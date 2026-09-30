@@ -3,15 +3,17 @@ import { Geist_Mono, Inter } from "next/font/google"
 import type { ReactNode } from "react"
 
 import "./globals.css"
-import { ThemeProvider } from "@/components/theme-provider"
+import { ThemeProvider } from "@/components/shell/theme-provider"
+import { Toaster } from "@/components/ui/toast"
+import { TooltipProvider } from "@/components/ui/tooltip"
 import { cn } from "@/lib/utils"
 
 const fontSans = Inter({ subsets: ["latin"], variable: "--font-sans" })
 const fontMono = Geist_Mono({ subsets: ["latin"], variable: "--font-mono" })
 
 export const metadata: Metadata = {
-  title: { default: "Meshway 控制台", template: "%s · Meshway" },
-  description: "Meshway controller 的本地开发控制台",
+  title: { default: "Meshway", template: "%s · Meshway" },
+  description: "Meshway 网络控制台",
 }
 
 export default function RootLayout({ children }: { children: ReactNode }) {
@@ -22,7 +24,11 @@ export default function RootLayout({ children }: { children: ReactNode }) {
       className={cn("antialiased", fontSans.variable, fontMono.variable)}
     >
       <body className="font-sans">
-        <ThemeProvider>{children}</ThemeProvider>
+        <ThemeProvider>
+          <TooltipProvider>
+            <Toaster>{children}</Toaster>
+          </TooltipProvider>
+        </ThemeProvider>
       </body>
     </html>
   )

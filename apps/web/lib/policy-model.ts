@@ -42,17 +42,6 @@ export type RuleDraft = {
 
 export type PolicyDraft = { defaultAction: DefaultAction; rules: RuleDraft[] }
 
-export const defaultActionOptions: { value: DefaultAction; label: string }[] = [
-  { value: "reject", label: "拒绝（reject）" },
-  { value: "direct", label: "本地直连（direct）" },
-]
-
-export const scopeOptions: { value: DestinationScope; label: string }[] = [
-  { value: "any", label: "任意目标" },
-  { value: "mesh", label: "仅 Mesh 内节点" },
-  { value: "internet", label: "仅互联网（Mesh 外）" },
-]
-
 export const destinationKindOptions: {
   value: DestinationKind
   label: string
@@ -63,20 +52,6 @@ export const destinationKindOptions: {
   { value: "cidr", label: "CIDR", placeholder: "203.0.113.0/24 或 2001:db8::/32" },
   { value: "country", label: "国家", placeholder: "JP" },
 ]
-
-export const actionOptions: { value: ActionKind; label: string }[] = [
-  { value: "route", label: "路由" },
-  { value: "reject", label: "拒绝" },
-]
-
-function pick<T extends string>(options: { value: T }[], raw: string): T | null {
-  return options.find((option) => option.value === raw)?.value ?? null
-}
-
-export const parseDefaultAction = (raw: string) => pick(defaultActionOptions, raw)
-export const parseScope = (raw: string) => pick(scopeOptions, raw)
-export const parseDestinationKind = (raw: string) => pick(destinationKindOptions, raw)
-export const parseActionKind = (raw: string) => pick(actionOptions, raw)
 
 export function parseCountryList(text: string): string[] {
   return text
@@ -106,26 +81,30 @@ export function fromPolicy(policy: RoutingPolicy): PolicyDraft {
   }
 }
 
+export function toRule(rule: RuleDraft): RouteRule {
+  return {
+    id: rule.id.trim(),
+    source: {
+      node_ids: [...rule.sourceNodeIds],
+      countries: parseCountryList(rule.sourceCountries),
+    },
+    destination_scope: rule.scope,
+    destination_any: rule.destinations.map(({ kind, value }) => ({
+      kind,
+      value: value.trim(),
+    })),
+    action: {
+      kind: rule.action,
+      via: [...rule.via],
+      exit_node_id: rule.exitNodeId === "" ? null : rule.exitNodeId,
+    },
+  }
+}
+
 export function toPolicy(draft: PolicyDraft): RoutingPolicy {
   return {
     default_action: draft.defaultAction,
-    rules: draft.rules.map((rule) => ({
-      id: rule.id.trim(),
-      source: {
-        node_ids: [...rule.sourceNodeIds],
-        countries: parseCountryList(rule.sourceCountries),
-      },
-      destination_scope: rule.scope,
-      destination_any: rule.destinations.map(({ kind, value }) => ({
-        kind,
-        value: value.trim(),
-      })),
-      action: {
-        kind: rule.action,
-        via: [...rule.via],
-        exit_node_id: rule.exitNodeId === "" ? null : rule.exitNodeId,
-      },
-    })),
+    rules: draft.rules.map(toRule),
   }
 }
 
@@ -133,8 +112,82 @@ export function policyBytes(policy: RoutingPolicy): number {
   return new TextEncoder().encode(JSON.stringify(policy)).length
 }
 
+// Structural identity. Policies arrive from the generated SDK (whose parsed
+// objects follow the schema's key order) and from `toPolicy` (which follows
+// the editor's order), so identity must not depend on object key order. The
+// projections below rebuild every object with one fixed key order and keep
+// every array in its semantic order: rules, via hops and selectors are
+// ordered and are never sorted.
+
+function canonicalRule(rule: RouteRule): RouteRule {
+  return {
+    id: rule.id,
+    source: {
+      node_ids: [...rule.source.node_ids],
+      countries: [...rule.source.countries],
+    },
+    destination_scope: rule.destination_scope,
+    destination_any: rule.destination_any.map((selector) => ({
+      kind: selector.kind,
+      value: selector.value,
+    })),
+    action: {
+      kind: rule.action.kind,
+      via: [...rule.action.via],
+      exit_node_id: rule.action.exit_node_id,
+    },
+  }
+}
+
+export function canonicalPolicy(policy: RoutingPolicy): RoutingPolicy {
+  return {
+    default_action: policy.default_action,
+    rules: policy.rules.map(canonicalRule),
+  }
+}
+
+/** Stable identity of a policy, independent of object key order. */
+export const policyKey = (policy: RoutingPolicy) => JSON.stringify(canonicalPolicy(policy))
+
+export const ruleKey = (rule: RouteRule) => JSON.stringify(canonicalRule(rule))
+
 export function samePolicy(a: RoutingPolicy, b: RoutingPolicy): boolean {
-  return JSON.stringify(a) === JSON.stringify(b)
+  return policyKey(a) === policyKey(b)
+}
+
+// ---------------------------------------------------------------------------
+// Draft vs stored
+
+export type RuleChange = "new" | "modified" | "unchanged"
+
+const SAVED_KEY = /^saved-(\d+)$/
+
+/**
+ * Rules loaded from the stored policy keep a `saved-<index>` key, so a rule
+ * stays "the same rule" across renames and reorders.
+ */
+export function ruleChange(rule: RuleDraft, base: RoutingPolicy): RuleChange {
+  const match = SAVED_KEY.exec(rule.key)
+  const original = match ? base.rules[Number(match[1])] : undefined
+  if (!original) return "new"
+  return ruleKey(toRule(rule)) === ruleKey(original) ? "unchanged" : "modified"
+}
+
+export function removedRuleCount(draft: PolicyDraft, base: RoutingPolicy): number {
+  const kept = new Set(
+    draft.rules.map((rule) => SAVED_KEY.exec(rule.key)?.[1]).filter((index) => index !== undefined)
+  )
+  return base.rules.length - kept.size
+}
+
+/** A route or reject rule with no source, scope or target restriction. */
+export function isCatchAll(rule: RuleDraft): boolean {
+  return (
+    rule.sourceNodeIds.length === 0 &&
+    parseCountryList(rule.sourceCountries).length === 0 &&
+    rule.scope === "any" &&
+    rule.destinations.length === 0
+  )
 }
 
 /** Issues the editor can detect without the controller; they block compile. */
@@ -223,6 +276,8 @@ export function fieldLabel(field: string): string {
 
 const fieldLabels: Record<string, string | undefined> = {
   id: "规则 ID",
+  source: "来源",
+  destination_any: "目标条件",
   selectors: "选择条件数量",
   "action.via": "经由节点",
   "action.exit_node_id": "出口节点",

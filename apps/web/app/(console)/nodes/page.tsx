@@ -2,93 +2,58 @@ import { PlusIcon } from "lucide-react"
 import type { Metadata } from "next"
 import Link from "next/link"
 
-import {
-  ControllerUnavailable,
-  DevelopmentNotice,
-  NoNodes,
-} from "@/components/controller-states"
-import { NodesTable } from "@/components/nodes-table"
-import { PageHeader } from "@/components/page-header"
-import { RefreshButton } from "@/components/refresh-button"
+import { ControllerUnavailable, NoNodes } from "@/components/common/controller-states"
+import { RefreshButton } from "@/components/common/refresh-button"
+import { NodesView } from "@/components/nodes/nodes-view"
+import { PageBody, PageHeader } from "@/components/shell/page-header"
 import { buttonVariants } from "@/components/ui/button"
-import {
-  Card,
-  CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle,
-} from "@/components/ui/card"
 import { controllerUrl, fetchNodes } from "@/lib/controller"
-import { byLastSeenDesc, formatClock } from "@/lib/time"
+import { formatClock } from "@/lib/time"
 
 export const metadata: Metadata = { title: "节点" }
 
-export default async function NodesPage() {
-  const nodes = await fetchNodes()
-  const revokedCount = nodes.ok
-    ? nodes.data.nodes.filter((node) => node.revoked_at !== null).length
-    : 0
+export default async function NodesPage({
+  searchParams,
+}: {
+  searchParams: Promise<Record<string, string | string[] | undefined>>
+}) {
+  const [nodes, params] = await Promise.all([fetchNodes(), searchParams])
+  const query = typeof params.q === "string" ? params.q : ""
 
   return (
-    <>
+    <PageBody>
       <PageHeader
         title="节点"
-        description="Controller 持久保存的全部注册记录，按最后联系时间倒序排列。"
+        description="在 controller 注册的节点身份、Mesh 地址与配置确认。"
         actions={
           <>
             {nodes.ok ? (
-              <span className="text-xs text-muted-foreground">
-                读取于 {formatClock(nodes.fetchedAt)}
-              </span>
+              <>
+                <span className="text-xs text-muted-foreground tabular-nums">
+                  读取于 {formatClock(nodes.fetchedAt)}
+                </span>
+                <RefreshButton />
+              </>
             ) : null}
-            <Link
-              href="/enrollment"
-              className={buttonVariants({ variant: "outline", size: "lg" })}
-            >
+            <Link href="/enrollment" className={buttonVariants({ size: "lg" })}>
               <PlusIcon data-icon="inline-start" />
-              注册令牌
+              添加节点
             </Link>
-            <RefreshButton />
           </>
         }
       />
-
       {!nodes.ok ? (
         <ControllerUnavailable url={controllerUrl()} error={nodes.error} />
+      ) : nodes.data.nodes.length === 0 ? (
+        <NoNodes />
       ) : (
-        <>
-          <DevelopmentNotice />
-          {nodes.data.nodes.length === 0 ? (
-            <NoNodes />
-          ) : (
-            <Card className="[--card-spacing:--spacing(5)]">
-              <CardHeader>
-                <CardTitle className="text-base">
-                  已注册节点
-                  <span className="ml-2 font-mono text-sm font-normal text-muted-foreground tabular-nums">
-                    {nodes.data.nodes.length}
-                  </span>
-                  {revokedCount > 0 ? (
-                    <span className="ml-2 text-sm font-normal text-muted-foreground">
-                      其中已撤销 {revokedCount}
-                    </span>
-                  ) : null}
-                </CardTitle>
-                <CardDescription className="text-sm">
-                  「最后联系」是 controller 最近一次收到该节点注册或心跳请求的时间，相对时间以本次读取时刻计算。它不反映隧道状态或节点之间的连通性。「配置」显示节点确认的配置版本：「已校验保存」只表示 agent 已校验并持久保存该版本，不代表网络已生效。国家是管理员标注的元数据，点击可修改。
-                </CardDescription>
-              </CardHeader>
-              <CardContent className="px-1">
-                <NodesTable
-                  nodes={[...nodes.data.nodes].sort(byLastSeenDesc)}
-                  fetchedAt={nodes.fetchedAt}
-                  manage
-                />
-              </CardContent>
-            </Card>
-          )}
-        </>
+        <NodesView
+          key={query}
+          nodes={nodes.data.nodes}
+          fetchedAt={nodes.fetchedAt}
+          initialQuery={query}
+        />
       )}
-    </>
+    </PageBody>
   )
 }

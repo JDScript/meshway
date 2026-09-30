@@ -1,178 +1,324 @@
-import type { NodeSummary } from "@meshway/control-client"
-import { ArrowRightIcon } from "lucide-react"
+import type { NodeSummary, PolicySnapshot } from "@meshway/control-client"
+import {
+  ActivityIcon,
+  ArrowRightIcon,
+  ChevronRightIcon,
+  CircleAlertIcon,
+  FlagIcon,
+  HourglassIcon,
+  KeyRoundIcon,
+  RouteIcon,
+  WaypointsIcon,
+} from "lucide-react"
 import Link from "next/link"
+import type { ReactNode } from "react"
 
-import {
-  ControllerUnavailable,
-  DevelopmentNotice,
-  NoNodes,
-} from "@/components/controller-states"
-import { Milestones } from "@/components/milestones"
-import { NodesTable } from "@/components/nodes-table"
-import { PageHeader } from "@/components/page-header"
-import { RefreshButton } from "@/components/refresh-button"
+import { ControllerUnavailable, NoNodes } from "@/components/common/controller-states"
+import { Panel } from "@/components/common/panel"
+import { RefreshButton } from "@/components/common/refresh-button"
+import { StatStrip } from "@/components/dashboard/stat-strip"
+import { LastContact, ReceiptBadge } from "@/components/nodes/node-status"
+import { PageBody, PageHeader } from "@/components/shell/page-header"
+import { Badge } from "@/components/ui/badge"
 import { buttonVariants } from "@/components/ui/button"
-import {
-  Card,
-  CardAction,
-  CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle,
-} from "@/components/ui/card"
-import { controllerUrl, fetchNodes, fetchOverview } from "@/lib/controller"
+import { controllerUrl, fetchNodes, fetchOverview, fetchPolicy } from "@/lib/controller"
+import { contactBucket, summarizeInventory } from "@/lib/node-status"
 import { byLastSeenDesc, formatClock } from "@/lib/time"
+import { cn } from "@/lib/utils"
 
-const RECENT_LIMIT = 5
+const RECENT_LIMIT = 6
 
-function deliverySummary(nodes: NodeSummary[]) {
-  const active = nodes.filter((node) => node.revoked_at === null)
-  const current = active.filter(
-    (node) => node.acknowledged_revision === node.configuration_revision
-  ).length
-  const never = active.filter((node) => node.acknowledged_revision === 0).length
-  return { active: active.length, current, never, pending: active.length - current - never }
+type Attention = { key: string; icon: ReactNode; title: string; detail: string; href: string; tone: "danger" | "warn" }
+
+function usesCountry(snapshot: PolicySnapshot): boolean {
+  return snapshot.policy.rules.some(
+    (rule) =>
+      rule.source.countries.length > 0 ||
+      rule.destination_any.some((selector) => selector.kind === "country")
+  )
+}
+
+function attentionItems(
+  nodes: NodeSummary[],
+  policy: PolicySnapshot | null,
+  fetchedAt: number
+): Attention[] {
+  const summary = summarizeInventory(nodes, fetchedAt)
+  const items: Attention[] = []
+  if (!policy) {
+    items.push({
+      key: "policy-read",
+      icon: <CircleAlertIcon />,
+      title: "无法读取路由策略",
+      detail: "打开路由策略页查看错误并重试。",
+      href: "/routing",
+      tone: "danger",
+    })
+  } else if (!policy.valid) {
+    items.push({
+      key: "policy",
+      icon: <CircleAlertIcon />,
+      title: "已保存的路由策略无效",
+      detail: `${policy.diagnostics.length} 条诊断。修复前节点收到的是拒绝全部的配置。`,
+      href: "/routing",
+      tone: "danger",
+    })
+  }
+  const pending = summary.receipt.behind + summary.receipt.never
+  if (pending > 0) {
+    items.push({
+      key: "receipt",
+      icon: <HourglassIcon />,
+      title: `${pending} 个节点尚未确认当前配置`,
+      detail: "节点下次同步时会拉取并校验新版本。",
+      href: "/nodes",
+      tone: "warn",
+    })
+  }
+  const stale = nodes.filter((node) => contactBucket(node, fetchedAt) === "stale").length
+  if (stale > 0) {
+    items.push({
+      key: "stale",
+      icon: <ActivityIcon />,
+      title: `${stale} 个节点超过 1 小时没有控制面联系`,
+      detail: "检查 agent 是否仍在运行，或是否需要撤销。",
+      href: "/nodes",
+      tone: "warn",
+    })
+  }
+  if (policy && usesCountry(policy) && summary.withoutCountry > 0) {
+    items.push({
+      key: "country",
+      icon: <FlagIcon />,
+      title: `${summary.withoutCountry} 个节点未设置国家`,
+      detail: "策略使用了国家条件，未设置国家的节点不会匹配。",
+      href: "/nodes",
+      tone: "warn",
+    })
+  }
+  return items
 }
 
 export default async function OverviewPage() {
-  const [overview, nodes] = await Promise.all([fetchOverview(), fetchNodes()])
-  const revokedCount = nodes.ok
-    ? nodes.data.nodes.filter((node) => node.revoked_at !== null).length
-    : null
-  const delivery = nodes.ok ? deliverySummary(nodes.data.nodes) : null
+  const [overview, nodes, policy] = await Promise.all([fetchOverview(), fetchNodes(), fetchPolicy()])
+
+  if (!overview.ok) {
+    return (
+      <PageBody>
+        <PageHeader title="概览" />
+        <ControllerUnavailable url={controllerUrl()} error={overview.error} />
+      </PageBody>
+    )
+  }
+
+  const fetchedAt = nodes.ok ? nodes.fetchedAt : overview.fetchedAt
+  const inventory = nodes.ok ? nodes.data.nodes : []
+  const summary = summarizeInventory(inventory, fetchedAt)
+  const snapshot = policy.ok ? policy.data : null
+  const revision = overview.data.configuration_revision
+  const attention = nodes.ok ? attentionItems(inventory, snapshot, fetchedAt) : []
+  const recent = [...inventory].filter((node) => node.revoked_at === null).sort(byLastSeenDesc).slice(0, RECENT_LIMIT)
 
   return (
-    <>
+    <PageBody>
       <PageHeader
         title="概览"
-        description="Controller 在本次请求时返回的状态，页面不缓存节点数据。"
+        description={`${overview.data.name} · ${overview.data.version}`}
         actions={
           <>
-            {overview.ok ? (
-              <span className="text-xs text-muted-foreground">
-                读取于 {formatClock(overview.fetchedAt)}
-              </span>
-            ) : null}
+            <span className="text-xs text-muted-foreground tabular-nums">
+              读取于 {formatClock(overview.fetchedAt)}
+            </span>
             <RefreshButton />
           </>
         }
       />
 
-      {overview.ok ? (
-        <>
-          <DevelopmentNotice />
+      {!nodes.ok ? <ControllerUnavailable url={controllerUrl()} error={nodes.error} /> : null}
 
-          <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-            <Card className="[--card-spacing:--spacing(5)]">
-              <CardHeader>
-                <CardDescription className="text-sm">Controller</CardDescription>
-                <CardTitle className="text-xl font-semibold">
-                  {overview.data.name}
-                </CardTitle>
-              </CardHeader>
-              <CardContent>
-                <dl className="grid grid-cols-[auto_1fr] gap-x-6 gap-y-1.5 text-sm">
-                  <dt className="text-muted-foreground">版本</dt>
-                  <dd className="font-mono text-xs leading-5">
-                    {overview.data.version}
-                  </dd>
-                  <dt className="text-muted-foreground">地址</dt>
-                  <dd className="font-mono text-xs leading-5 break-all">
-                    {controllerUrl()}
-                  </dd>
-                </dl>
-              </CardContent>
-            </Card>
+      {nodes.ok ? (
+        <StatStrip
+          stats={[
+            {
+              label: "已注册节点",
+              value: summary.active,
+              detail:
+                summary.revoked > 0
+                  ? `共 ${summary.total} 条记录，已撤销 ${summary.revoked}`
+                  : `共 ${summary.total} 条注册记录`,
+              href: "/nodes",
+            },
+            {
+              label: "近期控制面联系",
+              value: summary.recent,
+              suffix: `/ ${summary.active}`,
+              detail: "近 2 分钟有心跳，不代表在线",
+              href: "/nodes",
+            },
+            {
+              label: "配置确认",
+              value: summary.receipt.current,
+              suffix: `/ ${summary.active}`,
+              detail: `已校验保存 r${revision}`,
+              meter: { value: summary.receipt.current, max: summary.active },
+              href: "/nodes",
+            },
+            {
+              label: "路由规则",
+              value: snapshot ? snapshot.policy.rules.length : "—",
+              detail: snapshot
+                ? `${snapshot.valid ? "策略有效" : "策略无效"} · 未命中时${snapshot.policy.default_action === "reject" ? "拒绝" : "直连"}`
+                : "无法读取策略",
+              href: "/routing",
+            },
+          ]}
+        />
+      ) : null}
 
-            <Card className="[--card-spacing:--spacing(5)]">
-              <CardHeader>
-                <CardDescription className="text-sm">已注册节点</CardDescription>
-                <CardTitle className="font-mono text-3xl font-semibold tabular-nums">
-                  {overview.data.node_count}
-                </CardTitle>
-              </CardHeader>
-              <CardContent className="flex flex-col gap-1 text-sm text-muted-foreground">
-                {revokedCount !== null ? (
-                  <span>其中已撤销 {revokedCount} 个。</span>
-                ) : null}
-                <span>
-                  Controller 中持久保存的注册记录总数（含已撤销），不是在线或已连通的节点数。
-                </span>
-              </CardContent>
-            </Card>
-
-            <Card className="[--card-spacing:--spacing(5)]">
-              <CardHeader>
-                <CardDescription className="text-sm">配置版本</CardDescription>
-                <CardTitle className="font-mono text-3xl font-semibold tabular-nums">
-                  {overview.data.configuration_revision}
-                </CardTitle>
-                <CardAction>
-                  <Link
-                    href="/routing"
-                    className={buttonVariants({ variant: "ghost", size: "lg" })}
-                  >
-                    路由策略
-                    <ArrowRightIcon data-icon="inline-end" />
-                  </Link>
-                </CardAction>
-              </CardHeader>
-              <CardContent className="flex flex-col gap-1 text-sm text-muted-foreground">
-                {delivery !== null ? (
-                  delivery.active === 0 ? (
-                    <span>没有活动节点需要下发配置。</span>
-                  ) : (
-                    <span>
-                      {delivery.active} 个活动节点中，{delivery.current} 个已校验保存当前版本
-                      {delivery.pending > 0 ? `，${delivery.pending} 个仍停留在旧版本` : ""}
-                      {delivery.never > 0 ? `，${delivery.never} 个从未确认` : ""}。
-                    </span>
-                  )
-                ) : null}
-                <span>节点清单、国家或策略变化时递增。确认只表示 agent 已校验并保存，不代表网络已生效。</span>
-              </CardContent>
-            </Card>
-          </div>
-
-          <section className="flex flex-col gap-4">
-            {!nodes.ok ? (
-              <ControllerUnavailable url={controllerUrl()} error={nodes.error} />
-            ) : nodes.data.nodes.length === 0 ? (
-              <NoNodes />
+      {nodes.ok && inventory.length === 0 ? (
+        <NoNodes />
+      ) : nodes.ok ? (
+        <div className="grid items-start gap-6 lg:grid-cols-[minmax(0,1fr)_20rem]">
+          <Panel
+            title="最近控制面联系"
+            description="按最后联系时间排列的已注册节点"
+            actions={
+              <Link href="/nodes" className={buttonVariants({ variant: "ghost", size: "sm" })}>
+                全部节点
+                <ArrowRightIcon data-icon="inline-end" />
+              </Link>
+            }
+          >
+            {recent.length === 0 ? (
+              <p className="px-4 py-8 text-center text-sm text-muted-foreground">
+                所有节点都已撤销。
+              </p>
             ) : (
-              <Card className="[--card-spacing:--spacing(5)]">
-                <CardHeader>
-                  <CardTitle className="text-base">最近联系</CardTitle>
-                  <CardDescription className="text-sm">
-                    按最后联系 controller 的时间排列的前 {RECENT_LIMIT} 个节点。
-                  </CardDescription>
-                  <CardAction>
+              <ul className="divide-y">
+                {recent.map((node) => (
+                  <li key={node.id}>
                     <Link
-                      href="/nodes"
-                      className={buttonVariants({ variant: "ghost", size: "lg" })}
+                      href={`/nodes?q=${encodeURIComponent(node.id)}`}
+                      className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-x-4 gap-y-1 px-4 py-2.5 transition-colors hover:bg-muted/40 sm:grid-cols-[minmax(0,1.2fr)_minmax(0,1fr)_auto_auto]"
                     >
-                      全部节点
-                      <ArrowRightIcon data-icon="inline-end" />
+                      <span className="flex min-w-0 flex-col">
+                        <span className="truncate text-sm font-medium">{node.name}</span>
+                        <span className="truncate font-mono text-[0.6875rem] text-muted-foreground">
+                          {node.mesh_ipv4}
+                          {node.country ? ` · ${node.country}` : ""}
+                        </span>
+                      </span>
+                      <span className="text-xs">
+                        <LastContact node={node} fetchedAt={fetchedAt} />
+                      </span>
+                      <span className="hidden sm:inline-flex">
+                        <ReceiptBadge node={node} />
+                      </span>
+                      <ChevronRightIcon className="hidden size-3.5 text-muted-foreground sm:block" />
                     </Link>
-                  </CardAction>
-                </CardHeader>
-                <CardContent className="px-1">
-                  <NodesTable
-                    nodes={[...nodes.data.nodes]
-                      .sort(byLastSeenDesc)
-                      .slice(0, RECENT_LIMIT)}
-                    fetchedAt={nodes.fetchedAt}
-                  />
-                </CardContent>
-              </Card>
+                  </li>
+                ))}
+              </ul>
             )}
-          </section>
-        </>
-      ) : (
-        <ControllerUnavailable url={controllerUrl()} error={overview.error} />
-      )}
+          </Panel>
 
-      <Milestones />
-    </>
+          <div className="flex flex-col gap-6">
+            <Panel title="待处理">
+              {attention.length === 0 ? (
+                <p className="px-4 py-5 text-xs text-muted-foreground">
+                  没有待处理事项：策略有效，所有节点已确认当前配置。
+                </p>
+              ) : (
+                <ul className="divide-y">
+                  {attention.map((item) => (
+                    <li key={item.key}>
+                      <Link
+                        href={item.href}
+                        className="flex items-start gap-3 px-4 py-3 transition-colors hover:bg-muted/40"
+                      >
+                        <span
+                          className={cn(
+                            "mt-0.5 [&_svg]:size-4",
+                            item.tone === "danger" ? "text-destructive" : "text-warning"
+                          )}
+                        >
+                          {item.icon}
+                        </span>
+                        <span className="flex min-w-0 flex-col gap-0.5">
+                          <span className="text-sm font-medium">{item.title}</span>
+                          <span className="text-xs text-muted-foreground">{item.detail}</span>
+                        </span>
+                      </Link>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </Panel>
+
+            <Panel title="快速操作" bodyClassName="grid gap-1 p-2">
+              <QuickAction href="/enrollment" icon={<KeyRoundIcon />} label="注册新节点" />
+              <QuickAction href="/routing" icon={<RouteIcon />} label="编辑路由策略" />
+              <QuickAction href="/topology" icon={<WaypointsIcon />} label="查看逻辑拓扑与路径" />
+            </Panel>
+          </div>
+        </div>
+      ) : null}
+
+      <div className="grid gap-6 lg:grid-cols-2">
+        <Panel title="网络">
+          <dl className="grid grid-cols-[7rem_1fr] gap-x-4 gap-y-2 px-4 py-3 text-xs">
+            <dt className="text-muted-foreground">Controller</dt>
+            <dd className="font-mono break-all">{controllerUrl()}</dd>
+            <dt className="text-muted-foreground">Mesh IPv4</dt>
+            <dd className="font-mono">{snapshot?.network.ipv4_prefix ?? "—"}</dd>
+            <dt className="text-muted-foreground">Mesh IPv6</dt>
+            <dd className="font-mono">{snapshot?.network.ipv6_prefix ?? "—"}</dd>
+            <dt className="text-muted-foreground">配置版本</dt>
+            <dd className="font-mono tabular-nums">r{revision}</dd>
+          </dl>
+        </Panel>
+        <Panel
+          title={
+            <span className="flex items-center gap-2">
+              延迟与流量
+              <Badge variant="outline">未测量</Badge>
+            </span>
+          }
+          actions={
+            <Link href="/monitoring" className={buttonVariants({ variant: "ghost", size: "sm" })}>
+              监控
+              <ArrowRightIcon data-icon="inline-end" />
+            </Link>
+          }
+        >
+          <div className="flex flex-col gap-3 px-4 py-4">
+            <div className="grid grid-cols-3 gap-3">
+              {["节点间 RTT", "吞吐", "丢包"].map((label) => (
+                <div key={label} className="flex flex-col gap-1 rounded-lg border border-dashed px-3 py-2">
+                  <span className="text-[0.6875rem] text-muted-foreground">{label}</span>
+                  <span className="font-mono text-base text-muted-foreground">—</span>
+                </div>
+              ))}
+            </div>
+            <p className="text-xs text-muted-foreground">
+              数据面与 mesh trace 实现后，节点会上报测量数据并显示在这里。
+            </p>
+          </div>
+        </Panel>
+      </div>
+    </PageBody>
+  )
+}
+
+function QuickAction({ href, icon, label }: { href: string; icon: ReactNode; label: string }) {
+  return (
+    <Link
+      href={href}
+      className="flex items-center gap-2.5 rounded-md px-2 py-2 text-sm transition-colors hover:bg-muted [&_svg]:size-4 [&_svg]:text-muted-foreground"
+    >
+      {icon}
+      <span className="flex-1">{label}</span>
+      <ChevronRightIcon className="size-3.5!" />
+    </Link>
   )
 }

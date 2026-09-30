@@ -1,0 +1,47 @@
+"use client"
+
+import { usePathname } from "next/navigation"
+
+import { CapabilityPopover } from "@/components/shell/capability-popover"
+import { CommandMenu } from "@/components/shell/command-menu"
+import { currentItem } from "@/components/shell/nav"
+import { ThemeToggle } from "@/components/shell/theme-toggle"
+import {
+  Breadcrumb,
+  BreadcrumbItem,
+  BreadcrumbList,
+  BreadcrumbPage,
+  BreadcrumbSeparator,
+} from "@/components/ui/breadcrumb"
+import { Separator } from "@/components/ui/separator"
+import { SidebarTrigger } from "@/components/ui/sidebar"
+
+export function SiteHeader() {
+  const pathname = usePathname()
+  const item = currentItem(pathname)
+
+  return (
+    <header className="sticky top-0 z-20 flex h-12 shrink-0 items-center gap-2 border-b bg-background/85 px-3 backdrop-blur supports-backdrop-filter:bg-background/70 md:rounded-t-xl md:px-4">
+      <SidebarTrigger className="-ml-1" aria-label="切换侧边栏" />
+      <Separator orientation="vertical" className="mr-1 data-vertical:h-4" />
+      <Breadcrumb className="min-w-0">
+        <BreadcrumbList className="flex-nowrap">
+          <BreadcrumbItem className="hidden sm:inline-flex">
+            <span className="text-muted-foreground">默认网络</span>
+          </BreadcrumbItem>
+          <BreadcrumbSeparator className="hidden sm:inline-flex" />
+          <BreadcrumbItem className="min-w-0">
+            <BreadcrumbPage className="truncate">{item?.label ?? "控制台"}</BreadcrumbPage>
+          </BreadcrumbItem>
+        </BreadcrumbList>
+      </Breadcrumb>
+      <div className="ml-auto flex items-center gap-1.5">
+        <CommandMenu />
+        <div className="hidden sm:block">
+          <CapabilityPopover />
+        </div>
+        <ThemeToggle />
+      </div>
+    </header>
+  )
+}

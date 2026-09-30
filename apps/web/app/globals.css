@@ -46,6 +46,11 @@
     --radius-4xl: calc(var(--radius) * 2.6);
     --font-sans: var(--font-sans);
     --font-mono: var(--font-mono);
+    --color-brand: var(--brand);
+    --color-brand-foreground: var(--brand-foreground);
+    --color-success: var(--success);
+    --color-warning: var(--warning);
+    --color-canvas: var(--canvas);
 }
 
 :root {
@@ -81,6 +86,12 @@
     --sidebar-accent-foreground: oklch(0.205 0 0);
     --sidebar-border: oklch(0.922 0 0);
     --sidebar-ring: oklch(0.708 0 0);
+    /* Application tokens: brand teal from the Meshway mark, status hues. */
+    --brand: oklch(0.56 0.1 187);
+    --brand-foreground: oklch(0.985 0 0);
+    --success: oklch(0.6 0.13 155);
+    --warning: oklch(0.7 0.14 70);
+    --canvas: oklch(0.985 0 0);
 }
 
 .dark {
@@ -115,6 +126,11 @@
     --sidebar-accent-foreground: oklch(0.985 0 0);
     --sidebar-border: oklch(1 0 0 / 10%);
     --sidebar-ring: oklch(0.556 0 0);
+    --brand: oklch(0.8 0.11 183);
+    --brand-foreground: oklch(0.2 0.03 200);
+    --success: oklch(0.72 0.14 155);
+    --warning: oklch(0.8 0.13 75);
+    --canvas: oklch(0.175 0 0);
 }
 
 @layer base {
@@ -123,8 +139,20 @@
     }
   body {
     @apply bg-background text-foreground;
+    font-feature-settings: "cv11", "ss01";
     }
   button:not(:disabled), [role="button"]:not(:disabled) {
     cursor: pointer;
     }
+}
+
+@layer utilities {
+  /* Fine dotted grid used behind the logical map canvas. */
+  .bg-grid-dots {
+    background-image: radial-gradient(
+      color-mix(in oklch, var(--foreground) 14%, transparent) 1px,
+      transparent 1px
+    );
+    background-size: 16px 16px;
+  }
 }
