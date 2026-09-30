@@ -32,21 +32,33 @@ Rust 启动命令和契约生成流程见文档站的开发指南。
 分别在终端中运行控制面和 Web：
 
 ```sh
-cargo run --locked -p meshway-controller -- serve
+cargo run --locked -p meshway-controller -- serve --data-dir .meshway/controller
 pnpm dev:web
 ```
 
-发送一条真实的开发期进程报告：
+首次启动会创建 SQLite 状态及私有的 `.meshway/controller/admin.token`。在另一终端显式读取管理员令牌，并在 Web 登录：
 
 ```sh
-cargo run --locked -p meshway-agent -- report --name nyc --node-id dev-nyc
+cargo run --locked -p meshway-controller -- admin-token --data-dir .meshway/controller
 ```
+
+在 Web 创建一次性注册令牌，然后注册并运行 Agent：
+
+```sh
+cargo run --locked -p meshway-agent -- enroll \
+  --controller http://127.0.0.1:8420 \
+  --token '<Web 创建的一次性注册令牌>' \
+  --name nyc --state .meshway/agent.json
+cargo run --locked -p meshway-agent -- run --state .meshway/agent.json
+```
+
+保留同一数据目录与 Agent 状态文件，即可在重启后继续使用原身份。`.meshway/` 不进入 Git。
 
 Web 默认从 `http://127.0.0.1:8420` 读取 controller；可通过 `MESHWAY_CONTROLLER_URL` 配置。
 
 ## 当前范围
 
-当前基础闭环是本地 controller 接收 agent 的开发期进程报告，Web 读取真实报告数据。报告存储为内存状态；它不代表已完成安全注册或已建立 mesh 隧道。
+当前切片是一次性令牌注册、SQLite 持久化节点清单、节点专属控制面凭据、持续心跳及撤销。Web 使用管理员登录执行真实管理操作。这建立的是控制面凭据身份，`last_seen` 表示最近联系 controller 的时间；数据面密钥交换与 mesh 隧道另行实现。
 
 DNS、策略路由、多跳、multi-transport 与加密转发的架构和交付阶段在文档站维护。优先保留端到端加密与 `meshway trace`，系统 traceroute 作为后续增强；可信逐跳路由需要显式选择。
 
@@ -54,7 +66,7 @@ DNS、策略路由、多跳、multi-transport 与加密转发的架构和交付�
 
 HTTP 契约从 Rust 类型和实际路由声明生成，并驱动 Rust agent client、TypeScript SDK 与运行时 schema。前后端使用同一份生成契约，禁止手工复制 DTO。
 
-CI 检查契约漂移、Rust 格式/Clippy/测试、TypeScript、前端 lint 与两个站点的构建。
+CI 检查契约漂移、Rust 格式/Clippy/测试、TypeScript、前端 lint、两个站点构建，以及真实 controller / agent / Web 的浏览器联调。
 
 ```sh
 pnpm protocol:generate  # 修改 Rust 契约后更新 OpenAPI 和客户端
@@ -63,6 +75,8 @@ pnpm test:protocol     # SDK 校验及真实 controller 往返
 pnpm typecheck
 pnpm lint
 pnpm build
+pnpm exec playwright install chromium  # 首次运行浏览器测试
+pnpm test:e2e                          # 独立临时数据与端口，覆盖注册、重启、撤销和认证
 ```
 
 具体生成器及当前支持的契约形状见 [协议文档](docs/protocol.md)。

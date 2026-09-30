@@ -29,50 +29,68 @@ Rust 请求 / 响应类型 + 实际 API 路由声明
 
 ### 当前生成器与支持范围
 
-- Utoipa 6 与 utoipa-axum 0.3 导出原生 OpenAPI 3.1。
-- `openapi-to-rust` 0.19 生成 Agent 当前使用的 `reportAgent` 操作与 serde 模型。
-- Hey API 0.99 生成 TypeScript DTO 与 Zod schema；小型 OpenAPI 驱动的操作生成器负责调用经过校验的 HTTP transport。
-- 当前 TS 操作生成支持 JSON GET / POST、组件引用 schema、必填 POST body 与单一 HTTP 200 成功响应。新增不支持的契约形状会让生成失败，需要先扩展生成器。
+- Utoipa 6 与 utoipa-axum 0.3 从 Rust DTO 和路由声明导出原生 OpenAPI 3.1。
+- `apps/controller/src/bin/generate-rust-client.rs` 使用 `openapi-to-rust` 0.19，生成 `enrollAgent` 与 `heartbeatAgent` 及关联模型，认证配置由这两个实际操作的 bearer 声明派生。Agent 不需要管理 API 的权限。
+- 上游 Rust 生成器 0.19 没有在客户端构造中落实超时，且默认跟随重定向；仓库内的生成适配显式设置 **10 秒超时、禁止重定向**。适配前检查构造模板，模板变化会使生成失败，防止把注册凭据请求体转发给重定向目标。
+- Hey API 0.99 生成 TypeScript DTO；`scripts/generate-protocol.mjs` 从同一 OpenAPI 生成严格 Zod schema 与操作函数，再调用共享 HTTP transport。字符串长度按 Unicode code point 计算，与 Rust 的 Unicode scalar 计数一致；已修复原先 UTF-16 长度差异。
+- TS 操作生成支持 JSON GET / POST、组件 schema、必填 POST body、单一 HTTP 200 成功响应，以及单个必需的 HTTP bearer 认证方案。schema 生成支持封闭对象、组件引用、数组、整数、字符串、日期时间及 `T | null`。不支持的 schema 关键字、形状或认证要求直接使生成失败。
 
-Rust 响应通过 serde 校验声明的字段类型与时间格式，Web 通过 Zod 校验。当前响应模型允许忽略额外字段；请求的非空及长度约束仍由 controller 执行。Zod 的字符串长度以 UTF-16 计数，controller 以 Unicode scalar 计数，因此包含大量非 BMP 字符的报告可能被 TS 上报操作更严格地拒绝；Web 当前只调用读取操作。后续扩展协议时需要统一这个边界。
+当前生成物已通过漂移检查及真实 Rust / TS 客户端往返测试。所有管理操作都需要管理员 bearer；例如 SDK 读取概览的签名为 `getOverview(baseUrl, token)`。
 
-## 当前开发 API
+接口来源分别为 `crates/protocol/src/lib.rs` 的 DTO、`apps/controller/src/lib.rs` 的 `contract_router` 与处理器声明。认证安全方案在同一文件的 `describe` 中导出为 `adminBearer`、`enrollmentBearer`、`nodeBearer`，每个操作声明相应 `security`。生成客户端必须消费这些信息，不能在 Web 或 Agent 中手写 endpoint 或另建 DTO。
 
-默认地址：`http://127.0.0.1:8420`。这些接口只演示进程报告和读取，不是生产入网协议。
+## 注册与心跳 API
 
-| 方法与路径 | 请求 | 响应 |
-| --- | --- | --- |
-| `GET /api/v1/overview` | 无 | `{ name, version, node_count }` |
-| `GET /api/v1/nodes` | 无 | `{ nodes: [{ id, name, agent_version, last_seen }] }` |
-| `POST /api/v1/agents/report` | `{ node_id, name, agent_version }` | `{ node: { id, name, agent_version, last_seen } }` |
+默认本地地址：`http://127.0.0.1:8420`。以下接口已实现，Rust DTO、实际路由与生成 OpenAPI / 客户端一致，并通过控制面集成验收。
 
-表格是字段概览，不是完整 JSON Schema。精确类型、约束、可空性、时间格式及状态码以生成的 OpenAPI 为准。
+| 方法与路径 | bearer 权限 | JSON 请求 | HTTP 200 响应 |
+| --- | --- | --- | --- |
+| `GET /api/v1/overview` | 管理员 | 无 | `{ name, version, node_count }` |
+| `GET /api/v1/nodes` | 管理员 | 无 | `{ nodes: [NodeSummary] }` |
+| `POST /api/v1/enrollment-tokens` | 管理员 | `{ expires_in_seconds }` | `{ token_id, token, expires_at }` |
+| `POST /api/v1/nodes/revoke` | 管理员 | `{ node_id }` | `{ node: NodeSummary }` |
+| `POST /api/v1/agents/enroll` | 注册令牌 | `{ node_credential, name, agent_version }` | `{ node: NodeSummary }` |
+| `POST /api/v1/agents/heartbeat` | 节点 | `{ agent_version }` | `{ node: NodeSummary }` |
 
-### 报告记录的语义
+`NodeSummary` 的字段为 `id`、`name`、`agent_version`、`last_seen`、`registered_at`、`revoked_at`。`last_seen`、`registered_at` 为 RFC 3339 时间；`revoked_at` 是必有字段，取 RFC 3339 字符串或 `null`。令牌有效期为整数 `60..86400` 秒，`expires_at` 为 RFC 3339 时间。
 
-- `node_id` 是开发态记录标识，由调用方提交；不证明密钥所有权。
-- `name` 与 `agent_version` 是报告信息，不是可信能力声明。
-- `last_seen` 是最近一次报告的时间，不能直接解释成在线状态。
-- `node_count` 统计内存中的报告记录，不是健康隧道数量。
-- controller 重启清空记录；当前没有持久化、生产认证或网络转发承诺。
+注册 DTO 中的 `node_credential` 约束为 64 个小写十六进制字符，代表 Agent 预先随机生成的私有 bearer，**不是公钥**。`name` 最长 128 个 Unicode 字符、`agent_version` 最长 64 个，均须包含非空白文本。生成 schema 与 Rust 都按 Unicode code point / scalar 计数；真实往返测试覆盖 128 个 emoji 可接受、129 个被拒绝及全空白文本拒绝。
+
+表格仅是字段概览。请求与错误响应、约束及状态码的机器可读参考是 `packages/protocol/openapi.json`；它必须由实际 Rust 路由重生成并通过漂移检查。HTTP API schema 不是 mesh 数据面协议或网络连通性证明。当前路由没有公开健康 endpoint；若之后提供，也仅表示服务进程存活，不能暴露受保护清单或代表节点在线。
+
+### 记录和权限语义
+
+- 心跳不接收调用方任选的节点 ID；controller 从节点 bearer 派生身份。
+- `name` 与 `agent_version` 是元数据，不是 mesh 密钥认证或可信能力声明。
+- `last_seen` 是最近注册 / 心跳联系时间，不是在线、隧道健康或业务路径探测结果。
+- `node_count` 统计所有持久化节点，包括已撤销节点；controller 重启保留这些记录。
+- 节点凭据不能读取管理清单、签发注册令牌或撤销节点；注册令牌也不授予管理权限。
+- 注册绑定与幂等恢复、撤销不能复活等语义见[注册与持久化](/enrollment)。
+
+### 错误与运行时验证
+
+当前 Rust 路由声明包括：无效或缺失凭据的 HTTP `401`、已撤销节点访问的 `403`、非法请求的 `400`、未知撤销目标的 `404`、已绑定节点凭据再次创建身份的 `409`，以及请求体 / 存储错误。每个 endpoint 的完整响应集合以 OpenAPI 为准。不同凭据复用已消费注册令牌按无效注册权限处理；不能把它当作相同身份的成功重试。
+
+TypeScript SDK 导出 `ControlApiError`，其 `status` 保存非成功 HTTP 状态。Web 使用 `error instanceof ControlApiError && error.status === 401` 判断管理员凭据被拒绝，再进入登录流程。非成功响应体被丢弃，不把任意服务端内容回显给用户；JSON、媒体类型、网络及 schema 失败仍为普通 `Error`，不会伪装成认证拒绝。
+
+控制面输入 DTO 使用 serde 拒绝未知字段。生成的 Rust 响应模型校验必填字段、类型、时间及必填可空语义，当前忽略额外字段。TS 操作在请求前验证 body，HTTP transport 在成功响应边界使用生成的严格 Zod schema，校验额外 / 缺失字段、数值、`null` 与 RFC 3339 时间。transport 不缓存、禁止重定向，设置 10 秒超时及 2 MiB 响应上限。类型声明不能替代这些运行时检查。
+
+Rust 生成适配器从 schema 的 `required` 与 nullable 属性生成 serde 规则：`revoked_at` 可以明确为 `null`，但不能缺失；序列化 `None` 时保留该字段。当前支持直接的必填可空标量，其他可空别名、可选可空字段及容器形状在支持前会使生成失败。
 
 ## Web 如何消费真实契约
 
-前端通过 `@meshway/control-client` 导出的 `getOverview(baseUrl)`、`listNodes(baseUrl)` 和生成类型读取 API。
+Web 在 Next.js 服务端通过 `@meshway/control-client` 调用管理员操作。登录验证成功后将管理员令牌保存在 `HttpOnly` cookie 中；读取与 server action 均从服务端获取凭据，逐次检查权限，再交给生成 SDK。未登录不读取或展示受保护数据，登出清除 cookie。
 
-```ts
-import { getOverview, listNodes } from "@meshway/control-client";
+包公开的管理员操作直接导出生成函数：
 
-const controllerUrl = "http://127.0.0.1:8420";
-const [overview, nodes] = await Promise.all([
-  getOverview(controllerUrl),
-  listNodes(controllerUrl),
-]);
-```
+| SDK 调用 | 返回类型 |
+| --- | --- |
+| `getOverview(baseUrl, token)` | `Promise<Overview>` |
+| `listNodes(baseUrl, token)` | `Promise<NodeList>` |
+| `createEnrollmentToken(baseUrl, token, body)` | `Promise<CreateEnrollmentTokenResponse>` |
+| `revokeNode(baseUrl, token, body)` | `Promise<RevokeNodeResponse>` |
 
-具体返回类型由 SDK 生成声明确定。调用方需要处理网络失败、非成功状态码和 schema 验证错误。
-
-TypeScript 编译只能检查代码中声明的形状，不能验证 HTTP 对端实际返回的 JSON。SDK 应在边界使用生成 schema 验证响应，验证通过才交给页面。不能使用 `any`、未验证的类型断言或“缺字段就补假数据”掩盖协议漂移。
+请求类型和响应类型均来自生成声明。页面只消费验证通过的数据；不能用 `any`、未验证的类型断言或“缺字段就补假数据”掩盖协议漂移。会话期限、POST 清理及 Secure 配置见[Web 边界](/enrollment#web-管理员边界)。
 
 ## 前后端一起交付的含义
 
@@ -84,27 +102,28 @@ TypeScript 编译只能检查代码中声明的形状，不能验证 HTTP 对端
 4. Agent / Web 消费生成接口，呈现真实的结果、空状态和错误状态。
 5. 验证真实请求往返、生成物无漂移，并同步文档中的状态。
 
-因此“前后端一起”不是先做虚构流量仪表盘。当前只交付概览和进程报告列表；未来的策略、路径与 trace 页面应随对应 API 与数据面能力一起交付。
+本次闭环覆盖注册令牌、持久身份、心跳、撤销与管理员 Web 操作；未来的策略、路径与 trace 页面应随对应 API 和数据面能力一起交付，不以虚构流量仪表盘代替真实功能。
 
 ## 漂移与兼容性检查
 
-当前生成脚本与漂移检查可以直接从客户端包运行：
+在仓库根目录执行：
 
 ```sh
-pnpm --filter @meshway/control-client generate
-pnpm --filter @meshway/control-client check:generated
+pnpm protocol:generate
+pnpm protocol:check
 pnpm test:protocol
 ```
 
-`check:generated` 将结果生成到临时目录，再与仓库产物逐文件比较，不依赖已有 Git 提交。完整检查链还应包括：
+`protocol:check` 调用客户端包的 `check:generated`，将结果生成到临时目录，再与仓库产物逐文件比较，不依赖已有 Git 提交。完整检查链还应包括：
 
 - 重新导出 OpenAPI 并重新生成全部客户端，与仓库产物应无差异。
 - Rust 与 TypeScript 编译通过，Agent 和 Web 不依赖手写 DTO。
-- 使用生成客户端对真实测试服务执行一次报告与读取往返。
-- 对无效响应验证运行时 schema 能拒绝，并向上返回可处理的错误。
-- 路由、方法、成功与错误响应契约都能关联到实际处理器。
+- 使用生成客户端对真实测试服务执行管理认证、令牌创建、注册、心跳、清单读取和撤销往返。
+- 对缺失 / 额外字段、非法时间和可空性验证严格 schema 拒绝，并验证类型化 HTTP 401 能向上传递。
+- 路由、方法、认证要求、成功与错误响应契约都能关联到实际处理器。
+- [注册验收矩阵](/development#注册与持久化验收矩阵)中的权限、并发与持久化行为有实际证据。
 
-首版使用 `/api/v1` 命名空间，但开发阶段的契约仍可能变更。生产版本兼容窗口、协商、废弃流程和错误模型需要后续明确。
+首版使用 `/api/v1` 命名空间，但开发阶段的契约仍可能变更。本切片不提供混合版本运行或旧报告 API 迁移；生产版本兼容窗口、协商与废弃流程需后续明确。
 
 ## WASM 的位置
 
