@@ -21,13 +21,23 @@ const statusBadge: Record<Status, { label: string; variant: "default" | "seconda
 
 const milestones: { title: string; detail: string; status: Status }[] = [
   {
-    title: "节点上报与列表",
-    detail: "agent 通过开发用 report 请求登记名称、版本和最后上报时间。",
+    title: "管理员认证",
+    detail: "控制台与管理 API 需要管理员令牌；会话保存在仅服务端可读的 Cookie 中。",
     status: "implemented",
   },
   {
-    title: "安全注册 · Enrollment",
-    detail: "节点身份与准入凭据。当前的上报不做认证。",
+    title: "节点注册 · Enrollment",
+    detail: "一次性、有时效的注册令牌；agent 注册后持久保存自己的控制面凭据，记录在 controller 中持久存储。",
+    status: "implemented",
+  },
+  {
+    title: "心跳与撤销",
+    detail: "心跳更新最后联系时间；撤销后 controller 拒绝该节点凭据。不代表在线或连通性。",
+    status: "implemented",
+  },
+  {
+    title: "数据面身份",
+    detail: "节点密钥与数据面身份证明。当前身份仅为控制面 bearer 凭据。",
     status: "design",
   },
   {

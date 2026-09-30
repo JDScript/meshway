@@ -235,7 +235,11 @@ async fn __read_bounded_response_body(
 impl HttpClient {
     /// Create a new HTTP client with default configuration
     pub fn new() -> Self {
-        let reqwest_client = reqwest::Client::new();
+        let reqwest_client = reqwest::Client::builder()
+            .redirect(reqwest::redirect::Policy::none())
+            .timeout(std::time::Duration::from_secs(10))
+            .build()
+            .expect("valid static HTTP client configuration");
         let client_builder = ClientBuilder::new(reqwest_client);
         let http_client = client_builder.build();
         Self {
@@ -292,23 +296,34 @@ fn __pct_encode_path_segment(s: &str) -> String {
     }
     out
 }
-///Typed error responses for `reportAgent`. One variant per declared non-2xx response.
+///Typed error responses for `enrollAgent`. One variant per declared non-2xx response.
 #[derive(Debug, Clone)]
-pub enum ReportAgentApiError {
+pub enum EnrollAgentApiError {
     Status400(ErrorResponse),
+    Status401(ErrorResponse),
+    Status403(ErrorResponse),
+    Status409(ErrorResponse),
     Status413(ErrorResponse),
     Status415(ErrorResponse),
-    Status503(ErrorResponse),
+    Status500(ErrorResponse),
+}
+///Typed error responses for `heartbeatAgent`. One variant per declared non-2xx response.
+#[derive(Debug, Clone)]
+pub enum HeartbeatAgentApiError {
+    Status400(ErrorResponse),
+    Status401(ErrorResponse),
+    Status403(ErrorResponse),
+    Status413(ErrorResponse),
+    Status415(ErrorResponse),
+    Status500(ErrorResponse),
 }
 impl HttpClient {
-    /// Report a development process. No authentication or secure enrollment exists yet.
-    ///
-    /// `POST /api/v1/agents/report`
-    pub async fn report_agent(
+    /// `POST /api/v1/agents/enroll`
+    pub async fn enroll_agent(
         &self,
-        request: AgentReport,
-    ) -> Result<ReportResponse, ApiOpError<ReportAgentApiError>> {
-        let request_url = format!("{}{}", self.base_url, "/api/v1/agents/report");
+        request: EnrollAgentRequest,
+    ) -> Result<AgentNodeResponse, ApiOpError<EnrollAgentApiError>> {
+        let request_url = format!("{}{}", self.base_url, "/api/v1/agents/enroll");
         let mut req = self.http_client.post(request_url);
         req = req
             .body(serde_json::to_vec(&request).map_err(HttpError::serialization_error)?)
@@ -355,12 +370,42 @@ impl HttpClient {
                 )),
             }))
         } else {
-            let typed: Option<ReportAgentApiError>;
+            let typed: Option<EnrollAgentApiError>;
             let parse_error: Option<String>;
             match status_code {
                 400u16 => match serde_json::from_str::<ErrorResponse>(&body_text) {
                     Ok(v) => {
-                        typed = Some(ReportAgentApiError::Status400(v));
+                        typed = Some(EnrollAgentApiError::Status400(v));
+                        parse_error = None;
+                    }
+                    Err(e) => {
+                        typed = None;
+                        parse_error = Some(e.to_string());
+                    }
+                },
+                401u16 => match serde_json::from_str::<ErrorResponse>(&body_text) {
+                    Ok(v) => {
+                        typed = Some(EnrollAgentApiError::Status401(v));
+                        parse_error = None;
+                    }
+                    Err(e) => {
+                        typed = None;
+                        parse_error = Some(e.to_string());
+                    }
+                },
+                403u16 => match serde_json::from_str::<ErrorResponse>(&body_text) {
+                    Ok(v) => {
+                        typed = Some(EnrollAgentApiError::Status403(v));
+                        parse_error = None;
+                    }
+                    Err(e) => {
+                        typed = None;
+                        parse_error = Some(e.to_string());
+                    }
+                },
+                409u16 => match serde_json::from_str::<ErrorResponse>(&body_text) {
+                    Ok(v) => {
+                        typed = Some(EnrollAgentApiError::Status409(v));
                         parse_error = None;
                     }
                     Err(e) => {
@@ -370,7 +415,7 @@ impl HttpClient {
                 },
                 413u16 => match serde_json::from_str::<ErrorResponse>(&body_text) {
                     Ok(v) => {
-                        typed = Some(ReportAgentApiError::Status413(v));
+                        typed = Some(EnrollAgentApiError::Status413(v));
                         parse_error = None;
                     }
                     Err(e) => {
@@ -380,7 +425,7 @@ impl HttpClient {
                 },
                 415u16 => match serde_json::from_str::<ErrorResponse>(&body_text) {
                     Ok(v) => {
-                        typed = Some(ReportAgentApiError::Status415(v));
+                        typed = Some(EnrollAgentApiError::Status415(v));
                         parse_error = None;
                     }
                     Err(e) => {
@@ -388,9 +433,139 @@ impl HttpClient {
                         parse_error = Some(e.to_string());
                     }
                 },
-                503u16 => match serde_json::from_str::<ErrorResponse>(&body_text) {
+                500u16 => match serde_json::from_str::<ErrorResponse>(&body_text) {
                     Ok(v) => {
-                        typed = Some(ReportAgentApiError::Status503(v));
+                        typed = Some(EnrollAgentApiError::Status500(v));
+                        parse_error = None;
+                    }
+                    Err(e) => {
+                        typed = None;
+                        parse_error = Some(e.to_string());
+                    }
+                },
+                _ => {
+                    typed = None;
+                    parse_error = None;
+                }
+            }
+            Err(ApiOpError::Api(ApiError {
+                status: status_code,
+                headers,
+                body: body_text,
+                raw_body,
+                typed,
+                parse_error,
+            }))
+        }
+    }
+    /// `POST /api/v1/agents/heartbeat`
+    pub async fn heartbeat_agent(
+        &self,
+        request: HeartbeatRequest,
+    ) -> Result<AgentNodeResponse, ApiOpError<HeartbeatAgentApiError>> {
+        let request_url = format!("{}{}", self.base_url, "/api/v1/agents/heartbeat");
+        let mut req = self.http_client.post(request_url);
+        req = req
+            .body(serde_json::to_vec(&request).map_err(HttpError::serialization_error)?)
+            .header("content-type", "application/json");
+        if let Some(api_key) = &self.api_key {
+            req = req.bearer_auth(api_key);
+        }
+        for (name, value) in &self.custom_headers {
+            if !name.eq_ignore_ascii_case("accept") {
+                req = req.header(name, value);
+            }
+        }
+        req = req.header(reqwest::header::ACCEPT, "application/json");
+        let response = req.send().await?;
+        let status = response.status();
+        let status_code = status.as_u16();
+        let headers = response.headers().clone();
+        let body_bytes =
+            __read_bounded_response_body(response, self.max_response_body_bytes).await?;
+        let raw_body = body_bytes;
+        let body_text = String::from_utf8_lossy(&raw_body).into_owned();
+        if false || status_code == 200u16 {
+            match serde_json::from_str(&body_text) {
+                Ok(body) => Ok(body),
+                Err(e) => Err(ApiOpError::Api(ApiError {
+                    status: status_code,
+                    headers: headers,
+                    body: body_text,
+                    raw_body,
+                    typed: None,
+                    parse_error: Some(format!("failed to deserialize 2xx response body: {}", e)),
+                })),
+            }
+        } else if status.is_success() {
+            Err(ApiOpError::Api(ApiError {
+                status: status_code,
+                headers,
+                body: body_text,
+                raw_body,
+                typed: None,
+                parse_error: Some(format!(
+                    "unexpected successful status {}; generated return type selects `{}`",
+                    status_code, "200",
+                )),
+            }))
+        } else {
+            let typed: Option<HeartbeatAgentApiError>;
+            let parse_error: Option<String>;
+            match status_code {
+                400u16 => match serde_json::from_str::<ErrorResponse>(&body_text) {
+                    Ok(v) => {
+                        typed = Some(HeartbeatAgentApiError::Status400(v));
+                        parse_error = None;
+                    }
+                    Err(e) => {
+                        typed = None;
+                        parse_error = Some(e.to_string());
+                    }
+                },
+                401u16 => match serde_json::from_str::<ErrorResponse>(&body_text) {
+                    Ok(v) => {
+                        typed = Some(HeartbeatAgentApiError::Status401(v));
+                        parse_error = None;
+                    }
+                    Err(e) => {
+                        typed = None;
+                        parse_error = Some(e.to_string());
+                    }
+                },
+                403u16 => match serde_json::from_str::<ErrorResponse>(&body_text) {
+                    Ok(v) => {
+                        typed = Some(HeartbeatAgentApiError::Status403(v));
+                        parse_error = None;
+                    }
+                    Err(e) => {
+                        typed = None;
+                        parse_error = Some(e.to_string());
+                    }
+                },
+                413u16 => match serde_json::from_str::<ErrorResponse>(&body_text) {
+                    Ok(v) => {
+                        typed = Some(HeartbeatAgentApiError::Status413(v));
+                        parse_error = None;
+                    }
+                    Err(e) => {
+                        typed = None;
+                        parse_error = Some(e.to_string());
+                    }
+                },
+                415u16 => match serde_json::from_str::<ErrorResponse>(&body_text) {
+                    Ok(v) => {
+                        typed = Some(HeartbeatAgentApiError::Status415(v));
+                        parse_error = None;
+                    }
+                    Err(e) => {
+                        typed = None;
+                        parse_error = Some(e.to_string());
+                    }
+                },
+                500u16 => match serde_json::from_str::<ErrorResponse>(&body_text) {
+                    Ok(v) => {
+                        typed = Some(HeartbeatAgentApiError::Status500(v));
                         parse_error = None;
                     }
                     Err(e) => {

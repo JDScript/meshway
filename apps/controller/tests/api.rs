@@ -3,135 +3,675 @@ use axum::{
     body::{Body, to_bytes},
     http::{Request, StatusCode},
 };
-use meshway_controller::{AppState, openapi_json, router};
-use meshway_protocol::{AgentReport, ErrorResponse, NodeList, Overview, ReportResponse};
+use meshway_controller::{AppState, admin_token, openapi_json, router};
+use meshway_protocol::{
+    AgentNodeResponse, CreateEnrollmentTokenResponse, NodeList, RevokeNodeResponse, local,
+};
+use serde_json::{Value, json};
 use tower::ServiceExt;
 
-async fn get<T: serde::de::DeserializeOwned>(app: &Router, path: &str) -> T {
-    let response = app
-        .clone()
-        .oneshot(Request::get(path).body(Body::empty()).unwrap())
-        .await
-        .unwrap();
-    assert_eq!(response.status(), StatusCode::OK);
-    serde_json::from_slice(&to_bytes(response.into_body(), 1 << 20).await.unwrap()).unwrap()
+fn tempdir() -> tempfile::TempDir {
+    use std::os::unix::fs::PermissionsExt;
+    tempfile::Builder::new()
+        .permissions(std::fs::Permissions::from_mode(0o700))
+        .tempdir()
+        .unwrap()
 }
 
-async fn report(app: &Router, body: String, content_type: &str) -> (StatusCode, Vec<u8>) {
-    let response = app
-        .clone()
-        .oneshot(
-            Request::post("/api/v1/agents/report")
-                .header("content-type", content_type)
-                .body(Body::from(body))
-                .unwrap(),
+struct Fixture {
+    directory: tempfile::TempDir,
+    app: Router,
+    admin: String,
+}
+
+impl Fixture {
+    fn new() -> Self {
+        let directory = tempdir();
+        let app = router(AppState::open(directory.path()).unwrap());
+        let admin = admin_token(directory.path()).unwrap();
+        Self {
+            directory,
+            app,
+            admin,
+        }
+    }
+
+    async fn token(&self) -> CreateEnrollmentTokenResponse {
+        let (status, body) = request(
+            &self.app,
+            "POST",
+            "/api/v1/enrollment-tokens",
+            Some(&self.admin),
+            Some(json!({"expires_in_seconds": 3600})),
         )
-        .await
-        .unwrap();
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        serde_json::from_value(body).unwrap()
+    }
+}
+
+async fn request(
+    app: &Router,
+    method: &str,
+    path: &str,
+    token: Option<&str>,
+    body: Option<Value>,
+) -> (StatusCode, Value) {
+    let mut request = Request::builder().method(method).uri(path);
+    if let Some(token) = token {
+        request = request.header("authorization", format!("Bearer {token}"));
+    }
+    let request = if let Some(body) = body {
+        request
+            .header("content-type", "application/json")
+            .body(Body::from(body.to_string()))
+    } else {
+        request.body(Body::empty())
+    }
+    .unwrap();
+    let response = app.clone().oneshot(request).await.unwrap();
+    let status = response.status();
+    if status == StatusCode::UNAUTHORIZED {
+        assert_eq!(response.headers()["www-authenticate"], "Bearer");
+    }
+    let bytes = to_bytes(response.into_body(), 1 << 20).await.unwrap();
     (
-        response.status(),
-        to_bytes(response.into_body(), 1 << 20)
-            .await
-            .unwrap()
-            .to_vec(),
+        status,
+        if bytes.is_empty() {
+            Value::Null
+        } else {
+            serde_json::from_slice(&bytes).unwrap()
+        },
     )
 }
 
+fn enrollment(credential: &str, name: &str) -> Value {
+    json!({"node_credential": credential, "name": name, "agent_version": "0.1.0"})
+}
+
+async fn enroll(fixture: &Fixture, token: &str, credential: &str, name: &str) -> AgentNodeResponse {
+    let (status, body) = request(
+        &fixture.app,
+        "POST",
+        "/api/v1/agents/enroll",
+        Some(token),
+        Some(enrollment(credential, name)),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    serde_json::from_value(body).unwrap()
+}
+
 #[tokio::test]
-async fn reports_are_real_sorted_and_upserted_without_invented_initial_nodes() {
-    let app = router(AppState::default());
-    assert_eq!(
-        get::<Overview>(&app, "/api/v1/overview").await.node_count,
-        0
-    );
-    assert!(
-        get::<NodeList>(&app, "/api/v1/nodes")
-            .await
-            .nodes
-            .is_empty()
-    );
-    let before = chrono::Utc::now();
-    for (id, name) in [("z", "Zürich"), ("a", "nyc"), ("z", "updated")] {
-        let body = serde_json::to_string(&AgentReport {
-            node_id: id.into(),
-            name: name.into(),
-            agent_version: "0.1.0".into(),
-        })
-        .unwrap();
-        let (status, bytes) = report(&app, body, "application/json").await;
-        assert_eq!(status, StatusCode::OK);
-        let stored: ReportResponse = serde_json::from_slice(&bytes).unwrap();
-        assert_eq!(stored.node.id, id);
-        assert_eq!(stored.node.name, name);
-        assert!(stored.node.last_seen >= before && stored.node.last_seen <= chrono::Utc::now());
+async fn credentials_are_scoped_and_heartbeat_identity_is_server_derived() {
+    let fixture = Fixture::new();
+    let first_token = fixture.token().await.token;
+    let first_credential = local::credential().unwrap();
+    let first = enroll(&fixture, &first_token, &first_credential, "first")
+        .await
+        .node;
+    let second_token = fixture.token().await.token;
+    let second_credential = local::credential().unwrap();
+    let second = enroll(&fixture, &second_token, &second_credential, "second")
+        .await
+        .node;
+    assert_ne!(first.id, second.id);
+    assert_eq!(first.registered_at, first.last_seen);
+    assert!(first.revoked_at.is_none());
+    for token in [
+        None,
+        Some("invalid"),
+        Some(first_token.as_str()),
+        Some(first_credential.as_str()),
+    ] {
+        for path in ["/api/v1/overview", "/api/v1/nodes"] {
+            assert_eq!(
+                request(&fixture.app, "GET", path, token, None).await.0,
+                StatusCode::UNAUTHORIZED
+            );
+        }
+        for (path, body) in [
+            (
+                "/api/v1/enrollment-tokens",
+                json!({"expires_in_seconds":60}),
+            ),
+            ("/api/v1/nodes/revoke", json!({"node_id":first.id})),
+        ] {
+            assert_eq!(
+                request(&fixture.app, "POST", path, token, Some(body))
+                    .await
+                    .0,
+                StatusCode::UNAUTHORIZED
+            );
+        }
     }
-    let nodes = get::<NodeList>(&app, "/api/v1/nodes").await.nodes;
+    for token in [
+        None,
+        Some("invalid"),
+        Some(fixture.admin.as_str()),
+        Some(first_credential.as_str()),
+    ] {
+        assert_eq!(
+            request(
+                &fixture.app,
+                "POST",
+                "/api/v1/agents/enroll",
+                token,
+                Some(enrollment(&local::credential().unwrap(), "x"))
+            )
+            .await
+            .0,
+            StatusCode::UNAUTHORIZED
+        );
+    }
+    for token in [
+        None,
+        Some("invalid"),
+        Some(fixture.admin.as_str()),
+        Some(first_token.as_str()),
+    ] {
+        assert_eq!(
+            request(
+                &fixture.app,
+                "POST",
+                "/api/v1/agents/heartbeat",
+                token,
+                Some(json!({"agent_version":"0.2.0"}))
+            )
+            .await
+            .0,
+            StatusCode::UNAUTHORIZED
+        );
+    }
+    assert_eq!(
+        request(
+            &fixture.app,
+            "POST",
+            "/api/v1/agents/heartbeat",
+            Some(&first_credential),
+            Some(json!({"agent_version":"0.2.0", "node_id":second.id}))
+        )
+        .await
+        .0,
+        StatusCode::BAD_REQUEST
+    );
+    let (status, body) = request(
+        &fixture.app,
+        "POST",
+        "/api/v1/agents/heartbeat",
+        Some(&first_credential),
+        Some(json!({"agent_version":"0.2.0"})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["node"]["id"], first.id);
+    let (_, list) = request(
+        &fixture.app,
+        "GET",
+        "/api/v1/nodes",
+        Some(&fixture.admin),
+        None,
+    )
+    .await;
+    let nodes: NodeList = serde_json::from_value(list).unwrap();
     assert_eq!(
         nodes
-            .iter()
-            .map(|node| node.id.as_str())
-            .collect::<Vec<_>>(),
-        ["a", "z"]
-    );
-    assert_eq!(nodes[1].name, "updated");
-    assert_eq!(
-        get::<Overview>(&app, "/api/v1/overview").await.node_count,
-        2
-    );
-    assert!(
-        get::<NodeList>(&router(AppState::default()), "/api/v1/nodes")
-            .await
             .nodes
-            .is_empty()
+            .iter()
+            .find(|node| node.id == second.id)
+            .unwrap()
+            .last_seen,
+        second.last_seen
+    );
+    assert_eq!(
+        nodes
+            .nodes
+            .iter()
+            .find(|node| node.id == first.id)
+            .unwrap()
+            .agent_version,
+        "0.2.0"
+    );
+    assert_eq!(
+        request(&fixture.app, "POST", "/api/v1/agents/report", None, None)
+            .await
+            .0,
+        StatusCode::NOT_FOUND
     );
 }
 
 #[tokio::test]
-async fn invalid_or_oversized_reports_are_rejected_without_mutating_state() {
-    let app = router(AppState::default());
-    for body in [
-        r#"{"node_id":"","name":"nyc","agent_version":"0.1.0"}"#.to_owned(),
-        r#"{"node_id":"n","name":" \t","agent_version":"0.1.0"}"#.to_owned(),
-        r#"{"node_id":"n","name":"nyc","agent_version":""}"#.to_owned(),
-        r#"{"node_id":"n","name":"nyc","agent_version":"0.1.0","secret":"unexpected"}"#.to_owned(),
-        r#"{"node_id":"n","name":"nyc"}"#.to_owned(),
-        r#"{"node_id":3,"name":"nyc","agent_version":"0.1.0"}"#.to_owned(),
-        "{".to_owned(),
-        serde_json::to_string(&AgentReport {
-            node_id: "x".repeat(129),
-            name: "nyc".into(),
-            agent_version: "0.1.0".into(),
-        })
-        .unwrap(),
-        serde_json::to_string(&AgentReport {
-            node_id: "n".into(),
-            name: "x".repeat(129),
-            agent_version: "0.1.0".into(),
-        })
-        .unwrap(),
-        serde_json::to_string(&AgentReport {
-            node_id: "n".into(),
-            name: "nyc".into(),
-            agent_version: "x".repeat(65),
-        })
-        .unwrap(),
-    ] {
-        let (status, bytes) = report(&app, body, "application/json").await;
-        assert_eq!(status, StatusCode::BAD_REQUEST);
-        assert!(
-            !serde_json::from_slice::<ErrorResponse>(&bytes)
-                .unwrap()
-                .message
-                .is_empty()
+async fn invalid_requests_preserve_token_and_unicode_limits_match_the_contract() {
+    let fixture = Fixture::new();
+    for ttl in [json!(59), json!(86401), json!(-1), json!(60.5), json!("60")] {
+        assert_eq!(
+            request(
+                &fixture.app,
+                "POST",
+                "/api/v1/enrollment-tokens",
+                Some(&fixture.admin),
+                Some(json!({"expires_in_seconds":ttl}))
+            )
+            .await
+            .0,
+            StatusCode::BAD_REQUEST
         );
     }
-    let (status, _) = report(&app, " ".repeat(8193), "application/json").await;
-    assert_eq!(status, StatusCode::PAYLOAD_TOO_LARGE);
-    let (status, _) = report(&app, "{}".into(), "text/plain").await;
-    assert_eq!(status, StatusCode::UNSUPPORTED_MEDIA_TYPE);
+    let token = fixture.token().await.token;
+    let credential = local::credential().unwrap();
+    for body in [
+        enrollment(&credential, ""),
+        enrollment(&credential, " \t\u{0085}"),
+        enrollment(&credential, &"😀".repeat(129)),
+        enrollment("x", "x"),
+        json!({"node_credential":credential,"name":"x","agent_version":""}),
+        json!({"node_credential":credential,"name":"x","agent_version":"0.1.0","node_id":"chosen"}),
+    ] {
+        assert_eq!(
+            request(
+                &fixture.app,
+                "POST",
+                "/api/v1/agents/enroll",
+                Some(&token),
+                Some(body)
+            )
+            .await
+            .0,
+            StatusCode::BAD_REQUEST
+        );
+    }
+    // A token itself cannot be promoted into a node credential.
     assert_eq!(
-        get::<Overview>(&app, "/api/v1/overview").await.node_count,
-        0
+        request(
+            &fixture.app,
+            "POST",
+            "/api/v1/agents/enroll",
+            Some(&token),
+            Some(enrollment(&token, "x"))
+        )
+        .await
+        .0,
+        StatusCode::CONFLICT
+    );
+    let node = enroll(&fixture, &token, &credential, &"😀".repeat(128))
+        .await
+        .node;
+    let retry = enroll(&fixture, &token, &credential, &"😀".repeat(128))
+        .await
+        .node;
+    assert_eq!(node.id, retry.id);
+    assert_eq!(
+        request(
+            &fixture.app,
+            "POST",
+            "/api/v1/agents/enroll",
+            Some(&token),
+            Some(enrollment(&credential, "different name"))
+        )
+        .await
+        .0,
+        StatusCode::UNAUTHORIZED
+    );
+    let other_token = fixture.token().await.token;
+    assert_eq!(
+        request(
+            &fixture.app,
+            "POST",
+            "/api/v1/agents/enroll",
+            Some(&other_token),
+            Some(enrollment(&credential, "other"))
+        )
+        .await
+        .0,
+        StatusCode::CONFLICT
+    );
+    enroll(
+        &fixture,
+        &other_token,
+        &local::credential().unwrap(),
+        "other",
+    )
+    .await;
+    let (_, overview) = request(
+        &fixture.app,
+        "GET",
+        "/api/v1/overview",
+        Some(&fixture.admin),
+        None,
+    )
+    .await;
+    assert_eq!(overview["node_count"], 2);
+}
+
+#[tokio::test]
+async fn request_media_size_and_json_errors_are_safe_and_do_not_consume_token() {
+    let fixture = Fixture::new();
+    let token = fixture.token().await.token;
+    for (body, media, expected) in [
+        ("{".to_owned(), "application/json", 400),
+        ("{}".to_owned(), "text/plain", 415),
+        (" ".repeat(8193), "application/json", 413),
+    ] {
+        let response = fixture
+            .app
+            .clone()
+            .oneshot(
+                Request::post("/api/v1/agents/enroll")
+                    .header("authorization", format!("Bearer {token}"))
+                    .header("content-type", media)
+                    .body(Body::from(body))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status().as_u16(), expected);
+        let bytes = to_bytes(response.into_body(), 1 << 20).await.unwrap();
+        assert!(!String::from_utf8_lossy(&bytes).contains(&token));
+    }
+    enroll(&fixture, &token, &local::credential().unwrap(), "valid").await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn one_time_consumption_is_atomic_under_concurrent_distinct_and_bound_retries() {
+    let fixture = Fixture::new();
+    let token = fixture.token().await.token;
+    let mut tasks = tokio::task::JoinSet::new();
+    for _ in 0..16 {
+        let app = fixture.app.clone();
+        let token = token.clone();
+        tasks.spawn(async move {
+            let credential = local::credential().unwrap();
+            let response = request(
+                &app,
+                "POST",
+                "/api/v1/agents/enroll",
+                Some(&token),
+                Some(enrollment(&credential, "racer")),
+            )
+            .await;
+            (credential, response)
+        });
+    }
+    let mut winner = None;
+    while let Some(result) = tasks.join_next().await {
+        let (credential, (status, body)) = result.unwrap();
+        if status == StatusCode::OK {
+            assert!(winner.is_none());
+            winner = Some((credential, body["node"]["id"].clone()));
+        } else {
+            assert_eq!(status, StatusCode::UNAUTHORIZED);
+        }
+    }
+    let (credential, id) = winner.unwrap();
+    for _ in 0..16 {
+        let (app, token, credential) = (fixture.app.clone(), token.clone(), credential.clone());
+        tasks.spawn(async move {
+            (
+                credential.clone(),
+                request(
+                    &app,
+                    "POST",
+                    "/api/v1/agents/enroll",
+                    Some(&token),
+                    Some(enrollment(&credential, "racer")),
+                )
+                .await,
+            )
+        });
+    }
+    while let Some(result) = tasks.join_next().await {
+        let (_, (status, body)) = result.unwrap();
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(body["node"]["id"], id);
+    }
+    assert_eq!(
+        request(
+            &fixture.app,
+            "GET",
+            "/api/v1/overview",
+            Some(&fixture.admin),
+            None
+        )
+        .await
+        .1["node_count"],
+        1
+    );
+}
+
+#[tokio::test]
+async fn expiry_restart_and_revocation_preserve_identity_and_consumption() {
+    let fixture = Fixture::new();
+    let expired = fixture.token().await;
+    let active = fixture.token().await;
+    let unused = fixture.token().await;
+    let credential = local::credential().unwrap();
+    let node = enroll(&fixture, &active.token, &credential, "durable")
+        .await
+        .node;
+    // Set expiry in this isolated test database instead of sleeping for 60s.
+    let connection =
+        rusqlite::Connection::open(fixture.directory.path().join("controller.sqlite3")).unwrap();
+    connection
+        .execute(
+            "UPDATE enrollment_tokens SET expires_at = 0 WHERE id IN (?1, ?2)",
+            [&expired.token_id, &active.token_id],
+        )
+        .unwrap();
+    assert_eq!(
+        request(
+            &fixture.app,
+            "POST",
+            "/api/v1/agents/enroll",
+            Some(&expired.token),
+            Some(enrollment(&local::credential().unwrap(), "late"))
+        )
+        .await
+        .0,
+        StatusCode::UNAUTHORIZED
+    );
+    assert_eq!(
+        enroll(&fixture, &active.token, &credential, "durable")
+            .await
+            .node
+            .id,
+        node.id
+    );
+    drop(connection);
+    let Fixture {
+        directory,
+        app,
+        admin,
+    } = fixture;
+    drop(app);
+    let restarted = Fixture {
+        app: router(AppState::open(directory.path()).unwrap()),
+        directory,
+        admin,
+    };
+    assert_eq!(
+        admin_token(restarted.directory.path()).unwrap(),
+        restarted.admin
+    );
+    assert_eq!(
+        enroll(&restarted, &active.token, &credential, "durable")
+            .await
+            .node
+            .id,
+        node.id
+    );
+    assert_eq!(
+        request(
+            &restarted.app,
+            "POST",
+            "/api/v1/agents/enroll",
+            Some(&active.token),
+            Some(enrollment(&local::credential().unwrap(), "different"))
+        )
+        .await
+        .0,
+        StatusCode::UNAUTHORIZED
+    );
+    enroll(
+        &restarted,
+        &unused.token,
+        &local::credential().unwrap(),
+        "unused-survived",
+    )
+    .await;
+    let mut revoked_at = None;
+    for _ in 0..2 {
+        let (status, body) = request(
+            &restarted.app,
+            "POST",
+            "/api/v1/nodes/revoke",
+            Some(&restarted.admin),
+            Some(json!({"node_id":node.id})),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        let response: RevokeNodeResponse = serde_json::from_value(body).unwrap();
+        assert!(response.node.revoked_at.is_some());
+        if let Some(time) = revoked_at {
+            assert_eq!(response.node.revoked_at, Some(time));
+        }
+        revoked_at = response.node.revoked_at;
+    }
+    let Fixture {
+        directory,
+        app,
+        admin,
+    } = restarted;
+    drop(app);
+    let restarted = Fixture {
+        app: router(AppState::open(directory.path()).unwrap()),
+        directory,
+        admin,
+    };
+    assert_eq!(
+        request(
+            &restarted.app,
+            "POST",
+            "/api/v1/agents/heartbeat",
+            Some(&credential),
+            Some(json!({"agent_version":"0.2.0"}))
+        )
+        .await
+        .0,
+        StatusCode::FORBIDDEN
+    );
+    assert_eq!(
+        request(
+            &restarted.app,
+            "POST",
+            "/api/v1/agents/enroll",
+            Some(&active.token),
+            Some(enrollment(&credential, "durable"))
+        )
+        .await
+        .0,
+        StatusCode::FORBIDDEN
+    );
+    let fresh = restarted.token().await.token;
+    assert_eq!(
+        request(
+            &restarted.app,
+            "POST",
+            "/api/v1/agents/enroll",
+            Some(&fresh),
+            Some(enrollment(&credential, "durable"))
+        )
+        .await
+        .0,
+        StatusCode::CONFLICT
+    );
+    let (_, list) = request(
+        &restarted.app,
+        "GET",
+        "/api/v1/nodes",
+        Some(&restarted.admin),
+        None,
+    )
+    .await;
+    let list: NodeList = serde_json::from_value(list).unwrap();
+    let stored = list
+        .nodes
+        .iter()
+        .find(|stored| stored.id == node.id)
+        .unwrap();
+    assert_eq!(stored.revoked_at, revoked_at);
+    assert_eq!(stored.last_seen, node.last_seen);
+    assert_eq!(
+        request(
+            &restarted.app,
+            "GET",
+            "/api/v1/overview",
+            Some(&restarted.admin),
+            None
+        )
+        .await
+        .1["node_count"],
+        2
+    );
+    assert_eq!(
+        request(
+            &restarted.app,
+            "POST",
+            "/api/v1/nodes/revoke",
+            Some(&restarted.admin),
+            Some(json!({"node_id":"missing"}))
+        )
+        .await
+        .0,
+        StatusCode::NOT_FOUND
+    );
+}
+
+#[test]
+fn private_bootstrap_rejects_partial_mismatched_and_concurrently_owned_state() {
+    use std::os::unix::fs::{MetadataExt, PermissionsExt, symlink};
+    let directory = tempdir();
+    assert!(admin_token(directory.path()).is_err());
+    let state = AppState::open(directory.path()).unwrap();
+    let admin = admin_token(directory.path()).unwrap();
+    assert!(AppState::open(directory.path()).is_err());
+    for file in ["admin.token", "controller.sqlite3", "controller.lock"] {
+        assert_eq!(
+            std::fs::metadata(directory.path().join(file))
+                .unwrap()
+                .mode()
+                & 0o777,
+            0o600
+        );
+    }
+    assert_eq!(
+        std::fs::metadata(directory.path()).unwrap().mode() & 0o777,
+        0o700
+    );
+    let bytes = std::fs::read(directory.path().join("controller.sqlite3")).unwrap();
+    assert!(
+        !bytes
+            .windows(admin.len())
+            .any(|window| window == admin.as_bytes())
+    );
+    drop(state);
+    let token_file = directory.path().join("admin.token");
+    std::fs::write(&token_file, local::credential().unwrap()).unwrap();
+    assert!(AppState::open(directory.path()).is_err());
+    assert!(admin_token(directory.path()).is_err());
+    std::fs::write(&token_file, &admin).unwrap();
+    std::fs::set_permissions(&token_file, std::fs::Permissions::from_mode(0o644)).unwrap();
+    assert!(AppState::open(directory.path()).is_err());
+    std::fs::remove_file(&token_file).unwrap();
+    assert!(AppState::open(directory.path()).is_err());
+    let other = directory.path().join("other.token");
+    local::atomic_write(&other, admin.as_bytes(), false).unwrap();
+    symlink(&other, &token_file).unwrap();
+    assert!(AppState::open(directory.path()).is_err());
+    std::fs::remove_file(&token_file).unwrap();
+    std::fs::remove_file(directory.path().join("controller.sqlite3")).unwrap();
+    assert!(
+        AppState::open(directory.path()).is_err(),
+        "unknown files must not be reinitialized"
     );
 }
 

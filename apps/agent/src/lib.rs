@@ -2,3 +2,6 @@
 
 #[allow(dead_code, clippy::all)]
 pub mod generated;
+
+mod state;
+pub use state::{Agent, AgentError, AgentStatus, status};

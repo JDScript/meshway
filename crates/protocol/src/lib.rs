@@ -1,4 +1,6 @@
-//! Wire DTOs used by the controller and its route-linked OpenAPI document.
+//! Authoritative wire DTOs and shared local credential/file primitives.
+
+pub mod local;
 
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
@@ -9,10 +11,11 @@ use utoipa::ToSchema;
 pub struct Overview {
     pub name: String,
     pub version: String,
+    #[schema(format = Int64, minimum = 0, maximum = 4294967295_u64)]
     pub node_count: u32,
 }
 
-/// A process report received by this development controller, not tunnel status.
+/// Durable control-plane identity. Last contact is not tunnel health.
 #[derive(Clone, Debug, Serialize, Deserialize, ToSchema)]
 #[serde(deny_unknown_fields)]
 pub struct NodeSummary {
@@ -20,6 +23,21 @@ pub struct NodeSummary {
     pub name: String,
     pub agent_version: String,
     pub last_seen: DateTime<Utc>,
+    pub registered_at: DateTime<Utc>,
+    #[schema(required = true)]
+    #[serde(deserialize_with = "deserialize_required_nullable")]
+    pub revoked_at: Option<DateTime<Utc>>,
+}
+
+// A custom field deserializer makes serde reject a missing field before calling
+// this function, while Option still accepts an explicitly present JSON null.
+// Keep ordinary Option serialization: None must serialize as null, not omission.
+fn deserialize_required_nullable<'de, D, T>(deserializer: D) -> Result<Option<T>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+    T: Deserialize<'de>,
+{
+    Option::deserialize(deserializer)
 }
 
 #[derive(Debug, Serialize, Deserialize, ToSchema)]
@@ -28,49 +46,88 @@ pub struct NodeList {
     pub nodes: Vec<NodeSummary>,
 }
 
-/// Unauthenticated development process reporting; this is not secure enrollment.
 #[derive(Debug, Serialize, Deserialize, ToSchema)]
 #[serde(deny_unknown_fields)]
-pub struct AgentReport {
-    #[schema(min_length = 1, max_length = 128, pattern = r"\S")]
+pub struct CreateEnrollmentTokenRequest {
+    #[schema(minimum = 60, maximum = 86400)]
+    pub expires_in_seconds: u32,
+}
+
+/// The token is revealed only once, in this creation response.
+#[derive(Serialize, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
+pub struct CreateEnrollmentTokenResponse {
+    pub token_id: String,
+    pub token: String,
+    pub expires_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Serialize, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
+pub struct RevokeNodeRequest {
+    #[schema(min_length = 1, max_length = 128)]
     pub node_id: String,
-    #[schema(min_length = 1, max_length = 128, pattern = r"\S")]
+}
+
+#[derive(Debug, Serialize, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
+pub struct RevokeNodeResponse {
+    pub node: NodeSummary,
+}
+
+/// Persist the proposed random credential before sending this request. Retry
+/// with the same enrollment token, credential, name and enrollment version.
+#[derive(Serialize, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
+pub struct EnrollAgentRequest {
+    #[schema(min_length = 64, max_length = 64, pattern = "^[0-9a-f]{64}$")]
+    pub node_credential: String,
+    #[schema(
+        min_length = 1,
+        max_length = 128,
+        pattern = r"[^\u0009-\u000D\u0020\u0085\u00A0\u1680\u2000-\u200A\u2028\u2029\u202F\u205F\u3000]"
+    )]
     pub name: String,
-    #[schema(min_length = 1, max_length = 64, pattern = r"\S")]
+    #[schema(
+        min_length = 1,
+        max_length = 64,
+        pattern = r"[^\u0009-\u000D\u0020\u0085\u00A0\u1680\u2000-\u200A\u2028\u2029\u202F\u205F\u3000]"
+    )]
     pub agent_version: String,
 }
 
-impl AgentReport {
-    /// Lengths use Unicode scalar values, matching JSON Schema string lengths.
+impl EnrollAgentRequest {
     pub fn validate(&self) -> Result<(), &'static str> {
-        for (value, max, message) in [
-            (
-                &self.node_id,
-                128,
-                "node_id must contain 1–128 characters and non-whitespace text",
-            ),
-            (
-                &self.name,
-                128,
-                "name must contain 1–128 characters and non-whitespace text",
-            ),
-            (
-                &self.agent_version,
-                64,
-                "agent_version must contain 1–64 characters and non-whitespace text",
-            ),
-        ] {
-            if value.trim().is_empty() || value.chars().count() > max {
-                return Err(message);
-            }
+        if !local::valid_credential(&self.node_credential) {
+            return Err("node_credential must be 64 lowercase hexadecimal characters");
         }
-        Ok(())
+        validate_text(&self.name, 128)?;
+        validate_text(&self.agent_version, 64)
     }
 }
 
+/// Node identity is derived exclusively from the node bearer credential.
 #[derive(Debug, Serialize, Deserialize, ToSchema)]
 #[serde(deny_unknown_fields)]
-pub struct ReportResponse {
+pub struct HeartbeatRequest {
+    #[schema(
+        min_length = 1,
+        max_length = 64,
+        pattern = r"[^\u0009-\u000D\u0020\u0085\u00A0\u1680\u2000-\u200A\u2028\u2029\u202F\u205F\u3000]"
+    )]
+    pub agent_version: String,
+}
+
+impl HeartbeatRequest {
+    pub fn validate(&self) -> Result<(), &'static str> {
+        validate_text(&self.agent_version, 64)
+    }
+}
+
+/// Also lets a pending local enrollment recover its server-assigned node ID.
+#[derive(Debug, Serialize, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
+pub struct AgentNodeResponse {
     pub node: NodeSummary,
 }
 
@@ -78,4 +135,13 @@ pub struct ReportResponse {
 #[serde(deny_unknown_fields)]
 pub struct ErrorResponse {
     pub message: String,
+}
+
+fn validate_text(value: &str, max: usize) -> Result<(), &'static str> {
+    if value.trim().is_empty() || value.chars().count() > max {
+        return Err(
+            "text must be within the documented character limit and contain non-whitespace text",
+        );
+    }
+    Ok(())
 }

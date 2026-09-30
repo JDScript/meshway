@@ -1,131 +1,363 @@
-//! Loopback-first development control plane with route-linked OpenAPI.
+//! Persistent control-plane enrollment, scoped credentials and process contact.
 
-use std::{collections::BTreeMap, sync::Arc};
+mod store;
+
+use std::{
+    path::Path,
+    sync::{Arc, Mutex},
+};
 
 use axum::{
     Json, Router,
     extract::{DefaultBodyLimit, State, rejection::JsonRejection},
-    http::StatusCode,
+    http::{HeaderMap, StatusCode},
+    response::{IntoResponse, Response},
 };
-use chrono::Utc;
 use meshway_protocol::{
-    AgentReport, ErrorResponse, NodeList, NodeSummary, Overview, ReportResponse,
+    AgentNodeResponse, CreateEnrollmentTokenRequest, CreateEnrollmentTokenResponse,
+    EnrollAgentRequest, ErrorResponse, HeartbeatRequest, NodeList, Overview, RevokeNodeRequest,
+    RevokeNodeResponse, local,
 };
-use tokio::sync::RwLock;
-use utoipa::openapi::{Info, OpenApi};
+use store::Store;
+use utoipa::openapi::{
+    Info, OpenApi,
+    security::{Http, HttpAuthScheme, SecurityScheme},
+};
 use utoipa_axum::{router::OpenApiRouter, routes};
 
-const MAX_NODES: usize = 4096;
-const MAX_REPORT_BYTES: usize = 8192;
-
-#[derive(Clone, Default)]
-pub struct AppState {
-    nodes: Arc<RwLock<BTreeMap<String, NodeSummary>>>,
+#[derive(Debug, thiserror::Error)]
+pub enum Error {
+    #[error("invalid or missing bearer credential")]
+    Unauthorized,
+    #[error("node credential has been revoked")]
+    Forbidden,
+    #[error("{0}")]
+    Invalid(&'static str),
+    #[error("credential is already bound to a node")]
+    Conflict,
+    #[error("node not found")]
+    NotFound,
+    #[error("{0}")]
+    Configuration(&'static str),
+    #[error("controller storage error")]
+    Storage(#[from] rusqlite::Error),
+    #[error("controller file error: {0}")]
+    Io(#[from] std::io::Error),
+    #[error("controller storage worker unavailable")]
+    Worker,
+    #[error("{1}")]
+    Body(StatusCode, &'static str),
 }
 
-/// The same route registrations construct the live router and the contract.
-pub fn router_and_openapi(state: AppState) -> (Router, OpenApi) {
-    let (router, mut api) = OpenApiRouter::new()
+impl IntoResponse for Error {
+    fn into_response(self) -> Response {
+        let status = match &self {
+            Self::Unauthorized => StatusCode::UNAUTHORIZED,
+            Self::Forbidden => StatusCode::FORBIDDEN,
+            Self::Invalid(_) => StatusCode::BAD_REQUEST,
+            Self::Conflict => StatusCode::CONFLICT,
+            Self::NotFound => StatusCode::NOT_FOUND,
+            Self::Body(status, _) => *status,
+            _ => StatusCode::INTERNAL_SERVER_ERROR,
+        };
+        let message = if status.is_server_error() {
+            "controller storage unavailable".to_owned()
+        } else {
+            self.to_string()
+        };
+        let mut response = (status, Json(ErrorResponse { message })).into_response();
+        if status == StatusCode::UNAUTHORIZED {
+            response
+                .headers_mut()
+                .insert("www-authenticate", "Bearer".parse().expect("static header"));
+        }
+        response
+    }
+}
+
+#[derive(Clone)]
+pub struct AppState {
+    store: Arc<Mutex<Store>>,
+}
+
+impl AppState {
+    pub fn open(data_dir: impl AsRef<Path>) -> Result<Self, Error> {
+        Ok(Self {
+            store: Arc::new(Mutex::new(Store::open(data_dir.as_ref())?)),
+        })
+    }
+
+    async fn access<T: Send + 'static>(
+        &self,
+        action: impl FnOnce(&mut Store) -> Result<T, Error> + Send + 'static,
+    ) -> Result<T, Error> {
+        let store = self.store.clone();
+        tokio::task::spawn_blocking(move || action(&mut *store.lock().map_err(|_| Error::Worker)?))
+            .await
+            .map_err(|_| Error::Worker)?
+    }
+}
+
+/// Reads the existing private bootstrap file, including while the server runs.
+/// Does not initialize storage or replace an identity.
+pub fn admin_token(data_dir: impl AsRef<Path>) -> Result<String, Error> {
+    let data_dir = data_dir.as_ref();
+    std::fs::symlink_metadata(data_dir)?;
+    local::private_dir(data_dir)?;
+    local::open_private(&data_dir.join("controller.sqlite3"), false)?;
+    let token = local::read_private(&data_dir.join("admin.token"))?;
+    let token = token.trim_end_matches('\n');
+    if !local::valid_credential(token) {
+        return Err(Error::Configuration("invalid admin.token"));
+    }
+    let connection = rusqlite::Connection::open_with_flags(
+        data_dir.join("controller.sqlite3"),
+        rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY,
+    )?;
+    let stored: Vec<u8> =
+        connection.query_row("SELECT admin_hash FROM settings WHERE id = 1", [], |row| {
+            row.get(0)
+        })?;
+    if stored != local::digest(token) {
+        return Err(Error::Configuration(
+            "admin.token does not match the database",
+        ));
+    }
+    Ok(token.to_owned())
+}
+
+fn contract_router() -> OpenApiRouter<AppState> {
+    OpenApiRouter::new()
         .routes(routes!(get_overview))
         .routes(routes!(list_nodes))
-        .routes(routes!(report_agent))
-        .layer(DefaultBodyLimit::max(MAX_REPORT_BYTES))
-        .with_state(state)
-        .split_for_parts();
-    api.info = Info::new("Meshway development control API", env!("CARGO_PKG_VERSION"));
-    api.info.description = Some(
-        "In-memory development process reporting only. Reports are unauthenticated and are not secure enrollment, mesh membership, connectivity, or tunnel health. State resets on restart."
-            .to_owned(),
-    );
-    (router, api)
+        .routes(routes!(create_enrollment_token))
+        .routes(routes!(revoke_node))
+        .routes(routes!(enroll_agent))
+        .routes(routes!(heartbeat_agent))
+        .layer(DefaultBodyLimit::max(8192))
+}
+
+fn describe(api: &mut OpenApi) {
+    api.info = Info::new("Meshway control API", env!("CARGO_PKG_VERSION"));
+    api.info.description = Some("Durable control-plane credential identity and last process contact; not mesh public-key identity, connectivity or tunnel health.".to_owned());
+    let components = api.components.get_or_insert_with(Default::default);
+    for name in ["adminBearer", "enrollmentBearer", "nodeBearer"] {
+        components.add_security_scheme(
+            name,
+            SecurityScheme::Http(Http::new(HttpAuthScheme::Bearer)),
+        );
+    }
+}
+
+/// Live routes and the exported OpenAPI share one set of declarations.
+pub fn router_and_openapi(state: AppState) -> (Router, OpenApi) {
+    let (router, mut api) = contract_router().with_state(state).split_for_parts();
+    describe(&mut api);
+    (
+        router.layer(axum::middleware::map_response(
+            |mut response: Response| async move {
+                response
+                    .headers_mut()
+                    .insert("cache-control", "no-store".parse().expect("static header"));
+                response
+            },
+        )),
+        api,
+    )
 }
 
 pub fn router(state: AppState) -> Router {
     router_and_openapi(state).0
 }
 
-/// Stable JSON: schema/path maps are ordered and no runtime state is included.
 pub fn openapi_json() -> Result<String, serde_json::Error> {
-    let api = router_and_openapi(AppState::default()).1;
+    let (_, mut api) = contract_router().split_for_parts();
+    describe(&mut api);
     Ok(format!("{}\n", serde_json::to_string_pretty(&api)?))
 }
 
-#[utoipa::path(
-    get, path = "/api/v1/overview", operation_id = "getOverview",
-    responses((status = 200, description = "Controller identity and received report count", body = Overview))
-)]
-async fn get_overview(State(state): State<AppState>) -> Json<Overview> {
-    Json(Overview {
-        name: "Meshway".to_owned(),
-        version: env!("CARGO_PKG_VERSION").to_owned(),
-        node_count: state.nodes.read().await.len() as u32,
-    })
+fn bearer(headers: &HeaderMap) -> Result<String, Error> {
+    let mut values = headers.get_all("authorization").iter();
+    let value = values
+        .next()
+        .and_then(|value| value.to_str().ok())
+        .ok_or(Error::Unauthorized)?;
+    if values.next().is_some() {
+        return Err(Error::Unauthorized);
+    }
+    let (scheme, token) = value.split_once(' ').ok_or(Error::Unauthorized)?;
+    if !scheme.eq_ignore_ascii_case("bearer") || !local::valid_credential(token) {
+        return Err(Error::Unauthorized);
+    }
+    Ok(token.to_owned())
 }
 
-#[utoipa::path(
-    get, path = "/api/v1/nodes", operation_id = "listNodes",
-    responses((status = 200, description = "Received process reports, sorted by node ID", body = NodeList))
-)]
-async fn list_nodes(State(state): State<AppState>) -> Json<NodeList> {
-    Json(NodeList {
-        nodes: state.nodes.read().await.values().cloned().collect(),
-    })
-}
-
-/// Report a development process. No authentication or secure enrollment exists yet.
-#[utoipa::path(
-    post, path = "/api/v1/agents/report", operation_id = "reportAgent",
-    request_body = AgentReport,
-    responses(
-        (status = 200, description = "Report stored or updated", body = ReportResponse),
-        (status = 400, description = "Invalid JSON or report fields", body = ErrorResponse),
-        (status = 413, description = "Report exceeds 8192 bytes", body = ErrorResponse),
-        (status = 415, description = "Content-Type must be application/json", body = ErrorResponse),
-        (status = 503, description = "Development node capacity reached", body = ErrorResponse)
-    )
-)]
-async fn report_agent(
-    State(state): State<AppState>,
-    body: Result<Json<AgentReport>, JsonRejection>,
-) -> Result<Json<ReportResponse>, (StatusCode, Json<ErrorResponse>)> {
-    let Json(report) = body.map_err(|rejection| {
-        let (status, message) = match rejection.status() {
+fn json<T>(body: Result<Json<T>, JsonRejection>) -> Result<T, Error> {
+    body.map(|Json(value)| value)
+        .map_err(|rejection| match rejection.status() {
             StatusCode::PAYLOAD_TOO_LARGE => {
-                (StatusCode::PAYLOAD_TOO_LARGE, "report exceeds 8192 bytes")
+                Error::Body(StatusCode::PAYLOAD_TOO_LARGE, "request exceeds 8192 bytes")
             }
-            StatusCode::UNSUPPORTED_MEDIA_TYPE => (
+            StatusCode::UNSUPPORTED_MEDIA_TYPE => Error::Body(
                 StatusCode::UNSUPPORTED_MEDIA_TYPE,
                 "Content-Type must be application/json",
             ),
-            _ => (StatusCode::BAD_REQUEST, "invalid report JSON"),
-        };
-        api_error(status, message)
-    })?;
-    report
-        .validate()
-        .map_err(|message| api_error(StatusCode::BAD_REQUEST, message))?;
-    let mut nodes = state.nodes.write().await;
-    if nodes.len() >= MAX_NODES && !nodes.contains_key(&report.node_id) {
-        return Err(api_error(
-            StatusCode::SERVICE_UNAVAILABLE,
-            "development node capacity reached",
-        ));
-    }
-    let node = NodeSummary {
-        id: report.node_id,
-        name: report.name,
-        agent_version: report.agent_version,
-        last_seen: Utc::now(),
-    };
-    nodes.insert(node.id.clone(), node.clone());
-    Ok(Json(ReportResponse { node }))
+            _ => Error::Invalid("invalid request JSON"),
+        })
 }
 
-fn api_error(status: StatusCode, message: &str) -> (StatusCode, Json<ErrorResponse>) {
-    (
-        status,
-        Json(ErrorResponse {
-            message: message.to_owned(),
-        }),
-    )
+#[utoipa::path(
+    get, path = "/api/v1/overview", operation_id = "getOverview", security(("adminBearer" = [])),
+    responses((status = 200, description = "Controller identity and total stored nodes including revoked nodes", body = Overview),
+        (status = 401, description = "Admin credential required", body = ErrorResponse),
+        (status = 500, description = "Storage unavailable", body = ErrorResponse))
+)]
+async fn get_overview(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+) -> Result<Json<Overview>, Error> {
+    let token = bearer(&headers)?;
+    state
+        .access(move |store| {
+            store.authorize_admin(&token)?;
+            Ok(Json(Overview {
+                name: "Meshway".into(),
+                version: env!("CARGO_PKG_VERSION").into(),
+                node_count: store.count()?,
+            }))
+        })
+        .await
+}
+
+#[utoipa::path(
+    get, path = "/api/v1/nodes", operation_id = "listNodes", security(("adminBearer" = [])),
+    responses((status = 200, description = "Stored nodes sorted by ID", body = NodeList),
+        (status = 401, description = "Admin credential required", body = ErrorResponse),
+        (status = 500, description = "Storage unavailable", body = ErrorResponse))
+)]
+async fn list_nodes(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+) -> Result<Json<NodeList>, Error> {
+    let token = bearer(&headers)?;
+    state
+        .access(move |store| {
+            store.authorize_admin(&token)?;
+            Ok(Json(NodeList {
+                nodes: store.nodes()?,
+            }))
+        })
+        .await
+}
+
+#[utoipa::path(
+    post, path = "/api/v1/enrollment-tokens", operation_id = "createEnrollmentToken", security(("adminBearer" = [])),
+    request_body = CreateEnrollmentTokenRequest,
+    responses((status = 200, description = "One-use token, plaintext revealed only here", body = CreateEnrollmentTokenResponse),
+        (status = 400, description = "Invalid request or TTL", body = ErrorResponse),
+        (status = 401, description = "Admin credential required", body = ErrorResponse),
+        (status = 413, description = "Request exceeds 8192 bytes", body = ErrorResponse),
+        (status = 415, description = "Expected application/json", body = ErrorResponse),
+        (status = 500, description = "Storage unavailable", body = ErrorResponse))
+)]
+async fn create_enrollment_token(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    body: Result<Json<CreateEnrollmentTokenRequest>, JsonRejection>,
+) -> Result<Json<CreateEnrollmentTokenResponse>, Error> {
+    let token = bearer(&headers)?;
+    let request = json(body)?;
+    state
+        .access(move |store| {
+            store.authorize_admin(&token)?;
+            store.create_token(request.expires_in_seconds).map(Json)
+        })
+        .await
+}
+
+#[utoipa::path(
+    post, path = "/api/v1/nodes/revoke", operation_id = "revokeNode", security(("adminBearer" = [])),
+    request_body = RevokeNodeRequest,
+    responses((status = 200, description = "Revoked node; repeated revocation preserves its timestamp", body = RevokeNodeResponse),
+        (status = 400, description = "Invalid request", body = ErrorResponse),
+        (status = 401, description = "Admin credential required", body = ErrorResponse),
+        (status = 404, description = "Unknown node", body = ErrorResponse),
+        (status = 413, description = "Request exceeds 8192 bytes", body = ErrorResponse),
+        (status = 415, description = "Expected application/json", body = ErrorResponse),
+        (status = 500, description = "Storage unavailable", body = ErrorResponse))
+)]
+async fn revoke_node(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    body: Result<Json<RevokeNodeRequest>, JsonRejection>,
+) -> Result<Json<RevokeNodeResponse>, Error> {
+    let token = bearer(&headers)?;
+    let request = json(body)?;
+    if request.node_id.is_empty() || request.node_id.chars().count() > 128 {
+        return Err(Error::Invalid("invalid node_id"));
+    }
+    state
+        .access(move |store| {
+            store.authorize_admin(&token)?;
+            Ok(Json(RevokeNodeResponse {
+                node: store.revoke(&request.node_id)?,
+            }))
+        })
+        .await
+}
+
+#[utoipa::path(
+    post, path = "/api/v1/agents/enroll", operation_id = "enrollAgent", security(("enrollmentBearer" = [])),
+    request_body = EnrollAgentRequest,
+    responses((status = 200, description = "Enrolled node, or same active identity on a bound retry", body = AgentNodeResponse),
+        (status = 400, description = "Invalid enrollment; token remains unused", body = ErrorResponse),
+        (status = 401, description = "Invalid, expired or differently consumed enrollment token", body = ErrorResponse),
+        (status = 403, description = "Bound node revoked", body = ErrorResponse),
+        (status = 409, description = "Proposed credential already bound", body = ErrorResponse),
+        (status = 413, description = "Request exceeds 8192 bytes", body = ErrorResponse),
+        (status = 415, description = "Expected application/json", body = ErrorResponse),
+        (status = 500, description = "Storage unavailable", body = ErrorResponse))
+)]
+async fn enroll_agent(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    body: Result<Json<EnrollAgentRequest>, JsonRejection>,
+) -> Result<Json<AgentNodeResponse>, Error> {
+    let token = bearer(&headers)?;
+    let request = json(body)?;
+    state
+        .access(move |store| {
+            Ok(Json(AgentNodeResponse {
+                node: store.enroll(&token, &request)?,
+            }))
+        })
+        .await
+}
+
+#[utoipa::path(
+    post, path = "/api/v1/agents/heartbeat", operation_id = "heartbeatAgent", security(("nodeBearer" = [])),
+    request_body = HeartbeatRequest,
+    responses((status = 200, description = "Credential-scoped process contact; not tunnel health", body = AgentNodeResponse),
+        (status = 400, description = "Invalid heartbeat", body = ErrorResponse),
+        (status = 401, description = "Node credential required", body = ErrorResponse),
+        (status = 403, description = "Node revoked", body = ErrorResponse),
+        (status = 413, description = "Request exceeds 8192 bytes", body = ErrorResponse),
+        (status = 415, description = "Expected application/json", body = ErrorResponse),
+        (status = 500, description = "Storage unavailable", body = ErrorResponse))
+)]
+async fn heartbeat_agent(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    body: Result<Json<HeartbeatRequest>, JsonRejection>,
+) -> Result<Json<AgentNodeResponse>, Error> {
+    let token = bearer(&headers)?;
+    let request = json(body)?;
+    request.validate().map_err(Error::Invalid)?;
+    state
+        .access(move |store| {
+            Ok(Json(AgentNodeResponse {
+                node: store.heartbeat(&token, &request.agent_version)?,
+            }))
+        })
+        .await
 }

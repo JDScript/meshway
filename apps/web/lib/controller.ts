@@ -1,12 +1,16 @@
 import "server-only"
 
 import {
+  ControlApiError,
   getOverview,
   listNodes,
   type NodeList,
   type Overview,
 } from "@meshway/control-client"
+import { redirect } from "next/navigation"
 import { connection } from "next/server"
+
+import { EXPIRED_LOGIN_PATH, requireAdminToken } from "@/lib/session"
 
 export function controllerUrl(): string {
   return process.env.MESHWAY_CONTROLLER_URL ?? "http://127.0.0.1:8420"
@@ -16,37 +20,54 @@ export type ControllerResult<T> =
   | { ok: true; data: T; fetchedAt: number }
   | { ok: false; error: string }
 
-function describeError(error: unknown): string {
+/** The controller rejected the administrator credential itself. */
+export function isCredentialRejected(error: unknown): boolean {
+  return error instanceof ControlApiError && error.status === 401
+}
+
+export function describeError(error: unknown, secret?: string): string {
   // Node's fetch reports the socket-level reason (ECONNREFUSED, ENOTFOUND…)
   // somewhere down the `cause` chain, possibly under SDK wrapper errors.
   const messages: string[] = []
   let current: unknown = error
   while (current instanceof Error && messages.length < 5) {
-    if (!messages.includes(current.message)) messages.push(current.message)
+    const message = current.message
+    // SDK wrappers already embed their cause's message; skip repeats.
+    if (!messages.some((seen) => seen.includes(message))) messages.push(message)
     current = current.cause
   }
-  return messages.length > 0 ? messages.join(": ") : String(error)
+  if (error instanceof ControlApiError && !messages.some((m) => m.includes(String(error.status)))) {
+    messages.unshift(`HTTP ${error.status}`)
+  }
+  const text = messages.length > 0 ? messages.join(": ") : "未知错误"
+  // Bearer values are never meant to appear in SDK errors; redact defensively.
+  return secret ? text.replaceAll(secret, "[已隐藏]") : text
 }
 
-// Each call hits the controller at request time; nothing is cached, so the
-// console never shows a stale report as current. Timeouts are enforced by the
-// SDK transport and surface here as ordinary errors.
-async function request<T>(
-  call: (baseUrl: string) => Promise<T>
+// Each call hits the controller at request time; nothing is cached. A missing
+// or expired session redirects to login; a 401 from the controller redirects
+// to login where the stale cookie is discarded. Any other failure is shown as
+// a controller error rather than treated as an authentication failure.
+async function authorizedRead<T>(
+  call: (baseUrl: string, token: string) => Promise<T>
 ): Promise<ControllerResult<T>> {
   await connection()
+  const token = await requireAdminToken()
   try {
-    const data = await call(controllerUrl())
+    const data = await call(controllerUrl(), token)
     return { ok: true, data, fetchedAt: Date.now() }
   } catch (error) {
-    return { ok: false, error: describeError(error) }
+    if (!isCredentialRejected(error)) {
+      return { ok: false, error: describeError(error, token) }
+    }
   }
+  redirect(EXPIRED_LOGIN_PATH)
 }
 
 export function fetchOverview(): Promise<ControllerResult<Overview>> {
-  return request(getOverview)
+  return authorizedRead(getOverview)
 }
 
 export function fetchNodes(): Promise<ControllerResult<NodeList>> {
-  return request(listNodes)
+  return authorizedRead(listNodes)
 }

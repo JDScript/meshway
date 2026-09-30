@@ -13,6 +13,8 @@ axum.workspace = true
 chrono.workspace = true
 clap.workspace = true
 meshway-protocol = { path = "../../crates/protocol" }
+rusqlite.workspace = true
+thiserror = "2"
 serde_json.workspace = true
 tokio.workspace = true
 utoipa.workspace = true
@@ -26,6 +28,7 @@ required-features = ["codegen"]
 
 [dev-dependencies]
 serde.workspace = true
+tempfile.workspace = true
 tower = { version = "0.5.3", features = ["util"] }
 
 [lints]

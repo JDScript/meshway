@@ -1,20 +1,19 @@
 {
   "openapi": "3.1.0",
   "info": {
-    "title": "Meshway development control API",
-    "description": "In-memory development process reporting only. Reports are unauthenticated and are not secure enrollment, mesh membership, connectivity, or tunnel health. State resets on restart.",
+    "title": "Meshway control API",
+    "description": "Durable control-plane credential identity and last process contact; not mesh public-key identity, connectivity or tunnel health.",
     "version": "0.1.0"
   },
   "paths": {
-    "/api/v1/agents/report": {
+    "/api/v1/agents/enroll": {
       "post": {
-        "summary": "Report a development process. No authentication or secure enrollment exists yet.",
-        "operationId": "reportAgent",
+        "operationId": "enrollAgent",
         "requestBody": {
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/AgentReport"
+                "$ref": "#/components/schemas/EnrollAgentRequest"
               }
             }
           },
@@ -22,17 +21,47 @@
         },
         "responses": {
           "200": {
-            "description": "Report stored or updated",
+            "description": "Enrolled node, or same active identity on a bound retry",
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ReportResponse"
+                  "$ref": "#/components/schemas/AgentNodeResponse"
                 }
               }
             }
           },
           "400": {
-            "description": "Invalid JSON or report fields",
+            "description": "Invalid enrollment; token remains unused",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Invalid, expired or differently consumed enrollment token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Bound node revoked",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Proposed credential already bound",
             "content": {
               "application/json": {
                 "schema": {
@@ -42,7 +71,7 @@
             }
           },
           "413": {
-            "description": "Report exceeds 8192 bytes",
+            "description": "Request exceeds 8192 bytes",
             "content": {
               "application/json": {
                 "schema": {
@@ -52,7 +81,7 @@
             }
           },
           "415": {
-            "description": "Content-Type must be application/json",
+            "description": "Expected application/json",
             "content": {
               "application/json": {
                 "schema": {
@@ -61,8 +90,8 @@
               }
             }
           },
-          "503": {
-            "description": "Development node capacity reached",
+          "500": {
+            "description": "Storage unavailable",
             "content": {
               "application/json": {
                 "schema": {
@@ -71,7 +100,186 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "enrollmentBearer": []
+          }
+        ]
+      }
+    },
+    "/api/v1/agents/heartbeat": {
+      "post": {
+        "operationId": "heartbeatAgent",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/HeartbeatRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Credential-scoped process contact; not tunnel health",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AgentNodeResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid heartbeat",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Node credential required",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Node revoked",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "Request exceeds 8192 bytes",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "415": {
+            "description": "Expected application/json",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Storage unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "nodeBearer": []
+          }
+        ]
+      }
+    },
+    "/api/v1/enrollment-tokens": {
+      "post": {
+        "operationId": "createEnrollmentToken",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateEnrollmentTokenRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "One-use token, plaintext revealed only here",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CreateEnrollmentTokenResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request or TTL",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Admin credential required",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "Request exceeds 8192 bytes",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "415": {
+            "description": "Expected application/json",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Storage unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "adminBearer": []
+          }
+        ]
       }
     },
     "/api/v1/nodes": {
@@ -79,7 +287,7 @@
         "operationId": "listNodes",
         "responses": {
           "200": {
-            "description": "Received process reports, sorted by node ID",
+            "description": "Stored nodes sorted by ID",
             "content": {
               "application/json": {
                 "schema": {
@@ -87,8 +295,125 @@
                 }
               }
             }
+          },
+          "401": {
+            "description": "Admin credential required",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Storage unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
           }
-        }
+        },
+        "security": [
+          {
+            "adminBearer": []
+          }
+        ]
+      }
+    },
+    "/api/v1/nodes/revoke": {
+      "post": {
+        "operationId": "revokeNode",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RevokeNodeRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Revoked node; repeated revocation preserves its timestamp",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RevokeNodeResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Admin credential required",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Unknown node",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "Request exceeds 8192 bytes",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "415": {
+            "description": "Expected application/json",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Storage unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "adminBearer": []
+          }
+        ]
       }
     },
     "/api/v1/overview": {
@@ -96,7 +421,7 @@
         "operationId": "getOverview",
         "responses": {
           "200": {
-            "description": "Controller identity and received report count",
+            "description": "Controller identity and total stored nodes including revoked nodes",
             "content": {
               "application/json": {
                 "schema": {
@@ -104,18 +429,93 @@
                 }
               }
             }
+          },
+          "401": {
+            "description": "Admin credential required",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Storage unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
           }
-        }
+        },
+        "security": [
+          {
+            "adminBearer": []
+          }
+        ]
       }
     }
   },
   "components": {
     "schemas": {
-      "AgentReport": {
+      "AgentNodeResponse": {
         "type": "object",
-        "description": "Unauthenticated development process reporting; this is not secure enrollment.",
+        "description": "Also lets a pending local enrollment recover its server-assigned node ID.",
         "required": [
-          "node_id",
+          "node"
+        ],
+        "properties": {
+          "node": {
+            "$ref": "#/components/schemas/NodeSummary"
+          }
+        },
+        "additionalProperties": false
+      },
+      "CreateEnrollmentTokenRequest": {
+        "type": "object",
+        "required": [
+          "expires_in_seconds"
+        ],
+        "properties": {
+          "expires_in_seconds": {
+            "type": "integer",
+            "format": "int32",
+            "maximum": 86400,
+            "minimum": 60
+          }
+        },
+        "additionalProperties": false
+      },
+      "CreateEnrollmentTokenResponse": {
+        "type": "object",
+        "description": "The token is revealed only once, in this creation response.",
+        "required": [
+          "token_id",
+          "token",
+          "expires_at"
+        ],
+        "properties": {
+          "expires_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "token": {
+            "type": "string"
+          },
+          "token_id": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": false
+      },
+      "EnrollAgentRequest": {
+        "type": "object",
+        "description": "Persist the proposed random credential before sending this request. Retry\nwith the same enrollment token, credential, name and enrollment version.",
+        "required": [
+          "node_credential",
           "name",
           "agent_version"
         ],
@@ -124,19 +524,19 @@
             "type": "string",
             "maxLength": 64,
             "minLength": 1,
-            "pattern": "\\S"
+            "pattern": "[^\\u0009-\\u000D\\u0020\\u0085\\u00A0\\u1680\\u2000-\\u200A\\u2028\\u2029\\u202F\\u205F\\u3000]"
           },
           "name": {
             "type": "string",
             "maxLength": 128,
             "minLength": 1,
-            "pattern": "\\S"
+            "pattern": "[^\\u0009-\\u000D\\u0020\\u0085\\u00A0\\u1680\\u2000-\\u200A\\u2028\\u2029\\u202F\\u205F\\u3000]"
           },
-          "node_id": {
+          "node_credential": {
             "type": "string",
-            "maxLength": 128,
-            "minLength": 1,
-            "pattern": "\\S"
+            "maxLength": 64,
+            "minLength": 64,
+            "pattern": "^[0-9a-f]{64}$"
           }
         },
         "additionalProperties": false
@@ -149,6 +549,22 @@
         "properties": {
           "message": {
             "type": "string"
+          }
+        },
+        "additionalProperties": false
+      },
+      "HeartbeatRequest": {
+        "type": "object",
+        "description": "Node identity is derived exclusively from the node bearer credential.",
+        "required": [
+          "agent_version"
+        ],
+        "properties": {
+          "agent_version": {
+            "type": "string",
+            "maxLength": 64,
+            "minLength": 1,
+            "pattern": "[^\\u0009-\\u000D\\u0020\\u0085\\u00A0\\u1680\\u2000-\\u200A\\u2028\\u2029\\u202F\\u205F\\u3000]"
           }
         },
         "additionalProperties": false
@@ -170,12 +586,14 @@
       },
       "NodeSummary": {
         "type": "object",
-        "description": "A process report received by this development controller, not tunnel status.",
+        "description": "Durable control-plane identity. Last contact is not tunnel health.",
         "required": [
           "id",
           "name",
           "agent_version",
-          "last_seen"
+          "last_seen",
+          "registered_at",
+          "revoked_at"
         ],
         "properties": {
           "agent_version": {
@@ -190,6 +608,17 @@
           },
           "name": {
             "type": "string"
+          },
+          "registered_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "revoked_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
           }
         },
         "additionalProperties": false
@@ -207,7 +636,8 @@
           },
           "node_count": {
             "type": "integer",
-            "format": "int32",
+            "format": "int64",
+            "maximum": 4294967295,
             "minimum": 0
           },
           "version": {
@@ -216,7 +646,21 @@
         },
         "additionalProperties": false
       },
-      "ReportResponse": {
+      "RevokeNodeRequest": {
+        "type": "object",
+        "required": [
+          "node_id"
+        ],
+        "properties": {
+          "node_id": {
+            "type": "string",
+            "maxLength": 128,
+            "minLength": 1
+          }
+        },
+        "additionalProperties": false
+      },
+      "RevokeNodeResponse": {
         "type": "object",
         "required": [
           "node"
@@ -227,6 +671,20 @@
           }
         },
         "additionalProperties": false
+      }
+    },
+    "securitySchemes": {
+      "adminBearer": {
+        "type": "http",
+        "scheme": "bearer"
+      },
+      "enrollmentBearer": {
+        "type": "http",
+        "scheme": "bearer"
+      },
+      "nodeBearer": {
+        "type": "http",
+        "scheme": "bearer"
       }
     }
   }

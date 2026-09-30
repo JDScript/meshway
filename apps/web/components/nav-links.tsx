@@ -1,6 +1,11 @@
 "use client"
 
-import { ArrowUpRightIcon, LayoutDashboardIcon, ServerIcon } from "lucide-react"
+import {
+  ArrowUpRightIcon,
+  KeyRoundIcon,
+  LayoutDashboardIcon,
+  ServerIcon,
+} from "lucide-react"
 import Link from "next/link"
 import { usePathname } from "next/navigation"
 
@@ -10,6 +15,7 @@ import { cn } from "@/lib/utils"
 const items = [
   { href: "/", label: "概览", icon: LayoutDashboardIcon },
   { href: "/nodes", label: "节点", icon: ServerIcon },
+  { href: "/enrollment", label: "注册令牌", icon: KeyRoundIcon },
 ] as const
 
 const itemClass =

@@ -5,16 +5,44 @@ export type ClientOptions = {
 };
 
 /**
- * Unauthenticated development process reporting; this is not secure enrollment.
+ * Also lets a pending local enrollment recover its server-assigned node ID.
  */
-export type AgentReport = {
+export type AgentNodeResponse = {
+    node: NodeSummary;
+};
+
+export type CreateEnrollmentTokenRequest = {
+    expires_in_seconds: number;
+};
+
+/**
+ * The token is revealed only once, in this creation response.
+ */
+export type CreateEnrollmentTokenResponse = {
+    expires_at: string;
+    token: string;
+    token_id: string;
+};
+
+/**
+ * Persist the proposed random credential before sending this request. Retry
+ * with the same enrollment token, credential, name and enrollment version.
+ */
+export type EnrollAgentRequest = {
     agent_version: string;
     name: string;
-    node_id: string;
+    node_credential: string;
 };
 
 export type ErrorResponse = {
     message: string;
+};
+
+/**
+ * Node identity is derived exclusively from the node bearer credential.
+ */
+export type HeartbeatRequest = {
+    agent_version: string;
 };
 
 export type NodeList = {
@@ -22,13 +50,15 @@ export type NodeList = {
 };
 
 /**
- * A process report received by this development controller, not tunnel status.
+ * Durable control-plane identity. Last contact is not tunnel health.
  */
 export type NodeSummary = {
     agent_version: string;
     id: string;
     last_seen: string;
     name: string;
+    registered_at: string;
+    revoked_at: string | null;
 };
 
 export type Overview = {
@@ -37,46 +67,148 @@ export type Overview = {
     version: string;
 };
 
-export type ReportResponse = {
+export type RevokeNodeRequest = {
+    node_id: string;
+};
+
+export type RevokeNodeResponse = {
     node: NodeSummary;
 };
 
-export type ReportAgentData = {
-    body: AgentReport;
+export type EnrollAgentData = {
+    body: EnrollAgentRequest;
     path?: never;
     query?: never;
-    url: '/api/v1/agents/report';
+    url: '/api/v1/agents/enroll';
 };
 
-export type ReportAgentErrors = {
+export type EnrollAgentErrors = {
     /**
-     * Invalid JSON or report fields
+     * Invalid enrollment; token remains unused
      */
     400: ErrorResponse;
     /**
-     * Report exceeds 8192 bytes
+     * Invalid, expired or differently consumed enrollment token
+     */
+    401: ErrorResponse;
+    /**
+     * Bound node revoked
+     */
+    403: ErrorResponse;
+    /**
+     * Proposed credential already bound
+     */
+    409: ErrorResponse;
+    /**
+     * Request exceeds 8192 bytes
      */
     413: ErrorResponse;
     /**
-     * Content-Type must be application/json
+     * Expected application/json
      */
     415: ErrorResponse;
     /**
-     * Development node capacity reached
+     * Storage unavailable
      */
-    503: ErrorResponse;
+    500: ErrorResponse;
 };
 
-export type ReportAgentError = ReportAgentErrors[keyof ReportAgentErrors];
+export type EnrollAgentError = EnrollAgentErrors[keyof EnrollAgentErrors];
 
-export type ReportAgentResponses = {
+export type EnrollAgentResponses = {
     /**
-     * Report stored or updated
+     * Enrolled node, or same active identity on a bound retry
      */
-    200: ReportResponse;
+    200: AgentNodeResponse;
 };
 
-export type ReportAgentResponse = ReportAgentResponses[keyof ReportAgentResponses];
+export type EnrollAgentResponse = EnrollAgentResponses[keyof EnrollAgentResponses];
+
+export type HeartbeatAgentData = {
+    body: HeartbeatRequest;
+    path?: never;
+    query?: never;
+    url: '/api/v1/agents/heartbeat';
+};
+
+export type HeartbeatAgentErrors = {
+    /**
+     * Invalid heartbeat
+     */
+    400: ErrorResponse;
+    /**
+     * Node credential required
+     */
+    401: ErrorResponse;
+    /**
+     * Node revoked
+     */
+    403: ErrorResponse;
+    /**
+     * Request exceeds 8192 bytes
+     */
+    413: ErrorResponse;
+    /**
+     * Expected application/json
+     */
+    415: ErrorResponse;
+    /**
+     * Storage unavailable
+     */
+    500: ErrorResponse;
+};
+
+export type HeartbeatAgentError = HeartbeatAgentErrors[keyof HeartbeatAgentErrors];
+
+export type HeartbeatAgentResponses = {
+    /**
+     * Credential-scoped process contact; not tunnel health
+     */
+    200: AgentNodeResponse;
+};
+
+export type HeartbeatAgentResponse = HeartbeatAgentResponses[keyof HeartbeatAgentResponses];
+
+export type CreateEnrollmentTokenData = {
+    body: CreateEnrollmentTokenRequest;
+    path?: never;
+    query?: never;
+    url: '/api/v1/enrollment-tokens';
+};
+
+export type CreateEnrollmentTokenErrors = {
+    /**
+     * Invalid request or TTL
+     */
+    400: ErrorResponse;
+    /**
+     * Admin credential required
+     */
+    401: ErrorResponse;
+    /**
+     * Request exceeds 8192 bytes
+     */
+    413: ErrorResponse;
+    /**
+     * Expected application/json
+     */
+    415: ErrorResponse;
+    /**
+     * Storage unavailable
+     */
+    500: ErrorResponse;
+};
+
+export type CreateEnrollmentTokenError = CreateEnrollmentTokenErrors[keyof CreateEnrollmentTokenErrors];
+
+export type CreateEnrollmentTokenResponses = {
+    /**
+     * One-use token, plaintext revealed only here
+     */
+    200: CreateEnrollmentTokenResponse;
+};
+
+export type CreateEnrollmentTokenResponse2 = CreateEnrollmentTokenResponses[keyof CreateEnrollmentTokenResponses];
 
 export type ListNodesData = {
     body?: never;
@@ -85,14 +217,72 @@ export type ListNodesData = {
     url: '/api/v1/nodes';
 };
 
+export type ListNodesErrors = {
+    /**
+     * Admin credential required
+     */
+    401: ErrorResponse;
+    /**
+     * Storage unavailable
+     */
+    500: ErrorResponse;
+};
+
+export type ListNodesError = ListNodesErrors[keyof ListNodesErrors];
+
 export type ListNodesResponses = {
     /**
-     * Received process reports, sorted by node ID
+     * Stored nodes sorted by ID
      */
     200: NodeList;
 };
 
 export type ListNodesResponse = ListNodesResponses[keyof ListNodesResponses];
+
+export type RevokeNodeData = {
+    body: RevokeNodeRequest;
+    path?: never;
+    query?: never;
+    url: '/api/v1/nodes/revoke';
+};
+
+export type RevokeNodeErrors = {
+    /**
+     * Invalid request
+     */
+    400: ErrorResponse;
+    /**
+     * Admin credential required
+     */
+    401: ErrorResponse;
+    /**
+     * Unknown node
+     */
+    404: ErrorResponse;
+    /**
+     * Request exceeds 8192 bytes
+     */
+    413: ErrorResponse;
+    /**
+     * Expected application/json
+     */
+    415: ErrorResponse;
+    /**
+     * Storage unavailable
+     */
+    500: ErrorResponse;
+};
+
+export type RevokeNodeError = RevokeNodeErrors[keyof RevokeNodeErrors];
+
+export type RevokeNodeResponses = {
+    /**
+     * Revoked node; repeated revocation preserves its timestamp
+     */
+    200: RevokeNodeResponse;
+};
+
+export type RevokeNodeResponse2 = RevokeNodeResponses[keyof RevokeNodeResponses];
 
 export type GetOverviewData = {
     body?: never;
@@ -101,9 +291,22 @@ export type GetOverviewData = {
     url: '/api/v1/overview';
 };
 
+export type GetOverviewErrors = {
+    /**
+     * Admin credential required
+     */
+    401: ErrorResponse;
+    /**
+     * Storage unavailable
+     */
+    500: ErrorResponse;
+};
+
+export type GetOverviewError = GetOverviewErrors[keyof GetOverviewErrors];
+
 export type GetOverviewResponses = {
     /**
-     * Controller identity and received report count
+     * Controller identity and total stored nodes including revoked nodes
      */
     200: Overview;
 };

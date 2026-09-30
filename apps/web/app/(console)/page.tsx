@@ -26,12 +26,15 @@ const RECENT_LIMIT = 5
 
 export default async function OverviewPage() {
   const [overview, nodes] = await Promise.all([fetchOverview(), fetchNodes()])
+  const revokedCount = nodes.ok
+    ? nodes.data.nodes.filter((node) => node.revoked_at !== null).length
+    : null
 
   return (
     <>
       <PageHeader
         title="概览"
-        description="Controller 在本次请求时返回的状态，页面不缓存上报数据。"
+        description="Controller 在本次请求时返回的状态，页面不缓存节点数据。"
         actions={
           <>
             {overview.ok ? (
@@ -72,13 +75,18 @@ export default async function OverviewPage() {
 
             <Card className="[--card-spacing:--spacing(5)]">
               <CardHeader>
-                <CardDescription className="text-sm">已记录节点</CardDescription>
+                <CardDescription className="text-sm">已注册节点</CardDescription>
                 <CardTitle className="font-mono text-3xl font-semibold tabular-nums">
                   {overview.data.node_count}
                 </CardTitle>
               </CardHeader>
-              <CardContent className="text-sm text-muted-foreground">
-                至少向 controller 上报过一次的节点数量，不是在线或已连通的节点数。
+              <CardContent className="flex flex-col gap-1 text-sm text-muted-foreground">
+                {revokedCount !== null ? (
+                  <span>其中已撤销 {revokedCount} 个。</span>
+                ) : null}
+                <span>
+                  Controller 中持久保存的注册记录总数（含已撤销），不是在线或已连通的节点数。
+                </span>
               </CardContent>
             </Card>
           </div>
@@ -87,13 +95,13 @@ export default async function OverviewPage() {
             {!nodes.ok ? (
               <ControllerUnavailable url={controllerUrl()} error={nodes.error} />
             ) : nodes.data.nodes.length === 0 ? (
-              <NoNodes url={controllerUrl()} />
+              <NoNodes />
             ) : (
               <Card className="[--card-spacing:--spacing(5)]">
                 <CardHeader>
-                  <CardTitle className="text-base">最近上报</CardTitle>
+                  <CardTitle className="text-base">最近联系</CardTitle>
                   <CardDescription className="text-sm">
-                    按最后上报时间排列的前 {RECENT_LIMIT} 个节点。
+                    按最后联系 controller 的时间排列的前 {RECENT_LIMIT} 个节点。
                   </CardDescription>
                   <CardAction>
                     <Link

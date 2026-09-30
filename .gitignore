@@ -10,6 +10,9 @@
 .env
 .env.*
 !.env.example
+/.meshway/
+/test-results/
+/playwright-report/
 
 # Independent upstream checkouts; retain the reproducible research index.
 /references/*
