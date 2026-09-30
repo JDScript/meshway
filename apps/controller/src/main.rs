@@ -1,7 +1,7 @@
 use std::{net::SocketAddr, path::PathBuf};
 
 use clap::{Parser, Subcommand};
-use meshway_controller::{AppState, admin_token, openapi_json, router};
+use meshway_controller::{AppState, NetworkOptions, admin_token, openapi_json, router};
 
 #[derive(Parser)]
 #[command(version, about = "Meshway persistent control-plane controller")]
@@ -18,6 +18,10 @@ enum Command {
         bind: SocketAddr,
         #[arg(long, default_value = ".meshway/controller")]
         data_dir: PathBuf,
+        #[arg(long)]
+        ipv4_prefix: Option<String>,
+        #[arg(long)]
+        ipv6_prefix: Option<String>,
     },
     /// Explicitly reveal the existing bootstrap admin credential (never initializes state).
     AdminToken {
@@ -37,6 +41,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     match Cli::parse().command.unwrap_or(Command::Serve {
         bind: SocketAddr::from(([127, 0, 0, 1], 8420)),
         data_dir: PathBuf::from(".meshway/controller"),
+        ipv4_prefix: None,
+        ipv6_prefix: None,
     }) {
         Command::ExportOpenapi { output } => {
             let document = openapi_json()?;
@@ -46,8 +52,19 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
         }
         Command::AdminToken { data_dir } => println!("{}", admin_token(data_dir)?),
-        Command::Serve { bind, data_dir } => {
-            let state = AppState::open(data_dir)?;
+        Command::Serve {
+            bind,
+            data_dir,
+            ipv4_prefix,
+            ipv6_prefix,
+        } => {
+            let state = AppState::open_with_network(
+                data_dir,
+                NetworkOptions {
+                    ipv4_prefix,
+                    ipv6_prefix,
+                },
+            )?;
             let listener = tokio::net::TcpListener::bind(bind).await?;
             eprintln!(
                 "Meshway controller: http://{} (authenticated control-plane contact)",

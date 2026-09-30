@@ -1,5 +1,6 @@
 //! Persistent control-plane enrollment, scoped credentials and process contact.
 
+mod configuration_api;
 mod store;
 
 use std::{
@@ -33,8 +34,12 @@ pub enum Error {
     Forbidden,
     #[error("{0}")]
     Invalid(&'static str),
-    #[error("credential is already bound to a node")]
+    #[error("configuration revision/digest conflict or credential already bound")]
     Conflict,
+    #[error("{0}")]
+    Unprocessable(&'static str),
+    #[error("{0}")]
+    Capacity(&'static str),
     #[error("node not found")]
     NotFound,
     #[error("{0}")]
@@ -43,6 +48,8 @@ pub enum Error {
     Storage(#[from] rusqlite::Error),
     #[error("controller file error: {0}")]
     Io(#[from] std::io::Error),
+    #[error("{0}")]
+    Write(#[from] local::AtomicWriteError),
     #[error("controller storage worker unavailable")]
     Worker,
     #[error("{1}")]
@@ -56,6 +63,7 @@ impl IntoResponse for Error {
             Self::Forbidden => StatusCode::FORBIDDEN,
             Self::Invalid(_) => StatusCode::BAD_REQUEST,
             Self::Conflict => StatusCode::CONFLICT,
+            Self::Unprocessable(_) | Self::Capacity(_) => StatusCode::UNPROCESSABLE_ENTITY,
             Self::NotFound => StatusCode::NOT_FOUND,
             Self::Body(status, _) => *status,
             _ => StatusCode::INTERNAL_SERVER_ERROR,
@@ -80,10 +88,23 @@ pub struct AppState {
     store: Arc<Mutex<Store>>,
 }
 
+#[derive(Clone, Debug, Default)]
+pub struct NetworkOptions {
+    pub ipv4_prefix: Option<String>,
+    pub ipv6_prefix: Option<String>,
+}
+
 impl AppState {
     pub fn open(data_dir: impl AsRef<Path>) -> Result<Self, Error> {
+        Self::open_with_network(data_dir, NetworkOptions::default())
+    }
+
+    pub fn open_with_network(
+        data_dir: impl AsRef<Path>,
+        options: NetworkOptions,
+    ) -> Result<Self, Error> {
         Ok(Self {
-            store: Arc::new(Mutex::new(Store::open(data_dir.as_ref())?)),
+            store: Arc::new(Mutex::new(Store::open(data_dir.as_ref(), &options)?)),
         })
     }
 
@@ -135,6 +156,7 @@ fn contract_router() -> OpenApiRouter<AppState> {
         .routes(routes!(enroll_agent))
         .routes(routes!(heartbeat_agent))
         .layer(DefaultBodyLimit::max(8192))
+        .merge(configuration_api::routes())
 }
 
 fn describe(api: &mut OpenApi) {
@@ -195,9 +217,10 @@ fn bearer(headers: &HeaderMap) -> Result<String, Error> {
 fn json<T>(body: Result<Json<T>, JsonRejection>) -> Result<T, Error> {
     body.map(|Json(value)| value)
         .map_err(|rejection| match rejection.status() {
-            StatusCode::PAYLOAD_TOO_LARGE => {
-                Error::Body(StatusCode::PAYLOAD_TOO_LARGE, "request exceeds 8192 bytes")
-            }
+            StatusCode::PAYLOAD_TOO_LARGE => Error::Body(
+                StatusCode::PAYLOAD_TOO_LARGE,
+                "request exceeds endpoint byte budget",
+            ),
             StatusCode::UNSUPPORTED_MEDIA_TYPE => Error::Body(
                 StatusCode::UNSUPPORTED_MEDIA_TYPE,
                 "Content-Type must be application/json",
@@ -224,6 +247,7 @@ async fn get_overview(
                 name: "Meshway".into(),
                 version: env!("CARGO_PKG_VERSION").into(),
                 node_count: store.count()?,
+                configuration_revision: store.revision()?,
             }))
         })
         .await
@@ -282,6 +306,7 @@ async fn create_enrollment_token(
         (status = 400, description = "Invalid request", body = ErrorResponse),
         (status = 401, description = "Admin credential required", body = ErrorResponse),
         (status = 404, description = "Unknown node", body = ErrorResponse),
+        (status = 422, description = "Configuration revision capacity exhausted", body = ErrorResponse),
         (status = 413, description = "Request exceeds 8192 bytes", body = ErrorResponse),
         (status = 415, description = "Expected application/json", body = ErrorResponse),
         (status = 500, description = "Storage unavailable", body = ErrorResponse))
@@ -314,6 +339,7 @@ async fn revoke_node(
         (status = 401, description = "Invalid, expired or differently consumed enrollment token", body = ErrorResponse),
         (status = 403, description = "Bound node revoked", body = ErrorResponse),
         (status = 409, description = "Proposed credential already bound", body = ErrorResponse),
+        (status = 422, description = "Address, inventory, or configuration capacity exhausted; token remains unused", body = ErrorResponse),
         (status = 413, description = "Request exceeds 8192 bytes", body = ErrorResponse),
         (status = 415, description = "Expected application/json", body = ErrorResponse),
         (status = 500, description = "Storage unavailable", body = ErrorResponse))

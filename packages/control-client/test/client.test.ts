@@ -8,8 +8,9 @@ import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
-import { ControlApiError, createEnrollmentToken, getOverview, listNodes, revokeNode } from "../src/index.ts";
-import { enrollAgentOperation, heartbeatAgentOperation } from "../src/generated/operations.gen.ts";
+import { ControlApiError, createEnrollmentToken, getOverview, getPolicy, previewPolicy, savePolicy, setNodeCountry, listNodes, revokeNode } from "../src/index.ts";
+import { acknowledgeConfigurationOperation, getAgentConfigurationOperation, enrollAgentOperation, heartbeatAgentOperation } from "../src/generated/operations.gen.ts";
+import { zFlowQuery, zPolicySnapshot, zSetNodeCountryRequest } from "../src/generated/zod.gen.ts";
 
 const credential = () => randomBytes(32).toString("hex");
 
@@ -34,8 +35,8 @@ async function withResponse(body: string, use: (baseUrl: string) => Promise<void
 
 test("generated overview validation rejects missing, wrong-type, fractional, negative and overflow values", async () => {
   for (const body of [
-    { name: "Meshway", version: "0.1.0" },
-    ...["1", 1.5, -1, 4294967296].map(node_count => ({ name: "Meshway", version: "0.1.0", node_count })),
+    { name: "Meshway", version: "0.1.0", configuration_revision: 1 },
+    ...["1", 1.5, -1, 4294967296].map(node_count => ({ name: "Meshway", version: "0.1.0", node_count, configuration_revision: 1 })),
   ]) {
     await withResponse(JSON.stringify(body), async (base) => {
       await assert.rejects(getOverview(base, "test-token"), error => error instanceof Error && !(error instanceof ControlApiError));
@@ -44,7 +45,7 @@ test("generated overview validation rejects missing, wrong-type, fractional, neg
 });
 
 test("generated node validation requires nullable revocation and validates nested RFC3339 timestamps", async () => {
-  const node = { id: "n", name: "nyc", agent_version: "0.1.0", last_seen: "2026-09-30T12:00:00+01:00", registered_at: "2026-09-30T11:00:00Z", revoked_at: null };
+  const node = { id: "n", name: "nyc", agent_version: "0.1.0", last_seen: "2026-09-30T12:00:00+01:00", registered_at: "2026-09-30T11:00:00Z", revoked_at: null, country: null, mesh_ipv4: "100.96.0.1", mesh_ipv6: "fd00::1", configuration_revision: 1, acknowledged_revision: 0 };
   for (const invalid of [
     ...["not-a-date", "2026-09-30T12:00:00", 42].map(last_seen => ({ ...node, last_seen })),
     { ...node, registered_at: null }, { ...node, revoked_at: undefined }, { ...node, revoked_at: "not-a-date" }, { ...node, credential: "unexpected" },
@@ -52,6 +53,19 @@ test("generated node validation requires nullable revocation and validates neste
     await withResponse(JSON.stringify({ nodes: [invalid] }), async (base) => { await assert.rejects(listNodes(base, "test-token")); });
   }
   await withResponse(JSON.stringify({ nodes: [node] }), async (base) => { assert.deepEqual((await listNodes(base, "test-token")).nodes, [node]); });
+});
+
+test("generated policy schemas require nullable context, closed enums, booleans and bounded revisions", () => {
+  const flow = { source_node_id: "source", destination_node_id: null, destination_ip: null, domain: "example.com", destination_country: null };
+  assert.deepEqual(zFlowQuery.parse(flow), flow);
+  assert.equal(zFlowQuery.safeParse({ ...flow, destination_country: undefined }).success, false);
+  const snapshot = { revision: 1, network: { ipv4_prefix: "100.96.0.0/16", ipv6_prefix: "fd12::/64" }, policy: { default_action: "reject", rules: [] }, valid: true, diagnostics: [] };
+  assert.deepEqual(zPolicySnapshot.parse(snapshot), snapshot);
+  for (const revision of [0, -1, 1.5, 4294967296]) assert.equal(zPolicySnapshot.safeParse({ ...snapshot, revision }).success, false);
+  assert.equal(zPolicySnapshot.safeParse({ ...snapshot, valid: "true" }).success, false);
+  assert.equal(zPolicySnapshot.safeParse({ ...snapshot, policy: { default_action: "allow", rules: [] } }).success, false);
+  assert.equal(zSetNodeCountryRequest.safeParse({ node_id: "source", expected_revision: 1 }).success, false);
+  assert.equal(zSetNodeCountryRequest.safeParse({ node_id: "source", country: null, expected_revision: 1 }).success, true);
 });
 
 test("transport exposes HTTP status without mixing HTTP, schema, JSON or media failures", async () => {
@@ -113,6 +127,8 @@ test("generated authenticated TS operations roundtrip, retry, revoke and survive
     assert.equal(registered.node.name, body.name);
     assert.equal(registered.node.revoked_at, null);
     assert.equal((await enrollAgentOperation(server.base, enrollment.token, body)).node.id, registered.node.id);
+    assert.equal(registered.node.mesh_ipv4, "100.96.0.1");
+    assert.equal(registered.node.country, null);
     await assert.rejects(enrollAgentOperation(server.base, enrollment.token, { ...body, node_credential: credential() }), httpError(401));
     for (const token of [enrollment.token, nodeCredential]) {
       await assert.rejects(listNodes(server.base, token), httpError(401));
@@ -130,6 +146,30 @@ test("generated authenticated TS operations roundtrip, retry, revoke and survive
     server = await start();
     assert.deepEqual((await listNodes(server.base, admin)).nodes, [heartbeat.node]);
     assert.equal((await enrollAgentOperation(server.base, enrollment.token, body)).node.id, registered.node.id);
+    const initialPolicy = await getPolicy(server.base, admin);
+    assert.equal(initialPolicy.revision, 2);
+    assert.deepEqual(initialPolicy.policy, { default_action: "reject", rules: [] });
+    await assert.rejects(getPolicy(server.base, nodeCredential), httpError(401));
+    const preview = await previewPolicy(server.base, admin, {
+      policy: { default_action: "direct", rules: [] },
+      flow: { source_node_id: registered.node.id, destination_node_id: null, destination_ip: null, domain: "example.com", destination_country: null },
+    });
+    assert.equal(preview.valid, true);
+    assert.equal(preview.decision.action, "route");
+    assert.equal((await getPolicy(server.base, admin)).revision, 2);
+    const saved = await savePolicy(server.base, admin, { expected_revision: 2, policy: { default_action: "direct", rules: [] } });
+    assert.equal(saved.revision, 3);
+    await assert.rejects(savePolicy(server.base, admin, { expected_revision: 2, policy: saved.policy }), httpError(409));
+    assert.equal((await savePolicy(server.base, admin, { expected_revision: 3, policy: saved.policy })).revision, 3);
+    const country = await setNodeCountry(server.base, admin, { node_id: registered.node.id, country: "us", expected_revision: 3 });
+    assert.equal(country.node.country, "US");
+    assert.equal(country.node.configuration_revision, 4);
+    const configuration = await getAgentConfigurationOperation(server.base, nodeCredential);
+    assert.equal(configuration.payload.node.id, registered.node.id);
+    assert.equal(configuration.payload.revision, 4);
+    await acknowledgeConfigurationOperation(server.base, nodeCredential, { revision: 4, digest: configuration.digest });
+    assert.deepEqual(await getAgentConfigurationOperation(server.base, nodeCredential), configuration);
+    assert.equal((await listNodes(server.base, admin)).nodes[0]?.acknowledged_revision, 4);
     const revoked = await revokeNode(server.base, admin, { node_id: registered.node.id });
     assert.notEqual(revoked.node.revoked_at, null);
     assert.deepEqual(await revokeNode(server.base, admin, { node_id: registered.node.id }), revoked);

@@ -1,6 +1,10 @@
 //! Authoritative wire DTOs and shared local credential/file primitives.
 
+pub mod config;
 pub mod local;
+pub mod routing;
+pub use config::*;
+pub use routing::*;
 
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
@@ -13,6 +17,8 @@ pub struct Overview {
     pub version: String,
     #[schema(format = Int64, minimum = 0, maximum = 4294967295_u64)]
     pub node_count: u32,
+    #[schema(format = Int64, minimum = 1, maximum = 4294967295_u64)]
+    pub configuration_revision: u32,
 }
 
 /// Durable control-plane identity. Last contact is not tunnel health.
@@ -21,6 +27,15 @@ pub struct Overview {
 pub struct NodeSummary {
     pub id: String,
     pub name: String,
+    pub mesh_ipv4: String,
+    pub mesh_ipv6: String,
+    #[schema(required = true)]
+    #[serde(deserialize_with = "deserialize_required_nullable")]
+    pub country: Option<String>,
+    #[schema(format = Int64, minimum = 1, maximum = 4294967295_u64)]
+    pub configuration_revision: u32,
+    #[schema(format = Int64, minimum = 0, maximum = 4294967295_u64)]
+    pub acknowledged_revision: u32,
     pub agent_version: String,
     pub last_seen: DateTime<Utc>,
     pub registered_at: DateTime<Utc>,

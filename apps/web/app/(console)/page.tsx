@@ -1,3 +1,4 @@
+import type { NodeSummary } from "@meshway/control-client"
 import { ArrowRightIcon } from "lucide-react"
 import Link from "next/link"
 
@@ -24,11 +25,21 @@ import { byLastSeenDesc, formatClock } from "@/lib/time"
 
 const RECENT_LIMIT = 5
 
+function deliverySummary(nodes: NodeSummary[]) {
+  const active = nodes.filter((node) => node.revoked_at === null)
+  const current = active.filter(
+    (node) => node.acknowledged_revision === node.configuration_revision
+  ).length
+  const never = active.filter((node) => node.acknowledged_revision === 0).length
+  return { active: active.length, current, never, pending: active.length - current - never }
+}
+
 export default async function OverviewPage() {
   const [overview, nodes] = await Promise.all([fetchOverview(), fetchNodes()])
   const revokedCount = nodes.ok
     ? nodes.data.nodes.filter((node) => node.revoked_at !== null).length
     : null
+  const delivery = nodes.ok ? deliverySummary(nodes.data.nodes) : null
 
   return (
     <>
@@ -51,7 +62,7 @@ export default async function OverviewPage() {
         <>
           <DevelopmentNotice />
 
-          <div className="grid gap-4 sm:grid-cols-2">
+          <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
             <Card className="[--card-spacing:--spacing(5)]">
               <CardHeader>
                 <CardDescription className="text-sm">Controller</CardDescription>
@@ -87,6 +98,38 @@ export default async function OverviewPage() {
                 <span>
                   Controller 中持久保存的注册记录总数（含已撤销），不是在线或已连通的节点数。
                 </span>
+              </CardContent>
+            </Card>
+
+            <Card className="[--card-spacing:--spacing(5)]">
+              <CardHeader>
+                <CardDescription className="text-sm">配置版本</CardDescription>
+                <CardTitle className="font-mono text-3xl font-semibold tabular-nums">
+                  {overview.data.configuration_revision}
+                </CardTitle>
+                <CardAction>
+                  <Link
+                    href="/routing"
+                    className={buttonVariants({ variant: "ghost", size: "lg" })}
+                  >
+                    路由策略
+                    <ArrowRightIcon data-icon="inline-end" />
+                  </Link>
+                </CardAction>
+              </CardHeader>
+              <CardContent className="flex flex-col gap-1 text-sm text-muted-foreground">
+                {delivery !== null ? (
+                  delivery.active === 0 ? (
+                    <span>没有活动节点需要下发配置。</span>
+                  ) : (
+                    <span>
+                      {delivery.active} 个活动节点中，{delivery.current} 个已校验保存当前版本
+                      {delivery.pending > 0 ? `，${delivery.pending} 个仍停留在旧版本` : ""}
+                      {delivery.never > 0 ? `，${delivery.never} 个从未确认` : ""}。
+                    </span>
+                  )
+                ) : null}
+                <span>节点清单、国家或策略变化时递增。确认只表示 agent 已校验并保存，不代表网络已生效。</span>
               </CardContent>
             </Card>
           </div>

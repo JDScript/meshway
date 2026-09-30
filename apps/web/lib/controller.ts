@@ -3,9 +3,11 @@ import "server-only"
 import {
   ControlApiError,
   getOverview,
+  getPolicy,
   listNodes,
   type NodeList,
   type Overview,
+  type PolicySnapshot,
 } from "@meshway/control-client"
 import { redirect } from "next/navigation"
 import { connection } from "next/server"
@@ -70,4 +72,8 @@ export function fetchOverview(): Promise<ControllerResult<Overview>> {
 
 export function fetchNodes(): Promise<ControllerResult<NodeList>> {
   return authorizedRead(listNodes)
+}
+
+export function fetchPolicy(): Promise<ControllerResult<PolicySnapshot>> {
+  return authorizedRead(getPolicy)
 }

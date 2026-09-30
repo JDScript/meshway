@@ -54,6 +54,12 @@ export async function requireActionAdminToken(): Promise<string> {
   redirect(LOGIN_PATH)
 }
 
+/** For Server Actions whose credential the controller rejected (HTTP 401). */
+export async function rejectActionSession(): Promise<never> {
+  await endSession()
+  redirect(EXPIRED_LOGIN_PATH)
+}
+
 /**
  * MESHWAY_WEB_COOKIE_SECURE: "true" always sets Secure, "false" never does,
  * unset or "auto" sets it when the browser reached the console over HTTPS.

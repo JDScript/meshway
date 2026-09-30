@@ -3,6 +3,9 @@ use std::{
     path::{Path, PathBuf},
 };
 
+#[cfg(test)]
+use crate::test_local as local;
+#[cfg(not(test))]
 use meshway_protocol::local;
 use serde::{Deserialize, Serialize};
 
@@ -11,10 +14,17 @@ use crate::generated::{
     types::{AgentNodeResponse, EnrollAgentRequest, HeartbeatRequest},
 };
 
+mod configuration;
+#[cfg(test)]
+mod durability_tests;
+pub use configuration::SyncReceipt;
+
 #[derive(Debug, thiserror::Error)]
 pub enum AgentError {
     #[error("agent state file error: {0}")]
     File(#[from] std::io::Error),
+    #[error("{0}")]
+    Write(#[from] local::AtomicWriteError),
     #[error("{0}")]
     Invalid(&'static str),
     // Never format arbitrary server bodies or request data in CLI output.
@@ -95,6 +105,10 @@ impl Identity {
             } else {
                 "pending"
             },
+            stored_revision: 0,
+            stored_digest: None,
+            mesh_ipv4: None,
+            mesh_ipv6: None,
         }
     }
 }
@@ -106,15 +120,22 @@ pub struct AgentStatus {
     pub name: String,
     pub node_id: Option<String>,
     pub enrollment: &'static str,
+    pub stored_revision: u32,
+    pub stored_digest: Option<String>,
+    pub mesh_ipv4: Option<String>,
+    pub mesh_ipv6: Option<String>,
 }
 
 pub fn status(path: impl AsRef<Path>) -> Result<AgentStatus, AgentError> {
-    Ok(Identity::load(path.as_ref())?.status())
+    let identity = Identity::load(path.as_ref())?;
+    let cache = configuration::load(path.as_ref(), &identity)?;
+    Ok(configuration::status(&identity, cache.as_ref()))
 }
 
 pub struct Agent {
     path: PathBuf,
     identity: Identity,
+    cache: Option<configuration::Cache>,
     _lock: File,
 }
 
@@ -167,9 +188,11 @@ impl Agent {
             }
             Err(error) => return Err(error.into()),
         };
+        let cache = configuration::load(&path, &identity)?;
         Ok(Self {
             path,
             identity,
+            cache,
             _lock: lock,
         })
     }
@@ -178,9 +201,11 @@ impl Agent {
         let path = path.as_ref().to_path_buf();
         let lock = lock_state(&path)?;
         let identity = Identity::load(&path)?;
+        let cache = configuration::load(&path, &identity)?;
         Ok(Self {
             path,
             identity,
+            cache,
             _lock: lock,
         })
     }
@@ -191,6 +216,9 @@ impl Agent {
                 "enrollment token does not match persisted binding",
             ));
         }
+        // A previous creation/replacement may be visible but have failed its
+        // directory sync. Confirm credential durability before network use.
+        local::ensure_durable(&self.path)?;
         let response = HttpClient::new()
             .with_base_url(&self.identity.controller)
             .with_api_key(token)
@@ -206,6 +234,7 @@ impl Agent {
     /// Works for pending local state after the server committed enrollment but
     /// its response was lost. No enrollment token is needed for this recovery.
     pub async fn heartbeat(&mut self) -> Result<AgentNodeResponse, AgentError> {
+        local::ensure_durable(&self.path)?;
         let response = HttpClient::new()
             .with_base_url(&self.identity.controller)
             .with_api_key(&self.identity.node_credential)
@@ -238,7 +267,9 @@ impl Agent {
             }
             self.identity.node_id = Some(response.node.id.clone());
             if let Err(error) = write_identity(&self.path, &self.identity, true) {
-                self.identity.node_id = None;
+                if !matches!(&error, AgentError::Write(write) if write.committed()) {
+                    self.identity.node_id = None;
+                }
                 return Err(error);
             }
         }
@@ -246,7 +277,7 @@ impl Agent {
     }
 
     pub fn status(&self) -> AgentStatus {
-        self.identity.status()
+        configuration::status(&self.identity, self.cache.as_ref())
     }
 }
 

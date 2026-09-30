@@ -1163,7 +1163,9 @@ dependencies = [
  "chrono",
  "clap",
  "futures-util",
+ "ipnet",
  "meshway-controller",
+ "meshway-policy",
  "meshway-protocol",
  "reqwest",
  "reqwest-middleware",
@@ -1181,6 +1183,8 @@ dependencies = [
  "axum",
  "chrono",
  "clap",
+ "ipnet",
+ "meshway-policy",
  "meshway-protocol",
  "openapi-to-rust",
  "rusqlite",
@@ -1195,6 +1199,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "meshway-policy"
+version = "0.1.0"
+dependencies = [
+ "idna",
+ "ipnet",
+ "meshway-protocol",
+ "serde_json",
+]
+
+[[package]]
 name = "meshway-protocol"
 version = "0.1.0"
 dependencies = [
@@ -1202,6 +1216,7 @@ dependencies = [
  "getrandom 0.3.4",
  "rustix",
  "serde",
+ "serde_json",
  "sha2",
  "tempfile",
  "utoipa",

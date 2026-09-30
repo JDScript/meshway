@@ -3,11 +3,14 @@
 
 use std::{
     fs::{self, File, OpenOptions},
-    io::{self, Read, Write},
+    io::{self, Read},
     path::Path,
 };
 
 use sha2::{Digest, Sha256};
+
+mod write;
+pub use write::{AtomicWriteError, atomic_write, ensure_durable};
 
 pub fn credential() -> io::Result<String> {
     let mut bytes = [0_u8; 32];
@@ -99,33 +102,16 @@ pub fn lock(path: &Path) -> io::Result<File> {
 }
 
 pub fn read_private(path: &Path) -> io::Result<String> {
-    let mut value = String::new();
-    open_private(path, false)?
-        .take(65537)
-        .read_to_string(&mut value)?;
-    if value.len() > 65536 {
-        return Err(io::Error::other("credential file exceeds 64 KiB"));
-    }
-    Ok(value)
+    read_private_bounded(path, 65536)
 }
 
-/// Write/fsync a private temporary file, atomically publish it, then fsync the
-/// directory. The caller holds a sidecar lock and validates any existing state.
-pub fn atomic_write(path: &Path, value: &[u8], replace: bool) -> io::Result<()> {
-    let parent = path
-        .parent()
-        .filter(|p| !p.as_os_str().is_empty())
-        .unwrap_or(Path::new("."));
-    let mut temporary = tempfile::NamedTempFile::new_in(parent)?;
-    temporary.write_all(value)?;
-    temporary.as_file().sync_all()?;
-    if replace {
-        open_private(path, false)?;
-        temporary.persist(path).map_err(|error| error.error)?;
-    } else {
-        temporary
-            .persist_noclobber(path)
-            .map_err(|error| error.error)?;
+pub fn read_private_bounded(path: &Path, limit: usize) -> io::Result<String> {
+    let mut value = String::new();
+    open_private(path, false)?
+        .take(limit as u64 + 1)
+        .read_to_string(&mut value)?;
+    if value.len() > limit {
+        return Err(io::Error::other("private file exceeds size budget"));
     }
-    File::open(parent)?.sync_all()
+    Ok(value)
 }

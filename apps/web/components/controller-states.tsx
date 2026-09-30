@@ -64,11 +64,12 @@ export function DevelopmentNotice() {
   return (
     <Alert className="px-4 py-3 text-sm">
       <InfoIcon />
-      <AlertTitle className="text-sm">开发阶段：仅有控制面注册</AlertTitle>
+      <AlertTitle className="text-sm">开发阶段：仅有控制面</AlertTitle>
       <AlertDescription className="text-sm">
         节点用一次性注册令牌向 controller 注册，并持有自己的控制面凭据；心跳会更新「最后联系」，撤销后
-        controller 拒绝该凭据。这是基于令牌的控制面身份，不是数据面密钥证明。目前没有 TUN
-        数据面、隧道、路由策略、DNS 或端到端加密，注册记录不代表节点在线或 mesh 已连通。
+        controller 拒绝该凭据。这是基于令牌的控制面身份，不是数据面密钥证明。Controller 为节点分配
+        Mesh 地址并下发路由策略配置，节点只校验并保存配置。目前没有 TUN 数据面、隧道、实际转发、DNS
+        或端到端加密，注册记录和配置确认都不代表节点在线或 mesh 已连通。
       </AlertDescription>
     </Alert>
   )

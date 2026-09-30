@@ -4,11 +4,26 @@ export type ClientOptions = {
     baseUrl: `${string}://${string}` | (string & {});
 };
 
+export type AcknowledgeConfigurationRequest = {
+    digest: string;
+    revision: number;
+};
+
+export type AcknowledgeConfigurationResponse = {
+    digest: string;
+    revision: number;
+};
+
 /**
  * Also lets a pending local enrollment recover its server-assigned node ID.
  */
 export type AgentNodeResponse = {
     node: NodeSummary;
+};
+
+export type ConfigurationSnapshot = {
+    digest: string;
+    payload: NodeConfiguration;
 };
 
 export type CreateEnrollmentTokenRequest = {
@@ -23,6 +38,17 @@ export type CreateEnrollmentTokenResponse = {
     token: string;
     token_id: string;
 };
+
+export type DefaultRouteAction = 'direct' | 'reject';
+
+export type DestinationScope = 'any' | 'mesh' | 'internet';
+
+export type DestinationSelector = {
+    kind: DestinationSelectorKind;
+    value: string;
+};
+
+export type DestinationSelectorKind = 'node' | 'domain_suffix' | 'cidr' | 'country';
 
 /**
  * Persist the proposed random credential before sending this request. Retry
@@ -39,10 +65,49 @@ export type ErrorResponse = {
 };
 
 /**
+ * Internet country is a preview hint, not automatic geolocation. Mesh country
+ * and source country always come from the active-node inventory.
+ */
+export type FlowQuery = {
+    destination_country: string | null;
+    destination_ip: string | null;
+    destination_node_id: string | null;
+    domain: string | null;
+    source_node_id: string;
+};
+
+/**
  * Node identity is derived exclusively from the node bearer credential.
  */
 export type HeartbeatRequest = {
     agent_version: string;
+};
+
+export type MeshNetwork = {
+    ipv4_prefix: string;
+    ipv6_prefix: string;
+};
+
+/**
+ * Public active-node inventory; country is administrator-managed metadata.
+ */
+export type MeshNode = {
+    country: string | null;
+    id: string;
+    mesh_ipv4: string;
+    mesh_ipv6: string;
+    name: string;
+};
+
+export type NodeConfiguration = {
+    diagnostics: Array<PolicyDiagnostic>;
+    network: MeshNetwork;
+    node: MeshNode;
+    peers: Array<MeshNode>;
+    policy_valid: boolean;
+    revision: number;
+    routing_policy: RoutingPolicy;
+    schema_version: number;
 };
 
 export type NodeList = {
@@ -53,18 +118,50 @@ export type NodeList = {
  * Durable control-plane identity. Last contact is not tunnel health.
  */
 export type NodeSummary = {
+    acknowledged_revision: number;
     agent_version: string;
+    configuration_revision: number;
+    country: string | null;
     id: string;
     last_seen: string;
+    mesh_ipv4: string;
+    mesh_ipv6: string;
     name: string;
     registered_at: string;
     revoked_at: string | null;
 };
 
 export type Overview = {
+    configuration_revision: number;
     name: string;
     node_count: number;
     version: string;
+};
+
+export type PolicyDiagnostic = {
+    field: string;
+    message: string;
+    rule_id: string | null;
+};
+
+export type PolicySnapshot = {
+    diagnostics: Array<PolicyDiagnostic>;
+    network: MeshNetwork;
+    policy: RoutingPolicy;
+    revision: number;
+    valid: boolean;
+};
+
+export type PreviewPolicyRequest = {
+    flow: FlowQuery;
+    policy: RoutingPolicy;
+};
+
+export type PreviewPolicyResponse = {
+    decision: RouteDecision;
+    diagnostics: Array<PolicyDiagnostic>;
+    revision: number;
+    valid: boolean;
 };
 
 export type RevokeNodeRequest = {
@@ -74,6 +171,138 @@ export type RevokeNodeRequest = {
 export type RevokeNodeResponse = {
     node: NodeSummary;
 };
+
+export type RouteAction = {
+    exit_node_id: string | null;
+    kind: RouteActionKind;
+    via: Array<string>;
+};
+
+export type RouteActionKind = 'route' | 'reject';
+
+export type RouteDecision = {
+    action: RouteDecisionAction;
+    exit_node_id: string | null;
+    path: Array<string>;
+    reason: string;
+    rule_id: string | null;
+};
+
+export type RouteDecisionAction = 'route' | 'reject' | 'invalid';
+
+export type RouteRule = {
+    action: RouteAction;
+    destination_any: Array<DestinationSelector>;
+    destination_scope: DestinationScope;
+    id: string;
+    source: SourceSelector;
+};
+
+export type RoutingPolicy = {
+    default_action: DefaultRouteAction;
+    rules: Array<RouteRule>;
+};
+
+export type SavePolicyRequest = {
+    expected_revision: number;
+    policy: RoutingPolicy;
+};
+
+export type SetNodeCountryRequest = {
+    country: string | null;
+    expected_revision: number;
+    node_id: string;
+};
+
+/**
+ * Empty dimensions are wildcards; dimensions combine with AND, members with OR.
+ */
+export type SourceSelector = {
+    countries: Array<string>;
+    node_ids: Array<string>;
+};
+
+export type GetAgentConfigurationData = {
+    body?: never;
+    path?: never;
+    query?: never;
+    url: '/api/v1/agents/configuration';
+};
+
+export type GetAgentConfigurationErrors = {
+    /**
+     * Node credential required
+     */
+    401: ErrorResponse;
+    /**
+     * Node revoked
+     */
+    403: ErrorResponse;
+    /**
+     * Storage unavailable
+     */
+    500: ErrorResponse;
+};
+
+export type GetAgentConfigurationError = GetAgentConfigurationErrors[keyof GetAgentConfigurationErrors];
+
+export type GetAgentConfigurationResponses = {
+    /**
+     * Credential-scoped configuration and active public peers
+     */
+    200: ConfigurationSnapshot;
+};
+
+export type GetAgentConfigurationResponse = GetAgentConfigurationResponses[keyof GetAgentConfigurationResponses];
+
+export type AcknowledgeConfigurationData = {
+    body: AcknowledgeConfigurationRequest;
+    path?: never;
+    query?: never;
+    url: '/api/v1/agents/configuration/ack';
+};
+
+export type AcknowledgeConfigurationErrors = {
+    /**
+     * Invalid JSON
+     */
+    400: ErrorResponse;
+    /**
+     * Node credential required
+     */
+    401: ErrorResponse;
+    /**
+     * Node revoked
+     */
+    403: ErrorResponse;
+    /**
+     * Revision or digest is not this node's current snapshot
+     */
+    409: ErrorResponse;
+    /**
+     * Request exceeds 256 KiB
+     */
+    413: ErrorResponse;
+    /**
+     * Expected application/json
+     */
+    415: ErrorResponse;
+    /**
+     * Storage unavailable
+     */
+    500: ErrorResponse;
+};
+
+export type AcknowledgeConfigurationError = AcknowledgeConfigurationErrors[keyof AcknowledgeConfigurationErrors];
+
+export type AcknowledgeConfigurationResponses = {
+    /**
+     * Validated and durably saved receipt; not networking applied
+     */
+    200: AcknowledgeConfigurationResponse;
+};
+
+export type AcknowledgeConfigurationResponse2 = AcknowledgeConfigurationResponses[keyof AcknowledgeConfigurationResponses];
 
 export type EnrollAgentData = {
     body: EnrollAgentRequest;
@@ -107,6 +336,10 @@ export type EnrollAgentErrors = {
      * Expected application/json
      */
     415: ErrorResponse;
+    /**
+     * Address, inventory, or configuration capacity exhausted; token remains unused
+     */
+    422: ErrorResponse;
     /**
      * Storage unavailable
      */
@@ -239,6 +472,59 @@ export type ListNodesResponses = {
 
 export type ListNodesResponse = ListNodesResponses[keyof ListNodesResponses];
 
+export type SetNodeCountryData = {
+    body: SetNodeCountryRequest;
+    path?: never;
+    query?: never;
+    url: '/api/v1/nodes/country';
+};
+
+export type SetNodeCountryErrors = {
+    /**
+     * Country must be two ASCII letters or null
+     */
+    400: ErrorResponse;
+    /**
+     * Admin credential required
+     */
+    401: ErrorResponse;
+    /**
+     * Node not found
+     */
+    404: ErrorResponse;
+    /**
+     * Stale global revision
+     */
+    409: ErrorResponse;
+    /**
+     * Request exceeds 256 KiB
+     */
+    413: ErrorResponse;
+    /**
+     * Expected application/json
+     */
+    415: ErrorResponse;
+    /**
+     * Capacity exhausted
+     */
+    422: ErrorResponse;
+    /**
+     * Storage unavailable
+     */
+    500: ErrorResponse;
+};
+
+export type SetNodeCountryError = SetNodeCountryErrors[keyof SetNodeCountryErrors];
+
+export type SetNodeCountryResponses = {
+    /**
+     * Normalized administrator-managed country metadata
+     */
+    200: RevokeNodeResponse;
+};
+
+export type SetNodeCountryResponse = SetNodeCountryResponses[keyof SetNodeCountryResponses];
+
 export type RevokeNodeData = {
     body: RevokeNodeRequest;
     path?: never;
@@ -267,6 +553,10 @@ export type RevokeNodeErrors = {
      * Expected application/json
      */
     415: ErrorResponse;
+    /**
+     * Configuration revision capacity exhausted
+     */
+    422: ErrorResponse;
     /**
      * Storage unavailable
      */
@@ -312,3 +602,122 @@ export type GetOverviewResponses = {
 };
 
 export type GetOverviewResponse = GetOverviewResponses[keyof GetOverviewResponses];
+
+export type GetPolicyData = {
+    body?: never;
+    path?: never;
+    query?: never;
+    url: '/api/v1/policy';
+};
+
+export type GetPolicyErrors = {
+    /**
+     * Admin credential required
+     */
+    401: ErrorResponse;
+    /**
+     * Storage unavailable
+     */
+    500: ErrorResponse;
+};
+
+export type GetPolicyError = GetPolicyErrors[keyof GetPolicyErrors];
+
+export type GetPolicyResponses = {
+    /**
+     * Saved source policy and current diagnostics
+     */
+    200: PolicySnapshot;
+};
+
+export type GetPolicyResponse = GetPolicyResponses[keyof GetPolicyResponses];
+
+export type PreviewPolicyData = {
+    body: PreviewPolicyRequest;
+    path?: never;
+    query?: never;
+    url: '/api/v1/policy/preview';
+};
+
+export type PreviewPolicyErrors = {
+    /**
+     * Invalid JSON
+     */
+    400: ErrorResponse;
+    /**
+     * Admin credential required
+     */
+    401: ErrorResponse;
+    /**
+     * Request exceeds 256 KiB
+     */
+    413: ErrorResponse;
+    /**
+     * Expected application/json
+     */
+    415: ErrorResponse;
+    /**
+     * Storage unavailable
+     */
+    500: ErrorResponse;
+};
+
+export type PreviewPolicyError = PreviewPolicyErrors[keyof PreviewPolicyErrors];
+
+export type PreviewPolicyResponses = {
+    /**
+     * Pure preview; no persistence
+     */
+    200: PreviewPolicyResponse;
+};
+
+export type PreviewPolicyResponse2 = PreviewPolicyResponses[keyof PreviewPolicyResponses];
+
+export type SavePolicyData = {
+    body: SavePolicyRequest;
+    path?: never;
+    query?: never;
+    url: '/api/v1/policy/save';
+};
+
+export type SavePolicyErrors = {
+    /**
+     * Invalid JSON
+     */
+    400: ErrorResponse;
+    /**
+     * Admin credential required
+     */
+    401: ErrorResponse;
+    /**
+     * Stale global revision
+     */
+    409: ErrorResponse;
+    /**
+     * Request exceeds 256 KiB
+     */
+    413: ErrorResponse;
+    /**
+     * Expected application/json
+     */
+    415: ErrorResponse;
+    /**
+     * Invalid policy or capacity exhausted
+     */
+    422: ErrorResponse;
+    /**
+     * Storage unavailable
+     */
+    500: ErrorResponse;
+};
+
+export type SavePolicyError = SavePolicyErrors[keyof SavePolicyErrors];
+
+export type SavePolicyResponses = {
+    /**
+     * Canonical conditional policy save
+     */
+    200: PolicySnapshot;
+};
+
+export type SavePolicyResponse = SavePolicyResponses[keyof SavePolicyResponses];

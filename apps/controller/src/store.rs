@@ -9,13 +9,18 @@ use rusqlite::{Connection, OptionalExtension, Row, TransactionBehavior, params};
 
 use crate::Error;
 
+mod configuration;
+mod ipam;
+#[cfg(test)]
+mod tests;
+
 pub(crate) struct Store {
     connection: Connection,
     _lock: File,
 }
 
 impl Store {
-    pub fn open(path: &Path) -> Result<Self, Error> {
+    pub fn open(path: &Path, options: &crate::NetworkOptions) -> Result<Self, Error> {
         local::private_dir(path)?;
         let lock = local::lock(&path.join("controller.lock"))?;
         let database = path.join("controller.sqlite3");
@@ -58,6 +63,11 @@ impl Store {
         if !local::valid_credential(admin) {
             return Err(Error::Configuration("invalid admin.token"));
         }
+        // A prior startup may have published a bootstrap file and then failed
+        // its directory sync. Startup errors never imply those files vanished.
+        // Reconfirm visible files before opening a serving controller identity.
+        local::ensure_durable(&admin_file)?;
+        local::ensure_durable(&database)?;
         let mut connection = Connection::open_with_flags(
             database,
             rusqlite::OpenFlags::SQLITE_OPEN_READ_WRITE | rusqlite::OpenFlags::SQLITE_OPEN_NO_MUTEX,
@@ -94,7 +104,7 @@ impl Store {
             File::open(path)?.sync_all()?;
         }
         let version: i64 = connection.pragma_query_value(None, "user_version", |row| row.get(0))?;
-        if version != 1 {
+        if version != 1 && version != 2 {
             return Err(Error::Configuration(
                 "unsupported or incomplete controller database schema",
             ));
@@ -108,6 +118,7 @@ impl Store {
                 "admin.token does not match the database; refusing to reinitialize",
             ));
         }
+        ipam::upgrade(&mut connection, options)?;
         Ok(Self {
             connection,
             _lock: lock,
@@ -128,7 +139,9 @@ impl Store {
     }
 
     pub fn nodes(&self) -> Result<Vec<NodeSummary>, Error> {
-        let mut query = self.connection.prepare("SELECT id, name, agent_version, registered_at, last_seen, revoked_at FROM nodes ORDER BY id")?;
+        let mut query = self
+            .connection
+            .prepare(&format!("{NODE_SELECT} ORDER BY id"))?;
         Ok(query.query_map([], node_row)?.collect::<Result<_, _>>()?)
     }
 
@@ -200,14 +213,17 @@ impl Store {
             return Err(Error::Conflict);
         }
         let id = local::credential()?;
+        let (ipv4, ipv6) = ipam::allocate(&transaction)?;
         transaction.execute(
-            "INSERT INTO nodes (id, credential_hash, name, agent_version, registered_at, last_seen) VALUES (?1, ?2, ?3, ?4, ?5, ?5)",
-            params![id, credential_hash, request.name, request.agent_version, now.to_rfc3339()],
+            "INSERT INTO nodes (id, credential_hash, name, agent_version, registered_at, last_seen, mesh_ipv4, mesh_ipv6) VALUES (?1, ?2, ?3, ?4, ?5, ?5, ?6, ?7)",
+            params![id, credential_hash, request.name, request.agent_version, now.to_rfc3339(), ipv4, ipv6],
         )?;
         transaction.execute(
             "UPDATE enrollment_tokens SET used_node_id = ?1, binding_hash = ?2 WHERE token_hash = ?3 AND used_node_id IS NULL",
             params![id, binding, digest(token)],
         )?;
+        configuration::bump(&transaction)?;
+        configuration::ensure_publishable(&transaction)?;
         let node = find_node(&transaction, &id)?;
         transaction.commit()?;
         Ok(node)
@@ -241,21 +257,27 @@ impl Store {
         let transaction = self
             .connection
             .transaction_with_behavior(TransactionBehavior::Immediate)?;
-        transaction.execute(
-            "UPDATE nodes SET revoked_at = COALESCE(revoked_at, ?1) WHERE id = ?2",
+        let changed = transaction.execute(
+            "UPDATE nodes SET revoked_at = ?1 WHERE id = ?2 AND revoked_at IS NULL",
             params![Utc::now().to_rfc3339(), id],
         )?;
+        if changed != 0 {
+            configuration::bump(&transaction)?;
+            configuration::ensure_publishable(&transaction)?;
+        }
         let node = find_node(&transaction, id)?;
         transaction.commit()?;
         Ok(node)
     }
 }
 
+const NODE_SELECT: &str = "SELECT id, name, agent_version, registered_at, last_seen, revoked_at, mesh_ipv4, mesh_ipv6, country, (SELECT revision FROM configuration WHERE id = 1), acknowledged_revision FROM nodes";
+
 fn find_node(connection: &Connection, id: &str) -> Result<NodeSummary, Error> {
-    connection.query_row(
-        "SELECT id, name, agent_version, registered_at, last_seen, revoked_at FROM nodes WHERE id = ?1",
-        [id], node_row,
-    ).optional()?.ok_or(Error::NotFound)
+    connection
+        .query_row(&format!("{NODE_SELECT} WHERE id = ?1"), [id], node_row)
+        .optional()?
+        .ok_or(Error::NotFound)
 }
 
 fn timestamp(row: &Row<'_>, index: usize) -> rusqlite::Result<DateTime<Utc>> {
@@ -273,6 +295,11 @@ fn node_row(row: &Row<'_>) -> rusqlite::Result<NodeSummary> {
     Ok(NodeSummary {
         id: row.get(0)?,
         name: row.get(1)?,
+        mesh_ipv4: row.get(6)?,
+        mesh_ipv6: row.get(7)?,
+        country: row.get(8)?,
+        configuration_revision: row.get(9)?,
+        acknowledged_revision: row.get(10)?,
         agent_version: row.get(2)?,
         registered_at: timestamp(row, 3)?,
         last_seen: timestamp(row, 4)?,

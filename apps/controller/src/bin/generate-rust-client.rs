@@ -19,7 +19,12 @@ struct Args {
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let args = Args::parse();
     let document: serde_json::Value = serde_json::from_slice(&std::fs::read(&args.input)?)?;
-    let operations = ["enrollAgent", "heartbeatAgent"];
+    let operations = [
+        "enrollAgent",
+        "heartbeatAgent",
+        "getAgentConfiguration",
+        "acknowledgeConfiguration",
+    ];
     // Upstream has client-wide auth configuration. Derive it from the actual
     // selected operations, and fail if the contract needs richer semantics.
     let mut found = std::collections::BTreeSet::new();

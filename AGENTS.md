@@ -29,6 +29,8 @@ Rust 控制面与 agent、Next.js + shadcn/ui 控制台、VitePress 文档站。
 - 端到端加密优先；逐跳可信路由是显式的架构选择，不允许因连接失败静默降低加密语义。
 - Multi-transport 切换与逻辑路径变更是不同操作，不得为了可达性偷偷绕过必经节点。
 - 用户已确认首版 multi-transport 采用优先级主备；按流负载分担和同流多路径聚合不属于首版要求。
+- 用户已确认首版域名匹配仅支持 suffix，按 DNS 标签边界匹配；路由规则有序 first-match，默认动作可选 direct/reject，初始空策略为 reject。
+- 配置 ACK 只表示 Agent 已校验并持久保存，不等同于数据面生效；逻辑路径预览不等同于真实 trace 或访问授权。
 - Rust 使用 `cargo fmt`、Clippy 和必要的行为测试；JS 使用严格 TypeScript 与各包检查。
 - 并行任务明确文件所有权；根 workspace 配置、lockfile 和整体验证由协调者维护。
 - 独立完成的工作形成清晰提交。提交前检查生成产物、文档和实际运行命令一致。

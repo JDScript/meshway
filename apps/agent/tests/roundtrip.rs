@@ -150,9 +150,9 @@ async fn generated_agent_operations_roundtrip_and_decode_scoped_errors() {
 async fn generated_client_rejects_invalid_response_fields_and_dates_and_does_not_redirect_secrets()
 {
     for body in [
-        r#"{"node":{"id":"n","name":"nyc","agent_version":"0.1.0","last_seen":"not-a-date","registered_at":"2026-09-30T00:00:00Z","revoked_at":null}}"#,
-        r#"{"node":{"id":7,"name":"nyc","agent_version":"0.1.0","last_seen":"2026-09-30T00:00:00Z","registered_at":"2026-09-30T00:00:00Z","revoked_at":null}}"#,
-        r#"{"node":{"id":"n","name":"nyc","agent_version":"0.1.0","last_seen":"2026-09-30T00:00:00Z","registered_at":"2026-09-30T00:00:00Z"}}"#,
+        r#"{"node":{"id":"n","name":"nyc","agent_version":"0.1.0","last_seen":"not-a-date","registered_at":"2026-09-30T00:00:00Z","revoked_at":null,"country":null,"mesh_ipv4":"100.96.0.1","mesh_ipv6":"fd00::1","configuration_revision":1,"acknowledged_revision":0}}"#,
+        r#"{"node":{"id":7,"name":"nyc","agent_version":"0.1.0","last_seen":"2026-09-30T00:00:00Z","registered_at":"2026-09-30T00:00:00Z","revoked_at":null,"country":null,"mesh_ipv4":"100.96.0.1","mesh_ipv6":"fd00::1","configuration_revision":1,"acknowledged_revision":0}}"#,
+        r#"{"node":{"id":"n","name":"nyc","agent_version":"0.1.0","last_seen":"2026-09-30T00:00:00Z","registered_at":"2026-09-30T00:00:00Z","country":null,"mesh_ipv4":"100.96.0.1","mesh_ipv6":"fd00::1","configuration_revision":1,"acknowledged_revision":0}}"#,
         r#"{"node":{"id":"n"}}"#,
     ] {
         let server = serve(
@@ -227,6 +227,7 @@ async fn required_nullable_revocation_accepts_explicit_null_and_preserves_presen
             "id":"n", "name":"nyc", "agent_version":"0.1.0",
             "last_seen":"2026-09-30T00:00:00Z", "registered_at":"2026-09-30T00:00:00Z",
             "revoked_at":revoked_at,
+            "country":null,"mesh_ipv4":"100.96.0.1","mesh_ipv6":"fd00::1","configuration_revision":1,"acknowledged_revision":0,
         }});
         let body = payload.to_string();
         let server = serve(Router::new().route(
@@ -530,4 +531,269 @@ async fn enrollment_never_overwrites_state_replaced_while_request_is_in_flight()
     let recovered = Agent::load(&path).unwrap().heartbeat().await.unwrap();
     assert_eq!(recovered.node.name, "pending");
     assert_eq!(status(&path).unwrap().enrollment, "enrolled");
+}
+
+#[tokio::test]
+async fn sync_persists_before_ack_retries_conflict_and_keeps_cache_stable_across_restart() {
+    use std::os::unix::fs::MetadataExt;
+    let directory = tempdir();
+    let state_path = directory.path().join("agent.json");
+    let cache_path = directory.path().join("agent.json.config.json");
+    let state = AppState::open(directory.path().join("controller")).unwrap();
+    let admin = admin_token(directory.path().join("controller")).unwrap();
+    let ack_count = Arc::new(AtomicUsize::new(0));
+    let observed = ack_count.clone();
+    let saved_path = cache_path.clone();
+    let server = serve(router(state).layer(axum::middleware::from_fn(
+        move |request: axum::extract::Request, next: axum::middleware::Next| {
+            let observed = observed.clone();
+            let saved_path = saved_path.clone();
+            async move {
+                if request.uri().path() == "/api/v1/agents/configuration/ack" {
+                    let stored: Value = serde_json::from_str(
+                        &local::read_private_bounded(&saved_path, 2 << 20).unwrap(),
+                    )
+                    .unwrap();
+                    let (parts, body) = request.into_parts();
+                    let bytes = axum::body::to_bytes(body, 8192).await.unwrap();
+                    let ack: Value = serde_json::from_slice(&bytes).unwrap();
+                    assert_eq!(ack["revision"], stored["snapshot"]["payload"]["revision"]);
+                    assert_eq!(ack["digest"], stored["snapshot"]["digest"]);
+                    if observed.fetch_add(1, Ordering::SeqCst) == 0 {
+                        use axum::response::IntoResponse;
+                        return axum::http::StatusCode::CONFLICT.into_response();
+                    }
+                    return next
+                        .run(axum::extract::Request::from_parts(
+                            parts,
+                            axum::body::Body::from(bytes),
+                        ))
+                        .await;
+                }
+                next.run(request).await
+            }
+        },
+    )))
+    .await;
+    let token = token(&server.base, &admin).await;
+    let mut agent = Agent::prepare_enrollment(&state_path, &server.base, &token, "sync").unwrap();
+    let node = agent.enroll(&token).await.unwrap().node;
+    let receipt = agent.sync().await.unwrap();
+    assert_eq!(receipt.stored_revision, 2);
+    assert_eq!(receipt.node_id, node.id);
+    assert_eq!(ack_count.load(Ordering::SeqCst), 2);
+    let before = std::fs::read(&cache_path).unwrap();
+    let metadata = std::fs::metadata(&cache_path).unwrap();
+    assert_eq!(metadata.mode() & 0o777, 0o600);
+    assert_eq!(
+        status(&state_path).unwrap().stored_digest,
+        Some(receipt.digest.clone())
+    );
+    agent.heartbeat().await.unwrap();
+    assert_eq!(agent.sync().await.unwrap().digest, receipt.digest);
+    drop(agent);
+    let mut agent = Agent::load(&state_path).unwrap();
+    assert_eq!(agent.status().stored_revision, 2);
+    assert_eq!(agent.sync().await.unwrap().digest, receipt.digest);
+    assert_eq!(std::fs::read(&cache_path).unwrap(), before);
+    assert_eq!(
+        std::fs::metadata(&cache_path).unwrap().ino(),
+        metadata.ino(),
+        "unchanged cache must not be rewritten"
+    );
+    let identity: Value = serde_json::from_str(&local::read_private(&state_path).unwrap()).unwrap();
+    let redacted = serde_json::to_string(&agent.status()).unwrap();
+    assert!(!redacted.contains(identity["node_credential"].as_str().unwrap()));
+    assert!(
+        !String::from_utf8_lossy(&before).contains(identity["node_credential"].as_str().unwrap())
+    );
+    revoke(&server.base, &admin, &node.id).await;
+    assert!(matches!(
+        agent.sync().await,
+        Err(AgentError::Http {
+            status: 403,
+            retryable: false
+        })
+    ));
+    assert_eq!(std::fs::read(&cache_path).unwrap(), before);
+}
+
+#[tokio::test]
+async fn sync_rejects_replay_mutation_invalid_hash_policy_and_write_failure_without_ack() {
+    use std::os::unix::fs::PermissionsExt;
+    let directory = tempdir();
+    let path = directory.path().join("agent.json");
+    let cache_path = directory.path().join("agent.json.config.json");
+    let state = AppState::open(directory.path().join("controller")).unwrap();
+    let admin = admin_token(directory.path().join("controller")).unwrap();
+    let mode = Arc::new(AtomicUsize::new(0));
+    let selected_mode = mode.clone();
+    let acks = Arc::new(AtomicUsize::new(0));
+    let observed_acks = acks.clone();
+    let server = serve(router(state).layer(axum::middleware::from_fn(
+        move |request: axum::extract::Request, next: axum::middleware::Next| {
+            let mode = selected_mode.clone();
+            let acks = observed_acks.clone();
+            async move {
+                let pull = request.uri().path() == "/api/v1/agents/configuration";
+                if request.uri().path() == "/api/v1/agents/configuration/ack" {
+                    acks.fetch_add(1, Ordering::SeqCst);
+                }
+                let response = next.run(request).await;
+                let mode = mode.load(Ordering::SeqCst);
+                if !pull || mode == 0 {
+                    return response;
+                }
+                let (parts, body) = response.into_parts();
+                let bytes = axum::body::to_bytes(body, 2 << 20).await.unwrap();
+                let mut snapshot: meshway_protocol::ConfigurationSnapshot =
+                    serde_json::from_slice(&bytes).unwrap();
+                match mode {
+                    1 => snapshot.payload.revision -= 1,
+                    2 => snapshot.payload.node.country = Some("US".into()),
+                    3 => snapshot.digest = "0".repeat(64),
+                    4 => {
+                        snapshot.payload.revision += 1;
+                        snapshot.payload.policy_valid = false;
+                        snapshot.payload.routing_policy.default_action =
+                            meshway_protocol::DefaultRouteAction::Direct;
+                    }
+                    5 => {
+                        snapshot.payload.revision += 1;
+                        snapshot.payload.node.mesh_ipv4 = "100.96.0.0".into();
+                    }
+                    6 => {
+                        snapshot.payload.revision += 1;
+                        snapshot.payload.peers.push(snapshot.payload.node.clone());
+                    }
+                    _ => unreachable!(),
+                }
+                if mode != 3 {
+                    snapshot.digest =
+                        meshway_protocol::configuration_digest(&snapshot.payload).unwrap();
+                }
+                let mut parts = parts;
+                parts.headers.remove("content-length");
+                axum::response::Response::from_parts(
+                    parts,
+                    axum::body::Body::from(serde_json::to_vec(&snapshot).unwrap()),
+                )
+            }
+        },
+    )))
+    .await;
+    let token = token(&server.base, &admin).await;
+    let mut agent = Agent::prepare_enrollment(&path, &server.base, &token, "checked").unwrap();
+    let node = agent.enroll(&token).await.unwrap().node;
+    agent.sync().await.unwrap();
+    let old = std::fs::read(&cache_path).unwrap();
+    for invalid in 1..=6 {
+        mode.store(invalid, Ordering::SeqCst);
+        assert!(agent.sync().await.is_err(), "mutation {invalid}");
+        assert_eq!(acks.load(Ordering::SeqCst), 1);
+        assert_eq!(std::fs::read(&cache_path).unwrap(), old);
+    }
+    drop(agent);
+    let mut agent = Agent::load(&path).unwrap();
+    mode.store(1, Ordering::SeqCst);
+    assert!(
+        agent.sync().await.is_err(),
+        "restart must retain replay floor"
+    );
+    mode.store(0, Ordering::SeqCst);
+    let response = reqwest::Client::new()
+        .post(format!("{}/api/v1/nodes/country", server.base))
+        .bearer_auth(&admin)
+        .header("content-type", "application/json")
+        .body(json!({"node_id":node.id,"country":"US","expected_revision":2}).to_string())
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 200);
+    // An unsafe externally changed destination cannot be overwritten or ACKed.
+    std::fs::set_permissions(&cache_path, std::fs::Permissions::from_mode(0o644)).unwrap();
+    assert!(agent.sync().await.is_err());
+    assert_eq!(acks.load(Ordering::SeqCst), 1);
+    assert_eq!(std::fs::read(&cache_path).unwrap(), old);
+    assert_eq!(agent.status().stored_revision, 2);
+    std::fs::set_permissions(&cache_path, std::fs::Permissions::from_mode(0o600)).unwrap();
+    assert_eq!(agent.sync().await.unwrap().stored_revision, 3);
+    assert_eq!(acks.load(Ordering::SeqCst), 2);
+}
+
+#[tokio::test]
+async fn unreadable_private_parent_fails_before_publication_and_never_acks() {
+    use std::os::unix::fs::PermissionsExt;
+
+    struct RestorePermissions(std::path::PathBuf, std::fs::Permissions);
+    impl Drop for RestorePermissions {
+        fn drop(&mut self) {
+            std::fs::set_permissions(&self.0, self.1.clone())
+                .expect("restore private test directory before cleanup");
+        }
+    }
+
+    let directory = tempdir();
+    let parent = directory.path().join("agent");
+    let path = parent.join("identity.json");
+    let cache_path = parent.join("identity.json.config.json");
+    let state = AppState::open(directory.path().join("controller")).unwrap();
+    let admin = admin_token(directory.path().join("controller")).unwrap();
+    let acks = Arc::new(AtomicUsize::new(0));
+    let observed = acks.clone();
+    let server = serve(router(state).layer(axum::middleware::from_fn(
+        move |request: axum::extract::Request, next: axum::middleware::Next| {
+            let observed = observed.clone();
+            async move {
+                if request.uri().path() == "/api/v1/agents/configuration/ack" {
+                    observed.fetch_add(1, Ordering::SeqCst);
+                }
+                next.run(request).await
+            }
+        },
+    )))
+    .await;
+    let token = token(&server.base, &admin).await;
+    let mut agent = Agent::prepare_enrollment(&path, &server.base, &token, "permissions").unwrap();
+    let node = agent.enroll(&token).await.unwrap().node;
+    agent.sync().await.unwrap();
+    let old = std::fs::read(&cache_path).unwrap();
+    let response = reqwest::Client::new()
+        .post(format!("{}/api/v1/nodes/country", server.base))
+        .bearer_auth(&admin)
+        .header("content-type", "application/json")
+        .body(json!({"node_id":node.id,"country":"US","expected_revision":2}).to_string())
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 200);
+
+    let restore = RestorePermissions(
+        parent.clone(),
+        std::fs::metadata(&parent).unwrap().permissions(),
+    );
+    std::fs::set_permissions(&parent, std::fs::Permissions::from_mode(0o300)).unwrap();
+    local::private_dir(&parent).unwrap();
+    match std::fs::File::open(&parent) {
+        // Root/capability-enabled CI can bypass DAC. The injected fsync tests
+        // still run there; do not mistake a privileged open for a regression.
+        Ok(_) => {
+            eprintln!(
+                "0300 permission case skipped: this process can bypass directory read permissions"
+            );
+            return;
+        }
+        Err(error) => assert_eq!(error.kind(), std::io::ErrorKind::PermissionDenied),
+    }
+    assert!(
+        matches!(local::atomic_write(&cache_path, b"must not publish", true), Err(local::AtomicWriteError::NotCommitted(error)) if error.kind() == std::io::ErrorKind::PermissionDenied)
+    );
+    assert_eq!(std::fs::read(&cache_path).unwrap(), old);
+    assert!(agent.sync().await.is_err());
+    assert_eq!(agent.status().stored_revision, 2);
+    assert_eq!(acks.load(Ordering::SeqCst), 1);
+    assert_eq!(std::fs::read(&cache_path).unwrap(), old);
+    drop(restore);
+    assert_eq!(agent.sync().await.unwrap().stored_revision, 3);
+    assert_eq!(acks.load(Ordering::SeqCst), 2);
 }

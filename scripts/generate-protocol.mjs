@@ -87,7 +87,11 @@ function validators(document) {
         return `z.strictObject({\n${Object.entries(schema.properties).map(([name, property]) => `  ${JSON.stringify(name)}: ${emit(property)}${schema.required.includes(name) ? "" : ".optional()"}`).join(",\n")}\n})`;
       }
       case "string": {
-        keys(schema, ["type", "format", "minLength", "maxLength", "pattern"]);
+        keys(schema, ["type", "format", "minLength", "maxLength", "pattern", "enum"]);
+        if (schema.enum !== undefined) {
+          if (!Array.isArray(schema.enum) || !schema.enum.length || schema.enum.some(value => typeof value !== "string") || Object.keys(schema).some(key => !["type", "enum", "description", "title"].includes(key))) throw new Error("Only plain string enums are supported");
+          return `z.enum(${JSON.stringify(schema.enum)})`;
+        }
         if (schema.format && schema.format !== "date-time") throw new Error(`Unsupported string format ${schema.format}`);
         let code = schema.format ? "z.iso.datetime({ offset: true })" : "z.string()";
         for (const [key, operator] of [["minLength", ">="], ["maxLength", "<="]]) {
@@ -114,9 +118,20 @@ function validators(document) {
         }
         return code;
       }
-      case "array":
-        keys(schema, ["type", "items"]);
-        return `z.array(${emit(schema.items)})`;
+      case "boolean":
+        keys(schema, ["type"]);
+        return "z.boolean()";
+      case "array": {
+        keys(schema, ["type", "items", "minItems", "maxItems"]);
+        let code = `z.array(${emit(schema.items)})`;
+        for (const [key, operation] of [["minItems", "min"], ["maxItems", "max"]]) {
+          if (schema[key] !== undefined) {
+            if (!Number.isSafeInteger(schema[key]) || schema[key] < 0) throw new Error(`Invalid ${key}`);
+            code += `.${operation}(${schema[key]})`;
+          }
+        }
+        return code;
+      }
       default: throw new Error(`Unsupported schema type ${schema.type}`);
     }
   }

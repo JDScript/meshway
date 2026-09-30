@@ -75,7 +75,7 @@ export default async function NodesPage() {
                   ) : null}
                 </CardTitle>
                 <CardDescription className="text-sm">
-                  「最后联系」是 controller 最近一次收到该节点注册或心跳请求的时间，相对时间以本次读取时刻计算。它不反映隧道状态或节点之间的连通性。
+                  「最后联系」是 controller 最近一次收到该节点注册或心跳请求的时间，相对时间以本次读取时刻计算。它不反映隧道状态或节点之间的连通性。「配置」显示节点确认的配置版本：「已校验保存」只表示 agent 已校验并持久保存该版本，不代表网络已生效。国家是管理员标注的元数据，点击可修改。
                 </CardDescription>
               </CardHeader>
               <CardContent className="px-1">

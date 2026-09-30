@@ -3,5 +3,11 @@
 #[allow(dead_code, clippy::all)]
 pub mod generated;
 
+// Share the production filesystem implementation with unit tests, while its
+// fault hooks remain strictly cfg(test) and absent from production dependencies.
+#[cfg(test)]
+#[allow(dead_code)]
+mod test_local;
+
 mod state;
-pub use state::{Agent, AgentError, AgentStatus, status};
+pub use state::{Agent, AgentError, AgentStatus, SyncReceipt, status};

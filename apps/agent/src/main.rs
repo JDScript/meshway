@@ -6,7 +6,7 @@ use meshway_agent::{Agent, status};
 #[derive(Parser)]
 #[command(
     version,
-    about = "Meshway agent: persistent control-plane identity and authenticated heartbeats"
+    about = "Meshway agent: persistent identity, authenticated heartbeats and saved control intent"
 )]
 struct Cli {
     #[command(subcommand)]
@@ -31,7 +31,12 @@ enum Command {
         #[arg(long, default_value = ".meshway/agent.json")]
         state: PathBuf,
     },
-    /// Heartbeat immediately, then periodically; retry transient failures with backoff.
+    /// Validate and save current control intent, then ACK its receipt (not applied networking).
+    Sync {
+        #[arg(long, default_value = ".meshway/agent.json")]
+        state: PathBuf,
+    },
+    /// Heartbeat and sync immediately, then periodically; retry transient failures with backoff.
     Run {
         #[arg(long, default_value = ".meshway/agent.json")]
         state: PathBuf,
@@ -69,6 +74,10 @@ async fn execute(command: Command) -> Result<(), Box<dyn std::error::Error>> {
             let response = Agent::load(state)?.heartbeat().await?;
             println!("{}", serde_json::to_string_pretty(&response)?);
         }
+        Command::Sync { state } => {
+            let receipt = Agent::load(state)?.sync().await?;
+            println!("{}", serde_json::to_string_pretty(&receipt)?);
+        }
         Command::Status { state } => println!("{}", serde_json::to_string_pretty(&status(state)?)?),
         Command::Run {
             state,
@@ -78,7 +87,7 @@ async fn execute(command: Command) -> Result<(), Box<dyn std::error::Error>> {
             let mut backoff = 1_u64;
             loop {
                 let result = tokio::select! {
-                    result = agent.heartbeat() => result,
+                    result = async { agent.heartbeat().await?; agent.sync().await } => result,
                     _ = tokio::signal::ctrl_c() => return Ok(()),
                 };
                 let delay = match result {

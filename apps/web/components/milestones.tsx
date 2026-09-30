@@ -51,8 +51,23 @@ const milestones: { title: string; detail: string; status: Status }[] = [
     status: "design",
   },
   {
-    title: "路由与必经节点",
-    detail: "逻辑路径由策略决定，传输切换不得绕过必经节点。",
+    title: "Mesh 地址分配",
+    detail: "Controller 为每个节点分配 IPv4 与 IPv6 双栈 Mesh 地址。地址尚未配置到任何网络接口。",
+    status: "implemented",
+  },
+  {
+    title: "路由策略编写与编译预览",
+    detail: "有序 first-match 规则：来源节点/国家，目标 Mesh 节点、域名后缀、CIDR、国家，有序经由节点与显式出口；默认动作 direct/reject，初始为 reject。编译预览给出规划路径，不是实际 trace；按配置版本条件保存。",
+    status: "implemented",
+  },
+  {
+    title: "配置下发与确认",
+    detail: "节点拉取配置并确认已校验保存的版本。确认不代表网络已生效。",
+    status: "implemented",
+  },
+  {
+    title: "按策略转发与必经节点",
+    detail: "节点按编译后的逻辑路径实际转发流量；传输切换不得绕过必经节点。",
     status: "design",
   },
   {

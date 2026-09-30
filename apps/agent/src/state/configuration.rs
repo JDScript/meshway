@@ -1,0 +1,286 @@
+use std::path::{Path, PathBuf};
+
+use meshway_protocol::{
+    CONFIGURATION_SCHEMA_VERSION, ConfigurationSnapshot, MAX_CONFIGURATION_BYTES,
+    MAX_INVENTORY_NODES, RoutingPolicy, configuration_digest,
+};
+use serde::{Deserialize, Serialize};
+
+use super::{Agent, AgentError, AgentStatus, Identity, local};
+use crate::generated::{client::HttpClient, types::AcknowledgeConfigurationRequest};
+
+#[derive(Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(super) struct Cache {
+    format_version: u32,
+    controller: String,
+    node_id: String,
+    snapshot: ConfigurationSnapshot,
+}
+
+/// Receipt for saved control intent, never a dataplane application claim.
+#[derive(Debug, Serialize)]
+pub struct SyncReceipt {
+    pub controller: String,
+    pub node_id: String,
+    pub stored_revision: u32,
+    pub digest: String,
+    pub mesh_ipv4: String,
+    pub mesh_ipv6: String,
+    pub policy_valid: bool,
+}
+
+fn cache_path(path: &Path) -> PathBuf {
+    let mut value = path.as_os_str().to_owned();
+    value.push(".config.json");
+    PathBuf::from(value)
+}
+
+pub(super) fn load(path: &Path, identity: &Identity) -> Result<Option<Cache>, AgentError> {
+    let path = cache_path(path);
+    match std::fs::symlink_metadata(&path) {
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(error) => return Err(error.into()),
+        Ok(_) => {}
+    }
+    let cache: Cache = serde_json::from_str(&local::read_private_bounded(
+        &path,
+        MAX_CONFIGURATION_BYTES + 64 * 1024,
+    )?)
+    .map_err(|_| AgentError::Invalid("invalid configuration cache; refusing to overwrite"))?;
+    if cache.format_version != 1
+        || cache.controller != identity.controller
+        || Some(&cache.node_id) != identity.node_id.as_ref()
+    {
+        return Err(AgentError::Invalid(
+            "configuration cache belongs to a different controller or node",
+        ));
+    }
+    validate(&cache.snapshot, identity, None)?;
+    Ok(Some(cache))
+}
+
+fn validate(
+    snapshot: &ConfigurationSnapshot,
+    identity: &Identity,
+    previous: Option<&Cache>,
+) -> Result<(), AgentError> {
+    let payload = &snapshot.payload;
+    if serde_json::to_vec(snapshot)
+        .map_err(|_| AgentError::Invalid("cannot encode configuration"))?
+        .len()
+        > MAX_CONFIGURATION_BYTES
+        || payload.schema_version != CONFIGURATION_SCHEMA_VERSION
+        || payload.revision == 0
+        || Some(&payload.node.id) != identity.node_id.as_ref()
+        || payload.node.name != identity.name
+        || payload.peers.len() >= MAX_INVENTORY_NODES
+        || payload
+            .peers
+            .windows(2)
+            .any(|pair| pair[0].id >= pair[1].id)
+        || configuration_digest(payload)
+            .map_err(|_| AgentError::Invalid("cannot hash configuration"))?
+            != snapshot.digest
+    {
+        return Err(AgentError::Invalid(
+            "invalid configuration schema, binding, inventory, or digest",
+        ));
+    }
+    if let Some(previous) = previous {
+        let old = &previous.snapshot;
+        if payload.revision < old.payload.revision
+            || (payload.revision == old.payload.revision && snapshot.digest != old.digest)
+            || payload.network != old.payload.network
+            || payload.node.mesh_ipv4 != old.payload.node.mesh_ipv4
+            || payload.node.mesh_ipv6 != old.payload.node.mesh_ipv6
+        {
+            return Err(AgentError::Invalid(
+                "configuration rollback, same-revision mutation, or identity renumbering",
+            ));
+        }
+    }
+    let mut nodes = payload.peers.clone();
+    nodes.push(payload.node.clone());
+    let ipv4: ipnet::Ipv4Net = payload
+        .network
+        .ipv4_prefix
+        .parse()
+        .map_err(|_| AgentError::Invalid("invalid IPv4 pool"))?;
+    let ipv6: ipnet::Ipv6Net = payload
+        .network
+        .ipv6_prefix
+        .parse()
+        .map_err(|_| AgentError::Invalid("invalid IPv6 pool"))?;
+    if ipv4.prefix_len() > 30
+        || ipv4.addr() != ipv4.network()
+        || ipv4.to_string() != payload.network.ipv4_prefix
+        || ipv6.prefix_len() != 64
+        || ipv6.addr() != ipv6.network()
+        || ipv6.to_string() != payload.network.ipv6_prefix
+        || u128::from(ipv6.addr()) >> 120 != 0xfd
+    {
+        return Err(AgentError::Invalid(
+            "configuration network is not a canonical dual-stack mesh pool",
+        ));
+    }
+    for node in &nodes {
+        let v4: std::net::Ipv4Addr = node
+            .mesh_ipv4
+            .parse()
+            .map_err(|_| AgentError::Invalid("invalid node IPv4"))?;
+        let v6: std::net::Ipv6Addr = node
+            .mesh_ipv6
+            .parse()
+            .map_err(|_| AgentError::Invalid("invalid node IPv6"))?;
+        if !local::valid_credential(&node.id)
+            || !super::valid_name(&node.name)
+            || node.country.as_ref().is_some_and(|value| {
+                value.len() != 2 || !value.bytes().all(|byte| byte.is_ascii_uppercase())
+            })
+            || !ipv4.contains(&v4)
+            || v4 == ipv4.network()
+            || v4 == ipv4.broadcast()
+            || v4.to_string() != node.mesh_ipv4
+            || v6.to_string() != node.mesh_ipv6
+            || u128::from(v6)
+                != u128::from(ipv6.network())
+                    + u128::from(u32::from(v4).saturating_sub(u32::from(ipv4.network())))
+        {
+            return Err(AgentError::Invalid(
+                "invalid public mesh node identity or assigned address",
+            ));
+        }
+    }
+    let report = meshway_policy::compile(&payload.routing_policy, &payload.network, &nodes);
+    if !report.is_valid() || report.normalized_policy != payload.routing_policy {
+        return Err(AgentError::Invalid(
+            "configuration network, node inventory, or policy validation failed",
+        ));
+    }
+    if payload.policy_valid {
+        if !payload.diagnostics.is_empty() {
+            return Err(AgentError::Invalid("valid policy must have no diagnostics"));
+        }
+    } else if payload.routing_policy != RoutingPolicy::default()
+        || payload.diagnostics.is_empty()
+        || payload.diagnostics.len() > 64
+    {
+        return Err(AgentError::Invalid(
+            "invalid source policy must publish deny-all with bounded diagnostics",
+        ));
+    }
+    Ok(())
+}
+
+pub(super) fn status(identity: &Identity, cache: Option<&Cache>) -> AgentStatus {
+    let mut status = identity.status();
+    if let Some(cache) = cache {
+        status.stored_revision = cache.snapshot.payload.revision;
+        status.stored_digest = Some(cache.snapshot.digest.clone());
+        status.mesh_ipv4 = Some(cache.snapshot.payload.node.mesh_ipv4.clone());
+        status.mesh_ipv6 = Some(cache.snapshot.payload.node.mesh_ipv6.clone());
+    }
+    status
+}
+
+impl Agent {
+    pub async fn sync(&mut self) -> Result<SyncReceipt, AgentError> {
+        local::ensure_durable(&self.path)?;
+        if self.identity.node_id.is_none() {
+            self.heartbeat().await?;
+        }
+        let client = HttpClient::new()
+            .with_base_url(&self.identity.controller)
+            .with_api_key(&self.identity.node_credential);
+        for _ in 0..3 {
+            let wire = client.get_agent_configuration().await?;
+            // Reuse authoritative DTOs and the pure compiler after the generated
+            // transport has decoded the response; no handwritten wire model.
+            let snapshot: ConfigurationSnapshot = serde_json::from_value(
+                serde_json::to_value(wire)
+                    .map_err(|_| AgentError::Invalid("cannot decode configuration"))?,
+            )
+            .map_err(|_| AgentError::Invalid("invalid configuration response"))?;
+            validate(&snapshot, &self.identity, self.cache.as_ref())?;
+            self.persist_configuration(snapshot)?;
+            // Even an unchanged cache (including one loaded after restart) may
+            // have been published by a write whose final fsync failed. ACK only
+            // after both its file and directory durability have been confirmed.
+            local::ensure_durable(&cache_path(&self.path))?;
+            let cache = self.cache.as_ref().expect("persisted cache");
+            let response = client
+                .acknowledge_configuration(AcknowledgeConfigurationRequest {
+                    revision: cache.snapshot.payload.revision.into(),
+                    digest: cache.snapshot.digest.clone(),
+                })
+                .await;
+            match response {
+                Err(error) if error.api().is_some_and(|error| error.status == 409) => continue,
+                Err(error) => return Err(error.into()),
+                Ok(receipt) => {
+                    if receipt.revision != i64::from(cache.snapshot.payload.revision)
+                        || receipt.digest != cache.snapshot.digest
+                    {
+                        return Err(AgentError::Invalid(
+                            "ACK receipt does not match saved configuration",
+                        ));
+                    }
+                    return Ok(SyncReceipt {
+                        controller: self.identity.controller.clone(),
+                        node_id: cache.node_id.clone(),
+                        stored_revision: cache.snapshot.payload.revision,
+                        digest: cache.snapshot.digest.clone(),
+                        mesh_ipv4: cache.snapshot.payload.node.mesh_ipv4.clone(),
+                        mesh_ipv6: cache.snapshot.payload.node.mesh_ipv6.clone(),
+                        policy_valid: cache.snapshot.payload.policy_valid,
+                    });
+                }
+            }
+        }
+        Err(AgentError::Http {
+            status: 409,
+            retryable: true,
+        })
+    }
+
+    fn persist_configuration(&mut self, snapshot: ConfigurationSnapshot) -> Result<(), AgentError> {
+        if Identity::load(&self.path)? != self.identity {
+            return Err(AgentError::Invalid(
+                "identity changed during configuration sync",
+            ));
+        }
+        let disk = load(&self.path, &self.identity)?;
+        if disk.as_ref().map(|cache| &cache.snapshot.digest)
+            != self.cache.as_ref().map(|cache| &cache.snapshot.digest)
+        {
+            return Err(AgentError::Invalid(
+                "configuration cache changed during sync",
+            ));
+        }
+        if self
+            .cache
+            .as_ref()
+            .is_some_and(|cache| cache.snapshot.digest == snapshot.digest)
+        {
+            return Ok(());
+        }
+        let cache = Cache {
+            format_version: 1,
+            controller: self.identity.controller.clone(),
+            node_id: snapshot.payload.node.id.clone(),
+            snapshot,
+        };
+        let bytes = serde_json::to_vec(&cache)
+            .map_err(|_| AgentError::Invalid("cannot encode configuration cache"))?;
+        let result = local::atomic_write(&cache_path(&self.path), &bytes, self.cache.is_some());
+        if result.is_ok() || result.as_ref().is_err_and(|error| error.committed()) {
+            // Publication changed the visible file, even if its durability is
+            // uncertain. Preserve that value as the retry/replay floor in memory;
+            // propagate the error and do not ACK this attempt.
+            self.cache = Some(cache);
+        }
+        result?;
+        Ok(())
+    }
+}

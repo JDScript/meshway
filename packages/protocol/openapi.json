@@ -6,6 +6,160 @@
     "version": "0.1.0"
   },
   "paths": {
+    "/api/v1/agents/configuration": {
+      "get": {
+        "operationId": "getAgentConfiguration",
+        "responses": {
+          "200": {
+            "description": "Credential-scoped configuration and active public peers",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ConfigurationSnapshot"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Node credential required",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Node revoked",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Storage unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "nodeBearer": []
+          }
+        ]
+      }
+    },
+    "/api/v1/agents/configuration/ack": {
+      "post": {
+        "operationId": "acknowledgeConfiguration",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AcknowledgeConfigurationRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Validated and durably saved receipt; not networking applied",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AcknowledgeConfigurationResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid JSON",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Node credential required",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Node revoked",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Revision or digest is not this node's current snapshot",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "Request exceeds 256 KiB",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "415": {
+            "description": "Expected application/json",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Storage unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "nodeBearer": []
+          }
+        ]
+      }
+    },
     "/api/v1/agents/enroll": {
       "post": {
         "operationId": "enrollAgent",
@@ -82,6 +236,16 @@
           },
           "415": {
             "description": "Expected application/json",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Address, inventory, or configuration capacity exhausted; token remains unused",
             "content": {
               "application/json": {
                 "schema": {
@@ -324,6 +488,118 @@
         ]
       }
     },
+    "/api/v1/nodes/country": {
+      "post": {
+        "operationId": "setNodeCountry",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SetNodeCountryRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Normalized administrator-managed country metadata",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RevokeNodeResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Country must be two ASCII letters or null",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Admin credential required",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Node not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Stale global revision",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "Request exceeds 256 KiB",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "415": {
+            "description": "Expected application/json",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Capacity exhausted",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Storage unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "adminBearer": []
+          }
+        ]
+      }
+    },
     "/api/v1/nodes/revoke": {
       "post": {
         "operationId": "revokeNode",
@@ -398,6 +674,16 @@
               }
             }
           },
+          "422": {
+            "description": "Configuration revision capacity exhausted",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
           "500": {
             "description": "Storage unavailable",
             "content": {
@@ -457,10 +743,280 @@
           }
         ]
       }
+    },
+    "/api/v1/policy": {
+      "get": {
+        "operationId": "getPolicy",
+        "responses": {
+          "200": {
+            "description": "Saved source policy and current diagnostics",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PolicySnapshot"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Admin credential required",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Storage unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "adminBearer": []
+          }
+        ]
+      }
+    },
+    "/api/v1/policy/preview": {
+      "post": {
+        "operationId": "previewPolicy",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PreviewPolicyRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Pure preview; no persistence",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PreviewPolicyResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid JSON",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Admin credential required",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "Request exceeds 256 KiB",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "415": {
+            "description": "Expected application/json",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Storage unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "adminBearer": []
+          }
+        ]
+      }
+    },
+    "/api/v1/policy/save": {
+      "post": {
+        "operationId": "savePolicy",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SavePolicyRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Canonical conditional policy save",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PolicySnapshot"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid JSON",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Admin credential required",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Stale global revision",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "Request exceeds 256 KiB",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "415": {
+            "description": "Expected application/json",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Invalid policy or capacity exhausted",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Storage unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "adminBearer": []
+          }
+        ]
+      }
     }
   },
   "components": {
     "schemas": {
+      "AcknowledgeConfigurationRequest": {
+        "type": "object",
+        "required": [
+          "revision",
+          "digest"
+        ],
+        "properties": {
+          "digest": {
+            "type": "string",
+            "maxLength": 64,
+            "minLength": 64,
+            "pattern": "^[0-9a-f]{64}$"
+          },
+          "revision": {
+            "type": "integer",
+            "format": "int64",
+            "maximum": 4294967295,
+            "minimum": 1
+          }
+        },
+        "additionalProperties": false
+      },
+      "AcknowledgeConfigurationResponse": {
+        "type": "object",
+        "required": [
+          "revision",
+          "digest"
+        ],
+        "properties": {
+          "digest": {
+            "type": "string",
+            "maxLength": 64,
+            "minLength": 64,
+            "pattern": "^[0-9a-f]{64}$"
+          },
+          "revision": {
+            "type": "integer",
+            "format": "int64",
+            "maximum": 4294967295,
+            "minimum": 1
+          }
+        },
+        "additionalProperties": false
+      },
       "AgentNodeResponse": {
         "type": "object",
         "description": "Also lets a pending local enrollment recover its server-assigned node ID.",
@@ -470,6 +1026,25 @@
         "properties": {
           "node": {
             "$ref": "#/components/schemas/NodeSummary"
+          }
+        },
+        "additionalProperties": false
+      },
+      "ConfigurationSnapshot": {
+        "type": "object",
+        "required": [
+          "digest",
+          "payload"
+        ],
+        "properties": {
+          "digest": {
+            "type": "string",
+            "maxLength": 64,
+            "minLength": 64,
+            "pattern": "^[0-9a-f]{64}$"
+          },
+          "payload": {
+            "$ref": "#/components/schemas/NodeConfiguration"
           }
         },
         "additionalProperties": false
@@ -510,6 +1085,46 @@
           }
         },
         "additionalProperties": false
+      },
+      "DefaultRouteAction": {
+        "type": "string",
+        "enum": [
+          "direct",
+          "reject"
+        ]
+      },
+      "DestinationScope": {
+        "type": "string",
+        "enum": [
+          "any",
+          "mesh",
+          "internet"
+        ]
+      },
+      "DestinationSelector": {
+        "type": "object",
+        "required": [
+          "kind",
+          "value"
+        ],
+        "properties": {
+          "kind": {
+            "$ref": "#/components/schemas/DestinationSelectorKind"
+          },
+          "value": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": false
+      },
+      "DestinationSelectorKind": {
+        "type": "string",
+        "enum": [
+          "node",
+          "domain_suffix",
+          "cidr",
+          "country"
+        ]
       },
       "EnrollAgentRequest": {
         "type": "object",
@@ -553,6 +1168,47 @@
         },
         "additionalProperties": false
       },
+      "FlowQuery": {
+        "type": "object",
+        "description": "Internet country is a preview hint, not automatic geolocation. Mesh country\nand source country always come from the active-node inventory.",
+        "required": [
+          "source_node_id",
+          "destination_node_id",
+          "destination_ip",
+          "domain",
+          "destination_country"
+        ],
+        "properties": {
+          "destination_country": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "destination_ip": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "destination_node_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "domain": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "source_node_id": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": false
+      },
       "HeartbeatRequest": {
         "type": "object",
         "description": "Node identity is derived exclusively from the node bearer credential.",
@@ -565,6 +1221,106 @@
             "maxLength": 64,
             "minLength": 1,
             "pattern": "[^\\u0009-\\u000D\\u0020\\u0085\\u00A0\\u1680\\u2000-\\u200A\\u2028\\u2029\\u202F\\u205F\\u3000]"
+          }
+        },
+        "additionalProperties": false
+      },
+      "MeshNetwork": {
+        "type": "object",
+        "required": [
+          "ipv4_prefix",
+          "ipv6_prefix"
+        ],
+        "properties": {
+          "ipv4_prefix": {
+            "type": "string"
+          },
+          "ipv6_prefix": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": false
+      },
+      "MeshNode": {
+        "type": "object",
+        "description": "Public active-node inventory; country is administrator-managed metadata.",
+        "required": [
+          "id",
+          "name",
+          "country",
+          "mesh_ipv4",
+          "mesh_ipv6"
+        ],
+        "properties": {
+          "country": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "id": {
+            "type": "string"
+          },
+          "mesh_ipv4": {
+            "type": "string"
+          },
+          "mesh_ipv6": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": false
+      },
+      "NodeConfiguration": {
+        "type": "object",
+        "required": [
+          "schema_version",
+          "revision",
+          "network",
+          "node",
+          "peers",
+          "routing_policy",
+          "policy_valid",
+          "diagnostics"
+        ],
+        "properties": {
+          "diagnostics": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/PolicyDiagnostic"
+            }
+          },
+          "network": {
+            "$ref": "#/components/schemas/MeshNetwork"
+          },
+          "node": {
+            "$ref": "#/components/schemas/MeshNode"
+          },
+          "peers": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/MeshNode"
+            }
+          },
+          "policy_valid": {
+            "type": "boolean"
+          },
+          "revision": {
+            "type": "integer",
+            "format": "int64",
+            "maximum": 4294967295,
+            "minimum": 1
+          },
+          "routing_policy": {
+            "$ref": "#/components/schemas/RoutingPolicy"
+          },
+          "schema_version": {
+            "type": "integer",
+            "format": "int64",
+            "maximum": 4294967295,
+            "minimum": 1
           }
         },
         "additionalProperties": false
@@ -590,14 +1346,37 @@
         "required": [
           "id",
           "name",
+          "mesh_ipv4",
+          "mesh_ipv6",
+          "country",
+          "configuration_revision",
+          "acknowledged_revision",
           "agent_version",
           "last_seen",
           "registered_at",
           "revoked_at"
         ],
         "properties": {
+          "acknowledged_revision": {
+            "type": "integer",
+            "format": "int64",
+            "maximum": 4294967295,
+            "minimum": 0
+          },
           "agent_version": {
             "type": "string"
+          },
+          "configuration_revision": {
+            "type": "integer",
+            "format": "int64",
+            "maximum": 4294967295,
+            "minimum": 1
+          },
+          "country": {
+            "type": [
+              "string",
+              "null"
+            ]
           },
           "id": {
             "type": "string"
@@ -605,6 +1384,12 @@
           "last_seen": {
             "type": "string",
             "format": "date-time"
+          },
+          "mesh_ipv4": {
+            "type": "string"
+          },
+          "mesh_ipv6": {
+            "type": "string"
           },
           "name": {
             "type": "string"
@@ -628,9 +1413,16 @@
         "required": [
           "name",
           "version",
-          "node_count"
+          "node_count",
+          "configuration_revision"
         ],
         "properties": {
+          "configuration_revision": {
+            "type": "integer",
+            "format": "int64",
+            "maximum": 4294967295,
+            "minimum": 1
+          },
           "name": {
             "type": "string"
           },
@@ -642,6 +1434,109 @@
           },
           "version": {
             "type": "string"
+          }
+        },
+        "additionalProperties": false
+      },
+      "PolicyDiagnostic": {
+        "type": "object",
+        "required": [
+          "rule_id",
+          "field",
+          "message"
+        ],
+        "properties": {
+          "field": {
+            "type": "string"
+          },
+          "message": {
+            "type": "string"
+          },
+          "rule_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "additionalProperties": false
+      },
+      "PolicySnapshot": {
+        "type": "object",
+        "required": [
+          "revision",
+          "network",
+          "policy",
+          "valid",
+          "diagnostics"
+        ],
+        "properties": {
+          "diagnostics": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/PolicyDiagnostic"
+            }
+          },
+          "network": {
+            "$ref": "#/components/schemas/MeshNetwork"
+          },
+          "policy": {
+            "$ref": "#/components/schemas/RoutingPolicy"
+          },
+          "revision": {
+            "type": "integer",
+            "format": "int64",
+            "maximum": 4294967295,
+            "minimum": 1
+          },
+          "valid": {
+            "type": "boolean"
+          }
+        },
+        "additionalProperties": false
+      },
+      "PreviewPolicyRequest": {
+        "type": "object",
+        "required": [
+          "policy",
+          "flow"
+        ],
+        "properties": {
+          "flow": {
+            "$ref": "#/components/schemas/FlowQuery"
+          },
+          "policy": {
+            "$ref": "#/components/schemas/RoutingPolicy"
+          }
+        },
+        "additionalProperties": false
+      },
+      "PreviewPolicyResponse": {
+        "type": "object",
+        "required": [
+          "revision",
+          "valid",
+          "diagnostics",
+          "decision"
+        ],
+        "properties": {
+          "decision": {
+            "$ref": "#/components/schemas/RouteDecision"
+          },
+          "diagnostics": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/PolicyDiagnostic"
+            }
+          },
+          "revision": {
+            "type": "integer",
+            "format": "int64",
+            "maximum": 4294967295,
+            "minimum": 1
+          },
+          "valid": {
+            "type": "boolean"
           }
         },
         "additionalProperties": false
@@ -668,6 +1563,202 @@
         "properties": {
           "node": {
             "$ref": "#/components/schemas/NodeSummary"
+          }
+        },
+        "additionalProperties": false
+      },
+      "RouteAction": {
+        "type": "object",
+        "required": [
+          "kind",
+          "via",
+          "exit_node_id"
+        ],
+        "properties": {
+          "exit_node_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "kind": {
+            "$ref": "#/components/schemas/RouteActionKind"
+          },
+          "via": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        },
+        "additionalProperties": false
+      },
+      "RouteActionKind": {
+        "type": "string",
+        "enum": [
+          "route",
+          "reject"
+        ]
+      },
+      "RouteDecision": {
+        "type": "object",
+        "required": [
+          "action",
+          "rule_id",
+          "path",
+          "exit_node_id",
+          "reason"
+        ],
+        "properties": {
+          "action": {
+            "$ref": "#/components/schemas/RouteDecisionAction"
+          },
+          "exit_node_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "path": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "reason": {
+            "type": "string"
+          },
+          "rule_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "additionalProperties": false
+      },
+      "RouteDecisionAction": {
+        "type": "string",
+        "enum": [
+          "route",
+          "reject",
+          "invalid"
+        ]
+      },
+      "RouteRule": {
+        "type": "object",
+        "required": [
+          "id",
+          "source",
+          "destination_scope",
+          "destination_any",
+          "action"
+        ],
+        "properties": {
+          "action": {
+            "$ref": "#/components/schemas/RouteAction"
+          },
+          "destination_any": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/DestinationSelector"
+            }
+          },
+          "destination_scope": {
+            "$ref": "#/components/schemas/DestinationScope"
+          },
+          "id": {
+            "type": "string"
+          },
+          "source": {
+            "$ref": "#/components/schemas/SourceSelector"
+          }
+        },
+        "additionalProperties": false
+      },
+      "RoutingPolicy": {
+        "type": "object",
+        "required": [
+          "default_action",
+          "rules"
+        ],
+        "properties": {
+          "default_action": {
+            "$ref": "#/components/schemas/DefaultRouteAction"
+          },
+          "rules": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/RouteRule"
+            }
+          }
+        },
+        "additionalProperties": false
+      },
+      "SavePolicyRequest": {
+        "type": "object",
+        "required": [
+          "expected_revision",
+          "policy"
+        ],
+        "properties": {
+          "expected_revision": {
+            "type": "integer",
+            "format": "int64",
+            "maximum": 4294967295,
+            "minimum": 1
+          },
+          "policy": {
+            "$ref": "#/components/schemas/RoutingPolicy"
+          }
+        },
+        "additionalProperties": false
+      },
+      "SetNodeCountryRequest": {
+        "type": "object",
+        "required": [
+          "node_id",
+          "country",
+          "expected_revision"
+        ],
+        "properties": {
+          "country": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "expected_revision": {
+            "type": "integer",
+            "format": "int64",
+            "maximum": 4294967295,
+            "minimum": 1
+          },
+          "node_id": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": false
+      },
+      "SourceSelector": {
+        "type": "object",
+        "description": "Empty dimensions are wildcards; dimensions combine with AND, members with OR.",
+        "required": [
+          "node_ids",
+          "countries"
+        ],
+        "properties": {
+          "countries": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "node_ids": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
           }
         },
         "additionalProperties": false

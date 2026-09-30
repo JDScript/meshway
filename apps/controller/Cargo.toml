@@ -13,6 +13,9 @@ axum.workspace = true
 chrono.workspace = true
 clap.workspace = true
 meshway-protocol = { path = "../../crates/protocol" }
+meshway-policy = { path = "../../crates/policy" }
+serde.workspace = true
+ipnet = "2.11"
 rusqlite.workspace = true
 thiserror = "2"
 serde_json.workspace = true
