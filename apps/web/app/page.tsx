@@ -1,0 +1,127 @@
+import { ArrowRightIcon } from "lucide-react"
+import Link from "next/link"
+
+import {
+  ControllerUnavailable,
+  DevelopmentNotice,
+  NoNodes,
+} from "@/components/controller-states"
+import { Milestones } from "@/components/milestones"
+import { NodesTable } from "@/components/nodes-table"
+import { PageHeader } from "@/components/page-header"
+import { RefreshButton } from "@/components/refresh-button"
+import { buttonVariants } from "@/components/ui/button"
+import {
+  Card,
+  CardAction,
+  CardContent,
+  CardDescription,
+  CardHeader,
+  CardTitle,
+} from "@/components/ui/card"
+import { controllerUrl, fetchNodes, fetchOverview } from "@/lib/controller"
+import { byLastSeenDesc, formatClock } from "@/lib/time"
+
+const RECENT_LIMIT = 5
+
+export default async function OverviewPage() {
+  const [overview, nodes] = await Promise.all([fetchOverview(), fetchNodes()])
+
+  return (
+    <>
+      <PageHeader
+        title="概览"
+        description="Controller 在本次请求时返回的状态，页面不缓存上报数据。"
+        actions={
+          <>
+            {overview.ok ? (
+              <span className="text-xs text-muted-foreground">
+                读取于 {formatClock(overview.fetchedAt)}
+              </span>
+            ) : null}
+            <RefreshButton />
+          </>
+        }
+      />
+
+      {overview.ok ? (
+        <>
+          <DevelopmentNotice />
+
+          <div className="grid gap-4 sm:grid-cols-2">
+            <Card className="[--card-spacing:--spacing(5)]">
+              <CardHeader>
+                <CardDescription className="text-sm">Controller</CardDescription>
+                <CardTitle className="text-xl font-semibold">
+                  {overview.data.name}
+                </CardTitle>
+              </CardHeader>
+              <CardContent>
+                <dl className="grid grid-cols-[auto_1fr] gap-x-6 gap-y-1.5 text-sm">
+                  <dt className="text-muted-foreground">版本</dt>
+                  <dd className="font-mono text-xs leading-5">
+                    {overview.data.version}
+                  </dd>
+                  <dt className="text-muted-foreground">地址</dt>
+                  <dd className="font-mono text-xs leading-5 break-all">
+                    {controllerUrl()}
+                  </dd>
+                </dl>
+              </CardContent>
+            </Card>
+
+            <Card className="[--card-spacing:--spacing(5)]">
+              <CardHeader>
+                <CardDescription className="text-sm">已记录节点</CardDescription>
+                <CardTitle className="font-mono text-3xl font-semibold tabular-nums">
+                  {overview.data.node_count}
+                </CardTitle>
+              </CardHeader>
+              <CardContent className="text-sm text-muted-foreground">
+                至少向 controller 上报过一次的节点数量，不是在线或已连通的节点数。
+              </CardContent>
+            </Card>
+          </div>
+
+          <section className="flex flex-col gap-4">
+            {!nodes.ok ? (
+              <ControllerUnavailable url={controllerUrl()} error={nodes.error} />
+            ) : nodes.data.nodes.length === 0 ? (
+              <NoNodes url={controllerUrl()} />
+            ) : (
+              <Card className="[--card-spacing:--spacing(5)]">
+                <CardHeader>
+                  <CardTitle className="text-base">最近上报</CardTitle>
+                  <CardDescription className="text-sm">
+                    按最后上报时间排列的前 {RECENT_LIMIT} 个节点。
+                  </CardDescription>
+                  <CardAction>
+                    <Link
+                      href="/nodes"
+                      className={buttonVariants({ variant: "ghost", size: "lg" })}
+                    >
+                      全部节点
+                      <ArrowRightIcon data-icon="inline-end" />
+                    </Link>
+                  </CardAction>
+                </CardHeader>
+                <CardContent className="px-1">
+                  <NodesTable
+                    nodes={[...nodes.data.nodes]
+                      .sort(byLastSeenDesc)
+                      .slice(0, RECENT_LIMIT)}
+                    fetchedAt={nodes.fetchedAt}
+                  />
+                </CardContent>
+              </Card>
+            )}
+          </section>
+        </>
+      ) : (
+        <ControllerUnavailable url={controllerUrl()} error={overview.error} />
+      )}
+
+      <Milestones />
+    </>
+  )
+}
