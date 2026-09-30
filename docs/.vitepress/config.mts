@@ -19,6 +19,7 @@ export default defineConfig({
         items: [
           { text: "开始使用", link: "/getting-started" },
           { text: "架构与设计状态", link: "/architecture" },
+          { text: "Web 产品与交互", link: "/web-product" },
         ],
       },
       {

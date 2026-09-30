@@ -66,6 +66,8 @@ cargo run --locked -p meshway-agent -- status --state .meshway/agent.json
 
 Web 默认从 `http://127.0.0.1:8420` 读取 controller；可通过 `MESHWAY_CONTROLLER_URL` 配置。
 
+控制台提供 dashboard、节点管理、路由规则编辑、逻辑拓扑与监控视图。规则在 Sheet 中编辑并应用到草稿，再统一预览 / 保存；草稿及其版本基准可在已登录界面的页面间恢复。团队入口和未测量指标的边界见 [Web 产品与交互](docs/web-product.md)。
+
 ## 当前范围
 
 当前控制面包含一次性令牌注册、SQLite 持久清单、双栈 mesh 地址分配、持续心跳、版本化配置、节点撤销，以及路由策略编辑、编译预览和条件保存。Agent 校验配置后私有、原子地保存，再发送版本与摘要确认。`last_seen` 表示最近联系 controller 的时间；配置 ACK 表示存储回执，与数据面生效分开记录。
@@ -84,6 +86,7 @@ CI 检查契约漂移、Rust 格式/Clippy/测试、TypeScript、前端 lint、�
 pnpm protocol:generate  # 修改 Rust 契约后更新 OpenAPI 和客户端
 pnpm protocol:check     # 逐文件比较重新生成的产物
 pnpm test:protocol     # SDK 校验及真实 controller 往返
+pnpm test:web          # 生成 schema 与路由草稿语义
 pnpm typecheck
 pnpm lint
 pnpm build
