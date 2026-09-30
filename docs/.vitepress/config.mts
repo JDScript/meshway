@@ -28,6 +28,8 @@ export default defineConfig({
           { text: "身份 DNS 与域名上下文", link: "/dns" },
           { text: "分类、授权与有序路径", link: "/routing" },
           { text: "多传输与故障切换", link: "/transports" },
+          { text: "邻接、建连与协议插件", link: "/transport-connections" },
+          { text: "Linux 传输实验", link: "/transport-lab" },
           { text: "加密边界与真实追踪", link: "/security-and-tracing" },
         ],
       },

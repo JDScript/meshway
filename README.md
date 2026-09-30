@@ -72,7 +72,9 @@ Web 默认从 `http://127.0.0.1:8420` 读取 controller；可通过 `MESHWAY_CON
 
 当前控制面包含一次性令牌注册、SQLite 持久清单、双栈 mesh 地址分配、持续心跳、版本化配置、节点撤销，以及路由策略编辑、编译预览和条件保存。Agent 校验配置后私有、原子地保存，再发送版本与摘要确认。`last_seen` 表示最近联系 controller 的时间；配置 ACK 表示存储回执，与数据面生效分开记录。
 
-路由按有序 first-match 选择；首版域名规则仅支持标签边界 suffix，另支持节点、IPv4/IPv6 CIDR 与地区条件，默认动作可选 direct/reject，初始为空策略 reject。路径预览展示逻辑规划，访问授权、真实转发和 trace 在后续数据面中实现。
+路由按有序 first-match 选择；首版域名规则仅支持标签边界 suffix，另支持节点、IPv4/IPv6 CIDR 与地区条件，默认动作可选 direct/reject，初始为空策略 reject。Web 路径预览展示逻辑规划，尚未驱动生产数据面。
+
+独立的 [Linux 传输实验](docs/transport-lab.md) 通过 `transport-lab` feature 启用：原生 UDP / TCP、VLESS TCP CONNECT、Noise 邻接认证和 E2E、精确有序路径授权、反向建连、固定 IPv4 对 TUN，以及隔离 Docker / iperf3 工具。实验密钥与配置独立于现有注册身份；真实逐跳 trace 和生产公钥 / 授权分发仍需后续集成。
 
 DNS、multi-transport 与加密转发的交付阶段在文档站维护。优先保留端到端加密与 `meshway trace`，系统 traceroute 作为后续增强；可信逐跳路由需要显式选择。
 

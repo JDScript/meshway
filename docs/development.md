@@ -105,6 +105,8 @@ Web 编辑基准 revision 仅在成功保存或显式重新读取后更新，预
 
 ## 里程碑 2：真实三节点转发与追踪
 
+独立 `transport-lab` 切片开始交付真实数据面：采用静态私有身份、精确有序路径授权、Noise E2E，以及原生 UDP / TCP 与 VLESS 适配。SHA 主动 dial LAX 后，LAX 复用已接受通道向 SHA 转发；Linux TUN 与 Docker / iperf3 工具用于实测。范围和可运行命令见 [Linux 传输实验](/transport-lab)。该实验尚未绑定 controller 节点身份，也不提供逐跳 trace。
+
 建立可重复的 `NYC → LAX → SHA` 测试环境，先选一种合适承载打通真实数据面，再扩展候选。
 
 - 业务流量实际经过 LAX，由 SHA 作为 mesh 目标或外部出口。
@@ -171,7 +173,7 @@ pnpm exec playwright install chromium
 ## 仍需冻结的设计决策
 
 1. mesh 公钥认证、密钥生命周期和 E2E 封装；首版是否额外交付 trusted-routing。
-2. 第一种数据面承载与传输能力接口。
+2. 由原生 UDP / TCP 和 VLESS 实验验证的传输接口如何接入生产配置、能力协商与多候选生命周期。
 3. 真实数据面域名上下文的来源、可信度、过期与歧义处理；首版 suffix-only、first-match 和默认动作已确定。
 4. DNS 平台顺序、FakeIP 是否首版必需、上下文关联策略。
 5. 路径与回程对象、既有流在更新 / 撤销 / 故障时的处理。
