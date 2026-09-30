@@ -25,4 +25,6 @@ jobs:
       - run: pnpm typecheck
       - run: pnpm lint
       - run: pnpm test:protocol
-      - run: pnpm build
+      - run: pnpm build:docs
+      - run: pnpm exec playwright install --with-deps chromium
+      - run: pnpm test:e2e

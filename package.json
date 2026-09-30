@@ -1,6 +1,7 @@
 {
   "name": "meshway",
   "private": true,
+  "type": "module",
   "packageManager": "pnpm@11.24.0",
   "engines": {
     "node": ">=24 <25",
@@ -15,7 +16,14 @@
     "protocol:generate": "pnpm --filter @meshway/control-client generate",
     "protocol:check": "pnpm --filter @meshway/control-client check:generated",
     "test:protocol": "pnpm --filter @meshway/control-client test",
-    "typecheck": "pnpm -r --if-present typecheck",
+    "test:e2e": "cargo build --workspace --locked && pnpm build:web && playwright test",
+    "typecheck": "pnpm -r --if-present typecheck && pnpm typecheck:e2e",
+    "typecheck:e2e": "tsc --noEmit -p tsconfig.e2e.json",
     "lint": "pnpm -r --if-present lint"
+  },
+  "devDependencies": {
+    "@playwright/test": "1.62.1",
+    "@types/node": "24.12.0",
+    "typescript": "5.9.3"
   }
 }
