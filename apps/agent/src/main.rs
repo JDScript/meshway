@@ -15,6 +15,12 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Command {
+    /// Isolated experimental carriers, static authorization and Linux TUN.
+    #[cfg(feature = "transport-lab")]
+    TransportLab {
+        #[command(subcommand)]
+        command: meshway_agent::transport_lab::Command,
+    },
     /// Persist a proposed credential, then enroll (safe to retry the same binding).
     Enroll {
         #[arg(long)]
@@ -60,6 +66,12 @@ async fn main() {
 
 async fn execute(command: Command) -> Result<(), Box<dyn std::error::Error>> {
     match command {
+        #[cfg(feature = "transport-lab")]
+        Command::TransportLab { command } => {
+            meshway_agent::transport_lab::execute(command)
+                .await
+                .map_err(|error| -> Box<dyn std::error::Error> { error })?;
+        }
         Command::Enroll {
             controller,
             token,

@@ -1,0 +1,21 @@
+[package]
+name = "meshway-dataplane"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+getrandom.workspace = true
+hex = "0.4.3"
+serde.workspace = true
+serde_json.workspace = true
+snow = "0.9.6"
+tokio = { workspace = true, features = ["io-util"] }
+x25519-dalek = { version = "2.0.1", features = ["static_secrets"] }
+zeroize = "1.8.2"
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["test-util"] }
+
+[lints]
+workspace = true

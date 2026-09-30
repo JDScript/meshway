@@ -11,3 +11,6 @@ mod test_local;
 
 mod state;
 pub use state::{Agent, AgentError, AgentStatus, SyncReceipt, status};
+
+#[cfg(feature = "transport-lab")]
+pub mod transport_lab;
