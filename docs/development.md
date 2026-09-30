@@ -1,8 +1,8 @@
 # 开发路线与验收
 
-本页区分当前基础切片与后续网络里程碑。顺序是推荐推进路径，不是已完成清单，也不代表发布时间承诺。
+本页记录已验证的注册基线、配置 / 路由切片及后续网络里程碑。后续顺序是推荐推进路径，不代表发布时间承诺。
 
-## 当前：注册与持久化切片（已实现）
+## 已验证基线：注册与持久化切片
 
 Rust controller / Agent、生成客户端与真实 API 驱动的 Web 已交付控制面凭据身份闭环。该切片属于里程碑 1 的已完成部分，下表记录其实现范围。
 
@@ -15,13 +15,13 @@ Rust controller / Agent、生成客户端与真实 API 驱动的 Web 已交付�
 | VitePress | 中文架构、约束、研究依据与开发说明 |
 | 数据面 | 尚未实现 TUN、DNS 接管、多跳转发、多传输、E2E 或 trace |
 
-2026-09-30 集成结果：**17 项 Rust 测试（8 项 Agent、7 项 controller、2 项生成适配器）、4 项 SDK 测试及浏览器端到端测试通过**，Rust fmt / Clippy、TypeScript 检查和代码生成漂移检查通过。端到端测试使用生产构建的 Next.js、真实 controller 与 Rust Agent，数据目录和端口独立创建。
+2026-09-30 注册基线集成结果：**17 项 Rust 测试（8 项 Agent、7 项 controller、2 项生成适配器）、4 项 SDK 测试及浏览器端到端测试通过**，Rust fmt / Clippy、TypeScript 检查和代码生成漂移检查通过。端到端测试使用生产构建的 Next.js、真实 controller 与 Rust Agent，数据目录和端口独立创建。这是该基线的历史证据，不是本轮扩展后的测试数量或通过声明。
 
 这一阶段验证 HTTP 控制面凭据身份及持久化，不建立 mesh 公钥认证或 E2E 会话。具体语义见[注册与持久化](/enrollment)。
 
 ## 注册与持久化验收矩阵
 
-以下是本次已通过的行为覆盖。证据来源：**Controller** 为 `apps/controller/tests/api.rs`，**Agent** 为 `apps/agent/tests/roundtrip.rs`，**SDK** 为 `packages/control-client/test/client.test.ts`，**E2E** 为 `e2e/control-plane.spec.ts`。
+以下是注册基线已通过的行为覆盖。证据来源：**Controller** 为 `apps/controller/tests/api.rs`，**Agent** 为 `apps/agent/tests/roundtrip.rs`，**SDK** 为 `packages/control-client/test/client.test.ts`，**E2E** 为 `e2e/control-plane.spec.ts`。本轮配置扩展后的回归结果另列于下节。
 
 | 场景 | 已通过的结果 | 证据 |
 | --- | --- | --- |
@@ -46,16 +46,62 @@ Rust controller / Agent、生成客户端与真实 API 驱动的 Web 已交付�
 
 撤销验收仅覆盖控制面凭据拒绝，不宣称切断活动加密流。`last_seen` 与可选服务存活检查均不充当隧道或 mesh 在线状态。
 
+## 配置与路由切片
+
+**当前状态：已实现并通过集成验收。** 首版域名 suffix-only、first-match、可配置 direct / reject 默认动作（初始 reject）已贯通 Rust 编译器、控制面、生成客户端、Agent 和 Web；exact / prefix 不在首版范围。源类型与编译器分别位于 `crates/protocol` 和 `crates/policy`。
+
+2026-09-30 集成及审查复验记录：
+
+| 检查批次 | 已通过结果 |
+| --- | --- |
+| 初轮 Rust workspace | 48 项测试 |
+| 独立审查修复后 | policy 26 项测试；受影响核心 30 项测试，分别记录，不与初轮数量相加 |
+| 当前 SDK | 5 项测试，`packages/control-client/test/client.test.ts` |
+| 当前 TypeScript | 完整工作区与 E2E 类型检查 |
+| 真实浏览器端到端 | 2 项 Playwright 测试：`e2e/control-plane.spec.ts` 与 `e2e/routing.spec.ts`；生产构建 Next.js、真实 controller 与 Rust Agent |
+
+两项独立审查问题均已修复并重测：IPv4-mapped IPv6 在分类前拒绝；文件写入明确区分 `NotCommitted` 与 `CommittedNotDurable`，每次 ACK 前重新确认文件和父目录持久性。
+
+### 新切片验收清单
+
+以下行为覆盖已通过；路径均为仓库内的实际测试证据：
+
+| 场景 | 已通过的行为 | 证据 |
+| --- | --- | --- |
+| 双栈分配与开发数据库升级 | 构造的 v1 数据库保留管理员、节点 / 凭据、令牌绑定及撤销；按稳定 ID 补地址，容量不足回滚，撤销不复用，换池拒绝 | `apps/controller/src/store/tests.rs` |
+| revision、策略 CAS 与回执 | 清单 / 国家 / 策略变化增加全局版本；幂等操作、心跳 / ACK 不增加；节点绑定、旧 / 未来版本及错误 digest 拒绝；无效策略不保存 | `apps/controller/src/store/tests.rs`、`apps/controller/tests/api.rs` |
+| 配置校验与缓存 | schema / 绑定 / digest / 网络 / 策略校验，拒绝旧版本与同版本变更；先保存再 ACK，409 竞争重试，重启后缓存稳定 | `apps/agent/tests/roundtrip.rs` |
+| 发布前文件失败 | `0300` 父目录在发布前打开失败；保留旧缓存且不 ACK，恢复权限后可重试 | `apps/agent/tests/roundtrip.rs` 的 `unreadable_private_parent_fails_before_publication_and_never_acks` |
+| 发布后持久性失败 | 测试专用故障注入产生 `CommittedNotDurable`：新文件已可见，内存保留已发布值；相同缓存重试及重启仍不 ACK，直到文件 / 目录同步恢复；凭据使用前也重新确认 | `crates/protocol/src/local/write.rs`、`apps/agent/src/state/durability_tests.rs` |
+| 策略规范化与求值 | suffix 根域 / 子域 / 标签边界、IDNA / 大小写 / 末尾点、双栈 CIDR；来源 OR / 跨维 AND、目标 OR、first-match、两种默认动作 | `crates/policy/src/tests.rs` |
+| 目标与必经路径 | IP 归属解析为 mesh，池内无有效归属不得互联网回退；节点 / IP / 国家一致性；非法引用、重复 hop、循环及非法出口拒绝，不跳过规则或 hop | `crates/policy/src/tests.rs` |
+| IPv4-mapped IPv6 审查修复 | 点分及十六进制形式在分类前均为 `invalid`；已分配、未分配、外部地址和显式节点上下文不能绕过拒绝或默认 direct | `crates/policy/src/tests.rs`；`e2e/routing.spec.ts` 覆盖三类映射目标 |
+| 类型与容量边界 | 策略 wire 的必填可空及不支持的域名种类；规则 / selector / via / 字节限制；地址耗尽及配置发布约束 | `crates/policy/src/tests.rs`、`apps/controller/src/store/tests.rs`、`apps/agent/tests/roundtrip.rs` |
+| 生成 SDK 真实往返 | 管理读取、策略 / 国家操作、预览与条件保存；运行时响应校验及类型化错误 | `packages/control-client/test/client.test.ts` |
+
+`e2e/routing.spec.ts` 使用独立数据目录和端口，验证以下真实服务闭环：
+
+1. 注册 NYC、LAX、SHA 三个 Agent，双栈地址各自唯一，管理员设置国家标签。
+2. 预览得到逻辑 `NYC → LAX → SHA`，IPv6 字面 mesh 地址解析到相同目标；域名 suffix 边界生效，IPv4-mapped IPv6 在默认 direct 前拒绝；预览不持久化。
+3. Web `/routing` 编辑、预览和保存草稿；匿名重放捕获到的同一保存 action 被拒绝；并发写入导致 `409` 时保留草稿。
+4. Agent 私有配置缓存存在后 controller 才接受回执；重复同步不改缓存 mtime，心跳和 ACK 不增加 revision。
+5. controller 重启后地址、策略与回执稳定。
+6. 撤销必经 LAX 后保留失效源策略，分发 deny-all 与诊断，Agent 保存并 ACK；UI 如实呈现失效状态，移动视口无水平溢出，流程无浏览器 JavaScript 错误。
+
+Web 编辑基准 revision 仅在成功保存或显式重新读取后更新，预览不自动推进 CAS；国家编辑也使用 CAS。“已校验保存”回执标签不表示在线或网络生效。上述升级证据来自测试数据库，不代表既有运行实例已执行升级。
+
+这些证据只能证明控制意图、落盘和回执。它们不证明 ACL 已授权、OS 网络已应用、物理路径可达、真实多跳或 trace。
+
 ## 里程碑 1：身份与策略基础
 
-本里程碑**部分完成**：持久清单、控制面注册、凭据权限、心跳与撤销已实现并验收。仍待实现：
+本里程碑的**控制意图切片已完成并验收**：持久清单、控制面注册 / 凭据权限 / 心跳 / 撤销、双栈地址、版本化配置与回执、逻辑策略和管理编辑闭环。整个身份与网络基础里程碑仍为**部分完成**，后续仍需：
 
 - mesh 公钥绑定、对等节点认证与密钥生命周期，分离可信身份和观测标签。
-- mesh 地址、版本化配置及分发，以及未来数据面会话的撤销传播。
-- 分类规则、独立授权、有序路径、出口与传输能力的类型模型。
-- 编译期拒绝循环、非法节点、缺失能力与不可满足路径。
+- 数据面会话的配置应用、撤销传播和密钥更新。
+- 独立授权及传输能力模型，将逻辑意图连接到实际数据面。
+- 物理邻接、传输能力和不可满足路径的运行期诊断。
 
-**后续验收重点：** mesh 身份、地址 / 配置分发及策略验证，无效策略产生可解释的拒绝，Web 与 Agent 使用同一契约。
+**验收边界：** 已通过的配置回执与逻辑预览不完成 mesh 公钥身份、ACL 或网络会话；这些能力需独立实现与验收。
 
 ## 里程碑 2：真实三节点转发与追踪
 
@@ -126,9 +172,9 @@ pnpm exec playwright install chromium
 
 1. mesh 公钥认证、密钥生命周期和 E2E 封装；首版是否额外交付 trusted-routing。
 2. 第一种数据面承载与传输能力接口。
-3. 域名 prefix 精确语义、无匹配 / 域名未知时的行为。
+3. 真实数据面域名上下文的来源、可信度、过期与歧义处理；首版 suffix-only、first-match 和默认动作已确定。
 4. DNS 平台顺序、FakeIP 是否首版必需、上下文关联策略。
 5. 路径与回程对象、既有流在更新 / 撤销 / 故障时的处理。
-6. 版本化配置分发、后续兼容窗口与高可用部署模型；本切片已选择单 controller SQLite，远程 TLS 由部署层负责。
+6. 后续配置兼容窗口、协商 / 废弃流程与高可用部署模型；本轮单 controller SQLite 增量升级仅覆盖现有开发基线，远程 TLS 仍由部署层负责。
 
 每个决定都应更新对应设计页、契约与验收，不应仅在 UI 中添加一个尚无实现的开关。

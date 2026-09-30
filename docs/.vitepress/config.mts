@@ -34,6 +34,7 @@ export default defineConfig({
         text: "实现与研究",
         items: [
           { text: "控制面注册与持久化", link: "/enrollment" },
+          { text: "地址与配置分发", link: "/configuration" },
           { text: "协议与类型安全", link: "/protocol" },
           { text: "开发路线与验收", link: "/development" },
           { text: "参考源码", link: "/references" },

@@ -1,9 +1,9 @@
 # 开始使用
 
-本切片的联调路径是：controller 创建持久状态 → 管理员签发一次性令牌 → Agent 注册并保存身份 → 持续心跳 → Web 查看与撤销。VitePress 独立提供中文设计文档。
+基础联调路径是：controller 创建持久状态 → 管理员签发一次性令牌 → Agent 注册并保存身份 → 持续心跳 → Web 查看与撤销。本轮在此基础上增加地址分配、配置同步 / 回执和策略预览 / 条件保存。VitePress 独立提供中文设计文档。
 
 ::: info 已验证的控制面流程
-下面的注册、心跳、Web 登录、重启持久化和撤销流程已通过真实服务集成测试。注册和心跳建立的是控制面凭据身份，不表示 mesh 隧道或在线状态。
+注册、心跳、Web 登录、重启持久化和撤销，以及新增双栈地址、策略编辑和配置回执均已通过真实服务集成测试。注册建立的是控制面凭据身份；地址、心跳和配置 ACK 都不表示 mesh 隧道或在线状态。
 :::
 
 ## 准备环境
@@ -30,6 +30,12 @@ cargo run -p meshway-controller -- serve \
 
 首次启动在私有数据目录创建 `controller.sqlite3`、`admin.token` 与 `controller.lock`；常规启动日志不输出秘密。同一数据目录只允许一个 controller 使用；重启使用同一个 `--data-dir` 保留管理员凭据、节点、已消费令牌及撤销状态。
 
+### 地址池与开发数据库升级
+
+新网络默认采用 `100.96.0.0/16` 与首次生成后持久保存的 ULA IPv6 `/64`。首次创建网络配置时，可以在 `serve` 后传入 `--ipv4-prefix` 和 `--ipv6-prefix`，例如 `--ipv4-prefix 100.96.0.0/16 --ipv6-prefix fd12:3456:789a::/64`。IPv4 必须是规范网络前缀且有可用主机地址；IPv6 要求 `fd00::/8` 内规范 `/64`。
+
+原注册基线的 v1 SQLite 数据库进行事务增量升级，保留管理员凭据、节点身份、令牌绑定和撤销记录，按稳定 ID 顺序为既有节点分配地址；无需清空目录或重新注册。已有地址池的数据库拒绝不同前缀参数，不会自动重新编号。范围见[开发数据库升级](/configuration#当前开发数据库升级)。
+
 在另一终端显式读取管理员令牌：
 
 ```sh
@@ -45,7 +51,7 @@ curl --fail-with-body \
   http://127.0.0.1:8420/api/v1/overview
 ```
 
-响应为 `{ name, version, node_count }`。空数据库的数量为 `0`；此后统计所有持久化节点，包括已撤销节点。
+响应包含 `name`、`version`、`node_count`；本轮增加当前全局 `configuration_revision`。空数据库的节点数量为 `0`；此后统计所有持久化节点，包括已撤销节点。
 
 ## 2. 创建一次性注册令牌
 
@@ -79,7 +85,7 @@ Agent 在请求前原子保存随机节点凭据，注册后复用这一私有�
 cargo run -p meshway-agent -- heartbeat --state .meshway/agent.json
 ```
 
-持续发送心跳：
+持续发送心跳并同步配置：
 
 ```sh
 cargo run -p meshway-agent -- run \
@@ -87,7 +93,7 @@ cargo run -p meshway-agent -- run \
   --interval-seconds 15
 ```
 
-`run` 立即发送首次心跳，成功后按给定间隔继续；临时故障从 1 秒开始指数退避，最多 60 秒，成功后重置。HTTP `401` / `403` 会退出。退出后使用同一状态文件重启继续关联同一个节点。
+`run` 立即开始一轮工作，在心跳后执行配置同步，成功后按给定间隔继续。临时故障从 1 秒开始指数退避，最多 60 秒，成功后重置。HTTP `401` / `403` 和本地文件错误会退出；文件恢复后可另行重试。退出后使用同一状态文件重启继续关联同一个节点。
 
 查看本地注册状态而不暴露凭据：
 
@@ -95,7 +101,21 @@ cargo run -p meshway-agent -- run \
 cargo run -p meshway-agent -- status --state .meshway/agent.json
 ```
 
-输出中的 `pending` / `enrolled` 是本地注册进度，`status` 不发送连通性探测；`run` 也尚不建立数据面隧道。
+输出中的 `pending` / `enrolled` 是本地注册进度。本轮 `status` 增加 `stored_revision`、`stored_digest` 和已缓存的双栈地址；无缓存时版本为 `0`，其余缓存字段为 `null`。它只读本地文件，不向 controller 查询最新 ACK，也不发送连通性探测。
+
+### 显式同步配置
+
+发送一次配置同步：
+
+```sh
+cargo run -p meshway-agent -- sync --state .meshway/agent.json
+```
+
+Agent 通过生成客户端读取自身配置，验证绑定、schema、摘要、网络和策略，私有原子发布并确认文件和父目录 fsync 成功后再 ACK 当前 revision / digest。默认配置路径是 `.meshway/agent.json.config.json`，即 `<state>.config.json`，v1 身份文件继续使用。摘要未变时不重写缓存，但每次 ACK（包括重启后）仍重新确认持久性；凭据使用前也执行确认。
+
+成功输出的 `stored_revision` 和摘要表示本次已保存配置且收到匹配的 ACK 响应；本地 `status` 只表示可见缓存，不能推出持久性已确认、服务端回执成功或仍为最新。更旧版本、同版本不同摘要及损坏快照在发布前被拒绝，保留原缓存且不 ACK。
+
+写入失败按提交阶段区分：`NotCommitted` 保留旧文件；`CommittedNotDurable` 表示新文件已经可见、崩溃持久性未确认，Agent 内存保留已发布值但返回错误、不 ACK。不要通过删除身份或缓存“重试”；恢复文件条件后重新运行命令，由文件和目录同步成功后继续。详情见[同步与回执](/configuration#校验、私有落盘、再-ack)。这一步不会创建 TUN、应用 OS 网络或建立隧道。
 
 ## 4. 在 Web 查看并撤销
 
@@ -115,9 +135,20 @@ curl --fail-with-body \
   http://127.0.0.1:8420/api/v1/nodes
 ```
 
-列表为 `{ nodes: [...] }`，字段包括 `id`、`name`、`agent_version`、`registered_at`、`last_seen` 与 `revoked_at`。时间采用 RFC 3339；尚未撤销时 `revoked_at` 为 `null`。`last_seen` 不能标成连通性探测结果。
+列表为 `{ nodes: [...] }`，字段包括身份、版本、注册 / 联系 / 撤销时间，本轮扩展双栈地址、必填可空 `country`、当前配置版本及节点回执版本。时间采用 RFC 3339；尚未撤销时 `revoked_at` 为 `null`。`last_seen` 不能标成连通性探测结果，回执也不能标成网络已应用。
 
 在 Web 撤销测试节点，或向 `POST /api/v1/nodes/revoke` 发送管理员 bearer 及 `{ "node_id": "<实际节点 ID>" }`。此后节点仍保留在清单中，其心跳返回 HTTP `403`。登出后，清单读取及创建令牌、撤销等 server action 都受到认证检查。
+
+### 国家与策略管理
+
+Web 节点清单可通过 CAS 编辑国家元数据；配置列的“已校验保存”表示当前版本的回执，不表示在线或网络已应用。打开 `http://localhost:3000/routing` 使用引导式策略编辑器。使用真实节点 ID，来源国家从清单派生；预览互联网国家只是显式提示，没有自动 GeoIP。
+
+1. 页面显示只读网络前缀、当前策略及草稿基准 revision；初始策略为空规则、默认 `reject`，可选择 direct / reject。
+2. 编辑 suffix-only、CIDR / 节点 / 国家条件及有序 hop，选择来源与预览目标，点击“编译预览”查看匹配规则、逻辑路径和诊断。预览不保存、不推进草稿 CAS 基准，不发 DNS 请求，也不测试网络连通。IPv4-mapped IPv6 输入返回 `invalid`，不会隐式转换后进入默认动作。
+3. 点击“保存策略”，请求携带草稿的 `expected_revision`。策略非法返回 `422`；清单、国家或策略已变化导致 `409` 时保留草稿。基准仅在保存成功或显式“重新读取”后更新；较新的预览结果不能自动覆盖基准。
+4. 让 Agent 同步后查看回执版本。撤销使引用非法时，管理端保留原策略及诊断，节点收到整体 deny-all 有效策略。
+
+这一浏览器闭环和匿名保存 action 重放拒绝已由 `e2e/routing.spec.ts` 验证。HTTP 路由和生成请求类型见[协议页](/protocol#配置与策略-api)。
 
 ## 5. 启动文档
 
@@ -146,7 +177,7 @@ pnpm exec playwright install chromium
 pnpm test:e2e
 ```
 
-`test:e2e` 构建 Rust 与 Next.js，使用临时数据目录和端口启动真实服务，运行 `e2e/control-plane.spec.ts`。已通过的集成覆盖：
+`test:e2e` 构建 Rust 与 Next.js，使用临时数据目录和端口启动真实服务。当前 2 项测试均已通过：`e2e/control-plane.spec.ts` 与 `e2e/routing.spec.ts`。注册流程覆盖：
 
 1. 无管理员凭据不能读取清单或执行管理写入；合法登录后可签发限时令牌。
 2. Agent 注册、心跳与 Web 使用同一个服务端节点 ID，状态文件重启后继续复用。
@@ -155,4 +186,6 @@ pnpm test:e2e
 5. 关闭 controller 后，Web 显示连接失败；登出后受保护页面跳转登录。
 6. 登录 cookie 为 HttpOnly / Strict，页面不包含管理员秘密；移动视口无水平溢出，流程无浏览器 JavaScript 错误。
 
-重启后撤销 / 令牌消费的持久化、权限隔离、并发消费、响应丢失和本地文件失败由 Rust / SDK 测试进一步覆盖，见[完整验收矩阵](/development#注册与持久化验收矩阵)。非本地部署需要独立部署层 TLS，详见[部署边界](/enrollment#本地与远程部署)。网络转发属于后续里程碑。
+配置 / 路由测试覆盖三 Agent 唯一双栈地址和国家标签、逻辑多跳及 suffix / IPv6 目标预览、草稿保存 / 匿名拒绝 / 409 保留、私有缓存先于 ACK、重复同步 mtime 不变、心跳 / ACK 不增版、controller 重启后地址 / 策略 / 回执稳定，以及撤销必经节点后的源策略保留和 deny-all 配置回执。
+
+数据库升级、权限隔离、并发消费、响应丢失、映射地址拒绝和文件发布 / 持久性失败由 Rust / SDK 测试进一步覆盖，见[注册验收矩阵](/development#注册与持久化验收矩阵)与[配置验收证据](/development#新切片验收清单)。这些测试使用独立数据目录；既有运行实例的升级需由其实际启动执行。非本地部署需要独立部署层 TLS，详见[部署边界](/enrollment#本地与远程部署)。网络转发属于后续里程碑。

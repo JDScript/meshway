@@ -18,7 +18,7 @@ hero:
 
 features:
   - title: 身份与域名上下文
-    details: 面向节点身份、来源位置及域名 / CIDR 分类，区分节点发现 DNS 与互联网域名分流。
+    details: 面向节点身份、来源国家及域名后缀 / 双栈 CIDR 分类，区分节点发现 DNS 与互联网域名分流。
     link: /dns
     linkText: DNS 设计
   - title: 显式路径，多种承载
@@ -31,10 +31,14 @@ features:
     linkText: 安全边界
 ---
 
-## 当前阶段：控制面注册与持久化
+## 当前阶段：从持久身份到配置与路由意图
 
 Meshway 已实现 **单 controller SQLite 持久化、一次性注册令牌、Agent 持久凭据与心跳、Web 管理员登录及撤销**的纵向切片。Rust / SDK 行为测试、生成漂移检查，以及生产构建 Next.js + 真实 controller + Rust Agent 的浏览器端到端测试已通过。
 
-**注册与心跳不等于 mesh 连通。** 本切片的身份是 HTTP 控制面凭据身份；mesh 公钥认证、E2E 握手、TUN、MagicDNS、有序转发、多传输与 `meshway trace` 仍待实现。最近联系时间不能作为在线或隧道健康状态。
+**配置与路由控制意图切片也已实现并验证：** 持久双栈 mesh IPAM、保留现有数据的开发数据库增量升级、带摘要的版本化配置与私有缓存 / ACK、纯 Rust 策略编译，以及 `/routing` 引导式编辑 / 预览 / 条件保存。详见[地址与配置分发](/configuration)。
 
-文档区分 **已确认**的用户产品方向、**当前实现选择**、**建议默认**、**待决策**与有源码及验收依据的**已实现**。SQLite 与令牌协议属于本切片的实现选择，不表示用户逐项确认了所有协议细节。详见[注册与持久化](/enrollment)、[架构状态表](/architecture#设计状态)和[开发路线](/development)。
+首版[路由语义](/routing)已修订为 **域名 suffix-only、first-match、可配置 direct / reject 默认动作（初始 reject）**。国家为管理员元数据，互联网目的国家是预览提示；没有自动 DNS / GeoIP 查询。
+
+**注册、地址分配与配置回执不等于 mesh 连通。** 当前身份仍是 HTTP 控制面 bearer 身份；mesh 公钥认证、E2E 握手、TUN、MagicDNS、有序转发、多传输与 `meshway trace` 仍待实现。逻辑预览不是实测路径，最近联系时间不是隧道健康状态。
+
+本轮已通过独立审查修复后的 policy 26 项与受影响核心 30 项测试、SDK 5 项测试、完整 TypeScript 检查及 2 项真实服务 Playwright 测试。测试分组、文件发布失败语义和覆盖范围见[开发路线](/development#配置与路由切片)。里程碑 1 的控制意图部分已完成，mesh 公钥身份、ACL 与网络数据面仍待实现。
