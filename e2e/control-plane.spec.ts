@@ -56,6 +56,7 @@ test("administrator session, enrollment, durable identity and revocation cross t
       await page.getByRole("button", { name: "登录", exact: true }).click();
       await expect(page).not.toHaveURL(/\/login(?:\?|$)/);
       expect(await page.content()).not.toContain(adminToken);
+      await expect(page.locator("main")).not.toContainText(/NaN|Infinity/);
       expect(await page.evaluate(() => document.cookie)).not.toContain(adminToken);
       const sessionCookies = (await page.context().cookies()).filter((cookie) => cookie.httpOnly);
       expect(sessionCookies.length).toBeGreaterThan(0);
@@ -146,9 +147,11 @@ test("administrator session, enrollment, durable identity and revocation cross t
     });
 
     await test.step("Web revocation rejects the agent credential and logout closes the browser session", async () => {
-      await page.getByRole("row").filter({ hasText: nodeName }).getByRole("button", { name: /撤销/ }).click();
+      await page.getByRole("row").filter({ hasText: nodeName }).getByRole("button", { name: `节点 ${nodeName} 的操作`, exact: true }).click();
+      await page.getByRole("menuitem", { name: "撤销节点…", exact: true }).click();
       const confirmation = page.getByRole("alertdialog");
-      if (await confirmation.isVisible()) await confirmation.getByRole("button", { name: /撤销/ }).click();
+      await confirmation.getByRole("button", { name: "确认撤销", exact: true }).click();
+      await expect(confirmation).not.toBeVisible();
       await expect(page.getByRole("row").filter({ hasText: nodeName })).toContainText("已撤销");
       const node = (await listNodes(controllerUrl, adminToken)).nodes.find((node) => node.id === nodeId);
       expect(node?.revoked_at).toBeTruthy();
@@ -156,7 +159,9 @@ test("administrator session, enrollment, durable identity and revocation cross t
         .rejects.toThrow(/401|403|revoked|forbidden|unauthorized/i);
       await page.setViewportSize({ width: 390, height: 844 });
       expect(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth)).toBe(false);
-      await page.getByRole("button", { name: "退出登录", exact: true }).click();
+      await page.getByRole("button", { name: "切换侧边栏", exact: true }).click();
+      await page.getByRole("button", { name: "账户菜单", exact: true }).click();
+      await page.getByRole("menuitem", { name: "退出登录", exact: true }).click();
       await expect(page).toHaveURL(/\/login(?:\?|$)/);
       await page.goto(`${webUrl}/nodes`);
       await expect(page).toHaveURL(/\/login(?:\?|$)/);

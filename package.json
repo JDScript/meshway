@@ -16,6 +16,7 @@
     "protocol:generate": "pnpm --filter @meshway/control-client generate",
     "protocol:check": "pnpm --filter @meshway/control-client check:generated",
     "test:protocol": "pnpm --filter @meshway/control-client test",
+    "test:web": "pnpm --filter @meshway/web test",
     "test:e2e": "cargo build --workspace --locked && pnpm build:web && playwright test",
     "typecheck": "pnpm -r --if-present typecheck && pnpm typecheck:e2e",
     "typecheck:e2e": "tsc --noEmit -p tsconfig.e2e.json",

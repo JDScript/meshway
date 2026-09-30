@@ -15,6 +15,7 @@ import {
   type RoutingPolicy,
 } from "../packages/control-client/src/index.ts";
 import { executable, root, run, service, unusedPort } from "./harness.ts";
+import { discardPolicyDraft, editRuleId, selectNode } from "./web-actions.ts";
 
 function named(nodes: NodeSummary[], name: string): NodeSummary {
   const node = nodes.find((node) => node.name === name);
@@ -131,14 +132,56 @@ test("routing intent, conditional editing and persisted configuration receipts c
     await page.getByRole("button", { name: "登录", exact: true }).click();
     await expect(page).not.toHaveURL(/\/login(?:\?|$)/);
 
+    await test.step("new topology and monitoring views are protected and retain truthful path snapshots", async () => {
+      const stranger = await anonymous.newPage();
+      try {
+        for (const path of ["/topology", "/monitoring"]) {
+          await stranger.goto(`${webUrl}${path}`);
+          await expect(stranger).toHaveURL(/\/login(?:\?|$)/);
+          expect(await stranger.content()).not.toContain(nyc.id);
+        }
+      } finally { await stranger.close(); }
+
+      await page.goto(`${webUrl}/topology`);
+      await selectNode(page, "preview-source", /nyc/);
+      await selectNode(page, "preview-target", /sha/);
+      await page.getByRole("button", { name: "规划路径", exact: true }).click();
+      const path = page.getByRole("list", { name: "规划路径", exact: true });
+      await expect(path).toContainText("lax");
+      const steps = await path.getByRole("listitem").allTextContents();
+      expect(steps).toHaveLength(3);
+      expect(steps[0]).toContain("nyc");
+      expect(steps[1]).toContain("lax");
+      expect(steps[2]).toContain("sha");
+      await selectNode(page, "preview-target", /^外部目标（域名 \/ IP）$/);
+      await page.getByLabel("域名", { exact: true }).fill("allowed.example.cn");
+      await page.getByRole("button", { name: "规划路径", exact: true }).click();
+      await expect(page.getByTestId("route-preview")).toContainText("allowed.example.cn");
+      await page.getByLabel("域名", { exact: true }).fill("denied.invalid");
+      await expect(page.getByTestId("route-preview")).toContainText("流量已修改");
+      await expect(page.getByTestId("route-preview")).toContainText("allowed.example.cn");
+      await expect(page.getByTestId("route-preview")).not.toContainText("denied.invalid");
+      expect(await page.content()).not.toContain(admin);
+    });
+
     await test.step("the typed editor previews a draft, then saves it under its original revision", async () => {
       await page.goto(`${webUrl}/routing`);
       await expect(page.getByTestId("policy-editor")).toBeVisible();
-      await page.getByLabel("规则 ID", { exact: true }).first().fill("nyc-to-sha-edited");
-      await page.getByTestId("preview-source").selectOption(nyc.id);
-      await page.getByTestId("preview-target").selectOption(sha.id);
+      await expect(page.getByRole("button", { name: "保存策略", exact: true })).toBeDisabled();
+      await expect(page.getByTestId("policy-rule")).toHaveCount(2);
+      await expect(page.getByTestId("policy-rule").getByText("已修改", { exact: true })).toHaveCount(0);
+      await editRuleId(page, "nyc-to-sha", "nyc-to-sha-edited");
+      await selectNode(page, "preview-source", /nyc/);
+      await selectNode(page, "preview-target", /sha/);
       await page.getByRole("button", { name: "编译预览", exact: true }).click();
       await expect(page.getByTestId("route-preview")).toContainText("lax");
+      await selectNode(page, "preview-target", /^外部目标（域名 \/ IP）$/);
+      await page.getByLabel("域名", { exact: true }).fill("allowed.example.cn");
+      await page.getByRole("button", { name: "编译预览", exact: true }).click();
+      await expect(page.getByTestId("route-preview")).toContainText("allowed.example.cn");
+      await page.getByLabel("域名", { exact: true }).fill("denied.invalid");
+      await expect(page.getByTestId("route-preview")).toContainText("allowed.example.cn");
+      await expect(page.getByTestId("route-preview")).not.toContainText("denied.invalid");
       expect((await getPolicy(controllerUrl, admin)).policy.rules[0]?.id).toBe("nyc-to-sha");
       const mutation = page.waitForRequest((request) =>
         request.method() === "POST" && new URL(request.url()).pathname === "/routing",
@@ -147,6 +190,10 @@ test("routing intent, conditional editing and persisted configuration receipts c
       const request = await mutation;
       await expect.poll(async () => (await getPolicy(controllerUrl, admin)).policy.rules[0]?.id)
         .toBe("nyc-to-sha-edited");
+      await expect(page.getByTestId("policy-save-status")).toContainText("已保存");
+      await expect(page.getByRole("button", { name: "保存策略", exact: true })).toBeDisabled();
+      await expect(page.getByTestId("policy-rule").getByText("已修改", { exact: true })).toHaveCount(0);
+      await expect(page.getByTestId("policy-editor")).not.toContainText("保存前需要载入最新版本");
       const headers = Object.fromEntries(Object.entries(await request.allHeaders()).filter(([name]) =>
         ["content-type", "next-action", "next-router-state-tree"].includes(name.toLowerCase()),
       ));
@@ -159,20 +206,51 @@ test("routing intent, conditional editing and persisted configuration receipts c
       expect(await page.content()).not.toContain(admin);
     });
 
-    await test.step("a competing writer causes a conflict without destroying the browser draft", async () => {
+    await test.step("a completed save expires deletion undo before rule keys can be reused", async () => {
+      const original = await getPolicy(controllerUrl, admin);
+      await page.getByRole("button", { name: "规则 nyc-to-sha-edited 的操作", exact: true }).click();
+      await page.getByRole("menuitem", { name: "删除", exact: true }).click();
+      await expect(page.getByRole("button", { name: "撤销", exact: true })).toBeVisible();
+      await page.getByRole("button", { name: "保存策略", exact: true }).click();
+      await expect.poll(async () => (await getPolicy(controllerUrl, admin)).policy.rules.length).toBe(1);
+      await expect(page.getByTestId("policy-save-status")).toContainText("已保存");
+      await expect(page.getByRole("button", { name: "撤销", exact: true })).not.toBeVisible();
+      const saved = await getPolicy(controllerUrl, admin);
+      expect(saved.policy.rules[0]?.id).toBe("us-to-cn");
+      await savePolicy(controllerUrl, admin, { expected_revision: saved.revision, policy: original.policy });
+    });
+
+    await test.step("Cmd-K, history and cancelled reload preserve the draft and its original CAS base", async () => {
       // Reload once so the editor is unambiguously based on the successful save.
       await page.goto(`${webUrl}/routing`);
       const latest = await getPolicy(controllerUrl, admin);
+      const baseLabel = await page.getByTestId("policy-base-revision").innerText();
+      await editRuleId(page, "nyc-to-sha-edited", "draft-survives-conflict");
+      await page.keyboard.press("ControlOrMeta+k");
+      await page.getByRole("option", { name: "节点", exact: true }).click();
+      await expect(page).toHaveURL(`${webUrl}/nodes`);
+
+      const dialogPromise = page.waitForEvent("dialog");
+      const reload = page.reload({ timeout: 10_000 }).catch(() => null);
+      const unload = await dialogPromise;
+      expect(unload.type()).toBe("beforeunload");
+      await unload.dismiss();
+      await reload;
+      await expect(page).toHaveURL(`${webUrl}/nodes`);
+
       await savePolicy(controllerUrl, admin, {
         expected_revision: latest.revision,
         policy: { ...latest.policy, default_action: "direct" },
       });
-      const id = page.getByLabel("规则 ID", { exact: true }).first();
-      await id.fill("draft-survives-conflict");
+      await page.goBack();
+      await expect(page).toHaveURL(`${webUrl}/routing`);
+      await expect(page.getByTestId("policy-rule").filter({ hasText: "draft-survives-conflict" })).toBeVisible();
+      await expect(page.getByTestId("policy-base-revision")).toHaveText(baseLabel);
       await page.getByRole("button", { name: "保存策略", exact: true }).click();
       await expect(page.getByTestId("policy-editor")).toContainText(/409|冲突|版本.*(变化|更新)/);
-      await expect(id).toHaveValue("draft-survives-conflict");
+      await expect(page.getByTestId("policy-rule").filter({ hasText: "draft-survives-conflict" })).toBeVisible();
       expect((await getPolicy(controllerUrl, admin)).policy.rules[0]?.id).toBe("nyc-to-sha-edited");
+      await discardPolicyDraft(page);
     });
 
     const state = join(temporary, "nyc.json");

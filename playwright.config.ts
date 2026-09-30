@@ -11,6 +11,8 @@ export default defineConfig({
   reporter: "list",
   use: {
     browserName: "chromium",
+    actionTimeout: 15_000,
+    navigationTimeout: 30_000,
     viewport: { width: 1440, height: 1000 },
     screenshot: "only-on-failure",
   },
