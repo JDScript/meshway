@@ -1,0 +1,21 @@
+{
+  "name": "meshway",
+  "private": true,
+  "packageManager": "pnpm@11.24.0",
+  "engines": {
+    "node": ">=24 <25",
+    "pnpm": ">=11 <12"
+  },
+  "scripts": {
+    "dev:web": "pnpm --filter @meshway/web dev",
+    "dev:docs": "pnpm --filter @meshway/docs dev",
+    "build:web": "pnpm --filter @meshway/web build",
+    "build:docs": "pnpm --filter @meshway/docs build",
+    "build": "pnpm build:web && pnpm build:docs",
+    "protocol:generate": "pnpm --filter @meshway/control-client generate",
+    "protocol:check": "pnpm --filter @meshway/control-client check:generated",
+    "test:protocol": "pnpm --filter @meshway/control-client test",
+    "typecheck": "pnpm -r --if-present typecheck",
+    "lint": "pnpm -r --if-present lint"
+  }
+}

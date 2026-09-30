@@ -1,0 +1,16 @@
+/target/
+**/node_modules/
+**/.next/
+**/out/
+**/dist/
+**/.vitepress/cache/
+**/.vitepress/dist/
+**/*.tsbuildinfo
+.DS_Store
+.env
+.env.*
+!.env.example
+
+# Independent upstream checkouts; retain the reproducible research index.
+/references/*
+!/references/README.md

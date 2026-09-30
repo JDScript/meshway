@@ -1,0 +1,8 @@
+packages:
+  - apps/web
+  - docs
+  - packages/*
+
+allowBuilds:
+  esbuild: true
+  sharp: true

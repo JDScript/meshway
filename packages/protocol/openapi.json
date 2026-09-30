@@ -1,0 +1,233 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "Meshway development control API",
+    "description": "In-memory development process reporting only. Reports are unauthenticated and are not secure enrollment, mesh membership, connectivity, or tunnel health. State resets on restart.",
+    "version": "0.1.0"
+  },
+  "paths": {
+    "/api/v1/agents/report": {
+      "post": {
+        "summary": "Report a development process. No authentication or secure enrollment exists yet.",
+        "operationId": "reportAgent",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AgentReport"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Report stored or updated",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReportResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid JSON or report fields",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "Report exceeds 8192 bytes",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "415": {
+            "description": "Content-Type must be application/json",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Development node capacity reached",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/nodes": {
+      "get": {
+        "operationId": "listNodes",
+        "responses": {
+          "200": {
+            "description": "Received process reports, sorted by node ID",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NodeList"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/overview": {
+      "get": {
+        "operationId": "getOverview",
+        "responses": {
+          "200": {
+            "description": "Controller identity and received report count",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Overview"
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "AgentReport": {
+        "type": "object",
+        "description": "Unauthenticated development process reporting; this is not secure enrollment.",
+        "required": [
+          "node_id",
+          "name",
+          "agent_version"
+        ],
+        "properties": {
+          "agent_version": {
+            "type": "string",
+            "maxLength": 64,
+            "minLength": 1,
+            "pattern": "\\S"
+          },
+          "name": {
+            "type": "string",
+            "maxLength": 128,
+            "minLength": 1,
+            "pattern": "\\S"
+          },
+          "node_id": {
+            "type": "string",
+            "maxLength": 128,
+            "minLength": 1,
+            "pattern": "\\S"
+          }
+        },
+        "additionalProperties": false
+      },
+      "ErrorResponse": {
+        "type": "object",
+        "required": [
+          "message"
+        ],
+        "properties": {
+          "message": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": false
+      },
+      "NodeList": {
+        "type": "object",
+        "required": [
+          "nodes"
+        ],
+        "properties": {
+          "nodes": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/NodeSummary"
+            }
+          }
+        },
+        "additionalProperties": false
+      },
+      "NodeSummary": {
+        "type": "object",
+        "description": "A process report received by this development controller, not tunnel status.",
+        "required": [
+          "id",
+          "name",
+          "agent_version",
+          "last_seen"
+        ],
+        "properties": {
+          "agent_version": {
+            "type": "string"
+          },
+          "id": {
+            "type": "string"
+          },
+          "last_seen": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "name": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": false
+      },
+      "Overview": {
+        "type": "object",
+        "required": [
+          "name",
+          "version",
+          "node_count"
+        ],
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "node_count": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          },
+          "version": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": false
+      },
+      "ReportResponse": {
+        "type": "object",
+        "required": [
+          "node"
+        ],
+        "properties": {
+          "node": {
+            "$ref": "#/components/schemas/NodeSummary"
+          }
+        },
+        "additionalProperties": false
+      }
+    }
+  }
+}

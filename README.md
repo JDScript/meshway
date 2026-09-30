@@ -1,0 +1,68 @@
+# Meshway
+
+基于 Rust 的可编程 mesh 网络：身份与访问控制、域名/IP 策略路由、有序多跳，以及可替换的链路承载。
+
+## 工作区
+
+| 目录 | 职责 |
+| --- | --- |
+| `apps/controller` | Rust 控制面 |
+| `apps/agent` | Rust 节点进程 |
+| `crates` | 共享 Rust 协议定义；Agent 生成客户端位于 `apps/agent/src/generated` |
+| `apps/web` | Next.js + shadcn/ui 控制台 |
+| `packages/control-client` | 生成的 TypeScript 协议、SDK 与运行时校验 |
+| `docs` | VitePress 产品与架构文档 |
+| `references` | 独立的上游参考 checkout；版本见 [研究索引](references/README.md) |
+
+## 开发环境
+
+- Rust 1.98.0（由 `rust-toolchain.toml` 固定）
+- Node.js 24
+- pnpm 11.24.0
+
+```sh
+pnpm install
+pnpm dev:docs
+```
+
+文档站：<http://localhost:5173>。控制台通过 `pnpm dev:web` 启动于 <http://localhost:3000>。
+
+Rust 启动命令和契约生成流程见文档站的开发指南。
+
+分别在终端中运行控制面和 Web：
+
+```sh
+cargo run --locked -p meshway-controller -- serve
+pnpm dev:web
+```
+
+发送一条真实的开发期进程报告：
+
+```sh
+cargo run --locked -p meshway-agent -- report --name nyc --node-id dev-nyc
+```
+
+Web 默认从 `http://127.0.0.1:8420` 读取 controller；可通过 `MESHWAY_CONTROLLER_URL` 配置。
+
+## 当前范围
+
+当前基础闭环是本地 controller 接收 agent 的开发期进程报告，Web 读取真实报告数据。报告存储为内存状态；它不代表已完成安全注册或已建立 mesh 隧道。
+
+DNS、策略路由、多跳、multi-transport 与加密转发的架构和交付阶段在文档站维护。优先保留端到端加密与 `meshway trace`，系统 traceroute 作为后续增强；可信逐跳路由需要显式选择。
+
+## 类型安全
+
+HTTP 契约从 Rust 类型和实际路由声明生成，并驱动 Rust agent client、TypeScript SDK 与运行时 schema。前后端使用同一份生成契约，禁止手工复制 DTO。
+
+CI 检查契约漂移、Rust 格式/Clippy/测试、TypeScript、前端 lint 与两个站点的构建。
+
+```sh
+pnpm protocol:generate  # 修改 Rust 契约后更新 OpenAPI 和客户端
+pnpm protocol:check     # 逐文件比较重新生成的产物
+pnpm test:protocol     # SDK 校验及真实 controller 往返
+pnpm typecheck
+pnpm lint
+pnpm build
+```
+
+具体生成器及当前支持的契约形状见 [协议文档](docs/protocol.md)。

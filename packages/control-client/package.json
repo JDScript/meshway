@@ -1,0 +1,23 @@
+{
+  "name": "@meshway/control-client",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "generate": "node ../../scripts/generate-protocol.mjs",
+    "check:generated": "node ../../scripts/check-protocol.mjs",
+    "typecheck": "tsc --noEmit",
+    "test": "node --experimental-strip-types --test test/*.test.ts"
+  },
+  "dependencies": {
+    "zod": "4.6.5"
+  },
+  "devDependencies": {
+    "@hey-api/openapi-ts": "0.99.0",
+    "@types/node": "24.12.0",
+    "typescript": "5.9.3"
+  }
+}
