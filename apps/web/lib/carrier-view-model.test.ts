@@ -171,9 +171,45 @@ test("leases expire on the shared clock and never come back", () => {
   assert.equal(sockets(live.listeners[0]?.udp)[0]?.observed[0]?.state, "candidate")
   const expired = nodeCarrierView({ plan, revision: 7, nodeId: "lax", runtime: runtime(), discovery: discovery(), now: now + 20_000 })
   assert.equal(sockets(expired.listeners[0]?.udp)[0]?.observed[0]?.state, "expired")
+  assert.equal(sockets(expired.listeners[0]?.udp)[0]?.current, false)
+  assert.equal(sockets(expired.outgoing[0]?.udp)[0]?.current, false)
   // The runtime report ages past its TTL: the socket binding is history too.
   const aged = nodeCarrierView({ plan, revision: 7, nodeId: "lax", runtime: runtime(), discovery: discovery(), now: now + 60_000 })
   assertHistory(aged)
+})
+
+test("a socket binding lives only as long as its own measurements", () => {
+  // A newer runtime report of the same generation does not extend old socket observations.
+  const later = now + 25_000
+  const refreshed = runtime({ reported_at: new Date(later - 1_000).toISOString() })
+  const view = nodeCarrierView({ plan, revision: 7, nodeId: "lax", runtime: refreshed, discovery: discovery(), now: later })
+  // The report itself still passes the generation fence; its sockets do not.
+  assert.equal(view.discoveryCurrent, true)
+  for (const facts of [view.listeners[0]?.udp, view.outgoing[0]?.udp]) {
+    for (const socket of sockets(facts)) {
+      assert.equal(socket.current, false)
+      assert.ok(socket.observed.every((observed) => observed.state !== "candidate"))
+    }
+  }
+
+  // A fresh timeout still proves the socket existed: its binding is current, the mapping is not.
+  const report = discovery()
+  const fresh = report.sockets.map((socket) => ({
+    ...socket,
+    observations: socket.observations.map((observation) => ({ ...observation, outcome: "timeout" as const, mapped_endpoint: null, rtt_ms: null, observed_at: at(-1_000), expires_at: at(20_000) })),
+  }))
+  const timedOut = nodeCarrierView({ plan, revision: 7, nodeId: "lax", runtime: runtime(), discovery: { ...report, sockets: fresh }, now })
+  assert.equal(sockets(timedOut.outgoing[0]?.udp)[0]?.current, true)
+  assert.equal(sockets(timedOut.outgoing[0]?.udp)[0]?.observed[0]?.state, "failed")
+
+  // A measurement dated in the future is not evidence for now.
+  const future = report.sockets.map((socket) => ({
+    ...socket,
+    observations: socket.observations.map((observation) => ({ ...observation, observed_at: at(5_000), expires_at: at(20_000) })),
+  }))
+  const ahead = nodeCarrierView({ plan, revision: 7, nodeId: "lax", runtime: runtime(), discovery: { ...report, sockets: future }, now })
+  assert.equal(sockets(ahead.listeners[0]?.udp)[0]?.current, false)
+  assert.notEqual(sockets(ahead.listeners[0]?.udp)[0]?.observed[0]?.state, "candidate")
 })
 
 test("an authenticated channel without a fresh probe shows no current RTT", () => {

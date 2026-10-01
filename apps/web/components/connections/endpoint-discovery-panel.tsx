@@ -15,6 +15,7 @@ import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import type { ControllerResult } from "@/lib/controller"
 import { readEndpointDiscoveriesAction } from "@/lib/endpoint-discovery-actions"
+import { socketMeasuredAt } from "@/lib/carrier-view-model"
 import { discoveryLabel, discoveryOutcomeLabels, observationUsable } from "@/lib/endpoint-discovery-model"
 import { advanceDiscoveryClock, shownDiscoveryRead, type DiscoveryClock } from "@/lib/endpoint-discovery-view-model"
 import { formatDateTime } from "@/lib/time"
@@ -125,8 +126,9 @@ export function EndpointDiscoveryReport({ discoveries, nodeId, embedded = false,
 }
 
 function SocketReport({ socket, report, now, fenced }: { socket: UdpSocketDiscovery; report: NodeEndpointDiscovery; now: number; fenced: boolean }) {
+  // The bound address is only current while one of this socket's own measurements is valid.
   const historical = !fenced || !report.current || report.stale || report.state === "withdrawn" || report.state === "expired" ||
-    (socket.observations.length > 0 && socket.observations.every((observation) => Date.parse(observation.expires_at) <= now))
+    !socketMeasuredAt(socket, now)
   return <section aria-label={`承载地址 ${socket.resource_id}`} className="flex min-w-0 flex-col gap-2 rounded-lg border p-3">
       <h3 className="font-medium break-all">{socket.resource_kind === "listener" ? "接收连接" : "主动连接"} · {socket.resource_id}</h3>
       <Address label={historical ? "历史本地绑定 IP:port（失效）" : "本地绑定 IP:port"} value={socket.bound_address} disabled={historical} />

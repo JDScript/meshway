@@ -37,9 +37,10 @@ export type SocketFacts = {
   /**
    * The socket belongs to a discovery report that passed the local fence
    * (same node, same plan revision, server-current, and the same epoch /
-   * digest as a fresh runtime report of that revision). Otherwise its bound
-   * address and observations are history only. Independent of each
-   * measurement's outcome: a STUN timeout does not mean the socket closed.
+   * digest as a fresh runtime report of that revision) and one of the
+   * socket's own measurements is valid at `now`. Otherwise its bound address
+   * and observations are history only. Independent of each measurement's
+   * outcome: a STUN timeout still proves the socket existed then.
    */
   current: boolean
   boundAddress: string
@@ -145,9 +146,23 @@ export function peerProbe(peer: ConnectionNeighborObservation): { fresh: boolean
   return { fresh: true, rtt: peer.probe_rtt_ms === 0 ? "<1 ms" : `${peer.probe_rtt_ms} ms` }
 }
 
+/**
+ * A socket binding is only known to exist while one of its own measurements
+ * is within its validity window at `now` (any outcome: a timeout also proves
+ * the socket was there). A newer runtime report never extends it: the same
+ * generation may have rebuilt a dial socket on another local port.
+ */
+export function socketMeasuredAt(socket: UdpSocketDiscovery, now: number): boolean {
+  return socket.observations.some((observation) => {
+    const observed = Date.parse(observation.observed_at)
+    const expires = Date.parse(observation.expires_at)
+    return Number.isFinite(observed) && Number.isFinite(expires) && observed <= now && now < expires
+  })
+}
+
 function socketFacts(report: NodeEndpointDiscovery, socket: UdpSocketDiscovery, now: number, current: boolean): SocketFacts {
   return {
-    current,
+    current: current && socketMeasuredAt(socket, now),
     boundAddress: socket.bound_address,
     generation: socket.generation,
     socketId: socket.socket_id,
