@@ -6,6 +6,7 @@ members = [
     "crates/transport-vless",
     "crates/transport-trojan",
     "crates/transport-socks5",
+    "crates/transport-shadowsocks",
     "apps/controller",
     "apps/agent",
 ]
