@@ -2,7 +2,8 @@ use std::{fs::File, path::Path, time::Duration};
 
 use chrono::{DateTime, Utc};
 use meshway_protocol::{
-    CreateEnrollmentTokenResponse, EnrollAgentRequest, NodeSummary,
+    AuthorizeDeviceRequest, AuthorizeDeviceResponse, CreateEnrollmentTokenResponse,
+    EnrollAgentRequest, ExchangeDeviceRequest, NodeSummary,
     local::{self, digest},
 };
 use rusqlite::{Connection, OptionalExtension, Row, TransactionBehavior, params};
@@ -112,7 +113,7 @@ impl Store {
             File::open(path)?.sync_all()?;
         }
         let version: i64 = connection.pragma_query_value(None, "user_version", |row| row.get(0))?;
-        if !(1..=7).contains(&version) {
+        if !(1..=8).contains(&version) {
             return Err(Error::Configuration(
                 "unsupported or incomplete controller database schema",
             ));
@@ -131,6 +132,12 @@ impl Store {
         connection_runtime::upgrade(&mut connection)?;
         access::upgrade(&mut connection)?;
         network::upgrade(&mut connection)?;
+        if version < 8 {
+            let transaction =
+                connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
+            transaction.execute_batch("ALTER TABLE enrollment_tokens ADD COLUMN device_binding TEXT; PRAGMA user_version = 8;")?;
+            transaction.commit()?;
+        }
         Ok(Self {
             connection,
             _lock: lock,
@@ -189,6 +196,45 @@ impl Store {
         token: &str,
         request: &EnrollAgentRequest,
     ) -> Result<NodeSummary, Error> {
+        self.enroll_bound(token, request, None)
+    }
+
+    pub fn authorize_device(
+        &self,
+        request: &AuthorizeDeviceRequest,
+    ) -> Result<AuthorizeDeviceResponse, Error> {
+        request.validate().map_err(Error::Invalid)?;
+        let code = local::credential()?;
+        let expires_at = Utc::now() + chrono::Duration::seconds(300);
+        let binding = serde_json::to_string(request)
+            .map_err(|_| Error::Invalid("invalid device authorization"))?;
+        self.connection.execute("INSERT INTO enrollment_tokens (id, token_hash, expires_at, device_binding) VALUES (?1, ?2, ?3, ?4)", params![local::credential()?, digest(&code), expires_at.timestamp_millis(), binding])?;
+        Ok(AuthorizeDeviceResponse { code, expires_at })
+    }
+
+    pub fn exchange_device(
+        &mut self,
+        code: &str,
+        request: &ExchangeDeviceRequest,
+    ) -> Result<NodeSummary, Error> {
+        let enrollment = request.enrollment().map_err(Error::Invalid)?;
+        let authorization = AuthorizeDeviceRequest {
+            redirect_uri: request.redirect_uri.clone(),
+            code_challenge: meshway_protocol::s256(&request.code_verifier),
+            name: request.name.clone(),
+            agent_version: request.agent_version.clone(),
+        };
+        let binding = serde_json::to_string(&authorization)
+            .map_err(|_| Error::Invalid("invalid device exchange"))?;
+        self.enroll_bound(code, &enrollment, Some(&binding))
+    }
+
+    fn enroll_bound(
+        &mut self,
+        token: &str,
+        request: &EnrollAgentRequest,
+        device_binding: Option<&str>,
+    ) -> Result<NodeSummary, Error> {
         request.validate().map_err(Error::Invalid)?;
         let binding = digest(
             &serde_json::to_string(request).map_err(|_| Error::Invalid("invalid enrollment"))?,
@@ -197,12 +243,21 @@ impl Store {
             .connection
             .transaction_with_behavior(TransactionBehavior::Immediate)?;
         let record = transaction.query_row(
-            "SELECT expires_at, used_node_id, binding_hash FROM enrollment_tokens WHERE token_hash = ?1",
+            "SELECT expires_at, used_node_id, binding_hash, device_binding FROM enrollment_tokens WHERE token_hash = ?1",
             [digest(token)],
-            |row| Ok((row.get::<_, i64>(0)?, row.get::<_, Option<String>>(1)?, row.get::<_, Option<Vec<u8>>>(2)?)),
+            |row| Ok((row.get::<_, i64>(0)?, row.get::<_, Option<String>>(1)?, row.get::<_, Option<Vec<u8>>>(2)?, row.get::<_, Option<String>>(3)?)),
         ).optional()?.ok_or(Error::Unauthorized)?;
+        match (record.3.as_deref(), device_binding) {
+            (None, None) => {}
+            (Some(stored), Some(proposed)) if constant_eq(&digest(stored), &digest(proposed)) => {}
+            _ => return Err(Error::Unauthorized),
+        }
         if let Some(node_id) = record.1 {
-            if record.2.as_ref() != Some(&binding) {
+            if !record
+                .2
+                .as_ref()
+                .is_some_and(|stored| constant_eq(stored, &binding))
+            {
                 return Err(Error::Unauthorized);
             }
             let node = find_node(&transaction, &node_id)?;
@@ -295,6 +350,10 @@ impl Store {
 }
 
 const NODE_SELECT: &str = "SELECT id, name, agent_version, registered_at, last_seen, revoked_at, mesh_ipv4, mesh_ipv6, country, (SELECT revision FROM configuration WHERE id = 1), acknowledged_revision FROM nodes";
+
+fn constant_eq(a: &[u8], b: &[u8]) -> bool {
+    a.len() == b.len() && a.iter().zip(b).fold(0_u8, |diff, (a, b)| diff | (a ^ b)) == 0
+}
 
 fn find_node(connection: &Connection, id: &str) -> Result<NodeSummary, Error> {
     connection

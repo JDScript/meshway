@@ -86,7 +86,7 @@ fn additive_v6_upgrade_preserves_all_rows_revision_and_old_payloads_then_id_surv
     let admin = std::fs::read(dir.path().join("admin.token")).unwrap();
     store
         .connection
-        .execute_batch("DROP TABLE network_identity; PRAGMA user_version=6;")
+        .execute_batch("ALTER TABLE enrollment_tokens DROP COLUMN device_binding; DROP TABLE network_identity; PRAGMA user_version=6;")
         .unwrap();
     drop(store);
     let mut store = Store::open(dir.path(), &NetworkOptions::default()).unwrap();

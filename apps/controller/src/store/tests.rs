@@ -26,6 +26,103 @@ pub(super) fn enroll(store: &mut Store, request: &EnrollAgentRequest) -> NodeSum
 }
 
 #[test]
+fn device_login_v8_migration_preserves_existing_rows_and_reopens() {
+    let dir = directory();
+    let mut store = Store::open(dir.path(), &NetworkOptions::default()).unwrap();
+    let enrollment = request("existing");
+    let node = enroll(&mut store, &enrollment);
+    store
+        .publish_connection_identity(
+            &enrollment.node_credential,
+            &PublishConnectionIdentityRequest {
+                public_key: "09".repeat(32),
+                capabilities: vec![],
+            },
+        )
+        .unwrap();
+    let current = store.policy().unwrap();
+    store
+        .save_policy(&SavePolicyRequest {
+            expected_revision: current.revision,
+            policy: RoutingPolicy {
+                default_action: DefaultRouteAction::Direct,
+                ..current.policy
+            },
+            source_jsonc: None,
+        })
+        .unwrap();
+    let token = store.create_token(3600).unwrap();
+    store
+        .connection
+        .execute_batch(
+            "ALTER TABLE enrollment_tokens DROP COLUMN device_binding; PRAGMA user_version=7;",
+        )
+        .unwrap();
+    fn snapshot(
+        connection: &rusqlite::Connection,
+    ) -> Vec<(String, Vec<Vec<rusqlite::types::Value>>)> {
+        let tables: Vec<String> = connection.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' ORDER BY name").unwrap().query_map([],|r|r.get(0)).unwrap().collect::<Result<_,_>>().unwrap();
+        tables
+            .into_iter()
+            .map(|table| {
+                let columns: Vec<String> = connection
+                    .prepare(&format!("PRAGMA table_info(\"{table}\")"))
+                    .unwrap()
+                    .query_map([], |r| r.get(1))
+                    .unwrap()
+                    .collect::<Result<_, _>>()
+                    .unwrap();
+                let columns: Vec<_> = columns
+                    .into_iter()
+                    .filter(|c| c != "device_binding")
+                    .collect();
+                let sql = format!(
+                    "SELECT {} FROM \"{table}\" ORDER BY rowid",
+                    columns
+                        .iter()
+                        .map(|c| format!("\"{c}\""))
+                        .collect::<Vec<_>>()
+                        .join(",")
+                );
+                let rows = connection
+                    .prepare(&sql)
+                    .unwrap()
+                    .query_map([], |row| {
+                        (0..columns.len())
+                            .map(|i| row.get(i))
+                            .collect::<Result<Vec<rusqlite::types::Value>, _>>()
+                    })
+                    .unwrap()
+                    .collect::<Result<Vec<_>, _>>()
+                    .unwrap();
+                (table, rows)
+            })
+            .collect()
+    }
+    let before = snapshot(&store.connection);
+    drop(store);
+    let mut store = Store::open(dir.path(), &NetworkOptions::default()).unwrap();
+    assert_eq!(
+        store
+            .connection
+            .pragma_query_value(None, "user_version", |r| r.get::<_, u32>(0))
+            .unwrap(),
+        8
+    );
+    assert_eq!(snapshot(&store.connection), before);
+    assert_eq!(
+        store
+            .heartbeat(&enrollment.node_credential, "v1")
+            .unwrap()
+            .id,
+        node.id
+    );
+    assert!(store.enroll(&token.token, &request("new")).is_ok());
+    drop(store);
+    assert!(Store::open(dir.path(), &NetworkOptions::default()).is_ok());
+}
+
+#[test]
 fn dualstack_allocation_revision_and_exhaustion_are_transactional() {
     let dir = directory();
     let options = NetworkOptions {
@@ -441,7 +538,7 @@ fn additive_v2_to_v3_preserves_configuration_credentials_addresses_and_receipts(
             .connection
             .pragma_query_value(None, "user_version", |row| row.get::<_, u32>(0))
             .unwrap(),
-        7
+        8
     );
     assert_eq!(
         std::fs::read(dir.path().join("admin.token")).unwrap(),

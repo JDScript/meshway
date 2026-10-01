@@ -14,6 +14,8 @@ use tower::ServiceExt;
 mod access;
 #[path = "api/connection_runtime.rs"]
 mod connection_runtime;
+#[path = "api/device_login.rs"]
+mod device_login;
 #[path = "api/endpoint_discovery.rs"]
 mod endpoint_discovery;
 #[path = "api/network.rs"]

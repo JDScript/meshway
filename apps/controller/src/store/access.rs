@@ -63,7 +63,7 @@ fn migrate_legacy(legacy: MeshPathAuthorization) -> MeshAccessPolicy {
 
 pub(super) fn upgrade(connection: &mut Connection) -> Result<(), Error> {
     let version: u32 = connection.pragma_query_value(None, "user_version", |row| row.get(0))?;
-    if (6..=7).contains(&version) {
+    if (6..=8).contains(&version) {
         return Ok(());
     }
     if version == 4 {
