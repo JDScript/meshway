@@ -37,6 +37,7 @@ Rust 控制面与 agent、Next.js + shadcn/ui 控制台、VitePress 文档站。
 - 用户要求统一节点模型，以简单逻辑为准：不按服务器 Agent / App 划分节点类别或默认中继资格，不额外引入一套中继角色开关；节点在路径中的职责由路径 / 任务及现有授权表达，平台依据实际能力和可达性选择。底层能力差异留在能力模型内，不变成用户必须维护的产品分类。
 - 用户已确认首版同时覆盖 Mesh 私网互访和按域名 / IP 经指定路径访问互联网，两者同为核心闭环；公网出口与域名分流应进入首版交付主线，不再仅按旧技术里程碑排到后期。具体授权、路径与状态回包边界仍按已确认语义实现。
 - 用户已确认一个 controller 管理多个相互隔离的网络，采用类似 tailnet 的产品边界；成员、地址、DNS、Access、路由及相关配置按网络隔离，Web 操作限定在所选网络。当前实现仍为单网络，后续须无损迁移；同一设备一次只接入一张网络，可保存多个接入并切换，不同时在多网传输；不能仅做前端网络切换冒充后端隔离。
+- 用户已确认需要用户身份：设备归属登录用户，服务器类设备可用预分配 tag 的接入密钥；Agent 提供类似 `tailscale up` 的链接登录，App 使用系统浏览器 SSO。登录 / 接入凭据与管理员权限保持分离。
 - 用户已确认产品定位：常规场景以 Tailscale 为基线，Meshway 的差异是可插拔的自定义 transport 承载，以及按域名 / IP 经有序指定路径的 routing。网络、设备 / 用户、接入、授权、DNS、出口、控制台与客户端等产品定义默认参照 Tailscale 官方做法；只有这两项扩展需要时才偏离，偏离须说明理由。既有确认项与 Tailscale 冲突时逐项向用户复核，不擅自推翻。
 - 用户已确认 Apple 终端 App 位于 `apps/apple`：SwiftUI 多平台 + NetworkExtension Packet Tunnel，Rust 核心经 UniFFI 复用，FFI unsafe 仅限受审计的桥接 crate。App 登录本质是 SSO：App 经系统浏览器会话跳转 controller Web 完成登录 / 授权，controller 回调 App 下发一次性兑换码，App 用兑换码与本地已持久化的节点身份完成接入；外部 OIDC 对接、接入资格、用户权限、有效期等由 controller 侧决定，App 不感知。该流程尚未实现，不得伪造登录、接入或隧道状态。首个切片只搭 UI 与架构；付费 Apple Developer 会员暂未续费，真机 NE 与真实隧道验证暂缓。
 - 用户已确认先推进 Linux 传输实验；协议按编译期插件边界扩展，批量与 buffer 所有权属于公共接口。实验密钥、授权和网络必须与现有控制面身份及运行数据隔离。
@@ -46,7 +47,7 @@ Rust 控制面与 agent、Next.js + shadcn/ui 控制台、VitePress 文档站。
 - 用户已确认首版 multi-transport 采用优先级主备；按流负载分担和同流多路径聚合不属于首版要求。
 - 用户已确认首版域名匹配仅支持 suffix，按 DNS 标签边界匹配；路由规则有序 first-match，默认动作可选 direct/reject，初始空策略为 reject。
 - 配置 ACK 只表示 Agent 已校验并持久保存，不等同于数据面生效；逻辑路径预览不等同于真实 trace 或访问授权。
-- 托管 IPv4 数据面显式启用。Access 采用用户已确认的端点授权模型，与 routing 的路径选择分开；支持当前 network 内的 `*`、管理员分配的 tag、node，默认动作可选 allow/reject，有序 first-match，每条规则可显式双向。内部完整路径授权由控制面联合编译，不跳过必经节点；状态型回包另行推进。
+- 托管 IPv4 数据面显式启用。Access 采用端点授权模型，与 routing 的路径选择分开。用户已确认 Access 改为参照 Tailscale grants 的叠加授权：只写允许规则、未匹配即拒绝、规则取并集且与顺序无关，新网络默认模板为成员全部允许；原有序 first-match allow/reject 待迁移，现有策略须无损转换。selector 支持当前 network 内的 `*`、管理员分配的 tag、node，后续加入用户 / 组；每条规则可显式双向。内部完整路径授权由控制面联合编译，不跳过必经节点；状态型回包另行推进。
 - Access 与 routing 的图形化及带 schema 的 JSONC 编辑器必须共享同一份草稿和 CAS 基准；无效文本、注释和未保存编辑不得被切换视图静默覆盖。
 - 用户指定后续所有委派（包括前端）统一使用 `openai/gpt-6.1-sol`；独立任务按需要使用 worktree，根 manifest、lockfile 和合并验证由协调者维护。前端一致性与信息架构整理应和后端功能主线并行推进。
 - 业务配置、连接和端点公钥须来自同一 revision 的快照；撤回和 lease 到期独立于 HTTP 请求终止旧运行代际，TUN 停止后 Mesh 网段不得落回底层默认路由。
