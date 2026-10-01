@@ -114,11 +114,12 @@ mod tests {
         let mut source = generated_client();
         let original = source.clone();
         let operations = super::super::OPERATIONS;
-        assert_eq!(operations.len(), 11);
         assert!(operations.contains(&"getAgentDataplane"));
+        assert!(operations.contains(&"getAgentDns"));
         adapt(&mut source, operations.len()).unwrap();
         assert_eq!(source.matches(STATUS_GUARD).count(), operations.len());
         assert!(source.contains("pub async fn get_agent_dataplane("));
+        assert!(source.contains("pub async fn get_agent_dns("));
         // Every send is followed immediately by status extraction and the guard,
         // so no awaited reader can precede rejection within any operation.
         for operation in source.split(RESPONSE_HEAD).skip(1) {
@@ -170,7 +171,8 @@ mod tests {
             assert!(adapt(&mut source, super::super::OPERATIONS.len()).is_err());
             assert_eq!(source, before);
         }
-        for count in [0, 10, 12] {
+        let operation_count = super::super::OPERATIONS.len();
+        for count in [0, operation_count - 1, operation_count + 1] {
             let mut source = original.clone();
             assert!(adapt(&mut source, count).is_err());
             assert_eq!(source, original);

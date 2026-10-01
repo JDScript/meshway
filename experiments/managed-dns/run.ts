@@ -157,7 +157,8 @@ async function main() {
       const host = record(inspected.HostConfig); const config = record(inspected.Config);
       assert.equal(host.Privileged, false); assert.equal(host.ReadonlyRootfs, true); assert.equal(host.NetworkMode, network);
       assert(host.PidMode !== "host" && host.IpcMode !== "host"); assert.equal(config.User, "0:0");
-      assert.deepEqual(array(host.CapDrop), ["ALL"]); assert.deepEqual(host.CapAdd ?? [], data ? ["NET_ADMIN"] : []);
+      assert.deepEqual(array(host.CapDrop), ["ALL"]);
+      assert.deepEqual(array(host.CapAdd ?? []).map(text).map((cap) => cap.replace(/^CAP_/, "")), data ? ["NET_ADMIN"] : []);
       assert(!array(inspected.Mounts).some((mount) => record(mount).Type === "bind"));
       assert.deepEqual(Object.keys(record(inspected.NetworkSettings).Networks ?? {}).sort(), [network]);
       assert(boolean((await helper(role, "tools")).ready));

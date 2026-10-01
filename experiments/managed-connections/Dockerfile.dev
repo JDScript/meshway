@@ -18,7 +18,7 @@ RUN --mount=type=cache,target=/usr/local/cargo/registry \
 
 FROM ubuntu:24.04@sha256:008173c23f95b170204355c12626cb5a965d779a7e1283b09e9cffbb1bf33ca3
 RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
-    bash ca-certificates curl iproute2 iputils-ping libcap2-bin python3 traceroute util-linux \
+    bash ca-certificates curl dnsutils iproute2 iputils-ping libcap2-bin python3 traceroute util-linux \
     && setcap -r /usr/bin/ping \
     && find /var/lib/apt/lists -type f -name '*Packages*' -print -quit | grep -q .
 COPY --from=builder /out/meshway-agent /out/meshway-controller /usr/local/bin/
