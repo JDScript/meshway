@@ -63,12 +63,18 @@ public struct OnboardingContentView: View {
   }
   public var body: some View {
     GeometryReader { geometry in
-      ScrollView { content.frame(maxWidth: .infinity, minHeight: geometry.size.height) }
-        .background(Surface.canvas)
+      ScrollView {
+        layout(compact: geometry.size.height < LayoutMetrics.compactOnboardingHeight)
+          .frame(maxWidth: .infinity, minHeight: geometry.size.height)
+      }
+      .background(Surface.canvas)
     }.tint(.indigo)
   }
   public var content: some View {
-    OnboardingLayout(status: status, message: message) {
+    layout(compact: false)
+  }
+  private func layout(compact: Bool) -> some View {
+    OnboardingLayout(status: status, message: message, compact: compact) {
       TextField("https://console.example.com", text: $server).autocorrectionDisabled()
         #if os(iOS)
           .textInputAutocapitalization(.never).keyboardType(.URL)
@@ -93,27 +99,30 @@ public struct OnboardingContentView: View {
 public struct OnboardingLayout<ServerField: View, NameField: View, Action: View>: View {
   let status: AppStatus
   let message: String?
+  let compact: Bool
   @ViewBuilder let serverField: () -> ServerField
   @ViewBuilder let nameField: () -> NameField
   @ViewBuilder let action: () -> Action
   public init(
-    status: AppStatus = .notSignedIn, message: String? = nil,
+    status: AppStatus = .notSignedIn, message: String? = nil, compact: Bool = false,
     @ViewBuilder serverField: @escaping () -> ServerField,
     @ViewBuilder nameField: @escaping () -> NameField, @ViewBuilder action: @escaping () -> Action
   ) {
     self.status = status
     self.message = message
+    self.compact = compact
     self.serverField = serverField
     self.nameField = nameField
     self.action = action
   }
   public var body: some View {
-    VStack(spacing: LayoutMetrics.sectionGap) {
-      VStack(spacing: 16) {
-        MeshwayGlyph()
+    VStack(spacing: compact ? 16 : 24) {
+      VStack(spacing: compact ? 12 : 16) {
+        MeshwayGlyph(size: compact ? 48 : 68)
         VStack(spacing: 8) {
           Text(status == .revoked ? "Device revoked" : "Your network.\nWithin reach.")
-            .font(.largeTitle.weight(.bold)).multilineTextAlignment(.center)
+            .font(compact ? .title.weight(.bold) : .largeTitle.weight(.bold))
+            .multilineTextAlignment(.center)
           Text(
             status == .revoked
               ? "This device no longer has access to the controller."
@@ -135,14 +144,14 @@ public struct OnboardingLayout<ServerField: View, NameField: View, Action: View>
       VStack(spacing: 12) {
         Text(
           status == .revoked
-            ? "Reset this device from the network menu to sign in again.\nThis only removes its local identity."
+            ? "Choose Reset this device from the ⋯ menu.\nThis only removes its local identity."
             : "Your browser handles sign-in and approval.\nYour device identity stays in Keychain."
         )
         .font(.caption).foregroundStyle(.secondary).multilineTextAlignment(.center)
         TunnelNotice()
       }
     }.frame(maxWidth: 360).padding(.horizontal, LayoutMetrics.inset)
-      .padding(.vertical, LayoutMetrics.sectionGap)
+      .padding(.vertical, compact ? 16 : 24)
   }
   private func field<Content: View>(_ title: String, @ViewBuilder content: () -> Content)
     -> some View

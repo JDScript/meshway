@@ -13,32 +13,37 @@ public struct MeshwayRootView: View {
   public init(model: AppModel) { self.model = model }
 
   public var body: some View {
-    NavigationStack {
-      Group {
-        if model.enrollment.snapshot?.phase == .enrolled {
-          devices
-        } else {
-          OnboardingView(model: model)
-        }
-      }
-      .navigationTitle("Meshway")
-      #if os(iOS)
-        .navigationBarTitleDisplayMode(.inline)
-        .toolbarTitleMenu { networkActions }
+    Group {
+      #if os(macOS)
+        VStack(spacing: 0) {
+          MeshwayPanelHeader(
+            title: state.networkTitle == state.serverHost ? "Meshway" : state.networkTitle,
+            subtitle: state.serverHost, compact: false,
+            refreshing: state.loading,
+            refresh: model.enrollment.snapshot?.phase == .enrolled
+              ? { Task { await model.enrollment.refresh() } } : nil
+          ) { networkActions }
+          mainContent
+        }.background(Surface.canvas)
       #else
-        .modifier(NetworkWindowTitle())
+        NavigationStack {
+          mainContent
+            .navigationTitle("Meshway")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+              ToolbarItem(placement: .principal) { NetworkLabel(title: state.networkTitle) }
+              ToolbarItem(placement: .primaryAction) {
+                Menu {
+                  networkActions
+                } label: {
+                  Image(systemName: "ellipsis.circle")
+                }
+                .accessibilityLabel("Network actions")
+              }
+              ToolbarItem(placement: .primaryAction) { ConnectSwitch() }
+            }
+        }
       #endif
-      .toolbar {
-        #if os(macOS)
-          ToolbarItem(placement: .navigation) { networkMenu }
-          if #available(macOS 26, *) {
-            ToolbarSpacer(.flexible, placement: .primaryAction)
-          }
-        #else
-          ToolbarItem(placement: .principal) { networkMenu }
-        #endif
-        ToolbarItem(placement: .primaryAction) { ConnectSwitch() }
-      }
     }
     #if os(macOS)
       .frame(minWidth: 440, idealWidth: 500, maxWidth: 680, minHeight: 520, idealHeight: 680)
@@ -53,6 +58,8 @@ public struct MeshwayRootView: View {
         else { return }
         switch action {
         case "detail": selected = state.peers.last
+        case "alias-detail":
+          selected = state.peers.first { state.dnsName($0) != state.canonicalDnsName($0) }
         case "network": showNetwork = true
         case "dismiss":
           selected = nil
@@ -77,7 +84,9 @@ public struct MeshwayRootView: View {
     }
     .sheet(item: $selected) { device in
       DeviceDetailView(
-        device: device, dnsName: state.dnsName(device), isSelf: device.id == state.ownDevice?.id)
+        device: device, dnsName: state.dnsName(device),
+        canonicalName: state.canonicalDnsName(device),
+        isSelf: device.id == state.ownDevice?.id)
     }
     .sheet(isPresented: $showNetwork) { NetworkDetailView(model: model) }
     .confirmationDialog("Reset this device?", isPresented: $confirmReset, titleVisibility: .visible)
@@ -91,23 +100,15 @@ public struct MeshwayRootView: View {
   }
 
   private var state: DeviceScreenState { DeviceScreenState(model: model) }
-  private var networkMenu: some View {
-    Menu {
-      networkActions
-    } label: {
-      NetworkLabel(title: state.networkTitle)
-    }.menuStyle(.borderlessButton)
-      .accessibilityLabel("Select network: \(state.networkTitle)")
+  @ViewBuilder private var mainContent: some View {
+    if model.enrollment.snapshot?.phase == .enrolled {
+      devices
+    } else {
+      OnboardingView(model: model)
+    }
   }
   @ViewBuilder private var networkActions: some View {
     if let server = model.enrollment.snapshot?.server ?? model.controller?.url.absoluteString {
-      if model.enrollment.snapshot?.phase == .enrolled {
-        Label(state.networkTitle, systemImage: "checkmark")
-      } else {
-        Text("Server: \(state.networkTitle)")
-      }
-      Text(server)
-      Divider()
       Button("Network details", systemImage: "info.circle") { showNetwork = true }
       Button("Copy server URL", systemImage: "doc.on.doc") { Clipboard.copy(server) }
     } else {
@@ -125,39 +126,36 @@ public struct MeshwayRootView: View {
   @ViewBuilder private var devices: some View {
     #if os(iOS)
       List {
-        Section { TunnelNotice() }
-        if let message = state.error {
+        if let message = state.error, state.heartbeatSucceeded != false {
           Section { RefreshError(message: message, hasInventory: state.loaded) }
         }
         if let own = state.ownDevice {
           Section("This device") {
             deviceButton(own, own: true)
-            HeartbeatCaption(result: state.heartbeatResult, time: state.heartbeatTime)
           }
         }
-        Section("Devices · \(state.peers.count)") {
+        Section {
           if state.filtered(search).isEmpty {
             DeviceEmptyState(state: state, search: search).frame(maxWidth: .infinity)
               .padding(.vertical, LayoutMetrics.panelInset)
           }
           ForEach(state.filtered(search)) { device in deviceButton(device, own: false) }
+        } header: {
+          HStack(spacing: LayoutMetrics.groupGap) {
+            Text("Devices")
+            Text("\(state.peers.count)")
+            Spacer()
+            InventoryUpdated(state: state)
+          }
         }
-        Section { InventoryFooter(state: state) }
+        if let error = state.dnsError { Section { Text(error).foregroundStyle(.orange) } }
       }
       .listStyle(.insetGrouped)
       .searchable(text: $search, prompt: "Name, IP or DNS name")
       .refreshable { await model.enrollment.refresh() }
     #else
       VStack(spacing: 0) {
-        HStack(spacing: LayoutMetrics.groupGap) {
-          SearchBar(text: $search)
-          Button("Refresh devices", systemImage: "arrow.clockwise") {
-            Task { await model.enrollment.refresh() }
-          }
-          .labelStyle(.iconOnly).buttonStyle(.borderless).disabled(state.loading)
-          .frame(width: 32, height: 32).contentShape(Rectangle())
-          .help("Refresh devices and contact controller")
-        }.padding(.horizontal, LayoutMetrics.inset).padding(.top, LayoutMetrics.panelInset)
+        SearchBar(text: $search).padding(.horizontal, LayoutMetrics.inset)
         DeviceContentView(
           state: state, search: search, selectedID: selected?.id, select: { selected = $0 })
       }
@@ -168,7 +166,14 @@ public struct MeshwayRootView: View {
     Button {
       selected = device
     } label: {
-      DeviceRow(device: device, dnsName: state.dnsName(device), isSelf: own)
+      DeviceRow(
+        device: device, dnsName: state.dnsName(device),
+        canonicalName: state.canonicalDnsName(device),
+        isSelf: own,
+        contact: own
+          ? HeartbeatCaption(
+            result: state.heartbeatResult, time: state.heartbeatTime,
+            succeeded: state.heartbeatSucceeded) : nil)
     }
     .buttonStyle(.plain)
     .contextMenu { CopyDeviceActions(device: device, dnsName: state.dnsName(device)) }
@@ -181,33 +186,27 @@ public struct MeshwayRootView: View {
   }
 }
 
-#if os(macOS)
-  private struct NetworkWindowTitle: ViewModifier {
-    @ViewBuilder func body(content: Content) -> some View {
-      if #available(macOS 26, *) {
-        content.toolbar(removing: .title)
-      } else {
-        content
-      }
-    }
-  }
-#endif
-
 public struct MeshwayMenuView: View {
   private let model: AppModel
   @Environment(\.openWindow) private var openWindow
   @Environment(\.scenePhase) private var scenePhase
   @State private var confirmReset = false
   @State private var selected: MeshDevice?
+  @State private var showNetwork = false
   public init(model: AppModel) { self.model = model }
   public var body: some View {
     VStack(spacing: 0) {
-      MeshwayPanelHeader(title: DeviceScreenState(model: model).networkTitle) {
+      MeshwayPanelHeader(
+        title: DeviceScreenState(model: model).networkTitle
+          == DeviceScreenState(model: model).serverHost
+          ? "Meshway" : DeviceScreenState(model: model).networkTitle,
+        subtitle: DeviceScreenState(model: model).serverHost,
+        refreshing: model.enrollment.refreshing,
+        refresh: model.enrollment.snapshot?.phase == .enrolled
+          ? { Task { await model.enrollment.refresh() } } : nil
+      ) {
         if let server = model.enrollment.snapshot?.server {
-          if model.enrollment.snapshot?.phase == .enrolled {
-            Label(DeviceScreenState(model: model).networkTitle, systemImage: "checkmark")
-          }
-          Text(server)
+          Button("Network details") { showNetwork = true }
           Button("Copy server URL") { Clipboard.copy(server) }
           Divider()
           Button("Reset this device…", role: .destructive) { confirmReset = true }
@@ -236,7 +235,6 @@ public struct MeshwayMenuView: View {
               : "Open Meshway to sign in with your browser."
           )
           .font(.callout).foregroundStyle(.secondary)
-          TunnelNotice()
         }.multilineTextAlignment(.center).frame(maxWidth: .infinity)
           .padding(LayoutMetrics.inset)
       }
@@ -253,8 +251,10 @@ public struct MeshwayMenuView: View {
     .sheet(item: $selected) { device in
       DeviceDetailView(
         device: device, dnsName: DeviceScreenState(model: model).dnsName(device),
+        canonicalName: DeviceScreenState(model: model).canonicalDnsName(device),
         isSelf: device.id == model.enrollment.snapshot?.node?.id)
     }
+    .sheet(isPresented: $showNetwork) { NetworkDetailView(model: model) }
     .task(id: scenePhase) {
       guard scenePhase == .active else { return }
       while !Task.isCancelled {

@@ -20,7 +20,7 @@ import SwiftUI
   }
 
   var body: some Scene {
-    WindowGroup(id: "main") {
+    WindowGroup("Meshway", id: "main") {
       MeshwayRootView(model: model)
         #if DEBUG && os(macOS)
           .task { WindowSnapshots.start(model: model) }

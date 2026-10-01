@@ -7,10 +7,11 @@ import SwiftUI
 enum LayoutMetrics {
   static let inset: CGFloat = 24
   static let panelInset: CGFloat = 16
-  static let sectionGap: CGFloat = 24
+  static let sectionGap: CGFloat = 16
   static let groupGap: CGFloat = 8
   static let rowInset: CGFloat = 16
   static let rowVerticalInset: CGFloat = 12
+  static let rowHeight: CGFloat = 56
   static let iconSize: CGFloat = 28
   static let iconGap: CGFloat = 12
   static let countryWidth: CGFloat = 24
@@ -18,7 +19,8 @@ enum LayoutMetrics {
   static let cornerRadius: CGFloat = 12
   static let sheetWidth: CGFloat = 480
   static let sheetHeight: CGFloat = 560
-  static let panelContentHeight: CGFloat = 440
+  static let panelContentHeight: CGFloat = 336
+  static let compactOnboardingHeight: CGFloat = 520
 }
 
 enum Surface {
@@ -40,6 +42,7 @@ enum Surface {
 
 public struct DeviceScreenState: Sendable {
   public var networkTitle: String
+  public var serverHost: String?
   public var ownDevice: MeshDevice?
   public var peers: [MeshDevice]
   public var names: [MeshDnsName]
@@ -48,14 +51,17 @@ public struct DeviceScreenState: Sendable {
   public var error: String?
   public var dnsError: String?
   public var heartbeatResult: String?
+  public var heartbeatSucceeded: Bool?
   public var heartbeatTime: Date?
   public var refreshedAt: Date?
   public init(
     networkTitle: String, ownDevice: MeshDevice?, peers: [MeshDevice], names: [MeshDnsName] = [],
     loaded: Bool = true, loading: Bool = false, error: String? = nil, dnsError: String? = nil,
-    heartbeatResult: String? = nil, heartbeatTime: Date? = nil, refreshedAt: Date? = nil
+    heartbeatResult: String? = nil, heartbeatTime: Date? = nil, refreshedAt: Date? = nil,
+    serverHost: String? = nil, heartbeatSucceeded: Bool? = nil
   ) {
     self.networkTitle = networkTitle
+    self.serverHost = serverHost
     self.ownDevice = ownDevice
     self.peers = peers
     self.names = names
@@ -64,12 +70,14 @@ public struct DeviceScreenState: Sendable {
     self.error = error
     self.dnsError = dnsError
     self.heartbeatResult = heartbeatResult
+    self.heartbeatSucceeded = heartbeatSucceeded
     self.heartbeatTime = heartbeatTime
     self.refreshedAt = refreshedAt
   }
   @MainActor init(model: AppModel) {
     let coordinator = model.enrollment
     let server = coordinator.snapshot?.server ?? model.controller?.url.absoluteString
+    serverHost = server.flatMap { URL(string: $0)?.host }
     networkTitle =
       coordinator.dnsInventory?.zone ?? server.flatMap { URL(string: $0)?.host } ?? "Meshway"
     if let own = coordinator.inventory?.ownDevice {
@@ -91,10 +99,14 @@ public struct DeviceScreenState: Sendable {
     error = coordinator.inventoryMessage
     dnsError = coordinator.dnsMessage
     heartbeatResult = coordinator.heartbeatResult
+    heartbeatSucceeded = coordinator.heartbeatSucceeded
     heartbeatTime = coordinator.heartbeatTime
     refreshedAt = coordinator.inventoryTime
   }
   func dnsName(_ device: MeshDevice) -> String? { names.first { $0.nodeID == device.id }?.name }
+  func canonicalDnsName(_ device: MeshDevice) -> String? {
+    names.first { $0.nodeID == device.id }?.canonicalName
+  }
   func filtered(_ search: String) -> [MeshDevice] {
     guard !search.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return peers }
     return peers.filter { device in
@@ -108,31 +120,61 @@ public struct ConnectSwitch: View {
   public init() {}
   public var body: some View {
     HStack(spacing: LayoutMetrics.groupGap) {
-      Text("Connect").font(.callout).foregroundStyle(.secondary)
+      Text("Not connected").font(.caption).foregroundStyle(.secondary)
       Toggle("Connect", isOn: .constant(false)).labelsHidden()
-        .toggleStyle(.switch).controlSize(.small).disabled(true)
+        .toggleStyle(.switch).controlSize(.mini).disabled(true)
     }
     .fixedSize().accessibilityElement(children: .combine)
-    .accessibilityLabel("Connect — tunnel not implemented")
+    .accessibilityLabel("Not connected — tunnel not implemented")
     .help("The tunnel is not implemented in this version.")
   }
 }
 
 public struct MeshwayPanelHeader<Actions: View>: View {
   let title: String
+  let subtitle: String?
+  let compact: Bool
+  let refreshing: Bool
+  let refresh: (() -> Void)?
   @ViewBuilder let actions: () -> Actions
-  public init(title: String, @ViewBuilder actions: @escaping () -> Actions) {
+  public init(
+    title: String, subtitle: String? = nil, compact: Bool = true,
+    refreshing: Bool = false, refresh: (() -> Void)? = nil,
+    @ViewBuilder actions: @escaping () -> Actions
+  ) {
     self.title = title
+    self.subtitle = subtitle
+    self.compact = compact
+    self.refreshing = refreshing
+    self.refresh = refresh
     self.actions = actions
   }
   public var body: some View {
-    HStack(spacing: 12) {
-      Menu(content: actions) {
-        NetworkLabel(title: title)
-      }.menuStyle(.borderlessButton).accessibilityLabel("Select network")
-      Spacer(minLength: 8)
-      ConnectSwitch()
-    }.padding(LayoutMetrics.panelInset)
+    HStack(spacing: LayoutMetrics.panelInset) {
+      VStack(alignment: .leading, spacing: 4) {
+        Text(title).font(compact ? .headline : .title3.weight(.semibold)).lineLimit(1)
+          .truncationMode(.middle).help(title)
+        if let subtitle {
+          Text("Server · \(subtitle)").font(.caption).foregroundStyle(.secondary).lineLimit(1)
+            .truncationMode(.middle).help(subtitle)
+        }
+      }.frame(maxWidth: .infinity, alignment: .leading)
+      HStack(spacing: LayoutMetrics.groupGap) {
+        if let refresh {
+          Button(action: refresh) { Image(systemName: "arrow.clockwise") }
+            .buttonStyle(.plain).foregroundStyle(.secondary).frame(width: 24, height: 24)
+            .disabled(refreshing).accessibilityLabel("Refresh devices")
+            .help("Refresh devices and contact the server")
+        }
+        Menu(content: actions) { Image(systemName: "ellipsis.circle").font(.body) }
+          .menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize()
+          .tint(Color.secondary)
+          .foregroundStyle(.secondary).accessibilityLabel("Network actions")
+          .help("Network details, server URL and local reset")
+        ConnectSwitch()
+      }
+    }.padding(.horizontal, compact ? LayoutMetrics.panelInset : LayoutMetrics.inset)
+      .padding(.vertical, LayoutMetrics.panelInset)
   }
 }
 
@@ -140,11 +182,7 @@ public struct NetworkLabel: View {
   let title: String
   public init(title: String) { self.title = title }
   public var body: some View {
-    HStack(spacing: 6) {
-      Image(systemName: "network").foregroundStyle(.indigo)
-      Text(title).font(.headline).lineLimit(1)
-      Image(systemName: "chevron.down").font(.caption2).foregroundStyle(.secondary)
-    }.help(title)
+    Text(title).font(.headline).lineLimit(1).help(title)
   }
 }
 
@@ -205,29 +243,24 @@ public struct DeviceContentView: View {
     VStack(
       alignment: .leading, spacing: compact ? LayoutMetrics.panelInset : LayoutMetrics.sectionGap
     ) {
-      TunnelNotice()
-      if let error = state.error { RefreshError(message: error, hasInventory: state.loaded) }
+      if let error = state.error, state.heartbeatSucceeded != false {
+        RefreshError(message: error, hasInventory: state.loaded)
+      }
       if let own = state.ownDevice {
         VStack(alignment: .leading, spacing: 8) {
           sectionHeading("This device")
-          VStack(alignment: .leading, spacing: 0) {
-            row(own, isSelf: true)
-            Divider().padding(.leading, LayoutMetrics.textInset)
-            HeartbeatCaption(result: state.heartbeatResult, time: state.heartbeatTime)
-              .padding(.horizontal, LayoutMetrics.rowInset)
-              .padding(.vertical, LayoutMetrics.rowVerticalInset)
-          }.deviceCard()
+          row(own, isSelf: true).deviceCard()
         }
       }
       VStack(alignment: .leading, spacing: 8) {
-        HStack {
+        HStack(spacing: LayoutMetrics.groupGap) {
           sectionHeading("Devices")
+          Text("\(state.peers.count)").font(.caption.monospacedDigit()).foregroundStyle(.tertiary)
           Spacer()
           if state.loading && state.loaded {
             ActivityIndicator().accessibilityLabel("Refreshing devices")
           }
-          Text("\(state.peers.count)").font(.caption.monospacedDigit()).foregroundStyle(
-            .secondary)
+          InventoryUpdated(state: state)
         }
         VStack(spacing: 0) {
           let devices = Array(state.filtered(search).prefix(compact ? 3 : 1024))
@@ -246,7 +279,9 @@ public struct DeviceContentView: View {
             .secondary)
         }
       }
-      if !compact { InventoryFooter(state: state) }
+      if let error = state.dnsError {
+        Text(error).font(.caption).foregroundStyle(.orange)
+      }
     }.padding(.horizontal, compact ? LayoutMetrics.panelInset : LayoutMetrics.inset)
       .padding(.vertical, LayoutMetrics.panelInset)
   }
@@ -255,9 +290,15 @@ public struct DeviceContentView: View {
   }
   @ViewBuilder private func row(_ device: MeshDevice, isSelf: Bool) -> some View {
     let content = DeviceRow(
-      device: device, dnsName: state.dnsName(device), isSelf: isSelf
+      device: device, dnsName: state.dnsName(device), canonicalName: state.canonicalDnsName(device),
+      isSelf: isSelf,
+      contact: isSelf
+        ? HeartbeatCaption(
+          result: state.heartbeatResult, time: state.heartbeatTime,
+          succeeded: state.heartbeatSucceeded) : nil
     )
     .padding(.horizontal, LayoutMetrics.rowInset).padding(.vertical, LayoutMetrics.rowVerticalInset)
+    .frame(minHeight: LayoutMetrics.rowHeight)
     .contentShape(Rectangle())
     if let select {
       DeviceRowButton(selected: selectedID == device.id, action: { select(device) }) { content }
@@ -299,20 +340,14 @@ private struct DeviceRowButton<Content: View>: View {
 struct DeviceRow: View {
   let device: MeshDevice
   let dnsName: String?
+  var canonicalName: String? = nil
   let isSelf: Bool
+  var contact: HeartbeatCaption? = nil
   @Environment(\.dynamicTypeSize) private var dynamicType
   @ScaledMetric(relativeTo: .caption2) private var countryWidth = LayoutMetrics.countryWidth
   var body: some View {
     HStack(alignment: .center, spacing: LayoutMetrics.iconGap) {
-      Image(systemName: "circle.hexagongrid")
-        .font(.system(size: 16, weight: .medium))
-        .foregroundStyle(isSelf ? Color.indigo : Color.secondary)
-        .frame(width: LayoutMetrics.iconSize, height: LayoutMetrics.iconSize)
-        .background(
-          isSelf ? Color.indigo.opacity(0.09) : Color.secondary.opacity(0.07),
-          in: RoundedRectangle(cornerRadius: 8)
-        )
-        .accessibilityHidden(true)
+      DeviceAvatar(device: device, isSelf: isSelf)
       VStack(alignment: .leading, spacing: 4) {
         HStack(alignment: .firstTextBaseline, spacing: LayoutMetrics.groupGap) {
           if dynamicType.isAccessibilitySize {
@@ -327,9 +362,11 @@ struct DeviceRow: View {
           }
           countryLabel
         }
-        if let dnsName {
-          Text(dnsName).font(.caption).foregroundStyle(.secondary)
-            .lineLimit(1).truncationMode(.middle).help(dnsName)
+        if let contact {
+          contact
+        } else if let friendlyName {
+          Text(friendlyName).font(.caption).foregroundStyle(.secondary)
+            .lineLimit(1).truncationMode(.middle).help(friendlyName)
         }
       }
     }.accessibilityElement(children: .combine)
@@ -337,6 +374,17 @@ struct DeviceRow: View {
   }
   private var deviceName: some View {
     Text(device.name).font(.body.weight(.medium)).foregroundStyle(.primary).help(device.name)
+  }
+  private var friendlyName: String? {
+    guard let dnsName, dnsName != canonicalName else { return nil }
+    // Older test/preview callers do not carry a separate canonical name.
+    let labels = dnsName.split(separator: ".")
+    if labels.count > 2, labels[0] == "id",
+      labels[1].allSatisfy({ $0.isHexDigit || $0 == "-" })
+    {
+      return nil
+    }
+    return dnsName
   }
   private var address: some View {
     Text(device.meshIPv4).font(.callout.monospaced()).foregroundStyle(.secondary)
@@ -353,20 +401,21 @@ struct DeviceRow: View {
 struct HeartbeatCaption: View {
   let result: String?
   let time: Date?
+  var succeeded: Bool? = nil
   var body: some View {
-    VStack(alignment: .leading, spacing: 5) {
-      if let result {
-        Text(result).font(.caption).foregroundStyle(.secondary)
-      } else {
-        Text("Controller has not been contacted yet.").font(.caption).foregroundStyle(.secondary)
-      }
-      if let time {
+    Group {
+      if succeeded == false {
+        Text("Contact failed: \(result ?? "The server could not be reached.")")
+          .foregroundStyle(.orange)
+      } else if succeeded == true, let time {
         HStack(spacing: 4) {
-          Text("Last heartbeat")
-          Text(time, format: .dateTime.hour().minute().second())
-        }.font(.caption2).foregroundStyle(.secondary)
+          Text("Last contact with server")
+          Text(time, format: .dateTime.hour().minute())
+        }.foregroundStyle(.secondary)
+      } else {
+        Text("Not contacted yet").foregroundStyle(.secondary)
       }
-    }.fixedSize(horizontal: false, vertical: true)
+    }.font(.caption).fixedSize(horizontal: false, vertical: true)
   }
 }
 
@@ -418,19 +467,19 @@ struct DeviceEmptyState: View {
     }
   }
 }
-struct InventoryFooter: View {
+struct InventoryUpdated: View {
   let state: DeviceScreenState
   var body: some View {
-    VStack(alignment: .leading, spacing: 5) {
-      if let error = state.dnsError { Text(error).foregroundStyle(.secondary) }
+    Group {
       if let time = state.refreshedAt {
         HStack(spacing: 4) {
-          Text("Inventory fetched")
+          Text(state.error == nil ? "Updated" : "Previous fetch")
           Text(time, format: .dateTime.hour().minute())
         }
       }
-      Text("Device inventory does not indicate connectivity.")
-    }.font(.caption2).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+    }.font(.caption2).foregroundStyle(state.error == nil ? Color.secondary : Color.orange)
+      .help(
+        state.error == nil ? "Last device inventory fetch" : "Showing the last fetched inventory")
   }
 }
 
@@ -475,6 +524,7 @@ struct CopyDeviceActions: View {
 struct DeviceDetailView: View {
   let device: MeshDevice
   let dnsName: String?
+  var canonicalName: String? = nil
   let isSelf: Bool
   @Environment(\.dismiss) private var dismiss
   var body: some View {
@@ -484,7 +534,8 @@ struct DeviceDetailView: View {
           Text(device.name).font(.title3.weight(.semibold))
           copyRow("Mesh IPv4", device.meshIPv4)
           copyRow("Mesh IPv6", device.meshIPv6)
-          if let dnsName { copyRow("DNS name", dnsName) }
+          if let canonicalName { copyRow("Canonical DNS name", canonicalName) }
+          if let dnsName, dnsName != canonicalName { copyRow("DNS alias", dnsName) }
           if let country = device.country { LabeledContent("Admin country", value: country) }
           copyRow("Node ID", device.id)
         }
@@ -496,6 +547,9 @@ struct DeviceDetailView: View {
     }
     #if os(macOS)
       .frame(width: LayoutMetrics.sheetWidth, height: LayoutMetrics.sheetHeight)
+    #endif
+    #if DEBUG && os(macOS)
+      .modifier(SnapshotSheetDismissal(dismiss: dismiss))
     #endif
   }
   private func copyRow(_ title: String, _ value: String) -> some View {
@@ -545,6 +599,9 @@ struct NetworkDetailView: View {
     }
     #if os(macOS)
       .frame(width: LayoutMetrics.sheetWidth, height: LayoutMetrics.sheetHeight)
+    #endif
+    #if DEBUG && os(macOS)
+      .modifier(SnapshotSheetDismissal(dismiss: dismiss))
     #endif
   }
 }

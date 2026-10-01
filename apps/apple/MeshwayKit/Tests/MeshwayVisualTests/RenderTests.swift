@@ -33,13 +33,15 @@ import Testing
         name: $0.id == own.id
           ? "macbook.mesh.example"
           : "\($0.name.lowercased().replacingOccurrences(of: " ", with: "-")).mesh.example",
-        meshIPv4: $0.meshIPv4, meshIPv6: $0.meshIPv6)
+        meshIPv4: $0.meshIPv4, meshIPv6: $0.meshIPv6,
+        canonicalName: "id.\($0.id).mesh.example")
     }
     let now = Date(timeIntervalSince1970: 1_790_839_200)
     let state = DeviceScreenState(
       networkTitle: "mesh.example", ownDevice: own, peers: peers, names: names,
       heartbeatResult: "Controller contact succeeded (not tunnel connectivity).",
-      heartbeatTime: now, refreshedAt: now)
+      heartbeatTime: now, refreshedAt: now, serverHost: "console.example.com",
+      heartbeatSucceeded: true)
     for scheme in [ColorScheme.light, .dark] {
       let suffix = scheme == .light ? "light" : "dark"
       try render(
@@ -54,6 +56,8 @@ import Testing
         }, name: "mac-devices-\(suffix)", width: 500, height: 1000, scheme: scheme, output: output)
       var failure = state
       failure.error = "Cannot contact the server. Your saved identity has been preserved."
+      failure.heartbeatSucceeded = false
+      failure.heartbeatResult = "Cannot contact the server."
       try render(
         shell(title: state.networkTitle) {
           searchChrome
@@ -96,6 +100,7 @@ import Testing
       loading.loaded = false
       loading.loading = true
       loading.heartbeatResult = nil
+      loading.heartbeatSucceeded = nil
       loading.heartbeatTime = nil
       loading.refreshedAt = nil
       loading.names = []
