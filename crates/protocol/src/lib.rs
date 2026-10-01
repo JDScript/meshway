@@ -5,12 +5,14 @@ pub mod config;
 pub mod connection_runtime;
 pub mod connections;
 pub mod local;
+pub mod network;
 pub mod routing;
 pub mod tags;
 pub use access::*;
 pub use config::*;
 pub use connection_runtime::*;
 pub use connections::*;
+pub use network::*;
 pub use routing::*;
 pub use tags::*;
 
