@@ -1,4 +1,67 @@
 use super::*;
+
+#[test]
+fn network_budget_precedes_kernel_planning_and_diagnostics() {
+    let profile = RoutingProfile {
+        id: "office".into(),
+        rules: vec![],
+        fallback: ProfileFallback::None,
+    };
+    let mut p = NetworkPolicy::default_template();
+    // Even invalid kernel options cannot cause planning of an oversized source.
+    for (profiles, assignments) in [(65, 0), (0, 129)] {
+        p.profiles = vec![profile.clone(); profiles];
+        p.assignments = vec![
+            ProfileAssignment {
+                src: "*".into(),
+                allowed: vec![MESH_ONLY.into()],
+                default_profile: MESH_ONLY.into(),
+                locked: false,
+            };
+            assignments
+        ];
+        let errors = compile_network(&p, &facts(1), CompileOptions { paths: 0 }).unwrap_err();
+        assert_eq!(
+            errors,
+            vec![Diagnostic {
+                field: "profiles".into(),
+                message: "At most 64 custom profiles, 128 assignments and 2 MiB network intent"
+                    .into(),
+            }]
+        );
+    }
+    p.assignments.clear();
+    p.profiles = vec![RoutingProfile {
+        id: "x".repeat(2 * 1024 * 1024),
+        ..profile
+    }];
+    assert_eq!(
+        compile_network(&p, &facts(1), CompileOptions::default()).unwrap_err()[0].field,
+        "profiles"
+    );
+}
+
+#[test]
+fn static_profile_rejection_keeps_original_source_locations() {
+    let mut p = policy();
+    p.profiles[0].rules[0].destinations = vec![ExitMatch::Cidr("invalid".into())];
+    p.automatic
+        .regions
+        .insert("bad-region".into(), MESH_ONLY.into());
+    p.assignments[0].src = "node:missing".into();
+    let errors = compile_network(&p, &facts(3), CompileOptions::default()).unwrap_err();
+    assert!(
+        errors
+            .iter()
+            .any(|d| d.field == "profiles[0].rules[0].destinations[0]")
+    );
+    assert!(
+        errors
+            .iter()
+            .any(|d| d.field == "automatic.regions[bad-region]")
+    );
+    assert!(errors.iter().any(|d| d.field == "assignments[0].src"));
+}
 fn id(i: usize) -> String {
     format!("{i:064x}")
 }

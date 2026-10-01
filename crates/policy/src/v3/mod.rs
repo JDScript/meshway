@@ -1,12 +1,19 @@
 //! Four-layer engine: connections, grants and Mesh are order-independent;
 //! external routing is ordered first-match. Facts belong to one network snapshot.
+mod compiled;
 mod engine;
+mod graph;
 mod index;
 mod migration;
+mod path_search;
+mod profile_plan;
+mod profile_projection;
+mod profile_validation;
 mod profiles;
 mod rule_sets;
 mod validation;
-pub use engine::*;
+pub use compiled::*;
+pub use engine::compile;
 pub use index::{DestinationIndex, FlattenedPrefix};
 pub use migration::*;
 pub use profiles::*;
@@ -151,6 +158,11 @@ pub struct Diagnostic {
 }
 pub(crate) fn matches(s: &str, n: &Node) -> bool {
     s == "*" || s.strip_prefix("node:") == Some(n.id.as_str()) || n.tags.contains(s)
+}
+/// Legacy kernel source-first comparison, retained by this behavior-preserving
+/// refactor. The confirmed ordered Mesh model needs a separate semantic migration.
+fn mesh_specificity(rule: &MeshRule) -> (u8, u8) {
+    (specificity(&rule.src), specificity(&rule.dst))
 }
 pub(crate) fn specificity(s: &str) -> u8 {
     if s.starts_with("node:") {

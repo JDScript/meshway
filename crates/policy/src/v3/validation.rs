@@ -343,8 +343,7 @@ pub(crate) fn validate_expanded(p: &Policy, facts: &Snapshot) -> Vec<Diagnostic>
     };
     for (i, a) in p.mesh.iter().enumerate() {
         for (j, b) in p.mesh.iter().enumerate().skip(i + 1) {
-            if (specificity(&a.src), specificity(&a.dst))
-                == (specificity(&b.src), specificity(&b.dst))
+            if mesh_specificity(a) == mesh_specificity(b)
                 && a.via != b.via
                 && let (Some(src), Some(dst)) = (overlap(&a.src, &b.src), overlap(&a.dst, &b.dst))
             {

@@ -225,12 +225,9 @@ impl DestinationIndex {
             }
         }
     }
-    /// Return matches with their fixed cross-kind and longest-match ranks.
-    pub(crate) fn matching(
-        &self,
-        domain: Option<&str>,
-        ip: Option<IpAddr>,
-    ) -> Vec<((u8, usize), u16)> {
+    /// Return candidate rule IDs. Precedence is ordered first-match across both
+    /// domain and IP matches; trie depth and match kind confer no priority.
+    pub(crate) fn matching(&self, domain: Option<&str>, ip: Option<IpAddr>) -> Vec<u16> {
         let mut matches = Vec::new();
         if let Some(ip) = ip {
             let (nodes, bits, width) = match ip {
@@ -239,7 +236,7 @@ impl DestinationIndex {
             };
             let mut node = 0;
             for depth in 0..=width {
-                matches.extend(nodes[node].rules.iter().map(|r| ((0, depth), *r)));
+                matches.extend(nodes[node].rules.iter().copied());
                 if depth == width {
                     break;
                 }
@@ -252,17 +249,12 @@ impl DestinationIndex {
         }
         if let Some(domain) = domain {
             let mut node = 0;
-            for (depth, label) in domain.split('.').rev().enumerate() {
+            for label in domain.split('.').rev() {
                 let Some(next) = self.domains[node].children.get(label) else {
                     break;
                 };
                 node = *next as usize;
-                matches.extend(
-                    self.domains[node]
-                        .rules
-                        .iter()
-                        .map(|r| ((1, depth + 1), *r)),
-                );
+                matches.extend(self.domains[node].rules.iter().copied());
             }
         }
         matches
