@@ -72,12 +72,13 @@ test("connection identities, reverse-dial intent and independent receipts cross 
     await expect(page).not.toHaveURL(/\/login(?:\?|$)/);
     await page.goto(`${webUrl}/connections`);
     await expect(page.getByTestId("connections-editor")).toBeVisible();
-    await expect(page.getByRole("button", { name: "保存连接配置", exact: true })).toBeDisabled();
+    await expect(page.locator('[data-slot="draft-action-bar"]')).toBeHidden();
     await expect(page.getByTestId("connection-identity-row").filter({ hasText: "pending-key" })).toContainText("未发布公钥");
 
     await test.step("unapplied listener edits survive browser history without moving their base", async () => {
       await page.goto(`${webUrl}/nodes`);
-      await page.getByRole("link", { name: "连接配置", exact: true }).click();
+      await page.getByRole("link", { name: "高级连接", exact: true }).click();
+      await expect(page).toHaveURL(`${webUrl}/connections`);
       const base = await page.getByTestId("connections-base-revision").innerText();
       await page.getByRole("button", { name: "接收其他节点连接", exact: true }).first().click();
       await revealAdvanced(page.getByRole("dialog"), page.getByRole("dialog").getByLabel("监听器 ID", { exact: true }));
@@ -180,7 +181,7 @@ test("connection identities, reverse-dial intent and independent receipts cross 
       const saved = await getConnections(controllerUrl, admin);
       expect(saved.nodes.filter(entry => entry.node.name !== "pending-key").every(entry => entry.acknowledged_revision === saved.revision)).toBe(true);
       await page.reload();
-      await expect(page.getByRole("button", { name: "保存连接配置", exact: true })).toBeDisabled();
+      await expect(page.locator('[data-slot="draft-action-bar"]')).toBeHidden();
       const content = await page.content();
       for (const value of secrets) expect(content.includes(value), "credentials must not appear in HTML/Flight").toBe(false);
       await page.setViewportSize({ width: 1440, height: 1000 });

@@ -167,7 +167,7 @@ test("routing intent, conditional editing and persisted configuration receipts c
     await test.step("the typed editor previews a draft, then saves it under its original revision", async () => {
       await page.goto(`${webUrl}/routing`);
       await expect(page.getByTestId("policy-editor")).toBeVisible();
-      await expect(page.getByRole("button", { name: "保存策略", exact: true })).toBeDisabled();
+      await expect(page.locator('[data-slot="draft-action-bar"]')).toBeHidden();
       await expect(page.getByTestId("policy-rule")).toHaveCount(2);
       await expect(page.getByTestId("policy-rule").getByText("已修改", { exact: true })).toHaveCount(0);
       await editRuleId(page, "nyc-to-sha", "nyc-to-sha-edited");
