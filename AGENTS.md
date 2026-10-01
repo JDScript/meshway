@@ -52,4 +52,5 @@ Rust 控制面与 agent、Next.js + shadcn/ui 控制台、VitePress 文档站。
 - 远端真实联测留待 TUN 与打洞完善后进行，现阶段仅登记主机。测试限定独立 Docker 网络命名空间，保留原 SSH/管理连接，不改宿主机路由、DNS、防火墙或 Docker daemon 配置，不使用 host network/privileged；测试网段、端口和数据目录须与现有服务隔离。
 - Rust 使用 `cargo fmt`、Clippy 和必要的行为测试；JS 使用严格 TypeScript 与各包检查。
 - 并行任务明确文件所有权；根 workspace 配置、lockfile 和整体验证由协调者维护。
+- 所有后续 worktree 统一创建在本仓库 `.worktree/<任务名>`，不再散放上级目录。独立任务完成、提交已整合且无未提交 / 未跟踪工作后及时移除 worktree；保留分支和测量产物。活跃任务须在不影响进程与构建的安全边界迁移，不能直接删改其目录。
 - 独立完成的工作形成清晰提交。提交前检查生成产物、文档和实际运行命令一致。
