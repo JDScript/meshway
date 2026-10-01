@@ -2,6 +2,8 @@
 
 真实 Rust Agent 内部 `ExitPlan`、Noise hop + endpoint E2E、Linux TUN、nftables masquerade、kernel conntrack。与 controller 身份/数据库完全独立，通过 ignored tests 注入内部计划，不提供生产设备配置入口。RFC见 `docs/exit-dataplane.md`。
 
+完整成功证据、前缀表耗时与短基线见 [RESULTS.md](RESULTS.md)。
+
 ## 执行
 
 所有命令在仓库根目录执行。Docker build、verification及验收均经过共享performance lock，长任务使用独立 `meshway-exit-*` tmux session。

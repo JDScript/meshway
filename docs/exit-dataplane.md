@@ -123,3 +123,5 @@ P3c 参照 Tailscale exit DNS：本地可信 stub 把外部查询通过当前选
 公网授权分类核对固定checkout `references/headscale/hscontrol/util/net.go:39–63` 的 `TheInternet`；此处是借鉴分类集合，不能把Headscale当作Tailscale官方controller实现。隔离S使用172.29.233/24，成功用例显式授权该网段；另有internet-only用例证明 `/0`捕获不能把private LAN变成公网权限。
 
 隔离验收入口见 `experiments/exit-dataplane/README.md`。结果 JSON 包含 `status`、每项真实命令证据与 `cleanup_errors`；吞吐/RTT仅为同条件可复现基线，不衡量包装增量。
+
+2026-10-01 Linux验收已通过：12场景/105项检查，`status=ok`、`cleanup_errors=[]`。1000个direct前缀安装8.96ms、整表代际替换7.57ms、明确撤回3.55ms；C→E→S单次3秒基线418.77Mbit/s、平均RTT0.519ms；经R为361.63Mbit/s、0.558ms。详细范围、真实命令及原始JSON位置见 `experiments/exit-dataplane/RESULTS.md`，不声称8k性能、DNS接管、真实WAN或完整controller闭环已完成。
