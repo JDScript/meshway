@@ -289,7 +289,9 @@ impl State {
             .with_max_response_body_bytes(MAX_DATAPLANE_BYTES);
         for _ in 0..3 {
             // Generated SDK operation only; no handwritten endpoint or wire DTO.
-            let snapshot: AgentDataplaneSnapshot = convert(client.get_agent_dataplane().await?)?;
+            let bundle: meshway_protocol::AgentManagedDataplaneSnapshot =
+                convert(client.get_agent_managed_dataplane().await?)?;
+            let snapshot = bundle.dataplane;
             let state = agent.connections.as_ref().expect("published connections");
             validate(
                 &snapshot,
@@ -320,6 +322,16 @@ impl State {
             // This MUST stay before disk persistence and either saved ACK. A
             // changed routing rule invalidates even an unchanged adjacency plan.
             manager.invalidate_dataplane(&snapshot).await;
+            manager.validate_materials(&snapshot.payload.connections, &bundle.materials)?;
+            super::materials::persist(
+                agent,
+                &bundle.network_id,
+                snapshot.payload.revision,
+                &snapshot,
+                &bundle.materials,
+                &bundle.digest,
+            )?;
+            manager.install_materials(bundle.materials);
             self.persist(agent, snapshot.clone())?;
             agent.persist_configuration(configuration.clone())?;
             agent

@@ -57,6 +57,7 @@ impl Drop for Profile {
 pub(super) struct Server {
     pub tls: Arc<TlsServer>,
     pub vless: ServerConfig,
+    pub websocket: Option<meshway_transport_vless::websocket::Parameters>,
 }
 
 #[derive(Clone)]
@@ -64,6 +65,7 @@ pub(super) struct Client {
     pub tls: Arc<TlsClient>,
     pub name: ServerName<'static>,
     pub vless: ClientConfig,
+    pub websocket: Option<meshway_transport_vless::websocket::Parameters>,
 }
 
 #[derive(Default)]
@@ -257,6 +259,7 @@ pub(super) fn load(path: Option<&Path>, intent: &NodeConnections) -> Result<Prof
                             uuid,
                             expected_target: marker,
                         },
+                        websocket: None,
                     },
                 );
             }
@@ -288,11 +291,199 @@ pub(super) fn load(path: Option<&Path>, intent: &NodeConnections) -> Result<Prof
                             uuid,
                             target: marker,
                         },
+                        websocket: None,
                     },
                 );
             }
             _ => return Err(Failure(Reason::ProfileUnavailable)),
         }
+    }
+    result.fingerprint = hash.finalize().into();
+    Ok(result)
+}
+
+pub(super) fn load_combined(
+    path: Option<&Path>,
+    intent: &NodeConnections,
+    materials: &[meshway_protocol::ManagedVlessMaterial],
+) -> Result<Profiles, Failure> {
+    use meshway_protocol::VlessStreamTransport;
+    let mut legacy = intent.clone();
+    legacy.listeners.retain(|l| {
+        !l.credential_ref
+            .as_deref()
+            .is_some_and(|r| r.starts_with("managed."))
+    });
+    legacy.outgoing.retain(|c| {
+        !c.credential_ref
+            .as_deref()
+            .is_some_and(|r| r.starts_with("managed."))
+    });
+    let mut result = load(path, &legacy)?;
+    let mut hash = Sha256::new();
+    hash_part(&mut hash, &result.fingerprint);
+    let mut seen = std::collections::BTreeSet::new();
+    for material in materials {
+        let id = &material.credential_ref;
+        let expected = format!("managed.{}", material.listener_id);
+        let owner = intent.listeners.iter().any(|l| {
+            l.id == material.listener_id
+                && l.transport == ConnectionTransport::Vless
+                && l.credential_ref.as_ref() == Some(id)
+        });
+        let dialer = intent.outgoing.iter().any(|c| {
+            c.listener_id == material.listener_id
+                && c.transport == ConnectionTransport::Vless
+                && c.credential_ref.as_ref() == Some(id)
+        });
+        if id != &expected
+            || !seen.insert(id.clone())
+            || material.version == 0
+            || (!owner && !dialer)
+            || owner != material.private_key_pem.is_some()
+        {
+            return Err(Failure(Reason::ProfileUnavailable));
+        }
+        let certs = certificates(material.certificate_pem.as_bytes())?;
+        let fingerprint: String = Sha256::digest(certs[0].as_ref())
+            .iter()
+            .map(|b| format!("{b:02x}"))
+            .collect();
+        if fingerprint != material.certificate_sha256 {
+            return Err(Failure(Reason::ProfileUnavailable));
+        }
+        let websocket = match material.settings.stream {
+            VlessStreamTransport::Tcp
+                if material.settings.websocket_path.is_none()
+                    && material.settings.websocket_host.is_none() =>
+            {
+                None
+            }
+            VlessStreamTransport::Websocket => {
+                let value = meshway_transport_vless::websocket::Parameters {
+                    path: material
+                        .settings
+                        .websocket_path
+                        .clone()
+                        .ok_or(Failure(Reason::ProfileUnavailable))?,
+                    host: material
+                        .settings
+                        .websocket_host
+                        .clone()
+                        .ok_or(Failure(Reason::ProfileUnavailable))?,
+                };
+                value.validate().map_err(unavailable)?;
+                Some(value)
+            }
+            _ => return Err(Failure(Reason::ProfileUnavailable)),
+        };
+        let encoded = Zeroizing::new(serde_json::to_vec(material).map_err(unavailable)?);
+        hash_part(&mut hash, &encoded);
+        let provider = Arc::new(rustls::crypto::ring::default_provider());
+        // Validate certificate name/time before durable ACK, including owners.
+        // This root is the exact controller-delivered certificate chain; there
+        // is no system-root or insecure verification fallback.
+        let mut roots = RootCertStore::empty();
+        roots
+            .add(
+                certs
+                    .last()
+                    .ok_or(Failure(Reason::ProfileUnavailable))?
+                    .clone(),
+            )
+            .map_err(unavailable)?;
+        let verifier = rustls::client::WebPkiServerVerifier::builder_with_provider(
+            Arc::new(roots),
+            provider.clone(),
+        )
+        .build()
+        .map_err(unavailable)?;
+        let name =
+            ServerName::try_from(material.settings.server_name.clone()).map_err(unavailable)?;
+        use rustls::client::danger::ServerCertVerifier;
+        verifier
+            .verify_server_cert(
+                &certs[0],
+                &certs[1..],
+                &name,
+                &[],
+                rustls::pki_types::UnixTime::now(),
+            )
+            .map_err(unavailable)?;
+        let uuid: SecretUuid = material.uuid.parse().map_err(unavailable)?;
+        let marker = Target::ip(std::net::Ipv4Addr::LOCALHOST.into(), 8421).map_err(unavailable)?;
+        if owner {
+            let key = material
+                .private_key_pem
+                .as_ref()
+                .ok_or(Failure(Reason::ProfileUnavailable))?;
+            let mut cursor = std::io::Cursor::new(key.as_bytes());
+            let key = rustls_pemfile::private_key(&mut cursor)
+                .map_err(unavailable)?
+                .ok_or(Failure(Reason::ProfileUnavailable))?;
+            if rustls_pemfile::private_key(&mut cursor)
+                .map_err(unavailable)?
+                .is_some()
+            {
+                return Err(Failure(Reason::ProfileUnavailable));
+            }
+            let tls = TlsServer::builder_with_provider(provider.clone())
+                .with_safe_default_protocol_versions()
+                .map_err(unavailable)?
+                .with_no_client_auth()
+                .with_single_cert(certs.clone(), key)
+                .map_err(unavailable)?;
+            result.servers.insert(
+                id.clone(),
+                Server {
+                    tls: Arc::new(tls),
+                    vless: ServerConfig {
+                        uuid: uuid.clone(),
+                        expected_target: marker.clone(),
+                    },
+                    websocket: websocket.clone(),
+                },
+            );
+        }
+        if dialer {
+            let mut roots = RootCertStore::empty();
+            for cert in certs {
+                roots.add(cert).map_err(unavailable)?;
+            }
+            let tls = TlsClient::builder_with_provider(provider)
+                .with_safe_default_protocol_versions()
+                .map_err(unavailable)?
+                .with_root_certificates(roots)
+                .with_no_client_auth();
+            let name =
+                ServerName::try_from(material.settings.server_name.clone()).map_err(unavailable)?;
+            result.clients.insert(
+                id.clone(),
+                Client {
+                    tls: Arc::new(tls),
+                    name,
+                    vless: ClientConfig {
+                        uuid,
+                        target: marker,
+                    },
+                    websocket,
+                },
+            );
+        }
+    }
+    if intent
+        .listeners
+        .iter()
+        .filter_map(|l| l.credential_ref.as_ref())
+        .chain(
+            intent
+                .outgoing
+                .iter()
+                .filter_map(|c| c.credential_ref.as_ref()),
+        )
+        .any(|r| r.starts_with("managed.") && !seen.contains(r))
+    {
+        return Err(Failure(Reason::ProfileUnavailable));
     }
     result.fingerprint = hash.finalize().into();
     Ok(result)

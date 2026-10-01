@@ -15,6 +15,8 @@ use crate::generated::{client::HttpClient, types::AcknowledgeAgentConnectionsReq
 mod dataplane;
 #[cfg(feature = "managed-connections")]
 mod managed;
+#[cfg(feature = "managed-connections")]
+mod materials;
 #[cfg(test)]
 mod tests;
 mod validation;
@@ -231,8 +233,10 @@ pub fn connections_status(path: impl AsRef<Path>) -> Result<ConnectionStatus, Ag
 // Generated transport DTOs are converted into the authoritative protocol types
 // for digest/reference checks. No handwritten HTTP DTO or untyped JSON escapes.
 pub(super) fn convert<T: DeserializeOwned>(value: impl Serialize) -> Result<T, AgentError> {
-    let bytes = serde_json::to_vec(&value)
-        .map_err(|_| AgentError::Invalid("cannot encode connection contract"))?;
+    let bytes = zeroize::Zeroizing::new(
+        serde_json::to_vec(&value)
+            .map_err(|_| AgentError::Invalid("cannot encode connection contract"))?,
+    );
     serde_json::from_slice(&bytes).map_err(|_| AgentError::Invalid("invalid connection contract"))
 }
 
