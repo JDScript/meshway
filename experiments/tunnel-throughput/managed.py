@@ -10,7 +10,7 @@ import time
 
 from run import (TunnelFixture, Fixture, architecture, benchmark_case, bounded_integer, cpu_details, cpu_window,
                  docker, docker_json, interrupted, now, performance_lock, platform,
-                 wait_until, write_result, PROCESS, environment)
+                 wait_until, write_result, PROCESS, environment, counter_delta)
 from meshway import RUN_DIRECTORY, HERE
 
 SUPERVISE = r"""
@@ -27,6 +27,13 @@ m.save('agent-exit.json',{'exit_code':c.wait()})
 
 
 class ManagedFixture(TunnelFixture):
+    def runtime_statistics(self):
+        result={}
+        for n in self.nodes:
+            response=self.exec(n,'cat',RUN_DIRECTORY+'/runtime-statistics.json',check=False)
+            if response.returncode==0: result[n]={'statistics':json.loads(response.stdout)}
+        return result
+
     def create_node(self,node,network,topology,forward=False):
         name=f'{self.prefix}-{topology}-{node.lower()}'
         self.containers_owned.append(name); self.nodes[node]=name
@@ -82,6 +89,13 @@ class ManagedFixture(TunnelFixture):
             wait_until('real managed TUN generation',ready,timeout=40)
         for n,peer in [('NYC','SHA'),('SHA','NYC')]:
             wait_until('managed TUN ICMP',lambda n=n,peer=peer:self.exec(n,'ping','-n','-c','1','-W','1',ips[peer],check=False).returncode==0,timeout=40)
+        if self.args.tun_queue_length is not None:
+            for n in order: self.exec(n,'ip','link','set','dev','mwlab0','txqueuelen',str(self.args.tun_queue_length))
+            links={n:json.loads(self.exec(n,'ip','-json','link','show','dev','mwlab0').stdout) for n in order}
+            if any(link['txqlen']!=self.args.tun_queue_length for rows in links.values() for link in rows):
+                raise RuntimeError('Requested isolated TUN queue length did not take effect')
+        if self.args.require_runtime_statistics:
+            wait_until('ignored fixture Runtime statistics sidecars',lambda:len(self.runtime_statistics())==len(order),timeout=10)
         if mode=='relay' and self.probe('NYC',self.address('SHA','b')): raise RuntimeError('Unexpected relay bypass')
         return ips,{'snapshot':self.snapshot(),'connections':self.connections(),
                     'offload':{n:{dev:self.exec(n,'ethtool','-k',dev,check=False).stdout for dev in ['eth0','mwlab0']} for n in order}}
@@ -92,6 +106,8 @@ def main():
     p.add_argument('--image',required=True); p.add_argument('--output',type=Path,required=True)
     p.add_argument('--temp-dir',type=Path,required=True); p.add_argument('--seconds',type=bounded_integer(1,30),default=10)
     p.add_argument('--iterations',type=bounded_integer(1,3),default=1); p.add_argument('--modes',nargs='+',choices=['direct','relay'],default=['direct','relay'])
+    p.add_argument('--tun-queue-length',type=int,choices=[32,128,256],default=None,help='Same-image namespace-only TUN queue A/B; omit to retain binary default')
+    p.add_argument('--require-runtime-statistics',action='store_true',help='Fail unless this measurement image publishes experiment-only Runtime statistics')
     args=p.parse_args(); args.cpus,args.memory,args.mtu,args.omit=1.,'256m',1500,2
     if 4*(args.seconds+args.omit)*args.iterations>210: raise ValueError('Case duration exceeds bounded managed fixture lease budget')
     os.umask(0o077)
@@ -112,12 +128,15 @@ def main():
             for iteration in range(1,args.iterations+1):
                 for parallel in [1,4]:
                     for reverse in [False,True]:
-                        cpu_before=f.cgroups(); kernel_before=f.kernel()
+                        cpu_before=f.cgroups(); kernel_before=f.kernel(); runtime_before=f.runtime_statistics()
                         processes={n:json.loads(f.exec(n,'python3','-c',PROCESS).stdout) for n in f.nodes}
                         case=benchmark_case(f,ips['NYC'],ips['SHA'],'tcp',parallel,reverse,iteration)
+                        runtime_after=f.runtime_statistics()
                         case.update(mode=mode,mtu=1000,hop_count=2 if mode=='relay' else 1,
                             kernel_before=kernel_before,kernel_after=f.kernel(),process_before=processes,
-                            process_after={n:json.loads(f.exec(n,'python3','-c',PROCESS).stdout) for n in f.nodes})
+                            process_after={n:json.loads(f.exec(n,'python3','-c',PROCESS).stdout) for n in f.nodes},
+                            agent_before=runtime_before,agent_after=runtime_after,
+                            agent_counter_delta=counter_delta(runtime_before,runtime_after))
                         case['cpu']=cpu_window(cpu_before,f.cgroups())
                         cpu_details(case['cpu'],case['raw_client']['end']['sum_received']['bytes'])
                         result['cases'].append(case); write_result(args.output,result)

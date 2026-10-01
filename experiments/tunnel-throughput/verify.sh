@@ -3,7 +3,7 @@
 set -eu
 rustfmt --edition 2024 apps/agent/src/bin/carrier_measure.rs \
   apps/agent/src/managed_dataplane/throughput.rs apps/agent/src/managed_dataplane/packet.rs \
-  crates/dataplane/src/runtime/tests/discovery.rs
+  apps/agent/src/managed_dataplane/tun.rs crates/dataplane/src/runtime/tests/discovery.rs
 cargo fmt --all --check
 python3 -m unittest discover -s experiments/tunnel-throughput -p 'test_*.py'
 # Socket-using Rust behavior tests stay in Linux build namespaces, not the host.

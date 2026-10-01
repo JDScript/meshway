@@ -36,15 +36,17 @@ export ART=/private/var/folders/8n/20x15sl9797cdg9sdqfj803w0000gn/T/opencode/thr
 python3 experiments/transport/performance_lock.py docker build --platform linux/arm64 \
   -f experiments/tunnel-throughput/Dockerfile -t meshway-throughput:runtime-e69cb3d .
 python3 experiments/transport/performance_lock.py docker build --platform linux/arm64 \
-  -f experiments/tunnel-throughput/Dockerfile.managed -t meshway-throughput:managed-baseline-e69cb3d .
+  -f experiments/tunnel-throughput/Dockerfile.managed -t meshway-throughput:managed-tun128-e69cb3d .
 
 python3 experiments/tunnel-throughput/run.py --image meshway-throughput:runtime-e69cb3d \
   --output "$ART/matrix-new.json" --temp-dir "$ART" --seconds 10
-python3 experiments/tunnel-throughput/managed.py --image meshway-throughput:managed-baseline-e69cb3d \
-  --output "$ART/managed-new.json" --temp-dir "$ART" --seconds 20 --iterations 2
+python3 experiments/tunnel-throughput/managed.py --image meshway-throughput:managed-tun128-e69cb3d \
+  --output "$ART/managed-control32-new.json" --temp-dir "$ART" --seconds 20 --iterations 2 --tun-queue-length 32
+python3 experiments/tunnel-throughput/managed.py --image meshway-throughput:managed-tun128-e69cb3d \
+  --output "$ART/managed-treatment128-new.json" --temp-dir "$ART" --seconds 20 --iterations 2 --tun-queue-length 128
 python3 experiments/tunnel-throughput/runtime.py --image meshway-throughput:runtime-e69cb3d \
   --output "$ART/runtime-new.json" --temp-dir "$ART"
-python3 experiments/transport/performance_lock.py python3 experiments/tunnel-throughput/summarize.py "$ART/managed-new.json"
+python3 experiments/transport/performance_lock.py python3 experiments/tunnel-throughput/summarize.py "$ART/managed-treatment128-new.json"
 python3 experiments/transport/performance_lock.py python3 -m unittest discover -s experiments/tunnel-throughput -p 'test_*.py'
 ```
 
@@ -66,7 +68,9 @@ receiver bytes 得到的是 **CPU ns/B 上界估计**，不是严格对齐的热
 Runtime 无 TUN 接收器另有周期性对齐 CPU 采样。`/proc/PID/io` 的 syscr/syscw
 仅覆盖 read/write 等 IO，不能冒充所有 UDP sendto/recvfrom 系统调用。
 Runtime status 每秒发布，差值存在边界采样滞后；保留原始快照而不是只取表格。
-托管 Manager observation 未暴露 Runtime drop 计数，本专项不新增产品 API。
+托管 Manager observation 未暴露 Runtime drop 计数。本专项的 ignored Linux fixture
+通过一次性 Weak 注册及每秒 sidecar 采样取得 Runtime 计数，生产无此注册 / sampler，
+不新增产品 API、不延长运行代际或保留密钥。
 
 未测项包括 TLS-VLESS 托管 TUN、完整 HTTP enrollment/refresh 成本、真实 WAN、
 perf 硬件采样和 offloaded TUN；不依据它们下结论。已知代码路径：每 UDP 包独立
@@ -96,6 +100,9 @@ fixture 错误，不是产品中继性能结果；已修正为 LAX 在 SHA 同�
 `runtime10.json` 首轮 synthetic sender 超过公共 `MAX_BATCH_FRAMES=16`，全部被
 合法拒绝（accepted=0）；该负载无效，不用于吞吐 / 丢包结论。修正后拆 batch，
 并要求 sender exit=0 且 accepted>0，否则 runner 失败。失败原始数据保留以审计。
+第二轮 `runtime10-fixed.json` 的直连六个 case 和首个中继 case 已完成，后续因
+恢复检查错误地要求两端直接成为 authenticated peer 而失败。已修正为检查真实
+下一跳并等待新的进程代际；最终完整运行另存 `runtime10-final.json`，不覆盖失败数据。
 
 ## 实际托管 generation 的稳定基线
 
@@ -119,3 +126,6 @@ ingress queue 丢弃 1352 包、endpoint delivery queue 504 包、kernel UDP Rcv
 outbound 401，CPU 47.93% / throttling 0。相关场景 IP fragment / reassembly 和
 authentication / replay / unauthorized-path 错误均为 0。队列损失和 TCP 反馈是
 可确认的性能限制；仅从 CPU 平均低于 quota 不能推断它没有热路径 CPU 成本。
+
+主要托管 TUN 丢包定位、同二进制 queue32/128 A/B、保留 / 否决的优化及后续计划见
+[RESULTS.md](RESULTS.md)。

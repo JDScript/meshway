@@ -8,6 +8,15 @@ use serde::{Deserialize, Serialize};
 use std::{net::SocketAddr, path::PathBuf, time::Duration};
 use tokio::time::Instant;
 
+// Ignored fixture observability only. A Weak never extends a running generation
+// or retains its keys; production builds have neither registration nor sampler.
+static RUNTIME: std::sync::LazyLock<std::sync::Mutex<std::sync::Weak<meshway_dataplane::Runtime>>> =
+    std::sync::LazyLock::new(|| std::sync::Mutex::new(std::sync::Weak::new()));
+
+pub(super) fn observe_runtime(runtime: &std::sync::Arc<meshway_dataplane::Runtime>) {
+    *RUNTIME.lock().unwrap() = std::sync::Arc::downgrade(runtime);
+}
+
 #[derive(Serialize, Deserialize)]
 struct Fixture {
     payload: NodeDataplane,
@@ -89,6 +98,10 @@ async fn serve() {
             _ = timer.tick() => {
                 let observation = manager.observation();
                 local::atomic_write(&status, &serde_json::to_vec(&observation).unwrap(), status.try_exists().unwrap()).unwrap();
+                if let Some(runtime) = RUNTIME.lock().unwrap().upgrade() {
+                    let statistics = status.with_file_name("runtime-statistics.json");
+                    local::atomic_write(&statistics, &serde_json::to_vec(&runtime.statistics()).unwrap(), statistics.try_exists().unwrap()).unwrap();
+                }
             }
         }
     }

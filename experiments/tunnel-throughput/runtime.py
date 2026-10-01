@@ -58,6 +58,7 @@ def main():
     p.add_argument('--image',required=True)
     p.add_argument('--output',type=Path,required=True)
     p.add_argument('--temp-dir',type=Path,required=True)
+    p.add_argument('--modes',nargs='+',choices=['direct','relay'],default=['direct','relay'])
     p.add_argument('--seconds',type=bounded_integer(1,30),default=10)
     p.add_argument('--queue',type=bounded_integer(1,256),default=64)
     p.add_argument('--udp-receive-buffer',type=bounded_integer(0,4*1024*1024),default=0)
@@ -76,7 +77,7 @@ def main():
               'environment':environment(info),'cases':[],'fixtures':{},'cleanup_errors':[]}
     f = None
     try:
-        for mode in ['direct','relay']:
+        for mode in args.modes:
             f = RuntimeFixture(args,result)
             f.prepare_image(native)
             result['fixtures'][mode] = f.setup_direct() if mode=='direct' else f.setup_relay()
@@ -110,8 +111,15 @@ def main():
                     result['cases'].append(case)
                     write_result(args.output,result)
                     print(f"{mode} {pps}pps {'reverse' if reverse else 'forward'}: recv={received} accepted={accepted} retention={case['receiver_fraction']}",flush=True)
+                    sender_pid=f.agent_state(source)['pid']
                     f.start_agent(source)
-                    wait_until('sender restored',lambda:source.lower() in f.raw_status()[target]['authenticated_peers'])
+                    hop='LAX' if mode=='relay' else target
+                    def restored():
+                        state=f.agent_state(source)
+                        if state.get('pid')==sender_pid or not state['running']: return False
+                        statuses=f.raw_status()
+                        return hop.lower() in statuses[source]['authenticated_peers'] and source.lower() in statuses[hop]['authenticated_peers']
+                    wait_until('sender restored on authenticated next-hop channel',restored,timeout=30)
                     time.sleep(1.1)
             result['cleanup_errors'].extend(f.cleanup()); f=None
         result['status']='ok'

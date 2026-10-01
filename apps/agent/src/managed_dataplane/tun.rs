@@ -430,7 +430,10 @@ mod linux {
         }
         disable_ipv6(Path::new("/proc/sys/net/ipv6"), &options.name)?;
         device.set_network_address(plan.local, 32, None)?;
-        device.set_tx_queue_len(32)?;
+        // A 32-packet kernel queue drops TCP bursts before the packet task can
+        // read them. Keep a bounded 128-packet cushion, below drain's 256-read
+        // retirement budget so an old generation can still quiesce atomically.
+        device.set_tx_queue_len(128)?;
         if !existing_guard {
             ip(&[
                 "-4",

@@ -12,6 +12,8 @@ pub(crate) async fn run(
     deadline: watch::Receiver<Option<Instant>>,
     name: &str,
 ) -> io::Result<()> {
+    #[cfg(all(test, target_os = "linux"))]
+    super::throughput::observe_runtime(&runtime);
     meshway_dataplane::packet_io::run_with_activation(
         device,
         runtime,

@@ -168,6 +168,10 @@ def main():
             for mtu in (args.bare_mtus if mode == 'bare' else [1280]):
                 if mode == 'bare':
                     for n in fixture.nodes: fixture.exec(n,'ip','link','set','eth0','mtu',str(mtu))
+                    links = {n:json.loads(fixture.exec(n,'ip','-json','link','show').stdout) for n in fixture.nodes}
+                    if any(link['mtu'] != mtu for rows in links.values() for link in rows if link['ifname'] != 'lo'):
+                        raise LabError('Requested bare MTU did not take effect')
+                    result['fixtures'][mode].setdefault('mtu_configurations',{})[str(mtu)] = links
                 for iteration in range(1,args.iterations+1):
                     for parallel in [1,4]:
                         for reverse in [False,True]:

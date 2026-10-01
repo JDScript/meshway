@@ -3,6 +3,7 @@
 import argparse
 import json
 from pathlib import Path
+from run import cpu_details
 
 
 def snmp(text):
@@ -26,6 +27,10 @@ def kernel_delta(case,node):
 
 
 def describe(case):
+    window=case.get('cpu',{})
+    received_bytes=case.get('raw_client',{}).get('end',{}).get('sum_received',{}).get('bytes')
+    if 'total_cpu_ns_per_receiver_payload_byte' not in window and 'before' in window and 'after' in window and received_bytes is not None:
+        cpu_details(window,received_bytes)
     row={k:case.get(k) for k in ['mode','mtu','id','pps_requested','received','accepted_send','receiver_fraction','reverse'] if k in case}
     row['mbps']=case.get('summary',{}).get('receiver_bits_per_second',0)/1e6
     start=case.get('raw_client',{}).get('start',{})
@@ -42,6 +47,17 @@ def describe(case):
         delta=case.get('agent_counter_delta',{}).get(node,{}).get('statistics',{})
         entry['runtime_drops']=delta.get('native_udp',{}).get('drop_reasons',{})
         entry['runtime_counters']=delta.get('native_udp',{})
+        link_samples=[]
+        for side in ['kernel_before','kernel_after']:
+            link_samples.append({link['ifname']:link for link in case.get(side,{}).get(node,{}).get('links',[])})
+        entry['links']={}
+        for name,link in link_samples[1].items():
+            old=link_samples[0].get(name,{})
+            first=old.get('stats64',old.get('stats',{})); second=link.get('stats64',link.get('stats',{}))
+            entry['links'][name]={'tx_queue_length':link.get('txqlen'),'mtu':link.get('mtu'),
+                **{f'{direction}_{field}':second[direction][field]-first[direction][field]
+                    for direction in ['rx','tx'] for field in ['packets','bytes','dropped','errors']
+                    if field in first.get(direction,{}) and field in second.get(direction,{})}}
         entry['tun_counters']=case.get('agent_counter_delta',{}).get(node,{}).get('tun',{})
         samples=[]
         for side in ['process_before','process_after']:

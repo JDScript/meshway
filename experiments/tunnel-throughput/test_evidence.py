@@ -1,9 +1,19 @@
 import unittest
-from summarize import kernel_delta, snmp
+from summarize import describe, kernel_delta, snmp
 from run import cpu_details, cpu_window
 
 
 class EvidenceTests(unittest.TestCase):
+    def test_tun_loss_is_attributed_to_its_own_interface_and_direction(self):
+        def link(name, dropped):
+            return {'ifname':name,'txqlen':32,'mtu':1000,'stats64':{'rx':{'dropped':0},'tx':{'dropped':dropped}}}
+        case={'cpu':{'nodes':{'NYC':{}}},'kernel_before':{'NYC':{'links':[link('mwlab0',5),link('eth0',0)]}},
+              'kernel_after':{'NYC':{'links':[link('mwlab0',14417),link('eth0',0)]}}}
+        links=describe(case)['nodes']['NYC']['links']
+        self.assertEqual(links['mwlab0']['tx_dropped'],14412)
+        self.assertEqual(links['eth0']['tx_dropped'],0)
+        self.assertEqual(links['mwlab0']['rx_dropped'],0)
+
     def test_snmp_headers_are_matched_and_missing_is_not_zero_loss(self):
         self.assertEqual(snmp('Udp: InDatagrams RcvbufErrors\nUdp: 19 4\n'),
                          {'Udp': {'InDatagrams': 19, 'RcvbufErrors': 4}})
