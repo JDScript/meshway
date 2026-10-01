@@ -277,3 +277,98 @@ async fn activation_observation_requires_unique_receiver_and_live_generation() {
         runtime.shutdown().await;
     }
 }
+
+#[tokio::test]
+async fn admission_handoff_preserves_e2e_cache_discards_old_delivery_and_never_revives_shutdown() {
+    let fixture = Fixture::native(TransportKind::NativeTcp).await;
+    let runtime = Arc::new(fixture.sha.clone());
+    let plan = Ipv4PacketPlan::new(
+        Ipv4Addr::new(100, 64, 0, 3),
+        1000,
+        BTreeMap::new(),
+        BTreeMap::from([(path(), Ipv4Addr::new(100, 64, 0, 1))]),
+    );
+    let (device, endpoint) = packet_io::channel(4).unwrap();
+    let until = Instant::now() + Duration::from_secs(60);
+    let (lease, deadline) = watch::channel(Some(until));
+    let (active, ready) = tokio::sync::oneshot::channel();
+    let pump = tokio::spawn(packet_io::run_with_activation(
+        device.clone(),
+        runtime.clone(),
+        plan.clone(),
+        deadline,
+        || {
+            let _ = active.send(());
+        },
+    ));
+    ready.await.unwrap();
+    assert!(
+        runtime.take_packet_receiver().is_err(),
+        "only one receiver while active"
+    );
+    fixture.nyc.send_packet(path(), ipv4(1)).await.unwrap();
+    assert_eq!(
+        time::timeout(Duration::from_secs(3), endpoint.recv_batch())
+            .await
+            .unwrap()
+            .unwrap()
+            .into_packets(),
+        vec![ipv4(1)]
+    );
+    let cached = fixture.nyc.handle.inner.sending.lock().await[&path()].id;
+    lease.send_replace(None);
+    pump.await.unwrap().unwrap();
+    fixture.nyc.send_packet(path(), ipv4(2)).await.unwrap();
+    time::timeout(Duration::from_secs(3), async {
+        loop {
+            if lock(&runtime.handle.receiver)
+                .as_ref()
+                .is_some_and(|receiver| !receiver.is_empty())
+            {
+                break;
+            }
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .unwrap();
+    let (_lease, deadline) = watch::channel(Some(until));
+    let (active, ready) = tokio::sync::oneshot::channel();
+    let next = tokio::spawn(packet_io::run_with_activation(
+        device,
+        runtime.clone(),
+        plan,
+        deadline,
+        || {
+            let _ = active.send(());
+        },
+    ));
+    ready.await.unwrap();
+    fixture.nyc.send_packet(path(), ipv4(3)).await.unwrap();
+    assert_eq!(
+        time::timeout(Duration::from_secs(3), endpoint.recv_batch())
+            .await
+            .unwrap()
+            .unwrap()
+            .into_packets(),
+        vec![ipv4(3)]
+    );
+    assert_eq!(
+        fixture.nyc.handle.inner.sending.lock().await[&path()].id,
+        cached,
+        "handoff did not require cipher cache rotation"
+    );
+    runtime.shutdown().await;
+    assert!(
+        time::timeout(Duration::from_secs(3), next)
+            .await
+            .unwrap()
+            .unwrap()
+            .is_err()
+    );
+    assert!(
+        runtime.take_packet_receiver().is_err(),
+        "shutdown cannot be revived by receiver return"
+    );
+    fixture.shutdown().await;
+}

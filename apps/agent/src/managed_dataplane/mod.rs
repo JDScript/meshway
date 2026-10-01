@@ -1,5 +1,6 @@
-//! Managed IPv4 endpoint boundary. All payload encryption/path authentication
-//! belongs to the existing dataplane Runtime; this module never forwards plaintext.
+//! Managed IPv4 boundaries. Encryption and exact path authentication belong to
+//! Runtime. Mesh relays never receive plaintext; a planned final Linux exit
+//! decrypts external packets before authorized kernel forwarding and NAT.
 
 use std::{
     collections::BTreeMap,
@@ -15,6 +16,7 @@ use meshway_protocol::{ConnectionPeer, NodeDataplane};
 
 use crate::AgentError;
 
+pub(crate) mod exit;
 pub(crate) mod packet;
 #[cfg(test)]
 pub(crate) mod tests;

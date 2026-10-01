@@ -105,8 +105,24 @@ impl Ipv4PacketPlan {
     }
 }
 
+/// Generation-scoped packet admission. Stateful implementations must keep
+/// bounded state and may not infer authentication from inner packet addresses.
+pub trait Admission: Send + Sync {
+    fn outgoing(&self, bytes: &[u8]) -> Option<&Vec<String>>;
+    fn incoming(&self, packet: &ReceivedPacket) -> bool;
+}
+
+impl Admission for Ipv4PacketPlan {
+    fn outgoing(&self, bytes: &[u8]) -> Option<&Vec<String>> {
+        self.outgoing(bytes)
+    }
+    fn incoming(&self, packet: &ReceivedPacket) -> bool {
+        self.incoming(packet)
+    }
+}
+
 /// Strict complete IPv4 packets, without options or fragments.
-fn ipv4(bytes: &[u8], mtu: u16) -> Option<(Ipv4Addr, Ipv4Addr)> {
+pub fn ipv4(bytes: &[u8], mtu: u16) -> Option<(Ipv4Addr, Ipv4Addr)> {
     if bytes.len() < 20
         || bytes.len() > usize::from(mtu)
         || bytes[0] != 0x45
@@ -140,13 +156,58 @@ fn current(deadline: &watch::Receiver<Option<Instant>>) -> bool {
         .is_some_and(|until| until > Instant::now())
 }
 
+/// RAII preserves the unique delivery channel across admission-only selection.
+/// Runtime shutdown still owns cryptographic/session retirement. Bounded discard
+/// occurs before activation so buffered old plaintext cannot cross a generation.
+struct ReceiverLease {
+    runtime: Arc<Runtime>,
+    receiver: Option<mpsc::Receiver<ReceivedPacket>>,
+}
+
+impl ReceiverLease {
+    fn take(runtime: Arc<Runtime>) -> io::Result<Self> {
+        let mut receiver = runtime
+            .take_packet_receiver()
+            .map_err(|_| io::Error::other("runtime packet receiver unavailable"))?;
+        for _ in 0..256 {
+            match receiver.try_recv() {
+                Ok(_) => {}
+                Err(mpsc::error::TryRecvError::Empty) => {
+                    return Ok(Self {
+                        runtime,
+                        receiver: Some(receiver),
+                    });
+                }
+                Err(mpsc::error::TryRecvError::Disconnected) => {
+                    return Err(io::Error::other("packet runtime closed"));
+                }
+            }
+        }
+        // A permanently busy old queue is a failed prepare, never activated.
+        runtime.return_packet_receiver(receiver);
+        Err(io::Error::other("old runtime packet queue did not quiesce"))
+    }
+
+    async fn recv(&mut self) -> Option<ReceivedPacket> {
+        self.receiver.as_mut().expect("owned receiver").recv().await
+    }
+}
+
+impl Drop for ReceiverLease {
+    fn drop(&mut self) {
+        if let Some(receiver) = self.receiver.take() {
+            self.runtime.return_packet_receiver(receiver);
+        }
+    }
+}
+
 /// Single bounded duplex pump. Drop this future to cancel both directions;
 /// lease expiry, withdrawal and a closed lease sender also cancel blocked I/O.
 /// The coordinator must terminate the old pump before draining/reusing a device.
-pub async fn run<D: Device>(
+pub async fn run<D: Device, A: Admission>(
     device: Arc<D>,
     runtime: Arc<Runtime>,
-    plan: Ipv4PacketPlan,
+    plan: A,
     deadline: watch::Receiver<Option<Instant>>,
 ) -> io::Result<()> {
     run_with_activation(device, runtime, plan, deadline, || {}).await
@@ -155,16 +216,14 @@ pub async fn run<D: Device>(
 /// As `run`, with a bounded synchronous observation after acquiring the unique
 /// runtime receiver and checking the live lease, before either I/O direction.
 /// The callback is a local activation observation, never a delivery proof.
-pub async fn run_with_activation<D: Device>(
+pub async fn run_with_activation<D: Device, A: Admission>(
     device: Arc<D>,
     runtime: Arc<Runtime>,
-    plan: Ipv4PacketPlan,
+    plan: A,
     mut deadline: watch::Receiver<Option<Instant>>,
     activated: impl FnOnce() + Send,
 ) -> io::Result<()> {
-    let mut received = runtime
-        .take_packet_receiver()
-        .map_err(|_| io::Error::other("runtime packet receiver unavailable"))?;
+    let mut received = ReceiverLease::take(runtime.clone())?;
     if !current(&deadline) {
         return Ok(());
     }

@@ -545,6 +545,15 @@ impl Runtime {
         lock(&self.handle.receiver).take().ok_or(Error::Unavailable)
     }
 
+    /// The packet pump returns its unique receiver after a fenced admission
+    /// generation. A stopped Runtime never revives delivery or cached sessions.
+    pub(crate) fn return_packet_receiver(&self, receiver: mpsc::Receiver<ReceivedPacket>) {
+        let mut slot = lock(&self.handle.receiver);
+        if !*self.handle.inner.shutdown.borrow() && slot.is_none() {
+            *slot = Some(receiver);
+        }
+    }
+
     /// Encrypt and enqueue an owned endpoint packet. Success is not a remote delivery ACK.
     pub async fn send_packet(&self, path: Vec<String>, payload: Vec<u8>) -> Result<()> {
         packet::send(self.handle.inner.clone(), path, vec![payload]).await
@@ -560,6 +569,7 @@ impl Runtime {
         inner.shutdown.send_replace(true);
         inner.changed.notify_waiters();
         lock(&inner.delivery).take();
+        lock(&self.handle.receiver).take();
         let handles = std::mem::take(&mut *lock(&inner.handles));
         let deadline = tokio::time::Instant::now() + Duration::from_secs(2);
         for mut handle in handles {
