@@ -1,5 +1,6 @@
 use super::{
-    Channel, DropReason, Failure, Incoming, Inner, Outbound, StageResult, StreamRole, lock,
+    Channel, DropReason, Failure, Incoming, Inner, Outbound, StageResult, StreamContext,
+    StreamRole, lock,
     wire::{HOP_ACK, HOP_CONFIRM, hop_prologue},
 };
 use crate::{
@@ -21,15 +22,19 @@ pub(super) struct Established<S> {
     cipher: Cipher,
     peer: String,
     priority: u16,
+    initiator: bool,
+    context: StreamContext,
 }
 
-pub(super) async fn authenticate<S: DuplexStream>(
+pub(super) async fn authenticate_with_context<S: DuplexStream>(
     inner: &Inner,
     mut stream: S,
     role: StreamRole,
     transport: TransportKind,
     priority: u16,
+    context: StreamContext,
 ) -> Result<Established<S>> {
+    context.validate(&inner.config, &role, transport)?;
     let mut shutdown = inner.shutdown.subscribe();
     if *shutdown.borrow() {
         return Err(Error::Closed);
@@ -73,6 +78,7 @@ pub(super) async fn authenticate<S: DuplexStream>(
                 // Authenticate before replying or installing any channel.
                 let peer = inner.identify(state.get_remote_static())?;
                 inner.authorize_transport(&peer, transport)?;
+                context.authorize(&peer)?;
                 let response = write_handshake(&mut state, &setup)?;
                 write_record(&mut stream, &response).await?;
                 u16::from_be_bytes([setup[1], setup[2]])
@@ -104,6 +110,8 @@ pub(super) async fn authenticate<S: DuplexStream>(
             cipher,
             peer,
             priority: negotiated,
+            initiator,
+            context,
         })
     };
     tokio::select! {
@@ -128,6 +136,9 @@ pub(super) fn install<S: DuplexStream + 'static>(
             transport,
             tx,
             close,
+            initiator: established.initiator,
+            context: Arc::new(established.context.clone()),
+            probe_budget: Default::default(),
         },
     )?;
     inner.clone().spawn(async move {
@@ -185,10 +196,12 @@ async fn run<S: DuplexStream>(
             for frame in outbound.batch.into_frames() {
                 let record = lock(&cipher).seal(&frame)?;
                 write_record(&mut writer, &record).await?;
-                inner
-                    .counters(transport)
-                    .sent
-                    .fetch_add(1, Ordering::Relaxed);
+                if frame.first() != Some(&super::neighbor::NAMESPACE) {
+                    inner
+                        .counters(transport)
+                        .sent
+                        .fetch_add(1, Ordering::Relaxed);
+                }
             }
         }
         Ok(())
@@ -203,7 +216,7 @@ async fn run<S: DuplexStream>(
     }
 }
 
-pub(super) async fn listen(inner: Arc<Inner>, listener: TcpListener) {
+pub(super) async fn listen(inner: Arc<Inner>, listener: TcpListener, context: StreamContext) {
     let mut shutdown = inner.shutdown.subscribe();
     if *shutdown.borrow() {
         return;
@@ -212,18 +225,19 @@ pub(super) async fn listen(inner: Arc<Inner>, listener: TcpListener) {
         tokio::select! {
             _ = shutdown.changed() => break,
             accepted = listener.accept() => {
-                let Ok((socket, _)) = accepted else { break };
+                let Ok((socket, remote_addr)) = accepted else { break };
                 let Ok(permit) = inner.semaphore.clone().try_acquire_owned() else {
                     inner.counters(TransportKind::NativeTcp).drop(DropReason::CapacityOther);
                     continue;
                 };
                 let inner = inner.clone();
+                let context = StreamContext { remote_addr: Some(remote_addr), ..context.clone() };
                 inner.clone().spawn(async move {
                     if let Err(error) = configure_socket(&socket, inner.config.limits.native_tcp_nodelay) {
                         inner.counters(TransportKind::NativeTcp).drop(error.into());
                         return;
                     }
-                    match authenticate(&inner, socket, StreamRole::Acceptor, TransportKind::NativeTcp, 0).await {
+                    match authenticate_with_context(&inner, socket, StreamRole::Acceptor, TransportKind::NativeTcp, 0, context).await {
                         Ok(established) => { let _ = install(inner, established, TransportKind::NativeTcp, permit); }
                         Err(error) => { inner.counters(TransportKind::NativeTcp).drop(error.into()); }
                     }
@@ -250,7 +264,12 @@ pub(super) async fn maintain(inner: Arc<Inner>, candidate: OutgoingCandidate) {
                     .await
                     .map_err(|_| Error::Timeout)??;
                 configure_socket(&socket, inner.config.limits.native_tcp_nodelay)?;
-                let established = authenticate(
+                let context = StreamContext {
+                    candidate_id: candidate.id.clone(),
+                    remote_addr: Some(socket.peer_addr()?),
+                    ..Default::default()
+                };
+                let established = authenticate_with_context(
                     &inner,
                     socket,
                     StreamRole::Dialer {
@@ -258,6 +277,7 @@ pub(super) async fn maintain(inner: Arc<Inner>, candidate: OutgoingCandidate) {
                     },
                     TransportKind::NativeTcp,
                     candidate.priority,
+                    context,
                 )
                 .await?;
                 install(inner.clone(), established, TransportKind::NativeTcp, permit)

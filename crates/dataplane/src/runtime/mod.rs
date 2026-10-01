@@ -1,3 +1,4 @@
+mod neighbor;
 mod packet;
 mod probe;
 mod statistics;
@@ -9,7 +10,8 @@ mod wire;
 mod work_budget;
 
 use crate::{
-    Batch, DuplexStream, Error, Identity, LabConfig, Result, TransportKind, config::public_key,
+    Batch, DuplexStream, Error, Identity, LabConfig, Result, TransportKind,
+    config::{public_key, valid_id, validate_context_id},
 };
 use statistics::{Counters, DropReason, Failure, HighWater, StageResult, occupancy};
 pub use statistics::{
@@ -36,7 +38,7 @@ pub const MAX_NATIVE_UDP_DATAGRAM: usize = 9_000;
 
 /// Exact UDP payload length for an established endpoint packet, excluding outer IP/UDP.
 pub fn native_udp_datagram_len(path: &[String], payload_len: usize) -> Result<usize> {
-    if !(2..=8).contains(&path.len()) || path.iter().any(|id| id.is_empty() || id.len() > 48) {
+    if !(2..=8).contains(&path.len()) || path.iter().any(|id| !valid_id(id)) {
         return Err(Error::UnauthorizedPath);
     }
     if payload_len > MAX_PACKET_PAYLOAD {
@@ -68,10 +70,74 @@ pub enum StreamRole {
     Acceptor,
 }
 
+/// Trusted local adapter metadata and listener-scoped admission, never peer input.
+#[derive(Clone, Debug, Default)]
+pub struct StreamContext {
+    pub listener_id: Option<String>,
+    pub candidate_id: Option<String>,
+    pub allowed_peers: Option<Vec<String>>,
+    pub remote_addr: Option<SocketAddr>,
+}
+
+impl StreamContext {
+    fn validate(
+        &self,
+        config: &LabConfig,
+        role: &StreamRole,
+        transport: TransportKind,
+    ) -> Result<()> {
+        validate_context_id(self.listener_id.as_deref())?;
+        validate_context_id(self.candidate_id.as_deref())?;
+        match role {
+            StreamRole::Dialer { .. }
+                if self.listener_id.is_some() || self.allowed_peers.is_some() =>
+            {
+                return Err(Error::InvalidConfig("dialer has listener context"));
+            }
+            StreamRole::Acceptor if self.candidate_id.is_some() => {
+                return Err(Error::InvalidConfig("acceptor has candidate context"));
+            }
+            _ => (),
+        }
+        config.validate_listener_peers(self.allowed_peers.as_deref(), transport)
+    }
+
+    fn authorize(&self, peer: &str) -> Result<()> {
+        if self
+            .allowed_peers
+            .as_ref()
+            .is_some_and(|peers| !peers.iter().any(|id| id == peer))
+        {
+            return Err(Error::UnauthorizedTransport);
+        }
+        Ok(())
+    }
+}
+
+/// A freshly key-confirmed selected adjacency; not a delivery/health guarantee.
+#[derive(Clone, Debug, serde::Serialize)]
+pub struct PeerConnection {
+    pub peer_node_id: String,
+    pub transport: TransportKind,
+    pub initiator: bool,
+    pub listener_id: Option<String>,
+    pub candidate_id: Option<String>,
+    pub remote_addr: Option<SocketAddr>,
+}
+
+/// Point-in-time proof of a round trip on precisely this confirmed connection.
+/// The connection may change after completion; no future liveness is implied.
+#[derive(Clone, Debug, serde::Serialize)]
+pub struct NeighborProbeObservation {
+    pub connection: PeerConnection,
+    pub round_trip: Duration,
+}
+
 #[derive(Clone, Debug)]
 pub struct BoundListener {
     pub transport: TransportKind,
     pub address: SocketAddr,
+    pub id: Option<String>,
 }
 
 pub struct ProbeReply {
@@ -102,6 +168,34 @@ struct Channel {
     transport: TransportKind,
     tx: mpsc::Sender<Outbound>,
     close: watch::Sender<bool>,
+    initiator: bool,
+    // Channel clones are also used by packet enqueue; keep scoped metadata shared.
+    context: Arc<StreamContext>,
+    probe_budget: Arc<Mutex<neighbor::ProbeBudget>>,
+}
+
+/// Immutable, locally captured association of public metadata with a private token.
+/// Never serialized or included in public Debug output.
+#[derive(Clone)]
+struct InternalChannelSnapshot {
+    token: [u8; 32],
+    connection: PeerConnection,
+}
+
+impl Channel {
+    fn snapshot(&self, peer: &str) -> InternalChannelSnapshot {
+        InternalChannelSnapshot {
+            token: self.token,
+            connection: PeerConnection {
+                peer_node_id: peer.into(),
+                transport: self.transport,
+                initiator: self.initiator,
+                listener_id: self.context.listener_id.clone(),
+                candidate_id: self.context.candidate_id.clone(),
+                remote_addr: self.context.remote_addr,
+            },
+        }
+    }
 }
 
 struct Incoming {
@@ -133,6 +227,7 @@ struct Inner {
     keys: BTreeMap<String, [u8; 32]>,
     peers: Mutex<BTreeMap<String, Channel>>,
     pending: Mutex<BTreeMap<[u8; 16], WaitingProbe>>,
+    neighbor_pending: Mutex<BTreeMap<[u8; 16], neighbor::Waiting>>,
     endpoints: Mutex<BTreeMap<(String, [u8; 16]), EndpointSession>>,
     sending: tokio::sync::Mutex<BTreeMap<Vec<String>, SendingSession>>,
     delivery: Mutex<Option<mpsc::Sender<ReceivedPacket>>>,
@@ -193,6 +288,7 @@ impl Runtime {
             keys,
             peers: Mutex::default(),
             pending: Mutex::default(),
+            neighbor_pending: Mutex::default(),
             endpoints: Mutex::default(),
             sending: tokio::sync::Mutex::default(),
             delivery: Mutex::new(Some(delivery)),
@@ -212,18 +308,23 @@ impl Runtime {
         let mut udp = Vec::new();
         let mut bound = Vec::new();
         for listener in &inner.config.listeners {
+            let context = StreamContext {
+                listener_id: listener.id.clone(),
+                allowed_peers: listener.allowed_peers.clone(),
+                ..Default::default()
+            };
             let address = match listener.transport {
                 TransportKind::NativeTcp => {
                     let socket = TcpListener::bind(listener.bind).await?;
                     let address = socket.local_addr()?;
-                    tcp.push(socket);
+                    tcp.push((socket, context));
                     address
                 }
                 TransportKind::NativeUdp => {
                     let socket =
                         udp::bind(listener.bind, inner.config.limits.udp_receive_buffer_bytes)?;
                     let address = socket.local_addr()?;
-                    udp.push((socket, None));
+                    udp.push((socket, None, context));
                     address
                 }
                 TransportKind::Vless => {
@@ -233,13 +334,21 @@ impl Runtime {
             bound.push(BoundListener {
                 transport: listener.transport,
                 address,
+                id: listener.id.clone(),
             });
         }
         for candidate in &inner.config.outgoing {
             if candidate.transport == TransportKind::NativeUdp {
                 let socket =
                     udp::bind_outgoing(candidate, inner.config.limits.udp_receive_buffer_bytes)?;
-                udp.push((socket, Some(candidate.clone())));
+                udp.push((
+                    socket,
+                    Some(candidate.clone()),
+                    StreamContext {
+                        candidate_id: candidate.id.clone(),
+                        ..Default::default()
+                    },
+                ));
             }
         }
         let runtime = Self {
@@ -250,11 +359,11 @@ impl Runtime {
             }),
         };
         inner.spawn(probe::dispatch(inner.clone(), receiver));
-        for listener in tcp {
-            inner.spawn(stream::listen(inner.clone(), listener));
+        for (listener, context) in tcp {
+            inner.spawn(stream::listen(inner.clone(), listener, context));
         }
-        for (socket, candidate) in udp {
-            inner.spawn(udp::run(inner.clone(), socket, candidate));
+        for (socket, candidate, context) in udp {
+            inner.spawn(udp::run(inner.clone(), socket, candidate, context));
         }
         for candidate in inner.config.outgoing.clone() {
             match candidate.transport {
@@ -290,10 +399,23 @@ impl Runtime {
         transport: TransportKind,
         priority: u16,
     ) -> Result<()> {
+        self.attach_stream_with_context(stream, role, transport, priority, StreamContext::default())
+            .await
+    }
+
+    pub async fn attach_stream_with_context<S: DuplexStream + 'static>(
+        &self,
+        stream: S,
+        role: StreamRole,
+        transport: TransportKind,
+        priority: u16,
+        context: StreamContext,
+    ) -> Result<()> {
         if transport == TransportKind::NativeUdp {
             return Err(Error::Protocol);
         }
         let inner = &self.handle.inner;
+        context.validate(&inner.config, &role, transport)?;
         if *inner.shutdown.borrow() {
             return Err(Error::Closed);
         }
@@ -302,7 +424,9 @@ impl Runtime {
             .clone()
             .try_acquire_owned()
             .map_err(|_| Error::Capacity)?;
-        let established = stream::authenticate(inner, stream, role, transport, priority).await?;
+        let established =
+            stream::authenticate_with_context(inner, stream, role, transport, priority, context)
+                .await?;
         stream::install(inner.clone(), established, transport, permit)
     }
 
@@ -334,6 +458,33 @@ impl Runtime {
         lock(&self.handle.inner.peers)
             .get(peer)
             .map(|channel| channel.transport)
+    }
+
+    pub fn peer_connections(&self) -> Vec<PeerConnection> {
+        lock(&self.handle.inner.peers)
+            .iter()
+            .map(|(peer, channel)| channel.snapshot(peer).connection)
+            .collect()
+    }
+
+    /// Round trip on the exact confirmed neighbor channel; no path/transit grant.
+    /// Timeout disconnects only that channel, never a concurrently installed replacement.
+    pub async fn probe_neighbor(&self, peer: &str, timeout: Duration) -> Result<Duration> {
+        Ok(self
+            .probe_neighbor_observed(peer, timeout)
+            .await?
+            .round_trip)
+    }
+
+    /// Return proof and locally captured metadata for the same confirmed channel.
+    /// Replacement during the call returns Unavailable. This is a point-in-time
+    /// observation: the selected connection may change after completion.
+    pub async fn probe_neighbor_observed(
+        &self,
+        peer: &str,
+        timeout: Duration,
+    ) -> Result<NeighborProbeObservation> {
+        neighbor::probe_observed(self.handle.inner.clone(), peer, timeout).await
     }
 
     pub fn statistics(&self) -> Statistics {
@@ -395,6 +546,7 @@ impl Runtime {
         }
         lock(&inner.peers).clear();
         lock(&inner.pending).clear();
+        lock(&inner.neighbor_pending).clear();
         lock(&inner.endpoints).clear();
         if let Ok(mut sessions) = tokio::time::timeout_at(deadline, inner.sending.lock()).await {
             sessions.clear();
@@ -430,6 +582,7 @@ impl Inner {
     }
     fn register(&self, peer: String, channel: Channel) -> Result<()> {
         self.authorize_transport(&peer, channel.transport)?;
+        channel.context.authorize(&peer)?;
         let mut peers = lock(&self.peers);
         if *self.shutdown.borrow() {
             return Err(Error::Closed);
@@ -438,7 +591,7 @@ impl Inner {
             if (previous.priority, previous.token) <= (channel.priority, channel.token) {
                 return Err(Error::Capacity);
             }
-            let _ = previous.close.send(true);
+            previous.close.send_replace(true);
         }
         peers.insert(peer, channel);
         self.changed.notify_waiters();
@@ -460,8 +613,9 @@ impl Inner {
         if peers
             .get(peer)
             .is_some_and(|channel| &channel.token == token)
+            && let Some(channel) = peers.remove(peer)
         {
-            peers.remove(peer);
+            channel.close.send_replace(true);
         }
         self.changed.notify_waiters();
     }
@@ -535,7 +689,9 @@ impl Inner {
     }
     fn deliver(&self, incoming: Incoming) {
         let counters = self.counters(incoming.transport);
-        counters.received.fetch_add(1, Ordering::Relaxed);
+        if incoming.body.first() != Some(&neighbor::NAMESPACE) {
+            counters.received.fetch_add(1, Ordering::Relaxed);
+        }
         match self.incoming.try_send(incoming) {
             Ok(()) => self.ingress_high_water.enqueued(&self.incoming),
             Err(mpsc::error::TrySendError::Full(_)) => {

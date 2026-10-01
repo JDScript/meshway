@@ -68,6 +68,11 @@ pub struct PeerConfig {
 pub struct ListenerConfig {
     pub transport: TransportKind,
     pub bind: SocketAddr,
+    #[serde(default)]
+    pub id: Option<String>,
+    /// None retains explicit legacy carrier grants; Some([]) denies all peers.
+    #[serde(default)]
+    pub allowed_peers: Option<Vec<String>>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -78,6 +83,8 @@ pub struct OutgoingCandidate {
     pub endpoint: String,
     #[serde(default)]
     pub priority: u16,
+    #[serde(default)]
+    pub id: Option<String>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -146,12 +153,25 @@ pub(crate) fn public_key(value: &str) -> Result<[u8; 32]> {
     Ok(result)
 }
 
-fn valid_id(id: &str) -> bool {
+pub(crate) fn valid_id(id: &str) -> bool {
     !id.is_empty()
-        && id.len() <= 48
+        && id.len() <= 64
         && id
             .bytes()
             .all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_')
+}
+
+pub(crate) fn validate_context_id(id: Option<&str>) -> Result<()> {
+    if id.is_some_and(|id| {
+        id.is_empty()
+            || id.len() > 128
+            || !id
+                .bytes()
+                .all(|b| b.is_ascii_alphanumeric() || b"-_.:".contains(&b))
+    }) {
+        return Err(Error::InvalidConfig("invalid local context id"));
+    }
+    Ok(())
 }
 
 impl LabConfig {
@@ -198,7 +218,17 @@ impl LabConfig {
                 return Err(Error::InvalidConfig("duplicate authorized path"));
             }
         }
+        let mut listener_ids = BTreeSet::new();
         for listener in &self.listeners {
+            validate_context_id(listener.id.as_deref())?;
+            if listener
+                .id
+                .as_ref()
+                .is_some_and(|id| !listener_ids.insert(id))
+            {
+                return Err(Error::InvalidConfig("duplicate listener id"));
+            }
+            self.validate_listener_peers(listener.allowed_peers.as_deref(), listener.transport)?;
             if listener.transport == TransportKind::Vless {
                 return Err(Error::InvalidConfig(
                     "VLESS listeners must be attached externally",
@@ -206,7 +236,16 @@ impl LabConfig {
             }
         }
         let mut candidates = BTreeSet::new();
+        let mut candidate_ids = BTreeSet::new();
         for candidate in &self.outgoing {
+            validate_context_id(candidate.id.as_deref())?;
+            if candidate
+                .id
+                .as_ref()
+                .is_some_and(|id| !candidate_ids.insert(id))
+            {
+                return Err(Error::InvalidConfig("duplicate candidate id"));
+            }
             if candidate.peer == self.node_id
                 || !ids.contains(candidate.peer.as_str())
                 || candidate.endpoint.len() > 256
@@ -241,6 +280,28 @@ impl LabConfig {
             || !(50..=30_000).contains(&limits.reconnect_delay_ms)
         {
             return Err(Error::InvalidConfig("invalid runtime limits"));
+        }
+        Ok(())
+    }
+
+    pub(crate) fn validate_listener_peers(
+        &self,
+        allowed_peers: Option<&[String]>,
+        transport: TransportKind,
+    ) -> Result<()> {
+        if let Some(peers) = allowed_peers {
+            let mut unique = BTreeSet::new();
+            if peers.len() > self.trusted_peers.len()
+                || peers.iter().any(|id| {
+                    !unique.insert(id)
+                        || !self
+                            .trusted_peers
+                            .iter()
+                            .any(|peer| &peer.node_id == id && peer.transports.contains(&transport))
+                })
+            {
+                return Err(Error::InvalidConfig("invalid listener peer grant"));
+            }
         }
         Ok(())
     }

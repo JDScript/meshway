@@ -1,8 +1,8 @@
 // Generated from the controller OpenAPI by scripts/generate-protocol.mjs. Do not edit.
 
 import { request } from "../transport.ts";
-import type { AcknowledgeAgentConnectionsRequest, AcknowledgeAgentConnectionsResponse, AcknowledgeConfigurationRequest, AcknowledgeConfigurationResponse, AgentConnectionsSnapshot, AgentNodeResponse, ConfigurationSnapshot, ConnectionsSnapshot, CreateEnrollmentTokenRequest, CreateEnrollmentTokenResponse, EnrollAgentRequest, HeartbeatRequest, NodeList, Overview, PolicySnapshot, PreviewPolicyRequest, PreviewPolicyResponse, PublishConnectionIdentityRequest, PublishConnectionIdentityResponse, RevokeNodeRequest, RevokeNodeResponse, SaveConnectionsRequest, SavePolicyRequest, SetNodeCountryRequest } from "./types.gen.ts";
-import { zAcknowledgeAgentConnectionsRequest, zAcknowledgeAgentConnectionsResponse, zAcknowledgeConfigurationRequest, zAcknowledgeConfigurationResponse, zAgentConnectionsSnapshot, zAgentNodeResponse, zConfigurationSnapshot, zConnectionsSnapshot, zCreateEnrollmentTokenRequest, zCreateEnrollmentTokenResponse, zEnrollAgentRequest, zHeartbeatRequest, zNodeList, zOverview, zPolicySnapshot, zPreviewPolicyRequest, zPreviewPolicyResponse, zPublishConnectionIdentityRequest, zPublishConnectionIdentityResponse, zRevokeNodeRequest, zRevokeNodeResponse, zSaveConnectionsRequest, zSavePolicyRequest, zSetNodeCountryRequest } from "./zod.gen.ts";
+import type { AcknowledgeAgentConnectionsRequest, AcknowledgeAgentConnectionsResponse, AcknowledgeConfigurationRequest, AcknowledgeConfigurationResponse, AgentConnectionsSnapshot, AgentNodeResponse, BeginConnectionRuntimeRequest, BeginConnectionRuntimeResponse, ConfigurationSnapshot, ConnectionRuntimesSnapshot, ConnectionsSnapshot, CreateEnrollmentTokenRequest, CreateEnrollmentTokenResponse, EnrollAgentRequest, GetConnectionRuntimeEpochResponse, HeartbeatRequest, NodeList, Overview, PolicySnapshot, PreviewPolicyRequest, PreviewPolicyResponse, PublishConnectionIdentityRequest, PublishConnectionIdentityResponse, ReportConnectionRuntimeRequest, ReportConnectionRuntimeResponse, RevokeNodeRequest, RevokeNodeResponse, SaveConnectionsRequest, SavePolicyRequest, SetNodeCountryRequest } from "./types.gen.ts";
+import { zAcknowledgeAgentConnectionsRequest, zAcknowledgeAgentConnectionsResponse, zAcknowledgeConfigurationRequest, zAcknowledgeConfigurationResponse, zAgentConnectionsSnapshot, zAgentNodeResponse, zBeginConnectionRuntimeRequest, zBeginConnectionRuntimeResponse, zConfigurationSnapshot, zConnectionRuntimesSnapshot, zConnectionsSnapshot, zCreateEnrollmentTokenRequest, zCreateEnrollmentTokenResponse, zEnrollAgentRequest, zGetConnectionRuntimeEpochResponse, zHeartbeatRequest, zNodeList, zOverview, zPolicySnapshot, zPreviewPolicyRequest, zPreviewPolicyResponse, zPublishConnectionIdentityRequest, zPublishConnectionIdentityResponse, zReportConnectionRuntimeRequest, zReportConnectionRuntimeResponse, zRevokeNodeRequest, zRevokeNodeResponse, zSaveConnectionsRequest, zSavePolicyRequest, zSetNodeCountryRequest } from "./zod.gen.ts";
 
 export async function publishConnectionIdentityOperation(baseUrl: string, token: string, body: PublishConnectionIdentityRequest): Promise<PublishConnectionIdentityResponse> {
   return request(baseUrl, { method: "POST", path: "/api/v1/agent/connection-identity", token, body: zPublishConnectionIdentityRequest.parse(body) }, zPublishConnectionIdentityResponse);
@@ -14,6 +14,18 @@ export async function getAgentConnectionsOperation(baseUrl: string, token: strin
 
 export async function acknowledgeAgentConnectionsOperation(baseUrl: string, token: string, body: AcknowledgeAgentConnectionsRequest): Promise<AcknowledgeAgentConnectionsResponse> {
   return request(baseUrl, { method: "POST", path: "/api/v1/agent/connections/ack", token, body: zAcknowledgeAgentConnectionsRequest.parse(body) }, zAcknowledgeAgentConnectionsResponse);
+}
+
+export async function getConnectionRuntimeEpochOperation(baseUrl: string, token: string): Promise<GetConnectionRuntimeEpochResponse> {
+  return request(baseUrl, { method: "GET", path: "/api/v1/agent/connections/runtime", token }, zGetConnectionRuntimeEpochResponse);
+}
+
+export async function reportConnectionRuntimeOperation(baseUrl: string, token: string, body: ReportConnectionRuntimeRequest): Promise<ReportConnectionRuntimeResponse> {
+  return request(baseUrl, { method: "POST", path: "/api/v1/agent/connections/runtime", token, body: zReportConnectionRuntimeRequest.parse(body) }, zReportConnectionRuntimeResponse);
+}
+
+export async function beginConnectionRuntimeOperation(baseUrl: string, token: string, body: BeginConnectionRuntimeRequest): Promise<BeginConnectionRuntimeResponse> {
+  return request(baseUrl, { method: "POST", path: "/api/v1/agent/connections/runtime/begin", token, body: zBeginConnectionRuntimeRequest.parse(body) }, zBeginConnectionRuntimeResponse);
 }
 
 export async function getAgentConfigurationOperation(baseUrl: string, token: string): Promise<ConfigurationSnapshot> {
@@ -38,6 +50,10 @@ export async function getConnectionsOperation(baseUrl: string, token: string): P
 
 export async function saveConnectionsOperation(baseUrl: string, token: string, body: SaveConnectionsRequest): Promise<ConnectionsSnapshot> {
   return request(baseUrl, { method: "POST", path: "/api/v1/connections", token, body: zSaveConnectionsRequest.parse(body) }, zConnectionsSnapshot);
+}
+
+export async function getConnectionRuntimesOperation(baseUrl: string, token: string): Promise<ConnectionRuntimesSnapshot> {
+  return request(baseUrl, { method: "GET", path: "/api/v1/connections/runtime", token }, zConnectionRuntimesSnapshot);
 }
 
 export async function createEnrollmentTokenOperation(baseUrl: string, token: string, body: CreateEnrollmentTokenRequest): Promise<CreateEnrollmentTokenResponse> {

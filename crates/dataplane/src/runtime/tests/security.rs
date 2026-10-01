@@ -94,6 +94,8 @@ async fn captured_stream_first_flight_cannot_replace_live_channel_or_survive_res
     configs[1].listeners.push(ListenerConfig {
         transport: TransportKind::NativeTcp,
         bind: "127.0.0.1:0".parse().unwrap(),
+        id: None,
+        allowed_peers: None,
     });
     let lax = Runtime::start(configs[1].clone()).await.unwrap();
     let nyc = Runtime::start(configs[0].clone()).await.unwrap();
@@ -171,6 +173,8 @@ async fn captured_udp_first_flight_and_old_confirmation_cannot_replace_live_chan
     configs[1].listeners.push(ListenerConfig {
         transport: TransportKind::NativeUdp,
         bind: "127.0.0.1:0".parse().unwrap(),
+        id: None,
+        allowed_peers: None,
     });
     let lax = Runtime::start(configs[1].clone()).await.unwrap();
     let address = lax.bound_listeners()[0].address;
@@ -187,6 +191,7 @@ async fn captured_udp_first_flight_and_old_confirmation_cannot_replace_live_chan
         transport: TransportKind::NativeUdp,
         endpoint: address.to_string(),
         priority: 10,
+        id: None,
     });
     let nyc = Runtime::start(configs[0].clone()).await.unwrap();
     let sha = Runtime::start(configs[2].clone()).await.unwrap();
@@ -250,6 +255,7 @@ async fn udp_initiator_waits_for_ack_and_retries_with_fresh_nonces() {
         transport: TransportKind::NativeUdp,
         endpoint: server.local_addr().unwrap().to_string(),
         priority: 0,
+        id: None,
     });
     let nyc = Runtime::start(configs[0].clone()).await.unwrap();
     let mut buffer = [0; MAX_NATIVE_UDP_DATAGRAM];

@@ -7,6 +7,7 @@ use std::{
 use tokio::io::{AsyncRead, AsyncWrite, AsyncWriteExt, ReadBuf};
 use tokio::net::UdpSocket;
 
+mod managed;
 mod observability;
 mod security;
 mod socket_options;
@@ -64,6 +65,8 @@ impl Fixture {
         configs[1].listeners.push(ListenerConfig {
             transport,
             bind: "127.0.0.1:0".parse().unwrap(),
+            id: None,
+            allowed_peers: None,
         });
         let lax = Runtime::start(configs[1].clone()).await.unwrap();
         let endpoint = lax.bound_listeners()[0].address.to_string();
@@ -73,6 +76,7 @@ impl Fixture {
                 transport,
                 endpoint: endpoint.clone(),
                 priority: 0,
+                id: None,
             });
         }
         let nyc = Runtime::start(configs[0].clone()).await.unwrap();
@@ -512,6 +516,8 @@ async fn native_udp_replay_tamper_oversize_and_unknown_host_are_counted_drops() 
     configs[1].listeners.push(ListenerConfig {
         transport: TransportKind::NativeUdp,
         bind: "127.0.0.1:0".parse().unwrap(),
+        id: None,
+        allowed_peers: None,
     });
     let lax = Runtime::start(configs[1].clone()).await.unwrap();
     let address = lax.bound_listeners()[0].address;
@@ -698,6 +704,8 @@ async fn carrier_grants_reject_wrong_transport_and_endpoint_only_hops() {
     configs[1].listeners.push(ListenerConfig {
         transport: TransportKind::NativeUdp,
         bind: "127.0.0.1:0".parse().unwrap(),
+        id: None,
+        allowed_peers: None,
     });
     let lax = Runtime::start(configs[1].clone()).await.unwrap();
     let address = lax.bound_listeners()[0].address;
@@ -706,6 +714,7 @@ async fn carrier_grants_reject_wrong_transport_and_endpoint_only_hops() {
         transport: TransportKind::NativeUdp,
         endpoint: address.to_string(),
         priority: 0,
+        id: None,
     });
     let nyc = Runtime::start(configs[0].clone()).await.unwrap();
     let sha = Runtime::start(configs[2].clone()).await.unwrap();

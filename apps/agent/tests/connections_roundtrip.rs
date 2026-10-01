@@ -12,6 +12,10 @@ use meshway_agent::{Agent, compiled_connection_capabilities, connections_status}
 use meshway_controller::{AppState, admin_token, router};
 use serde::{Serialize, de::DeserializeOwned};
 
+#[cfg(feature = "managed-connections")]
+#[path = "connections_roundtrip/managed.rs"]
+mod managed;
+
 fn directory() -> tempfile::TempDir {
     tempfile::Builder::new()
         .permissions(std::fs::Permissions::from_mode(0o700))

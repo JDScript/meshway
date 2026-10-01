@@ -115,7 +115,7 @@ pub(super) fn upgrade(connection: &mut Connection, options: &NetworkOptions) -> 
         super::configuration::ensure_publishable(&transaction)?;
         transaction.pragma_update(None, "user_version", 2)?;
         transaction.commit()?;
-    } else if version != 2 && version != 3 {
+    } else if !(2..=4).contains(&version) {
         return Err(Error::Configuration(
             "unsupported or incomplete controller database schema",
         ));

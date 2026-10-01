@@ -115,6 +115,24 @@ impl KeyStore {
         self.key.as_ref().map(|key| key.public_key.as_str())
     }
 
+    /// Export only through the existing binding and durability checks while the
+    /// Agent lock is held. The core type owns a zeroizing decoded private buffer.
+    #[cfg(feature = "managed-connections")]
+    pub(super) fn application_key(
+        &self,
+        state: &Path,
+        identity: &Identity,
+    ) -> Result<meshway_dataplane::PrivateKey, AgentError> {
+        self.check(state, identity)?;
+        local::ensure_durable(state)?;
+        local::ensure_durable(&path(state))?;
+        let key = self.key.as_ref().ok_or(AgentError::Invalid(
+            "connection identity is not durably bound",
+        ))?;
+        meshway_dataplane::PrivateKey::from_hex(&key.private_key)
+            .map_err(|_| AgentError::Invalid("invalid bound connection key"))
+    }
+
     /// Caller holds the existing Agent state lock. Never rewrite enrollment.
     pub(super) fn check(&self, state: &Path, identity: &Identity) -> Result<(), AgentError> {
         let parent = state

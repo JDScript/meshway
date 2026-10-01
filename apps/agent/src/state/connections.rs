@@ -11,6 +11,8 @@ use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use super::{Agent, AgentError, Identity, SyncReceipt, connection_key::KeyStore, local};
 use crate::generated::{client::HttpClient, types::AcknowledgeAgentConnectionsRequest};
 
+#[cfg(feature = "managed-connections")]
+mod managed;
 #[cfg(test)]
 mod tests;
 mod validation;
@@ -308,6 +310,13 @@ impl Agent {
     }
 
     async fn sync_published_connections(&mut self) -> Result<ConnectionSyncReceipt, AgentError> {
+        self.sync_published_connections_observe(|_| {}).await
+    }
+
+    async fn sync_published_connections_observe(
+        &mut self,
+        mut on_saved: impl FnMut(&AgentConnectionsSnapshot),
+    ) -> Result<ConnectionSyncReceipt, AgentError> {
         let client = HttpClient::new()
             .with_base_url(&self.identity.controller)
             .with_api_key(&self.identity.node_credential);
@@ -323,6 +332,7 @@ impl Agent {
             local::ensure_durable(&super::connection_key::path(&self.path))?;
             local::ensure_durable(&cache_path(&self.path))?;
             let cache = state.cache.as_ref().expect("persisted connections cache");
+            on_saved(&cache.snapshot);
             let response = client
                 .acknowledge_agent_connections(AcknowledgeAgentConnectionsRequest {
                     revision: cache.snapshot.payload.revision.into(),

@@ -10,6 +10,9 @@ use meshway_protocol::{
 use serde_json::{Value, json};
 use tower::ServiceExt;
 
+#[path = "api/connection_runtime.rs"]
+mod connection_runtime;
+
 fn tempdir() -> tempfile::TempDir {
     use std::os::unix::fs::PermissionsExt;
     tempfile::Builder::new()

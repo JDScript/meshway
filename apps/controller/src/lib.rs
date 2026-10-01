@@ -1,6 +1,7 @@
 //! Persistent control-plane enrollment, scoped credentials and process contact.
 
 mod configuration_api;
+mod connection_runtime_api;
 mod connections_api;
 mod store;
 
@@ -159,6 +160,7 @@ fn contract_router() -> OpenApiRouter<AppState> {
         .layer(DefaultBodyLimit::max(8192))
         .merge(configuration_api::routes())
         .merge(connections_api::routes())
+        .merge(connection_runtime_api::routes())
 }
 
 fn describe(api: &mut OpenApi) {

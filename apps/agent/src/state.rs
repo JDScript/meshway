@@ -40,12 +40,17 @@ pub enum AgentError {
     Http { status: u16, retryable: bool },
     #[error("controller transport failed")]
     Transport { retryable: bool },
+    #[cfg(feature = "managed-connections")]
+    #[error("connection runtime observation changed; resynchronizing")]
+    RuntimeObservationChanged,
 }
 
 impl AgentError {
     pub fn retryable(&self) -> bool {
         match self {
             Self::Http { retryable, .. } | Self::Transport { retryable } => *retryable,
+            #[cfg(feature = "managed-connections")]
+            Self::RuntimeObservationChanged => true,
             _ => false,
         }
     }

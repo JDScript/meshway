@@ -9,6 +9,24 @@
 use serde::{Deserialize, Serialize};
 #[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
+pub struct ReportConnectionRuntimeRequest {
+    ///Constraint: minLength=64, maxLength=64, pattern=`^[0-9a-f]{64}$`
+    pub digest: String,
+    ///Constraint: minimum=1, maximum=4294967295
+    pub epoch: i64,
+    ///Constraint: maxItems=128
+    pub listeners: Vec<ConnectionListenerObservation>,
+    ///Constraint: maxItems=256
+    pub peers: Vec<ConnectionNeighborObservation>,
+    pub reason: ConnectionRuntimeReason,
+    ///Constraint: minimum=1, maximum=4294967295
+    pub revision: i64,
+    ///Constraint: minimum=1, maximum=4294967295
+    pub sequence: i64,
+    pub state: ConnectionRuntimeState,
+}
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
 pub struct PublishConnectionIdentityResponse {
     pub capabilities: Vec<ConnectionCapability>,
     pub node_id: String,
@@ -24,6 +42,188 @@ pub struct PublishConnectionIdentityRequest {
     pub capabilities: Vec<ConnectionCapability>,
     ///Constraint: minLength=64, maxLength=64, pattern=`^[0-9a-f]{64}$`
     pub public_key: String,
+}
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize, Default)]
+pub enum ConnectionRuntimeState {
+    #[default]
+    #[serde(rename = "awaiting_report")]
+    AwaitingReport,
+    #[serde(rename = "disabled")]
+    Disabled,
+    #[serde(rename = "applying")]
+    Applying,
+    #[serde(rename = "applied")]
+    Applied,
+    #[serde(rename = "error")]
+    Error,
+    #[serde(rename = "withdrawn")]
+    Withdrawn,
+}
+impl ConnectionRuntimeState {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::AwaitingReport => "awaiting_report",
+            Self::Disabled => "disabled",
+            Self::Applying => "applying",
+            Self::Applied => "applied",
+            Self::Error => "error",
+            Self::Withdrawn => "withdrawn",
+        }
+    }
+}
+impl ::std::fmt::Display for ConnectionRuntimeState {
+    fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+impl AsRef<str> for ConnectionRuntimeState {
+    fn as_ref(&self) -> &str {
+        self.as_str()
+    }
+}
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct ConnectionNeighborObservation {
+    ///Constraint: minLength=1, maxLength=64, pattern=`^[A-Za-z0-9._-]+$`
+    #[serde(deserialize_with = "deserialize_required_nullable")]
+    pub candidate_id: Option<String>,
+    ///Constraint: minLength=1, maxLength=64, pattern=`^[A-Za-z0-9._-]+$`
+    pub initiator_node_id: String,
+    ///Constraint: minLength=1, maxLength=64, pattern=`^[A-Za-z0-9._-]+$`
+    #[serde(deserialize_with = "deserialize_required_nullable")]
+    pub listener_id: Option<String>,
+    ///Constraint: minLength=1, maxLength=64, pattern=`^[A-Za-z0-9._-]+$`
+    pub peer_node_id: String,
+    ///A recent authenticated control-nonce probe, not merely a control heartbeat.
+    pub probe_fresh: bool,
+    ///Constraint: minimum=0, maximum=4294967295
+    #[serde(deserialize_with = "deserialize_required_nullable")]
+    pub probe_rtt_ms: Option<i64>,
+    pub reason: ConnectionRuntimeReason,
+    pub state: ConnectionNeighborState,
+    pub transport: ConnectionTransport,
+}
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize, Default)]
+pub enum ConnectionNeighborState {
+    #[default]
+    #[serde(rename = "authenticated")]
+    Authenticated,
+    #[serde(rename = "waiting")]
+    Waiting,
+    #[serde(rename = "unreachable")]
+    Unreachable,
+}
+impl ConnectionNeighborState {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::Authenticated => "authenticated",
+            Self::Waiting => "waiting",
+            Self::Unreachable => "unreachable",
+        }
+    }
+}
+impl ::std::fmt::Display for ConnectionNeighborState {
+    fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+impl AsRef<str> for ConnectionNeighborState {
+    fn as_ref(&self) -> &str {
+        self.as_str()
+    }
+}
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct ConnectionListenerObservation {
+    ///Constraint: minLength=1, maxLength=64, pattern=`^[A-Za-z0-9._-]+$`
+    pub listener_id: String,
+    pub reason: ConnectionRuntimeReason,
+    pub state: ConnectionListenerState,
+}
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize, Default)]
+pub enum ConnectionRuntimeReason {
+    #[default]
+    #[serde(rename = "none")]
+    None,
+    #[serde(rename = "disabled")]
+    Disabled,
+    #[serde(rename = "invalid_configuration")]
+    InvalidConfiguration,
+    #[serde(rename = "profile_unavailable")]
+    ProfileUnavailable,
+    #[serde(rename = "bind_failed")]
+    BindFailed,
+    #[serde(rename = "resolve_failed")]
+    ResolveFailed,
+    #[serde(rename = "transport_failed")]
+    TransportFailed,
+    #[serde(rename = "authentication_failed")]
+    AuthenticationFailed,
+    #[serde(rename = "probe_failed")]
+    ProbeFailed,
+    #[serde(rename = "lease_superseded")]
+    LeaseSuperseded,
+    #[serde(rename = "lease_expired")]
+    LeaseExpired,
+    #[serde(rename = "shutting_down")]
+    ShuttingDown,
+    #[serde(rename = "internal_error")]
+    InternalError,
+}
+impl ConnectionRuntimeReason {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::None => "none",
+            Self::Disabled => "disabled",
+            Self::InvalidConfiguration => "invalid_configuration",
+            Self::ProfileUnavailable => "profile_unavailable",
+            Self::BindFailed => "bind_failed",
+            Self::ResolveFailed => "resolve_failed",
+            Self::TransportFailed => "transport_failed",
+            Self::AuthenticationFailed => "authentication_failed",
+            Self::ProbeFailed => "probe_failed",
+            Self::LeaseSuperseded => "lease_superseded",
+            Self::LeaseExpired => "lease_expired",
+            Self::ShuttingDown => "shutting_down",
+            Self::InternalError => "internal_error",
+        }
+    }
+}
+impl ::std::fmt::Display for ConnectionRuntimeReason {
+    fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+impl AsRef<str> for ConnectionRuntimeReason {
+    fn as_ref(&self) -> &str {
+        self.as_str()
+    }
+}
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize, Default)]
+pub enum ConnectionListenerState {
+    #[default]
+    #[serde(rename = "bound")]
+    Bound,
+    #[serde(rename = "error")]
+    Error,
+}
+impl ConnectionListenerState {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::Bound => "bound",
+            Self::Error => "error",
+        }
+    }
+}
+impl ::std::fmt::Display for ConnectionListenerState {
+    fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+impl AsRef<str> for ConnectionListenerState {
+    fn as_ref(&self) -> &str {
+        self.as_str()
+    }
 }
 #[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
@@ -449,6 +649,21 @@ pub struct AcknowledgeConfigurationResponse {
     ///Constraint: minimum=1, maximum=4294967295
     pub revision: i64,
 }
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct BeginConnectionRuntimeRequest {
+    ///Pin the initial epoch read across retries; never refresh after a conflict.
+    ///Constraint: minimum=0, maximum=4294967295
+    pub expected_epoch: i64,
+    ///Constraint: minLength=64, maxLength=64, pattern=`^[0-9a-f]{64}$`
+    pub instance_id: String,
+}
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct BeginConnectionRuntimeResponse {
+    ///Constraint: minimum=1, maximum=4294967295
+    pub epoch: i64,
+}
 /**Persist the proposed random credential before sending this request. Retry
 with the same enrollment token, credential, name and enrollment version.*/
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -466,12 +681,28 @@ pub struct EnrollAgentRequest {
 pub struct ErrorResponse {
     pub message: String,
 }
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct GetConnectionRuntimeEpochResponse {
+    ///Zero means this node has never acquired a runtime lease.
+    ///Constraint: minimum=0, maximum=4294967295
+    pub epoch: i64,
+}
 ///Node identity is derived exclusively from the node bearer credential.
 #[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct HeartbeatRequest {
     ///Constraint: minLength=1, maxLength=64, pattern=`[^\u0009-\u000D\u0020\u0085\u00A0\u1680\u2000-\u200A\u2028\u2029\u202F\u205F\u3000]`
     pub agent_version: String,
+}
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct ReportConnectionRuntimeResponse {
+    ///Constraint: minimum=1, maximum=4294967295
+    pub epoch: i64,
+    pub reported_at: chrono::DateTime<chrono::Utc>,
+    ///Constraint: minimum=1, maximum=4294967295
+    pub sequence: i64,
 }
 
 // Generated from required nullable OpenAPI properties. deserialize_with makes

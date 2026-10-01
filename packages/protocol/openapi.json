@@ -272,6 +272,290 @@
         ]
       }
     },
+    "/api/v1/agent/connections/runtime": {
+      "get": {
+        "operationId": "getConnectionRuntimeEpoch",
+        "responses": {
+          "200": {
+            "description": "Read node-scoped acquisition CAS epoch; zero means no lease; no renewal or mutation",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GetConnectionRuntimeEpochResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Node credential required",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Node revoked",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Connection identity must be bound",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Storage unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "nodeBearer": []
+          }
+        ]
+      },
+      "post": {
+        "operationId": "reportConnectionRuntime",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ReportConnectionRuntimeRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Record scoped runtime self-report; duplicate sequence preserves server receive time; never ACK or independent peer proof",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReportConnectionRuntimeResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid JSON",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Node credential required",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Node revoked",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Superseded or absent runtime lease, old sequence or changed same-sequence report",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "Request exceeds 128 KiB",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "415": {
+            "description": "Expected application/json",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Configuration revision/digest mismatch, missing identity or invalid observation scope/state",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Storage unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "nodeBearer": []
+          }
+        ]
+      }
+    },
+    "/api/v1/agent/connections/runtime/begin": {
+      "post": {
+        "operationId": "beginConnectionRuntime",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/BeginConnectionRuntimeRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Acquire runtime epoch by CAS; current instance retries preserve observation freshness",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BeginConnectionRuntimeResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid JSON",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Node credential required",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Node revoked",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Expected epoch no longer current for a different instance; lease/report unchanged",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "Request exceeds 8192 bytes",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "415": {
+            "description": "Expected application/json",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Invalid instance ID, missing bound identity or epoch exhausted",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Storage unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "nodeBearer": []
+          }
+        ]
+      }
+    },
     "/api/v1/agents/configuration": {
       "get": {
         "operationId": "getAgentConfiguration",
@@ -746,6 +1030,48 @@
           },
           "422": {
             "description": "Invalid connection plan or capacity exhausted",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Storage unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "adminBearer": []
+          }
+        ]
+      }
+    },
+    "/api/v1/connections/runtime": {
+      "get": {
+        "operationId": "getConnectionRuntimes",
+        "responses": {
+          "200": {
+            "description": "Leased node self-reports with server receive TTL and current configuration matching; not authorization",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ConnectionRuntimesSnapshot"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Admin credential required",
             "content": {
               "application/json": {
                 "schema": {
@@ -1505,6 +1831,44 @@
         },
         "additionalProperties": false
       },
+      "BeginConnectionRuntimeRequest": {
+        "type": "object",
+        "required": [
+          "instance_id",
+          "expected_epoch"
+        ],
+        "properties": {
+          "expected_epoch": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Pin the initial epoch read across retries; never refresh after a conflict.",
+            "maximum": 4294967295,
+            "minimum": 0
+          },
+          "instance_id": {
+            "type": "string",
+            "maxLength": 64,
+            "minLength": 64,
+            "pattern": "^[0-9a-f]{64}$"
+          }
+        },
+        "additionalProperties": false
+      },
+      "BeginConnectionRuntimeResponse": {
+        "type": "object",
+        "required": [
+          "epoch"
+        ],
+        "properties": {
+          "epoch": {
+            "type": "integer",
+            "format": "int64",
+            "maximum": 4294967295,
+            "minimum": 1
+          }
+        },
+        "additionalProperties": false
+      },
       "ConfigurationSnapshot": {
         "type": "object",
         "required": [
@@ -1682,6 +2046,114 @@
         },
         "additionalProperties": false
       },
+      "ConnectionListenerObservation": {
+        "type": "object",
+        "required": [
+          "listener_id",
+          "state",
+          "reason"
+        ],
+        "properties": {
+          "listener_id": {
+            "type": "string",
+            "maxLength": 64,
+            "minLength": 1,
+            "pattern": "^[A-Za-z0-9._-]+$"
+          },
+          "reason": {
+            "$ref": "#/components/schemas/ConnectionRuntimeReason"
+          },
+          "state": {
+            "$ref": "#/components/schemas/ConnectionListenerState"
+          }
+        },
+        "additionalProperties": false
+      },
+      "ConnectionListenerState": {
+        "type": "string",
+        "enum": [
+          "bound",
+          "error"
+        ]
+      },
+      "ConnectionNeighborObservation": {
+        "type": "object",
+        "required": [
+          "peer_node_id",
+          "transport",
+          "initiator_node_id",
+          "listener_id",
+          "candidate_id",
+          "state",
+          "reason",
+          "probe_fresh",
+          "probe_rtt_ms"
+        ],
+        "properties": {
+          "candidate_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "maxLength": 64,
+            "minLength": 1,
+            "pattern": "^[A-Za-z0-9._-]+$"
+          },
+          "initiator_node_id": {
+            "type": "string",
+            "maxLength": 64,
+            "minLength": 1,
+            "pattern": "^[A-Za-z0-9._-]+$"
+          },
+          "listener_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "maxLength": 64,
+            "minLength": 1,
+            "pattern": "^[A-Za-z0-9._-]+$"
+          },
+          "peer_node_id": {
+            "type": "string",
+            "maxLength": 64,
+            "minLength": 1,
+            "pattern": "^[A-Za-z0-9._-]+$"
+          },
+          "probe_fresh": {
+            "type": "boolean",
+            "description": "A recent authenticated control-nonce probe, not merely a control heartbeat."
+          },
+          "probe_rtt_ms": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "maximum": 4294967295,
+            "minimum": 0
+          },
+          "reason": {
+            "$ref": "#/components/schemas/ConnectionRuntimeReason",
+            "description": "Sanitized peer-local outcome, independent of global reconcile state."
+          },
+          "state": {
+            "$ref": "#/components/schemas/ConnectionNeighborState"
+          },
+          "transport": {
+            "$ref": "#/components/schemas/ConnectionTransport"
+          }
+        },
+        "additionalProperties": false
+      },
+      "ConnectionNeighborState": {
+        "type": "string",
+        "enum": [
+          "authenticated",
+          "waiting",
+          "unreachable"
+        ]
+      },
       "ConnectionNode": {
         "type": "object",
         "required": [
@@ -1784,6 +2256,145 @@
         "enum": [
           "saved"
         ]
+      },
+      "ConnectionRuntimeObservation": {
+        "type": "object",
+        "required": [
+          "node_id",
+          "epoch",
+          "sequence",
+          "revision",
+          "digest",
+          "state",
+          "reason",
+          "listeners",
+          "peers",
+          "reported_at",
+          "stale_after_seconds",
+          "current",
+          "stale"
+        ],
+        "properties": {
+          "current": {
+            "type": "boolean",
+            "description": "Matches the current node-scoped revision/digest and node is active."
+          },
+          "digest": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "maxLength": 64,
+            "minLength": 64,
+            "pattern": "^[0-9a-f]{64}$"
+          },
+          "epoch": {
+            "type": "integer",
+            "format": "int64",
+            "maximum": 4294967295,
+            "minimum": 1
+          },
+          "listeners": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ConnectionListenerObservation"
+            },
+            "maxItems": 128
+          },
+          "node_id": {
+            "type": "string"
+          },
+          "peers": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ConnectionNeighborObservation"
+            },
+            "maxItems": 256
+          },
+          "reason": {
+            "$ref": "#/components/schemas/ConnectionRuntimeReason"
+          },
+          "reported_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "revision": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "maximum": 4294967295,
+            "minimum": 1
+          },
+          "sequence": {
+            "type": "integer",
+            "format": "int64",
+            "maximum": 4294967295,
+            "minimum": 0
+          },
+          "stale": {
+            "type": "boolean",
+            "description": "Not current, never reported, or receive age >= stale_after_seconds."
+          },
+          "stale_after_seconds": {
+            "type": "integer",
+            "format": "int64",
+            "maximum": 4294967295,
+            "minimum": 1
+          },
+          "state": {
+            "$ref": "#/components/schemas/ConnectionRuntimeState"
+          }
+        },
+        "additionalProperties": false
+      },
+      "ConnectionRuntimeReason": {
+        "type": "string",
+        "enum": [
+          "none",
+          "disabled",
+          "invalid_configuration",
+          "profile_unavailable",
+          "bind_failed",
+          "resolve_failed",
+          "transport_failed",
+          "authentication_failed",
+          "probe_failed",
+          "lease_superseded",
+          "lease_expired",
+          "shutting_down",
+          "internal_error"
+        ]
+      },
+      "ConnectionRuntimeState": {
+        "type": "string",
+        "enum": [
+          "awaiting_report",
+          "disabled",
+          "applying",
+          "applied",
+          "error",
+          "withdrawn"
+        ]
+      },
+      "ConnectionRuntimesSnapshot": {
+        "type": "object",
+        "required": [
+          "nodes"
+        ],
+        "properties": {
+          "nodes": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ConnectionRuntimeObservation"
+            }
+          }
+        },
+        "additionalProperties": false
       },
       "ConnectionSemantics": {
         "type": "string",
@@ -1993,6 +2604,22 @@
           },
           "source_node_id": {
             "type": "string"
+          }
+        },
+        "additionalProperties": false
+      },
+      "GetConnectionRuntimeEpochResponse": {
+        "type": "object",
+        "required": [
+          "epoch"
+        ],
+        "properties": {
+          "epoch": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Zero means this node has never acquired a runtime lease.",
+            "maximum": 4294967295,
+            "minimum": 0
           }
         },
         "additionalProperties": false
@@ -2525,6 +3152,93 @@
             "pattern": "^[0-9a-f]{64}$"
           },
           "revision": {
+            "type": "integer",
+            "format": "int64",
+            "maximum": 4294967295,
+            "minimum": 1
+          }
+        },
+        "additionalProperties": false
+      },
+      "ReportConnectionRuntimeRequest": {
+        "type": "object",
+        "required": [
+          "epoch",
+          "sequence",
+          "revision",
+          "digest",
+          "state",
+          "reason",
+          "listeners",
+          "peers"
+        ],
+        "properties": {
+          "digest": {
+            "type": "string",
+            "maxLength": 64,
+            "minLength": 64,
+            "pattern": "^[0-9a-f]{64}$"
+          },
+          "epoch": {
+            "type": "integer",
+            "format": "int64",
+            "maximum": 4294967295,
+            "minimum": 1
+          },
+          "listeners": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ConnectionListenerObservation"
+            },
+            "maxItems": 128
+          },
+          "peers": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ConnectionNeighborObservation"
+            },
+            "maxItems": 256
+          },
+          "reason": {
+            "$ref": "#/components/schemas/ConnectionRuntimeReason"
+          },
+          "revision": {
+            "type": "integer",
+            "format": "int64",
+            "maximum": 4294967295,
+            "minimum": 1
+          },
+          "sequence": {
+            "type": "integer",
+            "format": "int64",
+            "maximum": 4294967295,
+            "minimum": 1
+          },
+          "state": {
+            "$ref": "#/components/schemas/ConnectionRuntimeState"
+          }
+        },
+        "additionalProperties": false
+      },
+      "ReportConnectionRuntimeResponse": {
+        "type": "object",
+        "required": [
+          "epoch",
+          "sequence",
+          "reported_at"
+        ],
+        "properties": {
+          "epoch": {
+            "type": "integer",
+            "format": "int64",
+            "maximum": 4294967295,
+            "minimum": 1
+          },
+          "reported_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "sequence": {
             "type": "integer",
             "format": "int64",
             "maximum": 4294967295,

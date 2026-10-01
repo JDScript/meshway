@@ -7,11 +7,12 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import test from "node:test";
 
-import { ControlApiError, createEnrollmentToken, getConnections, revokeNode, saveConnections, type ConnectionCapability, type ConnectionPlan } from "../src/index.ts";
+import { ControlApiError, createEnrollmentToken, getConnections, getConnectionRuntimes, revokeNode, saveConnections, type ConnectionCapability, type ConnectionPlan, type ReportConnectionRuntimeRequest } from "../src/index.ts";
 import {
   acknowledgeAgentConnectionsOperation, acknowledgeConfigurationOperation,
   enrollAgentOperation, getAgentConfigurationOperation, getAgentConnectionsOperation,
   publishConnectionIdentityOperation,
+  beginConnectionRuntimeOperation, getConnectionRuntimeEpochOperation, reportConnectionRuntimeOperation,
 } from "../src/generated/operations.gen.ts";
 import { zConnectionsSnapshot, zPublishConnectionIdentityRequest, zSaveConnectionsRequest } from "../src/generated/zod.gen.ts";
 
@@ -102,6 +103,34 @@ test("generated connection operations bind immutable keys, scope projections and
     await assert.rejects(publishConnectionIdentityOperation(server.base, sha.credential, { public_key: nyc.key, capabilities }), httpError(409));
     await assert.rejects(getConnections(server.base, nyc.credential), httpError(401));
     await assert.rejects(publishConnectionIdentityOperation(server.base, admin, { public_key: publicKey(), capabilities }), httpError(401));
+    // Runtime observation leases are independent of configuration revisions/ACKs.
+    // Synthetic disabled reports exercise the API contract, not network liveness.
+    assert.deepEqual(await getConnectionRuntimeEpochOperation(server.base, nyc.credential), { epoch: 0 });
+    const instanceA = randomBytes(32).toString("hex");
+    const instanceB = randomBytes(32).toString("hex");
+    const firstLease = await beginConnectionRuntimeOperation(server.base, nyc.credential, { instance_id: instanceA, expected_epoch: 0 });
+    const beforeRuntime = await getAgentConnectionsOperation(server.base, nyc.credential);
+    const runtime: ReportConnectionRuntimeRequest = {
+      epoch: firstLease.epoch, sequence: 1, revision: beforeRuntime.payload.revision,
+      digest: beforeRuntime.digest, state: "disabled", reason: "disabled", listeners: [], peers: [],
+    };
+    const firstReport = await reportConnectionRuntimeOperation(server.base, nyc.credential, runtime);
+    assert.deepEqual(await beginConnectionRuntimeOperation(server.base, nyc.credential, { instance_id: instanceA, expected_epoch: 0 }), firstLease);
+    assert.deepEqual(await reportConnectionRuntimeOperation(server.base, nyc.credential, runtime), firstReport);
+    const nextLease = await beginConnectionRuntimeOperation(server.base, nyc.credential, { instance_id: instanceB, expected_epoch: firstLease.epoch });
+    const nextReportBody = { ...runtime, epoch: nextLease.epoch };
+    const nextReport = await reportConnectionRuntimeOperation(server.base, nyc.credential, nextReportBody);
+    await assert.rejects(beginConnectionRuntimeOperation(server.base, nyc.credential, { instance_id: instanceA, expected_epoch: 0 }), httpError(409));
+    await assert.rejects(reportConnectionRuntimeOperation(server.base, nyc.credential, runtime), httpError(409));
+    await assert.rejects(reportConnectionRuntimeOperation(server.base, nyc.credential, { ...nextReportBody, state: "withdrawn", reason: "shutting_down" }), httpError(409));
+    const observed = (await getConnectionRuntimes(server.base, admin)).nodes.find(entry => entry.node_id === nyc.node.id);
+    assert.equal(observed?.epoch, nextLease.epoch);
+    assert.equal(observed?.reported_at, nextReport.reported_at);
+    assert.equal(observed?.current, true);
+    assert.equal(observed?.stale, false);
+    assert.equal((await getConnections(server.base, admin)).revision, original.revision);
+    assert.equal((await getConnections(server.base, admin)).nodes.find(entry => entry.node.id === nyc.node.id)?.acknowledged_revision, 0);
+    await assert.rejects(getConnectionRuntimes(server.base, nyc.credential), httpError(401));
     const configuration: ConnectionPlan = {
       listeners: [
         { id: "lax-udp", node_id: lax.node.id, transport: "native_udp", bind: "0.0.0.0:41000", advertised_endpoints: [{ host: "127.0.0.1", port: 41000 }], credential_ref: null },
@@ -115,6 +144,10 @@ test("generated connection operations bind immutable keys, scope projections and
     const saved = await saveConnections(server.base, admin, { expected_revision: original.revision, configuration });
     assert.equal(saved.valid, true);
     assert.equal(saved.revision, original.revision + 1);
+    const historical = (await getConnectionRuntimes(server.base, admin)).nodes.find(entry => entry.node_id === nyc.node.id);
+    assert.equal(historical?.current, false);
+    assert.equal(historical?.stale, true);
+    await assert.rejects(reportConnectionRuntimeOperation(server.base, nyc.credential, { ...nextReportBody, sequence: 2 }), httpError(422));
     await assert.rejects(saveConnections(server.base, admin, { expected_revision: original.revision, configuration }), httpError(409));
     const noOp = await saveConnections(server.base, admin, { expected_revision: saved.revision, configuration: { listeners: [...configuration.listeners].reverse(), candidates: [...configuration.candidates].reverse() } });
     assert.equal(noOp.revision, saved.revision);

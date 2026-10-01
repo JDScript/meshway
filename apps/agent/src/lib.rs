@@ -17,3 +17,6 @@ pub use state::{
 
 #[cfg(feature = "transport-lab")]
 pub mod transport_lab;
+
+#[cfg(feature = "managed-connections")]
+mod managed_connections;

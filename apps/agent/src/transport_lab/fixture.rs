@@ -59,6 +59,8 @@ pub fn generate(
         if is_lax || *name == "nyc" || !use_vless {
             listeners.push(ListenerConfig {
                 transport: TransportKind::NativeUdp,
+                id: None,
+                allowed_peers: None,
                 bind: SocketAddr::from((
                     Ipv4Addr::UNSPECIFIED,
                     if is_lax { udp.port() } else { 0 },
@@ -66,6 +68,7 @@ pub fn generate(
             });
             if !is_lax {
                 outgoing.push(OutgoingCandidate {
+                    id: None,
                     peer: "lax".into(),
                     transport: TransportKind::NativeUdp,
                     endpoint: if *name == "sha" {
@@ -80,6 +83,8 @@ pub fn generate(
         if is_lax && !use_vless && udp.port() != vless.port() {
             listeners.push(ListenerConfig {
                 transport: TransportKind::NativeUdp,
+                id: None,
+                allowed_peers: None,
                 bind: SocketAddr::from((Ipv4Addr::UNSPECIFIED, vless.port())),
             });
         }

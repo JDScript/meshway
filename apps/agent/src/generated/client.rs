@@ -318,6 +318,18 @@ pub enum AcknowledgeConfigurationApiError {
     Status415(ErrorResponse),
     Status500(ErrorResponse),
 }
+///Typed error responses for `beginConnectionRuntime`. One variant per declared non-2xx response.
+#[derive(Debug, Clone)]
+pub enum BeginConnectionRuntimeApiError {
+    Status400(ErrorResponse),
+    Status401(ErrorResponse),
+    Status403(ErrorResponse),
+    Status409(ErrorResponse),
+    Status413(ErrorResponse),
+    Status415(ErrorResponse),
+    Status422(ErrorResponse),
+    Status500(ErrorResponse),
+}
 ///Typed error responses for `enrollAgent`. One variant per declared non-2xx response.
 #[derive(Debug, Clone)]
 pub enum EnrollAgentApiError {
@@ -344,6 +356,14 @@ pub enum GetAgentConnectionsApiError {
     Status403(ErrorResponse),
     Status500(ErrorResponse),
 }
+///Typed error responses for `getConnectionRuntimeEpoch`. One variant per declared non-2xx response.
+#[derive(Debug, Clone)]
+pub enum GetConnectionRuntimeEpochApiError {
+    Status401(ErrorResponse),
+    Status403(ErrorResponse),
+    Status422(ErrorResponse),
+    Status500(ErrorResponse),
+}
 ///Typed error responses for `heartbeatAgent`. One variant per declared non-2xx response.
 #[derive(Debug, Clone)]
 pub enum HeartbeatAgentApiError {
@@ -357,6 +377,18 @@ pub enum HeartbeatAgentApiError {
 ///Typed error responses for `publishConnectionIdentity`. One variant per declared non-2xx response.
 #[derive(Debug, Clone)]
 pub enum PublishConnectionIdentityApiError {
+    Status400(ErrorResponse),
+    Status401(ErrorResponse),
+    Status403(ErrorResponse),
+    Status409(ErrorResponse),
+    Status413(ErrorResponse),
+    Status415(ErrorResponse),
+    Status422(ErrorResponse),
+    Status500(ErrorResponse),
+}
+///Typed error responses for `reportConnectionRuntime`. One variant per declared non-2xx response.
+#[derive(Debug, Clone)]
+pub enum ReportConnectionRuntimeApiError {
     Status400(ErrorResponse),
     Status401(ErrorResponse),
     Status403(ErrorResponse),
@@ -627,6 +659,159 @@ impl HttpClient {
                 500u16 => match serde_json::from_str::<ErrorResponse>(&body_text) {
                     Ok(v) => {
                         typed = Some(AcknowledgeConfigurationApiError::Status500(v));
+                        parse_error = None;
+                    }
+                    Err(e) => {
+                        typed = None;
+                        parse_error = Some(e.to_string());
+                    }
+                },
+                _ => {
+                    typed = None;
+                    parse_error = None;
+                }
+            }
+            Err(ApiOpError::Api(ApiError {
+                status: status_code,
+                headers,
+                body: body_text,
+                raw_body,
+                typed,
+                parse_error,
+            }))
+        }
+    }
+    /// `POST /api/v1/agent/connections/runtime/begin`
+    pub async fn begin_connection_runtime(
+        &self,
+        request: BeginConnectionRuntimeRequest,
+    ) -> Result<BeginConnectionRuntimeResponse, ApiOpError<BeginConnectionRuntimeApiError>> {
+        let request_url = format!(
+            "{}{}",
+            self.base_url, "/api/v1/agent/connections/runtime/begin"
+        );
+        let mut req = self.http_client.post(request_url);
+        req = req
+            .body(serde_json::to_vec(&request).map_err(HttpError::serialization_error)?)
+            .header("content-type", "application/json");
+        if let Some(api_key) = &self.api_key {
+            req = req.bearer_auth(api_key);
+        }
+        for (name, value) in &self.custom_headers {
+            if !name.eq_ignore_ascii_case("accept") {
+                req = req.header(name, value);
+            }
+        }
+        req = req.header(reqwest::header::ACCEPT, "application/json");
+        let response = req.send().await?;
+        let status = response.status();
+        let status_code = status.as_u16();
+        let headers = response.headers().clone();
+        let body_bytes =
+            __read_bounded_response_body(response, self.max_response_body_bytes).await?;
+        let raw_body = body_bytes;
+        let body_text = String::from_utf8_lossy(&raw_body).into_owned();
+        if false || status_code == 200u16 {
+            match serde_json::from_str(&body_text) {
+                Ok(body) => Ok(body),
+                Err(e) => Err(ApiOpError::Api(ApiError {
+                    status: status_code,
+                    headers: headers,
+                    body: body_text,
+                    raw_body,
+                    typed: None,
+                    parse_error: Some(format!("failed to deserialize 2xx response body: {}", e)),
+                })),
+            }
+        } else if status.is_success() {
+            Err(ApiOpError::Api(ApiError {
+                status: status_code,
+                headers,
+                body: body_text,
+                raw_body,
+                typed: None,
+                parse_error: Some(format!(
+                    "unexpected successful status {}; generated return type selects `{}`",
+                    status_code, "200",
+                )),
+            }))
+        } else {
+            let typed: Option<BeginConnectionRuntimeApiError>;
+            let parse_error: Option<String>;
+            match status_code {
+                400u16 => match serde_json::from_str::<ErrorResponse>(&body_text) {
+                    Ok(v) => {
+                        typed = Some(BeginConnectionRuntimeApiError::Status400(v));
+                        parse_error = None;
+                    }
+                    Err(e) => {
+                        typed = None;
+                        parse_error = Some(e.to_string());
+                    }
+                },
+                401u16 => match serde_json::from_str::<ErrorResponse>(&body_text) {
+                    Ok(v) => {
+                        typed = Some(BeginConnectionRuntimeApiError::Status401(v));
+                        parse_error = None;
+                    }
+                    Err(e) => {
+                        typed = None;
+                        parse_error = Some(e.to_string());
+                    }
+                },
+                403u16 => match serde_json::from_str::<ErrorResponse>(&body_text) {
+                    Ok(v) => {
+                        typed = Some(BeginConnectionRuntimeApiError::Status403(v));
+                        parse_error = None;
+                    }
+                    Err(e) => {
+                        typed = None;
+                        parse_error = Some(e.to_string());
+                    }
+                },
+                409u16 => match serde_json::from_str::<ErrorResponse>(&body_text) {
+                    Ok(v) => {
+                        typed = Some(BeginConnectionRuntimeApiError::Status409(v));
+                        parse_error = None;
+                    }
+                    Err(e) => {
+                        typed = None;
+                        parse_error = Some(e.to_string());
+                    }
+                },
+                413u16 => match serde_json::from_str::<ErrorResponse>(&body_text) {
+                    Ok(v) => {
+                        typed = Some(BeginConnectionRuntimeApiError::Status413(v));
+                        parse_error = None;
+                    }
+                    Err(e) => {
+                        typed = None;
+                        parse_error = Some(e.to_string());
+                    }
+                },
+                415u16 => match serde_json::from_str::<ErrorResponse>(&body_text) {
+                    Ok(v) => {
+                        typed = Some(BeginConnectionRuntimeApiError::Status415(v));
+                        parse_error = None;
+                    }
+                    Err(e) => {
+                        typed = None;
+                        parse_error = Some(e.to_string());
+                    }
+                },
+                422u16 => match serde_json::from_str::<ErrorResponse>(&body_text) {
+                    Ok(v) => {
+                        typed = Some(BeginConnectionRuntimeApiError::Status422(v));
+                        parse_error = None;
+                    }
+                    Err(e) => {
+                        typed = None;
+                        parse_error = Some(e.to_string());
+                    }
+                },
+                500u16 => match serde_json::from_str::<ErrorResponse>(&body_text) {
+                    Ok(v) => {
+                        typed = Some(BeginConnectionRuntimeApiError::Status500(v));
                         parse_error = None;
                     }
                     Err(e) => {
@@ -991,6 +1176,113 @@ impl HttpClient {
             }))
         }
     }
+    /// `GET /api/v1/agent/connections/runtime`
+    pub async fn get_connection_runtime_epoch(
+        &self,
+    ) -> Result<GetConnectionRuntimeEpochResponse, ApiOpError<GetConnectionRuntimeEpochApiError>>
+    {
+        let request_url = format!("{}{}", self.base_url, "/api/v1/agent/connections/runtime");
+        let mut req = self.http_client.get(request_url);
+        if let Some(api_key) = &self.api_key {
+            req = req.bearer_auth(api_key);
+        }
+        for (name, value) in &self.custom_headers {
+            if !name.eq_ignore_ascii_case("accept") {
+                req = req.header(name, value);
+            }
+        }
+        req = req.header(reqwest::header::ACCEPT, "application/json");
+        let response = req.send().await?;
+        let status = response.status();
+        let status_code = status.as_u16();
+        let headers = response.headers().clone();
+        let body_bytes =
+            __read_bounded_response_body(response, self.max_response_body_bytes).await?;
+        let raw_body = body_bytes;
+        let body_text = String::from_utf8_lossy(&raw_body).into_owned();
+        if false || status_code == 200u16 {
+            match serde_json::from_str(&body_text) {
+                Ok(body) => Ok(body),
+                Err(e) => Err(ApiOpError::Api(ApiError {
+                    status: status_code,
+                    headers: headers,
+                    body: body_text,
+                    raw_body,
+                    typed: None,
+                    parse_error: Some(format!("failed to deserialize 2xx response body: {}", e)),
+                })),
+            }
+        } else if status.is_success() {
+            Err(ApiOpError::Api(ApiError {
+                status: status_code,
+                headers,
+                body: body_text,
+                raw_body,
+                typed: None,
+                parse_error: Some(format!(
+                    "unexpected successful status {}; generated return type selects `{}`",
+                    status_code, "200",
+                )),
+            }))
+        } else {
+            let typed: Option<GetConnectionRuntimeEpochApiError>;
+            let parse_error: Option<String>;
+            match status_code {
+                401u16 => match serde_json::from_str::<ErrorResponse>(&body_text) {
+                    Ok(v) => {
+                        typed = Some(GetConnectionRuntimeEpochApiError::Status401(v));
+                        parse_error = None;
+                    }
+                    Err(e) => {
+                        typed = None;
+                        parse_error = Some(e.to_string());
+                    }
+                },
+                403u16 => match serde_json::from_str::<ErrorResponse>(&body_text) {
+                    Ok(v) => {
+                        typed = Some(GetConnectionRuntimeEpochApiError::Status403(v));
+                        parse_error = None;
+                    }
+                    Err(e) => {
+                        typed = None;
+                        parse_error = Some(e.to_string());
+                    }
+                },
+                422u16 => match serde_json::from_str::<ErrorResponse>(&body_text) {
+                    Ok(v) => {
+                        typed = Some(GetConnectionRuntimeEpochApiError::Status422(v));
+                        parse_error = None;
+                    }
+                    Err(e) => {
+                        typed = None;
+                        parse_error = Some(e.to_string());
+                    }
+                },
+                500u16 => match serde_json::from_str::<ErrorResponse>(&body_text) {
+                    Ok(v) => {
+                        typed = Some(GetConnectionRuntimeEpochApiError::Status500(v));
+                        parse_error = None;
+                    }
+                    Err(e) => {
+                        typed = None;
+                        parse_error = Some(e.to_string());
+                    }
+                },
+                _ => {
+                    typed = None;
+                    parse_error = None;
+                }
+            }
+            Err(ApiOpError::Api(ApiError {
+                status: status_code,
+                headers,
+                body: body_text,
+                raw_body,
+                typed,
+                parse_error,
+            }))
+        }
+    }
     /// `POST /api/v1/agents/heartbeat`
     pub async fn heartbeat_agent(
         &self,
@@ -1250,6 +1542,156 @@ impl HttpClient {
                 500u16 => match serde_json::from_str::<ErrorResponse>(&body_text) {
                     Ok(v) => {
                         typed = Some(PublishConnectionIdentityApiError::Status500(v));
+                        parse_error = None;
+                    }
+                    Err(e) => {
+                        typed = None;
+                        parse_error = Some(e.to_string());
+                    }
+                },
+                _ => {
+                    typed = None;
+                    parse_error = None;
+                }
+            }
+            Err(ApiOpError::Api(ApiError {
+                status: status_code,
+                headers,
+                body: body_text,
+                raw_body,
+                typed,
+                parse_error,
+            }))
+        }
+    }
+    /// `POST /api/v1/agent/connections/runtime`
+    pub async fn report_connection_runtime(
+        &self,
+        request: ReportConnectionRuntimeRequest,
+    ) -> Result<ReportConnectionRuntimeResponse, ApiOpError<ReportConnectionRuntimeApiError>> {
+        let request_url = format!("{}{}", self.base_url, "/api/v1/agent/connections/runtime");
+        let mut req = self.http_client.post(request_url);
+        req = req
+            .body(serde_json::to_vec(&request).map_err(HttpError::serialization_error)?)
+            .header("content-type", "application/json");
+        if let Some(api_key) = &self.api_key {
+            req = req.bearer_auth(api_key);
+        }
+        for (name, value) in &self.custom_headers {
+            if !name.eq_ignore_ascii_case("accept") {
+                req = req.header(name, value);
+            }
+        }
+        req = req.header(reqwest::header::ACCEPT, "application/json");
+        let response = req.send().await?;
+        let status = response.status();
+        let status_code = status.as_u16();
+        let headers = response.headers().clone();
+        let body_bytes =
+            __read_bounded_response_body(response, self.max_response_body_bytes).await?;
+        let raw_body = body_bytes;
+        let body_text = String::from_utf8_lossy(&raw_body).into_owned();
+        if false || status_code == 200u16 {
+            match serde_json::from_str(&body_text) {
+                Ok(body) => Ok(body),
+                Err(e) => Err(ApiOpError::Api(ApiError {
+                    status: status_code,
+                    headers: headers,
+                    body: body_text,
+                    raw_body,
+                    typed: None,
+                    parse_error: Some(format!("failed to deserialize 2xx response body: {}", e)),
+                })),
+            }
+        } else if status.is_success() {
+            Err(ApiOpError::Api(ApiError {
+                status: status_code,
+                headers,
+                body: body_text,
+                raw_body,
+                typed: None,
+                parse_error: Some(format!(
+                    "unexpected successful status {}; generated return type selects `{}`",
+                    status_code, "200",
+                )),
+            }))
+        } else {
+            let typed: Option<ReportConnectionRuntimeApiError>;
+            let parse_error: Option<String>;
+            match status_code {
+                400u16 => match serde_json::from_str::<ErrorResponse>(&body_text) {
+                    Ok(v) => {
+                        typed = Some(ReportConnectionRuntimeApiError::Status400(v));
+                        parse_error = None;
+                    }
+                    Err(e) => {
+                        typed = None;
+                        parse_error = Some(e.to_string());
+                    }
+                },
+                401u16 => match serde_json::from_str::<ErrorResponse>(&body_text) {
+                    Ok(v) => {
+                        typed = Some(ReportConnectionRuntimeApiError::Status401(v));
+                        parse_error = None;
+                    }
+                    Err(e) => {
+                        typed = None;
+                        parse_error = Some(e.to_string());
+                    }
+                },
+                403u16 => match serde_json::from_str::<ErrorResponse>(&body_text) {
+                    Ok(v) => {
+                        typed = Some(ReportConnectionRuntimeApiError::Status403(v));
+                        parse_error = None;
+                    }
+                    Err(e) => {
+                        typed = None;
+                        parse_error = Some(e.to_string());
+                    }
+                },
+                409u16 => match serde_json::from_str::<ErrorResponse>(&body_text) {
+                    Ok(v) => {
+                        typed = Some(ReportConnectionRuntimeApiError::Status409(v));
+                        parse_error = None;
+                    }
+                    Err(e) => {
+                        typed = None;
+                        parse_error = Some(e.to_string());
+                    }
+                },
+                413u16 => match serde_json::from_str::<ErrorResponse>(&body_text) {
+                    Ok(v) => {
+                        typed = Some(ReportConnectionRuntimeApiError::Status413(v));
+                        parse_error = None;
+                    }
+                    Err(e) => {
+                        typed = None;
+                        parse_error = Some(e.to_string());
+                    }
+                },
+                415u16 => match serde_json::from_str::<ErrorResponse>(&body_text) {
+                    Ok(v) => {
+                        typed = Some(ReportConnectionRuntimeApiError::Status415(v));
+                        parse_error = None;
+                    }
+                    Err(e) => {
+                        typed = None;
+                        parse_error = Some(e.to_string());
+                    }
+                },
+                422u16 => match serde_json::from_str::<ErrorResponse>(&body_text) {
+                    Ok(v) => {
+                        typed = Some(ReportConnectionRuntimeApiError::Status422(v));
+                        parse_error = None;
+                    }
+                    Err(e) => {
+                        typed = None;
+                        parse_error = Some(e.to_string());
+                    }
+                },
+                500u16 => match serde_json::from_str::<ErrorResponse>(&body_text) {
+                    Ok(v) => {
+                        typed = Some(ReportConnectionRuntimeApiError::Status500(v));
                         parse_error = None;
                     }
                     Err(e) => {

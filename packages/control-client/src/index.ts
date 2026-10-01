@@ -9,6 +9,7 @@ export {
   setNodeCountryOperation as setNodeCountry,
   getConnectionsOperation as getConnections,
   saveConnectionsOperation as saveConnections,
+  getConnectionRuntimesOperation as getConnectionRuntimes,
 } from "./generated/operations.gen.ts";
 export type * from "./generated/types.gen.ts";
 export { ControlApiError } from "./transport.ts";

@@ -10,6 +10,7 @@ use rusqlite::{Connection, OptionalExtension, Row, TransactionBehavior, params};
 use crate::Error;
 
 mod configuration;
+mod connection_runtime;
 mod connections;
 mod ipam;
 #[cfg(test)]
@@ -105,7 +106,7 @@ impl Store {
             File::open(path)?.sync_all()?;
         }
         let version: i64 = connection.pragma_query_value(None, "user_version", |row| row.get(0))?;
-        if !(1..=3).contains(&version) {
+        if !(1..=4).contains(&version) {
             return Err(Error::Configuration(
                 "unsupported or incomplete controller database schema",
             ));
@@ -121,6 +122,7 @@ impl Store {
         }
         ipam::upgrade(&mut connection, options)?;
         connections::upgrade(&mut connection)?;
+        connection_runtime::upgrade(&mut connection)?;
         Ok(Self {
             connection,
             _lock: lock,
@@ -265,6 +267,10 @@ impl Store {
             params![Utc::now().to_rfc3339(), id],
         )?;
         if changed != 0 {
+            transaction.execute(
+                "DELETE FROM connection_runtime_reports WHERE node_id = ?1",
+                [id],
+            )?;
             configuration::bump(&transaction)?;
             configuration::ensure_publishable(&transaction)?;
             connections::ensure_publishable(&transaction)?;

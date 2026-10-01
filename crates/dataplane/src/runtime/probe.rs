@@ -145,6 +145,9 @@ fn process(inner: &Inner, incoming: &Incoming) -> StageResult<()> {
             DropReason::StaleChannel,
         ));
     }
+    if incoming.body.first() == Some(&super::neighbor::NAMESPACE) {
+        return super::neighbor::process(inner, incoming);
+    }
     let packet = Packet::decode(&incoming.body)?;
     let position = inner.authorize(&packet.path)?;
     let previous = if packet.phase.forward() {

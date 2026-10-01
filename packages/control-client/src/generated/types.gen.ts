@@ -37,6 +37,18 @@ export type AgentNodeResponse = {
     node: NodeSummary;
 };
 
+export type BeginConnectionRuntimeRequest = {
+    /**
+     * Pin the initial epoch read across retries; never refresh after a conflict.
+     */
+    expected_epoch: number;
+    instance_id: string;
+};
+
+export type BeginConnectionRuntimeResponse = {
+    epoch: number;
+};
+
 export type ConfigurationSnapshot = {
     digest: string;
     payload: NodeConfiguration;
@@ -78,6 +90,34 @@ export type ConnectionListener = {
     transport: ConnectionTransport;
 };
 
+export type ConnectionListenerObservation = {
+    listener_id: string;
+    reason: ConnectionRuntimeReason;
+    state: ConnectionListenerState;
+};
+
+export type ConnectionListenerState = 'bound' | 'error';
+
+export type ConnectionNeighborObservation = {
+    candidate_id: string | null;
+    initiator_node_id: string;
+    listener_id: string | null;
+    peer_node_id: string;
+    /**
+     * A recent authenticated control-nonce probe, not merely a control heartbeat.
+     */
+    probe_fresh: boolean;
+    probe_rtt_ms: number | null;
+    /**
+     * Sanitized peer-local outcome, independent of global reconcile state.
+     */
+    reason: ConnectionRuntimeReason;
+    state: ConnectionNeighborState;
+    transport: ConnectionTransport;
+};
+
+export type ConnectionNeighborState = 'authenticated' | 'waiting' | 'unreachable';
+
 export type ConnectionNode = {
     acknowledged_at: string | null;
     acknowledged_digest: string | null;
@@ -98,6 +138,36 @@ export type ConnectionPlan = {
 };
 
 export type ConnectionReceiptStatus = 'saved';
+
+export type ConnectionRuntimeObservation = {
+    /**
+     * Matches the current node-scoped revision/digest and node is active.
+     */
+    current: boolean;
+    digest: string | null;
+    epoch: number;
+    listeners: Array<ConnectionListenerObservation>;
+    node_id: string;
+    peers: Array<ConnectionNeighborObservation>;
+    reason: ConnectionRuntimeReason;
+    reported_at: string | null;
+    revision: number | null;
+    sequence: number;
+    /**
+     * Not current, never reported, or receive age >= stale_after_seconds.
+     */
+    stale: boolean;
+    stale_after_seconds: number;
+    state: ConnectionRuntimeState;
+};
+
+export type ConnectionRuntimeReason = 'none' | 'disabled' | 'invalid_configuration' | 'profile_unavailable' | 'bind_failed' | 'resolve_failed' | 'transport_failed' | 'authentication_failed' | 'probe_failed' | 'lease_superseded' | 'lease_expired' | 'shutting_down' | 'internal_error';
+
+export type ConnectionRuntimeState = 'awaiting_report' | 'disabled' | 'applying' | 'applied' | 'error' | 'withdrawn';
+
+export type ConnectionRuntimesSnapshot = {
+    nodes: Array<ConnectionRuntimeObservation>;
+};
 
 export type ConnectionSemantics = 'datagram' | 'stream';
 
@@ -159,6 +229,13 @@ export type FlowQuery = {
     destination_node_id: string | null;
     domain: string | null;
     source_node_id: string;
+};
+
+export type GetConnectionRuntimeEpochResponse = {
+    /**
+     * Zero means this node has never acquired a runtime lease.
+     */
+    epoch: number;
 };
 
 /**
@@ -290,6 +367,23 @@ export type PublishConnectionIdentityResponse = {
     node_id: string;
     public_key: string;
     revision: number;
+};
+
+export type ReportConnectionRuntimeRequest = {
+    digest: string;
+    epoch: number;
+    listeners: Array<ConnectionListenerObservation>;
+    peers: Array<ConnectionNeighborObservation>;
+    reason: ConnectionRuntimeReason;
+    revision: number;
+    sequence: number;
+    state: ConnectionRuntimeState;
+};
+
+export type ReportConnectionRuntimeResponse = {
+    epoch: number;
+    reported_at: string;
+    sequence: number;
 };
 
 export type RevokeNodeRequest = {
@@ -489,6 +583,149 @@ export type AcknowledgeAgentConnectionsResponses = {
 };
 
 export type AcknowledgeAgentConnectionsResponse2 = AcknowledgeAgentConnectionsResponses[keyof AcknowledgeAgentConnectionsResponses];
+
+export type GetConnectionRuntimeEpochData = {
+    body?: never;
+    path?: never;
+    query?: never;
+    url: '/api/v1/agent/connections/runtime';
+};
+
+export type GetConnectionRuntimeEpochErrors = {
+    /**
+     * Node credential required
+     */
+    401: ErrorResponse;
+    /**
+     * Node revoked
+     */
+    403: ErrorResponse;
+    /**
+     * Connection identity must be bound
+     */
+    422: ErrorResponse;
+    /**
+     * Storage unavailable
+     */
+    500: ErrorResponse;
+};
+
+export type GetConnectionRuntimeEpochError = GetConnectionRuntimeEpochErrors[keyof GetConnectionRuntimeEpochErrors];
+
+export type GetConnectionRuntimeEpochResponses = {
+    /**
+     * Read node-scoped acquisition CAS epoch; zero means no lease; no renewal or mutation
+     */
+    200: GetConnectionRuntimeEpochResponse;
+};
+
+export type GetConnectionRuntimeEpochResponse2 = GetConnectionRuntimeEpochResponses[keyof GetConnectionRuntimeEpochResponses];
+
+export type ReportConnectionRuntimeData = {
+    body: ReportConnectionRuntimeRequest;
+    path?: never;
+    query?: never;
+    url: '/api/v1/agent/connections/runtime';
+};
+
+export type ReportConnectionRuntimeErrors = {
+    /**
+     * Invalid JSON
+     */
+    400: ErrorResponse;
+    /**
+     * Node credential required
+     */
+    401: ErrorResponse;
+    /**
+     * Node revoked
+     */
+    403: ErrorResponse;
+    /**
+     * Superseded or absent runtime lease, old sequence or changed same-sequence report
+     */
+    409: ErrorResponse;
+    /**
+     * Request exceeds 128 KiB
+     */
+    413: ErrorResponse;
+    /**
+     * Expected application/json
+     */
+    415: ErrorResponse;
+    /**
+     * Configuration revision/digest mismatch, missing identity or invalid observation scope/state
+     */
+    422: ErrorResponse;
+    /**
+     * Storage unavailable
+     */
+    500: ErrorResponse;
+};
+
+export type ReportConnectionRuntimeError = ReportConnectionRuntimeErrors[keyof ReportConnectionRuntimeErrors];
+
+export type ReportConnectionRuntimeResponses = {
+    /**
+     * Record scoped runtime self-report; duplicate sequence preserves server receive time; never ACK or independent peer proof
+     */
+    200: ReportConnectionRuntimeResponse;
+};
+
+export type ReportConnectionRuntimeResponse2 = ReportConnectionRuntimeResponses[keyof ReportConnectionRuntimeResponses];
+
+export type BeginConnectionRuntimeData = {
+    body: BeginConnectionRuntimeRequest;
+    path?: never;
+    query?: never;
+    url: '/api/v1/agent/connections/runtime/begin';
+};
+
+export type BeginConnectionRuntimeErrors = {
+    /**
+     * Invalid JSON
+     */
+    400: ErrorResponse;
+    /**
+     * Node credential required
+     */
+    401: ErrorResponse;
+    /**
+     * Node revoked
+     */
+    403: ErrorResponse;
+    /**
+     * Expected epoch no longer current for a different instance; lease/report unchanged
+     */
+    409: ErrorResponse;
+    /**
+     * Request exceeds 8192 bytes
+     */
+    413: ErrorResponse;
+    /**
+     * Expected application/json
+     */
+    415: ErrorResponse;
+    /**
+     * Invalid instance ID, missing bound identity or epoch exhausted
+     */
+    422: ErrorResponse;
+    /**
+     * Storage unavailable
+     */
+    500: ErrorResponse;
+};
+
+export type BeginConnectionRuntimeError = BeginConnectionRuntimeErrors[keyof BeginConnectionRuntimeErrors];
+
+export type BeginConnectionRuntimeResponses = {
+    /**
+     * Acquire runtime epoch by CAS; current instance retries preserve observation freshness
+     */
+    200: BeginConnectionRuntimeResponse;
+};
+
+export type BeginConnectionRuntimeResponse2 = BeginConnectionRuntimeResponses[keyof BeginConnectionRuntimeResponses];
 
 export type GetAgentConfigurationData = {
     body?: never;
@@ -747,6 +984,35 @@ export type SaveConnectionsResponses = {
 };
 
 export type SaveConnectionsResponse = SaveConnectionsResponses[keyof SaveConnectionsResponses];
+
+export type GetConnectionRuntimesData = {
+    body?: never;
+    path?: never;
+    query?: never;
+    url: '/api/v1/connections/runtime';
+};
+
+export type GetConnectionRuntimesErrors = {
+    /**
+     * Admin credential required
+     */
+    401: ErrorResponse;
+    /**
+     * Storage unavailable
+     */
+    500: ErrorResponse;
+};
+
+export type GetConnectionRuntimesError = GetConnectionRuntimesErrors[keyof GetConnectionRuntimesErrors];
+
+export type GetConnectionRuntimesResponses = {
+    /**
+     * Leased node self-reports with server receive TTL and current configuration matching; not authorization
+     */
+    200: ConnectionRuntimesSnapshot;
+};
+
+export type GetConnectionRuntimesResponse = GetConnectionRuntimesResponses[keyof GetConnectionRuntimesResponses];
 
 export type CreateEnrollmentTokenData = {
     body: CreateEnrollmentTokenRequest;

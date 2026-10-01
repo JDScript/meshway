@@ -29,6 +29,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         "publishConnectionIdentity",
         "getAgentConnections",
         "acknowledgeAgentConnections",
+        "beginConnectionRuntime",
+        "getConnectionRuntimeEpoch",
+        "reportConnectionRuntime",
     ];
     // Upstream has client-wide auth configuration. Derive it from the actual
     // selected operations, and fail if the contract needs richer semantics.

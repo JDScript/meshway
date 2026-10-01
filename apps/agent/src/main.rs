@@ -56,6 +56,18 @@ enum Command {
         /// Also publish the connection key/capabilities and save a separate connections receipt.
         #[arg(long)]
         connections: bool,
+        /// Apply freshly saved adjacency intent and authenticated neighbor probes.
+        #[cfg(feature = "managed-connections")]
+        #[arg(long)]
+        apply_connections: bool,
+        /// Private local TLS/VLESS profiles, resolved by credential_ref.
+        #[cfg(feature = "managed-connections")]
+        #[arg(long, requires = "apply_connections")]
+        connection_profiles: Option<PathBuf>,
+        /// Config freshness deadline, independent of HTTP/report success.
+        #[cfg(feature = "managed-connections")]
+        #[arg(long, default_value_t = 45, value_parser = clap::value_parser!(u64).range(10..=300))]
+        connection_lease_seconds: u64,
     },
     /// Read local identity metadata without exposing credentials or claiming liveness.
     Status {
@@ -145,8 +157,25 @@ async fn execute(command: Command) -> Result<(), Box<dyn std::error::Error>> {
             state,
             interval_seconds,
             connections,
+            #[cfg(feature = "managed-connections")]
+            apply_connections,
+            #[cfg(feature = "managed-connections")]
+            connection_profiles,
+            #[cfg(feature = "managed-connections")]
+            connection_lease_seconds,
         } => {
             let mut agent = Agent::load(state)?;
+            #[cfg(feature = "managed-connections")]
+            if apply_connections {
+                agent
+                    .run_managed_connections(
+                        connection_profiles,
+                        Duration::from_secs(interval_seconds),
+                        Duration::from_secs(connection_lease_seconds),
+                    )
+                    .await?;
+                return Ok(());
+            }
             let mut backoff = 1_u64;
             loop {
                 let result = tokio::select! {

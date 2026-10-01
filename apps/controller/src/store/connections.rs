@@ -13,7 +13,7 @@ mod validation;
 
 pub(super) fn upgrade(connection: &mut Connection) -> Result<(), Error> {
     let version: u32 = connection.pragma_query_value(None, "user_version", |row| row.get(0))?;
-    if version == 3 {
+    if (3..=4).contains(&version) {
         return Ok(());
     }
     if version != 2 {
@@ -101,7 +101,7 @@ fn source(connection: &Connection) -> Result<ConnectionPlan, Error> {
     serde_json::from_str(&json).map_err(|_| Error::Configuration("invalid stored connection plan"))
 }
 
-fn admin_snapshot(connection: &Connection) -> Result<ConnectionsSnapshot, Error> {
+pub(super) fn admin_snapshot(connection: &Connection) -> Result<ConnectionsSnapshot, Error> {
     let configuration = source(connection)?;
     let nodes = nodes(connection)?;
     let (_, diagnostics) = validation::compile(&configuration, &nodes);
@@ -114,7 +114,10 @@ fn admin_snapshot(connection: &Connection) -> Result<ConnectionsSnapshot, Error>
     })
 }
 
-fn projection(snapshot: &ConnectionsSnapshot, id: &str) -> Result<AgentConnectionsSnapshot, Error> {
+pub(super) fn projection(
+    snapshot: &ConnectionsSnapshot,
+    id: &str,
+) -> Result<AgentConnectionsSnapshot, Error> {
     let own = snapshot
         .nodes
         .iter()

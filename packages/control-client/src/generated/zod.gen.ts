@@ -115,6 +115,15 @@ export const zAgentNodeResponse = z.strictObject({
   "node": zNodeSummary
 });
 
+export const zBeginConnectionRuntimeRequest = z.strictObject({
+  "expected_epoch": z.int().gte(0).lte(4294967295),
+  "instance_id": z.string().refine(value => [...value].length >= 64, "minLength 64 Unicode code points").refine(value => [...value].length <= 64, "maxLength 64 Unicode code points").regex(new RegExp("^[0-9a-f]{64}$", "u"))
+});
+
+export const zBeginConnectionRuntimeResponse = z.strictObject({
+  "epoch": z.int().gte(1).lte(4294967295)
+});
+
 export const zPolicyDiagnostic = z.strictObject({
   "field": z.string(),
   "message": z.string(),
@@ -196,6 +205,30 @@ export const zConnectionCandidate = z.strictObject({
   "priority": z.int().gte(0).lte(65535)
 });
 
+export const zConnectionRuntimeReason = z.enum(["none","disabled","invalid_configuration","profile_unavailable","bind_failed","resolve_failed","transport_failed","authentication_failed","probe_failed","lease_superseded","lease_expired","shutting_down","internal_error"]);
+
+export const zConnectionListenerState = z.enum(["bound","error"]);
+
+export const zConnectionListenerObservation = z.strictObject({
+  "listener_id": z.string().refine(value => [...value].length >= 1, "minLength 1 Unicode code points").refine(value => [...value].length <= 64, "maxLength 64 Unicode code points").regex(new RegExp("^[A-Za-z0-9._-]+$", "u")),
+  "reason": zConnectionRuntimeReason,
+  "state": zConnectionListenerState
+});
+
+export const zConnectionNeighborState = z.enum(["authenticated","waiting","unreachable"]);
+
+export const zConnectionNeighborObservation = z.strictObject({
+  "candidate_id": z.string().refine(value => [...value].length >= 1, "minLength 1 Unicode code points").refine(value => [...value].length <= 64, "maxLength 64 Unicode code points").regex(new RegExp("^[A-Za-z0-9._-]+$", "u")).nullable(),
+  "initiator_node_id": z.string().refine(value => [...value].length >= 1, "minLength 1 Unicode code points").refine(value => [...value].length <= 64, "maxLength 64 Unicode code points").regex(new RegExp("^[A-Za-z0-9._-]+$", "u")),
+  "listener_id": z.string().refine(value => [...value].length >= 1, "minLength 1 Unicode code points").refine(value => [...value].length <= 64, "maxLength 64 Unicode code points").regex(new RegExp("^[A-Za-z0-9._-]+$", "u")).nullable(),
+  "peer_node_id": z.string().refine(value => [...value].length >= 1, "minLength 1 Unicode code points").refine(value => [...value].length <= 64, "maxLength 64 Unicode code points").regex(new RegExp("^[A-Za-z0-9._-]+$", "u")),
+  "probe_fresh": z.boolean(),
+  "probe_rtt_ms": z.int().gte(0).lte(4294967295).nullable(),
+  "reason": zConnectionRuntimeReason,
+  "state": zConnectionNeighborState,
+  "transport": zConnectionTransport
+});
+
 export const zConnectionNode = z.strictObject({
   "acknowledged_at": z.iso.datetime({ offset: true }).nullable(),
   "acknowledged_digest": z.string().refine(value => [...value].length >= 64, "minLength 64 Unicode code points").refine(value => [...value].length <= 64, "maxLength 64 Unicode code points").regex(new RegExp("^[0-9a-f]{64}$", "u")).nullable(),
@@ -208,6 +241,28 @@ export const zConnectionNode = z.strictObject({
 export const zConnectionPlan = z.strictObject({
   "candidates": z.array(zConnectionCandidate).max(256),
   "listeners": z.array(zConnectionListener).max(128)
+});
+
+export const zConnectionRuntimeState = z.enum(["awaiting_report","disabled","applying","applied","error","withdrawn"]);
+
+export const zConnectionRuntimeObservation = z.strictObject({
+  "current": z.boolean(),
+  "digest": z.string().refine(value => [...value].length >= 64, "minLength 64 Unicode code points").refine(value => [...value].length <= 64, "maxLength 64 Unicode code points").regex(new RegExp("^[0-9a-f]{64}$", "u")).nullable(),
+  "epoch": z.int().gte(1).lte(4294967295),
+  "listeners": z.array(zConnectionListenerObservation).max(128),
+  "node_id": z.string(),
+  "peers": z.array(zConnectionNeighborObservation).max(256),
+  "reason": zConnectionRuntimeReason,
+  "reported_at": z.iso.datetime({ offset: true }).nullable(),
+  "revision": z.int().gte(1).lte(4294967295).nullable(),
+  "sequence": z.int().gte(0).lte(4294967295),
+  "stale": z.boolean(),
+  "stale_after_seconds": z.int().gte(1).lte(4294967295),
+  "state": zConnectionRuntimeState
+});
+
+export const zConnectionRuntimesSnapshot = z.strictObject({
+  "nodes": z.array(zConnectionRuntimeObservation)
 });
 
 export const zConnectionsSnapshot = z.strictObject({
@@ -244,6 +299,10 @@ export const zFlowQuery = z.strictObject({
   "destination_node_id": z.string().nullable(),
   "domain": z.string().nullable(),
   "source_node_id": z.string()
+});
+
+export const zGetConnectionRuntimeEpochResponse = z.strictObject({
+  "epoch": z.int().gte(0).lte(4294967295)
 });
 
 export const zHeartbeatRequest = z.strictObject({
@@ -301,6 +360,23 @@ export const zPublishConnectionIdentityResponse = z.strictObject({
   "node_id": z.string(),
   "public_key": z.string().refine(value => [...value].length >= 64, "minLength 64 Unicode code points").refine(value => [...value].length <= 64, "maxLength 64 Unicode code points").regex(new RegExp("^[0-9a-f]{64}$", "u")),
   "revision": z.int().gte(1).lte(4294967295)
+});
+
+export const zReportConnectionRuntimeRequest = z.strictObject({
+  "digest": z.string().refine(value => [...value].length >= 64, "minLength 64 Unicode code points").refine(value => [...value].length <= 64, "maxLength 64 Unicode code points").regex(new RegExp("^[0-9a-f]{64}$", "u")),
+  "epoch": z.int().gte(1).lte(4294967295),
+  "listeners": z.array(zConnectionListenerObservation).max(128),
+  "peers": z.array(zConnectionNeighborObservation).max(256),
+  "reason": zConnectionRuntimeReason,
+  "revision": z.int().gte(1).lte(4294967295),
+  "sequence": z.int().gte(1).lte(4294967295),
+  "state": zConnectionRuntimeState
+});
+
+export const zReportConnectionRuntimeResponse = z.strictObject({
+  "epoch": z.int().gte(1).lte(4294967295),
+  "reported_at": z.iso.datetime({ offset: true }),
+  "sequence": z.int().gte(1).lte(4294967295)
 });
 
 export const zRevokeNodeRequest = z.strictObject({

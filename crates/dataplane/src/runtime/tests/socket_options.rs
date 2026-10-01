@@ -67,6 +67,7 @@ async fn udp_listener_and_outgoing_bind_apply_only_requested_receive_buffer() {
         transport: TransportKind::NativeUdp,
         endpoint: reference.local_addr().unwrap().to_string(),
         priority: 0,
+        id: None,
     };
 
     for socket in [

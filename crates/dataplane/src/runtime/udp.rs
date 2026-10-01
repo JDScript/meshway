@@ -1,5 +1,5 @@
 use super::{
-    Channel, DropReason, Failure, Incoming, Inner, Outbound, StageResult, lock,
+    Channel, DropReason, Failure, Incoming, Inner, Outbound, StageResult, StreamContext, lock,
     wire::{HOP_ACK, HOP_CONFIRM, hop_prologue},
     work_budget::WorkBudget,
 };
@@ -114,6 +114,7 @@ pub(super) async fn run(
     inner: Arc<Inner>,
     socket: UdpSocket,
     candidate: Option<OutgoingCandidate>,
+    context: StreamContext,
 ) {
     let mut shutdown = inner.shutdown.subscribe();
     if *shutdown.borrow() {
@@ -178,7 +179,11 @@ pub(super) async fn run(
                     plaintext.push(1);
                     plaintext.extend_from_slice(&frame);
                     match send_datagram(&socket, session, &plaintext).await {
-                        Ok(()) => { inner.counters(TransportKind::NativeUdp).sent.fetch_add(1, Ordering::Relaxed); }
+                        Ok(()) => {
+                            if frame.first() != Some(&super::neighbor::NAMESPACE) {
+                                inner.counters(TransportKind::NativeUdp).sent.fetch_add(1, Ordering::Relaxed);
+                            }
+                        }
                         Err(error) => { inner.counters(TransportKind::NativeUdp).drop(error.into()); }
                     }
                     // Account each sealed/sent frame, not just the bounded batch entry.
@@ -188,7 +193,7 @@ pub(super) async fn run(
             datagram = socket.recv_from(&mut buffer) => {
                 let Ok((size, source)) = datagram else { break };
                 let result = if size == 0 || size > UDP_LIMIT { Err(Error::Oversize.into()) }
-                    else { receive(&inner, &socket, &tx, &mut sessions, &mut pending, &mut confirming, &buffer[..size], source).await };
+                    else { receive(&inner, &socket, &tx, &mut sessions, &mut pending, &mut confirming, &buffer[..size], source, candidate.is_none(), &context).await };
                 if let Err(failure) = result { inner.counters(TransportKind::NativeUdp).drop(failure.reason); }
                 // All datagrams consume work, including rejected input and hop control.
                 // Authentication/confirmation and any reply finish before yielding.
@@ -245,9 +250,16 @@ async fn receive(
     confirming: &mut BTreeMap<[u8; 32], Confirming>,
     datagram: &[u8],
     source: SocketAddr,
+    listener: bool,
+    context: &StreamContext,
 ) -> StageResult<()> {
     match Kind::try_from(datagram[0])? {
         Kind::Hello => {
+            // Outgoing candidate sockets are dial-only, not implicit listeners.
+            // Responses and confirmed bidirectional data still use this socket.
+            if !listener {
+                return Err(Error::UnauthorizedTransport.into());
+            }
             let permit = inner
                 .semaphore
                 .clone()
@@ -262,6 +274,7 @@ async fn receive(
             }
             let peer = inner.identify(state.get_remote_static())?;
             inner.authorize_transport(&peer, TransportKind::NativeUdp)?;
+            context.authorize(&peer)?;
             let response = write_handshake(&mut state, &setup)?;
             let cipher = Cipher::finish(state)?;
             let priority = u16::from_be_bytes([setup[1], setup[2]]);
@@ -345,6 +358,7 @@ async fn receive(
                     waiting.priority,
                     waiting.permit,
                     !is_ack,
+                    context,
                 )?;
             } else if is_ack {
                 return Err(Error::Authentication.into());
@@ -415,6 +429,7 @@ fn install(
     priority: u16,
     permit: OwnedSemaphorePermit,
     responder: bool,
+    context: &StreamContext,
 ) -> Result<()> {
     let token = cipher.id;
     let (close, _) = watch::channel(false);
@@ -426,6 +441,12 @@ fn install(
             transport: TransportKind::NativeUdp,
             tx: tx.clone(),
             close,
+            initiator: !responder,
+            context: Arc::new(StreamContext {
+                remote_addr: Some(address),
+                ..context.clone()
+            }),
+            probe_budget: Default::default(),
         },
     )?;
     sessions.insert(

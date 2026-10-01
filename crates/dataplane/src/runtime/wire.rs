@@ -2,7 +2,7 @@ use crate::{Error, MAX_FRAME_SIZE, Result, TransportKind};
 
 pub(super) const MAX_PAYLOAD: usize = 8_192;
 pub(super) fn hop_prologue(transport: TransportKind) -> Vec<u8> {
-    let mut result = b"meshway/lab/hop/2".to_vec();
+    let mut result = b"meshway/lab/hop/3".to_vec();
     result.push(match transport {
         TransportKind::NativeUdp => 1,
         TransportKind::NativeTcp => 2,
@@ -11,8 +11,8 @@ pub(super) fn hop_prologue(transport: TransportKind) -> Vec<u8> {
     result
 }
 
-pub(super) const HOP_CONFIRM: &[u8] = b"meshway/hop/initiator-confirm/2";
-pub(super) const HOP_ACK: &[u8] = b"meshway/hop/responder-ack/2";
+pub(super) const HOP_CONFIRM: &[u8] = b"meshway/hop/initiator-confirm/3";
+pub(super) const HOP_ACK: &[u8] = b"meshway/hop/responder-ack/3";
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(super) enum Phase {
@@ -45,7 +45,7 @@ impl Packet {
         output.extend_from_slice(&self.id);
         output.push(self.path.len() as u8);
         for id in &self.path {
-            if id.is_empty() || id.len() > 48 {
+            if !crate::config::valid_id(id) {
                 return Err(Error::Protocol);
             }
             output.push(id.len() as u8);
@@ -80,14 +80,14 @@ impl Packet {
         for _ in 0..count {
             let length = *input.get(offset).ok_or(Error::Protocol)? as usize;
             offset += 1;
-            if length == 0 || length > 48 {
+            if length == 0 || length > 64 {
                 return Err(Error::Protocol);
             }
             let value = input.get(offset..offset + length).ok_or(Error::Protocol)?;
             let value = std::str::from_utf8(value)
                 .map_err(|_| Error::Protocol)?
                 .to_owned();
-            if path.contains(&value) {
+            if !crate::config::valid_id(&value) || path.contains(&value) {
                 return Err(Error::Protocol);
             }
             path.push(value);

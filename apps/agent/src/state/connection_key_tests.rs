@@ -138,3 +138,31 @@ fn sidecar_rejects_replacement_permissions_links_and_binding_or_key_mismatch() {
     assert!(keys.prepare(&path, &agent.identity).is_err());
     assert_eq!(std::fs::read(&linked).unwrap(), original);
 }
+
+#[cfg(feature = "managed-connections")]
+#[test]
+fn managed_export_reuses_bound_key_and_rechecks_durability_and_binding() {
+    let directory = directory();
+    let path = directory.path().join("agent.json");
+    let agent = enrolled(&path);
+    let key_path = super::connection_key::path(&path);
+    let mut keys = KeyStore::load(&path, &agent.identity).unwrap();
+    assert!(keys.application_key(&path, &agent.identity).is_err());
+    let public = keys.prepare(&path, &agent.identity).unwrap().to_owned();
+    let before = std::fs::read(&key_path).unwrap();
+    let exported = keys.application_key(&path, &agent.identity).unwrap();
+    assert_eq!(
+        meshway_dataplane::Identity::from_private_key(exported).public_key_hex(),
+        public
+    );
+    assert_eq!(std::fs::read(&key_path).unwrap(), before);
+    let fault = local::test_faults::DirectorySyncFailure::after_publication(&key_path);
+    assert!(local::atomic_write(&key_path, &before, true).is_err());
+    assert!(keys.application_key(&path, &agent.identity).is_err());
+    drop(fault);
+    let mut replaced: serde_json::Value = serde_json::from_slice(&before).unwrap();
+    replaced["node_id"] = local::credential().unwrap().into();
+    local::atomic_write(&key_path, &serde_json::to_vec(&replaced).unwrap(), true).unwrap();
+    assert!(keys.application_key(&path, &agent.identity).is_err());
+    assert_ne!(std::fs::read(&key_path).unwrap(), before);
+}

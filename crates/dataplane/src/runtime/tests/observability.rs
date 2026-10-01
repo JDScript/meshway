@@ -42,6 +42,9 @@ fn queue_channel_with_capacity(
                 transport,
                 tx,
                 close,
+                initiator: true,
+                context: Default::default(),
+                probe_budget: Default::default(),
             },
         )
         .unwrap();
