@@ -1,18 +1,13 @@
 "use client"
 
-import { ChevronsUpDownIcon, NetworkIcon, UsersIcon } from "lucide-react"
+import { ChevronsUpDownIcon, NetworkIcon } from "lucide-react"
 
 import { BrandMark } from "@/components/shell/brand"
-import { Badge } from "@/components/ui/badge"
 import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuGroup,
-  DropdownMenuItem,
   DropdownMenuLabel,
-  DropdownMenuRadioGroup,
-  DropdownMenuRadioItem,
-  DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
 import {
@@ -24,9 +19,7 @@ import {
 
 /**
  * Identifies the one network this console manages. The controller has a
- * single mesh and no team or membership model yet, so the menu names the
- * actual controller and shows team management as not available — it never
- * offers a switch that would pretend to isolate anything.
+ * single mesh, so this is context information, not a pretend network switch.
  */
 export function ContextSwitcher({ controllerHost }: { controllerHost: string }) {
   const { isMobile } = useSidebar()
@@ -60,29 +53,13 @@ export function ContextSwitcher({ controllerHost }: { controllerHost: string }) 
             sideOffset={6}
           >
             <DropdownMenuGroup>
-              <DropdownMenuLabel>网络</DropdownMenuLabel>
-              <DropdownMenuRadioGroup value="default">
-                <DropdownMenuRadioItem value="default" closeOnClick>
-                  <NetworkIcon />
-                  <div className="grid min-w-0 leading-tight">
-                    <span>默认网络</span>
-                    <span className="truncate font-mono text-[0.625rem] text-muted-foreground">
-                      {controllerHost}
-                    </span>
-                  </div>
-                </DropdownMenuRadioItem>
-              </DropdownMenuRadioGroup>
-            </DropdownMenuGroup>
-            <DropdownMenuSeparator />
-            <DropdownMenuGroup>
-              <DropdownMenuLabel>团队</DropdownMenuLabel>
-              <DropdownMenuItem disabled>
-                <UsersIcon />
-                <span className="flex-1">团队与多网络</span>
-                <Badge variant="outline">规划中</Badge>
-              </DropdownMenuItem>
+              <DropdownMenuLabel>当前网络</DropdownMenuLabel>
+              <div className="flex items-start gap-2 px-2 py-1.5 text-sm">
+                <NetworkIcon className="mt-0.5 size-4 shrink-0 text-muted-foreground" />
+                <span className="min-w-0 break-all font-mono text-xs">{controllerHost}</span>
+              </div>
               <p className="px-2 pt-1 pb-1.5 text-[0.6875rem] leading-relaxed text-muted-foreground">
-                当前 controller 管理单个网络，尚无团队、成员或网络隔离。
+                此控制台管理 controller 的单个网络。
               </p>
             </DropdownMenuGroup>
           </DropdownMenuContent>

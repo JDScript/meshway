@@ -5,7 +5,7 @@ import { usePathname } from "next/navigation"
 
 import { CapabilityPopover } from "@/components/shell/capability-popover"
 import { CommandMenu } from "@/components/shell/command-menu"
-import { currentItem } from "@/components/shell/nav"
+import { currentItem, currentSection } from "@/components/shell/nav"
 import { ThemeToggle } from "@/components/shell/theme-toggle"
 import {
   Breadcrumb,
@@ -21,6 +21,7 @@ import { SidebarTrigger } from "@/components/ui/sidebar"
 export function SiteHeader() {
   const pathname = usePathname()
   const item = currentItem(pathname)
+  const section = currentSection(pathname)
   // Detail pages (e.g. /nodes/<id>) sit one level below their section.
   const detail = item !== undefined && item.href !== "/" && pathname !== item.href
 
@@ -31,7 +32,7 @@ export function SiteHeader() {
       <Breadcrumb className="min-w-0">
         <BreadcrumbList className="flex-nowrap">
           <BreadcrumbItem className="hidden sm:inline-flex">
-            <span className="text-muted-foreground">默认网络</span>
+            <span className="text-muted-foreground">{section?.label ?? "Meshway"}</span>
           </BreadcrumbItem>
           <BreadcrumbSeparator className="hidden sm:inline-flex" />
           {detail ? (

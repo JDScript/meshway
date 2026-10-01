@@ -3,6 +3,7 @@ import type { Metadata } from "next"
 import { ControllerUnavailable, NoNodes } from "@/components/common/controller-states"
 import { PageBody, PageHeader } from "@/components/shell/page-header"
 import { TopologyView } from "@/components/topology/topology-view"
+import { topologyInitialFlow } from "@/lib/flow-navigation"
 import {
   controllerUrl,
   fetchConnectionRuntimes,
@@ -26,6 +27,7 @@ export default async function TopologyPage({
     searchParams,
   ])
   const nodeId = typeof params.node === "string" ? params.node : null
+  const initialFlow = topologyInitialFlow(params)
 
   return (
     <PageBody width="wide">
@@ -42,7 +44,7 @@ export default async function TopologyPage({
       ) : (
         <TopologyView
           // A new policy revision starts a fresh view: plans never outlive it.
-          key={`${policy.data.revision}-${nodeId ?? ""}`}
+          key={`${policy.data.revision}-${nodeId ?? ""}-${JSON.stringify(initialFlow)}`}
           snapshot={policy.data}
           nodes={nodes.data.nodes}
           fetchedAt={nodes.fetchedAt}
@@ -53,6 +55,7 @@ export default async function TopologyPage({
           }
           initialRuntimes={runtimes}
           initialNodeId={nodeId}
+          initialFlow={initialFlow}
         />
       )}
     </PageBody>

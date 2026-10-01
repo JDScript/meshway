@@ -5,7 +5,7 @@ import { useTheme } from "next-themes"
 import { useRouter } from "next/navigation"
 import { useEffect, useState } from "react"
 
-import { navItems } from "@/components/shell/nav"
+import { navSections } from "@/components/shell/nav"
 import { Button } from "@/components/ui/button"
 import {
   Command,
@@ -103,18 +103,21 @@ export function CommandMenu() {
                 </CommandItem>
               </CommandGroup>
             ) : null}
-            <CommandGroup heading="页面">
-              {navItems.map((item) => (
-                <CommandItem
-                  key={item.href}
-                  value={`${item.label} ${item.keywords.join(" ")}`}
-                  onSelect={() => run(() => router.push(item.href))}
-                >
-                  <item.icon />
-                  {item.label}
-                </CommandItem>
-              ))}
-            </CommandGroup>
+            {navSections.map((section) => (
+              <CommandGroup key={section.label} heading={section.label}>
+                {section.items.map((item) => (
+                  <CommandItem
+                    key={item.href}
+                    value={`${item.label} ${item.keywords.join(" ")}`}
+                    onSelect={() => run(() => router.push(item.href))}
+                  >
+                    <item.icon />
+                    {item.label}
+                    {item.preview ? <span className="ml-auto text-xs text-muted-foreground">预览 · 未测量</span> : null}
+                  </CommandItem>
+                ))}
+              </CommandGroup>
+            ))}
             <CommandSeparator />
             <CommandGroup heading="操作">
               <CommandItem

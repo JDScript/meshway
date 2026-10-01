@@ -40,28 +40,27 @@ export const navSections: NavSection[] = [
         keywords: ["nodes", "inventory", "jiedian"],
       },
       {
-        href: "/connections",
-        label: "连接配置",
-        icon: CableIcon,
-        keywords: ["connections", "listeners", "dial", "transport", "public key", "lianjie"],
-      },
-      {
         href: "/topology",
         label: "网络拓扑",
         icon: WaypointsIcon,
         keywords: ["map", "topology", "network", "adjacency", "path", "tuopu", "luoji"],
       },
-      {
-        href: "/routing",
-        label: "路由策略",
-        icon: RouteIcon,
-        keywords: ["routing", "policy", "rules", "luyou"],
-      },
+    ],
+  },
+  {
+    label: "策略",
+    items: [
       {
         href: "/access",
         label: "访问授权",
         icon: ShieldCheckIcon,
         keywords: ["access", "acl", "authorization", "allow", "reject", "shouquan"],
+      },
+      {
+        href: "/routing",
+        label: "路由策略",
+        icon: RouteIcon,
+        keywords: ["routing", "policy", "rules", "draft", "luyou"],
       },
       {
         href: "/tags",
@@ -72,20 +71,26 @@ export const navSections: NavSection[] = [
     ],
   },
   {
-    label: "运维",
+    label: "管理",
     items: [
-      {
-        href: "/monitoring",
-        label: "监控",
-        icon: ActivityIcon,
-        keywords: ["monitoring", "latency", "traffic", "jiankong"],
-        preview: true,
-      },
       {
         href: "/enrollment",
         label: "注册令牌",
         icon: KeyRoundIcon,
         keywords: ["enrollment", "token", "zhuce"],
+      },
+      {
+        href: "/connections",
+        label: "高级连接",
+        icon: CableIcon,
+        keywords: ["connections", "连接配置", "listeners", "dial", "transport", "audit", "lianjie"],
+      },
+      {
+        href: "/monitoring",
+        label: "监控",
+        icon: ActivityIcon,
+        keywords: ["monitoring", "latency", "traffic", "未测量", "jiankong"],
+        preview: true,
       },
     ],
   },
@@ -99,4 +104,8 @@ export function isActive(href: string, pathname: string): boolean {
 
 export function currentItem(pathname: string): NavItem | undefined {
   return navItems.find((item) => isActive(item.href, pathname))
+}
+
+export function currentSection(pathname: string): NavSection | undefined {
+  return navSections.find((section) => section.items.some((item) => isActive(item.href, pathname)))
 }

@@ -79,6 +79,7 @@ export function TopologyView({
   initialConnections,
   initialRuntimes,
   initialNodeId,
+  initialFlow,
 }: {
   snapshot: PolicySnapshot
   nodes: NodeSummary[]
@@ -86,6 +87,7 @@ export function TopologyView({
   initialConnections: ConnectionsPageRead
   initialRuntimes: InitialRuntimes
   initialNodeId: string | null
+  initialFlow?: FlowDraft
 }) {
   const router = useRouter()
 
@@ -127,15 +129,16 @@ export function TopologyView({
 
   const active = activeNodes(nodes)
   const revokedCount = nodes.length - active.length
+  const focusNodeId = initialNodeId || initialFlow?.sourceNodeId || null
   const [selectedId, setSelectedId] = useState<string | null>(
-    initialNodeId && active.some((node) => node.id === initialNodeId)
-      ? initialNodeId
+    focusNodeId && active.some((node) => node.id === focusNodeId)
+      ? focusNodeId
       : (active[0]?.id ?? null)
   )
-  const [flow, setFlow] = useState<FlowDraft>(() => ({
+  const [flow, setFlow] = useState<FlowDraft>(() => initialFlow ?? {
     ...emptyFlow,
     sourceNodeId: initialNodeId && active.some((node) => node.id === initialNodeId) ? initialNodeId : "",
-  }))
+  })
   const [plan, setPlan] = useState<Plan | null>(null)
   const [layers, setLayers] = useState<Layers>({ live: true, intent: false, plan: true })
   const [pending, startPlan] = useTransition()
@@ -485,6 +488,12 @@ export function TopologyView({
                 设为目标
               </Button>
               <Link
+                href={`/nodes/${encodeURIComponent(selected.id)}?tab=connections`}
+                className={buttonVariants({ variant: "outline", size: "sm" })}
+              >
+                配置连接
+              </Link>
+              <Link
                 href={`/nodes/${encodeURIComponent(selected.id)}`}
                 className={buttonVariants({ variant: "ghost", size: "sm" })}
               >
@@ -496,9 +505,12 @@ export function TopologyView({
         ) : null}
 
         <Panel
+          id="flow-check"
+          data-testid="topology-flow-check"
+          className="scroll-mt-16"
           title={
             <span className="flex flex-wrap items-center gap-2">
-              流量预览
+              检查流量
               <Badge variant="outline">已保存配置</Badge>
               {!snapshot.valid ? <Badge variant="destructive">策略无效</Badge> : null}
             </span>

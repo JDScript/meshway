@@ -1,199 +1,34 @@
-import type { NodeSummary } from "@meshway/control-client"
 import { ArrowLeftRightIcon, GaugeIcon } from "lucide-react"
 import type { Metadata } from "next"
-import type { ReactNode } from "react"
+import Link from "next/link"
 
-import { ControllerUnavailable, NoNodes } from "@/components/common/controller-states"
 import { Panel } from "@/components/common/panel"
-import { RefreshButton } from "@/components/common/refresh-button"
-import { ContactDot, LastContact } from "@/components/nodes/node-status"
 import { PageBody, PageHeader } from "@/components/shell/page-header"
 import { Badge } from "@/components/ui/badge"
-import {
-  Empty,
-  EmptyDescription,
-  EmptyHeader,
-  EmptyMedia,
-  EmptyTitle,
-} from "@/components/ui/empty"
-import { controllerUrl, fetchNodes } from "@/lib/controller"
-import { activeNodes, contactBucket, contactLabels, type ContactBucket } from "@/lib/node-status"
-import { byLastSeenDesc, formatClock } from "@/lib/time"
+import { buttonVariants } from "@/components/ui/button"
 
-export const metadata: Metadata = { title: "监控" }
+export const metadata: Metadata = { title: "监控 · 预览" }
 
-const MATRIX_LIMIT = 8
-const buckets: ContactBucket[] = ["recent", "hour", "stale"]
-
-export default async function MonitoringPage() {
-  const nodes = await fetchNodes()
-
+/** Keep the old URL, while directing implemented checks to their canonical homes. */
+export default function MonitoringPage() {
   return (
     <PageBody>
-      <PageHeader
-        title="监控"
-        description="控制面联系来自真实心跳；延迟、流量与路径测量需要数据面，目前尚未上报。"
-        actions={
-          nodes.ok ? (
-            <>
-              <span className="text-xs text-muted-foreground tabular-nums">
-                读取于 {formatClock(nodes.fetchedAt)}
-              </span>
-              <RefreshButton />
-            </>
-          ) : null
-        }
-      />
-      {!nodes.ok ? (
-        <ControllerUnavailable url={controllerUrl()} error={nodes.error} />
-      ) : nodes.data.nodes.length === 0 ? (
-        <NoNodes />
-      ) : (
-        <Monitoring nodes={nodes.data.nodes} fetchedAt={nodes.fetchedAt} />
-      )}
-    </PageBody>
-  )
-}
-
-function Monitoring({
-  nodes: all,
-  fetchedAt,
-}: {
-  nodes: NodeSummary[]
-  fetchedAt: number
-}) {
-  const nodes = activeNodes(all).sort(byLastSeenDesc)
-  const matrix = nodes.slice(0, MATRIX_LIMIT)
-  const counts = buckets.map((bucket) => ({
-    bucket,
-    count: nodes.filter((node) => contactBucket(node, fetchedAt) === bucket).length,
-  }))
-
-  return (
-    <>
-      <Panel
-        title="控制面联系"
-        description="Controller 最近一次接受注册或心跳的时间。不代表在线、隧道或连通性。"
-      >
-        <div className="grid gap-px border-b bg-border sm:grid-cols-3">
-          {counts.map(({ bucket, count }) => (
-            <div key={bucket} className="flex items-center gap-3 bg-card px-4 py-3">
-              <ContactDot bucket={bucket} className="size-2" />
-              <span className="text-xs text-muted-foreground">{contactLabels[bucket]}</span>
-              <span className="ml-auto text-lg font-semibold tabular-nums">{count}</span>
-            </div>
-          ))}
+      <PageHeader title="监控" description="测量能力预览。当前没有 Mesh 流量、吞吐或端到端路径延迟的上报数据。" />
+      <Panel title="已有的检查入口" description="控制面联系、邻居探测与规划路径各有不同的数据来源。" bodyClassName="flex flex-col gap-3 p-4">
+        <div className="flex flex-wrap items-center gap-3">
+          <Link href="/nodes" className={buttonVariants({ variant: "outline", size: "sm" })}>节点与控制面联系</Link>
+          <Link href="/topology" className={buttonVariants({ variant: "outline", size: "sm" })}>邻接与已保存流量检查</Link>
         </div>
-        <ul className="divide-y">
-          {nodes.map((node) => (
-            <li key={node.id} className="flex items-center gap-3 px-4 py-2 text-xs">
-              <span className="min-w-0 flex-1 truncate text-sm font-medium">{node.name}</span>
-              <span className="hidden font-mono text-muted-foreground sm:inline">{node.agent_version}</span>
-              <span className="w-28 text-right">
-                <LastContact node={node} fetchedAt={fetchedAt} />
-              </span>
-            </li>
-          ))}
-        </ul>
+        <p className="text-xs text-muted-foreground">真实邻居探测 RTT 在拓扑及节点连接页展示；不等同于业务流量延迟。规划路径不等同于实际 trace。</p>
       </Panel>
-
-      <Panel
-        title={
-          <span className="flex items-center gap-2">
-            节点间延迟
-            <Badge variant="outline">未测量</Badge>
-          </span>
-        }
-        description={
-          nodes.length > MATRIX_LIMIT
-            ? `显示最近联系的 ${MATRIX_LIMIT} 个节点。数据面上报 RTT 后填充。`
-            : "数据面上报 RTT 后填充；— 表示没有测量数据。"
-        }
-      >
-        <div className="overflow-x-auto p-4">
-          <table className="border-separate border-spacing-1 text-[0.6875rem]">
-            <thead>
-              <tr>
-                <th scope="col" className="sr-only">
-                  源 \ 目标
-                </th>
-                {matrix.map((node) => (
-                  <th
-                    key={node.id}
-                    scope="col"
-                    className="max-w-20 truncate px-1 pb-1 text-left font-medium text-muted-foreground"
-                  >
-                    {node.name}
-                  </th>
-                ))}
-              </tr>
-            </thead>
-            <tbody>
-              {matrix.map((row) => (
-                <tr key={row.id}>
-                  <th
-                    scope="row"
-                    className="max-w-28 truncate pr-2 text-right font-medium text-muted-foreground"
-                  >
-                    {row.name}
-                  </th>
-                  {matrix.map((column) => (
-                    <td
-                      key={column.id}
-                      className={
-                        row.id === column.id
-                          ? "size-11 rounded-md bg-muted/40"
-                          : "size-11 rounded-md border border-dashed text-center font-mono text-muted-foreground"
-                      }
-                    >
-                      {row.id === column.id ? (
-                        <span className="sr-only">同一节点</span>
-                      ) : (
-                        <>
-                          —<span className="sr-only">未测量</span>
-                        </>
-                      )}
-                    </td>
-                  ))}
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      </Panel>
-
-      <div className="grid gap-6 md:grid-cols-2">
-        <FutureMetric
-          icon={<ArrowLeftRightIcon />}
-          title="流量与吞吐"
-          description="按节点与规则统计的流量需要数据面转发；实现前不会显示任何序列。"
-        />
-        <FutureMetric
-          icon={<GaugeIcon />}
-          title="Mesh trace"
-          description="实际转发路径测量（区别于逻辑规划路径），用于验证必经节点与出口。"
-        />
+      <div className="grid gap-4 md:grid-cols-2">
+        <Panel title={<span className="flex items-center gap-2"><ArrowLeftRightIcon className="size-4" />流量与吞吐<Badge variant="outline">未测量</Badge></span>} bodyClassName="p-4">
+          <p className="text-xs text-muted-foreground">按节点与规则统计的流量尚未上报，没有可展示的时间序列。</p>
+        </Panel>
+        <Panel title={<span className="flex items-center gap-2"><GaugeIcon className="size-4" />Mesh trace<Badge variant="outline">未测量</Badge></span>} bodyClassName="p-4">
+          <p className="text-xs text-muted-foreground">实际转发路径测量尚未提供；验证必经节点与出口不能用规划路径代替。</p>
+        </Panel>
       </div>
-    </>
-  )
-}
-
-function FutureMetric({
-  icon,
-  title,
-  description,
-}: {
-  icon: ReactNode
-  title: string
-  description: string
-}) {
-  return (
-    <Empty className="border border-dashed">
-      <EmptyHeader>
-        <EmptyMedia variant="icon">{icon}</EmptyMedia>
-        <EmptyTitle>{title}</EmptyTitle>
-        <EmptyDescription>{description}</EmptyDescription>
-      </EmptyHeader>
-    </Empty>
+    </PageBody>
   )
 }

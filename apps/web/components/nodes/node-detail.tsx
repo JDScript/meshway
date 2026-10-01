@@ -9,6 +9,7 @@ import {
   FingerprintIcon,
   FlagIcon,
   ShieldOffIcon,
+  ShieldCheckIcon,
   WaypointsIcon,
 } from "lucide-react"
 import Link from "next/link"
@@ -46,6 +47,7 @@ import { readNodeStatusAction } from "@/lib/connections-actions"
 import { nextPartStatus, type PartStatus } from "@/lib/node-status"
 import { formatClock, formatDateTime, formatRelative } from "@/lib/time"
 import { cn } from "@/lib/utils"
+import { topologyFlowHref } from "@/lib/flow-navigation"
 
 export type NodeTab = "overview" | "connections"
 
@@ -165,6 +167,12 @@ export function NodeDetail({
               <WaypointsIcon data-icon="inline-start" />
               在拓扑中查看
             </Link>
+            {!revoked ? (
+              <Link href={topologyFlowHref({ sourceNodeId: node.id })} className={buttonVariants({ variant: "outline" })}>
+                <ShieldCheckIcon data-icon="inline-start" />
+                检查访问
+              </Link>
+            ) : null}
             {!revoked ? (
               <>
                 <Button variant="outline" onClick={() => setDialog("country")}>
