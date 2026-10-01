@@ -414,6 +414,118 @@
         ]
       }
     },
+    "/api/v1/agent/connections/discovery": {
+      "post": {
+        "operationId": "reportEndpointDiscovery",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ReportEndpointDiscoveryRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Leased node-authenticated UDP self-observation; never authorization or peer identity proof",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReportEndpointDiscoveryResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid JSON",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Node credential required",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Node revoked",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Superseded epoch, sequence, generation or socket observation",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "Request exceeds 256 KiB",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "415": {
+            "description": "Expected application/json",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Invalid configuration scope or discovery claim",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Storage unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "nodeBearer": []
+          }
+        ]
+      }
+    },
     "/api/v1/agent/connections/runtime": {
       "get": {
         "operationId": "getConnectionRuntimeEpoch",
@@ -1296,6 +1408,48 @@
           },
           "422": {
             "description": "Invalid connection plan or capacity exhausted",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Storage unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "adminBearer": []
+          }
+        ]
+      }
+    },
+    "/api/v1/connections/discovery": {
+      "get": {
+        "operationId": "getEndpointDiscoveries",
+        "responses": {
+          "200": {
+            "description": "Current leased UDP self-observations; missing reports explicitly await reporting",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EndpointDiscoveriesSnapshot"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Admin credential required",
             "content": {
               "application/json": {
                 "schema": {
@@ -3224,6 +3378,43 @@
           "country"
         ]
       },
+      "EndpointDiscoveriesSnapshot": {
+        "type": "object",
+        "required": [
+          "network_id",
+          "nodes"
+        ],
+        "properties": {
+          "network_id": {
+            "type": "string"
+          },
+          "nodes": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/NodeEndpointDiscovery"
+            }
+          }
+        },
+        "additionalProperties": false
+      },
+      "EndpointDiscoverySource": {
+        "type": "string",
+        "enum": [
+          "managed_udp_socket_stun"
+        ]
+      },
+      "EndpointDiscoveryState": {
+        "type": "string",
+        "enum": [
+          "awaiting_report",
+          "disabled",
+          "probing",
+          "observed",
+          "withdrawn",
+          "expired",
+          "error"
+        ]
+      },
       "EnrollAgentRequest": {
         "type": "object",
         "description": "Persist the proposed random credential before sending this request. Retry\nwith the same enrollment token, credential, name and enrollment version.",
@@ -3937,6 +4128,80 @@
         },
         "additionalProperties": false
       },
+      "NodeEndpointDiscovery": {
+        "type": "object",
+        "required": [
+          "node_id",
+          "epoch",
+          "sequence",
+          "revision",
+          "digest",
+          "state",
+          "reported_at",
+          "current",
+          "stale",
+          "sockets"
+        ],
+        "properties": {
+          "current": {
+            "type": "boolean"
+          },
+          "digest": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "maxLength": 64,
+            "minLength": 64,
+            "pattern": "^[0-9a-f]{64}$"
+          },
+          "epoch": {
+            "type": "integer",
+            "format": "int64",
+            "maximum": 4294967295,
+            "minimum": 0
+          },
+          "node_id": {
+            "type": "string"
+          },
+          "reported_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "revision": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "maximum": 4294967295,
+            "minimum": 1
+          },
+          "sequence": {
+            "type": "integer",
+            "format": "int64",
+            "maximum": 4294967295,
+            "minimum": 0
+          },
+          "sockets": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/UdpSocketDiscovery"
+            },
+            "maxItems": 128
+          },
+          "stale": {
+            "type": "boolean"
+          },
+          "state": {
+            "$ref": "#/components/schemas/EndpointDiscoveryState"
+          }
+        },
+        "additionalProperties": false
+      },
       "NodeList": {
         "type": "object",
         "required": [
@@ -4421,6 +4686,83 @@
         },
         "additionalProperties": false
       },
+      "ReportEndpointDiscoveryRequest": {
+        "type": "object",
+        "required": [
+          "epoch",
+          "sequence",
+          "revision",
+          "digest",
+          "state",
+          "sockets"
+        ],
+        "properties": {
+          "digest": {
+            "type": "string",
+            "maxLength": 64,
+            "minLength": 64,
+            "pattern": "^[0-9a-f]{64}$"
+          },
+          "epoch": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Reuses the authenticated managed runtime's acquired epoch, not a new identity.",
+            "maximum": 4294967295,
+            "minimum": 1
+          },
+          "revision": {
+            "type": "integer",
+            "format": "int64",
+            "maximum": 4294967295,
+            "minimum": 1
+          },
+          "sequence": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Independent monotonic discovery report sequence within that epoch.",
+            "maximum": 4294967295,
+            "minimum": 1
+          },
+          "sockets": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/UdpSocketDiscovery"
+            },
+            "maxItems": 128
+          },
+          "state": {
+            "$ref": "#/components/schemas/EndpointDiscoveryState"
+          }
+        },
+        "additionalProperties": false
+      },
+      "ReportEndpointDiscoveryResponse": {
+        "type": "object",
+        "required": [
+          "epoch",
+          "sequence",
+          "reported_at"
+        ],
+        "properties": {
+          "epoch": {
+            "type": "integer",
+            "format": "int64",
+            "maximum": 4294967295,
+            "minimum": 1
+          },
+          "reported_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "sequence": {
+            "type": "integer",
+            "format": "int64",
+            "maximum": 4294967295,
+            "minimum": 1
+          }
+        },
+        "additionalProperties": false
+      },
       "RevokeNodeRequest": {
         "type": "object",
         "required": [
@@ -4775,6 +5117,65 @@
         },
         "additionalProperties": false
       },
+      "StunDiscoveryOutcome": {
+        "type": "string",
+        "enum": [
+          "mapped",
+          "timeout",
+          "invalid_response",
+          "io_error",
+          "stun_error"
+        ]
+      },
+      "StunEndpointObservation": {
+        "type": "object",
+        "required": [
+          "observer",
+          "outcome",
+          "mapped_endpoint",
+          "rtt_ms",
+          "observed_at",
+          "expires_at"
+        ],
+        "properties": {
+          "expires_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "mapped_endpoint": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "maxLength": 64,
+            "minLength": 3
+          },
+          "observed_at": {
+            "type": "string",
+            "format": "date-time",
+            "description": "Repeated reports preserve these times; retransmission is not renewal."
+          },
+          "observer": {
+            "type": "string",
+            "description": "Explicit numeric STUN observer endpoint, not a Meshway peer identity.",
+            "maxLength": 64,
+            "minLength": 3
+          },
+          "outcome": {
+            "$ref": "#/components/schemas/StunDiscoveryOutcome"
+          },
+          "rtt_ms": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "maximum": 4294967295,
+            "minimum": 0
+          }
+        },
+        "additionalProperties": false
+      },
       "TagDefinition": {
         "type": "object",
         "required": [
@@ -4820,6 +5221,66 @@
               "$ref": "#/components/schemas/TagDefinition"
             },
             "maxItems": 64
+          }
+        },
+        "additionalProperties": false
+      },
+      "UdpDiscoveryResourceKind": {
+        "type": "string",
+        "enum": [
+          "listener",
+          "outgoing_candidate"
+        ]
+      },
+      "UdpSocketDiscovery": {
+        "type": "object",
+        "required": [
+          "resource_kind",
+          "resource_id",
+          "generation",
+          "socket_id",
+          "bound_address",
+          "source",
+          "observations"
+        ],
+        "properties": {
+          "bound_address": {
+            "type": "string",
+            "maxLength": 64,
+            "minLength": 3
+          },
+          "generation": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Public process-local runtime generation and socket ordinal.",
+            "maximum": 4294967295,
+            "minimum": 1
+          },
+          "observations": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/StunEndpointObservation"
+            },
+            "maxItems": 4
+          },
+          "resource_id": {
+            "type": "string",
+            "description": "Controller listener/candidate ID, never a private runtime token.",
+            "maxLength": 64,
+            "minLength": 1,
+            "pattern": "^[A-Za-z0-9._-]+$"
+          },
+          "resource_kind": {
+            "$ref": "#/components/schemas/UdpDiscoveryResourceKind"
+          },
+          "socket_id": {
+            "type": "integer",
+            "format": "int64",
+            "maximum": 4294967295,
+            "minimum": 1
+          },
+          "source": {
+            "$ref": "#/components/schemas/EndpointDiscoverySource"
           }
         },
         "additionalProperties": false

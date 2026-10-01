@@ -339,6 +339,51 @@ export const zCreateEnrollmentTokenResponse = z.strictObject({
   "token_id": z.string()
 });
 
+export const zStunDiscoveryOutcome = z.enum(["mapped","timeout","invalid_response","io_error","stun_error"]);
+
+export const zStunEndpointObservation = z.strictObject({
+  "expires_at": z.iso.datetime({ offset: true }),
+  "mapped_endpoint": z.string().refine(value => [...value].length >= 3, "minLength 3 Unicode code points").refine(value => [...value].length <= 64, "maxLength 64 Unicode code points").nullable(),
+  "observed_at": z.iso.datetime({ offset: true }),
+  "observer": z.string().refine(value => [...value].length >= 3, "minLength 3 Unicode code points").refine(value => [...value].length <= 64, "maxLength 64 Unicode code points"),
+  "outcome": zStunDiscoveryOutcome,
+  "rtt_ms": z.int().gte(0).lte(4294967295).nullable()
+});
+
+export const zUdpDiscoveryResourceKind = z.enum(["listener","outgoing_candidate"]);
+
+export const zEndpointDiscoverySource = z.enum(["managed_udp_socket_stun"]);
+
+export const zUdpSocketDiscovery = z.strictObject({
+  "bound_address": z.string().refine(value => [...value].length >= 3, "minLength 3 Unicode code points").refine(value => [...value].length <= 64, "maxLength 64 Unicode code points"),
+  "generation": z.int().gte(1).lte(4294967295),
+  "observations": z.array(zStunEndpointObservation).max(4),
+  "resource_id": z.string().refine(value => [...value].length >= 1, "minLength 1 Unicode code points").refine(value => [...value].length <= 64, "maxLength 64 Unicode code points").regex(new RegExp("^[A-Za-z0-9._-]+$", "u")),
+  "resource_kind": zUdpDiscoveryResourceKind,
+  "socket_id": z.int().gte(1).lte(4294967295),
+  "source": zEndpointDiscoverySource
+});
+
+export const zEndpointDiscoveryState = z.enum(["awaiting_report","disabled","probing","observed","withdrawn","expired","error"]);
+
+export const zNodeEndpointDiscovery = z.strictObject({
+  "current": z.boolean(),
+  "digest": z.string().refine(value => [...value].length >= 64, "minLength 64 Unicode code points").refine(value => [...value].length <= 64, "maxLength 64 Unicode code points").regex(new RegExp("^[0-9a-f]{64}$", "u")).nullable(),
+  "epoch": z.int().gte(0).lte(4294967295),
+  "node_id": z.string(),
+  "reported_at": z.iso.datetime({ offset: true }).nullable(),
+  "revision": z.int().gte(1).lte(4294967295).nullable(),
+  "sequence": z.int().gte(0).lte(4294967295),
+  "sockets": z.array(zUdpSocketDiscovery).max(128),
+  "stale": z.boolean(),
+  "state": zEndpointDiscoveryState
+});
+
+export const zEndpointDiscoveriesSnapshot = z.strictObject({
+  "network_id": z.string(),
+  "nodes": z.array(zNodeEndpointDiscovery)
+});
+
 export const zEnrollAgentRequest = z.strictObject({
   "agent_version": z.string().refine(value => [...value].length >= 1, "minLength 1 Unicode code points").refine(value => [...value].length <= 64, "maxLength 64 Unicode code points").regex(new RegExp("[^\\u0009-\\u000D\\u0020\\u0085\\u00A0\\u1680\\u2000-\\u200A\\u2028\\u2029\\u202F\\u205F\\u3000]", "u")),
   "name": z.string().refine(value => [...value].length >= 1, "minLength 1 Unicode code points").refine(value => [...value].length <= 128, "maxLength 128 Unicode code points").regex(new RegExp("[^\\u0009-\\u000D\\u0020\\u0085\\u00A0\\u1680\\u2000-\\u200A\\u2028\\u2029\\u202F\\u205F\\u3000]", "u")),
@@ -488,6 +533,21 @@ export const zReportConnectionRuntimeRequest = z.strictObject({
 });
 
 export const zReportConnectionRuntimeResponse = z.strictObject({
+  "epoch": z.int().gte(1).lte(4294967295),
+  "reported_at": z.iso.datetime({ offset: true }),
+  "sequence": z.int().gte(1).lte(4294967295)
+});
+
+export const zReportEndpointDiscoveryRequest = z.strictObject({
+  "digest": z.string().refine(value => [...value].length >= 64, "minLength 64 Unicode code points").refine(value => [...value].length <= 64, "maxLength 64 Unicode code points").regex(new RegExp("^[0-9a-f]{64}$", "u")),
+  "epoch": z.int().gte(1).lte(4294967295),
+  "revision": z.int().gte(1).lte(4294967295),
+  "sequence": z.int().gte(1).lte(4294967295),
+  "sockets": z.array(zUdpSocketDiscovery).max(128),
+  "state": zEndpointDiscoveryState
+});
+
+export const zReportEndpointDiscoveryResponse = z.strictObject({
   "epoch": z.int().gte(1).lte(4294967295),
   "reported_at": z.iso.datetime({ offset: true }),
   "sequence": z.int().gte(1).lte(4294967295)

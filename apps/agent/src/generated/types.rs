@@ -9,6 +9,23 @@
 use serde::{Deserialize, Serialize};
 #[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
+pub struct ReportEndpointDiscoveryRequest {
+    ///Constraint: minLength=64, maxLength=64, pattern=`^[0-9a-f]{64}$`
+    pub digest: String,
+    ///Reuses the authenticated managed runtime's acquired epoch, not a new identity.
+    ///Constraint: minimum=1, maximum=4294967295
+    pub epoch: i64,
+    ///Constraint: minimum=1, maximum=4294967295
+    pub revision: i64,
+    ///Independent monotonic discovery report sequence within that epoch.
+    ///Constraint: minimum=1, maximum=4294967295
+    pub sequence: i64,
+    ///Constraint: maxItems=128
+    pub sockets: Vec<UdpSocketDiscovery>,
+    pub state: EndpointDiscoveryState,
+}
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
 pub struct ReportConnectionRuntimeRequest {
     ///Constraint: minLength=64, maxLength=64, pattern=`^[0-9a-f]{64}$`
     pub digest: String,
@@ -42,6 +59,166 @@ pub struct PublishConnectionIdentityRequest {
     pub capabilities: Vec<ConnectionCapability>,
     ///Constraint: minLength=64, maxLength=64, pattern=`^[0-9a-f]{64}$`
     pub public_key: String,
+}
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct UdpSocketDiscovery {
+    ///Constraint: minLength=3, maxLength=64
+    pub bound_address: String,
+    ///Public process-local runtime generation and socket ordinal.
+    ///Constraint: minimum=1, maximum=4294967295
+    pub generation: i64,
+    ///Constraint: maxItems=4
+    pub observations: Vec<StunEndpointObservation>,
+    ///Controller listener/candidate ID, never a private runtime token.
+    ///Constraint: minLength=1, maxLength=64, pattern=`^[A-Za-z0-9._-]+$`
+    pub resource_id: String,
+    pub resource_kind: UdpDiscoveryResourceKind,
+    ///Constraint: minimum=1, maximum=4294967295
+    pub socket_id: i64,
+    pub source: EndpointDiscoverySource,
+}
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize, Default)]
+pub enum UdpDiscoveryResourceKind {
+    #[default]
+    #[serde(rename = "listener")]
+    Listener,
+    #[serde(rename = "outgoing_candidate")]
+    OutgoingCandidate,
+}
+impl UdpDiscoveryResourceKind {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::Listener => "listener",
+            Self::OutgoingCandidate => "outgoing_candidate",
+        }
+    }
+}
+impl ::std::fmt::Display for UdpDiscoveryResourceKind {
+    fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+impl AsRef<str> for UdpDiscoveryResourceKind {
+    fn as_ref(&self) -> &str {
+        self.as_str()
+    }
+}
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct StunEndpointObservation {
+    pub expires_at: chrono::DateTime<chrono::Utc>,
+    ///Constraint: minLength=3, maxLength=64
+    #[serde(deserialize_with = "deserialize_required_nullable")]
+    pub mapped_endpoint: Option<String>,
+    ///Repeated reports preserve these times; retransmission is not renewal.
+    pub observed_at: chrono::DateTime<chrono::Utc>,
+    ///Explicit numeric STUN observer endpoint, not a Meshway peer identity.
+    ///Constraint: minLength=3, maxLength=64
+    pub observer: String,
+    pub outcome: StunDiscoveryOutcome,
+    ///Constraint: minimum=0, maximum=4294967295
+    #[serde(deserialize_with = "deserialize_required_nullable")]
+    pub rtt_ms: Option<i64>,
+}
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize, Default)]
+pub enum StunDiscoveryOutcome {
+    #[default]
+    #[serde(rename = "mapped")]
+    Mapped,
+    #[serde(rename = "timeout")]
+    Timeout,
+    #[serde(rename = "invalid_response")]
+    InvalidResponse,
+    #[serde(rename = "io_error")]
+    IoError,
+    #[serde(rename = "stun_error")]
+    StunError,
+}
+impl StunDiscoveryOutcome {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::Mapped => "mapped",
+            Self::Timeout => "timeout",
+            Self::InvalidResponse => "invalid_response",
+            Self::IoError => "io_error",
+            Self::StunError => "stun_error",
+        }
+    }
+}
+impl ::std::fmt::Display for StunDiscoveryOutcome {
+    fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+impl AsRef<str> for StunDiscoveryOutcome {
+    fn as_ref(&self) -> &str {
+        self.as_str()
+    }
+}
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize, Default)]
+pub enum EndpointDiscoverySource {
+    #[default]
+    #[serde(rename = "managed_udp_socket_stun")]
+    ManagedUdpSocketStun,
+}
+impl EndpointDiscoverySource {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::ManagedUdpSocketStun => "managed_udp_socket_stun",
+        }
+    }
+}
+impl ::std::fmt::Display for EndpointDiscoverySource {
+    fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+impl AsRef<str> for EndpointDiscoverySource {
+    fn as_ref(&self) -> &str {
+        self.as_str()
+    }
+}
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize, Default)]
+pub enum EndpointDiscoveryState {
+    #[default]
+    #[serde(rename = "awaiting_report")]
+    AwaitingReport,
+    #[serde(rename = "disabled")]
+    Disabled,
+    #[serde(rename = "probing")]
+    Probing,
+    #[serde(rename = "observed")]
+    Observed,
+    #[serde(rename = "withdrawn")]
+    Withdrawn,
+    #[serde(rename = "expired")]
+    Expired,
+    #[serde(rename = "error")]
+    Error,
+}
+impl EndpointDiscoveryState {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::AwaitingReport => "awaiting_report",
+            Self::Disabled => "disabled",
+            Self::Probing => "probing",
+            Self::Observed => "observed",
+            Self::Withdrawn => "withdrawn",
+            Self::Expired => "expired",
+            Self::Error => "error",
+        }
+    }
+}
+impl ::std::fmt::Display for EndpointDiscoveryState {
+    fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+impl AsRef<str> for EndpointDiscoveryState {
+    fn as_ref(&self) -> &str {
+        self.as_str()
+    }
 }
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize, Default)]
 pub enum ConnectionRuntimeState {
@@ -783,6 +960,15 @@ pub struct HeartbeatRequest {
 #[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct ReportConnectionRuntimeResponse {
+    ///Constraint: minimum=1, maximum=4294967295
+    pub epoch: i64,
+    pub reported_at: chrono::DateTime<chrono::Utc>,
+    ///Constraint: minimum=1, maximum=4294967295
+    pub sequence: i64,
+}
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct ReportEndpointDiscoveryResponse {
     ///Constraint: minimum=1, maximum=4294967295
     pub epoch: i64,
     pub reported_at: chrono::DateTime<chrono::Utc>,

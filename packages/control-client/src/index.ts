@@ -12,6 +12,8 @@ export {
   getConnectionsOperation as getConnections,
   saveConnectionsOperation as saveConnections,
   getConnectionRuntimesOperation as getConnectionRuntimes,
+  getEndpointDiscoveriesOperation as getEndpointDiscoveries,
+  reportEndpointDiscoveryOperation as reportEndpointDiscovery,
   getMeshAccessOperation as getMeshAccess,
   saveMeshAccessOperation as saveMeshAccess,
   getTagsOperation as getTags,

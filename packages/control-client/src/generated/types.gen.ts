@@ -217,6 +217,15 @@ export type DestinationSelector = {
 
 export type DestinationSelectorKind = 'node' | 'domain_suffix' | 'cidr' | 'country';
 
+export type EndpointDiscoveriesSnapshot = {
+    network_id: string;
+    nodes: Array<NodeEndpointDiscovery>;
+};
+
+export type EndpointDiscoverySource = 'managed_udp_socket_stun';
+
+export type EndpointDiscoveryState = 'awaiting_report' | 'disabled' | 'probing' | 'observed' | 'withdrawn' | 'expired' | 'error';
+
 /**
  * Persist the proposed random credential before sending this request. Retry
  * with the same enrollment token, credential, name and enrollment version.
@@ -403,6 +412,19 @@ export type NodeDnsRecord = {
     node_id: string;
 };
 
+export type NodeEndpointDiscovery = {
+    current: boolean;
+    digest: string | null;
+    epoch: number;
+    node_id: string;
+    reported_at: string | null;
+    revision: number | null;
+    sequence: number;
+    sockets: Array<UdpSocketDiscovery>;
+    stale: boolean;
+    state: EndpointDiscoveryState;
+};
+
 export type NodeList = {
     nodes: Array<NodeSummary>;
 };
@@ -516,6 +538,27 @@ export type ReportConnectionRuntimeResponse = {
     sequence: number;
 };
 
+export type ReportEndpointDiscoveryRequest = {
+    digest: string;
+    /**
+     * Reuses the authenticated managed runtime's acquired epoch, not a new identity.
+     */
+    epoch: number;
+    revision: number;
+    /**
+     * Independent monotonic discovery report sequence within that epoch.
+     */
+    sequence: number;
+    sockets: Array<UdpSocketDiscovery>;
+    state: EndpointDiscoveryState;
+};
+
+export type ReportEndpointDiscoveryResponse = {
+    epoch: number;
+    reported_at: string;
+    sequence: number;
+};
+
 export type RevokeNodeRequest = {
     node_id: string;
 };
@@ -603,6 +646,23 @@ export type SourceSelector = {
     node_ids: Array<string>;
 };
 
+export type StunDiscoveryOutcome = 'mapped' | 'timeout' | 'invalid_response' | 'io_error' | 'stun_error';
+
+export type StunEndpointObservation = {
+    expires_at: string;
+    mapped_endpoint: string | null;
+    /**
+     * Repeated reports preserve these times; retransmission is not renewal.
+     */
+    observed_at: string;
+    /**
+     * Explicit numeric STUN observer endpoint, not a Meshway peer identity.
+     */
+    observer: string;
+    outcome: StunDiscoveryOutcome;
+    rtt_ms: number | null;
+};
+
 export type TagDefinition = {
     description: string;
     tag: string;
@@ -612,6 +672,24 @@ export type TagSnapshot = {
     assignments: Array<NodeTagAssignment>;
     revision: number;
     tags: Array<TagDefinition>;
+};
+
+export type UdpDiscoveryResourceKind = 'listener' | 'outgoing_candidate';
+
+export type UdpSocketDiscovery = {
+    bound_address: string;
+    /**
+     * Public process-local runtime generation and socket ordinal.
+     */
+    generation: number;
+    observations: Array<StunEndpointObservation>;
+    /**
+     * Controller listener/candidate ID, never a private runtime token.
+     */
+    resource_id: string;
+    resource_kind: UdpDiscoveryResourceKind;
+    socket_id: number;
+    source: EndpointDiscoverySource;
 };
 
 export type GetMeshAccessData = {
@@ -826,6 +904,59 @@ export type AcknowledgeAgentConnectionsResponses = {
 };
 
 export type AcknowledgeAgentConnectionsResponse2 = AcknowledgeAgentConnectionsResponses[keyof AcknowledgeAgentConnectionsResponses];
+
+export type ReportEndpointDiscoveryData = {
+    body: ReportEndpointDiscoveryRequest;
+    path?: never;
+    query?: never;
+    url: '/api/v1/agent/connections/discovery';
+};
+
+export type ReportEndpointDiscoveryErrors = {
+    /**
+     * Invalid JSON
+     */
+    400: ErrorResponse;
+    /**
+     * Node credential required
+     */
+    401: ErrorResponse;
+    /**
+     * Node revoked
+     */
+    403: ErrorResponse;
+    /**
+     * Superseded epoch, sequence, generation or socket observation
+     */
+    409: ErrorResponse;
+    /**
+     * Request exceeds 256 KiB
+     */
+    413: ErrorResponse;
+    /**
+     * Expected application/json
+     */
+    415: ErrorResponse;
+    /**
+     * Invalid configuration scope or discovery claim
+     */
+    422: ErrorResponse;
+    /**
+     * Storage unavailable
+     */
+    500: ErrorResponse;
+};
+
+export type ReportEndpointDiscoveryError = ReportEndpointDiscoveryErrors[keyof ReportEndpointDiscoveryErrors];
+
+export type ReportEndpointDiscoveryResponses = {
+    /**
+     * Leased node-authenticated UDP self-observation; never authorization or peer identity proof
+     */
+    200: ReportEndpointDiscoveryResponse;
+};
+
+export type ReportEndpointDiscoveryResponse2 = ReportEndpointDiscoveryResponses[keyof ReportEndpointDiscoveryResponses];
 
 export type GetConnectionRuntimeEpochData = {
     body?: never;
@@ -1301,6 +1432,35 @@ export type SaveConnectionsResponses = {
 };
 
 export type SaveConnectionsResponse = SaveConnectionsResponses[keyof SaveConnectionsResponses];
+
+export type GetEndpointDiscoveriesData = {
+    body?: never;
+    path?: never;
+    query?: never;
+    url: '/api/v1/connections/discovery';
+};
+
+export type GetEndpointDiscoveriesErrors = {
+    /**
+     * Admin credential required
+     */
+    401: ErrorResponse;
+    /**
+     * Storage unavailable
+     */
+    500: ErrorResponse;
+};
+
+export type GetEndpointDiscoveriesError = GetEndpointDiscoveriesErrors[keyof GetEndpointDiscoveriesErrors];
+
+export type GetEndpointDiscoveriesResponses = {
+    /**
+     * Current leased UDP self-observations; missing reports explicitly await reporting
+     */
+    200: EndpointDiscoveriesSnapshot;
+};
+
+export type GetEndpointDiscoveriesResponse = GetEndpointDiscoveriesResponses[keyof GetEndpointDiscoveriesResponses];
 
 export type GetConnectionRuntimesData = {
     body?: never;
