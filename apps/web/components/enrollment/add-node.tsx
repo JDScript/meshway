@@ -61,7 +61,7 @@ export function AddNode() {
         <CableIcon className="mt-0.5 size-4 shrink-0" aria-hidden="true" />
         <p>
           <span className="font-medium text-foreground">监听与承载：</span>
-          节点注册后，可在节点页「连接与承载」配置监听与主动连接（当前为手工配置）。平台托管承载上线后，这里会提供可选的 listener 配置，参数与凭据由平台生成和下发。
+          注册后在节点页「监听与承载」查看与配置（当前为手工）。可选的托管监听设置（含 VLESS / WebSocket）待控制面接口就绪后在此提供。
         </p>
       </div>
     </div>
