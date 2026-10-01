@@ -4,6 +4,7 @@ import {
   ControlApiError,
   getConnectionRuntimes,
   getConnections,
+  getEndpointDiscoveries,
   getMeshAccess,
   getNetwork,
   getOverview,
@@ -12,6 +13,7 @@ import {
   listNodes,
   type ConnectionRuntimesSnapshot,
   type ConnectionsSnapshot,
+  type EndpointDiscoveriesSnapshot,
   type MeshAccessSnapshot,
   type NetworkSnapshot,
   type NodeList,
@@ -96,6 +98,10 @@ export function fetchConnections(): Promise<ControllerResult<ConnectionsSnapshot
 /** Agent self-reports; a separate read so an outage never hides the saved plan. */
 export function fetchConnectionRuntimes(): Promise<ControllerResult<ConnectionRuntimesSnapshot>> {
   return authorizedRead(getConnectionRuntimes)
+}
+
+export function fetchEndpointDiscoveries(): Promise<ControllerResult<EndpointDiscoveriesSnapshot>> {
+  return authorizedRead(getEndpointDiscoveries)
 }
 
 /** Saved endpoint access rules (with their JSONC source, if stored). */

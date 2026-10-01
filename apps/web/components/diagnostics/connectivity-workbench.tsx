@@ -1,12 +1,13 @@
 "use client"
 
-import type { NetworkSnapshot, NodeList, NodeSummary } from "@meshway/control-client"
+import type { EndpointDiscoveriesSnapshot, NetworkSnapshot, NodeList, NodeSummary } from "@meshway/control-client"
 import { ChevronDownIcon } from "lucide-react"
 import Link from "next/link"
 import { useSearchParams } from "next/navigation"
 import { useSyncExternalStore, type ReactNode } from "react"
 
 import { DnsCommand } from "@/components/network/dns-guidance"
+import { EndpointDiscoveryPanel } from "@/components/connections/endpoint-discovery-panel"
 import { Badge } from "@/components/ui/badge"
 import { buttonVariants } from "@/components/ui/button"
 import { LIVE_STATUS_COMMAND, NETCHECK_COMMAND, NODE_STATE_ARGUMENT, peerDiagnosticCommands } from "@/lib/connectivity-guidance"
@@ -27,9 +28,10 @@ const subscribeHash = (callback: () => void) => {
 const readHash = () => window.location.hash.slice(1)
 const serverHash = () => ""
 
-export function ConnectivityWorkbench({ nodes, network }: {
+export function ConnectivityWorkbench({ nodes, network, discoveries }: {
   nodes: ControllerResult<NodeList>
   network: ControllerResult<NetworkSnapshot>
+  discoveries: ControllerResult<EndpointDiscoveriesSnapshot>
 }) {
   const params = useSearchParams()
   const section = useSyncExternalStore(subscribeHash, readHash, serverHash)
@@ -88,7 +90,9 @@ export function ConnectivityWorkbench({ nodes, network }: {
           <Link href="/network#dns-diagnostics" className={buttonVariants({ variant: "outline", size: "sm" })}>DNS 配置与诊断</Link>
         </CheckSection>
 
-        <CheckSection id="netcheck" title="底层网络 · netcheck" source="独立探测 · 未上报" open={section === "netcheck"}>
+        <CheckSection id="netcheck" title="底层网络 · netcheck" source="carrier 自报 / 独立探测" open={section === "netcheck"}>
+          <EndpointDiscoveryPanel initial={discoveries} nodeId={source?.id} />
+          <p className="font-medium text-foreground">独立探测 · 未上报</p>
           <p>在想测的节点网络 namespace 中执行：当前进程用独立临时 UDP socket 观测底层网络，每次执行后关闭；无需 state 或 daemon，不改路由、不注册候选。</p>
           <Command value={NETCHECK_COMMAND} kind="netcheck" label="复制 netcheck 命令模板" />
           <p>替换为两个你指定的不同 numeric IPv4 地址；同 IP 的不同端口不能比较映射随目的 IP 的变化。来源为 independent probe，不代表节点 listener endpoint、打洞、peer 身份或已安装候选。</p>

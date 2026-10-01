@@ -8,6 +8,7 @@ import {
   controllerUrl,
   fetchConnectionRuntimes,
   fetchConnections,
+  fetchEndpointDiscoveries,
   fetchNetwork,
   fetchNodes,
   fetchTags,
@@ -24,12 +25,13 @@ export default async function NodePage({
 }) {
   const [{ id }, query] = await Promise.all([params, searchParams])
   const nodeId = safeDecode(id)
-  const [nodes, connections, runtimes, tags, network] = await Promise.all([
+  const [nodes, connections, runtimes, tags, network, discoveries] = await Promise.all([
     fetchNodes(),
     fetchConnections(),
     fetchConnectionRuntimes(),
     fetchTags(),
     fetchNetwork(),
+    fetchEndpointDiscoveries(),
   ])
 
   if (!nodes.ok) {
@@ -56,6 +58,7 @@ export default async function NodePage({
         }
         controllerUrl={controllerUrl()}
         initialRuntimes={runtimes}
+        discoveries={discoveries}
         network={network}
         tags={
           tags.ok

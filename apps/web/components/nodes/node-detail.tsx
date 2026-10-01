@@ -1,6 +1,6 @@
 "use client"
 
-import type { ConnectionNode, ConnectionsSnapshot, NodeSummary } from "@meshway/control-client"
+import type { ConnectionNode, ConnectionsSnapshot, EndpointDiscoveriesSnapshot, NodeSummary } from "@meshway/control-client"
 import {
   ArrowLeftIcon,
   CircleAlertIcon,
@@ -19,6 +19,7 @@ import { useCallback, useState, type ReactNode } from "react"
 import { ManagedDataplanePanel } from "@/components/nodes/managed-dataplane-panel"
 import { NodeDnsPanel, type NodeDnsNetwork } from "@/components/nodes/node-dns-panel"
 import { ConnectionsEditor } from "@/components/connections/connections-editor"
+import { EndpointDiscoveryPanel } from "@/components/connections/endpoint-discovery-panel"
 import { NodeRuntimePanel, RuntimeChip } from "@/components/connections/runtime-panel"
 import { useConnectionRuntimes, type InitialRuntimes, type Runtimes } from "@/components/connections/use-runtimes"
 import { ControllerUnavailable } from "@/components/common/controller-states"
@@ -44,6 +45,7 @@ import {
   transportLabels,
 } from "@/lib/connections-model"
 import type { RuntimeReadResult } from "@/lib/action-state"
+import type { ControllerResult } from "@/lib/controller"
 import { readNodeStatusAction } from "@/lib/connections-actions"
 import { nextPartStatus, type PartStatus } from "@/lib/node-status"
 import { formatClock, formatDateTime, formatRelative } from "@/lib/time"
@@ -69,6 +71,7 @@ export function NodeDetail({
   connections,
   controllerUrl,
   initialRuntimes,
+  discoveries,
   tags,
   network,
 }: {
@@ -78,6 +81,7 @@ export function NodeDetail({
   connections: ConnectionsPageRead
   controllerUrl: string
   initialRuntimes: InitialRuntimes
+  discoveries: ControllerResult<EndpointDiscoveriesSnapshot>
   /** This node's tags, or an error when the tag snapshot could not be read. */
   tags: { ok: true; tags: string[] } | { ok: false; error: string }
   network: NodeDnsNetwork
@@ -237,6 +241,7 @@ export function NodeDetail({
             <p className="text-xs text-muted-foreground">运行观测来自 Agent 上报；本地检查可在诊断工作台生成命令。</p>
             <Link href={diagnosticsHref(node.id)} className={buttonVariants({ variant: "outline", size: "sm" })}>诊断此节点</Link>
           </div>
+          <EndpointDiscoveryPanel initial={discoveries} nodeId={node.id} />
           {latest.ok ? (
             <>
               <div className="grid items-start gap-4 lg:grid-cols-[minmax(0,22rem)_minmax(0,1fr)]">
