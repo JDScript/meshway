@@ -122,7 +122,10 @@ def main(action, data):
         # This is Agent's local Identity disk format, NOT an HTTP DTO. Persist
         # before host SDK enrollment; no token or credential enters child argv.
         credential = secrets.token_hex(32)
-        atomic(STATE, {"format_version": 1, "controller": CONTROLLER, "name": data["name"],
+        controller = CONTROLLER
+        if "controller_address" in data:
+            controller = f"http://{ipaddress.IPv4Address(data['controller_address'])}:8420"
+        atomic(STATE, {"format_version": 1, "controller": controller, "name": data["name"],
                        "enrollment_version": VERSION, "enrollment_token_hash": list(hashlib.sha256(data["token"].encode()).digest()),
                        "node_credential": credential, "node_id": None})
         return {"credential": credential, "version": VERSION}

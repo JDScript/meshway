@@ -1,10 +1,10 @@
 # Managed DNS：本机隔离验收
 
-这是当前 MagicDNS 的**第一段**：控制面分配的节点名称，在真实 Agent 显式绑定的 `127.0.0.1:5353` 上提供 UDP/TCP nameservice。工具不配置系统 DNS，不修改 `/etc/resolv.conf`，不测试 NAT 打洞或互联网域名策略。远端真实联测尚未授权。
+默认模式验证显式 `127.0.0.1:5353` UDP/TCP nameservice。`--system-resolver` 额外验证同一批新容器中的系统解析接入、搜索域及真实应用访问：仅修改本次 `one` 容器的 `/etc/resolv.conf`，测试完成后按所有权恢复。两种模式都限定独立本机 Docker，不涉及 NAT 打洞或互联网域名策略。
 
 ## 主协调者运行
 
-本轮交付仅完成 host 检查；**主协调者负责镜像构建、长 tmux 运行和完整 Docker 验收**。使用当前主线二进制（含 DNS generation fence / disabled cache / self-IP pin 修复），Agent 必须编译启用 `meshway-agent/managed-connections`。镜像必须与 host 和 Docker engine 三者同架构、Linux；工具使用完整不可变 image ID 启动，不允许 emulation。
+使用当前主线二进制（含 DNS generation fence / disabled cache / self-IP pin 修复），Agent 必须编译启用 `meshway-agent/managed-connections`。镜像必须与 host 和 Docker engine 三者同架构、Linux；工具使用完整不可变 image ID 启动，不允许 emulation。默认 nameservice 模式已通过完整验收，已验证范围见文档站 `/dns`。
 
 已有 Ubuntu/Debian 镜像需包含 `meshway-controller`、`meshway-agent`、Python 3、`ip`、`ss`、`dig`，并支持 root 私有 tmpfs。若缺 dnsutils，主协调者可基于自己的实验镜像派生独立专用 tag：
 
@@ -14,6 +14,9 @@ docker build -f experiments/managed-dns/Dockerfile.tools \
   -t meshway-manageddns:YOUR_NATIVE_TAG .
 
 python3 experiments/managed-dns/run.py --image meshway-manageddns:YOUR_NATIVE_TAG
+
+# 在新建的隔离容器内，继续进行系统解析器 / glibc / curl 验收
+python3 experiments/managed-dns/run.py --image meshway-manageddns:YOUR_NATIVE_TAG --system-resolver
 ```
 
 不要对 live 容器安装包。工具不构建/删除镜像，不操作 Docker daemon、宿主机路由/DNS/防火墙，不使用 host network 或 privileged。唯一发布端口是 `127.0.0.1` 的随机 controller host port。可用 `--artifacts-dir EXISTING_PRIVATE_PARENT` 指定工作区之外的现有产物父目录。
@@ -46,6 +49,18 @@ python3 experiments/managed-dns/run.py --image meshway-manageddns:YOUR_NATIVE_TA
 8. 撤销 `tWIN`：自身生成 DNS API 403，进程退出，UDP/TCP listeners 全关闭；survivor canonical/reverse 不再包含它，同时其他 canonical 仍 positive。移除重名后 `Twin` readable alias恢复。未知 reverse name 可以 REFUSED（已不属于本机发布的 reverse owner）或 NXDOMAIN。
 
 本工具验证 nameservice 与最小 data+DNS 共存，不声称建立跨节点数据通路。pending-send generation race 的严格 packet unit tests 由 Agent 主线负责。
+
+## 可选系统解析器验收
+
+`--system-resolver` 先运行上述全部阶段，再安装仓库 `experiments/dns-resolver/*.py` 到新容器的私有 tmpfs。此模式的 `one` 容器使用可写层（Docker 会把只读容器的自有 resolv.conf 也挂为只读），额外获得 NET_ADMIN 和独立 TUN，初始仍为 keyless DNS-only；其余容器保持只读，`two` 保持 cap-drop ALL。没有任何宿主状态 bind mount。Agent 控制面地址采用本次 controller 的底层 IP，避免引导解析依赖接管后的 resolver。
+
+- `one` 使用本地 53 端口 adapter 与搜索域；`getent ahostsv4 solo` / 完整域名返回实际分配的 Mesh IP，显式 UDP/TCP 查询验证 A、AAAA、PTR。
+- 接管前原上游保留；`controller.mesh.test` 仍由 Docker `127.0.0.11` 解析。为精确 Mesh 名、裸短名及原 search 域下的同名主机预置不同 underlay IP 的诱饵，检查 NXDOMAIN、正常解析以及 lease 到期均不回退命中诱饵。启用期间只使用 Mesh search，down 才恢复原 search。
+- `one` 与 `data` 建立真实 Native UDP 邻接；先验证 DNS 可见但默认 Access reject 时 `curl` 失败，再保存精确双向端点授权，由 `curl -4 http://solo:43000/...` 检查独立响应内容、remote Mesh IP 和真实 TUN 路由。
+- 停控制面超过 lease：UDP/TCP SERVFAIL、glibc 不再返回 Mesh 名，外部上游仍可用；Mesh 流量停留在 TUN sink / 拒绝路由，真实按 IP 的 HTTP 也失败。Agent 退出后再验证 TUN 移除与显式 unreachable 路由。
+- 验证 SIGTERM、重复 down、SIGKILL 后 journal 恢复，以及第三方修改 resolv.conf 时拒绝覆盖。fixture 撤销自己的冲突编辑后才恢复原始文件。
+
+53 端口与文件写入权限不足会使 apply 失败；不增加宿主权限或更改 Docker daemon。系统 adapter 属于显式 Linux 容器实验，zone / 地址池在启动时固定；控制面改 zone 后需 down 再按新参数 apply。不是 systemd-resolved / macOS / Windows 安装器，也不是 controller 自动汇报的运行状态。
 
 ## 产物与清理
 

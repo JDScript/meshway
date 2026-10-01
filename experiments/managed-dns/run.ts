@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { randomBytes } from "node:crypto";
 import { fstatSync } from "node:fs";
-import { chmod, lstat, mkdtemp, readFile, realpath, writeFile } from "node:fs/promises";
+import { chmod, lstat, mkdtemp, readFile, readdir, realpath, writeFile } from "node:fs/promises";
 import { arch } from "node:os";
 import { dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
@@ -12,6 +12,8 @@ import type { MeshDnsConfiguration, NetworkSnapshot, NodeSummary } from "../../p
 import { array, boolean, command, parse, record, text } from "../managed-connections/local.ts";
 import { bound, canonical, negative, observation, positive, response, ROLES } from "./checks.ts";
 import type { Kind, Observation, Response, Role, Transport } from "./checks.ts";
+import { systemAcceptance } from "./system.ts";
+import type { SystemEvidence } from "./system.ts";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const WORKSPACE = resolve(HERE, "../..");
@@ -26,23 +28,24 @@ type Report = { schema_version: 1; run_id: string; status: "RUNNING" | "PASS" | 
   started_at: string; finished_at?: string; stage: string; check?: string; error_category?: string;
   image?: { reference: string; id: string; architecture: string }; network_id?: string;
   nodes: { role: Role; id: string; ipv4: string; ipv6: string; name: string }[];
-  evidence: Evidence[]; cleanup: { status: "PENDING" | "PASS" | "FAIL"; errors: string[] } };
+  evidence: Evidence[]; system_resolver?: SystemEvidence; cleanup: { status: "PENDING" | "PASS" | "FAIL"; errors: string[] } };
 
 function options(args: string[]) {
   if (args.includes("--help")) {
-    console.log("Usage: python3 experiments/managed-dns/run.py --image meshway-manageddns:TAG [--artifacts-dir EXISTING_PRIVATE_PARENT]\nMain owns native image build and tmux. Full fresh-controller local Docker acceptance; no remote tests.");
+    console.log("Usage: python3 experiments/managed-dns/run.py --image meshway-manageddns:TAG [--system-resolver] [--artifacts-dir EXISTING_PRIVATE_PARENT]\nFull fresh-controller local Docker acceptance; system resolver mode modifies only its own new container.");
     process.exit(0);
   }
-  let image: string | undefined; let parent = TEMP;
+  let image: string | undefined; let parent = TEMP; let systemResolver = false;
   const seen = new Set<string>();
   for (let i = 0; i < args.length; i++) {
     const flag = args[i]; assert(flag && !seen.has(flag)); seen.add(flag);
+    if (flag === "--system-resolver") { systemResolver = true; continue; }
     const value = args[++i]; assert(value && !value.startsWith("--"));
     if (flag === "--image") { assert(/^meshway-manageddns:[a-zA-Z0-9_.-]+$/.test(value)); image = value; }
     else if (flag === "--artifacts-dir") parent = resolve(value);
     else throw new Error("unknown option");
   }
-  assert(image, "dedicated --image is required"); return { image, parent };
+  assert(image, "dedicated --image is required"); return { image, parent, systemResolver };
 }
 function architecture(value: string) {
   const names: Record<string, string> = { arm64: "arm64", aarch64: "arm64", amd64: "amd64", x86_64: "amd64", x64: "amd64" };
@@ -97,7 +100,7 @@ async function main() {
     const values = await Promise.all(ROLES.map(async (role) => ({ role, state: await local(role) })));
     for (const value of values) {
       assert.equal(value.state.identity, node(value.role).id);
-      assert.equal(value.state.capabilities, value.role === "data" ? 1 << 12 : 0);
+      assert.equal(value.state.capabilities, value.role === "data" || (opts.systemResolver && value.role === "one") ? 1 << 12 : 0);
       assert.equal(value.state.resolv_digest, resolv.get(value.role), "fixture DNS must not change OS DNS");
     }
     assert(current); current.local = values; return values;
@@ -136,18 +139,22 @@ async function main() {
     await docker(["network", "create", "--label", `${OWNER}=${runId}`, network]); networks.push(network);
     for (const role of ["controller", ...ROLES] as const) {
       check(`${role}: create isolated private container`);
-      const data = role === "data";
+      const data = role === "data" || (opts.systemResolver && role === "one");
+      const writableResolver = opts.systemResolver && role === "one";
       await docker(["create", "--init", "--name", names[role], "--hostname", role, "--label", `${OWNER}=${runId}`,
         "--label", `io.meshway.managed-dns.role=${role}`, "--user", "0:0", "--network", network,
         ...(role === "controller" ? ["--network-alias", "controller.mesh.test", "--publish", "127.0.0.1::8420"] : []),
+        ...(role === "controller" && opts.systemResolver ? ["--network-alias", "solo", "--network-alias", "solo.next.fixture.meshway.test"] : []),
+        ...(role === "controller" && opts.systemResolver ? ["--network-alias", "solo.old.test", "--network-alias", "unknown.old.test"] : []),
+        ...(writableResolver ? ["--dns-search", "old.test"] : []),
         "--cap-drop", "ALL", ...(data ? ["--cap-add", "NET_ADMIN", "--device", "/dev/net/tun:/dev/net/tun:rw"] : []),
-        "--security-opt", "no-new-privileges", "--read-only", "--tmpfs", "/private:rw,nosuid,nodev,noexec,mode=0700,size=96m",
+        "--security-opt", "no-new-privileges", ...(writableResolver ? [] : ["--read-only"]), "--tmpfs", "/private:rw,nosuid,nodev,noexec,mode=0700,size=96m",
         "--sysctl", "net.ipv4.ip_forward=0", "--sysctl", "net.ipv6.conf.all.forwarding=0",
         ...(data ? ["--sysctl", "net.ipv6.conf.default.disable_ipv6=1"] : []),
         "--env", "PYTHONDONTWRITEBYTECODE=1", "--cpus", "1", "--memory", "256m", "--memory-swap", "256m", "--pids-limit", "96",
         "--entrypoint", "sleep", imageId, "infinity"]);
       containers.push(names[role]); await docker(["start", names[role]]);
-      for (const filename of ["container.py", "wire.py"]) {
+      for (const filename of ["container.py", "wire.py", ...(opts.systemResolver ? ["system.py"] : [])]) {
         const source = await readFile(join(HERE, filename), "utf8");
         await docker(["exec", "-i", names[role], "python3", "-c",
           `import os,sys; os.umask(0o077); open('/private/${filename}','x').write(sys.stdin.read())`], source);
@@ -155,7 +162,7 @@ async function main() {
       check(`${role}: confirm no host namespaces, mounts or privilege`);
       const inspected = parse(await docker(["inspect", names[role], "--format", "{{json .}}"]));
       const host = record(inspected.HostConfig); const config = record(inspected.Config);
-      assert.equal(host.Privileged, false); assert.equal(host.ReadonlyRootfs, true); assert.equal(host.NetworkMode, network);
+      assert.equal(host.Privileged, false); assert.equal(host.ReadonlyRootfs, !writableResolver); assert.equal(host.NetworkMode, network);
       assert(host.PidMode !== "host" && host.IpcMode !== "host"); assert.equal(config.User, "0:0");
       assert.deepEqual(array(host.CapDrop), ["ALL"]);
       assert.deepEqual(array(host.CapAdd ?? []).map(text).map((cap) => cap.replace(/^CAP_/, "")), data ? ["NET_ADMIN"] : []);
@@ -164,6 +171,22 @@ async function main() {
       assert(boolean((await helper(role, "tools")).ready));
       if (role !== "controller") resolv.set(role, (await local(role)).resolv_digest);
     }
+
+    if (opts.systemResolver) {
+      const directory = join(WORKSPACE, "experiments/dns-resolver");
+      const filenames = (await readdir(directory)).filter((name) => name.endsWith(".py") && !name.includes("test"));
+      assert(filenames.includes("resolver.py"));
+      for (const role of ["one", "data"] as const) {
+        await docker(["exec", names[role], "mkdir", "-m", "700", "/private/resolver-code"]);
+        for (const filename of filenames) {
+          assert(/^[a-z_]+\.py$/.test(filename));
+          await docker(["exec", "-i", names[role], "python3", "-c",
+            `import os,sys; os.umask(0o077); open('/private/resolver-code/${filename}','x').write(sys.stdin.read())`], await readFile(join(directory, filename), "utf8"));
+        }
+      }
+    }
+    const underlay = async (role: Role | "controller") => text(record(parse(await docker(["inspect", names[role], "--format", "{{json .NetworkSettings.Networks}}"]))[network]).IPAddress);
+    const controllerAddress = await underlay("controller");
 
     stage("fresh-controller-and-generated-enrollment");
     await helper("controller", "controller-start");
@@ -181,7 +204,8 @@ async function main() {
     for (const role of ROLES) {
       check(`${role}: SDK enrollment with pre-persisted credential`);
       const grant = await createEnrollmentToken(baseUrl, admin, { expires_in_seconds: 300 });
-      const pending = await helper(role, "prepare-enrollment", { name: namesByRole[role], token: grant.token });
+      const pending = await helper(role, "prepare-enrollment", { name: namesByRole[role], token: grant.token,
+        ...(opts.systemResolver ? { controller_address: controllerAddress } : {}) });
       const credential = text(pending.credential); tokens.set(role, credential);
       const enrolled = await enrollAgentOperation(baseUrl, grant.token, { node_credential: credential,
         name: namesByRole[role], agent_version: text(pending.version) });
@@ -365,7 +389,15 @@ async function main() {
       // Collision removal makes the surviving readable name available.
       await good(role, `twin.${changedZone}`, "A", "udp", node("one").mesh_ipv4);
     }
-    await observe(); assert(current); current.status = "PASS";
+    await observe();
+    if (opts.systemResolver) {
+      const originalDigest = resolv.get("one"); assert(originalDigest);
+      report.system_resolver = await systemAcceptance({ baseUrl, admin, runId, network: await getNetwork(baseUrl, admin),
+        node, helper, originalDigest, dataUnderlay: await underlay("data"), controllerUnderlay: controllerAddress, stage, check, until,
+        system: async (role, action, data = {}) => parse(await docker(["exec", "-i", names[role], "python3", "/private/system.py", action], JSON.stringify(data))),
+      });
+    }
+    assert(current); current.status = "PASS";
     report.status = "PASS"; report.stage = "complete"; delete report.check;
   } catch (error) {
     report.status = "FAIL"; process.exitCode = 1;

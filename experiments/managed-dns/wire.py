@@ -100,14 +100,14 @@ def receive_exact(sock, length):
     return bytes(result)
 
 
-def query(name, kind, transport):
+def query(name, kind, transport, port=5353):
     identifier = secrets.randbelow(65536)
     payload = request(name, kind, identifier)
     if transport not in ("udp", "tcp"):
         raise ValueError("invalid transport")
     with socket.socket(socket.AF_INET, socket.SOCK_DGRAM if transport == "udp" else socket.SOCK_STREAM) as sock:
         sock.settimeout(2)
-        sock.connect(("127.0.0.1", 5353))
+        sock.connect(("127.0.0.1", port))
         if transport == "udp":
             sock.send(payload)
             response = sock.recv(65536)
