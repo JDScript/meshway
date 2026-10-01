@@ -173,6 +173,59 @@ export const schemaDocument = {
         },
         "additionalProperties": false
       },
+      "AuthorizeDeviceRequest": {
+        "type": "object",
+        "required": [
+          "redirect_uri",
+          "code_challenge",
+          "name",
+          "agent_version"
+        ],
+        "properties": {
+          "agent_version": {
+            "type": "string",
+            "maxLength": 64,
+            "minLength": 1,
+            "pattern": "[^\\u0009-\\u000D\\u0020\\u0085\\u00A0\\u1680\\u2000-\\u200A\\u2028\\u2029\\u202F\\u205F\\u3000]"
+          },
+          "code_challenge": {
+            "type": "string",
+            "maxLength": 43,
+            "minLength": 43,
+            "pattern": "^[A-Za-z0-9_-]{42}[AEIMQUYcgkosw048]$"
+          },
+          "name": {
+            "type": "string",
+            "maxLength": 128,
+            "minLength": 1,
+            "pattern": "[^\\u0009-\\u000D\\u0020\\u0085\\u00A0\\u1680\\u2000-\\u200A\\u2028\\u2029\\u202F\\u205F\\u3000]"
+          },
+          "redirect_uri": {
+            "type": "string",
+            "maxLength": 25,
+            "minLength": 25,
+            "pattern": "^meshway://enroll/callback$"
+          }
+        },
+        "additionalProperties": false
+      },
+      "AuthorizeDeviceResponse": {
+        "type": "object",
+        "required": [
+          "code",
+          "expires_at"
+        ],
+        "properties": {
+          "code": {
+            "type": "string"
+          },
+          "expires_at": {
+            "type": "string",
+            "format": "date-time"
+          }
+        },
+        "additionalProperties": false
+      },
       "BeginConnectionRuntimeRequest": {
         "type": "object",
         "required": [
@@ -942,6 +995,49 @@ export const schemaDocument = {
         "properties": {
           "message": {
             "type": "string"
+          }
+        },
+        "additionalProperties": false
+      },
+      "ExchangeDeviceRequest": {
+        "type": "object",
+        "required": [
+          "code_verifier",
+          "redirect_uri",
+          "node_credential",
+          "name",
+          "agent_version"
+        ],
+        "properties": {
+          "agent_version": {
+            "type": "string",
+            "maxLength": 64,
+            "minLength": 1,
+            "pattern": "[^\\u0009-\\u000D\\u0020\\u0085\\u00A0\\u1680\\u2000-\\u200A\\u2028\\u2029\\u202F\\u205F\\u3000]"
+          },
+          "code_verifier": {
+            "type": "string",
+            "maxLength": 128,
+            "minLength": 43,
+            "pattern": "^[A-Za-z0-9._~-]{43,128}$"
+          },
+          "name": {
+            "type": "string",
+            "maxLength": 128,
+            "minLength": 1,
+            "pattern": "[^\\u0009-\\u000D\\u0020\\u0085\\u00A0\\u1680\\u2000-\\u200A\\u2028\\u2029\\u202F\\u205F\\u3000]"
+          },
+          "node_credential": {
+            "type": "string",
+            "maxLength": 64,
+            "minLength": 64,
+            "pattern": "^[0-9a-f]{64}$"
+          },
+          "redirect_uri": {
+            "type": "string",
+            "maxLength": 25,
+            "minLength": 25,
+            "pattern": "^meshway://enroll/callback$"
           }
         },
         "additionalProperties": false

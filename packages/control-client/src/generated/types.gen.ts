@@ -49,6 +49,18 @@ export type AgentNodeResponse = {
     node: NodeSummary;
 };
 
+export type AuthorizeDeviceRequest = {
+    agent_version: string;
+    code_challenge: string;
+    name: string;
+    redirect_uri: string;
+};
+
+export type AuthorizeDeviceResponse = {
+    code: string;
+    expires_at: string;
+};
+
 export type BeginConnectionRuntimeRequest = {
     /**
      * Pin the initial epoch read across retries; never refresh after a conflict.
@@ -238,6 +250,14 @@ export type EnrollAgentRequest = {
 
 export type ErrorResponse = {
     message: string;
+};
+
+export type ExchangeDeviceRequest = {
+    agent_version: string;
+    code_verifier: string;
+    name: string;
+    node_credential: string;
+    redirect_uri: string;
 };
 
 export type FlowAuthorizationAction = 'allow' | 'reject' | 'invalid';
@@ -1490,6 +1510,100 @@ export type GetConnectionRuntimesResponses = {
 };
 
 export type GetConnectionRuntimesResponse = GetConnectionRuntimesResponses[keyof GetConnectionRuntimesResponses];
+
+export type AuthorizeDeviceData = {
+    body: AuthorizeDeviceRequest;
+    path?: never;
+    query?: never;
+    url: '/api/v1/device-authorizations';
+};
+
+export type AuthorizeDeviceErrors = {
+    /**
+     * Invalid authorization
+     */
+    400: ErrorResponse;
+    /**
+     * Admin required
+     */
+    401: ErrorResponse;
+    /**
+     * Request too large
+     */
+    413: ErrorResponse;
+    /**
+     * JSON required
+     */
+    415: ErrorResponse;
+    /**
+     * Storage unavailable
+     */
+    500: ErrorResponse;
+};
+
+export type AuthorizeDeviceError = AuthorizeDeviceErrors[keyof AuthorizeDeviceErrors];
+
+export type AuthorizeDeviceResponses = {
+    /**
+     * PKCE-bound code; first use expires in five minutes
+     */
+    200: AuthorizeDeviceResponse;
+};
+
+export type AuthorizeDeviceResponse2 = AuthorizeDeviceResponses[keyof AuthorizeDeviceResponses];
+
+export type ExchangeDeviceData = {
+    body: ExchangeDeviceRequest;
+    path?: never;
+    query?: never;
+    url: '/api/v1/devices/exchange';
+};
+
+export type ExchangeDeviceErrors = {
+    /**
+     * Invalid exchange; code remains unused
+     */
+    400: ErrorResponse;
+    /**
+     * Invalid code, expiry or binding
+     */
+    401: ErrorResponse;
+    /**
+     * Bound node revoked
+     */
+    403: ErrorResponse;
+    /**
+     * Credential already bound
+     */
+    409: ErrorResponse;
+    /**
+     * Request too large
+     */
+    413: ErrorResponse;
+    /**
+     * JSON required
+     */
+    415: ErrorResponse;
+    /**
+     * Capacity exhausted; code remains unused
+     */
+    422: ErrorResponse;
+    /**
+     * Storage unavailable
+     */
+    500: ErrorResponse;
+};
+
+export type ExchangeDeviceError = ExchangeDeviceErrors[keyof ExchangeDeviceErrors];
+
+export type ExchangeDeviceResponses = {
+    /**
+     * Same unified active node on bound recovery
+     */
+    200: AgentNodeResponse;
+};
+
+export type ExchangeDeviceResponse = ExchangeDeviceResponses[keyof ExchangeDeviceResponses];
 
 export type CreateEnrollmentTokenData = {
     body: CreateEnrollmentTokenRequest;

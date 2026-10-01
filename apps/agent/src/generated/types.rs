@@ -945,6 +945,20 @@ pub struct ErrorResponse {
 }
 #[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
+pub struct ExchangeDeviceRequest {
+    ///Constraint: minLength=1, maxLength=64, pattern=`[^\u0009-\u000D\u0020\u0085\u00A0\u1680\u2000-\u200A\u2028\u2029\u202F\u205F\u3000]`
+    pub agent_version: String,
+    ///Constraint: minLength=43, maxLength=128, pattern=`^[A-Za-z0-9._~-]{43,128}$`
+    pub code_verifier: String,
+    ///Constraint: minLength=1, maxLength=128, pattern=`[^\u0009-\u000D\u0020\u0085\u00A0\u1680\u2000-\u200A\u2028\u2029\u202F\u205F\u3000]`
+    pub name: String,
+    ///Constraint: minLength=64, maxLength=64, pattern=`^[0-9a-f]{64}$`
+    pub node_credential: String,
+    ///Constraint: minLength=25, maxLength=25, pattern=`^meshway://enroll/callback$`
+    pub redirect_uri: String,
+}
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
 pub struct GetConnectionRuntimeEpochResponse {
     ///Zero means this node has never acquired a runtime lease.
     ///Constraint: minimum=0, maximum=4294967295

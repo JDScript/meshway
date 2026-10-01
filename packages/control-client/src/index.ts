@@ -1,4 +1,6 @@
 export {
+  authorizeDeviceOperation as authorizeDevice,
+  exchangeDeviceOperation as exchangeDevice,
   getOverviewOperation as getOverview,
   getNetworkOperation as getNetwork,
   saveNetworkOperation as saveNetwork,

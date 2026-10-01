@@ -238,6 +238,18 @@ export const zAgentNodeResponse = z.strictObject({
   "node": zNodeSummary
 });
 
+export const zAuthorizeDeviceRequest = z.strictObject({
+  "agent_version": z.string().refine(value => [...value].length >= 1, "minLength 1 Unicode code points").refine(value => [...value].length <= 64, "maxLength 64 Unicode code points").regex(new RegExp("[^\\u0009-\\u000D\\u0020\\u0085\\u00A0\\u1680\\u2000-\\u200A\\u2028\\u2029\\u202F\\u205F\\u3000]", "u")),
+  "code_challenge": z.string().refine(value => [...value].length >= 43, "minLength 43 Unicode code points").refine(value => [...value].length <= 43, "maxLength 43 Unicode code points").regex(new RegExp("^[A-Za-z0-9_-]{42}[AEIMQUYcgkosw048]$", "u")),
+  "name": z.string().refine(value => [...value].length >= 1, "minLength 1 Unicode code points").refine(value => [...value].length <= 128, "maxLength 128 Unicode code points").regex(new RegExp("[^\\u0009-\\u000D\\u0020\\u0085\\u00A0\\u1680\\u2000-\\u200A\\u2028\\u2029\\u202F\\u205F\\u3000]", "u")),
+  "redirect_uri": z.string().refine(value => [...value].length >= 25, "minLength 25 Unicode code points").refine(value => [...value].length <= 25, "maxLength 25 Unicode code points").regex(new RegExp("^meshway://enroll/callback$", "u"))
+});
+
+export const zAuthorizeDeviceResponse = z.strictObject({
+  "code": z.string(),
+  "expires_at": z.iso.datetime({ offset: true })
+});
+
 export const zBeginConnectionRuntimeRequest = z.strictObject({
   "expected_epoch": z.int().gte(0).lte(4294967295),
   "instance_id": z.string().refine(value => [...value].length >= 64, "minLength 64 Unicode code points").refine(value => [...value].length <= 64, "maxLength 64 Unicode code points").regex(new RegExp("^[0-9a-f]{64}$", "u"))
@@ -392,6 +404,14 @@ export const zEnrollAgentRequest = z.strictObject({
 
 export const zErrorResponse = z.strictObject({
   "message": z.string()
+});
+
+export const zExchangeDeviceRequest = z.strictObject({
+  "agent_version": z.string().refine(value => [...value].length >= 1, "minLength 1 Unicode code points").refine(value => [...value].length <= 64, "maxLength 64 Unicode code points").regex(new RegExp("[^\\u0009-\\u000D\\u0020\\u0085\\u00A0\\u1680\\u2000-\\u200A\\u2028\\u2029\\u202F\\u205F\\u3000]", "u")),
+  "code_verifier": z.string().refine(value => [...value].length >= 43, "minLength 43 Unicode code points").refine(value => [...value].length <= 128, "maxLength 128 Unicode code points").regex(new RegExp("^[A-Za-z0-9._~-]{43,128}$", "u")),
+  "name": z.string().refine(value => [...value].length >= 1, "minLength 1 Unicode code points").refine(value => [...value].length <= 128, "maxLength 128 Unicode code points").regex(new RegExp("[^\\u0009-\\u000D\\u0020\\u0085\\u00A0\\u1680\\u2000-\\u200A\\u2028\\u2029\\u202F\\u205F\\u3000]", "u")),
+  "node_credential": z.string().refine(value => [...value].length >= 64, "minLength 64 Unicode code points").refine(value => [...value].length <= 64, "maxLength 64 Unicode code points").regex(new RegExp("^[0-9a-f]{64}$", "u")),
+  "redirect_uri": z.string().refine(value => [...value].length >= 25, "minLength 25 Unicode code points").refine(value => [...value].length <= 25, "maxLength 25 Unicode code points").regex(new RegExp("^meshway://enroll/callback$", "u"))
 });
 
 export const zFlowAuthorizationAction = z.enum(["allow","reject","invalid"]);
