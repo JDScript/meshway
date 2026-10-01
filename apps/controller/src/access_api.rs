@@ -4,7 +4,8 @@ use axum::{
     http::HeaderMap,
 };
 use meshway_protocol::{
-    AgentDataplaneSnapshot, ErrorResponse, MeshAccessSnapshot, SaveMeshAccessRequest,
+    AgentDataplaneSnapshot, ErrorResponse, MeshAccessSnapshot, PreviewFlowRequest,
+    PreviewFlowResponse, SaveMeshAccessRequest,
 };
 use utoipa_axum::router::OpenApiRouter;
 
@@ -14,11 +15,33 @@ pub(crate) fn routes() -> OpenApiRouter<AppState> {
     OpenApiRouter::new()
         .routes(utoipa_axum::routes!(get_mesh_access, save_mesh_access))
         .routes(utoipa_axum::routes!(get_agent_dataplane))
-        .layer(DefaultBodyLimit::max(256 * 1024))
+        .routes(utoipa_axum::routes!(preview_flow))
+        .layer(DefaultBodyLimit::max(512 * 1024))
+}
+
+#[utoipa::path(post, path = "/api/v1/flows/preview", operation_id = "previewFlow", security(("adminBearer" = [])), request_body = PreviewFlowRequest,
+    responses((status = 200, description = "Combined saved endpoint authorization and routing preview", body = PreviewFlowResponse),
+    (status = 400, description = "Invalid JSON", body = ErrorResponse),
+    (status = 401, description = "Admin credential required", body = ErrorResponse),
+    (status = 413, description = "Request exceeds 512 KiB", body = ErrorResponse),
+    (status = 415, description = "Expected application/json", body = ErrorResponse)))]
+async fn preview_flow(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    body: Result<Json<PreviewFlowRequest>, JsonRejection>,
+) -> Result<Json<PreviewFlowResponse>, Error> {
+    let token = bearer(&headers)?;
+    let request = json(body)?;
+    state
+        .access(move |store| {
+            store.authorize_admin(&token)?;
+            store.preview_flow(&request).map(Json)
+        })
+        .await
 }
 
 #[utoipa::path(get, path = "/api/v1/access", operation_id = "getMeshAccess", security(("adminBearer" = [])),
-    responses((status = 200, description = "Saved directional full-path IPv4 authorization and current diagnostics", body = MeshAccessSnapshot),
+    responses((status = 200, description = "Saved ordered endpoint authorization source and current diagnostics", body = MeshAccessSnapshot),
     (status = 401, description = "Admin credential required", body = ErrorResponse),
     (status = 500, description = "Storage unavailable", body = ErrorResponse)))]
 async fn get_mesh_access(
@@ -35,12 +58,12 @@ async fn get_mesh_access(
 }
 
 #[utoipa::path(post, path = "/api/v1/access", operation_id = "saveMeshAccess", security(("adminBearer" = [])), request_body = SaveMeshAccessRequest,
-    responses((status = 200, description = "Global-CAS authorization save; all participants require bound public keys; adjacency need not exist", body = MeshAccessSnapshot),
+    responses((status = 200, description = "Global-CAS ordered endpoint authorization save; missing keys defer only affected runtime paths", body = MeshAccessSnapshot),
     (status = 400, description = "Invalid JSON", body = ErrorResponse),
     (status = 401, description = "Admin credential required", body = ErrorResponse),
     (status = 409, description = "Stale global revision", body = ErrorResponse),
-    (status = 422, description = "Invalid access, missing identity, or capacity exhausted (128 KiB source, 128 grants, 2..8 nodes per path, 64 projected union identities)", body = ErrorResponse),
-    (status = 413, description = "Request exceeds 256 KiB", body = ErrorResponse),
+    (status = 422, description = "Invalid selectors or references, JSONC mismatch, or expanded publication capacity exhausted", body = ErrorResponse),
+    (status = 413, description = "Request exceeds 512 KiB", body = ErrorResponse),
     (status = 415, description = "Expected application/json", body = ErrorResponse),
     (status = 500, description = "Storage unavailable", body = ErrorResponse)))]
 async fn save_mesh_access(

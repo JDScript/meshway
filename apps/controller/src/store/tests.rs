@@ -231,6 +231,7 @@ fn policy_cas_country_and_node_scoped_receipts_preserve_revision_semantics() {
         .save_policy(&SavePolicyRequest {
             expected_revision: 4,
             policy: policy.clone(),
+            source_jsonc: None,
         })
         .unwrap();
     assert_eq!(saved.revision, 5);
@@ -241,7 +242,8 @@ fn policy_cas_country_and_node_scoped_receipts_preserve_revision_semantics() {
     assert!(matches!(
         store.save_policy(&SavePolicyRequest {
             expected_revision: 4,
-            policy: policy.clone()
+            policy: policy.clone(),
+            source_jsonc: None,
         }),
         Err(Error::Conflict)
     ));
@@ -249,7 +251,8 @@ fn policy_cas_country_and_node_scoped_receipts_preserve_revision_semantics() {
         store
             .save_policy(&SavePolicyRequest {
                 expected_revision: 5,
-                policy
+                policy,
+                source_jsonc: None,
             })
             .unwrap()
             .revision,
@@ -260,7 +263,8 @@ fn policy_cas_country_and_node_scoped_receipts_preserve_revision_semantics() {
     assert!(matches!(
         store.save_policy(&SavePolicyRequest {
             expected_revision: 5,
-            policy: invalid
+            policy: invalid,
+            source_jsonc: None,
         }),
         Err(Error::Unprocessable(_))
     ));
@@ -437,7 +441,7 @@ fn additive_v2_to_v3_preserves_configuration_credentials_addresses_and_receipts(
             .connection
             .pragma_query_value(None, "user_version", |row| row.get::<_, u32>(0))
             .unwrap(),
-        5
+        6
     );
     assert_eq!(
         std::fs::read(dir.path().join("admin.token")).unwrap(),

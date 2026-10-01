@@ -132,7 +132,8 @@ fn validate(
     let nodes: Vec<_> = std::iter::once(payload.configuration.node.clone())
         .chain(payload.configuration.peers.iter().cloned())
         .collect();
-    if !meshway_policy::access::validate_mesh_access(&payload.access_policy, &nodes).is_empty()
+    if !meshway_policy::access::validate_mesh_path_authorization(&payload.access_policy, &nodes)
+        .is_empty()
         || payload
             .access_policy
             .grants

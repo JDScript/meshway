@@ -26,8 +26,49 @@ fn configuration() -> NodeConfiguration {
     }
 }
 
-fn access(paths: &[&[&str]]) -> MeshAccessPolicy {
-    MeshAccessPolicy {
+#[test]
+fn endpoint_acl_first_match_and_bidirectional_direction_are_authoritative() {
+    let a = "a".repeat(64);
+    let b = "b".repeat(64);
+    let mut assignments = BTreeMap::new();
+    assignments.insert(a.clone(), BTreeSet::from(["tag:prod".into()]));
+    let policy = MeshAccessPolicy {
+        default_action: AccessAction::Reject,
+        rules: vec![
+            MeshAccessRule {
+                id: "deny-forward".into(),
+                source: vec![format!("node:{a}")],
+                destination: vec![format!("node:{b}")],
+                action: AccessAction::Reject,
+                bidirectional: false,
+            },
+            MeshAccessRule {
+                id: "allow-pair".into(),
+                source: vec!["tag:prod".into()],
+                destination: vec![format!("node:{b}")],
+                action: AccessAction::Allow,
+                bidirectional: true,
+            },
+        ],
+    };
+    let forward = evaluate_access(&policy, &a, &b, &assignments);
+    assert_eq!(forward.action, FlowAuthorizationAction::Reject);
+    assert_eq!(forward.rule_id.as_deref(), Some("deny-forward"));
+    assert_eq!(
+        forward.matched_direction,
+        Some(AccessMatchedDirection::Forward)
+    );
+    let reverse = evaluate_access(&policy, &b, &a, &assignments);
+    assert_eq!(reverse.action, FlowAuthorizationAction::Allow);
+    assert_eq!(reverse.rule_id.as_deref(), Some("allow-pair"));
+    assert_eq!(
+        reverse.matched_direction,
+        Some(AccessMatchedDirection::Reverse)
+    );
+}
+
+fn access(paths: &[&[&str]]) -> MeshPathAuthorization {
+    MeshPathAuthorization {
         grants: paths
             .iter()
             .enumerate()
@@ -72,7 +113,7 @@ fn explicit_routes_and_grants_intersect_without_reverse_shortcuts_or_subpaths() 
         vec![vec!["a", "b", "c"]]
     );
     assert!(
-        compile_mesh_paths(&config, &MeshAccessPolicy::default())
+        compile_mesh_paths(&config, &MeshPathAuthorization::default())
             .unwrap()
             .is_empty()
     );
@@ -102,7 +143,7 @@ fn default_direct_requires_an_exact_directional_grant_and_never_skips_mandatory_
         vec![vec!["a", "c"]]
     );
     assert!(
-        compile_mesh_paths(&config, &MeshAccessPolicy::default())
+        compile_mesh_paths(&config, &MeshPathAuthorization::default())
             .unwrap()
             .is_empty()
     );
@@ -252,7 +293,7 @@ fn access_bounds_and_invalid_inventory_or_source_fail_closed() {
     ] {
         let mut invalid = good.clone();
         invalid.grants[0].id = id;
-        let diagnostics = validate_mesh_access(&invalid, &all_nodes);
+        let diagnostics = validate_mesh_path_authorization(&invalid, &all_nodes);
         assert!(!diagnostics.is_empty());
         assert!(
             diagnostics
@@ -262,8 +303,8 @@ fn access_bounds_and_invalid_inventory_or_source_fail_closed() {
     }
     let mut invalid = access(&[&["a", "b"], &["b", "a"]]);
     invalid.grants[1].id = invalid.grants[0].id.clone();
-    assert!(!validate_mesh_access(&invalid, &all_nodes).is_empty());
-    let invalid = MeshAccessPolicy {
+    assert!(!validate_mesh_path_authorization(&invalid, &all_nodes).is_empty());
+    let invalid = MeshPathAuthorization {
         grants: (0..129)
             .map(|i| MeshAccessGrant {
                 id: format!("g{i}"),
@@ -272,14 +313,14 @@ fn access_bounds_and_invalid_inventory_or_source_fail_closed() {
             .collect(),
     };
     assert!(
-        validate_mesh_access(&invalid, &all_nodes)
+        validate_mesh_path_authorization(&invalid, &all_nodes)
             .iter()
             .any(|d| d.field == "grants")
     );
     let mut invalid = good.clone();
     invalid.grants[0].path[0] = "a".repeat(MAX_MESH_ACCESS_BYTES);
     assert!(
-        validate_mesh_access(&invalid, &all_nodes)
+        validate_mesh_path_authorization(&invalid, &all_nodes)
             .iter()
             .any(|d| d.field == "policy")
     );
@@ -294,14 +335,14 @@ fn access_bounds_and_invalid_inventory_or_source_fail_closed() {
 
 #[test]
 fn invalid_grant_ids_cannot_amplify_diagnostic_bytes_within_the_source_budget() {
-    let policy = MeshAccessPolicy {
+    let policy = MeshPathAuthorization {
         grants: vec![MeshAccessGrant {
             id: "x".repeat(120_000),
             path: vec!["missing".into(); 62],
         }],
     };
     assert!(serde_json::to_vec(&policy).unwrap().len() <= MAX_MESH_ACCESS_BYTES);
-    let diagnostics = validate_mesh_access(&policy, &[]);
+    let diagnostics = validate_mesh_path_authorization(&policy, &[]);
     assert_eq!(diagnostics.len(), crate::MAX_DIAGNOSTICS);
     assert!(
         diagnostics

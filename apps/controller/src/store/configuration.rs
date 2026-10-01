@@ -7,7 +7,7 @@ use meshway_protocol::{
 };
 use rusqlite::{Connection, OptionalExtension, TransactionBehavior, params};
 
-use super::{Store, find_node, ipam};
+use super::{Store, access, find_node, ipam, jsonc};
 use crate::Error;
 
 const DIAGNOSTIC_BUDGET: usize = 32 * 1024;
@@ -65,12 +65,20 @@ pub(super) fn active_nodes(connection: &Connection) -> Result<Vec<MeshNode>, Err
         .collect::<Result<_, _>>()?)
 }
 
-fn source_policy(connection: &Connection) -> Result<RoutingPolicy, Error> {
+pub(super) fn source_policy(connection: &Connection) -> Result<RoutingPolicy, Error> {
     let json: String =
         connection.query_row("SELECT policy FROM configuration WHERE id = 1", [], |row| {
             row.get(0)
         })?;
     serde_json::from_str(&json).map_err(|_| Error::Configuration("invalid persisted policy"))
+}
+
+fn source_jsonc(connection: &Connection) -> Result<Option<String>, Error> {
+    Ok(connection.query_row(
+        "SELECT source_jsonc FROM configuration WHERE id=1",
+        [],
+        |row| row.get(0),
+    )?)
 }
 
 fn policy_snapshot(connection: &Connection) -> Result<PolicySnapshot, Error> {
@@ -81,6 +89,7 @@ fn policy_snapshot(connection: &Connection) -> Result<PolicySnapshot, Error> {
         revision: revision(connection)?,
         network,
         policy,
+        source_jsonc: source_jsonc(connection)?,
         valid: report.is_valid(),
         diagnostics: bounded_diagnostics(report.diagnostics),
     })
@@ -182,6 +191,21 @@ impl Store {
     }
 
     pub fn save_policy(&mut self, request: &SavePolicyRequest) -> Result<PolicySnapshot, Error> {
+        if request
+            .source_jsonc
+            .as_ref()
+            .is_some_and(|source| source.len() > meshway_protocol::MAX_SOURCE_JSONC_BYTES)
+        {
+            return Err(Error::Unprocessable("source_jsonc exceeds 256 KiB"));
+        }
+        if let Some(source) = &request.source_jsonc {
+            let parsed: RoutingPolicy = jsonc::parse_source(source)?;
+            if parsed != request.policy {
+                return Err(Error::Unprocessable(
+                    "source_jsonc policy does not equal request.policy",
+                ));
+            }
+        }
         let transaction = self
             .connection
             .transaction_with_behavior(TransactionBehavior::Immediate)?;
@@ -196,12 +220,23 @@ impl Store {
                 "policy is invalid; preview it for diagnostics",
             ));
         }
-        if source_policy(&transaction)? != report.normalized_policy {
-            let json = serde_json::to_string(&report.normalized_policy)
+        let stored_policy = if request.source_jsonc.is_some() {
+            &request.policy
+        } else {
+            &report.normalized_policy
+        };
+        if source_policy(&transaction)? != *stored_policy
+            || source_jsonc(&transaction)? != request.source_jsonc
+        {
+            let json = serde_json::to_string(stored_policy)
                 .map_err(|_| Error::Configuration("cannot encode policy"))?;
-            transaction.execute("UPDATE configuration SET policy = ?1 WHERE id = 1", [json])?;
+            transaction.execute(
+                "UPDATE configuration SET policy=?1, source_jsonc=?2 WHERE id=1",
+                params![json, request.source_jsonc],
+            )?;
             bump(&transaction)?;
             ensure_publishable(&transaction)?;
+            access::ensure_publishable(&transaction)?;
         }
         let snapshot = policy_snapshot(&transaction)?;
         transaction.commit()?;
@@ -231,6 +266,7 @@ impl Store {
             )?;
             bump(&transaction)?;
             ensure_publishable(&transaction)?;
+            access::ensure_publishable(&transaction)?;
         }
         let node = find_node(&transaction, &request.node_id)?;
         transaction.commit()?;

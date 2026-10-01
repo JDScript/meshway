@@ -1,43 +1,147 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use meshway_protocol::*;
-use rusqlite::{Connection, TransactionBehavior};
+use rusqlite::{Connection, TransactionBehavior, params};
 
-use super::{Store, configuration, connections};
+use super::{Store, configuration, connections, ipam, jsonc, tags};
 use crate::Error;
 
 #[cfg(test)]
 mod tests;
 
+fn valid_legacy_id(id: &str) -> bool {
+    !id.is_empty()
+        && id.len() <= 64
+        && id
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || b"._-".contains(&byte))
+}
+
+fn migrated_id(ids: impl Iterator<Item = String>, source: &str, destination: &str) -> String {
+    ids.filter(|id| valid_legacy_id(id))
+        .min()
+        .unwrap_or_else(|| {
+            local::digest(&format!("legacy:{source}:{destination}"))
+                .iter()
+                .map(|byte| format!("{byte:02x}"))
+                .collect()
+        })
+}
+
+fn migrate_legacy(legacy: MeshPathAuthorization) -> MeshAccessPolicy {
+    let mut directed: BTreeMap<(String, String), Vec<String>> = BTreeMap::new();
+    for grant in legacy.grants {
+        if let (Some(source), Some(destination)) = (grant.path.first(), grant.path.last())
+            && source != destination
+        {
+            directed
+                .entry((source.clone(), destination.clone()))
+                .or_default()
+                .push(grant.id);
+        }
+    }
+    let mut rules = Vec::new();
+    while let Some(((source, destination), mut ids)) = directed.pop_first() {
+        let reverse = directed.remove(&(destination.clone(), source.clone()));
+        let bidirectional = reverse.is_some();
+        if let Some(reverse) = reverse {
+            ids.extend(reverse);
+        }
+        rules.push(MeshAccessRule {
+            id: migrated_id(ids.into_iter(), &source, &destination),
+            source: vec![format!("node:{source}")],
+            destination: vec![format!("node:{destination}")],
+            action: AccessAction::Allow,
+            bidirectional,
+        });
+    }
+    MeshAccessPolicy {
+        default_action: AccessAction::Reject,
+        rules,
+    }
+}
+
 pub(super) fn upgrade(connection: &mut Connection) -> Result<(), Error> {
     let version: u32 = connection.pragma_query_value(None, "user_version", |row| row.get(0))?;
-    if version == 5 {
+    if version == 6 {
         return Ok(());
     }
-    if version != 4 {
+    if version == 4 {
+        let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        transaction.execute_batch(
+            "CREATE TABLE mesh_access_source (
+                id INTEGER PRIMARY KEY CHECK (id = 1), policy TEXT NOT NULL
+             );
+             INSERT INTO mesh_access_source VALUES (1, '{\"grants\":[]}');
+             PRAGMA user_version = 5;",
+        )?;
+        transaction.commit()?;
+    } else if version != 5 {
         return Err(Error::Configuration(
-            "access schema upgrade requires schema 4",
+            "access schema upgrade requires schema 4 or 5",
         ));
     }
+
     let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
-    transaction.execute_batch(
-        "CREATE TABLE mesh_access_source (
-            id INTEGER PRIMARY KEY CHECK (id = 1), policy TEXT NOT NULL
-         );
-         INSERT INTO mesh_access_source VALUES (1, '{\"grants\":[]}');
-         PRAGMA user_version = 5;",
+    let legacy_json: String = transaction.query_row(
+        "SELECT policy FROM mesh_access_source WHERE id=1",
+        [],
+        |row| row.get(0),
     )?;
+    let legacy: MeshPathAuthorization = serde_json::from_str(&legacy_json)
+        .map_err(|_| Error::Configuration("invalid legacy mesh access"))?;
+    let revision_must_change = !legacy.grants.is_empty();
+    let policy = serde_json::to_string(&migrate_legacy(legacy))
+        .map_err(|_| Error::Configuration("cannot migrate mesh access"))?;
+    if configuration::revision(&transaction)? == u32::MAX {
+        return Err(Error::Capacity("configuration revision exhausted"));
+    }
+    transaction.execute_batch(
+        "ALTER TABLE mesh_access_source RENAME TO mesh_access_legacy_v5;
+         CREATE TABLE mesh_access_source (
+            id INTEGER PRIMARY KEY CHECK (id = 1),
+            policy TEXT NOT NULL,
+            source_jsonc TEXT
+         );
+         ALTER TABLE configuration ADD COLUMN source_jsonc TEXT;
+         CREATE TABLE tag_definitions (
+            tag TEXT PRIMARY KEY,
+            description TEXT NOT NULL
+         );
+         CREATE TABLE node_tags (
+            node_id TEXT NOT NULL REFERENCES nodes(id),
+            tag TEXT NOT NULL REFERENCES tag_definitions(tag),
+            PRIMARY KEY(node_id, tag)
+         );",
+    )?;
+    transaction.execute(
+        "INSERT INTO mesh_access_source(id,policy,source_jsonc) VALUES (1,?1,NULL)",
+        [policy],
+    )?;
+    if revision_must_change {
+        configuration::bump(&transaction)?;
+    }
+    ensure_publishable(&transaction)?;
+    transaction.pragma_update(None, "user_version", 6)?;
     transaction.commit()?;
     Ok(())
 }
 
-fn source(connection: &Connection) -> Result<MeshAccessPolicy, Error> {
+pub(super) fn source(connection: &Connection) -> Result<MeshAccessPolicy, Error> {
     let json: String = connection.query_row(
         "SELECT policy FROM mesh_access_source WHERE id = 1",
         [],
         |row| row.get(0),
     )?;
     serde_json::from_str(&json).map_err(|_| Error::Configuration("invalid stored mesh access"))
+}
+
+fn source_jsonc(connection: &Connection) -> Result<Option<String>, Error> {
+    Ok(connection.query_row(
+        "SELECT source_jsonc FROM mesh_access_source WHERE id=1",
+        [],
+        |row| row.get(0),
+    )?)
 }
 
 fn bindings(connection: &Connection) -> Result<BTreeMap<String, String>, Error> {
@@ -47,67 +151,131 @@ fn bindings(connection: &Connection) -> Result<BTreeMap<String, String>, Error> 
 }
 
 fn validate(
+    connection: &Connection,
     policy: &MeshAccessPolicy,
-    nodes: &[MeshNode],
-    keys: &BTreeMap<String, String>,
-) -> Vec<PolicyDiagnostic> {
-    let mut diagnostics = meshway_policy::validate_mesh_access(policy, nodes);
-    if !diagnostics.is_empty() {
-        return diagnostics;
-    }
-    // Structural validation bounds every ID before binding diagnostics copy it.
-    // A missing or noncanonical binding withdraws the entire effective policy.
-    for grant in &policy.grants {
-        for id in &grant.path {
-            if diagnostics.len() == meshway_policy::MAX_DIAGNOSTICS {
-                return diagnostics;
-            }
-            if keys
-                .get(id)
-                .is_none_or(|key| !valid_connection_public_key(key))
-            {
-                diagnostics.push(PolicyDiagnostic {
-                    rule_id: Some(grant.id.clone()),
-                    field: "path".into(),
-                    message: "Every participant requires an active immutable canonical public-key binding".into(),
-                });
-            }
-        }
-    }
-    diagnostics
+) -> Result<Vec<PolicyDiagnostic>, Error> {
+    Ok(meshway_policy::validate_access_policy(
+        policy,
+        &configuration::active_nodes(connection)?,
+        &tags::catalog(connection)?,
+    ))
 }
 
 fn admin_snapshot(connection: &Connection) -> Result<MeshAccessSnapshot, Error> {
     let policy = source(connection)?;
-    let diagnostics = validate(
-        &policy,
-        &configuration::active_nodes(connection)?,
-        &bindings(connection)?,
-    );
+    let diagnostics = validate(connection, &policy)?;
     Ok(MeshAccessSnapshot {
         revision: configuration::revision(connection)?,
         policy,
+        source_jsonc: source_jsonc(connection)?,
         valid: diagnostics.is_empty(),
         diagnostics,
     })
 }
 
-fn local_access(access: &MeshAccessSnapshot, id: &str) -> MeshAccessPolicy {
-    MeshAccessPolicy {
-        grants: access
-            .policy
-            .grants
-            .iter()
-            .filter(|grant| access.valid && grant.path.iter().any(|node| node == id))
-            .cloned()
-            .collect(),
+fn authorization_id(path: &[String]) -> String {
+    local::digest(&format!("effective:{}", path.join(":")))
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect()
+}
+
+fn compiled_authorizations(
+    connection: &Connection,
+) -> Result<(bool, BTreeMap<String, MeshPathAuthorization>), Error> {
+    let nodes = configuration::active_nodes(connection)?;
+    let mut result: BTreeMap<_, _> = nodes
+        .iter()
+        .map(|node| (node.id.clone(), MeshPathAuthorization::default()))
+        .collect();
+    let access = source(connection)?;
+    if !validate(connection, &access)?.is_empty() {
+        return Ok((false, result));
     }
+    let routing = configuration::source_policy(connection)?;
+    let network = ipam::network(connection)?;
+    let routing_report = meshway_policy::compile(&routing, &network, &nodes);
+    if !routing_report.is_valid() {
+        return Ok((true, result));
+    }
+    let assignments = tags::assignments(connection)?;
+    let keys = bindings(connection)?;
+    for source in &nodes {
+        let node_configuration = configuration::snapshot(connection, &source.id)?.payload;
+        for destination in &nodes {
+            if source.id == destination.id
+                || meshway_policy::evaluate_access(
+                    &access,
+                    &source.id,
+                    &destination.id,
+                    &assignments,
+                )
+                .action
+                    != FlowAuthorizationAction::Allow
+            {
+                continue;
+            }
+            let flow = FlowQuery {
+                source_node_id: source.id.clone(),
+                destination_node_id: Some(destination.id.clone()),
+                destination_ip: Some(destination.mesh_ipv4.clone()),
+                domain: None,
+                destination_country: None,
+            };
+            let route = meshway_policy::preview(&routing, &network, &nodes, &flow);
+            if !route.valid
+                || route.decision.action != RouteDecisionAction::Route
+                || route.decision.exit_node_id.is_some()
+                || route.decision.path.first() != Some(&source.id)
+                || route.decision.path.last() != Some(&destination.id)
+                || route.decision.path.iter().any(|id| {
+                    keys.get(id)
+                        .is_none_or(|key| !valid_connection_public_key(key))
+                })
+            {
+                continue;
+            }
+            if route.decision.path.len() > MAX_MESH_ACCESS_PATH_NODES {
+                return Err(Error::Capacity(
+                    "authorized route exceeds the 8-node exact-path limit",
+                ));
+            }
+            let grant = MeshAccessGrant {
+                id: authorization_id(&route.decision.path),
+                path: route.decision.path,
+            };
+            let candidate = MeshPathAuthorization {
+                grants: vec![grant.clone()],
+            };
+            if meshway_policy::compile_mesh_paths(&node_configuration, &candidate)
+                .map_err(|_| Error::Configuration("cannot compile authorized mesh path"))?
+                .is_empty()
+            {
+                continue;
+            }
+            for participant in &grant.path {
+                let grants = &mut result
+                    .get_mut(participant)
+                    .ok_or(Error::Configuration(
+                        "routing returned an inactive path node",
+                    ))?
+                    .grants;
+                if grants.len() == MAX_MESH_ACCESS_GRANTS {
+                    return Err(Error::Capacity(
+                        "effective access exceeds 128 exact paths for a node",
+                    ));
+                }
+                grants.push(grant.clone());
+            }
+        }
+    }
+    Ok((true, result))
 }
 
 fn identities(
     id: &str,
     connections: &NodeConnections,
-    access: &MeshAccessPolicy,
+    access: &MeshPathAuthorization,
     keys: &BTreeMap<String, String>,
 ) -> Result<Vec<ConnectionPeer>, Error> {
     let ids: BTreeSet<_> = connections
@@ -143,6 +311,17 @@ fn identities(
         .collect()
 }
 
+pub(super) fn ensure_publishable(connection: &Connection) -> Result<(), Error> {
+    let (_, authorizations) = compiled_authorizations(connection)?;
+    let keys = bindings(connection)?;
+    let connection_source = connections::admin_snapshot(connection)?;
+    for (id, authorization) in authorizations {
+        let adjacency = connections::projection(&connection_source, &id)?.payload;
+        identities(&id, &adjacency, &authorization, &keys)?;
+    }
+    Ok(())
+}
+
 impl Store {
     pub fn mesh_access(&self) -> Result<MeshAccessSnapshot, Error> {
         admin_snapshot(&self.connection)
@@ -152,61 +331,149 @@ impl Store {
         &mut self,
         request: &SaveMeshAccessRequest,
     ) -> Result<MeshAccessSnapshot, Error> {
+        if request
+            .source_jsonc
+            .as_ref()
+            .is_some_and(|source| source.len() > MAX_SOURCE_JSONC_BYTES)
+        {
+            return Err(Error::Unprocessable("source_jsonc exceeds 256 KiB"));
+        }
+        if let Some(source) = &request.source_jsonc {
+            let parsed: MeshAccessPolicy = jsonc::parse_source(source)?;
+            if parsed != request.policy {
+                return Err(Error::Unprocessable(
+                    "source_jsonc policy does not equal request.policy",
+                ));
+            }
+        }
         let transaction = self
             .connection
             .transaction_with_behavior(TransactionBehavior::Immediate)?;
         if configuration::revision(&transaction)? != request.expected_revision {
             return Err(Error::Conflict);
         }
-        let keys = bindings(&transaction)?;
-        if !validate(
-            &request.policy,
-            &configuration::active_nodes(&transaction)?,
-            &keys,
-        )
-        .is_empty()
-        {
+        if !validate(&transaction, &request.policy)?.is_empty() {
             return Err(Error::Unprocessable(
-                "invalid mesh access: check grant IDs, unique full active paths and bound public keys",
+                "invalid mesh access policy; inspect selectors, references and ordered rules",
             ));
         }
-        let proposed = MeshAccessSnapshot {
-            revision: request.expected_revision,
-            policy: request.policy.clone(),
-            valid: true,
-            diagnostics: Vec::new(),
-        };
-        let connection_source = connections::admin_snapshot(&transaction)?;
-        let participants: BTreeSet<_> = request
-            .policy
-            .grants
-            .iter()
-            .flat_map(|grant| &grant.path)
-            .collect();
-        for id in participants {
-            let adjacency = connections::projection(&connection_source, id)?.payload;
-            identities(id, &adjacency, &local_access(&proposed, id), &keys)?;
-        }
-        if source(&transaction)? != request.policy {
+        let changed = source(&transaction)? != request.policy
+            || source_jsonc(&transaction)? != request.source_jsonc;
+        if changed {
             let encoded = serde_json::to_string(&request.policy)
                 .map_err(|_| Error::Configuration("cannot encode mesh access"))?;
             transaction.execute(
-                "UPDATE mesh_access_source SET policy = ?1 WHERE id = 1",
-                [encoded],
+                "UPDATE mesh_access_source SET policy=?1, source_jsonc=?2 WHERE id=1",
+                params![encoded, request.source_jsonc],
             )?;
             configuration::bump(&transaction)?;
             configuration::ensure_publishable(&transaction)?;
             connections::ensure_publishable(&transaction)?;
+            ensure_publishable(&transaction)?;
         }
         let response = admin_snapshot(&transaction)?;
         transaction.commit()?;
         Ok(response)
     }
 
-    /// AppState holds one Store lock for this entire operation; the read
-    /// transaction also pins a SQLite snapshot across every constituent query.
-    /// A later connection-plan expansion can exceed the identity union bound;
-    /// in that case GET fails closed (422), without truncating a path or peers.
+    pub fn preview_flow(&self, request: &PreviewFlowRequest) -> Result<PreviewFlowResponse, Error> {
+        let nodes = configuration::active_nodes(&self.connection)?;
+        let access = admin_snapshot(&self.connection)?;
+        let routing_policy = configuration::source_policy(&self.connection)?;
+        let network = ipam::network(&self.connection)?;
+        let routing = meshway_policy::preview(&routing_policy, &network, &nodes, &request.flow);
+        let source_active = nodes
+            .iter()
+            .any(|node| node.id == request.flow.source_node_id);
+        let explicit_destination_invalid = request
+            .flow
+            .destination_node_id
+            .as_ref()
+            .is_some_and(|id| !nodes.iter().any(|node| node.id == id.as_str()));
+        let destination = request
+            .flow
+            .destination_node_id
+            .as_deref()
+            .filter(|id| nodes.iter().any(|node| node.id == *id))
+            .or_else(|| {
+                request.flow.destination_ip.as_deref().and_then(|ip| {
+                    nodes
+                        .iter()
+                        .find(|node| node.mesh_ipv4 == ip)
+                        .map(|node| node.id.as_str())
+                })
+            });
+        let authorization = if !access.valid {
+            FlowAuthorizationDecision {
+                action: FlowAuthorizationAction::Invalid,
+                rule_id: None,
+                matched_direction: None,
+                reason: "Saved access policy is invalid".into(),
+            }
+        } else if !source_active || explicit_destination_invalid {
+            FlowAuthorizationDecision {
+                action: FlowAuthorizationAction::Invalid,
+                rule_id: None,
+                matched_direction: None,
+                reason: "Flow references a node outside the active network".into(),
+            }
+        } else if let Some(destination) = destination {
+            meshway_policy::evaluate_access(
+                &access.policy,
+                &request.flow.source_node_id,
+                destination,
+                &tags::assignments(&self.connection)?,
+            )
+        } else {
+            FlowAuthorizationDecision {
+                action: FlowAuthorizationAction::Reject,
+                rule_id: None,
+                matched_direction: None,
+                reason: "Endpoint authorization requires a resolved mesh destination".into(),
+            }
+        };
+        let execution_supported = access.valid
+            && authorization.action == FlowAuthorizationAction::Allow
+            && routing.valid
+            && routing.decision.action == RouteDecisionAction::Route
+            && routing.decision.exit_node_id.is_none()
+            && request.flow.domain.is_none()
+            && request.flow.destination_country.is_none()
+            && request
+                .flow
+                .destination_ip
+                .as_deref()
+                .is_none_or(|ip| ip.parse::<std::net::Ipv4Addr>().is_ok())
+            && destination.is_some()
+            && compiled_authorizations(&self.connection)?
+                .1
+                .get(&request.flow.source_node_id)
+                .is_some_and(|authorization| {
+                    authorization
+                        .grants
+                        .iter()
+                        .any(|grant| grant.path == routing.decision.path)
+                });
+        Ok(PreviewFlowResponse {
+            revision: access.revision,
+            valid: access.valid && routing.valid,
+            authorization,
+            routing: routing.decision,
+            diagnostics: access
+                .diagnostics
+                .into_iter()
+                .chain(routing.diagnostics)
+                .collect(),
+            execution_supported,
+            execution_reason: if execution_supported {
+                "Saved ACL and routing resolve to a runtime-eligible exact IPv4 mesh path".into()
+            } else {
+                "Flow is not an authorized runtime-eligible exact IPv4 mesh path with known keys"
+                    .into()
+            },
+        })
+    }
+
     pub fn agent_dataplane(&mut self, token: &str) -> Result<AgentDataplaneSnapshot, Error> {
         let transaction = self
             .connection
@@ -215,8 +482,8 @@ impl Store {
         let configuration = configuration::snapshot(&transaction, &node_id)?.payload;
         let connections =
             connections::projection(&connections::admin_snapshot(&transaction)?, &node_id)?.payload;
-        let access = admin_snapshot(&transaction)?;
-        let access_policy = local_access(&access, &node_id);
+        let (access_valid, mut authorizations) = compiled_authorizations(&transaction)?;
+        let access_policy = authorizations.remove(&node_id).unwrap_or_default();
         let identities = identities(
             &node_id,
             &connections,
@@ -224,7 +491,7 @@ impl Store {
             &bindings(&transaction)?,
         )?;
         let revision = configuration.revision;
-        if connections.revision != revision || access.revision != revision {
+        if connections.revision != revision {
             return Err(Error::Configuration("incoherent dataplane revision"));
         }
         let payload = NodeDataplane {
@@ -234,7 +501,7 @@ impl Store {
             configuration,
             connections,
             access_policy,
-            access_valid: access.valid,
+            access_valid,
             identities,
         };
         let digest = dataplane_digest(&payload)

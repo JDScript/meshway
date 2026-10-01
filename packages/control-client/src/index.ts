@@ -12,6 +12,10 @@ export {
   getConnectionRuntimesOperation as getConnectionRuntimes,
   getMeshAccessOperation as getMeshAccess,
   saveMeshAccessOperation as saveMeshAccess,
+  getTagsOperation as getTags,
+  saveTagsOperation as saveTags,
+  setNodeTagsOperation as setNodeTags,
+  previewFlowOperation as previewFlow,
 } from "./generated/operations.gen.ts";
 export type * from "./generated/types.gen.ts";
 export { ControlApiError } from "./transport.ts";

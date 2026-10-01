@@ -59,7 +59,7 @@ test("generated policy schemas require nullable context, closed enums, booleans 
   const flow = { source_node_id: "source", destination_node_id: null, destination_ip: null, domain: "example.com", destination_country: null };
   assert.deepEqual(zFlowQuery.parse(flow), flow);
   assert.equal(zFlowQuery.safeParse({ ...flow, destination_country: undefined }).success, false);
-  const snapshot = { revision: 1, network: { ipv4_prefix: "100.96.0.0/16", ipv6_prefix: "fd12::/64" }, policy: { default_action: "reject", rules: [] }, valid: true, diagnostics: [] };
+  const snapshot = { revision: 1, network: { ipv4_prefix: "100.96.0.0/16", ipv6_prefix: "fd12::/64" }, policy: { default_action: "reject", rules: [] }, source_jsonc: null, valid: true, diagnostics: [] };
   assert.deepEqual(zPolicySnapshot.parse(snapshot), snapshot);
   for (const revision of [0, -1, 1.5, 4294967296]) assert.equal(zPolicySnapshot.safeParse({ ...snapshot, revision }).success, false);
   assert.equal(zPolicySnapshot.safeParse({ ...snapshot, valid: "true" }).success, false);

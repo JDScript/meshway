@@ -1,8 +1,8 @@
 // Generated from the controller OpenAPI by scripts/generate-protocol.mjs. Do not edit.
 
 import { request } from "../transport.ts";
-import type { AcknowledgeAgentConnectionsRequest, AcknowledgeAgentConnectionsResponse, AcknowledgeConfigurationRequest, AcknowledgeConfigurationResponse, AgentConnectionsSnapshot, AgentDataplaneSnapshot, AgentNodeResponse, BeginConnectionRuntimeRequest, BeginConnectionRuntimeResponse, ConfigurationSnapshot, ConnectionRuntimesSnapshot, ConnectionsSnapshot, CreateEnrollmentTokenRequest, CreateEnrollmentTokenResponse, EnrollAgentRequest, GetConnectionRuntimeEpochResponse, HeartbeatRequest, MeshAccessSnapshot, NodeList, Overview, PolicySnapshot, PreviewPolicyRequest, PreviewPolicyResponse, PublishConnectionIdentityRequest, PublishConnectionIdentityResponse, ReportConnectionRuntimeRequest, ReportConnectionRuntimeResponse, RevokeNodeRequest, RevokeNodeResponse, SaveConnectionsRequest, SaveMeshAccessRequest, SavePolicyRequest, SetNodeCountryRequest } from "./types.gen.ts";
-import { zAcknowledgeAgentConnectionsRequest, zAcknowledgeAgentConnectionsResponse, zAcknowledgeConfigurationRequest, zAcknowledgeConfigurationResponse, zAgentConnectionsSnapshot, zAgentDataplaneSnapshot, zAgentNodeResponse, zBeginConnectionRuntimeRequest, zBeginConnectionRuntimeResponse, zConfigurationSnapshot, zConnectionRuntimesSnapshot, zConnectionsSnapshot, zCreateEnrollmentTokenRequest, zCreateEnrollmentTokenResponse, zEnrollAgentRequest, zGetConnectionRuntimeEpochResponse, zHeartbeatRequest, zMeshAccessSnapshot, zNodeList, zOverview, zPolicySnapshot, zPreviewPolicyRequest, zPreviewPolicyResponse, zPublishConnectionIdentityRequest, zPublishConnectionIdentityResponse, zReportConnectionRuntimeRequest, zReportConnectionRuntimeResponse, zRevokeNodeRequest, zRevokeNodeResponse, zSaveConnectionsRequest, zSaveMeshAccessRequest, zSavePolicyRequest, zSetNodeCountryRequest } from "./zod.gen.ts";
+import type { AcknowledgeAgentConnectionsRequest, AcknowledgeAgentConnectionsResponse, AcknowledgeConfigurationRequest, AcknowledgeConfigurationResponse, AgentConnectionsSnapshot, AgentDataplaneSnapshot, AgentNodeResponse, BeginConnectionRuntimeRequest, BeginConnectionRuntimeResponse, ConfigurationSnapshot, ConnectionRuntimesSnapshot, ConnectionsSnapshot, CreateEnrollmentTokenRequest, CreateEnrollmentTokenResponse, EnrollAgentRequest, GetConnectionRuntimeEpochResponse, HeartbeatRequest, MeshAccessSnapshot, NodeList, Overview, PolicySnapshot, PreviewFlowRequest, PreviewFlowResponse, PreviewPolicyRequest, PreviewPolicyResponse, PublishConnectionIdentityRequest, PublishConnectionIdentityResponse, ReportConnectionRuntimeRequest, ReportConnectionRuntimeResponse, RevokeNodeRequest, RevokeNodeResponse, SaveConnectionsRequest, SaveMeshAccessRequest, SavePolicyRequest, SaveTagsRequest, SetNodeCountryRequest, SetNodeTagsRequest, TagSnapshot } from "./types.gen.ts";
+import { zAcknowledgeAgentConnectionsRequest, zAcknowledgeAgentConnectionsResponse, zAcknowledgeConfigurationRequest, zAcknowledgeConfigurationResponse, zAgentConnectionsSnapshot, zAgentDataplaneSnapshot, zAgentNodeResponse, zBeginConnectionRuntimeRequest, zBeginConnectionRuntimeResponse, zConfigurationSnapshot, zConnectionRuntimesSnapshot, zConnectionsSnapshot, zCreateEnrollmentTokenRequest, zCreateEnrollmentTokenResponse, zEnrollAgentRequest, zGetConnectionRuntimeEpochResponse, zHeartbeatRequest, zMeshAccessSnapshot, zNodeList, zOverview, zPolicySnapshot, zPreviewFlowRequest, zPreviewFlowResponse, zPreviewPolicyRequest, zPreviewPolicyResponse, zPublishConnectionIdentityRequest, zPublishConnectionIdentityResponse, zReportConnectionRuntimeRequest, zReportConnectionRuntimeResponse, zRevokeNodeRequest, zRevokeNodeResponse, zSaveConnectionsRequest, zSaveMeshAccessRequest, zSavePolicyRequest, zSaveTagsRequest, zSetNodeCountryRequest, zSetNodeTagsRequest, zTagSnapshot } from "./zod.gen.ts";
 
 export async function getMeshAccessOperation(baseUrl: string, token: string): Promise<MeshAccessSnapshot> {
   return request(baseUrl, { method: "GET", path: "/api/v1/access", token }, zMeshAccessSnapshot);
@@ -72,6 +72,10 @@ export async function createEnrollmentTokenOperation(baseUrl: string, token: str
   return request(baseUrl, { method: "POST", path: "/api/v1/enrollment-tokens", token, body: zCreateEnrollmentTokenRequest.parse(body) }, zCreateEnrollmentTokenResponse);
 }
 
+export async function previewFlowOperation(baseUrl: string, token: string, body: PreviewFlowRequest): Promise<PreviewFlowResponse> {
+  return request(baseUrl, { method: "POST", path: "/api/v1/flows/preview", token, body: zPreviewFlowRequest.parse(body) }, zPreviewFlowResponse);
+}
+
 export async function listNodesOperation(baseUrl: string, token: string): Promise<NodeList> {
   return request(baseUrl, { method: "GET", path: "/api/v1/nodes", token }, zNodeList);
 }
@@ -82,6 +86,10 @@ export async function setNodeCountryOperation(baseUrl: string, token: string, bo
 
 export async function revokeNodeOperation(baseUrl: string, token: string, body: RevokeNodeRequest): Promise<RevokeNodeResponse> {
   return request(baseUrl, { method: "POST", path: "/api/v1/nodes/revoke", token, body: zRevokeNodeRequest.parse(body) }, zRevokeNodeResponse);
+}
+
+export async function setNodeTagsOperation(baseUrl: string, token: string, body: SetNodeTagsRequest): Promise<TagSnapshot> {
+  return request(baseUrl, { method: "POST", path: "/api/v1/nodes/tags", token, body: zSetNodeTagsRequest.parse(body) }, zTagSnapshot);
 }
 
 export async function getOverviewOperation(baseUrl: string, token: string): Promise<Overview> {
@@ -98,4 +106,12 @@ export async function previewPolicyOperation(baseUrl: string, token: string, bod
 
 export async function savePolicyOperation(baseUrl: string, token: string, body: SavePolicyRequest): Promise<PolicySnapshot> {
   return request(baseUrl, { method: "POST", path: "/api/v1/policy/save", token, body: zSavePolicyRequest.parse(body) }, zPolicySnapshot);
+}
+
+export async function getTagsOperation(baseUrl: string, token: string): Promise<TagSnapshot> {
+  return request(baseUrl, { method: "GET", path: "/api/v1/tags", token }, zTagSnapshot);
+}
+
+export async function saveTagsOperation(baseUrl: string, token: string, body: SaveTagsRequest): Promise<TagSnapshot> {
+  return request(baseUrl, { method: "POST", path: "/api/v1/tags", token, body: zSaveTagsRequest.parse(body) }, zTagSnapshot);
 }

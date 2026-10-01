@@ -14,6 +14,8 @@ mod configuration;
 mod connection_runtime;
 mod connections;
 mod ipam;
+mod jsonc;
+mod tags;
 #[cfg(test)]
 mod tests;
 
@@ -107,7 +109,7 @@ impl Store {
             File::open(path)?.sync_all()?;
         }
         let version: i64 = connection.pragma_query_value(None, "user_version", |row| row.get(0))?;
-        if !(1..=5).contains(&version) {
+        if !(1..=6).contains(&version) {
             return Err(Error::Configuration(
                 "unsupported or incomplete controller database schema",
             ));
@@ -231,6 +233,7 @@ impl Store {
         configuration::bump(&transaction)?;
         configuration::ensure_publishable(&transaction)?;
         connections::ensure_publishable(&transaction)?;
+        access::ensure_publishable(&transaction)?;
         let node = find_node(&transaction, &id)?;
         transaction.commit()?;
         Ok(node)
@@ -276,6 +279,7 @@ impl Store {
             configuration::bump(&transaction)?;
             configuration::ensure_publishable(&transaction)?;
             connections::ensure_publishable(&transaction)?;
+            access::ensure_publishable(&transaction)?;
         }
         let node = find_node(&transaction, id)?;
         transaction.commit()?;

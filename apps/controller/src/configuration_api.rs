@@ -20,7 +20,7 @@ pub(crate) fn routes() -> OpenApiRouter<AppState> {
         .routes(utoipa_axum::routes!(set_node_country))
         .routes(utoipa_axum::routes!(get_agent_configuration))
         .routes(utoipa_axum::routes!(acknowledge_configuration))
-        .layer(DefaultBodyLimit::max(256 * 1024))
+        .layer(DefaultBodyLimit::max(512 * 1024))
 }
 
 #[utoipa::path(get, path = "/api/v1/policy", operation_id = "getPolicy", security(("adminBearer" = [])),
@@ -44,7 +44,7 @@ async fn get_policy(
     responses((status = 200, description = "Pure preview; no persistence", body = PreviewPolicyResponse),
     (status = 400, description = "Invalid JSON", body = ErrorResponse),
     (status = 401, description = "Admin credential required", body = ErrorResponse),
-    (status = 413, description = "Request exceeds 256 KiB", body = ErrorResponse),
+    (status = 413, description = "Request exceeds 512 KiB", body = ErrorResponse),
     (status = 415, description = "Expected application/json", body = ErrorResponse),
     (status = 500, description = "Storage unavailable", body = ErrorResponse)))]
 async fn preview_policy(
@@ -68,7 +68,7 @@ async fn preview_policy(
     (status = 401, description = "Admin credential required", body = ErrorResponse),
     (status = 409, description = "Stale global revision", body = ErrorResponse),
     (status = 422, description = "Invalid policy or capacity exhausted", body = ErrorResponse),
-    (status = 413, description = "Request exceeds 256 KiB", body = ErrorResponse),
+    (status = 413, description = "Request exceeds 512 KiB", body = ErrorResponse),
     (status = 415, description = "Expected application/json", body = ErrorResponse),
     (status = 500, description = "Storage unavailable", body = ErrorResponse)))]
 async fn save_policy(
@@ -93,7 +93,7 @@ async fn save_policy(
     (status = 404, description = "Node not found", body = ErrorResponse),
     (status = 409, description = "Stale global revision", body = ErrorResponse),
     (status = 422, description = "Capacity exhausted", body = ErrorResponse),
-    (status = 413, description = "Request exceeds 256 KiB", body = ErrorResponse),
+    (status = 413, description = "Request exceeds 512 KiB", body = ErrorResponse),
     (status = 415, description = "Expected application/json", body = ErrorResponse),
     (status = 500, description = "Storage unavailable", body = ErrorResponse)))]
 async fn set_node_country(
@@ -134,7 +134,7 @@ async fn get_agent_configuration(
     (status = 401, description = "Node credential required", body = ErrorResponse),
     (status = 403, description = "Node revoked", body = ErrorResponse),
     (status = 409, description = "Revision or digest is not this node's current snapshot", body = ErrorResponse),
-    (status = 413, description = "Request exceeds 256 KiB", body = ErrorResponse),
+    (status = 413, description = "Request exceeds 512 KiB", body = ErrorResponse),
     (status = 415, description = "Expected application/json", body = ErrorResponse),
     (status = 500, description = "Storage unavailable", body = ErrorResponse)))]
 async fn acknowledge_configuration(

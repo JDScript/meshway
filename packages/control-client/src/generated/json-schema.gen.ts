@@ -4,6 +4,13 @@ export const schemaDocument = {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "components": {
     "schemas": {
+      "AccessAction": {
+        "type": "string",
+        "enum": [
+          "allow",
+          "reject"
+        ]
+      },
       "AcknowledgeAgentConnectionsRequest": {
         "type": "object",
         "required": [
@@ -883,6 +890,45 @@ export const schemaDocument = {
         },
         "additionalProperties": false
       },
+      "FlowAuthorizationAction": {
+        "type": "string",
+        "enum": [
+          "allow",
+          "reject",
+          "invalid"
+        ]
+      },
+      "FlowAuthorizationDecision": {
+        "type": "object",
+        "required": [
+          "action",
+          "rule_id",
+          "matched_direction",
+          "reason"
+        ],
+        "properties": {
+          "action": {
+            "$ref": "#/components/schemas/FlowAuthorizationAction"
+          },
+          "matched_direction": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "pattern": "^(forward|reverse)$"
+          },
+          "reason": {
+            "type": "string"
+          },
+          "rule_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "additionalProperties": false
+      },
       "FlowQuery": {
         "type": "object",
         "description": "Internet country is a preview hint, not automatic geolocation. Mesh country\nand source country always come from the active-node inventory.",
@@ -910,7 +956,8 @@ export const schemaDocument = {
             "type": [
               "string",
               "null"
-            ]
+            ],
+            "x-meshway-ref": "node"
           },
           "domain": {
             "type": [
@@ -919,7 +966,8 @@ export const schemaDocument = {
             ]
           },
           "source_node_id": {
-            "type": "string"
+            "type": "string",
+            "x-meshway-ref": "node"
           }
         },
         "additionalProperties": false
@@ -1008,15 +1056,62 @@ export const schemaDocument = {
       "MeshAccessPolicy": {
         "type": "object",
         "required": [
-          "grants"
+          "default_action",
+          "rules"
         ],
         "properties": {
-          "grants": {
+          "default_action": {
+            "$ref": "#/components/schemas/AccessAction"
+          },
+          "rules": {
             "type": "array",
             "items": {
-              "$ref": "#/components/schemas/MeshAccessGrant"
+              "$ref": "#/components/schemas/MeshAccessRule"
             },
             "maxItems": 128
+          }
+        },
+        "additionalProperties": false
+      },
+      "MeshAccessRule": {
+        "type": "object",
+        "required": [
+          "id",
+          "source",
+          "destination",
+          "action",
+          "bidirectional"
+        ],
+        "properties": {
+          "action": {
+            "$ref": "#/components/schemas/AccessAction"
+          },
+          "bidirectional": {
+            "type": "boolean"
+          },
+          "destination": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "x-meshway-ref": "selector"
+            },
+            "maxItems": 32,
+            "minItems": 1
+          },
+          "id": {
+            "type": "string",
+            "maxLength": 64,
+            "minLength": 1,
+            "pattern": "^[A-Za-z0-9._-]+$"
+          },
+          "source": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "x-meshway-ref": "selector"
+            },
+            "maxItems": 32,
+            "minItems": 1
           }
         },
         "additionalProperties": false
@@ -1026,6 +1121,7 @@ export const schemaDocument = {
         "required": [
           "revision",
           "policy",
+          "source_jsonc",
           "valid",
           "diagnostics"
         ],
@@ -1045,6 +1141,12 @@ export const schemaDocument = {
             "format": "int64",
             "maximum": 4294967295,
             "minimum": 1
+          },
+          "source_jsonc": {
+            "type": [
+              "string",
+              "null"
+            ]
           },
           "valid": {
             "type": "boolean"
@@ -1096,6 +1198,23 @@ export const schemaDocument = {
           },
           "name": {
             "type": "string"
+          }
+        },
+        "additionalProperties": false
+      },
+      "MeshPathAuthorization": {
+        "type": "object",
+        "description": "Internal compiled path authorization. Its JSON remains `{ \"grants\": [...] }`\nso schema-version-1 NodeDataplane remains byte-contract compatible.",
+        "required": [
+          "grants"
+        ],
+        "properties": {
+          "grants": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/MeshAccessGrant"
+            },
+            "maxItems": 128
           }
         },
         "additionalProperties": false
@@ -1236,7 +1355,7 @@ export const schemaDocument = {
       },
       "NodeDataplane": {
         "type": "object",
-        "description": "One coherent global revision, projected for the authenticated node. Identities\ninclude E2E peers and confer no carrier adjacency. Invalid access withdraws\nevery effective grant. More than 64 union identities rejects the request.",
+        "description": "One coherent global revision, projected for the authenticated node.",
         "required": [
           "schema_version",
           "revision",
@@ -1249,7 +1368,7 @@ export const schemaDocument = {
         ],
         "properties": {
           "access_policy": {
-            "$ref": "#/components/schemas/MeshAccessPolicy"
+            "$ref": "#/components/schemas/MeshPathAuthorization"
           },
           "access_valid": {
             "type": "boolean"
@@ -1368,6 +1487,28 @@ export const schemaDocument = {
         },
         "additionalProperties": false
       },
+      "NodeTagAssignment": {
+        "type": "object",
+        "required": [
+          "node_id",
+          "tags"
+        ],
+        "properties": {
+          "node_id": {
+            "type": "string",
+            "x-meshway-ref": "node"
+          },
+          "tags": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "x-meshway-ref": "tag"
+            },
+            "maxItems": 32
+          }
+        },
+        "additionalProperties": false
+      },
       "OutgoingConnectionCandidate": {
         "type": "object",
         "required": [
@@ -1469,6 +1610,7 @@ export const schemaDocument = {
           "revision",
           "network",
           "policy",
+          "source_jsonc",
           "valid",
           "diagnostics"
         ],
@@ -1490,6 +1632,66 @@ export const schemaDocument = {
             "format": "int64",
             "maximum": 4294967295,
             "minimum": 1
+          },
+          "source_jsonc": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "valid": {
+            "type": "boolean"
+          }
+        },
+        "additionalProperties": false
+      },
+      "PreviewFlowRequest": {
+        "type": "object",
+        "required": [
+          "flow"
+        ],
+        "properties": {
+          "flow": {
+            "$ref": "#/components/schemas/FlowQuery"
+          }
+        },
+        "additionalProperties": false
+      },
+      "PreviewFlowResponse": {
+        "type": "object",
+        "required": [
+          "revision",
+          "valid",
+          "authorization",
+          "routing",
+          "diagnostics",
+          "execution_supported",
+          "execution_reason"
+        ],
+        "properties": {
+          "authorization": {
+            "$ref": "#/components/schemas/FlowAuthorizationDecision"
+          },
+          "diagnostics": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/PolicyDiagnostic"
+            }
+          },
+          "execution_reason": {
+            "type": "string"
+          },
+          "execution_supported": {
+            "type": "boolean"
+          },
+          "revision": {
+            "type": "integer",
+            "format": "int64",
+            "maximum": 4294967295,
+            "minimum": 1
+          },
+          "routing": {
+            "$ref": "#/components/schemas/RouteDecision"
           },
           "valid": {
             "type": "boolean"
@@ -1724,7 +1926,8 @@ export const schemaDocument = {
             "type": [
               "string",
               "null"
-            ]
+            ],
+            "x-meshway-ref": "node"
           },
           "kind": {
             "$ref": "#/components/schemas/RouteActionKind"
@@ -1732,7 +1935,8 @@ export const schemaDocument = {
           "via": {
             "type": "array",
             "items": {
-              "type": "string"
+              "type": "string",
+              "x-meshway-ref": "node"
             }
           }
         },
@@ -1874,6 +2078,12 @@ export const schemaDocument = {
           },
           "policy": {
             "$ref": "#/components/schemas/MeshAccessPolicy"
+          },
+          "source_jsonc": {
+            "type": [
+              "string",
+              "null"
+            ]
           }
         },
         "additionalProperties": false
@@ -1893,6 +2103,35 @@ export const schemaDocument = {
           },
           "policy": {
             "$ref": "#/components/schemas/RoutingPolicy"
+          },
+          "source_jsonc": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "additionalProperties": false
+      },
+      "SaveTagsRequest": {
+        "type": "object",
+        "required": [
+          "expected_revision",
+          "tags"
+        ],
+        "properties": {
+          "expected_revision": {
+            "type": "integer",
+            "format": "int64",
+            "maximum": 4294967295,
+            "minimum": 1
+          },
+          "tags": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/TagDefinition"
+            },
+            "maxItems": 64
           }
         },
         "additionalProperties": false
@@ -1918,7 +2157,37 @@ export const schemaDocument = {
             "minimum": 1
           },
           "node_id": {
-            "type": "string"
+            "type": "string",
+            "x-meshway-ref": "node"
+          }
+        },
+        "additionalProperties": false
+      },
+      "SetNodeTagsRequest": {
+        "type": "object",
+        "required": [
+          "expected_revision",
+          "node_id",
+          "tags"
+        ],
+        "properties": {
+          "expected_revision": {
+            "type": "integer",
+            "format": "int64",
+            "maximum": 4294967295,
+            "minimum": 1
+          },
+          "node_id": {
+            "type": "string",
+            "x-meshway-ref": "node"
+          },
+          "tags": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "x-meshway-ref": "tag"
+            },
+            "maxItems": 32
           }
         },
         "additionalProperties": false
@@ -1940,8 +2209,58 @@ export const schemaDocument = {
           "node_ids": {
             "type": "array",
             "items": {
-              "type": "string"
+              "type": "string",
+              "x-meshway-ref": "node"
             }
+          }
+        },
+        "additionalProperties": false
+      },
+      "TagDefinition": {
+        "type": "object",
+        "required": [
+          "tag",
+          "description"
+        ],
+        "properties": {
+          "description": {
+            "type": "string",
+            "maxLength": 256
+          },
+          "tag": {
+            "type": "string",
+            "pattern": "^tag:[a-z0-9][a-z0-9_-]{0,47}$",
+            "x-meshway-ref": "tag"
+          }
+        },
+        "additionalProperties": false
+      },
+      "TagSnapshot": {
+        "type": "object",
+        "required": [
+          "revision",
+          "tags",
+          "assignments"
+        ],
+        "properties": {
+          "assignments": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/NodeTagAssignment"
+            }
+          },
+          "revision": {
+            "type": "integer",
+            "format": "int64",
+            "maximum": 4294967295,
+            "minimum": 1
+          },
+          "tags": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/TagDefinition"
+            },
+            "maxItems": 64
           }
         },
         "additionalProperties": false

@@ -5,6 +5,7 @@ mod configuration_api;
 mod connection_runtime_api;
 mod connections_api;
 mod store;
+mod tags_api;
 
 use std::{
     path::Path,
@@ -163,6 +164,7 @@ fn contract_router() -> OpenApiRouter<AppState> {
         .merge(connections_api::routes())
         .merge(connection_runtime_api::routes())
         .merge(access_api::routes())
+        .merge(tags_api::routes())
 }
 
 fn describe(api: &mut OpenApi) {
@@ -175,6 +177,70 @@ fn describe(api: &mut OpenApi) {
             SecurityScheme::Http(Http::new(HttpAuthScheme::Bearer)),
         );
     }
+    annotate_references(api);
+}
+
+fn annotate_references(api: &mut OpenApi) {
+    let mut document = serde_json::to_value(&*api).expect("OpenAPI must serialize");
+    let references = [
+        (
+            "/components/schemas/MeshAccessRule/properties/source/items",
+            "selector",
+        ),
+        (
+            "/components/schemas/MeshAccessRule/properties/destination/items",
+            "selector",
+        ),
+        (
+            "/components/schemas/FlowQuery/properties/source_node_id",
+            "node",
+        ),
+        (
+            "/components/schemas/FlowQuery/properties/destination_node_id",
+            "node",
+        ),
+        (
+            "/components/schemas/SourceSelector/properties/node_ids/items",
+            "node",
+        ),
+        (
+            "/components/schemas/RouteAction/properties/via/items",
+            "node",
+        ),
+        (
+            "/components/schemas/RouteAction/properties/exit_node_id",
+            "node",
+        ),
+        (
+            "/components/schemas/SetNodeCountryRequest/properties/node_id",
+            "node",
+        ),
+        (
+            "/components/schemas/SetNodeTagsRequest/properties/node_id",
+            "node",
+        ),
+        (
+            "/components/schemas/NodeTagAssignment/properties/node_id",
+            "node",
+        ),
+        ("/components/schemas/TagDefinition/properties/tag", "tag"),
+        (
+            "/components/schemas/NodeTagAssignment/properties/tags/items",
+            "tag",
+        ),
+        (
+            "/components/schemas/SetNodeTagsRequest/properties/tags/items",
+            "tag",
+        ),
+    ];
+    for (pointer, kind) in references {
+        let schema = document
+            .pointer_mut(pointer)
+            .and_then(serde_json::Value::as_object_mut)
+            .unwrap_or_else(|| panic!("missing schema reference field {pointer}"));
+        schema.insert("x-meshway-ref".into(), kind.into());
+    }
+    *api = serde_json::from_value(document).expect("annotated OpenAPI must deserialize");
 }
 
 /// Live routes and the exported OpenAPI share one set of declarations.

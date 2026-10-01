@@ -6,11 +6,13 @@ pub mod connection_runtime;
 pub mod connections;
 pub mod local;
 pub mod routing;
+pub mod tags;
 pub use access::*;
 pub use config::*;
 pub use connection_runtime::*;
 pub use connections::*;
 pub use routing::*;
+pub use tags::*;
 
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};

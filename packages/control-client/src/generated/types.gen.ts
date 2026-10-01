@@ -4,6 +4,8 @@ export type ClientOptions = {
     baseUrl: `${string}://${string}` | (string & {});
 };
 
+export type AccessAction = 'allow' | 'reject';
+
 export type AcknowledgeAgentConnectionsRequest = {
     digest: string;
     revision: number;
@@ -224,6 +226,15 @@ export type ErrorResponse = {
     message: string;
 };
 
+export type FlowAuthorizationAction = 'allow' | 'reject' | 'invalid';
+
+export type FlowAuthorizationDecision = {
+    action: FlowAuthorizationAction;
+    matched_direction: string | null;
+    reason: string;
+    rule_id: string | null;
+};
+
 /**
  * Internet country is a preview hint, not automatic geolocation. Mesh country
  * and source country always come from the active-node inventory.
@@ -266,7 +277,16 @@ export type MeshAccessGrant = {
 };
 
 export type MeshAccessPolicy = {
-    grants: Array<MeshAccessGrant>;
+    default_action: AccessAction;
+    rules: Array<MeshAccessRule>;
+};
+
+export type MeshAccessRule = {
+    action: AccessAction;
+    bidirectional: boolean;
+    destination: Array<string>;
+    id: string;
+    source: Array<string>;
 };
 
 export type MeshAccessSnapshot = {
@@ -276,6 +296,7 @@ export type MeshAccessSnapshot = {
      */
     policy: MeshAccessPolicy;
     revision: number;
+    source_jsonc: string | null;
     valid: boolean;
 };
 
@@ -293,6 +314,14 @@ export type MeshNode = {
     mesh_ipv4: string;
     mesh_ipv6: string;
     name: string;
+};
+
+/**
+ * Internal compiled path authorization. Its JSON remains `{ "grants": [...] }`
+ * so schema-version-1 NodeDataplane remains byte-contract compatible.
+ */
+export type MeshPathAuthorization = {
+    grants: Array<MeshAccessGrant>;
 };
 
 export type NodeConfiguration = {
@@ -321,12 +350,10 @@ export type NodeConnections = {
 };
 
 /**
- * One coherent global revision, projected for the authenticated node. Identities
- * include E2E peers and confer no carrier adjacency. Invalid access withdraws
- * every effective grant. More than 64 union identities rejects the request.
+ * One coherent global revision, projected for the authenticated node.
  */
 export type NodeDataplane = {
-    access_policy: MeshAccessPolicy;
+    access_policy: MeshPathAuthorization;
     access_valid: boolean;
     configuration: NodeConfiguration;
     connections: NodeConnections;
@@ -357,6 +384,11 @@ export type NodeSummary = {
     revoked_at: string | null;
 };
 
+export type NodeTagAssignment = {
+    node_id: string;
+    tags: Array<string>;
+};
+
 export type OutgoingConnectionCandidate = {
     credential_ref: string | null;
     endpoint: ConnectionEndpoint;
@@ -385,6 +417,21 @@ export type PolicySnapshot = {
     network: MeshNetwork;
     policy: RoutingPolicy;
     revision: number;
+    source_jsonc: string | null;
+    valid: boolean;
+};
+
+export type PreviewFlowRequest = {
+    flow: FlowQuery;
+};
+
+export type PreviewFlowResponse = {
+    authorization: FlowAuthorizationDecision;
+    diagnostics: Array<PolicyDiagnostic>;
+    execution_reason: string;
+    execution_supported: boolean;
+    revision: number;
+    routing: RouteDecision;
     valid: boolean;
 };
 
@@ -476,11 +523,18 @@ export type SaveConnectionsRequest = {
 export type SaveMeshAccessRequest = {
     expected_revision: number;
     policy: MeshAccessPolicy;
+    source_jsonc?: string | null;
 };
 
 export type SavePolicyRequest = {
     expected_revision: number;
     policy: RoutingPolicy;
+    source_jsonc?: string | null;
+};
+
+export type SaveTagsRequest = {
+    expected_revision: number;
+    tags: Array<TagDefinition>;
 };
 
 export type SetNodeCountryRequest = {
@@ -489,12 +543,29 @@ export type SetNodeCountryRequest = {
     node_id: string;
 };
 
+export type SetNodeTagsRequest = {
+    expected_revision: number;
+    node_id: string;
+    tags: Array<string>;
+};
+
 /**
  * Empty dimensions are wildcards; dimensions combine with AND, members with OR.
  */
 export type SourceSelector = {
     countries: Array<string>;
     node_ids: Array<string>;
+};
+
+export type TagDefinition = {
+    description: string;
+    tag: string;
+};
+
+export type TagSnapshot = {
+    assignments: Array<NodeTagAssignment>;
+    revision: number;
+    tags: Array<TagDefinition>;
 };
 
 export type GetMeshAccessData = {
@@ -519,7 +590,7 @@ export type GetMeshAccessError = GetMeshAccessErrors[keyof GetMeshAccessErrors];
 
 export type GetMeshAccessResponses = {
     /**
-     * Saved directional full-path IPv4 authorization and current diagnostics
+     * Saved ordered endpoint authorization source and current diagnostics
      */
     200: MeshAccessSnapshot;
 };
@@ -547,7 +618,7 @@ export type SaveMeshAccessErrors = {
      */
     409: ErrorResponse;
     /**
-     * Request exceeds 256 KiB
+     * Request exceeds 512 KiB
      */
     413: ErrorResponse;
     /**
@@ -555,7 +626,7 @@ export type SaveMeshAccessErrors = {
      */
     415: ErrorResponse;
     /**
-     * Invalid access, missing identity, or capacity exhausted (128 KiB source, 128 grants, 2..8 nodes per path, 64 projected union identities)
+     * Invalid selectors or references, JSONC mismatch, or expanded publication capacity exhausted
      */
     422: ErrorResponse;
     /**
@@ -568,7 +639,7 @@ export type SaveMeshAccessError = SaveMeshAccessErrors[keyof SaveMeshAccessError
 
 export type SaveMeshAccessResponses = {
     /**
-     * Global-CAS authorization save; all participants require bound public keys; adjacency need not exist
+     * Global-CAS ordered endpoint authorization save; missing keys defer only affected runtime paths
      */
     200: MeshAccessSnapshot;
 };
@@ -948,7 +1019,7 @@ export type AcknowledgeConfigurationErrors = {
      */
     409: ErrorResponse;
     /**
-     * Request exceeds 256 KiB
+     * Request exceeds 512 KiB
      */
     413: ErrorResponse;
     /**
@@ -1218,6 +1289,43 @@ export type CreateEnrollmentTokenResponses = {
 
 export type CreateEnrollmentTokenResponse2 = CreateEnrollmentTokenResponses[keyof CreateEnrollmentTokenResponses];
 
+export type PreviewFlowData = {
+    body: PreviewFlowRequest;
+    path?: never;
+    query?: never;
+    url: '/api/v1/flows/preview';
+};
+
+export type PreviewFlowErrors = {
+    /**
+     * Invalid JSON
+     */
+    400: ErrorResponse;
+    /**
+     * Admin credential required
+     */
+    401: ErrorResponse;
+    /**
+     * Request exceeds 512 KiB
+     */
+    413: ErrorResponse;
+    /**
+     * Expected application/json
+     */
+    415: ErrorResponse;
+};
+
+export type PreviewFlowError = PreviewFlowErrors[keyof PreviewFlowErrors];
+
+export type PreviewFlowResponses = {
+    /**
+     * Combined saved endpoint authorization and routing preview
+     */
+    200: PreviewFlowResponse;
+};
+
+export type PreviewFlowResponse2 = PreviewFlowResponses[keyof PreviewFlowResponses];
+
 export type ListNodesData = {
     body?: never;
     path?: never;
@@ -1272,7 +1380,7 @@ export type SetNodeCountryErrors = {
      */
     409: ErrorResponse;
     /**
-     * Request exceeds 256 KiB
+     * Request exceeds 512 KiB
      */
     413: ErrorResponse;
     /**
@@ -1349,6 +1457,43 @@ export type RevokeNodeResponses = {
 
 export type RevokeNodeResponse2 = RevokeNodeResponses[keyof RevokeNodeResponses];
 
+export type SetNodeTagsData = {
+    body: SetNodeTagsRequest;
+    path?: never;
+    query?: never;
+    url: '/api/v1/nodes/tags';
+};
+
+export type SetNodeTagsErrors = {
+    /**
+     * Invalid JSON
+     */
+    400: ErrorResponse;
+    /**
+     * Admin credential required
+     */
+    401: ErrorResponse;
+    /**
+     * Stale global revision
+     */
+    409: ErrorResponse;
+    /**
+     * Unknown node or tag
+     */
+    422: ErrorResponse;
+};
+
+export type SetNodeTagsError = SetNodeTagsErrors[keyof SetNodeTagsErrors];
+
+export type SetNodeTagsResponses = {
+    /**
+     * Global-CAS active-node tag assignment
+     */
+    200: TagSnapshot;
+};
+
+export type SetNodeTagsResponse = SetNodeTagsResponses[keyof SetNodeTagsResponses];
+
 export type GetOverviewData = {
     body?: never;
     path?: never;
@@ -1424,7 +1569,7 @@ export type PreviewPolicyErrors = {
      */
     401: ErrorResponse;
     /**
-     * Request exceeds 256 KiB
+     * Request exceeds 512 KiB
      */
     413: ErrorResponse;
     /**
@@ -1469,7 +1614,7 @@ export type SavePolicyErrors = {
      */
     409: ErrorResponse;
     /**
-     * Request exceeds 256 KiB
+     * Request exceeds 512 KiB
      */
     413: ErrorResponse;
     /**
@@ -1496,3 +1641,65 @@ export type SavePolicyResponses = {
 };
 
 export type SavePolicyResponse = SavePolicyResponses[keyof SavePolicyResponses];
+
+export type GetTagsData = {
+    body?: never;
+    path?: never;
+    query?: never;
+    url: '/api/v1/tags';
+};
+
+export type GetTagsErrors = {
+    /**
+     * Admin credential required
+     */
+    401: ErrorResponse;
+};
+
+export type GetTagsError = GetTagsErrors[keyof GetTagsErrors];
+
+export type GetTagsResponses = {
+    /**
+     * Admin-owned tag catalog and active assignments
+     */
+    200: TagSnapshot;
+};
+
+export type GetTagsResponse = GetTagsResponses[keyof GetTagsResponses];
+
+export type SaveTagsData = {
+    body: SaveTagsRequest;
+    path?: never;
+    query?: never;
+    url: '/api/v1/tags';
+};
+
+export type SaveTagsErrors = {
+    /**
+     * Invalid JSON
+     */
+    400: ErrorResponse;
+    /**
+     * Admin credential required
+     */
+    401: ErrorResponse;
+    /**
+     * Stale global revision
+     */
+    409: ErrorResponse;
+    /**
+     * Invalid or referenced tag
+     */
+    422: ErrorResponse;
+};
+
+export type SaveTagsError = SaveTagsErrors[keyof SaveTagsErrors];
+
+export type SaveTagsResponses = {
+    /**
+     * Global-CAS tag catalog save
+     */
+    200: TagSnapshot;
+};
+
+export type SaveTagsResponse = SaveTagsResponses[keyof SaveTagsResponses];

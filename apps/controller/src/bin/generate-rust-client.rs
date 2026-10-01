@@ -86,7 +86,23 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     if found.len() != operations.len() {
         return Err("missing agent operation".into());
     }
-    let mut analyzer = SchemaAnalyzer::new(document.clone())?;
+    // Editor-only reference metadata is authoritative in OpenAPI but has no
+    // meaning in the agent model. openapi-to-rust 0.19 rejects extensions on
+    // nullable scalar schemas, so strip only this known annotation from its
+    // private analysis copy while retaining it in the published document.
+    fn strip_editor_refs(value: &mut serde_json::Value) {
+        match value {
+            serde_json::Value::Object(object) => {
+                object.remove("x-meshway-ref");
+                object.values_mut().for_each(strip_editor_refs);
+            }
+            serde_json::Value::Array(array) => array.iter_mut().for_each(strip_editor_refs),
+            _ => {}
+        }
+    }
+    let mut agent_document = document.clone();
+    strip_editor_refs(&mut agent_document);
+    let mut analyzer = SchemaAnalyzer::new(agent_document)?;
     let mut analysis = analyzer.analyze()?;
     let generator = CodeGenerator::new(GeneratorConfig {
         spec_path: args.input,

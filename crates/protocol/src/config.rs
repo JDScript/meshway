@@ -17,6 +17,9 @@ pub struct PolicySnapshot {
     pub revision: u32,
     pub network: MeshNetwork,
     pub policy: RoutingPolicy,
+    #[schema(required = true)]
+    #[serde(deserialize_with = "crate::deserialize_required_nullable")]
+    pub source_jsonc: Option<String>,
     pub valid: bool,
     pub diagnostics: Vec<PolicyDiagnostic>,
 }
@@ -44,6 +47,8 @@ pub struct SavePolicyRequest {
     #[schema(format = Int64, minimum = 1, maximum = 4294967295_u64)]
     pub expected_revision: u32,
     pub policy: RoutingPolicy,
+    #[serde(default)]
+    pub source_jsonc: Option<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize, ToSchema)]

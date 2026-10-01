@@ -122,6 +122,7 @@ fn adapt_nullable_component(source: &mut String, name: &str, schema: &Value) -> 
                 "pattern",
                 "minimum",
                 "maximum",
+                "x-meshway-ref",
             ]
             .contains(&key.as_str())
             {

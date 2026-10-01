@@ -17,6 +17,7 @@ meshway-policy = { path = "../../crates/policy" }
 serde.workspace = true
 ipnet = "2.11"
 idna = "1"
+jsonc-parser = { version = "=0.33.1", features = ["serde"] }
 url = "2"
 rusqlite.workspace = true
 thiserror = "2"

@@ -265,13 +265,11 @@ pub struct AgentDataplaneSnapshot {
     pub digest: String,
     pub payload: NodeDataplane,
 }
-/**One coherent global revision, projected for the authenticated node. Identities
-include E2E peers and confer no carrier adjacency. Invalid access withdraws
-every effective grant. More than 64 union identities rejects the request.*/
+///One coherent global revision, projected for the authenticated node.
 #[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct NodeDataplane {
-    pub access_policy: MeshAccessPolicy,
+    pub access_policy: MeshPathAuthorization,
     pub access_valid: bool,
     pub configuration: NodeConfiguration,
     pub connections: NodeConnections,
@@ -471,9 +469,11 @@ pub struct MeshNetwork {
     pub ipv4_prefix: String,
     pub ipv6_prefix: String,
 }
+/**Internal compiled path authorization. Its JSON remains `{ "grants": [...] }`
+so schema-version-1 NodeDataplane remains byte-contract compatible.*/
 #[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
-pub struct MeshAccessPolicy {
+pub struct MeshPathAuthorization {
     ///Constraint: maxItems=128
     pub grants: Vec<MeshAccessGrant>,
 }

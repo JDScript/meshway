@@ -8,7 +8,10 @@
 //! path is invalid: preview fails closed rather than skipping a hop.
 
 pub mod access;
-pub use access::{compile_mesh_paths, validate_mesh_access};
+pub use access::{
+    compile_mesh_paths, evaluate_access, valid_tag_selector, validate_access_policy,
+    validate_mesh_path_authorization,
+};
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::io;

@@ -4,7 +4,7 @@ use chrono::Utc;
 use meshway_protocol::*;
 use rusqlite::{Connection, OptionalExtension, TransactionBehavior, params};
 
-use super::{NODE_SELECT, Store, configuration, node_row, timestamp};
+use super::{NODE_SELECT, Store, access, configuration, node_row, timestamp};
 use crate::Error;
 
 #[cfg(test)]
@@ -13,7 +13,7 @@ mod validation;
 
 pub(super) fn upgrade(connection: &mut Connection) -> Result<(), Error> {
     let version: u32 = connection.pragma_query_value(None, "user_version", |row| row.get(0))?;
-    if (3..=5).contains(&version) {
+    if (3..=6).contains(&version) {
         return Ok(());
     }
     if version != 2 {
@@ -260,6 +260,7 @@ impl Store {
             configuration::bump(&transaction)?;
             configuration::ensure_publishable(&transaction)?;
             ensure_publishable(&transaction)?;
+            access::ensure_publishable(&transaction)?;
         }
         let response = PublishConnectionIdentityResponse {
             revision: configuration::revision(&transaction)?,
@@ -305,6 +306,7 @@ impl Store {
             configuration::bump(&transaction)?;
             configuration::ensure_publishable(&transaction)?;
             ensure_publishable(&transaction)?;
+            access::ensure_publishable(&transaction)?;
         }
         let response = admin_snapshot(&transaction)?;
         transaction.commit()?;

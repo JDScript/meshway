@@ -50,7 +50,7 @@ pub(crate) fn fixtures(count: usize) -> (Vec<NodeDataplane>, Vec<PrivateKey>) {
             })
             .collect(),
     };
-    let access = MeshAccessPolicy {
+    let access = MeshPathAuthorization {
         grants: [path, reverse]
             .into_iter()
             .enumerate()
