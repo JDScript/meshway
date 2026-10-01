@@ -3,6 +3,7 @@ import {
   KeyRoundIcon,
   CableIcon,
   LayoutDashboardIcon,
+  NetworkIcon,
   RouteIcon,
   ServerIcon,
   ShieldCheckIcon,
@@ -73,6 +74,12 @@ export const navSections: NavSection[] = [
   {
     label: "管理",
     items: [
+      {
+        href: "/network",
+        label: "网络设置",
+        icon: NetworkIcon,
+        keywords: ["network", "settings", "dns", "zone", "ttl", "prefix", "网络名称"],
+      },
       {
         href: "/enrollment",
         label: "注册令牌",

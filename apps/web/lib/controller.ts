@@ -5,6 +5,7 @@ import {
   getConnectionRuntimes,
   getConnections,
   getMeshAccess,
+  getNetwork,
   getOverview,
   getPolicy,
   getTags,
@@ -12,6 +13,7 @@ import {
   type ConnectionRuntimesSnapshot,
   type ConnectionsSnapshot,
   type MeshAccessSnapshot,
+  type NetworkSnapshot,
   type NodeList,
   type Overview,
   type PolicySnapshot,
@@ -19,6 +21,7 @@ import {
 } from "@meshway/control-client"
 import { redirect } from "next/navigation"
 import { connection } from "next/server"
+import { cache } from "react"
 
 import { EXPIRED_LOGIN_PATH, requireAdminToken } from "@/lib/session"
 
@@ -103,4 +106,11 @@ export function fetchMeshAccess(): Promise<ControllerResult<MeshAccessSnapshot>>
 /** Tag catalog and node tag assignments. */
 export function fetchTags(): Promise<ControllerResult<TagSnapshot>> {
   return authorizedRead(getTags)
+}
+
+/** Persistent singleton network metadata and saved DNS intent. */
+const readNetwork = cache(() => authorizedRead(getNetwork))
+
+export function fetchNetwork(): Promise<ControllerResult<NetworkSnapshot>> {
+  return readNetwork()
 }

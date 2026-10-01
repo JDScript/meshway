@@ -1,6 +1,7 @@
 "use client"
 
 import Link from "next/link"
+import type { NetworkSnapshot } from "@meshway/control-client"
 import { usePathname } from "next/navigation"
 
 import { useAccessHasDraft } from "@/components/access/draft-store"
@@ -24,8 +25,9 @@ import {
   SidebarRail,
   useSidebar,
 } from "@/components/ui/sidebar"
+import type { ControllerResult } from "@/lib/controller"
 
-export function AppSidebar({ controllerHost }: { controllerHost: string }) {
+export function AppSidebar({ controllerHost, network }: { controllerHost: string; network?: ControllerResult<NetworkSnapshot> }) {
   const pathname = usePathname()
   const { isMobile, setOpenMobile } = useSidebar()
   const routingDraft = useRoutingHasDraft()
@@ -39,7 +41,7 @@ export function AppSidebar({ controllerHost }: { controllerHost: string }) {
   return (
     <Sidebar collapsible="icon" variant="inset">
       <SidebarHeader>
-        <ContextSwitcher controllerHost={controllerHost} />
+        <ContextSwitcher controllerHost={controllerHost} network={network} />
       </SidebarHeader>
       <SidebarContent>
         {navSections.map((section) => (

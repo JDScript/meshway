@@ -1,6 +1,7 @@
 "use client"
 
 import Link from "next/link"
+import type { NetworkSnapshot } from "@meshway/control-client"
 import { usePathname } from "next/navigation"
 
 import { CapabilityPopover } from "@/components/shell/capability-popover"
@@ -17,8 +18,9 @@ import {
 } from "@/components/ui/breadcrumb"
 import { Separator } from "@/components/ui/separator"
 import { SidebarTrigger } from "@/components/ui/sidebar"
+import type { ControllerResult } from "@/lib/controller"
 
-export function SiteHeader() {
+export function SiteHeader({ network }: { network?: ControllerResult<NetworkSnapshot> }) {
   const pathname = usePathname()
   const item = currentItem(pathname)
   const section = currentSection(pathname)
@@ -31,6 +33,14 @@ export function SiteHeader() {
       <Separator orientation="vertical" className="mr-1 data-vertical:h-4 data-vertical:self-center" />
       <Breadcrumb className="min-w-0">
         <BreadcrumbList className="flex-nowrap">
+          {network?.ok ? (
+            <>
+              <BreadcrumbItem className="hidden min-w-0 lg:inline-flex">
+                <span className="max-w-36 truncate text-muted-foreground" title={network.data.name}>{network.data.name}</span>
+              </BreadcrumbItem>
+              <BreadcrumbSeparator className="hidden lg:inline-flex" />
+            </>
+          ) : null}
           <BreadcrumbItem className="hidden sm:inline-flex">
             <span className="text-muted-foreground">{section?.label ?? "Meshway"}</span>
           </BreadcrumbItem>

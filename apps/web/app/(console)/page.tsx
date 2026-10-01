@@ -265,7 +265,7 @@ export default async function OverviewPage() {
       ) : null}
 
       <div className="grid gap-6 lg:grid-cols-2">
-        <Panel title="网络">
+        <Panel title="网络" actions={<Link href="/network" className={buttonVariants({ variant: "ghost", size: "sm" })}>网络设置<ArrowRightIcon data-icon="inline-end" /></Link>}>
           <dl className="grid grid-cols-[7rem_1fr] gap-x-4 gap-y-2 px-4 py-3 text-xs">
             <dt className="text-muted-foreground">Controller</dt>
             <dd className="font-mono break-all">{controllerUrl()}</dd>
@@ -301,7 +301,7 @@ export default async function OverviewPage() {
               ))}
             </div>
             <p className="text-xs text-muted-foreground">
-              数据面与 mesh trace 实现后，节点会上报测量数据并显示在这里。
+              Mesh 流量、吞吐与端到端路径测量尚未上报；邻居探测 RTT 在网络拓扑及节点连接页查看。
             </p>
           </div>
         </Panel>
