@@ -24,6 +24,7 @@ pub(super) async fn send(
         return Err(Error::Oversize);
     }
     let payloads: Vec<_> = payloads.into_iter().map(Zeroizing::new).collect();
+    let generation = inner.packet_generation();
     if inner.authorize(&path)? != 0 {
         return Err(Error::UnauthorizedPath);
     }
@@ -70,7 +71,7 @@ pub(super) async fn send(
                 sessions.insert(path.clone(), session);
             }
         }
-        if *inner.shutdown.borrow() {
+        if *inner.shutdown.borrow() || generation.retired() {
             return Err(Error::Closed);
         }
         let session = sessions.get_mut(&path).ok_or(Error::Protocol)?;
@@ -93,7 +94,7 @@ pub(super) async fn send(
             .ok_or(Error::Unavailable)?;
         let batch = Batch::new(frames)?;
         inner
-            .enqueue(&channel, batch)
+            .enqueue_scoped(&channel, batch, Some(generation.clone()))
             .map_err(|failure| inner.local_send_failure(failure))
     };
     tokio::select! {

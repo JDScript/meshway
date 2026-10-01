@@ -584,6 +584,7 @@ async fn first_packet_loss(rollover: bool) {
                     .send(Outbound {
                         token: outbound.token,
                         batch: Batch::new(retained).unwrap(),
+                        generation: outbound.generation,
                     })
                     .await
                     .unwrap();
@@ -690,7 +691,68 @@ async fn receive_ready(frames: &mut mpsc::Receiver<Outbound>) -> Outbound {
     Outbound {
         token: outbound.token,
         batch: Batch::new(frames).unwrap(),
+        generation: outbound.generation,
     }
+}
+
+#[tokio::test]
+async fn admission_fence_discards_queued_outbound_and_ingress_before_reactivation() {
+    let fixture = capacity_one_fixture(3_000).await;
+    let mut delivered = fixture.sha.take_packet_receiver().unwrap();
+    fixture.nyc.send_packet(path(), vec![1]).await.unwrap();
+    assert_eq!(receive_packet(&mut delivered).await.payload, vec![1]);
+    let (mut frames, original) = intercept_peer(&fixture.lax, "sha");
+    fixture.nyc.send_packet(path(), vec![2]).await.unwrap();
+    let old = tokio::time::timeout(Duration::from_secs(1), frames.recv())
+        .await
+        .unwrap()
+        .unwrap();
+    fixture.lax.retire_packet_generation();
+    let _next = fixture.lax.begin_packet_generation();
+    original.send(old).await.unwrap();
+    assert!(
+        tokio::time::timeout(Duration::from_millis(50), delivered.recv())
+            .await
+            .is_err()
+    );
+    assert!(
+        fixture.lax.peer_transport("sha").is_some(),
+        "unstarted queue discard preserves carrier"
+    );
+
+    fixture.nyc.send_packet(path(), vec![3]).await.unwrap();
+    let queued = tokio::time::timeout(Duration::from_secs(1), frames.recv())
+        .await
+        .unwrap()
+        .unwrap();
+    let body = queued.batch.into_frames().pop().unwrap();
+    let old_generation = fixture.sha.handle.inner.packet_generation();
+    fixture.sha.retire_packet_generation();
+    let _next = fixture.sha.begin_packet_generation();
+    let token = lock(&fixture.sha.handle.inner.peers)["lax"].token;
+    fixture.sha.handle.inner.deliver(Incoming {
+        peer: "lax".into(),
+        token,
+        transport: TransportKind::Vless,
+        body: body.clone(),
+        generation: old_generation,
+    });
+    assert!(
+        tokio::time::timeout(Duration::from_millis(50), delivered.recv())
+            .await
+            .is_err()
+    );
+    // The discarded old ingress did not consume the ciphertext nonce. This
+    // deliberate fresh ingress injection proves the captured packet was valid.
+    fixture.sha.handle.inner.deliver(Incoming {
+        peer: "lax".into(),
+        token,
+        transport: TransportKind::Vless,
+        body,
+        generation: fixture.sha.handle.inner.packet_generation(),
+    });
+    assert_eq!(receive_packet(&mut delivered).await.payload, vec![3]);
+    fixture.shutdown().await;
 }
 
 #[tokio::test(start_paused = true)]

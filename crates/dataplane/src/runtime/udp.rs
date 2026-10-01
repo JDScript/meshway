@@ -180,6 +180,10 @@ pub(super) async fn run(
             }
             outbound = rx.recv() => {
                 let Some(outbound) = outbound else { break };
+                if outbound.generation.as_ref().is_some_and(|fence| fence.retired()) {
+                    work.completed_frame().await;
+                    continue;
+                }
                 let Some(session) = sessions.get_mut(&outbound.token) else {
                     inner.counters(TransportKind::NativeUdp).drop(DropReason::StaleChannel);
                     for _ in 0..outbound.batch.len() {
@@ -191,7 +195,13 @@ pub(super) async fn run(
                     let mut plaintext = Vec::with_capacity(frame.len() + 1);
                     plaintext.push(1);
                     plaintext.extend_from_slice(&frame);
-                    match send_datagram(&socket, session, &plaintext).await {
+                    let send = send_datagram(&socket, session, &plaintext);
+                    let result = if let Some(fence) = &outbound.generation {
+                        fence.run(send).await
+                    } else {
+                        send.await
+                    };
+                    match result {
                         Ok(()) => {
                             if frame.first() != Some(&super::neighbor::NAMESPACE) {
                                 inner.counters(TransportKind::NativeUdp).sent.fetch_add(1, Ordering::Relaxed);
@@ -423,6 +433,7 @@ async fn receive(
                         token,
                         transport: TransportKind::NativeUdp,
                         body: body.to_vec(),
+                        generation: inner.packet_generation(),
                     });
                     Ok(())
                 }

@@ -1,4 +1,5 @@
 mod discovery;
+pub(crate) mod generation;
 pub use discovery::{UdpDiscoveryObservation, UdpDiscoveryOutcome, UdpSocketInfo};
 mod neighbor;
 mod packet;
@@ -161,6 +162,7 @@ impl fmt::Debug for ProbeReply {
 struct Outbound {
     token: [u8; 32],
     batch: Batch,
+    generation: Option<Arc<generation::Fence>>,
 }
 
 #[derive(Clone)]
@@ -205,6 +207,7 @@ struct Incoming {
     token: [u8; 32],
     transport: TransportKind,
     body: Vec<u8>,
+    generation: Arc<generation::Fence>,
 }
 struct WaitingProbe {
     path: Vec<String>,
@@ -236,6 +239,7 @@ struct Inner {
     // Immutable, configuration-bounded permits (at most 128 exact paths). Setup
     // waits never hold the shared cache/nonce lock or allocate per caller.
     packet_setup: BTreeMap<Vec<String>, tokio::sync::Mutex<()>>,
+    packet_generation: Mutex<Arc<generation::Fence>>,
     sending: tokio::sync::Mutex<BTreeMap<Vec<String>, SendingSession>>,
     delivery: Mutex<Option<mpsc::Sender<ReceivedPacket>>>,
     handles: Mutex<Vec<JoinHandle<()>>>,
@@ -306,6 +310,7 @@ impl Runtime {
             udp_discovery_slots: Arc::new(Semaphore::new(16)),
             endpoints: Mutex::default(),
             sending: tokio::sync::Mutex::default(),
+            packet_generation: Mutex::new(generation::Fence::new()),
             delivery: Mutex::new(Some(delivery)),
             handles: Mutex::default(),
             incoming,
@@ -563,6 +568,19 @@ impl Runtime {
         }
     }
 
+    // Call only after acquiring the unique receiver. The old fence stays
+    // installed while its delivery queue is drained, so dispatch cannot refill
+    // it with old ingress work between draining and activation.
+    pub(crate) fn retire_packet_generation(&self) {
+        self.handle.inner.packet_generation().retire();
+    }
+
+    pub(crate) fn begin_packet_generation(&self) -> generation::Generation {
+        let fence = generation::Fence::new();
+        *lock(&self.handle.inner.packet_generation) = fence.clone();
+        generation::Generation(fence)
+    }
+
     /// Encrypt and enqueue an owned endpoint packet. Success is not a remote delivery ACK.
     pub async fn send_packet(&self, path: Vec<String>, payload: Vec<u8>) -> Result<()> {
         packet::send(self.handle.inner.clone(), path, vec![payload]).await
@@ -576,6 +594,7 @@ impl Runtime {
     pub async fn shutdown(&self) {
         let inner = &self.handle.inner;
         inner.shutdown.send_replace(true);
+        inner.packet_generation().retire();
         inner.changed.notify_waiters();
         lock(&inner.delivery).take();
         lock(&self.handle.receiver).take();
@@ -601,6 +620,9 @@ impl Runtime {
 }
 
 impl Inner {
+    fn packet_generation(&self) -> Arc<generation::Fence> {
+        lock(&self.packet_generation).clone()
+    }
     fn spawn(&self, future: impl Future<Output = ()> + Send + 'static) {
         let mut handles = lock(&self.handles);
         if *self.shutdown.borrow() {
@@ -699,14 +721,24 @@ impl Inner {
             .get(peer)
             .cloned()
             .ok_or(Error::Unavailable)?;
+        let generation = (packet.phase == Phase::Packet).then(|| self.packet_generation());
         let batch = Batch::new(vec![packet.encode()?])?;
-        self.enqueue(&channel, batch)
+        self.enqueue_scoped(&channel, batch, generation)
     }
     fn enqueue(&self, channel: &Channel, batch: Batch) -> StageResult<()> {
+        self.enqueue_scoped(channel, batch, None)
+    }
+    fn enqueue_scoped(
+        &self,
+        channel: &Channel,
+        batch: Batch,
+        generation: Option<Arc<generation::Fence>>,
+    ) -> StageResult<()> {
         let counters = self.counters(channel.transport);
         match channel.tx.try_send(Outbound {
             token: channel.token,
             batch,
+            generation,
         }) {
             Ok(()) => {
                 counters.outbound_high_water.enqueued(&channel.tx);

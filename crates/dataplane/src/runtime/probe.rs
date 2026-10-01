@@ -149,6 +149,11 @@ fn process(inner: &Inner, incoming: &Incoming) -> StageResult<()> {
         return super::neighbor::process(inner, incoming);
     }
     let packet = Packet::decode(&incoming.body)?;
+    let _generation = if packet.phase == Phase::Packet {
+        Some(incoming.generation.enter()?)
+    } else {
+        None
+    };
     let position = inner.authorize(&packet.path)?;
     let previous = if packet.phase.forward() {
         position.checked_sub(1)

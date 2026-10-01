@@ -4,6 +4,210 @@ use crate::{MAX_BATCH_FRAMES, MAX_PACKET_PAYLOAD};
 use std::{collections::BTreeMap, future::Future, net::Ipv4Addr};
 use tokio::{sync::watch, time};
 
+#[derive(Default)]
+struct WriteGate {
+    remaining: std::sync::atomic::AtomicUsize,
+    blocked: tokio::sync::Notify,
+    waker: Mutex<Option<std::task::Waker>>,
+}
+
+struct GatedStream {
+    stream: tokio::io::DuplexStream,
+    gate: Arc<WriteGate>,
+}
+
+impl AsyncRead for GatedStream {
+    fn poll_read(
+        mut self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+        buf: &mut ReadBuf<'_>,
+    ) -> Poll<std::io::Result<()>> {
+        Pin::new(&mut self.stream).poll_read(cx, buf)
+    }
+}
+
+impl AsyncWrite for GatedStream {
+    fn poll_write(
+        mut self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+        bytes: &[u8],
+    ) -> Poll<std::io::Result<usize>> {
+        let remaining = self
+            .gate
+            .remaining
+            .load(std::sync::atomic::Ordering::SeqCst);
+        if remaining == 0 {
+            *lock(&self.gate.waker) = Some(cx.waker().clone());
+            self.gate.blocked.notify_one();
+            return Poll::Pending;
+        }
+        let length = bytes.len().min(remaining);
+        match Pin::new(&mut self.stream).poll_write(cx, &bytes[..length]) {
+            Poll::Ready(Ok(written)) => {
+                self.gate
+                    .remaining
+                    .fetch_sub(written, std::sync::atomic::Ordering::SeqCst);
+                Poll::Ready(Ok(written))
+            }
+            other => other,
+        }
+    }
+    fn poll_flush(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<std::io::Result<()>> {
+        Pin::new(&mut self.stream).poll_flush(cx)
+    }
+    fn poll_shutdown(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<std::io::Result<()>> {
+        Pin::new(&mut self.stream).poll_shutdown(cx)
+    }
+}
+
+#[tokio::test]
+async fn admission_retirement_fences_blocked_and_partial_stream_records_preserving_e2e() {
+    for partial_bytes in [0, 6] {
+        let configs = configs();
+        let nyc = Runtime::start(configs[0].clone()).await.unwrap();
+        let lax = Runtime::start(configs[1].clone()).await.unwrap();
+        let sha = Runtime::start(configs[2].clone()).await.unwrap();
+        let gate = Arc::new(WriteGate::default());
+        gate.remaining
+            .store(usize::MAX, std::sync::atomic::Ordering::SeqCst);
+        let (a, b) = tokio::io::duplex(65_536);
+        let (a, b) = tokio::join!(
+            nyc.attach_stream(
+                GatedStream {
+                    stream: a,
+                    gate: gate.clone()
+                },
+                StreamRole::Dialer { peer: "lax".into() },
+                TransportKind::NativeTcp
+            ),
+            lax.attach_stream(b, StreamRole::Acceptor, TransportKind::NativeTcp),
+        );
+        a.unwrap();
+        b.unwrap();
+        attach_pair(&sha, &lax, 0).await;
+        let fixture = Fixture { nyc, lax, sha };
+        let mut delivered = fixture.sha.take_packet_receiver().unwrap();
+        let plan = Ipv4PacketPlan::new(
+            Ipv4Addr::new(100, 64, 0, 1),
+            1000,
+            BTreeMap::from([(Ipv4Addr::new(100, 64, 0, 3), path())]),
+            BTreeMap::new(),
+        );
+        let (device, callback) = packet_io::channel(8).unwrap();
+        let (lease, deadline) = watch::channel(Some(Instant::now() + Duration::from_secs(60)));
+        let pump = tokio::spawn(packet_io::run(
+            device.clone(),
+            Arc::new(fixture.nyc.clone()),
+            plan.clone(),
+            deadline,
+        ));
+        callback
+            .try_feed(PacketBatch::new(vec![ipv4(1)]).unwrap())
+            .unwrap();
+        assert_eq!(
+            time::timeout(Duration::from_secs(3), delivered.recv())
+                .await
+                .unwrap()
+                .unwrap()
+                .payload,
+            ipv4(1)
+        );
+        let key = fixture
+            .nyc
+            .handle
+            .inner
+            .sending
+            .lock()
+            .await
+            .get(&path())
+            .unwrap()
+            .id;
+        gate.remaining
+            .store(partial_bytes, std::sync::atomic::Ordering::SeqCst);
+        callback
+            .try_feed(PacketBatch::new(vec![ipv4(42)]).unwrap())
+            .unwrap();
+        time::timeout(Duration::from_secs(3), gate.blocked.notified())
+            .await
+            .unwrap();
+        lease.send_replace(None);
+        time::timeout(Duration::from_secs(1), pump)
+            .await
+            .unwrap()
+            .unwrap()
+            .unwrap();
+        device.drain().unwrap();
+        let empty = Ipv4PacketPlan::new(
+            Ipv4Addr::new(100, 64, 0, 1),
+            1000,
+            BTreeMap::new(),
+            BTreeMap::new(),
+        );
+        let (lease, deadline) = watch::channel(Some(Instant::now() + Duration::from_secs(60)));
+        let (active, activated) = tokio::sync::oneshot::channel();
+        let pump = tokio::spawn(packet_io::run_with_activation(
+            device.clone(),
+            Arc::new(fixture.nyc.clone()),
+            empty,
+            deadline,
+            move || {
+                active.send(()).unwrap();
+            },
+        ));
+        activated.await.unwrap();
+        gate.remaining
+            .store(usize::MAX, std::sync::atomic::Ordering::SeqCst);
+        if let Some(waker) = lock(&gate.waker).take() {
+            waker.wake();
+        }
+        assert!(
+            time::timeout(Duration::from_millis(50), delivered.recv())
+                .await
+                .is_err()
+        );
+        // A potentially partial adapter record requires carrier reauthentication,
+        // but preserves the already confirmed endpoint key and replay state.
+        assert!(fixture.nyc.peer_transport("lax").is_none());
+        lease.send_replace(None);
+        pump.await.unwrap().unwrap();
+        attach_pair(&fixture.nyc, &fixture.lax, 0).await;
+        let (lease, deadline) = watch::channel(Some(Instant::now() + Duration::from_secs(60)));
+        let pump = tokio::spawn(packet_io::run(
+            device,
+            Arc::new(fixture.nyc.clone()),
+            plan,
+            deadline,
+        ));
+        callback
+            .try_feed(PacketBatch::new(vec![ipv4(43)]).unwrap())
+            .unwrap();
+        assert_eq!(
+            time::timeout(Duration::from_secs(3), delivered.recv())
+                .await
+                .unwrap()
+                .unwrap()
+                .payload,
+            ipv4(43)
+        );
+        assert_eq!(
+            fixture
+                .nyc
+                .handle
+                .inner
+                .sending
+                .lock()
+                .await
+                .get(&path())
+                .unwrap()
+                .id,
+            key
+        );
+        lease.send_replace(None);
+        pump.await.unwrap().unwrap();
+        fixture.shutdown().await;
+    }
+}
+
 struct ObservedDevice {
     channel: Arc<ChannelDevice>,
     writes: tokio::sync::Semaphore,
@@ -321,10 +525,7 @@ async fn admission_handoff_preserves_e2e_cache_discards_old_delivery_and_never_r
     fixture.nyc.send_packet(path(), ipv4(2)).await.unwrap();
     time::timeout(Duration::from_secs(3), async {
         loop {
-            if lock(&runtime.handle.receiver)
-                .as_ref()
-                .is_some_and(|receiver| !receiver.is_empty())
-            {
+            if runtime.statistics().native_tcp.drop_reasons.closed > 0 {
                 break;
             }
             tokio::task::yield_now().await;
@@ -332,6 +533,7 @@ async fn admission_handoff_preserves_e2e_cache_discards_old_delivery_and_never_r
     })
     .await
     .unwrap();
+    assert!(lock(&runtime.handle.receiver).as_ref().unwrap().is_empty());
     let (_lease, deadline) = watch::channel(Some(until));
     let (active, ready) = tokio::sync::oneshot::channel();
     let next = tokio::spawn(packet_io::run_with_activation(

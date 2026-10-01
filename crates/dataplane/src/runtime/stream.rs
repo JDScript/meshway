@@ -185,6 +185,7 @@ async fn run<S: DuplexStream>(
                 token,
                 transport,
                 body,
+                generation: inner.packet_generation(),
             });
         }
     };
@@ -193,9 +194,23 @@ async fn run<S: DuplexStream>(
             if outbound.token != token {
                 return Err(Failure::new(Error::Protocol, DropReason::StaleChannel));
             }
+            if outbound
+                .generation
+                .as_ref()
+                .is_some_and(|fence| fence.retired())
+            {
+                continue;
+            }
             for frame in outbound.batch.into_frames() {
                 let record = lock(&cipher).seal(&frame)?;
-                write_record(&mut writer, &record).await?;
+                if let Some(fence) = &outbound.generation {
+                    // Cancellation after entering a record closes this carrier:
+                    // an adapter may already have emitted a partial frame. Never
+                    // reuse that stream with the next record / nonce.
+                    fence.run(write_record(&mut writer, &record)).await?;
+                } else {
+                    write_record(&mut writer, &record).await?;
+                }
                 if frame.first() != Some(&super::neighbor::NAMESPACE) {
                     inner
                         .counters(transport)

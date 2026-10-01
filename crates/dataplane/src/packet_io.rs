@@ -162,6 +162,7 @@ fn current(deadline: &watch::Receiver<Option<Instant>>) -> bool {
 struct ReceiverLease {
     runtime: Arc<Runtime>,
     receiver: Option<mpsc::Receiver<ReceivedPacket>>,
+    generation: Option<crate::runtime::generation::Generation>,
 }
 
 impl ReceiverLease {
@@ -169,11 +170,13 @@ impl ReceiverLease {
         let mut receiver = runtime
             .take_packet_receiver()
             .map_err(|_| io::Error::other("runtime packet receiver unavailable"))?;
+        runtime.retire_packet_generation();
         for _ in 0..256 {
             match receiver.try_recv() {
                 Ok(_) => {}
                 Err(mpsc::error::TryRecvError::Empty) => {
                     return Ok(Self {
+                        generation: Some(runtime.begin_packet_generation()),
                         runtime,
                         receiver: Some(receiver),
                     });
@@ -195,6 +198,9 @@ impl ReceiverLease {
 
 impl Drop for ReceiverLease {
     fn drop(&mut self) {
+        // Fence queued ingress/outbound and blocked carrier polls before making
+        // the unique receiver available to a replacement admission generation.
+        self.generation.take();
         if let Some(receiver) = self.receiver.take() {
             self.runtime.return_packet_receiver(receiver);
         }
@@ -204,6 +210,11 @@ impl Drop for ReceiverLease {
 /// Single bounded duplex pump. Drop this future to cancel both directions;
 /// lease expiry, withdrawal and a closed lease sender also cancel blocked I/O.
 /// The coordinator must terminate the old pump before draining/reusing a device.
+/// Joining or dropping the pump retires its local Runtime packet queues and
+/// synchronizes with carrier I/O polls. Partially written streams are closed;
+/// E2E caches survive. Already emitted network bytes cannot be recalled. Ingress
+/// is attributed at authenticated carrier delivery, then fenced through dispatch;
+/// queued old delivery is discarded before the next activation.
 pub async fn run<D: Device, A: Admission>(
     device: Arc<D>,
     runtime: Arc<Runtime>,
