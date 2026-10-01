@@ -107,6 +107,8 @@ Web 编辑基准 revision 仅在成功保存或显式重新读取后更新，预
 
 ## 里程碑 2：真实三节点转发与追踪
 
+托管邻接已在隔离 Docker 环境通过真实注册、DNS 入口、UDP / VLESS-TLS 双向认证探测、配置撤回、控制面断联后有效期截止、原身份恢复与撤销验收；节点页显示独立的应用 / 观测状态。该能力只建立邻接，不把连接许可转换成 IP / 中转授权，完整业务转发与真实逐跳 trace 仍按下列目标继续推进。见[连接应用与地址](/connection-runtime)。
+
 独立 `transport-lab` 切片开始交付真实数据面：采用静态私有身份、精确有序路径授权、Noise E2E，以及原生 UDP / TCP 与 VLESS 适配。SHA 主动 dial LAX 后，LAX 复用已接受通道向 SHA 转发；Linux TUN 与 Docker / iperf3 工具用于实测。范围和可运行命令见 [Linux 传输实验](/transport-lab)。该实验尚未绑定 controller 节点身份，也不提供逐跳 trace。
 
 建立可重复的 `NYC → LAX → SHA` 测试环境，先选一种合适承载打通真实数据面，再扩展候选。

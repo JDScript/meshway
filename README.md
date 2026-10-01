@@ -76,7 +76,7 @@ Web 默认从 `http://127.0.0.1:8420` 读取 controller；可通过 `MESHWAY_CON
 
 独立的 [Linux 传输实验](docs/transport-lab.md) 通过 `transport-lab` feature 启用：原生 UDP / TCP、VLESS TCP CONNECT、Noise 邻接认证和 E2E、精确有序路径授权、反向建连、固定 IPv4 对 TUN，以及隔离 Docker / iperf3 工具。实验密钥与配置独立于现有注册身份；运行层消费受管理身份 / 授权及真实逐跳 trace 仍需后续接通。
 
-[公钥与连接配置](docs/connections.md) 已提供注册节点公钥绑定、编译能力声明、`/connections` 监听器 / 反向拨号候选编辑，以及独立的 Agent 保存回执。使用 `run --connections` 同步连接意图；回执仍明确为保存状态，实际运行层应用与实验数据面的接通需继续推进。
+[公钥与连接配置](docs/connections.md) 提供注册节点公钥绑定、编译能力声明、节点独立详情页、监听器 / 反向拨号编辑，以及独立保存回执。[托管连接运行层](docs/connection-runtime.md) 使用 `managed-connections` feature 和 `run --apply-connections`，实际应用 Native UDP / TCP 与 TLS-VLESS 邻接，支持 DNS endpoint、限定入口的 peer 许可、配置有效期与真实邻接探测。它与 `run --connections` 的存储回执分开，尚不授予 TUN 或业务 IP 转发。
 
 DNS、multi-transport 与加密转发的交付阶段在文档站维护。优先保留端到端加密与 `meshway trace`，系统 traceroute 作为后续增强；可信逐跳路由需要显式选择。
 

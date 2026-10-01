@@ -30,6 +30,7 @@ export default defineConfig({
           { text: "多传输与故障切换", link: "/transports" },
           { text: "邻接、建连与协议插件", link: "/transport-connections" },
           { text: "公钥与连接配置", link: "/connections" },
+          { text: "连接应用、观测与地址", link: "/connection-runtime" },
           { text: "Linux 传输实验", link: "/transport-lab" },
           { text: "加密边界与真实追踪", link: "/security-and-tracing" },
         ],
