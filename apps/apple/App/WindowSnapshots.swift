@@ -56,7 +56,8 @@
     static func run(model: AppModel) async {
       guard let directory,
         environment["MESHWAY_SNAPSHOT_KEYCHAIN"]?.hasPrefix("dev.meshway.snapshot.") == true,
-        environment["MESHWAY_SNAPSHOT_SERVER"] != nil, !started else { return }
+        environment["MESHWAY_SNAPSHOT_SERVER"] != nil, !started
+      else { return }
       started = true
       do {
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
@@ -107,6 +108,11 @@
               for _ in 0..<300 {
                 if !model.enrollment.refreshing { break }
                 try await Task.sleep(for: .milliseconds(100))
+              }
+              if window.attachedSheet == nil && panel == nil {
+                window.makeKeyAndOrderFront(nil)
+                window.makeFirstResponder(nil)
+                NSApp.activate(ignoringOtherApps: true)
               }
               try await Task.sleep(for: .milliseconds(700))
               try capture(window, to: directory.appendingPathComponent("\(command.id).png"))

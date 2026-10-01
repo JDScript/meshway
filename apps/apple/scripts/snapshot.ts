@@ -2,11 +2,11 @@
 import { chmod, copyFile, mkdir, mkdtemp, readFile, readdir, rename, rm, writeFile } from "node:fs/promises";
 import { spawn } from "node:child_process";
 import { createHash, randomBytes, randomUUID } from "node:crypto";
-import { join, resolve } from "node:path";
-import { tmpdir } from "node:os";
+import { dirname, join, resolve } from "node:path";
+import { homedir, tmpdir } from "node:os";
 import { setTimeout as delay } from "node:timers/promises";
 import { authorizeDevice, exchangeDevice, getNetwork, listNodes, revokeNode, saveNetwork, setNodeCountry } from "../../../packages/control-client/src/index.ts";
-import { executable, root, service, unusedPort } from "../../../e2e/harness.ts";
+import { executable, root, run, service, unusedPort } from "../../../e2e/harness.ts";
 
 const output = resolve(process.argv[2] ?? join(tmpdir(), "opencode/apple-ui-polish/round-1"));
 await mkdir(output, { recursive: true });
@@ -21,10 +21,26 @@ let web: ReturnType<typeof service> | undefined;
 let app: ReturnType<typeof spawn> | undefined;
 let appExit: Promise<void> | undefined;
 let keychainService: string | undefined;
+let isolatedBundle = false;
 const appExecutable = process.argv[3] ?? join(root, "apps/apple/build/DerivedData/Build/Products/Debug/Meshway.app/Contents/MacOS/Meshway");
+let interrupted = false;
+process.once("SIGINT", () => { interrupted = true; });
+process.once("SIGTERM", () => { interrupted = true; });
+async function cleanupNamespace(namespace: string) {
+  for (const [command, args] of [
+    ["/usr/bin/security", ["delete-generic-password", "-s", namespace, "-a", "identity-journal"]],
+    ["/usr/bin/defaults", ["delete", namespace]],
+  ] as const) {
+    const cleanup = spawn(command, [...args], { stdio: "ignore" });
+    await new Promise<void>(resolve => cleanup.once("exit", () => resolve()));
+  }
+  // defaults delete can leave an empty plist. Remove only our exact UUID file.
+  await rm(join(homedir(), "Library/Preferences", `${namespace}.plist`), { force: true });
+}
 async function waitFor(predicate: () => Promise<boolean>, label: string, timeout = 40_000) {
   const deadline = Date.now() + timeout;
   while (Date.now() < deadline) {
+    if (interrupted) throw new Error("Snapshot run interrupted");
     if (await predicate()) return;
     await delay(100);
   }
@@ -32,6 +48,12 @@ async function waitFor(predicate: () => Promise<boolean>, label: string, timeout
 }
 async function exists(path: string) { try { await readFile(path); return true; } catch { return false; } }
 try {
+  const bundle = await run("/usr/bin/plutil", ["-extract", "CFBundleIdentifier", "raw", "-o", "-",
+    resolve(dirname(appExecutable), "../Info.plist")]);
+  if (bundle.stdout.trim() !== "dev.meshway.snapshot.meshway") {
+    throw new Error("Build the Debug app with MESHWAY_BUNDLE_PREFIX=dev.meshway.snapshot before capturing");
+  }
+  isolatedBundle = true;
   await controller.ready(`${controllerURL}/api/v1/overview`, 401);
   web = service(process.execPath, [join(root, "apps/web/node_modules/next/dist/bin/next"), "start", join(root, "apps/web"), "--hostname", "127.0.0.1", "--port", String(webPort)], {
     ...process.env, MESHWAY_CONTROLLER_URL: controllerURL, NEXT_TELEMETRY_DISABLED: "1",
@@ -64,6 +86,8 @@ try {
       const ipc = join(temporary, `${appearance}-${size}`);
       await mkdir(ipc, { mode: 0o700 });
       keychainService = `dev.meshway.snapshot.${randomUUID()}`;
+      // Public cleanup metadata only; never write the credential to a file.
+      await writeFile(join(ipc, "namespace"), keychainService, { mode: 0o600 });
       app = spawn(appExecutable, ["-ApplePersistenceIgnoreState", "YES", "-NSQuitAlwaysKeepsWindows", "NO"], { cwd: root, stdio: "ignore", env: { ...process.env,
         MESHWAY_SNAPSHOT_DIR: ipc, MESHWAY_SNAPSHOT_SERVER: consoleURL,
         MESHWAY_SNAPSHOT_KEYCHAIN: keychainService, MESHWAY_SNAPSHOT_APPEARANCE: appearance,
@@ -90,6 +114,7 @@ try {
         }
       }
       await capture("signed-out");
+      await command("panel"); await capture("signed-out-panel");
       const signingIn = command("sign-in");
       await waitFor(() => exists(join(ipc, "authorization-request")), "real device-flow request");
       const request = new URL(await readFile(join(ipc, "authorization-request"), "utf8"));
@@ -106,14 +131,17 @@ try {
       await command("detail"); await capture("detail"); await command("dismiss");
       await command("network"); await capture("network"); await command("dismiss");
       await command("panel"); await capture("panel");
+      await command("search"); await capture("no-matches"); await command("search");
       await controller.stop(); await command("refresh"); await capture("error");
       controller = startController(); await controller.ready(`${controllerURL}/api/v1/overview`, 401);
       const own = (await listNodes(controllerURL, admin)).nodes.find(node => node.name === "Zeyu’s MacBook Pro" && !node.revoked_at);
       if (!own) throw new Error("App did not enroll a real node");
       await revokeNode(controllerURL, admin, { node_id: own.id });
       await command("refresh"); await capture("revoked");
+      await command("panel"); await capture("revoked-panel");
       await command("reset");
       app.kill("SIGTERM"); await appExit; app = undefined;
+      await cleanupNamespace(keychainService);
       keychainService = undefined;
       console.log(`Captured real windows: ${appearance}/${size}`);
     }
@@ -122,11 +150,16 @@ try {
   if (app && app.exitCode === null && app.signalCode === null) { app.kill("SIGTERM"); await appExit; }
   if (keychainService) {
     // Delete only this invocation's unique item; never access developer credentials.
-    const cleanup = spawn("/usr/bin/security", ["delete-generic-password", "-s", keychainService, "-a", "identity-journal"], { stdio: "ignore" });
-    await new Promise<void>(resolve => cleanup.once("exit", () => resolve()));
-    const defaults = spawn("/usr/bin/defaults", ["delete", keychainService], { stdio: "ignore" });
-    await new Promise<void>(resolve => defaults.once("exit", () => resolve()));
+    await cleanupNamespace(keychainService);
+  }
+  if (isolatedBundle) {
+    const preferences = spawn("/usr/bin/defaults", ["delete", "dev.meshway.snapshot.meshway"], { stdio: "ignore" });
+    await new Promise<void>(resolve => preferences.once("exit", () => resolve()));
+    await rm(join(homedir(), "Library/Preferences/dev.meshway.snapshot.meshway.plist"), { force: true });
+    await rm(join(homedir(), "Library/Saved Application State/dev.meshway.snapshot.meshway.savedState"), { recursive: true, force: true });
   }
   await web?.stop(); await controller.stop(); await rm(temporary, { recursive: true, force: true });
 }
+const images = (await readdir(output)).filter(name => name.startsWith("mac-") && name.endsWith(".png")).sort();
+await writeFile(join(output, "png-paths.txt"), `${images.map(name => join(output, name)).join("\n")}\n`);
 console.log(`PNGs: ${output}`);
