@@ -260,6 +260,31 @@ pub struct NodeSummary {
 }
 #[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
+pub struct AgentDataplaneSnapshot {
+    ///Constraint: minLength=64, maxLength=64, pattern=`^[0-9a-f]{64}$`
+    pub digest: String,
+    pub payload: NodeDataplane,
+}
+/**One coherent global revision, projected for the authenticated node. Identities
+include E2E peers and confer no carrier adjacency. Invalid access withdraws
+every effective grant. More than 64 union identities rejects the request.*/
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct NodeDataplane {
+    pub access_policy: MeshAccessPolicy,
+    pub access_valid: bool,
+    pub configuration: NodeConfiguration,
+    pub connections: NodeConnections,
+    ///Constraint: maxItems=64
+    pub identities: Vec<ConnectionPeer>,
+    pub node_id: String,
+    ///Constraint: minimum=1, maximum=4294967295
+    pub revision: i64,
+    ///Constraint: minimum=1, maximum=1
+    pub schema_version: i64,
+}
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
 pub struct NodeConfiguration {
     pub diagnostics: Vec<PolicyDiagnostic>,
     pub network: MeshNetwork,
@@ -445,6 +470,21 @@ pub struct MeshNode {
 pub struct MeshNetwork {
     pub ipv4_prefix: String,
     pub ipv6_prefix: String,
+}
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct MeshAccessPolicy {
+    ///Constraint: maxItems=128
+    pub grants: Vec<MeshAccessGrant>,
+}
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct MeshAccessGrant {
+    ///Constraint: minLength=1, maxLength=64, pattern=`^[A-Za-z0-9._-]+$`
+    pub id: String,
+    ///Exact ordered full path, including source and destination. No repeats.
+    ///Constraint: minItems=2, maxItems=8
+    pub path: Vec<String>,
 }
 #[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]

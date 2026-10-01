@@ -9,6 +9,22 @@ use openapi_to_rust::{CodeGenerator, GeneratorConfig, HttpClientConfig, SchemaAn
 mod closed_objects;
 #[path = "generate-rust-client/required_nullable.rs"]
 mod required_nullable;
+#[path = "generate-rust-client/status_first.rs"]
+mod status_first;
+
+const OPERATIONS: [&str; 11] = [
+    "enrollAgent",
+    "heartbeatAgent",
+    "getAgentConfiguration",
+    "acknowledgeConfiguration",
+    "publishConnectionIdentity",
+    "getAgentConnections",
+    "getAgentDataplane",
+    "acknowledgeAgentConnections",
+    "beginConnectionRuntime",
+    "getConnectionRuntimeEpoch",
+    "reportConnectionRuntime",
+];
 
 #[derive(Parser)]
 struct Args {
@@ -21,18 +37,7 @@ struct Args {
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let args = Args::parse();
     let document: serde_json::Value = serde_json::from_slice(&std::fs::read(&args.input)?)?;
-    let operations = [
-        "enrollAgent",
-        "heartbeatAgent",
-        "getAgentConfiguration",
-        "acknowledgeConfiguration",
-        "publishConnectionIdentity",
-        "getAgentConnections",
-        "acknowledgeAgentConnections",
-        "beginConnectionRuntime",
-        "getConnectionRuntimeEpoch",
-        "reportConnectionRuntime",
-    ];
+    let operations = OPERATIONS;
     // Upstream has client-wide auth configuration. Derive it from the actual
     // selected operations, and fail if the contract needs richer semantics.
     let mut found = std::collections::BTreeSet::new();
@@ -119,6 +124,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         return Err("upstream client constructor changed; review transport adapter".into());
     }
     client.content = client.content.replace(constructor, "let reqwest_client = reqwest::Client::builder().redirect(reqwest::redirect::Policy::none()).timeout(std::time::Duration::from_secs(10)).build().expect(\"valid static HTTP client configuration\");");
+    status_first::adapt(&mut client.content, operations.len())?;
     let types = result
         .files
         .iter_mut()
