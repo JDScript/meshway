@@ -73,6 +73,10 @@ Controller readiness 是由已核实进程提供的公开 401/Bearer 响应；We
 `all` 中尚未初始化 demo 是提示，不影响基础服务的成功；显式 `status demo` 返回非零。
 JSON 只输出公开、精简的状态，不输出管理员 bearer、节点凭据、密钥或完整进程环境。
 
+Demo 的 TUN 证明读取当前容器 `StartedAt` 以来的**全部可用**日志流，只保留最后一条 `managed_dataplane` 事件，再按当前生成快照的 node/revision/digest 校验；后来的撤回、lease expiry 或设备错误会使旧 ready 失效。
+读取上限为单行 64 KiB、stdout/stderr 合计 16 MiB、10 秒，不将完整历史装入内存。读取失败、超限、截断或畸形 stdout 返回 `not-proven`；仍同时要求新鲜 runtime、ACK、内核接口/路由、UID/capability 和现有 epoch fences。
+现有 Docker 日志保留约 1 MiB/1 文件；如果 generation proof 已被 rotation 删除，状态仍为 `not-proven`，不会用 ACK 或邻接探测替代真实 TUN 证明，也不会为状态检查自动重启 Agent。
+
 ## 已有 Docker demo
 
 统一入口只操作 `.meshway/docker-demo/demo.json` 已绑定的 demo。
@@ -116,6 +120,7 @@ python3 scripts/dev.py update demo --image meshway-managedtest:VALIDATED_TAG
 ```sh
 python3 -B -m unittest discover -s scripts -p 'test_dev.py' -v
 python3 scripts/dev.py --help
+node --test experiments/managed-connections/packet-log.test.ts
 ```
 
 测试使用临时私有文件和模拟进程/Docker，不接触 live 服务。

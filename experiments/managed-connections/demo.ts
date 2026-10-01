@@ -21,7 +21,8 @@ import type { EpochFloor, ShellMode, UpgradeJournal, UpgradeSnapshot } from "./u
 import type { UpgradeActions } from "./upgrade.ts";
 import { agentArguments, bootstrapArguments, BOOTSTRAP_CAPS, changeMode, demoMode, modeJournal } from "./mode.ts";
 import type { DemoMode, ModeJournal } from "./mode.ts";
-import { packetIdentity, packetInterface, packetProof, packetSnapshotCurrent, PROCESS_PROOF } from "./packet-readiness.ts";
+import { packetIdentity, packetInterface, packetSnapshotCurrent, PROCESS_PROOF } from "./packet-readiness.ts";
+import { dockerPacketLogReady } from "./packet-log.ts";
 import type { PacketControl } from "./packet-readiness.ts";
 import { currentImageSource, imageInventory, retainImage } from "./images.ts";
 
@@ -555,15 +556,15 @@ async function main() {
     if (!boolean(process.Running)) return false;
     const exec = (args: string[], input?: string) => docker(["exec", "--user", `${uid}:${gid}`, ...(input === undefined ? [] : ["--interactive"]), name, ...args], 10_000, input);
     try {
-      const [addresses, routes, logs, proof] = await Promise.all([
+      const [addresses, routes, logReady, proof] = await Promise.all([
         exec(["ip", "-j", "-4", "addr", "show", "dev", "meshway0"]),
         exec(["ip", "-j", "-N", "-4", "route", "show", "table", "main", "root", expected.ipv4_prefix]),
-        docker(["logs", "--tail", "2048", "--since", text(process.StartedAt), name], 10_000),
+        interrupted ? Promise.resolve(false) : dockerPacketLogReady(name, text(process.StartedAt), snapshot, fd),
         exec(["python3", "-", String(uid), String(gid), shellMode(owner().shell)], PROCESS_PROOF),
       ]);
       const after = await inspectOwned("container", name, role);
       return before.Id === after.Id && record(after.State).StartedAt === process.StartedAt && record(after.State).Running === true
-        && parse(proof).net_admin_only === true && packetProof(logs, snapshot)
+        && parse(proof).net_admin_only === true && logReady
         && packetInterface(JSON.parse(addresses), JSON.parse(routes), expected);
     } catch { return false; }
   };
