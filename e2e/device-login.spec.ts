@@ -4,7 +4,7 @@ import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { exchangeDevice, listNodes } from "../packages/control-client/src/index.ts";
-import { heartbeatAgentOperation as heartbeatAgent } from "../packages/control-client/src/generated/operations.gen.ts";
+import { heartbeatAgentOperation as heartbeatAgent, getAgentConfigurationOperation, getAgentDnsOperation } from "../packages/control-client/src/generated/operations.gen.ts";
 import { executable, root, service, unusedPort } from "./harness.ts";
 
 test("browser SSO approval redirects a PKCE code, exchange creates a real unified node, deny creates none", async ({ page, browser }) => {
@@ -51,6 +51,26 @@ test("browser SSO approval redirects a PKCE code, exchange creates a real unifie
     expect(node.node.name).toBe("SSO Mac"); expect(node.node.revoked_at).toBeNull();
     expect((await exchangeDevice(webUrl, code, binding)).node.id).toBe(node.node.id);
     expect((await heartbeatAgent(webUrl, credential, { agent_version: params.agent_version })).node.id).toBe(node.node.id);
+    const configuration = await getAgentConfigurationOperation(webUrl, credential);
+    expect(configuration.payload.node.id).toBe(node.node.id);
+    expect(configuration.payload.peers).toHaveLength(0);
+    expect((await getAgentDnsOperation(webUrl, credential)).payload.node_id).toBe(node.node.id);
+    // A second real enrollment must be visible through the node-scoped GET proxy.
+    const peerCredential = randomBytes(32).toString("hex");
+    const peerAuthorization = await anonymous.request.post(`${base}/api/v1/device-authorizations`, {
+      headers: { authorization: `Bearer ${admin}` },
+      data: { redirect_uri: params.redirect_uri, code_challenge: params.code_challenge, name: "Second device", agent_version: "e2e" },
+    });
+    const { zAuthorizeDeviceResponse } = await import("../packages/control-client/src/generated/zod.gen.ts");
+    const peerCode = zAuthorizeDeviceResponse.parse(await peerAuthorization.json()).code;
+    await exchangeDevice(webUrl, peerCode, { ...binding, node_credential: peerCredential, name: "Second device" });
+    expect((await getAgentConfigurationOperation(webUrl, credential)).payload.peers.map(peer => peer.name)).toEqual(["Second device"]);
+    for (const path of ["agents/configuration", "agent/dns"]) {
+      const rejected = await anonymous.request.get(`${webUrl}/api/v1/${path}`);
+      expect(rejected.status()).toBe(401);
+      expect(rejected.headers()["cache-control"]).toBe("no-store");
+      expect((await anonymous.request.post(`${webUrl}/api/v1/${path}`, { data: {} })).status()).toBe(405);
+    }
     const unauthenticated = await anonymous.request.post(`${webUrl}/api/v1/agents/heartbeat`, { data: { agent_version: "e2e" } });
     expect(unauthenticated.status()).toBe(401);
     expect(unauthenticated.headers()["www-authenticate"]).toBe("Bearer");
@@ -67,14 +87,14 @@ test("browser SSO approval redirects a PKCE code, exchange creates a real unifie
       const read = await anonymous.request.get(`${webUrl}/api/v1/${path}`, { headers: { authorization: `Bearer ${admin}` } });
       expect(read.status()).toBe(404);
     }
-    expect((await listNodes(base, admin)).nodes).toHaveLength(1);
+    expect((await listNodes(base, admin)).nodes).toHaveLength(2);
     await page.goto(authorize);
     const denial = page.waitForResponse(r => r.request().method() === "POST" && new URL(r.url()).pathname === "/authorize-device");
     await page.getByRole("button", { name: "拒绝", exact: true }).click();
     const denied = await denial;
     const deniedUrl = new URL((denied.headers()["x-action-redirect"] ?? denied.headers().location ?? "").split(";")[0] ?? "");
     expect(deniedUrl.searchParams.get("error")).toBe("access_denied"); expect(deniedUrl.searchParams.get("state")).toBe(params.state);
-    expect((await listNodes(base, admin)).nodes).toHaveLength(1);
+    expect((await listNodes(base, admin)).nodes).toHaveLength(2);
     await page.goto(`${webUrl}/authorize-device?${new URLSearchParams({ ...params, redirect_uri: "https://evil.test" })}`);
     await expect(page.getByRole("heading", { name: "授权请求无效" })).toBeVisible();
   } finally {

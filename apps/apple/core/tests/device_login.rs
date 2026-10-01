@@ -3,7 +3,8 @@ use axum::{
     http::Request,
 };
 use meshway_apple_core::{
-    SignInError, begin_authorization, exchange_device, heartbeat, new_node_credential,
+    SignInError, begin_authorization, exchange_device, get_device_configuration, get_device_dns,
+    heartbeat, new_node_credential,
 };
 use meshway_controller::{AppState, admin_token, router};
 use meshway_protocol::{
@@ -56,6 +57,26 @@ async fn real_controller_exchange_recovery_heartbeat_and_revocation() {
         )
     };
     let node = exchange().await.unwrap();
+    let inventory =
+        get_device_configuration(server_url.clone(), credential.clone(), node.id.clone())
+            .await
+            .unwrap();
+    assert_eq!(inventory.own_device.id, node.id);
+    assert_eq!(inventory.own_device.mesh_ipv4, node.mesh_ipv4);
+    assert!(inventory.peers.is_empty());
+    assert!(matches!(
+        get_device_configuration(
+            server_url.clone(),
+            credential.clone(),
+            new_node_credential().unwrap()
+        )
+        .await,
+        Err(SignInError::Server)
+    ));
+    let dns = get_device_dns(server_url.clone(), credential.clone(), node.id.clone())
+        .await
+        .unwrap();
+    assert!(dns.revision > 0);
     assert_eq!(exchange().await.unwrap().id, node.id);
     assert!(matches!(
         heartbeat(server_url.clone(), new_node_credential().unwrap()).await,
@@ -74,13 +95,24 @@ async fn real_controller_exchange_recovery_heartbeat_and_revocation() {
                 .header("authorization", format!("Bearer {admin}"))
                 .header("content-type", "application/json")
                 .body(Body::from(
-                    serde_json::to_vec(&RevokeNodeRequest { node_id: node.id }).unwrap(),
+                    serde_json::to_vec(&RevokeNodeRequest {
+                        node_id: node.id.clone(),
+                    })
+                    .unwrap(),
                 ))
                 .unwrap(),
         )
         .await
         .unwrap();
     assert_eq!(revoked.status(), 200);
+    assert!(matches!(
+        get_device_configuration(server_url.clone(), credential.clone(), node.id.clone()).await,
+        Err(SignInError::Revoked)
+    ));
+    assert!(matches!(
+        get_device_dns(server_url.clone(), credential.clone(), node.id).await,
+        Err(SignInError::Revoked)
+    ));
     assert!(matches!(
         heartbeat(server_url.clone(), credential.clone()).await,
         Err(SignInError::Revoked)

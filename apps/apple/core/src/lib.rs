@@ -3,6 +3,8 @@
 
 mod signin;
 pub use signin::*;
+mod inventory;
+pub use inventory::*;
 
 uniffi::setup_scaffolding!();
 

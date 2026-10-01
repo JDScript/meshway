@@ -94,7 +94,7 @@ pub fn begin_authorization(
     })
 }
 
-fn client(server: &str, bearer: &str) -> Result<HttpClient, SignInError> {
+pub(crate) fn client(server: &str, bearer: &str) -> Result<HttpClient, SignInError> {
     let base = origin(server)?;
     if !local::valid_credential(bearer) {
         return Err(SignInError::InvalidInput);
@@ -105,7 +105,7 @@ fn client(server: &str, bearer: &str) -> Result<HttpClient, SignInError> {
         .with_max_response_body_bytes(64 * 1024))
 }
 
-fn sanitized<E: std::fmt::Debug>(error: ApiOpError<E>) -> SignInError {
+pub(crate) fn sanitized<E: std::fmt::Debug>(error: ApiOpError<E>) -> SignInError {
     match error {
         ApiOpError::Transport(_) => SignInError::Transport,
         ApiOpError::Api(error) => match error.status {
@@ -134,7 +134,7 @@ fn node(response: generated::AgentNodeResponse) -> Result<DeviceNode, SignInErro
 // A single bounded bridge-owned runtime keeps reqwest off Swift's executor.
 // The exported futures only await a task handle; no tokio context is required
 // on the thread polling UniFFI. No extra async compatibility dependency.
-async fn on_runtime<T: Send + 'static>(
+pub(crate) async fn on_runtime<T: Send + 'static>(
     future: impl std::future::Future<Output = Result<T, SignInError>> + Send + 'static,
 ) -> Result<T, SignInError> {
     static RUNTIME: std::sync::OnceLock<Result<tokio::runtime::Runtime, std::io::Error>> =
