@@ -156,6 +156,7 @@ Agent 运行报告（运行阶段、全部邻居认证探测）
 - STUN 映射只标「未验证候选 / 已过期 / 历史观测 / 无映射」，从不标可达；过期或非当前代际的地址不可复制。UDP 观测从不出现在 TCP / VLESS 监听上（显示「不做 UDP 地址观测」）。
 - 拨号 socket 的观测归属其 outgoing candidate，显示为「出站映射」，不当作监听；没有监听的节点仍显示拨号 socket 的地址。报告里有但已不在配置中的 socket 进入「其他已上报 socket（历史）」。
 - 运行报告只有在「最近报告且对应当前已保存 revision」时才标注到行上；否则行上显示「未报告」，完整历史在下方运行报告里看。
+- 地址观测与运行报告分别读取，本地再做一次栅栏：观测报告须属于本节点、对应当前已保存 revision、服务端标为当前，且与一份最近的同 revision 运行报告 epoch / digest 一致，才是当前证据；否则其中的实际绑定与映射全部显示为「历史报告」，不可复制。socket 的新鲜度与单次 STUN 结果分开（超时不代表 socket 已关闭）。不在当前配置中、或已改为 TCP / VLESS 的资源，其旧 UDP socket 一律是历史。所有有效期共用一个只前进的时钟。对端「已认证」但最近没有新鲜探测时不显示 RTT。
 - epoch、digest、generation、socket 序号、observer、STUN RTT 只在折叠区。
 
 尚未实现、不出现入口：VLESS / WebSocket 托管表单、监听新增向导、NAT 打洞、UPnP / NAT-PMP / PCP 映射开关。目标见 §6.4。

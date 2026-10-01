@@ -4,7 +4,7 @@ import { test } from "node:test"
 import type { ConnectionPlan, ConnectionRuntimeObservation, NodeEndpointDiscovery } from "@meshway/control-client"
 
 import { zConnectionRuntimeObservation, zNodeEndpointDiscovery } from "../../../packages/control-client/src/generated/zod.gen.ts"
-import { nodeCarrierView } from "./carrier-view-model.ts"
+import { nodeCarrierView, peerProbe, type CarrierView, type UdpFacts } from "./carrier-view-model.ts"
 
 const now = Date.parse("2026-10-01T08:00:00Z")
 const at = (offset: number) => new Date(now + offset).toISOString()
@@ -94,11 +94,93 @@ test("a node without listeners still shows the addresses of its dial sockets", (
   assert.equal(view.outgoing[0]?.udp.kind, "sockets")
 })
 
-test("runtime of another revision and non-current discovery never annotate the plan as live", () => {
-  const view = nodeCarrierView({ plan, revision: 8, nodeId: "lax", runtime: runtime(), discovery: discovery({ current: false }), now })
-  const [udp] = view.listeners
-  assert.equal(udp?.runtime, undefined)
-  assert.deepEqual(udp?.incoming[0]?.reports, [])
-  if (udp?.udp.kind === "sockets") assert.equal(udp.udp.sockets[0]?.observed[0]?.state, "historical")
-  else assert.fail("expected the reported socket")
+function sockets(facts: UdpFacts | undefined) {
+  if (facts?.kind !== "sockets") return assert.fail("expected reported sockets")
+  return facts.sockets
+}
+
+/** Nothing in the view may present itself as current evidence. */
+function assertHistory(view: CarrierView) {
+  assert.equal(view.discoveryCurrent, false)
+  for (const facts of [...view.listeners.map((row) => row.udp), ...view.outgoing.map((row) => row.udp)]) {
+    if (facts.kind !== "sockets") continue
+    for (const socket of facts.sockets) {
+      assert.equal(socket.current, false)
+      assert.ok(socket.observed.every((observed) => observed.state !== "candidate"))
+    }
+  }
+  for (const orphan of view.orphans) {
+    assert.equal(orphan.facts.current, false)
+    assert.ok(orphan.facts.observed.every((observed) => observed.state !== "candidate"))
+  }
+}
+
+test("a fenced report is current evidence; its socket stays current across a STUN timeout", () => {
+  const report = discovery()
+  const listenerSocket = report.sockets[0]
+  assert.ok(listenerSocket)
+  const timedOut = { ...report, sockets: [{ ...listenerSocket, observations: listenerSocket.observations.map((o) => ({ ...o, outcome: "timeout" as const, mapped_endpoint: null, rtt_ms: null })) }] }
+  const view = nodeCarrierView({ plan, revision: 7, nodeId: "lax", runtime: runtime(), discovery: timedOut, now })
+  assert.equal(view.discoveryCurrent, true)
+  const [socket] = sockets(view.listeners[0]?.udp)
+  assert.equal(socket?.current, true)
+  assert.equal(socket?.observed[0]?.state, "failed")
+})
+
+test("same-ID resources after a plan revision change only see the old report as history", () => {
+  // Interleaved reads: plan and runtime already at r8, discovery still the server-current r7 response.
+  const view = nodeCarrierView({ plan, revision: 8, nodeId: "lax", runtime: runtime({ revision: 8 }), discovery: discovery(), now })
+  assertHistory(view)
+  assert.equal(sockets(view.listeners[0]?.udp)[0]?.observed[0]?.state, "historical")
+  assert.equal(view.listeners[0]?.runtime?.state, "bound")
+})
+
+test("discovery from another runtime generation or digest never mixes with the fresh runtime", () => {
+  assertHistory(nodeCarrierView({ plan, revision: 7, nodeId: "lax", runtime: runtime({ epoch: 2 }), discovery: discovery(), now }))
+  assertHistory(nodeCarrierView({ plan, revision: 7, nodeId: "lax", runtime: runtime({ digest: "b".repeat(64) }), discovery: discovery(), now }))
+  // Without a usable runtime report there is nothing to fence against.
+  assertHistory(nodeCarrierView({ plan, revision: 7, nodeId: "lax", runtime: undefined, discovery: discovery(), now }))
+  assertHistory(nodeCarrierView({ plan, revision: 7, nodeId: "lax", runtime: runtime(), discovery: discovery({ current: false }), now }))
+  assertHistory(nodeCarrierView({ plan, revision: 7, nodeId: "lax", runtime: runtime(), discovery: discovery({ stale: true }), now }))
+})
+
+test("another node's reports never appear on this node", () => {
+  const view = nodeCarrierView({ plan, revision: 7, nodeId: "lax", runtime: runtime({ node_id: "nyc" }), discovery: discovery({ node_id: "nyc" }), now })
+  assert.equal(view.listeners[0]?.udp.kind, "none")
+  assert.equal(view.listeners[0]?.runtime, undefined)
+  assert.deepEqual(view.orphans, [])
+  assert.equal(view.discoveryCurrent, false)
+})
+
+test("orphans and resources moved off UDP are history even in a current report", () => {
+  const view = nodeCarrierView({ plan, revision: 7, nodeId: "lax", runtime: runtime(), discovery: discovery(), now })
+  assert.equal(view.discoveryCurrent, true)
+  const removed = view.orphans.find((orphan) => orphan.resourceId === "removed-udp")
+  assert.equal(removed?.facts.current, false)
+
+  const tcpPlan: ConnectionPlan = { ...plan, listeners: plan.listeners.map((listener) => listener.id === "lax-udp" ? { ...listener, transport: "native_tcp" } : listener) }
+  const moved = nodeCarrierView({ plan: tcpPlan, revision: 7, nodeId: "lax", runtime: runtime(), discovery: discovery(), now })
+  assert.equal(moved.listeners[0]?.udp.kind, "not_applicable")
+  const old = moved.orphans.find((orphan) => orphan.resourceId === "lax-udp")
+  assert.equal(old?.facts.current, false)
+  assert.equal(old?.facts.observed[0]?.state, "historical")
+})
+
+test("leases expire on the shared clock and never come back", () => {
+  const live = nodeCarrierView({ plan, revision: 7, nodeId: "lax", runtime: runtime(), discovery: discovery(), now })
+  assert.equal(sockets(live.listeners[0]?.udp)[0]?.observed[0]?.state, "candidate")
+  const expired = nodeCarrierView({ plan, revision: 7, nodeId: "lax", runtime: runtime(), discovery: discovery(), now: now + 20_000 })
+  assert.equal(sockets(expired.listeners[0]?.udp)[0]?.observed[0]?.state, "expired")
+  // The runtime report ages past its TTL: the socket binding is history too.
+  const aged = nodeCarrierView({ plan, revision: 7, nodeId: "lax", runtime: runtime(), discovery: discovery(), now: now + 60_000 })
+  assertHistory(aged)
+})
+
+test("an authenticated channel without a fresh probe shows no current RTT", () => {
+  const peer = runtime().peers[0]
+  assert.ok(peer)
+  assert.deepEqual(peerProbe(peer), { fresh: true, rtt: "9 ms" })
+  assert.deepEqual(peerProbe({ ...peer, probe_fresh: false }), { fresh: false, rtt: null })
+  assert.deepEqual(peerProbe({ ...peer, probe_rtt_ms: 0 }), { fresh: true, rtt: "<1 ms" })
+  assert.deepEqual(peerProbe({ ...peer, state: "waiting", probe_fresh: true }), { fresh: false, rtt: null })
 })

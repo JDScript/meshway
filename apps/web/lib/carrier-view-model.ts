@@ -34,6 +34,14 @@ export type ObservedAddress = {
 }
 
 export type SocketFacts = {
+  /**
+   * The socket belongs to a discovery report that passed the local fence
+   * (same node, same plan revision, server-current, and the same epoch /
+   * digest as a fresh runtime report of that revision). Otherwise its bound
+   * address and observations are history only. Independent of each
+   * measurement's outcome: a STUN timeout does not mean the socket closed.
+   */
+  current: boolean
   boundAddress: string
   generation: number
   socketId: number
@@ -87,6 +95,8 @@ export type OutgoingView = {
 export type OrphanSocket = { kind: UdpDiscoveryResourceKind; resourceId: string; facts: SocketFacts }
 
 export type CarrierView = {
+  /** The node's discovery report passed the local fence; see `discoveryIsCurrent`. */
+  discoveryCurrent: boolean
   listeners: ListenerView[]
   outgoing: OutgoingView[]
   /** Reported sockets whose resource is not in the saved plan (e.g. removed since). */
@@ -96,8 +106,26 @@ export type CarrierView = {
 const hostPort = (endpoint: { host: string; port: number }) =>
   endpoint.host.includes(":") && !endpoint.host.startsWith("[") ? `[${endpoint.host}]:${endpoint.port}` : `${endpoint.host}:${endpoint.port}`
 
-export function observedState(report: NodeEndpointDiscovery, observation: StunEndpointObservation, now: number): ObservedState {
-  if (observationUsable(report, observation, now)) return "candidate"
+/**
+ * Whether a discovery report may stand as current evidence for `plan` at
+ * `revision`. Discovery and runtime are read independently, so the report
+ * must also share the epoch and digest of a fresh runtime report of the same
+ * revision; with no such runtime the report is history.
+ */
+export function discoveryIsCurrent(
+  report: NodeEndpointDiscovery,
+  nodeId: string,
+  revision: number,
+  runtime: ConnectionRuntimeObservation | undefined
+): boolean {
+  return report.node_id === nodeId && report.state === "observed" && report.reported_at !== null &&
+    report.current && !report.stale && report.revision === revision &&
+    runtime !== undefined && runtime.node_id === nodeId && runtime.revision === revision &&
+    runtime.epoch === report.epoch && runtime.digest !== null && runtime.digest === report.digest
+}
+
+export function observedState(report: NodeEndpointDiscovery, observation: StunEndpointObservation, now: number, current: boolean): ObservedState {
+  if (current && observationUsable(report, observation, now)) return "candidate"
   if (observation.outcome !== "mapped" || observation.mapped_endpoint === null) return "failed"
   if (Date.parse(observation.expires_at) <= now) return "expired"
   return "historical"
@@ -110,8 +138,16 @@ export const observedStateLabels: Record<ObservedState, string> = {
   failed: "无映射",
 }
 
-function socketFacts(report: NodeEndpointDiscovery, socket: UdpSocketDiscovery, now: number): SocketFacts {
+/** Probe evidence for one neighbor: an authenticated channel without a fresh probe has no current RTT. */
+export function peerProbe(peer: ConnectionNeighborObservation): { fresh: boolean; rtt: string | null } {
+  if (peer.state !== "authenticated" || !peer.probe_fresh) return { fresh: false, rtt: null }
+  if (peer.probe_rtt_ms === null) return { fresh: true, rtt: null }
+  return { fresh: true, rtt: peer.probe_rtt_ms === 0 ? "<1 ms" : `${peer.probe_rtt_ms} ms` }
+}
+
+function socketFacts(report: NodeEndpointDiscovery, socket: UdpSocketDiscovery, now: number, current: boolean): SocketFacts {
   return {
+    current,
     boundAddress: socket.bound_address,
     generation: socket.generation,
     socketId: socket.socket_id,
@@ -120,7 +156,7 @@ function socketFacts(report: NodeEndpointDiscovery, socket: UdpSocketDiscovery, 
       address: observation.mapped_endpoint,
       observer: observation.observer,
       outcome: observation.outcome,
-      state: observedState(report, observation, now),
+      state: observedState(report, observation, now, current),
       observedAt: observation.observed_at,
       expiresAt: observation.expires_at,
       rttMs: observation.rtt_ms,
@@ -133,12 +169,13 @@ function udpFacts(
   kind: UdpDiscoveryResourceKind,
   id: string,
   report: NodeEndpointDiscovery | undefined,
-  now: number
+  now: number,
+  current: boolean
 ): UdpFacts {
   if (transport !== "native_udp") return { kind: "not_applicable" }
   const sockets = report?.sockets.filter((socket) => socket.resource_kind === kind && socket.resource_id === id) ?? []
   if (!report || sockets.length === 0) return { kind: "none" }
-  return { kind: "sockets", sockets: sockets.map((socket) => socketFacts(report, socket, now)) }
+  return { kind: "sockets", sockets: sockets.map((socket) => socketFacts(report, socket, now, current)) }
 }
 
 export function nodeCarrierView({
@@ -157,7 +194,10 @@ export function nodeCarrierView({
   discovery: NodeEndpointDiscovery | undefined
   now: number
 }): CarrierView {
-  const usableRuntime = reportMatchesBase(runtime, revision, now) ? runtime : undefined
+  const usableRuntime = runtime?.node_id === nodeId && reportMatchesBase(runtime, revision, now) ? runtime : undefined
+  // Another node's report is never shown on this node, not even as history.
+  const report = discovery?.node_id === nodeId ? discovery : undefined
+  const current = report ? discoveryIsCurrent(report, nodeId, revision, usableRuntime) : false
   const listenersById = new Map(plan.listeners.map((listener) => [listener.id, listener]))
 
   const listeners: ListenerView[] = plan.listeners
@@ -168,7 +208,7 @@ export function nodeCarrierView({
       bind: listener.bind,
       advertised: listener.advertised_endpoints.map(hostPort),
       runtime: usableRuntime?.listeners.find((observation) => observation.listener_id === listener.id),
-      udp: udpFacts(listener.transport, "listener", listener.id, discovery, now),
+      udp: udpFacts(listener.transport, "listener", listener.id, report, now, current),
       incoming: plan.candidates
         .filter((candidate) => candidate.listener_id === listener.id)
         .map((candidate) => ({
@@ -196,7 +236,7 @@ export function nodeCarrierView({
         listenerId: candidate.listener_id,
         endpoint: hostPort(candidate.endpoint),
         priority: candidate.priority,
-        udp: udpFacts(transport, "outgoing_candidate", candidate.id, discovery, now),
+        udp: udpFacts(transport, "outgoing_candidate", candidate.id, report, now, current),
         check: {
           candidateId: candidate.id,
           peerNodeId: listener?.node_id ?? "",
@@ -212,15 +252,18 @@ export function nodeCarrierView({
       }
     })
 
+  // Only UDP resources of the saved plan own reported UDP sockets; a resource
+  // now on TCP / VLESS turns its old UDP socket into history.
   const known = new Set([
-    ...listeners.map((listener) => `listener:${listener.id}`),
-    ...outgoing.map((candidate) => `outgoing_candidate:${candidate.id}`),
+    ...listeners.filter((listener) => listener.transport === "native_udp").map((listener) => `listener:${listener.id}`),
+    ...outgoing.filter((candidate) => candidate.transport === "native_udp").map((candidate) => `outgoing_candidate:${candidate.id}`),
   ])
-  const orphans: OrphanSocket[] = discovery
-    ? discovery.sockets
+  // Not a resource of the current plan: history, however recent the report.
+  const orphans: OrphanSocket[] = report
+    ? report.sockets
         .filter((socket) => !known.has(`${socket.resource_kind}:${socket.resource_id}`))
-        .map((socket) => ({ kind: socket.resource_kind, resourceId: socket.resource_id, facts: socketFacts(discovery, socket, now) }))
+        .map((socket) => ({ kind: socket.resource_kind, resourceId: socket.resource_id, facts: socketFacts(report, socket, now, false) }))
     : []
 
-  return { listeners, outgoing, orphans }
+  return { discoveryCurrent: current, listeners, outgoing, orphans }
 }

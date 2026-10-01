@@ -21,16 +21,17 @@ import { Button } from "@/components/ui/button"
 import {
   nodeCarrierView,
   observedStateLabels,
+  peerProbe,
   type ListenerView,
   type ObservedAddress,
   type OutgoingView,
   type PeerCheck,
   type SocketFacts,
 } from "@/lib/carrier-view-model"
-import { formatRtt, neighborLabel, reasonLabels, runtimeFor, runtimeNextSteps } from "@/lib/connection-runtime-model"
+import { neighborLabel, reasonLabels, runtimeFor, runtimeNextSteps } from "@/lib/connection-runtime-model"
 import type { ControllerResult } from "@/lib/controller"
 import { nodeName, transportLabels } from "@/lib/connections-model"
-import { discoveryLabel } from "@/lib/endpoint-discovery-model"
+import { discoveryLabel, discoveryStateLabels } from "@/lib/endpoint-discovery-model"
 import { formatDateTime } from "@/lib/time"
 import { cn } from "@/lib/utils"
 
@@ -52,6 +53,7 @@ export function NodeCarriers({
 }) {
   const discoveries = useEndpointDiscoveries(initialDiscoveries)
   const report = discoveries.shown.ok ? discoveries.shown.data.nodes.find((node) => node.node_id === nodeId) : undefined
+  // One clock for every lease on this view; both sources only move forward.
   const now = Math.max(runtimes.now, discoveries.clock)
   const view = nodeCarrierView({
     plan: snapshot.configuration,
@@ -59,10 +61,13 @@ export function NodeCarriers({
     nodeId,
     runtime: runtimeFor(runtimes.snapshot, nodeId),
     discovery: report,
-    now: discoveries.clock,
+    now,
   })
   const nodes = snapshot.nodes
-  const discoveryStatus = discoveries.shown.ok ? discoveryLabel(report, discoveries.clock) : "观测读取失败"
+  const serverStatus = discoveries.shown.ok ? discoveryLabel(report, now) : "观测读取失败"
+  // The server may call a report current while it describes another plan
+  // revision or runtime generation than the one shown here.
+  const discoveryStatus = serverStatus === discoveryStateLabels.observed && !view.discoveryCurrent ? "与当前配置 / 运行代际不一致（历史）" : serverStatus
 
   return (
     <div data-testid="node-carriers" className="flex flex-col gap-4">
@@ -124,7 +129,7 @@ export function NodeCarriers({
       ) : null}
 
       <DiagnosticDetails title="地址观测报告与启用帮助">
-        <EndpointDiscoveryReport discoveries={discoveries} nodeId={nodeId} embedded />
+        <EndpointDiscoveryReport discoveries={discoveries} nodeId={nodeId} embedded fenced={view.discoveryCurrent} now={now} />
       </DiagnosticDetails>
     </div>
   )
@@ -146,11 +151,7 @@ function ListenerRow({ listener, nodes, now }: { listener: ListenerView; nodes: 
           <Address value={listener.bind} label={`复制 ${listener.id} 的绑定配置`} />
         </Fact>
         <Fact label="实际绑定" hint="Agent 报告的 socket 本地地址；只有 UDP socket 上报具体地址。">
-          {sockets.length > 0 ? (
-            sockets.map((socket) => <Address key={socket.socketId} value={socket.boundAddress} label={`复制 ${listener.id} 的实际绑定`} />)
-          ) : (
-            <span className="text-muted-foreground">{runtime?.state === "bound" ? "已监听，地址未上报" : "未上报"}</span>
-          )}
+          <BoundSockets sockets={sockets} copyLabel={`复制 ${listener.id} 的实际绑定`} empty={runtime?.state === "bound" ? "已监听，地址未上报" : "未上报"} />
         </Fact>
         <Fact label="对外候选" className="md:col-span-2" hint="对端可尝试的地址，按来源区分。管理员发布的地址只是意图；STUN 观测是未验证候选。">
           <ul className="flex flex-col gap-1.5">
@@ -205,10 +206,10 @@ function OutgoingRow({ candidate, nodes, now }: { candidate: OutgoingView; nodes
           <Address value={candidate.endpoint} label={`复制 ${candidate.id} 的拨号目标`} />
         </Fact>
         <Fact label="本地 socket" hint="Agent 报告的拨号 socket 本地地址；只有 UDP socket 上报。">
-          {sockets.length > 0 ? (
-            sockets.map((socket) => <Address key={socket.socketId} value={socket.boundAddress} label={`复制 ${candidate.id} 的本地 socket`} />)
+          {candidate.udp.kind === "not_applicable" ? (
+            <span className="text-muted-foreground">不适用</span>
           ) : (
-            <span className="text-muted-foreground">{candidate.udp.kind === "not_applicable" ? "不适用" : "未上报"}</span>
+            <BoundSockets sockets={sockets} copyLabel={`复制 ${candidate.id} 的本地 socket`} empty="未上报" />
           )}
         </Fact>
         {candidate.udp.kind !== "not_applicable" ? (
@@ -330,10 +331,36 @@ function PeerCheckRow({ check, nodes, direction }: { check: PeerCheck; nodes: Co
 
 function PeerReport({ peer }: { peer: ConnectionNeighborObservation }) {
   const tone: Tone = peer.state === "authenticated" ? "success" : peer.state === "unreachable" ? "danger" : "neutral"
+  const probe = peerProbe(peer)
   return (
     <span className="inline-flex items-center gap-1.5">
       <StatusBadge tone={tone} dot>{neighborLabel(peer)}</StatusBadge>
-      {peer.state === "authenticated" ? <span className="font-mono text-xs text-muted-foreground tabular-nums">{formatRtt(peer)}</span> : null}
+      {peer.state !== "authenticated" ? null : probe.fresh ? (
+        <span className="font-mono text-xs text-muted-foreground tabular-nums">{probe.rtt ?? "RTT 未测得"}</span>
+      ) : (
+        <span className="text-xs text-muted-foreground">最近无新鲜探测</span>
+      )}
+    </span>
+  )
+}
+
+/**
+ * Agent-reported socket addresses. Only sockets of a current report are a
+ * current binding (and copyable); others are labelled history.
+ */
+function BoundSockets({ sockets, copyLabel, empty }: { sockets: SocketFacts[]; copyLabel: string; empty: string }) {
+  const current = sockets.filter((socket) => socket.current)
+  const history = sockets.filter((socket) => !socket.current)
+  return (
+    <span className="flex flex-col gap-1">
+      {current.length === 0 ? <span className="text-muted-foreground">{empty}</span> : null}
+      {current.map((socket) => <Address key={socket.socketId} value={socket.boundAddress} label={copyLabel} />)}
+      {history.map((socket) => (
+        <span key={socket.socketId} data-testid="carrier-history-bind" className="flex flex-wrap items-center gap-1.5">
+          <Address value={socket.boundAddress} label="复制历史绑定地址（失效）" disabled />
+          <StatusBadge tone="neutral">历史报告</StatusBadge>
+        </span>
+      ))}
     </span>
   )
 }
