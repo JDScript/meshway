@@ -1,7 +1,11 @@
 .git
 .meshway
+.worktree
 references
 target
+apps/apple/build
+apps/apple/**/.build
+apps/apple/**/.swiftpm
 **/node_modules
 **/.next
 **/.next-review

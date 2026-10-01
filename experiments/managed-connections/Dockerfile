@@ -10,6 +10,7 @@ COPY Cargo.toml Cargo.lock ./
 COPY crates ./crates
 COPY apps/agent ./apps/agent
 COPY apps/controller ./apps/controller
+COPY apps/apple/core ./apps/apple/core
 RUN --mount=type=cache,target=/usr/local/cargo/registry \
     --mount=type=cache,target=/usr/local/cargo/git \
     --mount=type=cache,target=/src/target,id=meshway-managed-${TARGETARCH},sharing=locked \
