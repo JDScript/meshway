@@ -1,7 +1,7 @@
 # Isolated managed IPv4 TUN acceptance
 
-This fixture enrolls **three real Agents with a fresh controller**, saves policy,
-connections and directional access grants through the generated SDK, and exercises
+This fixture enrolls **three real Agents with a fresh controller**, saves routing,
+connections, tags and ordered endpoint-access rules through the generated SDK, and exercises
 Linux kernel ICMP and HTTP over controller-assigned mesh addresses. The main session
 owns the image build and the long Docker run. A completed `result.json` with
 `status: "PASS"` is the acceptance result; host checks alone do not certify delivery.
@@ -10,7 +10,8 @@ owns the image build and the long Docker run. A completed `result.json` with
 
 Prerequisites: Node 24, installed pnpm dependencies, Python 3, host OpenSSL, native
 Linux Docker, `/dev/net/tun`, and the freshly regenerated SDK containing
-`getMeshAccessOperation`, `saveMeshAccessOperation`, and `getAgentDataplaneOperation`.
+`getMeshAccessOperation`, `saveMeshAccessOperation`, tag operations,
+`previewFlowOperation`, and `getAgentDataplaneOperation`.
 The image must contain the new `run --apply-dataplane` implementation, the controller,
 iproute2, iputils-ping, Python 3 and the existing managed-connections container helper.
 Python's standard HTTP client supplies the real TCP/HTTP body test; curl is optional.
@@ -109,28 +110,43 @@ controller-assigned `100.96.*` addresses. It generates no static lab configurati
    selector combines exact source node/country with destination `/32` CIDR. The
    reverse selector uses source country and destination node. **Empty access denies
    ordinary OS ping and HTTP**, while the adjacency probes remain healthy.
-3. Grant only NYC → LAX → SHA. Round trips remain denied; SHA's Linux `Icmp.InEchos`
+3. Allow only the NYC endpoint to the SHA endpoint. The controller compiles the
+   routed NYC → LAX → SHA path into the schema-v1 Agent grant format. Round trips
+   remain denied; SHA's Linux `Icmp.InEchos`
    counter must increase, showing actual one-way delivery without raw capture tools.
-   Add the separate reverse grant, then require ping and distinctive HTTP bodies in
-   both directions. Each HTTP listener binds only its assigned mesh address.
-4. Prepend an owned reject rule before the allow; deny with grants intact. Remove
-   only that rule and recover. Change policy to default-direct with old three-node
-   grants; deny rather than skip LAX. Restore the via policy and recover.
-5. Change SHA's source country so the reverse selector no longer matches; deny and
-    recover. Withdraw all access grants with routes intact; deny and recover.
+   Change that source rule to one bidirectional rule, then require ping and distinctive
+   HTTP bodies in both directions. Each HTTP listener binds only its assigned mesh address.
+4. Create `tag:client` and `tag:server`, assign them to NYC and SHA through generated
+   admin operations, and replace the exact-node rule with one bidirectional tag rule.
+   Generated flow preview and real traffic must both retain NYC → LAX → SHA.
+5. Prove endpoint ACL first-match behavior in both directions: an earlier wildcard
+   reject to `tag:server` blocks forward delivery, while an earlier SHA/server →
+   NYC/client reject blocks replies despite a later bidirectional allow. Removing only
+   each reject recovers traffic; no stateful/conntrack authorization is assumed.
+6. Remove and move SHA's server tag and require withdrawal, then restore membership
+   and traffic. Update an assigned tag description and add `tag:west`; both assignments
+   must remain intact. A default-allow empty ACL still follows mandatory via-LAX routing,
+   and an explicit routing reject still denies it. Restore default-reject tag access.
+7. Prepend an owned routing reject before the route; deny with endpoint access intact.
+   Remove only that rule and recover. Change routing to default-direct; deny rather
+   than silently reuse the unavailable relay path. Restore the via policy and recover.
+8. Change SHA's source country so the reverse route selector no longer matches; deny and
+    recover. Withdraw all endpoint access rules with routes intact; deny and recover.
    Then restart NYC with a valid saved candidate whose unique DNS name does not yet
    exist. Require continued retries with the old owned unreachable route and no TUN
    or cached grants. Add the alias to LAX's existing data bridge and require fresh
    packet-generation evidence plus real traffic recovery without restarting NYC.
-6. Stop only the LAX Agent; check failure within the 15-second lease window while
+9. Stop only the LAX Agent; check failure within the 15-second lease window while
    the separate controller remains reachable. Restart and require a newer LAX
    runtime epoch plus fresh successful data traffic.
-7. Stop the controller beyond the local lease. All Agent processes must stay alive,
+10. Stop the controller beyond the local lease. All Agent processes must stay alive,
    close managed sockets, and retain a TUN sink or explicit unreachable mesh guard.
    Repeat real ping/HTTP failures. Restart the same controller, require fresh higher
    report sequences in the same Agent epochs, unchanged identities and real recovery.
-8. Revoke SHA last. The generated node dataplane operation must return 403, SHA must
-   exit, and the controller must expose no fresh revoked adjacency claims. Packet
+11. Revoke SHA last. Its tag assignment must disappear while policy-referenced tag
+   definitions remain, and attempting to delete the referenced definition must return
+   422. The generated node dataplane operation must return 403, SHA must exit, and the
+   controller must expose no fresh revoked adjacency claims. Packet
    delivery remains denied and owned resources are cleaned in `finally`.
 
 Policy negatives start only after **current configuration ACKs**, a new local
@@ -149,7 +165,8 @@ to a deadline; expected denial must hold repeatedly over a duration after readin
 Every probe uses the assigned mesh IP directly and the normal OS routing table,
 without an interface override, environment HTTP proxy, DNS exit, or underlay retry.
 A failed ping with an underlay route or a missing guard **fails the acceptance**.
-Evidence contains policy/access revisions, grant counts in the saved policy, exact
+Evidence contains policy/access revisions, public source-rule counts, per-node compiled
+path counts (null for a revoked credential), exact
 IDs/keys/IPs, neighbor reports, sanitized Linux routes/interfaces, local readiness,
 and observed ping/HTTP results. It is functional evidence, not a throughput result.
 Raw source-spoof/injection coverage belongs to Agent unit tests, avoiding NET_RAW in

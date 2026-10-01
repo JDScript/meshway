@@ -223,8 +223,8 @@ function packetGraph() {
   }
   for (const observation of runtime.nodes) observation.revision = 42;
   const control: PacketControl = { config, runtime,
-    policy: { revision: 42, valid: true, diagnostics: [], network: { ipv4_prefix: "100.64.0.0/16", ipv6_prefix: "fd00::/64" }, policy: { default_action: "reject", rules: [] } },
-    access: { revision: 42, valid: true, diagnostics: [], policy: { grants: [] } } };
+    policy: { revision: 42, valid: true, diagnostics: [], source_jsonc: null, network: { ipv4_prefix: "100.64.0.0/16", ipv6_prefix: "fd00::/64" }, policy: { default_action: "reject", rules: [] } },
+    access: { revision: 42, valid: true, diagnostics: [], source_jsonc: null, policy: { default_action: "reject", rules: [] } } };
   const snapshot = (role: keyof typeof ids): AgentDataplaneSnapshot => {
     const receipt = config.nodes.find((entry) => entry.node.id === ids[role]); assert(receipt);
     const { id, name, country, mesh_ipv4, mesh_ipv6 } = receipt.node;

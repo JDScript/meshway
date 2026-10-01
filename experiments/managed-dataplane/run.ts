@@ -8,7 +8,7 @@ import { setTimeout as delay } from "node:timers/promises";
 import { fileURLToPath } from "node:url";
 import {
   ControlApiError, createEnrollmentToken, getConnections, getConnectionRuntimes, getPolicy,
-  listNodes, revokeNode, saveConnections, savePolicy, setNodeCountry,
+  getTags, listNodes, previewFlow, revokeNode, saveConnections, savePolicy, saveTags, setNodeCountry, setNodeTags,
 } from "../../packages/control-client/src/index.ts";
 import {
   getAgentConnectionsOperation, getAgentDataplaneOperation,
@@ -32,7 +32,7 @@ type Evidence = {
   name: string; at: string; status: "PASS" | "OBSERVED";
   policy?: PolicySnapshot; access?: MeshAccessSnapshot; connections?: ConnectionsSnapshot;
   neighbors?: ConnectionRuntimesSnapshot; local?: ByRole<Local>;
-  grants_count?: number;
+  source_policy_rule_count?: number; compiled_path_count?: ByRole<number | null>;
   probes?: { source: Role; destination: Role; observed: Probe }[];
   duration_ms?: number; notes?: string[];
 };
@@ -270,9 +270,12 @@ async function main() {
     const admin = await until("controller bootstrap", async () => { try { return text((await helper("controller", "admin-token")).token); } catch { return false; } }, 20_000);
     await until("generated controller API readiness", async () => { try { return await getConnections(baseUrl, admin); } catch { return false; } }, 20_000);
     assert.equal((await listNodes(baseUrl, admin)).nodes.length, 0, "fresh controller only");
-    assert.deepEqual((await getMeshAccess(baseUrl, admin)).policy.grants, []);
+    const initialAccess = await getMeshAccess(baseUrl, admin);
+    assert.deepEqual(initialAccess.policy, { default_action: "reject", rules: [] });
+    assert.equal(initialAccess.source_jsonc, null);
     const initialPolicy = await getPolicy(baseUrl, admin);
     assert.deepEqual(initialPolicy.policy, { default_action: "reject", rules: [] });
+    assert.equal(initialPolicy.source_jsonc, null);
     failureEvidence = async () => {
       const evidence: Evidence = { name: "failure-observations", status: "OBSERVED", at: new Date().toISOString() };
       try { evidence.local = await locals(); } catch { /* Docker may be unavailable. */ }
@@ -323,15 +326,17 @@ async function main() {
       { id: "tun-sha-nyc-country", source: { node_ids: [], countries: ["CN"] }, destination_scope: "mesh",
         destination_any: [{ kind: "node", value: ids.NYC }], action: { kind: "route", via: [ids.LAX], exit_node_id: null } },
     ] };
-    const forward: MeshAccessPolicy = { grants: [{ id: "tun-nyc-lax-sha", path: [ids.NYC, ids.LAX, ids.SHA] }] };
-    const both: MeshAccessPolicy = { grants: [...forward.grants, { id: "tun-sha-lax-nyc", path: [ids.SHA, ids.LAX, ids.NYC] }] };
+    const emptyAccess: MeshAccessPolicy = { default_action: "reject", rules: [] };
+    const forward: MeshAccessPolicy = { default_action: "reject", rules: [{ id: "tun-nyc-to-sha", source: [`node:${ids.NYC}`],
+      destination: [`node:${ids.SHA}`], action: "allow", bidirectional: false }] };
+    const both: MeshAccessPolicy = { default_action: "reject", rules: [{ ...forward.rules[0]!, id: "tun-nyc-sha-bidirectional", bidirectional: true }] };
     const putPolicy = async (policy: RoutingPolicy) => {
-      const value = await savePolicy(baseUrl, admin, { expected_revision: (await getPolicy(baseUrl, admin)).revision, policy });
-      assert(value.valid); assert.deepEqual(value.diagnostics, []); return value;
+      const value = await savePolicy(baseUrl, admin, { expected_revision: (await getPolicy(baseUrl, admin)).revision, policy, source_jsonc: null });
+      assert(value.valid); assert.deepEqual(value.diagnostics, []); assert.equal(value.source_jsonc, null); return value;
     };
     const putAccess = async (policy: MeshAccessPolicy) => {
-      const value = await saveMeshAccess(baseUrl, admin, { expected_revision: (await getMeshAccess(baseUrl, admin)).revision, policy });
-      assert(value.valid); assert.deepEqual(value.diagnostics, []); return value;
+      const value = await saveMeshAccess(baseUrl, admin, { expected_revision: (await getMeshAccess(baseUrl, admin)).revision, policy, source_jsonc: null });
+      assert(value.valid); assert.deepEqual(value.diagnostics, []); assert.equal(value.source_jsonc, null); return value;
     };
     await putPolicy(routing);
     const scopedConnections = async (): Promise<ByRole<AgentConnectionsSnapshot>> => {
@@ -353,6 +358,7 @@ async function main() {
     const ready = async () => {
       const policy = await getPolicy(baseUrl, admin); const access = await getMeshAccess(baseUrl, admin);
       assert.equal(policy.revision, access.revision);
+      assert.equal(policy.source_jsonc, null); assert.equal(access.source_jsonc, null);
       const expected = await scopedConnections();
       const [NYC, LAX, SHA] = await Promise.all(ROLES.map((role) => getAgentDataplaneOperation(baseUrl, bearers[role])));
       assert(NYC && LAX && SHA);
@@ -381,10 +387,16 @@ async function main() {
       for (const role of ROLES) lastReady.set(role, { revision: policy.revision, pid: observations[role].agent_pid, events: observations[role].ready_events });
       return { policy, access, neighbors };
     };
-    const capture = async (name: string, extra: Partial<Pick<Evidence, "probes" | "duration_ms" | "notes">> = {}) => {
+    const capture = async (name: string, extra: Partial<Pick<Evidence, "probes" | "duration_ms" | "notes">> = {}, revoked: Role | null = null) => {
       const access = await getMeshAccess(baseUrl, admin);
+      const compiled = await Promise.all(ROLES.map(async (role) => {
+        try { return (await getAgentDataplaneOperation(baseUrl, bearers[role])).payload.access_policy.grants.length; }
+        catch (error) { if (role === revoked && error instanceof ControlApiError && error.status === 403) return null; throw error; }
+      }));
       report.evidence.push({ name, status: "PASS", at: new Date().toISOString(), policy: await getPolicy(baseUrl, admin),
-        access, grants_count: access.policy.grants.length, connections: await getConnections(baseUrl, admin),
+        access, source_policy_rule_count: access.policy.rules.length,
+        compiled_path_count: { NYC: compiled[0]!, LAX: compiled[1]!, SHA: compiled[2]! },
+        connections: await getConnections(baseUrl, admin),
         neighbors: await getConnectionRuntimes(baseUrl, admin), local: await locals(), ...extra }); await save();
     };
     const oneProbe = async (source: Role, destination: "NYC" | "SHA") => probe(await helper(source, "probe", { address: ips[destination], body: bodies[destination] }));
@@ -425,38 +437,88 @@ async function main() {
     }
     await negative("empty-access-default-deny");
 
-    stage("forward-only grant delivers ICMP but denies return traffic");
+    stage("forward-only endpoint rule delivers ICMP but denies return traffic");
     await putAccess(forward); await ready();
     const beforeEcho = (await locals()).SHA.icmp.InEchos;
     await negative("forward-only-no-implicit-reverse");
     const afterEcho = (await locals()).SHA.icmp.InEchos;
-    assert(afterEcho > beforeEcho, "one-way grant must deliver actual ICMP to SHA, not just fail before transmission");
+    assert(afterEcho > beforeEcho, "one-way rule must deliver actual ICMP to SHA, not just fail before transmission");
     await capture("forward-delivery-independent-kernel-counter", { notes: [`SHA Icmp.InEchos increased ${afterEcho - beforeEcho}; ping/HTTP round trips remained denied. No raw socket/capture capability.`] });
 
-    stage("explicit reverse grant enables real kernel TUN ping and HTTP");
-    await putAccess(both); await success("two-direction-grants-kernel-traffic");
+    stage("one bidirectional endpoint rule enables real kernel TUN ping and HTTP");
+    await putAccess(both); await success("bidirectional-rule-kernel-traffic");
 
-    stage("ordered first-match reject overrides later allow with grants intact");
+    stage("administrator tags drive one bidirectional endpoint rule");
+    const tagCatalog = [{ tag: "tag:client", description: "managed dataplane client" }, { tag: "tag:server", description: "managed dataplane server" }];
+    await saveTags(baseUrl, admin, { expected_revision: (await getTags(baseUrl, admin)).revision, tags: tagCatalog });
+    await setNodeTags(baseUrl, admin, { expected_revision: (await getTags(baseUrl, admin)).revision, node_id: ids.NYC, tags: ["tag:client"] });
+    await setNodeTags(baseUrl, admin, { expected_revision: (await getTags(baseUrl, admin)).revision, node_id: ids.SHA, tags: ["tag:server"] });
+    const tagged: MeshAccessPolicy = { default_action: "reject", rules: [{ id: "tagged-client-server", source: ["tag:client"],
+      destination: ["tag:server"], action: "allow", bidirectional: true }] };
+    await putAccess(tagged);
+    const taggedPreview = await previewFlow(baseUrl, admin, { flow: { source_node_id: ids.NYC, destination_node_id: ids.SHA,
+      destination_ip: ips.SHA, domain: null, destination_country: null } });
+    assert(taggedPreview.valid && taggedPreview.execution_supported);
+    assert.equal(taggedPreview.authorization.action, "allow"); assert.equal(taggedPreview.authorization.rule_id, "tagged-client-server");
+    assert.deepEqual(taggedPreview.routing.path, [ids.NYC, ids.LAX, ids.SHA]);
+    await success("tag-selectors-bidirectional-kernel-traffic");
+
+    stage("earlier wildcard-to-server reject wins before bidirectional tag allow");
+    const taggedFirstReject: MeshAccessPolicy = { ...tagged, rules: [{ id: "reject-to-tagged-server", source: ["*"], destination: ["tag:server"],
+      action: "reject", bidirectional: false }, ...tagged.rules] };
+    await putAccess(taggedFirstReject); await negative("access-first-match-forward-reject");
+    await putAccess(tagged); await success("access-first-match-forward-reject-removed");
+
+    stage("tag removal and move withdraw authorization until membership is restored");
+    await setNodeTags(baseUrl, admin, { expected_revision: (await getTags(baseUrl, admin)).revision, node_id: ids.SHA, tags: [] });
+    await negative("server-tag-removed");
+    await setNodeTags(baseUrl, admin, { expected_revision: (await getTags(baseUrl, admin)).revision, node_id: ids.LAX, tags: ["tag:server"] });
+    await negative("server-tag-moved-away-from-endpoint");
+    await setNodeTags(baseUrl, admin, { expected_revision: (await getTags(baseUrl, admin)).revision, node_id: ids.SHA, tags: ["tag:server"] });
+    await setNodeTags(baseUrl, admin, { expected_revision: (await getTags(baseUrl, admin)).revision, node_id: ids.LAX, tags: [] });
+    await success("server-tag-membership-restored");
+
+    stage("tag catalog edits preserve existing assignments");
+    const editedTags = await saveTags(baseUrl, admin, { expected_revision: (await getTags(baseUrl, admin)).revision, tags: [
+      { tag: "tag:client", description: "updated managed dataplane client" }, tagCatalog[1]!, { tag: "tag:west", description: "western region" },
+    ] });
+    assert.deepEqual(editedTags.assignments.find((entry) => entry.node_id === ids.NYC)?.tags, ["tag:client"]);
+    assert.deepEqual(editedTags.assignments.find((entry) => entry.node_id === ids.SHA)?.tags, ["tag:server"]);
+    await success("tag-catalog-edit-preserved-memberships");
+
+    stage("default allow still intersects mandatory routing and route rejection");
+    await putAccess({ default_action: "allow", rules: [] }); await success("access-default-allow-keeps-via-LAX");
     const first = routing.rules[0]; assert(first);
+    await putPolicy({ ...routing, rules: [{ ...first, id: "tun-own-first-reject", action: { kind: "reject", via: [], exit_node_id: null } }, ...routing.rules] });
+    await negative("route-reject-overrides-access-default-allow");
+    await putPolicy(routing); await putAccess(tagged); await success("default-reject-tag-policy-restored");
+
+    stage("reverse-direction first match rejects at its ordered position");
+    await putAccess({ ...tagged, rules: [{ id: "reject-server-to-client", source: ["tag:server"], destination: ["tag:client"],
+      action: "reject", bidirectional: false }, ...tagged.rules] });
+    await negative("access-first-match-reverse-reject");
+    await putAccess(tagged); await success("access-first-match-reverse-reject-removed");
+
+    stage("ordered routing first-match reject overrides access allow");
     await putPolicy({ ...routing, rules: [{ ...first, id: "tun-own-first-reject", action: { kind: "reject", via: [], exit_node_id: null } }, ...routing.rules] });
     await negative("first-match-reject");
     const rejected = await getPolicy(baseUrl, admin);
     await putPolicy({ ...rejected.policy, rules: rejected.policy.rules.filter((rule) => rule.id !== "tun-own-first-reject") });
     await success("first-match-reject-removed");
 
-    stage("default direct cannot reuse a grant requiring LAX");
+    stage("default direct cannot bypass the path authorized through LAX");
     await putPolicy({ default_action: "direct", rules: [] }); await negative("no-mandatory-hop-skipping");
     await putPolicy(routing); await success("via-LAX-restored");
 
-    stage("country selector changes take effect independently of path grants");
+    stage("country selector changes take effect independently of endpoint access");
     await setNodeCountry(baseUrl, admin, { expected_revision: (await getPolicy(baseUrl, admin)).revision, node_id: ids.SHA, country: "US" });
     await negative("source-country-mismatch");
     await setNodeCountry(baseUrl, admin, { expected_revision: (await getPolicy(baseUrl, admin)).revision, node_id: ids.SHA, country: "CN" });
     await success("source-country-restored");
 
-    stage("grant withdrawal with saved policy intact");
-    await putAccess({ grants: [] }); await negative("grant-withdrawal");
-    await putAccess(both); await success("grants-restored");
+    stage("endpoint access withdrawal with saved routing intact");
+    await putAccess(emptyAccess); await negative("access-rule-withdrawal");
+    await putAccess(tagged); await success("access-rules-restored");
 
     stage("unavailable bootstrap DNS retries without activating cached grants");
     await helper("NYC", "agent-stop");
@@ -546,6 +608,15 @@ async function main() {
 
     stage("final endpoint revocation denies API and packet delivery");
     await revokeNode(baseUrl, admin, { node_id: ids.SHA });
+    const tagsAfterRevoke = await getTags(baseUrl, admin);
+    assert(!tagsAfterRevoke.assignments.some((entry) => entry.node_id === ids.SHA), "revocation must clean SHA tag membership");
+    assert(tagsAfterRevoke.tags.some((entry) => entry.tag === "tag:server"), "policy-referenced tag definition must remain");
+    let referencedTagRejected = false;
+    try {
+      await saveTags(baseUrl, admin, { expected_revision: tagsAfterRevoke.revision, tags: tagsAfterRevoke.tags.filter((entry) => entry.tag !== "tag:server") });
+    } catch (error) { referencedTagRejected = error instanceof ControlApiError && error.status === 422; }
+    assert(referencedTagRejected, "deleting a policy-referenced tag must return 422 without silently changing policy");
+    assert.deepEqual(await getTags(baseUrl, admin), tagsAfterRevoke, "failed referenced-tag deletion must be atomic");
     let forbidden = false;
     try { await getAgentDataplaneOperation(baseUrl, bearers.SHA); } catch (error) { forbidden = error instanceof ControlApiError && error.status === 403; }
     assert(forbidden, "revoked node must lose its generated dataplane API");
@@ -565,7 +636,7 @@ async function main() {
     } while (Date.now() - revokeCheckAt < 6_000);
     const runtime = await getConnectionRuntimes(baseUrl, admin); const sha = runtime.nodes.find((node) => node.node_id === ids.SHA);
     assert(sha && sha.state === "withdrawn" && !sha.current && sha.stale && sha.peers.length === 0 && sha.reported_at === null);
-    await capture("revoked-endpoint", { probes: revokedProbes, notes: ["Generated getAgentDataplane returned 403; revoked process exited; runtime retained no fresh adjacency claims."] });
+    await capture("revoked-endpoint", { probes: revokedProbes, notes: ["Generated getAgentDataplane returned 403; revoked process exited; runtime retained no fresh adjacency claims."] }, "SHA");
     report.status = "PASS"; report.phase = "complete"; delete report.check;
   } catch (error) {
     report.status = "FAIL"; process.exitCode = 1;
