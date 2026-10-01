@@ -36,7 +36,7 @@ Rust 控制面与 agent、Next.js + shadcn/ui 控制台、VitePress 文档站。
 - 用户已确认承载默认由平台提供协议优先级并自动选择 / 主备切换，默认参数与凭据由平台生成和下发，Web 支持允许协议、优先级与逐段约束覆盖；添加节点时必须提供可选 listener 配置入口，后续可在 Web 修改，不能因自动化隐藏这项控制能力。
 - 用户要求统一节点模型，以简单逻辑为准：不按服务器 Agent / App 划分节点类别或默认中继资格，不额外引入一套中继角色开关；节点在路径中的职责由路径 / 任务及现有授权表达，平台依据实际能力和可达性选择。底层能力差异留在能力模型内，不变成用户必须维护的产品分类。
 - 用户已确认首版同时覆盖 Mesh 私网互访和按域名 / IP 经指定路径访问互联网，两者同为核心闭环；公网出口与域名分流应进入首版交付主线，不再仅按旧技术里程碑排到后期。具体授权、路径与状态回包边界仍按已确认语义实现。
-- 用户已确认一个 controller 管理多个相互隔离的网络，采用类似 tailnet 的产品边界；成员、地址、DNS、Access、路由及相关配置按网络隔离，Web 操作限定在所选网络。当前实现仍为单网络，后续须无损迁移；同一设备一次只接入一张网络，可保存多个接入并切换，不同时在多网传输；不能仅做前端网络切换冒充后端隔离。
+- 用户已确认一个 controller 管理多个相互隔离的网络，采用类似 tailnet 的产品边界；成员、地址、DNS、Access、路由及相关配置按网络隔离，Web 操作限定在所选网络。v9 多网络存储、显式类型化作用域与既有数据无损迁移已实现；客户端保存多接入并切换尚待实现，目标为同一设备一次只启用一张网络、不同时在多网传输。
 - 用户已确认需要用户身份：设备归属登录用户，服务器类设备可用预分配 tag 的接入密钥；Agent 提供类似 `tailscale up` 的链接登录，App 使用系统浏览器 SSO。登录 / 接入凭据与管理员权限保持分离。首版账户由 controller 本地管理：邮箱 + 密码注册登录，密码仅存安全哈希；OIDC 后续再接，不阻塞首版。不开放自助注册，仅凭管理员 / 网络 Owner 生成的邀请链接注册并加入指定网络，现有管理员迁移为第一个 Owner；首版不发邮件，邀请与重置链接在 Web 生成后手动转交。
 - 用户已确认产品定位：常规场景以 Tailscale 为基线，Meshway 的差异是可插拔的自定义 transport 承载，以及按域名 / IP 经有序指定路径的 routing。网络、设备 / 用户、接入、授权、DNS、出口、控制台与客户端等产品定义默认参照 Tailscale 官方做法；只有这两项扩展需要时才偏离，偏离须说明理由。既有确认项与 Tailscale 冲突时逐项向用户复核，不擅自推翻。
 - 用户已确认 Apple 终端 App 位于 `apps/apple`：SwiftUI 多平台 + NetworkExtension Packet Tunnel，Rust 核心经 UniFFI 复用，FFI unsafe 仅限受审计的桥接 crate。App 登录本质是 SSO：App 经系统浏览器会话跳转 controller Web 完成登录 / 授权，controller 回调 App 下发一次性兑换码，App 用兑换码与本地已持久化的节点身份完成接入；外部 OIDC 对接、接入资格、用户权限、有效期等由 controller 侧决定，App 不感知。已实现切片：controller PKCE 兑换码、Web 管理员批准（暂代用户登录）、App Keychain 节点身份、生成客户端兑换与心跳、只读节点清单；用户账户体系、隧道与 NE 包流尚未实现，不得伪造登录、接入或隧道状态；付费 Apple Developer 会员暂未续费，真机 NE 与真实隧道验证暂缓。
@@ -64,5 +64,6 @@ Rust 控制面与 agent、Next.js + shadcn/ui 控制台、VitePress 文档站。
 - 远端真实联测留待 TUN 与打洞完善后进行，现阶段仅登记主机。测试限定独立 Docker 网络命名空间，保留原 SSH/管理连接，不改宿主机路由、DNS、防火墙或 Docker daemon 配置，不使用 host network/privileged；测试网段、端口和数据目录须与现有服务隔离。
 - Rust 使用 `cargo fmt`、Clippy 和必要的行为测试；JS 使用严格 TypeScript 与各包检查。修改协议、HTTP 路由或生成客户端时，合并前必须跑全部消费者：`cargo test --workspace --all-features`（含 Agent 与 Apple core）、Web 与 SDK 检查，以及 `experiments/*/tsconfig.json` 的 `tsc --noEmit`。
 - 并行任务明确文件所有权；根 workspace 配置、lockfile 和整体验证由协调者维护。
+- 不同 feature 组合的 CLI 行为测试与 SDK / E2E 构建不得并行共用同一 Cargo target 目录；后者可能替换前者正在执行的 `target/debug/meshway-agent`。使用独立 target 或串行执行。
 - 所有后续 worktree 统一创建在本仓库 `.worktree/<任务名>`，不再散放上级目录。独立任务完成、提交已整合且无未提交 / 未跟踪工作后及时移除 worktree；保留分支和测量产物。活跃任务须在不影响进程与构建的安全边界迁移，不能直接删改其目录。
 - 独立完成的工作形成清晰提交。提交前检查生成产物、文档和实际运行命令一致。
