@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { setTimeout as delay } from "node:timers/promises";
 import { getConnections, getMeshAccess, getPolicy, saveConnections, saveMeshAccess, savePolicy } from "../../packages/control-client/src/index.ts";
 import type { NetworkSnapshot, NodeSummary } from "../../packages/control-client/src/index.ts";
-import { array, boolean, text } from "../managed-connections/local.ts";
+import { array, boolean, record, text } from "../managed-connections/local.ts";
 import { response } from "./checks.ts";
 import type { Role } from "./checks.ts";
 
@@ -45,6 +45,15 @@ export async function systemAcceptance(ctx: Context): Promise<SystemEvidence> {
     assert.equal(value.exit, 0); assert.equal(value.digest, ctx.originalDigest);
   };
   const curl = () => system("one", "curl", { name: "solo", body });
+  const dnsStatus = async (role: Role, expected: string) => {
+    const result = await system(role, "dns-status"); assert.equal(result.exit, 0);
+    const envelope = record(result.output); assert.equal(envelope.schema_version, 1);
+    const outcome = record(envelope.outcome); assert.equal(outcome.status, "ok");
+    const status = record(outcome.result); assert.equal(status.state, expected);
+    assert.equal(status.listener_bound, true); assert.equal(status.listener, "127.0.0.1:5353");
+    assert.equal(status.network_id, network.network_id); assert.equal(status.node_id, node(role).id);
+    assert.equal(status.evidence, "current_dns_guard");
+  };
   stage("system-resolver-glibc-search-and-original-upstream");
   check("read-only container apply fails without changing resolver or leaving listeners");
   const denied = await system("data", "readonly-apply", { zone: network.dns.zone, ...network.network });
@@ -82,6 +91,17 @@ export async function systemAcceptance(ctx: Context): Promise<SystemEvidence> {
     }
   }
   passed("adapter-udp-tcp-a-aaaa-ptr");
+  check("DNS-only and managed daemons expose the same private DNS diagnostic contract");
+  await dnsStatus("one", "active"); await dnsStatus("data", "active");
+  for (const transport of ["udp", "tcp"] as const) {
+    const value = await system("one", "dns-query", { name, kind: "A", transport });
+    assert.equal(value.exit, 0);
+    const outcome = record(record(value.output).outcome); assert.equal(outcome.status, "ok");
+    const query = record(outcome.result); assert.equal(query.state, "positive");
+    assert.equal(query.evidence, `loopback_${transport}_round_trip`);
+    assert.equal(record(array(query.answers)[0]).data, node("data").mesh_ipv4);
+  }
+  passed("dns-cli-real-linux-uds-and-udp-tcp-queries");
 
   stage("system-resolver-application-uses-authorized-mesh-tun");
   await helper("one", "agent-stop"); await helper("one", "agent-start", { dataplane: true });
@@ -127,9 +147,17 @@ export async function systemAcceptance(ctx: Context): Promise<SystemEvidence> {
   });
   assert.equal((await system("one", "route", { address: node("data").mesh_ipv4, prefix: network.network.ipv4_prefix })).kind, "tun");
   passed("curl-shortname-exact-body-and-mesh-ip-over-tun");
+  await dnsStatus("one", "active");
 
   stage("system-resolver-outage-keeps-mesh-fail-closed");
   await helper("controller", "controller-stop"); await delay(12_000);
+  check("DNS CLI reports expired runtime and retains the real failed query evidence");
+  await dnsStatus("one", "expired");
+  const expiredCli = await system("one", "dns-query", { name, kind: "A", transport: "tcp" });
+  assert.equal(expiredCli.exit, 1);
+  assert.equal(record(record(expiredCli.output).outcome).status, "error");
+  assert.equal(record(record(expiredCli.output).observation).state, "servfail");
+  passed("dns-cli-expired-status-and-servfail-evidence");
   for (const transport of ["udp", "tcp"] as const) {
     const result = response(await system("one", "query", { name, kind: "A", transport }));
     assert.equal(result.rcode, "SERVFAIL"); assert.deepEqual(result.answers, []); evidence.queries.push(result);
@@ -166,6 +194,7 @@ export async function systemAcceptance(ctx: Context): Promise<SystemEvidence> {
   assert(boolean((await system("one", "conflict-undo")).restored_fixture_edit)); await restore();
   check("daemon exit removes TUN and leaves explicit unreachable Mesh guard");
   await helper("one", "agent-stop");
+  assert.equal((await system("one", "dns-status")).exit, 1);
   assert.equal((await system("one", "route", { address: node("data").mesh_ipv4, prefix: network.network.ipv4_prefix })).kind, "guard");
   passed("daemon-exit-unreachable-route-guard");
   evidence.original_resolver_restored = true;

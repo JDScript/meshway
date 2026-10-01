@@ -55,12 +55,15 @@ python3 experiments/managed-dns/run.py --image meshway-manageddns:YOUR_NATIVE_TA
 `--system-resolver` 先运行上述全部阶段，再安装仓库 `experiments/dns-resolver/*.py` 到新容器的私有 tmpfs。此模式的 `one` 容器使用可写层（Docker 会把只读容器的自有 resolv.conf 也挂为只读），额外获得 NET_ADMIN 和独立 TUN，初始仍为 keyless DNS-only；其余容器保持只读，`two` 保持 cap-drop ALL。没有任何宿主状态 bind mount。Agent 控制面地址采用本次 controller 的底层 IP，避免引导解析依赖接管后的 resolver。
 
 - `one` 使用本地 53 端口 adapter 与搜索域；`getent ahostsv4 solo` / 完整域名返回实际分配的 Mesh IP，显式 UDP/TCP 查询验证 A、AAAA、PTR。
+- DNS-only 与 data+DNS daemon 均通过真实私有 UDS 返回 `dns status`；CLI query 使用 UDP/TCP，过期时状态与 SERVFAIL wire evidence 分别核对，停止 daemon 后明确失败。
 - 接管前原上游保留；`controller.mesh.test` 仍由 Docker `127.0.0.11` 解析。为精确 Mesh 名、裸短名及原 search 域下的同名主机预置不同 underlay IP 的诱饵，检查 NXDOMAIN、正常解析以及 lease 到期均不回退命中诱饵。启用期间只使用 Mesh search，down 才恢复原 search。
 - `one` 与 `data` 建立真实 Native UDP 邻接；先验证 DNS 可见但默认 Access reject 时 `curl` 失败，再保存精确双向端点授权，由 `curl -4 http://solo:43000/...` 检查独立响应内容、remote Mesh IP 和真实 TUN 路由。
 - 停控制面超过 lease：UDP/TCP SERVFAIL、glibc 不再返回 Mesh 名，外部上游仍可用；Mesh 流量停留在 TUN sink / 拒绝路由，真实按 IP 的 HTTP 也失败。Agent 退出后再验证 TUN 移除与显式 unreachable 路由。
 - 验证 SIGTERM、重复 down、SIGKILL 后 journal 恢复，以及第三方修改 resolv.conf 时拒绝覆盖。fixture 撤销自己的冲突编辑后才恢复原始文件。
 
 53 端口与文件写入权限不足会使 apply 失败；不增加宿主权限或更改 Docker daemon。系统 adapter 属于显式 Linux 容器实验，zone / 地址池在启动时固定；控制面改 zone 后需 down 再按新参数 apply。不是 systemd-resolved / macOS / Windows 安装器，也不是 controller 自动汇报的运行状态。
+
+2026-10-01 最终集成：`meshway-manageddns:m1-20261001-b`（原生 ARM64，image `sha256:8d089b9bb1c67d3ef54d6b00acc90e6b32869e97516ebb8d158f79ed0c60df3a`）的 `--system-resolver` 验收 PASS。运行 ID `mupq9edz-37f8cdbf841d8edf`，12 阶段、16 项系统检查；原 resolver 完整恢复，清理无错误。
 
 ## 产物与清理
 

@@ -40,6 +40,17 @@ def apply_args(data):
 
 
 def main(action, data):
+    if action in ('dns-status', 'dns-query'):
+        args = ['meshway-agent', 'dns', 'status' if action == 'dns-status' else 'query']
+        if action == 'dns-query':
+            args.extend([data['name'], '--type', data['kind']])
+            if data['transport'] == 'tcp':
+                args.append('--tcp')
+        result = child([*args, '--state', str(base.STATE), '--json'], timeout=15)
+        value = json.loads(result.stdout)  # Exactly one JSON object; no daemon logs on stdout.
+        if value['schema_version'] != 1:
+            raise ValueError('unknown diagnostic schema')
+        return {'exit': result.returncode, 'output': value}
     if action == 'resolver-start':
         return base.start('resolver', apply_args(data))
     if action == 'readonly-apply':
