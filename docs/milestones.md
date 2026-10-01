@@ -27,7 +27,7 @@
 
 当前兼容退出码为 0 成功、1 运行失败、2 参数错误；更细的失败种类放在版本化 JSON error code，stdout 只放结果，stderr 放诊断。验收覆盖 daemon 在/停/代际切换、过期 snapshot、无 peer、畸形/超大 IPC、权限不符、JSON 单对象及旧 ping 协议兼容。现有 `ping` 继续明确 neighbor-probe；up/set/down/login/logout、netcheck 网络探测、trace 或新管理 mutation 仍是后续切片。
 
-## M2 · Endpoint 发现与 netcheck（独立探测切片已验收）
+## M2 · Endpoint 发现与 netcheck（承载观测与有期限上报已验收）
 
 - **可见交付**：知道 UDP 是否可用、观测到的 underlay endpoint、映射是否随目的变化、探测时间与失败原因；尚不宣称打洞成功。
 - **协议/UI/CLI**：typed observation 带来源（local/manual/STUN）、时间/有效期与候选状态；节点能力、监听、endpoint、dial policy 各自建模。`netcheck --json` 与节点连通性面板共用诊断语义；IPv6 探测能力不等于 IPv6 overlay。
@@ -35,7 +35,9 @@
 - **验收**：独立本机 fixture 两个 STUN 观察点、对称映射、受限 NAT、UDP blocked、endpoint 变化；检查旧候选过期、测量超时/不可测值，不触碰宿主路由或提供的远端。
 - **依赖/并行**：依赖 M1 诊断边界；发现实现、schema/UI、fixture 可按文件所有权并行，fixture 网络执行串行。
 
-第一片已交付独立临时 UDP socket 的 CLI 观测、两个实际 STUN 观察点和容器内 kernel NAT 的 7 场景验收，详见 [Netcheck](/netcheck)。这是本机网络环境诊断；真实承载 socket 绑定、controller 的节点报告 / 候选分发以及自动发现仍是 M2 后续项。Web `/monitoring` 已归并为诊断工作台，保留原 URL 并提供节点上下文深链，不把未上报的本地结果展示为节点运行数据。
+第一片已交付独立临时 UDP socket 的 CLI 观测、两个实际 STUN 观察点和容器内 kernel NAT 的 7 场景验收，详见 [Netcheck](/netcheck)。第二片已将采集绑定到真实 carrier socket，接入有身份、代际与期限的报告及 Web 展示，并通过四容器 8 阶段验收，见[承载 endpoint 观测](/endpoint-discovery)。Web `/monitoring` 保留原 URL 与节点上下文深链，将独立诊断与真实承载报告分别呈现。
+
+接下来的独立交付是面向已获准邻接的候选分发、peer 连接验证与自动打洞。当前观测不会自动添加或改写连接配置，也不表示 peer 已经可达。
 
 ## M3 · 本机打洞 + 同邻接 fallback（待开工）
 

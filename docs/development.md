@@ -13,9 +13,10 @@
 - 稳定单 Network ID / 名称、只读地址池、DNS 设置与显式 loopback A/AAAA/PTR；页面统一间距、草稿栏过渡及已保存 Flow 检查入口已归并。
 - 通过私有 daemon IPC 查询的 `status --live`、`whois`、JSON 邻接 `ping` 与 `dns status/query`；网络页与节点详情区分 DNS 保存意图、完整节点名和本地诊断。
 - 显式容器 resolver / 搜索域实验接入，已验证 glibc 短名、真实授权 TUN HTTP、外部 DNS 保留与事务恢复。
+- 独立 `netcheck` 与真实 managed UDP carrier 的 STUN 观测、有期限的节点报告和 Web 候选观测卡；kernel NAT 与 carrier 生命周期分别隔离验收。
 - 可写 Ubuntu 本机 demo 和隔离 Docker 功能验收。当前阶段及证据分别见[访问授权](/access-policy)、[托管数据面](/managed-dataplane)。
 
-接下来推进 endpoint 发现、netcheck 和本机隔离 NAT / 打洞。具体完成状态和验收入口集中在[后续里程碑](/milestones)；平台 DNS 安装器、IPv6 TUN、互联网出口和真实逐跳 trace 继续按依赖分片。
+接下来推进向获准邻接分发候选、真实 peer 连接验证和本机隔离打洞。具体完成状态和验收入口集中在[后续里程碑](/milestones)；平台 DNS 安装器、IPv6 TUN、互联网出口和真实逐跳 trace 继续按依赖分片。
 
 远端主机目前只登记。按照用户要求，等 TUN / 打洞完善后再安排容器隔离的跨区域联测，保留宿主原有网络连接；不会用本机容器城市名称冒充跨地域测试。
 
@@ -31,7 +32,7 @@
 
 从仓库根目录用 `tmux list-sessions` 检查，`tmux attach -t meshway-web` 查看会话。当前日志位于 `.meshway/services/`。Controller 启动复用现有 SQLite 与管理员凭据；未登录的 `/api/v1/overview` 返回 401 表示认证端点可达。
 
-本轮 Docker 开发容器采用**原位二进制更新**：从原生 `meshway-managedtest:m2-dev-20261001-a` 构建提取 Agent，校验 SHA-256，原子替换后逐个重启同一容器。升级前后的节点身份、密钥、profiles 和安装包清单均核对保留；运行进程已验证新版 live CLI、Native UDP / VLESS 邻接探测及新运行 epoch。
+本轮 Docker 开发容器采用**原位二进制更新**：从原生 `meshway-managedtest:m2b-dev-20261001-b` 构建提取 Agent，校验 SHA-256，原子替换后逐个重启同一容器。升级前后的节点身份、密钥、profiles 和安装包清单均核对保留；运行进程已验证新版 live CLI、Native UDP / VLESS 邻接探测及新运行 epoch，discovery API 如实返回当前未配置观察点的 `disabled` 状态。
 
 `docker ps` 的 IMAGE 仍标示容器创建时的基础镜像；本次运行二进制的来源与校验记录在 `.meshway/services/binary-update-*/deployment.json`。这是可写开发容器的部署方式，重建容器时应使用最新构建镜像。普通镜像升级会重建可写层，操作入口与边界见仓库 `experiments/managed-connections/DEMO.md`。
 

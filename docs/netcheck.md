@@ -60,9 +60,9 @@ STUN 服务提供的是地址观测。它没有证明 Meshway peer 身份，也�
 | 仅 B 不可达 | true | null | true |
 | 更换映射前 / 后的两次检查 | 各自 true | 各自 false | 各自 true |
 
-## 后续：承载 socket 与候选生命周期
+## 承载 socket 与候选生命周期
 
-下一片需要让真实 managed UDP 承载使用同一 socket 做 endpoint 发现，绑定监听器、network / node 身份、公开运行代际和独立有效期。之后再通过生成的控制协议分发观测、验证 peer 回包与身份，并让 Web 展示报告来源和失效状态。
+实际 managed UDP socket 的采集与有期限上报已经接入，绑定监听器 / outgoing candidate、节点身份、公开运行代际和独立有效期；Web 展示真实报告来源与失效状态，见[承载 endpoint 观测](/endpoint-discovery)。后续继续向获准的邻接分发候选、验证 peer 回包与身份，再进入自动打洞。
 
 候选变化只影响同一逻辑邻接的承载选择。即使直连失败，也不能跳过 Routing 指定的必经节点或降低端到端加密。完成这些边界之后才进入 [M3 的打洞和同邻接 fallback](/milestones)。
 

@@ -107,9 +107,20 @@ Routing 与 Access 的保存请求支持 `source_jsonc`，服务端拒绝重复�
 
 旧的配置与连接响应不增加字段，仍保留各自的保存 ACK 语义。新数据面快照不是新的“已生效”回执；本地 TUN 代际证据绑定其 revision 和摘要，实际可达性另用普通 IP 流量验证。
 
+### 实际 UDP socket 观测
+
+| 方法与路径 | bearer 权限 | 生成操作 / 类型 |
+| --- | --- | --- |
+| `POST /api/v1/agent/connections/discovery` | 节点 | `reportEndpointDiscovery`，请求 `ReportEndpointDiscoveryRequest` |
+| `GET /api/v1/connections/discovery` | 管理员 | `getEndpointDiscoveries` → `EndpointDiscoveriesSnapshot` |
+
+观测引用当前连接 runtime epoch、独立递增 sequence 与配置 revision / digest。控制面核对 Native UDP 资源归属、监听器实际 bind、代际与 socket 关联，以及每笔观测的绝对期限。精确重试不刷新接收时间；同一次观测不能改时间或延长有效期。
+
+报告仅保存在有界内存中，controller 重启后重新等待 Agent 上报；这不增加配置版本或改写 SQLite 业务配置。撤销、换代、配置不匹配与到期使旧候选观测失效。详见[承载 endpoint 观测](/endpoint-discovery)。
+
 ## 错误与运行时验证
 
-新增连接契约通过同一生成链提供 `publishConnectionIdentity`、`getConnections`、`saveConnections`、`getAgentConnections` 和 `acknowledgeAgentConnections`。精确路径与字段见[公钥与连接配置](/connections)及 Rust 源契约。只有管理读取 / 保存导出为 Web 的公共 SDK 操作；Agent 的三个节点操作由实际路由声明选择生成。连接回执独立于 IP / 路由回执。
+连接契约通过同一生成链提供 `publishConnectionIdentity`、`getConnections`、`saveConnections`、`getAgentConnections` 和 `acknowledgeAgentConnections` 等操作。精确路径与字段见[公钥与连接配置](/connections)及 Rust 源契约。Web 服务端使用管理员操作；节点操作依据实际路由声明和认证元数据生成，也供隔离 fixture 使用。浏览器不持有节点凭据。连接回执独立于 IP / 路由回执。
 
 Rust 路由声明包括：无效或缺失凭据的 HTTP `401`、已撤销节点访问的 `403`、非法请求的 `400`、未知节点的 `404`、冲突的 `409`，以及请求体 / 存储错误；本轮新增无效策略 / 容量失败的 `422`。每个 endpoint 的完整响应集合以 OpenAPI 为准。不同凭据复用已消费注册令牌按无效注册权限处理；不能把它当作相同身份的成功重试。
 

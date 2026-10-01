@@ -34,6 +34,7 @@ export default defineConfig({
           { text: "手动验证连接", link: "/testing-connections" },
           { text: "Agent CLI 与运行证据", link: "/cli" },
           { text: "Netcheck 与底层网络", link: "/netcheck" },
+          { text: "承载 socket 与 endpoint 观测", link: "/endpoint-discovery" },
           { text: "托管 Mesh IPv4 数据面", link: "/managed-dataplane" },
           { text: "端点访问授权与 JSONC", link: "/access-policy" },
           { text: "Network 管理边界", link: "/network-management" },
