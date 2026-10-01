@@ -21,6 +21,7 @@ export type SystemEvidence = { checks: string[]; queries: ReturnType<typeof resp
 /** Real glibc + curl, using fresh identities belonging only to this fixture. */
 export async function systemAcceptance(ctx: Context): Promise<SystemEvidence> {
   const { baseUrl, admin, helper, system, node, until, network, check, stage } = ctx;
+  const networkId = network.network_id;
   const evidence: SystemEvidence = { checks: [], queries: [], remote_mesh_ipv4: node("data").mesh_ipv4, original_resolver_restored: false };
   const passed = (name: string) => evidence.checks.push(name);
   const name = `solo.${network.dns.zone}`;
@@ -106,11 +107,11 @@ export async function systemAcceptance(ctx: Context): Promise<SystemEvidence> {
   stage("system-resolver-application-uses-authorized-mesh-tun");
   await helper("one", "agent-stop"); await helper("one", "agent-start", { dataplane: true });
   await until("both endpoints publish real data identity", async () => {
-    const value = await getConnections(baseUrl, admin);
+    const value = await getConnections(baseUrl, admin, networkId);
     return [node("one").id, node("data").id].every((id) => value.nodes.some((entry) => entry.node.id === id && entry.public_key !== null)) ? value : false;
   });
-  const connections = await saveConnections(baseUrl, admin, {
-    expected_revision: (await getConnections(baseUrl, admin)).revision,
+  const connections = await saveConnections(baseUrl, admin, networkId, {
+    expected_revision: (await getConnections(baseUrl, admin, networkId)).revision,
     configuration: {
       listeners: [{ id: "resolver-data-udp", node_id: node("data").id, transport: "native_udp", bind: "0.0.0.0:41000",
         advertised_endpoints: [{ host: ctx.dataUnderlay, port: 41000 }], credential_ref: null }],
@@ -119,7 +120,7 @@ export async function systemAcceptance(ctx: Context): Promise<SystemEvidence> {
     },
   });
   assert(connections.valid);
-  assert((await savePolicy(baseUrl, admin, { expected_revision: (await getPolicy(baseUrl, admin)).revision,
+  assert((await savePolicy(baseUrl, admin, networkId, { expected_revision: (await getPolicy(baseUrl, admin, networkId)).revision,
     policy: { default_action: "direct", rules: [] }, source_jsonc: null })).valid);
   await until("both actual TUN interfaces up", async () => {
     const values = await Promise.all(["one", "data"].map((role) => helper(role === "one" ? "one" : "data", "observe")));
@@ -136,10 +137,10 @@ export async function systemAcceptance(ctx: Context): Promise<SystemEvidence> {
     try { await resolve("solo", node("data").mesh_ipv4); return true; } catch { return false; }
   });
   check("name visibility does not authorize Mesh access");
-  assert.deepEqual((await getMeshAccess(baseUrl, admin)).policy, { default_action: "reject", rules: [] });
+  assert.deepEqual((await getMeshAccess(baseUrl, admin, networkId)).policy, { default_action: "reject", rules: [] });
   assert.equal((await system("one", "route", { address: node("data").mesh_ipv4, prefix: network.network.ipv4_prefix })).kind, "tun");
   assert.notEqual((await curl()).exit, 0); passed("dns-visible-access-reject");
-  assert((await saveMeshAccess(baseUrl, admin, { expected_revision: (await getMeshAccess(baseUrl, admin)).revision,
+  assert((await saveMeshAccess(baseUrl, admin, networkId, { expected_revision: (await getMeshAccess(baseUrl, admin, networkId)).revision,
     source_jsonc: null, policy: { default_action: "reject", rules: [{ id: "resolver-application", source: [`node:${node("one").id}`],
       destination: [`node:${node("data").id}`], action: "allow", bidirectional: true }] } })).valid);
   await until("curl short name reaches exact Mesh service over TUN", async () => {

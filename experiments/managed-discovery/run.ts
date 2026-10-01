@@ -7,7 +7,8 @@ import { dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import { fileURLToPath } from "node:url";
 import { ControlApiError, createEnrollmentToken, getConnections, getConnectionRuntimes, getEndpointDiscoveries,
-  getNetwork, listNodes, revokeNode, saveConnections } from "../../packages/control-client/src/index.ts";
+  getNetwork, listNetworks, listNodes, revokeNode, saveConnections } from "../../packages/control-client/src/index.ts";
+import { fixtureNetworkId } from "../managed-connections/network-scope.ts";
 import { enrollAgentOperation, getAgentConnectionsOperation } from "../../packages/control-client/src/generated/operations.gen.ts";
 import type { ConnectionPlan, NodeEndpointDiscovery, NodeSummary } from "../../packages/control-client/src/index.ts";
 import { array, boolean, command, parse, record, text } from "../managed-connections/local.ts";
@@ -151,12 +152,14 @@ async function main() {
     const port = (await docker(["port", names.controller, "8420/tcp"])).trim(); assert(/^127\.0\.0\.1:\d+$/.test(port));
     const baseUrl = `http://${port}`;
     const admin = await until("fresh Controller bootstrap", async () => { try { return text((await helper("controller", "admin-token")).token); } catch { return false; } });
-    const initial = await until("generated network readiness", async () => { try { return await getNetwork(baseUrl, admin); } catch { return false; } });
-    assert.equal((await listNodes(baseUrl, admin)).nodes.length, 0); assert.equal(initial.dns.enabled, false);
+    const controllerNetworks = await until("generated network readiness", async () => { try { return await listNetworks(baseUrl, admin); } catch { return false; } });
+    const networkId = fixtureNetworkId(controllerNetworks);
+    const initial = await getNetwork(baseUrl, admin, networkId);
+    assert.equal((await listNodes(baseUrl, admin, networkId)).nodes.length, 0); assert.equal(initial.dns.enabled, false);
     report.network_id = initial.network_id;
     for (const role of ROLES) {
       const name = role === "one" ? "Twin" : "Solo";
-      const token = await createEnrollmentToken(baseUrl, admin, { expires_in_seconds: 300 });
+      const token = await createEnrollmentToken(baseUrl, admin, networkId, { expires_in_seconds: 300 });
       const prepared = await helper(role, "prepare-enrollment", { name, token: token.token, controller_address: ip("controller") });
       const secret = text(prepared.credential); credentials.set(role, secret);
       const enrolled = await enrollAgentOperation(baseUrl, token.token, { name, node_credential: secret, agent_version: text(prepared.version) });
@@ -165,12 +168,12 @@ async function main() {
       await helper(role, "agent-start", { dns: true });
     }
     await until("both real Agent connection keys published", async () => {
-      const value = await getConnections(baseUrl, admin);
+      const value = await getConnections(baseUrl, admin, networkId);
       return ROLES.every((role) => value.nodes.some((entry) => entry.node.id === node(role).id && entry.public_key !== null)) ? value : false;
     });
     const put = async (configuration: ConnectionPlan) => until("generated ADMIN connections CAS", async () => {
-      const baseline = await getConnections(baseUrl, admin);
-      try { const saved = await saveConnections(baseUrl, admin, { expected_revision: baseline.revision, configuration }); assert(saved.valid); return saved; }
+      const baseline = await getConnections(baseUrl, admin, networkId);
+      try { const saved = await saveConnections(baseUrl, admin, networkId, { expected_revision: baseline.revision, configuration }); assert(saved.valid); return saved; }
       catch (error) { if (error instanceof ControlApiError && error.status === 409) return false; throw error; }
     });
     const configuration: ConnectionPlan = {
@@ -181,7 +184,7 @@ async function main() {
     };
     const configured = await put(configuration); sample({ configuration_revision: configured.revision, configuration });
     const watermarks = new Map<string, { epoch: number; sequence: number }>();
-    const discovery = async () => { const value = await getEndpointDiscoveries(baseUrl, admin);
+    const discovery = async () => { const value = await getEndpointDiscoveries(baseUrl, admin, networkId);
       assert.equal(value.network_id, initial.network_id);
       assert.equal(new Set(value.nodes.map((item) => item.node_id)).size, value.nodes.length);
       for (const item of value.nodes) {
@@ -204,7 +207,7 @@ async function main() {
       sample({ role, nonce_round_trip: proof }); return proof;
     };
     const adjacency = async () => until("both fresh authenticated NativeUDP runtime probes and actual CLI nonce", async () => {
-      const values = await getConnectionRuntimes(baseUrl, admin);
+      const values = await getConnectionRuntimes(baseUrl, admin, networkId);
       const ready = ROLES.every((role) => { const value = values.nodes.find((item) => item.node_id === node(role).id);
         const peer = node(role === "one" ? "two" : "one").id;
         return value?.current && !value.stale && value.state === "applied"
@@ -237,7 +240,7 @@ async function main() {
     }
 
     const aligned = async (requireCurrent = true) => {
-      const values = await discovery(); const runtimes = await getConnectionRuntimes(baseUrl, admin);
+      const values = await discovery(); const runtimes = await getConnectionRuntimes(baseUrl, admin, networkId);
       for (const role of ROLES) {
         const value = entry(values, role); const projection = await getAgentConnectionsOperation(baseUrl, credential(role));
         const runtime = runtimes.nodes.find((item) => item.node_id === node(role).id); assert(runtime);
@@ -249,7 +252,7 @@ async function main() {
       return values;
     };
     captureFailure = async () => {
-      try { sample({ failure_discovery: await discovery(), failure_runtime: await getConnectionRuntimes(baseUrl, admin) }); } catch { /* Controller may be deliberately stopped. */ }
+      try { sample({ failure_discovery: await discovery(), failure_runtime: await getConnectionRuntimes(baseUrl, admin, networkId) }); } catch { /* Controller may be deliberately stopped. */ }
       for (const role of ROLES) {
         try { sample({ failure_role: role, public_process: await processState(role) }); } catch { /* Only validated public metadata is retained. */ }
       }
@@ -312,7 +315,7 @@ async function main() {
       sample({ elapsed_ms: Date.now() - lossAt, discovery: values, observer_count: observed.count }); await delay(1000);
     }
     assert(expired); const noFresh = await discovery(); assert(ROLES.every((role) => currentMapped(entry(noFresh, role)).length === 0));
-    const unchanged = await getConnections(baseUrl, admin); assert.equal(unchanged.revision, configured.revision); assert.deepEqual(unchanged.configuration, configuration);
+    const unchanged = await getConnections(baseUrl, admin, networkId); assert.equal(unchanged.revision, configured.revision); assert.deepEqual(unchanged.configuration, configuration);
     await adjacency(); passed("observer-loss-expires-mapped-without-report-based-renewal-revision-or-noise-loss"); await save();
 
     stage("observer-restoration-requires-new-real-observation");
@@ -320,8 +323,8 @@ async function main() {
     const restored = await mapped("new real response restores every carrier");
     for (const role of ROLES) for (const observation of currentMapped(entry(restored, role))) assert(Date.parse(observation.observed_at) > oldObserved);
     assert((await observerState()).count > stoppedLedger.count);
-    assert.deepEqual((await getConnections(baseUrl, admin)).configuration, configuration);
-    assert.equal((await getConnections(baseUrl, admin)).revision, configured.revision);
+    assert.deepEqual((await getConnections(baseUrl, admin, networkId)).configuration, configuration);
+    assert.equal((await getConnections(baseUrl, admin, networkId)).revision, configured.revision);
     await adjacency(); sample({ discovery: restored, observer: await observerState() });
     passed("new-observed-at-same-pids-identities-observation-never-auto-installs-candidate");
 
@@ -354,15 +357,15 @@ async function main() {
     // Freeze expired Agents to make the Controller's empty in-memory startup view deterministic.
     for (const role of ROLES) await helper(role, "pause", { paused: true });
     await helper("controller", "controller-start");
-    const recoveredNetwork = await until("same isolated DB recovery", async () => { try { return await getNetwork(baseUrl, admin); } catch { return false; } });
+    const recoveredNetwork = await until("same isolated DB recovery", async () => { try { return await getNetwork(baseUrl, admin, networkId); } catch { return false; } });
     assert.equal(recoveredNetwork.network_id, initial.network_id);
-    const persisted = await getConnections(baseUrl, admin); assert.equal(persisted.revision, withdrawn.revision); assert.deepEqual(persisted.configuration, reduced);
+    const persisted = await getConnections(baseUrl, admin, networkId); assert.equal(persisted.revision, withdrawn.revision); assert.deepEqual(persisted.configuration, reduced);
     for (const role of ROLES) {
       const before = configured.nodes.find((value) => value.node.id === node(role).id);
       const after = persisted.nodes.find((value) => value.node.id === node(role).id);
       assert(before && after && before.public_key !== null); assert.equal(after.public_key, before.public_key);
     }
-    assert.deepEqual((await listNodes(baseUrl, admin)).nodes.map((value) => value.id).sort(), report.nodes.map((value) => value.id).sort());
+    assert.deepEqual((await listNodes(baseUrl, admin, networkId)).nodes.map((value) => value.id).sort(), report.nodes.map((value) => value.id).sort());
     const empty = await discovery(); assert(ROLES.every((role) => entry(empty, role).sockets.length === 0 && currentMapped(entry(empty, role)).length === 0));
     sample({ discovery_before_outage: outageBefore, paused_startup_discovery: empty, configuration_revision: persisted.revision });
     for (const role of ROLES) await helper(role, "pause", { paused: false });
@@ -375,7 +378,7 @@ async function main() {
     passed("same-db-network-keys-config-retained-no-disk-report-resurrection-fresh-carrier-generation-and-report-required"); await save();
 
     stage("node-revocation-closes-carriers-clears-reports-and-peer");
-    await revokeNode(baseUrl, admin, { node_id: node("two").id });
+    await revokeNode(baseUrl, admin, networkId, { node_id: node("two").id });
     await until("revoked two self-exits with all UDP and DNS sockets closed", async () => {
       const state = await processState("two"); return state.pid === null && state.udp.length === 0 && array((await helper("two", "observe")).listeners).length === 0 ? state : false;
     });

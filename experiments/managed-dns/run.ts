@@ -6,7 +6,8 @@ import { arch } from "node:os";
 import { dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import { fileURLToPath } from "node:url";
-import { ControlApiError, createEnrollmentToken, getConnections, getNetwork, listNodes, revokeNode, saveNetwork } from "../../packages/control-client/src/index.ts";
+import { ControlApiError, createEnrollmentToken, getConnections, getNetwork, listNetworks, listNodes, revokeNode, saveNetwork } from "../../packages/control-client/src/index.ts";
+import { fixtureNetworkId } from "../managed-connections/network-scope.ts";
 import { enrollAgentOperation, getAgentConnectionsOperation, getAgentDataplaneOperation, getAgentDnsOperation } from "../../packages/control-client/src/generated/operations.gen.ts";
 import type { MeshDnsConfiguration, NetworkSnapshot, NodeSummary } from "../../packages/control-client/src/index.ts";
 import { array, boolean, command, parse, record, text } from "../managed-connections/local.ts";
@@ -194,15 +195,17 @@ async function main() {
     const admin = await until("private controller bootstrap", async () => {
       try { return text((await helper("controller", "admin-token")).token); } catch { return false; }
     });
-    const initial = await until("generated network API readiness", async () => {
-      try { return await getNetwork(baseUrl, admin); } catch { return false; }
+    const controllerNetworks = await until("generated network API readiness", async () => {
+      try { return await listNetworks(baseUrl, admin); } catch { return false; }
     });
-    assert.equal(initial.dns.enabled, false); assert.equal((await listNodes(baseUrl, admin)).nodes.length, 0);
+    const networkId = fixtureNetworkId(controllerNetworks);
+    const initial = await getNetwork(baseUrl, admin, networkId);
+    assert.equal(initial.dns.enabled, false); assert.equal((await listNodes(baseUrl, admin, networkId)).nodes.length, 0);
     report.network_id = initial.network_id; assert(current); current.network = initial;
     const namesByRole = { one: "Twin", two: "tWIN", data: "Solo" };
     for (const role of ROLES) {
       check(`${role}: SDK enrollment with pre-persisted credential`);
-      const grant = await createEnrollmentToken(baseUrl, admin, { expires_in_seconds: 300 });
+      const grant = await createEnrollmentToken(baseUrl, admin, networkId, { expires_in_seconds: 300 });
       const pending = await helper(role, "prepare-enrollment", { name: namesByRole[role], token: grant.token,
         ...(opts.systemResolver ? { controller_address: controllerAddress } : {}) });
       const credential = text(pending.credential); tokens.set(role, credential);
@@ -226,9 +229,9 @@ async function main() {
 
     const put = async (dns: MeshDnsConfiguration) => {
       return until("ADMIN CAS network DNS save", async () => {
-        const before = await getNetwork(baseUrl, admin);
+        const before = await getNetwork(baseUrl, admin, networkId);
         try {
-          const result = await saveNetwork(baseUrl, admin, { expected_revision: before.revision, name: before.name, dns });
+          const result = await saveNetwork(baseUrl, admin, networkId, { expected_revision: before.revision, name: before.name, dns });
           assert.equal(result.network_id, initial.network_id); assert(result.revision > before.revision);
           assert.deepEqual(result.dns, dns); assert(current); current.network = result; return result;
         } catch (error) {
@@ -284,7 +287,7 @@ async function main() {
       assert.equal((await getAgentConnectionsOperation(baseUrl, bearer(role))).payload.public_key, null);
       assert.deepEqual((await getAgentDataplaneOperation(baseUrl, bearer(role))).payload.access_policy.grants, []);
     }
-    const published = await getConnections(baseUrl, admin);
+    const published = await getConnections(baseUrl, admin, networkId);
     assert(published.nodes.find((entry) => entry.node.id === node("data").id)?.public_key);
     check("one data+DNS process, owned identity/state lock, real TUN up");
     await until("data: assigned TUN up with DNS on same Agent", async () => {
@@ -324,7 +327,7 @@ async function main() {
     stage("controller-outage-lease-fail-closed");
     await helper("controller", "controller-stop");
     const outageAt = Date.now();
-    let offline = false; try { await getNetwork(baseUrl, admin); } catch { offline = true; } assert(offline);
+    let offline = false; try { await getNetwork(baseUrl, admin, networkId); } catch { offline = true; } assert(offline);
     await delay((LEASE + 2) * 1000);
     for (let sample = 0; sample < 2; sample++) for (const role of ROLES) {
       const value = await local(role); assert(bound(value)); assert.equal(value.agent_pid, pids.get(role));
@@ -348,11 +351,11 @@ async function main() {
     stage("same-database-recovery-requires-fresh-answer");
     await helper("controller", "controller-start");
     const recovered = await until("controller same DB recovery", async () => {
-      try { return await getNetwork(baseUrl, admin); } catch { return false; }
+      try { return await getNetwork(baseUrl, admin, networkId); } catch { return false; }
     });
     assert.equal(recovered.network_id, initial.network_id); assert.equal(recovered.revision, restored.revision);
     assert(current); current.network = recovered;
-    const recoveredNodes = await listNodes(baseUrl, admin);
+    const recoveredNodes = await listNodes(baseUrl, admin, networkId);
     assert.deepEqual(recoveredNodes.nodes.map((entry) => entry.id).sort(), report.nodes.map((entry) => entry.id).sort());
     for (const role of ROLES) {
       const persisted = recoveredNodes.nodes.find((entry) => entry.id === node(role).id); assert(persisted);
@@ -364,7 +367,7 @@ async function main() {
     await fresh(recovered); await observe(); await save();
 
     stage("revocation-closes-own-listener-and-removes-peer-record");
-    await revokeNode(baseUrl, admin, { node_id: node("two").id });
+    await revokeNode(baseUrl, admin, networkId, { node_id: node("two").id });
     check("two: own generated DNS API must return 403");
     let forbidden = false;
     try { await getAgentDnsOperation(baseUrl, bearer("two")); }
@@ -391,7 +394,7 @@ async function main() {
     await observe();
     if (opts.systemResolver) {
       const originalDigest = resolv.get("one"); assert(originalDigest);
-      report.system_resolver = await systemAcceptance({ baseUrl, admin, runId, network: await getNetwork(baseUrl, admin),
+      report.system_resolver = await systemAcceptance({ baseUrl, admin, runId, network: await getNetwork(baseUrl, admin, networkId),
         node, helper, originalDigest, dataUnderlay: await underlay("data"), controllerUnderlay: controllerAddress, stage, check, until,
         system: async (role, action, data = {}) => parse(await docker(["exec", "-i", names[role], "python3", "/private/system.py", action], JSON.stringify(data))),
       });

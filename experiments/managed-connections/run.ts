@@ -8,13 +8,14 @@ import { setTimeout as delay } from "node:timers/promises";
 import { fileURLToPath } from "node:url";
 import {
   ControlApiError, createEnrollmentToken, getConnections, getConnectionRuntimes,
-  getPolicy, revokeNode, saveConnections,
+  getPolicy, listNetworks, revokeNode, saveConnections,
 } from "../../packages/control-client/src/index.ts";
 import type {
   AgentConnectionsSnapshot, ConnectionNode, ConnectionPlan, ConnectionRuntimesSnapshot, ConnectionsSnapshot,
 } from "../../packages/control-client/src/index.ts";
 import { getAgentConnectionsOperation } from "../../packages/control-client/src/generated/operations.gen.ts";
 import { applied, probed } from "./checks.ts";
+import { fixtureNetworkId } from "./network-scope.ts";
 import { array, boolean, command, parse, record, sockets, text } from "./local.ts";
 import type { SocketObservation } from "./local.ts";
 
@@ -242,20 +243,21 @@ async function main() {
     const adminToken = await until("controller private initialization", async () => {
       try { return text((await helper("LAX", "admin-token")).token); } catch { return false; }
     }, 15_000);
-    await until("controller HTTP readiness", async () => {
-      try { return await getConnections(baseUrl, adminToken); } catch { return false; }
+    const controllerNetworks = await until("controller HTTP readiness", async () => {
+      try { return await listNetworks(baseUrl, adminToken); } catch { return false; }
     }, 20_000);
+    const networkId = fixtureNetworkId(controllerNetworks);
     collectFailure = async () => {
       const evidence: Evidence = { name: "failure-observations", at: new Date().toISOString() };
-      try { evidence.connections = await getConnections(baseUrl, adminToken); } catch { /* API may be deliberately offline. */ }
-      try { evidence.runtime = await getConnectionRuntimes(baseUrl, adminToken); } catch { /* Do not invent an observation. */ }
+      try { evidence.connections = await getConnections(baseUrl, adminToken, networkId); } catch { /* API may be deliberately offline. */ }
+      try { evidence.runtime = await getConnectionRuntimes(baseUrl, adminToken, networkId); } catch { /* Do not invent an observation. */ }
       try { evidence.sockets = await socketSnapshot(); } catch { /* An interrupted Docker engine may be unavailable. */ }
       artifact.evidence.push(evidence);
     };
     const ids: ByRole<string> = { NYC: "", LAX: "", SHA: "" };
     const bearers: ByRole<string> = { NYC: "", LAX: "", SHA: "" };
     for (const role of ROLES) {
-      const grant = await createEnrollmentToken(baseUrl, adminToken, { expires_in_seconds: 300 });
+      const grant = await createEnrollmentToken(baseUrl, adminToken, networkId, { expires_in_seconds: 300 });
       ids[role] = text((await helper(role, "enroll", { name: role, token: grant.token })).node_id);
       assert(/^[0-9a-f]{64}$/.test(ids[role]), "expected a real full-length registered node ID");
       bearers[role] = text((await helper(role, "node-bearer")).token);
@@ -264,7 +266,7 @@ async function main() {
     assert.equal(new Set(Object.values(ids)).size, 3);
     artifact.node_ids = ids;
     const inventory = await until("all real identities and capabilities published", async () => {
-      const current = await getConnections(baseUrl, adminToken);
+      const current = await getConnections(baseUrl, adminToken, networkId);
       return ROLES.every((role) => current.nodes.some((node) => node.node.id === ids[role]
         && node.node.revoked_at === null && node.public_key !== null
         && node.capabilities.some((cap) => cap.transport === (role === "NYC" ? "native_udp" : "vless")
@@ -272,7 +274,7 @@ async function main() {
     });
     assert.equal(inventory.nodes.length, 3);
     assert.deepEqual(inventory.configuration, { listeners: [], candidates: [] });
-    const policy = await getPolicy(baseUrl, adminToken);
+    const policy = await getPolicy(baseUrl, adminToken, networkId);
     assert.equal(policy.policy.default_action, "reject");
     assert.equal(policy.policy.rules.length, 0);
 
@@ -287,8 +289,8 @@ async function main() {
       ],
     };
     const savePlan = async (configuration: ConnectionPlan) => {
-      const before = await getConnections(baseUrl, adminToken);
-      const saved = await saveConnections(baseUrl, adminToken, { expected_revision: before.revision, configuration });
+      const before = await getConnections(baseUrl, adminToken, networkId);
+      const saved = await saveConnections(baseUrl, adminToken, networkId, { expected_revision: before.revision, configuration });
       assert(saved.valid, "controller rejected the test's connection plan");
       assert.deepEqual(saved.diagnostics, []);
       return saved;
@@ -299,13 +301,13 @@ async function main() {
       return { NYC, LAX, SHA };
     };
     const capture = async (name: string, notes?: string[]) => {
-      const evidence: Evidence = { name, at: new Date().toISOString(), connections: await getConnections(baseUrl, adminToken), runtime: await getConnectionRuntimes(baseUrl, adminToken), sockets: await socketSnapshot(), ...(notes === undefined ? {} : { notes }) };
+      const evidence: Evidence = { name, at: new Date().toISOString(), connections: await getConnections(baseUrl, adminToken, networkId), runtime: await getConnectionRuntimes(baseUrl, adminToken, networkId), sockets: await socketSnapshot(), ...(notes === undefined ? {} : { notes }) };
       artifact.evidence.push(evidence);
       await saveArtifact();
       return evidence;
     };
     const graph = async (expected: ByRole<AgentConnectionsSnapshot>) => until("both authenticated neighbor probe directions", async () => {
-      const observations = await getConnectionRuntimes(baseUrl, adminToken);
+      const observations = await getConnectionRuntimes(baseUrl, adminToken, networkId);
       const NYC = observations.nodes.find((node) => node.node_id === ids.NYC);
       const LAX = observations.nodes.find((node) => node.node_id === ids.LAX);
       const SHA = observations.nodes.find((node) => node.node_id === ids.SHA);
@@ -340,7 +342,7 @@ async function main() {
     stage("missing private profile fails application");
     await helper("SHA", "install-files", { files: [{ name: "profiles.json", content: emptyProfiles }] });
     await until("missing profile must not claim authenticated resources", async () => {
-      const snapshot = await getConnectionRuntimes(baseUrl, adminToken);
+      const snapshot = await getConnectionRuntimes(baseUrl, adminToken, networkId);
       const sha = snapshot.nodes.find((node) => node.node_id === ids.SHA);
       return sha !== undefined && sha.current && !sha.stale && sha.state === "error" && sha.reason === "profile_unavailable"
         && sha.revision === expected.SHA.payload.revision && sha.digest === expected.SHA.digest
@@ -359,7 +361,7 @@ async function main() {
     assert.equal(withdrawn.SHA.payload.listeners.length, 0);
     assert(!withdrawn.LAX.payload.incoming.some((approval) => approval.peer_node_id === ids.SHA));
     await until("withdrawn SHA adjacency on both nodes", async () => {
-      const observations = await getConnectionRuntimes(baseUrl, adminToken);
+      const observations = await getConnectionRuntimes(baseUrl, adminToken, networkId);
       const sha = observations.nodes.find((node) => node.node_id === ids.SHA);
       const lax = observations.nodes.find((node) => node.node_id === ids.LAX);
       if (!sha || !lax) return false;
@@ -376,7 +378,7 @@ async function main() {
     stage("controller outage and local freshness lease");
     await helper("LAX", "controller-stop");
     let unavailable = false;
-    try { await getConnections(baseUrl, adminToken); } catch { unavailable = true; }
+    try { await getConnections(baseUrl, adminToken, networkId); } catch { unavailable = true; }
     assert(unavailable, "controller outage was not effective");
     await delay((opts.lease + 2) * 1_000);
     const expired = await until("fresh-config lease closes all managed sockets", async () => {
@@ -391,7 +393,7 @@ async function main() {
 
     stage("controller restart and fresh recovery");
     await helper("LAX", "controller-start");
-    await until("restarted controller HTTP", async () => { try { return await getConnections(baseUrl, adminToken); } catch { return false; } }, 20_000);
+    await until("restarted controller HTTP", async () => { try { return await getConnections(baseUrl, adminToken, networkId); } catch { return false; } }, 20_000);
     const recovered = await graph(restored);
     for (const role of ROLES) {
       assert.equal(text((await helper(role, "identity")).node_id), ids[role], "recovery must retain the enrolled identity");
@@ -404,7 +406,7 @@ async function main() {
     await capture("controller-restart-recovered");
 
     stage("revocation closes resources and denies node API");
-    await revokeNode(baseUrl, adminToken, { node_id: ids.SHA });
+    await revokeNode(baseUrl, adminToken, networkId, { node_id: ids.SHA });
     let denied = false;
     try { await getAgentConnectionsOperation(baseUrl, bearers.SHA); }
     catch (error) { denied = error instanceof ControlApiError && error.status === 403; }
@@ -413,7 +415,7 @@ async function main() {
       const sha = sockets(await helper("SHA", "sockets"));
       return !sha.agent_running && !sha.established.some((entry) => entry.peer_port === 41001);
     });
-    const revoked = await getConnectionRuntimes(baseUrl, adminToken);
+    const revoked = await getConnectionRuntimes(baseUrl, adminToken, networkId);
     const sha = revoked.nodes.find((node) => node.node_id === ids.SHA);
     assert(sha && sha.state === "withdrawn" && !sha.current && sha.stale && sha.listeners.length === 0
       && sha.peers.length === 0 && sha.reported_at === null, "revoked runtime must not retain fresh claims");

@@ -8,7 +8,7 @@ import { setTimeout as delay } from "node:timers/promises";
 import { fileURLToPath } from "node:url";
 import {
   ControlApiError, createEnrollmentToken, getConnections, getConnectionRuntimes, getPolicy,
-  getTags, listNodes, previewFlow, revokeNode, saveConnections, savePolicy, saveTags, setNodeCountry, setNodeTags,
+  getTags, listNetworks, listNodes, previewFlow, revokeNode, saveConnections, savePolicy, saveTags, setNodeCountry, setNodeTags,
 } from "../../packages/control-client/src/index.ts";
 import {
   getAgentConnectionsOperation, getAgentDataplaneOperation,
@@ -19,6 +19,7 @@ import type {
   ConnectionRuntimesSnapshot, MeshAccessPolicy, MeshAccessSnapshot, PolicySnapshot, RoutingPolicy,
 } from "../../packages/control-client/src/index.ts";
 import { applied, probed } from "../managed-connections/checks.ts";
+import { fixtureNetworkId } from "../managed-connections/network-scope.ts";
 import { array, boolean, command, parse, record, text } from "../managed-connections/local.ts";
 import { delivered, denied, hasExactCapabilities, local, noFallback, probe, ROLES, tunReady } from "./checks.ts";
 import type { ByRole, Local, Probe, Role } from "./checks.ts";
@@ -268,29 +269,30 @@ async function main() {
     const port = (await docker(["port", names.controller, "8420/tcp"])).trim(); assert(/^127\.0\.0\.1:\d+$/.test(port));
     const baseUrl = `http://${port}`;
     const admin = await until("controller bootstrap", async () => { try { return text((await helper("controller", "admin-token")).token); } catch { return false; } }, 20_000);
-    await until("generated controller API readiness", async () => { try { return await getConnections(baseUrl, admin); } catch { return false; } }, 20_000);
-    assert.equal((await listNodes(baseUrl, admin)).nodes.length, 0, "fresh controller only");
-    const initialAccess = await getMeshAccess(baseUrl, admin);
+    const controllerNetworks = await until("generated controller API readiness", async () => { try { return await listNetworks(baseUrl, admin); } catch { return false; } }, 20_000);
+    const networkId = fixtureNetworkId(controllerNetworks);
+    assert.equal((await listNodes(baseUrl, admin, networkId)).nodes.length, 0, "fresh controller only");
+    const initialAccess = await getMeshAccess(baseUrl, admin, networkId);
     assert.deepEqual(initialAccess.policy, { default_action: "reject", rules: [] });
     assert.equal(initialAccess.source_jsonc, null);
-    const initialPolicy = await getPolicy(baseUrl, admin);
+    const initialPolicy = await getPolicy(baseUrl, admin, networkId);
     assert.deepEqual(initialPolicy.policy, { default_action: "reject", rules: [] });
     assert.equal(initialPolicy.source_jsonc, null);
     failureEvidence = async () => {
       const evidence: Evidence = { name: "failure-observations", status: "OBSERVED", at: new Date().toISOString() };
       try { evidence.local = await locals(); } catch { /* Docker may be unavailable. */ }
-      try { evidence.connections = await getConnections(baseUrl, admin); evidence.neighbors = await getConnectionRuntimes(baseUrl, admin); } catch { /* Controller may be deliberately offline. */ }
+      try { evidence.connections = await getConnections(baseUrl, admin, networkId); evidence.neighbors = await getConnectionRuntimes(baseUrl, admin, networkId); } catch { /* Controller may be deliberately offline. */ }
       report.evidence.push(evidence);
     };
     for (const role of ROLES) {
-      const token = await createEnrollmentToken(baseUrl, admin, { expires_in_seconds: 300 });
+      const token = await createEnrollmentToken(baseUrl, admin, networkId, { expires_in_seconds: 300 });
       ids[role] = text((await helper(role, "enroll", { name: role, token: token.token })).node_id);
       assert(/^[0-9a-f]{64}$/.test(ids[role]));
       bearers[role] = text((await helper(role, "node-bearer")).token);
       await helper(role, "agent-start");
     }
     const inventory = await until("registered key/capability publication", async () => {
-      const value = await getConnections(baseUrl, admin);
+      const value = await getConnections(baseUrl, admin, networkId);
       return value.nodes.length === 3 && ROLES.every((role) => value.nodes.some((entry) => entry.node.id === ids[role]
         && entry.node.revoked_at === null && entry.public_key !== null
         && entry.capabilities.some((cap) => cap.transport === (role === "NYC" ? "native_udp" : "vless") && cap.can_dial && cap.can_accept))) ? value : false;
@@ -307,7 +309,7 @@ async function main() {
     }
     report.nodes = nodes;
     for (const [role, country] of [["NYC", "US"], ["SHA", "CN"]] as const) {
-      await setNodeCountry(baseUrl, admin, { expected_revision: (await getPolicy(baseUrl, admin)).revision, node_id: ids[role], country });
+      await setNodeCountry(baseUrl, admin, networkId, { expected_revision: (await getPolicy(baseUrl, admin, networkId)).revision, node_id: ids[role], country });
     }
     const plan: ConnectionPlan = {
       listeners: [
@@ -319,7 +321,7 @@ async function main() {
         { id: "tun-sha-vless", dialer_node_id: ids.SHA, listener_id: "tun-lax-vless", endpoint: { host: "lax.mesh.test", port: 41001 }, priority: 0, credential_ref: "lax-vless-client" },
       ],
     };
-    const savedPlan = await saveConnections(baseUrl, admin, { expected_revision: (await getConnections(baseUrl, admin)).revision, configuration: plan }); assert(savedPlan.valid);
+    const savedPlan = await saveConnections(baseUrl, admin, networkId, { expected_revision: (await getConnections(baseUrl, admin, networkId)).revision, configuration: plan }); assert(savedPlan.valid);
     const routing: RoutingPolicy = { default_action: "reject", rules: [
       { id: "tun-nyc-sha-cidr", source: { node_ids: [ids.NYC], countries: ["US"] }, destination_scope: "mesh",
         destination_any: [{ kind: "cidr", value: `${ips.SHA}/32` }], action: { kind: "route", via: [ids.LAX], exit_node_id: null } },
@@ -331,11 +333,11 @@ async function main() {
       destination: [`node:${ids.SHA}`], action: "allow", bidirectional: false }] };
     const both: MeshAccessPolicy = { default_action: "reject", rules: [{ ...forward.rules[0]!, id: "tun-nyc-sha-bidirectional", bidirectional: true }] };
     const putPolicy = async (policy: RoutingPolicy) => {
-      const value = await savePolicy(baseUrl, admin, { expected_revision: (await getPolicy(baseUrl, admin)).revision, policy, source_jsonc: null });
+      const value = await savePolicy(baseUrl, admin, networkId, { expected_revision: (await getPolicy(baseUrl, admin, networkId)).revision, policy, source_jsonc: null });
       assert(value.valid); assert.deepEqual(value.diagnostics, []); assert.equal(value.source_jsonc, null); return value;
     };
     const putAccess = async (policy: MeshAccessPolicy) => {
-      const value = await saveMeshAccess(baseUrl, admin, { expected_revision: (await getMeshAccess(baseUrl, admin)).revision, policy, source_jsonc: null });
+      const value = await saveMeshAccess(baseUrl, admin, networkId, { expected_revision: (await getMeshAccess(baseUrl, admin, networkId)).revision, policy, source_jsonc: null });
       assert(value.valid); assert.deepEqual(value.diagnostics, []); assert.equal(value.source_jsonc, null); return value;
     };
     await putPolicy(routing);
@@ -343,7 +345,7 @@ async function main() {
       const [NYC, LAX, SHA] = await Promise.all(ROLES.map((role) => getAgentConnectionsOperation(baseUrl, bearers[role]))); assert(NYC && LAX && SHA); return { NYC, LAX, SHA };
     };
     const graph = async (expected: ByRole<AgentConnectionsSnapshot>) => until("fresh bidirectional authenticated neighbor probes", async () => {
-      const snapshot = await getConnectionRuntimes(baseUrl, admin);
+      const snapshot = await getConnectionRuntimes(baseUrl, admin, networkId);
       const NYC = snapshot.nodes.find((node) => node.node_id === ids.NYC);
       const LAX = snapshot.nodes.find((node) => node.node_id === ids.LAX);
       const SHA = snapshot.nodes.find((node) => node.node_id === ids.SHA);
@@ -356,7 +358,7 @@ async function main() {
     });
     const lastReady = new Map<Role, { revision: number; pid: number | null; events: number }>();
     const ready = async () => {
-      const policy = await getPolicy(baseUrl, admin); const access = await getMeshAccess(baseUrl, admin);
+      const policy = await getPolicy(baseUrl, admin, networkId); const access = await getMeshAccess(baseUrl, admin, networkId);
       assert.equal(policy.revision, access.revision);
       assert.equal(policy.source_jsonc, null); assert.equal(access.source_jsonc, null);
       const expected = await scopedConnections();
@@ -375,7 +377,7 @@ async function main() {
         }
       }
       const observations = await until("configuration ACK plus new independent local TUN generation proof", async () => {
-        const inventory = await listNodes(baseUrl, admin); const observations = await locals();
+        const inventory = await listNodes(baseUrl, admin, networkId); const observations = await locals();
         return ROLES.every((role) => inventory.nodes.some((node) => node.id === ids[role] && node.acknowledged_revision === policy.revision)
           && tunReady(observations[role], ids[role], ips[role], coherent[role].payload.revision, coherent[role].digest)
           && (() => {
@@ -388,16 +390,16 @@ async function main() {
       return { policy, access, neighbors };
     };
     const capture = async (name: string, extra: Partial<Pick<Evidence, "probes" | "duration_ms" | "notes">> = {}, revoked: Role | null = null) => {
-      const access = await getMeshAccess(baseUrl, admin);
+      const access = await getMeshAccess(baseUrl, admin, networkId);
       const compiled = await Promise.all(ROLES.map(async (role) => {
         try { return (await getAgentDataplaneOperation(baseUrl, bearers[role])).payload.access_policy.grants.length; }
         catch (error) { if (role === revoked && error instanceof ControlApiError && error.status === 403) return null; throw error; }
       }));
-      report.evidence.push({ name, status: "PASS", at: new Date().toISOString(), policy: await getPolicy(baseUrl, admin),
+      report.evidence.push({ name, status: "PASS", at: new Date().toISOString(), policy: await getPolicy(baseUrl, admin, networkId),
         access, source_policy_rule_count: access.policy.rules.length,
         compiled_path_count: { NYC: compiled[0]!, LAX: compiled[1]!, SHA: compiled[2]! },
-        connections: await getConnections(baseUrl, admin),
-        neighbors: await getConnectionRuntimes(baseUrl, admin), local: await locals(), ...extra }); await save();
+        connections: await getConnections(baseUrl, admin, networkId),
+        neighbors: await getConnectionRuntimes(baseUrl, admin, networkId), local: await locals(), ...extra }); await save();
     };
     const oneProbe = async (source: Role, destination: "NYC" | "SHA") => probe(await helper(source, "probe", { address: ips[destination], body: bodies[destination] }));
     const directions = [["NYC", "SHA"], ["SHA", "NYC"]] as const;
@@ -450,13 +452,13 @@ async function main() {
 
     stage("administrator tags drive one bidirectional endpoint rule");
     const tagCatalog = [{ tag: "tag:client", description: "managed dataplane client" }, { tag: "tag:server", description: "managed dataplane server" }];
-    await saveTags(baseUrl, admin, { expected_revision: (await getTags(baseUrl, admin)).revision, tags: tagCatalog });
-    await setNodeTags(baseUrl, admin, { expected_revision: (await getTags(baseUrl, admin)).revision, node_id: ids.NYC, tags: ["tag:client"] });
-    await setNodeTags(baseUrl, admin, { expected_revision: (await getTags(baseUrl, admin)).revision, node_id: ids.SHA, tags: ["tag:server"] });
+    await saveTags(baseUrl, admin, networkId, { expected_revision: (await getTags(baseUrl, admin, networkId)).revision, tags: tagCatalog });
+    await setNodeTags(baseUrl, admin, networkId, { expected_revision: (await getTags(baseUrl, admin, networkId)).revision, node_id: ids.NYC, tags: ["tag:client"] });
+    await setNodeTags(baseUrl, admin, networkId, { expected_revision: (await getTags(baseUrl, admin, networkId)).revision, node_id: ids.SHA, tags: ["tag:server"] });
     const tagged: MeshAccessPolicy = { default_action: "reject", rules: [{ id: "tagged-client-server", source: ["tag:client"],
       destination: ["tag:server"], action: "allow", bidirectional: true }] };
     await putAccess(tagged);
-    const taggedPreview = await previewFlow(baseUrl, admin, { flow: { source_node_id: ids.NYC, destination_node_id: ids.SHA,
+    const taggedPreview = await previewFlow(baseUrl, admin, networkId, { flow: { source_node_id: ids.NYC, destination_node_id: ids.SHA,
       destination_ip: ips.SHA, domain: null, destination_country: null } });
     assert(taggedPreview.valid && taggedPreview.execution_supported);
     assert.equal(taggedPreview.authorization.action, "allow"); assert.equal(taggedPreview.authorization.rule_id, "tagged-client-server");
@@ -470,16 +472,16 @@ async function main() {
     await putAccess(tagged); await success("access-first-match-forward-reject-removed");
 
     stage("tag removal and move withdraw authorization until membership is restored");
-    await setNodeTags(baseUrl, admin, { expected_revision: (await getTags(baseUrl, admin)).revision, node_id: ids.SHA, tags: [] });
+    await setNodeTags(baseUrl, admin, networkId, { expected_revision: (await getTags(baseUrl, admin, networkId)).revision, node_id: ids.SHA, tags: [] });
     await negative("server-tag-removed");
-    await setNodeTags(baseUrl, admin, { expected_revision: (await getTags(baseUrl, admin)).revision, node_id: ids.LAX, tags: ["tag:server"] });
+    await setNodeTags(baseUrl, admin, networkId, { expected_revision: (await getTags(baseUrl, admin, networkId)).revision, node_id: ids.LAX, tags: ["tag:server"] });
     await negative("server-tag-moved-away-from-endpoint");
-    await setNodeTags(baseUrl, admin, { expected_revision: (await getTags(baseUrl, admin)).revision, node_id: ids.SHA, tags: ["tag:server"] });
-    await setNodeTags(baseUrl, admin, { expected_revision: (await getTags(baseUrl, admin)).revision, node_id: ids.LAX, tags: [] });
+    await setNodeTags(baseUrl, admin, networkId, { expected_revision: (await getTags(baseUrl, admin, networkId)).revision, node_id: ids.SHA, tags: ["tag:server"] });
+    await setNodeTags(baseUrl, admin, networkId, { expected_revision: (await getTags(baseUrl, admin, networkId)).revision, node_id: ids.LAX, tags: [] });
     await success("server-tag-membership-restored");
 
     stage("tag catalog edits preserve existing assignments");
-    const editedTags = await saveTags(baseUrl, admin, { expected_revision: (await getTags(baseUrl, admin)).revision, tags: [
+    const editedTags = await saveTags(baseUrl, admin, networkId, { expected_revision: (await getTags(baseUrl, admin, networkId)).revision, tags: [
       { tag: "tag:client", description: "updated managed dataplane client" }, tagCatalog[1]!, { tag: "tag:west", description: "western region" },
     ] });
     assert.deepEqual(editedTags.assignments.find((entry) => entry.node_id === ids.NYC)?.tags, ["tag:client"]);
@@ -502,7 +504,7 @@ async function main() {
     stage("ordered routing first-match reject overrides access allow");
     await putPolicy({ ...routing, rules: [{ ...first, id: "tun-own-first-reject", action: { kind: "reject", via: [], exit_node_id: null } }, ...routing.rules] });
     await negative("first-match-reject");
-    const rejected = await getPolicy(baseUrl, admin);
+    const rejected = await getPolicy(baseUrl, admin, networkId);
     await putPolicy({ ...rejected.policy, rules: rejected.policy.rules.filter((rule) => rule.id !== "tun-own-first-reject") });
     await success("first-match-reject-removed");
 
@@ -511,9 +513,9 @@ async function main() {
     await putPolicy(routing); await success("via-LAX-restored");
 
     stage("country selector changes take effect independently of endpoint access");
-    await setNodeCountry(baseUrl, admin, { expected_revision: (await getPolicy(baseUrl, admin)).revision, node_id: ids.SHA, country: "US" });
+    await setNodeCountry(baseUrl, admin, networkId, { expected_revision: (await getPolicy(baseUrl, admin, networkId)).revision, node_id: ids.SHA, country: "US" });
     await negative("source-country-mismatch");
-    await setNodeCountry(baseUrl, admin, { expected_revision: (await getPolicy(baseUrl, admin)).revision, node_id: ids.SHA, country: "CN" });
+    await setNodeCountry(baseUrl, admin, networkId, { expected_revision: (await getPolicy(baseUrl, admin, networkId)).revision, node_id: ids.SHA, country: "CN" });
     await success("source-country-restored");
 
     stage("endpoint access withdrawal with saved routing intact");
@@ -530,8 +532,8 @@ async function main() {
       candidates: plan.candidates.map((candidate) => candidate.id === "tun-nyc-udp"
         ? { ...candidate, endpoint: { host: delayedHost, port: 41000 } } : candidate),
     };
-    const delayed = await saveConnections(baseUrl, admin, {
-      expected_revision: (await getConnections(baseUrl, admin)).revision, configuration: delayedPlan,
+    const delayed = await saveConnections(baseUrl, admin, networkId, {
+      expected_revision: (await getConnections(baseUrl, admin, networkId)).revision, configuration: delayedPlan,
     });
     assert(delayed.valid);
     await helper("NYC", "agent-start");
@@ -553,15 +555,15 @@ async function main() {
     await docker(["network", "disconnect", netA, names.LAX]);
     await docker(["network", "connect", "--alias", "lax.mesh.test", "--alias", delayedHost, netA, names.LAX]);
     await success("bootstrap-DNS-recovery-fresh-packet-generation");
-    await saveConnections(baseUrl, admin, {
-      expected_revision: (await getConnections(baseUrl, admin)).revision, configuration: plan,
+    await saveConnections(baseUrl, admin, networkId, {
+      expected_revision: (await getConnections(baseUrl, admin, networkId)).revision, configuration: plan,
     });
     await success("original-endpoint-restored-after-DNS-recovery");
 
     stage("mandatory relay failure while controller remains reachable");
     const relayFenceAt = Date.now();
     const preRelay = await until("endpoint reports freshly renewed before relay-only failure", async () => {
-      const value = await getConnectionRuntimes(baseUrl, admin);
+      const value = await getConnectionRuntimes(baseUrl, admin, networkId);
       return [ids.NYC, ids.SHA].every((id) => value.nodes.some((node) => node.node_id === id
         && node.current && !node.stale && node.reported_at !== null && Date.parse(node.reported_at) >= relayFenceAt)) ? value : false;
     }, 12_000);
@@ -571,17 +573,17 @@ async function main() {
     assert(!(await locals()).LAX.agent_running);
     await negative("mandatory-LAX-stopped-before-lease", false, 3_500);
     assert(Date.now() - endpointLeaseFloor < (LEASE - 2) * 1_000, "relay failure must be observed before unrelated freshness leases can expire");
-    assert.equal((await listNodes(baseUrl, admin)).nodes.length, 3, "controller must remain independently reachable");
+    assert.equal((await listNodes(baseUrl, admin, networkId)).nodes.length, 3, "controller must remain independently reachable");
     await helper("LAX", "agent-start"); await success("relay-restarted");
-    const nextRelay = await getConnectionRuntimes(baseUrl, admin);
+    const nextRelay = await getConnectionRuntimes(baseUrl, admin, networkId);
     const oldLax = preRelay.nodes.find((node) => node.node_id === ids.LAX); const newLax = nextRelay.nodes.find((node) => node.node_id === ids.LAX);
     assert(oldLax && newLax && newLax.epoch > oldLax.epoch, "relay restart requires a replacement process epoch");
 
     stage("controller outage withdraws TUN packet paths after local lease");
-    const preOutage = await getConnectionRuntimes(baseUrl, admin);
+    const preOutage = await getConnectionRuntimes(baseUrl, admin, networkId);
     await helper("controller", "controller-stop");
     const outageAt = Date.now();
-    let offline = false; try { await getConnections(baseUrl, admin); } catch { offline = true; } assert(offline);
+    let offline = false; try { await getConnections(baseUrl, admin, networkId); } catch { offline = true; } assert(offline);
     const expired = await until("all independent freshness leases close sockets and keep route guards", async () => {
       if (Date.now() - outageAt <= (LEASE + 1) * 1_000) return false;
       const value = await locals();
@@ -597,9 +599,9 @@ async function main() {
       probes: [...outageProbes, ...repeatOutage], duration_ms: Date.now() - outageAt,
       notes: ["Controller stopped; all three Agent processes remain alive. Evidence is local sockets/routes and actual kernel probes, not stale controller runtime claims."] }); await save();
     await helper("controller", "controller-start");
-    await until("restarted controller", async () => { try { return await getConnections(baseUrl, admin); } catch { return false; } }, 20_000);
+    await until("restarted controller", async () => { try { return await getConnections(baseUrl, admin, networkId); } catch { return false; } }, 20_000);
     await success("controller-recovery-fresh-data-traffic");
-    const postOutage = await getConnectionRuntimes(baseUrl, admin);
+    const postOutage = await getConnectionRuntimes(baseUrl, admin, networkId);
     for (const role of ROLES) {
       const before = preOutage.nodes.find((node) => node.node_id === ids[role]); const after = postOutage.nodes.find((node) => node.node_id === ids[role]); assert(before && after);
       assert.equal(after.epoch, before.epoch); assert(after.sequence > before.sequence);
@@ -607,25 +609,25 @@ async function main() {
     }
 
     stage("final endpoint revocation denies API and packet delivery");
-    await revokeNode(baseUrl, admin, { node_id: ids.SHA });
-    const tagsAfterRevoke = await getTags(baseUrl, admin);
+    await revokeNode(baseUrl, admin, networkId, { node_id: ids.SHA });
+    const tagsAfterRevoke = await getTags(baseUrl, admin, networkId);
     assert(!tagsAfterRevoke.assignments.some((entry) => entry.node_id === ids.SHA), "revocation must clean SHA tag membership");
     assert(tagsAfterRevoke.tags.some((entry) => entry.tag === "tag:server"), "policy-referenced tag definition must remain");
     let referencedTagRejected = false;
     try {
-      await saveTags(baseUrl, admin, { expected_revision: tagsAfterRevoke.revision, tags: tagsAfterRevoke.tags.filter((entry) => entry.tag !== "tag:server") });
+      await saveTags(baseUrl, admin, networkId, { expected_revision: tagsAfterRevoke.revision, tags: tagsAfterRevoke.tags.filter((entry) => entry.tag !== "tag:server") });
     } catch (error) { referencedTagRejected = error instanceof ControlApiError && error.status === 422; }
     assert(referencedTagRejected, "deleting a policy-referenced tag must return 422 without silently changing policy");
-    assert.deepEqual(await getTags(baseUrl, admin), tagsAfterRevoke, "failed referenced-tag deletion must be atomic");
+    assert.deepEqual(await getTags(baseUrl, admin, networkId), tagsAfterRevoke, "failed referenced-tag deletion must be atomic");
     let forbidden = false;
     try { await getAgentDataplaneOperation(baseUrl, bearers.SHA); } catch (error) { forbidden = error instanceof ControlApiError && error.status === 403; }
     assert(forbidden, "revoked node must lose its generated dataplane API");
     await until("revoked SHA exits and withdraws carrier", async () => {
       const value = await locals(); return !value.SHA.agent_running && !value.SHA.established.some((socket) => socket.peer_port === 41001) ? value : false;
     });
-    const revokedRevision = (await getPolicy(baseUrl, admin)).revision;
+    const revokedRevision = (await getPolicy(baseUrl, admin, networkId)).revision;
     await until("surviving Agents save and ACK revocation withdrawal", async () => {
-      const inventory = await listNodes(baseUrl, admin); const value = await locals();
+      const inventory = await listNodes(baseUrl, admin, networkId); const value = await locals();
       return (["NYC", "LAX"] as const).every((role) => value[role].agent_running && value[role].saved_revision === revokedRevision
         && value[role].dataplane_proof?.tun_ready === false && inventory.nodes.some((node) => node.id === ids[role] && node.acknowledged_revision === revokedRevision));
     });
@@ -634,7 +636,7 @@ async function main() {
     do {
       const value = await probes(); assert(value.every((item) => denied(item.observed))); revokedProbes.push(...value);
     } while (Date.now() - revokeCheckAt < 6_000);
-    const runtime = await getConnectionRuntimes(baseUrl, admin); const sha = runtime.nodes.find((node) => node.node_id === ids.SHA);
+    const runtime = await getConnectionRuntimes(baseUrl, admin, networkId); const sha = runtime.nodes.find((node) => node.node_id === ids.SHA);
     assert(sha && sha.state === "withdrawn" && !sha.current && sha.stale && sha.peers.length === 0 && sha.reported_at === null);
     await capture("revoked-endpoint", { probes: revokedProbes, notes: ["Generated getAgentDataplane returned 403; revoked process exited; runtime retained no fresh adjacency claims."] }, "SHA");
     report.status = "PASS"; report.phase = "complete"; delete report.check;

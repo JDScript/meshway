@@ -25,6 +25,7 @@ import { packetIdentity, packetInterface, packetSnapshotCurrent, PROCESS_PROOF }
 import { dockerPacketLogReady } from "./packet-log.ts";
 import type { PacketControl } from "./packet-readiness.ts";
 import { currentImageSource, imageInventory, retainImage } from "./images.ts";
+import { NetworkScopeError, resolveDemoNetworkId } from "./network-scope.ts";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const ROLES = ["nyc", "lax", "sha"] as const;
@@ -411,6 +412,8 @@ async function main() {
   let state: Metadata | undefined;
   let mayStop = false;
   let adminToken: string | null = null;
+  let resolvedNetworkId: string | null = null;
+  const networkId = () => resolvedNetworkId ?? fail("demo network has not been resolved");
   const root = opts.dataDir;
   const metaPath = join(root, "demo.json");
   const journalPath = join(root, "upgrade.json");
@@ -470,8 +473,8 @@ async function main() {
   };
   const currentPacketReadiness = (ids: DemoIds, token: string, floor: EpochFloor | null) => demoPacketReadiness(ids, floor, {
     control: async () => {
-      const [config, runtime, policy, access] = await Promise.all([getConnections(owner().controller, token),
-        getConnectionRuntimes(owner().controller, token), getPolicy(owner().controller, token), getMeshAccess(owner().controller, token)]);
+      const [config, runtime, policy, access] = await Promise.all([getConnections(owner().controller, token, networkId()),
+        getConnectionRuntimes(owner().controller, token, networkId()), getPolicy(owner().controller, token, networkId()), getMeshAccess(owner().controller, token, networkId())]);
       return { config, runtime, policy, access };
     },
     // Original node bearer stays in host memory and goes only to the generated
@@ -484,7 +487,7 @@ async function main() {
     let inventory: NodeList | undefined; let runtime: ConnectionRuntimesSnapshot | undefined;
     let packets: PacketReadiness = { nyc: false, lax: false, sha: false };
     if (token !== null) {
-      try { [inventory, runtime] = await Promise.all([listNodes(local.controller, token), getConnectionRuntimes(local.controller, token)]); }
+      try { [inventory, runtime] = await Promise.all([listNodes(local.controller, token, networkId()), getConnectionRuntimes(local.controller, token, networkId())]); }
       catch { process.exitCode = 1; }
       if (demoMode(local.mode) === "linux-ipv4-tun") {
         const nyc = local.nodes.nyc.id; const lax = local.nodes.lax.id; const sha = local.nodes.sha.id;
@@ -578,7 +581,7 @@ async function main() {
     do {
       assert(!interrupted, "interrupted");
       if (demoMode(owner().mode) === "neighbors") {
-        const [config, runtime] = await Promise.all([getConnections(owner().controller, token), getConnectionRuntimes(owner().controller, token)]);
+        const [config, runtime] = await Promise.all([getConnections(owner().controller, token, networkId()), getConnectionRuntimes(owner().controller, token, networkId())]);
         if (demoHealthy(config, runtime, ids, Date.now(), floor)) {
           for (const role of ROLES) assert(record((await inspectOwned("container", containerName(role), role)).State).Running === true, "replacement Agent stopped before verification");
           return;
@@ -632,6 +635,13 @@ async function main() {
     assert(opts.adminFile);
     adminToken = (await readPrivate(opts.adminFile)).trim();
     assert(HEX.test(adminToken), "invalid admin token file");
+    const registeredIds = ROLES.flatMap((role) => {
+      const id = owner().nodes[role].id;
+      return id === null ? [] : [id];
+    });
+    phase = "controller network identity lookup";
+    if (opts.action !== "start" && registeredIds.length === 0) throw new NetworkScopeError("no registered demo identity available to locate its network");
+    resolvedNetworkId = await resolveDemoNetworkId(state.controller, adminToken, registeredIds);
     if (opts.action === "status") { await publicStatus(adminToken); return; }
     assert(state.phase === "ready", "partial initial setup: inspect private state; refusing automatic key regeneration");
     stage("immutable material and image checks");
@@ -647,9 +657,9 @@ async function main() {
     for (const path of FILES) assert(sha256(await readPrivate(join(root, path))) === state.files[path], "missing/changed private material; refusing regeneration");
     await command("openssl", ["x509", "-in", join(root, "lax/lax-cert.pem"), "-noout", "-checkend", "60"]);
     stage("controller identity and reserved-plan preflight");
-    const initial = await getConnections(state.controller, adminToken);
+    const initial = await getConnections(state.controller, adminToken, networkId());
     assert(initial.valid, "existing connection plan is invalid");
-    const inventory = await listNodes(state.controller, adminToken);
+    const inventory = await listNodes(state.controller, adminToken, networkId());
     restarting = opts.action === "start" && ROLES.every((role) => owner().nodes[role].id !== null && owner().nodes[role].public_key !== null);
     for (const role of ROLES) {
       const local = state.nodes[role];
@@ -696,11 +706,11 @@ async function main() {
           await privatePath(join(root, role), true);
           await privateControlSocket(join(root, role, "agent.json.control.sock"));
         }
-        const config = await getConnections(disk.controller, token);
+        const config = await getConnections(disk.controller, token, networkId());
         assert(config.valid, "controller plan became invalid");
         const { mode: _mode, ...stableModeBinding } = disk;
         const { shell: _shell, ...stableUpgradeBinding } = disk;
-        const binding = upgrading ? { ...stableUpgradeBinding, image_id: "" } : { ...stableModeBinding, image_id: "", routing: await getPolicy(disk.controller, token) };
+        const binding = upgrading ? { ...stableUpgradeBinding, image_id: "" } : { ...stableModeBinding, image_id: "", routing: await getPolicy(disk.controller, token, networkId()) };
         return { image_id: disk.image_id, shell: shellMode(disk.shell), binding: sha256(JSON.stringify(binding)), files,
           plan_revision: config.revision, plan_digest: sha256(JSON.stringify(config.configuration)) };
       };
@@ -825,7 +835,7 @@ async function main() {
           pendingUpgrade = journal;
         },
         stop: async () => { mayStop = true; stage(upgrading ? "controlled image-only restart" : "controlled persisted-mode restart"); await stopOwned(); },
-        epochs: async () => demoEpochFloor(await getConnectionRuntimes(owner().controller, token), ids),
+        epochs: async () => demoEpochFloor(await getConnectionRuntimes(owner().controller, token, networkId()), ids),
         replacementsRunning: async (image, shell) => {
           for (const role of ROLES) {
             if (!await found("container", containerName(role))) return false;
@@ -907,7 +917,7 @@ async function main() {
     mayStop = true;
     stage("controlled restart of owned containers");
     await stopOwned();
-    const stoppedRuntimes = await getConnectionRuntimes(state.controller, adminToken);
+    const stoppedRuntimes = await getConnectionRuntimes(state.controller, adminToken, networkId());
     for (const role of ROLES) for (const helper of [true, false]) {
       const name = containerName(role, helper);
       if (await found("container", name)) {
@@ -931,7 +941,7 @@ async function main() {
         // A lost create-token response leaves grant_requested, never auto-mints
         // a second grant. A lost enroll response retains this original file.
         local.phase = "grant_requested"; await persist();
-        const created = await createEnrollmentToken(state.controller, adminToken, { expires_in_seconds: 3600 });
+        const created = await createEnrollmentToken(state.controller, adminToken, networkId(), { expires_in_seconds: 3600 });
         await atomic(pendingPath, JSON.stringify({ version: 1, controller: state.agent_controller, name: `demo-${role}`, token: created.token }));
         grant = created.token; local.phase = "grant_saved"; await persist();
       }
@@ -943,18 +953,18 @@ async function main() {
         JSON.stringify({ operation: "recover", name: `demo-${role}`, controller: state.agent_controller, token: grant, expected_id: local.id })));
       const id = text(result.node_id);
       assert(HEX.test(id) && (local.id === null || local.id === id), "identity changed unexpectedly");
-      const registered = await listNodes(state.controller, adminToken);
+      const registered = await listNodes(state.controller, adminToken, networkId());
       assert(registered.nodes.some((node) => node.id === id && node.name === `demo-${role}` && node.revoked_at === null)
         && !registered.nodes.some((node) => node.name === `demo-${role}` && node.id !== id), "node ID/name collision");
       local.id = id; local.phase = "enrolled"; await persist();
       if (await exists(pendingPath)) { await privatePath(pendingPath); await unlink(pendingPath); }
-      const beforePublish = await getConnections(state.controller, adminToken);
+      const beforePublish = await getConnections(state.controller, adminToken, networkId());
       const bound = beforePublish.nodes.find((node) => node.node.id === id);
       assert(bound && (local.public_key === null || local.public_key === bound.public_key), "bound connection key changed");
       // Same stopped helper container, new stdin; no identity/grant regeneration.
       await docker(["start", "--attach", "--interactive", helperName], 45_000,
         JSON.stringify({ operation: "publish", name: `demo-${role}`, controller: state.agent_controller, token: null, expected_id: id, expected_key: bound.public_key }));
-      const published = (await getConnections(state.controller, adminToken)).nodes.find((node) => node.node.id === id);
+      const published = (await getConnections(state.controller, adminToken, networkId())).nodes.find((node) => node.node.id === id);
       assert(published?.public_key && HEX.test(published.public_key), "missing published connection key");
       local.public_key = published.public_key; await persist();
       await inspectOwned("container", helperName, `${role}-enroll`); await docker(["rm", helperName]);
@@ -965,7 +975,7 @@ async function main() {
     let saved = false;
     for (let attempt = 0; attempt < 5; attempt++) {
       assert(!interrupted, "interrupted");
-      const before = await getConnections(state.controller, adminToken);
+      const before = await getConnections(state.controller, adminToken, networkId());
       assert(before.valid, "global connection plan is invalid");
       for (const role of ROLES) {
         const node = before.nodes.find((entry) => entry.node.id === ids[role]);
@@ -976,7 +986,7 @@ async function main() {
       const configuration = mergeDemoPlan(before.configuration, ids);
       if (isDeepStrictEqual(configuration, before.configuration)) { saved = true; break; }
       try {
-        const response = await saveConnections(state.controller, adminToken, { expected_revision: before.revision, configuration });
+        const response = await saveConnections(state.controller, adminToken, networkId(), { expected_revision: before.revision, configuration });
         assert(response.valid && response.diagnostics.length === 0, "merged plan invalid");
         saved = true; break;
       } catch (error) { if (!(error instanceof ControlApiError && error.status === 409)) throw error; }
@@ -987,8 +997,9 @@ async function main() {
     await waitHealthy(ids, adminToken, demoEpochFloor(stoppedRuntimes, ids));
     await publicStatus(adminToken);
     console.log("[demo] ready: three real registered nodes; authenticated neighbor probes only");
-  } catch {
+  } catch (error) {
     process.exitCode = 1;
+    if (error instanceof NetworkScopeError) console.error(`[demo] ${error.message}`);
     console.error(`[demo] failed during ${phase}; private exception details suppressed`);
     if (mayStop && state && !pendingUpgrade?.epoch_floor && !pendingMode?.epoch_floor) {
       cleaning = true;
