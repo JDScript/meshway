@@ -90,6 +90,29 @@ This is a requested size, not a guaranteed usable payload capacity. The OS may c
 
 Native UDP listener and outgoing sockets are all prepared during atomic `Runtime::start`, before spawning tasks. Socket creation, option, nonblocking setup, bind, or Tokio-registration failures return `Error::Io`; an option failure never silently falls back to the OS default. Outgoing hop-handshake/reconnect attempts reuse the prepared, configured socket. This moves outgoing socket setup errors to startup instead of allowing a background bind failure to disappear. The request does not change wire limits, mpsc queue bounds, encryption, replay/session lifetimes, or receive/send batching. Portable socket tests compare readback against a directly configured control socket on the same OS, verify zero preserves defaults and TX is unchanged, and exercise configured sockets through Tokio; they do not assume Linux doubling or establish throughput improvement.
 
+### Native TCP small-record scheduling
+
+`limits.native_tcp_nodelay` is a strict boolean with **default true**. Native TCP
+sets `TCP_NODELAY` on both dialed and accepted sockets before Noise authentication.
+An explicit `false` reproduces Nagle-enabled behavior for same-image A/B; use
+`diagnose.py --first-leg tcp --native-tcp-nodelay off|on`. CLI-owned VLESS sockets
+already set NODELAY independently; `attach_stream` cannot configure arbitrary
+streams and is unaffected by this option.
+
+An option failure closes the socket before authentication/publication: accepted
+connections count an I/O failure and release their permit; dialed connections retry
+under the existing bounded reconnect policy. No send/receive buffer sizes, frame
+prefixes, flush calls, batch limits, queue bounds or cooperative budgets change.
+This option changes kernel packet scheduling, not the byte-stream contract.
+
+Security-impact review of this change: the option is applied **before** the existing
+authenticated path. All four Noise/confirmation flights, authenticated priority,
+carrier grants, fresh transport-key proof before publication, nonce/replay windows,
+path-bound E2E, packet pending/active lifetimes and shutdown selection are unchanged.
+The actual socket-option regression covers accepted and dialed TCP; the existing
+real-TCP and replay/restart/security tests run with NODELAY enabled. This is a
+socket I/O review and regression evidence, not a new cryptographic certification.
+
 `statistics()` reports received/sent application envelopes, successfully enqueued forwarding attributed to the ingress transport, and drops (including malformed handshakes/records and saturated queues). Heartbeats are excluded from application counts. UDP channels expire after six seconds without authenticated traffic and use one-second authenticated heartbeats. Stream disconnection is detected by EOF/I/O failure; probe/handshake operations have deadlines. These counters do not represent TUN bytes, delivered IP packets, or throughput measurements.
 
 ### Drop attribution and queue observations

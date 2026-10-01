@@ -67,8 +67,14 @@ in the examples above. The Linux default socket `SO_RCVBUF` was 229376 bytes; a
 Socket limits/rounding are platform dependent; inspect actual `ss -um` output.
 
 Native TCP first leg plus VLESS second leg measured 96.16 Mbit/s in one exploratory
-case. Native TCP currently lacks explicit TCP_NODELAY and uses separate prefix/body
-writes; this is an additional hypothesis, not yet a measured causal attribution.
+case. At that baseline, native TCP lacked explicit TCP_NODELAY and used separate
+prefix/body writes; that observation alone was a hypothesis, not causal attribution.
+
+**Follow-up:** [MATCHED.md](MATCHED.md) records a same-image off/on/on/off TCP_NODELAY
+test, with E2E/path/TUN semantics retained: off 88.39/99.38 Mbit/s, on 276.61/295.43
+Mbit/s. Native TCP now defaults to NODELAY, with an explicit false A/B setting.
+Prefix/body writes remain separate. Queue loss persists; this is not a claim that
+the remaining bottleneck is solved, nor a wrapper-overhead ratio.
 
 ## Reproduction and coordination
 

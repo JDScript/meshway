@@ -219,6 +219,10 @@ pub(super) async fn listen(inner: Arc<Inner>, listener: TcpListener) {
                 };
                 let inner = inner.clone();
                 inner.clone().spawn(async move {
+                    if let Err(error) = configure_socket(&socket, inner.config.limits.native_tcp_nodelay) {
+                        inner.counters(TransportKind::NativeTcp).drop(error.into());
+                        return;
+                    }
                     match authenticate(&inner, socket, StreamRole::Acceptor, TransportKind::NativeTcp, 0).await {
                         Ok(established) => { let _ = install(inner, established, TransportKind::NativeTcp, permit); }
                         Err(error) => { inner.counters(TransportKind::NativeTcp).drop(error.into()); }
@@ -245,6 +249,7 @@ pub(super) async fn maintain(inner: Arc<Inner>, candidate: OutgoingCandidate) {
                 let socket = tokio::time::timeout(timeout, TcpStream::connect(&candidate.endpoint))
                     .await
                     .map_err(|_| Error::Timeout)??;
+                configure_socket(&socket, inner.config.limits.native_tcp_nodelay)?;
                 let established = authenticate(
                     &inner,
                     socket,
@@ -264,4 +269,9 @@ pub(super) async fn maintain(inner: Arc<Inner>, candidate: OutgoingCandidate) {
         }
         tokio::select! { _ = shutdown.changed() => break, _ = tokio::time::sleep(delay) => () }
     }
+}
+
+pub(super) fn configure_socket(socket: &TcpStream, nodelay: bool) -> Result<()> {
+    socket.set_nodelay(nodelay)?;
+    Ok(())
 }

@@ -92,6 +92,9 @@ pub struct Limits {
     /// Requested SO_RCVBUF for every native UDP socket. Zero preserves the OS
     /// default; a nonzero request may be clamped/accounted differently by the OS.
     pub udp_receive_buffer_bytes: usize,
+    /// Disable Nagle on native TCP dialed AND accepted sockets. False retains
+    /// the old OS-default behavior for same-binary performance comparisons.
+    pub native_tcp_nodelay: bool,
     /// L bounds each source setup/cache pool. Receiving packet contexts are <= L,
     /// each with one active and one pending key, plus <= L separate echo setups:
     /// at most 3L receiving E2E states, without unrelated-context rollover borrowing.
@@ -108,6 +111,7 @@ impl Default for Limits {
             queue_capacity: 64,
             work_budget_frames: 16,
             udp_receive_buffer_bytes: 0,
+            native_tcp_nodelay: true,
             max_pending_probes: 64,
             handshake_timeout_ms: 3_000,
             probe_timeout_ms: 10_000,

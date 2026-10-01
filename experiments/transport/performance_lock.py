@@ -21,6 +21,17 @@ def performance_lock():
         except BlockingIOError:
             print("Waiting for the shared Meshway performance runner…", flush=True)
             fcntl.flock(descriptor, fcntl.LOCK_EX)
-        yield
+        yield descriptor
     finally:
         os.close(descriptor)
+
+
+if __name__ == "__main__":
+    import subprocess
+    import sys
+
+    if len(sys.argv) < 2:
+        sys.exit("Usage: performance_lock.py COMMAND [ARG ...]")
+    with performance_lock() as descriptor:
+        # The child retains the same flock even if this wrapper is terminated.
+        sys.exit(subprocess.run(sys.argv[1:], check=False, pass_fds=(descriptor,)).returncode)

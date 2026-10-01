@@ -25,6 +25,8 @@ if sys.argv[3] != 'default':
     config['dataplane']['limits']['work_budget_frames'] = int(sys.argv[3])
 if sys.argv[4] != 'default':
     config['dataplane']['limits']['udp_receive_buffer_bytes'] = int(sys.argv[4])
+if sys.argv[5] != 'default':
+    config['dataplane']['limits']['native_tcp_nodelay'] = sys.argv[5] == 'on'
 if sys.argv[2] == 'tcp':
     for peer in config['dataplane']['trusted_peers']:
         peer['transports'] = ['native_tcp' if t == 'native_udp' else t for t in peer['transports']]
@@ -68,7 +70,7 @@ class DiagnosticFixture(MeshwayFixture):
             # Keys never leave their container or enter argv/results.
             budget = "default" if self.args.work_budget is None else str(self.args.work_budget)
             receive_buffer = "default" if self.args.udp_receive_buffer is None else str(self.args.udp_receive_buffer)
-            response = self.exec(node, "python3", "-c", CONFIGURE, str(self.args.queue), self.args.first_leg, budget, receive_buffer, check=False)
+            response = self.exec(node, "python3", "-c", CONFIGURE, str(self.args.queue), self.args.first_leg, budget, receive_buffer, self.args.native_tcp_nodelay, check=False)
             if response.returncode:
                 raise LabError(f"Diagnostic configuration failed for {node}; private output suppressed")
 
@@ -105,6 +107,7 @@ def arguments(argv=None):
     parser.add_argument("--work-budget", type=bounded_integer(0, 64), default=None, help="explicit frames per cooperative yield; 0 disables the experimental yield budget")
     parser.add_argument("--udp-receive-buffer", type=bounded_integer(0, 4 * 1024 * 1024), default=None, help="requested UDP SO_RCVBUF; 0 preserves OS default, actual capacity is recorded by ss")
     parser.add_argument("--first-leg", choices=("udp", "tcp"), default="udp")
+    parser.add_argument("--native-tcp-nodelay", choices=("default", "off", "on"), default="default", help="same-image Nagle A/B on both native TCP endpoints; VLESS remains NODELAY")
     parser.add_argument("--second-leg", choices=("udp", "vless"), default="udp", help="with first-leg=tcp, native UDP legs are both converted to TCP")
     parser.add_argument("--seconds", type=bounded_integer(1, 30), default=5)
     parser.add_argument("--omit", type=bounded_integer(0, 5), default=1)

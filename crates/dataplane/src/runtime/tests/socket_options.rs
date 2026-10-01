@@ -1,6 +1,31 @@
 use super::*;
 use socket2::SockRef;
 
+#[tokio::test]
+async fn native_tcp_nodelay_option_applies_to_dialed_and_accepted_sockets() {
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let dial = tokio::net::TcpStream::connect(listener.local_addr().unwrap());
+    let (dialed, accepted) = tokio::join!(dial, listener.accept());
+    let dialed = dialed.unwrap();
+    let (accepted, _) = accepted.unwrap();
+    for value in [true, false] {
+        for socket in [&dialed, &accepted] {
+            stream::configure_socket(socket, value).unwrap();
+            assert_eq!(socket.nodelay().unwrap(), value);
+        }
+    }
+    let mut value = serde_json::to_value(configs().remove(0)).unwrap();
+    value["limits"]
+        .as_object_mut()
+        .unwrap()
+        .remove("native_tcp_nodelay");
+    let defaulted: LabConfig = serde_json::from_value(value.clone()).unwrap();
+    assert!(defaulted.limits.native_tcp_nodelay);
+    value["limits"]["native_tcp_nodelay"] = serde_json::json!(false);
+    let explicit: LabConfig = serde_json::from_value(value).unwrap();
+    assert!(!explicit.limits.native_tcp_nodelay);
+}
+
 #[test]
 fn udp_receive_buffer_config_preserves_default_and_bounds_requests() {
     let mut value = serde_json::to_value(configs().remove(0)).unwrap();

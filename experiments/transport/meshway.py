@@ -381,7 +381,7 @@ def main(argv=None):
     signal.signal(signal.SIGTERM, interrupted)
     run_id = f"meshway-lab-{datetime.now(timezone.utc).strftime('%Y%m%d%H%M%S')}-{uuid.uuid4().hex[:8]}"
     result = {
-        "schema_version": 1, "run_id": run_id, "started_at": now(), "status": "running",
+        "schema_version": 2, "run_id": run_id, "started_at": now(), "status": "running",
         "purpose": "Meshway experimental TUN iperf3 comparison, native UDP and VLESS second leg",
         "run_label": args.run_label,
         "packet_settings": {"mesh_inner_mtu": TUN_MTU, "underlay_mtu": 1500, "udp_payload_bytes": args.udp_length},

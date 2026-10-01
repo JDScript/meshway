@@ -7,6 +7,16 @@ deployments. A baseline result is not evidence of Meshway performance. Meshway
 results require a successful run with a built agent image; the presence of this
 runner alone does not establish that either transport passed.
 
+For **incremental wrapper overhead**, use [MATCHED.md](MATCHED.md), which defines
+matched carrier/adapter/security/TUN layers and reports the test-only same-Rust-
+implementation VLESS adapter A/B. The kernel and pure-Xray runners provide whole-
+path context, not wrapper-overhead denominators. `diagnose.py` provides same-image
+queue, scheduling, socket-buffer and native TCP NODELAY controls.
+
+All runners serialize on `MESHWAY_PERF_LOCK`; set the same absolute private path
+across worktrees. Builds sharing the VM must use that lock too, for example
+`python3 experiments/transport/performance_lock.py docker build ...`.
+
 ## Run
 
 Requirements: Python 3 (stdlib only), Docker CLI, and a running local Linux Docker
@@ -161,7 +171,7 @@ measurement code and support their respective package managers.
 python3 experiments/transport/meshway.py --image meshway-agent-lab:local \
   --temp-dir "$TMPDIR" --output "$TMPDIR/meshway-tun-$(date +%s).json"
 
-# Optional measured throughput ratios against an existing routed baseline.
+# Optional whole-path context against routed Linux (not wrapper overhead).
 python3 experiments/transport/meshway.py --second-leg vless --seconds 3 \
   --baseline-results /path/to/successful-baseline.json \
   --output "$TMPDIR/meshway-vless-$(date +%s).json"
