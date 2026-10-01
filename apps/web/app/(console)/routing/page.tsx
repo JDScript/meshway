@@ -38,11 +38,11 @@ export default async function RoutingPage({
         <AlertDescription className="flex flex-col gap-1">
           <p>
             以 <code className="font-mono">--apply-dataplane</code> 运行的 Linux agent 会执行这里的 Mesh IPv4
-            意图：来源节点 / 国家、目标节点 / CIDR、首条命中、经由节点、直连 / 拒绝；编译出的路径还必须有完全一致的
+            意图：来源节点 / 国家、目标节点 / CIDR、首条命中、经由节点、直连 / 拒绝。端点之间能否访问由
             <Link href="/access" className="mx-0.5 underline underline-offset-4">
               访问授权
             </Link>
-            。
+            单独决定；controller 把两者合成为每条路径的内部授权，允许不会绕过这里的拒绝或经由节点。
           </p>
           <p>
             域名后缀需要 DNS，互联网出口与 IPv6 尚未启用；报文可能命中域名规则时按拒绝处理，不会跳过该规则。

@@ -46,11 +46,11 @@ export function ManagedDataplanePanel() {
       <p className="text-muted-foreground">
         这是参数模板：把 <code className="font-mono text-foreground">--apply-dataplane</code>{" "}
         加到该节点现有的 agent 启动配置里，沿用它自己的 <code className="font-mono">--state</code>（VLESS 另需本地{" "}
-        <code className="font-mono">--connection-profiles</code>），不要另起第二个 agent；持久运行的 Docker 演示请按文档启用。流量还须被路由选中并有完全一致的
+        <code className="font-mono">--connection-profiles</code>），不要另起第二个 agent；持久运行的 Docker 演示请按文档启用。流量还须被
         <Link href="/access" className="mx-0.5 underline underline-offset-4">
           访问授权
         </Link>
-        ，连通请用 ping / curl 实测。
+        允许，并按路由选中的路径转发；连通请用 ping / curl 实测。
       </p>
       <a
         href={`${docsUrl}/managed-dataplane`}

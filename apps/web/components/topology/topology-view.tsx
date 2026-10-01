@@ -22,12 +22,12 @@ import { MeshMap, type MapEdge, type MapPlan } from "@/components/topology/mesh-
 import { Badge } from "@/components/ui/badge"
 import { Button, buttonVariants } from "@/components/ui/button"
 import { Switch } from "@/components/ui/switch"
-import type { PreviewResult, RuntimeReadResult } from "@/lib/action-state"
+import { previewFlowAction } from "@/lib/access-actions"
+import type { FlowPreviewResult, PreviewResult, RuntimeReadResult } from "@/lib/action-state"
 import { readNodeStatusAction } from "@/lib/connections-actions"
 import { flowStages } from "@/lib/flow-stages"
 import { latestSnapshot, transportLabels, type StampedSnapshot } from "@/lib/connections-model"
 import { activeNodes, nextPartStatus, type PartStatus } from "@/lib/node-status"
-import { previewPolicyAction } from "@/lib/policy-actions"
 import { emptyFlow, toFlow, validateFlow, type FlowDraft } from "@/lib/policy-model"
 import { formatClock, formatRelative } from "@/lib/time"
 import {
@@ -45,7 +45,14 @@ import {
 import { cn } from "@/lib/utils"
 
 /** A result with the exact flow it answered; the form may have moved on. */
-type Plan = { result: PreviewResult; key: string; flow: FlowDraft }
+type Plan = { result: FlowPreviewResult; key: string; flow: FlowDraft }
+
+/** The routing part of a combined preview, in the shape the path view renders. */
+function routeResult(result: FlowPreviewResult): PreviewResult {
+  if (result.status === "error") return result
+  const { routing, diagnostics, revision, valid } = result.response
+  return { status: "previewed", response: { decision: routing, diagnostics, revision, valid } }
+}
 
 type ConnectionsPageRead =
   | { ok: true; data: ConnectionsSnapshot; fetchedAt: number }
@@ -146,10 +153,10 @@ export function TopologyView({
   const configMoved = connections !== null && connections.snapshot.revision !== snapshot.revision
 
   const mapPlan: MapPlan | null =
-    layers.plan && response && response.decision.path.length > 0
+    layers.plan && response && response.routing.path.length > 0
       ? {
-          path: response.decision.path,
-          external: planSteps(response.decision, externalLabel(plan?.flow ?? flow)).some(
+          path: response.routing.path,
+          external: planSteps(response.routing, externalLabel(plan?.flow ?? flow)).some(
             (step) => step.kind === "external"
           ),
           stale,
@@ -162,7 +169,7 @@ export function TopologyView({
     const query = toFlow(flow)
     const submittedFlow = flow
     startPlan(async () => {
-      const result = await previewPolicyAction(snapshot.policy, query)
+      const result = await previewFlowAction(query)
       if (current !== seq.current) return
       setPlan({ result, key, flow: submittedFlow })
     })
@@ -217,8 +224,8 @@ export function TopologyView({
   // Planned hops without a live adjacency: a plan is not reachability.
   const unbackedHops =
     liveKnown && response && !stale
-      ? response.decision.path.flatMap((id, index) => {
-          const next = response.decision.path[index + 1]
+      ? response.routing.path.flatMap((id, index) => {
+          const next = response.routing.path[index + 1]
           if (next === undefined) return []
           return liveBetween(observation, id, next) ? [] : [`${name(id)} → ${name(next)}`]
         })
@@ -491,12 +498,12 @@ export function TopologyView({
         <Panel
           title={
             <span className="flex flex-wrap items-center gap-2">
-              规划路径
-              <Badge variant="outline">已保存策略 r{snapshot.revision}</Badge>
+              流量预览
+              <Badge variant="outline">已保存配置</Badge>
               {!snapshot.valid ? <Badge variant="destructive">策略无效</Badge> : null}
             </span>
           }
-          description="按已保存策略编译一条假设流量；不是实际 trace，也不是访问授权。"
+          description="Controller 按当前已保存的访问授权与路由策略判断一条假设流量。是计划，不是 trace。"
           bodyClassName="flex flex-col gap-4 p-4"
         >
           <FlowForm nodes={nodes} flow={flow} onFlowChange={setFlow} disabled={pending} />
@@ -510,7 +517,7 @@ export function TopologyView({
           {revisionMoved && response ? (
             <div className="flex flex-col items-start gap-2 rounded-lg border border-warning/40 bg-warning/5 px-3 py-2 text-xs">
               <span>
-                Controller 配置已变为 r{response.revision}，此规划基于页面读取的 r{snapshot.revision} 策略，可能不是当前生效配置。
+                预览基于 controller 当前的 r{response.revision}，而页面上的节点与策略读取于 r{snapshot.revision}；刷新后两者一致。
               </span>
               <RefreshPolicy refreshing={refreshing} onRefresh={() => startRefresh(() => router.refresh())} />
             </div>
@@ -520,7 +527,7 @@ export function TopologyView({
               className="flex flex-col items-start gap-2 rounded-lg border border-warning/40 bg-warning/5 px-3 py-2 text-xs"
             >
               <span>
-                Controller 配置已是 r{connections.snapshot.revision}，规划仍使用页面读取的 r{snapshot.revision} 策略。
+                Controller 配置已是 r{connections.snapshot.revision}，页面读取于 r{snapshot.revision}；预览总是使用 controller 当前的已保存配置。
               </span>
               <RefreshPolicy refreshing={refreshing} onRefresh={() => startRefresh(() => router.refresh())} />
             </div>
@@ -532,7 +539,7 @@ export function TopologyView({
           ) : null}
           <div className="border-t pt-4">
             <PreviewOutcome
-              result={plan?.result ?? null}
+              result={plan ? routeResult(plan.result) : null}
               nodes={nodes}
               flow={plan?.flow ?? flow}
               stale={stale}

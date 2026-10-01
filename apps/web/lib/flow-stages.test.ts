@@ -1,9 +1,9 @@
 import assert from "node:assert/strict"
 import { test } from "node:test"
 
-import type { PreviewPolicyResponse } from "@meshway/control-client"
+import type { PreviewFlowResponse } from "@meshway/control-client"
 
-import { flowStages } from "./flow-stages.ts"
+import { flowStages, matchedDirection } from "./flow-stages.ts"
 import type { Adjacency, ChannelStatus, TopologyObservation } from "./topology-model.ts"
 
 const NYC = "n".repeat(64)
@@ -22,12 +22,15 @@ const observation = (adjacencies: Adjacency[]): TopologyObservation => ({
   unmatchedReports: 0,
 })
 
-function routed(path: string[], ruleId: string | null = "nyc-sha"): PreviewPolicyResponse {
+function routed(path: string[], ruleId: string | null = "nyc-sha"): PreviewFlowResponse {
   return {
     revision: 9,
     valid: true,
     diagnostics: [],
-    decision: { action: "route", path, exit_node_id: null, rule_id: ruleId, reason: "matched" },
+    authorization: { action: "allow", rule_id: "edge", matched_direction: "reverse", reason: "rule edge" },
+    routing: { action: "route", path, exit_node_id: null, rule_id: ruleId, reason: "matched" },
+    execution_supported: true,
+    execution_reason: "eligible",
   }
 }
 
@@ -61,19 +64,33 @@ test("without runtime reads, adjacency is unknown rather than missing", () => {
   assert.equal(flowStages(routed([NYC, LAX]), null, true).find((stage) => stage.key === "neighbors")?.status, "unknown")
 })
 
-test("rejections, access and data plane are reported honestly", () => {
-  const rejected: PreviewPolicyResponse = {
+test("access, route and execution come straight from the controller preview", () => {
+  const rejected: PreviewFlowResponse = {
     ...routed([]),
-    decision: { action: "reject", path: [], exit_node_id: null, rule_id: null, reason: "default reject" },
+    authorization: { action: "reject", rule_id: null, matched_direction: null, reason: "default reject" },
+    routing: { action: "reject", path: [], exit_node_id: null, rule_id: null, reason: "default reject" },
+    execution_supported: false,
+    execution_reason: "not authorized",
   }
   const stages = flowStages(rejected, observation([]), true)
   assert.deepEqual(
     stages.map((stage) => [stage.key, stage.status]),
     [
+      ["access", "rejected"],
       ["route", "rejected"],
-      ["access", "unknown"],
       ["neighbors", "unknown"],
-      ["dataplane", "unknown"],
+      ["execution", "ineligible"],
     ]
   )
+  const [access] = flowStages(routed([NYC, LAX]), null, false)
+  assert.ok(access?.key === "access")
+  assert.equal(access.direction, "reverse")
+  assert.equal(access.ruleId, "edge")
+})
+
+test("matched direction is checked, never cast", () => {
+  assert.equal(matchedDirection("forward"), "forward")
+  assert.equal(matchedDirection("reverse"), "reverse")
+  assert.equal(matchedDirection("sideways"), null)
+  assert.equal(matchedDirection(null), null)
 })

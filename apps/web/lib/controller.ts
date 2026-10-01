@@ -7,6 +7,7 @@ import {
   getMeshAccess,
   getOverview,
   getPolicy,
+  getTags,
   listNodes,
   type ConnectionRuntimesSnapshot,
   type ConnectionsSnapshot,
@@ -14,6 +15,7 @@ import {
   type NodeList,
   type Overview,
   type PolicySnapshot,
+  type TagSnapshot,
 } from "@meshway/control-client"
 import { redirect } from "next/navigation"
 import { connection } from "next/server"
@@ -93,7 +95,12 @@ export function fetchConnectionRuntimes(): Promise<ControllerResult<ConnectionRu
   return authorizedRead(getConnectionRuntimes)
 }
 
-/** Saved mesh access grants (directional exact paths). */
+/** Saved endpoint access rules (with their JSONC source, if stored). */
 export function fetchMeshAccess(): Promise<ControllerResult<MeshAccessSnapshot>> {
   return authorizedRead(getMeshAccess)
+}
+
+/** Tag catalog and node tag assignments. */
+export function fetchTags(): Promise<ControllerResult<TagSnapshot>> {
+  return authorizedRead(getTags)
 }

@@ -7,7 +7,9 @@ import type {
   NodeList,
   NodeSummary,
   PolicySnapshot,
+  PreviewFlowResponse,
   PreviewPolicyResponse,
+  TagSnapshot,
 } from "@meshway/control-client"
 
 // Serializable results returned by Server Actions to client forms. None of
@@ -74,9 +76,25 @@ export type AccessSaveResult =
   | { status: "invalid"; message: string }
   | { status: "error"; message: string }
 
-/** Grants and the connection inventory (published keys) read together. */
+/** Access rules, the inventory and the tag catalog read together. */
 export type AccessReloadResult =
-  | { status: "loaded"; snapshot: MeshAccessSnapshot; inventory: ConnectionNode[] }
+  | { status: "loaded"; snapshot: MeshAccessSnapshot; inventory: ConnectionNode[]; tags: TagSnapshot }
+  | { status: "error"; message: string }
+
+/** `conflict` and `invalid` never carry a replacement: the draft stays. */
+export type TagSaveResult =
+  | { status: "saved"; snapshot: TagSnapshot }
+  | { status: "conflict"; message: string }
+  | { status: "invalid"; message: string }
+  | { status: "error"; message: string }
+
+export type TagReloadResult =
+  | { status: "loaded"; snapshot: TagSnapshot; inventory: ConnectionNode[]; access: MeshAccessSnapshot }
+  | { status: "error"; message: string }
+
+/** The controller's plan for one flow under the saved access and routing policies. */
+export type FlowPreviewResult =
+  | { status: "previewed"; response: PreviewFlowResponse }
   | { status: "error"; message: string }
 
 /** Background observation refresh; never touches an editor's draft base. */
