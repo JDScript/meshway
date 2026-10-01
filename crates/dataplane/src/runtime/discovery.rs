@@ -245,7 +245,9 @@ pub(super) fn receive(pending: &mut Option<Request>, packet: &[u8], source: Sock
     }
     // Binding requests and unrelated responses are not Noise Hello (byte 1).
     // This can only discard input; it never promotes a peer or sends a reply.
-    packet.len() >= 8 && packet[0] & 0xc0 == 0 && packet[4..8] == [0x21, 0x12, 0xa4, 0x42]
+    packet.len() >= 20
+        && matches!((packet[0], packet[1]), (0, 1 | 0x11) | (1, 1 | 0x11))
+        && packet[4..8] == [0x21, 0x12, 0xa4, 0x42]
 }
 
 pub(super) fn expire(pending: &mut Option<Request>) {

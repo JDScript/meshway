@@ -3,6 +3,27 @@ use meshway_protocol::stun;
 
 const TIMEOUT: Duration = Duration::from_millis(250);
 
+#[test]
+fn noise_token_cookie_collision_does_not_enter_stun_demux() {
+    let source = "127.0.0.1:3478".parse().unwrap();
+    let mut pending = None;
+    let mut datagram = [0_u8; 64];
+    // Native UDP Data begins with kind=3 and a per-channel token. A token can
+    // contain STUN's cookie by chance; that must not discard every packet on it.
+    datagram[0] = 3;
+    datagram[4..8].copy_from_slice(&[0x21, 0x12, 0xa4, 0x42]);
+    assert!(!crate::runtime::discovery::receive(
+        &mut pending,
+        &datagram,
+        source
+    ));
+    assert!(crate::runtime::discovery::receive(
+        &mut pending,
+        &stun::request([7; 12]),
+        source,
+    ));
+}
+
 async fn listener(bind: &str, count: usize) -> Runtime {
     let mut config = configs().remove(0);
     config.limits.work_budget_frames = 2;
