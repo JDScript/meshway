@@ -86,7 +86,7 @@ public protocol EnrollmentService: Sendable {
 
 public struct RustEnrollmentService: EnrollmentService {
   public init() {}
-  private func sanitized(_ error: Error) -> EnrollmentError {
+  func sanitized(_ error: Error) -> EnrollmentError {
     guard let error = error as? SignInError else { return .server }
     switch error {
     case .InvalidInput: return .invalidInput

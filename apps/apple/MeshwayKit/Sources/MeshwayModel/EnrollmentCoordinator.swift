@@ -9,11 +9,19 @@ import Observation
   public private(set) var busy = false
   public private(set) var heartbeatTime: Date?
   public private(set) var heartbeatResult: String?
+  public private(set) var inventory: MeshInventory?
+  public private(set) var dnsInventory: MeshDnsInventory?
+  public private(set) var inventoryMessage: String?
+  public private(set) var dnsMessage: String?
+  public private(set) var refreshing = false
+  public private(set) var inventoryTime: Date?
   public var hasIdentity: Bool { journal != nil || recoveryBlocked }
   public var canRestart: Bool {
     error == .invalidCode && journal?.snapshot.node == nil && journal?.pending?.code != nil
   }
   @ObservationIgnored private let service: any EnrollmentService
+  @ObservationIgnored private let inventoryService: any InventoryService
+  @ObservationIgnored private var lastForegroundRefresh: Date?
   @ObservationIgnored private let browser: any BrowserAuthorizing
   @ObservationIgnored private let persistence: IdentityPersistence
   @ObservationIgnored private var journal: IdentityJournal?
@@ -25,9 +33,11 @@ import Observation
     service: any EnrollmentService = RustEnrollmentService(),
     browser: any BrowserAuthorizing = SystemBrowserAuthorization(),
     secrets: any SecretStore = KeychainSecretStore(),
-    snapshots: any EnrollmentSnapshotStore = FileEnrollmentSnapshotStore()
+    snapshots: any EnrollmentSnapshotStore = FileEnrollmentSnapshotStore(),
+    inventoryService: any InventoryService = RustEnrollmentService()
   ) {
     self.service = service
+    self.inventoryService = inventoryService
     self.browser = browser
     persistence = IdentityPersistence(secrets: secrets, snapshots: snapshots)
     do {
@@ -197,6 +207,8 @@ import Observation
   }
 
   private func markRevoked() {
+    inventory = nil
+    dnsInventory = nil
     guard var next = journal else { return }
     next.snapshot.phase = .revoked
     next.pending = nil
@@ -230,12 +242,76 @@ import Observation
 
   public func foregroundContact() async {
     if snapshot?.phase == .redeeming { await resume() }
+    guard lastForegroundRefresh.map({ Date().timeIntervalSince($0) >= 30 }) ?? true else { return }
+    await refresh()
+  }
+
+  public func refresh() async {
+    guard !refreshing, !busy, !recoveryBlocked, let journal,
+      journal.snapshot.phase == .enrolled, let node = journal.snapshot.node
+    else { return }
+    refreshing = true
+    lastForegroundRefresh = Date()
+    let currentGeneration = generation
+    defer { refreshing = false }
     await heartbeat()
+    guard snapshot?.phase == .enrolled, generation == currentGeneration else { return }
+    do {
+      let next = try await inventoryService.configuration(
+        server: journal.snapshot.server, credential: journal.credential, nodeID: node.id)
+      guard generation == currentGeneration, snapshot?.phase == .enrolled else { return }
+      guard next.ownDevice.id == node.id, next.ownDevice.meshIPv4 == node.meshIPv4,
+        next.ownDevice.meshIPv6 == node.meshIPv6
+      else { throw EnrollmentError.server }
+      if let previous = inventory {
+        guard next.revision >= previous.revision,
+          next.revision != previous.revision || next.digest == previous.digest,
+          next.ipv4Prefix == previous.ipv4Prefix, next.ipv6Prefix == previous.ipv6Prefix
+        else { throw EnrollmentError.server }
+      }
+      inventory = next
+      inventoryTime = Date()
+      inventoryMessage = nil
+      // DNS is optional. Never combine DNS from a different configuration revision.
+      dnsInventory = nil
+      do {
+        let dns = try await inventoryService.dns(
+          server: journal.snapshot.server, credential: journal.credential, nodeID: node.id)
+        guard generation == currentGeneration, snapshot?.phase == .enrolled else { return }
+        guard dns.revision == next.revision,
+          dns.names.allSatisfy({ record in
+            ([next.ownDevice] + next.peers).contains {
+              $0.id == record.nodeID && $0.meshIPv4 == record.meshIPv4
+                && $0.meshIPv6 == record.meshIPv6
+            }
+          })
+        else { throw EnrollmentError.server }
+        dnsInventory = dns
+        dnsMessage = nil
+      } catch {
+        guard generation == currentGeneration else { return }
+        dnsMessage =
+          "DNS names could not be refreshed. "
+          + ((error as? EnrollmentError)?.localizedDescription ?? "Please try again.")
+        if error as? EnrollmentError == .revoked {
+          report(error)
+          markRevoked()
+        }
+      }
+    } catch {
+      guard generation == currentGeneration else { return }
+      inventoryMessage =
+        (error as? EnrollmentError)?.localizedDescription ?? "Devices could not be refreshed."
+      if error as? EnrollmentError == .revoked {
+        report(error)
+        markRevoked()
+      }
+    }
   }
 
   /// Requires an explicit confirmation in UI. Does not revoke on the server.
   public func reset() {
-    guard !busy, !heartbeatBusy else { return }
+    guard !busy, !heartbeatBusy, !refreshing else { return }
     do {
       try persistence.reset()
       generation += 1
@@ -247,6 +323,12 @@ import Observation
       error = nil
       heartbeatTime = nil
       heartbeatResult = nil
+      inventory = nil
+      dnsInventory = nil
+      inventoryMessage = nil
+      dnsMessage = nil
+      inventoryTime = nil
+      lastForegroundRefresh = nil
     } catch {
       recoveryBlocked = true
       report(error)

@@ -63,9 +63,23 @@
     await restored.heartbeat()
     #expect(restored.heartbeatTime != nil)
     #expect(restored.heartbeatResult?.contains("succeeded") == true)
+    let peerSecrets = KeychainSecretStore(service: "dev.meshway.signin-test.\(UUID().uuidString)")
+    defer { try? peerSecrets.remove() }
+    let peer = EnrollmentCoordinator(
+      browser: browser, secrets: peerSecrets,
+      snapshots: FileEnrollmentSnapshotStore(url: directory.appendingPathComponent("peer.json")))
+    await peer.signIn(server: server, name: "Swift inventory peer", version: "0.1.0")
+    #expect(peer.snapshot?.phase == .enrolled)
+    await restored.refresh()
+    #expect(restored.inventoryMessage == nil)
+    #expect(restored.inventory?.ownDevice.id == node.id)
+    #expect(restored.inventory?.peers.map(\.name) == ["Swift inventory peer"])
+    #expect(restored.dnsMessage == nil)
+    #expect(restored.dnsInventory?.revision == restored.inventory?.revision)
     _ = try browser.operation("revoke", value: node.id)
     await restored.heartbeat()
     #expect(restored.snapshot?.phase == .revoked)
+    #expect(restored.inventory == nil)
     restored.reset()
     #expect(try secrets.read() == nil)
     #expect(try snapshots.read() == nil)

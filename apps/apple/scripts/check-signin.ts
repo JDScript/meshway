@@ -41,10 +41,11 @@ try {
   process.stdout.write(result.stdout); process.stderr.write(result.stderr);
   const admin = (await readFile(adminFile, "utf8")).trim();
   const nodes = (await listNodes(controllerURL, admin)).nodes;
-  if (nodes.length !== 1 || nodes[0]?.name !== "Swift Keychain smoke" || !nodes[0]?.revoked_at) {
-    throw new Error("Swift smoke did not leave exactly one revoked controller node");
+  if (nodes.length !== 2 || !nodes.some(node => node.name === "Swift Keychain smoke" && node.revoked_at)
+    || !nodes.some(node => node.name === "Swift inventory peer" && !node.revoked_at)) {
+    throw new Error("Swift smoke did not leave the revoked self and real inventory peer");
   }
-  console.log("Verified: Swift + real Keychain → UniFFI → generated Rust client → console proxy → controller; recovery, heartbeat and revocation.");
+  console.log("Verified: Swift + real Keychain → UniFFI → generated Rust client → console proxy → controller; recovery, heartbeat, real peer inventory, DNS and revocation.");
   console.log("Browser approval used a test-only generated-client fixture; ASWebAuthenticationSession UI was not driven.");
 } finally {
   if (app && app.exitCode === null && app.signalCode === null) {

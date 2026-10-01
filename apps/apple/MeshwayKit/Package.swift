@@ -18,5 +18,7 @@ let package = Package(
     .target(name: "MeshwayTunnel", dependencies: ["MeshwayIPC"]),
     .testTarget(
       name: "MeshwayKitTests", dependencies: ["MeshwayModel", "MeshwayCore"]),
+    .testTarget(
+      name: "MeshwayVisualTests", dependencies: ["MeshwayUI", "MeshwayModel", "MeshwayCore"]),
   ]
 )

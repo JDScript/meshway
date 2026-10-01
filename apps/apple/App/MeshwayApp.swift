@@ -12,12 +12,12 @@ import SwiftUI
       providerBundleID: (Bundle.main.bundleIdentifier ?? "dev.example.meshway") + ".PacketTunnel"))
 
   var body: some Scene {
-    WindowGroup { MeshwayRootView(model: model) }
+    WindowGroup(id: "main") { MeshwayRootView(model: model) }
+      .defaultSize(width: 500, height: 680)
     #if os(macOS)
       MenuBarExtra("Meshway", systemImage: "network") {
         MeshwayMenuView(model: model)
-        Button("Quit Meshway") { NSApplication.shared.terminate(nil) }
-      }
+      }.menuBarExtraStyle(.window)
     #endif
   }
 }
