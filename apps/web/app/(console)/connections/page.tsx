@@ -27,7 +27,7 @@ export default async function ConnectionsPage({
     <PageBody width="wide">
       <PageHeader
         title="高级连接"
-        description="全网络连接配置与审计。日常监听、主动连接请从节点详情配置；这里适合跨节点检查与批量调整。认证通道不等于访问授权。"
+        description="当前手工连接意图的跨节点检查与调整；节点相关操作集中在节点详情。"
         actions={
           connections.ok ? (
             <span className="text-xs text-muted-foreground tabular-nums">
@@ -38,7 +38,7 @@ export default async function ConnectionsPage({
       />
       <div className="flex flex-wrap items-center gap-3 text-xs text-muted-foreground">
         <Link href="/nodes" className={buttonVariants({ variant: "outline", size: "sm" })}>选择节点配置连接</Link>
-        <Link href="/topology" className="underline underline-offset-4">查看真实邻接与检查流量</Link>
+        <Link href="/topology" className="underline underline-offset-4">查看上报邻接与检查流量</Link>
       </div>
       {connections.ok ? (
         <ConnectionsWorkspace

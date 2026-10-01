@@ -7,6 +7,7 @@ import { useRouter } from "next/navigation"
 import { useCallback, useRef, useState, useTransition } from "react"
 
 import { Panel } from "@/components/common/panel"
+import { DiagnosticDetails } from "@/components/common/diagnostic-details"
 import { useConnectionRuntimes, type InitialRuntimes } from "@/components/connections/use-runtimes"
 import { LastContact, ReceiptBadge } from "@/components/nodes/node-status"
 import { planSteps } from "@/components/routing/path-trace"
@@ -422,7 +423,6 @@ export function TopologyView({
           <Panel
             data-testid="topology-inspector"
             title={<NodeLink id={selected.id} nodes={nodes} />}
-            description={<span className="block truncate font-mono" title={selected.id}>{selected.id}</span>}
             bodyClassName="flex flex-col gap-3 p-4"
           >
             <dl className="grid grid-cols-[5.5rem_1fr] gap-x-3 gap-y-2 text-xs">
@@ -445,6 +445,7 @@ export function TopologyView({
                 <ReportState report={runtimes.snapshot === null ? undefined : selectedReport} now={runtimes.now} />
               </dd>
             </dl>
+            <DiagnosticDetails title="拓扑节点技术详情"><p className="font-mono break-all">{selected.id}</p><p>Agent {selected.agent_version} · 配置 r{selected.configuration_revision} · 回执 r{selected.acknowledged_revision ?? "—"}</p></DiagnosticDetails>
             <div className="flex flex-col gap-2">
               <h3 className="text-xs font-medium">邻接</h3>
               {!observation ? (

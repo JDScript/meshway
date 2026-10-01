@@ -28,6 +28,7 @@ import { ListenerSheet } from "@/components/connections/listener-sheet"
 import type { Runtimes } from "@/components/connections/use-runtimes"
 import { DraftActionBar } from "@/components/common/draft-action-bar"
 import { Panel } from "@/components/common/panel"
+import { Metric, StatusSummary } from "@/components/common/status-summary"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import {
   AlertDialog,
@@ -948,7 +949,7 @@ function StatusStrip({
   onReload: () => void
 }) {
   return (
-    <div className="flex flex-wrap items-center gap-x-5 gap-y-2 rounded-xl border bg-card px-4 py-2.5 text-xs">
+    <StatusSummary>
       <Metric label="编辑基础">
         <span data-testid="connections-base-revision" className="font-mono tabular-nums">
           r{base.revision}
@@ -978,16 +979,7 @@ function StatusStrip({
         <RefreshCwIcon data-icon="inline-start" className={reloading ? "animate-spin" : undefined} />
         {reloading ? "正在读取" : "重新读取"}
       </Button>
-    </div>
-  )
-}
-
-function Metric({ label, children }: { label: string; children: ReactNode }) {
-  return (
-    <span className="flex items-center gap-1.5">
-      <span className="text-muted-foreground">{label}</span>
-      {children}
-    </span>
+    </StatusSummary>
   )
 }
 

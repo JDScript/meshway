@@ -99,7 +99,7 @@ export function EnrollmentPanel() {
             <Step index={3} title="运行 agent">
               运行 agent 保持心跳与配置同步，节点随后出现在
               <Link href="/nodes" className="mx-1 underline underline-offset-4">节点</Link>
-              列表。
+              列表。此步骤完成控制面接入；连接配置与运行报告在节点详情查看。
             </Step>
           </ol>
         </Panel>

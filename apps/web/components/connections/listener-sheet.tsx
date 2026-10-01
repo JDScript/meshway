@@ -381,10 +381,8 @@ function ListenerForm({
           </Section>
 
           {profile || form.credentialRef !== "" ? (
-            <Section
-              title="本地配置档"
-              description="填写监听节点上已有 VLESS 配置档的名称。UUID、密码、TLS 证书等只保存在节点本地。"
-            >
+            <AdvancedSection summary="当前内部承载 profile 引用" attention={has("listeners.credential_ref") || (profile && form.credentialRef.trim() === "")}>
+              <p className="text-xs text-muted-foreground">当前实现引用监听节点已有的 VLESS profile；保存引用不下发 UUID、密码或证书。此入口用于当前内部承载配置。</p>
               <div className="flex flex-col gap-1.5">
                 <Label htmlFor={`${baseId}-profile`}>监听方配置档引用</Label>
                 <Input
@@ -410,7 +408,7 @@ function ListenerForm({
                   </Button>
                 ) : null}
               </div>
-            </Section>
+            </AdvancedSection>
           ) : null}
 
           {session.mode === "edit" ? (

@@ -26,14 +26,14 @@ export function Panel({
       {...props}
     >
       {title || actions ? (
-        <header className="flex items-start justify-between gap-3 border-b px-4 py-3">
-          <div className="flex min-w-0 flex-col gap-0.5">
+        <header className="flex flex-wrap items-start justify-between gap-3 border-b px-4 py-3">
+          <div className="flex min-w-0 flex-1 flex-col gap-0.5">
             {title ? <h2 className="text-sm font-medium">{title}</h2> : null}
             {description ? (
               <div className="min-w-0 text-xs text-muted-foreground">{description}</div>
             ) : null}
           </div>
-          {actions ? <div className="flex shrink-0 items-center gap-1.5">{actions}</div> : null}
+          {actions ? <div className="flex max-w-full shrink-0 flex-wrap items-center gap-1.5">{actions}</div> : null}
         </header>
       ) : null}
       <div className={cn("min-w-0 flex-1", bodyClassName)}>{children}</div>

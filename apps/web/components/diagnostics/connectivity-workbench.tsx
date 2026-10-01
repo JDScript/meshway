@@ -1,12 +1,14 @@
 "use client"
 
 import type { EndpointDiscoveriesSnapshot, NetworkSnapshot, NodeList, NodeSummary } from "@meshway/control-client"
-import { ChevronDownIcon } from "lucide-react"
 import Link from "next/link"
 import { useSearchParams } from "next/navigation"
-import { useSyncExternalStore, type ReactNode } from "react"
+import type { ReactNode } from "react"
 
 import { DnsCommand } from "@/components/network/dns-guidance"
+import { DiagnosticDetails } from "@/components/common/diagnostic-details"
+import { FailureNotice } from "@/components/common/failure-notice"
+import { useLocationHash } from "@/components/common/use-location-hash"
 import { EndpointDiscoveryPanel } from "@/components/connections/endpoint-discovery-panel"
 import { Badge } from "@/components/ui/badge"
 import { buttonVariants } from "@/components/ui/button"
@@ -17,24 +19,13 @@ import { canonicalNodeDnsName } from "@/lib/dns-guidance"
 import { topologyFlowHref } from "@/lib/flow-navigation"
 import { shellQuote } from "@/lib/shell"
 
-const subscribeHash = (callback: () => void) => {
-  window.addEventListener("hashchange", callback)
-  window.addEventListener("popstate", callback)
-  return () => {
-    window.removeEventListener("hashchange", callback)
-    window.removeEventListener("popstate", callback)
-  }
-}
-const readHash = () => window.location.hash.slice(1)
-const serverHash = () => ""
-
 export function ConnectivityWorkbench({ nodes, network, discoveries }: {
   nodes: ControllerResult<NodeList>
   network: ControllerResult<NetworkSnapshot>
   discoveries: ControllerResult<EndpointDiscoveriesSnapshot>
 }) {
   const params = useSearchParams()
-  const section = useSyncExternalStore(subscribeHash, readHash, serverHash)
+  const section = useLocationHash()
   const sourceId = params.get("source") ?? params.get("node") ?? ""
   const targetId = params.get("target") ?? ""
   const inventory = nodes.ok ? nodes.data.nodes.filter((node) => node.revoked_at === null) : []
@@ -58,12 +49,12 @@ export function ConnectivityWorkbench({ nodes, network, discoveries }: {
         <NodeSelect label="源节点（执行命令的环境）" id="diagnostic-source" value={sourceId} nodes={inventory} onChange={(id) => selectNode("source", id)} />
         <NodeSelect label="目标节点（独立于源节点）" id="diagnostic-target" value={targetId} nodes={inventory} exclude={source?.id} onChange={(id) => selectNode("target", id)} />
       </div>
-      {!nodes.ok ? <p role="status" className="text-xs text-destructive">节点清单读取失败：{nodes.error}</p> : inventory.length === 0 ? <p className="text-xs text-muted-foreground">没有可用的活动节点；netcheck 仍可在待测环境独立执行。</p> : null}
+      {!nodes.ok ? <FailureNotice title="节点清单读取失败" nextStep="刷新页面重试；恢复前可使用独立 netcheck 模板。" error={nodes.error} /> : inventory.length === 0 ? <p className="text-xs text-muted-foreground">没有可用的活动节点；netcheck 仍可在待测环境独立执行。</p> : null}
       {(sourceId && !source) || (targetId && !target) ? <p role="status" className="text-xs text-warning">链接中的节点已不可用，未替换成其他节点。请选择活动节点。</p> : null}
       {source && target && source.id === target.id ? <p role="status" className="text-xs text-warning">源与目标相同，请另选目标；不会生成自 ping 命令。</p> : null}
       <p className="text-xs text-muted-foreground">命令在源节点所在环境执行；live / DNS 模板复用其现有 state 路径。本地 CLI 输出未上报到 Web。</p>
 
-      <div className="min-w-0 divide-y rounded-xl border">
+      <div className="flex min-w-0 flex-col gap-3">
         <CheckSection id="saved-flow" title="已保存 flow" source="配置预览" open={!section || section === "saved-flow"}>
           <p>检查已保存的访问授权与路由选择。结果是规划路径，不是实际 trace。</p>
           <Link href={topologyFlowHref({ sourceNodeId: source?.id, targetNodeId: source && target && source.id !== target.id ? target.id : undefined })} className={buttonVariants({ variant: "outline", size: "sm" })}>在拓扑中检查已保存 flow</Link>
@@ -121,14 +112,10 @@ function NodeSelect({ label, id, value, nodes, exclude, onChange }: {
 
 function CheckSection({ id, title, source, open, children }: { id: string; title: string; source: string; open?: boolean; children: ReactNode }) {
   return (
-    <details id={id} open={open} className="group min-w-0 scroll-mt-20">
-      <summary className="flex cursor-pointer list-none flex-wrap items-center gap-2 rounded-lg p-4 text-sm focus-visible:outline-2 focus-visible:outline-ring [&::-webkit-details-marker]:hidden">
-        <ChevronDownIcon className="size-4 shrink-0 transition-transform group-open:rotate-180" aria-hidden="true" />
-        <span className="font-medium">{title}</span>
-        <Badge variant="outline" className="ml-auto font-normal text-muted-foreground">{source}</Badge>
-      </summary>
-      <div className="flex min-w-0 flex-col items-start gap-3 px-4 pb-4 text-xs text-muted-foreground [&>div]:w-full [&>p]:leading-relaxed">{children}</div>
-    </details>
+    <DiagnosticDetails id={id} open={open} title={title} className="scroll-mt-20">
+      <Badge variant="outline" className="w-fit font-normal text-muted-foreground">{source}</Badge>
+      <div className="flex min-w-0 flex-col items-start gap-3 text-xs text-muted-foreground [&>div]:w-full [&>p]:leading-relaxed">{children}</div>
+    </DiagnosticDetails>
   )
 }
 

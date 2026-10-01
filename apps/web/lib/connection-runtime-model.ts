@@ -101,6 +101,23 @@ export const reasonLabels: Record<ConnectionRuntimeReason, string> = {
   internal_error: "内部错误",
 }
 
+/** Actions describe the current implementation, never imply a Web secret deployment exists. */
+export const runtimeNextSteps: Record<ConnectionRuntimeReason, string> = {
+  none: "",
+  disabled: "展开节点的当前启用帮助，检查现有 Agent 是否启用了托管连接。",
+  invalid_configuration: "修复下方连接配置的校验问题，再保存并等待节点同步。",
+  profile_unavailable: "检查高级配置中引用的 profile 是否存在于节点当前配置文件；协议凭据尚不能由此表单下发。",
+  bind_failed: "检查监听地址属于本节点、端口未被占用；在连接配置中修正地址或端口。",
+  resolve_failed: "检查目标发布地址的域名拼写及节点环境的 DNS 解析。",
+  transport_failed: "核对目标监听、发布地址和承载类型；在诊断页检查底层网络。",
+  authentication_failed: "核对双方节点连接身份及协议配置；查看连接身份详情，勿替换成普通代理客户端身份。",
+  probe_failed: "查看邻居的运行报告及目标监听，刷新后仍失败可在诊断页检查邻接。",
+  lease_superseded: "另一 Agent 进程已接管该节点；确认只运行预期进程，等待新报告。",
+  lease_expired: "检查 Agent 与控制面的联系，恢复后刷新以获取新运行报告。",
+  shutting_down: "等待预期 Agent 启动并重新上报；如已停用，可删除对应连接意图。",
+  internal_error: "刷新重试；持续失败时展开技术详情并检查节点 Agent 日志。",
+}
+
 export const neighborStateLabels: Record<ConnectionNeighborState, string> = {
   authenticated: "已认证",
   waiting: "等待中",

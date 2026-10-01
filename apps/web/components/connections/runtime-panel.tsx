@@ -1,12 +1,13 @@
 "use client"
 
 import type { ConnectionNode, ConnectionRuntimeObservation } from "@meshway/control-client"
-import { ActivityIcon, CircleAlertIcon, RefreshCwIcon } from "lucide-react"
+import { ActivityIcon, RefreshCwIcon } from "lucide-react"
 import type { ReactNode } from "react"
 
 import type { Runtimes } from "@/components/connections/use-runtimes"
 import { Panel } from "@/components/common/panel"
-import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
+import { DiagnosticDetails } from "@/components/common/diagnostic-details"
+import { FailureNotice } from "@/components/common/failure-notice"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import {
@@ -19,6 +20,7 @@ import {
   runtimeFor,
   runtimeFreshness,
   runtimeSummary,
+  runtimeNextSteps,
   type RuntimeFreshness,
 } from "@/lib/connection-runtime-model"
 import { nodeName, transportLabels } from "@/lib/connections-model"
@@ -104,7 +106,7 @@ export function NodeRuntimePanel({
           {runtimes.snapshot !== null ? <FreshnessBadge freshness={freshness} /> : null}
         </span>
       }
-      description="节点 agent 自报的监听与已认证邻居。只说明节点之间的认证通道，不代表路由或 TUN 流量已放行。"
+       description="来源：Agent 自报的监听与邻居认证探测 · 业务授权另由 Access 决定。"
       actions={
         <span className="flex items-center gap-1.5">
           {runtimes.fetchedAt !== null ? (
@@ -126,21 +128,16 @@ export function NodeRuntimePanel({
       bodyClassName="flex flex-col gap-3 p-4"
     >
       {runtimes.error ? (
-        <Alert variant={runtimes.snapshot ? "default" : "destructive"}>
-          <CircleAlertIcon />
-          <AlertTitle>{runtimes.snapshot ? "最近一次刷新失败，以下为上次读取的结果" : "无法读取运行状态"}</AlertTitle>
-          <AlertDescription className="break-all">{runtimes.error}</AlertDescription>
-        </Alert>
+        <FailureNotice title={runtimes.snapshot ? "刷新失败，显示上次读取的运行报告" : "无法读取运行状态"} nextStep="点击刷新运行状态重试；持续失败时检查控制面与节点联系。" error={runtimes.error} />
       ) : null}
 
       {runtimes.snapshot === null ? null : !observation || freshness === "unreported" ? (
         <p className="text-xs text-muted-foreground">
-          {freshnessHints.unreported} 节点以托管连接模式运行（
-          <code className="font-mono">run --apply-connections</code>）后才会报告。
+          尚无运行报告。查看此节点的控制面联系；当前启用参数可在节点高级帮助中找到。
         </p>
       ) : (
         <>
-          <p className={cn("text-xs", history ? "text-warning" : "text-muted-foreground")}>{freshnessHints[freshness]}</p>
+          {history ? <p className="text-xs text-warning">{freshnessHints[freshness]}</p> : null}
           <dl className={cn("grid gap-x-6 gap-y-2 text-xs sm:grid-cols-3", history && "opacity-70")}>
             <Fact label="运行阶段">
               <span className={cn(observation.state === "error" && "text-destructive")}>{runtimeSummary(observation)}</span>
@@ -154,13 +151,10 @@ export function NodeRuntimePanel({
                 "尚未报告"
               )}
             </Fact>
-            <Fact label="对应配置">
-              <span className="font-mono tabular-nums">
-                {observation.revision === null ? "—" : `r${observation.revision}`}
-              </span>
-              <span className="text-muted-foreground">{observation.current ? " · 当前版本" : " · 非当前版本"}</span>
-            </Fact>
+            <Fact label="邻居认证探测">{neighborCounts(observation).authenticated} / {observation.peers.length} 已认证{history ? "（历史报告）" : ""}</Fact>
           </dl>
+
+          {observation.reason !== "none" ? <p role="status" className="text-xs text-warning">{runtimeNextSteps[observation.reason]}</p> : null}
 
           {observation.listeners.length > 0 ? (
             <div className={cn("flex flex-col gap-1.5", history && "opacity-70")}>
@@ -180,6 +174,11 @@ export function NodeRuntimePanel({
                   </li>
                 ))}
               </ul>
+              {observation.listeners.some((listener) => listener.reason !== "none") ? (
+                <ul aria-label="监听问题下一步" className="flex flex-col gap-1 text-xs text-warning">
+                  {[...new Set(observation.listeners.filter((listener) => listener.reason !== "none").map((listener) => listener.reason))].map((reason) => <li key={reason}>{runtimeNextSteps[reason]}</li>)}
+                </ul>
+              ) : null}
             </div>
           ) : null}
 
@@ -220,7 +219,6 @@ export function NodeRuntimePanel({
                           <span className="min-w-0 [overflow-wrap:anywhere]">
                             <span className="sm:hidden">· </span>
                             {initiator}
-                            {peer.listener_id ? <span className="ml-1 font-mono text-[0.6875rem]">→ {peer.listener_id}</span> : null}
                           </span>
                         </span>
                         <span className="col-start-2 row-start-1 flex items-center justify-end gap-2 sm:contents">
@@ -241,10 +239,16 @@ export function NodeRuntimePanel({
                 </ul>
               </div>
             )}
-            <p className="text-[0.6875rem] text-muted-foreground">
+            {observation.peers.length > 0 ? <p className="text-[0.6875rem] text-muted-foreground">
               「已认证」表示 agent 最近完成了一次邻居认证探测；RTT 仅来自该探测。
-            </p>
+            </p> : null}
           </div>
+          {observation.peers.some((peer) => peer.reason !== "none") ? <ul aria-label="连接问题下一步" className="flex flex-col gap-1 text-xs text-warning">{observation.peers.filter((peer) => peer.reason !== "none").map((peer, index) => <li key={index}>{nodeName(nodes, peer.peer_node_id)}：{runtimeNextSteps[peer.reason]}</li>)}</ul> : null}
+          <DiagnosticDetails title="运行报告技术详情">
+            <p>对应配置 r{observation.revision ?? "—"} · current {String(observation.current)} · stale {String(observation.stale)} · 有效期 {observation.stale_after_seconds} 秒</p>
+            <p>运行阶段 {observation.state} · 原因 {observation.reason}</p>
+            <ul className="flex flex-col gap-1">{observation.peers.map((peer, index) => <li key={index}>{nodeName(nodes, peer.peer_node_id)} · listener {peer.listener_id ?? "—"} · candidate {peer.candidate_id ?? "—"} · initiator {peer.initiator_node_id}</li>)}</ul>
+          </DiagnosticDetails>
         </>
       )}
     </Panel>

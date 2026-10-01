@@ -9,6 +9,9 @@ import { useEffect, useId, useState, useTransition } from "react"
 
 import { CopyButton } from "@/components/common/copy-button"
 import { DraftActionBar } from "@/components/common/draft-action-bar"
+import { DiagnosticDetails } from "@/components/common/diagnostic-details"
+import { StatusSummary } from "@/components/common/status-summary"
+import { useLocationHash } from "@/components/common/use-location-hash"
 import { Panel } from "@/components/common/panel"
 import { DnsDocsLinks, DnsStatusCommand } from "@/components/network/dns-guidance"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
@@ -31,6 +34,7 @@ const draftOf = (snapshot: NetworkSnapshot): Draft => ({ name: snapshot.name, en
 /** The editing base only moves after this form saves or an explicitly confirmed reload. */
 export function NetworkSettings({ snapshot }: { snapshot: NetworkSnapshot }) {
   const router = useRouter()
+  const hash = useLocationHash()
   const [base, setBase] = useState(snapshot)
   const [draft, setDraft] = useState(() => draftOf(snapshot))
   const [feedback, setFeedback] = useState<NetworkSaveResult | null>(null)
@@ -88,11 +92,11 @@ export function NetworkSettings({ snapshot }: { snapshot: NetworkSnapshot }) {
 
   return (
     <div data-testid="network-settings" className="flex flex-col gap-4">
-      <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
+      <StatusSummary>
         <span>编辑基础 <code data-testid="network-base-revision" className="font-mono">r{base.revision}</code></span>
         {dirty ? <Badge variant="outline" className="text-warning">未保存</Badge> : null}
         <Button variant="ghost" size="sm" className="ml-auto" disabled={pending} onClick={() => dirty ? setConfirmReload(true) : reload()}><RefreshCwIcon data-icon="inline-start" />重新读取</Button>
-      </div>
+      </StatusSummary>
       {snapshot.revision > base.revision ? <p role="status" className="text-xs text-warning">最近读取的全局配置已是 r{snapshot.revision}；本页仍基于 r{base.revision}，名称与 DNS 草稿未被替换。请显式重新读取后再保存。</p> : null}
       <Panel title="网络身份" description="Controller 管理的单个网络；名称与 ID 会持久保存。" bodyClassName="flex flex-col gap-4 p-4">
         <div className="flex flex-col gap-1.5">
@@ -121,15 +125,14 @@ export function NetworkSettings({ snapshot }: { snapshot: NetworkSnapshot }) {
           <div className="flex flex-col gap-1.5"><Label htmlFor={`${id}-ttl`}>TTL（秒）</Label><Input id={`${id}-ttl`} data-testid="network-dns-ttl" inputMode="numeric" value={draft.ttl} disabled={pending} onChange={(event) => setDraft({ ...draft, ttl: event.target.value })} /></div>
         </div>
         <div className="flex flex-wrap gap-2"><Badge variant="outline">已保存意图：{base.dns.enabled ? "启用" : "关闭"}</Badge><Badge variant="outline">运行状态未上报</Badge></div>
-        <div id="dns-diagnostics" className="flex min-w-0 scroll-mt-20 flex-col gap-3 border-t pt-4 text-xs">
-          <h3 className="font-medium">DNS 诊断</h3>
+        <DiagnosticDetails id="dns-diagnostics" title="DNS 诊断与当前启用帮助" className="scroll-mt-20" open={hash === "dns-diagnostics"}>
           <p data-testid="network-dns-saved-context" className="text-muted-foreground">已保存 r{base.revision} · zone <code className="font-mono break-all">{base.dns.zone}</code> · TTL {base.dns.ttl_seconds} 秒。{base.dns.enabled ? "启用是发布意图，尚不能证明本地解析服务运行。" : "DNS 已关闭，不发布节点记录。"}此处使用已保存配置，不预览未保存草稿。</p>
           <p className="text-muted-foreground">本地 DNS listener 与系统 resolver 状态未知；普通配置 ACK 只表示已保存。Agent 需显式配置 <code className="font-mono">--dns-listen 127.0.0.1:5353</code> 才提供 loopback UDP / TCP 查询。系统 DNS 接入需另外显式启用。</p>
           <p className="text-muted-foreground">在 <Link href="/nodes" className="text-foreground underline underline-offset-4">节点详情</Link> 复制完整 canonical FQDN 与实际 dig 命令。可读 alias 仅在 controller 检查全部活动节点后发布；无效或重名 alias 不发布，不影响完整身份名。</p>
           <DnsStatusCommand />
           <p className="text-muted-foreground">支持 A / AAAA / PTR，不做递归或上游转发；AAAA 是地址元数据，解析成功不证明 IPv6 数据面、访问授权或互联网域名路由已生效。</p>
           <DnsDocsLinks />
-        </div>
+        </DiagnosticDetails>
       </Panel>
       <DraftActionBar visible={dirty || pending || issues.length > 0 || feedback !== null || reloadError !== null}>
         <div aria-live="polite" className="flex flex-col gap-2">

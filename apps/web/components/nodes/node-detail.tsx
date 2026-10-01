@@ -6,7 +6,6 @@ import {
   CircleAlertIcon,
   RefreshCwIcon,
   CableIcon,
-  FingerprintIcon,
   FlagIcon,
   ShieldOffIcon,
   ShieldCheckIcon,
@@ -19,12 +18,18 @@ import { useCallback, useState, type ReactNode } from "react"
 import { ManagedDataplanePanel } from "@/components/nodes/managed-dataplane-panel"
 import { NodeDnsPanel, type NodeDnsNetwork } from "@/components/nodes/node-dns-panel"
 import { ConnectionsEditor } from "@/components/connections/connections-editor"
+import { useConnectionsHasDraft } from "@/components/connections/draft-store"
+import { ConnectionIdentityDetails, ConnectionReceipt } from "@/components/connections/node-connection-facts"
 import { EndpointDiscoveryPanel } from "@/components/connections/endpoint-discovery-panel"
 import { NodeRuntimePanel, RuntimeChip } from "@/components/connections/runtime-panel"
 import { useConnectionRuntimes, type InitialRuntimes, type Runtimes } from "@/components/connections/use-runtimes"
 import { ControllerUnavailable } from "@/components/common/controller-states"
 import { CopyButton } from "@/components/common/copy-button"
 import { Panel } from "@/components/common/panel"
+import { DiagnosticDetails } from "@/components/common/diagnostic-details"
+import { SectionHeader } from "@/components/common/section-header"
+import { Metric, StatusSummary } from "@/components/common/status-summary"
+import { FailureNotice } from "@/components/common/failure-notice"
 import { CountryDialog } from "@/components/nodes/country-dialog"
 import { LastContact, ReceiptBadge, StatusBadge } from "@/components/nodes/node-status"
 import { RevokeDialog } from "@/components/nodes/revoke-dialog"
@@ -33,23 +38,18 @@ import { Button, buttonVariants } from "@/components/ui/button"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { runtimeFor } from "@/lib/connection-runtime-model"
 import {
-  connectionReceipt,
-  connectionReceiptLabels,
-  fingerprint,
   fromPlan,
   latestSnapshot,
   nodeScope,
-  type StampedSnapshot,
   readiness,
   readinessLabels,
-  transportLabels,
+  type StampedSnapshot,
 } from "@/lib/connections-model"
 import type { RuntimeReadResult } from "@/lib/action-state"
 import type { ControllerResult } from "@/lib/controller"
 import { readNodeStatusAction } from "@/lib/connections-actions"
 import { nextPartStatus, type PartStatus } from "@/lib/node-status"
-import { formatClock, formatDateTime, formatRelative } from "@/lib/time"
-import { cn } from "@/lib/utils"
+import { formatClock, formatDateTime } from "@/lib/time"
 import { topologyFlowHref } from "@/lib/flow-navigation"
 import { diagnosticsHref } from "@/lib/connectivity-guidance"
 
@@ -89,6 +89,7 @@ export function NodeDetail({
   // The URL is the source of truth: history navigation can restore a cached
   // render whose server-provided tab is older than the entry's URL.
   const params = useSearchParams()
+  const hasConnectionDraft = useConnectionsHasDraft()
   const tab: NodeTab = params.has("tab") ? (params.get("tab") === "connections" ? "connections" : "overview") : initialTab
   const [dialog, setDialog] = useState<"country" | "revoke" | null>(null)
   // Snapshot sources: the page render, the status poll, and action responses
@@ -139,6 +140,7 @@ export function NodeDetail({
   const runtimes = useConnectionRuntimes(initialRuntimes, poll)
   const revoked = node.revoked_at !== null
   const entry = latest.ok ? latest.data.nodes.find((candidate) => candidate.node.id === node.id) : undefined
+  const savedScope = latest.ok ? nodeScope(fromPlan(latest.data.configuration), node.id) : null
 
   const changeTab = (next: NodeTab) => {
     const url = new URL(window.location.href)
@@ -162,10 +164,7 @@ export function NodeDetail({
               <h1 className="truncate text-xl font-semibold tracking-tight">{node.name}</h1>
               <StatusBadge node={node} />
             </div>
-            <div className="flex min-w-0 items-center gap-1 text-xs text-muted-foreground">
-              <code className="min-w-0 truncate font-mono">{node.id}</code>
-              <CopyButton value={node.id} label="复制节点 ID" iconOnly variant="ghost" />
-            </div>
+            <p className="text-xs text-muted-foreground">{node.mesh_ipv4} · <LastContact node={node} fetchedAt={fetchedAt} /></p>
           </div>
           <div className="flex flex-wrap items-center gap-2">
             <Link
@@ -241,22 +240,21 @@ export function NodeDetail({
             <p className="text-xs text-muted-foreground">运行观测来自 Agent 上报；本地检查可在诊断工作台生成命令。</p>
             <Link href={diagnosticsHref(node.id)} className={buttonVariants({ variant: "outline", size: "sm" })}>诊断此节点</Link>
           </div>
-          <EndpointDiscoveryPanel initial={discoveries} nodeId={node.id} />
           {latest.ok ? (
             <>
-              <div className="grid items-start gap-4 lg:grid-cols-[minmax(0,22rem)_minmax(0,1fr)]">
-                <ReceiptPanel entry={entry} revision={latest.data.revision} />
-                <NodeRuntimePanel nodeId={node.id} nodes={latest.data.nodes} runtimes={runtimes} />
-              </div>
-              <section aria-labelledby="node-connections-plan" className="flex flex-col gap-3">
-                <div className="flex flex-col gap-0.5">
-                  <h2 id="node-connections-plan" className="text-sm font-medium">
-                    连接配置（草稿）
-                  </h2>
-                  <p className="text-xs text-muted-foreground">
-                    保存的是意图；节点拉取后返回回执，实际是否连上以上方运行状态为准。
-                  </p>
-                </div>
+              <StatusSummary>
+                <Metric label="已保存意图">{savedScope?.listeners.length ?? 0} 个监听 · {savedScope?.outgoing.length ?? 0} 个主动连接</Metric>
+                {entry ? <Metric label="节点回执"><ConnectionReceipt entry={entry} revision={latest.data.revision} /></Metric> : null}
+                {entry && readiness(entry) !== "ready" ? <span className="text-warning">{readinessLabels[readiness(entry)]} · 展开连接身份详情检查</span> : null}
+              </StatusSummary>
+              <NodeRuntimePanel nodeId={node.id} nodes={latest.data.nodes} runtimes={runtimes} />
+              <DiagnosticDetails title="UDP 地址观测与当前启用帮助">
+                <EndpointDiscoveryPanel initial={discoveries} nodeId={node.id} />
+                {entry ? <ConnectionIdentityDetails entry={entry} revision={latest.data.revision} /> : null}
+                {!revoked ? <ManagedDataplanePanel /> : null}
+              </DiagnosticDetails>
+              <DiagnosticDetails title="高级手工连接配置" open={hasConnectionDraft || !latest.data.valid}>
+                <SectionHeader id="node-connections-plan" title="连接配置（草稿）" description="当前可用的监听与主动连接配置。保存意图；实际连接以上方运行报告为准。" />
                 <ConnectionsEditor
                   snapshot={latest.data}
                   scopeNodeId={node.id}
@@ -265,7 +263,7 @@ export function NodeDetail({
                     setAdopted((current) => latestSnapshot(current, { snapshot, readAt }))
                   }
                 />
-              </section>
+              </DiagnosticDetails>
             </>
           ) : (
             <ControllerUnavailable url={controllerUrl} error={latest.error} />
@@ -310,9 +308,6 @@ function Overview({
       <Panel title="身份与地址" bodyClassName="px-4 py-1">
         <dl className="divide-y">
           <Row label="名称">{node.name}</Row>
-          <Row label="节点 ID">
-            <CopyValue value={node.id} label="复制节点 ID" />
-          </Row>
           <Row label="Mesh IPv4" hint="隧道内地址，不是其他节点建连用的地址">
             <CopyValue value={node.mesh_ipv4} label="复制 IPv4" />
           </Row>
@@ -354,19 +349,21 @@ function Overview({
               ) : null}
             </span>
           </Row>
-          <Row label="Agent 版本">
-            <span className="font-mono">{node.agent_version}</span>
-          </Row>
-          <Row label="注册于">
-            {formatRelative(node.registered_at, fetchedAt) ?? "—"}
-            <span className="ml-2 font-mono text-[0.6875rem] text-muted-foreground">{formatDateTime(node.registered_at)}</span>
-          </Row>
           {node.revoked_at !== null ? (
             <Row label="撤销于">
               <span className="font-mono">{formatDateTime(node.revoked_at)}</span>
             </Row>
           ) : null}
         </dl>
+        <div className="py-3">
+          <DiagnosticDetails title="节点身份技术详情">
+            <dl>
+              <Row label="节点 ID"><CopyValue value={node.id} label="复制节点 ID" /></Row>
+              <Row label="Agent 版本"><span className="font-mono">{node.agent_version}</span></Row>
+              <Row label="注册于">{formatDateTime(node.registered_at)}</Row>
+            </dl>
+          </DiagnosticDetails>
+        </div>
       </Panel>
 
       <div className="flex flex-col gap-4">
@@ -387,23 +384,18 @@ function Overview({
           actions={
             <Button size="sm" variant="outline" onClick={onOpenConnections}>
               <CableIcon data-icon="inline-start" />
-              配置连接
+               查看连接
             </Button>
           }
           bodyClassName="px-4 py-1"
         >
           {!connections.ok ? (
-            <p className="py-3 text-xs text-destructive">连接配置读取失败：{connections.error}</p>
+            <div className="py-3"><FailureNotice title="连接配置读取失败" nextStep="进入连接页重试；持续失败时检查控制面。" error={connections.error} /></div>
           ) : !entry ? (
             <p className="py-3 text-xs text-muted-foreground">连接清单中没有这个节点。</p>
           ) : (
+            <div>
             <dl className="divide-y">
-              <Row label="连接公钥" hint="节点自己发布；对端是否认证见运行状态">
-                <PublicKey entry={entry} />
-              </Row>
-              <Row label="构建支持" hint="编译进 agent 的承载，不代表已开启监听">
-                <Capabilities entry={entry} />
-              </Row>
               <Row label="已保存配置">
                 {scope
                   ? `接收 ${scope.listeners.length} 个监听 · 主动连接 ${scope.outgoing.length} 个 · 被连接 ${scope.incoming.length} 个`
@@ -420,98 +412,14 @@ function Overview({
                 />
               </Row>
             </dl>
+            <div className="py-3"><ConnectionIdentityDetails entry={entry} revision={connections.data.revision} /></div>
+            </div>
           )}
         </Panel>
 
-        {node.revoked_at === null ? <ManagedDataplanePanel /> : null}
-
-        <Panel title="延迟 / 流量" bodyClassName="px-4 py-3">
-          <p className="text-xs text-muted-foreground">未测量：数据面尚未上报流量或路径延迟。邻居探测 RTT 见「连接」页的运行状态。</p>
-        </Panel>
+        {node.revoked_at === null ? <DiagnosticDetails title="当前节点启用帮助"><ManagedDataplanePanel /></DiagnosticDetails> : null}
       </div>
     </div>
-  )
-}
-
-function ReceiptPanel({ entry, revision }: { entry: ConnectionNode | undefined; revision: number }) {
-  return (
-    <Panel
-      title="节点回执"
-      description="Agent 拉取并校验后保存的连接配置版本。只表示已保存，不表示已应用或已连上。"
-      bodyClassName="px-4 py-1"
-    >
-      {!entry ? (
-        <p className="py-3 text-xs text-muted-foreground">连接清单中没有这个节点。</p>
-      ) : (
-        <dl className="divide-y">
-          <Row label="回执">
-            <ConnectionReceipt entry={entry} revision={revision} />
-          </Row>
-          <Row label="保存于">
-            {entry.acknowledged_at ? formatDateTime(entry.acknowledged_at) : <span className="text-muted-foreground">从未</span>}
-          </Row>
-          <Row label="连接公钥">
-            <PublicKey entry={entry} />
-          </Row>
-          <Row label="构建支持">
-            <Capabilities entry={entry} />
-          </Row>
-        </dl>
-      )}
-    </Panel>
-  )
-}
-
-function ConnectionReceipt({ entry, revision }: { entry: ConnectionNode; revision: number }) {
-  const receipt = connectionReceipt(entry, revision)
-  return (
-    <span className="inline-flex flex-wrap items-center gap-1.5">
-      <Badge
-        variant="outline"
-        className={cn(receipt === "current" && "text-success", receipt === "never" && "text-warning")}
-      >
-        {connectionReceiptLabels[receipt]}
-      </Badge>
-      {receipt === "current" || receipt === "behind" ? (
-        <span className="font-mono text-[0.6875rem] text-muted-foreground tabular-nums">
-          {receipt === "behind" ? `r${entry.acknowledged_revision}→r${revision}` : `r${entry.acknowledged_revision}`}
-        </span>
-      ) : null}
-    </span>
-  )
-}
-
-function PublicKey({ entry }: { entry: ConnectionNode }) {
-  if (entry.public_key === null) {
-    const state = readiness(entry)
-    return <span className="text-warning">{state === "revoked" ? readinessLabels.revoked : readinessLabels.no_key}</span>
-  }
-  return (
-    <span className="flex min-w-0 items-center gap-1.5">
-      <FingerprintIcon className="size-3.5 shrink-0 text-muted-foreground" aria-hidden="true" />
-      <code className="min-w-0 truncate font-mono" title={entry.public_key}>
-        {fingerprint(entry.public_key)}
-      </code>
-      <CopyButton value={entry.public_key} label="复制连接公钥" iconOnly variant="ghost" />
-    </span>
-  )
-}
-
-function Capabilities({ entry }: { entry: ConnectionNode }) {
-  if (entry.capabilities.length === 0) {
-    return <span className="text-muted-foreground">{entry.public_key === null ? "—" : readinessLabels.no_capabilities}</span>
-  }
-  return (
-    <span className="flex flex-wrap gap-1">
-      {entry.capabilities.map((capability) => (
-        <Badge key={capability.transport} variant="outline" className="font-normal">
-          {transportLabels[capability.transport]}
-          <span className="text-muted-foreground">
-            {[capability.can_dial ? "发起" : null, capability.can_accept ? "监听" : null].filter(Boolean).join(" / ")}
-          </span>
-        </Badge>
-      ))}
-    </span>
   )
 }
 

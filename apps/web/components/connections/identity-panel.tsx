@@ -1,41 +1,29 @@
 "use client"
 
 import type { ConnectionNode } from "@meshway/control-client"
-import { ChevronRightIcon, FingerprintIcon, TerminalIcon } from "lucide-react"
+import { ChevronRightIcon, TerminalIcon } from "lucide-react"
 import Link from "next/link"
 import { useState } from "react"
 
 import { CopyButton } from "@/components/common/copy-button"
+import { DiagnosticDetails } from "@/components/common/diagnostic-details"
+import { ConnectionIdentityDetails, ConnectionReceipt } from "@/components/connections/node-connection-facts"
 import { RuntimeChip } from "@/components/connections/runtime-panel"
 import type { Runtimes } from "@/components/connections/use-runtimes"
 import { Panel } from "@/components/common/panel"
-import { Badge } from "@/components/ui/badge"
 import { Button, buttonVariants } from "@/components/ui/button"
 import { runtimeFor } from "@/lib/connection-runtime-model"
 import {
-  connectionReceipt,
-  connectionReceiptLabels,
-  fingerprint,
   readiness,
   readinessLabels,
-  transportLabels,
-  type ReceiptState,
 } from "@/lib/connections-model"
 import { shellCommand } from "@/lib/shell"
-import { formatDateTime } from "@/lib/time"
 import { cn } from "@/lib/utils"
 
 const AGENT = ["cargo", "run", "-p", "meshway-agent"]
 const STATE = ["--state", ".meshway/agent.json"]
 const publishCommand = shellCommand([...AGENT, "--features", "transport-lab", "--", "connections", "publish", ...STATE])
 const runCommand = shellCommand([...AGENT, "--features", "transport-lab", "--", "run", "--connections", ...STATE])
-
-const receiptClass: Record<ReceiptState, string> = {
-  current: "text-success",
-  behind: "",
-  never: "text-warning",
-  revoked: "text-muted-foreground",
-}
 
 /**
  * Node connection identities as published by each agent: public key,
@@ -93,14 +81,16 @@ export function IdentityPanel({
               {unpublished > 0 ? `${unpublished} 个节点尚未发布公钥` : null}
               {unpublished > 0 && noCapabilities > 0 ? "，" : null}
               {noCapabilities > 0 ? `${noCapabilities} 个节点的当前构建未声明承载能力` : null}
-              。在节点的仓库根目录用带承载实现的构建发布身份（私钥只保存在节点本地）：
+              。展开当前身份发布帮助，或进入节点查看详情。
             </span>
           </p>
+          <DiagnosticDetails title="当前身份发布帮助">
           <CommandLine value={publishCommand} label="复制发布命令" />
           <p className="text-muted-foreground">
             长期运行时可用 <code className="font-mono">{runCommand}</code>{" "}
             同时保持心跳、发布身份并保存连接配置回执。默认构建不声明任何承载能力。
           </p>
+          </DiagnosticDetails>
         </div>
       ) : null}
 
@@ -135,14 +125,13 @@ function IdentityRow({
   runtimes: Runtimes | null
 }) {
   const state = readiness(entry)
-  const receipt = connectionReceipt(entry, revision)
   return (
     <li
       data-testid="connection-identity-row"
       data-node-id={entry.node.id}
       aria-label={`节点 ${entry.node.name} 的连接身份`}
       className={cn(
-        "grid items-center gap-x-4 gap-y-2 px-4 py-3 text-xs lg:grid-cols-[minmax(0,11rem)_minmax(0,10rem)_minmax(0,1fr)_minmax(0,14rem)_auto]",
+        "grid items-center gap-x-4 gap-y-2 px-4 py-3 text-xs lg:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_auto]",
         state === "revoked" && "opacity-70"
       )}
     >
@@ -153,47 +142,7 @@ function IdentityRow({
         >
           {entry.node.name}
         </Link>
-        <span className="truncate font-mono text-[0.6875rem] text-muted-foreground">{entry.node.id}</span>
-      </div>
-
-      <div className="flex min-w-0 items-center gap-1.5">
-        {entry.public_key !== null ? (
-          <>
-            <FingerprintIcon className="size-3.5 shrink-0 text-muted-foreground" aria-hidden="true" />
-            <code className="truncate font-mono" title={entry.public_key}>
-              {fingerprint(entry.public_key)}
-            </code>
-            <CopyButton value={entry.public_key} label={`复制 ${entry.node.name} 的公钥`} iconOnly />
-          </>
-        ) : (
-          <Badge variant={state === "revoked" ? "outline" : "secondary"} className={state === "revoked" ? "" : "text-warning"}>
-            {state === "revoked" ? readinessLabels.revoked : readinessLabels.no_key}
-          </Badge>
-        )}
-      </div>
-
-      <div className="flex min-w-0 flex-wrap items-center gap-1">
-        {entry.capabilities.length === 0 ? (
-          <span className="text-muted-foreground">
-            {entry.public_key === null ? "—" : readinessLabels.no_capabilities}
-          </span>
-        ) : (
-          entry.capabilities.map((capability) => (
-            <Badge
-              key={capability.transport}
-              variant="outline"
-              className="font-normal"
-              title="当前构建支持的承载；不代表已开启监听或已连接"
-            >
-              {transportLabels[capability.transport]}
-              <span className="text-muted-foreground">
-                {[capability.can_dial ? "发起" : null, capability.can_accept ? "监听" : null]
-                  .filter(Boolean)
-                  .join(" / ")}
-              </span>
-            </Badge>
-          ))
-        )}
+        <span className="text-[0.6875rem] text-muted-foreground">{entry.node.mesh_ipv4}</span>
       </div>
 
       <div className="flex min-w-0 flex-col gap-1">
@@ -204,27 +153,8 @@ function IdentityRow({
             readFailed={runtimes.snapshot === null}
           />
         ) : null}
-        <span
-          className="inline-flex items-center gap-1.5"
-          title={
-            entry.acknowledged_at
-              ? `连接配置回执 r${entry.acknowledged_revision}，保存于 ${formatDateTime(entry.acknowledged_at)}。回执只表示 agent 已校验并保存，不代表连接已建立。`
-              : "连接配置回执独立于 IP / 路由配置回执。"
-          }
-        >
-          <Badge variant="outline" className={receiptClass[receipt]}>
-            {connectionReceiptLabels[receipt]}
-          </Badge>
-          {receipt === "behind" ? (
-            <span className="font-mono text-[0.6875rem] text-muted-foreground tabular-nums">
-              r{entry.acknowledged_revision}→r{revision}
-            </span>
-          ) : receipt === "current" ? (
-            <span className="font-mono text-[0.6875rem] text-muted-foreground tabular-nums">
-              r{entry.acknowledged_revision}
-            </span>
-          ) : null}
-        </span>
+        <span><ConnectionReceipt entry={entry} revision={revision} /></span>
+        {state !== "ready" ? <span className="text-warning">{readinessLabels[state]}</span> : null}
       </div>
 
       <div className="flex items-center gap-2 lg:justify-end">
@@ -242,6 +172,7 @@ function IdentityRow({
           <ChevronRightIcon data-icon="inline-end" />
         </Link>
       </div>
+      <div className="min-w-0 lg:col-span-3"><ConnectionIdentityDetails entry={entry} revision={revision} /></div>
     </li>
   )
 }

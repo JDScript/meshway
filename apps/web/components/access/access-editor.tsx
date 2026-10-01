@@ -33,6 +33,7 @@ import { AccessRuleBuilder } from "@/components/access/rule-builder"
 import { AccessRuleCard, type RuleCardState } from "@/components/access/rule-card"
 import { DraftActionBar } from "@/components/common/draft-action-bar"
 import { Panel } from "@/components/common/panel"
+import { Metric, StatusSummary } from "@/components/common/status-summary"
 import { Segmented } from "@/components/common/segmented"
 import { JsoncPane } from "@/components/policy/jsonc-pane"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
@@ -412,7 +413,7 @@ export function AccessEditor({
 
   return (
     <div data-testid="access-editor" className="flex flex-col gap-4">
-      <div className="flex flex-wrap items-center gap-x-5 gap-y-2 rounded-xl border bg-card px-4 py-2.5 text-xs">
+      <StatusSummary>
         <Metric label="编辑基础">
           <span data-testid="access-base-revision" className="font-mono tabular-nums">
             r{base.revision}
@@ -443,7 +444,7 @@ export function AccessEditor({
           <RefreshCwIcon data-icon="inline-start" className={reloading ? "animate-spin" : undefined} />
           {reloading ? "正在读取" : "重新读取"}
         </Button>
-      </div>
+      </StatusSummary>
 
       {!base.valid ? (
         <Alert variant="destructive">
@@ -797,15 +798,6 @@ function DiagnosticItems({ label, items }: { label: string; items: { field: stri
         </li>
       ))}
     </ul>
-  )
-}
-
-function Metric({ label, children }: { label: string; children: ReactNode }) {
-  return (
-    <span className="flex items-center gap-1.5">
-      <span className="text-muted-foreground">{label}</span>
-      {children}
-    </span>
   )
 }
 

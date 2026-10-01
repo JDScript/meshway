@@ -302,9 +302,6 @@ function NodeRow({
           <span className="font-mono text-[0.6875rem] text-muted-foreground md:hidden">
             {node.mesh_ipv4}
           </span>
-          <span className="hidden max-w-56 truncate font-mono text-[0.6875rem] text-muted-foreground md:block">
-            {node.id}
-          </span>
         </div>
       </TableCell>
       <TableCell className="py-2.5 text-xs">

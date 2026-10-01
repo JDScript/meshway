@@ -2,6 +2,7 @@ import { ArrowRightIcon, CloudOffIcon, ServerIcon } from "lucide-react"
 import Link from "next/link"
 
 import { RefreshButton } from "@/components/common/refresh-button"
+import { DiagnosticDetails } from "@/components/common/diagnostic-details"
 import { buttonVariants } from "@/components/ui/button"
 import {
   Empty,
@@ -21,14 +22,11 @@ export function ControllerUnavailable({ url, error }: { url: string; error: stri
         </EmptyMedia>
         <EmptyTitle>无法读取 controller</EmptyTitle>
         <EmptyDescription>
-          请求 <code className="font-mono">{url}</code> 失败。这不是登录失效；确认 controller
-          正在运行，或检查服务端的 <code className="font-mono">MESHWAY_CONTROLLER_URL</code>。
+          请重试；持续失败时确认控制面正在运行，并检查 Web 服务端的控制面地址配置。
         </EmptyDescription>
       </EmptyHeader>
       <EmptyContent>
-        <pre className="max-w-full overflow-x-auto rounded-md border bg-background px-3 py-2 text-left font-mono text-[0.6875rem] whitespace-pre-wrap text-muted-foreground">
-          {error}
-        </pre>
+        <DiagnosticDetails title="请求技术详情" className="w-full text-left"><p className="font-mono break-all">{url}</p><pre className="max-w-full font-mono whitespace-pre-wrap [overflow-wrap:anywhere]">{error}</pre><p>Web 服务端配置：MESHWAY_CONTROLLER_URL</p></DiagnosticDetails>
         <RefreshButton />
       </EmptyContent>
     </Empty>

@@ -290,10 +290,8 @@ function CandidateFormView({
           </Section>
 
           {profile || form.credentialRef !== "" ? (
-            <Section
-              title="本地配置档"
-              description="填写发起节点上已有 VLESS 配置档的名称。实际凭据只保存在节点本地。"
-            >
+            <AdvancedSection summary="当前内部承载 profile 引用" attention={has("candidates.credential_ref") || (profile && form.credentialRef.trim() === "")}>
+              <p className="text-xs text-muted-foreground">当前实现引用发起节点已有的 VLESS profile；保存引用不下发协议凭据。此入口用于当前内部承载配置。</p>
               <div className="flex flex-col gap-1.5">
                 <Label htmlFor={`${baseId}-profile`}>发起方配置档引用</Label>
                 <Input
@@ -319,7 +317,7 @@ function CandidateFormView({
                   </Button>
                 ) : null}
               </div>
-            </Section>
+            </AdvancedSection>
           ) : null}
 
           {visible && messages("candidates").length > 0 ? (

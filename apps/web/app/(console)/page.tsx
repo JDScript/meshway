@@ -15,11 +15,11 @@ import type { ReactNode } from "react"
 
 import { ControllerUnavailable, NoNodes } from "@/components/common/controller-states"
 import { Panel } from "@/components/common/panel"
+import { DiagnosticDetails } from "@/components/common/diagnostic-details"
 import { RefreshButton } from "@/components/common/refresh-button"
 import { StatStrip } from "@/components/dashboard/stat-strip"
 import { LastContact, ReceiptBadge } from "@/components/nodes/node-status"
 import { PageBody, PageHeader } from "@/components/shell/page-header"
-import { Badge } from "@/components/ui/badge"
 import { buttonVariants } from "@/components/ui/button"
 import { controllerUrl, fetchNodes, fetchOverview, fetchPolicy } from "@/lib/controller"
 import { contactBucket, summarizeInventory } from "@/lib/node-status"
@@ -123,7 +123,7 @@ export default async function OverviewPage() {
     <PageBody>
       <PageHeader
         title="概览"
-        description={`${overview.data.name} · ${overview.data.version}`}
+        description="查看节点联系与待处理配置，选择下一步。"
         actions={
           <>
             <span className="text-xs text-muted-foreground tabular-nums">
@@ -267,39 +267,25 @@ export default async function OverviewPage() {
       <div className="grid gap-6 lg:grid-cols-2">
         <Panel title="网络" actions={<Link href="/network" className={buttonVariants({ variant: "ghost", size: "sm" })}>网络设置<ArrowRightIcon data-icon="inline-end" /></Link>}>
           <dl className="grid grid-cols-[7rem_1fr] gap-x-4 gap-y-2 px-4 py-3 text-xs">
-            <dt className="text-muted-foreground">Controller</dt>
-            <dd className="font-mono break-all">{controllerUrl()}</dd>
             <dt className="text-muted-foreground">Mesh IPv4</dt>
             <dd className="font-mono">{snapshot?.network.ipv4_prefix ?? "—"}</dd>
             <dt className="text-muted-foreground">Mesh IPv6</dt>
             <dd className="font-mono">{snapshot?.network.ipv6_prefix ?? "—"}</dd>
-            <dt className="text-muted-foreground">配置版本</dt>
-            <dd className="font-mono tabular-nums">r{revision}</dd>
-          </dl>
+           </dl>
+           <div className="px-4 pb-4"><DiagnosticDetails title="控制面技术详情"><p>{overview.data.name} · {overview.data.version}</p><p className="font-mono break-all">{controllerUrl()}</p><p>配置版本 r{revision}</p></DiagnosticDetails></div>
         </Panel>
         <Panel
-          title={
-            <span className="flex items-center gap-2">
-              延迟与流量
-              <Badge variant="outline">未测量</Badge>
-            </span>
-          }
+          title="检查连接与访问"
           actions={
             <Link href="/monitoring" className={buttonVariants({ variant: "ghost", size: "sm" })}>
-              监控
+              诊断
               <ArrowRightIcon data-icon="inline-end" />
             </Link>
           }
         >
           <div className="flex flex-col gap-3 px-4 py-4">
-            <div className="grid grid-cols-3 gap-3">
-              {["节点间 RTT", "吞吐", "丢包"].map((label) => (
-                <div key={label} className="flex flex-col gap-1 rounded-lg border border-dashed px-3 py-2">
-                  <span className="text-[0.6875rem] text-muted-foreground">{label}</span>
-                  <span className="font-mono text-base text-muted-foreground">—</span>
-                </div>
-              ))}
-            </div>
+            <QuickAction href="/topology" icon={<WaypointsIcon />} label="检查已保存的授权、路径与邻接" />
+            <QuickAction href="/nodes" icon={<ActivityIcon />} label="查看节点运行报告与邻居探测 RTT" />
             <p className="text-xs text-muted-foreground">
               Mesh 流量、吞吐与端到端路径测量尚未上报；邻居探测 RTT 在网络拓扑及节点连接页查看。
             </p>
