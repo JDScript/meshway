@@ -6,8 +6,9 @@ rust-version.workspace = true
 default-run = "meshway-agent"
 
 [features]
-transport-lab = ["dep:meshway-dataplane", "dep:meshway-transport-vless", "dep:tun-rs"]
-managed-connections = ["transport-lab", "dep:rustls", "dep:tokio-rustls", "dep:rustls-pemfile", "dep:sha2", "dep:rustix", "dep:hickory-proto"]
+transport-runtime = ["dep:meshway-dataplane", "dep:meshway-transport-vless", "dep:tun-rs"]
+transport-lab = ["transport-runtime"]
+managed-connections = ["transport-runtime", "dep:rustls", "dep:tokio-rustls", "dep:rustls-pemfile", "dep:sha2", "dep:rustix", "dep:hickory-proto"]
 
 [[bin]]
 name = "meshway-carrier-measure"

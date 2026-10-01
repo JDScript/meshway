@@ -195,9 +195,9 @@ fn native_profiles_are_null_and_compiled_capability_advertisement_is_truthful() 
     snapshot.digest = connection_digest(&snapshot.payload).unwrap();
     validation::validate(&snapshot, &identity, &own_key, None).unwrap();
     let actual = super::compiled_connection_capabilities();
-    #[cfg(not(feature = "transport-lab"))]
+    #[cfg(not(feature = "transport-runtime"))]
     assert!(actual.is_empty());
-    #[cfg(feature = "transport-lab")]
+    #[cfg(feature = "transport-runtime")]
     {
         assert_eq!(actual.len(), 3);
         assert_eq!(

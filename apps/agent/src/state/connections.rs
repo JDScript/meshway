@@ -40,7 +40,7 @@ pub(super) struct State {
 
 /// Capabilities describe compiled carriers, not configured or running listeners.
 pub fn compiled_connection_capabilities() -> Vec<ConnectionCapability> {
-    #[cfg(feature = "transport-lab")]
+    #[cfg(feature = "transport-runtime")]
     {
         use meshway_protocol::{ConnectionSemantics, ConnectionTransport};
         [
@@ -60,7 +60,7 @@ pub fn compiled_connection_capabilities() -> Vec<ConnectionCapability> {
         })
         .collect()
     }
-    #[cfg(not(feature = "transport-lab"))]
+    #[cfg(not(feature = "transport-runtime"))]
     Vec::new()
 }
 
