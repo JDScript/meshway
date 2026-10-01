@@ -22,6 +22,7 @@ export default defineConfig({
           { text: "产品对齐记录", link: "/product-alignment" },
           { text: "架构与设计状态", link: "/architecture" },
           { text: "Web 产品与交互", link: "/web-product" },
+          { text: "Apple App", link: "/apple-app" },
         ],
       },
       {
