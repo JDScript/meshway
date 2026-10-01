@@ -2,7 +2,7 @@
 
 **已确认的要求：接口自动生成并强制类型安全。** 当前实现选择 Rust 类型与实际路由关联的 OpenAPI 作为 HTTP 契约来源。Agent 使用生成的 Rust 客户端，Next.js 使用生成的 TypeScript SDK 及运行时验证。不能分别手写三份“看起来相同”的协议。
 
-本页接口表描述**当前单网络 / 旧版策略契约**，不是多网络、账户或四层策略的目标 API。已确认模型见[产品概念](/concepts)；相关改动须从 Rust 实际路由重生成，保留 App 依赖的接入端点与服务端鉴权边界。
+本页接口表描述**当前多网络 / 旧版策略契约**，不表示账户或四层策略的目标 API 已实现。已确认模型见[产品概念](/concepts)；相关改动须从 Rust 实际路由重生成，保留 App 依赖的接入端点与服务端鉴权边界。
 
 ## 契约生成链
 
@@ -40,7 +40,7 @@ Rust 请求 / 响应类型 + 实际 API 路由声明
 
 P1a 增加来自实际路由声明的必需 string path parameter：管理操作都在 `/api/v1/networks/{network_id}/…`，TS SDK 签名统一为 `operation(baseUrl, token, networkId[, body])`，生成器用 `encodeURIComponent` 展开路径。`listNetworks(baseUrl, token)` 与 `createNetwork(baseUrl, token, { name })` 是全局资源操作。Agent / App 兑换、注册、心跳与快照操作无 path parameter、契约保持兼容；网络由凭据解析。文中的全局 revision / CAS 指**当前网络内所有配置共用**，不再是 controller 所有网络共用。
 
-注册基线生成物已通过漂移检查及真实 Rust / TS 客户端往返测试；配置 / 策略契约也已生成并通过客户端、类型检查和真实服务闭环验证，具体测试批次见[验收记录](/development#配置与路由切片)。所有管理操作都需要管理员 bearer；例如 SDK 读取概览的签名为 `getOverview(baseUrl, token)`。
+注册基线生成物已通过漂移检查及真实 Rust / TS 客户端往返测试；配置 / 策略契约也已生成并通过客户端、类型检查和真实服务闭环验证，具体测试批次见[验收记录](/development#配置与路由切片)。所有管理操作都需要管理员 bearer；读取概览使用 `getOverview(baseUrl, token, networkId)`。存储层的显式 `NetworkId` 是内部类型，本轮结构调整不改变这些 API / DTO 或生成产物。
 
 接口来源为 `crates/protocol/src/` 的 DTO、`apps/controller/src/lib.rs` 的 `contract_router` 及关联处理器；本轮配置路由位于 `apps/controller/src/configuration_api.rs` 并合入同一 router。认证安全方案由 `describe` 导出为 `adminBearer`、`enrollmentBearer`、`nodeBearer`，每个操作声明相应 `security`。生成客户端必须消费这些信息，不能在 Web 或 Agent 中手写 endpoint 或另建 DTO。
 
@@ -52,6 +52,8 @@ P1a 增加来自实际路由声明的必需 string path parameter：管理操作
 
 | 方法与路径 | bearer 权限 | JSON 请求 | HTTP 200 响应 |
 | --- | --- | --- | --- |
+| `GET /api/v1/networks` | 管理员 | 无 | `NetworkList` |
+| `POST /api/v1/networks` | 管理员 | `CreateNetworkRequest { name }` | `NetworkSnapshot` |
 | `GET /api/v1/networks/{network_id}/overview` | 管理员 | 无 | `Overview`，本轮增加 `configuration_revision` |
 | `GET /api/v1/networks/{network_id}/nodes` | 管理员 | 无 | `{ nodes: [NodeSummary] }` |
 | `POST /api/v1/networks/{network_id}/enrollment-tokens` | 管理员 | `{ expires_in_seconds }` | `{ token_id, token, expires_at }` |

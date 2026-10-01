@@ -2,7 +2,7 @@
 
 本切片将控制面持久身份扩展到双栈 mesh 地址、版本化配置、策略预览和 Agent 配置回执。**地址是分配元数据，配置 ACK 是已校验并私有落盘的回执；两者都不表示系统网络已经应用。**
 
-下文是当前单网络、旧版策略与全局 revision 契约。已确认目标要求按网络隔离并由控制面管理 / 下发全部业务配置，设备只保留登录 / 接入与路由方案使用选择；具体多网络契约随实现更新，不从现有字段推导。目标见[产品概念](/concepts)。
+下文是当前多网络、旧版策略与网络内共享 revision 契约。控制面已按网络隔离业务配置和节点快照；平台托管全部承载、用户账户与路由方案仍是后续目标，设备侧只保留登录 / 接入与使用选择。多网络迁移及默认地址池见[网络管理](/network-management)，已确认模型见[产品概念](/concepts)。
 
 ::: info 已实现并通过集成验收
 双栈地址、配置校验 / 缓存 / ACK、策略编辑和条件保存已通过 Rust / SDK 测试及生产构建 Next.js + 真实 controller + Agent 的浏览器端到端测试。两项独立审查修复已重测：IPv4-mapped IPv6 输入拒绝，以及区分文件发布与持久性的写入失败处理。证据见[配置与路由验收](/development#配置与路由切片)。
@@ -29,9 +29,11 @@ controller 首次建立网络配置时，默认采用 IPv4 `100.96.0.0/16`，并
 
 升级验收使用 `apps/controller/src/store/tests.rs` 构造的独立 v1 数据库，验证身份保留和容量失败回滚；运行实例是否已升级须以该实例的实际启动结果为准。
 
+v8→v9 进一步将现有配置、身份、地址、策略、回执与运行报告原样迁为第一张网络，不推进原 revision。新网络各自分配地址，同一 IPv4 可存在于隔离网络；启动参数始终校验第一张网络的原地址池，不对其他网络重新编号。
+
 ## 全局 revision 与节点回执
 
-全局配置 `revision` 为 `u32`，有效版本从 `1` 开始；`0` 保留给节点的“从未 ACK”。节点清单 `configuration_revision` 和概览中的同名字段表示当前全局目标版本，`acknowledged_revision` 表示该节点最后被 controller 接受的回执版本。
+本文“全局”指**同一网络内全部业务配置共享**，不同网络的 revision 独立。`revision` 为 `u32`，有效版本从 `1` 开始；`0` 保留给节点的“从未 ACK”。节点清单 `configuration_revision` 和概览中的同名字段表示该网络目标版本，`acknowledged_revision` 表示该节点最后被 controller 接受的回执版本。
 
 | 事件 | revision 语义 |
 | --- | --- |
@@ -47,7 +49,7 @@ controller 首次建立网络配置时，默认采用 IPv4 `100.96.0.0/16`，并
 
 ## 公共配置与稳定摘要
 
-节点以自身 bearer 读取 `GET /api/v1/agents/configuration`。controller 从凭据决定身份，不接受调用方任选节点 ID；回复 `ConfigurationSnapshot { digest, payload }`。
+节点以自身 bearer 读取 `GET /api/v1/agents/configuration`。controller 从凭据决定身份和网络，不接受调用方任选节点 / 网络 ID；回复 `ConfigurationSnapshot { digest, payload }`，公共 peers 和策略仅来自同一网络。
 
 `payload` 为 `NodeConfiguration`，包含：
 

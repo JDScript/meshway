@@ -46,7 +46,7 @@ Meshway 以 **Tailscale 为常规产品基线**，提供身份驱动的私网互
 
 | 已实现 | 已确认但尚待交付 |
 | --- | --- |
-| 单网络 SQLite、管理员 bearer、一次性节点注册、App PKCE 浏览器兑换切片 | 多网络真实隔离、本地邮箱账户、仅邀请与用户归属、Agent 链接登录 |
+| 多网络 SQLite / 管理 API / 凭据快照隔离、原网络无损迁移、全局管理员 bearer、网络内一次性注册与 App PKCE 批准选网 | 本地邮箱账户、仅邀请与用户归属、Agent 链接登录、客户端多接入切换 |
 | 公钥绑定、版本化配置 / ACK、手工 listener / 候选、Native UDP / TCP 与 TLS-VLESS 托管邻接 | 平台托管全部承载配置、按需自动建连与完整主备生命周期 |
 | Linux Mesh IPv4 TUN、Noise E2E、有序路径与旧版端点授权、节点 DNS / 容器 resolver 验收 | grants / 四层模型迁移、出口 NAT 与状态回包、路由方案、规则集与可信域名上下文 |
 

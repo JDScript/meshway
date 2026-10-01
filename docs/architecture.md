@@ -27,7 +27,7 @@ Controller 维护与编译控制意图，不默认中继业务流量。Agent 执
 
 ### 当前实现
 
-当前是单网络、单实例 SQLite，管理员 bearer 与节点 bearer 分权；App 有管理员批准的 PKCE 接入切片，用户账户与多网络尚待落地。托管 Agent 已支持公钥绑定、认证邻接、路径绑定的 Noise E2E、Linux Mesh IPv4 TUN、节点 DNS 与私有 daemon 诊断。
+当前是多网络、单实例 SQLite，管理员 bearer 与节点 bearer 分权；管理查询显式携带已验证的网络 ID，Agent 由凭据推导网络，业务 SQL 绑定网络列，不使用连接级环境作用域。App 有管理员批准选网的 PKCE 接入切片，用户账户与客户端多接入切换尚待落地。托管 Agent 已支持公钥绑定、认证邻接、路径绑定的 Noise E2E、Linux Mesh IPv4 TUN、节点 DNS 与私有 daemon 诊断。
 
 管理员目前手工维护连接候选，VLESS 仍依赖本地 profiles；Access 与 Routing 仍使用旧版有序策略。迁移须保留既有身份、凭据、地址及策略行为；不能等价转换的规则须报告。互联网出口、路由方案、状态型回包、可信域名上下文、IPv6 TUN、自动打洞和真实逐跳 trace 尚未由这些切片完成。
 

@@ -2,7 +2,7 @@
 
 一个 controller 维护**多张具有稳定 ID 与名称的隔离网络**，以 Tailscale tailnet 为产品边界。每张网络独立拥有成员、接入令牌 / App 兑换码、地址、DNS、tags、Access、Routing、连接配置、运行报告和 revision。Web 左上角可切换 / 创建网络，设置入口仍为 `/network`。
 
-**已确认目标**是一个 controller 管理多张隔离网络：成员、地址、DNS、连接、授权、路由与报告均限定所选网络，设备一次只接入一张、可保存多个接入并切换。邮箱密码账户、仅邀请加入及设备归属与此边界一起推进；当前单网络实现须无损迁移，不能仅用前端切换代替服务端隔离。目标详情见[产品概念](/concepts#网络、用户与设备)，本页以下 API 均描述当前实现。
+**已确认目标**还包括设备保存多个接入、一次激活一网，以及邮箱密码账户、仅邀请加入和设备用户归属。这些客户端 / 用户能力尚待交付；本页描述已实现的多网络控制面、管理 API 与凭据快照隔离，目标详情见[产品概念](/concepts#网络、用户与设备)。
 
 ## 已实现与尚缺的部分
 
@@ -44,13 +44,24 @@ SQLite v6→v7 保留原身份、凭据、公钥、地址、路由、Access、ta
 
 升级在一个 `IMMEDIATE` 事务中完成所有表重建、数据复制和 `user_version` 推进。现有 network ID / 名称 / IPAM / DNS 原样作为第一张网络，不生成另一份身份、不推进 revision。节点、凭据摘要、注册 / 兑换绑定、公钥、tags、Access / Routing 及 JSONC 原文、连接配置、ACK、运行 epoch / lease / report 全部保留。任何复制、约束或 FK 校验失败都回滚 DDL 与行数据；迁移后开启 FK 约束。
 
-持久表使用 `<业务表>_scoped` 并含不可空 `network_id` 外键。单例配置改为 `(network_id,id)` 主键；标签为 `(network_id,tag)`；IPv4 / IPv6 唯一约束包含网络。节点 ID、凭据摘要和身份公钥仍 controller 全局唯一，防止同一个身份同时加入两张网络。节点标签、令牌消费、运行报告等有复合外键，数据库也拒绝跨网络绑定。
+固定建表语句位于 `apps/controller/src/store/schema_v9.sql`，逐表复制的原列清单位于 `store/networks.rs`，不解析或替换旧 `CREATE TABLE` 文本。持久表保留 `nodes`、`enrollment_tokens` 等清晰名称，带不可空 `network_id` 外键。单例配置为 `(network_id,id)` 主键；标签为 `(network_id,tag)`；IPv4 / IPv6 唯一约束包含网络。节点 ID、凭据摘要和身份公钥仍 controller 全局唯一，防止同一身份同时加入两张网络；复合外键拒绝跨网络令牌消费、节点标签与运行报告绑定。
 
-Store 的单连接 / mutex 内通过连接私有 TEMP scope、过滤视图及写触发器统一限定所有现有编译与业务 SQL；不能绕过 scope 访问物理表。物理表访问仅用于迁移、创建网络及全局唯一凭据定位。视图写入的 SQLite `changes()` 不代表行数，因此撤销以读取的原状态决定是否推进 revision；UPSERT 改为事务内差量更新。新业务表需加入 scope 表清单并补隔离测试。
+## 显式类型作用域
+
+Store 没有“当前网络”，也没有 TEMP scope、视图或写触发器。管理业务方法和内部查询显式接收已验证的 `NetworkId`，每条业务 SQL 显式绑定网络 ID。Agent、注册令牌与 App 兑换码通过全局唯一的凭据关联构造同一个类型；全局凭据 / 公钥唯一性检查单独存在。列出或创建网络不切换连接状态，并发 / 交错请求不会沿用上一请求的网络。
+
+类型边界由 Rust 模块可见性保证：`NetworkId` 的字段及任意值构造器只在身份查找模块内可见，没有 `From<String>`、`Default` 或 `Deserialize`；API 模块无法访问 Store 的原始连接。调用 `store.nodes()` / `store.revision()` 等业务方法缺少 `&NetworkId` 会直接编译失败。正常调用形状为：
+
+```rust
+let network = store.network_id(&requested_id)?;
+let nodes = store.nodes(&network)?;
+```
+
+运行时代码只使用 v9 表和作用域；版本判断仅在启动迁移链中。历史行为测试使用仅测试编译的单网络 fixture，向真实业务方法显式传入固定 ID；旧数据库由固定 v8 schema 构造，不引入生产版本兼容分支。
 
 Discovery 仍是按不可变全局 node ID 保存的有界内存记录：同进程网络切换不清空报告，展示仅遍历当前网络成员；controller 重启后重新等待上报，保持 v8 已有的非持久语义。
 
-2026-10-01 已用 SQLite backup API 对运行库做只读复制演练：14 张旧表的所有原列逐行一致，4 个节点、revision 42、ID `baf5c8095f41b92ea539a10456da64e3`、IPv4 `100.96.0.0/16`、IPv6 `fd73:96a6:cf5e::/64`、名称与 DNS 不变，FK 校验通过。副本在私有临时目录迁移后删除；live 服务未升级。测试另覆盖完整 v8 fixture、迁移失败整体回滚、跨网络拒绝、相同地址独立分配与旧 Agent 快照字节兼容。
+2026-10-01 已对固定 schema 重做 SQLite backup 只读复制演练：14 张旧表所有原列逐行一致，4 个节点、revision 42、ID `baf5c8095f41b92ea539a10456da64e3`、IPv4 `100.96.0.0/16`、IPv6 `fd73:96a6:cf5e::/64`、名称与 DNS 不变，FK 校验通过且物理表名保留。私有副本迁移后删除，live 未升级。回归覆盖完整 v8 数据、失败整体回滚、旧版本迁移、跨网拒绝、相同地址独立分配、并发 / 交错请求与旧 Agent 快照字节兼容。可复现命令：`cargo test -p meshway-controller --tests`、`pnpm exec playwright test e2e/multi-network.spec.ts`。
 
 ## Web 网络与草稿边界
 

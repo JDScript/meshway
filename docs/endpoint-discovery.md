@@ -28,7 +28,7 @@
 Rust 契约位于 `crates/protocol/src/endpoint_discovery.rs`，经实际路由生成 OpenAPI 和客户端：
 
 - 节点 `reportEndpointDiscovery`：`POST /api/v1/agent/connections/discovery`，由 NodeBearer 决定节点归属。
-- 管理员 `getEndpointDiscoveries`：`GET /api/v1/connections/discovery`，返回稳定 Network ID 与节点观测。
+- 管理员 `getEndpointDiscoveries`：`GET /api/v1/networks/{network_id}/connections/discovery`，只返回所选网络的稳定 ID 与节点观测。
 
 报告引用已取得的连接 runtime epoch、独立递增的 discovery sequence，以及当前 node-scoped revision / digest。socket 包含 controller resource ID、运行 generation、非秘密 socket ordinal、实际绑定地址和最多四个观察点结果。
 

@@ -18,6 +18,8 @@
 
 权威源：Rust 路由与 DTO → `packages/protocol/openapi.json` → 生成 TypeScript SDK / Zod。所有操作成功为 HTTP 200；closed DTO、运行时 schema、超时和状态优先错误处理继续使用生成客户端。
 
+审查后的存储重构保持本页全部 API / DTO 形状不变。controller 内部使用显式、已验证的 `NetworkId`，业务 SQL 绑定网络列，不再依赖连接级选择状态；控制台无需为此修改调用。
+
 ### 全局管理员资源
 
 | 方法 / 路径 | SDK | 请求 | 响应 |

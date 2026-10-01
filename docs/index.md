@@ -33,7 +33,7 @@ features:
 
 ## 当前实现
 
-已交付单网络 SQLite、管理员 bearer / 一次性节点接入、App 浏览器 PKCE 兑换、IPAM、版本化配置与 ACK、公钥认证邻接、Linux Mesh IPv4 TUN 与 Noise E2E，以及节点 DNS 和只读诊断。真实 ICMP / HTTP、反向 TLS-VLESS、授权 / 必经节点 / lease 撤回均有隔离验收，入口见[开发与验收](/development)。
+已交付多网络 SQLite、显式网络作用域 API、全局管理员 bearer / 网络内一次性接入、App 浏览器 PKCE 批准选网、网络内 IPAM / revision、配置 ACK、公钥认证邻接、Linux Mesh IPv4 TUN 与 Noise E2E，以及节点 DNS 和只读诊断。既有网络无损迁移；真实 ICMP / HTTP、反向 TLS-VLESS、授权 / 必经节点 / lease 撤回均有隔离验收，入口见[开发与验收](/development)。
 
 **已确认但仍待交付**：多网络真实隔离、本地邮箱密码 / 仅邀请用户体系、平台托管全部配置、grants 与四层模型迁移、按需自动建连、出口 / 路由方案 / 规则集与可信域名上下文。旧 first-match Access、混合 Routing 和本地 profiles 仅是迁移前现状，不能当作目标流程。
 
