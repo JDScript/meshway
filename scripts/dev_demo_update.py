@@ -9,7 +9,7 @@ import sys
 import time
 import uuid
 
-from dev import DevError, LOCK, performance_environment, private, run, save
+from dev import DevError, LOCK, private, run, save
 
 ROLES = ("nyc", "lax", "sha")
 BIN = "/usr/local/bin/meshway-agent"
@@ -132,7 +132,6 @@ def update(demo, image=None):
     sys.dont_write_bytecode = True
     sys.path.insert(0, str(demo.root / "experiments/transport"))
     from performance_lock import performance_lock
-    os.environ["MESHWAY_PERF_LOCK"] = performance_environment()["MESHWAY_PERF_LOCK"]
     with performance_lock() as descriptor:
         return deploy(demo, meta, image, Docker(demo.root, descriptor))
 
@@ -177,7 +176,6 @@ def lifecycle(demo, action):
     sys.dont_write_bytecode = True
     sys.path.insert(0, str(demo.root / "experiments/transport"))
     from performance_lock import performance_lock
-    os.environ["MESHWAY_PERF_LOCK"] = performance_environment()["MESHWAY_PERF_LOCK"]
     with performance_lock() as descriptor:
         docker = Docker(demo.root, descriptor)
         before = material(demo.data)

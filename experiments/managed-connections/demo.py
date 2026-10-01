@@ -6,13 +6,11 @@ import json
 import os
 from pathlib import Path
 import re
-import signal
 import stat
 import subprocess
 import sys
 import tempfile
 
-DEFAULT_LOCK = "/private/var/folders/8n/20x15sl9797cdg9sdqfj803w0000gn/T/opencode/meshway-performance.lock"
 # Local Agent disk sidecars, not HTTP DTOs. Never copy profiles, locks or IPC.
 VERIFY_FILES = {
     "agent.json": (True, 256 * 1024),
@@ -272,22 +270,10 @@ def main():
         return subprocess.run(["node", str(here / "demo.ts"), "--help"], check=False).returncode
     sys.dont_write_bytecode = True
     sys.path.insert(0, str(here.parent / "transport"))
-    from performance_lock import performance_lock
+    from performance_lock import locked_launch
 
-    os.environ.setdefault("MESHWAY_PERF_LOCK", DEFAULT_LOCK)
-    with performance_lock() as descriptor:
-        child = subprocess.Popen(
-            ["node", str(here / "demo.ts"), *sys.argv[1:]],
-            env={**os.environ, "MESHWAY_DEMO_LOCK_FD": str(descriptor)},
-            pass_fds=(descriptor,),
-        )
-        while True:
-            try:
-                return child.wait()
-            except KeyboardInterrupt:
-                # Node finishes its bounded command and stops owned containers;
-                # keep the inherited lock alive throughout that cleanup.
-                child.send_signal(signal.SIGINT)
+    return locked_launch(["node", str(here / "demo.ts"), *sys.argv[1:]],
+                         fd_env="MESHWAY_DEMO_LOCK_FD")
 
 
 if __name__ == "__main__":

@@ -88,7 +88,6 @@ def main():
         raise KeyboardInterrupt
     signal.signal(signal.SIGTERM, interrupted)
     os.umask(0o077)
-    os.environ.setdefault("MESHWAY_PERF_LOCK", shell.DEFAULT_LOCK)
     parent = Path(tempfile.gettempdir()) / "opencode"
     parent.mkdir(exist_ok=True)
     with tempfile.TemporaryDirectory(prefix="meshway-verify-", dir=parent) as root:

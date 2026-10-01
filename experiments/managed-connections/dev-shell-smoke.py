@@ -29,7 +29,6 @@ def main():
     if uid == 0:
         raise RuntimeError("run as the private-state owner, not root")
     name = f"meshway-dev-smoke-{uuid.uuid4().hex[:12]}"
-    os.environ.setdefault("MESHWAY_PERF_LOCK", str(TEMP / "meshway-performance.lock"))
     # Docker Desktop/OrbStack may not share the macOS private temporary tree.
     # A private, disposable directory in the shared workspace exercises the
     # same bind semantics as the persistent demo without mounting its state.

@@ -3,7 +3,7 @@ import { randomBytes } from "node:crypto";
 import { fstatSync } from "node:fs";
 import { chmod, lstat, mkdtemp, readFile, realpath, writeFile } from "node:fs/promises";
 import { arch } from "node:os";
-import { dirname, join, relative, resolve } from "node:path";
+import { dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import { fileURLToPath } from "node:url";
 import { ControlApiError, createEnrollmentToken, getConnections, getConnectionRuntimes, getEndpointDiscoveries,
@@ -17,7 +17,6 @@ import type { Ledger, Local, Role } from "./checks.ts";
 const HERE = dirname(fileURLToPath(import.meta.url));
 const WORKSPACE = resolve(HERE, "../..");
 const TEMP = "/private/var/folders/8n/20x15sl9797cdg9sdqfj803w0000gn/T/opencode";
-const LOCK = join(TEMP, "meshway-performance.lock");
 const OWNER = "io.meshway.managed-discovery.run";
 const LEASE = 10;
 type ContainerRole = Role | "controller" | "observer";
@@ -53,8 +52,8 @@ async function main() {
   const opts = options(process.argv.slice(2)); process.umask(0o077);
   assert.equal(Number(process.versions.node.split(".")[0]), 24);
   const fd = Number(process.env.MESHWAY_DISCOVERY_LOCK_FD); assert(Number.isSafeInteger(fd) && fd >= 3);
-  assert.equal(process.env.MESHWAY_PERF_LOCK, LOCK);
-  const held = fstatSync(fd); const disk = await lstat(LOCK);
+  const lock = process.env.MESHWAY_PERF_LOCK; assert(lock && isAbsolute(lock));
+  const held = fstatSync(fd); const disk = await lstat(lock);
   assert(held.isFile() && disk.isFile() && held.ino === disk.ino && held.dev === disk.dev
     && held.uid === process.getuid?.() && !(held.mode & 0o077));
   const parent = await realpath(opts.parent); const approved = await realpath(TEMP);

@@ -280,7 +280,7 @@ class NamespaceTests(unittest.TestCase):
         # with Main's actual Docker VM lock.
         with tempfile.TemporaryDirectory(dir=PARENT) as directory:
             path = Path(directory) / "test.lock"
-            with patch("run.LOCK", path), patch("run.sys.stderr", new_callable=io.StringIO):
+            with patch.dict(os.environ, MESHWAY_PERF_LOCK=str(path)):
                 with run.performance_lock():
                     with path.open("r+") as other:
                         with self.assertRaises(BlockingIOError):
@@ -288,7 +288,7 @@ class NamespaceTests(unittest.TestCase):
                 with path.open("r+") as other:
                     fcntl.flock(other.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
                 os.chmod(path, 0o644)
-                with self.assertRaises(CheckError):
+                with self.assertRaises(RuntimeError):
                     with run.performance_lock():
                         self.fail("non-private lock accepted")
 

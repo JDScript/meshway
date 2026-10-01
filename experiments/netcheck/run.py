@@ -2,8 +2,6 @@
 """Isolated real-Agent / kernel-NAT acceptance. Main invokes explicitly under tmux."""
 
 import argparse
-from contextlib import contextmanager
-import fcntl
 import ipaddress
 import json
 import os
@@ -11,7 +9,6 @@ from pathlib import Path
 import platform
 import re
 import signal
-import stat
 import subprocess
 import sys
 import tempfile
@@ -24,10 +21,11 @@ from kernel import SCENARIOS, router_commands
 from wire import endpoint
 
 TEMP = Path("/private/var/folders/8n/20x15sl9797cdg9sdqfj803w0000gn/T/opencode")
-LOCK = TEMP / "meshway-performance.lock"
 LABEL = "io.meshway.netcheck.run"
 ROLE_LABEL = "io.meshway.netcheck.role"
 HERE = Path(__file__).resolve().parent
+sys.path.insert(0, str(HERE.parent / "transport"))
+from performance_lock import performance_lock
 ID = re.compile(r"[0-9a-f]{64}")
 IMAGE = re.compile(r"meshway-netcheck:[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}")
 
@@ -38,19 +36,6 @@ class Interrupted(KeyboardInterrupt):
 
 def interrupt(_signal, _frame):
     raise Interrupted()
-
-
-@contextmanager
-def performance_lock():
-    descriptor = os.open(LOCK, os.O_CREAT | os.O_RDWR | getattr(os, "O_NOFOLLOW", 0), 0o600)
-    try:
-        metadata = os.fstat(descriptor)
-        require(stat.S_ISREG(metadata.st_mode) and metadata.st_uid == os.getuid() and metadata.st_mode & 0o077 == 0, "performance lock must be private and owned")
-        print("Waiting for shared Meshway performance lock", file=sys.stderr, flush=True)
-        fcntl.flock(descriptor, fcntl.LOCK_EX)
-        yield descriptor
-    finally:
-        os.close(descriptor)
 
 
 def architecture(value):

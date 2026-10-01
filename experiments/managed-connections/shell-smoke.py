@@ -14,9 +14,7 @@ import sys
 sys.dont_write_bytecode = True
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE.parent / "transport"))
-from performance_lock import performance_lock
-
-DEFAULT_LOCK = "/private/var/folders/8n/20x15sl9797cdg9sdqfj803w0000gn/T/opencode/meshway-performance.lock"
+from performance_lock import DEFAULT_LOCK, performance_lock
 LOCK_FD = None
 
 
@@ -112,7 +110,6 @@ def main():
     def interrupted(_signum, _frame):
         raise KeyboardInterrupt
     signal.signal(signal.SIGTERM, interrupted)
-    os.environ.setdefault("MESHWAY_PERF_LOCK", DEFAULT_LOCK)
     with performance_lock() as descriptor:
         LOCK_FD = descriptor
         smoke(args.image)

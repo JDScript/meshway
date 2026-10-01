@@ -20,7 +20,8 @@ import urllib.request
 import uuid
 
 ROOT = Path(__file__).resolve().parents[1]
-LOCK = "/private/var/folders/8n/20x15sl9797cdg9sdqfj803w0000gn/T/opencode/meshway-performance.lock"
+sys.path.insert(0, str(ROOT / "experiments/transport"))
+from performance_lock import DEFAULT_LOCK as LOCK, LOCK_FD_ENV, performance_environment as lock_environment, validate_descriptor
 SERVICES = {"controller": (8420, "/api/v1/overview"), "web": (3000, "/login"), "docs": (5173, "/")}
 WEB_ENV = {"MESHWAY_CONTROLLER_URL": "http://127.0.0.1:8420", "MESHWAY_WEB_COOKIE_SECURE": "auto", "NEXT_TELEMETRY_DISABLED": "1"}
 
@@ -78,10 +79,10 @@ def run(args, *, cwd=ROOT, check=True, timeout=30, pass_fds=(), env=None):
 
 
 def performance_environment():
-    path = os.environ.get("MESHWAY_PERF_LOCK", LOCK)
-    if not Path(path).is_absolute():
-        raise DevError("MESHWAY_PERF_LOCK must be a shared absolute private path")
-    return {**os.environ, "MESHWAY_PERF_LOCK": path}
+    try:
+        return lock_environment()
+    except ValueError as error:
+        raise DevError(str(error)) from None
 
 
 def command(service, root):
@@ -379,8 +380,16 @@ class Demo:
             args += ["--image", meta["image_id"], "--controller-url", meta["controller"], "--agent-controller-url", meta["agent_controller"]]
             if meta["host_gateway"]:
                 args.append("--host-gateway")
-        # demo.py owns the performance lock. Never acquire another copy around it.
-        return run(args, cwd=self.root, check=check, timeout=None, env=performance_environment())
+        # demo.py owns acquisition unless our caller already holds the same
+        # description. Preserve that FD rather than dropping it or locking twice.
+        env = performance_environment()
+        inherited = env.get(LOCK_FD_ENV)
+        kwargs = {}
+        if inherited is not None:
+            descriptor = int(inherited)
+            validate_descriptor(descriptor)
+            kwargs["pass_fds"] = (descriptor,)
+        return run(args, cwd=self.root, check=check, timeout=None, env=env, **kwargs)
 
     def status(self):
         result = {"service": "demo", "session": "not-initialized", "ready": False, "error": None}

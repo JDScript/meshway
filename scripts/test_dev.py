@@ -195,6 +195,18 @@ class Workspace(unittest.TestCase):
                 deployment.update(demo, "meshway-managedtest:new")
             docker.assert_not_called()
 
+    def test_demo_launcher_retains_callers_explicit_lock_fd_without_reacquiring(self):
+        from performance_lock import performance_lock
+        demo, _ = self.make_demo()
+        path = self.root / "custom-performance.lock"
+        with patch.dict(os.environ, MESHWAY_PERF_LOCK=str(path)):
+            with performance_lock() as descriptor:
+                with patch.dict(os.environ, MESHWAY_PERF_LOCK_FD=str(descriptor)), patch.object(dev, "run", return_value=result()) as child:
+                    demo.invoke("stop")
+                self.assertEqual(child.call_args.kwargs["pass_fds"], (descriptor,))
+                self.assertEqual(child.call_args.kwargs["env"]["MESHWAY_PERF_LOCK"], str(path))
+                os.fstat(descriptor)
+
     def test_binary_update_preserves_containers_packages_custom_files_and_identity(self):
         demo, meta = self.make_demo()
         docker = FakeDocker(demo, meta)
