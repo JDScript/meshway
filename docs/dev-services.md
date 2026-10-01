@@ -115,6 +115,7 @@ python3 scripts/dev.py update demo --image meshway-managedtest:VALIDATED_TAG
 直接委托 `demo.py` 时由它持锁；原位 binary 和 writable 生命周期由入口持锁并向 Docker 子进程继承 FD。
 与压测共享 Docker VM 时会等待已有任务完成。可通过 `MESHWAY_PERF_LOCK` 显式统一到另一私有绝对路径，所有 runner 必须一致。
 失败部署保留旧 binary 和 receipt 供检查；不会恢复旧业务策略或身份快照。临时容器和暂存文件只在 ownership 仍匹配时清理。
+镜像构建失败时不触碰任何容器，完整构建输出写入 `.meshway/services/demo-image-build-*.log`（0600）；构建上下文排除 `.meshway`，其中不含 demo 凭据。
 
 ## Host-only 验证
 

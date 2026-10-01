@@ -8,6 +8,7 @@ import os
 from pathlib import Path
 import shlex
 import signal
+import stat
 import struct
 import subprocess
 import tempfile
@@ -322,6 +323,18 @@ class Workspace(unittest.TestCase):
                 deployment.graceful_stop(docker, demo, meta, "nyc", "id-nyc")
         self.assertEqual([call for call in docker.calls if call[0] == "kill"], [("kill", "--signal", "SIGINT", "id-nyc")])
 
+    def test_image_build_failure_keeps_a_private_log_and_touches_no_container(self):
+        demo, meta = self.make_demo()
+        docker = FakeDocker(demo, meta)
+        with patch.object(deployment, "run", return_value=result("COMMIT\n")), redirect_stdout(io.StringIO()):
+            with self.assertRaisesRegex(dev.DevError, "image build failed .*private build log"):
+                deployment.deploy(demo, meta, None, docker)
+        log = next((self.root / ".meshway/services").glob("demo-image-build-*.log"))
+        self.assertEqual(stat.S_IMODE(log.stat().st_mode), 0o600)
+        self.assertIn("failed to load workspace member", log.read_text())
+        self.assertEqual(set(docker.installed.values()), {docker.old})
+        self.assertEqual([call[0] for call in docker.calls], ["build"])
+
     def test_failed_live_command_with_ok_body_is_not_health(self):
         demo, meta = self.make_demo()
         docker = FakeDocker(demo, meta)
@@ -361,6 +374,9 @@ class FakeDocker:
         return copy.deepcopy(self.containers[name] if name in self.containers else self.extraction)
 
     def execute(self, *args, **kwargs):
+        if args[:1] == ("build",):
+            self.calls.append(args)
+            return result("", 1, "#9 ERROR: failed to load workspace member\n")
         if args[:1] == ("exec",) and args[2:4] == ("meshway", "status"):
             return result(json.dumps({"outcome": {"status": "ok", "result": {"token": "SECRET"}}}), self.live_returncode)
         return result(self(*args, **kwargs))
