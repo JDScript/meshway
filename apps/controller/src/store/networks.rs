@@ -10,6 +10,9 @@ use rusqlite::{Connection, OptionalExtension, TransactionBehavior, params};
 mod tests;
 
 /// Only Store's validated resource/credential lookup can construct an ID.
+/// This proves existence/format only, never Owner or management permission.
+/// Management routes authenticate the administrator before resolving this ID;
+/// a future membership-authorized scope must be checked separately in P2b.
 /// Every administrative business method requires this type explicitly; there
 /// is no selected network, no implicit default and no mutable connection scope.
 /// The tuple field is private to this module; there is no From<String>, Default
@@ -120,6 +123,8 @@ fn migrate(connection: &mut Connection) -> Result<(), Error> {
     for (table, _) in TABLES.iter().rev() {
         transaction.execute_batch(&format!("DROP TABLE {table}_v8;"))?;
     }
+    validate_integrity(&transaction)?;
+    transaction.execute_batch(include_str!("identity_guards.sql"))?;
     if transaction
         .prepare("PRAGMA foreign_key_check")?
         .exists([])?
@@ -130,6 +135,65 @@ fn migrate(connection: &mut Connection) -> Result<(), Error> {
     }
     transaction.pragma_update(None, "user_version", 9)?;
     transaction.commit()?;
+    Ok(())
+}
+
+/// Startup/migration validation includes revoked identities: NULL addresses,
+/// wrong families/pools and semantic duplicate address spellings fail closed.
+/// This is a global integrity audit, not a business inventory projection.
+pub(super) fn validate_integrity(connection: &Connection) -> Result<(), Error> {
+    use std::{
+        collections::BTreeSet,
+        net::{Ipv4Addr, Ipv6Addr},
+    };
+    let mut addresses4 = BTreeSet::new();
+    let mut addresses6 = BTreeSet::new();
+    let mut query = connection.prepare("SELECT n.network_id,n.mesh_ipv4,n.mesh_ipv6,c.ipv4_prefix,c.ipv6_prefix FROM nodes n LEFT JOIN configuration c ON c.network_id=n.network_id AND c.id=1 ORDER BY n.id")?;
+    let mut rows = query.query([])?;
+    while let Some(row) = rows.next()? {
+        let network = NetworkId::stored(row.get(0)?)?;
+        let invalid =
+            || Error::Configuration("node has invalid or missing persistent mesh addresses");
+        let ipv4: Ipv4Addr = row
+            .get::<_, Option<String>>(1)?
+            .ok_or_else(invalid)?
+            .parse()
+            .map_err(|_| invalid())?;
+        let ipv6: Ipv6Addr = row
+            .get::<_, Option<String>>(2)?
+            .ok_or_else(invalid)?
+            .parse()
+            .map_err(|_| invalid())?;
+        let pool = meshway_protocol::MeshNetwork {
+            ipv4_prefix: row.get::<_, Option<String>>(3)?.ok_or_else(invalid)?,
+            ipv6_prefix: row.get::<_, Option<String>>(4)?.ok_or_else(invalid)?,
+        };
+        let (v4, v6) = super::ipam::parse(&pool)?;
+        if !v4.contains(&ipv4)
+            || ipv4 == v4.network()
+            || ipv4 == v4.broadcast()
+            || ipv4.is_unspecified()
+            || ipv4.is_loopback()
+            || ipv4.is_multicast()
+            || ipv4.is_link_local()
+            || !v6.contains(&ipv6)
+            || ipv6 == v6.network()
+            || !addresses4.insert((network.0.clone(), ipv4))
+            || !addresses6.insert((network.0, ipv6))
+        {
+            return Err(invalid());
+        }
+    }
+    if connection.prepare("PRAGMA foreign_key_check")?.exists([])? {
+        return Err(Error::Configuration(
+            "persisted network relationships fail foreign key validation",
+        ));
+    }
+    Ok(())
+}
+
+pub(super) fn install_identity_guards(connection: &Connection) -> Result<(), Error> {
+    connection.execute_batch(include_str!("identity_guards.sql"))?;
     Ok(())
 }
 
@@ -172,6 +236,8 @@ impl Store {
         self.credential_network(token, true)
     }
     fn credential_network(&self, token: &str, enrollment: bool) -> Result<NetworkId, Error> {
+        // Intentional global lookup: credential uniqueness locates one immutable
+        // node/token network. It grants no administrator or Owner permission.
         let sql = if enrollment {
             "SELECT network_id FROM enrollment_tokens WHERE token_hash=?1"
         } else {

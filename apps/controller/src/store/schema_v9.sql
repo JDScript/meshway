@@ -10,7 +10,7 @@ CREATE TABLE nodes (
     credential_hash BLOB NOT NULL UNIQUE,
     name TEXT NOT NULL, agent_version TEXT NOT NULL,
     registered_at TEXT NOT NULL, last_seen TEXT NOT NULL, revoked_at TEXT,
-    mesh_ipv4 TEXT, mesh_ipv6 TEXT, country TEXT,
+    mesh_ipv4 TEXT NOT NULL, mesh_ipv6 TEXT NOT NULL, country TEXT,
     acknowledged_revision INTEGER NOT NULL DEFAULT 0,
     acknowledged_digest TEXT,
     UNIQUE(network_id,id),

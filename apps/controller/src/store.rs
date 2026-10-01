@@ -145,6 +145,8 @@ impl Store {
             transaction.commit()?;
         }
         networks::upgrade(&mut connection)?;
+        networks::validate_integrity(&connection)?;
+        networks::install_identity_guards(&connection)?;
         // Initialization flags still refer to the original network; never
         // renumber any network on restart.
         let initial = NetworkId::initial(&connection)?;
