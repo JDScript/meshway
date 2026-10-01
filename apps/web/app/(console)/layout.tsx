@@ -29,7 +29,7 @@ export default async function ConsoleLayout({ children }: { children: ReactNode 
       <AccessDraftProvider>
       <SidebarProvider defaultOpen={sidebarState !== "false"}>
         <AppSidebar controllerHost={hostOf(controllerUrl())} />
-        <SidebarInset className="min-w-0">
+        <SidebarInset className="console-inset min-w-0">
           <SiteHeader />
           <div className="min-w-0 flex-1">{children}</div>
         </SidebarInset>

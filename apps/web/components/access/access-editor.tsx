@@ -31,6 +31,7 @@ import { useAccessDraftStore, type Owner } from "@/components/access/draft-store
 import { FlowCheck } from "@/components/access/flow-check"
 import { AccessRuleBuilder } from "@/components/access/rule-builder"
 import { AccessRuleCard, type RuleCardState } from "@/components/access/rule-card"
+import { DraftActionBar } from "@/components/common/draft-action-bar"
 import { Panel } from "@/components/common/panel"
 import { Segmented } from "@/components/common/segmented"
 import { JsoncPane } from "@/components/policy/jsonc-pane"
@@ -835,7 +836,7 @@ function SaveBar({
 }) {
   const pending = dirty || textOnly
   return (
-    <div className="sticky bottom-3 z-10 flex flex-col gap-2 rounded-xl border bg-background/95 px-4 py-3 shadow-lg backdrop-blur supports-backdrop-filter:bg-background/80">
+    <DraftActionBar visible={pending || saving || issueCount > 0 || save !== null}>
       <div data-testid="access-save-status" aria-live="polite">
         {save?.status === "conflict" ? (
           <Alert variant="destructive" className="mb-1">
@@ -862,8 +863,8 @@ function SaveBar({
           </p>
         ) : null}
       </div>
-      <div className="flex flex-wrap items-center gap-3">
-        <div className="flex min-w-0 flex-1 items-center gap-2 text-xs">
+      <div className="draft-action-bar-row">
+        <div className="draft-action-bar-summary text-xs">
           <span aria-hidden="true" className={cn("size-2 shrink-0 rounded-full", pending ? "bg-warning" : "bg-muted-foreground/30")} />
           <span className="min-w-0">
             {dirty ? (
@@ -882,13 +883,16 @@ function SaveBar({
             {issueCount > 0 ? <span className="text-destructive"> · {issueCount} 个问题需修复</span> : null}
           </span>
         </div>
-        <div className="flex items-center gap-2">
-          {pending || issueCount > 0 ? (
-            <Button variant="ghost" disabled={disabled} onClick={onRevert}>
-              <RotateCcwIcon data-icon="inline-start" />
-              放弃修改
-            </Button>
-          ) : null}
+        <div className="draft-action-bar-actions">
+          <Button
+            className={pending || issueCount > 0 ? undefined : "invisible"}
+            variant="ghost"
+            disabled={disabled || !(pending || issueCount > 0)}
+            onClick={onRevert}
+          >
+            <RotateCcwIcon data-icon="inline-start" />
+            放弃修改
+          </Button>
           <Button
             size="lg"
             data-testid="access-save"
@@ -901,6 +905,6 @@ function SaveBar({
           </Button>
         </div>
       </div>
-    </div>
+    </DraftActionBar>
   )
 }

@@ -156,3 +156,115 @@
     background-size: 16px 16px;
   }
 }
+
+/* One console gutter, independent of page density and sidebar state. */
+.console-inset {
+  --console-gutter: 1rem;
+  --console-page-block: 1.5rem;
+}
+
+.console-page {
+  padding: var(--console-page-block) var(--console-gutter);
+  padding-bottom: calc(var(--console-page-block) + env(safe-area-inset-bottom, 0px));
+}
+
+@media (min-width: 768px) {
+  .console-inset {
+    --console-gutter: 1.5rem;
+    --console-page-block: 2rem;
+  }
+}
+
+/* In-flow height reserves the full bar at the end of the editor. Sticky keeps
+   actions reachable while scrolling, without a fixed overlay spacer. */
+.draft-action-bar {
+  position: sticky;
+  bottom: calc(0.75rem + env(safe-area-inset-bottom, 0px));
+  z-index: 10;
+  display: grid;
+  grid-template-rows: 0fr;
+  margin-top: -1rem;
+  opacity: 0;
+  transform: translateY(0.5rem);
+  visibility: hidden;
+  pointer-events: none;
+  transition: grid-template-rows 180ms ease, margin-top 180ms ease,
+    opacity 180ms ease, transform 180ms ease, visibility 0s linear 180ms;
+}
+
+.draft-action-bar[data-open="true"],
+.draft-action-bar:focus-within {
+  grid-template-rows: 1fr;
+  margin-top: 0;
+  opacity: 1;
+  transform: translateY(0);
+  visibility: visible;
+  pointer-events: auto;
+  transition-delay: 0s;
+}
+
+.draft-action-bar-clip {
+  min-height: 0;
+  /* Preserve the shadow and focus rings outside the collapsing grid track. */
+  overflow: clip;
+  overflow-clip-margin: 1rem;
+}
+
+.draft-action-bar-surface {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  padding: 0.75rem 1rem;
+}
+
+.draft-action-bar-surface > [aria-live] {
+  order: 2;
+  min-height: 1.25rem;
+}
+
+.draft-action-bar-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.75rem 1rem;
+}
+
+.draft-action-bar-summary {
+  display: flex;
+  flex: 1 1 16rem;
+  min-width: 0;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.draft-action-bar-actions {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 0.5rem;
+  margin-left: auto;
+}
+
+@media (max-width: 639px) {
+  .draft-action-bar-summary {
+    min-height: 2rem;
+  }
+
+  .draft-action-bar-surface > [aria-live] {
+    min-height: 2.25rem;
+  }
+
+  .draft-action-bar-actions {
+    width: 100%;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .draft-action-bar,
+  .draft-action-bar[data-open="true"],
+  .draft-action-bar:focus-within {
+    transition: none;
+    transform: none;
+  }
+}

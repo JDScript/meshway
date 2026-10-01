@@ -10,7 +10,7 @@ export function PageHeader({
   actions?: ReactNode
 }) {
   return (
-    <header className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
+    <header data-slot="page-header" className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
       <div className="flex min-w-0 flex-col gap-1">
         <h1 className="text-xl font-semibold tracking-tight">{title}</h1>
         {description ? (
@@ -27,18 +27,15 @@ export function PageHeader({
 /** Shared page width and rhythm for console pages. */
 export function PageBody({
   children,
-  width = "default",
 }: {
   children: ReactNode
+  /** Compatibility for existing callers; density never changes outer gutters. */
   width?: "default" | "wide"
 }) {
   return (
     <div
-      className={
-        width === "wide"
-          ? "mx-auto flex w-full max-w-[96rem] flex-col gap-6 px-4 py-6 md:px-6 md:py-8"
-          : "mx-auto flex w-full max-w-6xl flex-col gap-6 px-4 py-6 md:px-6 md:py-8"
-      }
+      data-slot="page-body"
+      className="console-page flex min-w-0 w-full flex-col gap-6"
     >
       {children}
     </div>
