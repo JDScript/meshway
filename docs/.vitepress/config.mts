@@ -34,6 +34,7 @@ export default defineConfig({
           { text: "总览与实现边界", link: "/architecture" },
           { text: "控制面注册与持久化", link: "/enrollment" },
           { text: "浏览器登录与节点接入", link: "/device-login" },
+          { text: "本地账户领域与 SSO 接线", link: "/local-accounts" },
           { text: "地址与配置分发", link: "/configuration" },
           { text: "公钥与连接意图", link: "/connections" },
           { text: "Agent 连接运行层", link: "/connection-runtime" },
