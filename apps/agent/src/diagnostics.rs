@@ -18,15 +18,124 @@ use tokio::{
 use crate::managed_connections::Prober;
 
 const MAX_FRAME: usize = 4096;
+const MAX_RESPONSE: usize = 65_536;
+pub const SCHEMA_VERSION: u32 = 1;
+pub const MAX_PEERS: u32 = 64;
 const MAX_CONNECTIONS: usize = 4;
 const CONNECTION_DEADLINE: Duration = Duration::from_secs(12);
 const STALE_CHECK_DEADLINE: Duration = Duration::from_millis(250);
 
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub(crate) struct ProbeRequest {
+pub struct ProbeRequest {
     pub peer: String,
     pub timeout_ms: u64,
+}
+
+/// Versioned, closed local IPC. The unversioned legacy probe remains accepted.
+#[derive(Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Request {
+    pub schema_version: u32,
+    pub operation: Operation,
+}
+
+#[derive(Serialize, Deserialize)]
+#[serde(tag = "command", rename_all = "snake_case", deny_unknown_fields)]
+pub enum Operation {
+    Status {
+        peers: bool,
+        offset: u32,
+        limit: u32,
+    },
+    Whois {
+        query: String,
+    },
+}
+
+#[derive(Deserialize)]
+#[serde(untagged)]
+pub enum Incoming {
+    Versioned(Request),
+    Legacy(ProbeRequest),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct PublicIdentity {
+    pub node_id: String,
+    pub name: String,
+    pub mesh_ipv4: String,
+    pub mesh_ipv6: String,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct AuthenticatedChannel {
+    pub peer_node_id: String,
+    pub initiator_node_id: String,
+    pub transport: meshway_protocol::ConnectionTransport,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum LiveState {
+    Installed,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Evidence {
+    CurrentAuthenticatedChannelRegistry,
+    CurrentTrustedInventory,
+    DirectAuthenticatedNeighborRoundTrip,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct LiveStatus {
+    pub schema_version: u32,
+    pub state: LiveState,
+    pub generation: u64,
+    pub installed_revision: u32,
+    /// Fresh accepted source revision; a semantic-equivalent renewal does not
+    /// replace the runtime originally installed at installed_revision.
+    pub source_revision: u32,
+    pub lease_remaining_ms: u64,
+    pub local_node_id: String,
+    pub local_identity: Option<PublicIdentity>,
+    /// Network ID is not present in the manager's public metadata.
+    pub network_id: Option<String>,
+    pub authenticated_channel_count: u32,
+    /// Omitted by default; an explicit bounded page when requested.
+    pub peers: Option<Vec<AuthenticatedChannel>>,
+    pub peer_offset: u32,
+    pub next_peer_offset: Option<u32>,
+    pub evidence: Evidence,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct WhoisObservation {
+    pub schema_version: u32,
+    pub generation: u64,
+    pub installed_revision: u32,
+    pub source_revision: u32,
+    pub identity: PublicIdentity,
+    pub evidence: Evidence,
+}
+
+#[derive(Serialize, Deserialize)]
+#[serde(
+    tag = "status",
+    content = "result",
+    rename_all = "snake_case",
+    deny_unknown_fields
+)]
+pub enum LiveResponse {
+    Status(LiveStatus),
+    Whois(WhoisObservation),
+    Error(ProbeError),
 }
 
 impl ProbeRequest {
@@ -45,6 +154,10 @@ impl ProbeRequest {
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ProbeObservation {
+    pub generation: u64,
+    pub installed_revision: u32,
+    pub source_revision: u32,
+    pub evidence: Evidence,
     pub peer_node_id: String,
     pub peer_name: Option<String>,
     pub local_node_id: String,
@@ -80,6 +193,8 @@ pub enum ProbeError {
     InvalidRequest,
     #[error("private control socket security check failed")]
     Security,
+    #[error("identity not found in the current trusted inventory")]
+    UnknownIdentity,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -89,7 +204,7 @@ pub enum ProbeError {
     rename_all = "snake_case",
     deny_unknown_fields
 )]
-enum Response {
+pub enum ProbeResponse {
     Ok(ProbeObservation),
     Error(ProbeError),
 }
@@ -236,30 +351,47 @@ impl Server {
                         // No queued task/permit for overload. Wait briefly for
                         // socket write readiness so the caller can see Busy.
                         let _ = time::timeout(Duration::from_millis(50),
-                            write_frame(&mut socket, &Response::Error(ProbeError::Busy))).await;
+                            write_frame(&mut socket, &ProbeResponse::Error(ProbeError::Busy))).await;
                         continue;
                     }
                     accepted += 1;
                     let prober = prober.clone();
                     tasks.spawn(async move {
                         let _ = time::timeout(CONNECTION_DEADLINE, async {
-                            let response = match read_frame::<ProbeRequest>(&mut socket).await {
-                                Ok(request) => {
+                            match read_frame::<Incoming>(&mut socket).await {
+                                Ok(Incoming::Legacy(request)) => {
                                     let mut extra = [0; 1];
-                                    tokio::select! {
+                                    let response = tokio::select! {
                                         biased;
                                         // EOF cancels pending core work. Additional bytes
                                         // are never interpreted as another operation.
                                         _ = socket.read(&mut extra) => return,
                                         result = prober.probe_neighbor_observed(request) => match result {
-                                            Ok(value) => Response::Ok(value),
-                                            Err(error) => Response::Error(error),
+                                            Ok(value) => ProbeResponse::Ok(value),
+                                            Err(error) => ProbeResponse::Error(error),
                                         },
-                                    }
+                                    };
+                                    let _ = write_frame(&mut socket, &response).await;
                                 }
-                                Err(error) => Response::Error(error),
-                            };
-                            let _ = write_frame(&mut socket, &response).await;
+                                Ok(Incoming::Versioned(request)) => {
+                                    let response = if request.schema_version != SCHEMA_VERSION {
+                                        LiveResponse::Error(ProbeError::InvalidRequest)
+                                    } else {
+                                        match request.operation {
+                                            Operation::Status { peers, offset, limit } => match prober.live_status(peers, offset, limit) {
+                                                Ok(value) => LiveResponse::Status(value),
+                                                Err(error) => LiveResponse::Error(error),
+                                            },
+                                            Operation::Whois { query } => match prober.whois(&query) {
+                                                Ok(value) => LiveResponse::Whois(value),
+                                                Err(error) => LiveResponse::Error(error),
+                                            },
+                                        }
+                                    };
+                                    let _ = write_response(&mut socket, &response).await;
+                                }
+                                Err(error) => { let _ = write_frame(&mut socket, &ProbeResponse::Error(error)).await; }
+                            }
                         }).await;
                     });
                 }
@@ -271,8 +403,12 @@ impl Server {
 // Four-byte big-endian length followed by exactly one JSON value. Length is
 // checked before allocation; fragmented headers/payloads are handled by read_exact.
 fn frame(value: &impl Serialize) -> Result<Vec<u8>, ProbeError> {
+    bounded_frame(value, MAX_FRAME)
+}
+
+fn bounded_frame(value: &impl Serialize, limit: usize) -> Result<Vec<u8>, ProbeError> {
     let body = serde_json::to_vec(value).map_err(|_| ProbeError::InvalidRequest)?;
-    if body.is_empty() || body.len() > MAX_FRAME {
+    if body.is_empty() || body.len() > limit {
         return Err(ProbeError::InvalidRequest);
     }
     let mut bytes = (body.len() as u32).to_be_bytes().to_vec();
@@ -288,11 +424,32 @@ async fn write_frame(socket: &mut UnixStream, value: &impl Serialize) -> Result<
 }
 
 async fn read_frame<T: DeserializeOwned>(socket: &mut UnixStream) -> Result<T, ProbeError> {
+    read_bounded_frame(socket, MAX_FRAME).await
+}
+
+async fn write_response(socket: &mut UnixStream, value: &LiveResponse) -> Result<(), ProbeError> {
+    // An oversized response is an explicit error, never a silently truncated page.
+    let bytes = bounded_frame(value, MAX_RESPONSE).or_else(|_| {
+        bounded_frame(
+            &LiveResponse::Error(ProbeError::InvalidRequest),
+            MAX_RESPONSE,
+        )
+    })?;
+    socket
+        .write_all(&bytes)
+        .await
+        .map_err(|_| ProbeError::Unavailable)
+}
+
+async fn read_bounded_frame<T: DeserializeOwned>(
+    socket: &mut UnixStream,
+    limit: usize,
+) -> Result<T, ProbeError> {
     let size = socket
         .read_u32()
         .await
         .map_err(|_| ProbeError::Unavailable)? as usize;
-    if size == 0 || size > MAX_FRAME {
+    if size == 0 || size > limit {
         return Err(ProbeError::InvalidRequest);
     }
     let mut body = vec![0; size];
@@ -317,6 +474,79 @@ pub async fn probe(
             .map_err(|_| ProbeError::InvalidRequest)?,
     };
     request.validate()?;
+    match exchange::<ProbeResponse>(state, &request, MAX_FRAME).await? {
+        ProbeResponse::Ok(value) => Ok(value),
+        ProbeResponse::Error(error) => Err(error),
+    }
+}
+
+pub async fn live_status(
+    state: &Path,
+    peers: bool,
+    offset: u32,
+    limit: u32,
+) -> Result<LiveStatus, ProbeError> {
+    if !(1..=MAX_PEERS).contains(&limit) || (!peers && offset != 0) {
+        return Err(ProbeError::InvalidRequest);
+    }
+    match exchange::<LiveResponse>(
+        state,
+        &Request {
+            schema_version: SCHEMA_VERSION,
+            operation: Operation::Status {
+                peers,
+                offset,
+                limit,
+            },
+        },
+        MAX_RESPONSE,
+    )
+    .await?
+    {
+        LiveResponse::Status(value)
+            if value.schema_version == SCHEMA_VERSION
+                && value
+                    .peers
+                    .as_ref()
+                    .is_none_or(|peers| peers.len() <= limit as usize) =>
+        {
+            Ok(value)
+        }
+        LiveResponse::Error(error) => Err(error),
+        _ => Err(ProbeError::InvalidRequest),
+    }
+}
+
+pub async fn whois(state: &Path, query: &str) -> Result<WhoisObservation, ProbeError> {
+    if query.is_empty() || query.chars().count() > 128 {
+        return Err(ProbeError::InvalidRequest);
+    }
+    match exchange::<LiveResponse>(
+        state,
+        &Request {
+            schema_version: SCHEMA_VERSION,
+            operation: Operation::Whois {
+                query: query.into(),
+            },
+        },
+        MAX_RESPONSE,
+    )
+    .await?
+    {
+        LiveResponse::Whois(value) if value.schema_version == SCHEMA_VERSION => Ok(value),
+        LiveResponse::Error(error) => Err(error),
+        _ => Err(ProbeError::InvalidRequest),
+    }
+}
+
+async fn exchange<T: DeserializeOwned>(
+    state: &Path,
+    request: &impl Serialize,
+    response_limit: usize,
+) -> Result<T, ProbeError> {
+    // Validate the outbound bound before connecting. An invalid request must
+    // never become a silent write failure followed by a deadline wait.
+    let request = frame(request)?;
     let path = socket_path(state);
     parent_guard(&path).map_err(|error| {
         if error.kind() == io::ErrorKind::NotFound {
@@ -342,11 +572,8 @@ pub async fn probe(
         peer_guard(&socket)?;
         // An overloaded server may send Busy and close before our write; still
         // read its bounded response instead of disguising overload as absence.
-        let _ = write_frame(&mut socket, &request).await;
-        match read_frame(&mut socket).await? {
-            Response::Ok(value) => Ok(value),
-            Response::Error(error) => Err(error),
-        }
+        let _ = socket.write_all(&request).await;
+        read_bounded_frame(&mut socket, response_limit).await
     })
     .await
     .map_err(|_| ProbeError::Timeout)?

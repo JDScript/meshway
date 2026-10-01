@@ -3,6 +3,9 @@ use std::{path::PathBuf, time::Duration};
 use clap::{Parser, Subcommand};
 use meshway_agent::{Agent, ControlSyncReceipts, SyncReceipt, connections_status, status};
 
+#[cfg(all(feature = "managed-connections", unix))]
+mod cli_live;
+
 #[derive(Parser)]
 #[command(
     version,
@@ -26,6 +29,18 @@ enum Command {
         count: u8,
         #[arg(long, default_value_t = 3, value_parser = clap::value_parser!(u64).range(1..=10))]
         timeout_seconds: u64,
+        #[arg(long)]
+        json: bool,
+    },
+    /// Resolve public identity from the managed daemon's current trusted inventory (not DNS).
+    #[cfg(all(feature = "managed-connections", unix))]
+    Whois {
+        /// Exact name, full 64-character node ID, or mesh IPv4/IPv6 address.
+        query: String,
+        #[arg(long, env = "MESHWAY_STATE", default_value = ".meshway/agent.json")]
+        state: PathBuf,
+        #[arg(long)]
+        json: bool,
     },
     /// Isolated experimental carriers, static authorization and Linux TUN.
     #[cfg(feature = "transport-lab")]
@@ -99,6 +114,17 @@ enum Command {
     Status {
         #[arg(long, env = "MESHWAY_STATE", default_value = ".meshway/agent.json")]
         state: PathBuf,
+        /// Read the current managed daemon through its private control socket.
+        #[arg(long)]
+        live: bool,
+        #[arg(long)]
+        json: bool,
+        #[arg(long, requires = "live")]
+        peers: bool,
+        #[arg(long, requires = "peers", default_value_t = 0)]
+        peer_offset: u32,
+        #[arg(long, requires = "peers", default_value_t = 64, value_parser = clap::value_parser!(u32).range(1..=64))]
+        peer_limit: u32,
     },
 }
 
@@ -144,39 +170,12 @@ async fn execute(command: Command) -> Result<(), Box<dyn std::error::Error>> {
             state,
             count,
             timeout_seconds,
+            json,
         } => {
-            println!("authenticated neighbor probe / 认证邻接探测 (非ICMP，非mesh trace)");
-            for sequence in 1..=count {
-                let observation = meshway_agent::diagnostics::probe(
-                    &state,
-                    &peer,
-                    Duration::from_secs(timeout_seconds),
-                )
-                .await?;
-                let direction = if observation.initiator_node_id == observation.local_node_id {
-                    "outgoing (locally initiated)"
-                } else {
-                    "accepted (peer initiated)"
-                };
-                let transport = match observation.transport {
-                    meshway_protocol::ConnectionTransport::NativeUdp => "native_udp",
-                    meshway_protocol::ConnectionTransport::NativeTcp => "native_tcp",
-                    meshway_protocol::ConnectionTransport::Vless => "vless (TLS)",
-                };
-                println!(
-                    "seq={sequence} peer={} name={} direction={direction} transport={transport} initiator={} RTT={}.{:03} µs",
-                    observation.peer_node_id,
-                    // JSON quoting escapes inventory-controlled terminal characters.
-                    serde_json::to_string(&observation.peer_name)?,
-                    observation.initiator_node_id,
-                    observation.rtt_ns / 1000,
-                    observation.rtt_ns % 1000,
-                );
-                if sequence < count {
-                    tokio::time::sleep(Duration::from_secs(1)).await;
-                }
-            }
+            cli_live::ping(&state, &peer, count, timeout_seconds, json).await?;
         }
+        #[cfg(all(feature = "managed-connections", unix))]
+        Command::Whois { query, state, json } => cli_live::whois(&state, &query, json).await?,
         #[cfg(feature = "transport-lab")]
         Command::TransportLab { command } => {
             meshway_agent::transport_lab::execute(command)
@@ -217,7 +216,26 @@ async fn execute(command: Command) -> Result<(), Box<dyn std::error::Error>> {
                 );
             }
         },
-        Command::Status { state } => println!("{}", serde_json::to_string_pretty(&status(state)?)?),
+        Command::Status {
+            state,
+            live,
+            json,
+            peers,
+            peer_offset,
+            peer_limit,
+        } => {
+            if live {
+                #[cfg(all(feature = "managed-connections", unix))]
+                cli_live::status(&state, json, peers, peer_offset, peer_limit).await?;
+                #[cfg(not(all(feature = "managed-connections", unix)))]
+                {
+                    let _ = (json, peers, peer_offset, peer_limit);
+                    return Err("live status requires a Unix managed-connections build and a running --apply-connections/--apply-dataplane daemon".into());
+                }
+            } else {
+                println!("{}", serde_json::to_string_pretty(&status(state)?)?);
+            }
+        }
         Command::Run {
             state,
             interval_seconds,

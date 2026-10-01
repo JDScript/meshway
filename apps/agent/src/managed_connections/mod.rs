@@ -468,6 +468,8 @@ impl Manager {
                 .expect("active generation")
                 .deadline
                 .send(Some(deadline));
+            #[cfg(unix)]
+            self.probes.refresh_source_revision(revision);
             return Ok(());
         }
         self.withdraw(Reason::None).await;
@@ -519,7 +521,7 @@ impl Manager {
                 let (renew, deadlines) = watch::channel(Some(deadline));
                 #[cfg(unix)]
                 self.probes
-                    .publish(&session.runtime, &semantic, &renew, &observed);
+                    .publish(&session.runtime, &semantic, &renew, &observed, revision);
                 let packet_io = packet.map(|plan| {
                     let tun = self.tun.as_ref().expect("configured TUN");
                     (tun.device.clone(), tun.name.clone(), plan)

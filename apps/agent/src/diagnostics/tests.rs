@@ -1,6 +1,72 @@
 use super::*;
 use crate::managed_connections::Manager;
 
+#[tokio::test]
+async fn versioned_requests_are_closed_and_response_bound_is_independent() {
+    for body in [
+        r#"{"schema_version":1,"operation":{"command":"status","peers":false,"offset":0,"limit":64,"extra":true}}"#,
+        r#"{"schema_version":1,"operation":{"command":"whois","query":"SHA"},"extra":true}"#,
+        r#"{"schema_version":1,"operation":{"command":"dns_query","query":"SHA"}}"#,
+        r#"{"schema_version":1,"schema_version":2,"operation":{"command":"whois","query":"SHA"}}"#,
+    ] {
+        assert!(serde_json::from_str::<Incoming>(body).is_err());
+    }
+    let dir = directory();
+    let state = dir.path().join("a");
+    let lock = meshway_protocol::local::lock(&dir.path().join("a.lock")).unwrap();
+    let manager = Manager::new(None, Duration::from_secs(30));
+    let prober = manager.prober();
+    let server = Server::bind(&state, &lock).await.unwrap();
+    let task = tokio::spawn(async move { server.serve(prober).await });
+    for version in [0, 2, u32::MAX] {
+        let response: LiveResponse = exchange(
+            &state,
+            &Request {
+                schema_version: version,
+                operation: Operation::Whois {
+                    query: "SHA".into(),
+                },
+            },
+            MAX_RESPONSE,
+        )
+        .await
+        .unwrap();
+        assert!(matches!(
+            response,
+            LiveResponse::Error(ProbeError::InvalidRequest)
+        ));
+    }
+    assert_eq!(
+        live_status(&state, false, 0, 64).await.unwrap_err(),
+        ProbeError::Unavailable
+    );
+    assert_eq!(
+        whois(&state, "SHA").await.unwrap_err(),
+        ProbeError::Unavailable
+    );
+    task.abort();
+    let _ = task.await;
+
+    let large = "x".repeat(5000);
+    assert!(frame(&large).is_err());
+    let (mut a, mut b) = UnixStream::pair().unwrap();
+    a.write_all(&bounded_frame(&large, MAX_RESPONSE).unwrap())
+        .await
+        .unwrap();
+    assert_eq!(
+        read_bounded_frame::<String>(&mut b, MAX_RESPONSE)
+            .await
+            .unwrap(),
+        large
+    );
+    let (mut a, mut b) = UnixStream::pair().unwrap();
+    a.write_u32(MAX_RESPONSE as u32 + 1).await.unwrap();
+    assert!(matches!(
+        read_bounded_frame::<LiveResponse>(&mut b, MAX_RESPONSE).await,
+        Err(ProbeError::InvalidRequest)
+    ));
+}
+
 fn directory() -> tempfile::TempDir {
     tempfile::Builder::new()
         .prefix("mw")
