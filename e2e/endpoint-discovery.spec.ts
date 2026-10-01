@@ -86,6 +86,10 @@ test("node-authenticated fixture self-reports display as leased unverified carri
     await page.clock.runFor(1_000);
     await expect(panel.getByTestId("discovery-status")).toHaveText("观测已失效");
     await expect(panel.getByRole("button", { name: "复制历史观测 IP:port（失效）", exact: true })).toBeDisabled();
+    await page.clock.setSystemTime(new Date(Date.parse(expiresAt) - 10_000));
+    await page.clock.runFor(1_000);
+    await expect(panel.getByTestId("discovery-status")).toHaveText("观测已失效");
+    await expect(panel.getByRole("button", { name: "复制历史观测 IP:port（失效）", exact: true })).toBeDisabled();
     await page.goto(`${webUrl}/nodes/${awaiting.id}?tab=connections`);
     await expect(page.getByTestId("discovery-status")).toHaveText("尚无报告");
     await expect(page.getByTestId("endpoint-discovery")).not.toContainText(mappedEndpoint);

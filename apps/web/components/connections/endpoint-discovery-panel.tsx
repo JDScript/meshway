@@ -11,32 +11,44 @@ import { Button } from "@/components/ui/button"
 import type { ControllerResult } from "@/lib/controller"
 import { readEndpointDiscoveriesAction } from "@/lib/endpoint-discovery-actions"
 import { discoveryLabel, discoveryOutcomeLabels, observationUsable } from "@/lib/endpoint-discovery-model"
+import { advanceDiscoveryClock, shownDiscoveryRead, type DiscoveryClock } from "@/lib/endpoint-discovery-view-model"
 import { formatDateTime } from "@/lib/time"
 
 export function EndpointDiscoveryPanel({ initial, nodeId }: {
   initial: ControllerResult<EndpointDiscoveriesSnapshot>
   nodeId?: string
 }) {
-  const [read, setRead] = useState(initial)
-  const [now, setNow] = useState(initial.fetchedAt)
+  const [read, setRead] = useState({ initial, result: initial })
+  const [now, setNow] = useState<DiscoveryClock>({ time: initial.fetchedAt, monotonicTime: null })
   const [refreshing, startRefresh] = useTransition()
   const sequence = useRef(0)
-  const shown = initial.fetchedAt > read.fetchedAt ? initial : read
+  if (read.initial !== initial) {
+    setRead({ initial, result: initial })
+    // Preserve every displayed clock floor, including prop replacements that
+    // arrive between ticks. A subsequent older server time cannot undo expiry.
+    setNow((previous) => ({ ...previous, time: Math.max(previous.time, initial.fetchedAt) }))
+  }
+  const shown = shownDiscoveryRead(initial, read)
+  const sampleClock = useCallback((floor = initial.fetchedAt) => {
+    const wallTime = Math.max(Date.now(), floor)
+    const monotonicTime = performance.now()
+    setNow((previous) => advanceDiscoveryClock(previous, wallTime, monotonicTime))
+  }, [initial.fetchedAt])
   const refresh = useCallback(() => {
     const seq = ++sequence.current
     startRefresh(async () => {
       const result = await readEndpointDiscoveriesAction()
       if (seq !== sequence.current) return
       // A failed read replaces the snapshot: never present last-good as live.
-      setRead(result)
-      setNow(Date.now())
+      setRead({ initial, result })
+      sampleClock(result.fetchedAt)
     })
-  }, [])
+  }, [initial, sampleClock])
   useEffect(() => {
-    const tick = window.setInterval(() => setNow(Date.now()), 1_000)
+    const tick = window.setInterval(() => sampleClock(), 1_000)
     const poll = window.setInterval(() => { if (document.visibilityState === "visible") refresh() }, 12_000)
     const visible = () => {
-      setNow(Date.now())
+      sampleClock()
       if (document.visibilityState === "visible") refresh()
     }
     document.addEventListener("visibilitychange", visible)
@@ -47,9 +59,9 @@ export function EndpointDiscoveryPanel({ initial, nodeId }: {
       window.clearInterval(poll)
       document.removeEventListener("visibilitychange", visible)
     }
-  }, [refresh])
+  }, [refresh, sampleClock])
   const report = shown.ok && nodeId ? shown.data.nodes.find((node) => node.node_id === nodeId) : undefined
-  const clock = Math.max(now, shown.fetchedAt)
+  const clock = Math.max(now.time, shown.fetchedAt)
 
   return <Panel title="UDP carrier 端点观测" description="Agent 经节点身份认证的自报；未验证候选观测，不证明可达、peer 身份或连接成功。" actions={<Button size="sm" variant="outline" disabled={refreshing} onClick={refresh}>{refreshing ? "读取中…" : "刷新观测"}</Button>} bodyClassName="flex min-w-0 flex-col gap-3 px-4 py-3 text-xs">
     <div data-testid="endpoint-discovery" className="flex min-w-0 flex-col gap-3">
