@@ -52,10 +52,104 @@ roots and server-name verification, with no insecure option. Key PEM files requi
 write. Each PEM is bounded to 256 KiB. Managed VLESS reserves CONNECT target
 `127.0.0.1:8421` as a wire marker only; the acceptor never proxies that destination.
 
-## Runtime semantics
+## Managed Linux IPv4 dataplane
 
-- Only authenticated neighbor-control probes, no TUN/IP/transit/exit application;
-  every managed core configuration has `allowed_paths: []`.
+```sh
+meshway-agent run --state /private/agent.json --apply-dataplane \
+  --tun-name meshway0 --tun-mtu 1000 \
+  --interval-seconds 5 --connection-lease-seconds 45 \
+  --connection-profiles /private/profiles.json
+```
+
+`--apply-dataplane` explicitly opts into Linux IPv4 packet application and implies
+managed adjacencies. It uses the enrolled identity and existing connection key;
+there is no transport-lab daemon/configuration. Requires `managed-connections`,
+`/dev/net/tun`, iproute2 and `CAP_NET_ADMIN`. A Docker namespace with read-only
+`/proc/sys` must set `net.ipv6.conf.default.disable_ipv6=1` before creation (and
+normally `net.ipv6.conf.all.disable_ipv6=1`). The agent configures no IPv6 addresses
+or routes, kernel forwarding, NAT or Internet exit.
+
+Kernels that omit the new interface's IPv6 sysctl are supported only with verified
+`default.disable_ipv6=1` inheritance (or no IPv6 subsystem). The enabled interface
+is also checked for IPv6-address absence before readiness. Permission errors,
+read-only writes to an enabled interface, and unverified missing sysctls fail closed.
+
+The generated `get_agent_dataplane()` operation supplies one digest-validated
+global revision of configuration, adjacency, explicit directional access, and
+public identity bindings. The private `agent.json.dataplane.json` cache is bound
+to controller, node and credential hash. It supplies a rollback floor, never
+offline startup authority. Fresh snapshots are required on every restart. Separate
+configuration/connections saved ACKs use projections of this exact bundle; their
+digests are also used by the unchanged adjacency runtime-report API.
+
+Every packet path is the intersection of the routing compiler and an exact full
+directional grant. Missing grants, first-match rejects, missing reverse grants,
+and unknown relevant domain conditions deny packets. A reverse response needs its
+own route and grant. E2E-only public keys receive `transports: []`; neither a grant
+nor an endpoint key authorizes a physical carrier or listener. All traffic uses
+the existing Runtime's authenticated E2E packet API, including at relays. Endpoints
+check the full path, authenticated source ID, assigned source/destination IPs,
+IPv4 header checksum and exact length. Fragments, IP options, IPv6 and addresses
+outside an authorized assigned pair are dropped. Grants cover all IPv4 protocol
+numbers; there is no implicit port ACL.
+
+The default MTU is 1000 (minimum 576). Every compiled path is checked with
+`native_udp_datagram_len` using full 64-character IDs plus 48 outer IPv6/UDP header
+bytes against an outer MTU of 1500. An unsafe explicit MTU fails rather than
+fragmenting or silently lowering it; eight-node paths need a smaller MTU. Underlay
+transport targets, controller addresses and configured DNS servers cannot overlap
+the mesh IPv4 prefix.
+
+An unnamed, nonpersistent TUN is exclusively allocated, then atomically renamed;
+an existing requested name is never adopted or deleted. It owns only the registered
+IPv4 `/32` and the mesh-prefix route (metric 42759, protocol 242). A daemon-lifetime
+TUN remains as a bounded drop sink when packet generations are inactive; its kernel
+queue is discarded before a fresh generation. Changed bundle revisions conservatively
+restart the complete runtime **before disk writes or HTTP ACKs**. Unchanged bundles
+can renew only from their original fresh-fetch timestamp. The independent watchdog
+cancels packet reads, blocked writes and E2E setup on expiry; runtime shutdown erases
+old session caches. Resource failure withdraws the complete generation.
+
+A validated identity publication newer than the installed generation also withdraws
+that generation before the next snapshot GET. Either saved ACK returning 409 withdraws
+it before retrying the GET, even when the fetched bundle matched the old installation.
+Publication and stale-revision evidence never renew the packet lease; a stalled retry
+cannot retain grants already known to be stale.
+
+Endpoint DNS failure/timeouts during route-sink preparation are retryable, including
+startup before a peer's service name exists. The old generation is withdrawn, the
+owned sink/guard is retained, and retry starts with a new controller fetch. No failed
+preparation renews a lease. A resolved endpoint inside the mesh prefix, changed TUN
+binding, or filesystem/permission failure remains fatal.
+
+Terminal controller HTTP status is surfaced before reading its response body. A
+401/403 with an incomplete body stops the managed loop and withdraws active packet
+resources immediately; it does not wait for the HTTP timeout or packet lease.
+
+An exact-prefix `unreachable` guard (metric 42760, protocol 242) is deliberately
+retained after interface removal, clean shutdown or process death. This prevents
+the host's default underlay route from carrying Mesh IPs. Restart reuses only the
+exact guard when the private bound dataplane cache exists. Any conflicting route
+fails startup; routes are never replaced. Decommissioning a node includes explicitly
+removing this guard after stopping its daemon, for example for a `100.64.0.0/24` pool:
+
+```sh
+ip -4 route del unreachable 100.64.0.0/24 metric 42760 proto 242
+```
+
+Local JSON events (`event: "managed_dataplane"`) expose actual `tun_ready`, node/IP,
+MTU, installed generation revision/canonical dataplane digest, allowed-path count
+and withdrawal reason. Withdrawal retains the withdrawn generation's digest, even
+when newer saved ACKs have advanced. Ready means the owned configured
+interface and packet generation are available; successful local enqueue is not a
+remote delivery proof. HTTP `runtimeApplied` remains adjacency-only. Normal OS
+`ping` and `curl` to assigned Mesh IPv4 addresses exercise the packet plane; the
+private `meshway-agent ping` IPC command still performs authenticated neighbor probes.
+
+## Adjacency-only runtime semantics
+
+- With `--apply-connections`, only authenticated neighbor-control probes are applied;
+  every adjacency-only core configuration has `allowed_paths: []`.
 - Full 64-hex controller node IDs and the existing bound connection-key sidecar.
 - Listener-scoped peer allowlists; native UDP/TCP and TLS + VLESS + pinned Noise.
 - Endpoint DNS resolution uses the underlay with a deadline and bounded results;
@@ -103,8 +197,8 @@ Agent-owned implementation is in `src/managed_connections` and
 Checks: `cargo test -p meshway-agent --features managed-connections --locked`,
 `cargo clippy -p meshway-agent --features managed-connections --all-targets --locked -- -D warnings`,
 plus the ordinary non-feature Agent suite. Unit fixtures use real loopback UDP,
-TCP and TLS/VLESS with full 64-hex node IDs and OpenSSL-generated temporary test
-certificates. Controller subprocess tests cover saved-vs-applied reporting,
+TCP and TLS/VLESS with full 64-hex node IDs and in-process rcgen-generated temporary
+test certificates (fresh CA/key per fixture). Controller subprocess tests cover saved-vs-applied reporting,
 durable key reuse, grant removal, stalled HTTP lease expiry, epoch supersession,
 lost-begin CAS races, revocation, shutdown, and recovery of the same epoch/revision
 after controller downtime grows retry backoff beyond the config lease. Docker

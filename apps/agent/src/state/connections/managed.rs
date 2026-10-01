@@ -9,6 +9,7 @@ use meshway_protocol::{
 };
 use tokio::time::{self, Instant};
 
+use super::dataplane;
 use super::{Agent, AgentError, HttpClient, cache_path, convert, local};
 use crate::managed_connections::Manager;
 
@@ -20,12 +21,38 @@ struct RuntimeLease {
 }
 
 impl Agent {
+    /// IPv4-only coherent policy application. Never activates a cached grant at startup.
+    pub async fn run_managed_dataplane(
+        &mut self,
+        profiles: Option<PathBuf>,
+        interval: Duration,
+        lease: Duration,
+        options: crate::TunOptions,
+    ) -> Result<(), AgentError> {
+        options.validate()?;
+        if !cfg!(target_os = "linux") {
+            return Err(AgentError::Invalid("--apply-dataplane requires Linux"));
+        }
+        self.run_managed(profiles, interval, lease, Some(options))
+            .await
+    }
+
     /// Opt-in managed adjacencies. The ordinary saved-only sync API is unchanged.
     pub async fn run_managed_connections(
         &mut self,
         profiles: Option<PathBuf>,
         interval: Duration,
         lease: Duration,
+    ) -> Result<(), AgentError> {
+        self.run_managed(profiles, interval, lease, None).await
+    }
+
+    async fn run_managed(
+        &mut self,
+        profiles: Option<PathBuf>,
+        interval: Duration,
+        lease: Duration,
+        options: Option<crate::TunOptions>,
     ) -> Result<(), AgentError> {
         if !(Duration::from_secs(10)..=Duration::from_secs(300)).contains(&lease)
             || interval.is_zero()
@@ -35,30 +62,45 @@ impl Agent {
                 "connection lease must be 10–300 seconds and exceed the polling interval",
             ));
         }
-        let mut manager = Manager::new(profiles, lease);
+        let mut dataplane = options
+            .as_ref()
+            .map(|_| dataplane::State::load(self))
+            .transpose()?;
+        let mut manager = if let Some(options) = options {
+            Manager::new_dataplane(
+                profiles,
+                lease,
+                options,
+                self.identity.controller.clone(),
+                dataplane.as_ref().is_some_and(dataplane::State::has_cache),
+            )
+        } else {
+            Manager::new(profiles, lease)
+        };
         #[cfg(unix)]
         let control = crate::diagnostics::Server::bind(&self.path, &self._lock).await?;
         #[cfg(unix)]
         let prober = manager.prober();
         #[cfg(unix)]
         let result = tokio::select! {
-            result = self.managed_loop(&mut manager, interval) => result,
+            result = self.managed_loop(&mut manager, interval, &mut dataplane) => result,
             result = control.serve(prober) => result.map_err(AgentError::from),
             _ = tokio::signal::ctrl_c() => Ok(()),
         };
         #[cfg(not(unix))]
         let result = tokio::select! {
-            result = self.managed_loop(&mut manager, interval) => result,
+            result = self.managed_loop(&mut manager, interval, &mut dataplane) => result,
             _ = tokio::signal::ctrl_c() => Ok(()),
         };
         manager.withdraw(Reason::ShuttingDown).await;
         result
     }
 
-    async fn managed_loop(
+    pub(super) async fn managed_loop(
         &mut self,
         manager: &mut Manager,
         interval: Duration,
+        dataplane: &mut Option<dataplane::State>,
     ) -> Result<(), AgentError> {
         let mut lease = RuntimeLease {
             instance_id: local::credential()?,
@@ -70,7 +112,7 @@ impl Agent {
         loop {
             let mut control_synced = false;
             let result = self
-                .managed_tick(manager, &mut lease, &mut control_synced)
+                .managed_tick(manager, &mut lease, &mut control_synced, dataplane)
                 .await;
             // Recovery belongs to the validated, durable configuration sync,
             // not to the later best-effort observation report. The first probe
@@ -114,9 +156,10 @@ impl Agent {
         manager: &mut Manager,
         lease: &mut RuntimeLease,
         control_synced: &mut bool,
+        dataplane: &mut Option<dataplane::State>,
     ) -> Result<(), AgentError> {
         self.heartbeat().await?;
-        let mut receipt = self.managed_sync(manager).await?;
+        let (mut receipt, mut packet_snapshot) = self.managed_sync_mode(manager, dataplane).await?;
         if lease.epoch.is_none() {
             if lease.expected_epoch.is_none() {
                 let response: GetConnectionRuntimeEpochResponse =
@@ -148,7 +191,7 @@ impl Agent {
             }
             lease.epoch = Some(response.epoch);
             // Pull while holding the runtime lease, not merely before begin.
-            receipt = self.managed_sync(manager).await?;
+            (receipt, packet_snapshot) = self.managed_sync_mode(manager, dataplane).await?;
         }
         let fresh_at = Instant::now();
         let state = self
@@ -165,7 +208,11 @@ impl Agent {
             .snapshot
             .clone();
         *control_synced = true;
-        manager.reconcile(snapshot, key, fresh_at).await;
+        if let Some((snapshot, fresh_at)) = packet_snapshot {
+            manager.reconcile_dataplane(snapshot, key, fresh_at).await?;
+        } else {
+            manager.reconcile(snapshot, key, fresh_at).await;
+        }
         println!(
             "{}",
             serde_json::to_string(&receipt)
@@ -243,6 +290,25 @@ impl Agent {
         HttpClient::new()
             .with_base_url(&self.identity.controller)
             .with_api_key(&self.identity.node_credential)
+    }
+
+    async fn managed_sync_mode(
+        &mut self,
+        manager: &mut Manager,
+        dataplane: &mut Option<dataplane::State>,
+    ) -> Result<
+        (
+            super::ControlSyncReceipts,
+            Option<(meshway_protocol::AgentDataplaneSnapshot, Instant)>,
+        ),
+        AgentError,
+    > {
+        if let Some(dataplane) = dataplane {
+            let synced = dataplane.sync(self, manager).await?;
+            Ok((synced.receipt, Some((synced.snapshot, synced.fresh_at))))
+        } else {
+            Ok((self.managed_sync(manager).await?, None))
+        }
     }
 
     async fn managed_sync(

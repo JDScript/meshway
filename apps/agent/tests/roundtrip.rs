@@ -10,7 +10,7 @@ use axum::{Router, routing::post};
 use meshway_agent::{
     Agent, AgentError,
     generated::{
-        client::{EnrollAgentApiError, HttpClient},
+        client::HttpClient,
         types::{AgentNodeResponse, EnrollAgentRequest, HeartbeatRequest},
     },
     status,
@@ -83,7 +83,7 @@ fn enrollment(credential: &str, name: &str) -> EnrollAgentRequest {
 }
 
 #[tokio::test]
-async fn generated_agent_operations_roundtrip_and_decode_scoped_errors() {
+async fn generated_agent_operations_roundtrip_and_surface_terminal_status_without_body_io() {
     let directory = tempdir();
     let server = serve(router(AppState::open(directory.path()).unwrap())).await;
     let admin = admin_token(directory.path()).unwrap();
@@ -96,11 +96,16 @@ async fn generated_agent_operations_roundtrip_and_decode_scoped_errors() {
         .enroll_agent(enrollment(&credential, " "))
         .await
         .unwrap_err();
-    assert_eq!(error.api().unwrap().status, 400);
-    assert!(matches!(
-        error.api().unwrap().typed,
-        Some(EnrollAgentApiError::Status400(_))
-    ));
+    let response = error.api().unwrap();
+    assert_eq!(response.status, 400);
+    assert!(!response.is_retryable());
+    assert_eq!(response.headers["content-type"], "application/json");
+    // Terminal status is authoritative before any body I/O. Error DTO slots
+    // remain available in the SDK shape, but are deliberately not populated.
+    assert!(response.body.is_empty());
+    assert!(response.raw_body.is_empty());
+    assert!(response.typed.is_none());
+    assert!(response.parse_error.is_none());
     let first = client
         .enroll_agent(enrollment(&credential, "nyc"))
         .await

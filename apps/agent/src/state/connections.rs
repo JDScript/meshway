@@ -12,6 +12,8 @@ use super::{Agent, AgentError, Identity, SyncReceipt, connection_key::KeyStore, 
 use crate::generated::{client::HttpClient, types::AcknowledgeAgentConnectionsRequest};
 
 #[cfg(feature = "managed-connections")]
+mod dataplane;
+#[cfg(feature = "managed-connections")]
 mod managed;
 #[cfg(test)]
 mod tests;

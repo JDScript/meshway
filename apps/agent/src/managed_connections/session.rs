@@ -58,13 +58,28 @@ impl Session {
         self.runtime.shutdown().await;
     }
 
+    #[cfg(test)]
     pub async fn start(
         intent: &NodeConnections,
         key: PrivateKey,
         profiles: Profiles,
         targets: &BTreeMap<String, Vec<SocketAddr>>,
     ) -> Result<Self, Failure> {
-        let config = core_config(intent, key, targets)?;
+        Self::start_with_packet(intent, key, profiles, targets, None).await
+    }
+
+    pub async fn start_with_packet(
+        intent: &NodeConnections,
+        key: PrivateKey,
+        profiles: Profiles,
+        targets: &BTreeMap<String, Vec<SocketAddr>>,
+        packet: Option<&crate::managed_dataplane::PacketPlan>,
+    ) -> Result<Self, Failure> {
+        let mut config = core_config(intent, key, targets)?;
+        if let Some(plan) = packet {
+            plan.augment(&mut config)
+                .map_err(|_| Failure(Reason::InvalidConfiguration))?;
+        }
         let active_native: BTreeSet<_> = config
             .outgoing
             .iter()
@@ -186,11 +201,16 @@ impl Session {
         }
     }
 
-    pub async fn run(
+    pub async fn run_with_packet(
         mut self,
         intent: NodeConnections,
         mut deadlines: watch::Receiver<Option<Instant>>,
         observed: watch::Sender<Observation>,
+        packet: Option<(
+            Arc<dyn crate::managed_dataplane::tun::Device>,
+            String,
+            crate::managed_dataplane::PacketPlan,
+        )>,
     ) {
         let probe_runtime = self.runtime.clone();
         let probe_observed = observed.clone();
@@ -214,6 +234,24 @@ impl Session {
             }
         };
         tokio::pin!(probe);
+        let packet_runtime = self.runtime.clone();
+        let packet_deadline = deadlines.clone();
+        let packet_io = async {
+            match &packet {
+                Some((device, name, plan)) => {
+                    crate::managed_dataplane::packet::run(
+                        device.clone(),
+                        packet_runtime,
+                        plan.clone(),
+                        packet_deadline,
+                        name,
+                    )
+                    .await
+                }
+                None => std::future::pending().await,
+            }
+        };
+        tokio::pin!(packet_io);
         let reason = loop {
             let Some(deadline) = *deadlines.borrow_and_update() else {
                 break Reason::ShuttingDown;
@@ -225,11 +263,24 @@ impl Session {
                 biased;
                 _ = time::sleep_until(deadline) => break Reason::LeaseExpired,
                 result = deadlines.changed() => if result.is_err() { break Reason::ShuttingDown; },
+                _ = &mut packet_io => break Reason::InternalError,
                 _ = &mut probe => break Reason::InternalError,
                 _ = self.tasks.join_next(), if !self.tasks.is_empty() => break Reason::TransportFailed,
             }
         };
         observed.send_replace(Observation::empty(Phase::Withdrawn, reason));
+        if let Some((_, name, plan)) = &packet {
+            crate::managed_dataplane::tun::proof(
+                name,
+                plan,
+                false,
+                match reason {
+                    Reason::LeaseExpired => "lease_expired",
+                    Reason::ShuttingDown => "generation_withdrawn",
+                    _ => "runtime_or_device_failure",
+                },
+            );
+        }
         self.shutdown().await;
     }
 }

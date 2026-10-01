@@ -43,6 +43,9 @@ pub enum AgentError {
     #[cfg(feature = "managed-connections")]
     #[error("connection runtime observation changed; resynchronizing")]
     RuntimeObservationChanged,
+    #[cfg(feature = "managed-connections")]
+    #[error("dataplane endpoint resolution failed; resynchronizing")]
+    DataplaneResolveFailed,
 }
 
 impl AgentError {
@@ -50,7 +53,7 @@ impl AgentError {
         match self {
             Self::Http { retryable, .. } | Self::Transport { retryable } => *retryable,
             #[cfg(feature = "managed-connections")]
-            Self::RuntimeObservationChanged => true,
+            Self::RuntimeObservationChanged | Self::DataplaneResolveFailed => true,
             _ => false,
         }
     }

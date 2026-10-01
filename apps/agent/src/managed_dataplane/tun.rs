@@ -1,0 +1,484 @@
+//! A daemon-lifetime route sink with generation-scoped packet I/O. The interface
+//! is never persistent or adopted. A lower-priority unreachable route survives
+//! its removal (including process death), preventing mesh-to-underlay fallthrough.
+
+use futures_util::future::BoxFuture;
+use ipnet::Ipv4Net;
+use std::{io, net::Ipv4Addr, sync::Arc};
+
+use super::{PacketPlan, TunOptions};
+use crate::AgentError;
+
+pub(crate) trait Device: Send + Sync {
+    fn recv<'a>(&'a self, bytes: &'a mut [u8]) -> BoxFuture<'a, io::Result<usize>>;
+    fn send<'a>(&'a self, bytes: &'a [u8]) -> BoxFuture<'a, io::Result<usize>>;
+    /// Bounded, nonblocking discard before a new generation can see this queue.
+    fn drain(&self) -> io::Result<()>;
+}
+
+pub(crate) struct Tun {
+    pub device: Arc<dyn Device>,
+    pub name: String,
+    local: Ipv4Addr,
+    prefix: Ipv4Net,
+    mtu: u16,
+}
+
+/// Some Linux kernels omit the per-interface IPv6 sysctl entirely when default
+/// disable_ipv6=1 was inherited at link creation. Only that verified inheritance
+/// (or absence of the entire IPv6 subsystem) permits an absent interface entry.
+#[cfg(any(target_os = "linux", test))]
+fn disable_ipv6(tree: &std::path::Path, name: &str) -> io::Result<()> {
+    let interface = tree.join("conf").join(name).join("disable_ipv6");
+    match std::fs::read_to_string(&interface) {
+        Ok(value) if value.trim() == "1" => Ok(()),
+        Ok(value) if value.trim() == "0" => {
+            std::fs::write(&interface, b"1\n")?;
+            if std::fs::read_to_string(&interface)?.trim() != "1" {
+                return Err(io::Error::other("TUN IPv6 disable did not take effect"));
+            }
+            Ok(())
+        }
+        Ok(_) => Err(io::Error::other("invalid TUN IPv6 sysctl value")),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => {
+            if !tree.try_exists()? {
+                return Ok(());
+            }
+            match std::fs::read_to_string(tree.join("conf/default/disable_ipv6")) {
+                Ok(value) if value.trim() == "1" => Ok(()),
+                Ok(_) => Err(io::Error::other(
+                    "missing TUN IPv6 sysctl without verified disabled inheritance",
+                )),
+                Err(error) => Err(error),
+            }
+        }
+        Err(error) => Err(error),
+    }
+}
+
+impl Tun {
+    pub fn matches(&self, plan: &PacketPlan) -> bool {
+        self.local == plan.local && self.prefix == plan.prefix && self.mtu == plan.mtu
+    }
+
+    pub async fn open(
+        options: &TunOptions,
+        plan: &PacketPlan,
+        controller: &str,
+        may_reuse_guard: bool,
+    ) -> Result<Self, AgentError> {
+        options.validate()?;
+        #[cfg(target_os = "linux")]
+        {
+            linux::open(options, plan, controller, may_reuse_guard).await
+        }
+        #[cfg(not(target_os = "linux"))]
+        {
+            let _ = (plan, controller, may_reuse_guard);
+            Err(AgentError::Invalid("managed IPv4 TUN requires Linux"))
+        }
+    }
+
+    #[cfg(test)]
+    pub fn mock(device: Arc<dyn Device>, plan: &PacketPlan) -> Self {
+        Self {
+            device,
+            name: "mock0".into(),
+            local: plan.local,
+            prefix: plan.prefix,
+            mtu: plan.mtu,
+        }
+    }
+}
+
+/// Local proof only: adjacency reports retain their existing meaning. Ready
+/// means a configured owned device and a live packet generation, not delivery.
+fn proof_json(
+    name: &str,
+    plan: &PacketPlan,
+    ready: bool,
+    reason: &str,
+) -> Result<String, serde_json::Error> {
+    #[derive(serde::Serialize)]
+    struct Proof<'a> {
+        event: &'static str,
+        node_id: &'a str,
+        revision: u32,
+        digest: &'a str,
+        observed_at: chrono::DateTime<chrono::Utc>,
+        tun_name: &'a str,
+        ipv4: String,
+        ipv4_prefix: String,
+        mtu: u16,
+        ipv6: bool,
+        tun_ready: bool,
+        allowed_paths: usize,
+        route_sink_retained: bool,
+        reason: &'a str,
+    }
+    let proof = Proof {
+        event: "managed_dataplane",
+        node_id: &plan.node_id,
+        revision: plan.revision,
+        digest: &plan.digest,
+        observed_at: chrono::Utc::now(),
+        tun_name: name,
+        ipv4: plan.local.to_string(),
+        ipv4_prefix: plan.prefix.to_string(),
+        mtu: plan.mtu,
+        ipv6: false,
+        tun_ready: ready,
+        allowed_paths: if ready { plan.paths.len() } else { 0 },
+        route_sink_retained: true,
+        reason,
+    };
+    serde_json::to_string(&proof)
+}
+
+pub(crate) fn proof(name: &str, plan: &PacketPlan, ready: bool, reason: &str) {
+    if let Ok(json) = proof_json(name, plan, ready, reason) {
+        // A full stdout pipe must not block the packet watchdog. One bounded
+        // logger thread handles public, point-in-time proofs; overload drops
+        // observations rather than extending authorization or spawning tasks.
+        static OUTPUT: std::sync::OnceLock<Option<std::sync::mpsc::SyncSender<String>>> =
+            std::sync::OnceLock::new();
+        if let Some(sender) = OUTPUT.get_or_init(|| {
+            let (send, receive) = std::sync::mpsc::sync_channel::<String>(32);
+            std::thread::Builder::new()
+                .name("meshway-tun-proof".into())
+                .spawn(move || {
+                    use std::io::Write;
+                    for json in receive {
+                        if writeln!(std::io::stdout(), "{json}").is_err() {
+                            break;
+                        }
+                    }
+                })
+                .ok()
+                .map(|_| send)
+        }) {
+            let _ = sender.try_send(json);
+        }
+    }
+}
+
+#[cfg(target_os = "linux")]
+mod linux {
+    use super::*;
+    use std::{net::IpAddr, path::Path, process::Stdio, time::Duration};
+    use tokio::{io::AsyncReadExt, process::Command, time};
+
+    const GUARD_METRIC: &str = "42760";
+    const TUN_METRIC: &str = "42759";
+    const PROTOCOL: &str = "242";
+
+    impl Device for tun_rs::AsyncDevice {
+        fn recv<'a>(&'a self, bytes: &'a mut [u8]) -> BoxFuture<'a, io::Result<usize>> {
+            Box::pin(self.recv(bytes))
+        }
+        fn send<'a>(&'a self, bytes: &'a [u8]) -> BoxFuture<'a, io::Result<usize>> {
+            Box::pin(self.send(bytes))
+        }
+        fn drain(&self) -> io::Result<()> {
+            let mut bytes = [0; 65_536];
+            for _ in 0..256 {
+                match self.try_recv(&mut bytes) {
+                    Err(error) if error.kind() == io::ErrorKind::WouldBlock => return Ok(()),
+                    Err(error) => return Err(error),
+                    Ok(0) => return Err(io::Error::other("TUN closed")),
+                    Ok(_) => {}
+                }
+            }
+            Err(io::Error::other(
+                "TUN queue did not quiesce before generation activation",
+            ))
+        }
+    }
+
+    async fn ip(args: &[&str]) -> Result<Vec<u8>, AgentError> {
+        let binary = ["/usr/sbin/ip", "/sbin/ip", "/usr/bin/ip", "/bin/ip"]
+            .into_iter()
+            .find(|path| Path::new(path).is_file())
+            .ok_or(AgentError::Invalid("managed TUN requires iproute2"))?;
+        time::timeout(Duration::from_secs(3), async {
+            let mut child = Command::new(binary).args(args)
+                .stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::null())
+                .kill_on_drop(true).spawn()?;
+            let mut stdout = child.stdout.take().expect("piped stdout").take(65_537);
+            let mut bytes = Vec::new();
+            stdout.read_to_end(&mut bytes).await?;
+            if bytes.len() > 65_536 { return Err(AgentError::Invalid("iproute2 output exceeds bounds")); }
+            if !child.wait().await?.success() {
+                return Err(AgentError::Invalid("managed TUN route operation failed (existing route conflict or missing NET_ADMIN)"));
+            }
+            Ok(bytes)
+        }).await.map_err(|_| AgentError::Invalid("managed TUN route operation timed out"))?
+    }
+
+    async fn underlay(controller: &str, prefix: Ipv4Net) -> Result<(), AgentError> {
+        let url = reqwest::Url::parse(controller)
+            .map_err(|_| AgentError::Invalid("invalid controller URL"))?;
+        let host = url
+            .host_str()
+            .ok_or(AgentError::Invalid("missing controller hostname"))?;
+        let host = host
+            .strip_prefix('[')
+            .and_then(|value| value.strip_suffix(']'))
+            .unwrap_or(host);
+        let resolved = time::timeout(
+            Duration::from_secs(3),
+            tokio::net::lookup_host((host, url.port_or_known_default().unwrap_or(443))),
+        )
+        .await
+        .map_err(|_| AgentError::DataplaneResolveFailed)?
+        .map_err(|_| AgentError::DataplaneResolveFailed)?;
+        let addresses: Vec<_> = resolved.take(33).collect();
+        if addresses.is_empty() {
+            return Err(AgentError::DataplaneResolveFailed);
+        }
+        if addresses.len() > 32
+            || addresses
+                .iter()
+                .any(|address| super::super::in_prefix(address.ip(), prefix))
+        {
+            return Err(AgentError::Invalid(
+                "controller endpoint overlaps mesh IPv4 route",
+            ));
+        }
+        // Reject DNS recursion before adding either route. Resolver metadata is
+        // local OS configuration, not an HTTP contract. Bound reads as well.
+        let file = std::fs::File::open("/etc/resolv.conf")?;
+        let mut text = String::new();
+        std::io::Read::read_to_string(&mut std::io::Read::take(file, 65_537), &mut text)?;
+        if text.len() > 65_536 {
+            return Err(AgentError::Invalid("resolver configuration exceeds bounds"));
+        }
+        for line in text.lines() {
+            let mut fields = line.split_whitespace();
+            if fields.next() == Some("nameserver") {
+                let address: IpAddr = fields
+                    .next()
+                    .ok_or(AgentError::Invalid("invalid resolver address"))?
+                    .parse()
+                    .map_err(|_| AgentError::Invalid("unsupported resolver address"))?;
+                if super::super::in_prefix(address, prefix) {
+                    return Err(AgentError::Invalid("DNS server overlaps mesh IPv4 route"));
+                }
+            }
+        }
+        Ok(())
+    }
+
+    #[derive(serde::Deserialize)]
+    struct Route {
+        dst: Option<String>,
+        #[serde(rename = "type")]
+        kind: Option<String>,
+        protocol: Option<String>,
+        metric: Option<u32>,
+        dev: Option<String>,
+        gateway: Option<String>,
+    }
+
+    #[derive(serde::Deserialize)]
+    struct InterfaceAddresses {
+        #[serde(default)]
+        addr_info: Vec<InterfaceAddress>,
+    }
+
+    #[derive(serde::Deserialize)]
+    struct InterfaceAddress {
+        family: String,
+    }
+
+    async fn verify_no_ipv6(name: &str) -> Result<(), AgentError> {
+        let addresses: Vec<InterfaceAddresses> =
+            serde_json::from_slice(&ip(&["-j", "-6", "address", "show", "dev", name]).await?)
+                .map_err(|_| AgentError::Invalid("cannot verify TUN IPv6 address absence"))?;
+        if addresses
+            .iter()
+            .flat_map(|interface| &interface.addr_info)
+            .any(|address| address.family == "inet6")
+        {
+            return Err(AgentError::Invalid(
+                "managed IPv4 TUN unexpectedly has an IPv6 address",
+            ));
+        }
+        Ok(())
+    }
+
+    pub(super) async fn open(
+        options: &TunOptions,
+        plan: &PacketPlan,
+        controller: &str,
+        may_reuse_guard: bool,
+    ) -> Result<Tun, AgentError> {
+        underlay(controller, plan.prefix).await?;
+        // Preflight rejects existing names. Allocation below is unnamed, never
+        // attaches to a named persistent TUN; rename is atomic against races.
+        if Path::new("/sys/class/net")
+            .join(&options.name)
+            .try_exists()?
+        {
+            return Err(AgentError::Invalid(
+                "requested TUN name already exists; refusing to adopt",
+            ));
+        }
+        let prefix = plan.prefix.to_string();
+        let routes: Vec<Route> = serde_json::from_slice(
+            &ip(&[
+                "-j", "-4", "route", "show", "table", "main", "root", &prefix,
+            ])
+            .await?,
+        )
+        .map_err(|_| AgentError::Invalid("cannot validate existing mesh-prefix routes"))?;
+        let existing_guard = routes.len() == 1
+            && may_reuse_guard
+            && routes.iter().all(|route| {
+                route.dst.as_deref() == Some(prefix.as_str())
+                    && route.kind.as_deref() == Some("unreachable")
+                    && route.metric == Some(42760)
+                    && route.protocol.as_deref() == Some(PROTOCOL)
+                    && route.dev.is_none()
+                    && route.gateway.is_none()
+            });
+        if !routes.is_empty() && !existing_guard {
+            return Err(AgentError::Invalid(
+                "existing route conflicts with managed mesh IPv4 pool",
+            ));
+        }
+        // No supplied name: kernel allocation always creates a new interface.
+        let device = tun_rs::DeviceBuilder::new()
+            .enable(false)
+            .mtu(options.mtu)
+            .offload(false)
+            .build_async()?;
+        if device.name()? != options.name {
+            device.set_name(&options.name)?;
+        }
+        disable_ipv6(Path::new("/proc/sys/net/ipv6"), &options.name)?;
+        device.set_network_address(plan.local, 32, None)?;
+        device.set_tx_queue_len(32)?;
+        if !existing_guard {
+            ip(&[
+                "-4",
+                "route",
+                "add",
+                "unreachable",
+                &prefix,
+                "metric",
+                GUARD_METRIC,
+                "proto",
+                PROTOCOL,
+            ])
+            .await?;
+        }
+        // No replace, no default route, no forwarding/NAT. A failed add drops
+        // only this owned nonpersistent device; the unreachable guard remains.
+        device.enabled(true)?;
+        // Check again after link-up, when an IPv6 context could be instantiated.
+        disable_ipv6(Path::new("/proc/sys/net/ipv6"), &options.name)?;
+        verify_no_ipv6(&options.name).await?;
+        ip(&[
+            "-4",
+            "route",
+            "add",
+            &prefix,
+            "dev",
+            &options.name,
+            "src",
+            &plan.local.to_string(),
+            "metric",
+            TUN_METRIC,
+            "proto",
+            PROTOCOL,
+        ])
+        .await?;
+        Ok(Tun {
+            device: Arc::new(device),
+            name: options.name.clone(),
+            local: plan.local,
+            prefix: plan.prefix,
+            mtu: plan.mtu,
+        })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn proof_digest_is_the_installed_generation_even_when_saved_revision_advances() {
+        #[derive(serde::Deserialize)]
+        struct Evidence {
+            revision: u32,
+            digest: String,
+            tun_ready: bool,
+        }
+        let (payloads, _) = crate::managed_dataplane::tests::fixtures(2);
+        let old = &payloads[0];
+        let generation = PacketPlan::compile(old, 1000).unwrap();
+        let ready: Evidence = serde_json::from_str(
+            &proof_json("meshway0", &generation, true, "generation_active").unwrap(),
+        )
+        .unwrap();
+        assert!(ready.tun_ready);
+        assert_eq!(
+            ready.digest,
+            meshway_protocol::dataplane_digest(old).unwrap()
+        );
+        let mut newer = old.clone();
+        newer.revision += 1;
+        newer.configuration.revision += 1;
+        newer.connections.revision += 1;
+        let replacement = PacketPlan::compile(&newer, 1000).unwrap();
+        assert_ne!(replacement.digest, generation.digest);
+        let withdrawn: Evidence = serde_json::from_str(
+            &proof_json("meshway0", &generation, false, "generation_withdrawn").unwrap(),
+        )
+        .unwrap();
+        assert!(!withdrawn.tun_ready);
+        assert_eq!(withdrawn.revision, ready.revision);
+        assert_eq!(withdrawn.digest, ready.digest);
+        let ready: Evidence = serde_json::from_str(
+            &proof_json("meshway0", &replacement, true, "generation_active").unwrap(),
+        )
+        .unwrap();
+        assert_eq!(ready.revision, newer.revision);
+        assert_eq!(
+            ready.digest,
+            meshway_protocol::dataplane_digest(&newer).unwrap()
+        );
+    }
+
+    #[test]
+    fn missing_per_interface_ipv6_sysctl_requires_verified_disabled_inheritance() {
+        let dir = tempfile::tempdir().unwrap();
+        let tree = dir.path().join("ipv6");
+        assert!(disable_ipv6(&tree, "meshway0").is_ok());
+        std::fs::create_dir_all(tree.join("conf/default")).unwrap();
+        assert!(disable_ipv6(&tree, "meshway0").is_err());
+        let default = tree.join("conf/default/disable_ipv6");
+        std::fs::write(&default, b"0\n").unwrap();
+        assert!(disable_ipv6(&tree, "meshway0").is_err());
+        std::fs::write(&default, b"1\n").unwrap();
+        assert!(disable_ipv6(&tree, "meshway0").is_ok());
+        std::fs::create_dir_all(tree.join("conf/meshway0")).unwrap();
+        let own = tree.join("conf/meshway0/disable_ipv6");
+        std::fs::write(&own, b"0\n").unwrap();
+        disable_ipv6(&tree, "meshway0").unwrap();
+        assert_eq!(std::fs::read_to_string(&own).unwrap(), "1\n");
+        std::fs::write(&own, b"unknown\n").unwrap();
+        assert!(
+            disable_ipv6(&tree, "meshway0").is_err(),
+            "default=1 cannot mask invalid own settings"
+        );
+        std::fs::remove_file(&own).unwrap();
+        std::fs::create_dir(&own).unwrap();
+        assert!(
+            disable_ipv6(&tree, "meshway0").is_err(),
+            "default=1 cannot mask non-ENOENT failures"
+        );
+    }
+}

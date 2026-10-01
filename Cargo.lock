@@ -1805,6 +1805,7 @@ dependencies = [
  "meshway-policy",
  "meshway-protocol",
  "meshway-transport-vless",
+ "rcgen",
  "reqwest",
  "reqwest-middleware",
  "rustix",

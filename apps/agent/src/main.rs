@@ -72,9 +72,19 @@ enum Command {
         #[cfg(feature = "managed-connections")]
         #[arg(long)]
         apply_connections: bool,
+        /// Apply coherent directional mesh IPv4 policy through an owned Linux TUN (also manages adjacencies).
+        #[cfg(feature = "managed-connections")]
+        #[arg(long)]
+        apply_dataplane: bool,
+        #[cfg(feature = "managed-connections")]
+        #[arg(long, default_value = "meshway0", requires = "apply_dataplane")]
+        tun_name: String,
+        #[cfg(feature = "managed-connections")]
+        #[arg(long, default_value_t = 1000, requires = "apply_dataplane", value_parser = clap::value_parser!(u16).range(576..=1400))]
+        tun_mtu: u16,
         /// Private local TLS/VLESS profiles, resolved by credential_ref.
         #[cfg(feature = "managed-connections")]
-        #[arg(long, requires = "apply_connections")]
+        #[arg(long)]
         connection_profiles: Option<PathBuf>,
         /// Config freshness deadline, independent of HTTP/report success.
         #[cfg(feature = "managed-connections")]
@@ -211,11 +221,32 @@ async fn execute(command: Command) -> Result<(), Box<dyn std::error::Error>> {
             #[cfg(feature = "managed-connections")]
             apply_connections,
             #[cfg(feature = "managed-connections")]
+            apply_dataplane,
+            #[cfg(feature = "managed-connections")]
+            tun_name,
+            #[cfg(feature = "managed-connections")]
+            tun_mtu,
+            #[cfg(feature = "managed-connections")]
             connection_profiles,
             #[cfg(feature = "managed-connections")]
             connection_lease_seconds,
         } => {
             let mut agent = Agent::load(state)?;
+            #[cfg(feature = "managed-connections")]
+            if apply_dataplane {
+                agent
+                    .run_managed_dataplane(
+                        connection_profiles,
+                        Duration::from_secs(interval_seconds),
+                        Duration::from_secs(connection_lease_seconds),
+                        meshway_agent::TunOptions {
+                            name: tun_name,
+                            mtu: tun_mtu,
+                        },
+                    )
+                    .await?;
+                return Ok(());
+            }
             #[cfg(feature = "managed-connections")]
             if apply_connections {
                 agent
@@ -226,6 +257,13 @@ async fn execute(command: Command) -> Result<(), Box<dyn std::error::Error>> {
                     )
                     .await?;
                 return Ok(());
+            }
+            #[cfg(feature = "managed-connections")]
+            if connection_profiles.is_some() {
+                return Err(
+                    "--connection-profiles requires --apply-connections or --apply-dataplane"
+                        .into(),
+                );
             }
             let mut backoff = 1_u64;
             loop {
@@ -262,4 +300,49 @@ async fn execute(command: Command) -> Result<(), Box<dyn std::error::Error>> {
         }
     }
     Ok(())
+}
+
+#[cfg(all(test, feature = "managed-connections"))]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn packet_application_is_explicit_and_adjacency_only_does_not_require_it() {
+        let cli = Cli::try_parse_from(["meshway-agent", "run", "--apply-connections"]).unwrap();
+        assert!(matches!(
+            cli.command,
+            Command::Run {
+                apply_connections: true,
+                apply_dataplane: false,
+                ..
+            }
+        ));
+        let cli = Cli::try_parse_from(["meshway-agent", "run", "--apply-dataplane"]).unwrap();
+        assert!(
+            matches!(cli.command, Command::Run { apply_dataplane: true, tun_mtu: 1000, ref tun_name, .. } if tun_name == "meshway0")
+        );
+        for args in [
+            vec!["meshway-agent", "run", "--tun-name", "meshway1"],
+            vec!["meshway-agent", "run", "--tun-mtu", "1000"],
+            vec![
+                "meshway-agent",
+                "run",
+                "--apply-dataplane",
+                "--tun-mtu",
+                "575",
+            ],
+        ] {
+            assert!(Cli::try_parse_from(args).is_err());
+        }
+        assert!(
+            Cli::try_parse_from([
+                "meshway-agent",
+                "run",
+                "--apply-dataplane",
+                "--tun-mtu",
+                "576"
+            ])
+            .is_ok()
+        );
+    }
 }

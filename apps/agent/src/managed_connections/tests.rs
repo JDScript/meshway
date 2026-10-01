@@ -8,7 +8,8 @@ use meshway_protocol::{
 // These tests deliberately release and rebind listeners during reconcile. Keep
 // their ports outside the usual auto-assigned client source-port range; otherwise
 // concurrent real TCP dial fixtures can acquire the just-released ephemeral port.
-fn listener_port(kind: ConnectionTransport) -> u16 {
+#[track_caller]
+pub(crate) fn listener_port(kind: ConnectionTransport) -> u16 {
     static NEXT: std::sync::LazyLock<std::sync::atomic::AtomicU16> =
         std::sync::LazyLock::new(|| {
             let mut bytes = [0; 2];
@@ -26,8 +27,79 @@ fn listener_port(kind: ConnectionTransport) -> u16 {
         {
             continue;
         }
+        let previous = allocated_ports().lock().unwrap().insert(
+            port,
+            format!(
+                "{} at {}",
+                std::thread::current().name().unwrap_or("unnamed"),
+                std::panic::Location::caller()
+            ),
+        );
+        assert!(
+            previous.is_none(),
+            "fixture port allocated twice: {port}, prior={previous:?}"
+        );
         return port;
     }
+}
+
+fn allocated_ports() -> &'static std::sync::Mutex<BTreeMap<u16, String>> {
+    static PORTS: std::sync::OnceLock<std::sync::Mutex<BTreeMap<u16, String>>> =
+        std::sync::OnceLock::new();
+    PORTS.get_or_init(Default::default)
+}
+
+/// Preserve the immediate post-shutdown assertion. Diagnostics are gathered only
+/// after the first bind has failed; there is no wait/retry that could hide a leak.
+async fn assert_udp_released(address: &str) {
+    let rebound = tokio::net::UdpSocket::bind(address).await;
+    if let Err(error) = rebound {
+        bind_failure(address, "UDP", error).await;
+    }
+}
+
+async fn assert_tcp_released(address: &str) {
+    let rebound = tokio::net::TcpListener::bind(address).await;
+    if let Err(error) = rebound {
+        bind_failure(address, "TCP", error).await;
+    }
+}
+
+async fn bind_failure(address: &str, protocol: &str, error: std::io::Error) -> ! {
+    let port = address.parse::<SocketAddr>().unwrap().port();
+    let allocation = allocated_ports().lock().unwrap().get(&port).cloned();
+    let pid = std::process::id().to_string();
+    eprintln!(
+        "immediate {protocol} rebind failure: address={address} kind={:?} errno={:?} error={error}; allocation={allocation:?}; own PID={pid}",
+        error.kind(),
+        error.raw_os_error()
+    );
+    // Inspect only this test process, and only after the assertion failed.
+    // `-a` intersects the PID and UDP-port selectors; no unrelated services.
+    let mut command = tokio::process::Command::new("/usr/sbin/lsof");
+    command
+        .args([
+            "-nP",
+            "-w",
+            "-b",
+            "-a",
+            "-p",
+            &pid,
+            &format!("-i{protocol}:{port}"),
+        ])
+        .kill_on_drop(true);
+    match time::timeout(Duration::from_secs(3), command.output()).await {
+        Ok(Ok(output)) => eprintln!(
+            "owned {protocol} bindings: {}\n{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        ),
+        other => eprintln!("owned {protocol} binding diagnostics unavailable: {other:?}"),
+    }
+    panic!(
+        "{protocol} listener {address} was not released by shutdown: {error} (errno {:?})",
+        error.raw_os_error()
+    );
 }
 
 pub(super) fn fixture(
@@ -173,19 +245,35 @@ async fn native_udp_tcp_full_ids_reverse_dial_and_control_only() {
         a.shutdown().await;
         b.shutdown().await;
         if kind == ConnectionTransport::NativeTcp {
-            assert!(
-                tokio::net::TcpListener::bind(&server.listeners[0].bind)
-                    .await
-                    .is_ok()
-            );
+            assert_tcp_released(&server.listeners[0].bind).await;
         } else {
-            assert!(
-                tokio::net::UdpSocket::bind(&server.listeners[0].bind)
-                    .await
-                    .is_ok()
-            );
+            assert_udp_released(&server.listeners[0].bind).await;
         }
     }
+}
+
+#[tokio::test]
+async fn closed_udp_socket_is_not_retained_by_parallel_tls_fixture_creation() {
+    // No Meshway Runtime participates: isolate OS descriptor lifetime from core
+    // shutdown while exercising the suite's real certificate helper in parallel.
+    let certificates = tokio::task::spawn_blocking(tls_profiles);
+    let address = format!(
+        "127.0.0.1:{}",
+        listener_port(ConnectionTransport::NativeUdp)
+    );
+    for _ in 0..5000 {
+        // Each successful assertion's socket is dropped before the next bind.
+        // Fail on the first unsuccessful bind; never retry a failed assertion.
+        assert_udp_released(&address).await;
+        tokio::task::yield_now().await;
+    }
+    let first = certificates.await.unwrap();
+    let second = tls_profiles();
+    assert_ne!(
+        std::fs::read(first.path().join("ca.pem")).unwrap(),
+        std::fs::read(second.path().join("ca.pem")).unwrap(),
+        "each fixture still needs a fresh CA for wrong-root authentication tests"
+    );
 }
 
 #[tokio::test]
@@ -419,11 +507,7 @@ async fn reconcile_revision_only_preserves_generation_invalid_and_lease_close_po
     );
     assert_eq!(manager.observation().state, Phase::Withdrawn);
     assert_eq!(manager.observation().reason, Reason::LeaseExpired);
-    assert!(
-        tokio::net::TcpListener::bind(&server.listeners[0].bind)
-            .await
-            .is_ok()
-    );
+    assert_tcp_released(&server.listeners[0].bind).await;
     manager
         .reconcile(snapshot(revised.clone()), key.clone(), Instant::now())
         .await;
@@ -431,11 +515,7 @@ async fn reconcile_revision_only_preserves_generation_invalid_and_lease_close_po
     revised.valid = false;
     manager.invalidate_if_changed(&snapshot(revised.clone()));
     time::sleep(Duration::from_millis(50)).await;
-    assert!(
-        tokio::net::TcpListener::bind(&server.listeners[0].bind)
-            .await
-            .is_ok()
-    );
+    assert_tcp_released(&server.listeners[0].bind).await;
     manager
         .reconcile(snapshot(revised), key, Instant::now())
         .await;
@@ -460,11 +540,7 @@ async fn missing_profile_withdraws_existing_plan_and_empty_plan_applies() {
     assert_eq!(manager.observation().state, Phase::Error);
     assert_eq!(manager.observation().reason, Reason::ProfileUnavailable);
     assert!(manager.observation().listeners.is_empty());
-    assert!(
-        tokio::net::TcpListener::bind(&server.listeners[0].bind)
-            .await
-            .is_ok()
-    );
+    assert_tcp_released(&server.listeners[0].bind).await;
     let mut empty = server;
     empty.listeners.clear();
     empty.incoming.clear();
@@ -494,14 +570,7 @@ async fn failed_dns_or_atomic_bind_withdraws_old_listeners() {
         .await;
     assert_eq!(manager.observation().state, Phase::Error);
     assert_eq!(manager.observation().reason, Reason::BindFailed);
-    let rebound = tokio::net::TcpListener::bind(&server.listeners[0].bind).await;
-    assert!(
-        rebound.is_ok(),
-        "failed rebind {}: {:?}",
-        server.listeners[0].bind,
-        rebound.as_ref().err()
-    );
-    drop(rebound);
+    assert_tcp_released(&server.listeners[0].bind).await;
     manager
         .reconcile(snapshot(server.clone()), key.clone(), Instant::now())
         .await;
@@ -524,79 +593,51 @@ async fn failed_dns_or_atomic_bind_withdraws_old_listeners() {
     assert_eq!(manager.observation().state, Phase::Error);
     assert_eq!(manager.observation().reason, Reason::ResolveFailed);
     assert!(manager.observation().listeners.is_empty());
-    assert!(
-        tokio::net::TcpListener::bind(&server.listeners[0].bind)
-            .await
-            .is_ok()
-    );
+    assert_tcp_released(&server.listeners[0].bind).await;
 }
 
 #[cfg(unix)]
 pub(super) fn tls_profiles() -> tempfile::TempDir {
-    use std::{os::unix::fs::PermissionsExt, process::Command};
-    let dir = tempfile::tempdir().unwrap();
-    let run = |args: &[&str]| {
-        let result = Command::new("openssl")
-            .args(args)
-            .current_dir(dir.path())
-            .output()
-            .unwrap();
-        assert!(result.status.success(), "openssl fixture generation failed");
+    use rcgen::{
+        BasicConstraints, CertificateParams, DnType, ExtendedKeyUsagePurpose, IsCa, Issuer,
+        KeyPair, KeyUsagePurpose,
     };
-    run(&[
-        "req",
-        "-x509",
-        "-newkey",
-        "rsa:2048",
-        "-nodes",
-        "-keyout",
-        "ca-key.pem",
-        "-out",
-        "ca.pem",
-        "-days",
-        "1",
-        "-subj",
-        "/CN=Meshway test CA",
-        "-addext",
-        "basicConstraints=critical,CA:TRUE",
-    ]);
-    run(&[
-        "req",
-        "-newkey",
-        "rsa:2048",
-        "-nodes",
-        "-keyout",
-        "key.pem",
-        "-out",
-        "server.csr",
-        "-subj",
-        "/CN=lax.mesh.test",
-    ]);
-    std::fs::write(dir.path().join("extensions"), "subjectAltName=DNS:lax.mesh.test\nbasicConstraints=critical,CA:FALSE\nkeyUsage=digitalSignature,keyEncipherment\nextendedKeyUsage=serverAuth\n").unwrap();
-    run(&[
-        "x509",
-        "-req",
-        "-in",
-        "server.csr",
-        "-CA",
-        "ca.pem",
-        "-CAkey",
-        "ca-key.pem",
-        "-CAcreateserial",
-        "-out",
-        "cert.pem",
-        "-days",
-        "1",
-        "-extfile",
-        "extensions",
-    ]);
-    for file in ["key.pem", "ca-key.pem"] {
-        std::fs::set_permissions(
-            dir.path().join(file),
-            std::fs::Permissions::from_mode(0o600),
-        )
-        .unwrap();
-    }
+    let dir = tempfile::tempdir().unwrap();
+    // Do not fork/posix_spawn from the parallel socket test process. On macOS,
+    // spawn temporarily retains references to even CLOEXEC sockets until exec
+    // closes them, making immediate post-close bind fail with EADDRINUSE. This
+    // in-process fixture preserves unique CAs and keys without serializing tests.
+    let mut ca_params = CertificateParams::new(Vec::<String>::new()).unwrap();
+    ca_params.is_ca = IsCa::Ca(BasicConstraints::Unconstrained);
+    ca_params.key_usages = vec![KeyUsagePurpose::KeyCertSign, KeyUsagePurpose::CrlSign];
+    ca_params
+        .distinguished_name
+        .push(DnType::CommonName, "Meshway test CA");
+    let ca_key = KeyPair::generate().unwrap();
+    let ca = ca_params.self_signed(&ca_key).unwrap();
+    meshway_protocol::local::atomic_write(
+        &dir.path().join("ca-key.pem"),
+        ca_key.serialize_pem().as_bytes(),
+        false,
+    )
+    .unwrap();
+    let issuer = Issuer::new(ca_params, ca_key);
+    let mut leaf_params = CertificateParams::new(vec!["lax.mesh.test".into()]).unwrap();
+    leaf_params
+        .distinguished_name
+        .push(DnType::CommonName, "lax.mesh.test");
+    leaf_params.key_usages = vec![KeyUsagePurpose::DigitalSignature];
+    leaf_params.extended_key_usages = vec![ExtendedKeyUsagePurpose::ServerAuth];
+    let key = KeyPair::generate().unwrap();
+    let leaf = leaf_params.signed_by(&key, &issuer).unwrap();
+    std::fs::write(dir.path().join("ca.pem"), ca.pem()).unwrap();
+    std::fs::write(dir.path().join("cert.pem"), leaf.pem()).unwrap();
+    meshway_protocol::local::atomic_write(
+        &dir.path().join("key.pem"),
+        key.serialize_pem().as_bytes(),
+        false,
+    )
+    .unwrap();
     let value = serde_json::json!({"version":1,"profiles":[
         {"id":"server","role":"server","uuid":"11111111-1111-4111-8111-111111111111","certificate":"cert.pem","private_key":"key.pem"},
         {"id":"client","role":"client","uuid":"11111111-1111-4111-8111-111111111111","ca_certificate":"ca.pem","server_name":"lax.mesh.test"}

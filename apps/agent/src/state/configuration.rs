@@ -37,7 +37,7 @@ pub struct SyncReceipt {
     pub policy_valid: bool,
 }
 
-fn cache_path(path: &Path) -> PathBuf {
+pub(super) fn cache_path(path: &Path) -> PathBuf {
     let mut value = path.as_os_str().to_owned();
     value.push(".config.json");
     PathBuf::from(value)
@@ -67,7 +67,7 @@ pub(super) fn load(path: &Path, identity: &Identity) -> Result<Option<Cache>, Ag
     Ok(Some(cache))
 }
 
-fn validate(
+pub(super) fn validate(
     snapshot: &ConfigurationSnapshot,
     identity: &Identity,
     previous: Option<&Cache>,
@@ -251,7 +251,10 @@ impl Agent {
         })
     }
 
-    fn persist_configuration(&mut self, snapshot: ConfigurationSnapshot) -> Result<(), AgentError> {
+    pub(super) fn persist_configuration(
+        &mut self,
+        snapshot: ConfigurationSnapshot,
+    ) -> Result<(), AgentError> {
         if Identity::load(&self.path)? != self.identity {
             return Err(AgentError::Invalid(
                 "identity changed during configuration sync",

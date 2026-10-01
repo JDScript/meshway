@@ -1,4 +1,5 @@
-//! Explicitly enabled adjacency application. Never installs packet/path grants.
+//! Explicitly enabled adjacency application. Packet grants require a separately
+//! validated coherent bundle and the managed-dataplane opt-in.
 
 use std::{
     collections::{BTreeMap, BTreeSet},
@@ -21,16 +22,30 @@ use tokio::{
     time::{self, Instant},
 };
 
+use crate::{
+    AgentError,
+    managed_dataplane::{PacketPlan, TunOptions, tun::Tun},
+};
+
 #[cfg(unix)]
 mod probe;
 mod profiles;
 mod session;
 #[cfg(unix)]
 pub(crate) use probe::Prober;
+#[cfg(test)]
+mod packet_tests;
 #[cfg(all(test, unix))]
 mod probe_tests;
 #[cfg(test)]
-mod tests;
+pub(crate) mod tests;
+
+#[cfg(test)]
+impl Manager {
+    pub(crate) fn mock_tun(&mut self, tun: Tun) {
+        self.tun = Some(tun);
+    }
+}
 
 #[derive(Clone, Copy)]
 struct Failure(Reason);
@@ -55,6 +70,8 @@ impl Observation {
 }
 
 struct Running {
+    /// Revision actually installed in this generation, independent of saved ACKs.
+    revision: u32,
     deadline: watch::Sender<Option<Instant>>,
     observed: watch::Receiver<Observation>,
     task: JoinHandle<()>,
@@ -122,8 +139,17 @@ pub(crate) struct Manager {
     material: Option<Material>,
     observation: Observation,
     pub snapshot: Option<AgentConnectionsSnapshot>,
+    dataplane: Option<DataplaneSettings>,
+    packet_digest: Option<String>,
+    tun: Option<Tun>,
     #[cfg(unix)]
     probes: probe::Publisher,
+}
+
+struct DataplaneSettings {
+    options: TunOptions,
+    controller: String,
+    may_reuse_guard: bool,
 }
 
 #[derive(PartialEq, Eq)]
@@ -142,9 +168,165 @@ impl Manager {
             material: None,
             observation: Observation::empty(Phase::Withdrawn, Reason::None),
             snapshot: None,
+            dataplane: None,
+            packet_digest: None,
+            tun: None,
             #[cfg(unix)]
             probes: probe::Publisher::new(),
         }
+    }
+
+    pub fn new_dataplane(
+        profiles: Option<PathBuf>,
+        lease: Duration,
+        options: TunOptions,
+        controller: String,
+        may_reuse_guard: bool,
+    ) -> Self {
+        let mut manager = Self::new(profiles, lease);
+        manager.dataplane = Some(DataplaneSettings {
+            options,
+            controller,
+            may_reuse_guard,
+        });
+        manager
+    }
+
+    /// Complete generation teardown immediately after validation, before disk
+    /// persistence or any further HTTP request can stall. Runtime shutdown also
+    /// destroys all established endpoint sessions and queued plaintext delivery.
+    pub async fn invalidate_dataplane(
+        &mut self,
+        snapshot: &meshway_protocol::AgentDataplaneSnapshot,
+    ) {
+        if self.packet_digest.as_ref() != Some(&snapshot.digest)
+            || !snapshot.payload.access_valid
+            || !snapshot.payload.configuration.policy_valid
+            || !snapshot.payload.connections.valid
+        {
+            self.withdraw(Reason::InvalidConfiguration).await;
+        }
+    }
+
+    /// A validated publication can prove this generation stale before the next
+    /// coherent GET completes. It never renews a lease or relies on disk receipts.
+    pub async fn invalidate_dataplane_revision(&mut self, revision: u32) {
+        if self
+            .running
+            .as_ref()
+            .is_some_and(|running| revision > running.revision)
+        {
+            self.withdraw(Reason::InvalidConfiguration).await;
+        }
+    }
+
+    pub async fn reconcile_dataplane(
+        &mut self,
+        snapshot: meshway_protocol::AgentDataplaneSnapshot,
+        key: PrivateKey,
+        fresh_at: Instant,
+    ) -> Result<(), AgentError> {
+        self.invalidate_dataplane(&snapshot).await;
+        self.prepare_dataplane_sink(&snapshot).await?;
+        self.packet_digest = Some(snapshot.digest);
+        let payload = snapshot.payload;
+        let connections = AgentConnectionsSnapshot {
+            digest: meshway_protocol::connection_digest(&payload.connections)
+                .map_err(|_| AgentError::Invalid("cannot hash coherent adjacency projection"))?,
+            payload: payload.connections.clone(),
+        };
+        if !payload.access_valid
+            || !payload.configuration.policy_valid
+            || !payload.connections.valid
+        {
+            self.snapshot = Some(connections);
+            self.withdraw(Reason::InvalidConfiguration).await;
+            self.observation.state = Phase::Error;
+            return Ok(());
+        }
+        let options = &self
+            .dataplane
+            .as_ref()
+            .ok_or(AgentError::Invalid("dataplane was not explicitly enabled"))?
+            .options;
+        let plan = PacketPlan::compile(&payload, options.mtu)?;
+        self.reconcile_inner(connections, key, fresh_at, Some(plan))
+            .await
+    }
+
+    /// Install the drop sink before saved ACK HTTP waits, even when a structurally
+    /// valid bundle publishes invalid/withdrawn source intent. It authorizes no I/O.
+    pub async fn prepare_dataplane_sink(
+        &mut self,
+        snapshot: &meshway_protocol::AgentDataplaneSnapshot,
+    ) -> Result<(), AgentError> {
+        let result = self.prepare_dataplane_sink_inner(snapshot).await;
+        if let Err(error) = &result {
+            let reason = if matches!(error, AgentError::DataplaneResolveFailed) {
+                Reason::ResolveFailed
+            } else {
+                Reason::InvalidConfiguration
+            };
+            // Preparation never authorizes renewal. Retain the owned route sink,
+            // but close all old channels/packet tasks before returning to retry.
+            self.withdraw(reason).await;
+        }
+        result
+    }
+
+    async fn prepare_dataplane_sink_inner(
+        &mut self,
+        snapshot: &meshway_protocol::AgentDataplaneSnapshot,
+    ) -> Result<(), AgentError> {
+        let settings = self
+            .dataplane
+            .as_ref()
+            .ok_or(AgentError::Invalid("dataplane was not explicitly enabled"))?;
+        let plan = PacketPlan::sink(&snapshot.payload, settings.options.mtu)?;
+        for listener in &snapshot.payload.connections.listeners {
+            let address: SocketAddr = listener
+                .bind
+                .parse()
+                .map_err(|_| AgentError::Invalid("invalid transport listener"))?;
+            if crate::managed_dataplane::in_prefix(address.ip(), plan.prefix) {
+                return Err(AgentError::Invalid(
+                    "transport listener overlaps mesh IPv4 pool",
+                ));
+            }
+        }
+        if self.tun.as_ref().is_some_and(|tun| !tun.matches(&plan)) {
+            return Err(AgentError::Invalid("managed TUN binding changed"));
+        }
+        let targets = match time::timeout(
+            Duration::from_secs(5),
+            resolve_targets(&snapshot.payload.connections),
+        )
+        .await
+        {
+            Ok(Ok(targets)) => targets,
+            Ok(Err(Failure(Reason::ResolveFailed))) | Err(_) => {
+                return Err(AgentError::DataplaneResolveFailed);
+            }
+            Ok(Err(_)) => {
+                return Err(AgentError::Invalid(
+                    "invalid transport endpoint preparation",
+                ));
+            }
+        };
+        plan.check_targets(&targets)?;
+        if self.tun.is_some() {
+            return Ok(());
+        }
+        self.tun = Some(
+            Tun::open(
+                &settings.options,
+                &plan,
+                &settings.controller,
+                settings.may_reuse_guard,
+            )
+            .await?,
+        );
+        Ok(())
     }
 
     pub fn observation(&self) -> Observation {
@@ -212,10 +394,26 @@ impl Manager {
         key: PrivateKey,
         fresh_at: Instant,
     ) {
+        // This entry point always has allowed_paths=[], even in feature builds.
+        let _ = self.reconcile_inner(snapshot, key, fresh_at, None).await;
+    }
+
+    async fn reconcile_inner(
+        &mut self,
+        snapshot: AgentConnectionsSnapshot,
+        key: PrivateKey,
+        fresh_at: Instant,
+        packet: Option<PacketPlan>,
+    ) -> Result<(), AgentError> {
         let deadline = fresh_at + self.lease;
+        let revision = snapshot.payload.revision;
         let mut semantic = snapshot.payload.clone();
         semantic.revision = 0;
         self.snapshot = Some(snapshot);
+        if deadline <= Instant::now() {
+            self.withdraw(Reason::LeaseExpired).await;
+            return Ok(());
+        }
         if self.semantic.as_ref() != Some(&semantic) {
             self.withdraw(Reason::None).await;
             self.semantic = Some(semantic.clone());
@@ -223,13 +421,7 @@ impl Manager {
         if !semantic.valid {
             self.withdraw(Reason::InvalidConfiguration).await;
             self.observation.state = Phase::Error;
-            return;
-        }
-        if let Some(running) = &self.running {
-            // Renewal cannot revive an already-expired generation.
-            if running.active() {
-                let _ = running.deadline.send(Some(deadline));
-            }
+            return Ok(());
         }
         let prepared = time::timeout_at(
             deadline.min(Instant::now() + Duration::from_secs(5)),
@@ -252,34 +444,94 @@ impl Manager {
             Err(Failure(reason)) => {
                 self.withdraw(reason).await;
                 self.observation.state = Phase::Error;
-                return;
+                return Ok(());
             }
         };
         let material = Material {
             profiles: profiles.fingerprint,
             targets: targets.clone(),
         };
+        if let Some(plan) = &packet
+            && let Err(error) = plan.check_targets(&targets)
+        {
+            self.withdraw(Reason::InvalidConfiguration).await;
+            return Err(error);
+        }
         if self.material.as_ref() == Some(&material)
             && self.running.as_ref().is_some_and(Running::active)
         {
-            return;
+            // Only completed, safe preparation may renew. An already-expired
+            // generation cannot be revived by publication or a DNS retry.
+            let _ = self
+                .running
+                .as_ref()
+                .expect("active generation")
+                .deadline
+                .send(Some(deadline));
+            return Ok(());
         }
         self.withdraw(Reason::None).await;
+        if let Some(plan) = &packet {
+            if self.tun.as_ref().is_some_and(|tun| !tun.matches(plan)) {
+                return Err(AgentError::Invalid(
+                    "managed TUN address, prefix or MTU changed",
+                ));
+            }
+            if self.tun.is_none() {
+                let settings = self.dataplane.as_ref().expect("explicit dataplane options");
+                self.tun = Some(
+                    Tun::open(
+                        &settings.options,
+                        plan,
+                        &settings.controller,
+                        settings.may_reuse_guard,
+                    )
+                    .await?,
+                );
+            }
+            // Flush the bounded kernel queue while no generation owns the fd.
+            self.tun.as_ref().expect("configured TUN").device.drain()?;
+        }
+        if deadline <= Instant::now() {
+            self.withdraw(Reason::LeaseExpired).await;
+            return Ok(());
+        }
         let result = time::timeout_at(
             deadline,
-            session::Session::start(&semantic, key, profiles, &targets),
+            session::Session::start_with_packet(
+                &semantic,
+                key,
+                profiles,
+                &targets,
+                packet.as_ref(),
+            ),
         )
         .await;
         match result {
-            Ok(Ok(session)) => {
+            Ok(Ok(mut session)) => {
+                if deadline <= Instant::now() {
+                    session.shutdown().await;
+                    self.observation = Observation::empty(Phase::Withdrawn, Reason::LeaseExpired);
+                    return Ok(());
+                }
                 let initial = session.initial_observation(&semantic);
                 let (observations, observed) = watch::channel(initial);
                 let (renew, deadlines) = watch::channel(Some(deadline));
                 #[cfg(unix)]
                 self.probes
                     .publish(&session.runtime, &semantic, &renew, &observed);
-                let task = tokio::spawn(session.run(semantic, deadlines, observations));
+                let packet_io = packet.map(|plan| {
+                    let tun = self.tun.as_ref().expect("configured TUN");
+                    (tun.device.clone(), tun.name.clone(), plan)
+                });
+                let task = tokio::spawn(session.run_with_packet(
+                    semantic,
+                    deadlines,
+                    observations,
+                    packet_io,
+                ));
                 self.running = Some(Running {
+                    revision,
                     deadline: renew,
                     observed,
                     task,
@@ -294,6 +546,7 @@ impl Manager {
                 self.observation = Observation::empty(Phase::Error, reason);
             }
         }
+        Ok(())
     }
 }
 
