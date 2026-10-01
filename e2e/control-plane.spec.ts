@@ -3,7 +3,7 @@ import { mkdtemp, readFile, rm, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { listNodes } from "./network-client.ts";
-import { executable, root, run, service, unusedPort } from "./harness.ts";
+import { executable, root, run, service, unusedPort, consoleAt, expectNoOverflow } from "./harness.ts";
 
 test("administrator session, enrollment, durable identity and revocation cross the real stack", async ({ page, browser }) => {
   const browserErrors: string[] = [];
@@ -36,9 +36,10 @@ test("administrator session, enrollment, durable identity and revocation cross t
       NEXT_TELEMETRY_DISABLED: "1",
     });
     await web.ready(`${webUrl}/login`, 200);
+    const ui = await consoleAt(webUrl, controllerUrl, adminToken);
 
     await test.step("anonymous reads and incorrect credentials cannot establish an admin session", async () => {
-      await page.goto(`${webUrl}/nodes`);
+      await page.goto(`${ui.at("/machines")}`);
       await expect(page).toHaveURL(/\/login(?:\?|$)/);
       await page.getByLabel("管理员令牌", { exact: true }).fill("not-an-administrator-token");
       await Promise.all([
@@ -66,16 +67,21 @@ test("administrator session, enrollment, durable identity and revocation cross t
         expect(cookie.expires).toBeGreaterThan(Date.now() / 1000);
         expect(cookie.expires).toBeLessThan(Date.now() / 1000 + 9 * 3600);
       }
+      // Pre-network URLs land in the network; unknown networks are a 404, never another network.
+      await page.goto(`${webUrl}/nodes?q=edge`);
+      await expect(page).toHaveURL(`${ui.at("/machines")}?q=edge`);
+      expect((await page.goto(`${webUrl}/${"0".repeat(32)}/machines`))?.status()).toBe(404);
+      expect((await page.goto(`${webUrl}/not-a-network/machines`))?.status()).toBe(404);
     });
 
     let enrollmentToken = "";
     let enrollmentArguments: string[] = [];
     await test.step("mint a token and reject an anonymous replay of the same server action", async () => {
-      await page.goto(`${webUrl}/enrollment`);
+      await page.goto(`${ui.at("/machines/add")}`);
       const mutation = page.waitForRequest((request) =>
-        request.method() === "POST" && new URL(request.url()).pathname === "/enrollment",
+        request.method() === "POST" && new URL(request.url()).pathname === ui.path("/machines/add"),
       );
-      await page.getByRole("button", { name: "创建注册令牌", exact: true }).click();
+      await page.getByRole("button", { name: "生成接入令牌", exact: true }).click();
       const request = await mutation;
       const token = page.getByTestId("enrollment-token");
       await expect(token).toBeVisible();
@@ -129,7 +135,7 @@ test("administrator session, enrollment, durable identity and revocation cross t
       expect(node.name).toBe(nodeName);
       expect(node.revoked_at).toBeNull();
       if (process.platform !== "win32") expect((await stat(agentState)).mode & 0o777).toBe(0o600);
-      await page.goto(`${webUrl}/nodes`);
+      await page.goto(`${ui.at("/machines")}`);
       await expect(page.getByRole("row").filter({ hasText: nodeName })).toBeVisible();
       expect(await page.content()).not.toContain(adminToken);
     });
@@ -142,7 +148,7 @@ test("administrator session, enrollment, durable identity and revocation cross t
       await controller.ready(`${controllerUrl}/api/v1/overview`, 401);
       await run(executable("meshway-agent"), ["heartbeat", "--state", agentState], { timeout: 15_000 });
       expect((await listNodes(controllerUrl, adminToken)).nodes.map((node) => node.id)).toEqual([nodeId]);
-      await page.goto(`${webUrl}/nodes`);
+      await page.goto(`${ui.at("/machines")}`);
       await expect(page.getByRole("row").filter({ hasText: nodeName })).toBeVisible();
     });
 
@@ -158,12 +164,11 @@ test("administrator session, enrollment, durable identity and revocation cross t
       await expect(run(executable("meshway-agent"), ["heartbeat", "--state", agentState], { timeout: 15_000 }))
         .rejects.toThrow(/401|403|revoked|forbidden|unauthorized/i);
       await page.setViewportSize({ width: 390, height: 844 });
-      expect(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth)).toBe(false);
-      await page.getByRole("button", { name: "切换侧边栏", exact: true }).click();
+      await expectNoOverflow(page);
       await page.getByRole("button", { name: "账户菜单", exact: true }).click();
       await page.getByRole("menuitem", { name: "退出登录", exact: true }).click();
       await expect(page).toHaveURL(/\/login(?:\?|$)/);
-      await page.goto(`${webUrl}/nodes`);
+      await page.goto(`${ui.at("/machines")}`);
       await expect(page).toHaveURL(/\/login(?:\?|$)/);
       expect(browserErrors).toEqual([]);
     });

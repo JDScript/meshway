@@ -5,7 +5,7 @@ import { join } from "node:path";
 
 import { createEnrollmentToken, getConnections, getMeshAccess, listNodes, saveConnections, setNodeCountry } from "./network-client.ts";
 import { beginConnectionRuntimeOperation, getAgentConnectionsOperation, reportConnectionRuntimeOperation, reportEndpointDiscoveryOperation } from "../packages/control-client/src/generated/operations.gen.ts";
-import { executable, root, run, service, unusedPort } from "./harness.ts";
+import { consoleAt, contentAlignment, executable, root, run, service, unusedPort } from "./harness.ts";
 
 async function toggleByKeyboard(page: Page, title: string) {
   const summary = page.locator("summary").filter({ hasText: new RegExp(`^${title}$`) });
@@ -60,13 +60,14 @@ test("console task surfaces preserve disclosures, expired copy eligibility, deep
       ...process.env, MESHWAY_CONTROLLER_URL: base, MESHWAY_WEB_COOKIE_SECURE: "auto", NEXT_TELEMETRY_DISABLED: "1",
     });
     await web.ready(`${webUrl}/login`, 200);
+    const ui = await consoleAt(webUrl, base, admin);
     await page.goto(`${webUrl}/login`);
     await page.getByLabel("管理员令牌", { exact: true }).fill(admin);
     await page.getByRole("button", { name: "登录", exact: true }).click();
-    await expect.poll(() => new URL(page.url()).pathname).toBe("/");
+    await expect.poll(() => new URL(page.url()).pathname).toBe(ui.path());
 
-    await page.goto(`${webUrl}/connections?node=${node.id}`);
-    await expect(page).toHaveURL(new RegExp(`/nodes/${node.id}\\?tab=connections$`));
+    await page.goto(`${ui.at("/connections")}?node=${node.id}`);
+    await expect(page).toHaveURL(new RegExp(`${ui.path("/machines")}/${node.id}\\?tab=connections$`));
     await expect(page.getByTestId("connection-runtime")).toContainText("连接配置已应用");
     await expect(page.getByTestId("connections-editor")).toBeHidden();
     await expect(page.getByTestId("endpoint-discovery")).toBeHidden();
@@ -96,34 +97,29 @@ test("console task surfaces preserve disclosures, expired copy eligibility, deep
       epoch: lease.epoch, sequence: 2, revision: config.payload.revision, digest: config.digest,
       state: "error", reason: "bind_failed", listeners: [], peers: [],
     });
-    await page.goto(`${webUrl}/nodes/${node.id}?tab=connections`);
+    await page.goto(`${ui.at("/machines")}/${node.id}?tab=connections`);
     await expect(page.getByTestId("connection-runtime")).toContainText("本机监听失败");
     await expect(page.getByText("检查监听地址属于本节点、端口未被占用", { exact: false })).toBeVisible();
 
     for (const width of [1440, 390]) {
       await page.setViewportSize({ width, height: 900 });
-      for (const path of ["/", "/nodes", `/nodes/${node.id}?tab=connections`, "/network", "/access", "/routing", "/connections", "/topology", "/monitoring"]) {
-        await page.goto(`${webUrl}${path}`);
+      for (const path of ["", "/machines", `/machines/${node.id}?tab=connections`, "/machines/add", "/settings", "/dns", "/access", "/routing", "/tags", "/connections", "/topology", "/diagnostics"]) {
+        await page.goto(ui.at(path));
         await expect(page.locator('[data-slot="page-body"]')).toBeVisible();
-        expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
-        const gutters = await page.locator('[data-slot="page-body"]').evaluate(body => {
-          const inset = body.closest('[data-slot="sidebar-inset"]');
-          if (!inset) throw new Error("Missing shell inset");
-          const content = body.firstElementChild;
-          if (!content) throw new Error("Missing page content");
-          const a = content.getBoundingClientRect(); const b = inset.getBoundingClientRect();
-          return [a.left - b.left, b.right - a.right];
-        });
-        expect(gutters).toEqual(width === 390 ? [16, 16] : [24, 24]);
-        if (process.env.MESHWAY_PRODUCT_SCREENSHOTS && (path === "/" || path.startsWith("/nodes/"))) {
-          await page.screenshot({ path: test.info().outputPath(`product-${width}-${path === "/" ? "overview" : "node"}.png`), fullPage: true });
+        // The page column lines up with the shell header and never scrolls sideways.
+        const alignment = await contentAlignment(page);
+        expect(alignment).toEqual({ left: 0, right: 0, gutter: width === 390 ? 16 : (width - 1216) / 2 + 32, overflow: false });
+        if (process.env.MESHWAY_PRODUCT_SCREENSHOTS && (path === "" || path.startsWith("/machines/"))) {
+          await page.screenshot({ path: test.info().outputPath(`product-${width}-${path === "" ? "overview" : "node"}.png`), fullPage: true });
         }
       }
     }
+    // The old settings URL and its DNS fragment still land on the DNS diagnostics.
     await page.goto(`${webUrl}/network#dns-diagnostics`);
+    await expect(page).toHaveURL(`${ui.at("/dns")}#dns-diagnostics`);
     await expect(page.getByTestId("network-dns-saved-context")).toBeVisible();
     await page.setViewportSize({ width: 1440, height: 900 });
-    await page.goto(`${webUrl}/nodes/${node.id}?tab=connections`);
+    await page.goto(`${ui.at("/machines")}/${node.id}?tab=connections`);
     await toggleByKeyboard(page, "高级手工连接配置");
     await page.getByRole("button", { name: "编辑监听器 product-udp", exact: true }).click();
     const listenerSheet = page.getByRole("dialog");
@@ -133,16 +129,18 @@ test("console task surfaces preserve disclosures, expired copy eligibility, deep
     // Clearing dirty work must not fold the successful save feedback away.
     await expect(page.getByTestId("connections-save-status")).toBeVisible();
     await expect(page.getByTestId("connections-save-status")).toContainText("已保存");
-    await page.goto(`${webUrl}/access`);
+    await page.goto(`${ui.at("/access")}`);
     const baseRevision = await page.getByTestId("access-base-revision").textContent();
     await page.getByRole("button", { name: "JSONC", exact: true }).click();
     const editor = page.getByRole("textbox", { name: "访问授权 JSONC", exact: true });
     const invalid = '// product draft comment\n{ "rules": [';
     await editor.fill(invalid);
     await expect(page.getByRole("list", { name: "JSONC 问题" })).toBeVisible();
-    await page.getByRole("link", { name: "网络拓扑", exact: true }).first().click();
+    await page.getByRole("link", { name: "诊断", exact: true }).first().click();
+    await page.getByRole("link", { name: "拓扑与流量检查", exact: true }).click();
     await expect(page).toHaveURL(/\/topology/);
-    await page.getByRole("link", { name: "访问授权", exact: true }).first().click();
+    await page.getByRole("link", { name: /^访问控制/ }).first().click();
+    await expect(page).toHaveURL(ui.at("/access"));
     await expect(page.getByRole("textbox", { name: "访问授权 JSONC", exact: true }).locator(".cm-line")).toHaveText(invalid.split("\n"));
     await expect(page.getByTestId("access-base-revision")).toHaveText(baseRevision ?? "");
     const savedAccess = await getMeshAccess(base, admin);
@@ -152,7 +150,7 @@ test("console task surfaces preserve disclosures, expired copy eligibility, deep
     await expect(page.getByTestId("access-save-status")).toContainText("冲突");
     await expect(page.getByTestId("access-base-revision")).toHaveText(baseRevision ?? "");
     await expect(page.getByRole("textbox", { name: "访问授权 JSONC", exact: true })).toContainText("competing product draft");
-    await page.goto(`${webUrl}/monitoring?source=${node.id}#netcheck`);
+    await page.goto(`${ui.at("/diagnostics")}?source=${node.id}#netcheck`);
     await controller.stop();
     await page.getByRole("button", { name: "刷新观测", exact: true }).click();
     const failure = page.getByTestId("endpoint-discovery").getByRole("alert");

@@ -7,7 +7,7 @@ import {
   createEnrollmentToken, getMeshAccess, getPolicy, getTags, listNodes,
   previewFlow, revokeNode, savePolicy, setNodeCountry,
 } from "./network-client.ts";
-import { executable, root, run, service, unusedPort } from "./harness.ts";
+import { consoleAt, executable, root, run, service, unusedPort, expectNoOverflow } from "./harness.ts";
 
 test("tagged endpoint access, JSONC drafts, first-match and CAS cross the real stack", async ({ page, browser }) => {
   const temporary = await mkdtemp(join(process.env.MESHWAY_E2E_TMPDIR ?? tmpdir(), "meshway-access-v2-e2e-"));
@@ -36,13 +36,14 @@ test("tagged endpoint access, JSONC drafts, first-match and CAS cross the real s
       ...process.env, MESHWAY_CONTROLLER_URL: base, MESHWAY_WEB_COOKIE_SECURE: "auto", NEXT_TELEMETRY_DISABLED: "1",
     });
     await web.ready(`${webUrl}/login`, 200);
-    await page.goto(`${webUrl}/access`); await expect(page).toHaveURL(/\/login(?:\?|$)/);
+    const ui = await consoleAt(webUrl, base, admin);
+    await page.goto(ui.at("/access")); await expect(page).toHaveURL(/\/login(?:\?|$)/);
     await page.getByLabel("管理员令牌", { exact: true }).fill(admin);
     await page.getByRole("button", { name: "登录", exact: true }).click();
     await expect(page).not.toHaveURL(/\/login(?:\?|$)/);
 
     await test.step("create tags and assign members without public-key prerequisites", async () => {
-      await page.goto(`${webUrl}/tags`);
+      await page.goto(ui.at("/tags"));
       for (const tag of ["client", "server"]) {
         await page.getByTestId("tag-new-name").fill(tag);
         await page.getByTestId("tag-add").click();
@@ -65,7 +66,7 @@ test("tagged endpoint access, JSONC drafts, first-match and CAS cross the real s
     });
 
     await test.step("one visual bidirectional rule saves endpoint selectors, not paths", async () => {
-      await page.goto(`${webUrl}/access`);
+      await page.goto(ui.at("/access"));
       await page.getByTestId("access-add-rule").click();
       const builder = page.getByTestId("access-rule-builder");
       await builder.getByTestId("access-rule-source").getByRole("checkbox", { name: /^client/ }).check();
@@ -78,7 +79,7 @@ test("tagged endpoint access, JSONC drafts, first-match and CAS cross the real s
       await builder.getByTestId("access-rule-apply").click();
       await expect(builder).not.toBeVisible();
       expect((await getMeshAccess(base, admin)).policy.rules).toHaveLength(0);
-      const mutation = page.waitForRequest(request => request.method() === "POST" && new URL(request.url()).pathname === "/access");
+      const mutation = page.waitForRequest(request => request.method() === "POST" && new URL(request.url()).pathname === ui.path("/access"));
       await page.getByTestId("access-save").click(); const request = await mutation;
       await expect(page.getByTestId("access-save-status")).toContainText("已保存");
       const saved = await getMeshAccess(base, admin);
@@ -107,9 +108,9 @@ test("tagged endpoint access, JSONC drafts, first-match and CAS cross the real s
       await page.getByRole("button", { name: "规则", exact: true }).click();
       await expect(page.getByTestId("access-text-invalid")).toBeVisible();
       await expect(page.getByTestId("access-save")).toBeDisabled();
-      await page.getByRole("link", { name: "网络拓扑", exact: true }).first().click();
-      await expect(page).toHaveURL(`${webUrl}/topology`); await page.goBack();
-      await expect(page).toHaveURL(`${webUrl}/access`);
+      await page.getByRole("link", { name: "诊断", exact: true }).first().click();
+      await expect(page).toHaveURL(ui.at("/diagnostics")); await page.goBack();
+      await expect(page).toHaveURL(ui.at("/access"));
       await expect(page.getByTestId("access-text-invalid")).toBeVisible();
       await page.getByRole("button", { name: "JSONC", exact: true }).click();
       await expect(editor).toContainText("endpoint policy comment");
@@ -130,7 +131,7 @@ test("tagged endpoint access, JSONC drafts, first-match and CAS cross the real s
     });
 
     await test.step("routing JSONC is persisted with its own graphical draft", async () => {
-      await page.goto(`${webUrl}/routing`);
+      await page.goto(ui.at("/routing"));
       await page.getByRole("button", { name: "JSONC", exact: true }).click();
       const editor = page.getByRole("textbox", { name: "路由策略 JSONC", exact: true });
       const source = `// routing source comment\n${JSON.stringify((await getPolicy(base, admin)).policy, null, 2)}\n`;
@@ -146,10 +147,10 @@ test("tagged endpoint access, JSONC drafts, first-match and CAS cross the real s
       expect((await getTags(base, admin)).assignments.some(entry => entry.node_id === sha.id)).toBe(false);
       // The tag itself remains a valid, now empty subject group.
       expect((await getMeshAccess(base, admin)).valid).toBe(true);
-      await page.goto(`${webUrl}/access`);
+      await page.goto(ui.at("/access"));
       await page.getByRole("button", { name: "规则", exact: true }).click();
       await page.setViewportSize({ width: 390, height: 844 });
-      expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+      await expectNoOverflow(page);
       await page.screenshot({ path: test.info().outputPath("access-v2-mobile.png"), fullPage: true });
       expect((await page.content()).includes(admin)).toBe(false);
     });

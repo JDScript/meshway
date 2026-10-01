@@ -1,27 +1,15 @@
-import { expect, test, type Page } from "@playwright/test";
+import { expect, test } from "@playwright/test";
 import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { createEnrollmentToken, getConnections, getMeshAccess, getPolicy, savePolicy } from "./network-client.ts";
-import { executable, root, run, service, unusedPort } from "./harness.ts";
+import { consoleAt, contentAlignment, executable, root, run, service, unusedPort } from "./harness.ts";
 import { revealAdvanced } from "./web-actions.ts";
 
 const barSelector = '[data-slot="draft-action-bar"]';
 
-async function geometry(page: Page) {
-  return page.locator('[data-slot="page-header"]').evaluate(header => {
-    const inset = header.closest('[data-slot="sidebar-inset"]');
-    const body = header.closest('[data-slot="page-body"]');
-    if (!inset || !body) throw new Error("Missing console layout");
-    const h = header.getBoundingClientRect();
-    const i = inset.getBoundingClientRect();
-    const b = body.getBoundingClientRect();
-    return { left: h.left, right: h.right, top: h.top - b.top, leftGutter: h.left - i.left, rightGutter: i.right - h.right };
-  });
-}
-
-test("console gutters and animated draft actions remain consistent across widths and sidebar states", async ({ page }) => {
+test("the content column aligns with the shell and animated draft actions stay stable across widths", async ({ page }) => {
   test.setTimeout(180_000);
   const temporary = await mkdtemp(join(process.env.MESHWAY_E2E_TMPDIR ?? tmpdir(), "meshway-layout-e2e-"));
   const controllerPort = await unusedPort();
@@ -43,51 +31,36 @@ test("console gutters and animated draft actions remain consistent across widths
       ...process.env, MESHWAY_CONTROLLER_URL: base, MESHWAY_WEB_COOKIE_SECURE: "auto", NEXT_TELEMETRY_DISABLED: "1",
     });
     await web.ready(`${webUrl}/login`, 200);
-    await page.goto(`${webUrl}/access`);
+    const ui = await consoleAt(webUrl, base, admin);
+    await page.goto(ui.at("/access"));
     await page.getByLabel("管理员令牌", { exact: true }).fill(admin);
     await page.getByRole("button", { name: "登录", exact: true }).click();
     await expect(page).not.toHaveURL(/\/login(?:\?|$)/);
 
-    for (const width of [1440, 1920, 390]) {
+    for (const width of [1920, 1440, 1024, 390]) {
       await page.setViewportSize({ width, height: width === 390 ? 844 : 1000 });
-      for (const expanded of [true, false]) {
-        await page.goto(webUrl);
-        if (width >= 768) {
-          const sidebar = page.locator('[data-slot="sidebar"]').first();
-          if ((await sidebar.getAttribute("data-state")) !== (expanded ? "expanded" : "collapsed")) {
-            await page.getByRole("button", { name: "切换侧边栏", exact: true }).click();
-          }
-          await expect.poll(() => page.locator('[data-slot="sidebar-gap"]').evaluate(element => Math.round(element.getBoundingClientRect().width))).toBe(expanded ? 256 : 64);
-        }
-        let edges: { left: number; right: number } | undefined;
-        for (const path of ["/", "/nodes", "/access", "/routing", "/connections", "/topology"]) {
-          await page.goto(`${webUrl}${path}`);
-          await expect(page.locator('[data-slot="page-header"]')).toBeVisible();
-          if (width === 390 && expanded) {
-            await page.getByRole("button", { name: "切换侧边栏", exact: true }).click();
-            await expect(page.locator('[data-slot="sidebar"][data-mobile="true"]')).toBeVisible();
-          }
-          const box = await geometry(page);
-          expect(box.leftGutter).toBe(width === 390 ? 16 : 24);
-          expect(box.rightGutter).toBe(width === 390 ? 16 : 24);
-          expect(box.top).toBe(width === 390 ? 24 : 32);
-          if (edges) {
-            expect(box.left).toBeCloseTo(edges.left, 0);
-            expect(box.right).toBeCloseTo(edges.right, 0);
-          }
-          edges = box;
-          if (width === 390 && expanded) await page.keyboard.press("Escape");
-          expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
-          if (path === "/access" && process.env.MESHWAY_LAYOUT_SCREENSHOTS) {
-            await page.screenshot({ path: join(process.env.MESHWAY_LAYOUT_SCREENSHOTS, `layout-gutters-${width}-${expanded ? "expanded" : "collapsed"}.png`) });
-          }
+      const gutter = width === 390 ? 16 : Math.max(32, (width - 1216) / 2 + 32);
+      for (const path of ["", "/machines", "/machines/add", "/access", "/routing", "/tags", "/connections", "/dns", "/settings", "/diagnostics", "/topology"]) {
+        await page.goto(ui.at(path));
+        await expect(page.locator('[data-slot="page-header"]')).toBeVisible();
+        expect(await contentAlignment(page)).toEqual({ left: 0, right: 0, gutter, overflow: false });
+        const top = await page.locator('[data-slot="page-header"]').evaluate(header => {
+          const body = header.closest('[data-slot="page-body"]');
+          if (!body) throw new Error("Missing page body");
+          return header.getBoundingClientRect().top - body.getBoundingClientRect().top;
+        });
+        // Pages under a section tab strip start closer to it.
+        const tabs = ["/access", "/routing", "/tags", "/connections", "/diagnostics", "/topology"].includes(path);
+        expect(top).toBe(tabs ? 20 : width === 390 ? 24 : 32);
+        if (path === "/access" && process.env.MESHWAY_LAYOUT_SCREENSHOTS) {
+          await page.screenshot({ path: join(process.env.MESHWAY_LAYOUT_SCREENSHOTS, `layout-${width}.png`) });
         }
       }
     }
 
     for (const width of [1440, 390]) {
       await page.setViewportSize({ width, height: width === 390 ? 844 : 1000 });
-      await page.goto(`${webUrl}/access`);
+      await page.goto(ui.at("/access"));
       const bar = page.locator(barSelector);
       await expect(bar).toBeHidden();
       expect((await bar.boundingBox())?.height ?? 0).toBe(0);
@@ -117,7 +90,7 @@ test("console gutters and animated draft actions remain consistent across widths
       })).toBeGreaterThanOrEqual(16);
       let release!: () => void;
       const gate = new Promise<void>(resolve => { release = resolve; });
-      await page.route(`${webUrl}/access`, async route => {
+      await page.route(ui.at("/access"), async route => {
         if (route.request().method() === "POST") await gate;
         await route.continue();
       });
@@ -128,7 +101,7 @@ test("console gutters and animated draft actions remain consistent across widths
       expect(during?.width).toBe(before.width);
       release();
       await expect(page.getByTestId("access-save-status")).toContainText("已保存");
-      await page.unroute(`${webUrl}/access`);
+      await page.unroute(ui.at("/access"));
       const after = await save.boundingBox();
       expect(after?.x).toBe(before.x);
       expect(after?.width).toBe(before.width);
@@ -156,7 +129,7 @@ test("console gutters and animated draft actions remain consistent across widths
     }
 
     await page.emulateMedia({ reducedMotion: "reduce" });
-    await page.goto(`${webUrl}/routing`);
+    await page.goto(ui.at("/routing"));
     const routingBar = page.locator(barSelector);
     await expect(routingBar).toBeHidden();
     await page.getByRole("button", { name: "JSONC", exact: true }).click();
@@ -167,7 +140,7 @@ test("console gutters and animated draft actions remain consistent across widths
     await page.getByRole("button", { name: "保存策略", exact: true }).click();
     await expect(page.getByTestId("policy-save-status")).toContainText("已保存");
 
-    await page.goto(`${webUrl}/connections`);
+    await page.goto(ui.at("/connections"));
     const connectionsBar = page.locator(barSelector);
     await expect(connectionsBar).toBeHidden();
     await page.getByRole("button", { name: "接收其他节点连接", exact: true }).first().click();

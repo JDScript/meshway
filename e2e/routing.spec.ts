@@ -14,7 +14,7 @@ import {
   type NodeSummary,
   type RoutingPolicy,
 } from "./network-client.ts";
-import { executable, root, run, service, unusedPort } from "./harness.ts";
+import { executable, root, run, service, unusedPort, consoleAt, expectNoOverflow } from "./harness.ts";
 import { discardPolicyDraft, editRuleId, selectNode } from "./web-actions.ts";
 
 function named(nodes: NodeSummary[], name: string): NodeSummary {
@@ -127,6 +127,7 @@ test("routing intent, conditional editing and persisted configuration receipts c
       MESHWAY_WEB_COOKIE_SECURE: "auto", NEXT_TELEMETRY_DISABLED: "1",
     });
     await web.ready(`${webUrl}/login`, 200);
+    const ui = await consoleAt(webUrl, controllerUrl, admin);
     await page.goto(`${webUrl}/login`);
     await page.getByLabel("管理员令牌", { exact: true }).fill(admin);
     await page.getByRole("button", { name: "登录", exact: true }).click();
@@ -142,7 +143,7 @@ test("routing intent, conditional editing and persisted configuration receipts c
         }
       } finally { await stranger.close(); }
 
-      await page.goto(`${webUrl}/topology`);
+      await page.goto(`${ui.at("/topology")}`);
       await selectNode(page, "preview-source", /nyc/);
       await selectNode(page, "preview-target", /sha/);
       await page.getByRole("button", { name: "规划路径", exact: true }).click();
@@ -165,7 +166,7 @@ test("routing intent, conditional editing and persisted configuration receipts c
     });
 
     await test.step("the typed editor previews a draft, then saves it under its original revision", async () => {
-      await page.goto(`${webUrl}/routing`);
+      await page.goto(`${ui.at("/routing")}`);
       await expect(page.getByTestId("policy-editor")).toBeVisible();
       await expect(page.locator('[data-slot="draft-action-bar"]')).toBeHidden();
       await expect(page.getByTestId("policy-rule")).toHaveCount(2);
@@ -184,7 +185,7 @@ test("routing intent, conditional editing and persisted configuration receipts c
       await expect(page.getByTestId("route-preview")).not.toContainText("denied.invalid");
       expect((await getPolicy(controllerUrl, admin)).policy.rules[0]?.id).toBe("nyc-to-sha");
       const mutation = page.waitForRequest((request) =>
-        request.method() === "POST" && new URL(request.url()).pathname === "/routing",
+        request.method() === "POST" && new URL(request.url()).pathname === ui.path("/routing"),
       );
       await page.getByRole("button", { name: "保存策略", exact: true }).click();
       const request = await mutation;
@@ -222,13 +223,13 @@ test("routing intent, conditional editing and persisted configuration receipts c
 
     await test.step("Cmd-K, history and cancelled reload preserve the draft and its original CAS base", async () => {
       // Reload once so the editor is unambiguously based on the successful save.
-      await page.goto(`${webUrl}/routing`);
+      await page.goto(`${ui.at("/routing")}`);
       const latest = await getPolicy(controllerUrl, admin);
       const baseLabel = await page.getByTestId("policy-base-revision").innerText();
       await editRuleId(page, "nyc-to-sha-edited", "draft-survives-conflict");
       await page.keyboard.press("ControlOrMeta+k");
       await page.getByRole("option", { name: "节点", exact: true }).click();
-      await expect(page).toHaveURL(`${webUrl}/nodes`);
+      await expect(page).toHaveURL(`${ui.at("/machines")}`);
 
       const dialogPromise = page.waitForEvent("dialog");
       const reload = page.reload({ timeout: 10_000 }).catch(() => null);
@@ -236,14 +237,14 @@ test("routing intent, conditional editing and persisted configuration receipts c
       expect(unload.type()).toBe("beforeunload");
       await unload.dismiss();
       await reload;
-      await expect(page).toHaveURL(`${webUrl}/nodes`);
+      await expect(page).toHaveURL(`${ui.at("/machines")}`);
 
       await savePolicy(controllerUrl, admin, {
         expected_revision: latest.revision,
         policy: { ...latest.policy, default_action: "direct" },
       });
       await page.goBack();
-      await expect(page).toHaveURL(`${webUrl}/routing`);
+      await expect(page).toHaveURL(`${ui.at("/routing")}`);
       await expect(page.getByTestId("policy-rule").filter({ hasText: "draft-survives-conflict" })).toBeVisible();
       await expect(page.getByTestId("policy-base-revision")).toHaveText(baseLabel);
       await page.getByRole("button", { name: "保存策略", exact: true }).click();
@@ -295,10 +296,10 @@ test("routing intent, conditional editing and persisted configuration receipts c
       const stored = JSON.stringify(cached);
       expect(stored).toContain('"policy_valid":false');
       expect(stored).toContain('"default_action":"reject"');
-      await page.goto(`${webUrl}/routing`);
+      await page.goto(`${ui.at("/routing")}`);
       await expect(page.getByTestId("policy-editor")).toContainText(/无效|不可用|错误|失效/);
       await page.setViewportSize({ width: 390, height: 844 });
-      expect(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth)).toBe(false);
+      await expectNoOverflow(page);
       expect(browserErrors).toEqual([]);
     });
   } finally {

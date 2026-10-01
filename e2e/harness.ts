@@ -74,3 +74,55 @@ export function service(command: string, args: string[], environment: NodeJS.Pro
     },
   };
 }
+
+/** Console pages live under `/<network_id>`; fixtures use the controller's first network. */
+export async function consoleAt(webUrl: string, base: string, admin: string) {
+  const { listNetworks } = await import("../packages/control-client/src/index.ts");
+  const network = (await listNetworks(base, admin)).networks[0];
+  if (!network) throw new Error("Fixture controller has no network");
+  const prefix = `/${network.network_id}`;
+  return {
+    networkId: network.network_id,
+    /** Absolute URL of a console page, e.g. at("/machines"). */
+    at: (path = "") => `${webUrl}${prefix}${path}`,
+    /** Path name as seen by request matchers, e.g. path("/access"). */
+    path: (path = "") => `${prefix}${path}`,
+  };
+}
+
+/** The page body's content column lines up with the shell header at every width. */
+export async function contentAlignment(page: Page) {
+  return page.evaluate(() => {
+    const header = document.querySelector('[data-slot="page-header"]');
+    const brand = document.querySelector('header a[aria-label="Meshway 概览"]');
+    const account = document.querySelector('header [aria-label="账户菜单"]');
+    if (!header || !brand || !account) throw new Error("Missing console shell");
+    const h = header.getBoundingClientRect();
+    return {
+      left: Math.round(h.left - brand.getBoundingClientRect().left),
+      right: Math.round(account.getBoundingClientRect().right - h.right),
+      gutter: Math.round(h.left),
+      overflow: document.documentElement.scrollWidth > innerWidth,
+    };
+  });
+}
+
+/** No horizontal page scroll; on failure names the elements that stick out. */
+export async function expectNoOverflow(page: Page) {
+  const offenders = await page.evaluate(() => {
+    if (document.documentElement.scrollWidth <= innerWidth) return [];
+    const scrollers = (element: Element | null): boolean => {
+      for (let current = element?.parentElement; current; current = current.parentElement) {
+        const style = getComputedStyle(current);
+        if (["auto", "scroll", "hidden", "clip"].includes(style.overflowX)) return true;
+      }
+      return false;
+    };
+    return [...document.querySelectorAll("body *")]
+      .filter(element => element.getBoundingClientRect().right > innerWidth + 1 && !scrollers(element))
+      .slice(0, 8)
+      .map(element => `${element.tagName.toLowerCase()}[${element.getAttribute("data-slot") ?? element.getAttribute("data-testid") ?? ""}] ${(element.textContent ?? "").slice(0, 40)}`);
+  });
+  expect(offenders).toEqual([]);
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+}

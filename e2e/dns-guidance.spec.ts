@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { createEnrollmentToken, getNetwork, getPolicy, listNodes, revokeNode, savePolicy } from "./network-client.ts";
-import { executable, expandDetails, root, run, service, unusedPort } from "./harness.ts";
+import { executable, expandDetails, root, run, service, unusedPort, consoleAt } from "./harness.ts";
 
 test("DNS guidance uses saved intent and full identity without claiming local runtime", async ({ page }) => {
   const temporary = await mkdtemp(join(process.env.MESHWAY_E2E_TMPDIR ?? tmpdir(), "meshway-dns-guidance-e2e-"));
@@ -33,16 +33,17 @@ test("DNS guidance uses saved intent and full identity without claiming local ru
       ...process.env, MESHWAY_CONTROLLER_URL: base, MESHWAY_WEB_COOKIE_SECURE: "auto", NEXT_TELEMETRY_DISABLED: "1",
     });
     await web.ready(`${webUrl}/login`, 200);
-    await page.goto(`${webUrl}/network`);
+    const ui = await consoleAt(webUrl, base, admin);
+    await page.goto(ui.at("/dns"));
     await page.getByLabel("管理员令牌", { exact: true }).fill(admin);
     await page.getByRole("button", { name: "登录", exact: true }).click();
     await expect(page).not.toHaveURL(/\/login(?:\?|$)/);
-    await page.goto(`${webUrl}/network`);
+    await page.goto(ui.at("/dns"));
     await expect(page.getByTestId("network-dns-saved-context")).toContainText("DNS 已关闭");
     await expandDetails(page, "DNS 诊断与当前启用帮助");
     await expect(page.getByTestId("dns-status-command")).toHaveText("meshway-agent dns status --state '<该节点现有 state 文件路径>'");
 
-    await nodePage.goto(`${webUrl}/nodes/${node.id}`);
+    await nodePage.goto(ui.at(`/machines/${node.id}`));
     await expect(nodePage.getByTestId("node-dns-disabled")).toBeVisible();
     await expect(nodePage.getByTestId("node-dns-canonical")).toHaveText(nameFor(original.dns.zone));
     await expect(nodePage.getByTestId("node-dns-query-command")).toHaveCount(0);
@@ -63,7 +64,7 @@ test("DNS guidance uses saved intent and full identity without claiming local ru
     await expect(nodePage.getByTestId("node-dns-canonical")).toHaveText(fqdn);
     await expect(nodePage.getByTestId("node-dns-query-command")).toHaveText(dig);
     await expect(nodePage.getByText("本地 DNS listener 与系统 resolver 状态未知。", { exact: false })).toBeVisible();
-    await expect(nodePage.getByRole("link", { name: "配置与诊断", exact: true })).toHaveAttribute("href", "/network#dns-diagnostics");
+    await expect(nodePage.getByRole("link", { name: "配置与诊断", exact: true })).toHaveAttribute("href", ui.path("/dns#dns-diagnostics"));
     await expect(nodePage.getByRole("link", { name: "DNS 配置与诊断" })).toHaveAttribute("href", /\/dns$/);
     await expect(nodePage.getByRole("link", { name: "Agent CLI", exact: true })).toHaveAttribute("href", /\/cli$/);
 

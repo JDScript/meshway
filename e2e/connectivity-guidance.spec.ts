@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { createEnrollmentToken, getNetwork, listNodes, saveNetwork } from "./network-client.ts";
-import { executable, root, run, service, unusedPort } from "./harness.ts";
+import { executable, root, run, service, unusedPort, consoleAt, expectNoOverflow } from "./harness.ts";
 
 test("diagnostics separates saved flow, live peers, DNS and independent netcheck", async ({ page }) => {
   const temporary = await mkdtemp(join(process.env.MESHWAY_E2E_TMPDIR ?? tmpdir(), "meshway-connectivity-guidance-e2e-"));
@@ -30,29 +30,30 @@ test("diagnostics separates saved flow, live peers, DNS and independent netcheck
       ...process.env, MESHWAY_CONTROLLER_URL: base, MESHWAY_WEB_COOKIE_SECURE: "auto", NEXT_TELEMETRY_DISABLED: "1",
     });
     await web.ready(`${webUrl}/login`, 200);
-    await page.goto(`${webUrl}/monitoring`);
+    const ui = await consoleAt(webUrl, base, admin);
+    await page.goto(`${ui.at("/diagnostics")}`);
     await page.getByLabel("管理员令牌", { exact: true }).fill(admin);
     await page.getByRole("button", { name: "登录", exact: true }).click();
     await expect(page).not.toHaveURL(/\/login(?:\?|$)/);
-    await page.goto(`${webUrl}/nodes/${source.id}?tab=connections`);
+    await page.goto(`${ui.at("/machines")}/${source.id}?tab=connections`);
     const diagnosticLink = page.getByRole("link", { name: "诊断此节点", exact: true });
-    await expect(diagnosticLink).toHaveAttribute("href", `/monitoring?source=${source.id}`);
+    await expect(diagnosticLink).toHaveAttribute("href", `${ui.path("/diagnostics")}?source=${source.id}`);
     await diagnosticLink.click();
-    await expect(page.getByRole("heading", { name: "诊断", exact: true })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "诊断工作台", exact: true })).toBeVisible();
     await expect(page.getByLabel("源节点（执行命令的环境）")).toHaveValue(source.id);
     await expect(page.getByLabel("目标节点（独立于源节点）")).toHaveValue("");
     await page.locator("#live-adjacency summary").focus();
     await page.keyboard.press("Enter");
     await expect(page.getByTestId("diagnostic-live-status-command")).toContainText("--live --peers --json");
     await expect(page.getByTestId("diagnostic-ping-command")).toHaveCount(0);
-    await expect(page.getByRole("link", { name: "查看源节点连接运行状态" })).toHaveAttribute("href", `/nodes/${source.id}?tab=connections`);
+    await expect(page.getByRole("link", { name: "查看源节点连接运行状态" })).toHaveAttribute("href", `${ui.path("/machines")}/${source.id}?tab=connections`);
     await page.getByLabel("目标节点（独立于源节点）").selectOption(target.id);
     const state = "--state '<源节点现有 state 文件路径>'";
     const ping = `meshway-agent ping ${target.id} ${state} --count 3 --json`;
     const whois = `meshway-agent whois ${target.id} ${state} --json`;
     await expect(page.getByTestId("diagnostic-ping-command")).toHaveText(ping);
     await expect(page.getByTestId("diagnostic-whois-command")).toHaveText(whois);
-    await expect(page.getByRole("link", { name: "在拓扑中检查已保存 flow" })).toHaveAttribute("href", `/topology?src=${source.id}&dst=${target.id}#flow-check`);
+    await expect(page.getByRole("link", { name: "在拓扑中检查已保存 flow" })).toHaveAttribute("href", `${ui.path("/topology")}?src=${source.id}&dst=${target.id}#flow-check`);
     await expect(page).toHaveURL(new RegExp(`source=${source.id}&target=${target.id}`));
     await page.context().grantPermissions(["clipboard-read", "clipboard-write"]);
     for (const [label, value] of [["复制目标 ping 命令", ping], ["复制目标 whois 命令", whois]]) {
@@ -68,7 +69,7 @@ test("diagnostics separates saved flow, live peers, DNS and independent netcheck
     await expect.poll(() => page.evaluate(() => navigator.clipboard.readText())).toBe(dnsQuery);
 
     // A direct hash link expands the local-only probe, without inventing observations.
-    await page.goto(`${webUrl}/monitoring?source=${source.id}&target=${target.id}#netcheck`);
+    await page.goto(`${ui.at("/diagnostics")}?source=${source.id}&target=${target.id}#netcheck`);
     const netcheck = "meshway-agent netcheck --stun-server '<NUMERIC_IPV4_A>:3478' --stun-server '<DIFFERENT_NUMERIC_IPV4_B>:3478' --bind 0.0.0.0:0 --json";
     await expect(page.getByTestId("diagnostic-netcheck-command")).toBeVisible();
     await expect(page.getByTestId("diagnostic-netcheck-command")).toHaveText(netcheck);
@@ -87,15 +88,15 @@ test("diagnostics separates saved flow, live peers, DNS and independent netcheck
       for (const summary of await page.locator("details:not([open]) > summary").all()) {
         if (await summary.isVisible()) await summary.click();
       }
-      expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+      await expectNoOverflow(page);
       await page.screenshot({ path: test.info().outputPath(`diagnostics-${width}.png`), fullPage: true });
     }
 
-    await page.goto(`${webUrl}/monitoring?node=${source.id}&target=${source.id}#live-adjacency`);
+    await page.goto(`${ui.at("/diagnostics")}?node=${source.id}&target=${source.id}#live-adjacency`);
     await expect(page.getByLabel("源节点（执行命令的环境）")).toHaveValue(source.id);
     await expect(page.getByText("源与目标相同", { exact: false })).toBeVisible();
     await expect(page.getByTestId("diagnostic-ping-command")).toHaveCount(0);
-    await page.goto(`${webUrl}/monitoring?source=${"f".repeat(64)}&target=${target.id}#live-adjacency`);
+    await page.goto(`${ui.at("/diagnostics")}?source=${"f".repeat(64)}&target=${target.id}#live-adjacency`);
     await expect(page.getByText("链接中的节点已不可用", { exact: false })).toBeVisible();
     await expect(page.getByTestId("diagnostic-whois-command")).toHaveCount(0);
     expect(errors).toEqual([]);

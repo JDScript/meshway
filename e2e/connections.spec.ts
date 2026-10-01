@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { createEnrollmentToken, getConnections, listNodes, revokeNode, saveConnections, setNodeCountry } from "./network-client.ts";
-import { executable, expandDetails, root, run, service, unusedPort } from "./harness.ts";
+import { consoleAt, executable, expandDetails, root, run, service, unusedPort, expectNoOverflow } from "./harness.ts";
 import { revealAdvanced } from "./web-actions.ts";
 
 async function choose(page: Page, trigger: Locator, name: RegExp) {
@@ -65,26 +65,27 @@ test("connection identities, reverse-dial intent and independent receipts cross 
       ...process.env, MESHWAY_CONTROLLER_URL: controllerUrl, MESHWAY_WEB_COOKIE_SECURE: "auto", NEXT_TELEMETRY_DISABLED: "1",
     });
     await web.ready(`${webUrl}/login`, 200);
-    await page.goto(`${webUrl}/connections`);
+    const ui = await consoleAt(webUrl, controllerUrl, admin);
+    await page.goto(ui.at("/connections"));
     await expect(page).toHaveURL(/\/login(?:\?|$)/);
     await page.getByLabel("管理员令牌", { exact: true }).fill(admin);
     await page.getByRole("button", { name: "登录", exact: true }).click();
     await expect(page).not.toHaveURL(/\/login(?:\?|$)/);
-    await page.goto(`${webUrl}/connections`);
+    await page.goto(ui.at("/connections"));
     await expect(page.getByTestId("connections-editor")).toBeVisible();
     await expect(page.locator('[data-slot="draft-action-bar"]')).toBeHidden();
     await expect(page.getByTestId("connection-identity-row").filter({ hasText: "pending-key" })).toContainText("未发布公钥");
 
     await test.step("unapplied listener edits survive browser history without moving their base", async () => {
-      await page.goto(`${webUrl}/nodes`);
-      await page.getByRole("link", { name: "高级连接", exact: true }).click();
-      await expect(page).toHaveURL(`${webUrl}/connections`);
+      await page.goto(ui.at("/access"));
+      await page.getByRole("link", { name: "手工连接", exact: true }).click();
+      await expect(page).toHaveURL(ui.at("/connections"));
       const base = await page.getByTestId("connections-base-revision").innerText();
       await page.getByRole("button", { name: "接收其他节点连接", exact: true }).first().click();
       await revealAdvanced(page.getByRole("dialog"), page.getByRole("dialog").getByLabel("监听器 ID", { exact: true }));
       await page.getByRole("dialog").getByLabel("监听器 ID", { exact: true }).fill("unapplied-history-edit");
       await page.goBack();
-      await expect(page).toHaveURL(`${webUrl}/nodes`);
+      await expect(page).toHaveURL(ui.at("/access"));
       await page.goForward();
       await revealAdvanced(page.getByRole("dialog"), page.getByRole("dialog").getByLabel("监听器 ID", { exact: true }));
       await expect(page.getByRole("dialog").getByLabel("监听器 ID", { exact: true })).toHaveValue("unapplied-history-edit");
@@ -124,7 +125,7 @@ test("connection identities, reverse-dial intent and independent receipts cross 
         await expect(candidate).not.toBeVisible();
       }
       expect((await getConnections(controllerUrl, admin)).configuration.listeners).toHaveLength(0);
-      const mutation = page.waitForRequest(request => request.method() === "POST" && new URL(request.url()).pathname === "/connections");
+      const mutation = page.waitForRequest(request => request.method() === "POST" && new URL(request.url()).pathname === ui.path("/connections"));
       await page.getByRole("button", { name: "保存连接配置", exact: true }).click();
       const request = await mutation;
       await expect(page.getByTestId("connections-save-status")).toContainText("已保存");
@@ -196,7 +197,7 @@ test("connection identities, reverse-dial intent and independent receipts cross 
     });
 
     await test.step("node-scoped saves survive tab changes and fresh same-revision receipts arrive automatically", async () => {
-      await page.goto(`${webUrl}/nodes/${lax.id}?tab=connections`);
+      await page.goto(ui.at(`/machines/${lax.id}?tab=connections`));
       await expandDetails(page, "高级手工连接配置");
       await expect(page.getByRole("heading", { name: "lax", exact: true })).toBeVisible();
       await expect(page.getByTestId("connections-editor")).toHaveAttribute("data-scope", lax.id);
@@ -211,14 +212,14 @@ test("connection identities, reverse-dial intent and independent receipts cross 
       expect(saved.configuration.candidates.find(candidate => candidate.id === "nyc-to-lax")?.listener_id).toBe("lax-udp-renamed");
       expect(saved.configuration.candidates.find(candidate => candidate.id === "sha-to-lax")?.listener_id).toBe("lax-vless");
       await page.getByRole("tab", { name: "概览", exact: true }).click();
-      await page.getByRole("tab", { name: "连接", exact: true }).click();
+      await page.getByRole("tab", { name: "连接与承载", exact: true }).click();
       await expandDetails(page, "高级手工连接配置");
       await expect(page.getByTestId("connections-base-revision")).toHaveText(`r${saved.revision}`);
       await expect(page.getByTestId("listener-row").filter({ hasText: "lax-udp-renamed" })).toBeVisible();
       await run(executable("meshway-agent"), ["connections", "sync", "--state", join(temporary, "lax.json")]);
       await expect(page.getByText("已保存当前版本", { exact: true }).first()).toBeVisible({ timeout: 20_000 });
       await expect(page.getByTestId("connection-runtime")).toHaveAttribute("data-freshness", "unreported");
-      await page.goto(`${webUrl}/connections`);
+      await page.goto(ui.at("/connections"));
     });
 
     await test.step("navigation retains a dirty draft and a competing global writer causes CAS conflict", async () => {
@@ -229,7 +230,7 @@ test("connection identities, reverse-dial intent and independent receipts cross 
       await page.getByRole("dialog").getByRole("button", { name: "应用到草稿", exact: true }).click();
       await page.keyboard.press("ControlOrMeta+k");
       await page.getByRole("option", { name: "节点", exact: true }).click();
-      await expect(page).toHaveURL(`${webUrl}/nodes`);
+      await expect(page).toHaveURL(ui.at("/machines"));
       const latest = await getConnections(controllerUrl, admin);
       await setNodeCountry(controllerUrl, admin, { node_id: nyc.id, country: "US", expected_revision: latest.revision });
       await page.goBack();
@@ -250,7 +251,7 @@ test("connection identities, reverse-dial intent and independent receipts cross 
       await expect(page.getByTestId("connection-candidate-row")).toHaveCount(2);
       await run(executable("meshway-agent"), ["connections", "sync", "--state", join(temporary, "nyc.json")]);
       await page.setViewportSize({ width: 390, height: 844 });
-      expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+      await expectNoOverflow(page);
       await page.evaluate(() => window.scrollTo(0, 0));
       await page.screenshot({ path: test.info().outputPath("connections-mobile.png"), fullPage: true });
       const snapshot = await getConnections(controllerUrl, admin);

@@ -5,7 +5,7 @@ import { join } from "node:path";
 
 import { createEnrollmentToken, getConnections, getEndpointDiscoveries, listNodes, saveConnections } from "./network-client.ts";
 import { beginConnectionRuntimeOperation, getAgentConnectionsOperation, reportConnectionRuntimeOperation, reportEndpointDiscoveryOperation } from "../packages/control-client/src/generated/operations.gen.ts";
-import { executable, expandDetails, root, run, service, unusedPort } from "./harness.ts";
+import { executable, expandDetails, root, run, service, unusedPort, consoleAt, expectNoOverflow } from "./harness.ts";
 
 test("node-authenticated fixture self-reports display as leased unverified carrier candidates", async ({ page }) => {
   const temporary = await mkdtemp(join(process.env.MESHWAY_E2E_TMPDIR ?? tmpdir(), "meshway-discovery-web-e2e-"));
@@ -59,25 +59,26 @@ test("node-authenticated fixture self-reports display as leased unverified carri
       ...process.env, MESHWAY_CONTROLLER_URL: base, MESHWAY_WEB_COOKIE_SECURE: "auto", NEXT_TELEMETRY_DISABLED: "1",
     });
     await web.ready(`${webUrl}/login`, 200);
-    await page.goto(`${webUrl}/monitoring?source=${carrier.id}#netcheck`);
+    const ui = await consoleAt(webUrl, base, admin);
+    await page.goto(`${ui.at("/diagnostics")}?source=${carrier.id}#netcheck`);
     await page.getByLabel("管理员令牌", { exact: true }).fill(admin);
     await page.getByRole("button", { name: "登录", exact: true }).click();
-    await expect.poll(() => new URL(page.url()).pathname).toBe("/");
-    await page.goto(`${webUrl}/monitoring?source=${carrier.id}#netcheck`);
+    await expect.poll(() => new URL(page.url()).pathname).toBe(ui.path());
+    await page.goto(`${ui.at("/diagnostics")}?source=${carrier.id}#netcheck`);
     const panel = page.getByTestId("endpoint-discovery");
     await expect(panel.getByTestId("discovery-status")).toHaveText("未验证候选观测");
     await expect(panel).toContainText(mappedEndpoint);
     await expandDetails(panel, "承载 socket 技术详情");
     await expect(panel).toContainText("generation 1 / socket 1");
     await expect(panel).toContainText("managed_udp_socket_stun");
-    await expect(panel.getByRole("link", { name: "节点连接配置与运行状态" })).toHaveAttribute("href", `/nodes/${carrier.id}?tab=connections`);
+    await expect(panel.getByRole("link", { name: "节点连接配置与运行状态" })).toHaveAttribute("href", `${ui.path("/machines")}/${carrier.id}?tab=connections`);
     await page.context().grantPermissions(["clipboard-read", "clipboard-write"]);
     await panel.getByRole("button", { name: "复制观测 IP:port", exact: true }).focus();
     await page.keyboard.press("Enter");
     await expect.poll(() => page.evaluate(() => navigator.clipboard.readText())).toBe(mappedEndpoint);
     for (const width of [1440, 390]) {
       await page.setViewportSize({ width, height: 900 });
-      expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+      await expectNoOverflow(page);
       await page.screenshot({ path: test.info().outputPath(`carrier-discovery-${width}.png`), fullPage: true });
     }
     // Advance only the browser clock, then let the one-second lease tick run.
@@ -91,13 +92,13 @@ test("node-authenticated fixture self-reports display as leased unverified carri
     await page.clock.runFor(1_000);
     await expect(panel.getByTestId("discovery-status")).toHaveText("观测已失效");
     await expect(panel.getByRole("button", { name: "复制历史观测 IP:port（失效）", exact: true })).toBeDisabled();
-    await page.goto(`${webUrl}/nodes/${awaiting.id}?tab=connections`);
+    await page.goto(`${ui.at("/machines")}/${awaiting.id}?tab=connections`);
     await expandDetails(page, "UDP 地址观测与当前启用帮助");
     await expect(page.getByTestId("discovery-status")).toHaveText("尚无报告");
     await expect(page.getByTestId("endpoint-discovery")).not.toContainText(mappedEndpoint);
     await expandDetails(page, "当前 STUN 启用帮助");
     await expect(page.getByTestId("endpoint-discovery")).toContainText("不另起第二个 daemon");
-    await page.goto(`${webUrl}/nodes/${carrier.id}?tab=connections`);
+    await page.goto(`${ui.at("/machines")}/${carrier.id}?tab=connections`);
     await expandDetails(page, "UDP 地址观测与当前启用帮助");
     await expect(page.getByTestId("endpoint-discovery")).toContainText("fixture-carrier-udp");
     // Only this isolated fixture process is stopped. A failed authenticated read

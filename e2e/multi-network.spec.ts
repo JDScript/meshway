@@ -28,30 +28,38 @@ test("network creation, empty inventory, scoped enrollment, browser approval and
       ...process.env, MESHWAY_CONTROLLER_URL: base, MESHWAY_WEB_COOKIE_SECURE: "auto", NEXT_TELEMETRY_DISABLED: "1",
     });
     await web.ready(`${webUrl}/login`, 200);
-    await page.goto(`${webUrl}/nodes`);
+    await page.goto(webUrl);
     await page.getByLabel("管理员令牌", { exact: true }).fill(admin);
     await page.getByRole("button", { name: "登录", exact: true }).click();
-    await expect(page).not.toHaveURL(/\/login(?:\?|$)/);
-    await page.goto(`${webUrl}/nodes`);
+    await expect(page).toHaveURL(`${webUrl}/${initial.network_id}`);
+    const at = (networkId: string, path = "") => `${webUrl}/${networkId}${path}`;
+    await page.goto(at(initial.network_id, "/machines"));
     await expect(page.getByText("First member", { exact: true })).toBeVisible();
     await page.getByRole("button", { name: "当前网络", exact: true }).click();
     await page.getByRole("menuitem", { name: "创建网络", exact: true }).click();
     await page.getByLabel("网络名称", { exact: true }).fill("Second network");
-    const createRequest = page.waitForRequest(request => request.method() === "POST" && new URL(request.url()).pathname === "/nodes");
+    const createRequest = page.waitForRequest(request => request.method() === "POST" && new URL(request.url()).pathname === `/${initial.network_id}/machines`);
     await page.getByRole("button", { name: "创建网络", exact: true }).click();
     const submitted = await createRequest;
-    await expect(page.getByRole("button", { name: "当前网络", exact: true })).toContainText("Second network");
-    await expect(page.getByText("First member", { exact: true })).toHaveCount(0);
+    await expect.poll(async () => (await listNetworks(base, admin)).networks.length).toBe(2);
     const second = (await listNetworks(base, admin)).networks.find(network => network.name === "Second network")!;
+    // Creating opens the new network by URL; its inventory is really empty.
+    await expect(page).toHaveURL(at(second.network_id));
+    await expect(page.getByRole("button", { name: "当前网络", exact: true })).toContainText("Second network");
     expect((await listNodes(base, admin, second.network_id)).nodes).toEqual([]);
+    await page.goto(at(second.network_id, "/machines"));
+    await expect(page.getByText("这张网络还没有节点", { exact: true })).toBeVisible();
+    await expect(page.getByText("First member", { exact: true })).toHaveCount(0);
+    // Another network's node is not found here, never shown from the other network.
+    expect((await page.goto(at(second.network_id, `/machines/${first.id}`)))?.status()).toBe(404);
     const requestBody = submitted.postData(); if (!requestBody) throw new Error("Missing network creation action body");
     const headers = Object.fromEntries(Object.entries(await submitted.allHeaders()).filter(([name]) => ["content-type", "next-action", "next-router-state-tree"].includes(name)));
     const replay = await anonymous.request.post(submitted.url(), { headers: { ...headers, origin: webUrl }, data: requestBody, maxRedirects: 0 });
     expect(replay.headers()["x-action-redirect"] ?? replay.headers().location).toContain("/login");
     expect((await listNetworks(base, admin)).networks).toHaveLength(2);
 
-    await page.goto(`${webUrl}/enrollment`);
-    await page.getByRole("button", { name: "创建注册令牌", exact: true }).click();
+    await page.goto(at(second.network_id, "/machines/add"));
+    await page.getByRole("button", { name: "生成接入令牌", exact: true }).click();
     const secondToken = await page.getByTestId("enrollment-token").innerText();
     const secondCredential = randomBytes(32).toString("hex");
     const member = (await enrollAgentOperation(base, secondToken.trim(), { node_credential: secondCredential, name: "Second member", agent_version: "e2e" })).node;
@@ -60,27 +68,28 @@ test("network creation, empty inventory, scoped enrollment, browser approval and
     expect((await getAgentConfigurationOperation(base, secondCredential)).payload.peers).toEqual([]);
     expect((await getAgentDnsOperation(base, secondCredential)).payload.network_id).toBe(second.network_id);
 
-    const switchTo = async (name: string) => {
+    const switchTo = async (network: { network_id: string; name: string }) => {
       await page.getByRole("button", { name: "当前网络", exact: true }).click();
-      await page.getByRole("menuitem", { name, exact: true }).click();
-      await expect(page.getByRole("button", { name: "当前网络", exact: true })).toContainText(name);
+      await page.getByRole("menuitem", { name: network.name, exact: true }).click();
+      await expect(page).toHaveURL(at(network.network_id, "/access"));
+      await expect(page.getByRole("button", { name: "当前网络", exact: true })).toContainText(network.name);
     };
-    await page.goto(`${webUrl}/access`);
+    await page.goto(at(second.network_id, "/access"));
     const secondBase = await page.getByTestId("access-base-revision").innerText();
     await page.getByRole("button", { name: "JSONC", exact: true }).click();
     const invalid = "// second-network draft\n{ invalid";
     await page.getByRole("textbox", { name: "访问授权 JSONC", exact: true }).fill(invalid);
-    await switchTo(initial.name);
+    await switchTo(initial);
     await page.getByRole("button", { name: "JSONC", exact: true }).click();
     await expect(page.getByRole("textbox", { name: "访问授权 JSONC", exact: true })).not.toContainText("second-network draft");
-    // Keep a separate tab rendered in the first network; switching the cookie
-    // elsewhere must not retarget its already-rendered save action.
+    // A separate tab rendered for the first network keeps saving there,
+    // whatever the other tab selects.
     const oldTab = await context.newPage();
-    await oldTab.goto(`${webUrl}/access`);
+    await oldTab.goto(at(initial.network_id, "/access"));
     await oldTab.getByRole("button", { name: "JSONC", exact: true }).click();
     const firstSource = `// first-network multi-tab save\n${JSON.stringify((await getMeshAccess(base, admin, initial.network_id)).policy)}`;
     await oldTab.getByRole("textbox", { name: "访问授权 JSONC", exact: true }).fill(firstSource);
-    await switchTo(second.name);
+    await switchTo(second);
     await expect(page.getByRole("textbox", { name: "访问授权 JSONC", exact: true }).locator(".cm-line")).toHaveText(invalid.split("\n"));
     await expect(page.getByTestId("access-base-revision")).toHaveText(secondBase);
     await oldTab.getByTestId("access-save").click();
