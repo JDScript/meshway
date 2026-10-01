@@ -49,7 +49,7 @@ fn run(path: &Path, log: &Path) -> Process {
 
 async fn observations(server: &Server, admin: &str) -> ConnectionRuntimesSnapshot {
     let response = reqwest::Client::new()
-        .get(format!("{}/api/v1/connections/runtime", server.base))
+        .get(admin_url(&server.base, admin, "/connections/runtime").await)
         .bearer_auth(admin)
         .send()
         .await
@@ -204,7 +204,7 @@ async fn superseded_runtime_epoch_is_fatal_and_revocation_closes_listener() {
     let _: ConnectionsSnapshot = admin_post(
         &server.base,
         &admin,
-        "/api/v1/connections",
+        "/connections",
         SaveConnectionsRequest {
             expected_revision: identity.revision,
             configuration: ConnectionPlan {
@@ -285,7 +285,7 @@ async fn superseded_runtime_epoch_is_fatal_and_revocation_closes_listener() {
     let _: meshway_protocol::RevokeNodeResponse = admin_post(
         &server.base,
         &admin,
-        "/api/v1/nodes/revoke",
+        "/nodes/revoke",
         meshway_protocol::RevokeNodeRequest {
             node_id: identity.node_id,
         },
@@ -368,7 +368,7 @@ async fn actual_controller_runtime_reports_durable_identity_removal_stalled_http
     let saved: ConnectionsSnapshot = admin_post(
         &server.base,
         &admin,
-        "/api/v1/connections",
+        "/connections",
         SaveConnectionsRequest {
             expected_revision: sha_identity.revision,
             configuration: plan.clone(),
@@ -460,7 +460,7 @@ async fn actual_controller_runtime_reports_durable_identity_removal_stalled_http
     let empty: ConnectionsSnapshot = admin_post(
         &server.base,
         &admin,
-        "/api/v1/connections",
+        "/connections",
         SaveConnectionsRequest {
             expected_revision: saved.revision,
             configuration: ConnectionPlan::default(),
@@ -482,7 +482,7 @@ async fn actual_controller_runtime_reports_durable_identity_removal_stalled_http
     let _: ConnectionsSnapshot = admin_post(
         &server.base,
         &admin,
-        "/api/v1/connections",
+        "/connections",
         SaveConnectionsRequest {
             expected_revision: empty.revision,
             configuration: plan,
@@ -573,7 +573,7 @@ async fn same_epoch_configuration_recovers_after_outage_backoff_exceeds_lease() 
     let _: ConnectionsSnapshot = admin_post(
         &server.base,
         &admin,
-        "/api/v1/connections",
+        "/connections",
         SaveConnectionsRequest {
             expected_revision: sha_identity.revision,
             configuration: ConnectionPlan {

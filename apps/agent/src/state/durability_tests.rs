@@ -11,6 +11,8 @@ use serde_json::{Value, json};
 use super::{Agent, AgentError, Identity, local};
 use local::test_faults::DirectorySyncFailure;
 
+use crate::test_network_scope as network_scope;
+
 fn directory() -> tempfile::TempDir {
     use std::os::unix::fs::PermissionsExt;
     tempfile::Builder::new()
@@ -75,7 +77,7 @@ impl Server {
 
     async fn post(&self, path: &str, body: Value) -> Value {
         let response = reqwest::Client::new()
-            .post(format!("{}{path}", self.base))
+            .post(network_scope::admin_url(&self.base, &self.admin, path).await)
             .bearer_auth(&self.admin)
             .header("content-type", "application/json")
             .body(body.to_string())
@@ -88,11 +90,8 @@ impl Server {
 
     async fn token(&self) -> String {
         serde_json::from_value::<CreateEnrollmentTokenResponse>(
-            self.post(
-                "/api/v1/enrollment-tokens",
-                json!({"expires_in_seconds":3600}),
-            )
-            .await,
+            self.post("/enrollment-tokens", json!({"expires_in_seconds":3600}))
+                .await,
         )
         .unwrap()
         .token
@@ -115,7 +114,7 @@ async fn post_commit_cache_failure_blocks_ack_through_retry_and_restart_until_du
     assert_eq!(server.acks.load(Ordering::SeqCst), 1);
     server
         .post(
-            "/api/v1/nodes/country",
+            "/nodes/country",
             json!({"node_id":node.id,"country":"US","expected_revision":2}),
         )
         .await;

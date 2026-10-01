@@ -19,6 +19,10 @@ use meshway_controller::{AppState, admin_token, router};
 use meshway_protocol::{CreateEnrollmentTokenResponse, local};
 use serde_json::{Value, json};
 
+#[path = "support/network_scope.rs"]
+mod network_scope;
+use network_scope::admin_url;
+
 fn tempdir() -> tempfile::TempDir {
     use std::os::unix::fs::PermissionsExt;
     tempfile::Builder::new()
@@ -49,7 +53,7 @@ async fn serve(app: Router) -> Server {
 
 async fn token(base: &str, admin: &str) -> String {
     let response = reqwest::Client::new()
-        .post(format!("{base}/api/v1/enrollment-tokens"))
+        .post(admin_url(base, admin, "/enrollment-tokens").await)
         .bearer_auth(admin)
         .header("content-type", "application/json")
         .body(r#"{"expires_in_seconds":3600}"#)
@@ -64,7 +68,7 @@ async fn token(base: &str, admin: &str) -> String {
 
 async fn revoke(base: &str, admin: &str, id: &str) {
     let response = reqwest::Client::new()
-        .post(format!("{base}/api/v1/nodes/revoke"))
+        .post(admin_url(base, admin, "/nodes/revoke").await)
         .bearer_auth(admin)
         .header("content-type", "application/json")
         .body(json!({"node_id":id}).to_string())
@@ -707,7 +711,7 @@ async fn sync_rejects_replay_mutation_invalid_hash_policy_and_write_failure_with
     );
     mode.store(0, Ordering::SeqCst);
     let response = reqwest::Client::new()
-        .post(format!("{}/api/v1/nodes/country", server.base))
+        .post(admin_url(&server.base, &admin, "/nodes/country").await)
         .bearer_auth(&admin)
         .header("content-type", "application/json")
         .body(json!({"node_id":node.id,"country":"US","expected_revision":2}).to_string())
@@ -764,7 +768,7 @@ async fn unreadable_private_parent_fails_before_publication_and_never_acks() {
     agent.sync().await.unwrap();
     let old = std::fs::read(&cache_path).unwrap();
     let response = reqwest::Client::new()
-        .post(format!("{}/api/v1/nodes/country", server.base))
+        .post(admin_url(&server.base, &admin, "/nodes/country").await)
         .bearer_auth(&admin)
         .header("content-type", "application/json")
         .body(json!({"node_id":node.id,"country":"US","expected_revision":2}).to_string())

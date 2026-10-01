@@ -19,6 +19,8 @@ use super::{
 };
 use crate::generated::client::HttpClient;
 
+use crate::test_network_scope as network_scope;
+
 fn directory() -> tempfile::TempDir {
     tempfile::Builder::new()
         .permissions(std::fs::Permissions::from_mode(0o700))
@@ -205,7 +207,7 @@ impl Server {
     // Test-only admin fixture setup; production agent networking uses only SDK operations.
     async fn admin_post<T: DeserializeOwned>(&self, path: &str, body: impl Serialize) -> T {
         let response = reqwest::Client::new()
-            .post(format!("{}{path}", self.base))
+            .post(network_scope::admin_url(&self.base, &self.admin, path).await)
             .bearer_auth(&self.admin)
             .header("content-type", "application/json")
             .body(serde_json::to_vec(&body).unwrap())
@@ -219,7 +221,7 @@ impl Server {
     async fn agent(&self, path: &Path) -> Agent {
         let token: CreateEnrollmentTokenResponse = self
             .admin_post(
-                "/api/v1/enrollment-tokens",
+                "/enrollment-tokens",
                 meshway_protocol::CreateEnrollmentTokenRequest {
                     expires_in_seconds: 3600,
                 },
@@ -300,7 +302,7 @@ async fn not_committed_cache_replacement_preserves_cache_replay_floor_and_publis
     let identity_before = std::fs::read(&path).unwrap();
     let _: meshway_protocol::RevokeNodeResponse = server
         .admin_post(
-            "/api/v1/nodes/country",
+            "/nodes/country",
             meshway_protocol::SetNodeCountryRequest {
                 node_id: receipt.node_id.clone(),
                 country: Some("US".into()),
@@ -645,7 +647,7 @@ async fn immutable_binding_conflict_and_revocation_preserve_key_and_identity() {
     ));
     let _: meshway_protocol::RevokeNodeResponse = server
         .admin_post(
-            "/api/v1/nodes/revoke",
+            "/nodes/revoke",
             meshway_protocol::RevokeNodeRequest {
                 node_id: agent.identity.node_id.clone().unwrap(),
             },

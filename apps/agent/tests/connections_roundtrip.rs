@@ -12,6 +12,10 @@ use meshway_agent::{Agent, compiled_connection_capabilities, connections_status}
 use meshway_controller::{AppState, admin_token, router};
 use serde::{Serialize, de::DeserializeOwned};
 
+#[path = "support/network_scope.rs"]
+mod network_scope;
+use network_scope::admin_url;
+
 #[cfg(feature = "managed-connections")]
 #[path = "connections_roundtrip/managed.rs"]
 mod managed;
@@ -51,7 +55,7 @@ async fn admin_post<T: DeserializeOwned>(
     value: impl Serialize,
 ) -> T {
     let response = reqwest::Client::new()
-        .post(format!("{base}{path}"))
+        .post(admin_url(base, admin, path).await)
         .bearer_auth(admin)
         .header("content-type", "application/json")
         .body(serde_json::to_vec(&value).unwrap())
@@ -66,7 +70,7 @@ async fn enrolled(server: &Server, admin: &str, path: &Path, name: &str) -> Agen
     let token: meshway_protocol::CreateEnrollmentTokenResponse = admin_post(
         &server.base,
         admin,
-        "/api/v1/enrollment-tokens",
+        "/enrollment-tokens",
         meshway_protocol::CreateEnrollmentTokenRequest {
             expires_in_seconds: 3600,
         },
@@ -237,7 +241,7 @@ async fn compiled_carrier_agents_save_real_node_scoped_reverse_dial_intent_and_f
     let saved: ConnectionsSnapshot = admin_post(
         &server.base,
         &admin,
-        "/api/v1/connections",
+        "/connections",
         SaveConnectionsRequest {
             expected_revision: revision,
             configuration: plan,
@@ -308,7 +312,7 @@ async fn compiled_carrier_agents_save_real_node_scoped_reverse_dial_intent_and_f
     let _: meshway_protocol::RevokeNodeResponse = admin_post(
         &server.base,
         &admin,
-        "/api/v1/nodes/revoke",
+        "/nodes/revoke",
         meshway_protocol::RevokeNodeRequest {
             node_id: sha_public.node_id,
         },

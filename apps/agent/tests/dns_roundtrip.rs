@@ -22,6 +22,10 @@ use tokio::{
     time::timeout,
 };
 
+#[path = "support/network_scope.rs"]
+mod network_scope;
+use network_scope::admin_url;
+
 async fn enroll(
     base: &str,
     admin: &str,
@@ -29,7 +33,7 @@ async fn enroll(
     name: &str,
 ) -> meshway_agent::generated::types::NodeSummary {
     let response = reqwest::Client::new()
-        .post(format!("{base}/api/v1/enrollment-tokens"))
+        .post(admin_url(base, admin, "/enrollment-tokens").await)
         .bearer_auth(admin)
         .header("content-type", "application/json")
         .body(
@@ -108,7 +112,7 @@ async fn await_dns(path: &Path, expected: &str) -> serde_json::Value {
 
 async fn save_dns(client: &reqwest::Client, base: &str, admin: &str, enabled: bool, zone: &str) {
     let response = client
-        .get(format!("{base}/api/v1/network"))
+        .get(admin_url(base, admin, "/network").await)
         .bearer_auth(admin)
         .send()
         .await
@@ -119,7 +123,7 @@ async fn save_dns(client: &reqwest::Client, base: &str, admin: &str, enabled: bo
     dns.enabled = enabled;
     dns.zone = zone.into();
     let response = client
-        .post(format!("{base}/api/v1/network"))
+        .post(admin_url(base, admin, "/network").await)
         .bearer_auth(admin)
         .header("content-type", "application/json")
         .body(
@@ -192,7 +196,7 @@ async fn roundtrip(apply_connections: bool) {
     enroll(&base, &admin, &directory.path().join("peer2.json"), "DUPE").await;
     let client = reqwest::Client::new();
     let network = client
-        .get(format!("{base}/api/v1/network"))
+        .get(admin_url(&base, &admin, "/network").await)
         .bearer_auth(&admin)
         .send()
         .await
@@ -201,7 +205,7 @@ async fn roundtrip(apply_connections: bool) {
     let mut dns = network.dns;
     dns.enabled = true;
     let saved = client
-        .post(format!("{base}/api/v1/network"))
+        .post(admin_url(&base, &admin, "/network").await)
         .bearer_auth(&admin)
         .header("content-type", "application/json")
         .body(
@@ -409,7 +413,7 @@ async fn roundtrip(apply_connections: bool) {
         0
     );
     let revoked = client
-        .post(format!("{base}/api/v1/nodes/revoke"))
+        .post(admin_url(&base, &admin, "/nodes/revoke").await)
         .bearer_auth(&admin)
         .header("content-type", "application/json")
         .body(

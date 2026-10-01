@@ -2,6 +2,8 @@ use super::*;
 use crate::managed_connections::tests::{fixture, snapshot};
 use axum::response::IntoResponse;
 use meshway_protocol::ConnectionTransport;
+
+use crate::test_network_scope as network_scope;
 use std::{
     os::unix::fs::PermissionsExt,
     sync::{
@@ -107,7 +109,7 @@ async fn setup() -> (Agent, RuntimeLease, Server, tempfile::TempDir) {
         axum::serve(listener, app).await.unwrap();
     });
     let response = reqwest::Client::new()
-        .post(format!("{base}/api/v1/enrollment-tokens"))
+        .post(network_scope::admin_url(&base, &admin, "/enrollment-tokens").await)
         .bearer_auth(admin)
         .header("content-type", "application/json")
         .body(

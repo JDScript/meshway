@@ -8,11 +8,12 @@ use meshway_apple_core::{
 };
 use meshway_controller::{AppState, admin_token, router};
 use meshway_protocol::{
-    AuthorizeDeviceRequest, AuthorizeDeviceResponse, DEVICE_CALLBACK_URI, RevokeNodeRequest, s256,
+    AuthorizeDeviceRequest, AuthorizeDeviceResponse, DEVICE_CALLBACK_URI, NetworkList,
+    RevokeNodeRequest, s256,
 };
 use tower::ServiceExt;
 
-async fn network_path(app: &axum::Router, admin: &str) -> String {
+async fn initial_network(app: &axum::Router, admin: &str) -> String {
     let response = app
         .clone()
         .oneshot(
@@ -24,10 +25,14 @@ async fn network_path(app: &axum::Router, admin: &str) -> String {
         .await
         .unwrap();
     assert_eq!(response.status(), 200);
-    let list: serde_json::Value =
-        serde_json::from_slice(&to_bytes(response.into_body(), 1 << 20).await.unwrap()).unwrap();
-    let id = list["networks"][0]["network_id"].as_str().unwrap();
-    format!("/api/v1/networks/{id}")
+    let networks: NetworkList =
+        serde_json::from_slice(&to_bytes(response.into_body(), 8192).await.unwrap()).unwrap();
+    assert_eq!(
+        networks.networks.len(),
+        1,
+        "fixture requires a unique initial network"
+    );
+    networks.networks[0].network_id.clone()
 }
 
 #[tokio::test]
@@ -39,10 +44,10 @@ async fn real_controller_exchange_recovery_heartbeat_and_revocation() {
         .unwrap();
     let app = router(AppState::open(directory.path()).unwrap());
     let admin = admin_token(directory.path()).unwrap();
+    let network_id = initial_network(&app, &admin).await;
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let server_url = format!("http://{}", listener.local_addr().unwrap());
     let server = tokio::spawn(axum::serve(listener, app.clone()).into_future());
-    let network = network_path(&app, &admin).await;
     let attempt = begin_authorization(server_url.clone(), "Mac".into(), "v1".into()).unwrap();
     let authorization = AuthorizeDeviceRequest {
         redirect_uri: DEVICE_CALLBACK_URI.into(),
@@ -53,11 +58,13 @@ async fn real_controller_exchange_recovery_heartbeat_and_revocation() {
     let response = app
         .clone()
         .oneshot(
-            Request::post(format!("{network}/device-authorizations"))
-                .header("authorization", format!("Bearer {admin}"))
-                .header("content-type", "application/json")
-                .body(Body::from(serde_json::to_vec(&authorization).unwrap()))
-                .unwrap(),
+            Request::post(format!(
+                "/api/v1/networks/{network_id}/device-authorizations"
+            ))
+            .header("authorization", format!("Bearer {admin}"))
+            .header("content-type", "application/json")
+            .body(Body::from(serde_json::to_vec(&authorization).unwrap()))
+            .unwrap(),
         )
         .await
         .unwrap();
@@ -110,7 +117,7 @@ async fn real_controller_exchange_recovery_heartbeat_and_revocation() {
     );
     let revoked = app
         .oneshot(
-            Request::post(format!("{network}/nodes/revoke"))
+            Request::post(format!("/api/v1/networks/{network_id}/nodes/revoke"))
                 .header("authorization", format!("Bearer {admin}"))
                 .header("content-type", "application/json")
                 .body(Body::from(

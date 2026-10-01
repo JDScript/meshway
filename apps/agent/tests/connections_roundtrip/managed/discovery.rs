@@ -173,7 +173,7 @@ async fn real_udp_cli_reports_carrier_ports_and_watchdog_expires_during_http_sta
     let _: ConnectionsSnapshot = admin_post(
         &server.base,
         &admin,
-        "/api/v1/connections",
+        "/connections",
         SaveConnectionsRequest {
             expected_revision: sha_identity.revision,
             configuration: ConnectionPlan {

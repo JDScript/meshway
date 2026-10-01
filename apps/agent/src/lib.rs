@@ -15,6 +15,10 @@ pub use endpoint_discovery::{EndpointDiscoveryOptions, parse_stun_server};
 #[allow(dead_code)]
 mod test_local;
 
+#[cfg(test)]
+#[path = "../tests/support/network_scope.rs"]
+mod test_network_scope;
+
 mod state;
 pub use state::{
     Agent, AgentError, AgentStatus, ConnectionStatus, ConnectionSyncReceipt, ControlSyncReceipts,
