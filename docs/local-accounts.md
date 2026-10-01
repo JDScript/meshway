@@ -14,7 +14,7 @@
 - `Principal` 私有构造，区分已证明现有 `Store::authorize_admin` bearer 的 bootstrap、已验证用户 session、节点 marker。节点 marker 总是拒绝人类账户操作。实例 bootstrap 管理权限是兼容入口，不从网络 Owner 反向推导。
 - 网络管理 mutation 在调用方事务内重新验证 session、credential version 和当前 role。`authorize_network(Read/Manage)` 供下一切片保护既有资源；之前一次 HTTP 验证不是长期授权证明。membership 有独立随机 ID，移除后重新邀请加入会生成新 ID，旧 device approval 不会因重新入网复活。
 - 最后一个 Owner 不得移除或降级，包括 bootstrap 操作。转移采用同一外层事务先将已存在 Member 晋升 Owner，再降级原 Owner；后续 transfer API 必须将两步整体提交。没有从链接直接提升已有 membership 的捷径。
-- 邀请绑定本网、精确归一化邮箱、role、签发者、期限，最多 7 天，一次消费。签发者丧失可授角色后未消费邀请失效；bootstrap 签发不依赖网络成员。已消费绑定不可更新，跨网撤销拒绝。
+- 邀请绑定本网、精确归一化邮箱、role、签发者、期限，最多 7 天，一次消费。`set_membership` 在同一 savepoint 内**持久撤销**签发者在本网已失去授予资格的未消费邀请：Owner→Admin 只撤销 Owner/Admin 邀请，保留 Member 邀请；变为 Member 或被移除则撤销其全部未消费邀请。角色恢复、移除后以新 membership 重新入网都不复活旧链接。其他网络邀请、已消费记录及 bootstrap 签发不受影响。role 变更失败或外层事务回滚，同时回滚邀请失效。已消费绑定不可更新，跨网撤销拒绝。
 - 已存在账户必须通过本人的有效 session 接受邀请；邀请注册入口拒绝该邮箱，不覆盖全局密码。不提供无邀请 signup。账户 + membership + 消费邀请在同一次事务保存。
 - 全局密码恢复只允许实例 bootstrap；某网 Owner 不能接管跨网用户的密码。reset 最多 1 小时，单次、可撤销，并绑定 credential version。重置 / 本人密码变更增加 version、废止全部旧 session 及其他未消费 reset。
 - session 最多 7 天，绝对过期，无自动滑动延期。退出撤销当前 session；本人 / bootstrap 可撤销某用户全部 session。会话失效不换节点身份，本切片不声称已撤回设备数据面。
@@ -116,6 +116,8 @@ CLI 链接登录的最小适配草案采用 **device-request 绑定 polling**，
 复现命令（在该 worktree，独立 target；feature 组合串行）：
 
 2026-10-01 验证：账户领域 **20** 项行为测试、既有 Store **40** 项单元测试、既有 HTTP **24** 项测试，合计 **84 passed / 0 failed**。Controller 全 target / 全 feature Clippy（`-D warnings`）与 `cargo fmt --all -- --check` 通过。首次真实 bootstrap fixture 因 tempfile 目录非 0700 被私有权限检查拒绝，修正测试目录权限后完整重跑通过；生产权限检查未放宽。
+
+审查补齐一先增加两个失败回归，分别复现 Owner/Admin 邀请在角色恢复后复活、成员变更未触发持久邀请撤销。修复后覆盖 Owner→Admin 的 Member 邀请保留、Owner→Member→Owner、移除后重新加入、跨网不受影响、最后 Owner 拒绝、注入存储失败及外层 rollback 的原子性。
 
 ```sh
 CARGO_TARGET_DIR=target cargo test -p meshway-controller --tests

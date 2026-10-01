@@ -1035,3 +1035,155 @@ async fn two_connections_consume_reset_exactly_once() {
         .unwrap();
     assert_eq!(version, 2);
 }
+
+#[tokio::test]
+async fn issuer_invites_never_revive_after_demotion_or_rejoin() {
+    let worker = worker().await;
+    let mut f = Fixture::new();
+    let a = f.network(A);
+    let b = f.network(B);
+    let e = email("issuer@example.com");
+    let issuer = f.register(&worker, &a, &e, Role::Owner).await;
+    f.register(&worker, &a, &email("successor@example.com"), Role::Owner)
+        .await;
+    let s = f.login(&worker, &e).await;
+    let p = Accounts::new(&f.db)
+        .authenticate(s.secret.expose(), NOW)
+        .unwrap();
+    let join_b = f.invite(&b, &e, Role::Owner, 100);
+    f.transaction(|tx| accept_invitation(tx, &p, join_b.secret.expose(), NOW))
+        .unwrap();
+    let target = email("target@example.com");
+    let mut invites = Vec::new();
+    for role in [Role::Owner, Role::Admin, Role::Member] {
+        invites.push(
+            f.transaction(|tx| create_invitation(tx, &p, &a, &target, role, NOW, 100))
+                .unwrap(),
+        );
+    }
+    let other_net = f
+        .transaction(|tx| create_invitation(tx, &p, &b, &target, Role::Owner, NOW, 100))
+        .unwrap();
+    f.transaction(|tx| set_membership(tx, &bootstrap(), &a, &issuer.user, Some(Role::Admin), NOW))
+        .unwrap();
+    assert!(
+        Accounts::new(&f.db)
+            .prepare_registration(invites[2].secret.expose(), &target, NOW)
+            .is_ok()
+    );
+    f.transaction(|tx| set_membership(tx, &bootstrap(), &a, &issuer.user, Some(Role::Owner), NOW))
+        .unwrap();
+    for invite in &invites[..2] {
+        assert!(
+            Accounts::new(&f.db)
+                .prepare_registration(invite.secret.expose(), &target, NOW)
+                .is_err(),
+            "Owner/Admin invitation revived after role restoration"
+        );
+    }
+    f.transaction(|tx| set_membership(tx, &bootstrap(), &a, &issuer.user, Some(Role::Member), NOW))
+        .unwrap();
+    f.transaction(|tx| set_membership(tx, &bootstrap(), &a, &issuer.user, Some(Role::Owner), NOW))
+        .unwrap();
+    assert!(
+        Accounts::new(&f.db)
+            .prepare_registration(invites[2].secret.expose(), &target, NOW)
+            .is_err(),
+        "Member invitation revived after role restoration"
+    );
+    let before_removal = f
+        .transaction(|tx| create_invitation(tx, &p, &a, &target, Role::Member, NOW, 100))
+        .unwrap();
+    f.transaction(|tx| set_membership(tx, &bootstrap(), &a, &issuer.user, None, NOW))
+        .unwrap();
+    let rejoin = f.invite(&a, &e, Role::Owner, 100);
+    let rejoined = f
+        .transaction(|tx| accept_invitation(tx, &p, rejoin.secret.expose(), NOW))
+        .unwrap();
+    assert_ne!(rejoined.id, issuer.id);
+    assert!(
+        Accounts::new(&f.db)
+            .prepare_registration(before_removal.secret.expose(), &target, NOW)
+            .is_err(),
+        "Invitation revived after issuer rejoined"
+    );
+    assert!(
+        Accounts::new(&f.db)
+            .prepare_registration(other_net.secret.expose(), &target, NOW)
+            .is_ok()
+    );
+}
+
+#[tokio::test]
+async fn issuer_invite_invalidation_rolls_back_with_failed_role_change() {
+    let worker = worker().await;
+    let mut f = Fixture::new();
+    let a = f.network(A);
+    let e = email("issuer@example.com");
+    let issuer = f.register(&worker, &a, &e, Role::Owner).await;
+    let s = f.login(&worker, &e).await;
+    let p = Accounts::new(&f.db)
+        .authenticate(s.secret.expose(), NOW)
+        .unwrap();
+    let target = email("target@example.com");
+    let invite = f
+        .transaction(|tx| create_invitation(tx, &p, &a, &target, Role::Owner, NOW, 100))
+        .unwrap();
+    assert!(matches!(
+        f.transaction(|tx| set_membership(tx, &bootstrap(), &a, &issuer.user, None, NOW)),
+        Err(AccountError::LastOwner)
+    ));
+    assert!(
+        Accounts::new(&f.db)
+            .prepare_registration(invite.secret.expose(), &target, NOW)
+            .is_ok()
+    );
+    f.register(&worker, &a, &email("successor@example.com"), Role::Owner)
+        .await;
+    f.db.execute_batch("CREATE TRIGGER fail_invite_revoke BEFORE UPDATE OF revoked_at ON account_invitations BEGIN SELECT RAISE(ABORT,'test failure'); END;").unwrap();
+    assert!(
+        f.transaction(|tx| set_membership(
+            tx,
+            &bootstrap(),
+            &a,
+            &issuer.user,
+            Some(Role::Member),
+            NOW
+        ))
+        .is_err(),
+        "Role update did not persistently revoke invitations"
+    );
+    assert_eq!(
+        Accounts::new(&f.db).role(&a, &issuer.user).unwrap(),
+        Some(Role::Owner)
+    );
+    assert!(
+        Accounts::new(&f.db)
+            .prepare_registration(invite.secret.expose(), &target, NOW)
+            .is_ok()
+    );
+    f.db.execute_batch("DROP TRIGGER fail_invite_revoke;")
+        .unwrap();
+    let mut tx =
+        f.db.transaction_with_behavior(TransactionBehavior::Immediate)
+            .unwrap();
+    set_membership(
+        &mut tx,
+        &bootstrap(),
+        &a,
+        &issuer.user,
+        Some(Role::Member),
+        NOW,
+    )
+    .unwrap();
+    tx.rollback().unwrap();
+    assert_eq!(
+        Accounts::new(&f.db).role(&a, &issuer.user).unwrap(),
+        Some(Role::Owner)
+    );
+    assert!(
+        Accounts::new(&f.db)
+            .prepare_registration(invite.secret.expose(), &target, NOW)
+            .is_ok()
+    );
+}

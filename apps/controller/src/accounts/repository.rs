@@ -644,6 +644,19 @@ pub(crate) fn set_membership(
                 params![network.0, user.0,now],
             )?;
         }
+        // Losing delegation authority is permanent for already-issued links.
+        // Admin retains authority for Member invites; Member/removal retains
+        // none. Same-user role restoration or a new membership cannot revive
+        // these invitations. This write shares the membership savepoint.
+        if desired != Some(Role::Owner) {
+            db.execute(
+                "UPDATE account_invitations SET revoked_at=?3
+                 WHERE network_id=?1 AND issuer_user_id=?2
+                   AND consumed_at IS NULL AND revoked_at IS NULL
+                   AND (?4=0 OR role<>'member')",
+                params![network.0, user.0, now, desired == Some(Role::Admin)],
+            )?;
+        }
         Ok(())
     })
 }
