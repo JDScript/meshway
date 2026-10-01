@@ -1,11 +1,38 @@
 use super::*;
 
 #[test]
+fn legal_network_and_profile_fallback_json_preserve_compilation() {
+    let f = facts(3);
+    let mut policies = vec![NetworkPolicy::default_template()];
+    for fallback in [
+        ProfileFallback::None {},
+        ProfileFallback::Direct {},
+        ProfileFallback::Nodes {
+            candidates: vec![format!("node:{}", id(2))],
+            via: vec![],
+        },
+    ] {
+        let mut p = policy();
+        p.profiles[0].fallback = fallback;
+        policies.push(p);
+    }
+    for p in policies {
+        let encoded = serde_json::to_string(&p).unwrap();
+        let decoded: NetworkPolicy = serde_json::from_str(&encoded).unwrap();
+        assert_eq!(decoded, p);
+        assert_eq!(
+            compile_network(&decoded, &f, CompileOptions::default()).unwrap(),
+            compile_network(&p, &f, CompileOptions::default()).unwrap()
+        );
+    }
+}
+
+#[test]
 fn network_budget_precedes_kernel_planning_and_diagnostics() {
     let profile = RoutingProfile {
         id: "office".into(),
         rules: vec![],
-        fallback: ProfileFallback::None,
+        fallback: ProfileFallback::None {},
     };
     let mut p = NetworkPolicy::default_template();
     // Even invalid kernel options cannot cause planning of an oversized source.
@@ -329,7 +356,7 @@ fn policy() -> NetworkPolicy {
             ExitTarget::Nodes,
             2,
         )],
-        fallback: ProfileFallback::Direct,
+        fallback: ProfileFallback::Direct {},
     });
     p.assignments.push(ProfileAssignment {
         src: "*".into(),
@@ -571,7 +598,7 @@ fn unauthorized_profile_assignment_rejected_including_partial_ranges_and_final()
             ExitTarget::Nodes,
             1,
         )],
-        fallback: ProfileFallback::None,
+        fallback: ProfileFallback::None {},
     });
     p.assignments.push(ProfileAssignment {
         src: selector(0),
@@ -667,7 +694,7 @@ fn profile_eight_thousand_cidr_timing() {
             ExitTarget::Nodes,
             999,
         )],
-        fallback: ProfileFallback::None,
+        fallback: ProfileFallback::None {},
     }];
     p.assignments = vec![ProfileAssignment {
         src: "*".into(),

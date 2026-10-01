@@ -106,13 +106,13 @@ IP 使用共享 bit trie，域名使用反向 DNS 标签 trie。每个前缀节�
 }
 ```
 
-所有源策略结构和带字段枚举都使用 serde(deny_unknown_fields)，派生 utoipa::ToSchema。独立导出以 NetworkPolicy 为根的 JSON Schema（不向现有 Controller OpenAPI 注册）：
+所有源策略结构和带字段枚举都使用 serde(deny_unknown_fields)，派生 utoipa::ToSchema。`ProfileFallback` 的 `none` / `direct` 使用空 struct variants，确保反序列化实际拒绝未知字段（internally-tagged unit variants 仅有该注解仍会静默丢字段）。合法 JSON 仍为 `{"kind":"none"}` / `{"kind":"direct"}`；残留 candidates / via 或拼错字段在独立 fallback、嵌套 profile 和完整 NetworkPolicy 输入中均报错。其它 tagged 边界为 adjacently-tagged `ExitMatch`、`RuleSetEntry`（均有必需 value）与 `CompiledFinal`（none/direct unit、nodes paths），负例覆盖额外字段和错误 content；未发现同类静默丢字段。compiled 的索引关系验证仍属于后续 wire 集成边界。独立导出以 NetworkPolicy 为根的 JSON Schema（不向现有 Controller OpenAPI 注册）：
 
 ```sh
 cargo run -p meshway-policy --example policy_v3_schema > target/policy-v3.schema.json
 ```
 
-Schema 表达字段与类型；`compile_network` 同时验证公共规则、方案、分配、完整授权与动态能力。底层单表调用 v3::validate。诊断字段如 profiles[0].rules[0].candidates[1]、assignments[0].allowed 可映射到 JSONC AST；规则集展开的错误仍指向原始引用字段，消息注明规则集条目位置，不错误使用展开或排序后的数组下标。规则 ID 在公共 + 同一方案范围内唯一，前三层仍按共享策略的 ID 约束。
+Schema 表达字段与类型；fallback 的每个字段均必需，并以 `maxProperties` 限制为实际字段数（none/direct 为 1，nodes 为 3），弥补当前 utoipa 未把 enum 的 deny_unknown_fields 传播到 variant schema 的行为，与实际 decoder 的封闭性一致。`compile_network` 同时验证公共规则、方案、分配、完整授权与动态能力。底层单表调用 v3::validate。诊断字段如 profiles[0].rules[0].candidates[1]、assignments[0].allowed 可映射到 JSONC AST；规则集展开的错误仍指向原始引用字段，消息注明规则集条目位置，不错误使用展开或排序后的数组下标。规则 ID 在公共 + 同一方案范围内唯一，前三层仍按共享策略的 ID 约束。
 
 ## 确定性选路与输出
 

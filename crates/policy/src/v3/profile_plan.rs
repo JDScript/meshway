@@ -174,7 +174,7 @@ pub(super) fn plan(
         let unrestricted = all_external(base, src);
         for id in allowed.iter().filter(|id| id.as_str() != AUTO) {
             let (matcher, fallback) = if id == MESH_ONLY {
-                (0, ProfileFallback::None)
+                (0, ProfileFallback::None {})
             } else if let Some(exit) = id.strip_prefix("global:") {
                 if !nodes.iter().any(|n| n.id == exit && n.exit_enabled) || !all_external(base, src)
                 {
@@ -274,8 +274,8 @@ pub(super) fn plan(
                 i
             };
             let fallback = match fallback {
-                ProfileFallback::None => None,
-                ProfileFallback::Direct => Some((true, vec![])),
+                ProfileFallback::None {} => None,
+                ProfileFallback::Direct {} => Some((true, vec![])),
                 ProfileFallback::Nodes { candidates, via } => {
                     if !unrestricted {
                         report(

@@ -36,8 +36,15 @@ pub struct RoutingProfile {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 pub enum ProfileFallback {
-    None,
-    Direct,
+    // Empty struct variants are intentional: serde's internally tagged unit
+    // variants ignore extra fields even with deny_unknown_fields on the enum.
+    // utoipa does not propagate the container's deny_unknown_fields to variant
+    // schemas. All keys are required, so max_properties closes each variant.
+    #[schema(max_properties = 1)]
+    None {},
+    #[schema(max_properties = 1)]
+    Direct {},
+    #[schema(max_properties = 3)]
     Nodes {
         candidates: Vec<String>,
         via: Vec<String>,
