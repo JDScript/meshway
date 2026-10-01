@@ -31,6 +31,7 @@ export default defineConfig({
           { text: "邻接、建连与协议插件", link: "/transport-connections" },
           { text: "公钥与连接配置", link: "/connections" },
           { text: "连接应用、观测与地址", link: "/connection-runtime" },
+          { text: "手动验证连接", link: "/testing-connections" },
           { text: "Linux 传输实验", link: "/transport-lab" },
           { text: "加密边界与真实追踪", link: "/security-and-tracing" },
         ],
