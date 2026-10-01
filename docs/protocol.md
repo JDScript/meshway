@@ -42,6 +42,8 @@ Rust 请求 / 响应类型 + 实际 API 路由声明
 
 ## 注册与心跳 API
 
+原生 App 的[浏览器接入](/device-login)新增 `authorizeDevice` / `exchangeDevice`。后者也进入 Rust 客户端生成白名单，供后续 Apple core 复用；兑换码沿用单 bearer 安全方案，返回既有 `AgentNodeResponse`。
+
 默认本地地址：`http://127.0.0.1:8420`。以下路由、认证流程及概览 / 节点响应的配置字段已通过生成客户端和集成验收。
 
 | 方法与路径 | bearer 权限 | JSON 请求 | HTTP 200 响应 |
@@ -49,6 +51,8 @@ Rust 请求 / 响应类型 + 实际 API 路由声明
 | `GET /api/v1/overview` | 管理员 | 无 | `Overview`，本轮增加 `configuration_revision` |
 | `GET /api/v1/nodes` | 管理员 | 无 | `{ nodes: [NodeSummary] }` |
 | `POST /api/v1/enrollment-tokens` | 管理员 | `{ expires_in_seconds }` | `{ token_id, token, expires_at }` |
+| `POST /api/v1/device-authorizations` | 管理员 | `{ redirect_uri, code_challenge, name, agent_version }` | `{ code, expires_at }` |
+| `POST /api/v1/devices/exchange` | PKCE 兑换码 | `{ code_verifier, redirect_uri, node_credential, name, agent_version }` | `{ node: NodeSummary }` |
 | `POST /api/v1/nodes/revoke` | 管理员 | `{ node_id }` | `{ node: NodeSummary }` |
 | `POST /api/v1/agents/enroll` | 注册令牌 | `{ node_credential, name, agent_version }` | `{ node: NodeSummary }` |
 | `POST /api/v1/agents/heartbeat` | 节点 | `{ agent_version }` | `{ node: NodeSummary }` |
