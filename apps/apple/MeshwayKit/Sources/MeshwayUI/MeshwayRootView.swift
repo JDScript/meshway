@@ -39,6 +39,24 @@ public struct MeshwayRootView: View {
       .frame(minWidth: 440, idealWidth: 500, maxWidth: 680, minHeight: 520, idealHeight: 680)
     #endif
     .tint(.indigo)
+    #if DEBUG && os(macOS)
+      .onReceive(
+        NotificationCenter.default.publisher(for: Notification.Name("MeshwaySnapshotAction"))
+      ) {
+        guard ProcessInfo.processInfo.environment["MESHWAY_SNAPSHOT_DIR"] != nil,
+          let action = $0.object as? String
+        else { return }
+        switch action {
+        case "detail": selected = state.peers.last
+        case "network": showNetwork = true
+        case "dismiss":
+          selected = nil
+          showNetwork = false
+        case "search": search = "no matching device"
+        default: break
+        }
+      }
+    #endif
     .onOpenURL { url in Task { await model.enrollment.handleIncomingCallback(url) } }
     .task(id: model.enrollment.snapshot?.phase) {
       if model.enrollment.snapshot?.phase == .enrolled && scenePhase == .active {
