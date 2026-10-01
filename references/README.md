@@ -22,6 +22,7 @@ Mihomo 的默认 `main` 在拉取时停留于 2025-02-21，因此额外 fetch �
 - [`wgengine/magicsock/relaymanager.go`](tailscale/wgengine/magicsock/relaymanager.go):26–80：peer relay endpoint 分配、握手与探测管理。
 - [`net/udprelay/server.go`](tailscale/net/udprelay/server.go):4–6、802–835：peer relay 转发 Disco/WireGuard UDP 包，按 Geneve VNI 找到 relay binding。
 - [`wgengine/magicsock/`](tailscale/wgengine/magicsock/)：直连 endpoint 探测、选择和 relay 集成。
+- [`net/netcheck/netcheck.go`](tailscale/net/netcheck/netcheck.go):90–128：单次网络报告、UDP / IPv4 / IPv6 观测与可空的目的相关映射；`net/stun/stun.go`:36–70、154–190 为随机事务和映射地址编解码阅读入口。M2 先做独立诊断，承载 socket 上的发现另行推进。
 
 ### Headscale：自托管控制面与 Policy
 

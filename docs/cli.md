@@ -50,4 +50,8 @@ meshway-agent dns query 100.96.0.4 --json --state /state/agent.json
 - 超时、缺少 daemon、非法响应或不兼容 IPC 明确失败；不从缓存或 inventory 伪造答复。
 - DNS-only 与 managed 模式共用同一个私有 socket；DNS-only 的邻接 status / whois / ping 不可用。nameservice 状态不等于系统 resolver 已安装；容器实验 adapter 自有 status / down，见 [DNS](/dns#容器内系统解析接入)。
 
-精确字段和兼容行为见仓库 `apps/agent/CLI.md`。服务安装、up/set/down/login/logout、STUN/netcheck 与多跳 trace 按[后续里程碑](/milestones)继续推进。
+## 底层网络 netcheck
+
+`meshway-agent netcheck --stun-server <数字IP:端口> --stun-server <另一数字IP:端口> --bind 0.0.0.0:0 --json` 使用当前进程的独立临时 UDP socket；不需要 `--state` 或 daemon。报告当前观察到的映射、逐次失败原因以及可空的目的相关变化，详见 [Netcheck](/netcheck)。这与通过已认证邻接进行的 `ping` 是两类证据。
+
+精确字段和兼容行为见仓库 `apps/agent/CLI.md` 与 `apps/agent/NETCHECK.md`。服务安装、up/set/down/login/logout、真实承载上的发现与多跳 trace 按[后续里程碑](/milestones)继续推进。

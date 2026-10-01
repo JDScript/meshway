@@ -11,6 +11,7 @@
 - [`tailcfg/tailcfg.go`：Node 模型](https://github.com/tailscale/tailscale/blob/ab2380a6312858ccf95451787f33acc9c9fca066/tailcfg/tailcfg.go#L370)：节点、密钥、地址与 endpoint。
 - [`MapResponse`](https://github.com/tailscale/tailscale/blob/ab2380a6312858ccf95451787f33acc9c9fca066/tailcfg/tailcfg.go#L2038-L2136)：peer 全量 / 增量、DERP map、DNS 与 packet filters。
 - [`wgengine/magicsock/relaymanager.go`](https://github.com/tailscale/tailscale/blob/ab2380a6312858ccf95451787f33acc9c9fca066/wgengine/magicsock/relaymanager.go#L26-L80)：peer relay 分配、握手与探测。
+- [`net/netcheck/netcheck.go`](https://github.com/tailscale/tailscale/blob/ab2380a6312858ccf95451787f33acc9c9fca066/net/netcheck/netcheck.go#L90-L128)：网络报告和未知值；[`net/stun/stun.go`](https://github.com/tailscale/tailscale/blob/ab2380a6312858ccf95451787f33acc9c9fca066/net/stun/stun.go#L154-L190)：真实源地址的 XOR-MAPPED 编码。M2 的具体交付与边界见 [Netcheck](/netcheck)。
 - [`net/udprelay/server.go`](https://github.com/tailscale/tailscale/blob/ab2380a6312858ccf95451787f33acc9c9fca066/net/udprelay/server.go#L802-L835)：依据 relay binding 转发隧道相关 UDP 包。
 
 **对 Meshway 的启发：** 将控制分发与业务承载分开，研究节点清单、DNS 配置及邻接连通性。Peer relay 的隧道包中继不能直接等同于任意有序多跳路由产品模型。

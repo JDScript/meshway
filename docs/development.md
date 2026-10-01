@@ -19,6 +19,22 @@
 
 远端主机目前只登记。按照用户要求，等 TUN / 打洞完善后再安排容器隔离的跨区域联测，保留宿主原有网络连接；不会用本机容器城市名称冒充跨地域测试。
 
+## 本地常驻开发服务
+
+本机 controller、Web dev 和文档站使用独立 tmux 会话常驻，避免依赖短期执行会话的生命周期：
+
+| 会话 | 命令 | 地址 |
+| --- | --- | --- |
+| `meshway-controller` | `target/debug/meshway-controller serve --bind 127.0.0.1:8420 --data-dir .meshway/controller` | `http://127.0.0.1:8420` |
+| `meshway-web` | `pnpm dev:web` | `http://localhost:3000`，Next.js HMR |
+| `meshway-docs` | `pnpm dev:docs` | `http://localhost:5173` |
+
+从仓库根目录用 `tmux list-sessions` 检查，`tmux attach -t meshway-web` 查看会话。当前日志位于 `.meshway/services/`。Controller 启动复用现有 SQLite 与管理员凭据；未登录的 `/api/v1/overview` 返回 401 表示认证端点可达。
+
+本轮 Docker 开发容器采用**原位二进制更新**：从原生 `meshway-managedtest:m2-dev-20261001-a` 构建提取 Agent，校验 SHA-256，原子替换后逐个重启同一容器。升级前后的节点身份、密钥、profiles 和安装包清单均核对保留；运行进程已验证新版 live CLI、Native UDP / VLESS 邻接探测及新运行 epoch。
+
+`docker ps` 的 IMAGE 仍标示容器创建时的基础镜像；本次运行二进制的来源与校验记录在 `.meshway/services/binary-update-*/deployment.json`。这是可写开发容器的部署方式，重建容器时应使用最新构建镜像。普通镜像升级会重建可写层，操作入口与边界见仓库 `experiments/managed-connections/DEMO.md`。
+
 ## 已验证基线：注册与持久化切片
 
 Rust controller / Agent、生成客户端与真实 API 驱动的 Web 已交付控制面凭据身份闭环。该切片属于里程碑 1 的已完成部分，下表记录其实现范围。
