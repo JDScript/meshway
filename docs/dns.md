@@ -1,6 +1,6 @@
 # 身份 DNS 与域名上下文
 
-**节点 DNS 解决 mesh 节点名称，互联网域名分流还需要额外的 DNS 关联机制。** 两者不能互相替代。当前已实现显式 loopback 权威节点 DNS；系统 resolver 接管、Split DNS 和互联网域名上下文仍是后续设计。
+**节点 DNS 解决 mesh 节点名称，互联网域名分流还需要额外的 DNS 关联机制。** 当前已有显式 loopback 权威节点 DNS 和隔离 Linux 容器的 resolver 实验接入；通用平台安装器、可配置 Split DNS 与互联网域名上下文仍是后续设计。
 
 ## 当前可用：显式本地节点解析器
 
@@ -21,15 +21,29 @@ dig @127.0.0.1 -p 5353 -x <节点的实际 Mesh IPv4>
 
 节点显示名能规范成唯一单标签时提供可读 alias；重名或无效名称仅保留 `id.<节点 ID 前32字符>.<后32字符>.<zone>`，不截断身份或随机挑选重名节点。AAAA 是地址元数据，不证明 IPv6 TUN 已可通信。
 
-Agent 从生成的 `getAgentDns` 接口取得同 revision 的节点记录，校验网络 / 节点绑定、摘要及地址唯一归属，私有持久保存后才发布。磁盘缓存用于检查与防回退，不在离线启动时恢复旧解析权限。禁用配置返回 REFUSED，不可用 / lease 过期返回 SERVFAIL；没有递归转发。每个正响应 TTL 不超过剩余 lease，排队的发送也受到代际和截止时间约束。
+Agent 从生成的 `getAgentDns` 接口取得同 revision 的节点记录，校验网络 / 节点绑定、摘要及地址唯一归属，私有持久保存后才发布。磁盘缓存用于检查与防回退，不在离线启动时恢复旧解析权限。新鲜的禁用配置返回 REFUSED，不可用 / lease 过期返回 SERVFAIL；启用与关闭状态都受同样的 revision / lease 约束。没有递归转发。每个正响应 TTL 不超过剩余 lease，排队的发送也受到代际和截止时间约束。
 
-这一步没有修改系统 DNS、搜索域或默认上游。普通应用直接使用短名的容器 OS resolver 接入属于[下一里程碑](/milestones)，不能用 `dig` 成功替代它的完成状态。
+Agent 的 nameservice 本身不修改系统 DNS、搜索域或默认上游。普通应用使用短名还需要显式 resolver 接入，不能用 `dig` 成功代替应用路径验收。
 
 ### 已验证的本机隔离验收
 
 `experiments/managed-dns/run.py` 使用独立 controller、两个 keyless DNS-only 节点和一个同进程 TUN + DNS 节点。原生 ARM64 镜像 `sha256:83a725fbde106f34fef4f42be3f63af236fe5b218619b8226f7b9343385c0de5` 已通过完整验收，运行 ID 为 `mupehmrf-285d57c8e26c99ff`，公共结果文件包含 8 阶段证据，资源清理无错误。
 
 验证覆盖真实 UDP/TCP、`dig`、A/AAAA/PTR、重复 alias 抑制、zone 更换、禁用/恢复、TTL 不超过 lease、控制面断联、带缓存离线重启、同数据库恢复和撤销。测试限定本机独立容器，没有修改宿主 DNS 或接入登记的远端主机。
+
+## 容器内系统解析接入
+
+M1 采用单独的实验 adapter，将新建 Linux 容器的 loopback `:53` 接到 Agent 的 `:5353`，并为容器自身添加搜索域。来源位于 `experiments/dns-resolver`；完整验收通过 `experiments/managed-dns/run.py --system-resolver` 运行。
+
+- 节点 zone 按标签边界匹配，Mesh 地址池内的反向查询也固定走 nameservice；拒绝或失效的 Mesh 查询不尝试外部上游。
+- 接管前的 nameserver 继续负责外部域名，controller 与 transport 的引导连接使用独立底层地址。启用期间只使用 Mesh 搜索域；原搜索域随原文件保留，在 down 时恢复，避免同名外部 search 结果接管节点短名。
+- 搜索失败后的裸单标签查询在本地拒绝，避免短名落到同名底层服务；外部服务使用完整的多标签名称。
+- 只有 UDP/TCP 都绑定成功后才修改 resolv.conf；私有 journal 保存原始内容和文件身份。正常退出、显式 down、崩溃后的恢复均检查所有权，文件被其他程序修改时报告冲突。
+- 接入仅管理显式允许的容器文件；zone / 地址池为启动参数，变更后 down 再 apply。这不是通用 systemd-resolved 或跨平台安装器。
+
+验收使用 glibc `getent`、真实 `curl` 响应与 Mesh IP / TUN 路由证明应用通路；Access 默认拒绝时，同样的名称可解析但 HTTP 访问失败。控制面失联后继续检查 lease 到期与内核拒绝路由，区分 DNS 可见性、解析器运行和业务授权。
+
+2026-10-01 最终系统 resolver / DNS CLI 集成验收已通过：运行 ID `mupq9edz-37f8cdbf841d8edf`，共 12 个阶段、16 项系统接入检查；原生 ARM64 镜像 `meshway-manageddns:m1-20261001-b`，ID 为 `sha256:8d089b9bb1c67d3ef54d6b00acc90e6b32869e97516ebb8d158f79ed0c60df3a`，包含关闭状态 lease 修复与真实 DNS CLI。原 resolver 内容完整恢复，独立容器 / 网络清理无错误。结果文件还记录 TCP 占用 / 只读文件 apply 失败、SIGKILL 恢复、第三方编辑冲突、CLI 过期状态及 SERVFAIL 答复证据、daemon 退出后的显式 unreachable 路由。
 
 ## MagicDNS：从节点清单到本地解析器
 
@@ -39,9 +53,9 @@ Agent 从生成的 `getAgentDns` 接口取得同 revision 的节点记录，校�
 | --- | --- | --- |
 | `A` / `AAAA` | 节点名称映射到 mesh IPv4 / IPv6 地址 | 已实现本地权威回答；AAAA 不等同 IPv6 数据面 |
 | `PTR` | mesh 地址的反向节点名解析 | 已实现，只回答快照中实际分配的地址 |
-| 搜索域 | 允许使用节点短名称 | 命名冲突与优先级需要明确 |
+| 搜索域 | 允许使用节点短名称 | 容器实验只安装当前 Mesh search，退出恢复原配置，避免外部同名接管 |
 | Split DNS | 按域后缀分配 mesh / 企业 / 公网解析器 | 后缀按 DNS 标签匹配，避免误劫持 |
-| OS 集成 | 安装、更新并恢复系统 DNS 配置 | Linux、macOS、Windows 需要分别实现和测试 |
+| OS 集成 | 安装、更新并恢复系统 DNS 配置 | 已验收受控 Linux 容器文件 adapter；平台 resolver 仍需分别实现和测试 |
 
 当前后缀由网络管理员配置，重名 alias 被抑制，TTL 受新鲜配置 lease 限制；记录可见性与现有单网络公共 inventory 一致，不赋予业务访问权。跨组织可见性与 OS 集成仍需设计，不能仅修改一个通用 `resolv.conf` 就声称跨平台支持完成。
 

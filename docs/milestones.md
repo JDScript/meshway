@@ -10,19 +10,20 @@
 - **验收**：UDP/TCP 正反查、禁用/rename/节点撤销、超限/无效 digest、长 HTTP 阻塞期间 lease 仍到期；旧记录不因重启而恢复服务。
 - **证据**：完整本机隔离 Docker 验收已通过，详见 [DNS](/dns#已验证的本机隔离验收)。待发送旧响应的代际 fencing 与禁用后持久 self-address pin 已覆盖行为回归；节点 DNS 不会因此自动接管系统 resolver。
 
-## M1 · 容器内可用 DNS + 只读 CLI（CLI 并行推进）
+## M1 · 容器内可用 DNS + 只读 CLI（已交付受控容器切片）
 
 - **可见交付**：隔离 Linux 容器内 `getent hosts <短名/FQDN>` 后真实访问已授权 Mesh IPv4 服务；`status --live --json/--peers` 与 `dns status/query` 给出可解释诊断。
 - **协议/UI/CLI**：DNS adapter 在同一 netns 提供 53 端口，接入现有 5353 nameservice，添加 search domain；外部查询走接管前的上游，不递归计算。区分 intent/saved/applied、DNS listener/OS integration、运行代际/lease、邻接 transport 与业务方向。网络页集中配置，节点详情展示执行结果。
 - **不变量**：显式 opt-in，只管理容器自身 resolver；保存/恢复仅自己拥有的配置；拒绝自身上游循环，bootstrap 与 Mesh DNS 解耦。DNS 可见不等于 Access allow；撤回不允许 Mesh 流量落入底层默认路由。
 - **验收**：glibc 与实际应用短名解析、A/AAAA/PTR、TCP 查询；外部域名保留原解析；重复 apply/down/失败回滚；上游指回自身报错；改名旧 alias 消失；lease 到期停止旧 DNS；daemon 停止、DNS 端口占用/权限不足均真实报告。
-- **依赖/并行**：DNS adapter 依赖 M0；CLI 与 UI 可独立并行，协议/根 manifest/lock 合并归协调者。第一片先用受控容器 resolv.conf adapter，systemd-resolved 平台探测后续补齐。
+- **已交付**：受控容器 resolv.conf adapter 与真实 glibc / curl / TUN 验收通过，含外部搜索域诱饵、拒绝访问、过期和所有权恢复；网络 / 节点 DNS 名称与诊断入口已归并。见 [DNS](/dns#容器内系统解析接入)。
+- **后续边界**：adapter 的 zone / 地址池需显式 stop/reapply；systemd-resolved 平台探测和 controller 汇总节点 DNS 运行报告仍需后续切片。Web 目前显示保存意图与本地诊断入口。
 
 ### 已启动的独立 CLI slice
 
-本轮已实现 `status --live`、可读摘要 / JSON、peer 视图、`whois` 和邻接 `ping --json`，见 [CLI](/cli)。DNS status/query 等 DNS 运行边界稳定后接入；容器 OS resolver adapter 仍是下一片。
+已实现 `status --live`、可读摘要 / JSON、peer 视图、`whois`、邻接 `ping --json` 与 `dns status/query`，见 [CLI](/cli)。DNS-only 与 managed 模式共用私有 daemon IPC；DNS 查询使用真实 UDP/TCP，状态和答复证据分开呈现。
 
-在已有 `apps/agent/src/diagnostics.rs` 私有 Unix socket 上增加**只读** live-status/DNS-status 请求，复用单一 Rust 契约与 enum/严格校验；生成 schema 给后续消费者，禁止 CLI 与 daemon 各自手写 DTO。保留原 saved `status` 默认输出，新增 `--live`、`--json`、`--peers` 与 human summary；`dns query` 发真实本地查询，`whois` 只查当前可见 IP→node/tag 映射。JSON 带 schemaVersion、source、observedAt、generation/revision、lease、运行状态与 unknown 字段；无 daemon 不回退 cached-live。沿用同 UID、私有目录/socket、帧大小/并发/timeout 限制，不读取或输出私钥。
+`apps/agent/src/diagnostics.rs` 的只读 IPC 复用单一 Rust 契约与封闭 enum；当前 JSON 使用 `schema_version`、证据来源、generation/revision、lease 和明确的未知状态。`whois` 查询当前可信 inventory 中的节点 ID / 名称 / Mesh IP，不提供尚未发布的 tag 映射。无 daemon 不回退 cached-live；同 UID、私有目录/socket、帧大小/并发/timeout 限制保留。后续跨语言消费者接入前再生成其 schema，不手写第二套 DTO。
 
 当前兼容退出码为 0 成功、1 运行失败、2 参数错误；更细的失败种类放在版本化 JSON error code，stdout 只放结果，stderr 放诊断。验收覆盖 daemon 在/停/代际切换、过期 snapshot、无 peer、畸形/超大 IPC、权限不符、JSON 单对象及旧 ping 协议兼容。现有 `ping` 继续明确 neighbor-probe；up/set/down/login/logout、netcheck 网络探测、trace 或新管理 mutation 仍是后续切片。
 

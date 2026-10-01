@@ -14,9 +14,9 @@ Agent DNS 已通过真实 loopback UDP/TCP A/AAAA/PTR 和隔离 Docker 验收，
 
 | 官方语义与证据 | Meshway 差距及建议 |
 | --- | --- |
-| 每个 tailnet 有 DNS domain；machine short name 在 tailnet 唯一，冲突可加数字后缀；rename 同步改变 FQDN，搜索域使短名可用。[D1][D2] | 保留稳定 ID canonical（完整 64 字符十六进制 ID 分成两个 32 字符标签）与可变 alias；冲突 alias 按当前契约诊断/抑制，不引入静默自动改名。OS search domain 尚待集成。 |
+| 每个 tailnet 有 DNS domain；machine short name 在 tailnet 唯一，冲突可加数字后缀；rename 同步改变 FQDN，搜索域使短名可用。[D1][D2] | 保留稳定 ID canonical（完整 64 字符十六进制 ID 分成两个 32 字符标签）与可变 alias；冲突 alias 按当前契约诊断/抑制，不引入静默自动改名。容器实验 adapter 添加单一 Mesh 搜索域，退出恢复原文件。 |
 | MagicDNS 指向 overlay 地址，不是公网 STUN endpoint；IPv4/IPv6 地址与 underlay endpoint 分开。[D3][S1] 公共 DNS 可以公开映射到私有 overlay IP，解析公开不等于可访问。 | AAAA 地址元数据不等于 IPv6 TUN。名称可见性与业务授权分开；按当前节点 DNS 快照回答，不能从管理员 inventory 补齐不可见记录。推荐新集成仍不发布公共 DNS。 |
-| Quad100 `100.100.100.100:53`（IPv6 `fd7a:115c:a1e0::53`）是设备本地 stub/service，并非远端公共递归服务器；需要转发时才离开设备。[D4] | `127.0.0.1:5353` 第一段只是 nameservice。下一步推荐隔离 Linux 容器内 53 端口 adapter + OS resolver/search 集成，无须复制 Quad100 地址。 |
+| Quad100 `100.100.100.100:53`（IPv6 `fd7a:115c:a1e0::53`）是设备本地 stub/service，并非远端公共递归服务器；需要转发时才离开设备。[D4] | `127.0.0.1:5353` 作为 nameservice；M1 容器实验在本地 53 端口接入系统 resolver/search，无须复制 Quad100 地址。平台安装器和动态 zone 接入仍需后续切片。 |
 | restricted nameserver 是 split DNS；global nameserver 与 Override DNS servers 控制默认解析。搜索域补全不等于 DNS routing；`DNSConfig.Proxied` 是 MagicDNS 历史命名，不保证 proxy。[D3][S2] | 不把 DNS suffix 路由等同业务 Routing。集成层区分本地 zone、搜索域、外部上游和 override intent；首片保留原上游，外部查询才转发，不启用全局 override。 |
 | exit node 默认承接外部 DNS，可按 nameserver 的 Use with exit node 覆盖。[D3][S3] DoH 上游需要 bootstrap；原 OS resolver 可能指回本机，必须防 self-loop。[S4] | 出口 DNS 等出口职责成熟再做。先排除自身监听及指回自身的 stub、保留接管前 base resolver；endpoint/control bootstrap 不依赖尚未建立的 Mesh DNS。 |
 | proxy 正向：应用→本机 stub→本地记录/选定上游（或 exit）；响应反向返回查询者。PTR 是反向名称查询，并非“反向 dial”。[D3][D4][S3] | 建连方向与 DNS/业务方向分开：下一跳主动连接本机仍可承载已授权查询与响应；这不授予反向业务权限。DNS 回答不创建流授权，也不自动提供 IP 包的域名上下文。 |
@@ -35,7 +35,7 @@ Agent DNS 已通过真实 loopback UDP/TCP A/AAAA/PTR 和隔离 Docker 验收，
 
 | 官方语义与证据 | Meshway 差距及建议 |
 | --- | --- |
-| `tailscaled` 持续运行；CLI 经 LocalAPI 查询 daemon。`status --json/--peers`、`dns status/query`、`whois` 分别提供连接、解析配置/查询、IP 身份映射。[D8][S5] | 当前 `meshway-agent run` 是常驻进程，Docker `meshway` 是 UID launcher；`status` 仅保存状态，`ping` 仅认证邻接探测。推荐兼容命令风格与版本化输出，不承诺 Tailscale JSON 字段完全兼容；查询活 daemon，缓存明确标识 saved，停止时不伪造 live。 |
+| `tailscaled` 持续运行；CLI 经 LocalAPI 查询 daemon。`status --json/--peers`、`dns status/query`、`whois` 分别提供连接、解析配置/查询、IP 身份映射。[D8][S5] | `meshway-agent run` 是常驻进程，Docker `meshway` 是 UID launcher；默认 `status` 保留保存状态，`status --live` / `whois` 查询私有 daemon IPC，`ping --json` 是认证邻接探测。命令采用版本化输出与真实证据，不承诺 Tailscale JSON 字段兼容；停止时不伪造 live。 |
 | `netcheck` 测 underlay UDP/STUN、映射随目的变化、地址与 relay latency；未测得是 unknown。[D8][S6] `ping` 分 DISCO/TSMP/ICMP/PeerAPI，各自覆盖不同层。[D9][S2] | 优先 human summary + JSON、稳定退出码；邻接 probe 不能冒充端到端 ICMP、真实 trace 或应用可达。whois 只描述身份，不能输出“已授权”。 |
 | `up` 连接并必要时认证；`set` 只改指定偏好；`down` 暂断且保留身份；`login` 加入/登录；`logout` 使当前登录失效。[D8] | 后续 mutation 需定义生命周期与权限后再映射。不要把停止进程等同 logout/revoke，也不要将 enroll 偷换为网页登录。Rust 契约统一 IPC 类型与校验；已有私有 socket 上扩展 versioned enum，若选 HTTP 则由真实路由生成 OpenAPI/客户端，禁止另抄 DTO。 |
 | STUN 获得候选 endpoint，DISCO 认证探测/交换；DERP 可先承载协商/流量，然后尝试 direct，再 peer relay，失败仍 DERP，持续重试；三种均保持 E2E。[D10][D11][S6] | endpoint 候选不等于已连接。传输主备仅作用于同一逻辑邻接；relayfallback 不能绕过 mandatory via。先本机 NAT fixture 验证，再考虑远端，测试矩阵见里程碑。 |

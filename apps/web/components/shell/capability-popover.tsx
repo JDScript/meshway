@@ -30,7 +30,7 @@ const available = [
 const pending = [
   "IPv6 TUN、互联网出口与可信域名流量上下文",
   "端到端流量统计与真实多跳 mesh trace",
-  "系统 DNS 集成、自动打洞与完整多传输故障切换",
+  "跨平台系统 DNS 集成、自动打洞与完整多传输故障切换",
 ]
 
 export function CapabilityPopover() {

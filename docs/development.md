@@ -10,9 +10,12 @@
 - Linux TUN 上的真实 Mesh IPv4 通信、有序多跳、Noise E2E，以及 Native UDP / TCP、TLS-VLESS 承载。
 - Access 的端点 node/tag/`*`、默认 allow/reject、first-match 与显式双向规则；Routing 决定路径，两者联合编译内部权限。
 - Access / Routing 共享草稿的图形化与 schema JSONC 编辑器、注释持久保存，以及区分授权、计划与邻接报告的 Flow 预览。
+- 稳定单 Network ID / 名称、只读地址池、DNS 设置与显式 loopback A/AAAA/PTR；页面统一间距、草稿栏过渡及已保存 Flow 检查入口已归并。
+- 通过私有 daemon IPC 查询的 `status --live`、`whois`、JSON 邻接 `ping` 与 `dns status/query`；网络页与节点详情区分 DNS 保存意图、完整节点名和本地诊断。
+- 显式容器 resolver / 搜索域实验接入，已验证 glibc 短名、真实授权 TUN HTTP、外部 DNS 保留与事务恢复。
 - 可写 Ubuntu 本机 demo 和隔离 Docker 功能验收。当前阶段及证据分别见[访问授权](/access-policy)、[托管数据面](/managed-dataplane)。
 
-下一条后端主线是稳定的单 Network 身份与设置，以及显式启用的本地节点 DNS。前端的统一间距、草稿栏过渡和页面入口归并并行推进。节点 DNS、可信互联网域名上下文、系统 DNS 接管是不同的交付项；IPv6 TUN、互联网出口、打洞和真实逐跳 trace 仍需分别验收。
+接下来推进 endpoint 发现、netcheck 和本机隔离 NAT / 打洞。具体完成状态和验收入口集中在[后续里程碑](/milestones)；平台 DNS 安装器、IPv6 TUN、互联网出口和真实逐跳 trace 继续按依赖分片。
 
 远端主机目前只登记。按照用户要求，等 TUN / 打洞完善后再安排容器隔离的跨区域联测，保留宿主原有网络连接；不会用本机容器城市名称冒充跨地域测试。
 
