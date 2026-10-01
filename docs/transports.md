@@ -2,6 +2,17 @@
 
 **已确认：每条逻辑邻接允许多个传输候选；首版采用优先级主备，优先使用健康的高优先级承载，并支持故障切换。** 按流负载分担、同流多路径及逐包聚合不属于首版要求。独立的 [Linux 实验](/transport-lab) 已实现原生 UDP / TCP 与 VLESS stream，用于验证方向、认证和插件边界；正式承载协议、生产配置分发、按流固定与完整回切策略仍需后续交付。
 
+## 当前库级适配器
+
+| Crate | 已验证能力 | 运行层接入状态 |
+| --- | --- | --- |
+| `meshway-transport-vless` | VLESS v0 TCP CONNECT、双向字节流、Xray 互通 | 已接独立传输实验 |
+| `meshway-transport-trojan` | Trojan TCP、校验 CA / server name 的 TLS、Xray 双向互通 | 库级完成，待 Agent 统一装配 |
+| `meshway-transport-socks5` | TCP CONNECT、显式无认证 / 用户名密码、Xray 双角色互通 | 库级完成，待 Agent 统一装配 |
+| `meshway-transport-shadowsocks` | 经典 AEAD TCP 三种 cipher、基于 shadowsocks-rust、sing-box 双角色互通 | 库级完成，待 Agent 统一装配 |
+
+后三种尚未加入管理 API 的能力目录，控制台不会把它们显示成已部署的节点能力。各库的精确 API、版本和互通命令保存在各自 README。代理认证仍不替代 Meshway 身份认证；固定目标接收端也不是通用开放代理。
+
 ## 相邻节点不变，承载可以变化
 
 连接发起方独立于业务方向；SHA 主动 dial LAX 的 VLESS server 后，LAX 可以通过已认证的双向通道向 SHA 转发。节点入口声明、授权与协议插件边界见[邻接、建连与协议插件](/transport-connections)。
@@ -60,3 +71,9 @@ WireGuard、MASQUE CONNECT-IP、CONNECT-UDP 和 VMess / VLESS 类代理的接口
 多跳和多层封装会减少有效 MTU。建议记录每条候选的有效承载上限，并使用路径中最受限的一段指导包尺寸处理。
 
 需要验证 IPv4 分片、IPv6 Packet Too Big、PMTUD 黑洞及 ICMP 返回。只做小包 ping 或 HTTP 成功测试不足以证明传输可用。采用 stream 承载 IP 时还要评估队头阻塞，不能只比较连接建立成功率。
+
+## 包装成本的匹配基线
+
+性能验收比较同一协议 / 实现、加密、分帧、连接和资源条件下，直接路径与 Meshway 适配路径的差值。原生 L4 流代理与完整 L3 E2E 隧道的速度差不能直接当作包装损失。
+
+已完成的 VLESS 匹配实验只改变是否保留已经校验握手的 `ClientStream` 适配层，正向吞吐保留率为 99.47%；反向为 105.32%，短测试中的正增益不代表固有加速。本轮没有测出这个小适配层的明显吞吐损失，认证 / E2E、有序转发和 TUN 的增量成本尚未逐层隔离。方法、CPU/byte、延迟与原始证据见仓库 `experiments/transport/MATCHED.md`。
