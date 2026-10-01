@@ -1,5 +1,6 @@
 "use client"
 
+import { useRoutes } from "@/components/shell/network-context"
 import { useNetworkId } from "@/components/network/network-workspace"
 
 import type {
@@ -147,6 +148,7 @@ export function AccessEditor({
 }) {
   const drafts = useAccessDraftStore()
   const networkId = useNetworkId()
+  const routes = useRoutes()
   const [restored] = useState(() => drafts.read())
   const [restoredNotice, setRestoredNotice] = useState(restored !== null)
   const [base, setBase] = useState(restored?.base ?? snapshot)
@@ -439,7 +441,7 @@ export function AccessEditor({
         <Metric label="已注册节点">
           <span className="tabular-nums">{active.length}</span>
         </Metric>
-        <Link href="/tags" className="flex items-center gap-1 text-muted-foreground hover:text-foreground">
+        <Link href={routes.tags()} className="flex items-center gap-1 text-muted-foreground hover:text-foreground">
           <TagIcon className="size-3.5" />
           {tags.tags.length} 个标签
         </Link>
@@ -746,6 +748,7 @@ function DefaultActionCard({
 
 /** What an access rule does and does not do, in a few lines. */
 function ScopePanel() {
+  const routes = useRoutes()
   return (
     <Panel title="规则含义" bodyClassName="flex flex-col gap-3 p-4 text-xs">
       <p data-testid="access-relationship" className="text-sm font-medium">
@@ -761,14 +764,14 @@ function ScopePanel() {
       </ul>
       <div className="flex flex-wrap gap-x-4 gap-y-1 border-t pt-3">
         <Link
-          href="/routing"
+          href={routes.routing()}
           className="inline-flex items-center gap-1 text-muted-foreground underline-offset-4 hover:text-foreground hover:underline"
         >
-          路由策略
+          路由
           <ArrowUpRightIcon className="size-3" />
         </Link>
         <Link
-          href="/tags"
+          href={routes.tags()}
           className="inline-flex items-center gap-1 text-muted-foreground underline-offset-4 hover:text-foreground hover:underline"
         >
           标签

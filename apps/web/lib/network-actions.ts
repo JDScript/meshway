@@ -28,7 +28,7 @@ export async function saveNetworkAction(networkId: string, request: SaveNetworkR
     if (!isCredentialRejected(error)) {
       const status = error instanceof ControlApiError ? error.status : null
       if (status === 409) {
-        return { status: "conflict", message: `全局配置已不是 r${request.expected_revision}，可能有标签、路由或其他设置更新。当前名称与 DNS 草稿保留，未覆盖最新配置。` }
+        return { status: "conflict", message: `网络配置已不是 r${request.expected_revision}，可能有标签、路由或其他设置更新。当前名称与 DNS 草稿保留，未覆盖最新配置。` }
       }
       return { status: status === 422 ? "invalid" : "error", message: `保存失败：${describeError(error, token)}` }
     }
@@ -64,14 +64,16 @@ export async function switchNetworkAction(id: string): Promise<{ error: string |
   }
 }
 
-export async function createNetworkAction(_previous: { error: string | null }, form: FormData): Promise<{ error: string | null }> {
+export type CreateNetworkState = { error: string | null; networkId?: string }
+
+export async function createNetworkAction(_previous: CreateNetworkState, form: FormData): Promise<CreateNetworkState> {
   const token = await requireActionAdminToken()
   const name = form.get("name")
-  if (typeof name !== "string") return { error: "请输入网络名称。" }
+  if (typeof name !== "string" || name.trim() === "") return { error: "请输入网络名称。" }
   try {
     const network = await createNetwork(controllerUrl(), token, { name })
     await selectNetworkCookie(network.network_id)
-    return { error: null }
+    return { error: null, networkId: network.network_id }
   } catch (error) {
     if (isCredentialRejected(error)) return rejectActionSession()
     return { error: `创建失败：${describeError(error, token)}` }

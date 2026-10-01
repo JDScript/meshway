@@ -12,12 +12,10 @@ import {
   getTags,
   listNodes,
   listNetworks,
-  type NetworkList,
   type ConnectionRuntimesSnapshot,
   type ConnectionsSnapshot,
   type EndpointDiscoveriesSnapshot,
   type MeshAccessSnapshot,
-  type NetworkSnapshot,
   type NodeList,
   type Overview,
   type PolicySnapshot,
@@ -28,7 +26,6 @@ import { connection } from "next/server"
 import { cache } from "react"
 
 import { EXPIRED_LOGIN_PATH, requireAdminToken } from "@/lib/session"
-import { selectedNetworkId } from "@/lib/network-context"
 import { controllerUrl } from "@/lib/controller-config"
 
 export { controllerUrl } from "@/lib/controller-config"
@@ -81,52 +78,53 @@ async function authorizedRead<T>(
   redirect(EXPIRED_LOGIN_PATH)
 }
 
-function authorizedNetworkRead<T>(call: (baseUrl: string, token: string, networkId: string) => Promise<T>): Promise<ControllerResult<T>> {
-  return authorizedRead(async (base, token) => call(base, token, await selectedNetworkId(token)))
+// Every network read names its network explicitly: pages take it from the
+// `/<network_id>` URL segment (see lib/network-scope.ts), never from the
+// selection cookie, so a page always shows the network its URL names.
+function networkRead<T>(
+  networkId: string,
+  call: (baseUrl: string, token: string, networkId: string) => Promise<T>
+): Promise<ControllerResult<T>> {
+  return authorizedRead((base, token) => call(base, token, networkId))
 }
 
-export function fetchOverview(): Promise<ControllerResult<Overview>> {
-  return authorizedNetworkRead(getOverview)
+export function fetchOverview(networkId: string): Promise<ControllerResult<Overview>> {
+  return networkRead(networkId, getOverview)
 }
 
-export function fetchNodes(): Promise<ControllerResult<NodeList>> {
-  return authorizedNetworkRead(listNodes)
+export function fetchNodes(networkId: string): Promise<ControllerResult<NodeList>> {
+  return networkRead(networkId, listNodes)
 }
 
-export function fetchPolicy(): Promise<ControllerResult<PolicySnapshot>> {
-  return authorizedNetworkRead(getPolicy)
+export function fetchPolicy(networkId: string): Promise<ControllerResult<PolicySnapshot>> {
+  return networkRead(networkId, getPolicy)
 }
 
-export function fetchConnections(): Promise<ControllerResult<ConnectionsSnapshot>> {
-  return authorizedNetworkRead(getConnections)
+export function fetchConnections(networkId: string): Promise<ControllerResult<ConnectionsSnapshot>> {
+  return networkRead(networkId, getConnections)
 }
 
 /** Agent self-reports; a separate read so an outage never hides the saved plan. */
-export function fetchConnectionRuntimes(): Promise<ControllerResult<ConnectionRuntimesSnapshot>> {
-  return authorizedNetworkRead(getConnectionRuntimes)
+export function fetchConnectionRuntimes(networkId: string): Promise<ControllerResult<ConnectionRuntimesSnapshot>> {
+  return networkRead(networkId, getConnectionRuntimes)
 }
 
-export function fetchEndpointDiscoveries(): Promise<ControllerResult<EndpointDiscoveriesSnapshot>> {
-  return authorizedNetworkRead(getEndpointDiscoveries)
+export function fetchEndpointDiscoveries(networkId: string): Promise<ControllerResult<EndpointDiscoveriesSnapshot>> {
+  return networkRead(networkId, getEndpointDiscoveries)
 }
 
 /** Saved endpoint access rules (with their JSONC source, if stored). */
-export function fetchMeshAccess(): Promise<ControllerResult<MeshAccessSnapshot>> {
-  return authorizedNetworkRead(getMeshAccess)
+export function fetchMeshAccess(networkId: string): Promise<ControllerResult<MeshAccessSnapshot>> {
+  return networkRead(networkId, getMeshAccess)
 }
 
 /** Tag catalog and node tag assignments. */
-export function fetchTags(): Promise<ControllerResult<TagSnapshot>> {
-  return authorizedNetworkRead(getTags)
+export function fetchTags(networkId: string): Promise<ControllerResult<TagSnapshot>> {
+  return networkRead(networkId, getTags)
 }
 
-/** Persistent singleton network metadata and saved DNS intent. */
-const readNetwork = cache(() => authorizedNetworkRead(getNetwork))
+/** Network metadata and saved DNS intent, shared by the shell and pages within one request. */
+export const fetchNetwork = cache((networkId: string) => networkRead(networkId, getNetwork))
 
-export function fetchNetwork(): Promise<ControllerResult<NetworkSnapshot>> {
-  return readNetwork()
-}
-
-export function fetchNetworks(): Promise<ControllerResult<NetworkList>> {
-  return authorizedRead(listNetworks)
-}
+/** Global: every network this administrator manages. Shared within one request. */
+export const fetchNetworks = cache(() => authorizedRead(listNetworks))

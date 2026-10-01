@@ -21,6 +21,7 @@ import { Segmented } from "@/components/common/segmented"
 import { CountryDialog } from "@/components/nodes/country-dialog"
 import { LastContact, ReceiptBadge, StatusBadge } from "@/components/nodes/node-status"
 import { RevokeDialog } from "@/components/nodes/revoke-dialog"
+import { useRoutes } from "@/components/shell/network-context"
 import { Button } from "@/components/ui/button"
 import {
   DropdownMenu,
@@ -92,10 +93,13 @@ export function NodesView({
   nodes,
   fetchedAt,
   initialQuery,
+  tags,
 }: {
   nodes: NodeSummary[]
   fetchedAt: number
   initialQuery: string
+  /** Node ID → tags; null when the tag snapshot could not be read. */
+  tags: Record<string, string[]> | null
 }) {
   const [query, setQuery] = useState(initialQuery)
   const [status, setStatus] = useState<StatusFilter>("all")
@@ -116,7 +120,7 @@ export function NodesView({
       const state = receiptState(node)
       if (receipt === "current" && state !== "current") return false
       if (receipt === "pending" && state !== "behind" && state !== "never") return false
-      return matches(node, trimmed)
+      return matches(node, trimmed) || (tags?.[node.id] ?? []).some((tag) => tag.includes(trimmed.toLowerCase()))
     })
     const sorted = [...filtered]
     sorted.sort((a, b) => {
@@ -125,7 +129,7 @@ export function NodesView({
       return time(b.last_seen) - time(a.last_seen)
     })
     return sorted
-  }, [nodes, query, status, receipt, sort])
+  }, [nodes, query, status, receipt, sort, tags])
 
   const updateQuery = (next: string) => {
     setQuery(next)
@@ -144,14 +148,14 @@ export function NodesView({
   return (
     <div className="flex flex-col gap-3">
       <div className="flex flex-col gap-2 lg:flex-row lg:items-center">
-        <InputGroup className="lg:max-w-xs">
+        <InputGroup className="h-8 bg-card lg:max-w-xs">
           <InputGroupAddon>
             <SearchIcon />
           </InputGroupAddon>
           <InputGroupInput
             value={query}
             onChange={(event) => updateQuery(event.target.value)}
-            placeholder="名称、ID、Mesh 地址或国家"
+            placeholder="名称、地址、标签或国家"
             aria-label="搜索节点"
             autoComplete="off"
             spellCheck={false}
@@ -193,7 +197,7 @@ export function NodesView({
         </div>
       </div>
 
-      <div className="overflow-hidden rounded-xl border bg-card">
+      <div className="overflow-hidden rounded-lg border bg-card shadow-xs">
         {visible.length === 0 ? (
           <Empty className="py-12">
             <EmptyHeader>
@@ -217,13 +221,13 @@ export function NodesView({
           </Empty>
         ) : (
           <Table className="text-sm">
-            <TableHeader className="bg-muted/40 [&_th]:text-xs [&_th]:font-medium [&_th]:text-muted-foreground">
+            <TableHeader className="bg-muted/50 [&_th]:text-xs [&_th]:font-medium [&_th]:text-muted-foreground">
               <TableRow className="hover:bg-transparent">
-                <TableHead className="h-9 pl-4">节点</TableHead>
-                <TableHead className="h-9">控制面联系</TableHead>
+                <TableHead className="h-9 pl-5">节点</TableHead>
                 <TableHead className="hidden h-9 md:table-cell">Mesh 地址</TableHead>
                 <TableHead className="hidden h-9 sm:table-cell">国家</TableHead>
                 <TableHead className="hidden h-9 lg:table-cell">配置确认</TableHead>
+                <TableHead className="h-9">控制面联系</TableHead>
                 <TableHead className="h-9 w-10 pr-3">
                   <span className="sr-only">操作</span>
                 </TableHead>
@@ -234,6 +238,7 @@ export function NodesView({
                 <NodeRow
                   key={node.id}
                   node={node}
+                  tags={tags?.[node.id] ?? []}
                   fetchedAt={fetchedAt}
                   onOpen={(kind) => setDialog({ kind, nodeId: node.id })}
                 />
@@ -266,16 +271,19 @@ export function NodesView({
 
 function NodeRow({
   node,
+  tags,
   fetchedAt,
   onOpen,
 }: {
   node: NodeSummary
+  tags: string[]
   fetchedAt: number
   onOpen: (kind: DialogKind) => void
 }) {
   const revoked = node.revoked_at !== null
   const router = useRouter()
-  const href = `/nodes/${encodeURIComponent(node.id)}`
+  const routes = useRoutes()
+  const href = routes.machine(node.id)
 
   return (
     <TableRow
@@ -288,32 +296,38 @@ function NodeRow({
         router.push(href)
       }}
     >
-      <TableCell className="py-2.5 pl-4">
-        <div className="flex min-w-0 flex-col gap-0.5">
+      <TableCell className="py-3 pl-5">
+        <div className="flex min-w-0 flex-col gap-1">
           <div className="flex items-center gap-2">
             <Link
               href={href}
-              className="max-w-56 truncate text-left font-medium text-foreground underline-offset-4 hover:underline focus-visible:underline focus-visible:outline-none"
+              className="max-w-64 truncate text-left font-medium text-foreground underline-offset-4 hover:underline focus-visible:underline focus-visible:outline-none"
             >
               {node.name}
             </Link>
             {revoked ? <StatusBadge node={node} /> : null}
           </div>
+          {tags.length > 0 ? (
+            <span className="flex flex-wrap gap-1">
+              {tags.map((tag) => (
+                <span key={tag} className="rounded border bg-muted/60 px-1.5 font-mono text-[0.6875rem] leading-4 text-muted-foreground">
+                  {tag.slice(4)}
+                </span>
+              ))}
+            </span>
+          ) : null}
           <span className="font-mono text-[0.6875rem] text-muted-foreground md:hidden">
             {node.mesh_ipv4}
           </span>
         </div>
       </TableCell>
-      <TableCell className="py-2.5 text-xs">
-        <LastContact node={node} fetchedAt={fetchedAt} />
-      </TableCell>
-      <TableCell className="hidden py-2.5 md:table-cell">
+      <TableCell className="hidden py-3 md:table-cell">
         <div className="flex flex-col font-mono text-xs">
           <span>{node.mesh_ipv4}</span>
           <span className="text-[0.6875rem] text-muted-foreground">{node.mesh_ipv6}</span>
         </div>
       </TableCell>
-      <TableCell className="hidden py-2.5 sm:table-cell">
+      <TableCell className="hidden py-3 sm:table-cell">
         {revoked ? (
           <span className="font-mono text-xs">{node.country ?? "—"}</span>
         ) : (
@@ -328,10 +342,13 @@ function NodeRow({
           </Button>
         )}
       </TableCell>
-      <TableCell className="hidden py-2.5 lg:table-cell">
+      <TableCell className="hidden py-3 lg:table-cell">
         <ReceiptBadge node={node} />
       </TableCell>
-      <TableCell className="py-2.5 pr-3 text-right">
+      <TableCell className="py-3 text-xs">
+        <LastContact node={node} fetchedAt={fetchedAt} />
+      </TableCell>
+      <TableCell className="py-3 pr-3 text-right">
         <DropdownMenu>
           <DropdownMenuTrigger
             render={
@@ -345,11 +362,11 @@ function NodeRow({
               <EyeIcon />
               查看详情
             </DropdownMenuItem>
-            <DropdownMenuItem render={<Link href={`${href}?tab=connections`} />}>
+            <DropdownMenuItem render={<Link href={routes.machine(node.id, "connections")} />}>
               <CableIcon />
-              连接配置
+              连接与承载
             </DropdownMenuItem>
-            <DropdownMenuItem render={<Link href={`/topology?node=${encodeURIComponent(node.id)}`} />}>
+            <DropdownMenuItem render={<Link href={routes.topology({ node: node.id })} />}>
               <WaypointsIcon />
               在拓扑中查看
             </DropdownMenuItem>

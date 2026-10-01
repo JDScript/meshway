@@ -16,13 +16,13 @@ export type Stat = {
 /** A single row of key figures separated by hairlines, not a grid of cards. */
 export function StatStrip({ stats }: { stats: Stat[] }) {
   return (
-    <div className="grid overflow-hidden rounded-xl border bg-card sm:grid-cols-2 xl:grid-cols-4">
+    <div className="grid overflow-hidden rounded-lg border bg-card shadow-xs sm:grid-cols-2 xl:grid-cols-4">
       {stats.map((stat, index) => {
         const body = (
           <>
             <span className="text-xs text-muted-foreground">{stat.label}</span>
             <span className="flex items-baseline gap-1.5">
-              <span className="text-2xl font-semibold tracking-tight tabular-nums">{stat.value}</span>
+              <span className="text-[1.625rem] leading-none font-semibold tracking-tight tabular-nums">{stat.value}</span>
               {stat.suffix ? (
                 <span className="text-sm text-muted-foreground tabular-nums">{stat.suffix}</span>
               ) : null}

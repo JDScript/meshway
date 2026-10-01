@@ -1,5 +1,6 @@
 "use client"
 
+import { useRoutes } from "@/components/shell/network-context"
 import { useNetworkId } from "@/components/network/network-workspace"
 
 import type { ConnectionNode, MeshAccessSnapshot, TagDefinition, TagSnapshot } from "@meshway/control-client"
@@ -48,6 +49,7 @@ export function TagsWorkspace({
   access: MeshAccessSnapshot | null
   focusNodeId: string | null
 }) {
+  const routes = useRoutes()
   const [snapshot, setSnapshot] = useState(initialSnapshot)
   const networkId = useNetworkId()
   const [inventory, setInventory] = useState(initialInventory)
@@ -318,7 +320,7 @@ export function TagsWorkspace({
                     className={cn("flex flex-col gap-2 px-4 py-3", editing && "bg-muted/30")}
                   >
                     <div className="flex items-center gap-2">
-                      <Link href={`/nodes/${encodeURIComponent(entry.node.id)}`} className="text-sm font-medium hover:underline">
+                      <Link href={routes.machine(entry.node.id)} className="text-sm font-medium hover:underline">
                         {entry.node.name}
                       </Link>
                       <span className="font-mono text-[0.6875rem] text-muted-foreground" title={entry.node.id}>

@@ -1,5 +1,6 @@
 "use client"
 
+import { useRoutes } from "@/components/shell/network-context"
 import type { NetworkSnapshot, SaveNetworkRequest } from "@meshway/control-client"
 import { zSaveNetworkRequest } from "@meshway/control-client/schemas"
 import { RefreshCwIcon, SaveIcon } from "lucide-react"
@@ -32,7 +33,8 @@ type Draft = Pick<SaveNetworkRequest, "name"> & {
 const draftOf = (snapshot: NetworkSnapshot): Draft => ({ name: snapshot.name, enabled: snapshot.dns.enabled, zone: snapshot.dns.zone, ttl: String(snapshot.dns.ttl_seconds) })
 
 /** The editing base only moves after this form saves or an explicitly confirmed reload. */
-export function NetworkSettings({ snapshot }: { snapshot: NetworkSnapshot }) {
+export function NetworkSettings({ snapshot, section }: { snapshot: NetworkSnapshot; section: "general" | "dns" }) {
+  const routes = useRoutes()
   const router = useRouter()
   const hash = useLocationHash()
   const [base, setBase] = useState(snapshot)
@@ -97,8 +99,9 @@ export function NetworkSettings({ snapshot }: { snapshot: NetworkSnapshot }) {
         {dirty ? <Badge variant="outline" className="text-warning">未保存</Badge> : null}
         <Button variant="ghost" size="sm" className="ml-auto" disabled={pending} onClick={() => dirty ? setConfirmReload(true) : reload()}><RefreshCwIcon data-icon="inline-start" />重新读取</Button>
       </StatusSummary>
-      {snapshot.revision > base.revision ? <p role="status" className="text-xs text-warning">最近读取的全局配置已是 r{snapshot.revision}；本页仍基于 r{base.revision}，名称与 DNS 草稿未被替换。请显式重新读取后再保存。</p> : null}
-      <Panel title="网络身份" description="Controller 管理的单个网络；名称与 ID 会持久保存。" bodyClassName="flex flex-col gap-4 p-4">
+      {snapshot.revision > base.revision ? <p role="status" className="text-xs text-warning">最近读取的网络配置已是 r{snapshot.revision}；本页仍基于 r{base.revision}，名称与 DNS 草稿未被替换。请显式重新读取后再保存。</p> : null}
+      {section === "general" ? <>
+      <Panel title="网络身份" description="名称可随时修改；Network ID 是 URL 与 API 中的稳定标识，改名不会改变。" bodyClassName="flex flex-col gap-4 p-4 sm:p-5">
         <div className="flex flex-col gap-1.5">
           <Label htmlFor={`${id}-name`}>网络名称</Label>
           <Input id={`${id}-name`} data-testid="network-name" value={draft.name} disabled={pending} onChange={(event) => setDraft({ ...draft, name: event.target.value })} />
@@ -109,13 +112,14 @@ export function NetworkSettings({ snapshot }: { snapshot: NetworkSnapshot }) {
           <CopyButton value={base.network_id} label="复制 Network ID" iconOnly variant="ghost" />
         </div>
       </Panel>
-      <Panel title="地址前缀" description="初始化时确定的 IPAM 前缀，只读。在线改址与地址迁移尚未提供。" bodyClassName="p-4">
-        <dl className="grid grid-cols-[5rem_minmax(0,1fr)] gap-3 text-xs">
+      <Panel title="地址前缀" description="创建网络时确定的 IPAM 前缀，只读。在线改址与地址迁移尚未提供；不同网络的地址可以重叠。" bodyClassName="p-4 sm:p-5">
+        <dl className="grid grid-cols-[5rem_minmax(0,1fr)] gap-3 text-[0.8125rem]">
           <dt className="text-muted-foreground">Mesh IPv4</dt><dd data-testid="network-ipv4" className="font-mono break-all">{base.network.ipv4_prefix}</dd>
           <dt className="text-muted-foreground">Mesh IPv6</dt><dd data-testid="network-ipv6" className="font-mono break-all">{base.network.ipv6_prefix}</dd>
         </dl>
       </Panel>
-      <Panel title="节点 DNS" description="保存 zone 与 TTL 是控制意图，不表示 agent 解析器已应用。" bodyClassName="flex flex-col gap-4 p-4">
+      </> : <>
+      <Panel title="节点 DNS" description="保存 zone 与 TTL 是控制意图，不表示 agent 解析器已应用。" bodyClassName="flex flex-col gap-4 p-4 sm:p-5">
         <div className="flex items-center justify-between gap-3">
           <Label htmlFor={`${id}-enabled`}>配置节点 DNS</Label>
           <Switch id={`${id}-enabled`} data-testid="network-dns-enabled" checked={draft.enabled} disabled={pending} onCheckedChange={(enabled) => setDraft({ ...draft, enabled })} />
@@ -128,12 +132,13 @@ export function NetworkSettings({ snapshot }: { snapshot: NetworkSnapshot }) {
         <DiagnosticDetails id="dns-diagnostics" title="DNS 诊断与当前启用帮助" className="scroll-mt-20" open={hash === "dns-diagnostics"}>
           <p data-testid="network-dns-saved-context" className="text-muted-foreground">已保存 r{base.revision} · zone <code className="font-mono break-all">{base.dns.zone}</code> · TTL {base.dns.ttl_seconds} 秒。{base.dns.enabled ? "启用是发布意图，尚不能证明本地解析服务运行。" : "DNS 已关闭，不发布节点记录。"}此处使用已保存配置，不预览未保存草稿。</p>
           <p className="text-muted-foreground">本地 DNS listener 与系统 resolver 状态未知；普通配置 ACK 只表示已保存。Agent 需显式配置 <code className="font-mono">--dns-listen 127.0.0.1:5353</code> 才提供 loopback UDP / TCP 查询。系统 DNS 接入需另外显式启用。</p>
-          <p className="text-muted-foreground">在 <Link href="/nodes" className="text-foreground underline underline-offset-4">节点详情</Link> 复制完整 canonical FQDN 与实际 dig 命令。可读 alias 仅在 controller 检查全部活动节点后发布；无效或重名 alias 不发布，不影响完整身份名。</p>
+          <p className="text-muted-foreground">在 <Link href={routes.machines()} className="text-foreground underline underline-offset-4">节点详情</Link> 复制完整 canonical FQDN 与实际 dig 命令。可读 alias 仅在 controller 检查全部活动节点后发布；无效或重名 alias 不发布，不影响完整身份名。</p>
           <DnsStatusCommand />
           <p className="text-muted-foreground">支持 A / AAAA / PTR，不做递归或上游转发；AAAA 是地址元数据，解析成功不证明 IPv6 数据面、访问授权或互联网域名路由已生效。</p>
           <DnsDocsLinks />
         </DiagnosticDetails>
       </Panel>
+      </>}
       <DraftActionBar visible={dirty || pending || issues.length > 0 || feedback !== null || reloadError !== null}>
         <div aria-live="polite" className="flex flex-col gap-2">
           {issues.length > 0 ? <ul aria-label="网络设置问题" className="list-inside list-disc text-xs text-destructive">{issues.map((issue) => <li key={issue}>{issue}</li>)}</ul> : null}
@@ -142,7 +147,7 @@ export function NetworkSettings({ snapshot }: { snapshot: NetworkSnapshot }) {
         </div>
         <div className="draft-action-bar-row">
           <div className="draft-action-bar-summary text-xs">
-            <p className="text-muted-foreground">全局 CAS · 编辑基础 r{base.revision}；其他配置修改也会推进版本。</p>
+            <p className="text-muted-foreground">网络 CAS · 编辑基础 r{base.revision}；本网络的其他配置修改也会推进版本。</p>
           </div>
           <div className="draft-action-bar-actions">
             <Button data-testid="network-save" disabled={!dirty || pending || issues.length > 0} onClick={save}><SaveIcon data-icon="inline-start" />{pending ? "处理中…" : "保存网络设置"}</Button>

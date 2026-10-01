@@ -1,5 +1,6 @@
 "use client"
 
+import { useRoutes } from "@/components/shell/network-context"
 import { useNetworkId } from "@/components/network/network-workspace"
 
 import type { ConnectionsSnapshot, NodeSummary, PolicySnapshot } from "@meshway/control-client"
@@ -92,6 +93,7 @@ export function TopologyView({
   initialNodeId: string | null
   initialFlow?: FlowDraft
 }) {
+  const routes = useRoutes()
   const router = useRouter()
   const networkId = useNetworkId()
 
@@ -326,7 +328,7 @@ export function TopologyView({
           {active.length === 0 ? (
             <p className="px-4 py-16 text-center text-sm text-muted-foreground">
               没有活动节点。
-              <Link href="/enrollment" className="ml-1 underline underline-offset-4">
+              <Link href={routes.addMachine} className="ml-1 underline underline-offset-4">
                 注册节点
               </Link>
             </p>
@@ -492,13 +494,13 @@ export function TopologyView({
                 设为目标
               </Button>
               <Link
-                href={`/nodes/${encodeURIComponent(selected.id)}?tab=connections`}
+                href={routes.machine(selected.id, "connections")}
                 className={buttonVariants({ variant: "outline", size: "sm" })}
               >
                 配置连接
               </Link>
               <Link
-                href={`/nodes/${encodeURIComponent(selected.id)}`}
+                href={routes.machine(selected.id)}
                 className={buttonVariants({ variant: "ghost", size: "sm" })}
               >
                 节点详情
@@ -562,7 +564,7 @@ export function TopologyView({
               pending={pending}
               staleMessage={flowChanged ? "流量已修改，以下是上一次的规划。" : "基于较旧的策略版本。"}
               emptyMessage="选择源节点与目标，查看已保存策略为这条流量规划的逻辑路径。"
-              onRuleClick={(ruleId) => router.push(`/routing?rule=${encodeURIComponent(ruleId)}`)}
+              onRuleClick={(ruleId) => router.push(routes.routing({ rule: ruleId }))}
             />
           </div>
           {response && !stale ? (

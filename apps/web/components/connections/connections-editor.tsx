@@ -1,5 +1,6 @@
 "use client"
 
+import { useRoutes } from "@/components/shell/network-context"
 import { useNetworkId } from "@/components/network/network-workspace"
 
 import type { ConnectionsSnapshot } from "@meshway/control-client"
@@ -125,6 +126,7 @@ export function ConnectionsEditor({
    */
   onSnapshot?: (snapshot: ConnectionsSnapshot, fetchedAt: number) => void
 }) {
+  const routes = useRoutes()
   const drafts = useConnectionsDraftStore()
   const networkId = useNetworkId()
   const [restored] = useState(() => drafts.read())
@@ -714,7 +716,7 @@ export function ConnectionsEditor({
           </Panel>
           <p className="text-xs text-muted-foreground">
             这里只显示与本节点相关的配置；保存时整个网络的连接配置一起按版本提交，其他节点的配置保持不变。
-            <Link href="/connections" className="ml-1 underline underline-offset-4">
+            <Link href={routes.connections} className="ml-1 underline underline-offset-4">
               查看全部连接
             </Link>
           </p>

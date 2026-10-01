@@ -1,5 +1,6 @@
 "use client"
 
+import { useRoutes } from "@/components/shell/network-context"
 import type { EndpointDiscoveriesSnapshot, NetworkSnapshot, NodeList, NodeSummary } from "@meshway/control-client"
 import Link from "next/link"
 import { useSearchParams } from "next/navigation"
@@ -25,6 +26,7 @@ export function ConnectivityWorkbench({ nodes, network, discoveries }: {
   discoveries: ControllerResult<EndpointDiscoveriesSnapshot>
 }) {
   const params = useSearchParams()
+  const routes = useRoutes()
   const section = useLocationHash()
   const sourceId = params.get("source") ?? params.get("node") ?? ""
   const targetId = params.get("target") ?? ""
@@ -57,13 +59,13 @@ export function ConnectivityWorkbench({ nodes, network, discoveries }: {
       <div className="flex min-w-0 flex-col gap-3">
         <CheckSection id="saved-flow" title="已保存 flow" source="配置预览" open={!section || section === "saved-flow"}>
           <p>检查已保存的访问授权与路由选择。结果是规划路径，不是实际 trace。</p>
-          <Link href={topologyFlowHref({ sourceNodeId: source?.id, targetNodeId: source && target && source.id !== target.id ? target.id : undefined })} className={buttonVariants({ variant: "outline", size: "sm" })}>在拓扑中检查已保存 flow</Link>
+          <Link href={topologyFlowHref(routes, { sourceNodeId: source?.id, targetNodeId: source && target && source.id !== target.id ? target.id : undefined })} className={buttonVariants({ variant: "outline", size: "sm" })}>在拓扑中检查已保存 flow</Link>
         </CheckSection>
 
         <CheckSection id="live-adjacency" title="邻接与身份" source="Agent 运行观测" open={section === "live-adjacency"}>
           <div className="flex flex-wrap gap-2">
-            {source ? <Link href={`/nodes/${encodeURIComponent(source.id)}?tab=connections`} className={buttonVariants({ variant: "outline", size: "sm" })}>查看源节点连接运行状态</Link> : <Link href="/nodes" className={buttonVariants({ variant: "outline", size: "sm" })}>选择节点查看运行状态</Link>}
-            <Link href={source ? `/topology?node=${encodeURIComponent(source.id)}` : "/topology"} className={buttonVariants({ variant: "ghost", size: "sm" })}>查看已上报邻接</Link>
+            {source ? <Link href={routes.machine(source.id, "connections")} className={buttonVariants({ variant: "outline", size: "sm" })}>查看源节点连接运行状态</Link> : <Link href={routes.machines()} className={buttonVariants({ variant: "outline", size: "sm" })}>选择节点查看运行状态</Link>}
+            <Link href={source ? routes.topology({ node: source.id }) : routes.topology()} className={buttonVariants({ variant: "ghost", size: "sm" })}>查看已上报邻接</Link>
           </div>
           <p>status --live 读取正在运行的 managed daemon；whois 解析它的可信清单。ping 只探测已认证直连邻居的 RTT，不是 ICMP、端到端业务延迟或访问授权。</p>
           <Command value={LIVE_STATUS_COMMAND} kind="live-status" label="复制 live status 命令" />
@@ -78,7 +80,7 @@ export function ConnectivityWorkbench({ nodes, network, discoveries }: {
           <Command value={`meshway-agent dns status ${NODE_STATE_ARGUMENT} --json`} kind="dns-status" label="复制诊断 DNS status 命令" />
           {!network.ok ? <p role="status" className="text-destructive">网络设置读取失败，无法生成查询：{network.error}</p> : <p>已保存 DNS：{network.data.dns.enabled ? "启用" : "关闭"} · r{network.data.revision}；本地 listener 与系统 resolver 状态未知。</p>}
           {source && commands && name ? <Command value={`meshway-agent dns query ${shellQuote(name)} ${NODE_STATE_ARGUMENT} --type A --json`} kind="dns-query" label="复制目标 DNS 查询命令" /> : <p>已保存 DNS 启用且选定不同的活动目标后，提供查询命令。</p>}
-          <Link href="/network#dns-diagnostics" className={buttonVariants({ variant: "outline", size: "sm" })}>DNS 配置与诊断</Link>
+          <Link href={routes.dns("dns-diagnostics")} className={buttonVariants({ variant: "outline", size: "sm" })}>DNS 配置与诊断</Link>
         </CheckSection>
 
         <CheckSection id="netcheck" title="底层网络 · netcheck" source="carrier 自报 / 独立探测" open={section === "netcheck"}>
@@ -101,7 +103,7 @@ function NodeSelect({ label, id, value, nodes, exclude, onChange }: {
   return (
     <div className="flex min-w-0 flex-col gap-1.5">
       <label htmlFor={id} className="text-xs font-medium">{label}</label>
-      <select id={id} value={value} onChange={(event) => onChange(event.target.value)} className="h-9 w-full min-w-0 rounded-lg border bg-background px-2 text-sm">
+      <select id={id} value={value} onChange={(event) => onChange(event.target.value)} className="h-8 w-full min-w-0 rounded-md border border-input bg-card px-2 text-[0.8125rem]">
         <option value="">请选择节点</option>
         {value && !nodes.some((node) => node.id === value) ? <option value={value}>不可用节点（来自链接）</option> : null}
         {nodes.map((node) => <option key={node.id} value={node.id} disabled={node.id === exclude}>{node.name} · {node.id.slice(0, 8)}</option>)}

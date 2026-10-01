@@ -1,117 +1,163 @@
 import {
   ActivityIcon,
-  KeyRoundIcon,
   CableIcon,
+  GlobeIcon,
   LayoutDashboardIcon,
-  NetworkIcon,
   RouteIcon,
   ServerIcon,
+  SettingsIcon,
   ShieldCheckIcon,
   TagIcon,
   WaypointsIcon,
   type LucideIcon,
 } from "lucide-react"
 
-export type NavItem = {
-  href: string
+import { sectionSegment, type ConsoleRoutes } from "@/lib/routes"
+
+export { sectionSegment }
+
+/** Editors whose unsaved work is kept across navigation. */
+export type DraftKind = "access" | "routing" | "connections"
+
+export type SubNavItem = {
+  /** Path segment under the network, e.g. "access". */
+  segment: string
   label: string
   icon: LucideIcon
-  /** Short hint used by the command menu. */
+  description: string
+  href: (routes: ConsoleRoutes) => string
+  draft?: DraftKind
   keywords: string[]
-  /** A view whose data source is not implemented yet. */
-  preview?: boolean
 }
 
-export type NavSection = { label: string; items: NavItem[] }
+export type NavTab = {
+  key: string
+  label: string
+  icon: LucideIcon
+  href: (routes: ConsoleRoutes) => string
+  /** Path segments (first segment after the network) owned by this tab. "" is the overview. */
+  segments: string[]
+  children?: SubNavItem[]
+  keywords: string[]
+}
 
-export const navSections: NavSection[] = [
+export const policyNav: SubNavItem[] = [
   {
-    label: "网络",
-    items: [
-      {
-        href: "/",
-        label: "概览",
-        icon: LayoutDashboardIcon,
-        keywords: ["dashboard", "overview", "gailan"],
-      },
-      {
-        href: "/nodes",
-        label: "节点",
-        icon: ServerIcon,
-        keywords: ["nodes", "inventory", "jiedian"],
-      },
-      {
-        href: "/topology",
-        label: "网络拓扑",
-        icon: WaypointsIcon,
-        keywords: ["map", "topology", "network", "adjacency", "path", "tuopu", "luoji"],
-      },
-    ],
+    segment: "access",
+    label: "访问授权",
+    icon: ShieldCheckIcon,
+    description: "哪些节点之间可以访问",
+    href: (routes) => routes.access(),
+    draft: "access",
+    keywords: ["access", "acl", "grants", "authorization", "shouquan", "授权"],
   },
   {
-    label: "策略",
-    items: [
-      {
-        href: "/access",
-        label: "访问授权",
-        icon: ShieldCheckIcon,
-        keywords: ["access", "acl", "authorization", "allow", "reject", "shouquan"],
-      },
-      {
-        href: "/routing",
-        label: "路由策略",
-        icon: RouteIcon,
-        keywords: ["routing", "policy", "rules", "draft", "luyou"],
-      },
-      {
-        href: "/tags",
-        label: "标签",
-        icon: TagIcon,
-        keywords: ["tags", "groups", "members", "biaoqian"],
-      },
-    ],
+    segment: "routing",
+    label: "路由",
+    icon: RouteIcon,
+    description: "流量经过哪些节点、从哪里出去",
+    href: (routes) => routes.routing(),
+    draft: "routing",
+    keywords: ["routing", "policy", "via", "exit", "luyou", "路由策略"],
   },
   {
-    label: "管理",
-    items: [
-      {
-        href: "/network",
-        label: "网络设置",
-        icon: NetworkIcon,
-        keywords: ["network", "settings", "dns", "zone", "ttl", "prefix", "网络名称"],
-      },
-      {
-        href: "/enrollment",
-        label: "注册令牌",
-        icon: KeyRoundIcon,
-        keywords: ["enrollment", "token", "zhuce"],
-      },
-      {
-        href: "/connections",
-        label: "高级连接",
-        icon: CableIcon,
-        keywords: ["connections", "连接配置", "listeners", "dial", "transport", "audit", "lianjie"],
-      },
-      {
-        href: "/monitoring",
-        label: "诊断",
-        icon: ActivityIcon,
-        keywords: ["monitoring", "diagnostics", "netcheck", "ping", "whois", "dns", "诊断", "jiankong"],
-      },
-    ],
+    segment: "tags",
+    label: "标签",
+    icon: TagIcon,
+    description: "管理员维护的节点分组",
+    href: (routes) => routes.tags(),
+    keywords: ["tags", "groups", "biaoqian"],
+  },
+  {
+    segment: "connections",
+    label: "手工连接",
+    icon: CableIcon,
+    description: "当前的监听与主动连接配置（高级）",
+    href: (routes) => routes.connections,
+    draft: "connections",
+    keywords: ["connections", "listeners", "dial", "transport", "lianjie", "高级连接"],
   },
 ]
 
-export const navItems: NavItem[] = navSections.flatMap((section) => section.items)
+export const diagnosticsNav: SubNavItem[] = [
+  {
+    segment: "diagnostics",
+    label: "诊断工作台",
+    icon: ActivityIcon,
+    description: "按问题选择检查入口",
+    href: (routes) => routes.diagnostics(),
+    keywords: ["diagnostics", "monitoring", "netcheck", "whois", "ping", "zhenduan"],
+  },
+  {
+    segment: "topology",
+    label: "拓扑与流量检查",
+    icon: WaypointsIcon,
+    description: "已上报邻接与按已保存策略编译的路径",
+    href: (routes) => routes.topology(),
+    keywords: ["topology", "map", "flow", "path", "tuopu"],
+  },
+]
 
-export function isActive(href: string, pathname: string): boolean {
-  return href === "/" ? pathname === "/" : pathname === href || pathname.startsWith(`${href}/`)
+export const navTabs: NavTab[] = [
+  {
+    key: "overview",
+    label: "概览",
+    icon: LayoutDashboardIcon,
+    href: (routes) => routes.overview,
+    segments: [""],
+    keywords: ["overview", "dashboard", "gailan"],
+  },
+  {
+    key: "machines",
+    label: "节点",
+    icon: ServerIcon,
+    href: (routes) => routes.machines(),
+    segments: ["machines"],
+    keywords: ["machines", "nodes", "devices", "jiedian", "设备"],
+  },
+  {
+    key: "policies",
+    label: "访问控制",
+    icon: ShieldCheckIcon,
+    href: (routes) => routes.access(),
+    segments: policyNav.map((item) => item.segment),
+    children: policyNav,
+    keywords: ["policy", "access controls", "celue", "策略"],
+  },
+  {
+    key: "dns",
+    label: "DNS",
+    icon: GlobeIcon,
+    href: (routes) => routes.dns(),
+    segments: ["dns"],
+    keywords: ["dns", "magicdns", "zone", "ttl", "名称解析"],
+  },
+  {
+    key: "diagnostics",
+    label: "诊断",
+    icon: ActivityIcon,
+    href: (routes) => routes.diagnostics(),
+    segments: diagnosticsNav.map((item) => item.segment),
+    children: diagnosticsNav,
+    keywords: ["diagnostics", "monitoring"],
+  },
+  {
+    key: "settings",
+    label: "设置",
+    icon: SettingsIcon,
+    href: (routes) => routes.settings,
+    segments: ["settings"],
+    keywords: ["settings", "network", "name", "prefix", "shezhi", "网络设置"],
+  },
+]
+
+export function activeTab(pathname: string, base: string): NavTab | undefined {
+  const segment = sectionSegment(pathname, base)
+  if (segment === null) return undefined
+  return navTabs.find((tab) => tab.segments.includes(segment))
 }
 
-export function currentItem(pathname: string): NavItem | undefined {
-  return navItems.find((item) => isActive(item.href, pathname))
-}
-
-export function currentSection(pathname: string): NavSection | undefined {
-  return navSections.find((section) => section.items.some((item) => isActive(item.href, pathname)))
+export function activeSubItem(pathname: string, base: string): SubNavItem | undefined {
+  const segment = sectionSegment(pathname, base)
+  return activeTab(pathname, base)?.children?.find((item) => item.segment === segment)
 }

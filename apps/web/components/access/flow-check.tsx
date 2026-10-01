@@ -1,5 +1,6 @@
 "use client"
 
+import { useRoutes } from "@/components/shell/network-context"
 import type { NodeSummary } from "@meshway/control-client"
 import { ArrowUpRightIcon } from "lucide-react"
 import Link from "next/link"
@@ -19,6 +20,7 @@ export function FlowCheck({ nodes, baseRevision, dirty }: {
   dirty: boolean
 }) {
   const id = useId()
+  const routes = useRoutes()
   const [sourceNodeId, setSource] = useState("")
   const [targetNodeId, setTarget] = useState("")
 
@@ -39,7 +41,7 @@ export function FlowCheck({ nodes, baseRevision, dirty }: {
           <NodePicker id={`${id}-target`} nodes={nodes} value={targetNodeId} onValueChange={setTarget} placeholder="可预填目标" className="w-full" />
         </div>
       </div>
-      <Link href={topologyFlowHref({ sourceNodeId, targetNodeId })} className={buttonVariants({ variant: "outline", size: "sm" })}>
+      <Link href={topologyFlowHref(routes, { sourceNodeId, targetNodeId })} className={buttonVariants({ variant: "outline", size: "sm" })}>
         在拓扑中检查流量<ArrowUpRightIcon data-icon="inline-end" />
       </Link>
       <p className={dirty ? "text-xs text-warning" : "text-xs text-muted-foreground"}>

@@ -1,6 +1,7 @@
 "use client"
 
 import { useNetworkId } from "@/components/network/network-workspace"
+import { useRoutes } from "@/components/shell/network-context"
 
 import type { CreateEnrollmentTokenResponse } from "@meshway/control-client"
 import { CircleAlertIcon, EyeOffIcon, KeyRoundIcon } from "lucide-react"
@@ -39,6 +40,7 @@ const ttlOptions = enrollmentTtlOptions.map(({ seconds, label }) => ({
 
 export function EnrollmentPanel() {
   const networkId = useNetworkId()
+  const routes = useRoutes()
   const [state, formAction, pending] = useActionState(createEnrollment.bind(null, networkId), initialState)
   const [dismissedAt, setDismissedAt] = useState<number | null>(null)
   const [ttl, setTtl] = useState(String(defaultEnrollmentTtl))
@@ -47,8 +49,8 @@ export function EnrollmentPanel() {
   const showResult = state.status === "created" && state.createdAt !== dismissedAt
 
   return (
-    <div className="grid items-start gap-6 lg:grid-cols-[20rem_minmax(0,1fr)]">
-      <Panel title="创建注册令牌" description="令牌只能使用一次，过期未用也会失效。">
+    <div className="grid items-start gap-6 lg:grid-cols-[19rem_minmax(0,1fr)]">
+      <Panel title="接入令牌" description="一次性使用，过期未用也会失效。令牌只把节点加入当前网络。">
         <form action={formAction} className="flex flex-col gap-4 p-4">
           <div className="flex flex-col gap-1.5">
             <Label htmlFor={ttlId}>有效期</Label>
@@ -76,7 +78,7 @@ export function EnrollmentPanel() {
             ) : (
               <KeyRoundIcon data-icon="inline-start" />
             )}
-            创建注册令牌
+            生成接入令牌
           </Button>
           <p className="text-xs text-muted-foreground">
             注册时 agent 生成并保存自己的控制面凭据，之后不再需要令牌。控制台不会再次显示已创建的令牌。
@@ -93,15 +95,15 @@ export function EnrollmentPanel() {
           onDismiss={() => setDismissedAt(state.createdAt)}
         />
       ) : (
-        <Panel title="添加节点的步骤">
+        <Panel title="接入步骤">
           <ol className="flex flex-col gap-4 p-4">
-            <Step index={1} title="创建令牌">选择有效期并创建一次性注册令牌。</Step>
+            <Step index={1} title="生成令牌">选择有效期，生成一次性接入令牌。</Step>
             <Step index={2} title="在节点上注册">
               复制生成的 enroll 命令，在仓库根目录执行；节点凭据保存在本地状态文件中。
             </Step>
             <Step index={3} title="运行 agent">
               运行 agent 保持心跳与配置同步，节点随后出现在
-              <Link href="/nodes" className="mx-1 underline underline-offset-4">节点</Link>
+              <Link href={routes.machines()} className="mx-1 underline underline-offset-4">节点</Link>
               列表。此步骤完成控制面接入；连接配置与运行报告在节点详情查看。
             </Step>
           </ol>
@@ -114,11 +116,11 @@ export function EnrollmentPanel() {
 function Step({ index, title, children }: { index: number; title: string; children: ReactNode }) {
   return (
     <li className="flex gap-3">
-      <span className="flex size-6 shrink-0 items-center justify-center rounded-full border font-mono text-[0.6875rem] text-muted-foreground">
+      <span className="flex size-6 shrink-0 items-center justify-center rounded-full bg-brand/12 font-mono text-[0.6875rem] font-semibold text-brand">
         {index}
       </span>
       <div className="flex min-w-0 flex-1 flex-col gap-1.5 pt-0.5">
-        <span className="text-sm font-medium">{title}</span>
+        <span className="text-[0.8125rem] font-medium">{title}</span>
         <div className="text-xs text-muted-foreground">{children}</div>
       </div>
     </li>
@@ -128,7 +130,7 @@ function Step({ index, title, children }: { index: number; title: string; childr
 function CommandBlock({ value, label }: { value: string; label: string }) {
   return (
     <div className="relative">
-      <pre className="overflow-x-auto rounded-lg border bg-muted/40 py-2.5 pr-11 pl-3 font-mono text-xs leading-relaxed break-all whitespace-pre-wrap text-foreground">
+      <pre className="overflow-x-auto rounded-md border bg-muted/50 py-2.5 pr-11 pl-3 font-mono text-xs leading-relaxed break-all whitespace-pre-wrap text-foreground">
         {value}
       </pre>
       <div className="absolute top-1.5 right-1.5">
@@ -168,7 +170,7 @@ function EnrollmentResult({
 
   return (
     <Panel
-      title="注册令牌已创建"
+      title="接入令牌已生成"
       description={
         <>
           过期于{" "}
@@ -186,7 +188,7 @@ function EnrollmentResult({
       }
     >
       <ol className="flex flex-col gap-5 p-4">
-        <Step index={1} title="一次性注册令牌">
+        <Step index={1} title="一次性接入令牌">
           <div className="flex flex-col gap-2">
             <div className="flex items-center gap-2 rounded-lg border border-warning/40 bg-warning/5 py-1.5 pr-1.5 pl-3">
               <code

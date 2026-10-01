@@ -1,5 +1,6 @@
 "use client"
 
+import { useRoutes } from "@/components/shell/network-context"
 import type { ConnectionNode } from "@meshway/control-client"
 import { ChevronRightIcon, TerminalIcon } from "lucide-react"
 import Link from "next/link"
@@ -124,6 +125,7 @@ function IdentityRow({
   usage: { listeners: number; candidates: number } | undefined
   runtimes: Runtimes | null
 }) {
+  const routes = useRoutes()
   const state = readiness(entry)
   return (
     <li
@@ -137,7 +139,7 @@ function IdentityRow({
     >
       <div className="flex min-w-0 flex-col gap-0.5">
         <Link
-          href={`/nodes/${encodeURIComponent(entry.node.id)}?tab=connections`}
+          href={routes.machine(entry.node.id, "connections")}
           className="truncate text-sm font-medium underline-offset-4 hover:underline"
         >
           {entry.node.name}
@@ -164,7 +166,7 @@ function IdentityRow({
           </span>
         ) : null}
         <Link
-          href={`/nodes/${encodeURIComponent(entry.node.id)}?tab=connections`}
+          href={routes.machine(entry.node.id, "connections")}
           className={buttonVariants({ variant: "outline", size: "sm" })}
           aria-label={`配置 ${entry.node.name} 的连接`}
         >

@@ -2,6 +2,7 @@ import assert from "node:assert/strict"
 import test from "node:test"
 
 import { diagnosticsHref, peerDiagnosticCommands } from "./connectivity-guidance.ts"
+import { consoleRoutes } from "./routes.ts"
 
 test("peer commands reject self, stale input, and shell syntax in identity", () => {
   const source = "a".repeat(64)
@@ -19,8 +20,8 @@ test("peer commands reject self, stale input, and shell syntax in identity", () 
 
 test("node diagnostic navigation encodes inputs as query values", () => {
   const value = "node&target=other#netcheck"
-  const url = new URL(diagnosticsHref(value), "http://localhost")
-  assert.equal(url.pathname, "/monitoring")
+  const url = new URL(diagnosticsHref(consoleRoutes("0123456789abcdef0123456789abcdef"), value), "http://localhost")
+  assert.equal(url.pathname, "/0123456789abcdef0123456789abcdef/diagnostics")
   assert.equal(url.searchParams.get("source"), value)
   assert.equal(url.searchParams.get("target"), null)
   assert.equal(url.hash, "")

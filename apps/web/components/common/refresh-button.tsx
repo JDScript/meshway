@@ -7,14 +7,14 @@ import { useTransition } from "react"
 import { Button } from "@/components/ui/button"
 import { cn } from "@/lib/utils"
 
-export function RefreshButton() {
+export function RefreshButton({ size = "default" }: { size?: "default" | "sm" | "lg" }) {
   const router = useRouter()
   const [pending, startTransition] = useTransition()
 
   return (
     <Button
       variant="outline"
-      size="lg"
+      size={size}
       disabled={pending}
       onClick={() => startTransition(() => router.refresh())}
     >

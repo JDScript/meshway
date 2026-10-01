@@ -27,7 +27,7 @@ export function LoginForm({ returnTo = "/" }: { returnTo?: string }) {
     <form action={formAction} className="flex flex-col gap-4">
       <input type="hidden" name="returnTo" value={returnTo} />
       <div className="flex flex-col gap-2">
-        <Label htmlFor={inputId} className="text-sm">
+        <Label htmlFor={inputId}>
           管理员令牌
         </Label>
         <Input
@@ -42,6 +42,7 @@ export function LoginForm({ returnTo = "/" }: { returnTo?: string }) {
           aria-invalid={fieldError !== null || undefined}
           aria-describedby={fieldError !== null ? errorId : undefined}
           className="h-9 font-mono"
+          autoFocus
         />
         {fieldError !== null ? (
           <p id={errorId} role="alert" className="text-sm text-destructive">

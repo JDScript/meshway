@@ -1,20 +1,20 @@
 import { emptyFlow, type FlowDraft } from "./policy-model.ts"
+import type { ConsoleRoutes } from "./routes.ts"
 
 type SearchParams = Record<string, string | string[] | undefined>
 
 /** Share inputs, never a result: the destination explicitly checks saved configuration. */
-export function topologyFlowHref(flow: Partial<FlowDraft> = {}): string {
-  const params = new URLSearchParams()
-  if (flow.sourceNodeId) params.set("src", flow.sourceNodeId)
+export function topologyFlowHref(routes: Pick<ConsoleRoutes, "topology">, flow: Partial<FlowDraft> = {}): string {
+  const params: Record<string, string> = {}
+  if (flow.sourceNodeId) params.src = flow.sourceNodeId
   if (flow.targetNodeId) {
-    params.set("dst", flow.targetNodeId)
+    params.dst = flow.targetNodeId
   } else {
-    if (flow.domain) params.set("domain", flow.domain)
-    if (flow.ip) params.set("ip", flow.ip)
-    if (flow.country) params.set("country", flow.country)
+    if (flow.domain) params.domain = flow.domain
+    if (flow.ip) params.ip = flow.ip
+    if (flow.country) params.country = flow.country
   }
-  const query = params.toString()
-  return `/topology${query ? `?${query}` : ""}#flow-check`
+  return routes.topology(params, "flow-check")
 }
 
 /** Keep stale node references visible in the picker; never silently substitute another node. */

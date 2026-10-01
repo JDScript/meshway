@@ -1,4 +1,7 @@
+"use client"
+
 import type { NetworkSnapshot, NodeSummary } from "@meshway/control-client"
+import { useRoutes } from "@/components/shell/network-context"
 import Link from "next/link"
 
 import { CopyButton } from "@/components/common/copy-button"
@@ -12,12 +15,13 @@ export type NodeDnsNetwork = { ok: true; data: NetworkSnapshot } | { ok: false; 
 
 /** Identity-derived guidance, never an observation of the local agent. */
 export function NodeDnsPanel({ node, network }: { node: NodeSummary; network: NodeDnsNetwork }) {
+  const routes = useRoutes()
   const name = network.ok ? canonicalNodeDnsName(node.id, network.data.dns.zone) : null
   const publishedIntent = network.ok && network.data.dns.enabled && node.revoked_at === null
   const dig = name ? `dig @127.0.0.1 -p 5353 ${name}. A` : null
 
   return (
-    <Panel title="节点 DNS" actions={<Link href="/network#dns-diagnostics" className={buttonVariants({ variant: "ghost", size: "sm" })}>配置与诊断</Link>} bodyClassName="flex min-w-0 flex-col gap-3 px-4 py-3 text-xs">
+    <Panel title="节点 DNS" actions={<Link href={routes.dns("dns-diagnostics")} className={buttonVariants({ variant: "ghost", size: "sm" })}>配置与诊断</Link>} bodyClassName="flex min-w-0 flex-col gap-3 px-4 py-3 text-xs">
       {!network.ok ? <p role="status" className="text-destructive">网络设置读取失败，无法推导 DNS 名称：{network.error}</p> : (
         <>
           <div className="flex flex-wrap items-center gap-2">

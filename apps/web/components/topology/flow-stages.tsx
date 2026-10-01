@@ -1,4 +1,7 @@
+"use client"
+
 import type { NodeSummary } from "@meshway/control-client"
+import { useRoutes } from "@/components/shell/network-context"
 import { ArrowLeftRightIcon, ArrowRightIcon } from "lucide-react"
 import Link from "next/link"
 
@@ -76,6 +79,7 @@ export function FlowStages({
 const muted = "text-[0.6875rem] text-muted-foreground break-words"
 
 function StageDetail({ stage, name }: { stage: FlowStage; name: (id: string) => string }) {
+  const routes = useRoutes()
   switch (stage.key) {
     case "access":
       return (
@@ -84,7 +88,7 @@ function StageDetail({ stage, name }: { stage: FlowStage; name: (id: string) => 
             <>
               命中访问规则{" "}
               <Link
-                href={`/access?rule=${encodeURIComponent(stage.ruleId)}`}
+                href={routes.access({ rule: stage.ruleId })}
                 className="font-mono text-foreground underline underline-offset-2"
               >
                 {stage.ruleId}
@@ -104,7 +108,7 @@ function StageDetail({ stage, name }: { stage: FlowStage; name: (id: string) => 
           ) : (
             <>
               没有访问规则命中，使用默认动作 ·{" "}
-              <Link href="/access" className="underline underline-offset-2">
+              <Link href={routes.access()} className="underline underline-offset-2">
                 访问授权
               </Link>
             </>
@@ -120,7 +124,7 @@ function StageDetail({ stage, name }: { stage: FlowStage; name: (id: string) => 
             <>
               命中路由规则{" "}
               <Link
-                href={`/routing?rule=${encodeURIComponent(stage.ruleId)}`}
+                href={routes.routing({ rule: stage.ruleId })}
                 className="font-mono text-foreground underline underline-offset-2"
               >
                 {stage.ruleId}
@@ -156,7 +160,7 @@ function StageDetail({ stage, name }: { stage: FlowStage; name: (id: string) => 
             {stage.hops.some((hop) => hop.adjacency === null) ? (
               <>
                 {" "}
-                <Link href="/connections" className="underline underline-offset-2">
+                <Link href={routes.connections} className="underline underline-offset-2">
                   配置连接
                 </Link>
               </>

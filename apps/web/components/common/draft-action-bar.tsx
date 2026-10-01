@@ -15,7 +15,7 @@ export function DraftActionBar({
   return (
     <div data-slot="draft-action-bar" data-open={visible} className="draft-action-bar">
       <div className="draft-action-bar-clip">
-        <div className="draft-action-bar-surface rounded-xl border bg-background/95 shadow-lg backdrop-blur supports-backdrop-filter:bg-background/80">
+        <div className="draft-action-bar-surface rounded-lg border border-warning/35 bg-card/95 shadow-lg ring-1 ring-black/[0.03] backdrop-blur supports-backdrop-filter:bg-card/85">
           {children}
         </div>
       </div>

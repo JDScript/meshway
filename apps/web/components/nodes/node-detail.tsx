@@ -1,10 +1,10 @@
 "use client"
 
+import { useRoutes } from "@/components/shell/network-context"
 import { useNetworkId } from "@/components/network/network-workspace"
 
 import type { ConnectionNode, ConnectionsSnapshot, EndpointDiscoveriesSnapshot, NodeSummary } from "@meshway/control-client"
 import {
-  ArrowLeftIcon,
   CircleAlertIcon,
   RefreshCwIcon,
   CableIcon,
@@ -17,6 +17,7 @@ import Link from "next/link"
 import { useSearchParams } from "next/navigation"
 import { useCallback, useState, type ReactNode } from "react"
 
+import { PageHeader } from "@/components/shell/page-header"
 import { ManagedDataplanePanel } from "@/components/nodes/managed-dataplane-panel"
 import { NodeDnsPanel, type NodeDnsNetwork } from "@/components/nodes/node-dns-panel"
 import { ConnectionsEditor } from "@/components/connections/connections-editor"
@@ -88,6 +89,7 @@ export function NodeDetail({
   tags: { ok: true; tags: string[] } | { ok: false; error: string }
   network: NodeDnsNetwork
 }) {
+  const routes = useRoutes()
   // The URL is the source of truth: history navigation can restore a cached
   // render whose server-provided tab is older than the entry's URL.
   const params = useSearchParams()
@@ -153,51 +155,52 @@ export function NodeDetail({
 
   return (
     <div className="flex flex-col gap-6">
-      <header className="flex flex-col gap-3">
-        <Link
-          href="/nodes"
-          className="inline-flex w-fit items-center gap-1 text-xs text-muted-foreground hover:text-foreground"
-        >
-          <ArrowLeftIcon className="size-3.5" />
-          全部节点
-        </Link>
-        <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
-          <div className="flex min-w-0 flex-col gap-1">
-            <div className="flex min-w-0 items-center gap-2">
-              <h1 className="truncate text-xl font-semibold tracking-tight">{node.name}</h1>
-              <StatusBadge node={node} />
-            </div>
-            <p className="text-xs text-muted-foreground">{node.mesh_ipv4} · <LastContact node={node} fetchedAt={fetchedAt} /></p>
-          </div>
-          <div className="flex flex-wrap items-center gap-2">
-            <Link
-              href={`/topology?node=${encodeURIComponent(node.id)}`}
-              className={buttonVariants({ variant: "outline" })}
-            >
-              <WaypointsIcon data-icon="inline-start" />
-              在拓扑中查看
-            </Link>
+      <PageHeader
+        back={{ href: routes.machines(), label: "全部节点" }}
+        title={node.name}
+        status={<StatusBadge node={node} />}
+        meta={
+          <>
+            <span className="font-mono">{node.mesh_ipv4}</span>
+            <LastContact node={node} fetchedAt={fetchedAt} />
+            {tags.ok && tags.tags.length > 0 ? (
+              <span className="flex flex-wrap gap-1">
+                {tags.tags.map((tag) => (
+                  <span key={tag} className="rounded border bg-muted/60 px-1.5 font-mono text-[0.6875rem] leading-4">
+                    {tag.slice(4)}
+                  </span>
+                ))}
+              </span>
+            ) : null}
+          </>
+        }
+        actions={
+          <>
             {!revoked ? (
-              <Link href={topologyFlowHref({ sourceNodeId: node.id })} className={buttonVariants({ variant: "outline" })}>
+              <Link href={topologyFlowHref(routes, { sourceNodeId: node.id })} className={buttonVariants({ variant: "outline" })}>
                 <ShieldCheckIcon data-icon="inline-start" />
                 检查访问
               </Link>
             ) : null}
+            <Link href={routes.topology({ node: node.id })} className={buttonVariants({ variant: "outline" })}>
+              <WaypointsIcon data-icon="inline-start" />
+              在拓扑中查看
+            </Link>
             {!revoked ? (
               <>
                 <Button variant="outline" onClick={() => setDialog("country")}>
                   <FlagIcon data-icon="inline-start" />
                   设置国家
                 </Button>
-                <Button variant="outline" className="text-destructive" onClick={() => setDialog("revoke")}>
+                <Button variant="destructive" onClick={() => setDialog("revoke")}>
                   <ShieldOffIcon data-icon="inline-start" />
                   撤销…
                 </Button>
               </>
             ) : null}
-          </div>
-        </div>
-      </header>
+          </>
+        }
+      />
 
       <StaleReadHint
         failures={[
@@ -220,7 +223,7 @@ export function NodeDetail({
           </TabsTrigger>
           <TabsTrigger value="connections" className="flex-none px-3">
             <CableIcon />
-            连接
+            连接与承载
           </TabsTrigger>
         </TabsList>
 
@@ -241,7 +244,7 @@ export function NodeDetail({
         <TabsContent value="connections" className="flex flex-col gap-4 pt-4">
           <div className="flex flex-wrap items-center justify-between gap-2">
             <p className="text-xs text-muted-foreground">运行观测来自 Agent 上报；本地检查可在诊断工作台生成命令。</p>
-            <Link href={diagnosticsHref(node.id)} className={buttonVariants({ variant: "outline", size: "sm" })}>诊断此节点</Link>
+            <Link href={diagnosticsHref(routes, node.id)} className={buttonVariants({ variant: "outline", size: "sm" })}>诊断此节点</Link>
           </div>
           {latest.ok ? (
             <>
@@ -305,10 +308,11 @@ function Overview({
   tags: { ok: true; tags: string[] } | { ok: false; error: string }
   network: NodeDnsNetwork
 }) {
+  const routes = useRoutes()
   const scope = connections.ok ? nodeScope(fromPlan(connections.data.configuration), node.id) : null
   return (
     <div className="grid items-start gap-4 lg:grid-cols-2">
-      <Panel title="身份与地址" bodyClassName="px-4 py-1">
+      <Panel title="身份与地址" bodyClassName="px-4 py-1 sm:px-5">
         <dl className="divide-y">
           <Row label="名称">{node.name}</Row>
           <Row label="Mesh IPv4" hint="隧道内地址，不是其他节点建连用的地址">
@@ -344,7 +348,7 @@ function Overview({
               )}
               {node.revoked_at === null ? (
                 <Link
-                  href={`/tags?node=${encodeURIComponent(node.id)}`}
+                  href={routes.tags({ node: node.id })}
                   className={buttonVariants({ variant: "ghost", size: "sm" })}
                 >
                   修改
@@ -371,7 +375,7 @@ function Overview({
 
       <div className="flex flex-col gap-4">
         <NodeDnsPanel node={node} network={network} />
-        <Panel title="控制面" bodyClassName="px-4 py-1">
+        <Panel title="控制面" bodyClassName="px-4 py-1 sm:px-5">
           <dl className="divide-y">
             <Row label="最后联系" hint="controller 最近一次接受注册或心跳，不代表在线或连通">
               <LastContact node={node} fetchedAt={fetchedAt} detail />
@@ -390,7 +394,7 @@ function Overview({
                查看连接
             </Button>
           }
-          bodyClassName="px-4 py-1"
+          bodyClassName="px-4 py-1 sm:px-5"
         >
           {!connections.ok ? (
             <div className="py-3"><FailureNotice title="连接配置读取失败" nextStep="进入连接页重试；持续失败时检查控制面。" error={connections.error} /></div>
@@ -433,7 +437,7 @@ function Row({ label, hint, children }: { label: string; hint?: string; children
         {label}
         {hint ? <span className="text-[0.625rem] leading-snug text-muted-foreground/80">{hint}</span> : null}
       </dt>
-      <dd className="min-w-0 text-xs">{children}</dd>
+      <dd className="min-w-0 text-[0.8125rem]">{children}</dd>
     </div>
   )
 }
@@ -441,7 +445,7 @@ function Row({ label, hint, children }: { label: string; hint?: string; children
 function CopyValue({ value, label }: { value: string; label: string }) {
   return (
     <span className="flex min-w-0 items-center justify-between gap-2">
-      <code className="min-w-0 font-mono text-xs break-all">{value}</code>
+      <code className="min-w-0 font-mono text-[0.8125rem] break-all">{value}</code>
       <CopyButton value={value} label={label} iconOnly variant="ghost" />
     </span>
   )

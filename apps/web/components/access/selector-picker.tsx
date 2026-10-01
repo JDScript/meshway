@@ -1,5 +1,6 @@
 "use client"
 
+import { useRoutes } from "@/components/shell/network-context"
 import type { ConnectionNode, TagSnapshot } from "@meshway/control-client"
 import Link from "next/link"
 import { useId } from "react"
@@ -36,6 +37,7 @@ export function SelectorPicker({
   invalid?: boolean
   testId?: string
 }) {
+  const routes = useRoutes()
   const id = useId()
   const all = value.includes("*")
   const active = activeInventory(inventory)
@@ -65,7 +67,7 @@ export function SelectorPicker({
           <div className="flex flex-col gap-1.5">
             <span className="flex items-center justify-between text-xs font-medium text-muted-foreground">
               标签
-              <Link href="/tags" className="font-normal underline underline-offset-2">
+              <Link href={routes.tags()} className="font-normal underline underline-offset-2">
                 管理标签
               </Link>
             </span>

@@ -1,5 +1,6 @@
 "use client"
 
+import { useRoutes } from "@/components/shell/network-context"
 import type { NodeSummary } from "@meshway/control-client"
 import Link from "next/link"
 
@@ -33,10 +34,11 @@ export function AdjacencyBadge({ status }: { status: ChannelStatus }) {
 }
 
 export function NodeLink({ id, nodes }: { id: string; nodes: NodeSummary[] }) {
+  const routes = useRoutes()
   const node = nodes.find((candidate) => candidate.id === id)
   return (
     <Link
-      href={`/nodes/${encodeURIComponent(id)}`}
+      href={routes.machine(id)}
       className="min-w-0 truncate font-medium underline-offset-4 hover:underline"
       title={id}
     >
@@ -122,12 +124,13 @@ export function AdjacencyList({
   selectedId: string | null
   onSelect: (id: string) => void
 }) {
+  const routes = useRoutes()
   return (
     <div className="flex flex-col gap-3 p-4">
       {adjacencies.length === 0 ? (
         <p className="text-xs text-muted-foreground">
           已保存的连接配置中没有节点之间的邻接。
-          <Link href="/connections" className="ml-1 underline underline-offset-4">
+          <Link href={routes.connections} className="ml-1 underline underline-offset-4">
             连接配置
           </Link>
         </p>

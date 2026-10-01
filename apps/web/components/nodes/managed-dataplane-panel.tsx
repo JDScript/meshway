@@ -1,4 +1,7 @@
+"use client"
+
 import { ArrowUpRightIcon } from "lucide-react"
+import { useRoutes } from "@/components/shell/network-context"
 import Link from "next/link"
 
 import { CopyButton } from "@/components/common/copy-button"
@@ -25,6 +28,7 @@ const RUN_COMMAND = shellCommand([
  * actual packet state.
  */
 export function ManagedDataplanePanel() {
+  const routes = useRoutes()
   return (
     <Panel
       title="托管数据面"
@@ -47,7 +51,7 @@ export function ManagedDataplanePanel() {
         这是参数模板：把 <code className="font-mono text-foreground">--apply-dataplane</code>{" "}
         加到该节点现有的 agent 启动配置里，沿用它自己的 <code className="font-mono">--state</code>（VLESS 另需本地{" "}
         <code className="font-mono">--connection-profiles</code>），不要另起第二个 agent；持久运行的 Docker 演示请按文档启用。流量还须被
-        <Link href="/access" className="mx-0.5 underline underline-offset-4">
+        <Link href={routes.access()} className="mx-0.5 underline underline-offset-4">
           访问授权
         </Link>
         允许，并按路由选中的路径转发；连通请用 ping / curl 实测。

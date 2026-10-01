@@ -1,5 +1,6 @@
 "use client"
 
+import { useRoutes } from "@/components/shell/network-context"
 import { useNetworkId } from "@/components/network/network-workspace"
 
 import type { EndpointDiscoveriesSnapshot, NodeEndpointDiscovery, UdpSocketDiscovery } from "@meshway/control-client"
@@ -22,6 +23,7 @@ export function EndpointDiscoveryPanel({ initial, nodeId }: {
   initial: ControllerResult<EndpointDiscoveriesSnapshot>
   nodeId?: string
 }) {
+  const routes = useRoutes()
   const [read, setRead] = useState({ initial, result: initial })
   const networkId = useNetworkId()
   const [now, setNow] = useState<DiscoveryClock>({ time: initial.fetchedAt, monotonicTime: null })
@@ -73,7 +75,7 @@ export function EndpointDiscoveryPanel({ initial, nodeId }: {
       {!shown.ok ? <FailureNotice title="端点观测读取失败" nextStep="点击刷新观测重试；持续失败时检查控制面服务。" error={shown.error} /> : !nodeId ? <p className="text-muted-foreground">选择源节点，查看它实际 UDP 承载的 STUN 地址观测。</p> : <>
         <div className="flex flex-wrap items-center gap-2">
           <Badge variant="outline" data-testid="discovery-status">{discoveryLabel(report, clock)}</Badge>
-          <Link href={`/nodes/${encodeURIComponent(nodeId)}?tab=connections`} className="underline underline-offset-4">节点连接配置与运行状态</Link>
+          <Link href={routes.machine(nodeId, "connections")} className="underline underline-offset-4">节点连接配置与运行状态</Link>
         </div>
         {report?.reported_at ? <p className="text-muted-foreground">上报于 {formatDateTime(report.reported_at)}</p> : null}
         {report ? <DiagnosticDetails title="报告技术详情"><dl className="grid min-w-0 gap-x-4 gap-y-1 sm:grid-cols-2">
