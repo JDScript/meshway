@@ -51,10 +51,18 @@ struct Publication {
 #[derive(Default)]
 struct State {
     generation: Arc<()>,
+    generation_number: u64,
     active: Option<Publication>,
     disabled: bool,
+    expired: bool,
     revision_floor: u32,
     terminated: bool,
+    listener: Option<SocketAddr>,
+    listener_bound: bool,
+    network_id: Option<String>,
+    node_id: Option<String>,
+    zone: Option<String>,
+    ttl: Option<u32>,
 }
 
 /// Query-side freshness checks remain independent of any stalled HTTP future.
@@ -81,20 +89,78 @@ struct Response {
 impl Guard {
     fn changed(&self, state: &mut State) {
         state.generation = Arc::new(());
+        state.generation_number = state.generation_number.saturating_add(1);
         self.1.send_replace(());
+    }
+
+    pub fn listener_bound(&self, listener: SocketAddr, node_id: Option<String>) {
+        let mut state = self.0.write().expect("DNS guard poisoned");
+        state.listener = Some(listener);
+        state.listener_bound = true;
+        state.node_id = node_id;
+        self.changed(&mut state);
+    }
+
+    pub fn listener_closed(&self) {
+        let mut state = self.0.write().expect("DNS guard poisoned");
+        state.listener_bound = false;
+        self.changed(&mut state);
+    }
+
+    #[cfg(unix)]
+    pub fn status(&self) -> crate::diagnostics::dns::Status {
+        use crate::diagnostics::dns::{State as StatusState, Status, StatusEvidence};
+        let state = self.0.read().expect("DNS guard poisoned");
+        let remaining = state.active.as_ref().map_or(Duration::ZERO, |active| {
+            active.deadline.saturating_duration_since(Instant::now())
+        });
+        let status = if state.terminated || !state.listener_bound {
+            StatusState::Unavailable
+        } else if state.disabled {
+            StatusState::Disabled
+        } else if state.expired || (state.active.is_some() && remaining.as_secs() == 0) {
+            StatusState::Expired
+        } else if state.active.is_some() {
+            StatusState::Active
+        } else {
+            StatusState::Unavailable
+        };
+        Status {
+            schema_version: crate::diagnostics::SCHEMA_VERSION,
+            state: status,
+            generation: state.generation_number,
+            revision_floor: state.revision_floor,
+            active_revision: (status == StatusState::Active)
+                .then(|| state.active.as_ref().expect("active publication").revision),
+            zone: state.zone.clone(),
+            ttl: state.ttl,
+            lease_remaining_ms: if status == StatusState::Active {
+                remaining.as_millis().min(u128::from(u64::MAX)) as u64
+            } else {
+                0
+            },
+            listener: state.listener,
+            listener_bound: state.listener_bound,
+            network_id: state.network_id.clone(),
+            node_id: state.node_id.clone(),
+            evidence: StatusEvidence::CurrentDnsGuard,
+        }
     }
 
     pub fn withdraw(&self) {
         let mut state = self.0.write().expect("DNS guard poisoned");
         state.active = None;
         state.disabled = false;
+        state.expired = false;
         self.changed(&mut state);
     }
 
+    #[cfg(test)]
     pub fn disable(&self) {
         let mut state = self.0.write().expect("DNS guard poisoned");
         state.active = None;
         state.disabled = !state.terminated;
+        state.expired = false;
         self.changed(&mut state);
     }
 
@@ -103,6 +169,7 @@ impl Guard {
         state.active = None;
         state.disabled = false;
         state.terminated = true;
+        state.expired = false;
         self.changed(&mut state);
     }
 
@@ -116,6 +183,7 @@ impl Guard {
         {
             state.active = None;
             state.disabled = false;
+            state.expired = false;
             self.changed(&mut state);
         }
     }
@@ -132,6 +200,7 @@ impl Guard {
             .is_some_and(|active| active.deadline.saturating_duration_since(now).as_secs() == 0)
         {
             state.active = None;
+            state.expired = true;
             self.changed(&mut state);
             return true;
         }
@@ -143,10 +212,24 @@ impl Guard {
         state.revision_floor = state.revision_floor.max(revision.saturating_add(1));
         state.active = None;
         state.disabled = false;
+        state.expired = false;
         self.changed(&mut state);
     }
 
+    #[cfg(test)]
     pub fn publish(&self, zone: Zone, deadline: Instant, revision: u32) -> bool {
+        self.publish_snapshot(zone, deadline, revision, true, None, None)
+    }
+
+    pub fn publish_snapshot(
+        &self,
+        zone: Zone,
+        deadline: Instant,
+        revision: u32,
+        enabled: bool,
+        network_id: Option<String>,
+        node_id: Option<String>,
+    ) -> bool {
         let mut state = self.0.write().expect("DNS guard poisoned");
         if state.terminated
             || revision < state.revision_floor
@@ -155,12 +238,17 @@ impl Guard {
             return false;
         }
         state.revision_floor = revision;
-        state.active = Some(Publication {
+        state.zone = Some(zone.name.to_string());
+        state.ttl = Some(zone.ttl);
+        state.network_id = network_id;
+        state.node_id = node_id;
+        state.active = enabled.then(|| Publication {
             zone: Arc::new(zone),
             deadline,
             revision,
         });
-        state.disabled = false;
+        state.disabled = !enabled;
+        state.expired = false;
         self.changed(&mut state);
         true
     }

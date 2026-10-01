@@ -43,7 +43,7 @@ struct PingSample {
 
 /// Keep JSON valid while escaping HTML and terminal control/bidi characters in
 /// inventory-controlled names. This also applies to machine-readable output.
-fn escaped_json(value: &impl Serialize) -> Result<String, serde_json::Error> {
+pub(crate) fn escaped_json(value: &impl Serialize) -> Result<String, serde_json::Error> {
     Ok(serde_json::to_string(value)?
         .chars()
         .map(|character| {

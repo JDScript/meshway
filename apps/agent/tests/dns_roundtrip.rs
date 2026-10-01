@@ -16,7 +16,7 @@ use meshway_protocol::{
     SaveNetworkRequest, canonical_node_dns_name,
 };
 use tokio::{
-    io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader},
+    io::{AsyncReadExt, AsyncWriteExt},
     net::{TcpListener, TcpStream, UdpSocket},
     process::Command,
     time::timeout,
@@ -51,6 +51,89 @@ async fn enroll(
 async fn free_port() -> SocketAddr {
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     listener.local_addr().unwrap()
+}
+
+async fn dns_cli(path: &Path, args: &[&str]) -> (i32, serde_json::Value) {
+    // Respect the same bounded IPC admission budget used by every diagnostic.
+    tokio::time::sleep(Duration::from_millis(150)).await;
+    let output = timeout(
+        Duration::from_secs(15),
+        Command::new(env!("CARGO_BIN_EXE_meshway-agent"))
+            .args(["dns"])
+            .args(args)
+            .arg("--json")
+            .env("MESHWAY_STATE", path)
+            .output(),
+    )
+    .await
+    .unwrap()
+    .unwrap();
+    let text = String::from_utf8(output.stdout).unwrap();
+    assert_eq!(
+        text.lines().count(),
+        1,
+        "JSON stdout must have exactly one result: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    for forbidden in [
+        "node_credential",
+        "private_key",
+        "token",
+        "secret",
+        "instance_id",
+    ] {
+        assert!(
+            !text.contains(forbidden),
+            "public diagnostic leaked {forbidden}"
+        );
+    }
+    (
+        output.status.code().unwrap(),
+        serde_json::from_str(&text).unwrap(),
+    )
+}
+
+async fn await_dns(path: &Path, expected: &str) -> serde_json::Value {
+    timeout(Duration::from_secs(10), async {
+        loop {
+            let (code, value) = dns_cli(path, &["status"]).await;
+            if code == 0 && value["outcome"]["result"]["state"] == expected {
+                return value;
+            }
+        }
+    })
+    .await
+    .unwrap()
+}
+
+async fn save_dns(client: &reqwest::Client, base: &str, admin: &str, enabled: bool, zone: &str) {
+    let response = client
+        .get(format!("{base}/api/v1/network"))
+        .bearer_auth(admin)
+        .send()
+        .await
+        .unwrap();
+    let network: NetworkSnapshot =
+        serde_json::from_slice(&response.bytes().await.unwrap()).unwrap();
+    let mut dns = network.dns;
+    dns.enabled = enabled;
+    dns.zone = zone.into();
+    let response = client
+        .post(format!("{base}/api/v1/network"))
+        .bearer_auth(admin)
+        .header("content-type", "application/json")
+        .body(
+            serde_json::to_vec(&SaveNetworkRequest {
+                expected_revision: network.revision,
+                name: network.name,
+                dns,
+            })
+            .unwrap(),
+        )
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 200);
 }
 
 async fn ask(address: SocketAddr, owner: &str, kind: RecordType, tcp: bool) -> Message {
@@ -161,37 +244,60 @@ async fn roundtrip(apply_connections: bool) {
         command.arg("--apply-connections");
     }
     let mut child = command.spawn().unwrap();
-    let mut lines = BufReader::new(child.stdout.take().unwrap()).lines();
-    timeout(Duration::from_secs(10), async {
-        let mut dns_revision = None;
-        let mut runtime_revision = None;
-        while let Some(line) = lines.next_line().await.unwrap() {
-            let value: serde_json::Value = serde_json::from_str(&line).unwrap();
-            if value["event"] == "managed_dns" && value["state"] == "active" {
-                dns_revision = value["revision"].as_u64();
-            }
-            if apply_connections && value["runtime"].is_object() {
-                runtime_revision = value["runtime"]["revision"].as_u64();
-            }
-            if dns_revision.is_some()
-                && (!apply_connections
-                    || runtime_revision.is_some_and(|revision| dns_revision >= Some(revision)))
-            {
-                return;
-            }
-        }
-        let mut error = String::new();
-        child
-            .stderr
-            .take()
-            .unwrap()
-            .read_to_string(&mut error)
+    let active = await_dns(&path, "active").await;
+    assert_eq!(active["outcome"]["result"]["node_id"], own.id);
+    assert!(active["outcome"]["result"]["network_id"].is_string());
+    assert_eq!(active["outcome"]["result"]["listener"], address.to_string());
+    if apply_connections {
+        let output = Command::new(env!("CARGO_BIN_EXE_meshway-agent"))
+            .args(["status", "--live", "--json"])
+            .env("MESHWAY_STATE", &path)
+            .output()
             .await
             .unwrap();
-        panic!("DNS exited without becoming active: {error}");
-    })
-    .await
-    .unwrap();
+        assert!(output.status.success());
+    }
+    for tcp in [false, true] {
+        for (input, kind, expected) in [
+            ("demo-sha.meshway.test", "A", own.mesh_ipv4.as_str()),
+            ("demo-sha.meshway.test", "AAAA", own.mesh_ipv6.as_str()),
+            (own.mesh_ipv4.as_str(), "PTR", ""),
+        ] {
+            let mut args = vec!["query", input, "--type", kind];
+            if tcp {
+                args.push("--tcp");
+            }
+            let (code, value) = dns_cli(&path, &args).await;
+            assert_eq!(code, 0, "{value}");
+            assert_eq!(value["outcome"]["result"]["state"], "positive");
+            if !expected.is_empty() {
+                assert_eq!(value["outcome"]["result"]["answers"][0]["data"], expected);
+            }
+        }
+    }
+    for (input, expected, code) in [
+        ("missing.meshway.test", "nxdomain", 0),
+        ("meshway.test", "nodata", 0),
+        ("outside.test", "refused", 1),
+    ] {
+        let (actual, value) = dns_cli(&path, &["query", input]).await;
+        assert_eq!(actual, code);
+        if code == 0 {
+            assert_eq!(value["outcome"]["result"]["state"], expected);
+        } else {
+            assert_eq!(value["outcome"]["status"], "error");
+            assert_eq!(value["observation"]["state"], expected);
+        }
+    }
+    let (code, _) = dns_cli(&path, &["query", "bad/name"]).await;
+    assert_eq!(code, 2);
+    let (code, value) = dns_cli(
+        &directory.path().join("missing"),
+        &["status", "--state", path.to_str().unwrap()],
+    )
+    .await;
+    assert_eq!(code, 0);
+    assert_eq!(value["outcome"]["result"]["node_id"], own.id);
     if std::env::var_os("MESHWAY_DNS_TEST_DIG").is_some() {
         let output = Command::new("dig")
             .args([
@@ -283,6 +389,25 @@ async fn roundtrip(apply_connections: bool) {
             RData::A(A(dupe.mesh_ipv4.parse().unwrap()))
         );
     }
+    save_dns(&client, &base, &admin, false, "meshway.test").await;
+    let disabled = await_dns(&path, "disabled").await;
+    assert!(disabled["outcome"]["result"]["active_revision"].is_null());
+    assert_eq!(
+        dns_cli(&path, &["query", "demo-sha.meshway.test"]).await.0,
+        1
+    );
+    save_dns(&client, &base, &admin, true, "changed.meshway.test").await;
+    let changed = await_dns(&path, "active").await;
+    assert_eq!(
+        changed["outcome"]["result"]["zone"],
+        "changed.meshway.test."
+    );
+    assert_eq!(
+        dns_cli(&path, &["query", "demo-sha.changed.meshway.test"])
+            .await
+            .0,
+        0
+    );
     let revoked = client
         .post(format!("{base}/api/v1/nodes/revoke"))
         .bearer_auth(&admin)
@@ -305,6 +430,9 @@ async fn roundtrip(apply_connections: bool) {
             .success()
     );
     assert_eq!(std::fs::read(&path).unwrap(), identity);
+    let (code, value) = dns_cli(&path, &["status"]).await;
+    assert_eq!(code, 1);
+    assert_eq!(value["outcome"]["status"], "error");
     let rebound_tcp = TcpListener::bind(address).await.unwrap();
     let rebound_udp = UdpSocket::bind(address).await.unwrap();
     drop((rebound_tcp, rebound_udp));

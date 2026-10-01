@@ -16,7 +16,7 @@ fn emit(output: Output) {
                 use std::io::Write;
                 for output in receive {
                     let result = match output {
-                        Output::Event(json) => writeln!(std::io::stdout(), "{json}"),
+                        Output::Event(json) => writeln!(std::io::stderr(), "{json}"),
                         Output::Warning(message) => writeln!(std::io::stderr(), "{message}"),
                     };
                     if result.is_err() {

@@ -217,6 +217,16 @@ fn load(state: &Path, identity: &Identity) -> Result<Option<Cache>, AgentError> 
 pub struct DnsService {
     server: Server,
     sync: Sync,
+    lifetime: ListenerLifetime,
+    #[cfg(unix)]
+    control: Option<crate::diagnostics::Server>,
+}
+
+struct ListenerLifetime(Guard);
+impl Drop for ListenerLifetime {
+    fn drop(&mut self) {
+        self.0.listener_closed();
+    }
 }
 
 struct Sync {
@@ -263,9 +273,13 @@ impl Agent {
             guard.observe_revision(cache.public_inventory().revision);
         }
         let server = Server::bind(listen).await?;
+        guard.listener_bound(listen, identity.node_id.clone());
         self.dns_guard = Some(guard.clone());
         Ok(DnsService {
             server,
+            lifetime: ListenerLifetime(guard.clone()),
+            #[cfg(unix)]
+            control: None,
             sync: Sync {
                 state: self.path.clone(),
                 identity,
@@ -280,7 +294,15 @@ impl Agent {
 }
 
 impl DnsService {
+    /// DNS-only supervision uses the same private IPC server and held identity lock.
+    #[cfg(unix)]
+    pub async fn enable_diagnostics(&mut self, agent: &Agent) -> Result<(), AgentError> {
+        self.control = Some(crate::diagnostics::Server::bind(&agent.path, &agent._lock).await?);
+        Ok(())
+    }
+
     pub async fn run(self) -> Result<(), AgentError> {
+        let _lifetime = self.lifetime;
         let guard = self.sync.guard.clone();
         let listen = self.sync.listen;
         let expiry = async {
@@ -292,9 +314,17 @@ impl DnsService {
                 }
             }
         };
+        let control = async {
+            #[cfg(unix)]
+            if let Some(control) = self.control {
+                return control.serve_with_dns(None, Some(guard.clone())).await;
+            }
+            std::future::pending::<std::io::Result<()>>().await
+        };
         tokio::select! {
             result = self.server.serve(guard.clone()) => result,
             result = self.sync.run() => result,
+            result = control => result.map_err(AgentError::from),
             _ = expiry => unreachable!("DNS expiry watchdog runs until cancellation"),
         }
     }
@@ -495,14 +525,22 @@ impl Sync {
         }
         local::ensure_durable(&path(&self.state))?;
         let snapshot = &self.cache.as_ref().expect("persisted DNS").snapshot;
-        if !snapshot.payload.dns.enabled {
-            self.guard.disable();
-            self.event("disabled", Some(snapshot));
-        } else if self
-            .guard
-            .publish(zone, fresh_at + self.lease, snapshot.payload.revision)
-        {
-            self.event("active", Some(snapshot));
+        if self.guard.publish_snapshot(
+            zone,
+            fresh_at + self.lease,
+            snapshot.payload.revision,
+            snapshot.payload.dns.enabled,
+            Some(snapshot.payload.network_id.clone()),
+            Some(snapshot.payload.node_id.clone()),
+        ) {
+            self.event(
+                if snapshot.payload.dns.enabled {
+                    "active"
+                } else {
+                    "disabled"
+                },
+                Some(snapshot),
+            );
         } else {
             self.event("withdrawn", Some(snapshot));
             return Err(AgentError::Http {

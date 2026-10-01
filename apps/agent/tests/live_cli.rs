@@ -64,6 +64,7 @@ async fn fixture(state: &Path) -> tokio::task::JoinHandle<()> {
             };
             assert_eq!(request.schema_version, SCHEMA_VERSION);
             let response = match request.operation {
+                Operation::DnsStatus {} => panic!("DNS command is tested by dns diagnostics tests"),
                 Operation::Status {
                     peers,
                     offset,

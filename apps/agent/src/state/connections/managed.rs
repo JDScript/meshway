@@ -82,9 +82,11 @@ impl Agent {
         #[cfg(unix)]
         let prober = manager.prober();
         #[cfg(unix)]
+        let dns_guard = self.dns_guard.clone();
+        #[cfg(unix)]
         let result = tokio::select! {
             result = self.managed_loop(&mut manager, interval, &mut dataplane) => result,
-            result = control.serve(prober) => result.map_err(AgentError::from),
+            result = control.serve_with_dns(Some(prober), dns_guard) => result.map_err(AgentError::from),
             _ = tokio::signal::ctrl_c() => Ok(()),
         };
         #[cfg(not(unix))]

@@ -17,6 +17,8 @@ use tokio::{
 
 use crate::managed_connections::Prober;
 
+pub mod dns;
+
 const MAX_FRAME: usize = 4096;
 const MAX_RESPONSE: usize = 65_536;
 pub const SCHEMA_VERSION: u32 = 1;
@@ -43,6 +45,7 @@ pub struct Request {
 #[derive(Serialize, Deserialize)]
 #[serde(tag = "command", rename_all = "snake_case", deny_unknown_fields)]
 pub enum Operation {
+    DnsStatus {},
     Status {
         peers: bool,
         offset: u32,
@@ -136,6 +139,7 @@ pub struct WhoisObservation {
     deny_unknown_fields
 )]
 pub enum LiveResponse {
+    DnsStatus(dns::Status),
     Status(LiveStatus),
     Whois(WhoisObservation),
     Ping(ProbeObservation),
@@ -366,7 +370,16 @@ impl Server {
         })
     }
 
+    #[cfg(test)]
     pub async fn serve(&self, prober: Prober) -> io::Result<()> {
+        self.serve_with_dns(Some(prober), None).await
+    }
+
+    pub async fn serve_with_dns(
+        &self,
+        prober: Option<Prober>,
+        dns: Option<crate::managed_dns::Guard>,
+    ) -> io::Result<()> {
         let mut tasks = JoinSet::new();
         let mut since = Instant::now();
         let mut accepted = 0_u8;
@@ -390,10 +403,15 @@ impl Server {
                     }
                     accepted += 1;
                     let prober = prober.clone();
+                    let dns = dns.clone();
                     tasks.spawn(async move {
                         let _ = time::timeout(CONNECTION_DEADLINE, async {
                             match read_frame::<Incoming>(&mut socket).await {
                                 Ok(Incoming::Legacy(request)) => {
+                                    let Some(prober) = prober else {
+                                        let _ = write_frame(&mut socket, &ProbeResponse::Error(ProbeError::Unavailable)).await;
+                                        return;
+                                    };
                                     let mut extra = [0; 1];
                                     let response = tokio::select! {
                                         biased;
@@ -412,15 +430,20 @@ impl Server {
                                         LiveResponse::Error(ProbeError::UnsupportedVersion)
                                     } else {
                                         match request.operation {
-                                            Operation::Status { peers, offset, limit } => match prober.live_status(peers, offset, limit) {
+                                            Operation::DnsStatus {} => LiveResponse::DnsStatus(dns.as_ref().map_or_else(dns::Status::unavailable, crate::managed_dns::Guard::status)),
+                                            Operation::Status { peers, offset, limit } => match prober.as_ref().ok_or(ProbeError::Unavailable).and_then(|prober| prober.live_status(peers, offset, limit)) {
                                                 Ok(value) => LiveResponse::Status(value),
                                                 Err(error) => LiveResponse::Error(error),
                                             },
-                                            Operation::Whois { query } => match prober.whois(&query) {
+                                            Operation::Whois { query } => match prober.as_ref().ok_or(ProbeError::Unavailable).and_then(|prober| prober.whois(&query)) {
                                                 Ok(value) => LiveResponse::Whois(value),
                                                 Err(error) => LiveResponse::Error(error),
                                             },
                                             Operation::Ping { request } => {
+                                                let Some(prober) = prober else {
+                                                    let _ = write_response(&mut socket, &LiveResponse::Error(ProbeError::Unavailable)).await;
+                                                    return;
+                                                };
                                                 let mut extra = [0; 1];
                                                 tokio::select! {
                                                     biased;

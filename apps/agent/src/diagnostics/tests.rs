@@ -4,6 +4,7 @@ use crate::managed_connections::Manager;
 #[tokio::test]
 async fn versioned_requests_are_closed_and_response_bound_is_independent() {
     for body in [
+        r#"{"schema_version":1,"operation":{"command":"dns_status","extra":true}}"#,
         r#"{"schema_version":1,"operation":{"command":"status","peers":false,"offset":0,"limit":64,"extra":true}}"#,
         r#"{"schema_version":1,"operation":{"command":"whois","query":"SHA"},"extra":true}"#,
         r#"{"schema_version":1,"operation":{"command":"dns_query","query":"SHA"}}"#,
@@ -46,6 +47,10 @@ async fn versioned_requests_are_closed_and_response_bound_is_independent() {
         whois(&state, "SHA").await.unwrap_err(),
         ProbeError::Unavailable
     );
+    let dns = dns::status(&state).await.unwrap();
+    assert_eq!(dns.state, dns::State::Unavailable);
+    assert!(!dns.listener_bound);
+    assert!(dns.listener.is_none());
     task.abort();
     let _ = task.await;
 

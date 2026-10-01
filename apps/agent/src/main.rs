@@ -4,6 +4,8 @@ use clap::{Parser, Subcommand};
 use meshway_agent::{Agent, ControlSyncReceipts, SyncReceipt, connections_status, status};
 
 #[cfg(all(feature = "managed-connections", unix))]
+mod cli_dns;
+#[cfg(all(feature = "managed-connections", unix))]
 mod cli_live;
 
 #[derive(Parser)]
@@ -18,6 +20,12 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Command {
+    /// Observe current daemon DNS metadata or perform a real loopback DNS query.
+    #[cfg(all(feature = "managed-connections", unix))]
+    Dns {
+        #[command(subcommand)]
+        command: cli_dns::Command,
+    },
     /// Fresh authenticated direct-neighbor probe through the active managed daemon (not ICMP or mesh trace).
     #[cfg(all(feature = "managed-connections", unix))]
     Ping {
@@ -165,6 +173,8 @@ async fn main() {
 async fn execute(command: Command) -> Result<(), Box<dyn std::error::Error>> {
     match command {
         #[cfg(all(feature = "managed-connections", unix))]
+        Command::Dns { command } => cli_dns::execute(command).await?,
+        #[cfg(all(feature = "managed-connections", unix))]
         Command::Ping {
             peer,
             state,
@@ -257,7 +267,7 @@ async fn execute(command: Command) -> Result<(), Box<dyn std::error::Error>> {
         } => {
             let mut agent = Agent::load(state)?;
             #[cfg(feature = "managed-connections")]
-            let dns_service = if let Some(listen) = dns_listen {
+            let mut dns_service = if let Some(listen) = dns_listen {
                 Some(
                     agent
                         .dns_service(
@@ -270,6 +280,13 @@ async fn execute(command: Command) -> Result<(), Box<dyn std::error::Error>> {
             } else {
                 None
             };
+            #[cfg(all(feature = "managed-connections", unix))]
+            if !apply_connections
+                && !apply_dataplane
+                && let Some(service) = &mut dns_service
+            {
+                service.enable_diagnostics(&agent).await?;
+            }
             let run = async {
                 #[cfg(feature = "managed-connections")]
                 if apply_dataplane {

@@ -365,11 +365,28 @@ async fn cached_restart_socket_stays_unavailable_until_fresh_get() {
     let reservation = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let listen = reservation.local_addr().unwrap();
     drop(reservation);
-    let service = agent
+    let mut service = agent
         .dns_service(listen, Duration::from_secs(1), Duration::from_secs(10))
         .await
         .unwrap();
+    #[cfg(unix)]
+    service.enable_diagnostics(&agent).await.unwrap();
     let runtime = tokio::spawn(service.run());
+    #[cfg(unix)]
+    {
+        let observed = crate::diagnostics::dns::status(&agent.path).await.unwrap();
+        assert_eq!(observed.state, crate::diagnostics::dns::State::Unavailable);
+        assert!(observed.listener_bound);
+        assert!(
+            observed.zone.is_none(),
+            "cached zone must not masquerade as fresh publication"
+        );
+        let reply =
+            crate::diagnostics::dns::query(&agent.path, "demo-sha.meshway.test", None, false)
+                .await
+                .unwrap();
+        assert_eq!(reply.state, crate::diagnostics::dns::QueryState::Servfail);
+    }
     let socket = tokio::net::UdpSocket::bind("127.0.0.1:0").await.unwrap();
     let mut request = Message::new(4321, hickory_proto::op::MessageType::Query, OpCode::Query);
     request.add_query(Query::query(
@@ -391,5 +408,10 @@ async fn cached_restart_socket_stays_unavailable_until_fresh_get() {
     assert_eq!(std::fs::read(path(&agent.path)).unwrap(), cached);
     runtime.abort();
     assert!(runtime.await.unwrap_err().is_cancelled());
+    #[cfg(unix)]
+    {
+        assert!(!crate::diagnostics::socket_path(&agent.path).exists());
+        assert!(!agent.dns_guard.as_ref().unwrap().status().listener_bound);
+    }
     task.abort();
 }

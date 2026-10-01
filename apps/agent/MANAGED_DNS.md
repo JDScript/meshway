@@ -9,6 +9,9 @@ cargo run -p meshway-agent --features managed-connections -- run \
 dig @127.0.0.1 -p 5353 demo-sha.meshway.test A
 dig @127.0.0.1 -p 5353 demo-sha.meshway.test AAAA +tcp
 dig @127.0.0.1 -p 5353 -x 100.64.0.2
+meshway-agent dns status --state .meshway/agent.json --json
+meshway-agent dns query demo-sha.meshway.test --state .meshway/agent.json --json
+meshway-agent dns query 100.64.0.2 --tcp --state .meshway/agent.json --json
 ```
 
 The controller must enable DNS for the current network. The name and addresses
@@ -40,6 +43,14 @@ integration, Split DNS, FakeIP, internet-domain attribution, or packet access
 authorization. No OS resolver, routes, NAT, or default upstream are changed by
 DNS. AAAA records publish assigned metadata and do not prove IPv6 TUN reachability.
 Omitting the flag retains ordinary Agent behavior.
+
+DNS-only, adjacency-only and combined daemons expose one private
+`<state>.control.sock` while holding the original Agent identity lock. The DNS
+status operation reads the publication Guard, not `.dns.json`; query discovers
+only an explicitly bound loopback listener and performs a real DNS transaction.
+Status metadata and query evidence are distinct. See [CLI.md](CLI.md) for typed
+output, bounds and 0/1/2 exit codes. No IPC mutations or supervisor adapter
+configuration endpoints are added.
 
 ## Answers and failure lifecycle
 
@@ -84,7 +95,7 @@ complete TCP frame already accepted by the kernel cannot be recalled on a later
 withdrawal. User-space responses still waiting for readiness are canceled; an
 accepted partial TCP frame is never completed and must be discarded by the client.
 
-`event: "managed_dns"` records public local publication state, listen address,
+`event: "managed_dns"` on **stderr** records public local publication state, listen address,
 revision, digest and zone. It is neither a configuration ACK nor proof of packet
 delivery. Queries, node bearer credentials and private keys are not logged.
 DNS observations use one bounded logger queue; overload drops observations
@@ -94,8 +105,8 @@ rather than blocking DNS serving, withdrawal, or the expiry watchdog.
 
 ```sh
 cargo fmt --all -- --check
-cargo test -p meshway-agent --features managed-connections
-cargo clippy -p meshway-agent --features managed-connections --all-targets -- -D warnings
+cargo test --locked -p meshway-agent --features managed-connections
+cargo clippy --locked -p meshway-agent --features managed-connections --all-targets -- -D warnings
 ```
 
 Agent tests exercise actual loopback UDP/TCP sockets, authoritative answers and
