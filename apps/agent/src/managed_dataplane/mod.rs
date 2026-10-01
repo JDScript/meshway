@@ -18,6 +18,8 @@ use crate::AgentError;
 pub(crate) mod packet;
 #[cfg(test)]
 pub(crate) mod tests;
+#[cfg(all(test, target_os = "linux"))]
+mod throughput;
 pub(crate) mod tun;
 
 #[derive(Clone, Debug)]

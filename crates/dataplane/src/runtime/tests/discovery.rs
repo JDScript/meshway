@@ -68,6 +68,15 @@ async fn request(observer: &UdpSocket) -> (Vec<u8>, SocketAddr) {
 }
 
 async fn observe(runtime: &Runtime, observer: &UdpSocket, info: &UdpSocketInfo) {
+    observe_with_replies(runtime, observer, info, 1).await;
+}
+
+async fn observe_with_replies(
+    runtime: &Runtime,
+    observer: &UdpSocket,
+    info: &UdpSocketInfo,
+    replies: usize,
+) {
     let discovery = runtime.discover_udp(info.socket_id, observer.local_addr().unwrap(), TIMEOUT);
     let reply = async {
         let (packet, source) = request(observer).await;
@@ -75,10 +84,15 @@ async fn observe(runtime: &Runtime, observer: &UdpSocket, info: &UdpSocketInfo) 
         if !info.local_addr.ip().is_unspecified() {
             assert_eq!(source, info.local_addr);
         }
-        observer
-            .send_to(&mapped(&packet, source), source)
-            .await
-            .unwrap();
+        for reply in 0..replies {
+            if reply != 0 {
+                tokio::time::sleep(Duration::from_millis(5)).await;
+            }
+            observer
+                .send_to(&mapped(&packet, source), source)
+                .await
+                .unwrap();
+        }
         source
     };
     let (observation, source) = tokio::join!(discovery, reply);
@@ -512,6 +526,9 @@ async fn discovery_global_cap_validation_and_flood_deadline() {
     );
     assert!(started.elapsed() < Duration::from_millis(600));
     assert!(runtime.connected_peers().is_empty());
-    observe(&runtime, &observer, &info).await;
+    // A saturated UDP receive buffer can drop the first recovery reply even
+    // after the flood producer exits. Retry only this post-flood recovery probe;
+    // all transaction/source/codec checks and the flood deadline remain strict.
+    observe_with_replies(&runtime, &observer, &info, 4).await;
     runtime.shutdown().await;
 }

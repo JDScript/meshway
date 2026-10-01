@@ -1,7 +1,8 @@
-//! Isolated, plaintext carrier microbenchmark. Never a Runtime/agent fallback.
-//! Both arms use the SAME VLESS implementation and handshake; only one removes
+//! Isolated carrier and encrypted Runtime microbenchmarks. Never an agent fallback.
+//! VLESS arms use the SAME implementation and handshake; only one removes
 //! the already-validated ClientStream wrapper before the measured workload.
 use std::{
+    collections::VecDeque,
     error::Error,
     fs,
     net::SocketAddr,
@@ -25,18 +26,30 @@ const BATCH: usize = 16;
 const RECORD: usize = PAYLOAD + 4;
 
 #[derive(Parser)]
-#[command(
-    about = "TEST ONLY: matched plaintext VLESS adapter measurement; no Meshway identity/E2E/TUN"
-)]
+#[command(about = "TEST ONLY: matched VLESS adapter and encrypted NativeUDP Runtime measurement")]
 struct Cli {
     #[arg(long)]
-    uuid_file: PathBuf,
+    uuid_file: Option<PathBuf>,
     #[command(subcommand)]
     command: Command,
 }
 
 #[derive(Subcommand)]
 enum Command {
+    /// TEST ONLY: same encrypted NativeUDP Runtime, synthetic packet I/O, no TUN.
+    Runtime {
+        #[arg(long)]
+        config_file: PathBuf,
+        #[arg(long)]
+        status_file: PathBuf,
+        /// Ordered authorized path; omit to drain received packets at an endpoint/relay.
+        #[arg(long, value_delimiter = ',')]
+        path: Vec<String>,
+        #[arg(long, default_value_t = 10, value_parser = clap::value_parser!(u8).range(1..=30))]
+        seconds: u8,
+        #[arg(long, default_value_t = 20000, value_parser = clap::value_parser!(u32).range(1000..=64000))]
+        packets_per_second: u32,
+    },
     Serve {
         #[arg(long)]
         listen: SocketAddr,
@@ -67,6 +80,15 @@ struct Sample {
     payload_bytes: u64,
     elapsed_ns: u64,
     cgroup_usage_usec: Option<u64>,
+}
+
+#[derive(Serialize)]
+struct ReceiverInterval {
+    elapsed_seconds: f64,
+    received_packets_total: u64,
+    payload_bytes_delta: u64,
+    receiver_bits_per_second: f64,
+    cgroup_cpu_ns_per_payload_byte: Option<f64>,
 }
 
 fn cpu() -> Option<u64> {
@@ -243,9 +265,25 @@ async fn workload<S: AsyncRead + AsyncWrite + Unpin>(
 }
 
 async fn execute(cli: Cli) -> Result<()> {
-    let uuid: SecretUuid = fs::read_to_string(cli.uuid_file)?.trim().parse()?;
+    if let Command::Runtime {
+        config_file,
+        status_file,
+        path,
+        seconds,
+        packets_per_second,
+    } = cli.command
+    {
+        return runtime_measure(config_file, status_file, path, seconds, packets_per_second).await;
+    }
+    let uuid: SecretUuid = fs::read_to_string(
+        cli.uuid_file
+            .ok_or("--uuid-file required for VLESS measurement")?,
+    )?
+    .trim()
+    .parse()?;
     let target = Target::domain("carrier-measure.invalid", 41000)?;
     match cli.command {
+        Command::Runtime { .. } => unreachable!("handled before VLESS credential loading"),
         Command::Serve { listen, ready_file } => {
             let listener = TcpListener::bind(listen).await?;
             fs::write(ready_file, b"ready")?;
@@ -291,7 +329,136 @@ async fn execute(cli: Cli) -> Result<()> {
     Ok(())
 }
 
-#[tokio::main(flavor = "current_thread")]
-async fn main() -> Result<()> {
-    tokio::time::timeout(Duration::from_secs(60), execute(Cli::parse())).await?
+async fn runtime_measure(
+    config_file: PathBuf,
+    status_file: PathBuf,
+    path: Vec<String>,
+    seconds: u8,
+    packets_per_second: u32,
+) -> Result<()> {
+    #[derive(Deserialize)]
+    struct Config {
+        dataplane: meshway_dataplane::LabConfig,
+    }
+    // Reuse Rust-generated lab config and its exact keys/limits/authorization.
+    // This measurement deliberately does not instantiate the lab's TUN field.
+    let config: Config =
+        serde_json::from_str(&meshway_protocol::local::read_private(&config_file)?)?;
+    let runtime = meshway_dataplane::Runtime::start(config.dataplane).await?;
+    let mut incoming = runtime.take_packet_receiver()?;
+    let before = cpu();
+    let start = Instant::now();
+    let mut received = 0u64;
+    let mut sent = 0u64;
+    let mut rejected = 0u64;
+    let mut timer = tokio::time::interval(Duration::from_secs(1));
+    let mut last_bytes = 0u64;
+    let mut last_cpu = before;
+    let mut last_time = Instant::now();
+    let mut intervals = VecDeque::new();
+    let publish = |received: u64,
+                   sent: u64,
+                   rejected: u64,
+                   rate: f64,
+                   cpu_ns_per_byte: Option<f64>,
+                   intervals: &VecDeque<ReceiverInterval>|
+     -> Result<()> {
+        let report = serde_json::json!({
+            "experiment": true, "tun": false, "payload_size": PAYLOAD,
+            "node_id": runtime.node_id(), "authenticated_peers": runtime.connected_peers(),
+            "statistics": runtime.statistics(), "received_packets": received,
+            "accepted_send_packets": sent, "rejected_send_packets": rejected,
+            "elapsed_seconds": start.elapsed().as_secs_f64(),
+            "last_interval_receiver_bits_per_second": rate,
+            "last_interval_cgroup_cpu_ns_per_payload_byte": cpu_ns_per_byte,
+            "interval_samples": intervals,
+        });
+        meshway_protocol::local::atomic_write(
+            &status_file,
+            &serde_json::to_vec(&report)?,
+            status_file.try_exists()?,
+        )?;
+        Ok(())
+    };
+    publish(0, 0, 0, 0., None, &intervals)?;
+    if path.is_empty() {
+        loop {
+            tokio::select! {
+                _ = tokio::signal::ctrl_c() => break,
+                packet = incoming.recv() => {
+                    let packet = packet.ok_or("Runtime receiver closed")?;
+                    if packet.payload.len() != PAYLOAD || packet.payload[8..].iter().any(|b| *b != 0x5a) {
+                        return Err("synthetic payload integrity mismatch".into());
+                    }
+                    received += 1;
+                }
+                _ = timer.tick() => {
+                    let bytes = received * PAYLOAD as u64;
+                    let delta = bytes - last_bytes;
+                    let current_cpu = cpu();
+                    let cost = last_cpu.zip(current_cpu).filter(|_| delta > 0)
+                        .map(|(a,b)| (b-a) as f64 * 1000. / delta as f64);
+                    let rate = delta as f64 * 8. / last_time.elapsed().as_secs_f64();
+                    if intervals.len() == 32 { intervals.pop_front(); }
+                    intervals.push_back(ReceiverInterval {
+                        elapsed_seconds: start.elapsed().as_secs_f64(),
+                        received_packets_total: received,
+                        payload_bytes_delta: delta,
+                        receiver_bits_per_second: rate,
+                        cgroup_cpu_ns_per_payload_byte: cost,
+                    });
+                    publish(received, sent, rejected, rate, cost, &intervals)?;
+                    last_bytes = bytes; last_cpu = current_cpu; last_time = Instant::now();
+                }
+            }
+        }
+    } else {
+        runtime
+            .wait_for_peer(
+                path.get(1).ok_or("path needs next hop")?,
+                Duration::from_secs(15),
+            )
+            .await?;
+        // Bounded batches per millisecond. No detached per-packet tasks, and no
+        // retransmission layer: loss remains visible instead of hidden by TCP.
+        let batch_size = packets_per_second as usize / 1000;
+        let mut pace = tokio::time::interval(Duration::from_millis(1));
+        pace.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+        let load_start = Instant::now();
+        while load_start.elapsed() < Duration::from_secs(seconds.into()) {
+            pace.tick().await;
+            for offset in (0..batch_size).step_by(meshway_dataplane::MAX_BATCH_FRAMES) {
+                let count = (batch_size - offset).min(meshway_dataplane::MAX_BATCH_FRAMES);
+                let payloads = (0..count)
+                    .map(|i| {
+                        let mut bytes = vec![0x5a; PAYLOAD];
+                        bytes[..8].copy_from_slice(&(sent + rejected + i as u64).to_be_bytes());
+                        bytes
+                    })
+                    .collect();
+                match runtime.send_packet_batch(path.clone(), payloads).await {
+                    Ok(()) => sent += count as u64,
+                    Err(_) => rejected += count as u64,
+                }
+            }
+        }
+        tokio::time::sleep(Duration::from_secs(1)).await;
+        publish(received, sent, rejected, 0., None, &intervals)?;
+    }
+    runtime.shutdown().await;
+    Ok(())
+}
+
+fn main() -> Result<()> {
+    let cli = Cli::parse();
+    let runtime_measurement = matches!(&cli.command, Command::Runtime { .. });
+    let mut builder = if runtime_measurement {
+        tokio::runtime::Builder::new_multi_thread()
+    } else {
+        tokio::runtime::Builder::new_current_thread()
+    };
+    builder.enable_all().build()?.block_on(async {
+        let deadline = if runtime_measurement { 600 } else { 60 };
+        tokio::time::timeout(Duration::from_secs(deadline), execute(cli)).await?
+    })
 }

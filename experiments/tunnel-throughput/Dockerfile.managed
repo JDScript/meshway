@@ -1,0 +1,30 @@
+# syntax=docker/dockerfile:1
+FROM rust:1.98-slim-trixie@sha256:4cd829461bd5c4d511c32e269da9cb8929223b666519d8004e35fc8d1d771ab7 AS builder
+ARG TARGETARCH
+RUN apt-get update && apt-get install -y --no-install-recommends build-essential cmake pkg-config libsqlite3-dev python3
+WORKDIR /src
+COPY Cargo.toml Cargo.lock ./
+COPY crates ./crates
+COPY apps/agent ./apps/agent
+COPY apps/controller ./apps/controller
+RUN --mount=type=cache,target=/usr/local/cargo/registry \
+    --mount=type=cache,target=/usr/local/cargo/git \
+    --mount=type=cache,target=/src/target,id=meshway-lab-${TARGETARCH},sharing=locked \
+    mkdir /out \
+    && cargo test --locked --release -p meshway-agent --features managed-connections --lib --no-run --message-format=json > /out/build.json \
+    && python3 -c 'import json,shutil; a=[x["executable"] for l in open("/out/build.json") if (x:=json.loads(l)).get("reason")=="compiler-artifact" and x.get("executable") and x["target"]["kind"]==["lib"]]; assert len(a)==1,a; shutil.copy(a[0],"/out/meshway-managed-measure")'
+FROM builder AS verification
+ARG TARGETARCH
+RUN rustup component add rustfmt clippy
+RUN --mount=type=cache,target=/usr/local/cargo/registry \
+    --mount=type=cache,target=/usr/local/cargo/git \
+    --mount=type=cache,target=/src/target,id=meshway-lab-${TARGETARCH},sharing=locked \
+    cargo fmt --all --check \
+    && cargo clippy --locked -p meshway-dataplane -p meshway-agent --features managed-connections --all-targets -- -D warnings \
+    && cargo test --locked --release -p meshway-dataplane -- --test-threads=1 \
+    && cargo test --locked --release -p meshway-agent --features managed-connections --lib managed_dataplane -- --test-threads=1 \
+    && cargo test --locked --release -p meshway-agent --features managed-connections --lib packet_tests -- --test-threads=1
+FROM debian:trixie-slim@sha256:a99cfc517144bc59b1978475ec53b46ecabec7e43635402ee5b77cc54cd1b20a
+RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates iperf3 iproute2 iputils-ping python3 ethtool
+COPY --from=builder /out/meshway-managed-measure /usr/local/bin/meshway-managed-measure
+ENTRYPOINT ["meshway-managed-measure"]
