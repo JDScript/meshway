@@ -6,6 +6,13 @@ identities, or implements HTTP endpoints/DTOs. It proves numeric STUN observatio
 of actual managed NativeUDP listener and outgoing-candidate sockets coexist with
 authenticated Noise nonce probes and obey runtime/configuration/observation leases.
 
+**Final integration PASS (2026-10-01):** run `mupsr1dt-09b3d16f20327dee`, eight stages
+and ten principal checks, with complete owned-resource cleanup. Native ARM64 image
+`meshway-manageddiscovery:m2b-20261001-b` is pinned to
+`sha256:4a2d7f1389c7dddb80c129edf9db5b2d46bd883333b5e8330f56fd0834f87724`.
+The approved temporary artifact directory is
+`meshway-discovery-mupsr1dt-09b3d16f20327dee-xv94zc/result.json`.
+
 ## Prerequisites and ownership
 
 - Integrate the actual-carrier core/runtime, Agent `run --apply-connections` with
@@ -44,6 +51,11 @@ Linux UDP word endianness and inode filtering, and a bounded real loopback wire
 round trip. Node tests cover strict observation expiry, fake HTTP-based renewal,
 numeric nonzero endpoints, and rejecting a heartbeat as nonce-probe evidence.
 These are fixture checks; only a completed Docker run produces M2 acceptance.
+
+The outage baseline is captured while its mapped observations are fresh, then
+retained as historical evidence even after expiry. Failure artifacts contain only
+validated public process/report metadata and a source location, not raw logs or
+credential-bearing exceptions.
 
 ## Main-owned build and full run
 

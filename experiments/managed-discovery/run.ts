@@ -22,7 +22,7 @@ const OWNER = "io.meshway.managed-discovery.run";
 const LEASE = 10;
 type ContainerRole = Role | "controller" | "observer";
 type Report = { schema_version: 1; run_id: string; status: "RUNNING" | "PASS" | "FAIL";
-  started_at: string; finished_at?: string; stage: string; check?: string; error_category?: string;
+  started_at: string; finished_at?: string; stage: string; check?: string; error_category?: string; failure_location?: string;
   image?: { reference: string; id: string; architecture: string }; network_id?: string;
   runtime_ids: { role: ContainerRole; id: string; ip: string }[];
   nodes: { role: Role; id: string; name: string; ip: string }[];
@@ -73,6 +73,7 @@ async function main() {
   const report: Report = { schema_version: 1, run_id: runId, status: "RUNNING", started_at: new Date().toISOString(),
     stage: "preflight", runtime_ids: [], nodes: [], evidence: [], cleanup: { status: "PENDING", errors: [] } };
   let current: Report["evidence"][number] | undefined;
+  let captureFailure: (() => Promise<void>) | undefined;
   const save = () => writeFile(join(artifacts, "result.json"), `${JSON.stringify(report, null, 2)}\n`, { mode: 0o600 });
   const stage = (name: string) => {
     if (current) current.status = "PASS";
@@ -248,6 +249,12 @@ async function main() {
       }
       return values;
     };
+    captureFailure = async () => {
+      try { sample({ failure_discovery: await discovery(), failure_runtime: await getConnectionRuntimes(baseUrl, admin) }); } catch { /* Controller may be deliberately stopped. */ }
+      for (const role of ROLES) {
+        try { sample({ failure_role: role, public_process: await processState(role) }); } catch { /* Only validated public metadata is retained. */ }
+      }
+    };
     const mapped = async (label: string) => until(label, async () => {
       try {
         const values = await aligned(); const observed = await observerState();
@@ -273,10 +280,15 @@ async function main() {
     passed("same-daemon-dns-listener-and-noise-cli-authenticated-nonce-round-trips"); await save();
 
     stage("observer-loss-no-http-ttl-renewal-noise-remains");
+    const beforeLoss = await mapped("fresh carrier evidence immediately before observer loss");
+    // This is a historical comparison baseline. Its lease can expire while the
+    // observer stops; re-filtering it against a later clock loses valid evidence.
+    const oldObserved = Math.max(...ROLES.flatMap((role) => entry(beforeLoss, role).sockets
+      .flatMap((socket) => socket.observations.filter((item) => item.outcome === "mapped")
+        .map((item) => Date.parse(item.observed_at)))));
+    assert(Number.isFinite(oldObserved));
     await helper("observer", "observer-stop");
     const lossAt = Date.now();
-    const oldObserved = Math.max(...ROLES.flatMap((role) => currentMapped(entry(active, role)).map((item) => Date.parse(item.observed_at))));
-    assert(Number.isFinite(oldObserved));
     // Flush an already-received STUN reply and its next HTTP publication before
     // comparing stable peer counters. An in-flight real reply is not renewal fraud.
     await delay(4000);
@@ -386,6 +398,11 @@ async function main() {
   } catch (error) {
     report.status = "FAIL"; process.exitCode = 1; if (current) current.status = "FAIL";
     report.error_category = error instanceof assert.AssertionError ? "assertion" : error instanceof ControlApiError ? "controller-http" : "operation";
+    if (error instanceof Error) {
+      const location = /(?:run|checks)\.ts:\d+:\d+/.exec(error.stack ?? "");
+      if (location) report.failure_location = location[0];
+    }
+    if (captureFailure) await captureFailure();
     console.error(`[managed-discovery] failed: ${report.stage} / ${report.check ?? "operation"} (${report.error_category}); private diagnostics suppressed`);
   } finally {
     cleaning = true;
