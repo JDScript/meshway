@@ -55,6 +55,8 @@ Mihomo 的默认 `main` 在拉取时停留于 2025-02-21，因此额外 fetch �
 
 ## 官方文档
 
+2026-10-01 新增 [Tailscale 对照](../docs/tailscale-alignment.md)（MagicDNS、tags、CLI、连通性的官方文档与固定源码行号）及 [后续里程碑](../docs/milestones.md)（DNS 集成 → CLI 诊断 → endpoint/netcheck → 本机 NAT/fallback）。研究读取本表固定 checkout；没有修改上游源码。
+
 - [Tailscale Peer Relays](https://tailscale.com/docs/features/peer-relay)
 - [Tailscale Route filtering with Via](https://tailscale.com/docs/features/access-control/grants/grants-via)
 - [Tailscale Grants syntax](https://tailscale.com/docs/reference/syntax/grants)
