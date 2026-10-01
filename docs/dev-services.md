@@ -1,5 +1,7 @@
 # 统一开发入口
 
+这是当前 checkout 的开发服务管理入口。已确认产品目标中的节点配置仍由控制面管理 / 下发；这里的服务启停、镜像与实验操作不定义设备日常配置流程。
+
 在仓库根目录使用：
 
 ```sh
@@ -74,9 +76,7 @@ Demo 的 `ready` 要求容器运行、注册有效、当前且未过期的 `appl
 `all` 中尚未初始化 demo 是提示，不影响基础服务的成功；显式 `status demo` 返回非零。
 JSON 只输出公开、精简的状态，不输出管理员 bearer、节点凭据、密钥或完整进程环境。
 
-Demo 的 TUN 证明读取当前容器 `StartedAt` 以来的**全部可用**日志流，只保留最后一条 `managed_dataplane` 事件，再按当前生成快照的 node/revision/digest 校验；后来的撤回、lease expiry 或设备错误会使旧 ready 失效。
-读取上限为单行 64 KiB、stdout/stderr 合计 16 MiB、10 秒，不将完整历史装入内存。读取失败、超限、截断或畸形 stdout 返回 `not-proven`；仍同时要求新鲜 runtime、ACK、内核接口/路由、UID/capability 和现有 epoch fences。
-现有 Docker 日志保留约 1 MiB/1 文件；如果 generation proof 已被 rotation 删除，状态仍为 `not-proven`，不会用 ACK 或邻接探测替代真实 TUN 证明，也不会为状态检查自动重启 Agent。
+Demo TUN 证明使用容器本次启动以来最后一条 `managed_dataplane` 事件，按当前生成快照的 node / revision / digest 校验；撤回、lease expiry、设备错误使旧 ready 失效。读取有界，日志缺失 / rotation / 截断 / 无效时为 `not-proven`，不使用 ACK 或邻接替代证明，也不因状态检查重启 Agent。解析限制与回归由 `scripts/dev.py`、`experiments/managed-connections/packet-log.test.ts` 维护。
 
 ## 已有 Docker demo
 

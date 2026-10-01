@@ -29,7 +29,7 @@ SHA 不开放 VLESS listener；它主动连接 LAX。LAX 完成 SHA 的 Noise �
 ## 本机进程验证
 
 ```sh
-cargo build -p meshway-agent --features transport-lab
+cargo build --locked -p meshway-agent --features transport-lab
 LAB_DIR="$(mktemp -d)"
 target/debug/meshway-agent transport-lab fixture --directory "$LAB_DIR"
 target/debug/meshway-agent transport-lab check --config "$LAB_DIR/nyc.json"
@@ -72,7 +72,8 @@ target/debug/meshway-agent transport-lab probe \
 Docker 镜像构建：
 
 ```sh
-docker build -f apps/agent/Dockerfile.lab -t meshway-agent-lab:local .
+python3 experiments/transport/performance_lock.py \
+  docker build -f apps/agent/Dockerfile.lab -t meshway-agent-lab:local .
 ```
 
 容器按需提供 `/dev/net/tun` 与 `NET_ADMIN`。测试必须把各节点私有配置分别隔离，中继容器不能挂载端点私钥。根 `.dockerignore` 排除 `.meshway`、现有凭据、参考 checkout 与构建缓存。
@@ -91,13 +92,9 @@ python3 experiments/transport/benchmark.py --output "$LAB_DIR/baseline.json"
 
 批量接口以有限数量的 owned frame 传递数据；当前仍有复制，UDP 收发尚未使用 `sendmmsg` / `recvmmsg`，TUN offload 未开启。本轮测量用于定位实现成本，不能作为最终优化上限。
 
-### 2026-09-30 最终复验
+### 历史性能结论（2026-09-30）
 
-环境为 OrbStack 原生 Linux ARM64，同一镜像、iperf3 3.18，每节点 1 CPU 配额 / 256 MiB，每项 3 秒、一次采样。镜像 ID：
-
-```text
-sha256:d9bce9aad7687f81733fb2d64a68b8671bcc8751bda72da8007f6cdb99e1d823
-```
+环境为 OrbStack 原生 Linux ARM64，同一镜像、iperf3 3.18，每节点 1 CPU / 256 MiB，每项 3 秒、一次采样；内层 1280 / 外层 1500 MTU，裸路由链路 MTU 1280。镜像 digest、资源和负载在原始 artifact 中记录。
 
 下表为接收端吞吐，单位 Mbit/s：
 
@@ -109,25 +106,23 @@ sha256:d9bce9aad7687f81733fb2d64a68b8671bcc8751bda72da8007f6cdb99e1d823
 
 Meshway 使用 1280 内层 / 1500 外层 MTU；裸基线为 1280 链路 MTU。相同镜像与载荷预算有助比较，但上述差值不是独立的“加密成本”，尤其裸基线在同一 VM 内利用内核及虚拟网络批处理，未经过物理网卡。
 
-6 项裸基线与 12 项 Meshway iperf3 均完成。四项 Meshway UDP 测试在 20 Mbit/s、1200 字节载荷下接收约 19.98–19.99 Mbit/s，报告 0% 丢包。两种承载均通过双向 ICMP，以及仅停止 LAX Agent 后双向业务失败、底层接口与健康服务仍可用的故障检查；实验资源已清理。
+20 Mbit/s UDP 定速测试约 19.98–19.99 Mbit/s、报告零丢包；TCP 压测有重传和 Agent 丢弃，平均约 31.6–40.9% 单核 CPU、未 quota 节流，不能把定速结果推广到压力场景。两种承载均通过双向 ICMP 和停止必经 LAX 后失败，资源已清理。瓶颈定位需 profiling、队列 / 丢弃细分与批量 syscall / buffer / offload 分层实验。
 
-TCP 单流正向的 cgroup 采样显示各节点平均约 31.6–40.9% 单核 CPU，未发生 CPU quota 节流；测量窗口包含辅助进程。TCP 压测出现重传，Agent 聚合丢弃计数也非零，不能把 UDP 定速测试的零丢包推广到所有压力场景。后续应先细分丢弃原因、分析队列与调度，再用 profiling 指导批量 syscall、buffer pool 和 offload 优化。
+Artifact：`meshway-bare-final-20260930.json`（run `meshway-lab-20260930234154-e74bcd1c`）、`meshway-tun-final-20260930.json`（run `meshway-lab-20260930234231-e86ddcbd`）。历史本机临时产物不保证仍存在；当前重现命令与输出由 `experiments/transport/README.md` 维护，CI 手动 `Linux transport laboratory` workflow 上传本次非秘密结果。匹配适配层增量实验见 `experiments/transport/MATCHED.md`，完整隧道定位工具见 `experiments/tunnel-throughput/README.md`。
 
-本地完整原始结果保存在临时目录的 `meshway-bare-final-20260930.json` 与 `meshway-tun-final-20260930.json`，运行 ID 分别是 `meshway-lab-20260930234154-e74bcd1c` 与 `meshway-lab-20260930234231-e86ddcbd`。这些私有 JSON 不进入 Git；可用上述命令重新生成证据。CI 的手动 `Linux transport laboratory` workflow 上传其自身运行的非秘密结果。
+### 共享 packet pump 复测（2026-10-01）
+
+后续 `4edb70e` 源基线已使用共享 `meshway_dataplane::packet_io` / PacketDevice batch，不能拿上述早期表格当作当前性能。Native ARM64、每节点 1 CPU / 256 MiB、Noise 逐跳 + E2E、MTU1000 / MSS948、P4、`iperf3 -O2 -t20` 的 queue32 / 128 同二进制 ABBA 双样本对照确认：TUN TX 队列是突发丢包点，queue128 的直连 / 中继两方向均值提升约 14.6–25.6%，同时用户态 / socket 丢包增加、加载下 RTT 变长，瓶颈未全部解决。
+
+完整方法、样本、CPU / 丢弃 / RTT 与复现命令集中在 `experiments/tunnel-throughput/SHARED-PUMP.md`；`RESULTS.md` 是旧 pump 历史，未做新旧 pump 匹配 A/B，不直接据两份表推断重构损耗。用户反馈的裸 Docker / 隧道量级与包装增量仍分别衡量。
 
 ### 认证与缓存复核
 
-独立审查后的修复包含：
-
-- 邻接必须完成本次新会话的加密密钥确认与 ACK 后才发布，捕获的旧 Noise IK 首报文不能替换已建立通道；旧确认在重启后也无效。
-- E2E packet context 允许一个活动密钥与一个待确认替换密钥；仅新密钥下的有效 AEAD 数据能完成替换。配置上限为 L 时，接收状态有界为 2L packet keys 加 L 独立 echo setups。
-- 待确认 packet key 保留 60 秒；发送端缓存截止时间从 Init 发起时计 59 秒。第一包丢失后仍能继续发送，延迟 Ready 不延长缓存预算，过期 Ready 不进入发送缓存。
-
-丢失 Ready 或来自已授权邻居的重放可以占用一个 pending slot 最多 60 秒，但不能在缺少新密钥证明时提升或驱逐活动密钥。对应首报文重放、容量一的换钥、第一包丢失、延迟 / 丢失 Ready 回归位于 `crates/dataplane/src/runtime/tests/security.rs`。
+已修复旧握手重放替换通道、E2E 待确认密钥驱逐活动密钥、延迟 Ready 延长缓存等边界。发布邻接须本次密钥确认，新 packet key 须有效 AEAD 证明才提升，pending / active 状态有界，缓存 deadline 不因延迟响应延长。可复现回归位于 `crates/dataplane/src/runtime/tests/security.rs`。
 
 ## 后续接入条件
 
-- 控制面已提供[公钥绑定和连接意图分发](/connections)，[托管邻接](/connection-runtime) 已消费这些身份及邻接许可，含撤销处理和配置有效期。本实验的业务路径 / TUN 仍使用独立静态身份与 allowlist；统一业务授权、密钥轮换等仍需推进。
+- 控制面已提供[托管邻接](/connection-runtime)与[托管 IPv4](/managed-dataplane)，消费真实注册身份及版本化授权。本独立实验仍使用静态身份 / allowlist，不与生产接入数据混用；全托管配置与密钥轮换仍待推进。
 - 原生 UDP 握手和数据为 best effort；缓存的 E2E packet session 约 60 秒过期，终点重启后可能在过期前出现黑洞。
 - 原生 UDP 邻接有经过认证的心跳与过期；stream 的静默黑洞检测目前依赖操作系统，后续需业务探测与防抖。
 - 原生承载有同邻接优先级选择；实验 CLI 的 VLESS 每个 peer 仅维护一个候选，并拒绝与 native outgoing 混配，避免声称完整 multi-transport 回切已交付。

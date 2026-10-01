@@ -29,7 +29,7 @@ Agent 的 nameservice 本身不修改系统 DNS、搜索域或默认上游。普
 
 ### 已验证的本机隔离验收
 
-`experiments/managed-dns/run.py` 使用独立 controller、两个 keyless DNS-only 节点和一个同进程 TUN + DNS 节点。原生 ARM64 镜像 `sha256:83a725fbde106f34fef4f42be3f63af236fe5b218619b8226f7b9343385c0de5` 已通过完整验收，运行 ID 为 `mupehmrf-285d57c8e26c99ff`，公共结果文件包含 8 阶段证据，资源清理无错误。
+`experiments/managed-dns/run.py` 使用独立 controller、两个 keyless DNS-only 节点和一个同进程 TUN + DNS 节点。原生 ARM64 历史运行 `mupehmrf-285d57c8e26c99ff` 通过 8 阶段，非秘密结果含镜像 digest 和清理证据；构建 / 参数见该目录 README。
 
 验证覆盖真实 UDP/TCP、`dig`、A/AAAA/PTR、重复 alias 抑制、zone 更换、禁用/恢复、TTL 不超过 lease、控制面断联、带缓存离线重启、同数据库恢复和撤销。测试限定本机独立容器，没有修改宿主 DNS 或接入登记的远端主机。
 
@@ -45,7 +45,7 @@ M1 采用单独的实验 adapter，将新建 Linux 容器的 loopback `:53` 接�
 
 验收使用 glibc `getent`、真实 `curl` 响应与 Mesh IP / TUN 路由证明应用通路；Access 默认拒绝时，同样的名称可解析但 HTTP 访问失败。控制面失联后继续检查 lease 到期与内核拒绝路由，区分 DNS 可见性、解析器运行和业务授权。
 
-2026-10-01 最终系统 resolver / DNS CLI 集成验收已通过：运行 ID `mupq9edz-37f8cdbf841d8edf`，共 12 个阶段、16 项系统接入检查；原生 ARM64 镜像 `meshway-manageddns:m1-20261001-b`，ID 为 `sha256:8d089b9bb1c67d3ef54d6b00acc90e6b32869e97516ebb8d158f79ed0c60df3a`，包含关闭状态 lease 修复与真实 DNS CLI。原 resolver 内容完整恢复，独立容器 / 网络清理无错误。结果文件还记录 TCP 占用 / 只读文件 apply 失败、SIGKILL 恢复、第三方编辑冲突、CLI 过期状态及 SERVFAIL 答复证据、daemon 退出后的显式 unreachable 路由。
+2026-10-01 系统 resolver / DNS CLI 历史验收通过：run `mupq9edz-37f8cdbf841d8edf`（ARM64），12 阶段 / 16 项接入检查，原 resolver 完整恢复、资源清理无错误。Artifact 记录镜像 digest、TCP 占用 / 只读失败、SIGKILL 恢复、第三方编辑冲突、CLI 过期 / SERVFAIL 与 daemon 退出后的 unreachable 路由；重现使用上方 `--system-resolver` 入口。
 
 ## MagicDNS：从节点清单到本地解析器
 

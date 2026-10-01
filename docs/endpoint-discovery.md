@@ -50,8 +50,8 @@ Rust 契约位于 `crates/protocol/src/endpoint_discovery.rs`，经实际路由�
 
 生命周期验收还覆盖观察点失联、恢复、删除监听器、配置换代、控制面断联与节点撤销。独立 kernel NAT 条件矩阵仍见 [Netcheck](/netcheck)。
 
-2026-10-01 最终原生 ARM64 验收通过 **8 个阶段、10 项主要检查**，run ID `mupsr1dt-09b3d16f20327dee`。镜像为 `meshway-manageddiscovery:m2b-20261001-b`，不可变 ID `sha256:4a2d7f1389c7dddb80c129edf9db5b2d46bd883333b5e8330f56fd0834f87724`；独立资源清理无错误。证据同时对照了 observer `recvfrom`、Agent 进程 UDP FD / inode、`ss`、生成 API 的 socket 关联，以及实际 Noise nonce 往返。
+2026-10-01 原生 ARM64 历史验收通过 8 阶段、10 项主要检查，run `mupsr1dt-09b3d16f20327dee`，独立资源清理无错误。Artifact 对照 observer `recvfrom`、Agent UDP FD / inode、`ss`、生成 API 关联与 Noise nonce；镜像 digest 由结果记录。重现入口为 `experiments/managed-discovery/run.py`，构建与参数见目录 README。
 
-本机开发 Controller、Web dev 和三个 Docker demo 已同步更新。已有 demo 没有配置 STUN 观察点时会真实上报 `disabled`，不会自动向公共服务探测；显式开启的真实观测由上述独立 fixture 完整验证。
+没有配置观察点的 demo 真实报告 `disabled`；当前现场需重新检查，历史验收不表示所有已接入设备都已开启发现。
 
 下一片在有身份与有效期的观测基础上，向获准的同一逻辑邻接分发候选，并做真实 peer 连接验证、打洞与优先级主备切换。

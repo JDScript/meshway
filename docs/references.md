@@ -4,6 +4,8 @@
 
 这些是开发分支快照，不代表稳定发行版，也不代表 Meshway 已复用或实现相同功能。参考 checkout 保持只读。
 
+Tailscale 官方做法是 Meshway 常规产品基线，自定义 transport 与有序指定路径是已确认扩展。产品语义以[产品对齐](/product-alignment)为准，差异与当前缺口见[Tailscale 对照](/tailscale-alignment)；固定源码用于解释机制，不自动引入第二套需求。
+
 ## Tailscale：节点模型、控制分发与中继
 
 基线：[`ab2380a6312858ccf95451787f33acc9c9fca066`](https://github.com/tailscale/tailscale/tree/ab2380a6312858ccf95451787f33acc9c9fca066)（`main`）。

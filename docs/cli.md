@@ -2,6 +2,8 @@
 
 CLI 与常驻 Agent 分工：`run` 持有身份锁并应用配置；只读诊断通过现有私有 Unix socket 查询该 daemon。命令不会启动第二个实例，也不会把缓存当作运行证明。
 
+已确认目标中，设备只保留接入 / 登录与允许范围内的路由方案选择；listener、承载、DNS、出口与 STUN 等业务配置由控制面管理下发。当前启动参数是实现 / 实验入口，Agent 链接登录和方案选择尚未交付，不能把下面诊断命令理解为完整目标 CLI。
+
 ## 常用入口
 
 ```sh
@@ -54,4 +56,27 @@ meshway-agent dns query 100.96.0.4 --json --state /state/agent.json
 
 `meshway-agent netcheck --stun-server <数字IP:端口> --stun-server <另一数字IP:端口> --bind 0.0.0.0:0 --json` 使用当前进程的独立临时 UDP socket；不需要 `--state` 或 daemon。报告当前观察到的映射、逐次失败原因以及可空的目的相关变化，详见 [Netcheck](/netcheck)。这与通过已认证邻接进行的 `ping` 是两类证据。
 
-精确字段和兼容行为见仓库 `apps/agent/CLI.md` 与 `apps/agent/NETCHECK.md`。服务安装、up/set/down/login/logout、真实承载上的发现与多跳 trace 按[后续里程碑](/milestones)继续推进。
+精确字段和兼容行为见仓库 `apps/agent/CLI.md` 与 `apps/agent/NETCHECK.md`。真实 carrier 观测已接通，见[endpoint 观测](/endpoint-discovery)；服务安装、链接登录、路由方案选择、peer 候选验证 / 打洞和多跳 trace 见[里程碑](/milestones)。
+
+## 手动验证：三种不同的探测
+
+已有 demo 中查找容器，使用 Agent 所属 UID 查询私有 socket：
+
+```sh
+docker ps --filter label=io.meshway.demo.project=managed-neighbors \
+  --format '{{.Names}}\t{{.Status}}'
+docker exec --user "$(id -u):$(id -g)" -it <容器名称> sh
+meshway ping demo-lax --count 3 --timeout-seconds 3
+```
+
+此 UID 示例适用于当前主机用户创建的 demo；开发镜像 `meshway` launcher 也会切回原 Agent 用户。`MESHWAY_STATE=/state/agent.json` 已设置。名称重名时用完整 ID。
+
+| 探测 | 证明范围 |
+| --- | --- |
+| `ping -c 3 lax.mesh.test` | Docker DNS / underlay ICMP，不证明 Agent 认证 |
+| `meshway ping demo-lax` | 当前直接邻接的本次认证 nonce 往返，包含承载、建连方向和 RTT |
+| `ping -c 3 <Mesh IPv4>` / `curl http://<Mesh IPv4>:<端口>/` | 显式启用 TUN 且授权 / 路由完整后，本次真实 Mesh IP 访问 |
+
+在 NYC–LAX–SHA 拓扑中，LAX→SHA 可复用 SHA 发起的 VLESS 通道；NYC 的邻接 ping 到 SHA 应失败，不自动借 LAX 多跳。目标 Mesh IPv4 服务须绑定该地址，避免 underlay 假成功。路径预览和这些探测均不是逐跳 trace；完整数据面故障验收见[托管数据面](/managed-dataplane#验收方法)。
+
+页面中的联系时间、保存回执、资源已应用、认证邻接与规划路径分别是不同证据。未知、过期或旧代际不得画成当前连通；真实 ICMP / HTTP 结果也只证明本次访问，不自动授权任意节点对。

@@ -49,7 +49,7 @@ STUN 服务提供的是地址观测。它没有证明 Meshway peer 身份，也�
 
 验收分别记录稳定映射、目的相关映射、受限入站、UDP 丢弃、部分观察点失败和两次检查之间的映射更换。实验设置与 netcheck 测量结果分别记录；某场景配置了受限入站，不代表 CLI 已自动检测出过滤类型。
 
-2026-10-01 原生 ARM64 验收已通过 **7 个场景**，run ID `45c3ba2b4d9a4acdb5d6972890c0094e`。镜像 `meshway-netcheck:m2-20261001-a`，不可变 ID `sha256:5a6a14dedebd2199f64fae00bc4400ef4d8b8584aca9bacd49c9ef1f9e59cd55`。受限入站额外使用保持打开的同一 socket，在两次合法 A 答复之间验证 B 的未请求报文未送达，并核对 router drop counter；全部测试资源清理成功。
+2026-10-01 原生 ARM64 历史验收通过 7 场景，run `45c3ba2b4d9a4acdb5d6972890c0094e`，资源清理成功。受限入站使用保持打开的同一 socket 验证 B 未请求报文不送达，并核对 router drop counter。镜像 digest / 每次事务由 artifact 记录；重现入口为 `experiments/netcheck/run.py`，参数与构建见目录 README。
 
 | 场景 | UDP 观察 | 目的相关变化 | A 复测稳定 |
 | --- | --- | --- | --- |
