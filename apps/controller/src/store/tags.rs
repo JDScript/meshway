@@ -109,12 +109,18 @@ impl Store {
         }
         let current = snapshot(&transaction)?.tags;
         if current != normalized {
-            transaction.execute("DELETE FROM tag_definitions", [])?;
             for definition in &normalized {
                 transaction.execute(
-                    "INSERT INTO tag_definitions(tag,description) VALUES (?1,?2)",
+                    "INSERT INTO tag_definitions(tag,description) VALUES (?1,?2)
+                     ON CONFLICT(tag) DO UPDATE SET description=excluded.description",
                     params![definition.tag, definition.description],
                 )?;
+            }
+            for removed in current
+                .iter()
+                .filter(|definition| !retained.contains(definition.tag.as_str()))
+            {
+                transaction.execute("DELETE FROM tag_definitions WHERE tag=?1", [&removed.tag])?;
             }
             configuration::bump(&transaction)?;
             configuration::ensure_publishable(&transaction)?;

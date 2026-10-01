@@ -53,10 +53,76 @@ pub struct PreviewResult {
     pub decision: RouteDecision,
 }
 
+/// Routing source and inventory validated and normalized once for repeated flow
+/// evaluation. It owns no runtime state and performs no I/O.
+pub struct PreparedRouting<'a> {
+    report: CompileReport,
+    inventory: Inventory<'a>,
+}
+
+impl PreparedRouting<'_> {
+    pub fn report(&self) -> &CompileReport {
+        &self.report
+    }
+
+    pub fn preview(&self, flow: &FlowQuery) -> PreviewResult {
+        if !self.report.is_valid() {
+            return PreviewResult {
+                valid: false,
+                diagnostics: self.report.diagnostics.clone(),
+                decision: empty_decision(
+                    RouteDecisionAction::Invalid,
+                    None,
+                    "Policy or active-node inventory is invalid",
+                ),
+            };
+        }
+        let context = match resolve_flow(flow, &self.inventory) {
+            Ok(context) => context,
+            Err((field, reason)) => return invalid_preview(None, field, reason),
+        };
+        evaluate_prepared(&self.report.normalized_policy, &context)
+    }
+
+    /// Resolve one mesh IPv4 endpoint pair while preserving the conservative
+    /// unknown-domain fence used by schema-version-1 agent path compilation.
+    pub fn compile_mesh_endpoint(&self, source: &str, destination: &str) -> Option<Vec<String>> {
+        if !self.report.is_valid() {
+            return None;
+        }
+        let target = self.inventory.nodes.get(destination)?;
+        let flow = FlowQuery {
+            source_node_id: source.to_owned(),
+            destination_node_id: Some(destination.to_owned()),
+            destination_ip: Some(target.ipv4.to_string()),
+            domain: None,
+            destination_country: None,
+        };
+        let context = resolve_flow(&flow, &self.inventory).ok()?;
+        if has_unknown_domain_precedence(&self.report.normalized_policy, &context) {
+            return None;
+        }
+        let result = evaluate_prepared(&self.report.normalized_policy, &context);
+        (result.valid
+            && result.decision.action == RouteDecisionAction::Route
+            && result.decision.exit_node_id.is_none())
+        .then_some(result.decision.path)
+    }
+}
+
+pub fn prepare_routing<'a>(
+    policy: &RoutingPolicy,
+    network: &MeshNetwork,
+    nodes: &'a [MeshNode],
+) -> PreparedRouting<'a> {
+    let (report, inventory) = prepare(policy, network, nodes);
+    PreparedRouting { report, inventory }
+}
+
 /// Normalize policy values and validate all references against active inventory.
 /// Inputs are never modified. Invalid output must not be installed as a policy.
 pub fn compile(policy: &RoutingPolicy, network: &MeshNetwork, nodes: &[MeshNode]) -> CompileReport {
-    prepare(policy, network, nodes).0
+    prepare_routing(policy, network, nodes).report
 }
 
 /// Resolve trusted mesh context, then evaluate the first matching rule. Internet
@@ -67,25 +133,12 @@ pub fn preview(
     nodes: &[MeshNode],
     flow: &FlowQuery,
 ) -> PreviewResult {
-    let (report, inventory) = prepare(policy, network, nodes);
-    if !report.is_valid() {
-        return PreviewResult {
-            valid: false,
-            diagnostics: report.diagnostics,
-            decision: empty_decision(
-                RouteDecisionAction::Invalid,
-                None,
-                "Policy or active-node inventory is invalid",
-            ),
-        };
-    }
+    prepare_routing(policy, network, nodes).preview(flow)
+}
 
-    let context = match resolve_flow(flow, &inventory) {
-        Ok(context) => context,
-        Err((field, reason)) => return invalid_preview(None, field, reason),
-    };
-    for rule in &report.normalized_policy.rules {
-        if !matches_rule(rule, &context) {
+fn evaluate_prepared(policy: &RoutingPolicy, context: &FlowContext<'_>) -> PreviewResult {
+    for rule in &policy.rules {
+        if !matches_rule(rule, context) {
             continue;
         }
         if rule.action.kind == RouteActionKind::Reject {
@@ -96,21 +149,21 @@ pub fn preview(
             ));
         }
         return resolve_path(
-            &context,
+            context,
             &rule.action,
             Some(&rule.id),
             "Matched route rule; logical intent only",
         );
     }
 
-    match report.normalized_policy.default_action {
+    match policy.default_action {
         DefaultRouteAction::Reject => valid_preview(empty_decision(
             RouteDecisionAction::Reject,
             None,
             "No rule matched; default reject",
         )),
         DefaultRouteAction::Direct => resolve_path(
-            &context,
+            context,
             &RouteAction {
                 kind: RouteActionKind::Route,
                 via: vec![],
@@ -120,6 +173,26 @@ pub fn preview(
             "No rule matched; default direct logical path",
         ),
     }
+}
+
+fn has_unknown_domain_precedence(policy: &RoutingPolicy, context: &FlowContext<'_>) -> bool {
+    for rule in &policy.rules {
+        if matches_rule(rule, context) {
+            break;
+        }
+        if rule
+            .destination_any
+            .iter()
+            .any(|selector| selector.kind == DestinationSelectorKind::DomainSuffix)
+        {
+            let mut potential = rule.clone();
+            potential.destination_any.clear();
+            if matches_rule(&potential, context) {
+                return true;
+            }
+        }
+    }
+    false
 }
 
 fn prepare<'a>(

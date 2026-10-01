@@ -7,14 +7,14 @@ use std::{
 };
 
 use meshway_protocol::{
-    AccessAction, AccessMatchedDirection, CONFIGURATION_SCHEMA_VERSION, DestinationSelectorKind,
-    FlowAuthorizationAction, FlowAuthorizationDecision, FlowQuery, MAX_CONFIGURATION_BYTES,
-    MAX_INVENTORY_NODES, MAX_MESH_ACCESS_BYTES, MAX_MESH_ACCESS_GRANTS, MAX_MESH_ACCESS_PATH_NODES,
-    MAX_MESH_ACCESS_RULES, MAX_MESH_ACCESS_SELECTORS, MeshAccessPolicy, MeshNode,
-    MeshPathAuthorization, NodeConfiguration, PolicyDiagnostic, RouteDecisionAction,
+    AccessAction, AccessMatchedDirection, CONFIGURATION_SCHEMA_VERSION, FlowAuthorizationAction,
+    FlowAuthorizationDecision, MAX_CONFIGURATION_BYTES, MAX_INVENTORY_NODES, MAX_MESH_ACCESS_BYTES,
+    MAX_MESH_ACCESS_GRANTS, MAX_MESH_ACCESS_PATH_NODES, MAX_MESH_ACCESS_RULES,
+    MAX_MESH_ACCESS_SELECTORS, MeshAccessPolicy, MeshNode, MeshPathAuthorization,
+    NodeConfiguration, PolicyDiagnostic,
 };
 
-use crate::{diagnostic, matches_rule, prepare, preview, resolve_flow};
+use crate::{diagnostic, prepare_routing};
 
 fn valid_rule_id(id: &str) -> bool {
     !id.is_empty()
@@ -365,17 +365,17 @@ pub fn compile_mesh_paths(
             "Configuration exceeds publication budget",
         );
     }
-    let (report, inventory) = prepare(
+    let prepared = prepare_routing(
         &configuration.routing_policy,
         &configuration.network,
         &nodes,
     );
-    for entry in report.diagnostics {
+    for entry in &prepared.report().diagnostics {
         diagnostic(
             &mut diagnostics,
             entry.rule_id.as_deref(),
-            entry.field,
-            entry.message,
+            &entry.field,
+            &entry.message,
         );
     }
     if !diagnostics.is_empty() {
@@ -383,50 +383,9 @@ pub fn compile_mesh_paths(
     }
     let mut paths = Vec::new();
     for grant in &access.grants {
-        // Structural validation above guarantees both endpoints exist.
-        let target = inventory
-            .nodes
-            .get(grant.path.last().expect("validated path").as_str())
-            .expect("validated inventory reference");
-        let flow = FlowQuery {
-            source_node_id: grant.path[0].clone(),
-            destination_node_id: Some(target.id.to_owned()),
-            destination_ip: Some(target.ipv4.to_string()),
-            domain: None,
-            destination_country: None,
-        };
-        let context = resolve_flow(&flow, &inventory).expect("validated mesh endpoints");
-        let mut uncertain = false;
-        for rule in &report.normalized_policy.rules {
-            if matches_rule(rule, &context) {
-                break;
-            }
-            if rule
-                .destination_any
-                .iter()
-                .any(|selector| selector.kind == DestinationSelectorKind::DomainSuffix)
-            {
-                let mut potential = rule.clone();
-                potential.destination_any.clear();
-                if matches_rule(&potential, &context) {
-                    uncertain = true;
-                    break;
-                }
-            }
-        }
-        if uncertain {
-            continue;
-        }
-        let result = preview(
-            &report.normalized_policy,
-            &configuration.network,
-            &nodes,
-            &flow,
-        );
-        if result.valid
-            && result.decision.action == RouteDecisionAction::Route
-            && result.decision.exit_node_id.is_none()
-            && result.decision.path == grant.path
+        if prepared
+            .compile_mesh_endpoint(&grant.path[0], grant.path.last().expect("validated path"))
+            == Some(grant.path.clone())
         {
             paths.push(grant.path.clone());
         }

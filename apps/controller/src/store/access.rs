@@ -151,10 +151,18 @@ fn bindings(connection: &Connection) -> Result<BTreeMap<String, String>, Error> 
 }
 
 fn validate(
+    policy: &MeshAccessPolicy,
+    nodes: &[MeshNode],
+    catalog: &BTreeSet<String>,
+) -> Vec<PolicyDiagnostic> {
+    meshway_policy::validate_access_policy(policy, nodes, catalog)
+}
+
+fn validate_current(
     connection: &Connection,
     policy: &MeshAccessPolicy,
 ) -> Result<Vec<PolicyDiagnostic>, Error> {
-    Ok(meshway_policy::validate_access_policy(
+    Ok(validate(
         policy,
         &configuration::active_nodes(connection)?,
         &tags::catalog(connection)?,
@@ -163,7 +171,7 @@ fn validate(
 
 fn admin_snapshot(connection: &Connection) -> Result<MeshAccessSnapshot, Error> {
     let policy = source(connection)?;
-    let diagnostics = validate(connection, &policy)?;
+    let diagnostics = validate_current(connection, &policy)?;
     Ok(MeshAccessSnapshot {
         revision: configuration::revision(connection)?,
         policy,
@@ -183,26 +191,54 @@ fn authorization_id(path: &[String]) -> String {
 fn compiled_authorizations(
     connection: &Connection,
 ) -> Result<(bool, BTreeMap<String, MeshPathAuthorization>), Error> {
+    compiled_authorizations_with(connection, || {})
+}
+
+fn compiled_authorizations_with(
+    connection: &Connection,
+    mut route_evaluated: impl FnMut(),
+) -> Result<(bool, BTreeMap<String, MeshPathAuthorization>), Error> {
     let nodes = configuration::active_nodes(connection)?;
     let mut result: BTreeMap<_, _> = nodes
         .iter()
         .map(|node| (node.id.clone(), MeshPathAuthorization::default()))
         .collect();
     let access = source(connection)?;
-    if !validate(connection, &access)?.is_empty() {
+    let catalog = tags::catalog(connection)?;
+    if !validate(&access, &nodes, &catalog).is_empty() {
         return Ok((false, result));
+    }
+    if access.default_action == AccessAction::Reject
+        && access
+            .rules
+            .iter()
+            .all(|rule| rule.action == AccessAction::Reject)
+    {
+        return Ok((true, result));
+    }
+    let keys: BTreeMap<_, _> = bindings(connection)?
+        .into_iter()
+        .filter(|(_, key)| valid_connection_public_key(key))
+        .collect();
+    let eligible: Vec<_> = nodes
+        .iter()
+        .filter(|node| keys.contains_key(&node.id))
+        .collect();
+    if eligible.len() < 2 {
+        return Ok((true, result));
     }
     let routing = configuration::source_policy(connection)?;
     let network = ipam::network(connection)?;
-    let routing_report = meshway_policy::compile(&routing, &network, &nodes);
-    if !routing_report.is_valid() {
+    let prepared = meshway_policy::prepare_routing(&routing, &network, &nodes);
+    if !prepared.report().is_valid() {
         return Ok((true, result));
     }
     let assignments = tags::assignments(connection)?;
-    let keys = bindings(connection)?;
-    for source in &nodes {
-        let node_configuration = configuration::snapshot(connection, &source.id)?.payload;
-        for destination in &nodes {
+    let eligible_ids: BTreeSet<_> = eligible.iter().map(|node| node.id.as_str()).collect();
+    let mut connection_source = None;
+    let mut identity_unions: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
+    for source in &eligible {
+        for destination in &eligible {
             if source.id == destination.id
                 || meshway_policy::evaluate_access(
                     &access,
@@ -215,57 +251,66 @@ fn compiled_authorizations(
             {
                 continue;
             }
-            let flow = FlowQuery {
-                source_node_id: source.id.clone(),
-                destination_node_id: Some(destination.id.clone()),
-                destination_ip: Some(destination.mesh_ipv4.clone()),
-                domain: None,
-                destination_country: None,
+            route_evaluated();
+            let Some(path) = prepared.compile_mesh_endpoint(&source.id, &destination.id) else {
+                continue;
             };
-            let route = meshway_policy::preview(&routing, &network, &nodes, &flow);
-            if !route.valid
-                || route.decision.action != RouteDecisionAction::Route
-                || route.decision.exit_node_id.is_some()
-                || route.decision.path.first() != Some(&source.id)
-                || route.decision.path.last() != Some(&destination.id)
-                || route.decision.path.iter().any(|id| {
-                    keys.get(id)
-                        .is_none_or(|key| !valid_connection_public_key(key))
-                })
+            if path.first() != Some(&source.id)
+                || path.last() != Some(&destination.id)
+                || path.iter().any(|id| !eligible_ids.contains(id.as_str()))
             {
                 continue;
             }
-            if route.decision.path.len() > MAX_MESH_ACCESS_PATH_NODES {
+            if path.len() > MAX_MESH_ACCESS_PATH_NODES {
                 return Err(Error::Capacity(
                     "authorized route exceeds the 8-node exact-path limit",
                 ));
             }
             let grant = MeshAccessGrant {
-                id: authorization_id(&route.decision.path),
-                path: route.decision.path,
+                id: authorization_id(&path),
+                path,
             };
-            let candidate = MeshPathAuthorization {
-                grants: vec![grant.clone()],
-            };
-            if meshway_policy::compile_mesh_paths(&node_configuration, &candidate)
-                .map_err(|_| Error::Configuration("cannot compile authorized mesh path"))?
-                .is_empty()
-            {
-                continue;
-            }
             for participant in &grant.path {
-                let grants = &mut result
-                    .get_mut(participant)
-                    .ok_or(Error::Configuration(
-                        "routing returned an inactive path node",
-                    ))?
-                    .grants;
-                if grants.len() == MAX_MESH_ACCESS_GRANTS {
+                let authorization = result.get(participant).ok_or(Error::Configuration(
+                    "routing returned an inactive path node",
+                ))?;
+                if authorization.grants.len() == MAX_MESH_ACCESS_GRANTS {
                     return Err(Error::Capacity(
                         "effective access exceeds 128 exact paths for a node",
                     ));
                 }
-                grants.push(grant.clone());
+                if !identity_unions.contains_key(participant) {
+                    let source = if let Some(source) = &connection_source {
+                        source
+                    } else {
+                        connection_source.insert(connections::admin_snapshot(connection)?)
+                    };
+                    let adjacency = connections::projection(source, participant)?.payload;
+                    identity_unions.insert(
+                        participant.clone(),
+                        adjacency
+                            .peers
+                            .into_iter()
+                            .map(|peer| peer.node_id)
+                            .collect(),
+                    );
+                }
+                let union = identity_unions
+                    .get_mut(participant)
+                    .expect("inserted participant identity union");
+                union.extend(grant.path.iter().filter(|id| *id != participant).cloned());
+                if union.len() > MAX_DATAPLANE_IDENTITIES {
+                    return Err(Error::Capacity(
+                        "dataplane exceeds 64 union peer identities",
+                    ));
+                }
+            }
+            for participant in &grant.path {
+                result
+                    .get_mut(participant)
+                    .expect("validated path participant")
+                    .grants
+                    .push(grant.clone());
             }
         }
     }
@@ -312,13 +357,7 @@ fn identities(
 }
 
 pub(super) fn ensure_publishable(connection: &Connection) -> Result<(), Error> {
-    let (_, authorizations) = compiled_authorizations(connection)?;
-    let keys = bindings(connection)?;
-    let connection_source = connections::admin_snapshot(connection)?;
-    for (id, authorization) in authorizations {
-        let adjacency = connections::projection(&connection_source, &id)?.payload;
-        identities(&id, &adjacency, &authorization, &keys)?;
-    }
+    compiled_authorizations(connection)?;
     Ok(())
 }
 
@@ -352,7 +391,7 @@ impl Store {
         if configuration::revision(&transaction)? != request.expected_revision {
             return Err(Error::Conflict);
         }
-        if !validate(&transaction, &request.policy)?.is_empty() {
+        if !validate_current(&transaction, &request.policy)?.is_empty() {
             return Err(Error::Unprocessable(
                 "invalid mesh access policy; inspect selectors, references and ordered rules",
             ));

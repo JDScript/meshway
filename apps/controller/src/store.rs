@@ -276,6 +276,7 @@ impl Store {
                 "DELETE FROM connection_runtime_reports WHERE node_id = ?1",
                 [id],
             )?;
+            transaction.execute("DELETE FROM node_tags WHERE node_id = ?1", [id])?;
             configuration::bump(&transaction)?;
             configuration::ensure_publishable(&transaction)?;
             connections::ensure_publishable(&transaction)?;

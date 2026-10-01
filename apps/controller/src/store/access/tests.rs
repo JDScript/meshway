@@ -342,6 +342,148 @@ fn routing_jsonc_preserves_exact_admin_policy_but_agents_receive_normalized_proj
 }
 
 #[test]
+fn assigned_tag_catalog_updates_are_differential_and_failed_removal_is_atomic() {
+    let dir = directory();
+    let mut store = Store::open(dir.path(), &NetworkOptions::default()).unwrap();
+    let (node, _) = enrolled(&mut store, 9, false);
+    store
+        .save_tags(&SaveTagsRequest {
+            expected_revision: store.revision().unwrap(),
+            tags: vec![TagDefinition {
+                tag: "tag:prod".into(),
+                description: "old".into(),
+            }],
+        })
+        .unwrap();
+    store
+        .set_node_tags(&SetNodeTagsRequest {
+            expected_revision: store.revision().unwrap(),
+            node_id: node.clone(),
+            tags: vec!["tag:prod".into()],
+        })
+        .unwrap();
+    let updated = store
+        .save_tags(&SaveTagsRequest {
+            expected_revision: store.revision().unwrap(),
+            tags: vec![
+                TagDefinition {
+                    tag: "tag:prod".into(),
+                    description: "updated".into(),
+                },
+                TagDefinition {
+                    tag: "tag:staging".into(),
+                    description: "new".into(),
+                },
+            ],
+        })
+        .unwrap();
+    assert_eq!(
+        updated
+            .assignments
+            .iter()
+            .find(|assignment| assignment.node_id == node)
+            .unwrap()
+            .tags,
+        ["tag:prod"]
+    );
+    assert_eq!(
+        updated
+            .tags
+            .iter()
+            .find(|tag| tag.tag == "tag:prod")
+            .unwrap()
+            .description,
+        "updated"
+    );
+    let revision = updated.revision;
+    assert!(matches!(
+        store.save_tags(&SaveTagsRequest {
+            expected_revision: revision,
+            tags: vec![TagDefinition {
+                tag: "tag:staging".into(),
+                description: "new".into()
+            }],
+        }),
+        Err(Error::Unprocessable(_))
+    ));
+    assert_eq!(store.revision().unwrap(), revision);
+    assert_eq!(store.tags().unwrap(), updated);
+}
+
+#[test]
+fn revocation_cleans_hidden_tag_membership_but_not_policy_references() {
+    let dir = directory();
+    let mut store = Store::open(dir.path(), &NetworkOptions::default()).unwrap();
+    let (node, _) = enrolled(&mut store, 9, false);
+    let definitions = vec![
+        TagDefinition {
+            tag: "tag:assigned".into(),
+            description: String::new(),
+        },
+        TagDefinition {
+            tag: "tag:policy".into(),
+            description: String::new(),
+        },
+    ];
+    store
+        .save_tags(&SaveTagsRequest {
+            expected_revision: store.revision().unwrap(),
+            tags: definitions.clone(),
+        })
+        .unwrap();
+    store
+        .set_node_tags(&SetNodeTagsRequest {
+            expected_revision: store.revision().unwrap(),
+            node_id: node.clone(),
+            tags: vec!["tag:assigned".into(), "tag:policy".into()],
+        })
+        .unwrap();
+    save(
+        &mut store,
+        MeshAccessPolicy {
+            default_action: AccessAction::Reject,
+            rules: vec![rule(
+                "policy-tag",
+                vec!["tag:policy".into()],
+                vec!["*".into()],
+                AccessAction::Allow,
+                false,
+            )],
+        },
+    );
+    let before = store.revision().unwrap();
+    store.revoke(&node).unwrap();
+    let revoked_revision = store.revision().unwrap();
+    assert_eq!(revoked_revision, before + 1);
+    assert!(store.tags().unwrap().assignments.is_empty());
+    store.revoke(&node).unwrap();
+    assert_eq!(store.revision().unwrap(), revoked_revision);
+
+    let retained_policy_tag = store
+        .save_tags(&SaveTagsRequest {
+            expected_revision: revoked_revision,
+            tags: vec![definitions[1].clone()],
+        })
+        .unwrap();
+    assert_eq!(retained_policy_tag.tags, [definitions[1].clone()]);
+    assert!(matches!(
+        store.save_tags(&SaveTagsRequest {
+            expected_revision: retained_policy_tag.revision,
+            tags: vec![],
+        }),
+        Err(Error::Unprocessable(_))
+    ));
+    save(&mut store, MeshAccessPolicy::default());
+    let empty = store
+        .save_tags(&SaveTagsRequest {
+            expected_revision: store.revision().unwrap(),
+            tags: vec![],
+        })
+        .unwrap();
+    assert!(empty.tags.is_empty());
+}
+
+#[test]
 fn actual_v5_migration_deduplicates_paths_folds_reverse_and_bumps_revision() {
     let dir = directory();
     let mut store = Store::open(dir.path(), &NetworkOptions::default()).unwrap();
@@ -454,5 +596,89 @@ fn wildcard_expansion_rejects_identity_overflow_without_truncation_or_revision_c
     assert_eq!(
         store.mesh_access().unwrap().policy,
         MeshAccessPolicy::default()
+    );
+}
+
+#[test]
+fn thousand_keyless_acl_subjects_do_not_trigger_route_pair_evaluation() {
+    use std::net::{Ipv4Addr, Ipv6Addr};
+
+    let dir = directory();
+    let store = Store::open(dir.path(), &NetworkOptions::default()).unwrap();
+    let network = store.policy().unwrap().network;
+    let ipv4_base = u32::from(
+        network
+            .ipv4_prefix
+            .parse::<ipnet::Ipv4Net>()
+            .unwrap()
+            .network(),
+    );
+    let ipv6_base = u128::from(
+        network
+            .ipv6_prefix
+            .parse::<ipnet::Ipv6Net>()
+            .unwrap()
+            .network(),
+    );
+    for i in 1..=1024_u32 {
+        let id = format!("{i:064x}");
+        store.connection.execute(
+            "INSERT INTO nodes(id,credential_hash,name,agent_version,registered_at,last_seen,mesh_ipv4,mesh_ipv6) VALUES(?1,?2,?1,'test','2026-10-01T00:00:00Z','2026-10-01T00:00:00Z',?3,?4)",
+            params![id, local::digest(&format!("keyless-{i}")), Ipv4Addr::from(ipv4_base + i).to_string(), Ipv6Addr::from(ipv6_base + u128::from(i)).to_string()],
+        ).unwrap();
+    }
+    let mut evaluations = 0;
+    let (_, empty) = compiled_authorizations_with(&store.connection, || evaluations += 1).unwrap();
+    assert_eq!(evaluations, 0);
+    assert!(
+        empty
+            .values()
+            .all(|authorization| authorization.grants.is_empty())
+    );
+
+    let allow = MeshAccessPolicy {
+        default_action: AccessAction::Allow,
+        rules: vec![],
+    };
+    store
+        .connection
+        .execute(
+            "UPDATE mesh_access_source SET policy=?1",
+            [serde_json::to_string(&allow).unwrap()],
+        )
+        .unwrap();
+    store
+        .connection
+        .execute(
+            "UPDATE configuration SET policy='{\"default_action\":\"direct\",\"rules\":[]}'",
+            [],
+        )
+        .unwrap();
+    let (_, keyless) =
+        compiled_authorizations_with(&store.connection, || evaluations += 1).unwrap();
+    assert_eq!(evaluations, 0);
+    assert!(
+        keyless
+            .values()
+            .all(|authorization| authorization.grants.is_empty())
+    );
+
+    for i in 1..=2_u32 {
+        let id = format!("{i:064x}");
+        let public_key = format!("{i:02x}01{}", "00".repeat(30));
+        store.connection.execute(
+            "INSERT INTO connection_identities(node_id,public_key,capabilities) VALUES(?1,?2,'[]')",
+            params![id, public_key],
+        ).unwrap();
+    }
+    let (_, compiled) =
+        compiled_authorizations_with(&store.connection, || evaluations += 1).unwrap();
+    assert_eq!(evaluations, 2);
+    assert_eq!(
+        compiled
+            .values()
+            .filter(|authorization| !authorization.grants.is_empty())
+            .count(),
+        2
     );
 }
