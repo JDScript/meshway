@@ -37,6 +37,11 @@ export type AgentDataplaneSnapshot = {
     payload: NodeDataplane;
 };
 
+export type AgentDnsSnapshot = {
+    digest: string;
+    payload: NodeDnsConfiguration;
+};
+
 /**
  * Also lets a pending local enrollment recover its server-assigned node ID.
  */
@@ -300,6 +305,12 @@ export type MeshAccessSnapshot = {
     valid: boolean;
 };
 
+export type MeshDnsConfiguration = {
+    enabled: boolean;
+    ttl_seconds: number;
+    zone: string;
+};
+
 export type MeshNetwork = {
     ipv4_prefix: string;
     ipv6_prefix: string;
@@ -322,6 +333,17 @@ export type MeshNode = {
  */
 export type MeshPathAuthorization = {
     grants: Array<MeshAccessGrant>;
+};
+
+/**
+ * Saved intent at the global configuration revision. Address pools are immutable.
+ */
+export type NetworkSnapshot = {
+    dns: MeshDnsConfiguration;
+    name: string;
+    network: MeshNetwork;
+    network_id: string;
+    revision: number;
 };
 
 export type NodeConfiguration = {
@@ -361,6 +383,24 @@ export type NodeDataplane = {
     node_id: string;
     revision: number;
     schema_version: number;
+};
+
+export type NodeDnsConfiguration = {
+    diagnostics: Array<PolicyDiagnostic>;
+    dns: MeshDnsConfiguration;
+    network_id: string;
+    node_id: string;
+    records: Array<NodeDnsRecord>;
+    revision: number;
+    schema_version: number;
+};
+
+export type NodeDnsRecord = {
+    aliases: Array<string>;
+    canonical_name: string;
+    mesh_ipv4: string;
+    mesh_ipv6: string;
+    node_id: string;
 };
 
 export type NodeList = {
@@ -524,6 +564,12 @@ export type SaveMeshAccessRequest = {
     expected_revision: number;
     policy: MeshAccessPolicy;
     source_jsonc?: string | null;
+};
+
+export type SaveNetworkRequest = {
+    dns: MeshDnsConfiguration;
+    expected_revision: number;
+    name: string;
 };
 
 export type SavePolicyRequest = {
@@ -961,6 +1007,43 @@ export type GetAgentDataplaneResponses = {
 
 export type GetAgentDataplaneResponse = GetAgentDataplaneResponses[keyof GetAgentDataplaneResponses];
 
+export type GetAgentDnsData = {
+    body?: never;
+    path?: never;
+    query?: never;
+    url: '/api/v1/agent/dns';
+};
+
+export type GetAgentDnsErrors = {
+    /**
+     * Node credential required
+     */
+    401: ErrorResponse;
+    /**
+     * Node revoked
+     */
+    403: ErrorResponse;
+    /**
+     * Invalid inventory or publication capacity
+     */
+    422: ErrorResponse;
+    /**
+     * Storage unavailable
+     */
+    500: ErrorResponse;
+};
+
+export type GetAgentDnsError = GetAgentDnsErrors[keyof GetAgentDnsErrors];
+
+export type GetAgentDnsResponses = {
+    /**
+     * Credential-scoped authoritative node DNS bundle; DNS names do not grant access
+     */
+    200: AgentDnsSnapshot;
+};
+
+export type GetAgentDnsResponse = GetAgentDnsResponses[keyof GetAgentDnsResponses];
+
 export type GetAgentConfigurationData = {
     body?: never;
     path?: never;
@@ -1325,6 +1408,84 @@ export type PreviewFlowResponses = {
 };
 
 export type PreviewFlowResponse2 = PreviewFlowResponses[keyof PreviewFlowResponses];
+
+export type GetNetworkData = {
+    body?: never;
+    path?: never;
+    query?: never;
+    url: '/api/v1/network';
+};
+
+export type GetNetworkErrors = {
+    /**
+     * Admin credential required
+     */
+    401: ErrorResponse;
+    /**
+     * Storage unavailable
+     */
+    500: ErrorResponse;
+};
+
+export type GetNetworkError = GetNetworkErrors[keyof GetNetworkErrors];
+
+export type GetNetworkResponses = {
+    /**
+     * Single-network saved identity, immutable pools and authoritative node DNS intent
+     */
+    200: NetworkSnapshot;
+};
+
+export type GetNetworkResponse = GetNetworkResponses[keyof GetNetworkResponses];
+
+export type SaveNetworkData = {
+    body: SaveNetworkRequest;
+    path?: never;
+    query?: never;
+    url: '/api/v1/network';
+};
+
+export type SaveNetworkErrors = {
+    /**
+     * Invalid JSON or unknown fields; address pools cannot be edited
+     */
+    400: ErrorResponse;
+    /**
+     * Admin credential required
+     */
+    401: ErrorResponse;
+    /**
+     * Stale global revision
+     */
+    409: ErrorResponse;
+    /**
+     * Request exceeds 8 KiB
+     */
+    413: ErrorResponse;
+    /**
+     * Expected application/json
+     */
+    415: ErrorResponse;
+    /**
+     * Invalid name, zone, TTL or publication capacity
+     */
+    422: ErrorResponse;
+    /**
+     * Storage unavailable
+     */
+    500: ErrorResponse;
+};
+
+export type SaveNetworkError = SaveNetworkErrors[keyof SaveNetworkErrors];
+
+export type SaveNetworkResponses = {
+    /**
+     * Saved network intent; not an Agent DNS application receipt
+     */
+    200: NetworkSnapshot;
+};
+
+export type SaveNetworkResponse = SaveNetworkResponses[keyof SaveNetworkResponses];
 
 export type ListNodesData = {
     body?: never;

@@ -513,7 +513,7 @@ fn actual_v5_migration_deduplicates_paths_folds_reverse_and_bumps_revision() {
             [serde_json::to_string(&legacy).unwrap()],
         )
         .unwrap();
-    store.connection.execute_batch("DROP TABLE mesh_access_source; ALTER TABLE mesh_access_legacy_v5 RENAME TO mesh_access_source; DROP TABLE node_tags; DROP TABLE tag_definitions; ALTER TABLE configuration DROP COLUMN source_jsonc; PRAGMA user_version=5;").unwrap();
+    store.connection.execute_batch("DROP TABLE network_identity; DROP TABLE mesh_access_source; ALTER TABLE mesh_access_legacy_v5 RENAME TO mesh_access_source; DROP TABLE node_tags; DROP TABLE tag_definitions; ALTER TABLE configuration DROP COLUMN source_jsonc; PRAGMA user_version=5;").unwrap();
     drop(store);
     let reopened = Store::open(dir.path(), &NetworkOptions::default()).unwrap();
     let snapshot = reopened.mesh_access().unwrap();
@@ -527,7 +527,7 @@ fn actual_v5_migration_deduplicates_paths_folds_reverse_and_bumps_revision() {
             .connection
             .pragma_query_value(None, "user_version", |row| row.get::<_, u32>(0))
             .unwrap(),
-        6
+        7
     );
 }
 

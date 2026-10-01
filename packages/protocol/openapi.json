@@ -760,6 +760,68 @@
         ]
       }
     },
+    "/api/v1/agent/dns": {
+      "get": {
+        "operationId": "getAgentDns",
+        "responses": {
+          "200": {
+            "description": "Credential-scoped authoritative node DNS bundle; DNS names do not grant access",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AgentDnsSnapshot"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Node credential required",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Node revoked",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Invalid inventory or publication capacity",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Storage unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "nodeBearer": []
+          }
+        ]
+      }
+    },
     "/api/v1/agents/configuration": {
       "get": {
         "operationId": "getAgentConfiguration",
@@ -1440,6 +1502,148 @@
           },
           "415": {
             "description": "Expected application/json",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "adminBearer": []
+          }
+        ]
+      }
+    },
+    "/api/v1/network": {
+      "get": {
+        "operationId": "getNetwork",
+        "responses": {
+          "200": {
+            "description": "Single-network saved identity, immutable pools and authoritative node DNS intent",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NetworkSnapshot"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Admin credential required",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Storage unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "adminBearer": []
+          }
+        ]
+      },
+      "post": {
+        "operationId": "saveNetwork",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SaveNetworkRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Saved network intent; not an Agent DNS application receipt",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NetworkSnapshot"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid JSON or unknown fields; address pools cannot be edited",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Admin credential required",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Stale global revision",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "Request exceeds 8 KiB",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "415": {
+            "description": "Expected application/json",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Invalid name, zone, TTL or publication capacity",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Storage unavailable",
             "content": {
               "application/json": {
                 "schema": {
@@ -2290,6 +2494,25 @@
           },
           "payload": {
             "$ref": "#/components/schemas/NodeDataplane"
+          }
+        },
+        "additionalProperties": false
+      },
+      "AgentDnsSnapshot": {
+        "type": "object",
+        "required": [
+          "digest",
+          "payload"
+        ],
+        "properties": {
+          "digest": {
+            "type": "string",
+            "maxLength": 64,
+            "minLength": 64,
+            "pattern": "^[0-9a-f]{64}$"
+          },
+          "payload": {
+            "$ref": "#/components/schemas/NodeDnsConfiguration"
           }
         },
         "additionalProperties": false
@@ -3307,6 +3530,31 @@
         },
         "additionalProperties": false
       },
+      "MeshDnsConfiguration": {
+        "type": "object",
+        "required": [
+          "enabled",
+          "zone",
+          "ttl_seconds"
+        ],
+        "properties": {
+          "enabled": {
+            "type": "boolean"
+          },
+          "ttl_seconds": {
+            "type": "integer",
+            "format": "int32",
+            "maximum": 300,
+            "minimum": 1
+          },
+          "zone": {
+            "type": "string",
+            "maxLength": 128,
+            "minLength": 3
+          }
+        },
+        "additionalProperties": false
+      },
       "MeshNetwork": {
         "type": "object",
         "required": [
@@ -3368,6 +3616,44 @@
               "$ref": "#/components/schemas/MeshAccessGrant"
             },
             "maxItems": 128
+          }
+        },
+        "additionalProperties": false
+      },
+      "NetworkSnapshot": {
+        "type": "object",
+        "description": "Saved intent at the global configuration revision. Address pools are immutable.",
+        "required": [
+          "revision",
+          "network_id",
+          "name",
+          "network",
+          "dns"
+        ],
+        "properties": {
+          "dns": {
+            "$ref": "#/components/schemas/MeshDnsConfiguration"
+          },
+          "name": {
+            "type": "string",
+            "maxLength": 128,
+            "minLength": 1,
+            "pattern": "[^\\u0009-\\u000D\\u0020\\u0085\\u00A0\\u1680\\u2000-\\u200A\\u2028\\u2029\\u202F\\u205F\\u3000]"
+          },
+          "network": {
+            "$ref": "#/components/schemas/MeshNetwork"
+          },
+          "network_id": {
+            "type": "string",
+            "maxLength": 32,
+            "minLength": 32,
+            "pattern": "^[0-9a-f]{32}$"
+          },
+          "revision": {
+            "type": "integer",
+            "format": "int64",
+            "maximum": 4294967295,
+            "minimum": 1
           }
         },
         "additionalProperties": false
@@ -3553,6 +3839,100 @@
             "format": "int64",
             "maximum": 1,
             "minimum": 1
+          }
+        },
+        "additionalProperties": false
+      },
+      "NodeDnsConfiguration": {
+        "type": "object",
+        "required": [
+          "schema_version",
+          "revision",
+          "node_id",
+          "network_id",
+          "dns",
+          "records",
+          "diagnostics"
+        ],
+        "properties": {
+          "diagnostics": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/PolicyDiagnostic"
+            },
+            "maxItems": 64
+          },
+          "dns": {
+            "$ref": "#/components/schemas/MeshDnsConfiguration"
+          },
+          "network_id": {
+            "type": "string",
+            "maxLength": 32,
+            "minLength": 32,
+            "pattern": "^[0-9a-f]{32}$"
+          },
+          "node_id": {
+            "type": "string",
+            "maxLength": 64,
+            "minLength": 64,
+            "pattern": "^[0-9a-f]{64}$"
+          },
+          "records": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/NodeDnsRecord"
+            },
+            "maxItems": 1024
+          },
+          "revision": {
+            "type": "integer",
+            "format": "int64",
+            "maximum": 4294967295,
+            "minimum": 1
+          },
+          "schema_version": {
+            "type": "integer",
+            "format": "int32",
+            "maximum": 1,
+            "minimum": 1
+          }
+        },
+        "additionalProperties": false
+      },
+      "NodeDnsRecord": {
+        "type": "object",
+        "required": [
+          "node_id",
+          "canonical_name",
+          "aliases",
+          "mesh_ipv4",
+          "mesh_ipv6"
+        ],
+        "properties": {
+          "aliases": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 1
+          },
+          "canonical_name": {
+            "type": "string",
+            "maxLength": 253,
+            "minLength": 1,
+            "pattern": "^id\\.[0-9a-f]{32}\\.[0-9a-f]{32}\\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)+$"
+          },
+          "mesh_ipv4": {
+            "type": "string"
+          },
+          "mesh_ipv6": {
+            "type": "string"
+          },
+          "node_id": {
+            "type": "string",
+            "maxLength": 64,
+            "minLength": 64,
+            "pattern": "^[0-9a-f]{64}$"
           }
         },
         "additionalProperties": false
@@ -4237,6 +4617,32 @@
               "string",
               "null"
             ]
+          }
+        },
+        "additionalProperties": false
+      },
+      "SaveNetworkRequest": {
+        "type": "object",
+        "required": [
+          "expected_revision",
+          "name",
+          "dns"
+        ],
+        "properties": {
+          "dns": {
+            "$ref": "#/components/schemas/MeshDnsConfiguration"
+          },
+          "expected_revision": {
+            "type": "integer",
+            "format": "int64",
+            "maximum": 4294967295,
+            "minimum": 1
+          },
+          "name": {
+            "type": "string",
+            "maxLength": 128,
+            "minLength": 1,
+            "pattern": "[^\\u0009-\\u000D\\u0020\\u0085\\u00A0\\u1680\\u2000-\\u200A\\u2028\\u2029\\u202F\\u205F\\u3000]"
           }
         },
         "additionalProperties": false

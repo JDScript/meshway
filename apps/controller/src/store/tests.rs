@@ -4,7 +4,7 @@ use rusqlite::params;
 use super::Store;
 use crate::{Error, NetworkOptions};
 
-fn directory() -> tempfile::TempDir {
+pub(super) fn directory() -> tempfile::TempDir {
     use std::os::unix::fs::PermissionsExt;
     tempfile::Builder::new()
         .permissions(std::fs::Permissions::from_mode(0o700))
@@ -12,7 +12,7 @@ fn directory() -> tempfile::TempDir {
         .unwrap()
 }
 
-fn request(name: &str) -> EnrollAgentRequest {
+pub(super) fn request(name: &str) -> EnrollAgentRequest {
     EnrollAgentRequest {
         node_credential: local::credential().unwrap(),
         name: name.into(),
@@ -20,7 +20,7 @@ fn request(name: &str) -> EnrollAgentRequest {
     }
 }
 
-fn enroll(store: &mut Store, request: &EnrollAgentRequest) -> NodeSummary {
+pub(super) fn enroll(store: &mut Store, request: &EnrollAgentRequest) -> NodeSummary {
     let token = store.create_token(3600).unwrap();
     store.enroll(&token.token, request).unwrap()
 }
@@ -441,7 +441,7 @@ fn additive_v2_to_v3_preserves_configuration_credentials_addresses_and_receipts(
             .connection
             .pragma_query_value(None, "user_version", |row| row.get::<_, u32>(0))
             .unwrap(),
-        6
+        7
     );
     assert_eq!(
         std::fs::read(dir.path().join("admin.token")).unwrap(),

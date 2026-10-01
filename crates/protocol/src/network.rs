@@ -62,7 +62,11 @@ pub struct NetworkSnapshot {
     pub revision: u32,
     #[schema(min_length = 32, max_length = 32, pattern = "^[0-9a-f]{32}$")]
     pub network_id: String,
-    #[schema(min_length = 1, max_length = 128)]
+    #[schema(
+        min_length = 1,
+        max_length = 128,
+        pattern = r"[^\u0009-\u000D\u0020\u0085\u00A0\u1680\u2000-\u200A\u2028\u2029\u202F\u205F\u3000]"
+    )]
     pub name: String,
     pub network: MeshNetwork,
     pub dns: MeshDnsConfiguration,
@@ -73,7 +77,11 @@ pub struct NetworkSnapshot {
 pub struct SaveNetworkRequest {
     #[schema(format = Int64, minimum = 1, maximum = 4294967295_u64)]
     pub expected_revision: u32,
-    #[schema(min_length = 1, max_length = 128)]
+    #[schema(
+        min_length = 1,
+        max_length = 128,
+        pattern = r"[^\u0009-\u000D\u0020\u0085\u00A0\u1680\u2000-\u200A\u2028\u2029\u202F\u205F\u3000]"
+    )]
     pub name: String,
     pub dns: MeshDnsConfiguration,
 }
@@ -91,7 +99,11 @@ impl SaveNetworkRequest {
 pub struct NodeDnsRecord {
     #[schema(min_length = 64, max_length = 64, pattern = "^[0-9a-f]{64}$")]
     pub node_id: String,
-    #[schema(min_length = 1, max_length = 253)]
+    #[schema(
+        min_length = 1,
+        max_length = 253,
+        pattern = r"^id\.[0-9a-f]{32}\.[0-9a-f]{32}\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)+$"
+    )]
     pub canonical_name: String,
     #[schema(max_items = 1)]
     pub aliases: Vec<String>,
@@ -288,3 +300,6 @@ pub fn dns_digest(payload: &NodeDnsConfiguration) -> Result<String, serde_json::
         .map(|byte| format!("{byte:02x}"))
         .collect())
 }
+
+#[cfg(test)]
+mod tests;

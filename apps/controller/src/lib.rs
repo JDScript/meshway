@@ -4,6 +4,7 @@ mod access_api;
 mod configuration_api;
 mod connection_runtime_api;
 mod connections_api;
+mod network_api;
 mod store;
 mod tags_api;
 
@@ -165,6 +166,7 @@ fn contract_router() -> OpenApiRouter<AppState> {
         .merge(connection_runtime_api::routes())
         .merge(access_api::routes())
         .merge(tags_api::routes())
+        .merge(network_api::routes())
 }
 
 fn describe(api: &mut OpenApi) {

@@ -1,8 +1,8 @@
 // Generated from the controller OpenAPI by scripts/generate-protocol.mjs. Do not edit.
 
 import { request } from "../transport.ts";
-import type { AcknowledgeAgentConnectionsRequest, AcknowledgeAgentConnectionsResponse, AcknowledgeConfigurationRequest, AcknowledgeConfigurationResponse, AgentConnectionsSnapshot, AgentDataplaneSnapshot, AgentNodeResponse, BeginConnectionRuntimeRequest, BeginConnectionRuntimeResponse, ConfigurationSnapshot, ConnectionRuntimesSnapshot, ConnectionsSnapshot, CreateEnrollmentTokenRequest, CreateEnrollmentTokenResponse, EnrollAgentRequest, GetConnectionRuntimeEpochResponse, HeartbeatRequest, MeshAccessSnapshot, NodeList, Overview, PolicySnapshot, PreviewFlowRequest, PreviewFlowResponse, PreviewPolicyRequest, PreviewPolicyResponse, PublishConnectionIdentityRequest, PublishConnectionIdentityResponse, ReportConnectionRuntimeRequest, ReportConnectionRuntimeResponse, RevokeNodeRequest, RevokeNodeResponse, SaveConnectionsRequest, SaveMeshAccessRequest, SavePolicyRequest, SaveTagsRequest, SetNodeCountryRequest, SetNodeTagsRequest, TagSnapshot } from "./types.gen.ts";
-import { zAcknowledgeAgentConnectionsRequest, zAcknowledgeAgentConnectionsResponse, zAcknowledgeConfigurationRequest, zAcknowledgeConfigurationResponse, zAgentConnectionsSnapshot, zAgentDataplaneSnapshot, zAgentNodeResponse, zBeginConnectionRuntimeRequest, zBeginConnectionRuntimeResponse, zConfigurationSnapshot, zConnectionRuntimesSnapshot, zConnectionsSnapshot, zCreateEnrollmentTokenRequest, zCreateEnrollmentTokenResponse, zEnrollAgentRequest, zGetConnectionRuntimeEpochResponse, zHeartbeatRequest, zMeshAccessSnapshot, zNodeList, zOverview, zPolicySnapshot, zPreviewFlowRequest, zPreviewFlowResponse, zPreviewPolicyRequest, zPreviewPolicyResponse, zPublishConnectionIdentityRequest, zPublishConnectionIdentityResponse, zReportConnectionRuntimeRequest, zReportConnectionRuntimeResponse, zRevokeNodeRequest, zRevokeNodeResponse, zSaveConnectionsRequest, zSaveMeshAccessRequest, zSavePolicyRequest, zSaveTagsRequest, zSetNodeCountryRequest, zSetNodeTagsRequest, zTagSnapshot } from "./zod.gen.ts";
+import type { AcknowledgeAgentConnectionsRequest, AcknowledgeAgentConnectionsResponse, AcknowledgeConfigurationRequest, AcknowledgeConfigurationResponse, AgentConnectionsSnapshot, AgentDataplaneSnapshot, AgentDnsSnapshot, AgentNodeResponse, BeginConnectionRuntimeRequest, BeginConnectionRuntimeResponse, ConfigurationSnapshot, ConnectionRuntimesSnapshot, ConnectionsSnapshot, CreateEnrollmentTokenRequest, CreateEnrollmentTokenResponse, EnrollAgentRequest, GetConnectionRuntimeEpochResponse, HeartbeatRequest, MeshAccessSnapshot, NetworkSnapshot, NodeList, Overview, PolicySnapshot, PreviewFlowRequest, PreviewFlowResponse, PreviewPolicyRequest, PreviewPolicyResponse, PublishConnectionIdentityRequest, PublishConnectionIdentityResponse, ReportConnectionRuntimeRequest, ReportConnectionRuntimeResponse, RevokeNodeRequest, RevokeNodeResponse, SaveConnectionsRequest, SaveMeshAccessRequest, SaveNetworkRequest, SavePolicyRequest, SaveTagsRequest, SetNodeCountryRequest, SetNodeTagsRequest, TagSnapshot } from "./types.gen.ts";
+import { zAcknowledgeAgentConnectionsRequest, zAcknowledgeAgentConnectionsResponse, zAcknowledgeConfigurationRequest, zAcknowledgeConfigurationResponse, zAgentConnectionsSnapshot, zAgentDataplaneSnapshot, zAgentDnsSnapshot, zAgentNodeResponse, zBeginConnectionRuntimeRequest, zBeginConnectionRuntimeResponse, zConfigurationSnapshot, zConnectionRuntimesSnapshot, zConnectionsSnapshot, zCreateEnrollmentTokenRequest, zCreateEnrollmentTokenResponse, zEnrollAgentRequest, zGetConnectionRuntimeEpochResponse, zHeartbeatRequest, zMeshAccessSnapshot, zNetworkSnapshot, zNodeList, zOverview, zPolicySnapshot, zPreviewFlowRequest, zPreviewFlowResponse, zPreviewPolicyRequest, zPreviewPolicyResponse, zPublishConnectionIdentityRequest, zPublishConnectionIdentityResponse, zReportConnectionRuntimeRequest, zReportConnectionRuntimeResponse, zRevokeNodeRequest, zRevokeNodeResponse, zSaveConnectionsRequest, zSaveMeshAccessRequest, zSaveNetworkRequest, zSavePolicyRequest, zSaveTagsRequest, zSetNodeCountryRequest, zSetNodeTagsRequest, zTagSnapshot } from "./zod.gen.ts";
 
 export async function getMeshAccessOperation(baseUrl: string, token: string): Promise<MeshAccessSnapshot> {
   return request(baseUrl, { method: "GET", path: "/api/v1/access", token }, zMeshAccessSnapshot);
@@ -40,6 +40,10 @@ export async function getAgentDataplaneOperation(baseUrl: string, token: string)
   return request(baseUrl, { method: "GET", path: "/api/v1/agent/dataplane", token }, zAgentDataplaneSnapshot);
 }
 
+export async function getAgentDnsOperation(baseUrl: string, token: string): Promise<AgentDnsSnapshot> {
+  return request(baseUrl, { method: "GET", path: "/api/v1/agent/dns", token }, zAgentDnsSnapshot);
+}
+
 export async function getAgentConfigurationOperation(baseUrl: string, token: string): Promise<ConfigurationSnapshot> {
   return request(baseUrl, { method: "GET", path: "/api/v1/agents/configuration", token }, zConfigurationSnapshot);
 }
@@ -74,6 +78,14 @@ export async function createEnrollmentTokenOperation(baseUrl: string, token: str
 
 export async function previewFlowOperation(baseUrl: string, token: string, body: PreviewFlowRequest): Promise<PreviewFlowResponse> {
   return request(baseUrl, { method: "POST", path: "/api/v1/flows/preview", token, body: zPreviewFlowRequest.parse(body) }, zPreviewFlowResponse);
+}
+
+export async function getNetworkOperation(baseUrl: string, token: string): Promise<NetworkSnapshot> {
+  return request(baseUrl, { method: "GET", path: "/api/v1/network", token }, zNetworkSnapshot);
+}
+
+export async function saveNetworkOperation(baseUrl: string, token: string, body: SaveNetworkRequest): Promise<NetworkSnapshot> {
+  return request(baseUrl, { method: "POST", path: "/api/v1/network", token, body: zSaveNetworkRequest.parse(body) }, zNetworkSnapshot);
 }
 
 export async function listNodesOperation(baseUrl: string, token: string): Promise<NodeList> {

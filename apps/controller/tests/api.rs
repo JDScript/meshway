@@ -14,6 +14,8 @@ use tower::ServiceExt;
 mod access;
 #[path = "api/connection_runtime.rs"]
 mod connection_runtime;
+#[path = "api/network.rs"]
+mod network;
 
 fn tempdir() -> tempfile::TempDir {
     use std::os::unix::fs::PermissionsExt;

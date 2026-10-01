@@ -141,6 +141,25 @@ export const schemaDocument = {
         },
         "additionalProperties": false
       },
+      "AgentDnsSnapshot": {
+        "type": "object",
+        "required": [
+          "digest",
+          "payload"
+        ],
+        "properties": {
+          "digest": {
+            "type": "string",
+            "maxLength": 64,
+            "minLength": 64,
+            "pattern": "^[0-9a-f]{64}$"
+          },
+          "payload": {
+            "$ref": "#/components/schemas/NodeDnsConfiguration"
+          }
+        },
+        "additionalProperties": false
+      },
       "AgentNodeResponse": {
         "type": "object",
         "description": "Also lets a pending local enrollment recover its server-assigned node ID.",
@@ -1154,6 +1173,31 @@ export const schemaDocument = {
         },
         "additionalProperties": false
       },
+      "MeshDnsConfiguration": {
+        "type": "object",
+        "required": [
+          "enabled",
+          "zone",
+          "ttl_seconds"
+        ],
+        "properties": {
+          "enabled": {
+            "type": "boolean"
+          },
+          "ttl_seconds": {
+            "type": "integer",
+            "format": "int32",
+            "maximum": 300,
+            "minimum": 1
+          },
+          "zone": {
+            "type": "string",
+            "maxLength": 128,
+            "minLength": 3
+          }
+        },
+        "additionalProperties": false
+      },
       "MeshNetwork": {
         "type": "object",
         "required": [
@@ -1215,6 +1259,44 @@ export const schemaDocument = {
               "$ref": "#/components/schemas/MeshAccessGrant"
             },
             "maxItems": 128
+          }
+        },
+        "additionalProperties": false
+      },
+      "NetworkSnapshot": {
+        "type": "object",
+        "description": "Saved intent at the global configuration revision. Address pools are immutable.",
+        "required": [
+          "revision",
+          "network_id",
+          "name",
+          "network",
+          "dns"
+        ],
+        "properties": {
+          "dns": {
+            "$ref": "#/components/schemas/MeshDnsConfiguration"
+          },
+          "name": {
+            "type": "string",
+            "maxLength": 128,
+            "minLength": 1,
+            "pattern": "[^\\u0009-\\u000D\\u0020\\u0085\\u00A0\\u1680\\u2000-\\u200A\\u2028\\u2029\\u202F\\u205F\\u3000]"
+          },
+          "network": {
+            "$ref": "#/components/schemas/MeshNetwork"
+          },
+          "network_id": {
+            "type": "string",
+            "maxLength": 32,
+            "minLength": 32,
+            "pattern": "^[0-9a-f]{32}$"
+          },
+          "revision": {
+            "type": "integer",
+            "format": "int64",
+            "maximum": 4294967295,
+            "minimum": 1
           }
         },
         "additionalProperties": false
@@ -1400,6 +1482,100 @@ export const schemaDocument = {
             "format": "int64",
             "maximum": 1,
             "minimum": 1
+          }
+        },
+        "additionalProperties": false
+      },
+      "NodeDnsConfiguration": {
+        "type": "object",
+        "required": [
+          "schema_version",
+          "revision",
+          "node_id",
+          "network_id",
+          "dns",
+          "records",
+          "diagnostics"
+        ],
+        "properties": {
+          "diagnostics": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/PolicyDiagnostic"
+            },
+            "maxItems": 64
+          },
+          "dns": {
+            "$ref": "#/components/schemas/MeshDnsConfiguration"
+          },
+          "network_id": {
+            "type": "string",
+            "maxLength": 32,
+            "minLength": 32,
+            "pattern": "^[0-9a-f]{32}$"
+          },
+          "node_id": {
+            "type": "string",
+            "maxLength": 64,
+            "minLength": 64,
+            "pattern": "^[0-9a-f]{64}$"
+          },
+          "records": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/NodeDnsRecord"
+            },
+            "maxItems": 1024
+          },
+          "revision": {
+            "type": "integer",
+            "format": "int64",
+            "maximum": 4294967295,
+            "minimum": 1
+          },
+          "schema_version": {
+            "type": "integer",
+            "format": "int32",
+            "maximum": 1,
+            "minimum": 1
+          }
+        },
+        "additionalProperties": false
+      },
+      "NodeDnsRecord": {
+        "type": "object",
+        "required": [
+          "node_id",
+          "canonical_name",
+          "aliases",
+          "mesh_ipv4",
+          "mesh_ipv6"
+        ],
+        "properties": {
+          "aliases": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 1
+          },
+          "canonical_name": {
+            "type": "string",
+            "maxLength": 253,
+            "minLength": 1,
+            "pattern": "^id\\.[0-9a-f]{32}\\.[0-9a-f]{32}\\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)+$"
+          },
+          "mesh_ipv4": {
+            "type": "string"
+          },
+          "mesh_ipv6": {
+            "type": "string"
+          },
+          "node_id": {
+            "type": "string",
+            "maxLength": 64,
+            "minLength": 64,
+            "pattern": "^[0-9a-f]{64}$"
           }
         },
         "additionalProperties": false
@@ -2084,6 +2260,32 @@ export const schemaDocument = {
               "string",
               "null"
             ]
+          }
+        },
+        "additionalProperties": false
+      },
+      "SaveNetworkRequest": {
+        "type": "object",
+        "required": [
+          "expected_revision",
+          "name",
+          "dns"
+        ],
+        "properties": {
+          "dns": {
+            "$ref": "#/components/schemas/MeshDnsConfiguration"
+          },
+          "expected_revision": {
+            "type": "integer",
+            "format": "int64",
+            "maximum": 4294967295,
+            "minimum": 1
+          },
+          "name": {
+            "type": "string",
+            "maxLength": 128,
+            "minLength": 1,
+            "pattern": "[^\\u0009-\\u000D\\u0020\\u0085\\u00A0\\u1680\\u2000-\\u200A\\u2028\\u2029\\u202F\\u205F\\u3000]"
           }
         },
         "additionalProperties": false

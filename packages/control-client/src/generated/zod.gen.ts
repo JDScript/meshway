@@ -191,6 +191,35 @@ export const zAgentDataplaneSnapshot = z.strictObject({
   "payload": zNodeDataplane
 });
 
+export const zMeshDnsConfiguration = z.strictObject({
+  "enabled": z.boolean(),
+  "ttl_seconds": z.int().gte(1).lte(300),
+  "zone": z.string().refine(value => [...value].length >= 3, "minLength 3 Unicode code points").refine(value => [...value].length <= 128, "maxLength 128 Unicode code points")
+});
+
+export const zNodeDnsRecord = z.strictObject({
+  "aliases": z.array(z.string()).max(1),
+  "canonical_name": z.string().refine(value => [...value].length >= 1, "minLength 1 Unicode code points").refine(value => [...value].length <= 253, "maxLength 253 Unicode code points").regex(new RegExp("^id\\.[0-9a-f]{32}\\.[0-9a-f]{32}\\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)+$", "u")),
+  "mesh_ipv4": z.string(),
+  "mesh_ipv6": z.string(),
+  "node_id": z.string().refine(value => [...value].length >= 64, "minLength 64 Unicode code points").refine(value => [...value].length <= 64, "maxLength 64 Unicode code points").regex(new RegExp("^[0-9a-f]{64}$", "u"))
+});
+
+export const zNodeDnsConfiguration = z.strictObject({
+  "diagnostics": z.array(zPolicyDiagnostic).max(64),
+  "dns": zMeshDnsConfiguration,
+  "network_id": z.string().refine(value => [...value].length >= 32, "minLength 32 Unicode code points").refine(value => [...value].length <= 32, "maxLength 32 Unicode code points").regex(new RegExp("^[0-9a-f]{32}$", "u")),
+  "node_id": z.string().refine(value => [...value].length >= 64, "minLength 64 Unicode code points").refine(value => [...value].length <= 64, "maxLength 64 Unicode code points").regex(new RegExp("^[0-9a-f]{64}$", "u")),
+  "records": z.array(zNodeDnsRecord).max(1024),
+  "revision": z.int().gte(1).lte(4294967295),
+  "schema_version": z.int().gte(1).lte(1)
+});
+
+export const zAgentDnsSnapshot = z.strictObject({
+  "digest": z.string().refine(value => [...value].length >= 64, "minLength 64 Unicode code points").refine(value => [...value].length <= 64, "maxLength 64 Unicode code points").regex(new RegExp("^[0-9a-f]{64}$", "u")),
+  "payload": zNodeDnsConfiguration
+});
+
 export const zNodeSummary = z.strictObject({
   "acknowledged_revision": z.int().gte(0).lte(4294967295),
   "agent_version": z.string(),
@@ -366,6 +395,14 @@ export const zMeshAccessSnapshot = z.strictObject({
   "valid": z.boolean()
 });
 
+export const zNetworkSnapshot = z.strictObject({
+  "dns": zMeshDnsConfiguration,
+  "name": z.string().refine(value => [...value].length >= 1, "minLength 1 Unicode code points").refine(value => [...value].length <= 128, "maxLength 128 Unicode code points").regex(new RegExp("[^\\u0009-\\u000D\\u0020\\u0085\\u00A0\\u1680\\u2000-\\u200A\\u2028\\u2029\\u202F\\u205F\\u3000]", "u")),
+  "network": zMeshNetwork,
+  "network_id": z.string().refine(value => [...value].length >= 32, "minLength 32 Unicode code points").refine(value => [...value].length <= 32, "maxLength 32 Unicode code points").regex(new RegExp("^[0-9a-f]{32}$", "u")),
+  "revision": z.int().gte(1).lte(4294967295)
+});
+
 export const zNodeList = z.strictObject({
   "nodes": z.array(zNodeSummary)
 });
@@ -473,6 +510,12 @@ export const zSaveMeshAccessRequest = z.strictObject({
   "expected_revision": z.int().gte(1).lte(4294967295),
   "policy": zMeshAccessPolicy,
   "source_jsonc": z.string().nullable().optional()
+});
+
+export const zSaveNetworkRequest = z.strictObject({
+  "dns": zMeshDnsConfiguration,
+  "expected_revision": z.int().gte(1).lte(4294967295),
+  "name": z.string().refine(value => [...value].length >= 1, "minLength 1 Unicode code points").refine(value => [...value].length <= 128, "maxLength 128 Unicode code points").regex(new RegExp("[^\\u0009-\\u000D\\u0020\\u0085\\u00A0\\u1680\\u2000-\\u200A\\u2028\\u2029\\u202F\\u205F\\u3000]", "u"))
 });
 
 export const zSavePolicyRequest = z.strictObject({

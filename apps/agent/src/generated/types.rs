@@ -260,6 +260,51 @@ pub struct NodeSummary {
 }
 #[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
+pub struct AgentDnsSnapshot {
+    ///Constraint: minLength=64, maxLength=64, pattern=`^[0-9a-f]{64}$`
+    pub digest: String,
+    pub payload: NodeDnsConfiguration,
+}
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct NodeDnsConfiguration {
+    ///Constraint: maxItems=64
+    pub diagnostics: Vec<PolicyDiagnostic>,
+    pub dns: MeshDnsConfiguration,
+    ///Constraint: minLength=32, maxLength=32, pattern=`^[0-9a-f]{32}$`
+    pub network_id: String,
+    ///Constraint: minLength=64, maxLength=64, pattern=`^[0-9a-f]{64}$`
+    pub node_id: String,
+    ///Constraint: maxItems=1024
+    pub records: Vec<NodeDnsRecord>,
+    ///Constraint: minimum=1, maximum=4294967295
+    pub revision: i64,
+    ///Constraint: minimum=1, maximum=1
+    pub schema_version: i32,
+}
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct NodeDnsRecord {
+    ///Constraint: maxItems=1
+    pub aliases: Vec<String>,
+    ///Constraint: minLength=1, maxLength=253, pattern=`^id\.[0-9a-f]{32}\.[0-9a-f]{32}\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)+$`
+    pub canonical_name: String,
+    pub mesh_ipv4: String,
+    pub mesh_ipv6: String,
+    ///Constraint: minLength=64, maxLength=64, pattern=`^[0-9a-f]{64}$`
+    pub node_id: String,
+}
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct MeshDnsConfiguration {
+    pub enabled: bool,
+    ///Constraint: minimum=1, maximum=300
+    pub ttl_seconds: i32,
+    ///Constraint: minLength=3, maxLength=128
+    pub zone: String,
+}
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
 pub struct AgentDataplaneSnapshot {
     ///Constraint: minLength=64, maxLength=64, pattern=`^[0-9a-f]{64}$`
     pub digest: String,

@@ -1,5 +1,7 @@
 export {
   getOverviewOperation as getOverview,
+  getNetworkOperation as getNetwork,
+  saveNetworkOperation as saveNetwork,
   listNodesOperation as listNodes,
   createEnrollmentTokenOperation as createEnrollmentToken,
   revokeNodeOperation as revokeNode,

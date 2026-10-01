@@ -561,7 +561,7 @@ fn configuration_mismatch_withdrawal_and_revocation_never_leave_current_authenti
 }
 
 fn existing_rows(connection: &Connection) -> Vec<(String, Vec<Vec<rusqlite::types::Value>>)> {
-    let tables: Vec<String> = connection.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'connection_runtime_%' ORDER BY name")
+    let tables: Vec<String> = connection.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'connection_runtime_%' AND name != 'network_identity' ORDER BY name")
         .unwrap().query_map([], |row| row.get(0)).unwrap().collect::<Result<_, _>>().unwrap();
     tables
         .into_iter()
@@ -612,7 +612,7 @@ fn v3_to_v4_preserves_every_existing_sql_value_and_schema1_payload_bytes() {
     let before = serde_json::to_vec(&store.agent_connections(&token).unwrap()).unwrap();
     let rows = existing_rows(&store.connection);
     let admin_before = std::fs::read(dir.path().join("admin.token")).unwrap();
-    store.connection.execute_batch("DROP TABLE mesh_access_source; DROP TABLE mesh_access_legacy_v5; DROP TABLE node_tags; DROP TABLE tag_definitions; DROP TABLE connection_runtime_reports; DROP TABLE connection_runtime_leases; ALTER TABLE configuration DROP COLUMN source_jsonc; PRAGMA user_version=3;").unwrap();
+    store.connection.execute_batch("DROP TABLE network_identity; DROP TABLE mesh_access_source; DROP TABLE mesh_access_legacy_v5; DROP TABLE node_tags; DROP TABLE tag_definitions; DROP TABLE connection_runtime_reports; DROP TABLE connection_runtime_leases; ALTER TABLE configuration DROP COLUMN source_jsonc; PRAGMA user_version=3;").unwrap();
     drop(store);
     let mut reopened = Store::open(dir.path(), &NetworkOptions::default()).unwrap();
     assert_eq!(existing_rows(&reopened.connection), rows);
@@ -629,7 +629,7 @@ fn v3_to_v4_preserves_every_existing_sql_value_and_schema1_payload_bytes() {
             .connection
             .pragma_query_value(None, "user_version", |row| row.get::<_, u32>(0))
             .unwrap(),
-        6
+        7
     );
     assert!(reopened.connection_runtimes().unwrap().nodes.is_empty());
     assert!(matches!(

@@ -12,7 +12,7 @@ mod required_nullable;
 #[path = "generate-rust-client/status_first.rs"]
 mod status_first;
 
-const OPERATIONS: [&str; 11] = [
+const OPERATIONS: [&str; 12] = [
     "enrollAgent",
     "heartbeatAgent",
     "getAgentConfiguration",
@@ -20,6 +20,7 @@ const OPERATIONS: [&str; 11] = [
     "publishConnectionIdentity",
     "getAgentConnections",
     "getAgentDataplane",
+    "getAgentDns",
     "acknowledgeAgentConnections",
     "beginConnectionRuntime",
     "getConnectionRuntimeEpoch",
