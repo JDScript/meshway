@@ -9,6 +9,10 @@ default-run = "meshway-controller"
 codegen = ["dep:openapi-to-rust"]
 
 [dependencies]
+argon2 = "0.5.3"
+getrandom.workspace = true
+sha2.workspace = true
+zeroize = "1.8"
 axum.workspace = true
 chrono.workspace = true
 clap.workspace = true
