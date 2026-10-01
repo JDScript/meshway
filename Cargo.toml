@@ -9,6 +9,7 @@ members = [
     "crates/transport-shadowsocks",
     "apps/controller",
     "apps/agent",
+    "apps/apple/core",
 ]
 resolver = "3"
 
