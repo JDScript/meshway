@@ -14,7 +14,6 @@ import type {
 import { schemaFor } from "@meshway/control-client/json-schema"
 import { zMeshAccessPolicy } from "@meshway/control-client/schemas"
 import {
-  ArrowUpRightIcon,
   BracesIcon,
   CircleAlertIcon,
   HistoryIcon,
@@ -34,6 +33,7 @@ import { useAccessDraftStore, type Owner } from "@/components/access/draft-store
 import { FlowCheck } from "@/components/access/flow-check"
 import { AccessRuleBuilder } from "@/components/access/rule-builder"
 import { AccessRuleCard, type RuleCardState } from "@/components/access/rule-card"
+import { DiagnosticDetails } from "@/components/common/diagnostic-details"
 import { DraftActionBar } from "@/components/common/draft-action-bar"
 import { Panel } from "@/components/common/panel"
 import { Metric, StatusSummary } from "@/components/common/status-summary"
@@ -527,7 +527,7 @@ export function AccessEditor({
                 {!textValid ? <Badge variant="destructive">{document.problems.length} 个问题</Badge> : null}
               </span>
             }
-            description="与规则视图是同一份草稿。文本有效时规则视图随之更新；无效时不会被覆盖，也不能保存。注释随策略一起保存。"
+            description="与规则视图共用同一份草稿；注释随策略保存。"
             actions={viewSwitch}
           >
             <JsoncPane
@@ -552,7 +552,6 @@ export function AccessEditor({
                 </span>
               </span>
             }
-            description="自上而下匹配，第一条命中的规则决定允许或拒绝。"
             actions={
               <>
                 {viewSwitch}
@@ -746,39 +745,28 @@ function DefaultActionCard({
   )
 }
 
-/** What an access rule does and does not do, in a few lines. */
+/** What an access rule does and does not do; folded, the editor is the task. */
 function ScopePanel() {
   const routes = useRoutes()
   return (
-    <Panel title="规则含义" bodyClassName="flex flex-col gap-3 p-4 text-xs">
-      <p data-testid="access-relationship" className="text-sm font-medium">
-        路由决定走哪条路径，访问授权只决定端点之间能否访问。
+    <DiagnosticDetails title="规则如何生效" className="bg-card shadow-xs">
+      <p data-testid="access-relationship" className="font-medium text-foreground">
+        访问授权只决定端点之间能否访问；走哪条路径由
+        <Link href={routes.routing()} className="mx-0.5 underline underline-offset-4">路由</Link>
+        决定。
       </p>
       <ul className="flex flex-col gap-1.5 text-muted-foreground">
         <ScopeItem>{ALL_SELECTOR_HINT}</ScopeItem>
-        <ScopeItem>标签由管理员维护；规则引用标签时，成员变化立即生效（推进全局版本）。</ScopeItem>
+        <ScopeItem>
+          <Link href={routes.tags()} className="underline underline-offset-4">标签</Link>
+          由管理员维护；成员变化随配置版本生效。
+        </ScopeItem>
         <ScopeItem>双向规则在同一位置也匹配反向流量，两个方向各自检查；没有状态型回包跟踪。</ScopeItem>
         <ScopeItem>允许不会绕过路由的拒绝或必经节点；controller 据此为每条路径编译内部授权。</ScopeItem>
         <ScopeItem>未发布公钥的节点规则仍然有效，只是数据面在公钥发布前不执行。</ScopeItem>
         <ScopeItem>引用已撤销 / 未知的节点或不存在的标签会使整个授权无效（全部拒绝）。</ScopeItem>
       </ul>
-      <div className="flex flex-wrap gap-x-4 gap-y-1 border-t pt-3">
-        <Link
-          href={routes.routing()}
-          className="inline-flex items-center gap-1 text-muted-foreground underline-offset-4 hover:text-foreground hover:underline"
-        >
-          路由
-          <ArrowUpRightIcon className="size-3" />
-        </Link>
-        <Link
-          href={routes.tags()}
-          className="inline-flex items-center gap-1 text-muted-foreground underline-offset-4 hover:text-foreground hover:underline"
-        >
-          标签
-          <ArrowUpRightIcon className="size-3" />
-        </Link>
-      </div>
-    </Panel>
+    </DiagnosticDetails>
   )
 }
 

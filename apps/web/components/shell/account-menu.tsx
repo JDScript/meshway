@@ -1,6 +1,6 @@
 "use client"
 
-import { BookOpenIcon, LogOutIcon, MonitorIcon, MoonIcon, SunIcon } from "lucide-react"
+import { BookOpenIcon, ChevronsUpDownIcon, LogOutIcon, MonitorIcon, MoonIcon, SunIcon } from "lucide-react"
 import { useTheme } from "next-themes"
 import { useTransition } from "react"
 
@@ -38,16 +38,21 @@ export function AccountMenu() {
     <DropdownMenu>
       <DropdownMenuTrigger
         aria-label="账户菜单"
-        className="flex size-8 items-center justify-center rounded-full outline-none hover:ring-2 hover:ring-border focus-visible:ring-2 focus-visible:ring-ring/40"
+        className="flex w-full min-w-0 items-center gap-2.5 rounded-md p-1 text-left outline-none hover:bg-sidebar-accent focus-visible:ring-2 focus-visible:ring-sidebar-ring aria-expanded:bg-sidebar-accent group-data-[collapsible=icon]:size-8 group-data-[collapsible=icon]:p-0.5"
       >
         <span
           aria-hidden="true"
-          className="flex size-7 items-center justify-center rounded-full bg-primary text-[0.6875rem] font-semibold text-primary-foreground"
+          className="flex size-7 shrink-0 items-center justify-center rounded-full bg-primary text-[0.6875rem] font-semibold text-primary-foreground"
         >
           管
         </span>
+        <span className="flex min-w-0 flex-1 flex-col group-data-[collapsible=icon]:hidden">
+          <span className="truncate text-[0.8125rem] leading-5 font-medium">管理员</span>
+          <span className="truncate text-[0.6875rem] leading-4 text-muted-foreground">{pending ? "正在退出…" : "管理员令牌会话"}</span>
+        </span>
+        <ChevronsUpDownIcon className="size-4 shrink-0 text-muted-foreground group-data-[collapsible=icon]:hidden" aria-hidden="true" />
       </DropdownMenuTrigger>
-      <DropdownMenuContent align="end" sideOffset={6} className="w-60">
+      <DropdownMenuContent side="top" align="start" sideOffset={6} className="w-60">
         <DropdownMenuGroup>
           <DropdownMenuLabel className="flex flex-col gap-0.5">
             <span className="text-[0.8125rem] font-medium text-foreground">管理员</span>

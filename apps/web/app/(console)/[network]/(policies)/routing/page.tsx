@@ -1,8 +1,8 @@
-import { InfoIcon } from "lucide-react"
 import type { Metadata } from "next"
 import Link from "next/link"
 
 import { ControllerUnavailable } from "@/components/common/controller-states"
+import { DiagnosticDetails } from "@/components/common/diagnostic-details"
 import { PolicyEditor } from "@/components/routing/policy-editor"
 import { PageBody, PageHeader } from "@/components/shell/page-header"
 import { controllerUrl, fetchNodes, fetchPolicy } from "@/lib/controller"
@@ -27,21 +27,20 @@ export default async function RoutingPage({
     <PageBody>
       <PageHeader
         title="路由"
-        description="决定流量走哪条路：按来源、目标域名后缀 / CIDR / 节点 / 国家匹配，有序首条命中，规划经由节点与出口。"
+        description="流量走哪条路径、经由哪些节点。规则自上而下首条命中。"
         meta={policy.ok ? <span>读取于 {formatClock(policy.fetchedAt)}</span> : null}
       />
-      <div data-testid="routing-execution-scope" className="flex items-start gap-3 rounded-lg border bg-card px-4 py-3 text-xs leading-relaxed text-muted-foreground shadow-xs">
-        <InfoIcon className="mt-0.5 size-4 shrink-0 text-info" aria-hidden="true" />
-        <div className="flex flex-col gap-1">
+      <DiagnosticDetails title="执行范围：Mesh IPv4，互联网出口与 IPv6 尚未启用" className="bg-card shadow-xs">
+        <div data-testid="routing-execution-scope" className="flex flex-col gap-2 leading-relaxed text-muted-foreground">
           <p>
             以 <code className="font-mono text-foreground">--apply-dataplane</code> 运行的 Linux agent 执行这里的 Mesh IPv4
             意图：来源节点 / 国家、目标节点 / CIDR、首条命中、经由节点、直连 / 拒绝。端点之间能否访问由
             <Link href={routes.access()} className="mx-0.5 text-foreground underline underline-offset-4">访问授权</Link>
-            单独决定；controller 把两者合成为每条路径的内部授权，允许不会绕过这里的拒绝或经由节点。
+            单独决定；允许不会绕过这里的拒绝或经由节点。
           </p>
-          <p>域名后缀需要 DNS，互联网出口与 IPv6 尚未启用；报文可能命中域名规则时按拒绝处理，不会跳过该规则。</p>
+          <p>域名后缀需要 DNS；报文可能命中域名规则时按拒绝处理，不会跳过该规则。</p>
         </div>
-      </div>
+      </DiagnosticDetails>
       {!policy.ok ? (
         <ControllerUnavailable url={controllerUrl()} error={policy.error} />
       ) : !nodes.ok ? (

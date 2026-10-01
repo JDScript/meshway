@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { createEnrollmentToken, getConnections, getMeshAccess, getPolicy, savePolicy } from "./network-client.ts";
-import { consoleAt, contentAlignment, executable, root, run, service, unusedPort } from "./harness.ts";
+import { consoleAt, consoleGutter, contentAlignment, executable, root, run, service, SIDEBAR_WIDTH, unusedPort } from "./harness.ts";
 import { revealAdvanced } from "./web-actions.ts";
 
 const barSelector = '[data-slot="draft-action-bar"]';
@@ -39,24 +39,42 @@ test("the content column aligns with the shell and animated draft actions stay s
 
     for (const width of [1920, 1440, 1024, 390]) {
       await page.setViewportSize({ width, height: width === 390 ? 844 : 1000 });
-      const gutter = width === 390 ? 16 : Math.max(32, (width - 1216) / 2 + 32);
+      const inset = width >= 768 ? width - SIDEBAR_WIDTH : width;
       for (const path of ["", "/machines", "/machines/add", "/access", "/routing", "/tags", "/connections", "/dns", "/settings", "/diagnostics", "/topology"]) {
         await page.goto(ui.at(path));
         await expect(page.locator('[data-slot="page-header"]')).toBeVisible();
-        expect(await contentAlignment(page)).toEqual({ left: 0, right: 0, gutter, overflow: false });
+        expect(await contentAlignment(page)).toEqual({ left: 0, right: 0, gutter: consoleGutter(width, inset), inset, overflow: false });
         const top = await page.locator('[data-slot="page-header"]').evaluate(header => {
           const body = header.closest('[data-slot="page-body"]');
           if (!body) throw new Error("Missing page body");
           return header.getBoundingClientRect().top - body.getBoundingClientRect().top;
         });
-        // Pages under a section tab strip start closer to it.
-        const tabs = ["/access", "/routing", "/tags", "/connections", "/diagnostics", "/topology"].includes(path);
-        expect(top).toBe(tabs ? 20 : width === 390 ? 24 : 32);
+        // Every page starts at the same distance below the top bar.
+        expect(top).toBe(width === 390 ? 24 : 32);
         if (path === "/access" && process.env.MESHWAY_LAYOUT_SCREENSHOTS) {
           await page.screenshot({ path: join(process.env.MESHWAY_LAYOUT_SCREENSHOTS, `layout-${width}.png`) });
         }
       }
     }
+
+    // The sidebar collapses to icons and remembers it; the phone drawer
+    // holds the network switcher and closes after navigating.
+    await page.setViewportSize({ width: 1440, height: 1000 });
+    await page.goto(ui.at("/machines"));
+    await page.getByRole("button", { name: "收起导航", exact: true }).click();
+    await expect.poll(async () => (await contentAlignment(page)).inset).toBe(1440 - 48);
+    await page.reload();
+    await expect(page.getByRole("button", { name: "展开导航", exact: true })).toBeVisible();
+    expect(await contentAlignment(page)).toEqual({ left: 0, right: 0, gutter: consoleGutter(1440, 1392), inset: 1392, overflow: false });
+    await page.getByRole("button", { name: "展开导航", exact: true }).click();
+    await expect.poll(async () => (await contentAlignment(page)).inset).toBe(1440 - SIDEBAR_WIDTH);
+    await page.setViewportSize({ width: 390, height: 844 });
+    await page.getByRole("button", { name: "打开导航", exact: true }).click();
+    const drawer = page.getByRole("dialog", { name: "导航" });
+    await expect(drawer.getByRole("button", { name: "当前网络", exact: true })).toBeVisible();
+    await drawer.getByRole("link", { name: "DNS", exact: true }).click();
+    await expect(page).toHaveURL(ui.at("/dns"));
+    await expect(drawer).toBeHidden();
 
     for (const width of [1440, 390]) {
       await page.setViewportSize({ width, height: width === 390 ? 844 : 1000 });

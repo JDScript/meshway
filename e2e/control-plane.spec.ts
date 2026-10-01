@@ -165,6 +165,8 @@ test("administrator session, enrollment, durable identity and revocation cross t
         .rejects.toThrow(/401|403|revoked|forbidden|unauthorized/i);
       await page.setViewportSize({ width: 390, height: 844 });
       await expectNoOverflow(page);
+      // On phones the account menu lives in the navigation drawer.
+      await page.getByRole("button", { name: "打开导航", exact: true }).click();
       await page.getByRole("button", { name: "账户菜单", exact: true }).click();
       await page.getByRole("menuitem", { name: "退出登录", exact: true }).click();
       await expect(page).toHaveURL(/\/login(?:\?|$)/);

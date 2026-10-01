@@ -22,8 +22,8 @@ export function DnsNames({ network, nodes }: { network: NetworkSnapshot; nodes: 
       title="节点名称"
       description={
         network.dns.enabled
-          ? `已保存 zone ${network.dns.zone}。完整名称由节点 ID 推导，改名不会变化；可读别名由 controller 检查重名后发布。`
-          : "DNS 已关闭，不发布任何记录；下列名称是开启后会使用的完整名称。"
+          ? `zone ${network.dns.zone} · 完整名称由节点 ID 推导，改名不变。`
+          : "DNS 已关闭，不发布记录；下列为开启后的完整名称。"
       }
       actions={<StatusBadge tone={network.dns.enabled ? "info" : "neutral"}>{network.dns.enabled ? "发布意图：开启" : "未发布"}</StatusBadge>}
     >

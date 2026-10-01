@@ -178,14 +178,14 @@ export default async function OverviewPage({ params }: { params: Promise<{ netwo
             label: "近期控制面联系",
             value: summary.recent,
             suffix: `/ ${summary.active}`,
-            detail: "近 2 分钟有心跳，不代表隧道在线",
+            detail: "近 2 分钟内有心跳",
             href: routes.machines(),
           },
           {
             label: "配置确认",
             value: summary.receipt.current,
             suffix: `/ ${summary.active}`,
-            detail: `已校验并保存 r${revision}，不代表已生效`,
+            detail: `Agent 已保存 r${revision}`,
             meter: { value: summary.receipt.current, max: summary.active },
             href: routes.machines(),
           },
@@ -207,7 +207,6 @@ export default async function OverviewPage({ params }: { params: Promise<{ netwo
         <div className="grid items-start gap-6 lg:grid-cols-[minmax(0,1fr)_22rem]">
           <Panel
             title="最近联系的节点"
-            description="按控制面最后联系时间排列"
             actions={
               <Link href={routes.machines()} className={buttonVariants({ variant: "ghost", size: "sm" })}>
                 全部节点
@@ -257,7 +256,7 @@ export default async function OverviewPage({ params }: { params: Promise<{ netwo
                     <CheckIcon className="size-3.5" />
                   </span>
                   <p className="text-xs leading-relaxed text-muted-foreground">
-                    访问授权与路由有效，所有节点已确认当前配置，近期都有控制面联系。这里只检查控制面数据，不代表隧道或流量状态。
+                    授权与路由有效，节点都已确认当前配置并保持控制面联系。
                   </p>
                 </div>
               ) : (
@@ -283,8 +282,8 @@ export default async function OverviewPage({ params }: { params: Promise<{ netwo
               <QuickLink href={routes.topology({}, "flow-check")} label="检查两个节点之间的访问与路径" />
               <QuickLink href={routes.diagnostics()} label="按问题打开诊断工作台" />
               <QuickLink href={routes.dns()} label="DNS 名称与解析设置" />
-              <p className="px-2 pt-1 pb-1.5 text-[0.6875rem] leading-relaxed text-muted-foreground">
-                Mesh 流量、吞吐与端到端路径测量尚未上报；邻居探测 RTT 在拓扑与节点连接页查看。
+              <p className="px-2 pt-1 pb-1.5 text-xs leading-relaxed text-muted-foreground">
+                流量与吞吐：未测量。
               </p>
             </Panel>
           </div>

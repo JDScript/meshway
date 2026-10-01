@@ -108,7 +108,7 @@ test("tagged endpoint access, JSONC drafts, first-match and CAS cross the real s
       await page.getByRole("button", { name: "规则", exact: true }).click();
       await expect(page.getByTestId("access-text-invalid")).toBeVisible();
       await expect(page.getByTestId("access-save")).toBeDisabled();
-      await page.getByRole("link", { name: "诊断", exact: true }).first().click();
+      await page.getByRole("navigation", { name: "控制台" }).getByRole("link", { name: "诊断工作台", exact: true }).click();
       await expect(page).toHaveURL(ui.at("/diagnostics")); await page.goBack();
       await expect(page).toHaveURL(ui.at("/access"));
       await expect(page.getByTestId("access-text-invalid")).toBeVisible();

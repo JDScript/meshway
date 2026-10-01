@@ -31,18 +31,17 @@ export function NodeDnsPanel({ node, network }: { node: NodeSummary; network: No
           {!network.data.dns.enabled ? <p data-testid="node-dns-disabled" className="text-muted-foreground">DNS 已关闭，不发布节点记录；以下仅是身份推导名称。</p> : node.revoked_at !== null ? <p className="text-muted-foreground">节点已撤销，不发布其 DNS 记录；以下仅是身份推导名称。</p> : null}
           {name ? (
             <div className="flex min-w-0 flex-col gap-1.5">
-              <span className="text-muted-foreground">完整 ID canonical FQDN</span>
+              <span className="text-muted-foreground">完整名称</span>
               <div className="flex min-w-0 items-start gap-2">
                 <code data-testid="node-dns-canonical" className="min-w-0 flex-1 font-mono break-all">{name}</code>
                 <CopyButton value={name} label="复制完整 DNS FQDN" iconOnly variant="ghost" />
               </div>
             </div>
           ) : <p className="text-destructive">节点 ID 或已保存 zone 不满足 DNS 名称格式，未生成查询命令。</p>}
-          <p className="text-muted-foreground">可读 alias 需 controller 对全部活动节点做 IDNA 规范化与唯一性检查；本页只显示完整身份名，不推断 alias。</p>
           {publishedIntent && dig ? <DnsCommand value={dig} label="复制节点 DNS 查询命令" testId="node-dns-query-command" /> : null}
         </>
       )}
-      <p className="text-muted-foreground">本地 DNS listener 与系统 resolver 状态未知。查询示例需 agent 显式配置 <code className="font-mono">--dns-listen 127.0.0.1:5353</code>，在其所在环境执行；DNS 答复不证明隧道连通或访问授权。</p>
+      <p className="text-muted-foreground">本地 DNS listener 与系统 resolver 状态未知。查询示例需 agent 配置 <code className="font-mono">--dns-listen 127.0.0.1:5353</code>，在节点所在环境执行。</p>
       <DnsDocsLinks />
     </Panel>
   )

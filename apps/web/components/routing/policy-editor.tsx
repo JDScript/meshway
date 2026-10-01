@@ -634,7 +634,7 @@ export function PolicyEditor({
                 {!textValid ? <Badge variant="destructive">{policyDoc.problems.length} 个问题</Badge> : null}
               </span>
             }
-            description="与图形视图是同一份草稿。文本有效时图形视图随之更新；无效时不会被覆盖，也不能保存。"
+            description="与图形视图共用同一份草稿；无效文本不会被覆盖，也不能保存。"
             actions={<Segmented size="sm" aria-label="编辑方式" value={view} onValueChange={setView} options={viewOptions} />}
           >
             <JsoncPane
@@ -665,7 +665,6 @@ export function PolicyEditor({
                 </span>
               </span>
             }
-            description="自上而下匹配，第一条命中的规则生效。"
             actions={
               <>
                 <Segmented size="sm" aria-label="编辑方式" value={view} onValueChange={setView} options={viewOptions} />
@@ -762,7 +761,7 @@ export function PolicyEditor({
               <Badge variant="outline">草稿</Badge>
             </span>
           }
-          description="用当前草稿和一条假设流量让 controller 编译决策，不会保存。"
+          description="用当前草稿试算一条流量，不会保存。"
           bodyClassName="flex flex-col gap-4 p-4"
         >
           <FlowForm nodes={nodes} flow={flow} onFlowChange={setFlow} disabled={locked} />

@@ -50,6 +50,7 @@ export function NetworkSwitcher({ networks, controllerHost }: { networks: Networ
   const [error, setError] = useState<string | null>(null)
   const [creating, setCreating] = useState(false)
   const label = name ?? "网络"
+  const prefix = networks.ok ? networks.networks.find((network) => network.networkId === networkId)?.ipv4Prefix : undefined
 
   const open = (target: string) => {
     if (target === networkId) return
@@ -66,19 +67,22 @@ export function NetworkSwitcher({ networks, controllerHost }: { networks: Networ
       <DropdownMenu>
         <DropdownMenuTrigger
           aria-label="当前网络"
-          className="flex h-8 min-w-0 shrink items-center gap-2 rounded-md px-2 text-left text-[0.8125rem] outline-none hover:bg-accent focus-visible:ring-2 focus-visible:ring-ring/40 aria-expanded:bg-accent"
+          className="flex w-full min-w-0 items-center gap-2.5 rounded-lg border border-sidebar-border bg-background/60 p-1.5 pr-2 text-left shadow-xs outline-none transition-colors hover:bg-sidebar-accent focus-visible:ring-2 focus-visible:ring-sidebar-ring aria-expanded:bg-sidebar-accent group-data-[collapsible=icon]:size-8 group-data-[collapsible=icon]:border-0 group-data-[collapsible=icon]:bg-transparent group-data-[collapsible=icon]:p-0 group-data-[collapsible=icon]:shadow-none dark:bg-white/[0.03]"
         >
           <span
             aria-hidden="true"
-            className="flex size-5 shrink-0 items-center justify-center rounded bg-brand/15 text-[0.6875rem] font-semibold text-brand"
+            className="flex size-8 shrink-0 items-center justify-center rounded-md bg-brand/15 text-[0.8125rem] font-semibold text-brand"
           >
             {label.slice(0, 1).toUpperCase()}
           </span>
-          <span className="min-w-0 truncate font-medium sm:max-w-56">{label}</span>
-          {!networks.ok || error ? <CircleAlertIcon className="size-3.5 text-destructive" aria-hidden="true" /> : null}
-          <ChevronsUpDownIcon className="size-3.5 shrink-0 text-muted-foreground" aria-hidden="true" />
+          <span className="flex min-w-0 flex-1 flex-col group-data-[collapsible=icon]:hidden">
+            <span className="truncate text-[0.875rem] leading-5 font-medium">{label}</span>
+            <span className="truncate font-mono text-[0.6875rem] leading-4 text-muted-foreground">{prefix ?? "网络"}</span>
+          </span>
+          {!networks.ok || error ? <CircleAlertIcon className="size-3.5 shrink-0 text-destructive group-data-[collapsible=icon]:hidden" aria-hidden="true" /> : null}
+          <ChevronsUpDownIcon className="size-4 shrink-0 text-muted-foreground group-data-[collapsible=icon]:hidden" aria-hidden="true" />
         </DropdownMenuTrigger>
-        <DropdownMenuContent align="start" sideOffset={6} className="w-72">
+        <DropdownMenuContent align="start" sideOffset={6} className="w-(--anchor-width) min-w-64">
           <DropdownMenuGroup>
             <DropdownMenuLabel>网络</DropdownMenuLabel>
             {networks.ok ? (

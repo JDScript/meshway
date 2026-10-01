@@ -31,7 +31,7 @@ export default async function MachinesPage({
     <PageBody>
       <PageHeader
         title="节点"
-        description="加入这张网络的服务器与设备。名称、Mesh 地址、标签和配置确认都来自 controller；「控制面联系」不代表隧道在线。"
+        description="加入这张网络的服务器与设备。"
         meta={nodes.ok ? <span>读取于 {formatClock(nodes.fetchedAt)}</span> : null}
         actions={
           <>

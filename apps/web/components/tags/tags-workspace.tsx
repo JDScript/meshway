@@ -168,7 +168,7 @@ export function TagsWorkspace({
         <Panel
           data-testid="tag-catalog"
           title="标签目录"
-          description="访问规则用 tag:名称 引用一组节点。删除前需先移除节点上的标签和规则中的引用。"
+          description="删除前需先移除节点上的标签和规则中的引用。"
           bodyClassName="flex flex-col"
         >
           {catalog.length === 0 ? (
@@ -303,7 +303,7 @@ export function TagsWorkspace({
         <Panel
           data-testid="tag-assignments"
           title="节点标签"
-          description="为每个已注册节点选择所属标签；未发布公钥的节点也可以加入标签。"
+          description="为每个已注册节点选择所属标签。"
           bodyClassName="flex flex-col"
         >
           {active.length === 0 ? (

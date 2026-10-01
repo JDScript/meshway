@@ -19,7 +19,7 @@ export default async function SettingsPage({ params }: { params: Promise<{ netwo
       <DnsHashForward href={routes.dns()} />
       <PageHeader
         title="网络设置"
-        description="这张网络的名称、稳定 ID 与地址前缀。成员、访问控制与 DNS 都按网络隔离。"
+        description="名称、稳定 ID 与地址前缀。"
         meta={network.ok ? <span>读取于 {formatClock(network.fetchedAt)}</span> : null}
       />
       {network.ok ? (

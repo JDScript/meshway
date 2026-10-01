@@ -1,5 +1,6 @@
 import type { ComponentProps, ReactNode } from "react"
 
+import { Hint } from "@/components/common/hint"
 import { cn } from "@/lib/utils"
 
 /**
@@ -64,8 +65,10 @@ export function Field({
       )}
     >
       <dt className="flex flex-col gap-0.5 pt-px text-xs text-muted-foreground">
-        {label}
-        {hint ? <span className="text-[0.6875rem] leading-snug text-muted-foreground/80">{hint}</span> : null}
+        <span className="inline-flex items-center gap-1">
+          {label}
+          {hint ? <Hint label={typeof label === "string" ? label : "字段"}>{hint}</Hint> : null}
+        </span>
       </dt>
       <dd className="min-w-0 text-[0.8125rem]">{children}</dd>
     </div>

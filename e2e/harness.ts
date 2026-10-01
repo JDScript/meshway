@@ -90,18 +90,33 @@ export async function consoleAt(webUrl: string, base: string, admin: string) {
   };
 }
 
-/** The page body's content column lines up with the shell header at every width. */
+/** Sidebar width on desktop (≥ 768px); on mobile the sidebar is a drawer. */
+export const SIDEBAR_WIDTH = 240;
+
+/** Expected page gutter inside a main column of `inset` px at a viewport `width` px wide. */
+export function consoleGutter(width: number, inset: number): number {
+  return width < 768 ? 16 : Math.max(32, (inset - 1216) / 2 + 32);
+}
+
+/**
+ * The page body's content column lines up with the top bar at every width:
+ * the sidebar toggle on the left, the global actions on the right.
+ */
 export async function contentAlignment(page: Page) {
   return page.evaluate(() => {
     const header = document.querySelector('[data-slot="page-header"]');
-    const brand = document.querySelector('header a[aria-label="Meshway 概览"]');
-    const account = document.querySelector('header [aria-label="账户菜单"]');
-    if (!header || !brand || !account) throw new Error("Missing console shell");
+    const inset = document.querySelector('[data-slot="sidebar-inset"]');
+    const toggle = document.querySelector('[data-slot="console-topbar"] [data-sidebar="trigger"]');
+    const actions = document.querySelector('[data-slot="console-topbar-actions"]');
+    if (!header || !inset || !toggle || !actions) throw new Error("Missing console shell");
     const h = header.getBoundingClientRect();
+    const i = inset.getBoundingClientRect();
+    // The ghost toggle sits 6px outside the column so its icon lines up with the text.
     return {
-      left: Math.round(h.left - brand.getBoundingClientRect().left),
-      right: Math.round(account.getBoundingClientRect().right - h.right),
-      gutter: Math.round(h.left),
+      left: Math.round(h.left - toggle.getBoundingClientRect().left - 6),
+      right: Math.round(actions.getBoundingClientRect().right - h.right),
+      gutter: Math.round(h.left - i.left),
+      inset: Math.round(i.width),
       overflow: document.documentElement.scrollWidth > innerWidth,
     };
   });

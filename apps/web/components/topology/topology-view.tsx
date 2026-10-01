@@ -366,7 +366,7 @@ export function TopologyView({
           </div>
         </Panel>
 
-        <Panel title="邻接列表" description="拓扑图的文字版本：按已保存连接配置列出节点对，以及两端各自的报告。">
+        <Panel title="邻接列表" description="按已保存连接配置列出节点对与两端各自的报告。">
           {observation ? (
             <AdjacencyList
               adjacencies={observation.adjacencies}
@@ -521,7 +521,7 @@ export function TopologyView({
               {!snapshot.valid ? <Badge variant="destructive">策略无效</Badge> : null}
             </span>
           }
-          description="Controller 按当前已保存的访问授权与路由策略判断一条假设流量。是计划，不是 trace。"
+          description="按已保存的访问授权与路由规划一条流量；结果是规划，不是实测。"
           bodyClassName="flex flex-col gap-4 p-4"
         >
           <FlowForm nodes={nodes} flow={flow} onFlowChange={setFlow} disabled={pending} />

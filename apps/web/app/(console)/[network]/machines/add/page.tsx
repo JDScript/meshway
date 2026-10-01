@@ -18,11 +18,7 @@ export default async function AddMachinePage({ params }: { params: Promise<{ net
       <PageHeader
         back={{ href: routes.machines(), label: "全部节点" }}
         title="添加节点"
-        description={
-          network.ok
-            ? `加入网络「${network.data.name}」。服务器、电脑和手机是同一种节点，路径上的职责由策略与可达性决定。`
-            : "服务器、电脑和手机是同一种节点，路径上的职责由策略与可达性决定。"
-        }
+        description={network.ok ? `加入网络「${network.data.name}」。` : undefined}
       />
       <AddNode />
     </PageBody>

@@ -28,7 +28,7 @@ export default async function TagsPage({
     <PageBody>
       <PageHeader
         title="标签"
-        description="管理员维护的节点分组。访问授权以 tag:名称 引用；成员变化随网络配置版本生效。"
+        description="管理员维护的节点分组，供访问授权以 tag:名称 引用。"
       />
       {!tags.ok ? (
         <ControllerUnavailable url={controllerUrl()} error={tags.error} />

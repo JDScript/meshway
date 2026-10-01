@@ -16,7 +16,7 @@ export function DnsCommand({ value, label, testId }: { value: string; label: str
 export function DnsStatusCommand() {
   return (
     <div className="flex min-w-0 flex-col gap-2">
-      <p className="text-xs text-muted-foreground">在要查询的 agent 所在环境执行，复用该节点现有的 <code className="font-mono">--state</code> 路径；替换下例占位符。</p>
+      <p className="text-xs text-muted-foreground">在节点所在环境执行，替换为该节点现有的 <code className="font-mono">--state</code> 路径。</p>
       <DnsCommand value={DNS_STATUS_COMMAND} label="复制 DNS status 命令模板" testId="dns-status-command" />
     </div>
   )

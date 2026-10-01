@@ -192,11 +192,6 @@
   }
 }
 
-/* Pages under a section tab strip start closer to it. */
-[data-section-tabs] + .console-page {
-  padding-top: 1.25rem;
-}
-
 /* In-flow height reserves the full bar at the end of the editor. Sticky keeps
    actions reachable while scrolling, without a fixed overlay spacer. */
 .draft-action-bar {

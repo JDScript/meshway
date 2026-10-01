@@ -1,3 +1,4 @@
+import { cookies } from "next/headers"
 import type { ReactNode } from "react"
 
 import { ConsoleShell } from "@/components/shell/console-shell"
@@ -20,7 +21,9 @@ export default async function NetworkLayout({
   children: ReactNode
   params: Promise<{ network: string }>
 }) {
-  const scope = await requireNetwork(params)
+  const [scope, jar] = await Promise.all([requireNetwork(params), cookies()])
+  // Written by the sidebar itself; only a layout preference.
+  const sidebarOpen = jar.get("sidebar_state")?.value !== "false"
   const networks: NetworkChoices = scope.networks.ok
     ? {
         ok: true,
@@ -33,7 +36,7 @@ export default async function NetworkLayout({
     : { ok: false, error: scope.networks.error }
 
   return (
-    <ConsoleShell networkId={scope.networkId} networks={networks} controllerHost={hostOf(controllerUrl())}>
+    <ConsoleShell networkId={scope.networkId} networks={networks} controllerHost={hostOf(controllerUrl())} sidebarOpen={sidebarOpen}>
       {children}
     </ConsoleShell>
   )

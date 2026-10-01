@@ -31,7 +31,7 @@ export default async function TopologyPage({
     <PageBody>
       <PageHeader
         title="拓扑与流量检查"
-        description="节点 agent 自报的已认证邻接、已保存的连接意图，以及按已保存策略编译的规划路径。规划不是实测 trace。"
+        description="Agent 上报的邻接，以及按已保存策略规划的路径。"
       />
       {!policy.ok ? (
         <ControllerUnavailable url={controllerUrl()} error={policy.error} />

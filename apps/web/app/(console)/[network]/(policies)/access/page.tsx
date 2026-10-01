@@ -32,7 +32,7 @@ export default async function AccessPage({
     <PageBody>
       <PageHeader
         title="访问授权"
-        description="决定哪些节点之间可以访问：按节点、标签或 * 选择来源与目标，有序首条命中，其余流量走默认动作。走哪条路径由「路由」决定。"
+        description="哪些节点之间可以访问。规则自上而下首条命中，其余流量走默认动作。"
         meta={access.ok ? <span>读取于 {formatClock(access.fetchedAt)}</span> : null}
       />
       {failed !== null || !access.ok || !connections.ok || !tags.ok ? (

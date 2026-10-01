@@ -17,7 +17,7 @@ export default async function DnsPage({ params }: { params: Promise<{ network: s
     <PageBody>
       <PageHeader
         title="DNS"
-        description="节点名称解析：每个节点在本网络 zone 下有稳定的完整名称，可读别名在不重名时发布。这里保存的是控制意图，节点上的解析服务需显式启用。"
+        description="节点在本网络 zone 下的名称与解析设置。"
         meta={network.ok ? <span>读取于 {formatClock(network.fetchedAt)}</span> : null}
       />
       {network.ok ? (

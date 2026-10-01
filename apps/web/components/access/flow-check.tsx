@@ -27,8 +27,7 @@ export function FlowCheck({ nodes, baseRevision, dirty }: {
   return (
     <Panel
       data-testid="access-flow-check"
-      title={<span className="flex flex-wrap items-center gap-2">检查已保存的授权<Badge variant="outline">编辑基础 r{baseRevision}</Badge></span>}
-      description="在网络拓扑中统一查看端点授权、路由选择、逐跳邻接与执行条件。"
+      title={<span className="flex flex-wrap items-center gap-2">检查访问<Badge variant="outline" className="font-normal">已保存 r{baseRevision}</Badge></span>}
       bodyClassName="flex flex-col gap-4 p-4"
     >
       <div className="grid gap-3 sm:grid-cols-2">
@@ -45,7 +44,7 @@ export function FlowCheck({ nodes, baseRevision, dirty }: {
         在拓扑中检查流量<ArrowUpRightIcon data-icon="inline-end" />
       </Link>
       <p className={dirty ? "text-xs text-warning" : "text-xs text-muted-foreground"}>
-        {dirty ? "未保存的草稿不参与检查；草稿会保留，返回后可继续编辑。" : "检查使用 controller 当前已保存的配置，是计划，不是 trace。"}
+        {dirty ? "未保存的草稿不参与检查；草稿会保留。" : "按已保存的配置规划，不是实测。"}
       </p>
     </Panel>
   )

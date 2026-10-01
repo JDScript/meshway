@@ -18,7 +18,7 @@ export default async function DiagnosticsPage({ params }: { params: Promise<{ ne
     <PageBody>
       <PageHeader
         title="诊断工作台"
-        description="选择源节点与目标节点，按问题检查：已保存的授权与路径、运行邻接、DNS 与底层网络。每项都标明数据来源。"
+        description="选择源与目标节点，按问题逐项检查；每项标明数据来源。"
       />
       <ConnectivityWorkbench nodes={nodes} network={network} discoveries={discoveries} />
     </PageBody>
