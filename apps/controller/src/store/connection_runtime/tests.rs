@@ -634,7 +634,7 @@ fn v3_to_v4_preserves_every_existing_sql_value_and_schema1_payload_bytes() {
             .connection
             .pragma_query_value(None, "user_version", |row| row.get::<_, u32>(0))
             .unwrap(),
-        9
+        10
     );
     assert!(reopened.connection_runtimes().unwrap().nodes.is_empty());
     assert!(matches!(

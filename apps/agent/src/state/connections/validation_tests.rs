@@ -120,7 +120,6 @@ fn scoped_projection_accepts_owned_listener_and_direct_peer_grants_only() {
         |p| p.listeners[0].advertised_endpoints[0].host = "[::1]".into(),
         |p| p.listeners[0].advertised_endpoints[0].host = "::ffff:0.0.0.0".into(),
         |p| p.listeners[0].advertised_endpoints[0].port = 0,
-        |p| p.listeners[0].advertised_endpoints.clear(),
         |p| p.listeners[0].credential_ref = Some("../../other-node-secret".into()),
         |p| p.listeners[0].credential_ref = None,
         |p| p.outgoing[0].credential_ref = None,

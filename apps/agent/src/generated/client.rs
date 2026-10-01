@@ -370,6 +370,21 @@ pub enum GetAgentDnsApiError {
     Status422(ErrorResponse),
     Status500(ErrorResponse),
 }
+///Typed error responses for `getAgentManagedConnections`. One variant per declared non-2xx response.
+#[derive(Debug, Clone)]
+pub enum GetAgentManagedConnectionsApiError {
+    Status401(ErrorResponse),
+    Status403(ErrorResponse),
+    Status500(ErrorResponse),
+}
+///Typed error responses for `getAgentManagedDataplane`. One variant per declared non-2xx response.
+#[derive(Debug, Clone)]
+pub enum GetAgentManagedDataplaneApiError {
+    Status401(ErrorResponse),
+    Status403(ErrorResponse),
+    Status422(ErrorResponse),
+    Status500(ErrorResponse),
+}
 ///Typed error responses for `getConnectionRuntimeEpoch`. One variant per declared non-2xx response.
 #[derive(Debug, Clone)]
 pub enum GetConnectionRuntimeEpochApiError {
@@ -395,6 +410,17 @@ pub enum PublishConnectionIdentityApiError {
     Status401(ErrorResponse),
     Status403(ErrorResponse),
     Status409(ErrorResponse),
+    Status413(ErrorResponse),
+    Status415(ErrorResponse),
+    Status422(ErrorResponse),
+    Status500(ErrorResponse),
+}
+///Typed error responses for `publishManagedTransportCapabilities`. One variant per declared non-2xx response.
+#[derive(Debug, Clone)]
+pub enum PublishManagedTransportCapabilitiesApiError {
+    Status400(ErrorResponse),
+    Status401(ErrorResponse),
+    Status403(ErrorResponse),
     Status413(ErrorResponse),
     Status415(ErrorResponse),
     Status422(ErrorResponse),
@@ -1661,6 +1687,231 @@ impl HttpClient {
             }))
         }
     }
+    /// `GET /api/v1/agent/managed-connections`
+    pub async fn get_agent_managed_connections(
+        &self,
+    ) -> Result<AgentManagedConnectionsSnapshot, ApiOpError<GetAgentManagedConnectionsApiError>>
+    {
+        let request_url = format!("{}{}", self.base_url, "/api/v1/agent/managed-connections");
+        let mut req = self.http_client.get(request_url);
+        if let Some(api_key) = &self.api_key {
+            req = req.bearer_auth(api_key);
+        }
+        for (name, value) in &self.custom_headers {
+            if !name.eq_ignore_ascii_case("accept") {
+                req = req.header(name, value);
+            }
+        }
+        req = req.header(reqwest::header::ACCEPT, "application/json");
+        let response = req.send().await?;
+        let status = response.status();
+        let status_code = status.as_u16();
+        let headers = response.headers().clone();
+        // Meshway acts on HTTP rejection immediately; error bodies are not consumed.
+        if !status.is_success() {
+            return Err(ApiOpError::Api(ApiError {
+                status: status_code,
+                headers,
+                body: String::new(),
+                raw_body: Vec::new(),
+                typed: None,
+                parse_error: None,
+            }));
+        }
+        let body_bytes =
+            __read_bounded_response_body(response, self.max_response_body_bytes).await?;
+        let raw_body = body_bytes;
+        let body_text = String::from_utf8_lossy(&raw_body).into_owned();
+        if false || status_code == 200u16 {
+            match serde_json::from_str(&body_text) {
+                Ok(body) => Ok(body),
+                Err(e) => Err(ApiOpError::Api(ApiError {
+                    status: status_code,
+                    headers: headers,
+                    body: body_text,
+                    raw_body,
+                    typed: None,
+                    parse_error: Some(format!("failed to deserialize 2xx response body: {}", e)),
+                })),
+            }
+        } else if status.is_success() {
+            Err(ApiOpError::Api(ApiError {
+                status: status_code,
+                headers,
+                body: body_text,
+                raw_body,
+                typed: None,
+                parse_error: Some(format!(
+                    "unexpected successful status {}; generated return type selects `{}`",
+                    status_code, "200",
+                )),
+            }))
+        } else {
+            let typed: Option<GetAgentManagedConnectionsApiError>;
+            let parse_error: Option<String>;
+            match status_code {
+                401u16 => match serde_json::from_str::<ErrorResponse>(&body_text) {
+                    Ok(v) => {
+                        typed = Some(GetAgentManagedConnectionsApiError::Status401(v));
+                        parse_error = None;
+                    }
+                    Err(e) => {
+                        typed = None;
+                        parse_error = Some(e.to_string());
+                    }
+                },
+                403u16 => match serde_json::from_str::<ErrorResponse>(&body_text) {
+                    Ok(v) => {
+                        typed = Some(GetAgentManagedConnectionsApiError::Status403(v));
+                        parse_error = None;
+                    }
+                    Err(e) => {
+                        typed = None;
+                        parse_error = Some(e.to_string());
+                    }
+                },
+                500u16 => match serde_json::from_str::<ErrorResponse>(&body_text) {
+                    Ok(v) => {
+                        typed = Some(GetAgentManagedConnectionsApiError::Status500(v));
+                        parse_error = None;
+                    }
+                    Err(e) => {
+                        typed = None;
+                        parse_error = Some(e.to_string());
+                    }
+                },
+                _ => {
+                    typed = None;
+                    parse_error = None;
+                }
+            }
+            Err(ApiOpError::Api(ApiError {
+                status: status_code,
+                headers,
+                body: body_text,
+                raw_body,
+                typed,
+                parse_error,
+            }))
+        }
+    }
+    /// `GET /api/v1/agent/managed-dataplane`
+    pub async fn get_agent_managed_dataplane(
+        &self,
+    ) -> Result<AgentManagedDataplaneSnapshot, ApiOpError<GetAgentManagedDataplaneApiError>> {
+        let request_url = format!("{}{}", self.base_url, "/api/v1/agent/managed-dataplane");
+        let mut req = self.http_client.get(request_url);
+        if let Some(api_key) = &self.api_key {
+            req = req.bearer_auth(api_key);
+        }
+        for (name, value) in &self.custom_headers {
+            if !name.eq_ignore_ascii_case("accept") {
+                req = req.header(name, value);
+            }
+        }
+        req = req.header(reqwest::header::ACCEPT, "application/json");
+        let response = req.send().await?;
+        let status = response.status();
+        let status_code = status.as_u16();
+        let headers = response.headers().clone();
+        // Meshway acts on HTTP rejection immediately; error bodies are not consumed.
+        if !status.is_success() {
+            return Err(ApiOpError::Api(ApiError {
+                status: status_code,
+                headers,
+                body: String::new(),
+                raw_body: Vec::new(),
+                typed: None,
+                parse_error: None,
+            }));
+        }
+        let body_bytes =
+            __read_bounded_response_body(response, self.max_response_body_bytes).await?;
+        let raw_body = body_bytes;
+        let body_text = String::from_utf8_lossy(&raw_body).into_owned();
+        if false || status_code == 200u16 {
+            match serde_json::from_str(&body_text) {
+                Ok(body) => Ok(body),
+                Err(e) => Err(ApiOpError::Api(ApiError {
+                    status: status_code,
+                    headers: headers,
+                    body: body_text,
+                    raw_body,
+                    typed: None,
+                    parse_error: Some(format!("failed to deserialize 2xx response body: {}", e)),
+                })),
+            }
+        } else if status.is_success() {
+            Err(ApiOpError::Api(ApiError {
+                status: status_code,
+                headers,
+                body: body_text,
+                raw_body,
+                typed: None,
+                parse_error: Some(format!(
+                    "unexpected successful status {}; generated return type selects `{}`",
+                    status_code, "200",
+                )),
+            }))
+        } else {
+            let typed: Option<GetAgentManagedDataplaneApiError>;
+            let parse_error: Option<String>;
+            match status_code {
+                401u16 => match serde_json::from_str::<ErrorResponse>(&body_text) {
+                    Ok(v) => {
+                        typed = Some(GetAgentManagedDataplaneApiError::Status401(v));
+                        parse_error = None;
+                    }
+                    Err(e) => {
+                        typed = None;
+                        parse_error = Some(e.to_string());
+                    }
+                },
+                403u16 => match serde_json::from_str::<ErrorResponse>(&body_text) {
+                    Ok(v) => {
+                        typed = Some(GetAgentManagedDataplaneApiError::Status403(v));
+                        parse_error = None;
+                    }
+                    Err(e) => {
+                        typed = None;
+                        parse_error = Some(e.to_string());
+                    }
+                },
+                422u16 => match serde_json::from_str::<ErrorResponse>(&body_text) {
+                    Ok(v) => {
+                        typed = Some(GetAgentManagedDataplaneApiError::Status422(v));
+                        parse_error = None;
+                    }
+                    Err(e) => {
+                        typed = None;
+                        parse_error = Some(e.to_string());
+                    }
+                },
+                500u16 => match serde_json::from_str::<ErrorResponse>(&body_text) {
+                    Ok(v) => {
+                        typed = Some(GetAgentManagedDataplaneApiError::Status500(v));
+                        parse_error = None;
+                    }
+                    Err(e) => {
+                        typed = None;
+                        parse_error = Some(e.to_string());
+                    }
+                },
+                _ => {
+                    typed = None;
+                    parse_error = None;
+                }
+            }
+            Err(ApiOpError::Api(ApiError {
+                status: status_code,
+                headers,
+                body: body_text,
+                raw_body,
+                typed,
+                parse_error,
+            }))
+        }
+    }
     /// `GET /api/v1/agent/connections/runtime`
     pub async fn get_connection_runtime_epoch(
         &self,
@@ -2060,6 +2311,163 @@ impl HttpClient {
                 500u16 => match serde_json::from_str::<ErrorResponse>(&body_text) {
                     Ok(v) => {
                         typed = Some(PublishConnectionIdentityApiError::Status500(v));
+                        parse_error = None;
+                    }
+                    Err(e) => {
+                        typed = None;
+                        parse_error = Some(e.to_string());
+                    }
+                },
+                _ => {
+                    typed = None;
+                    parse_error = None;
+                }
+            }
+            Err(ApiOpError::Api(ApiError {
+                status: status_code,
+                headers,
+                body: body_text,
+                raw_body,
+                typed,
+                parse_error,
+            }))
+        }
+    }
+    /// `POST /api/v1/agent/managed-transport-capabilities`
+    pub async fn publish_managed_transport_capabilities(
+        &self,
+        request: PublishManagedTransportCapabilitiesRequest,
+    ) -> Result<
+        PublishManagedTransportCapabilitiesResponse,
+        ApiOpError<PublishManagedTransportCapabilitiesApiError>,
+    > {
+        let request_url = format!(
+            "{}{}",
+            self.base_url, "/api/v1/agent/managed-transport-capabilities"
+        );
+        let mut req = self.http_client.post(request_url);
+        req = req
+            .body(serde_json::to_vec(&request).map_err(HttpError::serialization_error)?)
+            .header("content-type", "application/json");
+        if let Some(api_key) = &self.api_key {
+            req = req.bearer_auth(api_key);
+        }
+        for (name, value) in &self.custom_headers {
+            if !name.eq_ignore_ascii_case("accept") {
+                req = req.header(name, value);
+            }
+        }
+        req = req.header(reqwest::header::ACCEPT, "application/json");
+        let response = req.send().await?;
+        let status = response.status();
+        let status_code = status.as_u16();
+        let headers = response.headers().clone();
+        // Meshway acts on HTTP rejection immediately; error bodies are not consumed.
+        if !status.is_success() {
+            return Err(ApiOpError::Api(ApiError {
+                status: status_code,
+                headers,
+                body: String::new(),
+                raw_body: Vec::new(),
+                typed: None,
+                parse_error: None,
+            }));
+        }
+        let body_bytes =
+            __read_bounded_response_body(response, self.max_response_body_bytes).await?;
+        let raw_body = body_bytes;
+        let body_text = String::from_utf8_lossy(&raw_body).into_owned();
+        if false || status_code == 200u16 {
+            match serde_json::from_str(&body_text) {
+                Ok(body) => Ok(body),
+                Err(e) => Err(ApiOpError::Api(ApiError {
+                    status: status_code,
+                    headers: headers,
+                    body: body_text,
+                    raw_body,
+                    typed: None,
+                    parse_error: Some(format!("failed to deserialize 2xx response body: {}", e)),
+                })),
+            }
+        } else if status.is_success() {
+            Err(ApiOpError::Api(ApiError {
+                status: status_code,
+                headers,
+                body: body_text,
+                raw_body,
+                typed: None,
+                parse_error: Some(format!(
+                    "unexpected successful status {}; generated return type selects `{}`",
+                    status_code, "200",
+                )),
+            }))
+        } else {
+            let typed: Option<PublishManagedTransportCapabilitiesApiError>;
+            let parse_error: Option<String>;
+            match status_code {
+                400u16 => match serde_json::from_str::<ErrorResponse>(&body_text) {
+                    Ok(v) => {
+                        typed = Some(PublishManagedTransportCapabilitiesApiError::Status400(v));
+                        parse_error = None;
+                    }
+                    Err(e) => {
+                        typed = None;
+                        parse_error = Some(e.to_string());
+                    }
+                },
+                401u16 => match serde_json::from_str::<ErrorResponse>(&body_text) {
+                    Ok(v) => {
+                        typed = Some(PublishManagedTransportCapabilitiesApiError::Status401(v));
+                        parse_error = None;
+                    }
+                    Err(e) => {
+                        typed = None;
+                        parse_error = Some(e.to_string());
+                    }
+                },
+                403u16 => match serde_json::from_str::<ErrorResponse>(&body_text) {
+                    Ok(v) => {
+                        typed = Some(PublishManagedTransportCapabilitiesApiError::Status403(v));
+                        parse_error = None;
+                    }
+                    Err(e) => {
+                        typed = None;
+                        parse_error = Some(e.to_string());
+                    }
+                },
+                413u16 => match serde_json::from_str::<ErrorResponse>(&body_text) {
+                    Ok(v) => {
+                        typed = Some(PublishManagedTransportCapabilitiesApiError::Status413(v));
+                        parse_error = None;
+                    }
+                    Err(e) => {
+                        typed = None;
+                        parse_error = Some(e.to_string());
+                    }
+                },
+                415u16 => match serde_json::from_str::<ErrorResponse>(&body_text) {
+                    Ok(v) => {
+                        typed = Some(PublishManagedTransportCapabilitiesApiError::Status415(v));
+                        parse_error = None;
+                    }
+                    Err(e) => {
+                        typed = None;
+                        parse_error = Some(e.to_string());
+                    }
+                },
+                422u16 => match serde_json::from_str::<ErrorResponse>(&body_text) {
+                    Ok(v) => {
+                        typed = Some(PublishManagedTransportCapabilitiesApiError::Status422(v));
+                        parse_error = None;
+                    }
+                    Err(e) => {
+                        typed = None;
+                        parse_error = Some(e.to_string());
+                    }
+                },
+                500u16 => match serde_json::from_str::<ErrorResponse>(&body_text) {
+                    Ok(v) => {
+                        typed = Some(PublishManagedTransportCapabilitiesApiError::Status500(v));
                         parse_error = None;
                     }
                     Err(e) => {

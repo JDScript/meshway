@@ -13,6 +13,10 @@ argon2 = "0.5.3"
 getrandom.workspace = true
 sha2.workspace = true
 zeroize = "1.8"
+chacha20poly1305 = "0.10"
+rcgen = { version = "0.14", default-features = false, features = ["pem", "ring"] }
+rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12"] }
+rustls-pemfile = "2.2"
 axum.workspace = true
 chrono.workspace = true
 clap.workspace = true

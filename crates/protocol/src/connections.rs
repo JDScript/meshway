@@ -125,7 +125,7 @@ pub struct ConnectionListener {
     pub node_id: String,
     pub transport: ConnectionTransport,
     pub bind: String,
-    #[schema(min_items = 1, max_items = 16)]
+    #[schema(max_items = 16)]
     pub advertised_endpoints: Vec<ConnectionEndpoint>,
     #[schema(
         required = true,

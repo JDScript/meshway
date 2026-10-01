@@ -132,7 +132,6 @@ pub(super) fn validate(
             || bind.port() == 0
             || !usable_ip(bind.ip(), true)
             || bind.to_string() != listener.bind
-            || listener.advertised_endpoints.is_empty()
             || listener.advertised_endpoints.len() > 16
             || !valid_profile(listener.transport, listener.credential_ref.as_deref())
             || listeners.insert(&listener.id, listener).is_some()

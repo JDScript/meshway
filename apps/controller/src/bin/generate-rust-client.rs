@@ -12,7 +12,7 @@ mod required_nullable;
 #[path = "generate-rust-client/status_first.rs"]
 mod status_first;
 
-const OPERATIONS: [&str; 14] = [
+const OPERATIONS: [&str; 17] = [
     "enrollAgent",
     "exchangeDevice",
     "heartbeatAgent",
@@ -27,6 +27,9 @@ const OPERATIONS: [&str; 14] = [
     "getConnectionRuntimeEpoch",
     "reportConnectionRuntime",
     "reportEndpointDiscovery",
+    "getAgentManagedConnections",
+    "getAgentManagedDataplane",
+    "publishManagedTransportCapabilities",
 ];
 
 #[derive(Parser)]
@@ -151,6 +154,29 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .ok_or("missing generated types")?;
     required_nullable::adapt(&document, &operations, &mut types.content)?;
     closed_objects::adapt(&document, &operations, &mut types.content)?;
+    // Generated models may carry credentials directly or through nested
+    // snapshots. Never derive Debug for HTTP DTOs; serialization is unchanged.
+    // Checked source adapter, rather than hand-editing generated artifacts.
+    if !types.content.contains("Debug") {
+        return Err("upstream DTO derives changed; review secret protection".into());
+    }
+    types.content = types.content.replace("Debug, ", "").replace(", Debug", "");
+    let names: Vec<_> = types
+        .content
+        .lines()
+        .filter_map(|line| {
+            line.strip_prefix("pub struct ")
+                .or_else(|| line.strip_prefix("pub enum "))
+                .and_then(|value| value.split_whitespace().next())
+                .map(str::to_owned)
+        })
+        .collect();
+    if names.is_empty() {
+        return Err("upstream DTO declarations changed; review secret protection".into());
+    }
+    for name in names {
+        types.content.push_str(&format!("\nimpl std::fmt::Debug for {name} {{ fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {{ f.write_str(\"{name}([REDACTED])\") }} }}\n"));
+    }
     generator.write_files(&result)?;
     Ok(())
 }

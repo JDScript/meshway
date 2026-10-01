@@ -83,6 +83,15 @@ function validators(document) {
     visiting.delete(name);
   }
   function emit(schema) {
+    if (schema.anyOf || schema.oneOf) {
+      keys(schema, ["anyOf", "oneOf"]);
+      const variants = schema.anyOf ?? schema.oneOf;
+      if (variants.length !== 2) throw new Error("Only nullable component unions are supported");
+      const value = variants.find(item => item.$ref);
+      const empty = variants.find(item => item.type === "null" && Object.keys(item).length === 1);
+      if (!value || !empty) throw new Error("Only component|null unions are supported");
+      return `${emit(value)}.nullable()`;
+    }
     if (schema.$ref) {
       keys(schema, ["$ref"]);
       const match = /^#\/components\/schemas\/([A-Za-z][A-Za-z0-9]*)$/.exec(schema.$ref);
@@ -107,8 +116,8 @@ function validators(document) {
           if (!Array.isArray(schema.enum) || !schema.enum.length || schema.enum.some(value => typeof value !== "string") || Object.keys(schema).some(key => !["type", "enum", "description", "title", "x-meshway-ref"].includes(key))) throw new Error("Only plain string enums are supported");
           return `z.enum(${JSON.stringify(schema.enum)})`;
         }
-        if (schema.format && schema.format !== "date-time") throw new Error(`Unsupported string format ${schema.format}`);
-        let code = schema.format ? "z.iso.datetime({ offset: true })" : "z.string()";
+        if (schema.format && !["date-time", "password"].includes(schema.format)) throw new Error(`Unsupported string format ${schema.format}`);
+        let code = schema.format === "date-time" ? "z.iso.datetime({ offset: true })" : "z.string()";
         for (const [key, operator] of [["minLength", ">="], ["maxLength", "<="]]) {
           if (schema[key] !== undefined) {
             if (!Number.isSafeInteger(schema[key]) || schema[key] < 0) throw new Error(`Invalid ${key}`);

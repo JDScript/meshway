@@ -92,6 +92,7 @@ impl TestStore {
     }
 
     pub fn downgrade_v8(&mut self) {
+        self.connection.execute_batch("DROP TABLE managed_enrollment_intents; DROP TABLE managed_transport_capabilities; DROP TABLE managed_listeners; DROP INDEX enrollment_tokens_network_id;").unwrap();
         let db = &mut self.inner.connection;
         db.pragma_update(None, "foreign_keys", false).unwrap();
         let tx = db.transaction().unwrap();

@@ -17,6 +17,7 @@ mod connections;
 mod endpoint_discovery;
 mod ipam;
 mod jsonc;
+mod managed_transports;
 mod network;
 mod networks;
 use networks::NetworkId;
@@ -30,6 +31,7 @@ pub(crate) struct Store {
     connection: Connection,
     _lock: File,
     discoveries: std::collections::BTreeMap<String, endpoint_discovery::StoredDiscovery>,
+    material_key: zeroize::Zeroizing<Vec<u8>>,
 }
 
 impl Store {
@@ -117,7 +119,7 @@ impl Store {
             File::open(path)?.sync_all()?;
         }
         let version: i64 = connection.pragma_query_value(None, "user_version", |row| row.get(0))?;
-        if !(1..=9).contains(&version) {
+        if !(1..=10).contains(&version) {
             return Err(Error::Configuration(
                 "unsupported or incomplete controller database schema",
             ));
@@ -144,7 +146,11 @@ impl Store {
             transaction.execute_batch("ALTER TABLE enrollment_tokens ADD COLUMN device_binding TEXT; PRAGMA user_version = 8;")?;
             transaction.commit()?;
         }
-        networks::upgrade(&mut connection)?;
+        if version < 9 {
+            networks::upgrade(&mut connection)?;
+        }
+        managed_transports::upgrade(&mut connection)?;
+        let material_key = managed_transports::key(path, &connection)?;
         networks::validate_integrity(&connection)?;
         networks::install_identity_guards(&connection)?;
         // Initialization flags still refer to the original network; never
@@ -155,6 +161,7 @@ impl Store {
             connection,
             _lock: lock,
             discoveries: Default::default(),
+            material_key,
         })
     }
 
@@ -312,6 +319,7 @@ impl Store {
             "UPDATE enrollment_tokens SET used_node_id = ?1, binding_hash = ?2 WHERE token_hash = ?3 AND used_node_id IS NULL AND network_id=?4",
             params![id, binding, digest(token), network.as_str()],
         )?;
+        managed_transports::enroll_initial(&transaction, network, token, &id, &self.material_key)?;
         configuration::bump(&transaction, network)?;
         configuration::ensure_publishable(&transaction, network)?;
         connections::ensure_publishable(&transaction, network)?;

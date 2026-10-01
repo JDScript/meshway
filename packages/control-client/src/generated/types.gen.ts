@@ -42,6 +42,20 @@ export type AgentDnsSnapshot = {
     payload: NodeDnsConfiguration;
 };
 
+export type AgentManagedConnectionsSnapshot = {
+    connections: AgentConnectionsSnapshot;
+    digest: string;
+    materials: Array<ManagedVlessMaterial>;
+    network_id: string;
+};
+
+export type AgentManagedDataplaneSnapshot = {
+    dataplane: AgentDataplaneSnapshot;
+    digest: string;
+    materials: Array<ManagedVlessMaterial>;
+    network_id: string;
+};
+
 /**
  * Also lets a pending local enrollment recover its server-assigned node ID.
  */
@@ -218,6 +232,14 @@ export type CreateEnrollmentTokenResponse = {
     token_id: string;
 };
 
+export type CreateManagedEnrollmentTokenRequest = {
+    expires_in_seconds: number;
+    /**
+     * Initial intent only: node_id MUST be empty and is bound by enrollment.
+     */
+    initial_listener: ManagedListenerSettings;
+};
+
 export type CreateNetworkRequest = {
     name: string;
 };
@@ -304,6 +326,62 @@ export type IncomingConnectionApproval = {
     listener_id: string;
     peer_node_id: string;
     transport: ConnectionTransport;
+};
+
+export type ManagedListenerSettings = {
+    /**
+     * Explicit announcement, not proof of reachability. Empty means no dial endpoint.
+     */
+    advertised_endpoints: Array<ConnectionEndpoint>;
+    bind_address: string;
+    bind_port: number;
+    enabled: boolean;
+    id: string;
+    node_id: string;
+    transport: ConnectionTransport;
+    vless: ManagedVlessSettings | null;
+};
+
+export type ManagedListenerSummary = {
+    certificate_sha256: string | null;
+    /**
+     * False is retained intent awaiting a compatible identity/capability report.
+     */
+    compiled_capability_available: boolean;
+    material_version: number;
+    settings: ManagedListenerSettings;
+};
+
+export type ManagedListenersSnapshot = {
+    listeners: Array<ManagedListenerSummary>;
+    revision: number;
+};
+
+/**
+ * No Debug: serialization is permitted only on the node-authenticated endpoint.
+ */
+export type ManagedVlessMaterial = {
+    certificate_pem: string;
+    certificate_sha256: string;
+    credential_ref: string;
+    listener_id: string;
+    /**
+     * Only listener owner receives this; dialers receive null.
+     */
+    private_key_pem: string | null;
+    settings: ManagedVlessSettings;
+    uuid: string;
+    version: number;
+};
+
+export type ManagedVlessSettings = {
+    /**
+     * Certificate name and client verification name, independent of HTTP Host.
+     */
+    server_name: string;
+    stream: VlessStreamTransport;
+    websocket_host: string | null;
+    websocket_path: string | null;
 };
 
 export type MeshAccessGrant = {
@@ -549,6 +627,14 @@ export type PublishConnectionIdentityResponse = {
     revision: number;
 };
 
+export type PublishManagedTransportCapabilitiesRequest = {
+    vless_streams: Array<VlessStreamTransport>;
+};
+
+export type PublishManagedTransportCapabilitiesResponse = {
+    revision: number;
+};
+
 export type ReportConnectionRuntimeRequest = {
     digest: string;
     epoch: number;
@@ -629,6 +715,11 @@ export type RoutingPolicy = {
 export type SaveConnectionsRequest = {
     configuration: ConnectionPlan;
     expected_revision: number;
+};
+
+export type SaveManagedListenerRequest = {
+    expected_revision: number;
+    settings: ManagedListenerSettings;
 };
 
 export type SaveMeshAccessRequest = {
@@ -719,6 +810,8 @@ export type UdpSocketDiscovery = {
     socket_id: number;
     source: EndpointDiscoverySource;
 };
+
+export type VlessStreamTransport = 'tcp' | 'websocket';
 
 export type PublishConnectionIdentityData = {
     body: PublishConnectionIdentityRequest;
@@ -1124,6 +1217,125 @@ export type GetAgentDnsResponses = {
 };
 
 export type GetAgentDnsResponse = GetAgentDnsResponses[keyof GetAgentDnsResponses];
+
+export type GetAgentManagedConnectionsData = {
+    body?: never;
+    path?: never;
+    query?: never;
+    url: '/api/v1/agent/managed-connections';
+};
+
+export type GetAgentManagedConnectionsErrors = {
+    /**
+     * Node required
+     */
+    401: ErrorResponse;
+    /**
+     * Node revoked
+     */
+    403: ErrorResponse;
+    /**
+     * Storage unavailable
+     */
+    500: ErrorResponse;
+};
+
+export type GetAgentManagedConnectionsError = GetAgentManagedConnectionsErrors[keyof GetAgentManagedConnectionsErrors];
+
+export type GetAgentManagedConnectionsResponses = {
+    /**
+     * Coherent node-only connection/material snapshot; listener keys only to owner
+     */
+    200: AgentManagedConnectionsSnapshot;
+};
+
+export type GetAgentManagedConnectionsResponse = GetAgentManagedConnectionsResponses[keyof GetAgentManagedConnectionsResponses];
+
+export type GetAgentManagedDataplaneData = {
+    body?: never;
+    path?: never;
+    query?: never;
+    url: '/api/v1/agent/managed-dataplane';
+};
+
+export type GetAgentManagedDataplaneErrors = {
+    /**
+     * Node required
+     */
+    401: ErrorResponse;
+    /**
+     * Node revoked
+     */
+    403: ErrorResponse;
+    /**
+     * Publication capacity exhausted
+     */
+    422: ErrorResponse;
+    /**
+     * Storage unavailable
+     */
+    500: ErrorResponse;
+};
+
+export type GetAgentManagedDataplaneError = GetAgentManagedDataplaneErrors[keyof GetAgentManagedDataplaneErrors];
+
+export type GetAgentManagedDataplaneResponses = {
+    /**
+     * Coherent policy, public keys, connections and node-only material snapshot
+     */
+    200: AgentManagedDataplaneSnapshot;
+};
+
+export type GetAgentManagedDataplaneResponse = GetAgentManagedDataplaneResponses[keyof GetAgentManagedDataplaneResponses];
+
+export type PublishManagedTransportCapabilitiesData = {
+    body: PublishManagedTransportCapabilitiesRequest;
+    path?: never;
+    query?: never;
+    url: '/api/v1/agent/managed-transport-capabilities';
+};
+
+export type PublishManagedTransportCapabilitiesErrors = {
+    /**
+     * Invalid capability report
+     */
+    400: ErrorResponse;
+    /**
+     * Node credential required
+     */
+    401: ErrorResponse;
+    /**
+     * Node revoked
+     */
+    403: ErrorResponse;
+    /**
+     * Body exceeds 32 KiB
+     */
+    413: ErrorResponse;
+    /**
+     * Expected JSON
+     */
+    415: ErrorResponse;
+    /**
+     * Publication capacity exhausted
+     */
+    422: ErrorResponse;
+    /**
+     * Storage unavailable
+     */
+    500: ErrorResponse;
+};
+
+export type PublishManagedTransportCapabilitiesError = PublishManagedTransportCapabilitiesErrors[keyof PublishManagedTransportCapabilitiesErrors];
+
+export type PublishManagedTransportCapabilitiesResponses = {
+    /**
+     * Compiled managed stream capabilities; not listener activation
+     */
+    200: PublishManagedTransportCapabilitiesResponse;
+};
+
+export type PublishManagedTransportCapabilitiesResponse2 = PublishManagedTransportCapabilitiesResponses[keyof PublishManagedTransportCapabilitiesResponses];
 
 export type GetAgentConfigurationData = {
     body?: never;
@@ -1837,6 +2049,147 @@ export type PreviewFlowResponses = {
 };
 
 export type PreviewFlowResponse2 = PreviewFlowResponses[keyof PreviewFlowResponses];
+
+export type CreateManagedEnrollmentTokenData = {
+    body: CreateManagedEnrollmentTokenRequest;
+    path: {
+        network_id: string;
+    };
+    query?: never;
+    url: '/api/v1/networks/{network_id}/managed-enrollment-tokens';
+};
+
+export type CreateManagedEnrollmentTokenErrors = {
+    /**
+     * Invalid JSON or TTL
+     */
+    400: ErrorResponse;
+    /**
+     * Administrator required
+     */
+    401: ErrorResponse;
+    /**
+     * Network not found
+     */
+    404: ErrorResponse;
+    /**
+     * Body exceeds 32 KiB
+     */
+    413: ErrorResponse;
+    /**
+     * Expected JSON
+     */
+    415: ErrorResponse;
+    /**
+     * Invalid listener intent
+     */
+    422: ErrorResponse;
+    /**
+     * Storage unavailable
+     */
+    500: ErrorResponse;
+};
+
+export type CreateManagedEnrollmentTokenError = CreateManagedEnrollmentTokenErrors[keyof CreateManagedEnrollmentTokenErrors];
+
+export type CreateManagedEnrollmentTokenResponses = {
+    /**
+     * One-time token bound to initial public listener intent; enrollment binds node atomically
+     */
+    200: CreateEnrollmentTokenResponse;
+};
+
+export type CreateManagedEnrollmentTokenResponse = CreateManagedEnrollmentTokenResponses[keyof CreateManagedEnrollmentTokenResponses];
+
+export type GetManagedListenersData = {
+    body?: never;
+    path: {
+        network_id: string;
+    };
+    query?: never;
+    url: '/api/v1/networks/{network_id}/managed-listeners';
+};
+
+export type GetManagedListenersErrors = {
+    /**
+     * Administrator required
+     */
+    401: ErrorResponse;
+    /**
+     * Network not found
+     */
+    404: ErrorResponse;
+    /**
+     * Storage unavailable
+     */
+    500: ErrorResponse;
+};
+
+export type GetManagedListenersError = GetManagedListenersErrors[keyof GetManagedListenersErrors];
+
+export type GetManagedListenersResponses = {
+    /**
+     * Public listener intent and material metadata only; not active or reachable
+     */
+    200: ManagedListenersSnapshot;
+};
+
+export type GetManagedListenersResponse = GetManagedListenersResponses[keyof GetManagedListenersResponses];
+
+export type SaveManagedListenerData = {
+    body: SaveManagedListenerRequest;
+    path: {
+        network_id: string;
+    };
+    query?: never;
+    url: '/api/v1/networks/{network_id}/managed-listeners';
+};
+
+export type SaveManagedListenerErrors = {
+    /**
+     * Invalid JSON
+     */
+    400: ErrorResponse;
+    /**
+     * Administrator required
+     */
+    401: ErrorResponse;
+    /**
+     * Network or node not found
+     */
+    404: ErrorResponse;
+    /**
+     * Stale revision or immutable owner/transport conflict
+     */
+    409: ErrorResponse;
+    /**
+     * Body exceeds 32 KiB
+     */
+    413: ErrorResponse;
+    /**
+     * Expected JSON
+     */
+    415: ErrorResponse;
+    /**
+     * Invalid settings or publication capacity
+     */
+    422: ErrorResponse;
+    /**
+     * Storage unavailable
+     */
+    500: ErrorResponse;
+};
+
+export type SaveManagedListenerError = SaveManagedListenerErrors[keyof SaveManagedListenerErrors];
+
+export type SaveManagedListenerResponses = {
+    /**
+     * CAS public settings save; secrets are generated and never returned here
+     */
+    200: ManagedListenersSnapshot;
+};
+
+export type SaveManagedListenerResponse = SaveManagedListenerResponses[keyof SaveManagedListenerResponses];
 
 export type GetNetworkData = {
     body?: never;
