@@ -197,11 +197,24 @@ fn plan(f: &Fixture) -> ExitPlan {
             source: "198.19.90.1".parse().unwrap(),
             path: f.path.clone(),
             return_path: f.path.iter().rev().cloned().collect(),
-            prefixes: vec![if f.defaults {
-                "0.0.0.0/0".parse().unwrap()
+            prefixes: if f.defaults && f.runtime.node_id == format!("{:064x}", 3) {
+                // Controller's route/authorization intersection: the public
+                // S.20 rule always uses E, so F may not carry that destination.
+                let host = u32::from(Ipv4Addr::new(172, 29, 233, 20));
+                (1..=32)
+                    .map(|length| {
+                        let bit = 1u32 << (32 - length);
+                        let network = (host & (u32::MAX << (32 - length))) ^ bit;
+                        Ipv4Net::new(Ipv4Addr::from(network), length).unwrap()
+                    })
+                    .collect()
             } else {
-                f.prefix.parse().unwrap()
-            }],
+                vec![if f.defaults {
+                    "0.0.0.0/0".parse().unwrap()
+                } else {
+                    f.prefix.parse().unwrap()
+                }]
+            },
         }]
     } else {
         vec![]
@@ -405,6 +418,14 @@ async fn serve() {
                         forged[20..22].copy_from_slice(&9001u16.to_be_bytes());forged[22..24].copy_from_slice(&9001u16.to_be_bytes());forged[24..26].copy_from_slice(&8u16.to_be_bytes());
                         runtime.send_packet(f.path.iter().rev().cloned().collect(),forged).await.unwrap();
                         std::fs::write(directory.join("unsolicited-sent"),b"sent").unwrap();
+                    }
+                    if directory.join("inject-wrong-exit").exists() {
+                        std::fs::remove_file(directory.join("inject-wrong-exit")).unwrap();
+                        let path=f.runtime.allowed_paths.iter().find(|p|p.first()==Some(&f.runtime.node_id) && p.last()==Some(&format!("{:064x}",3))).unwrap();
+                        let mut forged=crate::managed_dataplane::tests::packet("198.19.90.1",&std::env::var("MESHWAY_EXIT_TARGET").unwrap(),17);
+                        forged[20..22].copy_from_slice(&40000u16.to_be_bytes());forged[22..24].copy_from_slice(&9001u16.to_be_bytes());forged[24..26].copy_from_slice(&8u16.to_be_bytes());
+                        runtime.send_packet(path.clone(),forged).await.unwrap();
+                        std::fs::write(directory.join("wrong-exit-sent"),b"sent").unwrap();
                     }
                 },
             }

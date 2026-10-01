@@ -8,7 +8,7 @@
 
 - 每源节点表：规范 IPv4 prefix → 当前选中的完整 `source → mandatory via → exit` 路径，以及 `direct_prefixes`。**产品出口规则现为有序 first-match**（后续确认覆盖初始最长匹配定义）：controller/v3 编译器先做前序集合减法，消解 IP / rule-set 重叠，生成互不冲突的有效前缀，Agent 只对该等价输出做内核最长前缀匹配，不能把原始有序规则直接排序后安装。域名/IP跨条件重叠需要 P3c 可信解析上下文联合编译；被完全遮蔽规则由 controller 提示。Agent 不下载规则集。每节点输出上限 16384 IPv4前缀，超限明确失败，不能部分应用。
 - **最新确认以路由方案取代默认出口候选模型**：`ProfileCatalog { profiles, default_profile, locked, automatic }`，每个 `RoutingProfile { id, routes, direct_prefixes, fallback }` 是controller已编译的“公共规则 + 方案有序规则 + 兜底”的有效表。`ProfileFallback`区分出口、direct、不接管；后两者在无具体匹配时均继续本地网络。公共规则排最前、在每个方案的等价表中保留。`select_profile`只接受允许方案ID，不携带规则、listener、NAT等配置。选择无需新policy revision，但创建新的packet/flow运行代际；锁定和可选范围由控制面决定。主备只在方案已授权的完整路径内切换，不按包随机挑出口。
-- 每出口授权表：源节点身份、唯一 Mesh IPv4、完整正向路径、允许的外部前缀。回程路径明确编译为逆序路径，仅能传递状态型回包，不是一般反向 grant。中继同时持有两条精确路径，不能自行缩短。
+- 每出口授权表：源节点身份、唯一Mesh IPv4、完整正向路径、允许外部前缀的多行投影。相同源可有不同精确路径，地址/身份绑定须一致。目的前缀是**授权与所有允许方案的路径交集**，不是泛互联网grant原样复制：公共规则指定给E的目的地，F的授权表必须排除，防止已认证恶意客户端通过另一个已允许的出口绕路。回程路径明确编译为逆序，仅能传递状态回包。中继持有两条精确路径，不能自行缩短。
 - 表、端点公钥、承载配置、network、revision、lease 来自同一快照。P3a/P3c 必须在新 snapshot 的准备/原子激活流程接入；缓存旧出口表不能延长 lease。原型不在正常 Agent CLI 中启用，通过 ignored fixture 注入内部类型。
 - `ExitPlan::validate` 在绑定 Runtime 前检查身份、地址、完整路径、MTU、重复前缀与本地投影。外部内层地址不得指向 Mesh pool、loopback、link-local、multicast、保留广播/零地址；源必须与认证源节点绑定。**统一出口职责**覆盖离开 Mesh 到目标节点本地 LAN 或互联网的流量，不另做 subnet router。管理员在 Web 开启“可作为出口”后，编译计划才包含出口职责；设备不通告、不配置。LAN 前缀访问授权独立于泛“互联网”授权，controller 必须联合投影为 `ExitGrant.prefixes`，不能从默认 /0 推导对未授权 LAN 的访问。
 
@@ -67,6 +67,8 @@ LAN与互联网统一默认 masquerade（与 Tailscale subnet router默认SNAT�
 撤回顺序：先原子替换 nft table 为纯拒绝边界，再 `conntrack -D --mark <generation>` 清理；因此删除 conntrack 失败也不能继续旧流。仅删除授权源的五元组但保留 `established accept` 会允许抢跑重建，禁止这种顺序。既有 TCP 流被**数据面截断**，不是保证向两端发送 RST；应用可按自己的 TCP 超时退出。新流同样失败。退出成功状态必须包括清理结果，拒绝 nft 更新失败不能报告撤回完成。
 
 conntrack负责NAT、TCP状态、UDP timeout、ICMP echo association；不是用户身份授权，不保证应用层会话合法。NEW TCP必须是初始SYN（不能用内核tcp_loose的ACK重建绕过），UDP与ICMP echo request可创建状态；返回只允许ESTABLISHED，不启用helper/RELATED，减少FTP等扩权。拒绝fragments/options。mark是当前namespace内部边界，非跨主机可信标识；启动时拒绝已被占用的mark，不删除未认领状态。timeout继承内核设置；本原型不修改其sysctl，容量边界需后续设计。
+
+出口另有有界的“入向五元组→精确回程path”关联（4096条、出向请求闲置120秒过期），只有已认证且源/目的/完整路径均合法的请求才能创建；不能仅按源IP挑第一条grant作为回程，否则同一源到同一出口的多条允许路径会回错路。内核conntrack仍是状态/NAT边界；该关联只表达实际请求使用的逻辑路径，不授予反向发起权限。NAT防火墙目的前缀使用nft interval set（原子提交整表），避免每CIDR生成多个filter规则；当前出口grant前缀总预算16384，超限拒绝准备。
 
 SIGKILL 无法执行用户态 conntrack 删除；非持久 TUN 立即消失，保留的 forward Mesh drop 阻止存量回程与新流穿过。该等价截断必须实测，不把 conntrack entries 消失当唯一判据。重新激活必须清除旧 conntrack/旧标记，不沿用存量 NAT 映射。精确清理所有权后才允许另建 TUN。
 

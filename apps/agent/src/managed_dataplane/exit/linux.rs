@@ -608,17 +608,23 @@ impl ExitFirewall {
         let tun = &self.tun;
         let external = &self.external;
         let mut forwards = String::new();
-        for grant in &plan.grants {
-            for prefix in &grant.prefixes {
-                let common = format!(
-                    "iifname \"{tun}\" oifname \"{external}\" ip saddr {} ip daddr {prefix} ct mark {MARK}",
-                    grant.source
-                );
-                forwards.push_str(&format!("{common} ct state established accept;\n{common} ct state new ip protocol tcp tcp flags & (fin | syn | rst | ack) == syn accept;\n{common} ct state new ip protocol udp accept;\n{common} ct state new ip protocol icmp icmp type echo-request accept;\n"));
-            }
+        let mut sets = String::new();
+        for (index, grant) in plan.grants.iter().enumerate() {
+            let elements = grant
+                .prefixes
+                .iter()
+                .map(ToString::to_string)
+                .collect::<Vec<_>>()
+                .join(", ");
+            sets.push_str(&format!("set dest_{index} {{ type ipv4_addr; flags interval; auto-merge; elements = {{ {elements} }}; }}\n"));
+            let common = format!(
+                "iifname \"{tun}\" oifname \"{external}\" ip saddr {} ip daddr @dest_{index} ct mark {MARK}",
+                grant.source
+            );
+            forwards.push_str(&format!("{common} ct state established accept;\n{common} ct state new ip protocol tcp tcp flags & (fin | syn | rst | ack) == syn accept;\n{common} ct state new ip protocol udp accept;\n{common} ct state new ip protocol icmp icmp type echo-request accept;\n"));
         }
         let rules = format!(
-            "delete table inet {NFT}\ntable inet {NFT} {{\nchain prerouting {{ type filter hook prerouting priority -150; policy accept; iifname \"{tun}\" ct mark set {MARK}; }}\nchain input {{ type filter hook input priority -10; policy accept; iifname \"{tun}\" drop; }}\nchain forward {{ type filter hook forward priority -10; policy accept; {forwards} iifname \"{external}\" oifname \"{tun}\" ct mark {MARK} ct state established accept; iifname \"{tun}\" drop; oifname \"{tun}\" drop; oifname \"{external}\" drop; ip daddr {} drop; }}\nchain nat {{ type nat hook postrouting priority 100; policy accept; oifname \"{external}\" ct mark {MARK} masquerade; }}\n}}\n",
+            "delete table inet {NFT}\ntable inet {NFT} {{\n{sets}chain prerouting {{ type filter hook prerouting priority -150; policy accept; iifname \"{tun}\" ct mark set {MARK}; }}\nchain input {{ type filter hook input priority -10; policy accept; iifname \"{tun}\" drop; }}\nchain forward {{ type filter hook forward priority -10; policy accept; {forwards} iifname \"{external}\" oifname \"{tun}\" ct mark {MARK} ct state established accept; iifname \"{tun}\" drop; oifname \"{tun}\" drop; oifname \"{external}\" drop; ip daddr {} drop; }}\nchain nat {{ type nat hook postrouting priority 100; policy accept; oifname \"{external}\" ct mark {MARK} masquerade; }}\n}}\n",
             plan.mesh
         );
         command("nft", &["-f", "-"], Some(&rules), false).await?;

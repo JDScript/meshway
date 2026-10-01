@@ -82,6 +82,7 @@ pub(crate) struct ExitPlan {
     pub grants: Vec<ExitGrant>,
     mesh_admission: Option<meshway_dataplane::packet_io::Ipv4PacketPlan>,
     flows: Mutex<BTreeMap<Flow, Instant>>,
+    returns: Mutex<BTreeMap<Flow, (Vec<String>, Instant)>>,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
@@ -181,6 +182,7 @@ impl ExitPlan {
             grants,
             mesh_admission: None,
             flows: Mutex::default(),
+            returns: Mutex::default(),
         }
     }
 
@@ -341,6 +343,7 @@ impl ExitPlan {
             || !(576..=1400).contains(&self.mtu)
             || self.routes.len() + self.direct_prefixes.len() > 16384
             || self.grants.len() > 64
+            || self.grants.iter().map(|g| g.prefixes.len()).sum::<usize>() > 16384
         {
             return Err(invalid());
         }
@@ -411,17 +414,23 @@ impl ExitPlan {
                 }
             }
         }
-        let mut sources = BTreeSet::new();
-        let mut identities = BTreeSet::new();
+        let mut sources = BTreeMap::new();
+        let mut identities = BTreeMap::new();
+        let mut grant_paths = BTreeSet::new();
         for grant in &self.grants {
             if !self.mesh.contains(&grant.source)
                 || grant.source == self.local
-                || !sources.insert(grant.source)
-                || !identities.insert(grant.path.first())
+                || sources
+                    .insert(grant.source, grant.path.first())
+                    .is_some_and(|old| old != grant.path.first())
+                || identities
+                    .insert(grant.path.first(), grant.source)
+                    .is_some_and(|old| old != grant.source)
+                || !grant_paths.insert((grant.source, &grant.path))
                 || grant.path.last() != Some(&config.node_id)
                 || !valid_path(&grant.path, &grant.return_path)
                 || grant.prefixes.is_empty()
-                || grant.prefixes.len() > 128
+                || grant.prefixes.len() > 16384
                 || grant.prefixes.iter().any(|p| *p != p.trunc())
                 || grant.prefixes.iter().collect::<BTreeSet<_>>().len() != grant.prefixes.len()
             {
@@ -491,6 +500,28 @@ impl ExitPlan {
             .get(&flow.reverse())
             .is_some_and(|seen| seen.elapsed() < Duration::from_secs(120))
     }
+
+    fn remember_return(&self, flow: Flow, bytes: &[u8], grant: &ExitGrant) -> bool {
+        let now = Instant::now();
+        let mut returns = self
+            .returns
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        returns.retain(|_, (_, seen)| now.duration_since(*seen) < Duration::from_secs(120));
+        if let Some((path, seen)) = returns.get_mut(&flow) {
+            if *path != grant.return_path && !flow.opens(bytes) {
+                return false;
+            }
+            *path = grant.return_path.clone();
+            *seen = now;
+            return true;
+        }
+        if returns.len() >= 4096 || !flow.opens(bytes) {
+            return false;
+        }
+        returns.insert(flow, (grant.return_path.clone(), now));
+        true
+    }
 }
 
 impl Admission for ExitPlan {
@@ -511,10 +542,19 @@ impl Admission for ExitPlan {
         if !self.external(flow.source) || !flow.is_reply(bytes) {
             return None;
         }
+        let returns = self
+            .returns
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let (path, seen) = returns.get(&flow.reverse())?;
+        if seen.elapsed() >= Duration::from_secs(120) {
+            return None;
+        }
         self.grants
             .iter()
             .find(|grant| {
                 grant.source == flow.destination
+                    && grant.return_path == *path
                     && grant.prefixes.iter().any(|p| p.contains(&flow.source))
             })
             .map(|grant| &grant.return_path)
@@ -545,6 +585,7 @@ impl Admission for ExitPlan {
                 grant.path == packet.path
                     && grant.source == flow.source
                     && grant.prefixes.iter().any(|p| p.contains(&flow.destination))
+                    && self.remember_return(flow, &packet.payload, grant)
             })
     }
 }
@@ -826,5 +867,51 @@ mod tests {
             id: None,
         });
         assert!(default.validate(&config).is_err());
+    }
+
+    #[test]
+    fn exit_return_tracks_actual_authorized_forward_path_not_first_grant() {
+        let direct = vec!["c".into(), "e".into()];
+        let relayed = vec!["c".into(), "r".into(), "e".into()];
+        let grants = [direct.clone(), relayed.clone()]
+            .into_iter()
+            .map(|path: Vec<String>| ExitGrant {
+                source: "198.19.90.1".parse().unwrap(),
+                return_path: path.iter().rev().cloned().collect(),
+                path,
+                prefixes: vec!["203.0.113.0/24".parse().unwrap()],
+            })
+            .collect();
+        let p = ExitPlan::new(
+            "198.19.90.3".parse().unwrap(),
+            "198.19.90.0/24".parse().unwrap(),
+            1000,
+            vec![],
+            grants,
+        );
+        let reply = udp("203.0.113.9", "198.19.90.1", 443, 40000);
+        assert!(
+            p.outgoing(&reply).is_none(),
+            "no userspace ingress association"
+        );
+        assert!(p.incoming(&ReceivedPacket {
+            source: "c".into(),
+            path: relayed.clone(),
+            payload: udp("198.19.90.1", "203.0.113.9", 40000, 443)
+        }));
+        assert_eq!(
+            p.outgoing(&reply).unwrap(),
+            &relayed.into_iter().rev().collect::<Vec<_>>()
+        );
+        let other_reply = udp("203.0.113.9", "198.19.90.1", 443, 40001);
+        assert!(p.incoming(&ReceivedPacket {
+            source: "c".into(),
+            path: direct.clone(),
+            payload: udp("198.19.90.1", "203.0.113.9", 40001, 443)
+        }));
+        assert_eq!(
+            p.outgoing(&other_reply).unwrap(),
+            &direct.into_iter().rev().collect::<Vec<_>>()
+        );
     }
 }

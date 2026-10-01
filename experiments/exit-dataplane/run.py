@@ -338,6 +338,11 @@ def exercise(f, case):
             f.selection('mesh', accept=False)
             f.succeeds('172.29.233.21', '172.29.233.10')
         else:
+            before = f.read('S', 'udp.json')['received']
+            f.touch('C', 'inject-wrong-exit')
+            wait('authenticated public-route bypass attempt', lambda: f.exec('C', 'test', '-f', RUN + '/wrong-exit-sent', check=False).returncode == 0)
+            time.sleep(.5)
+            f.check('alternate allowed exit cannot bypass public destination path', f.read('S', 'udp.json')['received'] == before)
             name = f.flow(target='172.29.233.21')
             f.selection(other)
             f.flow_stopped(name)
