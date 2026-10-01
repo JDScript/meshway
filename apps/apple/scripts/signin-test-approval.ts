@@ -1,11 +1,13 @@
 // Test-only private IPC helper. stdout is captured by the Swift test, never
 // inherited by a terminal/log. The App itself never possesses admin authority.
 import { readFile } from "node:fs/promises";
-import { authorizeDevice, revokeNode } from "../../../packages/control-client/src/index.ts";
+import { authorizeDevice, listNetworks, revokeNode } from "../../../packages/control-client/src/index.ts";
 
 const [mode, controller, adminFile, value] = process.argv.slice(2);
 if (!controller || !adminFile || !value) throw new Error("Missing isolated test inputs");
 const admin = (await readFile(adminFile, "utf8")).trim();
+const networkId = (await listNetworks(controller, admin)).networks[0]?.network_id;
+if (!networkId) throw new Error("Isolated controller has no network");
 if (mode === "authorize") {
   const url = new URL(value);
   const required = (name: string): string => {
@@ -13,7 +15,7 @@ if (mode === "authorize") {
     if (!value) throw new Error("Missing authorization parameter");
     return value;
   };
-  const response = await authorizeDevice(controller, admin, {
+  const response = await authorizeDevice(controller, admin, networkId, {
     redirect_uri: required("redirect_uri"), code_challenge: required("code_challenge"),
     name: required("name"), agent_version: required("agent_version"),
   });
@@ -22,5 +24,5 @@ if (mode === "authorize") {
   callback.searchParams.set("code", response.code);
   process.stdout.write(callback.toString());
 } else if (mode === "revoke") {
-  await revokeNode(controller, admin, { node_id: value });
+  await revokeNode(controller, admin, networkId, { node_id: value });
 } else { throw new Error("Unknown test operation"); }

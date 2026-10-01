@@ -5,7 +5,7 @@ import { createHash, randomBytes, randomUUID } from "node:crypto";
 import { dirname, join, resolve } from "node:path";
 import { homedir, tmpdir } from "node:os";
 import { setTimeout as delay } from "node:timers/promises";
-import { authorizeDevice, exchangeDevice, getNetwork, listNodes, revokeNode, saveNetwork, setNodeCountry } from "../../../packages/control-client/src/index.ts";
+import { authorizeDevice, exchangeDevice, getNetwork, listNetworks, listNodes, revokeNode, saveNetwork, setNodeCountry } from "../../../packages/control-client/src/index.ts";
 import { executable, root, run, service, unusedPort } from "../../../e2e/harness.ts";
 
 const output = resolve(process.argv[2] ?? join(tmpdir(), "opencode/apple-ui-polish/round-1"));
@@ -61,14 +61,16 @@ try {
   });
   await web.ready(`${consoleURL}/login`, 200);
   const admin = (await readFile(join(data, "admin.token"), "utf8")).trim();
-  const network = await getNetwork(controllerURL, admin);
-  await saveNetwork(controllerURL, admin, { expected_revision: network.revision, name: network.name,
+  const networkId = (await listNetworks(controllerURL, admin)).networks[0]?.network_id;
+  if (!networkId) throw new Error("Isolated controller has no network");
+  const network = await getNetwork(controllerURL, admin, networkId);
+  await saveNetwork(controllerURL, admin, networkId, { expected_revision: network.revision, name: network.name,
     dns: { enabled: true, zone: "mesh.example", ttl_seconds: 60 } });
   const names = ["Atlas", "Home studio", "iPhone", "Office workstation — 東京", "Travel companion with a very long device name for truncation review"];
   for (const [index, name] of names.entries()) {
     const verifier = randomBytes(32).toString("base64url");
     const redirect = "meshway://enroll/callback";
-    const authorization = await authorizeDevice(controllerURL, admin, {
+    const authorization = await authorizeDevice(controllerURL, admin, networkId, {
       name, agent_version: "snapshot-review", redirect_uri: redirect,
       code_challenge: createHash("sha256").update(verifier).digest("base64url"),
     });
@@ -77,8 +79,8 @@ try {
       code_verifier: verifier, node_credential: randomBytes(32).toString("hex"),
     });
     if (index !== 2) {
-      const current = await getNetwork(controllerURL, admin);
-      await setNodeCountry(controllerURL, admin, { expected_revision: current.revision,
+      const current = await getNetwork(controllerURL, admin, networkId);
+      await setNodeCountry(controllerURL, admin, networkId, { expected_revision: current.revision,
         node_id: enrolled.node.id, country: ["US", "JP", "", "DE", "CA"][index] ?? "US" });
     }
   }
@@ -131,7 +133,7 @@ try {
       await waitFor(() => exists(join(ipc, "authorization-request")), "real device-flow request");
       const request = new URL(await readFile(join(ipc, "authorization-request"), "utf8"));
       const required = (name: string) => { const value = request.searchParams.get(name); if (!value) throw new Error("Missing device-flow parameter"); return value; };
-      const authorization = await authorizeDevice(controllerURL, admin, {
+      const authorization = await authorizeDevice(controllerURL, admin, networkId, {
         redirect_uri: required("redirect_uri"), code_challenge: required("code_challenge"),
         name: required("name"), agent_version: required("agent_version"),
       });
@@ -147,9 +149,9 @@ try {
       await command("search"); await capture("no-matches"); await command("search");
       await controller.stop(); await command("refresh"); await capture("error");
       controller = startController(); await controller.ready(`${controllerURL}/api/v1/overview`, 401);
-      const own = (await listNodes(controllerURL, admin)).nodes.find(node => node.name === "Zeyu’s MacBook Pro" && !node.revoked_at);
+      const own = (await listNodes(controllerURL, admin, networkId)).nodes.find(node => node.name === "Zeyu’s MacBook Pro" && !node.revoked_at);
       if (!own) throw new Error("App did not enroll a real node");
-      await revokeNode(controllerURL, admin, { node_id: own.id });
+      await revokeNode(controllerURL, admin, networkId, { node_id: own.id });
       await command("refresh"); await capture("revoked");
       await command("panel"); await capture("revoked-panel");
       await command("reset");

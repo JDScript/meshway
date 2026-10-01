@@ -12,6 +12,24 @@ use meshway_protocol::{
 };
 use tower::ServiceExt;
 
+async fn network_path(app: &axum::Router, admin: &str) -> String {
+    let response = app
+        .clone()
+        .oneshot(
+            Request::get("/api/v1/networks")
+                .header("authorization", format!("Bearer {admin}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 200);
+    let list: serde_json::Value =
+        serde_json::from_slice(&to_bytes(response.into_body(), 1 << 20).await.unwrap()).unwrap();
+    let id = list["networks"][0]["network_id"].as_str().unwrap();
+    format!("/api/v1/networks/{id}")
+}
+
 #[tokio::test]
 async fn real_controller_exchange_recovery_heartbeat_and_revocation() {
     use std::os::unix::fs::PermissionsExt;
@@ -24,6 +42,7 @@ async fn real_controller_exchange_recovery_heartbeat_and_revocation() {
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let server_url = format!("http://{}", listener.local_addr().unwrap());
     let server = tokio::spawn(axum::serve(listener, app.clone()).into_future());
+    let network = network_path(&app, &admin).await;
     let attempt = begin_authorization(server_url.clone(), "Mac".into(), "v1".into()).unwrap();
     let authorization = AuthorizeDeviceRequest {
         redirect_uri: DEVICE_CALLBACK_URI.into(),
@@ -34,7 +53,7 @@ async fn real_controller_exchange_recovery_heartbeat_and_revocation() {
     let response = app
         .clone()
         .oneshot(
-            Request::post("/api/v1/device-authorizations")
+            Request::post(format!("{network}/device-authorizations"))
                 .header("authorization", format!("Bearer {admin}"))
                 .header("content-type", "application/json")
                 .body(Body::from(serde_json::to_vec(&authorization).unwrap()))
@@ -91,7 +110,7 @@ async fn real_controller_exchange_recovery_heartbeat_and_revocation() {
     );
     let revoked = app
         .oneshot(
-            Request::post("/api/v1/nodes/revoke")
+            Request::post(format!("{network}/nodes/revoke"))
                 .header("authorization", format!("Bearer {admin}"))
                 .header("content-type", "application/json")
                 .body(Body::from(

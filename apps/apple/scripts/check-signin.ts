@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { spawn } from "node:child_process";
 import { setTimeout as delay } from "node:timers/promises";
-import { listNodes } from "../../../packages/control-client/src/index.ts";
+import { listNetworks, listNodes } from "../../../packages/control-client/src/index.ts";
 import { executable, root, run, service, unusedPort } from "../../../e2e/harness.ts";
 
 const directory = await mkdtemp(join(process.env.TMPDIR ?? tmpdir(), "meshway-apple-signin-"));
@@ -40,7 +40,9 @@ try {
   });
   process.stdout.write(result.stdout); process.stderr.write(result.stderr);
   const admin = (await readFile(adminFile, "utf8")).trim();
-  const nodes = (await listNodes(controllerURL, admin)).nodes;
+  const networkId = (await listNetworks(controllerURL, admin)).networks[0]?.network_id;
+  if (!networkId) throw new Error("Isolated controller has no network");
+  const nodes = (await listNodes(controllerURL, admin, networkId)).nodes;
   if (nodes.length !== 2 || !nodes.some(node => node.name === "Swift Keychain smoke" && node.revoked_at)
     || !nodes.some(node => node.name === "Swift inventory peer" && !node.revoked_at)) {
     throw new Error("Swift smoke did not leave the revoked self and real inventory peer");
