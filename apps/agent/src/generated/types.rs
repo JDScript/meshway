@@ -232,6 +232,32 @@ pub struct ConfigurationSnapshot {
     pub digest: String,
     pub payload: NodeConfiguration,
 }
+///Also lets a pending local enrollment recover its server-assigned node ID.
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct AgentNodeResponse {
+    pub node: NodeSummary,
+}
+///Durable control-plane identity. Last contact is not tunnel health.
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct NodeSummary {
+    ///Constraint: minimum=0, maximum=4294967295
+    pub acknowledged_revision: i64,
+    pub agent_version: String,
+    ///Constraint: minimum=1, maximum=4294967295
+    pub configuration_revision: i64,
+    #[serde(deserialize_with = "deserialize_required_nullable")]
+    pub country: Option<String>,
+    pub id: String,
+    pub last_seen: chrono::DateTime<chrono::Utc>,
+    pub mesh_ipv4: String,
+    pub mesh_ipv6: String,
+    pub name: String,
+    pub registered_at: chrono::DateTime<chrono::Utc>,
+    #[serde(deserialize_with = "deserialize_required_nullable")]
+    pub revoked_at: Option<chrono::DateTime<chrono::Utc>>,
+}
 #[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct NodeConfiguration {
@@ -419,32 +445,6 @@ pub struct MeshNode {
 pub struct MeshNetwork {
     pub ipv4_prefix: String,
     pub ipv6_prefix: String,
-}
-///Also lets a pending local enrollment recover its server-assigned node ID.
-#[derive(Debug, Clone, Deserialize, Serialize)]
-#[serde(deny_unknown_fields)]
-pub struct AgentNodeResponse {
-    pub node: NodeSummary,
-}
-///Durable control-plane identity. Last contact is not tunnel health.
-#[derive(Debug, Clone, Deserialize, Serialize)]
-#[serde(deny_unknown_fields)]
-pub struct NodeSummary {
-    ///Constraint: minimum=0, maximum=4294967295
-    pub acknowledged_revision: i64,
-    pub agent_version: String,
-    ///Constraint: minimum=1, maximum=4294967295
-    pub configuration_revision: i64,
-    #[serde(deserialize_with = "deserialize_required_nullable")]
-    pub country: Option<String>,
-    pub id: String,
-    pub last_seen: chrono::DateTime<chrono::Utc>,
-    pub mesh_ipv4: String,
-    pub mesh_ipv6: String,
-    pub name: String,
-    pub registered_at: chrono::DateTime<chrono::Utc>,
-    #[serde(deserialize_with = "deserialize_required_nullable")]
-    pub revoked_at: Option<chrono::DateTime<chrono::Utc>>,
 }
 #[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]

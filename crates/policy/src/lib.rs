@@ -7,6 +7,9 @@
 //! Rule order and mandatory hop order are preserved, including when a resolved
 //! path is invalid: preview fails closed rather than skipping a hop.
 
+pub mod access;
+pub use access::{compile_mesh_paths, validate_mesh_access};
+
 use std::collections::{BTreeMap, BTreeSet};
 use std::io;
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};

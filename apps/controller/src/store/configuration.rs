@@ -59,7 +59,7 @@ fn compare_revision(connection: &Connection, expected: u32) -> Result<(), Error>
     Ok(())
 }
 
-fn active_nodes(connection: &Connection) -> Result<Vec<MeshNode>, Error> {
+pub(super) fn active_nodes(connection: &Connection) -> Result<Vec<MeshNode>, Error> {
     Ok(connection.prepare("SELECT id, name, country, mesh_ipv4, mesh_ipv6 FROM nodes WHERE revoked_at IS NULL ORDER BY id")?
         .query_map([], |row| Ok(MeshNode { id: row.get(0)?, name: row.get(1)?, country: row.get(2)?, mesh_ipv4: row.get(3)?, mesh_ipv6: row.get(4)? }))?
         .collect::<Result<_, _>>()?)
@@ -101,7 +101,7 @@ pub(super) fn node_id(connection: &Connection, token: &str) -> Result<String, Er
     Ok(id)
 }
 
-fn snapshot(connection: &Connection, id: &str) -> Result<ConfigurationSnapshot, Error> {
+pub(super) fn snapshot(connection: &Connection, id: &str) -> Result<ConfigurationSnapshot, Error> {
     let mut nodes = active_nodes(connection)?;
     let network = ipam::network(connection)?;
     let policy = source_policy(connection)?;

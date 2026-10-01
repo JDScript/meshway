@@ -10,6 +10,8 @@ use meshway_protocol::{
 use serde_json::{Value, json};
 use tower::ServiceExt;
 
+#[path = "api/access.rs"]
+mod access;
 #[path = "api/connection_runtime.rs"]
 mod connection_runtime;
 

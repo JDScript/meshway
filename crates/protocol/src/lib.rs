@@ -1,10 +1,12 @@
 //! Authoritative wire DTOs and shared local credential/file primitives.
 
+pub mod access;
 pub mod config;
 pub mod connection_runtime;
 pub mod connections;
 pub mod local;
 pub mod routing;
+pub use access::*;
 pub use config::*;
 pub use connection_runtime::*;
 pub use connections::*;

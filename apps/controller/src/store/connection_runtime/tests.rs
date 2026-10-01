@@ -612,7 +612,7 @@ fn v3_to_v4_preserves_every_existing_sql_value_and_schema1_payload_bytes() {
     let before = serde_json::to_vec(&store.agent_connections(&token).unwrap()).unwrap();
     let rows = existing_rows(&store.connection);
     let admin_before = std::fs::read(dir.path().join("admin.token")).unwrap();
-    store.connection.execute_batch("DROP TABLE connection_runtime_reports; DROP TABLE connection_runtime_leases; PRAGMA user_version=3;").unwrap();
+    store.connection.execute_batch("DROP TABLE mesh_access_source; DROP TABLE connection_runtime_reports; DROP TABLE connection_runtime_leases; PRAGMA user_version=3;").unwrap();
     drop(store);
     let mut reopened = Store::open(dir.path(), &NetworkOptions::default()).unwrap();
     assert_eq!(existing_rows(&reopened.connection), rows);
@@ -629,7 +629,7 @@ fn v3_to_v4_preserves_every_existing_sql_value_and_schema1_payload_bytes() {
             .connection
             .pragma_query_value(None, "user_version", |row| row.get::<_, u32>(0))
             .unwrap(),
-        4
+        5
     );
     assert!(reopened.connection_runtimes().unwrap().nodes.is_empty());
     assert!(matches!(

@@ -12,7 +12,7 @@ mod tests;
 
 pub(super) fn upgrade(connection: &mut Connection) -> Result<(), Error> {
     let version: u32 = connection.pragma_query_value(None, "user_version", |row| row.get(0))?;
-    if version == 4 {
+    if (4..=5).contains(&version) {
         return Ok(());
     }
     if version != 3 {

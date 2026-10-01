@@ -6,6 +6,148 @@
     "version": "0.1.0"
   },
   "paths": {
+    "/api/v1/access": {
+      "get": {
+        "operationId": "getMeshAccess",
+        "responses": {
+          "200": {
+            "description": "Saved directional full-path IPv4 authorization and current diagnostics",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MeshAccessSnapshot"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Admin credential required",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Storage unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "adminBearer": []
+          }
+        ]
+      },
+      "post": {
+        "operationId": "saveMeshAccess",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SaveMeshAccessRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Global-CAS authorization save; all participants require bound public keys; adjacency need not exist",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MeshAccessSnapshot"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid JSON",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Admin credential required",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Stale global revision",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "Request exceeds 256 KiB",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "415": {
+            "description": "Expected application/json",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Invalid access, missing identity, or capacity exhausted (128 KiB source, 128 grants, 2..8 nodes per path, 64 projected union identities)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Storage unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "adminBearer": []
+          }
+        ]
+      }
+    },
     "/api/v1/agent/connection-identity": {
       "post": {
         "operationId": "publishConnectionIdentity",
@@ -530,6 +672,68 @@
           },
           "422": {
             "description": "Invalid instance ID, missing bound identity or epoch exhausted",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Storage unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "nodeBearer": []
+          }
+        ]
+      }
+    },
+    "/api/v1/agent/dataplane": {
+      "get": {
+        "operationId": "getAgentDataplane",
+        "responses": {
+          "200": {
+            "description": "Atomic node-scoped configuration, adjacency, directional access and public identities. Invalid access projects empty grants. No runtime or ACK assertion.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AgentDataplaneSnapshot"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Node credential required",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Node revoked",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Fails closed above 64 union identities or 2 MiB snapshot",
             "content": {
               "application/json": {
                 "schema": {
@@ -1818,6 +2022,25 @@
         },
         "additionalProperties": false
       },
+      "AgentDataplaneSnapshot": {
+        "type": "object",
+        "required": [
+          "digest",
+          "payload"
+        ],
+        "properties": {
+          "digest": {
+            "type": "string",
+            "maxLength": 64,
+            "minLength": 64,
+            "pattern": "^[0-9a-f]{64}$"
+          },
+          "payload": {
+            "$ref": "#/components/schemas/NodeDataplane"
+          }
+        },
+        "additionalProperties": false
+      },
       "AgentNodeResponse": {
         "type": "object",
         "description": "Also lets a pending local enrollment recover its server-assigned node ID.",
@@ -2664,6 +2887,78 @@
         },
         "additionalProperties": false
       },
+      "MeshAccessGrant": {
+        "type": "object",
+        "required": [
+          "id",
+          "path"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "maxLength": 64,
+            "minLength": 1,
+            "pattern": "^[A-Za-z0-9._-]+$"
+          },
+          "path": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Exact ordered full path, including source and destination. No repeats.",
+            "maxItems": 8,
+            "minItems": 2
+          }
+        },
+        "additionalProperties": false
+      },
+      "MeshAccessPolicy": {
+        "type": "object",
+        "required": [
+          "grants"
+        ],
+        "properties": {
+          "grants": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/MeshAccessGrant"
+            },
+            "maxItems": 128
+          }
+        },
+        "additionalProperties": false
+      },
+      "MeshAccessSnapshot": {
+        "type": "object",
+        "required": [
+          "revision",
+          "policy",
+          "valid",
+          "diagnostics"
+        ],
+        "properties": {
+          "diagnostics": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/PolicyDiagnostic"
+            }
+          },
+          "policy": {
+            "$ref": "#/components/schemas/MeshAccessPolicy",
+            "description": "Saved source intent, retained even when references become invalid."
+          },
+          "revision": {
+            "type": "integer",
+            "format": "int64",
+            "maximum": 4294967295,
+            "minimum": 1
+          },
+          "valid": {
+            "type": "boolean"
+          }
+        },
+        "additionalProperties": false
+      },
       "MeshNetwork": {
         "type": "object",
         "required": [
@@ -2842,6 +3137,57 @@
           },
           "valid": {
             "type": "boolean"
+          }
+        },
+        "additionalProperties": false
+      },
+      "NodeDataplane": {
+        "type": "object",
+        "description": "One coherent global revision, projected for the authenticated node. Identities\ninclude E2E peers and confer no carrier adjacency. Invalid access withdraws\nevery effective grant. More than 64 union identities rejects the request.",
+        "required": [
+          "schema_version",
+          "revision",
+          "node_id",
+          "configuration",
+          "connections",
+          "access_policy",
+          "access_valid",
+          "identities"
+        ],
+        "properties": {
+          "access_policy": {
+            "$ref": "#/components/schemas/MeshAccessPolicy"
+          },
+          "access_valid": {
+            "type": "boolean"
+          },
+          "configuration": {
+            "$ref": "#/components/schemas/NodeConfiguration"
+          },
+          "connections": {
+            "$ref": "#/components/schemas/NodeConnections"
+          },
+          "identities": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ConnectionPeer"
+            },
+            "maxItems": 64
+          },
+          "node_id": {
+            "type": "string"
+          },
+          "revision": {
+            "type": "integer",
+            "format": "int64",
+            "maximum": 4294967295,
+            "minimum": 1
+          },
+          "schema_version": {
+            "type": "integer",
+            "format": "int64",
+            "maximum": 1,
+            "minimum": 1
           }
         },
         "additionalProperties": false
@@ -3416,6 +3762,25 @@
             "format": "int64",
             "maximum": 4294967295,
             "minimum": 1
+          }
+        },
+        "additionalProperties": false
+      },
+      "SaveMeshAccessRequest": {
+        "type": "object",
+        "required": [
+          "expected_revision",
+          "policy"
+        ],
+        "properties": {
+          "expected_revision": {
+            "type": "integer",
+            "format": "int64",
+            "maximum": 4294967295,
+            "minimum": 1
+          },
+          "policy": {
+            "$ref": "#/components/schemas/MeshAccessPolicy"
           }
         },
         "additionalProperties": false

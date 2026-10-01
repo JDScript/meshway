@@ -437,7 +437,7 @@ fn additive_v2_to_v3_preserves_configuration_credentials_addresses_and_receipts(
             .connection
             .pragma_query_value(None, "user_version", |row| row.get::<_, u32>(0))
             .unwrap(),
-        4
+        5
     );
     assert_eq!(
         std::fs::read(dir.path().join("admin.token")).unwrap(),

@@ -30,6 +30,11 @@ export type AgentConnectionsSnapshot = {
     payload: NodeConnections;
 };
 
+export type AgentDataplaneSnapshot = {
+    digest: string;
+    payload: NodeDataplane;
+};
+
 /**
  * Also lets a pending local enrollment recover its server-assigned node ID.
  */
@@ -252,6 +257,28 @@ export type IncomingConnectionApproval = {
     transport: ConnectionTransport;
 };
 
+export type MeshAccessGrant = {
+    id: string;
+    /**
+     * Exact ordered full path, including source and destination. No repeats.
+     */
+    path: Array<string>;
+};
+
+export type MeshAccessPolicy = {
+    grants: Array<MeshAccessGrant>;
+};
+
+export type MeshAccessSnapshot = {
+    diagnostics: Array<PolicyDiagnostic>;
+    /**
+     * Saved source intent, retained even when references become invalid.
+     */
+    policy: MeshAccessPolicy;
+    revision: number;
+    valid: boolean;
+};
+
 export type MeshNetwork = {
     ipv4_prefix: string;
     ipv6_prefix: string;
@@ -291,6 +318,22 @@ export type NodeConnections = {
     revision: number;
     schema_version: number;
     valid: boolean;
+};
+
+/**
+ * One coherent global revision, projected for the authenticated node. Identities
+ * include E2E peers and confer no carrier adjacency. Invalid access withdraws
+ * every effective grant. More than 64 union identities rejects the request.
+ */
+export type NodeDataplane = {
+    access_policy: MeshAccessPolicy;
+    access_valid: boolean;
+    configuration: NodeConfiguration;
+    connections: NodeConnections;
+    identities: Array<ConnectionPeer>;
+    node_id: string;
+    revision: number;
+    schema_version: number;
 };
 
 export type NodeList = {
@@ -430,6 +473,11 @@ export type SaveConnectionsRequest = {
     expected_revision: number;
 };
 
+export type SaveMeshAccessRequest = {
+    expected_revision: number;
+    policy: MeshAccessPolicy;
+};
+
 export type SavePolicyRequest = {
     expected_revision: number;
     policy: RoutingPolicy;
@@ -448,6 +496,84 @@ export type SourceSelector = {
     countries: Array<string>;
     node_ids: Array<string>;
 };
+
+export type GetMeshAccessData = {
+    body?: never;
+    path?: never;
+    query?: never;
+    url: '/api/v1/access';
+};
+
+export type GetMeshAccessErrors = {
+    /**
+     * Admin credential required
+     */
+    401: ErrorResponse;
+    /**
+     * Storage unavailable
+     */
+    500: ErrorResponse;
+};
+
+export type GetMeshAccessError = GetMeshAccessErrors[keyof GetMeshAccessErrors];
+
+export type GetMeshAccessResponses = {
+    /**
+     * Saved directional full-path IPv4 authorization and current diagnostics
+     */
+    200: MeshAccessSnapshot;
+};
+
+export type GetMeshAccessResponse = GetMeshAccessResponses[keyof GetMeshAccessResponses];
+
+export type SaveMeshAccessData = {
+    body: SaveMeshAccessRequest;
+    path?: never;
+    query?: never;
+    url: '/api/v1/access';
+};
+
+export type SaveMeshAccessErrors = {
+    /**
+     * Invalid JSON
+     */
+    400: ErrorResponse;
+    /**
+     * Admin credential required
+     */
+    401: ErrorResponse;
+    /**
+     * Stale global revision
+     */
+    409: ErrorResponse;
+    /**
+     * Request exceeds 256 KiB
+     */
+    413: ErrorResponse;
+    /**
+     * Expected application/json
+     */
+    415: ErrorResponse;
+    /**
+     * Invalid access, missing identity, or capacity exhausted (128 KiB source, 128 grants, 2..8 nodes per path, 64 projected union identities)
+     */
+    422: ErrorResponse;
+    /**
+     * Storage unavailable
+     */
+    500: ErrorResponse;
+};
+
+export type SaveMeshAccessError = SaveMeshAccessErrors[keyof SaveMeshAccessErrors];
+
+export type SaveMeshAccessResponses = {
+    /**
+     * Global-CAS authorization save; all participants require bound public keys; adjacency need not exist
+     */
+    200: MeshAccessSnapshot;
+};
+
+export type SaveMeshAccessResponse = SaveMeshAccessResponses[keyof SaveMeshAccessResponses];
 
 export type PublishConnectionIdentityData = {
     body: PublishConnectionIdentityRequest;
@@ -726,6 +852,43 @@ export type BeginConnectionRuntimeResponses = {
 };
 
 export type BeginConnectionRuntimeResponse2 = BeginConnectionRuntimeResponses[keyof BeginConnectionRuntimeResponses];
+
+export type GetAgentDataplaneData = {
+    body?: never;
+    path?: never;
+    query?: never;
+    url: '/api/v1/agent/dataplane';
+};
+
+export type GetAgentDataplaneErrors = {
+    /**
+     * Node credential required
+     */
+    401: ErrorResponse;
+    /**
+     * Node revoked
+     */
+    403: ErrorResponse;
+    /**
+     * Fails closed above 64 union identities or 2 MiB snapshot
+     */
+    422: ErrorResponse;
+    /**
+     * Storage unavailable
+     */
+    500: ErrorResponse;
+};
+
+export type GetAgentDataplaneError = GetAgentDataplaneErrors[keyof GetAgentDataplaneErrors];
+
+export type GetAgentDataplaneResponses = {
+    /**
+     * Atomic node-scoped configuration, adjacency, directional access and public identities. Invalid access projects empty grants. No runtime or ACK assertion.
+     */
+    200: AgentDataplaneSnapshot;
+};
+
+export type GetAgentDataplaneResponse = GetAgentDataplaneResponses[keyof GetAgentDataplaneResponses];
 
 export type GetAgentConfigurationData = {
     body?: never;

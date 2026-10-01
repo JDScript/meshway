@@ -97,31 +97,13 @@ export const zAgentConnectionsSnapshot = z.strictObject({
   "payload": zNodeConnections
 });
 
-export const zNodeSummary = z.strictObject({
-  "acknowledged_revision": z.int().gte(0).lte(4294967295),
-  "agent_version": z.string(),
-  "configuration_revision": z.int().gte(1).lte(4294967295),
-  "country": z.string().nullable(),
-  "id": z.string(),
-  "last_seen": z.iso.datetime({ offset: true }),
-  "mesh_ipv4": z.string(),
-  "mesh_ipv6": z.string(),
-  "name": z.string(),
-  "registered_at": z.iso.datetime({ offset: true }),
-  "revoked_at": z.iso.datetime({ offset: true }).nullable()
+export const zMeshAccessGrant = z.strictObject({
+  "id": z.string().refine(value => [...value].length >= 1, "minLength 1 Unicode code points").refine(value => [...value].length <= 64, "maxLength 64 Unicode code points").regex(new RegExp("^[A-Za-z0-9._-]+$", "u")),
+  "path": z.array(z.string()).min(2).max(8)
 });
 
-export const zAgentNodeResponse = z.strictObject({
-  "node": zNodeSummary
-});
-
-export const zBeginConnectionRuntimeRequest = z.strictObject({
-  "expected_epoch": z.int().gte(0).lte(4294967295),
-  "instance_id": z.string().refine(value => [...value].length >= 64, "minLength 64 Unicode code points").refine(value => [...value].length <= 64, "maxLength 64 Unicode code points").regex(new RegExp("^[0-9a-f]{64}$", "u"))
-});
-
-export const zBeginConnectionRuntimeResponse = z.strictObject({
-  "epoch": z.int().gte(1).lte(4294967295)
+export const zMeshAccessPolicy = z.strictObject({
+  "grants": z.array(zMeshAccessGrant).max(128)
 });
 
 export const zPolicyDiagnostic = z.strictObject({
@@ -189,6 +171,49 @@ export const zNodeConfiguration = z.strictObject({
   "revision": z.int().gte(1).lte(4294967295),
   "routing_policy": zRoutingPolicy,
   "schema_version": z.int().gte(1).lte(4294967295)
+});
+
+export const zNodeDataplane = z.strictObject({
+  "access_policy": zMeshAccessPolicy,
+  "access_valid": z.boolean(),
+  "configuration": zNodeConfiguration,
+  "connections": zNodeConnections,
+  "identities": z.array(zConnectionPeer).max(64),
+  "node_id": z.string(),
+  "revision": z.int().gte(1).lte(4294967295),
+  "schema_version": z.int().gte(1).lte(1)
+});
+
+export const zAgentDataplaneSnapshot = z.strictObject({
+  "digest": z.string().refine(value => [...value].length >= 64, "minLength 64 Unicode code points").refine(value => [...value].length <= 64, "maxLength 64 Unicode code points").regex(new RegExp("^[0-9a-f]{64}$", "u")),
+  "payload": zNodeDataplane
+});
+
+export const zNodeSummary = z.strictObject({
+  "acknowledged_revision": z.int().gte(0).lte(4294967295),
+  "agent_version": z.string(),
+  "configuration_revision": z.int().gte(1).lte(4294967295),
+  "country": z.string().nullable(),
+  "id": z.string(),
+  "last_seen": z.iso.datetime({ offset: true }),
+  "mesh_ipv4": z.string(),
+  "mesh_ipv6": z.string(),
+  "name": z.string(),
+  "registered_at": z.iso.datetime({ offset: true }),
+  "revoked_at": z.iso.datetime({ offset: true }).nullable()
+});
+
+export const zAgentNodeResponse = z.strictObject({
+  "node": zNodeSummary
+});
+
+export const zBeginConnectionRuntimeRequest = z.strictObject({
+  "expected_epoch": z.int().gte(0).lte(4294967295),
+  "instance_id": z.string().refine(value => [...value].length >= 64, "minLength 64 Unicode code points").refine(value => [...value].length <= 64, "maxLength 64 Unicode code points").regex(new RegExp("^[0-9a-f]{64}$", "u"))
+});
+
+export const zBeginConnectionRuntimeResponse = z.strictObject({
+  "epoch": z.int().gte(1).lte(4294967295)
 });
 
 export const zConfigurationSnapshot = z.strictObject({
@@ -309,6 +334,13 @@ export const zHeartbeatRequest = z.strictObject({
   "agent_version": z.string().refine(value => [...value].length >= 1, "minLength 1 Unicode code points").refine(value => [...value].length <= 64, "maxLength 64 Unicode code points").regex(new RegExp("[^\\u0009-\\u000D\\u0020\\u0085\\u00A0\\u1680\\u2000-\\u200A\\u2028\\u2029\\u202F\\u205F\\u3000]", "u"))
 });
 
+export const zMeshAccessSnapshot = z.strictObject({
+  "diagnostics": z.array(zPolicyDiagnostic),
+  "policy": zMeshAccessPolicy,
+  "revision": z.int().gte(1).lte(4294967295),
+  "valid": z.boolean()
+});
+
 export const zNodeList = z.strictObject({
   "nodes": z.array(zNodeSummary)
 });
@@ -390,6 +422,11 @@ export const zRevokeNodeResponse = z.strictObject({
 export const zSaveConnectionsRequest = z.strictObject({
   "configuration": zConnectionPlan,
   "expected_revision": z.int().gte(1).lte(4294967295)
+});
+
+export const zSaveMeshAccessRequest = z.strictObject({
+  "expected_revision": z.int().gte(1).lte(4294967295),
+  "policy": zMeshAccessPolicy
 });
 
 export const zSavePolicyRequest = z.strictObject({

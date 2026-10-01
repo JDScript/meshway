@@ -9,6 +9,7 @@ use rusqlite::{Connection, OptionalExtension, Row, TransactionBehavior, params};
 
 use crate::Error;
 
+mod access;
 mod configuration;
 mod connection_runtime;
 mod connections;
@@ -106,7 +107,7 @@ impl Store {
             File::open(path)?.sync_all()?;
         }
         let version: i64 = connection.pragma_query_value(None, "user_version", |row| row.get(0))?;
-        if !(1..=4).contains(&version) {
+        if !(1..=5).contains(&version) {
             return Err(Error::Configuration(
                 "unsupported or incomplete controller database schema",
             ));
@@ -123,6 +124,7 @@ impl Store {
         ipam::upgrade(&mut connection, options)?;
         connections::upgrade(&mut connection)?;
         connection_runtime::upgrade(&mut connection)?;
+        access::upgrade(&mut connection)?;
         Ok(Self {
             connection,
             _lock: lock,
