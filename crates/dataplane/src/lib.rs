@@ -3,6 +3,7 @@
 mod config;
 mod crypto;
 mod framing;
+pub mod packet_io;
 mod runtime;
 
 pub use config::{

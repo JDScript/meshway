@@ -7,8 +7,9 @@ This section is the core/agent handoff contract. Adjacency-only managed use conf
 packet, E2E probe, TUN or transit authorization. The explicit managed IPv4 packet
 mode supplies only the intersection of controller-issued full directional grants
 and the routing compiler's exact paths. Endpoint-only keys receive no hop carrier
-grants. The Agent owns coherent snapshot validation, inner-IP admission, TUN and
-fail-closed routes; those are not inferred by this crate. Config/lease changes replace the
+grants. The Agent owns coherent snapshot validation and grant compilation, Linux
+TUN and fail-closed route application. `packet_io` supplies the shared inner-IP
+admission and device pump; it does not infer grants. Config/lease changes replace the
 runtime via `shutdown()` and `Runtime::start`; `Runtime` is cloneable and also works
 inside an `Arc`.
 
@@ -160,7 +161,76 @@ Priority selects a peer's active channel (lower is preferred); `attach_stream` u
 
 `probe` negotiates a separate pinned-static Noise IK session between the endpoints, with the exact ordered path in the Noise prologue. Relays authenticate their neighbor and validate the claimed full path, direction, and their predecessor/successor before forwarding opaque endpoint ciphertext. Relays do **not** claim cryptographic proof of the original source of every packet; an authorized neighbor can submit authorized path contexts. The final endpoint authenticates the origin key and path before echoing. Probe results contain endpoint-authenticated echo bytes, elapsed duration and the authorized path; the path is not fabricated measured hop observations or a trace.
 
-## Endpoint packet / Linux TUN boundary
+## Endpoint packet / platform-neutral packet-I/O boundary
+
+`meshway_dataplane::packet_io` is an existing-crate boundary: no agent, tun-rs,
+iproute2 or foreign-bridge dependencies. Linux device creation, controller/DNS
+underlay exclusion, route conflict checks and persistent unreachable safety sink
+remain in the Agent. The shared pump preserves one `send_packet` admission per
+packet and per-packet cooperative yields; it does not coalesce carrier queues or
+change their counter units. It receives owned batches and writes accepted endpoint
+packets as singleton batches today. Device adapters can accept/write full batches.
+
+```rust,ignore
+trait Device: Send + Sync {
+    fn recv_batch(&self) -> impl Future<Output = io::Result<PacketBatch>> + Send;
+    fn send_batch(&self, packets: PacketBatch) -> impl Future<Output = io::Result<()>> + Send;
+    fn drain(&self) -> io::Result<()>;
+}
+PacketBatch::new(packets: Vec<Vec<u8>>) -> io::Result<PacketBatch>;
+PacketBatch::into_packets(self) -> Vec<Vec<u8>>;
+channel(capacity: usize) -> io::Result<(Arc<ChannelDevice>, ChannelEndpoint)>;
+ChannelEndpoint::try_feed(&self, batch: PacketBatch)
+    -> Result<(), tokio::sync::mpsc::error::TrySendError<PacketBatch>>;
+ChannelEndpoint::recv_batch(&self) -> impl Future<Output = Option<PacketBatch>>;
+ChannelEndpoint::drain(&self) -> io::Result<()>;
+Ipv4PacketPlan::new(local: Ipv4Addr, mtu: u16,
+    outgoing: BTreeMap<Ipv4Addr, Vec<String>>,
+    incoming: BTreeMap<Vec<String>, Ipv4Addr>) -> Ipv4PacketPlan;
+run<D: Device>(device: Arc<D>, runtime: Arc<Runtime>, plan: Ipv4PacketPlan,
+    deadline: watch::Receiver<Option<tokio::time::Instant>>) -> impl Future<Output = io::Result<()>>;
+run_with_activation<D: Device>(device: Arc<D>, runtime: Arc<Runtime>, plan: Ipv4PacketPlan,
+    deadline: watch::Receiver<Option<tokio::time::Instant>>, activated: impl FnOnce() + Send)
+    -> impl Future<Output = io::Result<()>>;
+```
+
+`Ipv4PacketPlan` consumes **trusted, already compiled** exact directional IP/path
+bindings from a coherent snapshot, not arbitrary callback input. It retains strict
+IPv4 checksum, length, MTU, no-options/no-fragments/TTL checks, exact local source,
+authenticated endpoint source and full incoming path. IPv6 is not implemented.
+`RoutePolicy { local, network, prefix_len, mtu, retain_fail_closed_sink }` describes
+platform route intent, separately from packet authorization. The managed plan sets
+the sink requirement to true; a platform must enforce capture plus fail-closed
+behavior during withdrawal and after device/process termination before activation.
+The shared crate cannot apply or verify OS routes. Apple NE settings/bridge code
+and its stop-time fail-closed implementation remain follow-up work.
+
+`PacketBatch` owns 1–16 nonempty buffers, each at most 8192 bytes, at most 65,536
+raw bytes total (carrier encoding may impose tighter limits). Channel capacity is
+1–256 **batch entries per direction**, with at most capacity × 65,536 queued bytes
+per direction plus in-flight buffers. Full/closed callback ingress returns the
+whole owned batch, without partial admission; callbacks must split larger arrays
+and handle backpressure explicitly. Debug/errors contain no packet contents.
+An NE adapter must check protocol-family metadata and pass only IPv4 buffers.
+
+The pump takes the runtime packet receiver once. Deadline expiry, `None`, closing
+the deadline sender, or dropping the pump future cancels both directions, including
+a blocked channel write. Custom device futures must be cancellation-safe and must
+not spawn background writes. Success means local enqueue only. Retained callback
+output from before withdrawal is not current authorization: stop/join the pump
+and foreign writer, discard both queues (`Device::drain`, endpoint `drain`) before
+reuse. Prefer **fresh channel endpoints per generation**, so late old callbacks
+cannot feed the replacement. The coordinator still owns generation fencing,
+runtime shutdown, coherent replacement and platform sink lifetime.
+`run_with_activation` additionally invokes a bounded synchronous local observer
+only after obtaining the unique receiver and checking the live lease. The Agent
+uses it to preserve generation-active proof timing; it is not a delivery signal.
+
+Regressions in `runtime/tests/packet_io.rs` cover full queues with ownership return,
+batch ordering, bounds/oversize rejection, bounded drain, closed endpoints, cancelled
+blocked writes, paused-clock lease expiry/closed lease sender, withdrawal during a
+full callback write, and real encrypted three-node TCP packet-pump delivery. The
+Agent's existing snapshot/lease/revocation/device-failure regressions remain in place.
 
 ```rust,ignore
 let mut received = runtime.take_packet_receiver()?; // once per runtime; bounded queue
