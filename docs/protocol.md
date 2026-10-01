@@ -2,6 +2,8 @@
 
 **已确认的要求：接口自动生成并强制类型安全。** 当前实现选择 Rust 类型与实际路由关联的 OpenAPI 作为 HTTP 契约来源。Agent 使用生成的 Rust 客户端，Next.js 使用生成的 TypeScript SDK 及运行时验证。不能分别手写三份“看起来相同”的协议。
 
+本页接口表描述**当前单网络 / 旧版策略契约**，不是多网络、账户或四层策略的目标 API。已确认模型见[产品概念](/concepts)；相关改动须从 Rust 实际路由重生成，保留 App 依赖的接入端点与服务端鉴权边界。
+
 ## 契约生成链
 
 ```text
@@ -105,7 +107,7 @@ Rust 请求 / 响应类型 + 实际 API 路由声明
 
 授权保存使用全局 CAS，相同内容不增加 revision。节点快照在一个 SQLite 读事务中组合节点配置、连接、授权及所需公钥，所有部分使用同一 revision，调用方身份只从节点 bearer 派生。摘要覆盖完整公共 payload；它不包含节点 bearer、管理员令牌或本地 profile 密钥。
 
-管理员 `MeshAccessPolicy` 使用默认 allow/reject 和最多 128 条端点规则，支持 `*`、node、tag 与显式双向。控制面联合路由编译的 `MeshPathAuthorization` 仍是内部 `{ grants }`，每节点最多 128 条精确路径、每路径 2–8 个活动节点，联合公钥集合最多 64 个；超出容量拒绝，不截断路径。结构化授权源上限 128 KiB，JSONC 原文上限 256 KiB，一致数据面快照上限 2 MiB。
+当前旧版管理员 `MeshAccessPolicy` 使用默认 allow/reject 和最多 128 条端点规则，支持 `*`、node、tag 与显式双向；已确认目标为无序叠加 grants，待迁移。控制面联合路由编译的 `MeshPathAuthorization` 仍是内部 `{ grants }`，每节点最多 128 条精确路径、每路径 2–8 个活动节点，联合公钥集合最多 64 个；超出容量拒绝，不截断路径。结构化授权源上限 128 KiB，JSONC 原文上限 256 KiB，一致数据面快照上限 2 MiB。
 
 Routing 与 Access 的保存请求支持 `source_jsonc`，服务端拒绝重复对象键、解析失败或与结构化 `policy` 不一致的文本。原文随管理员快照返回；只改注释也使用全局 CAS。生成客户端的 `/schemas` 和 `/json-schema` 子路径分别提供运行时校验和保留描述、长度及 `x-meshway-ref` 的编辑器 schema。
 

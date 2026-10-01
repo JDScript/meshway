@@ -15,6 +15,8 @@
 
 ## 显式启动
 
+以下是当前诊断 / 实验参数。已确认目标是 STUN 与承载配置由控制面管理下发，设备不维护本地业务配置；自动方案将使用 STUN 观测公网 IP 的地区，但当前观测切片尚未实现方案切换。
+
 在现有 Agent `run` 命令中加入一个或多个 `--stun-server <数字IP:端口>`，并使用 `--apply-connections` 或 `--apply-dataplane`。保留原来的 state、profiles 和数据面参数；由同一 daemon 管理 socket 和身份锁。
 
 不提供默认公共观察点。没有配置 STUN server 时，报告明确为 `disabled`；有观察点但尚无可探测的 Native UDP 资源时，不能据此宣称网络不可达。

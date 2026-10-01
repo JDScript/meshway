@@ -2,6 +2,8 @@
 
 连接配置将“节点身份”“谁监听”“谁主动建连”和“保存回执”分别表达。业务路由仍由独立策略决定；配置一个邻接不自动授予转发、出口或业务访问权限。
 
+**已确认目标**：平台按授权、路径和可达性按需自动建连，默认连接图允许可达直连、阻断优先；Web 保留 listener 与承载优先级 / 逐段覆盖，平台生成下发参数和凭据。下文手工 listener / candidate 与本地 profile 引用是当前契约，须迁移为托管配置和高级覆盖，不是日常主流程。
+
 ## 交付边界
 
 这一切片交付控制意图链路：Agent 私有生成与保存 X25519 密钥，向 controller 绑定公钥及声明编译能力；管理员维护监听器和拨号候选；Agent 拉取本节点配置、校验保存并回执。
@@ -25,7 +27,7 @@
 
 输入为规范 X25519 公钥：64 个小写十六进制字符，对应规范 u-coordinate 编码；拒绝低阶点及同一有效公钥的非规范别名。私钥只存在 Agent 的私有 sidecar 中，不进入 controller、Web 或普通日志。原有 Agent 注册身份及注册令牌绑定不因发布公钥而改变。
 
-能力由 Agent 按实际编译功能生成，包含协议、`can_dial`、`can_accept` 和 stream / datagram 语义。当前管理契约的承载为 `native_udp`、`native_tcp` 与 `vless`；它们的实际自动应用仍需后续接通。这里的原生 UDP 是 Noise 实验承载，不称作 WireGuard。
+能力由 Agent 按实际编译功能生成，包含协议、`can_dial`、`can_accept` 和 stream / datagram 语义。当前管理契约的承载为 `native_udp`、`native_tcp` 与 `vless`；已接通显式启用的托管运行层，默认按需建连仍待实现。这里的原生 UDP 是 Noise 承载，不称作 WireGuard。
 
 ## 监听器与拨号候选
 
@@ -49,7 +51,7 @@
 建连方向：NYC ──→ LAX ←── SHA
 ```
 
-SHA 的候选引用 LAX 的 listener，明确由 SHA 发起连接。未来运行层可复用该已认证双向邻接向 SHA 发送业务，但业务权限仍需独立授权。
+SHA 的候选引用 LAX 的 listener，明确由 SHA 发起连接。当前运行层已可复用认证双向邻接向 SHA 发送业务，业务权限仍需独立授权。
 
 ## 全局版本与两种回执
 
@@ -88,7 +90,7 @@ cargo run -p meshway-agent --features transport-lab -- run --connections --state
 
 保存时检查节点、公钥、能力、listener 引用、endpoint 和角色。配置因撤销或能力收回而失效时，controller 保留源计划供管理员修复，向节点发布空的有效执行意图并附带无效标记；不会删除失效候选后悄悄改走另一条路径。
 
-Web 保留失败保存时的草稿及其原始 revision。成功保存或明确重新读取才更换编辑基准。后续运行层还需要定义配置应用、撤销传播、现有流处置及真实连接观测。
+Web 保留失败保存时的草稿及其原始 revision。成功保存或明确重新读取才更换编辑基准。当前配置应用、撤回与观测见[运行层](/connection-runtime)，出口存量流 / 状态回包仍待独立交付。
 
 ## 源契约
 

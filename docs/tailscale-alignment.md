@@ -4,7 +4,9 @@
 
 ## 已有基线
 
-Meshway 已有单 control v7 network 的 stable ID、名称、不可变 IPAM、节点名称与 DNS intent API；管理员 tag catalog/assignment；端点 Access（node/tag/当前 network 的 `*`、有序 first-match allow/reject、显式双向）与 Routing 联合编译精确 NodeData 路径；E2E、mandatory via、Linux IPv4 TUN、UDP/TCP/VLESS TLS 及反向主动 dial、配置 lease 撤回。图形/JSONC 共享草稿、注释与 CAS，前端 spacing/draft 动画与 IA 整理已合并，`/network` 在主线推进。
+当前已实现单网络稳定 ID / 名称、IPAM、节点 DNS、管理员 tag、旧版端点授权与精确路径编译、E2E、Linux IPv4 TUN、UDP / TCP / TLS-VLESS 及反向 dial、lease 撤回，图形 / JSONC 共享草稿和 CAS。旧版有序 allow/reject 是待迁移现状，不能继续作为目标语义。
+
+**已确认目标**以 Tailscale 为常规产品基线，扩展自定义 transport 与有序指定路径；多网络、本地邀请账户、grants、自动建连与路由方案见[产品概念](/concepts)。下表保留实现差距与源码依据，既有差异不自动覆盖新确认项。
 
 Agent DNS 已通过真实 loopback UDP/TCP A/AAAA/PTR 和隔离 Docker 验收，并修复待发送响应的 lease/代际 fencing、禁用后持久地址绑定；无递归，不代表 OS DNS、Fake-IP 或域名上下文已实现。
 
@@ -18,18 +20,18 @@ Agent DNS 已通过真实 loopback UDP/TCP A/AAAA/PTR 和隔离 Docker 验收，
 | MagicDNS 指向 overlay 地址，不是公网 STUN endpoint；IPv4/IPv6 地址与 underlay endpoint 分开。[D3][S1] 公共 DNS 可以公开映射到私有 overlay IP，解析公开不等于可访问。 | AAAA 地址元数据不等于 IPv6 TUN。名称可见性与业务授权分开；按当前节点 DNS 快照回答，不能从管理员 inventory 补齐不可见记录。推荐新集成仍不发布公共 DNS。 |
 | Quad100 `100.100.100.100:53`（IPv6 `fd7a:115c:a1e0::53`）是设备本地 stub/service，并非远端公共递归服务器；需要转发时才离开设备。[D4] | `127.0.0.1:5353` 作为 nameservice；M1 容器实验在本地 53 端口接入系统 resolver/search，无须复制 Quad100 地址。平台安装器和动态 zone 接入仍需后续切片。 |
 | restricted nameserver 是 split DNS；global nameserver 与 Override DNS servers 控制默认解析。搜索域补全不等于 DNS routing；`DNSConfig.Proxied` 是 MagicDNS 历史命名，不保证 proxy。[D3][S2] | 不把 DNS suffix 路由等同业务 Routing。集成层区分本地 zone、搜索域、外部上游和 override intent；首片保留原上游，外部查询才转发，不启用全局 override。 |
-| exit node 默认承接外部 DNS，可按 nameserver 的 Use with exit node 覆盖。[D3][S3] DoH 上游需要 bootstrap；原 OS resolver 可能指回本机，必须防 self-loop。[S4] | 出口 DNS 等出口职责成熟再做。先排除自身监听及指回自身的 stub、保留接管前 base resolver；endpoint/control bootstrap 不依赖尚未建立的 Mesh DNS。 |
+| exit node 默认承接外部 DNS，可按 nameserver 的 Use with exit node 覆盖。[D3][S3] DoH 上游需要 bootstrap；原 OS resolver 可能指回本机，必须防 self-loop。[S4] | 出口与域名分流是首版主线；DNS 出口一致性和泄漏边界待数据面设计 / 验收。当前容器 adapter 保留原上游；bootstrap 不依赖未建立的 Mesh DNS。 |
 | proxy 正向：应用→本机 stub→本地记录/选定上游（或 exit）；响应反向返回查询者。PTR 是反向名称查询，并非“反向 dial”。[D3][D4][S3] | 建连方向与 DNS/业务方向分开：下一跳主动连接本机仍可承载已授权查询与响应；这不授予反向业务权限。DNS 回答不创建流授权，也不自动提供 IP 包的域名上下文。 |
 
 ### Tags / Policy schema
 
 | 官方语义与证据 | Meshway 差距及建议 |
 | --- | --- |
-| `tagOwners` 可引用用户/组/tag；设备 tag identity 替代 user identity，不能同时存在。self-advertise 必须获得赋 tag 的权限，不是自报即生效。[D5] | 当前 tag 是管理员分配的节点授权属性，没有设备用户身份切换。继续此模型；未来 advertisement 只能产生待审批请求，enrollment/token 身份不能获得管理员权限。 |
-| grants 是 additive union，ACL 网络规则仅 accept；更具体规则不覆盖较宽规则。[D6][D7] | 保留已确认 ordered first-match/reject 和有序 mandatory via。`grants.via` 是 router tag 候选筛选，不是 hop 序列；不能自动导入为等价规则。[S8] |
-| 新 tailnet 默认模板 allow-all；显式配置则采用 deny-by-default；方向授权不等于对端可发起新连接。[D7] | 初始空策略 reject 已确定。新增成员/tag 只按现有规则匹配，不附赠权限；default allow 是显式策略选择。未知 group/不支持 selector 应报 schema 错误，不能转成 `*`。 |
+| `tagOwners` 可引用用户/组/tag；设备 tag identity 替代 user identity，不能同时存在。self-advertise 必须获得赋 tag 的权限，不是自报即生效。[D5] | 当前 tag 是管理员节点属性；目标增加用户归属与预分配 tag 接入密钥，tag identity / 委派细节随契约落实。设备不做本地通告；接入凭据不授予管理权限。 |
+| grants 是 additive union，ACL 网络规则仅 accept；更具体规则不覆盖较宽规则。[D6][D7] | 已确认采用无序 grants 并集；旧 first-match allow/reject 无损迁移或报告不可等价部分。Mesh 内路径约束独立于 Access；`grants.via` 不能当作有序 hop 序列。[S8] |
+| 新 tailnet 默认模板 allow-all；显式配置则采用 deny-by-default；方向授权不等于对端可发起新连接。[D7] | 已确认新网络默认成员全部允许，未匹配 grant 拒绝。Routing 初始空策略 reject 已废止，无 Mesh 规则自动选路；只有出口方案有序 first-match。未知 selector 报错，不转换为 `*`。 |
 | tagged device 不能在控制台移除最后一个 tag，须重新以用户身份认证；移除用户不删除独立 tagged device。[D5] 客户端 filter 的返回包处理按协议不同：TCP 非 SYN、UDP/SCTP reverse-flow 缓存、ICMP 响应。[S7] | Meshway 移除 tag 是属性撤回，节点 revoke 是身份撤销；须重新编译并终止旧代际。当前显式双向不是 stateful return，不照搬 Tailscale 的 TCP/ICMP shortcut。 |
-| HuJSON 提供注释/尾逗号及 policy tests；schema 的语法容错不改变授权语义。[D6] | 借鉴测试断言与字段诊断，继续一份草稿+CAS；保留无效文本、注释和未保存编辑。已实现双 editor 不重做，未支持的 HuJSON 字段不可静默忽略。 |
+| HuJSON 提供注释/尾逗号及 policy tests；schema 的语法容错不改变授权语义。[D6] | 已有共享草稿 / CAS，重整控制台仍须保留无效文本、注释和未保存编辑。未支持字段不可静默忽略。 |
 
 ### CLI / 连通性
 

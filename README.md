@@ -1,103 +1,65 @@
 # Meshway
 
-基于 Rust 的可编程 mesh 网络：身份与访问控制、域名/IP 策略路由、有序多跳，以及可替换的链路承载。
+以 Tailscale 为常规产品基线的 Rust mesh 网络，扩展**可插拔的自定义 transport**与**按域名 / IP 经有序指定路径的路由**。Mesh 私网互访和互联网分流同为首版目标。
+
+## 产品目标与当前实现
+
+**已确认目标**：一个 controller 管理多张隔离网络，一台设备一次只接入一张；本地邮箱 + 密码账户、仅邀请加入；全部业务配置由 Web 管理、控制面下发。四层策略是连接图、叠加 grants、Mesh 内具体度路由，以及出口路由方案（公共规则 + 方案规则 + 兜底）。用户可选择允许的「仅 Mesh」「全局经 X」「自动按 STUN 地区」等方案。
+
+**当前基线**：单网络 SQLite、管理员 bearer、节点令牌注册、App PKCE 浏览器批准、IPAM、版本化配置 / ACK、公钥绑定、托管 Native UDP / TCP / TLS-VLESS 邻接、Linux Mesh IPv4 TUN 与 Noise E2E、节点 DNS、只读 daemon CLI。旧版 Access / Routing 有序策略与本地 profiles 尚待迁移；多网络、用户账户、平台全托管、按需自动建连、出口 / 路由方案、可信域名上下文、IPv6 TUN 与逐跳 trace 尚待交付。
+
+配置 ACK 是校验并持久保存，心跳是联系记录，路径预览是规划；都不能代替真实隧道 / ICMP / HTTP 验证。Apple App 已有浏览器接入与库存显示，隧道未实现。
+
+产品要求权威见 [产品对齐记录](docs/product-alignment.md)，精简概念见 [产品概览](docs/concepts.md)，交付依赖见 [里程碑](docs/milestones.md)。
 
 ## 工作区
 
 | 目录 | 职责 |
 | --- | --- |
-| `apps/controller` | Rust 控制面 |
-| `apps/agent` | Rust 节点进程 |
-| `crates/protocol` | 共享 Rust 协议定义；Agent 生成客户端位于 `apps/agent/src/generated` |
-| `crates/policy` | 纯 Rust 路由策略规范化、校验与逻辑路径预览 |
+| `apps/controller` / `apps/agent` | Rust 控制面与节点进程；Agent 生成客户端位于 `apps/agent/src/generated` |
+| `crates/protocol` / `crates/policy` / `crates/dataplane` | Rust 契约、纯策略编译、认证与加密转发 |
+| `crates/transport-*` | 编译期承载适配 |
 | `apps/web` | Next.js + shadcn/ui 控制台 |
-| `packages/control-client` | 生成的 TypeScript 协议、SDK 与运行时校验 |
-| `docs` | VitePress 产品与架构文档 |
-| `references` | 独立的上游参考 checkout；版本见 [研究索引](references/README.md) |
+| `apps/apple` | SwiftUI + NetworkExtension、UniFFI Rust bridge |
+| `packages/protocol` / `packages/control-client` | 生成 OpenAPI、TypeScript SDK 与运行时校验 |
+| `docs` | VitePress 产品、架构、开发与参考文档 |
+| `experiments` | 独立隔离验收与性能工具 |
+| `references` | 只读上游 checkout，版本见 [研究索引](references/README.md) |
 
-## 开发环境
+## 开发入口
 
-- Rust 1.98.0（由 `rust-toolchain.toml` 固定）
-- Node.js 24
-- pnpm 11.24.0
+需要 Rust 1.98.0、Node.js 24、pnpm 11.24.0；统一入口使用 Python 3、tmux、lsof。
 
 ```sh
-pnpm install
-pnpm dev:docs
+pnpm install --frozen-lockfile
+pnpm dev
+pnpm dev:status
+pnpm dev:restart web
+pnpm dev:update
+pnpm dev:stop
 ```
 
-文档站：<http://localhost:5173>。控制台通过 `pnpm dev:web` 启动于 <http://localhost:3000>。
-
-Rust 启动命令和契约生成流程见文档站的开发指南。
-
-分别在终端中运行控制面和 Web：
+统一入口为 `scripts/dev.py`，Controller / Web / 文档默认在 8420 / 3000 / 5173，仅管理当前 checkout 及已初始化 demo。身份和运行数据在忽略的 `.meshway/`。行为与更新边界见 [统一开发入口](docs/dev-services.md)，首次注册与单组件启动见 [本地联调](docs/getting-started.md)。
 
 ```sh
-cargo run --locked -p meshway-controller -- serve --data-dir .meshway/controller
 pnpm dev:web
+pnpm dev:docs
+pnpm build:docs
 ```
 
-首次启动会创建 SQLite 状态及私有的 `.meshway/controller/admin.token`。在另一终端显式读取管理员令牌，并在 Web 登录：
+## 契约与验证
+
+HTTP API 由 Rust DTO 和实际路由生成，Agent / Web 使用生成客户端，Web 对外部响应做生成 schema 校验；禁止手工复制 DTO / endpoint。每个 Web 管理 mutation 均须服务端认证。
 
 ```sh
-cargo run --locked -p meshway-controller -- admin-token --data-dir .meshway/controller
-```
-
-在 Web 创建一次性注册令牌，然后注册并运行 Agent：
-
-```sh
-cargo run --locked -p meshway-agent -- enroll \
-  --controller http://127.0.0.1:8420 \
-  --token '<Web 创建的一次性注册令牌>' \
-  --name nyc --state .meshway/agent.json
-cargo run --locked -p meshway-agent -- run --state .meshway/agent.json
-```
-
-保留同一数据目录与 Agent 状态文件，即可在重启后继续使用原身份和已分配的 mesh 地址。`.meshway/` 不进入 Git。
-
-`run` 持续发送心跳并同步配置；也可以单次拉取、校验、保存并确认当前配置：
-
-```sh
-cargo run --locked -p meshway-agent -- sync --state .meshway/agent.json
-cargo run --locked -p meshway-agent -- status --state .meshway/agent.json
-```
-
-首次初始化默认使用 `100.96.0.0/16`，并生成和保存 IPv6 ULA `/64`。自定义前缀通过 controller 的 `--ipv4-prefix` / `--ipv6-prefix` 指定；现有数据目录不会隐式改址。路由编辑器位于 `/routing`。
-
-Web 默认从 `http://127.0.0.1:8420` 读取 controller；可通过 `MESHWAY_CONTROLLER_URL` 配置。
-
-控制台提供 dashboard、节点管理、路由规则编辑、访问授权、网络拓扑与监控视图。规则在 Sheet 中编辑并应用到草稿，再统一预览 / 保存；草稿及其版本基准可在已登录界面的页面间恢复。团队入口和未测量指标的边界见 [Web 产品与交互](docs/web-product.md)。
-
-## 当前范围
-
-当前控制面包含一次性令牌注册、SQLite 持久清单、双栈 mesh 地址分配、持续心跳、版本化配置、节点撤销，以及路由策略编辑、编译预览和条件保存。Agent 校验配置后私有、原子地保存，再发送版本与摘要确认。`last_seen` 表示最近联系 controller 的时间；配置 ACK 表示存储回执，与数据面生效分开记录。
-
-路由按有序 first-match 选择；首版域名规则仅支持标签边界 suffix，另支持节点、IPv4/IPv6 CIDR 与地区条件，默认动作可选 direct/reject，初始为空策略 reject。Web 路径预览展示逻辑规划，实际执行范围由数据面与独立授权决定。
-
-独立的 [Linux 传输实验](docs/transport-lab.md) 通过 `transport-lab` feature 启用：原生 UDP / TCP、VLESS TCP CONNECT、Noise 邻接认证和 E2E、精确有序路径授权、反向建连、固定 IPv4 对 TUN，以及隔离 Docker / iperf3 工具。实验密钥与配置独立于现有注册身份；托管模式通过另一套控制配置接入同一数据面基础。
-
-[公钥与连接配置](docs/connections.md) 提供注册节点公钥绑定、编译能力声明、节点独立详情页、监听器 / 反向拨号编辑，以及独立保存回执。[托管连接运行层](docs/connection-runtime.md) 使用 `managed-connections` feature 和 `run --apply-connections`，实际应用 Native UDP / TCP 与 TLS-VLESS 邻接，支持 DNS endpoint、限定入口的 peer 许可、配置有效期与真实邻接探测。它与 `run --connections` 的存储回执分开，尚不授予 TUN 或业务 IP 转发。
-
-DNS、multi-transport 与加密转发的交付阶段在文档站维护。优先保留端到端加密与 `meshway trace`，系统 traceroute 作为后续增强；可信逐跳路由需要显式选择。
-
-[托管 Mesh IPv4 数据面](docs/managed-dataplane.md) 通过 `run --apply-dataplane` 显式启用，使用已有注册身份和同 revision 的配置。[Access](docs/access-policy.md) 按 node/tag/`*` 决定端点权限，支持默认 allow/reject、first-match 和双向规则；Routing 决定有序路径，控制面联合编译内部精确授权。两者均有图形化 / schema JSONC 编辑器，注释随配置保存。互联网出口、IPv6 TUN、可信 DNS 上下文及真实逐跳 trace 尚未接通；邻接观测和配置 ACK 均不能代替普通 ICMP / HTTP 的实际 IP 验收。
-
-## 类型安全
-
-HTTP 契约从 Rust 类型和实际路由声明生成，并驱动 Rust agent client、TypeScript SDK 与运行时 schema。前后端使用同一份生成契约，禁止手工复制 DTO。
-
-CI 检查契约漂移、Rust 格式/Clippy/测试、TypeScript、前端 lint、两个站点构建，以及真实 controller / agent / Web 的浏览器联调。
-
-```sh
-pnpm protocol:generate  # 修改 Rust 契约后更新 OpenAPI 和客户端
-pnpm protocol:check     # 逐文件比较重新生成的产物
-pnpm test:protocol     # SDK 校验及真实 controller 往返
-pnpm test:web          # 生成 schema 与路由草稿语义
+pnpm protocol:generate  # 修改 Rust 契约后生成
+pnpm protocol:check     # 生成物 drift check
+pnpm test:protocol
+pnpm test:web
 pnpm typecheck
 pnpm lint
 pnpm build
-pnpm exec playwright install chromium  # 首次运行浏览器测试
-pnpm test:e2e                          # 独立临时数据与端口，覆盖注册、策略编辑、配置回执与故障
+pnpm test:e2e
 ```
 
-具体生成器及当前支持的契约形状见 [协议文档](docs/protocol.md)。
+Rust fmt / Clippy / 行为测试、浏览器安装与实验入口见 [开发与验收](docs/development.md)。文档构建保留死链检查；实验结果必须保留负载、资源与加密条件，不能把原生 L4 与完整 L3 隧道差值当作包装增量成本。

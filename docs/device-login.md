@@ -8,6 +8,8 @@ App 登录本质是 SSO：App 打开 controller Web，由 Web 完成人类登录
 
 **外部 OIDC、接入资格、用户权限、节点接入有效期及审批策略：controller 侧后续决定，App 不感知。** 本切片不新增 users、principals、owners、节点到期或 App 节点类别。兑换码的五分钟期限仅限制首次消费，不是节点有效期。
 
+**已确认产品目标**已包括 controller 本地邮箱 + 密码账户、安全哈希、仅邀请加入指定网络、Owner 与设备归属；Agent 也须提供浏览器链接登录。OIDC 后续接入。这里“后续”指该切片尚未接入这些能力，不表示用户身份仍是未确认提案；App 保持浏览器 / 兑换契约，不持有管理权限，见[产品概念](/concepts#网络、用户与设备)。
+
 Apple 已接线 `ASWebAuthenticationSession`、Keychain、Rust 生成客户端兑换和真实心跳，见 [Apple App](./apple-app.md)。注册 / 心跳成功不代表隧道已建立；X25519 发布、agent 生命周期、NE 包流及真机验证仍待后续。
 
 ## 单一服务器地址
@@ -66,4 +68,4 @@ SQLite v8 只给 `enrollment_tokens` 增加可空 `device_binding`，存储公�
 - Web 参数 / allowlist / 登录安全返回单测；隔离端口与数据目录的 Playwright 实测登录→批准→回调 Location→真实兑换、匿名 action 重放、拒绝与非法回调页。
 - 生成漂移与工作区 Rust / TypeScript 检查；具体运行结果见本切片提交报告。
 
-背景参考：[RFC 8252](https://www.rfc-editor.org/rfc/rfc8252) 的系统浏览器原生登录与 [RFC 7636](https://www.rfc-editor.org/rfc/rfc7636) 的 S256 PKCE。Tailscale / Headscale 研究仅说明人类认证与节点身份应分层；其 OIDC、owner、tag 与到期规则不构成 Meshway 需求。
+背景参考：[RFC 8252](https://www.rfc-editor.org/rfc/rfc8252) 的系统浏览器原生登录与 [RFC 7636](https://www.rfc-editor.org/rfc/rfc7636) 的 S256 PKCE。Tailscale 是常规产品基线；具体 Meshway 确认项见[产品对齐](/product-alignment)，固定研究实现不自动定义本项目的 wire 契约。
