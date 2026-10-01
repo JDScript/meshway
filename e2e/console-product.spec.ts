@@ -5,7 +5,7 @@ import { join } from "node:path";
 
 import { createEnrollmentToken, getConnections, getMeshAccess, listNodes, saveConnections, setNodeCountry } from "./network-client.ts";
 import { beginConnectionRuntimeOperation, getAgentConnectionsOperation, reportConnectionRuntimeOperation, reportEndpointDiscoveryOperation } from "../packages/control-client/src/generated/operations.gen.ts";
-import { consoleAt, consoleGutter, contentAlignment, executable, root, run, service, SIDEBAR_WIDTH, unusedPort } from "./harness.ts";
+import { consoleAt, consoleGutter, contentAlignment, executable, HEADER_HEIGHT, root, run, service, SIDEBAR_WIDTH, unusedPort } from "./harness.ts";
 
 async function toggleByKeyboard(page: Page, title: string) {
   const summary = page.locator("summary").filter({ hasText: new RegExp(`^${title}$`) });
@@ -109,7 +109,7 @@ test("console task surfaces preserve disclosures, expired copy eligibility, deep
         // The page column lines up with the top bar beside the sidebar and never scrolls sideways.
         const alignment = await contentAlignment(page);
         const inset = width >= 768 ? width - SIDEBAR_WIDTH : width;
-        expect(alignment).toEqual({ left: 0, right: 0, gutter: consoleGutter(width, inset), inset, overflow: false });
+        expect(alignment).toEqual({ left: 0, right: 0, gutter: consoleGutter(width, inset), asymmetry: 0, inset, header: HEADER_HEIGHT, overflow: false });
         if (process.env.MESHWAY_PRODUCT_SCREENSHOTS && (path === "" || path.startsWith("/machines/"))) {
           await page.screenshot({ path: test.info().outputPath(`product-${width}-${path === "" ? "overview" : "node"}.png`), fullPage: true });
         }
@@ -138,10 +138,14 @@ test("console task surfaces preserve disclosures, expired copy eligibility, deep
     await editor.fill(invalid);
     await expect(page.getByRole("list", { name: "JSONC 问题" })).toBeVisible();
     const sidebar = page.getByRole("navigation", { name: "控制台" });
+    // Sections other than the current page's start folded, as in sidebar-07.
+    await sidebar.getByRole("button", { name: "诊断", exact: true }).click();
     await sidebar.getByRole("link", { name: "诊断工作台", exact: true }).click();
     await expect(page).toHaveURL(/\/diagnostics/);
     await sidebar.getByRole("link", { name: "拓扑与流量检查", exact: true }).click();
     await expect(page).toHaveURL(/\/topology/);
+    // A folded section still marks the unsaved draft inside it.
+    await sidebar.getByRole("button", { name: /^访问控制\s*（有未保存的草稿）$/ }).click();
     await sidebar.getByRole("link", { name: /^访问授权\s*（有未保存的草稿）$/ }).click();
     await expect(page).toHaveURL(ui.at("/access"));
     await expect(page.getByRole("textbox", { name: "访问授权 JSONC", exact: true }).locator(".cm-line")).toHaveText(invalid.split("\n"));

@@ -174,22 +174,33 @@
   }
 }
 
-/* One content column for every console page: centred, bounded, with a
-   single gutter that only changes at the mobile breakpoint. */
-.console-page {
+/* One content column for the inset header and every console page: centred
+   inside SidebarInset with symmetric gutters, so titles and actions line up
+   with the header whether the sidebar is expanded, an icon rail or a drawer. */
+:root {
+  --console-column: 80rem;
   --console-gutter: 1rem;
-  width: 100%;
-  max-width: 76rem;
-  margin-inline: auto;
-  padding: 1.5rem var(--console-gutter);
-  padding-bottom: calc(3rem + env(safe-area-inset-bottom, 0px));
 }
 
 @media (min-width: 768px) {
-  .console-page {
-    --console-gutter: 2rem;
-    padding-top: 2rem;
+  :root {
+    --console-gutter: 1.5rem;
   }
+}
+
+.console-column {
+  width: 100%;
+  max-width: var(--console-column);
+  margin-inline: auto;
+  padding-inline: var(--console-gutter);
+}
+
+.console-page {
+  width: 100%;
+  max-width: var(--console-column);
+  margin-inline: auto;
+  padding: 1.5rem var(--console-gutter);
+  padding-bottom: calc(3rem + env(safe-area-inset-bottom, 0px));
 }
 
 /* In-flow height reserves the full bar at the end of the editor. Sticky keeps

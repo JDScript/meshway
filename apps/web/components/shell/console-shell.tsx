@@ -1,6 +1,5 @@
 "use client"
 
-import { MenuIcon, PanelLeftIcon } from "lucide-react"
 import Link from "next/link"
 import { usePathname } from "next/navigation"
 import { useEffect, type ReactNode } from "react"
@@ -15,8 +14,16 @@ import { activeNavItem, type DraftKind } from "@/components/shell/nav"
 import { useNetwork } from "@/components/shell/network-context"
 import type { NetworkChoices } from "@/components/shell/network-switcher"
 import { ThemeToggle } from "@/components/shell/theme-toggle"
-import { Button } from "@/components/ui/button"
-import { SidebarProvider, useSidebar } from "@/components/ui/sidebar"
+import {
+  Breadcrumb,
+  BreadcrumbItem,
+  BreadcrumbLink,
+  BreadcrumbList,
+  BreadcrumbPage,
+  BreadcrumbSeparator,
+} from "@/components/ui/breadcrumb"
+import { Separator } from "@/components/ui/separator"
+import { SidebarInset, SidebarProvider, SidebarTrigger, useSidebar } from "@/components/ui/sidebar"
 
 /**
  * Console frame for one network. The workspace binds the network's own
@@ -83,65 +90,65 @@ function ConsoleFrame({
         跳到主要内容
       </a>
       <AppSidebar networks={networks} controllerHost={controllerHost} drafts={drafts} />
-      <div data-slot="sidebar-inset" className="relative flex min-w-0 flex-1 flex-col bg-background">
-        <ConsoleTopbar />
-        <main id="main" className="flex min-w-0 flex-1 flex-col">
+      <SidebarInset className="min-w-0">
+        <ConsoleHeader />
+        <div id="main" tabIndex={-1} className="flex min-w-0 flex-1 flex-col outline-none">
           {children}
-        </main>
-      </div>
+        </div>
+      </SidebarInset>
     </>
   )
 }
 
-/** Only context and global actions: where am I, search, theme. */
-function ConsoleTopbar() {
+/**
+ * sidebar-07's inset header: trigger, separator and breadcrumb, 4rem tall
+ * and 3rem while the sidebar is an icon rail. Sticky so search and the
+ * sidebar stay reachable on long pages; the row shares the page column.
+ */
+function ConsoleHeader() {
   const pathname = usePathname()
   const { routes, name } = useNetwork()
-  const { isMobile, open, toggleSidebar } = useSidebar()
+  const { isMobile, open } = useSidebar()
   const active = activeNavItem(pathname, routes.base)
-  const detail = active && pathname.replace(/\/$/, "") !== active.item.href(routes).split("?")[0]
+  const detail = active ? pathname.replace(/\/$/, "") !== active.item.href(routes).split("?")[0] : false
 
   return (
-    <header data-slot="console-topbar" className="sticky top-0 z-30 border-b bg-header backdrop-blur-md">
-      <div className="mx-auto flex h-14 w-full max-w-[76rem] items-center gap-2 px-4 md:px-8">
-        <Button
-          variant="ghost"
-          size="icon"
-          data-sidebar="trigger"
-          className="-ml-1.5 text-muted-foreground hover:text-foreground"
-          aria-label={isMobile ? "打开导航" : open ? "收起导航" : "展开导航"}
-          aria-keyshortcuts="Meta+B"
-          onClick={toggleSidebar}
-        >
-          <MenuIcon className="md:hidden" />
-          <PanelLeftIcon className="hidden md:block" />
-        </Button>
-        <span aria-hidden="true" className="h-4 w-px bg-border" />
-        <nav aria-label="当前位置" className="min-w-0 flex-1">
-          <ol className="flex min-w-0 items-center gap-1.5 text-[0.8125rem] text-muted-foreground">
-            <li className="min-w-0 truncate md:hidden">
-              <span className="font-medium text-foreground">{name ?? "网络"}</span>
-            </li>
-            {active ? (
+    <header
+      data-slot="console-topbar"
+      className="sticky top-0 z-30 flex h-16 shrink-0 items-center border-b bg-header backdrop-blur-md transition-[width,height] ease-linear group-has-data-[collapsible=icon]/sidebar-wrapper:h-12"
+    >
+      <div className="console-column flex items-center gap-2">
+        <SidebarTrigger className="-ml-1" aria-label={isMobile ? "打开导航" : open ? "收起导航" : "展开导航"} aria-keyshortcuts="Meta+B" />
+        <Separator orientation="vertical" className="mr-2 data-vertical:h-4 data-vertical:self-auto" />
+        <Breadcrumb aria-label="当前位置" className="min-w-0 flex-1">
+          <BreadcrumbList className="flex-nowrap text-[0.8125rem] whitespace-nowrap">
+            <BreadcrumbItem className="min-w-0 shrink">
+              <BreadcrumbLink render={<Link href={routes.overview} />} className="max-w-48 truncate">
+                {name ?? "网络"}
+              </BreadcrumbLink>
+            </BreadcrumbItem>
+            {active?.section ? (
               <>
-                <li aria-hidden="true" className="md:hidden">/</li>
-                {active.group?.label ? (
-                  <>
-                    <li className="hidden shrink-0 md:block">{active.group.label}</li>
-                    <li aria-hidden="true" className="hidden md:block">/</li>
-                  </>
-                ) : null}
-                <li className="min-w-0 truncate">
-                  {detail ? (
-                    <Link href={active.item.href(routes)} className="hover:text-foreground">{active.item.label}</Link>
-                  ) : (
-                    <span aria-current="page" className="font-medium text-foreground md:font-normal md:text-muted-foreground">{active.item.label}</span>
-                  )}
-                </li>
+                <BreadcrumbSeparator className="hidden lg:block" />
+                <BreadcrumbItem className="hidden shrink-0 lg:inline-flex">{active.section.label}</BreadcrumbItem>
               </>
             ) : null}
-          </ol>
-        </nav>
+            {active && active.item.segment !== "" ? (
+              <>
+                <BreadcrumbSeparator />
+                <BreadcrumbItem className="min-w-0 shrink-0">
+                  {detail ? (
+                    <BreadcrumbLink render={<Link href={active.item.href(routes)} />} className="truncate">
+                      {active.item.label}
+                    </BreadcrumbLink>
+                  ) : (
+                    <BreadcrumbPage className="truncate">{active.item.label}</BreadcrumbPage>
+                  )}
+                </BreadcrumbItem>
+              </>
+            ) : null}
+          </BreadcrumbList>
+        </Breadcrumb>
         <div data-slot="console-topbar-actions" className="flex shrink-0 items-center gap-1.5">
           <CommandMenu />
           <ThemeToggle />

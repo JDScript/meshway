@@ -90,33 +90,41 @@ export async function consoleAt(webUrl: string, base: string, admin: string) {
   };
 }
 
-/** Sidebar width on desktop (≥ 768px); on mobile the sidebar is a drawer. */
-export const SIDEBAR_WIDTH = 240;
+/** shadcn sidebar-07: 16rem sidebar, 3rem icon rail; a drawer below 768px. */
+export const SIDEBAR_WIDTH = 256;
+export const SIDEBAR_ICON_WIDTH = 48;
+/** The inset header: 4rem, 3rem while the sidebar is an icon rail. */
+export const HEADER_HEIGHT = 64;
+export const HEADER_HEIGHT_ICON = 48;
 
-/** Expected page gutter inside a main column of `inset` px at a viewport `width` px wide. */
+/** Page gutter inside a main column of `inset` px at a viewport `width` px wide (80rem column, 1rem / 1.5rem gutter). */
 export function consoleGutter(width: number, inset: number): number {
-  return width < 768 ? 16 : Math.max(32, (inset - 1216) / 2 + 32);
+  return width < 768 ? 16 : Math.max(24, (inset - 1280) / 2 + 24);
 }
 
 /**
- * The page body's content column lines up with the top bar at every width:
- * the sidebar toggle on the left, the global actions on the right.
+ * The page body's content column lines up with the inset header at every
+ * width (the trigger on the left, the global actions on the right) and sits
+ * symmetrically inside SidebarInset.
  */
 export async function contentAlignment(page: Page) {
   return page.evaluate(() => {
     const header = document.querySelector('[data-slot="page-header"]');
-    const inset = document.querySelector('[data-slot="sidebar-inset"]');
-    const toggle = document.querySelector('[data-slot="console-topbar"] [data-sidebar="trigger"]');
+    const inset = document.querySelector('main[data-slot="sidebar-inset"]');
+    const topbar = document.querySelector('[data-slot="console-topbar"]');
+    const toggle = topbar?.querySelector('[data-sidebar="trigger"]');
     const actions = document.querySelector('[data-slot="console-topbar-actions"]');
-    if (!header || !inset || !toggle || !actions) throw new Error("Missing console shell");
+    if (!header || !inset || !topbar || !toggle || !actions) throw new Error("Missing console shell");
     const h = header.getBoundingClientRect();
     const i = inset.getBoundingClientRect();
-    // The ghost toggle sits 6px outside the column so its icon lines up with the text.
+    // The ghost trigger sits 4px (-ml-1) outside the column so its icon lines up with the text.
     return {
-      left: Math.round(h.left - toggle.getBoundingClientRect().left - 6),
+      left: Math.round(h.left - toggle.getBoundingClientRect().left - 4),
       right: Math.round(actions.getBoundingClientRect().right - h.right),
       gutter: Math.round(h.left - i.left),
+      asymmetry: Math.round((i.right - h.right) - (h.left - i.left)),
       inset: Math.round(i.width),
+      header: Math.round(topbar.getBoundingClientRect().height),
       overflow: document.documentElement.scrollWidth > innerWidth,
     };
   });

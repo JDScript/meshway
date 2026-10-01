@@ -2,8 +2,10 @@ import {
   ActivityIcon,
   CableIcon,
   GlobeIcon,
+  LockKeyholeIcon,
   LayoutDashboardIcon,
   RouteIcon,
+  StethoscopeIcon,
   ServerIcon,
   SettingsIcon,
   ShieldCheckIcon,
@@ -33,47 +35,58 @@ export type NavItem = {
   keywords: string[]
 }
 
-export type NavGroup = {
+/** A collapsible entry of the main navigation (sidebar-07 `NavMain`). */
+export type NavSection = {
   key: string
-  /** Groups without a label sit at the top of the sidebar. */
-  label: string | null
+  label: string
+  icon: LucideIcon
   items: NavItem[]
 }
 
-export const navGroups: NavGroup[] = [
-  {
-    key: "network",
-    label: null,
-    items: [
-      {
-        segment: "",
-        label: "概览",
-        icon: LayoutDashboardIcon,
-        description: "待处理事项与网络摘要",
-        href: (routes) => routes.overview,
-        keywords: ["overview", "dashboard", "gailan"],
-      },
-      {
-        segment: "machines",
-        label: "节点",
-        icon: ServerIcon,
-        description: "加入这张网络的设备与服务器",
-        href: (routes) => routes.machines(),
-        keywords: ["machines", "nodes", "devices", "jiedian", "设备"],
-      },
-      {
-        segment: "dns",
-        label: "DNS",
-        icon: GlobeIcon,
-        description: "节点 DNS 意图与节点名称",
-        href: (routes) => routes.dns(),
-        keywords: ["dns", "magicdns", "zone", "ttl", "名称解析"],
-      },
-    ],
-  },
-  {
+export type NavEntry = { kind: "link"; item: NavItem } | { kind: "section"; section: NavSection }
+
+const link = (item: NavItem): NavEntry => ({ kind: "link", item })
+const section = (value: NavSection): NavEntry => ({ kind: "section", section: value })
+
+export const settingsItem: NavItem = {
+  segment: "settings",
+  label: "网络设置",
+  icon: SettingsIcon,
+  description: "名称、ID 与地址前缀",
+  href: (routes) => routes.settings,
+  keywords: ["settings", "network", "name", "prefix", "shezhi", "网络设置", "设置"],
+}
+
+/** The sidebar's one navigation group, in order; ⌘K uses the same list. */
+export const navMain: NavEntry[] = [
+  link({
+    segment: "",
+    label: "概览",
+    icon: LayoutDashboardIcon,
+    description: "待处理事项与网络摘要",
+    href: (routes) => routes.overview,
+    keywords: ["overview", "dashboard", "gailan"],
+  }),
+  link({
+    segment: "machines",
+    label: "节点",
+    icon: ServerIcon,
+    description: "加入这张网络的设备与服务器",
+    href: (routes) => routes.machines(),
+    keywords: ["machines", "nodes", "devices", "jiedian", "设备"],
+  }),
+  link({
+    segment: "dns",
+    label: "DNS",
+    icon: GlobeIcon,
+    description: "节点 DNS 意图与节点名称",
+    href: (routes) => routes.dns(),
+    keywords: ["dns", "magicdns", "zone", "ttl", "名称解析"],
+  }),
+  section({
     key: "policies",
     label: "访问控制",
+    icon: LockKeyholeIcon,
     items: [
       {
         segment: "access",
@@ -112,10 +125,11 @@ export const navGroups: NavGroup[] = [
         keywords: ["connections", "listeners", "dial", "transport", "lianjie", "高级连接"],
       },
     ],
-  },
-  {
+  }),
+  section({
     key: "diagnostics",
     label: "诊断",
+    icon: StethoscopeIcon,
     items: [
       {
         segment: "diagnostics",
@@ -134,28 +148,22 @@ export const navGroups: NavGroup[] = [
         keywords: ["topology", "map", "flow", "path", "tuopu"],
       },
     ],
-  },
+  }),
+  link(settingsItem),
 ]
 
-/** Pinned to the bottom of the sidebar, like Tailscale's settings. */
-export const settingsItem: NavItem = {
-  segment: "settings",
-  label: "网络设置",
-  icon: SettingsIcon,
-  description: "名称、ID 与地址前缀",
-  href: (routes) => routes.settings,
-  keywords: ["settings", "network", "name", "prefix", "shezhi", "网络设置", "设置"],
-}
+export const navItems: NavItem[] = navMain.flatMap((entry) => (entry.kind === "link" ? [entry.item] : entry.section.items))
 
-export const navItems: NavItem[] = [...navGroups.flatMap((group) => group.items), settingsItem]
-
-export function activeNavItem(pathname: string, base: string): { item: NavItem; group: NavGroup | null } | undefined {
+export function activeNavItem(pathname: string, base: string): { item: NavItem; section: NavSection | null } | undefined {
   const segment = sectionSegment(pathname, base)
   if (segment === null) return undefined
-  if (segment === settingsItem.segment) return { item: settingsItem, group: null }
-  for (const group of navGroups) {
-    const item = group.items.find((candidate) => candidate.segment === segment)
-    if (item) return { item, group }
+  for (const entry of navMain) {
+    if (entry.kind === "link") {
+      if (entry.item.segment === segment) return { item: entry.item, section: null }
+      continue
+    }
+    const item = entry.section.items.find((candidate) => candidate.segment === segment)
+    if (item) return { item, section: entry.section }
   }
   return undefined
 }

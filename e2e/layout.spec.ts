@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { createEnrollmentToken, getConnections, getMeshAccess, getPolicy, savePolicy } from "./network-client.ts";
-import { consoleAt, consoleGutter, contentAlignment, executable, root, run, service, SIDEBAR_WIDTH, unusedPort } from "./harness.ts";
+import { consoleAt, consoleGutter, contentAlignment, executable, HEADER_HEIGHT, HEADER_HEIGHT_ICON, root, run, service, SIDEBAR_ICON_WIDTH, SIDEBAR_WIDTH, unusedPort } from "./harness.ts";
 import { revealAdvanced } from "./web-actions.ts";
 
 const barSelector = '[data-slot="draft-action-bar"]';
@@ -37,20 +37,20 @@ test("the content column aligns with the shell and animated draft actions stay s
     await page.getByRole("button", { name: "登录", exact: true }).click();
     await expect(page).not.toHaveURL(/\/login(?:\?|$)/);
 
-    for (const width of [1920, 1440, 1024, 390]) {
+    for (const width of [1920, 1440, 1024, 768, 390]) {
       await page.setViewportSize({ width, height: width === 390 ? 844 : 1000 });
       const inset = width >= 768 ? width - SIDEBAR_WIDTH : width;
       for (const path of ["", "/machines", "/machines/add", "/access", "/routing", "/tags", "/connections", "/dns", "/settings", "/diagnostics", "/topology"]) {
         await page.goto(ui.at(path));
         await expect(page.locator('[data-slot="page-header"]')).toBeVisible();
-        expect(await contentAlignment(page)).toEqual({ left: 0, right: 0, gutter: consoleGutter(width, inset), inset, overflow: false });
+        expect(await contentAlignment(page)).toEqual({ left: 0, right: 0, gutter: consoleGutter(width, inset), asymmetry: 0, inset, header: HEADER_HEIGHT, overflow: false });
         const top = await page.locator('[data-slot="page-header"]').evaluate(header => {
           const body = header.closest('[data-slot="page-body"]');
           if (!body) throw new Error("Missing page body");
           return header.getBoundingClientRect().top - body.getBoundingClientRect().top;
         });
-        // Every page starts at the same distance below the top bar.
-        expect(top).toBe(width === 390 ? 24 : 32);
+        // Every page starts at the same distance below the inset header.
+        expect(top).toBe(24);
         if (path === "/access" && process.env.MESHWAY_LAYOUT_SCREENSHOTS) {
           await page.screenshot({ path: join(process.env.MESHWAY_LAYOUT_SCREENSHOTS, `layout-${width}.png`) });
         }
@@ -62,10 +62,14 @@ test("the content column aligns with the shell and animated draft actions stay s
     await page.setViewportSize({ width: 1440, height: 1000 });
     await page.goto(ui.at("/machines"));
     await page.getByRole("button", { name: "收起导航", exact: true }).click();
-    await expect.poll(async () => (await contentAlignment(page)).inset).toBe(1440 - 48);
+    await expect.poll(async () => (await contentAlignment(page)).inset).toBe(1440 - SIDEBAR_ICON_WIDTH);
     await page.reload();
     await expect(page.getByRole("button", { name: "展开导航", exact: true })).toBeVisible();
-    expect(await contentAlignment(page)).toEqual({ left: 0, right: 0, gutter: consoleGutter(1440, 1392), inset: 1392, overflow: false });
+    const iconInset = 1440 - SIDEBAR_ICON_WIDTH;
+    await expect.poll(() => contentAlignment(page)).toEqual({ left: 0, right: 0, gutter: consoleGutter(1440, iconInset), asymmetry: 0, inset: iconInset, header: HEADER_HEIGHT_ICON, overflow: false });
+    // Icon rail: a section's icon opens its first page; tooltips name it.
+    await page.getByRole("navigation", { name: "控制台" }).getByRole("link", { name: "诊断", exact: true }).click();
+    await expect(page).toHaveURL(ui.at("/diagnostics"));
     await page.getByRole("button", { name: "展开导航", exact: true }).click();
     await expect.poll(async () => (await contentAlignment(page)).inset).toBe(1440 - SIDEBAR_WIDTH);
     await page.setViewportSize({ width: 390, height: 844 });

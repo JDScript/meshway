@@ -5,7 +5,7 @@ import { useTheme } from "next-themes"
 import { useRouter } from "next/navigation"
 import { useEffect, useState } from "react"
 
-import { navGroups, settingsItem } from "@/components/shell/nav"
+import { navMain } from "@/components/shell/nav"
 import { useRoutes } from "@/components/shell/network-context"
 import { Button } from "@/components/ui/button"
 import {
@@ -62,12 +62,12 @@ export function CommandMenu() {
       <Button
         variant="outline"
         onClick={() => setOpen(true)}
-        className="w-8 justify-center px-0 font-normal text-muted-foreground shadow-none sm:w-56 sm:justify-start sm:px-2.5"
+        className="w-8 justify-center px-0 font-normal text-muted-foreground shadow-none lg:w-56 lg:justify-start lg:px-2.5"
         aria-label="搜索与跳转"
       >
         <SearchIcon data-icon="inline-start" />
-        <span className="hidden flex-1 text-left sm:inline">搜索或跳转…</span>
-        <Kbd className="hidden sm:inline-flex">⌘K</Kbd>
+        <span className="hidden flex-1 text-left lg:inline">搜索或跳转…</span>
+        <Kbd className="hidden lg:inline-flex">⌘K</Kbd>
       </Button>
       <CommandDialog
         open={open}
@@ -94,26 +94,21 @@ export function CommandMenu() {
               </CommandGroup>
             ) : null}
             <CommandGroup heading="页面">
-              {navGroups.flatMap((group) =>
-                group.items.map((item) => (
-                  <CommandItem
-                    key={item.segment}
-                    value={`${group.label ?? ""} ${item.label} ${item.keywords.join(" ")}`}
-                    onSelect={() => run(() => router.push(item.href(routes)))}
-                  >
-                    <item.icon />
-                    {item.label}
-                    {group.label ? <span className="ml-auto text-xs text-muted-foreground">{group.label}</span> : null}
-                  </CommandItem>
-                ))
+              {navMain.flatMap((entry) =>
+                (entry.kind === "link" ? [{ item: entry.item, section: null }] : entry.section.items.map((item) => ({ item, section: entry.section.label }))).map(
+                  ({ item, section }) => (
+                    <CommandItem
+                      key={item.segment}
+                      value={`${section ?? ""} ${item.label} ${item.keywords.join(" ")}`}
+                      onSelect={() => run(() => router.push(item.href(routes)))}
+                    >
+                      <item.icon />
+                      {item.label}
+                      {section ? <span className="ml-auto text-xs text-muted-foreground">{section}</span> : null}
+                    </CommandItem>
+                  )
+                )
               )}
-              <CommandItem
-                value={`${settingsItem.label} ${settingsItem.keywords.join(" ")}`}
-                onSelect={() => run(() => router.push(settingsItem.href(routes)))}
-              >
-                <settingsItem.icon />
-                {settingsItem.label}
-              </CommandItem>
             </CommandGroup>
             <CommandSeparator />
             <CommandGroup heading="操作">

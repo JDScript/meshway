@@ -6,6 +6,7 @@ import { usePathname, useRouter } from "next/navigation"
 import { useActionState, useEffect, useState, useTransition } from "react"
 
 import { useDraftVault } from "@/components/network/network-workspace"
+import { BrandMark } from "@/components/shell/brand"
 import { useNetwork } from "@/components/shell/network-context"
 import { sectionSegment } from "@/components/shell/nav"
 import { Button } from "@/components/ui/button"
@@ -20,6 +21,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
 import { Input } from "@/components/ui/input"
+import { SidebarMenu, SidebarMenuButton, SidebarMenuItem, useSidebar } from "@/components/ui/sidebar"
 import { Label } from "@/components/ui/label"
 import { createNetworkAction, switchNetworkAction, type CreateNetworkState } from "@/lib/network-actions"
 import { consoleRoutes } from "@/lib/routes"
@@ -49,6 +51,7 @@ export function NetworkSwitcher({ networks, controllerHost }: { networks: Networ
   const [pending, startTransition] = useTransition()
   const [error, setError] = useState<string | null>(null)
   const [creating, setCreating] = useState(false)
+  const { isMobile } = useSidebar()
   const label = name ?? "网络"
   const prefix = networks.ok ? networks.networks.find((network) => network.networkId === networkId)?.ipv4Prefix : undefined
 
@@ -64,27 +67,26 @@ export function NetworkSwitcher({ networks, controllerHost }: { networks: Networ
 
   return (
     <>
+      <SidebarMenu>
+        <SidebarMenuItem>
       <DropdownMenu>
         <DropdownMenuTrigger
           aria-label="当前网络"
-          className="flex w-full min-w-0 items-center gap-2.5 rounded-lg border border-sidebar-border bg-background/60 p-1.5 pr-2 text-left shadow-xs outline-none transition-colors hover:bg-sidebar-accent focus-visible:ring-2 focus-visible:ring-sidebar-ring aria-expanded:bg-sidebar-accent group-data-[collapsible=icon]:size-8 group-data-[collapsible=icon]:border-0 group-data-[collapsible=icon]:bg-transparent group-data-[collapsible=icon]:p-0 group-data-[collapsible=icon]:shadow-none dark:bg-white/[0.03]"
+          render={<SidebarMenuButton size="lg" tooltip={label} className="data-open:bg-sidebar-accent data-open:text-sidebar-accent-foreground" />}
         >
-          <span
-            aria-hidden="true"
-            className="flex size-8 shrink-0 items-center justify-center rounded-md bg-brand/15 text-[0.8125rem] font-semibold text-brand"
-          >
-            {label.slice(0, 1).toUpperCase()}
+          <span className="flex aspect-square size-8 shrink-0 items-center justify-center overflow-hidden rounded-lg">
+            <BrandMark className="size-8!" />
           </span>
-          <span className="flex min-w-0 flex-1 flex-col group-data-[collapsible=icon]:hidden">
-            <span className="truncate text-[0.875rem] leading-5 font-medium">{label}</span>
-            <span className="truncate font-mono text-[0.6875rem] leading-4 text-muted-foreground">{prefix ?? "网络"}</span>
+          <span className="grid flex-1 text-left text-sm leading-tight">
+            <span className="truncate font-medium">{label}</span>
+            <span className="truncate font-mono text-xs text-muted-foreground">{prefix ?? "Meshway"}</span>
           </span>
-          {!networks.ok || error ? <CircleAlertIcon className="size-3.5 shrink-0 text-destructive group-data-[collapsible=icon]:hidden" aria-hidden="true" /> : null}
-          <ChevronsUpDownIcon className="size-4 shrink-0 text-muted-foreground group-data-[collapsible=icon]:hidden" aria-hidden="true" />
+          {!networks.ok || error ? <CircleAlertIcon className="size-3.5 shrink-0 text-destructive" aria-hidden="true" /> : null}
+          <ChevronsUpDownIcon className="ml-auto" aria-hidden="true" />
         </DropdownMenuTrigger>
-        <DropdownMenuContent align="start" sideOffset={6} className="w-(--anchor-width) min-w-64">
+        <DropdownMenuContent align="start" side={isMobile ? "bottom" : "right"} sideOffset={4} className="w-72">
           <DropdownMenuGroup>
-            <DropdownMenuLabel>网络</DropdownMenuLabel>
+            <DropdownMenuLabel className="text-xs text-muted-foreground">网络</DropdownMenuLabel>
             {networks.ok ? (
               networks.networks.map((network) => {
                 const current = network.networkId === networkId
@@ -134,6 +136,8 @@ export function NetworkSwitcher({ networks, controllerHost }: { networks: Networ
           </p>
         </DropdownMenuContent>
       </DropdownMenu>
+        </SidebarMenuItem>
+      </SidebarMenu>
       <Dialog open={creating} onOpenChange={setCreating}>
         <DialogContent className="sm:max-w-md">
           {creating ? <CreateNetworkForm onCancel={() => setCreating(false)} /> : null}
