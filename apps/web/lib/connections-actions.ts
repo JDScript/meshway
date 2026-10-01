@@ -22,7 +22,8 @@ import {
   describeError,
   isCredentialRejected,
 } from "@/lib/controller"
-import { rejectActionSession, requireActionAdminToken } from "@/lib/session"
+import { rejectActionSession } from "@/lib/session"
+import { requireNetworkActionContext } from "@/lib/network-context"
 
 // Arguments arrive from the browser and are untrusted: every action checks the
 // session first, and the generated SDK validates the request body against the
@@ -39,10 +40,11 @@ function oversized(value: unknown): boolean {
 }
 
 export async function saveConnectionsAction(
+  networkId: string,
   expectedRevision: number,
   configuration: ConnectionPlan
 ): Promise<ConnectionsSaveResult> {
-  const token = await requireActionAdminToken()
+  const { token } = await requireNetworkActionContext(networkId)
   if (
     !Number.isSafeInteger(expectedRevision) ||
     expectedRevision < 1 ||
@@ -55,7 +57,7 @@ export async function saveConnectionsAction(
     return { status: "error", message: "连接配置超过大小上限，未保存。" }
   }
   try {
-    const snapshot = await saveConnections(controllerUrl(), token, body)
+    const snapshot = await saveConnections(controllerUrl(), token, networkId, body)
     return { status: "saved", snapshot, fetchedAt: Date.now() }
   } catch (error) {
     if (!isCredentialRejected(error)) {
@@ -82,10 +84,10 @@ export async function saveConnectionsAction(
 }
 
 /** Fresh snapshot for an explicit reload; callers decide to discard the draft. */
-export async function reloadConnectionsAction(): Promise<ConnectionsReloadResult> {
-  const token = await requireActionAdminToken()
+export async function reloadConnectionsAction(networkId: string): Promise<ConnectionsReloadResult> {
+  const { token } = await requireNetworkActionContext(networkId)
   try {
-    const snapshot = await getConnections(controllerUrl(), token)
+    const snapshot = await getConnections(controllerUrl(), token, networkId)
     return { status: "loaded", snapshot, fetchedAt: Date.now() }
   } catch (error) {
     if (!isCredentialRejected(error)) {
@@ -99,10 +101,10 @@ export async function reloadConnectionsAction(): Promise<ConnectionsReloadResult
 }
 
 /** Read-only runtime observations for the bounded background refresh. */
-export async function readConnectionRuntimesAction(): Promise<RuntimeReadResult> {
-  const token = await requireActionAdminToken()
+export async function readConnectionRuntimesAction(networkId: string): Promise<RuntimeReadResult> {
+  const { token } = await requireNetworkActionContext(networkId)
   try {
-    const snapshot = await getConnectionRuntimes(controllerUrl(), token)
+    const snapshot = await getConnectionRuntimes(controllerUrl(), token, networkId)
     return { status: "loaded", snapshot, fetchedAt: Date.now() }
   } catch (error) {
     if (!isCredentialRejected(error)) {
@@ -117,13 +119,13 @@ export async function readConnectionRuntimesAction(): Promise<RuntimeReadResult>
  * (contact, IP receipts), connection snapshot (plan, connection receipts) and
  * runtime reports in one request, so a single bounded poll covers all of them.
  */
-export async function readNodeStatusAction(): Promise<NodeStatusResult> {
-  const token = await requireActionAdminToken()
+export async function readNodeStatusAction(networkId: string): Promise<NodeStatusResult> {
+  const { token } = await requireNetworkActionContext(networkId)
   const base = controllerUrl()
   const [nodes, connections, runtimes] = await Promise.allSettled([
-    listNodes(base, token),
-    getConnections(base, token),
-    getConnectionRuntimes(base, token),
+    listNodes(base, token, networkId),
+    getConnections(base, token, networkId),
+    getConnectionRuntimes(base, token, networkId),
   ])
   const fetchedAt = Date.now()
   const settled = [nodes, connections, runtimes]

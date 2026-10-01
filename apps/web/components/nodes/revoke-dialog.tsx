@@ -1,5 +1,7 @@
 "use client"
 
+import { useNetworkId } from "@/components/network/network-workspace"
+
 import type { NodeSummary } from "@meshway/control-client"
 import { CircleAlertIcon } from "lucide-react"
 import { useActionState } from "react"
@@ -38,9 +40,10 @@ export function RevokeDialog({
 }
 
 function RevokeForm({ node, onRevoked }: { node: NodeSummary; onRevoked: () => void }) {
+  const networkId = useNetworkId()
   const [state, formAction, pending] = useActionState(
     async (previous: RevokeState, formData: FormData) => {
-      const result = await revokeNodeAction(previous, formData)
+      const result = await revokeNodeAction(networkId, previous, formData)
       if (result.status === "revoked") onRevoked()
       return result
     },

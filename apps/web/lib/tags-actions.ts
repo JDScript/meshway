@@ -12,7 +12,8 @@ import {
 
 import type { TagReloadResult, TagSaveResult } from "@/lib/action-state"
 import { controllerUrl, describeError, isCredentialRejected } from "@/lib/controller"
-import { rejectActionSession, requireActionAdminToken } from "@/lib/session"
+import { rejectActionSession } from "@/lib/session"
+import { requireNetworkActionContext } from "@/lib/network-context"
 
 // Tag catalog and node tag bindings. Both mutations use the global
 // configuration revision as their CAS base; the generated SDK validates every
@@ -47,13 +48,13 @@ function failure(error: unknown, token: string, expectedRevision: number): TagSa
   return { status: "error", message: `保存失败：${describeError(error, token)}` }
 }
 
-export async function saveTagsAction(expectedRevision: number, tags: TagDefinition[]): Promise<TagSaveResult> {
-  const token = await requireActionAdminToken()
+export async function saveTagsAction(networkId: string, expectedRevision: number, tags: TagDefinition[]): Promise<TagSaveResult> {
+  const { token } = await requireNetworkActionContext(networkId)
   if (badRevision(expectedRevision)) return { status: "error", message: "编辑基础版本无效，请重新读取。" }
   const body = { expected_revision: expectedRevision, tags }
   if (oversized(body)) return { status: "error", message: "标签目录超过大小上限，未保存。" }
   try {
-    return { status: "saved", snapshot: await saveTags(controllerUrl(), token, body) }
+    return { status: "saved", snapshot: await saveTags(controllerUrl(), token, networkId, body) }
   } catch (error) {
     if (!isCredentialRejected(error)) return failure(error, token, expectedRevision)
   }
@@ -61,16 +62,17 @@ export async function saveTagsAction(expectedRevision: number, tags: TagDefiniti
 }
 
 export async function setNodeTagsAction(
+  networkId: string,
   expectedRevision: number,
   nodeId: string,
   tags: string[]
 ): Promise<TagSaveResult> {
-  const token = await requireActionAdminToken()
+  const { token } = await requireNetworkActionContext(networkId)
   if (badRevision(expectedRevision)) return { status: "error", message: "编辑基础版本无效，请重新读取。" }
   const body = { expected_revision: expectedRevision, node_id: nodeId, tags }
   if (oversized(body)) return { status: "error", message: "节点标签超过大小上限，未保存。" }
   try {
-    return { status: "saved", snapshot: await setNodeTags(controllerUrl(), token, body) }
+    return { status: "saved", snapshot: await setNodeTags(controllerUrl(), token, networkId, body) }
   } catch (error) {
     if (!isCredentialRejected(error)) return failure(error, token, expectedRevision)
   }
@@ -78,14 +80,14 @@ export async function setNodeTagsAction(
 }
 
 /** Catalog, inventory and saved access rules (for "referenced by") read together. */
-export async function reloadTagsAction(): Promise<TagReloadResult> {
-  const token = await requireActionAdminToken()
+export async function reloadTagsAction(networkId: string): Promise<TagReloadResult> {
+  const { token } = await requireNetworkActionContext(networkId)
   const baseUrl = controllerUrl()
   try {
     const [snapshot, connections, access] = await Promise.all([
-      getTags(baseUrl, token),
-      getConnections(baseUrl, token),
-      getMeshAccess(baseUrl, token),
+      getTags(baseUrl, token, networkId),
+      getConnections(baseUrl, token, networkId),
+      getMeshAccess(baseUrl, token, networkId),
     ])
     return { status: "loaded", snapshot, inventory: connections.nodes, access }
   } catch (error) {

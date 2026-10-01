@@ -3,7 +3,7 @@ import { createHash, randomBytes } from "node:crypto";
 import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { exchangeDevice, listNodes } from "../packages/control-client/src/index.ts";
+import { exchangeDevice, listNodes, listNetworks, authorizeDevice } from "./network-client.ts";
 import { heartbeatAgentOperation as heartbeatAgent, getAgentConfigurationOperation, getAgentDnsOperation } from "../packages/control-client/src/generated/operations.gen.ts";
 import { executable, root, service, unusedPort } from "./harness.ts";
 
@@ -57,12 +57,10 @@ test("browser SSO approval redirects a PKCE code, exchange creates a real unifie
     expect((await getAgentDnsOperation(webUrl, credential)).payload.node_id).toBe(node.node.id);
     // A second real enrollment must be visible through the node-scoped GET proxy.
     const peerCredential = randomBytes(32).toString("hex");
-    const peerAuthorization = await anonymous.request.post(`${base}/api/v1/device-authorizations`, {
-      headers: { authorization: `Bearer ${admin}` },
-      data: { redirect_uri: params.redirect_uri, code_challenge: params.code_challenge, name: "Second device", agent_version: "e2e" },
-    });
-    const { zAuthorizeDeviceResponse } = await import("../packages/control-client/src/generated/zod.gen.ts");
-    const peerCode = zAuthorizeDeviceResponse.parse(await peerAuthorization.json()).code;
+    const networkId = (await listNetworks(base, admin)).networks[0]!.network_id;
+    const peerCode = (await authorizeDevice(base, admin, networkId, {
+      redirect_uri: params.redirect_uri, code_challenge: params.code_challenge, name: "Second device", agent_version: "e2e",
+    })).code;
     await exchangeDevice(webUrl, peerCode, { ...binding, node_credential: peerCredential, name: "Second device" });
     expect((await getAgentConfigurationOperation(webUrl, credential)).payload.peers.map(peer => peer.name)).toEqual(["Second device"]);
     for (const path of ["agents/configuration", "agent/dns"]) {

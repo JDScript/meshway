@@ -1,6 +1,6 @@
 "use server"
 
-import { authorizeDevice, getOverview } from "@meshway/control-client"
+import { authorizeDevice, listNetworks } from "@meshway/control-client"
 import { redirect } from "next/navigation"
 import { controllerUrl, isCredentialRejected } from "@/lib/controller"
 import { authorizationPath, deviceCallback, parseDeviceAuthorization } from "@/lib/device-login"
@@ -25,10 +25,12 @@ export async function decideDevice(_previous: DeviceLoginState, form: FormData):
   try {
     // Both decisions recheck the current human login on the controller.
     if (decision === "approve") {
-      const response = await authorizeDevice(controllerUrl(), session.token, value.request)
+      const networkId = form.get("network_id")
+      if (typeof networkId !== "string") return { error: "请选择接入网络。" }
+      const response = await authorizeDevice(controllerUrl(), session.token, networkId, value.request)
       callback = deviceCallback(value, { code: response.code })
     } else {
-      await getOverview(controllerUrl(), session.token)
+      await listNetworks(controllerUrl(), session.token)
       callback = deviceCallback(value, { error: "access_denied" })
     }
   } catch (error) {

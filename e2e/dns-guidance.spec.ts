@@ -3,7 +3,7 @@ import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { createEnrollmentToken, getNetwork, getPolicy, listNodes, revokeNode, savePolicy } from "../packages/control-client/src/index.ts";
+import { createEnrollmentToken, getNetwork, getPolicy, listNodes, revokeNode, savePolicy } from "./network-client.ts";
 import { executable, expandDetails, root, run, service, unusedPort } from "./harness.ts";
 
 test("DNS guidance uses saved intent and full identity without claiming local runtime", async ({ page }) => {

@@ -19,7 +19,8 @@ import {
   describeError,
   isCredentialRejected,
 } from "@/lib/controller"
-import { rejectActionSession, requireActionAdminToken } from "@/lib/session"
+import { rejectActionSession } from "@/lib/session"
+import { requireNetworkActionContext } from "@/lib/network-context"
 
 const MAX_NODE_ID_LENGTH = 128
 const MAX_REVISION = 4_294_967_295
@@ -32,10 +33,11 @@ function readNodeId(formData: FormData): string | null {
 }
 
 export async function createEnrollment(
+  networkId: string,
   _previous: EnrollmentState,
   formData: FormData
 ): Promise<EnrollmentState> {
-  const token = await requireActionAdminToken()
+  const { token } = await requireNetworkActionContext(networkId)
 
   const raw = formData.get("expires_in_seconds")
   const option = enrollmentTtlOptions.find(
@@ -45,7 +47,7 @@ export async function createEnrollment(
 
   const baseUrl = controllerUrl()
   try {
-    const enrollment = await createEnrollmentToken(baseUrl, token, {
+    const enrollment = await createEnrollmentToken(baseUrl, token, networkId, {
       expires_in_seconds: option.seconds,
     })
     return {
@@ -66,16 +68,17 @@ export async function createEnrollment(
 }
 
 export async function revokeNodeAction(
+  networkId: string,
   _previous: RevokeState,
   formData: FormData
 ): Promise<RevokeState> {
-  const token = await requireActionAdminToken()
+  const { token } = await requireNetworkActionContext(networkId)
 
   const nodeId = readNodeId(formData)
   if (!nodeId) return { status: "error", message: "节点 ID 无效。" }
 
   try {
-    const { node } = await revokeNode(controllerUrl(), token, { node_id: nodeId })
+    const { node } = await revokeNode(controllerUrl(), token, networkId, { node_id: nodeId })
     refresh()
     return { status: "revoked", node }
   } catch (error) {
@@ -103,10 +106,11 @@ export async function revokeNodeAction(
  * 409 and nothing is written.
  */
 export async function setNodeCountryAction(
+  networkId: string,
   _previous: CountryState,
   formData: FormData
 ): Promise<CountryState> {
-  const token = await requireActionAdminToken()
+  const { token } = await requireNetworkActionContext(networkId)
 
   const nodeId = readNodeId(formData)
   if (!nodeId) return { status: "error", message: "节点 ID 无效。" }
@@ -125,7 +129,7 @@ export async function setNodeCountryAction(
   }
 
   try {
-    const { node } = await setNodeCountry(controllerUrl(), token, {
+    const { node } = await setNodeCountry(controllerUrl(), token, networkId, {
       node_id: nodeId,
       country: country === "" ? null : country.toUpperCase(),
       expected_revision: expectedRevision,

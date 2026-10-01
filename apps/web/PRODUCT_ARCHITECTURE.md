@@ -41,3 +41,10 @@
 - `network.spec.ts` / `dns-guidance.spec.ts`：DNS 命令前展开「DNS 诊断与当前启用帮助」，`#dns-diagnostics` deep link 自动展开。
 - 数据面启动模板前展开「当前节点启用帮助」；节点身份 ID 前展开「节点身份技术详情」。「配置连接」概览按钮改为「查看连接」。
 - `connectivity-guidance.spec.ts`：问题区仍用 `summary`，来源 badge 在展开内容；若定位原 summary 的来源文字需改为标题定位。
+## 多网络上下文（P1a）
+
+左上角网络菜单读取真实网络列表，提供切换与创建；设置页管理所选网络的名称 / DNS。各页面仅展示所选网络的节点、标签、策略、连接和报告，空网络保持空状态。现有管理员仍是 controller 全局管理员，网络用户 / Owner 权限由后续接入阶段实现。
+
+选择 cookie 为 HttpOnly，仅作为界面上下文。所有 server action 独立验证管理员身份；mutation 使用渲染时显式绑定的 network ID，不读取可能被另一标签页更改的选择 cookie。Rust 管理路由 `/api/v1/networks/{network_id}/…` 是真正的隔离边界。
+
+Access / Routing / Connections 草稿注册表按网络分别保存，共享图形 / JSONC 草稿、注释、无效文本和 CAS 基准；切换网络重新挂载页面状态，返回时恢复该网络的编辑。页面关闭警告包含不活动网络的未保存草稿。App 浏览器批准页独立选择接入网络，兑换 / 心跳契约保持兼容。

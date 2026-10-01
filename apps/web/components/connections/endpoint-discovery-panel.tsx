@@ -1,5 +1,7 @@
 "use client"
 
+import { useNetworkId } from "@/components/network/network-workspace"
+
 import type { EndpointDiscoveriesSnapshot, NodeEndpointDiscovery, UdpSocketDiscovery } from "@meshway/control-client"
 import Link from "next/link"
 import { useCallback, useEffect, useRef, useState, useTransition } from "react"
@@ -21,6 +23,7 @@ export function EndpointDiscoveryPanel({ initial, nodeId }: {
   nodeId?: string
 }) {
   const [read, setRead] = useState({ initial, result: initial })
+  const networkId = useNetworkId()
   const [now, setNow] = useState<DiscoveryClock>({ time: initial.fetchedAt, monotonicTime: null })
   const [refreshing, startRefresh] = useTransition()
   const sequence = useRef(0)
@@ -39,13 +42,13 @@ export function EndpointDiscoveryPanel({ initial, nodeId }: {
   const refresh = useCallback(() => {
     const seq = ++sequence.current
     startRefresh(async () => {
-      const result = await readEndpointDiscoveriesAction()
+      const result = await readEndpointDiscoveriesAction(networkId)
       if (seq !== sequence.current) return
       // A failed read replaces the snapshot: never present last-good as live.
       setRead({ initial, result })
       sampleClock(result.fetchedAt)
     })
-  }, [initial, sampleClock])
+  }, [initial, sampleClock, networkId])
   useEffect(() => {
     const tick = window.setInterval(() => sampleClock(), 1_000)
     const poll = window.setInterval(() => { if (document.visibilityState === "visible") refresh() }, 12_000)

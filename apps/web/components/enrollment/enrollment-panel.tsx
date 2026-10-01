@@ -1,5 +1,7 @@
 "use client"
 
+import { useNetworkId } from "@/components/network/network-workspace"
+
 import type { CreateEnrollmentTokenResponse } from "@meshway/control-client"
 import { CircleAlertIcon, EyeOffIcon, KeyRoundIcon } from "lucide-react"
 import Link from "next/link"
@@ -36,7 +38,8 @@ const ttlOptions = enrollmentTtlOptions.map(({ seconds, label }) => ({
 }))
 
 export function EnrollmentPanel() {
-  const [state, formAction, pending] = useActionState(createEnrollment, initialState)
+  const networkId = useNetworkId()
+  const [state, formAction, pending] = useActionState(createEnrollment.bind(null, networkId), initialState)
   const [dismissedAt, setDismissedAt] = useState<number | null>(null)
   const [ttl, setTtl] = useState(String(defaultEnrollmentTtl))
   const ttlId = useId()

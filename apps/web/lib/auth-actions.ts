@@ -1,6 +1,6 @@
 "use server"
 
-import { getOverview } from "@meshway/control-client"
+import { listNetworks } from "@meshway/control-client"
 import { redirect } from "next/navigation"
 
 import type { LoginState } from "@/lib/action-state"
@@ -30,7 +30,7 @@ export async function login(
   }
 
   try {
-    await getOverview(controllerUrl(), token)
+    await listNetworks(controllerUrl(), token)
   } catch (error) {
     if (isCredentialRejected(error)) return { status: "invalid" }
     return { status: "unavailable", detail: describeError(error, token) }
@@ -59,7 +59,7 @@ export async function discardRejectedSession(): Promise<void> {
     return
   }
   try {
-    await getOverview(controllerUrl(), session.token)
+    await listNetworks(controllerUrl(), session.token)
   } catch (error) {
     if (isCredentialRejected(error)) await endSession()
   }

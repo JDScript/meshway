@@ -22,8 +22,8 @@ const ConnectionsDraftContext = createContext<ConnectionsDraftRegistry | null>(n
  * edits; a full reload, logout or leaving the console discards them. Nothing
  * is persisted to storage and it never contains credentials.
  */
-export function ConnectionsDraftProvider({ children }: { children: ReactNode }) {
-  const [registry] = useState(() => new ConnectionsDraftRegistry())
+export function ConnectionsDraftProvider({ children, registry: supplied }: { children: ReactNode; registry?: ConnectionsDraftRegistry }) {
+  const [registry] = useState(() => supplied ?? new ConnectionsDraftRegistry())
   const hasDraft = useSyncExternalStore(
     (listener) => registry.subscribe(listener),
     () => registry.hasDraft(),

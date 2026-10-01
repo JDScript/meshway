@@ -65,7 +65,7 @@ export async function rejectActionSession(): Promise<never> {
  * unset or "auto" sets it when the browser reached the console over HTTPS.
  * Any other value fails closed to Secure.
  */
-async function secureCookie(): Promise<boolean> {
+export async function secureCookie(): Promise<boolean> {
   const setting = process.env.MESHWAY_WEB_COOKIE_SECURE?.trim().toLowerCase()
   if (setting === "false") return false
   if (setting !== undefined && setting !== "" && setting !== "auto") return true

@@ -1,5 +1,7 @@
 "use client"
 
+import { useNetworkId } from "@/components/network/network-workspace"
+
 import type { NodeSummary } from "@meshway/control-client"
 import { CircleAlertIcon } from "lucide-react"
 import { useActionState, useId } from "react"
@@ -45,11 +47,12 @@ export function CountryDialog({
 }
 
 function CountryForm({ node, onSaved }: { node: NodeSummary; onSaved: () => void }) {
+  const networkId = useNetworkId()
   const inputId = useId()
   const hintId = useId()
   const [state, formAction, pending] = useActionState(
     async (previous: CountryState, formData: FormData) => {
-      const result = await setNodeCountryAction(previous, formData)
+      const result = await setNodeCountryAction(networkId, previous, formData)
       if (result.status === "saved") onSaved()
       return result
     },

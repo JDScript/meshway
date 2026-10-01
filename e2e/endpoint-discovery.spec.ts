@@ -3,7 +3,7 @@ import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { createEnrollmentToken, getConnections, getEndpointDiscoveries, listNodes, saveConnections } from "../packages/control-client/src/index.ts";
+import { createEnrollmentToken, getConnections, getEndpointDiscoveries, listNodes, saveConnections } from "./network-client.ts";
 import { beginConnectionRuntimeOperation, getAgentConnectionsOperation, reportConnectionRuntimeOperation, reportEndpointDiscoveryOperation } from "../packages/control-client/src/generated/operations.gen.ts";
 import { executable, expandDetails, root, run, service, unusedPort } from "./harness.ts";
 

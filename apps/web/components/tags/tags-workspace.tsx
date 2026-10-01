@@ -1,5 +1,7 @@
 "use client"
 
+import { useNetworkId } from "@/components/network/network-workspace"
+
 import type { ConnectionNode, MeshAccessSnapshot, TagDefinition, TagSnapshot } from "@meshway/control-client"
 import { CircleAlertIcon, PencilIcon, PlusIcon, RefreshCwIcon, RotateCcwIcon, SaveIcon, TagIcon, Trash2Icon } from "lucide-react"
 import Link from "next/link"
@@ -47,6 +49,7 @@ export function TagsWorkspace({
   focusNodeId: string | null
 }) {
   const [snapshot, setSnapshot] = useState(initialSnapshot)
+  const networkId = useNetworkId()
   const [inventory, setInventory] = useState(initialInventory)
   const [access, setAccess] = useState(initialAccess)
   const [catalog, setCatalog] = useState<TagDefinition[]>(initialSnapshot.tags)
@@ -86,7 +89,7 @@ export function TagsWorkspace({
     const expected = snapshot.revision
     const body = catalog
     start(async () => {
-      const result = await saveTagsAction(expected, body)
+      const result = await saveTagsAction(networkId, expected, body)
       if (accept(result, "catalog") && result.status === "saved") setCatalog(result.snapshot.tags)
     })
   }
@@ -95,14 +98,14 @@ export function TagsWorkspace({
     const expected = snapshot.revision
     const body = nodeDraft
     start(async () => {
-      const result = await setNodeTagsAction(expected, nodeId, body)
+      const result = await setNodeTagsAction(networkId, expected, nodeId, body)
       if (accept(result, nodeId)) setEditingNode(null)
     })
   }
 
   const reload = () => {
     start(async () => {
-      const result = await reloadTagsAction()
+      const result = await reloadTagsAction(networkId)
       if (result.status === "error") {
         setReloadError(result.message)
         return

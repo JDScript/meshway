@@ -72,7 +72,7 @@ export function NetworkSettings({ snapshot }: { snapshot: NetworkSnapshot }) {
   const save = () => {
     if (!dirty || pending || issues.length > 0) return
     start(async () => {
-      const result = await saveNetworkAction(request)
+      const result = await saveNetworkAction(snapshot.network_id, request)
       setFeedback(result)
       if (result.status === "saved") {
         adopt(result.snapshot)
@@ -83,7 +83,7 @@ export function NetworkSettings({ snapshot }: { snapshot: NetworkSnapshot }) {
   const reload = () => {
     setConfirmReload(false)
     start(async () => {
-      const result = await readNetworkAction()
+      const result = await readNetworkAction(snapshot.network_id)
       if (result.status === "error") { setReloadError(result.message); return }
       adopt(result.snapshot)
       setFeedback(null)

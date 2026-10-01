@@ -11,6 +11,8 @@ import {
   getPolicy,
   getTags,
   listNodes,
+  listNetworks,
+  type NetworkList,
   type ConnectionRuntimesSnapshot,
   type ConnectionsSnapshot,
   type EndpointDiscoveriesSnapshot,
@@ -26,10 +28,10 @@ import { connection } from "next/server"
 import { cache } from "react"
 
 import { EXPIRED_LOGIN_PATH, requireAdminToken } from "@/lib/session"
+import { selectedNetworkId } from "@/lib/network-context"
+import { controllerUrl } from "@/lib/controller-config"
 
-export function controllerUrl(): string {
-  return process.env.MESHWAY_CONTROLLER_URL ?? "http://127.0.0.1:8420"
-}
+export { controllerUrl } from "@/lib/controller-config"
 
 export type ControllerResult<T> =
   | { ok: true; data: T; fetchedAt: number }
@@ -79,44 +81,52 @@ async function authorizedRead<T>(
   redirect(EXPIRED_LOGIN_PATH)
 }
 
+function authorizedNetworkRead<T>(call: (baseUrl: string, token: string, networkId: string) => Promise<T>): Promise<ControllerResult<T>> {
+  return authorizedRead(async (base, token) => call(base, token, await selectedNetworkId(token)))
+}
+
 export function fetchOverview(): Promise<ControllerResult<Overview>> {
-  return authorizedRead(getOverview)
+  return authorizedNetworkRead(getOverview)
 }
 
 export function fetchNodes(): Promise<ControllerResult<NodeList>> {
-  return authorizedRead(listNodes)
+  return authorizedNetworkRead(listNodes)
 }
 
 export function fetchPolicy(): Promise<ControllerResult<PolicySnapshot>> {
-  return authorizedRead(getPolicy)
+  return authorizedNetworkRead(getPolicy)
 }
 
 export function fetchConnections(): Promise<ControllerResult<ConnectionsSnapshot>> {
-  return authorizedRead(getConnections)
+  return authorizedNetworkRead(getConnections)
 }
 
 /** Agent self-reports; a separate read so an outage never hides the saved plan. */
 export function fetchConnectionRuntimes(): Promise<ControllerResult<ConnectionRuntimesSnapshot>> {
-  return authorizedRead(getConnectionRuntimes)
+  return authorizedNetworkRead(getConnectionRuntimes)
 }
 
 export function fetchEndpointDiscoveries(): Promise<ControllerResult<EndpointDiscoveriesSnapshot>> {
-  return authorizedRead(getEndpointDiscoveries)
+  return authorizedNetworkRead(getEndpointDiscoveries)
 }
 
 /** Saved endpoint access rules (with their JSONC source, if stored). */
 export function fetchMeshAccess(): Promise<ControllerResult<MeshAccessSnapshot>> {
-  return authorizedRead(getMeshAccess)
+  return authorizedNetworkRead(getMeshAccess)
 }
 
 /** Tag catalog and node tag assignments. */
 export function fetchTags(): Promise<ControllerResult<TagSnapshot>> {
-  return authorizedRead(getTags)
+  return authorizedNetworkRead(getTags)
 }
 
 /** Persistent singleton network metadata and saved DNS intent. */
-const readNetwork = cache(() => authorizedRead(getNetwork))
+const readNetwork = cache(() => authorizedNetworkRead(getNetwork))
 
 export function fetchNetwork(): Promise<ControllerResult<NetworkSnapshot>> {
   return readNetwork()
+}
+
+export function fetchNetworks(): Promise<ControllerResult<NetworkList>> {
+  return authorizedRead(listNetworks)
 }

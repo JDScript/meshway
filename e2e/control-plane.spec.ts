@@ -2,7 +2,7 @@ import { expect, test } from "@playwright/test";
 import { mkdtemp, readFile, rm, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { listNodes } from "../packages/control-client/src/index.ts";
+import { listNodes } from "./network-client.ts";
 import { executable, root, run, service, unusedPort } from "./harness.ts";
 
 test("administrator session, enrollment, durable identity and revocation cross the real stack", async ({ page, browser }) => {

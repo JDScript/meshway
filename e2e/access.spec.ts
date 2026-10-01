@@ -6,7 +6,7 @@ import { join } from "node:path";
 import {
   createEnrollmentToken, getMeshAccess, getPolicy, getTags, listNodes,
   previewFlow, revokeNode, savePolicy, setNodeCountry,
-} from "../packages/control-client/src/index.ts";
+} from "./network-client.ts";
 import { executable, root, run, service, unusedPort } from "./harness.ts";
 
 test("tagged endpoint access, JSONC drafts, first-match and CAS cross the real stack", async ({ page, browser }) => {

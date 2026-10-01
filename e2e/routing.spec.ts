@@ -13,7 +13,7 @@ import {
   type FlowQuery,
   type NodeSummary,
   type RoutingPolicy,
-} from "../packages/control-client/src/index.ts";
+} from "./network-client.ts";
 import { executable, root, run, service, unusedPort } from "./harness.ts";
 import { discardPolicyDraft, editRuleId, selectNode } from "./web-actions.ts";
 

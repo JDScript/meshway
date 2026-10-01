@@ -17,7 +17,8 @@ import {
   isCredentialRejected,
 } from "@/lib/controller"
 import { POLICY_LIMITS } from "@/lib/policy-model"
-import { rejectActionSession, requireActionAdminToken } from "@/lib/session"
+import { rejectActionSession } from "@/lib/session"
+import { requireNetworkActionContext } from "@/lib/network-context"
 
 // Arguments arrive from the browser and are untrusted: every action checks the
 // session first, and the generated SDK validates each request body against the
@@ -37,16 +38,17 @@ function oversized(value: unknown): boolean {
 }
 
 export async function previewPolicyAction(
+  networkId: string,
   policy: RoutingPolicy,
   flow: FlowQuery
 ): Promise<PreviewResult> {
-  const token = await requireActionAdminToken()
+  const { token } = await requireNetworkActionContext(networkId)
   const body = { policy, flow }
   if (oversized(body)) {
     return { status: "error", message: "策略超过大小上限，未发送。" }
   }
   try {
-    const response = await previewPolicy(controllerUrl(), token, body)
+    const response = await previewPolicy(controllerUrl(), token, networkId, body)
     return { status: "previewed", response }
   } catch (error) {
     if (!isCredentialRejected(error)) {
@@ -64,11 +66,12 @@ export async function previewPolicyAction(
  * controller stores it only if it parses to exactly `policy`.
  */
 export async function savePolicyAction(
+  networkId: string,
   expectedRevision: number,
   policy: RoutingPolicy,
   sourceJsonc: string | null
 ): Promise<SaveResult> {
-  const token = await requireActionAdminToken()
+  const { token } = await requireNetworkActionContext(networkId)
   if (
     !Number.isSafeInteger(expectedRevision) ||
     expectedRevision < 1 ||
@@ -84,7 +87,7 @@ export async function savePolicyAction(
     return { status: "error", message: "策略超过大小上限，未保存。" }
   }
   try {
-    const snapshot = await savePolicy(controllerUrl(), token, body)
+    const snapshot = await savePolicy(controllerUrl(), token, networkId, body)
     return { status: "saved", snapshot }
   } catch (error) {
     if (!isCredentialRejected(error)) {
@@ -110,13 +113,13 @@ export async function savePolicyAction(
 }
 
 /** Fresh snapshot for an explicit reload; callers decide to discard the draft. */
-export async function reloadPolicyAction(): Promise<ReloadResult> {
-  const token = await requireActionAdminToken()
+export async function reloadPolicyAction(networkId: string): Promise<ReloadResult> {
+  const { token } = await requireNetworkActionContext(networkId)
   const baseUrl = controllerUrl()
   try {
     const [snapshot, nodes] = await Promise.all([
-      getPolicy(baseUrl, token),
-      listNodes(baseUrl, token),
+      getPolicy(baseUrl, token, networkId),
+      listNodes(baseUrl, token, networkId),
     ])
     return { status: "loaded", snapshot, nodes: nodes.nodes }
   } catch (error) {

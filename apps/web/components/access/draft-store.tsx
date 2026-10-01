@@ -20,8 +20,8 @@ const AccessDraftContext = createContext<AccessDraftRegistry | null>(null)
  * lifetime: in-memory only and scoped to the console layout. Nothing is
  * persisted to storage and it never contains credentials.
  */
-export function AccessDraftProvider({ children }: { children: ReactNode }) {
-  const [registry] = useState(() => new AccessDraftRegistry())
+export function AccessDraftProvider({ children, registry: supplied }: { children: ReactNode; registry?: AccessDraftRegistry }) {
+  const [registry] = useState(() => supplied ?? new AccessDraftRegistry())
   const hasDraft = useSyncExternalStore(
     (listener) => registry.subscribe(listener),
     () => registry.hasDraft(),

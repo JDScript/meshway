@@ -1,6 +1,6 @@
 import type { Metadata } from "next"
 import { redirect } from "next/navigation"
-import { getNetwork } from "@meshway/control-client"
+import { listNetworks, type NetworkList } from "@meshway/control-client"
 import { DeviceAuthorizationForm } from "@/components/auth/device-authorization-form"
 import { controllerUrl, isCredentialRejected } from "@/lib/controller"
 import { authorizationPath, parseDeviceAuthorization } from "@/lib/device-login"
@@ -17,9 +17,9 @@ export default async function AuthorizeDevicePage({ searchParams }: {
   const loginPath = `/login?returnTo=${encodeURIComponent(authorizationPath(value))}`
   const session = await readSession()
   if (session.kind !== "active") redirect(loginPath)
-  let name: string
+  let networks: NetworkList
   try {
-    name = (await getNetwork(controllerUrl(), session.token)).name
+    networks = await listNetworks(controllerUrl(), session.token)
   } catch (error) {
     if (isCredentialRejected(error)) redirect(`${loginPath}&reason=expired`)
     return frame(<><h1 className="text-xl font-semibold">无法读取 Controller</h1><p className="text-sm">授权尚未完成，请稍后重试。</p></>)
@@ -29,10 +29,9 @@ export default async function AuthorizeDevicePage({ searchParams }: {
     <dl className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-2 text-sm">
       <dt>设备</dt><dd className="break-all">{value.request.name}</dd>
       <dt>版本</dt><dd className="break-all">{value.request.agent_version}</dd>
-      <dt>网络</dt><dd className="break-all">{name}</dd>
       <dt>Controller</dt><dd className="break-all">{controllerUrl()}</dd>
     </dl>
     <p className="text-sm text-muted-foreground">批准后 App 可兑换一个节点身份。实际访问由网络策略决定，接入不代表隧道已建立。</p>
-    <DeviceAuthorizationForm value={value} />
+    <DeviceAuthorizationForm value={value} networks={networks} />
   </>)
 }

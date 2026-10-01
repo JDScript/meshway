@@ -22,8 +22,8 @@ const RoutingDraftContext = createContext<RoutingDraftRegistry | null>(null)
  * leaving the console discards them. Nothing is persisted to storage and it
  * never contains credentials.
  */
-export function RoutingDraftProvider({ children }: { children: ReactNode }) {
-  const [registry] = useState(() => new RoutingDraftRegistry())
+export function RoutingDraftProvider({ children, registry: supplied }: { children: ReactNode; registry?: RoutingDraftRegistry }) {
+  const [registry] = useState(() => supplied ?? new RoutingDraftRegistry())
   const hasDraft = useSyncExternalStore(
     (listener) => registry.subscribe(listener),
     () => registry.hasDraft(),

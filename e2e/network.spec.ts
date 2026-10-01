@@ -3,7 +3,7 @@ import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { getNetwork, getPolicy, savePolicy } from "../packages/control-client/src/index.ts";
+import { getNetwork, getPolicy, savePolicy } from "./network-client.ts";
 import { executable, root, service, unusedPort } from "./harness.ts";
 
 test("network identity and saved DNS intent preserve global CAS and authenticated writes", async ({ page, browser }) => {

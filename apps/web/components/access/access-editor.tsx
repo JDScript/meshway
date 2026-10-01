@@ -1,5 +1,7 @@
 "use client"
 
+import { useNetworkId } from "@/components/network/network-workspace"
+
 import type {
   AccessAction,
   ConnectionNode,
@@ -144,6 +146,7 @@ export function AccessEditor({
   focusRuleId?: string | null
 }) {
   const drafts = useAccessDraftStore()
+  const networkId = useNetworkId()
   const [restored] = useState(() => drafts.read())
   const [restoredNotice, setRestoredNotice] = useState(restored !== null)
   const [base, setBase] = useState(restored?.base ?? snapshot)
@@ -318,7 +321,7 @@ export function AccessEditor({
     const sentSeq = document.seq
     const saver = owner.current
     startSave(async () => {
-      const result = await saveMeshAccessAction(expected, body, source)
+      const result = await saveMeshAccessAction(networkId, expected, body, source)
       if (!drafts.owns(saver)) {
         if (result.status === "saved") drafts.adoptOrphanSave(expected, sentSeq, result.snapshot, zMeshAccessPolicy)
         return
@@ -337,7 +340,7 @@ export function AccessEditor({
     const requested = ++reloadGeneration.current
     const loader = owner.current
     startReload(async () => {
-      const result = await reloadMeshAccessAction()
+      const result = await reloadMeshAccessAction(networkId)
       if (requested !== reloadGeneration.current || !drafts.owns(loader)) return
       if (result.status === "error") {
         setReloadError(result.message)

@@ -18,7 +18,8 @@ import {
   describeError,
   isCredentialRejected,
 } from "@/lib/controller"
-import { rejectActionSession, requireActionAdminToken } from "@/lib/session"
+import { rejectActionSession } from "@/lib/session"
+import { requireNetworkActionContext } from "@/lib/network-context"
 
 // Arguments arrive from the browser and are untrusted: every action checks the
 // session first, and the generated SDK validates the request body against the
@@ -39,11 +40,12 @@ function oversized(value: unknown, limit: number = ACCESS_LIMITS.requestBytes): 
  * controller stores it only if it parses to exactly `policy`.
  */
 export async function saveMeshAccessAction(
+  networkId: string,
   expectedRevision: number,
   policy: MeshAccessPolicy,
   sourceJsonc: string | null
 ): Promise<AccessSaveResult> {
-  const token = await requireActionAdminToken()
+  const { token } = await requireNetworkActionContext(networkId)
   if (
     !Number.isSafeInteger(expectedRevision) ||
     expectedRevision < 1 ||
@@ -59,7 +61,7 @@ export async function saveMeshAccessAction(
     return { status: "error", message: "访问授权超过大小上限，未保存。" }
   }
   try {
-    const snapshot = await saveMeshAccess(controllerUrl(), token, body)
+    const snapshot = await saveMeshAccess(controllerUrl(), token, networkId, body)
     return { status: "saved", snapshot }
   } catch (error) {
     if (!isCredentialRejected(error)) {
@@ -71,14 +73,14 @@ export async function saveMeshAccessAction(
 }
 
 /** Fresh snapshot for an explicit reload; callers decide to discard the draft. */
-export async function reloadMeshAccessAction(): Promise<AccessReloadResult> {
-  const token = await requireActionAdminToken()
+export async function reloadMeshAccessAction(networkId: string): Promise<AccessReloadResult> {
+  const { token } = await requireNetworkActionContext(networkId)
   const baseUrl = controllerUrl()
   try {
     const [snapshot, connections, tags] = await Promise.all([
-      getMeshAccess(baseUrl, token),
-      getConnections(baseUrl, token),
-      getTags(baseUrl, token),
+      getMeshAccess(baseUrl, token, networkId),
+      getConnections(baseUrl, token, networkId),
+      getTags(baseUrl, token, networkId),
     ])
     return { status: "loaded", snapshot, inventory: connections.nodes, tags }
   } catch (error) {
@@ -97,14 +99,14 @@ export async function reloadMeshAccessAction(): Promise<AccessReloadResult> {
  * policies: authorization, route and whether the runtime could execute it.
  * A plan, never a trace.
  */
-export async function previewFlowAction(flow: FlowQuery): Promise<FlowPreviewResult> {
-  const token = await requireActionAdminToken()
+export async function previewFlowAction(networkId: string, flow: FlowQuery): Promise<FlowPreviewResult> {
+  const { token } = await requireNetworkActionContext(networkId)
   const body = { flow }
   if (oversized(body, 16 * 1024)) {
     return { status: "error", message: "流量参数过大，未发送。" }
   }
   try {
-    const response = await previewFlow(controllerUrl(), token, body)
+    const response = await previewFlow(controllerUrl(), token, networkId, body)
     return { status: "previewed", response }
   } catch (error) {
     if (!isCredentialRejected(error)) {

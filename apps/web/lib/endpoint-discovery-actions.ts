@@ -3,13 +3,14 @@
 import { getEndpointDiscoveries, type EndpointDiscoveriesSnapshot } from "@meshway/control-client"
 
 import { controllerUrl, describeError, isCredentialRejected, type ControllerResult } from "@/lib/controller"
-import { rejectActionSession, requireActionAdminToken } from "@/lib/session"
+import { rejectActionSession } from "@/lib/session"
+import { requireNetworkActionContext } from "@/lib/network-context"
 
 /** Authenticated read only; the generated operation validates the response. */
-export async function readEndpointDiscoveriesAction(): Promise<ControllerResult<EndpointDiscoveriesSnapshot>> {
-  const token = await requireActionAdminToken()
+export async function readEndpointDiscoveriesAction(networkId: string): Promise<ControllerResult<EndpointDiscoveriesSnapshot>> {
+  const { token } = await requireNetworkActionContext(networkId)
   try {
-    const data = await getEndpointDiscoveries(controllerUrl(), token)
+    const data = await getEndpointDiscoveries(controllerUrl(), token, networkId)
     return { ok: true, data, fetchedAt: Date.now() }
   } catch (error) {
     if (!isCredentialRejected(error)) return { ok: false, error: describeError(error, token), fetchedAt: Date.now() }

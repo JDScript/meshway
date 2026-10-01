@@ -46,6 +46,7 @@ export function service(command: string, args: string[], environment: NodeJS.Pro
   });
   return {
     async ready(url: string, status: number) {
+      url = url.replace(/\/api\/v1\/overview$/, "/api/v1/networks");
       await Promise.race([
         expect.poll(async () => {
           try {

@@ -3,7 +3,7 @@ import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { createEnrollmentToken, getConnections, getMeshAccess, getPolicy, savePolicy } from "../packages/control-client/src/index.ts";
+import { createEnrollmentToken, getConnections, getMeshAccess, getPolicy, savePolicy } from "./network-client.ts";
 import { executable, root, run, service, unusedPort } from "./harness.ts";
 import { revealAdvanced } from "./web-actions.ts";
 

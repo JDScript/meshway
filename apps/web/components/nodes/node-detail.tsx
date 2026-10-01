@@ -1,5 +1,7 @@
 "use client"
 
+import { useNetworkId } from "@/components/network/network-workspace"
+
 import type { ConnectionNode, ConnectionsSnapshot, EndpointDiscoveriesSnapshot, NodeSummary } from "@meshway/control-client"
 import {
   ArrowLeftIcon,
@@ -89,6 +91,7 @@ export function NodeDetail({
   // The URL is the source of truth: history navigation can restore a cached
   // render whose server-provided tab is older than the entry's URL.
   const params = useSearchParams()
+  const networkId = useNetworkId()
   const hasConnectionDraft = useConnectionsHasDraft()
   const tab: NodeTab = params.has("tab") ? (params.get("tab") === "connections" ? "connections" : "overview") : initialTab
   const [dialog, setDialog] = useState<"country" | "revoke" | null>(null)
@@ -121,7 +124,7 @@ export function NodeDetail({
     error: connections.ok ? null : connections.error,
   })
   const poll = useCallback(async (): Promise<RuntimeReadResult> => {
-    const result = await readNodeStatusAction()
+    const result = await readNodeStatusAction(networkId)
     if (result.status === "error") return result
     const read = result.fetchedAt
     const found = result.nodes.ok ? result.nodes.data.nodes.find((candidate) => candidate.id === nodeId) : undefined
@@ -136,7 +139,7 @@ export function NodeDetail({
     return result.runtimes.ok
       ? { status: "loaded", snapshot: result.runtimes.data, fetchedAt: read }
       : { status: "error", message: result.runtimes.error }
-  }, [nodeId])
+  }, [nodeId, networkId])
   const runtimes = useConnectionRuntimes(initialRuntimes, poll)
   const revoked = node.revoked_at !== null
   const entry = latest.ok ? latest.data.nodes.find((candidate) => candidate.node.id === node.id) : undefined
