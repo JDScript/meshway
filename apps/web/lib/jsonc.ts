@@ -1,41 +1,26 @@
-// Minimal JSONC (JSON with comments and trailing commas) parser and
-// comment-preserving patcher for the policy text editors.
-//
-// The tree mirrors the `Node` shape of `jsonc-parser`'s `parseTree` (type,
-// offset, length, colonOffset, children, value) so the parser can be replaced
-// by that package once it is an approved dependency without touching callers.
-// The parser is strict about everything except comments and trailing commas:
-// it stops at the first syntax error and then returns no tree.
+import {
+  applyEdits as applyJsoncEdits,
+  createScanner,
+  findNodeAtLocation,
+  modify,
+  parseTree,
+  printParseErrorCode,
+  type FormattingOptions,
+  type Node,
+  type ParseError,
+} from "jsonc-parser"
 
-export type JsoncNodeType = "object" | "array" | "property" | "string" | "number" | "boolean" | "null"
+// JSONC (JSON with comments and trailing commas) for the policy text editors,
+// on top of `jsonc-parser`. On top of the package this module adds what the
+// policy editors need: duplicate keys are errors (the controller rejects
+// them, and last-wins would silently hide a typed value), values are built
+// without the `__proto__` setter, and `patchJsonc` turns a visual edit into
+// the smallest set of `modify` calls so comments outside touched nodes stay.
 
-export type JsoncNode = {
-  type: JsoncNodeType
-  offset: number
-  length: number
-  /** Property nodes only: offset of the ':'. */
-  colonOffset?: number
-  /** Objects: property nodes. Arrays: elements. Properties: [key, value]. */
-  children?: JsoncNode[]
-  /** Scalars and property keys only. */
-  value?: string | number | boolean | null
-}
+export type JsoncNode = Node
+export type JsoncNodeType = Node["type"]
 
-export type JsoncErrorCode =
-  | "InvalidSymbol"
-  | "InvalidNumberFormat"
-  | "PropertyNameExpected"
-  | "ValueExpected"
-  | "ColonExpected"
-  | "CommaExpected"
-  | "CloseBraceExpected"
-  | "CloseBracketExpected"
-  | "EndOfFileExpected"
-  | "UnexpectedEndOfComment"
-  | "UnexpectedEndOfString"
-  | "InvalidEscapeCharacter"
-  | "InvalidCharacter"
-  | "DuplicateKey"
+export type JsoncErrorCode = ReturnType<typeof printParseErrorCode> | "DuplicateKey"
 
 export type JsoncError = { code: JsoncErrorCode; offset: number; length: number; message: string }
 
@@ -57,187 +42,52 @@ const errorMessages: Record<JsoncErrorCode, string> = {
   CloseBraceExpected: "缺少右花括号 }。",
   CloseBracketExpected: "缺少右方括号 ]。",
   EndOfFileExpected: "文档在这里应当结束。",
+  InvalidCommentToken: "注释格式无效。",
   UnexpectedEndOfComment: "块注释没有结束。",
   UnexpectedEndOfString: "字符串没有结束。",
+  UnexpectedEndOfNumber: "数字没有结束。",
+  InvalidUnicode: "Unicode 转义无效。",
   InvalidEscapeCharacter: "字符串中的转义无效。",
   InvalidCharacter: "字符串中不能直接包含控制字符。",
   DuplicateKey: "同一对象中字段名重复。",
+  "<unknown ParseErrorCode>": "语法错误。",
 }
 
-class Failure extends Error {
-  readonly detail: JsoncError
+const parseOptions = { disallowComments: false, allowTrailingComma: true, allowEmptyContent: false }
 
-  constructor(detail: JsoncError) {
-    super(detail.message)
-    this.detail = detail
-  }
-}
-
-function fail(code: JsoncErrorCode, offset: number, length = 1): never {
-  throw new Failure({ code, offset, length: Math.max(length, 0), message: errorMessages[code] })
-}
-
-const end = (node: JsoncNode) => node.offset + node.length
-
-const isDigit = (char: string | undefined) => char !== undefined && char >= "0" && char <= "9"
-
-class Parser {
-  pos = 0
-  readonly text: string
-
-  constructor(text: string) {
-    this.text = text
-  }
-
-  /** Skips whitespace and comments. */
-  skip() {
-    const { text } = this
-    while (this.pos < text.length) {
-      const char = text[this.pos]
-      if (char === " " || char === "\t" || char === "\n" || char === "\r" || char === "\uFEFF") {
-        this.pos += 1
-      } else if (char === "/" && text[this.pos + 1] === "/") {
-        while (this.pos < text.length && text[this.pos] !== "\n" && text[this.pos] !== "\r") this.pos += 1
-      } else if (char === "/" && text[this.pos + 1] === "*") {
-        const end = text.indexOf("*/", this.pos + 2)
-        if (end === -1) fail("UnexpectedEndOfComment", this.pos, text.length - this.pos)
-        this.pos = end + 2
-      } else {
-        return
-      }
-    }
-  }
-
-  value(): JsoncNode {
-    this.skip()
-    const char = this.text[this.pos]
-    if (char === "{") return this.object()
-    if (char === "[") return this.array()
-    if (char === '"') return this.string()
-    if (char === "-" || isDigit(char)) return this.number()
-    for (const [word, value] of [
-      ["true", true],
-      ["false", false],
-      ["null", null],
-    ] as const) {
-      if (this.text.startsWith(word, this.pos)) {
-        const offset = this.pos
-        this.pos += word.length
-        return { type: value === null ? "null" : "boolean", offset, length: word.length, value }
-      }
-    }
-    fail(char === undefined ? "ValueExpected" : "InvalidSymbol", this.pos)
-  }
-
-  object(): JsoncNode {
-    const node: JsoncNode = { type: "object", offset: this.pos, length: 0, children: [] }
-    const keys = new Set<string>()
-    this.pos += 1
-    this.skip()
-    while (this.text[this.pos] !== "}") {
-      if (this.pos >= this.text.length) fail("CloseBraceExpected", this.pos, 0)
-      if (this.text[this.pos] !== '"') fail("PropertyNameExpected", this.pos)
-      const key = this.string()
-      const name = String(key.value)
-      if (keys.has(name)) fail("DuplicateKey", key.offset, key.length)
-      keys.add(name)
-      this.skip()
-      if (this.text[this.pos] !== ":") fail("ColonExpected", this.pos, 0)
-      const colonOffset = this.pos
-      this.pos += 1
-      const value = this.value()
-      node.children?.push({
-        type: "property",
-        offset: key.offset,
-        length: value.offset + value.length - key.offset,
-        colonOffset,
-        children: [key, value],
-      })
-      this.skip()
-      if (this.text[this.pos] === ",") {
-        this.pos += 1
-        this.skip()
-      } else if (this.text[this.pos] !== "}") {
-        // Point at where the separator is missing, not at the next token.
-        fail(this.pos >= this.text.length ? "CloseBraceExpected" : "CommaExpected", end(value), 0)
-      }
-    }
-    this.pos += 1
-    node.length = this.pos - node.offset
-    return node
-  }
-
-  array(): JsoncNode {
-    const node: JsoncNode = { type: "array", offset: this.pos, length: 0, children: [] }
-    this.pos += 1
-    this.skip()
-    while (this.text[this.pos] !== "]") {
-      if (this.pos >= this.text.length) fail("CloseBracketExpected", this.pos, 0)
-      const item = this.value()
-      node.children?.push(item)
-      this.skip()
-      if (this.text[this.pos] === ",") {
-        this.pos += 1
-        this.skip()
-      } else if (this.text[this.pos] !== "]") {
-        fail(this.pos >= this.text.length ? "CloseBracketExpected" : "CommaExpected", end(item), 0)
-      }
-    }
-    this.pos += 1
-    node.length = this.pos - node.offset
-    return node
-  }
-
-  string(): JsoncNode {
-    const { text } = this
-    const offset = this.pos
-    let end = offset + 1
-    while (true) {
-      const char = text[end]
-      if (char === undefined || char === "\n" || char === "\r") {
-        fail("UnexpectedEndOfString", offset, end - offset)
-      }
-      if (char === '"') break
-      if (char === "\\") {
-        const next = text[end + 1]
-        if (next === "u") {
-          if (!/^[0-9a-fA-F]{4}$/.test(text.slice(end + 2, end + 6))) fail("InvalidEscapeCharacter", end, 2)
-          end += 6
-          continue
+function duplicateKeys(node: JsoncNode, errors: JsoncError[]) {
+  if (node.type === "object") {
+    const seen = new Set<string>()
+    for (const property of node.children ?? []) {
+      const key = property.children?.[0]
+      const name = propertyKey(property)
+      if (key && name !== undefined) {
+        if (seen.has(name)) {
+          errors.push({ code: "DuplicateKey", offset: key.offset, length: key.length, message: errorMessages.DuplicateKey })
         }
-        if (next === undefined || !'"\\/bfnrt'.includes(next)) fail("InvalidEscapeCharacter", end, 2)
-        end += 2
-        continue
+        seen.add(name)
       }
-      if (char < " ") fail("InvalidCharacter", end)
-      end += 1
     }
-    this.pos = end + 1
-    const value: unknown = JSON.parse(text.slice(offset, this.pos))
-    return { type: "string", offset, length: this.pos - offset, value: String(value) }
   }
-
-  number(): JsoncNode {
-    const match = /^-?(?:0|[1-9][0-9]*)(?:\.[0-9]+)?(?:[eE][+-]?[0-9]+)?/.exec(this.text.slice(this.pos))
-    const offset = this.pos
-    if (!match) fail("InvalidNumberFormat", offset)
-    this.pos += match[0].length
-    if (/[0-9A-Za-z.]/.test(this.text[this.pos] ?? "")) fail("InvalidNumberFormat", offset, this.pos - offset + 1)
-    return { type: "number", offset, length: match[0].length, value: Number(match[0]) }
-  }
+  for (const child of node.children ?? []) duplicateKeys(child, errors)
 }
 
 export function parseJsonc(text: string): JsoncParse {
-  const parser = new Parser(text)
-  try {
-    const tree = parser.value()
-    parser.skip()
-    if (parser.pos < text.length) fail("EndOfFileExpected", parser.pos, text.length - parser.pos)
-    return { tree, value: nodeValue(tree), errors: [] }
-  } catch (error) {
-    if (error instanceof Failure) return { tree: null, value: undefined, errors: [error.detail] }
-    throw error
+  const raw: ParseError[] = []
+  const tree = parseTree(text, raw, parseOptions)
+  const errors: JsoncError[] = raw.map((error) => {
+    const code = printParseErrorCode(error.error)
+    return { code, offset: error.offset, length: error.length, message: errorMessages[code] }
+  })
+  if (!tree && errors.length === 0) {
+    errors.push({ code: "ValueExpected", offset: 0, length: 0, message: errorMessages.ValueExpected })
   }
+  if (tree) duplicateKeys(tree, errors)
+  if (!tree || errors.length > 0) {
+    errors.sort((a, b) => a.offset - b.offset)
+    return { tree: null, value: undefined, errors }
+  }
+  return { tree, value: nodeValue(tree), errors: [] }
 }
 
 /** Plain value of a node. Keys are defined, never assigned, so `__proto__` stays data. */
@@ -262,8 +112,10 @@ export function nodeValue(node: JsoncNode): unknown {
       return (node.children ?? []).map(nodeValue)
     case "property":
       return node.children?.[1] ? nodeValue(node.children[1]) : undefined
-    default:
-      return node.value
+    default: {
+      const value: unknown = node.value
+      return value
+    }
   }
 }
 
@@ -271,24 +123,13 @@ export type JsonPath = readonly (string | number)[]
 
 /** Key of a property node. */
 export function propertyKey(property: JsoncNode): string | undefined {
-  const value = property.children?.[0]?.value
+  const value: unknown = property.children?.[0]?.value
   return typeof value === "string" ? value : undefined
 }
 
 /** The value node at `path`, or undefined when any segment is missing. */
 export function findNode(root: JsoncNode, path: JsonPath): JsoncNode | undefined {
-  let node: JsoncNode | undefined = root
-  for (const segment of path) {
-    if (!node) return undefined
-    if (node.type === "object" && typeof segment === "string") {
-      node = node.children?.find((property) => propertyKey(property) === segment)?.children?.[1]
-    } else if (node.type === "array" && typeof segment === "number") {
-      node = node.children?.[segment]
-    } else {
-      return undefined
-    }
-  }
-  return node
+  return findNodeAtLocation(root, [...path])
 }
 
 /** Deepest existing node along `path` and whether it is the full path. */
@@ -325,27 +166,14 @@ export function lineColumn(text: string, offset: number): { line: number; column
 
 // --- Patching ---------------------------------------------------------------
 
-export type TextEdit = { offset: number; length: number; content: string }
-
 export type FormatOptions = { indent: string; eol: string }
 
 export const defaultFormat: FormatOptions = { indent: "  ", eol: "\n" }
 
-/** Applies non-overlapping edits. */
-export function applyEdits(text: string, edits: readonly TextEdit[]): string {
-  const sorted = [...edits].sort((a, b) => b.offset - a.offset || b.length - a.length)
-  let result = text
-  let limit = text.length
-  for (const edit of sorted) {
-    if (edit.offset + edit.length > limit) throw new Error("overlapping JSONC edits")
-    result = result.slice(0, edit.offset) + edit.content + result.slice(edit.offset + edit.length)
-    limit = edit.offset
-  }
-  return result
-}
-
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === "object" && value !== null && !Array.isArray(value)
+
+const own = (value: Record<string, unknown>, key: string) => Object.prototype.hasOwnProperty.call(value, key)
 
 export function jsonEqual(a: unknown, b: unknown): boolean {
   if (a === b) return true
@@ -354,150 +182,32 @@ export function jsonEqual(a: unknown, b: unknown): boolean {
   }
   if (isRecord(a) && isRecord(b)) {
     const keys = Object.keys(a)
-    return (
-      keys.length === Object.keys(b).length &&
-      keys.every((key) => Object.prototype.hasOwnProperty.call(b, key) && jsonEqual(a[key], b[key]))
-    )
+    return keys.length === Object.keys(b).length && keys.every((key) => own(b, key) && jsonEqual(a[key], b[key]))
   }
   return false
 }
 
-function lineIndent(text: string, offset: number): string {
-  let start = offset
-  while (start > 0 && text[start - 1] !== "\n" && text[start - 1] !== "\r") start -= 1
-  return /^[ \t]*/.exec(text.slice(start))?.[0] ?? ""
-}
+type Operation = { path: (string | number)[]; value: unknown; insert: boolean }
 
-/** Indentation of a container's members (existing, or one level deeper). */
-function childIndent(text: string, container: JsoncNode, format: FormatOptions): string {
-  const first = container.children?.[0]
-  return first ? lineIndent(text, first.offset) : lineIndent(text, container.offset) + format.indent
-}
-
-function render(value: unknown, indent: string, format: FormatOptions): string {
-  return JSON.stringify(value, null, format.indent).split("\n").join(format.eol + indent)
-}
-
-/** Offset just after the separating comma that follows `from`, or null. */
-function commaAfter(text: string, from: number): number | null {
-  const parser = new Parser(text)
-  parser.pos = from
-  try {
-    parser.skip()
-  } catch {
-    return null
-  }
-  return text[parser.pos] === "," ? parser.pos + 1 : null
-}
-
-/** Removal edits for the given child indices, one per contiguous run. */
-function removals(text: string, children: readonly JsoncNode[], indices: readonly number[]): TextEdit[] {
-  const sorted = [...indices].sort((a, b) => a - b)
-  const edits: TextEdit[] = []
-  let index = 0
-  while (index < sorted.length) {
-    const first = sorted[index]
-    if (first === undefined) break
-    let last = first
-    while (sorted[index + 1] === last + 1) {
-      index += 1
-      last += 1
-    }
-    edits.push(removal(text, children, first, last))
-    index += 1
-  }
-  return edits
-}
-
-/** Removal range for children `first..=last`, keeping neighbouring comments. */
-function removal(text: string, children: readonly JsoncNode[], first: number, last: number): TextEdit {
-  const child = children[last]
-  const head = children[first]
-  if (!child || !head) throw new Error("JSONC removal out of range")
-  const next = children[last + 1]
-  const previous = children[first - 1]
-  if (next) {
-    const comma = commaAfter(text, end(child)) ?? end(child)
-    let stop = comma
-    while (text[stop] === " " || text[stop] === "\t") stop += 1
-    if (text[stop] === "\r") stop += 1
-    if (text[stop] === "\n") stop += 1
-    // Also drop the now-empty indentation of the removed line.
-    let start = head.offset
-    while (start > 0 && (text[start - 1] === " " || text[start - 1] === "\t")) start -= 1
-    if (start > 0 && text[start - 1] !== "\n" && text[start - 1] !== "\r") start = head.offset
-    if (stop > next.offset) stop = next.offset
-    return { offset: start, length: stop - start, content: "" }
-  }
-  if (previous) return { offset: end(previous), length: end(child) - end(previous), content: "" }
-  const comma = commaAfter(text, end(child))
-  return { offset: head.offset, length: (comma ?? end(child)) - head.offset, content: "" }
-}
-
-function insertion(
-  text: string,
-  container: JsoncNode,
-  before: JsoncNode | undefined,
-  items: readonly string[],
-  format: FormatOptions
-): TextEdit {
-  const children = container.children ?? []
-  const outer = lineIndent(text, container.offset)
-  const inner = childIndent(text, container, format)
-  const sep = `,${format.eol}${inner}`
-  if (before) {
-    return { offset: before.offset, length: 0, content: items.join(sep) + sep }
-  }
-  const last = children[children.length - 1]
-  if (last) return { offset: end(last), length: 0, content: sep + items.join(sep) }
-  return {
-    offset: container.offset + 1,
-    length: 0,
-    content: format.eol + inner + items.join(sep) + format.eol + outer,
-  }
-}
-
-function diff(
-  text: string,
-  node: JsoncNode,
-  before: unknown,
-  after: unknown,
-  format: FormatOptions,
-  edits: TextEdit[]
-) {
+/**
+ * Operations turning `before` into `after`, deepest first. Within one array,
+ * paired elements are diffed in place, surplus elements are removed from the
+ * highest index down and new ones inserted in ascending order, so every
+ * operation's path is still valid when it is applied.
+ */
+function operations(path: (string | number)[], before: unknown, after: unknown, out: Operation[]) {
   if (jsonEqual(before, after)) return
-  if (node.type === "object" && isRecord(before) && isRecord(after)) {
-    const properties = node.children ?? []
-    const removed = properties.flatMap((property, index) =>
-      Object.prototype.hasOwnProperty.call(after, propertyKey(property) ?? "") ? [] : [index]
-    )
-    if (removed.length > 0 && removed.length === properties.length) {
-      replace(text, node, after, format, edits)
-      return
+  if (isRecord(before) && isRecord(after)) {
+    for (const key of Object.keys(before)) {
+      if (own(after, key)) operations([...path, key], before[key], after[key], out)
+      else out.push({ path: [...path, key], value: undefined, insert: false })
     }
-    const added = Object.keys(after).filter((key) => !Object.prototype.hasOwnProperty.call(before, key))
-    // Removing the last property and appending would edit the same separator.
-    if (removed.length > 0 && added.length > 0 && removed.includes(properties.length - 1)) {
-      replace(text, node, after, format, edits)
-      return
-    }
-    for (const property of properties) {
-      const key = propertyKey(property)
-      const value = property.children?.[1]
-      if (key !== undefined && value && Object.prototype.hasOwnProperty.call(after, key)) {
-        diff(text, value, before[key], after[key], format, edits)
-      }
-    }
-    edits.push(...removals(text, properties, removed))
-    if (added.length > 0) {
-      const indent = childIndent(text, node, format)
-      const items = added.map((key) => `${JSON.stringify(key)}: ${render(after[key], indent, format)}`)
-      edits.push(insertion(text, node, undefined, items, format))
+    for (const key of Object.keys(after)) {
+      if (!own(before, key)) out.push({ path: [...path, key], value: after[key], insert: false })
     }
     return
   }
-  if (node.type === "array" && Array.isArray(before) && Array.isArray(after)) {
-    const children = node.children ?? []
+  if (Array.isArray(before) && Array.isArray(after)) {
     let prefix = 0
     while (prefix < before.length && prefix < after.length && jsonEqual(before[prefix], after[prefix])) prefix += 1
     let suffix = 0
@@ -512,27 +222,84 @@ function diff(
     const newMiddle = after.length - prefix - suffix
     const paired = Math.min(oldMiddle, newMiddle)
     for (let index = prefix; index < prefix + paired; index += 1) {
-      const child = children[index]
-      if (child) diff(text, child, before[index], after[index], format, edits)
+      operations([...path, index], before[index], after[index], out)
     }
-    if (oldMiddle > newMiddle) {
-      if (newMiddle === 0 && after.length === 0) {
-        replace(text, node, after, format, edits)
-        return
-      }
-      edits.push(removal(text, children, prefix + paired, prefix + oldMiddle - 1))
-    } else if (newMiddle > oldMiddle) {
-      const indent = childIndent(text, node, format)
-      const items = after.slice(prefix + paired, prefix + newMiddle).map((item) => render(item, indent, format))
-      edits.push(insertion(text, node, children[prefix + oldMiddle], items, format))
+    for (let index = prefix + oldMiddle - 1; index >= prefix + paired; index -= 1) {
+      out.push({ path: [...path, index], value: undefined, insert: false })
+    }
+    for (let index = prefix + paired; index < prefix + newMiddle; index += 1) {
+      out.push({ path: [...path, index], value: after[index], insert: true })
     }
     return
   }
-  replace(text, node, after, format, edits)
+  out.push({ path, value: after, insert: false })
 }
 
-function replace(text: string, node: JsoncNode, value: unknown, format: FormatOptions, edits: TextEdit[]) {
-  edits.push({ offset: node.offset, length: node.length, content: render(value, lineIndent(text, node.offset), format) })
+const COMMA = 5 // SyntaxKind.CommaToken
+
+/** Offset of the next non-trivia token at or after `from`, if it is a comma. */
+function commaFrom(text: string, from: number): number | null {
+  const scanner = createScanner(text, true)
+  scanner.setPosition(from)
+  scanner.scan()
+  return scanner.getToken() === COMMA ? scanner.getTokenOffset() : null
+}
+
+/**
+ * Removes the array element or object property at `path` together with one
+ * separating comma. Unlike `modify`, it never deletes comments: only the
+ * value, its comma, and a line left blank by the removal go away.
+ */
+function removeAt(text: string, path: readonly (string | number)[]): string {
+  const tree = parseJsonc(text).tree
+  if (!tree) throw new Error("cannot patch invalid JSONC")
+  const parentPath = path.slice(0, -1)
+  const last = path[path.length - 1]
+  const parent = findNode(tree, parentPath)
+  if (!parent || last === undefined) throw new Error("JSONC removal path not found")
+  const children = parent.children ?? []
+  const index =
+    typeof last === "number" ? last : children.findIndex((property) => propertyKey(property) === last)
+  const child = children[index]
+  if (!child) throw new Error("JSONC removal path not found")
+  const ranges: { from: number; to: number }[] = [{ from: child.offset, to: child.offset + child.length }]
+  const after = commaFrom(text, child.offset + child.length)
+  const previous = children[index - 1]
+  if (after !== null) {
+    let to = after + 1
+    while (text[to] === " " || text[to] === "\t") to += 1
+    if (/^\s*$/.test(text.slice(child.offset + child.length, after))) {
+      ranges[0] = { from: child.offset, to }
+    } else {
+      ranges.push({ from: after, to })
+    }
+  } else if (previous) {
+    const before = commaFrom(text, previous.offset + previous.length)
+    if (before !== null && /^\s*$/.test(text.slice(before + 1, child.offset))) {
+      ranges[0] = { from: before, to: child.offset + child.length }
+    } else if (before !== null) {
+      ranges.push({ from: before, to: before + 1 })
+    }
+  }
+  ranges.sort((a, b) => b.from - a.from)
+  let result = text
+  for (const range of ranges) {
+    result = result.slice(0, range.from) + result.slice(range.to)
+    // Drop a line the removal left with only whitespace.
+    let start = range.from
+    while (start > 0 && (result[start - 1] === " " || result[start - 1] === "\t")) start -= 1
+    let end = range.from
+    while (end < result.length && (result[end] === " " || result[end] === "\t")) end += 1
+    const lineStart = start === 0 || result[start - 1] === "\n"
+    if (lineStart && result[end] === "\n") result = result.slice(0, start) + result.slice(end + 1)
+    else if (lineStart && result[end] === "\r" && result[end + 1] === "\n") result = result.slice(0, start) + result.slice(end + 2)
+  }
+  return result
+}
+
+function formatting(format: FormatOptions): FormattingOptions {
+  const tabs = format.indent.includes("\t")
+  return { insertSpaces: !tabs, tabSize: tabs ? 1 : format.indent.length, eol: format.eol }
 }
 
 /**
@@ -551,12 +318,28 @@ export function patchJsonc(
   const parsed = parseJsonc(text)
   if (!parsed.tree) throw new Error("cannot patch invalid JSONC")
   if (!jsonEqual(parsed.value, before)) throw new Error("JSONC text does not match the edited value")
-  const edits: TextEdit[] = []
-  diff(text, parsed.tree, before, after, format, edits)
-  return applyEdits(text, edits)
+  const out: Operation[] = []
+  operations([], before, after, out)
+  const formattingOptions = formatting(format)
+  let result = text
+  for (const operation of out) {
+    if (operation.path.length === 0) return formatJsonc(after, format)
+    if (operation.value === undefined) {
+      result = removeAt(result, operation.path)
+      continue
+    }
+    const edits = modify(result, operation.path, operation.value, {
+      formattingOptions,
+      isArrayInsertion: operation.insert,
+    })
+    result = applyJsoncEdits(result, edits)
+  }
+  const check = parseJsonc(result)
+  if (!check.tree || !jsonEqual(check.value, after)) throw new Error("JSONC patch did not produce the edited value")
+  return result
 }
 
 /** Canonical text for a value with no prior buffer. */
 export function formatJsonc(value: unknown, format: FormatOptions = defaultFormat): string {
-  return render(value, "", format) + format.eol
+  return JSON.stringify(value, null, format.indent).split("\n").join(format.eol) + format.eol
 }
