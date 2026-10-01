@@ -45,9 +45,9 @@ export const navSections: NavSection[] = [
       },
       {
         href: "/topology",
-        label: "逻辑拓扑",
+        label: "网络拓扑",
         icon: WaypointsIcon,
-        keywords: ["map", "topology", "path", "tuopu"],
+        keywords: ["map", "topology", "network", "adjacency", "path", "tuopu", "luoji"],
       },
       {
         href: "/routing",

@@ -5,8 +5,6 @@ import type { KeyboardEvent } from "react"
 
 import { cn } from "@/lib/utils"
 
-const WIDTH = 720
-const HEIGHT = 440
 const CENTER = { x: 320, y: 220 }
 const INTERNET = { x: 650, y: 220 }
 const NODE_R = 15
@@ -77,6 +75,56 @@ function arc(from: Point, to: Point): string {
   return `M ${from.x} ${from.y} Q ${cx} ${cy} ${to.x} ${to.y}`
 }
 
+/**
+ * Neighbor-channel layers. `confirmed` / `one_sided` / `degraded` come from
+ * fused agent self-reports; `intent` is a saved-plan pair. None carry a
+ * direction: who dialed is named in the list and inspector, not drawn as an
+ * arrow that could read as the only allowed traffic direction.
+ */
+export type MapEdgeKind = "confirmed" | "one_sided" | "degraded" | "intent"
+
+export type MapEdge = {
+  key: string
+  kind: MapEdgeKind
+  nodeIds: [string, string]
+  /** Short carrier label drawn at the midpoint. */
+  label: string
+  /** Full description for the tooltip and data attributes. */
+  title: string
+}
+
+const edgeClass: Record<MapEdgeKind, string> = {
+  confirmed: "stroke-success",
+  one_sided: "stroke-warning",
+  degraded: "stroke-destructive/70",
+  intent: "stroke-muted-foreground/50",
+}
+
+const edgeDash: Record<MapEdgeKind, string | undefined> = {
+  confirmed: undefined,
+  one_sided: "7 5",
+  degraded: "2 4",
+  intent: "4 4",
+}
+
+/**
+ * Crop to the drawn content (ring, labels, the internet marker when used) so
+ * small rings stay legible on narrow screens instead of floating in margin.
+ */
+function viewBox(points: Point[], external: boolean): string {
+  const xs = [...points.map((point) => point.x), CENTER.x]
+  const ys = [...points.map((point) => point.y), CENTER.y]
+  if (external) {
+    xs.push(INTERNET.x)
+    ys.push(INTERNET.y)
+  }
+  const minX = Math.min(...xs) - 120
+  const maxX = Math.max(...xs) + 120
+  const minY = Math.min(...ys) - 50
+  const maxY = Math.max(...ys) + 50
+  return `${minX} ${minY} ${maxX - minX} ${maxY - minY}`
+}
+
 export type MapPlan = {
   /** Node IDs in order, exactly as compiled by the controller. */
   path: string[]
@@ -90,6 +138,8 @@ export function MeshMap({
   sourceId,
   targetId,
   plan,
+  edges,
+  liveDegree,
   onSelect,
 }: {
   nodes: NodeSummary[]
@@ -97,9 +147,18 @@ export function MeshMap({
   sourceId: string
   targetId: string
   plan: MapPlan | null
+  edges: MapEdge[]
+  /** Live (confirmed or one-sided) adjacencies per node, for labels; absent when unknown. */
+  liveDegree: Map<string, number> | null
   onSelect: (id: string) => void
 }) {
   const positions = layout(nodes)
+  const drawn = edges.flatMap((edge) => {
+    const from = positions.get(edge.nodeIds[0])
+    const to = positions.get(edge.nodeIds[1])
+    return from && to ? [{ edge, from, to }] : []
+  })
+  const names = new Map(nodes.map((node) => [node.id, node.name]))
   const onPath = new Set(plan?.path ?? [])
   const segments: { key: string; d: string }[] = []
   if (plan) {
@@ -125,10 +184,10 @@ export function MeshMap({
 
   return (
     <svg
-      viewBox={`0 0 ${WIDTH} ${HEIGHT}`}
+      viewBox={viewBox([...positions.values()], plan?.external ?? false)}
       role="group"
-      aria-label="逻辑拓扑图：节点按名称排列，连线仅表示规划路径；控制面联系见节点列表与详情"
-      className="h-auto w-full select-none"
+      aria-label="网络拓扑图：节点按名称环形排列，不代表地理位置；连线为节点自报的邻居通道或规划路径，文字版本见邻接列表"
+      className="mx-auto h-auto max-h-[30rem] w-full select-none"
     >
       <defs>
         <marker
@@ -143,6 +202,39 @@ export function MeshMap({
           <path d="M 0 0 L 10 5 L 0 10 z" className="fill-brand" />
         </marker>
       </defs>
+
+      <g aria-hidden="true">
+        {drawn.map(({ edge, from, to }) => (
+          <g
+            key={edge.key}
+            data-testid={edge.kind === "intent" ? "intent-edge" : "observed-edge"}
+            data-status={edge.kind}
+            data-nodes={`${names.get(edge.nodeIds[0]) ?? ""}|${names.get(edge.nodeIds[1]) ?? ""}`}
+          >
+            <title>{edge.title}</title>
+            <line
+              x1={from.x}
+              y1={from.y}
+              x2={to.x}
+              y2={to.y}
+              className={edgeClass[edge.kind]}
+              strokeWidth={edge.kind === "confirmed" ? 2.5 : edge.kind === "intent" ? 1.25 : 2}
+              strokeDasharray={edgeDash[edge.kind]}
+              strokeLinecap="round"
+            />
+            {edge.kind !== "intent" ? (
+              <text
+                x={(from.x + to.x) / 2}
+                y={(from.y + to.y) / 2 + 3}
+                textAnchor="middle"
+                className={labelHalo("fill-muted-foreground text-[9px]")}
+              >
+                {edge.label}
+              </text>
+            ) : null}
+          </g>
+        ))}
+      </g>
 
       {plan?.external ? (
         <g aria-hidden="true">
@@ -164,13 +256,15 @@ export function MeshMap({
         {segments.map((segment) => (
           <path
             key={segment.key}
+            data-testid="plan-edge"
             d={segment.d}
             fill="none"
             className="stroke-brand"
             strokeWidth={2.5}
             strokeLinecap="round"
             markerEnd="url(#mesh-arrow)"
-            strokeDasharray={segment.key === "internet" ? "6 5" : undefined}
+            // Always dashed: a hypothetical plan, never confused with a solid observed adjacency.
+            strokeDasharray={segment.key === "internet" ? "3 6" : "9 5"}
           />
         ))}
       </g>
@@ -183,12 +277,14 @@ export function MeshMap({
         const isTarget = targetId === node.id
         const highlighted = onPath.has(node.id)
         const label = labelPlacement(point)
+        const degree = liveDegree?.get(node.id)
+        const degreeText = degree === undefined ? "" : degree === 0 ? "，无已认证邻接" : `，${degree} 个已认证邻接`
         return (
           <g
             key={node.id}
             role="button"
             tabIndex={0}
-            aria-label={`节点 ${node.name}${isSource ? "（来源）" : ""}${isTarget ? "（目标）" : ""}${highlighted ? "，在规划路径上" : ""}`}
+            aria-label={`节点 ${node.name}${isSource ? "（来源）" : ""}${isTarget ? "（目标）" : ""}${degreeText}${highlighted ? "，在规划路径上" : ""}`}
             aria-pressed={selected}
             onClick={() => onSelect(node.id)}
             onKeyDown={keyActivate(node.id)}
@@ -211,6 +307,7 @@ export function MeshMap({
               r={NODE_R}
               className={cn(
                 "stroke-border transition-colors",
+                degree !== undefined && degree > 0 && "stroke-success/70",
                 highlighted && !plan?.stale ? "fill-brand stroke-brand" : "fill-card",
                 (isSource || isTarget) && "stroke-brand"
               )}

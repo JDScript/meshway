@@ -258,7 +258,7 @@ export default async function OverviewPage() {
             <Panel title="快速操作" bodyClassName="grid gap-1 p-2">
               <QuickAction href="/enrollment" icon={<KeyRoundIcon />} label="注册新节点" />
               <QuickAction href="/routing" icon={<RouteIcon />} label="编辑路由策略" />
-              <QuickAction href="/topology" icon={<WaypointsIcon />} label="查看逻辑拓扑与路径" />
+              <QuickAction href="/topology" icon={<WaypointsIcon />} label="查看网络拓扑与路径" />
             </Panel>
           </div>
         </div>

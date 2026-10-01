@@ -113,9 +113,9 @@ export async function readConnectionRuntimesAction(): Promise<RuntimeReadResult>
 }
 
 /**
- * Read-only status refresh for the node page: inventory (contact, IP
- * receipts), connection snapshot (connection receipts) and runtime reports in
- * one request, so a single bounded poll covers all of them.
+ * Read-only status refresh for the node and topology pages: inventory
+ * (contact, IP receipts), connection snapshot (plan, connection receipts) and
+ * runtime reports in one request, so a single bounded poll covers all of them.
  */
 export async function readNodeStatusAction(): Promise<NodeStatusResult> {
   const token = await requireActionAdminToken()
