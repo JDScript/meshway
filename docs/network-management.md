@@ -1,6 +1,6 @@
 # Network 管理边界
 
-当前每个 controller 维护**一个隐式网络**，不是多个可切换的 network 资源。Web 的“默认网络”表示当前 controller 上下文。
+当前每个 controller 维护**一个具有稳定 ID 与名称的网络**，不是多个可切换的 network 资源。Web 的网络上下文来自 controller 持久保存的名称，设置入口为 `/network`。
 
 ## 已实现与尚缺的部分
 
@@ -10,15 +10,24 @@
 | IPv6 地址池 | 首次生成 ULA `/64`，持久保存；不代表 IPv6 TUN 已启用 |
 | 节点地址 | 稳定分配，撤销保留记录，不自动复用 |
 | 管理策略 | Routing、Access、标签、连接配置共享全局 revision 与 CAS |
-| Network ID / 名称 / 多网络成员关系 | 尚未作为独立资源实现 |
+| Network ID / 名称 | v7 增量升级创建稳定 ID；名称通过管理员 API 与 Web 条件保存 |
+| 多网络成员关系 | 尚未实现；当前节点属于该 controller 的单一网络 |
 | 在线更换网段 | 尚未实现；已有库拒绝不同的地址池启动参数 |
-| DNS 配置与分发 | 尚无管理 API 或执行层；当前只解析 transport 的底层 endpoint |
-| MagicDNS / Split DNS / OS DNS 接管 | 尚未实现，见[DNS 设计](/dns) |
+| 节点 DNS 配置与分发 | 管理员配置 enabled / zone / TTL；节点通过独立认证 API 读取同 revision 的记录快照 |
+| Split DNS / OS DNS 接管 | 尚未实现；本地节点 DNS 与系统解析器接入是不同步骤，见[DNS 设计](/dns) |
 
 地址池初始化参数是 `meshway-controller serve --ipv4-prefix … --ipv6-prefix …`。它们不是日常在线设置：已有节点、TUN、系统路由和缓存都绑定了地址，改址必须有独立迁移流程，不能在设置页保存一个新 CIDR 后就宣称生效。
 
+## 当前配置边界
+
+`GET/POST /api/v1/network` 提供网络 ID、名称、只读地址池和 DNS 意图，修改使用全局 CAS。名称 / DNS 的实际变化增加 revision，规范化后无变化的保存不增加版本。初始 DNS 关闭，zone 为 `meshway.test`，TTL 为 30 秒。
+
+节点 DNS 快照使用 NodeBearer 身份、稳定 network ID、全局 revision 和 canonical SHA-256 摘要；只包含当前网络的活动节点记录。节点显示名无效或规范化后重名时不产生短名 alias，完整节点 ID 的 canonical 名仍可用。DNS 记录不会赋予业务访问权限，AAAA 地址元数据也不代表 IPv6 TUN 已启用。
+
+SQLite v6→v7 保留原身份、凭据、公钥、地址、路由、Access、tags 和旧 Agent 配置字节；新增关闭状态的 DNS 不改变既有 revision。此后 network 设置保存与其他配置共享冲突检查。
+
 ## 后续管理层方向
 
-下一层应先明确网络身份与成员归属，再提供网络设置：创建时选址、只读展示现有分配、显式改址流程，以及可观测的 DNS 配置分发与应用状态。保存 DNS 意图、Agent ACK、解析器配置和实际解析结果需要分别呈现。
+后续继续提供显式改址流程、网络成员归属扩展，以及系统 DNS 集成与可观测应用状态。保存 DNS 意图、普通配置 ACK、解析器运行和实际解析结果分别呈现；设置页不能因保存成功就显示解析器“已生效”。
 
 用户已要求的远端真实联测留待 TUN 和打洞完善之后开展。测试应使用各主机内独立 Docker 网络命名空间，保留既有 SSH / 管理连接；规划阶段核对管理地址、现有子网、端口及数据目录，避免与测试地址池重叠。尤其不能把正在使用的 `100.96.0.0/16` 管理地址当作 Meshway 自动接管的测试空间。

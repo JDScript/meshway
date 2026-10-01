@@ -2,15 +2,15 @@
 
 2026-10-01 路线建议，非本轮全量实现承诺。已有功能与官方依据见 [Tailscale 对照](./tailscale-alignment.md)，这里仅维护可执行交付。已完成的 network v7、管理员 tags、端点 ACL/精确路径编译、IPv4 TUN、多 transport/反向 dial、双编辑器与前端 spacing/IA 不再作为待开发里程碑。
 
-## M0 · 当前 DNS slice 收口（主线进行中）
+## M0 · 显式本地节点 DNS（已实现并验收）
 
 - **可见交付**：显式开启 loopback:5353 后，真实 UDP/TCP A/AAAA/PTR 可查；这是 nameservice，不改变 OS resolver。
 - **协议/UI/CLI**：沿用 node DNS snapshot/version/digest/limits；网络页显示 intent，Agent `run --dns-listen` 显式启用。无新增 DNS ACK；ACK saved 不表示 applied。
 - **不变量**：fresh lease 与 revision coherent；禁递归、禁公网监听、禁把 AAAA 当 IPv6 数据面。
 - **验收**：UDP/TCP 正反查、禁用/rename/节点撤销、超限/无效 digest、长 HTTP 阻塞期间 lease 仍到期；旧记录不因重启而恢复服务。
-- **依赖/并行**：由主线完成 P2 与生成 drift check；CLI runtime snapshot 可以同时设计，等待 DNS 运行接口稳定后合并。
+- **证据**：完整本机隔离 Docker 验收已通过，详见 [DNS](/dns#已验证的本机隔离验收)。待发送旧响应的代际 fencing 与禁用后持久 self-address pin 已覆盖行为回归；节点 DNS 不会因此自动接管系统 resolver。
 
-## M1 · 容器内可用 DNS + 只读 CLI（待开工）
+## M1 · 容器内可用 DNS + 只读 CLI（CLI 并行推进）
 
 - **可见交付**：隔离 Linux 容器内 `getent hosts <短名/FQDN>` 后真实访问已授权 Mesh IPv4 服务；`status --live --json/--peers` 与 `dns status/query` 给出可解释诊断。
 - **协议/UI/CLI**：DNS adapter 在同一 netns 提供 53 端口，接入现有 5353 nameservice，添加 search domain；外部查询走接管前的上游，不递归计算。区分 intent/saved/applied、DNS listener/OS integration、运行代际/lease、邻接 transport 与业务方向。网络页集中配置，节点详情展示执行结果。
@@ -18,11 +18,13 @@
 - **验收**：glibc 与实际应用短名解析、A/AAAA/PTR、TCP 查询；外部域名保留原解析；重复 apply/down/失败回滚；上游指回自身报错；改名旧 alias 消失；lease 到期停止旧 DNS；daemon 停止、DNS 端口占用/权限不足均真实报告。
 - **依赖/并行**：DNS adapter 依赖 M0；CLI 与 UI 可独立并行，协议/根 manifest/lock 合并归协调者。第一片先用受控容器 resolv.conf adapter，systemd-resolved 平台探测后续补齐。
 
-### 可马上开工的独立 CLI slice
+### 已启动的独立 CLI slice
+
+本轮已实现 `status --live`、可读摘要 / JSON、peer 视图、`whois` 和邻接 `ping --json`，见 [CLI](/cli)。DNS status/query 等 DNS 运行边界稳定后接入；容器 OS resolver adapter 仍是下一片。
 
 在已有 `apps/agent/src/diagnostics.rs` 私有 Unix socket 上增加**只读** live-status/DNS-status 请求，复用单一 Rust 契约与 enum/严格校验；生成 schema 给后续消费者，禁止 CLI 与 daemon 各自手写 DTO。保留原 saved `status` 默认输出，新增 `--live`、`--json`、`--peers` 与 human summary；`dns query` 发真实本地查询，`whois` 只查当前可见 IP→node/tag 映射。JSON 带 schemaVersion、source、observedAt、generation/revision、lease、运行状态与 unknown 字段；无 daemon 不回退 cached-live。沿用同 UID、私有目录/socket、帧大小/并发/timeout 限制，不读取或输出私钥。
 
-建议冻结退出码：0 请求成功（停止状态可成功查询）、1 内部错误、2 参数错误、3 daemon unavailable、4 超时、5 拒绝/unsupported；stdout 只放结果，stderr 放诊断。验收 daemon 在/停/代际切换、过期 snapshot、无 peer、畸形/超大 IPC、权限不符、JSON 单对象及退出码。现有 `ping` 继续明确 neighbor-probe；暂不做 up/set/down/login/logout、netcheck 网络探测、trace 或新管理 mutation。
+当前兼容退出码为 0 成功、1 运行失败、2 参数错误；更细的失败种类放在版本化 JSON error code，stdout 只放结果，stderr 放诊断。验收覆盖 daemon 在/停/代际切换、过期 snapshot、无 peer、畸形/超大 IPC、权限不符、JSON 单对象及旧 ping 协议兼容。现有 `ping` 继续明确 neighbor-probe；up/set/down/login/logout、netcheck 网络探测、trace 或新管理 mutation 仍是后续切片。
 
 ## M2 · Endpoint 发现与 netcheck（待开工）
 

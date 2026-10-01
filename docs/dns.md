@@ -1,6 +1,35 @@
 # 身份 DNS 与域名上下文
 
-**MagicDNS 解决 mesh 节点名称，互联网域名分流还需要额外的 DNS 关联机制。** 两者共享本地解析基础设施，但不能互相替代。本页均为待实现的网络设计。
+**节点 DNS 解决 mesh 节点名称，互联网域名分流还需要额外的 DNS 关联机制。** 两者不能互相替代。当前已实现显式 loopback 权威节点 DNS；系统 resolver 接管、Split DNS 和互联网域名上下文仍是后续设计。
+
+## 当前可用：显式本地节点解析器
+
+`/network` 保存 DNS 开关、zone 与 TTL，默认关闭、`meshway.test`、30 秒。启用配置后，修改现有 Agent 的启动参数，显式加入：
+
+```sh
+meshway-agent run --state /state/agent.json \
+  --dns-listen 127.0.0.1:5353 --interval-seconds 2 --connection-lease-seconds 15
+```
+
+可以同时保留原来的 `--apply-dataplane` 与本地 profiles 参数。不要为同一身份启动第二个 Agent。监听限定非特权 loopback UDP/TCP；端口占用会明确失败，不会抢占其他服务或偷偷换端口。
+
+```sh
+dig @127.0.0.1 -p 5353 demo-sha.meshway.test A
+dig @127.0.0.1 -p 5353 demo-sha.meshway.test AAAA +tcp
+dig @127.0.0.1 -p 5353 -x <节点的实际 Mesh IPv4>
+```
+
+节点显示名能规范成唯一单标签时提供可读 alias；重名或无效名称仅保留 `id.<节点 ID 前32字符>.<后32字符>.<zone>`，不截断身份或随机挑选重名节点。AAAA 是地址元数据，不证明 IPv6 TUN 已可通信。
+
+Agent 从生成的 `getAgentDns` 接口取得同 revision 的节点记录，校验网络 / 节点绑定、摘要及地址唯一归属，私有持久保存后才发布。磁盘缓存用于检查与防回退，不在离线启动时恢复旧解析权限。禁用配置返回 REFUSED，不可用 / lease 过期返回 SERVFAIL；没有递归转发。每个正响应 TTL 不超过剩余 lease，排队的发送也受到代际和截止时间约束。
+
+这一步没有修改系统 DNS、搜索域或默认上游。普通应用直接使用短名的容器 OS resolver 接入属于[下一里程碑](/milestones)，不能用 `dig` 成功替代它的完成状态。
+
+### 已验证的本机隔离验收
+
+`experiments/managed-dns/run.py` 使用独立 controller、两个 keyless DNS-only 节点和一个同进程 TUN + DNS 节点。原生 ARM64 镜像 `sha256:83a725fbde106f34fef4f42be3f63af236fe5b218619b8226f7b9343385c0de5` 已通过完整验收，运行 ID 为 `mupehmrf-285d57c8e26c99ff`，公共结果文件包含 8 阶段证据，资源清理无错误。
+
+验证覆盖真实 UDP/TCP、`dig`、A/AAAA/PTR、重复 alias 抑制、zone 更换、禁用/恢复、TTL 不超过 lease、控制面断联、带缓存离线重启、同数据库恢复和撤销。测试限定本机独立容器，没有修改宿主 DNS 或接入登记的远端主机。
 
 ## MagicDNS：从节点清单到本地解析器
 
@@ -8,13 +37,13 @@
 
 | 能力 | 建议设计 | 边界 |
 | --- | --- | --- |
-| `A` / `AAAA` | 节点名称映射到 mesh IPv4 / IPv6 地址 | 本轮地址分配见[配置分发](/configuration)，尚无本地解析器或 DNS 发布 |
-| `PTR` | mesh 地址的反向节点名解析 | 只回答本节点获准看到的清单 |
+| `A` / `AAAA` | 节点名称映射到 mesh IPv4 / IPv6 地址 | 已实现本地权威回答；AAAA 不等同 IPv6 数据面 |
+| `PTR` | mesh 地址的反向节点名解析 | 已实现，只回答快照中实际分配的地址 |
 | 搜索域 | 允许使用节点短名称 | 命名冲突与优先级需要明确 |
 | Split DNS | 按域后缀分配 mesh / 企业 / 公网解析器 | 后缀按 DNS 标签匹配，避免误劫持 |
 | OS 集成 | 安装、更新并恢复系统 DNS 配置 | Linux、macOS、Windows 需要分别实现和测试 |
 
-本地域名后缀、DNS 缓存生命周期、重名策略和跨组织可见性尚待决定。双栈 mesh 地址由控制面 IPAM 分配；这不代替 DNS 发布或 OS 集成。应测试操作系统升级、Agent 异常退出和网络切换后的恢复行为，不能仅修改一个通用 `resolv.conf` 就声称跨平台支持完成。
+当前后缀由网络管理员配置，重名 alias 被抑制，TTL 受新鲜配置 lease 限制；记录可见性与现有单网络公共 inventory 一致，不赋予业务访问权。跨组织可见性与 OS 集成仍需设计，不能仅修改一个通用 `resolv.conf` 就声称跨平台支持完成。
 
 ## 互联网域名路由需要什么
 

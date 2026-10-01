@@ -19,15 +19,18 @@ const available = [
   "管理员会话、一次性注册令牌与节点撤销",
   "双栈 Mesh 地址分配",
   "路由策略编辑、编译预览与条件保存",
-  "按完整路径的访问授权与条件保存",
+  "node / tag / * 端点授权、双向规则与条件保存",
+  "图形化 / schema JSONC 策略编辑与已保存 Flow 检查",
   "配置下发，节点确认已校验保存的版本",
+  "稳定 Network ID、网络名称和节点 DNS 配置",
+  "可选本地 UDP / TCP 节点 DNS（A / AAAA / PTR，不接管系统 DNS）",
   "可选 Linux IPv4 托管数据面（agent opt-in）；实际连通需用 ping / curl 单独测试",
 ]
 
 const pending = [
-  "IPv6、DNS 与互联网出口数据面",
-  "延迟、流量等运行测量与 mesh trace",
-  "DNS 与多传输主备切换",
+  "IPv6 TUN、互联网出口与可信域名流量上下文",
+  "端到端流量统计与真实多跳 mesh trace",
+  "系统 DNS 集成、自动打洞与完整多传输故障切换",
 ]
 
 export function CapabilityPopover() {

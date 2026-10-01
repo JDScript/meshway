@@ -6,7 +6,7 @@
 
 Meshway 已有单 control v7 network 的 stable ID、名称、不可变 IPAM、节点名称与 DNS intent API；管理员 tag catalog/assignment；端点 Access（node/tag/当前 network 的 `*`、有序 first-match allow/reject、显式双向）与 Routing 联合编译精确 NodeData 路径；E2E、mandatory via、Linux IPv4 TUN、UDP/TCP/VLESS TLS 及反向主动 dial、配置 lease 撤回。图形/JSONC 共享草稿、注释与 CAS，前端 spacing/draft 动画与 IA 整理已合并，`/network` 在主线推进。
 
-Agent DNS 正在主线收口 fresh-lease P2：真实 loopback UDP/TCP A/AAAA/PTR、无递归；不代表 OS DNS、Fake-IP 或域名上下文已实现。
+Agent DNS 已通过真实 loopback UDP/TCP A/AAAA/PTR 和隔离 Docker 验收，并修复待发送响应的 lease/代际 fencing、禁用后持久地址绑定；无递归，不代表 OS DNS、Fake-IP 或域名上下文已实现。
 
 ## 对照矩阵
 
