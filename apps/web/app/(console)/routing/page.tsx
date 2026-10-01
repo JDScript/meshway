@@ -11,8 +11,14 @@ import { formatClock } from "@/lib/time"
 
 export const metadata: Metadata = { title: "路由策略" }
 
-export default async function RoutingPage() {
-  const [policy, nodes] = await Promise.all([fetchPolicy(), fetchNodes()])
+export default async function RoutingPage({
+  searchParams,
+}: {
+  searchParams: Promise<Record<string, string | string[] | undefined>>
+}) {
+  const [policy, nodes, params] = await Promise.all([fetchPolicy(), fetchNodes(), searchParams])
+  // Deep link from a plan or trace explanation: highlight that rule.
+  const focusRuleId = typeof params.rule === "string" ? params.rule : null
 
   return (
     <PageBody width="wide">
@@ -48,7 +54,7 @@ export default async function RoutingPage() {
       ) : !nodes.ok ? (
         <ControllerUnavailable url={controllerUrl()} error={nodes.error} />
       ) : (
-        <PolicyEditor snapshot={policy.data} nodes={nodes.data.nodes} />
+        <PolicyEditor snapshot={policy.data} nodes={nodes.data.nodes} focusRuleId={focusRuleId} />
       )}
     </PageBody>
   )

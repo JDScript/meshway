@@ -17,12 +17,14 @@ import {
   PreviewOutcome,
 } from "@/components/routing/route-preview"
 import { AdjacencyBadge, AdjacencyList, ChannelRows, channelText, NodeLink } from "@/components/topology/adjacency-list"
+import { FlowStages } from "@/components/topology/flow-stages"
 import { MeshMap, type MapEdge, type MapPlan } from "@/components/topology/mesh-map"
 import { Badge } from "@/components/ui/badge"
 import { Button, buttonVariants } from "@/components/ui/button"
 import { Switch } from "@/components/ui/switch"
 import type { PreviewResult, RuntimeReadResult } from "@/lib/action-state"
 import { readNodeStatusAction } from "@/lib/connections-actions"
+import { flowStages } from "@/lib/flow-stages"
 import { latestSnapshot, transportLabels, type StampedSnapshot } from "@/lib/connections-model"
 import { activeNodes, nextPartStatus, type PartStatus } from "@/lib/node-status"
 import { previewPolicyAction } from "@/lib/policy-actions"
@@ -537,8 +539,15 @@ export function TopologyView({
               pending={pending}
               staleMessage={flowChanged ? "流量已修改，以下是上一次的规划。" : "基于较旧的策略版本。"}
               emptyMessage="选择源节点与目标，查看已保存策略为这条流量规划的逻辑路径。"
+              onRuleClick={(ruleId) => router.push(`/routing?rule=${encodeURIComponent(ruleId)}`)}
             />
           </div>
+          {response && !stale ? (
+            <div className="flex flex-col gap-2 border-t pt-4">
+              <h3 className="text-xs font-medium">这条流量的证据</h3>
+              <FlowStages stages={flowStages(response, observation, liveKnown)} nodes={nodes} />
+            </div>
+          ) : null}
         </Panel>
       </div>
     </div>
