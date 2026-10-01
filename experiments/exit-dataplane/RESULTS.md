@@ -1,10 +1,10 @@
 # P1c · 已验证结果（2026-10-01）
 
-交付源：`d1be62c3a986158f716a2351ce4251c4ca17cec5`，基于main `47a1ba0`；运行时工作树干净（`source_dirty=false`）。本页提交仅增加证据说明，不改变被测数据面。
+首轮完整源：`d1be62c3a986158f716a2351ce4251c4ca17cec5`，基于main `47a1ba0`。随后已按要求rebase `de6f531`，采用统一launcher并再次完整通过；最新证据见下节。两个被测工作树均干净（`source_dirty=false`），本页仅增加说明，不改变数据面。
 
 - artifact根：`/private/var/folders/8n/20x15sl9797cdg9sdqfj803w0000gn/T/opencode/meshway-exit-20261001-p1c/`
 - 最终完整JSON：`final5/result.json`；Linux构建/Clippy/行为测试/验收日志：`final5.log`；wrapper退出码：`final5.exit` = 0。
-- image：`sha256:fd79758009753cd1e8233278f7da33422d16323041f14c6029fc9568624c792a`，tag `meshway-exit:p1c`。验证target为 `meshway-exit:verified`。
+- 首轮image：`sha256:fd79758009753cd1e8233278f7da33422d16323041f14c6029fc9568624c792a`。`meshway-exit:p1c`与 `meshway-exit:verified` tag已更新到下节的统一launcher复测。
 - `status=ok`、`cleanup_errors=[]`，12个场景、105个检查全部成功。容器/网络均按精确记录与owner标签清理，无prune、host network或privileged。
 - Docker 29.4.0、ARM64、OrbStack Linux `7.0.14-orbstack-00380-ga7e0a2dc9535`，VM 12 logical CPU；每节点1 CPU/256 MiB、2 Tokio workers、TUN MTU1000、NativeUDP、hop Noise + endpoint Noise E2E。
 
@@ -61,4 +61,14 @@ iperf3单TCP流3秒，ICMP 5次；只作为环境与完整隧道成本参考，�
 
 ## 历史产物
 
-`smoke*`、`matrix*`、`final*`前序产物均保留，不覆盖失败证据。早期修复包括OrbStack tmpfs归档copy改为namespace字节传输、nft保留字chain命名、PID身份校验、同revision选择保留Runtime反向密码缓存；rebase后verification补齐只读OpenAPI与policy文档依赖。`final3`为补充公网分类前的完整成功结果；`final4`因合并的policy测试文档未复制而在验证阶段失败，未启动验收；最终有效证据为 `final5`。
+`smoke*`、`matrix*`、`final*`前序产物均保留，不覆盖失败证据。早期修复包括OrbStack tmpfs归档copy改为namespace字节传输、nft保留字chain命名、PID身份校验、同revision选择保留Runtime反向密码缓存；rebase后verification补齐只读OpenAPI与policy文档依赖。`final3`为补充公网分类前的完整成功结果；`final4`因policy文档未复制在验证阶段失败，未启动验收；`final5`及以下 `launcher-final`是完整有效证据。
+
+## 统一launcher最终复测
+
+- source：`1ce4b15261e9f0c2cefb5654c2adc850bab5f8ee`，main baseline `de6f531`；`source_dirty=false`。
+- 最新JSON：同artifact根下 `launcher-final/result.json`；日志 `launcher-final.log`；`launcher-final.exit` = 0。
+- 最新image：`sha256:554f770309495664107090a0f2e0ed15eea2b81072e3820f519081df60ab2b34`。
+- 共享wrapper→launcher→runner复用同一FD：无嵌套flock；12场景/105检查、`status=ok`、`cleanup_errors=[]`。所有Docker子命令和私有文件字节传输继承锁FD。
+- Linuxworkspace严格Clippy、63个dataplane测试、116个Agent测试再次通过；3个无Docker fixture单测通过并加入 `.github/workflows/check.yml` 的Python矩阵。
+- 1000个前缀安装9.073860ms、整表替换8.210804ms、撤回4.720704ms。
+- C→E→S单次基线466.55Mbit/s、平均RTT0.906ms；C→R→E→S为278.56Mbit/s、0.938ms。两轮单样本波动保留，不选择最佳值作为长期性能声明。
