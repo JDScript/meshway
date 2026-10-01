@@ -2,11 +2,13 @@
 //! external routing is ordered first-match. Facts belong to one network snapshot.
 mod engine;
 mod index;
+mod migration;
 mod profiles;
 mod rule_sets;
 mod validation;
 pub use index::{DestinationIndex, FlattenedPrefix};
 pub use engine::*;
+pub use migration::*;
 pub use profiles::*;
 pub use rule_sets::*;
 use serde::{Deserialize, Serialize};
