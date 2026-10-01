@@ -105,7 +105,7 @@ IP 使用共享 bit trie，域名使用反向 DNS 标签 trie。每个前缀节�
 cargo run -p meshway-policy --example policy_v3_schema > target/policy-v3.schema.json
 ```
 
-Schema 表达字段与类型；`compile_network` 同时验证公共规则、方案、分配、完整授权与动态能力。底层单表调用 v3::validate。诊断字段如 profiles[0].rules[0].candidates[1]、assignments[0].allowed 可映射到 JSONC AST。规则 ID 在公共 + 同一方案范围内唯一，前三层仍按共享策略的 ID 约束。
+Schema 表达字段与类型；`compile_network` 同时验证公共规则、方案、分配、完整授权与动态能力。底层单表调用 v3::validate。诊断字段如 profiles[0].rules[0].candidates[1]、assignments[0].allowed 可映射到 JSONC AST；规则集展开的错误仍指向原始引用字段，消息注明规则集条目位置，不错误使用展开或排序后的数组下标。规则 ID 在公共 + 同一方案范围内唯一，前三层仍按共享策略的 ID 约束。
 
 ## 确定性选路与输出
 
@@ -151,12 +151,12 @@ cargo test -p meshway-policy --release timing -- --ignored --nocapture
 | 1000 节点全可达、allow-all、主路径 | 471.86 ms | 999,000 paths |
 | 同上，主路径 + 一条备选 | 675.46 ms | 1,998,000 paths |
 | 1000 节点星型图，主备搜索 | 195.88 ms | 999,000 paths；桥边没有备选 |
-| 底层单表：1000 节点、规则集 8000 CIDR + 前置 direct | 18.14 ms | 7969 个互不重叠前缀，1 份共享表 |
-| 路由方案：1000 源、8000 CIDR、公用 direct + 自定义 regional + global | 28.23 ms | 2 份共享表，1000 外部路径，允许方案共用路径池 |
+| 底层单表：1000 节点、规则集 8000 CIDR + 前置 direct | 20.18 ms | 7969 个互不重叠前缀，1 份共享表 |
+| 路由方案：1000 源、8000 CIDR、公用 direct + 自定义 regional + global | 26.28 ms | 2 份共享表，1000 外部路径，允许方案共用路径池 |
 
-8000 CIDR 场景的 100,000 次出口 lookup 合计 **8.84 ms**（约 88 ns / 次；含 grant fence 与返回决策，不含构造地址）。该次 release 计时测试可并行运行两个场景，数字是本机一次测量，不是实时控制面 SLA。
+8000 CIDR 场景的 100,000 次出口 lookup 合计 **8.73 ms**（约 87 ns / 次；含 grant fence 与返回决策，不含构造地址）。该次 release 计时测试可并行运行两个场景，数字是本机一次测量，不是实时控制面 SLA。
 
-路由方案 API 的 100,000 次 lookup 合计 **14.52 ms**（含方案选择与 grant fence，约 145 ns / 次）；对应测试为 profile_eight_thousand_cidr_timing。方案和前缀展平 property tests 同时验证三层共享结果、公共优先、按 STUN 地区自动选择、未知兜底、锁定、授权分配失败与所有候选出口侧精确路径覆盖。
+路由方案 API 的 100,000 次 lookup 合计 **9.93 ms**（含方案选择与 grant fence，约 99 ns / 次）；对应测试为 profile_eight_thousand_cidr_timing。方案和前缀展平 property tests 同时验证三层共享结果、公共优先、按 STUN 地区自动选择、未知兜底、锁定、授权分配失败与所有候选出口侧精确路径覆盖。
 
 行为测试包含四节点全部 64 种无向图的简单路径穷举 oracle；80 组随机 IPv4 / IPv6 策略、每源 200 地址，验证不重叠表 == 顺序求值；另覆盖千节点 mandatory、前三层规则置换、出口顺序变化、mixed domain / IP、grants 范围、direct、默认选择、锁定、出口开关、规则集报告与迁移。
 

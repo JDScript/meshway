@@ -95,9 +95,14 @@ pub fn expand_rule_sets(
                         _ => Err("Unsupported exact-domain/keyword/regex/provider predicate cannot be exactly represented by suffix/CIDR".into()),
                     };
                     match value {
-                        Ok(d) => {
+                        Ok(d) if super::validation::valid_destination(&d) => {
                             destinations.push(d);
                             total += 1;
+                        }
+                        Ok(_) => {
+                            if diagnostics.len() < 128 {
+                                diagnostics.push(Diagnostic { field:field.clone(),message:format!("rule_sets[{id}].entries[{k}]: Unsupported IPv4-mapped IPv6 CIDR") });
+                            }
                         }
                         Err(message) => {
                             if diagnostics.len() < 128 {
@@ -110,7 +115,16 @@ pub fn expand_rule_sets(
                     }
                 }
             } else {
-                destinations.push(d.clone());
+                if super::validation::valid_destination(d) {
+                    destinations.push(d.clone());
+                } else if diagnostics.len() < 128 {
+                    diagnostics.push(Diagnostic {
+                        field: format!("exits[{i}].destinations[{j}]"),
+                        message:
+                            "Require canonical IDNA suffix or supported IPv4/IPv6 network CIDR"
+                                .into(),
+                    });
+                }
                 total += 1;
             }
             if total > MAX_DESTINATIONS {

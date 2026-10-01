@@ -1110,6 +1110,41 @@ fn documented_policy_deserializes_and_compiles_with_authoritative_facts() {
 }
 
 #[test]
+fn expansion_errors_preserve_original_jsonc_field_not_expanded_or_sorted_index() {
+    let mut f = facts(2);
+    f.rule_sets.insert(
+        "set".into(),
+        ParsedRuleSet {
+            entries: vec![
+                RuleSetEntry::Cidr("192.0.2.0/24".into()),
+                RuleSetEntry::Cidr("198.51.100.0/24".into()),
+            ],
+        },
+    );
+    let mut p = Policy::default_template();
+    let mut r = exit("mixed", ExitMatch::RuleSet("set".into()), vec![selector(1)]);
+    r.destinations
+        .push(ExitMatch::DomainSuffix("INVALID.Example.".into()));
+    p.exits.push(r);
+    assert!(
+        validate(&p, &f)
+            .iter()
+            .any(|d| d.field == "exits[0].destinations[1]")
+    );
+    p.exits[0].destinations.pop();
+    f.rule_sets
+        .get_mut("set")
+        .unwrap()
+        .entries
+        .push(RuleSetEntry::Cidr("::ffff:192.0.2.0/120".into()));
+    let d = validate(&p, &f);
+    assert!(
+        d.iter()
+            .any(|d| d.field == "exits[0].destinations[0]" && d.message.contains("entries[2]"))
+    );
+}
+
+#[test]
 #[ignore]
 fn eight_thousand_cidr_timing() {
     let mut f = facts(1000);

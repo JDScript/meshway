@@ -391,7 +391,7 @@ pub(crate) fn validate_expanded(p: &Policy, facts: &Snapshot) -> Vec<Diagnostic>
     }
     d
 }
-fn valid_destination(d: &ExitMatch) -> bool {
+pub(crate) fn valid_destination(d: &ExitMatch) -> bool {
     match d {
         ExitMatch::RuleSet(_) => false,
         ExitMatch::DomainSuffix(s) => {
