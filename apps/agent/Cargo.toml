@@ -7,7 +7,7 @@ default-run = "meshway-agent"
 
 [features]
 transport-lab = ["dep:meshway-dataplane", "dep:meshway-transport-vless", "dep:tun-rs"]
-managed-connections = ["transport-lab", "dep:rustls", "dep:tokio-rustls", "dep:rustls-pemfile", "dep:sha2", "dep:rustix"]
+managed-connections = ["transport-lab", "dep:rustls", "dep:tokio-rustls", "dep:rustls-pemfile", "dep:sha2", "dep:rustix", "dep:hickory-proto"]
 
 [[bin]]
 name = "meshway-carrier-measure"
@@ -20,6 +20,7 @@ clap = { workspace = true, features = ["env"] }
 futures-util = "0.3"
 getrandom.workspace = true
 idna = "1.1"
+hickory-proto = { version = "=0.26.3", default-features = false, features = ["std"], optional = true }
 ipnet = "2.11"
 meshway-protocol = { path = "../../crates/protocol" }
 meshway-policy = { path = "../../crates/policy" }

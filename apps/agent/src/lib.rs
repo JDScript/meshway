@@ -24,7 +24,11 @@ mod managed_connections;
 #[cfg(feature = "managed-connections")]
 mod managed_dataplane;
 #[cfg(feature = "managed-connections")]
+mod managed_dns;
+#[cfg(feature = "managed-connections")]
 pub use managed_dataplane::TunOptions;
+#[cfg(feature = "managed-connections")]
+pub use state::DnsService;
 
 #[cfg(all(feature = "managed-connections", unix))]
 pub mod diagnostics;

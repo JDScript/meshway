@@ -15,6 +15,10 @@ use crate::generated::{
 };
 
 mod configuration;
+#[cfg(feature = "managed-connections")]
+mod dns;
+#[cfg(feature = "managed-connections")]
+pub use dns::DnsService;
 mod connection_key;
 mod connections;
 pub use connections::{
@@ -154,6 +158,8 @@ pub struct Agent {
     cache: Option<configuration::Cache>,
     // Opt-in and lazy: ordinary heartbeat/routing commands do not touch sidecars.
     connections: Option<connections::State>,
+    #[cfg(feature = "managed-connections")]
+    dns_guard: Option<crate::managed_dns::Guard>,
     _lock: File,
 }
 
@@ -212,6 +218,8 @@ impl Agent {
             identity,
             cache,
             connections: None,
+            #[cfg(feature = "managed-connections")]
+            dns_guard: None,
             _lock: lock,
         })
     }
@@ -226,6 +234,8 @@ impl Agent {
             identity,
             cache,
             connections: None,
+            #[cfg(feature = "managed-connections")]
+            dns_guard: None,
             _lock: lock,
         })
     }
@@ -261,7 +271,17 @@ impl Agent {
             .heartbeat_agent(HeartbeatRequest {
                 agent_version: env!("CARGO_PKG_VERSION").to_owned(),
             })
-            .await?;
+            .await;
+        #[cfg(feature = "managed-connections")]
+        if let Err(error) = &response
+            && error
+                .api()
+                .is_some_and(|error| matches!(error.status, 401 | 403))
+            && let Some(guard) = &self.dns_guard
+        {
+            guard.shutdown();
+        }
+        let response = response?;
         self.accept(response)
     }
 

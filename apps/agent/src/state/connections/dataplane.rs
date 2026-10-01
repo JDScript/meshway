@@ -314,6 +314,9 @@ impl State {
                 ));
             }
             let fresh_at = Instant::now();
+            if let Some(guard) = &agent.dns_guard {
+                guard.observe_revision(snapshot.payload.revision);
+            }
             // This MUST stay before disk persistence and either saved ACK. A
             // changed routing rule invalidates even an unchanged adjacency plan.
             manager.invalidate_dataplane(&snapshot).await;
@@ -344,6 +347,9 @@ impl State {
                 .await;
             let ack = match ack {
                 Err(error) if error.api().is_some_and(|error| error.status == 409) => {
+                    if let Some(guard) = &agent.dns_guard {
+                        guard.conflict(snapshot.payload.revision);
+                    }
                     // Even an identical fetched bundle is now known stale. Do
                     // not keep its grants alive while the retry GET can stall.
                     manager
@@ -367,6 +373,9 @@ impl State {
                 .await;
             let ack: AcknowledgeAgentConnectionsResponse = match ack {
                 Err(error) if error.api().is_some_and(|error| error.status == 409) => {
+                    if let Some(guard) = &agent.dns_guard {
+                        guard.conflict(snapshot.payload.revision);
+                    }
                     manager
                         .withdraw(ConnectionRuntimeReason::InvalidConfiguration)
                         .await;

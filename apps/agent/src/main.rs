@@ -90,6 +90,10 @@ enum Command {
         #[cfg(feature = "managed-connections")]
         #[arg(long, default_value_t = 45, value_parser = clap::value_parser!(u64).range(10..=300))]
         connection_lease_seconds: u64,
+        /// Serve controller-assigned node names on explicit unprivileged loopback UDP+TCP. Does not change OS DNS.
+        #[cfg(feature = "managed-connections")]
+        #[arg(long, value_parser = parse_dns_listen)]
+        dns_listen: Option<std::net::SocketAddr>,
     },
     /// Read local identity metadata without exposing credentials or claiming liveness.
     Status {
@@ -230,81 +234,160 @@ async fn execute(command: Command) -> Result<(), Box<dyn std::error::Error>> {
             connection_profiles,
             #[cfg(feature = "managed-connections")]
             connection_lease_seconds,
+            #[cfg(feature = "managed-connections")]
+            dns_listen,
         } => {
             let mut agent = Agent::load(state)?;
             #[cfg(feature = "managed-connections")]
-            if apply_dataplane {
-                agent
-                    .run_managed_dataplane(
-                        connection_profiles,
-                        Duration::from_secs(interval_seconds),
-                        Duration::from_secs(connection_lease_seconds),
-                        meshway_agent::TunOptions {
-                            name: tun_name,
-                            mtu: tun_mtu,
-                        },
-                    )
-                    .await?;
-                return Ok(());
-            }
-            #[cfg(feature = "managed-connections")]
-            if apply_connections {
-                agent
-                    .run_managed_connections(
-                        connection_profiles,
-                        Duration::from_secs(interval_seconds),
-                        Duration::from_secs(connection_lease_seconds),
-                    )
-                    .await?;
-                return Ok(());
-            }
-            #[cfg(feature = "managed-connections")]
-            if connection_profiles.is_some() {
-                return Err(
-                    "--connection-profiles requires --apply-connections or --apply-dataplane"
-                        .into(),
-                );
-            }
-            let mut backoff = 1_u64;
-            loop {
-                let result = tokio::select! {
-                    result = async {
-                        agent.heartbeat().await?;
-                        if connections {
-                            agent.sync_with_connections().await.map(RunReceipt::WithConnections)
-                        } else {
-                            agent.sync().await.map(RunReceipt::Configuration)
-                        }
-                    } => result,
-                    _ = tokio::signal::ctrl_c() => return Ok(()),
-                };
-                let delay = match result {
-                    Ok(response) => {
-                        backoff = 1;
-                        println!("{}", serde_json::to_string(&response)?);
-                        interval_seconds
-                    }
-                    Err(error) if error.retryable() => {
-                        let delay = backoff;
-                        backoff = (backoff * 2).min(60);
-                        eprintln!("{error}; retrying in {delay}s");
-                        delay
-                    }
-                    Err(error) => return Err(error.into()),
-                };
-                tokio::select! {
-                    _ = tokio::time::sleep(Duration::from_secs(delay)) => {},
-                    _ = tokio::signal::ctrl_c() => return Ok(()),
+            let dns_service = if let Some(listen) = dns_listen {
+                Some(
+                    agent
+                        .dns_service(
+                            listen,
+                            Duration::from_secs(interval_seconds),
+                            Duration::from_secs(connection_lease_seconds),
+                        )
+                        .await?,
+                )
+            } else {
+                None
+            };
+            let run = async {
+                #[cfg(feature = "managed-connections")]
+                if apply_dataplane {
+                    agent
+                        .run_managed_dataplane(
+                            connection_profiles,
+                            Duration::from_secs(interval_seconds),
+                            Duration::from_secs(connection_lease_seconds),
+                            meshway_agent::TunOptions {
+                                name: tun_name,
+                                mtu: tun_mtu,
+                            },
+                        )
+                        .await?;
+                    return Ok::<(), Box<dyn std::error::Error>>(());
                 }
+                #[cfg(feature = "managed-connections")]
+                if apply_connections {
+                    agent
+                        .run_managed_connections(
+                            connection_profiles,
+                            Duration::from_secs(interval_seconds),
+                            Duration::from_secs(connection_lease_seconds),
+                        )
+                        .await?;
+                    return Ok(());
+                }
+                #[cfg(feature = "managed-connections")]
+                if connection_profiles.is_some() {
+                    return Err(
+                        "--connection-profiles requires --apply-connections or --apply-dataplane"
+                            .into(),
+                    );
+                }
+                let mut backoff = 1_u64;
+                loop {
+                    let result = tokio::select! {
+                        result = async {
+                            agent.heartbeat().await?;
+                            if connections {
+                                agent.sync_with_connections().await.map(RunReceipt::WithConnections)
+                            } else {
+                                agent.sync().await.map(RunReceipt::Configuration)
+                            }
+                        } => result,
+                        _ = tokio::signal::ctrl_c() => return Ok::<(), Box<dyn std::error::Error>>(()),
+                    };
+                    let delay = match result {
+                        Ok(response) => {
+                            backoff = 1;
+                            println!("{}", serde_json::to_string(&response)?);
+                            interval_seconds
+                        }
+                        Err(error) if error.retryable() => {
+                            let delay = backoff;
+                            backoff = (backoff * 2).min(60);
+                            eprintln!("{error}; retrying in {delay}s");
+                            delay
+                        }
+                        Err(error) => return Err(error.into()),
+                    };
+                    tokio::select! {
+                        _ = tokio::time::sleep(Duration::from_secs(delay)) => {},
+                        _ = tokio::signal::ctrl_c() => return Ok(()),
+                    }
+                }
+            };
+            #[cfg(feature = "managed-connections")]
+            if let Some(service) = dns_service {
+                tokio::select! {
+                    result = run => result?,
+                    result = service.run() => result?,
+                }
+            } else {
+                run.await?;
             }
+            #[cfg(not(feature = "managed-connections"))]
+            run.await?;
         }
     }
     Ok(())
 }
 
+#[cfg(feature = "managed-connections")]
+fn parse_dns_listen(value: &str) -> Result<std::net::SocketAddr, String> {
+    let address: std::net::SocketAddr = value
+        .parse()
+        .map_err(|_| "DNS listen requires an IP:port socket address".to_owned())?;
+    if !address.ip().is_loopback() || address.port() < 1024 {
+        return Err("DNS listen requires a loopback IP and port >= 1024".to_owned());
+    }
+    Ok(address)
+}
+
 #[cfg(all(test, feature = "managed-connections"))]
 mod tests {
     use super::*;
+
+    #[test]
+    fn dns_is_explicit_loopback_and_can_share_dataplane_daemon() {
+        let cli = Cli::try_parse_from(["meshway-agent", "run"]).unwrap();
+        assert!(matches!(
+            cli.command,
+            Command::Run {
+                dns_listen: None,
+                ..
+            }
+        ));
+        for ip in ["127.0.0.1:5353", "[::1]:5353"] {
+            let cli = Cli::try_parse_from([
+                "meshway-agent",
+                "run",
+                "--apply-dataplane",
+                "--dns-listen",
+                ip,
+            ])
+            .unwrap();
+            assert!(matches!(
+                cli.command,
+                Command::Run {
+                    apply_dataplane: true,
+                    dns_listen: Some(_),
+                    ..
+                }
+            ));
+        }
+        for ip in [
+            "0.0.0.0:5353",
+            "[::]:5353",
+            "192.0.2.1:5353",
+            "127.0.0.1:53",
+            "localhost:5353",
+        ] {
+            assert!(Cli::try_parse_from(["meshway-agent", "run", "--dns-listen", ip]).is_err());
+        }
+    }
 
     #[test]
     fn packet_application_is_explicit_and_adjacency_only_does_not_require_it() {

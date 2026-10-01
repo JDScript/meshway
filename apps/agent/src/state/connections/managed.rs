@@ -92,6 +92,9 @@ impl Agent {
             result = self.managed_loop(&mut manager, interval, &mut dataplane) => result,
             _ = tokio::signal::ctrl_c() => Ok(()),
         };
+        if let Some(guard) = &self.dns_guard {
+            guard.shutdown();
+        }
         manager.withdraw(Reason::ShuttingDown).await;
         result
     }
@@ -131,6 +134,11 @@ impl Agent {
                     status: 422,
                     retryable: true,
                 }) => {
+                    if let Some(guard) = &self.dns_guard
+                        && let Some(snapshot) = &manager.snapshot
+                    {
+                        guard.conflict(snapshot.payload.revision);
+                    }
                     // Revision/digest changed during report. Withdraw and pull;
                     // never label the old channels current or renew by reporting.
                     manager.withdraw(Reason::InvalidConfiguration).await;
@@ -143,6 +151,9 @@ impl Agent {
                     delay
                 }
                 Err(error) => {
+                    if let Some(guard) = &self.dns_guard {
+                        guard.shutdown();
+                    }
                     manager.withdraw(Reason::InternalError).await;
                     return Err(error);
                 }

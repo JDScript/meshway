@@ -18,7 +18,7 @@ pub(super) struct Cache {
     snapshot: ConfigurationSnapshot,
 }
 
-#[cfg(all(feature = "managed-connections", unix))]
+#[cfg(feature = "managed-connections")]
 impl Cache {
     pub(super) fn public_inventory(&self) -> &meshway_protocol::NodeConfiguration {
         &self.snapshot.payload
@@ -209,6 +209,10 @@ impl Agent {
                     .map_err(|_| AgentError::Invalid("cannot decode configuration"))?,
             )
             .map_err(|_| AgentError::Invalid("invalid configuration response"))?;
+            #[cfg(feature = "managed-connections")]
+            if let Some(guard) = &self.dns_guard {
+                guard.observe_revision(snapshot.payload.revision);
+            }
             validate(&snapshot, &self.identity, self.cache.as_ref())?;
             self.persist_configuration(snapshot)?;
             // Even an unchanged cache (including one loaded after restart) may
@@ -223,7 +227,13 @@ impl Agent {
                 })
                 .await;
             match response {
-                Err(error) if error.api().is_some_and(|error| error.status == 409) => continue,
+                Err(error) if error.api().is_some_and(|error| error.status == 409) => {
+                    #[cfg(feature = "managed-connections")]
+                    if let Some(guard) = &self.dns_guard {
+                        guard.conflict(cache.snapshot.payload.revision);
+                    }
+                    continue;
+                }
                 Err(error) => return Err(error.into()),
                 Ok(receipt) => {
                     if receipt.revision != i64::from(cache.snapshot.payload.revision)

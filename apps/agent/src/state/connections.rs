@@ -230,7 +230,7 @@ pub fn connections_status(path: impl AsRef<Path>) -> Result<ConnectionStatus, Ag
 
 // Generated transport DTOs are converted into the authoritative protocol types
 // for digest/reference checks. No handwritten HTTP DTO or untyped JSON escapes.
-fn convert<T: DeserializeOwned>(value: impl Serialize) -> Result<T, AgentError> {
+pub(super) fn convert<T: DeserializeOwned>(value: impl Serialize) -> Result<T, AgentError> {
     let bytes = serde_json::to_vec(&value)
         .map_err(|_| AgentError::Invalid("cannot encode connection contract"))?;
     serde_json::from_slice(&bytes).map_err(|_| AgentError::Invalid("invalid connection contract"))
@@ -291,6 +291,10 @@ impl Agent {
             ));
         }
         state.published_revision = response.revision;
+        #[cfg(feature = "managed-connections")]
+        if let Some(guard) = &self.dns_guard {
+            guard.observe_revision(response.revision);
+        }
         Ok(response)
     }
 
@@ -327,7 +331,12 @@ impl Agent {
             .as_mut()
             .expect("published connection state");
         for _ in 0..3 {
-            let snapshot = convert(client.get_agent_connections().await?)?;
+            let snapshot: AgentConnectionsSnapshot =
+                convert(client.get_agent_connections().await?)?;
+            #[cfg(feature = "managed-connections")]
+            if let Some(guard) = &self.dns_guard {
+                guard.observe_revision(snapshot.payload.revision);
+            }
             state.persist(&self.path, &self.identity, snapshot)?;
             // Recheck even when an unchanged cache was loaded after a crash.
             state.check(&self.path, &self.identity)?;
@@ -342,7 +351,13 @@ impl Agent {
                 })
                 .await;
             match response {
-                Err(error) if error.api().is_some_and(|error| error.status == 409) => continue,
+                Err(error) if error.api().is_some_and(|error| error.status == 409) => {
+                    #[cfg(feature = "managed-connections")]
+                    if let Some(guard) = &self.dns_guard {
+                        guard.conflict(cache.snapshot.payload.revision);
+                    }
+                    continue;
+                }
                 Err(error) => return Err(error.into()),
                 Ok(receipt) => {
                     let receipt: meshway_protocol::AcknowledgeAgentConnectionsResponse =
