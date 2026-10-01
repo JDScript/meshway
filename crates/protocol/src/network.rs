@@ -175,6 +175,45 @@ fn alias_label(name: &str) -> Option<String> {
     (!label.contains('.') && label != "id" && !reserved_zone(&label)).then_some(label)
 }
 
+#[derive(Default)]
+struct DnsAddressOwners {
+    ipv4: BTreeSet<Ipv4Addr>,
+    ipv6: BTreeSet<Ipv6Addr>,
+}
+
+impl DnsAddressOwners {
+    fn insert(&mut self, ipv4: &str, ipv6: &str) -> Result<(), &'static str> {
+        let ipv4: Ipv4Addr = ipv4
+            .parse()
+            .map_err(|_| "invalid DNS assigned IPv4 address")?;
+        let ipv6: Ipv6Addr = ipv6
+            .parse()
+            .map_err(|_| "invalid DNS assigned IPv6 address")?;
+        // DNS owners represent mesh endpoints, never host-local or link-scoped
+        // interfaces. Do not infer a pool here: pool membership remains IPAM /
+        // policy's responsibility, and this check does not add prefix support.
+        if ipv4.is_unspecified()
+            || ipv4.is_multicast()
+            || ipv4.is_broadcast()
+            || ipv4.is_loopback()
+            || ipv4.is_link_local()
+            || ipv6.is_unspecified()
+            || ipv6.is_multicast()
+            || ipv6.is_loopback()
+            || ipv6.is_unicast_link_local()
+            || ipv6.to_ipv4_mapped().is_some()
+        {
+            return Err("DNS assigned addresses must be ordinary mesh endpoints");
+        }
+        // Compare parsed values so equivalent IPv6 spellings cannot introduce
+        // two owners for one address (and hence an ambiguous PTR response).
+        if !self.ipv4.insert(ipv4) || !self.ipv6.insert(ipv6) {
+            return Err("duplicate DNS assigned address owner");
+        }
+        Ok(())
+    }
+}
+
 /// Input is the entire active public inventory, including nodes without public
 /// keys. Invalid or ambiguous display names never replace canonical identities.
 pub fn compile_dns_records(
@@ -201,17 +240,14 @@ pub fn compile_dns_records(
     let mut records = Vec::new();
     let mut diagnostics = Vec::new();
     let mut previous = None;
+    let mut addresses = DnsAddressOwners::default();
     for node in sorted {
         if previous == Some(&node.id) {
             return Err("duplicate DNS node identity");
         }
         previous = Some(&node.id);
         let canonical_name = canonical_node_dns_name(&node.id, &dns.zone)?;
-        if node.mesh_ipv4.parse::<Ipv4Addr>().is_err()
-            || node.mesh_ipv6.parse::<Ipv6Addr>().is_err()
-        {
-            return Err("invalid DNS assigned address");
-        }
+        addresses.insert(&node.mesh_ipv4, &node.mesh_ipv6)?;
         let label = alias_label(&node.name);
         let aliases = match label {
             Some(label) if counts.get(&label) == Some(&1) => vec![format!("{label}.{}", dns.zone)],
@@ -260,17 +296,19 @@ impl NodeDnsConfiguration {
         }
         let mut names = BTreeSet::new();
         let mut previous: Option<&str> = None;
+        let mut addresses = DnsAddressOwners::default();
+        let mut includes_self = false;
         for record in &self.records {
             if previous.is_some_and(|id| id >= record.node_id.as_str())
                 || record.canonical_name
                     != canonical_node_dns_name(&record.node_id, &self.dns.zone)?
                 || record.aliases.len() > 1
-                || record.mesh_ipv4.parse::<Ipv4Addr>().is_err()
-                || record.mesh_ipv6.parse::<Ipv6Addr>().is_err()
             {
                 return Err("invalid DNS record metadata or order");
             }
             previous = Some(&record.node_id);
+            includes_self |= record.node_id == self.node_id;
+            addresses.insert(&record.mesh_ipv4, &record.mesh_ipv6)?;
             if !names.insert(record.canonical_name.clone()) {
                 return Err("duplicate DNS name");
             }
@@ -282,6 +320,10 @@ impl NodeDnsConfiguration {
                     return Err("invalid or duplicate DNS alias");
                 }
             }
+        }
+        // Strict node-ID order already ensures there cannot be two self records.
+        if self.dns.enabled && !includes_self {
+            return Err("enabled DNS configuration must include its own node record");
         }
         if canonical_json(self)
             .map_err(|_| "cannot encode DNS configuration")?

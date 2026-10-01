@@ -187,6 +187,14 @@ fn record_and_diagnostic_budgets_are_enforced() {
         .map(|id| {
             let mut node = node(1, "invalid label");
             node.id = format!("{id:064x}");
+            node.mesh_ipv4 = Ipv4Addr::from(
+                u32::from(Ipv4Addr::new(100, 96, 0, 0)) + u32::try_from(id).unwrap(),
+            )
+            .to_string();
+            node.mesh_ipv6 = Ipv6Addr::from(
+                u128::from("fd00::".parse::<Ipv6Addr>().unwrap()) + u128::try_from(id).unwrap(),
+            )
+            .to_string();
             node
         })
         .collect();
@@ -203,4 +211,133 @@ fn record_and_diagnostic_budgets_are_enforced() {
             .0
             .is_empty()
     );
+}
+
+fn nodes_from_records(records: &[NodeDnsRecord]) -> Vec<MeshNode> {
+    records
+        .iter()
+        .enumerate()
+        .map(|(index, record)| MeshNode {
+            id: record.node_id.clone(),
+            name: format!("node-{index}"),
+            country: None,
+            mesh_ipv4: record.mesh_ipv4.clone(),
+            mesh_ipv6: record.mesh_ipv6.clone(),
+        })
+        .collect()
+}
+
+fn assert_validator_and_compiler_reject(source: &NodeDnsConfiguration) {
+    // Recomputing a valid digest for a malformed bundle is not semantic validation.
+    let snapshot = AgentDnsSnapshot {
+        digest: dns_digest(source).unwrap(),
+        payload: source.clone(),
+    };
+    let restored: AgentDnsSnapshot =
+        serde_json::from_slice(&canonical_json(&snapshot).unwrap()).unwrap();
+    assert_eq!(restored.digest, dns_digest(&restored.payload).unwrap());
+    assert!(restored.payload.validate().is_err());
+    assert!(
+        compile_dns_records(
+            &restored.payload.dns,
+            &nodes_from_records(&restored.payload.records)
+        )
+        .is_err()
+    );
+}
+
+#[test]
+fn validator_and_compiler_require_unique_address_owners_by_value() {
+    let source = payload();
+    for ipv6 in [false, true] {
+        let mut invalid = source.clone();
+        if ipv6 {
+            invalid.records[1].mesh_ipv6 = invalid.records[0].mesh_ipv6.clone();
+        } else {
+            invalid.records[1].mesh_ipv4 = invalid.records[0].mesh_ipv4.clone();
+        }
+        assert_validator_and_compiler_reject(&invalid);
+    }
+    for equivalent in [
+        "fd00:0:0:0:0:0:0:1",
+        "FD00:0000:0000:0000:0000:0000:0000:0001",
+    ] {
+        let mut invalid = source.clone();
+        invalid.records[1].mesh_ipv6 = equivalent.into();
+        assert_validator_and_compiler_reject(&invalid);
+    }
+    // A different spelling alone is legal when the parsed owner stays unique.
+    let mut valid = source;
+    valid.records[0].mesh_ipv6 = "FD00:0000:0000:0000:0000:0000:0000:0001".into();
+    valid.validate().unwrap();
+    compile_dns_records(&valid.dns, &nodes_from_records(&valid.records)).unwrap();
+}
+
+#[test]
+fn validator_and_compiler_reject_non_endpoint_addresses() {
+    let source = payload();
+    for ipv4 in [
+        "not-an-ip",
+        "0.0.0.0",
+        "224.0.0.1",
+        "239.255.255.255",
+        "255.255.255.255",
+        "127.0.0.1",
+        "127.255.255.254",
+        "169.254.0.1",
+        "169.254.255.254",
+    ] {
+        let mut invalid = source.clone();
+        invalid.records[0].mesh_ipv4 = ipv4.into();
+        assert_validator_and_compiler_reject(&invalid);
+    }
+    for ipv6 in [
+        "not-an-ip",
+        "::",
+        "0:0:0:0:0:0:0:0",
+        "ff02::1",
+        "ff0e::1",
+        "::1",
+        "fe80::1",
+        "febf::1",
+        "::ffff:100.96.0.1",
+        "0:0:0:0:0:ffff:6460:1",
+    ] {
+        let mut invalid = source.clone();
+        invalid.records[0].mesh_ipv6 = ipv6.into();
+        assert_validator_and_compiler_reject(&invalid);
+    }
+}
+
+#[test]
+fn enabled_bundles_require_exactly_one_self_and_disabled_empty_remains_valid() {
+    let source = payload();
+    // MeshNode is active public inventory without credentials or public keys;
+    // those keyless nodes remain valid DNS owners.
+    let nodes = nodes_from_records(&source.records);
+    assert_eq!(compile_dns_records(&source.dns, &nodes).unwrap().0.len(), 2);
+    source.validate().unwrap();
+    let mut absent = source.clone();
+    absent.node_id = "f".repeat(64);
+    assert!(absent.validate().is_err());
+    assert_eq!(dns_digest(&absent).unwrap().len(), 64);
+    let mut empty = source.clone();
+    empty.records.clear();
+    assert!(empty.validate().is_err());
+    let mut duplicate = source.clone();
+    duplicate.records.insert(0, duplicate.records[0].clone());
+    assert_validator_and_compiler_reject(&duplicate);
+    // Neither disabled configuration nor compiler publication needs a self
+    // record, matching the existing withdrawal contract.
+    empty.dns.enabled = false;
+    empty.validate().unwrap();
+    assert!(
+        compile_dns_records(&empty.dns, &nodes)
+            .unwrap()
+            .0
+            .is_empty()
+    );
+    absent.dns.enabled = false;
+    absent.records.clear();
+    absent.validate().unwrap();
 }
