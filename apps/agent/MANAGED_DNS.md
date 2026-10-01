@@ -18,6 +18,13 @@ request, strict validation, and durable private persistence. Startup does **not*
 activate `.dns.json`; that file supplies only inspection data and a replay floor.
 The Agent's identity and transport private key are reused, never replaced.
 
+The private DNS cache is format v2. It retains an independent self-address pin
+across disabled/empty publications and restarts; later enabled snapshots and
+the ordinary configuration cache must agree with that pin. A pin can initially
+be null only before either source has supplied this node's assigned addresses.
+Old v1 caches are rejected without overwriting them: an empty v1 snapshot cannot
+prove whether an earlier address binding was lost. There is no silent migration.
+
 `--dns-listen` accepts only numeric IPv4/IPv6 loopback socket addresses with port
 1024 or greater. UDP and TCP must both bind successfully. DNS-only operation is
 portable across the Agent's supported Unix identity-storage platforms; Linux
@@ -51,6 +58,13 @@ Omitting the flag retains ordinary Agent behavior.
   question/response without chopped records. TCP requests are capped at 4096
   bytes; frames use the standard two-byte length prefix. Connections and idle
   work are bounded. Hickory handles all DNS wire decoding and encoding.
+- Pending sends carry a publication generation and deadline, not reusable answer
+  bytes. Readiness waits are bounded to one second and race withdrawal/expiry.
+  TTL is encoded again immediately before a nonblocking syscall, under the same
+  guard lock that linearizes publication changes. A TCP prefix and body are sent
+  in one `try_write`; any partial frame closes the connection without sending
+  the remaining old body. No lock is held across an await. Fresh expired queries
+  receive SERVFAIL even before the watchdog has retired the old publication.
 - A changed/invalid source, known newer global revision or known ACK conflict
   withdraws old records before filesystem persistence or subsequent HTTP awaits.
   Explicit rejection of the node and root daemon shutdown stop publication.
@@ -65,9 +79,16 @@ Omitting the flag retains ordinary Agent behavior.
   answers may survive until their already-announced TTL; withdrawal does not
   claim to flush remote caches instantly.
 
+The send fence is point-in-time at the nonblocking kernel write. A datagram or
+complete TCP frame already accepted by the kernel cannot be recalled on a later
+withdrawal. User-space responses still waiting for readiness are canceled; an
+accepted partial TCP frame is never completed and must be discarded by the client.
+
 `event: "managed_dns"` records public local publication state, listen address,
 revision, digest and zone. It is neither a configuration ACK nor proof of packet
 delivery. Queries, node bearer credentials and private keys are not logged.
+DNS observations use one bounded logger queue; overload drops observations
+rather than blocking DNS serving, withdrawal, or the expiry watchdog.
 
 ## Agent checks
 

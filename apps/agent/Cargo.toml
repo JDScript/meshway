@@ -44,6 +44,7 @@ rustix = { workspace = true, optional = true }
 tun-rs = { version = "2.8.11", features = ["async_tokio"], optional = true }
 
 [dev-dependencies]
+tokio = { workspace = true, features = ["test-util"] }
 rcgen = "0.14"
 meshway-controller = { path = "../controller" }
 axum.workspace = true

@@ -17,13 +17,17 @@ use hickory_proto::{
     serialize::binary::{BinDecodable, BinDecoder},
 };
 use tokio::{
-    io::{AsyncReadExt, AsyncWriteExt},
+    io::AsyncReadExt,
     net::{TcpListener, TcpStream, UdpSocket},
+    sync::watch,
     task::JoinSet,
     time::{Instant, timeout},
 };
 
 use crate::AgentError;
+
+pub(crate) mod log;
+mod send;
 
 pub(crate) const MAX_UDP: usize = 1232;
 pub(crate) const MAX_REQUEST: usize = 4096;
@@ -46,6 +50,7 @@ struct Publication {
 
 #[derive(Default)]
 struct State {
+    generation: Arc<()>,
     active: Option<Publication>,
     disabled: bool,
     revision_floor: u32,
@@ -53,20 +58,44 @@ struct State {
 }
 
 /// Query-side freshness checks remain independent of any stalled HTTP future.
-#[derive(Clone, Default)]
-pub(crate) struct Guard(Arc<RwLock<State>>);
+#[derive(Clone)]
+pub(crate) struct Guard(Arc<RwLock<State>>, watch::Sender<()>);
+
+impl Default for Guard {
+    fn default() -> Self {
+        let (changes, _) = watch::channel(());
+        Self(Arc::new(RwLock::new(State::default())), changes)
+    }
+}
+
+/// A bounded question and publication fence, not a detached serialized answer.
+/// Bytes and TTL are generated only under the guard at the nonblocking send.
+struct Response {
+    query: Message,
+    limit: usize,
+    tcp: bool,
+    generation: Arc<()>,
+    deadline: Option<Instant>,
+}
 
 impl Guard {
+    fn changed(&self, state: &mut State) {
+        state.generation = Arc::new(());
+        self.1.send_replace(());
+    }
+
     pub fn withdraw(&self) {
         let mut state = self.0.write().expect("DNS guard poisoned");
         state.active = None;
         state.disabled = false;
+        self.changed(&mut state);
     }
 
     pub fn disable(&self) {
         let mut state = self.0.write().expect("DNS guard poisoned");
         state.active = None;
         state.disabled = !state.terminated;
+        self.changed(&mut state);
     }
 
     pub fn shutdown(&self) {
@@ -74,6 +103,7 @@ impl Guard {
         state.active = None;
         state.disabled = false;
         state.terminated = true;
+        self.changed(&mut state);
     }
 
     pub fn observe_revision(&self, revision: u32) {
@@ -86,6 +116,7 @@ impl Guard {
         {
             state.active = None;
             state.disabled = false;
+            self.changed(&mut state);
         }
     }
 
@@ -101,6 +132,7 @@ impl Guard {
             .is_some_and(|active| active.deadline.saturating_duration_since(now).as_secs() == 0)
         {
             state.active = None;
+            self.changed(&mut state);
             return true;
         }
         false
@@ -111,6 +143,7 @@ impl Guard {
         state.revision_floor = state.revision_floor.max(revision.saturating_add(1));
         state.active = None;
         state.disabled = false;
+        self.changed(&mut state);
     }
 
     pub fn publish(&self, zone: Zone, deadline: Instant, revision: u32) -> bool {
@@ -128,10 +161,16 @@ impl Guard {
             revision,
         });
         state.disabled = false;
+        self.changed(&mut state);
         true
     }
 
+    #[cfg(test)]
     fn answer(&self, query: &Message, now: Instant) -> Message {
+        Self::answer_locked(&self.0.read().expect("DNS guard poisoned"), query, now)
+    }
+
+    fn answer_locked(state: &State, query: &Message, now: Instant) -> Message {
         let mut response = Message::response(query.metadata.id, query.metadata.op_code);
         response.metadata.recursion_desired = query.metadata.recursion_desired;
         // RD is echoed, but RA always remains false. No upstream exists.
@@ -160,7 +199,6 @@ impl Guard {
             response.metadata.response_code = ResponseCode::FormErr;
             return response;
         }
-        let state = self.0.read().expect("DNS guard poisoned");
         let Some(active) = &state.active else {
             response.metadata.response_code = if state.disabled {
                 ResponseCode::Refused
@@ -212,7 +250,7 @@ impl Guard {
         response
     }
 
-    pub fn respond(&self, bytes: &[u8], tcp: bool) -> Option<Vec<u8>> {
+    fn prepare(&self, bytes: &[u8], tcp: bool) -> Option<Response> {
         if bytes.len() > if tcp { MAX_REQUEST } else { MAX_UDP } {
             return None;
         }
@@ -228,8 +266,35 @@ impl Guard {
                 usize::from(edns.max_payload()).clamp(512, MAX_UDP)
             })
         };
-        let response = self.answer(&query, Instant::now());
-        encode_bounded(response, limit)
+        let state = self.0.read().expect("DNS guard poisoned");
+        Some(Response {
+            query,
+            limit,
+            tcp,
+            generation: state.generation.clone(),
+            // New queries after expiry still get a fresh SERVFAIL even before
+            // the watchdog retires the publication. Previously prepared
+            // positive responses retain their deadline and are canceled.
+            deadline: state
+                .active
+                .as_ref()
+                .map(|active| active.deadline)
+                .filter(|deadline| {
+                    deadline.saturating_duration_since(Instant::now()).as_secs() > 0
+                }),
+        })
+    }
+
+    // Tests inspect point-in-time bytes. Production socket writes exclusively
+    // use send's readiness/generation fence and locked nonblocking syscall.
+    #[cfg(test)]
+    pub fn respond(&self, bytes: &[u8], tcp: bool) -> Option<Vec<u8>> {
+        let response = self.prepare(bytes, tcp)?;
+        let state = self.0.read().expect("DNS guard poisoned");
+        encode_bounded(
+            Self::answer_locked(&state, &response.query, Instant::now()),
+            response.limit,
+        )
     }
 }
 
@@ -274,10 +339,8 @@ impl Server {
             tokio::select! {
                 packet = self.udp.recv_from(&mut requests) => {
                     let (length, peer) = packet?;
-                    if peer.ip().is_loopback()
-                        && let Some(response) = guard.respond(&requests[..length], false)
-                    {
-                        self.udp.send_to(&response, peer).await?;
+                    if peer.ip().is_loopback() {
+                        send::udp(&self.udp, &guard, &requests[..length], peer).await?;
                     }
                 }
                 client = self.tcp.accept() => {
@@ -301,10 +364,7 @@ async fn serve_tcp(mut stream: TcpStream, guard: Guard) {
         }
         let mut request = vec![0; length];
         stream.read_exact(&mut request).await?;
-        if let Some(response) = guard.respond(&request, true) {
-            stream.write_u16(response.len() as u16).await?;
-            stream.write_all(&response).await?;
-        }
+        send::tcp(&stream, &guard, &request).await?;
         Ok(())
     })
     .await;

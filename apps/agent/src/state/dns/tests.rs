@@ -12,6 +12,7 @@ use std::sync::{Arc, RwLock};
 use tokio::{net::TcpListener, sync::Notify};
 
 mod inventory;
+mod pins;
 
 fn snapshot(id: &str, revision: u32) -> AgentDnsSnapshot {
     let zone = "meshway.test";

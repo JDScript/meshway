@@ -1,5 +1,6 @@
 use super::*;
 use hickory_proto::op::Query;
+use tokio::io::AsyncWriteExt;
 
 fn name(value: &str) -> Name {
     Name::from_ascii(value).unwrap()

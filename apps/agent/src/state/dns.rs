@@ -15,7 +15,7 @@ use tokio::time::{Instant, sleep};
 use super::{Agent, AgentError, Identity, local};
 use crate::{
     generated::client::HttpClient,
-    managed_dns::{Guard, Server, Zone},
+    managed_dns::{Guard, Server, Zone, log},
 };
 
 #[derive(Serialize, Deserialize)]
@@ -25,7 +25,46 @@ struct Cache {
     controller: String,
     node_id: String,
     credential_hash: Vec<u8>,
+    // Required even when null: disabled snapshots must not erase a known pin.
+    #[serde(deserialize_with = "required_pin")]
+    self_addresses: Option<SelfAddresses>,
     snapshot: AgentDnsSnapshot,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct SelfAddresses {
+    mesh_ipv4: Ipv4Addr,
+    mesh_ipv6: Ipv6Addr,
+}
+
+fn required_pin<'de, D: serde::Deserializer<'de>>(
+    deserializer: D,
+) -> Result<Option<SelfAddresses>, D::Error> {
+    Option::deserialize(deserializer)
+}
+
+impl SelfAddresses {
+    fn parse(v4: &str, v6: &str) -> Result<Self, AgentError> {
+        Ok(Self {
+            mesh_ipv4: v4
+                .parse()
+                .map_err(|_| AgentError::Invalid("invalid DNS pinned IPv4"))?,
+            mesh_ipv6: v6
+                .parse()
+                .map_err(|_| AgentError::Invalid("invalid DNS pinned IPv6"))?,
+        })
+    }
+
+    fn pin(current: &mut Option<Self>, observed: Self) -> Result<(), AgentError> {
+        if current.as_ref().is_some_and(|pin| pin != &observed) {
+            return Err(AgentError::Invalid(
+                "DNS durable self address binding changed",
+            ));
+        }
+        *current = Some(observed);
+        Ok(())
+    }
 }
 
 fn path(state: &Path) -> PathBuf {
@@ -112,12 +151,23 @@ fn load(state: &Path, identity: &Identity) -> Result<Option<Cache>, AgentError> 
         Err(error) => return Err(error.into()),
         Ok(_) => {}
     }
-    let cache: Cache = serde_json::from_str(&local::read_private_bounded(
-        &file,
-        MAX_DNS_BYTES + 64 * 1024,
-    )?)
-    .map_err(|_| AgentError::Invalid("invalid DNS cache; refusing to overwrite"))?;
-    if cache.format_version != 1
+    let bytes = local::read_private_bounded(&file, MAX_DNS_BYTES + 64 * 1024)?;
+    #[derive(Deserialize)]
+    struct Version {
+        format_version: u32,
+    }
+    let version: Version = serde_json::from_str(&bytes)
+        .map_err(|_| AgentError::Invalid("invalid DNS cache; refusing to overwrite"))?;
+    // v1 disabled caches have already lost any earlier self-address evidence.
+    // Do not silently migrate that unprovable history or replace the file.
+    if version.format_version != 2 {
+        return Err(AgentError::Invalid(
+            "unsupported DNS cache version; v2 self-address continuity required",
+        ));
+    }
+    let cache: Cache = serde_json::from_str(&bytes)
+        .map_err(|_| AgentError::Invalid("invalid DNS cache; refusing to overwrite"))?;
+    if cache.format_version != 2
         || cache.controller != identity.controller
         || Some(&cache.node_id) != identity.node_id.as_ref()
         || cache.credential_hash != local::digest(&identity.node_credential)
@@ -127,6 +177,38 @@ fn load(state: &Path, identity: &Identity) -> Result<Option<Cache>, AgentError> 
         ));
     }
     validate(&cache.snapshot, &cache.node_id, None)?;
+    if let Some(pin) = &cache.self_addresses {
+        // Reuse the authoritative address-safety helper even for an empty
+        // disabled publication; the pin is not itself a published DNS record.
+        let dns = meshway_protocol::MeshDnsConfiguration {
+            enabled: true,
+            ..cache.snapshot.payload.dns.clone()
+        };
+        meshway_protocol::compile_dns_records(
+            &dns,
+            &[meshway_protocol::MeshNode {
+                id: cache.node_id.clone(),
+                name: identity.name.clone(),
+                country: None,
+                mesh_ipv4: pin.mesh_ipv4.to_string(),
+                mesh_ipv6: pin.mesh_ipv6.to_string(),
+            }],
+        )
+        .map_err(|_| AgentError::Invalid("invalid DNS durable self address pin"))?;
+    }
+    if let Some(own) = cache
+        .snapshot
+        .payload
+        .records
+        .iter()
+        .find(|record| record.node_id == cache.node_id)
+        && cache.self_addresses.as_ref()
+            != Some(&SelfAddresses::parse(&own.mesh_ipv4, &own.mesh_ipv6)?)
+    {
+        return Err(AgentError::Invalid(
+            "DNS cache self record differs from its durable address pin",
+        ));
+    }
     Ok(Some(cache))
 }
 
@@ -206,10 +288,7 @@ impl DnsService {
             loop {
                 timer.tick().await;
                 if guard.expire(Instant::now()) {
-                    println!(
-                        "{}",
-                        serde_json::json!({"event": "managed_dns", "state": "expired", "listen": listen})
-                    );
+                    log::event(serde_json::json!({"event": "managed_dns", "state": "expired", "listen": listen}).to_string());
                 }
             }
         };
@@ -241,7 +320,7 @@ impl Sync {
             zone: snapshot.map(|s| s.payload.dns.zone.as_str()),
         };
         if let Ok(event) = serde_json::to_string(&event) {
-            println!("{event}");
+            log::event(event);
         }
     }
 
@@ -258,7 +337,7 @@ impl Sync {
                 Err(error) if error.retryable() => {
                     let delay = Duration::from_secs(backoff);
                     backoff = (backoff * 2).min(30);
-                    eprintln!("DNS {error}; retrying in {}s", delay.as_secs());
+                    log::warning(format!("DNS {error}; retrying in {}s", delay.as_secs()));
                     delay
                 }
                 Err(error) => {
@@ -320,11 +399,30 @@ impl Sync {
             self.identity.node_id.as_deref().expect("enrolled DNS"),
             self.cache.as_ref().map(|c| &c.snapshot),
         )?;
+        let mut self_addresses = self
+            .cache
+            .as_ref()
+            .and_then(|cache| cache.self_addresses.clone());
+        if let Some(own) = snapshot
+            .payload
+            .records
+            .iter()
+            .find(|record| record.node_id == snapshot.payload.node_id)
+        {
+            SelfAddresses::pin(
+                &mut self_addresses,
+                SelfAddresses::parse(&own.mesh_ipv4, &own.mesh_ipv6)?,
+            )?;
+        }
         // The separately validated configuration cache pins this node's assigned
         // addresses even across a disabled (empty-record) DNS generation.
         if let Some(configuration) = super::configuration::load(&self.state, &self.identity)? {
             let inventory = configuration.public_inventory();
             let own = &inventory.node;
+            SelfAddresses::pin(
+                &mut self_addresses,
+                SelfAddresses::parse(&own.mesh_ipv4, &own.mesh_ipv6)?,
+            )?;
             if snapshot.payload.records.iter().any(|record| {
                 record.node_id == own.id
                     && (record.mesh_ipv4 != own.mesh_ipv4 || record.mesh_ipv6 != own.mesh_ipv6)
@@ -362,19 +460,29 @@ impl Sync {
         if Identity::load(&self.state)? != self.identity
             || load(&self.state, &self.identity)?
                 .as_ref()
-                .map(|c| &c.snapshot.digest)
-                != self.cache.as_ref().map(|c| &c.snapshot.digest)
+                .map(|c| (&c.snapshot.digest, &c.self_addresses))
+                != self
+                    .cache
+                    .as_ref()
+                    .map(|c| (&c.snapshot.digest, &c.self_addresses))
         {
             return Err(AgentError::Invalid(
                 "DNS identity or cache changed during sync",
             ));
         }
-        if changed {
+        if changed
+            || self
+                .cache
+                .as_ref()
+                .and_then(|cache| cache.self_addresses.as_ref())
+                != self_addresses.as_ref()
+        {
             let cache = Cache {
-                format_version: 1,
+                format_version: 2,
                 controller: self.identity.controller.clone(),
                 node_id: snapshot.payload.node_id.clone(),
                 credential_hash: local::digest(&self.identity.node_credential),
+                self_addresses,
                 snapshot,
             };
             let bytes = serde_json::to_vec(&cache)
