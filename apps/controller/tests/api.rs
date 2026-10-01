@@ -880,3 +880,331 @@ async fn policy_metadata_and_configuration_routes_enforce_roles_and_conditional_
         StatusCode::OK
     );
 }
+
+#[tokio::test]
+async fn connection_routes_scope_identity_roles_strict_bodies_and_saved_only_receipts() {
+    let fixture = Fixture::new();
+    let token = fixture.token().await.token;
+    let credential = local::credential().unwrap();
+    let node = enroll(&fixture, &token, &credential, "connections")
+        .await
+        .node;
+    let identity = json!({"public_key":format!("09{}","00".repeat(31)),"capabilities":[{"transport":"native_tcp","can_dial":true,"can_accept":true,"semantics":"stream"}]});
+    let empty = json!({"expected_revision":2,"configuration":{"listeners":[],"candidates":[]}});
+    let ack = json!({"revision":2,"digest":"00".repeat(32)});
+    for wrong in [&credential, &token] {
+        assert_eq!(
+            request(
+                &fixture.app,
+                "GET",
+                "/api/v1/connections",
+                Some(wrong),
+                None
+            )
+            .await
+            .0,
+            StatusCode::UNAUTHORIZED
+        );
+        assert_eq!(
+            request(
+                &fixture.app,
+                "POST",
+                "/api/v1/connections",
+                Some(wrong),
+                Some(empty.clone())
+            )
+            .await
+            .0,
+            StatusCode::UNAUTHORIZED
+        );
+    }
+    for wrong in [&fixture.admin, &token] {
+        assert_eq!(
+            request(
+                &fixture.app,
+                "GET",
+                "/api/v1/agent/connections",
+                Some(wrong),
+                None
+            )
+            .await
+            .0,
+            StatusCode::UNAUTHORIZED
+        );
+        assert_eq!(
+            request(
+                &fixture.app,
+                "POST",
+                "/api/v1/agent/connection-identity",
+                Some(wrong),
+                Some(identity.clone())
+            )
+            .await
+            .0,
+            StatusCode::UNAUTHORIZED
+        );
+        assert_eq!(
+            request(
+                &fixture.app,
+                "POST",
+                "/api/v1/agent/connections/ack",
+                Some(wrong),
+                Some(ack.clone())
+            )
+            .await
+            .0,
+            StatusCode::UNAUTHORIZED
+        );
+    }
+    for bad in [
+        json!({"public_key":identity["public_key"],"capabilities":[],"node_id":node.id}),
+        json!({"public_key":"00".repeat(32),"capabilities":[]}),
+        json!({"public_key":"AB".repeat(32),"capabilities":[]}),
+        json!({"public_key":identity["public_key"],"capabilities":[{"transport":"wireguard","can_dial":true,"can_accept":true,"semantics":"datagram"}]}),
+        json!({"public_key":identity["public_key"],"capabilities":[{"transport":"native_udp","can_dial":true,"can_accept":true,"semantics":"stream"}]}),
+        json!({"public_key":identity["public_key"],"capabilities":[{"transport":"native_tcp","can_dial":"true","can_accept":true,"semantics":"stream"}]}),
+    ] {
+        assert_eq!(
+            request(
+                &fixture.app,
+                "POST",
+                "/api/v1/agent/connection-identity",
+                Some(&credential),
+                Some(bad)
+            )
+            .await
+            .0,
+            StatusCode::BAD_REQUEST
+        );
+    }
+    let published = request(
+        &fixture.app,
+        "POST",
+        "/api/v1/agent/connection-identity?node_id=other",
+        Some(&credential),
+        Some(identity.clone()),
+    )
+    .await;
+    assert_eq!(published.0, StatusCode::OK);
+    assert_eq!(published.1["node_id"], node.id);
+    assert_eq!(published.1["revision"], 3);
+    assert_eq!(
+        request(
+            &fixture.app,
+            "POST",
+            "/api/v1/connections",
+            Some(&fixture.admin),
+            Some(empty)
+        )
+        .await
+        .0,
+        StatusCode::CONFLICT
+    );
+    let snapshot = request(
+        &fixture.app,
+        "GET",
+        "/api/v1/agent/connections?node_id=other",
+        Some(&credential),
+        None,
+    )
+    .await;
+    assert_eq!(snapshot.1["payload"]["node_id"], node.id);
+    let receipt = json!({"revision":3,"digest":snapshot.1["digest"]});
+    let saved = request(
+        &fixture.app,
+        "POST",
+        "/api/v1/agent/connections/ack",
+        Some(&credential),
+        Some(receipt.clone()),
+    )
+    .await;
+    assert_eq!(saved.0, StatusCode::OK);
+    assert_eq!(saved.1["status"], "saved");
+    assert_eq!(
+        request(
+            &fixture.app,
+            "GET",
+            "/api/v1/nodes",
+            Some(&fixture.admin),
+            None
+        )
+        .await
+        .1["nodes"][0]["acknowledged_revision"],
+        0
+    );
+    for bad in [
+        json!({"revision":"3","digest":snapshot.1["digest"]}),
+        json!({"revision":3,"digest":"bad"}),
+        json!({"revision":0,"digest":snapshot.1["digest"]}),
+        json!({"revision":3,"digest":snapshot.1["digest"],"node_id":node.id}),
+    ] {
+        assert_eq!(
+            request(
+                &fixture.app,
+                "POST",
+                "/api/v1/agent/connections/ack",
+                Some(&credential),
+                Some(bad)
+            )
+            .await
+            .0,
+            StatusCode::BAD_REQUEST
+        );
+    }
+    request(
+        &fixture.app,
+        "POST",
+        "/api/v1/nodes/revoke",
+        Some(&fixture.admin),
+        Some(json!({"node_id":node.id})),
+    )
+    .await;
+    for (method, path, body) in [
+        ("GET", "/api/v1/agent/connections", None),
+        ("POST", "/api/v1/agent/connection-identity", Some(identity)),
+        ("POST", "/api/v1/agent/connections/ack", Some(receipt)),
+    ] {
+        assert_eq!(
+            request(&fixture.app, method, path, Some(&credential), body)
+                .await
+                .0,
+            StatusCode::FORBIDDEN
+        );
+    }
+}
+
+#[tokio::test]
+async fn connections_concurrent_admin_cas_has_one_winner_and_scoped_body_budget() {
+    let fixture = Fixture::new();
+    let token = fixture.token().await.token;
+    let credential = local::credential().unwrap();
+    let node = enroll(&fixture, &token, &credential, "listener").await.node;
+    assert_eq!(request(&fixture.app,"POST","/api/v1/agent/connection-identity",Some(&credential),Some(json!({"public_key":format!("09{}","00".repeat(31)),"capabilities":[{"transport":"native_tcp","can_dial":false,"can_accept":true,"semantics":"stream"}]}))).await.0,StatusCode::OK);
+    let plan = |port| json!({"expected_revision":3,"configuration":{"listeners":[{"id":"listener","node_id":node.id,"transport":"native_tcp","bind":format!("0.0.0.0:{port}"),"advertised_endpoints":[{"host":"127.0.0.1","port":port}],"credential_ref":null}],"candidates":[]}});
+    let (one, two) = tokio::join!(
+        request(
+            &fixture.app,
+            "POST",
+            "/api/v1/connections",
+            Some(&fixture.admin),
+            Some(plan(8443))
+        ),
+        request(
+            &fixture.app,
+            "POST",
+            "/api/v1/connections",
+            Some(&fixture.admin),
+            Some(plan(8444))
+        )
+    );
+    assert!(
+        (one.0 == StatusCode::OK && two.0 == StatusCode::CONFLICT)
+            || (two.0 == StatusCode::OK && one.0 == StatusCode::CONFLICT)
+    );
+    let winner = if one.0 == StatusCode::OK {
+        one.1
+    } else {
+        two.1
+    };
+    assert_eq!(winner["revision"], 4);
+    for (path, token, body, padding, expected) in [
+        (
+            "/api/v1/connections",
+            fixture.admin.as_str(),
+            json!({"expected_revision":4,"configuration":winner["configuration"]}),
+            9000,
+            StatusCode::OK,
+        ),
+        (
+            "/api/v1/connections",
+            fixture.admin.as_str(),
+            json!({"expected_revision":4,"configuration":winner["configuration"]}),
+            128 * 1024,
+            StatusCode::PAYLOAD_TOO_LARGE,
+        ),
+        (
+            "/api/v1/agent/connection-identity",
+            credential.as_str(),
+            json!({"public_key":format!("09{}","00".repeat(31)),"capabilities":[]}),
+            9000,
+            StatusCode::PAYLOAD_TOO_LARGE,
+        ),
+        (
+            "/api/v1/agent/connections/ack",
+            credential.as_str(),
+            json!({"revision":4,"digest":"00".repeat(32)}),
+            9000,
+            StatusCode::PAYLOAD_TOO_LARGE,
+        ),
+        (
+            "/api/v1/enrollment-tokens",
+            fixture.admin.as_str(),
+            json!({"expires_in_seconds":60}),
+            9000,
+            StatusCode::PAYLOAD_TOO_LARGE,
+        ),
+    ] {
+        let request = Request::builder()
+            .method("POST")
+            .uri(path)
+            .header("authorization", format!("Bearer {token}"))
+            .header("content-type", "application/json")
+            .body(Body::from(format!("{}{body}", " ".repeat(padding))))
+            .unwrap();
+        assert_eq!(
+            fixture.app.clone().oneshot(request).await.unwrap().status(),
+            expected,
+            "{path}"
+        );
+    }
+    let mut missing_ref = plan(8443);
+    missing_ref["expected_revision"] = 4.into();
+    missing_ref["configuration"]["listeners"][0]
+        .as_object_mut()
+        .unwrap()
+        .remove("credential_ref");
+    assert_eq!(
+        request(
+            &fixture.app,
+            "POST",
+            "/api/v1/connections",
+            Some(&fixture.admin),
+            Some(missing_ref)
+        )
+        .await
+        .0,
+        StatusCode::BAD_REQUEST
+    );
+    let mut invalid = plan(8443);
+    invalid["expected_revision"] = 4.into();
+    invalid["configuration"]["listeners"][0]["advertised_endpoints"][0]["port"] = 0.into();
+    assert_eq!(
+        request(
+            &fixture.app,
+            "POST",
+            "/api/v1/connections",
+            Some(&fixture.admin),
+            Some(invalid)
+        )
+        .await
+        .0,
+        StatusCode::UNPROCESSABLE_ENTITY
+    );
+    for port in [json!(65536), json!(-1), json!(1.5), json!("443")] {
+        let mut invalid = plan(8443);
+        invalid["expected_revision"] = 4.into();
+        invalid["configuration"]["listeners"][0]["advertised_endpoints"][0]["port"] = port;
+        assert_eq!(
+            request(
+                &fixture.app,
+                "POST",
+                "/api/v1/connections",
+                Some(&fixture.admin),
+                Some(invalid)
+            )
+            .await
+            .0,
+            StatusCode::BAD_REQUEST
+        );
+    }
+}

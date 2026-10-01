@@ -5,6 +5,8 @@ use std::path::PathBuf;
 use clap::Parser;
 use openapi_to_rust::{CodeGenerator, GeneratorConfig, HttpClientConfig, SchemaAnalyzer};
 
+#[path = "generate-rust-client/closed_objects.rs"]
+mod closed_objects;
 #[path = "generate-rust-client/required_nullable.rs"]
 mod required_nullable;
 
@@ -24,6 +26,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         "heartbeatAgent",
         "getAgentConfiguration",
         "acknowledgeConfiguration",
+        "publishConnectionIdentity",
+        "getAgentConnections",
+        "acknowledgeAgentConnections",
     ];
     // Upstream has client-wide auth configuration. Derive it from the actual
     // selected operations, and fail if the contract needs richer semantics.
@@ -117,6 +122,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .find(|file| file.path == std::path::Path::new("types.rs"))
         .ok_or("missing generated types")?;
     required_nullable::adapt(&document, &operations, &mut types.content)?;
+    closed_objects::adapt(&document, &operations, &mut types.content)?;
     generator.write_files(&result)?;
     Ok(())
 }

@@ -1,8 +1,20 @@
 // Generated from the controller OpenAPI by scripts/generate-protocol.mjs. Do not edit.
 
 import { request } from "../transport.ts";
-import type { AcknowledgeConfigurationRequest, AcknowledgeConfigurationResponse, AgentNodeResponse, ConfigurationSnapshot, CreateEnrollmentTokenRequest, CreateEnrollmentTokenResponse, EnrollAgentRequest, HeartbeatRequest, NodeList, Overview, PolicySnapshot, PreviewPolicyRequest, PreviewPolicyResponse, RevokeNodeRequest, RevokeNodeResponse, SavePolicyRequest, SetNodeCountryRequest } from "./types.gen.ts";
-import { zAcknowledgeConfigurationRequest, zAcknowledgeConfigurationResponse, zAgentNodeResponse, zConfigurationSnapshot, zCreateEnrollmentTokenRequest, zCreateEnrollmentTokenResponse, zEnrollAgentRequest, zHeartbeatRequest, zNodeList, zOverview, zPolicySnapshot, zPreviewPolicyRequest, zPreviewPolicyResponse, zRevokeNodeRequest, zRevokeNodeResponse, zSavePolicyRequest, zSetNodeCountryRequest } from "./zod.gen.ts";
+import type { AcknowledgeAgentConnectionsRequest, AcknowledgeAgentConnectionsResponse, AcknowledgeConfigurationRequest, AcknowledgeConfigurationResponse, AgentConnectionsSnapshot, AgentNodeResponse, ConfigurationSnapshot, ConnectionsSnapshot, CreateEnrollmentTokenRequest, CreateEnrollmentTokenResponse, EnrollAgentRequest, HeartbeatRequest, NodeList, Overview, PolicySnapshot, PreviewPolicyRequest, PreviewPolicyResponse, PublishConnectionIdentityRequest, PublishConnectionIdentityResponse, RevokeNodeRequest, RevokeNodeResponse, SaveConnectionsRequest, SavePolicyRequest, SetNodeCountryRequest } from "./types.gen.ts";
+import { zAcknowledgeAgentConnectionsRequest, zAcknowledgeAgentConnectionsResponse, zAcknowledgeConfigurationRequest, zAcknowledgeConfigurationResponse, zAgentConnectionsSnapshot, zAgentNodeResponse, zConfigurationSnapshot, zConnectionsSnapshot, zCreateEnrollmentTokenRequest, zCreateEnrollmentTokenResponse, zEnrollAgentRequest, zHeartbeatRequest, zNodeList, zOverview, zPolicySnapshot, zPreviewPolicyRequest, zPreviewPolicyResponse, zPublishConnectionIdentityRequest, zPublishConnectionIdentityResponse, zRevokeNodeRequest, zRevokeNodeResponse, zSaveConnectionsRequest, zSavePolicyRequest, zSetNodeCountryRequest } from "./zod.gen.ts";
+
+export async function publishConnectionIdentityOperation(baseUrl: string, token: string, body: PublishConnectionIdentityRequest): Promise<PublishConnectionIdentityResponse> {
+  return request(baseUrl, { method: "POST", path: "/api/v1/agent/connection-identity", token, body: zPublishConnectionIdentityRequest.parse(body) }, zPublishConnectionIdentityResponse);
+}
+
+export async function getAgentConnectionsOperation(baseUrl: string, token: string): Promise<AgentConnectionsSnapshot> {
+  return request(baseUrl, { method: "GET", path: "/api/v1/agent/connections", token }, zAgentConnectionsSnapshot);
+}
+
+export async function acknowledgeAgentConnectionsOperation(baseUrl: string, token: string, body: AcknowledgeAgentConnectionsRequest): Promise<AcknowledgeAgentConnectionsResponse> {
+  return request(baseUrl, { method: "POST", path: "/api/v1/agent/connections/ack", token, body: zAcknowledgeAgentConnectionsRequest.parse(body) }, zAcknowledgeAgentConnectionsResponse);
+}
 
 export async function getAgentConfigurationOperation(baseUrl: string, token: string): Promise<ConfigurationSnapshot> {
   return request(baseUrl, { method: "GET", path: "/api/v1/agents/configuration", token }, zConfigurationSnapshot);
@@ -18,6 +30,14 @@ export async function enrollAgentOperation(baseUrl: string, token: string, body:
 
 export async function heartbeatAgentOperation(baseUrl: string, token: string, body: HeartbeatRequest): Promise<AgentNodeResponse> {
   return request(baseUrl, { method: "POST", path: "/api/v1/agents/heartbeat", token, body: zHeartbeatRequest.parse(body) }, zAgentNodeResponse);
+}
+
+export async function getConnectionsOperation(baseUrl: string, token: string): Promise<ConnectionsSnapshot> {
+  return request(baseUrl, { method: "GET", path: "/api/v1/connections", token }, zConnectionsSnapshot);
+}
+
+export async function saveConnectionsOperation(baseUrl: string, token: string, body: SaveConnectionsRequest): Promise<ConnectionsSnapshot> {
+  return request(baseUrl, { method: "POST", path: "/api/v1/connections", token, body: zSaveConnectionsRequest.parse(body) }, zConnectionsSnapshot);
 }
 
 export async function createEnrollmentTokenOperation(baseUrl: string, token: string, body: CreateEnrollmentTokenRequest): Promise<CreateEnrollmentTokenResponse> {

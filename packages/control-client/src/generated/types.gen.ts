@@ -4,6 +4,17 @@ export type ClientOptions = {
     baseUrl: `${string}://${string}` | (string & {});
 };
 
+export type AcknowledgeAgentConnectionsRequest = {
+    digest: string;
+    revision: number;
+};
+
+export type AcknowledgeAgentConnectionsResponse = {
+    digest: string;
+    revision: number;
+    status: ConnectionReceiptStatus;
+};
+
 export type AcknowledgeConfigurationRequest = {
     digest: string;
     revision: number;
@@ -12,6 +23,11 @@ export type AcknowledgeConfigurationRequest = {
 export type AcknowledgeConfigurationResponse = {
     digest: string;
     revision: number;
+};
+
+export type AgentConnectionsSnapshot = {
+    digest: string;
+    payload: NodeConnections;
 };
 
 /**
@@ -24,6 +40,75 @@ export type AgentNodeResponse = {
 export type ConfigurationSnapshot = {
     digest: string;
     payload: NodeConfiguration;
+};
+
+export type ConnectionCandidate = {
+    credential_ref: string | null;
+    dialer_node_id: string;
+    endpoint: ConnectionEndpoint;
+    id: string;
+    listener_id: string;
+    priority: number;
+};
+
+export type ConnectionCapability = {
+    can_accept: boolean;
+    can_dial: boolean;
+    semantics: ConnectionSemantics;
+    transport: ConnectionTransport;
+};
+
+export type ConnectionDiagnostic = {
+    field: string;
+    item_id: string | null;
+    message: string;
+};
+
+export type ConnectionEndpoint = {
+    host: string;
+    port: number;
+};
+
+export type ConnectionListener = {
+    advertised_endpoints: Array<ConnectionEndpoint>;
+    bind: string;
+    credential_ref: string | null;
+    id: string;
+    node_id: string;
+    transport: ConnectionTransport;
+};
+
+export type ConnectionNode = {
+    acknowledged_at: string | null;
+    acknowledged_digest: string | null;
+    acknowledged_revision: number;
+    capabilities: Array<ConnectionCapability>;
+    node: NodeSummary;
+    public_key: string | null;
+};
+
+export type ConnectionPeer = {
+    node_id: string;
+    public_key: string;
+};
+
+export type ConnectionPlan = {
+    candidates: Array<ConnectionCandidate>;
+    listeners: Array<ConnectionListener>;
+};
+
+export type ConnectionReceiptStatus = 'saved';
+
+export type ConnectionSemantics = 'datagram' | 'stream';
+
+export type ConnectionTransport = 'native_udp' | 'native_tcp' | 'vless';
+
+export type ConnectionsSnapshot = {
+    configuration: ConnectionPlan;
+    diagnostics: Array<ConnectionDiagnostic>;
+    nodes: Array<ConnectionNode>;
+    revision: number;
+    valid: boolean;
 };
 
 export type CreateEnrollmentTokenRequest = {
@@ -83,6 +168,13 @@ export type HeartbeatRequest = {
     agent_version: string;
 };
 
+export type IncomingConnectionApproval = {
+    candidate_id: string;
+    listener_id: string;
+    peer_node_id: string;
+    transport: ConnectionTransport;
+};
+
 export type MeshNetwork = {
     ipv4_prefix: string;
     ipv6_prefix: string;
@@ -110,6 +202,20 @@ export type NodeConfiguration = {
     schema_version: number;
 };
 
+export type NodeConnections = {
+    capabilities: Array<ConnectionCapability>;
+    diagnostics: Array<ConnectionDiagnostic>;
+    incoming: Array<IncomingConnectionApproval>;
+    listeners: Array<ConnectionListener>;
+    node_id: string;
+    outgoing: Array<OutgoingConnectionCandidate>;
+    peers: Array<ConnectionPeer>;
+    public_key: string | null;
+    revision: number;
+    schema_version: number;
+    valid: boolean;
+};
+
 export type NodeList = {
     nodes: Array<NodeSummary>;
 };
@@ -129,6 +235,16 @@ export type NodeSummary = {
     name: string;
     registered_at: string;
     revoked_at: string | null;
+};
+
+export type OutgoingConnectionCandidate = {
+    credential_ref: string | null;
+    endpoint: ConnectionEndpoint;
+    id: string;
+    listener_id: string;
+    peer_node_id: string;
+    priority: number;
+    transport: ConnectionTransport;
 };
 
 export type Overview = {
@@ -162,6 +278,18 @@ export type PreviewPolicyResponse = {
     diagnostics: Array<PolicyDiagnostic>;
     revision: number;
     valid: boolean;
+};
+
+export type PublishConnectionIdentityRequest = {
+    capabilities: Array<ConnectionCapability>;
+    public_key: string;
+};
+
+export type PublishConnectionIdentityResponse = {
+    capabilities: Array<ConnectionCapability>;
+    node_id: string;
+    public_key: string;
+    revision: number;
 };
 
 export type RevokeNodeRequest = {
@@ -203,6 +331,11 @@ export type RoutingPolicy = {
     rules: Array<RouteRule>;
 };
 
+export type SaveConnectionsRequest = {
+    configuration: ConnectionPlan;
+    expected_revision: number;
+};
+
 export type SavePolicyRequest = {
     expected_revision: number;
     policy: RoutingPolicy;
@@ -221,6 +354,141 @@ export type SourceSelector = {
     countries: Array<string>;
     node_ids: Array<string>;
 };
+
+export type PublishConnectionIdentityData = {
+    body: PublishConnectionIdentityRequest;
+    path?: never;
+    query?: never;
+    url: '/api/v1/agent/connection-identity';
+};
+
+export type PublishConnectionIdentityErrors = {
+    /**
+     * Invalid JSON, key or capability advertisement
+     */
+    400: ErrorResponse;
+    /**
+     * Node credential required
+     */
+    401: ErrorResponse;
+    /**
+     * Node revoked
+     */
+    403: ErrorResponse;
+    /**
+     * Node or public key already differently bound, including revoked tombstones
+     */
+    409: ErrorResponse;
+    /**
+     * Request exceeds 8192 bytes
+     */
+    413: ErrorResponse;
+    /**
+     * Expected application/json
+     */
+    415: ErrorResponse;
+    /**
+     * Revision or publication capacity exhausted
+     */
+    422: ErrorResponse;
+    /**
+     * Storage unavailable
+     */
+    500: ErrorResponse;
+};
+
+export type PublishConnectionIdentityError = PublishConnectionIdentityErrors[keyof PublishConnectionIdentityErrors];
+
+export type PublishConnectionIdentityResponses = {
+    /**
+     * Immutable node-scoped control-plane public-key association; not runtime peer proof
+     */
+    200: PublishConnectionIdentityResponse;
+};
+
+export type PublishConnectionIdentityResponse2 = PublishConnectionIdentityResponses[keyof PublishConnectionIdentityResponses];
+
+export type GetAgentConnectionsData = {
+    body?: never;
+    path?: never;
+    query?: never;
+    url: '/api/v1/agent/connections';
+};
+
+export type GetAgentConnectionsErrors = {
+    /**
+     * Node credential required
+     */
+    401: ErrorResponse;
+    /**
+     * Node revoked
+     */
+    403: ErrorResponse;
+    /**
+     * Storage unavailable
+     */
+    500: ErrorResponse;
+};
+
+export type GetAgentConnectionsError = GetAgentConnectionsErrors[keyof GetAgentConnectionsErrors];
+
+export type GetAgentConnectionsResponses = {
+    /**
+     * Node-scoped connection intent with only local profile references and approved adjacent peers
+     */
+    200: AgentConnectionsSnapshot;
+};
+
+export type GetAgentConnectionsResponse = GetAgentConnectionsResponses[keyof GetAgentConnectionsResponses];
+
+export type AcknowledgeAgentConnectionsData = {
+    body: AcknowledgeAgentConnectionsRequest;
+    path?: never;
+    query?: never;
+    url: '/api/v1/agent/connections/ack';
+};
+
+export type AcknowledgeAgentConnectionsErrors = {
+    /**
+     * Invalid JSON, revision or digest
+     */
+    400: ErrorResponse;
+    /**
+     * Node credential required
+     */
+    401: ErrorResponse;
+    /**
+     * Node revoked
+     */
+    403: ErrorResponse;
+    /**
+     * Revision or digest is not this node's current connections snapshot
+     */
+    409: ErrorResponse;
+    /**
+     * Request exceeds 8192 bytes
+     */
+    413: ErrorResponse;
+    /**
+     * Expected application/json
+     */
+    415: ErrorResponse;
+    /**
+     * Storage unavailable
+     */
+    500: ErrorResponse;
+};
+
+export type AcknowledgeAgentConnectionsError = AcknowledgeAgentConnectionsErrors[keyof AcknowledgeAgentConnectionsErrors];
+
+export type AcknowledgeAgentConnectionsResponses = {
+    /**
+     * Independently validated and durably saved connection receipt; not applied or connected
+     */
+    200: AcknowledgeAgentConnectionsResponse;
+};
+
+export type AcknowledgeAgentConnectionsResponse2 = AcknowledgeAgentConnectionsResponses[keyof AcknowledgeAgentConnectionsResponses];
 
 export type GetAgentConfigurationData = {
     body?: never;
@@ -401,6 +669,84 @@ export type HeartbeatAgentResponses = {
 };
 
 export type HeartbeatAgentResponse = HeartbeatAgentResponses[keyof HeartbeatAgentResponses];
+
+export type GetConnectionsData = {
+    body?: never;
+    path?: never;
+    query?: never;
+    url: '/api/v1/connections';
+};
+
+export type GetConnectionsErrors = {
+    /**
+     * Admin credential required
+     */
+    401: ErrorResponse;
+    /**
+     * Storage unavailable
+     */
+    500: ErrorResponse;
+};
+
+export type GetConnectionsError = GetConnectionsErrors[keyof GetConnectionsErrors];
+
+export type GetConnectionsResponses = {
+    /**
+     * Source connection plan, validity and inventory with independent saved-only receipts
+     */
+    200: ConnectionsSnapshot;
+};
+
+export type GetConnectionsResponse = GetConnectionsResponses[keyof GetConnectionsResponses];
+
+export type SaveConnectionsData = {
+    body: SaveConnectionsRequest;
+    path?: never;
+    query?: never;
+    url: '/api/v1/connections';
+};
+
+export type SaveConnectionsErrors = {
+    /**
+     * Invalid JSON
+     */
+    400: ErrorResponse;
+    /**
+     * Admin credential required
+     */
+    401: ErrorResponse;
+    /**
+     * Stale global revision
+     */
+    409: ErrorResponse;
+    /**
+     * Request exceeds 128 KiB
+     */
+    413: ErrorResponse;
+    /**
+     * Expected application/json
+     */
+    415: ErrorResponse;
+    /**
+     * Invalid connection plan or capacity exhausted
+     */
+    422: ErrorResponse;
+    /**
+     * Storage unavailable
+     */
+    500: ErrorResponse;
+};
+
+export type SaveConnectionsError = SaveConnectionsErrors[keyof SaveConnectionsErrors];
+
+export type SaveConnectionsResponses = {
+    /**
+     * Canonical global-CAS connection intent save; no runtime activation or transit/exit grant
+     */
+    200: ConnectionsSnapshot;
+};
+
+export type SaveConnectionsResponse = SaveConnectionsResponses[keyof SaveConnectionsResponses];
 
 export type CreateEnrollmentTokenData = {
     body: CreateEnrollmentTokenRequest;

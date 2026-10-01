@@ -16,6 +16,8 @@ meshway-protocol = { path = "../../crates/protocol" }
 meshway-policy = { path = "../../crates/policy" }
 serde.workspace = true
 ipnet = "2.11"
+idna = "1"
+url = "2"
 rusqlite.workspace = true
 thiserror = "2"
 serde_json.workspace = true

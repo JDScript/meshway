@@ -401,3 +401,93 @@ fn additive_v1_upgrade_preserves_binding_revocation_and_rolls_back_on_exhaustion
         nodes.iter().map(|node| &node.mesh_ipv6).collect::<Vec<_>>()
     );
 }
+
+#[test]
+fn additive_v2_to_v3_preserves_configuration_credentials_addresses_and_receipts() {
+    let dir = directory();
+    let (admin, requests, tokens) = legacy(dir.path());
+    let mut db = rusqlite::Connection::open(dir.path().join("controller.sqlite3")).unwrap();
+    super::ipam::upgrade(&mut db, &NetworkOptions::default()).unwrap();
+    db.execute("UPDATE configuration SET revision = 17, policy = '{\"default_action\":\"direct\",\"rules\":[]}'", []).unwrap();
+    db.execute("UPDATE nodes SET country = 'US', acknowledged_revision = 16, acknowledged_digest = ?1 WHERE id = 'z'", ["ab".repeat(32)]).unwrap();
+    let receipt_digest = |connection: &rusqlite::Connection| {
+        connection
+            .query_row(
+                "SELECT CAST(acknowledged_digest AS BLOB) FROM nodes WHERE id = 'z'",
+                [],
+                |row| row.get::<_, Vec<u8>>(0),
+            )
+            .unwrap()
+    };
+    let before_digest = receipt_digest(&db);
+    let before = db
+        .prepare(super::NODE_SELECT)
+        .unwrap()
+        .query_map([], super::node_row)
+        .unwrap()
+        .collect::<Result<Vec<_>, _>>()
+        .unwrap();
+    let token_bytes = std::fs::read(dir.path().join("admin.token")).unwrap();
+    let network = super::ipam::network(&db).unwrap();
+    drop(db);
+    let mut store = Store::open(dir.path(), &NetworkOptions::default()).unwrap();
+    assert_eq!(receipt_digest(&store.connection), before_digest);
+    assert_eq!(
+        store
+            .connection
+            .pragma_query_value(None, "user_version", |row| row.get::<_, u32>(0))
+            .unwrap(),
+        3
+    );
+    assert_eq!(
+        std::fs::read(dir.path().join("admin.token")).unwrap(),
+        token_bytes
+    );
+    store.authorize_admin(&admin).unwrap();
+    let after = store
+        .connection
+        .prepare(super::NODE_SELECT)
+        .unwrap()
+        .query_map([], super::node_row)
+        .unwrap()
+        .collect::<Result<Vec<_>, _>>()
+        .unwrap();
+    assert_eq!(
+        serde_json::to_value(&before).unwrap(),
+        serde_json::to_value(&after).unwrap()
+    );
+    assert_eq!(store.policy().unwrap().network, network);
+    assert_eq!(
+        store.policy().unwrap().policy.default_action,
+        DefaultRouteAction::Direct
+    );
+    let initial = store.connections().unwrap();
+    assert_eq!(initial.revision, 17);
+    assert!(initial.valid && initial.configuration == ConnectionPlan::default());
+    assert!(
+        initial
+            .nodes
+            .iter()
+            .all(|node| node.public_key.is_none() && node.acknowledged_revision == 0)
+    );
+    assert_eq!(store.enroll(&tokens[0], &requests[0]).unwrap().id, "z");
+    assert!(matches!(
+        store.enroll(&tokens[1], &requests[1]),
+        Err(Error::Forbidden)
+    ));
+    assert_eq!(store.enroll(&tokens[2], &requests[2]).unwrap().id, "m");
+    drop(store);
+    let reopened = Store::open(dir.path(), &NetworkOptions::default()).unwrap();
+    assert_eq!(receipt_digest(&reopened.connection), before_digest);
+    reopened.authorize_admin(&admin).unwrap();
+    assert_eq!(reopened.revision().unwrap(), 17);
+    assert!(reopened.connections().unwrap().valid);
+    assert_eq!(
+        reopened
+            .configuration(&requests[0].node_credential)
+            .unwrap()
+            .payload
+            .network,
+        network
+    );
+}

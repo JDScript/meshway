@@ -15,6 +15,14 @@ use crate::generated::{
 };
 
 mod configuration;
+mod connection_key;
+mod connections;
+pub use connections::{
+    ConnectionStatus, ConnectionSyncReceipt, ControlSyncReceipts, compiled_connection_capabilities,
+    connections_status,
+};
+#[cfg(test)]
+mod connection_key_tests;
 #[cfg(test)]
 mod durability_tests;
 pub use configuration::SyncReceipt;
@@ -136,6 +144,8 @@ pub struct Agent {
     path: PathBuf,
     identity: Identity,
     cache: Option<configuration::Cache>,
+    // Opt-in and lazy: ordinary heartbeat/routing commands do not touch sidecars.
+    connections: Option<connections::State>,
     _lock: File,
 }
 
@@ -193,6 +203,7 @@ impl Agent {
             path,
             identity,
             cache,
+            connections: None,
             _lock: lock,
         })
     }
@@ -206,6 +217,7 @@ impl Agent {
             path,
             identity,
             cache,
+            connections: None,
             _lock: lock,
         })
     }

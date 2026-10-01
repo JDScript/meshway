@@ -11,6 +11,8 @@ transport-lab = ["dep:meshway-dataplane", "dep:meshway-transport-vless", "dep:tu
 chrono.workspace = true
 clap.workspace = true
 futures-util = "0.3"
+getrandom.workspace = true
+idna = "1.1"
 ipnet = "2.11"
 meshway-protocol = { path = "../../crates/protocol" }
 meshway-policy = { path = "../../crates/policy" }
@@ -22,6 +24,8 @@ serde.workspace = true
 serde_json.workspace = true
 thiserror = "2"
 tokio.workspace = true
+x25519-dalek = { version = "2.0.1", features = ["static_secrets"] }
+zeroize = "1.8.2"
 
 [target.'cfg(target_os = "linux")'.dependencies]
 tun-rs = { version = "2.8.11", features = ["async_tokio"], optional = true }

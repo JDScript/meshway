@@ -1457,6 +1457,8 @@ dependencies = [
  "chrono",
  "clap",
  "futures-util",
+ "getrandom 0.3.4",
+ "idna",
  "ipnet",
  "meshway-controller",
  "meshway-dataplane",
@@ -1471,6 +1473,8 @@ dependencies = [
  "thiserror",
  "tokio",
  "tun-rs",
+ "x25519-dalek",
+ "zeroize",
 ]
 
 [[package]]
@@ -1480,6 +1484,7 @@ dependencies = [
  "axum",
  "chrono",
  "clap",
+ "idna",
  "ipnet",
  "meshway-policy",
  "meshway-protocol",
@@ -1491,6 +1496,7 @@ dependencies = [
  "thiserror",
  "tokio",
  "tower",
+ "url",
  "utoipa",
  "utoipa-axum",
 ]
@@ -1532,6 +1538,7 @@ dependencies = [
  "sha2",
  "tempfile",
  "utoipa",
+ "x25519-dalek",
 ]
 
 [[package]]

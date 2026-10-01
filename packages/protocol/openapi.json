@@ -2,10 +2,276 @@
   "openapi": "3.1.0",
   "info": {
     "title": "Meshway control API",
-    "description": "Durable control-plane credential identity and last process contact; not mesh public-key identity, connectivity or tunnel health.",
+    "description": "Durable control-plane identity, public-key associations and configuration intent. Receipts mean saved only; not runtime peer proof, connectivity or tunnel health.",
     "version": "0.1.0"
   },
   "paths": {
+    "/api/v1/agent/connection-identity": {
+      "post": {
+        "operationId": "publishConnectionIdentity",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PublishConnectionIdentityRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Immutable node-scoped control-plane public-key association; not runtime peer proof",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PublishConnectionIdentityResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid JSON, key or capability advertisement",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Node credential required",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Node revoked",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Node or public key already differently bound, including revoked tombstones",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "Request exceeds 8192 bytes",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "415": {
+            "description": "Expected application/json",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Revision or publication capacity exhausted",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Storage unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "nodeBearer": []
+          }
+        ]
+      }
+    },
+    "/api/v1/agent/connections": {
+      "get": {
+        "operationId": "getAgentConnections",
+        "responses": {
+          "200": {
+            "description": "Node-scoped connection intent with only local profile references and approved adjacent peers",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AgentConnectionsSnapshot"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Node credential required",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Node revoked",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Storage unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "nodeBearer": []
+          }
+        ]
+      }
+    },
+    "/api/v1/agent/connections/ack": {
+      "post": {
+        "operationId": "acknowledgeAgentConnections",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AcknowledgeAgentConnectionsRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Independently validated and durably saved connection receipt; not applied or connected",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AcknowledgeAgentConnectionsResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid JSON, revision or digest",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Node credential required",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Node revoked",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Revision or digest is not this node's current connections snapshot",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "Request exceeds 8192 bytes",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "415": {
+            "description": "Expected application/json",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Storage unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "nodeBearer": []
+          }
+        ]
+      }
+    },
     "/api/v1/agents/configuration": {
       "get": {
         "operationId": "getAgentConfiguration",
@@ -360,6 +626,148 @@
         "security": [
           {
             "nodeBearer": []
+          }
+        ]
+      }
+    },
+    "/api/v1/connections": {
+      "get": {
+        "operationId": "getConnections",
+        "responses": {
+          "200": {
+            "description": "Source connection plan, validity and inventory with independent saved-only receipts",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ConnectionsSnapshot"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Admin credential required",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Storage unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "adminBearer": []
+          }
+        ]
+      },
+      "post": {
+        "operationId": "saveConnections",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SaveConnectionsRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Canonical global-CAS connection intent save; no runtime activation or transit/exit grant",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ConnectionsSnapshot"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid JSON",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Admin credential required",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Stale global revision",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "Request exceeds 128 KiB",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "415": {
+            "description": "Expected application/json",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Invalid connection plan or capacity exhausted",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Storage unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "adminBearer": []
           }
         ]
       }
@@ -973,6 +1381,54 @@
   },
   "components": {
     "schemas": {
+      "AcknowledgeAgentConnectionsRequest": {
+        "type": "object",
+        "required": [
+          "revision",
+          "digest"
+        ],
+        "properties": {
+          "digest": {
+            "type": "string",
+            "maxLength": 64,
+            "minLength": 64,
+            "pattern": "^[0-9a-f]{64}$"
+          },
+          "revision": {
+            "type": "integer",
+            "format": "int64",
+            "maximum": 4294967295,
+            "minimum": 1
+          }
+        },
+        "additionalProperties": false
+      },
+      "AcknowledgeAgentConnectionsResponse": {
+        "type": "object",
+        "required": [
+          "revision",
+          "digest",
+          "status"
+        ],
+        "properties": {
+          "digest": {
+            "type": "string",
+            "maxLength": 64,
+            "minLength": 64,
+            "pattern": "^[0-9a-f]{64}$"
+          },
+          "revision": {
+            "type": "integer",
+            "format": "int64",
+            "maximum": 4294967295,
+            "minimum": 1
+          },
+          "status": {
+            "$ref": "#/components/schemas/ConnectionReceiptStatus"
+          }
+        },
+        "additionalProperties": false
+      },
       "AcknowledgeConfigurationRequest": {
         "type": "object",
         "required": [
@@ -1017,6 +1473,25 @@
         },
         "additionalProperties": false
       },
+      "AgentConnectionsSnapshot": {
+        "type": "object",
+        "required": [
+          "digest",
+          "payload"
+        ],
+        "properties": {
+          "digest": {
+            "type": "string",
+            "maxLength": 64,
+            "minLength": 64,
+            "pattern": "^[0-9a-f]{64}$"
+          },
+          "payload": {
+            "$ref": "#/components/schemas/NodeConnections"
+          }
+        },
+        "additionalProperties": false
+      },
       "AgentNodeResponse": {
         "type": "object",
         "description": "Also lets a pending local enrollment recover its server-assigned node ID.",
@@ -1045,6 +1520,319 @@
           },
           "payload": {
             "$ref": "#/components/schemas/NodeConfiguration"
+          }
+        },
+        "additionalProperties": false
+      },
+      "ConnectionCandidate": {
+        "type": "object",
+        "required": [
+          "id",
+          "dialer_node_id",
+          "listener_id",
+          "endpoint",
+          "priority",
+          "credential_ref"
+        ],
+        "properties": {
+          "credential_ref": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "maxLength": 64,
+            "minLength": 1,
+            "pattern": "^[A-Za-z0-9._-]+$"
+          },
+          "dialer_node_id": {
+            "type": "string"
+          },
+          "endpoint": {
+            "$ref": "#/components/schemas/ConnectionEndpoint"
+          },
+          "id": {
+            "type": "string",
+            "maxLength": 64,
+            "minLength": 1,
+            "pattern": "^[A-Za-z0-9._-]+$"
+          },
+          "listener_id": {
+            "type": "string"
+          },
+          "priority": {
+            "type": "integer",
+            "format": "int32",
+            "maximum": 65535,
+            "minimum": 0
+          }
+        },
+        "additionalProperties": false
+      },
+      "ConnectionCapability": {
+        "type": "object",
+        "required": [
+          "transport",
+          "can_dial",
+          "can_accept",
+          "semantics"
+        ],
+        "properties": {
+          "can_accept": {
+            "type": "boolean"
+          },
+          "can_dial": {
+            "type": "boolean"
+          },
+          "semantics": {
+            "$ref": "#/components/schemas/ConnectionSemantics"
+          },
+          "transport": {
+            "$ref": "#/components/schemas/ConnectionTransport"
+          }
+        },
+        "additionalProperties": false
+      },
+      "ConnectionDiagnostic": {
+        "type": "object",
+        "required": [
+          "item_id",
+          "field",
+          "message"
+        ],
+        "properties": {
+          "field": {
+            "type": "string"
+          },
+          "item_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "message": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": false
+      },
+      "ConnectionEndpoint": {
+        "type": "object",
+        "required": [
+          "host",
+          "port"
+        ],
+        "properties": {
+          "host": {
+            "type": "string",
+            "maxLength": 253,
+            "minLength": 1
+          },
+          "port": {
+            "type": "integer",
+            "format": "int32",
+            "maximum": 65535,
+            "minimum": 1
+          }
+        },
+        "additionalProperties": false
+      },
+      "ConnectionListener": {
+        "type": "object",
+        "required": [
+          "id",
+          "node_id",
+          "transport",
+          "bind",
+          "advertised_endpoints",
+          "credential_ref"
+        ],
+        "properties": {
+          "advertised_endpoints": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ConnectionEndpoint"
+            },
+            "maxItems": 16,
+            "minItems": 1
+          },
+          "bind": {
+            "type": "string"
+          },
+          "credential_ref": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "maxLength": 64,
+            "minLength": 1,
+            "pattern": "^[A-Za-z0-9._-]+$"
+          },
+          "id": {
+            "type": "string",
+            "maxLength": 64,
+            "minLength": 1,
+            "pattern": "^[A-Za-z0-9._-]+$"
+          },
+          "node_id": {
+            "type": "string"
+          },
+          "transport": {
+            "$ref": "#/components/schemas/ConnectionTransport"
+          }
+        },
+        "additionalProperties": false
+      },
+      "ConnectionNode": {
+        "type": "object",
+        "required": [
+          "node",
+          "public_key",
+          "capabilities",
+          "acknowledged_revision",
+          "acknowledged_digest",
+          "acknowledged_at"
+        ],
+        "properties": {
+          "acknowledged_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "acknowledged_digest": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "maxLength": 64,
+            "minLength": 64,
+            "pattern": "^[0-9a-f]{64}$"
+          },
+          "acknowledged_revision": {
+            "type": "integer",
+            "format": "int64",
+            "maximum": 4294967295,
+            "minimum": 0
+          },
+          "capabilities": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ConnectionCapability"
+            }
+          },
+          "node": {
+            "$ref": "#/components/schemas/NodeSummary"
+          },
+          "public_key": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "maxLength": 64,
+            "minLength": 64,
+            "pattern": "^[0-9a-f]{64}$"
+          }
+        },
+        "additionalProperties": false
+      },
+      "ConnectionPeer": {
+        "type": "object",
+        "required": [
+          "node_id",
+          "public_key"
+        ],
+        "properties": {
+          "node_id": {
+            "type": "string"
+          },
+          "public_key": {
+            "type": "string",
+            "maxLength": 64,
+            "minLength": 64,
+            "pattern": "^[0-9a-f]{64}$"
+          }
+        },
+        "additionalProperties": false
+      },
+      "ConnectionPlan": {
+        "type": "object",
+        "required": [
+          "listeners",
+          "candidates"
+        ],
+        "properties": {
+          "candidates": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ConnectionCandidate"
+            },
+            "maxItems": 256
+          },
+          "listeners": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ConnectionListener"
+            },
+            "maxItems": 128
+          }
+        },
+        "additionalProperties": false
+      },
+      "ConnectionReceiptStatus": {
+        "type": "string",
+        "enum": [
+          "saved"
+        ]
+      },
+      "ConnectionSemantics": {
+        "type": "string",
+        "enum": [
+          "datagram",
+          "stream"
+        ]
+      },
+      "ConnectionTransport": {
+        "type": "string",
+        "enum": [
+          "native_udp",
+          "native_tcp",
+          "vless"
+        ]
+      },
+      "ConnectionsSnapshot": {
+        "type": "object",
+        "required": [
+          "revision",
+          "configuration",
+          "valid",
+          "diagnostics",
+          "nodes"
+        ],
+        "properties": {
+          "configuration": {
+            "$ref": "#/components/schemas/ConnectionPlan"
+          },
+          "diagnostics": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ConnectionDiagnostic"
+            }
+          },
+          "nodes": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ConnectionNode"
+            }
+          },
+          "revision": {
+            "type": "integer",
+            "format": "int64",
+            "maximum": 4294967295,
+            "minimum": 1
+          },
+          "valid": {
+            "type": "boolean"
           }
         },
         "additionalProperties": false
@@ -1225,6 +2013,30 @@
         },
         "additionalProperties": false
       },
+      "IncomingConnectionApproval": {
+        "type": "object",
+        "required": [
+          "candidate_id",
+          "listener_id",
+          "peer_node_id",
+          "transport"
+        ],
+        "properties": {
+          "candidate_id": {
+            "type": "string"
+          },
+          "listener_id": {
+            "type": "string"
+          },
+          "peer_node_id": {
+            "type": "string"
+          },
+          "transport": {
+            "$ref": "#/components/schemas/ConnectionTransport"
+          }
+        },
+        "additionalProperties": false
+      },
       "MeshNetwork": {
         "type": "object",
         "required": [
@@ -1325,6 +2137,88 @@
         },
         "additionalProperties": false
       },
+      "NodeConnections": {
+        "type": "object",
+        "required": [
+          "schema_version",
+          "revision",
+          "node_id",
+          "public_key",
+          "capabilities",
+          "valid",
+          "diagnostics",
+          "listeners",
+          "outgoing",
+          "incoming",
+          "peers"
+        ],
+        "properties": {
+          "capabilities": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ConnectionCapability"
+            }
+          },
+          "diagnostics": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ConnectionDiagnostic"
+            }
+          },
+          "incoming": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/IncomingConnectionApproval"
+            }
+          },
+          "listeners": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ConnectionListener"
+            }
+          },
+          "node_id": {
+            "type": "string"
+          },
+          "outgoing": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/OutgoingConnectionCandidate"
+            }
+          },
+          "peers": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ConnectionPeer"
+            }
+          },
+          "public_key": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "maxLength": 64,
+            "minLength": 64,
+            "pattern": "^[0-9a-f]{64}$"
+          },
+          "revision": {
+            "type": "integer",
+            "format": "int64",
+            "maximum": 4294967295,
+            "minimum": 1
+          },
+          "schema_version": {
+            "type": "integer",
+            "format": "int64",
+            "maximum": 4294967295,
+            "minimum": 1
+          },
+          "valid": {
+            "type": "boolean"
+          }
+        },
+        "additionalProperties": false
+      },
       "NodeList": {
         "type": "object",
         "required": [
@@ -1404,6 +2298,48 @@
               "null"
             ],
             "format": "date-time"
+          }
+        },
+        "additionalProperties": false
+      },
+      "OutgoingConnectionCandidate": {
+        "type": "object",
+        "required": [
+          "id",
+          "listener_id",
+          "peer_node_id",
+          "transport",
+          "endpoint",
+          "priority",
+          "credential_ref"
+        ],
+        "properties": {
+          "credential_ref": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "endpoint": {
+            "$ref": "#/components/schemas/ConnectionEndpoint"
+          },
+          "id": {
+            "type": "string"
+          },
+          "listener_id": {
+            "type": "string"
+          },
+          "peer_node_id": {
+            "type": "string"
+          },
+          "priority": {
+            "type": "integer",
+            "format": "int32",
+            "maximum": 65535,
+            "minimum": 0
+          },
+          "transport": {
+            "$ref": "#/components/schemas/ConnectionTransport"
           }
         },
         "additionalProperties": false
@@ -1537,6 +2473,62 @@
           },
           "valid": {
             "type": "boolean"
+          }
+        },
+        "additionalProperties": false
+      },
+      "PublishConnectionIdentityRequest": {
+        "type": "object",
+        "required": [
+          "public_key",
+          "capabilities"
+        ],
+        "properties": {
+          "capabilities": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ConnectionCapability"
+            },
+            "maxItems": 3
+          },
+          "public_key": {
+            "type": "string",
+            "maxLength": 64,
+            "minLength": 64,
+            "pattern": "^[0-9a-f]{64}$"
+          }
+        },
+        "additionalProperties": false
+      },
+      "PublishConnectionIdentityResponse": {
+        "type": "object",
+        "required": [
+          "revision",
+          "node_id",
+          "public_key",
+          "capabilities"
+        ],
+        "properties": {
+          "capabilities": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ConnectionCapability"
+            }
+          },
+          "node_id": {
+            "type": "string"
+          },
+          "public_key": {
+            "type": "string",
+            "maxLength": 64,
+            "minLength": 64,
+            "pattern": "^[0-9a-f]{64}$"
+          },
+          "revision": {
+            "type": "integer",
+            "format": "int64",
+            "maximum": 4294967295,
+            "minimum": 1
           }
         },
         "additionalProperties": false
@@ -1691,6 +2683,25 @@
             "items": {
               "$ref": "#/components/schemas/RouteRule"
             }
+          }
+        },
+        "additionalProperties": false
+      },
+      "SaveConnectionsRequest": {
+        "type": "object",
+        "required": [
+          "expected_revision",
+          "configuration"
+        ],
+        "properties": {
+          "configuration": {
+            "$ref": "#/components/schemas/ConnectionPlan"
+          },
+          "expected_revision": {
+            "type": "integer",
+            "format": "int64",
+            "maximum": 4294967295,
+            "minimum": 1
           }
         },
         "additionalProperties": false

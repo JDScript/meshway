@@ -1,7 +1,7 @@
 use std::{path::PathBuf, time::Duration};
 
 use clap::{Parser, Subcommand};
-use meshway_agent::{Agent, status};
+use meshway_agent::{Agent, ControlSyncReceipts, SyncReceipt, connections_status, status};
 
 #[derive(Parser)]
 #[command(
@@ -42,18 +42,52 @@ enum Command {
         #[arg(long, default_value = ".meshway/agent.json")]
         state: PathBuf,
     },
+    /// Publish connection identity or save node-scoped connection intent (not applied networking).
+    Connections {
+        #[command(subcommand)]
+        command: ConnectionsCommand,
+    },
     /// Heartbeat and sync immediately, then periodically; retry transient failures with backoff.
     Run {
         #[arg(long, default_value = ".meshway/agent.json")]
         state: PathBuf,
         #[arg(long, default_value_t = 15, value_parser = clap::value_parser!(u64).range(1..=86400))]
         interval_seconds: u64,
+        /// Also publish the connection key/capabilities and save a separate connections receipt.
+        #[arg(long)]
+        connections: bool,
     },
     /// Read local identity metadata without exposing credentials or claiming liveness.
     Status {
         #[arg(long, default_value = ".meshway/agent.json")]
         state: PathBuf,
     },
+}
+
+#[derive(Subcommand)]
+enum ConnectionsCommand {
+    /// Durably create/reuse the private key, then bind its public key and compiled capabilities.
+    Publish {
+        #[arg(long, default_value = ".meshway/agent.json")]
+        state: PathBuf,
+    },
+    /// Publish identity, validate and save connection intent, then ACK saved (never applied).
+    Sync {
+        #[arg(long, default_value = ".meshway/agent.json")]
+        state: PathBuf,
+    },
+    /// Read local public key and saved connection revision without making network requests.
+    Status {
+        #[arg(long, default_value = ".meshway/agent.json")]
+        state: PathBuf,
+    },
+}
+
+#[derive(serde::Serialize)]
+#[serde(untagged)]
+enum RunReceipt {
+    Configuration(SyncReceipt),
+    WithConnections(ControlSyncReceipts),
 }
 
 #[tokio::main]
@@ -90,16 +124,40 @@ async fn execute(command: Command) -> Result<(), Box<dyn std::error::Error>> {
             let receipt = Agent::load(state)?.sync().await?;
             println!("{}", serde_json::to_string_pretty(&receipt)?);
         }
+        Command::Connections { command } => match command {
+            ConnectionsCommand::Publish { state } => {
+                let receipt = Agent::load(state)?.publish_connection_identity().await?;
+                println!("{}", serde_json::to_string_pretty(&receipt)?);
+            }
+            ConnectionsCommand::Sync { state } => {
+                let receipt = Agent::load(state)?.sync_connections().await?;
+                println!("{}", serde_json::to_string_pretty(&receipt)?);
+            }
+            ConnectionsCommand::Status { state } => {
+                println!(
+                    "{}",
+                    serde_json::to_string_pretty(&connections_status(state)?)?
+                );
+            }
+        },
         Command::Status { state } => println!("{}", serde_json::to_string_pretty(&status(state)?)?),
         Command::Run {
             state,
             interval_seconds,
+            connections,
         } => {
             let mut agent = Agent::load(state)?;
             let mut backoff = 1_u64;
             loop {
                 let result = tokio::select! {
-                    result = async { agent.heartbeat().await?; agent.sync().await } => result,
+                    result = async {
+                        agent.heartbeat().await?;
+                        if connections {
+                            agent.sync_with_connections().await.map(RunReceipt::WithConnections)
+                        } else {
+                            agent.sync().await.map(RunReceipt::Configuration)
+                        }
+                    } => result,
                     _ = tokio::signal::ctrl_c() => return Ok(()),
                 };
                 let delay = match result {

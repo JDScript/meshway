@@ -1,6 +1,7 @@
 //! Persistent control-plane enrollment, scoped credentials and process contact.
 
 mod configuration_api;
+mod connections_api;
 mod store;
 
 use std::{
@@ -157,11 +158,12 @@ fn contract_router() -> OpenApiRouter<AppState> {
         .routes(routes!(heartbeat_agent))
         .layer(DefaultBodyLimit::max(8192))
         .merge(configuration_api::routes())
+        .merge(connections_api::routes())
 }
 
 fn describe(api: &mut OpenApi) {
     api.info = Info::new("Meshway control API", env!("CARGO_PKG_VERSION"));
-    api.info.description = Some("Durable control-plane credential identity and last process contact; not mesh public-key identity, connectivity or tunnel health.".to_owned());
+    api.info.description = Some("Durable control-plane identity, public-key associations and configuration intent. Receipts mean saved only; not runtime peer proof, connectivity or tunnel health.".to_owned());
     let components = api.components.get_or_insert_with(Default::default);
     for name in ["adminBearer", "enrollmentBearer", "nodeBearer"] {
         components.add_security_scheme(

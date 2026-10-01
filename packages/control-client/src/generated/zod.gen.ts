@@ -2,6 +2,19 @@
 
 import * as z from "zod";
 
+export const zAcknowledgeAgentConnectionsRequest = z.strictObject({
+  "digest": z.string().refine(value => [...value].length >= 64, "minLength 64 Unicode code points").refine(value => [...value].length <= 64, "maxLength 64 Unicode code points").regex(new RegExp("^[0-9a-f]{64}$", "u")),
+  "revision": z.int().gte(1).lte(4294967295)
+});
+
+export const zConnectionReceiptStatus = z.enum(["saved"]);
+
+export const zAcknowledgeAgentConnectionsResponse = z.strictObject({
+  "digest": z.string().refine(value => [...value].length >= 64, "minLength 64 Unicode code points").refine(value => [...value].length <= 64, "maxLength 64 Unicode code points").regex(new RegExp("^[0-9a-f]{64}$", "u")),
+  "revision": z.int().gte(1).lte(4294967295),
+  "status": zConnectionReceiptStatus
+});
+
 export const zAcknowledgeConfigurationRequest = z.strictObject({
   "digest": z.string().refine(value => [...value].length >= 64, "minLength 64 Unicode code points").refine(value => [...value].length <= 64, "maxLength 64 Unicode code points").regex(new RegExp("^[0-9a-f]{64}$", "u")),
   "revision": z.int().gte(1).lte(4294967295)
@@ -10,6 +23,78 @@ export const zAcknowledgeConfigurationRequest = z.strictObject({
 export const zAcknowledgeConfigurationResponse = z.strictObject({
   "digest": z.string().refine(value => [...value].length >= 64, "minLength 64 Unicode code points").refine(value => [...value].length <= 64, "maxLength 64 Unicode code points").regex(new RegExp("^[0-9a-f]{64}$", "u")),
   "revision": z.int().gte(1).lte(4294967295)
+});
+
+export const zConnectionSemantics = z.enum(["datagram","stream"]);
+
+export const zConnectionTransport = z.enum(["native_udp","native_tcp","vless"]);
+
+export const zConnectionCapability = z.strictObject({
+  "can_accept": z.boolean(),
+  "can_dial": z.boolean(),
+  "semantics": zConnectionSemantics,
+  "transport": zConnectionTransport
+});
+
+export const zConnectionDiagnostic = z.strictObject({
+  "field": z.string(),
+  "item_id": z.string().nullable(),
+  "message": z.string()
+});
+
+export const zIncomingConnectionApproval = z.strictObject({
+  "candidate_id": z.string(),
+  "listener_id": z.string(),
+  "peer_node_id": z.string(),
+  "transport": zConnectionTransport
+});
+
+export const zConnectionEndpoint = z.strictObject({
+  "host": z.string().refine(value => [...value].length >= 1, "minLength 1 Unicode code points").refine(value => [...value].length <= 253, "maxLength 253 Unicode code points"),
+  "port": z.int().gte(1).lte(65535)
+});
+
+export const zConnectionListener = z.strictObject({
+  "advertised_endpoints": z.array(zConnectionEndpoint).min(1).max(16),
+  "bind": z.string(),
+  "credential_ref": z.string().refine(value => [...value].length >= 1, "minLength 1 Unicode code points").refine(value => [...value].length <= 64, "maxLength 64 Unicode code points").regex(new RegExp("^[A-Za-z0-9._-]+$", "u")).nullable(),
+  "id": z.string().refine(value => [...value].length >= 1, "minLength 1 Unicode code points").refine(value => [...value].length <= 64, "maxLength 64 Unicode code points").regex(new RegExp("^[A-Za-z0-9._-]+$", "u")),
+  "node_id": z.string(),
+  "transport": zConnectionTransport
+});
+
+export const zOutgoingConnectionCandidate = z.strictObject({
+  "credential_ref": z.string().nullable(),
+  "endpoint": zConnectionEndpoint,
+  "id": z.string(),
+  "listener_id": z.string(),
+  "peer_node_id": z.string(),
+  "priority": z.int().gte(0).lte(65535),
+  "transport": zConnectionTransport
+});
+
+export const zConnectionPeer = z.strictObject({
+  "node_id": z.string(),
+  "public_key": z.string().refine(value => [...value].length >= 64, "minLength 64 Unicode code points").refine(value => [...value].length <= 64, "maxLength 64 Unicode code points").regex(new RegExp("^[0-9a-f]{64}$", "u"))
+});
+
+export const zNodeConnections = z.strictObject({
+  "capabilities": z.array(zConnectionCapability),
+  "diagnostics": z.array(zConnectionDiagnostic),
+  "incoming": z.array(zIncomingConnectionApproval),
+  "listeners": z.array(zConnectionListener),
+  "node_id": z.string(),
+  "outgoing": z.array(zOutgoingConnectionCandidate),
+  "peers": z.array(zConnectionPeer),
+  "public_key": z.string().refine(value => [...value].length >= 64, "minLength 64 Unicode code points").refine(value => [...value].length <= 64, "maxLength 64 Unicode code points").regex(new RegExp("^[0-9a-f]{64}$", "u")).nullable(),
+  "revision": z.int().gte(1).lte(4294967295),
+  "schema_version": z.int().gte(1).lte(4294967295),
+  "valid": z.boolean()
+});
+
+export const zAgentConnectionsSnapshot = z.strictObject({
+  "digest": z.string().refine(value => [...value].length >= 64, "minLength 64 Unicode code points").refine(value => [...value].length <= 64, "maxLength 64 Unicode code points").regex(new RegExp("^[0-9a-f]{64}$", "u")),
+  "payload": zNodeConnections
 });
 
 export const zNodeSummary = z.strictObject({
@@ -102,6 +187,37 @@ export const zConfigurationSnapshot = z.strictObject({
   "payload": zNodeConfiguration
 });
 
+export const zConnectionCandidate = z.strictObject({
+  "credential_ref": z.string().refine(value => [...value].length >= 1, "minLength 1 Unicode code points").refine(value => [...value].length <= 64, "maxLength 64 Unicode code points").regex(new RegExp("^[A-Za-z0-9._-]+$", "u")).nullable(),
+  "dialer_node_id": z.string(),
+  "endpoint": zConnectionEndpoint,
+  "id": z.string().refine(value => [...value].length >= 1, "minLength 1 Unicode code points").refine(value => [...value].length <= 64, "maxLength 64 Unicode code points").regex(new RegExp("^[A-Za-z0-9._-]+$", "u")),
+  "listener_id": z.string(),
+  "priority": z.int().gte(0).lte(65535)
+});
+
+export const zConnectionNode = z.strictObject({
+  "acknowledged_at": z.iso.datetime({ offset: true }).nullable(),
+  "acknowledged_digest": z.string().refine(value => [...value].length >= 64, "minLength 64 Unicode code points").refine(value => [...value].length <= 64, "maxLength 64 Unicode code points").regex(new RegExp("^[0-9a-f]{64}$", "u")).nullable(),
+  "acknowledged_revision": z.int().gte(0).lte(4294967295),
+  "capabilities": z.array(zConnectionCapability),
+  "node": zNodeSummary,
+  "public_key": z.string().refine(value => [...value].length >= 64, "minLength 64 Unicode code points").refine(value => [...value].length <= 64, "maxLength 64 Unicode code points").regex(new RegExp("^[0-9a-f]{64}$", "u")).nullable()
+});
+
+export const zConnectionPlan = z.strictObject({
+  "candidates": z.array(zConnectionCandidate).max(256),
+  "listeners": z.array(zConnectionListener).max(128)
+});
+
+export const zConnectionsSnapshot = z.strictObject({
+  "configuration": zConnectionPlan,
+  "diagnostics": z.array(zConnectionDiagnostic),
+  "nodes": z.array(zConnectionNode),
+  "revision": z.int().gte(1).lte(4294967295),
+  "valid": z.boolean()
+});
+
 export const zCreateEnrollmentTokenRequest = z.strictObject({
   "expires_in_seconds": z.int().gte(60).lte(86400)
 });
@@ -175,12 +291,29 @@ export const zPreviewPolicyResponse = z.strictObject({
   "valid": z.boolean()
 });
 
+export const zPublishConnectionIdentityRequest = z.strictObject({
+  "capabilities": z.array(zConnectionCapability).max(3),
+  "public_key": z.string().refine(value => [...value].length >= 64, "minLength 64 Unicode code points").refine(value => [...value].length <= 64, "maxLength 64 Unicode code points").regex(new RegExp("^[0-9a-f]{64}$", "u"))
+});
+
+export const zPublishConnectionIdentityResponse = z.strictObject({
+  "capabilities": z.array(zConnectionCapability),
+  "node_id": z.string(),
+  "public_key": z.string().refine(value => [...value].length >= 64, "minLength 64 Unicode code points").refine(value => [...value].length <= 64, "maxLength 64 Unicode code points").regex(new RegExp("^[0-9a-f]{64}$", "u")),
+  "revision": z.int().gte(1).lte(4294967295)
+});
+
 export const zRevokeNodeRequest = z.strictObject({
   "node_id": z.string().refine(value => [...value].length >= 1, "minLength 1 Unicode code points").refine(value => [...value].length <= 128, "maxLength 128 Unicode code points")
 });
 
 export const zRevokeNodeResponse = z.strictObject({
   "node": zNodeSummary
+});
+
+export const zSaveConnectionsRequest = z.strictObject({
+  "configuration": zConnectionPlan,
+  "expected_revision": z.int().gte(1).lte(4294967295)
 });
 
 export const zSavePolicyRequest = z.strictObject({

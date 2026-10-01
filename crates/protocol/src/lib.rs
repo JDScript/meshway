@@ -1,9 +1,11 @@
 //! Authoritative wire DTOs and shared local credential/file primitives.
 
 pub mod config;
+pub mod connections;
 pub mod local;
 pub mod routing;
 pub use config::*;
+pub use connections::*;
 pub use routing::*;
 
 use chrono::{DateTime, Utc};

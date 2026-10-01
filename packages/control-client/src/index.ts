@@ -7,6 +7,8 @@ export {
   previewPolicyOperation as previewPolicy,
   savePolicyOperation as savePolicy,
   setNodeCountryOperation as setNodeCountry,
+  getConnectionsOperation as getConnections,
+  saveConnectionsOperation as saveConnections,
 } from "./generated/operations.gen.ts";
 export type * from "./generated/types.gen.ts";
 export { ControlApiError } from "./transport.ts";

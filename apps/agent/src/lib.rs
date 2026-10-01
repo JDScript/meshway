@@ -10,7 +10,10 @@ pub mod generated;
 mod test_local;
 
 mod state;
-pub use state::{Agent, AgentError, AgentStatus, SyncReceipt, status};
+pub use state::{
+    Agent, AgentError, AgentStatus, ConnectionStatus, ConnectionSyncReceipt, ControlSyncReceipts,
+    SyncReceipt, compiled_connection_capabilities, connections_status, status,
+};
 
 #[cfg(feature = "transport-lab")]
 pub mod transport_lab;
