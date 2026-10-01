@@ -4,11 +4,11 @@
 
 **已确认**：`apps/apple` 使用 SwiftUI 多平台 App、NetworkExtension Packet Tunnel、UniFFI Rust 核心及 XCFramework。设备是统一的 Meshway 节点；不引入 App / 服务器节点类别或中继角色开关。
 
-**已实现**：单一服务器地址（Web 控制台 origin）、系统浏览器授权、Keychain 节点凭据与待兑换状态、生成 Rust 客户端兑换、心跳和只读设备 / DNS 快照。macOS 为默认 500 × 680 的单列设备窗口与 window-style 菜单栏面板；iOS 使用 NavigationStack、insetGrouped 设备列表、搜索、下拉刷新、侧滑 / 上下文复制与详情。顶部网络 Menu 显示当前唯一接入，名称取已启用的 DNS zone 或真实服务器 host；详情提供服务器、网络 prefixes、revision 与本地重置。右上角 Connect switch 禁用，正文说明隧道未实现。首次接入为居中浏览器登录引导；撤销、加载和错误使用相同视觉层级。
+**已实现**：单一服务器地址（Web 控制台 origin）、系统浏览器授权、Keychain 节点凭据与待兑换状态、生成 Rust 客户端兑换、心跳和只读设备 / DNS 快照。macOS 为默认 500 × 680 的单列普通窗口与 window-style 菜单栏面板；iOS 使用 NavigationStack、insetGrouped 设备列表、搜索、下拉刷新、侧滑 / 上下文复制与详情。macOS in-content header 使用静态网络名（启用的 DNS zone）与真实服务器 host 副标题；无 label 时使用通用 Meshway 标题，不呈现单网络 switcher。⋯ 菜单提供详情、复制服务器 URL 与本地重置，refresh 在 header 内。右上角原生 mini switch 禁用、off，旁边为 Not connected，help / accessibility 说明隧道未实现。首次接入为居中浏览器登录引导，窄 / 矮窗口使用 compact layout；撤销、加载和错误使用相同视觉层级。
 
-前台出现 / 接入成功时读取，自动刷新跨窗口每 30 秒至多一次；手动刷新可立即发起，整个心跳 → 配置 → DNS 流程禁止重叠，各 HTTP 请求限时 10 秒。自身展示真实最近心跳时间 / 结果；peer 只展示名称、地址、DNS 与管理员 country，不显示在线状态。刷新失败标明旧库存；DNS 仅在配置同 revision、ID / 地址一致时合并。403 进入持久撤销状态并清除库存。快照只用于显示，**不 ACK、不持久化配置、不激活数据面**。
+前台出现 / 接入成功时读取，自动刷新跨窗口每 30 秒至多一次；手动刷新可立即发起，整个心跳 → 配置 → DNS 流程禁止重叠，各 HTTP 请求限时 10 秒。自身成功 contact 只展示一行真实最近时间，失败显示 orange reason；section header 显示 updated / previous fetch。peer 展示名称、IPv4、真实 friendly DNS alias 与管理员 country；canonical DNS / IPv6 留在详情 / copy action。行使用真实名称 initials 与 node-ID 稳定 tint 的 monogram，不表示设备类型或在线状态。DNS 仅在配置同 revision、ID / 地址一致时合并。403 进入持久撤销状态并清除库存。快照只用于显示，**不 ACK、不持久化配置、不激活数据面**。
 
-**未实现**：外部 OIDC、X25519 公钥发布、嵌入 agent 生命周期、多网络接入保存 / 切换、NE 包流适配、隧道、流量及诊断导出。后端已支持多网络，浏览器批准时选择目标网络；App 的接入保存 / 切换仍待实现，菜单只列真实接入，没有虚构的添加网络操作。浏览器当前使用控制台管理员登录 / 批准；App 不获得管理员凭据。保存 URL、注册及心跳均不代表隧道已建立。
+**未实现**：外部 OIDC、X25519 公钥发布、嵌入 agent 生命周期、多网络接入保存 / 切换、NE 包流适配、隧道、流量及诊断导出。后端已支持多网络，浏览器批准时选择目标网络；App 的接入保存 / 切换仍待实现，界面只显示当前真实接入，没有虚构的添加网络或 network switcher。浏览器当前使用控制台管理员登录 / 批准；App 不获得管理员凭据。保存 URL、注册及心跳均不代表隧道已建立。
 
 ## 结构与依赖
 
@@ -78,10 +78,10 @@ xcodebuild -quiet -project apps/apple/Meshway.xcodeproj -scheme Meshway \
   -configuration Debug -destination 'platform=macOS,arch=arm64' \
   -derivedDataPath apps/apple/build/DerivedData CODE_SIGNING_ALLOWED=NO \
   MESHWAY_BUNDLE_PREFIX=dev.meshway.snapshot build
-node apps/apple/scripts/snapshot.ts "${TMPDIR%/}/opencode/apple-ui-polish/round-4"
+node apps/apple/scripts/snapshot.ts "${TMPDIR%/}/opencode/apple-ui-polish/round-7"
 ```
 
-脚本需先构建 controller / Web（见下方链接中的完整命令），自行启动隔离端口、临时数据及唯一 Keychain / defaults namespace，经真实 device flow 接入并创建五个真实 peers。Debug-only AppKit hook 捕获实际主窗口 titlebar / toolbar 和原生 sheets；面板使用真实 `MeshwayMenuView` 内容的 native host fallback。列表采用名称 + IPv4 第一行、DNS 第二行、IPv6 只在详情，长名称 / DNS 截断并保留完整详情和复制。`RenderTests.swift` 的 test-only ImageRenderer 只作为 iPhone-width / accessibility-size 共享布局辅助检查，不冒充 native iOS chrome 或 Simulator 运行。产物、四轮缺陷和具体边界见 [视觉验收](./apple-ui-verification.md)。
+脚本需先构建 controller / Web（见下方链接中的完整命令），自行启动隔离端口、临时数据及唯一 Keychain / defaults namespace，经真实 device flow 接入并创建五个真实 peers。Debug-only AppKit hook 捕获实际主窗口 titlebar、header 的原生控件和 sheets；面板使用真实 `MeshwayMenuView` 内容的 native host fallback。列表采用名称 + IPv4 第一行，只将真实 friendly DNS alias 放在第二行，canonical name 与 IPv6 在详情 / copy action。FFI 保留已校验 DNS record 的 alias 与 canonical 字段，不从显示名称手工猜造 canonical name；HTTP / OpenAPI 契约未改。`RenderTests.swift` 的 test-only ImageRenderer 只作为 iPhone-width / accessibility-size 共享布局辅助检查，不冒充 native iOS chrome 或 Simulator 运行。产物、逐轮缺陷和具体边界见 [视觉验收](./apple-ui-verification.md)。
 
 签名默认无 Team，bundle prefix 为 `dev.example`。需要签名时创建忽略的 `apps/apple/Config/Local.xcconfig`，设置 `DEVELOPMENT_TEAM`、`MESHWAY_BUNDLE_PREFIX`，必要时覆盖 `MESHWAY_APP_GROUP`。`MESHWAY_KEYCHAIN_ACCESS_GROUP` 默认空，unsigned 使用默认 Keychain；需要 extension 共享时设置此变量并为 App / extension 添加匹配的 `keychain-access-groups` entitlement 与有效 provisioning。App Group 不能替代 Keychain access group。会员未续费，不能据编译声称签名权限、真机 NE 或隧道已验证。
 
