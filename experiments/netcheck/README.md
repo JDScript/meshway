@@ -5,13 +5,14 @@ STUN observers through a Linux router container running IPv4 iptables SNAT.
 Observers encode their actual UDP `recvfrom()` peer in RFC 8489 XOR-MAPPED-ADDRESS;
 scenario settings never choose the address reported by an observer.
 
-Implementation baseline: `d4d5dec602af246fd39a2bd027ee00da405c44d2`.
-The baseline does not yet contain the new Agent CLI. Main must integrate the Agent
-slice and this independent fixture before building the dedicated image.
-
-**Validation status:** host tests and static checks only. No Docker build or run
-has been performed for this delivery. The scenario expectations below are
-acceptance criteria, not recorded kernel-NAT results.
+**Validation status:** all seven kernel-NAT scenarios passed on 2026-10-01,
+run `45c3ba2b4d9a4acdb5d6972890c0094e`, including the held-socket unsolicited
+canary and complete owned-resource cleanup. Image `meshway-netcheck:m2-20261001-a`
+is native ARM64, immutable ID
+`sha256:5a6a14dedebd2199f64fae00bc4400ef4d8b8584aca9bacd49c9ef1f9e59cd55`.
+Agent source is the integrated `74a2bde` slice. The fixture also passed 27 host
+tests. The host's retained artifact is `meshway-netcheck-dp18z2df/result.json`
+under the approved OpenCode temporary directory.
 
 ## Host verification (no Docker)
 
@@ -97,6 +98,10 @@ client -- internal LAN bridge -- router -- internal WAN bridge -- observer A
   driver, private 0700 `/private` tmpfs, 1 CPU, 256 MiB memory/no additional swap,
   64 PID limit, no privileged mode. Observers run as UID/GID 65532 with no added
   capabilities. Only client and router add NET_ADMIN.
+- Helper code is written through stdin by each container's configured UID into
+  its owned private tmpfs; this also works when Docker refuses `cp` into a
+  read-only rootfs. Capability inspection accepts Docker's `CAP_NET_ADMIN`
+  spelling while retaining the exact NET_ADMIN-only allowlist.
 - Client changes only its own default route to the owned router's LAN IP. Router
   enables only its own namespace's `net.ipv4.ip_forward=1` via Docker's namespaced
   `--sysctl` and changes only its own iptables/conntrack tables. Each scenario
@@ -174,7 +179,7 @@ This is a fixture-side runtime validator of the CLI contract, not a new HTTP DTO
 generated client, authoritative product schema or protocol implementation. Main
 can adjust minor contract details here when integrating the Agent slice.
 
-## Scenario acceptance expectations (not executed results)
+## Verified scenario results
 
 `W` below is the actual dynamically allocated router WAN IP.
 

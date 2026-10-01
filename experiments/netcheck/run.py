@@ -119,11 +119,12 @@ class Docker:
     def __init__(self, lock_fd):
         self.lock_fd = lock_fd
 
-    def call(self, args, timeout=20, checked=True):
+    def call(self, args, timeout=20, checked=True, input=None):
         # Never emit command output/errors; inherited lock survives an interrupted
         # wrapper until the current Docker client has exited.
-        result = subprocess.run(["docker", *args], stdin=subprocess.DEVNULL, capture_output=True,
-                                text=True, timeout=timeout, pass_fds=(self.lock_fd,))
+        result = subprocess.run(["docker", *args], capture_output=True,
+                                text=True, timeout=timeout, pass_fds=(self.lock_fd,),
+                                **({"stdin": subprocess.DEVNULL} if input is None else {"input": input}))
         if checked:
             require(result.returncode == 0, "Docker command failed (raw diagnostics suppressed)")
         return result
@@ -209,8 +210,10 @@ class Harness:
         self.owned(info, role, "container")
         config = info.get("HostConfig", {})
         require(config.get("Privileged") is False and config.get("ReadonlyRootfs") is True, "container isolation missing")
-        require(config.get("CapDrop") == ["ALL"] and config.get("CapAdd") in (["NET_ADMIN"], None, []), "unexpected container capabilities")
-        require(bool(config.get("CapAdd")) == (role in ("client", "router")), "NET_ADMIN belongs only to client/router")
+        added = config.get("CapAdd") or []
+        require(type(added) is list and all(type(cap) is str for cap in added), "invalid container capabilities")
+        added = [cap.removeprefix("CAP_") for cap in added]
+        require(config.get("CapDrop") == ["ALL"] and added == (["NET_ADMIN"] if role in ("client", "router") else []), "unexpected container capabilities")
         require(not info.get("Mounts") and not config.get("PortBindings"), "host mounts or published ports are forbidden")
         networks = info.get("NetworkSettings", {}).get("Networks", {})
         expected = {self.networks[network_role]} | ({self.networks["wan"]} if role == "router" else set())
@@ -226,6 +229,14 @@ class Harness:
 
     def exec_json(self, role, args):
         return strict_json(self.execute(role, args).stdout)
+
+    def install_script(self, role, filename):
+        require(filename in ("wire.py", "observer.py", "canary.py"), "unknown fixture script")
+        # Docker cp can reject an entirely read-only rootfs even for its writable
+        # tmpfs. Write as the configured container UID into its own private tmpfs.
+        code = f"import os,sys; os.umask(0o077); open('/private/{filename}','x').write(sys.stdin.read())"
+        self.docker.call(["exec", "-i", self.containers[role], "python3", "-B", "-c", code],
+                         input=(HERE / filename).read_text())
 
     def provision(self, image_id):
         self.stage = "topology"
@@ -248,7 +259,7 @@ class Harness:
         self.stage = "observers"
         for role in ("a", "b"):
             for file in ("wire.py", "observer.py"):
-                self.docker.text(["cp", str(HERE / file), f"{self.containers[role]}:/private/{file}"])
+                self.install_script(role, file)
             self.docker.text(["exec", "--detach", self.containers[role], "python3", "-B", "/private/observer.py", "--bind", self.addresses[f"{role}_wan"], "--subnet", self.subnets["wan"], "--source", self.addresses["router_wan"]])
             ready = False
             for _ in range(50):
@@ -284,7 +295,7 @@ class Harness:
         # tuple against this new held socket. Only our router namespace is reset.
         self.execute("router", ["conntrack", "-F"])
         for file in ("wire.py", "observer.py", "canary.py"):
-            self.docker.text(["cp", str(HERE / file), f"{self.containers['client']}:/private/{file}"])
+            self.install_script("client", file)
         nonce = uuid.uuid4().hex
         self.docker.text(["exec", "--detach", self.containers["client"], "python3", "-B", "/private/canary.py", "--client", addresses["client_lan"], "--server-a", addresses["a_wan"], "--server-b", addresses["b_wan"], "--nonce", nonce])
         for _ in range(50):
