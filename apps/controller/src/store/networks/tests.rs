@@ -1,4 +1,6 @@
 use super::{TABLES, upgrade};
+#[path = "original_v8.rs"]
+mod original_v8;
 use crate::{
     Error, NetworkOptions,
     store::{

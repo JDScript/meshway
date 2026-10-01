@@ -20,6 +20,8 @@ mod device_login;
 mod endpoint_discovery;
 #[path = "api/network.rs"]
 mod network;
+#[path = "api/network_endpoint_matrix.rs"]
+mod network_endpoint_matrix;
 #[path = "api/networks.rs"]
 mod networks;
 
