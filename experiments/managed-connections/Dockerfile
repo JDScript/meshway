@@ -19,7 +19,7 @@ RUN --mount=type=cache,target=/usr/local/cargo/registry \
 
 FROM debian:trixie-slim@sha256:a99cfc517144bc59b1978475ec53b46ecabec7e43635402ee5b77cc54cd1b20a
 RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
-    ca-certificates iproute2 iputils-ping python3 \
+    ca-certificates curl iproute2 iputils-ping python3 util-linux \
     && rm -rf /var/lib/apt/lists/*
 COPY --from=builder /out/meshway-agent /out/meshway-controller /usr/local/bin/
 RUN ln -s /usr/local/bin/meshway-agent /usr/local/bin/meshway
