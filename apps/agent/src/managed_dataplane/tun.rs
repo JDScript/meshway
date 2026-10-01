@@ -2,22 +2,94 @@
 //! is never persistent or adopted. A lower-priority unreachable route survives
 //! its removal (including process death), preventing mesh-to-underlay fallthrough.
 
-use futures_util::future::BoxFuture;
 use ipnet::Ipv4Net;
+use meshway_dataplane::packet_io::{Device as PacketDevice, PacketBatch};
 use std::{io, net::Ipv4Addr, sync::Arc};
 
 use super::{PacketPlan, TunOptions};
 use crate::AgentError;
 
-pub(crate) trait Device: Send + Sync {
-    fn recv<'a>(&'a self, bytes: &'a mut [u8]) -> BoxFuture<'a, io::Result<usize>>;
-    fn send<'a>(&'a self, bytes: &'a [u8]) -> BoxFuture<'a, io::Result<usize>>;
-    /// Bounded, nonblocking discard before a new generation can see this queue.
-    fn drain(&self) -> io::Result<()>;
+pub(crate) enum Device {
+    #[cfg(target_os = "linux")]
+    Linux {
+        device: tun_rs::AsyncDevice,
+        buffer: tokio::sync::Mutex<Vec<u8>>,
+    },
+    #[cfg(test)]
+    Mock(Arc<super::tests::MockDevice>),
+}
+
+impl PacketDevice for Device {
+    async fn recv_batch(&self) -> io::Result<PacketBatch> {
+        match self {
+            #[cfg(target_os = "linux")]
+            Self::Linux { device, buffer } => {
+                let mut bytes = buffer.lock().await;
+                loop {
+                    let length = device.recv(&mut bytes).await?;
+                    if length == 0 {
+                        return Err(io::Error::other("TUN closed"));
+                    }
+                    // Previously these malformed, over-MTU packets were discarded
+                    // by admission. Preserve that disposition, not a device failure.
+                    if length > meshway_dataplane::MAX_PACKET_PAYLOAD {
+                        tokio::task::yield_now().await;
+                        continue;
+                    }
+                    return PacketBatch::new(vec![bytes[..length].to_vec()]);
+                }
+            }
+            #[cfg(test)]
+            Self::Mock(device) => {
+                let mut bytes = vec![0; 65_536];
+                let length = device.recv(&mut bytes).await?;
+                bytes.truncate(length);
+                PacketBatch::new(vec![bytes])
+            }
+            #[cfg(not(any(target_os = "linux", test)))]
+            _ => Err(io::Error::other("managed IPv4 TUN requires Linux")),
+        }
+    }
+
+    async fn send_batch(&self, packets: PacketBatch) -> io::Result<()> {
+        #[cfg(not(any(target_os = "linux", test)))]
+        {
+            let _ = packets;
+            Err(io::Error::other("managed IPv4 TUN requires Linux"))
+        }
+        #[cfg(any(target_os = "linux", test))]
+        {
+            for bytes in packets.into_packets() {
+                let length = match self {
+                    #[cfg(target_os = "linux")]
+                    Self::Linux { device, .. } => device.send(&bytes).await?,
+                    #[cfg(test)]
+                    Self::Mock(device) => device.send(&bytes).await?,
+                    #[cfg(not(any(target_os = "linux", test)))]
+                    _ => return Err(io::Error::other("managed IPv4 TUN requires Linux")),
+                };
+                if length != bytes.len() {
+                    return Err(io::Error::other("short TUN write"));
+                }
+            }
+            Ok(())
+        }
+    }
+
+    fn drain(&self) -> io::Result<()> {
+        match self {
+            #[cfg(target_os = "linux")]
+            Self::Linux { device, .. } => linux::drain(device),
+            #[cfg(test)]
+            Self::Mock(device) => device.drain(),
+            #[cfg(not(any(target_os = "linux", test)))]
+            _ => Err(io::Error::other("managed IPv4 TUN requires Linux")),
+        }
+    }
 }
 
 pub(crate) struct Tun {
-    pub device: Arc<dyn Device>,
+    pub device: Arc<Device>,
     pub name: String,
     local: Ipv4Addr,
     prefix: Ipv4Net,
@@ -58,7 +130,11 @@ fn disable_ipv6(tree: &std::path::Path, name: &str) -> io::Result<()> {
 
 impl Tun {
     pub fn matches(&self, plan: &PacketPlan) -> bool {
-        self.local == plan.local && self.prefix == plan.prefix && self.mtu == plan.mtu
+        let policy = plan.route_policy();
+        self.local == policy.local
+            && self.prefix.network() == policy.network
+            && self.prefix.prefix_len() == policy.prefix_len
+            && self.mtu == policy.mtu
     }
 
     pub async fn open(
@@ -80,9 +156,9 @@ impl Tun {
     }
 
     #[cfg(test)]
-    pub fn mock(device: Arc<dyn Device>, plan: &PacketPlan) -> Self {
+    pub fn mock(device: Arc<super::tests::MockDevice>, plan: &PacketPlan) -> Self {
         Self {
-            device,
+            device: Arc::new(Device::Mock(device)),
             name: "mock0".into(),
             local: plan.local,
             prefix: plan.prefix,
@@ -172,27 +248,19 @@ mod linux {
     const TUN_METRIC: &str = "42759";
     const PROTOCOL: &str = "242";
 
-    impl Device for tun_rs::AsyncDevice {
-        fn recv<'a>(&'a self, bytes: &'a mut [u8]) -> BoxFuture<'a, io::Result<usize>> {
-            Box::pin(self.recv(bytes))
-        }
-        fn send<'a>(&'a self, bytes: &'a [u8]) -> BoxFuture<'a, io::Result<usize>> {
-            Box::pin(self.send(bytes))
-        }
-        fn drain(&self) -> io::Result<()> {
-            let mut bytes = [0; 65_536];
-            for _ in 0..256 {
-                match self.try_recv(&mut bytes) {
-                    Err(error) if error.kind() == io::ErrorKind::WouldBlock => return Ok(()),
-                    Err(error) => return Err(error),
-                    Ok(0) => return Err(io::Error::other("TUN closed")),
-                    Ok(_) => {}
-                }
+    pub(super) fn drain(device: &tun_rs::AsyncDevice) -> io::Result<()> {
+        let mut bytes = [0; 65_536];
+        for _ in 0..256 {
+            match device.try_recv(&mut bytes) {
+                Err(error) if error.kind() == io::ErrorKind::WouldBlock => return Ok(()),
+                Err(error) => return Err(error),
+                Ok(0) => return Err(io::Error::other("TUN closed")),
+                Ok(_) => {}
             }
-            Err(io::Error::other(
-                "TUN queue did not quiesce before generation activation",
-            ))
         }
+        Err(io::Error::other(
+            "TUN queue did not quiesce before generation activation",
+        ))
     }
 
     async fn ip(args: &[&str]) -> Result<Vec<u8>, AgentError> {
@@ -313,7 +381,11 @@ mod linux {
         controller: &str,
         may_reuse_guard: bool,
     ) -> Result<Tun, AgentError> {
-        underlay(controller, plan.prefix).await?;
+        let policy = plan.route_policy();
+        debug_assert!(policy.retain_fail_closed_sink);
+        let route_prefix = Ipv4Net::new(policy.network, policy.prefix_len)
+            .map_err(|_| AgentError::Invalid("invalid mesh IPv4 pool"))?;
+        underlay(controller, route_prefix).await?;
         // Preflight rejects existing names. Allocation below is unnamed, never
         // attaches to a named persistent TUN; rename is atomic against races.
         if Path::new("/sys/class/net")
@@ -324,7 +396,7 @@ mod linux {
                 "requested TUN name already exists; refusing to adopt",
             ));
         }
-        let prefix = plan.prefix.to_string();
+        let prefix = route_prefix.to_string();
         let routes: Vec<Route> = serde_json::from_slice(
             &ip(&[
                 "-j", "-4", "route", "show", "table", "main", "root", &prefix,
@@ -395,7 +467,10 @@ mod linux {
         ])
         .await?;
         Ok(Tun {
-            device: Arc::new(device),
+            device: Arc::new(Device::Linux {
+                device,
+                buffer: tokio::sync::Mutex::new(vec![0; 65_536]),
+            }),
             name: options.name.clone(),
             local: plan.local,
             prefix: plan.prefix,

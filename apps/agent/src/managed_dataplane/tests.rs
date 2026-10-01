@@ -218,8 +218,8 @@ impl MockDevice {
     }
 }
 
-impl tun::Device for MockDevice {
-    fn recv<'a>(&'a self, bytes: &'a mut [u8]) -> BoxFuture<'a, io::Result<usize>> {
+impl MockDevice {
+    pub(super) fn recv<'a>(&'a self, bytes: &'a mut [u8]) -> BoxFuture<'a, io::Result<usize>> {
         Box::pin(async move {
             let data = self
                 .from_kernel
@@ -235,7 +235,7 @@ impl tun::Device for MockDevice {
             Ok(data.len())
         })
     }
-    fn send<'a>(&'a self, bytes: &'a [u8]) -> BoxFuture<'a, io::Result<usize>> {
+    pub(super) fn send<'a>(&'a self, bytes: &'a [u8]) -> BoxFuture<'a, io::Result<usize>> {
         Box::pin(async move {
             self.attempted.notify_one();
             let _permit = self
@@ -250,7 +250,7 @@ impl tun::Device for MockDevice {
             Ok(bytes.len())
         })
     }
-    fn drain(&self) -> io::Result<()> {
+    pub(super) fn drain(&self) -> io::Result<()> {
         let mut receive = self
             .from_kernel
             .try_lock()

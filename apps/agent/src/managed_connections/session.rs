@@ -207,7 +207,7 @@ impl Session {
         mut deadlines: watch::Receiver<Option<Instant>>,
         observed: watch::Sender<Observation>,
         packet: Option<(
-            Arc<dyn crate::managed_dataplane::tun::Device>,
+            Arc<crate::managed_dataplane::tun::Device>,
             String,
             crate::managed_dataplane::PacketPlan,
         )>,

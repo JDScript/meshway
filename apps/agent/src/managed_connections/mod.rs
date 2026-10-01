@@ -565,7 +565,9 @@ impl Manager {
                 );
             }
             // Flush the bounded kernel queue while no generation owns the fd.
-            self.tun.as_ref().expect("configured TUN").device.drain()?;
+            meshway_dataplane::packet_io::Device::drain(
+                self.tun.as_ref().expect("configured TUN").device.as_ref(),
+            )?;
         }
         if deadline <= Instant::now() {
             self.withdraw(Reason::LeaseExpired).await;

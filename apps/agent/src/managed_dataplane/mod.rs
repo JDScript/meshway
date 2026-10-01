@@ -7,7 +7,10 @@ use std::{
 };
 
 use ipnet::Ipv4Net;
-use meshway_dataplane::{LabConfig, PeerConfig, ReceivedPacket, native_udp_datagram_len};
+#[cfg(test)]
+use meshway_dataplane::ReceivedPacket;
+use meshway_dataplane::packet_io::{Ipv4PacketPlan, RoutePolicy};
+use meshway_dataplane::{LabConfig, PeerConfig, native_udp_datagram_len};
 use meshway_protocol::{ConnectionPeer, NodeDataplane};
 
 use crate::AgentError;
@@ -51,8 +54,7 @@ pub(crate) struct PacketPlan {
     pub mtu: u16,
     pub paths: Vec<Vec<String>>,
     identities: Vec<ConnectionPeer>,
-    outgoing: BTreeMap<Ipv4Addr, Vec<String>>,
-    incoming: BTreeMap<Vec<String>, Ipv4Addr>,
+    admission: Ipv4PacketPlan,
 }
 
 impl PacketPlan {
@@ -94,8 +96,7 @@ impl PacketPlan {
             mtu,
             paths: vec![],
             identities: vec![],
-            outgoing: BTreeMap::new(),
-            incoming: BTreeMap::new(),
+            admission: Ipv4PacketPlan::new(local, mtu, BTreeMap::new(), BTreeMap::new()),
         })
     }
 
@@ -163,8 +164,7 @@ impl PacketPlan {
         }
         plan.paths = paths;
         plan.identities = payload.identities.clone();
-        plan.outgoing = outgoing;
-        plan.incoming = incoming;
+        plan.admission = Ipv4PacketPlan::new(plan.local, mtu, outgoing, incoming);
         Ok(plan)
     }
 
@@ -199,19 +199,24 @@ impl PacketPlan {
         })
     }
 
+    #[cfg(test)]
     pub fn outgoing(&self, bytes: &[u8]) -> Option<&Vec<String>> {
-        let (source, destination) = packet::ipv4(bytes, self.mtu)?;
-        if source != self.local {
-            return None;
-        }
-        self.outgoing.get(&destination)
+        self.admission.outgoing(bytes)
     }
 
+    #[cfg(test)]
     pub fn incoming(&self, packet: &ReceivedPacket) -> bool {
-        packet.path.first() == Some(&packet.source)
-            && self.incoming.get(&packet.path).is_some_and(|source| {
-                packet::ipv4(&packet.payload, self.mtu) == Some((*source, self.local))
-            })
+        self.admission.incoming(packet)
+    }
+
+    pub fn route_policy(&self) -> RoutePolicy {
+        RoutePolicy {
+            local: self.local,
+            network: self.prefix.network(),
+            prefix_len: self.prefix.prefix_len(),
+            mtu: self.mtu,
+            retain_fail_closed_sink: true,
+        }
     }
 
     pub fn check_targets(
