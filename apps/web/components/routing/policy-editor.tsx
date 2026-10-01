@@ -64,7 +64,6 @@ import { Label } from "@/components/ui/label"
 import { Spinner } from "@/components/ui/spinner"
 import { useToastManager } from "@/components/ui/toast"
 import type { PreviewResult, SaveResult } from "@/lib/action-state"
-import { commentRanges } from "@/lib/jsonc"
 import { documentChange, hasUnsavedWork, isValid } from "@/lib/policy-document"
 import {
   previewPolicyAction,
@@ -462,10 +461,11 @@ export function PolicyEditor({
   const runSave = () => {
     const expected = base.revision
     const body = policy
+    const source = policyDoc.text
     const sentSeq = policyDoc.seq
     const saver = owner.current
     startSave(async () => {
-      const result = await savePolicyAction(expected, body)
+      const result = await savePolicyAction(expected, body, source)
       if (!drafts.owns(saver)) {
         // This editor unmounted meanwhile: kept work that is exactly what
         // was saved moves onto the new base; anything else is left alone.
@@ -590,7 +590,7 @@ export function PolicyEditor({
               草稿基于 r{base.revision}，编辑基础不会自动前移，此时保存会因版本冲突被拒绝。
             </p>
             <Button variant="outline" size="sm" disabled={busy} onClick={requestReload}>
-              载入最新版本{dirty ? "（先确认放弃草稿）" : ""}
+              载入最新版本{unsaved ? "（先确认放弃草稿）" : ""}
             </Button>
           </AlertDescription>
         </Alert>
@@ -646,9 +646,7 @@ export function PolicyEditor({
               }}
               readOnly={locked}
               notice={
-                commentRanges(policyDoc.text).length > 0 || change.textOnly ? (
-                  <>Controller 当前只保存策略内容：注释和排版保留在本次浏览器会话的草稿中，刷新页面或退出登录后会丢失。</>
-                ) : null
+                change.textOnly ? <>只有注释或排版改动：保存后 controller 会连同原文一起存储，策略内容不变。</> : null
               }
             />
           </Panel>
@@ -999,7 +997,7 @@ function SaveBar({
         <div className="flex min-w-0 flex-1 items-center gap-2 text-xs">
           <span
             aria-hidden="true"
-            className={cn("size-2 shrink-0 rounded-full", dirty ? "bg-warning" : "bg-muted-foreground/30")}
+            className={cn("size-2 shrink-0 rounded-full", dirty || textOnly ? "bg-warning" : "bg-muted-foreground/30")}
           />
           <span className="min-w-0">
             {dirty ? (
@@ -1008,9 +1006,10 @@ function SaveBar({
                 <span className="text-muted-foreground"> · {changeSummary.join("，")}</span>
               </>
             ) : textOnly ? (
-              <span className="text-muted-foreground">
-                策略内容与 r{baseRevision} 一致，只有注释或排版不同（controller 当前不保存 JSONC 原文）
-              </span>
+              <>
+                <span className="font-medium">未保存的 JSONC 原文</span>
+                <span className="text-muted-foreground"> · 只有注释或排版不同，策略内容与 r{baseRevision} 一致</span>
+              </>
             ) : (
               <span className="text-muted-foreground">草稿与已保存的 r{baseRevision} 一致</span>
             )}
@@ -1028,7 +1027,7 @@ function SaveBar({
           ) : null}
           <Button
             size="lg"
-            disabled={disabled || !dirty || issueCount > 0}
+            disabled={disabled || !(dirty || textOnly) || issueCount > 0}
             onClick={onSave}
             title={`条件保存：仅当 controller 仍为 r${baseRevision} 时写入`}
           >

@@ -24,8 +24,9 @@ import { rejectActionSession, requireActionAdminToken } from "@/lib/session"
 // generated runtime schema before anything is sent to the controller.
 
 const MAX_REVISION = 4_294_967_295
-// Policy cap plus room for the flow query; the controller enforces its own.
-const MAX_REQUEST_BYTES = POLICY_LIMITS.policyBytes + 16 * 1024
+// Policy cap plus the JSONC source (256 KiB) and room for the flow query;
+// the controller enforces its own.
+const MAX_REQUEST_BYTES = POLICY_LIMITS.policyBytes + 256 * 1024 + 16 * 1024
 
 function oversized(value: unknown): boolean {
   try {
@@ -58,9 +59,14 @@ export async function previewPolicyAction(
   return rejectActionSession()
 }
 
+/**
+ * `sourceJsonc` is the editor's JSONC text (comments included); the
+ * controller stores it only if it parses to exactly `policy`.
+ */
 export async function savePolicyAction(
   expectedRevision: number,
-  policy: RoutingPolicy
+  policy: RoutingPolicy,
+  sourceJsonc: string | null
 ): Promise<SaveResult> {
   const token = await requireActionAdminToken()
   if (
@@ -70,7 +76,10 @@ export async function savePolicyAction(
   ) {
     return { status: "error", message: "编辑基础版本无效，请重新读取。" }
   }
-  const body = { expected_revision: expectedRevision, policy }
+  if (sourceJsonc !== null && typeof sourceJsonc !== "string") {
+    return { status: "error", message: "JSONC 原文无效，未保存。" }
+  }
+  const body = { expected_revision: expectedRevision, policy, source_jsonc: sourceJsonc }
   if (oversized(body)) {
     return { status: "error", message: "策略超过大小上限，未保存。" }
   }
@@ -88,7 +97,7 @@ export async function savePolicyAction(
       if (error instanceof ControlApiError && error.status === 422) {
         return {
           status: "invalid",
-          message: "Controller 拒绝保存：策略没有通过编译（或配置版本号已耗尽）。已保存的策略保持不变；请运行「编译预览」查看诊断并修复。",
+          message: `Controller 拒绝保存：${describeError(error, token)}。已保存的策略保持不变；请运行「编译预览」查看诊断并修复。`,
         }
       }
       return {

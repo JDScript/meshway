@@ -33,6 +33,7 @@ function snapshot(revision: number, value: RoutingPolicy = policy): PolicySnapsh
   return zPolicySnapshot.parse({
     revision,
     policy: value,
+    source_jsonc: null,
     valid: true,
     diagnostics: [],
     network: { ipv4_prefix: "100.96.0.0/16", ipv6_prefix: "fd00::/64" },

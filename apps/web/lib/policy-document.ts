@@ -28,6 +28,52 @@ export type SchemaIssueInput = {
   path: readonly PropertyKey[]
   message: string
   keys?: readonly string[]
+  expected?: unknown
+  values?: readonly unknown[]
+  maximum?: unknown
+  minimum?: unknown
+  origin?: unknown
+}
+
+const typeNames: Record<string, string> = {
+  string: "字符串",
+  number: "数字",
+  int: "整数",
+  boolean: "布尔值",
+  array: "数组",
+  object: "对象",
+  null: "null",
+}
+
+const sizeUnit = (origin: unknown) => (origin === "array" ? "项" : origin === "string" ? "个字符" : "")
+
+/**
+ * Chinese text for the common runtime-schema issue codes. Anything else
+ * keeps the generated schema's own message; it is shown as plain text.
+ */
+export function schemaMessage(issue: SchemaIssueInput): string {
+  switch (issue.code) {
+    case "invalid_type":
+      return typeof issue.expected === "string"
+        ? `这里需要${typeNames[issue.expected] ?? issue.expected}。`
+        : issue.message
+    case "invalid_value":
+      return issue.values && issue.values.length > 0
+        ? `只能是 ${issue.values.map((value) => JSON.stringify(value)).join("、")} 之一。`
+        : issue.message
+    case "too_big":
+      return typeof issue.maximum === "number" || typeof issue.maximum === "bigint"
+        ? `最多 ${String(issue.maximum)} ${sizeUnit(issue.origin)}。`.replace(" 。", "。")
+        : issue.message
+    case "too_small":
+      return typeof issue.minimum === "number" || typeof issue.minimum === "bigint"
+        ? `至少 ${String(issue.minimum)} ${sizeUnit(issue.origin)}。`.replace(" 。", "。")
+        : issue.message
+    case "invalid_format":
+      return "格式不符合要求。"
+    default:
+      return issue.message
+  }
 }
 
 export type DocumentProblem = {
@@ -122,7 +168,7 @@ export function schemaProblems(
         problemAt(text, "schema", [...path, key], `不支持的字段 "${key}"。`, rangeFor(tree, path, key))
       )
     }
-    return [problemAt(text, "schema", path, issue.message, rangeFor(tree, path))]
+    return [problemAt(text, "schema", path, schemaMessage(issue), rangeFor(tree, path))]
   })
 }
 

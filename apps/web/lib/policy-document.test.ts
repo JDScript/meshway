@@ -1,11 +1,8 @@
 import assert from "node:assert/strict"
 import { test } from "node:test"
 
-import type { MeshAccessPolicy, RoutingPolicy } from "@meshway/control-client"
-
-// Tests use the generated runtime schemas directly; the product code receives
-// them through the control client once it exports them.
-import { zMeshAccessPolicy, zRoutingPolicy } from "../../../packages/control-client/src/generated/zod.gen.ts"
+import type { MeshPathAuthorization, RoutingPolicy } from "@meshway/control-client"
+import { zMeshPathAuthorization, zRoutingPolicy } from "@meshway/control-client/schemas"
 import {
   applyVisual,
   discardInvalidText,
@@ -22,7 +19,9 @@ import {
   type RuntimeSchema,
 } from "./policy-document.ts"
 
-const access: RuntimeSchema<MeshAccessPolicy> = zMeshAccessPolicy
+// Generic document behaviour, exercised on a small generated shape with
+// nested arrays (the compiled path authorization) and on the routing policy.
+const access: RuntimeSchema<MeshPathAuthorization> = zMeshPathAuthorization
 const routing: RuntimeSchema<RoutingPolicy> = zRoutingPolicy
 
 const base = { revision: 4, value: { grants: [{ id: "a", path: ["nyc", "sha"] }] }, source: null }
@@ -144,4 +143,14 @@ test("semantic issues from field paths are placed on the buffer", () => {
   const [problem] = semanticProblems(document, [{ field: "grants[0].path[1]", message: "revoked" }])
   assert.ok(problem)
   assert.equal(document.text.slice(problem.from, problem.to), `"sha"`)
+})
+
+test("common schema issues are shown in Chinese, others keep the schema text", () => {
+  const document = openDocument({ revision: 1, value: { default_action: "reject", rules: [] }, source: null }, routing)
+  const edited = editText(document, `{ "default_action": "allow", "rules": 1 }`, routing)
+  const messages = edited.problems.map((problem) => problem.message)
+  assert.ok(messages.includes(`只能是 "direct"、"reject" 之一。`), messages.join(" | "))
+  assert.ok(messages.includes("这里需要数组。"), messages.join(" | "))
+  const short = editText(openDocument(base, access), `{"grants": [{"id": "a", "path": ["x"]}]}`, access)
+  assert.ok(short.problems.some((problem) => problem.message === "至少 2 项。"), short.problems.map((p) => p.message).join(" | "))
 })

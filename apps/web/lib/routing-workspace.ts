@@ -42,13 +42,9 @@ export type RoutingWorkspace = {
   nextKey: number
 }
 
-/**
- * The CAS base of a routing snapshot. The current contract stores no JSONC
- * source, so the canonical rendering is shown; once snapshots carry
- * `source_jsonc`, this is the one place that reads it.
- */
+/** The CAS base of a routing snapshot, with the JSONC source the controller stored. */
 export function routingBase(snapshot: PolicySnapshot): DocumentBase<RoutingPolicy> {
-  return { revision: snapshot.revision, value: snapshot.policy, source: null }
+  return { revision: snapshot.revision, value: snapshot.policy, source: snapshot.source_jsonc }
 }
 
 const savedKeys = (policy: RoutingPolicy) => policy.rules.map((_, index) => `saved-${index}`)
