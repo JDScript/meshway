@@ -61,8 +61,14 @@ The generated `report_endpoint_discovery` client operation sends the protocol's
 the acquired epoch and uses its own monotonic discovery sequence. Every request
 pins one revision/digest/body and is cancelled by the generation's report guard.
 The HTTP wait is bounded to two seconds; it does not renew connection, DNS or TUN
-leases. HTTP 403 stops the agent; 409 never reacquires or steals a newer epoch;
-422 withdraws stale configuration and triggers a fresh pull. Other publication
+leases. HTTP 403 stops the agent; 409 never reacquires or steals a newer epoch.
+Discovery 422 confirms the current connections projection with a generated GET
+within the same two-second budget. Only a validated revision/digest change
+withdraws the installed configuration and triggers a fresh pull. A same-source
+rejection (including clock skew, expired observations or diagnostic semantics),
+invalid confirmation or failed/timed-out confirmation is best effort and does
+not change the connection lease or DNS revision floor. This confirmation never
+ACKs, persists, installs or renews the returned projection. Other publication
 failures are best effort. Shutdown makes one bounded withdrawal publication.
 Discovery-only 409 conflicts are confirmed with a generated epoch read within
 the same two-second budget: only a different epoch retires the runtime. A

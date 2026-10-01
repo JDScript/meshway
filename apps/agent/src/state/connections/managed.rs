@@ -449,6 +449,50 @@ impl Agent {
                 return Err(error.into());
             }
             Err(error) if error.api().is_some_and(|error| error.status == 422) => {
+                // Observation time/schema rejection is not proof that the
+                // installed authorization source changed. Confirm its current
+                // projection without ACK, persistence, lease renewal or DNS
+                // publication, within the original report HTTP budget.
+                let fresh = tokio::select! {
+                    biased;
+                    _ = async { match &mut guard { Some(guard) => guard.changed().await, None => std::future::pending().await } } => return Ok(()),
+                    _ = time::sleep_until(http_deadline) => return Ok(()),
+                    result = client.get_agent_connections() => result,
+                };
+                let fresh = match fresh {
+                    Ok(fresh) => match convert::<meshway_protocol::AgentConnectionsSnapshot>(fresh)
+                    {
+                        Ok(fresh) => fresh,
+                        Err(_) => return Ok(()),
+                    },
+                    Err(error) if error.api().is_some_and(|error| error.status == 403) => {
+                        return Err(error.into());
+                    }
+                    Err(_) => return Ok(()),
+                };
+                if guard.as_ref().is_some_and(|guard| !guard.current()) {
+                    return Ok(());
+                }
+                let Some(key) = self
+                    .connections
+                    .as_ref()
+                    .and_then(|state| state.keys.public_key())
+                else {
+                    return Ok(());
+                };
+                if super::validation::validate(
+                    &fresh,
+                    &self.identity,
+                    key,
+                    manager.snapshot.as_ref(),
+                )
+                .is_err()
+                    || (fresh.payload.revision == request.revision
+                        && fresh.digest == request.digest)
+                {
+                    return Ok(());
+                }
+                manager.withdraw(Reason::InvalidConfiguration).await;
                 return Err(AgentError::Http {
                     status: 422,
                     retryable: true,
