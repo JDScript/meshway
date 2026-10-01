@@ -13,6 +13,7 @@ import { useLocationHash } from "@/components/common/use-location-hash"
 import { EndpointDiscoveryPanel } from "@/components/connections/endpoint-discovery-panel"
 import { Badge } from "@/components/ui/badge"
 import { buttonVariants } from "@/components/ui/button"
+import { NativeSelect, NativeSelectOption } from "@/components/ui/native-select"
 import { LIVE_STATUS_COMMAND, NETCHECK_COMMAND, NODE_STATE_ARGUMENT, peerDiagnosticCommands } from "@/lib/connectivity-guidance"
 import { docsUrl } from "@/lib/config"
 import type { ControllerResult } from "@/lib/controller"
@@ -103,18 +104,18 @@ function NodeSelect({ label, id, value, nodes, exclude, onChange }: {
   return (
     <div className="flex min-w-0 flex-col gap-1.5">
       <label htmlFor={id} className="text-xs font-medium">{label}</label>
-      <select id={id} value={value} onChange={(event) => onChange(event.target.value)} className="h-8 w-full min-w-0 rounded-md border border-input bg-card px-2 text-[0.8125rem]">
-        <option value="">请选择节点</option>
-        {value && !nodes.some((node) => node.id === value) ? <option value={value}>不可用节点（来自链接）</option> : null}
-        {nodes.map((node) => <option key={node.id} value={node.id} disabled={node.id === exclude}>{node.name} · {node.id.slice(0, 8)}</option>)}
-      </select>
+      <NativeSelect id={id} value={value} onChange={(event) => onChange(event.target.value)} className="w-full">
+        <NativeSelectOption value="">请选择节点</NativeSelectOption>
+        {value && !nodes.some((node) => node.id === value) ? <NativeSelectOption value={value}>不可用节点（来自链接）</NativeSelectOption> : null}
+        {nodes.map((node) => <NativeSelectOption key={node.id} value={node.id} disabled={node.id === exclude}>{node.name} · {node.id.slice(0, 8)}</NativeSelectOption>)}
+      </NativeSelect>
     </div>
   )
 }
 
 function CheckSection({ id, title, source, open, children }: { id: string; title: string; source: string; open?: boolean; children: ReactNode }) {
   return (
-    <DiagnosticDetails id={id} open={open} title={title} className="scroll-mt-20">
+    <DiagnosticDetails id={id} open={open} title={title} className="scroll-mt-28 bg-card shadow-xs">
       <Badge variant="outline" className="w-fit font-normal text-muted-foreground">{source}</Badge>
       <div className="flex min-w-0 flex-col items-start gap-3 text-xs text-muted-foreground [&>div]:w-full [&>p]:leading-relaxed">{children}</div>
     </DiagnosticDetails>
