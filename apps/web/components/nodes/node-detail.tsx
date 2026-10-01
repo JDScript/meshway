@@ -17,6 +17,7 @@ import { useSearchParams } from "next/navigation"
 import { useCallback, useState, type ReactNode } from "react"
 
 import { ManagedDataplanePanel } from "@/components/nodes/managed-dataplane-panel"
+import { NodeDnsPanel, type NodeDnsNetwork } from "@/components/nodes/node-dns-panel"
 import { ConnectionsEditor } from "@/components/connections/connections-editor"
 import { NodeRuntimePanel, RuntimeChip } from "@/components/connections/runtime-panel"
 import { useConnectionRuntimes, type InitialRuntimes, type Runtimes } from "@/components/connections/use-runtimes"
@@ -68,6 +69,7 @@ export function NodeDetail({
   controllerUrl,
   initialRuntimes,
   tags,
+  network,
 }: {
   node: NodeSummary
   fetchedAt: number
@@ -77,6 +79,7 @@ export function NodeDetail({
   initialRuntimes: InitialRuntimes
   /** This node's tags, or an error when the tag snapshot could not be read. */
   tags: { ok: true; tags: string[] } | { ok: false; error: string }
+  network: NodeDnsNetwork
 }) {
   // The URL is the source of truth: history navigation can restore a cached
   // render whose server-provided tab is older than the entry's URL.
@@ -224,6 +227,7 @@ export function NodeDetail({
             onOpenConnections={() => changeTab("connections")}
             onSetCountry={revoked ? null : () => setDialog("country")}
             tags={tags}
+            network={network}
           />
         </TabsContent>
 
@@ -278,6 +282,7 @@ function Overview({
   onOpenConnections,
   onSetCountry,
   tags,
+  network,
 }: {
   node: NodeSummary
   fetchedAt: number
@@ -287,6 +292,7 @@ function Overview({
   onOpenConnections: () => void
   onSetCountry: (() => void) | null
   tags: { ok: true; tags: string[] } | { ok: false; error: string }
+  network: NodeDnsNetwork
 }) {
   const scope = connections.ok ? nodeScope(fromPlan(connections.data.configuration), node.id) : null
   return (
@@ -354,6 +360,7 @@ function Overview({
       </Panel>
 
       <div className="flex flex-col gap-4">
+        <NodeDnsPanel node={node} network={network} />
         <Panel title="控制面" bodyClassName="px-4 py-1">
           <dl className="divide-y">
             <Row label="最后联系" hint="controller 最近一次接受注册或心跳，不代表在线或连通">

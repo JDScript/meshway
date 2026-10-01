@@ -3,11 +3,14 @@
 import type { NetworkSnapshot, SaveNetworkRequest } from "@meshway/control-client"
 import { zSaveNetworkRequest } from "@meshway/control-client/schemas"
 import { RefreshCwIcon, SaveIcon } from "lucide-react"
+import Link from "next/link"
 import { useRouter } from "next/navigation"
 import { useEffect, useId, useState, useTransition } from "react"
 
 import { CopyButton } from "@/components/common/copy-button"
+import { DraftActionBar } from "@/components/common/draft-action-bar"
 import { Panel } from "@/components/common/panel"
+import { DnsDocsLinks, DnsStatusCommand } from "@/components/network/dns-guidance"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { AlertDialog, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog"
 import { Badge } from "@/components/ui/badge"
@@ -82,7 +85,6 @@ export function NetworkSettings({ snapshot }: { snapshot: NetworkSnapshot }) {
       setFeedback(null)
     })
   }
-  const dig = `dig @127.0.0.1 -p 5353 <name>.${base.dns.zone}`
 
   return (
     <div data-testid="network-settings" className="flex flex-col gap-4">
@@ -119,20 +121,31 @@ export function NetworkSettings({ snapshot }: { snapshot: NetworkSnapshot }) {
           <div className="flex flex-col gap-1.5"><Label htmlFor={`${id}-ttl`}>TTL（秒）</Label><Input id={`${id}-ttl`} data-testid="network-dns-ttl" inputMode="numeric" value={draft.ttl} disabled={pending} onChange={(event) => setDraft({ ...draft, ttl: event.target.value })} /></div>
         </div>
         <div className="flex flex-wrap gap-2"><Badge variant="outline">已保存意图：{base.dns.enabled ? "启用" : "关闭"}</Badge><Badge variant="outline">运行状态未上报</Badge></div>
-        <p className="text-xs text-muted-foreground">支持节点名的 A / AAAA / PTR。没有递归解析、上游转发、系统 DNS 接管或互联网域名路由上下文。普通配置 ACK 不证明解析器运行。</p>
-        <div className="flex flex-col gap-2 rounded-lg border bg-muted/30 p-3 text-xs">
-          <h3 className="font-medium">在 agent 上实际验证</h3>
-          <p className="text-muted-foreground">Agent 需显式指定 <code className="font-mono">--dns-listen 127.0.0.1:5353</code>，提供 loopback UDP / TCP 服务。下例使用已保存的 zone；将 &lt;name&gt; 替换为有效且唯一的节点名称。无效或重名 alias 不发布，完整 ID canonical 名仍保留。</p>
-          <div className="flex min-w-0 items-start gap-2"><code data-testid="network-dns-example" className="min-w-0 flex-1 font-mono break-all">{dig}</code><CopyButton value={dig} label="复制 DNS 验证命令" iconOnly variant="ghost" /></div>
+        <div id="dns-diagnostics" className="flex min-w-0 scroll-mt-20 flex-col gap-3 border-t pt-4 text-xs">
+          <h3 className="font-medium">DNS 诊断</h3>
+          <p data-testid="network-dns-saved-context" className="text-muted-foreground">已保存 r{base.revision} · zone <code className="font-mono break-all">{base.dns.zone}</code> · TTL {base.dns.ttl_seconds} 秒。{base.dns.enabled ? "启用是发布意图，尚不能证明本地解析服务运行。" : "DNS 已关闭，不发布节点记录。"}此处使用已保存配置，不预览未保存草稿。</p>
+          <p className="text-muted-foreground">本地 DNS listener 与系统 resolver 状态未知；普通配置 ACK 只表示已保存。Agent 需显式配置 <code className="font-mono">--dns-listen 127.0.0.1:5353</code> 才提供 loopback UDP / TCP 查询。系统 DNS 接入需另外显式启用。</p>
+          <p className="text-muted-foreground">在 <Link href="/nodes" className="text-foreground underline underline-offset-4">节点详情</Link> 复制完整 canonical FQDN 与实际 dig 命令。可读 alias 仅在 controller 检查全部活动节点后发布；无效或重名 alias 不发布，不影响完整身份名。</p>
+          <DnsStatusCommand />
+          <p className="text-muted-foreground">支持 A / AAAA / PTR，不做递归或上游转发；AAAA 是地址元数据，解析成功不证明 IPv6 数据面、访问授权或互联网域名路由已生效。</p>
+          <DnsDocsLinks />
         </div>
       </Panel>
-      {issues.length > 0 ? <ul aria-label="网络设置问题" className="list-inside list-disc text-xs text-destructive">{issues.map((issue) => <li key={issue}>{issue}</li>)}</ul> : null}
-      {reloadError ? <p role="alert" className="text-xs text-destructive">{reloadError}</p> : null}
-      {feedback ? <Alert data-testid="network-save-status" variant={feedback.status === "saved" ? "default" : "destructive"}><AlertTitle>{feedback.status === "saved" ? `已保存 r${feedback.snapshot.revision}` : feedback.status === "conflict" ? "配置版本冲突" : "未保存"}</AlertTitle><AlertDescription>{feedback.status === "saved" ? "名称与 DNS 控制意图已持久保存；请通过 agent 上的实际查询验证解析器。" : feedback.message}</AlertDescription></Alert> : null}
-      <div className="flex flex-wrap items-center gap-3">
-        <Button data-testid="network-save" disabled={!dirty || pending || issues.length > 0} onClick={save}><SaveIcon data-icon="inline-start" />{pending ? "处理中…" : "保存网络设置"}</Button>
-        <p className="text-xs text-muted-foreground">使用全局 CAS；标签、路由及其他配置的修改也会推进版本。</p>
-      </div>
+      <DraftActionBar visible={dirty || pending || issues.length > 0 || feedback !== null || reloadError !== null}>
+        <div aria-live="polite" className="flex flex-col gap-2">
+          {issues.length > 0 ? <ul aria-label="网络设置问题" className="list-inside list-disc text-xs text-destructive">{issues.map((issue) => <li key={issue}>{issue}</li>)}</ul> : null}
+          {reloadError ? <p role="alert" className="text-xs text-destructive">{reloadError}</p> : null}
+          {feedback ? <Alert data-testid="network-save-status" variant={feedback.status === "saved" ? "default" : "destructive"}><AlertTitle>{feedback.status === "saved" ? `已保存 r${feedback.snapshot.revision}` : feedback.status === "conflict" ? "配置版本冲突" : "未保存"}</AlertTitle><AlertDescription>{feedback.status === "saved" ? "名称与 DNS 控制意图已持久保存；请通过 agent 上的实际查询验证解析器。" : feedback.message}</AlertDescription></Alert> : null}
+        </div>
+        <div className="draft-action-bar-row">
+          <div className="draft-action-bar-summary text-xs">
+            <p className="text-muted-foreground">全局 CAS · 编辑基础 r{base.revision}；其他配置修改也会推进版本。</p>
+          </div>
+          <div className="draft-action-bar-actions">
+            <Button data-testid="network-save" disabled={!dirty || pending || issues.length > 0} onClick={save}><SaveIcon data-icon="inline-start" />{pending ? "处理中…" : "保存网络设置"}</Button>
+          </div>
+        </div>
+      </DraftActionBar>
       <AlertDialog open={confirmReload} onOpenChange={setConfirmReload}>
         <AlertDialogContent><AlertDialogHeader><AlertDialogTitle>放弃名称与 DNS 草稿并重新读取？</AlertDialogTitle><AlertDialogDescription>当前未保存的编辑将被 controller 最新的网络设置替换。冲突不会自动更新编辑基础。</AlertDialogDescription></AlertDialogHeader><AlertDialogFooter><AlertDialogCancel>继续编辑</AlertDialogCancel><Button variant="destructive" onClick={reload}>放弃草稿并重新读取</Button></AlertDialogFooter></AlertDialogContent>
       </AlertDialog>
