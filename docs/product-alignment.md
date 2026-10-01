@@ -11,6 +11,8 @@
 - **首版双核心闭环**（问题 4 已确认，选择 C）：Mesh 私网互访和终端按域名 / IP 经指定路径访问互联网同为首版核心。公网出口、域名分流应与平台配置下发、自动建连一起形成可用流程，不继续仅按旧技术路线推迟到后期。
 - **承载默认自动、保留 listener 控制**（问题 5 已确认）：平台提供默认协议优先级、自动选择 / 主备切换，并生成和下发默认参数、凭据；Web 可限制允许协议、调整优先级和覆盖某段承载。添加节点时提供可选 listener 配置入口，后续可在节点页修改；不要求用户逐对配置拨号候选。
 - **多网络隔离**（问题 6 已确认，选择 B）：一个 controller 托管多张独立网络，采用类似 tailnet 的边界。每张网络拥有独立成员、地址、DNS、Access、路由及相关配置，网络之间默认隔离；Web 选择网络后在该范围内操作。节点保持统一模型，现有有序路径与授权语义不因参考 Tailscale 而改变。
+- **一台设备一张网络**（问题 7 已确认，选择 A）：设备可保存多个网络接入并切换，同一时间只接入一张，不在多网同时传输。与 [Tailscale fast user switching](https://tailscale.com/docs/features/client/fast-user-switching) 一致。
+- **以 Tailscale 为产品基线**：常规场景贴近 Tailscale。Meshway 的差异只有两项扩展：可插拔的自定义 transport 承载（平台托管、自动选择与主备），以及按域名 / IP 经有序指定路径的 routing（多跳链路、指定出口）。网络、设备与用户、接入、授权、DNS、出口、控制台和客户端等定义默认参照 Tailscale 官方做法；只有上述扩展需要时才偏离，并说明理由。
 - **前端整体整理并行推进**：内部诊断字段收进高级详情，页面围绕用户任务组织；正常状态和失败原因仍需真实可见。
 - **统一开发入口**：收拢 Controller、Web dev、文档和 Docker demo 的启动、状态检查与更新入口，保持现有身份、业务配置和可写开发容器中的工具。
 - **性能专项并行推进**：用户观察到 Docker 原生网络约 100 Gbps、隧道约 300 Mbps，中转后更低。首先复现并定位瓶颈，再报告匹配条件下的改进。这个反馈不是本项目已复测的性能结论。
@@ -18,7 +20,18 @@
 
 ## 正在对齐
 
-7. 同一设备是否需要同时接入多张网络，还是保存多个接入配置、一次只启用一张并可切换即可？尚未确认。
+8. Access 是否改用 Tailscale grants 语义：只写允许规则、默认拒绝、多条规则叠加且与顺序无关？现行实现为已确认的有序 first-match allow/reject。
+
+### 与 Tailscale 基线不一致、待逐项复核
+
+以下是早先确认或已实现、但与 Tailscale 做法不同的地方。每项单独确认，确认前保持现状：
+
+- Access 的有序 first-match 与 reject（问题 8）。
+- Access 与 Routing 分为两套策略；Tailscale 用一份 policy file，路由约束写在 grant 的 `via` 中。
+- Routing 初始空策略为 reject；Tailscale 默认不接管互联网流量，设备选择 exit node 后才经由出口。
+- 互联网出口由管理员规则集中决定；Tailscale 由设备自行选择已获批准的 exit node，管理员通过 grants 与 `via` 限制可用范围。
+- 当前只有管理员、注册令牌与 tag；Tailscale 中设备归属登录用户，服务器类设备使用 tag 与 auth key，授权可按用户 / 组书写。
+- 手工“连接”页面与节点本地 profiles；Tailscale 中设备自动互联，无连接配置。自动建连与平台托管已确认，待实现。
 
 ## 当前实现与目标的差距
 
@@ -29,4 +42,6 @@
 ## Tailnet 对照依据
 
 - [What is a tailnet?](https://tailscale.com/docs/concepts/tailnet)：用户、设备、资源、DNS 与访问策略的网络边界。
-- [Fast user switching](https://tailscale.com/docs/features/client/fast-user-switching)：Tailscale 当前客户端支持保存并切换账户，但同一客户端一次只有一个活动账户，不同时在多张 tailnet 传输。此行为仅作为问题 7 的参考，不代表 Meshway 已采用。
+- [Fast user switching](https://tailscale.com/docs/features/client/fast-user-switching)：同一客户端保存多个账户，一次只有一个活动账户，不同时在多张 tailnet 传输。Meshway 已按问题 7 采用。
+- [Grants](https://tailscale.com/kb/1324/grants)、[Route filtering with Via](https://tailscale.com/docs/features/access-control/grants/grants-via)：只允许、默认拒绝；`via` 仅以 tag 限定可用的 exit node / subnet router / app connector，不是有序 hop 序列。
+- [Exit nodes](https://tailscale.com/kb/1103/exit-nodes)、[App connectors](https://tailscale.com/kb/1281/app-connectors)：设备通告、管理员批准、`autogroup:internet` 授权、终端自行选用；app connector 按域名经指定设备访问应用。
