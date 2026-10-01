@@ -1,6 +1,7 @@
 //! Persistent control-plane enrollment, scoped credentials and process contact.
 
 mod access_api;
+mod accounts;
 mod configuration_api;
 mod connection_runtime_api;
 mod connections_api;
