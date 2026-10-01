@@ -71,18 +71,21 @@ pnpm exec playwright test e2e/device-login.spec.ts
 
 smoke 自行分配回环端口与临时 controller 数据，使用真实 Keychain 的唯一测试 item，完成 Swift → FFI → 生成 Rust client → Web proxy → controller 的接入、重启读取、心跳、第二个真实节点的配置 / DNS 库存、撤销；退出时删除测试 item / 数据并停止子进程。可在命令末尾传入独立 bundle prefix 构建的 macOS executable 路径，短暂启动 unsigned App（同样由脚本停止）。批准由 test-only 生成客户端 fixture 完成，不注入 App 管理员权限、不将 code 写日志；它不验证 ASWebAuthenticationSession UI。Playwright 单独验证真实 Web 登录 / 批准 / 拒绝、proxy 幂等兑换 / 心跳、GET peers / DNS、方法限制、错误透传与 admin 路由未暴露。
 
-离屏视觉验收（无需 screen recording）：
+真实 macOS 窗口视觉验收（无需 screen recording）：
 
 ```sh
-MESHWAY_RENDER_DIR="${TMPDIR%/}/opencode/apple-ui" \
-  swift test --package-path apps/apple/MeshwayKit --filter renderAppleScreens
+xcodebuild -quiet -project apps/apple/Meshway.xcodeproj -scheme Meshway \
+  -configuration Debug -destination 'platform=macOS,arch=arm64' \
+  -derivedDataPath apps/apple/build/DerivedData CODE_SIGNING_ALLOWED=NO \
+  MESHWAY_BUNDLE_PREFIX=dev.meshway.snapshot build
+node apps/apple/scripts/snapshot.ts "${TMPDIR%/}/opencode/apple-ui-polish/round-4"
 ```
 
-`Tests/MeshwayVisualTests/RenderTests.swift` 的样本只在测试 target，ImageRenderer 输出明暗两套 signed-out、devices、error、revoked、loading、menu panel、iPhone-size onboarding / devices。渲染真实共享 `OnboardingLayout` / `DeviceContentView.content` / `NetworkLabel`；macOS ImageRenderer 不支持原生 Menu、Toggle、TextField、ScrollView，测试使用静态 chrome 代替并省去 scroll container。iPhone-size 捕获验证共享行在窄屏的换行，不冒充 iOS 原生导航 / List chrome 或 Simulator 运行。实际 App 保留原生 toolbar / switch / searchable / insetGrouped List。产物与具体边界见 [视觉验收](./apple-ui-verification.md)。
+脚本需先构建 controller / Web（见下方链接中的完整命令），自行启动隔离端口、临时数据及唯一 Keychain / defaults namespace，经真实 device flow 接入并创建五个真实 peers。Debug-only AppKit hook 捕获实际主窗口 titlebar / toolbar 和原生 sheets；面板使用真实 `MeshwayMenuView` 内容的 native host fallback。列表采用名称 + IPv4 第一行、DNS 第二行、IPv6 只在详情，长名称 / DNS 截断并保留完整详情和复制。`RenderTests.swift` 的 test-only ImageRenderer 只作为 iPhone-width / accessibility-size 共享布局辅助检查，不冒充 native iOS chrome 或 Simulator 运行。产物、四轮缺陷和具体边界见 [视觉验收](./apple-ui-verification.md)。
 
 签名默认无 Team，bundle prefix 为 `dev.example`。需要签名时创建忽略的 `apps/apple/Config/Local.xcconfig`，设置 `DEVELOPMENT_TEAM`、`MESHWAY_BUNDLE_PREFIX`，必要时覆盖 `MESHWAY_APP_GROUP`。`MESHWAY_KEYCHAIN_ACCESS_GROUP` 默认空，unsigned 使用默认 Keychain；需要 extension 共享时设置此变量并为 App / extension 添加匹配的 `keychain-access-groups` entitlement 与有效 provisioning。App Group 不能替代 Keychain access group。会员未续费，不能据编译声称签名权限、真机 NE 或隧道已验证。
 
-本地验收：Rust bridge + 真实 controller ephemeral-port 联测；Swift 覆盖严格 callback、各持久化 phase 恢复、镜像写入中断修复、原绑定重试、Keychain 错误 / 丢失、取消 / 拒绝、过期重开、撤销与重置中断；真实 Keychain / FFI / proxy smoke 和 Web Playwright 通过。三平台 XCFramework、macOS / iOS Simulator unsigned build 通过；独立 bundle prefix 的 macOS App 已对隔离 console 短暂启动并退出。原生浏览器 UI 自动化因 macOS Accessibility 未启用无法执行，不能声称已看到 Home 的真实接入显示。该机器 CoreSimulator / CoreDevice 插件版本仍不匹配，未验证 Simulator 运行；真机 NE 生命周期待有签名宿主验证。
+本地验收：Rust bridge + 真实 controller ephemeral-port 联测；Swift 覆盖严格 callback、各持久化 phase 恢复、镜像写入中断修复、原绑定重试、Keychain 错误 / 丢失、取消 / 拒绝、过期重开、撤销与重置中断；真实 Keychain / FFI / proxy smoke 和 Web Playwright 通过。三平台 XCFramework、macOS / iOS Simulator unsigned build 通过；独立 bundle prefix 的真实 macOS App 已完成隔离接入、真实设备 / DNS 库存和撤销窗口截图验收。原生浏览器 UI 自动化因 macOS Accessibility 未启用无法执行；未安装 Simulator runtime，未验证 native iOS 运行；真机 NE 生命周期待有签名宿主验证。
 
 ## FFI 审计边界
 
