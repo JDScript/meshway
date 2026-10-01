@@ -128,8 +128,10 @@ controller-assigned `100.96.*` addresses. It generates no static lab configurati
    must remain intact. A default-allow empty ACL still follows mandatory via-LAX routing,
    and an explicit routing reject still denies it. Restore default-reject tag access.
 7. Prepend an owned routing reject before the route; deny with endpoint access intact.
-   Remove only that rule and recover. Change routing to default-direct; deny rather
-   than silently reuse the unavailable relay path. Restore the via policy and recover.
+   Remove only that rule and recover. Change routing to default-direct: endpoint
+   authorization still allows the pair, but delivery fails because NYC–SHA has no
+   direct authenticated adjacency. The previous via-LAX route cannot be retained
+   after the route change. Restore the via policy and recover.
 8. Change SHA's source country so the reverse route selector no longer matches; deny and
     recover. Withdraw all endpoint access rules with routes intact; deny and recover.
    Then restart NYC with a valid saved candidate whose unique DNS name does not yet

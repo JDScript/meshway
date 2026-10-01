@@ -506,8 +506,8 @@ async function main() {
     await putPolicy({ ...rejected.policy, rules: rejected.policy.rules.filter((rule) => rule.id !== "tun-own-first-reject") });
     await success("first-match-reject-removed");
 
-    stage("default direct cannot bypass the path authorized through LAX");
-    await putPolicy({ default_action: "direct", rules: [] }); await negative("no-mandatory-hop-skipping");
+    stage("a newly selected direct route requires its own authenticated adjacency");
+    await putPolicy({ default_action: "direct", rules: [] }); await negative("direct-route-without-direct-adjacency");
     await putPolicy(routing); await success("via-LAX-restored");
 
     stage("country selector changes take effect independently of endpoint access");
