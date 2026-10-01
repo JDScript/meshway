@@ -108,7 +108,7 @@ public struct OnboardingLayout<ServerField: View, NameField: View, Action: View>
     self.action = action
   }
   public var body: some View {
-    VStack(spacing: 28) {
+    VStack(spacing: LayoutMetrics.sectionGap) {
       VStack(spacing: 16) {
         MeshwayGlyph()
         VStack(spacing: 8) {
@@ -122,7 +122,7 @@ public struct OnboardingLayout<ServerField: View, NameField: View, Action: View>
           .font(.body).foregroundStyle(.secondary).multilineTextAlignment(.center)
         }
       }
-      VStack(alignment: .leading, spacing: 18) {
+      VStack(alignment: .leading, spacing: 16) {
         field("Server URL", content: serverField)
         field("Device name", content: nameField)
         if let message {
@@ -133,16 +133,21 @@ public struct OnboardingLayout<ServerField: View, NameField: View, Action: View>
         action()
       }
       VStack(spacing: 12) {
-        Text("Your browser handles sign-in and approval.\nYour device identity stays in Keychain.")
-          .font(.caption).foregroundStyle(.secondary).multilineTextAlignment(.center)
+        Text(
+          status == .revoked
+            ? "Reset this device from the network menu to sign in again.\nThis only removes its local identity."
+            : "Your browser handles sign-in and approval.\nYour device identity stays in Keychain."
+        )
+        .font(.caption).foregroundStyle(.secondary).multilineTextAlignment(.center)
         TunnelNotice()
       }
-    }.frame(maxWidth: 360).padding(.horizontal, 28).padding(.vertical, 36)
+    }.frame(maxWidth: 360).padding(.horizontal, LayoutMetrics.inset)
+      .padding(.vertical, LayoutMetrics.sectionGap)
   }
   private func field<Content: View>(_ title: String, @ViewBuilder content: () -> Content)
     -> some View
   {
-    VStack(alignment: .leading, spacing: 7) {
+    VStack(alignment: .leading, spacing: LayoutMetrics.groupGap) {
       Text(title).font(.caption.weight(.medium)).foregroundStyle(.secondary)
       content().frame(maxWidth: .infinity, alignment: .leading).padding(12)
         .background(Surface.card, in: RoundedRectangle(cornerRadius: 10))

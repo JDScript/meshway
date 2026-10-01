@@ -81,6 +81,13 @@ import Testing
         }, name: "iphone-devices-\(suffix)", width: 393, height: 1000, scheme: scheme,
         output: output)
       try render(
+        DeviceContentView(state: state).content
+          .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+          .background(Color(nsColor: .windowBackgroundColor))
+          .environment(\.dynamicTypeSize, .accessibility3),
+        name: "iphone-devices-accessibility-\(suffix)", width: 393, height: 1400,
+        scheme: scheme, output: output)
+      try render(
         shell(title: "Meshway") {
           onboarding(name: own.name, revoked: true)
         }, name: "mac-revoked-\(suffix)", width: 500, height: 680, scheme: scheme, output: output)

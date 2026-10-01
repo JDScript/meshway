@@ -25,10 +25,15 @@ public struct MeshwayRootView: View {
       #if os(iOS)
         .navigationBarTitleDisplayMode(.inline)
         .toolbarTitleMenu { networkActions }
+      #else
+        .modifier(NetworkWindowTitle())
       #endif
       .toolbar {
         #if os(macOS)
           ToolbarItem(placement: .navigation) { networkMenu }
+          if #available(macOS 26, *) {
+            ToolbarSpacer(.flexible, placement: .primaryAction)
+          }
         #else
           ToolbarItem(placement: .principal) { networkMenu }
         #endif
@@ -52,7 +57,7 @@ public struct MeshwayRootView: View {
         case "dismiss":
           selected = nil
           showNetwork = false
-        case "search": search = "no matching device"
+        case "search": search = search.isEmpty ? "no matching device" : ""
         default: break
         }
       }
@@ -91,7 +96,8 @@ public struct MeshwayRootView: View {
       networkActions
     } label: {
       NetworkLabel(title: state.networkTitle)
-    }.menuStyle(.borderlessButton).accessibilityLabel("Select network: \(state.networkTitle)")
+    }.menuStyle(.borderlessButton)
+      .accessibilityLabel("Select network: \(state.networkTitle)")
   }
   @ViewBuilder private var networkActions: some View {
     if let server = model.enrollment.snapshot?.server ?? model.controller?.url.absoluteString {
@@ -130,7 +136,10 @@ public struct MeshwayRootView: View {
           }
         }
         Section("Devices · \(state.peers.count)") {
-          if state.filtered(search).isEmpty { DeviceEmptyState(state: state, search: search) }
+          if state.filtered(search).isEmpty {
+            DeviceEmptyState(state: state, search: search).frame(maxWidth: .infinity)
+              .padding(.vertical, LayoutMetrics.panelInset)
+          }
           ForEach(state.filtered(search)) { device in deviceButton(device, own: false) }
         }
         Section { InventoryFooter(state: state) }
@@ -140,15 +149,17 @@ public struct MeshwayRootView: View {
       .refreshable { await model.enrollment.refresh() }
     #else
       VStack(spacing: 0) {
-        HStack(spacing: 12) {
+        HStack(spacing: LayoutMetrics.groupGap) {
           SearchBar(text: $search)
           Button("Refresh devices", systemImage: "arrow.clockwise") {
             Task { await model.enrollment.refresh() }
           }
           .labelStyle(.iconOnly).buttonStyle(.borderless).disabled(state.loading)
+          .frame(width: 32, height: 32).contentShape(Rectangle())
           .help("Refresh devices and contact controller")
-        }.padding(.horizontal, 24).padding(.top, 18).padding(.bottom, 14)
-        DeviceContentView(state: state, search: search, select: { selected = $0 })
+        }.padding(.horizontal, LayoutMetrics.inset).padding(.top, LayoutMetrics.panelInset)
+        DeviceContentView(
+          state: state, search: search, selectedID: selected?.id, select: { selected = $0 })
       }
       .background(Surface.canvas)
     #endif
@@ -169,6 +180,18 @@ public struct MeshwayRootView: View {
     #endif
   }
 }
+
+#if os(macOS)
+  private struct NetworkWindowTitle: ViewModifier {
+    @ViewBuilder func body(content: Content) -> some View {
+      if #available(macOS 26, *) {
+        content.toolbar(removing: .title)
+      } else {
+        content
+      }
+    }
+  }
+#endif
 
 public struct MeshwayMenuView: View {
   private let model: AppModel
@@ -196,9 +219,10 @@ public struct MeshwayMenuView: View {
       Divider()
       if model.enrollment.snapshot?.phase == .enrolled {
         DeviceContentView(
-          state: DeviceScreenState(model: model), compact: true, select: { selected = $0 }
+          state: DeviceScreenState(model: model), compact: true, selectedID: selected?.id,
+          select: { selected = $0 }
         )
-        .frame(height: 460)
+        .frame(height: LayoutMetrics.panelContentHeight)
       } else {
         VStack(spacing: 12) {
           MeshwayGlyph(size: 44)
@@ -206,9 +230,15 @@ public struct MeshwayMenuView: View {
           if let message = model.enrollment.message {
             Text(message).font(.caption).foregroundStyle(.secondary)
           }
-          Text("Open Meshway to sign in with your browser.").font(.callout).foregroundStyle(
-            .secondary)
-        }.padding(24)
+          Text(
+            model.enrollment.snapshot?.phase == .revoked
+              ? "Open Meshway to reset this device locally."
+              : "Open Meshway to sign in with your browser."
+          )
+          .font(.callout).foregroundStyle(.secondary)
+          TunnelNotice()
+        }.multilineTextAlignment(.center).frame(maxWidth: .infinity)
+          .padding(LayoutMetrics.inset)
       }
       Divider()
       HStack {
@@ -217,7 +247,7 @@ public struct MeshwayMenuView: View {
         #if os(macOS)
           Button("Quit") { NSApplication.shared.terminate(nil) }
         #endif
-      }.buttonStyle(.borderless).padding(16)
+      }.buttonStyle(.borderless).padding(LayoutMetrics.panelInset)
     }
     .frame(width: 360).background(Surface.canvas).tint(.indigo)
     .sheet(item: $selected) { device in

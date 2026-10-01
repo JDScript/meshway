@@ -3,6 +3,24 @@ import MeshwayCore
 import MeshwayModel
 import SwiftUI
 
+// Shared edges and an eight-point spacing rhythm for the window and panel.
+enum LayoutMetrics {
+  static let inset: CGFloat = 24
+  static let panelInset: CGFloat = 16
+  static let sectionGap: CGFloat = 24
+  static let groupGap: CGFloat = 8
+  static let rowInset: CGFloat = 16
+  static let rowVerticalInset: CGFloat = 12
+  static let iconSize: CGFloat = 28
+  static let iconGap: CGFloat = 12
+  static let countryWidth: CGFloat = 24
+  static let textInset = rowInset + iconSize + iconGap
+  static let cornerRadius: CGFloat = 12
+  static let sheetWidth: CGFloat = 480
+  static let sheetHeight: CGFloat = 560
+  static let panelContentHeight: CGFloat = 440
+}
+
 enum Surface {
   static var canvas: Color {
     #if os(macOS)
@@ -89,9 +107,14 @@ public struct DeviceScreenState: Sendable {
 public struct ConnectSwitch: View {
   public init() {}
   public var body: some View {
-    Toggle("Connect", isOn: .constant(false)).toggleStyle(.switch).disabled(true)
-      .fixedSize().accessibilityLabel("Connect — tunnel not implemented")
-      .help("The tunnel is not implemented in this version.")
+    HStack(spacing: LayoutMetrics.groupGap) {
+      Text("Connect").font(.callout).foregroundStyle(.secondary)
+      Toggle("Connect", isOn: .constant(false)).labelsHidden()
+        .toggleStyle(.switch).controlSize(.small).disabled(true)
+    }
+    .fixedSize().accessibilityElement(children: .combine)
+    .accessibilityLabel("Connect — tunnel not implemented")
+    .help("The tunnel is not implemented in this version.")
   }
 }
 
@@ -109,7 +132,7 @@ public struct MeshwayPanelHeader<Actions: View>: View {
       }.menuStyle(.borderlessButton).accessibilityLabel("Select network")
       Spacer(minLength: 8)
       ConnectSwitch()
-    }.padding(18)
+    }.padding(LayoutMetrics.panelInset)
   }
 }
 
@@ -121,7 +144,7 @@ public struct NetworkLabel: View {
       Image(systemName: "network").foregroundStyle(.indigo)
       Text(title).font(.headline).lineLimit(1)
       Image(systemName: "chevron.down").font(.caption2).foregroundStyle(.secondary)
-    }
+    }.help(title)
   }
 }
 
@@ -148,8 +171,12 @@ public struct SearchBar: View {
         }
         .buttonStyle(.plain).accessibilityLabel("Clear search")
       }
-    }.padding(10).background(Surface.card, in: RoundedRectangle(cornerRadius: 10))
-      .overlay { RoundedRectangle(cornerRadius: 10).strokeBorder(.primary.opacity(0.07)) }
+    }.padding(.horizontal, LayoutMetrics.rowInset).padding(.vertical, LayoutMetrics.groupGap)
+      .frame(minHeight: 32)
+      .background(Surface.card, in: RoundedRectangle(cornerRadius: LayoutMetrics.groupGap))
+      .overlay {
+        RoundedRectangle(cornerRadius: LayoutMetrics.groupGap).strokeBorder(.primary.opacity(0.1))
+      }
   }
 }
 
@@ -157,14 +184,16 @@ public struct DeviceContentView: View {
   let state: DeviceScreenState
   let search: String
   let compact: Bool
+  let selectedID: String?
   let select: ((MeshDevice) -> Void)?
   public init(
-    state: DeviceScreenState, search: String = "", compact: Bool = false,
+    state: DeviceScreenState, search: String = "", compact: Bool = false, selectedID: String? = nil,
     select: ((MeshDevice) -> Void)? = nil
   ) {
     self.state = state
     self.search = search
     self.compact = compact
+    self.selectedID = selectedID
     self.select = select
   }
   public var body: some View {
@@ -173,7 +202,9 @@ public struct DeviceContentView: View {
     }.background(Surface.canvas)
   }
   public var content: some View {
-    VStack(alignment: .leading, spacing: compact ? 16 : 22) {
+    VStack(
+      alignment: .leading, spacing: compact ? LayoutMetrics.panelInset : LayoutMetrics.sectionGap
+    ) {
       TunnelNotice()
       if let error = state.error { RefreshError(message: error, hasInventory: state.loaded) }
       if let own = state.ownDevice {
@@ -181,11 +212,11 @@ public struct DeviceContentView: View {
           sectionHeading("This device")
           VStack(alignment: .leading, spacing: 0) {
             row(own, isSelf: true)
-            Divider().padding(.leading, 58)
+            Divider().padding(.leading, LayoutMetrics.textInset)
             HeartbeatCaption(result: state.heartbeatResult, time: state.heartbeatTime)
-              .padding(.horizontal, 16).padding(.vertical, 12)
-          }.background(Surface.card, in: RoundedRectangle(cornerRadius: 14))
-            .overlay { RoundedRectangle(cornerRadius: 14).strokeBorder(.primary.opacity(0.07)) }
+              .padding(.horizontal, LayoutMetrics.rowInset)
+              .padding(.vertical, LayoutMetrics.rowVerticalInset)
+          }.deviceCard()
         }
       }
       VStack(alignment: .leading, spacing: 8) {
@@ -205,33 +236,31 @@ public struct DeviceContentView: View {
           }
           ForEach(devices) { device in
             row(device, isSelf: false)
-            if device.id != devices.last?.id { Divider().padding(.leading, 58) }
+            if device.id != devices.last?.id {
+              Divider().padding(.leading, LayoutMetrics.textInset)
+            }
           }
-        }.background(Surface.card, in: RoundedRectangle(cornerRadius: 14))
-          .overlay { RoundedRectangle(cornerRadius: 14).strokeBorder(.primary.opacity(0.07)) }
+        }.deviceCard()
         if compact && state.peers.count > 3 {
           Text("\(state.peers.count - 3) more in Meshway").font(.caption).foregroundStyle(
             .secondary)
         }
       }
       if !compact { InventoryFooter(state: state) }
-    }.padding(compact ? 18 : 24).padding(.top, compact ? 0 : -6)
+    }.padding(.horizontal, compact ? LayoutMetrics.panelInset : LayoutMetrics.inset)
+      .padding(.vertical, LayoutMetrics.panelInset)
   }
   private func sectionHeading(_ title: String) -> some View {
-    Text(title).font(.subheadline.weight(.semibold)).foregroundStyle(.secondary).padding(
-      .leading, 2)
+    Text(title).font(.subheadline.weight(.semibold)).foregroundStyle(.secondary)
   }
   @ViewBuilder private func row(_ device: MeshDevice, isSelf: Bool) -> some View {
     let content = DeviceRow(
-      device: device, dnsName: state.dnsName(device), isSelf: isSelf, compact: compact
+      device: device, dnsName: state.dnsName(device), isSelf: isSelf
     )
-    .padding(.horizontal, 14).padding(.vertical, compact ? 12 : 14).contentShape(Rectangle())
+    .padding(.horizontal, LayoutMetrics.rowInset).padding(.vertical, LayoutMetrics.rowVerticalInset)
+    .contentShape(Rectangle())
     if let select {
-      Button {
-        select(device)
-      } label: {
-        content
-      }.buttonStyle(.plain)
+      DeviceRowButton(selected: selectedID == device.id, action: { select(device) }) { content }
         .contextMenu { CopyDeviceActions(device: device, dnsName: state.dnsName(device)) }
     } else {
       content.contextMenu { CopyDeviceActions(device: device, dnsName: state.dnsName(device)) }
@@ -239,41 +268,85 @@ public struct DeviceContentView: View {
   }
 }
 
+extension View {
+  fileprivate func deviceCard() -> some View {
+    background(Surface.card)
+      .clipShape(RoundedRectangle(cornerRadius: LayoutMetrics.cornerRadius))
+      .overlay {
+        RoundedRectangle(cornerRadius: LayoutMetrics.cornerRadius).strokeBorder(
+          .primary.opacity(0.08))
+      }
+  }
+}
+
+private struct DeviceRowButton<Content: View>: View {
+  let selected: Bool
+  let action: () -> Void
+  @ViewBuilder let content: () -> Content
+  @State private var hovering = false
+  var body: some View {
+    Button(action: action) {
+      content().frame(maxWidth: .infinity, alignment: .leading)
+        .background(
+          selected ? Color.indigo.opacity(0.1) : Color.primary.opacity(hovering ? 0.04 : 0))
+    }.buttonStyle(.plain)
+      #if os(macOS)
+        .onHover { hovering = $0 }
+      #endif
+  }
+}
+
 struct DeviceRow: View {
   let device: MeshDevice
   let dnsName: String?
   let isSelf: Bool
-  var compact = false
+  @Environment(\.dynamicTypeSize) private var dynamicType
+  @ScaledMetric(relativeTo: .caption2) private var countryWidth = LayoutMetrics.countryWidth
   var body: some View {
-    HStack(alignment: .top, spacing: 12) {
+    HStack(alignment: .center, spacing: LayoutMetrics.iconGap) {
       Image(systemName: "circle.hexagongrid")
-        .font(.system(size: compact ? 17 : 20, weight: .medium))
+        .font(.system(size: 16, weight: .medium))
         .foregroundStyle(isSelf ? Color.indigo : Color.secondary)
-        .frame(width: 34, height: 36)
+        .frame(width: LayoutMetrics.iconSize, height: LayoutMetrics.iconSize)
         .background(
           isSelf ? Color.indigo.opacity(0.09) : Color.secondary.opacity(0.07),
-          in: RoundedRectangle(cornerRadius: 9)
+          in: RoundedRectangle(cornerRadius: 8)
         )
         .accessibilityHidden(true)
       VStack(alignment: .leading, spacing: 4) {
-        HStack(alignment: .firstTextBaseline) {
-          Text(device.name).font(.body.weight(.medium)).foregroundStyle(.primary).lineLimit(2)
-          Spacer(minLength: 4)
-          if let country = device.country {
-            Text(country).font(.caption2.weight(.medium)).foregroundStyle(.secondary)
-              .help("Administrator-assigned country: \(country)")
-              .accessibilityLabel("Administrator-assigned country \(country)")
+        HStack(alignment: .firstTextBaseline, spacing: LayoutMetrics.groupGap) {
+          if dynamicType.isAccessibilitySize {
+            VStack(alignment: .leading, spacing: 4) {
+              deviceName.lineLimit(3)
+              address
+            }.frame(maxWidth: .infinity, alignment: .leading)
+          } else {
+            deviceName.lineLimit(1).truncationMode(.tail)
+              .frame(maxWidth: .infinity, alignment: .leading)
+            address.fixedSize()
           }
+          countryLabel
         }
-        Text(device.meshIPv4).font(.callout.monospaced()).foregroundStyle(.secondary)
-        if !compact {
-          if let dnsName { Text(dnsName).font(.caption).foregroundStyle(.secondary).lineLimit(2) }
-          Text(device.meshIPv6).font(.caption.monospaced()).foregroundStyle(.secondary).opacity(0.8)
-            .lineLimit(2)
+        if let dnsName {
+          Text(dnsName).font(.caption).foregroundStyle(.secondary)
+            .lineLimit(1).truncationMode(.middle).help(dnsName)
         }
       }
     }.accessibilityElement(children: .combine)
       .accessibilityHint("Device details and copy actions")
+  }
+  private var deviceName: some View {
+    Text(device.name).font(.body.weight(.medium)).foregroundStyle(.primary).help(device.name)
+  }
+  private var address: some View {
+    Text(device.meshIPv4).font(.callout.monospaced()).foregroundStyle(.secondary)
+  }
+  private var countryLabel: some View {
+    Text(device.country ?? "").font(.caption2.weight(.medium)).foregroundStyle(.secondary)
+      .frame(width: countryWidth, alignment: .trailing)
+      .help(device.country.map { "Administrator-assigned country: \($0)" } ?? "")
+      .accessibilityLabel(device.country.map { "Administrator-assigned country \($0)" } ?? "")
+      .accessibilityHidden(device.country == nil)
   }
 }
 
@@ -422,7 +495,7 @@ struct DeviceDetailView: View {
         .toolbar { ToolbarItem(placement: .confirmationAction) { Button("Done") { dismiss() } } }
     }
     #if os(macOS)
-      .frame(width: 480, height: 430)
+      .frame(width: LayoutMetrics.sheetWidth, height: LayoutMetrics.sheetHeight)
     #endif
   }
   private func copyRow(_ title: String, _ value: String) -> some View {
@@ -471,7 +544,7 @@ struct NetworkDetailView: View {
         .toolbar { ToolbarItem(placement: .confirmationAction) { Button("Done") { dismiss() } } }
     }
     #if os(macOS)
-      .frame(width: 480, height: 450)
+      .frame(width: LayoutMetrics.sheetWidth, height: LayoutMetrics.sheetHeight)
     #endif
   }
 }
