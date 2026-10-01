@@ -549,12 +549,14 @@ fn probing_failures_ipv6_and_individual_expiry_are_truthful() {
     report.sockets[0].observations.clear();
     f.send(&report, now).unwrap();
     let mut ipv6_fixture = Fixture::with_bind("[::]:19000");
-    let ipv6 = ipv6_fixture.request(now + Duration::seconds(1));
-    ipv6_fixture
-        .send(&ipv6, now + Duration::seconds(1))
-        .unwrap();
+    // The second fixture has its own real runtime receive timestamps. Under
+    // parallel test load its construction can exceed one second; querying with
+    // the first fixture's clock would incorrectly test a time before its lease.
+    let ipv6_now = Utc::now();
+    let ipv6 = ipv6_fixture.request(ipv6_now);
+    ipv6_fixture.send(&ipv6, ipv6_now).unwrap();
     assert_eq!(
-        ipv6_fixture.view(now + Duration::seconds(1)).state,
+        ipv6_fixture.view(ipv6_now).state,
         EndpointDiscoveryState::Observed
     );
 }
