@@ -93,6 +93,8 @@ impl Parameters {
             || self.path.contains(['\r', '\n', '#', '?', ' '])
             || self.host.is_empty()
             || self.host.len() > 253
+            || !self.host.is_ascii()
+            || self.host.contains(['/', '\\', '?', '#', '@'])
             || self
                 .host
                 .bytes()
@@ -116,8 +118,17 @@ fn config() -> WebSocketConfig {
         .max_frame_size(Some(MAX_MESSAGE_BYTES))
 }
 
-fn error(_: tokio_tungstenite::tungstenite::Error) -> io::Error {
+fn error(failure: tokio_tungstenite::tungstenite::Error) -> io::Error {
     // Remote HTTP bodies and payloads must never enter logs through errors.
+    if let tokio_tungstenite::tungstenite::Error::Http(response) = failure {
+        return io::Error::new(
+            io::ErrorKind::ConnectionRefused,
+            format!(
+                "WebSocket upgrade rejected (HTTP {})",
+                response.status().as_u16()
+            ),
+        );
+    }
     io::Error::new(io::ErrorKind::InvalidData, "WebSocket carrier failed")
 }
 

@@ -122,18 +122,31 @@ async fn managed_tcp_and_websocket_tls_noise_deliver_real_ipv4_both_directions_a
         // Reconfigure on the same bind, with fresh WS path/material version,
         // and require real IPv4 delivery again rather than retrying a failed bind.
         for i in 0..2 {
-            payloads[i].revision+=1;
-            payloads[i].configuration.revision+=1;
-            payloads[i].connections.revision+=1;
+            payloads[i].revision += 1;
+            payloads[i].configuration.revision += 1;
+            payloads[i].connections.revision += 1;
             for material in &mut managers[i].managed_materials {
-                material.version+=1;
-                if mode==VlessStreamTransport::Websocket {material.settings.websocket_path=Some("/changed".into());}
+                material.version += 1;
+                if mode == VlessStreamTransport::Websocket {
+                    material.settings.websocket_path = Some("/changed".into());
+                }
             }
-            managers[i].reconcile_dataplane(snapshot(payloads[i].clone()),keys[i].clone(),Instant::now()).await.unwrap();
-            assert_eq!(managers[i].observation().state,Phase::Applied);
+            managers[i]
+                .reconcile_dataplane(
+                    snapshot(payloads[i].clone()),
+                    keys[i].clone(),
+                    Instant::now(),
+                )
+                .await
+                .unwrap();
+            assert_eq!(managers[i].observation().state, Phase::Applied);
         }
-        for (source,target) in [(0,1),(1,0)] {
-            let bytes=packet(&payloads[source].configuration.node.mesh_ipv4,&payloads[target].configuration.node.mesh_ipv4,2);
+        for (source, target) in [(0, 1), (1, 0)] {
+            let bytes = packet(
+                &payloads[source].configuration.node.mesh_ipv4,
+                &payloads[target].configuration.node.mesh_ipv4,
+                2,
+            );
             time::timeout(Duration::from_secs(4),async{loop{sends[source].send(bytes.clone()).await.unwrap();tokio::select!{value=receives[target].recv()=>{assert_eq!(value,Some(bytes.clone()));break;},_=time::sleep(Duration::from_millis(50))=>{}}}}).await.expect("replacement TLS generation must rebind and deliver");
         }
         time::timeout(Duration::from_secs(6), async {

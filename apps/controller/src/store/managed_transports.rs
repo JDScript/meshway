@@ -217,6 +217,8 @@ fn validate(settings: &ManagedListenerSettings) -> Result<(), Error> {
                         || path.contains(['\r', '\n', '#', '?', ' '])
                         || host.is_empty()
                         || host.len() > 253
+                        || !host.is_ascii()
+                        || host.contains(['/', '\\', '?', '#', '@'])
                         || host
                             .bytes()
                             .any(|b| b.is_ascii_control() || b.is_ascii_whitespace())
@@ -271,8 +273,9 @@ fn generate(
         rcgen::generate_simple_self_signed(vec![settings.server_name.clone()])
             .map_err(|_| Error::Configuration("cannot generate transport certificate"))?;
     let random = local::credential()?;
+    let variant = 8 | (u8::from_str_radix(&random[16..17], 16).expect("random hex") & 3);
     let uuid = format!(
-        "{}-{}-4{}-a{}-{}",
+        "{}-{}-4{}-{variant:x}{}-{}",
         &random[..8],
         &random[8..12],
         &random[13..16],

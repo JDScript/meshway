@@ -96,7 +96,9 @@ async fn exact_path_and_host_mismatches_reject_http_upgrade() {
         let (server, client) =
             tokio::join!(websocket::accept(a, &expected), websocket::connect(b, &bad));
         assert!(server.is_err());
-        assert!(client.is_err());
+        let error = client.err().expect("upgrade must reject");
+        assert_eq!(error.kind(), std::io::ErrorKind::ConnectionRefused);
+        assert!(error.to_string().contains("HTTP 404"));
     }
 }
 
