@@ -1,5 +1,7 @@
 use std::{path::PathBuf, time::Duration};
 
+#[cfg(feature = "managed-connections")]
+use clap::CommandFactory;
 use clap::{Parser, Subcommand};
 use meshway_agent::{Agent, ControlSyncReceipts, SyncReceipt, connections_status, status};
 
@@ -87,6 +89,7 @@ enum Command {
         command: ConnectionsCommand,
     },
     /// Heartbeat and sync immediately, then periodically; retry transient failures with backoff.
+    #[cfg_attr(feature = "managed-connections", command(group(clap::ArgGroup::new("managed_apply").args(["apply_connections", "apply_dataplane"]).multiple(true))))]
     Run {
         #[arg(long, env = "MESHWAY_STATE", default_value = ".meshway/agent.json")]
         state: PathBuf,
@@ -121,6 +124,10 @@ enum Command {
         #[cfg(feature = "managed-connections")]
         #[arg(long, value_parser = parse_dns_listen)]
         dns_listen: Option<std::net::SocketAddr>,
+        /// Observe actual managed UDP sockets; repeat up to four numeric unicast observers.
+        #[cfg(feature = "managed-connections")]
+        #[arg(long, requires = "managed_apply", value_parser = meshway_agent::parse_stun_server)]
+        stun_server: Vec<std::net::SocketAddr>,
     },
     /// Read local identity metadata without exposing credentials or claiming liveness.
     Status {
@@ -269,7 +276,25 @@ async fn execute(command: Command) -> Result<(), Box<dyn std::error::Error>> {
             connection_lease_seconds,
             #[cfg(feature = "managed-connections")]
             dns_listen,
+            #[cfg(feature = "managed-connections")]
+            stun_server,
         } => {
+            #[cfg(feature = "managed-connections")]
+            let discovery = {
+                if !stun_server.is_empty() && !apply_connections && !apply_dataplane {
+                    Cli::command()
+                        .error(
+                            clap::error::ErrorKind::ArgumentConflict,
+                            "--stun-server requires --apply-connections or --apply-dataplane",
+                        )
+                        .exit();
+                }
+                meshway_agent::EndpointDiscoveryOptions::new(stun_server).unwrap_or_else(|error| {
+                    Cli::command()
+                        .error(clap::error::ErrorKind::ValueValidation, error)
+                        .exit()
+                })
+            };
             let mut agent = Agent::load(state)?;
             #[cfg(feature = "managed-connections")]
             let mut dns_service = if let Some(listen) = dns_listen {
@@ -296,7 +321,7 @@ async fn execute(command: Command) -> Result<(), Box<dyn std::error::Error>> {
                 #[cfg(feature = "managed-connections")]
                 if apply_dataplane {
                     agent
-                        .run_managed_dataplane(
+                        .run_managed_dataplane_with_discovery(
                             connection_profiles,
                             Duration::from_secs(interval_seconds),
                             Duration::from_secs(connection_lease_seconds),
@@ -304,6 +329,7 @@ async fn execute(command: Command) -> Result<(), Box<dyn std::error::Error>> {
                                 name: tun_name,
                                 mtu: tun_mtu,
                             },
+                            discovery,
                         )
                         .await?;
                     return Ok::<(), Box<dyn std::error::Error>>(());
@@ -311,10 +337,11 @@ async fn execute(command: Command) -> Result<(), Box<dyn std::error::Error>> {
                 #[cfg(feature = "managed-connections")]
                 if apply_connections {
                     agent
-                        .run_managed_connections(
+                        .run_managed_connections_with_discovery(
                             connection_profiles,
                             Duration::from_secs(interval_seconds),
                             Duration::from_secs(connection_lease_seconds),
+                            discovery,
                         )
                         .await?;
                     return Ok(());
@@ -389,6 +416,41 @@ fn parse_dns_listen(value: &str) -> Result<std::net::SocketAddr, String> {
 #[cfg(all(test, feature = "managed-connections"))]
 mod tests {
     use super::*;
+
+    #[test]
+    fn stun_is_opt_in_numeric_and_requires_managed_application() {
+        let cli = Cli::try_parse_from(["meshway-agent", "run", "--apply-connections"]).unwrap();
+        assert!(matches!(cli.command, Command::Run { stun_server, .. } if stun_server.is_empty()));
+        assert!(
+            Cli::try_parse_from(["meshway-agent", "run", "--stun-server", "127.0.0.1:3478"])
+                .is_err()
+        );
+        assert!(
+            Cli::try_parse_from([
+                "meshway-agent",
+                "run",
+                "--apply-connections",
+                "--stun-server",
+                "stun.example:3478"
+            ])
+            .is_err()
+        );
+        let cli = Cli::try_parse_from([
+            "meshway-agent",
+            "run",
+            "--apply-connections",
+            "--dns-listen",
+            "127.0.0.1:5353",
+            "--stun-server",
+            "127.0.0.1:3478",
+            "--stun-server",
+            "[::1]:3478",
+        ])
+        .unwrap();
+        assert!(
+            matches!(cli.command, Command::Run { stun_server, dns_listen: Some(_), .. } if stun_server.len() == 2)
+        );
+    }
 
     #[test]
     fn dns_is_explicit_loopback_and_can_share_dataplane_daemon() {

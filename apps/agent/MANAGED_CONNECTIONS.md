@@ -15,6 +15,15 @@ strictly below the lease (lease range 10–300 seconds, default 45). No cached p
 starts before a successful fresh controller sync. Runtime reports are separate
 from saved ACK receipts, which continue to contain `applied:false`.
 
+Add repeatable `--stun-server <NUMERIC_IP:PORT>` to observe the runtime's actual
+native UDP listener and outgoing sockets. This is opt-in, supports 1–4 distinct
+unicast observers, and does not bind auxiliary sockets or select new targets.
+The default daemon reports discovery `disabled` with an empty socket list.
+Discovery uses an independent report sequence within the acquired runtime epoch;
+ordinary runtime report success precedes discovery publication. Freshness comes
+from the accepted snapshot GET, including in adjacency-only mode, never from a
+later saved ACK. See [ENDPOINT_DISCOVERY.md](ENDPOINT_DISCOVERY.md).
+
 ## Private profile schema (frozen for integration)
 
 Strict JSON, max 128 KiB, max 128 profiles, unique IDs; unknown fields rejected.

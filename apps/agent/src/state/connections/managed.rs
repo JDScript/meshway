@@ -6,6 +6,7 @@ use meshway_protocol::{
     BeginConnectionRuntimeRequest, BeginConnectionRuntimeResponse,
     ConnectionRuntimeReason as Reason, GetConnectionRuntimeEpochResponse,
     ReportConnectionRuntimeRequest, ReportConnectionRuntimeResponse,
+    ReportEndpointDiscoveryRequest, ReportEndpointDiscoveryResponse,
 };
 use tokio::time::{self, Instant};
 
@@ -18,6 +19,19 @@ struct RuntimeLease {
     expected_epoch: Option<u32>,
     epoch: Option<u32>,
     sequence: u32,
+    discovery_sequence: u32,
+}
+
+impl RuntimeLease {
+    fn new() -> Result<Self, AgentError> {
+        Ok(Self {
+            instance_id: local::credential()?,
+            expected_epoch: None,
+            epoch: None,
+            sequence: 0,
+            discovery_sequence: 0,
+        })
+    }
 }
 
 impl Agent {
@@ -33,8 +47,14 @@ impl Agent {
         if !cfg!(target_os = "linux") {
             return Err(AgentError::Invalid("--apply-dataplane requires Linux"));
         }
-        self.run_managed(profiles, interval, lease, Some(options))
-            .await
+        self.run_managed(
+            profiles,
+            interval,
+            lease,
+            Some(options),
+            crate::EndpointDiscoveryOptions::default(),
+        )
+        .await
     }
 
     /// Opt-in managed adjacencies. The ordinary saved-only sync API is unchanged.
@@ -44,7 +64,41 @@ impl Agent {
         interval: Duration,
         lease: Duration,
     ) -> Result<(), AgentError> {
-        self.run_managed(profiles, interval, lease, None).await
+        self.run_managed(
+            profiles,
+            interval,
+            lease,
+            None,
+            crate::EndpointDiscoveryOptions::default(),
+        )
+        .await
+    }
+
+    pub async fn run_managed_connections_with_discovery(
+        &mut self,
+        profiles: Option<PathBuf>,
+        interval: Duration,
+        lease: Duration,
+        discovery: crate::EndpointDiscoveryOptions,
+    ) -> Result<(), AgentError> {
+        self.run_managed(profiles, interval, lease, None, discovery)
+            .await
+    }
+
+    pub async fn run_managed_dataplane_with_discovery(
+        &mut self,
+        profiles: Option<PathBuf>,
+        interval: Duration,
+        lease: Duration,
+        options: crate::TunOptions,
+        discovery: crate::EndpointDiscoveryOptions,
+    ) -> Result<(), AgentError> {
+        options.validate()?;
+        if !cfg!(target_os = "linux") {
+            return Err(AgentError::Invalid("--apply-dataplane requires Linux"));
+        }
+        self.run_managed(profiles, interval, lease, Some(options), discovery)
+            .await
     }
 
     async fn run_managed(
@@ -53,6 +107,7 @@ impl Agent {
         interval: Duration,
         lease: Duration,
         options: Option<crate::TunOptions>,
+        discovery: crate::EndpointDiscoveryOptions,
     ) -> Result<(), AgentError> {
         if !(Duration::from_secs(10)..=Duration::from_secs(300)).contains(&lease)
             || interval.is_zero()
@@ -77,6 +132,8 @@ impl Agent {
         } else {
             Manager::new(profiles, lease)
         };
+        manager.enable_discovery(discovery);
+        let mut runtime_lease = RuntimeLease::new()?;
         #[cfg(unix)]
         let control = crate::diagnostics::Server::bind(&self.path, &self._lock).await?;
         #[cfg(unix)]
@@ -85,39 +142,51 @@ impl Agent {
         let dns_guard = self.dns_guard.clone();
         #[cfg(unix)]
         let result = tokio::select! {
-            result = self.managed_loop(&mut manager, interval, &mut dataplane) => result,
+            result = self.managed_loop_with_lease(&mut manager, interval, &mut dataplane, &mut runtime_lease) => result,
             result = control.serve_with_dns(Some(prober), dns_guard) => result.map_err(AgentError::from),
             _ = tokio::signal::ctrl_c() => Ok(()),
         };
         #[cfg(not(unix))]
         let result = tokio::select! {
-            result = self.managed_loop(&mut manager, interval, &mut dataplane) => result,
+            result = self.managed_loop_with_lease(&mut manager, interval, &mut dataplane, &mut runtime_lease) => result,
             _ = tokio::signal::ctrl_c() => Ok(()),
         };
         if let Some(guard) = &self.dns_guard {
             guard.shutdown();
         }
         manager.withdraw(Reason::ShuttingDown).await;
+        if runtime_lease.epoch.is_some() {
+            // No lease renewal and no failure can hold the control loop open.
+            let _ = self
+                .report_discovery(&mut manager, &mut runtime_lease)
+                .await;
+        }
         result
     }
 
+    #[cfg(test)]
     pub(super) async fn managed_loop(
         &mut self,
         manager: &mut Manager,
         interval: Duration,
         dataplane: &mut Option<dataplane::State>,
     ) -> Result<(), AgentError> {
-        let mut lease = RuntimeLease {
-            instance_id: local::credential()?,
-            expected_epoch: None,
-            epoch: None,
-            sequence: 0,
-        };
+        self.managed_loop_with_lease(manager, interval, dataplane, &mut RuntimeLease::new()?)
+            .await
+    }
+
+    async fn managed_loop_with_lease(
+        &mut self,
+        manager: &mut Manager,
+        interval: Duration,
+        dataplane: &mut Option<dataplane::State>,
+        lease: &mut RuntimeLease,
+    ) -> Result<(), AgentError> {
         let mut backoff = 1_u64;
         loop {
             let mut control_synced = false;
             let result = self
-                .managed_tick(manager, &mut lease, &mut control_synced, dataplane)
+                .managed_tick(manager, lease, &mut control_synced, dataplane)
                 .await;
             // Recovery belongs to the validated, durable configuration sync,
             // not to the later best-effort observation report. The first probe
@@ -172,7 +241,8 @@ impl Agent {
         dataplane: &mut Option<dataplane::State>,
     ) -> Result<(), AgentError> {
         self.heartbeat().await?;
-        let (mut receipt, mut packet_snapshot) = self.managed_sync_mode(manager, dataplane).await?;
+        let (mut receipt, mut packet_snapshot, mut fresh_at) =
+            self.managed_sync_mode(manager, dataplane).await?;
         if lease.epoch.is_none() {
             if lease.expected_epoch.is_none() {
                 let response: GetConnectionRuntimeEpochResponse =
@@ -204,9 +274,9 @@ impl Agent {
             }
             lease.epoch = Some(response.epoch);
             // Pull while holding the runtime lease, not merely before begin.
-            (receipt, packet_snapshot) = self.managed_sync_mode(manager, dataplane).await?;
+            (receipt, packet_snapshot, fresh_at) =
+                self.managed_sync_mode(manager, dataplane).await?;
         }
-        let fresh_at = Instant::now();
         let state = self
             .connections
             .as_ref()
@@ -296,6 +366,78 @@ impl Agent {
             })
             .map_err(|_| AgentError::Invalid("cannot encode runtime receipt"))?
         );
+        self.report_discovery(manager, lease).await?;
+        Ok(())
+    }
+
+    async fn report_discovery(
+        &self,
+        manager: &mut Manager,
+        lease: &mut RuntimeLease,
+    ) -> Result<(), AgentError> {
+        let Some(snapshot) = manager.snapshot.as_ref() else {
+            return Ok(());
+        };
+        let (state, sockets, mut guard) = manager.discovery_snapshot();
+        lease.discovery_sequence = lease
+            .discovery_sequence
+            .checked_add(1)
+            .ok_or(AgentError::Invalid("discovery report sequence exhausted"))?;
+        let request = ReportEndpointDiscoveryRequest {
+            epoch: lease.epoch.expect("runtime lease acquired"),
+            sequence: lease.discovery_sequence,
+            revision: snapshot.payload.revision,
+            digest: snapshot.digest.clone(),
+            state,
+            sockets,
+        };
+        let body = convert(&request)?;
+        let client = self.runtime_client();
+        let send = client.report_endpoint_discovery(body);
+        let response = tokio::select! {
+            biased;
+            _ = async { match &mut guard { Some(guard) => guard.changed().await, None => std::future::pending().await } } => return Ok(()),
+            _ = time::sleep(Duration::from_secs(2)) => return Ok(()),
+            result = send => result,
+        };
+        let response = match response {
+            Err(error) if error.api().is_some_and(|error| error.status == 409) => {
+                manager.withdraw(Reason::LeaseSuperseded).await;
+                return Err(AgentError::Invalid(
+                    "runtime lease superseded; refusing to reacquire",
+                ));
+            }
+            Err(error) if error.api().is_some_and(|error| error.status == 403) => {
+                return Err(error.into());
+            }
+            Err(error) if error.api().is_some_and(|error| error.status == 422) => {
+                return Err(AgentError::Http {
+                    status: 422,
+                    retryable: true,
+                });
+            }
+            Err(_) => return Ok(()),
+            Ok(response) => convert::<ReportEndpointDiscoveryResponse>(response)?,
+        };
+        if guard.as_ref().is_some_and(|guard| !guard.current()) {
+            return Ok(());
+        }
+        if response.epoch != request.epoch || response.sequence != request.sequence {
+            return Err(AgentError::Invalid("discovery report response mismatch"));
+        }
+        #[derive(serde::Serialize)]
+        struct Receipt<'a> {
+            endpoint_discovery: &'a ReportEndpointDiscoveryRequest,
+            reported_at: chrono::DateTime<chrono::Utc>,
+        }
+        println!(
+            "{}",
+            serde_json::to_string(&Receipt {
+                endpoint_discovery: &request,
+                reported_at: response.reported_at
+            })
+            .map_err(|_| AgentError::Invalid("cannot encode discovery receipt"))?
+        );
         Ok(())
     }
 
@@ -313,21 +455,27 @@ impl Agent {
         (
             super::ControlSyncReceipts,
             Option<(meshway_protocol::AgentDataplaneSnapshot, Instant)>,
+            Instant,
         ),
         AgentError,
     > {
         if let Some(dataplane) = dataplane {
             let synced = dataplane.sync(self, manager).await?;
-            Ok((synced.receipt, Some((synced.snapshot, synced.fresh_at))))
+            Ok((
+                synced.receipt,
+                Some((synced.snapshot, synced.fresh_at)),
+                synced.fresh_at,
+            ))
         } else {
-            Ok((self.managed_sync(manager).await?, None))
+            let (receipt, fresh_at) = self.managed_sync(manager).await?;
+            Ok((receipt, None, fresh_at))
         }
     }
 
     async fn managed_sync(
         &mut self,
         manager: &Manager,
-    ) -> Result<super::ControlSyncReceipts, AgentError> {
+    ) -> Result<(super::ControlSyncReceipts, Instant), AgentError> {
         self.publish_connection_identity().await?;
         let configuration = self.sync().await?;
         #[cfg(unix)]
@@ -337,12 +485,19 @@ impl Agent {
                 .expect("freshly synced configuration")
                 .public_inventory(),
         );
+        let mut fresh_at = Instant::now();
         let connections = self
-            .sync_published_connections_observe(|snapshot| manager.invalidate_if_changed(snapshot))
+            .sync_published_connections_observe(|snapshot, received_at| {
+                fresh_at = received_at;
+                manager.invalidate_if_changed(snapshot);
+            })
             .await?;
-        Ok(super::ControlSyncReceipts {
-            configuration,
-            connections,
-        })
+        Ok((
+            super::ControlSyncReceipts {
+                configuration,
+                connections,
+            },
+            fresh_at,
+        ))
     }
 }

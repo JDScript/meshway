@@ -3,7 +3,11 @@
 #[allow(dead_code, clippy::all)]
 pub mod generated;
 
+#[cfg(feature = "managed-connections")]
+mod endpoint_discovery;
 pub mod netcheck;
+#[cfg(feature = "managed-connections")]
+pub use endpoint_discovery::{EndpointDiscoveryOptions, parse_stun_server};
 
 // Share the production filesystem implementation with unit tests, while its
 // fault hooks remain strictly cfg(test) and absent from production dependencies.

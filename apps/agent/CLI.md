@@ -23,6 +23,27 @@ meshway-agent dns query 100.64.0.2 --json
 
 ## Evidence and freshness
 
+Managed carrier endpoint observations are explicitly enabled on the daemon:
+
+```sh
+meshway-agent run --state /private/agent.json --apply-connections \
+  --stun-server 192.0.2.10:3478 --stun-server '[2001:db8::10]:3478'
+```
+
+Replace the documentation addresses with your numeric UDP observers. Repeat
+`--stun-server` 1–4 times, with distinct unicast IP:port values; DNS names, zero
+ports, unspecified/multicast/broadcast addresses, IPv4-mapped IPv6 and scoped
+IPv6 are rejected. The flag requires `--apply-connections` or `--apply-dataplane`
+(usage exit 2). There are no public defaults. Without the flag discovery is
+`disabled` and sends no STUN. Existing DNS options can share the same daemon.
+
+Successful controller publications produce daemon stdout JSON with the
+`endpoint_discovery` typed request and controller `reported_at`. These are
+observations from actual carrier sockets, with source `managed_udp_socket_stun`.
+`netcheck` remains an independent temporary-socket measurement with source
+`independent_udp_probe`; its mappings are not daemon endpoint evidence.
+See [ENDPOINT_DISCOVERY.md](ENDPOINT_DISCOVERY.md) for report freshness and bounds.
+
 - `status` without `--live` retains its existing cached JSON output (including
   with `--json`). Saved revisions and ACKs do not establish runtime liveness.
 - Live status is one point-in-time publication: process-local non-secret

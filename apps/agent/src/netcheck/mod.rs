@@ -146,7 +146,7 @@ pub fn parse_endpoint(value: &str) -> Result<SocketAddr, String> {
         .map_err(|_| "requires a numeric IP:port (IPv6: [IP]:port); DNS is not supported".into())
 }
 
-fn validate_address(address: SocketAddr, bind: bool) -> Result<(), String> {
+pub(crate) fn validate_address(address: SocketAddr, bind: bool) -> Result<(), String> {
     if let SocketAddr::V6(v6) = address
         && (v6.scope_id() != 0 || v6.flowinfo() != 0 || v6.ip().to_ipv4_mapped().is_some())
     {

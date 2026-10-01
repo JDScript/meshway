@@ -27,6 +27,7 @@ use crate::{
     managed_dataplane::{PacketPlan, TunOptions, tun::Tun},
 };
 
+mod discovery;
 #[cfg(unix)]
 mod probe;
 mod profiles;
@@ -75,11 +76,14 @@ struct Running {
     deadline: watch::Sender<Option<Instant>>,
     observed: watch::Receiver<Observation>,
     task: JoinHandle<()>,
+    discovery: watch::Receiver<discovery::Publication>,
+    discovery_task: Option<JoinHandle<()>>,
 }
 
 pub(crate) struct ReportGuard {
     deadline: watch::Receiver<Option<Instant>>,
     observed: watch::Receiver<Observation>,
+    observation_expiry: Option<Instant>,
 }
 
 impl ReportGuard {
@@ -90,6 +94,9 @@ impl ReportGuard {
             && self.observed.borrow().state == Phase::Applied
             && !self.observed.has_changed().unwrap_or(true)
             && !self.deadline.has_changed().unwrap_or(true)
+            && self
+                .observation_expiry
+                .is_none_or(|expiry| expiry > Instant::now())
     }
 
     pub async fn changed(&mut self) {
@@ -97,6 +104,9 @@ impl ReportGuard {
             return;
         }
         let deadline = (*self.deadline.borrow()).expect("checked active deadline");
+        let deadline = self
+            .observation_expiry
+            .map_or(deadline, |expiry| expiry.min(deadline));
         tokio::select! {
             _ = time::sleep_until(deadline) => {},
             _ = self.deadline.changed() => {},
@@ -117,6 +127,10 @@ impl Running {
 
     async fn stop(self) {
         let _ = self.deadline.send(None);
+        if let Some(task) = self.discovery_task {
+            task.abort();
+            let _ = task.await;
+        }
         let _ = self.task.await;
     }
 }
@@ -142,6 +156,8 @@ pub(crate) struct Manager {
     dataplane: Option<DataplaneSettings>,
     packet_digest: Option<String>,
     tun: Option<Tun>,
+    discovery_options: crate::EndpointDiscoveryOptions,
+    discovery_generation: u32,
     #[cfg(unix)]
     probes: probe::Publisher,
 }
@@ -171,6 +187,8 @@ impl Manager {
             dataplane: None,
             packet_digest: None,
             tun: None,
+            discovery_options: crate::EndpointDiscoveryOptions::default(),
+            discovery_generation: 0,
             #[cfg(unix)]
             probes: probe::Publisher::new(),
         }
@@ -190,6 +208,39 @@ impl Manager {
             may_reuse_guard,
         });
         manager
+    }
+
+    pub fn enable_discovery(&mut self, options: crate::EndpointDiscoveryOptions) {
+        self.discovery_options = options;
+    }
+
+    pub fn discovery_snapshot(
+        &self,
+    ) -> (
+        meshway_protocol::EndpointDiscoveryState,
+        Vec<meshway_protocol::UdpSocketDiscovery>,
+        Option<ReportGuard>,
+    ) {
+        use meshway_protocol::EndpointDiscoveryState as State;
+        if self.discovery_options.servers.is_empty() {
+            return (State::Disabled, Vec::new(), self.report_snapshot().1);
+        }
+        let Some(running) = self.running.as_ref().filter(|r| r.active()) else {
+            return (State::Withdrawn, Vec::new(), None);
+        };
+        let mut publication = running.discovery.borrow().clone();
+        if !self.snapshot.as_ref().is_some_and(|snapshot| {
+            snapshot.payload.revision == publication.source.revision
+                && snapshot.digest == publication.source.digest
+        }) {
+            return (State::Withdrawn, Vec::new(), None);
+        }
+        publication.prune();
+        let (_, mut guard) = self.report_snapshot();
+        if let Some(guard) = &mut guard {
+            guard.observation_expiry = publication.earliest_expiry();
+        }
+        (publication.state, publication.sockets, guard)
     }
 
     /// Complete generation teardown immediately after validation, before disk
@@ -358,7 +409,14 @@ impl Manager {
             let mut observed = running.observed.clone();
             let value = observed.borrow_and_update().clone();
             let deadline = running.deadline.subscribe();
-            (value, Some(ReportGuard { deadline, observed }))
+            (
+                value,
+                Some(ReportGuard {
+                    deadline,
+                    observed,
+                    observation_expiry: None,
+                }),
+            )
         } else {
             (self.observation(), None)
         }
@@ -369,7 +427,13 @@ impl Manager {
     pub fn invalidate_if_changed(&self, snapshot: &AgentConnectionsSnapshot) {
         let mut semantic = snapshot.payload.clone();
         semantic.revision = 0;
-        if (!semantic.valid || self.semantic.as_ref().is_some_and(|old| old != &semantic))
+        if (!semantic.valid
+            || self.semantic.as_ref().is_some_and(|old| old != &semantic)
+            || (!self.discovery_options.servers.is_empty()
+                && self.snapshot.as_ref().is_some_and(|old| {
+                    old.payload.revision != snapshot.payload.revision
+                        || old.digest != snapshot.digest
+                })))
             && let Some(running) = &self.running
         {
             let _ = running.deadline.send(None);
@@ -409,6 +473,13 @@ impl Manager {
         let revision = snapshot.payload.revision;
         let mut semantic = snapshot.payload.clone();
         semantic.revision = 0;
+        if !self.discovery_options.servers.is_empty()
+            && self.snapshot.as_ref().is_some_and(|old| {
+                old.payload.revision != snapshot.payload.revision || old.digest != snapshot.digest
+            })
+        {
+            self.withdraw(Reason::None).await;
+        }
         self.snapshot = Some(snapshot);
         if deadline <= Instant::now() {
             self.withdraw(Reason::LeaseExpired).await;
@@ -519,6 +590,55 @@ impl Manager {
                 let initial = session.initial_observation(&semantic);
                 let (observations, observed) = watch::channel(initial);
                 let (renew, deadlines) = watch::channel(Some(deadline));
+                let source = discovery::Source {
+                    revision,
+                    digest: self
+                        .snapshot
+                        .as_ref()
+                        .expect("current source")
+                        .digest
+                        .clone(),
+                };
+                let enabled = !self.discovery_options.servers.is_empty();
+                let (discovered, discovery) = watch::channel(discovery::Publication::new(
+                    source.clone(),
+                    if enabled {
+                        meshway_protocol::EndpointDiscoveryState::Probing
+                    } else {
+                        meshway_protocol::EndpointDiscoveryState::Disabled
+                    },
+                ));
+                let discovery_task = if enabled {
+                    self.discovery_generation =
+                        self.discovery_generation
+                            .checked_add(1)
+                            .ok_or(AgentError::Invalid(
+                                "endpoint discovery generation exhausted",
+                            ))?;
+                    let runtime = std::sync::Arc::downgrade(&session.runtime);
+                    let intent = semantic.clone();
+                    let servers = self.discovery_options.servers.clone();
+                    let generation = self.discovery_generation;
+                    let deadlines = renew.subscribe();
+                    let observed = observed.clone();
+                    Some(tokio::spawn(async move {
+                        discovery::run(
+                            discovery::Carrier {
+                                runtime,
+                                intent,
+                                generation,
+                                source,
+                            },
+                            servers,
+                            deadlines,
+                            observed,
+                            discovered,
+                        )
+                        .await;
+                    }))
+                } else {
+                    None
+                };
                 #[cfg(unix)]
                 self.probes
                     .publish(&session.runtime, &semantic, &renew, &observed, revision);
@@ -537,6 +657,8 @@ impl Manager {
                     deadline: renew,
                     observed,
                     task,
+                    discovery,
+                    discovery_task,
                 });
                 self.material = Some(material);
             }

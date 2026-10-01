@@ -316,12 +316,12 @@ impl Agent {
     }
 
     async fn sync_published_connections(&mut self) -> Result<ConnectionSyncReceipt, AgentError> {
-        self.sync_published_connections_observe(|_| {}).await
+        self.sync_published_connections_observe(|_, _| {}).await
     }
 
     async fn sync_published_connections_observe(
         &mut self,
-        mut on_saved: impl FnMut(&AgentConnectionsSnapshot),
+        mut on_saved: impl FnMut(&AgentConnectionsSnapshot, tokio::time::Instant),
     ) -> Result<ConnectionSyncReceipt, AgentError> {
         let client = HttpClient::new()
             .with_base_url(&self.identity.controller)
@@ -333,6 +333,7 @@ impl Agent {
         for _ in 0..3 {
             let snapshot: AgentConnectionsSnapshot =
                 convert(client.get_agent_connections().await?)?;
+            let fresh_at = tokio::time::Instant::now();
             #[cfg(feature = "managed-connections")]
             if let Some(guard) = &self.dns_guard {
                 guard.observe_revision(snapshot.payload.revision);
@@ -343,7 +344,7 @@ impl Agent {
             local::ensure_durable(&super::connection_key::path(&self.path))?;
             local::ensure_durable(&cache_path(&self.path))?;
             let cache = state.cache.as_ref().expect("persisted connections cache");
-            on_saved(&cache.snapshot);
+            on_saved(&cache.snapshot, fresh_at);
             let response = client
                 .acknowledge_agent_connections(AcknowledgeAgentConnectionsRequest {
                     revision: cache.snapshot.payload.revision.into(),

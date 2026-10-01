@@ -13,6 +13,9 @@ use meshway_protocol::{
 
 use super::*;
 
+#[path = "managed/discovery.rs"]
+mod discovery;
+
 struct Process(Child);
 
 impl Drop for Process {
