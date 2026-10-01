@@ -10,7 +10,7 @@ COPY apps/controller ./apps/controller
 COPY apps/apple/core ./apps/apple/core
 RUN --mount=type=cache,target=/usr/local/cargo/registry \
     --mount=type=cache,target=/usr/local/cargo/git \
-    --mount=type=cache,target=/src/target,id=meshway-lab-${TARGETARCH},sharing=locked \
+    --mount=type=cache,target=/src/target,id=meshway-perf-tunnel-next-${TARGETARCH},sharing=locked \
     mkdir /out \
     && cargo test --locked --release -p meshway-agent --features managed-connections --lib --no-run --message-format=json > /out/build.json \
     && python3 -c 'import json,shutil; a=[x["executable"] for l in open("/out/build.json") if (x:=json.loads(l)).get("reason")=="compiler-artifact" and x.get("executable") and x["target"]["kind"]==["lib"]]; assert len(a)==1,a; shutil.copy(a[0],"/out/meshway-managed-measure")'
@@ -19,7 +19,7 @@ ARG TARGETARCH
 RUN rustup component add rustfmt clippy
 RUN --mount=type=cache,target=/usr/local/cargo/registry \
     --mount=type=cache,target=/usr/local/cargo/git \
-    --mount=type=cache,target=/src/target,id=meshway-lab-${TARGETARCH},sharing=locked \
+    --mount=type=cache,target=/src/target,id=meshway-perf-tunnel-next-${TARGETARCH},sharing=locked \
     cargo fmt --all --check \
     && cargo clippy --locked -p meshway-dataplane -p meshway-agent --features managed-connections --all-targets -- -D warnings \
     && cargo test --locked --release -p meshway-dataplane -- --test-threads=1 \

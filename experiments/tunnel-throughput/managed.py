@@ -134,6 +134,7 @@ class ManagedFixture(TunnelFixture):
             wait_until('ignored fixture Runtime statistics sidecars',lambda:len(self.runtime_statistics())==len(order),timeout=10)
         if mode=='relay' and self.probe('NYC',self.address('SHA','b')): raise RuntimeError('Unexpected relay bypass')
         return ips,{'snapshot':self.snapshot(),'connections':self.connections(),
+                    'binary_sha256':self.exec('NYC','sha256sum','/usr/local/bin/meshway-managed-measure').stdout.split()[0],
                     'offload':{n:{dev:self.exec(n,'ethtool','-k',dev,check=False).stdout for dev in ['eth0','mwlab0']} for n in order}}
 
 
@@ -160,6 +161,7 @@ def main():
         'scope':'Real managed Manager/coherent contract compilation/TUN generation/300-second lease watchdog; fixture keys, no controller enrollment or HTTP refresh. E2E plus NativeUDP hop Noise, full 64-byte node IDs, MTU1000, two Tokio workers.',
         'environment':environment(info),
         'source_revision':subprocess.check_output(['git','rev-parse','HEAD'],text=True).strip(),
+        'source_dirty':bool(subprocess.check_output(['git','status','--porcelain'],text=True).strip()),
         'packet_pump':'meshway_dataplane::packet_io::run_with_activation (shared pump)',
         'cases':[],'fixtures':{},'cleanup_errors':[]}
     f=None
