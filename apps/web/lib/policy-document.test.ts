@@ -25,7 +25,7 @@ import {
 const access: RuntimeSchema<MeshAccessPolicy> = zMeshAccessPolicy
 const routing: RuntimeSchema<RoutingPolicy> = zRoutingPolicy
 
-const base = { revision: 4, value: { grants: [{ id: "a", path: ["nyc", "sha"] }] } }
+const base = { revision: 4, value: { grants: [{ id: "a", path: ["nyc", "sha"] }] }, source: null }
 
 test("opens valid and unchanged", () => {
   const document = openDocument(base, access)
@@ -65,7 +65,7 @@ test("schema issues point at the offending node and unknown keys", () => {
 })
 
 test("routing enum errors are located", () => {
-  const document = openDocument({ revision: 1, value: { default_action: "reject", rules: [] } }, routing)
+  const document = openDocument({ revision: 1, value: { default_action: "reject", rules: [] }, source: null }, routing)
   const edited = editText(document, `{ "default_action": "allow", "rules": [] }`, routing)
   const problem = edited.problems[0]
   assert.ok(problem)
@@ -102,16 +102,30 @@ test("explicit discard returns to the last valid text, comments included", () =>
 
 test("a save settles only the work that was sent", () => {
   const edited = editText(openDocument(base, access), `// mine\n{"grants": []}`, access)
-  const saved = settleSaved(edited, { revision: 5, value: { grants: [] } }, edited.seq, access)
+  const saved = settleSaved(edited, { revision: 5, value: { grants: [] }, source: null }, edited.seq, access)
   assert.equal(saved.base.revision, 5)
   assert.equal(saved.text, edited.text)
   assert.equal(hasUnsavedWork(saved), true, "comments are browser-only and still shown as unsaved text")
   assert.equal(documentChange(saved).valueChanged, false)
 
   const later = editText(edited, `{"grants": [{"id": "z", "path": ["a", "b"]}]}`, access)
-  const settled = settleSaved(later, { revision: 5, value: { grants: [] } }, edited.seq, access)
+  const settled = settleSaved(later, { revision: 5, value: { grants: [] }, source: null }, edited.seq, access)
   assert.equal(settled.text, later.text)
   assert.equal(documentChange(settled).valueChanged, true)
+})
+
+test("a stored source is the base text, so saved comments are not unsaved work", () => {
+  const source = `// saved comment\n{"grants": [{"id": "a", "path": ["nyc", "sha"]}]}`
+  const document = openDocument({ ...base, source }, access)
+  assert.equal(document.text, source)
+  assert.equal(hasUnsavedWork(document), false)
+  const saved = settleSaved(
+    editText(document, `${source}\n// more`, access),
+    { ...base, revision: 5, source: `${source}\n// more` },
+    1,
+    access
+  )
+  assert.equal(hasUnsavedWork(saved), false)
 })
 
 test("restoring keeps the invalid buffer and the last valid text", () => {

@@ -5,9 +5,13 @@ import type {
   PolicyDiagnostic,
   PolicySnapshot,
 } from "@meshway/control-client"
+import { schemaFor } from "@meshway/control-client/json-schema"
+import { zRoutingPolicy } from "@meshway/control-client/schemas"
 import {
+  BracesIcon,
   CircleAlertIcon,
   HistoryIcon,
+  ListOrderedIcon,
   PlusIcon,
   RefreshCwIcon,
   RotateCcwIcon,
@@ -26,6 +30,8 @@ import {
 
 import { OptionSelect } from "@/components/common/option-select"
 import { Panel } from "@/components/common/panel"
+import { Segmented } from "@/components/common/segmented"
+import { JsoncPane } from "@/components/policy/jsonc-pane"
 import { DiagnosticList } from "@/components/routing/diagnostics"
 import { RuleBuilder } from "@/components/routing/rule-builder"
 import { RuleList, type RuleRowState } from "@/components/routing/rule-list"
@@ -58,6 +64,8 @@ import { Label } from "@/components/ui/label"
 import { Spinner } from "@/components/ui/spinner"
 import { useToastManager } from "@/components/ui/toast"
 import type { PreviewResult, SaveResult } from "@/lib/action-state"
+import { commentRanges } from "@/lib/jsonc"
+import { documentChange, hasUnsavedWork, isValid } from "@/lib/policy-document"
 import {
   previewPolicyAction,
   reloadPolicyAction,
@@ -66,15 +74,12 @@ import {
 import {
   diagnosticsForRule,
   emptyFlow,
-  fromPolicy,
   isCatchAll,
   POLICY_LIMITS,
   policyKey,
   removedRuleCount,
   ruleChange,
-  samePolicy,
   toFlow,
-  toPolicy,
   validateDraft,
   validateFlow,
   type DefaultAction,
@@ -89,7 +94,45 @@ import {
   type RuleForm,
   type WorkingRule,
 } from "@/lib/rule-form"
+import type { RoutingView } from "@/lib/routing-draft-registry"
+import {
+  applyDraft,
+  discardWorkspaceText,
+  editWorkspaceText,
+  localIssueProblems,
+  openWorkspace,
+  restoreWorkspace,
+  revertWorkspace,
+  routingBase,
+  settleWorkspaceSave,
+  storeWorkspace,
+  workspaceDraft,
+  type RoutingWorkspace,
+} from "@/lib/routing-workspace"
 import { cn } from "@/lib/utils"
+
+const routingSchema = schemaFor("RoutingPolicy")
+
+const viewOptions = [
+  {
+    value: "visual",
+    label: (
+      <span className="flex items-center gap-1.5">
+        <ListOrderedIcon className="size-3.5" />
+        图形
+      </span>
+    ),
+  },
+  {
+    value: "jsonc",
+    label: (
+      <span className="flex items-center gap-1.5">
+        <BracesIcon className="size-3.5" />
+        JSONC
+      </span>
+    ),
+  },
+] as const satisfies readonly { value: RoutingView; label: ReactNode }[]
 
 /** Diagnostics together with the exact policy they were compiled for. */
 type Compiled = {
@@ -137,9 +180,12 @@ function moveItem<T>(items: T[], from: number, to: number): T[] {
 export function PolicyEditor({
   snapshot,
   nodes: initialNodes,
+  focusRuleId = null,
 }: {
   snapshot: PolicySnapshot
   nodes: NodeSummary[]
+  /** Rule to highlight on open (deep link from a plan); not an edit. */
+  focusRuleId?: string | null
 }) {
   const drafts = useRoutingDraftStore()
   // A draft kept from an earlier visit brings back its own base snapshot; the
@@ -148,9 +194,15 @@ export function PolicyEditor({
   const [restoredNotice, setRestoredNotice] = useState(restored !== null)
   const [base, setBase] = useState(restored?.base ?? snapshot)
   const [nodes, setNodes] = useState(restored?.nodes ?? initialNodes)
-  const [draft, setDraft] = useState<PolicyDraft>(
-    () => restored?.draft ?? fromPolicy(snapshot.policy)
+  // The one draft: JSONC text (with comments) plus the last valid policy.
+  // The visual editor is derived from it and writes back through it.
+  const [workspace, setWorkspace] = useState<RoutingWorkspace>(() =>
+    restored
+      ? restoreWorkspace(restored.workspace, zRoutingPolicy)
+      : openWorkspace(routingBase(snapshot), zRoutingPolicy)
   )
+  const [view, setView] = useState<RoutingView>(restored?.view ?? "visual")
+  const draft = useMemo(() => workspaceDraft(workspace), [workspace])
   const [compiled, setCompiled] = useState<Compiled>(() => fromSnapshot(restored?.base ?? snapshot))
   const [flow, setFlow] = useState<FlowDraft>(emptyFlow)
   // The flow is captured with its result: history renders what was asked.
@@ -169,7 +221,9 @@ export function PolicyEditor({
       ? { open: true, session: { ...restored.builder.session, working: restored.builder.form } }
       : null
   )
-  const [highlight, setHighlight] = useState<string | null>(null)
+  const [highlight, setHighlight] = useState<string | null>(() =>
+    focusRuleId === null ? null : (draft.rules.find((rule) => rule.id.trim() === focusRuleId)?.key ?? null)
+  )
   const [previewing, startPreview] = useTransition()
   const [saving, startSave] = useTransition()
   const [reloading, startReload] = useTransition()
@@ -180,7 +234,6 @@ export function PolicyEditor({
   const undoToasts = useRef<string[]>([])
   const sessionId = useRef(restored?.nextSession ?? 0)
   const previewSeq = useRef(0)
-  const draftRef = useRef(draft)
   const defaultActionId = useId()
   const toast = useToastManager()
   // This mount's claim on the shared store, and the current reload request:
@@ -200,21 +253,29 @@ export function PolicyEditor({
   }, [drafts])
 
   useEffect(() => {
-    draftRef.current = draft
-  }, [draft])
-
-  useEffect(() => {
     if (highlight === null) return
     const timer = window.setTimeout(() => setHighlight(null), 2500)
     return () => window.clearTimeout(timer)
   }, [highlight])
 
-  const policy = useMemo(() => toPolicy(draft), [draft])
+  const policyDoc = workspace.document
+  const policy = policyDoc.value
   const currentKey = policyKey(policy)
   const issues = useMemo(() => validateDraft(draft), [draft])
-  const dirty = !samePolicy(policy, base.policy)
+  const textValid = isValid(policyDoc)
+  const change = documentChange(policyDoc)
+  const dirty = change.valueChanged
+  const unsaved = hasUnsavedWork(policyDoc)
+  const textProblems = useMemo(
+    () => [...workspace.document.problems, ...localIssueProblems(workspace, issues)],
+    [workspace, issues]
+  )
+  const blocking = issues.length + (textValid ? 0 : policyDoc.problems.length)
   const busy = previewing || saving || reloading
   const locked = saving || reloading
+  // While the JSONC buffer is invalid the visual editor shows the last valid
+  // policy read-only: editing it would have to overwrite the typed text.
+  const visualLocked = locked || !textValid
   const previewKey = JSON.stringify([currentKey, toFlow(flow)])
   const flowError = validateFlow(flow)
 
@@ -226,19 +287,20 @@ export function PolicyEditor({
   // In-app navigation keeps the draft in the console-scoped store, which
   // also owns the reload / tab-close warning.
   useEffect(() => {
-    if (dirty || working !== null) {
+    if (unsaved || working !== null) {
       drafts.write(owner.current, {
         base,
         nodes,
-        draft,
+        workspace: storeWorkspace(workspace),
         builder: working,
         nextKey: nextKey.current,
         nextSession: sessionId.current,
+        view,
       })
     } else {
       drafts.clear(owner.current)
     }
-  }, [dirty, working, base, nodes, draft, drafts])
+  }, [unsaved, working, base, nodes, workspace, view, drafts])
 
   const compiledFresh = compiled.key === currentKey
   const states: RuleRowState[] = useMemo(() => {
@@ -254,10 +316,19 @@ export function PolicyEditor({
     }))
   }, [draft.rules, base.policy, issues, compiled.diagnostics, compiledFresh])
 
+  /** Visual edits go through the JSONC document so comments elsewhere stay. */
   const updateDraft = (update: (current: PolicyDraft) => PolicyDraft) => {
-    setDraft(update)
+    setWorkspace((current) => {
+      const result = applyDraft(current, update(workspaceDraft(current)), zRoutingPolicy)
+      return result.ok ? result.workspace : current
+    })
     setSave(null)
   }
+  const updateText = (text: string) => {
+    setWorkspace((current) => editWorkspaceText(current, text, zRoutingPolicy))
+    setSave(null)
+  }
+  const discardText = () => setWorkspace((current) => discardWorkspaceText(current, zRoutingPolicy))
 
   const openBuilder = (session: Omit<BuilderSession, "id">) => {
     sessionId.current += 1
@@ -391,25 +462,28 @@ export function PolicyEditor({
   const runSave = () => {
     const expected = base.revision
     const body = policy
-    const sentKey = currentKey
+    const sentSeq = policyDoc.seq
     const saver = owner.current
     startSave(async () => {
       const result = await savePolicyAction(expected, body)
       if (!drafts.owns(saver)) {
         // This editor unmounted meanwhile: kept work that is exactly what
-        // was saved is no longer unsaved; anything else is left alone.
-        if (result.status === "saved") drafts.adoptOrphanSave(expected, sentKey)
+        // was saved moves onto the new base; anything else is left alone.
+        if (result.status === "saved") {
+          const saved = { snapshot: result.snapshot, base: routingBase(result.snapshot) }
+          drafts.adoptOrphanSave(expected, sentSeq, saved, zRoutingPolicy)
+        }
         return
       }
       setSave(result)
       if (result.status === "saved") {
         newGeneration()
         setBase(result.snapshot)
-        // The controller returns the canonical (normalized) policy. Only
-        // adopt it when the draft is still exactly what was sent.
-        if (policyKey(toPolicy(draftRef.current)) === sentKey) {
-          setDraft(fromPolicy(result.snapshot.policy))
-        }
+        // The controller returns the canonical (normalized) policy; it
+        // replaces the draft only when nothing was edited since sending.
+        setWorkspace((current) =>
+          settleWorkspaceSave(current, routingBase(result.snapshot), sentSeq, zRoutingPolicy)
+        )
         setCompiled(fromSnapshot(result.snapshot))
       }
     })
@@ -435,18 +509,18 @@ export function PolicyEditor({
       newGeneration()
       setBase(result.snapshot)
       setNodes(result.nodes)
-      setDraft(fromPolicy(result.snapshot.policy))
+      setWorkspace(openWorkspace(routingBase(result.snapshot), zRoutingPolicy))
       setCompiled(fromSnapshot(result.snapshot))
       setPreview(null)
       setSave(null)
       setHighlight(null)
     })
   }
-  const requestReload = () => (dirty ? setConfirm("reload") : runReload())
+  const requestReload = () => (unsaved ? setConfirm("reload") : runReload())
   const revertDraft = () => {
     setConfirm(null)
     newGeneration()
-    setDraft(fromPolicy(base.policy))
+    setWorkspace((current) => revertWorkspace(current, zRoutingPolicy))
     setCompiled(fromSnapshot(base))
     setSave(null)
   }
@@ -528,100 +602,154 @@ export function PolicyEditor({
         </p>
       ) : null}
 
-      <div className="grid items-start gap-4 xl:grid-cols-[minmax(0,1fr)_24rem]">
-        <Panel
-          title={
-            <span className="flex items-center gap-2">
-              规则
-              <span className="font-mono text-xs font-normal text-muted-foreground tabular-nums">
-                {draft.rules.length}/{POLICY_LIMITS.rules}
-              </span>
-            </span>
-          }
-          description="自上而下匹配，第一条命中的规则生效。"
-          actions={
-            <Button
-              type="button"
-              size="sm"
-              disabled={locked || draft.rules.length >= POLICY_LIMITS.rules}
-              onClick={newRule}
-            >
-              <PlusIcon data-icon="inline-start" />
-              添加规则
-            </Button>
-          }
-        >
-          {draft.rules.length === 0 ? (
-            <Empty className="py-10">
-              <EmptyHeader>
-                <EmptyTitle>还没有规则</EmptyTitle>
-                <EmptyDescription>
-                  所有流量都使用下方的默认动作。添加规则来为特定来源和目标规划路径或拒绝访问。
-                </EmptyDescription>
-              </EmptyHeader>
-              <EmptyContent>
-                <Button variant="outline" disabled={locked} onClick={newRule}>
-                  <PlusIcon data-icon="inline-start" />
-                  添加第一条规则
-                </Button>
-              </EmptyContent>
-            </Empty>
-          ) : (
-            <RuleList
-              rules={draft.rules}
-              states={states}
-              nodes={nodes}
-              highlightKey={highlight}
-              disabled={locked}
-              actions={{
-                onEdit: editRule,
-                onMove: (index, target) =>
-                  updateDraft((current) => ({ ...current, rules: moveItem(current.rules, index, target) })),
-                onDuplicate: duplicateRule,
-                onDelete: (index) => {
-                  const rule = draft.rules[index]
-                  if (rule) deleteRule(rule.key)
-                },
-              }}
-            />
-          )}
-
-          <div className="flex flex-col gap-3 border-t bg-muted/30 px-3 py-3 sm:flex-row sm:items-center sm:px-4">
-            <span className="flex size-6 shrink-0 items-center justify-center rounded-md border border-dashed font-mono text-[0.6875rem] text-muted-foreground">
-              ∗
-            </span>
-            <div className="flex min-w-0 flex-1 flex-col">
-              <Label htmlFor={defaultActionId} className="text-sm">
-                默认动作
-              </Label>
-              <span className="text-xs text-muted-foreground">
-                没有规则命中时使用。直连：Mesh 目标直达，互联网目标由源节点本地出网。
-              </span>
+      {!textValid && view === "visual" ? (
+        <Alert variant="destructive" data-testid="routing-text-invalid">
+          <TriangleAlertIcon />
+          <AlertTitle>JSONC 文本有 {policyDoc.problems.length} 个问题，图形编辑已暂停</AlertTitle>
+          <AlertDescription className="flex flex-col items-start gap-2">
+            <p>下方是最后一次有效的策略，只读显示。修复文本，或明确放弃文本中尚未生效的修改；切换视图不会丢弃它们。</p>
+            <div className="flex flex-wrap gap-2">
+              <Button variant="outline" size="sm" onClick={() => setView("jsonc")}>
+                回到 JSONC 修复
+              </Button>
+              <Button variant="ghost" size="sm" onClick={discardText}>
+                放弃无效的文本修改
+              </Button>
             </div>
-            <OptionSelect
-              id={defaultActionId}
-              value={draft.defaultAction}
-              options={defaultActionOptions}
-              onValueChange={(defaultAction) =>
-                updateDraft((current) => ({ ...current, defaultAction }))
-              }
-              disabled={locked}
-              className={cn("w-32", draft.defaultAction === "direct" && "text-brand")}
-            />
-          </div>
+          </AlertDescription>
+        </Alert>
+      ) : null}
 
-          {globalIssues.length > 0 || orphanDiagnostics.length > 0 ? (
-            <div className="flex flex-col gap-2 border-t px-4 py-3">
-              <DiagnosticList label="策略级问题" issues={globalIssues} />
-              <DiagnosticList
-                label={compiled.source === "preview" ? "最近一次编译的其他诊断" : "已保存策略的其他诊断"}
-                diagnostics={orphanDiagnostics}
-                stale={!compiledFresh}
-                showRule
+      <div className="grid items-start gap-4 xl:grid-cols-[minmax(0,1fr)_24rem]">
+        {view === "jsonc" ? (
+          <Panel
+            title={
+              <span className="flex items-center gap-2">
+                策略 JSONC
+                {!textValid ? <Badge variant="destructive">{policyDoc.problems.length} 个问题</Badge> : null}
+              </span>
+            }
+            description="与图形视图是同一份草稿。文本有效时图形视图随之更新；无效时不会被覆盖，也不能保存。"
+            actions={<Segmented size="sm" aria-label="编辑方式" value={view} onValueChange={setView} options={viewOptions} />}
+          >
+            <JsoncPane
+              label="路由策略 JSONC"
+              text={policyDoc.text}
+              problems={textProblems}
+              onChange={updateText}
+              schemaRoot={routingSchema}
+              schema={routingSchema}
+              references={{
+                node: nodes
+                  .filter((node) => node.revoked_at === null)
+                  .map((node) => ({ value: node.id, label: node.name, detail: `${node.mesh_ipv4} · ${node.id.slice(0, 8)}` })),
+              }}
+              readOnly={locked}
+              notice={
+                commentRanges(policyDoc.text).length > 0 || change.textOnly ? (
+                  <>Controller 当前只保存策略内容：注释和排版保留在本次浏览器会话的草稿中，刷新页面或退出登录后会丢失。</>
+                ) : null
+              }
+            />
+          </Panel>
+        ) : (
+          <Panel
+            title={
+              <span className="flex items-center gap-2">
+                规则
+                <span className="font-mono text-xs font-normal text-muted-foreground tabular-nums">
+                  {draft.rules.length}/{POLICY_LIMITS.rules}
+                </span>
+              </span>
+            }
+            description="自上而下匹配，第一条命中的规则生效。"
+            actions={
+              <>
+                <Segmented size="sm" aria-label="编辑方式" value={view} onValueChange={setView} options={viewOptions} />
+                <Button
+                  type="button"
+                  size="sm"
+                  disabled={visualLocked || draft.rules.length >= POLICY_LIMITS.rules}
+                  onClick={newRule}
+                >
+                  <PlusIcon data-icon="inline-start" />
+                  添加规则
+                </Button>
+              </>
+            }
+          >
+            {draft.rules.length === 0 ? (
+              <Empty className="py-10">
+                <EmptyHeader>
+                  <EmptyTitle>还没有规则</EmptyTitle>
+                  <EmptyDescription>
+                    所有流量都使用下方的默认动作。添加规则来为特定来源和目标规划路径或拒绝访问。
+                  </EmptyDescription>
+                </EmptyHeader>
+                <EmptyContent>
+                  <Button variant="outline" disabled={visualLocked} onClick={newRule}>
+                    <PlusIcon data-icon="inline-start" />
+                    添加第一条规则
+                  </Button>
+                </EmptyContent>
+              </Empty>
+            ) : (
+              <RuleList
+                rules={draft.rules}
+                states={states}
+                nodes={nodes}
+                highlightKey={highlight}
+                disabled={visualLocked}
+                actions={{
+                  onEdit: editRule,
+                  onMove: (index, target) =>
+                    updateDraft((current) => ({ ...current, rules: moveItem(current.rules, index, target) })),
+                  onDuplicate: duplicateRule,
+                  onDelete: (index) => {
+                    const rule = draft.rules[index]
+                    if (rule) deleteRule(rule.key)
+                  },
+                }}
+              />
+            )}
+
+            <div className="flex flex-col gap-3 border-t bg-muted/30 px-3 py-3 sm:flex-row sm:items-center sm:px-4">
+              <span className="flex size-6 shrink-0 items-center justify-center rounded-md border border-dashed font-mono text-[0.6875rem] text-muted-foreground">
+                ∗
+              </span>
+              <div className="flex min-w-0 flex-1 flex-col">
+                <Label htmlFor={defaultActionId} className="text-sm">
+                  默认动作
+                </Label>
+                <span className="text-xs text-muted-foreground">
+                  没有规则命中时使用。直连：Mesh 目标直达，互联网目标由源节点本地出网。
+                </span>
+              </div>
+              <OptionSelect
+                id={defaultActionId}
+                value={draft.defaultAction}
+                options={defaultActionOptions}
+                onValueChange={(defaultAction) =>
+                  updateDraft((current) => ({ ...current, defaultAction }))
+                }
+                disabled={visualLocked}
+                className={cn("w-32", draft.defaultAction === "direct" && "text-brand")}
               />
             </div>
-          ) : null}
-        </Panel>
+
+            {globalIssues.length > 0 || orphanDiagnostics.length > 0 ? (
+              <div className="flex flex-col gap-2 border-t px-4 py-3">
+                <DiagnosticList label="策略级问题" issues={globalIssues} />
+                <DiagnosticList
+                  label={compiled.source === "preview" ? "最近一次编译的其他诊断" : "已保存策略的其他诊断"}
+                  diagnostics={orphanDiagnostics}
+                  stale={!compiledFresh}
+                  showRule
+                />
+              </div>
+            ) : null}
+          </Panel>
+        )}
 
         <Panel
           className="xl:sticky xl:top-16"
@@ -639,7 +767,13 @@ export function PolicyEditor({
             onClick={runPreview}
             disabled={busy}
             pending={previewing}
-            blockedReason={issues.length > 0 ? "先修复草稿中标记的问题。" : flowError}
+            blockedReason={
+              !textValid
+                ? "先修复 JSONC 文本中的问题。"
+                : issues.length > 0
+                  ? "先修复草稿中标记的问题。"
+                  : flowError
+            }
           />
           <div className="border-t pt-4">
             <PreviewOutcome
@@ -679,8 +813,9 @@ export function PolicyEditor({
 
       <SaveBar
         dirty={dirty}
+        textOnly={change.textOnly}
         changeSummary={changeSummary}
-        issueCount={issues.length}
+        issueCount={blocking}
         baseRevision={base.revision}
         saving={saving}
         disabled={busy}
@@ -706,7 +841,7 @@ export function PolicyEditor({
         nodes={nodes}
         diagnostics={builderRule ? diagnosticsForRule(compiled.diagnostics, builderRule.id) : []}
         diagnosticsStale={!compiledFresh}
-        disabled={locked}
+        disabled={visualLocked}
       />
 
       <AlertDialog
@@ -810,6 +945,7 @@ function Metric({
 
 function SaveBar({
   dirty,
+  textOnly,
   changeSummary,
   issueCount,
   baseRevision,
@@ -821,6 +957,8 @@ function SaveBar({
   onReload,
 }: {
   dirty: boolean
+  /** Only comments or layout differ from the saved text. */
+  textOnly: boolean
   changeSummary: string[]
   issueCount: number
   baseRevision: number
@@ -869,6 +1007,10 @@ function SaveBar({
                 <span className="font-medium">未保存的草稿</span>
                 <span className="text-muted-foreground"> · {changeSummary.join("，")}</span>
               </>
+            ) : textOnly ? (
+              <span className="text-muted-foreground">
+                策略内容与 r{baseRevision} 一致，只有注释或排版不同（controller 当前不保存 JSONC 原文）
+              </span>
             ) : (
               <span className="text-muted-foreground">草稿与已保存的 r{baseRevision} 一致</span>
             )}
@@ -878,7 +1020,7 @@ function SaveBar({
           </span>
         </div>
         <div className="flex items-center gap-2">
-          {dirty ? (
+          {dirty || textOnly || issueCount > 0 ? (
             <Button variant="ghost" disabled={disabled} onClick={onRevert}>
               <RotateCcwIcon data-icon="inline-start" />
               放弃修改

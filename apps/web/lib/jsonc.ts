@@ -235,7 +235,25 @@ function operations(path: (string | number)[], before: unknown, after: unknown, 
   out.push({ path, value: after, insert: false })
 }
 
+// `SyntaxKind` is a const enum in the package typings, which isolated
+// modules cannot read; these are its stable values.
 const COMMA = 5 // SyntaxKind.CommaToken
+const LINE_COMMENT = 12 // SyntaxKind.LineCommentTrivia
+const BLOCK_COMMENT = 13 // SyntaxKind.BlockCommentTrivia
+const EOF = 17 // SyntaxKind.EOF
+
+/** Ranges of every comment, for highlighting (`@lezer/json` has no comment syntax). */
+export function commentRanges(text: string): { from: number; to: number }[] {
+  const scanner = createScanner(text, false)
+  const ranges: { from: number; to: number }[] = []
+  for (let token = scanner.scan(); token !== EOF; token = scanner.scan()) {
+    if (token === LINE_COMMENT || token === BLOCK_COMMENT) {
+      const from = scanner.getTokenOffset()
+      ranges.push({ from, to: from + scanner.getTokenLength() })
+    }
+  }
+  return ranges
+}
 
 /** Offset of the next non-trivia token at or after `from`, if it is a comma. */
 function commaFrom(text: string, from: number): number | null {

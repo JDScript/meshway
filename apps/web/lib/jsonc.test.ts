@@ -1,7 +1,7 @@
 import assert from "node:assert/strict"
 import { test } from "node:test"
 
-import { findNode, formatJsonc, lineColumn, parseJsonc, patchJsonc } from "./jsonc.ts"
+import { commentRanges, findNode, formatJsonc, lineColumn, parseJsonc, patchJsonc } from "./jsonc.ts"
 
 test("parses comments and trailing commas", () => {
   const text = `{
@@ -130,4 +130,12 @@ test("refuses to patch a buffer it was not derived from", () => {
 
 test("formats a value with a trailing newline", () => {
   assert.equal(formatJsonc({ a: [1] }), `{\n  "a": [\n    1\n  ]\n}\n`)
+})
+
+test("finds comment ranges for highlighting", () => {
+  const text = `{ // a\n  "x": /* b */ 1 }`
+  assert.deepEqual(
+    commentRanges(text).map((range) => text.slice(range.from, range.to)),
+    ["// a", "/* b */"]
+  )
 })

@@ -43,9 +43,18 @@ export type DocumentProblem = {
   column: number
 }
 
+/**
+ * A saved policy. `source` is the JSONC text stored with it when the
+ * controller keeps one (null: no stored source, the canonical rendering of
+ * `value` is shown instead).
+ */
+export type DocumentBase<T> = { revision: number; value: T; source: string | null }
+
+export const baseText = (base: DocumentBase<unknown>) => base.source ?? formatJsonc(base.value)
+
 export type PolicyDocument<T> = {
   /** CAS base: only a successful save moves it. */
-  base: { revision: number; value: T }
+  base: DocumentBase<T>
   text: string
   /** Last fully valid value (equals `base.value` before any edit). */
   value: T
@@ -57,9 +66,9 @@ export type PolicyDocument<T> = {
 }
 
 export function openDocument<T>(
-  base: { revision: number; value: T },
+  base: DocumentBase<T>,
   schema: RuntimeSchema<T>,
-  text: string = formatJsonc(base.value)
+  text: string = baseText(base)
 ): PolicyDocument<T> {
   const document: PolicyDocument<T> = {
     base,
@@ -206,7 +215,7 @@ export function revertToBase<T>(document: PolicyDocument<T>, schema: RuntimeSche
 export type DocumentChange = {
   /** The value differs from the base (what the controller would store). */
   valueChanged: boolean
-  /** The buffer differs from a canonical rendering of the value (comments, layout, or invalid edits). */
+  /** Same value, but the buffer differs from the saved text (comments or layout only). */
   textOnly: boolean
 }
 
@@ -214,7 +223,7 @@ export function documentChange(document: PolicyDocument<unknown>): DocumentChang
   const valueChanged = !jsonEqual(document.value, document.base.value)
   return {
     valueChanged,
-    textOnly: !valueChanged && document.text !== formatJsonc(document.base.value),
+    textOnly: !valueChanged && document.text !== baseText(document.base),
   }
 }
 
@@ -232,7 +241,7 @@ export function hasUnsavedWork(document: PolicyDocument<unknown>): boolean {
  */
 export function settleSaved<T>(
   document: PolicyDocument<T>,
-  saved: { revision: number; value: T },
+  saved: DocumentBase<T>,
   sentSeq: number,
   schema: RuntimeSchema<T>
 ): PolicyDocument<T> {
@@ -248,13 +257,13 @@ export function settleSaved<T>(
  * base stay untouched; the caller shows `remote` beside it and only an
  * explicit choice replaces the draft.
  */
-export function remoteDiffers<T>(document: PolicyDocument<T>, remote: { revision: number; value: T }): boolean {
+export function remoteDiffers<T>(document: PolicyDocument<T>, remote: DocumentBase<T>): boolean {
   return remote.revision !== document.base.revision || !jsonEqual(remote.value, document.base.value)
 }
 
 /** What a navigation-scoped registry keeps; everything else is recomputed. */
 export type StoredDocument<T> = {
-  base: { revision: number; value: T }
+  base: DocumentBase<T>
   text: string
   validText: string
   seq: number
