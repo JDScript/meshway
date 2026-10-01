@@ -34,7 +34,7 @@ Rust 控制面与 agent、Next.js + shadcn/ui 控制台、VitePress 文档站。
 - 用户已确认这些协议用于 Meshway 内部传输承载；后续终端设备通过 Meshway App 接入。普通代理客户端直接接入、代理账户及订阅服务不属于当前产品目标。
 - 用户已确认节点邻接默认按访问授权、路径规则和可达性按需自动建立，并支持 Web 手动约束；无需先手工配置每对节点连接。自动建连不改变 Access 授权，也不能绕过明确的必经节点；当前手工连接流程需逐步收敛为高级入口。
 - 用户要求统一节点模型，以简单逻辑为准：不按服务器 Agent / App 划分节点类别或默认中继资格，不额外引入一套中继角色开关；节点在路径中的职责由路径 / 任务及现有授权表达，平台依据实际能力和可达性选择。底层能力差异留在能力模型内，不变成用户必须维护的产品分类。
-- 用户已确认 Apple 终端 App 位于 `apps/apple`：SwiftUI 多平台 + NetworkExtension Packet Tunnel，Rust 核心经 UniFFI 复用，FFI unsafe 仅限受审计的桥接 crate。App 接入方向为 OAuth，但控制面尚未实现，不得伪造登录、接入或隧道状态。首个切片只搭 UI 与架构；付费 Apple Developer 会员暂未续费，真机 NE 与真实隧道验证暂缓。
+- 用户已确认 Apple 终端 App 位于 `apps/apple`：SwiftUI 多平台 + NetworkExtension Packet Tunnel，Rust 核心经 UniFFI 复用，FFI unsafe 仅限受审计的桥接 crate。App 登录本质是 SSO：App 经系统浏览器会话跳转 controller Web 完成登录 / 授权，controller 回调 App 下发一次性兑换码，App 用兑换码与本地已持久化的节点身份完成接入；外部 OIDC 对接、接入资格、用户权限、有效期等由 controller 侧决定，App 不感知。该流程尚未实现，不得伪造登录、接入或隧道状态。首个切片只搭 UI 与架构；付费 Apple Developer 会员暂未续费，真机 NE 与真实隧道验证暂缓。
 - 用户已确认先推进 Linux 传输实验；协议按编译期插件边界扩展，批量与 buffer 所有权属于公共接口。实验密钥、授权和网络必须与现有控制面身份及运行数据隔离。
 - 性能目标优先衡量 Meshway 包装的增量损失：同一协议 / 实现、资源和负载建立匹配基线，分开记录适配层、认证 / 加密、转发与 TUN 成本；不得用原生 L4 流代理与 L3 E2E 隧道的差值直接声称包装损耗。
 - 性能深挖与新 transport 实现可委派独立 worktree 并行推进；共享 Docker VM 的压测通过同一 performance lock 串行执行，避免阻塞协议主线或互相干扰。
