@@ -1,9 +1,13 @@
 //! Four-layer engine: connections, grants and Mesh are order-independent;
 //! external routing is ordered first-match. Facts belong to one network snapshot.
+mod engine;
 mod index;
+mod profiles;
 mod rule_sets;
 mod validation;
 pub use index::{DestinationIndex, FlattenedPrefix};
+pub use engine::*;
+pub use profiles::*;
 pub use rule_sets::*;
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};

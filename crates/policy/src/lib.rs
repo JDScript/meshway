@@ -8,6 +8,7 @@
 //! path is invalid: preview fails closed rather than skipping a hop.
 
 pub mod access;
+pub mod v3;
 pub use access::{
     compile_mesh_paths, evaluate_access, valid_tag_selector, validate_access_policy,
     validate_mesh_path_authorization,
