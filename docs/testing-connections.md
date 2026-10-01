@@ -1,12 +1,12 @@
 # 手动验证连接
 
-当前 Docker demo 建立的是 **认证邻接**。三个容器位于本机，城市名只是标签：
+Docker demo 的底层拓扑是两条 **认证邻接**。三个容器位于本机，城市名只是标签：
 
 ```text
 demo-nyc ←── Native UDP ──→ demo-lax ←── VLESS/TLS ──→ demo-sha
 ```
 
-SHA 主动连接 LAX，但 LAX 可以复用该双向通道发起邻接探测。NYC 与 SHA 没有直接邻接；托管模式尚未安装 TUN 或授予经 LAX 转发的业务路径。
+SHA 主动连接 LAX，但 LAX 可以复用该双向通道发起邻接探测。NYC 与 SHA 没有直接邻接。邻接模式不安装 TUN；另行启用 [托管 Mesh IPv4 数据面](/managed-dataplane) 后，匹配独立授权与路由的业务包才会经 LAX 转发。
 
 ## 进入容器
 
@@ -15,10 +15,12 @@ SHA 主动连接 LAX，但 LAX 可以复用该双向通道发起邻接探测。N
 ```sh
 docker ps --filter label=io.meshway.demo.project=managed-neighbors \
   --format '{{.Names}}\t{{.Status}}'
-docker exec -it <容器名称> sh
+docker exec --user "$(id -u):$(id -g)" -it <容器名称> sh
 ```
 
 诊断镜像提供 `meshway`（`meshway-agent` 的简写）和标准 `ping`。容器内 `MESHWAY_STATE=/state/agent.json`，需要时仍可显式使用 `--state`。
+
+本地控制 socket 只接受运行 Agent 的同一 UID。上面的 `--user` 在主机展开，适用于由当前主机用户创建的持久 demo；即使 TUN 模式需要启动时设置网络权限，Agent 仍使用原文件所有者身份。
 
 ## 测试正在运行的认证通道
 
@@ -53,7 +55,7 @@ ping -c 3 lax.mesh.test
 
 普通 `ping` 测试的是 Docker DNS 与底层 IP/ICMP。即使 LAX Agent 停止，容器网络仍可能回应，因此它不能证明 Meshway 认证或承载协议成功。
 
-控制台中分配的 `100.96.x.x` 是 Mesh 地址；当前托管邻接 demo 尚未把这些地址安装到 TUN，不能据此用普通 ICMP、SSH 或 iperf 验证完整组网。
+控制台中分配的 `100.96.x.x` 是 Mesh 地址。邻接模式不会把这些地址安装到 TUN；显式启用数据面并配置路由与业务授权后，应使用目标 Mesh IPv4 做普通 ICMP / HTTP 验收。没有配置该模式时，普通 `ping` Mesh IP 仍不是有效的组网测试。
 
 ## 页面和回执怎么看
 
@@ -64,9 +66,9 @@ ping -c 3 lax.mesh.test
 
 `/topology` 默认展示近期认证邻接：双侧报告一致时画实线，单侧或不完整报告单独标记。配置意图可按需开启；规划路径使用虚线。过期报告、旧配置版本、已撤销节点或不匹配的候选不能提供当前连接证据。缺少运行数据时显示未知，而不是把读取失败画成节点隔离。
 
-完整的 full-mesh IP 体验需要继续接通业务授权、路由执行与 TUN。它不要求永远保有每对节点之间的物理直连。
+完整组网需要身份、连接、业务授权、路由执行与 TUN 同时满足。托管 IPv4 切片支持显式授权路径上的节点互访，不自动开放任意节点对；它也不要求永远保有每对节点之间的物理直连。
 
-## 本机 demo 验证记录
+## 邻接模式验证记录
 
 诊断镜像 `sha256:97d83046a3b73c0a2abddd49c6307d1d96efdc04316ee422eb5f7bc9bb9194f9` 已用于持久 demo。四个方向各三次主动探测均成功：NYC→LAX、SHA→LAX、LAX→NYC、LAX→SHA；本机实测 RTT 约 175–622 微秒。LAX→SHA 的输出为 `accepted (peer initiated)`、`vless (TLS)`，说明复用了 SHA 发起的连接。NYC→SHA 返回非零退出码并说明不是已配置直接邻居。
 

@@ -66,19 +66,21 @@ cargo run --locked -p meshway-agent -- status --state .meshway/agent.json
 
 Web 默认从 `http://127.0.0.1:8420` 读取 controller；可通过 `MESHWAY_CONTROLLER_URL` 配置。
 
-控制台提供 dashboard、节点管理、路由规则编辑、逻辑拓扑与监控视图。规则在 Sheet 中编辑并应用到草稿，再统一预览 / 保存；草稿及其版本基准可在已登录界面的页面间恢复。团队入口和未测量指标的边界见 [Web 产品与交互](docs/web-product.md)。
+控制台提供 dashboard、节点管理、路由规则编辑、访问授权、网络拓扑与监控视图。规则在 Sheet 中编辑并应用到草稿，再统一预览 / 保存；草稿及其版本基准可在已登录界面的页面间恢复。团队入口和未测量指标的边界见 [Web 产品与交互](docs/web-product.md)。
 
 ## 当前范围
 
 当前控制面包含一次性令牌注册、SQLite 持久清单、双栈 mesh 地址分配、持续心跳、版本化配置、节点撤销，以及路由策略编辑、编译预览和条件保存。Agent 校验配置后私有、原子地保存，再发送版本与摘要确认。`last_seen` 表示最近联系 controller 的时间；配置 ACK 表示存储回执，与数据面生效分开记录。
 
-路由按有序 first-match 选择；首版域名规则仅支持标签边界 suffix，另支持节点、IPv4/IPv6 CIDR 与地区条件，默认动作可选 direct/reject，初始为空策略 reject。Web 路径预览展示逻辑规划，尚未驱动生产数据面。
+路由按有序 first-match 选择；首版域名规则仅支持标签边界 suffix，另支持节点、IPv4/IPv6 CIDR 与地区条件，默认动作可选 direct/reject，初始为空策略 reject。Web 路径预览展示逻辑规划，实际执行范围由数据面与独立授权决定。
 
-独立的 [Linux 传输实验](docs/transport-lab.md) 通过 `transport-lab` feature 启用：原生 UDP / TCP、VLESS TCP CONNECT、Noise 邻接认证和 E2E、精确有序路径授权、反向建连、固定 IPv4 对 TUN，以及隔离 Docker / iperf3 工具。实验密钥与配置独立于现有注册身份；运行层消费受管理身份 / 授权及真实逐跳 trace 仍需后续接通。
+独立的 [Linux 传输实验](docs/transport-lab.md) 通过 `transport-lab` feature 启用：原生 UDP / TCP、VLESS TCP CONNECT、Noise 邻接认证和 E2E、精确有序路径授权、反向建连、固定 IPv4 对 TUN，以及隔离 Docker / iperf3 工具。实验密钥与配置独立于现有注册身份；托管模式通过另一套控制配置接入同一数据面基础。
 
 [公钥与连接配置](docs/connections.md) 提供注册节点公钥绑定、编译能力声明、节点独立详情页、监听器 / 反向拨号编辑，以及独立保存回执。[托管连接运行层](docs/connection-runtime.md) 使用 `managed-connections` feature 和 `run --apply-connections`，实际应用 Native UDP / TCP 与 TLS-VLESS 邻接，支持 DNS endpoint、限定入口的 peer 许可、配置有效期与真实邻接探测。它与 `run --connections` 的存储回执分开，尚不授予 TUN 或业务 IP 转发。
 
 DNS、multi-transport 与加密转发的交付阶段在文档站维护。优先保留端到端加密与 `meshway trace`，系统 traceroute 作为后续增强；可信逐跳路由需要显式选择。
+
+[托管 Mesh IPv4 数据面](docs/managed-dataplane.md) 通过 `run --apply-dataplane` 显式启用，使用已有注册身份、同 revision 的配置及独立有向路径授权。路由结果必须与授权完整匹配，Linux TUN 才能传递对应端点之间的 IPv4 包。正反方向分别配置，初始授权为空。互联网出口、IPv6 TUN、可信 DNS 上下文及真实逐跳 trace 尚未接通；邻接观测和配置 ACK 均不能代替普通 ICMP / HTTP 的实际 IP 验收。
 
 ## 类型安全
 

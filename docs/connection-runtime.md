@@ -1,6 +1,6 @@
 # 连接应用、观测与地址
 
-本切片把已保存的连接意图交给 Agent 运行层：开启获授权 listener、主动连接配置的对端，并通过实际加密邻接探测形成运行观测。邻接不等于业务路径，运行层保持空的业务路径授权，不因建立连接而开放 TUN、转发、出口或任意 IP 流量。
+本切片把已保存的连接意图交给 Agent 运行层：开启获授权 listener、主动连接配置的对端，并通过实际加密邻接探测形成运行观测。`--apply-connections` 保持空的业务路径授权。另行启用的 [托管 Mesh IPv4 数据面](/managed-dataplane) 才会把路由与独立授权交给 TUN；建立邻接本身不开放业务 IP 流量。
 
 ## 四个状态维度
 
@@ -98,4 +98,6 @@ python3 experiments/managed-connections/demo.py status \
 python3 experiments/managed-connections/demo.py stop --data-dir .meshway/docker-demo
 ```
 
-`stop` 保留节点身份和配置意图，供原身份恢复。演示的共享管理 bridge 用于连接主机 controller，因此它是可观察的邻接演示，不替代上面的隔离 no-bypass 验收。TLS 证书有效期为 30 天，尚不自动轮换。三地名称仅为本机容器标签；这些邻接仍不授予 NYC→SHA 的业务流量或 TUN 路由。
+`stop` 保留节点身份和配置意图，供原身份恢复。演示的共享管理 bridge 用于连接主机 controller，因此它不替代隔离 no-bypass 验收。TLS 证书有效期为 30 天，尚不自动轮换，三地名称仅为本机容器标签。
+
+持久 demo 已另行启用 [托管 Mesh IPv4 数据面](/managed-dataplane)：`demo-nyc` 为 `100.96.0.2`、`demo-lax` 为 `100.96.0.3`、`demo-sha` 为 `100.96.0.4`。六个方向都有显式授权；NYC 与 SHA 的正反路径经过 LAX，其余节点对使用直接逻辑路径。六个方向的普通 ICMP 各三次均成功。该能力来自路由、授权与 TUN 的共同配置，不是邻接自动授予的权限；本机 `nyc` 仍只保存配置。

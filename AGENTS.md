@@ -36,6 +36,8 @@ Rust 控制面与 agent、Next.js + shadcn/ui 控制台、VitePress 文档站。
 - 用户已确认首版 multi-transport 采用优先级主备；按流负载分担和同流多路径聚合不属于首版要求。
 - 用户已确认首版域名匹配仅支持 suffix，按 DNS 标签边界匹配；路由规则有序 first-match，默认动作可选 direct/reject，初始空策略为 reject。
 - 配置 ACK 只表示 Agent 已校验并持久保存，不等同于数据面生效；逻辑路径预览不等同于真实 trace 或访问授权。
+- 托管 IPv4 数据面显式启用；首个授权模型是完整有向路径，与路由结果精确取交集，正反方向分别配置。默认 direct 本身不授予权限；域名上下文不确定时不得跳过相关拒绝或必经节点条件。
+- 业务配置、连接和端点公钥须来自同一 revision 的快照；撤回和 lease 到期独立于 HTTP 请求终止旧运行代际，TUN 停止后 Mesh 网段不得落回底层默认路由。
 - Rust 使用 `cargo fmt`、Clippy 和必要的行为测试；JS 使用严格 TypeScript 与各包检查。
 - 并行任务明确文件所有权；根 workspace 配置、lockfile 和整体验证由协调者维护。
 - 独立完成的工作形成清晰提交。提交前检查生成产物、文档和实际运行命令一致。

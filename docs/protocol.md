@@ -32,6 +32,7 @@ Rust 请求 / 响应类型 + 实际 API 路由声明
 - Utoipa 6 与 utoipa-axum 0.3 从 Rust DTO 和路由声明导出原生 OpenAPI 3.1。
 - `apps/controller/src/bin/generate-rust-client.rs` 使用 `openapi-to-rust` 0.19，基线生成 `enrollAgent` 与 `heartbeatAgent`。本轮选择范围扩展到 `getAgentConfiguration` / `acknowledgeConfiguration` 及其关联模型，认证配置始终从所选实际操作的 bearer 声明派生；Agent 不需要管理 API 的权限。
 - 上游 Rust 生成器 0.19 没有在客户端构造中落实超时，且默认跟随重定向；仓库内的生成适配显式设置 **10 秒超时、禁止重定向**。适配前检查构造模板，模板变化会使生成失败，防止把注册凭据请求体转发给重定向目标。封闭对象另按 OpenAPI `additionalProperties: false` 生成 `deny_unknown_fields`，在 serde 丢弃异常字段之前拒绝响应；不支持的开放对象、flatten 或模板变化使生成失败。
+- Rust 客户端收到非 2xx 状态头后立即返回类型化 HTTP 错误，保留状态与 headers、丢弃错误 body。已知 `401/403/409` 不能因错误响应体挂起或截断而被延迟处理或误判成可重试网络错误；成功响应仍受有界读取和严格解码约束。该适配逐项核对所选操作的模板数量和形状。
 - Hey API 0.99 生成 TypeScript DTO；`scripts/generate-protocol.mjs` 从同一 OpenAPI 生成严格 Zod schema 与操作函数，再调用共享 HTTP transport。字符串长度按 Unicode code point 计算，与 Rust 的 Unicode scalar 计数一致；已修复原先 UTF-16 长度差异。
 - TS 操作生成支持 JSON GET / POST、组件 schema、必填 POST body、单一 HTTP 200 成功响应，以及单个必需的 HTTP bearer 认证方案。schema 生成覆盖配置 / 策略所需的封闭对象、组件引用、数组、整数、布尔值、字符串枚举、日期时间及 `T | null`。不支持的 schema 关键字、形状或认证要求直接使生成失败。
 
@@ -85,6 +86,20 @@ Rust 请求 / 响应类型 + 实际 API 路由声明
 节点配置读取 / ACK 均从 bearer 派生自身身份，不能自行选择节点。ACK 只接受当前自身配置的 revision 与 SHA-256 摘要；旧版本、未来版本或错误摘要返回 `409`，已撤销节点返回 `403`。Agent 每次 ACK 前都须确认私有缓存文件和父目录 fsync 成功，包括未变化缓存及重启后加载；发布后同步失败返回错误、不 ACK，即使新文件已经可见。ACK 不增加 revision，也不代表网络已应用。公共配置排除凭据和瞬时时间，规范 JSON 摘要规则见[配置分发](/configuration#公共配置与稳定摘要)。
 
 策略源文档因节点撤销而失效时，管理 API 仍返回源文档及诊断；节点配置分发的是 deny-all 有效策略，并带 `policy_valid: false`。不能把坏引用丢掉后继续使用默认 direct。
+
+### 有向业务授权与一致数据面快照
+
+| 方法与路径 | bearer 权限 | 生成操作 / 类型 |
+| --- | --- | --- |
+| `GET /api/v1/access` | 管理员 | `getMeshAccess` → `MeshAccessSnapshot` |
+| `POST /api/v1/access` | 管理员 | `saveMeshAccess`，请求 `SaveMeshAccessRequest`，返回 `MeshAccessSnapshot` |
+| `GET /api/v1/agent/dataplane` | 节点 | `getAgentDataplane` → `AgentDataplaneSnapshot` |
+
+授权保存使用全局 CAS，相同内容不增加 revision。节点快照在一个 SQLite 读事务中组合节点配置、连接、授权及所需公钥，所有部分使用同一 revision，调用方身份只从节点 bearer 派生。摘要覆盖完整公共 payload；它不包含节点 bearer、管理员令牌或本地 profile 密钥。
+
+路径授权最多 128 条，每条包含 2–8 个不同的活动节点，完整路径有方向，不隐式允许反向或子路径。每个参与节点必须已有合法绑定公钥。单节点的数据面公钥集合最多 64 个；超出容量拒绝分发，不截断路径。授权源上限 128 KiB，一致快照上限 2 MiB。具体执行范围见[托管 Mesh IPv4 数据面](/managed-dataplane)。
+
+旧的配置与连接响应不增加字段，仍保留各自的保存 ACK 语义。新数据面快照不是新的“已生效”回执；本地 TUN 代际证据绑定其 revision 和摘要，实际可达性另用普通 IP 流量验证。
 
 ## 错误与运行时验证
 

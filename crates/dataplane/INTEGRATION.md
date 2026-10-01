@@ -2,9 +2,13 @@
 
 ## Managed adjacency API (integration names frozen)
 
-This section is the core/agent handoff contract. Managed use configures
+This section is the core/agent handoff contract. Adjacency-only managed use configures
 `allowed_paths: []`; authenticated adjacency and its control ping grant no endpoint
-packet, E2E probe, TUN or transit authorization. Config/lease changes replace the
+packet, E2E probe, TUN or transit authorization. The explicit managed IPv4 packet
+mode supplies only the intersection of controller-issued full directional grants
+and the routing compiler's exact paths. Endpoint-only keys receive no hop carrier
+grants. The Agent owns coherent snapshot validation, inner-IP admission, TUN and
+fail-closed routes; those are not inferred by this crate. Config/lease changes replace the
 runtime via `shutdown()` and `Runtime::start`; `Runtime` is cloneable and also works
 inside an `Arc`.
 
@@ -111,7 +115,7 @@ Hop wire revision **3** adds the distinct neighbor-control frame namespace and u
 constants. **Rebuild all peers together**; revision-2 peers cannot authenticate.
 E2E packet encoding and short-path datagram overhead remain unchanged.
 
-This crate supplies **static-config experimental dataplane and managed-adjacency primitives**, independent of controller HTTP contracts. It provides authenticated native UDP datagrams, native TCP streams, and an authenticated hop over any already-connected duplex stream (including an external VLESS adapter). The agent maps validated controller configuration onto these primitives; TUN and IP routing/ACL integration belong to its separate lab boundary.
+This crate supplies **static-config experimental dataplane and managed networking primitives**, independent of controller HTTP contracts. It provides authenticated native UDP datagrams, native TCP streams, and an authenticated hop over any already-connected duplex stream (including an external VLESS adapter). The agent maps validated controller configuration onto these primitives; TUN and IP routing/authorization integration belong to the Agent's explicit managed-packet or isolated lab boundary.
 
 ## Public API
 
