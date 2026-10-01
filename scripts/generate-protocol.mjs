@@ -40,6 +40,18 @@ export async function generate(outputRoot = root) {
   const document = JSON.parse(await readFile(schema, "utf8"));
   await writeFile(join(typescript, "zod.gen.ts"), validators(document));
   await writeFile(join(typescript, "operations.gen.ts"), operations(document));
+  await writeFile(join(typescript, "json-schema.gen.ts"), editorSchemas(document));
+}
+
+// Preserve the authoritative annotations and bounds for local JSONC completion.
+// JSON Pointer references retain their OpenAPI component location; no DTO or
+// field-name inference is maintained by the editor.
+function editorSchemas(document) {
+  const schemaDocument = {
+    $schema: "https://json-schema.org/draft/2020-12/schema",
+    components: { schemas: document.components.schemas },
+  };
+  return `// Generated from the controller OpenAPI by scripts/generate-protocol.mjs. Do not edit.\n\nexport const schemaDocument = ${JSON.stringify(schemaDocument, null, 2)} as const;\n\nexport const componentSchemas = schemaDocument.components.schemas;\n\nexport function schemaFor(name: keyof typeof componentSchemas) {\n  return { ...schemaDocument, $ref: \`#/components/schemas/\${name}\` } as const;\n}\n`;
 }
 
 // Hey API emits DTOs. These deliberately narrow schema and operation
@@ -53,8 +65,11 @@ function validators(document) {
   const definitions = [];
   const schemas = document.components.schemas;
   function keys(schema, allowed) {
+    if (schema["x-meshway-ref"] !== undefined && !["node", "tag", "selector"].includes(schema["x-meshway-ref"])) {
+      throw new Error("Unsupported Meshway schema reference annotation");
+    }
     for (const key of Object.keys(schema)) {
-      if (![...allowed, "description", "title"].includes(key)) throw new Error(`Unsupported schema keyword: ${key}`);
+      if (![...allowed, "description", "title", "x-meshway-ref"].includes(key)) throw new Error(`Unsupported schema keyword: ${key}`);
     }
   }
   function component(name) {
@@ -89,7 +104,7 @@ function validators(document) {
       case "string": {
         keys(schema, ["type", "format", "minLength", "maxLength", "pattern", "enum"]);
         if (schema.enum !== undefined) {
-          if (!Array.isArray(schema.enum) || !schema.enum.length || schema.enum.some(value => typeof value !== "string") || Object.keys(schema).some(key => !["type", "enum", "description", "title"].includes(key))) throw new Error("Only plain string enums are supported");
+          if (!Array.isArray(schema.enum) || !schema.enum.length || schema.enum.some(value => typeof value !== "string") || Object.keys(schema).some(key => !["type", "enum", "description", "title", "x-meshway-ref"].includes(key))) throw new Error("Only plain string enums are supported");
           return `z.enum(${JSON.stringify(schema.enum)})`;
         }
         if (schema.format && schema.format !== "date-time") throw new Error(`Unsupported string format ${schema.format}`);

@@ -4,7 +4,9 @@
   "private": true,
   "type": "module",
   "exports": {
-    ".": "./src/index.ts"
+    ".": "./src/index.ts",
+    "./schemas": "./src/generated/zod.gen.ts",
+    "./json-schema": "./src/generated/json-schema.gen.ts"
   },
   "scripts": {
     "generate": "node ../../scripts/generate-protocol.mjs",
