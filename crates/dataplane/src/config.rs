@@ -86,6 +86,12 @@ pub struct Limits {
     /// Combined live channels and unfinished hop handshakes/confirmations.
     pub max_connections: usize,
     pub queue_capacity: usize,
+    /// Completed UDP/dispatch frames between cooperative yields. Zero disables
+    /// explicit yielding for same-build A/B comparisons; it does not change queues.
+    pub work_budget_frames: usize,
+    /// Requested SO_RCVBUF for every native UDP socket. Zero preserves the OS
+    /// default; a nonzero request may be clamped/accounted differently by the OS.
+    pub udp_receive_buffer_bytes: usize,
     /// L bounds each source setup/cache pool. Receiving packet contexts are <= L,
     /// each with one active and one pending key, plus <= L separate echo setups:
     /// at most 3L receiving E2E states, without unrelated-context rollover borrowing.
@@ -100,6 +106,8 @@ impl Default for Limits {
         Self {
             max_connections: 32,
             queue_capacity: 64,
+            work_budget_frames: 16,
+            udp_receive_buffer_bytes: 0,
             max_pending_probes: 64,
             handshake_timeout_ms: 3_000,
             probe_timeout_ms: 10_000,
@@ -221,6 +229,8 @@ impl LabConfig {
         let limits = &self.limits;
         if !(1..=128).contains(&limits.max_connections)
             || !(1..=256).contains(&limits.queue_capacity)
+            || limits.work_budget_frames > 64
+            || limits.udp_receive_buffer_bytes > 4 * 1024 * 1024
             || !(1..=128).contains(&limits.max_pending_probes)
             || !(50..=30_000).contains(&limits.handshake_timeout_ms)
             || !(100..=60_000).contains(&limits.probe_timeout_ms)

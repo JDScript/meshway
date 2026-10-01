@@ -1,6 +1,4 @@
-use super::{
-    Inner, Outbound, Packet, Phase, SendingSession, WaitingProbe, lock, probe::PendingGuard,
-};
+use super::{Inner, Packet, Phase, SendingSession, WaitingProbe, lock, probe::PendingGuard};
 use crate::{
     Batch, Error, MAX_BATCH_BYTES, MAX_BATCH_FRAMES, Result,
     crypto::{Cipher, read_handshake, write_handshake},
@@ -65,16 +63,9 @@ pub(super) async fn send(
             .cloned()
             .ok_or(Error::Unavailable)?;
         let batch = Batch::new(frames)?;
-        channel
-            .tx
-            .try_send(Outbound {
-                token: channel.token,
-                batch,
-            })
-            .map_err(|error| match error {
-                mpsc::error::TrySendError::Full(_) => Error::Capacity,
-                mpsc::error::TrySendError::Closed(_) => Error::Unavailable,
-            })
+        inner
+            .enqueue(&channel, batch)
+            .map_err(|failure| inner.local_send_failure(failure))
     };
     tokio::select! {
         _ = shutdown.changed() => Err(Error::Closed),

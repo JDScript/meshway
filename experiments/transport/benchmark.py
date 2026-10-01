@@ -330,12 +330,15 @@ def benchmark_case(fixture, source, target, protocol, parallel, reverse, iterati
     ]
     if reverse:
         client.append("--reverse")
+    omitted = getattr(args, "omit", 0)
+    if omitted:
+        client.extend(["--omit", str(omitted)])
     if protocol == "udp":
         client.extend(["--udp", "--bitrate", args.udp_rate, "--length", str(args.udp_length)])
     started = now()
     docker("exec", "--detach", fixture.nodes["SHA"], *server)
     wait_until("iperf3 listener", lambda: fixture.helper("SHA", "listening", "5201", check=False).returncode == 0)
-    execution = fixture.exec("NYC", *client, timeout=args.seconds + 20, check=False)
+    execution = fixture.exec("NYC", *client, timeout=args.seconds + omitted + 20, check=False)
     try:
         raw = json.loads(execution.stdout)
     except ValueError as error:
@@ -508,4 +511,6 @@ def main(argv=None):
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    from performance_lock import performance_lock
+    with performance_lock():
+        sys.exit(main())

@@ -1,4 +1,7 @@
-use super::{EndpointSession, Incoming, Inner, Packet, Phase, ProbeReply, WaitingProbe, lock};
+use super::{
+    DropReason, EndpointSession, Failure, Incoming, Inner, Packet, Phase, ProbeReply, StageResult,
+    WaitingProbe, lock, work_budget::WorkBudget,
+};
 use crate::{
     Error, Result,
     crypto::{Cipher, read_handshake, write_handshake},
@@ -115,6 +118,7 @@ pub(super) async fn dispatch(inner: Arc<Inner>, mut receiver: mpsc::Receiver<Inc
         return;
     }
     let mut cleanup = tokio::time::interval(Duration::from_millis(250));
+    let mut work = WorkBudget::new(inner.config.limits.work_budget_frames);
     loop {
         tokio::select! {
             _ = shutdown.changed() => break,
@@ -124,17 +128,22 @@ pub(super) async fn dispatch(inner: Arc<Inner>, mut receiver: mpsc::Receiver<Inc
             }
             incoming = receiver.recv() => {
                 let Some(incoming) = incoming else { break };
-                if process(&inner, &incoming).is_err() {
-                    inner.counters(incoming.transport).dropped.fetch_add(1, Ordering::Relaxed);
+                if let Err(failure) = process(&inner, &incoming) {
+                    inner.counters(incoming.transport).drop(failure.reason);
                 }
+                // process is synchronous: no endpoint/registry/delivery lock crosses this yield.
+                work.completed_frame().await;
             }
         }
     }
 }
 
-fn process(inner: &Inner, incoming: &Incoming) -> Result<()> {
+fn process(inner: &Inner, incoming: &Incoming) -> StageResult<()> {
     if !inner.active(&incoming.peer, &incoming.token) {
-        return Err(Error::Authentication);
+        return Err(Failure::new(
+            Error::Authentication,
+            DropReason::StaleChannel,
+        ));
     }
     let packet = Packet::decode(&incoming.body)?;
     let position = inner.authorize(&packet.path)?;
@@ -146,7 +155,7 @@ fn process(inner: &Inner, incoming: &Incoming) -> Result<()> {
     .and_then(|index| packet.path.get(index))
     .ok_or(Error::UnauthorizedPath)?;
     if previous != &incoming.peer {
-        return Err(Error::UnauthorizedPath);
+        return Err(Error::UnauthorizedPath.into());
     }
     let next = if packet.phase.forward() {
         position.checked_add(1)
@@ -163,7 +172,7 @@ fn process(inner: &Inner, incoming: &Incoming) -> Result<()> {
                 observed.push(packet.body.clone());
             }
         }
-        inner.send(&next, packet)?;
+        inner.send_classified(&next, packet)?;
         // Attributed to ingress transport: successfully enqueued for the exact next hop.
         inner
             .counters(incoming.transport)
@@ -180,17 +189,17 @@ fn process(inner: &Inner, incoming: &Incoming) -> Result<()> {
             // Admission must see current occupancy, not wait for the cleanup tick.
             sessions.retain(|_, session| session.expires > Instant::now());
             if sessions.contains_key(&session_key) {
-                return Err(Error::Capacity);
+                return Err(Error::Capacity.into());
             }
             let mut state = inner.identity.handshake(None, &packet.e2e_prologue())?;
             let mode = read_handshake(&mut state, &packet.body)?;
             let packets = match mode.as_slice() {
                 b"echo-v1" => false,
                 b"packet-v1" => true,
-                _ => return Err(Error::Protocol),
+                _ => return Err(Error::Protocol.into()),
             };
             if state.get_remote_static() != Some(key.as_slice()) {
-                return Err(Error::Authentication);
+                return Err(Error::Authentication.into());
             }
             let limit = inner.config.limits.max_pending_probes;
             if packets {
@@ -208,16 +217,16 @@ fn process(inner: &Inner, incoming: &Incoming) -> Result<()> {
                         session.packets && session.path == packet.path && !session.confirmed
                     })
                 {
-                    return Err(Error::Capacity);
+                    return Err(Error::Capacity.into());
                 }
             } else if sessions.values().filter(|session| !session.packets).count() >= limit {
                 // Probe setup has its own bounded pool, so it cannot consume packet
                 // rollover headroom (or vice versa). Total receiving state <= 3L.
-                return Err(Error::Capacity);
+                return Err(Error::Capacity.into());
             }
             let body = write_handshake(&mut state, &mode)?;
             let cipher = Cipher::finish(state)?;
-            inner.send(
+            inner.send_classified(
                 previous,
                 Packet {
                     phase: Phase::Ready,
@@ -256,11 +265,11 @@ fn process(inner: &Inner, incoming: &Incoming) -> Result<()> {
                 || session.expires <= Instant::now()
                 || session.packets != (packet.phase == Phase::Packet)
             {
-                return Err(Error::Authentication);
+                return Err(Error::Authentication.into());
             }
             let plaintext = Zeroizing::new(session.cipher.open(&packet.body)?);
             if plaintext.len() > super::wire::MAX_PAYLOAD {
-                return Err(Error::Oversize);
+                return Err(Error::Oversize.into());
             }
             if session.packets {
                 let promote = !session.confirmed;
@@ -276,18 +285,34 @@ fn process(inner: &Inner, incoming: &Incoming) -> Result<()> {
                             || session.path != packet.path
                     });
                 }
-                return lock(&inner.delivery)
-                    .as_ref()
-                    .ok_or(Error::Closed)?
-                    .try_send(super::ReceivedPacket {
-                        source: origin.clone(),
-                        path: packet.path,
-                        payload: plaintext.to_vec(),
-                    })
-                    .map_err(|_| Error::Capacity);
+                let delivery = lock(&inner.delivery);
+                let delivery = delivery.as_ref().ok_or_else(|| {
+                    Failure::new(Error::Closed, DropReason::EndpointDeliveryClosed)
+                })?;
+                return match delivery.try_send(super::ReceivedPacket {
+                    source: origin.clone(),
+                    path: packet.path,
+                    payload: plaintext.to_vec(),
+                }) {
+                    Ok(()) => {
+                        inner.delivery_high_water.enqueued(delivery);
+                        Ok(())
+                    }
+                    Err(mpsc::error::TrySendError::Full(_)) => {
+                        inner.delivery_high_water.observe(delivery.max_capacity());
+                        Err(Failure::new(
+                            Error::Capacity,
+                            DropReason::EndpointDeliveryFull,
+                        ))
+                    }
+                    Err(mpsc::error::TrySendError::Closed(_)) => Err(Failure::new(
+                        Error::Capacity,
+                        DropReason::EndpointDeliveryClosed,
+                    )),
+                };
             }
             let body = session.cipher.seal(&plaintext)?;
-            inner.send(
+            inner.send_classified(
                 previous,
                 Packet {
                     phase: Phase::Echo,
@@ -303,9 +328,12 @@ fn process(inner: &Inner, incoming: &Incoming) -> Result<()> {
             let pending = lock(&inner.pending);
             let waiting = pending.get(&packet.id).ok_or(Error::Authentication)?;
             if waiting.path != packet.path {
-                return Err(Error::UnauthorizedPath);
+                return Err(Error::UnauthorizedPath.into());
             }
-            waiting.tx.try_send(packet).map_err(|_| Error::Capacity)
+            waiting
+                .tx
+                .try_send(packet)
+                .map_err(|_| Error::Capacity.into())
         }
     }
 }

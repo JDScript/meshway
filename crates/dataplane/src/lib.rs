@@ -13,8 +13,9 @@ pub use framing::{
     Batch, BoxedStream, DuplexStream, MAX_BATCH_BYTES, MAX_BATCH_FRAMES, MAX_FRAME_SIZE,
 };
 pub use runtime::{
-    BoundListener, MAX_NATIVE_UDP_DATAGRAM, MAX_PACKET_PAYLOAD, ProbeReply, ReceivedPacket,
-    Runtime, Statistics, StreamRole, TransportStatistics, native_udp_datagram_len,
+    BoundListener, DropStatistics, MAX_NATIVE_UDP_DATAGRAM, MAX_PACKET_PAYLOAD, ProbeReply,
+    QueueRejectionStatistics, QueueStatistics, ReceivedPacket, Runtime, RuntimeQueueStatistics,
+    Statistics, StreamRole, TransportStatistics, native_udp_datagram_len,
 };
 
 /// Intentionally contains no cryptographic material, endpoints or application bytes.

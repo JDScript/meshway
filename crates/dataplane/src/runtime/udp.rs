@@ -1,12 +1,14 @@
 use super::{
-    Channel, Incoming, Inner, Outbound, lock,
+    Channel, DropReason, Failure, Incoming, Inner, Outbound, StageResult, lock,
     wire::{HOP_ACK, HOP_CONFIRM, hop_prologue},
+    work_budget::WorkBudget,
 };
 use crate::{
     Error, OutgoingCandidate, Result, TransportKind,
     crypto::{Cipher, read_handshake, write_handshake},
 };
 use snow::HandshakeState;
+use socket2::{Domain, Protocol, SockRef, Socket, Type};
 use std::{
     collections::BTreeMap,
     net::SocketAddr,
@@ -76,24 +78,36 @@ struct Confirming {
     permit: OwnedSemaphorePermit,
 }
 
-pub(super) async fn maintain(inner: Arc<Inner>, candidate: OutgoingCandidate) {
-    let Ok(address) = candidate.endpoint.parse::<SocketAddr>() else {
-        return;
-    };
+/// Prepare every UDP socket before spawning its engine, so setup failures are
+/// returned to the caller rather than silently terminating a reconnect task.
+pub(super) fn bind(address: SocketAddr, receive_buffer_bytes: usize) -> Result<UdpSocket> {
+    let socket = Socket::new(
+        Domain::for_address(address),
+        Type::DGRAM,
+        Some(Protocol::UDP),
+    )?;
+    if receive_buffer_bytes != 0 {
+        SockRef::from(&socket).set_recv_buffer_size(receive_buffer_bytes)?;
+    }
+    socket.set_nonblocking(true)?;
+    socket.bind(&address.into())?;
+    Ok(UdpSocket::from_std(socket.into())?)
+}
+
+pub(super) fn bind_outgoing(
+    candidate: &OutgoingCandidate,
+    receive_buffer_bytes: usize,
+) -> Result<UdpSocket> {
+    let address = candidate
+        .endpoint
+        .parse::<SocketAddr>()
+        .map_err(|_| Error::Protocol)?;
     let bind: SocketAddr = if address.is_ipv4() {
         ([0, 0, 0, 0], 0).into()
     } else {
         ([0_u16; 8], 0).into()
     };
-    let mut shutdown = inner.shutdown.subscribe();
-    if *shutdown.borrow() {
-        return;
-    }
-    let socket = tokio::select! {
-        _ = shutdown.changed() => return,
-        result = UdpSocket::bind(bind) => match result { Ok(socket) => socket, Err(_) => return },
-    };
-    run(inner, socket, Some(candidate)).await;
+    self::bind(bind, receive_buffer_bytes)
 }
 
 pub(super) async fn run(
@@ -111,6 +125,8 @@ pub(super) async fn run(
     let mut confirming = BTreeMap::<[u8; 32], Confirming>::new();
     let mut next_attempt = Instant::now();
     let mut tick = tokio::time::interval(Duration::from_millis(100));
+    // The socket engine shares one budget across receive and outbound frame work.
+    let mut work = WorkBudget::new(inner.config.limits.work_budget_frames);
     // One extra byte detects truncation of oversized datagrams without allocating from a wire length.
     let mut buffer = vec![0; UDP_LIMIT + 1];
     loop {
@@ -135,8 +151,8 @@ pub(super) async fn run(
                 for session in sessions.values_mut() {
                     if now.duration_since(session.pinged) >= PING_EVERY {
                         session.pinged = now;
-                        if send_datagram(&socket, session, &[0]).await.is_err() {
-                            inner.counters(TransportKind::NativeUdp).dropped.fetch_add(1, Ordering::Relaxed);
+                        if let Err(error) = send_datagram(&socket, session, &[0]).await {
+                            inner.counters(TransportKind::NativeUdp).drop(error.into());
                         }
                     }
                 }
@@ -150,22 +166,33 @@ pub(super) async fn run(
             }
             outbound = rx.recv() => {
                 let Some(outbound) = outbound else { break };
-                let Some(session) = sessions.get_mut(&outbound.token) else { continue };
+                let Some(session) = sessions.get_mut(&outbound.token) else {
+                    inner.counters(TransportKind::NativeUdp).drop(DropReason::StaleChannel);
+                    for _ in 0..outbound.batch.len() {
+                        work.completed_frame().await;
+                    }
+                    continue;
+                };
                 for frame in outbound.batch.into_frames() {
                     let mut plaintext = Vec::with_capacity(frame.len() + 1);
                     plaintext.push(1);
                     plaintext.extend_from_slice(&frame);
                     match send_datagram(&socket, session, &plaintext).await {
                         Ok(()) => { inner.counters(TransportKind::NativeUdp).sent.fetch_add(1, Ordering::Relaxed); }
-                        Err(_) => { inner.counters(TransportKind::NativeUdp).dropped.fetch_add(1, Ordering::Relaxed); }
+                        Err(error) => { inner.counters(TransportKind::NativeUdp).drop(error.into()); }
                     }
+                    // Account each sealed/sent frame, not just the bounded batch entry.
+                    work.completed_frame().await;
                 }
             }
             datagram = socket.recv_from(&mut buffer) => {
                 let Ok((size, source)) = datagram else { break };
-                let result = if size == 0 || size > UDP_LIMIT { Err(Error::Oversize) }
+                let result = if size == 0 || size > UDP_LIMIT { Err(Error::Oversize.into()) }
                     else { receive(&inner, &socket, &tx, &mut sessions, &mut pending, &mut confirming, &buffer[..size], source).await };
-                if result.is_err() { inner.counters(TransportKind::NativeUdp).dropped.fetch_add(1, Ordering::Relaxed); }
+                if let Err(failure) = result { inner.counters(TransportKind::NativeUdp).drop(failure.reason); }
+                // All datagrams consume work, including rejected input and hop control.
+                // Authentication/confirmation and any reply finish before yielding.
+                work.completed_frame().await;
             }
         }
     }
@@ -218,7 +245,7 @@ async fn receive(
     confirming: &mut BTreeMap<[u8; 32], Confirming>,
     datagram: &[u8],
     source: SocketAddr,
-) -> Result<()> {
+) -> StageResult<()> {
     match Kind::try_from(datagram[0])? {
         Kind::Hello => {
             let permit = inner
@@ -231,7 +258,7 @@ async fn receive(
                 .handshake(None, &hop_prologue(TransportKind::NativeUdp))?;
             let setup = read_handshake(&mut state, &datagram[1..])?;
             if setup.len() != 3 || setup[0] != 1 {
-                return Err(Error::Protocol);
+                return Err(Error::Protocol.into());
             }
             let peer = inner.identify(state.get_remote_static())?;
             inner.authorize_transport(&peer, TransportKind::NativeUdp)?;
@@ -262,13 +289,13 @@ async fn receive(
         Kind::Response => {
             let waiting = pending.as_mut().ok_or(Error::Authentication)?;
             if waiting.address != source || waiting.expires <= Instant::now() {
-                return Err(Error::Authentication);
+                return Err(Error::Authentication.into());
             }
             let setup = read_handshake(&mut waiting.state, &datagram[1..])?;
             if setup != [1, (waiting.priority >> 8) as u8, waiting.priority as u8]
                 || inner.identify(waiting.state.get_remote_static())? != waiting.peer
             {
-                return Err(Error::Authentication);
+                return Err(Error::Authentication.into());
             }
             let waiting = pending.take().ok_or(Error::Protocol)?;
             let mut cipher = Cipher::finish(waiting.state)?;
@@ -292,7 +319,7 @@ async fn receive(
         Kind::Confirm | Kind::Ack => {
             let kind = Kind::try_from(datagram[0])?;
             if datagram.len() < 33 {
-                return Err(Error::Protocol);
+                return Err(Error::Protocol.into());
             }
             let token: [u8; 32] = datagram[1..33].try_into().map_err(|_| Error::Protocol)?;
             let is_ack = matches!(kind, Kind::Ack);
@@ -301,11 +328,11 @@ async fn receive(
                     || waiting.expires <= Instant::now()
                     || waiting.initiator != is_ack
                 {
-                    return Err(Error::Authentication);
+                    return Err(Error::Authentication.into());
                 }
                 let expected = if is_ack { HOP_ACK } else { HOP_CONFIRM };
                 if waiting.cipher.open(&datagram[33..])? != expected {
-                    return Err(Error::Authentication);
+                    return Err(Error::Authentication.into());
                 }
                 let waiting = confirming.remove(&token).ok_or(Error::Protocol)?;
                 install(
@@ -320,7 +347,7 @@ async fn receive(
                     !is_ack,
                 )?;
             } else if is_ack {
-                return Err(Error::Authentication);
+                return Err(Error::Authentication.into());
             } else {
                 // A lost ACK can be recovered by a fresh-nonce confirmation from
                 // the original source address; replays never refresh or promote state.
@@ -330,7 +357,7 @@ async fn receive(
                     || !inner.active(&session.peer, &token)
                     || session.cipher.open(&datagram[33..])? != HOP_CONFIRM
                 {
-                    return Err(Error::Authentication);
+                    return Err(Error::Authentication.into());
                 }
             }
             if !is_ack {
@@ -342,17 +369,25 @@ async fn receive(
         }
         Kind::Data => {
             if datagram.len() < 33 {
-                return Err(Error::Protocol);
+                return Err(Error::Protocol.into());
             }
             let token: [u8; 32] = datagram[1..33].try_into().map_err(|_| Error::Protocol)?;
             let session = sessions.get_mut(&token).ok_or(Error::Authentication)?;
-            if session.address != source || !inner.active(&session.peer, &token) {
-                return Err(Error::Authentication);
+            if session.address != source {
+                return Err(Error::Authentication.into());
+            }
+            if !inner.active(&session.peer, &token) {
+                return Err(Failure::new(
+                    Error::Authentication,
+                    DropReason::StaleChannel,
+                ));
             }
             let plaintext = session.cipher.open(&datagram[33..])?;
             session.received = Instant::now();
             match plaintext.as_slice() {
-                [0] => send_datagram(socket, session, &[2]).await,
+                [0] => send_datagram(socket, session, &[2])
+                    .await
+                    .map_err(Into::into),
                 [2] => Ok(()),
                 [1, body @ ..] if !body.is_empty() => {
                     inner.deliver(Incoming {
@@ -363,7 +398,7 @@ async fn receive(
                     });
                     Ok(())
                 }
-                _ => Err(Error::Protocol),
+                _ => Err(Error::Protocol.into()),
             }
         }
     }

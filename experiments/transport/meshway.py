@@ -215,6 +215,10 @@ class MeshwayFixture(Fixture):
     def cgroups(self):
         return {node: json.loads(self.helper(node, "cgroup").stdout) for node in self.nodes}
 
+    def start_agent(self, node):
+        self.agents_started.add(node)
+        docker("exec", "--detach", self.nodes[node], "python3", f"{RUN_DIRECTORY}/meshway_node.py", "supervise")
+
     def setup_mesh(self, second_leg):
         self.nodes = {}
         self.networks = {}
@@ -236,8 +240,7 @@ class MeshwayFixture(Fixture):
             raise LabError("Unexpected endpoint-to-endpoint underlay reachability")
         self.generate_configs(second_leg)
         for node in ("LAX", "NYC", "SHA"):
-            self.agents_started.add(node)
-            docker("exec", "--detach", self.nodes[node], "python3", f"{RUN_DIRECTORY}/meshway_node.py", "supervise")
+            self.start_agent(node)
         wait_until("authenticated NYC-LAX-SHA peer graph", lambda: authenticated_graph(self.statuses()), timeout=self.args.ready_timeout)
         for node, peer in (("NYC", "SHA"), ("SHA", "NYC")):
             wait_until(f"{node} addressed/up {TUN_NAME} MTU {TUN_MTU}", lambda n=node: self.tun_ready(n), timeout=self.args.ready_timeout)
@@ -476,4 +479,6 @@ def main(argv=None):
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    from performance_lock import performance_lock
+    with performance_lock():
+        sys.exit(main())

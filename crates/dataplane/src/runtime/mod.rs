@@ -1,26 +1,30 @@
 mod packet;
 mod probe;
+mod statistics;
 mod stream;
 #[cfg(test)]
 mod tests;
 mod udp;
 mod wire;
+mod work_budget;
 
 use crate::{
     Batch, DuplexStream, Error, Identity, LabConfig, Result, TransportKind, config::public_key,
+};
+use statistics::{Counters, DropReason, Failure, HighWater, StageResult, occupancy};
+pub use statistics::{
+    DropStatistics, QueueRejectionStatistics, QueueStatistics, RuntimeQueueStatistics, Statistics,
+    TransportStatistics,
 };
 use std::{
     collections::BTreeMap,
     fmt,
     net::SocketAddr,
-    sync::{
-        Arc, Mutex,
-        atomic::{AtomicU64, Ordering},
-    },
+    sync::{Arc, Mutex, atomic::Ordering},
     time::Duration,
 };
 use tokio::{
-    net::{TcpListener, UdpSocket},
+    net::TcpListener,
     sync::{Notify, Semaphore, mpsc, watch},
     task::JoinHandle,
     time::Instant,
@@ -86,40 +90,6 @@ impl fmt::Debug for ProbeReply {
     }
 }
 
-#[derive(Clone, Copy, Debug, Default, serde::Serialize)]
-pub struct TransportStatistics {
-    pub received: u64,
-    pub sent: u64,
-    pub forwarded: u64,
-    pub dropped: u64,
-}
-
-#[derive(Clone, Debug, Default, serde::Serialize)]
-pub struct Statistics {
-    pub native_udp: TransportStatistics,
-    pub native_tcp: TransportStatistics,
-    pub vless: TransportStatistics,
-}
-
-#[derive(Default)]
-struct Counters {
-    received: AtomicU64,
-    sent: AtomicU64,
-    forwarded: AtomicU64,
-    dropped: AtomicU64,
-}
-
-impl Counters {
-    fn snapshot(&self) -> TransportStatistics {
-        TransportStatistics {
-            received: self.received.load(Ordering::Relaxed),
-            sent: self.sent.load(Ordering::Relaxed),
-            forwarded: self.forwarded.load(Ordering::Relaxed),
-            dropped: self.dropped.load(Ordering::Relaxed),
-        }
-    }
-}
-
 struct Outbound {
     token: [u8; 32],
     batch: Batch,
@@ -172,6 +142,8 @@ struct Inner {
     shutdown: watch::Sender<bool>,
     changed: Notify,
     counters: [Counters; 3],
+    ingress_high_water: HighWater,
+    delivery_high_water: HighWater,
     #[cfg(test)]
     observed_transit: Mutex<Vec<Vec<u8>>>,
 }
@@ -229,10 +201,13 @@ impl Runtime {
             shutdown,
             changed: Notify::new(),
             counters: Default::default(),
+            ingress_high_water: HighWater::default(),
+            delivery_high_water: HighWater::default(),
             #[cfg(test)]
             observed_transit: Mutex::default(),
         });
-        // Bind every native listener before spawning any tasks, so startup failure is atomic.
+        // Prepare native listeners and UDP candidates before spawning any tasks, so
+        // socket-option/bind failure is an explicit, atomic startup error.
         let mut tcp = Vec::new();
         let mut udp = Vec::new();
         let mut bound = Vec::new();
@@ -245,9 +220,10 @@ impl Runtime {
                     address
                 }
                 TransportKind::NativeUdp => {
-                    let socket = UdpSocket::bind(listener.bind).await?;
+                    let socket =
+                        udp::bind(listener.bind, inner.config.limits.udp_receive_buffer_bytes)?;
                     let address = socket.local_addr()?;
-                    udp.push(socket);
+                    udp.push((socket, None));
                     address
                 }
                 TransportKind::Vless => {
@@ -258,6 +234,13 @@ impl Runtime {
                 transport: listener.transport,
                 address,
             });
+        }
+        for candidate in &inner.config.outgoing {
+            if candidate.transport == TransportKind::NativeUdp {
+                let socket =
+                    udp::bind_outgoing(candidate, inner.config.limits.udp_receive_buffer_bytes)?;
+                udp.push((socket, Some(candidate.clone())));
+            }
         }
         let runtime = Self {
             handle: Arc::new(Handle {
@@ -270,14 +253,14 @@ impl Runtime {
         for listener in tcp {
             inner.spawn(stream::listen(inner.clone(), listener));
         }
-        for socket in udp {
-            inner.spawn(udp::run(inner.clone(), socket, None));
+        for (socket, candidate) in udp {
+            inner.spawn(udp::run(inner.clone(), socket, candidate));
         }
         for candidate in inner.config.outgoing.clone() {
             match candidate.transport {
                 TransportKind::NativeTcp => inner.spawn(stream::maintain(inner.clone(), candidate)),
-                TransportKind::NativeUdp => inner.spawn(udp::maintain(inner.clone(), candidate)),
-                TransportKind::Vless => (), // Established by CLI adapter, then attach_stream.
+                TransportKind::NativeUdp => (), // Prepared above; reconnect reuses this socket.
+                TransportKind::Vless => (),     // Established by CLI adapter, then attach_stream.
             }
         }
         Ok(runtime)
@@ -355,10 +338,23 @@ impl Runtime {
 
     pub fn statistics(&self) -> Statistics {
         let inner = &self.handle.inner;
+        let capacity = inner.config.limits.queue_capacity;
+        let mut outbound = [0; 3];
+        for channel in lock(&inner.peers).values() {
+            let current = &mut outbound[Inner::transport_index(channel.transport)];
+            *current = (*current).max(occupancy(&channel.tx));
+        }
+        let delivery = lock(&inner.delivery).as_ref().map_or(0, occupancy);
         Statistics {
-            native_udp: inner.counters[0].snapshot(),
-            native_tcp: inner.counters[1].snapshot(),
-            vless: inner.counters[2].snapshot(),
+            native_udp: inner.counters[0].snapshot(capacity, outbound[0]),
+            native_tcp: inner.counters[1].snapshot(capacity, outbound[1]),
+            vless: inner.counters[2].snapshot(capacity, outbound[2]),
+            queues: RuntimeQueueStatistics {
+                ingress: inner
+                    .ingress_high_water
+                    .snapshot(capacity, occupancy(&inner.incoming)),
+                endpoint_delivery: inner.delivery_high_water.snapshot(capacity, delivery),
+            },
         }
     }
 
@@ -416,11 +412,14 @@ impl Inner {
         handles.push(tokio::spawn(future));
     }
     fn counters(&self, transport: TransportKind) -> &Counters {
-        &self.counters[match transport {
+        &self.counters[Self::transport_index(transport)]
+    }
+    fn transport_index(transport: TransportKind) -> usize {
+        match transport {
             TransportKind::NativeUdp => 0,
             TransportKind::NativeTcp => 1,
             TransportKind::Vless => 2,
-        }]
+        }
     }
     fn identify(&self, key: Option<&[u8]>) -> Result<String> {
         let key = key.ok_or(Error::Authentication)?;
@@ -485,27 +484,68 @@ impl Inner {
             .ok_or(Error::UnauthorizedPath)
     }
     fn send(&self, peer: &str, packet: Packet) -> Result<()> {
+        self.send_classified(peer, packet)
+            .map_err(|failure| self.local_send_failure(failure))
+    }
+    fn local_send_failure(&self, failure: Failure) -> Error {
+        if let Some(transport) = failure.outgoing {
+            self.counters(transport).drop(failure.reason);
+        }
+        failure.error
+    }
+    // Dispatch owns ingress attribution; public/local send owns outgoing attribution.
+    fn send_classified(&self, peer: &str, packet: Packet) -> StageResult<()> {
         let channel = lock(&self.peers)
             .get(peer)
             .cloned()
             .ok_or(Error::Unavailable)?;
         let batch = Batch::new(vec![packet.encode()?])?;
-        channel
-            .tx
-            .try_send(Outbound {
-                token: channel.token,
-                batch,
-            })
-            .map_err(|error| match error {
-                mpsc::error::TrySendError::Full(_) => Error::Capacity,
-                mpsc::error::TrySendError::Closed(_) => Error::Unavailable,
-            })
+        self.enqueue(&channel, batch)
+    }
+    fn enqueue(&self, channel: &Channel, batch: Batch) -> StageResult<()> {
+        let counters = self.counters(channel.transport);
+        match channel.tx.try_send(Outbound {
+            token: channel.token,
+            batch,
+        }) {
+            Ok(()) => {
+                counters.outbound_high_water.enqueued(&channel.tx);
+                Ok(())
+            }
+            Err(error) => {
+                let (error, reason, full) = match error {
+                    mpsc::error::TrySendError::Full(_) => {
+                        counters
+                            .outbound_high_water
+                            .observe(channel.tx.max_capacity());
+                        (Error::Capacity, DropReason::OutboundQueueFull, true)
+                    }
+                    mpsc::error::TrySendError::Closed(_) => {
+                        (Error::Unavailable, DropReason::OutboundQueueClosed, false)
+                    }
+                };
+                counters.outbound_rejected(full);
+                Err(Failure {
+                    error,
+                    reason,
+                    outgoing: Some(channel.transport),
+                })
+            }
+        }
     }
     fn deliver(&self, incoming: Incoming) {
         let counters = self.counters(incoming.transport);
         counters.received.fetch_add(1, Ordering::Relaxed);
-        if self.incoming.try_send(incoming).is_err() {
-            counters.dropped.fetch_add(1, Ordering::Relaxed);
+        match self.incoming.try_send(incoming) {
+            Ok(()) => self.ingress_high_water.enqueued(&self.incoming),
+            Err(mpsc::error::TrySendError::Full(_)) => {
+                self.ingress_high_water
+                    .observe(self.incoming.max_capacity());
+                counters.drop(DropReason::IngressQueueFull);
+            }
+            Err(mpsc::error::TrySendError::Closed(_)) => {
+                counters.drop(DropReason::IngressQueueClosed)
+            }
         }
     }
 }

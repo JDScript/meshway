@@ -1,5 +1,5 @@
 use super::{
-    Channel, Incoming, Inner, Outbound, StreamRole, lock,
+    Channel, DropReason, Failure, Incoming, Inner, Outbound, StageResult, StreamRole, lock,
     wire::{HOP_ACK, HOP_CONFIRM, hop_prologue},
 };
 use crate::{
@@ -134,14 +134,8 @@ pub(super) fn install<S: DuplexStream + 'static>(
         let peer = established.peer.clone();
         let token = established.cipher.id;
         let _permit = permit;
-        if run(&inner, established, transport, rx, closed)
-            .await
-            .is_err()
-        {
-            inner
-                .counters(transport)
-                .dropped
-                .fetch_add(1, Ordering::Relaxed);
+        if let Err(failure) = run(&inner, established, transport, rx, closed).await {
+            inner.counters(transport).drop(failure.reason);
         }
         inner.unregister(&peer, &token);
     });
@@ -154,7 +148,7 @@ async fn run<S: DuplexStream>(
     transport: TransportKind,
     mut rx: mpsc::Receiver<Outbound>,
     mut closed: watch::Receiver<bool>,
-) -> Result<()> {
+) -> StageResult<()> {
     let Established {
         stream,
         cipher,
@@ -172,7 +166,7 @@ async fn run<S: DuplexStream>(
         loop {
             let record = read_record(&mut reader).await?;
             if !inner.active(&peer, &token) {
-                return Err(Error::Closed);
+                return Err(Failure::new(Error::Closed, DropReason::StaleChannel));
             }
             let body = lock(&cipher).open(&record)?;
             inner.deliver(Incoming {
@@ -186,7 +180,7 @@ async fn run<S: DuplexStream>(
     let writes = async {
         while let Some(outbound) = rx.recv().await {
             if outbound.token != token {
-                return Err(Error::Protocol);
+                return Err(Failure::new(Error::Protocol, DropReason::StaleChannel));
             }
             for frame in outbound.batch.into_frames() {
                 let record = lock(&cipher).seal(&frame)?;
@@ -220,14 +214,14 @@ pub(super) async fn listen(inner: Arc<Inner>, listener: TcpListener) {
             accepted = listener.accept() => {
                 let Ok((socket, _)) = accepted else { break };
                 let Ok(permit) = inner.semaphore.clone().try_acquire_owned() else {
-                    inner.counters(TransportKind::NativeTcp).dropped.fetch_add(1, Ordering::Relaxed);
+                    inner.counters(TransportKind::NativeTcp).drop(DropReason::CapacityOther);
                     continue;
                 };
                 let inner = inner.clone();
                 inner.clone().spawn(async move {
                     match authenticate(&inner, socket, StreamRole::Acceptor, TransportKind::NativeTcp, 0).await {
                         Ok(established) => { let _ = install(inner, established, TransportKind::NativeTcp, permit); }
-                        Err(_) => { inner.counters(TransportKind::NativeTcp).dropped.fetch_add(1, Ordering::Relaxed); }
+                        Err(error) => { inner.counters(TransportKind::NativeTcp).drop(error.into()); }
                     }
                 });
             }
