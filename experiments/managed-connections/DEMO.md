@@ -18,7 +18,8 @@ Requirements: non-root Unix host user, Node **24**, Python 3, host `openssl`, Do
 installed workspace pnpm dependencies, and a **prebuilt** native image from
 `experiments/managed-connections/Dockerfile` containing the managed Agent. Supply
 the coordinator's retained image; the demo never builds, retags, pulls or deletes
-images. The image ID is pinned on first initialization.
+images. The image ID is pinned on first initialization. Ordinary `start` continues
+to reject a changed image; use the explicit image-only upgrade below.
 
 From the workspace root, after the coordinator's isolated acceptance:
 
@@ -61,6 +62,175 @@ Python launcher passes the locked file descriptor into Node, retaining ownership
 through cleanup. Do not wrap `demo.py` in another performance-lock invocation.
 `--help` is read-only and needs neither the lock nor a data directory.
 
+## Manual shell checks
+
+The updated image installs **`meshway-agent`**, the **`meshway`** symlink, and
+Debian **`iputils-ping`**. It sets `MESHWAY_STATE=/state/agent.json`; explicit
+`--state /private/...` arguments in the isolated fixture still take precedence.
+Existing containers need an image upgrade/recreation before these are available.
+Do not install packages in the running, read-only demo containers.
+
+From the host, discover the actual container names by labels. This wrapper keeps
+even manual Docker actions under the shared lock (exit an interactive shell to
+release it):
+
+```sh
+export MESHWAY_PERF_LOCK=/private/var/folders/8n/20x15sl9797cdg9sdqfj803w0000gn/T/opencode/meshway-performance.lock
+demo_docker() { python3 experiments/transport/performance_lock.py docker "$@"; }
+demo_docker ps --filter label=io.meshway.demo.project=managed-neighbors \
+  --format 'table {{.Names}}\t{{.Label "io.meshway.demo.resource"}}\t{{.Status}}'
+
+# Substitute the exact NYC name printed above; the hash depends on --data-dir.
+demo_docker exec -it meshway-demo-DATA_HASH-nyc sh
+```
+
+Inside NYC, after the coordinator has upgraded to the validated diagnostic image:
+
+```sh
+meshway status
+meshway connections status
+meshway ping demo-lax --count 3 --timeout-seconds 3
+meshway ping demo-sha --count 1 --timeout-seconds 3
+ping -c 3 127.0.0.1
+ping -c 3 lax.mesh.test
+```
+
+- `meshway status` and `meshway connections status` read local saved metadata;
+  they do not themselves prove reachability.
+- **`meshway ping` sends a fresh authenticated direct-neighbor probe through the
+  running managed Agent.** NYC → LAX uses native UDP. SHA → LAX uses VLESS/TLS.
+  From **LAX**, both `meshway ping demo-nyc` and `meshway ping demo-sha` exercise
+  the accepted, peer-initiated bidirectional channels. No extra port or admin
+  secret is needed: the CLI uses the private `/state/agent.json.control.sock`.
+- NYC → `demo-sha` **must fail**: SHA is not NYC's direct authenticated neighbor.
+  The CLI does not automatically route through LAX. It is not ICMP or mesh trace.
+- Standard **`ping lax.mesh.test` tests only the Docker underlay**, independent
+  of Meshway authentication. Unprivileged Linux ping datagram sockets are enabled
+  by `net.ipv4.ping_group_range=0 2147483647`; UID/GID remains non-root, capabilities
+  remain fully dropped, and no `NET_RAW`, `NET_ADMIN` or privileged mode is added.
+- **`ping 100.96...` is unsupported in this managed demo.** Allocated mesh addresses
+  are control-plane metadata here; there is no TUN/business-IP forwarding. The
+  real adjacency graph has two edges, NYC–LAX and SHA–LAX, not a full mesh.
+
+These manual authenticated-CLI checks are **deferred to the coordinator** after
+Agent integration and image validation; the shell smoke test below does not claim
+they passed on the persistent demo.
+
+## Explicit image-only upgrade and recovery
+
+Build and validate a new, host-native image before touching the persistent demo:
+
+```sh
+MESHWAY_PERF_LOCK=/private/var/folders/8n/20x15sl9797cdg9sdqfj803w0000gn/T/opencode/meshway-performance.lock \
+  python3 experiments/transport/performance_lock.py docker build \
+  --file experiments/managed-connections/Dockerfile \
+  --tag meshway-managedtest:NEW .
+
+python3 experiments/managed-connections/shell-smoke.py --image meshway-managedtest:NEW
+
+# Run only when the coordinator is ready to restart the three demo Agents.
+python3 experiments/managed-connections/demo.py upgrade-image \
+  --data-dir .meshway/docker-demo --image meshway-managedtest:NEW \
+  --admin-token-file .meshway/controller/admin.token
+```
+
+`shell-smoke.py` acquires the shared lock itself and uses two uniquely labeled
+scratch containers on one new internal bridge. It checks native architecture,
+managed binaries, the alias/default state environment, and real `ping 127.0.0.1`
+and `ping lax.mesh.test` under the demo's non-root/cap-drop/read-only restrictions.
+It checks the authenticated ping CLI's help/flags if present, but has no enrolled
+nodes and does not test authenticated probes. Scratch resources are removed with
+ownership checks in `finally`; the supplied image is retained. No live directory,
+controller or demo network is used.
+
+`upgrade-image` is deliberately distinct from `start`:
+
+1. Require ready metadata and all three original enrolled/published identities.
+   Validate canonical private directories, pinned controller URLs/UID/GID,
+   material hashes, certificate validity, Docker ownership labels, expected image
+   IDs, original `/state` mounts and non-root/container security settings. Both
+   original and target images must be Linux and match the host and Docker engine
+   architecture; emulation is rejected. The target needs both managed binaries,
+   the shell alias/default environment and ordinary ping. If it exposes the new
+   `ping` CLI, its `--count` and `--timeout-seconds` flags are checked.
+2. Bind the original node directory **read-only** at `/source-state` in network-free
+   check containers. Copy only `agent.json`, `agent.json.connection-key.json`, and
+   optional `agent.json.config.json` / `agent.json.connections.json` into a private
+   0700 directory on writable `/state` tmpfs, with 0600 files. The actual Agent
+   `status` / `connections status` commands validate these exact copies, including
+   key-pair checks: their protocol reader requires read+write opens even for status.
+   Original source opens are strictly read-only, bounded and no-follow; foreign
+   owners, symlinks, hardlinks, non-regular files and wrong permissions are rejected.
+   Original identity/key hashes are checked again afterward. Profiles, locks,
+   sockets and unrelated files are never copied; temporary copies are discarded.
+   Prove each original credential still authenticates its recorded node ID using
+   the generated node get-connections operation. Check inventory/public-key
+   bindings through the generated admin SDK. No enrollment helper is run in
+   recovery/publish mode, and no grant is minted.
+3. Before any stop, atomically save private `upgrade.json` with old/new image pins,
+   the intended target and phase, immutable metadata/identity/key/profile hashes,
+   and the original global connection-plan revision/hash. Gracefully stop only
+   owned containers, then read the per-node controller runtime epochs through
+   generated `getConnectionRuntimes` (zero only if absent, including stale/withdrawn
+   epochs otherwise). Persist this `epoch_floor` **before any replacement starts**.
+   Atomically change only `demo.json.image_id`, recreate the containers on their
+   original networks/state mounts, and start the same Agents.
+4. Require the normal fresh authenticated-neighbor graph and unchanged identity,
+   key/profile bytes and global plan. **Every node's reported epoch must be
+   strictly greater than its recorded floor**; even a fully healthy, recent report
+   from the preceding process cannot complete verification. The tool never saves or repairs the plan.
+   Agent epochs/reports, heartbeats and saved caches can advance normally. Mark
+   the journal complete and durably remove it. Repeating an already-pinned image
+   validates readiness and immutable state without restarting healthy containers.
+
+An interrupted upgrade retains every original credential and private file. Retry
+the exact same `upgrade-image --image ...` command to complete it. A running
+replacement cohort and its durable epoch floor are retained on verification
+failure. A retry rechecks this same cohort without restarting or recapturing its
+already-advanced epochs. If a replacement is absent/stopped (including a crash
+during a partial start), retry performs a new controlled restart and records a
+new post-stop floor for that genuinely new cohort. Switching targets for rollback
+also records its own floor before starting rollback replacements. `status` prints
+public old/new/target image IDs, the pending phase and epoch floor. Ordinary `start` refuses a
+pending journal, so it cannot accidentally bypass an incomplete migration.
+For an explicit **pending-upgrade image-only rollback**:
+
+```sh
+python3 experiments/managed-connections/demo.py rollback-image \
+  --data-dir .meshway/docker-demo --admin-token-file .meshway/controller/admin.token
+```
+
+Rollback uses the recorded old image ID and the same state; it never restores,
+deletes, replaces or regenerates credentials or keys. Keep the old image available
+until upgrade verification completes. The first shell upgrade can roll back to a
+legacy image without the new alias/ping CLI. A changed plan, key/material, revoked
+node, foreign image/resource, incompatible disk format or unavailable controller
+causes a guarded failure; concurrent plan edits are never overwritten. Such a
+failure requires inspection before recovery can pass. There is no automatic
+credential/schema downgrade or controller migration.
+
+The private upgrade journal is now **version 2**, adding
+`epoch_floor: {nyc, lax, sha} | null`. `prepared` has a null floor; `restarting`,
+`verifying` and `complete` require all three nonnegative integer floors. The
+`verifying` phase is durable before the first replacement starts. Existing
+version-1 upgrade journals are read compatibly with pins and immutable hashes
+retained, but are treated as `prepared` and must undergo a new epoch-fenced
+restart; an old unfenced `complete` phase cannot bypass verification.
+`demo.json` remains version 1. No controller API or generated schema changes.
+
+The separate `verify-smoke.py --image OLD_PIN --image NEW_PIN` regression uses
+synthetic, never-enrolled identity/key files and the real binaries from both
+images. Under the shared lock it proves the original bind rejects writable opens,
+the private-copy checks succeed, original bytes/metadata remain unchanged and
+copies/containers are cleaned up. It has `--network none`, no live mounts, and
+does not access a controller. No image rebuild is needed for helper-only changes:
+the upgrade mounts the current `demo.py` read-only from the host.
+
+The diagnostic socket is checked as an optional **actual 0600, current-user Unix
+socket**. A regular file or symlink at that path is rejected. It is not fingerprinted
+as key material, and the harness never unlinks it; the Agent owns shutdown and
+stale-socket handling under its state lock.
+
 ## Start, rerun and stop semantics
 
 1. Initialize private per-node profiles once and pin their content hashes. Check
@@ -85,9 +255,12 @@ through cleanup. Do not wrap `demo.py` in another performance-lock invocation.
        --connection-profiles /state/profiles.json --state /state/agent.json
    ```
 
-6. Wait up to 90 seconds for all three current, non-stale, applied runtime reports,
+6. After stopping originals, capture the controller epochs before starting any
+   replacement. Wait up to 90 seconds for all three current, non-stale, applied runtime reports,
    matching saved revision/digest receipts, positive epoch/sequence, and receive
-   age at most eight seconds. Require both sides of each expected adjacency to
+   age at most eight seconds. Each epoch must be **strictly newer than that node's
+   post-stop floor**, including an ordinary controlled `start` on the same image.
+   Require both sides of each expected adjacency to
    report authenticated, `probe_fresh=true`, non-null measured RTT (zero is valid),
    and the exact peer/listener/candidate/initiator association. SHA must initiate
    VLESS on **both** reports. Saved ACK alone is insufficient.
@@ -140,8 +313,14 @@ Unrelated entries retain their complete values and order. Reserved-ID collisions
 with other owners or different candidate listener bindings are rejected. Matching
 names do not authorize adoption of an existing node; full persisted node IDs and
 original credentials are required. The existing local `nyc` node is not modified.
-Extra non-demo entries involving these demo IDs are preserved; they can prevent
-the exact expected three-node graph from passing the readiness check.
+Extra saved listeners and candidates involving these demo IDs are preserved.
+Readiness requires **all listeners declared for each node in the current saved
+plan** to report bound, including user-added NYC/SHA listeners. Every reported
+peer must match a saved listener, transport, dialer/acceptor role and candidate;
+unknown or duplicate claims are rejected. Additional standby candidates need not
+all authenticate, but both original NYC–LAX and SHA–LAX adjacencies must still
+provide fresh authenticated probes in both directions. Upgrade snapshots the
+current plan, so prior legitimate Web edits are retained rather than reverted.
 
 Each process runs as the host's non-root UID/GID and receives only its own 0700
 node directory at `/state`; config, pending grants and material files are 0600.
@@ -174,6 +353,9 @@ authenticated neighbor control probes, not business-IP traffic, transit or exits
   Files, identities, networks, and any already-saved plan intent remain inspectable.
   Any resource that cannot be stopped is explicitly named by role. SIGINT/SIGTERM
   follow the same cleanup after the bounded in-flight command completes.
+- Image upgrades retain their journal and running replacement cohort on verification
+  failure so retry can use the original epoch fence. An explicit `stop` remains
+  available; a later upgrade retry must then record a new floor for its new cohort.
 - A lost enrollment response reuses the original grant/credential; a committed
   enrollment can recover by heartbeat after grant expiry. An expired **unused**
   grant is not silently replaced.
@@ -183,8 +365,9 @@ authenticated neighbor control probes, not business-IP traffic, transit or exits
   inspection. The tool deliberately refuses automatic reset, regeneration or
   name-based adoption. Do not delete state and rerun against existing registrations.
 - Controller database replacement, revocation, changed URLs/UID/GID, moving the
-  private directory, certificate rotation and changing the pinned image require
-  deliberate migration outside this tool. Ordinary start/stop is not migration.
+  private directory and certificate rotation require deliberate migration outside
+  this tool. Only `upgrade-image` / pending `rollback-image` can change the image
+  pin. Ordinary start/stop is not migration.
 - Docker commands are bounded: ordinarily 30 seconds, enrollment helper 75 seconds,
   key publication helper 45 seconds. Agent CLI children have 30-second deadlines;
   generated SDK calls have their existing 10-second HTTP deadline. No build,
@@ -194,12 +377,21 @@ authenticated neighbor control probes, not business-IP traffic, transit or exits
 
 ```sh
 pnpm exec tsc --noEmit -p experiments/managed-connections/tsconfig.json
-node --test experiments/managed-connections/demo.test.ts
+node --test experiments/managed-connections/demo.test.ts experiments/managed-connections/upgrade.test.ts
 python3 experiments/managed-connections/demo.test.py
 python3 experiments/managed-connections/demo.py --help
 ```
 
 Tests cover non-destructive/idempotent merges, ownership collisions, stale or
-incomplete runtime evidence, SHA initiation, and pending/enrolled credential/key
-recovery guards. They use no real Docker resources or controller and are not a
-claim of live-demo success.
+incomplete runtime evidence, SHA initiation, pending/enrolled credential/key
+recovery guards, image-only idempotence, interruption/retry at every journal
+boundary, image-only rollback, material/plan drift, foreign images/state mounts,
+native architecture and actual private socket handling. Epoch regressions cover
+healthy old reports, partially advanced cohorts, crash/retry without moving a live
+cohort's floor, dead-cohort replacement, rollback floors and V1 journal recovery.
+They use no real Docker
+resources or controller and are not a claim of live-demo upgrade success.
+Private-copy unit regressions also verify source read-only opens, unchanged
+original bytes/metadata, writable disposable copies, no IPC/profile copying,
+cleanup after CLI failure, and link/special-file/permission rejection. The Docker
+copy smoke above separately checks the real old/new CLIs against read-only binds.

@@ -1,15 +1,25 @@
 #!/usr/bin/env python3
 """Locked host launcher and stdin-only, container-local enrollment helper."""
 
+import hashlib
 import json
 import os
 from pathlib import Path
 import re
 import signal
+import stat
 import subprocess
 import sys
+import tempfile
 
 DEFAULT_LOCK = "/private/var/folders/8n/20x15sl9797cdg9sdqfj803w0000gn/T/opencode/meshway-performance.lock"
+# Local Agent disk sidecars, not HTTP DTOs. Never copy profiles, locks or IPC.
+VERIFY_FILES = {
+    "agent.json": (True, 256 * 1024),
+    "agent.json.connection-key.json": (True, 8192),
+    "agent.json.config.json": (False, 1024 * 1024 + 64 * 1024),
+    "agent.json.connections.json": (False, 1024 * 1024 + 64 * 1024),
+}
 
 
 def checked(arguments):
@@ -19,7 +29,97 @@ def checked(arguments):
     return result.stdout
 
 
-def container_enroll(data):
+def container_image_check(data):
+    """Network-free validation; no state, credentials or controller mutation."""
+    help_text = checked(["meshway-agent", "--help"])
+    run_help = checked(["meshway-agent", "run", "--help"])
+    if not all(flag in run_help for flag in ("--apply-connections", "--connection-profiles", "--connection-lease-seconds")):
+        raise RuntimeError("managed Agent required")
+    checked(["meshway-controller", "--help"])
+    ping_cli = re.search(r"^\s+ping\s", help_text, re.MULTILINE) is not None
+    if ping_cli:
+        ping_help = checked(["meshway-agent", "ping", "--help"])
+        if not all(flag in ping_help for flag in ("--count", "--timeout-seconds", "--state")):
+            raise RuntimeError("unsupported ping CLI")
+    if data["shell"]:
+        if Path("/usr/local/bin/meshway").resolve() != Path("/usr/local/bin/meshway-agent"):
+            raise RuntimeError("meshway alias required")
+        if os.environ.get("MESHWAY_STATE") != "/state/agent.json":
+            raise RuntimeError("default state binding required")
+        if "MESHWAY_STATE" not in checked(["meshway", "status", "--help"]):
+            raise RuntimeError("state environment support required")
+        checked(["ping", "-c", "1", "-W", "2", "127.0.0.1"])
+    return {"managed": True, "ping_cli": ping_cli}
+
+
+def private_source_bytes(directory_fd, name, required, limit):
+    """Read only, relative to a pinned directory; reject link/special-file tricks."""
+    try:
+        descriptor = os.open(name, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=directory_fd)
+    except FileNotFoundError:
+        if not required:
+            return None
+        raise
+    with os.fdopen(descriptor, "rb") as source:
+        before = os.fstat(source.fileno())
+        if (not stat.S_ISREG(before.st_mode) or before.st_uid != os.getuid()
+                or stat.S_IMODE(before.st_mode) != 0o600 or before.st_nlink != 1 or before.st_size > limit):
+            raise RuntimeError("verification source must be a bounded private regular file without hardlinks")
+        contents = source.read(limit + 1)
+        after = os.fstat(source.fileno())
+        # A running Agent may atomically replace an optional cache while this FD
+        # is read. Its old, fully read inode remains valid; in-place edits do not.
+        if (len(contents) != before.st_size or after.st_size != before.st_size
+                or after.st_mtime_ns != before.st_mtime_ns or after.st_nlink > 1
+                or after.st_mode != before.st_mode or after.st_uid != before.st_uid):
+            raise RuntimeError("verification source changed while reading")
+        return contents
+
+
+def container_verify(data, source_path="/source-state", scratch_path="/state"):
+    """Run real status CLIs on disposable private copies, never writable originals.
+
+    The protocol's local reader opens files read+write even for status. The Docker
+    adapter binds /source-state read-only and supplies a private writable tmpfs at
+    /state, with --network none. No heartbeat/enroll/publish command is invoked.
+    """
+    os.umask(0o077)
+    if (os.getuid() == 0 or data["operation"] != "verify" or data["token"] is not None
+            or any(not isinstance(data[key], str) or re.fullmatch(r"[0-9a-f]{64}", data[key]) is None
+                   for key in ("expected_id", "expected_key"))):
+        raise RuntimeError("read-only verification requires original enrolled identity and key")
+    descriptor = os.open(source_path, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+    try:
+        directory = os.fstat(descriptor)
+        scratch = os.lstat(scratch_path)
+        if any(not stat.S_ISDIR(item.st_mode) or item.st_uid != os.getuid()
+               or stat.S_IMODE(item.st_mode) != 0o700 for item in (directory, scratch)):
+            raise RuntimeError("verification directories must be private and user-owned")
+        with tempfile.TemporaryDirectory(prefix="verify-", dir=scratch_path) as temporary:
+            immutable = {}
+            for name, (required, limit) in VERIFY_FILES.items():
+                contents = private_source_bytes(descriptor, name, required, limit)
+                if contents is None:
+                    continue
+                destination = Path(temporary) / name
+                with destination.open("xb") as copy:
+                    copy.write(contents)
+                digest = hashlib.sha256(contents).digest()
+                if hashlib.sha256(destination.read_bytes()).digest() != digest:
+                    raise RuntimeError("verification copy differs from source bytes")
+                if required:
+                    immutable[name] = digest
+            result = container_enroll(data, str(Path(temporary) / "agent.json"))
+            for name, digest in immutable.items():
+                required, limit = VERIFY_FILES[name]
+                if hashlib.sha256(private_source_bytes(descriptor, name, required, limit)).digest() != digest:
+                    raise RuntimeError("original identity/key changed during verification")
+            return result
+    finally:
+        os.close(descriptor)
+
+
+def container_enroll(data, state_path="/state/agent.json"):
     """Never mint a replacement credential for an existing state file.
 
     The original grant arrives on stdin, not host Docker argv. The real Agent
@@ -29,7 +129,7 @@ def container_enroll(data):
     os.umask(0o077)
     if os.getuid() == 0:
         raise RuntimeError("non-root Agent required")
-    state = Path("/state/agent.json")
+    state = Path(state_path)
     name, controller, token = data["name"], data["controller"], data["token"]
     if name not in ("demo-nyc", "demo-lax", "demo-sha") or not isinstance(controller, str):
         raise RuntimeError("invalid binding")
@@ -47,7 +147,7 @@ def container_enroll(data):
             raise RuntimeError("identity differs from demo metadata")
         return node_id
 
-    if data["operation"] == "publish":
+    if data["operation"] in ("publish", "verify"):
         node_id = status()
         if node_id is None:
             raise RuntimeError("cannot publish a pending identity")
@@ -55,7 +155,8 @@ def container_enroll(data):
         expected_key = data["expected_key"]
         if expected_key is not None and connection["public_key"] != expected_key:
             raise RuntimeError("bound connection key missing or changed; refusing regeneration")
-        checked(["meshway-agent", "connections", "publish", "--state", str(state)])
+        if data["operation"] == "publish":
+            checked(["meshway-agent", "connections", "publish", "--state", str(state)])
         return {"node_id": node_id}
     if data["operation"] != "recover":
         raise RuntimeError("invalid helper operation")
@@ -81,6 +182,20 @@ def container_enroll(data):
 
 
 def main():
+    if sys.argv[1:2] == ["--container-verify"]:
+        try:
+            print(json.dumps(container_verify(json.load(sys.stdin))))
+            return 0
+        except Exception:
+            print("private-copy verification failed; private diagnostics suppressed", file=sys.stderr)
+            return 1
+    if sys.argv[1:2] == ["--container-image-check"]:
+        try:
+            print(json.dumps(container_image_check(json.load(sys.stdin))))
+            return 0
+        except Exception:
+            print("image validation failed; private diagnostics suppressed", file=sys.stderr)
+            return 1
     if sys.argv[1:2] == ["--container-enroll"]:
         try:
             print(json.dumps(container_enroll(json.load(sys.stdin))))

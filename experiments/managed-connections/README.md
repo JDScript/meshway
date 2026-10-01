@@ -32,6 +32,11 @@ load is generated. Host, engine, and image architecture must match.
 The Dockerfile uses the same pinned Rust **1.98** and Debian trixie base digests as
 `apps/agent/Dockerfile.lab`, but installs **both** controller and Agent binaries and
 enables `meshway-agent/managed-connections` (which includes `transport-lab`).
+It also provides standard `iputils-ping`, the `meshway` alias for `meshway-agent`,
+and `MESHWAY_STATE=/state/agent.json` for the persistent demo's interactive shell.
+The isolated fixture's explicit `--state /private/...` paths override that default.
+`DEMO.md` distinguishes standard Docker-underlay ICMP from the new authenticated
+direct-neighbor `meshway ping` CLI, and documents the guarded image-only upgrade.
 
 To build a reusable image with visible build diagnostics, run separately under the
 same lock, then give the runner its tag. Choose a unique tag:

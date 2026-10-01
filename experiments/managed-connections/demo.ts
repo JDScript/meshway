@@ -3,17 +3,21 @@ import { createHash, randomBytes, randomUUID } from "node:crypto";
 import { fstatSync } from "node:fs";
 import { link, lstat, mkdir, open, readFile, readdir, realpath, rename, rm, unlink } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
+import { arch } from "node:os";
 import { setTimeout as delay } from "node:timers/promises";
 import { fileURLToPath } from "node:url";
 import { isDeepStrictEqual } from "node:util";
 import {
   ControlApiError, createEnrollmentToken, getConnections, getConnectionRuntimes, listNodes, saveConnections,
 } from "../../packages/control-client/src/index.ts";
+import { getAgentConnectionsOperation } from "../../packages/control-client/src/generated/operations.gen.ts";
 import type {
   ConnectionPlan, ConnectionRuntimesSnapshot, ConnectionsSnapshot, NodeList,
 } from "../../packages/control-client/src/index.ts";
 import { probed } from "./checks.ts";
-import { boolean, command, parse, record, text } from "./local.ts";
+import { array, boolean, command, parse, record, text } from "./local.ts";
+import { nativeArchitecture, upgradeImage, upgradeJournal } from "./upgrade.ts";
+import type { EpochFloor, UpgradeJournal, UpgradeSnapshot } from "./upgrade.ts";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const ROLES = ["nyc", "lax", "sha"] as const;
@@ -86,8 +90,32 @@ export function assertDemoOwnership(value: unknown, owner: Ownership, resource: 
     "Docker resource ownership mismatch");
 }
 
-/** Only Agent-originated observations can satisfy this predicate. */
-export function demoHealthy(config: ConnectionsSnapshot, snapshot: ConnectionRuntimesSnapshot, ids: DemoIds, now = Date.now()): boolean {
+/** Labels alone cannot authorize replacing a foreign image or state mount. */
+export function assertDemoContainer(value: Record<string, unknown>, owner: Ownership, resource: string,
+  images: string[], stateDir: string, user: string): void {
+  const config = record(value.Config); const host = record(value.HostConfig);
+  assertDemoOwnership(config.Labels, owner, resource);
+  assert(images.includes(text(value.Image)), "owned container uses an unexpected image");
+  assert(config.User === user && host.ReadonlyRootfs === true && host.Privileged === false
+    && array(host.CapDrop).includes("ALL") && (host.CapAdd === null || array(host.CapAdd).length === 0), "owned container security configuration differs");
+  const mounts = array(value.Mounts).map(record);
+  assert(mounts.some((mount) => mount.Type === "bind" && mount.Source === stateDir && mount.Destination === "/state" && mount.RW === true), "owned container state binding differs");
+  assert(!mounts.some((mount) => mount.Type === "bind" && mount.Destination !== "/state"
+    && !(resource.endsWith("-enroll") && mount.Destination === "/opt/meshway-demo.py" && mount.Source === join(HERE, "demo.py") && mount.RW === false)), "unexpected owned container bind mount");
+}
+
+/** Capture all epochs, including stale/withdrawn ones, after the old processes stop. */
+export function demoEpochFloor(snapshot: ConnectionRuntimesSnapshot, ids: DemoIds): EpochFloor {
+  const epoch = (role: Role): number => {
+    const nodes = snapshot.nodes.filter((node) => node.node_id === ids[role]);
+    assert(nodes.length <= 1, "ambiguous runtime epoch baseline");
+    return integer(nodes[0]?.epoch ?? 0);
+  };
+  return { nyc: epoch("nyc"), lax: epoch("lax"), sha: epoch("sha") };
+}
+
+/** Restart callers supply the durable per-node floor; recent old reports cannot pass. */
+export function demoHealthy(config: ConnectionsSnapshot, snapshot: ConnectionRuntimesSnapshot, ids: DemoIds, now = Date.now(), floor: EpochFloor | null = null): boolean {
   if (!config.valid || !isDeepStrictEqual(mergeDemoPlan(config.configuration, ids), config.configuration)) return false;
   for (const role of ROLES) {
     const observation = snapshot.nodes.find((node) => node.node_id === ids[role]);
@@ -95,13 +123,30 @@ export function demoHealthy(config: ConnectionsSnapshot, snapshot: ConnectionRun
     if (!observation || !receipt || receipt.node.revoked_at !== null || receipt.public_key === null
       || !observation.current || observation.stale || observation.state !== "applied" || observation.reason !== "none"
       || observation.epoch < 1 || observation.sequence < 1 || observation.revision !== config.revision
+      || (floor !== null && observation.epoch <= floor[role])
       || observation.digest === null || observation.digest !== receipt.acknowledged_digest
       || observation.revision !== receipt.acknowledged_revision || observation.reported_at === null) return false;
     const age = now - Date.parse(observation.reported_at);
     if (!Number.isFinite(age) || age < -2_000 || age > 8_000) return false;
-    const listeners = role === "lax" ? ["demo-lax-udp", "demo-lax-vless"] : [];
+    const listeners = config.configuration.listeners.filter((listener) => listener.node_id === ids[role]).map((listener) => listener.id);
     if (observation.listeners.length !== listeners.length || !listeners.every((id) => observation.listeners.some((entry) => entry.listener_id === id && entry.state === "bound" && entry.reason === "none"))) return false;
-    if (observation.peers.length !== (role === "lax" ? 2 : 1)) return false;
+    // Additional saved candidates are allowed, but every claimed peer must have
+    // the actual plan's listener/carrier/initiator/candidate association. Standby
+    // candidates need not all authenticate; the two original edges below must.
+    const claims = new Set<string>();
+    for (const peer of observation.peers) {
+      const claim = JSON.stringify([peer.peer_node_id, peer.transport, peer.initiator_node_id, peer.listener_id, peer.candidate_id]);
+      if (claims.has(claim)) return false;
+      claims.add(claim);
+      const listener = config.configuration.listeners.find((entry) => entry.id === peer.listener_id && entry.transport === peer.transport);
+      if (!listener || !config.configuration.candidates.some((candidate) => {
+        if (candidate.listener_id !== listener.id || candidate.dialer_node_id !== peer.initiator_node_id) return false;
+        if (peer.initiator_node_id === observation.node_id)
+          return peer.candidate_id === candidate.id && peer.peer_node_id === listener.node_id;
+        return peer.initiator_node_id === peer.peer_node_id && listener.node_id === observation.node_id
+          && (peer.candidate_id === null || peer.candidate_id === candidate.id);
+      })) return false;
+    }
     if (role !== "sha" && !probed(observation, role === "nyc" ? ids.lax : ids.nyc, ids.nyc, "native_udp", "demo-lax-udp", "demo-nyc-to-lax")) return false;
     if (role !== "nyc" && !probed(observation, role === "sha" ? ids.lax : ids.sha, ids.sha, "vless", "demo-lax-vless", "demo-sha-to-lax")) return false;
   }
@@ -166,6 +211,14 @@ async function privatePath(path: string, directory = false): Promise<void> {
     && (stat.mode & 0o777) === (directory ? 0o700 : 0o600), "private path must be user-owned 0700 directory / 0600 regular file");
 }
 
+export async function privateControlSocket(path: string): Promise<void> {
+  if (!await exists(path)) return;
+  const stat = await lstat(path);
+  assert(stat.isSocket() && !stat.isSymbolicLink() && stat.uid === process.getuid?.() && (stat.mode & 0o777) === 0o600,
+    "control path must be a private Agent-owned Unix socket, never a regular file or symlink");
+  // The Agent owns stale detection/unlinking after its state lock is acquired.
+}
+
 async function readPrivate(path: string): Promise<string> {
   await privatePath(path);
   const stat = await lstat(path);
@@ -189,11 +242,11 @@ async function atomic(path: string, value: string, replace = false): Promise<voi
 
 function options(args: string[]) {
   if (args.includes("--help")) {
-    console.log("Usage: python3 experiments/managed-connections/demo.py start --data-dir PRIVATE_DIR --image IMAGE --controller-url HOST_URL --agent-controller-url DOCKER_URL --admin-token-file FILE [--host-gateway]\n       python3 experiments/managed-connections/demo.py status --data-dir PRIVATE_DIR --admin-token-file FILE\n       python3 experiments/managed-connections/demo.py stop --data-dir PRIVATE_DIR\nStart requires a prebuilt managed image. Stop preserves identities, profiles, networks and controller intent. See DEMO.md.");
+    console.log("Usage: python3 experiments/managed-connections/demo.py start --data-dir PRIVATE_DIR --image IMAGE --controller-url HOST_URL --agent-controller-url DOCKER_URL --admin-token-file FILE [--host-gateway]\n       python3 experiments/managed-connections/demo.py upgrade-image --data-dir PRIVATE_DIR --image IMAGE --admin-token-file FILE\n       python3 experiments/managed-connections/demo.py rollback-image --data-dir PRIVATE_DIR --admin-token-file FILE\n       python3 experiments/managed-connections/demo.py status --data-dir PRIVATE_DIR --admin-token-file FILE\n       python3 experiments/managed-connections/demo.py stop --data-dir PRIVATE_DIR\nStart keeps its image pin. Upgrade/retry and pending-upgrade rollback preserve identities and controller intent. See DEMO.md.");
     return null;
   }
   const action = args[0];
-  assert(action === "start" || action === "status" || action === "stop", "expected start/status/stop");
+  assert(action === "start" || action === "status" || action === "stop" || action === "upgrade-image" || action === "rollback-image", "expected start/status/stop/upgrade-image/rollback-image");
   const values = new Map<string, string>();
   let hostGateway = false;
   for (let i = 1; i < args.length; i++) {
@@ -207,11 +260,11 @@ function options(args: string[]) {
   const required = (key: string) => values.get(key) ?? fail("missing required option");
   const dataDir = resolve(required("--data-dir"));
   const adminFile = action !== "stop" ? resolve(required("--admin-token-file")) : null;
-  const image = action === "start" ? required("--image") : null;
+  const image = action === "start" || action === "upgrade-image" ? required("--image") : null;
   if (image !== null) assert(/^[A-Za-z0-9][A-Za-z0-9_.:/@-]*$/.test(image), "invalid image reference");
   const controller = action === "start" ? controllerUrl(required("--controller-url")) : null;
   const agentController = action === "start" ? controllerUrl(required("--agent-controller-url")) : null;
-  if (action !== "start") assert(!hostGateway && [...values.keys()].every((key) => ["--data-dir", "--admin-token-file"].includes(key)), "start-only option");
+  if (action !== "start") assert(!hostGateway && [...values.keys()].every((key) => ["--data-dir", "--admin-token-file", ...(action === "upgrade-image" ? ["--image"] : [])].includes(key)), "option does not apply to this operation");
   return { action, dataDir, adminFile, image, controller, agentController, hostGateway };
 }
 
@@ -267,6 +320,9 @@ async function main() {
   let adminToken: string | null = null;
   const root = opts.dataDir;
   const metaPath = join(root, "demo.json");
+  const journalPath = join(root, "upgrade.json");
+  let pendingUpgrade: UpgradeJournal | null = null;
+  const upgrading = opts.action === "upgrade-image" || opts.action === "rollback-image";
   const persist = async () => { assert(state); await atomic(metaPath, `${JSON.stringify(state, null, 2)}\n`, true); };
   const owner = (): Metadata => state ?? fail("no owned resources");
   const prefix = () => `meshway-demo-${owner().fingerprint.slice(0, 12)}`;
@@ -282,6 +338,13 @@ async function main() {
   const inspectOwned = async (kind: "container" | "network", name: string, resource: string) => {
     const inspected = parse(await docker([kind, "inspect", name, "--format", "{{json .}}"]));
     assertDemoOwnership(kind === "container" ? record(inspected.Config).Labels : inspected.Labels, owner(), resource);
+    if (upgrading && kind === "container") {
+      const role = ROLES.find((role) => resource === role || resource === `${role}-enroll`);
+      assert(role);
+      assertDemoContainer(inspected, owner(), resource,
+        pendingUpgrade ? [pendingUpgrade.old_image_id, pendingUpgrade.new_image_id] : [owner().image_id],
+        join(root, role), `${uid}:${gid}`);
+    }
     return inspected;
   };
   const stopOwned = async () => {
@@ -326,7 +389,42 @@ async function main() {
           received_age_ms: age, listeners: report.listeners, neighbors: report.peers } : null });
     }
     console.log(JSON.stringify({ controller: local.controller, agent_controller: local.agent_controller, phase: local.phase,
+      image_id: local.image_id, upgrade: pendingUpgrade ? { phase: pendingUpgrade.phase, old_image_id: pendingUpgrade.old_image_id,
+        new_image_id: pendingUpgrade.new_image_id, target_image_id: pendingUpgrade.target_image_id, epoch_floor: pendingUpgrade.epoch_floor } : null,
       controller_observations: token === null ? "not-requested" : runtime ? "available" : "unavailable", nodes }, null, 2));
+  };
+  const common = (role: Role, helper: boolean) => [
+    "create", "--name", containerName(role, helper), "--hostname", `demo-${role}`, ...labelArgs(helper ? `${role}-enroll` : role),
+    "--pull", "never", "--user", `${uid}:${gid}`, "--network", networkName("mgmt"),
+    ...(owner().host_gateway ? ["--add-host", "host.docker.internal:host-gateway"] : []),
+    "--cap-drop", "ALL", "--security-opt", "no-new-privileges", "--read-only", "--stop-signal", "SIGINT", "--stop-timeout", "20",
+    "--mount", `type=bind,src=${join(root, role)},dst=/state`,
+    "--tmpfs", `/tmp:rw,nosuid,nodev,noexec,mode=0700,uid=${uid},gid=${gid},size=8m`,
+    "--sysctl", "net.ipv4.ip_forward=0", "--sysctl", "net.ipv6.conf.all.forwarding=0",
+    "--sysctl", "net.ipv4.ping_group_range=0 2147483647",
+    "--cpus", "1", "--memory", "256m", "--memory-swap", "256m", "--pids-limit", "64", "--log-driver", "none",
+  ];
+  const createAgent = async (role: Role, image: string) => {
+    await docker([...common(role, false), "--init", "--entrypoint", "meshway-agent", image,
+      "run", "--apply-connections", "--interval-seconds", "2", "--connection-lease-seconds", "15",
+      "--connection-profiles", "/state/profiles.json", "--state", "/state/agent.json"]);
+    for (const network of role === "lax" ? ["a", "b"] : [role === "nyc" ? "a" : "b"])
+      await docker(["network", "connect", ...(role === "lax" ? ["--alias", "lax.mesh.test"] : []), networkName(network), containerName(role)]);
+  };
+  const waitHealthy = async (ids: DemoIds, token: string, floor: EpochFloor | null) => {
+    stage("waiting for both sides of fresh authenticated UDP and SHA-initiated VLESS probes");
+    for (const role of ROLES) {
+      assert(await found("container", containerName(role)), "owned Agent container absent");
+      assert(boolean(record((await inspectOwned("container", containerName(role), role)).State).Running), "owned Agent container is not running");
+    }
+    const deadline = Date.now() + 90_000;
+    do {
+      assert(!interrupted, "interrupted");
+      const [config, runtime] = await Promise.all([getConnections(owner().controller, token), getConnectionRuntimes(owner().controller, token)]);
+      if (demoHealthy(config, runtime, ids, Date.now(), floor)) return;
+      await delay(1_000);
+    } while (Date.now() < deadline);
+    fail("fresh authenticated graph deadline exceeded");
   };
   try {
     assert(await realpath(dirname(root)) === dirname(root), "data parent must exist without symlink aliases");
@@ -339,6 +437,8 @@ async function main() {
       assert(state.fingerprint === fingerprint && state.uid === uid && state.gid === gid, "different data directory/user binding");
       if (opts.action === "start") assert(state.controller === opts.controller && state.agent_controller === opts.agentController
         && state.host_gateway === opts.hostGateway, "immutable controller/network binding differs");
+      if (await exists(journalPath)) pendingUpgrade = upgradeJournal(parse(await readPrivate(journalPath)));
+      assert(opts.action !== "start" || pendingUpgrade === null, "pending image upgrade: retry upgrade-image or rollback-image first");
     } else {
       assert(opts.action === "start" && (await readdir(root)).length === 0, "refusing unfamiliar or nonempty data directory");
       assert(opts.image && opts.controller && opts.agentController);
@@ -363,9 +463,14 @@ async function main() {
     if (opts.action === "status") { await publicStatus(adminToken); return; }
     assert(state.phase === "ready", "partial initial setup: inspect private state; refusing automatic key regeneration");
     stage("immutable material and image checks");
-    assert(opts.image);
-    assert((await docker(["image", "inspect", opts.image, "--format", "{{.Id}}"])).trim() === state.image_id, "image differs from pinned demo image");
-    for (const role of ROLES) await privatePath(join(root, role), true);
+    if (!upgrading) {
+      assert(opts.image);
+      assert((await docker(["image", "inspect", opts.image, "--format", "{{.Id}}"])).trim() === state.image_id, "image differs from pinned demo image");
+    }
+    for (const role of ROLES) {
+      await privatePath(join(root, role), true);
+      await privateControlSocket(join(root, role, "agent.json.control.sock"));
+    }
     for (const path of FILES) assert(sha256(await readPrivate(join(root, path))) === state.files[path], "missing/changed private material; refusing regeneration");
     await command("openssl", ["x509", "-in", join(root, "lax/lax-cert.pem"), "-noout", "-checkend", "60"]);
     stage("controller identity and reserved-plan preflight");
@@ -375,6 +480,7 @@ async function main() {
     for (const role of ROLES) {
       const local = state.nodes[role];
       if (local.id !== null) assert(inventory.nodes.some((node) => node.id === local.id && node.name === `demo-${role}` && node.revoked_at === null), "original node missing, renamed or revoked; refusing re-enrollment");
+      if (upgrading) assert(!inventory.nodes.some((node) => node.name === `demo-${role}` && node.id !== local.id), "demo name collision; refusing identity adoption");
       const agentExists = await exists(join(root, role, "agent.json"));
       if (local.id !== null || local.phase === "enroll_started") assert(agentExists, "original identity file missing after enrollment began; refusing replacement");
       if (!agentExists && local.phase === "empty") assert(!inventory.nodes.some((node) => node.name === `demo-${role}`), "name collision; no name-only identity adoption");
@@ -396,6 +502,135 @@ async function main() {
     if (ROLES.every((role) => owner().nodes[role].id !== null)) mergeDemoPlan(initial.configuration, known());
     else assert(![...initial.configuration.listeners, ...initial.configuration.candidates].some((item) => RESERVED.has(item.id)), "reserved plan IDs exist without all original demo identities");
 
+    if (upgrading) {
+      const ids = known(); const token = adminToken;
+      assert(ROLES.every((role) => owner().nodes[role].public_key !== null), "upgrade requires all original published identities");
+      assert(isDeepStrictEqual(mergeDemoPlan(initial.configuration, ids), initial.configuration), "upgrade does not repair or modify controller plans");
+      const target = opts.action === "rollback-image"
+        ? (pendingUpgrade?.old_image_id ?? fail("no pending image upgrade to roll back"))
+        : (await docker(["image", "inspect", opts.image ?? fail("image required"), "--format", "{{.Id}}"])).trim();
+      const snapshot = async (): Promise<UpgradeSnapshot> => {
+        const disk = metadata(parse(await readPrivate(metaPath)));
+        assert(isDeepStrictEqual(disk, owner()), "private metadata changed outside this operation");
+        const files: Record<string, string> = {};
+        for (const path of [...FILES, ...ROLES.flatMap((role) => [`${role}/agent.json`, `${role}/agent.json.connection-key.json`])])
+          files[path] = sha256(await readPrivate(join(root, path)));
+        for (const role of ROLES) {
+          await privatePath(join(root, role), true);
+          await privateControlSocket(join(root, role, "agent.json.control.sock"));
+        }
+        const config = await getConnections(disk.controller, token);
+        assert(config.valid, "controller plan became invalid");
+        return { image_id: disk.image_id, binding: sha256(JSON.stringify({ ...disk, image_id: "" })), files,
+          plan_revision: config.revision, plan_digest: sha256(JSON.stringify(config.configuration)) };
+      };
+      // Originals remain read-only at /source-state. Real status CLI readers
+      // require writable opens, so verification uses private disposable tmpfs
+      // copies, never the source mount. No enroll/heartbeat/publish/daemon runs.
+      const fixture = async (image: string, operation: string, input: string, role?: Role) => {
+        const resource = `check-${randomBytes(8).toString("hex")}`;
+        const name = `${prefix()}-${resource}`;
+        assert(!HERE.includes(","), "helper mount path contains separator");
+        try {
+          await docker(["create", "--name", name, ...labelArgs(resource), "--pull", "never", "--interactive", "--network", "none",
+            "--user", `${uid}:${gid}`, "--cap-drop", "ALL", "--security-opt", "no-new-privileges", "--read-only",
+            "--sysctl", "net.ipv4.ping_group_range=0 2147483647", "--pids-limit", "32", "--memory", "128m", "--log-driver", "none",
+            "--mount", `type=bind,src=${join(HERE, "demo.py")},dst=/opt/meshway-demo.py,readonly`,
+            ...(role ? ["--mount", `type=bind,src=${join(root, role)},dst=/source-state,readonly`,
+              "--tmpfs", `/state:rw,nosuid,nodev,noexec,mode=0700,uid=${uid},gid=${gid},size=8m`] : []),
+            "--entrypoint", "python3", image, "/opt/meshway-demo.py", operation]);
+          return parse(await docker(["start", "--attach", "--interactive", name], 45_000, input));
+        } finally {
+          const before = cleaning; cleaning = true;
+          try {
+            if (await found("container", name)) {
+              const inspected = parse(await docker(["container", "inspect", name, "--format", "{{json .}}"]));
+              assertDemoOwnership(record(inspected.Config).Labels, owner(), resource);
+              assert(inspected.Image === image, "check container image changed");
+              await docker(["rm", "--force", name]);
+            }
+          } finally { cleaning = before; }
+        }
+      };
+      stage("image-only upgrade preflight");
+      const outcome = await upgradeImage(target, pendingUpgrade, {
+        snapshot,
+        preflight: async (image, allowedImages) => {
+          for (const role of ROLES) for (const helper of [true, false]) {
+            const name = containerName(role, helper);
+            if (await found("container", name)) {
+              const inspected = await inspectOwned("container", name, helper ? `${role}-enroll` : role);
+              assert(allowedImages.includes(text(inspected.Image)), "foreign image at owned container name");
+              if (helper) assert(!boolean(record(inspected.State).Running), "enrollment helper still active");
+            }
+          }
+          for (const kind of ["mgmt", "a", "b"]) {
+            assert(await found("network", networkName(kind)), "original demo network missing");
+            const inspected = await inspectOwned("network", networkName(kind), `network-${kind}`);
+            assert(inspected.Driver === "bridge" && inspected.Internal === (kind !== "mgmt"), "unexpected owned network topology");
+          }
+          const engine = (await docker(["info", "--format", "{{.Architecture}}"])).trim();
+          for (const pin of new Set([owner().image_id, image])) {
+            const info = parse(await docker(["image", "inspect", pin, "--format", "{{json .}}"]));
+            assert(info.Id === pin, "image ID changed");
+            nativeArchitecture(arch(), engine, text(info.Architecture), text(info.Os));
+            const result = await fixture(pin, "--container-image-check", JSON.stringify({ shell: pin === image && opts.action !== "rollback-image" }));
+            assert(result.managed === true && typeof result.ping_cli === "boolean", "invalid image check");
+            if (pin === image) console.log(`[demo] target image managed CLI verified; active-neighbor ping CLI ${result.ping_cli ? "available" : "unavailable"}`);
+            for (const role of ROLES) {
+              const result = await fixture(pin, "--container-verify", JSON.stringify({ operation: "verify", name: `demo-${role}`,
+                controller: owner().agent_controller, token: null, expected_id: ids[role], expected_key: owner().nodes[role].public_key }), role);
+              assert(result.node_id === ids[role], "original state/key validation failed");
+            }
+          }
+          for (const role of ROLES) {
+            const identity = parse(await readPrivate(join(root, role, "agent.json")));
+            assert(identity.controller === owner().agent_controller && identity.name === `demo-${role}` && identity.node_id === ids[role]
+              && typeof identity.node_credential === "string" && HEX.test(identity.node_credential), "original credential binding differs");
+            const scoped = await getAgentConnectionsOperation(owner().controller, identity.node_credential);
+            assert(scoped.payload.node_id === ids[role], "node credential does not authenticate its original identity");
+          }
+        },
+        saveJournal: async (journal) => {
+          await atomic(journalPath, `${JSON.stringify(journal, null, 2)}\n`, await exists(journalPath));
+          pendingUpgrade = journal;
+        },
+        stop: async () => { mayStop = true; stage("controlled image-only restart"); await stopOwned(); },
+        epochs: async () => demoEpochFloor(await getConnectionRuntimes(owner().controller, token), ids),
+        replacementsRunning: async (image) => {
+          for (const role of ROLES) {
+            if (!await found("container", containerName(role))) return false;
+            const inspected = await inspectOwned("container", containerName(role), role);
+            if (inspected.Image !== image || !boolean(record(inspected.State).Running)) return false;
+          }
+          return true;
+        },
+        pin: async (image) => { owner().image_id = image; await persist(); },
+        replaceContainers: async (image) => {
+          for (const role of ROLES) for (const helper of [true, false]) {
+            const name = containerName(role, helper);
+            if (await found("container", name)) {
+              const inspected = await inspectOwned("container", name, helper ? `${role}-enroll` : role);
+              assert(!boolean(record(inspected.State).Running), "owned container still running");
+              await docker(["rm", name]);
+            }
+          }
+          for (const role of ROLES) await createAgent(role, image);
+        },
+        start: async () => { for (const role of ROLES) await docker(["start", containerName(role)]); },
+        healthy: (floor) => waitHealthy(ids, token, floor),
+        finish: async () => {
+          await privatePath(journalPath); await unlink(journalPath);
+          const directory = await open(root, "r");
+          try { await directory.sync(); } finally { await directory.close(); }
+          pendingUpgrade = null;
+        },
+      });
+      await publicStatus(token);
+      console.log(`[demo] image ${outcome}; original identities, key/profile bytes and controller plan verified unchanged`);
+      return;
+    }
+
     // Verify all preexisting names before any container is stopped or recreated.
     for (const role of ROLES) for (const helper of [true, false]) {
       const name = containerName(role, helper);
@@ -411,6 +646,7 @@ async function main() {
     mayStop = true;
     stage("controlled restart of owned containers");
     await stopOwned();
+    const stoppedRuntimes = await getConnectionRuntimes(state.controller, adminToken);
     for (const role of ROLES) for (const helper of [true, false]) {
       const name = containerName(role, helper);
       if (await found("container", name)) {
@@ -419,16 +655,6 @@ async function main() {
       }
     }
     assert(!HERE.includes(","), "helper mount path contains separator");
-    const common = (role: Role, helper: boolean) => [
-      "create", "--name", containerName(role, helper), "--hostname", `demo-${role}`, ...labelArgs(helper ? `${role}-enroll` : role),
-      "--pull", "never", "--user", `${uid}:${gid}`, "--network", networkName("mgmt"),
-      ...(owner().host_gateway ? ["--add-host", "host.docker.internal:host-gateway"] : []),
-      "--cap-drop", "ALL", "--security-opt", "no-new-privileges", "--read-only", "--stop-signal", "SIGINT", "--stop-timeout", "20",
-      "--mount", `type=bind,src=${join(root, role)},dst=/state`,
-      "--tmpfs", `/tmp:rw,nosuid,nodev,noexec,mode=0700,uid=${uid},gid=${gid},size=8m`,
-      "--sysctl", "net.ipv4.ip_forward=0", "--sysctl", "net.ipv6.conf.all.forwarding=0",
-      "--cpus", "1", "--memory", "256m", "--memory-swap", "256m", "--pids-limit", "64", "--log-driver", "none",
-    ];
     for (const role of ROLES) {
       stage(`recover/enroll and publish demo-${role}`);
       const local = state.nodes[role]; const pendingPath = join(root, role, "pending-grant.json");
@@ -471,11 +697,7 @@ async function main() {
       assert(published?.public_key && HEX.test(published.public_key), "missing published connection key");
       local.public_key = published.public_key; await persist();
       await inspectOwned("container", helperName, `${role}-enroll`); await docker(["rm", helperName]);
-      await docker([...common(role, false), "--init", "--entrypoint", "meshway-agent", state.image_id,
-        "run", "--apply-connections", "--interval-seconds", "2", "--connection-lease-seconds", "15",
-        "--connection-profiles", "/state/profiles.json", "--state", "/state/agent.json"]);
-      for (const network of role === "lax" ? ["a", "b"] : [role === "nyc" ? "a" : "b"])
-        await docker(["network", "connect", ...(role === "lax" ? ["--alias", "lax.mesh.test"] : []), networkName(network), containerName(role)]);
+      await createAgent(role, state.image_id);
     }
     const ids = known();
     stage("generated SDK capability check and CAS merge");
@@ -501,26 +723,18 @@ async function main() {
     assert(saved, "CAS retries exhausted");
     stage("starting real managed Agents");
     for (const role of ROLES) await docker(["start", containerName(role)]);
-    stage("waiting for both sides of fresh authenticated UDP and SHA-initiated VLESS probes");
-    const deadline = Date.now() + 90_000;
-    let healthy = false;
-    do {
-      assert(!interrupted, "interrupted");
-      const [config, runtime] = await Promise.all([getConnections(state.controller, adminToken), getConnectionRuntimes(state.controller, adminToken)]);
-      if (demoHealthy(config, runtime, ids)) { healthy = true; break; }
-      await delay(1_000);
-    } while (Date.now() < deadline);
-    assert(healthy, "fresh authenticated graph deadline exceeded");
+    await waitHealthy(ids, adminToken, demoEpochFloor(stoppedRuntimes, ids));
     await publicStatus(adminToken);
     console.log("[demo] ready: three real registered nodes; authenticated neighbor probes only");
   } catch {
     process.exitCode = 1;
     console.error(`[demo] failed during ${phase}; private exception details suppressed`);
-    if (mayStop && state) {
+    if (mayStop && state && !(upgrading && pendingUpgrade?.epoch_floor)) {
       cleaning = true;
       try { await stopOwned(); } catch { /* Explicit nonsecret partial-stop message above. */ }
       console.error("[demo] owned containers stopped where possible. Private files, identities, networks and any saved controller intent remain; no nodes revoked. Use status/stop to inspect partial resources.");
-    } else console.error("[demo] partial private setup/resources may remain; existing identities are never replaced. See DEMO.md recovery limits.");
+    } else if (!pendingUpgrade) console.error("[demo] partial private setup/resources may remain; existing identities are never replaced. See DEMO.md recovery limits.");
+    if (pendingUpgrade) console.error("[demo] upgrade journal and replacement cohort retained for epoch-fenced retry; retry upgrade-image with the same target, or rollback-image. Ordinary start refuses a pending upgrade.");
     if (state) { cleaning = true; try { await publicStatus(adminToken); } catch { /* No invented observations. */ } }
   } finally {
     process.off("SIGINT", signal); process.off("SIGTERM", signal);
