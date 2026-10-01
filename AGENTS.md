@@ -60,6 +60,8 @@ Rust 控制面与 agent、Next.js + shadcn/ui 控制台、VitePress 文档站。
 - 托管 IPv4 数据面显式启用。Access 采用端点授权模型，与 routing 的路径选择分开。用户已确认 Access 改为参照 Tailscale grants 的叠加授权：只写允许规则、未匹配即拒绝、规则取并集且与顺序无关，新网络默认模板为成员全部允许；原有序 first-match allow/reject 待迁移，现有策略须无损转换。selector 支持当前 network 内的 `*`、管理员分配的 tag、node，后续加入用户 / 组；每条规则可显式双向。内部完整路径授权由控制面联合编译，不跳过必经节点；状态型回包另行推进。
 - Access 与 routing 的图形化及带 schema 的 JSONC 编辑器必须共享同一份草稿和 CAS 基准；无效文本、注释和未保存编辑不得被切换视图静默覆盖。
 - 用户指定：前端（`apps/web` 控制台）委派使用 `anthropic/claude-opus-5-5`，其余委派统一使用 `openai/gpt-6.1-sol`。用户已确认控制台可整体推翻重做，按已确认产品模型重整产品逻辑与视觉，但 App 依赖的 Web 端点与服务端鉴权边界必须保持兼容；独立任务按需要使用 worktree，根 manifest、lockfile 和合并验证由协调者维护。前端一致性与信息架构整理应和后端功能主线并行推进。
+- 用户最新指定本轮性能专项使用 `openai/gpt-6-astra-ultrafast`，Rust 代码审查使用 `openai/gpt-6-astra`；其余后端任务继续使用 `openai/gpt-6.1-sol`。控制台导航偏好侧边栏，精简重复说明，状态、错误与诊断信息保持真实可查。
+- P2a 承载托管需覆盖便捷的 VLESS 配置（含用户要求的 WebSocket 承载）；监听 bind 地址 / 端口、对外 endpoint、TLS 与 WebSocket 参数分别建模，由控制面管理并在 Web 提供显式覆盖。TUN 接管 IP 包，NAT 打洞属于 transport socket；打洞观测不等于可达监听，也不自动替代 VLESS / WebSocket 的服务端入口。
 - 业务配置、连接和端点公钥须来自同一 revision 的快照；撤回和 lease 到期独立于 HTTP 请求终止旧运行代际，TUN 停止后 Mesh 网段不得落回底层默认路由。
 - 远端真实联测留待 TUN 与打洞完善后进行，现阶段仅登记主机。测试限定独立 Docker 网络命名空间，保留原 SSH/管理连接，不改宿主机路由、DNS、防火墙或 Docker daemon 配置，不使用 host network/privileged；测试网段、端口和数据目录须与现有服务隔离。
 - Rust 使用 `cargo fmt`、Clippy 和必要的行为测试；JS 使用严格 TypeScript 与各包检查。修改协议、HTTP 路由或生成客户端时，合并前必须跑全部消费者：`cargo test --workspace --all-features`（含 Agent 与 Apple core）、Web 与 SDK 检查，以及 `experiments/*/tsconfig.json` 的 `tsc --noEmit`。
