@@ -44,8 +44,9 @@ test("node-authenticated fixture self-reports display as leased unverified carri
     });
     // This fixture submits a node-authenticated self-report. It does not run STUN
     // or assert that an advertised / observed endpoint is reachable or connected.
-    const observedAt = new Date().toISOString();
-    const expiresAt = new Date(Date.now() + 30_000).toISOString();
+    const observedAtMs = Date.now();
+    const observedAt = new Date(observedAtMs).toISOString();
+    const expiresAt = new Date(observedAtMs + 30_000).toISOString();
     const mappedEndpoint = "[2001:db8:1234:5678:abcd:ef01:2345:6789]:45123";
     await reportEndpointDiscoveryOperation(base, credential, {
       epoch: lease.epoch, sequence: 1, revision: config.payload.revision, digest: config.digest, state: "observed",
@@ -61,7 +62,7 @@ test("node-authenticated fixture self-reports display as leased unverified carri
     await page.goto(`${webUrl}/monitoring?source=${carrier.id}#netcheck`);
     await page.getByLabel("管理员令牌", { exact: true }).fill(admin);
     await page.getByRole("button", { name: "登录", exact: true }).click();
-    await expect(page).not.toHaveURL(/\/login(?:\?|$)/);
+    await expect.poll(() => new URL(page.url()).pathname).toBe("/");
     await page.goto(`${webUrl}/monitoring?source=${carrier.id}#netcheck`);
     const panel = page.getByTestId("endpoint-discovery");
     await expect(panel.getByTestId("discovery-status")).toHaveText("未验证候选观测");
@@ -73,9 +74,11 @@ test("node-authenticated fixture self-reports display as leased unverified carri
     await panel.getByRole("button", { name: "复制观测 IP:port", exact: true }).focus();
     await page.keyboard.press("Enter");
     await expect.poll(() => page.evaluate(() => navigator.clipboard.readText())).toBe(mappedEndpoint);
-    await page.setViewportSize({ width: 390, height: 900 });
-    expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
-    await page.screenshot({ path: test.info().outputPath("carrier-discovery-mobile.png"), fullPage: true });
+    for (const width of [1440, 390]) {
+      await page.setViewportSize({ width, height: 900 });
+      expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+      await page.screenshot({ path: test.info().outputPath(`carrier-discovery-${width}.png`), fullPage: true });
+    }
     // Advance only the browser clock, then let the one-second lease tick run.
     // Controller still retains the report, proving local expiry independently.
     await page.clock.install();
@@ -87,6 +90,15 @@ test("node-authenticated fixture self-reports display as leased unverified carri
     await expect(page.getByTestId("discovery-status")).toHaveText("尚无报告");
     await expect(page.getByTestId("endpoint-discovery")).not.toContainText(mappedEndpoint);
     await expect(page.getByTestId("endpoint-discovery")).toContainText("不另起第二个 daemon");
+    await page.goto(`${webUrl}/nodes/${carrier.id}?tab=connections`);
+    await expect(page.getByTestId("endpoint-discovery")).toContainText("fixture-carrier-udp");
+    // Only this isolated fixture process is stopped. A failed authenticated read
+    // must replace all last-good observation values with a real retryable error.
+    await controller.stop();
+    await page.getByRole("button", { name: "刷新观测", exact: true }).click();
+    await expect(page.getByTestId("endpoint-discovery").getByRole("alert")).toContainText("端点观测读取失败");
+    await expect(page.getByTestId("endpoint-discovery")).not.toContainText(mappedEndpoint);
+    await expect(page.getByRole("button", { name: "刷新观测", exact: true })).toBeEnabled();
     expect(errors).toEqual([]);
   } finally {
     await web?.stop(); await controller.stop();
