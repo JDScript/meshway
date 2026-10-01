@@ -1,5 +1,12 @@
 # 隧道吞吐专项（隔离实验）
 
+## 版本边界
+
+旧 `e69cb3d` Agent pump 的测量见 [RESULTS.md](RESULTS.md)，只作为历史证据。
+`5029c0a` 起 Agent 已接入共享 `packet_io::run_with_activation` / PacketDevice；
+当前完整集成源 `4edb70e` 的 native Linux queue32/128 复测见
+[SHARED-PUMP.md](SHARED-PUMP.md)，两者不得混作当前版本性能。
+
 用户反馈的 Docker 原生约 100 Gbit/s、Meshway 约 300 Mbit/s 是待复现测量；其
 iperf 参数、资源、方向和运行版本未知。本目录提供独立复测，不补造这些参数。
 
@@ -22,6 +29,14 @@ iperf 参数、资源、方向和运行版本未知。本目录提供独立复�
 所有容器 native ARM64、每节点 1 CPU quota / 256 MiB、两个 Tokio worker。
 CPU quota 不等于专用物理核；裸 Docker 保留内核 offload，TUN offload 关闭。
 裸 TCP 是环境容量参考，不是同协议 / 同加密的包装损耗基线。
+
+`managed.py --parallel 4 --directions forward reverse` 可仅复测所需 case。
+`--loaded-rtt` 在 iperf client 发起后延迟 3 秒，于负载期间从 NYC 经授权 Mesh
+路径向 SHA 发起 32 个 ICMP probes（0.5 秒间隔）；保存逐样本、丢失数、median /
+p95 / max 及采样时刻，两臂同条件。非响应与 `<` 上界不会被填成 0 RTT。
+`revalidate-shared.sh` 使用 queue32/128/128/32（ABBA）四个独立 fixture block，
+每个路径 / 方向每臂两个 20 秒样本，固定同一 resolved image ID。Docker build
+只读复制 Apple core workspace member以满足 Cargo workspace 解析，不改其代码。
 
 ## 运行
 

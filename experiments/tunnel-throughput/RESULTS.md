@@ -1,4 +1,9 @@
-# 托管隧道吞吐定位与有界 TUN 队列优化
+# 托管隧道吞吐定位与有界 TUN 队列优化（历史：e69cb3d 旧 pump）
+
+**版本边界：本文所有测量来自 e69cb3d 的旧 Agent packet pump。** main 后续
+5029c0a 已将它替换为共享 `meshway_dataplane::packet_io::run_with_activation` 和
+PacketDevice batch 接口；这些数值不能当成共享 pump 的当前性能。共享 pump 的
+独立集成复测见 [SHARED-PUMP.md](SHARED-PUMP.md)，原始旧 JSON 保持不变。
 
 ## 可证实的瓶颈
 

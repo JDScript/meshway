@@ -3,6 +3,10 @@
 import argparse
 import json
 import os
+import math
+import re
+import statistics
+import subprocess
 from pathlib import Path
 import signal
 import tempfile
@@ -25,8 +29,40 @@ if s: m.save('agent-pid.json',{'pid':c.pid,'start_ticks':s['start_ticks']})
 m.save('agent-exit.json',{'exit_code':c.wait()})
 """
 
+RTT_SAMPLE = r"""
+import json, os, subprocess, sys, time
+from pathlib import Path
+os.umask(0o077)
+time.sleep(3)
+command=['ping','-n','-I',sys.argv[1],'-i','0.5','-c','32','-w','19',sys.argv[2]]
+start=time.monotonic_ns()
+p=subprocess.run(command,capture_output=True,text=True,timeout=21,check=False)
+r={'command':command,'started_monotonic_ns':start,'finished_monotonic_ns':time.monotonic_ns(),
+   'exit_code':p.returncode,'stdout':p.stdout,'stderr':p.stderr,
+   'scope':'NYC->SHA->NYC ICMP RTT while iperf runs; delayed 3s after client launch, not idle RTT'}
+path=Path(sys.argv[3]); temporary=path.with_suffix('.tmp')
+temporary.write_text(json.dumps(r)); temporary.replace(path)
+"""
+
+
+def summarize_loaded_rtt(raw):
+    samples=[float(value) for value in re.findall(r'\btime=([0-9.]+) ms',raw['stdout'])]
+    counts=re.search(r'(\d+) packets transmitted, (\d+) received',raw['stdout'])
+    return {'samples_ms':samples,'median_ms':statistics.median(samples) if samples else None,
+            'p95_ms':sorted(samples)[math.ceil(.95*len(samples))-1] if samples else None,
+            'max_ms':max(samples) if samples else None,
+            'upper_bound_samples':len(re.findall(r'\btime<',raw['stdout'])),
+            'transmitted':int(counts[1]) if counts else None,'received':int(counts[2]) if counts else None}
+
 
 class ManagedFixture(TunnelFixture):
+    def exec(self,node,*command,**kwargs):
+        if getattr(self,'rtt_request',None) and command[0]=='iperf3' and '--client' in command:
+            source,target,path=self.rtt_request
+            docker('exec','--detach',self.nodes['NYC'],'python3','-c',RTT_SAMPLE,source,target,path)
+            self.rtt_request=None
+        return super().exec(node,*command,**kwargs)
+
     def runtime_statistics(self):
         result={}
         for n in self.nodes:
@@ -108,8 +144,12 @@ def main():
     p.add_argument('--iterations',type=bounded_integer(1,3),default=1); p.add_argument('--modes',nargs='+',choices=['direct','relay'],default=['direct','relay'])
     p.add_argument('--tun-queue-length',type=int,choices=[32,128,256],default=None,help='Same-image namespace-only TUN queue A/B; omit to retain binary default')
     p.add_argument('--require-runtime-statistics',action='store_true',help='Fail unless this measurement image publishes experiment-only Runtime statistics')
+    p.add_argument('--parallel',type=int,nargs='+',choices=[1,4,8],default=[1,4],help='Select only required stream counts')
+    p.add_argument('--directions',nargs='+',choices=['forward','reverse'],default=['forward','reverse'])
+    p.add_argument('--loaded-rtt',action='store_true',help='32 delayed ICMP probes during each iperf workload')
     args=p.parse_args(); args.cpus,args.memory,args.mtu,args.omit=1.,'256m',1500,2
-    if 4*(args.seconds+args.omit)*args.iterations>210: raise ValueError('Case duration exceeds bounded managed fixture lease budget')
+    if len(args.parallel)*len(args.directions)*(args.seconds+args.omit)*args.iterations>210: raise ValueError('Case duration exceeds bounded managed fixture lease budget')
+    if args.loaded_rtt and args.seconds<20: raise ValueError('Loaded RTT sampling requires at least 20 measured seconds')
     os.umask(0o077)
     if args.output.exists(): raise ValueError('Output exists')
     signal.signal(signal.SIGTERM,interrupted)
@@ -119,6 +159,8 @@ def main():
         'settings':{k:str(v) if isinstance(v,Path) else v for k,v in vars(args).items()},
         'scope':'Real managed Manager/coherent contract compilation/TUN generation/300-second lease watchdog; fixture keys, no controller enrollment or HTTP refresh. E2E plus NativeUDP hop Noise, full 64-byte node IDs, MTU1000, two Tokio workers.',
         'environment':environment(info),
+        'source_revision':subprocess.check_output(['git','rev-parse','HEAD'],text=True).strip(),
+        'packet_pump':'meshway_dataplane::packet_io::run_with_activation (shared pump)',
         'cases':[],'fixtures':{},'cleanup_errors':[]}
     f=None
     try:
@@ -126,11 +168,18 @@ def main():
             f=ManagedFixture(args,result); f.prepare_image(native)
             ips,result['fixtures'][mode]=f.setup_managed(mode)
             for iteration in range(1,args.iterations+1):
-                for parallel in [1,4]:
-                    for reverse in [False,True]:
+                for parallel in args.parallel:
+                    for direction in args.directions:
+                        reverse=direction=='reverse'
                         cpu_before=f.cgroups(); kernel_before=f.kernel(); runtime_before=f.runtime_statistics()
                         processes={n:json.loads(f.exec(n,'python3','-c',PROCESS).stdout) for n in f.nodes}
+                        rtt_file=f"{RUN_DIRECTORY}/rtt-p{parallel}-{direction}-{iteration}.json"
+                        if args.loaded_rtt: f.rtt_request=(ips['NYC'],ips['SHA'],rtt_file)
                         case=benchmark_case(f,ips['NYC'],ips['SHA'],'tcp',parallel,reverse,iteration)
+                        if args.loaded_rtt:
+                            wait_until('loaded RTT sample completion',lambda:f.exec('NYC','test','-f',rtt_file,check=False).returncode==0,timeout=5)
+                            case['loaded_rtt']=json.loads(f.exec('NYC','cat',rtt_file).stdout)
+                            case['loaded_rtt']['summary']=summarize_loaded_rtt(case['loaded_rtt'])
                         runtime_after=f.runtime_statistics()
                         case.update(mode=mode,mtu=1000,hop_count=2 if mode=='relay' else 1,
                             kernel_before=kernel_before,kernel_after=f.kernel(),process_before=processes,

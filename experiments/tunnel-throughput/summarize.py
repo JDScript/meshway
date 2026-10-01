@@ -39,6 +39,8 @@ def describe(case):
     row['socket_buffers']={k:start.get(k) for k in ['sock_bufsize','sndbuf_actual','rcvbuf_actual']}
     row['retransmits']=case.get('summary',{}).get('retransmits')
     row['cpu_ns_per_byte_upper_estimate']=case.get('cpu',{}).get('total_cpu_ns_per_receiver_payload_byte')
+    if 'loaded_rtt' in case:
+        row['loaded_rtt']=case['loaded_rtt']['summary']
     row['nodes']={}
     for node,cpu in case.get('cpu',{}).get('nodes',{}).items():
         entry={'cpu_core_percent':cpu.get('cpu_percent_one_core'),'user_usec':cpu.get('user_usec_delta'),

@@ -1,9 +1,16 @@
 import unittest
 from summarize import describe, kernel_delta, snmp
 from run import cpu_details, cpu_window
+from managed import summarize_loaded_rtt
 
 
 class EvidenceTests(unittest.TestCase):
+    def test_loaded_rtt_missing_and_upper_bound_samples_are_not_zero_latency(self):
+        result=summarize_loaded_rtt({'stdout':'time=1.2 ms\ntime=2.4 ms\ntime<0.1 ms\n3 packets transmitted, 3 received'})
+        self.assertAlmostEqual(result['median_ms'],1.8)
+        self.assertEqual(result['p95_ms'],2.4)
+        self.assertEqual(result['upper_bound_samples'],1)
+        self.assertIsNone(summarize_loaded_rtt({'stdout':'32 packets transmitted, 0 received'})['median_ms'])
     def test_tun_loss_is_attributed_to_its_own_interface_and_direction(self):
         def link(name, dropped):
             return {'ifname':name,'txqlen':32,'mtu':1000,'stats64':{'rx':{'dropped':0},'tx':{'dropped':dropped}}}
