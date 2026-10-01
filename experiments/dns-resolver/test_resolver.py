@@ -156,6 +156,40 @@ class DNSBehavior(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual(dns.parse(result).flags & 15, rcode)
         self.assertFalse(external.requests)
 
+    async def test_original_search_cannot_turn_unknown_mesh_short_name_into_external_alias(self):
+        local, external = await self.fixture(rcode=3), await self.fixture()
+        proxy = await self.proxy(local, external)
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary).resolve()
+            path = root / "resolv.conf"
+            original = ORIGINAL + b"domain legacy.test\nsearch old.test another.test\n"
+            path.write_bytes(original)
+            with state.Store(root / "private") as store, state.ResolverFile(path) as target:
+                store.lock()
+                journal, previous = target.prepare(store, "fixture.meshway.test",
+                                                   ("127.0.0.1", 53), ("127.0.0.1", 5353), PREFIXES)
+                target.apply(store, journal, previous)
+                directives = [line.split() for line in path.read_text().splitlines()]
+                searches = [parts[1:] for parts in directives if parts and parts[0] == "search"]
+                self.assertEqual(searches, [["fixture.meshway.test"]])
+                self.assertFalse(any(parts and parts[0] == "domain" for parts in directives))
+                # Exercise the installed search candidates and final bare-name
+                # retry over actual UDP. This is not a glibc implementation.
+                for suffix in searches[0]:
+                    result = await self.query(proxy, "solo." + suffix)
+                    self.assertEqual(dns.parse(result).flags & 15, 3)
+                result = await self.query(proxy, "solo")
+                self.assertEqual(dns.parse(result).flags & 15, 5)
+                self.assertFalse(external.requests)
+                # An explicit external FQDN is still allowed. The Router cannot
+                # infer that solo.old.test originated from a libc search retry.
+                result = await self.query(proxy, "solo.old.test")
+                self.assertEqual(dns.parse(result).flags & 15, 0)
+                self.assertEqual(len(external.requests), 1)
+                self.assertEqual(state.decoded(store.load()["original"]), original)
+                target.restore(store, journal, forget=True)
+                self.assertEqual(path.read_bytes(), original)
+
     async def test_wrong_id_question_opcode_peer_and_record_bounds_are_ignored(self):
         async def callback(fixture, data, addr):
             good = answer(data)
@@ -394,7 +428,8 @@ class FileTransaction(unittest.TestCase):
             journal = self.apply(store, target)
             self.assertEqual(stat.S_IMODE(self.state_path.stat().st_mode), 0o700)
             self.assertEqual(stat.S_IMODE((self.state_path / "journal.json").stat().st_mode), 0o600)
-            self.assertIn(b"search fixture.meshway.test old.test\n", self.path.read_bytes())
+            self.assertIn(b"search fixture.meshway.test\n", self.path.read_bytes())
+            self.assertNotIn(b"old.test", self.path.read_bytes())
             self.assertIn(b"options ndots:0 timeout:1 attempts:2", self.path.read_bytes())
             self.assertEqual(self.path.stat().st_ino, original_inode)
             target.restore(store, journal)

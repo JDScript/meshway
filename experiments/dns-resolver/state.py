@@ -237,15 +237,12 @@ def original_config(data, listen, nameservice):
     return upstreams, search, options
 
 
-def generated_config(zone, search, options):
-    names, seen = [], set()
-    for name in [zone] + search:
-        key = name.rstrip(".").lower()
-        if key not in seen:
-            names.append(name)
-            seen.add(key)
+def generated_config(zone, options):
     result = "# Owned by Meshway experimental container DNS adapter\n"
-    result += "nameserver 127.0.0.1\nsearch " + " ".join(names) + "\n"
+    # A libc search retry through an original domain (solo.old.test) is a
+    # multi-label external question: the bare-label refusal cannot stop it.
+    # Original search/domain directives survive only in the recovery bytes.
+    result += "nameserver 127.0.0.1\nsearch " + zone + "\n"
     if options:
         result += "options " + " ".join(options) + "\n"
     return result.encode("ascii")
@@ -314,8 +311,8 @@ class ResolverFile:
                     or previous["path"] != self.path):
                 raise Conflict("existing ownership journal requires down/recovery before run")
             zones = previous["zones"]
-        upstreams, search, options = original_config(self.original, listen, nameservice)
-        written = generated_config(zone, search, options)
+        upstreams, _search, options = original_config(self.original, listen, nameservice)
+        written = generated_config(zone, options)
         info = self.info
         journal = dict(version=1, phase="prepared", path=self.path,
                        original=encoded(self.original), original_sha256=digest(self.original),

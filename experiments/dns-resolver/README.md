@@ -69,6 +69,11 @@ controller/fixture connections must use IPs so startup does not depend on DNS.
   does not rewrite questions. Use multi-label external names/FQDNs such as
   `controller.mesh.test` for underlay services. A client that bypasses the
   search list and sends only a bare label will be refused.
+  The active search list contains **only the current Mesh zone**: preserving an
+  original search domain would let libc retry `solo.old.test` after Mesh
+  NXDOMAIN, which the Router would correctly classify as an external FQDN.
+  Bare-label refusal alone cannot prevent that branch. External services must
+  use their complete FQDNs (a trailing dot makes the name absolute to libc).
 * Other names are forwarded only to original resolv.conf nameservers at port
   **53**, IPv4 or IPv6. Docker's original `127.0.0.11` stub is retained. Original
   loopback stubs other than exactly `127.0.0.11` are rejected because their
@@ -77,12 +82,12 @@ controller/fixture connections must use IPs so startup does not depend on DNS.
   identical to the nameservice endpoint are rejected, including Docker `.11`
   if explicitly chosen as that nameservice. No public fallback is invented.
 
-The generated resolver has `nameserver 127.0.0.1`, a search list starting with
-the explicit zone then the effective original search/domain list (case-insensitive
-deduplication), and the original `options` tokens. Original bytes, including
-all nameservers and comments, are restored verbatim. Effective search/domain
-uses the last directive, matching resolv.conf convention. Search-list/kernel/libc
-limits still apply; this experiment does not emulate every resolver client.
+The generated resolver has `nameserver 127.0.0.1`, exactly `search <current-zone>`,
+and the original `options` tokens. Original search/domain directives are not
+installed while the adapter is enabled. Original bytes, including all
+nameservers, search/domain directives and comments, remain in the journal and
+are restored verbatim on stop/down. Kernel/libc limits still apply; this
+experiment does not emulate every resolver client.
 
 Zone changes require **stop/reapply** with a new explicit `--zone`; the adapter
 does not follow controller configuration automatically. Graceful stop restores
@@ -184,7 +189,9 @@ python3 resolver.py run --help
 ```
 
 Coverage includes label-boundary routing, punycode validation, IPv4/IPv6 reverse
-validation, unknown Mesh PTR and short-name non-fallback, local error responses,
+validation, unknown Mesh PTR and short-name non-fallback (including exclusion of
+original search/domain candidates with an external `solo.old.test` positive
+control), local error responses,
 original upstream loop rejection/Docker stub preservation, wrong ID/question/
 opcode/peer and oversized/malformed responses, UDP TC-to-TCP, TTL aging and
 expired positives, no cache/transfer/ANY, deadlines, partial TCP frames,
