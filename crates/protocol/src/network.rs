@@ -1,4 +1,4 @@
-//! Single-network identity and authoritative node DNS intent, not recursive DNS
+//! Network identity and authoritative node DNS intent, not recursive DNS
 //! or access authorization. AAAA metadata does not assert IPv6 dataplane support.
 
 use std::collections::{BTreeMap, BTreeSet};
@@ -54,7 +54,7 @@ impl MeshDnsConfiguration {
     }
 }
 
-/// Saved intent at the global configuration revision. Address pools are immutable.
+/// Saved intent at the network configuration revision. Address pools are immutable.
 #[derive(Clone, Debug, Serialize, Deserialize, ToSchema)]
 #[serde(deny_unknown_fields)]
 pub struct NetworkSnapshot {
@@ -70,6 +70,29 @@ pub struct NetworkSnapshot {
     pub name: String,
     pub network: MeshNetwork,
     pub dns: MeshDnsConfiguration,
+}
+
+#[derive(Debug, Serialize, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
+pub struct NetworkList {
+    pub networks: Vec<NetworkSnapshot>,
+}
+
+#[derive(Debug, Serialize, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
+pub struct CreateNetworkRequest {
+    #[schema(
+        min_length = 1,
+        max_length = 128,
+        pattern = r"[^\u0009-\u000D\u0020\u0085\u00A0\u1680\u2000-\u200A\u2028\u2029\u202F\u205F\u3000]"
+    )]
+    pub name: String,
+}
+
+impl CreateNetworkRequest {
+    pub fn validate(&self) -> Result<(), &'static str> {
+        crate::validate_text(&self.name, 128)
+    }
 }
 
 #[derive(Debug, Serialize, Deserialize, ToSchema)]

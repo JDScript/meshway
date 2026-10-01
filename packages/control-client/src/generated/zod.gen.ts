@@ -351,6 +351,10 @@ export const zCreateEnrollmentTokenResponse = z.strictObject({
   "token_id": z.string()
 });
 
+export const zCreateNetworkRequest = z.strictObject({
+  "name": z.string().refine(value => [...value].length >= 1, "minLength 1 Unicode code points").refine(value => [...value].length <= 128, "maxLength 128 Unicode code points").regex(new RegExp("[^\\u0009-\\u000D\\u0020\\u0085\\u00A0\\u1680\\u2000-\\u200A\\u2028\\u2029\\u202F\\u205F\\u3000]", "u"))
+});
+
 export const zStunDiscoveryOutcome = z.enum(["mapped","timeout","invalid_response","io_error","stun_error"]);
 
 export const zStunEndpointObservation = z.strictObject({
@@ -466,6 +470,10 @@ export const zNetworkSnapshot = z.strictObject({
   "network": zMeshNetwork,
   "network_id": z.string().refine(value => [...value].length >= 32, "minLength 32 Unicode code points").refine(value => [...value].length <= 32, "maxLength 32 Unicode code points").regex(new RegExp("^[0-9a-f]{32}$", "u")),
   "revision": z.int().gte(1).lte(4294967295)
+});
+
+export const zNetworkList = z.strictObject({
+  "networks": z.array(zNetworkSnapshot)
 });
 
 export const zNodeList = z.strictObject({

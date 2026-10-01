@@ -291,7 +291,7 @@ fn openapi_dns_contract_is_closed_bounded_and_role_scoped() {
         json!([{"nodeBearer":[]}])
     );
     assert_eq!(
-        document["paths"]["/api/v1/network"]["post"]["security"],
+        document["paths"][contract_path("/api/v1/network")]["post"]["security"],
         json!([{"adminBearer":[]}])
     );
     for component in [

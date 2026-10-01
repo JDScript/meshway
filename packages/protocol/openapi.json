@@ -6,148 +6,6 @@
     "version": "0.1.0"
   },
   "paths": {
-    "/api/v1/access": {
-      "get": {
-        "operationId": "getMeshAccess",
-        "responses": {
-          "200": {
-            "description": "Saved ordered endpoint authorization source and current diagnostics",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/MeshAccessSnapshot"
-                }
-              }
-            }
-          },
-          "401": {
-            "description": "Admin credential required",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            }
-          },
-          "500": {
-            "description": "Storage unavailable",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            }
-          }
-        },
-        "security": [
-          {
-            "adminBearer": []
-          }
-        ]
-      },
-      "post": {
-        "operationId": "saveMeshAccess",
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/SaveMeshAccessRequest"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "200": {
-            "description": "Global-CAS ordered endpoint authorization save; missing keys defer only affected runtime paths",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/MeshAccessSnapshot"
-                }
-              }
-            }
-          },
-          "400": {
-            "description": "Invalid JSON",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            }
-          },
-          "401": {
-            "description": "Admin credential required",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            }
-          },
-          "409": {
-            "description": "Stale global revision",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            }
-          },
-          "413": {
-            "description": "Request exceeds 512 KiB",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            }
-          },
-          "415": {
-            "description": "Expected application/json",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            }
-          },
-          "422": {
-            "description": "Invalid selectors or references, JSONC mismatch, or expanded publication capacity exhausted",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            }
-          },
-          "500": {
-            "description": "Storage unavailable",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            }
-          }
-        },
-        "security": [
-          {
-            "adminBearer": []
-          }
-        ]
-      }
-    },
     "/api/v1/agent/connection-identity": {
       "post": {
         "operationId": "publishConnectionIdentity",
@@ -1292,314 +1150,6 @@
         ]
       }
     },
-    "/api/v1/connections": {
-      "get": {
-        "operationId": "getConnections",
-        "responses": {
-          "200": {
-            "description": "Source connection plan, validity and inventory with independent saved-only receipts",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ConnectionsSnapshot"
-                }
-              }
-            }
-          },
-          "401": {
-            "description": "Admin credential required",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            }
-          },
-          "500": {
-            "description": "Storage unavailable",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            }
-          }
-        },
-        "security": [
-          {
-            "adminBearer": []
-          }
-        ]
-      },
-      "post": {
-        "operationId": "saveConnections",
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/SaveConnectionsRequest"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "200": {
-            "description": "Canonical global-CAS connection intent save; no runtime activation or transit/exit grant",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ConnectionsSnapshot"
-                }
-              }
-            }
-          },
-          "400": {
-            "description": "Invalid JSON",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            }
-          },
-          "401": {
-            "description": "Admin credential required",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            }
-          },
-          "409": {
-            "description": "Stale global revision",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            }
-          },
-          "413": {
-            "description": "Request exceeds 128 KiB",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            }
-          },
-          "415": {
-            "description": "Expected application/json",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            }
-          },
-          "422": {
-            "description": "Invalid connection plan or capacity exhausted",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            }
-          },
-          "500": {
-            "description": "Storage unavailable",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            }
-          }
-        },
-        "security": [
-          {
-            "adminBearer": []
-          }
-        ]
-      }
-    },
-    "/api/v1/connections/discovery": {
-      "get": {
-        "operationId": "getEndpointDiscoveries",
-        "responses": {
-          "200": {
-            "description": "Current leased UDP self-observations; missing reports explicitly await reporting",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/EndpointDiscoveriesSnapshot"
-                }
-              }
-            }
-          },
-          "401": {
-            "description": "Admin credential required",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            }
-          },
-          "500": {
-            "description": "Storage unavailable",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            }
-          }
-        },
-        "security": [
-          {
-            "adminBearer": []
-          }
-        ]
-      }
-    },
-    "/api/v1/connections/runtime": {
-      "get": {
-        "operationId": "getConnectionRuntimes",
-        "responses": {
-          "200": {
-            "description": "Leased node self-reports with server receive TTL and current configuration matching; not authorization",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ConnectionRuntimesSnapshot"
-                }
-              }
-            }
-          },
-          "401": {
-            "description": "Admin credential required",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            }
-          },
-          "500": {
-            "description": "Storage unavailable",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            }
-          }
-        },
-        "security": [
-          {
-            "adminBearer": []
-          }
-        ]
-      }
-    },
-    "/api/v1/device-authorizations": {
-      "post": {
-        "operationId": "authorizeDevice",
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/AuthorizeDeviceRequest"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "200": {
-            "description": "PKCE-bound code; first use expires in five minutes",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/AuthorizeDeviceResponse"
-                }
-              }
-            }
-          },
-          "400": {
-            "description": "Invalid authorization",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            }
-          },
-          "401": {
-            "description": "Admin required",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            }
-          },
-          "413": {
-            "description": "Request too large",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            }
-          },
-          "415": {
-            "description": "JSON required",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            }
-          },
-          "500": {
-            "description": "Storage unavailable",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            }
-          }
-        },
-        "security": [
-          {
-            "adminBearer": []
-          }
-        ]
-      }
-    },
     "/api/v1/devices/exchange": {
       "post": {
         "operationId": "exchangeDevice",
@@ -1712,9 +1262,729 @@
         ]
       }
     },
-    "/api/v1/enrollment-tokens": {
+    "/api/v1/networks": {
+      "get": {
+        "operationId": "listNetworks",
+        "responses": {
+          "200": {
+            "description": "Networks in creation order, original network first",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NetworkList"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Admin credential required",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Storage unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "adminBearer": []
+          }
+        ]
+      },
+      "post": {
+        "operationId": "createNetwork",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateNetworkRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Empty isolated network with immutable address pools",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NetworkSnapshot"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid JSON",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Admin credential required",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Invalid network name",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Storage unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "adminBearer": []
+          }
+        ]
+      }
+    },
+    "/api/v1/networks/{network_id}/access": {
+      "get": {
+        "operationId": "getMeshAccess",
+        "parameters": [
+          {
+            "name": "network_id",
+            "in": "path",
+            "description": "Stable network ID",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Saved ordered endpoint authorization source and current diagnostics",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MeshAccessSnapshot"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Admin credential required",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Network not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Storage unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "adminBearer": []
+          }
+        ]
+      },
+      "post": {
+        "operationId": "saveMeshAccess",
+        "parameters": [
+          {
+            "name": "network_id",
+            "in": "path",
+            "description": "Stable network ID",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SaveMeshAccessRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Global-CAS ordered endpoint authorization save; missing keys defer only affected runtime paths",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MeshAccessSnapshot"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid JSON",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Admin credential required",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Network not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Stale global revision",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "Request exceeds 512 KiB",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "415": {
+            "description": "Expected application/json",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Invalid selectors or references, JSONC mismatch, or expanded publication capacity exhausted",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Storage unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "adminBearer": []
+          }
+        ]
+      }
+    },
+    "/api/v1/networks/{network_id}/connections": {
+      "get": {
+        "operationId": "getConnections",
+        "parameters": [
+          {
+            "name": "network_id",
+            "in": "path",
+            "description": "Stable network ID",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Source connection plan, validity and inventory with independent saved-only receipts",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ConnectionsSnapshot"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Admin credential required",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Network not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Storage unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "adminBearer": []
+          }
+        ]
+      },
+      "post": {
+        "operationId": "saveConnections",
+        "parameters": [
+          {
+            "name": "network_id",
+            "in": "path",
+            "description": "Stable network ID",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SaveConnectionsRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Canonical global-CAS connection intent save; no runtime activation or transit/exit grant",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ConnectionsSnapshot"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid JSON",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Admin credential required",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Network not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Stale global revision",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "Request exceeds 128 KiB",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "415": {
+            "description": "Expected application/json",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Invalid connection plan or capacity exhausted",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Storage unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "adminBearer": []
+          }
+        ]
+      }
+    },
+    "/api/v1/networks/{network_id}/connections/discovery": {
+      "get": {
+        "operationId": "getEndpointDiscoveries",
+        "parameters": [
+          {
+            "name": "network_id",
+            "in": "path",
+            "description": "Stable network ID",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Current leased UDP self-observations; missing reports explicitly await reporting",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EndpointDiscoveriesSnapshot"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Admin credential required",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Network not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Storage unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "adminBearer": []
+          }
+        ]
+      }
+    },
+    "/api/v1/networks/{network_id}/connections/runtime": {
+      "get": {
+        "operationId": "getConnectionRuntimes",
+        "parameters": [
+          {
+            "name": "network_id",
+            "in": "path",
+            "description": "Stable network ID",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Leased node self-reports with server receive TTL and current configuration matching; not authorization",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ConnectionRuntimesSnapshot"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Admin credential required",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Network not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Storage unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "adminBearer": []
+          }
+        ]
+      }
+    },
+    "/api/v1/networks/{network_id}/device-authorizations": {
+      "post": {
+        "operationId": "authorizeDevice",
+        "parameters": [
+          {
+            "name": "network_id",
+            "in": "path",
+            "description": "Approved destination network",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AuthorizeDeviceRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "PKCE-bound code; first use expires in five minutes",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AuthorizeDeviceResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid authorization",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Admin required",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Approved network not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "Request too large",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "415": {
+            "description": "JSON required",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Storage unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "adminBearer": []
+          }
+        ]
+      }
+    },
+    "/api/v1/networks/{network_id}/enrollment-tokens": {
       "post": {
         "operationId": "createEnrollmentToken",
+        "parameters": [
+          {
+            "name": "network_id",
+            "in": "path",
+            "description": "Stable network ID",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
         "requestBody": {
           "content": {
             "application/json": {
@@ -1748,6 +2018,16 @@
           },
           "401": {
             "description": "Admin credential required",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Network not found",
             "content": {
               "application/json": {
                 "schema": {
@@ -1794,9 +2074,20 @@
         ]
       }
     },
-    "/api/v1/flows/preview": {
+    "/api/v1/networks/{network_id}/flows/preview": {
       "post": {
         "operationId": "previewFlow",
+        "parameters": [
+          {
+            "name": "network_id",
+            "in": "path",
+            "description": "Stable network ID",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
         "requestBody": {
           "content": {
             "application/json": {
@@ -1838,6 +2129,16 @@
               }
             }
           },
+          "404": {
+            "description": "Network not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
           "413": {
             "description": "Request exceeds 512 KiB",
             "content": {
@@ -1866,12 +2167,23 @@
         ]
       }
     },
-    "/api/v1/network": {
+    "/api/v1/networks/{network_id}/network": {
       "get": {
         "operationId": "getNetwork",
+        "parameters": [
+          {
+            "name": "network_id",
+            "in": "path",
+            "description": "Stable network ID",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
         "responses": {
           "200": {
-            "description": "Single-network saved identity, immutable pools and authoritative node DNS intent",
+            "description": "Selected network saved identity, immutable pools and authoritative node DNS intent",
             "content": {
               "application/json": {
                 "schema": {
@@ -1882,6 +2194,16 @@
           },
           "401": {
             "description": "Admin credential required",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Network not found",
             "content": {
               "application/json": {
                 "schema": {
@@ -1909,6 +2231,17 @@
       },
       "post": {
         "operationId": "saveNetwork",
+        "parameters": [
+          {
+            "name": "network_id",
+            "in": "path",
+            "description": "Stable network ID",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
         "requestBody": {
           "content": {
             "application/json": {
@@ -1942,6 +2275,16 @@
           },
           "401": {
             "description": "Admin credential required",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Network not found",
             "content": {
               "application/json": {
                 "schema": {
@@ -2008,9 +2351,20 @@
         ]
       }
     },
-    "/api/v1/nodes": {
+    "/api/v1/networks/{network_id}/nodes": {
       "get": {
         "operationId": "listNodes",
+        "parameters": [
+          {
+            "name": "network_id",
+            "in": "path",
+            "description": "Stable network ID",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
         "responses": {
           "200": {
             "description": "Stored nodes sorted by ID",
@@ -2024,6 +2378,16 @@
           },
           "401": {
             "description": "Admin credential required",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Network not found",
             "content": {
               "application/json": {
                 "schema": {
@@ -2050,9 +2414,20 @@
         ]
       }
     },
-    "/api/v1/nodes/country": {
+    "/api/v1/networks/{network_id}/nodes/country": {
       "post": {
         "operationId": "setNodeCountry",
+        "parameters": [
+          {
+            "name": "network_id",
+            "in": "path",
+            "description": "Stable network ID",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
         "requestBody": {
           "content": {
             "application/json": {
@@ -2162,9 +2537,20 @@
         ]
       }
     },
-    "/api/v1/nodes/revoke": {
+    "/api/v1/networks/{network_id}/nodes/revoke": {
       "post": {
         "operationId": "revokeNode",
+        "parameters": [
+          {
+            "name": "network_id",
+            "in": "path",
+            "description": "Stable network ID",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
         "requestBody": {
           "content": {
             "application/json": {
@@ -2264,9 +2650,20 @@
         ]
       }
     },
-    "/api/v1/nodes/tags": {
+    "/api/v1/networks/{network_id}/nodes/tags": {
       "post": {
         "operationId": "setNodeTags",
+        "parameters": [
+          {
+            "name": "network_id",
+            "in": "path",
+            "description": "Stable network ID",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
         "requestBody": {
           "content": {
             "application/json": {
@@ -2308,6 +2705,16 @@
               }
             }
           },
+          "404": {
+            "description": "Network not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
           "409": {
             "description": "Stale global revision",
             "content": {
@@ -2336,9 +2743,20 @@
         ]
       }
     },
-    "/api/v1/overview": {
+    "/api/v1/networks/{network_id}/overview": {
       "get": {
         "operationId": "getOverview",
+        "parameters": [
+          {
+            "name": "network_id",
+            "in": "path",
+            "description": "Stable network ID",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
         "responses": {
           "200": {
             "description": "Controller identity and total stored nodes including revoked nodes",
@@ -2360,6 +2778,16 @@
               }
             }
           },
+          "404": {
+            "description": "Network not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
           "500": {
             "description": "Storage unavailable",
             "content": {
@@ -2378,9 +2806,20 @@
         ]
       }
     },
-    "/api/v1/policy": {
+    "/api/v1/networks/{network_id}/policy": {
       "get": {
         "operationId": "getPolicy",
+        "parameters": [
+          {
+            "name": "network_id",
+            "in": "path",
+            "description": "Stable network ID",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
         "responses": {
           "200": {
             "description": "Saved source policy and current diagnostics",
@@ -2402,6 +2841,16 @@
               }
             }
           },
+          "404": {
+            "description": "Network not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
           "500": {
             "description": "Storage unavailable",
             "content": {
@@ -2420,9 +2869,20 @@
         ]
       }
     },
-    "/api/v1/policy/preview": {
+    "/api/v1/networks/{network_id}/policy/preview": {
       "post": {
         "operationId": "previewPolicy",
+        "parameters": [
+          {
+            "name": "network_id",
+            "in": "path",
+            "description": "Stable network ID",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
         "requestBody": {
           "content": {
             "application/json": {
@@ -2456,6 +2916,16 @@
           },
           "401": {
             "description": "Admin credential required",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Network not found",
             "content": {
               "application/json": {
                 "schema": {
@@ -2502,9 +2972,20 @@
         ]
       }
     },
-    "/api/v1/policy/save": {
+    "/api/v1/networks/{network_id}/policy/save": {
       "post": {
         "operationId": "savePolicy",
+        "parameters": [
+          {
+            "name": "network_id",
+            "in": "path",
+            "description": "Stable network ID",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
         "requestBody": {
           "content": {
             "application/json": {
@@ -2538,6 +3019,16 @@
           },
           "401": {
             "description": "Admin credential required",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Network not found",
             "content": {
               "application/json": {
                 "schema": {
@@ -2604,9 +3095,20 @@
         ]
       }
     },
-    "/api/v1/tags": {
+    "/api/v1/networks/{network_id}/tags": {
       "get": {
         "operationId": "getTags",
+        "parameters": [
+          {
+            "name": "network_id",
+            "in": "path",
+            "description": "Stable network ID",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
         "responses": {
           "200": {
             "description": "Admin-owned tag catalog and active assignments",
@@ -2627,6 +3129,16 @@
                 }
               }
             }
+          },
+          "404": {
+            "description": "Network not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
           }
         },
         "security": [
@@ -2637,6 +3149,17 @@
       },
       "post": {
         "operationId": "saveTags",
+        "parameters": [
+          {
+            "name": "network_id",
+            "in": "path",
+            "description": "Stable network ID",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
         "requestBody": {
           "content": {
             "application/json": {
@@ -2670,6 +3193,16 @@
           },
           "401": {
             "description": "Admin credential required",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Network not found",
             "content": {
               "application/json": {
                 "schema": {
@@ -3585,6 +4118,21 @@
         },
         "additionalProperties": false
       },
+      "CreateNetworkRequest": {
+        "type": "object",
+        "required": [
+          "name"
+        ],
+        "properties": {
+          "name": {
+            "type": "string",
+            "maxLength": 128,
+            "minLength": 1,
+            "pattern": "[^\\u0009-\\u000D\\u0020\\u0085\\u00A0\\u1680\\u2000-\\u200A\\u2028\\u2029\\u202F\\u205F\\u3000]"
+          }
+        },
+        "additionalProperties": false
+      },
       "DefaultRouteAction": {
         "type": "string",
         "enum": [
@@ -4101,9 +4649,24 @@
         },
         "additionalProperties": false
       },
+      "NetworkList": {
+        "type": "object",
+        "required": [
+          "networks"
+        ],
+        "properties": {
+          "networks": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/NetworkSnapshot"
+            }
+          }
+        },
+        "additionalProperties": false
+      },
       "NetworkSnapshot": {
         "type": "object",
-        "description": "Saved intent at the global configuration revision. Address pools are immutable.",
+        "description": "Saved intent at the network configuration revision. Address pools are immutable.",
         "required": [
           "revision",
           "network_id",

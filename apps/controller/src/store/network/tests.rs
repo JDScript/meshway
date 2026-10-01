@@ -34,7 +34,7 @@ fn old_rows(connection: &Connection) -> Vec<(String, Vec<Vec<Value>>)> {
 #[test]
 fn additive_v6_upgrade_preserves_all_rows_revision_and_old_payloads_then_id_survives_restart() {
     let dir = directory();
-    let mut store = Store::open(dir.path(), &NetworkOptions::default()).unwrap();
+    let mut store = Store::open_v8(dir.path(), &NetworkOptions::default()).unwrap();
     let first = request("one");
     let second = request("two");
     let node = enroll(&mut store, &first);
@@ -89,7 +89,7 @@ fn additive_v6_upgrade_preserves_all_rows_revision_and_old_payloads_then_id_surv
         .execute_batch("ALTER TABLE enrollment_tokens DROP COLUMN device_binding; DROP TABLE network_identity; PRAGMA user_version=6;")
         .unwrap();
     drop(store);
-    let mut store = Store::open(dir.path(), &NetworkOptions::default()).unwrap();
+    let mut store = Store::open_v8(dir.path(), &NetworkOptions::default()).unwrap();
     assert_eq!(old_rows(&store.connection), rows);
     assert_eq!(
         std::fs::read(dir.path().join("admin.token")).unwrap(),

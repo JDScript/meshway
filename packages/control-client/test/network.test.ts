@@ -50,12 +50,12 @@ test("new generated operations use frozen routes, bearer scope, runtime validati
     calls.push({ path: url.pathname, method: init?.method ?? "GET", body: init?.body ? JSON.parse(String(init.body)) : null });
     return Response.json(url.pathname === "/api/v1/agent/dns" ? bundle : network);
   });
-  assert.deepEqual(await getNetwork("https://controller.test", "test-token"), network);
+  assert.deepEqual(await getNetwork("https://controller.test", "test-token", network.network_id), network);
   const save = { expected_revision: 1, name: "Meshway", dns };
-  assert.deepEqual(await saveNetwork("https://controller.test", "test-token", save), network);
+  assert.deepEqual(await saveNetwork("https://controller.test", "test-token", network.network_id, save), network);
   assert.deepEqual(await getAgentDnsOperation("https://controller.test", "test-token"), bundle);
-  assert.deepEqual(calls, [{ path: "/api/v1/network", method: "GET", body: null },
-    { path: "/api/v1/network", method: "POST", body: save }, { path: "/api/v1/agent/dns", method: "GET", body: null }]);
+  assert.deepEqual(calls, [{ path: `/api/v1/networks/${network.network_id}/network`, method: "GET", body: null },
+    { path: `/api/v1/networks/${network.network_id}/network`, method: "POST", body: save }, { path: "/api/v1/agent/dns", method: "GET", body: null }]);
   t.mock.method(globalThis, "fetch", async () => new Response("not JSON; no echo", { status: 403 }));
   await assert.rejects(getAgentDnsOperation("https://controller.test", "test-token"),
     (error: unknown) => error instanceof ControlApiError && error.status === 403 && !error.message.includes("echo"));

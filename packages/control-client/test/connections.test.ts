@@ -7,7 +7,7 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import test from "node:test";
 
-import { ControlApiError, createEnrollmentToken, getConnections, getConnectionRuntimes, revokeNode, saveConnections, type ConnectionCapability, type ConnectionPlan, type ReportConnectionRuntimeRequest } from "../src/index.ts";
+import { ControlApiError, createEnrollmentToken, getConnections, getConnectionRuntimes, revokeNode, saveConnections, listNetworks, type ConnectionCapability, type ConnectionPlan, type ReportConnectionRuntimeRequest } from "../src/index.ts";
 import {
   acknowledgeAgentConnectionsOperation, acknowledgeConfigurationOperation,
   enrollAgentOperation, getAgentConfigurationOperation, getAgentConnectionsOperation,
@@ -85,9 +85,10 @@ test("generated connection operations bind immutable keys, scope projections and
   let server = await start();
   try {
     const admin = (await readFile(join(directory, "admin.token"), "utf8")).trim();
+    const networkId = (await listNetworks(server.base, admin)).networks[0]!.network_id;
     const enrolled = [];
     for (const name of ["nyc", "lax", "sha"]) {
-      const grant = await createEnrollmentToken(server.base, admin, { expires_in_seconds: 600 });
+      const grant = await createEnrollmentToken(server.base, admin, networkId, { expires_in_seconds: 600 });
       const credential = randomBytes(32).toString("hex");
       const node = (await enrollAgentOperation(server.base, grant.token, { node_credential: credential, name, agent_version: "connection-sdk-test" })).node;
       const key = publicKey();
@@ -96,12 +97,12 @@ test("generated connection operations bind immutable keys, scope projections and
     }
     const [nyc, lax, sha] = enrolled;
     assert.ok(nyc && lax && sha);
-    const original = await getConnections(server.base, admin);
+    const original = await getConnections(server.base, admin, networkId);
     const repeated = await publishConnectionIdentityOperation(server.base, nyc.credential, { public_key: nyc.key, capabilities: [...capabilities].reverse() });
     assert.equal(repeated.revision, original.revision);
     await assert.rejects(publishConnectionIdentityOperation(server.base, nyc.credential, { public_key: publicKey(), capabilities }), httpError(409));
     await assert.rejects(publishConnectionIdentityOperation(server.base, sha.credential, { public_key: nyc.key, capabilities }), httpError(409));
-    await assert.rejects(getConnections(server.base, nyc.credential), httpError(401));
+    await assert.rejects(getConnections(server.base, nyc.credential, networkId), httpError(401));
     await assert.rejects(publishConnectionIdentityOperation(server.base, admin, { public_key: publicKey(), capabilities }), httpError(401));
     // Runtime observation leases are independent of configuration revisions/ACKs.
     // Synthetic disabled reports exercise the API contract, not network liveness.
@@ -123,14 +124,14 @@ test("generated connection operations bind immutable keys, scope projections and
     await assert.rejects(beginConnectionRuntimeOperation(server.base, nyc.credential, { instance_id: instanceA, expected_epoch: 0 }), httpError(409));
     await assert.rejects(reportConnectionRuntimeOperation(server.base, nyc.credential, runtime), httpError(409));
     await assert.rejects(reportConnectionRuntimeOperation(server.base, nyc.credential, { ...nextReportBody, state: "withdrawn", reason: "shutting_down" }), httpError(409));
-    const observed = (await getConnectionRuntimes(server.base, admin)).nodes.find(entry => entry.node_id === nyc.node.id);
+    const observed = (await getConnectionRuntimes(server.base, admin, networkId)).nodes.find(entry => entry.node_id === nyc.node.id);
     assert.equal(observed?.epoch, nextLease.epoch);
     assert.equal(observed?.reported_at, nextReport.reported_at);
     assert.equal(observed?.current, true);
     assert.equal(observed?.stale, false);
-    assert.equal((await getConnections(server.base, admin)).revision, original.revision);
-    assert.equal((await getConnections(server.base, admin)).nodes.find(entry => entry.node.id === nyc.node.id)?.acknowledged_revision, 0);
-    await assert.rejects(getConnectionRuntimes(server.base, nyc.credential), httpError(401));
+    assert.equal((await getConnections(server.base, admin, networkId)).revision, original.revision);
+    assert.equal((await getConnections(server.base, admin, networkId)).nodes.find(entry => entry.node.id === nyc.node.id)?.acknowledged_revision, 0);
+    await assert.rejects(getConnectionRuntimes(server.base, nyc.credential, networkId), httpError(401));
     const configuration: ConnectionPlan = {
       listeners: [
         { id: "lax-udp", node_id: lax.node.id, transport: "native_udp", bind: "0.0.0.0:41000", advertised_endpoints: [{ host: "127.0.0.1", port: 41000 }], credential_ref: null },
@@ -141,15 +142,15 @@ test("generated connection operations bind immutable keys, scope projections and
         { id: "sha-to-lax", dialer_node_id: sha.node.id, listener_id: "lax-vless", endpoint: { host: "127.0.0.1", port: 41001 }, priority: 10, credential_ref: "sha-local-profile" },
       ],
     };
-    const saved = await saveConnections(server.base, admin, { expected_revision: original.revision, configuration });
+    const saved = await saveConnections(server.base, admin, networkId, { expected_revision: original.revision, configuration });
     assert.equal(saved.valid, true);
     assert.equal(saved.revision, original.revision + 1);
-    const historical = (await getConnectionRuntimes(server.base, admin)).nodes.find(entry => entry.node_id === nyc.node.id);
+    const historical = (await getConnectionRuntimes(server.base, admin, networkId)).nodes.find(entry => entry.node_id === nyc.node.id);
     assert.equal(historical?.current, false);
     assert.equal(historical?.stale, true);
     await assert.rejects(reportConnectionRuntimeOperation(server.base, nyc.credential, { ...nextReportBody, sequence: 2 }), httpError(422));
-    await assert.rejects(saveConnections(server.base, admin, { expected_revision: original.revision, configuration }), httpError(409));
-    const noOp = await saveConnections(server.base, admin, { expected_revision: saved.revision, configuration: { listeners: [...configuration.listeners].reverse(), candidates: [...configuration.candidates].reverse() } });
+    await assert.rejects(saveConnections(server.base, admin, networkId, { expected_revision: original.revision, configuration }), httpError(409));
+    const noOp = await saveConnections(server.base, admin, networkId, { expected_revision: saved.revision, configuration: { listeners: [...configuration.listeners].reverse(), candidates: [...configuration.candidates].reverse() } });
     assert.equal(noOp.revision, saved.revision);
     const laxIntent = await getAgentConnectionsOperation(server.base, lax.credential);
     const shaIntent = await getAgentConnectionsOperation(server.base, sha.credential);
@@ -163,22 +164,22 @@ test("generated connection operations bind immutable keys, scope projections and
     assert.ok(!JSON.stringify(shaIntent).includes("lax-local-profile"));
     const policy = await getAgentConfigurationOperation(server.base, nyc.credential);
     await acknowledgeConfigurationOperation(server.base, nyc.credential, { revision: policy.payload.revision, digest: policy.digest });
-    const beforeReceipt = (await getConnections(server.base, admin)).nodes.find(entry => entry.node.id === nyc.node.id);
+    const beforeReceipt = (await getConnections(server.base, admin, networkId)).nodes.find(entry => entry.node.id === nyc.node.id);
     assert.ok(beforeReceipt);
     assert.equal(beforeReceipt.node.acknowledged_revision, saved.revision);
     assert.equal(beforeReceipt.acknowledged_revision, 0);
     const intent = await getAgentConnectionsOperation(server.base, nyc.credential);
     const ack = { revision: intent.payload.revision, digest: intent.digest };
     assert.equal((await acknowledgeAgentConnectionsOperation(server.base, nyc.credential, ack)).status, "saved");
-    const receipt = (await getConnections(server.base, admin)).nodes.find(entry => entry.node.id === nyc.node.id);
+    const receipt = (await getConnections(server.base, admin, networkId)).nodes.find(entry => entry.node.id === nyc.node.id);
     await acknowledgeAgentConnectionsOperation(server.base, nyc.credential, ack);
-    assert.deepEqual((await getConnections(server.base, admin)).nodes.find(entry => entry.node.id === nyc.node.id), receipt);
+    assert.deepEqual((await getConnections(server.base, admin, networkId)).nodes.find(entry => entry.node.id === nyc.node.id), receipt);
     assert.deepEqual(await getAgentConnectionsOperation(server.base, nyc.credential), intent);
     await server.stop();
     server = await start();
     assert.deepEqual(await getAgentConnectionsOperation(server.base, nyc.credential), intent);
-    await revokeNode(server.base, admin, { node_id: lax.node.id });
-    const invalid = await getConnections(server.base, admin);
+    await revokeNode(server.base, admin, networkId, { node_id: lax.node.id });
+    const invalid = await getConnections(server.base, admin, networkId);
     assert.equal(invalid.valid, false);
     assert.deepEqual(invalid.configuration, saved.configuration);
     const rejected = await getAgentConnectionsOperation(server.base, nyc.credential);

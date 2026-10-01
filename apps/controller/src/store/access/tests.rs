@@ -486,7 +486,7 @@ fn revocation_cleans_hidden_tag_membership_but_not_policy_references() {
 #[test]
 fn actual_v5_migration_deduplicates_paths_folds_reverse_and_bumps_revision() {
     let dir = directory();
-    let mut store = Store::open(dir.path(), &NetworkOptions::default()).unwrap();
+    let mut store = Store::open_v8(dir.path(), &NetworkOptions::default()).unwrap();
     let (a, _) = enrolled(&mut store, 9, false);
     let (b, _) = enrolled(&mut store, 10, false);
     let legacy = MeshPathAuthorization {
@@ -515,7 +515,7 @@ fn actual_v5_migration_deduplicates_paths_folds_reverse_and_bumps_revision() {
         .unwrap();
     store.connection.execute_batch("ALTER TABLE enrollment_tokens DROP COLUMN device_binding; DROP TABLE network_identity; DROP TABLE mesh_access_source; ALTER TABLE mesh_access_legacy_v5 RENAME TO mesh_access_source; DROP TABLE node_tags; DROP TABLE tag_definitions; ALTER TABLE configuration DROP COLUMN source_jsonc; PRAGMA user_version=5;").unwrap();
     drop(store);
-    let reopened = Store::open(dir.path(), &NetworkOptions::default()).unwrap();
+    let reopened = Store::open_v8(dir.path(), &NetworkOptions::default()).unwrap();
     let snapshot = reopened.mesh_access().unwrap();
     assert_eq!(snapshot.revision, revision + 1);
     assert_eq!(snapshot.policy.default_action, AccessAction::Reject);

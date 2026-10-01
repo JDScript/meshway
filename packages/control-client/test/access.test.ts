@@ -50,17 +50,17 @@ test("access responses reject unauthorized extensions, missing fields and malfor
     ...badRules.map(rule => ({ ...snapshot, policy: { default_action: "reject", rules: [rule] } })),
   ]) {
     await response(invalid, async base => {
-      await assert.rejects(getMeshAccess(base, "fixture-token"));
+      await assert.rejects(getMeshAccess(base, "fixture-token", "a".repeat(32)));
     });
   }
   await response(snapshot, async base => {
-    assert.deepEqual(await getMeshAccess(base, "fixture-token"), snapshot);
+    assert.deepEqual(await getMeshAccess(base, "fixture-token", "a".repeat(32)), snapshot);
   });
 });
 
 test("access save does not turn a malformed successful HTTP response into a saved receipt", async () => {
   await response({ ...snapshot, revision: 1.5 }, async base => {
-    await assert.rejects(saveMeshAccess(base, "fixture-token", {
+    await assert.rejects(saveMeshAccess(base, "fixture-token", "a".repeat(32), {
       expected_revision: 1,
       policy: snapshot.policy,
     }));

@@ -880,6 +880,21 @@ export const schemaDocument = {
         },
         "additionalProperties": false
       },
+      "CreateNetworkRequest": {
+        "type": "object",
+        "required": [
+          "name"
+        ],
+        "properties": {
+          "name": {
+            "type": "string",
+            "maxLength": 128,
+            "minLength": 1,
+            "pattern": "[^\\u0009-\\u000D\\u0020\\u0085\\u00A0\\u1680\\u2000-\\u200A\\u2028\\u2029\\u202F\\u205F\\u3000]"
+          }
+        },
+        "additionalProperties": false
+      },
       "DefaultRouteAction": {
         "type": "string",
         "enum": [
@@ -1396,9 +1411,24 @@ export const schemaDocument = {
         },
         "additionalProperties": false
       },
+      "NetworkList": {
+        "type": "object",
+        "required": [
+          "networks"
+        ],
+        "properties": {
+          "networks": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/NetworkSnapshot"
+            }
+          }
+        },
+        "additionalProperties": false
+      },
       "NetworkSnapshot": {
         "type": "object",
-        "description": "Saved intent at the global configuration revision. Address pools are immutable.",
+        "description": "Saved intent at the network configuration revision. Address pools are immutable.",
         "required": [
           "revision",
           "network_id",

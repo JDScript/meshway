@@ -17,7 +17,7 @@ use std::{
 
 use axum::{
     Json, Router,
-    extract::{DefaultBodyLimit, State, rejection::JsonRejection},
+    extract::{DefaultBodyLimit, Path as ApiPath, State, rejection::JsonRejection},
     http::{HeaderMap, StatusCode},
     response::{IntoResponse, Response},
 };
@@ -47,7 +47,7 @@ pub enum Error {
     Unprocessable(&'static str),
     #[error("{0}")]
     Capacity(&'static str),
-    #[error("node not found")]
+    #[error("resource not found in the selected network")]
     NotFound,
     #[error("{0}")]
     Configuration(&'static str),
@@ -308,21 +308,25 @@ fn json<T>(body: Result<Json<T>, JsonRejection>) -> Result<T, Error> {
 }
 
 #[utoipa::path(
-    get, path = "/api/v1/overview", operation_id = "getOverview", security(("adminBearer" = [])),
+    get, path = "/api/v1/networks/{network_id}/overview", operation_id = "getOverview", security(("adminBearer" = [])),
+    params(("network_id" = String, Path, description = "Stable network ID")),
     responses((status = 200, description = "Controller identity and total stored nodes including revoked nodes", body = Overview),
+        (status = 404, description = "Network not found", body = ErrorResponse),
         (status = 401, description = "Admin credential required", body = ErrorResponse),
         (status = 500, description = "Storage unavailable", body = ErrorResponse))
 )]
 async fn get_overview(
     State(state): State<AppState>,
+    ApiPath(network_id): ApiPath<String>,
     headers: HeaderMap,
 ) -> Result<Json<Overview>, Error> {
     let token = bearer(&headers)?;
     state
         .access(move |store| {
             store.authorize_admin(&token)?;
+            store.select_network(&network_id)?;
             Ok(Json(Overview {
-                name: "Meshway".into(),
+                name: store.network()?.name,
                 version: env!("CARGO_PKG_VERSION").into(),
                 node_count: store.count()?,
                 configuration_revision: store.revision()?,
@@ -332,19 +336,23 @@ async fn get_overview(
 }
 
 #[utoipa::path(
-    get, path = "/api/v1/nodes", operation_id = "listNodes", security(("adminBearer" = [])),
+    get, path = "/api/v1/networks/{network_id}/nodes", operation_id = "listNodes", security(("adminBearer" = [])),
+    params(("network_id" = String, Path, description = "Stable network ID")),
     responses((status = 200, description = "Stored nodes sorted by ID", body = NodeList),
+        (status = 404, description = "Network not found", body = ErrorResponse),
         (status = 401, description = "Admin credential required", body = ErrorResponse),
         (status = 500, description = "Storage unavailable", body = ErrorResponse))
 )]
 async fn list_nodes(
     State(state): State<AppState>,
+    ApiPath(network_id): ApiPath<String>,
     headers: HeaderMap,
 ) -> Result<Json<NodeList>, Error> {
     let token = bearer(&headers)?;
     state
         .access(move |store| {
             store.authorize_admin(&token)?;
+            store.select_network(&network_id)?;
             Ok(Json(NodeList {
                 nodes: store.nodes()?,
             }))
@@ -353,9 +361,11 @@ async fn list_nodes(
 }
 
 #[utoipa::path(
-    post, path = "/api/v1/enrollment-tokens", operation_id = "createEnrollmentToken", security(("adminBearer" = [])),
+    post, path = "/api/v1/networks/{network_id}/enrollment-tokens", operation_id = "createEnrollmentToken", security(("adminBearer" = [])),
+    params(("network_id" = String, Path, description = "Stable network ID")),
     request_body = CreateEnrollmentTokenRequest,
     responses((status = 200, description = "One-use token, plaintext revealed only here", body = CreateEnrollmentTokenResponse),
+        (status = 404, description = "Network not found", body = ErrorResponse),
         (status = 400, description = "Invalid request or TTL", body = ErrorResponse),
         (status = 401, description = "Admin credential required", body = ErrorResponse),
         (status = 413, description = "Request exceeds 8192 bytes", body = ErrorResponse),
@@ -364,6 +374,7 @@ async fn list_nodes(
 )]
 async fn create_enrollment_token(
     State(state): State<AppState>,
+    ApiPath(network_id): ApiPath<String>,
     headers: HeaderMap,
     body: Result<Json<CreateEnrollmentTokenRequest>, JsonRejection>,
 ) -> Result<Json<CreateEnrollmentTokenResponse>, Error> {
@@ -372,13 +383,15 @@ async fn create_enrollment_token(
     state
         .access(move |store| {
             store.authorize_admin(&token)?;
+            store.select_network(&network_id)?;
             store.create_token(request.expires_in_seconds).map(Json)
         })
         .await
 }
 
 #[utoipa::path(
-    post, path = "/api/v1/nodes/revoke", operation_id = "revokeNode", security(("adminBearer" = [])),
+    post, path = "/api/v1/networks/{network_id}/nodes/revoke", operation_id = "revokeNode", security(("adminBearer" = [])),
+    params(("network_id" = String, Path, description = "Stable network ID")),
     request_body = RevokeNodeRequest,
     responses((status = 200, description = "Revoked node; repeated revocation preserves its timestamp", body = RevokeNodeResponse),
         (status = 400, description = "Invalid request", body = ErrorResponse),
@@ -391,6 +404,7 @@ async fn create_enrollment_token(
 )]
 async fn revoke_node(
     State(state): State<AppState>,
+    ApiPath(network_id): ApiPath<String>,
     headers: HeaderMap,
     body: Result<Json<RevokeNodeRequest>, JsonRejection>,
 ) -> Result<Json<RevokeNodeResponse>, Error> {
@@ -402,6 +416,7 @@ async fn revoke_node(
     state
         .access(move |store| {
             store.authorize_admin(&token)?;
+            store.select_network(&network_id)?;
             Ok(Json(RevokeNodeResponse {
                 node: store.revoke(&request.node_id)?,
             }))

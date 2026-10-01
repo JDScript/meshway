@@ -248,7 +248,7 @@ impl Store {
         {
             return Err(Error::Conflict);
         }
-        let duplicate: bool = transaction.query_row("SELECT EXISTS(SELECT 1 FROM connection_identities WHERE public_key = ?1 AND node_id != ?2)", params![request.public_key, id], |row| row.get(0))?;
+        let duplicate = super::networks::public_key_bound(&transaction, &request.public_key, &id)?;
         if duplicate {
             return Err(Error::Conflict);
         }
@@ -256,7 +256,14 @@ impl Store {
             .as_ref()
             .is_none_or(|(_, stored)| stored != &encoded)
         {
-            transaction.execute("INSERT INTO connection_identities (node_id,public_key,capabilities) VALUES (?1,?2,?3) ON CONFLICT(node_id) DO UPDATE SET capabilities = excluded.capabilities", params![id,request.public_key,encoded])?;
+            if current.is_some() {
+                transaction.execute(
+                    "UPDATE connection_identities SET capabilities=?2 WHERE node_id=?1",
+                    params![id, encoded],
+                )?;
+            } else {
+                transaction.execute("INSERT INTO connection_identities (node_id,public_key,capabilities) VALUES (?1,?2,?3)", params![id,request.public_key,encoded])?;
+            }
             configuration::bump(&transaction)?;
             configuration::ensure_publishable(&transaction)?;
             ensure_publishable(&transaction)?;
@@ -336,7 +343,10 @@ impl Store {
         if request.revision != current.payload.revision || request.digest != current.digest {
             return Err(Error::Conflict);
         }
-        transaction.execute("INSERT INTO connection_receipts (node_id,revision,digest,saved_at) VALUES (?1,?2,?3,?4) ON CONFLICT(node_id) DO UPDATE SET revision=excluded.revision,digest=excluded.digest,saved_at=excluded.saved_at WHERE connection_receipts.revision != excluded.revision OR connection_receipts.digest != excluded.digest", params![id,request.revision,request.digest,Utc::now().to_rfc3339()])?;
+        let unchanged: bool = transaction.query_row("SELECT EXISTS(SELECT 1 FROM connection_receipts WHERE node_id=?1 AND revision=?2 AND digest=?3)", params![id, request.revision, request.digest], |row| row.get(0))?;
+        if !unchanged {
+            transaction.execute("INSERT OR REPLACE INTO connection_receipts (node_id,revision,digest,saved_at) VALUES (?1,?2,?3,?4)", params![id,request.revision,request.digest,Utc::now().to_rfc3339()])?;
+        }
         transaction.commit()?;
         Ok(AcknowledgeAgentConnectionsResponse {
             revision: request.revision,

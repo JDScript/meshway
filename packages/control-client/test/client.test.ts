@@ -8,11 +8,12 @@ import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
-import { ControlApiError, createEnrollmentToken, getOverview, getPolicy, previewPolicy, savePolicy, setNodeCountry, listNodes, revokeNode } from "../src/index.ts";
+import { ControlApiError, createEnrollmentToken, getOverview, getPolicy, previewPolicy, savePolicy, setNodeCountry, listNodes, revokeNode, listNetworks } from "../src/index.ts";
 import { acknowledgeConfigurationOperation, getAgentConfigurationOperation, enrollAgentOperation, heartbeatAgentOperation } from "../src/generated/operations.gen.ts";
 import { zFlowQuery, zPolicySnapshot, zSetNodeCountryRequest } from "../src/generated/zod.gen.ts";
 
 const credential = () => randomBytes(32).toString("hex");
+const fixtureNetwork = "a".repeat(32);
 
 async function withResponse(body: string, use: (baseUrl: string) => Promise<void>, status = 200, contentType = "application/json"): Promise<void> {
   const server = createServer((request, response) => {
@@ -39,7 +40,7 @@ test("generated overview validation rejects missing, wrong-type, fractional, neg
     ...["1", 1.5, -1, 4294967296].map(node_count => ({ name: "Meshway", version: "0.1.0", node_count, configuration_revision: 1 })),
   ]) {
     await withResponse(JSON.stringify(body), async (base) => {
-      await assert.rejects(getOverview(base, "test-token"), error => error instanceof Error && !(error instanceof ControlApiError));
+      await assert.rejects(getOverview(base, "test-token", fixtureNetwork), error => error instanceof Error && !(error instanceof ControlApiError));
     });
   }
 });
@@ -50,9 +51,9 @@ test("generated node validation requires nullable revocation and validates neste
     ...["not-a-date", "2026-09-30T12:00:00", 42].map(last_seen => ({ ...node, last_seen })),
     { ...node, registered_at: null }, { ...node, revoked_at: undefined }, { ...node, revoked_at: "not-a-date" }, { ...node, credential: "unexpected" },
   ]) {
-    await withResponse(JSON.stringify({ nodes: [invalid] }), async (base) => { await assert.rejects(listNodes(base, "test-token")); });
+    await withResponse(JSON.stringify({ nodes: [invalid] }), async (base) => { await assert.rejects(listNodes(base, "test-token", fixtureNetwork)); });
   }
-  await withResponse(JSON.stringify({ nodes: [node] }), async (base) => { assert.deepEqual((await listNodes(base, "test-token")).nodes, [node]); });
+  await withResponse(JSON.stringify({ nodes: [node] }), async (base) => { assert.deepEqual((await listNodes(base, "test-token", fixtureNetwork)).nodes, [node]); });
 });
 
 test("generated policy schemas require nullable context, closed enums, booleans and bounded revisions", () => {
@@ -71,12 +72,12 @@ test("generated policy schemas require nullable context, closed enums, booleans 
 test("transport exposes HTTP status without mixing HTTP, schema, JSON or media failures", async () => {
   for (const status of [401, 403, 503]) {
     await withResponse("do not echo an arbitrary server body", async (base) => {
-      await assert.rejects(getOverview(base, "test-token"), error => error instanceof ControlApiError && error.status === status && !error.message.includes("arbitrary"));
+      await assert.rejects(getOverview(base, "test-token", fixtureNetwork), error => error instanceof ControlApiError && error.status === status && !error.message.includes("arbitrary"));
     }, status);
   }
-  await withResponse("{", async (base) => { await assert.rejects(getOverview(base, "test-token"), error => error instanceof Error && !(error instanceof ControlApiError)); });
-  await withResponse("{}", async (base) => { await assert.rejects(getOverview(base, "test-token"), /application\/json/); }, 200, "text/html");
-  await withResponse(" ".repeat(2 * 1024 * 1024 + 1), async (base) => { await assert.rejects(getOverview(base, "test-token"), /exceeds 2 MiB/); });
+  await withResponse("{", async (base) => { await assert.rejects(getOverview(base, "test-token", fixtureNetwork), error => error instanceof Error && !(error instanceof ControlApiError)); });
+  await withResponse("{}", async (base) => { await assert.rejects(getOverview(base, "test-token", fixtureNetwork), /application\/json/); }, 200, "text/html");
+  await withResponse(" ".repeat(2 * 1024 * 1024 + 1), async (base) => { await assert.rejects(getOverview(base, "test-token", fixtureNetwork), /exceeds 2 MiB/); });
 });
 
 const httpError = (status: number) => (error: unknown): boolean => error instanceof ControlApiError && error.status === status;
@@ -105,17 +106,18 @@ test("generated authenticated TS operations roundtrip, retry, revoke and survive
   let server = await start();
   try {
     const admin = (await readFile(join(data, "admin.token"), "utf8")).trim();
+    const networkId = (await listNetworks(server.base, admin)).networks[0]!.network_id;
     assert.equal((await stat(join(data, "admin.token"))).mode & 0o777, 0o600);
     assert.equal((await stat(data)).mode & 0o777, 0o700);
     assert.ok(!server.logs().includes(admin));
     const printed = spawnSync(binary, ["admin-token", "--data-dir", data], { encoding: "utf8" });
     assert.equal(printed.status, 0, printed.stderr);
     assert.equal(printed.stdout.trim(), admin);
-    assert.equal((await getOverview(server.base, admin)).node_count, 0);
-    assert.deepEqual(await listNodes(server.base, admin), { nodes: [] });
-    await assert.rejects(getOverview(server.base, ""), httpError(401));
+    assert.equal((await getOverview(server.base, admin, networkId)).node_count, 0);
+    assert.deepEqual(await listNodes(server.base, admin, networkId), { nodes: [] });
+    await assert.rejects(getOverview(server.base, "", networkId), httpError(401));
     const before = Date.now();
-    const enrollment = await createEnrollmentToken(server.base, admin, { expires_in_seconds: 3600 });
+    const enrollment = await createEnrollmentToken(server.base, admin, networkId, { expires_in_seconds: 3600 });
     assert.ok(Date.parse(enrollment.expires_at) >= before + 3600_000);
     assert.ok(Date.parse(enrollment.expires_at) <= Date.now() + 3600_000);
     const nodeCredential = credential();
@@ -131,37 +133,37 @@ test("generated authenticated TS operations roundtrip, retry, revoke and survive
     assert.equal(registered.node.country, null);
     await assert.rejects(enrollAgentOperation(server.base, enrollment.token, { ...body, node_credential: credential() }), httpError(401));
     for (const token of [enrollment.token, nodeCredential]) {
-      await assert.rejects(listNodes(server.base, token), httpError(401));
-      await assert.rejects(createEnrollmentToken(server.base, token, { expires_in_seconds: 60 }), httpError(401));
-      await assert.rejects(revokeNode(server.base, token, { node_id: registered.node.id }), httpError(401));
+      await assert.rejects(listNodes(server.base, token, networkId), httpError(401));
+      await assert.rejects(createEnrollmentToken(server.base, token, networkId, { expires_in_seconds: 60 }), httpError(401));
+      await assert.rejects(revokeNode(server.base, token, networkId, { node_id: registered.node.id }), httpError(401));
     }
     await assert.rejects(heartbeatAgentOperation(server.base, admin, { agent_version: "0.2.0" }), httpError(401));
     await assert.rejects(heartbeatAgentOperation(server.base, enrollment.token, { agent_version: "0.2.0" }), httpError(401));
     const heartbeat = await heartbeatAgentOperation(server.base, nodeCredential, { agent_version: "0.2.0" });
     assert.equal(heartbeat.node.id, registered.node.id);
     assert.equal(heartbeat.node.agent_version, "0.2.0");
-    assert.deepEqual((await listNodes(server.base, admin)).nodes, [heartbeat.node]);
-    assert.equal((await getOverview(server.base, admin)).node_count, 1);
+    assert.deepEqual((await listNodes(server.base, admin, networkId)).nodes, [heartbeat.node]);
+    assert.equal((await getOverview(server.base, admin, networkId)).node_count, 1);
     await server.stop();
     server = await start();
-    assert.deepEqual((await listNodes(server.base, admin)).nodes, [heartbeat.node]);
+    assert.deepEqual((await listNodes(server.base, admin, networkId)).nodes, [heartbeat.node]);
     assert.equal((await enrollAgentOperation(server.base, enrollment.token, body)).node.id, registered.node.id);
-    const initialPolicy = await getPolicy(server.base, admin);
+    const initialPolicy = await getPolicy(server.base, admin, networkId);
     assert.equal(initialPolicy.revision, 2);
     assert.deepEqual(initialPolicy.policy, { default_action: "reject", rules: [] });
-    await assert.rejects(getPolicy(server.base, nodeCredential), httpError(401));
-    const preview = await previewPolicy(server.base, admin, {
+    await assert.rejects(getPolicy(server.base, nodeCredential, networkId), httpError(401));
+    const preview = await previewPolicy(server.base, admin, networkId, {
       policy: { default_action: "direct", rules: [] },
       flow: { source_node_id: registered.node.id, destination_node_id: null, destination_ip: null, domain: "example.com", destination_country: null },
     });
     assert.equal(preview.valid, true);
     assert.equal(preview.decision.action, "route");
-    assert.equal((await getPolicy(server.base, admin)).revision, 2);
-    const saved = await savePolicy(server.base, admin, { expected_revision: 2, policy: { default_action: "direct", rules: [] } });
+    assert.equal((await getPolicy(server.base, admin, networkId)).revision, 2);
+    const saved = await savePolicy(server.base, admin, networkId, { expected_revision: 2, policy: { default_action: "direct", rules: [] } });
     assert.equal(saved.revision, 3);
-    await assert.rejects(savePolicy(server.base, admin, { expected_revision: 2, policy: saved.policy }), httpError(409));
-    assert.equal((await savePolicy(server.base, admin, { expected_revision: 3, policy: saved.policy })).revision, 3);
-    const country = await setNodeCountry(server.base, admin, { node_id: registered.node.id, country: "us", expected_revision: 3 });
+    await assert.rejects(savePolicy(server.base, admin, networkId, { expected_revision: 2, policy: saved.policy }), httpError(409));
+    assert.equal((await savePolicy(server.base, admin, networkId, { expected_revision: 3, policy: saved.policy })).revision, 3);
+    const country = await setNodeCountry(server.base, admin, networkId, { node_id: registered.node.id, country: "us", expected_revision: 3 });
     assert.equal(country.node.country, "US");
     assert.equal(country.node.configuration_revision, 4);
     const configuration = await getAgentConfigurationOperation(server.base, nodeCredential);
@@ -169,16 +171,16 @@ test("generated authenticated TS operations roundtrip, retry, revoke and survive
     assert.equal(configuration.payload.revision, 4);
     await acknowledgeConfigurationOperation(server.base, nodeCredential, { revision: 4, digest: configuration.digest });
     assert.deepEqual(await getAgentConfigurationOperation(server.base, nodeCredential), configuration);
-    assert.equal((await listNodes(server.base, admin)).nodes[0]?.acknowledged_revision, 4);
-    const revoked = await revokeNode(server.base, admin, { node_id: registered.node.id });
+    assert.equal((await listNodes(server.base, admin, networkId)).nodes[0]?.acknowledged_revision, 4);
+    const revoked = await revokeNode(server.base, admin, networkId, { node_id: registered.node.id });
     assert.notEqual(revoked.node.revoked_at, null);
-    assert.deepEqual(await revokeNode(server.base, admin, { node_id: registered.node.id }), revoked);
+    assert.deepEqual(await revokeNode(server.base, admin, networkId, { node_id: registered.node.id }), revoked);
     await server.stop();
     server = await start();
     await assert.rejects(heartbeatAgentOperation(server.base, nodeCredential, { agent_version: "0.3.0" }), httpError(403));
     await assert.rejects(enrollAgentOperation(server.base, enrollment.token, body), httpError(403));
-    assert.equal((await getOverview(server.base, admin)).node_count, 1);
-    assert.deepEqual((await listNodes(server.base, admin)).nodes, [revoked.node]);
+    assert.equal((await getOverview(server.base, admin, networkId)).node_count, 1);
+    assert.deepEqual((await listNodes(server.base, admin, networkId)).nodes, [revoked.node]);
     const database = await readFile(join(data, "controller.sqlite3"));
     for (const secret of [admin, enrollment.token, nodeCredential]) assert.ok(!database.includes(Buffer.from(secret)));
   } finally {

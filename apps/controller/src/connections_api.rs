@@ -1,6 +1,6 @@
 use axum::{
     Json,
-    extract::{DefaultBodyLimit, State, rejection::JsonRejection},
+    extract::{DefaultBodyLimit, Path, State, rejection::JsonRejection},
     http::HeaderMap,
 };
 use meshway_protocol::{
@@ -51,25 +51,31 @@ async fn publish_connection_identity(
         .await
 }
 
-#[utoipa::path(get, path = "/api/v1/connections", operation_id = "getConnections", security(("adminBearer" = [])),
+#[utoipa::path(get, path = "/api/v1/networks/{network_id}/connections", operation_id = "getConnections", security(("adminBearer" = [])),
+    params(("network_id" = String, Path, description = "Stable network ID")),
     responses((status = 200, description = "Source connection plan, validity and inventory with independent saved-only receipts", body = ConnectionsSnapshot),
+    (status = 404, description = "Network not found", body = ErrorResponse),
     (status = 401, description = "Admin credential required", body = ErrorResponse),
     (status = 500, description = "Storage unavailable", body = ErrorResponse)))]
 async fn get_connections(
     State(state): State<AppState>,
+    Path(network_id): Path<String>,
     headers: HeaderMap,
 ) -> Result<Json<ConnectionsSnapshot>, Error> {
     let token = bearer(&headers)?;
     state
         .access(move |store| {
             store.authorize_admin(&token)?;
+            store.select_network(&network_id)?;
             store.connections().map(Json)
         })
         .await
 }
 
-#[utoipa::path(post, path = "/api/v1/connections", operation_id = "saveConnections", security(("adminBearer" = [])), request_body = SaveConnectionsRequest,
+#[utoipa::path(post, path = "/api/v1/networks/{network_id}/connections", operation_id = "saveConnections", security(("adminBearer" = [])), request_body = SaveConnectionsRequest,
+    params(("network_id" = String, Path, description = "Stable network ID")),
     responses((status = 200, description = "Canonical global-CAS connection intent save; no runtime activation or transit/exit grant", body = ConnectionsSnapshot),
+    (status = 404, description = "Network not found", body = ErrorResponse),
     (status = 400, description = "Invalid JSON", body = ErrorResponse),
     (status = 401, description = "Admin credential required", body = ErrorResponse),
     (status = 409, description = "Stale global revision", body = ErrorResponse),
@@ -79,6 +85,7 @@ async fn get_connections(
     (status = 500, description = "Storage unavailable", body = ErrorResponse)))]
 async fn save_connections(
     State(state): State<AppState>,
+    Path(network_id): Path<String>,
     headers: HeaderMap,
     body: Result<Json<SaveConnectionsRequest>, JsonRejection>,
 ) -> Result<Json<ConnectionsSnapshot>, Error> {
@@ -87,6 +94,7 @@ async fn save_connections(
     state
         .access(move |store| {
             store.authorize_admin(&token)?;
+            store.select_network(&network_id)?;
             store.save_connections(&request).map(Json)
         })
         .await

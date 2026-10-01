@@ -218,6 +218,10 @@ export type CreateEnrollmentTokenResponse = {
     token_id: string;
 };
 
+export type CreateNetworkRequest = {
+    name: string;
+};
+
 export type DefaultRouteAction = 'direct' | 'reject';
 
 export type DestinationScope = 'any' | 'mesh' | 'internet';
@@ -364,8 +368,12 @@ export type MeshPathAuthorization = {
     grants: Array<MeshAccessGrant>;
 };
 
+export type NetworkList = {
+    networks: Array<NetworkSnapshot>;
+};
+
 /**
- * Saved intent at the global configuration revision. Address pools are immutable.
+ * Saved intent at the network configuration revision. Address pools are immutable.
  */
 export type NetworkSnapshot = {
     dns: MeshDnsConfiguration;
@@ -711,84 +719,6 @@ export type UdpSocketDiscovery = {
     socket_id: number;
     source: EndpointDiscoverySource;
 };
-
-export type GetMeshAccessData = {
-    body?: never;
-    path?: never;
-    query?: never;
-    url: '/api/v1/access';
-};
-
-export type GetMeshAccessErrors = {
-    /**
-     * Admin credential required
-     */
-    401: ErrorResponse;
-    /**
-     * Storage unavailable
-     */
-    500: ErrorResponse;
-};
-
-export type GetMeshAccessError = GetMeshAccessErrors[keyof GetMeshAccessErrors];
-
-export type GetMeshAccessResponses = {
-    /**
-     * Saved ordered endpoint authorization source and current diagnostics
-     */
-    200: MeshAccessSnapshot;
-};
-
-export type GetMeshAccessResponse = GetMeshAccessResponses[keyof GetMeshAccessResponses];
-
-export type SaveMeshAccessData = {
-    body: SaveMeshAccessRequest;
-    path?: never;
-    query?: never;
-    url: '/api/v1/access';
-};
-
-export type SaveMeshAccessErrors = {
-    /**
-     * Invalid JSON
-     */
-    400: ErrorResponse;
-    /**
-     * Admin credential required
-     */
-    401: ErrorResponse;
-    /**
-     * Stale global revision
-     */
-    409: ErrorResponse;
-    /**
-     * Request exceeds 512 KiB
-     */
-    413: ErrorResponse;
-    /**
-     * Expected application/json
-     */
-    415: ErrorResponse;
-    /**
-     * Invalid selectors or references, JSONC mismatch, or expanded publication capacity exhausted
-     */
-    422: ErrorResponse;
-    /**
-     * Storage unavailable
-     */
-    500: ErrorResponse;
-};
-
-export type SaveMeshAccessError = SaveMeshAccessErrors[keyof SaveMeshAccessErrors];
-
-export type SaveMeshAccessResponses = {
-    /**
-     * Global-CAS ordered endpoint authorization save; missing keys defer only affected runtime paths
-     */
-    200: MeshAccessSnapshot;
-};
-
-export type SaveMeshAccessResponse = SaveMeshAccessResponses[keyof SaveMeshAccessResponses];
 
 export type PublishConnectionIdentityData = {
     body: PublishConnectionIdentityRequest;
@@ -1375,183 +1305,6 @@ export type HeartbeatAgentResponses = {
 
 export type HeartbeatAgentResponse = HeartbeatAgentResponses[keyof HeartbeatAgentResponses];
 
-export type GetConnectionsData = {
-    body?: never;
-    path?: never;
-    query?: never;
-    url: '/api/v1/connections';
-};
-
-export type GetConnectionsErrors = {
-    /**
-     * Admin credential required
-     */
-    401: ErrorResponse;
-    /**
-     * Storage unavailable
-     */
-    500: ErrorResponse;
-};
-
-export type GetConnectionsError = GetConnectionsErrors[keyof GetConnectionsErrors];
-
-export type GetConnectionsResponses = {
-    /**
-     * Source connection plan, validity and inventory with independent saved-only receipts
-     */
-    200: ConnectionsSnapshot;
-};
-
-export type GetConnectionsResponse = GetConnectionsResponses[keyof GetConnectionsResponses];
-
-export type SaveConnectionsData = {
-    body: SaveConnectionsRequest;
-    path?: never;
-    query?: never;
-    url: '/api/v1/connections';
-};
-
-export type SaveConnectionsErrors = {
-    /**
-     * Invalid JSON
-     */
-    400: ErrorResponse;
-    /**
-     * Admin credential required
-     */
-    401: ErrorResponse;
-    /**
-     * Stale global revision
-     */
-    409: ErrorResponse;
-    /**
-     * Request exceeds 128 KiB
-     */
-    413: ErrorResponse;
-    /**
-     * Expected application/json
-     */
-    415: ErrorResponse;
-    /**
-     * Invalid connection plan or capacity exhausted
-     */
-    422: ErrorResponse;
-    /**
-     * Storage unavailable
-     */
-    500: ErrorResponse;
-};
-
-export type SaveConnectionsError = SaveConnectionsErrors[keyof SaveConnectionsErrors];
-
-export type SaveConnectionsResponses = {
-    /**
-     * Canonical global-CAS connection intent save; no runtime activation or transit/exit grant
-     */
-    200: ConnectionsSnapshot;
-};
-
-export type SaveConnectionsResponse = SaveConnectionsResponses[keyof SaveConnectionsResponses];
-
-export type GetEndpointDiscoveriesData = {
-    body?: never;
-    path?: never;
-    query?: never;
-    url: '/api/v1/connections/discovery';
-};
-
-export type GetEndpointDiscoveriesErrors = {
-    /**
-     * Admin credential required
-     */
-    401: ErrorResponse;
-    /**
-     * Storage unavailable
-     */
-    500: ErrorResponse;
-};
-
-export type GetEndpointDiscoveriesError = GetEndpointDiscoveriesErrors[keyof GetEndpointDiscoveriesErrors];
-
-export type GetEndpointDiscoveriesResponses = {
-    /**
-     * Current leased UDP self-observations; missing reports explicitly await reporting
-     */
-    200: EndpointDiscoveriesSnapshot;
-};
-
-export type GetEndpointDiscoveriesResponse = GetEndpointDiscoveriesResponses[keyof GetEndpointDiscoveriesResponses];
-
-export type GetConnectionRuntimesData = {
-    body?: never;
-    path?: never;
-    query?: never;
-    url: '/api/v1/connections/runtime';
-};
-
-export type GetConnectionRuntimesErrors = {
-    /**
-     * Admin credential required
-     */
-    401: ErrorResponse;
-    /**
-     * Storage unavailable
-     */
-    500: ErrorResponse;
-};
-
-export type GetConnectionRuntimesError = GetConnectionRuntimesErrors[keyof GetConnectionRuntimesErrors];
-
-export type GetConnectionRuntimesResponses = {
-    /**
-     * Leased node self-reports with server receive TTL and current configuration matching; not authorization
-     */
-    200: ConnectionRuntimesSnapshot;
-};
-
-export type GetConnectionRuntimesResponse = GetConnectionRuntimesResponses[keyof GetConnectionRuntimesResponses];
-
-export type AuthorizeDeviceData = {
-    body: AuthorizeDeviceRequest;
-    path?: never;
-    query?: never;
-    url: '/api/v1/device-authorizations';
-};
-
-export type AuthorizeDeviceErrors = {
-    /**
-     * Invalid authorization
-     */
-    400: ErrorResponse;
-    /**
-     * Admin required
-     */
-    401: ErrorResponse;
-    /**
-     * Request too large
-     */
-    413: ErrorResponse;
-    /**
-     * JSON required
-     */
-    415: ErrorResponse;
-    /**
-     * Storage unavailable
-     */
-    500: ErrorResponse;
-};
-
-export type AuthorizeDeviceError = AuthorizeDeviceErrors[keyof AuthorizeDeviceErrors];
-
-export type AuthorizeDeviceResponses = {
-    /**
-     * PKCE-bound code; first use expires in five minutes
-     */
-    200: AuthorizeDeviceResponse;
-};
-
-export type AuthorizeDeviceResponse2 = AuthorizeDeviceResponses[keyof AuthorizeDeviceResponses];
-
 export type ExchangeDeviceData = {
     body: ExchangeDeviceRequest;
     path?: never;
@@ -1605,11 +1358,400 @@ export type ExchangeDeviceResponses = {
 
 export type ExchangeDeviceResponse = ExchangeDeviceResponses[keyof ExchangeDeviceResponses];
 
-export type CreateEnrollmentTokenData = {
-    body: CreateEnrollmentTokenRequest;
+export type ListNetworksData = {
+    body?: never;
     path?: never;
     query?: never;
-    url: '/api/v1/enrollment-tokens';
+    url: '/api/v1/networks';
+};
+
+export type ListNetworksErrors = {
+    /**
+     * Admin credential required
+     */
+    401: ErrorResponse;
+    /**
+     * Storage unavailable
+     */
+    500: ErrorResponse;
+};
+
+export type ListNetworksError = ListNetworksErrors[keyof ListNetworksErrors];
+
+export type ListNetworksResponses = {
+    /**
+     * Networks in creation order, original network first
+     */
+    200: NetworkList;
+};
+
+export type ListNetworksResponse = ListNetworksResponses[keyof ListNetworksResponses];
+
+export type CreateNetworkData = {
+    body: CreateNetworkRequest;
+    path?: never;
+    query?: never;
+    url: '/api/v1/networks';
+};
+
+export type CreateNetworkErrors = {
+    /**
+     * Invalid JSON
+     */
+    400: ErrorResponse;
+    /**
+     * Admin credential required
+     */
+    401: ErrorResponse;
+    /**
+     * Invalid network name
+     */
+    422: ErrorResponse;
+    /**
+     * Storage unavailable
+     */
+    500: ErrorResponse;
+};
+
+export type CreateNetworkError = CreateNetworkErrors[keyof CreateNetworkErrors];
+
+export type CreateNetworkResponses = {
+    /**
+     * Empty isolated network with immutable address pools
+     */
+    200: NetworkSnapshot;
+};
+
+export type CreateNetworkResponse = CreateNetworkResponses[keyof CreateNetworkResponses];
+
+export type GetMeshAccessData = {
+    body?: never;
+    path: {
+        /**
+         * Stable network ID
+         */
+        network_id: string;
+    };
+    query?: never;
+    url: '/api/v1/networks/{network_id}/access';
+};
+
+export type GetMeshAccessErrors = {
+    /**
+     * Admin credential required
+     */
+    401: ErrorResponse;
+    /**
+     * Network not found
+     */
+    404: ErrorResponse;
+    /**
+     * Storage unavailable
+     */
+    500: ErrorResponse;
+};
+
+export type GetMeshAccessError = GetMeshAccessErrors[keyof GetMeshAccessErrors];
+
+export type GetMeshAccessResponses = {
+    /**
+     * Saved ordered endpoint authorization source and current diagnostics
+     */
+    200: MeshAccessSnapshot;
+};
+
+export type GetMeshAccessResponse = GetMeshAccessResponses[keyof GetMeshAccessResponses];
+
+export type SaveMeshAccessData = {
+    body: SaveMeshAccessRequest;
+    path: {
+        /**
+         * Stable network ID
+         */
+        network_id: string;
+    };
+    query?: never;
+    url: '/api/v1/networks/{network_id}/access';
+};
+
+export type SaveMeshAccessErrors = {
+    /**
+     * Invalid JSON
+     */
+    400: ErrorResponse;
+    /**
+     * Admin credential required
+     */
+    401: ErrorResponse;
+    /**
+     * Network not found
+     */
+    404: ErrorResponse;
+    /**
+     * Stale global revision
+     */
+    409: ErrorResponse;
+    /**
+     * Request exceeds 512 KiB
+     */
+    413: ErrorResponse;
+    /**
+     * Expected application/json
+     */
+    415: ErrorResponse;
+    /**
+     * Invalid selectors or references, JSONC mismatch, or expanded publication capacity exhausted
+     */
+    422: ErrorResponse;
+    /**
+     * Storage unavailable
+     */
+    500: ErrorResponse;
+};
+
+export type SaveMeshAccessError = SaveMeshAccessErrors[keyof SaveMeshAccessErrors];
+
+export type SaveMeshAccessResponses = {
+    /**
+     * Global-CAS ordered endpoint authorization save; missing keys defer only affected runtime paths
+     */
+    200: MeshAccessSnapshot;
+};
+
+export type SaveMeshAccessResponse = SaveMeshAccessResponses[keyof SaveMeshAccessResponses];
+
+export type GetConnectionsData = {
+    body?: never;
+    path: {
+        /**
+         * Stable network ID
+         */
+        network_id: string;
+    };
+    query?: never;
+    url: '/api/v1/networks/{network_id}/connections';
+};
+
+export type GetConnectionsErrors = {
+    /**
+     * Admin credential required
+     */
+    401: ErrorResponse;
+    /**
+     * Network not found
+     */
+    404: ErrorResponse;
+    /**
+     * Storage unavailable
+     */
+    500: ErrorResponse;
+};
+
+export type GetConnectionsError = GetConnectionsErrors[keyof GetConnectionsErrors];
+
+export type GetConnectionsResponses = {
+    /**
+     * Source connection plan, validity and inventory with independent saved-only receipts
+     */
+    200: ConnectionsSnapshot;
+};
+
+export type GetConnectionsResponse = GetConnectionsResponses[keyof GetConnectionsResponses];
+
+export type SaveConnectionsData = {
+    body: SaveConnectionsRequest;
+    path: {
+        /**
+         * Stable network ID
+         */
+        network_id: string;
+    };
+    query?: never;
+    url: '/api/v1/networks/{network_id}/connections';
+};
+
+export type SaveConnectionsErrors = {
+    /**
+     * Invalid JSON
+     */
+    400: ErrorResponse;
+    /**
+     * Admin credential required
+     */
+    401: ErrorResponse;
+    /**
+     * Network not found
+     */
+    404: ErrorResponse;
+    /**
+     * Stale global revision
+     */
+    409: ErrorResponse;
+    /**
+     * Request exceeds 128 KiB
+     */
+    413: ErrorResponse;
+    /**
+     * Expected application/json
+     */
+    415: ErrorResponse;
+    /**
+     * Invalid connection plan or capacity exhausted
+     */
+    422: ErrorResponse;
+    /**
+     * Storage unavailable
+     */
+    500: ErrorResponse;
+};
+
+export type SaveConnectionsError = SaveConnectionsErrors[keyof SaveConnectionsErrors];
+
+export type SaveConnectionsResponses = {
+    /**
+     * Canonical global-CAS connection intent save; no runtime activation or transit/exit grant
+     */
+    200: ConnectionsSnapshot;
+};
+
+export type SaveConnectionsResponse = SaveConnectionsResponses[keyof SaveConnectionsResponses];
+
+export type GetEndpointDiscoveriesData = {
+    body?: never;
+    path: {
+        /**
+         * Stable network ID
+         */
+        network_id: string;
+    };
+    query?: never;
+    url: '/api/v1/networks/{network_id}/connections/discovery';
+};
+
+export type GetEndpointDiscoveriesErrors = {
+    /**
+     * Admin credential required
+     */
+    401: ErrorResponse;
+    /**
+     * Network not found
+     */
+    404: ErrorResponse;
+    /**
+     * Storage unavailable
+     */
+    500: ErrorResponse;
+};
+
+export type GetEndpointDiscoveriesError = GetEndpointDiscoveriesErrors[keyof GetEndpointDiscoveriesErrors];
+
+export type GetEndpointDiscoveriesResponses = {
+    /**
+     * Current leased UDP self-observations; missing reports explicitly await reporting
+     */
+    200: EndpointDiscoveriesSnapshot;
+};
+
+export type GetEndpointDiscoveriesResponse = GetEndpointDiscoveriesResponses[keyof GetEndpointDiscoveriesResponses];
+
+export type GetConnectionRuntimesData = {
+    body?: never;
+    path: {
+        /**
+         * Stable network ID
+         */
+        network_id: string;
+    };
+    query?: never;
+    url: '/api/v1/networks/{network_id}/connections/runtime';
+};
+
+export type GetConnectionRuntimesErrors = {
+    /**
+     * Admin credential required
+     */
+    401: ErrorResponse;
+    /**
+     * Network not found
+     */
+    404: ErrorResponse;
+    /**
+     * Storage unavailable
+     */
+    500: ErrorResponse;
+};
+
+export type GetConnectionRuntimesError = GetConnectionRuntimesErrors[keyof GetConnectionRuntimesErrors];
+
+export type GetConnectionRuntimesResponses = {
+    /**
+     * Leased node self-reports with server receive TTL and current configuration matching; not authorization
+     */
+    200: ConnectionRuntimesSnapshot;
+};
+
+export type GetConnectionRuntimesResponse = GetConnectionRuntimesResponses[keyof GetConnectionRuntimesResponses];
+
+export type AuthorizeDeviceData = {
+    body: AuthorizeDeviceRequest;
+    path: {
+        /**
+         * Approved destination network
+         */
+        network_id: string;
+    };
+    query?: never;
+    url: '/api/v1/networks/{network_id}/device-authorizations';
+};
+
+export type AuthorizeDeviceErrors = {
+    /**
+     * Invalid authorization
+     */
+    400: ErrorResponse;
+    /**
+     * Admin required
+     */
+    401: ErrorResponse;
+    /**
+     * Approved network not found
+     */
+    404: ErrorResponse;
+    /**
+     * Request too large
+     */
+    413: ErrorResponse;
+    /**
+     * JSON required
+     */
+    415: ErrorResponse;
+    /**
+     * Storage unavailable
+     */
+    500: ErrorResponse;
+};
+
+export type AuthorizeDeviceError = AuthorizeDeviceErrors[keyof AuthorizeDeviceErrors];
+
+export type AuthorizeDeviceResponses = {
+    /**
+     * PKCE-bound code; first use expires in five minutes
+     */
+    200: AuthorizeDeviceResponse;
+};
+
+export type AuthorizeDeviceResponse2 = AuthorizeDeviceResponses[keyof AuthorizeDeviceResponses];
+
+export type CreateEnrollmentTokenData = {
+    body: CreateEnrollmentTokenRequest;
+    path: {
+        /**
+         * Stable network ID
+         */
+        network_id: string;
+    };
+    query?: never;
+    url: '/api/v1/networks/{network_id}/enrollment-tokens';
 };
 
 export type CreateEnrollmentTokenErrors = {
@@ -1621,6 +1763,10 @@ export type CreateEnrollmentTokenErrors = {
      * Admin credential required
      */
     401: ErrorResponse;
+    /**
+     * Network not found
+     */
+    404: ErrorResponse;
     /**
      * Request exceeds 8192 bytes
      */
@@ -1648,9 +1794,14 @@ export type CreateEnrollmentTokenResponse2 = CreateEnrollmentTokenResponses[keyo
 
 export type PreviewFlowData = {
     body: PreviewFlowRequest;
-    path?: never;
+    path: {
+        /**
+         * Stable network ID
+         */
+        network_id: string;
+    };
     query?: never;
-    url: '/api/v1/flows/preview';
+    url: '/api/v1/networks/{network_id}/flows/preview';
 };
 
 export type PreviewFlowErrors = {
@@ -1662,6 +1813,10 @@ export type PreviewFlowErrors = {
      * Admin credential required
      */
     401: ErrorResponse;
+    /**
+     * Network not found
+     */
+    404: ErrorResponse;
     /**
      * Request exceeds 512 KiB
      */
@@ -1685,9 +1840,14 @@ export type PreviewFlowResponse2 = PreviewFlowResponses[keyof PreviewFlowRespons
 
 export type GetNetworkData = {
     body?: never;
-    path?: never;
+    path: {
+        /**
+         * Stable network ID
+         */
+        network_id: string;
+    };
     query?: never;
-    url: '/api/v1/network';
+    url: '/api/v1/networks/{network_id}/network';
 };
 
 export type GetNetworkErrors = {
@@ -1695,6 +1855,10 @@ export type GetNetworkErrors = {
      * Admin credential required
      */
     401: ErrorResponse;
+    /**
+     * Network not found
+     */
+    404: ErrorResponse;
     /**
      * Storage unavailable
      */
@@ -1705,7 +1869,7 @@ export type GetNetworkError = GetNetworkErrors[keyof GetNetworkErrors];
 
 export type GetNetworkResponses = {
     /**
-     * Single-network saved identity, immutable pools and authoritative node DNS intent
+     * Selected network saved identity, immutable pools and authoritative node DNS intent
      */
     200: NetworkSnapshot;
 };
@@ -1714,9 +1878,14 @@ export type GetNetworkResponse = GetNetworkResponses[keyof GetNetworkResponses];
 
 export type SaveNetworkData = {
     body: SaveNetworkRequest;
-    path?: never;
+    path: {
+        /**
+         * Stable network ID
+         */
+        network_id: string;
+    };
     query?: never;
-    url: '/api/v1/network';
+    url: '/api/v1/networks/{network_id}/network';
 };
 
 export type SaveNetworkErrors = {
@@ -1728,6 +1897,10 @@ export type SaveNetworkErrors = {
      * Admin credential required
      */
     401: ErrorResponse;
+    /**
+     * Network not found
+     */
+    404: ErrorResponse;
     /**
      * Stale global revision
      */
@@ -1763,9 +1936,14 @@ export type SaveNetworkResponse = SaveNetworkResponses[keyof SaveNetworkResponse
 
 export type ListNodesData = {
     body?: never;
-    path?: never;
+    path: {
+        /**
+         * Stable network ID
+         */
+        network_id: string;
+    };
     query?: never;
-    url: '/api/v1/nodes';
+    url: '/api/v1/networks/{network_id}/nodes';
 };
 
 export type ListNodesErrors = {
@@ -1773,6 +1951,10 @@ export type ListNodesErrors = {
      * Admin credential required
      */
     401: ErrorResponse;
+    /**
+     * Network not found
+     */
+    404: ErrorResponse;
     /**
      * Storage unavailable
      */
@@ -1792,9 +1974,14 @@ export type ListNodesResponse = ListNodesResponses[keyof ListNodesResponses];
 
 export type SetNodeCountryData = {
     body: SetNodeCountryRequest;
-    path?: never;
+    path: {
+        /**
+         * Stable network ID
+         */
+        network_id: string;
+    };
     query?: never;
-    url: '/api/v1/nodes/country';
+    url: '/api/v1/networks/{network_id}/nodes/country';
 };
 
 export type SetNodeCountryErrors = {
@@ -1845,9 +2032,14 @@ export type SetNodeCountryResponse = SetNodeCountryResponses[keyof SetNodeCountr
 
 export type RevokeNodeData = {
     body: RevokeNodeRequest;
-    path?: never;
+    path: {
+        /**
+         * Stable network ID
+         */
+        network_id: string;
+    };
     query?: never;
-    url: '/api/v1/nodes/revoke';
+    url: '/api/v1/networks/{network_id}/nodes/revoke';
 };
 
 export type RevokeNodeErrors = {
@@ -1894,9 +2086,14 @@ export type RevokeNodeResponse2 = RevokeNodeResponses[keyof RevokeNodeResponses]
 
 export type SetNodeTagsData = {
     body: SetNodeTagsRequest;
-    path?: never;
+    path: {
+        /**
+         * Stable network ID
+         */
+        network_id: string;
+    };
     query?: never;
-    url: '/api/v1/nodes/tags';
+    url: '/api/v1/networks/{network_id}/nodes/tags';
 };
 
 export type SetNodeTagsErrors = {
@@ -1908,6 +2105,10 @@ export type SetNodeTagsErrors = {
      * Admin credential required
      */
     401: ErrorResponse;
+    /**
+     * Network not found
+     */
+    404: ErrorResponse;
     /**
      * Stale global revision
      */
@@ -1931,9 +2132,14 @@ export type SetNodeTagsResponse = SetNodeTagsResponses[keyof SetNodeTagsResponse
 
 export type GetOverviewData = {
     body?: never;
-    path?: never;
+    path: {
+        /**
+         * Stable network ID
+         */
+        network_id: string;
+    };
     query?: never;
-    url: '/api/v1/overview';
+    url: '/api/v1/networks/{network_id}/overview';
 };
 
 export type GetOverviewErrors = {
@@ -1941,6 +2147,10 @@ export type GetOverviewErrors = {
      * Admin credential required
      */
     401: ErrorResponse;
+    /**
+     * Network not found
+     */
+    404: ErrorResponse;
     /**
      * Storage unavailable
      */
@@ -1960,9 +2170,14 @@ export type GetOverviewResponse = GetOverviewResponses[keyof GetOverviewResponse
 
 export type GetPolicyData = {
     body?: never;
-    path?: never;
+    path: {
+        /**
+         * Stable network ID
+         */
+        network_id: string;
+    };
     query?: never;
-    url: '/api/v1/policy';
+    url: '/api/v1/networks/{network_id}/policy';
 };
 
 export type GetPolicyErrors = {
@@ -1970,6 +2185,10 @@ export type GetPolicyErrors = {
      * Admin credential required
      */
     401: ErrorResponse;
+    /**
+     * Network not found
+     */
+    404: ErrorResponse;
     /**
      * Storage unavailable
      */
@@ -1989,9 +2208,14 @@ export type GetPolicyResponse = GetPolicyResponses[keyof GetPolicyResponses];
 
 export type PreviewPolicyData = {
     body: PreviewPolicyRequest;
-    path?: never;
+    path: {
+        /**
+         * Stable network ID
+         */
+        network_id: string;
+    };
     query?: never;
-    url: '/api/v1/policy/preview';
+    url: '/api/v1/networks/{network_id}/policy/preview';
 };
 
 export type PreviewPolicyErrors = {
@@ -2003,6 +2227,10 @@ export type PreviewPolicyErrors = {
      * Admin credential required
      */
     401: ErrorResponse;
+    /**
+     * Network not found
+     */
+    404: ErrorResponse;
     /**
      * Request exceeds 512 KiB
      */
@@ -2030,9 +2258,14 @@ export type PreviewPolicyResponse2 = PreviewPolicyResponses[keyof PreviewPolicyR
 
 export type SavePolicyData = {
     body: SavePolicyRequest;
-    path?: never;
+    path: {
+        /**
+         * Stable network ID
+         */
+        network_id: string;
+    };
     query?: never;
-    url: '/api/v1/policy/save';
+    url: '/api/v1/networks/{network_id}/policy/save';
 };
 
 export type SavePolicyErrors = {
@@ -2044,6 +2277,10 @@ export type SavePolicyErrors = {
      * Admin credential required
      */
     401: ErrorResponse;
+    /**
+     * Network not found
+     */
+    404: ErrorResponse;
     /**
      * Stale global revision
      */
@@ -2079,9 +2316,14 @@ export type SavePolicyResponse = SavePolicyResponses[keyof SavePolicyResponses];
 
 export type GetTagsData = {
     body?: never;
-    path?: never;
+    path: {
+        /**
+         * Stable network ID
+         */
+        network_id: string;
+    };
     query?: never;
-    url: '/api/v1/tags';
+    url: '/api/v1/networks/{network_id}/tags';
 };
 
 export type GetTagsErrors = {
@@ -2089,6 +2331,10 @@ export type GetTagsErrors = {
      * Admin credential required
      */
     401: ErrorResponse;
+    /**
+     * Network not found
+     */
+    404: ErrorResponse;
 };
 
 export type GetTagsError = GetTagsErrors[keyof GetTagsErrors];
@@ -2104,9 +2350,14 @@ export type GetTagsResponse = GetTagsResponses[keyof GetTagsResponses];
 
 export type SaveTagsData = {
     body: SaveTagsRequest;
-    path?: never;
+    path: {
+        /**
+         * Stable network ID
+         */
+        network_id: string;
+    };
     query?: never;
-    url: '/api/v1/tags';
+    url: '/api/v1/networks/{network_id}/tags';
 };
 
 export type SaveTagsErrors = {
@@ -2118,6 +2369,10 @@ export type SaveTagsErrors = {
      * Admin credential required
      */
     401: ErrorResponse;
+    /**
+     * Network not found
+     */
+    404: ErrorResponse;
     /**
      * Stale global revision
      */

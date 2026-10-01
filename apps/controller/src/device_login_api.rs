@@ -1,7 +1,7 @@
 use crate::{AppState, Error, bearer, json};
 use axum::{
     Json,
-    extract::{State, rejection::JsonRejection},
+    extract::{Path, State, rejection::JsonRejection},
     http::HeaderMap,
 };
 use meshway_protocol::{
@@ -17,8 +17,10 @@ pub(super) fn routes() -> OpenApiRouter<AppState> {
         .layer(axum::extract::DefaultBodyLimit::max(8192))
 }
 
-#[utoipa::path(post, path = "/api/v1/device-authorizations", operation_id = "authorizeDevice", security(("adminBearer" = [])), request_body = AuthorizeDeviceRequest,
+#[utoipa::path(post, path = "/api/v1/networks/{network_id}/device-authorizations", operation_id = "authorizeDevice", security(("adminBearer" = [])), request_body = AuthorizeDeviceRequest,
+    params(("network_id" = String, Path, description = "Approved destination network")),
     responses((status = 200, description = "PKCE-bound code; first use expires in five minutes", body = AuthorizeDeviceResponse),
+    (status = 404, description = "Approved network not found", body = ErrorResponse),
     (status = 400, description = "Invalid authorization", body = ErrorResponse),
     (status = 401, description = "Admin required", body = ErrorResponse),
     (status = 413, description = "Request too large", body = ErrorResponse),
@@ -26,6 +28,7 @@ pub(super) fn routes() -> OpenApiRouter<AppState> {
     (status = 500, description = "Storage unavailable", body = ErrorResponse)))]
 async fn authorize_device(
     State(state): State<AppState>,
+    Path(network_id): Path<String>,
     headers: HeaderMap,
     body: Result<Json<AuthorizeDeviceRequest>, JsonRejection>,
 ) -> Result<Json<AuthorizeDeviceResponse>, Error> {
@@ -34,6 +37,7 @@ async fn authorize_device(
     state
         .access(move |store| {
             store.authorize_admin(&token)?;
+            store.select_network(&network_id)?;
             store.authorize_device(&request).map(Json)
         })
         .await

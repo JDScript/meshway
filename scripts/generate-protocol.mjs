@@ -172,11 +172,21 @@ function operations(document) {
     return name;
   }
   for (const [path, item] of Object.entries(document.paths)) {
-    if (!/^\/[a-zA-Z0-9/_-]+$/.test(path)) throw new Error(`Unsupported operation path: ${path}`);
+    if (!/^\/[a-zA-Z0-9/{}_\-]+$/.test(path)) throw new Error(`Unsupported operation path: ${path}`);
     for (const [method, operation] of Object.entries(item)) {
-      if (!["get", "post"].includes(method) || operation.parameters?.length || operation.servers || document.servers?.length) {
+      if (!["get", "post"].includes(method) || operation.servers || document.servers?.length) {
         throw new Error(`Unsupported operation shape: ${method} ${path}; extend the emitter first`);
       }
+      const parameters = operation.parameters ?? [];
+      const placeholders = [...path.matchAll(/\{([a-z_]+)\}/g)].map(match => match[1]);
+      if (parameters.length !== placeholders.length || parameters.some(parameter =>
+        parameter.in !== "path" || parameter.required !== true || parameter.schema?.type !== "string" ||
+        !placeholders.includes(parameter.name) || !/^[a-z_]+$/.test(parameter.name))) {
+        throw new Error(`Only required string path parameters are supported: ${path}`);
+      }
+      const pathExpression = placeholders.length
+        ? "`" + path.replace(/\{([a-z_]+)\}/g, (_, name) => `\${encodeURIComponent(${name})}`) + "`"
+        : JSON.stringify(path);
       const security = operation.security ?? document.security ?? [];
       let authenticated = false;
       if (security.length) {
@@ -197,7 +207,7 @@ function operations(document) {
         if (!operation.requestBody.required || method !== "post") throw new Error("Only required POST request bodies are currently supported");
         body = component(operation.requestBody.content);
       }
-      functions.push(`export async function ${name}Operation(baseUrl: string${authenticated ? ", token: string" : ""}${body ? `, body: ${body}` : ""}): Promise<${response}> {\n  return request(baseUrl, { method: ${JSON.stringify(method.toUpperCase())}, path: ${JSON.stringify(path)}${authenticated ? ", token" : ""}${body ? `, body: z${body}.parse(body)` : ""} }, z${response});\n}`);
+      functions.push(`export async function ${name}Operation(baseUrl: string${authenticated ? ", token: string" : ""}${parameters.map(parameter => `, ${parameter.name}: string`).join("")}${body ? `, body: ${body}` : ""}): Promise<${response}> {\n  return request(baseUrl, { method: ${JSON.stringify(method.toUpperCase())}, path: ${pathExpression}${authenticated ? ", token" : ""}${body ? `, body: z${body}.parse(body)` : ""} }, z${response});\n}`);
     }
   }
   return `// Generated from the controller OpenAPI by scripts/generate-protocol.mjs. Do not edit.\n\nimport { request } from "../transport.ts";\nimport type { ${[...types].sort().join(", ")} } from "./types.gen.ts";\nimport { ${[...validators].sort().join(", ")} } from "./zod.gen.ts";\n\n${functions.join("\n\n")}\n`;

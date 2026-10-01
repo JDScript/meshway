@@ -1,6 +1,6 @@
 use axum::{
     Json,
-    extract::{DefaultBodyLimit, State, rejection::JsonRejection},
+    extract::{DefaultBodyLimit, Path, State, rejection::JsonRejection},
     http::HeaderMap,
 };
 use meshway_protocol::{
@@ -19,14 +19,17 @@ pub(crate) fn routes() -> OpenApiRouter<AppState> {
         .layer(DefaultBodyLimit::max(512 * 1024))
 }
 
-#[utoipa::path(post, path = "/api/v1/flows/preview", operation_id = "previewFlow", security(("adminBearer" = [])), request_body = PreviewFlowRequest,
+#[utoipa::path(post, path = "/api/v1/networks/{network_id}/flows/preview", operation_id = "previewFlow", security(("adminBearer" = [])), request_body = PreviewFlowRequest,
+    params(("network_id" = String, Path, description = "Stable network ID")),
     responses((status = 200, description = "Combined saved endpoint authorization and routing preview", body = PreviewFlowResponse),
+    (status = 404, description = "Network not found", body = ErrorResponse),
     (status = 400, description = "Invalid JSON", body = ErrorResponse),
     (status = 401, description = "Admin credential required", body = ErrorResponse),
     (status = 413, description = "Request exceeds 512 KiB", body = ErrorResponse),
     (status = 415, description = "Expected application/json", body = ErrorResponse)))]
 async fn preview_flow(
     State(state): State<AppState>,
+    Path(network_id): Path<String>,
     headers: HeaderMap,
     body: Result<Json<PreviewFlowRequest>, JsonRejection>,
 ) -> Result<Json<PreviewFlowResponse>, Error> {
@@ -35,30 +38,37 @@ async fn preview_flow(
     state
         .access(move |store| {
             store.authorize_admin(&token)?;
+            store.select_network(&network_id)?;
             store.preview_flow(&request).map(Json)
         })
         .await
 }
 
-#[utoipa::path(get, path = "/api/v1/access", operation_id = "getMeshAccess", security(("adminBearer" = [])),
+#[utoipa::path(get, path = "/api/v1/networks/{network_id}/access", operation_id = "getMeshAccess", security(("adminBearer" = [])),
+    params(("network_id" = String, Path, description = "Stable network ID")),
     responses((status = 200, description = "Saved ordered endpoint authorization source and current diagnostics", body = MeshAccessSnapshot),
+    (status = 404, description = "Network not found", body = ErrorResponse),
     (status = 401, description = "Admin credential required", body = ErrorResponse),
     (status = 500, description = "Storage unavailable", body = ErrorResponse)))]
 async fn get_mesh_access(
     State(state): State<AppState>,
+    Path(network_id): Path<String>,
     headers: HeaderMap,
 ) -> Result<Json<MeshAccessSnapshot>, Error> {
     let token = bearer(&headers)?;
     state
         .access(move |store| {
             store.authorize_admin(&token)?;
+            store.select_network(&network_id)?;
             store.mesh_access().map(Json)
         })
         .await
 }
 
-#[utoipa::path(post, path = "/api/v1/access", operation_id = "saveMeshAccess", security(("adminBearer" = [])), request_body = SaveMeshAccessRequest,
+#[utoipa::path(post, path = "/api/v1/networks/{network_id}/access", operation_id = "saveMeshAccess", security(("adminBearer" = [])), request_body = SaveMeshAccessRequest,
+    params(("network_id" = String, Path, description = "Stable network ID")),
     responses((status = 200, description = "Global-CAS ordered endpoint authorization save; missing keys defer only affected runtime paths", body = MeshAccessSnapshot),
+    (status = 404, description = "Network not found", body = ErrorResponse),
     (status = 400, description = "Invalid JSON", body = ErrorResponse),
     (status = 401, description = "Admin credential required", body = ErrorResponse),
     (status = 409, description = "Stale global revision", body = ErrorResponse),
@@ -68,6 +78,7 @@ async fn get_mesh_access(
     (status = 500, description = "Storage unavailable", body = ErrorResponse)))]
 async fn save_mesh_access(
     State(state): State<AppState>,
+    Path(network_id): Path<String>,
     headers: HeaderMap,
     body: Result<Json<SaveMeshAccessRequest>, JsonRejection>,
 ) -> Result<Json<MeshAccessSnapshot>, Error> {
@@ -76,6 +87,7 @@ async fn save_mesh_access(
     state
         .access(move |store| {
             store.authorize_admin(&token)?;
+            store.select_network(&network_id)?;
             store.save_mesh_access(&request).map(Json)
         })
         .await

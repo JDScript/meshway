@@ -1,7 +1,7 @@
 use crate::{AppState, Error, bearer, json};
 use axum::{
     Json,
-    extract::{DefaultBodyLimit, State, rejection::JsonRejection},
+    extract::{DefaultBodyLimit, Path, State, rejection::JsonRejection},
     http::HeaderMap,
 };
 use meshway_protocol::{
@@ -39,18 +39,22 @@ async fn report_endpoint_discovery(
         .await
 }
 
-#[utoipa::path(get, path = "/api/v1/connections/discovery", operation_id = "getEndpointDiscoveries", security(("adminBearer" = [])),
+#[utoipa::path(get, path = "/api/v1/networks/{network_id}/connections/discovery", operation_id = "getEndpointDiscoveries", security(("adminBearer" = [])),
+    params(("network_id" = String, Path, description = "Stable network ID")),
     responses((status = 200, description = "Current leased UDP self-observations; missing reports explicitly await reporting", body = EndpointDiscoveriesSnapshot),
+    (status = 404, description = "Network not found", body = ErrorResponse),
     (status = 401, description = "Admin credential required", body = ErrorResponse),
     (status = 500, description = "Storage unavailable", body = ErrorResponse)))]
 async fn get_endpoint_discoveries(
     State(state): State<AppState>,
+    Path(network_id): Path<String>,
     headers: HeaderMap,
 ) -> Result<Json<EndpointDiscoveriesSnapshot>, Error> {
     let token = bearer(&headers)?;
     state
         .access(move |store| {
             store.authorize_admin(&token)?;
+            store.select_network(&network_id)?;
             store.endpoint_discoveries().map(Json)
         })
         .await

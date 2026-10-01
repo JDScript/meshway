@@ -20,6 +20,8 @@ mod device_login;
 mod endpoint_discovery;
 #[path = "api/network.rs"]
 mod network;
+#[path = "api/networks.rs"]
+mod networks;
 
 fn tempdir() -> tempfile::TempDir {
     use std::os::unix::fs::PermissionsExt;
@@ -68,6 +70,7 @@ async fn request(
     token: Option<&str>,
     body: Option<Value>,
 ) -> (StatusCode, Value) {
+    let path = scoped_path(app, path, token).await;
     let mut request = Request::builder().method(method).uri(path);
     if let Some(token) = token {
         request = request.header("authorization", format!("Bearer {token}"));
@@ -93,6 +96,60 @@ async fn request(
         } else {
             serde_json::from_slice(&bytes).unwrap()
         },
+    )
+}
+
+// Existing single-network behavior cases target the original network through
+// the actual scoped routes. Multi-network tests supply explicit paths.
+fn contract_path(path: &str) -> String {
+    if is_admin_path(path) {
+        format!(
+            "/api/v1/networks/{{network_id}}/{}",
+            path.trim_start_matches("/api/v1/")
+        )
+    } else {
+        path.to_owned()
+    }
+}
+
+fn is_admin_path(path: &str) -> bool {
+    let path = path.split('?').next().unwrap();
+    [
+        "/api/v1/overview",
+        "/api/v1/network",
+        "/api/v1/device-authorizations",
+        "/api/v1/enrollment-tokens",
+        "/api/v1/access",
+        "/api/v1/tags",
+        "/api/v1/flows/preview",
+    ]
+    .contains(&path)
+        || path.starts_with("/api/v1/nodes")
+        || path.starts_with("/api/v1/policy")
+        || path.starts_with("/api/v1/connections")
+}
+
+async fn scoped_path(app: &Router, path: &str, token: Option<&str>) -> String {
+    if !is_admin_path(path) {
+        return path.to_owned();
+    }
+    let mut lookup = Request::get("/api/v1/networks");
+    if let Some(token) = token {
+        lookup = lookup.header("authorization", format!("Bearer {token}"));
+    }
+    let response = app
+        .clone()
+        .oneshot(lookup.body(Body::empty()).unwrap())
+        .await
+        .unwrap();
+    let bytes = to_bytes(response.into_body(), 1 << 20).await.unwrap();
+    let list: Value = serde_json::from_slice(&bytes).unwrap();
+    let id = list["networks"][0]["network_id"]
+        .as_str()
+        .unwrap_or("00000000000000000000000000000000");
+    format!(
+        "/api/v1/networks/{id}/{}",
+        path.trim_start_matches("/api/v1/")
     )
 }
 
@@ -464,7 +521,7 @@ async fn expiry_restart_and_revocation_preserve_identity_and_consumption() {
         rusqlite::Connection::open(fixture.directory.path().join("controller.sqlite3")).unwrap();
     connection
         .execute(
-            "UPDATE enrollment_tokens SET expires_at = 0 WHERE id IN (?1, ?2)",
+            "UPDATE enrollment_tokens_scoped SET expires_at = 0 WHERE id IN (?1, ?2)",
             [&expired.token_id, &active.token_id],
         )
         .unwrap();
@@ -1157,7 +1214,7 @@ async fn connections_concurrent_admin_cas_has_one_winner_and_scoped_body_budget(
     ] {
         let request = Request::builder()
             .method("POST")
-            .uri(path)
+            .uri(scoped_path(&fixture.app, path, Some(token)).await)
             .header("authorization", format!("Bearer {token}"))
             .header("content-type", "application/json")
             .body(Body::from(format!("{}{body}", " ".repeat(padding))))

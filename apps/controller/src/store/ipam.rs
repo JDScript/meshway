@@ -120,6 +120,13 @@ pub(super) fn upgrade(connection: &mut Connection, options: &NetworkOptions) -> 
             "unsupported or incomplete controller database schema",
         ));
     }
+    check_options(connection, options)
+}
+
+pub(super) fn check_options(
+    connection: &Connection,
+    options: &NetworkOptions,
+) -> Result<(), Error> {
     let stored = network(connection)?;
     let (v4, v6) = parse(&stored)?;
     if options

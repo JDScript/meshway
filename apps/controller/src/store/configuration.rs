@@ -96,6 +96,7 @@ fn policy_snapshot(connection: &Connection) -> Result<PolicySnapshot, Error> {
 }
 
 pub(super) fn node_id(connection: &Connection, token: &str) -> Result<String, Error> {
+    super::networks::select_node(connection, token)?;
     let (id, revoked): (String, bool) = connection
         .query_row(
             "SELECT id, revoked_at IS NOT NULL FROM nodes WHERE credential_hash = ?1",

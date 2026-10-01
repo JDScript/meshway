@@ -28,7 +28,7 @@ pub(super) fn enroll(store: &mut Store, request: &EnrollAgentRequest) -> NodeSum
 #[test]
 fn device_login_v8_migration_preserves_existing_rows_and_reopens() {
     let dir = directory();
-    let mut store = Store::open(dir.path(), &NetworkOptions::default()).unwrap();
+    let mut store = Store::open_v8(dir.path(), &NetworkOptions::default()).unwrap();
     let enrollment = request("existing");
     let node = enroll(&mut store, &enrollment);
     store
@@ -101,7 +101,7 @@ fn device_login_v8_migration_preserves_existing_rows_and_reopens() {
     }
     let before = snapshot(&store.connection);
     drop(store);
-    let mut store = Store::open(dir.path(), &NetworkOptions::default()).unwrap();
+    let mut store = Store::open_v8(dir.path(), &NetworkOptions::default()).unwrap();
     assert_eq!(
         store
             .connection
@@ -531,7 +531,7 @@ fn additive_v2_to_v3_preserves_configuration_credentials_addresses_and_receipts(
     let token_bytes = std::fs::read(dir.path().join("admin.token")).unwrap();
     let network = super::ipam::network(&db).unwrap();
     drop(db);
-    let mut store = Store::open(dir.path(), &NetworkOptions::default()).unwrap();
+    let mut store = Store::open_v8(dir.path(), &NetworkOptions::default()).unwrap();
     assert_eq!(receipt_digest(&store.connection), before_digest);
     assert_eq!(
         store

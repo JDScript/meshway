@@ -199,8 +199,14 @@ fn access_v2_contract_is_live_closed_annotated_and_legacy_dataplane_only_contain
         ),
         (DATAPLANE, "get", "getAgentDataplane", "nodeBearer"),
     ] {
-        assert_eq!(api["paths"][path][verb]["operationId"], operation);
-        assert_eq!(api["paths"][path][verb]["security"], json!([{role:[]}]));
+        assert_eq!(
+            api["paths"][contract_path(path)][verb]["operationId"],
+            operation
+        );
+        assert_eq!(
+            api["paths"][contract_path(path)][verb]["security"],
+            json!([{role:[]}])
+        );
     }
     for schema in [
         "MeshAccessPolicy",

@@ -1,6 +1,6 @@
 use axum::{
     Json,
-    extract::{DefaultBodyLimit, State, rejection::JsonRejection},
+    extract::{DefaultBodyLimit, Path, State, rejection::JsonRejection},
     http::HeaderMap,
 };
 use meshway_protocol::{
@@ -23,25 +23,31 @@ pub(crate) fn routes() -> OpenApiRouter<AppState> {
         .layer(DefaultBodyLimit::max(512 * 1024))
 }
 
-#[utoipa::path(get, path = "/api/v1/policy", operation_id = "getPolicy", security(("adminBearer" = [])),
+#[utoipa::path(get, path = "/api/v1/networks/{network_id}/policy", operation_id = "getPolicy", security(("adminBearer" = [])),
+    params(("network_id" = String, Path, description = "Stable network ID")),
     responses((status = 200, description = "Saved source policy and current diagnostics", body = PolicySnapshot),
+    (status = 404, description = "Network not found", body = ErrorResponse),
     (status = 401, description = "Admin credential required", body = ErrorResponse),
     (status = 500, description = "Storage unavailable", body = ErrorResponse)))]
 async fn get_policy(
     State(state): State<AppState>,
+    Path(network_id): Path<String>,
     headers: HeaderMap,
 ) -> Result<Json<PolicySnapshot>, Error> {
     let token = bearer(&headers)?;
     state
         .access(move |store| {
             store.authorize_admin(&token)?;
+            store.select_network(&network_id)?;
             store.policy().map(Json)
         })
         .await
 }
 
-#[utoipa::path(post, path = "/api/v1/policy/preview", operation_id = "previewPolicy", security(("adminBearer" = [])), request_body = PreviewPolicyRequest,
+#[utoipa::path(post, path = "/api/v1/networks/{network_id}/policy/preview", operation_id = "previewPolicy", security(("adminBearer" = [])), request_body = PreviewPolicyRequest,
+    params(("network_id" = String, Path, description = "Stable network ID")),
     responses((status = 200, description = "Pure preview; no persistence", body = PreviewPolicyResponse),
+    (status = 404, description = "Network not found", body = ErrorResponse),
     (status = 400, description = "Invalid JSON", body = ErrorResponse),
     (status = 401, description = "Admin credential required", body = ErrorResponse),
     (status = 413, description = "Request exceeds 512 KiB", body = ErrorResponse),
@@ -49,6 +55,7 @@ async fn get_policy(
     (status = 500, description = "Storage unavailable", body = ErrorResponse)))]
 async fn preview_policy(
     State(state): State<AppState>,
+    Path(network_id): Path<String>,
     headers: HeaderMap,
     body: Result<Json<PreviewPolicyRequest>, JsonRejection>,
 ) -> Result<Json<PreviewPolicyResponse>, Error> {
@@ -57,13 +64,16 @@ async fn preview_policy(
     state
         .access(move |store| {
             store.authorize_admin(&token)?;
+            store.select_network(&network_id)?;
             store.preview(&request).map(Json)
         })
         .await
 }
 
-#[utoipa::path(post, path = "/api/v1/policy/save", operation_id = "savePolicy", security(("adminBearer" = [])), request_body = SavePolicyRequest,
+#[utoipa::path(post, path = "/api/v1/networks/{network_id}/policy/save", operation_id = "savePolicy", security(("adminBearer" = [])), request_body = SavePolicyRequest,
+    params(("network_id" = String, Path, description = "Stable network ID")),
     responses((status = 200, description = "Canonical conditional policy save", body = PolicySnapshot),
+    (status = 404, description = "Network not found", body = ErrorResponse),
     (status = 400, description = "Invalid JSON", body = ErrorResponse),
     (status = 401, description = "Admin credential required", body = ErrorResponse),
     (status = 409, description = "Stale global revision", body = ErrorResponse),
@@ -73,6 +83,7 @@ async fn preview_policy(
     (status = 500, description = "Storage unavailable", body = ErrorResponse)))]
 async fn save_policy(
     State(state): State<AppState>,
+    Path(network_id): Path<String>,
     headers: HeaderMap,
     body: Result<Json<SavePolicyRequest>, JsonRejection>,
 ) -> Result<Json<PolicySnapshot>, Error> {
@@ -81,12 +92,14 @@ async fn save_policy(
     state
         .access(move |store| {
             store.authorize_admin(&token)?;
+            store.select_network(&network_id)?;
             store.save_policy(&request).map(Json)
         })
         .await
 }
 
-#[utoipa::path(post, path = "/api/v1/nodes/country", operation_id = "setNodeCountry", security(("adminBearer" = [])), request_body = SetNodeCountryRequest,
+#[utoipa::path(post, path = "/api/v1/networks/{network_id}/nodes/country", operation_id = "setNodeCountry", security(("adminBearer" = [])), request_body = SetNodeCountryRequest,
+    params(("network_id" = String, Path, description = "Stable network ID")),
     responses((status = 200, description = "Normalized administrator-managed country metadata", body = RevokeNodeResponse),
     (status = 400, description = "Country must be two ASCII letters or null", body = ErrorResponse),
     (status = 401, description = "Admin credential required", body = ErrorResponse),
@@ -98,6 +111,7 @@ async fn save_policy(
     (status = 500, description = "Storage unavailable", body = ErrorResponse)))]
 async fn set_node_country(
     State(state): State<AppState>,
+    Path(network_id): Path<String>,
     headers: HeaderMap,
     body: Result<Json<SetNodeCountryRequest>, JsonRejection>,
 ) -> Result<Json<RevokeNodeResponse>, Error> {
@@ -106,6 +120,7 @@ async fn set_node_country(
     state
         .access(move |store| {
             store.authorize_admin(&token)?;
+            store.select_network(&network_id)?;
             Ok(Json(RevokeNodeResponse {
                 node: store.set_country(&request)?,
             }))

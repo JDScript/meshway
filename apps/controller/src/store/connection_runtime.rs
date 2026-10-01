@@ -127,8 +127,7 @@ impl Store {
             .checked_add(1)
             .ok_or(Error::Capacity("connection runtime epoch exhausted"))?;
         transaction.execute(
-            "INSERT INTO connection_runtime_leases (node_id,instance_id,epoch) VALUES (?1,?2,?3)
-             ON CONFLICT(node_id) DO UPDATE SET instance_id=excluded.instance_id,epoch=excluded.epoch",
+            "INSERT OR REPLACE INTO connection_runtime_leases (node_id,instance_id,epoch) VALUES (?1,?2,?3)",
             params![id, request.instance_id, epoch],
         )?;
         transaction.execute(
@@ -194,8 +193,7 @@ impl Store {
         }
         let reported_at = Utc::now();
         transaction.execute(
-            "INSERT INTO connection_runtime_reports (node_id,sequence,body,reported_at) VALUES (?1,?2,?3,?4)
-             ON CONFLICT(node_id) DO UPDATE SET sequence=excluded.sequence,body=excluded.body,reported_at=excluded.reported_at",
+            "INSERT OR REPLACE INTO connection_runtime_reports (node_id,sequence,body,reported_at) VALUES (?1,?2,?3,?4)",
             params![id, request.sequence, body, reported_at.to_rfc3339()],
         )?;
         transaction.commit()?;

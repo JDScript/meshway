@@ -215,11 +215,11 @@ async fn discovery_routes_auth_json_contract_lease_and_openapi() {
         json!([{"nodeBearer":[]}])
     );
     assert_eq!(
-        api["paths"][SNAPSHOT]["get"]["operationId"],
+        api["paths"][contract_path(SNAPSHOT)]["get"]["operationId"],
         "getEndpointDiscoveries"
     );
     assert_eq!(
-        api["paths"][SNAPSHOT]["get"]["security"],
+        api["paths"][contract_path(SNAPSHOT)]["get"]["security"],
         json!([{"adminBearer":[]}])
     );
     let required = api["components"]["schemas"]["StunEndpointObservation"]["required"]

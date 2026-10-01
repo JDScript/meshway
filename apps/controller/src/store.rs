@@ -18,6 +18,7 @@ mod endpoint_discovery;
 mod ipam;
 mod jsonc;
 mod network;
+mod networks;
 mod tags;
 #[cfg(test)]
 mod tests;
@@ -30,6 +31,19 @@ pub(crate) struct Store {
 
 impl Store {
     pub fn open(path: &Path, options: &crate::NetworkOptions) -> Result<Self, Error> {
+        Self::open_schema(path, options, true)
+    }
+
+    #[cfg(test)]
+    fn open_v8(path: &Path, options: &crate::NetworkOptions) -> Result<Self, Error> {
+        Self::open_schema(path, options, false)
+    }
+
+    fn open_schema(
+        path: &Path,
+        options: &crate::NetworkOptions,
+        latest: bool,
+    ) -> Result<Self, Error> {
         local::private_dir(path)?;
         let lock = local::lock(&path.join("controller.lock"))?;
         let database = path.join("controller.sqlite3");
@@ -113,7 +127,7 @@ impl Store {
             File::open(path)?.sync_all()?;
         }
         let version: i64 = connection.pragma_query_value(None, "user_version", |row| row.get(0))?;
-        if !(1..=8).contains(&version) {
+        if !(1..=9).contains(&version) {
             return Err(Error::Configuration(
                 "unsupported or incomplete controller database schema",
             ));
@@ -127,16 +141,25 @@ impl Store {
                 "admin.token does not match the database; refusing to reinitialize",
             ));
         }
-        ipam::upgrade(&mut connection, options)?;
-        connections::upgrade(&mut connection)?;
-        connection_runtime::upgrade(&mut connection)?;
-        access::upgrade(&mut connection)?;
-        network::upgrade(&mut connection)?;
+        if version < 9 {
+            ipam::upgrade(&mut connection, options)?;
+            connections::upgrade(&mut connection)?;
+            connection_runtime::upgrade(&mut connection)?;
+            access::upgrade(&mut connection)?;
+            network::upgrade(&mut connection)?;
+        }
         if version < 8 {
             let transaction =
                 connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
             transaction.execute_batch("ALTER TABLE enrollment_tokens ADD COLUMN device_binding TEXT; PRAGMA user_version = 8;")?;
             transaction.commit()?;
+        }
+        if latest {
+            networks::upgrade(&mut connection)?;
+            networks::install_scope(&connection)?;
+            // Initialization flags still refer to the original network; never
+            // renumber any network on restart.
+            ipam::check_options(&connection, options)?;
         }
         Ok(Self {
             connection,
@@ -196,6 +219,7 @@ impl Store {
         token: &str,
         request: &EnrollAgentRequest,
     ) -> Result<NodeSummary, Error> {
+        self.select_enrollment(token)?;
         self.enroll_bound(token, request, None)
     }
 
@@ -217,6 +241,7 @@ impl Store {
         code: &str,
         request: &ExchangeDeviceRequest,
     ) -> Result<NodeSummary, Error> {
+        self.select_enrollment(code)?;
         let enrollment = request.enrollment().map_err(Error::Invalid)?;
         let authorization = AuthorizeDeviceRequest {
             redirect_uri: request.redirect_uri.clone(),
@@ -273,10 +298,7 @@ impl Store {
             return Err(Error::Unauthorized);
         }
         let credential_hash = digest(&request.node_credential);
-        let duplicate: bool = transaction.query_row(
-            "SELECT EXISTS(SELECT 1 FROM nodes WHERE credential_hash = ?1 UNION ALL SELECT 1 FROM settings WHERE admin_hash = ?1 UNION ALL SELECT 1 FROM enrollment_tokens WHERE token_hash = ?1)",
-            [&credential_hash], |row| row.get(0),
-        )?;
+        let duplicate = networks::credential_bound(&transaction, &credential_hash)?;
         if duplicate {
             return Err(Error::Conflict);
         }
@@ -301,6 +323,7 @@ impl Store {
     }
 
     pub fn heartbeat(&mut self, token: &str, version: &str) -> Result<NodeSummary, Error> {
+        self.select_node(token)?;
         let transaction = self
             .connection
             .transaction_with_behavior(TransactionBehavior::Immediate)?;
@@ -328,11 +351,12 @@ impl Store {
         let transaction = self
             .connection
             .transaction_with_behavior(TransactionBehavior::Immediate)?;
-        let changed = transaction.execute(
+        let current = find_node(&transaction, id)?;
+        transaction.execute(
             "UPDATE nodes SET revoked_at = ?1 WHERE id = ?2 AND revoked_at IS NULL",
             params![Utc::now().to_rfc3339(), id],
         )?;
-        if changed != 0 {
+        if current.revoked_at.is_none() {
             transaction.execute(
                 "DELETE FROM connection_runtime_reports WHERE node_id = ?1",
                 [id],

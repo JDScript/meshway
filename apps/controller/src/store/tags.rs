@@ -110,11 +110,17 @@ impl Store {
         let current = snapshot(&transaction)?.tags;
         if current != normalized {
             for definition in &normalized {
-                transaction.execute(
-                    "INSERT INTO tag_definitions(tag,description) VALUES (?1,?2)
-                     ON CONFLICT(tag) DO UPDATE SET description=excluded.description",
-                    params![definition.tag, definition.description],
-                )?;
+                if current.iter().any(|tag| tag.tag == definition.tag) {
+                    transaction.execute(
+                        "UPDATE tag_definitions SET description=?2 WHERE tag=?1",
+                        params![definition.tag, definition.description],
+                    )?;
+                } else {
+                    transaction.execute(
+                        "INSERT INTO tag_definitions(tag,description) VALUES (?1,?2)",
+                        params![definition.tag, definition.description],
+                    )?;
+                }
             }
             for removed in current
                 .iter()

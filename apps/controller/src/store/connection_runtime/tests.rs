@@ -583,7 +583,7 @@ fn existing_rows(connection: &Connection) -> Vec<(String, Vec<Vec<rusqlite::type
 #[test]
 fn v3_to_v4_preserves_every_existing_sql_value_and_schema1_payload_bytes() {
     let dir = directory();
-    let mut store = Store::open(dir.path(), &NetworkOptions::default()).unwrap();
+    let mut store = Store::open_v8(dir.path(), &NetworkOptions::default()).unwrap();
     let (id, token) = enrolled(&mut store, 9);
     let (peer_id, peer_token) = enrolled(&mut store, 10);
     connected_plan(&mut store, &id, &peer_id);
@@ -614,7 +614,7 @@ fn v3_to_v4_preserves_every_existing_sql_value_and_schema1_payload_bytes() {
     let admin_before = std::fs::read(dir.path().join("admin.token")).unwrap();
     store.connection.execute_batch("ALTER TABLE enrollment_tokens DROP COLUMN device_binding; DROP TABLE network_identity; DROP TABLE mesh_access_source; DROP TABLE mesh_access_legacy_v5; DROP TABLE node_tags; DROP TABLE tag_definitions; DROP TABLE connection_runtime_reports; DROP TABLE connection_runtime_leases; ALTER TABLE configuration DROP COLUMN source_jsonc; PRAGMA user_version=3;").unwrap();
     drop(store);
-    let mut reopened = Store::open(dir.path(), &NetworkOptions::default()).unwrap();
+    let mut reopened = Store::open_v8(dir.path(), &NetworkOptions::default()).unwrap();
     assert_eq!(existing_rows(&reopened.connection), rows);
     assert_eq!(
         serde_json::to_vec(&reopened.agent_connections(&token).unwrap()).unwrap(),
