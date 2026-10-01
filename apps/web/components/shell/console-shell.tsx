@@ -75,9 +75,11 @@ function ConsoleHeader({ networks, controllerHost }: { networks: NetworkChoices;
         </Link>
         <span aria-hidden="true" className="mx-1 hidden h-5 w-px rotate-12 bg-border sm:block" />
         <NetworkSwitcher networks={networks} controllerHost={controllerHost} />
-        <div className="ml-auto flex items-center gap-1.5">
+        <div className="ml-auto flex shrink-0 items-center gap-1.5">
           <CommandMenu />
-          <ThemeToggle />
+          <span className="hidden sm:contents">
+            <ThemeToggle />
+          </span>
           <AccountMenu />
         </div>
       </div>

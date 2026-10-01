@@ -374,7 +374,6 @@ function Overview({
       </Panel>
 
       <div className="flex flex-col gap-4">
-        <NodeDnsPanel node={node} network={network} />
         <Panel title="控制面" bodyClassName="px-4 py-1 sm:px-5">
           <dl className="divide-y">
             <Row label="最后联系" hint="controller 最近一次接受注册或心跳，不代表在线或连通">
@@ -424,6 +423,7 @@ function Overview({
           )}
         </Panel>
 
+        <NodeDnsPanel node={node} network={network} />
         {node.revoked_at === null ? <DiagnosticDetails title="当前节点启用帮助"><ManagedDataplanePanel /></DiagnosticDetails> : null}
       </div>
     </div>

@@ -66,7 +66,7 @@ export function NetworkSwitcher({ networks, controllerHost }: { networks: Networ
       <DropdownMenu>
         <DropdownMenuTrigger
           aria-label="当前网络"
-          className="flex h-8 min-w-0 items-center gap-2 rounded-md px-2 text-left text-[0.8125rem] outline-none hover:bg-accent focus-visible:ring-2 focus-visible:ring-ring/40 aria-expanded:bg-accent"
+          className="flex h-8 min-w-0 shrink items-center gap-2 rounded-md px-2 text-left text-[0.8125rem] outline-none hover:bg-accent focus-visible:ring-2 focus-visible:ring-ring/40 aria-expanded:bg-accent"
         >
           <span
             aria-hidden="true"
@@ -74,7 +74,7 @@ export function NetworkSwitcher({ networks, controllerHost }: { networks: Networ
           >
             {label.slice(0, 1).toUpperCase()}
           </span>
-          <span className="max-w-36 truncate font-medium sm:max-w-56">{label}</span>
+          <span className="min-w-0 truncate font-medium sm:max-w-56">{label}</span>
           {!networks.ok || error ? <CircleAlertIcon className="size-3.5 text-destructive" aria-hidden="true" /> : null}
           <ChevronsUpDownIcon className="size-3.5 shrink-0 text-muted-foreground" aria-hidden="true" />
         </DropdownMenuTrigger>
