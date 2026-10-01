@@ -81,7 +81,6 @@ impl Store {
                 return Ok(response(old));
             }
         }
-        validate(request, &current.payload, now)?;
         let generation = request
             .sockets
             .first()
@@ -104,7 +103,6 @@ impl Store {
             }
         });
         let mut latest_observed = previous.and_then(|old| old.latest_observed);
-        let mut sockets = BTreeMap::new();
         for socket in &request.sockets {
             let old = previous
                 .filter(|_| same_generation)
@@ -116,9 +114,16 @@ impl Store {
                 {
                     return Err(Error::Conflict);
                 }
-            } else if socket.socket_id <= highest_socket {
+            } else if same_generation && socket.socket_id <= highest_socket {
                 return Err(Error::Conflict);
             }
+        }
+        validate(request, &current.payload, now)?;
+        let mut sockets = BTreeMap::new();
+        for socket in &request.sockets {
+            let old = previous
+                .filter(|_| same_generation)
+                .and_then(|old| old.sockets.get(&socket.socket_id));
             // Compare all new IDs to the previous high watermark, not iteration
             // order: complete snapshots may list sockets in any order.
             let mut watermark = old.cloned().unwrap_or_else(|| SocketWatermark {
@@ -366,24 +371,56 @@ fn validate(
                 "invalid discovery generation, socket ID or observer limit",
             ));
         }
-        let owned = match socket.resource_kind {
-            UdpDiscoveryResourceKind::Listener => configuration.listeners.iter().any(|resource| {
-                resource.id == socket.resource_id
-                    && resource.transport == ConnectionTransport::NativeUdp
-            }),
-            UdpDiscoveryResourceKind::OutgoingCandidate => {
-                configuration.outgoing.iter().any(|resource| {
-                    resource.id == socket.resource_id
-                        && resource.transport == ConnectionTransport::NativeUdp
-                })
-            }
-        };
-        if !owned || !configuration.valid {
+        if !configuration.valid {
             return Err(Error::Unprocessable(
-                "discovery socket is outside current native UDP resources",
+                "discovery requires valid node connections",
             ));
         }
         let bound = address(&socket.bound_address, true)?;
+        match socket.resource_kind {
+            UdpDiscoveryResourceKind::Listener => {
+                let resource = configuration
+                    .listeners
+                    .iter()
+                    .find(|resource| {
+                        resource.id == socket.resource_id
+                            && resource.transport == ConnectionTransport::NativeUdp
+                    })
+                    .ok_or(Error::Unprocessable(
+                        "discovery socket is outside current native UDP resources",
+                    ))?;
+                // A listener's OS local_addr preserves the configured bind,
+                // including an unspecified IP. Ports are fixed and nonzero in
+                // the current connection-plan contract; compare parsed values.
+                let configured = address(&resource.bind, true)?;
+                if bound != configured {
+                    return Err(Error::Unprocessable(
+                        "discovery listener socket does not match configured bind",
+                    ));
+                }
+            }
+            UdpDiscoveryResourceKind::OutgoingCandidate => {
+                let resource = configuration
+                    .outgoing
+                    .iter()
+                    .find(|resource| {
+                        resource.id == socket.resource_id
+                            && resource.transport == ConnectionTransport::NativeUdp
+                    })
+                    .ok_or(Error::Unprocessable(
+                        "discovery socket is outside current native UDP resources",
+                    ))?;
+                // DNS endpoints can resolve to either family. Only a literal IP
+                // supplies enough configuration evidence to reject a mismatch.
+                if let Ok(ip) = resource.endpoint.host.parse::<IpAddr>()
+                    && ip.is_ipv4() != bound.is_ipv4()
+                {
+                    return Err(Error::Unprocessable(
+                        "discovery outgoing socket family does not match literal endpoint",
+                    ));
+                }
+            }
+        }
         let mut observers = BTreeSet::new();
         for observation in &socket.observations {
             let observer = address(&observation.observer, false)?;

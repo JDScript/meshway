@@ -11,6 +11,9 @@ struct Fixture {
 
 impl Fixture {
     fn new() -> Self {
+        Self::with_bind("0.0.0.0:19000")
+    }
+    fn with_bind(bind: &str) -> Self {
         use std::os::unix::fs::PermissionsExt;
         let directory = tempfile::Builder::new()
             .permissions(std::fs::Permissions::from_mode(0o700))
@@ -56,7 +59,7 @@ impl Fixture {
                         id: "listen".into(),
                         node_id: id.clone(),
                         transport: ConnectionTransport::NativeUdp,
-                        bind: "0.0.0.0:19000".into(),
+                        bind: bind.into(),
                         advertised_endpoints: vec![ConnectionEndpoint {
                             host: "127.0.0.1".into(),
                             port: 19000,
@@ -123,6 +126,8 @@ impl Fixture {
     }
     fn request(&self, now: DateTime<Utc>) -> ReportEndpointDiscoveryRequest {
         let configuration = self.store.agent_connections(&self.token).unwrap();
+        let bound = configuration.payload.listeners[0].bind.clone();
+        let ipv4 = bound.parse::<SocketAddr>().unwrap().is_ipv4();
         ReportEndpointDiscoveryRequest {
             epoch: 1,
             sequence: 1,
@@ -134,12 +139,24 @@ impl Fixture {
                 resource_id: "listen".into(),
                 generation: 1,
                 socket_id: 1,
-                bound_address: "0.0.0.0:19000".into(),
+                bound_address: bound,
                 source: EndpointDiscoverySource::ManagedUdpSocketStun,
                 observations: vec![StunEndpointObservation {
-                    observer: "192.0.2.1:3478".into(),
+                    observer: if ipv4 {
+                        "192.0.2.1:3478"
+                    } else {
+                        "[2001:db8::1]:3478"
+                    }
+                    .into(),
                     outcome: StunDiscoveryOutcome::Mapped,
-                    mapped_endpoint: Some("198.51.100.1:19001".into()),
+                    mapped_endpoint: Some(
+                        if ipv4 {
+                            "198.51.100.1:19001"
+                        } else {
+                            "[2001:db8::2]:19001"
+                        }
+                        .into(),
+                    ),
                     rtt_ms: Some(4),
                     observed_at: now,
                     expires_at: now + Duration::seconds(30),
@@ -238,6 +255,7 @@ fn complete_snapshots_retire_sockets_and_generations_without_rebinding() {
     report.sequence += 1;
     report.sockets[0].bound_address = "0.0.0.0:19002".into();
     assert!(matches!(f.send(&report, now), Err(Error::Conflict)));
+    report.sockets[0].bound_address = "0.0.0.0:19000".into();
     report.sockets[0].generation = 2;
     assert!(matches!(f.send(&report, now), Err(Error::Conflict))); // old observation cannot return in new generation
     report.sockets[0].observations[0].observed_at += Duration::seconds(1);
@@ -529,15 +547,133 @@ fn probing_failures_ipv6_and_individual_expiry_are_truthful() {
     report.sequence += 1;
     report.sockets[0].observations.clear();
     f.send(&report, now).unwrap();
-    let mut ipv6 = f.request(now + Duration::seconds(1));
-    ipv6.sequence = 4;
-    ipv6.sockets[0].generation = 2;
-    ipv6.sockets[0].bound_address = "[::]:19000".into();
-    ipv6.sockets[0].observations[0].observer = "[2001:db8::1]:3478".into();
-    ipv6.sockets[0].observations[0].mapped_endpoint = Some("[2001:db8::2]:19001".into());
-    f.send(&ipv6, now + Duration::seconds(1)).unwrap();
+    let mut ipv6_fixture = Fixture::with_bind("[::]:19000");
+    let ipv6 = ipv6_fixture.request(now + Duration::seconds(1));
+    ipv6_fixture
+        .send(&ipv6, now + Duration::seconds(1))
+        .unwrap();
     assert_eq!(
-        f.view(now + Duration::seconds(1)).state,
+        ipv6_fixture.view(now + Duration::seconds(1)).state,
         EndpointDiscoveryState::Observed
     );
+}
+
+#[test]
+fn listener_bind_scope_rejects_first_report_and_preserves_previous_snapshot() {
+    for bind in [
+        "0.0.0.0:19000",
+        "127.0.0.1:19000",
+        "[::]:19000",
+        "[2001:db8::9]:19000",
+    ] {
+        let mut f = Fixture::with_bind(bind);
+        let now = Utc::now();
+        let valid = f.request(now);
+        let original = serde_json::to_value(f.view(now)).unwrap();
+        let configured: SocketAddr = bind.parse().unwrap();
+        let mut wrong_port = configured;
+        wrong_port.set_port(19001);
+        let wrong_family = if configured.is_ipv4() {
+            "[::]:19000"
+        } else {
+            "0.0.0.0:19000"
+        };
+        let wrong_ip = if configured.is_ipv4() {
+            "192.0.2.9:19000"
+        } else {
+            "[2001:db8::10]:19000"
+        };
+        let addresses = [
+            wrong_family.to_owned(),
+            wrong_port.to_string(),
+            wrong_ip.to_owned(),
+        ];
+        for bound in &addresses {
+            let mut invalid = valid.clone();
+            invalid.state = EndpointDiscoveryState::Probing;
+            invalid.sockets[0].observations.clear();
+            invalid.sockets[0].bound_address = bound.clone();
+            assert!(
+                matches!(f.send(&invalid, now), Err(Error::Unprocessable(_))),
+                "accepted {bound} for configured bind {bind}"
+            );
+            assert!(!f.store.discoveries.contains_key(&f.id));
+            assert_eq!(serde_json::to_value(f.view(now)).unwrap(), original);
+        }
+        let first = f.send(&valid, now).unwrap();
+        let accepted = serde_json::to_value(f.view(now)).unwrap();
+        assert!(f.view(now).current && !f.view(now).stale);
+        for bound in &addresses {
+            let mut invalid = valid.clone();
+            invalid.sequence = 2;
+            invalid.state = EndpointDiscoveryState::Probing;
+            invalid.sockets[0].generation = 2;
+            invalid.sockets[0].observations.clear();
+            invalid.sockets[0].bound_address = bound.clone();
+            assert!(matches!(
+                f.send(&invalid, now),
+                Err(Error::Unprocessable(_))
+            ));
+            assert_eq!(serde_json::to_value(f.view(now)).unwrap(), accepted);
+        }
+        // Rejected first reports and attempted generation replacements consume
+        // neither the report sequence nor any binding/generation watermark.
+        assert_eq!(f.send(&valid, now).unwrap().reported_at, first.reported_at);
+        let mut replacement = valid;
+        replacement.sequence = 2;
+        replacement.sockets[0].generation = 2;
+        replacement.sockets[0].observations[0].observed_at += Duration::seconds(1);
+        f.send(&replacement, now + Duration::seconds(1)).unwrap();
+    }
+}
+
+#[test]
+fn outgoing_literal_family_is_checked_but_dns_family_is_not_guessed() {
+    let mut f = Fixture::new();
+    let now = Utc::now();
+    let config = f.store.agent_connections(&f.other).unwrap();
+    let mut outgoing = f.request(now);
+    outgoing.digest = config.digest;
+    outgoing.revision = config.payload.revision;
+    outgoing.state = EndpointDiscoveryState::Probing;
+    outgoing.sockets[0].observations.clear();
+    outgoing.sockets[0].resource_kind = UdpDiscoveryResourceKind::OutgoingCandidate;
+    outgoing.sockets[0].resource_id = "dial".into();
+    outgoing.sockets[0].bound_address = "[::]:20000".into();
+    assert!(matches!(
+        f.store
+            .report_endpoint_discovery_at(&f.other, &outgoing, now),
+        Err(Error::Unprocessable(_))
+    ));
+    let other_id = config.payload.node_id;
+    assert!(!f.store.discoveries.contains_key(&other_id));
+    outgoing.sockets[0].bound_address = "0.0.0.0:20000".into();
+    f.store
+        .report_endpoint_discovery_at(&f.other, &outgoing, now)
+        .unwrap();
+
+    let mut plan = f.store.connections().unwrap().configuration;
+    plan.listeners[0].advertised_endpoints[0].host = "carrier.example".into();
+    plan.candidates[0].endpoint.host = "carrier.example".into();
+    f.store
+        .save_connections(&SaveConnectionsRequest {
+            expected_revision: f.store.revision().unwrap(),
+            configuration: plan,
+        })
+        .unwrap();
+    let config = f.store.agent_connections(&f.other).unwrap();
+    outgoing.digest = config.digest;
+    outgoing.revision = config.payload.revision;
+    outgoing.sequence = 2;
+    outgoing.sockets[0].generation = 2;
+    outgoing.sockets[0].bound_address = "[::]:20000".into();
+    f.store
+        .report_endpoint_discovery_at(&f.other, &outgoing, now)
+        .unwrap();
+    outgoing.sequence = 3;
+    outgoing.sockets[0].generation = 3;
+    outgoing.sockets[0].bound_address = "0.0.0.0:20000".into();
+    f.store
+        .report_endpoint_discovery_at(&f.other, &outgoing, now)
+        .unwrap();
 }
