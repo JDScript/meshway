@@ -32,17 +32,46 @@ pub(super) async fn send(
         return Err(Error::Closed);
     }
     let operation = async {
-        // One setup per path. The async lock serializes cache insertion and nonce ownership;
-        // no packet task is spawned. Caller cancellation drops pending handshake registration.
+        // The cache lock still owns nonce assignment through enqueue, preserving
+        // same-key order. Only a missing path takes its own setup permit; no
+        // network await holds the cache lock, so cached paths keep progressing.
         let mut sessions = inner.sending.lock().await;
         let now = Instant::now();
         sessions.retain(|_, session| session.expires > now);
         if !sessions.contains_key(&path) {
-            if sessions.len() >= inner.config.limits.max_pending_probes {
-                return Err(Error::Capacity);
+            drop(sessions);
+            let _setup = inner
+                .packet_setup
+                .get(&path)
+                .ok_or(Error::UnauthorizedPath)?
+                .lock()
+                .await;
+            sessions = inner.sending.lock().await;
+            sessions.retain(|_, session| session.expires > Instant::now());
+            // A preceding caller may have established this exact path while we
+            // waited. Cancellation releases the permit and PendingGuard without
+            // spawning work that could later publish a session.
+            if !sessions.contains_key(&path) {
+                if sessions.len() >= inner.config.limits.max_pending_probes {
+                    return Err(Error::Capacity);
+                }
+                drop(sessions);
+                let session = establish(&inner, &path).await?;
+                sessions = inner.sending.lock().await;
+                if *inner.shutdown.borrow() {
+                    return Err(Error::Closed);
+                }
+                sessions.retain(|_, session| session.expires > Instant::now());
+                // Other paths can complete during setup. Recheck rather than
+                // increasing the bounded cipher cache under concurrent setup.
+                if sessions.len() >= inner.config.limits.max_pending_probes {
+                    return Err(Error::Capacity);
+                }
+                sessions.insert(path.clone(), session);
             }
-            let session = establish(&inner, &path).await?;
-            sessions.insert(path.clone(), session);
+        }
+        if *inner.shutdown.borrow() {
+            return Err(Error::Closed);
         }
         let session = sessions.get_mut(&path).ok_or(Error::Protocol)?;
         let mut frames = Vec::with_capacity(payloads.len());
@@ -68,6 +97,7 @@ pub(super) async fn send(
             .map_err(|failure| inner.local_send_failure(failure))
     };
     tokio::select! {
+        biased;
         _ = shutdown.changed() => Err(Error::Closed),
         result = tokio::time::timeout(Duration::from_millis(inner.config.limits.probe_timeout_ms), operation) => result.map_err(|_| Error::Timeout)?,
     }

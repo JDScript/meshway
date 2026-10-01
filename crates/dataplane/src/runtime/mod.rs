@@ -233,6 +233,9 @@ struct Inner {
     udp_sockets: Mutex<BTreeMap<u32, discovery::Registration>>,
     udp_discovery_slots: Arc<Semaphore>,
     endpoints: Mutex<BTreeMap<(String, [u8; 16]), EndpointSession>>,
+    // Immutable, configuration-bounded permits (at most 128 exact paths). Setup
+    // waits never hold the shared cache/nonce lock or allocate per caller.
+    packet_setup: BTreeMap<Vec<String>, tokio::sync::Mutex<()>>,
     sending: tokio::sync::Mutex<BTreeMap<Vec<String>, SendingSession>>,
     delivery: Mutex<Option<mpsc::Sender<ReceivedPacket>>>,
     handles: Mutex<Vec<JoinHandle<()>>>,
@@ -287,6 +290,12 @@ impl Runtime {
         let (shutdown, _) = watch::channel(false);
         let inner = Arc::new(Inner {
             semaphore: Arc::new(Semaphore::new(config.limits.max_connections)),
+            packet_setup: config
+                .allowed_paths
+                .iter()
+                .filter(|path| path.first() == Some(&config.node_id))
+                .map(|path| (path.clone(), tokio::sync::Mutex::new(())))
+                .collect(),
             config,
             identity,
             keys,

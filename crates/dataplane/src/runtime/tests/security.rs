@@ -694,6 +694,98 @@ async fn receive_ready(frames: &mut mpsc::Receiver<Outbound>) -> Outbound {
 }
 
 #[tokio::test(start_paused = true)]
+async fn slow_packet_setup_does_not_block_established_path() {
+    let mut configs = configs();
+    let direct = vec!["nyc".to_owned(), "lax".to_owned()];
+    for config in &mut configs[..2] {
+        config.allowed_paths.push(direct.clone());
+    }
+    let nyc = Runtime::start(configs[0].clone()).await.unwrap();
+    let lax = Runtime::start(configs[1].clone()).await.unwrap();
+    let sha = Runtime::start(configs[2].clone()).await.unwrap();
+    attach_pair(&nyc, &lax, 0).await;
+    attach_pair(&sha, &lax, 0).await;
+    let fixture = Fixture { nyc, lax, sha };
+    let mut received = fixture.lax.take_packet_receiver().unwrap();
+    fixture
+        .nyc
+        .send_packet(direct.clone(), vec![1])
+        .await
+        .unwrap();
+    assert_eq!(receive_packet(&mut received).await.payload, vec![1]);
+    let (mut frames, original) = intercept_peer(&fixture.lax, "nyc");
+    let source = fixture.nyc.clone();
+    let slow = tokio::spawn(async move { source.send_packet(path(), vec![2]).await });
+    let ready = receive_ready(&mut frames).await;
+    // The slow setup is deterministically waiting on this withheld Ready. A
+    // separate cached path must finish before its 1500ms setup timeout.
+    tokio::time::timeout(
+        Duration::from_millis(100),
+        fixture.nyc.send_packet(direct, vec![3]),
+    )
+    .await
+    .expect("unrelated cached path blocked by setup")
+    .unwrap();
+    assert_eq!(receive_packet(&mut received).await.payload, vec![3]);
+    original.send(ready).await.unwrap();
+    slow.await.unwrap().unwrap();
+    fixture.shutdown().await;
+}
+
+#[tokio::test(start_paused = true)]
+async fn concurrent_packet_setup_has_one_key_and_distinct_nonces() {
+    let fixture = capacity_one_fixture(3_000).await;
+    let mut received = fixture.sha.take_packet_receiver().unwrap();
+    let (mut frames, original) = intercept_peer(&fixture.lax, "nyc");
+    let source = fixture.nyc.clone();
+    let first = tokio::spawn(async move { source.send_packet(path(), vec![1]).await });
+    let ready = receive_ready(&mut frames).await;
+    let source = fixture.nyc.clone();
+    let second = tokio::spawn(async move { source.send_packet(path(), vec![2]).await });
+    tokio::task::yield_now().await;
+    assert_eq!(lock(&fixture.nyc.handle.inner.pending).len(), 1);
+    assert!(frames.try_recv().is_err());
+    original.send(ready).await.unwrap();
+    first.await.unwrap().unwrap();
+    second.await.unwrap().unwrap();
+    // Real decryption/replay checks accept both packets in order on one key.
+    assert_eq!(receive_packet(&mut received).await.payload, vec![1]);
+    assert_eq!(receive_packet(&mut received).await.payload, vec![2]);
+    assert_eq!(fixture.nyc.handle.inner.sending.lock().await.len(), 1);
+    assert_eq!(lock(&fixture.sha.handle.inner.endpoints).len(), 1);
+    assert!(lock(&fixture.nyc.handle.inner.pending).is_empty());
+    fixture.shutdown().await;
+}
+
+#[tokio::test(start_paused = true)]
+async fn cancelled_packet_setup_releases_permit_and_shutdown_never_recaches() {
+    let fixture = capacity_one_fixture(3_000).await;
+    let (mut frames, original) = intercept_peer(&fixture.lax, "nyc");
+    let source = fixture.nyc.clone();
+    let first = tokio::spawn(async move { source.send_packet(path(), vec![1]).await });
+    let old_ready = receive_ready(&mut frames).await;
+    first.abort();
+    assert!(first.await.unwrap_err().is_cancelled());
+    assert!(lock(&fixture.nyc.handle.inner.pending).is_empty());
+    // Remove the remote unconfirmed challenge only by its genuine expiry.
+    tokio::time::advance(Duration::from_secs(61)).await;
+    let source = fixture.nyc.clone();
+    let second = tokio::spawn(async move { source.send_packet(path(), vec![2]).await });
+    let ready = receive_ready(&mut frames).await;
+    fixture.nyc.shutdown().await;
+    assert_eq!(second.await.unwrap(), Err(Error::Closed));
+    let _ = original.send(old_ready).await;
+    let _ = original.send(ready).await;
+    assert!(fixture.nyc.handle.inner.sending.lock().await.is_empty());
+    assert!(lock(&fixture.nyc.handle.inner.pending).is_empty());
+    assert_eq!(
+        fixture.nyc.send_packet(path(), vec![3]).await,
+        Err(Error::Closed)
+    );
+    fixture.shutdown().await;
+}
+
+#[tokio::test(start_paused = true)]
 async fn delayed_ready_consumes_init_time_budget_and_expired_ready_is_not_cached() {
     let fixture = capacity_one_fixture(60_000).await;
     let mut received = fixture.sha.take_packet_receiver().unwrap();
