@@ -8,6 +8,37 @@ const INVITE_MAX: i64 = 7 * 86400;
 const RESET_MAX: i64 = 3600;
 const SESSION_MAX: i64 = 7 * 86400;
 
+const INVITATION_METADATA_COLUMNS: &str = "invitation_id,network_id,email,role,issuer_user_id,expires_at,revoked_at,consumed_by,consumed_at";
+const RESET_METADATA_COLUMNS: &str = "r.reset_id,r.user_id,r.expires_at,r.revoked_at,r.consumed_at,r.credential_version=u.credential_version";
+
+fn invitation_metadata_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<InvitationMetadata> {
+    Ok(InvitationMetadata {
+        id: InvitationId::parse(&row.get::<_, String>(0)?)
+            .map_err(|_| rusqlite::Error::InvalidQuery)?,
+        network: AccountNetwork(row.get(1)?),
+        email: Email::parse(&row.get::<_, String>(2)?)
+            .map_err(|_| rusqlite::Error::InvalidQuery)?,
+        role: Role::stored(row.get(3)?).map_err(|_| rusqlite::Error::InvalidQuery)?,
+        issuer: row.get::<_, Option<String>>(4)?.map(UserId),
+        expires_at: row.get(5)?,
+        revoked_at: row.get(6)?,
+        consumed_by: row.get::<_, Option<String>>(7)?.map(UserId),
+        consumed_at: row.get(8)?,
+    })
+}
+
+fn reset_metadata_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<PasswordResetMetadata> {
+    Ok(PasswordResetMetadata {
+        id: PasswordResetId::parse(&row.get::<_, String>(0)?)
+            .map_err(|_| rusqlite::Error::InvalidQuery)?,
+        user: UserId(row.get(1)?),
+        expires_at: row.get(2)?,
+        revoked_at: row.get(3)?,
+        consumed_at: row.get(4)?,
+        credential_current: row.get(5)?,
+    })
+}
+
 fn expiry(now: i64, ttl: i64, maximum: i64) -> Result<i64> {
     if now < 0 || !(1..=maximum).contains(&ttl) {
         return Err(AccountError::Invalid);
@@ -259,6 +290,65 @@ impl<'a> Accounts<'a> {
             version,
         })
     }
+
+    /// Owner/bootstrap sees all invitations in this network. Admin sees only
+    /// Member invitations, the same grant ceiling used by ID-based revoke.
+    /// Expired/revoked/consumed metadata remains inspectable without secrets.
+    pub(crate) fn list_invitations(
+        &self,
+        principal: &Principal,
+        network: &AccountNetwork,
+        now: i64,
+    ) -> Result<Vec<InvitationMetadata>> {
+        let issuer = self.may_grant(principal, network, Role::Member, now)?;
+        let member_only = issuer
+            .as_ref()
+            .map(|u| self.role(network, u))
+            .transpose()?
+            .flatten()
+            == Some(Role::Admin);
+        let mut statement = self.db.prepare(&format!("SELECT {INVITATION_METADATA_COLUMNS} FROM account_invitations WHERE network_id=?1 AND (?2=0 OR role='member') ORDER BY invitation_id"))?;
+        let rows = statement.query_map(params![network.0, member_only], invitation_metadata_row)?;
+        rows.map(|row| row.map_err(AccountError::from)).collect()
+    }
+
+    pub(crate) fn invitation_metadata(
+        &self,
+        principal: &Principal,
+        network: &AccountNetwork,
+        id: &InvitationId,
+        now: i64,
+    ) -> Result<InvitationMetadata> {
+        self.may_grant(principal, network, Role::Member, now)?;
+        let metadata = self.db.query_row(&format!("SELECT {INVITATION_METADATA_COLUMNS} FROM account_invitations WHERE network_id=?1 AND invitation_id=?2"),params![network.0,id.0],invitation_metadata_row).optional()?.ok_or(AccountError::Forbidden)?;
+        self.may_grant(principal, network, metadata.role, now)?;
+        Ok(metadata)
+    }
+
+    /// Global account recovery inventory is exclusively instance-bootstrap
+    /// controlled, never a capability obtained from a network role.
+    pub(crate) fn list_password_resets(
+        &self,
+        principal: &Principal,
+    ) -> Result<Vec<PasswordResetMetadata>> {
+        if !matches!(principal.0, PrincipalKind::Bootstrap) {
+            return Err(AccountError::Forbidden);
+        }
+        let mut statement = self.db.prepare(&format!("SELECT {RESET_METADATA_COLUMNS} FROM account_password_resets r JOIN account_users u ON u.user_id=r.user_id ORDER BY r.reset_id"))?;
+        let rows = statement.query_map([], reset_metadata_row)?;
+        rows.map(|row| row.map_err(AccountError::from)).collect()
+    }
+
+    pub(crate) fn password_reset_metadata(
+        &self,
+        principal: &Principal,
+        id: &PasswordResetId,
+    ) -> Result<PasswordResetMetadata> {
+        if !matches!(principal.0, PrincipalKind::Bootstrap) {
+            return Err(AccountError::Forbidden);
+        }
+        self.db.query_row(&format!("SELECT {RESET_METADATA_COLUMNS} FROM account_password_resets r JOIN account_users u ON u.user_id=r.user_id WHERE r.reset_id=?1"),[&id.0],reset_metadata_row).optional()?.ok_or(AccountError::Forbidden)
+    }
 }
 
 fn insert_user(
@@ -319,15 +409,29 @@ pub(crate) fn create_invitation(
     role: Role,
     now: i64,
     ttl: i64,
-) -> Result<IssuedSecret> {
+) -> Result<IssuedInvitation> {
     atomic(tx, |db| {
         let issuer = Accounts::new(db).may_grant(principal, network, role, now)?;
         let expires_at = expiry(now, ttl, INVITE_MAX)?;
         let secret = Secret::generate(SecretKind::Invitation)?;
         let digest = Secret::digest(secret.expose(), SecretKind::Invitation)?;
-        let id = meshway_protocol::local::credential().map_err(|_| AccountError::Worker)?;
-        db.execute("INSERT INTO account_invitations(invitation_id,token_hash,network_id,email,role,issuer_user_id,expires_at) VALUES (?1,?2,?3,?4,?5,?6,?7)", params![id,digest,network.0,email.as_str(),role.as_str(),issuer.map(|u| u.0),expires_at])?;
-        Ok(IssuedSecret { secret, expires_at })
+        let id =
+            InvitationId(meshway_protocol::local::credential().map_err(|_| AccountError::Worker)?);
+        db.execute("INSERT INTO account_invitations(invitation_id,token_hash,network_id,email,role,issuer_user_id,expires_at) VALUES (?1,?2,?3,?4,?5,?6,?7)", params![id.0,digest,network.0,email.as_str(),role.as_str(),issuer.as_ref().map(|u| &u.0),expires_at])?;
+        Ok(IssuedInvitation {
+            secret,
+            metadata: InvitationMetadata {
+                id,
+                network: network.clone(),
+                email: email.clone(),
+                role,
+                issuer,
+                expires_at,
+                revoked_at: None,
+                consumed_by: None,
+                consumed_at: None,
+            },
+        })
     })
 }
 
@@ -335,21 +439,12 @@ pub(crate) fn revoke_invitation(
     tx: &mut Transaction<'_>,
     principal: &Principal,
     network: &AccountNetwork,
-    token: &str,
+    id: &InvitationId,
     now: i64,
 ) -> Result<()> {
     atomic(tx, |db| {
-        let digest = Secret::digest(token, SecretKind::Invitation)?;
-        let role = db
-            .query_row(
-                "SELECT role FROM account_invitations WHERE network_id=?1 AND token_hash=?2",
-                params![network.0, digest],
-                |r| r.get::<_, String>(0),
-            )
-            .optional()?
-            .ok_or(AccountError::Forbidden)?;
-        Accounts::new(db).may_grant(principal, network, Role::stored(role)?, now)?;
-        db.execute("UPDATE account_invitations SET revoked_at=COALESCE(revoked_at,?1) WHERE network_id=?2 AND token_hash=?3", params![now,network.0,digest])?;
+        Accounts::new(db).invitation_metadata(principal, network, id, now)?;
+        db.execute("UPDATE account_invitations SET revoked_at=COALESCE(revoked_at,?1) WHERE network_id=?2 AND invitation_id=?3", params![now,network.0,id.0])?;
         Ok(())
     })
 }
@@ -518,7 +613,7 @@ pub(crate) fn issue_reset(
     user: &UserId,
     now: i64,
     ttl: i64,
-) -> Result<IssuedSecret> {
+) -> Result<IssuedPasswordReset> {
     atomic(tx, |db| {
         if !matches!(principal.0, PrincipalKind::Bootstrap) {
             return Err(AccountError::Forbidden);
@@ -530,8 +625,21 @@ pub(crate) fn issue_reset(
         )?;
         let expires_at = expiry(now, ttl, RESET_MAX)?;
         let secret = Secret::generate(SecretKind::Reset)?;
-        db.execute("INSERT INTO account_password_resets(token_hash,user_id,credential_version,expires_at) VALUES (?1,?2,?3,?4)", params![Secret::digest(secret.expose(),SecretKind::Reset)?,user.0,version,expires_at])?;
-        Ok(IssuedSecret { secret, expires_at })
+        let id = PasswordResetId(
+            meshway_protocol::local::credential().map_err(|_| AccountError::Worker)?,
+        );
+        db.execute("INSERT INTO account_password_resets(reset_id,token_hash,user_id,credential_version,expires_at) VALUES (?1,?2,?3,?4,?5)", params![id.0,Secret::digest(secret.expose(),SecretKind::Reset)?,user.0,version,expires_at])?;
+        Ok(IssuedPasswordReset {
+            secret,
+            metadata: PasswordResetMetadata {
+                id,
+                user: user.clone(),
+                expires_at,
+                revoked_at: None,
+                consumed_at: None,
+                credential_current: true,
+            },
+        })
     })
 }
 
@@ -592,15 +700,12 @@ pub(crate) fn change_password(
 pub(crate) fn revoke_reset(
     tx: &mut Transaction<'_>,
     principal: &Principal,
-    token: &str,
+    id: &PasswordResetId,
     now: i64,
 ) -> Result<()> {
     atomic(tx, |db| {
-        if !matches!(principal.0, PrincipalKind::Bootstrap) {
-            return Err(AccountError::Forbidden);
-        }
-        let digest = Secret::digest(token, SecretKind::Reset)?;
-        db.execute("UPDATE account_password_resets SET revoked_at=COALESCE(revoked_at,?1) WHERE token_hash=?2", params![now,digest])?;
+        Accounts::new(db).password_reset_metadata(principal, id)?;
+        db.execute("UPDATE account_password_resets SET revoked_at=COALESCE(revoked_at,?1) WHERE reset_id=?2", params![now,id.0])?;
         Ok(())
     })
 }

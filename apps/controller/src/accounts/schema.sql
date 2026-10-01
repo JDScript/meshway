@@ -40,7 +40,8 @@ CREATE TABLE account_sessions (
 );
 CREATE INDEX account_sessions_user ON account_sessions(user_id);
 CREATE TABLE account_password_resets (
-    token_hash BLOB PRIMARY KEY CHECK(length(token_hash)=32),
+    reset_id TEXT PRIMARY KEY,
+    token_hash BLOB NOT NULL UNIQUE CHECK(length(token_hash)=32),
     user_id TEXT NOT NULL REFERENCES account_users(user_id),
     credential_version INTEGER NOT NULL,
     expires_at INTEGER NOT NULL,
@@ -48,6 +49,12 @@ CREATE TABLE account_password_resets (
     consumed_at INTEGER
 );
 CREATE INDEX account_resets_user ON account_password_resets(user_id);
+CREATE TRIGGER account_reset_binding BEFORE UPDATE ON account_password_resets
+WHEN NEW.reset_id IS NOT OLD.reset_id OR NEW.token_hash IS NOT OLD.token_hash
+ OR NEW.user_id IS NOT OLD.user_id OR NEW.credential_version IS NOT OLD.credential_version
+ OR NEW.expires_at IS NOT OLD.expires_at
+ OR (OLD.consumed_at IS NOT NULL AND NEW.consumed_at IS NOT OLD.consumed_at)
+BEGIN SELECT RAISE(ABORT,'immutable password reset binding'); END;
 CREATE TRIGGER account_user_identity BEFORE UPDATE OF user_id ON account_users
 WHEN NEW.user_id IS NOT OLD.user_id
 BEGIN SELECT RAISE(ABORT,'immutable global user identity'); END;
@@ -59,7 +66,8 @@ BEGIN SELECT RAISE(ABORT,'immutable network membership identity'); END;
 -- Once copied to a future versioned migration these guards protect immutable
 -- invitation binding and global identity even against accidental UPDATE SQL.
 CREATE TRIGGER account_invitation_binding BEFORE UPDATE ON account_invitations
-WHEN NEW.network_id IS NOT OLD.network_id OR NEW.email IS NOT OLD.email
+WHEN NEW.invitation_id IS NOT OLD.invitation_id
+ OR NEW.network_id IS NOT OLD.network_id OR NEW.email IS NOT OLD.email
  OR NEW.role IS NOT OLD.role OR NEW.token_hash IS NOT OLD.token_hash
  OR NEW.issuer_user_id IS NOT OLD.issuer_user_id OR NEW.expires_at IS NOT OLD.expires_at
  OR (OLD.consumed_by IS NOT NULL AND

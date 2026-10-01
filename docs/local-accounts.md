@@ -58,6 +58,18 @@ DDL 的网络 FK 使用真实 v9 `networks(network_id)`，不是概念草案的 
 
 ## 后续 API 草案（不是生成契约）
 
+### 可管理的链接资源
+
+已补齐内部公有资源引用 `InvitationId` / `PasswordResetId`（独立随机 256-bit opaque ID，可从字符串显式校验）。ID 不是 bearer、不是授权凭证；取得 ID 后仍须校验 principal 与 network。原 invitation ID 现在类型化返回；reset ID 只加入尚未上线的 schema 片段，无 `user_version` 分配。
+
+- `create_invitation` 返回 `IssuedInvitation { metadata, secret }`，`issue_reset` 返回 `IssuedPasswordReset { metadata, secret }`。包含 secret 的结果不实现 Debug / Serialize；secret 只在创建成功且根事务提交后返回一次，刷新页无法重新获取。库内仍只保存 token hash。
+- `InvitationMetadata` 仅有 ID、network、目标 email、role、issuer user、expires_at、revoked_at、consumed_by / consumed_at；不含 secret / hash。`Accounts::list_invitations(principal, network, now)` 与 `invitation_metadata(principal, network, id, now)` 是按真实身份授权的管理投影。Owner / bootstrap 可见本网全部，Admin 仅可见其能管理的 Member 邀请，Member / node 无权限。过期、撤销、已消费记录仍可查看，跨网 ID 查询拒绝。
+- `revoke_invitation(tx, principal, network, &InvitationId, now)` 按公有资源 ID 撤销；不再需要原链接。与查询使用同一个 role 上限，Admin 不能撤销 Owner / Admin 邀请。未知或跨网 ID 返回净化拒绝；重复撤销保留第一次 revoked_at。
+- `PasswordResetMetadata` 仅有 ID、目标 user、expires_at、revoked_at、consumed_at、credential_current；最后一项表示签发时 credential version 是否仍当前，不暴露版本、PHC 或 token hash。`list_password_resets(principal)` / `password_reset_metadata(principal, &PasswordResetId)` / `revoke_reset(tx, principal, &PasswordResetId, now)` 均只允许实例 bootstrap，网络 Owner 不能查看或撤销全局恢复资源。未知或错误类别资源 ID 拒绝。
+- metadata 类型只用于本模块内部管理投影，尚不是手写 HTTP DTO。未来按权威协议生成契约；管理列表 / 详情也需在调用方 read transaction 内完成身份与资源查询，不能信任页面缓存的角色。
+
+新 reset ID 与 invitation ID 均由显式不可变 binding guard 保护；管理刷新、详情和撤销查询完全不选择 token hash 或原值。不保留按 secret 撤销 helper，既有行为测试同步切换到公有 ID。
+
 协议权威仍是未来 `crates/protocol` Rust DTO + 实际路由，必须一起生成 OpenAPI / Rust / TS / Zod 并跑 drift 与全部消费者。本切片下列仅 handoff：
 
 | 草案操作 | 主体 / 必须事务 |
@@ -65,11 +77,11 @@ DDL 的网络 FK 使用真实 v9 `networks(network_id)`，不是概念草案的 
 | `POST /api/v1/auth/login` | 邮箱密码；KDF 后 `finish_login` version 复核事务；只返回 session 原值一次 |
 | `GET /api/v1/auth/session`, `GET /api/v1/me/networks` | 用户 session；实时验证，仅自身 membership |
 | `POST /api/v1/auth/logout`, `/auth/sessions/revoke` | 当前用户或实例 bootstrap；会话撤销事务 |
-| `POST /api/v1/networks/{id}/invitations`, `/invitations/revoke` | 本网 Owner / 可授角色 Admin / bootstrap；事务复核 role 与网域 |
+| `GET/POST /api/v1/networks/{id}/invitations`, `GET /invitations/{invitation_id}`, `POST /invitations/revoke` | 本网 Owner / 可授角色 Admin / bootstrap；列表 / 详情只公有 metadata，创建单次返回 secret，撤销请求为 invitation_id；事务复核 role 与网域 |
 | `POST /api/v1/auth/invitations/register` | 邮箱绑定邀请 + 新密码；KDF 后账户 / membership / 消费事务，无匿名 signup |
 | `POST /api/v1/auth/invitations/accept` | 已存在用户本人 session；membership / 消费事务，无密码覆盖 |
 | `POST /api/v1/networks/{id}/members/save` | 本网 Owner / 限定 Admin / bootstrap；最后 Owner 保护，设备准入撤回同根事务 |
-| `POST /api/v1/auth/password-resets`, `/password-resets/revoke` | 实例 bootstrap；全局 user reset 创建 / 撤销事务，不发邮件 |
+| `GET/POST /api/v1/auth/password-resets`, `GET /password-resets/{reset_id}`, `POST /password-resets/revoke` | 实例 bootstrap；列表 / 详情只公有 metadata，创建单次返回 secret，撤销请求为 reset_id；全局 user reset，不发邮件 |
 | `POST /api/v1/auth/password-resets/redeem` | 独立 reset bearer；KDF 后消费 / 密码替换 / 旧 session 与 reset 失效事务 |
 | `POST /api/v1/me/password` | 本人 session + 旧密码证明；新 KDF 后 version CAS 与会话废止事务 |
 | `POST /api/v1/networks/{id}/owner-claim` | bootstrap + 新真实账户或本人 session；无 Owner 前提与 membership 原子提交 |
@@ -118,6 +130,10 @@ CLI 链接登录的最小适配草案采用 **device-request 绑定 polling**，
 2026-10-01 验证：账户领域 **20** 项行为测试、既有 Store **40** 项单元测试、既有 HTTP **24** 项测试，合计 **84 passed / 0 failed**。Controller 全 target / 全 feature Clippy（`-D warnings`）与 `cargo fmt --all -- --check` 通过。首次真实 bootstrap fixture 因 tempfile 目录非 0700 被私有权限检查拒绝，修正测试目录权限后完整重跑通过；生产权限检查未放宽。
 
 审查补齐一先增加两个失败回归，分别复现 Owner/Admin 邀请在角色恢复后复活、成员变更未触发持久邀请撤销。修复后覆盖 Owner→Admin 的 Member 邀请保留、Owner→Member→Owner、移除后重新加入、跨网不受影响、最后 Owner 拒绝、注入存储失败及外层 rollback 的原子性。
+
+审查补齐二增加两项针对性测试：丢弃创建返回值并重新连接 SQLite 后，按公有 ID 读取 metadata / 撤销；验证 Admin 的 Member 上限、Member/node 拒绝、跨网 / 未知 / 错误类别 ID 拒绝、secret 不能作为 ID、metadata Debug 不含原 token / hash，以及已消费 / 撤销 / 过期状态可查和 ID 不可替换。
+
+两项审查补齐后的完整验证：账户领域 **24**、既有 Store **40**、既有 HTTP **24**，合计 **88 passed / 0 failed**；Controller 全 target / 全 feature Clippy `-D warnings`、fmt check 通过。新增 reset ID 仅在未上线 schema 片段；本轮无依赖或 lockfile 变化，原独立 lock 候选继续供协调者审查。
 
 ```sh
 CARGO_TARGET_DIR=target cargo test -p meshway-controller --tests

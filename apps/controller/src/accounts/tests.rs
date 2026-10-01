@@ -72,7 +72,7 @@ impl Fixture {
         email: &Email,
         role: Role,
         ttl: i64,
-    ) -> IssuedSecret {
+    ) -> IssuedInvitation {
         self.transaction(|tx| create_invitation(tx, &bootstrap(), net, email, role, NOW, ttl))
             .unwrap()
     }
@@ -219,14 +219,14 @@ async fn invite_expiry_revocation_replay_and_binding() {
             .is_err()
     );
     assert!(
-        f.transaction(|tx| revoke_invitation(tx, &bootstrap(), &b, invite.secret.expose(), NOW))
+        f.transaction(|tx| revoke_invitation(tx, &bootstrap(), &b, &invite.metadata.id, NOW))
             .is_err()
     );
     let intent = Accounts::new(&f.db)
         .prepare_registration(invite.secret.expose(), &e, NOW)
         .unwrap();
     let hash = worker.hash(password(OLD)).await.unwrap();
-    f.transaction(|tx| revoke_invitation(tx, &bootstrap(), &a, invite.secret.expose(), NOW))
+    f.transaction(|tx| revoke_invitation(tx, &bootstrap(), &a, &invite.metadata.id, NOW))
         .unwrap();
     assert!(
         f.transaction(|tx| register_invited(tx, intent, hash, NOW))
@@ -541,7 +541,7 @@ async fn reset_expiry_revoke_and_secret_class_separation() {
         ))
         .is_err()
     );
-    f.transaction(|tx| revoke_reset(tx, &bootstrap(), reset.secret.expose(), NOW))
+    f.transaction(|tx| revoke_reset(tx, &bootstrap(), &reset.metadata.id, NOW))
         .unwrap();
     assert!(
         Accounts::new(&f.db)
@@ -1185,5 +1185,229 @@ async fn issuer_invite_invalidation_rolls_back_with_failed_role_change() {
         Accounts::new(&f.db)
             .prepare_registration(invite.secret.expose(), &target, NOW)
             .is_ok()
+    );
+}
+
+#[tokio::test]
+async fn invitation_metadata_and_id_revocation_need_no_link_secret() {
+    let worker = worker().await;
+    let mut f = Fixture::new();
+    let a = f.network(A);
+    let b = f.network(B);
+    let owner_email = email("owner@example.com");
+    let admin_email = email("admin@example.com");
+    let member_email = email("member@example.com");
+    let owner = f.register(&worker, &a, &owner_email, Role::Owner).await;
+    f.register(&worker, &a, &admin_email, Role::Admin).await;
+    f.register(&worker, &a, &member_email, Role::Member).await;
+    let owner_session = f.login(&worker, &owner_email).await;
+    let admin_session = f.login(&worker, &admin_email).await;
+    let member_session = f.login(&worker, &member_email).await;
+    let owner_p = Accounts::new(&f.db)
+        .authenticate(owner_session.secret.expose(), NOW)
+        .unwrap();
+    let admin_p = Accounts::new(&f.db)
+        .authenticate(admin_session.secret.expose(), NOW)
+        .unwrap();
+    let member_p = Accounts::new(&f.db)
+        .authenticate(member_session.secret.expose(), NOW)
+        .unwrap();
+    let target = email("target@example.com");
+    let member_invite = f
+        .transaction(|tx| create_invitation(tx, &owner_p, &a, &target, Role::Member, NOW, 100))
+        .unwrap();
+    let owner_invite = f
+        .transaction(|tx| create_invitation(tx, &owner_p, &a, &target, Role::Owner, NOW, 100))
+        .unwrap();
+    let other_net = f.invite(&b, &target, Role::Member, 100);
+    let expected = member_invite.metadata.clone();
+    let test_secret = member_invite.secret.expose().to_owned();
+    assert!(InvitationId::parse(member_invite.secret.expose()).is_err());
+    assert_eq!(
+        InvitationId::parse(expected.id.as_str()).unwrap(),
+        expected.id
+    );
+    drop(member_invite);
+    // Reopen the same caller-owned DB and list/get by public resource ID only.
+    let reopened = connect(&f.path);
+    let repo = Accounts::new(&reopened);
+    assert_eq!(
+        repo.invitation_metadata(&owner_p, &a, &expected.id, NOW)
+            .unwrap(),
+        expected
+    );
+    let all = repo.list_invitations(&owner_p, &a, NOW).unwrap();
+    assert!(all.iter().all(|m| m.network == a));
+    assert!(all.iter().any(|m| m.id == expected.id));
+    assert!(
+        all.iter()
+            .any(|m| m.consumed_by.as_ref() == Some(&owner.user))
+    );
+    let public_debug = format!("{all:?}");
+    assert!(!public_debug.contains(&test_secret));
+    assert!(!public_debug.contains("token_hash"));
+    let admin_view = repo.list_invitations(&admin_p, &a, NOW).unwrap();
+    assert!(admin_view.iter().all(|m| m.role == Role::Member));
+    assert!(admin_view.iter().any(|m| m.id == expected.id));
+    assert!(
+        repo.invitation_metadata(&admin_p, &a, &owner_invite.metadata.id, NOW)
+            .is_err()
+    );
+    assert!(repo.list_invitations(&member_p, &a, NOW).is_err());
+    assert!(repo.list_invitations(&Principal::node(), &a, NOW).is_err());
+    assert!(repo.list_invitations(&owner_p, &b, NOW).is_err());
+    assert!(
+        repo.invitation_metadata(&bootstrap(), &a, &other_net.metadata.id, NOW)
+            .is_err()
+    );
+    assert!(
+        f.transaction(|tx| revoke_invitation(tx, &bootstrap(), &a, &other_net.metadata.id, NOW))
+            .is_err()
+    );
+    assert!(
+        f.transaction(|tx| revoke_invitation(tx, &admin_p, &a, &owner_invite.metadata.id, NOW))
+            .is_err()
+    );
+    assert!(
+        f.transaction(|tx| revoke_invitation(tx, &member_p, &a, &expected.id, NOW))
+            .is_err()
+    );
+    f.transaction(|tx| revoke_invitation(tx, &admin_p, &a, &expected.id, NOW))
+        .unwrap();
+    f.transaction(|tx| revoke_invitation(tx, &owner_p, &a, &expected.id, NOW + 1))
+        .unwrap();
+    let revoked = repo
+        .invitation_metadata(&bootstrap(), &a, &expected.id, NOW + 101)
+        .unwrap();
+    assert_eq!(revoked.revoked_at, Some(NOW));
+    assert!(
+        repo.prepare_registration(&test_secret, &target, NOW)
+            .is_err()
+    );
+    assert!(
+        repo.prepare_registration(other_net.secret.expose(), &target, NOW)
+            .is_ok()
+    );
+    let missing = InvitationId::parse(&meshway_protocol::local::credential().unwrap()).unwrap();
+    assert!(
+        f.transaction(|tx| revoke_invitation(tx, &bootstrap(), &a, &missing, NOW))
+            .is_err()
+    );
+    assert!(
+        f.db.execute(
+            "UPDATE account_invitations SET invitation_id=?1 WHERE invitation_id=?2",
+            params![missing.as_str(), owner_invite.metadata.id.as_str()]
+        )
+        .is_err()
+    );
+}
+
+#[tokio::test]
+async fn reset_metadata_and_id_revocation_are_global_bootstrap_only() {
+    let worker = worker().await;
+    let mut f = Fixture::new();
+    let a = f.network(A);
+    let e = email("owner@example.com");
+    let owner = f.register(&worker, &a, &e, Role::Owner).await;
+    let s = f.login(&worker, &e).await;
+    let p = Accounts::new(&f.db)
+        .authenticate(s.secret.expose(), NOW)
+        .unwrap();
+    let first = f
+        .transaction(|tx| issue_reset(tx, &bootstrap(), &owner.user, NOW, 100))
+        .unwrap();
+    let second = f
+        .transaction(|tx| issue_reset(tx, &bootstrap(), &owner.user, NOW, 100))
+        .unwrap();
+    let expected = first.metadata.clone();
+    let test_secret = first.secret.expose().to_owned();
+    assert!(PasswordResetId::parse(first.secret.expose()).is_err());
+    assert_eq!(
+        PasswordResetId::parse(expected.id.as_str()).unwrap(),
+        expected.id
+    );
+    drop(first);
+    let reopened = connect(&f.path);
+    let repo = Accounts::new(&reopened);
+    assert_eq!(
+        repo.password_reset_metadata(&bootstrap(), &expected.id)
+            .unwrap(),
+        expected
+    );
+    let listed = repo.list_password_resets(&bootstrap()).unwrap();
+    assert_eq!(listed.len(), 2);
+    assert!(
+        listed
+            .iter()
+            .all(|m| m.user == owner.user && m.credential_current)
+    );
+    assert!(!format!("{listed:?}").contains(&test_secret));
+    assert!(!format!("{listed:?}").contains("token_hash"));
+    for unauthorized in [&p, &Principal::node()] {
+        assert!(repo.list_password_resets(unauthorized).is_err());
+        assert!(
+            repo.password_reset_metadata(unauthorized, &expected.id)
+                .is_err()
+        );
+        assert!(
+            f.transaction(|tx| revoke_reset(tx, unauthorized, &expected.id, NOW))
+                .is_err()
+        );
+    }
+    f.transaction(|tx| revoke_reset(tx, &bootstrap(), &expected.id, NOW))
+        .unwrap();
+    f.transaction(|tx| revoke_reset(tx, &bootstrap(), &expected.id, NOW + 1))
+        .unwrap();
+    assert_eq!(
+        repo.password_reset_metadata(&bootstrap(), &expected.id)
+            .unwrap()
+            .revoked_at,
+        Some(NOW)
+    );
+    assert!(repo.prepare_reset(&test_secret, NOW).is_err());
+    let intent = repo.prepare_reset(second.secret.expose(), NOW).unwrap();
+    let hash = worker.hash(password(NEW)).await.unwrap();
+    f.transaction(|tx| redeem_reset(tx, intent, hash, NOW))
+        .unwrap();
+    let consumed = repo
+        .password_reset_metadata(&bootstrap(), &second.metadata.id)
+        .unwrap();
+    assert_eq!(consumed.consumed_at, Some(NOW));
+    assert!(!consumed.credential_current);
+    assert_eq!(repo.list_password_resets(&bootstrap()).unwrap().len(), 2);
+    let expired = f
+        .transaction(|tx| issue_reset(tx, &bootstrap(), &owner.user, NOW, 1))
+        .unwrap();
+    assert!(
+        repo.prepare_reset(expired.secret.expose(), NOW + 1)
+            .is_err()
+    );
+    assert_eq!(
+        repo.password_reset_metadata(&bootstrap(), &expired.metadata.id)
+            .unwrap()
+            .expires_at,
+        NOW + 1
+    );
+    let missing = PasswordResetId::parse(&meshway_protocol::local::credential().unwrap()).unwrap();
+    assert!(
+        f.transaction(|tx| revoke_reset(tx, &bootstrap(), &missing, NOW))
+            .is_err()
+    );
+    let invite = f.invite(&a, &email("target@example.com"), Role::Member, 100);
+    let wrong_category = PasswordResetId::parse(invite.metadata.id.as_str()).unwrap();
+    assert!(
+        repo.password_reset_metadata(&bootstrap(), &wrong_category)
+            .is_err()
+    );
+    assert!(
+        f.transaction(|tx| revoke_reset(tx, &bootstrap(), &wrong_category, NOW))
+            .is_err()
+    );
+    assert!(
+        f.db.execute(
+            "UPDATE account_password_resets SET reset_id=?1 WHERE reset_id=?2",
+            params![missing.as_str(), second.metadata.id.as_str()]
+        )
+        .is_err()
     );
 }

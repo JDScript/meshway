@@ -35,6 +35,75 @@ pub(crate) struct UserId(pub(super) String);
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct MembershipId(pub(super) String);
 
+/// Public resource references, not bearer credentials or permission proofs.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct InvitationId(pub(super) String);
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct PasswordResetId(pub(super) String);
+
+impl InvitationId {
+    pub(crate) fn parse(value: &str) -> Result<Self> {
+        if !meshway_protocol::local::valid_credential(value) {
+            return Err(AccountError::Invalid);
+        }
+        Ok(Self(value.to_owned()))
+    }
+
+    pub(crate) fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+impl PasswordResetId {
+    pub(crate) fn parse(value: &str) -> Result<Self> {
+        if !meshway_protocol::local::valid_credential(value) {
+            return Err(AccountError::Invalid);
+        }
+        Ok(Self(value.to_owned()))
+    }
+
+    pub(crate) fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+/// Management projection deliberately contains neither raw token nor digest.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct InvitationMetadata {
+    pub(crate) id: InvitationId,
+    pub(crate) network: AccountNetwork,
+    pub(crate) email: Email,
+    pub(crate) role: Role,
+    pub(crate) issuer: Option<UserId>,
+    pub(crate) expires_at: i64,
+    pub(crate) revoked_at: Option<i64>,
+    pub(crate) consumed_by: Option<UserId>,
+    pub(crate) consumed_at: Option<i64>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct PasswordResetMetadata {
+    pub(crate) id: PasswordResetId,
+    pub(crate) user: UserId,
+    pub(crate) expires_at: i64,
+    pub(crate) revoked_at: Option<i64>,
+    pub(crate) consumed_at: Option<i64>,
+    pub(crate) credential_current: bool,
+}
+
+// Issuance results are intentionally not Debug/Serialize: only their metadata
+// may appear in refreshed management views. Original link secret is returned once.
+pub(crate) struct IssuedInvitation {
+    pub(crate) metadata: InvitationMetadata,
+    pub(crate) secret: Secret,
+}
+
+pub(crate) struct IssuedPasswordReset {
+    pub(crate) metadata: PasswordResetMetadata,
+    pub(crate) secret: Secret,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct Email(String);
 
