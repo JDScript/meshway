@@ -28,6 +28,7 @@ pub struct DeviceInventory {
 pub struct DeviceDnsName {
     pub node_id: String,
     pub name: String,
+    pub canonical_name: String,
     pub mesh_ipv4: String,
     pub mesh_ipv6: String,
 }
@@ -140,7 +141,8 @@ fn dns(
                     .aliases
                     .first()
                     .cloned()
-                    .unwrap_or(record.canonical_name),
+                    .unwrap_or_else(|| record.canonical_name.clone()),
+                canonical_name: record.canonical_name,
                 mesh_ipv4: record.mesh_ipv4,
                 mesh_ipv6: record.mesh_ipv6,
             })

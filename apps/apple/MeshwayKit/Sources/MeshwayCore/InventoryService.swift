@@ -39,11 +39,16 @@ public struct MeshInventory: Sendable, Equatable {
 public struct MeshDnsName: Sendable, Equatable {
   public let nodeID: String
   public let name: String
+  public let canonicalName: String
   public let meshIPv4: String
   public let meshIPv6: String
-  public init(nodeID: String, name: String, meshIPv4: String, meshIPv6: String) {
+  public init(
+    nodeID: String, name: String, meshIPv4: String, meshIPv6: String,
+    canonicalName: String? = nil
+  ) {
     self.nodeID = nodeID
     self.name = name
+    self.canonicalName = canonicalName ?? name
     self.meshIPv4 = meshIPv4
     self.meshIPv6 = meshIPv6
   }
@@ -94,7 +99,8 @@ extension RustEnrollmentService: InventoryService {
         revision: value.revision, digest: value.digest, zone: value.zone,
         names: value.names.map {
           MeshDnsName(
-            nodeID: $0.nodeId, name: $0.name, meshIPv4: $0.meshIpv4, meshIPv6: $0.meshIpv6)
+            nodeID: $0.nodeId, name: $0.name, meshIPv4: $0.meshIpv4, meshIPv6: $0.meshIpv6,
+            canonicalName: $0.canonicalName)
         })
     } catch { throw sanitized(error) }
   }

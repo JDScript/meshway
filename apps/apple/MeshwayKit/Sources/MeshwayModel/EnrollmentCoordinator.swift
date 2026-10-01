@@ -9,6 +9,7 @@ import Observation
   public private(set) var busy = false
   public private(set) var heartbeatTime: Date?
   public private(set) var heartbeatResult: String?
+  public private(set) var heartbeatSucceeded: Bool?
   public private(set) var inventory: MeshInventory?
   public private(set) var dnsInventory: MeshDnsInventory?
   public private(set) var inventoryMessage: String?
@@ -227,10 +228,12 @@ import Observation
       guard generation == currentGeneration else { return }
       guard node.id == journal.snapshot.node?.id else { throw EnrollmentError.server }
       heartbeatTime = Date()
+      heartbeatSucceeded = true
       heartbeatResult = "Controller contact succeeded (not tunnel connectivity)."
     } catch {
       guard generation == currentGeneration else { return }
       heartbeatTime = Date()
+      heartbeatSucceeded = false
       heartbeatResult =
         (error as? EnrollmentError)?.localizedDescription ?? "Controller contact failed."
       if error as? EnrollmentError == .revoked {
@@ -323,6 +326,7 @@ import Observation
       error = nil
       heartbeatTime = nil
       heartbeatResult = nil
+      heartbeatSucceeded = nil
       inventory = nil
       dnsInventory = nil
       inventoryMessage = nil
