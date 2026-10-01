@@ -3,9 +3,15 @@ name = "meshway-agent"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
+default-run = "meshway-agent"
 
 [features]
 transport-lab = ["dep:meshway-dataplane", "dep:meshway-transport-vless", "dep:tun-rs"]
+
+[[bin]]
+name = "meshway-carrier-measure"
+path = "src/bin/carrier_measure.rs"
+required-features = ["transport-lab"]
 
 [dependencies]
 chrono.workspace = true

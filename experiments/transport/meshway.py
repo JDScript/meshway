@@ -331,7 +331,7 @@ def compare_case(case, baseline, settings):
         return None
     candidate = next((entry for entry in baseline["routed"]["cases"] if entry["id"] == case["id"] and entry["status"] == "ok"), None)
     if candidate is None:
-        return {"matched": False}
+        return {"case_found": False, "matched_wrapper_baseline": False}
     bare = candidate["summary"]["receiver_bits_per_second"]
     mesh = case["summary"]["receiver_bits_per_second"]
     ratio = mesh / bare if isinstance(bare, (int, float)) and bare > 0 and isinstance(mesh, (int, float)) else None
@@ -343,8 +343,14 @@ def compare_case(case, baseline, settings):
     bare_mtu = baseline["settings"].get("mtu", 1500)
     if bare_mtu != TUN_MTU:
         differences["payload_path_mtu"] = {"baseline": bare_mtu, "meshway_inner": TUN_MTU}
-    return {"matched": True, "baseline_case_id": candidate["id"], "baseline_receiver_bits_per_second": bare,
-            "meshway_over_baseline_throughput_ratio": ratio, "measurement_setting_differences": differences}
+    return {"case_found": True, "matched_wrapper_baseline": False,
+            "comparison_class": "different_network_semantics",
+            "baseline_case_id": candidate["id"], "baseline_receiver_bits_per_second": bare,
+            "whole_path_throughput_ratio": ratio, "measurement_setting_differences": differences,
+            "semantic_differences": ["kernel IP routing versus userspace encrypted carriers",
+                                     "Meshway hop identity, E2E encryption and ordered authorization",
+                                     "TUN integration and different buffering/offloads"],
+            "interpretation": "Whole-path context only; not incremental wrapper or encryption overhead"}
 
 
 def arguments(argv=None):
@@ -360,7 +366,7 @@ def arguments(argv=None):
     parser.add_argument("--memory", choices=("128m", "256m", "512m", "1g"), default="256m")
     parser.add_argument("--ready-timeout", type=bounded_integer(5, 120), default=30)
     parser.add_argument("--temp-dir", type=Path, help="approved host scratch directory; defaults to tempfile/TMPDIR")
-    parser.add_argument("--baseline-results", type=Path, help="optional successful routed benchmark.py result for explicit ratios")
+    parser.add_argument("--baseline-results", type=Path, help="optional routed benchmark.py result for whole-path context, never wrapper overhead")
     parser.add_argument("--run-label", default="functional-smoke", help="operator-supplied evidence label, recorded verbatim")
     return parser.parse_args(argv)
 

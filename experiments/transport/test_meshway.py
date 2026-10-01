@@ -123,7 +123,9 @@ class MeshwaySafetyTests(unittest.TestCase):
         settings = {"seconds": 3, "cpus": 1, "memory": "256m", "mtu": 1500}
         baseline = {"settings": settings, "routed": {"cases": [{**case, "status": "ok", "summary": {"receiver_bits_per_second": 100}}]}}
         comparison = meshway.compare_case(case, baseline, {**settings, "seconds": 1})
-        self.assertEqual(comparison["meshway_over_baseline_throughput_ratio"], 0.5)
+        self.assertEqual(comparison["whole_path_throughput_ratio"], 0.5)
+        self.assertFalse(comparison["matched_wrapper_baseline"])
+        self.assertEqual(comparison["comparison_class"], "different_network_semantics")
         self.assertIn("seconds", comparison["measurement_setting_differences"])
         self.assertIn("payload_path_mtu", comparison["measurement_setting_differences"])
 

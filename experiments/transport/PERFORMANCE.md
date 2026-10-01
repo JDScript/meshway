@@ -1,6 +1,8 @@
 # Performance investigation handoff
 
 This is an ongoing diagnostic branch of work, independent of adding transport adapters.
+See [MATCHED.md](MATCHED.md) for the layered acceptance model, same-implementation
+adapter A/B methodology, and follow-up evidence.
 The user's primary acceptance criterion is **incremental wrapper overhead**, not an
 absolute headline bandwidth target: native 300 Mbit/s and wrapped 300 Mbit/s under
 matched conditions can be a good result. Also compare CPU/byte and latency so a
