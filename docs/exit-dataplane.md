@@ -18,7 +18,7 @@
 
 旧E的NAT映射不能迁移到F；旧TCP/UDP被截断，应用需建新连接。原型在客户端截断旧流，旧出口conntrack可保留至内核timeout，但回包因不匹配当前出口和flow代际被拒；P3c可向旧出口下发源级清理，不能用本地选择提升出口授权或延长lease。纯本地direct流不由packet pump转发，不迁移NAT。
 
-`locked=true`拒绝与当前锁定方案不同的请求（包括切换“仅Mesh”）；同值选择不扩大权限。未授权ID拒绝且现有代际保持运行。“不使用出口”表达为选择内置“仅Mesh”方案：它仍执行公共规则，其余恢复main本地网络；不能删除公共规则。现阶段为Agent内部 `select_profile(id)` 与ignored fixture请求，不新增设备配置入口；P3c同UID私有IPC/CLI只承载“切换到哪个允许方案”。内置“全局经X”由controller为每个允许出口生成，不是Agent自建授权；所有方案分配时必须校验grants，未授权方案不能进入catalog。
+`locked=true`时，`with_profiles`初始化忽略旧本地选择（包括已移除的ID），始终使用controller的 `default_profile`，与v3 compiler选择语义一致；因此由解锁改为锁定、或锁定默认从E改为F时，旧用户缓存不能覆盖新默认。后续 `select_profile`只接受该controller default，不与缓存的当前选择比较，拒绝其它请求（包括切换“仅Mesh”）；同值选择不扩大权限。锁定auto时用户仍只能选择auto，具体生效方案仅由可信 `resolve_automatic`更新。未授权ID拒绝且现有代际保持运行。“不使用出口”表达为选择内置“仅Mesh”方案：它仍执行公共规则，其余恢复main本地网络；不能删除公共规则。现阶段为Agent内部 `select_profile(id)` 与ignored fixture请求，不新增设备配置入口；P3c同UID私有IPC/CLI只承载“切换到哪个允许方案”。内置“全局经X”由controller为每个允许出口生成，不是Agent自建授权；所有方案分配时必须校验grants，未授权方案不能进入catalog。
 
 ### 自动方案与换网
 

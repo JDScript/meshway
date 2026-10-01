@@ -19,6 +19,9 @@ use std::{
 mod fixture;
 #[cfg(target_os = "linux")]
 pub(crate) mod linux;
+#[cfg(test)]
+#[path = "exit/profile_tests.rs"]
+mod profile_tests;
 
 #[derive(Clone, Debug)]
 pub(crate) struct ExitRoute {
@@ -240,7 +243,13 @@ impl ExitPlan {
                 "automatic profile resolution is outside the allowed catalog",
             ));
         }
-        let selected = selected.unwrap_or(&catalog.default_profile).to_owned();
+        // Match the policy compiler: a cached local choice may survive a
+        // controller update, but cannot override its newly locked default.
+        let selected = if catalog.locked {
+            catalog.default_profile.clone()
+        } else {
+            selected.unwrap_or(&catalog.default_profile).to_owned()
+        };
         let effective = if selected == "auto" {
             let auto = catalog
                 .automatic
@@ -299,7 +308,7 @@ impl ExitPlan {
             .profiles
             .as_ref()
             .ok_or(AgentError::Invalid("no allowed routing profiles"))?;
-        if catalog.locked && self.selected_profile.as_deref() != Some(selected) {
+        if catalog.locked && catalog.default_profile != selected {
             return Err(AgentError::Invalid(
                 "routing profile selection is administrator locked",
             ));
@@ -824,6 +833,7 @@ mod tests {
         );
         assert!(automatic.resolve_automatic(Some("unauthorized")).is_err());
         none.profiles.as_mut().unwrap().locked = true;
+        none.profiles.as_mut().unwrap().default_profile = "mesh".into();
         assert!(none.select_profile("e").is_err());
         assert!(none.select_profile("mesh").is_ok());
     }
