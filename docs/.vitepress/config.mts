@@ -33,6 +33,8 @@ export default defineConfig({
           { text: "连接应用、观测与地址", link: "/connection-runtime" },
           { text: "手动验证连接", link: "/testing-connections" },
           { text: "托管 Mesh IPv4 数据面", link: "/managed-dataplane" },
+          { text: "端点访问授权与 JSONC", link: "/access-policy" },
+          { text: "Network 管理边界", link: "/network-management" },
           { text: "Linux 传输实验", link: "/transport-lab" },
           { text: "加密边界与真实追踪", link: "/security-and-tracing" },
         ],

@@ -80,7 +80,7 @@ Web 默认从 `http://127.0.0.1:8420` 读取 controller；可通过 `MESHWAY_CON
 
 DNS、multi-transport 与加密转发的交付阶段在文档站维护。优先保留端到端加密与 `meshway trace`，系统 traceroute 作为后续增强；可信逐跳路由需要显式选择。
 
-[托管 Mesh IPv4 数据面](docs/managed-dataplane.md) 通过 `run --apply-dataplane` 显式启用，使用已有注册身份、同 revision 的配置及独立有向路径授权。路由结果必须与授权完整匹配，Linux TUN 才能传递对应端点之间的 IPv4 包。正反方向分别配置，初始授权为空。互联网出口、IPv6 TUN、可信 DNS 上下文及真实逐跳 trace 尚未接通；邻接观测和配置 ACK 均不能代替普通 ICMP / HTTP 的实际 IP 验收。
+[托管 Mesh IPv4 数据面](docs/managed-dataplane.md) 通过 `run --apply-dataplane` 显式启用，使用已有注册身份和同 revision 的配置。[Access](docs/access-policy.md) 按 node/tag/`*` 决定端点权限，支持默认 allow/reject、first-match 和双向规则；Routing 决定有序路径，控制面联合编译内部精确授权。两者均有图形化 / schema JSONC 编辑器，注释随配置保存。互联网出口、IPv6 TUN、可信 DNS 上下文及真实逐跳 trace 尚未接通；邻接观测和配置 ACK 均不能代替普通 ICMP / HTTP 的实际 IP 验收。
 
 ## 类型安全
 

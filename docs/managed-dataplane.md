@@ -8,13 +8,13 @@
 
 1. **连接配置**建立 NYC–LAX、LAX–SHA 的认证邻接。SHA 可以主动连接 LAX；LAX 复用该双向通道转发。
 2. **路由策略**对 NYC 到 SHA 的 Mesh IPv4 选出有序路径 `NYC → LAX → SHA`。
-3. **访问授权**显式允许这个完整、有方向的路径。
+3. **访问授权**允许 NYC 访问 SHA，或由双向规则同时允许往返方向。
 
-只有路由结果和授权路径完全一致，才能安装业务路径。`direct` 不授予访问权限；配置了 `via LAX` 也不会自动允许中转。缺少通道时失败，不换逻辑路径、不跳过 LAX，也不降低加密模式。
+控制面将端点授权和路由结果联合编译为内部精确路径，再分发到沿途节点。`direct` 本身不授予访问权限；Access 的 `allow` 也不改写 Routing 的 reject 或 `via`。缺少通道时失败，不换逻辑路径、不跳过 LAX，也不降低加密模式。
 
-首个授权模型是完整节点路径白名单，初始为空。每条路径包含源节点、零个或多个必经节点和目标节点，节点不能重复。它授予两个端点 Mesh IPv4 之间的包访问，不是互联网出口、子网路由或端口级 ACL。
+当前管理员授权模型支持 `*` / node / tag、默认 allow/reject、有序 first-match 和显式双向规则，详见[端点访问授权](/access-policy)。内部路径仍包含源节点、必经节点和目标节点且不得重复；它授予两个端点 Mesh IPv4 之间的包访问，不是互联网出口、子网路由或端口级 ACL。
 
-管理员在 `/access` 保存授权，使用与路由相同的全局 revision CAS。每个参与节点必须已有不可替换绑定的公钥。撤销导致源授权无效时保留原文供修复，向 Agent 分发的有效授权整体为空。Agent 专用的 `getAgentDataplane` 接口一次读取一致的配置、连接、授权和公钥；该快照不向 Web 暴露节点凭据或本地私钥。
+管理员在 `/access` 保存授权，使用与路由相同的全局 revision CAS。安装业务路径前，参与节点须具备不可替换绑定的公钥。撤销导致显式节点引用无效时保留源文档供修复，生效授权整体为空；通配符和标签则按活动成员更新。Agent 的 `getAgentDataplane` 接口一次读取一致的配置、连接、内部授权和公钥，不向 Web 暴露节点凭据或本地私钥。
 
 ### 回程也是一个方向
 
@@ -24,7 +24,7 @@
 SHA → LAX → NYC
 ```
 
-为这个方向同时设置路由和授权。双向物理通道不代表双向业务许可；添加反向授权也不会自动修改路由规则。
+回程需要路由，并由双向 Access 规则、反向单向规则或默认 allow 授权。双向物理通道不代表双向业务许可；打开双向授权开关也不会自动修改路由规则。
 
 ## 哪些路由规则执行
 
@@ -88,7 +88,7 @@ curl --fail --max-time 5 http://<目标 Mesh IPv4>:<测试服务端口>/
 
 ```sh
 python3 experiments/managed-dataplane/run.py \
-  --image meshway-managedtest:dataplane-20261001-a
+  --image meshway-managedtest:access-v2-ubuntu-20261001-a
 ```
 
 镜像构建与运行方式见该目录 README。脚本使用共享 Docker performance lock，但只验证功能，不给出吞吐基准结论。准备就绪要求配置回执、实际 TUN / 路由、与当前快照 revision / digest 对应的本地运行代际以及新鲜邻接报告；最终成功仍须由实际 ICMP / HTTP 往返证明。
@@ -96,6 +96,8 @@ python3 experiments/managed-dataplane/run.py \
 原生 ARM64 镜像 `sha256:fda7fa9b50fe64d41f62d6a72745bc0d501f6236ef6333840e071d1b0e7864eb` 已通过完整验收，运行 ID 为 `mup6m9qh-539ecd0828df0f80`，输出 21 项通过证据且临时资源清理完成。除授权、规则、国家、必经节点、lease、恢复和撤销外，还实际验证了：以暂不存在的域名启动 NYC，保留拒绝路由并持续重试；随后添加对端 DNS alias，在不重启 NYC 的情况下重新取得新鲜配置并恢复 ICMP / HTTP。
 
 实现回归另外覆盖已知新 revision、ACK 409 与不完整 HTTP 403 响应体：Agent 必须及时撤回旧权限，不能等阻塞请求或普通 lease 自行结束。Linux TUN 初始化的临时 DNS 故障可重试；解析到了 Mesh 网段、身份不一致或缺少网络权限仍会失败关闭。
+
+Access v2 的 Ubuntu ARM64 镜像 `sha256:505e2e5beca37ed0449120cddc14d77b1b0ad784a13e215e21d20caa8c143984` 已通过更新后的隔离验收（运行 ID `mupb51em-eaecbd9d255f1984`），共 33 项证据、清理无错误。覆盖单条双向规则、tag 成员变化、已分配标签的目录更新、ACL 双向 first-match、default-allow 仍受路由 reject / via 约束，以及原有 lease、DNS 恢复和撤销测试。
 
 ### 持久 demo 的启用方式
 
@@ -120,6 +122,8 @@ docker exec --user "$(id -u):$(id -g)" -it <容器名称> sh
 
 Linux 启动器把权限收敛到原非 root UID 和 `NET_ADMIN`，不需要 `NET_RAW` 或 privileged 模式。`enable-dataplane` 本身不修改路由或添加授权。恢复为只运行邻接使用 `disable-dataplane`，完整生命周期与恢复说明见 `experiments/managed-connections/DEMO.md`。
 
+当前持久 demo 已启用可写 Ubuntu 开发 shell，可直接 `docker exec -it <容器名称> bash` 后使用 `apt-get`。预装 `traceroute`，根 shell 的 `meshway` 启动器会自动切到原 Agent UID；Agent 进程仍只保留 `NET_ADMIN`。手动安装的软件属于容器可写层，重建时会丢失；常用工具可加入 `Dockerfile.dev`。
+
 ### 已启用的本机 demo
 
 | 节点 | Mesh IPv4 | 物理邻接 |
@@ -128,7 +132,7 @@ Linux 启动器把权限收敛到原非 root UID 和 `NET_ADMIN`，不需要 `NE
 | `demo-lax` | `100.96.0.3` | 接受 NYC 和 SHA 的连接 |
 | `demo-sha` | `100.96.0.4` | 主动建立到 LAX 的 TLS-VLESS |
 
-保留原 NYC→LAX→SHA 路由，增加 SHA→LAX→NYC 的回程规则；另外四个方向使用已有 default-direct。六个方向分别保存完整路径授权，未授权的本机 `nyc` 不因此获得业务访问权。原三个节点的身份文件、私钥、profiles、证书、公钥绑定和监听配置均已比较保留。
+初始 demo 配置保留 NYC→LAX→SHA 路由，并增加 SHA→LAX→NYC 回程；另外四个方向使用 default-direct。升级后六个方向的访问许可折叠为三条双向端点规则，未授权的本机 `nyc` 不因此获得业务访问权。原三个节点的身份文件、私钥、profiles、证书、公钥绑定和监听配置均已比较保留；之后的用户编辑以控制台当前版本为准。
 
 ```sh
 docker exec --user "$(id -u):$(id -g)" meshway-demo-c011ae657303-nyc \

@@ -87,17 +87,23 @@ Rust 请求 / 响应类型 + 实际 API 路由声明
 
 策略源文档因节点撤销而失效时，管理 API 仍返回源文档及诊断；节点配置分发的是 deny-all 有效策略，并带 `policy_valid: false`。不能把坏引用丢掉后继续使用默认 direct。
 
-### 有向业务授权与一致数据面快照
+### 端点授权、标签与一致数据面快照
 
 | 方法与路径 | bearer 权限 | 生成操作 / 类型 |
 | --- | --- | --- |
 | `GET /api/v1/access` | 管理员 | `getMeshAccess` → `MeshAccessSnapshot` |
 | `POST /api/v1/access` | 管理员 | `saveMeshAccess`，请求 `SaveMeshAccessRequest`，返回 `MeshAccessSnapshot` |
+| `GET /api/v1/tags` | 管理员 | `getTags` → `TagSnapshot` |
+| `POST /api/v1/tags` | 管理员 | `saveTags`，条件保存标签目录 |
+| `POST /api/v1/nodes/tags` | 管理员 | `setNodeTags`，条件保存指定节点的标签 |
+| `POST /api/v1/flows/preview` | 管理员 | `previewFlow`，返回授权、路由、诊断和执行条件 |
 | `GET /api/v1/agent/dataplane` | 节点 | `getAgentDataplane` → `AgentDataplaneSnapshot` |
 
 授权保存使用全局 CAS，相同内容不增加 revision。节点快照在一个 SQLite 读事务中组合节点配置、连接、授权及所需公钥，所有部分使用同一 revision，调用方身份只从节点 bearer 派生。摘要覆盖完整公共 payload；它不包含节点 bearer、管理员令牌或本地 profile 密钥。
 
-路径授权最多 128 条，每条包含 2–8 个不同的活动节点，完整路径有方向，不隐式允许反向或子路径。每个参与节点必须已有合法绑定公钥。单节点的数据面公钥集合最多 64 个；超出容量拒绝分发，不截断路径。授权源上限 128 KiB，一致快照上限 2 MiB。具体执行范围见[托管 Mesh IPv4 数据面](/managed-dataplane)。
+管理员 `MeshAccessPolicy` 使用默认 allow/reject 和最多 128 条端点规则，支持 `*`、node、tag 与显式双向。控制面联合路由编译的 `MeshPathAuthorization` 仍是内部 `{ grants }`，每节点最多 128 条精确路径、每路径 2–8 个活动节点，联合公钥集合最多 64 个；超出容量拒绝，不截断路径。结构化授权源上限 128 KiB，JSONC 原文上限 256 KiB，一致数据面快照上限 2 MiB。
+
+Routing 与 Access 的保存请求支持 `source_jsonc`，服务端拒绝重复对象键、解析失败或与结构化 `policy` 不一致的文本。原文随管理员快照返回；只改注释也使用全局 CAS。生成客户端的 `/schemas` 和 `/json-schema` 子路径分别提供运行时校验和保留描述、长度及 `x-meshway-ref` 的编辑器 schema。
 
 旧的配置与连接响应不增加字段，仍保留各自的保存 ACK 语义。新数据面快照不是新的“已生效”回执；本地 TUN 代际证据绑定其 revision 和摘要，实际可达性另用普通 IP 流量验证。
 

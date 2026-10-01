@@ -36,7 +36,7 @@ Rust 控制面与 agent、Next.js + shadcn/ui 控制台、VitePress 文档站。
 - 用户已确认首版 multi-transport 采用优先级主备；按流负载分担和同流多路径聚合不属于首版要求。
 - 用户已确认首版域名匹配仅支持 suffix，按 DNS 标签边界匹配；路由规则有序 first-match，默认动作可选 direct/reject，初始空策略为 reject。
 - 配置 ACK 只表示 Agent 已校验并持久保存，不等同于数据面生效；逻辑路径预览不等同于真实 trace 或访问授权。
-- 托管 IPv4 数据面显式启用。用户已确认 Access 下一版采用端点授权，与 routing 的路径选择分开；支持当前 network 内的 `*`、管理员分配的 tag、node，默认动作可选 allow/reject，有序 first-match，每条规则可显式双向。当前内部完整路径授权仍须由控制面编译，不跳过必经节点；状态型回包另行推进。
+- 托管 IPv4 数据面显式启用。Access 采用用户已确认的端点授权模型，与 routing 的路径选择分开；支持当前 network 内的 `*`、管理员分配的 tag、node，默认动作可选 allow/reject，有序 first-match，每条规则可显式双向。内部完整路径授权由控制面联合编译，不跳过必经节点；状态型回包另行推进。
 - Access 与 routing 的图形化及带 schema 的 JSONC 编辑器必须共享同一份草稿和 CAS 基准；无效文本、注释和未保存编辑不得被切换视图静默覆盖。
 - 用户指定前端委派 `anthropic/claude-opus-5-5`，其他后续实现可委派 `openai/gpt-5.6-sol`；独立任务按需要使用 worktree，根 manifest、lockfile 和合并验证由协调者维护。
 - 业务配置、连接和端点公钥须来自同一 revision 的快照；撤回和 lease 到期独立于 HTTP 请求终止旧运行代际，TUN 停止后 Mesh 网段不得落回底层默认路由。
