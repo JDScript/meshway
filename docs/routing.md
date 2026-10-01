@@ -31,6 +31,26 @@
 
 ## 匹配与规则集
 
+### 系统保护通路
+
+控制面通信、STUN/认证建连探测、transport 外层 socket 与它们必要的 bootstrap DNS，
+使用独立于 Meshway 自身 TUN 的底层通路。此项在业务规则之前由系统处理，不是用户
+必须手工放在第一条的 `direct` 规则，也不随 routing profile 切换。
+
+豁免按 Agent 内部 socket 用途识别（Linux 可用 socket mark 与策略路由，其他平台用
+等效机制），不能把整个 Agent 进程或 controller / peer 的 IP 全部放行。普通应用访问
+同一 IP、同一 CDN 上的其他域名仍按公共规则、方案规则和兜底处理。transport 只把
+外层包交给当前合法下一跳；业务内层依然经过已授权的完整路径。
+
+换网、DNS 重解析或 peer endpoint 变化时，先准备新底层通路，再启用新 socket 和
+相关观测；控制面断连或观测过期时不拿隧道出口地址补齐地区。这里的底层网络是运行
+环境原有的网络路径，不自动绕过其他系统 VPN 或企业网络策略。
+
+P1c 原型的固定 /32 例外仍会影响同地址的普通业务；它已记录为原型限制，正式集成须
+改为 socket 级保护，见[出口数据面](/exit-dataplane)。
+
+### 业务匹配
+
 域名先做 IDNA、ASCII 小写与末尾点规范化，再按 DNS 标签边界匹配 suffix：`example.com` 命中根域与 `a.example.com`，不命中 `badexample.com`。首版不支持 exact、keyword 或 regex；URL 与字面 IP 不能伪装成域名。
 
 IP 使用规范化 CIDR。规则集由 controller 下载、管理、更新并编译下发，设备不下载数据集；参考 sing-box rule-set / mihomo rule-providers。首版仅域名后缀和 IP 段，无法精确转换的条目须报告。控制面把有序规则编译为等价不重叠前缀表，提示完全被前序规则遮蔽的规则，不采用最长匹配替代 first-match。

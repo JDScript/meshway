@@ -44,6 +44,12 @@ Linux 使用自己拥有的独立 policy routing 表及规则，而非替换系�
 
 原型的 /32 例外对该 IP 的所有业务端口生效，这是明确限制：生产应为 controller/STUN/承载 sockets 设置统一 SO_MARK，通过 fwmark 例外恢复原路由，限制为受保护进程/socket；不能声称当前 /32 例外是完全无泄漏的全流量 VPN。fixture 验证默认出口下承载仍可达且不会进入 TUN。
 
+用户进一步确认：这是优先于业务路由的系统保护通路，公共规则或路由方案不能覆盖。
+正式实现必须限定到明确用途的 socket，不能仅凭进程 UID 或目标 IP 全量豁免；bootstrap
+DNS 只保护控制面/承载/探测所需的解析请求，业务 DNS 仍按其出口 DNS 策略处理。
+IPv4/IPv6、重解析和 endpoint 换代必须同时保留该边界；构建保护通路不改变 Mesh 内层
+路径授权。此项为正式集成要求，原型 /32 行为尚未因此改变。
+
 本地网络访问默认提案参照 Tailscale：默认出口不允许直接 LAN；显式 allow-LAN 时只对发现并批准的 on-link 前缀添加更高优先级 main lookup，绝不自动豁免全部 RFC1918。本原型只支持显式 bypass 地址，不提供生产 allow-LAN 开关。loopback 仍由 Linux local table 处理。
 
 | 事件 | 原型行为及理由 |
