@@ -43,16 +43,20 @@ pub fn compile(
         ip_tables: vec![],
         source_ip_table: vec![],
         lints: vec![],
+        mesh_lints: super::mesh_lints::lint(&p.mesh, &nodes),
         failures: vec![],
     };
-    // Rule sorting is only a stable duplicate-action tie break, never semantic precedence.
-    let mut mesh: Vec<_> = p.mesh.iter().collect();
-    mesh.sort_by(|a, b| a.id.cmp(&b.id));
     let exits: Vec<_> = p.exits.iter().collect();
     let mut grants: Vec<_> = p.grants.iter().collect();
     grants.sort_by(|a, b| a.id.cmp(&b.id));
     for (i, g) in grants.iter().enumerate() {
         let mut ranges = false;
+        if g.dst.iter().any(|s| s == "autogroup:internet") {
+            for d in super::internet::ranges() {
+                out.grant_index.insert(d, i as u16);
+            }
+            ranges = true;
+        }
         for s in &g.dst {
             if let Some(d) = super::index::external_selector(s) {
                 out.grant_index.insert(&d, i as u16);
@@ -82,10 +86,10 @@ pub fn compile(
             if a == b || !allowed(p, nodes[a], Some(nodes[b])) {
                 continue;
             }
-            let rule = mesh
+            let rule = p
+                .mesh
                 .iter()
-                .filter(|r| matches(&r.src, nodes[a]) && matches(&r.dst, nodes[b]))
-                .max_by_key(|r| mesh_specificity(r));
+                .find(|r| matches(&r.src, nodes[a]) && matches(&r.dst, nodes[b]));
             let via = rule.map_or(&[][..], |r| r.via.as_slice());
             let paths = find_paths(&graph, &bridges, &nodes, a, b, via, options.paths);
             let ids = record(&mut out, &dial, a, &nodes[b].id, paths, PathScope::Mesh)?;

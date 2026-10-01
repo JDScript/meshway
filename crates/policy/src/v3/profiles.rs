@@ -182,14 +182,7 @@ impl NetworkCompilation {
                     .map(|i| &profile.routes[i])
             })
             .min_by_key(|r| r.rule);
-        let auth = &self.base.external_grants[src];
-        let authorized = auth.internet
-            || self
-                .base
-                .grant_index
-                .matching(domain.as_deref(), ip)
-                .iter()
-                .any(|r| auth.range_grants.contains(r));
+        let authorized = self.base.external_authorized(src, domain.as_deref(), ip);
         match rule {
             Some(r) if r.target == ExitTarget::Direct => Ok(ExitDecision::Local),
             Some(_) if !authorized => Ok(ExitDecision::Denied),

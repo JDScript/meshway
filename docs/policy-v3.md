@@ -1,6 +1,6 @@
 # 四层策略引擎 v3
 
-本页描述 `meshway_policy::v3` 的纯 Rust 实现，按 2026-10-01 的最终确认：前三层是整张网络共享、顺序无关的配置；出口层按**路由方案**组织，使用有序 first-match。产品源模型为 `NetworkPolicy`，入口为 `compile_network`；接收同一网络、同一 revision 的节点、管理员 tag、listener、出口开关、可达性事实与已解析规则集。不执行 DNS、拨号、NAT、加密、下载或网络 I/O。Controller 与 Agent 仍使用 v2，编译成功不表示隧道或出口已生效。底层 `Policy` / `compile` 保留为纯选路与迁移验证内核，不是产品方案配置入口。
+本页描述 `meshway_policy::v3` 的纯 Rust 实现，按 2026-10-01 的最终确认：连接、授权是整张网络共享、顺序无关的配置；Mesh 内路由与按**路由方案**组织的出口路由都使用有序 first-match。前三层仍为所有设备共享的一套策略。产品源模型为 `NetworkPolicy`，入口为 `compile_network`；接收同一网络、同一 revision 的节点、管理员 tag、listener、出口开关、可达性事实与已解析规则集。不执行 DNS、拨号、NAT、加密、下载或网络 I/O。Controller 与 Agent 仍使用 v2，编译成功不表示隧道或出口已生效。底层 `Policy` / `compile` 保留为纯选路与迁移验证内核，不是产品方案配置入口。
 
 ## 四层语义
 
@@ -14,7 +14,9 @@
 
 `grants` 是只允许、未匹配拒绝的并集，不使用具体度覆盖或规则顺序。每条规则的 `src` / `dst` 列表内部 OR，两端 AND；`bidirectional` 显式授权反方向发起业务，不代表状态型回包。
 
-`*` 只匹配本网络节点，不包含离开 Mesh 的流量。`autogroup:internet` 表示全部非 Mesh 目的地，包含远端出口所连接的 LAN；也可写 `ip:192.168.1.0/24`、`domain:openai.com` 授权具体范围，不再另设 subnet router。外部 grant 不能双向。域名 grant 只在**可信域名上下文**中按标签后缀匹配，不授权裸 IP；IP grant 只按实际目的 IP 匹配。有域名和解析 IP 时，两种 grant 取并集，路由规则本身不授予访问。
+`*` 只匹配本网络节点，不包含离开 Mesh 的流量。`autogroup:internet` 只授权公网目的地址，不包含出口 LAN。按 Tailscale / Headscale 的 `TheInternet` 基线，IPv4 集合从 `0.0.0.0/0` 排除 RFC1918（`10/8`、`172.16/12`、`192.168/16`）、CGNAT（`100.64/10`，包含 Mesh IPv4 网段）和链路本地（`169.254/16`）；IPv6 使用 global-unicast `2000::/3`，不含 ULA（`fc00::/7`，包含 Mesh IPv6 网段）和链路本地（`fe80::/10`）。参考 `references/headscale/hscontrol/util/net.go:39-63`。
+
+访问私网目的地须有覆盖实际地址的具体 `ip:` grant，例如 `ip:192.168.1.0/24`；即使有可信域名或 `domain:openai.com` grant，也不能把解析到私网的地址当成公网授权。公网上下文中的域名 / IP grants 仍取并集；域名 grant 不授权裸 IP，IP grant 只按实际目的地址匹配。只有 internet grant、没有解析 IP 的域名请求无法证明公网范围，返回 Denied；显式域名 grant 可先匹配域名上下文，但实际包准入仍须带解析 IP 重新校验。路由规则本身不授予访问。外部 grant 不能双向；统一出口仍覆盖公网与 LAN，不另设 subnet router。
 
 `user:` / `group:` 为后续身份语法保留，当前返回带字段路径的“不支持”诊断。v2 没有端口 / 协议维度，因此 v3 没有删除已有维度，也没有伪造尚不存在的包过滤能力。
 
@@ -22,9 +24,14 @@
 
 `mesh` 的 `src`、`dst` 各为一个 selector，`via` 是有序 node / tag selector。未匹配时自动选路。路由存在不会创建 grant；未授权流不进入选路输出。
 
-定义 selector 等级 `node = 2`、`tag = 1`、`* = 0`。Mesh 具体度为**有序二元组 `(src 等级, dst 等级)`，按字典序比较，先源后目的**。例如 `(node, *) > (tag, node) > (*, node)`。这是严格、可复现的引擎定义，不是相加评分。
+规则按源文档数组顺序从上到下检查，第一条同时命中 src / dst 的规则生效。不比较 node / tag / wildcard 具体度，不按 ID 排序，不禁止重叠或不同 via 的规则。第一条命中的必经约束不可达时，报告该流不可达，不能回退到后续规则或自动路径来绕过必经节点。
 
-同具体度、两端匹配集合都有交集、`via` 不同的规则是冲突；校验指出两个 ID、字段位置和示例流。同动作重复可以保存，不靠排序决定动作。Tag 重叠不仅检查当前成员，还考虑未来同一节点同时拥有两个 tag 的可能，返回 hypothetical 示例；不会等 tag 分配变更后才发现歧义。
+编译输出 `base.mesh_lints`，按当前网络库存展开 node / tag，对不同节点间的有向源 → 目的流统计（不以 grants 或当前可达性过滤潜在匹配）：
+
+- **完全遮挡**：规则所有当前可能命中的流都被前序规则拿走，`fully_shadowed = true`。
+- **部分抢先**：只有部分流被前序规则拿走，给出至少一个具体示例；`example.src / dst` 指向稳定 nodes 表，附 winning_rule_id / winning_rule、winning_via 与 shadowed_via，供 Web 表达“laptop → prod 命中 rule-1（via hk），未命中 rule-2（via bastion）”。
+
+每条 lint 保留原始规则 ID / 数组位置、shadowed_flows / total_flows 与 `inventory_dependent = true`。结果只说明**当前库存**：tag 成员改变须重新编译；当前没有匹配成员的规则不报告为永久无效，不用 hypothetical 节点推断冲突。Lint 不使保存失败，也不授予访问权限。
 
 ### 出口路由与默认选择
 
@@ -41,16 +48,16 @@
 内置方案 ID：
 
 - `mesh-only`：只有公共规则，final 不接管。
-- `global:<完整节点 ID>`：为已开启出口且该源 grants 覆盖全部非 Mesh 目的地的节点生成，final 为该节点。`global:*` 只用于分配列表，展开为该源可用的全部全局方案，不是路由 matcher。
+- `global:<完整节点 ID>`：为已开启出口且该源 grants 覆盖全部公网目的地的节点生成，final 为该节点。`global:*` 只用于分配列表，展开为该源可用的全部全局方案，不是路由 matcher。实际私网目的地仍须另有具体 IP grant，选择出口不会扩大授权。
 - `auto`：由 automatic.regions（两位大写国家 / 地区代码 → 其它方案 ID）与 fallback 选择具体方案。调用方传入 `StunLocation`，来自 STUN 观测到的设备公网 IP 的国家 / 地区；绝不使用 controller 连接来源 IP。未知 / 无定位走 automatic.fallback；自动不能引用自动，拒绝循环。
 
 自定义 profiles 包含 id、rules 与 fallback。fallback.kind 为 nodes（candidates / via）、direct、none。`assignments` 用 src selector 分配 allowed、default_profile、locked；源等级 node > tag > *，较具体分配替换较宽分配；同级可能重叠但 allowed / default / locked 不同保存报错，顺序无关。auto 引用的每个方案也须在该源 allowed 中显式允许。无匹配分配时的引擎模板为 mesh-only、可用 global:*、auto，默认 mesh-only；自定义方案不会自动赋给成员。
 
 锁定时忽略用户请求，使用分配的 default_profile；否则只允许集合内的选择，未给请求时用 default_profile。公共规则与方案规则始终先于 final。所有可选方案预编译，切换不需要新 revision、不改变前三层；调用方应用切换时须中断旧出口存量连接，本纯引擎不执行运行时代际撤回。
 
-**分配时检查完整授权覆盖**：nodes 规则的每个目的范围须被源的外部 grants 联合完整覆盖，允许两个 /25 合并覆盖 /24；只覆盖一部分仍报错。域名须有覆盖 suffix 的 grant，或覆盖全部非 Mesh 的授权；不凭 DNS 猜测将某个 IP grant 扩大为域名授权。nodes final / global 需要全部非 Mesh 授权（internet 或联合覆盖 IPv4、IPv6 的两个 /0），direct / none 不需要出口 grant。即使规则被前序遮蔽，也检查其声明目标，不以遮蔽绕过方案分配授权。
+**分配时检查完整授权覆盖**：nodes 规则的每个目的范围须被源的外部 grants 联合完整覆盖，允许两个 /25 合并覆盖 /24；只覆盖一部分仍报错。internet 编译为排除私网后的共享前缀，因此包含私网的 CIDR 不能靠 internet 授权通过分配检查，须有联合覆盖的具体 IP grants。域名须有覆盖 suffix 的 grant，或 internet 授权（运行时只允许解析到公网）；不凭 DNS 猜测将某个 IP grant 扩大为域名授权。nodes final / global 需要全部公网授权（internet 或联合覆盖公网前缀集合），运行时仍按实际目的地址检查；direct / none 不需要出口 grant。即使规则被前序遮蔽，也检查其声明目标，不以遮蔽绕过方案分配授权。
 
-规则 `/0` 是有序 catch-all，可能遮蔽其后规则，不移到末尾。方案 fallback.nodes 就是“全局经 X”的兜底；优先使用 fallback 表达兜底，避免与末尾 `/0` 重复。规则 /0 可覆盖单个家族，fallback.nodes 覆盖全部非 Mesh（必须有解析 IP）；domain-only 具体 suffix 可匹配，使用 nodes final 没有 IP 时明确报上下文错误。
+规则 `/0` 是有序 catch-all，可能遮蔽其后规则，不移到末尾；nodes `/0` 声明了私网目标，单凭 internet 不满足完整覆盖。方案 fallback.nodes 就是“全局经 X”的兜底，按实际地址做 grant fence；优先使用 fallback 表达兜底，避免与末尾 `/0` 重复。规则 /0 可覆盖单个家族；domain-only 具体 suffix 可匹配，使用 nodes final 没有 IP 时明确报上下文错误。
 
 出口节点必须具有调用方提供的 `exit_enabled = true` 管理员属性。出口 node selector 指向未开启节点时报字段错误；tag 只展开已开启节点，展开为空时报“候选不可用”，整个策略不编译。此开关不影响中转，任何满足连接事实的节点仍可承担路径中转。
 
@@ -129,6 +136,7 @@ Schema 表达字段与类型；`compile_network` 同时验证公共规则、方�
 | `ip_tables` / `source_ip_table` | 共享等价、互不重叠的纯 IP 前缀表，以及各源指向的表索引 |
 | `failures` | 不可达、路径长度或搜索预算失败，不伪造运行状态 |
 | `lints` | 完全遮蔽与规则集展开后部分 matcher 遮蔽统计；不使策略失效 |
+| `mesh_lints` | 按当前网络库存统计的 Mesh 完全遮挡 / 部分抢先、原始规则位置与具体流量示例；不使策略失效 |
 
 所有允许方案的目标在选择前生成源与出口侧完整路径投影；撤回 grants 或关闭出口需新快照重新编译。`exact_authorization(node)` **只投影 Mesh 路径**，去重后使用现有 MeshPathAuthorization 结构；`external_path_authorization(node)` 单独投影 External 路径，必须联合外部目的 grants 与 route-table 上下文安装，不能授权访问出口节点自身的 Mesh 地址。两者不添加反向、子路径或跳过中继的授权。它们不直接安装到 v2 Agent：v2 routing 交集、128 grants / 64 identities 发布上限、多备选 admission、真实出口过滤 / NAT 仍需后续集成。
 
@@ -136,11 +144,11 @@ Schema 表达字段与类型；`compile_network` 同时验证公共规则、方�
 
 上限：1024 节点、前三层各 128 规则、公共规则与每方案规则各 128、自定义方案 64、分配 128；grant 源 32 selectors、单表 / grant 合计范围 16,384，公共 + 单方案最多 16,384，全部自定义方案展开范围总计 65,536；出口 32 候选、6 mandatory hops、完整路径 8 节点、源策略 2 MiB、最多 4,200,000 输出路径（预算覆盖千节点 Mesh 与全部 global 方案共存）。单次约束搜索最多 100,000 弹出 / 排队状态；预算耗尽明确报告，不装绕过路径；输出预算耗尽整体 Err，不发布部分结果。
 
-设 N 为节点数、E 为边、R 为规则数、H 为路径上限、Q 为候选查询数、D 为范围条目数、U 为不同源适用规则集合数、S 为搜索预算。构图与 Mesh 匹配 O(N²R)，Mesh 冲突检查 O(R²N)。前缀索引 O(D×128)，每个源等价表分割 O(D×128)，共享表共 O(U×D×128)，lookup 只遍历最多 32 / 128 IP bits 与域名标签，再检查命中规则号，最多 R 个规则候选；没有线性扫描 8000 条 CIDR。Lint 逐 matcher 检查去重后的前序源上下文，支持多个前缀联合覆盖，最坏成本额外取决于 U 与被访问的索引子树。
+设 N 为节点数、E 为边、R 为规则数、H 为路径上限、Q 为候选查询数、D 为范围条目数、U 为不同源适用规则集合数、S 为搜索预算。构图、Mesh 匹配与库存 lint 为 O(N²R)，lint 仅保留每规则计数和一个示例，不存储 N²R 个匹配记录。前缀索引 O(D×128)，每个源等价表分割 O(D×128)，共享表共 O(U×D×128)，lookup 只遍历最多 32 / 128 IP bits 与域名标签，再检查命中规则号，最多 R 个规则候选；没有线性扫描 8000 条 CIDR。出口 lint 逐 matcher 检查去重后的前序源上下文，支持多个前缀联合覆盖，最坏成本额外取决于 U 与被访问的索引子树。
 
 无约束路径查询一般 O(N+E)，直接路径 O(log N)，共同邻居 O(degree×log N)；桥识别 O(N+E)。每个 primary 最多 H−1 次备选搜索；约束启发式 O(H(N+E)log N)，简单路径搜索最坏指数，以 S 限制，预算内约 O(S×degree×H + S log S)。总路径输出 O(QH)，存储 O(N² + 索引 + 共享表 + 路径节点 + 转发投影)。不是声称所有任意千节点策略都能在线性时间内编译。
 
-运行计时（release、macOS Apple Silicon、1000 节点、所有成员授权；不计构造输入，包含全部编译输出）见下表。计时测试无需 Docker，不设脆弱的 CI 时间断言：
+下表保留此前具体度匹配版本的历史计时基线（release、macOS Apple Silicon、1000 节点、所有成员授权；不计构造输入，包含全部编译输出）；尚未对当前 first-match / 库存 lint / 公网授权版本重测。计时测试无需 Docker，不设脆弱的 CI 时间断言：
 
 ```sh
 cargo test -p meshway-policy --release timing -- --ignored --nocapture
@@ -158,7 +166,7 @@ cargo test -p meshway-policy --release timing -- --ignored --nocapture
 
 路由方案 API 的 100,000 次 lookup 合计 **9.93 ms**（含方案选择与 grant fence，约 99 ns / 次）；对应测试为 profile_eight_thousand_cidr_timing。方案和前缀展平 property tests 同时验证三层共享结果、公共优先、按 STUN 地区自动选择、未知兜底、锁定、授权分配失败与所有候选出口侧精确路径覆盖。
 
-行为测试包含四节点全部 64 种无向图的简单路径穷举 oracle；80 组随机 IPv4 / IPv6 策略、每源 200 地址，验证不重叠表 == 顺序求值；另覆盖千节点 mandatory、前三层规则置换、出口顺序变化、mixed domain / IP、grants 范围、direct、默认选择、锁定、出口开关、规则集报告与迁移。
+行为测试包含四节点全部 64 种无向图的简单路径穷举 oracle；80 组随机 IPv4 / IPv6 策略、每源 200 地址，验证不重叠表 == 顺序求值；另覆盖千节点 mandatory、连接 / grants 规则置换、Mesh 与出口顺序变化、库存 lint 与 tag 成员变更、mixed domain / IP、公网与私网 grant 边界、direct、默认选择、锁定、出口开关、规则集报告与迁移。
 
 ## v2 → v3 迁移
 
@@ -167,23 +175,22 @@ cargo test -p meshway-policy --release timing -- --ignored --nocapture
 - live Access `{"default_action":"allow","rules":[]}` → 一条 `* → *` grant，**不会附赠互联网授权**。
 - default reject 下的纯 allow，或与后续 allow 不重叠的 reject → allow grants；顺序中 reject 挖出的例外不能变成 additive grants。
 - live 的两个相反方向 node → node、via 同一个完整中继 ID、default direct → 两条 Mesh mandatory 规则；行为测试比较两方向完整路径。
-- Mesh node / wildcard、无出口动作，且不同动作没有顺序重叠 → 无损转换。
+- Mesh node / wildcard、无出口动作 → 保留 v2 原顺序无损转换，允许不同动作重叠；同一原始规则的 selector 展开连续排列，不按生成 ID 排序。
 - Internet 明确 domain / CIDR → nodes / direct，保留原规则顺序，允许原有重叠；真实使用仍需独立外部 grant 与出口开启事实。
-- country、Mesh 域名 / CIDR predicate、any scope、routing reject / default reject、Mesh 不同动作的顺序重叠均保留 v2 并报告。Internet wildcard 也匹配无 IP 的 domain-only 上下文，不能静默转换成只看 IP 的两个 `/0`。
+- country、Mesh 域名 / CIDR predicate、any scope、routing reject / default reject 均保留 v2 并报告。Internet wildcard 也匹配无 IP 的 domain-only 上下文，不能静默转换成只看 IP 的两个 `/0`。
 
 典型报告：
 
 ```text
 rules[0].action: Reject exception office-deny cannot be represented by additive grants; retain v2 until rewritten
 rules[1].source.countries: Country selectors unsupported; node expansion is not equivalent for future members
-rules: Order-dependent overlap migrated-mesh-0-0-0 / migrated-mesh-1-0-0 requires predicate subtraction
 profiles[0].rules[0].candidates[0]: Referenced node is not enabled as an exit by the administrator
 ```
 
-这是保守的可证明子集转换器：即使某些冗余 / 完全被遮蔽规则数学上可化简，尚未实现完整 predicate subtraction / shadow-elimination 时也会明确报告需要重写，不声称无损。输出后的引用有效性仍由当前网络 `validate` 检查。
+这是保守的可证明子集转换器：Mesh 重叠无需 predicate subtraction，直接保留 first-match 原顺序；Access reject 例外等不可表达部分仍明确报告需要重写，不声称无损。输出后的引用有效性仍由当前网络 `validate` 检查。原 v2 Access 的节点成员 grants 不会被迁移成 internet 或出口 LAN 授权。
 
 ## 后续集成边界
 
 本切片没有新增 controller route、节点本地配置或设备自报开关。类型暂留 policy crate；正式 HTTP 契约接入时迁入 protocol 并同步生成 OpenAPI、运行时 schema、Agent/Web 客户端及 drift check。接入层负责 revision / network fencing、管理员出口开关、用户运行时选择、可信 DNS 上下文、真实出口转发 / NAT、状态型回包与数据面生效证据。
 
-先源后目的 Mesh 具体度、未匹配分配的模板、auto 子方案须显式允许、资源预算与一条逻辑备选是明确的引擎设计选择，未被描述为用户此前逐项确认的产品细节；对外契约冻结前应复核。路由方案、公共优先、first-match、规则集、direct、STUN 定位、用户切换、管理员开启与锁定均已确认，不再列为待决。
+Mesh / 出口有序 first-match、公网 internet 范围、库存相关遮挡提醒、路由方案、公共优先、规则集、direct、STUN 定位、用户切换、管理员开启与锁定均已确认，不再列为待决。方案分配仍使用 node > tag > * 的具体度（不是 Mesh 路由匹配）；其 template / auto 允许集合语义及资源预算沿用既有实现。

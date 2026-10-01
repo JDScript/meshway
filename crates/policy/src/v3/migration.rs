@@ -257,26 +257,8 @@ pub fn migrate_routing(old: &RoutingPolicy) -> Migration<MigratedRouting> {
             ),
         }
     }
-    // Overlap with different actions requires first-match subtraction. Even if
-    // one ordering happens to match v3 specificity, do not guess equivalence.
-    for (i, a) in out.mesh.iter().enumerate() {
-        for b in out.mesh.iter().skip(i + 1) {
-            if a.via != b.via
-                && selectors_overlap(std::slice::from_ref(&a.src), std::slice::from_ref(&b.src))
-                && selectors_overlap(std::slice::from_ref(&a.dst), std::slice::from_ref(&b.dst))
-            {
-                problem(
-                    &mut d,
-                    "rules",
-                    format!(
-                        "Order-dependent overlap {} / {} requires predicate subtraction",
-                        a.id, b.id
-                    ),
-                );
-            }
-        }
-    }
-    out.mesh.sort_by(|a, b| a.id.cmp(&b.id));
+    // Each v2 rule expands contiguously, preserving first-match precedence even
+    // when actions overlap. Do not sort IDs (rule 10 must remain after rule 9).
     Migration {
         converted: d.is_empty().then_some(out),
         diagnostics: d,

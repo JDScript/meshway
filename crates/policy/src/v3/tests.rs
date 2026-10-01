@@ -174,7 +174,7 @@ fn grants_union_bidirectional_and_routing_never_authorizes() {
     assert_eq!(c, compile_ok(&p, &f));
 }
 #[test]
-fn specificity_is_source_then_destination_and_conflicts_are_symbolic() {
+fn mesh_first_match_preserves_order_without_specificity_or_conflict_rejection() {
     let mut p = Policy::default_template();
     p.mesh = vec![
         MeshRule {
@@ -192,20 +192,36 @@ fn specificity_is_source_then_destination_and_conflicts_are_symbolic() {
     ];
     let f = facts(4);
     let c = compile_ok(&p, &f);
-    assert_eq!(path(&c, 0, 3)[0], vec![0, 2, 3]);
+    assert_eq!(path(&c, 0, 3)[0], vec![0, 1, 3]);
+    assert_eq!(c.mesh_lints.len(), 1);
+    let lint = &c.mesh_lints[0];
+    assert_eq!(lint.rule_id, "specific");
+    assert_eq!((lint.shadowed_flows, lint.total_flows), (1, 3));
+    assert!(!lint.fully_shadowed);
+    assert!(lint.inventory_dependent);
+    assert_eq!((lint.example.src, lint.example.dst), (0, 3));
+    assert_eq!(lint.example.winning_rule_id, "general");
+    assert_eq!(lint.example.winning_via, vec![selector(1)]);
+    assert_eq!(lint.example.shadowed_via, vec![selector(2)]);
     p.mesh.reverse();
-    assert_eq!(c, compile_ok(&p, &f));
+    let reversed = compile_ok(&p, &f);
+    assert_eq!(path(&reversed, 0, 3)[0], vec![0, 2, 3]);
+    assert_ne!(c, reversed);
     p.mesh.push(MeshRule {
         id: "conflict".into(),
         src: selector(0),
         dst: "*".into(),
         via: vec![selector(1)],
     });
-    assert!(
-        validate(&p, &f)
-            .iter()
-            .any(|e| e.message.contains("example") && e.message.contains("conflict"))
-    );
+    assert!(validate(&p, &f).is_empty());
+    let c = compile_ok(&p, &f);
+    let lint = c
+        .mesh_lints
+        .iter()
+        .find(|l| l.rule_id == "conflict")
+        .unwrap();
+    assert!(lint.fully_shadowed);
+    assert_eq!((lint.shadowed_flows, lint.total_flows), (3, 3));
     p.mesh.clear();
     p.mesh.push(mesh(0, 3, vec![selector(1)]));
     p.mesh.push(MeshRule {
@@ -213,6 +229,52 @@ fn specificity_is_source_then_destination_and_conflicts_are_symbolic() {
         ..p.mesh[0].clone()
     });
     assert!(validate(&p, &f).is_empty());
+    assert!(compile_ok(&p, &f).mesh_lints[0].fully_shadowed);
+
+    // An unreachable first match must never try the later rule or automatic path.
+    p.mesh[0].via = vec![selector(1)];
+    p.mesh[1].via.clear();
+    p.connections.push(block(0, 1));
+    p.connections.push(block(1, 2));
+    p.connections.push(block(1, 3));
+    assert!(path(&compile_ok(&p, &f), 0, 3).is_empty());
+}
+#[test]
+fn mesh_lints_expand_current_tags_and_recompute_after_inventory_changes() {
+    let mut f = facts(4);
+    f.tags.insert("tag:laptop".into());
+    f.nodes[0].tags.insert("tag:laptop".into());
+    let mut p = Policy::default_template();
+    p.mesh = vec![
+        MeshRule {
+            id: "first".into(),
+            src: selector(0),
+            dst: selector(3),
+            via: vec![selector(1)],
+        },
+        MeshRule {
+            id: "tag".into(),
+            src: "tag:laptop".into(),
+            dst: selector(3),
+            via: vec![selector(2)],
+        },
+    ];
+    let c = compile_ok(&p, &f);
+    assert!(c.mesh_lints[0].fully_shadowed);
+    f.nodes[1].tags.insert("tag:laptop".into());
+    let c = compile_ok(&p, &f);
+    assert!(!c.mesh_lints[0].fully_shadowed);
+    assert_eq!(
+        (c.mesh_lints[0].shadowed_flows, c.mesh_lints[0].total_flows),
+        (1, 2)
+    );
+    assert_eq!(path(&c, 1, 3)[0], vec![1, 2, 3]);
+    f.nodes.reverse();
+    assert_eq!(c, compile_ok(&p, &f));
+    for node in &mut f.nodes {
+        node.tags.remove("tag:laptop");
+    }
+    assert!(compile_ok(&p, &f).mesh_lints.is_empty());
 }
 #[test]
 fn exits_ordered_boundary_defaults_and_grant_fence() {
@@ -417,7 +479,39 @@ fn live_migration_is_lossless_and_exceptions_reported() {
     overlap.rules[1].source = overlap.rules[0].source.clone();
     overlap.rules[1].destination_any = overlap.rules[0].destination_any.clone();
     overlap.rules[1].action.via.clear();
-    assert!(migrate_routing(&overlap).converted.is_none());
+    let migrated = migrate_routing(&overlap).converted.unwrap();
+    assert_eq!(migrated.mesh[0].via, vec![format!("node:{via}")]);
+    assert!(migrated.mesh[1].via.is_empty());
+    let c = compile_ok(
+        &Policy {
+            mesh: migrated.mesh,
+            ..p.clone()
+        },
+        &f,
+    );
+    assert_eq!(path(&c, ai, bi)[0], vec![ai, vi, bi]);
+    assert!(c.mesh_lints[0].fully_shadowed);
+
+    // Lexical ID order differs at 10; expansion must retain original order.
+    let mut many = overlap.clone();
+    many.rules = (0..12)
+        .map(|i| {
+            let mut r = overlap.rules[usize::from(i != 0)].clone();
+            r.id = format!("r-{i}");
+            r
+        })
+        .collect();
+    let migrated = migrate_routing(&many).converted.unwrap();
+    assert_eq!(
+        migrated
+            .mesh
+            .iter()
+            .map(|r| r.id.clone())
+            .collect::<Vec<_>>(),
+        (0..12)
+            .map(|i| format!("migrated-mesh-{i}-0-0"))
+            .collect::<Vec<_>>()
+    );
 }
 #[test]
 fn migration_disjoint_reject_and_allow_is_equivalent() {
@@ -1162,6 +1256,12 @@ fn eight_thousand_cidr_timing() {
     );
     let mut p = Policy::default_template();
     p.grants = vec![internet()];
+    p.grants.push(Grant {
+        id: "lab-lan".into(),
+        src: vec!["*".into()],
+        dst: vec!["ip:10.0.0.0/8".into()],
+        bidirectional: false,
+    });
     let mut direct = exit("direct", ExitMatch::Cidr("10.0.0.0/16".into()), vec![]);
     direct.target = ExitTarget::Direct;
     p.exits = vec![

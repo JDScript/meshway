@@ -62,6 +62,209 @@ fn static_profile_rejection_keeps_original_source_locations() {
     );
     assert!(errors.iter().any(|d| d.field == "assignments[0].src"));
 }
+
+#[test]
+fn internet_only_cannot_assign_private_exit_ranges_but_specific_ip_grants_can() {
+    let f = facts(3);
+    for (range, ip) in [
+        ("10.0.0.0/8", "10.1.2.3"),
+        ("172.16.0.0/12", "172.31.1.1"),
+        ("192.168.0.0/16", "192.168.1.1"),
+        ("100.64.0.0/10", "100.96.1.1"),
+        ("169.254.0.0/16", "169.254.1.1"),
+        ("fc00::/7", "fd96::1"),
+        ("fe80::/10", "fe80::1"),
+    ] {
+        let mut p = policy();
+        p.profiles[0].rules[0].destinations = vec![ExitMatch::Cidr(range.into())];
+        let errors = compile_network(&p, &f, CompileOptions::default()).unwrap_err();
+        assert!(
+            errors
+                .iter()
+                .any(|d| d.field == "assignments[0].allowed"
+                    && d.message.contains("not fully covered")),
+            "{range}: {errors:?}"
+        );
+        p.grants.push(Grant {
+            id: "lan".into(),
+            src: vec!["*".into()],
+            dst: vec![format!("ip:{range}")],
+            bidirectional: false,
+        });
+        let c = compile_network(&p, &f, CompileOptions::default()).unwrap();
+        assert!(
+            matches!(
+                c.exit_for_profile(
+                    0,
+                    Some("office"),
+                    &unknown(),
+                    None,
+                    Some(ip.parse().unwrap())
+                )
+                .unwrap(),
+                ExitDecision::Paths(_)
+            ),
+            "{range}"
+        );
+    }
+    // A broad catch-all declares private targets too; Internet alone cannot
+    // authorize it. A global/final exit instead enforces the actual IP grant.
+    let mut p = policy();
+    p.profiles[0].rules[0].destinations = vec![ExitMatch::Cidr("0.0.0.0/0".into())];
+    assert!(compile_network(&p, &f, CompileOptions::default()).is_err());
+
+    // A public rule is checked even for mesh-only; profile selection cannot
+    // hide an unauthorized LAN target. Explicit ranges may combine with public
+    // Internet coverage to cover a mixed public/private CIDR completely.
+    let mut p = policy();
+    p.public_rules.push(rule(
+        "public-lan",
+        ExitMatch::Cidr("172.0.0.0/8".into()),
+        ExitTarget::Nodes,
+        2,
+    ));
+    assert!(
+        compile_network(&p, &f, CompileOptions::default())
+            .unwrap_err()
+            .iter()
+            .any(|d| d.message.contains("public-lan") && d.message.contains("not fully covered"))
+    );
+    p.grants.push(Grant {
+        id: "lan".into(),
+        src: vec!["*".into()],
+        dst: vec!["ip:172.16.0.0/12".into()],
+        bidirectional: false,
+    });
+    let c = compile_network(&p, &f, CompileOptions::default()).unwrap();
+    assert!(matches!(
+        c.exit_for_profile(
+            0,
+            Some(MESH_ONLY),
+            &unknown(),
+            None,
+            Some("172.16.1.1".parse().unwrap())
+        )
+        .unwrap(),
+        ExitDecision::Paths(_)
+    ));
+}
+
+#[test]
+fn internet_runtime_gate_checks_actual_ip_even_with_trusted_domain_context() {
+    let mut p = policy();
+    p.grants.push(Grant {
+        id: "domain".into(),
+        src: vec!["*".into()],
+        dst: vec!["domain:example.com".into()],
+        bidirectional: false,
+    });
+    let f = facts(3);
+    let c = compile_network(&p, &f, CompileOptions::default()).unwrap();
+    let kernel = compile(
+        &Policy {
+            grants: p.grants.clone(),
+            exits: p.profiles[0].rules.clone(),
+            ..Policy::default_template()
+        },
+        &f,
+        CompileOptions::default(),
+    )
+    .unwrap();
+    for ip in [
+        "10.1.1.1",
+        "172.16.1.1",
+        "192.168.1.1",
+        "100.64.1.1",
+        "100.96.1.1",
+        "169.254.1.1",
+        "fc00::1",
+        "fd96::1",
+        "fe80::1",
+    ] {
+        assert_eq!(
+            c.exit_for_profile(
+                0,
+                Some("office"),
+                &unknown(),
+                Some("example.com"),
+                Some(ip.parse().unwrap())
+            )
+            .unwrap(),
+            ExitDecision::Denied,
+            "{ip}"
+        );
+        assert_eq!(
+            c.exit_for_profile(
+                0,
+                Some(&global(2)),
+                &unknown(),
+                None,
+                Some(ip.parse().unwrap())
+            )
+            .unwrap(),
+            ExitDecision::Denied,
+            "{ip}"
+        );
+        assert_eq!(
+            kernel
+                .exit_for(0, Some("example.com"), Some(ip.parse().unwrap()))
+                .unwrap(),
+            ExitDecision::Denied,
+            "{ip}"
+        );
+    }
+    for ip in [
+        "8.8.8.8",
+        "1.1.1.1",
+        "100.63.255.255",
+        "100.128.0.1",
+        "172.15.255.255",
+        "172.32.0.1",
+        "2001:4860:4860::8888",
+    ] {
+        assert!(
+            matches!(
+                kernel
+                    .exit_for(0, Some("example.com"), Some(ip.parse().unwrap()))
+                    .unwrap(),
+                ExitDecision::Paths(_)
+            ),
+            "{ip}"
+        );
+        assert!(
+            matches!(
+                c.exit_for_profile(
+                    0,
+                    Some(&global(2)),
+                    &unknown(),
+                    None,
+                    Some(ip.parse().unwrap())
+                )
+                .unwrap(),
+                ExitDecision::Paths(_)
+            ),
+            "{ip}"
+        );
+    }
+    p.grants.push(Grant {
+        id: "lan".into(),
+        src: vec!["*".into()],
+        dst: vec!["ip:192.168.1.0/24".into()],
+        bidirectional: false,
+    });
+    let c = compile_network(&p, &f, CompileOptions::default()).unwrap();
+    assert!(matches!(
+        c.exit_for_profile(
+            0,
+            Some("office"),
+            &unknown(),
+            Some("example.com"),
+            Some("192.168.1.1".parse().unwrap())
+        )
+        .unwrap(),
+        ExitDecision::Paths(_)
+    ));
+}
 fn id(i: usize) -> String {
     format!("{i:064x}")
 }
@@ -444,6 +647,12 @@ fn profile_eight_thousand_cidr_timing() {
     );
     let mut p = NetworkPolicy::default_template();
     p.grants = vec![internet("*")];
+    p.grants.push(Grant {
+        id: "lab-lan".into(),
+        src: vec!["*".into()],
+        dst: vec!["ip:10.0.0.0/8".into()],
+        bidirectional: false,
+    });
     p.public_rules = vec![rule(
         "direct",
         ExitMatch::Cidr("10.0.0.0/16".into()),

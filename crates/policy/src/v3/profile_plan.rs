@@ -29,12 +29,7 @@ pub(super) struct Plan {
     pub requests: BTreeSet<PathRequest>,
 }
 fn all_external(base: &Compiled, src: usize) -> bool {
-    let a = &base.external_grants[src];
-    a.internet
-        || ["0.0.0.0/0", "::/0"].iter().all(|s| {
-            base.grant_index
-                .covered(&ExitMatch::Cidr((*s).into()), &a.range_grants)
-        })
+    super::internet::all_public(base, src)
 }
 fn requests(src: usize, candidates: &[String], via: &[String], nodes: &[&Node]) -> PathPlan {
     let mut seen = BTreeSet::new();
@@ -221,7 +216,6 @@ pub(super) fn plan(
             );
             let cached_lint = lint_cache.contains_key(&key);
             let mut lints = lint_cache.get(&key).cloned().unwrap_or_default();
-            let grant = &base.external_grants[src];
             for (rule, r) in m
                 .rules
                 .iter()
@@ -229,11 +223,10 @@ pub(super) fn plan(
                 .filter(|(_, r)| matches(&r.src, node))
             {
                 if r.target == ExitTarget::Nodes
-                    && !unrestricted
                     && !r
                         .destinations
                         .iter()
-                        .all(|d| base.grant_index.covered(d, &grant.range_grants))
+                        .all(|d| super::internet::covered(base, src, d))
                 {
                     report(
                         &mut diagnostics,
@@ -289,7 +282,7 @@ pub(super) fn plan(
                             &mut diagnostics,
                             format!("{assignment_field}.allowed"),
                             format!(
-                                "Profile {id} final exit requires grants covering all non-Mesh destinations"
+                                "Profile {id} final exit requires grants covering all public Internet destinations"
                             ),
                         );
                     }

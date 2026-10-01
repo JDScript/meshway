@@ -31,6 +31,7 @@ pub struct Compiled {
     pub ip_tables: Vec<Vec<super::index::FlattenedPrefix>>,
     pub source_ip_table: Vec<u16>,
     pub lints: Vec<ExitLint>,
+    pub mesh_lints: Vec<MeshLint>,
     pub failures: Vec<FlowFailure>,
 }
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
@@ -94,6 +95,29 @@ pub struct ExitLint {
     pub total_destinations: usize,
     pub fully_shadowed: bool,
 }
+/// Counts and examples depend on the current network inventory, including tags.
+/// Zero-current-match rules are not reported as permanently unreachable.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
+pub struct MeshLint {
+    pub rule_id: String,
+    pub rule: u16,
+    pub shadowed_flows: usize,
+    pub total_flows: usize,
+    pub fully_shadowed: bool,
+    pub inventory_dependent: bool,
+    pub example: MeshShadowExample,
+}
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
+pub struct MeshShadowExample {
+    pub src: u16,
+    pub dst: u16,
+    pub winning_rule_id: String,
+    pub winning_rule: u16,
+    pub winning_via: Vec<String>,
+    pub shadowed_via: Vec<String>,
+}
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 #[serde(deny_unknown_fields)]
 pub struct FlowFailure {
@@ -132,13 +156,7 @@ impl Compiled {
             return Err("Mapped IPv6 unsupported");
         }
         let entries = self.exits.get(src).ok_or("Unknown source index")?;
-        let grants = &self.external_grants[src];
-        let authorized = grants.internet
-            || self
-                .grant_index
-                .matching(domain.as_deref(), ip)
-                .iter()
-                .any(|g| grants.range_grants.contains(g));
+        let authorized = self.external_authorized(src, domain.as_deref(), ip);
         let best = self
             .exit_index
             .matching(domain.as_deref(), ip)
@@ -185,6 +203,25 @@ impl Compiled {
             Some(e) if e.paths.is_empty() => ExitDecision::Unreachable,
             Some(e) => ExitDecision::Paths(&e.paths),
         })
+    }
+    pub(super) fn external_authorized(
+        &self,
+        src: usize,
+        domain: Option<&str>,
+        ip: Option<IpAddr>,
+    ) -> bool {
+        let grants = &self.external_grants[src];
+        // Private/LAN addresses require an actual covering IP grant. Neither an
+        // Internet grant nor DNS context can turn them into public destinations.
+        let domain = if ip.is_some_and(|ip| !super::internet::contains(ip)) {
+            None
+        } else {
+            domain
+        };
+        self.grant_index
+            .matching(domain, ip)
+            .iter()
+            .any(|g| grants.range_grants.contains(g))
     }
     /// Same complete, directional path semantics as MeshPathAuthorization. Legacy
     /// publication budgets and v2 routing intersection still require integration.
