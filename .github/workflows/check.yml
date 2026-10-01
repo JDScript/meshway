@@ -22,10 +22,6 @@ jobs:
       - run: cargo fmt --all -- --check
       - run: cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
       - run: cargo test --workspace --all-features --locked
-      - run: PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s experiments/transport -p 'test_*.py'
-      - run: pnpm exec tsc --noEmit -p experiments/managed-connections/tsconfig.json
-      - run: node --test experiments/managed-connections/*.test.ts
-      - run: PYTHONDONTWRITEBYTECODE=1 python3 experiments/managed-connections/demo.test.py
       - run: pnpm typecheck
       - run: pnpm lint
       - run: pnpm test:protocol
@@ -33,3 +29,74 @@ jobs:
       - run: pnpm build:docs
       - run: pnpm exec playwright install --with-deps chromium
       - run: pnpm test:e2e
+
+  agent-features:
+    name: Agent ${{ matrix.build.name }} / ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+        build:
+          - name: default
+            args: ""
+          - name: lab
+            args: --no-default-features --features transport-lab
+          - name: managed
+            args: --no-default-features --features managed-connections
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@1.98.0
+      - run: cargo check -p meshway-agent --all-targets --locked ${{ matrix.build.args }}
+
+  fixture-python:
+    name: Python fixture / ${{ matrix.fixture.directory }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        fixture:
+          - directory: experiments/transport
+            command: python3 -B -m unittest discover -s experiments/transport -p 'test_*.py'
+          - directory: experiments/tunnel-throughput
+            command: python3 -B -m unittest discover -s experiments/tunnel-throughput -p 'test_*.py'
+          - directory: experiments/netcheck
+            command: python3 -B -m unittest discover -s experiments/netcheck -p 'test_*.py'
+          - directory: experiments/dns-resolver
+            command: python3 -B -m unittest discover -s experiments/dns-resolver -p 'test_*.py'
+          - directory: experiments/managed-connections
+            command: python3 -B experiments/managed-connections/demo.test.py
+          - directory: experiments/managed-dataplane
+            command: python3 -B experiments/managed-dataplane/container.test.py
+          - directory: experiments/managed-dns
+            command: python3 -B experiments/managed-dns/wire.test.py
+          - directory: experiments/managed-discovery
+            command: python3 -B experiments/managed-discovery/host.test.py
+          - directory: scripts
+            command: python3 -B -m unittest discover -s scripts -p 'test_dev.py'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      # Host-only unit fixtures: private scratch files / ephemeral loopback,
+      # never Docker builds, runner main(), or persistent service mutations.
+      - run: ${{ matrix.fixture.command }}
+
+  fixture-typescript:
+    name: TypeScript fixture / ${{ matrix.fixture }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        fixture: [managed-connections, managed-dataplane, managed-dns, managed-discovery]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm exec tsc --noEmit -p experiments/${{ matrix.fixture }}/tsconfig.json
+      - run: node --test experiments/${{ matrix.fixture }}/*.test.ts
