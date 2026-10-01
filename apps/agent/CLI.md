@@ -96,6 +96,9 @@ they do not imply records are active. Lease below one whole second is expired,
 matching the answer fence. Metadata is a point-in-time observation, never a
 cached ACK or successful query. Disabled/expired/unavailable status from a
 running daemon is an ordinary successful status command (exit 0).
+Disabled is also a leased, freshly accepted snapshot: it reports remaining
+lease time with `active_revision=null`. A known newer revision withdraws it;
+lease expiry changes its status to expired even while controller HTTP is stalled.
 
 `dns query` first reads that status, then sends a fresh DNS transaction to its
 bound listener over UDP (default) or TCP (`--tcp`). Names default to `A`;

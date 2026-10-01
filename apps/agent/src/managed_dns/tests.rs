@@ -126,7 +126,107 @@ fn expired_withdrawn_disabled_and_fractional_lease_never_answer() {
     assert_eq!(expired.metadata.response_code, ResponseCode::ServFail);
     guard.withdraw();
     assert!(response(&guard, &request).answers.is_empty());
+    let guard = active();
     guard.disable();
+    assert_eq!(
+        response(&guard, &request).metadata.response_code,
+        ResponseCode::Refused
+    );
+}
+
+#[cfg(unix)]
+fn leased_disabled() -> Guard {
+    let guard = Guard::default();
+    guard.listener_bound("127.0.0.1:5353".parse().unwrap(), None);
+    assert!(guard.publish_snapshot(
+        Zone {
+            name: name("meshway.test."),
+            ttl: 30,
+            forward: BTreeMap::new(),
+            reverse: BTreeMap::new(),
+        },
+        Instant::now() + Duration::from_secs(45),
+        1,
+        false,
+        None,
+        None,
+    ));
+    guard
+}
+
+#[cfg(unix)]
+#[tokio::test(start_paused = true)]
+async fn disabled_snapshot_newer_revision_withdraws_status_answers_and_generation() {
+    use crate::diagnostics::dns::State as DnsState;
+    let guard = leased_disabled();
+    let before = guard.status();
+    let generation = guard.0.read().unwrap().generation.clone();
+    assert_eq!(before.state, DnsState::Disabled);
+    assert_eq!(before.active_revision, None);
+    assert!(before.lease_remaining_ms > 0);
+    let request = query("demo-sha.meshway.test.", RecordType::A);
+    assert_eq!(
+        response(&guard, &request).metadata.response_code,
+        ResponseCode::Refused
+    );
+    guard.observe_revision(2);
+    let withdrawn = guard.status();
+    assert_eq!(withdrawn.state, DnsState::Unavailable);
+    assert_eq!(withdrawn.revision_floor, 2);
+    assert!(withdrawn.generation > before.generation);
+    assert!(!Arc::ptr_eq(
+        &generation,
+        &guard.0.read().unwrap().generation
+    ));
+    assert_eq!(withdrawn.lease_remaining_ms, 0);
+    assert_eq!(withdrawn.zone, before.zone);
+    assert_eq!(
+        response(&guard, &request).metadata.response_code,
+        ResponseCode::ServFail
+    );
+}
+
+#[cfg(unix)]
+#[tokio::test(start_paused = true)]
+async fn disabled_snapshot_expires_before_watchdog_and_can_recover_only_with_fresh_publication() {
+    use crate::diagnostics::dns::State as DnsState;
+    let guard = leased_disabled();
+    let before = guard.status();
+    let generation = guard.0.read().unwrap().generation.clone();
+    let request = query("demo-sha.meshway.test.", RecordType::A);
+    // Match the whole-second positive/disabled answer fence before the watchdog runs.
+    tokio::time::advance(Duration::from_millis(44_500)).await;
+    assert_eq!(guard.status().state, DnsState::Expired);
+    assert_eq!(
+        response(&guard, &request).metadata.response_code,
+        ResponseCode::ServFail
+    );
+    assert!(guard.expire(Instant::now()));
+    let expired = guard.status();
+    assert_eq!(expired.state, DnsState::Expired);
+    assert_eq!(expired.active_revision, None);
+    assert_eq!(expired.lease_remaining_ms, 0);
+    assert!(expired.generation > before.generation);
+    assert!(!Arc::ptr_eq(
+        &generation,
+        &guard.0.read().unwrap().generation
+    ));
+    assert!(!guard.expire(Instant::now() + Duration::from_secs(1)));
+    assert!(guard.publish_snapshot(
+        Zone {
+            name: name("meshway.test."),
+            ttl: 30,
+            forward: BTreeMap::new(),
+            reverse: BTreeMap::new(),
+        },
+        Instant::now() + Duration::from_secs(10),
+        2,
+        false,
+        None,
+        None,
+    ));
+    assert_eq!(guard.status().state, DnsState::Disabled);
+    assert_eq!(guard.status().active_revision, None);
     assert_eq!(
         response(&guard, &request).metadata.response_code,
         ResponseCode::Refused

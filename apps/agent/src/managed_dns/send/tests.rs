@@ -164,6 +164,47 @@ async fn pending_udp_and_tcp_old_positive_is_fenced_for_every_withdrawal() {
 }
 
 #[tokio::test]
+async fn pending_disabled_refusal_is_fenced_by_newer_revision_and_expiry() {
+    for tcp in [false, true] {
+        for newer_revision in [false, true] {
+            let (guard, original) = prepared(tcp, Duration::from_secs(10));
+            guard.disable();
+            let response = guard
+                .prepare(&original.query.to_vec().unwrap(), tcp)
+                .unwrap();
+            assert!(response.deadline.is_some());
+            let writer = Arc::new(PendingWriter::new(false));
+            let task_writer = writer.clone();
+            let task_guard = guard.clone();
+            let task = tokio::spawn(async move {
+                transmit(task_writer.as_ref(), &task_guard, response, Instant::now).await
+            });
+            tokio::time::timeout(Duration::from_secs(2), writer.waiting.notified())
+                .await
+                .unwrap();
+            assert_eq!(
+                decode(&writer.attempts.lock().unwrap()[0], tcp)
+                    .metadata
+                    .response_code,
+                hickory_proto::op::ResponseCode::Refused
+            );
+            if newer_revision {
+                guard.observe_revision(2);
+            } else {
+                assert!(guard.expire(Instant::now() + Duration::from_secs(11)));
+            }
+            tokio::time::timeout(Duration::from_secs(2), task)
+                .await
+                .unwrap()
+                .unwrap()
+                .unwrap();
+            writer.unblock();
+            assert!(writer.sent.lock().unwrap().is_empty());
+        }
+    }
+}
+
+#[tokio::test]
 async fn would_block_discards_serialized_ttl_and_reencodes_at_current_clock() {
     for tcp in [false, true] {
         let (guard, response) = prepared(tcp, Duration::from_secs(60));

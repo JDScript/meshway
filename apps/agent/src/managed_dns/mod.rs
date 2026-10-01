@@ -52,7 +52,8 @@ struct Publication {
 struct State {
     generation: Arc<()>,
     generation_number: u64,
-    active: Option<Publication>,
+    /// Both enabled and disabled accepted snapshots carry freshness evidence.
+    accepted: Option<Publication>,
     disabled: bool,
     expired: bool,
     revision_floor: u32,
@@ -111,16 +112,16 @@ impl Guard {
     pub fn status(&self) -> crate::diagnostics::dns::Status {
         use crate::diagnostics::dns::{State as StatusState, Status, StatusEvidence};
         let state = self.0.read().expect("DNS guard poisoned");
-        let remaining = state.active.as_ref().map_or(Duration::ZERO, |active| {
-            active.deadline.saturating_duration_since(Instant::now())
+        let remaining = state.accepted.as_ref().map_or(Duration::ZERO, |accepted| {
+            accepted.deadline.saturating_duration_since(Instant::now())
         });
         let status = if state.terminated || !state.listener_bound {
             StatusState::Unavailable
-        } else if state.disabled {
-            StatusState::Disabled
-        } else if state.expired || (state.active.is_some() && remaining.as_secs() == 0) {
+        } else if state.expired || (state.accepted.is_some() && remaining.as_secs() == 0) {
             StatusState::Expired
-        } else if state.active.is_some() {
+        } else if state.disabled && state.accepted.is_some() {
+            StatusState::Disabled
+        } else if state.accepted.is_some() {
             StatusState::Active
         } else {
             StatusState::Unavailable
@@ -130,11 +131,16 @@ impl Guard {
             state: status,
             generation: state.generation_number,
             revision_floor: state.revision_floor,
-            active_revision: (status == StatusState::Active)
-                .then(|| state.active.as_ref().expect("active publication").revision),
+            active_revision: (status == StatusState::Active).then(|| {
+                state
+                    .accepted
+                    .as_ref()
+                    .expect("active publication")
+                    .revision
+            }),
             zone: state.zone.clone(),
             ttl: state.ttl,
-            lease_remaining_ms: if status == StatusState::Active {
+            lease_remaining_ms: if matches!(status, StatusState::Active | StatusState::Disabled) {
                 remaining.as_millis().min(u128::from(u64::MAX)) as u64
             } else {
                 0
@@ -149,7 +155,7 @@ impl Guard {
 
     pub fn withdraw(&self) {
         let mut state = self.0.write().expect("DNS guard poisoned");
-        state.active = None;
+        state.accepted = None;
         state.disabled = false;
         state.expired = false;
         self.changed(&mut state);
@@ -158,15 +164,14 @@ impl Guard {
     #[cfg(test)]
     pub fn disable(&self) {
         let mut state = self.0.write().expect("DNS guard poisoned");
-        state.active = None;
-        state.disabled = !state.terminated;
+        state.disabled = !state.terminated && state.accepted.is_some();
         state.expired = false;
         self.changed(&mut state);
     }
 
     pub fn shutdown(&self) {
         let mut state = self.0.write().expect("DNS guard poisoned");
-        state.active = None;
+        state.accepted = None;
         state.disabled = false;
         state.terminated = true;
         state.expired = false;
@@ -177,11 +182,11 @@ impl Guard {
         let mut state = self.0.write().expect("DNS guard poisoned");
         state.revision_floor = state.revision_floor.max(revision);
         if state
-            .active
+            .accepted
             .as_ref()
-            .is_some_and(|active| active.revision < revision)
+            .is_some_and(|accepted| accepted.revision < revision)
         {
-            state.active = None;
+            state.accepted = None;
             state.disabled = false;
             state.expired = false;
             self.changed(&mut state);
@@ -195,11 +200,12 @@ impl Guard {
     pub fn expire(&self, now: Instant) -> bool {
         let mut state = self.0.write().expect("DNS guard poisoned");
         if state
-            .active
+            .accepted
             .as_ref()
-            .is_some_and(|active| active.deadline.saturating_duration_since(now).as_secs() == 0)
+            .is_some_and(|accepted| accepted.deadline.saturating_duration_since(now).as_secs() == 0)
         {
-            state.active = None;
+            state.accepted = None;
+            state.disabled = false;
             state.expired = true;
             self.changed(&mut state);
             return true;
@@ -210,7 +216,7 @@ impl Guard {
     pub fn conflict(&self, revision: u32) {
         let mut state = self.0.write().expect("DNS guard poisoned");
         state.revision_floor = state.revision_floor.max(revision.saturating_add(1));
-        state.active = None;
+        state.accepted = None;
         state.disabled = false;
         state.expired = false;
         self.changed(&mut state);
@@ -242,7 +248,7 @@ impl Guard {
         state.ttl = Some(zone.ttl);
         state.network_id = network_id;
         state.node_id = node_id;
-        state.active = enabled.then(|| Publication {
+        state.accepted = Some(Publication {
             zone: Arc::new(zone),
             deadline,
             revision,
@@ -287,20 +293,20 @@ impl Guard {
             response.metadata.response_code = ResponseCode::FormErr;
             return response;
         }
-        let Some(active) = &state.active else {
-            response.metadata.response_code = if state.disabled {
-                ResponseCode::Refused
-            } else {
-                ResponseCode::ServFail
-            };
+        let Some(accepted) = &state.accepted else {
+            response.metadata.response_code = ResponseCode::ServFail;
             return response;
         };
-        let remaining = active.deadline.saturating_duration_since(now).as_secs();
+        let remaining = accepted.deadline.saturating_duration_since(now).as_secs();
         if remaining == 0 {
             response.metadata.response_code = ResponseCode::ServFail;
             return response;
         }
-        let zone = &active.zone;
+        if state.disabled {
+            response.metadata.response_code = ResponseCode::Refused;
+            return response;
+        }
+        let zone = &accepted.zone;
         let question = &query.queries[0];
         let name = question.name().to_lowercase();
         let in_zone = zone.name.zone_of(&name);
@@ -362,11 +368,11 @@ impl Guard {
             generation: state.generation.clone(),
             // New queries after expiry still get a fresh SERVFAIL even before
             // the watchdog retires the publication. Previously prepared
-            // positive responses retain their deadline and are canceled.
+            // positive/disabled responses retain their deadline and are canceled.
             deadline: state
-                .active
+                .accepted
                 .as_ref()
-                .map(|active| active.deadline)
+                .map(|accepted| accepted.deadline)
                 .filter(|deadline| {
                     deadline.saturating_duration_since(Instant::now()).as_secs() > 0
                 }),

@@ -85,7 +85,10 @@ configuration endpoints are added.
   Each answer TTL is bounded by both the controller TTL and whole remaining
   lease seconds. With less than one second remaining no positive RR is returned.
   An independent watchdog retires expired publication. Unavailable DNS responds
-  SERVFAIL; explicitly disabled DNS responds REFUSED. No old records are served.
+  SERVFAIL; freshly accepted explicitly disabled DNS responds REFUSED. Disabled
+  snapshots carry the same accepted revision and lease deadline as enabled
+  snapshots: a known newer revision withdraws them, and expiry changes REFUSED
+  to SERVFAIL independently of HTTP. No old records are served.
 - No negative caching SOA TTL is published. Previously cached client positive
   answers may survive until their already-announced TTL; withdrawal does not
   claim to flush remote caches instantly.
