@@ -3,6 +3,8 @@ use std::{path::PathBuf, time::Duration};
 use clap::{Parser, Subcommand};
 use meshway_agent::{Agent, ControlSyncReceipts, SyncReceipt, connections_status, status};
 
+mod cli_netcheck;
+
 #[cfg(all(feature = "managed-connections", unix))]
 mod cli_dns;
 #[cfg(all(feature = "managed-connections", unix))]
@@ -20,6 +22,8 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Command {
+    /// Measure explicit STUN observers using an independent temporary UDP socket.
+    Netcheck(cli_netcheck::Args),
     /// Observe current daemon DNS metadata or perform a real loopback DNS query.
     #[cfg(all(feature = "managed-connections", unix))]
     Dns {
@@ -172,6 +176,7 @@ async fn main() {
 
 async fn execute(command: Command) -> Result<(), Box<dyn std::error::Error>> {
     match command {
+        Command::Netcheck(args) => cli_netcheck::execute(args).await?,
         #[cfg(all(feature = "managed-connections", unix))]
         Command::Dns { command } => cli_dns::execute(command).await?,
         #[cfg(all(feature = "managed-connections", unix))]

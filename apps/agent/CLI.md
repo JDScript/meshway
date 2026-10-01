@@ -1,6 +1,6 @@
 # Agent local diagnostics
 
-Build the Unix agent with `--features managed-connections`. These commands use
+Build the Unix agent with `--features managed-connections` for the daemon diagnostics below. These commands use
 the running `run --apply-connections`, `run --apply-dataplane`, or DNS-only
 `run --dns-listen 127.0.0.1:5353` daemon's existing
 private `<state>.control.sock`; they never load a private key, take a second state
@@ -127,5 +127,31 @@ and identity lock; managed status/whois/ping are unavailable in DNS-only mode.
 Managed-only DNS status reports unavailable with no listener. DNS and managed
 connections together share one socket rather than binding competing servers.
 
-Service installation, up/set/down/login/logout, netcheck/STUN,
-and multi-hop tracing are later slices.
+## Independent UDP netcheck
+
+`netcheck` is available in both default and `managed-connections` builds, without
+a running daemon, state file or credentials. It binds one new temporary UDP
+socket and measures **explicit numeric** STUN observers, in supplied order,
+then repeats the first observer when at least two were supplied.
+
+```sh
+meshway-agent netcheck --stun-server 127.0.0.1:3478 --bind 0.0.0.0:0 --timeout-ms 1000 --json
+meshway-agent netcheck --stun-server '[::1]:3478' --bind '[::]:0'
+```
+
+These examples require a separately running local STUN server. No public server
+is defaulted and no DNS lookup occurs. The JSON stdout is exactly one closed
+`netcheck::Report` (also when all probes fail). At least one mapping observed
+exits 0; all failed probes or a bind/IO failure exit 1 with stderr diagnostics;
+invalid options exit 2. Bind failure emits no report because no socket exists.
+
+The 30-second observation window starts at `measured_at`; the socket is closed
+before output. Mappings are neither current carrier listeners nor usable
+candidates. Unknown comparisons are `null`/`unknown`, never inferred false.
+STUN does not authenticate a Meshway peer or establish hole punching, and IPv6
+underlay measurement does not establish IPv6 mesh support.
+
+See [NETCHECK.md](NETCHECK.md) for validation, exact report fields, freshness,
+wire limits, and fixture commands. Real carrier-socket measurement and controller
+reporting belong to a later M2 slice. Service installation,
+up/set/down/login/logout, and multi-hop tracing are later slices.

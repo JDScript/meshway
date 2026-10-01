@@ -3,6 +3,8 @@
 #[allow(dead_code, clippy::all)]
 pub mod generated;
 
+pub mod netcheck;
+
 // Share the production filesystem implementation with unit tests, while its
 // fault hooks remain strictly cfg(test) and absent from production dependencies.
 #[cfg(test)]
