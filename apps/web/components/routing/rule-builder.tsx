@@ -10,8 +10,9 @@ import {
   Trash2Icon,
   XIcon,
 } from "lucide-react"
-import { useEffect, useId, useMemo, useRef, useState, type ReactNode } from "react"
+import { useId, useMemo, useState, type ReactNode } from "react"
 
+import { AdvancedSection } from "@/components/common/advanced-section"
 import { OptionSelect } from "@/components/common/option-select"
 import { Segmented } from "@/components/common/segmented"
 import { DiagnosticList } from "@/components/routing/diagnostics"
@@ -54,28 +55,26 @@ import {
   sameForm,
   toRuleDraft,
   validateRuleForm,
+  type BuilderSession,
   type RuleForm,
 } from "@/lib/rule-form"
 import { cn } from "@/lib/utils"
 
-export type BuilderSession = {
-  /** Increments per opening so the form remounts with fresh state. */
-  id: number
-  mode: "edit" | "new"
-  initial: RuleForm
-  /** Position the rule has (edit) or will take (new) in the ordered list. */
-  position: number
-}
-
 const kindOptions = destinationKindOptions.map(({ value }) => ({ value, label: kindLabels[value] }))
 
 /**
- * Focused editor for one rule. Edits stay local until "apply", which hands a
- * RuleDraft back to the policy editor; closing with changes asks first.
+ * Focused editor for one rule. Edits stay in the form until "apply", which
+ * hands a RuleDraft back to the policy editor. Unapplied edits (`dirty`) are
+ * owned by the editor, which keeps them in the console-scoped draft store:
+ * navigating away and back reopens the builder with them. Closing with
+ * unapplied edits asks first; while open the sheet is modal, which also keeps
+ * the global command menu from navigating away underneath it.
  */
 export function RuleBuilder({
   session,
   open,
+  dirty,
+  onWorkingChange,
   onClose,
   onApply,
   onDelete,
@@ -88,6 +87,10 @@ export function RuleBuilder({
 }: {
   session: BuilderSession | null
   open: boolean
+  /** The open session holds unapplied edits. */
+  dirty: boolean
+  /** Unapplied form contents, or null when the form matches its initial value. */
+  onWorkingChange: (form: RuleForm | null) => void
   onClose: () => void
   onApply: (rule: RuleDraft) => void
   onDelete: () => void
@@ -99,10 +102,9 @@ export function RuleBuilder({
   disabled: boolean
 }) {
   const [confirmDiscard, setConfirmDiscard] = useState(false)
-  const dirtyRef = useRef(false)
 
   const requestClose = () => {
-    if (dirtyRef.current) setConfirmDiscard(true)
+    if (dirty) setConfirmDiscard(true)
     else onClose()
   }
 
@@ -125,18 +127,10 @@ export function RuleBuilder({
               diagnostics={diagnostics}
               diagnosticsStale={diagnosticsStale}
               disabled={disabled}
-              onDirtyChange={(dirty) => {
-                dirtyRef.current = dirty
-              }}
+              onWorkingChange={onWorkingChange}
               onCancel={requestClose}
-              onApply={(rule) => {
-                dirtyRef.current = false
-                onApply(rule)
-              }}
-              onDelete={() => {
-                dirtyRef.current = false
-                onDelete()
-              }}
+              onApply={onApply}
+              onDelete={onDelete}
             />
           ) : null}
         </SheetContent>
@@ -155,7 +149,6 @@ export function RuleBuilder({
               variant="destructive"
               onClick={() => {
                 setConfirmDiscard(false)
-                dirtyRef.current = false
                 onClose()
               }}
             >
@@ -176,7 +169,7 @@ function BuilderForm({
   diagnostics,
   diagnosticsStale,
   disabled,
-  onDirtyChange,
+  onWorkingChange,
   onCancel,
   onApply,
   onDelete,
@@ -188,30 +181,26 @@ function BuilderForm({
   diagnostics: PolicyDiagnostic[]
   diagnosticsStale: boolean
   disabled: boolean
-  onDirtyChange: (dirty: boolean) => void
+  onWorkingChange: (form: RuleForm | null) => void
   onCancel: () => void
   onApply: (rule: RuleDraft) => void
   onDelete: () => void
 }) {
-  const [form, setFormState] = useState<RuleForm>(session.initial)
+  const [form, setFormState] = useState<RuleForm>(session.working ?? session.initial)
   const [attempted, setAttempted] = useState(false)
   const baseId = useId()
-  const nextKey = useRef(0)
-  const newKey = () => `${form.key}-f${nextKey.current++}`
+  // Unique among the current rows, including rows restored from the store.
+  const newKey = () => {
+    const taken = new Set(form.destinations.map((selector) => selector.key))
+    let n = 0
+    while (taken.has(`${form.key}-f${n}`)) n += 1
+    return `${form.key}-f${n}`
+  }
 
   const setForm = (next: RuleForm) => {
     setFormState(next)
-    onDirtyChange(!sameForm(next, session.initial))
+    onWorkingChange(sameForm(next, session.initial) ? null : next)
   }
-
-  // Unapplied form edits are not part of the kept draft; warn on reload.
-  const formDirty = !sameForm(form, session.initial)
-  useEffect(() => {
-    if (!formDirty) return
-    const warn = (event: BeforeUnloadEvent) => event.preventDefault()
-    window.addEventListener("beforeunload", warn)
-    return () => window.removeEventListener("beforeunload", warn)
-  }, [formDirty])
 
   const issues = useMemo(
     () => validateRuleForm(form, others, defaultAction),
@@ -280,34 +269,24 @@ function BuilderForm({
           {session.mode === "new" ? "新建规则" : "编辑规则"}
         </SheetTitle>
         <SheetDescription>
-          第 {session.position + 1} 条 · 规则自上而下匹配，第一条命中的规则生效。
+          第 {session.position + 1} 条 · 自上而下匹配，第一条命中的规则生效。同一组内的条件满足任一即可。
         </SheetDescription>
       </SheetHeader>
 
       <div className="flex-1 overflow-y-auto">
-        <div className="border-b bg-muted/30 px-4 py-3">
+        <div className="flex flex-col gap-2 border-b bg-muted/30 px-4 py-3">
           <RuleSummary rule={draft} nodes={nodes} />
+          {form.sourceMode === "any" && form.targetMode === "all" ? (
+            <p className="flex items-start gap-1.5 text-xs text-warning">
+              <InfoIcon className="mt-0.5 size-3.5 shrink-0" />
+              {form.scope === "any"
+                ? "这条规则匹配全部流量：排在它后面的规则和默认动作都不会再生效。"
+                : `这条规则匹配所有来源访问的全部${form.scope === "mesh" ? " Mesh 节点" : "互联网"}目标，后面同范围的规则不会再生效。`}
+            </p>
+          ) : null}
         </div>
 
         <div className="flex flex-col divide-y">
-          <Section title="规则 ID">
-            <div className="flex flex-col gap-1.5">
-              <Label htmlFor={`${baseId}-id`} className="sr-only">
-                规则 ID
-              </Label>
-              <Input
-                id={`${baseId}-id`}
-                value={form.id}
-                onChange={(event) => setForm({ ...form, id: event.target.value })}
-                autoComplete="off"
-                spellCheck={false}
-                aria-invalid={show("id") || undefined}
-                className="max-w-xs font-mono"
-              />
-              <span className="text-xs text-muted-foreground">在策略中唯一，用于诊断与预览结果。</span>
-            </div>
-          </Section>
-
           <Section title="来源" description="节点与国家同时填写时需同时满足；同一类内满足任一即可。">
             <Segmented
               value={form.sourceMode}
@@ -553,6 +532,23 @@ function BuilderForm({
               </p>
             )}
           </Section>
+
+          <AdvancedSection summary={`ID ${form.id.trim() || "—"}`} attention={show("id")}>
+            <div className="flex flex-col gap-1.5">
+              <Label htmlFor={`${baseId}-id`}>规则 ID</Label>
+              <Input
+                id={`${baseId}-id`}
+                value={form.id}
+                onChange={(event) => setForm({ ...form, id: event.target.value })}
+                autoComplete="off"
+                spellCheck={false}
+                aria-invalid={show("id") || undefined}
+                className="max-w-xs font-mono"
+              />
+              <FieldIssues issues={issues} field="id" visible={attempted || session.mode === "edit"} />
+              <span className="text-xs text-muted-foreground">在策略中唯一，诊断与预览结果用它指代这条规则。</span>
+            </div>
+          </AdvancedSection>
 
           {issues.length > 0 && attempted ? (
             <Section title="需要修复">

@@ -107,7 +107,7 @@ export function AccountMenu() {
               disabled={pending}
               onClick={() => {
                 // Unsaved drafts belong to this session only.
-                drafts.clear()
+                drafts.reset()
                 connectionDrafts.reset()
                 startTransition(() => logout())
               }}

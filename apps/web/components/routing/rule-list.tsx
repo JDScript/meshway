@@ -14,7 +14,7 @@ import {
 } from "lucide-react"
 import { useEffect, useRef } from "react"
 
-import { RuleSummary } from "@/components/routing/rule-summary"
+import { ruleHeadline, RuleSummary } from "@/components/routing/rule-summary"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import {
@@ -138,9 +138,15 @@ function RuleRow({
         aria-label={`编辑规则 ${label}`}
         className="flex min-w-0 flex-1 flex-col gap-2 text-left focus-visible:outline-none disabled:cursor-not-allowed"
       >
-        <span className="flex flex-wrap items-center gap-2">
-          <span className="truncate font-mono text-sm font-medium group-hover/rule:underline group-focus-within/rule:underline">
-            {label}
+        <span className="flex min-w-0 flex-wrap items-center gap-2">
+          <Badge
+            variant={rule.action === "reject" ? "destructive" : "secondary"}
+            className="font-normal"
+          >
+            {rule.action === "reject" ? "拒绝" : "路由"}
+          </Badge>
+          <span className="line-clamp-2 min-w-0 text-sm font-medium break-words group-hover/rule:underline group-focus-within/rule:underline">
+            {ruleHeadline(rule, nodes)}
           </span>
           {change ? (
             <Badge variant="outline" className={change.className}>
@@ -164,6 +170,7 @@ function RuleRow({
           ) : null}
         </span>
         <RuleSummary rule={rule} nodes={nodes} />
+        <span className="font-mono text-[0.6875rem] text-muted-foreground">ID {label}</span>
       </button>
       <div className="flex shrink-0 items-center gap-0.5">
         <Button

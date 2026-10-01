@@ -248,7 +248,7 @@ export function TopologyView({
                 设为目标
               </Button>
               <Link
-                href={`/nodes?q=${encodeURIComponent(selected.id)}`}
+                href={`/nodes/${encodeURIComponent(selected.id)}`}
                 className={buttonVariants({ variant: "ghost", size: "sm" })}
               >
                 节点详情

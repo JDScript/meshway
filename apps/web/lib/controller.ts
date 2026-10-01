@@ -2,10 +2,12 @@ import "server-only"
 
 import {
   ControlApiError,
+  getConnectionRuntimes,
   getConnections,
   getOverview,
   getPolicy,
   listNodes,
+  type ConnectionRuntimesSnapshot,
   type ConnectionsSnapshot,
   type NodeList,
   type Overview,
@@ -22,7 +24,7 @@ export function controllerUrl(): string {
 
 export type ControllerResult<T> =
   | { ok: true; data: T; fetchedAt: number }
-  | { ok: false; error: string }
+  | { ok: false; error: string; fetchedAt: number }
 
 /** The controller rejected the administrator credential itself. */
 export function isCredentialRejected(error: unknown): boolean {
@@ -62,7 +64,7 @@ async function authorizedRead<T>(
     return { ok: true, data, fetchedAt: Date.now() }
   } catch (error) {
     if (!isCredentialRejected(error)) {
-      return { ok: false, error: describeError(error, token) }
+      return { ok: false, error: describeError(error, token), fetchedAt: Date.now() }
     }
   }
   redirect(EXPIRED_LOGIN_PATH)
@@ -82,4 +84,9 @@ export function fetchPolicy(): Promise<ControllerResult<PolicySnapshot>> {
 
 export function fetchConnections(): Promise<ControllerResult<ConnectionsSnapshot>> {
   return authorizedRead(getConnections)
+}
+
+/** Agent self-reports; a separate read so an outage never hides the saved plan. */
+export function fetchConnectionRuntimes(): Promise<ControllerResult<ConnectionRuntimesSnapshot>> {
+  return authorizedRead(getConnectionRuntimes)
 }

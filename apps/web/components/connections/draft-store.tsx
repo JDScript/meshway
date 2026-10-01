@@ -51,3 +51,13 @@ export function useConnectionsDraftStore(): ConnectionsDraftRegistry {
   }
   return registry
 }
+
+/** Whether unsaved connections work is kept (for navigation badges). */
+export function useConnectionsHasDraft(): boolean {
+  const registry = useConnectionsDraftStore()
+  return useSyncExternalStore(
+    (listener) => registry.subscribe(listener),
+    () => registry.hasDraft(),
+    () => false
+  )
+}

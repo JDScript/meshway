@@ -82,3 +82,15 @@ export function summarizeInventory(
 export function activeNodes(nodes: NodeSummary[]): NodeSummary[] {
   return nodes.filter((node) => node.revoked_at === null)
 }
+
+/**
+ * Outcome of the latest background read of one status source. Responses can
+ * arrive out of order, so an older read never overrides a newer one: a late
+ * failure cannot flag data a newer read refreshed, and a late success cannot
+ * hide a newer failure.
+ */
+export type PartStatus = { at: number; error: string | null }
+
+export function nextPartStatus(previous: PartStatus, at: number, error: string | null): PartStatus {
+  return at > previous.at ? { at, error } : previous
+}

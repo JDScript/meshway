@@ -1,13 +1,17 @@
 "use client"
 
 import type { ConnectionNode } from "@meshway/control-client"
-import { FingerprintIcon, TerminalIcon } from "lucide-react"
+import { ChevronRightIcon, FingerprintIcon, TerminalIcon } from "lucide-react"
+import Link from "next/link"
 import { useState } from "react"
 
 import { CopyButton } from "@/components/common/copy-button"
+import { RuntimeChip } from "@/components/connections/runtime-panel"
+import type { Runtimes } from "@/components/connections/use-runtimes"
 import { Panel } from "@/components/common/panel"
 import { Badge } from "@/components/ui/badge"
-import { Button } from "@/components/ui/button"
+import { Button, buttonVariants } from "@/components/ui/button"
+import { runtimeFor } from "@/lib/connection-runtime-model"
 import {
   connectionReceipt,
   connectionReceiptLabels,
@@ -42,13 +46,13 @@ export function IdentityPanel({
   nodes,
   revision,
   usage,
-  focusNodeId,
+  runtimes,
 }: {
   nodes: ConnectionNode[]
   revision: number
   /** Listener / candidate counts per node ID in the current draft. */
   usage: Map<string, { listeners: number; candidates: number }>
-  focusNodeId: string | null
+  runtimes: Runtimes | null
 }) {
   const [showRevoked, setShowRevoked] = useState(false)
   const revoked = nodes.filter((entry) => entry.node.revoked_at !== null)
@@ -56,8 +60,7 @@ export function IdentityPanel({
     (entry) =>
       entry.node.revoked_at === null ||
       showRevoked ||
-      usage.has(entry.node.id) ||
-      entry.node.id === focusNodeId
+      usage.has(entry.node.id)
   )
   const unpublished = nodes.filter((entry) => readiness(entry) === "no_key").length
   const noCapabilities = nodes.filter((entry) => readiness(entry) === "no_capabilities").length
@@ -67,13 +70,13 @@ export function IdentityPanel({
       id="identities"
       title={
         <span className="flex items-center gap-2">
-          节点连接身份
+          节点
           <span className="font-mono text-xs font-normal text-muted-foreground tabular-nums">
             {nodes.length - revoked.length} 个活动节点
           </span>
         </span>
       }
-      description="由各节点 agent 发布公钥与已编译的承载能力；首次绑定后不可更换，当前不支持轮换。"
+      description="每个节点的连接身份、已保存回执与 agent 自报的运行状态。进入节点配置它接收和主动发起的连接。"
       actions={
         revoked.length > 0 ? (
           <Button variant="ghost" size="sm" onClick={() => setShowRevoked((value) => !value)}>
@@ -111,7 +114,7 @@ export function IdentityPanel({
               entry={entry}
               revision={revision}
               usage={usage.get(entry.node.id)}
-              focused={entry.node.id === focusNodeId}
+              runtimes={runtimes}
             />
           ))}
         </ul>
@@ -124,12 +127,12 @@ function IdentityRow({
   entry,
   revision,
   usage,
-  focused,
+  runtimes,
 }: {
   entry: ConnectionNode
   revision: number
   usage: { listeners: number; candidates: number } | undefined
-  focused: boolean
+  runtimes: Runtimes | null
 }) {
   const state = readiness(entry)
   const receipt = connectionReceipt(entry, revision)
@@ -139,13 +142,17 @@ function IdentityRow({
       data-node-id={entry.node.id}
       aria-label={`节点 ${entry.node.name} 的连接身份`}
       className={cn(
-        "grid gap-x-4 gap-y-1.5 px-4 py-3 text-xs md:grid-cols-[minmax(0,12rem)_minmax(0,1fr)_minmax(0,1fr)_auto]",
-        focused && "bg-brand/[0.06] ring-1 ring-brand/40 ring-inset",
+        "grid items-center gap-x-4 gap-y-2 px-4 py-3 text-xs lg:grid-cols-[minmax(0,11rem)_minmax(0,10rem)_minmax(0,1fr)_minmax(0,14rem)_auto]",
         state === "revoked" && "opacity-70"
       )}
     >
       <div className="flex min-w-0 flex-col gap-0.5">
-        <span className="truncate text-sm font-medium">{entry.node.name}</span>
+        <Link
+          href={`/nodes/${encodeURIComponent(entry.node.id)}?tab=connections`}
+          className="truncate text-sm font-medium underline-offset-4 hover:underline"
+        >
+          {entry.node.name}
+        </Link>
         <span className="truncate font-mono text-[0.6875rem] text-muted-foreground">{entry.node.id}</span>
       </div>
 
@@ -172,7 +179,12 @@ function IdentityRow({
           </span>
         ) : (
           entry.capabilities.map((capability) => (
-            <Badge key={capability.transport} variant="outline" className="font-normal">
+            <Badge
+              key={capability.transport}
+              variant="outline"
+              className="font-normal"
+              title="当前构建支持的承载；不代表已开启监听或已连接"
+            >
               {transportLabels[capability.transport]}
               <span className="text-muted-foreground">
                 {[capability.can_dial ? "发起" : null, capability.can_accept ? "监听" : null]
@@ -184,11 +196,13 @@ function IdentityRow({
         )}
       </div>
 
-      <div className="flex flex-wrap items-center gap-2 md:justify-end">
-        {usage ? (
-          <span className="text-muted-foreground tabular-nums">
-            {usage.listeners} 监听 · {usage.candidates} 候选
-          </span>
+      <div className="flex min-w-0 flex-col gap-1">
+        {state !== "revoked" && runtimes ? (
+          <RuntimeChip
+            observation={runtimeFor(runtimes.snapshot, entry.node.id)}
+            now={runtimes.now}
+            readFailed={runtimes.snapshot === null}
+          />
         ) : null}
         <span
           className="inline-flex items-center gap-1.5"
@@ -211,6 +225,22 @@ function IdentityRow({
             </span>
           ) : null}
         </span>
+      </div>
+
+      <div className="flex items-center gap-2 lg:justify-end">
+        {usage ? (
+          <span className="text-muted-foreground tabular-nums">
+            {usage.listeners} 监听 · {usage.candidates} 主动
+          </span>
+        ) : null}
+        <Link
+          href={`/nodes/${encodeURIComponent(entry.node.id)}?tab=connections`}
+          className={buttonVariants({ variant: "outline", size: "sm" })}
+          aria-label={`配置 ${entry.node.name} 的连接`}
+        >
+          配置
+          <ChevronRightIcon data-icon="inline-end" />
+        </Link>
       </div>
     </li>
   )

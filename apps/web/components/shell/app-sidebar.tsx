@@ -3,7 +3,8 @@
 import Link from "next/link"
 import { usePathname } from "next/navigation"
 
-import { useRoutingDraftStore } from "@/components/routing/draft-store"
+import { useConnectionsHasDraft } from "@/components/connections/draft-store"
+import { useRoutingHasDraft } from "@/components/routing/draft-store"
 import { AccountMenu } from "@/components/shell/account-menu"
 import { ContextSwitcher } from "@/components/shell/context-switcher"
 import { isActive, navSections } from "@/components/shell/nav"
@@ -26,7 +27,10 @@ import {
 export function AppSidebar({ controllerHost }: { controllerHost: string }) {
   const pathname = usePathname()
   const { isMobile, setOpenMobile } = useSidebar()
-  const { hasDraft } = useRoutingDraftStore()
+  const routingDraft = useRoutingHasDraft()
+  const connectionsDraft = useConnectionsHasDraft()
+  const unsaved = (href: string) =>
+    (href === "/routing" && routingDraft) || (href === "/connections" && connectionsDraft)
 
   return (
     <Sidebar collapsible="icon" variant="inset">
@@ -59,7 +63,7 @@ export function AppSidebar({ controllerHost }: { controllerHost: string }) {
                         <item.icon />
                         <span>{item.label}</span>
                       </SidebarMenuButton>
-                      {item.href === "/routing" && hasDraft ? (
+                      {unsaved(item.href) ? (
                         <SidebarMenuBadge className="gap-1 text-[0.625rem] font-normal text-warning">
                           <span aria-hidden="true" className="size-1.5 rounded-full bg-warning" />
                           未保存

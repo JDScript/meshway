@@ -4,6 +4,7 @@ import type { ConnectionDiagnostic, ConnectionNode } from "@meshway/control-clie
 import { InfoIcon, PlusIcon, Trash2Icon, XIcon } from "lucide-react"
 import { useId, useMemo, useState } from "react"
 
+import { AdvancedSection } from "@/components/common/advanced-section"
 import { ConnectionDiagnosticList } from "@/components/connections/connection-diagnostics"
 import { ConnectionNodePicker } from "@/components/connections/connection-node-picker"
 import {
@@ -14,25 +15,38 @@ import {
   SheetHeading,
   type SheetGuard,
 } from "@/components/connections/item-sheet"
+import { OptionSelect } from "@/components/common/option-select"
 import { Segmented } from "@/components/common/segmented"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import {
+  autofillListener,
+  composeBind,
   CONNECTION_LIMITS,
+  endpointHint,
   needsProfile,
   newEndpointKey,
+  nodeName,
+  parseBind,
+  resolveConnectionNode,
+  roleBlocker,
   sameItem,
   transportHints,
   transportLabels,
   transports,
   validateListener,
+  type BindMode,
   type ConnectionIssue,
   type ListenerDraft,
   type ListenerSession,
 } from "@/lib/connections-model"
 
-const transportOptions = transports.map((value) => ({ value, label: transportLabels[value] }))
+const bindModeOptions: { value: BindMode; label: string }[] = [
+  { value: "ipv4_any", label: "所有 IPv4 地址（0.0.0.0）" },
+  { value: "ipv6_any", label: "所有 IPv6 地址（[::]）" },
+  { value: "address", label: "指定本机地址" },
+]
 
 export function ListenerSheet({
   session,
@@ -44,7 +58,7 @@ export function ListenerSheet({
   onDelete,
   others,
   nodes,
-  referencedBy,
+  dialers,
   diagnostics,
   diagnosticsStale,
   disabled,
@@ -61,14 +75,14 @@ export function ListenerSheet({
   /** Every other listener in the draft, for ID uniqueness. */
   others: ListenerDraft[]
   nodes: ConnectionNode[]
-  /** Candidates in the draft that dial this listener. */
-  referencedBy: number
+  /** Names of nodes whose candidates dial this listener in the draft. */
+  dialers: string[]
   diagnostics: ConnectionDiagnostic[]
   diagnosticsStale: boolean
   disabled: boolean
 }) {
   return (
-    <ItemSheet open={open} dirty={dirty} onClose={onClose} discardTitle="放弃对这个监听器的修改？">
+    <ItemSheet open={open} dirty={dirty} onClose={onClose} discardTitle="放弃对这个监听的修改？">
       {(guard) =>
         session ? (
           <ListenerForm
@@ -78,7 +92,7 @@ export function ListenerSheet({
             onWorkingChange={onWorkingChange}
             others={others}
             nodes={nodes}
-            referencedBy={referencedBy}
+            dialers={dialers}
             diagnostics={diagnostics}
             diagnosticsStale={diagnosticsStale}
             disabled={disabled}
@@ -97,7 +111,7 @@ function ListenerForm({
   onWorkingChange,
   others,
   nodes,
-  referencedBy,
+  dialers,
   diagnostics,
   diagnosticsStale,
   disabled,
@@ -109,7 +123,7 @@ function ListenerForm({
   onWorkingChange: (form: ListenerDraft | null) => void
   others: ListenerDraft[]
   nodes: ConnectionNode[]
-  referencedBy: number
+  dialers: string[]
   diagnostics: ConnectionDiagnostic[]
   diagnosticsStale: boolean
   disabled: boolean
@@ -121,8 +135,9 @@ function ListenerForm({
   const baseId = useId()
 
   const setForm = (next: ListenerDraft) => {
-    setFormState(next)
-    onWorkingChange(sameItem(next, session.initial) ? null : next)
+    const filled = autofillListener(next, form, session.mode, others, nodes)
+    setFormState(filled)
+    onWorkingChange(sameItem(filled, session.initial) ? null : filled)
   }
 
   const issues = useMemo(() => validateListener(form, others, nodes), [form, others, nodes])
@@ -142,9 +157,23 @@ function ListenerForm({
         issue.field === `listeners.advertised_endpoints[${index}]`
     )
 
-  const renamed =
-    session.mode === "edit" && form.id.trim() !== session.initial.id.trim() && referencedBy > 0
+  const renamed = session.mode === "edit" && form.id.trim() !== session.initial.id.trim() && dialers.length > 0
   const profile = needsProfile(form.transport)
+  const bind = parseBind(form.bind)
+  const setBind = (patch: Partial<typeof bind>) => setForm({ ...form, bind: composeBind({ ...bind, ...patch }) })
+  const owner = form.nodeId === "" ? null : resolveConnectionNode(nodes, form.nodeId)
+  const fixedNode = session.fixed === "node" && form.nodeId === session.initial.nodeId
+
+  const transportOptions = transports.map((value) => {
+    const blocker = owner?.kind === "active" ? roleBlocker(owner.entry, value, "accept") : null
+    return {
+      value,
+      label: transportLabels[value],
+      // The current value stays selectable so it can be seen and repaired.
+      disabled: blocker !== null && value !== form.transport,
+    }
+  })
+  const transportBlocker = owner?.kind === "active" ? roleBlocker(owner.entry, form.transport, "accept") : null
 
   const apply = () => {
     setAttempted(true)
@@ -177,32 +206,32 @@ function ListenerForm({
       }}
     >
       <SheetHeading
-        title={session.mode === "new" ? "新建监听器" : "编辑监听器"}
-        description="监听器声明「谁在哪里等待连接」。它本身不授权任何节点连接，也不授权流量。"
+        title={session.mode === "new" ? "接收其他节点连接" : "编辑监听"}
+        description="节点在本机端口等待其他节点主动连接。只主动连接别人的节点不需要监听：它发起的通道双方都能复用。"
       />
 
       <div className="flex-1 overflow-y-auto">
         <div className="flex flex-col divide-y">
-          <Section title="标识与载体">
-            <div className="flex flex-col gap-1.5">
-              <Label htmlFor={`${baseId}-id`}>监听器 ID</Label>
-              <Input
-                id={`${baseId}-id`}
-                value={form.id}
-                onChange={(event) => setForm({ ...form, id: event.target.value })}
-                autoComplete="off"
-                spellCheck={false}
-                aria-invalid={has("listeners.id") || undefined}
-                className="max-w-xs font-mono"
-              />
-              <FieldError messages={messages("listeners.id")} />
-              {renamed ? (
-                <p className="flex items-start gap-1.5 text-xs text-muted-foreground">
-                  <InfoIcon className="mt-0.5 size-3.5 shrink-0" />
-                  应用后，草稿中引用此监听器的 {referencedBy} 个拨号候选会一并改用新 ID。
-                </p>
-              ) : null}
-            </div>
+          <Section title="哪个节点接收连接">
+            {fixedNode ? (
+              <p className="text-sm font-medium">{nodeName(nodes, form.nodeId)}</p>
+            ) : (
+              <div className="flex flex-col gap-1.5">
+                <Label htmlFor={`${baseId}-node`}>监听节点</Label>
+                <ConnectionNodePicker
+                  id={`${baseId}-node`}
+                  nodes={nodes}
+                  value={form.nodeId}
+                  onValueChange={(nodeId) => setForm({ ...form, nodeId })}
+                  transport={null}
+                  role="accept"
+                  placeholder="选择节点"
+                  invalid={has("listeners.node_id")}
+                  className="w-full max-w-sm"
+                />
+              </div>
+            )}
+            <FieldError messages={messages("listeners.node_id")} />
             <div className="flex flex-col gap-1.5">
               <span id={`${baseId}-transport`} className="text-xs font-medium">
                 载体
@@ -213,98 +242,121 @@ function ListenerForm({
                 onValueChange={(transport) => setForm({ ...form, transport })}
                 aria-labelledby={`${baseId}-transport`}
               />
-              <span className="text-xs text-muted-foreground">{transportHints[form.transport]}</span>
-            </div>
-          </Section>
-
-          <Section
-            title="谁监听"
-            description="只能选择已发布公钥、并声明可监听此载体的节点。"
-          >
-            <div className="flex flex-col gap-1.5">
-              <Label htmlFor={`${baseId}-node`}>监听节点</Label>
-              <ConnectionNodePicker
-                id={`${baseId}-node`}
-                nodes={nodes}
-                value={form.nodeId}
-                onValueChange={(nodeId) => setForm({ ...form, nodeId })}
-                transport={form.transport}
-                role="accept"
-                placeholder="选择监听节点"
-                invalid={has("listeners.node_id")}
-                className="w-full max-w-sm"
-              />
-              <FieldError messages={messages("listeners.node_id")} />
-            </div>
-            <div className="flex flex-col gap-1.5">
-              <Label htmlFor={`${baseId}-bind`}>本机监听地址</Label>
-              <Input
-                id={`${baseId}-bind`}
-                value={form.bind}
-                onChange={(event) => setForm({ ...form, bind: event.target.value })}
-                placeholder="0.0.0.0:51820 或 [::]:51820"
-                autoComplete="off"
-                spellCheck={false}
-                aria-invalid={has("listeners.bind") || undefined}
-                className="max-w-xs font-mono"
-              />
-              <FieldError messages={messages("listeners.bind")} />
               <span className="text-xs text-muted-foreground">
-                节点进程绑定的 socket 地址，可以是 0.0.0.0 / [::]；它不会作为对外地址发给其他节点。
+                {transportBlocker ?? transportHints[form.transport]}
               </span>
             </div>
           </Section>
 
+          <Section title="本机监听" description="节点进程在本机绑定的地址和端口，不会发给其他节点。">
+            <div className="grid gap-3 sm:grid-cols-[minmax(0,1fr)_7rem]">
+              <div className="flex min-w-0 flex-col gap-1.5">
+                <Label htmlFor={`${baseId}-bind-mode`}>监听网卡</Label>
+                <OptionSelect
+                  id={`${baseId}-bind-mode`}
+                  value={bind.mode}
+                  options={bindModeOptions}
+                  onValueChange={(mode) => setBind({ mode })}
+                  className="w-full"
+                />
+              </div>
+              <div className="flex flex-col gap-1.5">
+                <Label htmlFor={`${baseId}-bind-port`}>监听端口</Label>
+                <Input
+                  id={`${baseId}-bind-port`}
+                  value={bind.port}
+                  onChange={(event) => setBind({ port: event.target.value })}
+                  placeholder="51820"
+                  inputMode="numeric"
+                  autoComplete="off"
+                  aria-invalid={has("listeners.bind") || undefined}
+                  className="font-mono tabular-nums"
+                />
+              </div>
+              {bind.mode === "address" ? (
+                <div className="flex flex-col gap-1.5 sm:col-span-2">
+                  <Label htmlFor={`${baseId}-bind-address`}>本机地址</Label>
+                  <Input
+                    id={`${baseId}-bind-address`}
+                    value={bind.address}
+                    onChange={(event) => setBind({ address: event.target.value })}
+                    placeholder="例如 192.168.1.20 或 fd00::20"
+                    autoComplete="off"
+                    spellCheck={false}
+                    aria-invalid={has("listeners.bind") || undefined}
+                    className="max-w-sm font-mono"
+                  />
+                  <span className="text-xs text-muted-foreground">该节点某块网卡上的 IP，不支持主机名。</span>
+                </div>
+              ) : null}
+            </div>
+            <FieldError messages={messages("listeners.bind")} />
+            <span className="text-[0.6875rem] text-muted-foreground">
+              实际绑定 <code className="font-mono">{form.bind.trim() || "—"}</code>
+            </span>
+          </Section>
+
           <Section
-            title="对外地址"
-            description="其他节点拨号时使用的 IP 或域名与端口（例如 NAT 映射后的公网地址）。不能填 0.0.0.0 / ::。"
+            title="其他节点通过什么地址找到我"
+            description="公网 IP、域名或局域网地址都可以；在 NAT 后时填映射后的地址和端口。Meshway 不会自动探测这个地址。"
           >
             <ol className="flex flex-col gap-2">
-              {form.endpoints.map((endpoint, index) => (
-                <li key={endpoint.key} className="flex items-center gap-2">
-                  <div className="min-w-0 flex-1">
-                    <Label htmlFor={`${baseId}-host-${endpoint.key}`} className="sr-only">
-                      对外地址 {index + 1} 主机
-                    </Label>
-                    <Input
-                      id={`${baseId}-host-${endpoint.key}`}
-                      value={endpoint.host}
-                      onChange={(event) => setEndpoint(index, { host: event.target.value })}
-                      placeholder="lax.example.net 或 203.0.113.7"
-                      autoComplete="off"
-                      spellCheck={false}
-                      aria-invalid={endpointIssue(index, "host") || undefined}
-                      className="font-mono"
-                    />
-                  </div>
-                  <div className="w-24 shrink-0">
-                    <Label htmlFor={`${baseId}-port-${endpoint.key}`} className="sr-only">
-                      对外地址 {index + 1} 端口
-                    </Label>
-                    <Input
-                      id={`${baseId}-port-${endpoint.key}`}
-                      value={endpoint.port}
-                      onChange={(event) => setEndpoint(index, { port: event.target.value })}
-                      placeholder="端口"
-                      inputMode="numeric"
-                      autoComplete="off"
-                      aria-invalid={endpointIssue(index, "port") || undefined}
-                      className="font-mono tabular-nums"
-                    />
-                  </div>
-                  <Button
-                    type="button"
-                    variant="ghost"
-                    size="icon"
-                    aria-label={`移除对外地址 ${index + 1}`}
-                    onClick={() =>
-                      setForm({ ...form, endpoints: form.endpoints.filter((_, i) => i !== index) })
-                    }
-                  >
-                    <XIcon />
-                  </Button>
-                </li>
-              ))}
+              {form.endpoints.map((endpoint, index) => {
+                const hint = endpointHint(endpoint.host, nodes)
+                return (
+                  <li key={endpoint.key} className="flex flex-col gap-1">
+                    <div className="flex items-center gap-2">
+                      <div className="min-w-0 flex-1">
+                        <Label htmlFor={`${baseId}-host-${endpoint.key}`} className="sr-only">
+                          对外地址 {index + 1} 主机
+                        </Label>
+                        <Input
+                          id={`${baseId}-host-${endpoint.key}`}
+                          value={endpoint.host}
+                          onChange={(event) => setEndpoint(index, { host: event.target.value })}
+                          placeholder="lax.example.net 或 203.0.113.7"
+                          autoComplete="off"
+                          spellCheck={false}
+                          aria-invalid={endpointIssue(index, "host") || undefined}
+                          className="font-mono"
+                        />
+                      </div>
+                      <div className="w-24 shrink-0">
+                        <Label htmlFor={`${baseId}-port-${endpoint.key}`} className="sr-only">
+                          对外地址 {index + 1} 端口
+                        </Label>
+                        <Input
+                          id={`${baseId}-port-${endpoint.key}`}
+                          value={endpoint.port}
+                          onChange={(event) => setEndpoint(index, { port: event.target.value })}
+                          placeholder="端口"
+                          inputMode="numeric"
+                          autoComplete="off"
+                          aria-invalid={endpointIssue(index, "port") || undefined}
+                          className="font-mono tabular-nums"
+                        />
+                      </div>
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="icon"
+                        aria-label={`移除对外地址 ${index + 1}`}
+                        onClick={() =>
+                          setForm({ ...form, endpoints: form.endpoints.filter((_, i) => i !== index) })
+                        }
+                      >
+                        <XIcon />
+                      </Button>
+                    </div>
+                    {hint ? (
+                      <p className="flex items-start gap-1.5 text-xs text-warning">
+                        <InfoIcon className="mt-0.5 size-3.5 shrink-0" />
+                        {hint}
+                      </p>
+                    ) : null}
+                  </li>
+                )
+              })}
             </ol>
             <div className="flex flex-wrap items-center gap-3">
               <Button
@@ -314,14 +366,7 @@ function ListenerForm({
                 onClick={() =>
                   setForm({
                     ...form,
-                    endpoints: [
-                      ...form.endpoints,
-                      {
-                        key: newEndpointKey(form),
-                        host: "",
-                        port: bindPort(form.bind),
-                      },
-                    ],
+                    endpoints: [...form.endpoints, { key: newEndpointKey(form), host: "", port: bind.port.trim() }],
                   })
                 }
               >
@@ -337,8 +382,8 @@ function ListenerForm({
 
           {profile || form.credentialRef !== "" ? (
             <Section
-              title="本地配置档引用"
-              description="只填写监听节点上已有 VLESS 配置档的名称。UUID、密码、TLS 证书等凭据保存在节点本地，从不经过控制台。"
+              title="本地配置档"
+              description="填写监听节点上已有 VLESS 配置档的名称。UUID、密码、TLS 证书等只保存在节点本地。"
             >
               <div className="flex flex-col gap-1.5">
                 <Label htmlFor={`${baseId}-profile`}>监听方配置档引用</Label>
@@ -368,6 +413,39 @@ function ListenerForm({
             </Section>
           ) : null}
 
+          {session.mode === "edit" ? (
+            <Section title="谁会连接到这里">
+              <p className="text-xs text-muted-foreground">
+                {dialers.length > 0 ? `草稿中由 ${dialers.join("、")} 主动连接。` : "草稿中还没有节点主动连接这个监听。"}
+              </p>
+            </Section>
+          ) : null}
+
+          <AdvancedSection summary={`ID ${form.id.trim() || "—"}`} attention={has("listeners.id") || renamed}>
+            <div className="flex flex-col gap-1.5">
+              <Label htmlFor={`${baseId}-id`}>监听器 ID</Label>
+              <Input
+                id={`${baseId}-id`}
+                value={form.id}
+                onChange={(event) => setForm({ ...form, id: event.target.value })}
+                autoComplete="off"
+                spellCheck={false}
+                aria-invalid={has("listeners.id") || undefined}
+                className="max-w-xs font-mono"
+              />
+              <FieldError messages={messages("listeners.id")} />
+              <span className="text-xs text-muted-foreground">
+                {session.mode === "new" ? "已按节点和载体自动生成；只在需要固定名称时修改。" : "拨号候选通过它引用这个监听。"}
+              </span>
+              {renamed ? (
+                <p className="flex items-start gap-1.5 text-xs text-warning">
+                  <InfoIcon className="mt-0.5 size-3.5 shrink-0" />
+                  应用后，草稿中引用「{session.initial.id.trim()}」的 {dialers.length} 个拨号候选会一并改用新 ID。
+                </p>
+              ) : null}
+            </div>
+          </AdvancedSection>
+
           {diagnostics.length > 0 ? (
             <Section title={diagnosticsStale ? "已保存配置的诊断（草稿已修改）" : "Controller 诊断"}>
               <ConnectionDiagnosticList
@@ -382,15 +460,9 @@ function ListenerForm({
 
       <SheetFooter className="flex-row items-center gap-2 border-t p-3">
         {session.mode === "edit" ? (
-          <Button
-            type="button"
-            variant="ghost"
-            className="text-destructive"
-            onClick={onDelete}
-            disabled={disabled}
-          >
+          <Button type="button" variant="ghost" className="text-destructive" onClick={onDelete} disabled={disabled}>
             <Trash2Icon data-icon="inline-start" />
-            删除监听器
+            删除
           </Button>
         ) : null}
         <div className="ml-auto flex items-center gap-2">
@@ -404,8 +476,4 @@ function ListenerForm({
       </SheetFooter>
     </form>
   )
-}
-
-function bindPort(bind: string): string {
-  return /:([0-9]{1,5})$/.exec(bind.trim())?.[1] ?? ""
 }

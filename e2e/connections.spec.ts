@@ -5,6 +5,7 @@ import { join } from "node:path";
 
 import { createEnrollmentToken, getConnections, listNodes, revokeNode, saveConnections, setNodeCountry } from "../packages/control-client/src/index.ts";
 import { executable, root, run, service, unusedPort } from "./harness.ts";
+import { revealAdvanced } from "./web-actions.ts";
 
 async function choose(page: Page, trigger: Locator, name: RegExp) {
   await trigger.click();
@@ -78,11 +79,13 @@ test("connection identities, reverse-dial intent and independent receipts cross 
       await page.goto(`${webUrl}/nodes`);
       await page.getByRole("link", { name: "连接配置", exact: true }).click();
       const base = await page.getByTestId("connections-base-revision").innerText();
-      await page.getByRole("button", { name: "添加监听器", exact: true }).click();
+      await page.getByRole("button", { name: "接收其他节点连接", exact: true }).first().click();
+      await revealAdvanced(page.getByRole("dialog"), page.getByRole("dialog").getByLabel("监听器 ID", { exact: true }));
       await page.getByRole("dialog").getByLabel("监听器 ID", { exact: true }).fill("unapplied-history-edit");
       await page.goBack();
       await expect(page).toHaveURL(`${webUrl}/nodes`);
       await page.goForward();
+      await revealAdvanced(page.getByRole("dialog"), page.getByRole("dialog").getByLabel("监听器 ID", { exact: true }));
       await expect(page.getByRole("dialog").getByLabel("监听器 ID", { exact: true })).toHaveValue("unapplied-history-edit");
       await expect(page.getByTestId("connections-base-revision")).toHaveText(base);
       await page.keyboard.press("Escape");
@@ -95,12 +98,13 @@ test("connection identities, reverse-dial intent and independent receipts cross 
       for (const transport of ["Native UDP", "VLESS"]) {
         const id = transport === "VLESS" ? "lax-vless" : "lax-udp";
         const port = transport === "VLESS" ? "41001" : "41000";
-        await page.getByRole("button", { name: "添加监听器", exact: true }).click();
+        await page.getByRole("button", { name: "接收其他节点连接", exact: true }).first().click();
         const sheet = page.getByRole("dialog");
+        await revealAdvanced(sheet, sheet.getByLabel("监听器 ID", { exact: true }));
         await sheet.getByLabel("监听器 ID", { exact: true }).fill(id);
         await sheet.getByRole("button", { name: transport, exact: true }).click();
         await choose(page, sheet.getByLabel("监听节点", { exact: true }), /^lax/);
-        await sheet.getByLabel("本机监听地址", { exact: true }).fill(`0.0.0.0:${port}`);
+        await sheet.getByLabel("监听端口", { exact: true }).fill(port);
         await sheet.getByLabel("对外地址 1 主机", { exact: true }).fill("127.0.0.1");
         await sheet.getByLabel("对外地址 1 端口", { exact: true }).fill(port);
         if (transport === "VLESS") await sheet.getByLabel("监听方配置档引用", { exact: true }).fill("lax-local-profile");
@@ -110,6 +114,7 @@ test("connection identities, reverse-dial intent and independent receipts cross 
         await expect(sheet).not.toBeVisible();
         await page.getByRole("button", { name: `为监听器 ${id} 添加拨号候选`, exact: true }).click();
         const candidate = page.getByRole("dialog");
+        await revealAdvanced(candidate, candidate.getByLabel("候选 ID", { exact: true }));
         await candidate.getByLabel("候选 ID", { exact: true }).fill(transport === "VLESS" ? "sha-to-lax" : "nyc-to-lax");
         await choose(page, candidate.getByLabel("发起节点", { exact: true }), transport === "VLESS" ? /^sha/ : /^nyc/);
         await candidate.getByLabel("优先级", { exact: true }).fill("0");
@@ -189,9 +194,34 @@ test("connection identities, reverse-dial intent and independent receipts cross 
       await page.screenshot({ path: test.info().outputPath("connections-desktop-dark.png"), fullPage: true });
     });
 
+    await test.step("node-scoped saves survive tab changes and fresh same-revision receipts arrive automatically", async () => {
+      await page.goto(`${webUrl}/nodes/${lax.id}?tab=connections`);
+      await expect(page.getByRole("heading", { name: "lax", exact: true })).toBeVisible();
+      await expect(page.getByTestId("connections-editor")).toHaveAttribute("data-scope", lax.id);
+      await page.getByRole("button", { name: "编辑监听器 lax-udp", exact: true }).click();
+      const sheet = page.getByRole("dialog");
+      await revealAdvanced(sheet, sheet.getByLabel("监听器 ID", { exact: true }));
+      await sheet.getByLabel("监听器 ID", { exact: true }).fill("lax-udp-renamed");
+      await sheet.getByRole("button", { name: "应用到草稿", exact: true }).click();
+      await page.getByRole("button", { name: "保存连接配置", exact: true }).click();
+      await expect.poll(async () => (await getConnections(controllerUrl, admin)).configuration.listeners.some(listener => listener.id === "lax-udp-renamed")).toBe(true);
+      const saved = await getConnections(controllerUrl, admin);
+      expect(saved.configuration.candidates.find(candidate => candidate.id === "nyc-to-lax")?.listener_id).toBe("lax-udp-renamed");
+      expect(saved.configuration.candidates.find(candidate => candidate.id === "sha-to-lax")?.listener_id).toBe("lax-vless");
+      await page.getByRole("tab", { name: "概览", exact: true }).click();
+      await page.getByRole("tab", { name: "连接", exact: true }).click();
+      await expect(page.getByTestId("connections-base-revision")).toHaveText(`r${saved.revision}`);
+      await expect(page.getByTestId("listener-row").filter({ hasText: "lax-udp-renamed" })).toBeVisible();
+      await run(executable("meshway-agent"), ["connections", "sync", "--state", join(temporary, "lax.json")]);
+      await expect(page.getByText("已保存当前版本", { exact: true }).first()).toBeVisible({ timeout: 20_000 });
+      await expect(page.getByTestId("connection-runtime")).toHaveAttribute("data-freshness", "unreported");
+      await page.goto(`${webUrl}/connections`);
+    });
+
     await test.step("navigation retains a dirty draft and a competing global writer causes CAS conflict", async () => {
       const base = await page.getByTestId("connections-base-revision").innerText();
       await page.getByRole("button", { name: "编辑拨号候选 sha-to-lax", exact: true }).click();
+      await revealAdvanced(page.getByRole("dialog"), page.getByRole("dialog").getByLabel("优先级", { exact: true }));
       await page.getByRole("dialog").getByLabel("优先级", { exact: true }).fill("20");
       await page.getByRole("dialog").getByRole("button", { name: "应用到草稿", exact: true }).click();
       await page.keyboard.press("ControlOrMeta+k");

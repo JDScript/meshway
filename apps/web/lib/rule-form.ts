@@ -7,12 +7,28 @@ import {
   type LocalIssue,
   type RuleDraft,
   type SelectorDraft,
-} from "@/lib/policy-model"
+} from "./policy-model.ts"
 
 // Focused rule-builder state. It widens a RuleDraft with explicit "any" modes
 // so that matching everything is a deliberate choice rather than the silent
 // result of leaving fields empty. `toRuleDraft` narrows it back; nothing here
 // reaches the controller without going through `toPolicy`.
+
+/** One opening of the rule builder. */
+export type BuilderSession = {
+  /** Increments per opening so the form remounts with fresh state. */
+  id: number
+  mode: "edit" | "new"
+  /** What the rule was when the builder opened; unapplied edits compare against it. */
+  initial: RuleForm
+  /** Position the rule has (edit) or will take (new) in the ordered list. */
+  position: number
+  /** Unapplied form contents to resume with (restored after navigating away). */
+  working?: RuleForm
+}
+
+/** An open builder holding edits that are not applied to the draft yet. */
+export type WorkingRule = { session: BuilderSession; form: RuleForm }
 
 export type SourceMode = "any" | "specific"
 export type TargetMode = "all" | "specific"

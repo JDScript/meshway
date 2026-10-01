@@ -1,4 +1,9 @@
-import { expect, type Page } from "@playwright/test";
+import { expect, type Locator, type Page } from "@playwright/test";
+
+export async function revealAdvanced(container: Locator, field: Locator) {
+  if (!await field.isVisible()) await container.getByRole("button", { name: /^高级/ }).click();
+  await expect(field).toBeVisible();
+}
 
 export async function selectNode(page: Page, testId: string, name: RegExp) {
   const trigger = page.getByTestId(testId);
@@ -13,6 +18,7 @@ export async function selectNode(page: Page, testId: string, name: RegExp) {
 export async function editRuleId(page: Page, current: string, next: string) {
   await page.getByRole("button", { name: `编辑规则 ${current}`, exact: true }).click();
   const editor = page.getByRole("dialog");
+  await revealAdvanced(editor, editor.getByLabel("规则 ID", { exact: true }));
   await editor.getByLabel("规则 ID", { exact: true }).fill(next);
   await page.keyboard.press("ControlOrMeta+k");
   await expect(page.getByRole("dialog", { name: "搜索与跳转", exact: true })).not.toBeVisible();

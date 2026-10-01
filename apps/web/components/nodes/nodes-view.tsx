@@ -2,6 +2,7 @@
 
 import type { NodeSummary } from "@meshway/control-client"
 import {
+  CableIcon,
   CopyIcon,
   EllipsisIcon,
   EyeIcon,
@@ -12,12 +13,12 @@ import {
   XIcon,
 } from "lucide-react"
 import Link from "next/link"
+import { useRouter } from "next/navigation"
 import { useMemo, useState } from "react"
 
 import { OptionSelect, type Option } from "@/components/common/option-select"
 import { Segmented } from "@/components/common/segmented"
 import { CountryDialog } from "@/components/nodes/country-dialog"
-import { NodeDetailSheet } from "@/components/nodes/node-detail-sheet"
 import { LastContact, ReceiptBadge, StatusBadge } from "@/components/nodes/node-status"
 import { RevokeDialog } from "@/components/nodes/revoke-dialog"
 import { Button } from "@/components/ui/button"
@@ -77,7 +78,7 @@ function matches(node: NodeSummary, query: string): boolean {
     .some((field) => field.toLowerCase().includes(needle))
 }
 
-type DialogKind = "country" | "revoke" | "detail"
+type DialogKind = "country" | "revoke"
 /** `nodeId` outlives `kind` so closing overlays can finish their exit animation. */
 type Dialog = { kind: DialogKind | null; nodeId: string } | null
 
@@ -245,29 +246,18 @@ export function NodesView({
         显示 {visible.length} / {nodes.length} 个节点。「控制面联系」是 controller 最近一次接受注册或心跳的时间，不代表在线或连通。
       </p>
 
-      {dialogNode ? (
+      {dialogNode && dialogNode.revoked_at === null ? (
         <>
-          <NodeDetailSheet
+          <CountryDialog
             node={dialogNode}
-            fetchedAt={fetchedAt}
-            open={dialog?.kind === "detail"}
+            open={dialog?.kind === "country"}
             onOpenChange={closeDialog}
-            onAction={(kind) => setDialog({ kind, nodeId: dialogNode.id })}
           />
-          {dialogNode.revoked_at === null ? (
-            <>
-              <CountryDialog
-                node={dialogNode}
-                open={dialog?.kind === "country"}
-                onOpenChange={closeDialog}
-              />
-              <RevokeDialog
-                node={dialogNode}
-                open={dialog?.kind === "revoke"}
-                onOpenChange={closeDialog}
-              />
-            </>
-          ) : null}
+          <RevokeDialog
+            node={dialogNode}
+            open={dialog?.kind === "revoke"}
+            onOpenChange={closeDialog}
+          />
         </>
       ) : null}
     </div>
@@ -284,26 +274,29 @@ function NodeRow({
   onOpen: (kind: DialogKind) => void
 }) {
   const revoked = node.revoked_at !== null
+  const router = useRouter()
+  const href = `/nodes/${encodeURIComponent(node.id)}`
 
   return (
     <TableRow
+      data-testid="node-row"
+      data-node-id={node.id}
       className={cn("cursor-pointer", revoked && "text-muted-foreground")}
       onClick={(event) => {
         // Controls inside the row keep their own behaviour.
         if (event.target instanceof Element && event.target.closest("button, a, [role=menu]")) return
-        onOpen("detail")
+        router.push(href)
       }}
     >
       <TableCell className="py-2.5 pl-4">
         <div className="flex min-w-0 flex-col gap-0.5">
           <div className="flex items-center gap-2">
-            <button
-              type="button"
-              onClick={() => onOpen("detail")}
+            <Link
+              href={href}
               className="max-w-56 truncate text-left font-medium text-foreground underline-offset-4 hover:underline focus-visible:underline focus-visible:outline-none"
             >
               {node.name}
-            </button>
+            </Link>
             {revoked ? <StatusBadge node={node} /> : null}
           </div>
           <span className="font-mono text-[0.6875rem] text-muted-foreground md:hidden">
@@ -351,9 +344,13 @@ function NodeRow({
             <EllipsisIcon />
           </DropdownMenuTrigger>
           <DropdownMenuContent align="end" className="w-44">
-            <DropdownMenuItem onClick={() => onOpen("detail")}>
+            <DropdownMenuItem render={<Link href={href} />}>
               <EyeIcon />
               查看详情
+            </DropdownMenuItem>
+            <DropdownMenuItem render={<Link href={`${href}?tab=connections`} />}>
+              <CableIcon />
+              连接配置
             </DropdownMenuItem>
             <DropdownMenuItem render={<Link href={`/topology?node=${encodeURIComponent(node.id)}`} />}>
               <WaypointsIcon />

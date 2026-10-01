@@ -1,6 +1,8 @@
 import type {
+  ConnectionRuntimesSnapshot,
   ConnectionsSnapshot,
   CreateEnrollmentTokenResponse,
+  NodeList,
   NodeSummary,
   PolicySnapshot,
   PreviewPolicyResponse,
@@ -53,13 +55,36 @@ export type ReloadResult =
 
 /** `conflict` and `invalid` never carry a replacement plan: the draft stays. */
 export type ConnectionsSaveResult =
-  | { status: "saved"; snapshot: ConnectionsSnapshot }
+  /** `fetchedAt`: when the server received it, on the same clock as page reads. */
+  | { status: "saved"; snapshot: ConnectionsSnapshot; fetchedAt: number }
   | { status: "conflict"; message: string }
   | { status: "invalid"; message: string }
   | { status: "error"; message: string }
 
 export type ConnectionsReloadResult =
-  | { status: "loaded"; snapshot: ConnectionsSnapshot }
+  | { status: "loaded"; snapshot: ConnectionsSnapshot; fetchedAt: number }
+  | { status: "error"; message: string }
+
+/** Background observation refresh; never touches an editor's draft base. */
+export type RuntimeReadResult =
+  | { status: "loaded"; snapshot: ConnectionRuntimesSnapshot; fetchedAt: number }
+  | { status: "error"; message: string }
+
+export type PartRead<T> = { ok: true; data: T } | { ok: false; error: string }
+
+/**
+ * One bounded status refresh for a node page: public inventory, connection
+ * snapshot (receipts) and runtime self-reports, read together at `fetchedAt`.
+ * Each part fails independently; nothing here is ever a draft base.
+ */
+export type NodeStatusResult =
+  | {
+      status: "loaded"
+      fetchedAt: number
+      nodes: PartRead<NodeList>
+      connections: PartRead<ConnectionsSnapshot>
+      runtimes: PartRead<ConnectionRuntimesSnapshot>
+    }
   | { status: "error"; message: string }
 
 export const enrollmentTtlOptions = [

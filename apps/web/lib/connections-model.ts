@@ -1,4 +1,5 @@
 import type {
+  ConnectionsSnapshot,
   ConnectionCandidate,
   ConnectionCapability,
   ConnectionEndpoint,
@@ -76,6 +77,20 @@ export type ConnectionsDraft = {
 
 export const emptyDraft: ConnectionsDraft = { listeners: [], candidates: [] }
 
+/**
+ * Candidate form state: the draft item plus the chosen target node, which is
+ * UI-only (the acceptor always comes from the listener's owner) but must
+ * survive navigation before an entry is picked.
+ */
+export type CandidateForm = CandidateDraft & { targetNodeId: string }
+
+/**
+ * Which side the opening context fixes: a per-node editor opens "this node
+ * listens" (`node`), "this node dials" (`dialer`) or "another node dials this
+ * node" (`target`). The global editor fixes nothing.
+ */
+export type SessionFixed = "node" | "dialer" | "target" | null
+
 /** One opening of a listener / candidate sheet. */
 export type ItemSession<T> = {
   /** Increments per opening so the form remounts with fresh state. */
@@ -85,15 +100,34 @@ export type ItemSession<T> = {
   initial: T
   /** Unapplied form contents to resume with (restored after navigating away). */
   working?: T
+  fixed?: SessionFixed
 }
 
 export type ListenerSession = ItemSession<ListenerDraft>
-export type CandidateSession = ItemSession<CandidateDraft>
+export type CandidateSession = ItemSession<CandidateForm>
 
 /** An open sheet holding edits that are not applied to the draft yet. */
 export type WorkingSheet =
   | { kind: "listener"; session: ListenerSession; form: ListenerDraft }
-  | { kind: "candidate"; session: CandidateSession; form: CandidateDraft }
+  | { kind: "candidate"; session: CandidateSession; form: CandidateForm }
+
+export function toCandidateForm(candidate: CandidateDraft, listeners: ListenerDraft[]): CandidateForm {
+  const listener = listeners.find((existing) => existing.id.trim() === candidate.listenerId)
+  return { ...candidate, targetNodeId: listener?.nodeId ?? "" }
+}
+
+export function fromCandidateForm(form: CandidateForm): CandidateDraft {
+  return {
+    key: form.key,
+    id: form.id,
+    dialerNodeId: form.dialerNodeId,
+    listenerId: form.listenerId,
+    host: form.host,
+    port: form.port,
+    priority: form.priority,
+    credentialRef: form.credentialRef,
+  }
+}
 
 /** `${stem}<n>` with the smallest n not already taken. */
 export function freshKey(stem: string, taken: Iterable<string>): string {
@@ -320,6 +354,14 @@ export function roleBlocker(entry: ConnectionNode, transport: Transport, role: R
   if (role === "accept" && !capability.can_accept) return `${transportLabels[transport]} 不可监听`
   if (role === "dial" && !capability.can_dial) return `${transportLabels[transport]} 不可发起`
   return null
+}
+
+/** Why this node cannot take the role on any carrier, or null when it can on at least one. */
+export function anyRoleBlocker(entry: ConnectionNode, role: Role): string | null {
+  const state = readiness(entry)
+  if (state !== "ready") return readinessLabels[state]
+  if (transports.some((transport) => canServe(entry, transport, role))) return null
+  return role === "accept" ? "没有可监听的载体" : "没有可发起的载体"
 }
 
 export type ReceiptState = "revoked" | "never" | "current" | "behind"
@@ -599,4 +641,433 @@ export function slug(value: string, fallback: string): string {
     .replace(/^-+|-+$/g, "")
     .slice(0, 40)
   return text === "" ? fallback : text
+}
+
+// ---------------------------------------------------------------------------
+// Node-first workflow helpers. They only derive suggestions and views from
+// the draft; the DTO sent is still produced by `toPlan`.
+
+export const transportSlugs: Record<Transport, string> = {
+  native_udp: "udp",
+  native_tcp: "tcp",
+  vless: "vless",
+}
+
+/** `stem` when free, otherwise `stem-2`, `stem-3`… (IDs are case-sensitive). */
+export function stableId(stem: string, taken: Iterable<string>): string {
+  const used = new Set([...taken].map((id) => id.trim()))
+  const base = stem.slice(0, CONNECTION_LIMITS.idLength - 4)
+  if (!used.has(base)) return base
+  let n = 2
+  while (used.has(`${base}-${n}`)) n += 1
+  return `${base}-${n}`
+}
+
+function nodeStem(nodes: ConnectionNode[], id: string): string {
+  const ref = resolveConnectionNode(nodes, id)
+  const name = ref.kind === "unknown" ? id : ref.entry.node.name
+  return slug(name, "node").slice(0, 20)
+}
+
+/** Readable, stable listener ID such as `lax-udp`. */
+export function suggestListenerId(
+  nodes: ConnectionNode[],
+  nodeId: string,
+  transport: Transport,
+  taken: Iterable<string>
+): string {
+  return stableId(`${nodeStem(nodes, nodeId)}-${transportSlugs[transport]}`, taken)
+}
+
+/** Readable, stable candidate ID such as `sha-to-lax-udp`. */
+export function suggestCandidateId(
+  nodes: ConnectionNode[],
+  dialerNodeId: string,
+  acceptorNodeId: string,
+  transport: Transport,
+  taken: Iterable<string>
+): string {
+  const dialer = dialerNodeId === "" ? "dial" : nodeStem(nodes, dialerNodeId)
+  const acceptor = acceptorNodeId === "" ? "node" : nodeStem(nodes, acceptorNodeId)
+  return stableId(`${dialer}-to-${acceptor}-${transportSlugs[transport]}`, taken)
+}
+
+// --- bind address --------------------------------------------------------
+
+export type BindMode = "ipv4_any" | "ipv6_any" | "address"
+export type BindParts = { mode: BindMode; address: string; port: string }
+
+/** Splits a raw bind into interface choice and port; `composeBind` reverses it exactly. */
+export function parseBind(raw: string): BindParts {
+  const text = raw.trim()
+  if (text === "") return { mode: "ipv4_any", address: "", port: "" }
+  const v6 = /^\[([^\]]*)\]:([^:]*)$/.exec(text)
+  if (v6) {
+    const [, address = "", port = ""] = v6
+    return address === "::" ? { mode: "ipv6_any", address: "", port } : { mode: "address", address, port }
+  }
+  const v4 = /^([^:[\]]*):([^:]*)$/.exec(text)
+  if (v4) {
+    const [, address = "", port = ""] = v4
+    return address === "0.0.0.0" ? { mode: "ipv4_any", address: "", port } : { mode: "address", address, port }
+  }
+  return { mode: "address", address: text, port: "" }
+}
+
+export function composeBind(parts: BindParts): string {
+  const port = parts.port.trim()
+  if (parts.mode === "ipv4_any") return `0.0.0.0:${port}`
+  if (parts.mode === "ipv6_any") return `[::]:${port}`
+  const address = parts.address.trim()
+  return address.includes(":") ? `[${address}]:${port}` : `${address}:${port}`
+}
+
+/**
+ * Advisory hint for an advertised host that is syntactically valid but likely
+ * not what other nodes can reach. Never blocks: the controller decides.
+ */
+export function endpointHint(raw: string, nodes: ConnectionNode[]): string | null {
+  const host = raw.trim().replace(/\.$/, "").toLowerCase()
+  if (host === "") return null
+  if (nodes.some((entry) => entry.node.mesh_ipv4 === host || entry.node.mesh_ipv6.toLowerCase() === host)) {
+    return "这是 Mesh 隧道内地址，隧道建立前其他节点用它连不上。请填写公网 / 局域网 IP 或域名。"
+  }
+  if (!host.includes(".") && !host.includes(":") && nodes.some((entry) => entry.node.name.toLowerCase() === host)) {
+    return "节点名称不会自动解析成地址；除非你的 DNS 能解析它，请填写 IP 或完整域名。"
+  }
+  if (host === "localhost" || host === "::1" || /^127\./.test(host)) {
+    return "回环地址只适用于同一台机器上的节点。"
+  }
+  return null
+}
+
+// --- per-node view -------------------------------------------------------
+
+export type NodeScope = {
+  /** Listeners this node owns. */
+  listeners: ListenerDraft[]
+  /** Candidates this node dials. */
+  outgoing: CandidateDraft[]
+  /** Candidates other nodes dial into this node's listeners. */
+  incoming: CandidateDraft[]
+}
+
+export function nodeScope(draft: ConnectionsDraft, nodeId: string): NodeScope {
+  const owned = new Set(
+    draft.listeners.filter((listener) => listener.nodeId === nodeId).map((listener) => listener.id.trim())
+  )
+  return {
+    listeners: draft.listeners.filter((listener) => listener.nodeId === nodeId),
+    outgoing: draft.candidates.filter((candidate) => candidate.dialerNodeId === nodeId),
+    incoming: draft.candidates.filter(
+      (candidate) => candidate.dialerNodeId !== nodeId && owned.has(candidate.listenerId)
+    ),
+  }
+}
+
+// --- dial entries --------------------------------------------------------
+
+export type DialEntry = {
+  /** Option value; JSON keeps IPv6 colons unambiguous. */
+  value: string
+  listener: ListenerDraft
+  host: string
+  port: string
+  /** Why the dialer cannot use this entry, or null. */
+  blocker: string | null
+}
+
+export const entryValue = (listenerId: string, host: string, port: string) =>
+  JSON.stringify([listenerId.trim(), host.trim(), port.trim()])
+
+/**
+ * Every advertised endpoint of the target node's listeners, flagged when the
+ * dialer lacks the carrier or already dials exactly that entry.
+ */
+export function dialEntries(
+  draft: ConnectionsDraft,
+  nodes: ConnectionNode[],
+  dialerNodeId: string,
+  targetNodeId: string,
+  candidateKey: string
+): DialEntry[] {
+  const dialer = dialerNodeId === "" ? null : resolveConnectionNode(nodes, dialerNodeId)
+  const entries: DialEntry[] = []
+  for (const listener of draft.listeners) {
+    if (listener.nodeId !== targetNodeId || listener.id.trim() === "") continue
+    for (const endpoint of listener.endpoints) {
+      if (endpoint.host.trim() === "") continue
+      const taken = draft.candidates.some(
+        (candidate) =>
+          candidate.key !== candidateKey &&
+          candidate.dialerNodeId === dialerNodeId &&
+          candidate.listenerId === listener.id.trim() &&
+          sameEndpoint(candidate, endpoint)
+      )
+      const blocker =
+        dialer === null
+          ? null
+          : dialer.kind === "unknown"
+            ? "发起节点不在清单中"
+            : roleBlocker(dialer.entry, listener.transport, "dial") ?? (taken ? "已配置过这个入口" : null)
+      entries.push({
+        value: entryValue(listener.id, endpoint.host, endpoint.port),
+        listener,
+        host: endpoint.host.trim(),
+        port: endpoint.port.trim(),
+        blocker,
+      })
+    }
+  }
+  return entries
+}
+
+/** Nodes that own at least one listener in the draft, other than `exclude`. */
+export function listeningNodeIds(draft: ConnectionsDraft, exclude: string): string[] {
+  return [...new Set(draft.listeners.map((listener) => listener.nodeId))].filter(
+    (id) => id !== "" && id !== exclude
+  )
+}
+
+// --- primary / backup ----------------------------------------------------
+
+function acceptorOf(candidate: CandidateDraft, listeners: ListenerDraft[]): string | null {
+  return listeners.find((listener) => listener.id.trim() === candidate.listenerId)?.nodeId ?? null
+}
+
+/** Candidates from one dialer to one acceptor node, in primary-first order. */
+export function pairCandidates(
+  draft: ConnectionsDraft,
+  dialerNodeId: string,
+  acceptorNodeId: string
+): CandidateDraft[] {
+  const priority = (candidate: CandidateDraft) => {
+    const value = parsePort(candidate.priority)
+    return Number.isInteger(value) ? value : Number.POSITIVE_INFINITY
+  }
+  return draft.candidates
+    .filter(
+      (candidate) =>
+        candidate.dialerNodeId === dialerNodeId && acceptorOf(candidate, draft.listeners) === acceptorNodeId
+    )
+    .sort((a, b) => priority(a) - priority(b) || (a.id.trim() < b.id.trim() ? -1 : a.id.trim() > b.id.trim() ? 1 : 0))
+}
+
+/** Lower-first: the first entry for a pair is 0, later ones go behind it. */
+export function nextPriority(draft: ConnectionsDraft, dialerNodeId: string, acceptorNodeId: string, exceptKey: string): string {
+  const values = pairCandidates(draft, dialerNodeId, acceptorNodeId)
+    .filter((candidate) => candidate.key !== exceptKey)
+    .map((candidate) => parsePort(candidate.priority))
+    .filter((value) => Number.isInteger(value))
+  if (values.length === 0) return "0"
+  return String(Math.min(65535, Math.max(...values) + 10))
+}
+
+export type DialRole = { rank: number; total: number; tied: boolean }
+
+/** Position of a candidate among its dialer → acceptor pair. */
+export function dialRole(candidate: CandidateDraft, draft: ConnectionsDraft): DialRole | null {
+  const acceptor = acceptorOf(candidate, draft.listeners)
+  if (acceptor === null || candidate.dialerNodeId === "") return null
+  const pair = pairCandidates(draft, candidate.dialerNodeId, acceptor)
+  const rank = pair.findIndex((existing) => existing.key === candidate.key)
+  if (rank < 0) return null
+  const tied = pair.some(
+    (existing) => existing.key !== candidate.key && existing.priority.trim() === candidate.priority.trim()
+  )
+  return { rank, total: pair.length, tied }
+}
+
+export function dialRoleLabel(role: DialRole | null): string | null {
+  if (role === null) return null
+  if (role.total === 1) return "唯一入口"
+  return role.rank === 0 ? "主用" : `备用 ${role.rank}`
+}
+
+// --- form autofill -------------------------------------------------------
+// Suggestions follow the user's choices until the user overrides them: a
+// field is regenerated only while it still holds the previous suggestion.
+
+function listenerTransportFor(entry: ConnectionNode | undefined, current: Transport): Transport {
+  if (!entry) return current
+  if (canServe(entry, current, "accept")) return current
+  return transports.find((transport) => canServe(entry, transport, "accept")) ?? current
+}
+
+export function autofillListener(
+  next: ListenerDraft,
+  previous: ListenerDraft,
+  mode: "new" | "edit",
+  others: ListenerDraft[],
+  nodes: ConnectionNode[]
+): ListenerDraft {
+  let form = next
+  if (form.nodeId !== previous.nodeId) {
+    const ref = resolveConnectionNode(nodes, form.nodeId)
+    form = { ...form, transport: listenerTransportFor(ref.kind === "active" ? ref.entry : undefined, form.transport) }
+  }
+  if (mode === "new") {
+    const taken = others.map((listener) => listener.id)
+    const was = suggestListenerId(nodes, previous.nodeId, previous.transport, taken)
+    // Only while the user has not just typed an ID of their own.
+    if (form.id === previous.id && (previous.id.trim() === was || previous.id.trim() === "")) {
+      form = { ...form, id: suggestListenerId(nodes, form.nodeId, form.transport, taken) }
+    }
+  }
+  const oldPort = parseBind(previous.bind).port.trim()
+  const newPort = parseBind(form.bind).port.trim()
+  if (oldPort !== newPort) {
+    form = {
+      ...form,
+      endpoints: form.endpoints.map((endpoint) =>
+        endpoint.port.trim() === "" || endpoint.port.trim() === oldPort ? { ...endpoint, port: newPort } : endpoint
+      ),
+    }
+  }
+  return form
+}
+
+function transportOfEntry(draft: ConnectionsDraft, form: CandidateForm): Transport {
+  const listener =
+    draft.listeners.find((existing) => existing.id.trim() === form.listenerId) ??
+    draft.listeners.find((existing) => existing.nodeId === form.targetNodeId)
+  return listener?.transport ?? "native_udp"
+}
+
+export function autofillCandidate(
+  next: CandidateForm,
+  previous: CandidateForm,
+  mode: "new" | "edit",
+  draft: ConnectionsDraft,
+  nodes: ConnectionNode[]
+): CandidateForm {
+  let form = next
+  const others = draft.candidates.filter((candidate) => candidate.key !== form.key)
+  const peersChanged = form.dialerNodeId !== previous.dialerNodeId || form.targetNodeId !== previous.targetNodeId
+  if (peersChanged) {
+    const entries = dialEntries(draft, nodes, form.dialerNodeId, form.targetNodeId, form.key)
+    const usable = entries.filter((entry) => entry.blocker === null)
+    const current = entries.find(
+      (entry) => entry.value === entryValue(form.listenerId, form.host, form.port) && entry.blocker === null
+    )
+    if (!current) {
+      const [only] = usable.length === 1 ? usable : []
+      if (only) form = { ...form, listenerId: only.listener.id.trim(), host: only.host, port: only.port }
+      // A different target invalidates the entry; a different dialer keeps
+      // it visible (and flagged) for an explicit choice.
+      else if (form.targetNodeId !== previous.targetNodeId) form = { ...form, listenerId: "", host: "", port: "" }
+    }
+  }
+  if (mode === "new") {
+    const scoped = { ...draft, candidates: others }
+    const wasPriority =
+      previous.dialerNodeId !== "" && previous.targetNodeId !== ""
+        ? nextPriority(scoped, previous.dialerNodeId, previous.targetNodeId, form.key)
+        : "0"
+    if (previous.priority.trim() === wasPriority && form.priority === previous.priority) {
+      form = {
+        ...form,
+        priority:
+          form.dialerNodeId !== "" && form.targetNodeId !== ""
+            ? nextPriority(scoped, form.dialerNodeId, form.targetNodeId, form.key)
+            : "0",
+      }
+    }
+    const taken = others.map((candidate) => candidate.id)
+    const wasId = suggestCandidateId(nodes, previous.dialerNodeId, previous.targetNodeId, transportOfEntry(draft, previous), taken)
+    if ((previous.id.trim() === wasId || previous.id.trim() === "") && form.id === previous.id) {
+      form = { ...form, id: suggestCandidateId(nodes, form.dialerNodeId, form.targetNodeId, transportOfEntry(draft, form), taken) }
+    }
+  }
+  return form
+}
+
+/** Initial form for a new candidate in the given context. */
+export function newCandidateForm(
+  key: string,
+  draft: ConnectionsDraft,
+  nodes: ConnectionNode[],
+  context: { dialerNodeId?: string; targetNodeId?: string; listenerId?: string }
+): CandidateForm {
+  const listener = context.listenerId
+    ? draft.listeners.find((existing) => existing.id.trim() === context.listenerId)
+    : undefined
+  const blank: CandidateForm = {
+    key,
+    id: "",
+    dialerNodeId: "",
+    listenerId: "",
+    host: "",
+    port: "",
+    priority: "0",
+    credentialRef: "",
+    targetNodeId: "",
+  }
+  const chosen: CandidateForm = {
+    ...blank,
+    dialerNodeId: context.dialerNodeId ?? "",
+    targetNodeId: listener?.nodeId ?? context.targetNodeId ?? "",
+  }
+  let form = autofillCandidate(chosen, blank, "new", draft, nodes)
+  if (listener) {
+    const usable = dialEntries(draft, nodes, form.dialerNodeId, form.targetNodeId, key).filter(
+      (entry) => entry.listener.key === listener.key && entry.blocker === null
+    )
+    const [only] = usable.length === 1 ? usable : []
+    form = only
+      ? { ...form, listenerId: only.listener.id.trim(), host: only.host, port: only.port }
+      : { ...form, listenerId: listener.id.trim(), host: "", port: "" }
+    const taken = draft.candidates.map((candidate) => candidate.id)
+    form = { ...form, id: suggestCandidateId(nodes, form.dialerNodeId, form.targetNodeId, listener.transport, taken) }
+  }
+  return form
+}
+
+/** Initial form for a new listener on `nodeId` (or the first node able to accept). */
+export function newListenerForm(
+  key: string,
+  draft: ConnectionsDraft,
+  nodes: ConnectionNode[],
+  nodeId: string | null
+): ListenerDraft {
+  const ready = (entry: ConnectionNode) => transports.some((transport) => canServe(entry, transport, "accept"))
+  const ref = nodeId ? resolveConnectionNode(nodes, nodeId) : null
+  const owner = ref?.kind === "active" ? ref.entry : nodeId ? undefined : nodes.find(ready)
+  const ownerId = nodeId ?? owner?.node.id ?? ""
+  const transport = listenerTransportFor(owner, "native_udp")
+  return {
+    key,
+    id: suggestListenerId(nodes, ownerId, transport, draft.listeners.map((listener) => listener.id)),
+    nodeId: ownerId,
+    transport,
+    bind: composeBind({ mode: "ipv4_any", address: "", port: "" }),
+    endpoints: [{ key: `${key}-e0`, host: "", port: "" }],
+    credentialRef: "",
+  }
+}
+
+/** A connections snapshot with the server time it was read at. */
+export type StampedSnapshot = { snapshot: ConnectionsSnapshot; readAt: number }
+
+/**
+ * Freshest snapshot among page renders, polls and action responses (save,
+ * explicit reload). A higher revision always wins, so nothing rolls back;
+ * at the same revision the later read wins, because receipts and contact
+ * change without bumping the revision. All `readAt` values come from the
+ * web server's clock. Only ever a mount / display source: a kept dirty draft
+ * restores its own CAS base from the draft store.
+ */
+export function latestSnapshot(...sources: (StampedSnapshot | null)[]): StampedSnapshot | null {
+  let best: StampedSnapshot | null = null
+  for (const source of sources) {
+    if (source === null) continue
+    if (
+      best === null ||
+      source.snapshot.revision > best.snapshot.revision ||
+      (source.snapshot.revision === best.snapshot.revision && source.readAt > best.readAt)
+    ) {
+      best = source
+    }
+  }
+  return best
 }

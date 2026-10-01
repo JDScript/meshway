@@ -10,6 +10,7 @@ import {
   SelectValue,
 } from "@/components/ui/select"
 import {
+  anyRoleBlocker,
   nodeName,
   resolveConnectionNode,
   roleBlocker,
@@ -42,7 +43,8 @@ export function ConnectionNodePicker({
   nodes: ConnectionNode[]
   value: string
   onValueChange: (value: string) => void
-  transport: Transport
+  /** null: any carrier the node can take the role on. */
+  transport: Transport | null
   role: Role
   exclude?: string[]
   placeholder: string
@@ -58,7 +60,9 @@ export function ConnectionNodePicker({
     entry,
     blocker: exclude.includes(entry.node.id)
       ? "不能连接自己"
-      : roleBlocker(entry, transport, role),
+      : transport === null
+        ? anyRoleBlocker(entry, role)
+        : roleBlocker(entry, transport, role),
   }))
   const currentBlocked =
     current?.kind === "active" && options.find((o) => o.entry.node.id === value)?.blocker != null
@@ -107,7 +111,7 @@ export function ConnectionNodePicker({
                   blocker ? "text-warning" : "font-mono text-muted-foreground"
                 )}
               >
-                {blocker ?? entry.node.mesh_ipv4}
+                {blocker ?? entry.node.country ?? ""}
               </span>
             </SelectItem>
           ))

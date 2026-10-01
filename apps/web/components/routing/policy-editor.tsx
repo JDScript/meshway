@@ -27,14 +27,14 @@ import {
 import { OptionSelect } from "@/components/common/option-select"
 import { Panel } from "@/components/common/panel"
 import { DiagnosticList } from "@/components/routing/diagnostics"
-import { RuleBuilder, type BuilderSession } from "@/components/routing/rule-builder"
+import { RuleBuilder } from "@/components/routing/rule-builder"
 import { RuleList, type RuleRowState } from "@/components/routing/rule-list"
 import {
   FlowForm,
   PreviewButton,
   PreviewOutcome,
 } from "@/components/routing/route-preview"
-import { useRoutingDraftStore } from "@/components/routing/draft-store"
+import { useRoutingDraftStore, type Owner } from "@/components/routing/draft-store"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import {
   AlertDialog,
@@ -82,7 +82,13 @@ import {
   type PolicyDraft,
   type RuleDraft,
 } from "@/lib/policy-model"
-import { newRuleForm, toRuleForm } from "@/lib/rule-form"
+import {
+  newRuleForm,
+  toRuleForm,
+  type BuilderSession,
+  type RuleForm,
+  type WorkingRule,
+} from "@/lib/rule-form"
 import { cn } from "@/lib/utils"
 
 /** Diagnostics together with the exact policy they were compiled for. */
@@ -156,7 +162,13 @@ export function PolicyEditor({
   const [save, setSave] = useState<SaveResult | null>(null)
   const [reloadError, setReloadError] = useState<string | null>(null)
   const [confirm, setConfirm] = useState<"reload" | "revert" | null>(null)
-  const [builder, setBuilder] = useState<{ session: BuilderSession; open: boolean } | null>(null)
+  // Unapplied builder edits come back too: the builder reopens with them.
+  const [working, setWorking] = useState<WorkingRule | null>(restored?.builder ?? null)
+  const [builder, setBuilder] = useState<{ session: BuilderSession; open: boolean } | null>(() =>
+    restored?.builder
+      ? { open: true, session: { ...restored.builder.session, working: restored.builder.form } }
+      : null
+  )
   const [highlight, setHighlight] = useState<string | null>(null)
   const [previewing, startPreview] = useTransition()
   const [saving, startSave] = useTransition()
@@ -166,11 +178,26 @@ export function PolicyEditor({
   // Undo callbacks from an older generation must not touch the new draft.
   const generation = useRef(0)
   const undoToasts = useRef<string[]>([])
-  const sessionId = useRef(0)
+  const sessionId = useRef(restored?.nextSession ?? 0)
   const previewSeq = useRef(0)
   const draftRef = useRef(draft)
   const defaultActionId = useId()
   const toast = useToastManager()
+  // This mount's claim on the shared store, and the current reload request:
+  // completions from an unmounted editor never touch a newer editor's work.
+  const owner = useRef<Owner | null>(null)
+  const reloadGeneration = useRef(0)
+
+  useEffect(() => {
+    const claimed = drafts.claim()
+    owner.current = claimed
+    const generation = reloadGeneration
+    return () => {
+      generation.current += 1
+      owner.current = null
+      drafts.release(claimed)
+    }
+  }, [drafts])
 
   useEffect(() => {
     draftRef.current = draft
@@ -199,9 +226,19 @@ export function PolicyEditor({
   // In-app navigation keeps the draft in the console-scoped store, which
   // also owns the reload / tab-close warning.
   useEffect(() => {
-    if (dirty) drafts.write({ base, nodes, draft, nextKey: nextKey.current })
-    else drafts.clear()
-  }, [dirty, base, nodes, draft, drafts])
+    if (dirty || working !== null) {
+      drafts.write(owner.current, {
+        base,
+        nodes,
+        draft,
+        builder: working,
+        nextKey: nextKey.current,
+        nextSession: sessionId.current,
+      })
+    } else {
+      drafts.clear(owner.current)
+    }
+  }, [dirty, working, base, nodes, draft, drafts])
 
   const compiledFresh = compiled.key === currentKey
   const states: RuleRowState[] = useMemo(() => {
@@ -213,7 +250,7 @@ export function PolicyEditor({
       diagnostics: diagnosticsForRule(compiled.diagnostics, rule.id).length,
       diagnosticsStale: !compiledFresh,
       shadowedBy:
-        catchAllRule && index > firstCatchAll ? catchAllRule.id.trim() || "（空 ID）" : null,
+        catchAllRule && index > firstCatchAll ? `第 ${firstCatchAll + 1} 条` : null,
     }))
   }, [draft.rules, base.policy, issues, compiled.diagnostics, compiledFresh])
 
@@ -224,10 +261,20 @@ export function PolicyEditor({
 
   const openBuilder = (session: Omit<BuilderSession, "id">) => {
     sessionId.current += 1
+    setWorking(null)
     setBuilder({ session: { ...session, id: sessionId.current }, open: true })
   }
-  const closeBuilder = () =>
+  /** Ends the session; its unapplied edits go, the outer draft stays. */
+  const closeBuilder = () => {
+    setWorking(null)
     setBuilder((current) => (current ? { ...current, open: false } : null))
+  }
+  const trackBuilderForm = (form: RuleForm | null) => {
+    const session = builder?.session
+    if (!session) return
+    const opened = { id: session.id, mode: session.mode, initial: session.initial, position: session.position }
+    setWorking(form === null ? null : { session: opened, form })
+  }
 
   const editRule = (index: number) => {
     const rule = draft.rules[index]
@@ -345,13 +392,17 @@ export function PolicyEditor({
     const expected = base.revision
     const body = policy
     const sentKey = currentKey
+    const saver = owner.current
     startSave(async () => {
       const result = await savePolicyAction(expected, body)
+      if (!drafts.owns(saver)) {
+        // This editor unmounted meanwhile: kept work that is exactly what
+        // was saved is no longer unsaved; anything else is left alone.
+        if (result.status === "saved") drafts.adoptOrphanSave(expected, sentKey)
+        return
+      }
       setSave(result)
       if (result.status === "saved") {
-        // Also covers a save that finishes after navigating away: the kept
-        // draft is exactly what was saved, so it is no longer unsaved.
-        drafts.clearIfPolicy(sentKey)
         newGeneration()
         setBase(result.snapshot)
         // The controller returns the canonical (normalized) policy. Only
@@ -367,15 +418,20 @@ export function PolicyEditor({
   const runReload = () => {
     setConfirm(null)
     previewSeq.current += 1
+    const generation = ++reloadGeneration.current
+    const loader = owner.current
     startReload(async () => {
       const result = await reloadPolicyAction()
+      // Superseded, or this editor unmounted: newer work must survive.
+      if (generation !== reloadGeneration.current || !drafts.owns(loader)) return
       if (result.status === "error") {
         setReloadError(result.message)
         return
       }
       setReloadError(null)
       // The administrator confirmed discarding the draft.
-      drafts.clear()
+      setWorking(null)
+      setBuilder((current) => (current ? { ...current, open: false } : null))
       newGeneration()
       setBase(result.snapshot)
       setNodes(result.nodes)
@@ -637,6 +693,8 @@ export function PolicyEditor({
       <RuleBuilder
         session={builder?.session ?? null}
         open={builder?.open ?? false}
+        dirty={working !== null}
+        onWorkingChange={trackBuilderForm}
         onClose={closeBuilder}
         onApply={applyRule}
         onDelete={() => {
