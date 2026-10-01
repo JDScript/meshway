@@ -4,6 +4,7 @@ members = [
     "crates/policy",
     "crates/dataplane",
     "crates/transport-vless",
+    "crates/transport-trojan",
     "apps/controller",
     "apps/agent",
 ]
