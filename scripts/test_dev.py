@@ -140,7 +140,7 @@ class Workspace(unittest.TestCase):
 
     def test_demo_status_failure_cannot_be_reported_ready_and_filters_secrets(self):
         demo, _ = self.make_demo()
-        value = {"nodes": [{"name": "demo-" + role, "container": "running", "dataplane": "ready", "registration": "active", "runtime": {"current": True, "stale": False, "bearer": "SECRET"}, "token": "SECRET"} for role in deployment.ROLES], "admin": "SECRET"}
+        value = {"nodes": [{"name": "demo-" + role, "container": "running", "dataplane": "ready", "registration": "active", "runtime": {"current": True, "stale": False, "state": "applied", "bearer": "SECRET"}, "token": "SECRET"} for role in deployment.ROLES], "admin": "SECRET"}
         with patch.object(demo, "invoke", return_value=result(json.dumps(value), returncode=1)):
             row = demo.status()
         self.assertEqual(row["session"], "running")
@@ -149,13 +149,28 @@ class Workspace(unittest.TestCase):
 
     def test_demo_status_accepts_lock_wait_notice_and_rejects_malformed_report(self):
         demo, _ = self.make_demo()
-        value = {"nodes": [{"name": "demo-" + role, "container": "running", "dataplane": "ready", "registration": "active", "runtime": {"current": True, "stale": False}} for role in deployment.ROLES]}
+        value = {"nodes": [{"name": "demo-" + role, "container": "running", "dataplane": "ready", "registration": "active", "runtime": {"current": True, "stale": False, "state": "applied"}} for role in deployment.ROLES]}
         with patch.object(demo, "invoke", return_value=result("Waiting for the shared Meshway performance runner…\n" + json.dumps(value))):
             self.assertTrue(demo.status()["ready"])
         with patch.object(demo, "invoke", return_value=result("[]")):
             row = demo.status()
             self.assertFalse(row["ready"])
             self.assertEqual(row["session"], "unverified")
+
+    def test_service_readiness_does_not_fabricate_missing_dataplane_proof(self):
+        demo, _ = self.make_demo()
+        value = {"nodes": [{"name": "demo-" + role, "container": "running", "dataplane": "not-proven", "registration": "active", "runtime": {"current": True, "stale": False, "state": "applied"}} for role in deployment.ROLES]}
+        with patch.object(demo, "invoke", return_value=result(json.dumps(value))):
+            row = demo.status()
+        self.assertTrue(row["ready"])
+        self.assertEqual(row["dataplane"], "not-proven")
+        for state in ("applying", "error", "withdrawn", "unexpected", None):
+            value["nodes"][0]["runtime"]["state"] = state
+            with patch.object(demo, "invoke", return_value=result(json.dumps(value))):
+                self.assertFalse(demo.status()["ready"])
+        value["nodes"][0]["runtime"].update(state="applied", stale=True)
+        with patch.object(demo, "invoke", return_value=result(json.dumps(value))):
+            self.assertFalse(demo.status()["ready"])
 
     def test_demo_launcher_has_no_nested_lock_and_uses_absolute_local_data(self):
         demo, _ = self.make_demo()

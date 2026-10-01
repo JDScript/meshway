@@ -405,12 +405,19 @@ class Demo:
                     raise DevError("demo: invalid status report")
                 runtime = node.get("runtime")
                 current = isinstance(runtime, dict) and runtime.get("current") is True and runtime.get("stale") is False
-                summaries.append({key: node[key] for key in ("name", "container", "dataplane", "registration")} | {"runtime_current": current})
+                state = runtime.get("state") if isinstance(runtime, dict) else None
+                if state not in ("awaiting_report", "disabled", "applying", "applied", "error", "withdrawn"):
+                    state = None
+                summaries.append({key: node[key] for key in ("name", "container", "dataplane", "registration")} | {"runtime_current": current, "runtime_state": state})
             if len({node["name"] for node in summaries}) != 3:
                 raise DevError("demo: duplicate status nodes")
             result["nodes"] = summaries
             result["session"] = "running" if all(node["container"] == "running" for node in summaries) else "partial-or-stopped"
-            result["ready"] = output.returncode == 0 and all(node["container"] == "running" and node["registration"] == "active" and node["runtime_current"] and node["dataplane"] != "not-proven" for node in summaries)
+            # Developer service readiness is current applied Agent execution.
+            # TUN proof is reported independently: bounded Docker log rotation
+            # can remove an old startup proof while the daemon keeps running.
+            result["ready"] = output.returncode == 0 and all(node["container"] == "running" and node["registration"] == "active" and node["runtime_current"] and node["runtime_state"] == "applied" for node in summaries)
+            result["dataplane"] = "not-proven" if any(node["dataplane"] == "not-proven" for node in summaries) else "ready" if any(node["dataplane"] == "ready" for node in summaries) else "disabled"
             if output.returncode:
                 result["error"] = "demo: existing status command failed"
         except (DevError, OSError, ValueError, TypeError):
@@ -424,7 +431,7 @@ class Demo:
             if self.status()["ready"]:
                 return
             if time.monotonic() >= deadline:
-                raise DevError("demo: current dataplane/runtime readiness is not proven; inspect status demo and retained receipts")
+                raise DevError("demo: current applied runtime is not proven; inspect status demo and retained receipts")
             time.sleep(.5)
 
 
@@ -454,7 +461,7 @@ def main(argv=None):
             print(json.dumps({"root": str(ROOT), "services": rows}, indent=2))
         else:
             for row in rows:
-                print(row["service"] + ": " + row["session"] + ", " + ("ready" if row["ready"] else "not ready") + (", port " + str(row["port"]) + (" listening" if row["listening"] else " closed") if "port" in row else "") + ("; " + row["error"] if row["error"] else ""))
+                print(row["service"] + ": " + row["session"] + ", " + ("ready" if row["ready"] else "not ready") + (", port " + str(row["port"]) + (" listening" if row["listening"] else " closed") if "port" in row else "") + (", dataplane " + row["dataplane"] if "dataplane" in row else "") + ("; " + row["error"] if row["error"] else ""))
         return int(any(not row["ready"] for row in rows if row["session"] != "not-initialized" or args.service == "demo"))
     with local.lock():
         if args.action == "update" and "controller" in selected:

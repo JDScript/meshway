@@ -69,6 +69,7 @@ python3 scripts/dev.py status demo --json
 状态区分 session 是否运行、端口是否监听、真实 readiness 和检查错误。
 Controller readiness 是由已核实进程提供的公开 401/Bearer 响应；Web 是 `/login` 的 HTML 200；文档站是首页的 HTML 200。
 运行 session、保存的配置、二进制部署 receipt 均不能替代 readiness。
+Demo 的 `ready` 要求容器运行、注册有效、当前且未过期的 `applied` 运行报告；TUN 证据另列为 `dataplane`，缺少证明时明确显示 `not-proven`。日志 rotation 可能移除旧启动证明，入口不会据此捏造数据面状态或无故重启 Agent。实际隧道访问仍用单独的流量验证。
 选择的服务未 ready、检查失败或生命周期操作失败时返回非零。
 `all` 中尚未初始化 demo 是提示，不影响基础服务的成功；显式 `status demo` 返回非零。
 JSON 只输出公开、精简的状态，不输出管理员 bearer、节点凭据、密钥或完整进程环境。
@@ -99,7 +100,7 @@ python3 scripts/dev.py update demo --image meshway-managedtest:VALIDATED_TAG
 - 从一个停止、`network=none` 的临时容器提取 Agent ELF 到已批准临时根目录下的独占 0700 子目录（文件 0600），完成后按 inode/ownership 清理；逐个备份旧 binary，再校验新旧 digest、架构和功能。
 - 将新 binary 暂存到原容器，在原路径同文件系统 atomic rename，SIGINT 优雅停止，再启动同一容器。确认 live CLI、相同容器 ID、apt inventory、CLI alias 以及原始 identity/key/profiles 不变。
 - 原始 `demo.json.image_id` 仍是容器 base image pin。源 image、binary SHA、各容器验证结果和旧 binary 保留在 `.meshway/services/binary-update-*/deployment.json` 同目录；二进制更新不冒充 base image 更新。
-- 完成部署后通过现有 SDK-backed demo status 检查当前 runtime / dataplane readiness，失败返回非零。部署 receipt 的 live IPC 结果不等同于隧道连通性。
+- 完成部署后通过现有 SDK-backed demo status 检查当前 runtime readiness，并单独呈现数据面证明。部署 receipt 的 live IPC 结果不等同于隧道连通性。
 
 只读 demo 的 `update` 会明确拒绝。要升级其镜像，请显式使用原有 `demo.py upgrade-image`；这会重建容器，保留绑定的数据目录，但丢弃容器可写层。
 只读 demo 已 ready 时 `start` 仅检查状态；需要恢复的 `start` 以及 `restart/stop` 使用原有生命周期流程，恢复或重启可能重建容器。
