@@ -2045,7 +2045,9 @@ dependencies = [
  "idna",
  "ipnet",
  "meshway-protocol",
+ "serde",
  "serde_json",
+ "utoipa",
 ]
 
 [[package]]

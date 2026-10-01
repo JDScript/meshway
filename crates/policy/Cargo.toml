@@ -9,6 +9,8 @@ meshway-protocol = { path = "../protocol" }
 ipnet = "2.11"
 idna = "1.1"
 serde_json.workspace = true
+serde.workspace = true
+utoipa.workspace = true
 
 [lints]
 workspace = true
