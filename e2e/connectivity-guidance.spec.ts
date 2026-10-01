@@ -84,7 +84,9 @@ test("diagnostics separates saved flow, live peers, DNS and independent netcheck
     await expect(page.getByRole("link", { name: "netcheck 使用说明" })).toHaveAttribute("href", /\/netcheck$/);
     for (const width of [1440, 390]) {
       await page.setViewportSize({ width, height: 900 });
-      for (const summary of await page.locator("details:not([open]) summary").all()) await summary.click();
+      for (const summary of await page.locator("details:not([open]) > summary").all()) {
+        if (await summary.isVisible()) await summary.click();
+      }
       expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
       await page.screenshot({ path: test.info().outputPath(`diagnostics-${width}.png`), fullPage: true });
     }

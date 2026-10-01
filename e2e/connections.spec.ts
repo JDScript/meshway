@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { createEnrollmentToken, getConnections, listNodes, revokeNode, saveConnections, setNodeCountry } from "../packages/control-client/src/index.ts";
-import { executable, root, run, service, unusedPort } from "./harness.ts";
+import { executable, expandDetails, root, run, service, unusedPort } from "./harness.ts";
 import { revealAdvanced } from "./web-actions.ts";
 
 async function choose(page: Page, trigger: Locator, name: RegExp) {
@@ -197,6 +197,7 @@ test("connection identities, reverse-dial intent and independent receipts cross 
 
     await test.step("node-scoped saves survive tab changes and fresh same-revision receipts arrive automatically", async () => {
       await page.goto(`${webUrl}/nodes/${lax.id}?tab=connections`);
+      await expandDetails(page, "高级手工连接配置");
       await expect(page.getByRole("heading", { name: "lax", exact: true })).toBeVisible();
       await expect(page.getByTestId("connections-editor")).toHaveAttribute("data-scope", lax.id);
       await page.getByRole("button", { name: "编辑监听器 lax-udp", exact: true }).click();
@@ -211,6 +212,7 @@ test("connection identities, reverse-dial intent and independent receipts cross 
       expect(saved.configuration.candidates.find(candidate => candidate.id === "sha-to-lax")?.listener_id).toBe("lax-vless");
       await page.getByRole("tab", { name: "概览", exact: true }).click();
       await page.getByRole("tab", { name: "连接", exact: true }).click();
+      await expandDetails(page, "高级手工连接配置");
       await expect(page.getByTestId("connections-base-revision")).toHaveText(`r${saved.revision}`);
       await expect(page.getByTestId("listener-row").filter({ hasText: "lax-udp-renamed" })).toBeVisible();
       await run(executable("meshway-agent"), ["connections", "sync", "--state", join(temporary, "lax.json")]);

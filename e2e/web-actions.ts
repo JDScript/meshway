@@ -1,7 +1,10 @@
 import { expect, type Locator, type Page } from "@playwright/test";
 
 export async function revealAdvanced(container: Locator, field: Locator) {
-  if (!await field.isVisible()) await container.getByRole("button", { name: /^高级/ }).click();
+  for (const trigger of await container.getByRole("button", { name: /^高级/ }).all()) {
+    if (await field.isVisible()) break;
+    if (await trigger.getAttribute("aria-expanded") === "false") await trigger.click();
+  }
   await expect(field).toBeVisible();
 }
 

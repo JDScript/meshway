@@ -1,4 +1,4 @@
-import { expect } from "@playwright/test";
+import { expect, type Locator, type Page } from "@playwright/test";
 import { execFile, spawn } from "node:child_process";
 import { createServer } from "node:net";
 import { join, resolve } from "node:path";
@@ -9,6 +9,14 @@ export const root = resolve(import.meta.dirname, "..");
 export const run = promisify(execFile);
 export const executable = (name: string) =>
   join(root, "target", "debug", `${name}${process.platform === "win32" ? ".exe" : ""}`);
+
+export async function expandDetails(scope: Page | Locator, title: string) {
+  const summary = scope.locator("summary").filter({ hasText: title }).first();
+  await expect(summary).toBeVisible();
+  const details = summary.locator("..");
+  if (await details.getAttribute("open") === null) await summary.click();
+  await expect(details).toHaveAttribute("open", "");
+}
 
 export async function unusedPort(): Promise<number> {
   const server = createServer();

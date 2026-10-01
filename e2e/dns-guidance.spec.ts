@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { createEnrollmentToken, getNetwork, getPolicy, listNodes, revokeNode, savePolicy } from "../packages/control-client/src/index.ts";
-import { executable, root, run, service, unusedPort } from "./harness.ts";
+import { executable, expandDetails, root, run, service, unusedPort } from "./harness.ts";
 
 test("DNS guidance uses saved intent and full identity without claiming local runtime", async ({ page }) => {
   const temporary = await mkdtemp(join(process.env.MESHWAY_E2E_TMPDIR ?? tmpdir(), "meshway-dns-guidance-e2e-"));
@@ -39,6 +39,7 @@ test("DNS guidance uses saved intent and full identity without claiming local ru
     await expect(page).not.toHaveURL(/\/login(?:\?|$)/);
     await page.goto(`${webUrl}/network`);
     await expect(page.getByTestId("network-dns-saved-context")).toContainText("DNS 已关闭");
+    await expandDetails(page, "DNS 诊断与当前启用帮助");
     await expect(page.getByTestId("dns-status-command")).toHaveText("meshway-agent dns status --state '<该节点现有 state 文件路径>'");
 
     await nodePage.goto(`${webUrl}/nodes/${node.id}`);
