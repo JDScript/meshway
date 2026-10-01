@@ -16,7 +16,8 @@ pub use runtime::{
     BoundListener, DropStatistics, MAX_NATIVE_UDP_DATAGRAM, MAX_PACKET_PAYLOAD,
     NeighborProbeObservation, PeerConnection, ProbeReply, QueueRejectionStatistics,
     QueueStatistics, ReceivedPacket, Runtime, RuntimeQueueStatistics, Statistics, StreamContext,
-    StreamRole, TransportStatistics, native_udp_datagram_len,
+    StreamRole, TransportStatistics, UdpDiscoveryObservation, UdpDiscoveryOutcome, UdpSocketInfo,
+    native_udp_datagram_len,
 };
 
 /// Intentionally contains no cryptographic material, endpoints or application bytes.

@@ -1,5 +1,6 @@
 use super::{
-    Channel, DropReason, Failure, Incoming, Inner, Outbound, StageResult, StreamContext, lock,
+    Channel, DropReason, Failure, Incoming, Inner, Outbound, StageResult, StreamContext, discovery,
+    lock,
     wire::{HOP_ACK, HOP_CONFIRM, hop_prologue},
     work_budget::WorkBudget,
 };
@@ -115,6 +116,7 @@ pub(super) async fn run(
     socket: UdpSocket,
     candidate: Option<OutgoingCandidate>,
     context: StreamContext,
+    mut live: discovery::LiveSocket,
 ) {
     let mut shutdown = inner.shutdown.subscribe();
     if *shutdown.borrow() {
@@ -130,9 +132,20 @@ pub(super) async fn run(
     let mut work = WorkBudget::new(inner.config.limits.work_budget_frames);
     // One extra byte detects truncation of oversized datagrams without allocating from a wire length.
     let mut buffer = vec![0; UDP_LIMIT + 1];
+    let mut discovery_pending = None;
     loop {
         tokio::select! {
             _ = shutdown.changed() => break,
+            request = live.rx.recv(), if discovery_pending.is_none() => {
+                let Some(request) = request else { break };
+                discovery_pending = Some(request);
+            }
+            _ = discovery::deadline(&discovery_pending) => discovery::expire(&mut discovery_pending),
+            _ = discovery::cancelled(&discovery_pending) => discovery_pending = None,
+            ready = discovery::writable(&socket, &discovery_pending) => {
+                discovery::send(&socket, &mut discovery_pending, ready);
+                work.completed_frame().await;
+            }
             _ = tick.tick() => {
                 let now = Instant::now();
                 sessions.retain(|token, session| {
@@ -192,7 +205,8 @@ pub(super) async fn run(
             }
             datagram = socket.recv_from(&mut buffer) => {
                 let Ok((size, source)) = datagram else { break };
-                let result = if size == 0 || size > UDP_LIMIT { Err(Error::Oversize.into()) }
+                let result = if discovery::receive(&mut discovery_pending, &buffer[..size], source) { Ok(()) }
+                    else if size == 0 || size > UDP_LIMIT { Err(Error::Oversize.into()) }
                     else { receive(&inner, &socket, &tx, &mut sessions, &mut pending, &mut confirming, &buffer[..size], source, candidate.is_none(), &context).await };
                 if let Err(failure) = result { inner.counters(TransportKind::NativeUdp).drop(failure.reason); }
                 // All datagrams consume work, including rejected input and hop control.

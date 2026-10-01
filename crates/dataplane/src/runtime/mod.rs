@@ -1,3 +1,5 @@
+mod discovery;
+pub use discovery::{UdpDiscoveryObservation, UdpDiscoveryOutcome, UdpSocketInfo};
 mod neighbor;
 mod packet;
 mod probe;
@@ -228,6 +230,8 @@ struct Inner {
     peers: Mutex<BTreeMap<String, Channel>>,
     pending: Mutex<BTreeMap<[u8; 16], WaitingProbe>>,
     neighbor_pending: Mutex<BTreeMap<[u8; 16], neighbor::Waiting>>,
+    udp_sockets: Mutex<BTreeMap<u32, discovery::Registration>>,
+    udp_discovery_slots: Arc<Semaphore>,
     endpoints: Mutex<BTreeMap<(String, [u8; 16]), EndpointSession>>,
     sending: tokio::sync::Mutex<BTreeMap<Vec<String>, SendingSession>>,
     delivery: Mutex<Option<mpsc::Sender<ReceivedPacket>>>,
@@ -289,6 +293,8 @@ impl Runtime {
             peers: Mutex::default(),
             pending: Mutex::default(),
             neighbor_pending: Mutex::default(),
+            udp_sockets: Mutex::default(),
+            udp_discovery_slots: Arc::new(Semaphore::new(16)),
             endpoints: Mutex::default(),
             sending: tokio::sync::Mutex::default(),
             delivery: Mutex::new(Some(delivery)),
@@ -362,8 +368,29 @@ impl Runtime {
         for (listener, context) in tcp {
             inner.spawn(stream::listen(inner.clone(), listener, context));
         }
-        for (socket, candidate, context) in udp {
-            inner.spawn(udp::run(inner.clone(), socket, candidate, context));
+        for (ordinal, (socket, candidate, context)) in udp.into_iter().enumerate() {
+            let socket_id = u32::try_from(ordinal).map_err(|_| Error::Capacity)?;
+            let info = UdpSocketInfo {
+                socket_id,
+                local_addr: socket.local_addr()?,
+                listener_id: context.listener_id.clone(),
+                candidate_id: context.candidate_id.clone(),
+            };
+            let (tx, rx) = mpsc::channel(1);
+            lock(&inner.udp_sockets).insert(
+                socket_id,
+                discovery::Registration {
+                    info,
+                    tx,
+                    slot: Arc::new(Semaphore::new(1)),
+                },
+            );
+            let live = discovery::LiveSocket {
+                inner: inner.clone(),
+                id: socket_id,
+                rx,
+            };
+            inner.spawn(udp::run(inner.clone(), socket, candidate, context, live));
         }
         for candidate in inner.config.outgoing.clone() {
             match candidate.transport {
