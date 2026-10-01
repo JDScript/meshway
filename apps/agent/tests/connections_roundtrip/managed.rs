@@ -335,6 +335,8 @@ async fn actual_controller_runtime_reports_durable_identity_removal_stalled_http
     let sha_identity = sha.publish_connection_identity().await.unwrap();
     let lax_key = std::fs::read(directory.path().join("lax.json.connection-key.json")).unwrap();
     let sha_key = std::fs::read(directory.path().join("sha.json.connection-key.json")).unwrap();
+    let lax_state = std::fs::read(&lax_path).unwrap();
+    let sha_state = std::fs::read(&sha_path).unwrap();
     let reserved = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let port = reserved.local_addr().unwrap().port();
     drop(reserved);
@@ -393,6 +395,57 @@ async fn actual_controller_runtime_reports_durable_identity_removal_stalled_http
         Some("lax-tcp")
     );
     assert!(lax_observed.peers[0].probe_rtt_ms.is_some());
+    assert!(
+        Agent::load(&lax_path).is_err(),
+        "daemon must retain its state lock"
+    );
+    let ping = Command::new(env!("CARGO_BIN_EXE_meshway-agent"))
+        .env("MESHWAY_STATE", &lax_path)
+        .args(["ping", "sha", "--count", "1", "--timeout-seconds", "3"])
+        .output()
+        .unwrap();
+    assert!(
+        ping.status.success(),
+        "{}",
+        String::from_utf8_lossy(&ping.stderr)
+    );
+    let output = String::from_utf8(ping.stdout).unwrap();
+    assert!(output.contains("authenticated neighbor probe / 认证邻接探测 (非ICMP，非mesh trace)"));
+    assert!(output.contains(&sha_identity.node_id));
+    assert!(output.contains("direction=accepted (peer initiated)"));
+    assert!(output.contains("transport=native_tcp"));
+    assert!(output.contains(" µs"));
+    assert!(!output.contains("private_key"));
+    let explicit = Command::new(env!("CARGO_BIN_EXE_meshway-agent"))
+        .env("MESHWAY_STATE", &lax_path)
+        .args(["ping", "lax", "--count", "1", "--state"])
+        .arg(&sha_path)
+        .output()
+        .unwrap();
+    assert!(
+        explicit.status.success(),
+        "{}",
+        String::from_utf8_lossy(&explicit.stderr)
+    );
+    assert!(
+        String::from_utf8(explicit.stdout)
+            .unwrap()
+            .contains("direction=outgoing (locally initiated)")
+    );
+    let unknown = Command::new(env!("CARGO_BIN_EXE_meshway-agent"))
+        .env("MESHWAY_STATE", &lax_path)
+        .args(["ping", "unconfigured-nyc", "--count", "1"])
+        .output()
+        .unwrap();
+    assert!(!unknown.status.success());
+    assert!(
+        String::from_utf8(unknown.stderr)
+            .unwrap()
+            .contains("not a configured direct neighbor")
+    );
+    assert!(Agent::load(&lax_path).is_err());
+    assert_eq!(std::fs::read(&lax_path).unwrap(), lax_state);
+    assert_eq!(std::fs::read(&sha_path).unwrap(), sha_state);
     assert_eq!(
         std::fs::read(directory.path().join("lax.json.connection-key.json")).unwrap(),
         lax_key
@@ -412,6 +465,12 @@ async fn actual_controller_runtime_reports_durable_identity_removal_stalled_http
     )
     .await;
     wait_neighbors(&server, &admin, false).await;
+    assert_eq!(
+        meshway_agent::diagnostics::probe(&lax_path, "sha", Duration::from_secs(1))
+            .await
+            .unwrap_err(),
+        meshway_agent::diagnostics::ProbeError::UnconfiguredPeer,
+    );
     assert!(
         tokio::net::TcpListener::bind(("127.0.0.1", port))
             .await
@@ -446,6 +505,13 @@ async fn actual_controller_runtime_reports_durable_identity_removal_stalled_http
     .expect("HTTP stall extended the runtime lease");
     assert!(lax.0.try_wait().unwrap().is_none());
     assert!(sha.0.try_wait().unwrap().is_none());
+    assert_eq!(
+        meshway_agent::diagnostics::probe(&lax_path, "sha", Duration::from_secs(1))
+            .await
+            .unwrap_err(),
+        meshway_agent::diagnostics::ProbeError::Unavailable,
+        "IPC must answer unavailable independently of stalled controller HTTP",
+    );
     for process in [&mut lax, &mut sha] {
         rustix::process::kill_process(
             rustix::process::Pid::from_raw(process.0.id() as i32).unwrap(),
@@ -466,6 +532,12 @@ async fn actual_controller_runtime_reports_durable_identity_removal_stalled_http
     })
     .await
     .unwrap();
+    for path in [&lax_path, &sha_path] {
+        assert!(
+            !meshway_agent::diagnostics::socket_path(path).exists(),
+            "ctrl-C must clean up the private socket"
+        );
+    }
     for (path, bytes) in [(&lax_log, lax_key), (&sha_log, sha_key)] {
         let log = std::fs::read_to_string(path).unwrap();
         let private: serde_json::Value = serde_json::from_slice(&bytes).unwrap();

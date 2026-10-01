@@ -15,6 +15,18 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Command {
+    /// Fresh authenticated direct-neighbor probe through the active managed daemon (not ICMP or mesh trace).
+    #[cfg(all(feature = "managed-connections", unix))]
+    Ping {
+        /// Exact inventory name or full 64-character node ID; no automatic routing.
+        peer: String,
+        #[arg(long, env = "MESHWAY_STATE", default_value = ".meshway/agent.json")]
+        state: PathBuf,
+        #[arg(long, default_value_t = 3, value_parser = clap::value_parser!(u8).range(1..=20))]
+        count: u8,
+        #[arg(long, default_value_t = 3, value_parser = clap::value_parser!(u64).range(1..=10))]
+        timeout_seconds: u64,
+    },
     /// Isolated experimental carriers, static authorization and Linux TUN.
     #[cfg(feature = "transport-lab")]
     TransportLab {
@@ -29,17 +41,17 @@ enum Command {
         token: String,
         #[arg(long)]
         name: String,
-        #[arg(long, default_value = ".meshway/agent.json")]
+        #[arg(long, env = "MESHWAY_STATE", default_value = ".meshway/agent.json")]
         state: PathBuf,
     },
     /// Send one authenticated process heartbeat, recovering a pending ID if needed.
     Heartbeat {
-        #[arg(long, default_value = ".meshway/agent.json")]
+        #[arg(long, env = "MESHWAY_STATE", default_value = ".meshway/agent.json")]
         state: PathBuf,
     },
     /// Validate and save current control intent, then ACK its receipt (not applied networking).
     Sync {
-        #[arg(long, default_value = ".meshway/agent.json")]
+        #[arg(long, env = "MESHWAY_STATE", default_value = ".meshway/agent.json")]
         state: PathBuf,
     },
     /// Publish connection identity or save node-scoped connection intent (not applied networking).
@@ -49,7 +61,7 @@ enum Command {
     },
     /// Heartbeat and sync immediately, then periodically; retry transient failures with backoff.
     Run {
-        #[arg(long, default_value = ".meshway/agent.json")]
+        #[arg(long, env = "MESHWAY_STATE", default_value = ".meshway/agent.json")]
         state: PathBuf,
         #[arg(long, default_value_t = 15, value_parser = clap::value_parser!(u64).range(1..=86400))]
         interval_seconds: u64,
@@ -71,7 +83,7 @@ enum Command {
     },
     /// Read local identity metadata without exposing credentials or claiming liveness.
     Status {
-        #[arg(long, default_value = ".meshway/agent.json")]
+        #[arg(long, env = "MESHWAY_STATE", default_value = ".meshway/agent.json")]
         state: PathBuf,
     },
 }
@@ -80,17 +92,17 @@ enum Command {
 enum ConnectionsCommand {
     /// Durably create/reuse the private key, then bind its public key and compiled capabilities.
     Publish {
-        #[arg(long, default_value = ".meshway/agent.json")]
+        #[arg(long, env = "MESHWAY_STATE", default_value = ".meshway/agent.json")]
         state: PathBuf,
     },
     /// Publish identity, validate and save connection intent, then ACK saved (never applied).
     Sync {
-        #[arg(long, default_value = ".meshway/agent.json")]
+        #[arg(long, env = "MESHWAY_STATE", default_value = ".meshway/agent.json")]
         state: PathBuf,
     },
     /// Read local public key and saved connection revision without making network requests.
     Status {
-        #[arg(long, default_value = ".meshway/agent.json")]
+        #[arg(long, env = "MESHWAY_STATE", default_value = ".meshway/agent.json")]
         state: PathBuf,
     },
 }
@@ -112,6 +124,45 @@ async fn main() {
 
 async fn execute(command: Command) -> Result<(), Box<dyn std::error::Error>> {
     match command {
+        #[cfg(all(feature = "managed-connections", unix))]
+        Command::Ping {
+            peer,
+            state,
+            count,
+            timeout_seconds,
+        } => {
+            println!("authenticated neighbor probe / 认证邻接探测 (非ICMP，非mesh trace)");
+            for sequence in 1..=count {
+                let observation = meshway_agent::diagnostics::probe(
+                    &state,
+                    &peer,
+                    Duration::from_secs(timeout_seconds),
+                )
+                .await?;
+                let direction = if observation.initiator_node_id == observation.local_node_id {
+                    "outgoing (locally initiated)"
+                } else {
+                    "accepted (peer initiated)"
+                };
+                let transport = match observation.transport {
+                    meshway_protocol::ConnectionTransport::NativeUdp => "native_udp",
+                    meshway_protocol::ConnectionTransport::NativeTcp => "native_tcp",
+                    meshway_protocol::ConnectionTransport::Vless => "vless (TLS)",
+                };
+                println!(
+                    "seq={sequence} peer={} name={} direction={direction} transport={transport} initiator={} RTT={}.{:03} µs",
+                    observation.peer_node_id,
+                    // JSON quoting escapes inventory-controlled terminal characters.
+                    serde_json::to_string(&observation.peer_name)?,
+                    observation.initiator_node_id,
+                    observation.rtt_ns / 1000,
+                    observation.rtt_ns % 1000,
+                );
+                if sequence < count {
+                    tokio::time::sleep(Duration::from_secs(1)).await;
+                }
+            }
+        }
         #[cfg(feature = "transport-lab")]
         Command::TransportLab { command } => {
             meshway_agent::transport_lab::execute(command)

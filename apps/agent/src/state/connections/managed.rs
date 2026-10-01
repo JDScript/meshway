@@ -36,6 +36,17 @@ impl Agent {
             ));
         }
         let mut manager = Manager::new(profiles, lease);
+        #[cfg(unix)]
+        let control = crate::diagnostics::Server::bind(&self.path, &self._lock).await?;
+        #[cfg(unix)]
+        let prober = manager.prober();
+        #[cfg(unix)]
+        let result = tokio::select! {
+            result = self.managed_loop(&mut manager, interval) => result,
+            result = control.serve(prober) => result.map_err(AgentError::from),
+            _ = tokio::signal::ctrl_c() => Ok(()),
+        };
+        #[cfg(not(unix))]
         let result = tokio::select! {
             result = self.managed_loop(&mut manager, interval) => result,
             _ = tokio::signal::ctrl_c() => Ok(()),
@@ -240,6 +251,13 @@ impl Agent {
     ) -> Result<super::ControlSyncReceipts, AgentError> {
         self.publish_connection_identity().await?;
         let configuration = self.sync().await?;
+        #[cfg(unix)]
+        manager.set_probe_inventory(
+            self.cache
+                .as_ref()
+                .expect("freshly synced configuration")
+                .public_inventory(),
+        );
         let connections = self
             .sync_published_connections_observe(|snapshot| manager.invalidate_if_changed(snapshot))
             .await?;

@@ -253,7 +253,7 @@ fn waiting(intent: &NodeConnections) -> Vec<ConnectionNeighborObservation> {
         .collect()
 }
 
-fn describe(
+pub(super) fn describe(
     intent: &NodeConnections,
     channel: &PeerConnection,
 ) -> Option<ConnectionNeighborObservation> {

@@ -16,7 +16,7 @@ required-features = ["transport-lab"]
 
 [dependencies]
 chrono.workspace = true
-clap.workspace = true
+clap = { workspace = true, features = ["env"] }
 futures-util = "0.3"
 getrandom.workspace = true
 idna = "1.1"
@@ -46,6 +46,7 @@ tun-rs = { version = "2.8.11", features = ["async_tokio"], optional = true }
 meshway-controller = { path = "../controller" }
 axum.workspace = true
 tempfile.workspace = true
+rustix = { workspace = true, features = ["net"] }
 
 [lints]
 workspace = true

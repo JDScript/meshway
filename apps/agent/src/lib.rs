@@ -20,3 +20,6 @@ pub mod transport_lab;
 
 #[cfg(feature = "managed-connections")]
 mod managed_connections;
+
+#[cfg(all(feature = "managed-connections", unix))]
+pub mod diagnostics;

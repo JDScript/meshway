@@ -18,6 +18,13 @@ pub(super) struct Cache {
     snapshot: ConfigurationSnapshot,
 }
 
+#[cfg(all(feature = "managed-connections", unix))]
+impl Cache {
+    pub(super) fn public_inventory(&self) -> &meshway_protocol::NodeConfiguration {
+        &self.snapshot.payload
+    }
+}
+
 /// Receipt for saved control intent, never a dataplane application claim.
 #[derive(Debug, Serialize)]
 pub struct SyncReceipt {

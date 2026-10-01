@@ -30,7 +30,7 @@ fn listener_port(kind: ConnectionTransport) -> u16 {
     }
 }
 
-fn fixture(
+pub(super) fn fixture(
     kind: ConnectionTransport,
 ) -> (NodeConnections, PrivateKey, NodeConnections, PrivateKey) {
     let a = Identity::generate().unwrap();
@@ -98,14 +98,14 @@ fn fixture(
     )
 }
 
-fn snapshot(payload: NodeConnections) -> AgentConnectionsSnapshot {
+pub(super) fn snapshot(payload: NodeConnections) -> AgentConnectionsSnapshot {
     AgentConnectionsSnapshot {
         digest: meshway_protocol::connection_digest(&payload).unwrap(),
         payload,
     }
 }
 
-async fn session(
+pub(super) async fn session(
     intent: &NodeConnections,
     key: PrivateKey,
     path: Option<&std::path::Path>,
@@ -532,7 +532,7 @@ async fn failed_dns_or_atomic_bind_withdraws_old_listeners() {
 }
 
 #[cfg(unix)]
-fn tls_profiles() -> tempfile::TempDir {
+pub(super) fn tls_profiles() -> tempfile::TempDir {
     use std::{os::unix::fs::PermissionsExt, process::Command};
     let dir = tempfile::tempdir().unwrap();
     let run = |args: &[&str]| {

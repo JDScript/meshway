@@ -21,8 +21,14 @@ use tokio::{
     time::{self, Instant},
 };
 
+#[cfg(unix)]
+mod probe;
 mod profiles;
 mod session;
+#[cfg(unix)]
+pub(crate) use probe::Prober;
+#[cfg(all(test, unix))]
+mod probe_tests;
 #[cfg(test)]
 mod tests;
 
@@ -116,6 +122,8 @@ pub(crate) struct Manager {
     material: Option<Material>,
     observation: Observation,
     pub snapshot: Option<AgentConnectionsSnapshot>,
+    #[cfg(unix)]
+    probes: probe::Publisher,
 }
 
 #[derive(PartialEq, Eq)]
@@ -134,6 +142,8 @@ impl Manager {
             material: None,
             observation: Observation::empty(Phase::Withdrawn, Reason::None),
             snapshot: None,
+            #[cfg(unix)]
+            probes: probe::Publisher::new(),
         }
     }
 
@@ -185,6 +195,8 @@ impl Manager {
     }
 
     pub async fn withdraw(&mut self, reason: Reason) {
+        #[cfg(unix)]
+        self.probes.withdraw();
         if let Some(running) = self.running.take() {
             running.stop().await;
         }
@@ -263,6 +275,9 @@ impl Manager {
                 let initial = session.initial_observation(&semantic);
                 let (observations, observed) = watch::channel(initial);
                 let (renew, deadlines) = watch::channel(Some(deadline));
+                #[cfg(unix)]
+                self.probes
+                    .publish(&session.runtime, &semantic, &renew, &observed);
                 let task = tokio::spawn(session.run(semantic, deadlines, observations));
                 self.running = Some(Running {
                     deadline: renew,
