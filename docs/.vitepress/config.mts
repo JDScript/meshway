@@ -18,6 +18,8 @@ export default defineConfig({
         text: "项目",
         items: [
           { text: "开始使用", link: "/getting-started" },
+          { text: "统一开发入口", link: "/dev-services" },
+          { text: "产品对齐记录", link: "/product-alignment" },
           { text: "架构与设计状态", link: "/architecture" },
           { text: "Web 产品与交互", link: "/web-product" },
         ],

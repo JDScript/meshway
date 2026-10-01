@@ -3,6 +3,16 @@
 在仓库根目录使用：
 
 ```sh
+pnpm dev
+pnpm dev:status
+pnpm dev:restart web
+pnpm dev:update
+pnpm dev:stop
+```
+
+以上别名对应同一个 Python 入口，也可以直接使用：
+
+```sh
 python3 scripts/dev.py start
 python3 scripts/dev.py status
 python3 scripts/dev.py restart web

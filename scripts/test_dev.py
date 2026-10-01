@@ -213,6 +213,18 @@ class Workspace(unittest.TestCase):
         self.assertFalse(docker.staged)
         self.assertFalse(docker.extraction)
 
+    def test_binary_without_managed_feature_is_rejected_before_replacement(self):
+        demo, meta = self.make_demo()
+        docker = FakeDocker(demo, meta)
+        docker.managed_feature = False
+        with patch.object(deployment, "run", return_value=result("COMMIT\n")), redirect_stdout(io.StringIO()):
+            with self.assertRaisesRegex(dev.DevError, "required managed runtime mode"):
+                deployment.deploy(demo, meta, "meshway-managedtest:new", docker)
+        self.assertEqual(set(docker.installed.values()), {docker.old})
+        self.assertFalse(docker.staged)
+        self.assertFalse(docker.extraction)
+        self.assertFalse(any(call[0] in ("kill", "start", "restart", "stop") for call in docker.calls))
+
     def test_old_binary_change_during_staging_refuses_to_overwrite_it(self):
         demo, meta = self.make_demo()
         docker = FakeDocker(demo, meta)
@@ -319,6 +331,7 @@ class FakeDocker:
         self.change_current = False
         self.ignore_sigint = False
         self.live_returncode = 0
+        self.managed_feature = True
 
     def container(self, role):
         uid, gid = str(self.meta["uid"]), str(self.meta["gid"])
@@ -381,6 +394,8 @@ class FakeDocker:
             if operation in ("chmod", "test"):
                 return ""
             if args[-1] == "--help":
+                if args[-2] == "run":
+                    return "--apply-connections --apply-dataplane" if self.managed_feature else "--interval-seconds"
                 return "connections stun-server"
         if args[0] == "kill":
             if not self.ignore_sigint:

@@ -8,6 +8,11 @@
     "pnpm": ">=11 <12"
   },
   "scripts": {
+    "dev": "python3 scripts/dev.py start",
+    "dev:status": "python3 scripts/dev.py status",
+    "dev:stop": "python3 scripts/dev.py stop",
+    "dev:restart": "python3 scripts/dev.py restart",
+    "dev:update": "python3 scripts/dev.py update",
     "dev:web": "pnpm --filter @meshway/web dev",
     "dev:docs": "pnpm --filter @meshway/docs dev",
     "build:web": "pnpm --filter @meshway/web build",

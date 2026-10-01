@@ -8,6 +8,8 @@
 
 ## 准备环境
 
+已有开发环境可直接使用 `pnpm dev` 启动本地服务，`pnpm dev:status` 查看真实状态，`pnpm dev:update` 构建并更新。完整命令及已有 Docker demo 的保留方式见[统一开发入口](/dev-services)。下文保留首次初始化和各组件的单独操作说明。
+
 - Rust 1.98.0 与 Cargo；仓库的 `rust-toolchain.toml` 固定工具链版本。
 - Node.js 24 与 pnpm 11；精确 pnpm 版本见根 `package.json` 的 `packageManager`。
 - 当前凭据存储要求 Unix 私有目录 / 文件权限，适用于 macOS、Linux 等 Unix 环境。

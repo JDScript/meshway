@@ -269,7 +269,8 @@ def deploy(demo, meta, image, docker):
             require(staged_hashes[container] == expected, "staged binary digest differs")
             require(docker("exec", container, "sha256sum", BIN).split()[0] == record["previous_sha256"], "current binary changed during deployment")
             require("stun-server" in docker("exec", container, next_path, "netcheck", "--help"), "new binary lacks expected diagnostics")
-            require("connections" in docker("exec", container, next_path, "--help"), "new binary lacks managed connections")
+            mode_flag = "--apply-dataplane" if meta.get("mode") == "linux-ipv4-tun" else "--apply-connections"
+            require(mode_flag in docker("exec", container, next_path, "run", "--help"), "new binary lacks required managed runtime mode")
         require(material(demo.data) == before and digest(demo.data / "demo.json") == metadata_digest, "private state changed before replacement")
         report["status"] = "UPDATING"
         save(journal, report)
