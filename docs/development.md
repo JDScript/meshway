@@ -94,9 +94,11 @@ Web 编辑基准 revision 仅在成功保存或显式重新读取后更新，预
 
 ## 里程碑 1：身份与策略基础
 
+连接控制意图切片新增公钥关联、编译能力声明、管理连接计划及独立存储 ACK。覆盖 SQLite v2→v3 保留身份、不可替换 / 不可复用公钥、全局 CAS、节点局部投影、未知响应字段拒绝、发布前 / 后持久性故障及真实 Web 编辑；见[公钥与连接配置](/connections)。`e2e/connections.spec.ts` 验证 SHA→LAX 的建连方向、回执独立性、匿名重放拒绝、原始编辑基准及未应用表单的跨页恢复。
+
 本里程碑的**控制意图切片已完成并验收**：持久清单、控制面注册 / 凭据权限 / 心跳 / 撤销、双栈地址、版本化配置与回执、逻辑策略和管理编辑闭环。整个身份与网络基础里程碑仍为**部分完成**，后续仍需：
 
-- mesh 公钥绑定、对等节点认证与密钥生命周期，分离可信身份和观测标签。
+- 控制面公钥关联已交付；运行层对等认证与受管理身份的连接、密钥生命周期仍需推进，继续分离身份和观测标签。
 - 数据面会话的配置应用、撤销传播和密钥更新。
 - 独立授权及传输能力模型，将逻辑意图连接到实际数据面。
 - 物理邻接、传输能力和不可满足路径的运行期诊断。
@@ -162,7 +164,7 @@ pnpm test:e2e
 pnpm exec playwright install chromium
 ```
 
-`pnpm test:e2e` 先执行 `cargo build --workspace --locked` 和 `pnpm build:web`，再运行 Playwright。测试自动启动真实 controller、Rust Agent 和生产 Next.js 服务，使用临时数据目录及独立端口，并在结束后清理。可通过 `MESHWAY_E2E_TMPDIR` 指定临时目录的父路径。
+`pnpm test:e2e` 先执行 `cargo build --workspace --features meshway-agent/transport-lab --locked` 和 `pnpm build:web`，再运行 Playwright。承载 feature 用于验证 Agent 发布实际已编译能力，连接配置测试不会因此启动 TUN 或隧道。测试自动启动真实 controller、Rust Agent 和生产 Next.js 服务，使用临时数据目录及独立端口，并在结束后清理。可通过 `MESHWAY_E2E_TMPDIR` 指定临时目录的父路径。
 
 `pnpm typecheck` 同时覆盖工作区包与根目录 E2E TypeScript；单独检查测试代码可执行 `pnpm typecheck:e2e`。
 

@@ -31,7 +31,7 @@ Rust 请求 / 响应类型 + 实际 API 路由声明
 
 - Utoipa 6 与 utoipa-axum 0.3 从 Rust DTO 和路由声明导出原生 OpenAPI 3.1。
 - `apps/controller/src/bin/generate-rust-client.rs` 使用 `openapi-to-rust` 0.19，基线生成 `enrollAgent` 与 `heartbeatAgent`。本轮选择范围扩展到 `getAgentConfiguration` / `acknowledgeConfiguration` 及其关联模型，认证配置始终从所选实际操作的 bearer 声明派生；Agent 不需要管理 API 的权限。
-- 上游 Rust 生成器 0.19 没有在客户端构造中落实超时，且默认跟随重定向；仓库内的生成适配显式设置 **10 秒超时、禁止重定向**。适配前检查构造模板，模板变化会使生成失败，防止把注册凭据请求体转发给重定向目标。
+- 上游 Rust 生成器 0.19 没有在客户端构造中落实超时，且默认跟随重定向；仓库内的生成适配显式设置 **10 秒超时、禁止重定向**。适配前检查构造模板，模板变化会使生成失败，防止把注册凭据请求体转发给重定向目标。封闭对象另按 OpenAPI `additionalProperties: false` 生成 `deny_unknown_fields`，在 serde 丢弃异常字段之前拒绝响应；不支持的开放对象、flatten 或模板变化使生成失败。
 - Hey API 0.99 生成 TypeScript DTO；`scripts/generate-protocol.mjs` 从同一 OpenAPI 生成严格 Zod schema 与操作函数，再调用共享 HTTP transport。字符串长度按 Unicode code point 计算，与 Rust 的 Unicode scalar 计数一致；已修复原先 UTF-16 长度差异。
 - TS 操作生成支持 JSON GET / POST、组件 schema、必填 POST body、单一 HTTP 200 成功响应，以及单个必需的 HTTP bearer 认证方案。schema 生成覆盖配置 / 策略所需的封闭对象、组件引用、数组、整数、布尔值、字符串枚举、日期时间及 `T | null`。不支持的 schema 关键字、形状或认证要求直接使生成失败。
 
@@ -88,11 +88,13 @@ Rust 请求 / 响应类型 + 实际 API 路由声明
 
 ## 错误与运行时验证
 
+新增连接契约通过同一生成链提供 `publishConnectionIdentity`、`getConnections`、`saveConnections`、`getAgentConnections` 和 `acknowledgeAgentConnections`。精确路径与字段见[公钥与连接配置](/connections)及 Rust 源契约。只有管理读取 / 保存导出为 Web 的公共 SDK 操作；Agent 的三个节点操作由实际路由声明选择生成。连接回执独立于 IP / 路由回执。
+
 Rust 路由声明包括：无效或缺失凭据的 HTTP `401`、已撤销节点访问的 `403`、非法请求的 `400`、未知节点的 `404`、冲突的 `409`，以及请求体 / 存储错误；本轮新增无效策略 / 容量失败的 `422`。每个 endpoint 的完整响应集合以 OpenAPI 为准。不同凭据复用已消费注册令牌按无效注册权限处理；不能把它当作相同身份的成功重试。
 
 TypeScript SDK 导出 `ControlApiError`，其 `status` 保存非成功 HTTP 状态。Web 使用 `error instanceof ControlApiError && error.status === 401` 判断管理员凭据被拒绝，再进入登录流程。非成功响应体被丢弃，不把任意服务端内容回显给用户；JSON、媒体类型、网络及 schema 失败仍为普通 `Error`，不会伪装成认证拒绝。
 
-控制面输入 DTO 使用 serde 拒绝未知字段。生成的 Rust 响应模型校验必填字段、类型、时间及必填可空语义，当前忽略额外字段。TS 操作在请求前验证 body，HTTP transport 在成功响应边界使用生成的严格 Zod schema，校验额外 / 缺失字段、数值、`null` 与 RFC 3339 时间。transport 不缓存、禁止重定向，设置 10 秒超时及 2 MiB 响应上限。类型声明不能替代这些运行时检查。
+控制面输入 DTO 使用 serde 拒绝未知字段。生成的 Rust 响应模型校验必填字段、类型、时间及必填可空语义，并按封闭 schema 拒绝额外字段；Agent 再校验摘要、节点绑定及业务约束。TS 操作在请求前验证 body，HTTP transport 在成功响应边界使用生成的严格 Zod schema，校验额外 / 缺失字段、数值、`null` 与 RFC 3339 时间。transport 不缓存、禁止重定向，设置 10 秒超时及 2 MiB 响应上限。类型声明不能替代这些运行时检查。
 
 Rust 生成适配器从 schema 的 `required` 与 nullable 属性生成 serde 规则：`revoked_at` 可以明确为 `null`，但不能缺失；序列化 `None` 时保留该字段。`country`、`exit_node_id`、预览上下文和诊断中的必填可空字段也保持这一语义。配置 / 策略的嵌套类型、枚举与可空字段已纳入契约和客户端测试；生成器不支持的形状应直接失败，不能以宽泛 JSON 或未验证断言绕过。
 
