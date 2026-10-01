@@ -1,6 +1,7 @@
 import { cookies } from "next/headers"
 import type { ReactNode } from "react"
 
+import { ConnectionsDraftProvider } from "@/components/connections/draft-store"
 import { RoutingDraftProvider } from "@/components/routing/draft-store"
 import { AppSidebar } from "@/components/shell/app-sidebar"
 import { SiteHeader } from "@/components/shell/site-header"
@@ -23,6 +24,7 @@ export default async function ConsoleLayout({ children }: { children: ReactNode 
 
   return (
     <RoutingDraftProvider>
+      <ConnectionsDraftProvider>
       <SidebarProvider defaultOpen={sidebarState !== "false"}>
         <AppSidebar controllerHost={hostOf(controllerUrl())} />
         <SidebarInset className="min-w-0">
@@ -30,6 +32,7 @@ export default async function ConsoleLayout({ children }: { children: ReactNode 
           <div className="min-w-0 flex-1">{children}</div>
         </SidebarInset>
       </SidebarProvider>
+      </ConnectionsDraftProvider>
     </RoutingDraftProvider>
   )
 }

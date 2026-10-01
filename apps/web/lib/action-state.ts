@@ -1,4 +1,5 @@
 import type {
+  ConnectionsSnapshot,
   CreateEnrollmentTokenResponse,
   NodeSummary,
   PolicySnapshot,
@@ -48,6 +49,17 @@ export type SaveResult =
 
 export type ReloadResult =
   | { status: "loaded"; snapshot: PolicySnapshot; nodes: NodeSummary[] }
+  | { status: "error"; message: string }
+
+/** `conflict` and `invalid` never carry a replacement plan: the draft stays. */
+export type ConnectionsSaveResult =
+  | { status: "saved"; snapshot: ConnectionsSnapshot }
+  | { status: "conflict"; message: string }
+  | { status: "invalid"; message: string }
+  | { status: "error"; message: string }
+
+export type ConnectionsReloadResult =
+  | { status: "loaded"; snapshot: ConnectionsSnapshot }
   | { status: "error"; message: string }
 
 export const enrollmentTtlOptions = [

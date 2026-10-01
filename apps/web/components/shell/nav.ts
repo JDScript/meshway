@@ -1,6 +1,7 @@
 import {
   ActivityIcon,
   KeyRoundIcon,
+  CableIcon,
   LayoutDashboardIcon,
   RouteIcon,
   ServerIcon,
@@ -35,6 +36,12 @@ export const navSections: NavSection[] = [
         label: "节点",
         icon: ServerIcon,
         keywords: ["nodes", "inventory", "jiedian"],
+      },
+      {
+        href: "/connections",
+        label: "连接配置",
+        icon: CableIcon,
+        keywords: ["connections", "listeners", "dial", "transport", "public key", "lianjie"],
       },
       {
         href: "/topology",

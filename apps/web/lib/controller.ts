@@ -2,9 +2,11 @@ import "server-only"
 
 import {
   ControlApiError,
+  getConnections,
   getOverview,
   getPolicy,
   listNodes,
+  type ConnectionsSnapshot,
   type NodeList,
   type Overview,
   type PolicySnapshot,
@@ -76,4 +78,8 @@ export function fetchNodes(): Promise<ControllerResult<NodeList>> {
 
 export function fetchPolicy(): Promise<ControllerResult<PolicySnapshot>> {
   return authorizedRead(getPolicy)
+}
+
+export function fetchConnections(): Promise<ControllerResult<ConnectionsSnapshot>> {
+  return authorizedRead(getConnections)
 }

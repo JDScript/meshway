@@ -28,6 +28,7 @@ import {
   SidebarMenuItem,
   useSidebar,
 } from "@/components/ui/sidebar"
+import { useConnectionsDraftStore } from "@/components/connections/draft-store"
 import { useRoutingDraftStore } from "@/components/routing/draft-store"
 import { logout } from "@/lib/auth-actions"
 import { docsUrl } from "@/lib/config"
@@ -43,6 +44,7 @@ export function AccountMenu() {
   const { theme, setTheme } = useTheme()
   const [pending, startTransition] = useTransition()
   const drafts = useRoutingDraftStore()
+  const connectionDrafts = useConnectionsDraftStore()
 
   return (
     <SidebarMenu>
@@ -106,6 +108,7 @@ export function AccountMenu() {
               onClick={() => {
                 // Unsaved drafts belong to this session only.
                 drafts.clear()
+                connectionDrafts.reset()
                 startTransition(() => logout())
               }}
             >

@@ -1,7 +1,7 @@
 "use client"
 
 import type { NodeSummary } from "@meshway/control-client"
-import { FlagIcon, ShieldOffIcon, WaypointsIcon } from "lucide-react"
+import { CableIcon, FlagIcon, ShieldOffIcon, WaypointsIcon } from "lucide-react"
 import Link from "next/link"
 import type { ReactNode } from "react"
 
@@ -112,6 +112,13 @@ export function NodeDetailSheet({
           >
             <WaypointsIcon data-icon="inline-start" />
             在拓扑中查看
+          </Link>
+          <Link
+            href={`/connections?node=${encodeURIComponent(node.id)}`}
+            className={buttonVariants({ variant: "outline" })}
+          >
+            <CableIcon data-icon="inline-start" />
+            连接配置
           </Link>
           {!revoked ? (
             <>
