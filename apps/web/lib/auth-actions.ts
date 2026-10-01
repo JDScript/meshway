@@ -4,6 +4,7 @@ import { getOverview } from "@meshway/control-client"
 import { redirect } from "next/navigation"
 
 import type { LoginState } from "@/lib/action-state"
+import { safeLoginReturn } from "@/lib/device-login"
 import {
   controllerUrl,
   describeError,
@@ -36,7 +37,7 @@ export async function login(
   }
 
   await startSession(token)
-  redirect("/")
+  redirect(safeLoginReturn(formData.get("returnTo")))
 }
 
 export async function logout(): Promise<void> {

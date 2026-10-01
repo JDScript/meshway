@@ -12,7 +12,7 @@ import { login } from "@/lib/auth-actions"
 
 const initialState: LoginState = { status: "idle" }
 
-export function LoginForm() {
+export function LoginForm({ returnTo = "/" }: { returnTo?: string }) {
   const [state, formAction, pending] = useActionState(login, initialState)
   const inputId = useId()
   const errorId = useId()
@@ -25,6 +25,7 @@ export function LoginForm() {
 
   return (
     <form action={formAction} className="flex flex-col gap-4">
+      <input type="hidden" name="returnTo" value={returnTo} />
       <div className="flex flex-col gap-2">
         <Label htmlFor={inputId} className="text-sm">
           管理员令牌

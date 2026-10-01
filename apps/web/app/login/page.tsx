@@ -8,6 +8,7 @@ import { BrandMark } from "@/components/shell/brand"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { controllerUrl } from "@/lib/controller"
 import { readSession } from "@/lib/session"
+import { safeLoginReturn } from "@/lib/device-login"
 
 export const metadata: Metadata = { title: "登录" }
 
@@ -16,12 +17,13 @@ export default async function LoginPage({
 }: {
   searchParams: Promise<Record<string, string | string[] | undefined>>
 }) {
-  const { reason } = await searchParams
+  const { reason, returnTo } = await searchParams
+  const destination = safeLoginReturn(returnTo)
   const expired = reason === "expired"
   const session = await readSession()
   // Only a plain visit with a live cookie skips the form. After a rejection
   // the cookie may still exist until it is discarded, so never bounce back.
-  if (!expired && session.kind === "active") redirect("/")
+  if (!expired && session.kind === "active") redirect(destination)
 
   return (
     <main className="grid min-h-svh lg:grid-cols-[minmax(0,1fr)_minmax(0,1.1fr)]">
@@ -66,7 +68,7 @@ export default async function LoginPage({
               </Alert>
             </>
           ) : null}
-          <LoginForm />
+          <LoginForm returnTo={destination} />
           <div className="flex flex-col gap-2 border-t pt-5 text-xs text-muted-foreground">
             <span>在运行 controller 的机器上读取令牌：</span>
             <pre className="overflow-x-auto rounded-lg border bg-muted/40 px-3 py-2 font-mono text-[0.6875rem] text-foreground">
