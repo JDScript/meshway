@@ -14,6 +14,8 @@
 
 网络选择 cookie 不是权限。多标签页下 cookie 可被改写，不能在保存时用它重新决定目标。页面 / 编辑器要固定自己的 network ID，并将其与草稿 / CAS 一起保存；刷新或切换网络后重新挂载新的上下文。旧切片的 `NetworkWorkspace` 以逐网络草稿 registry 验证了无效 JSONC、注释、未应用表单和原 CAS 的恢复，也验证了另一标签页切换后旧页面保存仍写入原网络。
 
+**合法网络与管理权限分开**：controller 的 `NetworkId` 构造只证明格式合法且网络存在，不代表 Owner、membership 或任何管理权限。当前每个管理路由按“管理员 bearer 认证 → 网络存在性 / 资源作用域检查 → 查询或 mutation”执行；全局 list / create 也先认证。P2b 应在同一服务端边界验证 membership / permissions，形成 `AuthorizedNetworkScope` 或等价授权能力，再调用现有显式网络业务方法，不能把 `network_id()` 成功当作授权。Agent / token / device exchange 的作用域只能由凭据关联派生，不接收调用方覆盖网络。
+
 ## API 形状
 
 权威源：Rust 路由与 DTO → `packages/protocol/openapi.json` → 生成 TypeScript SDK / Zod。所有操作成功为 HTTP 200；closed DTO、运行时 schema、超时和状态优先错误处理继续使用生成客户端。
@@ -73,10 +75,16 @@
 
 `POST /api/v1/devices/exchange`、`POST /api/v1/agents/heartbeat`、`GET /api/v1/agents/configuration`、`GET /api/v1/agent/dns` 的 URL / request / response 保持兼容。其他 Agent 控制 API 同样由节点 bearer 推导网络；客户端不能用 body / query 选择网络。App 的浏览器请求 / 回调 / PKCE 也不增加参数，只有 Web 批准表单增加所选网络。四个 Web 同源代理仍只暴露既有路径。
 
+旧 v1 closed DTO 不新增 `network_id`；已有 DNS / discovery 契约中的网络字段保留原样。节点凭据和公钥保持 controller 全局唯一，节点不能换网。P1a 的网络隔离**不代表客户端多接入保存 / 切换已经完成，也不能证明同一物理设备只有一个活动接入**；未来每接入独立身份 / 缓存及唯一活动生命周期需要单独实现。
+
 ## 迁移与当前实现边界
 
 v8→v9 将现有 ID / 名称 / DNS / IPAM / 节点 / 凭据 / 接入绑定 / tags / 策略 / 连接 / 运行 lease / report / revision 原样作为第一张网络。新网络地址可重叠：IPv4 `100.96.0.0/16`、新随机 ULA `/64`、DNS 关闭，默认 `net-<network_id>.meshway.test`，TTL 30。
 
 本阶段仍是全局管理员、Access / Routing v2 与现有手工连接配置。新网络 Access 以 v2 default allow 表达默认全成员允许；Routing v2 仍 reject。用户 / Owner、策略 v3、托管承载、自动建连和真实出口不在 P1a 里伪装实现。客户端多接入切换后续推进；同一 controller 节点身份只能归属一张网络。
 
+v9 原样复制 v2 与 JSONC 字节，不顺带转换规则或默认动作；空网络没有自动连接或真实出口。v3 源文档、默认模板与迁移属于 P3a。迁移 / 启动检查包括撤销节点的双栈地址、配置池、语义地址唯一性及 FK；固定身份不可变 trigger 仅阻止 node / credential / key / 已消费接入绑定换绑，不选择 scope 或重写查询。
+
 验证入口：`e2e/multi-network.spec.ts` 使用真实 controller + production Web，覆盖空网络、接入令牌、批准选网、跨网 Agent 快照、逐网络无效草稿 / CAS，以及多标签页原网络保存；其他 11 个原行为 e2e 通过生成接口在第一张网络运行。
+
+存储验收：`store/networks/original_v8.rs` 直接用原始 v8 DDL / 数据构造独立库，逐表比较全部旧列、JSONC 及 v1 Node / configuration / connections / DNS / dataplane 字节和 digest，验证恢复 / 撤销与失败回滚。`tests/api/network_endpoint_matrix.rs` 对 OpenAPI 全部声明做覆盖核对，交错全局 list / create、A 读取、B writes / previews、C Agent 请求及失败返回，检查同数字 CAS、报告、ACK 和公钥投影不串网。
