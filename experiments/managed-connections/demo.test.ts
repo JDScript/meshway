@@ -1,7 +1,9 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import type { ConnectionPlan, ConnectionRuntimesSnapshot, ConnectionsSnapshot } from "../../packages/control-client/src/index.ts";
-import { assertDemoOwnership, demoEpochFloor, demoHealthy, demoPlan, mergeDemoPlan } from "./demo.ts";
+import type { AgentDataplaneSnapshot, ConnectionPlan, ConnectionRuntimesSnapshot, ConnectionsSnapshot } from "../../packages/control-client/src/index.ts";
+import { assertDemoOwnership, boundNodeCredential, demoEpochFloor, demoHealthy, demoPacketReadiness, demoPlan, mergeDemoPlan } from "./demo.ts";
+import { packetProof } from "./packet-readiness.ts";
+import type { PacketControl } from "./packet-readiness.ts";
 
 const ids = { nyc: "1".repeat(64), lax: "2".repeat(64), sha: "3".repeat(64) };
 const other = "4".repeat(64);
@@ -209,4 +211,114 @@ test("additional saved candidates may report scoped peers but cannot replace req
     assert.equal(demoHealthy(value.config, runtime, ids, now), false);
   }
   assert.deepEqual(value.config.configuration, saved);
+});
+
+function packetGraph() {
+  const { config, runtime } = graph(Date.now());
+  config.revision = 42;
+  for (const receipt of config.nodes) {
+    receipt.acknowledged_revision = 42;
+    receipt.node.configuration_revision = 42;
+    receipt.node.acknowledged_revision = 42;
+  }
+  for (const observation of runtime.nodes) observation.revision = 42;
+  const control: PacketControl = { config, runtime,
+    policy: { revision: 42, valid: true, diagnostics: [], network: { ipv4_prefix: "100.64.0.0/16", ipv6_prefix: "fd00::/64" }, policy: { default_action: "reject", rules: [] } },
+    access: { revision: 42, valid: true, diagnostics: [], policy: { grants: [] } } };
+  const snapshot = (role: keyof typeof ids): AgentDataplaneSnapshot => {
+    const receipt = config.nodes.find((entry) => entry.node.id === ids[role]); assert(receipt);
+    const { id, name, country, mesh_ipv4, mesh_ipv6 } = receipt.node;
+    return { digest: "d".repeat(64), payload: { schema_version: 1, revision: 42, node_id: id, access_policy: { grants: [] }, access_valid: true, identities: [],
+      configuration: { schema_version: 1, revision: 42, network: control.policy.network, node: { id, name, country, mesh_ipv4, mesh_ipv6 }, peers: [],
+        policy_valid: true, routing_policy: control.policy.policy, diagnostics: [] },
+      connections: { schema_version: 1, revision: 42, node_id: id, public_key: receipt.public_key, capabilities: [], diagnostics: [], valid: true,
+        listeners: config.configuration.listeners.filter((entry) => entry.node_id === id), incoming: [], outgoing: [], peers: [] } } };
+  };
+  const proof = (snapshot: AgentDataplaneSnapshot) => ({ event: "managed_dataplane", node_id: snapshot.payload.node_id,
+    revision: snapshot.payload.revision, digest: snapshot.digest, ipv4: snapshot.payload.configuration.node.mesh_ipv4,
+    ipv4_prefix: snapshot.payload.configuration.network.ipv4_prefix, tun_name: "meshway0", mtu: 1000, ipv6: false,
+    tun_ready: true, allowed_paths: 0, route_sink_retained: true, reason: "generation_active" });
+  const actions = { control: async () => structuredClone(control), dataplane: async (role: keyof typeof ids) => snapshot(role),
+    packet: async (_role: keyof typeof ids, expected: AgentDataplaneSnapshot) => packetProof(JSON.stringify(proof(expected)), expected) };
+  return { control, snapshot, proof, actions };
+}
+
+test("packet proof binds CURRENT generated bundle revision AND digest, including valid default-drop", () => {
+  const f = packetGraph(); const expected = f.snapshot("nyc"); const proof = f.proof(expected);
+  assert(packetProof(JSON.stringify(proof), expected));
+  assert.equal(packetProof('{"state":"applied","probe_fresh":true}', expected), false);
+  for (const field of ["revision", "digest"]) {
+    const missing: Record<string, unknown> = { ...proof }; delete missing[field];
+    assert.equal(packetProof(JSON.stringify(missing), expected), false, `legacy proof missing ${field}`);
+  }
+  for (const changed of [{ ...proof, revision: 41 }, { ...proof, revision: "42" }, { ...proof, digest: "e".repeat(64) },
+    { ...proof, revision: 41, digest: "e".repeat(64) }, { ...proof, tun_ready: false }, { ...proof, node_id: other },
+    { ...proof, ipv4: "100.96.0.3" }, { ...proof, reason: "withdrawn" }, { ...proof, mtu: 1400 },
+    { ...proof, allowed_paths: -1 }, { ...proof, route_sink_retained: false }])
+    assert.equal(packetProof(`${JSON.stringify(proof)}\n${JSON.stringify(changed)}`, expected), false);
+});
+
+test("shared status/wait predicate requires configuration ACK AND connection ACK plus fresh epochs", async () => {
+  const f = packetGraph(); const floor = { nyc: 0, lax: 0, sha: 0 };
+  assert.deepEqual(await demoPacketReadiness(ids, floor, f.actions), { nyc: true, lax: true, sha: true });
+  const receipt = f.control.config.nodes[0]; assert(receipt);
+  receipt.node.acknowledged_revision = 41;
+  assert(demoHealthy(f.control.config, f.control.runtime, ids), "adjacency can be healthy while business configuration ACK lags");
+  assert.deepEqual(await demoPacketReadiness(ids, floor, f.actions), { nyc: false, lax: false, sha: false });
+  receipt.node.acknowledged_revision = 42; receipt.acknowledged_revision = 41;
+  assert.deepEqual(await demoPacketReadiness(ids, floor, f.actions), { nyc: false, lax: false, sha: false });
+  receipt.acknowledged_revision = 42;
+  assert.deepEqual(await demoPacketReadiness(ids, { nyc: 1, lax: 0, sha: 0 }, f.actions), { nyc: false, lax: false, sha: false });
+  assert.deepEqual(await demoPacketReadiness(ids, floor, f.actions), { nyc: true, lax: true, sha: true });
+});
+
+test("current ACKs/runtime cannot accept an earlier packet generation or digest, even at the same node/address", async () => {
+  for (const fields of [{ revision: 41 }, { digest: "e".repeat(64) }, { revision: 41, digest: "e".repeat(64) }]) {
+    const f = packetGraph();
+    f.actions.packet = async (_role, expected) => packetProof(JSON.stringify({ ...f.proof(expected), ...fields }), expected);
+    assert(demoHealthy(f.control.config, f.control.runtime, ids));
+    assert.deepEqual(await demoPacketReadiness(ids, null, f.actions), { nyc: false, lax: false, sha: false });
+  }
+});
+
+test("coherent reads reject stale node bundles, invalid or mixed global revisions, and wrong scoped identity", async () => {
+  for (const mutate of [
+    (f: ReturnType<typeof packetGraph>) => { f.control.policy.revision = 41; },
+    (f: ReturnType<typeof packetGraph>) => { f.control.access.revision = 41; },
+    (f: ReturnType<typeof packetGraph>) => { f.control.config.revision = 41; },
+    (f: ReturnType<typeof packetGraph>) => { f.control.access.valid = false; },
+    (f: ReturnType<typeof packetGraph>) => { f.control.policy.valid = false; },
+    (f: ReturnType<typeof packetGraph>) => { f.actions.dataplane = async (role) => { const snapshot = f.snapshot(role); snapshot.payload.revision = 41; return snapshot; }; },
+    (f: ReturnType<typeof packetGraph>) => { f.actions.dataplane = async (role) => { const snapshot = f.snapshot(role); snapshot.payload.configuration.revision = 41; return snapshot; }; },
+    (f: ReturnType<typeof packetGraph>) => { f.actions.dataplane = async (role) => { const snapshot = f.snapshot(role); snapshot.payload.connections.revision = 41; return snapshot; }; },
+    (f: ReturnType<typeof packetGraph>) => { f.actions.dataplane = async () => f.snapshot("sha"); },
+    (f: ReturnType<typeof packetGraph>) => { f.actions.dataplane = async () => { throw Error("generated response validation failed"); }; },
+  ]) {
+    const f = packetGraph(); mutate(f);
+    assert.deepEqual(await demoPacketReadiness(ids, null, f.actions), { nyc: false, lax: false, sha: false });
+  }
+});
+
+test("revision, ACK or epoch races after kernel/log checks return unknown and a fresh retry can succeed", async () => {
+  for (const mutate of [
+    (control: PacketControl) => { control.config.revision++; },
+    (control: PacketControl) => { control.policy.revision++; },
+    (control: PacketControl) => { control.access.revision++; },
+    (control: PacketControl) => { const node = control.config.nodes[0]; assert(node); node.node.acknowledged_revision--; },
+    (control: PacketControl) => { const node = control.runtime.nodes[0]; assert(node); node.epoch++; },
+  ]) {
+    const f = packetGraph(); let reads = 0;
+    f.actions.control = async () => { const control = structuredClone(f.control); if (++reads === 2) mutate(control); return control; };
+    assert.deepEqual(await demoPacketReadiness(ids, null, f.actions), { nyc: false, lax: false, sha: false });
+    assert.equal(reads, 2, "global currentness must be checked after the packet observation");
+    assert.deepEqual(await demoPacketReadiness(ids, null, f.actions), { nyc: true, lax: true, sha: true });
+  }
+});
+
+test("node bearer is accepted only from the recorded private on-disk controller/name/ID binding", () => {
+  const identity = { controller: "http://host.docker.internal:8420", name: "demo-nyc", node_id: ids.nyc, node_credential: "a".repeat(64) };
+  const check = (value: unknown) => boundNodeCredential(value, identity.controller, identity.name, ids.nyc);
+  assert.equal(check(identity), identity.node_credential);
+  for (const changed of [{ ...identity, controller: "http://different:8420" }, { ...identity, name: "demo-sha" },
+    { ...identity, node_id: ids.sha }, { ...identity, node_credential: null }, { ...identity, node_credential: "bad" }]) assert.throws(() => check(changed));
 });

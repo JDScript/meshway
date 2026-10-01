@@ -7,10 +7,11 @@ import os
 from pathlib import Path
 import socket
 import stat
+import subprocess
 import sys
 import tempfile
 import unittest
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock, mock_open, patch
 
 sys.dont_write_bytecode = True
 spec = importlib.util.spec_from_file_location("meshway_demo", Path(__file__).with_name("demo.py"))
@@ -106,6 +107,69 @@ class RecoveryTests(unittest.TestCase):
                 with self.assertRaises(RuntimeError):
                     demo.container_enroll(self.data(operation="verify", expected_id=NODE_ID, expected_key=KEY, token=None))
             self.assertTrue(all(call.args[0][1] in ("status", "connections") for call in checked.call_args_list))
+
+
+class ImageChecks(unittest.TestCase):
+    def test_neighbors_do_not_require_packet_flags_or_capability_tools(self):
+        with patch.object(demo, "checked", side_effect=["help", "--apply-connections --connection-profiles --connection-lease-seconds", "controller"]) as checked:
+            self.assertEqual(demo.container_image_check({"shell": False}), {"managed": True, "ping_cli": False})
+        self.assertEqual(checked.call_count, 3)
+
+    def test_enable_requires_all_packet_cli_flags_before_any_state_or_controller_operation(self):
+        managed = "--apply-connections --connection-profiles --connection-lease-seconds"
+        flags = ["--apply-dataplane", "--tun-name", "--tun-mtu"]
+        for missing in flags:
+            with patch.object(demo, "checked", side_effect=["help", managed + " " + " ".join(flag for flag in flags if flag != missing)]) as checked:
+                with self.assertRaisesRegex(RuntimeError, "IPv4 TUN"):
+                    demo.container_image_check({"shell": False, "dataplane": True})
+                self.assertEqual(checked.call_count, 2)
+        with patch.object(demo, "checked", side_effect=["help", managed + " " + " ".join(flags), "setpriv", "ip", "controller"]) as checked:
+            demo.container_image_check({"shell": False, "dataplane": True})
+        self.assertEqual([call.args[0] for call in checked.call_args_list[2:4]], [["setpriv", "--version"], ["ip", "-Version"]])
+
+    def test_running_exec_requires_original_uid_gid_zero_capabilities_and_readonly_rootfs(self):
+        status = "CapEff:\t00000000\nCapPrm:\t00000000\nCapAmb:\t00000000\nNoNewPrivs:\t1\n"
+        rootfs = "overlay / overlay ro,relatime 0 0\n"
+        with patch.object(demo.os, "getuid", return_value=501), patch.object(demo.os, "geteuid", return_value=501), \
+                patch.object(demo.os, "getgid", return_value=20), patch.object(demo.os, "getegid", return_value=20):
+            with patch.object(demo.Path, "read_text", side_effect=[status, rootfs]):
+                demo.running_exec_user(501, 20)
+            for uid, gid in [(0, 20), (502, 20), (501, 21), (True, 20)]:
+                with self.assertRaises(RuntimeError):
+                    demo.running_exec_user(uid, gid)
+            for changed in [status.replace("CapEff:\t00000000", "CapEff:\t00001000"),
+                            status.replace("CapPrm:\t00000000", "CapPrm:\t00001000"),
+                            status.replace("CapAmb:\t00000000", "CapAmb:\t00001000"), status.replace("Privs:\t1", "Privs:\t0")]:
+                with patch.object(demo.Path, "read_text", side_effect=[changed, rootfs]):
+                    with self.assertRaises(RuntimeError):
+                        demo.running_exec_user(501, 20)
+            with patch.object(demo.Path, "read_text", side_effect=[status, rootfs.replace("ro,", "rw,")]):
+                with self.assertRaises(RuntimeError):
+                    demo.running_exec_user(501, 20)
+
+    def test_installed_old_agent_elf_architecture_is_read_without_execution_or_uname_inference(self):
+        for machine, expected in [(183, "arm64"), (62, "amd64"), (3, None)]:
+            header = bytearray(64); header[:6] = b"\x7fELF\x02\x01"; header[18:20] = machine.to_bytes(2, "little")
+            with patch("builtins.open", mock_open(read_data=bytes(header))) as opened:
+                if expected:
+                    self.assertEqual(demo.running_agent_architecture(), expected)
+                else:
+                    with self.assertRaises(RuntimeError):
+                        demo.running_agent_architecture()
+                opened.assert_called_once_with("/usr/local/bin/meshway-agent", "rb")
+
+    def test_stdin_loader_never_runs_demo_main_and_bounds_or_suppresses_invalid_private_input(self):
+        loader = Path(__file__).with_name("running-check.py").read_text()
+        code = 'if __name__ == "__main__":\n    raise RuntimeError("main must not run")\ndef container_running_check(data):\n    return {"node_id": data["node_id"]}\n'
+        result = subprocess.run([sys.executable, "-c", loader], input=json.dumps({"code": code, "request": {"node_id": NODE_ID}}), text=True, capture_output=True, check=False)
+        self.assertEqual(result.returncode, 0)
+        self.assertEqual(json.loads(result.stdout), {"node_id": NODE_ID})
+        for envelope in [{"code": code, "request": {}, "unexpected": True}, {"code": "x" * (128 * 1024 + 1), "request": {}},
+                         {"code": "raise RuntimeError('synthetic-private-value')", "request": {}}, {"code": "\x00", "request": {}}]:
+            result = subprocess.run([sys.executable, "-c", loader], input=json.dumps(envelope), text=True, capture_output=True, check=False)
+            self.assertEqual(result.returncode, 1)
+            self.assertEqual(result.stdout, "")
+            self.assertNotIn("synthetic-private-value", result.stderr)
 
 
 class PrivateCopyTests(unittest.TestCase):
@@ -230,6 +294,74 @@ class PrivateCopyTests(unittest.TestCase):
                 return json.dumps({"public_key": KEY})
             with patch.object(demo, "checked", side_effect=cli):
                 self.assertEqual(demo.container_verify(self.data(), source, scratch), {"node_id": NODE_ID})
+
+    def test_running_old_cli_uses_readonly_originals_and_disposable_private_tmp_copies(self):
+        for failure in (None, "wrong-id", "wrong-key", "cli-error"):
+            with self.subTest(failure=failure), self.fixture() as (source, scratch):
+                original = self.fingerprint(source)
+                actual_verify, actual_temporary, actual_open = demo.container_verify, demo.tempfile.TemporaryDirectory, demo.os.open
+                source_reads = []
+
+                def temporary(*args, **kwargs):
+                    if kwargs.get("dir") == "/tmp":
+                        kwargs["dir"] = scratch
+                    return actual_temporary(*args, **kwargs)
+
+                def verify(data, source_path, scratch_path):
+                    self.assertEqual(source_path, "/state")
+                    self.assertTrue(Path(scratch_path).name.startswith("meshway-old-verify-"))
+                    self.assertEqual(Path(scratch_path).parent, scratch)
+                    self.assertEqual(stat.S_IMODE(Path(scratch_path).stat().st_mode), 0o700)
+                    return actual_verify(data, source_path=source, scratch_path=scratch_path)
+
+                def source_open(path, flags, *args, **kwargs):
+                    if path in demo.VERIFY_FILES and "dir_fd" in kwargs:
+                        self.assertEqual(flags & os.O_ACCMODE, os.O_RDONLY)
+                        self.assertTrue(flags & os.O_NOFOLLOW)
+                        source_reads.append(path)
+                    return actual_open(path, flags, *args, **kwargs)
+
+                def cli(arguments):
+                    state = Path(arguments[-1])
+                    self.assertNotEqual(state.parent, source)
+                    self.assertEqual(state.parent.parent.parent, scratch)
+                    self.assertEqual(state.read_bytes(), (source / "agent.json").read_bytes())
+                    with state.open("r+b") as copied:
+                        copied.write(state.read_bytes())
+                    if failure == "cli-error":
+                        raise RuntimeError("synthetic CLI failure")
+                    if arguments[1] == "status":
+                        return json.dumps({"node_id": "3" * 64 if failure == "wrong-id" else NODE_ID, "name": "demo-sha", "controller": CONTROLLER})
+                    self.assertEqual(arguments[1:3], ["connections", "status"])
+                    return json.dumps({"public_key": "3" * 64 if failure == "wrong-key" else KEY})
+
+                request = {"uid": os.getuid(), "gid": os.getgid(), "dataplane": True, "verify": self.data()}
+                with patch.object(demo, "running_exec_user") as user, patch.object(demo, "running_agent_architecture", return_value="arm64"), \
+                        patch.object(demo, "container_image_check", return_value={"managed": True, "ping_cli": True}) as image, \
+                        patch.object(demo, "container_verify", side_effect=verify), patch.object(demo.tempfile, "TemporaryDirectory", side_effect=temporary), \
+                        patch.object(demo.os, "open", side_effect=source_open), patch.object(demo, "checked", side_effect=cli):
+                    if failure:
+                        with self.assertRaises(RuntimeError):
+                            demo.container_running_check(request)
+                    else:
+                        self.assertEqual(demo.container_running_check(request), {"managed": True, "ping_cli": True, "node_id": NODE_ID, "architecture": "arm64"})
+                    user.assert_called_once_with(os.getuid(), os.getgid())
+                    image.assert_called_once_with({"shell": False, "dataplane": True})
+                self.assertTrue(source_reads)
+                self.assertEqual(self.fingerprint(source), original)
+                self.assertEqual(list(scratch.iterdir()), [])
+
+    def test_running_helper_rejects_mutations_credentials_and_unbounded_public_request(self):
+        request = {"uid": os.getuid(), "gid": os.getgid(), "dataplane": True, "verify": self.data()}
+        for verify in [{**self.data(), "operation": "recover"}, {**self.data(), "operation": "publish"},
+                       {**self.data(), "token": TOKEN}, {**self.data(), "node_credential": TOKEN},
+                       {**self.data(), "expected_key": None}, {**self.data(), "expected_id": "wrong"},
+                       {**self.data(), "controller": "http://user:private@host"}, {**self.data(), "controller": "x" * 2049}]:
+            with patch.object(demo, "running_exec_user") as user, patch.object(demo, "container_image_check") as image:
+                with self.assertRaises(RuntimeError):
+                    demo.container_running_check({**request, "verify": verify})
+                user.assert_not_called()
+                image.assert_not_called()
 
 
 if __name__ == "__main__":

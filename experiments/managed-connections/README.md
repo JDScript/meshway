@@ -195,6 +195,11 @@ suite; this harness currently exercises missing-profile, withdrawal, outage,
 restart and revocation negatives.
 
 The separate persistent demo is documented in `DEMO.md`. It retains identities in
-a user-selected private directory and CAS-merges only its reserved plan IDs into
-existing global configuration. Its shared management bridge makes it inspectable
-from the live console; it does not replace this isolated acceptance topology.
+a user-selected private directory and initially CAS-merges only its reserved plan
+IDs into existing global configuration. Subsequent fully enrolled starts preserve
+the complete current plan. Its explicit `enable-dataplane` / `disable-dataplane`
+commands add a journaled, opt-in Linux IPv4 TUN lifecycle while preserving IDs,
+credentials, profiles and controller intent. `tun-bootstrap-smoke.py` proves the
+non-root NET_ADMIN-only bootstrap in an isolated, locked scratch namespace.
+Its shared management bridge makes it inspectable from the live console; it does
+not replace the isolated acceptance topologies.

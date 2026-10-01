@@ -35,6 +35,11 @@ def container_image_check(data):
     run_help = checked(["meshway-agent", "run", "--help"])
     if not all(flag in run_help for flag in ("--apply-connections", "--connection-profiles", "--connection-lease-seconds")):
         raise RuntimeError("managed Agent required")
+    if data.get("dataplane", False):
+        if not all(flag in run_help for flag in ("--apply-dataplane", "--tun-name", "--tun-mtu")):
+            raise RuntimeError("image does not expose managed IPv4 TUN mode")
+        checked(["setpriv", "--version"])
+        checked(["ip", "-Version"])
     checked(["meshway-controller", "--help"])
     ping_cli = re.search(r"^\s+ping\s", help_text, re.MULTILINE) is not None
     if ping_cli:
@@ -117,6 +122,55 @@ def container_verify(data, source_path="/source-state", scratch_path="/state"):
             return result
     finally:
         os.close(descriptor)
+
+
+def running_exec_user(uid, gid):
+    """The Docker exec process must be the original user with zero capabilities."""
+    if (type(uid) is not int or type(gid) is not int or not 0 < uid < 2**32 or not 0 <= gid < 2**32
+            or (os.getuid(), os.geteuid(), os.getgid(), os.getegid()) != (uid, uid, gid, gid)):
+        raise RuntimeError("original non-root execution identity required")
+    status = dict(line.split(":", 1) for line in Path("/proc/self/status").read_text().splitlines())
+    if (any(int(status[key], 16) != 0 for key in ("CapEff", "CapPrm", "CapAmb"))
+            or status["NoNewPrivs"].strip() != "1"):
+        raise RuntimeError("verification exec must have zero effective/permitted/ambient capabilities and no-new-privileges")
+    if not any(line.split()[1] == "/" and "ro" in line.split()[3].split(",")
+               for line in Path("/proc/mounts").read_text().splitlines()):
+        raise RuntimeError("original image root filesystem must remain read-only")
+
+
+def running_agent_architecture():
+    # Fixed installed executable on the validated read-only rootfs. This is a
+    # bounded ELF header read, not an inference from the container's kernel uname.
+    with open("/usr/local/bin/meshway-agent", "rb") as binary:
+        header = binary.read(64)
+    if len(header) != 64 or header[:6] != b"\x7fELF\x02\x01":
+        raise RuntimeError("native 64-bit little-endian Agent ELF required")
+    architecture = {183: "arm64", 62: "amd64"}.get(int.from_bytes(header[18:20], "little"))
+    if architecture is None:
+        raise RuntimeError("unsupported Agent ELF architecture")
+    return architecture
+
+
+def container_running_check(data):
+    """Old installed CLI verification; original /state opens are O_RDONLY only."""
+    if not isinstance(data, dict) or set(data) != {"uid", "gid", "dataplane", "verify"} or type(data["dataplane"]) is not bool:
+        raise RuntimeError("invalid public running-image request")
+    verify = data["verify"]
+    if (not isinstance(verify, dict) or set(verify) != {"operation", "name", "controller", "token", "expected_id", "expected_key"}
+            or verify["operation"] != "verify" or verify["token"] is not None
+            or verify["name"] not in ("demo-nyc", "demo-lax", "demo-sha")
+            or not isinstance(verify["controller"], str) or len(verify["controller"]) > 2048
+            or re.fullmatch(r"https?://[^\s@?#]+", verify["controller"]) is None
+            or any(not isinstance(verify[key], str) or re.fullmatch(r"[0-9a-f]{64}", verify[key]) is None
+                   for key in ("expected_id", "expected_key"))):
+        raise RuntimeError("only public original binding and read-only verify are allowed")
+    running_exec_user(data["uid"], data["gid"])
+    architecture = running_agent_architecture()
+    image = container_image_check({"shell": False, "dataplane": data["dataplane"]})
+    os.umask(0o077)
+    with tempfile.TemporaryDirectory(prefix="meshway-old-verify-", dir="/tmp") as scratch:
+        result = container_verify(verify, source_path="/state", scratch_path=scratch)
+    return {**image, **result, "architecture": architecture}
 
 
 def container_enroll(data, state_path="/state/agent.json"):

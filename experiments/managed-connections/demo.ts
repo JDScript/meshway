@@ -8,19 +8,27 @@ import { setTimeout as delay } from "node:timers/promises";
 import { fileURLToPath } from "node:url";
 import { isDeepStrictEqual } from "node:util";
 import {
-  ControlApiError, createEnrollmentToken, getConnections, getConnectionRuntimes, listNodes, saveConnections,
+  ControlApiError, createEnrollmentToken, getConnections, getConnectionRuntimes, getMeshAccess, getPolicy, listNodes, saveConnections,
 } from "../../packages/control-client/src/index.ts";
-import { getAgentConnectionsOperation } from "../../packages/control-client/src/generated/operations.gen.ts";
+import { getAgentConnectionsOperation, getAgentDataplaneOperation } from "../../packages/control-client/src/generated/operations.gen.ts";
 import type {
-  ConnectionPlan, ConnectionRuntimesSnapshot, ConnectionsSnapshot, NodeList,
+  AgentDataplaneSnapshot, ConnectionPlan, ConnectionRuntimesSnapshot, ConnectionsSnapshot, NodeList,
 } from "../../packages/control-client/src/index.ts";
 import { probed } from "./checks.ts";
 import { array, boolean, command, parse, record, text } from "./local.ts";
 import { nativeArchitecture, upgradeImage, upgradeJournal } from "./upgrade.ts";
 import type { EpochFloor, UpgradeJournal, UpgradeSnapshot } from "./upgrade.ts";
+import type { UpgradeActions } from "./upgrade.ts";
+import { agentArguments, bootstrapArguments, BOOTSTRAP_CAPS, changeMode, demoMode, modeJournal } from "./mode.ts";
+import type { DemoMode, ModeJournal } from "./mode.ts";
+import { packetIdentity, packetInterface, packetProof, packetSnapshotCurrent, PROCESS_PROOF } from "./packet-readiness.ts";
+import type { PacketControl } from "./packet-readiness.ts";
+import { currentImageSource, imageInventory, retainImage } from "./images.ts";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const ROLES = ["nyc", "lax", "sha"] as const;
+// Docker publishes the listener's DNS aliases when its container starts.
+const START_ROLES = ["lax", "nyc", "sha"] as const;
 type Role = typeof ROLES[number];
 export type DemoIds = Record<Role, string>;
 type NodePhase = "empty" | "grant_requested" | "grant_saved" | "enroll_started" | "enrolled";
@@ -29,9 +37,11 @@ type Metadata = {
   version: 1; run_id: string; fingerprint: string; controller: string; agent_controller: string;
   uid: number; gid: number; image_id: string; host_gateway: boolean;
   phase: "preparing" | "ready"; nodes: Record<Role, LocalNode>; files: Record<string, string>;
+  mode?: DemoMode;
 };
 type Ownership = Pick<Metadata, "run_id" | "fingerprint">;
 const FILES = ["nyc/profiles.json", "lax/profiles.json", "lax/lax-cert.pem", "lax/lax-key.pem", "sha/profiles.json", "sha/ca.pem"];
+export const IMMUTABLE_FILES = [...FILES, ...ROLES.flatMap((role) => [`${role}/agent.json`, `${role}/agent.json.connection-key.json`])];
 const RESERVED = new Set(["demo-lax-udp", "demo-lax-vless", "demo-nyc-to-lax", "demo-sha-to-lax"]);
 const HEX = /^[0-9a-f]{64}$/;
 const sha256 = (value: string | Buffer) => createHash("sha256").update(value).digest("hex");
@@ -92,16 +102,47 @@ export function assertDemoOwnership(value: unknown, owner: Ownership, resource: 
 
 /** Labels alone cannot authorize replacing a foreign image or state mount. */
 export function assertDemoContainer(value: Record<string, unknown>, owner: Ownership, resource: string,
-  images: string[], stateDir: string, user: string): void {
+  images: string[], stateDir: string, user: string, modes: DemoMode[] = ["neighbors"]): void {
   const config = record(value.Config); const host = record(value.HostConfig);
   assertDemoOwnership(config.Labels, owner, resource);
   assert(images.includes(text(value.Image)), "owned container uses an unexpected image");
-  assert(config.User === user && host.ReadonlyRootfs === true && host.Privileged === false
-    && array(host.CapDrop).includes("ALL") && (host.CapAdd === null || array(host.CapAdd).length === 0), "owned container security configuration differs");
+  const helper = resource.endsWith("-enroll");
+  const packet = config.User === "0:0";
+  const mode: DemoMode = packet ? "linux-ipv4-tun" : "neighbors";
+  assert(helper ? !packet : modes.includes(mode), "owned container mode differs");
+  const caps = (value: unknown) => value === null || value === undefined ? [] : array(value).map(text).map((cap) => cap.replace(/^CAP_/, "")).sort();
+  assert(config.User === (packet ? "0:0" : user) && host.ReadonlyRootfs === true && host.Privileged === false
+    && isDeepStrictEqual(caps(host.CapDrop), ["ALL"])
+    && isDeepStrictEqual(caps(host.CapAdd), packet ? BOOTSTRAP_CAPS : [])
+    && isDeepStrictEqual(array(host.SecurityOpt).map((option) => option === "no-new-privileges=true" ? "no-new-privileges" : option), ["no-new-privileges"])
+    && typeof host.NetworkMode === "string" && !/^(host|none|default|bridge|container:.*)$/.test(host.NetworkMode), "owned container security configuration differs");
+  assert(isDeepStrictEqual(host.Devices ?? [], packet ? [{ PathOnHost: "/dev/net/tun", PathInContainer: "/dev/net/tun", CgroupPermissions: "rw" }] : [])
+    && array(host.DeviceRequests ?? []).length === 0 && array(host.DeviceCgroupRules ?? []).length === 0, "owned container devices differ");
+  assert(isDeepStrictEqual(config.Entrypoint, [helper ? "python3" : packet ? "setpriv" : "meshway-agent"])
+    && isDeepStrictEqual(config.Cmd, helper ? ["/opt/meshway-demo.py", "--container-enroll"]
+      : [...(packet ? [...bootstrapArguments(user), "meshway-agent"] : []), ...agentArguments(mode)]), "owned container command differs");
+  if (packet) assert(!host.Init, "packet Agent must be PID 1 after non-root bootstrap");
+  assert(isDeepStrictEqual(host.Sysctls, { "net.ipv4.ip_forward": "0", "net.ipv6.conf.all.forwarding": "0",
+    "net.ipv4.ping_group_range": "0 2147483647", ...(packet ? { "net.ipv6.conf.default.disable_ipv6": "1" } : {}) }), "owned container sysctls differ");
+  assert(isDeepStrictEqual(host.LogConfig, packet ? { Type: "local", Config: { "max-size": "1m", "max-file": "1", compress: "false" } }
+    : { Type: "none", Config: {} }), "owned container log configuration differs");
   const mounts = array(value.Mounts).map(record);
   assert(mounts.some((mount) => mount.Type === "bind" && mount.Source === stateDir && mount.Destination === "/state" && mount.RW === true), "owned container state binding differs");
   assert(!mounts.some((mount) => mount.Type === "bind" && mount.Destination !== "/state"
     && !(resource.endsWith("-enroll") && mount.Destination === "/opt/meshway-demo.py" && mount.Source === join(HERE, "demo.py") && mount.RW === false)), "unexpected owned container bind mount");
+  assert(mounts.every((mount) => mount.Type === "bind" || (mount.Type === "tmpfs" && mount.Destination === "/tmp")), "unexpected owned container mount type");
+}
+
+/** A missing old artifact can be verified only through the entire live original cohort. */
+export function assertRunningOriginals(containers: ReadonlyMap<Role, Record<string, unknown>>, owner: Ownership,
+  pin: string, root: string, user: string, mode: DemoMode): void {
+  assert(containers.size === ROLES.length, "all three original running containers required for missing-image verification");
+  for (const role of ROLES) {
+    const container = containers.get(role);
+    assert(container, "original container missing");
+    assertDemoContainer(container, owner, role, [pin], join(root, role), user, [mode]);
+    assert(record(container.State).Running === true, "original container must be running for missing-image verification");
+  }
 }
 
 /** Capture all epochs, including stale/withdrawn ones, after the old processes stop. */
@@ -153,6 +194,41 @@ export function demoHealthy(config: ConnectionsSnapshot, snapshot: ConnectionRun
   return true;
 }
 
+type PacketReadiness = Record<Role, boolean>;
+/** Shared by status and wait: fence actual packet proof with current generated reads. */
+export async function demoPacketReadiness(ids: DemoIds, floor: EpochFloor | null, actions: {
+  control(): Promise<PacketControl>;
+  dataplane(role: Role): Promise<AgentDataplaneSnapshot>;
+  packet(role: Role, snapshot: AgentDataplaneSnapshot): Promise<boolean>;
+}): Promise<PacketReadiness> {
+  const unknown = (): PacketReadiness => ({ nyc: false, lax: false, sha: false });
+  try {
+    const before = await actions.control();
+    if (!demoHealthy(before.config, before.runtime, ids, Date.now(), floor)) return unknown();
+    const snapshots = await Promise.all(ROLES.map(async (role) => ({ role, snapshot: await actions.dataplane(role) })));
+    if (!snapshots.every(({ role, snapshot }) => packetSnapshotCurrent(snapshot, ids[role], before))) return unknown();
+    const observed = await Promise.all(snapshots.map(async ({ role, snapshot }) => ({ role, ready: await actions.packet(role, snapshot) })));
+    // Connections, routing and access share a monotonic global revision. Reading
+    // them again after the scoped fetch/kernel/log observations rejects races.
+    const after = await actions.control();
+    if (!demoHealthy(after.config, after.runtime, ids, Date.now(), floor)
+      || !snapshots.every(({ role, snapshot }) => packetSnapshotCurrent(snapshot, ids[role], after)
+        && before.runtime.nodes.find((node) => node.node_id === ids[role])?.epoch
+          === after.runtime.nodes.find((node) => node.node_id === ids[role])?.epoch)) return unknown();
+    const result = unknown();
+    for (const { role, ready } of observed) result[role] = ready;
+    return result;
+  } catch { return unknown(); } // Unavailable, racing or old-schema evidence is never readiness.
+}
+
+/** This is the existing private on-disk identity binding, not an HTTP DTO. */
+export function boundNodeCredential(value: unknown, controller: string, name: string, id: string): string {
+  const identity = record(value);
+  assert(identity.controller === controller && identity.name === name && identity.node_id === id
+    && typeof identity.node_credential === "string" && HEX.test(identity.node_credential), "original credential binding differs");
+  return identity.node_credential;
+}
+
 function closed(value: Record<string, unknown>, keys: string[]): void {
   assert(isDeepStrictEqual(Object.keys(value).sort(), [...keys].sort()), "unrecognized private metadata");
 }
@@ -169,9 +245,10 @@ function controllerUrl(value: string): string {
   return url.toString().replace(/\/+$/, "");
 }
 
-function metadata(value: Record<string, unknown>): Metadata {
-  closed(value, ["version", "run_id", "fingerprint", "controller", "agent_controller", "uid", "gid", "image_id", "host_gateway", "phase", "nodes", "files"]);
+export function metadata(value: Record<string, unknown>): Metadata {
+  closed(value, ["version", "run_id", "fingerprint", "controller", "agent_controller", "uid", "gid", "image_id", "host_gateway", "phase", "nodes", "files", ...(Object.hasOwn(value, "mode") ? ["mode"] : [])]);
   assert(value.version === 1 && (value.phase === "preparing" || value.phase === "ready"), "unrecognized demo metadata version/phase");
+  if (Object.hasOwn(value, "mode")) assert(typeof value.mode === "string", "explicit mode must be a string");
   const nodes = record(value.nodes);
   closed(nodes, [...ROLES]);
   const node = (role: Role): LocalNode => {
@@ -193,6 +270,7 @@ function metadata(value: Record<string, unknown>): Metadata {
     agent_controller: text(value.agent_controller), uid: integer(value.uid), gid: integer(value.gid),
     image_id: text(value.image_id), host_gateway: boolean(value.host_gateway), phase: value.phase,
     nodes: { nyc: node("nyc"), lax: node("lax"), sha: node("sha") }, files,
+    ...(Object.hasOwn(value, "mode") ? { mode: demoMode(value.mode) } : {}),
   };
   assert(/^[0-9a-f]{32}$/.test(result.run_id) && HEX.test(result.fingerprint) && /^sha256:[0-9a-f]{64}$/.test(result.image_id), "invalid ownership/image metadata");
   assert(controllerUrl(result.controller) === result.controller && controllerUrl(result.agent_controller) === result.agent_controller, "noncanonical stored controller");
@@ -242,11 +320,11 @@ async function atomic(path: string, value: string, replace = false): Promise<voi
 
 function options(args: string[]) {
   if (args.includes("--help")) {
-    console.log("Usage: python3 experiments/managed-connections/demo.py start --data-dir PRIVATE_DIR --image IMAGE --controller-url HOST_URL --agent-controller-url DOCKER_URL --admin-token-file FILE [--host-gateway]\n       python3 experiments/managed-connections/demo.py upgrade-image --data-dir PRIVATE_DIR --image IMAGE --admin-token-file FILE\n       python3 experiments/managed-connections/demo.py rollback-image --data-dir PRIVATE_DIR --admin-token-file FILE\n       python3 experiments/managed-connections/demo.py status --data-dir PRIVATE_DIR --admin-token-file FILE\n       python3 experiments/managed-connections/demo.py stop --data-dir PRIVATE_DIR\nStart keeps its image pin. Upgrade/retry and pending-upgrade rollback preserve identities and controller intent. See DEMO.md.");
+    console.log("Usage: python3 experiments/managed-connections/demo.py start --data-dir PRIVATE_DIR --image IMAGE --controller-url HOST_URL --agent-controller-url DOCKER_URL --admin-token-file FILE [--host-gateway]\n       python3 experiments/managed-connections/demo.py upgrade-image --data-dir PRIVATE_DIR --image IMAGE --admin-token-file FILE\n       python3 experiments/managed-connections/demo.py rollback-image --data-dir PRIVATE_DIR --admin-token-file FILE\n       python3 experiments/managed-connections/demo.py enable-dataplane --data-dir PRIVATE_DIR --admin-token-file FILE\n       python3 experiments/managed-connections/demo.py disable-dataplane --data-dir PRIVATE_DIR --admin-token-file FILE\n       python3 experiments/managed-connections/demo.py status --data-dir PRIVATE_DIR --admin-token-file FILE\n       python3 experiments/managed-connections/demo.py stop --data-dir PRIVATE_DIR\nStart keeps the image pin and persisted mode. Dataplane is opt-in, Linux IPv4 TUN meshway0 MTU 1000. Transitions preserve identities and controller intent. See DEMO.md.");
     return null;
   }
   const action = args[0];
-  assert(action === "start" || action === "status" || action === "stop" || action === "upgrade-image" || action === "rollback-image", "expected start/status/stop/upgrade-image/rollback-image");
+  assert(action === "start" || action === "status" || action === "stop" || action === "upgrade-image" || action === "rollback-image" || action === "enable-dataplane" || action === "disable-dataplane", "unrecognized demo operation");
   const values = new Map<string, string>();
   let hostGateway = false;
   for (let i = 1; i < args.length; i++) {
@@ -315,14 +393,24 @@ async function main() {
     assert(!interrupted || cleaning, "interrupted");
     return command("docker", args, { timeout, ...(input === undefined ? {} : { input }) });
   };
+  const availableImages = async () => imageInventory(await docker(["image", "ls", "--all", "--no-trunc", "--format", "{{json .}}"]));
+  const retain = (fingerprint: string, pin: string) => retainImage(fingerprint, pin, {
+    inventory: availableImages,
+    tag: async (source, reference) => { await docker(["image", "tag", source, reference]); },
+    inspect: async (reference) => (await docker(["image", "inspect", reference, "--format", "{{.Id}}"])).trim(),
+  });
   let state: Metadata | undefined;
   let mayStop = false;
   let adminToken: string | null = null;
   const root = opts.dataDir;
   const metaPath = join(root, "demo.json");
   const journalPath = join(root, "upgrade.json");
+  const modePath = join(root, "mode.json");
   let pendingUpgrade: UpgradeJournal | null = null;
+  let pendingMode: ModeJournal | null = null;
   const upgrading = opts.action === "upgrade-image" || opts.action === "rollback-image";
+  const changingMode = opts.action === "enable-dataplane" || opts.action === "disable-dataplane";
+  let restarting = false;
   const persist = async () => { assert(state); await atomic(metaPath, `${JSON.stringify(state, null, 2)}\n`, true); };
   const owner = (): Metadata => state ?? fail("no owned resources");
   const prefix = () => `meshway-demo-${owner().fingerprint.slice(0, 12)}`;
@@ -338,12 +426,13 @@ async function main() {
   const inspectOwned = async (kind: "container" | "network", name: string, resource: string) => {
     const inspected = parse(await docker([kind, "inspect", name, "--format", "{{json .}}"]));
     assertDemoOwnership(kind === "container" ? record(inspected.Config).Labels : inspected.Labels, owner(), resource);
-    if (upgrading && kind === "container") {
+    if (kind === "container") {
       const role = ROLES.find((role) => resource === role || resource === `${role}-enroll`);
       assert(role);
       assertDemoContainer(inspected, owner(), resource,
         pendingUpgrade ? [pendingUpgrade.old_image_id, pendingUpgrade.new_image_id] : [owner().image_id],
-        join(root, role), `${uid}:${gid}`);
+        join(root, role), `${uid}:${gid}`, pendingMode ? [pendingMode.original.mode, pendingMode.source_mode, pendingMode.target_mode] : [demoMode(owner().mode)]);
+      assert(record(inspected.HostConfig).NetworkMode === networkName("mgmt"), "owned container management network differs");
     }
     return inspected;
   };
@@ -363,12 +452,35 @@ async function main() {
       fail("partial stop");
     }
   };
+  const nodeBearer = async (role: Role): Promise<string> => {
+    const id = owner().nodes[role].id;
+    assert(id, "original enrolled identity required");
+    await privatePath(join(root, role), true);
+    return boundNodeCredential(parse(await readPrivate(join(root, role, "agent.json"))), owner().agent_controller, `demo-${role}`, id);
+  };
+  const currentPacketReadiness = (ids: DemoIds, token: string, floor: EpochFloor | null) => demoPacketReadiness(ids, floor, {
+    control: async () => {
+      const [config, runtime, policy, access] = await Promise.all([getConnections(owner().controller, token),
+        getConnectionRuntimes(owner().controller, token), getPolicy(owner().controller, token), getMeshAccess(owner().controller, token)]);
+      return { config, runtime, policy, access };
+    },
+    // Original node bearer stays in host memory and goes only to the generated
+    // read-only SDK operation. No CLI argv, Docker input, admin mount or logging.
+    dataplane: async (role) => getAgentDataplaneOperation(owner().controller, await nodeBearer(role)),
+    packet: (role, snapshot) => packetReady(role, snapshot),
+  });
   const publicStatus = async (token: string | null) => {
     const local = owner();
     let inventory: NodeList | undefined; let runtime: ConnectionRuntimesSnapshot | undefined;
+    let packets: PacketReadiness = { nyc: false, lax: false, sha: false };
     if (token !== null) {
       try { [inventory, runtime] = await Promise.all([listNodes(local.controller, token), getConnectionRuntimes(local.controller, token)]); }
       catch { process.exitCode = 1; }
+      if (demoMode(local.mode) === "linux-ipv4-tun") {
+        const nyc = local.nodes.nyc.id; const lax = local.nodes.lax.id; const sha = local.nodes.sha.id;
+        if (nyc && lax && sha) packets = await currentPacketReadiness({ nyc, lax, sha }, token,
+          pendingMode?.epoch_floor ?? pendingUpgrade?.epoch_floor ?? null);
+      }
     }
     const nodes = [];
     for (const role of ROLES) {
@@ -381,7 +493,12 @@ async function main() {
       const registration = inventory?.nodes.find((node) => node.id === id);
       const report = runtime?.nodes.find((node) => node.node_id === id);
       const age = report?.reported_at === null || report?.reported_at === undefined ? null : Math.max(0, Date.now() - Date.parse(report.reported_at));
+      let dataplane: "disabled" | "ready" | "not-proven" = "disabled";
+      if (demoMode(local.mode) === "linux-ipv4-tun") {
+        dataplane = container === "running" && packets[role] ? "ready" : "not-proven";
+      }
       nodes.push({ name: `demo-${role}`, node_id: id, phase: local.nodes[role].phase, container,
+        dataplane,
         registration: inventory === undefined ? "unavailable" : registration === undefined ? "not-found" : registration.revoked_at === null ? "active" : "revoked",
         last_seen: registration?.last_seen ?? null,
         runtime: report ? { epoch: report.epoch, sequence: report.sequence, state: report.state, reason: report.reason,
@@ -389,27 +506,52 @@ async function main() {
           received_age_ms: age, listeners: report.listeners, neighbors: report.peers } : null });
     }
     console.log(JSON.stringify({ controller: local.controller, agent_controller: local.agent_controller, phase: local.phase,
-      image_id: local.image_id, upgrade: pendingUpgrade ? { phase: pendingUpgrade.phase, old_image_id: pendingUpgrade.old_image_id,
+      image_id: local.image_id, mode: demoMode(local.mode), mode_transition: pendingMode ? { phase: pendingMode.phase,
+        old_mode: pendingMode.original.mode, source_mode: pendingMode.source_mode, target_mode: pendingMode.target_mode, epoch_floor: pendingMode.epoch_floor } : null,
+      exec_user: `${local.uid}:${local.gid}`, upgrade: pendingUpgrade ? { phase: pendingUpgrade.phase, old_image_id: pendingUpgrade.old_image_id,
         new_image_id: pendingUpgrade.new_image_id, target_image_id: pendingUpgrade.target_image_id, epoch_floor: pendingUpgrade.epoch_floor } : null,
       controller_observations: token === null ? "not-requested" : runtime ? "available" : "unavailable", nodes }, null, 2));
   };
   const common = (role: Role, helper: boolean) => [
     "create", "--name", containerName(role, helper), "--hostname", `demo-${role}`, ...labelArgs(helper ? `${role}-enroll` : role),
-    "--pull", "never", "--user", `${uid}:${gid}`, "--network", networkName("mgmt"),
+    "--pull", "never", "--user", !helper && demoMode(owner().mode) === "linux-ipv4-tun" ? "0:0" : `${uid}:${gid}`, "--network", networkName("mgmt"),
     ...(owner().host_gateway ? ["--add-host", "host.docker.internal:host-gateway"] : []),
     "--cap-drop", "ALL", "--security-opt", "no-new-privileges", "--read-only", "--stop-signal", "SIGINT", "--stop-timeout", "20",
+    ...(!helper && demoMode(owner().mode) === "linux-ipv4-tun" ? [...BOOTSTRAP_CAPS.flatMap((cap) => ["--cap-add", cap]), "--device", "/dev/net/tun:/dev/net/tun:rw"] : []),
     "--mount", `type=bind,src=${join(root, role)},dst=/state`,
     "--tmpfs", `/tmp:rw,nosuid,nodev,noexec,mode=0700,uid=${uid},gid=${gid},size=8m`,
     "--sysctl", "net.ipv4.ip_forward=0", "--sysctl", "net.ipv6.conf.all.forwarding=0",
     "--sysctl", "net.ipv4.ping_group_range=0 2147483647",
-    "--cpus", "1", "--memory", "256m", "--memory-swap", "256m", "--pids-limit", "64", "--log-driver", "none",
+    ...(!helper && demoMode(owner().mode) === "linux-ipv4-tun" ? ["--sysctl", "net.ipv6.conf.default.disable_ipv6=1",
+      "--log-driver", "local", "--log-opt", "max-size=1m", "--log-opt", "max-file=1", "--log-opt", "compress=false"] : ["--log-driver", "none"]),
+    "--cpus", "1", "--memory", "256m", "--memory-swap", "256m", "--pids-limit", "64",
   ];
   const createAgent = async (role: Role, image: string) => {
-    await docker([...common(role, false), "--init", "--entrypoint", "meshway-agent", image,
-      "run", "--apply-connections", "--interval-seconds", "2", "--connection-lease-seconds", "15",
-      "--connection-profiles", "/state/profiles.json", "--state", "/state/agent.json"]);
+    const mode = demoMode(owner().mode);
+    await docker([...common(role, false), ...(mode === "linux-ipv4-tun" ? ["--entrypoint", "setpriv", image, ...bootstrapArguments(`${uid}:${gid}`), "meshway-agent"]
+      : ["--init", "--entrypoint", "meshway-agent", image]), ...agentArguments(mode)]);
     for (const network of role === "lax" ? ["a", "b"] : [role === "nyc" ? "a" : "b"])
       await docker(["network", "connect", ...(role === "lax" ? ["--alias", "lax.mesh.test"] : []), networkName(network), containerName(role)]);
+  };
+  const packetReady = async (role: Role, snapshot: AgentDataplaneSnapshot): Promise<boolean> => {
+    const expected = packetIdentity(snapshot);
+    const name = containerName(role);
+    const before = await inspectOwned("container", name, role);
+    const process = record(before.State);
+    if (!boolean(process.Running)) return false;
+    const exec = (args: string[], input?: string) => docker(["exec", "--user", `${uid}:${gid}`, ...(input === undefined ? [] : ["--interactive"]), name, ...args], 10_000, input);
+    try {
+      const [addresses, routes, logs, proof] = await Promise.all([
+        exec(["ip", "-j", "-4", "addr", "show", "dev", "meshway0"]),
+        exec(["ip", "-j", "-N", "-4", "route", "show", "table", "main", "root", expected.ipv4_prefix]),
+        docker(["logs", "--tail", "2048", "--since", text(process.StartedAt), name], 10_000),
+        exec(["python3", "-", String(uid), String(gid)], PROCESS_PROOF),
+      ]);
+      const after = await inspectOwned("container", name, role);
+      return before.Id === after.Id && record(after.State).StartedAt === process.StartedAt && record(after.State).Running === true
+        && parse(proof).net_admin_only === true && packetProof(logs, snapshot)
+        && packetInterface(JSON.parse(addresses), JSON.parse(routes), expected);
+    } catch { return false; }
   };
   const waitHealthy = async (ids: DemoIds, token: string, floor: EpochFloor | null) => {
     stage("waiting for both sides of fresh authenticated UDP and SHA-initiated VLESS probes");
@@ -420,11 +562,21 @@ async function main() {
     const deadline = Date.now() + 90_000;
     do {
       assert(!interrupted, "interrupted");
-      const [config, runtime] = await Promise.all([getConnections(owner().controller, token), getConnectionRuntimes(owner().controller, token)]);
-      if (demoHealthy(config, runtime, ids, Date.now(), floor)) return;
+      if (demoMode(owner().mode) === "neighbors") {
+        const [config, runtime] = await Promise.all([getConnections(owner().controller, token), getConnectionRuntimes(owner().controller, token)]);
+        if (demoHealthy(config, runtime, ids, Date.now(), floor)) {
+          for (const role of ROLES) assert(record((await inspectOwned("container", containerName(role), role)).State).Running === true, "replacement Agent stopped before verification");
+          return;
+        }
+      } else {
+        if (Object.values(await currentPacketReadiness(ids, token, floor)).every(Boolean)) {
+          console.log("[demo] fresh neighbor epochs, both ACKs and current dataplane revision/digest proof AND owned IPv4 TUN/address/route/drop guard verified (zero grants allowed)");
+          return;
+        }
+      }
       await delay(1_000);
     } while (Date.now() < deadline);
-    fail("fresh authenticated graph deadline exceeded");
+    fail("fresh authenticated graph / selected-mode kernel readiness deadline exceeded");
   };
   try {
     assert(await realpath(dirname(root)) === dirname(root), "data parent must exist without symlink aliases");
@@ -438,12 +590,17 @@ async function main() {
       if (opts.action === "start") assert(state.controller === opts.controller && state.agent_controller === opts.agentController
         && state.host_gateway === opts.hostGateway, "immutable controller/network binding differs");
       if (await exists(journalPath)) pendingUpgrade = upgradeJournal(parse(await readPrivate(journalPath)));
+      if (await exists(modePath)) pendingMode = modeJournal(parse(await readPrivate(modePath)));
+      assert(!(pendingUpgrade && pendingMode), "simultaneous image and mode journals require inspection");
       assert(opts.action !== "start" || pendingUpgrade === null, "pending image upgrade: retry upgrade-image or rollback-image first");
+      assert(!changingMode || pendingUpgrade === null, "finish the pending image upgrade before changing mode");
+      assert(!upgrading || pendingMode === null, "finish the pending mode transition before changing image");
     } else {
       assert(opts.action === "start" && (await readdir(root)).length === 0, "refusing unfamiliar or nonempty data directory");
       assert(opts.image && opts.controller && opts.agentController);
       const imageId = (await docker(["image", "inspect", opts.image, "--format", "{{.Id}}"])).trim();
       assert(/^sha256:[0-9a-f]{64}$/.test(imageId), "supplied image must already exist locally");
+      await retain(fingerprint, imageId);
       state = { version: 1, run_id: randomBytes(16).toString("hex"), fingerprint, controller: opts.controller,
         agent_controller: opts.agentController, uid, gid, image_id: imageId, host_gateway: opts.hostGateway, phase: "preparing",
         nodes: { nyc: { phase: "empty", id: null, public_key: null }, lax: { phase: "empty", id: null, public_key: null }, sha: { phase: "empty", id: null, public_key: null } }, files: {} };
@@ -463,9 +620,10 @@ async function main() {
     if (opts.action === "status") { await publicStatus(adminToken); return; }
     assert(state.phase === "ready", "partial initial setup: inspect private state; refusing automatic key regeneration");
     stage("immutable material and image checks");
-    if (!upgrading) {
+    if (opts.action === "start") {
       assert(opts.image);
       assert((await docker(["image", "inspect", opts.image, "--format", "{{.Id}}"])).trim() === state.image_id, "image differs from pinned demo image");
+      await retain(state.fingerprint, state.image_id);
     }
     for (const role of ROLES) {
       await privatePath(join(root, role), true);
@@ -477,10 +635,11 @@ async function main() {
     const initial = await getConnections(state.controller, adminToken);
     assert(initial.valid, "existing connection plan is invalid");
     const inventory = await listNodes(state.controller, adminToken);
+    restarting = opts.action === "start" && ROLES.every((role) => owner().nodes[role].id !== null && owner().nodes[role].public_key !== null);
     for (const role of ROLES) {
       const local = state.nodes[role];
       if (local.id !== null) assert(inventory.nodes.some((node) => node.id === local.id && node.name === `demo-${role}` && node.revoked_at === null), "original node missing, renamed or revoked; refusing re-enrollment");
-      if (upgrading) assert(!inventory.nodes.some((node) => node.name === `demo-${role}` && node.id !== local.id), "demo name collision; refusing identity adoption");
+      if (upgrading || changingMode || restarting) assert(!inventory.nodes.some((node) => node.name === `demo-${role}` && node.id !== local.id), "demo name collision; refusing identity adoption");
       const agentExists = await exists(join(root, role, "agent.json"));
       if (local.id !== null || local.phase === "enroll_started") assert(agentExists, "original identity file missing after enrollment began; refusing replacement");
       if (!agentExists && local.phase === "empty") assert(!inventory.nodes.some((node) => node.name === `demo-${role}`), "name collision; no name-only identity adoption");
@@ -502,18 +661,19 @@ async function main() {
     if (ROLES.every((role) => owner().nodes[role].id !== null)) mergeDemoPlan(initial.configuration, known());
     else assert(![...initial.configuration.listeners, ...initial.configuration.candidates].some((item) => RESERVED.has(item.id)), "reserved plan IDs exist without all original demo identities");
 
-    if (upgrading) {
+    if (upgrading || changingMode || restarting) {
       const ids = known(); const token = adminToken;
       assert(ROLES.every((role) => owner().nodes[role].public_key !== null), "upgrade requires all original published identities");
       assert(isDeepStrictEqual(mergeDemoPlan(initial.configuration, ids), initial.configuration), "upgrade does not repair or modify controller plans");
+      const targetMode = opts.action === "enable-dataplane" ? "linux-ipv4-tun" : opts.action === "disable-dataplane" ? "neighbors" : pendingMode?.target_mode ?? demoMode(owner().mode);
       const target = opts.action === "rollback-image"
         ? (pendingUpgrade?.old_image_id ?? fail("no pending image upgrade to roll back"))
-        : (await docker(["image", "inspect", opts.image ?? fail("image required"), "--format", "{{.Id}}"])).trim();
+        : upgrading ? (await docker(["image", "inspect", opts.image ?? fail("image required"), "--format", "{{.Id}}"])).trim() : owner().image_id;
       const snapshot = async (): Promise<UpgradeSnapshot> => {
         const disk = metadata(parse(await readPrivate(metaPath)));
         assert(isDeepStrictEqual(disk, owner()), "private metadata changed outside this operation");
         const files: Record<string, string> = {};
-        for (const path of [...FILES, ...ROLES.flatMap((role) => [`${role}/agent.json`, `${role}/agent.json.connection-key.json`])])
+        for (const path of IMMUTABLE_FILES)
           files[path] = sha256(await readPrivate(join(root, path)));
         for (const role of ROLES) {
           await privatePath(join(root, role), true);
@@ -521,7 +681,9 @@ async function main() {
         }
         const config = await getConnections(disk.controller, token);
         assert(config.valid, "controller plan became invalid");
-        return { image_id: disk.image_id, binding: sha256(JSON.stringify({ ...disk, image_id: "" })), files,
+        const { mode: _mode, ...stableModeBinding } = disk;
+        const binding = upgrading ? { ...disk, image_id: "" } : { ...stableModeBinding, image_id: "", routing: await getPolicy(disk.controller, token) };
+        return { image_id: disk.image_id, binding: sha256(JSON.stringify(binding)), files,
           plan_revision: config.revision, plan_digest: sha256(JSON.stringify(config.configuration)) };
       };
       // Originals remain read-only at /source-state. Real status CLI readers
@@ -552,16 +714,18 @@ async function main() {
           } finally { cleaning = before; }
         }
       };
-      stage("image-only upgrade preflight");
-      const outcome = await upgradeImage(target, pendingUpgrade, {
+      stage(upgrading ? "image-only upgrade preflight" : "persisted-mode restart preflight");
+      const actions: UpgradeActions = {
         snapshot,
         preflight: async (image, allowedImages) => {
+          const originals = new Map<Role, Record<string, unknown>>();
           for (const role of ROLES) for (const helper of [true, false]) {
             const name = containerName(role, helper);
             if (await found("container", name)) {
               const inspected = await inspectOwned("container", name, helper ? `${role}-enroll` : role);
               assert(allowedImages.includes(text(inspected.Image)), "foreign image at owned container name");
               if (helper) assert(!boolean(record(inspected.State).Running), "enrollment helper still active");
+              else originals.set(role, inspected);
             }
           }
           for (const kind of ["mgmt", "a", "b"]) {
@@ -570,32 +734,75 @@ async function main() {
             assert(inspected.Driver === "bridge" && inspected.Internal === (kind !== "mgmt"), "unexpected owned network topology");
           }
           const engine = (await docker(["info", "--format", "{{.Architecture}}"])).trim();
-          for (const pin of new Set([owner().image_id, image])) {
+          const inventory = await availableImages();
+          const source = currentImageSource(owner().image_id, image, opts.action, inventory);
+          if (source === "running-cohort") {
+            const targetInfo = parse(await docker(["image", "inspect", image, "--format", "{{json .}}"]));
+            assert(targetInfo.Id === image, "target image ID changed");
+            nativeArchitecture(arch(), engine, text(targetInfo.Architecture), text(targetInfo.Os));
+            assertRunningOriginals(originals, owner(), owner().image_id, root, `${uid}:${gid}`, demoMode(owner().mode));
+            stage("current image artifact absent; verifying installed CLIs in all three owned running originals");
+            const code = await readFile(join(HERE, "demo.py"), "utf8");
+            const loader = await readFile(join(HERE, "running-check.py"), "utf8");
+            assert(Buffer.byteLength(code) <= 128 * 1024 && Buffer.byteLength(loader) <= 16 * 1024, "trusted verification helper exceeds bounds");
+            for (const role of ROLES) {
+              const before = originals.get(role); assert(before);
+              stage(`verifying ${role} current installed CLI and read-only private state copy`);
+              const result = parse(await docker(["exec", "--user", `${uid}:${gid}`, "--interactive", containerName(role), "python3", "-c", loader], 90_000,
+                JSON.stringify({ code, request: { uid, gid, dataplane: targetMode === "linux-ipv4-tun", verify: { operation: "verify", name: `demo-${role}`,
+                  controller: owner().agent_controller, token: null, expected_id: ids[role], expected_key: owner().nodes[role].public_key } } })));
+              assert(result.managed === true && typeof result.ping_cli === "boolean" && result.node_id === ids[role], "installed old CLI verification failed");
+              nativeArchitecture(arch(), engine, text(result.architecture), "linux");
+              const after = await inspectOwned("container", containerName(role), role);
+              assert(after.Id === before.Id && record(after.State).StartedAt === record(before.State).StartedAt,
+                "original process changed during installed CLI verification");
+              originals.set(role, after);
+            }
+            assertRunningOriginals(originals, owner(), owner().image_id, root, `${uid}:${gid}`, demoMode(owner().mode));
+          }
+          // Target validation ALWAYS uses its available image artifact in isolated
+          // network-none fixtures; a failed inspect never enables the fallback.
+          const pins = new Set(source === "artifact" ? [owner().image_id, image] : [image]);
+          for (const pin of pins) {
+            const imageRole = pin === image ? "target" : "current";
+            stage(`verifying ${imageRole} image CLI`);
             const info = parse(await docker(["image", "inspect", pin, "--format", "{{json .}}"]));
             assert(info.Id === pin, "image ID changed");
             nativeArchitecture(arch(), engine, text(info.Architecture), text(info.Os));
-            const result = await fixture(pin, "--container-image-check", JSON.stringify({ shell: pin === image && opts.action !== "rollback-image" }));
+            const result = await fixture(pin, "--container-image-check", JSON.stringify({ shell: pin === image && opts.action !== "rollback-image", dataplane: targetMode === "linux-ipv4-tun" }));
             assert(result.managed === true && typeof result.ping_cli === "boolean", "invalid image check");
             if (pin === image) console.log(`[demo] target image managed CLI verified; active-neighbor ping CLI ${result.ping_cli ? "available" : "unavailable"}`);
             for (const role of ROLES) {
+              stage(`verifying ${role} private state copy with ${imageRole} image`);
               const result = await fixture(pin, "--container-verify", JSON.stringify({ operation: "verify", name: `demo-${role}`,
                 controller: owner().agent_controller, token: null, expected_id: ids[role], expected_key: owner().nodes[role].public_key }), role);
               assert(result.node_id === ids[role], "original state/key validation failed");
             }
           }
           for (const role of ROLES) {
-            const identity = parse(await readPrivate(join(root, role, "agent.json")));
-            assert(identity.controller === owner().agent_controller && identity.name === `demo-${role}` && identity.node_id === ids[role]
-              && typeof identity.node_credential === "string" && HEX.test(identity.node_credential), "original credential binding differs");
-            const scoped = await getAgentConnectionsOperation(owner().controller, identity.node_credential);
+            const scoped = await getAgentConnectionsOperation(owner().controller, await nodeBearer(role));
             assert(scoped.payload.node_id === ids[role], "node credential does not authenticate its original identity");
+          }
+          stage("retaining available image pins under dedicated demo tags");
+          await retain(owner().fingerprint, image);
+          if (source === "artifact" && owner().image_id !== image) await retain(owner().fingerprint, owner().image_id);
+          if (source === "running-cohort") {
+            // Recheck the whole original cohort at the last preflight boundary.
+            for (const role of ROLES) {
+              const before = originals.get(role); assert(before);
+              const after = await inspectOwned("container", containerName(role), role);
+              assert(after.Id === before.Id && record(after.State).StartedAt === record(before.State).StartedAt,
+                "original process changed before forward migration");
+              originals.set(role, after);
+            }
+            assertRunningOriginals(originals, owner(), owner().image_id, root, `${uid}:${gid}`, demoMode(owner().mode));
           }
         },
         saveJournal: async (journal) => {
           await atomic(journalPath, `${JSON.stringify(journal, null, 2)}\n`, await exists(journalPath));
           pendingUpgrade = journal;
         },
-        stop: async () => { mayStop = true; stage("controlled image-only restart"); await stopOwned(); },
+        stop: async () => { mayStop = true; stage(upgrading ? "controlled image-only restart" : "controlled persisted-mode restart"); await stopOwned(); },
         epochs: async () => demoEpochFloor(await getConnectionRuntimes(owner().controller, token), ids),
         replacementsRunning: async (image) => {
           for (const role of ROLES) {
@@ -617,7 +824,7 @@ async function main() {
           }
           for (const role of ROLES) await createAgent(role, image);
         },
-        start: async () => { for (const role of ROLES) await docker(["start", containerName(role)]); },
+        start: async () => { for (const role of START_ROLES) await docker(["start", containerName(role)]); },
         healthy: (floor) => waitHealthy(ids, token, floor),
         finish: async () => {
           await privatePath(journalPath); await unlink(journalPath);
@@ -625,9 +832,39 @@ async function main() {
           try { await directory.sync(); } finally { await directory.close(); }
           pendingUpgrade = null;
         },
-      });
+      };
+      if (upgrading) {
+        const outcome = await upgradeImage(target, pendingUpgrade, actions);
+        console.log(`[demo] image ${outcome}; original identities, key/profile bytes and controller plan verified unchanged`);
+      } else {
+        await changeMode(targetMode, pendingMode, {
+          ...actions,
+          snapshot: async () => ({ ...await snapshot(), mode: demoMode(owner().mode) }),
+          preflight: async () => actions.preflight(target, [target]),
+          saveJournal: async (journal) => {
+            await atomic(modePath, `${JSON.stringify(journal, null, 2)}\n`, await exists(modePath)); pendingMode = journal;
+          },
+          pin: async (mode) => { owner().mode = mode; await persist(); },
+          replacementsRunning: async (mode) => {
+            if (mode !== demoMode(owner().mode) || !await actions.replacementsRunning(target)) return false;
+            for (const role of ROLES) {
+              const inspected = await inspectOwned("container", containerName(role), role);
+              if (record(inspected.Config).User !== (mode === "linux-ipv4-tun" ? "0:0" : `${uid}:${gid}`)) return false;
+            }
+            return true;
+          },
+          replaceContainers: async () => actions.replaceContainers(target),
+          finish: async () => {
+            await privatePath(modePath); await unlink(modePath);
+            const directory = await open(root, "r");
+            try { await directory.sync(); } finally { await directory.close(); }
+            pendingMode = null;
+          },
+        }, restarting);
+        console.log(`[demo] mode ${demoMode(owner().mode)} ready; original identities, key/profile bytes and controller plan verified unchanged`);
+      }
       await publicStatus(token);
-      console.log(`[demo] image ${outcome}; original identities, key/profile bytes and controller plan verified unchanged`);
+      if (demoMode(owner().mode) === "linux-ipv4-tun") console.log(`[demo] manual commands: docker exec --user ${uid}:${gid} CONTAINER meshway status (use this explicit user for meshway ping and shells too)`);
       return;
     }
 
@@ -722,19 +959,20 @@ async function main() {
     }
     assert(saved, "CAS retries exhausted");
     stage("starting real managed Agents");
-    for (const role of ROLES) await docker(["start", containerName(role)]);
+    for (const role of START_ROLES) await docker(["start", containerName(role)]);
     await waitHealthy(ids, adminToken, demoEpochFloor(stoppedRuntimes, ids));
     await publicStatus(adminToken);
     console.log("[demo] ready: three real registered nodes; authenticated neighbor probes only");
   } catch {
     process.exitCode = 1;
     console.error(`[demo] failed during ${phase}; private exception details suppressed`);
-    if (mayStop && state && !(upgrading && pendingUpgrade?.epoch_floor)) {
+    if (mayStop && state && !pendingUpgrade?.epoch_floor && !pendingMode?.epoch_floor) {
       cleaning = true;
       try { await stopOwned(); } catch { /* Explicit nonsecret partial-stop message above. */ }
       console.error("[demo] owned containers stopped where possible. Private files, identities, networks and any saved controller intent remain; no nodes revoked. Use status/stop to inspect partial resources.");
     } else if (!pendingUpgrade) console.error("[demo] partial private setup/resources may remain; existing identities are never replaced. See DEMO.md recovery limits.");
     if (pendingUpgrade) console.error("[demo] upgrade journal and replacement cohort retained for epoch-fenced retry; retry upgrade-image with the same target, or rollback-image. Ordinary start refuses a pending upgrade.");
+    if (pendingMode) console.error("[demo] mode journal retained for epoch-fenced retry; repeat enable-dataplane/disable-dataplane, or start to resume its target mode. disable-dataplane explicitly recovers adjacency-only mode.");
     if (state) { cleaning = true; try { await publicStatus(adminToken); } catch { /* No invented observations. */ } }
   } finally {
     process.off("SIGINT", signal); process.off("SIGTERM", signal);

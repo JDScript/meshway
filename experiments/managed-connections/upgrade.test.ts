@@ -8,6 +8,7 @@ import { assertDemoContainer, demoEpochFloor, demoHealthy, demoPlan, privateCont
 import type { ConnectionRuntimesSnapshot, ConnectionsSnapshot } from "../../packages/control-client/src/index.ts";
 import { nativeArchitecture, upgradeImage, upgradeJournal } from "./upgrade.ts";
 import type { UpgradeActions, UpgradeJournal, UpgradeSnapshot } from "./upgrade.ts";
+import { agentArguments } from "./mode.ts";
 
 const old = `sha256:${"1".repeat(64)}`;
 const next = `sha256:${"2".repeat(64)}`;
@@ -254,9 +255,10 @@ test("only native Linux images and engines are accepted; emulation is rejected",
 
 test("matching Docker labels cannot adopt a foreign image, user or state mount", () => {
   const owner = { run_id: "a".repeat(32), fingerprint: "b".repeat(64) };
-  const container = { Image: old, Config: { User: "501:20", Labels: { "io.meshway.demo.project": "managed-neighbors",
+  const container = { Image: old, Config: { User: "501:20", Entrypoint: ["meshway-agent"], Cmd: agentArguments("neighbors"), Labels: { "io.meshway.demo.project": "managed-neighbors",
     "io.meshway.demo.run": owner.run_id, "io.meshway.demo.data": owner.fingerprint, "io.meshway.demo.resource": "nyc" } },
-  HostConfig: { ReadonlyRootfs: true, Privileged: false, CapDrop: ["ALL"], CapAdd: null },
+  HostConfig: { ReadonlyRootfs: true, Privileged: false, CapDrop: ["ALL"], CapAdd: null, SecurityOpt: ["no-new-privileges"], NetworkMode: "meshway-demo-mgmt",
+    Sysctls: { "net.ipv4.ip_forward": "0", "net.ipv6.conf.all.forwarding": "0", "net.ipv4.ping_group_range": "0 2147483647" }, LogConfig: { Type: "none", Config: {} } },
   Mounts: [{ Type: "bind", Source: "/private/demo/nyc", Destination: "/state", RW: true }] };
   const check = (value: typeof container) => assertDemoContainer(value, owner, "nyc", [old, next], "/private/demo/nyc", "501:20");
   check(container);

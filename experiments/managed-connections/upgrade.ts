@@ -6,7 +6,7 @@ const IMAGE = /^sha256:[0-9a-f]{64}$/;
 const HASH = /^[0-9a-f]{64}$/;
 export type EpochFloor = Record<"nyc" | "lax" | "sha", number>;
 
-function epochFloor(value: unknown): EpochFloor {
+export function epochFloor(value: unknown): EpochFloor {
   const floor = record(value);
   assert.deepEqual(Object.keys(floor).sort(), ["lax", "nyc", "sha"], "incomplete runtime epoch floor");
   const epoch = (role: keyof EpochFloor): number => {
@@ -33,28 +33,34 @@ export type UpgradeJournal = {
   original: UpgradeSnapshot;
 };
 
-export function upgradeJournal(value: unknown): UpgradeJournal {
-  const entry = record(value);
-  assert(entry.version === 1 || entry.version === 2, "unrecognized upgrade journal version");
-  assert.deepEqual(Object.keys(entry).sort(), ["version", "old_image_id", "new_image_id", "target_image_id", "phase", "original", ...(entry.version === 2 ? ["epoch_floor"] : [])].sort(), "unrecognized upgrade journal");
-  const original = record(entry.original);
+export function upgradeSnapshot(value: unknown): UpgradeSnapshot {
+  const original = record(value);
   assert.deepEqual(Object.keys(original).sort(), ["image_id", "binding", "files", "plan_revision", "plan_digest"].sort(), "unrecognized upgrade snapshot");
-  const old = text(entry.old_image_id); const next = text(entry.new_image_id); const target = text(entry.target_image_id);
-  assert(IMAGE.test(old) && IMAGE.test(next) && old !== next && [old, next].includes(target), "invalid upgrade pins");
-  assert(entry.phase === "prepared" || entry.phase === "restarting" || entry.phase === "verifying" || entry.phase === "complete", "invalid upgrade phase");
-  assert(original.image_id === old && typeof original.plan_revision === "number" && Number.isSafeInteger(original.plan_revision) && original.plan_revision >= 0, "invalid original pin/revision");
+  assert(IMAGE.test(text(original.image_id)) && typeof original.plan_revision === "number" && Number.isSafeInteger(original.plan_revision) && original.plan_revision >= 0, "invalid original pin/revision");
   const files = Object.fromEntries(Object.entries(record(original.files)).map(([path, digest]) => {
     assert(/^(nyc|lax|sha)\/[a-zA-Z0-9.-]+$/.test(path) && typeof digest === "string" && HASH.test(digest), "invalid upgrade file fingerprint");
     return [path, digest];
   }));
   assert(Object.keys(files).length >= 12 && HASH.test(text(original.binding)) && HASH.test(text(original.plan_digest)), "incomplete upgrade snapshot");
+  return { image_id: text(original.image_id), binding: text(original.binding), files, plan_revision: original.plan_revision, plan_digest: text(original.plan_digest) };
+}
+
+export function upgradeJournal(value: unknown): UpgradeJournal {
+  const entry = record(value);
+  assert(entry.version === 1 || entry.version === 2, "unrecognized upgrade journal version");
+  assert.deepEqual(Object.keys(entry).sort(), ["version", "old_image_id", "new_image_id", "target_image_id", "phase", "original", ...(entry.version === 2 ? ["epoch_floor"] : [])].sort(), "unrecognized upgrade journal");
+  const original = upgradeSnapshot(entry.original);
+  const old = text(entry.old_image_id); const next = text(entry.new_image_id); const target = text(entry.target_image_id);
+  assert(IMAGE.test(old) && IMAGE.test(next) && old !== next && [old, next].includes(target), "invalid upgrade pins");
+  assert(entry.phase === "prepared" || entry.phase === "restarting" || entry.phase === "verifying" || entry.phase === "complete", "invalid upgrade phase");
+  assert(original.image_id === old, "invalid original image pin");
   // V1 cannot prove a replacement cohort. Retain its pins/material and require a
   // new controlled stop + persisted floor, even if its old phase was complete.
   const phase = entry.version === 1 ? "prepared" : entry.phase;
   const floor = entry.version === 1 || entry.epoch_floor === null ? null : epochFloor(entry.epoch_floor);
   assert((phase === "prepared") === (floor === null), "upgrade phase lacks its runtime epoch fence");
   return { version: 2, old_image_id: old, new_image_id: next, target_image_id: target, phase, epoch_floor: floor,
-    original: { image_id: old, binding: text(original.binding), files, plan_revision: original.plan_revision, plan_digest: text(original.plan_digest) } };
+    original };
 }
 
 /** No credentials, key files, controller binding or plan can change during recovery. */
