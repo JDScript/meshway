@@ -23,6 +23,9 @@ jobs:
       - run: cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
       - run: cargo test --workspace --all-features --locked
       - run: PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s experiments/transport -p 'test_*.py'
+      - run: pnpm exec tsc --noEmit -p experiments/managed-connections/tsconfig.json
+      - run: node --test experiments/managed-connections/*.test.ts
+      - run: PYTHONDONTWRITEBYTECODE=1 python3 experiments/managed-connections/demo.test.py
       - run: pnpm typecheck
       - run: pnpm lint
       - run: pnpm test:protocol

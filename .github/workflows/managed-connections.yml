@@ -1,0 +1,28 @@
+name: Managed Docker connections
+
+on:
+  workflow_dispatch:
+
+jobs:
+  adjacency:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: Run isolated registered-node acceptance
+        env:
+          MESHWAY_PERF_LOCK: ${{ runner.temp }}/meshway-performance.lock
+        run: python3 experiments/managed-connections/run.py --artifacts-dir "$RUNNER_TEMP"
+      - name: Preserve non-secret connection evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: managed-connections-results
+          path: ${{ runner.temp }}/meshway-managedtest-*-artifacts-*/result.json
+          if-no-files-found: ignore
