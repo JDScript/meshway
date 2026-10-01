@@ -73,7 +73,7 @@ async fn network_resources_and_credentials_enforce_isolation_under_interleaved_r
         ),
         (
             "policy/save",
-            json!({"expected_revision":2,"policy":{"default_action":"direct","rules":[{"id":"cross","source":{"node_ids":[enrolled[0].0.id],"countries":[]},"destination":{"ip_cidrs":[],"domain_suffixes":[],"countries":[]},"action":{"kind":"route","via":[],"exit_node_id":null}}]}}),
+            json!({"expected_revision":2,"policy":{"default_action":"direct","rules":[{"id":"cross","source":{"node_ids":[enrolled[0].0.id],"countries":[]},"destination_scope":"any","destination_any":[],"action":{"kind":"route","via":[],"exit_node_id":null}}]}}),
         ),
         (
             "connections",
@@ -89,8 +89,13 @@ async fn network_resources_and_credentials_enforce_isolation_under_interleaved_r
         )
         .await
         .0;
-        assert!(
-            status.is_client_error(),
+        let expected = if ["nodes/revoke", "nodes/country"].contains(&operation) {
+            StatusCode::NOT_FOUND
+        } else {
+            StatusCode::UNPROCESSABLE_ENTITY
+        };
+        assert_eq!(
+            status, expected,
             "cross-network {operation} returned {status}"
         );
     }
