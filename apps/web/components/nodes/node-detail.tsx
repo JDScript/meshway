@@ -49,6 +49,7 @@ import { nextPartStatus, type PartStatus } from "@/lib/node-status"
 import { formatClock, formatDateTime, formatRelative } from "@/lib/time"
 import { cn } from "@/lib/utils"
 import { topologyFlowHref } from "@/lib/flow-navigation"
+import { diagnosticsHref } from "@/lib/connectivity-guidance"
 
 export type NodeTab = "overview" | "connections"
 
@@ -232,6 +233,10 @@ export function NodeDetail({
         </TabsContent>
 
         <TabsContent value="connections" className="flex flex-col gap-4 pt-4">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <p className="text-xs text-muted-foreground">运行观测来自 Agent 上报；本地检查可在诊断工作台生成命令。</p>
+            <Link href={diagnosticsHref(node.id)} className={buttonVariants({ variant: "outline", size: "sm" })}>诊断此节点</Link>
+          </div>
           {latest.ok ? (
             <>
               <div className="grid items-start gap-4 lg:grid-cols-[minmax(0,22rem)_minmax(0,1fr)]">

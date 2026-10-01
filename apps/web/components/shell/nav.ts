@@ -94,10 +94,9 @@ export const navSections: NavSection[] = [
       },
       {
         href: "/monitoring",
-        label: "监控",
+        label: "诊断",
         icon: ActivityIcon,
-        keywords: ["monitoring", "latency", "traffic", "未测量", "jiankong"],
-        preview: true,
+        keywords: ["monitoring", "diagnostics", "netcheck", "ping", "whois", "dns", "诊断", "jiankong"],
       },
     ],
   },
