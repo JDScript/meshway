@@ -13,6 +13,8 @@ public struct ControllerAddress: Equatable, Sendable {
       let host = parts.host, !host.isEmpty,
       parts.user == nil, parts.password == nil,
       parts.query == nil, parts.fragment == nil,
+      parts.path.isEmpty || parts.path == "/",
+      scheme == "https" || ["localhost", "127.0.0.1", "[::1]"].contains(host),
       parts.port.map({ (1...65535).contains($0) }) ?? true,
       let url = parts.url
     else { throw AddressError.invalid }
@@ -23,18 +25,7 @@ public struct ControllerAddress: Equatable, Sendable {
 public enum AddressError: Error, LocalizedError {
   case invalid
   public var errorDescription: String? {
-    "Enter an absolute HTTP or HTTPS controller URL without credentials, query, or fragment."
-  }
-}
-
-@MainActor public protocol AuthProvider {
-  var unavailableReason: String { get }
-}
-
-public struct UnavailableOAuthProvider: AuthProvider {
-  public init() {}
-  public var unavailableReason: String {
-    "OAuth sign-in is not available on the controller yet. User and device identity APIs are not implemented."
+    "Enter the console HTTPS origin without a path, credentials, query, or fragment. Loopback HTTP is allowed for development."
   }
 }
 

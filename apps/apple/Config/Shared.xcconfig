@@ -1,6 +1,9 @@
 // Override locally (untracked) or with xcodebuild KEY=value. No team is assumed.
 MESHWAY_BUNDLE_PREFIX = dev.example
 MESHWAY_APP_GROUP = group.$(MESHWAY_BUNDLE_PREFIX).meshway
+// Empty for unsigned builds. A signed deployment also needs matching
+// keychain-access-groups entitlements on App and extension.
+MESHWAY_KEYCHAIN_ACCESS_GROUP =
 DEVELOPMENT_TEAM =
 #include? "Local.xcconfig"
 SWIFT_VERSION = 6.0
