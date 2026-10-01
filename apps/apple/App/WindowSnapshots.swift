@@ -91,7 +91,7 @@
             switch command.action {
             case "sign-in": await model.signIn()
             case "refresh": await model.enrollment.refresh()
-            case "detail", "network", "dismiss", "search":
+            case "detail", "alias-detail", "network", "dismiss", "search":
               NotificationCenter.default.post(
                 name: Notification.Name("MeshwaySnapshotAction"), object: command.action)
             case "panel":
@@ -115,12 +115,15 @@
                 NSApp.activate(ignoringOtherApps: true)
               }
               try await Task.sleep(for: .milliseconds(700))
-              try capture(window, to: directory.appendingPathComponent("\(command.id).png"))
+              try await captureLaidOut(
+                window, to: directory.appendingPathComponent("\(command.id).png"))
               if let sheet = window.attachedSheet {
-                try capture(sheet, to: directory.appendingPathComponent("\(command.id)-sheet.png"))
+                try await captureLaidOut(
+                  sheet, to: directory.appendingPathComponent("\(command.id)-sheet.png"))
               }
               if let panel {
-                try capture(panel, to: directory.appendingPathComponent("\(command.id)-panel.png"))
+                try await captureLaidOut(
+                  panel, to: directory.appendingPathComponent("\(command.id)-panel.png"))
                 panel.orderOut(nil)
                 self.panel = nil
               }
@@ -140,7 +143,14 @@
         }
       } catch {
         // Deliberately omit underlying errors, requests, and callback URLs.
-        try? Data("Snapshot operation failed".utf8).write(
+        let reason: String
+        switch error as? SnapshotError {
+        case .window: reason = "window"
+        case .bitmap: reason = "bitmap"
+        case .command: reason = "command"
+        case nil: reason = "io"
+        }
+        try? Data(reason.utf8).write(
           to: directory.appendingPathComponent("failed"))
         NSApp.terminate(nil)
       }
@@ -150,8 +160,25 @@
       let action: String
     }
     private enum SnapshotError: Error { case window, bitmap, command }
+    private static func captureLaidOut(_ window: NSWindow, to url: URL) async throws {
+      // AppKit may briefly detach/replace its content wrappers after a toolbar
+      // visibility or sheet transition. Capture only a settled real frame.
+      for attempt in 0..<10 {
+        do {
+          try capture(window, to: url)
+          return
+        } catch let error as SnapshotError {
+          if attempt == 9 { throw error }
+          try await Task.sleep(for: .milliseconds(200))
+        }
+      }
+    }
     private static func capture(_ window: NSWindow, to url: URL) throws {
-      guard let frame = window.contentView?.superview else { throw SnapshotError.window }
+      guard var frame = window.contentView else { throw SnapshotError.window }
+      // The immediate parent is not always NSThemeFrame (notably with a hidden
+      // toolbar). Ascend to include real titlebar buttons and window chrome.
+      while let parent = frame.superview { frame = parent }
+      guard frame.bounds.width > 0, frame.bounds.height > 0 else { throw SnapshotError.window }
       frame.layoutSubtreeIfNeeded()
       window.displayIfNeeded()
       guard let bitmap = frame.bitmapImageRepForCachingDisplay(in: frame.bounds) else {

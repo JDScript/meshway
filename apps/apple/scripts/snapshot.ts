@@ -102,7 +102,10 @@ try {
         await writeFile(join(ipc, "next.json"), JSON.stringify({ action, id }), { mode: 0o600 });
         await rename(join(ipc, "next.json"), join(ipc, "command.json"));
         await waitFor(async () => {
-          if (await exists(join(ipc, "failed"))) throw new Error("Debug snapshot operation failed");
+          if (await exists(join(ipc, "failed"))) {
+            const reason = (await readFile(join(ipc, "failed"), "utf8")).trim();
+            throw new Error(`Debug snapshot operation failed: ${["window", "bitmap", "command", "io"].includes(reason) ? reason : "unknown"}`);
+          }
           try { return (await readFile(join(ipc, "done"), "utf8")) === id; } catch { return false; }
         }, action);
       }
@@ -129,6 +132,7 @@ try {
       await signingIn;
       await command("refresh"); await capture("devices");
       await command("detail"); await capture("detail"); await command("dismiss");
+      await command("alias-detail"); await capture("alias-detail"); await command("dismiss");
       await command("network"); await capture("network"); await command("dismiss");
       await command("panel"); await capture("panel");
       await command("search"); await capture("no-matches"); await command("search");
