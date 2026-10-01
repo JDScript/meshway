@@ -6,8 +6,8 @@ mod migration;
 mod profiles;
 mod rule_sets;
 mod validation;
-pub use index::{DestinationIndex, FlattenedPrefix};
 pub use engine::*;
+pub use index::{DestinationIndex, FlattenedPrefix};
 pub use migration::*;
 pub use profiles::*;
 pub use rule_sets::*;
@@ -191,3 +191,5 @@ impl Policy {
         }
     }
 }
+#[cfg(test)]
+mod tests;

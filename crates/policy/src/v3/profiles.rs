@@ -837,3 +837,6 @@ pub fn compile_network(
         sources,
     })
 }
+#[cfg(test)]
+#[path = "profiles_tests.rs"]
+mod tests;
