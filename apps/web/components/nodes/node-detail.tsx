@@ -15,6 +15,7 @@ import Link from "next/link"
 import { useSearchParams } from "next/navigation"
 import { useCallback, useState, type ReactNode } from "react"
 
+import { ManagedDataplanePanel } from "@/components/nodes/managed-dataplane-panel"
 import { ConnectionsEditor } from "@/components/connections/connections-editor"
 import { NodeRuntimePanel, RuntimeChip } from "@/components/connections/runtime-panel"
 import { useConnectionRuntimes, type InitialRuntimes, type Runtimes } from "@/components/connections/use-runtimes"
@@ -365,6 +366,8 @@ function Overview({
             </dl>
           )}
         </Panel>
+
+        {node.revoked_at === null ? <ManagedDataplanePanel /> : null}
 
         <Panel title="延迟 / 流量" bodyClassName="px-4 py-3">
           <p className="text-xs text-muted-foreground">未测量：数据面尚未上报流量或路径延迟。邻居探测 RTT 见「连接」页的运行状态。</p>

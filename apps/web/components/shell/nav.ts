@@ -5,6 +5,7 @@ import {
   LayoutDashboardIcon,
   RouteIcon,
   ServerIcon,
+  ShieldCheckIcon,
   WaypointsIcon,
   type LucideIcon,
 } from "lucide-react"
@@ -54,6 +55,12 @@ export const navSections: NavSection[] = [
         label: "路由策略",
         icon: RouteIcon,
         keywords: ["routing", "policy", "rules", "luyou"],
+      },
+      {
+        href: "/access",
+        label: "访问授权",
+        icon: ShieldCheckIcon,
+        keywords: ["access", "grant", "authorization", "allow", "shouquan"],
       },
     ],
   },

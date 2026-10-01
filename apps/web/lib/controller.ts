@@ -4,11 +4,13 @@ import {
   ControlApiError,
   getConnectionRuntimes,
   getConnections,
+  getMeshAccess,
   getOverview,
   getPolicy,
   listNodes,
   type ConnectionRuntimesSnapshot,
   type ConnectionsSnapshot,
+  type MeshAccessSnapshot,
   type NodeList,
   type Overview,
   type PolicySnapshot,
@@ -89,4 +91,9 @@ export function fetchConnections(): Promise<ControllerResult<ConnectionsSnapshot
 /** Agent self-reports; a separate read so an outage never hides the saved plan. */
 export function fetchConnectionRuntimes(): Promise<ControllerResult<ConnectionRuntimesSnapshot>> {
   return authorizedRead(getConnectionRuntimes)
+}
+
+/** Saved mesh access grants (directional exact paths). */
+export function fetchMeshAccess(): Promise<ControllerResult<MeshAccessSnapshot>> {
+  return authorizedRead(getMeshAccess)
 }

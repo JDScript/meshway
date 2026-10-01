@@ -3,6 +3,7 @@
 import Link from "next/link"
 import { usePathname } from "next/navigation"
 
+import { useAccessHasDraft } from "@/components/access/draft-store"
 import { useConnectionsHasDraft } from "@/components/connections/draft-store"
 import { useRoutingHasDraft } from "@/components/routing/draft-store"
 import { AccountMenu } from "@/components/shell/account-menu"
@@ -29,8 +30,11 @@ export function AppSidebar({ controllerHost }: { controllerHost: string }) {
   const { isMobile, setOpenMobile } = useSidebar()
   const routingDraft = useRoutingHasDraft()
   const connectionsDraft = useConnectionsHasDraft()
+  const accessDraft = useAccessHasDraft()
   const unsaved = (href: string) =>
-    (href === "/routing" && routingDraft) || (href === "/connections" && connectionsDraft)
+    (href === "/routing" && routingDraft) ||
+    (href === "/connections" && connectionsDraft) ||
+    (href === "/access" && accessDraft)
 
   return (
     <Sidebar collapsible="icon" variant="inset">

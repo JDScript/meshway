@@ -1,7 +1,9 @@
 import type {
+  ConnectionNode,
   ConnectionRuntimesSnapshot,
   ConnectionsSnapshot,
   CreateEnrollmentTokenResponse,
+  MeshAccessSnapshot,
   NodeList,
   NodeSummary,
   PolicySnapshot,
@@ -63,6 +65,18 @@ export type ConnectionsSaveResult =
 
 export type ConnectionsReloadResult =
   | { status: "loaded"; snapshot: ConnectionsSnapshot; fetchedAt: number }
+  | { status: "error"; message: string }
+
+/** `conflict` and `invalid` never carry a replacement policy: the draft stays. */
+export type AccessSaveResult =
+  | { status: "saved"; snapshot: MeshAccessSnapshot }
+  | { status: "conflict"; message: string }
+  | { status: "invalid"; message: string }
+  | { status: "error"; message: string }
+
+/** Grants and the connection inventory (published keys) read together. */
+export type AccessReloadResult =
+  | { status: "loaded"; snapshot: MeshAccessSnapshot; inventory: ConnectionNode[] }
   | { status: "error"; message: string }
 
 /** Background observation refresh; never touches an editor's draft base. */

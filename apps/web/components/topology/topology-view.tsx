@@ -338,7 +338,7 @@ export function TopologyView({
               {revokedCount > 0 ? <span>已撤销 {revokedCount} 个节点未显示</span> : null}
             </div>
             <p>
-              连线是节点 agent 自报、经认证的邻居通道，不代表 IP / TUN 业务可达；overlay 不要求每对节点直连。
+              连线是节点 agent 自报、经认证的邻居通道，不表示 Mesh IP 流量健康；实际 IP 连通需用 ping / curl 单独测试。overlay 不要求每对节点直连。
               {liveKnown && count("unobserved") > 0 ? ` ${count("unobserved")} 条已配置邻接暂无可用报告。` : ""}
               {liveKnown && observation && observation.unmatchedReports > 0
                 ? ` ${observation.unmatchedReports} 条报告与当前连接配置不对应，未显示。`
