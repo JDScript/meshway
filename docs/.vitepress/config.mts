@@ -38,7 +38,8 @@ export default defineConfig({
           { text: "公钥与连接意图", link: "/connections" },
           { text: "Agent 连接运行层", link: "/connection-runtime" },
           { text: "托管 Mesh IPv4 数据面", link: "/managed-dataplane" },
-          // 并行任务整合页面后启用：/policy-v3（四层编译）、/exit-dataplane（出口数据面）。
+          { text: "四层策略引擎 v3", link: "/policy-v3" },
+          // 并行任务整合页面后启用：/exit-dataplane（出口数据面）。
           { text: "DNS 与域名上下文", link: "/dns" },
           { text: "Transport、插件与主备", link: "/transports" },
           { text: "加密边界与真实追踪", link: "/security-and-tracing" },
