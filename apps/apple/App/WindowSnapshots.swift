@@ -30,6 +30,7 @@
   @MainActor enum WindowSnapshots {
     private static let environment = ProcessInfo.processInfo.environment
     private static var started = false
+    private static var runner: Task<Void, Never>?
     private static var panel: NSWindow?
     private static var directory: URL? {
       environment["MESHWAY_SNAPSHOT_DIR"].map { URL(fileURLWithPath: $0, isDirectory: true) }
@@ -53,7 +54,13 @@
       model.deviceName = "Zeyu’s MacBook Pro"
       return model
     }
-    static func run(model: AppModel) async {
+    static func start(model: AppModel) {
+      guard directory != nil, runner == nil else { return }
+      // Capture IPC has App lifetime, not the lifetime of SwiftUI's view task.
+      // Enrollment/sheet transitions may replace or cancel a scene's view task.
+      runner = Task { await run(model: model) }
+    }
+    private static func run(model: AppModel) async {
       guard let directory,
         environment["MESHWAY_SNAPSHOT_KEYCHAIN"]?.hasPrefix("dev.meshway.snapshot.") == true,
         environment["MESHWAY_SNAPSHOT_SERVER"] != nil, !started
@@ -94,6 +101,13 @@
             case "detail", "alias-detail", "network", "dismiss", "search":
               NotificationCenter.default.post(
                 name: Notification.Name("MeshwaySnapshotAction"), object: command.action)
+              if command.action == "dismiss" {
+                for _ in 0..<30 {
+                  if window.attachedSheet == nil { break }
+                  try await Task.sleep(for: .milliseconds(100))
+                }
+                guard window.attachedSheet == nil else { throw SnapshotError.window }
+              }
             case "panel":
               let host = NSHostingView(rootView: MeshwayMenuView(model: model))
               let panel = NSWindow(
@@ -148,7 +162,7 @@
         case .window: reason = "window"
         case .bitmap: reason = "bitmap"
         case .command: reason = "command"
-        case nil: reason = "io"
+        case nil: reason = error is CancellationError ? "cancelled" : "io"
         }
         try? Data(reason.utf8).write(
           to: directory.appendingPathComponent("failed"))

@@ -23,7 +23,7 @@ import SwiftUI
     WindowGroup(id: "main") {
       MeshwayRootView(model: model)
         #if DEBUG && os(macOS)
-          .task { await WindowSnapshots.run(model: model) }
+          .task { WindowSnapshots.start(model: model) }
         #endif
     }
     .defaultSize(width: 500, height: 680)

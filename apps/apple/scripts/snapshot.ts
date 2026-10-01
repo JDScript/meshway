@@ -9,6 +9,7 @@ import { authorizeDevice, exchangeDevice, getNetwork, listNodes, revokeNode, sav
 import { executable, root, run, service, unusedPort } from "../../../e2e/harness.ts";
 
 const output = resolve(process.argv[2] ?? join(tmpdir(), "opencode/apple-ui-polish/round-1"));
+const capturedFiles = new Set<string>();
 await mkdir(output, { recursive: true });
 const temporary = await mkdtemp(join(output, ".live-"));
 await chmod(temporary, 0o700);
@@ -104,7 +105,7 @@ try {
         await waitFor(async () => {
           if (await exists(join(ipc, "failed"))) {
             const reason = (await readFile(join(ipc, "failed"), "utf8")).trim();
-            throw new Error(`Debug snapshot operation failed: ${["window", "bitmap", "command", "io"].includes(reason) ? reason : "unknown"}`);
+            throw new Error(`Debug snapshot operation failed: ${["window", "bitmap", "command", "cancelled", "io"].includes(reason) ? reason : "unknown"}`);
           }
           try { return (await readFile(join(ipc, "done"), "utf8")) === id; } catch { return false; }
         }, action);
@@ -112,8 +113,16 @@ try {
       async function capture(state: string) {
         const id = `mac-${state}-${appearance}-${size}`;
         await command("capture", id);
+        // A rerun after interruption can otherwise retain an old attached sheet
+        // for a state which no longer has one. Replace only this managed ID.
+        for (const suffix of ["", "-sheet", "-panel"]) {
+          await rm(join(output, `${id}${suffix}.png`), { force: true });
+        }
         for (const name of await readdir(ipc)) {
-          if (name.startsWith(id) && name.endsWith(".png")) await copyFile(join(ipc, name), join(output, name));
+          if (name.startsWith(id) && name.endsWith(".png")) {
+            await copyFile(join(ipc, name), join(output, name));
+            capturedFiles.add(name);
+          }
         }
       }
       await capture("signed-out");
@@ -164,6 +173,6 @@ try {
   }
   await web?.stop(); await controller.stop(); await rm(temporary, { recursive: true, force: true });
 }
-const images = (await readdir(output)).filter(name => name.startsWith("mac-") && name.endsWith(".png")).sort();
+const images = [...capturedFiles].sort();
 await writeFile(join(output, "png-paths.txt"), `${images.map(name => join(output, name)).join("\n")}\n`);
 console.log(`PNGs: ${output}`);
