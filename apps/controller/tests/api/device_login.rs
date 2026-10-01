@@ -134,7 +134,7 @@ async fn device_exchange_binding_concurrency_recovery_and_revocation() {
     let node: AgentNodeResponse = serde_json::from_value(a.1).unwrap();
     let db = rusqlite::Connection::open(f.directory.path().join("controller.sqlite3")).unwrap();
     db.execute(
-        "UPDATE enrollment_tokens_scoped SET expires_at=0 WHERE token_hash=?1",
+        "UPDATE enrollment_tokens SET expires_at=0 WHERE token_hash=?1",
         [local::digest(&code)],
     )
     .unwrap();
@@ -172,8 +172,7 @@ async fn device_exchange_binding_concurrency_recovery_and_revocation() {
         );
     }
     assert_eq!(
-        db.query_row("SELECT COUNT(*) FROM nodes_scoped", [], |r| r
-            .get::<_, u32>(0))
+        db.query_row("SELECT COUNT(*) FROM nodes", [], |r| r.get::<_, u32>(0))
             .unwrap(),
         2
     );
@@ -199,7 +198,7 @@ async fn device_exchange_binding_concurrency_recovery_and_revocation() {
     );
     let expired = self::code(&f).await;
     db.execute(
-        "UPDATE enrollment_tokens_scoped SET expires_at=0 WHERE token_hash=?1",
+        "UPDATE enrollment_tokens SET expires_at=0 WHERE token_hash=?1",
         [local::digest(&expired)],
     )
     .unwrap();
@@ -217,7 +216,7 @@ async fn device_exchange_binding_concurrency_recovery_and_revocation() {
     );
     assert!(
         db.query_row(
-            "SELECT used_node_id IS NULL FROM enrollment_tokens_scoped WHERE token_hash=?1",
+            "SELECT used_node_id IS NULL FROM enrollment_tokens WHERE token_hash=?1",
             [local::digest(&expired)],
             |r| r.get::<_, bool>(0)
         )

@@ -1,5 +1,6 @@
 use super::*;
 use crate::NetworkOptions;
+use crate::store::test_store::TestStore as Store;
 
 fn directory() -> tempfile::TempDir {
     use std::os::unix::fs::PermissionsExt;

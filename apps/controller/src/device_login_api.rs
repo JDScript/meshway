@@ -37,8 +37,8 @@ async fn authorize_device(
     state
         .access(move |store| {
             store.authorize_admin(&token)?;
-            store.select_network(&network_id)?;
-            store.authorize_device(&request).map(Json)
+            let network_id = store.network_id(&network_id)?;
+            store.authorize_device(&network_id, &request).map(Json)
         })
         .await
 }

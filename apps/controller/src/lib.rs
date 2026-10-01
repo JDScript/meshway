@@ -324,12 +324,12 @@ async fn get_overview(
     state
         .access(move |store| {
             store.authorize_admin(&token)?;
-            store.select_network(&network_id)?;
+            let network_id = store.network_id(&network_id)?;
             Ok(Json(Overview {
-                name: store.network()?.name,
+                name: store.network(&network_id)?.name,
                 version: env!("CARGO_PKG_VERSION").into(),
-                node_count: store.count()?,
-                configuration_revision: store.revision()?,
+                node_count: store.count(&network_id)?,
+                configuration_revision: store.revision(&network_id)?,
             }))
         })
         .await
@@ -352,9 +352,9 @@ async fn list_nodes(
     state
         .access(move |store| {
             store.authorize_admin(&token)?;
-            store.select_network(&network_id)?;
+            let network_id = store.network_id(&network_id)?;
             Ok(Json(NodeList {
-                nodes: store.nodes()?,
+                nodes: store.nodes(&network_id)?,
             }))
         })
         .await
@@ -383,8 +383,10 @@ async fn create_enrollment_token(
     state
         .access(move |store| {
             store.authorize_admin(&token)?;
-            store.select_network(&network_id)?;
-            store.create_token(request.expires_in_seconds).map(Json)
+            let network_id = store.network_id(&network_id)?;
+            store
+                .create_token(&network_id, request.expires_in_seconds)
+                .map(Json)
         })
         .await
 }
@@ -416,9 +418,9 @@ async fn revoke_node(
     state
         .access(move |store| {
             store.authorize_admin(&token)?;
-            store.select_network(&network_id)?;
+            let network_id = store.network_id(&network_id)?;
             Ok(Json(RevokeNodeResponse {
-                node: store.revoke(&request.node_id)?,
+                node: store.revoke(&network_id, &request.node_id)?,
             }))
         })
         .await

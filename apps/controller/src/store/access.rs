@@ -3,7 +3,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use meshway_protocol::*;
 use rusqlite::{Connection, TransactionBehavior, params};
 
-use super::{Store, configuration, connections, ipam, jsonc, tags};
+use super::{NetworkId, Store, configuration, connections, ipam, jsonc, tags};
 use crate::Error;
 
 #[cfg(test)]
@@ -93,7 +93,10 @@ pub(super) fn upgrade(connection: &mut Connection) -> Result<(), Error> {
     let revision_must_change = !legacy.grants.is_empty();
     let policy = serde_json::to_string(&migrate_legacy(legacy))
         .map_err(|_| Error::Configuration("cannot migrate mesh access"))?;
-    if configuration::revision(&transaction)? == u32::MAX {
+    if transaction.query_row("SELECT revision FROM configuration WHERE id=1", [], |row| {
+        row.get::<_, u32>(0)
+    })? == u32::MAX
+    {
         return Err(Error::Capacity("configuration revision exhausted"));
     }
     transaction.execute_batch(
@@ -119,35 +122,40 @@ pub(super) fn upgrade(connection: &mut Connection) -> Result<(), Error> {
         [policy],
     )?;
     if revision_must_change {
-        configuration::bump(&transaction)?;
+        transaction.execute(
+            "UPDATE configuration SET revision=revision+1 WHERE id=1",
+            [],
+        )?;
     }
-    ensure_publishable(&transaction)?;
     transaction.pragma_update(None, "user_version", 6)?;
     transaction.commit()?;
     Ok(())
 }
 
-pub(super) fn source(connection: &Connection) -> Result<MeshAccessPolicy, Error> {
+pub(super) fn source(
+    connection: &Connection,
+    scope: &NetworkId,
+) -> Result<MeshAccessPolicy, Error> {
     let json: String = connection.query_row(
-        "SELECT policy FROM mesh_access_source WHERE id = 1",
-        [],
+        "SELECT policy FROM mesh_access_source WHERE id = 1 AND network_id=?1",
+        [scope.as_str()],
         |row| row.get(0),
     )?;
     serde_json::from_str(&json).map_err(|_| Error::Configuration("invalid stored mesh access"))
 }
 
-fn source_jsonc(connection: &Connection) -> Result<Option<String>, Error> {
+fn source_jsonc(connection: &Connection, scope: &NetworkId) -> Result<Option<String>, Error> {
     Ok(connection.query_row(
-        "SELECT source_jsonc FROM mesh_access_source WHERE id=1",
-        [],
+        "SELECT source_jsonc FROM mesh_access_source WHERE id=1 AND network_id=?1",
+        [scope.as_str()],
         |row| row.get(0),
     )?)
 }
 
-fn bindings(connection: &Connection) -> Result<BTreeMap<String, String>, Error> {
+fn bindings(connection: &Connection, scope: &NetworkId) -> Result<BTreeMap<String, String>, Error> {
     Ok(connection.prepare(
-        "SELECT node_id, public_key FROM connection_identities JOIN nodes ON nodes.id = node_id WHERE nodes.revoked_at IS NULL ORDER BY node_id",
-    )?.query_map([], |row| Ok((row.get(0)?, row.get(1)?)))?.collect::<Result<_, _>>()?)
+        "SELECT node_id, public_key FROM connection_identities JOIN nodes ON nodes.id = node_id AND nodes.network_id=connection_identities.network_id WHERE nodes.revoked_at IS NULL AND nodes.network_id=?1 ORDER BY node_id",
+    )?.query_map([scope.as_str()], |row| Ok((row.get(0)?, row.get(1)?)))?.collect::<Result<_, _>>()?)
 }
 
 fn validate(
@@ -160,22 +168,23 @@ fn validate(
 
 fn validate_current(
     connection: &Connection,
+    scope: &NetworkId,
     policy: &MeshAccessPolicy,
 ) -> Result<Vec<PolicyDiagnostic>, Error> {
     Ok(validate(
         policy,
-        &configuration::active_nodes(connection)?,
-        &tags::catalog(connection)?,
+        &configuration::active_nodes(connection, scope)?,
+        &tags::catalog(connection, scope)?,
     ))
 }
 
-fn admin_snapshot(connection: &Connection) -> Result<MeshAccessSnapshot, Error> {
-    let policy = source(connection)?;
-    let diagnostics = validate_current(connection, &policy)?;
+fn admin_snapshot(connection: &Connection, scope: &NetworkId) -> Result<MeshAccessSnapshot, Error> {
+    let policy = source(connection, scope)?;
+    let diagnostics = validate_current(connection, scope, &policy)?;
     Ok(MeshAccessSnapshot {
-        revision: configuration::revision(connection)?,
+        revision: configuration::revision(connection, scope)?,
         policy,
-        source_jsonc: source_jsonc(connection)?,
+        source_jsonc: source_jsonc(connection, scope)?,
         valid: diagnostics.is_empty(),
         diagnostics,
     })
@@ -190,21 +199,23 @@ fn authorization_id(path: &[String]) -> String {
 
 fn compiled_authorizations(
     connection: &Connection,
+    scope: &NetworkId,
 ) -> Result<(bool, BTreeMap<String, MeshPathAuthorization>), Error> {
-    compiled_authorizations_with(connection, || {})
+    compiled_authorizations_with(connection, scope, || {})
 }
 
 fn compiled_authorizations_with(
     connection: &Connection,
+    scope: &NetworkId,
     mut route_evaluated: impl FnMut(),
 ) -> Result<(bool, BTreeMap<String, MeshPathAuthorization>), Error> {
-    let nodes = configuration::active_nodes(connection)?;
+    let nodes = configuration::active_nodes(connection, scope)?;
     let mut result: BTreeMap<_, _> = nodes
         .iter()
         .map(|node| (node.id.clone(), MeshPathAuthorization::default()))
         .collect();
-    let access = source(connection)?;
-    let catalog = tags::catalog(connection)?;
+    let access = source(connection, scope)?;
+    let catalog = tags::catalog(connection, scope)?;
     if !validate(&access, &nodes, &catalog).is_empty() {
         return Ok((false, result));
     }
@@ -216,7 +227,7 @@ fn compiled_authorizations_with(
     {
         return Ok((true, result));
     }
-    let keys: BTreeMap<_, _> = bindings(connection)?
+    let keys: BTreeMap<_, _> = bindings(connection, scope)?
         .into_iter()
         .filter(|(_, key)| valid_connection_public_key(key))
         .collect();
@@ -227,13 +238,13 @@ fn compiled_authorizations_with(
     if eligible.len() < 2 {
         return Ok((true, result));
     }
-    let routing = configuration::source_policy(connection)?;
-    let network = ipam::network(connection)?;
+    let routing = configuration::source_policy(connection, scope)?;
+    let network = ipam::network(connection, scope)?;
     let prepared = meshway_policy::prepare_routing(&routing, &network, &nodes);
     if !prepared.report().is_valid() {
         return Ok((true, result));
     }
-    let assignments = tags::assignments(connection)?;
+    let assignments = tags::assignments(connection, scope)?;
     let eligible_ids: BTreeSet<_> = eligible.iter().map(|node| node.id.as_str()).collect();
     let mut connection_source = None;
     let mut identity_unions: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
@@ -283,7 +294,7 @@ fn compiled_authorizations_with(
                     let source = if let Some(source) = &connection_source {
                         source
                     } else {
-                        connection_source.insert(connections::admin_snapshot(connection)?)
+                        connection_source.insert(connections::admin_snapshot(connection, scope)?)
                     };
                     let adjacency = connections::projection(source, participant)?.payload;
                     identity_unions.insert(
@@ -356,18 +367,19 @@ fn identities(
         .collect()
 }
 
-pub(super) fn ensure_publishable(connection: &Connection) -> Result<(), Error> {
-    compiled_authorizations(connection)?;
+pub(super) fn ensure_publishable(connection: &Connection, scope: &NetworkId) -> Result<(), Error> {
+    compiled_authorizations(connection, scope)?;
     Ok(())
 }
 
 impl Store {
-    pub fn mesh_access(&self) -> Result<MeshAccessSnapshot, Error> {
-        admin_snapshot(&self.connection)
+    pub fn mesh_access(&self, scope: &NetworkId) -> Result<MeshAccessSnapshot, Error> {
+        admin_snapshot(&self.connection, scope)
     }
 
     pub fn save_mesh_access(
         &mut self,
+        scope: &NetworkId,
         request: &SaveMeshAccessRequest,
     ) -> Result<MeshAccessSnapshot, Error> {
         if request
@@ -388,38 +400,42 @@ impl Store {
         let transaction = self
             .connection
             .transaction_with_behavior(TransactionBehavior::Immediate)?;
-        if configuration::revision(&transaction)? != request.expected_revision {
+        if configuration::revision(&transaction, scope)? != request.expected_revision {
             return Err(Error::Conflict);
         }
-        if !validate_current(&transaction, &request.policy)?.is_empty() {
+        if !validate_current(&transaction, scope, &request.policy)?.is_empty() {
             return Err(Error::Unprocessable(
                 "invalid mesh access policy; inspect selectors, references and ordered rules",
             ));
         }
-        let changed = source(&transaction)? != request.policy
-            || source_jsonc(&transaction)? != request.source_jsonc;
+        let changed = source(&transaction, scope)? != request.policy
+            || source_jsonc(&transaction, scope)? != request.source_jsonc;
         if changed {
             let encoded = serde_json::to_string(&request.policy)
                 .map_err(|_| Error::Configuration("cannot encode mesh access"))?;
             transaction.execute(
-                "UPDATE mesh_access_source SET policy=?1, source_jsonc=?2 WHERE id=1",
-                params![encoded, request.source_jsonc],
+                "UPDATE mesh_access_source SET policy=?1, source_jsonc=?2 WHERE id=1 AND network_id=?3",
+                params![encoded, request.source_jsonc, scope.as_str()],
             )?;
-            configuration::bump(&transaction)?;
-            configuration::ensure_publishable(&transaction)?;
-            connections::ensure_publishable(&transaction)?;
-            ensure_publishable(&transaction)?;
+            configuration::bump(&transaction, scope)?;
+            configuration::ensure_publishable(&transaction, scope)?;
+            connections::ensure_publishable(&transaction, scope)?;
+            ensure_publishable(&transaction, scope)?;
         }
-        let response = admin_snapshot(&transaction)?;
+        let response = admin_snapshot(&transaction, scope)?;
         transaction.commit()?;
         Ok(response)
     }
 
-    pub fn preview_flow(&self, request: &PreviewFlowRequest) -> Result<PreviewFlowResponse, Error> {
-        let nodes = configuration::active_nodes(&self.connection)?;
-        let access = admin_snapshot(&self.connection)?;
-        let routing_policy = configuration::source_policy(&self.connection)?;
-        let network = ipam::network(&self.connection)?;
+    pub fn preview_flow(
+        &self,
+        scope: &NetworkId,
+        request: &PreviewFlowRequest,
+    ) -> Result<PreviewFlowResponse, Error> {
+        let nodes = configuration::active_nodes(&self.connection, scope)?;
+        let access = admin_snapshot(&self.connection, scope)?;
+        let routing_policy = configuration::source_policy(&self.connection, scope)?;
+        let network = ipam::network(&self.connection, scope)?;
         let routing = meshway_policy::preview(&routing_policy, &network, &nodes, &request.flow);
         let source_active = nodes
             .iter()
@@ -461,7 +477,7 @@ impl Store {
                 &access.policy,
                 &request.flow.source_node_id,
                 destination,
-                &tags::assignments(&self.connection)?,
+                &tags::assignments(&self.connection, scope)?,
             )
         } else {
             FlowAuthorizationDecision {
@@ -484,7 +500,7 @@ impl Store {
                 .as_deref()
                 .is_none_or(|ip| ip.parse::<std::net::Ipv4Addr>().is_ok())
             && destination.is_some()
-            && compiled_authorizations(&self.connection)?
+            && compiled_authorizations(&self.connection, scope)?
                 .1
                 .get(&request.flow.source_node_id)
                 .is_some_and(|authorization| {
@@ -514,20 +530,24 @@ impl Store {
     }
 
     pub fn agent_dataplane(&mut self, token: &str) -> Result<AgentDataplaneSnapshot, Error> {
+        let scope = self.node_network(token)?;
         let transaction = self
             .connection
             .transaction_with_behavior(TransactionBehavior::Deferred)?;
-        let node_id = configuration::node_id(&transaction, token)?;
-        let configuration = configuration::snapshot(&transaction, &node_id)?.payload;
-        let connections =
-            connections::projection(&connections::admin_snapshot(&transaction)?, &node_id)?.payload;
-        let (access_valid, mut authorizations) = compiled_authorizations(&transaction)?;
+        let node_id = configuration::node_id(&transaction, &scope, token)?;
+        let configuration = configuration::snapshot(&transaction, &scope, &node_id)?.payload;
+        let connections = connections::projection(
+            &connections::admin_snapshot(&transaction, &scope)?,
+            &node_id,
+        )?
+        .payload;
+        let (access_valid, mut authorizations) = compiled_authorizations(&transaction, &scope)?;
         let access_policy = authorizations.remove(&node_id).unwrap_or_default();
         let identities = identities(
             &node_id,
             &connections,
             &access_policy,
-            &bindings(&transaction)?,
+            &bindings(&transaction, &scope)?,
         )?;
         let revision = configuration.revision;
         if connections.revision != revision {

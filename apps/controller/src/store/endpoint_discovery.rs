@@ -1,8 +1,8 @@
-use super::{Store, connection_runtime, connections};
+use super::{NetworkId, Store, connection_runtime, connections};
 use crate::Error;
 use chrono::{DateTime, Duration, Utc};
 use meshway_protocol::*;
-use rusqlite::OptionalExtension;
+use rusqlite::{OptionalExtension, params};
 use std::{
     collections::{BTreeMap, BTreeSet},
     net::{IpAddr, SocketAddr},
@@ -47,20 +47,23 @@ impl Store {
         request: &ReportEndpointDiscoveryRequest,
         now: DateTime<Utc>,
     ) -> Result<ReportEndpointDiscoveryResponse, Error> {
-        let id = connection_runtime::bound_node(&self.connection, token)?;
+        let network = self.node_network(token)?;
+        let id = connection_runtime::bound_node(&self.connection, &network, token)?;
         let epoch: Option<u32> = self
             .connection
             .query_row(
-                "SELECT epoch FROM connection_runtime_leases WHERE node_id=?1",
-                [&id],
+                "SELECT epoch FROM connection_runtime_leases WHERE node_id=?1 AND network_id=?2",
+                params![id, network.as_str()],
                 |row| row.get(0),
             )
             .optional()?;
         if epoch != Some(request.epoch) {
             return Err(Error::Conflict);
         }
-        let current =
-            connections::projection(&connections::admin_snapshot(&self.connection)?, &id)?;
+        let current = connections::projection(
+            &connections::admin_snapshot(&self.connection, &network)?,
+            &id,
+        )?;
         if request.revision != current.payload.revision || request.digest != current.digest {
             return Err(Error::Unprocessable(
                 "discovery revision/digest does not match current node connections",
@@ -203,16 +206,20 @@ impl Store {
         Ok(result)
     }
 
-    pub fn endpoint_discoveries(&self) -> Result<EndpointDiscoveriesSnapshot, Error> {
-        self.endpoint_discoveries_at(Utc::now())
+    pub fn endpoint_discoveries(
+        &self,
+        network: &NetworkId,
+    ) -> Result<EndpointDiscoveriesSnapshot, Error> {
+        self.endpoint_discoveries_at(network, Utc::now())
     }
 
-    fn endpoint_discoveries_at(
+    pub(super) fn endpoint_discoveries_at(
         &self,
+        network: &NetworkId,
         now: DateTime<Utc>,
     ) -> Result<EndpointDiscoveriesSnapshot, Error> {
-        let snapshot = connections::admin_snapshot(&self.connection)?;
-        let runtimes = self.connection_runtimes_at(now)?;
+        let snapshot = connections::admin_snapshot(&self.connection, network)?;
+        let runtimes = self.connection_runtimes_at(network, now)?;
         let mut nodes = Vec::with_capacity(snapshot.nodes.len());
         for node in &snapshot.nodes {
             let id = &node.node.id;
@@ -296,8 +303,8 @@ impl Store {
             nodes.push(view);
         }
         let network_id = self.connection.query_row(
-            "SELECT network_id FROM network_identity WHERE id=1",
-            [],
+            "SELECT network_id FROM network_identity WHERE id=1 AND network_id=?1",
+            [network.as_str()],
             |row| row.get(0),
         )?;
         Ok(EndpointDiscoveriesSnapshot { network_id, nodes })

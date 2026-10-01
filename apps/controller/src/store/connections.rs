@@ -4,7 +4,7 @@ use chrono::Utc;
 use meshway_protocol::*;
 use rusqlite::{Connection, OptionalExtension, TransactionBehavior, params};
 
-use super::{NODE_SELECT, Store, access, configuration, node_row, timestamp};
+use super::{NODE_SELECT, NetworkId, Store, access, configuration, node_row, timestamp};
 use crate::Error;
 
 #[cfg(test)]
@@ -38,25 +38,26 @@ pub(super) fn upgrade(connection: &mut Connection) -> Result<(), Error> {
          );
          PRAGMA user_version = 3;",
     )?;
-    ensure_publishable(&transaction)?;
     transaction.commit()?;
     Ok(())
 }
 
-fn nodes(connection: &Connection) -> Result<Vec<ConnectionNode>, Error> {
+fn nodes(connection: &Connection, network: &NetworkId) -> Result<Vec<ConnectionNode>, Error> {
     let inventory = connection
-        .prepare(&format!("{NODE_SELECT} ORDER BY id"))?
-        .query_map([], node_row)?
+        .prepare(&format!("{NODE_SELECT} WHERE network_id=?1 ORDER BY id"))?
+        .query_map([network.as_str()], node_row)?
         .collect::<Result<Vec<_>, _>>()?;
     let mut identities = connection
-        .prepare("SELECT public_key, capabilities FROM connection_identities WHERE node_id = ?1")?;
+        .prepare("SELECT public_key, capabilities FROM connection_identities WHERE node_id = ?1 AND network_id=?2")?;
     let mut receipts = connection
-        .prepare("SELECT revision, digest, saved_at FROM connection_receipts WHERE node_id = ?1")?;
+        .prepare("SELECT revision, digest, saved_at FROM connection_receipts WHERE node_id = ?1 AND network_id=?2")?;
     inventory
         .into_iter()
         .map(|node| {
             let identity: Option<(String, String)> = identities
-                .query_row([&node.id], |row| Ok((row.get(0)?, row.get(1)?)))
+                .query_row(params![node.id, network.as_str()], |row| {
+                    Ok((row.get(0)?, row.get(1)?))
+                })
                 .optional()?;
             let (public_key, capabilities) = match identity {
                 Some((key, capabilities)) => (
@@ -68,7 +69,7 @@ fn nodes(connection: &Connection) -> Result<Vec<ConnectionNode>, Error> {
                 None => (None, Vec::new()),
             };
             let receipt = receipts
-                .query_row([&node.id], |row| {
+                .query_row(params![node.id, network.as_str()], |row| {
                     Ok((
                         row.get::<_, u32>(0)?,
                         row.get::<_, String>(1)?,
@@ -92,21 +93,24 @@ fn nodes(connection: &Connection) -> Result<Vec<ConnectionNode>, Error> {
         .collect()
 }
 
-fn source(connection: &Connection) -> Result<ConnectionPlan, Error> {
+fn source(connection: &Connection, network: &NetworkId) -> Result<ConnectionPlan, Error> {
     let json: String = connection.query_row(
-        "SELECT configuration FROM connection_source WHERE id = 1",
-        [],
+        "SELECT configuration FROM connection_source WHERE id = 1 AND network_id=?1",
+        [network.as_str()],
         |row| row.get(0),
     )?;
     serde_json::from_str(&json).map_err(|_| Error::Configuration("invalid stored connection plan"))
 }
 
-pub(super) fn admin_snapshot(connection: &Connection) -> Result<ConnectionsSnapshot, Error> {
-    let configuration = source(connection)?;
-    let nodes = nodes(connection)?;
+pub(super) fn admin_snapshot(
+    connection: &Connection,
+    network: &NetworkId,
+) -> Result<ConnectionsSnapshot, Error> {
+    let configuration = source(connection, network)?;
+    let nodes = nodes(connection, network)?;
     let (_, diagnostics) = validation::compile(&configuration, &nodes);
     Ok(ConnectionsSnapshot {
-        revision: configuration::revision(connection)?,
+        revision: configuration::revision(connection, network)?,
         configuration,
         valid: diagnostics.is_empty(),
         diagnostics,
@@ -204,8 +208,11 @@ pub(super) fn projection(
 
 /// Bound every node-scoped projection, not just a representative inventory.
 /// Reserve enough for future fail-closed diagnostics and global revision growth.
-pub(super) fn ensure_publishable(connection: &Connection) -> Result<(), Error> {
-    let snapshot = admin_snapshot(connection)?;
+pub(super) fn ensure_publishable(
+    connection: &Connection,
+    network: &NetworkId,
+) -> Result<(), Error> {
+    let snapshot = admin_snapshot(connection, network)?;
     for node in &snapshot.nodes {
         if node.node.revoked_at.is_none() {
             let encoded = serde_json::to_vec(&projection(&snapshot, &node.node.id)?)
@@ -226,10 +233,11 @@ impl Store {
         token: &str,
         request: &PublishConnectionIdentityRequest,
     ) -> Result<PublishConnectionIdentityResponse, Error> {
+        let network = self.node_network(token)?;
         let transaction = self
             .connection
             .transaction_with_behavior(TransactionBehavior::Immediate)?;
-        let id = configuration::node_id(&transaction, token)?;
+        let id = configuration::node_id(&transaction, &network, token)?;
         request.validate().map_err(Error::Invalid)?;
         let mut capabilities = request.capabilities.clone();
         capabilities.sort_by_key(|capability| capability.transport);
@@ -237,8 +245,8 @@ impl Store {
             .map_err(|_| Error::Configuration("cannot encode capabilities"))?;
         let current: Option<(String, String)> = transaction
             .query_row(
-                "SELECT public_key, capabilities FROM connection_identities WHERE node_id = ?1",
-                [&id],
+                "SELECT public_key, capabilities FROM connection_identities WHERE node_id = ?1 AND network_id=?2",
+                params![id,network.as_str()],
                 |row| Ok((row.get(0)?, row.get(1)?)),
             )
             .optional()?;
@@ -258,19 +266,19 @@ impl Store {
         {
             if current.is_some() {
                 transaction.execute(
-                    "UPDATE connection_identities SET capabilities=?2 WHERE node_id=?1",
-                    params![id, encoded],
+                    "UPDATE connection_identities SET capabilities=?2 WHERE node_id=?1 AND network_id=?3",
+                    params![id, encoded,network.as_str()],
                 )?;
             } else {
-                transaction.execute("INSERT INTO connection_identities (node_id,public_key,capabilities) VALUES (?1,?2,?3)", params![id,request.public_key,encoded])?;
+                transaction.execute("INSERT INTO connection_identities (node_id,public_key,capabilities,network_id) VALUES (?1,?2,?3,?4)", params![id,request.public_key,encoded,network.as_str()])?;
             }
-            configuration::bump(&transaction)?;
-            configuration::ensure_publishable(&transaction)?;
-            ensure_publishable(&transaction)?;
-            access::ensure_publishable(&transaction)?;
+            configuration::bump(&transaction, &network)?;
+            configuration::ensure_publishable(&transaction, &network)?;
+            ensure_publishable(&transaction, &network)?;
+            access::ensure_publishable(&transaction, &network)?;
         }
         let response = PublishConnectionIdentityResponse {
-            revision: configuration::revision(&transaction)?,
+            revision: configuration::revision(&transaction, &network)?,
             node_id: id,
             public_key: request.public_key.clone(),
             capabilities,
@@ -279,50 +287,52 @@ impl Store {
         Ok(response)
     }
 
-    pub fn connections(&self) -> Result<ConnectionsSnapshot, Error> {
-        admin_snapshot(&self.connection)
+    pub fn connections(&self, network: &NetworkId) -> Result<ConnectionsSnapshot, Error> {
+        admin_snapshot(&self.connection, network)
     }
 
     pub fn save_connections(
         &mut self,
+        network: &NetworkId,
         request: &SaveConnectionsRequest,
     ) -> Result<ConnectionsSnapshot, Error> {
         let transaction = self
             .connection
             .transaction_with_behavior(TransactionBehavior::Immediate)?;
-        if configuration::revision(&transaction)? != request.expected_revision {
+        if configuration::revision(&transaction, network)? != request.expected_revision {
             return Err(Error::Conflict);
         }
         let (normalized, diagnostics) =
-            validation::compile(&request.configuration, &nodes(&transaction)?);
+            validation::compile(&request.configuration, &nodes(&transaction, network)?);
         if !diagnostics.is_empty() {
             return Err(Error::Unprocessable(
                 "invalid connection plan: check node identities, roles, listeners, endpoints and local profile references",
             ));
         }
-        if source(&transaction)? != normalized {
+        if source(&transaction, network)? != normalized {
             let encoded = serde_json::to_string(&normalized)
                 .map_err(|_| Error::Configuration("cannot encode connection plan"))?;
             if encoded.len() > 128 * 1024 {
                 return Err(Error::Capacity("connection source exceeds 128 KiB"));
             }
             transaction.execute(
-                "UPDATE connection_source SET configuration = ?1 WHERE id = 1",
-                [encoded],
+                "UPDATE connection_source SET configuration = ?1 WHERE id = 1 AND network_id=?2",
+                params![encoded, network.as_str()],
             )?;
-            configuration::bump(&transaction)?;
-            configuration::ensure_publishable(&transaction)?;
-            ensure_publishable(&transaction)?;
-            access::ensure_publishable(&transaction)?;
+            configuration::bump(&transaction, network)?;
+            configuration::ensure_publishable(&transaction, network)?;
+            ensure_publishable(&transaction, network)?;
+            access::ensure_publishable(&transaction, network)?;
         }
-        let response = admin_snapshot(&transaction)?;
+        let response = admin_snapshot(&transaction, network)?;
         transaction.commit()?;
         Ok(response)
     }
 
     pub fn agent_connections(&self, token: &str) -> Result<AgentConnectionsSnapshot, Error> {
-        let id = configuration::node_id(&self.connection, token)?;
-        projection(&admin_snapshot(&self.connection)?, &id)
+        let network = self.node_network(token)?;
+        let id = configuration::node_id(&self.connection, &network, token)?;
+        projection(&admin_snapshot(&self.connection, &network)?, &id)
     }
 
     pub fn acknowledge_connections(
@@ -330,22 +340,23 @@ impl Store {
         token: &str,
         request: &AcknowledgeAgentConnectionsRequest,
     ) -> Result<AcknowledgeAgentConnectionsResponse, Error> {
+        let network = self.node_network(token)?;
         let transaction = self
             .connection
             .transaction_with_behavior(TransactionBehavior::Immediate)?;
-        let id = configuration::node_id(&transaction, token)?;
+        let id = configuration::node_id(&transaction, &network, token)?;
         if request.revision == 0 || !local::valid_credential(&request.digest) {
             return Err(Error::Invalid(
                 "invalid connection receipt revision or digest",
             ));
         }
-        let current = projection(&admin_snapshot(&transaction)?, &id)?;
+        let current = projection(&admin_snapshot(&transaction, &network)?, &id)?;
         if request.revision != current.payload.revision || request.digest != current.digest {
             return Err(Error::Conflict);
         }
-        let unchanged: bool = transaction.query_row("SELECT EXISTS(SELECT 1 FROM connection_receipts WHERE node_id=?1 AND revision=?2 AND digest=?3)", params![id, request.revision, request.digest], |row| row.get(0))?;
+        let unchanged: bool = transaction.query_row("SELECT EXISTS(SELECT 1 FROM connection_receipts WHERE node_id=?1 AND revision=?2 AND digest=?3 AND network_id=?4)", params![id, request.revision, request.digest,network.as_str()], |row| row.get(0))?;
         if !unchanged {
-            transaction.execute("INSERT OR REPLACE INTO connection_receipts (node_id,revision,digest,saved_at) VALUES (?1,?2,?3,?4)", params![id,request.revision,request.digest,Utc::now().to_rfc3339()])?;
+            transaction.execute("INSERT INTO connection_receipts (node_id,revision,digest,saved_at,network_id) VALUES (?1,?2,?3,?4,?5) ON CONFLICT(node_id) DO UPDATE SET revision=excluded.revision,digest=excluded.digest,saved_at=excluded.saved_at WHERE connection_receipts.network_id=excluded.network_id", params![id,request.revision,request.digest,Utc::now().to_rfc3339(),network.as_str()])?;
         }
         transaction.commit()?;
         Ok(AcknowledgeAgentConnectionsResponse {

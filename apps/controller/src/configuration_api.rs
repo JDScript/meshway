@@ -38,8 +38,8 @@ async fn get_policy(
     state
         .access(move |store| {
             store.authorize_admin(&token)?;
-            store.select_network(&network_id)?;
-            store.policy().map(Json)
+            let network_id = store.network_id(&network_id)?;
+            store.policy(&network_id).map(Json)
         })
         .await
 }
@@ -64,8 +64,8 @@ async fn preview_policy(
     state
         .access(move |store| {
             store.authorize_admin(&token)?;
-            store.select_network(&network_id)?;
-            store.preview(&request).map(Json)
+            let network_id = store.network_id(&network_id)?;
+            store.preview(&network_id, &request).map(Json)
         })
         .await
 }
@@ -92,8 +92,8 @@ async fn save_policy(
     state
         .access(move |store| {
             store.authorize_admin(&token)?;
-            store.select_network(&network_id)?;
-            store.save_policy(&request).map(Json)
+            let network_id = store.network_id(&network_id)?;
+            store.save_policy(&network_id, &request).map(Json)
         })
         .await
 }
@@ -120,9 +120,9 @@ async fn set_node_country(
     state
         .access(move |store| {
             store.authorize_admin(&token)?;
-            store.select_network(&network_id)?;
+            let network_id = store.network_id(&network_id)?;
             Ok(Json(RevokeNodeResponse {
-                node: store.set_country(&request)?,
+                node: store.set_country(&network_id, &request)?,
             }))
         })
         .await

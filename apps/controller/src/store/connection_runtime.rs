@@ -4,7 +4,7 @@ use chrono::{DateTime, Utc};
 use meshway_protocol::*;
 use rusqlite::{Connection, OptionalExtension, TransactionBehavior, params};
 
-use super::{Store, configuration, connections, timestamp};
+use super::{NetworkId, Store, configuration, connections, timestamp};
 use crate::Error;
 
 #[cfg(test)]
@@ -38,11 +38,15 @@ pub(super) fn upgrade(connection: &mut Connection) -> Result<(), Error> {
     Ok(())
 }
 
-pub(super) fn bound_node(connection: &Connection, token: &str) -> Result<String, Error> {
-    let id = configuration::node_id(connection, token)?;
+pub(super) fn bound_node(
+    connection: &Connection,
+    network: &NetworkId,
+    token: &str,
+) -> Result<String, Error> {
+    let id = configuration::node_id(connection, network, token)?;
     let bound: bool = connection.query_row(
-        "SELECT EXISTS(SELECT 1 FROM connection_identities WHERE node_id = ?1)",
-        [&id],
+        "SELECT EXISTS(SELECT 1 FROM connection_identities WHERE node_id = ?1 AND network_id=?2)",
+        params![id, network.as_str()],
         |row| row.get(0),
     )?;
     if !bound {
@@ -59,11 +63,15 @@ struct StoredReport {
     reported_at: DateTime<Utc>,
 }
 
-fn report(connection: &Connection, id: &str) -> Result<Option<StoredReport>, Error> {
+fn report(
+    connection: &Connection,
+    network: &NetworkId,
+    id: &str,
+) -> Result<Option<StoredReport>, Error> {
     Ok(connection
         .query_row(
-            "SELECT sequence, body, reported_at FROM connection_runtime_reports WHERE node_id = ?1",
-            [id],
+            "SELECT sequence, body, reported_at FROM connection_runtime_reports WHERE node_id = ?1 AND network_id=?2",
+            params![id,network.as_str()],
             |row| {
                 Ok(StoredReport {
                     sequence: row.get(0)?,
@@ -80,12 +88,13 @@ impl Store {
         &self,
         token: &str,
     ) -> Result<GetConnectionRuntimeEpochResponse, Error> {
-        let id = bound_node(&self.connection, token)?;
+        let network = self.node_network(token)?;
+        let id = bound_node(&self.connection, &network, token)?;
         let epoch = self
             .connection
             .query_row(
-                "SELECT epoch FROM connection_runtime_leases WHERE node_id = ?1",
-                [&id],
+                "SELECT epoch FROM connection_runtime_leases WHERE node_id = ?1 AND network_id=?2",
+                params![id, network.as_str()],
                 |row| row.get(0),
             )
             .optional()?
@@ -98,10 +107,11 @@ impl Store {
         token: &str,
         request: &BeginConnectionRuntimeRequest,
     ) -> Result<BeginConnectionRuntimeResponse, Error> {
+        let network = self.node_network(token)?;
         let transaction = self
             .connection
             .transaction_with_behavior(TransactionBehavior::Immediate)?;
-        let id = bound_node(&transaction, token)?;
+        let id = bound_node(&transaction, &network, token)?;
         if !local::valid_credential(&request.instance_id) {
             return Err(Error::Unprocessable(
                 "instance_id must be 64 lowercase hexadecimal characters",
@@ -109,8 +119,8 @@ impl Store {
         }
         let lease: Option<(String, u32)> = transaction
             .query_row(
-                "SELECT instance_id, epoch FROM connection_runtime_leases WHERE node_id = ?1",
-                [&id],
+                "SELECT instance_id, epoch FROM connection_runtime_leases WHERE node_id = ?1 AND network_id=?2",
+                params![id,network.as_str()],
                 |row| Ok((row.get(0)?, row.get(1)?)),
             )
             .optional()?;
@@ -127,12 +137,12 @@ impl Store {
             .checked_add(1)
             .ok_or(Error::Capacity("connection runtime epoch exhausted"))?;
         transaction.execute(
-            "INSERT OR REPLACE INTO connection_runtime_leases (node_id,instance_id,epoch) VALUES (?1,?2,?3)",
-            params![id, request.instance_id, epoch],
+            "INSERT INTO connection_runtime_leases (node_id,instance_id,epoch,network_id) VALUES (?1,?2,?3,?4) ON CONFLICT(node_id) DO UPDATE SET instance_id=excluded.instance_id,epoch=excluded.epoch WHERE connection_runtime_leases.network_id=excluded.network_id",
+            params![id, request.instance_id, epoch,network.as_str()],
         )?;
         transaction.execute(
-            "DELETE FROM connection_runtime_reports WHERE node_id = ?1",
-            [&id],
+            "DELETE FROM connection_runtime_reports WHERE node_id = ?1 AND network_id=?2",
+            params![id, network.as_str()],
         )?;
         transaction.commit()?;
         Ok(BeginConnectionRuntimeResponse { epoch })
@@ -143,10 +153,11 @@ impl Store {
         token: &str,
         request: &ReportConnectionRuntimeRequest,
     ) -> Result<ReportConnectionRuntimeResponse, Error> {
+        let network = self.node_network(token)?;
         let transaction = self
             .connection
             .transaction_with_behavior(TransactionBehavior::Immediate)?;
-        let id = bound_node(&transaction, token)?;
+        let id = bound_node(&transaction, &network, token)?;
         if request.epoch == 0
             || request.sequence == 0
             || request.revision == 0
@@ -158,15 +169,15 @@ impl Store {
         }
         let epoch: Option<u32> = transaction
             .query_row(
-                "SELECT epoch FROM connection_runtime_leases WHERE node_id = ?1",
-                [&id],
+                "SELECT epoch FROM connection_runtime_leases WHERE node_id = ?1 AND network_id=?2",
+                params![id, network.as_str()],
                 |row| row.get(0),
             )
             .optional()?;
         if epoch != Some(request.epoch) {
             return Err(Error::Conflict);
         }
-        let previous = report(&transaction, &id)?;
+        let previous = report(&transaction, &network, &id)?;
         let body = canonical_json(request)
             .map_err(|_| Error::Configuration("cannot encode runtime report"))?;
         if previous.as_ref().is_some_and(|previous| {
@@ -175,7 +186,8 @@ impl Store {
         }) {
             return Err(Error::Conflict);
         }
-        let current = connections::projection(&connections::admin_snapshot(&transaction)?, &id)?;
+        let current =
+            connections::projection(&connections::admin_snapshot(&transaction, &network)?, &id)?;
         if request.revision != current.payload.revision || request.digest != current.digest {
             return Err(Error::Unprocessable(
                 "runtime revision or digest does not match current node connections",
@@ -193,8 +205,8 @@ impl Store {
         }
         let reported_at = Utc::now();
         transaction.execute(
-            "INSERT OR REPLACE INTO connection_runtime_reports (node_id,sequence,body,reported_at) VALUES (?1,?2,?3,?4)",
-            params![id, request.sequence, body, reported_at.to_rfc3339()],
+            "INSERT INTO connection_runtime_reports (node_id,sequence,body,reported_at,network_id) VALUES (?1,?2,?3,?4,?5) ON CONFLICT(node_id) DO UPDATE SET sequence=excluded.sequence,body=excluded.body,reported_at=excluded.reported_at WHERE connection_runtime_reports.network_id=excluded.network_id",
+            params![id, request.sequence, body, reported_at.to_rfc3339(), network.as_str()],
         )?;
         transaction.commit()?;
         Ok(ReportConnectionRuntimeResponse {
@@ -204,19 +216,23 @@ impl Store {
         })
     }
 
-    pub fn connection_runtimes(&self) -> Result<ConnectionRuntimesSnapshot, Error> {
-        self.connection_runtimes_at(Utc::now())
+    pub fn connection_runtimes(
+        &self,
+        network: &NetworkId,
+    ) -> Result<ConnectionRuntimesSnapshot, Error> {
+        self.connection_runtimes_at(network, Utc::now())
     }
 
     pub(super) fn connection_runtimes_at(
         &self,
+        network: &NetworkId,
         now: DateTime<Utc>,
     ) -> Result<ConnectionRuntimesSnapshot, Error> {
-        let snapshot = connections::admin_snapshot(&self.connection)?;
+        let snapshot = connections::admin_snapshot(&self.connection, network)?;
         let leases = self
             .connection
-            .prepare("SELECT node_id, epoch FROM connection_runtime_leases ORDER BY node_id")?
-            .query_map([], |row| {
+            .prepare("SELECT node_id, epoch FROM connection_runtime_leases WHERE network_id=?1 ORDER BY node_id")?
+            .query_map([network.as_str()], |row| {
                 Ok((row.get::<_, String>(0)?, row.get::<_, u32>(1)?))
             })?
             .collect::<Result<Vec<_>, _>>()?;
@@ -249,7 +265,7 @@ impl Store {
             };
             // Revocation never exposes retained authenticated claims, even if a
             // malformed external database edit left an obsolete report behind.
-            if !revoked && let Some(stored) = report(&self.connection, &id)? {
+            if !revoked && let Some(stored) = report(&self.connection, network, &id)? {
                 let report: ReportConnectionRuntimeRequest =
                     serde_json::from_slice(&stored.body)
                         .map_err(|_| Error::Configuration("invalid stored runtime report"))?;

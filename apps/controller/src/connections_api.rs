@@ -66,8 +66,8 @@ async fn get_connections(
     state
         .access(move |store| {
             store.authorize_admin(&token)?;
-            store.select_network(&network_id)?;
-            store.connections().map(Json)
+            let network_id = store.network_id(&network_id)?;
+            store.connections(&network_id).map(Json)
         })
         .await
 }
@@ -94,8 +94,8 @@ async fn save_connections(
     state
         .access(move |store| {
             store.authorize_admin(&token)?;
-            store.select_network(&network_id)?;
-            store.save_connections(&request).map(Json)
+            let network_id = store.network_id(&network_id)?;
+            store.save_connections(&network_id, &request).map(Json)
         })
         .await
 }

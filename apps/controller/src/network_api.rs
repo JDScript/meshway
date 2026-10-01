@@ -34,8 +34,8 @@ async fn get_network(
     state
         .access(move |store| {
             store.authorize_admin(&token)?;
-            store.select_network(&network_id)?;
-            store.network().map(Json)
+            let network_id = store.network_id(&network_id)?;
+            store.network(&network_id).map(Json)
         })
         .await
 }
@@ -62,8 +62,8 @@ async fn save_network(
     state
         .access(move |store| {
             store.authorize_admin(&token)?;
-            store.select_network(&network_id)?;
-            store.save_network(&request).map(Json)
+            let network_id = store.network_id(&network_id)?;
+            store.save_network(&network_id, &request).map(Json)
         })
         .await
 }

@@ -2,19 +2,22 @@ use meshway_protocol::*;
 use rusqlite::{Connection, types::Value};
 
 use super::super::{
-    Store,
+    test_store::TestStore as Store,
     tests::{directory, enroll, request},
 };
 use crate::{Error, NetworkOptions};
 
 fn old_rows(connection: &Connection) -> Vec<(String, Vec<Vec<Value>>)> {
-    let tables: Vec<String> = connection.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' AND name != 'network_identity' ORDER BY name")
+    let tables: Vec<String> = connection.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' AND name NOT IN ('network_identity','networks') ORDER BY name")
         .unwrap().query_map([], |row| row.get(0)).unwrap().collect::<Result<_, _>>().unwrap();
     tables
         .into_iter()
         .map(|table| {
             let mut statement = connection
-                .prepare(&format!("SELECT * FROM \"{table}\" ORDER BY rowid"))
+                .prepare(&format!(
+                    "SELECT {} FROM \"{table}\" ORDER BY rowid",
+                    crate::store::test_store::original_columns(connection, &table)
+                ))
                 .unwrap();
             let count = statement.column_count();
             let rows = statement
@@ -48,33 +51,36 @@ fn additive_v6_upgrade_preserves_all_rows_revision_and_old_payloads_then_id_surv
     store
         .connection
         .execute(
-            "INSERT INTO connection_identities VALUES(?1,?2,'[]')",
-            rusqlite::params![node.id, key],
+            "INSERT INTO connection_identities(node_id,public_key,capabilities,network_id) VALUES(?1,?2,'[]',?3)",
+            rusqlite::params![node.id, key,store.network_id.as_str()],
         )
         .unwrap();
     store
         .connection
         .execute(
-            "INSERT INTO tag_definitions VALUES ('tag:test','preserve')",
-            [],
-        )
-        .unwrap();
-    store
-        .connection
-        .execute("INSERT INTO node_tags VALUES (?1,'tag:test')", [&node.id])
-        .unwrap();
-    store
-        .connection
-        .execute(
-            "INSERT INTO connection_runtime_leases VALUES (?1,?2,3)",
-            rusqlite::params![node.id, "b".repeat(64)],
+            "INSERT INTO tag_definitions(tag,description,network_id) VALUES ('tag:test','preserve',?1)",
+            [store.network_id.as_str()],
         )
         .unwrap();
     store
         .connection
         .execute(
-            "INSERT INTO connection_runtime_reports VALUES (?1,4,?2,'2026-10-01T00:00:00Z')",
-            rusqlite::params![node.id, b"preserve opaque persisted report".as_slice()],
+            "INSERT INTO node_tags(node_id,tag,network_id) VALUES (?1,'tag:test',?2)",
+            rusqlite::params![node.id, store.network_id.as_str()],
+        )
+        .unwrap();
+    store
+        .connection
+        .execute(
+            "INSERT INTO connection_runtime_leases(node_id,instance_id,epoch,network_id) VALUES (?1,?2,3,?3)",
+            rusqlite::params![node.id, "b".repeat(64),store.network_id.as_str()],
+        )
+        .unwrap();
+    store
+        .connection
+        .execute(
+            "INSERT INTO connection_runtime_reports(node_id,sequence,body,reported_at,network_id) VALUES (?1,4,?2,'2026-10-01T00:00:00Z',?3)",
+            rusqlite::params![node.id, b"preserve opaque persisted report".as_slice(),store.network_id.as_str()],
         )
         .unwrap();
     let configuration =
@@ -84,6 +90,7 @@ fn additive_v6_upgrade_preserves_all_rows_revision_and_old_payloads_then_id_surv
     let rows = old_rows(&store.connection);
     let revision = store.revision().unwrap();
     let admin = std::fs::read(dir.path().join("admin.token")).unwrap();
+    store.downgrade_v8();
     store
         .connection
         .execute_batch("ALTER TABLE enrollment_tokens DROP COLUMN device_binding; DROP TABLE network_identity; PRAGMA user_version=6;")

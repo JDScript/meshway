@@ -29,8 +29,8 @@ async fn get_tags(
     state
         .access(move |store| {
             store.authorize_admin(&token)?;
-            store.select_network(&network_id)?;
-            store.tags().map(Json)
+            let network_id = store.network_id(&network_id)?;
+            store.tags(&network_id).map(Json)
         })
         .await
 }
@@ -54,8 +54,8 @@ async fn save_tags(
     state
         .access(move |store| {
             store.authorize_admin(&token)?;
-            store.select_network(&network_id)?;
-            store.save_tags(&request).map(Json)
+            let network_id = store.network_id(&network_id)?;
+            store.save_tags(&network_id, &request).map(Json)
         })
         .await
 }
@@ -79,8 +79,8 @@ async fn set_node_tags(
     state
         .access(move |store| {
             store.authorize_admin(&token)?;
-            store.select_network(&network_id)?;
-            store.set_node_tags(&request).map(Json)
+            let network_id = store.network_id(&network_id)?;
+            store.set_node_tags(&network_id, &request).map(Json)
         })
         .await
 }

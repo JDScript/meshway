@@ -154,6 +154,28 @@ async fn network_resources_and_credentials_enforce_isolation_under_interleaved_r
             if index == 0 { "first" } else { "second" }
         );
     }
+    let first_nodes = format!("{first_path}/nodes");
+    let second_nodes = format!("{second_path}/nodes");
+    for _ in 0..16 {
+        let (a, b, agent) = tokio::join!(
+            request(&f.app, "GET", &first_nodes, Some(&f.admin), None),
+            request(&f.app, "GET", &second_nodes, Some(&f.admin), None),
+            request(
+                &f.app,
+                "GET",
+                "/api/v1/agents/configuration",
+                Some(&enrolled[0].1),
+                None
+            )
+        );
+        assert_eq!(a.0, StatusCode::OK);
+        assert_eq!(b.0, StatusCode::OK);
+        assert_eq!(agent.0, StatusCode::OK);
+        assert_eq!(a.1["nodes"][0]["id"], enrolled[0].0.id);
+        assert_eq!(b.1["nodes"][0]["id"], enrolled[1].0.id);
+        assert_eq!(agent.1["payload"]["node"]["id"], enrolled[0].0.id);
+        assert_eq!(agent.1["payload"]["peers"], json!([]));
+    }
     let (_, code) = request(&f.app,"POST",&format!("{second_path}/device-authorizations"),Some(&f.admin),Some(json!({"redirect_uri":meshway_protocol::DEVICE_CALLBACK_URI,"code_challenge":meshway_protocol::s256(&"v".repeat(43)),"name":"App","agent_version":"test"}))).await;
     let (_, exchange) = request(&f.app,"POST","/api/v1/devices/exchange",code["code"].as_str(),Some(json!({"redirect_uri":meshway_protocol::DEVICE_CALLBACK_URI,"code_verifier":"v".repeat(43),"node_credential":local::credential().unwrap(),"name":"App","agent_version":"test"}))).await;
     assert_eq!(exchange["node"]["mesh_ipv4"], "100.96.0.2");

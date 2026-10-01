@@ -7,7 +7,7 @@ use meshway_protocol::{
 };
 use rusqlite::{Connection, OptionalExtension, TransactionBehavior, params};
 
-use super::{Store, access, find_node, ipam, jsonc};
+use super::{NetworkId, Store, access, find_node, ipam, jsonc};
 use crate::Error;
 
 const DIAGNOSTIC_BUDGET: usize = 32 * 1024;
@@ -33,74 +33,88 @@ fn bounded_diagnostics(diagnostics: Vec<PolicyDiagnostic>) -> Vec<PolicyDiagnost
     bounded
 }
 
-pub(super) fn revision(connection: &Connection) -> Result<u32, Error> {
+pub(super) fn revision(connection: &Connection, network: &NetworkId) -> Result<u32, Error> {
     Ok(connection.query_row(
-        "SELECT revision FROM configuration WHERE id = 1",
-        [],
+        "SELECT revision FROM configuration WHERE id = 1 AND network_id=?1",
+        [network.as_str()],
         |row| row.get(0),
     )?)
 }
 
-pub(super) fn bump(connection: &Connection) -> Result<(), Error> {
-    if revision(connection)? == u32::MAX {
+pub(super) fn bump(connection: &Connection, network: &NetworkId) -> Result<(), Error> {
+    if revision(connection, network)? == u32::MAX {
         return Err(Error::Capacity("configuration revision exhausted"));
     }
     connection.execute(
-        "UPDATE configuration SET revision = revision + 1 WHERE id = 1",
-        [],
+        "UPDATE configuration SET revision = revision + 1 WHERE id = 1 AND network_id=?1",
+        [network.as_str()],
     )?;
     Ok(())
 }
 
-fn compare_revision(connection: &Connection, expected: u32) -> Result<(), Error> {
-    if revision(connection)? != expected {
+fn compare_revision(
+    connection: &Connection,
+    network: &NetworkId,
+    expected: u32,
+) -> Result<(), Error> {
+    if revision(connection, network)? != expected {
         return Err(Error::Conflict);
     }
     Ok(())
 }
 
-pub(super) fn active_nodes(connection: &Connection) -> Result<Vec<MeshNode>, Error> {
-    Ok(connection.prepare("SELECT id, name, country, mesh_ipv4, mesh_ipv6 FROM nodes WHERE revoked_at IS NULL ORDER BY id")?
-        .query_map([], |row| Ok(MeshNode { id: row.get(0)?, name: row.get(1)?, country: row.get(2)?, mesh_ipv4: row.get(3)?, mesh_ipv6: row.get(4)? }))?
+pub(super) fn active_nodes(
+    connection: &Connection,
+    network: &NetworkId,
+) -> Result<Vec<MeshNode>, Error> {
+    Ok(connection.prepare("SELECT id, name, country, mesh_ipv4, mesh_ipv6 FROM nodes WHERE revoked_at IS NULL AND network_id=?1 ORDER BY id")?
+        .query_map([network.as_str()], |row| Ok(MeshNode { id: row.get(0)?, name: row.get(1)?, country: row.get(2)?, mesh_ipv4: row.get(3)?, mesh_ipv6: row.get(4)? }))?
         .collect::<Result<_, _>>()?)
 }
 
-pub(super) fn source_policy(connection: &Connection) -> Result<RoutingPolicy, Error> {
-    let json: String =
-        connection.query_row("SELECT policy FROM configuration WHERE id = 1", [], |row| {
-            row.get(0)
-        })?;
+pub(super) fn source_policy(
+    connection: &Connection,
+    network: &NetworkId,
+) -> Result<RoutingPolicy, Error> {
+    let json: String = connection.query_row(
+        "SELECT policy FROM configuration WHERE id = 1 AND network_id=?1",
+        [network.as_str()],
+        |row| row.get(0),
+    )?;
     serde_json::from_str(&json).map_err(|_| Error::Configuration("invalid persisted policy"))
 }
 
-fn source_jsonc(connection: &Connection) -> Result<Option<String>, Error> {
+fn source_jsonc(connection: &Connection, network: &NetworkId) -> Result<Option<String>, Error> {
     Ok(connection.query_row(
-        "SELECT source_jsonc FROM configuration WHERE id=1",
-        [],
+        "SELECT source_jsonc FROM configuration WHERE id=1 AND network_id=?1",
+        [network.as_str()],
         |row| row.get(0),
     )?)
 }
 
-fn policy_snapshot(connection: &Connection) -> Result<PolicySnapshot, Error> {
-    let policy = source_policy(connection)?;
-    let network = ipam::network(connection)?;
-    let report = meshway_policy::compile(&policy, &network, &active_nodes(connection)?);
+fn policy_snapshot(connection: &Connection, scope: &NetworkId) -> Result<PolicySnapshot, Error> {
+    let policy = source_policy(connection, scope)?;
+    let network = ipam::network(connection, scope)?;
+    let report = meshway_policy::compile(&policy, &network, &active_nodes(connection, scope)?);
     Ok(PolicySnapshot {
-        revision: revision(connection)?,
+        revision: revision(connection, scope)?,
         network,
         policy,
-        source_jsonc: source_jsonc(connection)?,
+        source_jsonc: source_jsonc(connection, scope)?,
         valid: report.is_valid(),
         diagnostics: bounded_diagnostics(report.diagnostics),
     })
 }
 
-pub(super) fn node_id(connection: &Connection, token: &str) -> Result<String, Error> {
-    super::networks::select_node(connection, token)?;
+pub(super) fn node_id(
+    connection: &Connection,
+    network: &NetworkId,
+    token: &str,
+) -> Result<String, Error> {
     let (id, revoked): (String, bool) = connection
         .query_row(
-            "SELECT id, revoked_at IS NOT NULL FROM nodes WHERE credential_hash = ?1",
-            [digest(token)],
+            "SELECT id, revoked_at IS NOT NULL FROM nodes WHERE credential_hash = ?1 AND network_id=?2",
+            params![digest(token), network.as_str()],
             |row| Ok((row.get(0)?, row.get(1)?)),
         )
         .optional()?
@@ -111,10 +125,14 @@ pub(super) fn node_id(connection: &Connection, token: &str) -> Result<String, Er
     Ok(id)
 }
 
-pub(super) fn snapshot(connection: &Connection, id: &str) -> Result<ConfigurationSnapshot, Error> {
-    let mut nodes = active_nodes(connection)?;
-    let network = ipam::network(connection)?;
-    let policy = source_policy(connection)?;
+pub(super) fn snapshot(
+    connection: &Connection,
+    scope: &NetworkId,
+    id: &str,
+) -> Result<ConfigurationSnapshot, Error> {
+    let mut nodes = active_nodes(connection, scope)?;
+    let network = ipam::network(connection, scope)?;
+    let policy = source_policy(connection, scope)?;
     let report = meshway_policy::compile(&policy, &network, &nodes);
     let node_index = nodes
         .iter()
@@ -124,7 +142,7 @@ pub(super) fn snapshot(connection: &Connection, id: &str) -> Result<Configuratio
     let valid = report.is_valid();
     let payload = NodeConfiguration {
         schema_version: CONFIGURATION_SCHEMA_VERSION,
-        revision: revision(connection)?,
+        revision: revision(connection, scope)?,
         network,
         node,
         peers: nodes,
@@ -143,16 +161,19 @@ pub(super) fn snapshot(connection: &Connection, id: &str) -> Result<Configuratio
 
 /// Every active node appears exactly once (self or peers). Moving an object
 /// between those positions preserves the encoded size, so one snapshot suffices.
-pub(super) fn ensure_publishable(connection: &Connection) -> Result<(), Error> {
+pub(super) fn ensure_publishable(
+    connection: &Connection,
+    network: &NetworkId,
+) -> Result<(), Error> {
     let id: Option<String> = connection
         .query_row(
-            "SELECT id FROM nodes WHERE revoked_at IS NULL ORDER BY id LIMIT 1",
-            [],
+            "SELECT id FROM nodes WHERE revoked_at IS NULL AND network_id=?1 ORDER BY id LIMIT 1",
+            [network.as_str()],
             |row| row.get(0),
         )
         .optional()?;
     if let Some(id) = id {
-        let mut snapshot = snapshot(connection, &id)?;
+        let mut snapshot = snapshot(connection, network, &id)?;
         // Always reserve room for a future fail-closed report. Withdrawing a
         // revoked peer can never make this base projection larger.
         snapshot.payload.diagnostics.clear();
@@ -168,30 +189,38 @@ pub(super) fn ensure_publishable(connection: &Connection) -> Result<(), Error> {
 }
 
 impl Store {
-    pub fn revision(&self) -> Result<u32, Error> {
-        revision(&self.connection)
+    pub fn revision(&self, network: &NetworkId) -> Result<u32, Error> {
+        revision(&self.connection, network)
     }
 
-    pub fn policy(&self) -> Result<PolicySnapshot, Error> {
-        policy_snapshot(&self.connection)
+    pub fn policy(&self, network: &NetworkId) -> Result<PolicySnapshot, Error> {
+        policy_snapshot(&self.connection, network)
     }
 
-    pub fn preview(&self, request: &PreviewPolicyRequest) -> Result<PreviewPolicyResponse, Error> {
+    pub fn preview(
+        &self,
+        network: &NetworkId,
+        request: &PreviewPolicyRequest,
+    ) -> Result<PreviewPolicyResponse, Error> {
         let result = meshway_policy::preview(
             &request.policy,
-            &ipam::network(&self.connection)?,
-            &active_nodes(&self.connection)?,
+            &ipam::network(&self.connection, network)?,
+            &active_nodes(&self.connection, network)?,
             &request.flow,
         );
         Ok(PreviewPolicyResponse {
-            revision: self.revision()?,
+            revision: self.revision(network)?,
             valid: result.valid,
             diagnostics: bounded_diagnostics(result.diagnostics),
             decision: result.decision,
         })
     }
 
-    pub fn save_policy(&mut self, request: &SavePolicyRequest) -> Result<PolicySnapshot, Error> {
+    pub fn save_policy(
+        &mut self,
+        network: &NetworkId,
+        request: &SavePolicyRequest,
+    ) -> Result<PolicySnapshot, Error> {
         if request
             .source_jsonc
             .as_ref()
@@ -210,11 +239,11 @@ impl Store {
         let transaction = self
             .connection
             .transaction_with_behavior(TransactionBehavior::Immediate)?;
-        compare_revision(&transaction, request.expected_revision)?;
+        compare_revision(&transaction, network, request.expected_revision)?;
         let report = meshway_policy::compile(
             &request.policy,
-            &ipam::network(&transaction)?,
-            &active_nodes(&transaction)?,
+            &ipam::network(&transaction, network)?,
+            &active_nodes(&transaction, network)?,
         );
         if !report.is_valid() {
             return Err(Error::Unprocessable(
@@ -226,25 +255,29 @@ impl Store {
         } else {
             &report.normalized_policy
         };
-        if source_policy(&transaction)? != *stored_policy
-            || source_jsonc(&transaction)? != request.source_jsonc
+        if source_policy(&transaction, network)? != *stored_policy
+            || source_jsonc(&transaction, network)? != request.source_jsonc
         {
             let json = serde_json::to_string(stored_policy)
                 .map_err(|_| Error::Configuration("cannot encode policy"))?;
             transaction.execute(
-                "UPDATE configuration SET policy=?1, source_jsonc=?2 WHERE id=1",
-                params![json, request.source_jsonc],
+                "UPDATE configuration SET policy=?1, source_jsonc=?2 WHERE id=1 AND network_id=?3",
+                params![json, request.source_jsonc, network.as_str()],
             )?;
-            bump(&transaction)?;
-            ensure_publishable(&transaction)?;
-            access::ensure_publishable(&transaction)?;
+            bump(&transaction, network)?;
+            ensure_publishable(&transaction, network)?;
+            access::ensure_publishable(&transaction, network)?;
         }
-        let snapshot = policy_snapshot(&transaction)?;
+        let snapshot = policy_snapshot(&transaction, network)?;
         transaction.commit()?;
         Ok(snapshot)
     }
 
-    pub fn set_country(&mut self, request: &SetNodeCountryRequest) -> Result<NodeSummary, Error> {
+    pub fn set_country(
+        &mut self,
+        network: &NetworkId,
+        request: &SetNodeCountryRequest,
+    ) -> Result<NodeSummary, Error> {
         let country = request
             .country
             .as_ref()
@@ -258,24 +291,29 @@ impl Store {
         let transaction = self
             .connection
             .transaction_with_behavior(TransactionBehavior::Immediate)?;
-        compare_revision(&transaction, request.expected_revision)?;
-        let node = find_node(&transaction, &request.node_id)?;
+        compare_revision(&transaction, network, request.expected_revision)?;
+        let node = find_node(&transaction, network, &request.node_id)?;
         if node.country != country {
             transaction.execute(
-                "UPDATE nodes SET country = ?1 WHERE id = ?2",
-                params![country, request.node_id],
+                "UPDATE nodes SET country = ?1 WHERE id = ?2 AND network_id=?3",
+                params![country, request.node_id, network.as_str()],
             )?;
-            bump(&transaction)?;
-            ensure_publishable(&transaction)?;
-            access::ensure_publishable(&transaction)?;
+            bump(&transaction, network)?;
+            ensure_publishable(&transaction, network)?;
+            access::ensure_publishable(&transaction, network)?;
         }
-        let node = find_node(&transaction, &request.node_id)?;
+        let node = find_node(&transaction, network, &request.node_id)?;
         transaction.commit()?;
         Ok(node)
     }
 
     pub fn configuration(&self, token: &str) -> Result<ConfigurationSnapshot, Error> {
-        snapshot(&self.connection, &node_id(&self.connection, token)?)
+        let network = self.node_network(token)?;
+        snapshot(
+            &self.connection,
+            &network,
+            &node_id(&self.connection, &network, token)?,
+        )
     }
 
     pub fn acknowledge(
@@ -283,17 +321,18 @@ impl Store {
         token: &str,
         request: &AcknowledgeConfigurationRequest,
     ) -> Result<AcknowledgeConfigurationResponse, Error> {
+        let network = self.node_network(token)?;
         let transaction = self
             .connection
             .transaction_with_behavior(TransactionBehavior::Immediate)?;
-        let id = node_id(&transaction, token)?;
-        let current = snapshot(&transaction, &id)?;
+        let id = node_id(&transaction, &network, token)?;
+        let current = snapshot(&transaction, &network, &id)?;
         if current.payload.revision != request.revision || current.digest != request.digest {
             return Err(Error::Conflict);
         }
         transaction.execute(
-            "UPDATE nodes SET acknowledged_revision = ?1, acknowledged_digest = ?2 WHERE id = ?3",
-            params![request.revision, request.digest, id],
+            "UPDATE nodes SET acknowledged_revision = ?1, acknowledged_digest = ?2 WHERE id = ?3 AND network_id=?4",
+            params![request.revision, request.digest, id, network.as_str()],
         )?;
         transaction.commit()?;
         Ok(AcknowledgeConfigurationResponse {

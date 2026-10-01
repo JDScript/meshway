@@ -19,7 +19,10 @@ mod ipam;
 mod jsonc;
 mod network;
 mod networks;
+use networks::NetworkId;
 mod tags;
+#[cfg(test)]
+mod test_store;
 #[cfg(test)]
 mod tests;
 
@@ -31,19 +34,6 @@ pub(crate) struct Store {
 
 impl Store {
     pub fn open(path: &Path, options: &crate::NetworkOptions) -> Result<Self, Error> {
-        Self::open_schema(path, options, true)
-    }
-
-    #[cfg(test)]
-    fn open_v8(path: &Path, options: &crate::NetworkOptions) -> Result<Self, Error> {
-        Self::open_schema(path, options, false)
-    }
-
-    fn open_schema(
-        path: &Path,
-        options: &crate::NetworkOptions,
-        latest: bool,
-    ) -> Result<Self, Error> {
         local::private_dir(path)?;
         let lock = local::lock(&path.join("controller.lock"))?;
         let database = path.join("controller.sqlite3");
@@ -154,13 +144,11 @@ impl Store {
             transaction.execute_batch("ALTER TABLE enrollment_tokens ADD COLUMN device_binding TEXT; PRAGMA user_version = 8;")?;
             transaction.commit()?;
         }
-        if latest {
-            networks::upgrade(&mut connection)?;
-            networks::install_scope(&connection)?;
-            // Initialization flags still refer to the original network; never
-            // renumber any network on restart.
-            ipam::check_options(&connection, options)?;
-        }
+        networks::upgrade(&mut connection)?;
+        // Initialization flags still refer to the original network; never
+        // renumber any network on restart.
+        let initial = NetworkId::initial(&connection)?;
+        ipam::check_options(&connection, &initial, options)?;
         Ok(Self {
             connection,
             _lock: lock,
@@ -181,20 +169,28 @@ impl Store {
         }
     }
 
-    pub fn nodes(&self) -> Result<Vec<NodeSummary>, Error> {
+    pub fn nodes(&self, network: &NetworkId) -> Result<Vec<NodeSummary>, Error> {
         let mut query = self
             .connection
-            .prepare(&format!("{NODE_SELECT} ORDER BY id"))?;
-        Ok(query.query_map([], node_row)?.collect::<Result<_, _>>()?)
+            .prepare(&format!("{NODE_SELECT} WHERE network_id=?1 ORDER BY id"))?;
+        Ok(query
+            .query_map([network.as_str()], node_row)?
+            .collect::<Result<_, _>>()?)
     }
 
-    pub fn count(&self) -> Result<u32, Error> {
-        Ok(self
-            .connection
-            .query_row("SELECT COUNT(*) FROM nodes", [], |row| row.get(0))?)
+    pub fn count(&self, network: &NetworkId) -> Result<u32, Error> {
+        Ok(self.connection.query_row(
+            "SELECT COUNT(*) FROM nodes WHERE network_id=?1",
+            [network.as_str()],
+            |row| row.get(0),
+        )?)
     }
 
-    pub fn create_token(&self, ttl: u32) -> Result<CreateEnrollmentTokenResponse, Error> {
+    pub fn create_token(
+        &self,
+        network: &NetworkId,
+        ttl: u32,
+    ) -> Result<CreateEnrollmentTokenResponse, Error> {
         if !(60..=86400).contains(&ttl) {
             return Err(Error::Invalid(
                 "expires_in_seconds must be between 60 and 86400",
@@ -204,8 +200,8 @@ impl Store {
         let token_id = local::credential()?;
         let expires_at = Utc::now() + chrono::Duration::seconds(i64::from(ttl));
         self.connection.execute(
-            "INSERT INTO enrollment_tokens (id, token_hash, expires_at) VALUES (?1, ?2, ?3)",
-            params![token_id, digest(&token), expires_at.timestamp_millis()],
+            "INSERT INTO enrollment_tokens (id, token_hash, expires_at, network_id) VALUES (?1, ?2, ?3, ?4)",
+            params![token_id, digest(&token), expires_at.timestamp_millis(), network.as_str()],
         )?;
         Ok(CreateEnrollmentTokenResponse {
             token_id,
@@ -219,12 +215,13 @@ impl Store {
         token: &str,
         request: &EnrollAgentRequest,
     ) -> Result<NodeSummary, Error> {
-        self.select_enrollment(token)?;
-        self.enroll_bound(token, request, None)
+        let network = self.enrollment_network(token)?;
+        self.enroll_bound(&network, token, request, None)
     }
 
     pub fn authorize_device(
         &self,
+        network: &NetworkId,
         request: &AuthorizeDeviceRequest,
     ) -> Result<AuthorizeDeviceResponse, Error> {
         request.validate().map_err(Error::Invalid)?;
@@ -232,7 +229,7 @@ impl Store {
         let expires_at = Utc::now() + chrono::Duration::seconds(300);
         let binding = serde_json::to_string(request)
             .map_err(|_| Error::Invalid("invalid device authorization"))?;
-        self.connection.execute("INSERT INTO enrollment_tokens (id, token_hash, expires_at, device_binding) VALUES (?1, ?2, ?3, ?4)", params![local::credential()?, digest(&code), expires_at.timestamp_millis(), binding])?;
+        self.connection.execute("INSERT INTO enrollment_tokens (id, token_hash, expires_at, device_binding, network_id) VALUES (?1, ?2, ?3, ?4, ?5)", params![local::credential()?, digest(&code), expires_at.timestamp_millis(), binding, network.as_str()])?;
         Ok(AuthorizeDeviceResponse { code, expires_at })
     }
 
@@ -241,7 +238,7 @@ impl Store {
         code: &str,
         request: &ExchangeDeviceRequest,
     ) -> Result<NodeSummary, Error> {
-        self.select_enrollment(code)?;
+        let network = self.enrollment_network(code)?;
         let enrollment = request.enrollment().map_err(Error::Invalid)?;
         let authorization = AuthorizeDeviceRequest {
             redirect_uri: request.redirect_uri.clone(),
@@ -251,11 +248,12 @@ impl Store {
         };
         let binding = serde_json::to_string(&authorization)
             .map_err(|_| Error::Invalid("invalid device exchange"))?;
-        self.enroll_bound(code, &enrollment, Some(&binding))
+        self.enroll_bound(&network, code, &enrollment, Some(&binding))
     }
 
     fn enroll_bound(
         &mut self,
+        network: &NetworkId,
         token: &str,
         request: &EnrollAgentRequest,
         device_binding: Option<&str>,
@@ -268,8 +266,8 @@ impl Store {
             .connection
             .transaction_with_behavior(TransactionBehavior::Immediate)?;
         let record = transaction.query_row(
-            "SELECT expires_at, used_node_id, binding_hash, device_binding FROM enrollment_tokens WHERE token_hash = ?1",
-            [digest(token)],
+            "SELECT expires_at, used_node_id, binding_hash, device_binding FROM enrollment_tokens WHERE token_hash = ?1 AND network_id=?2",
+            params![digest(token),network.as_str()],
             |row| Ok((row.get::<_, i64>(0)?, row.get::<_, Option<String>>(1)?, row.get::<_, Option<Vec<u8>>>(2)?, row.get::<_, Option<String>>(3)?)),
         ).optional()?.ok_or(Error::Unauthorized)?;
         match (record.3.as_deref(), device_binding) {
@@ -285,7 +283,7 @@ impl Store {
             {
                 return Err(Error::Unauthorized);
             }
-            let node = find_node(&transaction, &node_id)?;
+            let node = find_node(&transaction, network, &node_id)?;
             if node.revoked_at.is_some() {
                 return Err(Error::Forbidden);
             }
@@ -303,85 +301,92 @@ impl Store {
             return Err(Error::Conflict);
         }
         let id = local::credential()?;
-        let (ipv4, ipv6) = ipam::allocate(&transaction)?;
+        let (ipv4, ipv6) = ipam::allocate(&transaction, network)?;
         transaction.execute(
-            "INSERT INTO nodes (id, credential_hash, name, agent_version, registered_at, last_seen, mesh_ipv4, mesh_ipv6) VALUES (?1, ?2, ?3, ?4, ?5, ?5, ?6, ?7)",
-            params![id, credential_hash, request.name, request.agent_version, now.to_rfc3339(), ipv4, ipv6],
+            "INSERT INTO nodes (id, credential_hash, name, agent_version, registered_at, last_seen, mesh_ipv4, mesh_ipv6, network_id) VALUES (?1, ?2, ?3, ?4, ?5, ?5, ?6, ?7, ?8)",
+            params![id, credential_hash, request.name, request.agent_version, now.to_rfc3339(), ipv4, ipv6, network.as_str()],
         )?;
         transaction.execute(
-            "UPDATE enrollment_tokens SET used_node_id = ?1, binding_hash = ?2 WHERE token_hash = ?3 AND used_node_id IS NULL",
-            params![id, binding, digest(token)],
+            "UPDATE enrollment_tokens SET used_node_id = ?1, binding_hash = ?2 WHERE token_hash = ?3 AND used_node_id IS NULL AND network_id=?4",
+            params![id, binding, digest(token), network.as_str()],
         )?;
-        configuration::bump(&transaction)?;
-        configuration::ensure_publishable(&transaction)?;
-        connections::ensure_publishable(&transaction)?;
-        access::ensure_publishable(&transaction)?;
-        network::ensure_publishable(&transaction)?;
-        let node = find_node(&transaction, &id)?;
+        configuration::bump(&transaction, network)?;
+        configuration::ensure_publishable(&transaction, network)?;
+        connections::ensure_publishable(&transaction, network)?;
+        access::ensure_publishable(&transaction, network)?;
+        network::ensure_publishable(&transaction, network)?;
+        let node = find_node(&transaction, network, &id)?;
         transaction.commit()?;
         Ok(node)
     }
 
     pub fn heartbeat(&mut self, token: &str, version: &str) -> Result<NodeSummary, Error> {
-        self.select_node(token)?;
+        let network = self.node_network(token)?;
         let transaction = self
             .connection
             .transaction_with_behavior(TransactionBehavior::Immediate)?;
         let id: String = transaction
             .query_row(
-                "SELECT id FROM nodes WHERE credential_hash = ?1",
-                [digest(token)],
+                "SELECT id FROM nodes WHERE credential_hash = ?1 AND network_id=?2",
+                params![digest(token), network.as_str()],
                 |row| row.get(0),
             )
             .optional()?
             .ok_or(Error::Unauthorized)?;
-        if find_node(&transaction, &id)?.revoked_at.is_some() {
+        if find_node(&transaction, &network, &id)?.revoked_at.is_some() {
             return Err(Error::Forbidden);
         }
         transaction.execute(
-            "UPDATE nodes SET agent_version = ?1, last_seen = ?2 WHERE id = ?3 AND revoked_at IS NULL",
-            params![version, Utc::now().to_rfc3339(), id],
+            "UPDATE nodes SET agent_version = ?1, last_seen = ?2 WHERE id = ?3 AND revoked_at IS NULL AND network_id=?4",
+            params![version, Utc::now().to_rfc3339(), id,network.as_str()],
         )?;
-        let node = find_node(&transaction, &id)?;
+        let node = find_node(&transaction, &network, &id)?;
         transaction.commit()?;
         Ok(node)
     }
 
-    pub fn revoke(&mut self, id: &str) -> Result<NodeSummary, Error> {
+    pub fn revoke(&mut self, network: &NetworkId, id: &str) -> Result<NodeSummary, Error> {
         let transaction = self
             .connection
             .transaction_with_behavior(TransactionBehavior::Immediate)?;
-        let current = find_node(&transaction, id)?;
+        let current = find_node(&transaction, network, id)?;
         transaction.execute(
-            "UPDATE nodes SET revoked_at = ?1 WHERE id = ?2 AND revoked_at IS NULL",
-            params![Utc::now().to_rfc3339(), id],
+            "UPDATE nodes SET revoked_at = ?1 WHERE id = ?2 AND revoked_at IS NULL AND network_id=?3",
+            params![Utc::now().to_rfc3339(), id, network.as_str()],
         )?;
         if current.revoked_at.is_none() {
             transaction.execute(
-                "DELETE FROM connection_runtime_reports WHERE node_id = ?1",
-                [id],
+                "DELETE FROM connection_runtime_reports WHERE node_id = ?1 AND network_id=?2",
+                params![id, network.as_str()],
             )?;
-            transaction.execute("DELETE FROM node_tags WHERE node_id = ?1", [id])?;
-            configuration::bump(&transaction)?;
-            configuration::ensure_publishable(&transaction)?;
-            connections::ensure_publishable(&transaction)?;
-            access::ensure_publishable(&transaction)?;
+            transaction.execute(
+                "DELETE FROM node_tags WHERE node_id = ?1 AND network_id=?2",
+                params![id, network.as_str()],
+            )?;
+            configuration::bump(&transaction, network)?;
+            configuration::ensure_publishable(&transaction, network)?;
+            connections::ensure_publishable(&transaction, network)?;
+            access::ensure_publishable(&transaction, network)?;
         }
-        let node = find_node(&transaction, id)?;
+        let node = find_node(&transaction, network, id)?;
         transaction.commit()?;
         Ok(node)
     }
 }
 
-const NODE_SELECT: &str = "SELECT id, name, agent_version, registered_at, last_seen, revoked_at, mesh_ipv4, mesh_ipv6, country, (SELECT revision FROM configuration WHERE id = 1), acknowledged_revision FROM nodes";
+const NODE_SELECT: &str = "SELECT id, name, agent_version, registered_at, last_seen, revoked_at, mesh_ipv4, mesh_ipv6, country, (SELECT revision FROM configuration WHERE id = 1 AND configuration.network_id=nodes.network_id), acknowledged_revision FROM nodes";
 
 fn constant_eq(a: &[u8], b: &[u8]) -> bool {
     a.len() == b.len() && a.iter().zip(b).fold(0_u8, |diff, (a, b)| diff | (a ^ b)) == 0
 }
 
-fn find_node(connection: &Connection, id: &str) -> Result<NodeSummary, Error> {
+fn find_node(connection: &Connection, network: &NetworkId, id: &str) -> Result<NodeSummary, Error> {
     connection
-        .query_row(&format!("{NODE_SELECT} WHERE id = ?1"), [id], node_row)
+        .query_row(
+            &format!("{NODE_SELECT} WHERE id = ?1 AND network_id=?2"),
+            params![id, network.as_str()],
+            node_row,
+        )
         .optional()?
         .ok_or(Error::NotFound)
 }

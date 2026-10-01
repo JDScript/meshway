@@ -1,5 +1,6 @@
 use super::*;
 use crate::NetworkOptions;
+use crate::store::test_store::TestStore as Store;
 use rusqlite::params;
 
 fn directory() -> tempfile::TempDir {
@@ -513,6 +514,7 @@ fn actual_v5_migration_deduplicates_paths_folds_reverse_and_bumps_revision() {
             [serde_json::to_string(&legacy).unwrap()],
         )
         .unwrap();
+    store.downgrade_v8();
     store.connection.execute_batch("ALTER TABLE enrollment_tokens DROP COLUMN device_binding; DROP TABLE network_identity; DROP TABLE mesh_access_source; ALTER TABLE mesh_access_legacy_v5 RENAME TO mesh_access_source; DROP TABLE node_tags; DROP TABLE tag_definitions; ALTER TABLE configuration DROP COLUMN source_jsonc; PRAGMA user_version=5;").unwrap();
     drop(store);
     let reopened = Store::open_v8(dir.path(), &NetworkOptions::default()).unwrap();
@@ -527,7 +529,7 @@ fn actual_v5_migration_deduplicates_paths_folds_reverse_and_bumps_revision() {
             .connection
             .pragma_query_value(None, "user_version", |row| row.get::<_, u32>(0))
             .unwrap(),
-        8
+        9
     );
 }
 
@@ -564,12 +566,12 @@ fn wildcard_expansion_rejects_identity_overflow_without_truncation_or_revision_c
         let public_key = format!("{i:02x}01{}", "00".repeat(30));
         assert!(valid_connection_public_key(&public_key));
         store.connection.execute(
-            "INSERT INTO nodes(id,credential_hash,name,agent_version,registered_at,last_seen,mesh_ipv4,mesh_ipv6) VALUES(?1,?2,?1,'test','2026-10-01T00:00:00Z','2026-10-01T00:00:00Z',?3,?4)",
-            params![id, local::digest(&format!("credential-{i}")), format!("100.96.0.{i}"), format!("{ipv6}{i:x}")],
+            "INSERT INTO nodes(id,credential_hash,name,agent_version,registered_at,last_seen,mesh_ipv4,mesh_ipv6,network_id) VALUES(?1,?2,?1,'test','2026-10-01T00:00:00Z','2026-10-01T00:00:00Z',?3,?4,?5)",
+            params![id, local::digest(&format!("credential-{i}")), format!("100.96.0.{i}"), format!("{ipv6}{i:x}"),store.network_id.as_str()],
         ).unwrap();
         store.connection.execute(
-            "INSERT INTO connection_identities(node_id,public_key,capabilities) VALUES(?1,?2,'[]')",
-            params![id, public_key],
+            "INSERT INTO connection_identities(node_id,public_key,capabilities,network_id) VALUES(?1,?2,'[]',?3)",
+            params![id, public_key,store.network_id.as_str()],
         ).unwrap();
     }
     let routing = store.policy().unwrap();
@@ -623,12 +625,14 @@ fn thousand_keyless_acl_subjects_do_not_trigger_route_pair_evaluation() {
     for i in 1..=1024_u32 {
         let id = format!("{i:064x}");
         store.connection.execute(
-            "INSERT INTO nodes(id,credential_hash,name,agent_version,registered_at,last_seen,mesh_ipv4,mesh_ipv6) VALUES(?1,?2,?1,'test','2026-10-01T00:00:00Z','2026-10-01T00:00:00Z',?3,?4)",
-            params![id, local::digest(&format!("keyless-{i}")), Ipv4Addr::from(ipv4_base + i).to_string(), Ipv6Addr::from(ipv6_base + u128::from(i)).to_string()],
+            "INSERT INTO nodes(id,credential_hash,name,agent_version,registered_at,last_seen,mesh_ipv4,mesh_ipv6,network_id) VALUES(?1,?2,?1,'test','2026-10-01T00:00:00Z','2026-10-01T00:00:00Z',?3,?4,?5)",
+            params![id, local::digest(&format!("keyless-{i}")), Ipv4Addr::from(ipv4_base + i).to_string(), Ipv6Addr::from(ipv6_base + u128::from(i)).to_string(),store.network_id.as_str()],
         ).unwrap();
     }
     let mut evaluations = 0;
-    let (_, empty) = compiled_authorizations_with(&store.connection, || evaluations += 1).unwrap();
+    let (_, empty) =
+        compiled_authorizations_with(&store.connection, &store.network_id, || evaluations += 1)
+            .unwrap();
     assert_eq!(evaluations, 0);
     assert!(
         empty
@@ -655,7 +659,8 @@ fn thousand_keyless_acl_subjects_do_not_trigger_route_pair_evaluation() {
         )
         .unwrap();
     let (_, keyless) =
-        compiled_authorizations_with(&store.connection, || evaluations += 1).unwrap();
+        compiled_authorizations_with(&store.connection, &store.network_id, || evaluations += 1)
+            .unwrap();
     assert_eq!(evaluations, 0);
     assert!(
         keyless
@@ -667,12 +672,13 @@ fn thousand_keyless_acl_subjects_do_not_trigger_route_pair_evaluation() {
         let id = format!("{i:064x}");
         let public_key = format!("{i:02x}01{}", "00".repeat(30));
         store.connection.execute(
-            "INSERT INTO connection_identities(node_id,public_key,capabilities) VALUES(?1,?2,'[]')",
-            params![id, public_key],
+            "INSERT INTO connection_identities(node_id,public_key,capabilities,network_id) VALUES(?1,?2,'[]',?3)",
+            params![id, public_key,store.network_id.as_str()],
         ).unwrap();
     }
     let (_, compiled) =
-        compiled_authorizations_with(&store.connection, || evaluations += 1).unwrap();
+        compiled_authorizations_with(&store.connection, &store.network_id, || evaluations += 1)
+            .unwrap();
     assert_eq!(evaluations, 2);
     assert_eq!(
         compiled

@@ -4,7 +4,7 @@ use meshway_protocol::{
 };
 use rusqlite::{Connection, OptionalExtension, TransactionBehavior, params};
 
-use super::{Store, access, configuration, connections, ipam};
+use super::{NetworkId, Store, access, configuration, connections, ipam};
 use crate::Error;
 
 #[cfg(test)]
@@ -40,10 +40,10 @@ pub(super) fn upgrade(connection: &mut Connection) -> Result<(), Error> {
     Ok(())
 }
 
-fn snapshot(connection: &Connection) -> Result<NetworkSnapshot, Error> {
+fn snapshot(connection: &Connection, network: &NetworkId) -> Result<NetworkSnapshot, Error> {
     let (network_id, name, json): (String, String, String) = connection.query_row(
-        "SELECT network_id,name,dns FROM network_identity WHERE id=1",
-        [],
+        "SELECT network_id,name,dns FROM network_identity WHERE id=1 AND network_id=?1",
+        [network.as_str()],
         |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
     )?;
     let dns: MeshDnsConfiguration = serde_json::from_str(&json)
@@ -52,19 +52,25 @@ fn snapshot(connection: &Connection) -> Result<NetworkSnapshot, Error> {
         return Err(Error::Configuration("invalid persisted network DNS"));
     }
     Ok(NetworkSnapshot {
-        revision: configuration::revision(connection)?,
+        revision: configuration::revision(connection, network)?,
         network_id,
         name,
-        network: ipam::network(connection)?,
+        network: ipam::network(connection, network)?,
         dns,
     })
 }
 
-fn dns_snapshot(connection: &Connection, node_id: String) -> Result<AgentDnsSnapshot, Error> {
-    let network = snapshot(connection)?;
-    let (records, diagnostics) =
-        compile_dns_records(&network.dns, &configuration::active_nodes(connection)?)
-            .map_err(Error::Unprocessable)?;
+fn dns_snapshot(
+    connection: &Connection,
+    scope: &NetworkId,
+    node_id: String,
+) -> Result<AgentDnsSnapshot, Error> {
+    let network = snapshot(connection, scope)?;
+    let (records, diagnostics) = compile_dns_records(
+        &network.dns,
+        &configuration::active_nodes(connection, scope)?,
+    )
+    .map_err(Error::Unprocessable)?;
     let payload = NodeDnsConfiguration {
         schema_version: DNS_SCHEMA_VERSION,
         revision: network.revision,
@@ -90,35 +96,42 @@ fn dns_snapshot(connection: &Connection, node_id: String) -> Result<AgentDnsSnap
     Ok(snapshot)
 }
 
-pub(super) fn ensure_publishable(connection: &Connection) -> Result<(), Error> {
+pub(super) fn ensure_publishable(
+    connection: &Connection,
+    network: &NetworkId,
+) -> Result<(), Error> {
     let id: Option<String> = connection
         .query_row(
-            "SELECT id FROM nodes WHERE revoked_at IS NULL ORDER BY id LIMIT 1",
-            [],
+            "SELECT id FROM nodes WHERE revoked_at IS NULL AND network_id=?1 ORDER BY id LIMIT 1",
+            [network.as_str()],
             |row| row.get(0),
         )
         .optional()?;
     if let Some(id) = id {
-        dns_snapshot(connection, id)?;
+        dns_snapshot(connection, network, id)?;
     }
     Ok(())
 }
 
 impl Store {
-    pub fn network(&mut self) -> Result<NetworkSnapshot, Error> {
+    pub fn network(&mut self, network: &NetworkId) -> Result<NetworkSnapshot, Error> {
         let transaction = self.connection.transaction()?;
-        let result = snapshot(&transaction)?;
+        let result = snapshot(&transaction, network)?;
         transaction.commit()?;
         Ok(result)
     }
 
-    pub fn save_network(&mut self, request: &SaveNetworkRequest) -> Result<NetworkSnapshot, Error> {
+    pub fn save_network(
+        &mut self,
+        network: &NetworkId,
+        request: &SaveNetworkRequest,
+    ) -> Result<NetworkSnapshot, Error> {
         request.validate().map_err(Error::Unprocessable)?;
         let dns = request.dns.normalized().map_err(Error::Unprocessable)?;
         let transaction = self
             .connection
             .transaction_with_behavior(TransactionBehavior::Immediate)?;
-        let current = snapshot(&transaction)?;
+        let current = snapshot(&transaction, network)?;
         if current.revision != request.expected_revision {
             return Err(Error::Conflict);
         }
@@ -126,26 +139,27 @@ impl Store {
             let json = serde_json::to_string(&dns)
                 .map_err(|_| Error::Configuration("cannot encode network DNS"))?;
             transaction.execute(
-                "UPDATE network_identity SET name=?1,dns=?2 WHERE id=1",
-                params![request.name, json],
+                "UPDATE network_identity SET name=?1,dns=?2 WHERE id=1 AND network_id=?3",
+                params![request.name, json, network.as_str()],
             )?;
-            configuration::bump(&transaction)?;
-            configuration::ensure_publishable(&transaction)?;
-            connections::ensure_publishable(&transaction)?;
-            access::ensure_publishable(&transaction)?;
-            ensure_publishable(&transaction)?;
+            configuration::bump(&transaction, network)?;
+            configuration::ensure_publishable(&transaction, network)?;
+            connections::ensure_publishable(&transaction, network)?;
+            access::ensure_publishable(&transaction, network)?;
+            ensure_publishable(&transaction, network)?;
         }
-        let result = snapshot(&transaction)?;
+        let result = snapshot(&transaction, network)?;
         transaction.commit()?;
         Ok(result)
     }
 
     pub fn agent_dns(&mut self, token: &str) -> Result<AgentDnsSnapshot, Error> {
+        let network = self.node_network(token)?;
         // One Store lock and one SQLite read transaction cover credential scope,
         // global revision, persisted zone and the complete active inventory.
         let transaction = self.connection.transaction()?;
-        let id = configuration::node_id(&transaction, token)?;
-        let result = dns_snapshot(&transaction, id)?;
+        let id = configuration::node_id(&transaction, &network, token)?;
+        let result = dns_snapshot(&transaction, &network, id)?;
         transaction.commit()?;
         Ok(result)
     }

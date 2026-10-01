@@ -7,6 +7,7 @@ use ipnet::{Ipv4Net, Ipv6Net};
 use meshway_protocol::{MeshNetwork, local};
 use rusqlite::{Connection, TransactionBehavior, params};
 
+use super::NetworkId;
 use crate::{Error, NetworkOptions};
 
 pub(super) fn parse(network: &MeshNetwork) -> Result<(Ipv4Net, Ipv6Net), Error> {
@@ -32,10 +33,10 @@ pub(super) fn parse(network: &MeshNetwork) -> Result<(Ipv4Net, Ipv6Net), Error> 
     Ok((v4, v6))
 }
 
-pub(super) fn network(connection: &Connection) -> Result<MeshNetwork, Error> {
+pub(super) fn network(connection: &Connection, network: &NetworkId) -> Result<MeshNetwork, Error> {
     Ok(connection.query_row(
-        "SELECT ipv4_prefix, ipv6_prefix FROM configuration WHERE id = 1",
-        [],
+        "SELECT ipv4_prefix, ipv6_prefix FROM configuration WHERE id = 1 AND network_id=?1",
+        [network.as_str()],
         |row| {
             Ok(MeshNetwork {
                 ipv4_prefix: row.get(0)?,
@@ -106,13 +107,16 @@ pub(super) fn upgrade(connection: &mut Connection, options: &NetworkOptions) -> 
             ));
         }
         for id in ids {
-            let (v4, v6) = allocate(&transaction)?;
+            let used = transaction
+                .prepare("SELECT mesh_ipv4 FROM nodes WHERE mesh_ipv4 IS NOT NULL")?
+                .query_map([], |row| row.get(0))?
+                .collect::<Result<BTreeSet<String>, _>>()?;
+            let (v4, v6) = allocate_used(&network, &used)?;
             transaction.execute(
                 "UPDATE nodes SET mesh_ipv4 = ?1, mesh_ipv6 = ?2 WHERE id = ?3",
                 params![v4, v6, id],
             )?;
         }
-        super::configuration::ensure_publishable(&transaction)?;
         transaction.pragma_update(None, "user_version", 2)?;
         transaction.commit()?;
     } else if !(2..=8).contains(&version) {
@@ -120,15 +124,29 @@ pub(super) fn upgrade(connection: &mut Connection, options: &NetworkOptions) -> 
             "unsupported or incomplete controller database schema",
         ));
     }
-    check_options(connection, options)
+    let stored = connection.query_row(
+        "SELECT ipv4_prefix,ipv6_prefix FROM configuration WHERE id=1",
+        [],
+        |row| {
+            Ok(MeshNetwork {
+                ipv4_prefix: row.get(0)?,
+                ipv6_prefix: row.get(1)?,
+            })
+        },
+    )?;
+    compare_options(&stored, options)
 }
 
 pub(super) fn check_options(
     connection: &Connection,
+    scope: &NetworkId,
     options: &NetworkOptions,
 ) -> Result<(), Error> {
-    let stored = network(connection)?;
-    let (v4, v6) = parse(&stored)?;
+    compare_options(&network(connection, scope)?, options)
+}
+
+fn compare_options(stored: &MeshNetwork, options: &NetworkOptions) -> Result<(), Error> {
+    let (v4, v6) = parse(stored)?;
     if options
         .ipv4_prefix
         .as_ref()
@@ -145,12 +163,22 @@ pub(super) fn check_options(
     Ok(())
 }
 
-pub(super) fn allocate(connection: &Connection) -> Result<(String, String), Error> {
-    let (v4, v6) = parse(&network(connection)?)?;
+pub(super) fn allocate(
+    connection: &Connection,
+    scope: &NetworkId,
+) -> Result<(String, String), Error> {
     let used: BTreeSet<String> = connection
-        .prepare("SELECT mesh_ipv4 FROM nodes WHERE mesh_ipv4 IS NOT NULL")?
-        .query_map([], |row| row.get(0))?
+        .prepare("SELECT mesh_ipv4 FROM nodes WHERE mesh_ipv4 IS NOT NULL AND network_id=?1")?
+        .query_map([scope.as_str()], |row| row.get(0))?
         .collect::<Result<_, _>>()?;
+    allocate_used(&network(connection, scope)?, &used)
+}
+
+fn allocate_used(
+    network: &MeshNetwork,
+    used: &BTreeSet<String>,
+) -> Result<(String, String), Error> {
+    let (v4, v6) = parse(network)?;
     if used.len() >= meshway_protocol::MAX_INVENTORY_NODES {
         return Err(Error::Capacity("node inventory limit reached"));
     }

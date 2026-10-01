@@ -54,8 +54,8 @@ async fn get_endpoint_discoveries(
     state
         .access(move |store| {
             store.authorize_admin(&token)?;
-            store.select_network(&network_id)?;
-            store.endpoint_discoveries().map(Json)
+            let network_id = store.network_id(&network_id)?;
+            store.endpoint_discoveries(&network_id).map(Json)
         })
         .await
 }

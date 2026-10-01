@@ -38,8 +38,8 @@ async fn preview_flow(
     state
         .access(move |store| {
             store.authorize_admin(&token)?;
-            store.select_network(&network_id)?;
-            store.preview_flow(&request).map(Json)
+            let network_id = store.network_id(&network_id)?;
+            store.preview_flow(&network_id, &request).map(Json)
         })
         .await
 }
@@ -59,8 +59,8 @@ async fn get_mesh_access(
     state
         .access(move |store| {
             store.authorize_admin(&token)?;
-            store.select_network(&network_id)?;
-            store.mesh_access().map(Json)
+            let network_id = store.network_id(&network_id)?;
+            store.mesh_access(&network_id).map(Json)
         })
         .await
 }
@@ -87,8 +87,8 @@ async fn save_mesh_access(
     state
         .access(move |store| {
             store.authorize_admin(&token)?;
-            store.select_network(&network_id)?;
-            store.save_mesh_access(&request).map(Json)
+            let network_id = store.network_id(&network_id)?;
+            store.save_mesh_access(&network_id, &request).map(Json)
         })
         .await
 }

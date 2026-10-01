@@ -521,7 +521,7 @@ async fn expiry_restart_and_revocation_preserve_identity_and_consumption() {
         rusqlite::Connection::open(fixture.directory.path().join("controller.sqlite3")).unwrap();
     connection
         .execute(
-            "UPDATE enrollment_tokens_scoped SET expires_at = 0 WHERE id IN (?1, ?2)",
+            "UPDATE enrollment_tokens SET expires_at = 0 WHERE id IN (?1, ?2)",
             [&expired.token_id, &active.token_id],
         )
         .unwrap();

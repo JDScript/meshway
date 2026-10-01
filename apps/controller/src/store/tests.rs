@@ -1,7 +1,7 @@
 use meshway_protocol::*;
 use rusqlite::params;
 
-use super::Store;
+use super::test_store::TestStore as Store;
 use crate::{Error, NetworkOptions};
 
 pub(super) fn directory() -> tempfile::TempDir {
@@ -52,6 +52,7 @@ fn device_login_v8_migration_preserves_existing_rows_and_reopens() {
         })
         .unwrap();
     let token = store.create_token(3600).unwrap();
+    store.downgrade_v8();
     store
         .connection
         .execute_batch(
@@ -61,7 +62,7 @@ fn device_login_v8_migration_preserves_existing_rows_and_reopens() {
     fn snapshot(
         connection: &rusqlite::Connection,
     ) -> Vec<(String, Vec<Vec<rusqlite::types::Value>>)> {
-        let tables: Vec<String> = connection.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' ORDER BY name").unwrap().query_map([],|r|r.get(0)).unwrap().collect::<Result<_,_>>().unwrap();
+        let tables: Vec<String> = connection.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' AND name != 'networks' ORDER BY name").unwrap().query_map([],|r|r.get(0)).unwrap().collect::<Result<_,_>>().unwrap();
         tables
             .into_iter()
             .map(|table| {
@@ -74,7 +75,9 @@ fn device_login_v8_migration_preserves_existing_rows_and_reopens() {
                     .unwrap();
                 let columns: Vec<_> = columns
                     .into_iter()
-                    .filter(|c| c != "device_binding")
+                    .filter(|c| {
+                        c != "device_binding" && (c != "network_id" || table == "network_identity")
+                    })
                     .collect();
                 let sql = format!(
                     "SELECT {} FROM \"{table}\" ORDER BY rowid",
@@ -107,7 +110,7 @@ fn device_login_v8_migration_preserves_existing_rows_and_reopens() {
             .connection
             .pragma_query_value(None, "user_version", |r| r.get::<_, u32>(0))
             .unwrap(),
-        8
+        9
     );
     assert_eq!(snapshot(&store.connection), before);
     assert_eq!(
@@ -260,13 +263,13 @@ fn policy_cas_country_and_node_scoped_receipts_preserve_revision_semantics() {
         snapshot.digest
     );
     assert_eq!(
-        super::find_node(&store.connection, &source.id)
+        super::find_node(&store.connection, &store.network_id, &source.id)
             .unwrap()
             .acknowledged_revision,
         3
     );
     assert_eq!(
-        super::find_node(&store.connection, &peer.id)
+        super::find_node(&store.connection, &store.network_id, &peer.id)
             .unwrap()
             .acknowledged_revision,
         0
@@ -391,7 +394,7 @@ fn policy_cas_country_and_node_scoped_receipts_preserve_revision_semantics() {
         effective.digest
     );
     assert_eq!(
-        super::find_node(&reopened.connection, &source.id)
+        super::find_node(&reopened.connection, &reopened.network_id, &source.id)
             .unwrap()
             .acknowledged_revision,
         3
@@ -522,14 +525,25 @@ fn additive_v2_to_v3_preserves_configuration_credentials_addresses_and_receipts(
     };
     let before_digest = receipt_digest(&db);
     let before = db
-        .prepare(super::NODE_SELECT)
+        .prepare(super::test_store::LEGACY_NODE_SELECT)
         .unwrap()
         .query_map([], super::node_row)
         .unwrap()
         .collect::<Result<Vec<_>, _>>()
         .unwrap();
     let token_bytes = std::fs::read(dir.path().join("admin.token")).unwrap();
-    let network = super::ipam::network(&db).unwrap();
+    let network = db
+        .query_row(
+            "SELECT ipv4_prefix,ipv6_prefix FROM configuration WHERE id=1",
+            [],
+            |row| {
+                Ok(MeshNetwork {
+                    ipv4_prefix: row.get(0)?,
+                    ipv6_prefix: row.get(1)?,
+                })
+            },
+        )
+        .unwrap();
     drop(db);
     let mut store = Store::open_v8(dir.path(), &NetworkOptions::default()).unwrap();
     assert_eq!(receipt_digest(&store.connection), before_digest);
@@ -538,7 +552,7 @@ fn additive_v2_to_v3_preserves_configuration_credentials_addresses_and_receipts(
             .connection
             .pragma_query_value(None, "user_version", |row| row.get::<_, u32>(0))
             .unwrap(),
-        8
+        9
     );
     assert_eq!(
         std::fs::read(dir.path().join("admin.token")).unwrap(),

@@ -100,8 +100,8 @@ async fn get_connection_runtimes(
     state
         .access(move |store| {
             store.authorize_admin(&token)?;
-            store.select_network(&network_id)?;
-            store.connection_runtimes().map(Json)
+            let network_id = store.network_id(&network_id)?;
+            store.connection_runtimes(&network_id).map(Json)
         })
         .await
 }
