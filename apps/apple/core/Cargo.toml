@@ -16,9 +16,20 @@ required-features = ["bindgen"]
 bindgen = ["uniffi/cli"]
 
 [dependencies]
+meshway-agent = { path = "../../agent" }
 meshway-protocol = { path = "../../../crates/protocol" }
 meshway-policy = { path = "../../../crates/policy" }
 uniffi = "=0.32.2"
+tokio.workspace = true
+thiserror = "2"
+url = "2"
+
+[dev-dependencies]
+meshway-controller = { path = "../../controller" }
+axum.workspace = true
+tempfile.workspace = true
+tower = { version = "0.5", features = ["util"] }
+serde_json.workspace = true
 
 # Workspace forbid cannot be relaxed by generated UniFFI scaffolding. This
 # audited FFI boundary uses deny: UniFFI's generated allow attributes may relax

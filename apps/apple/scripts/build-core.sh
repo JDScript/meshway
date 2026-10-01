@@ -3,6 +3,10 @@ set -euo pipefail
 APPLE="$(cd "$(dirname "$0")/.." && pwd)"
 ROOT="$(cd "$APPLE/../.." && pwd)"
 export CARGO_TARGET_DIR="$APPLE/build/rust"
+# Keep Rust and native TLS dependencies aligned with the Swift deployment
+# targets; Xcode's SDK default otherwise builds C objects for the latest OS.
+export MACOSX_DEPLOYMENT_TARGET=14.0
+export IPHONEOS_DEPLOYMENT_TARGET=17.0
 cd "$ROOT"
 for target in aarch64-apple-darwin aarch64-apple-ios aarch64-apple-ios-sim; do
   cargo build --locked -p meshway-apple-core --release --target "$target"

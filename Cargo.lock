@@ -1983,9 +1983,18 @@ dependencies = [
 name = "meshway-apple-core"
 version = "0.1.0"
 dependencies = [
+ "axum",
+ "meshway-agent",
+ "meshway-controller",
  "meshway-policy",
  "meshway-protocol",
+ "serde_json",
+ "tempfile",
+ "thiserror",
+ "tokio",
+ "tower",
  "uniffi",
+ "url",
 ]
 
 [[package]]

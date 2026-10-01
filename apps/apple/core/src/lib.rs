@@ -1,5 +1,8 @@
 //! Apple FFI boundary. Handwritten code is safe Rust; only UniFFI-generated
-//! ABI scaffolding may use unsafe. No credentials, runtime or packet I/O yet.
+//! ABI scaffolding may use unsafe. Control-plane contact is not tunnel health.
+
+mod signin;
+pub use signin::*;
 
 uniffi::setup_scaffolding!();
 
