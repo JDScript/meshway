@@ -50,6 +50,10 @@ DNS 只保护控制面/承载/探测所需的解析请求，业务 DNS 仍按其
 IPv4/IPv6、重解析和 endpoint 换代必须同时保留该边界；构建保护通路不改变 Mesh 内层
 路径授权。此项为正式集成要求，原型 /32 行为尚未因此改变。
 
+独立双栈实验已验证只跳过自有捕获规则的 socket mark / RPDB 跳转机制，见
+[系统保护通路](/underlay-routing)。HTTP connector、生成客户端注入和生产 ownership
+恢复仍是接入项，不能直接把该实验结论视为当前 Agent 所有连接均已保护。
+
 本地网络访问默认提案参照 Tailscale：默认出口不允许直接 LAN；显式 allow-LAN 时只对发现并批准的 on-link 前缀添加更高优先级 main lookup，绝不自动豁免全部 RFC1918。本原型只支持显式 bypass 地址，不提供生产 allow-LAN 开关。loopback 仍由 Linux local table 处理。
 
 | 事件 | 原型行为及理由 |
