@@ -219,6 +219,7 @@ struct EndpointSession {
     expires: Instant,
     packets: bool,
     confirmed: bool,
+    retry: Option<(Vec<u8>, Vec<u8>)>,
 }
 struct SendingSession {
     id: [u8; 16],
@@ -240,6 +241,7 @@ struct Inner {
     // waits never hold the shared cache/nonce lock or allocate per caller.
     packet_setup: BTreeMap<Vec<String>, tokio::sync::Mutex<()>>,
     packet_generation: Mutex<Arc<generation::Fence>>,
+    packet_retries: Mutex<BTreeMap<Vec<String>, packet::Setup>>,
     sending: tokio::sync::Mutex<BTreeMap<Vec<String>, SendingSession>>,
     delivery: Mutex<Option<mpsc::Sender<ReceivedPacket>>>,
     handles: Mutex<Vec<JoinHandle<()>>>,
@@ -311,6 +313,7 @@ impl Runtime {
             endpoints: Mutex::default(),
             sending: tokio::sync::Mutex::default(),
             packet_generation: Mutex::new(generation::Fence::new()),
+            packet_retries: Mutex::default(),
             delivery: Mutex::new(Some(delivery)),
             handles: Mutex::default(),
             incoming,
@@ -613,6 +616,7 @@ impl Runtime {
         lock(&inner.pending).clear();
         lock(&inner.neighbor_pending).clear();
         lock(&inner.endpoints).clear();
+        lock(&inner.packet_retries).clear();
         if let Ok(mut sessions) = tokio::time::timeout_at(deadline, inner.sending.lock()).await {
             sessions.clear();
         }

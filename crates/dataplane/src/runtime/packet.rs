@@ -9,6 +9,25 @@ use zeroize::Zeroizing;
 
 pub(super) const SESSION_LIFETIME: Duration = Duration::from_secs(60);
 
+// No payloads or detached work survive a caller cancellation. Only this bounded
+// cryptographic setup is retained so a retry can use the same Init/Ready pair.
+pub(super) struct Setup {
+    first: Packet,
+    expires: Instant,
+    state: Option<SetupState>,
+}
+
+enum SetupState {
+    Waiting(Box<snow::HandshakeState>),
+    Ready(Box<SendingSession>),
+}
+
+impl Setup {
+    pub(super) fn current(&self) -> bool {
+        self.expires > Instant::now()
+    }
+}
+
 pub(super) async fn send(
     inner: Arc<Inner>,
     path: Vec<String>,
@@ -57,7 +76,7 @@ pub(super) async fn send(
                     return Err(Error::Capacity);
                 }
                 drop(sessions);
-                let session = establish(&inner, &path).await?;
+                establish(&inner, &path).await?;
                 sessions = inner.sending.lock().await;
                 if *inner.shutdown.borrow() {
                     return Err(Error::Closed);
@@ -68,7 +87,16 @@ pub(super) async fn send(
                 if sessions.len() >= inner.config.limits.max_pending_probes {
                     return Err(Error::Capacity);
                 }
-                sessions.insert(path.clone(), session);
+                let setup = lock(&inner.packet_retries)
+                    .remove(&path)
+                    .ok_or(Error::Timeout)?;
+                if !setup.current() {
+                    return Err(Error::Timeout);
+                }
+                let Some(SetupState::Ready(session)) = setup.state else {
+                    return Err(Error::Protocol);
+                };
+                sessions.insert(path.clone(), *session);
             }
         }
         if *inner.shutdown.borrow() || generation.retired() {
@@ -104,14 +132,49 @@ pub(super) async fn send(
     }
 }
 
-async fn establish(inner: &Arc<Inner>, path: &[String]) -> Result<SendingSession> {
+async fn establish(inner: &Arc<Inner>, path: &[String]) -> Result<()> {
     // Anchor the lifetime before emitting Init. A delayed Ready must consume,
     // rather than restart, this budget; receiver pending retention is 60s.
-    let expires = Instant::now() + SESSION_LIFETIME - Duration::from_secs(1);
     let destination = path.last().ok_or(Error::UnauthorizedPath)?;
     let remote = inner.keys.get(destination).ok_or(Error::Authentication)?;
-    let mut id = [0; 16];
-    getrandom::fill(&mut id).map_err(|_| Error::Authentication)?;
+    let first = {
+        let mut setups = lock(&inner.packet_retries);
+        if *inner.shutdown.borrow() {
+            return Err(Error::Closed);
+        }
+        setups.retain(|_, setup| setup.current());
+        if !setups.contains_key(path) {
+            if setups.len() >= inner.config.limits.max_pending_probes {
+                return Err(Error::Capacity);
+            }
+            let mut id = [0; 16];
+            getrandom::fill(&mut id).map_err(|_| Error::Authentication)?;
+            let mut first = Packet {
+                phase: Phase::Init,
+                id,
+                path: path.to_vec(),
+                body: Vec::new(),
+            };
+            let mut state = inner
+                .identity
+                .handshake(Some(remote), &first.e2e_prologue())?;
+            first.body = write_handshake(&mut state, b"packet-v1")?;
+            setups.insert(
+                path.to_vec(),
+                Setup {
+                    first,
+                    expires: Instant::now() + SESSION_LIFETIME - Duration::from_secs(1),
+                    state: Some(SetupState::Waiting(Box::new(state))),
+                },
+            );
+        }
+        let setup = setups.get(path).ok_or(Error::Protocol)?;
+        if matches!(setup.state, Some(SetupState::Ready(_))) {
+            return Ok(());
+        }
+        setup.first.clone()
+    };
+    let id = first.id;
     let (tx, mut rx) = mpsc::channel(2);
     {
         let mut pending = lock(&inner.pending);
@@ -130,30 +193,32 @@ async fn establish(inner: &Arc<Inner>, path: &[String]) -> Result<SendingSession
         inner: inner.clone(),
         id,
     };
-    let mut first = Packet {
-        phase: Phase::Init,
-        id,
-        path: path.to_vec(),
-        body: Vec::new(),
-    };
-    let mut state = inner
-        .identity
-        .handshake(Some(remote), &first.e2e_prologue())?;
-    first.body = write_handshake(&mut state, b"packet-v1")?;
     inner.send(&path[1], first)?;
     let ready = rx.recv().await.ok_or(Error::Closed)?;
+    let mut setups = lock(&inner.packet_retries);
+    if *inner.shutdown.borrow() {
+        return Err(Error::Closed);
+    }
+    let mut setup = setups.remove(path).ok_or(Error::Timeout)?;
+    if !setup.current() {
+        return Err(Error::Timeout);
+    }
+    let Some(SetupState::Waiting(mut state)) = setup.state.take() else {
+        return Err(Error::Protocol);
+    };
     if ready.phase != Phase::Ready
         || read_handshake(&mut state, &ready.body)? != b"packet-v1"
         || state.get_remote_static() != Some(remote.as_slice())
     {
         return Err(Error::Authentication);
     }
-    if Instant::now() >= expires {
-        return Err(Error::Timeout);
-    }
-    Ok(SendingSession {
+    setup.state = Some(SetupState::Ready(Box::new(SendingSession {
         id,
-        cipher: Cipher::finish(state)?,
-        expires,
-    })
+        cipher: Cipher::finish(*state)?,
+        expires: setup.expires,
+    })));
+    // Keep the finished key here until atomically moved under the sending cache
+    // lock. Cancellation while awaiting that lock cannot strand a pending key.
+    setups.insert(path.to_vec(), setup);
+    Ok(())
 }

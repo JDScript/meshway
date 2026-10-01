@@ -29,6 +29,7 @@ impl Phase {
     }
 }
 
+#[derive(Clone)]
 pub(super) struct Packet {
     pub phase: Phase,
     pub id: [u8; 16],

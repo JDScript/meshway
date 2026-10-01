@@ -829,11 +829,12 @@ async fn cancelled_packet_setup_releases_permit_and_shutdown_never_recaches() {
     first.abort();
     assert!(first.await.unwrap_err().is_cancelled());
     assert!(lock(&fixture.nyc.handle.inner.pending).is_empty());
-    // Remove the remote unconfirmed challenge only by its genuine expiry.
-    tokio::time::advance(Duration::from_secs(61)).await;
+    // Cancellation keeps only bounded setup state; an immediate retry uses the
+    // same Init rather than blackholing behind the remote pending slot for 60s.
     let source = fixture.nyc.clone();
     let second = tokio::spawn(async move { source.send_packet(path(), vec![2]).await });
     let ready = receive_ready(&mut frames).await;
+    assert_eq!(lock(&fixture.sha.handle.inner.endpoints).len(), 1);
     fixture.nyc.shutdown().await;
     assert_eq!(second.await.unwrap(), Err(Error::Closed));
     let _ = original.send(old_ready).await;
@@ -891,14 +892,83 @@ async fn delayed_ready_consumes_init_time_budget_and_expired_ready_is_not_cached
 }
 
 #[tokio::test(start_paused = true)]
-async fn lost_ready_does_not_cache_sender_and_pending_capacity_expires_without_promotion() {
+async fn cancellation_after_ready_before_cache_insert_reuses_finished_key_without_nonce_reuse() {
+    let fixture = capacity_one_fixture(3_000).await;
+    let mut received = fixture.sha.take_packet_receiver().unwrap();
+    let (mut frames, original) = intercept_peer(&fixture.lax, "nyc");
+    let source = fixture.nyc.clone();
+    let first = tokio::spawn(async move { source.send_packet(path(), vec![1]).await });
+    let ready = receive_ready(&mut frames).await;
+    let cache = fixture.nyc.handle.inner.sending.lock().await;
+    original.send(ready).await.unwrap();
+    tokio::time::timeout(Duration::from_secs(1), async {
+        while !lock(&fixture.nyc.handle.inner.pending).is_empty() {
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .unwrap();
+    first.abort();
+    assert!(first.await.unwrap_err().is_cancelled());
+    assert!(cache.is_empty());
+    drop(cache);
+    fixture.nyc.send_packet(path(), vec![2]).await.unwrap();
+    fixture.nyc.send_packet(path(), vec![3]).await.unwrap();
+    assert_eq!(receive_packet(&mut received).await.payload, vec![2]);
+    assert_eq!(receive_packet(&mut received).await.payload, vec![3]);
+    assert!(
+        frames.try_recv().is_err(),
+        "finished setup needs no second Init"
+    );
+    assert!(lock(&fixture.nyc.handle.inner.packet_retries).is_empty());
+    fixture.shutdown().await;
+}
+
+#[tokio::test(start_paused = true)]
+async fn late_ready_retry_replays_only_identical_challenge_without_extending_expiry() {
+    let fixture = capacity_one_fixture(3_000).await;
+    let mut received = fixture.sha.take_packet_receiver().unwrap();
+    let (mut frames, original) = intercept_peer(&fixture.lax, "nyc");
+    let source = fixture.nyc.clone();
+    let first = tokio::spawn(async move { source.send_packet(path(), vec![1]).await });
+    let ready = receive_ready(&mut frames).await;
+    let expiry = lock(&fixture.sha.handle.inner.endpoints)
+        .values()
+        .next()
+        .unwrap()
+        .expires;
+    tokio::time::advance(Duration::from_secs(4)).await;
+    assert_eq!(first.await.unwrap(), Err(Error::Timeout));
+    original.send(ready).await.unwrap(); // Late response has no pending caller.
+    tokio::task::yield_now().await;
+    let source = fixture.nyc.clone();
+    let retry = tokio::spawn(async move { source.send_packet(path(), vec![2]).await });
+    let ready = receive_ready(&mut frames).await;
+    assert_eq!(
+        lock(&fixture.sha.handle.inner.endpoints)
+            .values()
+            .next()
+            .unwrap()
+            .expires,
+        expiry
+    );
+    original.send(ready).await.unwrap();
+    retry.await.unwrap().unwrap();
+    assert_eq!(receive_packet(&mut received).await.payload, vec![2]);
+    assert_eq!(lock(&fixture.sha.handle.inner.endpoints).len(), 1);
+    fixture.shutdown().await;
+}
+
+#[tokio::test(start_paused = true)]
+async fn lost_ready_timeout_retries_same_setup_without_pending_blackhole() {
     let fixture = capacity_one_fixture(3_000).await;
     let mut received = fixture.sha.take_packet_receiver().unwrap();
     let (mut frames, original) = intercept_peer(&fixture.lax, "nyc");
     let source = fixture.nyc.clone();
     let send =
         tokio::spawn(async move { source.send_packet(path(), b"lost ready".to_vec()).await });
-    drop(receive_ready(&mut frames).await);
+    let ready = receive_ready(&mut frames).await;
+    let original_id = Packet::decode(&ready.batch.into_frames()[0]).unwrap().id;
     // Restore normal forwarding, but deliberately do not redeliver the lost Ready.
     lock(&fixture.lax.handle.inner.peers)
         .get_mut("nyc")
@@ -917,9 +987,8 @@ async fn lost_ready_does_not_cache_sender_and_pending_capacity_expires_without_p
                 .all(|session| !session.confirmed && session.expires > Instant::now())
         );
     }
-    // Best-effort setup loss reserves the context until expiry; it does not claim
-    // reliable setup, consume unbounded states, or create a usable sender cache.
-    tokio::time::advance(Duration::from_secs(57)).await;
+    // Healthy-carrier retry succeeds immediately, on the original key; no
+    // waiting for the receiver's 60-second challenge retention to expire.
     fixture
         .nyc
         .send_packet(path(), b"setup after expiry".to_vec())
@@ -930,5 +999,9 @@ async fn lost_ready_does_not_cache_sender_and_pending_capacity_expires_without_p
         b"setup after expiry"
     );
     assert_eq!(lock(&fixture.sha.handle.inner.endpoints).len(), 1);
+    assert_eq!(
+        fixture.nyc.handle.inner.sending.lock().await[&path()].id,
+        original_id
+    );
     fixture.shutdown().await;
 }

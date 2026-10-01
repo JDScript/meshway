@@ -125,6 +125,7 @@ pub(super) async fn dispatch(inner: Arc<Inner>, mut receiver: mpsc::Receiver<Inc
             _ = cleanup.tick() => {
                 let now = Instant::now();
                 lock(&inner.endpoints).retain(|_, session| session.expires > now);
+                lock(&inner.packet_retries).retain(|_, setup| setup.current());
             }
             incoming = receiver.recv() => {
                 let Some(incoming) = incoming else { break };
@@ -196,7 +197,24 @@ fn process(inner: &Inner, incoming: &Incoming) -> StageResult<()> {
             let mut sessions = lock(&inner.endpoints);
             // Admission must see current occupancy, not wait for the cleanup tick.
             sessions.retain(|_, session| session.expires > Instant::now());
-            if sessions.contains_key(&session_key) {
+            if let Some(session) = sessions.get(&session_key) {
+                if session.path == packet.path
+                    && let Some((init, ready)) = &session.retry
+                    && init == &packet.body
+                {
+                    // Exact authenticated Init retransmission: replay the same
+                    // handshake response, never replace a cipher, reset replay
+                    // state, promote a key, or extend its original expiration.
+                    return inner.send_classified(
+                        previous,
+                        Packet {
+                            phase: Phase::Ready,
+                            id: packet.id,
+                            path: packet.path.clone(),
+                            body: ready.clone(),
+                        },
+                    );
+                }
                 return Err(Error::Capacity.into());
             }
             let mut state = inner.identity.handshake(None, &packet.e2e_prologue())?;
@@ -233,6 +251,7 @@ fn process(inner: &Inner, incoming: &Incoming) -> StageResult<()> {
                 return Err(Error::Capacity.into());
             }
             let body = write_handshake(&mut state, &mode)?;
+            let retry = packets.then(|| (packet.body.clone(), body.clone()));
             let cipher = Cipher::finish(state)?;
             inner.send_classified(
                 previous,
@@ -259,6 +278,7 @@ fn process(inner: &Inner, incoming: &Incoming) -> StageResult<()> {
                     packets,
                     confirmed: false,
                     expires: Instant::now() + lifetime,
+                    retry,
                 },
             );
             Ok(())
@@ -285,6 +305,7 @@ fn process(inner: &Inner, incoming: &Incoming) -> StageResult<()> {
                     // Only the first authenticated transport message proves possession
                     // of the fresh E2E key. Retire this exact context's old key now.
                     session.confirmed = true;
+                    session.retry = None;
                     session.expires = Instant::now() + super::packet::SESSION_LIFETIME;
                     sessions.retain(|(source, id), session| {
                         source != origin
