@@ -5,7 +5,6 @@ import {
   CheckIcon,
   ChevronRightIcon,
   CircleAlertIcon,
-  FlagIcon,
   HourglassIcon,
   PlusIcon,
   ShieldAlertIcon,
@@ -35,12 +34,6 @@ export const metadata: Metadata = { title: "概览" }
 const RECENT_LIMIT = 6
 
 type Attention = { key: string; icon: ReactNode; title: string; detail: string; href: string; tone: "danger" | "warn" }
-
-function usesCountry(snapshot: PolicySnapshot): boolean {
-  return snapshot.policy.rules.some(
-    (rule) => rule.source.countries.length > 0 || rule.destination_any.some((selector) => selector.kind === "country")
-  )
-}
 
 /** Only conditions the controller actually reports; absence is not "healthy". */
 function attentionItems(
@@ -94,16 +87,6 @@ function attentionItems(
       icon: <ActivityIcon />,
       title: `${stale} 个节点超过 1 小时没有控制面联系`,
       detail: "检查 agent 是否仍在运行，或是否需要撤销。",
-      href: routes.machines(),
-      tone: "warn",
-    })
-  }
-  if (policy && usesCountry(policy) && summary.withoutCountry > 0) {
-    items.push({
-      key: "country",
-      icon: <FlagIcon />,
-      title: `${summary.withoutCountry} 个节点未设置国家`,
-      detail: "路由使用了国家条件，未设置国家的节点不会匹配。",
       href: routes.machines(),
       tone: "warn",
     })
@@ -228,7 +211,6 @@ export default async function OverviewPage({ params }: { params: Promise<{ netwo
                         <span className="truncate text-[0.8125rem] font-medium">{node.name}</span>
                         <span className="truncate font-mono text-[0.6875rem] text-muted-foreground">
                           {node.mesh_ipv4}
-                          {node.country ? ` · ${node.country}` : ""}
                         </span>
                       </span>
                       <span className="text-xs">

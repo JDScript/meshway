@@ -404,7 +404,7 @@ export function TopologyView({
                     </span>
                     <span className="truncate font-mono text-[0.6875rem] text-muted-foreground">
                       {node.mesh_ipv4}
-                      {node.country ? ` · ${node.country}` : ""}
+
                     </span>
                     <span className="text-[0.6875rem] text-muted-foreground">
                       {configured === 0
@@ -435,8 +435,6 @@ export function TopologyView({
               <dd className="font-mono">{selected.mesh_ipv4}</dd>
               <dt className="text-muted-foreground">Mesh IPv6</dt>
               <dd className="font-mono break-all">{selected.mesh_ipv6}</dd>
-              <dt className="text-muted-foreground">国家</dt>
-              <dd className="font-mono">{selected.country ?? "未设置"}</dd>
               <dt className="text-muted-foreground">控制面联系</dt>
               <dd>
                 <LastContact node={selected} fetchedAt={fetchedAt} />

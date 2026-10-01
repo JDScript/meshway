@@ -66,12 +66,13 @@ function NavSectionItem({ section, active, drafts }: { section: NavSection; acti
   const { state, isMobile } = useSidebar()
   const containsActive = section.items.some((item) => item === active)
   const unsaved = section.items.some((item) => item.draft && drafts[item.draft])
+  const listed = section.items.filter((item) => !item.hidden)
   // Opening follows the current page until the user toggles; entering the
   // section again (e.g. via ⌘K) opens it again.
   const [toggle, setToggle] = useState<{ open: boolean; whileActive: boolean } | null>(null)
   if (toggle !== null && toggle.whileActive !== containsActive) setToggle(null)
   const open = toggle?.open ?? containsActive
-  const first = section.items[0]
+  const first = listed[0]
 
   if (state === "collapsed" && !isMobile && first) {
     return (
@@ -104,7 +105,7 @@ function NavSectionItem({ section, active, drafts }: { section: NavSection; acti
       </CollapsibleTrigger>
       <CollapsibleContent>
         <SidebarMenuSub>
-          {section.items.map((item) => {
+          {listed.map((item) => {
             const current = active === item
             const draft = item.draft ? drafts[item.draft] : false
             return (

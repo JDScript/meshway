@@ -50,7 +50,6 @@ export type InventorySummary = {
   revoked: number
   recent: number
   receipt: { current: number; behind: number; never: number }
-  withoutCountry: number
 }
 
 export function summarizeInventory(
@@ -63,7 +62,6 @@ export function summarizeInventory(
     revoked: 0,
     recent: 0,
     receipt: { current: 0, behind: 0, never: 0 },
-    withoutCountry: 0,
   }
   for (const node of nodes) {
     if (node.revoked_at !== null) {
@@ -74,7 +72,6 @@ export function summarizeInventory(
     if (contactBucket(node, reference) === "recent") summary.recent += 1
     const receipt = receiptState(node)
     if (receipt !== "revoked") summary.receipt[receipt] += 1
-    if (node.country === null) summary.withoutCountry += 1
   }
   return summary
 }

@@ -228,7 +228,7 @@ test("routing intent, conditional editing and persisted configuration receipts c
       const baseLabel = await page.getByTestId("policy-base-revision").innerText();
       await editRuleId(page, "nyc-to-sha-edited", "draft-survives-conflict");
       await page.keyboard.press("ControlOrMeta+k");
-      await page.getByRole("option", { name: "节点", exact: true }).click();
+      await page.getByRole("option", { name: /^全部节点/ }).click();
       await expect(page).toHaveURL(`${ui.at("/machines")}`);
 
       const dialogPromise = page.waitForEvent("dialog");

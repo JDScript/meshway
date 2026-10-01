@@ -68,8 +68,8 @@ test("the content column aligns with the shell and animated draft actions stay s
     const iconInset = 1440 - SIDEBAR_ICON_WIDTH;
     await expect.poll(() => contentAlignment(page)).toEqual({ left: 0, right: 0, gutter: consoleGutter(1440, iconInset), asymmetry: 0, inset: iconInset, header: HEADER_HEIGHT_ICON, overflow: false });
     // Icon rail: a section's icon opens its first page; tooltips name it.
-    await page.getByRole("navigation", { name: "控制台" }).getByRole("link", { name: "诊断", exact: true }).click();
-    await expect(page).toHaveURL(ui.at("/diagnostics"));
+    await page.getByRole("navigation", { name: "控制台" }).getByRole("link", { name: "设置", exact: true }).click();
+    await expect(page).toHaveURL(ui.at("/settings"));
     await page.getByRole("button", { name: "展开导航", exact: true }).click();
     await expect.poll(async () => (await contentAlignment(page)).inset).toBe(1440 - SIDEBAR_WIDTH);
     await page.setViewportSize({ width: 390, height: 844 });

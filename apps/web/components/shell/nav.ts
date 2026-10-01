@@ -2,10 +2,8 @@ import {
   ActivityIcon,
   CableIcon,
   GlobeIcon,
-  LockKeyholeIcon,
   LayoutDashboardIcon,
   RouteIcon,
-  StethoscopeIcon,
   ServerIcon,
   SettingsIcon,
   ShieldCheckIcon,
@@ -32,6 +30,8 @@ export type NavItem = {
   draft?: DraftKind
   /** Small qualifier after the label, e.g. an advanced entry. */
   badge?: string
+  /** Reached from context (a node, an edge, a path), not listed in the sidebar; still in ⌘K and breadcrumbs. */
+  hidden?: boolean
   keywords: string[]
 }
 
@@ -48,15 +48,6 @@ export type NavEntry = { kind: "link"; item: NavItem } | { kind: "section"; sect
 const link = (item: NavItem): NavEntry => ({ kind: "link", item })
 const section = (value: NavSection): NavEntry => ({ kind: "section", section: value })
 
-export const settingsItem: NavItem = {
-  segment: "settings",
-  label: "网络设置",
-  icon: SettingsIcon,
-  description: "名称、ID 与地址前缀",
-  href: (routes) => routes.settings,
-  keywords: ["settings", "network", "name", "prefix", "shezhi", "网络设置", "设置"],
-}
-
 /** The sidebar's one navigation group, in order; ⌘K uses the same list. */
 export const navMain: NavEntry[] = [
   link({
@@ -67,44 +58,18 @@ export const navMain: NavEntry[] = [
     href: (routes) => routes.overview,
     keywords: ["overview", "dashboard", "gailan"],
   }),
-  link({
-    segment: "machines",
+  section({
+    key: "nodes",
     label: "节点",
     icon: ServerIcon,
-    description: "加入这张网络的设备与服务器",
-    href: (routes) => routes.machines(),
-    keywords: ["machines", "nodes", "devices", "jiedian", "设备"],
-  }),
-  link({
-    segment: "dns",
-    label: "DNS",
-    icon: GlobeIcon,
-    description: "节点 DNS 意图与节点名称",
-    href: (routes) => routes.dns(),
-    keywords: ["dns", "magicdns", "zone", "ttl", "名称解析"],
-  }),
-  section({
-    key: "policies",
-    label: "访问控制",
-    icon: LockKeyholeIcon,
     items: [
       {
-        segment: "access",
-        label: "访问授权",
-        icon: ShieldCheckIcon,
-        description: "哪些节点之间可以访问",
-        href: (routes) => routes.access(),
-        draft: "access",
-        keywords: ["access", "acl", "grants", "authorization", "shouquan", "授权", "访问控制"],
-      },
-      {
-        segment: "routing",
-        label: "路由",
-        icon: RouteIcon,
-        description: "流量经过哪些节点、从哪里出去",
-        href: (routes) => routes.routing(),
-        draft: "routing",
-        keywords: ["routing", "policy", "via", "exit", "luyou", "路由策略"],
+        segment: "machines",
+        label: "全部节点",
+        icon: ServerIcon,
+        description: "加入这张网络的设备与服务器",
+        href: (routes) => routes.machines(),
+        keywords: ["machines", "nodes", "devices", "jiedian", "设备"],
       },
       {
         segment: "tags",
@@ -124,19 +89,13 @@ export const navMain: NavEntry[] = [
         badge: "高级",
         keywords: ["connections", "listeners", "dial", "transport", "lianjie", "高级连接"],
       },
-    ],
-  }),
-  section({
-    key: "diagnostics",
-    label: "诊断",
-    icon: StethoscopeIcon,
-    items: [
       {
         segment: "diagnostics",
         label: "诊断工作台",
         icon: ActivityIcon,
         description: "按问题选择检查入口",
         href: (routes) => routes.diagnostics(),
+        hidden: true,
         keywords: ["diagnostics", "monitoring", "netcheck", "whois", "ping", "zhenduan", "诊断"],
       },
       {
@@ -145,11 +104,52 @@ export const navMain: NavEntry[] = [
         icon: WaypointsIcon,
         description: "已上报邻接与规划路径",
         href: (routes) => routes.topology(),
+        hidden: true,
         keywords: ["topology", "map", "flow", "path", "tuopu"],
       },
     ],
   }),
-  link(settingsItem),
+  link({
+    segment: "routing",
+    label: "路由",
+    icon: RouteIcon,
+    description: "流量经过哪些节点、从哪里出去",
+    href: (routes) => routes.routing(),
+    draft: "routing",
+    keywords: ["routing", "policy", "via", "exit", "luyou", "路由策略"],
+  }),
+  section({
+    key: "settings",
+    label: "设置",
+    icon: SettingsIcon,
+    items: [
+      {
+        segment: "settings",
+        label: "网络",
+        icon: SettingsIcon,
+        description: "名称、ID 与地址前缀",
+        href: (routes) => routes.settings,
+        keywords: ["settings", "network", "name", "prefix", "shezhi", "网络设置", "设置"],
+      },
+      {
+        segment: "dns",
+        label: "DNS",
+        icon: GlobeIcon,
+        description: "节点 DNS 意图与节点名称",
+        href: (routes) => routes.dns(),
+        keywords: ["dns", "magicdns", "zone", "ttl", "名称解析"],
+      },
+      {
+        segment: "access",
+        label: "访问授权",
+        icon: ShieldCheckIcon,
+        description: "哪些节点之间可以访问",
+        href: (routes) => routes.access(),
+        draft: "access",
+        keywords: ["access", "acl", "grants", "authorization", "shouquan", "授权", "访问控制"],
+      },
+    ],
+  }),
 ]
 
 export const navItems: NavItem[] = navMain.flatMap((entry) => (entry.kind === "link" ? [entry.item] : entry.section.items))

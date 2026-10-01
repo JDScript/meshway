@@ -10,7 +10,6 @@ import {
   EllipsisIcon,
   RefreshCwIcon,
   CableIcon,
-  FlagIcon,
   ShieldOffIcon,
   ShieldCheckIcon,
   WaypointsIcon,
@@ -36,7 +35,6 @@ import { DiagnosticDetails } from "@/components/common/diagnostic-details"
 import { SectionHeader } from "@/components/common/section-header"
 import { Metric, StatusSummary } from "@/components/common/status-summary"
 import { FailureNotice } from "@/components/common/failure-notice"
-import { CountryDialog } from "@/components/nodes/country-dialog"
 import { LastContact, ReceiptBadge, StatusBadge } from "@/components/nodes/node-status"
 import { RevokeDialog } from "@/components/nodes/revoke-dialog"
 import { Badge } from "@/components/ui/badge"
@@ -101,7 +99,7 @@ export function NodeDetail({
   const networkId = useNetworkId()
   const hasConnectionDraft = useConnectionsHasDraft()
   const tab: NodeTab = params.has("tab") ? (params.get("tab") === "connections" ? "connections" : "overview") : initialTab
-  const [dialog, setDialog] = useState<"country" | "revoke" | null>(null)
+  const [dialog, setDialog] = useState<"revoke" | null>(null)
   // Snapshot sources: the page render, the status poll, and action responses
   // (successful save, explicit reload). The action response outlives the
   // editor, which the tabs unmount, so remounting never resurrects an older
@@ -196,10 +194,6 @@ export function NodeDetail({
                 </DropdownMenuItem>
                 {!revoked ? (
                   <>
-                    <DropdownMenuItem onClick={() => setDialog("country")}>
-                      <FlagIcon />
-                      设置国家
-                    </DropdownMenuItem>
                     <DropdownMenuSeparator />
                     <DropdownMenuItem variant="destructive" onClick={() => setDialog("revoke")}>
                       <ShieldOffIcon />
@@ -234,7 +228,7 @@ export function NodeDetail({
           </TabsTrigger>
           <TabsTrigger value="connections" className="flex-none px-3">
             <CableIcon />
-            监听与承载
+            配置
           </TabsTrigger>
         </TabsList>
 
@@ -246,7 +240,6 @@ export function NodeDetail({
             connections={latest}
             runtimes={runtimes}
             onOpenConnections={() => changeTab("connections")}
-            onSetCountry={revoked ? null : () => setDialog("country")}
             tags={tags}
             network={network}
           />
@@ -292,7 +285,6 @@ export function NodeDetail({
 
       {!revoked ? (
         <>
-          <CountryDialog node={node} open={dialog === "country"} onOpenChange={(open) => setDialog(open ? "country" : null)} />
           <RevokeDialog node={node} open={dialog === "revoke"} onOpenChange={(open) => setDialog(open ? "revoke" : null)} />
         </>
       ) : null}
@@ -307,7 +299,6 @@ function Overview({
   connections,
   runtimes,
   onOpenConnections,
-  onSetCountry,
   tags,
   network,
 }: {
@@ -317,7 +308,6 @@ function Overview({
   connections: ConnectionsRead
   runtimes: Runtimes
   onOpenConnections: () => void
-  onSetCountry: (() => void) | null
   tags: { ok: true; tags: string[] } | { ok: false; error: string }
   network: NodeDnsNetwork
 }) {
@@ -333,16 +323,6 @@ function Overview({
           </Row>
           <Row label="Mesh IPv6">
             <CopyValue value={node.mesh_ipv6} label="复制 IPv6" />
-          </Row>
-          <Row label="国家" hint="管理员标注，用于路由匹配；不是定位或自动地区结果。">
-            <span className="flex items-center justify-between gap-2">
-              <span className="font-mono">{node.country ?? <span className="font-sans text-muted-foreground">未设置</span>}</span>
-              {onSetCountry ? (
-                <Button variant="ghost" size="sm" onClick={onSetCountry}>
-                  修改
-                </Button>
-              ) : null}
-            </span>
           </Row>
           <Row label="标签" hint="管理员维护的分组，供访问授权引用。">
             <span className="flex items-center justify-between gap-2">
@@ -381,6 +361,11 @@ function Overview({
               <Row label="节点 ID"><CopyValue value={node.id} label="复制节点 ID" /></Row>
               <Row label="Agent 版本"><span className="font-mono">{node.agent_version}</span></Row>
               <Row label="注册于">{formatDateTime(node.registered_at)}</Row>
+              {node.country !== null ? (
+                <Row label="旧版国家标注" hint="v2 路由国家条件仍可能引用；不是位置，也不再在节点上维护。">
+                  <span className="font-mono">{node.country}</span>
+                </Row>
+              ) : null}
             </dl>
           </DiagnosticDetails>
         </div>
@@ -399,11 +384,11 @@ function Overview({
         </Panel>
 
         <Panel
-          title="监听与承载"
+          title="承载与连接"
           actions={
             <Button size="sm" variant="outline" onClick={onOpenConnections}>
               <CableIcon data-icon="inline-start" />
-              监听与承载
+              配置
             </Button>
           }
           bodyClassName="px-4 py-1 sm:px-5"

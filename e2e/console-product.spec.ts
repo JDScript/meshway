@@ -138,14 +138,14 @@ test("console task surfaces preserve disclosures, expired copy eligibility, deep
     await editor.fill(invalid);
     await expect(page.getByRole("list", { name: "JSONC 问题" })).toBeVisible();
     const sidebar = page.getByRole("navigation", { name: "控制台" });
+    await sidebar.getByRole("link", { name: "路由", exact: true }).click();
+    await expect(page).toHaveURL(ui.at("/routing"));
     // Sections other than the current page's start folded, as in sidebar-07.
-    await sidebar.getByRole("button", { name: "诊断", exact: true }).click();
-    await sidebar.getByRole("link", { name: "诊断工作台", exact: true }).click();
-    await expect(page).toHaveURL(/\/diagnostics/);
-    await sidebar.getByRole("link", { name: "拓扑与流量检查", exact: true }).click();
-    await expect(page).toHaveURL(/\/topology/);
+    await sidebar.getByRole("button", { name: "节点", exact: true }).click();
+    await sidebar.getByRole("link", { name: "标签", exact: true }).click();
+    await expect(page).toHaveURL(ui.at("/tags"));
     // A folded section still marks the unsaved draft inside it.
-    await sidebar.getByRole("button", { name: /^访问控制\s*（有未保存的草稿）$/ }).click();
+    await sidebar.getByRole("button", { name: /^设置\s*（有未保存的草稿）$/ }).click();
     await sidebar.getByRole("link", { name: /^访问授权\s*（有未保存的草稿）$/ }).click();
     await expect(page).toHaveURL(ui.at("/access"));
     await expect(page.getByRole("textbox", { name: "访问授权 JSONC", exact: true }).locator(".cm-line")).toHaveText(invalid.split("\n"));

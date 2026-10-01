@@ -36,12 +36,6 @@ export type RevokeState =
   | { status: "error"; message: string }
   | { status: "revoked"; node: NodeSummary }
 
-export type CountryState =
-  | { status: "idle" }
-  | { status: "error"; message: string }
-  | { status: "conflict"; message: string }
-  | { status: "saved"; node: NodeSummary }
-
 export type PreviewResult =
   | { status: "previewed"; response: PreviewPolicyResponse }
   | { status: "error"; message: string }

@@ -111,7 +111,7 @@ export function ConnectionNodePicker({
                   blocker ? "text-warning" : "font-mono text-muted-foreground"
                 )}
               >
-                {blocker ?? entry.node.country ?? ""}
+                {blocker ?? ""}
               </span>
             </SelectItem>
           ))

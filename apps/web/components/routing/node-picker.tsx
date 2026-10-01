@@ -105,7 +105,6 @@ export function NodePicker({
               <span className="truncate">{node.name}</span>
               <span className="font-mono text-[0.6875rem] text-muted-foreground">
                 {node.mesh_ipv4}
-                {node.country ? ` · ${node.country}` : ""}
               </span>
             </SelectItem>
           ))

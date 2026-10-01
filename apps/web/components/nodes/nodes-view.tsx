@@ -6,7 +6,6 @@ import {
   CopyIcon,
   EllipsisIcon,
   EyeIcon,
-  FlagIcon,
   SearchIcon,
   ShieldOffIcon,
   WaypointsIcon,
@@ -19,7 +18,6 @@ import { useMemo, useState } from "react"
 import { HintLabel } from "@/components/common/hint"
 import { OptionSelect, type Option } from "@/components/common/option-select"
 import { Segmented } from "@/components/common/segmented"
-import { CountryDialog } from "@/components/nodes/country-dialog"
 import { LastContact, ReceiptBadge, StatusBadge } from "@/components/nodes/node-status"
 import { RevokeDialog } from "@/components/nodes/revoke-dialog"
 import { useRoutes } from "@/components/shell/network-context"
@@ -76,11 +74,11 @@ const time = (value: string) => Date.parse(value) || 0
 function matches(node: NodeSummary, query: string): boolean {
   if (!query) return true
   const needle = query.toLowerCase()
-  return [node.name, node.id, node.mesh_ipv4, node.mesh_ipv6, node.country ?? "", node.agent_version]
+  return [node.name, node.id, node.mesh_ipv4, node.mesh_ipv6, node.agent_version]
     .some((field) => field.toLowerCase().includes(needle))
 }
 
-type DialogKind = "country" | "revoke"
+type DialogKind = "revoke"
 /** `nodeId` outlives `kind` so closing overlays can finish their exit animation. */
 type Dialog = { kind: DialogKind | null; nodeId: string } | null
 
@@ -156,7 +154,7 @@ export function NodesView({
           <InputGroupInput
             value={query}
             onChange={(event) => updateQuery(event.target.value)}
-            placeholder="名称、地址、标签或国家"
+            placeholder="名称、地址或标签"
             aria-label="搜索节点"
             autoComplete="off"
             spellCheck={false}
@@ -226,7 +224,6 @@ export function NodesView({
               <TableRow className="hover:bg-transparent">
                 <TableHead className="h-9 pl-5">节点</TableHead>
                 <TableHead className="hidden h-9 md:table-cell">Mesh 地址</TableHead>
-                <TableHead className="hidden h-9 sm:table-cell"><HintLabel label="国家">管理员标注，用于路由匹配；不是定位或自动地区结果。</HintLabel></TableHead>
                 <TableHead className="hidden h-9 lg:table-cell"><HintLabel label="配置确认">Agent 已校验并保存该版本配置；不代表数据面已生效。</HintLabel></TableHead>
                 <TableHead className="h-9"><HintLabel label="控制面联系">controller 最近一次接受注册或心跳的时间；不代表在线或隧道连通。</HintLabel></TableHead>
                 <TableHead className="h-9 w-10 pr-3">
@@ -254,11 +251,6 @@ export function NodesView({
 
       {dialogNode && dialogNode.revoked_at === null ? (
         <>
-          <CountryDialog
-            node={dialogNode}
-            open={dialog?.kind === "country"}
-            onOpenChange={closeDialog}
-          />
           <RevokeDialog
             node={dialogNode}
             open={dialog?.kind === "revoke"}
@@ -328,21 +320,6 @@ function NodeRow({
           <span className="text-[0.6875rem] text-muted-foreground">{node.mesh_ipv6}</span>
         </div>
       </TableCell>
-      <TableCell className="hidden py-3 sm:table-cell">
-        {revoked ? (
-          <span className="font-mono text-xs">{node.country ?? "—"}</span>
-        ) : (
-          <Button
-            variant="ghost"
-            size="sm"
-            className="-ml-2 font-mono"
-            aria-label={`设置节点 ${node.name} 的国家`}
-            onClick={() => onOpen("country")}
-          >
-            {node.country ?? <span className="font-sans text-muted-foreground">设置</span>}
-          </Button>
-        )}
-      </TableCell>
       <TableCell className="hidden py-3 lg:table-cell">
         <ReceiptBadge node={node} />
       </TableCell>
@@ -371,12 +348,6 @@ function NodeRow({
               <WaypointsIcon />
               在拓扑中查看
             </DropdownMenuItem>
-            {!revoked ? (
-              <DropdownMenuItem onClick={() => onOpen("country")}>
-                <FlagIcon />
-                设置国家
-              </DropdownMenuItem>
-            ) : null}
             <DropdownMenuSeparator />
             <DropdownMenuItem onClick={() => copy(node.id)}>
               <CopyIcon />
