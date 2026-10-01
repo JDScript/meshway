@@ -251,7 +251,19 @@ impl Agent {
         control_synced: &mut bool,
         dataplane: &mut Option<dataplane::State>,
     ) -> Result<(), AgentError> {
-        self.heartbeat().await?;
+        let heartbeat = self.heartbeat().await?;
+        // A trusted response is stale-generation evidence before any subsequent
+        // HTTP can block. This never renews a lease or installs a lower revision.
+        let revision = u32::try_from(heartbeat.node.configuration_revision)
+            .ok()
+            .filter(|revision| *revision != 0)
+            .ok_or(AgentError::Invalid(
+                "invalid heartbeat configuration revision",
+            ))?;
+        if let Some(guard) = &self.dns_guard {
+            guard.observe_revision(revision);
+        }
+        manager.invalidate_dataplane_revision(revision).await;
         let (mut receipt, mut packet_snapshot, mut fresh_at) =
             self.managed_sync_mode(manager, dataplane).await?;
         if lease.epoch.is_none() {
@@ -590,3 +602,6 @@ impl Agent {
 
 #[cfg(test)]
 mod discovery_tests;
+#[cfg(test)]
+#[path = "managed/heartbeat_tests.rs"]
+mod heartbeat_tests;
