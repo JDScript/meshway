@@ -105,6 +105,19 @@ impl Parameters {
                 "invalid WebSocket parameters",
             ));
         }
+        let uri = format!("wss://{}{}", self.host, self.path)
+            .parse::<tokio_tungstenite::tungstenite::http::Uri>()
+            .map_err(|_| {
+                io::Error::new(io::ErrorKind::InvalidInput, "invalid WebSocket upgrade URI")
+            })?;
+        if uri.authority().map(|a| a.as_str()) != Some(self.host.as_str())
+            || uri.path_and_query().map(|p| p.as_str()) != Some(self.path.as_str())
+        {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "invalid WebSocket upgrade URI",
+            ));
+        }
         Ok(())
     }
 }

@@ -225,6 +225,14 @@ fn validate(settings: &ManagedListenerSettings) -> Result<(), Error> {
                     {
                         return Err(Error::Unprocessable("invalid WebSocket path or Host"));
                     }
+                    let uri = format!("wss://{host}{path}")
+                        .parse::<axum::http::Uri>()
+                        .map_err(|_| Error::Unprocessable("invalid WebSocket upgrade URI"))?;
+                    if uri.authority().map(|a| a.as_str()) != Some(host)
+                        || uri.path_and_query().map(|p| p.as_str()) != Some(path)
+                    {
+                        return Err(Error::Unprocessable("invalid WebSocket upgrade URI"));
+                    }
                 }
                 _ => {
                     return Err(Error::Unprocessable(

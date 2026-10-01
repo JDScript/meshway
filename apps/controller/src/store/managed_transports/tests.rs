@@ -347,6 +347,9 @@ fn closed_settings_reject_unknown_transport_tls_ws_fields_and_bad_binding() {
     item = settings("node");
     item.advertised_endpoints[0].host = "0.0.0.0".into();
     assert!(validate(&item).is_err());
+    let mut item = settings("node");
+    item.vless.as_mut().unwrap().websocket_path = Some("/bad\0path".into());
+    assert!(validate(&item).is_err());
 }
 
 #[test]

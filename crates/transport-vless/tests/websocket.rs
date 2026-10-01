@@ -20,6 +20,26 @@ fn parameters() -> Parameters {
     }
 }
 
+#[test]
+fn configuration_rejects_invalid_upgrade_uris() {
+    for bad in [
+        Parameters {
+            path: "/bad\0path".into(),
+            host: "meshway.test".into(),
+        },
+        Parameters {
+            path: "/meshway".into(),
+            host: "user@meshway.test".into(),
+        },
+        Parameters {
+            path: "/meshway".into(),
+            host: "meshway.test/other".into(),
+        },
+    ] {
+        assert!(bad.validate().is_err());
+    }
+}
+
 #[tokio::test]
 async fn upgrade_headers_have_a_total_byte_budget_and_cancelled_carriers_are_closed() {
     tokio::time::timeout(Duration::from_secs(2), async {
