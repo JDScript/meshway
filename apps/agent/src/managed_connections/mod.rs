@@ -158,6 +158,7 @@ pub(crate) struct Manager {
     tun: Option<Tun>,
     discovery_options: crate::EndpointDiscoveryOptions,
     discovery_generation: u32,
+    discovery_timestamps: std::sync::Arc<discovery::TimestampGate>,
     #[cfg(unix)]
     probes: probe::Publisher,
 }
@@ -189,6 +190,7 @@ impl Manager {
             tun: None,
             discovery_options: crate::EndpointDiscoveryOptions::default(),
             discovery_generation: 0,
+            discovery_timestamps: std::sync::Arc::default(),
             #[cfg(unix)]
             probes: probe::Publisher::new(),
         }
@@ -621,6 +623,7 @@ impl Manager {
                     let generation = self.discovery_generation;
                     let deadlines = renew.subscribe();
                     let observed = observed.clone();
+                    let timestamps = self.discovery_timestamps.clone();
                     Some(tokio::spawn(async move {
                         discovery::run(
                             discovery::Carrier {
@@ -628,6 +631,7 @@ impl Manager {
                                 intent,
                                 generation,
                                 source,
+                                timestamps,
                             },
                             servers,
                             deadlines,

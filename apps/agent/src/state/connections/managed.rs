@@ -22,6 +22,12 @@ struct RuntimeLease {
     discovery_sequence: u32,
 }
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum DiscoveryReportMode {
+    Normal,
+    Shutdown,
+}
+
 impl RuntimeLease {
     fn new() -> Result<Self, AgentError> {
         Ok(Self {
@@ -158,7 +164,12 @@ impl Agent {
         if runtime_lease.epoch.is_some() {
             // No lease renewal and no failure can hold the control loop open.
             let _ = self
-                .report_discovery(&mut manager, &mut runtime_lease)
+                .report_discovery(
+                    &mut manager,
+                    &mut runtime_lease,
+                    DiscoveryReportMode::Shutdown,
+                    |_| {},
+                )
                 .await;
         }
         result
@@ -366,7 +377,10 @@ impl Agent {
             })
             .map_err(|_| AgentError::Invalid("cannot encode runtime receipt"))?
         );
-        self.report_discovery(manager, lease).await?;
+        self.report_discovery(manager, lease, DiscoveryReportMode::Normal, |receipt| {
+            println!("{receipt}")
+        })
+        .await?;
         Ok(())
     }
 
@@ -374,6 +388,8 @@ impl Agent {
         &self,
         manager: &mut Manager,
         lease: &mut RuntimeLease,
+        mode: DiscoveryReportMode,
+        mut receipt_writer: impl FnMut(&str),
     ) -> Result<(), AgentError> {
         let Some(snapshot) = manager.snapshot.as_ref() else {
             return Ok(());
@@ -393,15 +409,37 @@ impl Agent {
         };
         let body = convert(&request)?;
         let client = self.runtime_client();
+        let http_deadline = Instant::now() + Duration::from_secs(2);
         let send = client.report_endpoint_discovery(body);
         let response = tokio::select! {
             biased;
             _ = async { match &mut guard { Some(guard) => guard.changed().await, None => std::future::pending().await } } => return Ok(()),
-            _ = time::sleep(Duration::from_secs(2)) => return Ok(()),
+            _ = time::sleep_until(http_deadline) => return Ok(()),
             result = send => result,
         };
         let response = match response {
             Err(error) if error.api().is_some_and(|error| error.status == 409) => {
+                // Diagnostic watermark conflicts are not runtime ownership loss.
+                // Confirm using the generated read operation, within the same
+                // HTTP budget and generation fence; never begin/reacquire.
+                let epoch = tokio::select! {
+                    biased;
+                    _ = async { match &mut guard { Some(guard) => guard.changed().await, None => std::future::pending().await } } => return Ok(()),
+                    _ = time::sleep_until(http_deadline) => return Ok(()),
+                    result = client.get_connection_runtime_epoch() => result,
+                };
+                let epoch = match epoch {
+                    Ok(epoch) => convert::<GetConnectionRuntimeEpochResponse>(epoch)?,
+                    Err(error) if error.api().is_some_and(|error| error.status == 403) => {
+                        return Err(error.into());
+                    }
+                    Err(_) => return Ok(()),
+                };
+                if guard.as_ref().is_some_and(|guard| !guard.current())
+                    || epoch.epoch == request.epoch
+                {
+                    return Ok(());
+                }
                 manager.withdraw(Reason::LeaseSuperseded).await;
                 return Err(AgentError::Invalid(
                     "runtime lease superseded; refusing to reacquire",
@@ -425,18 +463,22 @@ impl Agent {
         if response.epoch != request.epoch || response.sequence != request.sequence {
             return Err(AgentError::Invalid("discovery report response mismatch"));
         }
+        // In particular, never synchronously touch stdout after the shutdown
+        // HTTP wait. A full pipe must not retain the daemon's state lock.
+        if mode == DiscoveryReportMode::Shutdown {
+            return Ok(());
+        }
         #[derive(serde::Serialize)]
         struct Receipt<'a> {
             endpoint_discovery: &'a ReportEndpointDiscoveryRequest,
             reported_at: chrono::DateTime<chrono::Utc>,
         }
-        println!(
-            "{}",
-            serde_json::to_string(&Receipt {
+        receipt_writer(
+            &serde_json::to_string(&Receipt {
                 endpoint_discovery: &request,
-                reported_at: response.reported_at
+                reported_at: response.reported_at,
             })
-            .map_err(|_| AgentError::Invalid("cannot encode discovery receipt"))?
+            .map_err(|_| AgentError::Invalid("cannot encode discovery receipt"))?,
         );
         Ok(())
     }
@@ -501,3 +543,6 @@ impl Agent {
         ))
     }
 }
+
+#[cfg(test)]
+mod discovery_tests;

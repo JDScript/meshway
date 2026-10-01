@@ -102,7 +102,7 @@ async fn bind_failure(address: &str, protocol: &str, error: std::io::Error) -> !
     );
 }
 
-pub(super) fn fixture(
+pub(crate) fn fixture(
     kind: ConnectionTransport,
 ) -> (NodeConnections, PrivateKey, NodeConnections, PrivateKey) {
     let a = Identity::generate().unwrap();
@@ -170,7 +170,7 @@ pub(super) fn fixture(
     )
 }
 
-pub(super) fn snapshot(payload: NodeConnections) -> AgentConnectionsSnapshot {
+pub(crate) fn snapshot(payload: NodeConnections) -> AgentConnectionsSnapshot {
     AgentConnectionsSnapshot {
         digest: meshway_protocol::connection_digest(&payload).unwrap(),
         payload,

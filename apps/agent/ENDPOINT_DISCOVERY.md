@@ -64,6 +64,13 @@ The HTTP wait is bounded to two seconds; it does not renew connection, DNS or TU
 leases. HTTP 403 stops the agent; 409 never reacquires or steals a newer epoch;
 422 withdraws stale configuration and triggers a fresh pull. Other publication
 failures are best effort. Shutdown makes one bounded withdrawal publication.
+Discovery-only 409 conflicts are confirmed with a generated epoch read within
+the same two-second budget: only a different epoch retires the runtime. A
+same-epoch diagnostic conflict is dropped without reacquisition. A retained
+process-wide UTC watermark suppresses regressed/equal-time measurements until
+the actual clock advances beyond it; times are never clamped and old observation
+expiry is never extended. Shutdown withdrawal does not emit a receipt or touch
+stdout, so a full stdout pipe cannot hold the shutdown path open.
 
 Successful publication emits stdout JSON containing `endpoint_discovery` and
 `reported_at`. The controller's admin view applies its own current-source and

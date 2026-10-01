@@ -1,7 +1,7 @@
 //! Lease-fenced STUN observations from the carrier's existing receive dispatcher.
 use std::{
     collections::{BTreeMap, VecDeque},
-    sync::{Arc, Weak},
+    sync::{Arc, Mutex, Weak},
     time::Duration,
 };
 
@@ -18,6 +18,23 @@ use tokio::{
 };
 
 use super::{Observation, Phase, controller_candidate};
+
+/// Retained across socket generations, including expiry/withdrawal. Wall-clock
+/// regression suppresses new observations rather than manufacturing timestamps
+/// or extending the previous monotonic/UTC expiry.
+#[derive(Default)]
+pub(super) struct TimestampGate(Mutex<Option<DateTime<Utc>>>);
+
+impl TimestampGate {
+    fn observe(&self, now: DateTime<Utc>) -> Option<DateTime<Utc>> {
+        let mut watermark = self.0.lock().expect("discovery timestamp gate");
+        if watermark.is_some_and(|previous| now <= previous) {
+            return None;
+        }
+        *watermark = Some(now);
+        Some(now)
+    }
+}
 
 #[derive(Clone, PartialEq, Eq)]
 pub(super) struct Source {
@@ -108,6 +125,7 @@ pub(super) struct Carrier {
     pub intent: meshway_protocol::NodeConnections,
     pub generation: u32,
     pub source: Source,
+    pub timestamps: Arc<TimestampGate>,
 }
 
 pub(super) async fn run(
@@ -122,6 +140,7 @@ pub(super) async fn run(
         intent,
         generation,
         source,
+        timestamps,
     } = carrier;
     let mut queue = VecDeque::new();
     let mut value = Publication::new(source.clone(), State::Probing);
@@ -211,14 +230,15 @@ pub(super) async fn run(
                     queue.push_back((id, server));
                     let runtime = runtime.clone();
                     let slot = slots[&id].clone();
+                    let timestamps = timestamps.clone();
                     async move {
                         let _permit = slot.acquire_owned().await.expect("round-owned semaphore");
                         let started = Instant::now();
-                        let utc = Utc::now();
+                        let utc = timestamps.observe(Utc::now())?;
                         let result = runtime
                             .discover_udp(id, server, Duration::from_millis(1000))
                             .await;
-                        (id, server, started, utc, result)
+                        Some((id, server, started, utc, result))
                     }
                 })
                 .buffer_unordered(4);
@@ -238,7 +258,8 @@ pub(super) async fn run(
                         // Adjacency probe results do not retire the carrier socket.
                     },
                     result = jobs.next() => {
-                        let Some((id, server, started, utc, result)) = result else { break false };
+                    let Some(result) = result else { break false };
+                    let Some((id, server, started, utc, result)) = result else { continue; };
                         let expiry = (started + Duration::from_secs(30)).min(until);
                         if expiry <= Instant::now() { continue; }
                         let Ok(result) = result else { continue; };

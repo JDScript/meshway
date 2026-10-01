@@ -5,6 +5,32 @@ use crate::managed_connections::{
 };
 use meshway_protocol::ConnectionTransport;
 
+#[test]
+fn injected_clock_regression_suppresses_samples_across_generations_without_clamping() {
+    let timestamps = Arc::new(TimestampGate::default());
+    let original = DateTime::parse_from_rfc3339("2026-10-01T12:00:00Z")
+        .unwrap()
+        .with_timezone(&Utc);
+    let readings = [
+        original,
+        original - chrono::Duration::seconds(10),
+        original,
+        original + chrono::Duration::nanoseconds(1),
+    ];
+    let mut clock = readings.into_iter();
+    assert_eq!(timestamps.observe(clock.next().unwrap()), Some(original));
+    let next_generation = timestamps.clone();
+    assert_eq!(next_generation.observe(clock.next().unwrap()), None);
+    assert_eq!(next_generation.observe(clock.next().unwrap()), None);
+    let genuinely_later = clock.next().unwrap();
+    assert_eq!(
+        next_generation.observe(genuinely_later),
+        Some(genuinely_later)
+    );
+    // No synthetic timestamp can be returned during rollback or equality.
+    assert_eq!(timestamps.observe(original), None);
+}
+
 async fn observer() -> (
     std::net::SocketAddr,
     tokio::task::JoinHandle<()>,
