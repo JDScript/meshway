@@ -19,11 +19,16 @@ import { discoveryLabel, discoveryOutcomeLabels, observationUsable } from "@/lib
 import { advanceDiscoveryClock, shownDiscoveryRead, type DiscoveryClock } from "@/lib/endpoint-discovery-view-model"
 import { formatDateTime } from "@/lib/time"
 
-export function EndpointDiscoveryPanel({ initial, nodeId }: {
-  initial: ControllerResult<EndpointDiscoveriesSnapshot>
-  nodeId?: string
-}) {
-  const routes = useRoutes()
+export type EndpointDiscoveries = {
+  shown: ControllerResult<EndpointDiscoveriesSnapshot>
+  /** Monotonic display clock: an expired lease never becomes usable again. */
+  clock: number
+  refreshing: boolean
+  refresh: () => void
+}
+
+/** Polled discovery reports with a clock that keeps leases ageing between reads. */
+export function useEndpointDiscoveries(initial: ControllerResult<EndpointDiscoveriesSnapshot>): EndpointDiscoveries {
   const [read, setRead] = useState({ initial, result: initial })
   const networkId = useNetworkId()
   const [now, setNow] = useState<DiscoveryClock>({ time: initial.fetchedAt, monotonicTime: null })
@@ -67,15 +72,33 @@ export function EndpointDiscoveryPanel({ initial, nodeId }: {
       document.removeEventListener("visibilitychange", visible)
     }
   }, [refresh, sampleClock])
+  return { shown, clock: Math.max(now.time, shown.fetchedAt), refreshing, refresh }
+}
+
+export function EndpointDiscoveryPanel({ initial, nodeId }: {
+  initial: ControllerResult<EndpointDiscoveriesSnapshot>
+  nodeId?: string
+}) {
+  return <EndpointDiscoveryReport discoveries={useEndpointDiscoveries(initial)} nodeId={nodeId} />
+}
+
+/** The raw report for one node: state, sockets, observer outcomes and technical fields. */
+export function EndpointDiscoveryReport({ discoveries, nodeId, embedded = false }: {
+  discoveries: EndpointDiscoveries
+  nodeId?: string
+  /** Inside the node's carrier view: no link back to the node page. */
+  embedded?: boolean
+}) {
+  const routes = useRoutes()
+  const { shown, clock, refreshing, refresh } = discoveries
   const report = shown.ok && nodeId ? shown.data.nodes.find((node) => node.node_id === nodeId) : undefined
-  const clock = Math.max(now.time, shown.fetchedAt)
 
   return <Panel title="UDP 承载地址观测" description="来源：Agent 的实际承载 socket · 地址尚未验证可达。" actions={<Button size="sm" variant="outline" disabled={refreshing} onClick={refresh}>{refreshing ? "读取中…" : "刷新观测"}</Button>} bodyClassName="flex min-w-0 flex-col gap-3 px-4 py-3 text-xs">
     <div data-testid="endpoint-discovery" className="flex min-w-0 flex-col gap-3">
       {!shown.ok ? <FailureNotice title="端点观测读取失败" nextStep="点击刷新观测重试；持续失败时检查控制面服务。" error={shown.error} /> : !nodeId ? <p className="text-muted-foreground">选择源节点，查看它实际 UDP 承载的 STUN 地址观测。</p> : <>
         <div className="flex flex-wrap items-center gap-2">
           <Badge variant="outline" data-testid="discovery-status">{discoveryLabel(report, clock)}</Badge>
-          <Link href={routes.machine(nodeId, "connections")} className="underline underline-offset-4">节点连接配置与运行状态</Link>
+          {embedded ? null : <Link href={routes.machine(nodeId, "connections")} className="underline underline-offset-4">节点连接配置与运行状态</Link>}
         </div>
         {report?.reported_at ? <p className="text-muted-foreground">上报于 {formatDateTime(report.reported_at)}</p> : null}
         {report ? <DiagnosticDetails title="报告技术详情"><dl className="grid min-w-0 gap-x-4 gap-y-1 sm:grid-cols-2">

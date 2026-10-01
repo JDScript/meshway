@@ -212,7 +212,7 @@ test("connection identities, reverse-dial intent and independent receipts cross 
       expect(saved.configuration.candidates.find(candidate => candidate.id === "nyc-to-lax")?.listener_id).toBe("lax-udp-renamed");
       expect(saved.configuration.candidates.find(candidate => candidate.id === "sha-to-lax")?.listener_id).toBe("lax-vless");
       await page.getByRole("tab", { name: "概览", exact: true }).click();
-      await page.getByRole("tab", { name: "连接与承载", exact: true }).click();
+      await page.getByRole("tab", { name: "监听与承载", exact: true }).click();
       await expandDetails(page, "高级手工连接配置");
       await expect(page.getByTestId("connections-base-revision")).toHaveText(`r${saved.revision}`);
       await expect(page.getByTestId("listener-row").filter({ hasText: "lax-udp-renamed" })).toBeVisible();

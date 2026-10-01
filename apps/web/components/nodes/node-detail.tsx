@@ -5,7 +5,9 @@ import { useNetworkId } from "@/components/network/network-workspace"
 
 import type { ConnectionNode, ConnectionsSnapshot, EndpointDiscoveriesSnapshot, NodeSummary } from "@meshway/control-client"
 import {
+  ActivityIcon,
   CircleAlertIcon,
+  EllipsisIcon,
   RefreshCwIcon,
   CableIcon,
   FlagIcon,
@@ -19,15 +21,16 @@ import { useCallback, useState, type ReactNode } from "react"
 
 import { PageHeader } from "@/components/shell/page-header"
 import { ManagedDataplanePanel } from "@/components/nodes/managed-dataplane-panel"
+import { NodeCarriers } from "@/components/nodes/node-carriers"
 import { NodeDnsPanel, type NodeDnsNetwork } from "@/components/nodes/node-dns-panel"
 import { ConnectionsEditor } from "@/components/connections/connections-editor"
 import { useConnectionsHasDraft } from "@/components/connections/draft-store"
 import { ConnectionIdentityDetails, ConnectionReceipt } from "@/components/connections/node-connection-facts"
-import { EndpointDiscoveryPanel } from "@/components/connections/endpoint-discovery-panel"
 import { NodeRuntimePanel, RuntimeChip } from "@/components/connections/runtime-panel"
 import { useConnectionRuntimes, type InitialRuntimes, type Runtimes } from "@/components/connections/use-runtimes"
 import { ControllerUnavailable } from "@/components/common/controller-states"
 import { CopyButton } from "@/components/common/copy-button"
+import { Hint } from "@/components/common/hint"
 import { Panel } from "@/components/common/panel"
 import { DiagnosticDetails } from "@/components/common/diagnostic-details"
 import { SectionHeader } from "@/components/common/section-header"
@@ -38,6 +41,7 @@ import { LastContact, ReceiptBadge, StatusBadge } from "@/components/nodes/node-
 import { RevokeDialog } from "@/components/nodes/revoke-dialog"
 import { Badge } from "@/components/ui/badge"
 import { Button, buttonVariants } from "@/components/ui/button"
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/dropdown-menu"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { runtimeFor } from "@/lib/connection-runtime-model"
 import {
@@ -55,6 +59,7 @@ import { nextPartStatus, type PartStatus } from "@/lib/node-status"
 import { formatClock, formatDateTime } from "@/lib/time"
 import { topologyFlowHref } from "@/lib/flow-navigation"
 import { diagnosticsHref } from "@/lib/connectivity-guidance"
+import { cn } from "@/lib/utils"
 
 export type NodeTab = "overview" | "connections"
 
@@ -161,17 +166,11 @@ export function NodeDetail({
         status={<StatusBadge node={node} />}
         meta={
           <>
-            <span className="font-mono">{node.mesh_ipv4}</span>
+            <span className="inline-flex items-center gap-0.5 font-mono text-[0.8125rem] text-foreground">
+              {node.mesh_ipv4}
+              <CopyButton value={node.mesh_ipv4} label="复制 Mesh IPv4" iconOnly variant="ghost" />
+            </span>
             <LastContact node={node} fetchedAt={fetchedAt} />
-            {tags.ok && tags.tags.length > 0 ? (
-              <span className="flex flex-wrap gap-1">
-                {tags.tags.map((tag) => (
-                  <span key={tag} className="rounded border bg-muted/60 px-1.5 font-mono text-[0.6875rem] leading-4">
-                    {tag.slice(4)}
-                  </span>
-                ))}
-              </span>
-            ) : null}
           </>
         }
         actions={
@@ -182,22 +181,34 @@ export function NodeDetail({
                 检查访问
               </Link>
             ) : null}
-            <Link href={routes.topology({ node: node.id })} className={buttonVariants({ variant: "outline" })}>
-              <WaypointsIcon data-icon="inline-start" />
-              在拓扑中查看
-            </Link>
-            {!revoked ? (
-              <>
-                <Button variant="outline" onClick={() => setDialog("country")}>
-                  <FlagIcon data-icon="inline-start" />
-                  设置国家
-                </Button>
-                <Button variant="destructive" onClick={() => setDialog("revoke")}>
-                  <ShieldOffIcon data-icon="inline-start" />
-                  撤销…
-                </Button>
-              </>
-            ) : null}
+            <DropdownMenu>
+              <DropdownMenuTrigger render={<Button variant="outline" size="icon" aria-label="更多节点操作" />}>
+                <EllipsisIcon />
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end" className="w-44">
+                <DropdownMenuItem render={<Link href={routes.topology({ node: node.id })} />}>
+                  <WaypointsIcon />
+                  在拓扑中查看
+                </DropdownMenuItem>
+                <DropdownMenuItem render={<Link href={diagnosticsHref(routes, node.id)} />}>
+                  <ActivityIcon />
+                  诊断此节点
+                </DropdownMenuItem>
+                {!revoked ? (
+                  <>
+                    <DropdownMenuItem onClick={() => setDialog("country")}>
+                      <FlagIcon />
+                      设置国家
+                    </DropdownMenuItem>
+                    <DropdownMenuSeparator />
+                    <DropdownMenuItem variant="destructive" onClick={() => setDialog("revoke")}>
+                      <ShieldOffIcon />
+                      撤销节点…
+                    </DropdownMenuItem>
+                  </>
+                ) : null}
+              </DropdownMenuContent>
+            </DropdownMenu>
           </>
         }
       />
@@ -223,7 +234,7 @@ export function NodeDetail({
           </TabsTrigger>
           <TabsTrigger value="connections" className="flex-none px-3">
             <CableIcon />
-            连接与承载
+            监听与承载
           </TabsTrigger>
         </TabsList>
 
@@ -242,25 +253,27 @@ export function NodeDetail({
         </TabsContent>
 
         <TabsContent value="connections" className="flex flex-col gap-4 pt-4">
-          <div className="flex flex-wrap items-center justify-between gap-2">
-            <p className="text-xs text-muted-foreground">运行观测来自 Agent 上报；本地检查可在诊断工作台生成命令。</p>
-            <Link href={diagnosticsHref(routes, node.id)} className={buttonVariants({ variant: "outline", size: "sm" })}>诊断此节点</Link>
-          </div>
           {latest.ok ? (
             <>
               <StatusSummary>
-                <Metric label="已保存意图">{savedScope?.listeners.length ?? 0} 个监听 · {savedScope?.outgoing.length ?? 0} 个主动连接</Metric>
+                <Metric label="已保存">{savedScope?.listeners.length ?? 0} 个监听 · {savedScope?.outgoing.length ?? 0} 个主动连接</Metric>
                 {entry ? <Metric label="节点回执"><ConnectionReceipt entry={entry} revision={latest.data.revision} /></Metric> : null}
                 {entry && readiness(entry) !== "ready" ? <span className="text-warning">{readinessLabels[readiness(entry)]} · 展开连接身份详情检查</span> : null}
+                <Link href={diagnosticsHref(routes, node.id)} className={cn(buttonVariants({ variant: "ghost", size: "sm" }), "ml-auto")}>诊断此节点</Link>
               </StatusSummary>
+              <NodeCarriers
+                nodeId={node.id}
+                snapshot={latest.data}
+                runtimes={runtimes}
+                discoveries={discoveries}
+              />
               <NodeRuntimePanel nodeId={node.id} nodes={latest.data.nodes} runtimes={runtimes} />
-              <DiagnosticDetails title="UDP 地址观测与当前启用帮助">
-                <EndpointDiscoveryPanel initial={discoveries} nodeId={node.id} />
+              <DiagnosticDetails title="连接身份与当前启用帮助">
                 {entry ? <ConnectionIdentityDetails entry={entry} revision={latest.data.revision} /> : null}
                 {!revoked ? <ManagedDataplanePanel /> : null}
               </DiagnosticDetails>
               <DiagnosticDetails title="高级手工连接配置" open={hasConnectionDraft || !latest.data.valid}>
-                <SectionHeader id="node-connections-plan" title="连接配置（草稿）" description="当前可用的监听与主动连接配置。保存意图；实际连接以上方运行报告为准。" />
+                <SectionHeader id="node-connections-plan" title="连接配置（草稿）" description="保存的是意图；实际状态以上方报告为准。" />
                 <ConnectionsEditor
                   snapshot={latest.data}
                   scopeNodeId={node.id}
@@ -315,13 +328,13 @@ function Overview({
       <Panel title="身份与地址" bodyClassName="px-4 py-1 sm:px-5">
         <dl className="divide-y">
           <Row label="名称">{node.name}</Row>
-          <Row label="Mesh IPv4" hint="隧道内地址，不是其他节点建连用的地址">
+          <Row label="Mesh IPv4" hint="隧道内地址，不是其他节点建连用的对外地址。">
             <CopyValue value={node.mesh_ipv4} label="复制 IPv4" />
           </Row>
           <Row label="Mesh IPv6">
             <CopyValue value={node.mesh_ipv6} label="复制 IPv6" />
           </Row>
-          <Row label="国家" hint="管理员标注，用于路由匹配，不是定位结果">
+          <Row label="国家" hint="管理员标注，用于路由匹配；不是定位或自动地区结果。">
             <span className="flex items-center justify-between gap-2">
               <span className="font-mono">{node.country ?? <span className="font-sans text-muted-foreground">未设置</span>}</span>
               {onSetCountry ? (
@@ -331,7 +344,7 @@ function Overview({
               ) : null}
             </span>
           </Row>
-          <Row label="标签" hint="管理员分组，用于访问规则">
+          <Row label="标签" hint="管理员维护的分组，供访问授权引用。">
             <span className="flex items-center justify-between gap-2">
               {!tags.ok ? (
                 <span className="text-destructive">读取失败</span>
@@ -376,7 +389,7 @@ function Overview({
       <div className="flex flex-col gap-4">
         <Panel title="控制面" bodyClassName="px-4 py-1 sm:px-5">
           <dl className="divide-y">
-            <Row label="最后联系" hint="controller 最近一次接受注册或心跳，不代表在线或连通">
+            <Row label="控制面联系" hint="controller 最近一次接受注册或心跳；不代表在线或隧道连通。">
               <LastContact node={node} fetchedAt={fetchedAt} detail />
             </Row>
             <Row label="IP / 路由配置">
@@ -386,11 +399,11 @@ function Overview({
         </Panel>
 
         <Panel
-          title="连接"
+          title="监听与承载"
           actions={
             <Button size="sm" variant="outline" onClick={onOpenConnections}>
               <CableIcon data-icon="inline-start" />
-               查看连接
+              监听与承载
             </Button>
           }
           bodyClassName="px-4 py-1 sm:px-5"
@@ -424,7 +437,6 @@ function Overview({
         </Panel>
 
         <NodeDnsPanel node={node} network={network} />
-        {node.revoked_at === null ? <DiagnosticDetails title="当前节点启用帮助"><ManagedDataplanePanel /></DiagnosticDetails> : null}
       </div>
     </div>
   )
@@ -433,9 +445,9 @@ function Overview({
 function Row({ label, hint, children }: { label: string; hint?: string; children: ReactNode }) {
   return (
     <div className="grid grid-cols-[6.5rem_minmax(0,1fr)] items-start gap-3 py-2.5 sm:grid-cols-[8rem_minmax(0,1fr)]">
-      <dt className="flex flex-col gap-0.5 text-xs text-muted-foreground">
+      <dt className="flex items-center gap-1 pt-px text-xs text-muted-foreground">
         {label}
-        {hint ? <span className="text-[0.625rem] leading-snug text-muted-foreground/80">{hint}</span> : null}
+        {hint ? <Hint label={label}>{hint}</Hint> : null}
       </dt>
       <dd className="min-w-0 text-[0.8125rem]">{children}</dd>
     </div>
@@ -489,3 +501,4 @@ function StaleReadHint({
     </div>
   )
 }
+

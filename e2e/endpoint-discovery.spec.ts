@@ -93,13 +93,13 @@ test("node-authenticated fixture self-reports display as leased unverified carri
     await expect(panel.getByTestId("discovery-status")).toHaveText("观测已失效");
     await expect(panel.getByRole("button", { name: "复制历史观测 IP:port（失效）", exact: true })).toBeDisabled();
     await page.goto(`${ui.at("/machines")}/${awaiting.id}?tab=connections`);
-    await expandDetails(page, "UDP 地址观测与当前启用帮助");
+    await expandDetails(page, "地址观测报告与启用帮助");
     await expect(page.getByTestId("discovery-status")).toHaveText("尚无报告");
     await expect(page.getByTestId("endpoint-discovery")).not.toContainText(mappedEndpoint);
     await expandDetails(page, "当前 STUN 启用帮助");
     await expect(page.getByTestId("endpoint-discovery")).toContainText("不另起第二个 daemon");
     await page.goto(`${ui.at("/machines")}/${carrier.id}?tab=connections`);
-    await expandDetails(page, "UDP 地址观测与当前启用帮助");
+    await expandDetails(page, "地址观测报告与启用帮助");
     await expect(page.getByTestId("endpoint-discovery")).toContainText("fixture-carrier-udp");
     // Only this isolated fixture process is stopped. A failed authenticated read
     // must replace all last-good observation values with a real retryable error.

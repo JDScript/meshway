@@ -16,7 +16,6 @@ import {
   freshnessLabels,
   neighborCounts,
   neighborLabel,
-  reasonLabels,
   runtimeFor,
   runtimeFreshness,
   runtimeSummary,
@@ -102,11 +101,11 @@ export function NodeRuntimePanel({
       title={
         <span className="flex flex-wrap items-center gap-2">
           <ActivityIcon className="size-4 text-muted-foreground" aria-hidden="true" />
-          实际连接状态
+          Agent 运行报告
           {runtimes.snapshot !== null ? <FreshnessBadge freshness={freshness} /> : null}
         </span>
       }
-       description="来源：Agent 自报的监听与邻居认证探测 · 业务授权另由 Access 决定。"
+      description="运行阶段与全部邻居的认证探测，由 Agent 自报。"
       actions={
         <span className="flex items-center gap-1.5">
           {runtimes.fetchedAt !== null ? (
@@ -133,7 +132,7 @@ export function NodeRuntimePanel({
 
       {runtimes.snapshot === null ? null : !observation || freshness === "unreported" ? (
         <p className="text-xs text-muted-foreground">
-          尚无运行报告。查看此节点的控制面联系；当前启用参数可在节点高级帮助中找到。
+          尚无运行报告。
         </p>
       ) : (
         <>
@@ -155,32 +154,6 @@ export function NodeRuntimePanel({
           </dl>
 
           {observation.reason !== "none" ? <p role="status" className="text-xs text-warning">{runtimeNextSteps[observation.reason]}</p> : null}
-
-          {observation.listeners.length > 0 ? (
-            <div className={cn("flex flex-col gap-1.5", history && "opacity-70")}>
-              <h3 className="text-xs font-medium">本机监听</h3>
-              <ul className="flex flex-wrap gap-1.5">
-                {observation.listeners.map((listener) => (
-                  <li key={listener.listener_id}>
-                    <Badge
-                      variant="outline"
-                      className={cn("max-w-full font-normal", listener.state === "error" ? "text-destructive" : "")}
-                    >
-                      <span className="truncate font-mono">{listener.listener_id}</span>
-                      <span className="text-muted-foreground">
-                        {listener.state === "bound" ? "已监听" : reasonLabels[listener.reason] || "错误"}
-                      </span>
-                    </Badge>
-                  </li>
-                ))}
-              </ul>
-              {observation.listeners.some((listener) => listener.reason !== "none") ? (
-                <ul aria-label="监听问题下一步" className="flex flex-col gap-1 text-xs text-warning">
-                  {[...new Set(observation.listeners.filter((listener) => listener.reason !== "none").map((listener) => listener.reason))].map((reason) => <li key={reason}>{runtimeNextSteps[reason]}</li>)}
-                </ul>
-              ) : null}
-            </div>
-          ) : null}
 
           <div className={cn("flex flex-col gap-1.5", history && "opacity-70")}>
             <h3 className="text-xs font-medium">邻居</h3>
@@ -239,8 +212,8 @@ export function NodeRuntimePanel({
                 </ul>
               </div>
             )}
-            {observation.peers.length > 0 ? <p className="text-[0.6875rem] text-muted-foreground">
-              「已认证」表示 agent 最近完成了一次邻居认证探测；RTT 仅来自该探测。
+            {observation.peers.length > 0 ? <p className="text-xs text-muted-foreground">
+              「已认证」表示最近一次邻居认证探测成功；RTT 仅来自该探测。
             </p> : null}
           </div>
           {observation.peers.some((peer) => peer.reason !== "none") ? <ul aria-label="连接问题下一步" className="flex flex-col gap-1 text-xs text-warning">{observation.peers.filter((peer) => peer.reason !== "none").map((peer, index) => <li key={index}>{nodeName(nodes, peer.peer_node_id)}：{runtimeNextSteps[peer.reason]}</li>)}</ul> : null}

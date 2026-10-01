@@ -16,6 +16,7 @@ import Link from "next/link"
 import { useRouter } from "next/navigation"
 import { useMemo, useState } from "react"
 
+import { HintLabel } from "@/components/common/hint"
 import { OptionSelect, type Option } from "@/components/common/option-select"
 import { Segmented } from "@/components/common/segmented"
 import { CountryDialog } from "@/components/nodes/country-dialog"
@@ -225,9 +226,9 @@ export function NodesView({
               <TableRow className="hover:bg-transparent">
                 <TableHead className="h-9 pl-5">节点</TableHead>
                 <TableHead className="hidden h-9 md:table-cell">Mesh 地址</TableHead>
-                <TableHead className="hidden h-9 sm:table-cell">国家</TableHead>
-                <TableHead className="hidden h-9 lg:table-cell">配置确认</TableHead>
-                <TableHead className="h-9">控制面联系</TableHead>
+                <TableHead className="hidden h-9 sm:table-cell"><HintLabel label="国家">管理员标注，用于路由匹配；不是定位或自动地区结果。</HintLabel></TableHead>
+                <TableHead className="hidden h-9 lg:table-cell"><HintLabel label="配置确认">Agent 已校验并保存该版本配置；不代表数据面已生效。</HintLabel></TableHead>
+                <TableHead className="h-9"><HintLabel label="控制面联系">controller 最近一次接受注册或心跳的时间；不代表在线或隧道连通。</HintLabel></TableHead>
                 <TableHead className="h-9 w-10 pr-3">
                   <span className="sr-only">操作</span>
                 </TableHead>
@@ -248,7 +249,7 @@ export function NodesView({
         )}
       </div>
       <p className="text-xs text-muted-foreground">
-        显示 {visible.length} / {nodes.length} 个节点。「控制面联系」是 controller 最近一次接受注册或心跳的时间，不代表在线或连通。
+        显示 {visible.length} / {nodes.length} 个节点
       </p>
 
       {dialogNode && dialogNode.revoked_at === null ? (
@@ -364,7 +365,7 @@ function NodeRow({
             </DropdownMenuItem>
             <DropdownMenuItem render={<Link href={routes.machine(node.id, "connections")} />}>
               <CableIcon />
-              连接与承载
+              监听与承载
             </DropdownMenuItem>
             <DropdownMenuItem render={<Link href={routes.topology({ node: node.id })} />}>
               <WaypointsIcon />

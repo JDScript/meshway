@@ -73,7 +73,7 @@ test("console task surfaces preserve disclosures, expired copy eligibility, deep
     await expect(page.getByTestId("endpoint-discovery")).toBeHidden();
     await toggleByKeyboard(page, "高级手工连接配置");
     await expect(page.getByTestId("connections-editor")).toBeVisible();
-    await toggleByKeyboard(page, "UDP 地址观测与当前启用帮助");
+    await toggleByKeyboard(page, "地址观测报告与启用帮助");
     const panel = page.getByTestId("endpoint-discovery");
     await expect(panel.getByTestId("discovery-status")).toHaveText("未验证候选观测");
     await expect(panel.getByText(/epoch/)).toBeHidden();
@@ -83,11 +83,11 @@ test("console task surfaces preserve disclosures, expired copy eligibility, deep
     await toggleByKeyboard(page, "报告技术详情");
     await expect(panel.getByRole("button", { name: "复制观测 IP:port", exact: true })).toBeEnabled();
     // The observer keeps ageing while its outer disclosure is closed.
-    await toggleByKeyboard(page, "UDP 地址观测与当前启用帮助");
+    await toggleByKeyboard(page, "地址观测报告与启用帮助");
     await page.clock.install();
     await page.clock.setSystemTime(new Date(Date.parse(expiresAt) + 1));
     await page.clock.runFor(1_000);
-    await toggleByKeyboard(page, "UDP 地址观测与当前启用帮助");
+    await toggleByKeyboard(page, "地址观测报告与启用帮助");
     await expect(panel.getByRole("button", { name: "复制历史观测 IP:port（失效）", exact: true })).toBeDisabled();
     await page.clock.setSystemTime(new Date(Date.parse(expiresAt) - 10_000));
     await page.clock.runFor(1_000);
