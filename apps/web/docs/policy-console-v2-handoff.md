@@ -1,6 +1,6 @@
 # Policy console v2：语义与交付交接（提案）
 
-状态：**提案，未确认**。本文件只放在 `apps/web/docs`，不属于正式文档站；访问语义、标签模型、中转许可由 main 与用户决定。前端不得把本文中的新字段当作已实现。
+状态：第 2 节的四项语义已于 2026-10-01 由用户确认，main 冻结的 v2 wire 见第 8 节；其余仍为**提案**。本文件只放在 `apps/web/docs`，不属于正式文档站；访问语义、标签模型、中转许可由 main 与用户决定。前端不得把本文中的新字段当作已实现。
 
 基线：`a02a6f4`，分支 `feat/policy-console-v2`。
 
@@ -16,7 +16,7 @@
 
 `zod@4.6.5` 的 `z.toJSONSchema(zRoutingPolicy)` 可用（已在本地验证），但会丢失 `.refine()` 的长度约束和 OpenAPI 的 `description`。OpenAPI `components.schemas` 本身就是 JSON Schema 2020-12，带 `description`、`minLength/maxLength`，更适合补全和悬停帮助。
 
-## 2. 访问语义提案（供 main / 用户决策，前端不冻结）
+## 2. 访问语义提案（已由第 8 节冻结版取代，保留作背景）
 
 目标：访问回答"谁可以访问谁"；路由回答"走哪条路"；中转许可回答"谁愿意替谁转发"。三者取交集：
 
@@ -160,3 +160,31 @@ PolicyDocument<T> = {
 | Rust 契约、OpenAPI、生成器、`packages/**`、根配置、lockfile、依赖添加 | main |
 | 访问 / 中转 / 标签语义决定 | main + 用户 |
 | 正式 `docs/` | main（本文件是交接，不进文档站） |
+
+## 8. 对 main 冻结的 v2 wire 的前端反馈
+
+冻结版：`MeshAccessPolicy { default_action: "allow"|"reject", rules: [{ id, source: string[], destination: string[], action: "allow"|"reject", bidirectional: boolean }] }`；选择器 `"*"` | `"node:<FULLID>"` | `"tag:<lowercase>"`；标签另有 `{ revision, tags: [{ tag, description }], assignments: [{ node_id, tags }] }`。
+
+请在 Rust 契约中写成**可生成的 schema 约束**，让 Web 的生成 Zod 直接报错并定位，而不是只在 422 里出现：
+
+1. **选择器 pattern**：`^(\*|node:[^\s]+|tag:[a-z0-9][a-z0-9-]{0,62})$`（tag 长度 / 字符集由 main 定；前端 `lib/access-selector.ts` 中的 `TAG_SELECTOR` 是临时值，生成后删除）。
+2. **`*` 独立**：建议 schema 用 `oneOf: [{ const: ["*"] }, { items: { not: { const: "*" } } }]` 或等价写法；若生成器不支持，至少保证诊断 `field` 指向 `rules[i].source[j]`。
+3. **`minItems: 1`、`uniqueItems`**：空列表含义不明（"无" 还是 "全部"），应直接拒绝。
+4. **规则 ID**：沿用 `^[A-Za-z0-9._-]{1,64}$`，并说明是否允许 Web 生成（当前 grant 用 64 位 hex）。
+5. **诊断定位约定**：`PolicyDiagnostic.rule_id` = 规则 ID，`field` 使用 `rules[0].source[1]` 形式（`lib/policy-document.ts#parseFieldPath` 已按此映射到 JSONC 文本范围）。
+6. **引用失效**：未知 tag、已撤销 / 无公钥 node 被规则引用时的行为需明确——建议与现状一致：原文保留、`valid: false` + 诊断，下发的编译结果整体失败关闭。空成员 tag 只是"不匹配任何节点"，应为警告而非错误。
+7. **`*` 的成员**：确认"已注册"是否排除已撤销、未发布公钥的节点；UI 文案按"当前网络中已注册（未撤销）的节点"书写（`ALL_SELECTOR_HINT`）。
+8. **标签与授权的 CAS**：删除 / 重命名被规则引用的 tag、或 `setNodeTags` 都会改变编译结果。建议共用全局 revision（与路由、授权一致），并规定删除被引用 tag 时 422 还是保留诊断。
+9. **`x-meshway-ref` 扩展**：`source[]`/`destination[]` 标 `"selector"`，`assignments[].node_id` 与路由中的 node 字段标 `"node"`，`assignments[].tags[]` 标 `"tag"`。`lib/jsonc-complete.ts` 已按该扩展提供节点 / 标签补全，不硬编码字段名。
+10. **`source_jsonc`**：请求可选、响应 nullable。建议：服务端用 JSONC 解析器（Rust 可用 `jsonc-parser` crate）解析并要求解析结果与 `policy` 完全相等，否则 422，避免原文与生效策略分叉；上限与策略相同量级（例如 256 KiB）；迁移或服务端规范化导致不相等时置 `null`，Web 显示"注释已因服务端改写而丢弃"。同一机制也用于路由策略时，请一并加到 `SavePolicyRequest`。
+11. **双向规则在预览中的输出**：组合预览应返回命中的 `rule_id` 和 `matched_direction: "forward"|"reverse"`，UI 在同一张卡片上标出方向，不拆两行。
+12. **组合预览**：输入 `{ flow, routing_policy?, access_policy?, tags? }`（草稿可选，缺省用已保存值），输出分阶段：`route`（RouteDecision）、`access`（rule_id / default、方向）、`compiled_path_authorized`、`revision`。只是计划，不是 trace。
+
+依赖最终清单（无变化）：上文第 4 节的 CodeMirror 6 包 + `jsonc-parser@3.3.1`。若 control-client 直接导出生成的 JSON Schema（第 3 节第 2 项），Web **不需要** `zod` 直接依赖。
+
+本轮已在 `apps/web/lib` 完成、可在 DTO 生成后直接接入的部分：
+
+- `jsonc.ts` / `policy-document.ts`：共享草稿、CAS、无效缓冲区保护、注释保留的图形编辑。
+- `jsonc-complete.ts`：容错定位 + 基于 JSON Schema（`$ref`、`anyOf/oneOf`、`items`、`enum`、nullable）的字段名 / 枚举 / 引用补全；测试直接使用 `packages/protocol/openapi.json`。
+- `access-selector.ts`：选择器解析与列表预检、`*` 文案、双向规则的反向读取。
+- 现有 path grant 的矩阵视图（迁移后该视图与 legacy 编辑器一并删除，不保留 legacy 路径编辑）。
