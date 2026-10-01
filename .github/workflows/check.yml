@@ -60,6 +60,8 @@ jobs:
             command: python3 -B -m unittest discover -s experiments/transport -p 'test_*.py'
           - directory: experiments/tunnel-throughput
             command: python3 -B -m unittest discover -s experiments/tunnel-throughput -p 'test_*.py'
+          - directory: experiments/exit-dataplane
+            command: python3 -B -m unittest discover -s experiments/exit-dataplane -p 'test_*.py'
           - directory: experiments/netcheck
             command: python3 -B -m unittest discover -s experiments/netcheck -p 'test_*.py'
           - directory: experiments/dns-resolver

@@ -14,12 +14,14 @@ python3 experiments/transport/performance_lock.py docker build \
   -t meshway-exit:p1c -f experiments/exit-dataplane/Dockerfile .
 python3 experiments/transport/performance_lock.py docker build \
   --target verification -t meshway-exit:verified -f experiments/exit-dataplane/Dockerfile .
-python3 experiments/transport/performance_lock.py python3 experiments/exit-dataplane/run.py \
+python3 experiments/exit-dataplane/launch.py \
   --image meshway-exit:p1c \
   --artifacts /private/var/folders/8n/20x15sl9797cdg9sdqfj803w0000gn/T/opencode/meshway-exit-new-run
 ```
 
-`--cases` 可选单项重验；默认完整矩阵。artifact目录必须没有 `result.json`，防止覆盖已有证据。脚本不自行嵌套加锁，必须用上面的wrapper（避免同一进程重复flock死锁）。Docker namespace sysctl为1用于Docker常见的只读/proc/sys环境，生产自动启用函数仍尝试在收到出口职责时设置与验证；无权限真实报错，不宣称已应用。
+`--cases`可选单项重验；默认完整矩阵。artifact目录必须没有 `result.json`，防止覆盖已有证据。`launch.py`使用共享 `locked_launch`（fixture FD为 `MESHWAY_EXIT_PERF_LOCK_FD`），转发SIGINT/SIGTERM并持锁等待清理；`run.py`使用共享 `performance_lock(inherited_env=...)`，已有 `MESHWAY_PERF_LOCK_FD`时复用描述符，直接调用也会使用同一个规范锁。所有Docker子命令和namespace字节传输继承FD，拒绝锁外运行，不另建锁实现。Docker namespace sysctl为1用于常见只读/proc/sys，生产函数仍尝试设置与验证；无权限真实报错。
+
+无Docker的CI单测：`python3 -B -m unittest discover -s experiments/exit-dataplane -p 'test_*.py'`。覆盖锁外拒绝、launcher继承不嵌套/不释放父锁、子命令FD传递与精确所有权清理。
 
 ## 拓扑与条件
 

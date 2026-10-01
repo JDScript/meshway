@@ -15,10 +15,22 @@ import uuid
 ROOT = Path(__file__).resolve().parents[2]
 HERE = Path(__file__).resolve().parent
 RUN = '/run/meshway-exit'
+sys.path.insert(0, str(ROOT / 'experiments/transport'))
+from performance_lock import performance_environment, performance_lock, validate_descriptor
+
+LOCK_DESCRIPTOR = None
+
+
+def docker_process_options():
+    if LOCK_DESCRIPTOR is None:
+        raise RuntimeError('Docker operations require the shared Meshway performance lock')
+    validate_descriptor(LOCK_DESCRIPTOR)
+    return {'pass_fds': (LOCK_DESCRIPTOR,), 'env': {**performance_environment(), 'MESHWAY_PERF_LOCK_FD': str(LOCK_DESCRIPTOR)}}
 
 
 def command(*args, check=True, timeout=60):
-    p = subprocess.run(args, capture_output=True, text=True, timeout=timeout)
+    p = subprocess.run(args, capture_output=True, text=True, timeout=timeout,
+                       **(docker_process_options() if args[0] == 'docker' else {}))
     if check and p.returncode:
         raise RuntimeError(f'Command failed: {args[:4]}: {p.stderr[-1500:]}')
     return p
@@ -76,7 +88,7 @@ class Fixture:
         p = subprocess.run(['docker', 'exec', '-i', self.nodes[node], 'python3', '-c',
                             'import os,sys; f=os.open(sys.argv[1],os.O_WRONLY|os.O_CREAT|os.O_EXCL,0o600); '
                             's=os.fdopen(f,"wb"); s.write(sys.stdin.buffer.read()); s.close()', destination],
-                           input=Path(source).read_bytes(), capture_output=True, timeout=30)
+                           input=Path(source).read_bytes(), capture_output=True, timeout=30, **docker_process_options())
         if p.returncode:
             raise RuntimeError('Namespace byte transfer failed; private data suppressed')
 
@@ -438,5 +450,7 @@ def main():
 
 
 if __name__ == '__main__':
-    # Run via performance_lock.py; the caller retains the shared lock through Docker.
-    sys.exit(main())
+    # A wrapper/launcher descriptor is reused, never recursively acquired.
+    with performance_lock(inherited_env='MESHWAY_EXIT_PERF_LOCK_FD') as descriptor:
+        LOCK_DESCRIPTOR = descriptor
+        sys.exit(main())
