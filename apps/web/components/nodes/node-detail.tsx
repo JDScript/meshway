@@ -65,6 +65,7 @@ export function NodeDetail({
   connections,
   controllerUrl,
   initialRuntimes,
+  tags,
 }: {
   node: NodeSummary
   fetchedAt: number
@@ -72,6 +73,8 @@ export function NodeDetail({
   connections: ConnectionsPageRead
   controllerUrl: string
   initialRuntimes: InitialRuntimes
+  /** This node's tags, or an error when the tag snapshot could not be read. */
+  tags: { ok: true; tags: string[] } | { ok: false; error: string }
 }) {
   // The URL is the source of truth: history navigation can restore a cached
   // render whose server-provided tab is older than the entry's URL.
@@ -212,6 +215,7 @@ export function NodeDetail({
             runtimes={runtimes}
             onOpenConnections={() => changeTab("connections")}
             onSetCountry={revoked ? null : () => setDialog("country")}
+            tags={tags}
           />
         </TabsContent>
 
@@ -265,6 +269,7 @@ function Overview({
   runtimes,
   onOpenConnections,
   onSetCountry,
+  tags,
 }: {
   node: NodeSummary
   fetchedAt: number
@@ -273,6 +278,7 @@ function Overview({
   runtimes: Runtimes
   onOpenConnections: () => void
   onSetCountry: (() => void) | null
+  tags: { ok: true; tags: string[] } | { ok: false; error: string }
 }) {
   const scope = connections.ok ? nodeScope(fromPlan(connections.data.configuration), node.id) : null
   return (
@@ -296,6 +302,31 @@ function Overview({
                 <Button variant="ghost" size="sm" onClick={onSetCountry}>
                   修改
                 </Button>
+              ) : null}
+            </span>
+          </Row>
+          <Row label="标签" hint="管理员分组，用于访问规则">
+            <span className="flex items-center justify-between gap-2">
+              {!tags.ok ? (
+                <span className="text-destructive">读取失败</span>
+              ) : tags.tags.length === 0 ? (
+                <span className="text-muted-foreground">没有标签</span>
+              ) : (
+                <span data-testid="node-tags" className="flex flex-wrap gap-1">
+                  {tags.tags.map((tag) => (
+                    <Badge key={tag} variant="outline" className="font-mono">
+                      {tag.slice(4)}
+                    </Badge>
+                  ))}
+                </span>
+              )}
+              {node.revoked_at === null ? (
+                <Link
+                  href={`/tags?node=${encodeURIComponent(node.id)}`}
+                  className={buttonVariants({ variant: "ghost", size: "sm" })}
+                >
+                  修改
+                </Link>
               ) : null}
             </span>
           </Row>

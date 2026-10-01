@@ -6,6 +6,7 @@ import {
   RouteIcon,
   ServerIcon,
   ShieldCheckIcon,
+  TagIcon,
   WaypointsIcon,
   type LucideIcon,
 } from "lucide-react"
@@ -60,7 +61,13 @@ export const navSections: NavSection[] = [
         href: "/access",
         label: "访问授权",
         icon: ShieldCheckIcon,
-        keywords: ["access", "grant", "authorization", "allow", "shouquan"],
+        keywords: ["access", "acl", "authorization", "allow", "reject", "shouquan"],
+      },
+      {
+        href: "/tags",
+        label: "标签",
+        icon: TagIcon,
+        keywords: ["tags", "groups", "members", "biaoqian"],
       },
     ],
   },

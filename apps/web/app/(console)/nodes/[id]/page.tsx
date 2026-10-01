@@ -9,6 +9,7 @@ import {
   fetchConnectionRuntimes,
   fetchConnections,
   fetchNodes,
+  fetchTags,
 } from "@/lib/controller"
 
 export const metadata: Metadata = { title: "节点详情" }
@@ -22,10 +23,11 @@ export default async function NodePage({
 }) {
   const [{ id }, query] = await Promise.all([params, searchParams])
   const nodeId = safeDecode(id)
-  const [nodes, connections, runtimes] = await Promise.all([
+  const [nodes, connections, runtimes, tags] = await Promise.all([
     fetchNodes(),
     fetchConnections(),
     fetchConnectionRuntimes(),
+    fetchTags(),
   ])
 
   if (!nodes.ok) {
@@ -52,6 +54,11 @@ export default async function NodePage({
         }
         controllerUrl={controllerUrl()}
         initialRuntimes={runtimes}
+        tags={
+          tags.ok
+            ? { ok: true, tags: tags.data.assignments.find((assignment) => assignment.node_id === node.id)?.tags ?? [] }
+            : { ok: false, error: tags.error }
+        }
       />
     </PageBody>
   )
