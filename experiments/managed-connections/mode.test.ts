@@ -4,9 +4,10 @@ import { assertDemoContainer, IMMUTABLE_FILES, metadata } from "./demo.ts";
 import { agentArguments, bootstrapArguments, BOOTSTRAP_CAPS, changeMode, demoMode, modeJournal } from "./mode.ts";
 import type { DemoMode, ModeActions, ModeJournal, ModeSnapshot } from "./mode.ts";
 import { packetInterface } from "./packet-readiness.ts";
+import { shellMode } from "./upgrade.ts";
 
 const image = `sha256:${"1".repeat(64)}`;
-const original: ModeSnapshot = { image_id: image, mode: "neighbors", binding: "2".repeat(64), plan_revision: 7, plan_digest: "3".repeat(64),
+const original: ModeSnapshot = { image_id: image, shell: "readonly", mode: "neighbors", binding: "2".repeat(64), plan_revision: 7, plan_digest: "3".repeat(64),
   files: Object.fromEntries(IMMUTABLE_FILES.map((file) => [file, "4".repeat(64)])) };
 
 function fixture(initial: DemoMode = "neighbors") {
@@ -141,8 +142,32 @@ test("strict metadata keeps legacy mode absent until explicit persistence and re
   assert.deepEqual(metadata(value), value);
   assert.equal(demoMode(metadata(value).mode), "neighbors");
   assert.equal(metadata({ ...value, mode: "linux-ipv4-tun" }).mode, "linux-ipv4-tun");
+  assert.equal(shellMode(metadata(value).shell), "readonly");
+  assert.equal(metadata({ ...value, shell: "development" }).shell, "development");
+  for (const shell of [null, true, "writable", "auto", {}]) assert.throws(() => metadata({ ...value, shell }));
   for (const mode of [null, true, "tun", "auto", {}, undefined]) assert.throws(() => metadata({ ...value, mode }));
   assert.throws(() => metadata({ ...value, tun_mtu: 1400 }));
+});
+
+test("development containers are explicitly writable with bounded Docker defaults while PID 1 drops to the recorded UID", () => {
+  const f = container("neighbors");
+  const value: Record<string, unknown> = structuredClone(f.value);
+  const config = value.Config as Record<string, unknown>; const host = value.HostConfig as Record<string, unknown>;
+  config.User = "0:0"; config.Entrypoint = ["setpriv"];
+  config.Cmd = [...bootstrapArguments("501:20", false), "meshway-agent", ...agentArguments("neighbors")];
+  config.Env = ["PATH=/usr/local/bin:/usr/bin", "MESHWAY_AGENT_UID=501", "MESHWAY_AGENT_GID=20"];
+  host.ReadonlyRootfs = false; host.CapDrop = null; host.CapAdd = ["NET_ADMIN"]; host.Init = false;
+  const check = (candidate: Record<string, unknown>) => assertDemoContainer(candidate,
+    { run_id: "a".repeat(32), fingerprint: "b".repeat(64) }, "nyc", [image], "/private/demo/nyc", "501:20", ["neighbors"], ["development"]);
+  check(value);
+  for (const mutate of [
+    (item: Record<string, unknown>) => { (item.HostConfig as Record<string, unknown>).Privileged = true; },
+    (item: Record<string, unknown>) => { (item.HostConfig as Record<string, unknown>).CapAdd = ["NET_ADMIN", "SYS_ADMIN"]; },
+    (item: Record<string, unknown>) => { (item.HostConfig as Record<string, unknown>).CapDrop = ["ALL"]; },
+    (item: Record<string, unknown>) => { (item.HostConfig as Record<string, unknown>).ReadonlyRootfs = true; },
+    (item: Record<string, unknown>) => { (item.Config as Record<string, unknown>).User = "501:20"; },
+    (item: Record<string, unknown>) => { (item.Config as Record<string, unknown>).Env = ["MESHWAY_AGENT_UID=0", "MESHWAY_AGENT_GID=0"]; },
+  ]) { const changed = structuredClone(value); mutate(changed); assert.throws(() => check(changed)); }
 });
 
 function container(mode: DemoMode) {

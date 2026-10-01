@@ -47,7 +47,16 @@ def container_image_check(data):
         if not all(flag in ping_help for flag in ("--count", "--timeout-seconds", "--state")):
             raise RuntimeError("unsupported ping CLI")
     if data["shell"]:
-        if Path("/usr/local/bin/meshway").resolve() != Path("/usr/local/bin/meshway-agent"):
+        alias = Path("/usr/local/bin/meshway")
+        if data.get("development", False):
+            if not alias.is_file() or alias.is_symlink():
+                raise RuntimeError("developer meshway privilege-dropping launcher required")
+            os_release = Path("/etc/os-release").read_text()
+            if "ID=ubuntu" not in os_release or 'VERSION_ID="24.04"' not in os_release:
+                raise RuntimeError("Ubuntu 24.04 developer runtime required")
+            for command in ("apt-get", "bash", "curl", "ping", "ip", "python3", "setpriv", "traceroute"):
+                checked(["sh", "-c", f"command -v {command}"])
+        elif alias.resolve() != Path("/usr/local/bin/meshway-agent"):
             raise RuntimeError("meshway alias required")
         if os.environ.get("MESHWAY_STATE") != "/state/agent.json":
             raise RuntimeError("default state binding required")

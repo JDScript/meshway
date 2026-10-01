@@ -1,4 +1,4 @@
-# Persistent Docker neighbors and opt-in IPv4 TUN
+# Persistent Docker neighbors, opt-in IPv4 TUN and developer shells
 
 This is **live-demo tooling**, separate from the isolated acceptance fixture in
 `README.md`. Run it only after the coordinator has obtained the isolated managed
@@ -69,7 +69,8 @@ The updated image installs **`meshway-agent`**, the **`meshway`** symlink, and
 Debian **`iputils-ping`**. It sets `MESHWAY_STATE=/state/agent.json`; explicit
 `--state /private/...` arguments in the isolated fixture still take precedence.
 Existing containers need an image upgrade/recreation before these are available.
-Do not install packages in the running, read-only demo containers.
+Ordinary containers remain read-only. Package installation is available only after
+the explicit Ubuntu developer-shell transition below.
 
 From the host, discover the actual container names by labels. This wrapper keeps
 even manual Docker actions under the shared lock (exit an interactive shell to
@@ -89,6 +90,57 @@ Use the recorded UID:GID printed as `exec_user` by `status`; `501:20` is the
 existing demo's binding. Always supply `--user` after enabling dataplane: Docker's
 configured startup user is root for the brief capability bootstrap, while the
 actual Agent and private state remain owned by the recorded non-root user.
+
+### Explicit writable Ubuntu developer shell
+
+The developer variant is Ubuntu 24.04 with Bash, curl, ping, iproute2, Python 3,
+util-linux and traceroute preinstalled. Its apt indexes are retained, and root
+`docker exec` processes use Docker's bounded default capability set plus
+`NET_ADMIN` (including default `NET_RAW`), never `--privileged` or host networking.
+The Agent PID 1 still uses `setpriv` to run as the original recorded UID:GID; in
+TUN mode it retains only `NET_ADMIN`, and in neighbor mode it retains no capability.
+
+Build and scratch-test a unique image before changing the persistent demo:
+
+```sh
+MESHWAY_PERF_LOCK=/private/var/folders/8n/20x15sl9797cdg9sdqfj803w0000gn/T/opencode/meshway-performance.lock \
+  python3 experiments/transport/performance_lock.py docker build \
+  --file experiments/managed-connections/Dockerfile.dev \
+  --tag meshway-managedtest:ubuntu-dev-20261001-a .
+
+python3 experiments/managed-connections/dev-shell-smoke.py \
+  meshway-managedtest:ubuntu-dev-20261001-a
+
+python3 experiments/managed-connections/demo.py enable-dev-shell \
+  --data-dir .meshway/docker-demo \
+  --image meshway-managedtest:ubuntu-dev-20261001-a \
+  --admin-token-file .meshway/controller/admin.token
+```
+
+`enable-dev-shell` uses the image-upgrade journal: the old/new image IDs and
+read-only/development shell targets are durable before any stop. Retry the exact
+command after interruption; `rollback-image` restores both the recorded old image
+and its read-only shell setting. Ordinary `start`, packet-mode transitions and
+later image upgrades preserve the selected shell mode.
+
+After it succeeds, enter a root developer shell without `--user`:
+
+```sh
+demo_docker exec -it meshway-demo-DATA_HASH-nyc bash
+apt-get update
+apt-get install -y dnsutils
+traceroute 127.0.0.1
+traceroute -I 127.0.0.1
+meshway status
+```
+
+`meshway` is a non-secret launcher: when invoked by root it drops to the recorded
+Agent UID:GID before executing `meshway-agent`; non-root invocations execute the
+same binary directly. `meshway-agent` remains the direct installed binary. The
+host `/state` bind and its identities/keys remain owned by the original user, and
+the admin bearer is never placed in the container. Apt changes live only in that
+container's writable overlay: any lifecycle recreation or image upgrade discards
+them. Put durable custom tooling in another pinned developer Dockerfile/image.
 
 Inside NYC, after the coordinator has upgraded to the validated diagnostic image:
 
@@ -176,12 +228,12 @@ controller or demo network is used.
 3. Retain available target/current image artifacts under dedicated demo tags,
    checking each existing tag for exact pin equality and refusing collisions.
    Before any stop, atomically save private `upgrade.json` with old/new image pins,
-   the intended target and phase, immutable metadata/identity/key/profile hashes,
+    the intended image and shell target and phase, immutable metadata/identity/key/profile hashes,
    and the original global connection-plan revision/hash. Gracefully stop only
    owned containers, then read the per-node controller runtime epochs through
    generated `getConnectionRuntimes` (zero only if absent, including stale/withdrawn
    epochs otherwise). Persist this `epoch_floor` **before any replacement starts**.
-   Atomically change only `demo.json.image_id`, recreate the containers on their
+    Atomically change only the pinned image/shell fields in `demo.json`, recreate the containers on their
    original networks/state mounts, and start the same Agents.
 4. Require the normal fresh authenticated-neighbor graph and unchanged identity,
    key/profile bytes and global plan. **Every node's reported epoch must be
@@ -230,6 +282,9 @@ original running cohort, under these strict conditions:
 - **All three** original containers must exist, be running, and pass the full
   image/label/state-bind/UID-mode/capability/device/command/rootfs checks against
   the exact old pin. Missing, stopped or foreign members reject preflight.
+- This missing-artifact fallback is restricted to the original **read-only**
+  descriptor. A modified writable overlay is never accepted as an old-image
+  substitute; restore its image artifact before another transition.
 - The current trusted repository helper and a bounded public binding request go
   over stdin to `docker exec --user RECORDED_UID:GID --interactive ... python3 -c`.
   The loader imports the helper with a non-main module name. It requires the

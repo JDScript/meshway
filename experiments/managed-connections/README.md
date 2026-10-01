@@ -36,7 +36,9 @@ It also provides standard `iputils-ping`, the `meshway` alias for `meshway-agent
 and `MESHWAY_STATE=/state/agent.json` for the persistent demo's interactive shell.
 The isolated fixture's explicit `--state /private/...` paths override that default.
 `DEMO.md` distinguishes standard Docker-underlay ICMP from the new authenticated
-direct-neighbor `meshway ping` CLI, and documents the guarded image-only upgrade.
+direct-neighbor `meshway ping` CLI, and documents both the guarded image-only
+upgrade and explicit writable Ubuntu developer image (`Dockerfile.dev`). The
+isolated acceptance fixture and ordinary persistent mode remain read-only.
 
 To build a reusable image with visible build diagnostics, run separately under the
 same lock, then give the runner its tag. Choose a unique tag:

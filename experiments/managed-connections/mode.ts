@@ -15,12 +15,12 @@ export function demoMode(value: unknown = "neighbors"): DemoMode {
   return value;
 }
 
-export function bootstrapArguments(user: string): string[] {
+export function bootstrapArguments(user: string, netAdmin = true): string[] {
   assert(/^[1-9][0-9]*:[0-9]+$/.test(user), "non-root recorded UID:GID required");
   const [uid, gid] = user.split(":");
   assert(uid && gid);
-  return ["--reuid", uid, "--regid", gid, "--clear-groups", "--bounding-set=-all,+net_admin",
-    "--inh-caps=-all,+net_admin", "--ambient-caps=-all,+net_admin", "--no-new-privs"];
+  return ["--reuid", uid, "--regid", gid, "--clear-groups", `--bounding-set=-all${netAdmin ? ",+net_admin" : ""}`,
+    `--inh-caps=-all${netAdmin ? ",+net_admin" : ""}`, `--ambient-caps=-all${netAdmin ? ",+net_admin" : ""}`, "--no-new-privs"];
 }
 
 export function agentArguments(mode: DemoMode): string[] {

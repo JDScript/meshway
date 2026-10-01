@@ -14,7 +14,7 @@ const old = `sha256:${"1".repeat(64)}`;
 const next = `sha256:${"2".repeat(64)}`;
 const foreign = `sha256:${"3".repeat(64)}`;
 const original: UpgradeSnapshot = {
-  image_id: old, binding: "4".repeat(64), plan_revision: 7, plan_digest: "5".repeat(64),
+  image_id: old, shell: "readonly", binding: "4".repeat(64), plan_revision: 7, plan_digest: "5".repeat(64),
   files: Object.fromEntries(["nyc", "lax", "sha"].flatMap((role) => ["agent.json", "agent.json.connection-key.json", "profiles.json", "cert.pem"].map((name) => [`${role}/${name}`, "6".repeat(64)]))),
 };
 
@@ -31,8 +31,8 @@ function fixture() {
     saveJournal: async (journal) => { disk.journal = upgradeJournal(JSON.parse(JSON.stringify(journal))); event(`journal:${journal.phase}`); },
     stop: async () => { disk.running = false; event("stop"); },
     epochs: async () => { event("epochs"); return { nyc: epoch, lax: epoch, sha: epoch }; },
-    replacementsRunning: async (image) => disk.containers === image && disk.running,
-    pin: async (image) => { current.image_id = image; event("pin"); },
+    replacementsRunning: async (image, shell) => disk.containers === image && current.shell === shell && disk.running,
+    pin: async (image, shell) => { current.image_id = image; current.shell = shell; event("pin"); },
     replaceContainers: async (image) => { disk.containers = image; event("replace"); },
     start: async () => { disk.running = true; epoch++; event("start"); },
     healthy: async (floor) => { assert(disk.running); if (floor) assert(Object.values(floor).every((value) => epoch > value)); event("healthy"); },
@@ -52,6 +52,26 @@ test("image upgrade preserves all material/binding/plan bytes; repeating the pin
   f.events.length = 0;
   assert.equal(await upgradeImage(next, null, f.actions), "unchanged");
   assert.deepEqual(f.events, ["preflight", "healthy"]);
+});
+
+test("developer transition journals image and writable target before stop and survives retries", async () => {
+  const f = fixture(); f.failAfter("stop");
+  await assert.rejects(upgradeImage(next, null, f.actions, "development"), /simulated/);
+  assert.equal(f.disk.journal?.old_shell, "readonly");
+  assert.equal(f.disk.journal?.new_shell, "development");
+  assert.equal(f.disk.journal?.target_shell, "development");
+  assert(f.events.indexOf("journal:prepared") < f.events.indexOf("stop"));
+  await upgradeImage(next, f.disk.journal, f.actions, "development");
+  assert.equal(f.current.shell, "development");
+  assert.equal(f.current.image_id, next);
+});
+
+test("pending developer transition rollback restores the old image and read-only descriptor", async () => {
+  const f = fixture(); f.failAfter("start");
+  await assert.rejects(upgradeImage(next, null, f.actions, "development"), /simulated/);
+  assert.equal(f.current.shell, "development");
+  assert.equal(await upgradeImage(old, f.disk.journal, f.actions, "readonly"), "rolled-back");
+  assert.deepEqual(f.current, original);
 });
 
 test("every durable transition is retryable after process loss without restoring or replacing identity files", async () => {
@@ -111,8 +131,13 @@ test("ownership, credentials, key fingerprints, binding, image and concurrent pl
 test("controller edits during preflight or restart are detected, never overwritten", async () => {
   for (const step of ["preflight", "replaceContainers"] as const) {
     const f = fixture();
-    const operation = f.actions[step];
-    f.actions[step] = async (image: string, images: string[] = []) => { await operation(image, images); f.current.plan_revision++; };
+    if (step === "preflight") {
+      const operation = f.actions.preflight;
+      f.actions.preflight = async (image, images) => { await operation(image, images); f.current.plan_revision++; };
+    } else {
+      const operation = f.actions.replaceContainers;
+      f.actions.replaceContainers = async (image, shell) => { await operation(image, shell); f.current.plan_revision++; };
+    }
     await assert.rejects(upgradeImage(next, null, f.actions), /controller plan changed/);
     assert.equal(f.current.plan_revision, original.plan_revision + 1);
     assert.deepEqual(f.current.files, original.files);
@@ -233,9 +258,9 @@ test("legacy V1 journal preserves pins/material but cannot reuse an unfenced com
   const f = reportedFixture(); f.failAfter("start");
   await assert.rejects(upgradeImage(next, null, f.actions));
   assert(f.disk.journal);
-  const { epoch_floor: _floor, ...legacy } = f.disk.journal;
+  const { epoch_floor: _floor, old_shell: _oldShell, new_shell: _newShell, target_shell: _targetShell, ...legacy } = f.disk.journal;
   const migrated = upgradeJournal({ ...legacy, version: 1, phase: "complete" });
-  assert.equal(migrated.version, 2);
+  assert.equal(migrated.version, 3);
   assert.equal(migrated.phase, "prepared");
   assert.equal(migrated.epoch_floor, null);
   assert.deepEqual(migrated.original, original);

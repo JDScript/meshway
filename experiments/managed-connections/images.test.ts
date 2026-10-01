@@ -112,7 +112,7 @@ test("unrelated multi-platform tags do not block an owned upgrade, but ambiguous
 });
 
 test("forward migration retains target before journal/stop, preserves original pin, and collisions abort before stop", async () => {
-  const original: UpgradeSnapshot = { image_id: old, binding: "4".repeat(64), plan_revision: 19, plan_digest: "5".repeat(64),
+  const original: UpgradeSnapshot = { image_id: old, shell: "readonly", binding: "4".repeat(64), plan_revision: 19, plan_digest: "5".repeat(64),
     files: Object.fromEntries(IMMUTABLE_FILES.map((name) => [name, "6".repeat(64)])) };
   for (const collision of [false, true]) {
     const f = retention(); f.inventory.ids.delete(old);
@@ -130,7 +130,7 @@ test("forward migration retains target before journal/stop, preserves original p
       stop: async () => { f.events.push("stop"); },
       epochs: async () => ({ nyc: 7, lax: 7, sha: 7 }),
       replacementsRunning: async () => false,
-      pin: async (pin) => { current.image_id = pin; },
+      pin: async (pin, shell) => { current.image_id = pin; current.shell = shell; },
       replaceContainers: async () => {}, start: async () => {}, healthy: async () => {}, finish: async () => {},
     };
     if (collision) {
