@@ -13,6 +13,7 @@ mod access;
 mod configuration;
 mod connection_runtime;
 mod connections;
+mod endpoint_discovery;
 mod ipam;
 mod jsonc;
 mod network;
@@ -23,6 +24,7 @@ mod tests;
 pub(crate) struct Store {
     connection: Connection,
     _lock: File,
+    discoveries: std::collections::BTreeMap<String, endpoint_discovery::StoredDiscovery>,
 }
 
 impl Store {
@@ -132,6 +134,7 @@ impl Store {
         Ok(Self {
             connection,
             _lock: lock,
+            discoveries: Default::default(),
         })
     }
 

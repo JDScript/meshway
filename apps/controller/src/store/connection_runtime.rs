@@ -38,7 +38,7 @@ pub(super) fn upgrade(connection: &mut Connection) -> Result<(), Error> {
     Ok(())
 }
 
-fn bound_node(connection: &Connection, token: &str) -> Result<String, Error> {
+pub(super) fn bound_node(connection: &Connection, token: &str) -> Result<String, Error> {
     let id = configuration::node_id(connection, token)?;
     let bound: bool = connection.query_row(
         "SELECT EXISTS(SELECT 1 FROM connection_identities WHERE node_id = ?1)",
@@ -207,8 +207,14 @@ impl Store {
     }
 
     pub fn connection_runtimes(&self) -> Result<ConnectionRuntimesSnapshot, Error> {
+        self.connection_runtimes_at(Utc::now())
+    }
+
+    pub(super) fn connection_runtimes_at(
+        &self,
+        now: DateTime<Utc>,
+    ) -> Result<ConnectionRuntimesSnapshot, Error> {
         let snapshot = connections::admin_snapshot(&self.connection)?;
-        let now = Utc::now();
         let leases = self
             .connection
             .prepare("SELECT node_id, epoch FROM connection_runtime_leases ORDER BY node_id")?
