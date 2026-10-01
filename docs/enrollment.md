@@ -14,7 +14,7 @@
 
 | 凭据 | 获取与保存 | 权限边界 |
 | --- | --- | --- |
-| 管理员 bearer | controller 首次启动创建私有 `admin.token`；显式命令或读取文件获取 | 读取概览及全部节点、创建注册令牌、撤销节点；本轮扩展国家和策略管理 |
+| 管理员 bearer | controller 首次启动创建私有 `admin.token`；显式命令或读取文件获取 | 全局管理员可列出 / 创建网络；概览、节点、注册令牌、撤销和配置操作均在明确选择的网络内执行 |
 | 注册 bearer | 管理员创建，响应返回原始令牌与到期时间 | 为一个节点绑定凭据；有效期为 `60..86400` 秒，不能读取管理清单 |
 | 节点 bearer | Agent 在首次注册请求前生成随机凭据并持久保存；controller 保存摘要 | 代表该节点提交心跳；本轮增加读取自身公共配置及 ACK，仍不能调用管理 API |
 
@@ -31,6 +31,7 @@ HTTP 使用 `Authorization: Bearer …`。节点 ID 由服务端建立并从节�
 1. Agent 先生成随机节点凭据，将待注册状态私有、原子地写入本地状态文件，成功后才发送请求。
 2. 使用注册 bearer 提交节点凭据及名称、版本；controller 校验令牌期限和请求。
 3. 在同一 SQLite 事务中消费令牌、创建节点并绑定凭据摘要；不同凭据并发消费同一令牌时，只能有一个成功的新身份。
+   令牌所属网络同时决定节点归属与 IPAM；不能在注册请求中选择另一张网络。节点身份 / 凭据 controller 全局唯一、地址网络内唯一，跨网络复用凭据拒绝。
 4. 成功返回服务端节点记录；Agent 原子更新本地状态，后续启动复用这一身份。
 5. 响应丢失时保留原凭据。相同令牌、凭据及原注册元数据的重试返回同一个仍有效的节点，不创建第二条记录；不同凭据不能复用已消费令牌。
 6. 若服务端已经接受注册，节点凭据心跳可返回节点记录，恢复尚未保存服务端 ID 的本地待注册状态。
@@ -70,13 +71,15 @@ Agent 通过 `--state` 指定状态文件，默认 `.meshway/agent.json`；对�
 
 ## Web 管理员边界
 
-Next.js 服务端用管理员令牌调用概览 API，验证成功后才设置 `meshway_admin_session` cookie。cookie 内容是 `v1.<expiresAt>.<token>`，属性为 `HttpOnly`、`SameSite=Strict`、`Path=/`，有效期 8 小时；服务端也检查其中的绝对到期时间。管理员令牌仅在服务端读取并交给生成 SDK，不写入 HTML 或 React Flight 页面载荷。登出清除登录 cookie，未登录时不读取或展示管理数据。
+Next.js 服务端用管理员令牌调用网络列表 API，验证成功后才设置 `meshway_admin_session` cookie。cookie 内容是 `v1.<expiresAt>.<token>`，属性为 `HttpOnly`、`SameSite=Strict`、`Path=/`，有效期 8 小时；服务端也检查其中的绝对到期时间。管理员令牌仅在服务端读取并交给生成 SDK，不写入 HTML 或 React Flight 页面载荷。登出清除登录 cookie，未登录时不读取或展示管理数据。
 
 每次受保护读取和管理 server action 都检查 cookie；controller 对每次 API 调用再次检查 bearer。无 cookie 跳转 `/login`，本地过期或 API HTTP `401` 跳转 `/login?reason=expired`。创建注册令牌、撤销节点在 action 内检查身份，匿名重放已捕获的真实 Next.js action 请求也会被拒绝并跳转登录。
 
 策略预览 / 保存和国家编辑沿用相同服务端身份检查，并消费生成的请求类型和响应 schema；国家编辑 / 策略保存还检查全局 `expected_revision`。策略保存 action 的匿名重放拒绝与 `409` 冲突草稿保留已由 `e2e/routing.spec.ts` 验证；预览不会自动更新编辑器的保存基准 revision。
 
 GET 页面渲染不修改 cookie。登录页通过 POST server action `discardRejectedSession` 重新检查会话，仅在本地过期或 controller 明确返回 `401` 时清除；controller 不可达时保留会话并显示真实错误。管理 action 在发现会话失效时也会清除 cookie。
+
+P1a 将管理路径移到 `/api/v1/networks/{network_id}/…`，注册和心跳等 Agent 路径不变。Web 的选择 cookie 只是界面上下文；controller 的持久 network ownership 和服务端作用域才是隔离边界。编辑器保存显式绑定渲染时的网络，避免另一标签页的选择 cookie 改变目标；CAS 在同一网络的配置间共享，不同网络独立。详见[网络管理](./network-management.md)。
 
 `HttpOnly` 限制浏览器脚本读取 cookie；`Secure` 控制浏览器是否仅通过 HTTPS 发送，具体配置见下节。
 

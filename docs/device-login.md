@@ -31,7 +31,7 @@ App 只要求 **Web 控制台 origin**（HTTPS；回环 HTTP 仅开发），浏�
 | `agent_version` | 1–64 个 Unicode 字符，包含非空白文本 |
 
 4. Web 先验证请求；非法回调仅显示错误页，不跳转。未登录时进入现有登录页，成功后返回**重新验证并规范化的授权路径**。确认页展示设备名称 / 版本、网络名称与 controller 地址；GET 不创建兑换码或节点。
-5. 管理员明确批准后，Web 调用 `authorizeDevice`，回调 `meshway://enroll/callback?code=…&state=…`；拒绝回调 `?error=access_denied&state=…`。controller 故障留在页面显示真实错误。
+5. 管理员在确认页选择设备要加入的网络后明确批准，Web 调用该网络的 `authorizeDevice`，服务端验证网络存在并将兑换码绑定到该网络；回调 `meshway://enroll/callback?code=…&state=…`。拒绝回调 `?error=access_denied&state=…`。controller 故障留在页面显示真实错误。
 6. App 使用 `ASWebAuthenticationSession(callbackURLScheme: "meshway")`，核对完整 callback URI、state 与选定 controller；取消 / 拒绝不创建节点。
 7. 校验回调后，App 先把兑换码写入私有待注册状态，再使用它作为 bearer，通过生成的 `exchangeDevice` 发送原 verifier、redirect URI、已保存节点凭据及相同名称 / 版本；成功返回既有 `AgentNodeResponse`，原子保存服务端节点 ID 后清除待注册秘密。响应丢失时复用整份绑定重试。
 8. 后续使用既有节点 bearer 接口。X25519 公钥继续经 `publishConnectionIdentity` 单独不可替换地绑定，本次兑换不改变其语义。
@@ -46,7 +46,7 @@ Rust DTO 位于 `crates/protocol/src/device_login.rs`，实际路由位于 `apps
 
 | 路由 / 操作 | 认证 | 请求 | HTTP 200 |
 | --- | --- | --- | --- |
-| `POST /api/v1/device-authorizations` / `authorizeDevice` | 管理员 bearer | `{ redirect_uri, code_challenge, name, agent_version }` | `{ code, expires_at }` |
+| `POST /api/v1/networks/{network_id}/device-authorizations` / `authorizeDevice` | 管理员 bearer | `{ redirect_uri, code_challenge, name, agent_version }` | `{ code, expires_at }` |
 | `POST /api/v1/devices/exchange` / `exchangeDevice` | 兑换码 bearer（`enrollmentBearer` scheme） | `{ code_verifier, redirect_uri, node_credential, name, agent_version }` | 既有 `{ node: NodeSummary }` |
 
 `state` 只在 Web / App 往返中回传，controller 不需要它来验证 PKCE。回调 allowlist 采用协议常量，首片只允许一个精确 URI，避免增加尚无消费者的部署配置或任意客户端注册。Web 校验来自 Rust 约束生成的 Zod schema。
@@ -56,6 +56,8 @@ Rust DTO 位于 `crates/protocol/src/device_login.rs`，实际路由位于 `apps
 ## 存储、恢复与统一节点
 
 SQLite v8 只给 `enrollment_tokens` 增加可空 `device_binding`，存储公开的 redirect URI、challenge、名称 / 版本。旧 token 该列为 null；原身份、凭据摘要、IP、公钥、策略及 revision 保留。
+
+P1a 的 v8→v9 升级为接入令牌与兑换码增加不可变网络归属，已有绑定整体迁为第一张网络。App 的 exchange / heartbeat / configuration / DNS 请求、回调和 `AgentNodeResponse` 保持原契约；App 无需知道批准时的网络 ID，controller 从兑换码 / 节点凭据解析。客户端保存多个接入、一次一个活动网络的切换属于后续客户端生命周期，P1a 不修改 Apple 代码。详见[多网络迁移](./network-management.md)。
 
 兑换码为随机 256-bit bearer，服务端仅保存摘要，首次消费期限固定 300 秒。新增绑定复用原注册事务：校验 PKCE / 元数据 / 期限，分配地址、创建相同 nodes 记录、绑定节点 ID 与请求摘要、推进配置 revision，全部一起提交。首次校验失败或容量不足不消费代码。新节点没有 App 标志、owner 或另一套身份系统，Access / Routing / 撤销语义与 token 注册一致。
 

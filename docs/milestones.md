@@ -8,7 +8,7 @@
 
 | 阶段 | 待交付内容 | 依赖 |
 | --- | --- | --- |
-| P1a 多网络 | 成员、接入、IPAM、DNS、策略、连接与报告真实隔离，原网络无损迁移；设备一次只接入一网 | — |
+| P1a 多网络（已实现） | v8→v9 无损迁移；成员、接入、IPAM、DNS、策略、连接与报告隔离；管理 API 显式选网、Agent 由凭据推导；Web 最小选网 / 创建与批准选网，逐网络草稿。客户端多接入切换另行实现 | — |
 | P1b 策略引擎 v3 | 纯 Rust 四层校验 / 编译：连接 allow/block、grants 并集、Mesh 具体度与同级冲突、出口方案有序 first-match；迁移报告 | — |
 | P1c 出口数据面 | NAT、状态型回包、撤回终止存量流、DNS 泄漏边界设计与 Linux 隔离原型 | — |
 | P2a 承载托管 | Web 可选 / 可修改 listener，平台生成下发参数与凭据，迁移本地 profiles | P1a |
@@ -24,14 +24,14 @@
 
 | 能力 | 已交付边界 |
 | --- | --- |
-| 控制面与配置 | 单网络稳定 ID、SQLite、注册 / 心跳 / 撤销、IPAM、公钥绑定、revision / digest / ACK、CAS 与双编辑器 |
+| 控制面与配置 | 多网络稳定 ID、SQLite、注册 / 心跳 / 撤销、网络内 IPAM、公钥绑定、revision / digest / ACK、网络内 CAS 与逐网络双编辑器草稿 |
 | 托管 IPv4 | Linux TUN、路径绑定 Noise E2E、旧版端点授权与有序路由、Native UDP / TCP / TLS-VLESS、反向 dial |
 | 节点 DNS | loopback UDP/TCP A/AAAA/PTR；隔离容器 resolver / search、真实 glibc / curl、退出恢复 |
 | CLI | 保存状态与 live IPC 分开，whois、邻接 ping、DNS status/query |
 | Endpoint 观测 | 独立 netcheck 的 kernel NAT 场景；真实 carrier socket STUN、身份 / 代际 / 期限上报 |
 | App 接入 | controller PKCE 兑换与管理员批准、Apple Keychain / 库存显示；App 隧道未实现 |
 
-这些能力不等于多网络 / 用户体系、grants 模型、全平台配置托管或公网出口已完成。行为证据集中见[开发验收](/development#数据面与实验)，具体边界见各功能页。
+这些能力不等于用户体系、grants 模型、全平台配置托管或公网出口已完成。多网络控制面与快照隔离已实现；客户端多接入切换仍待交付。行为证据集中见[开发验收](/development#数据面与实验)，具体边界见各功能页。
 
 ## 后续验证边界
 

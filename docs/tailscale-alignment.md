@@ -4,7 +4,7 @@
 
 ## 已有基线
 
-当前已实现单网络稳定 ID / 名称、IPAM、节点 DNS、管理员 tag、旧版端点授权与精确路径编译、E2E、Linux IPv4 TUN、UDP / TCP / TLS-VLESS 及反向 dial、lease 撤回，图形 / JSONC 共享草稿和 CAS。旧版有序 allow/reject 是待迁移现状，不能继续作为目标语义。
+当前已实现 v9 多网络隔离、稳定 ID / 名称、网络内 IPAM、节点 DNS、管理员 tag、旧版端点授权与精确路径编译、E2E、Linux IPv4 TUN、UDP / TCP / TLS-VLESS 及反向 dial、lease 撤回，图形 / JSONC 共享逐网络草稿和 CAS。v8 既有身份 / 地址 / revision 无损迁为第一张网络，迁移与默认 DNS / 地址池差异见[网络管理](/network-management)。旧版有序 allow/reject 是待迁移现状，不能继续作为目标语义。
 
 **已确认目标**以 Tailscale 为常规产品基线，扩展自定义 transport 与有序指定路径；多网络、本地邀请账户、grants、自动建连与路由方案见[产品概念](/concepts)。下表保留实现差距与源码依据，既有差异不自动覆盖新确认项。
 

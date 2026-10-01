@@ -38,6 +38,8 @@ Rust 请求 / 响应类型 + 实际 API 路由声明
 - Hey API 0.99 生成 TypeScript DTO；`scripts/generate-protocol.mjs` 从同一 OpenAPI 生成严格 Zod schema 与操作函数，再调用共享 HTTP transport。字符串长度按 Unicode code point 计算，与 Rust 的 Unicode scalar 计数一致；已修复原先 UTF-16 长度差异。
 - TS 操作生成支持 JSON GET / POST、组件 schema、必填 POST body、单一 HTTP 200 成功响应，以及单个必需的 HTTP bearer 认证方案。schema 生成覆盖配置 / 策略所需的封闭对象、组件引用、数组、整数、布尔值、字符串枚举、日期时间及 `T | null`。不支持的 schema 关键字、形状或认证要求直接使生成失败。
 
+P1a 增加来自实际路由声明的必需 string path parameter：管理操作都在 `/api/v1/networks/{network_id}/…`，TS SDK 签名统一为 `operation(baseUrl, token, networkId[, body])`，生成器用 `encodeURIComponent` 展开路径。`listNetworks(baseUrl, token)` 与 `createNetwork(baseUrl, token, { name })` 是全局资源操作。Agent / App 兑换、注册、心跳与快照操作无 path parameter、契约保持兼容；网络由凭据解析。文中的全局 revision / CAS 指**当前网络内所有配置共用**，不再是 controller 所有网络共用。
+
 注册基线生成物已通过漂移检查及真实 Rust / TS 客户端往返测试；配置 / 策略契约也已生成并通过客户端、类型检查和真实服务闭环验证，具体测试批次见[验收记录](/development#配置与路由切片)。所有管理操作都需要管理员 bearer；例如 SDK 读取概览的签名为 `getOverview(baseUrl, token)`。
 
 接口来源为 `crates/protocol/src/` 的 DTO、`apps/controller/src/lib.rs` 的 `contract_router` 及关联处理器；本轮配置路由位于 `apps/controller/src/configuration_api.rs` 并合入同一 router。认证安全方案由 `describe` 导出为 `adminBearer`、`enrollmentBearer`、`nodeBearer`，每个操作声明相应 `security`。生成客户端必须消费这些信息，不能在 Web 或 Agent 中手写 endpoint 或另建 DTO。
@@ -50,12 +52,12 @@ Rust 请求 / 响应类型 + 实际 API 路由声明
 
 | 方法与路径 | bearer 权限 | JSON 请求 | HTTP 200 响应 |
 | --- | --- | --- | --- |
-| `GET /api/v1/overview` | 管理员 | 无 | `Overview`，本轮增加 `configuration_revision` |
-| `GET /api/v1/nodes` | 管理员 | 无 | `{ nodes: [NodeSummary] }` |
-| `POST /api/v1/enrollment-tokens` | 管理员 | `{ expires_in_seconds }` | `{ token_id, token, expires_at }` |
-| `POST /api/v1/device-authorizations` | 管理员 | `{ redirect_uri, code_challenge, name, agent_version }` | `{ code, expires_at }` |
+| `GET /api/v1/networks/{network_id}/overview` | 管理员 | 无 | `Overview`，本轮增加 `configuration_revision` |
+| `GET /api/v1/networks/{network_id}/nodes` | 管理员 | 无 | `{ nodes: [NodeSummary] }` |
+| `POST /api/v1/networks/{network_id}/enrollment-tokens` | 管理员 | `{ expires_in_seconds }` | `{ token_id, token, expires_at }` |
+| `POST /api/v1/networks/{network_id}/device-authorizations` | 管理员 | `{ redirect_uri, code_challenge, name, agent_version }` | `{ code, expires_at }` |
 | `POST /api/v1/devices/exchange` | PKCE 兑换码 | `{ code_verifier, redirect_uri, node_credential, name, agent_version }` | `{ node: NodeSummary }` |
-| `POST /api/v1/nodes/revoke` | 管理员 | `{ node_id }` | `{ node: NodeSummary }` |
+| `POST /api/v1/networks/{network_id}/nodes/revoke` | 管理员 | `{ node_id }` | `{ node: NodeSummary }` |
 | `POST /api/v1/agents/enroll` | 注册令牌 | `{ node_credential, name, agent_version }` | `{ node: NodeSummary }` |
 | `POST /api/v1/agents/heartbeat` | 节点 | `{ agent_version }` | `{ node: NodeSummary }` |
 
@@ -80,10 +82,10 @@ Rust 请求 / 响应类型 + 实际 API 路由声明
 
 | 方法与路径 | bearer 权限 | 生成请求类型 | HTTP 200 响应 |
 | --- | --- | --- | --- |
-| `GET /api/v1/policy` | 管理员 | 无 | `PolicySnapshot`：保存的源策略、网络、当前全局 revision 和诊断 |
-| `POST /api/v1/policy/preview` | 管理员 | `PreviewPolicyRequest`：策略草稿与 `FlowQuery` | `PreviewPolicyResponse`：当前 revision、有效性、诊断及逻辑决策 |
-| `POST /api/v1/policy/save` | 管理员 | `SavePolicyRequest`：`expected_revision` 与策略 | `PolicySnapshot` |
-| `POST /api/v1/nodes/country` | 管理员 | `SetNodeCountryRequest`：节点 ID、必填可空国家、`expected_revision` | `{ node: NodeSummary }` |
+| `GET /api/v1/networks/{network_id}/policy` | 管理员 | 无 | `PolicySnapshot`：保存的源策略、网络、当前网络 revision 和诊断 |
+| `POST /api/v1/networks/{network_id}/policy/preview` | 管理员 | `PreviewPolicyRequest`：策略草稿与 `FlowQuery` | `PreviewPolicyResponse`：当前 revision、有效性、诊断及逻辑决策 |
+| `POST /api/v1/networks/{network_id}/policy/save` | 管理员 | `SavePolicyRequest`：`expected_revision` 与策略 | `PolicySnapshot` |
+| `POST /api/v1/networks/{network_id}/nodes/country` | 管理员 | `SetNodeCountryRequest`：节点 ID、必填可空国家、`expected_revision` | `{ node: NodeSummary }` |
 | `GET /api/v1/agents/configuration` | 节点 | 无 | `ConfigurationSnapshot`：摘要与本节点公共配置 |
 | `POST /api/v1/agents/configuration/ack` | 节点 | `AcknowledgeConfigurationRequest`：`revision` 与 `digest` | `AcknowledgeConfigurationResponse` |
 
@@ -97,12 +99,12 @@ Rust 请求 / 响应类型 + 实际 API 路由声明
 
 | 方法与路径 | bearer 权限 | 生成操作 / 类型 |
 | --- | --- | --- |
-| `GET /api/v1/access` | 管理员 | `getMeshAccess` → `MeshAccessSnapshot` |
-| `POST /api/v1/access` | 管理员 | `saveMeshAccess`，请求 `SaveMeshAccessRequest`，返回 `MeshAccessSnapshot` |
-| `GET /api/v1/tags` | 管理员 | `getTags` → `TagSnapshot` |
-| `POST /api/v1/tags` | 管理员 | `saveTags`，条件保存标签目录 |
-| `POST /api/v1/nodes/tags` | 管理员 | `setNodeTags`，条件保存指定节点的标签 |
-| `POST /api/v1/flows/preview` | 管理员 | `previewFlow`，返回授权、路由、诊断和执行条件 |
+| `GET /api/v1/networks/{network_id}/access` | 管理员 | `getMeshAccess` → `MeshAccessSnapshot` |
+| `POST /api/v1/networks/{network_id}/access` | 管理员 | `saveMeshAccess`，请求 `SaveMeshAccessRequest`，返回 `MeshAccessSnapshot` |
+| `GET /api/v1/networks/{network_id}/tags` | 管理员 | `getTags` → `TagSnapshot` |
+| `POST /api/v1/networks/{network_id}/tags` | 管理员 | `saveTags`，条件保存标签目录 |
+| `POST /api/v1/networks/{network_id}/nodes/tags` | 管理员 | `setNodeTags`，条件保存指定节点的标签 |
+| `POST /api/v1/networks/{network_id}/flows/preview` | 管理员 | `previewFlow`，返回授权、路由、诊断和执行条件 |
 | `GET /api/v1/agent/dataplane` | 节点 | `getAgentDataplane` → `AgentDataplaneSnapshot` |
 
 授权保存使用全局 CAS，相同内容不增加 revision。节点快照在一个 SQLite 读事务中组合节点配置、连接、授权及所需公钥，所有部分使用同一 revision，调用方身份只从节点 bearer 派生。摘要覆盖完整公共 payload；它不包含节点 bearer、管理员令牌或本地 profile 密钥。
@@ -118,7 +120,7 @@ Routing 与 Access 的保存请求支持 `source_jsonc`，服务端拒绝重复�
 | 方法与路径 | bearer 权限 | 生成操作 / 类型 |
 | --- | --- | --- |
 | `POST /api/v1/agent/connections/discovery` | 节点 | `reportEndpointDiscovery`，请求 `ReportEndpointDiscoveryRequest` |
-| `GET /api/v1/connections/discovery` | 管理员 | `getEndpointDiscoveries` → `EndpointDiscoveriesSnapshot` |
+| `GET /api/v1/networks/{network_id}/connections/discovery` | 管理员 | `getEndpointDiscoveries` → `EndpointDiscoveriesSnapshot` |
 
 观测引用当前连接 runtime epoch、独立递增 sequence 与配置 revision / digest。控制面核对 Native UDP 资源归属、监听器实际 bind、代际与 socket 关联，以及每笔观测的绝对期限。精确重试不刷新接收时间；同一次观测不能改时间或延长有效期。
 
@@ -144,14 +146,16 @@ Web 在 Next.js 服务端通过 `@meshway/control-client` 调用管理员操作�
 
 | SDK 调用 | 返回类型 |
 | --- | --- |
-| `getOverview(baseUrl, token)` | `Promise<Overview>` |
-| `listNodes(baseUrl, token)` | `Promise<NodeList>` |
-| `createEnrollmentToken(baseUrl, token, body)` | `Promise<CreateEnrollmentTokenResponse>` |
-| `revokeNode(baseUrl, token, body)` | `Promise<RevokeNodeResponse>` |
-| `getPolicy(baseUrl, token)` | `Promise<PolicySnapshot>`，本轮新增 |
-| `previewPolicy(baseUrl, token, body)` | `Promise<PreviewPolicyResponse>`，本轮新增 |
-| `savePolicy(baseUrl, token, body)` | `Promise<PolicySnapshot>`，本轮新增 |
-| `setNodeCountry(baseUrl, token, body)` | `Promise<RevokeNodeResponse>`，本轮新增，复用单节点响应包装 |
+| `listNetworks(baseUrl, token)` | `Promise<NetworkList>` |
+| `createNetwork(baseUrl, token, body)` | `Promise<NetworkSnapshot>` |
+| `getOverview(baseUrl, token, networkId)` | `Promise<Overview>` |
+| `listNodes(baseUrl, token, networkId)` | `Promise<NodeList>` |
+| `createEnrollmentToken(baseUrl, token, networkId, body)` | `Promise<CreateEnrollmentTokenResponse>` |
+| `revokeNode(baseUrl, token, networkId, body)` | `Promise<RevokeNodeResponse>` |
+| `getPolicy(baseUrl, token, networkId)` | `Promise<PolicySnapshot>` |
+| `previewPolicy(baseUrl, token, networkId, body)` | `Promise<PreviewPolicyResponse>` |
+| `savePolicy(baseUrl, token, networkId, body)` | `Promise<PolicySnapshot>` |
+| `setNodeCountry(baseUrl, token, networkId, body)` | `Promise<RevokeNodeResponse>`，复用单节点响应包装 |
 
 请求类型和响应类型均来自生成声明。策略保存、国家修改以及预览都在 Next.js 服务端检查登录身份，再调用生成 SDK。页面只消费验证通过的数据；不能用 `any`、未验证的类型断言或“缺字段就补假数据”掩盖协议漂移。会话期限、POST 清理及 Secure 配置见[Web 边界](/enrollment#web-管理员边界)。
 
