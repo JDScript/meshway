@@ -12,6 +12,23 @@ App 登录本质是 SSO：App 打开 controller Web，由 Web 完成人类登录
 
 Apple 已接线 `ASWebAuthenticationSession`、Keychain、Rust 生成客户端兑换和真实心跳，见 [Apple App](./apple-app.md)。注册 / 心跳成功不代表隧道已建立；X25519 发布、agent 生命周期、NE 包流及真机验证仍待后续。
 
+## 本地账户下的统一登录（P2b 目标）
+
+本地账户是认证来源，SSO 是 Web、App 与 CLI 共用登录的方式。用户只在 controller
+Web 输入邮箱和密码；浏览器已有有效会话时直接进入设备授权页。controller 校验用户
+及所选网络的成员权限，把接入结果与该用户、网络和本次设备请求绑定，设备继续用
+自己的持久化节点身份接入，不获得人类会话或管理权限。
+
+- **Web**：建立用户会话，按用户在各网络的权限提供管理与使用入口。
+- **App**：系统浏览器登录 / 授权，经已有回调与 S256 PKCE 兑换取得节点接入结果。
+- **CLI**：输出浏览器授权链接，复用相同用户认证与网络授权服务；无本机回调的场景
+  需增加受本次设备请求绑定的结果领取机制。具体协议与生成客户端在接入切片实现，
+  不把现有 App 专用 callback 直接当作已经支持 CLI。
+
+本地账户先落地，外部 OIDC 后续只扩展 controller 的用户认证来源。现阶段不需要为
+其他第三方应用提供通用 IdP、ID token 或客户端注册服务。当前已实现的管理员批准
+切片仍按下文运行；用户会话与成员权限替代该批准身份的接线属于 P2b。
+
 ## 单一服务器地址
 
 App 只要求 **Web 控制台 origin**（HTTPS；回环 HTTP 仅开发），浏览器授权页与 App API 使用相同 origin。Next.js 仅为 `POST /api/v1/devices/exchange`、`POST /api/v1/agents/heartbeat`、`GET /api/v1/agents/configuration`、`GET /api/v1/agent/dns` 提供显式 route-handler 代理到 `controllerUrl()`，严格限制各路径的方法，运行时读取 `MESHWAY_CONTROLLER_URL`，避免 rewrites 的 build-time 配置固化。原请求 bearer / body、上游 body / status / 认证响应头透传，无缓存、不读取 console cookie、不注入管理员凭据、不记录秘密。移除 hop-by-hop / host 头，流式转发；fetch 解压后的响应去掉编码 / 长度头。其他 API（含 admin routes）不由此代理暴露。生产也可由反向代理精确路由这四个路径，保持同源入口。App GET 库存用于显示，不发送配置 ACK。
