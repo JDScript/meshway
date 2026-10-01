@@ -3,42 +3,45 @@ layout: home
 
 hero:
   name: Meshway
-  text: 用身份连接节点，用策略定义路径。
-  tagline: Rust 控制面与 Agent · 有序多跳 · 多传输 · 可验证的网络诊断
+  text: 以身份互联，以策略选择路径。
+  tagline: Tailscale 产品基线 · 自定义 transport · 有序指定路径 · Rust 控制面与 Agent
   image:
     src: /meshway.svg
     alt: Meshway 节点路径标志
   actions:
     - theme: brand
-      text: 运行开发演示
-      link: /getting-started
+      text: 了解产品与概念
+      link: /concepts
     - theme: alt
-      text: 阅读架构设计
-      link: /architecture
+      text: 运行本地联调
+      link: /getting-started
 
 features:
-  - title: 身份与域名上下文
-    details: 面向节点身份、来源国家及域名后缀 / 双栈 CIDR 分类，区分节点发现 DNS 与互联网域名分流。
-    link: /dns
-    linkText: DNS 设计
-  - title: 显式路径，多种承载
-    details: 把有序中间节点、出口选择与相邻节点间的传输候选分开建模，让失败行为可解释。
+  - title: 网络、用户与设备
+    details: 目标为多网络隔离、仅邀请账户与统一节点；设备一次只接入一张网络，配置由平台管理。
+    link: /concepts
+    linkText: 已确认目标与当前差距
+  - title: 四层策略与路由方案
+    details: 连接图、叠加 grants、Mesh 内必经路径、出口有序方案各司其职；用户在允许范围内选择方案。
     link: /routing
-    linkText: 路径设计
-  - title: 加密与真实追踪
-    details: 优先端到端加密与真实数据面 mesh trace；信任模式的变化必须显式决定。
-    link: /security-and-tracing
-    linkText: 安全边界
+    linkText: 路由模型
+  - title: 自定义承载与 E2E
+    details: 将承载主备与逻辑路径分开，连接方向独立于业务方向，中间节点转发端到端密文。
+    link: /transports
+    linkText: 承载与插件边界
 ---
 
-## 当前阶段：从持久身份到配置与路由意图
+## 当前实现
 
-Meshway 已实现 **单 controller SQLite 持久化、一次性注册令牌、Agent 持久凭据与心跳、Web 管理员登录及撤销**的纵向切片。Rust / SDK 行为测试、生成漂移检查，以及生产构建 Next.js + 真实 controller + Rust Agent 的浏览器端到端测试已通过。
+已交付单网络 SQLite、管理员 bearer / 一次性节点接入、App 浏览器 PKCE 兑换、IPAM、版本化配置与 ACK、公钥认证邻接、Linux Mesh IPv4 TUN 与 Noise E2E，以及节点 DNS 和只读诊断。真实 ICMP / HTTP、反向 TLS-VLESS、授权 / 必经节点 / lease 撤回均有隔离验收，入口见[开发与验收](/development)。
 
-**配置与路由控制意图切片也已实现并验证：** 持久双栈 mesh IPAM、保留现有数据的开发数据库增量升级、带摘要的版本化配置与私有缓存 / ACK、纯 Rust 策略编译，以及 `/routing` 引导式编辑 / 预览 / 条件保存。详见[地址与配置分发](/configuration)。
+**已确认但仍待交付**：多网络真实隔离、本地邮箱密码 / 仅邀请用户体系、平台托管全部配置、grants 与四层模型迁移、按需自动建连、出口 / 路由方案 / 规则集与可信域名上下文。旧 first-match Access、混合 Routing 和本地 profiles 仅是迁移前现状，不能当作目标流程。
 
-首版[路由语义](/routing)已修订为 **域名 suffix-only、first-match、可配置 direct / reject 默认动作（初始 reject）**。国家为管理员元数据，互联网目的国家是预览提示；没有自动 DNS / GeoIP 查询。
+IPv6 地址和 AAAA 不代表 IPv6 TUN；Apple App 接入 / 库存不代表 App 隧道。配置 ACK 是持久保存回执，心跳是联系记录，规划路径不是实测 trace。实现边界见[架构](/architecture)，首版闭环和依赖见[里程碑](/milestones)。
 
-**注册、地址分配与配置回执不等于 mesh 连通。** 当前身份仍是 HTTP 控制面 bearer 身份；mesh 公钥认证、E2E 握手、TUN、MagicDNS、有序转发、多传输与 `meshway trace` 仍待实现。逻辑预览不是实测路径，最近联系时间不是隧道健康状态。
+## 阅读入口
 
-本轮已通过独立审查修复后的 policy 26 项与受影响核心 30 项测试、SDK 5 项测试、完整 TypeScript 检查及 2 项真实服务 Playwright 测试。测试分组、文件发布失败语义和覆盖范围见[开发路线](/development#配置与路由切片)。里程碑 1 的控制意图部分已完成，mesh 公钥身份、ACL 与网络数据面仍待实现。
+- **产品**：[概念与流程](/concepts) → [网络](/network-management)、[Access](/access-policy)、[路由方案](/routing)；决策依据为[产品对齐](/product-alignment)。
+- **架构**：[总览](/architecture) → [控制面身份](/enrollment)、[配置](/configuration)、[Agent](/connection-runtime)、[数据面](/managed-dataplane)。
+- **开发**：[本地联调](/getting-started) → [统一入口](/dev-services)、[检查与验收](/development)、[实验](/transport-lab)。
+- **参考**：[CLI](/cli)、[协议 / API](/protocol)、[Tailscale 对照](/tailscale-alignment)、[参考源码](/references)。
