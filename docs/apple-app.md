@@ -4,9 +4,11 @@
 
 **已确认**：`apps/apple` 使用 SwiftUI 多平台 App、NetworkExtension Packet Tunnel、UniFFI Rust 核心及 XCFramework。设备是统一的 Meshway 节点；不引入 App / 服务器节点类别或中继角色开关。
 
-**已实现**：单一服务器地址（Web 控制台 origin）、系统浏览器授权、Keychain 节点凭据与待兑换状态、生成 Rust 客户端兑换与心跳。Home 展示真实接入阶段、节点名称 / 短 ID / Mesh IP、最近心跳结果和时间。前台每 30 秒至多一次心跳，请求限时 10 秒、禁止重叠；心跳仅表示控制面联系。保留真实空网络页、Rust 信息、只读系统 VPN 诊断及明确拒绝启动的 Packet Tunnel 骨架。iPhone 使用 TabView，macOS / iPad 使用 NavigationSplitView；macOS 有菜单栏入口。
+**已实现**：单一服务器地址（Web 控制台 origin）、系统浏览器授权、Keychain 节点凭据与待兑换状态、生成 Rust 客户端兑换、心跳和只读设备 / DNS 快照。macOS 为默认 500 × 680 的单列设备窗口与 window-style 菜单栏面板；iOS 使用 NavigationStack、insetGrouped 设备列表、搜索、下拉刷新、侧滑 / 上下文复制与详情。顶部网络 Menu 显示当前唯一接入，名称取已启用的 DNS zone 或真实服务器 host；详情提供服务器、网络 prefixes、revision 与本地重置。右上角 Connect switch 禁用，正文说明隧道未实现。首次接入为居中浏览器登录引导；撤销、加载和错误使用相同视觉层级。
 
-**未实现**：外部 OIDC、X25519 公钥发布、嵌入 agent 生命周期、peer 数据源、NE 包流适配、隧道、流量及诊断导出。浏览器当前使用控制台管理员登录 / 批准；App 不获得管理员凭据。保存 URL、注册及心跳均不代表隧道已建立。
+前台出现 / 接入成功时读取，自动刷新跨窗口每 30 秒至多一次；手动刷新可立即发起，整个心跳 → 配置 → DNS 流程禁止重叠，各 HTTP 请求限时 10 秒。自身展示真实最近心跳时间 / 结果；peer 只展示名称、地址、DNS 与管理员 country，不显示在线状态。刷新失败标明旧库存；DNS 仅在配置同 revision、ID / 地址一致时合并。403 进入持久撤销状态并清除库存。快照只用于显示，**不 ACK、不持久化配置、不激活数据面**。
+
+**未实现**：外部 OIDC、X25519 公钥发布、嵌入 agent 生命周期、多网络接入保存 / 切换、NE 包流适配、隧道、流量及诊断导出。当前后端仍为单网络；菜单只列真实接入，没有虚构的添加网络操作。浏览器当前使用控制台管理员登录 / 批准；App 不获得管理员凭据。保存 URL、注册及心跳均不代表隧道已建立。
 
 ## 结构与依赖
 
@@ -36,7 +38,9 @@ apps/apple/
 
 SystemTunnelController 仍只读 VPN preferences；provider 的 startTunnel 返回 “not implemented in this build”，不设置网络、路由或 DNS。
 
-Rust FFI：`begin_authorization`、`new_node_credential`、异步 `exchange_device` / `heartbeat`，以及既有 `core_info` / `valid_tag_selector`。PKCE S256 与随机 credential 复用 protocol；HTTP DTO / 操作复用生成客户端。一个单 worker、bridge-owned Tokio runtime 执行请求，Swift executor 只等待任务；净化错误枚举不携带 source、body 或秘密。URL 只允许 HTTPS origin（开发回环 HTTP），无 path / userinfo / query / fragment，不声称已验证网络可达。
+Rust FFI：`begin_authorization`、`new_node_credential`、异步 `exchange_device` / `heartbeat` / `get_device_configuration` / `get_device_dns`，以及既有 `core_info` / `valid_tag_selector`。`core/src/inventory.rs` 调用 agent 生成 `get_agent_configuration` / `get_agent_dns`，将有类型 wire DTO 转换为权威 protocol 类型并验证 digest、自身 ID、schema / revision、库存 bounds / 唯一身份 / 地址与 policy；DNS 复用 `NodeDnsConfiguration::validate`。Agent 完整缓存验证器为私有，未作为显示层公开；摘要直接复用 protocol 函数，不重写密码逻辑。Swift 另绑定已持久节点 IP、阻止 revision 回退 / 同 revision mutation，合并 DNS 时检查同 revision / ID / IP。
+
+PKCE S256 与随机 credential 复用 protocol；HTTP DTO / 操作复用生成客户端。一个单 worker、bridge-owned Tokio runtime 执行请求，Swift executor 只等待任务；净化错误枚举不携带 source、body 或秘密。URL 只允许 HTTPS origin（开发回环 HTTP），无 path / userinfo / query / fragment，不声称已验证网络可达。
 
 ## 构建与运行
 
@@ -65,7 +69,16 @@ node apps/apple/scripts/check-signin.ts
 pnpm exec playwright test e2e/device-login.spec.ts
 ```
 
-smoke 自行分配回环端口与临时 controller 数据，使用真实 Keychain 的唯一测试 item，完成 Swift → FFI → 生成 Rust client → Web proxy → controller 的接入、重启读取、心跳、撤销；退出时删除测试 item / 数据并停止子进程。可在命令末尾传入独立 bundle prefix 构建的 macOS executable 路径，短暂启动 unsigned App（同样由脚本停止）。批准由 test-only 生成客户端 fixture 完成，不注入 App 管理员权限、不将 code 写日志；它不验证 ASWebAuthenticationSession UI。Playwright 单独验证真实 Web 登录 / 批准 / 拒绝、proxy 幂等兑换 / 心跳、错误透传与 admin 路由未暴露。
+smoke 自行分配回环端口与临时 controller 数据，使用真实 Keychain 的唯一测试 item，完成 Swift → FFI → 生成 Rust client → Web proxy → controller 的接入、重启读取、心跳、第二个真实节点的配置 / DNS 库存、撤销；退出时删除测试 item / 数据并停止子进程。可在命令末尾传入独立 bundle prefix 构建的 macOS executable 路径，短暂启动 unsigned App（同样由脚本停止）。批准由 test-only 生成客户端 fixture 完成，不注入 App 管理员权限、不将 code 写日志；它不验证 ASWebAuthenticationSession UI。Playwright 单独验证真实 Web 登录 / 批准 / 拒绝、proxy 幂等兑换 / 心跳、GET peers / DNS、方法限制、错误透传与 admin 路由未暴露。
+
+离屏视觉验收（无需 screen recording）：
+
+```sh
+MESHWAY_RENDER_DIR="${TMPDIR%/}/opencode/apple-ui" \
+  swift test --package-path apps/apple/MeshwayKit --filter renderAppleScreens
+```
+
+`Tests/MeshwayVisualTests/RenderTests.swift` 的样本只在测试 target，ImageRenderer 输出明暗两套 signed-out、devices、error、revoked、loading、menu panel、iPhone-size onboarding / devices。渲染真实共享 `OnboardingLayout` / `DeviceContentView.content` / `NetworkLabel`；macOS ImageRenderer 不支持原生 Menu、Toggle、TextField、ScrollView，测试使用静态 chrome 代替并省去 scroll container。iPhone-size 捕获验证共享行在窄屏的换行，不冒充 iOS 原生导航 / List chrome 或 Simulator 运行。实际 App 保留原生 toolbar / switch / searchable / insetGrouped List。产物与具体边界见 [视觉验收](./apple-ui-verification.md)。
 
 签名默认无 Team，bundle prefix 为 `dev.example`。需要签名时创建忽略的 `apps/apple/Config/Local.xcconfig`，设置 `DEVELOPMENT_TEAM`、`MESHWAY_BUNDLE_PREFIX`，必要时覆盖 `MESHWAY_APP_GROUP`。`MESHWAY_KEYCHAIN_ACCESS_GROUP` 默认空，unsigned 使用默认 Keychain；需要 extension 共享时设置此变量并为 App / extension 添加匹配的 `keychain-access-groups` entitlement 与有效 provisioning。App Group 不能替代 Keychain access group。会员未续费，不能据编译声称签名权限、真机 NE 或隧道已验证。
 

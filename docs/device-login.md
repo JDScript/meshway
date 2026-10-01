@@ -12,7 +12,7 @@ Apple 已接线 `ASWebAuthenticationSession`、Keychain、Rust 生成客户端�
 
 ## 单一服务器地址
 
-App 只要求 **Web 控制台 origin**（HTTPS；回环 HTTP 仅开发），浏览器授权页与 App API 使用相同 origin。Next.js 仅为 `POST /api/v1/devices/exchange` 和 `POST /api/v1/agents/heartbeat` 提供显式 route-handler 代理到 `controllerUrl()`，运行时读取 `MESHWAY_CONTROLLER_URL`，避免 rewrites 的 build-time 配置固化。原请求 bearer / body、上游 body / status / 认证响应头透传，无缓存、不读取 console cookie、不注入管理员凭据、不记录秘密。移除 hop-by-hop / host 头，流式转发；fetch 解压后的响应去掉编码 / 长度头。其他 API（含 admin routes）不由此代理暴露。生产也可由反向代理精确路由这两个路径，保持同源入口。
+App 只要求 **Web 控制台 origin**（HTTPS；回环 HTTP 仅开发），浏览器授权页与 App API 使用相同 origin。Next.js 仅为 `POST /api/v1/devices/exchange`、`POST /api/v1/agents/heartbeat`、`GET /api/v1/agents/configuration`、`GET /api/v1/agent/dns` 提供显式 route-handler 代理到 `controllerUrl()`，严格限制各路径的方法，运行时读取 `MESHWAY_CONTROLLER_URL`，避免 rewrites 的 build-time 配置固化。原请求 bearer / body、上游 body / status / 认证响应头透传，无缓存、不读取 console cookie、不注入管理员凭据、不记录秘密。移除 hop-by-hop / host 头，流式转发；fetch 解压后的响应去掉编码 / 长度头。其他 API（含 admin routes）不由此代理暴露。生产也可由反向代理精确路由这四个路径，保持同源入口。App GET 库存用于显示，不发送配置 ACK。
 
 ## App 接入步骤
 
