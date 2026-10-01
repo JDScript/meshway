@@ -18,6 +18,7 @@
 mod config;
 mod error;
 mod stream;
+pub mod websocket;
 
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 
