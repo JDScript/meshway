@@ -1,6 +1,6 @@
 //! Independent, unauthenticated STUN observations; never runtime carrier candidates.
 
-mod stun;
+use meshway_protocol::stun;
 
 use std::{collections::HashSet, io, net::SocketAddr, time::Duration};
 

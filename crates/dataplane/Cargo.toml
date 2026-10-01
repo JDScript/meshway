@@ -5,6 +5,7 @@ edition.workspace = true
 rust-version.workspace = true
 
 [dependencies]
+meshway-protocol = { path = "../protocol" }
 getrandom.workspace = true
 hex = "0.4.3"
 serde.workspace = true

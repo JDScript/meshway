@@ -4,14 +4,15 @@ use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr};
 
 const COOKIE: [u8; 4] = [0x21, 0x12, 0xa4, 0x42];
 
-pub(super) enum Response {
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Response {
     Ignore,
     Invalid,
     Error,
     Mapped(SocketAddr),
 }
 
-pub(super) fn request(transaction: [u8; 12]) -> [u8; 20] {
+pub fn request(transaction: [u8; 12]) -> [u8; 20] {
     let mut packet = [0; 20];
     packet[1] = 1;
     packet[4..8].copy_from_slice(&COOKIE);
@@ -19,7 +20,7 @@ pub(super) fn request(transaction: [u8; 12]) -> [u8; 20] {
     packet
 }
 
-pub(super) fn parse(packet: &[u8], transaction: [u8; 12], ipv4: bool) -> Response {
+pub fn parse(packet: &[u8], transaction: [u8; 12], ipv4: bool) -> Response {
     if packet.len() < 20 {
         return Response::Invalid;
     }
