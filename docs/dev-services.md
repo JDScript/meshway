@@ -45,6 +45,12 @@ Controller 数据位于 `.meshway/controller`。Web 自动连接上述 controlle
 日志位于 `.meshway/services/meshway-{controller,web,docs}.log`，目录 0700、文件 0600。
 服务在 tmux 中持续运行，开发入口退出后仍然可用。
 
+独立控制台预览使用自己的 controller、数据目录和管理员令牌。浏览器的 Cookie
+不按端口隔离：若同时运行 `localhost:3000` 与 `localhost:3100`，预览 Web 在构建和
+启动时设置 `MESHWAY_WEB_COOKIE_NAMESPACE=preview`，分别隔离登录和所选网络 Cookie，
+避免两套页面互相覆盖。命名空间限 1–64 位字母、数字、下划线或短横线；未设置时保留
+现有 Cookie 名称。预览登录使用预览 controller 的令牌，主 controller 的令牌不能通用。
+
 `start` 幂等；已有 session 必须同时匹配 checkout、启动命令、实际进程和监听端口归属，才能接管。
 同名外部 session 或其他进程占用端口时明确报错。不同 worktree 使用相同默认 session 名和端口，因此不会同时启动两套本地服务。
 `stop` 向已核实的服务进程树发送 SIGINT，等待退出；超时保留现场并报错。

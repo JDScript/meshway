@@ -3,11 +3,13 @@ import "server-only"
 import { cookies, headers } from "next/headers"
 import { redirect } from "next/navigation"
 
+import { consoleCookieName } from "@/lib/cookie-name"
+
 // Single-administrator console: the administrator token itself is kept in an
 // HttpOnly, SameSite=Strict cookie and only ever read on the server. The
 // cookie carries its own absolute expiry so the lifetime is enforced here and
 // not only by the browser's Max-Age handling.
-const COOKIE_NAME = "meshway_admin_session"
+const COOKIE_NAME = consoleCookieName("meshway_admin_session")
 const COOKIE_VERSION = "v1"
 const SESSION_LIFETIME_SECONDS = 8 * 60 * 60
 

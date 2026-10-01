@@ -5,9 +5,10 @@ import { zNetworkSnapshot } from "@meshway/control-client/schemas"
 import { cookies } from "next/headers"
 import { cache } from "react"
 import { controllerUrl } from "@/lib/controller-config"
+import { consoleCookieName } from "@/lib/cookie-name"
 import { requireActionAdminToken } from "@/lib/session"
 
-export const NETWORK_COOKIE = "meshway_network"
+export const NETWORK_COOKIE = consoleCookieName("meshway_network")
 
 /** Every network action authenticates first, then validates its explicit scope.
  * Scope comes from the rendered workspace, never from a mutable selection
