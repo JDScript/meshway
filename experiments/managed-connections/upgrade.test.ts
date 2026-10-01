@@ -74,6 +74,23 @@ test("pending developer transition rollback restores the old image and read-only
   assert.deepEqual(f.current, original);
 });
 
+test("same-image shell transition remains recoverable and cannot mix image/shell descriptors", async () => {
+  const f = fixture(); f.failAfter("start");
+  await assert.rejects(upgradeImage(old, null, f.actions, "development"), /simulated/);
+  assert(f.disk.journal);
+  const pending = upgradeJournal(JSON.parse(JSON.stringify(f.disk.journal)));
+  assert.equal(await upgradeImage(old, pending, f.actions, "development"), "upgraded");
+  assert.deepEqual(f.current, { ...original, shell: "development" });
+
+  const mixed = fixture(); mixed.failAfter("journal:prepared");
+  await assert.rejects(upgradeImage(next, null, mixed.actions, "development"), /simulated/);
+  assert(mixed.disk.journal);
+  assert.throws(() => upgradeJournal({ ...mixed.disk.journal, target_shell: "readonly" }), /target pair/);
+  mixed.events.length = 0;
+  await assert.rejects(upgradeImage(next, mixed.disk.journal, mixed.actions, "readonly"), /image\/shell pair/);
+  assert.deepEqual(mixed.events, []);
+});
+
 test("every durable transition is retryable after process loss without restoring or replacing identity files", async () => {
   for (const boundary of ["journal:prepared", "stop", "epochs", "journal:restarting", "pin", "replace", "start", "journal:verifying", "healthy", "journal:complete", "finish"]) {
     const f = fixture(); f.failAfter(boundary);
@@ -143,6 +160,26 @@ test("controller edits during preflight or restart are detected, never overwritt
     assert.deepEqual(f.current.files, original.files);
     if (step === "preflight") assert(!f.events.includes("stop"));
   }
+});
+
+test("an already running replacement verifies newer user intent without restoring plans or losing its epoch fence", async () => {
+  const f = fixture(); f.failAfter("healthy");
+  await assert.rejects(upgradeImage(next, null, f.actions, "development"), /simulated/);
+  assert(f.disk.journal?.phase === "verifying");
+  const floor = structuredClone(f.disk.journal.epoch_floor);
+  f.current.plan_revision++;
+  f.current.plan_digest = "9".repeat(64);
+  f.events.length = 0;
+  const verify = f.actions.healthy;
+  f.actions.healthy = async (value) => {
+    assert.deepEqual(value, floor);
+    assert.equal(f.disk.journal?.original.plan_revision, f.current.plan_revision);
+    await verify(value);
+  };
+  assert.equal(await upgradeImage(next, f.disk.journal, f.actions, "development"), "upgraded");
+  assert.equal(f.current.plan_digest, "9".repeat(64));
+  assert.deepEqual(f.current.files, original.files);
+  assert(!f.events.includes("stop") && !f.events.includes("replace"));
 });
 
 test("upgrade journal rejects malformed or broadened snapshots", async () => {

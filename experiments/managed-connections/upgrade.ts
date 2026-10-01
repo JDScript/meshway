@@ -63,7 +63,7 @@ export function upgradeJournal(value: unknown): UpgradeJournal {
     ...(entry.version >= 2 ? ["epoch_floor"] : []), ...(entry.version === 3 ? ["old_shell", "new_shell", "target_shell"] : [])].sort(), "unrecognized upgrade journal");
   const original = upgradeSnapshot(entry.original);
   const old = text(entry.old_image_id); const next = text(entry.new_image_id); const target = text(entry.target_image_id);
-  assert(IMAGE.test(old) && IMAGE.test(next) && old !== next && [old, next].includes(target), "invalid upgrade pins");
+  assert(IMAGE.test(old) && IMAGE.test(next) && [old, next].includes(target), "invalid upgrade pins");
   assert(entry.phase === "prepared" || entry.phase === "restarting" || entry.phase === "verifying" || entry.phase === "complete", "invalid upgrade phase");
   assert(original.image_id === old, "invalid original image pin");
   // V1 cannot prove a replacement cohort. Retain its pins/material and require a
@@ -74,16 +74,23 @@ export function upgradeJournal(value: unknown): UpgradeJournal {
   const oldShell = entry.version === 3 ? shellMode(entry.old_shell) : original.shell;
   const newShell = entry.version === 3 ? shellMode(entry.new_shell) : original.shell;
   const targetShell = entry.version === 3 ? shellMode(entry.target_shell) : original.shell;
-  assert([oldShell, newShell].includes(targetShell), "invalid upgrade shell target");
+  assert(old !== next || oldShell !== newShell, "upgrade must change image or shell mode");
+  assert(original.shell === oldShell, "original shell differs from upgrade source");
+  assert((target === old && targetShell === oldShell) || (target === next && targetShell === newShell), "invalid upgrade image/shell target pair");
   return { version: 3, old_image_id: old, new_image_id: next, target_image_id: target, old_shell: oldShell,
     new_shell: newShell, target_shell: targetShell, phase, epoch_floor: floor, original };
 }
 
 /** No credentials, key files, controller binding or plan can change during recovery. */
-export function assertUpgradeSnapshot(journal: UpgradeJournal, current: UpgradeSnapshot): void {
+function assertUpgradeMaterial(journal: UpgradeJournal, current: UpgradeSnapshot): void {
   assert([journal.old_image_id, journal.new_image_id].includes(current.image_id), "metadata image is outside pending upgrade pins");
-  assert([journal.old_shell, journal.new_shell].includes(current.shell), "metadata shell mode is outside pending upgrade targets");
+  assert((current.image_id === journal.old_image_id && current.shell === journal.old_shell)
+    || (current.image_id === journal.new_image_id && current.shell === journal.new_shell), "metadata image/shell pair is outside pending upgrade targets");
   assert(current.binding === journal.original.binding && isDeepStrictEqual(current.files, journal.original.files), "immutable identity/material changed during upgrade");
+}
+
+export function assertUpgradeSnapshot(journal: UpgradeJournal, current: UpgradeSnapshot): void {
+  assertUpgradeMaterial(journal, current);
   assert(current.plan_revision === journal.original.plan_revision && current.plan_digest === journal.original.plan_digest, "controller plan changed during upgrade; refusing to overwrite");
 }
 
@@ -115,10 +122,28 @@ export async function upgradeImage(target: string, pending: UpgradeJournal | nul
   requestedShell?: ShellMode): Promise<"unchanged" | "upgraded" | "rolled-back"> {
   assert(IMAGE.test(target), "resolved image ID required");
   const initial = await actions.snapshot();
-  const targetShell = requestedShell ?? (pending ? (target === pending.old_image_id ? pending.old_shell : pending.new_shell) : initial.shell);
+  const targetShell = requestedShell ?? (pending
+    ? (target === pending.target_image_id ? pending.target_shell : target === pending.old_image_id ? pending.old_shell : pending.new_shell)
+    : initial.shell);
   if (pending) {
     assert([pending.old_image_id, pending.new_image_id].includes(target), "finish or roll back the pending upgrade before selecting another image");
-    assertUpgradeSnapshot(pending, initial);
+    assert((target === pending.old_image_id && targetShell === pending.old_shell)
+      || (target === pending.new_image_id && targetShell === pending.new_shell), "requested image/shell pair is outside pending upgrade targets");
+    assertUpgradeMaterial(pending, initial);
+    if (initial.plan_revision !== pending.original.plan_revision || initial.plan_digest !== pending.original.plan_digest) {
+      // The administrator may continue editing after the replacement cohort is
+      // already running. Verify that CURRENT intent, without restoring old
+      // controller data or discarding the original process-epoch fence.
+      assert((pending.phase === "verifying" || pending.phase === "complete")
+        && pending.target_image_id === target && pending.target_shell === targetShell
+        && await actions.replacementsRunning(target, targetShell),
+      "controller plan changed before a running replacement cohort could be verified");
+      await actions.preflight(target, [pending.old_image_id, pending.new_image_id]);
+      assert.deepEqual(await actions.snapshot(), initial, "controller plan changed during resumed preflight; retry against latest intent");
+      pending = { ...pending, phase: "verifying", original: { ...pending.original,
+        plan_revision: initial.plan_revision, plan_digest: initial.plan_digest } };
+      await actions.saveJournal(pending);
+    }
   }
   // All resource ownership, image/binary and real credential checks precede mutation.
   await actions.preflight(target, pending ? [pending.old_image_id, pending.new_image_id] : [initial.image_id]);
@@ -161,5 +186,5 @@ export async function upgradeImage(target: string, pending: UpgradeJournal | nul
   await check();
   journal.phase = "complete"; await actions.saveJournal(journal);
   await actions.finish();
-  return target === journal.old_image_id ? "rolled-back" : "upgraded";
+  return target === journal.old_image_id && targetShell === journal.old_shell ? "rolled-back" : "upgraded";
 }

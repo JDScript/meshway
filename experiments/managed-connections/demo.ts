@@ -122,8 +122,8 @@ export function assertDemoContainer(value: Record<string, unknown>, owner: Owner
     && typeof host.NetworkMode === "string" && !/^(host|none|default|bridge|container:.*)$/.test(host.NetworkMode), "owned container security configuration differs");
   assert(isDeepStrictEqual(host.Devices ?? [], packet ? [{ PathOnHost: "/dev/net/tun", PathInContainer: "/dev/net/tun", CgroupPermissions: "rw" }] : [])
     && array(host.DeviceRequests ?? []).length === 0 && array(host.DeviceCgroupRules ?? []).length === 0, "owned container devices differ");
-  assert(isDeepStrictEqual(array(config.Env ?? []).filter((entry: unknown) => typeof entry === "string" && /^MESHWAY_AGENT_(UID|GID)=/.test(entry)),
-    development ? [`MESHWAY_AGENT_UID=${user.split(":")[0]}`, `MESHWAY_AGENT_GID=${user.split(":")[1]}`] : []), "owned container Agent identity environment differs");
+  assert(isDeepStrictEqual(array(config.Env ?? []).filter((entry: unknown) => typeof entry === "string" && /^MESHWAY_AGENT_(UID|GID)=/.test(entry)).sort(),
+    development ? [`MESHWAY_AGENT_GID=${user.split(":")[1]}`, `MESHWAY_AGENT_UID=${user.split(":")[0]}`] : []), "owned container Agent identity environment differs");
   assert(isDeepStrictEqual(config.Entrypoint, [helper ? "python3" : packet || development ? "setpriv" : "meshway-agent"])
     && isDeepStrictEqual(config.Cmd, helper ? ["/opt/meshway-demo.py", "--container-enroll"]
       : [...(packet || development ? [...bootstrapArguments(user, packet), "meshway-agent"] : []), ...agentArguments(mode)]), "owned container command differs");
@@ -531,7 +531,8 @@ async function main() {
     "--security-opt", "no-new-privileges", "--stop-signal", "SIGINT", "--stop-timeout", "20",
     ...(!helper && demoMode(owner().mode) === "linux-ipv4-tun" ? [...(shellMode(owner().shell) === "development" ? [] : BOOTSTRAP_CAPS.flatMap((cap) => ["--cap-add", cap])), "--device", "/dev/net/tun:/dev/net/tun:rw"] : []),
     "--mount", `type=bind,src=${join(root, role)},dst=/state`,
-    "--tmpfs", `/tmp:rw,nosuid,nodev,noexec,mode=0700,uid=${uid},gid=${gid},size=8m`,
+    ...(!helper && shellMode(owner().shell) === "development" ? []
+      : ["--tmpfs", `/tmp:rw,nosuid,nodev,noexec,mode=0700,uid=${uid},gid=${gid},size=8m`]),
     "--sysctl", "net.ipv4.ip_forward=0", "--sysctl", "net.ipv6.conf.all.forwarding=0",
     "--sysctl", "net.ipv4.ping_group_range=0 2147483647",
     ...(!helper && demoMode(owner().mode) === "linux-ipv4-tun" ? ["--sysctl", "net.ipv6.conf.default.disable_ipv6=1",
@@ -558,7 +559,7 @@ async function main() {
         exec(["ip", "-j", "-4", "addr", "show", "dev", "meshway0"]),
         exec(["ip", "-j", "-N", "-4", "route", "show", "table", "main", "root", expected.ipv4_prefix]),
         docker(["logs", "--tail", "2048", "--since", text(process.StartedAt), name], 10_000),
-        exec(["python3", "-", String(uid), String(gid)], PROCESS_PROOF),
+        exec(["python3", "-", String(uid), String(gid), shellMode(owner().shell)], PROCESS_PROOF),
       ]);
       const after = await inspectOwned("container", name, role);
       return before.Id === after.Id && record(after.State).StartedAt === process.StartedAt && record(after.State).Running === true
@@ -885,7 +886,8 @@ async function main() {
         console.log(`[demo] mode ${demoMode(owner().mode)} ready; original identities, key/profile bytes and controller plan verified unchanged`);
       }
       await publicStatus(token);
-      if (demoMode(owner().mode) === "linux-ipv4-tun") console.log(`[demo] manual commands: docker exec --user ${uid}:${gid} CONTAINER meshway status (use this explicit user for meshway ping and shells too)`);
+      if (shellMode(owner().shell) === "development") console.log("[demo] developer shell: docker exec -it CONTAINER bash; apt is writable and meshway automatically uses the recorded Agent user");
+      else if (demoMode(owner().mode) === "linux-ipv4-tun") console.log(`[demo] manual commands: docker exec --user ${uid}:${gid} CONTAINER meshway status (use this explicit user for meshway ping and shells too)`);
       return;
     }
 

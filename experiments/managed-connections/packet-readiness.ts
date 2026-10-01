@@ -74,6 +74,8 @@ export function packetInterface(addresses: unknown, routes: unknown, expected: P
 export const PROCESS_PROOF = String.raw`
 import json, os, pathlib, stat, subprocess, sys
 uid, gid = map(int, sys.argv[1:3])
+shell = sys.argv[3] if len(sys.argv) > 3 else "readonly"
+assert shell in ("readonly", "development")
 assert uid > 0 and os.getuid() == uid and os.getgid() == gid
 status = dict(line.split(":", 1) for line in pathlib.Path("/proc/1/status").read_text().splitlines())
 assert list(map(int, status["Uid"].split())) == [uid] * 4
@@ -89,6 +91,9 @@ assert pathlib.Path("/proc/sys/net/ipv6/conf/all/forwarding").read_text().strip(
 assert pathlib.Path("/proc/sys/net/ipv6/conf/default/disable_ipv6").read_text().strip() == "1"
 ipv6 = json.loads(subprocess.check_output(["ip", "-j", "-6", "addr", "show", "dev", "meshway0"], text=True, timeout=3))
 assert all(not item.get("addr_info", []) for item in ipv6)
-assert any(line.split()[1] == "/" and "ro" in line.split()[3].split(",") for line in pathlib.Path("/proc/mounts").read_text().splitlines())
-print(json.dumps({"uid": uid, "gid": gid, "net_admin_only": True, "no_new_privs": True, "rootfs_readonly": True}))
+roots = [line.split()[3].split(",") for line in pathlib.Path("/proc/mounts").read_text().splitlines() if line.split()[1] == "/"]
+assert len(roots) == 1
+readonly = shell == "readonly"
+assert ("ro" in roots[0]) == readonly and ("rw" in roots[0]) != readonly
+print(json.dumps({"uid": uid, "gid": gid, "net_admin_only": True, "no_new_privs": True, "rootfs_readonly": readonly}))
 `;

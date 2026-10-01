@@ -160,6 +160,8 @@ test("development containers are explicitly writable with bounded Docker default
   const check = (candidate: Record<string, unknown>) => assertDemoContainer(candidate,
     { run_id: "a".repeat(32), fingerprint: "b".repeat(64) }, "nyc", [image], "/private/demo/nyc", "501:20", ["neighbors"], ["development"]);
   check(value);
+  config.Env = ["MESHWAY_AGENT_GID=20", "PATH=/usr/local/bin:/usr/bin", "MESHWAY_AGENT_UID=501"];
+  check(value);
   for (const mutate of [
     (item: Record<string, unknown>) => { (item.HostConfig as Record<string, unknown>).Privileged = true; },
     (item: Record<string, unknown>) => { (item.HostConfig as Record<string, unknown>).CapAdd = ["NET_ADMIN", "SYS_ADMIN"]; },
@@ -167,6 +169,7 @@ test("development containers are explicitly writable with bounded Docker default
     (item: Record<string, unknown>) => { (item.HostConfig as Record<string, unknown>).ReadonlyRootfs = true; },
     (item: Record<string, unknown>) => { (item.Config as Record<string, unknown>).User = "501:20"; },
     (item: Record<string, unknown>) => { (item.Config as Record<string, unknown>).Env = ["MESHWAY_AGENT_UID=0", "MESHWAY_AGENT_GID=0"]; },
+    (item: Record<string, unknown>) => { (item.Config as Record<string, unknown>).Env = ["MESHWAY_AGENT_UID=501", "MESHWAY_AGENT_UID=501", "MESHWAY_AGENT_GID=20"]; },
   ]) { const changed = structuredClone(value); mutate(changed); assert.throws(() => check(changed)); }
 });
 
