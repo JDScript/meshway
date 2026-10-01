@@ -34,6 +34,22 @@ pub(crate) struct ExitGrant {
     pub path: Vec<String>,
     pub return_path: Vec<String>,
     pub prefixes: Vec<Ipv4Net>,
+    pub authorization: ExitAuthorization,
+}
+
+#[derive(Clone, Debug)]
+pub(crate) struct ExitAuthorization {
+    pub internet: bool,
+    pub networks: Vec<Ipv4Net>,
+}
+
+impl ExitAuthorization {
+    fn allows(&self, address: Ipv4Addr) -> bool {
+        let public = !address.is_private()
+            && !address.is_link_local()
+            && !matches!(address.octets(), [100, 64..=127, _, _]);
+        (self.internet && public) || self.networks.iter().any(|prefix| prefix.contains(&address))
+    }
 }
 
 /// Already-flattened public + profile rules. Devices never evaluate rule order.
@@ -433,6 +449,9 @@ impl ExitPlan {
                 || grant.prefixes.len() > 16384
                 || grant.prefixes.iter().any(|p| *p != p.trunc())
                 || grant.prefixes.iter().collect::<BTreeSet<_>>().len() != grant.prefixes.len()
+                || (!grant.authorization.internet && grant.authorization.networks.is_empty())
+                || grant.authorization.networks.len() > 16384
+                || grant.authorization.networks.iter().any(|p| *p != p.trunc())
             {
                 return Err(invalid());
             }
@@ -556,6 +575,7 @@ impl Admission for ExitPlan {
                 grant.source == flow.destination
                     && grant.return_path == *path
                     && grant.prefixes.iter().any(|p| p.contains(&flow.source))
+                    && grant.authorization.allows(flow.source)
             })
             .map(|grant| &grant.return_path)
     }
@@ -585,6 +605,7 @@ impl Admission for ExitPlan {
                 grant.path == packet.path
                     && grant.source == flow.source
                     && grant.prefixes.iter().any(|p| p.contains(&flow.destination))
+                    && grant.authorization.allows(flow.destination)
                     && self.remember_return(flow, &packet.payload, grant)
             })
     }
@@ -670,6 +691,10 @@ mod tests {
                 path: vec!["c".into(), "r".into(), "e".into()],
                 return_path: vec!["e".into(), "r".into(), "c".into()],
                 prefixes: vec!["203.0.113.0/24".parse().unwrap()],
+                authorization: ExitAuthorization {
+                    internet: true,
+                    networks: vec![],
+                },
             }],
         );
         let receive = |source, destination| ReceivedPacket {
@@ -880,6 +905,10 @@ mod tests {
                 return_path: path.iter().rev().cloned().collect(),
                 path,
                 prefixes: vec!["203.0.113.0/24".parse().unwrap()],
+                authorization: ExitAuthorization {
+                    internet: true,
+                    networks: vec![],
+                },
             })
             .collect();
         let p = ExitPlan::new(
@@ -913,5 +942,54 @@ mod tests {
             p.outgoing(&other_reply).unwrap(),
             &direct.into_iter().rev().collect::<Vec<_>>()
         );
+    }
+
+    #[test]
+    fn internet_does_not_authorize_private_cgnat_or_link_local_destinations() {
+        let scope = ExitAuthorization {
+            internet: true,
+            networks: vec![],
+        };
+        for address in [
+            "10.0.0.1",
+            "172.16.0.1",
+            "172.31.255.254",
+            "192.168.1.1",
+            "100.64.0.1",
+            "100.127.255.254",
+            "169.254.1.1",
+        ] {
+            assert!(!scope.allows(address.parse().unwrap()), "{address}");
+        }
+        for address in ["8.8.8.8", "172.15.255.254", "172.32.0.1", "100.128.0.1"] {
+            assert!(scope.allows(address.parse().unwrap()));
+        }
+        let mut grant = ExitGrant {
+            source: "198.19.90.1".parse().unwrap(),
+            path: vec!["c".into(), "e".into()],
+            return_path: vec!["e".into(), "c".into()],
+            prefixes: vec!["0.0.0.0/0".parse().unwrap()],
+            authorization: scope,
+        };
+        let incoming = ReceivedPacket {
+            source: "c".into(),
+            path: grant.path.clone(),
+            payload: udp("198.19.90.1", "192.168.1.9", 40000, 443),
+        };
+        let make = |grant| {
+            ExitPlan::new(
+                "198.19.90.3".parse().unwrap(),
+                "198.19.90.0/24".parse().unwrap(),
+                1000,
+                vec![],
+                vec![grant],
+            )
+        };
+        assert!(!make(grant.clone()).incoming(&incoming));
+        grant
+            .authorization
+            .networks
+            .push("192.168.1.0/24".parse().unwrap());
+        assert!(make(grant).incoming(&incoming));
     }
 }

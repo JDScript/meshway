@@ -608,7 +608,9 @@ impl ExitFirewall {
         let tun = &self.tun;
         let external = &self.external;
         let mut forwards = String::new();
-        let mut sets = String::new();
+        let mut sets = String::from(
+            "set internet_excluded { type ipv4_addr; flags interval; auto-merge; elements = { 10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16, 100.64.0.0/10, 169.254.0.0/16 }; }\n",
+        );
         for (index, grant) in plan.grants.iter().enumerate() {
             let elements = grant
                 .prefixes
@@ -621,7 +623,24 @@ impl ExitFirewall {
                 "iifname \"{tun}\" oifname \"{external}\" ip saddr {} ip daddr @dest_{index} ct mark {MARK}",
                 grant.source
             );
-            forwards.push_str(&format!("{common} ct state established accept;\n{common} ct state new ip protocol tcp tcp flags & (fin | syn | rst | ack) == syn accept;\n{common} ct state new ip protocol udp accept;\n{common} ct state new ip protocol icmp icmp type echo-request accept;\n"));
+            let mut authorized = Vec::new();
+            if grant.authorization.internet {
+                authorized.push(format!("{common} ip daddr != @internet_excluded"));
+            }
+            if !grant.authorization.networks.is_empty() {
+                let elements = grant
+                    .authorization
+                    .networks
+                    .iter()
+                    .map(ToString::to_string)
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                sets.push_str(&format!("set auth_{index} {{ type ipv4_addr; flags interval; auto-merge; elements = {{ {elements} }}; }}\n"));
+                authorized.push(format!("{common} ip daddr @auth_{index}"));
+            }
+            for common in authorized {
+                forwards.push_str(&format!("{common} ct state established accept;\n{common} ct state new ip protocol tcp tcp flags & (fin | syn | rst | ack) == syn accept;\n{common} ct state new ip protocol udp accept;\n{common} ct state new ip protocol icmp icmp type echo-request accept;\n"));
+            }
         }
         let rules = format!(
             "delete table inet {NFT}\ntable inet {NFT} {{\n{sets}chain prerouting {{ type filter hook prerouting priority -150; policy accept; iifname \"{tun}\" ct mark set {MARK}; }}\nchain input {{ type filter hook input priority -10; policy accept; iifname \"{tun}\" drop; }}\nchain forward {{ type filter hook forward priority -10; policy accept; {forwards} iifname \"{external}\" oifname \"{tun}\" ct mark {MARK} ct state established accept; iifname \"{tun}\" drop; oifname \"{tun}\" drop; oifname \"{external}\" drop; ip daddr {} drop; }}\nchain nat {{ type nat hook postrouting priority 100; policy accept; oifname \"{external}\" ct mark {MARK} masquerade; }}\n}}\n",

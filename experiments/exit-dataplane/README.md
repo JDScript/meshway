@@ -33,6 +33,7 @@ python3 experiments/transport/performance_lock.py python3 experiments/exit-datap
 1. `direct`：C→E→S、服务端看到E外网地址；未匹配L地址走C本地；认证路径内伪造inner source拒绝；物理非Mesh源不能把E当开放路由器；E直达/C隧道的RTT与iperf短基线。
 2. `relay`：C→R→E→S；无C→E物理路由，停止R后业务失败，不能绕过；同条件短基线。
 3. `unauthorized`：无ExitGrant的源失败（不能从Mesh路径grant推导Internet授权）。
+   `internet-only`：相同默认捕获只授予公网权限时拒绝172.29.233/24出口LAN；其他成功用例显式授权该网段后可访问并观察NAT源。
 4. `default`：非具体服务地址走默认出口，peer endpoint物理pin不被捕获，隐式LAN访问拒绝，IPv6 default unreachable。
 5. `withdraw` / `lease`：真实持续TCP echo先成立；撤回/无刷新lease到期后应用流终止，新流失败，代际mark conntrack清空。
 6. `kill-client` / `kill-exit`：SIGKILL真实Agent测试进程，非持久TUN消失；持续流及新流失败，客户端捕获sink不恢复物理LAN，出口保留拒绝边界。
@@ -48,5 +49,5 @@ python3 experiments/transport/performance_lock.py python3 experiments/exit-datap
 - 同revision切换保留Runtime/密码缓存，RAII交还唯一packet receiver，新pump激活前有界丢弃旧delivery。撤回/lease由Runtime所有者关闭整个Runtime并清理缓存；旧receiver不能复活已关闭的Runtime。
 - 一个namespace一套独占出口表；不采用已有route/nft资源。故SIGKILL后的资源不会被无条件认领；恢复需可信持久所有权。
 - 默认出口的peer/controller/STUN保护先用/32路由pin；SO_MARK socket例外、DNS接管、IPv6数据面、ICMP errors/PMTU属于后续。
-- LAN与Internet都做masquerade。fixture的/0允许所有测试外部IPv4；生产互联网授权与LAN授权的地址集合必须由controller联合编译，不能把fixture的grant当产品默认。
+- LAN与Internet都做masquerade，但授权分开：公网排除RFC1918/CGNAT/link-local，private目的只有具体网段grant才允许。成功fixture显式授权172.29.233/24；`internet-only`默认方案仍捕获 `/0`，在E拒绝LAN。备用F的路径目的表还排除公共规则指定给E的S.20，已认证客户端也不能借F绕路。
 - 双表替换的原子性指packet generation fence与激活，不声称多个Netlink操作构成内核事务；短暂丢包允许，失败不恢复旧I/O。

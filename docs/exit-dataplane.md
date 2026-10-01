@@ -10,7 +10,7 @@
 - **最新确认以路由方案取代默认出口候选模型**：`ProfileCatalog { profiles, default_profile, locked, automatic }`，每个 `RoutingProfile { id, routes, direct_prefixes, fallback }` 是controller已编译的“公共规则 + 方案有序规则 + 兜底”的有效表。`ProfileFallback`区分出口、direct、不接管；后两者在无具体匹配时均继续本地网络。公共规则排最前、在每个方案的等价表中保留。`select_profile`只接受允许方案ID，不携带规则、listener、NAT等配置。选择无需新policy revision，但创建新的packet/flow运行代际；锁定和可选范围由控制面决定。主备只在方案已授权的完整路径内切换，不按包随机挑出口。
 - 每出口授权表：源节点身份、唯一Mesh IPv4、完整正向路径、允许外部前缀的多行投影。相同源可有不同精确路径，地址/身份绑定须一致。目的前缀是**授权与所有允许方案的路径交集**，不是泛互联网grant原样复制：公共规则指定给E的目的地，F的授权表必须排除，防止已认证恶意客户端通过另一个已允许的出口绕路。回程路径明确编译为逆序，仅能传递状态回包。中继持有两条精确路径，不能自行缩短。
 - 表、端点公钥、承载配置、network、revision、lease 来自同一快照。P3a/P3c 必须在新 snapshot 的准备/原子激活流程接入；缓存旧出口表不能延长 lease。原型不在正常 Agent CLI 中启用，通过 ignored fixture 注入内部类型。
-- `ExitPlan::validate` 在绑定 Runtime 前检查身份、地址、完整路径、MTU、重复前缀与本地投影。外部内层地址不得指向 Mesh pool、loopback、link-local、multicast、保留广播/零地址；源必须与认证源节点绑定。**统一出口职责**覆盖离开 Mesh 到目标节点本地 LAN 或互联网的流量，不另做 subnet router。管理员在 Web 开启“可作为出口”后，编译计划才包含出口职责；设备不通告、不配置。LAN 前缀访问授权独立于泛“互联网”授权，controller 必须联合投影为 `ExitGrant.prefixes`，不能从默认 /0 推导对未授权 LAN 的访问。
+- `ExitPlan::validate`在绑定Runtime前检查身份、地址、完整路径、MTU、重复前缀与本地投影。外部内层地址不得指向Mesh pool、loopback、link-local、multicast、保留广播/零地址；源须与认证身份绑定。**统一出口职责**覆盖离开Mesh到目标节点LAN或互联网，不另做subnet router。Web管理员开启出口后计划才包含此职责，设备不通告/配置。`ExitGrant.prefixes`表达路径目的投影，另有 `ExitAuthorization { internet, networks }`：**已确认internet仅含公网**，排除RFC1918（10/8、172.16/12、192.168/16）、CGNAT（100.64/10，含Mesh）与链路本地（169.254/16）；IPv6计划按2000::/3并排除ULA（fc00::/7）和链路本地（fe80::/10）。LAN须独立具体网段授权。默认/全局方案捕获 `/0`不扩大授权，只有internet的源访问出口LAN，在解密准入与nft过滤两层拒绝，不进入masquerade。
 
 ### 方案选择、取消与存量流
 
@@ -109,7 +109,7 @@ P3c 参照 Tailscale exit DNS：本地可信 stub 把外部查询通过当前选
 ## 需用户确认的产品问题
 
 1. 异常期始终 fail-closed 的产品偏好；原型已按此实现，明确取消选择与授权撤回的恢复边界见上文。
-2. 默认出口 LAN access 默认关闭、通过direct排除开放本地LAN的体验；“互联网”授权是否排除出口LAN/保留地址的具体地址分类。
+2. 默认出口LAN access默认关闭、通过direct排除开放本地LAN的体验。互联网排除RFC1918/ULA/CGNAT/link-local已确认，不再作为问题。
 3. 出口 DNS / OS override、共享域名 IP 的路由语义与 IPv6不可用时的域名行为。
 
 已确认而不再列为问题：公共规则优先，用户从允许范围切换路由方案（管理员可锁定），仅Mesh/全局经X/自动为内置方案；Web管理员开启出口能力，设备不通告；统一出口覆盖LAN与互联网；direct排除；规则集由controller管理下载编译；出口规则有序first-match，设备只执行有效展平表。
@@ -119,5 +119,7 @@ P3c 参照 Tailscale exit DNS：本地可信 stub 把外部查询通过当前选
 2026-10-01 实际阅读官方 [Exit nodes](https://tailscale.com/kb/1103/exit-nodes)（默认路由、opt-in、LAN默认关闭、forwarding、互联网授权）、[App connectors](https://tailscale.com/kb/1281/app-connectors)（DoH发现、共享IP限制）、[DNS](https://tailscale.com/kb/1054/dns)（exit resolver与use-with-exit）。有序中转与管理员集中路由是 Meshway 扩展，不把 Tailscale via tag 当作 ordered path。
 
 域名上下文对照实际阅读：[sing-box FakeIP DNS server](https://sing-box.sagernet.org/configuration/dns/server/fakeip/)（legacy FakeIP配置已删除，不能复制旧格式）、[Protocol sniff](https://sing-box.sagernet.org/configuration/route/sniff/)、[mihomo DNS](https://wiki.metacubex.one/config/dns/)（fake-ip/redir-host、上游bootstrap、fake-ip-filter）、[mihomo sniff](https://wiki.metacubex.one/config/sniff/)（HTTP/TLS/QUIC、force-dns-mapping与override-destination边界）。
+
+公网授权分类核对固定checkout `references/headscale/hscontrol/util/net.go:39–63` 的 `TheInternet`；此处是借鉴分类集合，不能把Headscale当作Tailscale官方controller实现。隔离S使用172.29.233/24，成功用例显式授权该网段；另有internet-only用例证明 `/0`捕获不能把private LAN变成公网权限。
 
 隔离验收入口见 `experiments/exit-dataplane/README.md`。结果 JSON 包含 `status`、每项真实命令证据与 `cleanup_errors`；吞吐/RTT仅为同条件可复现基线，不衡量包装增量。

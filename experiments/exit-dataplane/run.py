@@ -113,7 +113,7 @@ class Fixture:
         self.check('external server observes NAT source ' + expected_source,
                    response['exit_code'] == 0 and json.loads(response['stdout'])['source'] == expected_source, response=response)
 
-    def setup(self, mode='direct', default=False, authorized=True, lease=180, locked=False, direct_count=0):
+    def setup(self, mode='direct', default=False, authorized=True, lease=180, locked=False, direct_count=0, internet_only=False):
         self.network('a', '172.29.231.0/24')
         self.network('ext', '172.29.233.0/24')
         self.node('C', 'a', '172.29.231.10')
@@ -156,6 +156,7 @@ class Fixture:
                               '--env', f'MESHWAY_EXIT_AUTHORIZED={int(authorized)}', '--env', f'MESHWAY_EXIT_DEFAULTS={int(mode == "dual")}',
                               '--env', f'MESHWAY_EXIT_LOCKED={int(locked)}', '--env', f'MESHWAY_EXIT_LEASE={lease}',
                               '--env', f'MESHWAY_EXIT_DIRECT_COUNT={direct_count}',
+                              '--env', f'MESHWAY_EXIT_INTERNET_ONLY={int(internet_only)}',
                               self.args.image, '--exact', 'managed_dataplane::exit::fixture::generate', '--ignored', check=False)
             if response.returncode:
                 raise RuntimeError('Private fixture generation failed; output suppressed')
@@ -265,6 +266,13 @@ def exercise(f, case):
     elif case == 'unauthorized':
         f.setup(authorized=False)
         f.check('source without internet grant rejected', f.http('C', '172.29.233.20')['exit_code'] != 0)
+    elif case == 'internet-only':
+        f.setup(default=True, internet_only=True)
+        response = f.http('C', '172.29.233.20')
+        f.check('internet-only grant cannot NAT into exit LAN', response['exit_code'] != 0, response=response)
+        route = json.loads(f.exec('C', 'ip', '-j', 'route', 'get', '172.29.233.20').stdout)
+        f.check('private destination is captured but authorization-denied at E', route[0]['dev'] == 'mwexit0', route=route)
+        f.check('E can reach its LAN independently', f.http('E', '172.29.233.20')['exit_code'] == 0)
     elif case == 'default':
         f.setup(default=True)
         f.succeeds('172.29.233.21', '172.29.233.10')
@@ -373,8 +381,8 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--image', required=True)
     parser.add_argument('--artifacts', type=Path, required=True)
-    parser.add_argument('--cases', nargs='+', choices=['direct', 'relay', 'unauthorized', 'default', 'withdraw', 'lease', 'kill-client', 'kill-exit', 'dual', 'locked', 'direct-exclude'],
-                        default=['direct', 'relay', 'unauthorized', 'default', 'withdraw', 'lease', 'kill-client', 'kill-exit', 'dual', 'locked', 'direct-exclude'])
+    parser.add_argument('--cases', nargs='+', choices=['direct', 'relay', 'unauthorized', 'internet-only', 'default', 'withdraw', 'lease', 'kill-client', 'kill-exit', 'dual', 'locked', 'direct-exclude'],
+                        default=['direct', 'relay', 'unauthorized', 'internet-only', 'default', 'withdraw', 'lease', 'kill-client', 'kill-exit', 'dual', 'locked', 'direct-exclude'])
     args = parser.parse_args()
     os.umask(0o077)
     args.artifacts.mkdir(parents=True, exist_ok=True)

@@ -23,6 +23,7 @@ struct Fixture {
     defaults: bool,
     locked: bool,
     direct_count: usize,
+    internet_only: bool,
 }
 
 #[test]
@@ -46,6 +47,7 @@ fn generate() {
         .unwrap()
         .parse()
         .unwrap();
+    let internet_only = std::env::var("MESHWAY_EXIT_INTERNET_ONLY").unwrap() == "1";
     assert!((2..=3).contains(&endpoints.len()));
     let (mut payloads, _) = crate::managed_dataplane::tests::fixtures(endpoints.len());
     let keys: Vec<_> = (0..endpoints.len())
@@ -170,6 +172,7 @@ fn generate() {
             defaults,
             locked,
             direct_count,
+            internet_only,
         };
         local::atomic_write(
             &directory.join(format!("node-{index}.json")),
@@ -194,6 +197,14 @@ fn plan(f: &Fixture) -> ExitPlan {
     };
     let grants = if f.role == "exit" && f.authorized {
         vec![ExitGrant {
+            authorization: ExitAuthorization {
+                internet: f.internet_only,
+                networks: if f.internet_only {
+                    vec![]
+                } else {
+                    vec!["172.29.233.0/24".parse().unwrap()]
+                },
+            },
             source: "198.19.90.1".parse().unwrap(),
             path: f.path.clone(),
             return_path: f.path.iter().rev().cloned().collect(),
