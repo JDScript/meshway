@@ -4,6 +4,7 @@ import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { exchangeDevice, listNodes } from "../packages/control-client/src/index.ts";
+import { heartbeatAgentOperation as heartbeatAgent } from "../packages/control-client/src/generated/operations.gen.ts";
 import { executable, root, service, unusedPort } from "./harness.ts";
 
 test("browser SSO approval redirects a PKCE code, exchange creates a real unified node, deny creates none", async ({ page, browser }) => {
@@ -45,8 +46,27 @@ test("browser SSO approval redirects a PKCE code, exchange creates a real unifie
     const blocked = await anonymous.request.post(authorize, { headers: { ...headers, origin: webUrl }, data: body, maxRedirects: 0 });
     expect(blocked.headers()["x-action-redirect"] ?? blocked.headers().location).toContain("/login");
     expect((await listNodes(base, admin)).nodes).toHaveLength(0);
-    const node = await exchangeDevice(base, code, { code_verifier: verifier, redirect_uri: params.redirect_uri, node_credential: credential, name: params.name, agent_version: params.agent_version });
+    const binding = { code_verifier: verifier, redirect_uri: params.redirect_uri, node_credential: credential, name: params.name, agent_version: params.agent_version };
+    const node = await exchangeDevice(webUrl, code, binding);
     expect(node.node.name).toBe("SSO Mac"); expect(node.node.revoked_at).toBeNull();
+    expect((await exchangeDevice(webUrl, code, binding)).node.id).toBe(node.node.id);
+    expect((await heartbeatAgent(webUrl, credential, { agent_version: params.agent_version })).node.id).toBe(node.node.id);
+    const unauthenticated = await anonymous.request.post(`${webUrl}/api/v1/agents/heartbeat`, { data: { agent_version: "e2e" } });
+    expect(unauthenticated.status()).toBe(401);
+    expect(unauthenticated.headers()["www-authenticate"]).toBe("Bearer");
+    expect(unauthenticated.headers()["cache-control"]).toBe("no-store");
+    const directRejection = await anonymous.request.post(`${base}/api/v1/agents/heartbeat`, { data: { agent_version: "e2e" } });
+    expect(await unauthenticated.text()).toBe(await directRejection.text());
+    const wrongMedia = await anonymous.request.post(`${webUrl}/api/v1/agents/heartbeat`, {
+      headers: { authorization: `Bearer ${credential}`, "content-type": "text/plain" }, data: "{}",
+    });
+    expect(wrongMedia.status()).toBe(415);
+    for (const path of ["nodes", "overview", "device-authorizations", "nodes/revoke", "enrollment-tokens"]) {
+      const response = await anonymous.request.post(`${webUrl}/api/v1/${path}`, { headers: { authorization: `Bearer ${admin}` }, data: {} });
+      expect(response.status()).toBe(404);
+      const read = await anonymous.request.get(`${webUrl}/api/v1/${path}`, { headers: { authorization: `Bearer ${admin}` } });
+      expect(read.status()).toBe(404);
+    }
     expect((await listNodes(base, admin)).nodes).toHaveLength(1);
     await page.goto(authorize);
     const denial = page.waitForResponse(r => r.request().method() === "POST" && new URL(r.url()).pathname === "/authorize-device");
