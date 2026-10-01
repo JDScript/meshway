@@ -51,6 +51,9 @@ pub enum Operation {
     Whois {
         query: String,
     },
+    Ping {
+        request: ProbeRequest,
+    },
 }
 
 #[derive(Deserialize)]
@@ -135,6 +138,7 @@ pub struct WhoisObservation {
 pub enum LiveResponse {
     Status(LiveStatus),
     Whois(WhoisObservation),
+    Ping(ProbeObservation),
     Error(ProbeError),
 }
 
@@ -166,6 +170,32 @@ pub struct ProbeObservation {
     pub rtt_ns: u64,
 }
 
+/// Historical unversioned wire shape. Keep its exact six fields: old clients
+/// deny unknown fields. Generation evidence is available only via versioned IPC.
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct LegacyProbeObservation {
+    pub peer_node_id: String,
+    pub peer_name: Option<String>,
+    pub local_node_id: String,
+    pub initiator_node_id: String,
+    pub transport: meshway_protocol::ConnectionTransport,
+    pub rtt_ns: u64,
+}
+
+impl From<ProbeObservation> for LegacyProbeObservation {
+    fn from(observation: ProbeObservation) -> Self {
+        Self {
+            peer_node_id: observation.peer_node_id,
+            peer_name: observation.peer_name,
+            local_node_id: observation.local_node_id,
+            initiator_node_id: observation.initiator_node_id,
+            transport: observation.transport,
+            rtt_ns: observation.rtt_ns,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, thiserror::Error)]
 #[serde(rename_all = "snake_case")]
 pub enum ProbeError {
@@ -195,6 +225,10 @@ pub enum ProbeError {
     Security,
     #[error("identity not found in the current trusted inventory")]
     UnknownIdentity,
+    #[error(
+        "daemon local IPC version/operation unsupported or response incompatible; upgrade and restart the managed daemon"
+    )]
+    UnsupportedVersion,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -205,7 +239,7 @@ pub enum ProbeError {
     deny_unknown_fields
 )]
 pub enum ProbeResponse {
-    Ok(ProbeObservation),
+    Ok(LegacyProbeObservation),
     Error(ProbeError),
 }
 
@@ -367,7 +401,7 @@ impl Server {
                                         // are never interpreted as another operation.
                                         _ = socket.read(&mut extra) => return,
                                         result = prober.probe_neighbor_observed(request) => match result {
-                                            Ok(value) => ProbeResponse::Ok(value),
+                                            Ok(value) => ProbeResponse::Ok(value.into()),
                                             Err(error) => ProbeResponse::Error(error),
                                         },
                                     };
@@ -375,7 +409,7 @@ impl Server {
                                 }
                                 Ok(Incoming::Versioned(request)) => {
                                     let response = if request.schema_version != SCHEMA_VERSION {
-                                        LiveResponse::Error(ProbeError::InvalidRequest)
+                                        LiveResponse::Error(ProbeError::UnsupportedVersion)
                                     } else {
                                         match request.operation {
                                             Operation::Status { peers, offset, limit } => match prober.live_status(peers, offset, limit) {
@@ -385,6 +419,17 @@ impl Server {
                                             Operation::Whois { query } => match prober.whois(&query) {
                                                 Ok(value) => LiveResponse::Whois(value),
                                                 Err(error) => LiveResponse::Error(error),
+                                            },
+                                            Operation::Ping { request } => {
+                                                let mut extra = [0; 1];
+                                                tokio::select! {
+                                                    biased;
+                                                    _ = socket.read(&mut extra) => return,
+                                                    result = prober.probe_neighbor_observed(request) => match result {
+                                                        Ok(value) => LiveResponse::Ping(value),
+                                                        Err(error) => LiveResponse::Error(error),
+                                                    },
+                                                }
                                             },
                                         }
                                     };
@@ -474,9 +519,26 @@ pub async fn probe(
             .map_err(|_| ProbeError::InvalidRequest)?,
     };
     request.validate()?;
-    match exchange::<ProbeResponse>(state, &request, MAX_FRAME).await? {
-        ProbeResponse::Ok(value) => Ok(value),
-        ProbeResponse::Error(error) => Err(error),
+    let response = exchange::<LiveResponse>(
+        state,
+        &Request {
+            schema_version: SCHEMA_VERSION,
+            operation: Operation::Ping { request },
+        },
+        MAX_RESPONSE,
+    )
+    .await
+    .map_err(|error| match error {
+        ProbeError::InvalidRequest => ProbeError::UnsupportedVersion,
+        error => error,
+    })?;
+    match response {
+        LiveResponse::Ping(value) => Ok(value),
+        // Old daemons reject the versioned request with the historical error.
+        // Never fabricate current metadata or silently fall back to legacy IPC.
+        LiveResponse::Error(ProbeError::InvalidRequest) => Err(ProbeError::UnsupportedVersion),
+        LiveResponse::Error(error) => Err(error),
+        _ => Err(ProbeError::UnsupportedVersion),
     }
 }
 

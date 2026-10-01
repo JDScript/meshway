@@ -7,6 +7,8 @@ async fn versioned_requests_are_closed_and_response_bound_is_independent() {
         r#"{"schema_version":1,"operation":{"command":"status","peers":false,"offset":0,"limit":64,"extra":true}}"#,
         r#"{"schema_version":1,"operation":{"command":"whois","query":"SHA"},"extra":true}"#,
         r#"{"schema_version":1,"operation":{"command":"dns_query","query":"SHA"}}"#,
+        r#"{"schema_version":1,"operation":{"command":"ping","request":{"peer":"SHA","timeout_ms":3000,"extra":true}}}"#,
+        r#"{"schema_version":1,"operation":{"command":"ping","request":{"peer":"SHA","timeout_ms":3000},"extra":true}}"#,
         r#"{"schema_version":1,"schema_version":2,"operation":{"command":"whois","query":"SHA"}}"#,
     ] {
         assert!(serde_json::from_str::<Incoming>(body).is_err());
@@ -33,7 +35,7 @@ async fn versioned_requests_are_closed_and_response_bound_is_independent() {
         .unwrap();
         assert!(matches!(
             response,
-            LiveResponse::Error(ProbeError::InvalidRequest)
+            LiveResponse::Error(ProbeError::UnsupportedVersion)
         ));
     }
     assert_eq!(

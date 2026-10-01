@@ -3,8 +3,9 @@
 use std::{fs, os::unix::fs::PermissionsExt, path::Path, process::Output};
 
 use meshway_agent::diagnostics::{
-    self, Evidence, Incoming, LiveResponse, LiveState, LiveStatus, Operation, ProbeError,
-    ProbeObservation, ProbeResponse, PublicIdentity, SCHEMA_VERSION, WhoisObservation,
+    self, Evidence, Incoming, LegacyProbeObservation, LiveResponse, LiveState, LiveStatus,
+    Operation, ProbeError, ProbeObservation, ProbeResponse, PublicIdentity, SCHEMA_VERSION,
+    WhoisObservation,
 };
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
@@ -59,29 +60,7 @@ async fn fixture(state: &Path) -> tokio::task::JoinHandle<()> {
             let request: Incoming = serde_json::from_slice(&bytes).unwrap();
             let request = match request {
                 Incoming::Versioned(request) => request,
-                Incoming::Legacy(request) => {
-                    request.validate().unwrap();
-                    let response = if request.peer == "SHA" {
-                        ProbeResponse::Ok(ProbeObservation {
-                            generation: 7,
-                            installed_revision: 3,
-                            source_revision: 3,
-                            evidence: Evidence::DirectAuthenticatedNeighborRoundTrip,
-                            peer_node_id: "b".repeat(64),
-                            peer_name: Some(identity().name),
-                            local_node_id: "a".repeat(64),
-                            initiator_node_id: "b".repeat(64),
-                            transport: meshway_protocol::ConnectionTransport::NativeUdp,
-                            rtt_ns: 123_456,
-                        })
-                    } else {
-                        ProbeResponse::Error(ProbeError::UnconfiguredPeer)
-                    };
-                    let body = serde_json::to_vec(&response).unwrap();
-                    socket.write_u32(body.len() as u32).await.unwrap();
-                    socket.write_all(&body).await.unwrap();
-                    continue;
-                }
+                Incoming::Legacy(_) => panic!("new CLI must use versioned ping, not legacy IPC"),
             };
             assert_eq!(request.schema_version, SCHEMA_VERSION);
             let response = match request.operation {
@@ -120,6 +99,25 @@ async fn fixture(state: &Path) -> tokio::task::JoinHandle<()> {
                         evidence: Evidence::CurrentTrustedInventory,
                     })
                 }
+                Operation::Ping { request } => {
+                    request.validate().unwrap();
+                    if request.peer == "SHA" {
+                        LiveResponse::Ping(ProbeObservation {
+                            generation: 7,
+                            installed_revision: 3,
+                            source_revision: 3,
+                            evidence: Evidence::DirectAuthenticatedNeighborRoundTrip,
+                            peer_node_id: "b".repeat(64),
+                            peer_name: Some(identity().name),
+                            local_node_id: "a".repeat(64),
+                            initiator_node_id: "b".repeat(64),
+                            transport: meshway_protocol::ConnectionTransport::NativeUdp,
+                            rtt_ns: 123_456,
+                        })
+                    } else {
+                        LiveResponse::Error(ProbeError::UnconfiguredPeer)
+                    }
+                }
             };
             let body = serde_json::to_vec(&response).unwrap();
             socket.write_u32(body.len() as u32).await.unwrap();
@@ -149,6 +147,77 @@ fn json(output: &Output) -> serde_json::Value {
         assert!(!text.contains(forbidden), "must not emit {forbidden:?}");
     }
     serde_json::from_slice(&output.stdout).unwrap()
+}
+
+#[tokio::test]
+async fn old_daemon_rejection_or_success_never_fabricates_live_ping_metadata() {
+    for success_reply in [false, true] {
+        let dir = directory();
+        let state = dir.path().join("a");
+        let path = diagnostics::socket_path(&state);
+        let listener = UnixListener::bind(&path).unwrap();
+        fs::set_permissions(&path, fs::Permissions::from_mode(0o600)).unwrap();
+        let task = tokio::spawn(async move {
+            for _ in 0..2 {
+                let (mut socket, _) = listener.accept().await.unwrap();
+                let length = socket.read_u32().await.unwrap();
+                assert!(length <= 4096);
+                let mut bytes = vec![0; length as usize];
+                socket.read_exact(&mut bytes).await.unwrap();
+                let incoming: Incoming = serde_json::from_slice(&bytes).unwrap();
+                assert!(
+                    matches!(
+                        incoming,
+                        Incoming::Versioned(diagnostics::Request {
+                            operation: Operation::Ping { .. },
+                            ..
+                        })
+                    ),
+                    "no silent legacy fallback"
+                );
+                let response = if success_reply {
+                    ProbeResponse::Ok(LegacyProbeObservation {
+                        peer_node_id: "b".repeat(64),
+                        peer_name: Some("SHA".into()),
+                        local_node_id: "a".repeat(64),
+                        initiator_node_id: "b".repeat(64),
+                        transport: meshway_protocol::ConnectionTransport::NativeUdp,
+                        rtt_ns: 123_456,
+                    })
+                } else {
+                    ProbeResponse::Error(ProbeError::InvalidRequest)
+                };
+                let body = serde_json::to_vec(&response).unwrap();
+                socket.write_u32(body.len() as u32).await.unwrap();
+                socket.write_all(&body).await.unwrap();
+            }
+        });
+        let output = cli(&state, &["ping", "SHA", "--json", "--count", "3"]).await;
+        assert_eq!(output.status.code(), Some(1));
+        let value = json(&output);
+        assert_eq!(value["samples"].as_array().unwrap().len(), 1);
+        assert_eq!(
+            value["samples"][0]["outcome"]["result"],
+            "unsupported_version"
+        );
+        assert_eq!(value["result"]["result"], "unsupported_version");
+        let text = String::from_utf8(output.stdout).unwrap();
+        assert!(!text.contains("generation"));
+        assert!(!text.contains("evidence"));
+        let output = cli(&state, &["ping", "SHA", "--count", "1"]).await;
+        assert_eq!(output.status.code(), Some(1));
+        assert!(
+            String::from_utf8(output.stderr)
+                .unwrap()
+                .contains("upgrade and restart")
+        );
+        assert!(
+            !String::from_utf8(output.stdout)
+                .unwrap()
+                .contains("seq=1 peer=")
+        );
+        task.await.unwrap();
+    }
 }
 
 #[tokio::test]

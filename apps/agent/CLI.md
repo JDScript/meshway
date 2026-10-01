@@ -66,7 +66,12 @@ bearer, private key, instance secret, channel token or transport credential is
 serialized. Exit codes: success **0**, runtime failure **1**, clap usage **2**.
 
 The length-prefixed one-request IPC accepts a versioned closed operation tag for
-status/whois, and preserves the legacy closed unversioned probe request. Unknown
+status/whois/ping, and preserves the legacy closed unversioned probe request and
+its original six-field success response. Enriched probe metadata is returned
+only for versioned ping. The new CLI uses versioned ping; an old daemon's
+rejection or incompatible success response becomes `unsupported_version` with
+exit 1 and an upgrade/restart instruction. No missing generation is synthesized
+and no legacy fallback is performed. Unknown
 versions/tags/fields are rejected. Requests are limited to **4 KiB**, responses
 to **64 KiB**, and status pages to **64 peers**. Bounds are checked before inbound
 allocation. Oversized responses are explicit errors. Existing safeguards remain:

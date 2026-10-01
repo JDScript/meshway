@@ -439,6 +439,32 @@ mod live_tests {
     use super::*;
     use crate::diagnostics;
     use std::os::unix::fs::PermissionsExt;
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+    // Exact historical closed client DTO: deliberately independent of the
+    // production legacy type so additions to its wire shape fail this test.
+    #[derive(Debug, serde::Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct HistoricalObservation {
+        peer_node_id: String,
+        peer_name: Option<String>,
+        local_node_id: String,
+        initiator_node_id: String,
+        transport: meshway_protocol::ConnectionTransport,
+        rtt_ns: u64,
+    }
+
+    #[derive(Debug, serde::Deserialize)]
+    #[serde(
+        tag = "status",
+        content = "result",
+        rename_all = "snake_case",
+        deny_unknown_fields
+    )]
+    enum HistoricalResponse {
+        Ok(HistoricalObservation),
+        Error(ProbeError),
+    }
 
     fn inventory(own: &str, peer: &str) -> NodeConfiguration {
         let node = |id: &str, name: &str, index| meshway_protocol::MeshNode {
@@ -533,6 +559,43 @@ mod live_tests {
             assert_eq!(found.identity.node_id, client.node_id);
             assert_eq!(found.generation, live.generation);
         }
+        let mut legacy = tokio::net::UnixStream::connect(diagnostics::socket_path(&state))
+            .await
+            .unwrap();
+        let request = serde_json::to_vec(&ProbeRequest {
+            peer: "SHA".into(),
+            timeout_ms: 3000,
+        })
+        .unwrap();
+        legacy.write_u32(request.len() as u32).await.unwrap();
+        legacy.write_all(&request).await.unwrap();
+        let size = legacy.read_u32().await.unwrap();
+        assert!(size <= 4096);
+        let mut body = vec![0; size as usize];
+        legacy.read_exact(&mut body).await.unwrap();
+        let historical = match serde_json::from_slice::<HistoricalResponse>(&body).unwrap() {
+            HistoricalResponse::Ok(observation) => observation,
+            HistoricalResponse::Error(error) => panic!("legacy real nonce probe failed: {error}"),
+        };
+        assert_eq!(historical.peer_node_id, client.node_id);
+        assert_eq!(historical.peer_name.as_deref(), Some("SHA"));
+        assert_eq!(historical.local_node_id, server.node_id);
+        assert_eq!(historical.initiator_node_id, client.node_id);
+        assert_eq!(
+            historical.transport,
+            meshway_protocol::ConnectionTransport::NativeUdp
+        );
+        assert!(historical.rtt_ns > 0);
+        let enriched = diagnostics::probe(&state, "SHA", Duration::from_secs(3))
+            .await
+            .unwrap();
+        assert_eq!(enriched.generation, live.generation);
+        assert_eq!(enriched.installed_revision, 1);
+        assert_eq!(enriched.source_revision, 1);
+        assert!(matches!(
+            enriched.evidence,
+            Evidence::DirectAuthenticatedNeighborRoundTrip
+        ));
         assert_eq!(
             prober.whois("unknown").unwrap_err(),
             ProbeError::UnknownIdentity
