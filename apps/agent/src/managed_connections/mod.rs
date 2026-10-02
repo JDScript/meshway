@@ -87,6 +87,7 @@ struct Running {
     discovery_task: Option<JoinHandle<()>>,
 }
 
+#[derive(Clone)]
 pub(crate) struct ReportGuard {
     deadline: watch::Receiver<Option<Instant>>,
     observed: watch::Receiver<Observation>,
@@ -121,10 +122,15 @@ impl ReportGuard {
         let deadline = self
             .observation_expiry
             .map_or(deadline, |expiry| expiry.min(deadline));
+        // Waiting must not mark the original proof witnesses seen. In
+        // particular a renewal (including same-value notification / ABA) must
+        // permanently fence this guard even after the waiter wakes.
+        let mut deadlines = self.deadline.clone();
+        let mut observations = self.observed.clone();
         tokio::select! {
             _ = time::sleep_until(deadline) => {},
-            _ = self.deadline.changed() => {},
-            _ = self.observed.changed() => {},
+            _ = deadlines.changed() => {},
+            _ = observations.changed() => {},
         }
     }
 }

@@ -913,3 +913,49 @@ async fn runtime_report_guard_negative_withdraw_and_generation_fences() {
     manager.withdraw(Reason::ShuttingDown).await;
     assert!(!proof.current());
 }
+#[tokio::test(start_paused = true)]
+async fn runtime_report_pending_wait_preserves_witness_for_renewal_aba_same_value_and_closed() {
+    for mode in 0..5 {
+        let original = Some(Instant::now() + Duration::from_secs(30));
+        let (deadline_sender, deadline) = watch::channel(original);
+        let (observation_sender, observed) =
+            watch::channel(Observation::empty(Phase::Applied, Reason::None));
+        let mut guard = ReportGuard {
+            deadline,
+            observed,
+            observation_expiry: None,
+        };
+        {
+            let changed = guard.changed();
+            tokio::pin!(changed);
+            std::future::poll_fn(|cx| {
+                use std::future::Future;
+                assert!(changed.as_mut().poll(cx).is_pending());
+                std::task::Poll::Ready(())
+            })
+            .await;
+            match mode {
+                0 => {
+                    deadline_sender.send_replace(Some(Instant::now() + Duration::from_secs(60)));
+                }
+                1 => {
+                    deadline_sender.send_replace(None);
+                    deadline_sender.send_replace(original);
+                }
+                2 => {
+                    deadline_sender.send_replace(original);
+                }
+                3 => drop(deadline_sender),
+                _ => drop(observation_sender),
+            }
+            changed.await;
+        }
+        assert!(
+            !guard.current() && !guard.generation_current(),
+            "pending notification mode {mode} must permanently invalidate the original token"
+        );
+        // A second wait must not consume the evidence or restore the token.
+        guard.changed().await;
+        assert!(!guard.current() && !guard.generation_current());
+    }
+}

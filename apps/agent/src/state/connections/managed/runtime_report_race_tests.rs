@@ -14,12 +14,12 @@ use meshway_protocol::{
 use std::sync::{Arc, Mutex};
 use tokio::sync::watch;
 
-struct Transport {
-    requests: Arc<Mutex<Vec<ReportConnectionRuntimeRequest>>>,
-    wait: Duration,
-    status: u16,
-    race: Option<watch::Sender<Observation>>,
-    retire: Option<watch::Sender<Option<Instant>>>,
+pub(super) struct Transport {
+    pub(super) requests: Arc<Mutex<Vec<ReportConnectionRuntimeRequest>>>,
+    pub(super) wait: Duration,
+    pub(super) status: u16,
+    pub(super) race: Option<watch::Sender<Observation>>,
+    pub(super) retire: Option<watch::Sender<Option<Instant>>>,
 }
 
 impl HttpTransport for Transport {
@@ -55,7 +55,7 @@ impl HttpTransport for Transport {
     }
 }
 
-fn setup(
+pub(super) fn setup(
     lease_duration: Duration,
 ) -> (
     tempfile::TempDir,
@@ -101,7 +101,7 @@ fn setup(
     (dir, agent, manager, lease, observed, deadline)
 }
 
-fn client(transport: Transport) -> HttpClient {
+pub(super) fn client(transport: Transport) -> HttpClient {
     HttpClient::new().with_transport(Arc::new(transport))
 }
 

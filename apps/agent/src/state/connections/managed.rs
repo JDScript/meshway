@@ -1,6 +1,6 @@
 //! Generated-HTTP orchestration; the runtime watchdog never waits on HTTP.
 
-use std::{path::PathBuf, time::Duration};
+use std::{future::Future, path::PathBuf, task::Poll, time::Duration};
 
 use meshway_protocol::{
     BeginConnectionRuntimeRequest, BeginConnectionRuntimeResponse,
@@ -386,7 +386,7 @@ impl Agent {
                 .checked_add(1)
                 .ok_or(AgentError::Invalid("runtime report sequence exhausted"))?;
             let snapshot = manager.snapshot.as_ref().expect("reconciled snapshot");
-            let (observed, mut guard) = manager.report_snapshot();
+            let (observed, guard) = manager.report_snapshot();
             let request = ReportConnectionRuntimeRequest {
                 epoch: lease.epoch.expect("runtime lease acquired"),
                 sequence: lease.sequence,
@@ -410,13 +410,35 @@ impl Agent {
                 }
                 return Err(AgentError::RuntimeObservationChanged);
             }
-            let response = tokio::select! {
-                biased;
-                // Received status evidence takes precedence over a simultaneous
-                // observation/lease fence, including late 403 and 409 responses.
-                response = client.report_connection_runtime(body) => Some(response),
-                _ = time::sleep_until(http_deadline) => return Err(AgentError::Transport { retryable: true }),
-                _ = async { match &mut guard { Some(guard) => guard.changed().await, None => std::future::pending().await } } => None,
+            let response = {
+                let mut waiter = guard.clone();
+                let send = client.report_connection_runtime(body);
+                tokio::pin!(send);
+                let admitted = std::future::poll_fn(|cx| {
+                    // An entire generated HTTP poll can advance outbound I/O,
+                    // not merely inspect an already received status. Admit every
+                    // poll against the original token and original HTTP budget.
+                    if Instant::now() >= http_deadline {
+                        return Poll::Ready(Err(AgentError::Transport { retryable: true }));
+                    }
+                    if guard.as_ref().is_some_and(|guard| !guard.current()) {
+                        return Poll::Ready(Err(AgentError::RuntimeObservationChanged));
+                    }
+                    // A terminal response received during this valid poll may
+                    // carry 403/409 even if that same poll also publishes a
+                    // fence. Preserve it; never poll invalid I/O to seek status.
+                    send.as_mut().poll(cx).map(Ok)
+                });
+                tokio::select! {
+                    biased;
+                    response = admitted => match response {
+                        Ok(response) => Some(response),
+                        Err(AgentError::RuntimeObservationChanged) => None,
+                        Err(error) => return Err(error),
+                    },
+                    _ = time::sleep_until(http_deadline) => return Err(AgentError::Transport { retryable: true }),
+                    _ = async { match &mut waiter { Some(guard) => guard.changed().await, None => std::future::pending().await } } => None,
+                }
             };
             let Some(response) = response else {
                 // Drop the old HTTP future/body even on peer failure. Only a
@@ -764,6 +786,8 @@ mod discovery_tests;
 mod heartbeat_tests;
 #[cfg(test)]
 mod mesh_restart_tests;
+#[cfg(test)]
+mod runtime_report_boundary_tests;
 #[cfg(test)]
 mod runtime_report_race_tests;
 #[cfg(test)]

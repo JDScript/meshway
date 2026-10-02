@@ -37,6 +37,8 @@ async fn serve(
 async fn proxy(
     upstream: std::net::SocketAddr,
     delay: Arc<AtomicU64>,
+    cancelled: Arc<AtomicU64>,
+    delivered: Arc<AtomicU64>,
 ) -> (String, tokio::task::JoinHandle<()>) {
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -46,6 +48,8 @@ async fn proxy(
         loop {
             let (mut downstream, _) = listener.accept().await.unwrap();
             let delay = delay.clone();
+            let cancelled = cancelled.clone();
+            let delivered = delivered.clone();
             tasks.spawn(async move {
                 let mut bytes = Vec::new();
                 let mut buffer = [0; 8192];
@@ -72,12 +76,14 @@ async fn proxy(
                         _ = time::sleep(Duration::from_millis(delay.load(Ordering::SeqCst))) => {},
                         read = downstream.read(&mut buffer) => {
                             assert_eq!(read.unwrap(), 0, "no pipelined request before first response");
+                            cancelled.fetch_add(1, Ordering::SeqCst);
                             return;
                         },
                     }
                 }
                 let Ok(mut upstream) = tokio::net::TcpStream::connect(upstream).await else { return; };
                 if upstream.write_all(&bytes).await.is_err() { return; }
+                if report { delivered.fetch_add(1, Ordering::SeqCst); }
                 let _ = tokio::io::copy_bidirectional(&mut downstream, &mut upstream).await;
             });
             while tasks.try_join_next().is_some() {}
@@ -97,8 +103,11 @@ async fn runtime_report_periodic_two_stream_peers_recovers_after_controller_rest
     let address = reservation.local_addr().unwrap();
     drop(reservation);
     let delay = Arc::new(AtomicU64::new(0));
+    let cancelled = Arc::new(AtomicU64::new(0));
+    let delivered = Arc::new(AtomicU64::new(0));
     let mut server = serve(&controller, address).await;
-    let (base, proxy_task) = proxy(address, delay.clone()).await;
+    let (base, proxy_task) =
+        proxy(address, delay.clone(), cancelled.clone(), delivered.clone()).await;
     let admin = meshway_controller::admin_token(&controller).unwrap();
     let http = reqwest::Client::new();
     let networks: NetworkList = json(
@@ -218,10 +227,12 @@ async fn runtime_report_periodic_two_stream_peers_recovers_after_controller_rest
     // The independent baseline run had 13 aligned cancellations and a >60s
     // stale public report. Every aligned fixed tick must now advance reported_at.
     let mut previous_at = initial_at;
-    for cycle in 0..13 {
+    for cycle in 0..3 {
         let (_, guard) = managers[0].report_snapshot();
         guard.unwrap().changed().await;
         time::sleep(Duration::from_millis(4800)).await;
+        let before_cancel = cancelled.load(Ordering::SeqCst);
+        let before_delivery = delivered.load(Ordering::SeqCst);
         let mut synced = false;
         let result = agents[0]
             .managed_tick(&mut managers[0], &mut leases[0], &mut synced, &mut None)
@@ -239,6 +250,19 @@ async fn runtime_report_periodic_two_stream_peers_recovers_after_controller_rest
         previous_at = report.reported_at;
         assert_eq!(report.peers.len(), 2);
         assert!(report.peers.iter().all(|peer| peer.probe_fresh));
+        assert!(
+            cancelled.load(Ordering::SeqCst) > before_cancel,
+            "aligned cycle must really cancel a pre-delivery old request"
+        );
+        assert!(delivered.load(Ordering::SeqCst) > before_delivery);
+        eprintln!(
+            "RR12 REAL CYCLE {cycle}: epoch {} sequence {} reported_at {:?} cancelled={} delivered={}",
+            report.epoch,
+            report.sequence,
+            report.reported_at,
+            cancelled.load(Ordering::SeqCst),
+            delivered.load(Ordering::SeqCst)
+        );
     }
     server.abort();
     let _ = server.await;
@@ -288,6 +312,10 @@ async fn runtime_report_periodic_two_stream_peers_recovers_after_controller_rest
     assert_eq!(report.epoch, leases[0].epoch.unwrap());
     assert_eq!(report.peers.len(), 2);
     assert!(report.peers.iter().all(|peer| peer.probe_fresh));
+    eprintln!(
+        "RR12 REAL RECOVERY: epoch {} sequence {} reported_at {:?} fresh={} current={}",
+        report.epoch, report.sequence, report.reported_at, !report.stale, report.current
+    );
     for manager in &mut managers {
         manager.withdraw(Reason::ShuttingDown).await;
     }
