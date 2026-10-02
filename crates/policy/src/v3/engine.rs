@@ -212,17 +212,33 @@ pub fn compile(
         }
     }
     let mut tables = BTreeMap::new();
-    for entries in &out.exits {
+    for (src, entries) in out.exits.iter().enumerate() {
         let enabled: BTreeSet<_> = entries.iter().map(|e| e.rule).collect();
         let key: Vec<_> = enabled.iter().copied().collect();
         let table = if let Some(table) = tables.get(&key) {
             *table
         } else {
             let i = out.ip_tables.len() as u16;
-            out.ip_tables.push(out.exit_index.flatten(&enabled));
+            out.ip_tables
+                .push(out.exit_index.flatten(&enabled).map_err(|message| {
+                    vec![Diagnostic {
+                        field: format!("compiled.source_ip_table[{src}]"),
+                        message: message.into(),
+                    }]
+                })?);
             tables.insert(key, i);
             i
         };
+        let finals = out.defaults[src]
+            .iter()
+            .filter(|e| e.target == ExitTarget::Nodes)
+            .count();
+        if out.ip_tables[usize::from(table)].len() + finals > MAX_INSTALLED_PREFIXES {
+            return Err(vec![Diagnostic {
+                field: format!("compiled.source_ip_table[{src}]"),
+                message: "Installed prefix budget exceeds 16384 including final routes; no partial output returned".into(),
+            }]);
+        }
         out.source_ip_table.push(table);
     }
     for (i, r) in exits.iter().enumerate() {

@@ -13,7 +13,14 @@ impl Default for CompileOptions {
     }
 }
 /// Node indexes refer to the sorted `nodes` table; path indexes to `paths`.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+/// Trusted in-process compiler output, not a deserializable execution contract.
+/// Recompile typed source policy against a coherent snapshot instead of decoding
+/// this structure. Public fields support inspection, not untrusted construction.
+///
+/// ```compile_fail
+/// let _: meshway_policy::v3::Compiled = serde_json::from_str("{}").unwrap();
+/// ```
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, ToSchema)]
 #[serde(deny_unknown_fields)]
 pub struct Compiled {
     pub nodes: Vec<String>,

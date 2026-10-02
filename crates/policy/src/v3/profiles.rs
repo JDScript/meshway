@@ -3,6 +3,21 @@ use super::*;
 pub const MESH_ONLY: &str = "mesh-only";
 pub const AUTO: &str = "auto";
 
+/// Concrete profile identity shared by compiler and execution adapters. Custom
+/// IDs retain the existing 1..64 ASCII syntax; global IDs retain all 64 hex digits.
+/// `global:*` is an assignment expansion token, never a concrete profile ID.
+pub fn valid_profile_id(id: &str) -> bool {
+    id.strip_prefix("global:")
+        .map_or_else(|| valid_custom_profile_id(id), super::validation::valid_id)
+}
+pub(super) fn valid_custom_profile_id(id: &str) -> bool {
+    !id.is_empty()
+        && id.len() <= 64
+        && id
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || b"._-".contains(&b))
+}
+
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 #[serde(deny_unknown_fields)]
 pub struct NetworkPolicy {
@@ -72,7 +87,7 @@ pub struct ProfileAssignment {
     pub default_profile: String,
     pub locked: bool,
 }
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, ToSchema)]
 #[serde(deny_unknown_fields)]
 pub struct ProfileMatcher {
     pub rules: Vec<ExitRule>,
@@ -116,7 +131,13 @@ pub struct SourceProfiles {
     pub profiles: Vec<CompiledProfile>,
     pub automatic: AutomaticRouting,
 }
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+/// Trusted in-process output; serialization is diagnostic only. Reconstruct via
+/// `compile_network`, never by decoding compiled indexes or authorizations.
+///
+/// ```compile_fail
+/// let _: meshway_policy::v3::NetworkCompilation = serde_json::from_str("{}").unwrap();
+/// ```
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, ToSchema)]
 #[serde(deny_unknown_fields)]
 pub struct NetworkCompilation {
     pub base: Compiled,

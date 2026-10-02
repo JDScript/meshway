@@ -80,6 +80,59 @@ fn internet() -> Grant {
 }
 
 #[test]
+fn legal_small_cidr_input_cannot_publish_oversized_flattened_table() {
+    // 1024 isolated host exceptions before /0 create 17416 disjoint prefixes,
+    // despite only 1025 input destinations. Count with a separate interval
+    // CIDR-cover oracle, independent of the compiler's trie partitioning.
+    let hosts: Vec<u32> = (256..1280).map(|i| (i << 16) + 1).collect();
+    let count_cover = |mut start: u64, end: u64| {
+        let mut count = 0;
+        while start < end {
+            let bits = start
+                .trailing_zeros()
+                .min(32)
+                .min(63 - (end - start).leading_zeros());
+            start += 1 << bits;
+            count += 1;
+        }
+        count
+    };
+    let mut count = hosts.len();
+    let mut start = 0;
+    for host in &hosts {
+        count += count_cover(start, u64::from(*host));
+        start = u64::from(*host) + 1;
+    }
+    count += count_cover(start, 1 << 32);
+    assert_eq!(count, 17416);
+    let mut exceptions = exit("hosts", ExitMatch::Cidr("0.0.0.1/32".into()), vec![]);
+    exceptions.target = ExitTarget::Direct;
+    exceptions.destinations = hosts
+        .into_iter()
+        .map(|ip| ExitMatch::Cidr(format!("{}/32", std::net::Ipv4Addr::from(ip))))
+        .collect();
+    let mut rest = exit("rest", ExitMatch::Cidr("0.0.0.0/0".into()), vec![]);
+    rest.target = ExitTarget::Direct;
+    let p = Policy {
+        exits: vec![exceptions.clone(), rest.clone()],
+        ..Policy::default()
+    };
+    let f = facts(2);
+    assert!(validate(&p, &f).is_empty());
+    let errors = compile(&p, &f, CompileOptions::default()).unwrap_err();
+    assert_eq!(errors[0].field, "compiled.source_ip_table[0]");
+    assert!(errors[0].message.contains("16384; no partial output"));
+
+    let p = NetworkPolicy {
+        public_rules: vec![exceptions, rest],
+        ..NetworkPolicy::default_template()
+    };
+    let errors = compile_network(&p, &f, CompileOptions::default()).unwrap_err();
+    assert!(errors[0].field.starts_with("compiled.sources[0].profiles["));
+    assert!(errors[0].message.contains("16384; no partial output"));
+}
+
+#[test]
 fn block_priority_automatic_relay_and_order_independence() {
     let mut p = Policy::default_template();
     p.connections.push(block(0, 3));

@@ -2,13 +2,13 @@ use super::*;
 use ipnet::IpNet;
 use std::{collections::BTreeMap, net::IpAddr};
 
-#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, ToSchema)]
 #[serde(deny_unknown_fields)]
 struct PrefixNode {
     children: [Option<u32>; 2],
     rules: Vec<u16>,
 }
-#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, ToSchema)]
 #[serde(deny_unknown_fields)]
 struct DomainNode {
     children: BTreeMap<String, u32>,
@@ -16,7 +16,7 @@ struct DomainNode {
 }
 /// Shared matcher index: bit tries for IP, reverse-label trie for DNS. Runtime
 /// lookups do not parse CIDRs or linearly scan thousands of destination ranges.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, ToSchema)]
 #[serde(deny_unknown_fields)]
 pub struct DestinationIndex {
     ipv4: Vec<PrefixNode>,
@@ -78,10 +78,19 @@ fn partition(
         Partition::Branch(Box::new(left), Box::new(right))
     }
 }
-fn emit(partition: &Partition, bits: u128, depth: u8, width: u8, out: &mut Vec<FlattenedPrefix>) {
+fn emit(
+    partition: &Partition,
+    bits: u128,
+    depth: u8,
+    width: u8,
+    out: &mut Vec<FlattenedPrefix>,
+) -> Result<(), &'static str> {
     match partition {
         Partition::Leaf(None) => {}
         Partition::Leaf(Some(rule)) => {
+            if out.len() == MAX_INSTALLED_PREFIXES {
+                return Err("Flattened prefix budget exceeds 16384; no partial output returned");
+            }
             let network = if width == 32 {
                 ipnet::Ipv4Net::new(std::net::Ipv4Addr::from(bits as u32), depth)
                     .expect("prefix depth")
@@ -97,16 +106,17 @@ fn emit(partition: &Partition, bits: u128, depth: u8, width: u8, out: &mut Vec<F
             });
         }
         Partition::Branch(left, right) => {
-            emit(left, bits, depth + 1, width, out);
+            emit(left, bits, depth + 1, width, out)?;
             emit(
                 right,
                 bits | (1u128 << (width - depth - 1)),
                 depth + 1,
                 width,
                 out,
-            );
+            )?;
         }
     }
+    Ok(())
 }
 impl Default for DestinationIndex {
     fn default() -> Self {
@@ -118,7 +128,10 @@ impl Default for DestinationIndex {
     }
 }
 impl DestinationIndex {
-    pub(crate) fn flatten(&self, enabled: &BTreeSet<u16>) -> Vec<FlattenedPrefix> {
+    pub(crate) fn flatten(
+        &self,
+        enabled: &BTreeSet<u16>,
+    ) -> Result<Vec<FlattenedPrefix>, &'static str> {
         let mut out = Vec::new();
         emit(
             &partition(&self.ipv4, Some(0), None, enabled),
@@ -126,15 +139,15 @@ impl DestinationIndex {
             0,
             32,
             &mut out,
-        );
+        )?;
         emit(
             &partition(&self.ipv6, Some(0), None, enabled),
             0,
             0,
             128,
             &mut out,
-        );
-        out
+        )?;
+        Ok(out)
     }
     pub(crate) fn covered(&self, d: &ExitMatch, enabled: &BTreeSet<u16>) -> bool {
         match d {

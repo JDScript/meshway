@@ -269,7 +269,12 @@ pub(super) fn plan(
                 *i
             } else {
                 let i = tables.len() as u32;
-                tables.push(m.index.flatten(&enabled));
+                tables.push(m.index.flatten(&enabled).map_err(|message| {
+                    vec![Diagnostic {
+                        field: format!("compiled.sources[{src}].profiles[{id}].ip_table"),
+                        message: message.into(),
+                    }]
+                })?);
                 table_cache.insert(key, i);
                 i
             };
@@ -291,6 +296,15 @@ pub(super) fn plan(
                     Some((false, paths))
                 }
             };
+            // Every profile reference is checked, including cache hits: a shared
+            // table does not erase the final routes installed by this profile.
+            let finals = usize::from(fallback.as_ref().is_some_and(|(direct, _)| !direct)) * 2;
+            if tables[table as usize].len() + finals > MAX_INSTALLED_PREFIXES {
+                return Err(vec![Diagnostic {
+                    field: format!("compiled.sources[{src}].profiles[{id}].ip_table"),
+                    message: "Installed prefix budget exceeds 16384 including final routes; no partial output returned".into(),
+                }]);
+            }
             source_profiles.push(PlannedProfile {
                 id: id.clone(),
                 matcher,

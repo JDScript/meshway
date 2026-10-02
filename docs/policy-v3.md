@@ -106,7 +106,7 @@ IP 使用共享 bit trie，域名使用反向 DNS 标签 trie。每个前缀节�
 }
 ```
 
-所有源策略结构和带字段枚举都使用 serde(deny_unknown_fields)，派生 utoipa::ToSchema。`ProfileFallback` 的 `none` / `direct` 使用空 struct variants，确保反序列化实际拒绝未知字段（internally-tagged unit variants 仅有该注解仍会静默丢字段）。合法 JSON 仍为 `{"kind":"none"}` / `{"kind":"direct"}`；残留 candidates / via 或拼错字段在独立 fallback、嵌套 profile 和完整 NetworkPolicy 输入中均报错。其它 tagged 边界为 adjacently-tagged `ExitMatch`、`RuleSetEntry`（均有必需 value）与 `CompiledFinal`（none/direct unit、nodes paths），负例覆盖额外字段和错误 content；未发现同类静默丢字段。compiled 的索引关系验证仍属于后续 wire 集成边界。独立导出以 NetworkPolicy 为根的 JSON Schema（不向现有 Controller OpenAPI 注册）：
+所有源策略结构和带字段枚举都使用 serde(deny_unknown_fields)，派生 utoipa::ToSchema。`ProfileFallback` 的 `none` / `direct` 使用空 struct variants，确保反序列化实际拒绝未知字段（internally-tagged unit variants 仅有该注解仍会静默丢字段）。合法 JSON 仍为 `{"kind":"none"}` / `{"kind":"direct"}`；残留 candidates / via 或拼错字段在独立 fallback、嵌套 profile 和完整 NetworkPolicy 输入中均报错。其它 tagged 边界为 adjacently-tagged `ExitMatch`、`RuleSetEntry`（均有必需 value）与 `CompiledFinal`（none/direct unit、nodes paths），负例覆盖额外字段和错误 content；未发现同类静默丢字段。`Compiled`、`NetworkCompilation`、`ProfileMatcher`、`DestinationIndex` 及内部 trie 节点不实现 `Deserialize`：输出只用于可信进程内计算与诊断序列化，不能把解码成功当作执行计划验证成功。独立导出以 NetworkPolicy 为根的 JSON Schema（不向现有 Controller OpenAPI 注册）：
 
 ```sh
 cargo run -p meshway-policy --example policy_v3_schema > target/policy-v3.schema.json
@@ -143,6 +143,8 @@ Schema 表达字段与类型；fallback 的每个字段均必需，并以 `maxPr
 ## 规模、复杂度与验证
 
 上限：1024 节点、前三层各 128 规则、公共规则与每方案规则各 128、自定义方案 64、分配 128；grant 源 32 selectors、单表 / grant 合计范围 16,384，公共 + 单方案最多 16,384，全部自定义方案展开范围总计 65,536；出口 32 候选、6 mandatory hops、完整路径 8 节点、源策略 2 MiB、最多 4,200,000 输出路径（预算覆盖千节点 Mesh 与全部 global 方案共存）。单次约束搜索最多 100,000 弹出 / 排队状态；预算耗尽明确报告，不装绕过路径；输出预算耗尽整体 Err，不发布部分结果。
+
+输入范围预算与实际安装预算分别检查。`MAX_INSTALLED_PREFIXES = 16,384` 限制每源**任一可选具体方案**的 IPv4 + IPv6 展平表，direct 条目同样计数；nodes final 再计两个家族的默认路由（底层 `Policy.defaults` 按所声明家族计数）。direct / none final 不安装 Mesh 出口默认路由，不增加该计数。测试中的 1024 个孤立 `/32` + 后置 `/0`（合法 1025 输入）产生 17,416 个互不重叠前缀，现整体 Err。展平 emit 在越界时停止，不返回部分表。方案计数在每个 source/profile 引用处执行，**缓存命中也检查该方案自己的 final**：相同共享表能被 mesh-only 使用，不代表增加 final 的 global 仍在安装预算内。不同设备、互斥方案不会被误当成一张同时安装的表；这不替代后续出口侧多源 / 多路径 grants 总量和线协议字节预算。
 
 设 N 为节点数、E 为边、R 为规则数、H 为路径上限、Q 为候选查询数、D 为范围条目数、U 为不同源适用规则集合数、S 为搜索预算。构图、Mesh 匹配与库存 lint 为 O(N²R)，lint 仅保留每规则计数和一个示例，不存储 N²R 个匹配记录。前缀索引 O(D×128)，每个源等价表分割 O(D×128)，共享表共 O(U×D×128)，lookup 只遍历最多 32 / 128 IP bits 与域名标签，再检查命中规则号，最多 R 个规则候选；没有线性扫描 8000 条 CIDR。出口 lint 逐 matcher 检查去重后的前序源上下文，支持多个前缀联合覆盖，最坏成本额外取决于 U 与被访问的索引子树。
 
@@ -192,5 +194,29 @@ profiles[0].rules[0].candidates[0]: Referenced node is not enabled as an exit by
 ## 后续集成边界
 
 本切片没有新增 controller route、节点本地配置或设备自报开关。类型暂留 policy crate；正式 HTTP 契约接入时迁入 protocol 并同步生成 OpenAPI、运行时 schema、Agent/Web 客户端及 drift check。接入层负责 revision / network fencing、管理员出口开关、用户运行时选择、可信 DNS 上下文、真实出口转发 / NAT、状态型回包与数据面生效证据。
+
+### P3a 发布边界修复与 Controller handoff
+
+本轮是接线前的 policy 库修复，**不表示 P3a 已上线**。最小接线顺序：
+
+1. **源存储与 CAS**：在网络作用域持久化类型化 `NetworkPolicy` 与原始 JSONC 草稿，沿用 `apps/controller/src/store/configuration.rs` 的 `configuration.revision` / `compare_revision` / `bump` 事务边界及 `store/access.rs` 的作用域；新增存储迁移由 Controller 主线处理。保存必须检查网络内管理员身份。源策略、JSONC、库存与发布 revision 一致，冲突返回 CAS 错误；失败不写入部分编译结果、不覆盖未保存草稿。
+2. **迁移**：同事务读取原 v2 Access / Routing，调用 `migrate_access` / `migrate_routing`；任一 `converted = None` 时保留原 v2 源与运行版本，返回字段诊断，不标记迁移成功。可证明转换也须经当前库存完整编译，并通过发布预算后才原子切换。尚未定义的外部授权不自动补授；缺少出口属性或授权时保留 v2 并报告。v2 消费者退出前保留既有兼容入口。
+3. **同 revision 输入与权限**：一次一致性读取提供本网络有效身份 / 地址 / 公钥、管理员 tag / listener / exit_enabled、连接约束与有来源且未过期的可达事实、已解析规则集版本、账户 / 成员权限及方案分配。`Snapshot` 自身没有 network/revision 字段，调用方须绑定外围类型化作用域与版本，不能把独立请求结果混拼。库存、grants 或出口开关变动重编译；STUN 位置与用户方案选择不能扩张授权。
+4. **发布 / 执行预算**：`compile_network` 成功后逐节点计算真实安装投影，除本库逐方案展平 + final 预算外，还校验所有入向源 / 路径的出口 grants 前缀**总和**、完整授权路径 / 身份数、允许方案目录及配置字节上限，不能用共享表的存储去重数代替某节点实际安装总数。既有 v2 128 grants / 64 identities 与出口原型 64 grants / 16 concrete profiles 的限制仍须协商或明确报超限；原型只支持 IPv4，不能把 v3 IPv6 悄悄丢弃后报告完整生效。失败保留最后可用运行代际，并明确区分保存、ACK 和 apply 状态。
+5. **执行契约与 underlay**：可信进程内重编译源策略取得 `Compiled` / `NetworkCompilation`；目前没有已验证 compiled wire 解码入口，公开字段仅用于检查，不构成不可信输入的受控构造 API。正式 wire 必须使用类型化契约和受控执行计划构造，校验索引 / 排序 / 唯一身份、完整方向路径 / 授权 / mandatory hops、revision / lease 与安装预算，再生成全部消费者；不能恢复无条件 `Deserialize`。准备系统保护 socket 通路后才启用 TUN / 新承载，撤回与 lease 到期独立终止旧运行代际；该部分由 underlay / Controller / Agent 主线实施。
+
+#### 方案 ID 的兼容边界
+
+保留既有源 ID：自定义 ID 为 1..64 字节 ASCII 字母数字及 `._-`；内置 `mesh-only` / `auto`；具体 global 为 `global:` + **完整小写 64-hex 身份**，长度 71。`v3::valid_profile_id` 是共用的具体 ID 语法检查；自定义定义另外拒绝保留 ID。`global:*` 只允许出现在分配 allowed 中作展开 token，不能进入执行目录；不能截断、哈希改名或把所有自定义 ID 长度泛化到 71。
+
+真实出口消费者为 `apps/agent/src/managed_dataplane/exit.rs` 的 `ExitPlan::with_profiles`（本轮基线第 217 行）：`p.id.is_empty() || p.id.len() > 64` 与 global 不兼容。该文件由协调者处理，最小补丁是把这两个条件替换为 `!meshway_policy::v3::valid_profile_id(&p.id)`，保留 `p.id == "auto"`（auto 不在 concrete profiles 中）与重复 ID 检查；default / automatic / 用户选择继续对完整 ID 做允许目录成员校验。添加 71 字节合法 global 与残缺 / 大写身份的行为测试。现有自定义源 ID、选择请求及目录引用无须重命名。该补丁**尚未实施**，因此本库 global 目前仍不可直接交给原型；目录 16 项限制也是独立的未接线限制。
+
+本 worktree 的检查命令（独立 Cargo target，限制两项构建并发）：
+
+```sh
+CARGO_TARGET_DIR="$PWD/target/policy-v3-publication" CARGO_BUILD_JOBS=2 cargo fmt -p meshway-policy -- --check
+CARGO_TARGET_DIR="$PWD/target/policy-v3-publication" CARGO_BUILD_JOBS=2 cargo test -p meshway-policy --all-features --locked
+CARGO_TARGET_DIR="$PWD/target/policy-v3-publication" CARGO_BUILD_JOBS=2 cargo clippy -p meshway-policy --all-features --all-targets --locked -- -D warnings
+```
 
 Mesh / 出口有序 first-match、公网 internet 范围、库存相关遮挡提醒、路由方案、公共优先、规则集、direct、STUN 定位、用户切换、管理员开启与锁定均已确认，不再列为待决。方案分配仍使用 node > tag > * 的具体度（不是 Mesh 路由匹配）；其 template / auto 允许集合语义及资源预算沿用既有实现。

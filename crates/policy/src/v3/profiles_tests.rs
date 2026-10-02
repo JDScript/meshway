@@ -1,6 +1,131 @@
 use super::*;
 
 #[test]
+fn shared_table_budget_counts_each_profiles_installed_final_routes() {
+    let mut p = NetworkPolicy::default_template();
+    let mut r = rule(
+        "hosts",
+        ExitMatch::Cidr("0.0.0.0/32".into()),
+        ExitTarget::Direct,
+        0,
+    );
+    r.destinations = (0..MAX_INSTALLED_PREFIXES)
+        .map(|i| ExitMatch::Cidr(format!("{}/32", std::net::Ipv4Addr::from(i as u32 * 2))))
+        .collect();
+    p.public_rules.push(r);
+    let f = facts(2);
+    let c = compile_network(&p, &f, CompileOptions::default()).unwrap();
+    assert_eq!(c.ip_tables.len(), 1);
+    assert_eq!(c.ip_tables[0].len(), MAX_INSTALLED_PREFIXES);
+    assert_eq!(
+        c.sources[0].profiles[0].ip_table,
+        c.sources[1].profiles[0].ip_table
+    );
+
+    p.public_rules[0]
+        .destinations
+        .push(ExitMatch::Cidr("2001:db8::1/128".into()));
+    // Replace two IPv4 entries so the source input still fits, while the second
+    // family plus a splitting catch-all exceeds the actual output budget.
+    p.public_rules[0].destinations.drain(..2);
+    p.public_rules.push(rule(
+        "v6-rest",
+        ExitMatch::Cidr("::/0".into()),
+        ExitTarget::Direct,
+        0,
+    ));
+    assert!(
+        compile_network(&p, &f, CompileOptions::default()).unwrap_err()[0]
+            .message
+            .contains("Flattened prefix budget")
+    );
+    p.public_rules.pop();
+    p.public_rules[0].destinations.pop();
+    p.public_rules[0]
+        .destinations
+        .insert(0, ExitMatch::Cidr("0.0.0.2/32".into()));
+    p.public_rules[0]
+        .destinations
+        .insert(0, ExitMatch::Cidr("0.0.0.0/32".into()));
+
+    // Source 0 creates the shared public table using mesh-only. Source 1 hits
+    // that cache using global, which installs a final in each IP family.
+    p.grants.push(internet(&selector(1)));
+    let mut kernel = Policy {
+        connections: p.connections.clone(),
+        grants: vec![internet(&selector(1))],
+        exits: p.public_rules.clone(),
+        defaults: vec![DefaultExitRule {
+            id: "final".into(),
+            src: selector(1),
+            families: BTreeSet::from([AddressFamily::Ipv4, AddressFamily::Ipv6]),
+            candidates: vec![selector(1)],
+            via: vec![],
+            locked: true,
+            target: ExitTarget::Nodes,
+        }],
+        ..Policy::default()
+    };
+    kernel.exits[0]
+        .destinations
+        .truncate(MAX_INSTALLED_PREFIXES - 1);
+    let errors = compile(&kernel, &f, CompileOptions::default()).unwrap_err();
+    assert_eq!(errors[0].field, "compiled.source_ip_table[1]");
+    assert!(errors[0].message.contains("including final routes"));
+    let errors = compile_network(&p, &f, CompileOptions::default()).unwrap_err();
+    assert!(errors[0].field.contains("global:"));
+    assert!(errors[0].field.starts_with("compiled.sources[1].profiles["));
+    assert!(errors[0].message.contains("including final routes"));
+
+    p.public_rules[0]
+        .destinations
+        .truncate(MAX_INSTALLED_PREFIXES - 2);
+    let c = compile_network(&p, &f, CompileOptions::default()).unwrap();
+    assert_eq!(c.ip_tables.len(), 1);
+    for s in &c.sources {
+        for profile in &s.profiles {
+            let finals = usize::from(matches!(profile.fallback, CompiledFinal::Nodes(_))) * 2;
+            assert!(
+                c.ip_tables[profile.ip_table as usize].len() + finals <= MAX_INSTALLED_PREFIXES
+            );
+        }
+    }
+}
+
+#[test]
+fn concrete_profile_ids_preserve_global_identity_and_custom_source_ids() {
+    assert!(valid_profile_id(&"a".repeat(64)));
+    assert!(!valid_profile_id(&"a".repeat(65)));
+    assert!(valid_profile_id(MESH_ONLY));
+    assert!(valid_profile_id(AUTO));
+    assert!(!valid_profile_id("global:*"));
+    let global_id = global(1);
+    assert_eq!(global_id.len(), 71);
+    assert!(valid_profile_id(&global_id));
+    for invalid in [
+        format!("global:{}", "a".repeat(63)),
+        format!("global:{}", "a".repeat(65)),
+        format!("global:{}", "A".repeat(64)),
+        "bad:id".into(),
+        String::new(),
+    ] {
+        assert!(!valid_profile_id(&invalid), "{invalid}");
+    }
+    let mut p = policy();
+    p.profiles[0].id = "a".repeat(64);
+    p.assignments[0].allowed = vec![global_id.clone(), p.profiles[0].id.clone()];
+    p.assignments[0].default_profile = global_id.clone();
+    let c = compile_network(&p, &facts(3), CompileOptions::default()).unwrap();
+    assert_eq!(c.select_profile(0, None, &unknown()).unwrap().id, global_id);
+    assert!(
+        c.sources[0]
+            .profiles
+            .iter()
+            .any(|profile| profile.id == p.profiles[0].id)
+    );
+}
+
+#[test]
 fn legal_network_and_profile_fallback_json_preserve_compilation() {
     let f = facts(3);
     let mut policies = vec![NetworkPolicy::default_template()];

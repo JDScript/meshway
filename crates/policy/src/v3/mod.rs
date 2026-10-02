@@ -31,6 +31,9 @@ pub const MAX_PATH_NODES: usize = 8;
 pub const MAX_SEARCH_STATES: usize = 100_000;
 pub const MAX_COMPILED_PATHS: usize = 4_200_000;
 pub const MAX_DESTINATIONS: usize = 16384;
+/// Actual installed prefixes, including direct entries and final routes, per
+/// source's active profile (both address families together).
+pub const MAX_INSTALLED_PREFIXES: usize = 16384;
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 #[serde(deny_unknown_fields)]

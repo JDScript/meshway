@@ -23,15 +23,7 @@ fn field_at(field: &str, prefix: &str) -> String {
         .map_or_else(|| prefix.into(), |rest| format!("{prefix}{rest}"))
 }
 fn valid_reference(id: &str, wildcard: bool) -> bool {
-    (wildcard && id == "global:*")
-        || id
-            .strip_prefix("global:")
-            .is_some_and(super::validation::valid_id)
-        || (!id.is_empty()
-            && id.len() <= 64
-            && id
-                .bytes()
-                .all(|b| b.is_ascii_alphanumeric() || b"._-".contains(&b)))
+    (wildcard && id == "global:*") || valid_profile_id(id)
 }
 pub(super) fn check_budget(p: &NetworkPolicy) -> Result<(), Vec<Diagnostic>> {
     if p.profiles.len() > 64
@@ -72,12 +64,7 @@ pub(super) fn preflight(p: &NetworkPolicy, facts: &Snapshot) -> Result<Catalog, 
         );
     }
     for (i, profile) in p.profiles.iter().enumerate() {
-        if profile.id.is_empty()
-            || profile.id.len() > 64
-            || !profile
-                .id
-                .bytes()
-                .all(|b| b.is_ascii_alphanumeric() || b"._-".contains(&b))
+        if !valid_custom_profile_id(&profile.id)
             || [MESH_ONLY, AUTO].contains(&profile.id.as_str())
             || definitions.contains_key(&profile.id)
         {
