@@ -45,11 +45,11 @@ pub(super) fn transaction(
 
 impl Store {
     pub(super) fn principal(&self, token: &str, now: i64) -> Result<Principal, Error> {
-        if token.starts_with("mws_") {
-            Ok(Accounts::new(&self.connection).authenticate(token, now)?)
-        } else {
-            Ok(Principal::prove_bootstrap(self, token)?)
-        }
+        Ok(Principal::authenticate_source(
+            &self.connection,
+            token,
+            now,
+        )?)
     }
 
     /// BEGIN IMMEDIATE precedes role/session lookup, and is held through the

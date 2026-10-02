@@ -67,11 +67,11 @@ impl Store {
         token: &str,
         f: impl FnOnce(&mut Transaction<'_>, &Principal, i64) -> Result<T, Error>,
     ) -> Result<T, Error> {
-        let now = chrono::Utc::now().timestamp();
-        let principal = self.principal(token, now)?;
         let mut tx = self
             .connection
             .transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let now = chrono::Utc::now().timestamp();
+        let principal = Principal::authenticate_source(&tx, token, now)?;
         let result = f(&mut tx, &principal, now)?;
         tx.commit()?;
         Ok(result)

@@ -106,10 +106,10 @@ impl Store {
         request: &AuthorizeDeviceRequest,
     ) -> Result<AuthorizeDeviceResponse, Error> {
         request.validate().map_err(Error::Invalid)?;
-        let now = chrono::Utc::now();
         let tx = self
             .connection
             .transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let now = chrono::Utc::now();
         let principal = Accounts::new(&tx).authenticate(token, now.timestamp())?;
         let scope = NetworkId::lookup(&tx, scope)?;
         let subject = Accounts::new(&tx).authorize_device(&principal, &scope, now.timestamp())?;
