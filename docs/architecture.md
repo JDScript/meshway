@@ -58,6 +58,10 @@ Linux 正常接入、控制同步与 TUN 生命周期已接受保护 socket、HT
 | `crates/dataplane` | Noise、认证邻接、E2E 与转发核心 |
 | `crates/agent-dns` | 本地权威 DNS、Zone 与租约 / 代际发送边界 |
 | `crates/agent-tun` | Linux TUN 设备创建、配置、I/O 与真实设备身份，不拥有业务路由 |
+| `crates/agent-underlay` | Socket 用途/代际保护、底层解析、capture/sink/journal 所有权 |
+| `crates/agent-connections` | 连接与承载执行、内存材料与运行观测，不拥有 TUN/HTTP/私有文件 |
+| `crates/agent-dataplane` | 节点执行计划/admission 与底层包流适配，不复制加密/转发 |
+| `crates/agent-diagnostics` | 本地 IPC 和查询协议，经 provider 获取真实运行状态/探测 |
 | `crates/control-client` | Rust 生成 HTTP 客户端与 checked transport 注入 |
 | `crates/transport-*` | 编译期承载适配，保留 stream / datagram 与 buffer 所有权语义 |
 | `apps/controller` | 实际 API 路由、权限、SQLite、快照与配置编译 |
