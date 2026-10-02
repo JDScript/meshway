@@ -9,8 +9,9 @@ import { EMPTY_SCENE, type Scene } from "./scene"
 /**
  * - `welcome`: signed out; the globe sits to one side of the sign-in card.
  * - `network`: a network's nodes and links, centred.
+ * - `dock`: the console's pages; the globe shrinks into the orb at `dock`.
  */
-export type Framing = "welcome" | "network"
+export type Framing = "welcome" | "network" | "dock"
 
 export type GlobeState = {
   framing: Framing
@@ -19,6 +20,8 @@ export type GlobeState = {
   /** Width (px) covered by a panel on the right; the globe centres in the rest. */
   rightInset: number
   look: GlobeLook
+  /** Centre and radius (CSS px, viewport) of the orb in `dock` framing. */
+  dock: { x: number; y: number; radius: number } | null
 }
 
 export const useGlobeStore = create<GlobeState>(() => ({
@@ -27,6 +30,7 @@ export const useGlobeStore = create<GlobeState>(() => ({
   selectedNodeId: null,
   rightInset: 0,
   look: DEFAULT_LOOK,
+  dock: null,
 }))
 
 export function setGlobe(patch: Partial<GlobeState>) {

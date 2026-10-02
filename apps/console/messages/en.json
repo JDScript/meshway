@@ -105,5 +105,13 @@
   "overview_title_line": "{nodes} nodes · {confirmed}/{total} links",
   "loading": "Loading",
   "node_rtt_heading": "RTT",
-  "node_rtt_hint": "Round trip measured here · by the peer"
+  "node_rtt_hint": "Round trip measured here · by the peer",
+  "console_open": "Console",
+  "console_back_to_globe": "Back to the globe",
+  "console_navigation": "Navigation",
+  "console_summary": "{nodes} nodes · {confirmed}/{total} links",
+  "nav_overview": "Overview",
+  "nav_nodes": "Nodes",
+  "nodes_col_node": "Name",
+  "nodes_empty": "This network has no nodes yet"
 }

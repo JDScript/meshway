@@ -23,7 +23,7 @@ function OverviewPage() {
   const { node } = Route.useSearch()
   const navigate = Route.useNavigate()
   const select = useCallback(
-    (next: string | null) => void navigate({ search: { node: next ?? undefined }, replace: true }),
+    (next: string | null) => void navigate({ search: { node: next ?? undefined }, replace: true, viewTransition: false }),
     [navigate]
   )
   return <NetworkOverview networkId={network} selectedNodeId={node ?? null} onSelect={select} />

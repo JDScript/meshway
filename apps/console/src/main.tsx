@@ -29,6 +29,8 @@ const router = createRouter({
   defaultPreload: "intent",
   defaultPreloadStaleTime: 0,
   scrollRestoration: true,
+  // Mode switches cross-fade the interface while the live globe animates.
+  defaultViewTransition: true,
 })
 
 declare module "@tanstack/react-router" {

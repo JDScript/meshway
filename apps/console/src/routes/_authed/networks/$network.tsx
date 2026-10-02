@@ -3,14 +3,15 @@ import { useEffect } from "react"
 
 import { StatusCard } from "@/components/chrome/status-card"
 import { DEFAULT_LOOK } from "@/features/globe/look"
-import { setGlobe } from "@/features/globe/store"
 import { EMPTY_SCENE } from "@/features/globe/scene"
+import { setGlobe } from "@/features/globe/store"
 import { NETWORK_ID, networksQuery, rememberNetwork } from "@/features/network/queries"
+import { useNetworkView } from "@/features/network/use-network-view"
 import { m } from "@/paraglide/messages.js"
 
 /**
- * Every page under `/networks/<network_id>` is bound to that network. An unknown or
- * malformed ID is a 404; it never falls back to another network.
+ * Every page under `/networks/<network_id>` is bound to that network. An
+ * unknown or malformed ID is a 404; it never falls back to another network.
  */
 export const Route = createFileRoute("/_authed/networks/$network")({
   loader: async ({ context, params }) => {
@@ -19,10 +20,21 @@ export const Route = createFileRoute("/_authed/networks/$network")({
     if (!networks.some((network) => network.network_id === params.network)) throw notFound()
     rememberNetwork(params.network)
   },
-  component: Outlet,
+  component: NetworkLayout,
   notFoundComponent: NetworkNotFound,
   errorComponent: NetworksFailed,
 })
+
+/** One scene for the whole network: the globe keeps it across every page below. */
+function NetworkLayout() {
+  const { network } = Route.useParams()
+  const { scene } = useNetworkView(network)
+  useEffect(() => {
+    setGlobe({ scene })
+  }, [scene])
+  useEffect(() => () => setGlobe({ scene: EMPTY_SCENE }), [])
+  return <Outlet />
+}
 
 function useWelcomeGlobe() {
   useEffect(() => {

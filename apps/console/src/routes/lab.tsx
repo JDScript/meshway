@@ -69,7 +69,7 @@ function LabPage() {
   const facts = selected ? nodeFacts(selected, byId, observation, data.runtimes, now) : null
 
   const select = useCallback(
-    (next: string | null) => void navigate({ search: (search) => ({ ...search, node: next ?? undefined }), replace: true }),
+    (next: string | null) => void navigate({ search: (search) => ({ ...search, node: next ?? undefined }), replace: true, viewTransition: false }),
     [navigate]
   )
   useEffect(() => onGlobeSelect(select), [select])
@@ -97,7 +97,7 @@ function LabPage() {
         onSelect={select}
       />
       <div className="fixed inset-x-0 top-5 z-10 flex justify-center">
-        <div className="glass flex items-center gap-1 rounded-full p-1 text-[13px]">
+        <div className="glass pointer-events-auto flex items-center gap-1 rounded-full p-1 text-[13px]">
           <span className="px-3 text-xs text-muted-foreground">{m.lab_title()}</span>
           {IDS.map((id) => (
             <button

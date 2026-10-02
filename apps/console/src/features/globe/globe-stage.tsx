@@ -77,7 +77,7 @@ export function GlobeStage() {
   }, [engine, state, colors, motion, boot, markEngineReady])
 
   return (
-    <div className="globe-backdrop fixed inset-0">
+    <div className="globe-layer globe-backdrop fixed inset-0">
       <div ref={host} role="region" aria-label={m.globe_region()} data-boot={boot} className="globe-stage size-full" />
     </div>
   )

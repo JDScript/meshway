@@ -363,6 +363,16 @@ export function createGlobeEngine(
   const framingPov = (input: EngineInput): Pov => (input.framing === "welcome" ? WELCOME : HOME)
   let offset: [number, number] = [0, 0]
   let offsetTween: { from: [number, number]; to: [number, number]; start: number; ms: number } | null = null
+  /** Moving between framings: apparent size, latitude and offset together; longitude keeps turning. */
+  let frameTween: {
+    start: number
+    ms: number
+    from: { scale: number; lat: number; lng: number; offset: [number, number] }
+    /** `lng` null: keep turning with the globe instead of aiming. */
+    to: { scale: number; lat: number; lng: number | null; offset: [number, number] }
+  } | null = null
+  /** How far the dock framing has taken over, 0–1 (markers, stars and rings fade with it). */
+  let docked = 0
   let fly: { from: Pov; to: Pov; start: number; ms: number; bump: number } | null = null
 
   controls.addEventListener("start", () => {
@@ -390,8 +400,16 @@ export function createGlobeEngine(
     fly = { from, to: target, start: performance.now(), ms, bump: Math.min(0.8, distance * 0.9) }
   }
 
-  const offsetFor = (input: EngineInput): [number, number] =>
-    input.framing === "welcome" ? (width >= 900 ? [Math.min(width * 0.14, 260), 0] : [0, height * 0.18]) : [-input.rightInset / 2, 0]
+  const offsetFor = (input: EngineInput): [number, number] => {
+    if (input.framing === "dock" && input.dock) return [input.dock.x - width / 2, input.dock.y - height / 2]
+    if (input.framing === "welcome") return width >= 900 ? [Math.min(width * 0.14, 260), 0] : [0, height * 0.18]
+    return [-input.rightInset / 2, 0]
+  }
+  const framePov = (input: EngineInput): Pov =>
+    input.framing === "dock" && input.dock
+      ? { lat: 18, lng: globe.pointOfView().lng, altitude: altitudeForRadius(input.dock.radius, Math.max(height, 1)) }
+      : framingPov(input)
+  const scaleOf = (altitude: number) => 1 / (1 + altitude)
 
   let frame = 0
   let previousTime = performance.now()
@@ -433,27 +451,47 @@ export function createGlobeEngine(
     surface.uniforms.uOpacity = { value: last?.look.surfaceOpacity ?? 1 }
     landMaterial.uniforms.uOpacity = { value: 1 }
     pulseMaterial.uniforms.uOpacity = { value: extras }
-    orbitMaterial.opacity = (last?.colors.dark ? 0.55 : 0.7) * extras
+    orbitMaterial.opacity = (last?.colors.dark ? 0.55 : 0.7) * extras * (1 - docked * 0.5)
 
     const look = last?.look
     const dark = last?.colors.dark ?? true
     guides.quaternion.copy(globe.camera().quaternion)
     guides.visible = look?.guides ?? false
     guideMaterials.forEach((material, index) => {
-      material.opacity = ((dark ? [0.14, 0.09, 0.06] : [0.2, 0.13, 0.08])[index] ?? 0) * reveal
+      material.opacity = ((dark ? [0.14, 0.09, 0.06] : [0.2, 0.13, 0.08])[index] ?? 0) * reveal * (1 - docked)
     })
     graticule.visible = look?.graticule ?? false
     graticuleMaterial.opacity = (dark ? 0.22 : 0.32) * reveal
     // Stars belong to a dark sky only.
     stars.visible = (look?.stars ?? false) && dark
-    starMaterial.uniforms.uOpacity = { value: reveal * (0.85 + 0.15 * Math.sin(time / 1300)) }
+    starMaterial.uniforms.uOpacity = { value: reveal * (1 - docked) * (0.85 + 0.15 * Math.sin(time / 1300)) }
 
     // Rotation eases in and out instead of starting or stopping dead.
     const target = interacting || time < pausedUntil ? 0 : rotationTarget
     rotationSpeed += (target - rotationSpeed) * (1 - Math.exp(-dt / 0.7))
     controls.autoRotateSpeed = rotationSpeed
 
-    if (offsetTween && !intro) {
+    const dockTarget = last?.framing === "dock" ? 1 : 0
+    if (frameTween && !intro) {
+      const t = clamp01((time - frameTween.start) / frameTween.ms)
+      const k = easeInOut(t)
+      const { from, to } = frameTween
+      const scale = from.scale + (to.scale - from.scale) * k
+      globe.pointOfView({
+        lat: from.lat + (to.lat - from.lat) * k,
+        lng: to.lng === null ? globe.pointOfView().lng : from.lng + (to.lng - from.lng) * k,
+        altitude: 1 / scale - 1,
+      })
+      offset = [from.offset[0] + (to.offset[0] - from.offset[0]) * k, from.offset[1] + (to.offset[1] - from.offset[1]) * k]
+      globe.globeOffset(offset)
+      docked = dockTarget === 1 ? k : 1 - k
+      if (t >= 1) frameTween = null
+    } else {
+      docked = dockTarget
+    }
+    container.style.setProperty("--globe-docked", docked.toFixed(3))
+
+    if (offsetTween && !intro && !frameTween) {
       const t = clamp01((time - offsetTween.start) / offsetTween.ms)
       const k = easeInOut(t)
       offset = [
@@ -464,7 +502,7 @@ export function createGlobeEngine(
       if (t >= 1) offsetTween = null
     }
 
-    if (fly && !intro) {
+    if (fly && !intro && !frameTween) {
       const t = clamp01((time - fly.start) / fly.ms)
       const k = easeInOut(t)
       globe.pointOfView({
@@ -592,7 +630,7 @@ export function createGlobeEngine(
 
   const buildLinks = (input: EngineInput) => {
     disposeLinks()
-    const sceneLinks = input.framing === "network" ? input.scene.links : []
+    const sceneLinks = input.framing === "welcome" ? [] : input.scene.links
     for (const sceneLink of sceneLinks) {
       const a = anchors.get(sceneLink.nodeIds[0])
       const b = anchors.get(sceneLink.nodeIds[1])
@@ -647,7 +685,7 @@ export function createGlobeEngine(
     if (!previous || previous.colors !== input.colors) applyColors(input.colors)
     if (!previous || previous.look !== input.look) applyLook(input.look)
 
-    const nodes = input.framing === "network" ? input.scene.nodes : []
+    const nodes = input.framing === "welcome" ? [] : input.scene.nodes
     anchors = anchorsOf(nodes)
 
     nodes.forEach((node, order) => {
@@ -676,7 +714,7 @@ export function createGlobeEngine(
     const hasOrbit = [...anchors.values()].some((anchor) => anchor.orbit)
     orbit.visible = hasOrbit
 
-    const nextLinksKey = JSON.stringify([input.framing === "network" ? input.scene.links : [], nextMarkersKey, input.motion, input.colors])
+    const nextLinksKey = JSON.stringify([input.framing === "welcome" ? [] : input.scene.links, nextMarkersKey, input.motion, input.colors])
     if (nextLinksKey !== linksKey) {
       linksKey = nextLinksKey
       buildLinks(input)
@@ -705,8 +743,35 @@ export function createGlobeEngine(
         toOffset: offsetFor(input),
       }
     }
+    const enteringOrLeavingDock = previous && previous.framing !== input.framing && (previous.framing === "dock" || input.framing === "dock")
     if (input.boot === "loading" || intro) {
       // The intro owns the camera and offset until it is done.
+    } else if (enteringOrLeavingDock) {
+      fly = null
+      offsetTween = null
+      // Leaving the dock straight onto a node aims at it on the way out.
+      const focus = input.framing === "network" && input.selectedNodeId ? anchors.get(input.selectedNodeId) : undefined
+      const to = focus ? { lat: focus.lat, lng: focus.lng, altitude: focus.orbit ? FOCUS_ALTITUDE.orbit : FOCUS_ALTITUDE.ground } : framePov(input)
+      const current = globe.pointOfView()
+      const lngTarget = focus ? current.lng + (((((focus.lng - current.lng + 180) % 360) + 360) % 360) - 180) : null
+      frameTween = input.motion
+        ? {
+            start: performance.now(),
+            ms: input.framing === "dock" ? 1000 : 1200,
+            from: { scale: scaleOf(current.altitude), lat: current.lat, lng: current.lng, offset },
+            to: { scale: scaleOf(to.altitude), lat: to.lat, lng: lngTarget, offset: offsetFor(input) },
+          }
+        : null
+      if (!input.motion) {
+        globe.pointOfView(to)
+        offset = offsetFor(input)
+        globe.globeOffset(offset)
+      }
+    } else if (input.framing === "dock" && previous && previous.dock !== input.dock && !frameTween) {
+      // The orb moved (resize): follow at once.
+      offset = offsetFor(input)
+      globe.globeOffset(offset)
+      globe.pointOfView({ altitude: framePov(input).altitude })
     } else if (!previous || previous.framing !== input.framing || previous.rightInset !== input.rightInset) {
       const to = offsetFor(input)
       if (!previous || !input.motion) {
@@ -723,9 +788,9 @@ export function createGlobeEngine(
     } else if (!previous) {
       globe.pointOfView(framingPov(input))
       extrasShownAt ??= performance.now()
-    } else if (previous.framing !== input.framing) flyTo(framingPov(input), transitionMs)
+    } else if (previous.framing !== input.framing && !enteringOrLeavingDock) flyTo(framingPov(input), transitionMs)
 
-    if (previous && previous.selectedNodeId !== input.selectedNodeId && !intro && input.boot !== "loading") {
+    if (previous && previous.selectedNodeId !== input.selectedNodeId && !intro && input.boot !== "loading" && input.framing !== "dock" && !enteringOrLeavingDock) {
       const anchor = input.selectedNodeId ? anchors.get(input.selectedNodeId) : undefined
       if (anchor) {
         flyTo({ lat: anchor.lat, lng: anchor.lng, altitude: anchor.orbit ? FOCUS_ALTITUDE.orbit : FOCUS_ALTITUDE.ground }, transitionMs)
@@ -733,7 +798,12 @@ export function createGlobeEngine(
         flyTo({ ...globe.pointOfView(), altitude: HOME.altitude }, transitionMs)
       }
     }
-    rotationTarget = input.boot === "ready" ? rotationFor(input) : 0
+    rotationTarget = input.boot === "ready" ? (input.framing === "dock" ? (input.motion ? ROTATION_SPEED * 2.5 : 0) : rotationFor(input)) : 0
+    // The orb is a picture, not a control.
+    controls.enabled = input.framing !== "dock"
+    container.dataset.framing = input.framing
+    if (input.framing === "dock") controls.maxDistance = Infinity
+    else if (!intro && input.boot !== "loading") controls.maxDistance = 560
   }
 
   return {
@@ -747,10 +817,11 @@ export function createGlobeEngine(
         material.uniforms.uScale = { value: nextHeight * 0.5 }
         material.uniforms.uPixelRatio = { value: pixelRatio }
       }
-      if (last && last.boot !== "loading" && !intro) {
+      if (last && last.boot !== "loading" && !intro && !frameTween) {
         offsetTween = null
         offset = offsetFor(last)
         globe.globeOffset(offset)
+        if (last.framing === "dock") globe.pointOfView({ altitude: framePov(last).altitude })
       }
     },
     destroy() {
