@@ -14,7 +14,7 @@ import { SessionRejected } from "@/lib/api"
 import { TextField } from "@/components/chrome/form"
 import { m } from "@/paraglide/messages.js"
 
-import { formText } from "../form"
+import { formText } from "@/lib/form"
 import { EntryLink, EntrySubmit } from "../frame"
 import { instanceCall, readInstance, type Instance } from "./instance"
 import { SetupSections } from "./setup-sections"

@@ -16,20 +16,17 @@ import { Skeleton } from "@/components/ui/skeleton"
 import { surfaceTitleId } from "@/features/shell/page-frame"
 import { authed } from "@/lib/api"
 import { toastFailure } from "@/lib/failure"
-import { dateTime } from "@/lib/format"
+import { unixDateTime } from "@/lib/format"
 import { m } from "@/paraglide/messages.js"
 
 import { InviteDialog } from "./invite-dialog"
 import { invitationsQuery } from "./queries"
 import {
-  byRole,
-  grantableRoles,
   invitationState,
   invitationTime,
-  roleLabel,
-  unixIso,
   type InvitationState,
-} from "./roles"
+} from "./invitation"
+import { byRole, grantableRoles, roleLabel } from "./roles"
 import type { MembersView } from "./url"
 
 const PLACEHOLDER_ROWS = 4
@@ -355,7 +352,7 @@ function Invitations({
                 </span>
                 <span className="block truncate text-meta text-muted-foreground">
                   {roleLabel[invitation.role]()} ·{" "}
-                  {stateLabel[state](dateTime(unixIso(at)) ?? "—")}
+                  {stateLabel[state](unixDateTime(at) ?? "—")}
                   {accepter && accepter !== invitation.email
                     ? ` · ${accepter}`
                     : ""}

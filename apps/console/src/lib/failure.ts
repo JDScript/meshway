@@ -10,7 +10,7 @@ import { m } from "@/paraglide/messages.js"
  * alone; a lost response is not a refusal: the change may have happened.
  */
 export type Failure =
-  "forbidden" | "conflict" | "invalid" | "missing" | "unknown"
+  "forbidden" | "conflict" | "invalid" | "missing" | "limited" | "unknown"
 
 /** null when there is nothing to say here: a rejected session hands over to the sign-in. */
 export function failureOf(error: unknown): Failure | null {
@@ -21,6 +21,7 @@ export function failureOf(error: unknown): Failure | null {
   if (error.status === 400 || error.status === 413 || error.status === 422)
     return "invalid"
   if (error.status === 404) return "missing"
+  if (error.status === 429) return "limited"
   return "unknown"
 }
 
@@ -29,11 +30,32 @@ export const failureMessage: Record<Failure, () => string> = {
   conflict: () => m.failure_conflict(),
   invalid: () => m.failure_invalid(),
   missing: () => m.failure_missing(),
+  limited: () => m.failure_limited(),
   unknown: () => m.failure_unknown(),
+}
+
+/** What a call's own context says about some failures (a 409 on the last Owner). */
+export type FailureText = Partial<Record<Failure, () => string>>
+
+/** The words for a failure, the caller's own where it has them; null when there is nothing to say. */
+export function failureText(
+  error: unknown,
+  overrides: FailureText = {}
+): string | null {
+  const failure = failureOf(error)
+  if (!failure) return null
+  return (overrides[failure] ?? failureMessage[failure])()
 }
 
 /** Announces a failed change as a toast. */
 export function toastFailure(error: unknown) {
-  const failure = failureOf(error)
-  if (failure) toast.error(failureMessage[failure]())
+  const text = failureText(error)
+  if (text) toast.error(text)
 }
+
+/** `toastFailure` with the caller's own words for some failures. */
+export const toastFailureWith =
+  (overrides: FailureText) => (error: unknown) => {
+    const text = failureText(error, overrides)
+    if (text) toast.error(text)
+  }

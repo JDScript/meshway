@@ -70,5 +70,10 @@
   "placeholder_new_password": "至少 12 个字符",
   "placeholder_confirm_password": "再输入一次新密码",
   "login_instance": "实例管理员",
-  "login_setup": "初始化与恢复"
+  "login_setup": "初始化与恢复",
+  "failure_limited": "尝试次数过多，请稍后再试",
+  "dialog_done": "完成",
+  "password_short": "密码至少 {min} 个字节",
+  "password_long": "密码最多 {max} 个字节",
+  "password_mismatch": "两次输入的密码不一致"
 }

@@ -22,12 +22,19 @@ import { roleLabel } from "@/features/members/roles"
 import { networksQuery, sessionQuery } from "@/features/network/queries"
 import { surfaceTitleId } from "@/features/shell/page-frame"
 import { dropDrafts } from "@/features/shell/drafts"
-import { toastFailure } from "@/lib/failure"
-import { dateTime } from "@/lib/format"
+import { failureOf, toastFailure } from "@/lib/failure"
+import { formText } from "@/lib/form"
+import { unixDateTime } from "@/lib/format"
+import {
+  newPasswordProblem,
+  PASSWORD_MAX_BYTES,
+  PASSWORD_MIN_BYTES,
+} from "@/lib/password"
+import { passwordProblemText } from "@/lib/password-text"
 import { currentSession, endSession } from "@/lib/session"
 import { m } from "@/paraglide/messages.js"
 
-import { changePassword, passwordProblem, revokeAllSessions } from "./queries"
+import { changePassword, revokeAllSessions } from "./queries"
 
 /**
  * This account: its email, the networks it belongs to (with the role in
@@ -185,9 +192,7 @@ function SignIns({ userId }: { userId: string | null }) {
   return (
     <FormSection title={m.account_sign_ins()}>
       <Tile label={m.account_session_expires()}>
-        {expiresAt
-          ? (dateTime(new Date(expiresAt * 1000).toISOString()) ?? "—")
-          : "—"}
+        {expiresAt ? (unixDateTime(expiresAt) ?? "—") : "—"}
       </Tile>
       <div className="flex flex-wrap gap-2">
         <Button
@@ -229,11 +234,6 @@ function SignIns({ userId }: { userId: string | null }) {
 
 type PasswordField = "current" | "next" | "confirm"
 
-const problemText = {
-  short: () => m.account_password_short(),
-  long: () => m.account_password_long(),
-} as const
-
 /**
  * A real password form: the username rides along for password managers,
  * Enter submits. On success the controller ends every session; this tab
@@ -263,28 +263,29 @@ function PasswordForm({ email }: { email: string | null }) {
     event.preventDefault()
     if (pending || !email) return
     const data = new FormData(event.currentTarget)
-    const text = (name: string) => {
-      const value = data.get(name)
-      return typeof value === "string" ? value : ""
-    }
-    const current = text("current-password")
-    const next = text("new-password")
+    const current = formText(data, "current-password")
+    const next = formText(data, "new-password")
     if (current === "") return fail("current", m.account_password_missing())
-    const problem = passwordProblem(next)
-    if (problem) return fail("next", problemText[problem]())
-    if (text("confirm-password") !== next)
-      return fail("confirm", m.account_password_mismatch())
+    const problem = newPasswordProblem(next, formText(data, "confirm-password"))
+    if (problem)
+      return fail(
+        problem === "mismatch" ? "confirm" : "next",
+        passwordProblemText[problem]()
+      )
     setInvalid(null)
     setPending(true)
-    const outcome = await changePassword(current, next)
+    let outcome
+    try {
+      outcome = await changePassword(current, next)
+    } catch (error) {
+      setPending(false)
+      if (failureOf(error) === "invalid") setInvalid("next")
+      toastFailure(error)
+      return
+    }
     if (outcome !== "changed") {
       setPending(false)
       if (outcome === "wrong") fail("current", m.account_password_wrong())
-      else if (outcome === "limited")
-        toast.error(m.login_limited(), { id: "password" })
-      else if (outcome === "invalid") fail("next", m.failure_invalid())
-      else if (outcome === "unknown")
-        toast.error(m.failure_unknown(), { id: "password" })
       return
     }
     // Every session of the account, this one too, has just been revoked.
@@ -330,7 +331,7 @@ function PasswordForm({ email }: { email: string | null }) {
           type="password"
           label={m.account_password_current()}
           autoComplete="current-password"
-          maxLength={1024}
+          maxLength={PASSWORD_MAX_BYTES}
           invalid={invalid === "current"}
           disabled={pending}
           onChange={() => setInvalid(null)}
@@ -342,8 +343,8 @@ function PasswordForm({ email }: { email: string | null }) {
           type="password"
           label={m.account_password_new()}
           autoComplete="new-password"
-          minLength={12}
-          maxLength={1024}
+          minLength={PASSWORD_MIN_BYTES}
+          maxLength={PASSWORD_MAX_BYTES}
           invalid={invalid === "next"}
           disabled={pending}
           onChange={() => setInvalid(null)}
@@ -355,7 +356,7 @@ function PasswordForm({ email }: { email: string | null }) {
           type="password"
           label={m.account_password_confirm()}
           autoComplete="new-password"
-          maxLength={1024}
+          maxLength={PASSWORD_MAX_BYTES}
           invalid={invalid === "confirm"}
           disabled={pending}
           onChange={() => setInvalid(null)}

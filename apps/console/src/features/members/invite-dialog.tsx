@@ -21,12 +21,15 @@ import { Tile } from "@/components/chrome/tile"
 import { Button } from "@/components/ui/button"
 import { Spinner } from "@/components/ui/spinner"
 import { authed } from "@/lib/api"
-import { dateTime } from "@/lib/format"
+import { formText, validEmail } from "@/lib/form"
+import { unixDateTime } from "@/lib/format"
 import { useSecretMutation } from "@/lib/secret"
+import { useUnmountAfter } from "@/lib/use-kept"
 import { m } from "@/paraglide/messages.js"
 
 import { invitationsQuery } from "./queries"
-import { invitationLink, roleLabel, unixIso } from "./roles"
+import { invitationLink } from "./invitation"
+import { roleLabel } from "./roles"
 
 const DAY = 86_400
 /** The controller allows at most seven days. */
@@ -47,13 +50,7 @@ export function InviteDialog(props: {
   open: boolean
   onOpenChange: (open: boolean) => void
 }) {
-  const [mounted, setMounted] = useState(props.open)
-  if (props.open && !mounted) setMounted(true)
-  useEffect(() => {
-    if (props.open || !mounted) return
-    const timer = window.setTimeout(() => setMounted(false), UNMOUNT_AFTER_MS)
-    return () => window.clearTimeout(timer)
-  }, [props.open, mounted])
+  const mounted = useUnmountAfter(props.open, UNMOUNT_AFTER_MS)
   return mounted ? <Invite {...props} /> : null
 }
 
@@ -99,18 +96,13 @@ function Invite({
   const submit = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault()
     if (secret.pending) return
-    const raw = new FormData(event.currentTarget).get("email")
-    const email = typeof raw === "string" ? raw.trim() : ""
+    const email = formText(new FormData(event.currentTarget), "email").trim()
     const body = zCreateInvitationRequest.safeParse({
       email,
       role,
       expires_in_seconds: Number(expiry) * DAY,
     })
-    if (
-      !body.success ||
-      email.length > 254 ||
-      !/^[^\s@]+@[^\s@]+$/.test(email)
-    ) {
+    if (!body.success || !validEmail(email)) {
       setInvalid(true)
       toast.error(m.members_invite_email_invalid(), { id: "invite" })
       return
@@ -131,7 +123,7 @@ function Invite({
             className="h-9 rounded-full px-4"
             onClick={() => close(false)}
           >
-            {m.members_done()}
+            {m.dialog_done()}
           </Button>
         }
       >
@@ -143,7 +135,7 @@ function Invite({
             {roleLabel[created.invitation.role]()}
           </Tile>
           <Tile label={m.members_invite_expires()}>
-            {dateTime(unixIso(created.invitation.expires_at)) ?? "—"}
+            {unixDateTime(created.invitation.expires_at) ?? "—"}
           </Tile>
         </div>
         {link ? (

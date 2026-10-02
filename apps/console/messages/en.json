@@ -98,5 +98,10 @@
   "placeholder_new_password": "At least 12 characters",
   "placeholder_confirm_password": "The new password again",
   "login_instance": "Instance administrator",
-  "login_setup": "Setup and recovery"
+  "login_setup": "Setup and recovery",
+  "failure_limited": "Too many attempts; try again later",
+  "dialog_done": "Done",
+  "password_short": "The password needs at least {min} bytes",
+  "password_long": "The password allows at most {max} bytes",
+  "password_mismatch": "The passwords do not match"
 }

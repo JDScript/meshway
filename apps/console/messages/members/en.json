@@ -28,7 +28,6 @@
   "members_invite_expires": "Expires",
   "members_invite_expires_in": "Valid for",
   "members_days": "{count} d",
-  "members_done": "Done",
   "members_email": "Email",
   "members_role": "Role",
   "members_role_save": "Save role",

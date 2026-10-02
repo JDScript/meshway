@@ -3,7 +3,7 @@ import { toast } from "sonner"
 
 import { m } from "@/paraglide/messages.js"
 
-import { newPasswordProblem, type PasswordProblem } from "./password"
+import { newPasswordProblem, type PasswordProblem } from "@/lib/password"
 
 const problemMessage: Record<PasswordProblem, () => string> = {
   short: () => m.entry_password_short(),

@@ -26,7 +26,7 @@ import { useSecretMutation } from "@/lib/secret"
 import { currentSession, endSession, startSession } from "@/lib/session"
 import { m } from "@/paraglide/messages.js"
 
-import { formText } from "../form"
+import { formText } from "@/lib/form"
 import { fragmentLink } from "../fragment"
 import { usePasswordFields } from "../password-fields"
 import type { InstanceCall, SetupAccount, SetupNetwork } from "./instance"

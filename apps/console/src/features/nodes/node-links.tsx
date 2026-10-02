@@ -29,7 +29,6 @@ import {
 } from "@/features/topology/topology"
 import { clockTime, dateTime } from "@/lib/format"
 import { m } from "@/paraglide/messages.js"
-import { getLocale } from "@/paraglide/runtime.js"
 
 import { latencyFailureLabel, transportLabel } from "./labels"
 import {
@@ -399,12 +398,7 @@ function Chart({
             type="number"
             domain={[range.from, range.until]}
             ticks={ticks}
-            tickFormatter={(at: number) =>
-              new Intl.DateTimeFormat(getLocale(), {
-                hour: "2-digit",
-                minute: "2-digit",
-              }).format(at)
-            }
+            tickFormatter={(at: number) => clockTime(at, { seconds: false })}
             tickLine={false}
             axisLine={false}
             minTickGap={48}
@@ -462,7 +456,7 @@ function Chart({
         {history.events.map((event, index) => (
           <span
             key={`${event.at}/${index}`}
-            title={`${dateTime(new Date(event.at).toISOString()) ?? ""} · ${
+            title={`${dateTime(event.at) ?? ""} · ${
               event.outcome === "timeout"
                 ? m.node_latency_timeout()
                 : event.reason

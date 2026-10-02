@@ -16,9 +16,6 @@
   "account_password_confirm": "确认新密码",
   "account_password_submit": "修改密码",
   "account_password_missing": "需要当前密码",
-  "account_password_short": "新密码至少 12 个字节",
-  "account_password_long": "新密码最多 1024 个字节",
-  "account_password_mismatch": "两次输入的新密码不一致",
   "account_password_wrong": "当前密码不正确",
   "account_password_changed": "密码已修改，其他登录已失效",
   "account_password_changed_sign_in": "密码已修改，所有登录已失效"

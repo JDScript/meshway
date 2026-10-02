@@ -1,4 +1,4 @@
-import { useState, type ReactNode } from "react"
+import type { ReactNode } from "react"
 
 import { CloseButton } from "@/components/chrome/close-button"
 import { CopyButton } from "@/components/chrome/copy-button"
@@ -18,6 +18,7 @@ import {
 } from "@/components/ui/drawer"
 import { Spinner } from "@/components/ui/spinner"
 import { useIsMobile } from "@/hooks/use-mobile"
+import { useKeptWhile } from "@/lib/use-kept"
 import { m } from "@/paraglide/messages.js"
 
 // Dialogs are for three things only: confirming what cannot be undone,
@@ -48,15 +49,11 @@ export function GlassDialog({
   footer?: ReactNode
 }) {
   const mobile = useIsMobile()
-  const [kept, setKept] = useState({ title, children, footer })
-  if (
-    open &&
-    (kept.title !== title ||
-      kept.children !== children ||
-      kept.footer !== footer)
-  )
-    setKept({ title, children, footer })
-  const shown = open ? { title, children, footer } : kept
+  const shown = {
+    title: useKeptWhile(open, title),
+    children: useKeptWhile(open, children),
+    footer: useKeptWhile(open, footer),
+  }
   const change = (next: boolean) => {
     if (!next && busy) return
     onOpenChange(next)

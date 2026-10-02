@@ -23,7 +23,7 @@ import { m } from "@/paraglide/messages.js"
 
 import { EntryCard, EntryFoot, EntryLink, EntrySubmit } from "../frame"
 import { heldInvitation } from "../held"
-import { formText } from "../form"
+import { formText } from "@/lib/form"
 import { usePasswordFields } from "../password-fields"
 import { withSession } from "../session-call"
 

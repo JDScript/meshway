@@ -36,7 +36,7 @@ import { vitalityOf } from "@/features/overview/model"
 import { VitalityDot } from "@/features/overview/status-dots"
 import { surfaceTitleId } from "@/features/shell/page-frame"
 import { authed } from "@/lib/api"
-import { failureOf, toastFailure } from "@/lib/failure"
+import { toastFailureWith } from "@/lib/failure"
 import { m } from "@/paraglide/messages.js"
 
 import { YouMark } from "./member-list"
@@ -47,11 +47,9 @@ type Read<T> = { data: T | null; loading: boolean }
 type Runtimes = ConnectionRuntimesSnapshot | null
 
 /** A refused change on the last Owner says so; anything else as usual. */
-function toastMembershipFailure(error: unknown) {
-  if (failureOf(error) === "conflict")
-    toast.error(m.members_last_owner(), { id: "last-owner" })
-  else toastFailure(error)
-}
+const toastMembershipFailure = toastFailureWith({
+  conflict: () => m.members_last_owner(),
+})
 
 /**
  * One member in full: their role, their devices in this network, and
@@ -447,11 +445,7 @@ function Unassigned({
       setOpen(false)
       toast.success(m.members_claimed())
     },
-    onError: (error) => {
-      if (failureOf(error) === "conflict")
-        toast.error(m.members_claim_conflict())
-      else toastFailure(error)
-    },
+    onError: toastFailureWith({ conflict: () => m.members_claim_conflict() }),
     onSettled: onClaimed,
   })
 

@@ -16,7 +16,7 @@ import { currentSession } from "@/lib/session"
 import { TextField } from "@/components/chrome/form"
 import { m } from "@/paraglide/messages.js"
 
-import { formText } from "../form"
+import { formText } from "@/lib/form"
 import { EntryCard, EntrySubmit } from "../frame"
 import { heldReset } from "../held"
 import { usePasswordFields } from "../password-fields"

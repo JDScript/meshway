@@ -8,6 +8,7 @@ import { TextField } from "@/components/chrome/form"
 import { Button } from "@/components/ui/button"
 import { FieldGroup } from "@/components/ui/field"
 import { Spinner } from "@/components/ui/spinner"
+import { formText } from "@/lib/form"
 import { m } from "@/paraglide/messages.js"
 
 import { signIn, type SignInOutcome } from "./sign-in"
@@ -66,12 +67,10 @@ export function LoginCard({
     event.preventDefault()
     if (pending) return
     const form = new FormData(event.currentTarget)
-    const email = form.get("email")
-    const secret = form.get("password")
     setPending(true)
     const outcome = await signIn(
-      typeof email === "string" ? email : "",
-      typeof secret === "string" ? secret : ""
+      formText(form, "email"),
+      formText(form, "password")
     )
     if (outcome !== "signed_in") {
       setPending(false)

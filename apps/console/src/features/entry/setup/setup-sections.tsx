@@ -28,7 +28,7 @@ import { toastFailure } from "@/lib/failure"
 import { dateTime } from "@/lib/format"
 import { m } from "@/paraglide/messages.js"
 
-import { formText } from "../form"
+import { formText } from "@/lib/form"
 import {
   hasOwner,
   instanceCall,

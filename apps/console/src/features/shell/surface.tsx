@@ -1,5 +1,7 @@
 import { cn } from "@/lib/utils"
-import { useEffect, useState, type ComponentProps, type ReactNode } from "react"
+import type { ComponentProps, ReactNode } from "react"
+
+import { useKeptWhile, useUnmountAfter } from "@/lib/use-kept"
 
 /** Matches the hidden-state transition in `index.css` (`.surface`). */
 const EXIT_MS = 260
@@ -23,16 +25,8 @@ export function Surface({
   ComponentProps<"section">,
   "children"
 >) {
-  const [mounted, setMounted] = useState(shown)
-  if (shown && !mounted) setMounted(true)
-  const [kept, setKept] = useState(children)
-  if (shown && children !== kept) setKept(children)
-
-  useEffect(() => {
-    if (shown || !mounted) return
-    const timer = window.setTimeout(() => setMounted(false), EXIT_MS)
-    return () => window.clearTimeout(timer)
-  }, [shown, mounted])
+  const mounted = useUnmountAfter(shown, EXIT_MS)
+  const content = useKeptWhile(shown, children)
 
   if (!mounted) return null
   return (
@@ -43,7 +37,7 @@ export function Surface({
       className={cn("surface", className)}
       {...props}
     >
-      {shown ? children : kept}
+      {content}
     </section>
   )
 }

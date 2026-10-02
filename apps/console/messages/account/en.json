@@ -16,9 +16,6 @@
   "account_password_confirm": "Confirm new password",
   "account_password_submit": "Change password",
   "account_password_missing": "Current password required",
-  "account_password_short": "The new password needs at least 12 bytes",
-  "account_password_long": "The new password allows at most 1024 bytes",
-  "account_password_mismatch": "The new passwords do not match",
   "account_password_wrong": "Current password is incorrect",
   "account_password_changed": "Password changed; other sign-ins ended",
   "account_password_changed_sign_in": "Password changed; every sign-in ended"
