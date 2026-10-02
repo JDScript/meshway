@@ -1,10 +1,73 @@
-# P2b 本地账户领域切片
+# P2b 本地账户 Controller / API 接线
 
 ## 状态与边界
 
-已实现 `apps/controller/src/accounts/` 内部 Rust 领域、显式 SQLite DDL、Argon2id worker、邀请 / 会话 / 密码恢复与网络权限行为测试。**尚未安装生产 schema、接入 HTTP / Web 或改变当前管理员认证。用户登录尚未上线。** 没有新增 crate、账户数据库、公开 HTTP DTO 或手写客户端。
+本文完整 API handoff 从原账户 `7ceb936` 同步到最终组合分支 `integration/account-p2a`，并追加 AR1/AR2/SG1 修复语义。现有账户领域已接入 Controller 的真实 HTTP 路由、原 Store、网络管理权限与 App PKCE ownership 事务。权威 DTO 位于 `crates/protocol/src/accounts.rs`，生成 OpenAPI / Rust / TypeScript / Zod；没有另造账户领域或数据库。以下能力是此分支交付，**不是 P2b / Web / App / CLI 的全部完成声明**。
 
-账户按 controller 全局唯一；membership 按网络隔离。同一用户可属于多网，Owner 不等于实例管理员。网络 ID 是资源作用域，不是授权。统一节点与现有 App PKCE / 回调合同保持现状，本模块不修改节点身份、地址、公钥、tags 或生产接入事务。
+账户按 controller 全局唯一；membership 按网络隔离。同一用户可属于多网，Owner 不等于实例管理员。账户已经复用原 `Store::NetworkId`，不存在第二套 `AccountNetwork`。网络 ID 是资源作用域，不是授权。App 回调、exchange、heartbeat 请求 / 响应合同兼容，批准入口改用真正的用户 session。
+
+## 分支安装与合并边界
+
+- `store/account_schema.rs::install` 接收原 Store 的迁移事务，安装现有账户片段及 `store/ownership.sql`，检查真实 FK，**不写 `user_version`**。现有 v9 数据保留，旧节点 ownership 为 `membership_id=null`（legacy-unassigned）；不生成账户，不转换 tags，不认领设备。
+- 本分支的 `AppState::open_with_network` 显式调用 `install_account_integration_schema`，用于隔离 fixture / API 验收；这是一处**待协调者替换的 integration hook**，不是已确定的生产迁移。正式合并应把片段与 P2a DDL 放在统一版本迁移的同一事务，并移除分支 hook。不能直接把带无版本账户表的实验数据库冒充正式升级产物。
+- 共用文件的接线包括 `lib.rs`、`store.rs`、`store/networks.rs`、既有管理 API 与 Store 事务创建点、`main.rs` 的真实 peer `ConnectInfo`、protocol module 注册和 SDK public exports。它们随独立 integration commit 交付，协调者与 P2a / underlay / latency API 合并后重新生成；未修改 generator 模板、Web 或 Agent 数据面。
+- P2a 冻结 `56da5ad` 的 schema **v10 保留给托管 transport**，账户片段不争用该版本，正式后续版本由协调者统一。在 `.worktree/account-p2a-integration` / `integration/account-p2a` 独立副本叠加账户提交，保留 P2a `transport-material.key`、初次 enrollment 的 listener/material 同事务安装及 `18c4313` secret Debug adapter。新 managed listener / managed enrollment 管理入口须接同一 `Read/Manage` 根事务；node-only material / capability 接口继续只接受节点身份。此副本是组合验证候选，不覆盖 main 或作者活跃 worktree。
+
+## 合并前 review 修复
+
+- **AR1**：`account_transaction`、`authorize_user_device` 与既有 network wrapper 均先取得根 `BEGIN IMMEDIATE` 写锁，再生成新的绝对过期时钟、从该事务认证 principal 并复核 session/credential version/当前角色。等待期间过期的 session 不会签发邀请或设备 code；KDF 仍使用锁外两阶段工作。修复覆盖共用账户 wrapper 的所有调用，不局限复现端点。
+- **AR2**：移除/退出与这批撤销节点的 `node_tags` 清理处于同根事务，仅清理当前网络、该用户已撤销 membership 所有的已撤销节点；不删除 tag catalog，不清别的活动设备。真实 Owner claim 仍无损保留 tags。重复 remove 需当前角色具备历史撤销角色的管理上限（最严格角色优先）；重复 leave 需本人有效 session 和该网既有撤销 membership。两者只修复旧孤儿、不恢复身份，无变更的重试不推进 revision；仍有活动 assignment 或 Access 引用的 tag 不可删。
+- **SG1**：`account_schema::validate(&Connection)` 是协调者可在迁移事务中调用的完整已安装 gate。它从权威账户/ownership SQL及真实 v9父合同构建已知 schema manifest，比较七张表、命名索引、全部账户/ownership guards 的定义（保留引用/字符串内容，只规范化外部空白），并比较解析后的列/PK、复合 FK、索引列及 partial/unique 标志，执行 FK check，以及每个活动或撤销 node 恰有一条同网 ownership 的覆盖检查。不存在“七个表名就完备”的捷径。
+- `account_schema::install(&Transaction)` 安装无版本片段后立即调用上述 validate，失败整个调用方事务 rollback。当前 branch startup hook 同一 IMMEDIATE 事务中：若任何账户相关对象已经存在，必须完整 validate；全部不存在才 install。未知/partial/弱化 guard/缺 ownership 数据明确拒绝，不通过 `IF NOT EXISTS` 补壳。**正式 user_version 与删除/替换 branch startup hook 仍由协调者统一**，不抢 P2a v10，不宣称生产迁移已部署。
+- 本轮只收尾上述 review 修复与验收；Web SSO、CLI request/poll 不在本轮新增范围。
+
+## 正式生成接口与前端 handoff
+
+所有接口前缀 `/api/v1`，返回 `Cache-Control: no-store`。人类 API 不使用 Controller cookie：Web 服务端调用生成 SDK，私有保存 session，浏览器安全 cookie / CSRF / Origin 校验由 Web 主线接线。Controller 不接受 cookie 登录，不把 admin.token 返回给 App / CLI。不要把 login 返回的原 session 写入普通日志、localStorage 或 App 回调。
+
+| 操作 ID（SDK 同名导出） | HTTP 路径 | 主体 / 结果 |
+| --- | --- | --- |
+| `loginAccount` | POST `/auth/login` | 邮箱密码；durable commit 后单次返回 `mws_` session 与 Unix 秒绝对 expiry |
+| `getAccountSession` / `logoutAccount` | GET `/auth/session` / POST `/auth/logout` | 本人有效 session；资料与 live memberships / 撤销当前 session |
+| `listNetworks` | GET `/networks` | 用户只见活动 membership 的网络，bootstrap 保留全局列表 |
+| `claimFirstOwner` | POST `/networks/{network_id}/owner-claim` | bootstrap；`kind=new_account` + 真实 email/password，或 `kind=existing_account` + 本人有效 `session_token`，两组互斥 |
+| `createAccountInvitation` / `listAccountInvitations` | POST / GET `/networks/{network_id}/invitations` | Owner / Admin role ceiling / bootstrap；secret 仅创建且 commit 后返回 |
+| `getAccountInvitation` / `revokeAccountInvitation` | GET `/networks/{network_id}/invitations/{invitation_id}` / POST `/networks/{network_id}/invitations/revoke` | 仅公有 ID + 当前主体授权；读取 metadata 不返回 secret/hash |
+| `registerInvitedAccount` / `acceptAccountInvitation` | POST `/auth/invitations/register` / `/auth/invitations/accept` | 新账户 KDF + 单次邀请原子保存；已有账户本人 session 接受，不覆盖密码 |
+| `listAccountMembers` / `saveAccountMember` | GET `/networks/{network_id}/members` / POST `/networks/{network_id}/members/save` | read / role ceiling；`role` 必填 `owner/admin/member/remove`，移除不是缺省字段 |
+| `leaveAccountNetwork` | POST `/networks/{network_id}/members/leave` | 本人退出；最后 Owner 保护，所属设备撤回同根事务 |
+| `revokeAccountSessions` | POST `/auth/sessions/revoke` | 本人或实例 bootstrap 撤销指定用户全部 session |
+| `changeAccountPassword` | POST `/me/password` | 本人有效 session + 原密码证明；version CAS，撤销全部旧 session/reset |
+| `createAccountPasswordReset` / `listAccountPasswordResets` | POST / GET `/auth/password-resets` | 仅实例 bootstrap；手动转交链接，无发邮件 |
+| `getAccountPasswordReset` / `revokeAccountPasswordReset` | GET `/auth/password-resets/{reset_id}` / POST `/auth/password-resets/revoke` | 仅 bootstrap，公有 ID 管理 |
+| `redeemAccountPasswordReset` | POST `/auth/password-resets/redeem` | 独立 `mwr_` secret，KDF 前读取 intent，消费/version/password/session 同事务 |
+| `listNodeOwnership` / `claimNodeOwnership` | GET `/networks/{network_id}/node-ownership` / POST `/networks/{network_id}/node-ownership/claim` | read / 真实 Owner；只认领本网活动 membership 与未认领、未撤销的旧节点 |
+| `authorizeDevice` | POST `/networks/{network_id}/device-authorizations` | `userSession`，Member 可批准本人设备，bootstrap/node/enrollment 不可产生 user-owned 接入 |
+| `exchangeDevice` | POST `/devices/exchange` | 原 code/PKCE；同事务 revalidate + 原 node 创建/地址/ownership/code消费/revision |
+
+OpenAPI 三类人类认证明确区分：`userSession` 只接受 `mws_`；`adminBearer` 只用于 bootstrap；`managementBearer` 支持用户 session 或原 bootstrap 兼容入口。节点和 enrollment 仍是 `nodeBearer` / `enrollmentBearer`，均不能取得人类权限。网络 Owner 无法通过任何网络角色反向成为实例管理员。
+
+现有管理 API 全部通过 `network_operation(token, network_id, Read/Manage, action)`：在实际根 `BEGIN IMMEDIATE` 内验证当前 session / credential version / role，再执行资源操作。原业务事务在根事务内成为 savepoint，根失败整体 rollback；没有可变 selected-network 或仅 handler 的权限检查。网络清单按当前 membership 过滤。`Member` 可 read、预览与本人设备接入，不可写配置。
+
+账户 ingress 采用固定一分钟窗口的有界预算：同账户最多 10 次、同真实 peer IP 最多 30 次、全实例最多 120 次；key 仅 SHA-256 摘要，最多 4096 keys。不相信 `X-Forwarded-For`；未注入真实 peer 的测试 / embedding 共享保守 unknown-source 预算。reset 在读取 intent 后另按实际 user 预算，入口与用户预算都先于 KDF；reset 的双重 reservation 会更早耗尽 source/global 预算。KDF 固定至多 2 个并发，取消 HTTP 不释放仍执行的 blocking permit；没有 Store 锁跨 KDF await。
+
+membership 移除 / 退出在同根事务撤销其原稳定 membership 所属节点，清除这批节点 runtime reports 与 tag assignments，并推进受影响网络 revision 和 publication 校验；任何一步失败撤回 membership、邀请失效、节点与关联写入。重加入生成新 membership ID，不复活旧设备或旧批准。首次兑换检查 session/expiry/credential version/membership；精确已消费重试不依赖浏览器 session，却仍检查原节点未撤销及原 membership 活动、ownership 相同。owner / binding 存储禁止更换或删除，node ID/credential/IP/keys/material 不重写；claim 保留 tags，撤回按上述清理语义处理。
+
+## 尚待交付
+
+- Web 本地登录 / Cookie / CSRF / 目标网络选择与上述生成接口接线由 Opus 主线负责；此分支没有改 `apps/web`，不宣称浏览器 SSO UI 完成。
+- CLI request/approve/poll/exchange、code 临时加密重交付与本地 journal 尚未实现，沿用本文末尾 polling handoff；不交付半接 CLI endpoint。
+- 生产 schema 版本 / P2a 合并与迁移部署由协调者决定；Controller 撤回和 revision 已接线，真实 NE / Agent runtime 终止与跨 transport 数据面联测仍受既有主线状态约束。
+
+下文保留账户领域原切片的审计背景及 CLI 设计；其中“待接线 / 下一切片”描述是历史 handoff，已集成项目以上述正式接口为准。
+
+## 本轮验证（账户独立分支）
+
+- `CARGO_TARGET_DIR=target cargo test --workspace --all-features --locked -- --test-threads=2`：**477 passed / 0 failed / 7 ignored**（含 1 doctest；既有显式外部代理 / Docker / 性能专项 ignored 未执行）。Controller **67 单元 + 29 HTTP**，其中账户领域25项；另有6项既有 generator 测试。Apple core真实Controller接入测试已改为浏览器fixture真实账户 / session，确认membership ownership后验证原exchange/heartbeat/撤销。
+- `cargo clippy -p meshway-controller -p meshway-apple-core --all-targets --all-features -- -D warnings` 通过；`cargo fmt --all -- --check`、生成drift、Web/SDK/e2e TypeScript及4个 `experiments/*/tsconfig.json` 检查通过。SDK **14** tests、Web **145** tests通过。
+- 新取消测试确定性占用 blocking worker，取消请求后预算保持占用，直至真实KDF任务完成。新HTTP回归先复现login按email、reset按user ID分拆预算可绕过同账户上限（200而非429），修正后以归一化邮箱共享预算，拒绝时不消费reset、不修改密码/session。
+- API验收包括所有既有网络 read / mutation 的 Member与跨网隔离、公有邀请ID管理及跨重启永久失效、最后Owner、已有账户接受邀请、全局恢复权限、本人密码/会话撤销、App首次兑换的session失效、移除后重加入、节点精确retry与撤回、成员退出、ownership存储故障原子rollback，以及实际v9每个旧表/列的SQL值对照与DDL失败rollback。托管material的组合故障和撤回投影在独立P2a副本验证。
+- 仅独立tempfile / loopback fixture；未使用真实控制面数据、真实管理员token或live端口，无Docker / 宿主路由 / DNS / 防火墙操作。组合P2a验证单独记录在integration候选，不把其待审查状态或生产schema部署记为已完成。
 
 ## 模型与权限
 
