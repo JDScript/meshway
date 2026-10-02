@@ -1,7 +1,6 @@
 import assert from "node:assert/strict";
 import { spawn, spawnSync } from "node:child_process";
 import { generateKeyPairSync, randomBytes } from "node:crypto";
-import { once } from "node:events";
 import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
@@ -65,12 +64,15 @@ test("generated connection operations bind immutable keys, scope projections and
   const built = spawnSync("cargo", ["build", "--locked", "--quiet", "-p", "meshway-controller"], { cwd: root, encoding: "utf8" });
   assert.equal(built.status, 0, built.stderr);
   const directory = await mkdtemp(join(tmpdir(), "meshway-connection-sdk-"));
-  const binary = join(root, process.env.CARGO_TARGET_DIR ?? "target", "debug/meshway-controller");
+  const binary = resolve(root, process.env.CARGO_TARGET_DIR ?? "target", "debug/meshway-controller");
   async function start() {
     const child = spawn(binary, ["serve", "--bind", "127.0.0.1:0", "--data-dir", directory], { cwd: root, stdio: ["ignore", "ignore", "pipe"] });
-    const exited = once(child, "exit");
+    const exited = new Promise<void>(accept => {
+      child.once("exit", () => accept());
+      child.once("error", () => accept());
+    });
     let log = "";
-    const base = await new Promise<string>((accept, reject) => {
+    const ready = new Promise<string>((accept, reject) => {
       const deadline = setTimeout(() => { child.kill("SIGTERM"); reject(new Error("Controller startup timed out")); }, 20_000);
       child.once("error", error => { clearTimeout(deadline); reject(error); });
       child.once("exit", () => { clearTimeout(deadline); reject(new Error(`Controller exited: ${log}`)); });
@@ -80,10 +82,18 @@ test("generated connection operations bind immutable keys, scope projections and
         if (match) { clearTimeout(deadline); accept(match[0]); }
       });
     });
-    return { base, stop: async () => { child.kill("SIGTERM"); await exited; } };
+    try {
+      const base = await ready;
+      return { base, stop: async () => { child.kill("SIGTERM"); await exited; } };
+    } catch (error) {
+      child.kill("SIGTERM");
+      await exited;
+      throw error;
+    }
   }
-  let server = await start();
+  let server: Awaited<ReturnType<typeof start>> | undefined;
   try {
+    server = await start();
     const admin = (await readFile(join(directory, "admin.token"), "utf8")).trim();
     const networkId = (await listNetworks(server.base, admin)).networks[0]!.network_id;
     const enrolled = [];
@@ -188,7 +198,7 @@ test("generated connection operations bind immutable keys, scope projections and
     await assert.rejects(acknowledgeAgentConnectionsOperation(server.base, nyc.credential, ack), httpError(409));
     await assert.rejects(getAgentConnectionsOperation(server.base, lax.credential), httpError(403));
   } finally {
-    await server.stop();
+    await server?.stop();
     await rm(directory, { recursive: true, force: true });
   }
 });
