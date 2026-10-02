@@ -321,6 +321,9 @@ struct Operation {
 enum OperationPhase {
     Install,
     Rollback,
+    /// Original nonpersistent bindings cannot return. Keep rejecting resources
+    /// and complete their lookups, but retire every runtime Tun in this intent.
+    Converge,
 }
 
 pub(super) struct Lease {
@@ -1259,7 +1262,26 @@ impl LinuxUnderlay {
         }
         let start = self.journal.installed.len();
         self.journal.operation = projected.operation;
+        if let Err(error) = self.validate_operation_intent(
+            self.journal
+                .operation
+                .as_ref()
+                .ok_or_else(|| invalid("missing projected intent"))?,
+        ) {
+            self.journal.operation = None;
+            return Err(error);
+        }
         write_journal(&self.directory, &self.journal)?;
+        #[cfg(test)]
+        if let Some(checkpoint) = &self.checkpoint
+            && checkpoint.after == 0
+        {
+            if checkpoint.crash {
+                std::process::exit(0);
+            }
+            checkpoint.reached.notify_one();
+            checkpoint.release.notified().await;
+        }
         for resource in resources {
             if let Err(error) = self.install_one(resource).await {
                 if self.journal.pending.is_some() {
@@ -1279,8 +1301,7 @@ impl LinuxUnderlay {
                         io::Error::other(format!("{error}; rollback failed: {rollback}"))
                     })?;
                 }
-                self.journal.operation = None;
-                write_journal(&self.directory, &self.journal)?;
+                self.finish_operation().await?;
                 return Err(error);
             }
             #[cfg(test)]
@@ -1303,14 +1324,22 @@ impl LinuxUnderlay {
             .operation
             .as_ref()
             .ok_or_else(|| invalid("missing full operation intent"))?;
+        let expected: Vec<_> = intent
+            .resources
+            .iter()
+            .filter(|resource| {
+                intent.phase != OperationPhase::Converge
+                    || !matches!(resource, Resource::Tun { .. })
+            })
+            .collect();
         if self.journal.pending.is_some()
             || intent.start > self.journal.installed.len()
-            || (intent.phase == OperationPhase::Install
-                && (self.journal.installed.len() - intent.start != intent.resources.len()
+            || (intent.phase != OperationPhase::Rollback
+                && (self.journal.installed.len() - intent.start != expected.len()
                     || self.journal.installed[intent.start..]
                         .iter()
-                        .zip(&intent.resources)
-                        .any(|(installed, expected)| &installed.resource != expected)))
+                        .zip(&expected)
+                        .any(|(installed, expected)| &installed.resource != *expected)))
             || (intent.phase == OperationPhase::Rollback
                 && self.journal.installed.len() != intent.start)
         {
@@ -1341,24 +1370,38 @@ impl LinuxUnderlay {
                 "ambiguous mutation requires ownership reconciliation",
             ));
         }
-        let Some(operation) = self.journal.operation.clone() else {
+        let Some(mut operation) = self.journal.operation.clone() else {
             return Ok(());
         };
+        self.validate_operation_intent(&operation)?;
         if operation.start > self.journal.installed.len() {
             return Err(invalid("invalid operation baseline"));
         }
         let completed = self.journal.installed.len() - operation.start;
-        if completed > operation.resources.len()
-            || self.journal.installed[operation.start..]
-                .iter()
-                .zip(&operation.resources)
-                .any(|(installed, resource)| &installed.resource != resource)
+        if operation.phase != OperationPhase::Converge
+            && (completed > operation.resources.len()
+                || self.journal.installed[operation.start..]
+                    .iter()
+                    .zip(&operation.resources)
+                    .any(|(installed, resource)| &installed.resource != resource))
         {
             return Err(invalid(
                 "operation does not match its exact owned resource prefix",
             ));
         }
         self.verify_resources(true).await?;
+        if operation.phase == OperationPhase::Install {
+            for resource in &operation.resources {
+                if let Resource::Tun { name, index, .. } = resource
+                    && binding_unavailable(name, *index).await?
+                {
+                    operation.phase = OperationPhase::Converge;
+                    self.journal.operation = Some(operation.clone());
+                    write_journal(&self.directory, &self.journal)?;
+                    break;
+                }
+            }
+        }
         match operation.phase {
             OperationPhase::Install => {
                 for resource in operation.resources.into_iter().skip(completed) {
@@ -1372,16 +1415,105 @@ impl LinuxUnderlay {
                 }
                 self.finish_operation().await
             }
+            OperationPhase::Converge => {
+                let expected: Vec<_> = operation
+                    .resources
+                    .iter()
+                    .filter(|resource| !matches!(resource, Resource::Tun { .. }))
+                    .cloned()
+                    .collect();
+                let kept: Vec<_> = self.journal.installed[operation.start..]
+                    .iter()
+                    .filter(|installed| !matches!(installed.resource, Resource::Tun { .. }))
+                    .map(|installed| &installed.resource)
+                    .collect();
+                if kept.len() > expected.len()
+                    || kept
+                        .iter()
+                        .zip(&expected)
+                        .any(|(actual, expected)| *actual != expected)
+                    || self.journal.installed[operation.start..]
+                        .iter()
+                        .any(|installed| !operation.resources.contains(&installed.resource))
+                {
+                    return Err(invalid("convergence does not match original owned intent"));
+                }
+                for index in (operation.start..self.journal.installed.len()).rev() {
+                    if matches!(self.journal.installed[index].resource, Resource::Tun { .. }) {
+                        self.remove_one(index).await?;
+                    }
+                }
+                let completed = self.journal.installed.len() - operation.start;
+                for resource in expected.into_iter().skip(completed) {
+                    self.install_one(resource).await?;
+                }
+                self.finish_operation().await
+            }
         }
     }
 
-    fn verify_topology(&self) -> io::Result<()> {
-        let resources: Vec<_> = self
-            .journal
+    fn validate_operation_intent(&self, operation: &Operation) -> io::Result<()> {
+        if operation.start > self.journal.installed.len() || operation.resources.is_empty() {
+            return Err(invalid("invalid operation baseline/empty intent"));
+        }
+        if operation.start == 0 {
+            let first = self.journal.reservation.first_priority;
+            let last = self.journal.reservation.last_priority;
+            let mark = self.journal.reservation.mark.merge(0)?;
+            let reservation = vec![
+                Resource::Nop {
+                    family: 4,
+                    priority: last,
+                },
+                Resource::Nop {
+                    family: 6,
+                    priority: last,
+                },
+                Resource::Guard {
+                    family: 4,
+                    priority: first,
+                    mark,
+                    target: last,
+                },
+                Resource::Guard {
+                    family: 6,
+                    priority: first,
+                    mark,
+                    target: last,
+                },
+            ];
+            if operation.resources != reservation || operation.phase == OperationPhase::Converge {
+                return Err(invalid("start=0 is restricted to initial reservation"));
+            }
+        } else {
+            self.verify_topology_of(&self.journal.installed[..operation.start])?;
+        }
+        let mut projected = self.journal.clone();
+        projected.installed.truncate(operation.start);
+        projected
             .installed
-            .iter()
-            .map(|item| &item.resource)
-            .collect();
+            .extend(operation.resources.iter().map(|resource| Installed {
+                resource: resource.clone(),
+                observed: resource.expected(),
+            }));
+        projected.pending = operation.resources.last().cloned();
+        if serde_json::to_vec(&projected)
+            .map_err(|error| invalid(error.to_string()))?
+            .len()
+            > 1_048_576 - 65_536
+        {
+            return Err(invalid("stored intent exceeds durable recovery budget"));
+        }
+        // Validate full original Install topology too, even while rolling back.
+        self.verify_topology_of(&projected.installed)
+    }
+
+    fn verify_topology(&self) -> io::Result<()> {
+        self.verify_topology_of(&self.journal.installed)
+    }
+
+    fn verify_topology_of(&self, installed: &[Installed]) -> io::Result<()> {
+        let resources: Vec<_> = installed.iter().map(|item| &item.resource).collect();
         for family in [4, 6] {
             if resources.iter().filter(|resource| matches!(resource, Resource::Nop { family: f, .. } if *f == family)).count() != 1
                 || resources.iter().filter(|resource| matches!(resource, Resource::Guard { family: f, .. } if *f == family)).count() != 1 {
@@ -1741,9 +1873,31 @@ fn verify_tun(name: &str) -> io::Result<()> {
     Ok(())
 }
 
+async fn binding_unavailable(name: &str, index: u32) -> io::Result<bool> {
+    match std::fs::read_to_string(Path::new("/sys/class/net").join(name).join("ifindex")) {
+        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(true),
+        Err(error) => Err(error),
+        Ok(value) => {
+            let actual: u32 = value
+                .trim()
+                .parse()
+                .map_err(|_| invalid("unknown original TUN identity"))?;
+            if actual != index {
+                return Ok(true);
+            }
+            verify_tun(name)?;
+            Ok(false)
+        }
+    }
+}
+
 #[cfg(test)]
 #[path = "owner_review_tests.rs"]
 mod review_tests;
+
+#[cfg(test)]
+#[path = "owner_tun_recovery_tests.rs"]
+mod tun_recovery_tests;
 
 async fn link_index(name: &str) -> io::Result<u32> {
     let links: Vec<Value> = serde_json::from_slice(

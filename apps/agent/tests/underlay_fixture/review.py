@@ -38,9 +38,9 @@ def run(args):
     for sig in (signal.SIGINT, signal.SIGTERM):
         previous[sig] = signal.signal(sig, stop)
 
-    def case(container, name, extra=()):
+    def case(container, name, extra=(), module='review_tests'):
         output = docker('exec', '-e', 'MESHWAY_UNDERLAY_FIXTURE=1', *extra, container, '/underlay-tests', '--exact',
-                       'underlay::owner::review_tests::' + name, '--ignored', '--nocapture', check=False, timeout=90)
+                       'underlay::owner::' + module + '::' + name, '--ignored', '--nocapture', check=False, timeout=90)
         row = {'name': name, 'exit': output.returncode, 'stdout': output.stdout, 'stderr': output.stderr}
         result['cases'].append(row)
         (directory / f'{len(result["cases"]):02}-{name}.json').write_text(json.dumps(row, indent=2))
@@ -48,11 +48,11 @@ def run(args):
             raise RuntimeError(f'{name} failed: {output.stderr}')
         assert 'running 1 test' in output.stdout, f'{name} did not execute an actual test'
 
-    def create(name, network, volume=None):
+    def create(name, network, volume=None, tun=False, server=False):
         containers.append(name)
         flags = ['--network', network] if network.startswith('container:') else [
-            '--network', network, '--ip', '172.30.247.10', '--ip6', 'fd74:6d77:247::10',
-            '--sysctl', 'net.ipv6.conf.all.disable_ipv6=0', '--sysctl', 'net.ipv4.ip_forward=1', '--sysctl', 'net.ipv6.conf.all.forwarding=1']
+            '--network', network, '--ip', '172.30.247.20' if server else '172.30.247.10', '--ip6', 'fd74:6d77:247::20' if server else 'fd74:6d77:247::10',
+            '--sysctl', 'net.ipv6.conf.default.disable_ipv6=1' if tun else 'net.ipv6.conf.all.disable_ipv6=0', '--sysctl', 'net.ipv4.ip_forward=1', '--sysctl', 'net.ipv6.conf.all.forwarding=1']
         if volume:
             flags += ['--mount', f'type=volume,source={volume},target=/state']
         docker('run', '-d', '--name', name, '--label', mechanism.LABEL + '=' + owner,
@@ -125,6 +125,26 @@ def run(args):
         second = owner + '-scope-two'
         create(second, network, volume)
         case(second, 'scope_fresh')
+        assert mechanism.owns(json.loads(docker('inspect', second).stdout), owner)
+        docker('rm', '-f', second)
+        server = owner + '-tun-server'
+        create(server, network, server=True)
+        docker('exec', '-d', server, 'python3', '/lab/production.py', 'server')
+        deadline = time.monotonic() + 10
+        while time.monotonic() < deadline:
+            if docker('exec', server, 'test', '-f', '/run/ready', check=False).returncode == 0:
+                break
+            time.sleep(.05)
+        else:
+            raise RuntimeError('controller fixture server did not start')
+        tun_client = owner + '-tun-client'
+        create(tun_client, network, tun=True)
+        case(tun_client, 'normal_open_cancel', module='tun_recovery_tests')
+        for kind, boundaries in [('open', range(1, 5)), ('activate', [0])]:
+            for boundary in boundaries:
+                case(tun_client, 'normal_open_crash', ['-e', 'MESHWAY_UNDERLAY_TEST_OPERATION=' + kind,
+                    '-e', 'MESHWAY_UNDERLAY_TEST_COMMIT=' + str(boundary)], module='tun_recovery_tests')
+                case(tun_client, 'normal_open_recover', module='tun_recovery_tests')
         result['status'] = 'ok'
     except BaseException as error:
         result['error'] = str(error)

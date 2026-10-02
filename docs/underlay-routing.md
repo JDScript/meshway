@@ -6,6 +6,12 @@
 保留。下述整组 operation、netns singleton 与 scope rollover 是后续修复，须交原
 reviewer 复核；旧 `2186c3ba6d71` 证据不用于声称关闭 F1/F2。
 
+**41008b2 复核后的状态**：原 F1/F2 已独立关闭；本轮补 R1 的真实非持久 TUN
+消失恢复，R2 namespace lifetime 身份仍为条件性阻断。当前 `{boot,dev,inode}`
+及 abstract singleton 不足以排除同 boot inode/dev 生命周期重用，不能作为生产
+自动 scope rollover 保证。本候选继续不接正常生产主循环；未触碰固定 `4d106e0`
+的远端工作。
+
 `underlay::LinuxUnderlay` 是正常 Agent 可调用的内部准备入口；不接受设备提供的
 mark、priority、table 或 nameserver 参数。主循环接线由 P3a owner 完成，本切片
 本身不代表正常 Agent 已自动启用保护或完成真实 Controller/TUN 组网闭环。
@@ -84,6 +90,16 @@ prefix 可由 `recover_operation()` 精确续做/收敛；ambiguous 单条 pendi
 缺 lookup / 单族 capture / orphan sink 明确拒绝，不凭 shape 修补未知 ownership。
 `retain_mesh_sink` 的幂等返回也经过完整关联及实际 lookup 核验。
 
+R1 的完整 intent 如果引用原绑定已消失/不可用的非持久 TUN，会先持久化
+`Converge` phase，保留/完成原 rejecting Sink 与双族 Capture lookup，精确退休
+该 operation 已 owned 的 Tun rows，取消未提交的 runtime Tun 意图。只有完整
+**sink-only 保护拓扑**及真实 evidence 核验后才清 intent、恢复 controller capability。
+原 ifindex/name 不被新设备替代；发现不能确认归属的现存 route 仍拒绝清理。
+随后必须由正常授权、packet fence/join 与 fresh `TunBinding` 重建数据面。
+Install projection、Rollback baseline、start=0 仅初始 reservation、intent 预算现在
+也在 mutation 前重检；rollback marker clear 复用 finish 的内存 intent 恢复行为。
+这是私有 journal 的普通关系完整性校验，不宣称防持有 state/root 权限的主体篡改。
+
 DNS 新入口 `SystemDnsSnapshot::from_system` 保留 `hosts: files dns` 下的 `/etc/hosts`
 优先级，并在真实 Docker 环境中保留唯一 `127.0.0.11:53` embedded resolver。
 Docker 网络别名的 A/AAAA 查询仍使用 marked UDP/TCP 工厂，而不是 getaddrinfo 或
@@ -104,6 +120,43 @@ fence 不由这个准备合同证明。准备、capture、恢复和 capability �
 持续环境监控与普通主循环切换编排仍是协调者接线边界。下文旧验收记录保持冻结。
 
 ### 本轮实证与 P3a 接线边界
+
+#### R1 完成 / R2 设计待协调者决定
+
+新 run `mw-underlay-review-fix-2bb296e7ad42`，36 个 case exit 全为 0，`status=ok`、
+`cleanup_errors=[]`。result SHA256
+`e15c47eb861debdca11178be2a1a8720e63a636710e3d28563e79e70343bc3fb`，镜像
+`sha256:bce51c446a5871a747f07a42cd6ab6c9312230cc082d9d056f6d3a8a7754dc4e`。
+源码及 fixture SHA 逐字节记录，材料在批准 TMP `meshway-underlay-artifacts/`。
+
+- 实际 `Tun::open_with_underlay` 在 capture Sink 提交后取消，局部 AsyncDevice
+  确实 Drop；同 owner 收敛为 sink-only。本地与 `iif eth0` Mesh lookup 拒绝，
+  生成 controller API 请求实际传输完成并如实处理 fixture HTTP 401，fresh binding
+  随后可激活。旧 Tun/name/ifindex 没有复活。
+- IPv4 capture 四项提交边界分别进程退出/同 scope 新进程恢复；activate 的
+  第一个 Tun 尚未提交边界也分别取消与进程退出。全部保留 Mesh sink、允许独立
+  controller 通道恢复，再以新 `mwfresh0` 建真实 TUN。
+- 原无 TUN F1/F2、scope 归档 cases 同次重跑；两个旧 reviewer probes 目录和
+  两套旧 artifact 未改。7 个 host underlay tests 通过，Linux image 执行 Clippy。
+
+相同源码镜像再执行原 `run.py --skip-build --image meshway-underlay-review-fix:local`，
+run `mw-rust-underlay-5ff5f9bdef8d` 为 `status=ok/cleanup_errors=[]`；result SHA256
+`427f95b299f191a86618a5f8385e079443dcfd7bbd83626ae905dc39f0457833`。
+host `target/underlay-tun-recovery-host` 的 all-features/all-targets Clippy、7 个定向
+underlay tests、fmt/diff check 和 2 个 Python syscall-auditor tests 已通过。提交前
+逐字节确认当前 underlay/TUN 源文件与两份 R1 artifact 的 source SHA 一致。
+
+R2 最小依赖/ABI提案（**未实现、待决定**）：在已审 `socket2` 层增加安全
+`netns_cookie() -> io::Result<u64>`，由依赖内部调用 Linux `SO_NETNS_COOKIE`，检查
+8-byte optlen/非零值并保留真实 OS error；不是已有 `SO_COOKIE`（socket lifetime）。
+Agent 不加入 unsafe，新 socket 不 bind/connect/send。Linux 最低 5.7；ENOPROTOOPT /
+失败必须停止身份判断。kernel cookie 配合 boot ID 写入新 journal；不同 socket /
+同 netns / 同 boot 的 restart 必须 cookie 相同，不同 lifetime 必须不同。
+旧无 cookie journal 不能自动认证为 same-scope ownership，迁移需另行审定。
+当前本地及协调者核查的 rustix/socket2/nix 都无公开 netns-cookie wrapper，因此
+不猜 API、不引生产 Python、fork keeper、SYS_ADMIN 或绕 unsafe forbid；根依赖 /
+lock 修改由协调者处理。`NS_GET_ID` 是另一项需要独立版本/安全 wrapper 审查的选择，
+本轮没有把它或 dev/inode 当作已实现保证。
 
 #### F1/F2 修复候选实证（旧证据保留）
 
