@@ -277,7 +277,7 @@ struct NativeRunning {
     tasks: Vec<JoinHandle<()>>,
     factory: Arc<dyn sockets::NativeSocketFactory>,
     next_socket_id: u32,
-    punch_sockets: usize,
+    punch_slots: Arc<Semaphore>,
 }
 impl NativeRunning {
     async fn stop(&mut self) {
@@ -382,7 +382,7 @@ fn launch_native(
         tasks: Vec::new(),
         factory: factory.clone(),
         next_socket_id: u32::try_from(udp.len()).map_err(|_| Error::Capacity)?,
-        punch_sockets: 0,
+        punch_slots: Arc::new(Semaphore::new(16)),
     };
     let mut spawn = |future: std::pin::Pin<Box<dyn Future<Output = ()> + Send>>| {
         let fence = running.generation.0.clone();
@@ -422,6 +422,9 @@ fn launch_native(
             id: socket_id,
             rx,
             punch_rx: None,
+            generation: running.generation.0.clone(),
+            owner: None,
+            channels: None,
         };
         spawn(Box::pin(udp::run(
             inner.clone(),
@@ -811,16 +814,51 @@ impl Inner {
             .ok_or(Error::Authentication)
     }
     fn register(&self, peer: String, channel: Channel) -> Result<()> {
+        self.register_admitted(peer, channel, None)
+    }
+    fn register_admitted(
+        &self,
+        peer: String,
+        channel: Channel,
+        attempt: Option<&connectivity::Request>,
+    ) -> Result<()> {
+        // Socket-generation admission precedes the peers mutex, as it does in
+        // existing packet dispatch/native stream installation. Attempt admission
+        // is acquired only AFTER peers: cancellation cannot be stuck behind a
+        // contended registry while an engine holds its attempt guard.
+        let _socket = attempt
+            .map(|request| request.socket_generation.enter())
+            .transpose()?;
         self.authorize_transport(&peer, channel.transport)?;
         channel.context.authorize(&peer)?;
         let mut peers = lock(&self.peers);
+        let _attempt = attempt.map(|request| request.fence.enter()).transpose()?;
         if *self.shutdown.borrow() {
             return Err(Error::Closed);
         }
-        if let Some(previous) = peers.get(&peer) {
-            if (previous.priority, previous.token) <= (channel.priority, channel.token) {
-                return Err(Error::Capacity);
+        if let Some(previous) = peers.get(&peer)
+            && (previous.priority, previous.token) <= (channel.priority, channel.token)
+        {
+            return Err(Error::Capacity);
+        }
+        // Final lease/identity check at actual publication under both mutexes.
+        // No crypto or async I/O occurs in this critical section.
+        if let Some(request) = attempt {
+            if request.reply.is_closed() || Instant::now() >= request.deadline {
+                return Err(Error::Timeout);
             }
+            if request.peer != peer
+                || request.priority != channel.priority
+                || channel.transport != TransportKind::NativeUdp
+                || !channel
+                    .context
+                    .remote_addr
+                    .is_some_and(|address| request.candidates.contains(&address))
+            {
+                return Err(Error::Authentication);
+            }
+        }
+        if let Some(previous) = peers.get(&peer) {
             previous.close.send_replace(true);
         }
         peers.insert(peer, channel);

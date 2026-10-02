@@ -57,6 +57,7 @@ struct Session {
     received: Instant,
     pinged: Instant,
     responder: bool,
+    attempt: Option<Arc<super::generation::Fence>>,
     _permit: OwnedSemaphorePermit,
 }
 
@@ -67,6 +68,7 @@ struct Pending {
     priority: u16,
     expires: Instant,
     permit: OwnedSemaphorePermit,
+    attempt: Option<Arc<super::generation::Fence>>,
 }
 
 struct Confirming {
@@ -78,6 +80,7 @@ struct Confirming {
     retried: Instant,
     initiator: bool,
     permit: OwnedSemaphorePermit,
+    attempt: Option<Arc<super::generation::Fence>>,
 }
 
 /// Prepare every UDP socket before spawning its engine, so setup failures are
@@ -127,6 +130,7 @@ pub(super) async fn run(
         return;
     }
     let (tx, mut rx) = mpsc::channel::<Outbound>(inner.config.limits.queue_capacity);
+    live.channels = Some(tx.clone());
     let mut sessions = BTreeMap::<[u8; 32], Session>::new();
     let mut pending: Option<Pending> = None;
     let mut confirming = BTreeMap::<[u8; 32], Confirming>::new();
@@ -205,12 +209,14 @@ pub(super) async fn run(
                         pending = None;
                         confirming.clear();
                     } else if let Some((token, session)) = sessions.iter().find(|(token, session)| {
-                        session.peer == request.peer && request.accepts(session.address) && inner.active(&session.peer, token)
+                        session.attempt.as_ref().is_some_and(|attempt| Arc::ptr_eq(attempt, &request.fence))
+                            && session.peer == request.peer && request.accepts(session.address) && inner.active(&session.peer, token)
                     }) {
                         // Capture evidence from this engine's confirmed channel,
                         // never from a different socket/transport for this peer.
                         let connection = lock(&inner.peers).get(&session.peer)
-                            .filter(|channel| channel.token == *token).map(|channel| channel.snapshot(&session.peer).connection);
+                            .filter(|channel| channel.token == *token && channel.priority == request.priority)
+                            .map(|channel| channel.snapshot(&session.peer));
                         if let Some(connection) = connection {
                             punch.take().unwrap().finish(Ok(connection));
                             pending = None;
@@ -235,7 +241,7 @@ pub(super) async fn run(
                             request.next_attempt = tokio::time::Instant::now() + Duration::from_millis(400);
                             let candidate = OutgoingCandidate { peer: request.peer.clone(), transport: TransportKind::NativeUdp,
                                 endpoint: address.to_string(), priority: request.priority, id: context.candidate_id.clone() };
-                            pending = request.run(initiate(&inner, socket.as_ref(), &candidate)).await.ok();
+                            pending = request.run(initiate(&inner, socket.as_ref(), &candidate, Some(request.fence.clone()))).await.ok();
                             if let Some(waiting) = pending.as_mut() {
                                 waiting.expires = waiting.expires.min(Instant::now() + Duration::from_millis(400)).min(request.deadline.into_std());
                             }
@@ -246,7 +252,7 @@ pub(super) async fn run(
                     let need = lock(&inner.peers).get(&candidate.peer).is_none_or(|peer| peer.priority > candidate.priority);
                     if need && pending.is_none() && !confirming.values().any(|pending| pending.initiator) && now >= next_attempt {
                         next_attempt = now + Duration::from_millis(inner.config.limits.reconnect_delay_ms);
-                        pending = initiate(&inner, socket.as_ref(), candidate).await.ok();
+                        pending = initiate(&inner, socket.as_ref(), candidate, None).await.ok();
                     }
                 }
             }
@@ -310,6 +316,7 @@ async fn initiate(
     inner: &Inner,
     socket: &dyn NativeUdp,
     candidate: &OutgoingCandidate,
+    attempt: Option<Arc<super::generation::Fence>>,
 ) -> Result<Pending> {
     inner.authorize_transport(&candidate.peer, TransportKind::NativeUdp)?;
     let permit = inner
@@ -337,6 +344,7 @@ async fn initiate(
         priority: candidate.priority,
         expires: Instant::now() + Duration::from_millis(inner.config.limits.handshake_timeout_ms),
         permit,
+        attempt,
     })
 }
 
@@ -416,6 +424,7 @@ async fn receive(
                     retried: Instant::now(),
                     initiator: false,
                     permit,
+                    attempt: punch.map(|request| request.fence.clone()),
                 },
             );
             Ok(())
@@ -423,8 +432,14 @@ async fn receive(
         Kind::Response => {
             let waiting = pending.as_mut().ok_or(Error::Authentication)?;
             if coordinated
-                && !punch
-                    .is_some_and(|request| request.accepts(source) && request.peer == waiting.peer)
+                && !punch.is_some_and(|request| {
+                    request.accepts(source)
+                        && request.peer == waiting.peer
+                        && waiting
+                            .attempt
+                            .as_ref()
+                            .is_some_and(|attempt| Arc::ptr_eq(attempt, &request.fence))
+                })
             {
                 return Err(Error::Authentication.into());
             }
@@ -457,6 +472,7 @@ async fn receive(
                     expires: Instant::now()
                         + Duration::from_millis(inner.config.limits.handshake_timeout_ms),
                     retried: Instant::now(),
+                    attempt: waiting.attempt,
                 },
             );
             Ok(())
@@ -474,6 +490,10 @@ async fn receive(
                         request.accepts(source)
                             && request.peer == waiting.peer
                             && request.priority == waiting.priority
+                            && waiting
+                                .attempt
+                                .as_ref()
+                                .is_some_and(|attempt| Arc::ptr_eq(attempt, &request.fence))
                     })
                 {
                     return Err(Error::Authentication.into());
@@ -500,6 +520,9 @@ async fn receive(
                     waiting.permit,
                     !is_ack,
                     context,
+                    waiting.attempt,
+                    punch,
+                    socket_generation,
                 )?;
             } else if is_ack {
                 return Err(Error::Authentication.into());
@@ -573,10 +596,19 @@ fn install(
     permit: OwnedSemaphorePermit,
     responder: bool,
     context: &StreamContext,
+    attempt: Option<Arc<super::generation::Fence>>,
+    punch: Option<&connectivity::Request>,
+    socket_generation: &Arc<super::generation::Fence>,
 ) -> Result<()> {
+    let _socket = socket_generation.enter()?;
+    match (&attempt, punch) {
+        (None, None) => (),
+        (Some(attempt), Some(request)) if Arc::ptr_eq(attempt, &request.fence) => (),
+        _ => return Err(Error::Authentication),
+    }
     let token = cipher.id;
     let (close, _) = watch::channel(false);
-    inner.register(
+    inner.register_admitted(
         peer.clone(),
         Channel {
             token,
@@ -591,6 +623,7 @@ fn install(
             }),
             probe_budget: Default::default(),
         },
+        punch,
     )?;
     sessions.insert(
         token,
@@ -601,6 +634,7 @@ fn install(
             received: Instant::now(),
             pinged: Instant::now(),
             responder,
+            attempt,
             _permit: permit,
         },
     );

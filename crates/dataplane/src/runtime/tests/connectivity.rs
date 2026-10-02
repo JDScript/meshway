@@ -357,3 +357,132 @@ async fn blocked_udp_preserves_stream_relay_and_e2e_path() {
     fixture.exercise(TransportKind::NativeTcp).await;
     fixture.shutdown().await;
 }
+
+#[tokio::test]
+async fn retiring_socket_owner_reclaims_live_budget_without_reusing_ordinals() {
+    let a = Runtime::start(configs().remove(0)).await.unwrap();
+    let mut last = None;
+    for _ in 0..32 {
+        let socket = a
+            .open_udp_punch_socket("lax", "owned-lax", false)
+            .await
+            .unwrap();
+        if let Some(previous) = last {
+            assert!(socket.info.socket_id > previous);
+        }
+        last = Some(socket.info.socket_id);
+        assert!(matches!(
+            a.open_udp_punch_socket("lax", "other-lax", false).await,
+            Err(Error::Capacity)
+        ));
+        let other = a
+            .open_udp_punch_socket("sha", "owned-sha", false)
+            .await
+            .unwrap();
+        assert_eq!(
+            a.handle.native.lock().await.punch_slots.available_permits(),
+            14
+        );
+        a.close_udp_punch_socket(&socket).await.unwrap();
+        a.close_udp_punch_socket(&other).await.unwrap();
+        // Capability clones cannot keep the actual fd/permit alive after close.
+        assert!(a.udp_sockets().is_empty());
+        assert_eq!(
+            a.handle.native.lock().await.punch_slots.available_permits(),
+            16
+        );
+        assert!(a.handle.native.lock().await.tasks.is_empty());
+        assert_eq!(
+            a.punch_udp(
+                &socket,
+                vec!["127.0.0.1:12345".parse().unwrap()],
+                0,
+                Duration::from_secs(1)
+            )
+            .await
+            .unwrap_err(),
+            Error::Closed
+        );
+    }
+    a.shutdown().await;
+}
+
+type PendingPunch<'a> = Pin<Box<dyn Future<Output = Result<UdpPunchObservation>> + 'a>>;
+
+async fn queued_pair<'a>(
+    a: &'a Runtime,
+    b: &'a Runtime,
+    sa: &'a UdpPunchSocket,
+    sb: &'a UdpPunchSocket,
+    priority: u16,
+) -> (PendingPunch<'a>, PendingPunch<'a>) {
+    let mut ca = Box::pin(a.punch_udp(sa, vec![endpoint(sb)], priority, Duration::from_secs(2)));
+    let mut cb = Box::pin(b.punch_udp(sb, vec![endpoint(sa)], priority, Duration::from_secs(2)));
+    assert!(
+        std::future::poll_fn(|cx| Poll::Ready(ca.as_mut().poll(cx)))
+            .await
+            .is_pending()
+    );
+    assert!(
+        std::future::poll_fn(|cx| Poll::Ready(cb.as_mut().poll(cx)))
+            .await
+            .is_pending()
+    );
+    tokio::time::timeout(Duration::from_secs(1), async {
+        while a.handle.inner.udp_punch_slots.available_permits() != 16
+            || b.handle.inner.udp_punch_slots.available_permits() != 16
+        {
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .unwrap();
+    (ca, cb)
+}
+
+#[tokio::test]
+async fn queued_receipt_cannot_borrow_a_better_channel_and_close_keeps_its_owner() {
+    let (a, b, sa, sb) = pair(false).await;
+    let (ca, cb) = queued_pair(&a, &b, &sa, &sb, 7).await;
+    let (left, right) = tokio::io::duplex(64 * 1024);
+    let (oa, ob) = tokio::join!(
+        a.attach_stream_with_priority(
+            left,
+            StreamRole::Dialer { peer: "lax".into() },
+            TransportKind::NativeTcp,
+            0
+        ),
+        b.attach_stream_with_priority(right, StreamRole::Acceptor, TransportKind::NativeTcp, 0),
+    );
+    oa.unwrap();
+    ob.unwrap();
+    assert_eq!(ca.await.unwrap_err(), Error::Unavailable);
+    assert_eq!(cb.await.unwrap_err(), Error::Unavailable);
+    a.close_udp_punch_socket(&sa).await.unwrap();
+    b.close_udp_punch_socket(&sb).await.unwrap();
+    assert_eq!(a.peer_transport("lax"), Some(TransportKind::NativeTcp));
+    assert_eq!(b.peer_transport("nyc"), Some(TransportKind::NativeTcp));
+    a.probe_neighbor("lax", Duration::from_secs(1))
+        .await
+        .unwrap();
+    tokio::join!(a.shutdown(), b.shutdown());
+}
+
+#[tokio::test]
+async fn cancelling_a_committed_attempt_preserves_the_authenticated_session() {
+    let (a, b, sa, sb) = pair(false).await;
+    let (ca, cb) = queued_pair(&a, &b, &sa, &sb, 0).await;
+    drop(ca);
+    drop(cb);
+    // Cancellation retires only uncommitted attempt work; fresh key-confirmed
+    // sessions already published before cancellation keep normal liveness.
+    a.probe_neighbor("lax", Duration::from_secs(1))
+        .await
+        .unwrap();
+    b.probe_neighbor("nyc", Duration::from_secs(1))
+        .await
+        .unwrap();
+    a.close_udp_punch_socket(&sa).await.unwrap();
+    assert!(!a.connected_peers().contains(&"lax".into()));
+    tokio::join!(a.shutdown(), b.shutdown());
+}

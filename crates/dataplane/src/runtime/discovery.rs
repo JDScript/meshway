@@ -52,7 +52,7 @@ pub(super) struct Registration {
     pub info: UdpSocketInfo,
     pub tx: mpsc::Sender<Request>,
     pub slot: Arc<Semaphore>,
-    pub punch: Option<(mpsc::Sender<super::connectivity::Request>, Arc<Semaphore>)>,
+    pub punch: Option<super::connectivity::Registration>,
 }
 
 pub(super) struct LiveSocket {
@@ -60,11 +60,38 @@ pub(super) struct LiveSocket {
     pub id: u32,
     pub rx: mpsc::Receiver<Request>,
     pub punch_rx: Option<mpsc::Receiver<super::connectivity::Request>>,
+    pub generation: Arc<super::generation::Fence>,
+    pub owner: Option<super::connectivity::SocketOwner>,
+    pub channels: Option<mpsc::Sender<super::Outbound>>,
 }
 
 impl Drop for LiveSocket {
     fn drop(&mut self) {
-        lock(&self.inner.udp_sockets).remove(&self.id);
+        // Per-engine retirement waits for admitted polls/registry publication.
+        // Then remove inventory and only channels owned by this exact queue.
+        if let Some(owner) = &self.owner {
+            owner.generation.retire();
+        }
+        {
+            let mut sockets = lock(&self.inner.udp_sockets);
+            if sockets
+                .get(&self.id)
+                .is_some_and(|entry| Arc::ptr_eq(&entry.generation, &self.generation))
+            {
+                sockets.remove(&self.id);
+            }
+        }
+        if let Some(tx) = &self.channels {
+            lock(&self.inner.peers).retain(|_, channel| {
+                if !channel.tx.same_channel(tx) {
+                    return true;
+                }
+                channel.close.send_replace(true);
+                false
+            });
+        }
+        drop(self.owner.take());
+        self.inner.changed.notify_waiters();
     }
 }
 
@@ -85,14 +112,28 @@ impl Runtime {
     /// Current live engine sockets only. Ordinals are local to this Runtime.
     pub fn udp_sockets(&self) -> Vec<UdpSocketInfo> {
         let inner = &self.handle.inner;
-        let sockets = lock(&inner.udp_sockets);
         if *inner.shutdown.borrow() {
             return Vec::new();
         }
-        sockets
+        // Never acquire generation admission while holding inventory: completion
+        // and owner retirement use generation -> inventory -> registry ordering.
+        let sockets: Vec<_> = lock(&inner.udp_sockets)
             .values()
-            .filter(|entry| !entry.tx.is_closed() && !entry.generation.retired())
-            .map(|entry| entry.info.clone())
+            .filter(|entry| !entry.tx.is_closed())
+            .map(|entry| {
+                (
+                    entry.info.clone(),
+                    entry.generation.clone(),
+                    entry.punch.as_ref().map(|punch| punch.engine.clone()),
+                )
+            })
+            .collect();
+        sockets
+            .into_iter()
+            .filter(|(_, generation, engine)| {
+                !generation.retired() && engine.as_ref().is_none_or(|engine| !engine.retired())
+            })
+            .map(|(info, _, _)| info)
             .collect()
     }
 
@@ -111,13 +152,23 @@ impl Runtime {
             ));
         }
         let deadline = Instant::now() + timeout;
-        let (tx, info, socket_permit, generation) = {
+        let (tx, info, socket_permit, generation, engine) = {
+            let (generation, engine) = {
+                let sockets = lock(&inner.udp_sockets);
+                let entry = sockets.get(&socket_id).ok_or(Error::Unavailable)?;
+                (
+                    entry.generation.clone(),
+                    entry.punch.as_ref().map(|punch| punch.engine.clone()),
+                )
+            };
+            let _engine = engine.as_ref().map(|engine| engine.enter()).transpose()?;
+            let _admission = generation.enter()?;
             let sockets = lock(&inner.udp_sockets);
             if *inner.shutdown.borrow() {
                 return Err(Error::Closed);
             }
             let entry = sockets.get(&socket_id).ok_or(Error::Unavailable)?;
-            if entry.generation.retired() {
+            if !Arc::ptr_eq(&entry.generation, &generation) {
                 return Err(Error::Closed);
             }
             validate_server(server, entry.info.local_addr)?;
@@ -131,6 +182,7 @@ impl Runtime {
                 entry.info.clone(),
                 permit,
                 entry.generation.clone(),
+                engine.clone(),
             )
         };
         let global_permit = inner
@@ -175,9 +227,10 @@ impl Runtime {
         };
         // Reject metadata from an engine that exited or a retired Runtime, even if
         // its response had already entered the oneshot queue before retirement.
+        let _engine = engine.as_ref().map(|engine| engine.enter()).transpose()?;
+        let _admission = generation.enter()?;
         let sockets = lock(&inner.udp_sockets);
         if *inner.shutdown.borrow()
-            || generation.retired()
             || !sockets.get(&socket_id).is_some_and(|entry| {
                 entry.info == info
                     && Arc::ptr_eq(&entry.generation, &generation)
