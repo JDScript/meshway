@@ -15,7 +15,7 @@
 | P1a 多网络（已实现） | v8→v9 无损迁移；成员、接入、IPAM、DNS、策略、连接与报告隔离；管理 API 显式选网、Agent 由凭据推导；Web 选网 / 创建与逐网络草稿。Apple 已保存隔离多接入及活动网络切换，CLI 多接入仍待实现 | — |
 | P1b 策略引擎 v3（已合入） | 独立 Rust 四层校验 / 编译：连接 allow/block、grants 并集、Mesh / 出口有序 first-match 与遮挡提示、路由方案、规则集展开及迁移报告；controller 接入在 P3a | — |
 | P1c 出口数据面（原型已验收） | Linux NAT、状态型回包、撤回终止存量流与方案切换；12 个隔离 Docker 场景通过；控制面下发、出口 DNS 和正式产品接入仍待 P3c | — |
-| P2a 承载托管（已合入） | 平台材料生成/下发、VLESS TCP/TLS 与 WebSocket/TLS、v10 迁移和私有 profiles 等价导入已完成隔离验收；WS 退休晚写、错误脱敏与能力投影问题已修复并独立复核。节点 listener 与添加节点的可选配置表单已接入并部署；现有 demo 的二进制/旧 profiles 迁移按独立更新流程推进 | P1a |
+| P2a 承载托管（已合入） | 平台材料生成/下发、VLESS TCP/TLS 与 WebSocket/TLS、v10 迁移和私有 profiles 等价导入已完成隔离验收；WS 退休晚写、错误脱敏与能力投影问题已修复并独立复核。节点 listener 与添加节点的可选配置表单已部署，Demo Agent 已原位更新；旧 profiles 保留，托管导入另行推进 | P1a |
 | P2b 用户与登录（Web/App 闭环已接入） | Controller API、事务内网络 RBAC、设备归属及 App PKCE 已合入；v11 正式迁移、Web 邮箱登录/首 Owner/单邀请及用户批准已接通。会话过期、撤成员 tag 清理、schema gate 和跨标签页会话问题已修复。CLI 链接登录、完整成员/账户管理 UI 仍待交付，用户 / 组策略随契约落地 | P1a；共享迁移 / 接口已统一 |
 | P3a 策略上线 | controller / Web 接入四层模型，图形 / JSONC 共用草稿 / CAS，既有策略迁移 | P1a、P1b |
 | P3b 自动建连 | 按授权流量及路径按需连接 / 自动中转，手工候选收敛为高级覆盖 | P2a、P3a |
@@ -36,7 +36,7 @@
 真实邻接延迟采样、幂等上报、滚动存储、查询与 Web 曲线已合入；正常 Agent 生命周期在
 新鲜 Applied 报告获接受后启动唯一采样任务，撤回/lease/版本变化取消旧任务。
 容量停写和 schema gate 问题已独立复核关闭，查询显示保留范围与容量裁剪。
-历史曲线等待节点运行新版 Agent 后产生真实样本；不补旧数据、不当作端到端路径 RTT，也没有主动检测命令。
+三个本地 Demo 已运行新版 Agent，四个有方向的直接邻接开始产生真实历史；端节点之间没有直邻接，因此不生成它们的邻接样本。不补旧数据、不当作端到端路径 RTT，也没有主动检测命令。
 性能复测与 Rust 代码审查独立并行，输出证据与可验证的改动；共享 Docker 实验使用同一性能锁。
 系统保护通路的[独立 Linux socket/策略路由实验](/underlay-routing)已完成双栈 148 项
 检查与 10 项 host-only 测试。受保护 socket 工厂、HTTP/TLS connector、bootstrap DNS 与
@@ -58,7 +58,9 @@ Clippy、生成 drift、SDK 12 / Web 150 tests、各 TypeScript 消费者与文�
 随后独立合入邻接探测原期限内的有界重试，增量 dataplane 74、Agent managed 28 / dataplane 16 /
 packet 7 与 workspace Clippy 通过；它不延长超时或 lease，RTT 包含可能的重试等待。
 已移除 underlay 实现/审查及邻接重试审查工作树，保留分支与证据；本地 Controller 已更新。
-Docker demo 的 Agent 待按已审定主线原位更新，保留容器可写层、身份及当前配置。
+Docker demo 已从已审定主线 `bdbd13f` 构建并原位更新，三个容器 ID、可写层工具、身份、密钥和旧 profiles 均保留。
+端节点双向 ICMP 各 3 包通过；部署回执与包验证位于
+`.meshway/services/binary-update-b1188f16dea2/`。本次没有修改策略，也没有导入实验 offload。
 
 最终整合已包含账户、托管承载、历史与 Apple 多接入改动：Rust **548 passed / 7 ignored**、
 SDK 14 tests、Web 176 tests、Clippy、drift、各消费者类型检查与生产构建通过。
@@ -71,6 +73,7 @@ SDK 14 tests、Web 176 tests、Clippy、drift、各消费者类型检查与生�
 `experiments/tunnel-throughput/HANDOFF.md`（`dba5f49`）。邻接丢包恢复修复已审合；
 offload 有局部收益但仍有完整性 / 延迟问题，NEON 和 worker 调整无稳定收益，
 没有无保留可上线的新吞吐候选。保留原始产物，不整分支部署、不扩展实验矩阵。
+已核对性能工作树无未提交内容或进程引用并移除，分支与外部测量产物保留。
 
 ### 后续并行与发布边界
 

@@ -2,13 +2,15 @@
 
 ## 决策与实现边界
 
+**当前优先级**：暂停 Apple 新增开发，先推进 Linux 自动组网、打洞和跨地域 Docker 验收；已有登录、PKCE 和生成客户端接口继续保持兼容。下文构建与验收是现有能力记录，不表示本轮继续扩展 NE。
+
 **已确认**：`apps/apple` 使用 SwiftUI 多平台 App、NetworkExtension Packet Tunnel、UniFFI Rust 核心及 XCFramework。设备是统一的 Meshway 节点；不引入 App / 服务器节点类别或中继角色开关。
 
 **已实现**：多网络接入保存、一次一个活动接入、系统浏览器授权、每接入独立 Keychain 身份与待兑换状态、生成 Rust 客户端兑换、心跳和只读设备 / DNS 快照。macOS 为默认 500 × 680 的单列普通窗口与 window-style 菜单栏面板；iOS 使用 NavigationStack、insetGrouped 设备列表、搜索、下拉刷新、侧滑 / 上下文复制与详情。静态标题与服务器 host 保持不变；macOS 窗口、菜单栏面板与 iOS 的 ⋯ 菜单提供保存的网络（活动勾选、Pending / Revoked）、Add network…、详情与本地移除。退出当前选择后的登录页也列出保存接入。右上角原生 mini switch 禁用、off，旁边为 Not connected，明确隧道未实现。
 
 前台出现 / 接入成功时读取，自动刷新跨窗口每 30 秒至多一次；手动刷新可立即发起，整个心跳 → 配置 → DNS 流程禁止重叠，各 HTTP 请求限时 10 秒。自身成功 contact 只展示一行真实最近时间，失败显示 orange reason；section header 显示 updated / previous fetch。peer 展示名称、IPv4、真实 friendly DNS alias 与管理员 country；canonical DNS / IPv6 留在详情 / copy action。行使用真实名称 initials 与 node-ID 稳定 tint 的 monogram，不表示设备类型或在线状态。DNS 仅在配置同 revision、ID / 地址一致时合并。403 进入持久撤销状态并清除库存。快照只用于显示，**不 ACK、不持久化配置、不激活数据面**。
 
-**未实现**：外部 OIDC、X25519 公钥发布、嵌入 agent 生命周期、NE 包流适配、隧道、流量及诊断导出。浏览器批准时选择目标网络；用户账户接线仍在另一主线，App 不获得密码、会话或管理员凭据。节点端尚无网络显示名 / Owner 身份接口，保存条目使用真实 DNS zone、IPv4 prefix、服务器 host，未取得配置时使用已接入节点 IPv4；同来源标签相同时补充已保存 node ID 区分接入，不冒充网络名。待接入显示本地尝试标识，不能本地重命名网络。保存 URL、注册及心跳均不代表隧道已建立。
+**未实现**：外部 OIDC、X25519 公钥发布、嵌入 agent 生命周期、NE 包流适配、隧道、流量及诊断导出。浏览器批准已接入 controller 用户会话、所选网络 membership 和设备归属，App 不获得密码、会话或管理员凭据。节点端尚无网络显示名 / Owner 身份接口，保存条目使用真实 DNS zone、IPv4 prefix、服务器 host，未取得配置时使用已接入节点 IPv4；同来源标签相同时补充已保存 node ID 区分接入，不冒充网络名。待接入显示本地尝试标识，不能本地重命名网络。保存 URL、注册及心跳均不代表隧道已建立。
 
 ## 结构与依赖
 

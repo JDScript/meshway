@@ -1,8 +1,8 @@
 # Network 管理边界
 
-一个 controller 维护**多张具有稳定 ID 与名称的隔离网络**，以 Tailscale tailnet 为产品边界。每张网络独立拥有成员、接入令牌 / App 兑换码、地址、DNS、tags、Access、Routing、连接配置、运行报告和 revision。Web 左上角可切换 / 创建网络，设置入口仍为 `/network`。
+一个 controller 维护**多张具有稳定 ID 与名称的隔离网络**，以 Tailscale tailnet 为产品边界。每张网络独立拥有成员、接入令牌 / App 兑换码、地址、DNS、tags、Access、Routing、连接配置、运行报告和 revision。Web 左上角切换网络，网络设置为 `/<network_id>/settings`；实例创建网络仍有独立权限边界。
 
-**已确认目标**还包括设备保存多个接入、一次激活一网，以及邮箱密码账户、仅邀请加入和设备用户归属。这些客户端 / 用户能力尚待交付；本页描述已实现的多网络控制面、管理 API 与凭据快照隔离，目标详情见[产品概念](/concepts#网络、用户与设备)。
+邮箱密码账户、仅邀请加入、网络角色和设备归属已接入 v11；Apple 已支持保存多个隔离接入，一次激活一网，CLI 尚待交付。完整成员管理界面正在下一批控制台重整中推进；目标详情见[产品概念](/concepts#网络、用户与设备)。
 
 ## 已实现与尚缺的部分
 
@@ -30,13 +30,13 @@ SQLite v6→v7 保留原身份、凭据、公钥、地址、路由、Access、ta
 
 ## 后续管理层方向
 
-后续继续提供显式改址流程、用户 / Owner 网络成员权限、客户端多接入切换，以及系统 DNS 集成与可观测应用状态。保存 DNS 意图、普通配置 ACK、解析器运行和实际解析结果分别呈现；设置页不能因保存成功就显示解析器“已生效”。
+后续补齐完整成员 / 邀请 / 设备归属界面、CLI 登录和多接入、显式改址，以及系统 DNS 集成与可观测应用状态。保存 DNS 意图、普通配置 ACK、解析器运行和实际解析结果分别呈现；设置页不能因保存成功就显示解析器“已生效”。
 
-用户已要求的远端真实联测留待 TUN 和打洞完善之后开展。测试应使用各主机内独立 Docker 网络命名空间，保留既有 SSH / 管理连接；规划阶段核对管理地址、现有子网、端口及数据目录，避免与测试地址池重叠。尤其不能把正在使用的 `100.96.0.0/16` 管理地址当作 Meshway 自动接管的测试空间。
+用户已要求的远端真实联测在 TUN / 自动组网和打洞完善后优先开展，见[Linux 跨地域验收](/linux-field-validation)。测试使用各主机内独立 Docker 网络命名空间，保留既有 SSH / 管理连接；核对管理地址、现有子网、端口及数据目录，避免与测试地址池重叠。尤其不能把正在使用的 `100.96.0.0/16` 管理地址当作 Meshway 自动接管的测试空间。
 
 ## 多网络 API 与默认配置
 
-所有其他管理员操作使用 `/api/v1/networks/{network_id}/…`，旧的未限定管理路径不再提供。服务端先验证全局管理员，再选择存在的网络；节点 ID、selector、标签及连接两端仅能引用该网络。Agent 的现有 URL 与请求 body 保持兼容：服务端从节点 bearer 或接入令牌推导网络，调用方不能用 query / body 指定另一张网络。管理员仍是现有全局管理员；网络成员权限、用户 / Owner 与 OIDC 属于后续独立接入阶段。
+网络管理操作使用 `/api/v1/networks/{network_id}/…`，旧的未限定管理路径不再提供。服务端在根事务内验证用户 session、当前 membership 和 Read/Manage 权限；实例 bootstrap 仅保留独立兼容权限。节点 ID、selector、标签及连接两端只能引用该网络。Agent 的 URL 与请求 body 保持兼容：服务端从节点 bearer 或接入令牌推导网络，调用方不能用 query / body 指定另一张网络。外部 OIDC 尚待后续接入。
 
 新网络默认 IPv4 池为 `100.96.0.0/16`，IPv6 为新随机 RFC 4193 ULA `/64`；地址只要求网络内唯一，因此不同网络可以同时分配 `100.96.0.1`。撤销地址仍保留、不复用。默认 DNS 关闭，zone 为 `net-<32 位 network ID>.meshway.test`，TTL 30。名称修改不改 stable ID 或 DNS zone。新网络从 revision 1 开始，成员 / 标签 / 连接报告为空；Access v2 以显式 default allow 表达成员全部允许，原网络策略原样保留。Routing v2 的初始 reject 与空手工连接图仍是当前实现，自动选路 / 默认连接模板在 P3a / P3b 接入，不能把创建网络描述成已经建立隧道。
 
@@ -46,7 +46,7 @@ SQLite v6→v7 保留原身份、凭据、公钥、地址、路由、Access、ta
 
 固定建表语句位于 `apps/controller/src/store/schema_v9.sql`，逐表复制的原列清单位于 `store/networks.rs`，不解析或替换旧 `CREATE TABLE` 文本。持久表保留 `nodes`、`enrollment_tokens` 等清晰名称，带不可空 `network_id` 外键。单例配置为 `(network_id,id)` 主键；标签为 `(network_id,tag)`；IPv4 / IPv6 唯一约束包含网络。节点 ID、凭据摘要和身份公钥仍 controller 全局唯一，防止同一身份同时加入两张网络；复合外键拒绝跨网络令牌消费、节点标签与运行报告绑定。
 
-## 后续 v9 → v10 承载托管
+## v9 → v10 承载托管与 v11 账户 / 历史
 
 P2a在一个IMMEDIATE事务中添加 `managed_listeners`、
 `managed_transport_capabilities`、`managed_enrollment_intents` 和注册令牌复合唯一索引；
@@ -54,12 +54,12 @@ P2a在一个IMMEDIATE事务中添加 `managed_listeners`、
 已有表、身份、公钥、地址、JSONC、leases与网络revision不变，不把旧profiles自动换成新密钥。
 可恢复的VLESS材料在SQLite内加密，仅节点专属接口最小下发；恢复须一并保存私有
 `transport-material.key`。材料、初始接入意图、Agent执行与显式旧材料导入见
-[托管承载对接](/managed-transports-api)。该迁移没有接入账户domain的生产schema或用户HTTP。
+[托管承载对接](/managed-transports-api)。后续 v10→v11 已在统一事务安装账户、ownership 和延迟历史，见[统一迁移](/schema-v11)；旧节点初始未认领，不自动创建账户。
 
 ## 显式类型作用域
 
 Store 没有“当前网络”，也没有 TEMP scope、过滤视图或作用域触发器。管理业务方法和内部查询显式接收已验证的 `NetworkId`，每条业务 SQL 显式绑定网络 ID。Agent、注册令牌与 App 兑换码通过全局唯一的凭据关联构造同一个类型；全局凭据 / 公钥唯一性检查单独存在。列出或创建网络不切换连接状态，并发 / 交错请求不会沿用上一请求的网络。
-`NetworkId` 只证明网络存在 / 格式合法，不代表 Owner 权限；管理路由先认证管理员，再检查作用域。当前未实现网络 membership / Owner，不能通过合法 ID 获得管理权限。
+`NetworkId` 只证明网络存在 / 格式合法，不代表 Owner 权限；管理操作通过 `network_operation` 在同一根事务验证主体及网络角色，不能通过合法 ID 获得管理权限。
 
 类型边界由 Rust 模块可见性保证：`NetworkId` 的字段及任意值构造器只在身份查找模块内可见，没有 `From<String>`、`Default` 或 `Deserialize`；API 模块无法访问 Store 的原始连接。调用 `store.nodes()` / `store.revision()` 等业务方法缺少 `&NetworkId` 会直接编译失败。正常调用形状为：
 
@@ -68,7 +68,7 @@ let network = store.network_id(&requested_id)?;
 let nodes = store.nodes(&network)?;
 ```
 
-运行时代码只使用 v9 表和作用域；版本判断仅在启动迁移链中。历史行为测试使用仅测试编译的单网络 fixture，向真实业务方法显式传入固定 ID；旧数据库由固定 v8 schema 构造，不引入生产版本兼容分支。
+版本判断仅在启动迁移链中，业务查询使用显式网络作用域。历史行为测试使用仅测试编译的单网络 fixture，向真实业务方法显式传入固定 ID；旧数据库由固定 v8 schema 构造，不引入生产版本兼容分支。
 
 地址列在 v9 为 `NOT NULL`；迁移提交前及启动时检查全部节点（含撤销节点）的双栈地址、所属地址池、语义地址唯一性与 FK。固定 `identity_guards.sql` 只保护节点网络 / 凭据、公钥与已消费接入绑定不可变，不是 scope 或查询触发器；能力、联系、国家及 ACK 等已有合法更新继续允许。
 
@@ -78,11 +78,11 @@ Discovery 仍是按不可变全局 node ID 保存的有界内存记录：同进�
 
 ## Web 网络与草稿边界
 
-网络选择存于 HttpOnly cookie；每页按所选网络读取生成接口，每个 server action 重新检查管理员身份。mutation 显式携带**渲染时的网络 ID**，不临时读取可能已被其他标签页改写的选择 cookie。Access / Routing / Connections 的草稿注册表逐网络保存，切换后恢复原 JSONC、注释、无效文本、未应用表单及 CAS 基准；另一张网络不继承这份草稿。空网络显示真实空清单，不补假节点或在线状态。
+页面以 URL 的网络 ID 为作用域，Cookie 仅记住导航选择。每个 server action 重新校验真实登录凭据与渲染时的 sign-in marker，并显式携带**渲染时的网络 ID**，不使用可能已被其他标签页改写的选择 Cookie。Access / Routing / Connections 草稿逐网络保存，切换后恢复原 JSONC、注释、无效文本、未应用表单及 CAS 基准；另一张网络不继承草稿。空网络显示真实空清单，不补假节点或在线状态。
 
 ## Tailscale 对照与差异
 
-- 与 tailnet 一致：网络是成员、地址、DNS 和策略边界；每网 IP 唯一；同一节点身份只能属于一张网络，客户端保存 / 切换多个接入留待客户端生命周期实现。
+- 与 tailnet 一致：网络是成员、地址、DNS 和策略边界；每网 IP 唯一；同一节点身份只能属于一张网络。Apple 多接入使用各自独立凭据并按活动网络隔离请求。
 - tailnet DNS name 使用平台分配的域名；本地 Meshway 用 stable ID 生成独立 `.meshway.test` zone，不发布公共解析，因为现有产品是自托管开发控制面与显式本地 DNS，不能冒充 `ts.net` 公共服务。
 - IPv4 采用已有 `100.96.0.0/16` 子池，保持节点规模与数据面界限；网络之间可重叠。IPv6 延续已有随机 ULA，不复用 Tailscale 专属前缀；只有地址元数据，不宣称 IPv6 TUN。
-- 全局管理员是本阶段兼容选择，不等同于 Tailscale 的网络用户 / 角色体系。承载与有序指定路径继续作为 Meshway 扩展，策略 v3 由独立阶段接入。
+- 实例 bootstrap 留作初始化 / 恢复权限，日常使用本地账户及网络所有者 / 管理员 / 成员角色。承载与有序指定路径继续作为 Meshway 扩展，策略 v3 由独立阶段接入。

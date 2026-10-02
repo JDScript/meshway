@@ -54,6 +54,7 @@ export default defineConfig({
           { text: "统一开发入口", link: "/dev-services" },
           { text: "环境、检查与验收", link: "/development" },
           { text: "Linux 传输与性能实验", link: "/transport-lab" },
+          { text: "Linux 跨地域验收", link: "/linux-field-validation" },
           { text: "Apple UI 验收", link: "/apple-ui-verification" },
         ],
       },
