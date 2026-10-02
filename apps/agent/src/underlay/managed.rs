@@ -62,7 +62,7 @@ impl Protection for ManagedProtection {
     fn listen(&self, bind: SocketAddr, _: &str) -> io::Result<sockets::OuterListener> {
         self.factory
             .listener(Purpose::Carrier, bind)
-            .map(sockets::OuterListener::Protected)
+            .map(|listener| sockets::OuterListener::Prepared(Box::new(listener)))
     }
     fn dial<'a>(
         &'a self,
@@ -74,7 +74,7 @@ impl Protection for ManagedProtection {
             self.factory
                 .tcp(Purpose::Carrier, address)
                 .await
-                .map(sockets::OuterTcp::Protected)
+                .map(|stream| sockets::OuterTcp::Prepared(Box::new(stream)))
         })
     }
 }

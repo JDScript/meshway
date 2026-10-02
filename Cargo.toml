@@ -7,6 +7,7 @@ members = [
     "crates/agent-tun",
     "crates/agent-dataplane",
     "crates/agent-diagnostics",
+    "crates/agent-connections",
     "crates/control-client",
     "crates/transport-vless",
     "crates/transport-trojan",

@@ -759,7 +759,7 @@ async fn tls_vless_neighbors_verify_san_ca_and_profile_reload() {
             .is_err()
     );
     assert!(a.runtime.connected_peers().is_empty());
-    let failed = b.test_probe_observations(&client).await;
+    let failed = b.sample_neighbors(&client).await;
     assert_eq!(
         failed[0].state,
         meshway_protocol::ConnectionNeighborState::Unreachable
@@ -869,7 +869,7 @@ async fn tls_vless_listener_admission_is_scoped_before_noise_confirmation() {
             .is_err()
     );
     assert!(a.runtime.connected_peers().is_empty());
-    let failed = b.test_probe_observations(&client).await;
+    let failed = b.sample_neighbors(&client).await;
     assert_eq!(failed[0].reason, Reason::AuthenticationFailed);
     assert!(!failed[0].probe_fresh);
     b.shutdown().await;

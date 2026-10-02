@@ -8,7 +8,7 @@ default-run = "meshway-agent"
 [features]
 transport-runtime = ["dep:meshway-dataplane", "dep:meshway-transport-vless", "dep:meshway-agent-tun"]
 transport-lab = ["transport-runtime"]
-managed-connections = ["transport-runtime", "dep:meshway-agent-diagnostics", "dep:meshway-agent-dataplane", "dep:meshway-agent-dns", "dep:rustls", "dep:tokio-rustls", "dep:rustls-pemfile", "dep:rustls-native-certs", "dep:sha2", "dep:rustix", "dep:hickory-proto", "dep:bytes", "dep:http", "dep:http-body-util", "dep:hyper", "dep:hyper-util", "dep:socket2", "dep:tokio-util"]
+managed-connections = ["transport-runtime", "dep:meshway-agent-connections", "dep:meshway-agent-diagnostics", "dep:meshway-agent-dataplane", "dep:meshway-agent-dns", "dep:rustls", "dep:tokio-rustls", "dep:rustls-pemfile", "dep:rustls-native-certs", "dep:sha2", "dep:rustix", "dep:hickory-proto", "dep:bytes", "dep:http", "dep:http-body-util", "dep:hyper", "dep:hyper-util", "dep:socket2", "dep:tokio-util"]
 
 [[bin]]
 name = "meshway-carrier-measure"
@@ -19,6 +19,7 @@ required-features = ["transport-lab"]
 meshway-agent-dns = { path = "../../crates/agent-dns", optional = true }
 meshway-agent-dataplane = { path = "../../crates/agent-dataplane", optional = true }
 meshway-agent-diagnostics = { path = "../../crates/agent-diagnostics", optional = true }
+meshway-agent-connections = { path = "../../crates/agent-connections", optional = true }
 bytes = { version = "1", optional = true }
 http = { version = "1", optional = true }
 http-body-util = { version = "0.1", optional = true }

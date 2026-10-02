@@ -54,14 +54,14 @@ impl Drop for Profile {
 }
 
 #[derive(Clone)]
-pub(super) struct Server {
+pub struct Server {
     pub tls: Arc<TlsServer>,
     pub vless: ServerConfig,
     pub websocket: Option<meshway_transport_vless::websocket::Parameters>,
 }
 
 #[derive(Clone)]
-pub(super) struct Client {
+pub struct Client {
     pub tls: Arc<TlsClient>,
     pub name: ServerName<'static>,
     pub vless: ClientConfig,
@@ -69,7 +69,7 @@ pub(super) struct Client {
 }
 
 #[derive(Default)]
-pub(super) struct Profiles {
+pub struct Profiles {
     pub servers: BTreeMap<String, Server>,
     pub clients: BTreeMap<String, Client>,
     pub fingerprint: [u8; 32],
@@ -164,7 +164,7 @@ fn hash_part(hash: &mut Sha256, bytes: &[u8]) {
     hash.update(bytes);
 }
 
-pub(super) fn load(path: Option<&Path>, intent: &NodeConnections) -> Result<Profiles, Failure> {
+pub fn load(path: Option<&Path>, intent: &NodeConnections) -> Result<Profiles, Failure> {
     let mut needed = BTreeMap::new();
     for listener in &intent.listeners {
         if listener.transport == ConnectionTransport::Vless {
@@ -302,7 +302,7 @@ pub(super) fn load(path: Option<&Path>, intent: &NodeConnections) -> Result<Prof
     Ok(result)
 }
 
-pub(super) fn load_combined(
+pub fn load_combined(
     path: Option<&Path>,
     intent: &NodeConnections,
     materials: &[meshway_protocol::ManagedVlessMaterial],

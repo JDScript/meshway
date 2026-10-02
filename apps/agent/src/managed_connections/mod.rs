@@ -9,12 +9,13 @@ use std::{
 };
 
 use futures_util::{StreamExt, stream};
-use meshway_dataplane::{
-    LabConfig, ListenerConfig, OutgoingCandidate, PeerConfig, PrivateKey, TransportKind,
-};
+use meshway_agent_connections::{controller_candidate, core_config};
+use meshway_dataplane::PrivateKey;
+#[cfg(test)]
+use meshway_protocol::ConnectionTransport;
 use meshway_protocol::{
     AgentConnectionsSnapshot, ConnectionRuntimeReason as Reason, ConnectionRuntimeState as Phase,
-    ConnectionTransport, NodeConnections,
+    NodeConnections,
 };
 use tokio::{
     sync::watch,
@@ -34,12 +35,11 @@ mod latency_history;
 mod latency_lifecycle;
 #[cfg(test)]
 mod managed_material_tests;
-pub(crate) mod observations;
+pub(crate) use meshway_agent_connections::{
+    Failure, Observation, observations, profiles, session, sockets,
+};
 #[cfg(unix)]
 mod probe;
-mod profiles;
-mod session;
-pub(crate) mod sockets;
 #[cfg(unix)]
 pub(crate) use probe::Prober;
 #[cfg(test)]
@@ -53,28 +53,6 @@ pub(crate) mod tests;
 impl Manager {
     pub(crate) fn mock_tun(&mut self, tun: Tun) {
         self.tun = Some(tun);
-    }
-}
-
-#[derive(Clone, Copy)]
-struct Failure(Reason);
-
-#[derive(Clone, serde::Serialize)]
-pub(crate) struct Observation {
-    pub state: Phase,
-    pub reason: Reason,
-    pub listeners: Vec<meshway_protocol::ConnectionListenerObservation>,
-    pub peers: Vec<meshway_protocol::ConnectionNeighborObservation>,
-}
-
-impl Observation {
-    fn empty(state: Phase, reason: Reason) -> Self {
-        Self {
-            state,
-            reason,
-            listeners: Vec::new(),
-            peers: Vec::new(),
-        }
     }
 }
 
@@ -812,14 +790,18 @@ impl Manager {
             self.withdraw(Reason::LeaseExpired).await;
             return Ok(());
         }
+        let mut runtime_config = core_config(&semantic, key, &targets)
+            .map_err(|_| AgentError::Invalid("invalid coherent adjacency runtime configuration"))?;
+        if let Some(plan) = &packet {
+            plan.augment(&mut runtime_config)?;
+        }
         let result = time::timeout_at(
             deadline,
-            session::Session::start_with_packet(
+            session::Session::start_prepared(
                 &semantic,
-                key,
                 profiles,
                 &targets,
-                packet.as_ref(),
+                runtime_config,
                 self.socket_protection.clone(),
             ),
         )
@@ -895,10 +877,50 @@ impl Manager {
                 #[cfg(target_os = "linux")]
                 let underlay = self.underlay_owner.clone();
                 let events = self.events.clone();
+                let packet_runtime = session.runtime.clone();
+                let packet_deadline = deadlines.clone();
+                let observed_owner = observations.clone();
                 let task = tokio::spawn(async move {
-                    session
-                        .run_with_packet(semantic, deadlines, observations, packet_io, events)
-                        .await;
+                    let reason = {
+                        let connection = session.run(semantic, deadlines, observations);
+                        let packet = async {
+                            match &packet_io {
+                                Some((device, name, plan)) => {
+                                    crate::managed_dataplane::packet::run(
+                                        device.clone(),
+                                        packet_runtime,
+                                        plan.clone(),
+                                        packet_deadline,
+                                        name,
+                                        events.as_ref(),
+                                    )
+                                    .await
+                                }
+                                None => std::future::pending().await,
+                            }
+                        };
+                        tokio::pin!(connection, packet);
+                        tokio::select! {
+                            biased;
+                            reason = &mut connection => reason,
+                            _ = &mut packet => Reason::InternalError,
+                        }
+                    };
+                    observed_owner.send_replace(Observation::empty(Phase::Withdrawn, reason));
+                    if let Some((_, name, plan)) = &packet_io {
+                        crate::managed_dataplane::tun::proof(
+                            name,
+                            plan,
+                            false,
+                            match reason {
+                                Reason::LeaseExpired => "lease_expired",
+                                Reason::ShuttingDown => "generation_withdrawn",
+                                _ => "runtime_or_device_failure",
+                            },
+                            events.as_ref(),
+                        );
+                    }
+                    session.shutdown().await;
                     // Session owns packet/carrier teardown. Even cancellation of
                     // the controlling HTTP future cannot skip this joined fence.
                     #[cfg(target_os = "linux")]
@@ -931,51 +953,6 @@ impl Manager {
         }
         Ok(())
     }
-}
-
-fn transport(value: ConnectionTransport) -> TransportKind {
-    match value {
-        ConnectionTransport::NativeUdp => TransportKind::NativeUdp,
-        ConnectionTransport::NativeTcp => TransportKind::NativeTcp,
-        ConnectionTransport::Vless => TransportKind::Vless,
-    }
-}
-
-fn protocol_transport(value: TransportKind) -> ConnectionTransport {
-    match value {
-        TransportKind::NativeUdp => ConnectionTransport::NativeUdp,
-        TransportKind::NativeTcp => ConnectionTransport::NativeTcp,
-        TransportKind::Vless => ConnectionTransport::Vless,
-    }
-}
-
-fn allowed_peers(intent: &NodeConnections, listener: &str) -> Vec<String> {
-    intent
-        .incoming
-        .iter()
-        .filter(|approval| approval.listener_id == listener)
-        .map(|approval| approval.peer_node_id.clone())
-        .collect::<BTreeSet<_>>()
-        .into_iter()
-        .collect()
-}
-
-fn candidate_label(id: &str, address_index: usize) -> String {
-    if address_index == 0 {
-        id.to_owned()
-    } else {
-        format!("{id}:address:{address_index}")
-    }
-}
-
-fn controller_candidate<'a>(
-    intent: &'a NodeConnections,
-    label: &str,
-) -> Option<&'a meshway_protocol::OutgoingConnectionCandidate> {
-    intent
-        .outgoing
-        .iter()
-        .find(|candidate| (0..8).any(|index| candidate_label(&candidate.id, index) == label))
 }
 
 async fn resolve_targets(
@@ -1020,98 +997,4 @@ async fn resolve_targets(
     .await
     .into_iter()
     .collect()
-}
-
-fn core_config(
-    intent: &NodeConnections,
-    private_key: PrivateKey,
-    targets: &BTreeMap<String, Vec<SocketAddr>>,
-) -> Result<LabConfig, Failure> {
-    let trusted_peers = intent
-        .peers
-        .iter()
-        .map(|peer| {
-            let transports = intent
-                .outgoing
-                .iter()
-                .filter(|item| item.peer_node_id == peer.node_id)
-                .map(|item| transport(item.transport))
-                .chain(
-                    intent
-                        .incoming
-                        .iter()
-                        .filter(|item| item.peer_node_id == peer.node_id)
-                        .map(|item| transport(item.transport)),
-                )
-                .collect::<BTreeSet<_>>()
-                .into_iter()
-                .collect();
-            PeerConfig {
-                node_id: peer.node_id.clone(),
-                public_key: peer.public_key.clone(),
-                transports,
-            }
-        })
-        .collect();
-    let listeners = intent
-        .listeners
-        .iter()
-        .filter(|item| item.transport != ConnectionTransport::Vless)
-        .map(|item| {
-            Ok(ListenerConfig {
-                transport: transport(item.transport),
-                bind: item
-                    .bind
-                    .parse()
-                    .map_err(|_| Failure(Reason::InvalidConfiguration))?,
-                id: Some(item.id.clone()),
-                allowed_peers: Some(allowed_peers(intent, &item.id)),
-            })
-        })
-        .collect::<Result<Vec<_>, Failure>>()?;
-    let mut outgoing = Vec::new();
-    let mut native_targets = BTreeSet::new();
-    // The validated projection is ordered by priority, then candidate ID. DNS
-    // aliases can converge on the same physical target: keep the preferred
-    // approved candidate's label/priority before enforcing core count limits.
-    // Peer identity and carrier remain separate authorization boundaries.
-    for item in intent
-        .outgoing
-        .iter()
-        .filter(|item| item.transport != ConnectionTransport::Vless)
-    {
-        let addresses = targets
-            .get(&item.id)
-            .filter(|targets| !targets.is_empty())
-            .ok_or(Failure(Reason::ResolveFailed))?;
-        for (index, address) in addresses.iter().enumerate() {
-            if !native_targets.insert((&item.peer_node_id, transport(item.transport), *address)) {
-                continue;
-            }
-            outgoing.push(OutgoingCandidate {
-                peer: item.peer_node_id.clone(),
-                transport: transport(item.transport),
-                endpoint: address.to_string(),
-                priority: item.priority,
-                id: Some(candidate_label(&item.id, index)),
-            });
-        }
-    }
-    let config = LabConfig {
-        node_id: intent.node_id.clone(),
-        private_key,
-        public_key: intent
-            .public_key
-            .clone()
-            .ok_or(Failure(Reason::InvalidConfiguration))?,
-        trusted_peers,
-        allowed_paths: Vec::new(),
-        listeners,
-        outgoing,
-        limits: Default::default(),
-    };
-    config
-        .validate()
-        .map_err(|_| Failure(Reason::InvalidConfiguration))?;
-    Ok(config)
 }

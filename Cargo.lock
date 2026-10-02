@@ -1979,6 +1979,7 @@ dependencies = [
  "hyper-util",
  "idna",
  "ipnet",
+ "meshway-agent-connections",
  "meshway-agent-dataplane",
  "meshway-agent-diagnostics",
  "meshway-agent-dns",
@@ -2005,6 +2006,25 @@ dependencies = [
  "tokio-rustls",
  "tokio-util",
  "x25519-dalek",
+ "zeroize",
+]
+
+[[package]]
+name = "meshway-agent-connections"
+version = "0.1.0"
+dependencies = [
+ "futures-util",
+ "meshway-dataplane",
+ "meshway-protocol",
+ "meshway-transport-vless",
+ "rustix",
+ "rustls",
+ "rustls-pemfile",
+ "serde",
+ "serde_json",
+ "sha2",
+ "tokio",
+ "tokio-rustls",
  "zeroize",
 ]
 

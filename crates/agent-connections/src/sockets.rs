@@ -10,7 +10,7 @@ use std::{
 };
 use tokio::net::{TcpListener, TcpSocket, TcpStream};
 
-pub(crate) enum Purpose<'a> {
+pub enum Purpose<'a> {
     Listener {
         listener_id: &'a str,
     },
@@ -22,7 +22,7 @@ pub(crate) enum Purpose<'a> {
 
 /// Controller-driven platform adapters can set SO_MARK or an equivalent
 /// per-socket exclusion here. No process-wide or destination-wide exemptions.
-pub(crate) trait Protection: Send + Sync {
+pub trait Protection: Send + Sync {
     fn check_active(&self) -> io::Result<()> {
         Ok(())
     }
@@ -69,7 +69,7 @@ pub(crate) trait Protection: Send + Sync {
 
 /// Current Mesh-prefix-only execution uses the system underlay. Full IP capture
 /// must install a platform protection adapter before activating these sockets.
-pub(crate) struct SystemUnderlay;
+pub struct SystemUnderlay;
 impl Protection for SystemUnderlay {
     fn native(&self) -> &dyn NativeSocketFactory {
         &meshway_dataplane::sockets::SystemSocketFactory
@@ -99,7 +99,7 @@ impl Protection for SystemUnderlay {
     }
 }
 
-pub(crate) fn listen(
+pub fn listen(
     protection: &dyn Protection,
     address: SocketAddr,
     id: &str,
@@ -107,7 +107,7 @@ pub(crate) fn listen(
     protection.listen(address, id)
 }
 
-pub(crate) async fn dial(
+pub async fn dial(
     protection: &dyn Protection,
     address: SocketAddr,
     id: &str,
@@ -116,39 +116,39 @@ pub(crate) async fn dial(
     protection.dial(address, id, peer).await
 }
 
-pub(crate) enum OuterListener {
+pub enum OuterListener {
     System(TcpListener),
-    Protected(crate::underlay::ProtectedListener),
+    Prepared(Box<dyn NativeListener>),
 }
-pub(crate) enum OuterTcp {
+pub enum OuterTcp {
     System(TcpStream),
-    Protected(crate::underlay::ProtectedTcp),
+    Prepared(Box<dyn NativeTcp>),
 }
 impl OuterListener {
-    pub(crate) async fn accept(&self) -> io::Result<(OuterTcp, SocketAddr)> {
+    pub async fn accept(&self) -> io::Result<(OuterTcp, SocketAddr)> {
         match self {
             Self::System(s) => s.accept().await.map(|(s, a)| (OuterTcp::System(s), a)),
-            Self::Protected(s) => s.accept().await.map(|(s, a)| (OuterTcp::Protected(s), a)),
+            Self::Prepared(s) => s.accept().await.map(|(s, a)| (OuterTcp::Prepared(s), a)),
         }
     }
 }
 impl OuterTcp {
-    pub(crate) fn accepted(&self, protection: &dyn Protection, id: &str) -> io::Result<()> {
+    pub fn accepted(&self, protection: &dyn Protection, id: &str) -> io::Result<()> {
         match self {
             Self::System(s) => protection.accepted(s, id),
-            Self::Protected(_) => Ok(()),
+            Self::Prepared(_) => Ok(()),
         }
     }
-    pub(crate) fn peer_addr(&self) -> io::Result<SocketAddr> {
+    pub fn peer_addr(&self) -> io::Result<SocketAddr> {
         match self {
             Self::System(s) => s.peer_addr(),
-            Self::Protected(s) => s.peer_addr(),
+            Self::Prepared(s) => s.peer_addr(),
         }
     }
-    pub(crate) fn set_nodelay(&self, value: bool) -> io::Result<()> {
+    pub fn set_nodelay(&self, value: bool) -> io::Result<()> {
         match self {
             Self::System(s) => s.set_nodelay(value),
-            Self::Protected(s) => s.set_nodelay(value),
+            Self::Prepared(s) => s.set_nodelay(value),
         }
     }
 }
@@ -160,7 +160,7 @@ impl tokio::io::AsyncRead for OuterTcp {
     ) -> Poll<io::Result<()>> {
         match self.get_mut() {
             Self::System(s) => Pin::new(s).poll_read(cx, b),
-            Self::Protected(s) => Pin::new(s).poll_read(cx, b),
+            Self::Prepared(s) => Pin::new(s.as_mut()).poll_read(cx, b),
         }
     }
 }
@@ -168,19 +168,19 @@ impl tokio::io::AsyncWrite for OuterTcp {
     fn poll_write(self: Pin<&mut Self>, cx: &mut Context<'_>, b: &[u8]) -> Poll<io::Result<usize>> {
         match self.get_mut() {
             Self::System(s) => Pin::new(s).poll_write(cx, b),
-            Self::Protected(s) => Pin::new(s).poll_write(cx, b),
+            Self::Prepared(s) => Pin::new(s.as_mut()).poll_write(cx, b),
         }
     }
     fn poll_flush(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
         match self.get_mut() {
             Self::System(s) => Pin::new(s).poll_flush(cx),
-            Self::Protected(s) => Pin::new(s).poll_flush(cx),
+            Self::Prepared(s) => Pin::new(s.as_mut()).poll_flush(cx),
         }
     }
     fn poll_shutdown(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
         match self.get_mut() {
             Self::System(s) => Pin::new(s).poll_shutdown(cx),
-            Self::Protected(s) => Pin::new(s).poll_shutdown(cx),
+            Self::Prepared(s) => Pin::new(s.as_mut()).poll_shutdown(cx),
         }
     }
 }
