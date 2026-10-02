@@ -61,3 +61,27 @@ the coordinator's integration step; see `docs/underlay-routing.md` and the
 unapplied `docs/underlay-integration.patch`. There is no real Mesh tunnel, VLESS
 or WebSocket handshake, public NAT, authenticated probe or business DNS policy
 in this fixture.
+
+## UR1 / UR2 regression
+
+The repair fixture adds namespace-only `rt_tables` alias 18402, its default TUN
+route and an outside-block 19001 lookup while keeping 18001 capture and omitting
+18002. IPv4 and IPv6 each execute actual `PreparedGeneration::prepare` rejection;
+`result.json.ur1_alias_checks` contains both ordinary and numeric `ip -j` output.
+
+DNS ports 41866/41867 serve real service failures, and 41864 is the configured
+same-scope healthy alternative. `ur2_observer_checks` records primary/backup UDP
+and TCP counts, failure/terminal/cancel behavior for both families. A separate
+`syscalls-ur2.log` must contain no ordinary socket attempts. Added packets must
+not appear in the TUN alongside the expected ordinary controls.
+
+```sh
+# Replays the immutable Astra counterexamples in a new TMP copy, with current
+# byte-for-byte source and corrected expectations. The memory double tests
+# resolver control flow, not kernel protection. Needs the original review repro.
+python3 apps/agent/tests/underlay_fixture/review_regression.py --stage all
+python3 apps/agent/tests/underlay_fixture/run.py --image meshway-rust-underlay-ur-fixes:local
+```
+
+Old `0f2e5cad741b` evidence is frozen. New repair runs record commit/diff/source
+hashes and additional checks; old passing counts do not establish UR1/UR2 fixes.

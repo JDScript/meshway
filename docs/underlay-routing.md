@@ -148,3 +148,19 @@ syscall audit 实际验证 **137 次** protected bind/connect/listen 前的 mark
 UR1：`PreparedGeneration::prepare` 改为 `ip -N -j -4/-6 rule show`，table 的判断使用数值身份而非 rt_tables 显示 alias。validator 同步识别标准 local=255 / main=254 / default=253 / unspec=0 的数字、数字字符串与旧 canonical 名称；其它无法解释的名称明确拒绝，不再跳过。备用表尚无 block 内引用 / guard-only 仍可作为 prepared staging，但任何已存在的 block 外自有表引用都必须拒绝。未知 selector、外部 mark mask 冲突与 VPN table 检查保留。
 
 原 Astra 复现目录与 target 未修改。`python3 apps/agent/tests/underlay_fixture/review_regression.py --stage ur1` 在新的批准 TMP 副本以实际新源码回归原反例，9 tests 通过；命名 / 数字备用表外引用均拒绝，两个合法 staging 场景仍接受。该阶段刻意保留 UR2 的原坏结果断言，不能声称 DNS 已修复。材料 `meshway-underlay-review-fixed-n41wioum/`。新增 Linux alias case 的实测结果在后续 UR2 联合 fixture 中另行记录，旧 137-call 证据不用于证明此修复。
+
+UR2：合法 SERVFAIL 现在记录真实错误并尝试同一个 `SystemDnsSnapshot` 内的下一台 protected 上游。该列表只能表达同一已确认 system/VPN 解析 scope 的有序替代，不能把 split-DNS 的不同 scope 展平；没有 ambient / public / unmarked resolver fallback。REFUSED 作为策略拒绝终局，不用备用规避；NXDOMAIN 与其它非重试服务响应也终局，不改写为 NODATA 或成功。所有已配置上游失败时返回最后一次实际服务 / 传输错误，原每上游 3 秒与 generation 取消仍适用。
+
+`review_regression.py --stage all` 在新副本以 byte-for-byte 新 DNS 源码运行原控制流反例，9 tests 通过：主 SERVFAIL / 备用成功均有 A/AAAA 查询，全部失败仍报 Server Failure，NXDOMAIN / REFUSED 不查询备用；generation 取消无备用发送，两台 silent 同 scope 上游在 6 秒虚拟期限（加 timer-wheel tick）终止。材料 `meshway-underlay-review-fixed-k_d08hv0/`。这是 host 内存 double 的控制流证据，不替代真实 Linux DNS 与 SO_MARK 联测。
+
+本次没有修改 HTTP DTO / 生成器、P2a WS packet fence 或 client error 脱敏 adapter，也没有重跑 P2a 组合。继续保持 SocketGeneration != PacketGeneration：underlay 退休不能替代业务 revision 的共享 packet fence。默认 SystemUnderlay 未激活 protected path；RPDB owner / 生产 activation、Native Runtime 接线与非 plain DNS 适配仍是前述明确残余。
+
+新增 Linux 联合验收 `mw-rust-underlay-a8cbbee43ee1`：`status=ok`、`cleanup_errors=[]`，镜像 `sha256:ba39286df41a5bef127eef38637c898e4e4f497a2e00a857a45ee9805f5fb93c`。原 `0f2e5cad741b` result 未改。新 result SHA256 为 `7ceec2895016af93b1c528cd60e7e4dbcfa913f51c3d6f16c387d1676b743d8e`，材料在批准 TMP `meshway-underlay-artifacts/mw-rust-underlay-a8cbbee43ee1/`。
+
+- UR1 双栈真实 namespace 中把 18402 命名为 `mw_capture_two`，向其加入 default TUN route 和仅 block 外 19001 rule；18001/18401 capture 保持、18002 未安装。实际新 `PreparedGeneration::prepare` 两次均以 owned capture table outside block 错误拒绝，exit 0。result 同时保存 `ip -j` 与 `ip -N -j`：前者显示 alias，后者显示 18402，以及 local=255/main=254/default=253 数字身份。新增 rule/route 按完整属性移除，alias 文件只在容器 tmpfs 内、随 namespace 销毁。
+- UR2 observer 的 12 个双栈 case 全部通过：每族主 SERVFAIL 的 A/AAAA 各一次，健康已配置备用 UDP 各一次；截断的备用响应另走 protected TCP；全部失败确实查询两台且返回服务失败；NXDOMAIN / REFUSED / generation 取消的备用查询数均为 0。独立 `syscalls-ur2.log` 验证 **76 次** protected bind/connect 前 mark/readback、0 ordinary connect/bind。
+- 同一次新 run 重新运行既有完整 production_paths / permission_denied：双栈 HTTP/TLS/DNS、listener 退休、VPN table / foreign bits、普通同 IP capture 均通过，新的基本路径 syscall audit 为 137 次，4 listeners premark；真实 TUN 仍仅出现预期 10 个远端普通 socket，无新增 backup / fallback leakage。该 137 次是此次新执行，不借用旧 run 证明新增 case。
+
+复现命令：`python3 apps/agent/tests/underlay_fixture/review_regression.py --stage all`；Linux 用 `python3 apps/agent/tests/underlay_fixture/run.py --image meshway-rust-underlay-ur-fixes:local`，runner 仍持同一 performance.lock 到精确 cleanup。构建与 host 检查均 `CARGO_BUILD_JOBS=2`，新 target 为 `target/underlay-ur-fixes` / `target/underlay-ur-repro`，旧 target / Astra 原副本保持。root lock 只临时使用原已交付 candidate，候选内容未变，结束恢复协调者维护边界。
+
+针对修复的 host 检查：Agent `--all-features --lib underlay::` 5 tests 通过；Agent `--all-features --all-targets` Clippy `-D warnings` 通过；fmt check 与 syscall auditor 2 tests 通过。Linux image 构建同样执行 Agent lib/tests Clippy。公共契约、生成器和产品接线未改变，本轮没有把旧全消费者 / P2a 组合结果冒充新增复测。

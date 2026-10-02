@@ -30,7 +30,7 @@ def exact(conn, length):
     return data
 
 
-def dns(request, tcp=False):
+def dns(request, tcp=False, port=41864, version=None):
     end, labels = 12, []
     while request[end]:
         n = request[end]
@@ -39,13 +39,20 @@ def dns(request, tcp=False):
     end += 1
     hostname = '.'.join(labels)
     kind = struct.unpack('!H', request[end:end + 2])[0]
-    record(service='dns', hostname=hostname, transport='tcp' if tcp else 'udp', kind=kind)
-    if hostname.startswith('silent.'):
+    record(service='dns', hostname=hostname, transport='tcp' if tcp else 'udp', kind=kind, port=port, version=version)
+    if hostname.startswith(('silent.', 'cancelbackup.')):
         return None
-    flags = 0x8183 if hostname.startswith('missing.') else 0x8180
-    if hostname.startswith('tcp.') and not tcp:
+    if hostname.startswith(('missing.', 'nxdomainbackup.')):
+        flags = 0x8183
+    elif hostname.startswith('refused.'):
+        flags = 0x8185
+    elif port in (41866, 41867):
+        flags = 0x8182
+    else:
+        flags = 0x8180
+    if flags == 0x8180 and hostname.startswith(('tcp.', 'tcpbackup.')) and not tcp:
         flags |= 0x0200
-    empty = hostname.startswith('missing.') or hostname.startswith('v4.') and kind == 28 or hostname.startswith('v6.') and kind == 1 or flags & 0x0200
+    empty = flags != 0x8180 or hostname.startswith('v4.') and kind == 28 or hostname.startswith('v6.') and kind == 1
     if empty:
         return request[:2] + struct.pack('!HHHHH', flags, 1, 0, 0, 0) + request[12:end + 4]
     reply = bytearray(dns_reply(request))
@@ -64,7 +71,7 @@ def server():
         while True:
             request, peer = sock.recvfrom(65535)
             record(service='udp-receive', port=port, source=peer[0], source_port=peer[1], version=version, payload=request.hex())
-            reply = dns(request) if port == 41864 else request
+            reply = dns(request, port=port, version=version) if port in (41864, 41866, 41867) else request
             if reply is not None:
                 sock.sendto(reply, peer)
 
@@ -76,7 +83,7 @@ def server():
             record(service='accept', port=port, source=peer[0], source_port=peer[1], version=version)
             if port == 41864:
                 request = exact(conn, struct.unpack('!H', exact(conn, 2))[0])
-                reply = dns(request, tcp=True)
+                reply = dns(request, tcp=True, version=version)
                 if reply is not None:
                     conn.sendall(struct.pack('!H', len(reply)) + reply)
                 return
@@ -121,7 +128,7 @@ def server():
             threading.Thread(target=handle, args=(conn, peer, version, port), daemon=True).start()
 
     for version in (4, 6):
-        for port in (41864, 41865):
+        for port in (41864, 41865, 41866, 41867):
             threading.Thread(target=udp, args=(version, port), daemon=True).start()
         for port in (41861, 41862, 41864):
             threading.Thread(target=tcp, args=(version, port), daemon=True).start()
@@ -178,6 +185,12 @@ def client():
         result['rust_stdout'], result['rust_stderr'], result['rust_exit'] = process.stdout, process.stderr, process.returncode
         if process.returncode:
             raise RuntimeError('production Rust fixture failed')
+        dns_checked = subprocess.run(['strace', '-f', '-e', 'trace=socket,setsockopt,getsockopt,connect,bind,listen,accept4,sendto,shutdown,close',
+            '-o', '/run/syscalls-ur2.log', '/underlay-tests', '--exact', 'underlay::fixture::dns_configured_backup_paths', '--ignored', '--nocapture'],
+            env=env, capture_output=True, text=True, timeout=30)
+        result['ur2_dns_check'] = {'rust_exit': dns_checked.returncode, 'stdout': dns_checked.stdout, 'stderr': dns_checked.stderr}
+        if dns_checked.returncode:
+            raise RuntimeError('configured protected DNS backup paths failed')
         def drop():
             os.setgroups([])
             os.setgid(65534)

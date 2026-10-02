@@ -41,6 +41,8 @@ def run(stage):
     text = text.replace('BUG: same external capture-table reference rejects numeric ID but accepts unresolved alias',
         'FIXED UR1: numeric ID and unresolved alias both reject outside reserve-table references')
     if stage == 'all':
+        manifest = directory / 'Cargo.toml'
+        manifest.write_text(checked(manifest.read_text(), '"sync"]', '"sync", "test-util"]'))
         text = checked(text, 'assert!(result.is_err());\n        assert_eq!(FIRST_SERVER.load(Ordering::SeqCst), 2);\n        assert_eq!(SECOND_SERVER.load(Ordering::SeqCst), 0);',
             'assert_eq!(result.unwrap().len(), 2);\n        assert_eq!(FIRST_SERVER.load(Ordering::SeqCst), 2);\n        assert_eq!(SECOND_SERVER.load(Ordering::SeqCst), 2);')
         text = text.replace('BUG: SERVFAIL returned after first upstream; healthy second upstream received zero queries',
@@ -55,17 +57,40 @@ def run(stage):
         # allfail's second server is counted accurately rather than as primary.
         text = checked(text, 'FIRST_SERVER.fetch_add(1, Ordering::SeqCst);',
             'if server.ip().to_string() == "192.0.2.53" { FIRST_SERVER.fetch_add(1, Ordering::SeqCst); } else { SECOND_SERVER.fetch_add(1, Ordering::SeqCst); }')
+        text = checked(text, 'let mut response = Message::response(request.metadata.id, OpCode::Query);',
+            'if request.queries[0].name().to_ascii().starts_with("silent.") {\n'
+            ' if server.ip().to_string() == "192.0.2.53" { FIRST_SERVER.fetch_add(1, Ordering::SeqCst); } else { SECOND_SERVER.fetch_add(1, Ordering::SeqCst); }\n'
+            ' return std::future::pending().await;\n}\n'
+            'let mut response = Message::response(request.metadata.id, OpCode::Query);')
         text = checked(text, 'println!("CONTROL: same healthy second upstream alone resolves both A and AAAA");',
             'println!("CONTROL: same healthy second upstream alone resolves both A and AAAA");\n'
-            'for (name, backup_count, error_code) in [("allfail.test", 2, "ServFail"), ("missing.test", 0, "NXDomain"), ("refused.test", 0, "Refused")] {\n'
+            'for (name, backup_count, error_code) in [("allfail.test", 2, hickory_proto::op::ResponseCode::ServFail), ("missing.test", 0, hickory_proto::op::ResponseCode::NXDomain), ("refused.test", 0, hickory_proto::op::ResponseCode::Refused)] {\n'
             ' FIRST_SERVER.store(0, Ordering::SeqCst); SECOND_SERVER.store(0, Ordering::SeqCst);\n'
             ' let snapshot = dns::SystemDnsSnapshot::plain_servers(vec!["192.0.2.53:53".parse().unwrap(), "192.0.2.54:53".parse().unwrap()]).unwrap();\n'
             ' let resolver = dns::BootstrapResolver::new(generation::test_factory(), snapshot);\n'
             ' let error = resolver.resolve(Purpose::Controller, name).await.unwrap_err();\n'
-            ' assert!(error.to_string().contains(error_code), "{error}");\n'
+            ' assert_eq!(error.to_string(), format!("bootstrap DNS response: {error_code}"));\n'
             ' assert_eq!(FIRST_SERVER.load(Ordering::SeqCst), 2); assert_eq!(SECOND_SERVER.load(Ordering::SeqCst), backup_count);\n'
             ' println!("FIXED UR2 control {name}: {error}, configured backup queries={backup_count}");\n'
-            '}')
+            '}\n'
+            'tokio::time::pause();\n'
+            'FIRST_SERVER.store(0, Ordering::SeqCst); SECOND_SERVER.store(0, Ordering::SeqCst);\n'
+            'let factory = generation::test_factory();\n'
+            'let snapshot = dns::SystemDnsSnapshot::plain_servers(vec!["192.0.2.53:53".parse().unwrap(), "192.0.2.54:53".parse().unwrap()]).unwrap();\n'
+            'let resolver = dns::BootstrapResolver::new(factory.clone(), snapshot);\n'
+            'let waiting = resolver.resolve(Purpose::Controller, "silent.test"); tokio::pin!(waiting);\n'
+            'assert!(tokio::time::timeout(std::time::Duration::from_millis(10), &mut waiting).await.is_err());\n'
+            'factory.0.retire(); assert_eq!(waiting.await.unwrap_err().kind(), std::io::ErrorKind::ConnectionAborted);\n'
+            'assert_eq!(FIRST_SERVER.load(Ordering::SeqCst), 2); assert_eq!(SECOND_SERVER.load(Ordering::SeqCst), 0);\n'
+            'FIRST_SERVER.store(0, Ordering::SeqCst); SECOND_SERVER.store(0, Ordering::SeqCst);\n'
+            'let snapshot = dns::SystemDnsSnapshot::plain_servers(vec!["192.0.2.53:53".parse().unwrap(), "192.0.2.54:53".parse().unwrap()]).unwrap();\n'
+            'let resolver = dns::BootstrapResolver::new(generation::test_factory(), snapshot);\n'
+            'let started = tokio::time::Instant::now();\n'
+            'assert_eq!(resolver.resolve(Purpose::Controller, "silent.test").await.unwrap_err().kind(), std::io::ErrorKind::TimedOut);\n'
+            'assert!(started.elapsed() >= std::time::Duration::from_secs(6));\n'
+            'assert!(started.elapsed() <= std::time::Duration::from_millis(6005));\n'
+            'assert_eq!(FIRST_SERVER.load(Ordering::SeqCst), 2); assert_eq!(SECOND_SERVER.load(Ordering::SeqCst), 2);\n'
+            'println!("FIXED UR2: generation cancel prevents backup sends; two silent same-scope upstreams stop at 6-second virtual budget plus timer-wheel tick");')
     path.write_text(text)
     env = {**os.environ, 'CARGO_BUILD_JOBS': '2', 'CARGO_TARGET_DIR': str(ROOT / 'target/underlay-ur-repro')}
     child = subprocess.run(['cargo', 'test', '--locked', '--offline', '--', '--nocapture', '--test-threads=1'],

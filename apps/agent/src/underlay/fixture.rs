@@ -380,3 +380,100 @@ async fn alias_capture_reference_rejected() {
         "{error}"
     );
 }
+
+#[tokio::test]
+#[ignore = "isolated namespace provides SERVFAIL primary and configured DNS alternatives"]
+async fn dns_configured_backup_paths() {
+    assert_eq!(
+        std::env::var("MESHWAY_UNDERLAY_FIXTURE").as_deref(),
+        Ok("1")
+    );
+    for version in [4, 6] {
+        let generation = PreparedGeneration::prepare(reservation(200 + version, 0))
+            .await
+            .unwrap();
+        let factory = generation.factory();
+        let host: std::net::IpAddr = if version == 4 {
+            "172.30.247.20"
+        } else {
+            "fd74:6d77:247::20"
+        }
+        .parse()
+        .unwrap();
+        let make = |backup_port| {
+            BootstrapResolver::new(
+                factory.clone(),
+                SystemDnsSnapshot::plain_servers(vec![
+                    SocketAddr::new(host, 41866),
+                    SocketAddr::new(host, backup_port),
+                ])
+                .unwrap(),
+            )
+        };
+        let healthy = make(41864);
+        assert_eq!(
+            healthy
+                .resolve(Purpose::Controller, "backup.underlay.fixture")
+                .await
+                .unwrap()
+                .len(),
+            2
+        );
+        // A truncated answer at the configured backup uses protected TCP too.
+        assert_eq!(
+            healthy
+                .resolve(Purpose::Controller, "tcpbackup.underlay.fixture")
+                .await
+                .unwrap()
+                .len(),
+            2
+        );
+        let failing = make(41867);
+        let error = failing
+            .resolve(Purpose::Controller, "allfail.underlay.fixture")
+            .await
+            .unwrap_err();
+        assert_eq!(
+            error.to_string(),
+            format!(
+                "bootstrap DNS response: {}",
+                hickory_proto::op::ResponseCode::ServFail
+            )
+        );
+        for (name, code) in [
+            (
+                "nxdomainbackup.underlay.fixture",
+                hickory_proto::op::ResponseCode::NXDomain,
+            ),
+            (
+                "refused.underlay.fixture",
+                hickory_proto::op::ResponseCode::Refused,
+            ),
+        ] {
+            let error = healthy
+                .resolve(Purpose::Controller, name)
+                .await
+                .unwrap_err();
+            assert_eq!(error.to_string(), format!("bootstrap DNS response: {code}"));
+        }
+        let waiting = healthy.resolve(Purpose::Controller, "cancelbackup.underlay.fixture");
+        tokio::pin!(waiting);
+        assert!(
+            tokio::time::timeout(Duration::from_millis(100), &mut waiting)
+                .await
+                .is_err()
+        );
+        generation.retire();
+        assert_eq!(
+            tokio::time::timeout(Duration::from_secs(1), waiting)
+                .await
+                .unwrap()
+                .unwrap_err()
+                .kind(),
+            io::ErrorKind::ConnectionAborted
+        );
+    }
+    println!(
+        "UR2 protected same-scope DNS fallback, terminal responses and generation cancel verified"
+    );
+}

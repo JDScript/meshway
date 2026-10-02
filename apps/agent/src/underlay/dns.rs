@@ -19,6 +19,8 @@ use super::{Purpose, SocketFactory, closed, invalid};
 /// DNS, local resolver daemons, proxy and encrypted upstreams need an adapter;
 /// they must not be converted to an unmarked system lookup.
 pub(crate) struct SystemDnsSnapshot {
+    // All entries are ordered alternatives in ONE trusted system/VPN resolution
+    // scope. Never flatten servers from multiple split-DNS scopes into this list.
     servers: Vec<SocketAddr>,
 }
 
@@ -162,10 +164,21 @@ impl BootstrapResolver {
                 }
             };
             if response.metadata.response_code != ResponseCode::NoError {
-                return Err(io::Error::other(format!(
+                let error = io::Error::other(format!(
                     "bootstrap DNS response: {}",
                     response.metadata.response_code
-                )));
+                ));
+                if response.metadata.response_code == ResponseCode::ServFail {
+                    // A temporary server failure may use only configured,
+                    // protected alternatives in this same snapshot/scope.
+                    last = error;
+                    continue;
+                }
+                // NXDOMAIN is terminal, not NODATA. REFUSED is also terminal:
+                // do not defeat an upstream policy refusal via another server.
+                // Other protocol errors remain terminal unless explicitly
+                // assigned a retry policy; no ambient/public resolver fallback.
+                return Err(error);
             }
             let (addresses, ttl) = addresses(&response, name, kind)?;
             if !addresses.is_empty() && ttl > 0 {

@@ -81,6 +81,8 @@ def run(args):
             result['status'] = 'failed'
         syscall = docker('exec', containers[1], 'cat', '/run/syscalls.log').stdout
         (directory / 'syscalls.log').write_text(syscall)
+        ur2_syscall = docker('exec', containers[1], 'cat', '/run/syscalls-ur2.log', check=False).stdout
+        (directory / 'syscalls-ur2.log').write_text(ur2_syscall)
         observer = docker('exec', containers[0], 'cat', '/run/observer.jsonl').stdout
         (directory / 'observer.jsonl').write_text(observer)
         events = [json.loads(line) for line in observer.splitlines()]
@@ -97,6 +99,22 @@ def run(args):
             assert 'SO_MARK' in syscall and 'setsockopt' in syscall and 'getsockopt' in syscall
             result['syscall_audit'] = audit(syscall)
             assert result['syscall_audit']['premarked_listeners'] == 4
+            result['ur2_syscall_audit'] = audit(ur2_syscall, ordinary_connects=0, ordinary_binds=0)
+            result['ur2_observer_checks'] = []
+            for version in (4, 6):
+                for hostname, primary, backup, tcp, failing in [
+                    ('backup.underlay.fixture', 2, 2, 0, 0),
+                    ('tcpbackup.underlay.fixture', 2, 2, 2, 0),
+                    ('allfail.underlay.fixture', 2, 0, 0, 2),
+                    ('nxdomainbackup.underlay.fixture', 2, 0, 0, 0),
+                    ('refused.underlay.fixture', 2, 0, 0, 0),
+                    ('cancelbackup.underlay.fixture', 2, 0, 0, 0),
+                ]:
+                    actual = [e for e in events if e.get('service') == 'dns' and e.get('hostname') == hostname and e.get('version') == version]
+                    counts = (sum(e['port'] == 41866 for e in actual), sum(e['port'] == 41864 and e['transport'] == 'udp' for e in actual),
+                              sum(e['port'] == 41864 and e['transport'] == 'tcp' for e in actual), sum(e['port'] == 41867 for e in actual))
+                    assert counts == (primary, backup, tcp, failing), (version, hostname, counts)
+                    result['ur2_observer_checks'].append({'version': version, 'hostname': hostname, 'counts': counts, 'status': 'ok'})
     except BaseException as error:
         result['status'], result['error'] = 'failed', str(error)
     finally:
