@@ -1,6 +1,6 @@
 //! Nonpersistent TUN cancellation/restart and exact journal convergence.
+use super::test_support::{ControllerTestChannel, Plan, Tun, TunOptions};
 use super::*;
-use crate::managed_dataplane::{PacketPlan, TunOptions, tun::Tun};
 
 fn preparation(path: &Path) -> Preparation<'_> {
     Preparation {
@@ -10,9 +10,11 @@ fn preparation(path: &Path) -> Preparation<'_> {
     }
 }
 
-pub(super) fn plan() -> PacketPlan {
-    let (payloads, _) = crate::managed_dataplane::tests::fixtures(2);
-    PacketPlan::compile(&payloads[0], 1000).unwrap()
+pub(super) fn plan() -> Plan {
+    Plan {
+        prefix: "100.64.0.0/24".parse().unwrap(),
+        local: "100.64.0.1".parse().unwrap(),
+    }
 }
 
 pub(super) async fn reject_mesh() {
@@ -36,24 +38,8 @@ pub(super) async fn reject_mesh() {
 }
 
 pub(super) async fn control(owner: &LinuxUnderlay) {
-    let channel = owner
-        .controller_channel(reqwest::Url::parse("http://172.30.247.20:41861").unwrap())
-        .await
-        .unwrap();
-    let error = channel
-        .client()
-        .with_api_key("fixture-only")
-        .enroll_agent(meshway_control_client::types::EnrollAgentRequest {
-            agent_version: "tun-recovery-fixture".into(),
-            name: "isolated".into(),
-            node_credential: "a".repeat(64),
-        })
-        .await
-        .unwrap_err();
-    match error {
-        meshway_control_client::client::ApiOpError::Api(error) => assert_eq!(error.status, 401),
-        error => panic!("controller transport did not recover: {error:?}"),
-    }
+    let channel = ControllerTestChannel::prepare(owner).await.unwrap();
+    channel.request().await.unwrap();
     channel.retire();
     drop(channel);
     // HTTP drivers release their wrappers asynchronously; singleton/state lock
@@ -67,7 +53,7 @@ pub(super) async fn control(owner: &LinuxUnderlay) {
     .unwrap();
 }
 
-pub(super) async fn fresh(owner: &mut LinuxUnderlay, plan: &PacketPlan) {
+pub(super) async fn fresh(owner: &mut LinuxUnderlay, plan: &Plan) {
     let tun = Tun::open_with_underlay(
         &TunOptions {
             name: "mwfresh0".into(),

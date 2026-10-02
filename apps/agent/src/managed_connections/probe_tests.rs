@@ -6,10 +6,10 @@ use std::{
     },
 };
 
-use super::observations::{ProbeError as ConnectionError, ProbeRequest};
 use super::tests::{fixture, session, snapshot, tls_profiles};
 use super::*;
 use crate::diagnostics::{self, ProbeError};
+use meshway_agent_connections::observations::{ProbeError as ConnectionError, ProbeRequest};
 
 fn inventory(own: &str, peer: &str) -> meshway_protocol::NodeConfiguration {
     let node = |id: &str, name: &str, index: u8| meshway_protocol::MeshNode {

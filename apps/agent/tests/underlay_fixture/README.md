@@ -1,87 +1,41 @@
-# Actual Agent underlay paths
+# Agent underlay acceptance
 
-This fixture builds and runs the **production Agent socket factory, resolver,
-HTTP transport and generated Rust client**. The Python observer only serves
-test traffic; it does not create or substitute the client's sockets.
+The normal acceptance exercises Controller enrollment and generated configuration,
+the Agent lifecycle, actual Linux TUN traffic and lease withdrawal. The mechanism
+runners additionally exercise protected HTTP/TLS, native carriers, DNS alternatives,
+namespace cookies and exact journal recovery in disposable dual-stack namespaces.
 
 ```sh
 python3 -m unittest discover -s apps/agent/tests/underlay_fixture -p 'test_*.py' -v
 python3 apps/agent/tests/underlay_fixture/main_loop.py
-# Reuse the image ID from that run's result.json for the lower-level checks:
+# Reuse the image ID in that run's result.json:
 python3 apps/agent/tests/underlay_fixture/run.py --skip-build --image <image-id>
-```
-
-`main_loop.py` compiles in a non-root, cap-drop-ALL container with explicit CPU
-and memory limits, builds the runtime layer with the ordinary Docker builder,
-and validates the normal Controller/Agent/TUN lifecycle. The mechanism runners
-reuse its image under the same performance lock, with a 2400-second budget.
-`--skip-build` compares the complete input path set and hashes, including nested
-modules, extracted crates, manifests and runtime helpers. Images without this
-manifest must be rebuilt. There is no separate in-builder Rust compilation path.
-All traffic is in a fresh internal dual-stack Docker network, with no published
-ports, host networking, privileged containers or host routing/DNS/firewall
-changes. NET_ADMIN is confined to disposable containers. UID/GID 65534 tests
-really lose SO_MARK permission. Fixture constants are not production allocation.
-
-## Evidence
-
-Artifacts are written under the approved private TMP:
-
-```text
-meshway-underlay-artifacts/mw-rust-underlay-<owner>/
-  result.json       # Rust results, ownership cleanup, observer and syscall audit
-  syscalls.log      # actual socket/SO_MARK/readback/connect/bind/listen/accept
-  observer.jsonl    # actual remote source/port, DNS transports, listener replies
-  client.stdout
-  client.stderr
-```
-
-The audit requires a matching successful SO_MARK readback **before** every
-factory bind/connect/listen. Only the explicitly enumerated ordinary sockets
-may be unmarked; additional unmarked attempts fail the audit. TUN independently
-checks the expected ordinary same-address HTTP/TLS/DNS TCP and DNS/echo UDP
-sockets, with no extra protected or fallback sockets. The wrapper's async
-cloned-FD write fence and accepted inheritance are verified by Rust I/O and the
-remote observer rather than inferred solely from trace text.
-
-Both families cover:
-
-- actual HTTP and certificate-validated TLS over factory TCP;
-- generated enrollment request, bearer and status-first rejection;
-- certificate failure, a second request without a pool, no unmarked retry;
-- bootstrap DNS UDP and truncated-response TCP fallback, transaction/question
-  validation, cached results and actual TTL expiry;
-- marked connected UDP send/recv and listener premark / inherited accept;
-- preservation of foreign low bits and original VPN-table source selection;
-- stalled HTTP headers/body and DNS cancellation, old socket write rejection,
-  new generation recovery, NXDOMAIN/upstream failure;
-- ordinary same-IP/port TCP and UDP hitting the real default capture sink;
-- capability failure before factory publication.
-
-The RPDB setup uses guard/goto and a stable NOP. The fixture includes the current
-namespace owner, lifetime-cookie recovery, TUN capture/withdrawal and protected
-Native/Manager socket paths. It does not prove the normal Agent main loop has
-enabled this owner or that public NAT traversal works. See
-`docs/underlay-routing.md` for the current integration boundary.
-
-## Routing and resolver regression
-
-The repair fixture adds namespace-only `rt_tables` alias 18402, its default TUN
-route and an outside-block 19001 lookup while keeping 18001 capture and omitting
-18002. IPv4 and IPv6 each execute actual `PreparedGeneration::prepare` rejection;
-`result.json.ur1_alias_checks` contains both ordinary and numeric `ip -j` output.
-
-DNS ports 41866/41867 serve real service failures, and 41864 is the configured
-same-scope healthy alternative. `ur2_observer_checks` records primary/backup UDP
-and TCP counts, failure/terminal/cancel behavior for both families. A separate
-`syscalls-ur2.log` must contain no ordinary socket attempts. Added packets must
-not appear in the TUN alongside the expected ordinary controls.
-
-```sh
-# Current source: namespace ownership, partial transactions and restart cases.
 python3 apps/agent/tests/underlay_fixture/review.py --skip-build --image <image-id>
 ```
 
-Each run records its actual source hashes and cleanup result. Historical
-counterexamples and branch-composition scripts remain in Git history; current
-checks build the checkout directly without applying handoff patches.
+`main_loop.py` compiles in a non-root, cap-drop-ALL container with two CPUs and
+bounded memory, then builds only the runtime layer with the ordinary Docker
+builder. All Docker calls retain the coordinator's `scripts/performance_lock.py`
+descriptor. No host networking, privileged builder or host routing/DNS/firewall
+change is used. NET_ADMIN and TUN access are confined to owned test namespaces;
+UID/GID 65534 checks really lose SO_MARK permission.
+
+The image carries a complete source-input manifest, including nested modules,
+extracted crates, manifests and runtime helpers. Reuse verifies the exact path set
+and hashes. The image has two test executables: `/underlay-tests` for App HTTP,
+bootstrap and carrier orchestration, and `/underlay-core-tests` for private
+`agent-underlay` journal/socket tests. Every selected test must actually collect
+one test; process-death cases additionally verify the intended exit boundary.
+
+App fixtures obtain capabilities from the public Linux owner and the real system
+DNS snapshot. Private mark/alias/DNS-alternative reproductions stay in underlay's
+unit-test modules; no production constructor exposes a fabricated reservation or
+TUN identity. Low-level device-open cancellation is kernel ownership evidence;
+it is separate from the normal Controller/Agent/TUN acceptance.
+
+Artifacts and all failed attempts remain under the approved private TMP in
+`meshway-underlay-main-loop-runs/` or `meshway-underlay-artifacts/`. Syscall audits
+require successful mark readback before protected bind/connect/listen. The remote
+observer and actual capture TUN independently verify foreign VPN bits, ordinary
+same-destination controls, inherited accepts and retirement fences. App-owned
+reject-only captures also verify that ordinary traffic has no fall-through.

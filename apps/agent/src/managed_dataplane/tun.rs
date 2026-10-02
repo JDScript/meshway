@@ -86,7 +86,7 @@ impl Tun {
     pub(crate) async fn open_with_underlay(
         options: &TunOptions,
         plan: &PacketPlan,
-        owner: &mut crate::underlay::LinuxUnderlay,
+        owner: &mut meshway_agent_underlay::LinuxUnderlay,
     ) -> Result<Self, AgentError> {
         options.validate()?;
         let policy = plan.route_policy();
@@ -95,9 +95,9 @@ impl Tun {
         // Install the durable reject-only sink BEFORE enabling any new device.
         owner.retain_mesh_sink(prefix.into()).await?;
         let device = create_device(options, plan).await?;
-        let binding = crate::underlay::TunBinding::from_created_device(&device)?;
+        let binding = meshway_agent_underlay::TunBinding::from_created_device(&device)?;
         owner
-            .install_tun(&[crate::underlay::CapturePrefix {
+            .install_tun(&[meshway_agent_underlay::CapturePrefix {
                 prefix: prefix.into(),
                 tun: Some(&binding),
             }])
@@ -113,9 +113,11 @@ impl Tun {
 
     #[cfg(all(target_os = "linux", feature = "managed-connections"))]
     #[allow(dead_code)] // P3a mainloop owner installs this binding at the shared seam.
-    pub(crate) fn underlay_binding(&self) -> io::Result<crate::underlay::TunBinding> {
+    pub(crate) fn underlay_binding(&self) -> io::Result<meshway_agent_underlay::TunBinding> {
         match self.device.as_ref() {
-            Device::Linux(device) => crate::underlay::TunBinding::from_created_device(device),
+            Device::Linux(device) => {
+                meshway_agent_underlay::TunBinding::from_created_device(device)
+            }
             #[cfg(test)]
             Device::Mock(_) => Err(io::Error::new(
                 io::ErrorKind::Unsupported,

@@ -15,11 +15,11 @@ use tokio::{
     time::{self, Instant},
 };
 
-use super::observations::{
+use super::{Manager, Observation, Phase, session};
+use meshway_agent_connections::observations::{
     AuthenticatedChannel, LiveStatus, MAX_PEERS, ProbeError, ProbeObservation, ProbeRequest,
     PublicIdentity, WhoisObservation,
 };
-use super::{Manager, Observation, Phase, session};
 
 #[derive(Clone, PartialEq, Eq)]
 struct Inventory {

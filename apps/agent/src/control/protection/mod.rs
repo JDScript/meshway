@@ -1,11 +1,11 @@
 //! Controller ownership and durable real network binding; never business grants.
+use crate::control::transport::{BootstrapChannel, ControllerChannel, ControllerClients};
 use crate::state::{
     Agent, AgentError, Identity, connections, dns, local,
     network_binding::{fingerprint, load_binding, persist_binding, sidecar},
 };
-use crate::underlay::{
-    BootstrapChannel, BootstrapPreparation, BootstrapUnderlay, ControllerChannel,
-    ControllerClients, LinuxUnderlay, Preparation, SystemDnsSnapshot,
+use meshway_agent_underlay::{
+    BootstrapPreparation, BootstrapUnderlay, LinuxUnderlay, Preparation, SystemDnsSnapshot,
 };
 use meshway_control_client::{
     client::HttpClient,
@@ -127,16 +127,12 @@ impl Agent {
                     .channel
                     .is_none()
                 {
-                    let channel = self
-                        .bootstrap
-                        .as_ref()
-                        .expect("bootstrap owner")
-                        .owner
-                        .channel(
-                            reqwest::Url::parse(&self.identity.controller)
-                                .map_err(|_| AgentError::Invalid("invalid persisted controller"))?,
-                        )
-                        .await?;
+                    let channel = BootstrapChannel::prepare(
+                        &self.bootstrap.as_ref().expect("bootstrap owner").owner,
+                        reqwest::Url::parse(&self.identity.controller)
+                            .map_err(|_| AgentError::Invalid("invalid persisted controller"))?,
+                    )
+                    .await?;
                     self.bootstrap.as_mut().expect("bootstrap owner").channel = Some(channel);
                 }
                 let channel = self
@@ -223,12 +219,12 @@ impl Agent {
         } else {
             LinuxUnderlay::prepare(input).await?
         };
-        let channel = owner
-            .controller_channel(
-                reqwest::Url::parse(&binding.controller)
-                    .map_err(|_| AgentError::Invalid("invalid bound controller"))?,
-            )
-            .await?;
+        let channel = ControllerChannel::from_prepared(
+            owner.socket_generation().await?,
+            reqwest::Url::parse(&binding.controller)
+                .map_err(|_| AgentError::Invalid("invalid bound controller"))?,
+            owner.system_dns()?,
+        )?;
         let dns = owner.system_dns()?;
         let clients = ControllerClients::new(&channel);
         self.underlay = Some(Control {

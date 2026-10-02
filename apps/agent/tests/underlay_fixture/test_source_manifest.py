@@ -15,8 +15,10 @@ class SourceManifestTests(unittest.TestCase):
                 path = root / name
                 path.parent.mkdir(parents=True, exist_ok=True)
                 path.write_text(name)
-            names = ['apps/agent/src/underlay/owner/mod.rs',
-                     'apps/agent/src/underlay/owner/bootstrap/mod.rs',
+            names = ['crates/agent-underlay/src/owner/mod.rs',
+                     'crates/agent-underlay/src/owner/bootstrap/mod.rs',
+                     'apps/agent/src/control/transport/http.rs',
+                     'crates/agent-connections/src/lib.rs',
                      'crates/agent-tun/src/lib.rs', 'crates/control-client/src/generated/client.rs']
             for name in names:
                 path = root / name

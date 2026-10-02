@@ -216,7 +216,7 @@ async fn real_agent_sampler_generated_http_persistence_restart_and_withdrawal() 
     // Neither operation may produce a history row by itself.
     manager
         .prober()
-        .probe_neighbor_observed(crate::managed_connections::observations::ProbeRequest {
+        .probe_neighbor_observed(meshway_agent_connections::observations::ProbeRequest {
             peer: b_id.clone(),
             timeout: Duration::from_secs(3),
         })

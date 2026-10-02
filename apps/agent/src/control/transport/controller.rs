@@ -5,11 +5,8 @@ use std::{
     sync::{Arc, RwLock},
 };
 
-use super::{
-    PreparedGeneration, Reservation,
-    dns::{BootstrapResolver, SystemDnsSnapshot},
-    http::ControllerHttp,
-};
+use super::http::ControllerHttp;
+use meshway_agent_underlay::{BootstrapResolver, PreparedGeneration, SystemDnsSnapshot};
 use meshway_control_client::client::{HttpClient, HttpError, HttpResult, HttpTransport};
 
 /// All generated consumer clones observe one replacement point. An empty or
@@ -54,15 +51,6 @@ pub(crate) struct ControllerChannel {
 }
 
 impl ControllerChannel {
-    pub(crate) async fn prepare(
-        reservation: Reservation,
-        origin: reqwest::Url,
-        upstreams: SystemDnsSnapshot,
-    ) -> io::Result<Self> {
-        let owner = PreparedGeneration::prepare(reservation).await?;
-        Self::from_prepared(owner, origin, upstreams)
-    }
-
     pub(crate) fn from_prepared(
         owner: PreparedGeneration,
         origin: reqwest::Url,

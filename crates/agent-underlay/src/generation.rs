@@ -4,8 +4,11 @@ use std::{
     sync::{Arc, Mutex, Weak},
 };
 
+#[cfg(any(target_os = "linux", test))]
 use serde::Deserialize;
-use socket2::{Domain, Protocol, Socket, Type};
+use socket2::Socket;
+#[cfg(target_os = "linux")]
+use socket2::{Domain, Protocol, Type};
 use tokio_util::sync::CancellationToken;
 
 use super::{Purpose, SocketFactory, closed, invalid};
@@ -18,6 +21,7 @@ pub(crate) struct MarkReservation {
 }
 
 impl MarkReservation {
+    #[cfg(any(target_os = "linux", test))]
     pub(crate) fn new(value: u32, mask: u32) -> io::Result<Self> {
         if mask == 0 || value == 0 || value & !mask != 0 {
             return Err(invalid("nonzero mark must fit its nonzero reserved mask"));
@@ -25,6 +29,7 @@ impl MarkReservation {
         Ok(Self { value, mask })
     }
 
+    #[cfg(any(target_os = "linux", test))]
     pub(super) fn merge(self, existing: u32) -> io::Result<u32> {
         let owned = existing & self.mask;
         if owned != 0 && owned != self.value {
@@ -97,6 +102,7 @@ pub(super) struct State {
 
 struct Registered {
     socket: Weak<Socket>,
+    #[allow(dead_code)] // Kept for typed socket admission/audit, not a runtime DTO.
     purpose: Purpose,
 }
 
@@ -176,7 +182,7 @@ impl Generation {
 
 /// Unique retirement owner; clones of factory/resolver/HTTP cannot keep an old
 /// generation active when this owner is dropped.
-pub(crate) struct PreparedGeneration(Arc<Generation>);
+pub struct PreparedGeneration(Arc<Generation>);
 
 impl Drop for PreparedGeneration {
     fn drop(&mut self) {
@@ -185,6 +191,7 @@ impl Drop for PreparedGeneration {
 }
 
 impl PreparedGeneration {
+    #[cfg(target_os = "linux")]
     pub(crate) async fn prepare(reservation: Reservation) -> io::Result<Self> {
         let _ = MarkReservation::new(reservation.mark.value, reservation.mark.mask)?;
         if reservation.owner.is_empty()
@@ -268,7 +275,7 @@ impl PreparedGeneration {
         })))
     }
 
-    pub(crate) fn factory(&self) -> SocketFactory {
+    pub fn factory(&self) -> SocketFactory {
         SocketFactory(self.0.clone())
     }
 
@@ -278,11 +285,11 @@ impl PreparedGeneration {
             .expect("unpublished bootstrap generation")
             .controller_only = true;
     }
-    pub(crate) fn retire(&self) {
+    pub fn retire(&self) {
         self.0.retire();
     }
 
-    pub(super) fn active(&self) -> bool {
+    pub fn active(&self) -> bool {
         self.0.state.lock().is_ok_and(|state| state.active)
     }
 
@@ -296,6 +303,7 @@ impl PreparedGeneration {
     }
 }
 
+#[cfg(any(target_os = "linux", test))]
 pub(super) fn validate_mesh_sinks(table: u32, bytes: &[u8]) -> io::Result<()> {
     let routes: Vec<serde_json::Value> = serde_json::from_slice(bytes).map_err(invalid_json)?;
     for route in routes {
@@ -343,12 +351,14 @@ pub(super) fn validate_mesh_sinks(table: u32, bytes: &[u8]) -> io::Result<()> {
 }
 
 #[derive(Deserialize)]
+#[cfg(any(target_os = "linux", test))]
 struct Rule {
     priority: u32,
     #[serde(flatten)]
     attributes: std::collections::BTreeMap<String, serde_json::Value>,
 }
 
+#[cfg(any(target_os = "linux", test))]
 fn number(value: &serde_json::Value) -> Option<u32> {
     value
         .as_u64()
@@ -362,6 +372,7 @@ fn number(value: &serde_json::Value) -> Option<u32> {
         })
 }
 
+#[cfg(any(target_os = "linux", test))]
 pub(super) fn validate_rules(reservation: &Reservation, bytes: &[u8]) -> io::Result<()> {
     let rules: Vec<Rule> = serde_json::from_slice(bytes).map_err(invalid_json)?;
     let mut guard = 0;
@@ -452,10 +463,12 @@ pub(super) fn validate_rules(reservation: &Reservation, bytes: &[u8]) -> io::Res
     Ok(())
 }
 
+#[cfg(any(target_os = "linux", test))]
 fn invalid_json(error: serde_json::Error) -> io::Error {
     invalid(error.to_string())
 }
 
+#[cfg(any(target_os = "linux", test))]
 pub(super) fn table_identity(value: &serde_json::Value) -> io::Result<u32> {
     if let Some(id) = number(value) {
         return Ok(id);

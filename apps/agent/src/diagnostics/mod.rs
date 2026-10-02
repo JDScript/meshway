@@ -1,6 +1,6 @@
 //! App projection from current connection/DNS handles to the diagnostic provider.
 use crate::managed_connections::Prober;
-use crate::managed_connections::observations as connection;
+use meshway_agent_connections::observations as connection;
 pub use meshway_agent_diagnostics::{
     AuthenticatedChannel, Evidence, Incoming, LegacyProbeObservation, LiveResponse, LiveState,
     LiveStatus, MAX_PEERS, Operation, ProbeError, ProbeObservation, ProbeRequest, ProbeResponse,

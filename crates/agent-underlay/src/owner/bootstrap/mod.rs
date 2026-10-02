@@ -1,13 +1,8 @@
 //! Guard-only enrollment ownership. No business capability is exposed here.
 use super::*;
-use meshway_control_client::{
-    client::{ApiOpError, EnrollAgentApiError, GetAgentDnsApiError, HeartbeatAgentApiError},
-    types,
-};
-
-pub(crate) struct BootstrapPreparation<'a> {
-    pub(crate) state_directory: &'a Path,
-    pub(crate) fingerprint: &'a str,
+pub struct BootstrapPreparation<'a> {
+    pub state_directory: &'a Path,
+    pub fingerprint: &'a str,
 }
 
 #[derive(Clone, Serialize, Deserialize)]
@@ -105,60 +100,12 @@ impl OwnerJournal for BootstrapJournal {
     }
 }
 
-pub(crate) struct BootstrapUnderlay {
+pub struct BootstrapUnderlay {
     core: NamespaceOwner<BootstrapJournal>,
 }
 
-/// Deliberately not a general generated client or socket factory. A mutable
-/// borrow prevents transition while one of these requests is in flight.
-pub(crate) struct BootstrapChannel {
-    channel: ControllerChannel,
-}
-
-impl BootstrapChannel {
-    pub(crate) async fn enroll(
-        &mut self,
-        token: &str,
-        request: types::EnrollAgentRequest,
-    ) -> Result<types::AgentNodeResponse, Box<ApiOpError<EnrollAgentApiError>>> {
-        self.channel
-            .client()
-            .with_api_key(token)
-            .enroll_agent(request)
-            .await
-            .map_err(Box::new)
-    }
-    pub(crate) async fn heartbeat(
-        &mut self,
-        credential: &str,
-        request: types::HeartbeatRequest,
-    ) -> Result<types::AgentNodeResponse, Box<ApiOpError<HeartbeatAgentApiError>>> {
-        self.channel
-            .client()
-            .with_api_key(credential)
-            .heartbeat_agent(request)
-            .await
-            .map_err(Box::new)
-    }
-    pub(crate) async fn scope(
-        &mut self,
-        credential: &str,
-    ) -> Result<types::AgentDnsSnapshot, Box<ApiOpError<GetAgentDnsApiError>>> {
-        self.channel
-            .client()
-            .with_api_key(credential)
-            .with_max_response_body_bytes(meshway_protocol::MAX_DNS_BYTES)
-            .get_agent_dns()
-            .await
-            .map_err(Box::new)
-    }
-    pub(crate) async fn retire(self) {
-        self.channel.retire_and_join().await;
-    }
-}
-
 impl BootstrapUnderlay {
-    pub(crate) async fn prepare(input: BootstrapPreparation<'_>) -> io::Result<Self> {
+    pub async fn prepare(input: BootstrapPreparation<'_>) -> io::Result<Self> {
         let lease = acquire_lease(input.state_directory)?;
         if input.state_directory.join("underlay.json").try_exists()? {
             return Err(invalid(
@@ -292,24 +239,17 @@ impl BootstrapUnderlay {
         Ok(Self { core })
     }
 
-    pub(crate) async fn channel(&self, origin: reqwest::Url) -> io::Result<BootstrapChannel> {
+    pub async fn controller_generation(&self) -> io::Result<PreparedGeneration> {
         if self.core.journal.cleaning {
             return Err(invalid("bootstrap is transitioning; no new HTTP"));
         }
         audit_unbound(&self.core.journal.installed).await?;
-        let generation = self.core.prepare_generation(true).await?;
-        Ok(BootstrapChannel {
-            channel: ControllerChannel::from_prepared(
-                generation,
-                origin,
-                SystemDnsSnapshot::from_system()?,
-            )?,
-        })
+        self.core.prepare_generation(true).await
     }
 
     /// Caller must retire/join the narrow channel and durably save real binding
     /// first. The lease never leaves this move, including the singleton FD.
-    pub(crate) async fn bind(mut self, input: Preparation<'_>) -> io::Result<LinuxUnderlay> {
+    pub async fn bind(mut self, input: Preparation<'_>) -> io::Result<LinuxUnderlay> {
         if input.state_directory != self.core.directory
             || input.identity.is_empty()
             || input.network.is_empty()

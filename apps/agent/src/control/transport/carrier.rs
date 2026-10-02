@@ -1,9 +1,6 @@
 //! The same owning capability backs managed VLESS and core native carriers.
-use super::{
-    BootstrapResolver, ProtectedListener, ProtectedTcp, ProtectedUdp, Purpose, SocketFactory,
-    SystemDnsSnapshot,
-};
-use crate::managed_connections::sockets::{self, Protection};
+use meshway_agent_connections::sockets::{self, Protection};
+use meshway_agent_underlay::{BootstrapResolver, Purpose, SocketFactory, SystemDnsSnapshot};
 use meshway_dataplane::sockets::{
     NativeListener, NativeSocketFactory, NativeSocketPurpose, NativeTcp, NativeUdp, SocketFuture,
 };
@@ -23,16 +20,11 @@ impl ManagedProtection {
 }
 impl Protection for ManagedProtection {
     fn check_active(&self) -> io::Result<()> {
-        let state = self.factory.0.state.lock().map_err(|_| super::closed())?;
-        if state.active {
-            Ok(())
-        } else {
-            Err(super::closed())
-        }
+        self.factory.check_active()
     }
     fn cancelled(&self) -> SocketFuture<'_, ()> {
         Box::pin(async move {
-            self.factory.0.cancelled.cancelled().await;
+            self.factory.cancelled().await;
             Ok(())
         })
     }
@@ -111,41 +103,5 @@ impl NativeSocketFactory for ManagedProtection {
             // coherent managed Runtime config was constructed. No ambient DNS.
             Ok(Box::new(self.factory.tcp(Purpose::Carrier, endpoint).await?) as Box<dyn NativeTcp>)
         })
-    }
-}
-impl NativeTcp for ProtectedTcp {
-    fn peer_addr(&self) -> io::Result<SocketAddr> {
-        self.peer_addr()
-    }
-    fn set_nodelay(&self, value: bool) -> io::Result<()> {
-        self.set_nodelay(value)
-    }
-}
-impl NativeListener for ProtectedListener {
-    fn local_addr(&self) -> io::Result<SocketAddr> {
-        self.local_addr()
-    }
-    fn accept(&self) -> SocketFuture<'_, (Box<dyn NativeTcp>, SocketAddr)> {
-        Box::pin(async move {
-            let (s, a) = self.accept().await?;
-            Ok((Box::new(s) as Box<dyn NativeTcp>, a))
-        })
-    }
-}
-impl NativeUdp for ProtectedUdp {
-    fn local_addr(&self) -> io::Result<SocketAddr> {
-        self.local_addr()
-    }
-    fn writable(&self) -> SocketFuture<'_, ()> {
-        Box::pin(self.writable())
-    }
-    fn try_send_to(&self, bytes: &[u8], remote: SocketAddr) -> io::Result<usize> {
-        self.try_send_to(bytes, remote)
-    }
-    fn recv_from<'a>(&'a self, bytes: &'a mut [u8]) -> SocketFuture<'a, (usize, SocketAddr)> {
-        Box::pin(self.recv_from(bytes))
-    }
-    fn send_to<'a>(&'a self, bytes: &'a [u8], remote: SocketAddr) -> SocketFuture<'a, usize> {
-        Box::pin(self.send_to(bytes, remote))
     }
 }

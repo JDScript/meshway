@@ -23,7 +23,7 @@ def run(args):
     name = 'mw-underlay-main-loop-' + uuid.uuid4().hex[:12]
     logs = TMP / 'meshway-underlay-main-loop-runs' / name
     logs.mkdir(parents=True, mode=0o700)
-    work = TMP / 'meshway-underlay-main-loop-linux'
+    work = TMP / 'meshway-agent-components-linux'
     work.mkdir(mode=0o700, exist_ok=True)
     for child in ('cargo', 'home', 'target'):
         (work / child).mkdir(exist_ok=True)
@@ -64,10 +64,10 @@ def run(args):
             builder = docker('buildx', 'inspect', 'default').stdout
             assert 'Driver:        docker' in builder or any(line.split() == ['Driver:', 'docker'] for line in builder.splitlines())
             (logs / 'builder.txt').write_text(builder)
-            command = 'cargo check --locked -p meshway-agent --all-features --tests'
+            command = 'cargo check --locked -p meshway-agent -p meshway-agent-underlay --all-features --tests'
             if not args.check_only:
-                command = ('cargo clippy --locked -p meshway-agent --all-features --all-targets -- -D warnings && '
-                    'cargo test --locked -p meshway-agent --all-features --lib --no-run --message-format=json > /work/tests.json && '
+                command = ('cargo clippy --locked -p meshway-agent -p meshway-agent-underlay -p meshway-agent-dataplane -p meshway-agent-connections -p meshway-agent-diagnostics --all-features --all-targets -- -D warnings && '
+                    'cargo test --locked -p meshway-agent -p meshway-agent-underlay --all-features --lib --no-run --message-format=json > /work/tests.json && '
                     'cargo build --locked -p meshway-agent -p meshway-controller --all-features')
             created = docker('create', '--name', name + '-compile', '--label', 'meshway.underlay.acceptance=' + name,
                 '--user', f'{os.getuid()}:{os.getgid()}', '--cap-drop', 'ALL', '--security-opt', 'no-new-privileges',
@@ -100,6 +100,10 @@ def run(args):
                     and item.get('executable') and item['target']['name'] == 'meshway_agent']
                 assert len(tests) == 1
                 shutil.copy2(work / Path(tests[0]).relative_to('/work'), context / 'underlay-tests')
+                underlay = [item['executable'] for item in artifacts if item.get('reason') == 'compiler-artifact'
+                    and item.get('executable') and item['target']['name'] == 'meshway_agent_underlay']
+                assert len(underlay) == 1
+                shutil.copy2(work / Path(underlay[0]).relative_to('/work'), context / 'underlay-core-tests')
                 (context / 'source-manifest.json').write_text(json.dumps(inventory(source), sort_keys=True))
                 for relative, output in (
                     ('apps/agent/tests/underlay_fixture/namespace.py', 'production.py'),
@@ -110,6 +114,7 @@ def run(args):
                 (context / 'Dockerfile').write_text(f'FROM {args.runtime}\n'
                     'COPY --chmod=755 meshway-agent meshway-controller /usr/local/bin/\n'
                     'COPY --chmod=755 underlay-tests /underlay-tests\n'
+                    'COPY --chmod=755 underlay-core-tests /underlay-core-tests\n'
                     'COPY source-manifest.json /source-manifest.json\n'
                     'COPY production.py helper.py fixture.py /lab/\n'
                     'ENTRYPOINT ["python3", "-c", "import signal; signal.pause()"]\n')
@@ -149,7 +154,7 @@ def run(args):
                 for case in ('capability', 'foreign', 'orphan-capture', 'foreign-tun', 'bound-journal', 'lifetime', 'damage', 'cleanup'):
                     cid = container('test-' + case, fixture_net, 'test-' + case)
                     completed = docker('exec', '-e', 'MESHWAY_UNDERLAY_FIXTURE=1', '-e', 'MESHWAY_UNDERLAY_CASE=' + case,
-                        cid, '/underlay-tests', '--exact', 'underlay::owner::bootstrap::tests::guard_only_capability_requires_retirement_and_preserves_foreign_resources',
+                        cid, '/underlay-core-tests', '--exact', 'owner::bootstrap::tests::guard_only_capability_requires_retirement_and_preserves_foreign_resources',
                         '--ignored', '--nocapture', check=False, timeout=90)
                     (logs / ('bootstrap-' + case + '.log')).write_text(completed.stdout + completed.stderr)
                     result['behavior_tests'].append({'case': case, 'exit': completed.returncode})

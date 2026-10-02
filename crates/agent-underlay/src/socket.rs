@@ -17,10 +17,33 @@ use tokio_util::sync::WaitForCancellationFutureOwned;
 use super::{Purpose, closed, generation::Generation};
 
 #[derive(Clone)]
-pub(crate) struct SocketFactory(pub(super) Arc<Generation>);
+pub struct SocketFactory(pub(super) Arc<Generation>);
 
 impl SocketFactory {
-    pub(crate) fn generation(&self) -> u64 {
+    pub fn check_active(&self) -> io::Result<()> {
+        self.0.check_namespace()?;
+        if self.0.state.lock().map_err(|_| closed())?.active {
+            Ok(())
+        } else {
+            Err(closed())
+        }
+    }
+    pub fn retire(&self) {
+        self.0.retire();
+    }
+    pub fn cancelled(&self) -> impl Future<Output = ()> + Send + 'static {
+        self.0.cancelled.clone().cancelled_owned()
+    }
+    /// Serialized poll admission, preserving the generation's I/O fence.
+    pub fn admit<T>(&self, operation: impl FnOnce() -> T) -> io::Result<T> {
+        self.0.check_namespace()?;
+        let state = self.0.state.lock().map_err(|_| closed())?;
+        if !state.active {
+            return Err(closed());
+        }
+        Ok(operation())
+    }
+    pub fn generation(&self) -> u64 {
         self.0.reservation.generation
     }
 
@@ -49,15 +72,11 @@ impl SocketFactory {
         self.0.register(Arc::new(socket), purpose)
     }
 
-    pub(crate) async fn tcp(
-        &self,
-        purpose: Purpose,
-        remote: SocketAddr,
-    ) -> io::Result<ProtectedTcp> {
+    pub async fn tcp(&self, purpose: Purpose, remote: SocketAddr) -> io::Result<ProtectedTcp> {
         self.tcp_bound(purpose, remote, None).await
     }
 
-    pub(crate) async fn tcp_bound(
+    pub async fn tcp_bound(
         &self,
         purpose: Purpose,
         remote: SocketAddr,
@@ -101,11 +120,11 @@ impl SocketFactory {
         Ok(ProtectedTcp::new(stream, socket, self.0.clone(), purpose))
     }
 
-    pub(crate) fn udp(&self, purpose: Purpose, bind: SocketAddr) -> io::Result<ProtectedUdp> {
+    pub fn udp(&self, purpose: Purpose, bind: SocketAddr) -> io::Result<ProtectedUdp> {
         self.udp_buffered(purpose, bind, 0)
     }
 
-    pub(crate) fn udp_buffered(
+    pub fn udp_buffered(
         &self,
         purpose: Purpose,
         bind: SocketAddr,
@@ -130,11 +149,7 @@ impl SocketFactory {
         })
     }
 
-    pub(crate) fn listener(
-        &self,
-        purpose: Purpose,
-        bind: SocketAddr,
-    ) -> io::Result<ProtectedListener> {
+    pub fn listener(&self, purpose: Purpose, bind: SocketAddr) -> io::Result<ProtectedListener> {
         self.0.admit_listener()?;
         let socket = self.socket(purpose, bind, Type::STREAM, Protocol::TCP)?;
         let state = self.0.state.lock().map_err(|_| closed())?;
@@ -156,7 +171,7 @@ impl SocketFactory {
     }
 }
 
-pub(crate) struct ProtectedUdp {
+pub struct ProtectedUdp {
     udp: UdpSocket,
     socket: Arc<Socket>,
     generation: Arc<Generation>,
@@ -164,7 +179,7 @@ pub(crate) struct ProtectedUdp {
 }
 
 impl ProtectedUdp {
-    pub(crate) async fn writable(&self) -> io::Result<()> {
+    pub async fn writable(&self) -> io::Result<()> {
         tokio::select! {
             biased;
             _ = self.generation.cancelled.cancelled() => Err(closed()),
@@ -172,7 +187,7 @@ impl ProtectedUdp {
         }
     }
 
-    pub(crate) fn try_send_to(&self, bytes: &[u8], remote: SocketAddr) -> io::Result<usize> {
+    pub fn try_send_to(&self, bytes: &[u8], remote: SocketAddr) -> io::Result<usize> {
         let state = self.generation.state.lock().map_err(|_| closed())?;
         if !state.active {
             return Err(closed());
@@ -180,17 +195,17 @@ impl ProtectedUdp {
         self.generation.reservation.mark.verify(&self.socket)?;
         self.udp.try_send_to(bytes, remote)
     }
-    pub(crate) fn purpose(&self) -> Purpose {
+    pub fn purpose(&self) -> Purpose {
         self.purpose
     }
-    pub(crate) fn generation(&self) -> u64 {
+    pub fn generation(&self) -> u64 {
         self.generation.reservation.generation
     }
-    pub(crate) fn local_addr(&self) -> io::Result<SocketAddr> {
+    pub fn local_addr(&self) -> io::Result<SocketAddr> {
         self.udp.local_addr()
     }
 
-    pub(crate) async fn connect(&self, remote: SocketAddr) -> io::Result<()> {
+    pub async fn connect(&self, remote: SocketAddr) -> io::Result<()> {
         // socket2::connect is immediate for UDP and performed under the fence.
         let state = self.generation.state.lock().map_err(|_| closed())?;
         if !state.active {
@@ -200,7 +215,7 @@ impl ProtectedUdp {
         self.socket.connect(&remote.into())
     }
 
-    pub(crate) async fn send_to(&self, bytes: &[u8], remote: SocketAddr) -> io::Result<usize> {
+    pub async fn send_to(&self, bytes: &[u8], remote: SocketAddr) -> io::Result<usize> {
         loop {
             tokio::select! {
                 biased;
@@ -219,7 +234,7 @@ impl ProtectedUdp {
         }
     }
 
-    pub(crate) async fn send(&self, bytes: &[u8]) -> io::Result<usize> {
+    pub async fn send(&self, bytes: &[u8]) -> io::Result<usize> {
         loop {
             tokio::select! {
                 biased;
@@ -238,7 +253,7 @@ impl ProtectedUdp {
         }
     }
 
-    pub(crate) async fn recv_from(&self, bytes: &mut [u8]) -> io::Result<(usize, SocketAddr)> {
+    pub async fn recv_from(&self, bytes: &mut [u8]) -> io::Result<(usize, SocketAddr)> {
         loop {
             tokio::select! {
                 biased;
@@ -257,7 +272,7 @@ impl ProtectedUdp {
     }
 }
 
-pub(crate) struct ProtectedListener {
+pub struct ProtectedListener {
     listener: TcpListener,
     _socket: Arc<Socket>,
     generation: Arc<Generation>,
@@ -265,11 +280,11 @@ pub(crate) struct ProtectedListener {
 }
 
 impl ProtectedListener {
-    pub(crate) fn local_addr(&self) -> io::Result<SocketAddr> {
+    pub fn local_addr(&self) -> io::Result<SocketAddr> {
         self.listener.local_addr()
     }
 
-    pub(crate) async fn accept(&self) -> io::Result<(ProtectedTcp, SocketAddr)> {
+    pub async fn accept(&self) -> io::Result<(ProtectedTcp, SocketAddr)> {
         let (stream, address) = tokio::select! {
             biased;
             _ = self.generation.cancelled.cancelled() => return Err(closed()),
@@ -294,7 +309,7 @@ impl ProtectedListener {
     }
 }
 
-pub(crate) struct ProtectedTcp {
+pub struct ProtectedTcp {
     stream: TcpStream,
     socket: Arc<Socket>,
     generation: Arc<Generation>,
@@ -319,20 +334,20 @@ impl ProtectedTcp {
         }
     }
 
-    pub(crate) fn local_addr(&self) -> io::Result<SocketAddr> {
+    pub fn local_addr(&self) -> io::Result<SocketAddr> {
         self.stream.local_addr()
     }
-    pub(crate) fn purpose(&self) -> Purpose {
+    pub fn purpose(&self) -> Purpose {
         self.purpose
     }
-    pub(crate) fn generation(&self) -> u64 {
+    pub fn generation(&self) -> u64 {
         self.generation.reservation.generation
     }
 
-    pub(crate) fn peer_addr(&self) -> io::Result<SocketAddr> {
+    pub fn peer_addr(&self) -> io::Result<SocketAddr> {
         self.stream.peer_addr()
     }
-    pub(crate) fn set_nodelay(&self, value: bool) -> io::Result<()> {
+    pub fn set_nodelay(&self, value: bool) -> io::Result<()> {
         self.stream.set_nodelay(value)
     }
 }

@@ -21,9 +21,9 @@ use tokio::{
     time::{Instant, Sleep},
 };
 use tokio_rustls::TlsConnector;
-use tokio_util::sync::WaitForCancellationFutureOwned;
 
-use super::{Purpose, SocketFactory, closed, dns::BootstrapResolver, invalid};
+use super::{closed, invalid};
+use meshway_agent_underlay::{BootstrapResolver, Purpose, SocketFactory};
 use meshway_control_client::client::{HttpError, HttpResult, HttpTransport};
 
 trait Io: AsyncRead + AsyncWrite + Send + Unpin {}
@@ -101,7 +101,7 @@ impl ControllerHttp {
         deadline: Instant,
     ) -> io::Result<reqwest::Response> {
         if let Err(error) = self.resolver.check_system() {
-            self.factory.0.retire();
+            self.factory.retire();
             return Err(error);
         }
         if request.url().origin() != self.origin.origin() {
@@ -136,7 +136,7 @@ impl ControllerHttp {
                     last = io::Error::new(io::ErrorKind::TimedOut, "controller candidate timeout")
                 }
             }
-            if self.factory.0.cancelled.is_cancelled() {
+            if self.factory.check_active().is_err() {
                 return Err(closed());
             }
         }
@@ -208,9 +208,9 @@ impl ControllerHttp {
             stream: Box::pin(stream),
             driver: Driver(driver.0.take()),
             deadline: Box::pin(tokio::time::sleep_until(deadline)),
-            cancelled: Box::pin(self.factory.0.cancelled.clone().cancelled_owned()),
+            cancelled: Box::pin(self.factory.cancelled()),
             ended: false,
-            generation: self.factory.0.clone(),
+            generation: self.factory.clone(),
         };
         Ok(reqwest::Response::from(http::Response::from_parts(
             parts,
@@ -233,7 +233,7 @@ impl HttpTransport for ControllerHttp {
             let deadline = Instant::now() + Duration::from_secs(10);
             tokio::select! {
                 biased;
-                _ = self.factory.0.cancelled.cancelled() => Err(HttpError::Io(closed())),
+                _ = self.factory.cancelled() => Err(HttpError::Io(closed())),
                 result = tokio::time::timeout_at(deadline, self.request(request, deadline)) => match result {
                     Ok(result) => result.map_err(HttpError::Io),
                     Err(_) => Err(HttpError::Timeout),
@@ -256,9 +256,9 @@ struct ResponseStream {
     stream: Pin<Box<dyn Stream<Item = io::Result<Bytes>> + Send>>,
     driver: Driver,
     deadline: Pin<Box<Sleep>>,
-    cancelled: Pin<Box<WaitForCancellationFutureOwned>>,
+    cancelled: Pin<Box<dyn Future<Output = ()> + Send>>,
     ended: bool,
-    generation: Arc<super::generation::Generation>,
+    generation: SocketFactory,
 }
 
 impl Stream for ResponseStream {
@@ -286,8 +286,8 @@ impl Stream for ResponseStream {
             return Poll::Ready(Some(Err(error)));
         }
         let generation = this.generation.clone();
-        let state = match generation.state.lock() {
-            Ok(state) if state.active => state,
+        let result = match generation.admit(|| this.stream.as_mut().poll_next(cx)) {
+            Ok(result) => result,
             _ => {
                 this.ended = true;
                 if let Some(task) = this.driver.0.take() {
@@ -296,8 +296,6 @@ impl Stream for ResponseStream {
                 return Poll::Ready(Some(Err(closed())));
             }
         };
-        let result = this.stream.as_mut().poll_next(cx);
-        drop(state);
         if matches!(result, Poll::Ready(None) | Poll::Ready(Some(Err(_)))) {
             this.ended = true;
             if let Some(task) = this.driver.0.take() {

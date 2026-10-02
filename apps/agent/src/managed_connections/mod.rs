@@ -35,9 +35,8 @@ mod latency_history;
 mod latency_lifecycle;
 #[cfg(test)]
 mod managed_material_tests;
-pub(crate) use meshway_agent_connections::{
-    Failure, Observation, observations, profiles, session, sockets,
-};
+pub(crate) use meshway_agent_connections::{Failure, Observation};
+use meshway_agent_connections::{profiles, session, sockets};
 #[cfg(unix)]
 mod probe;
 #[cfg(unix)]
@@ -148,10 +147,11 @@ impl Drop for Manager {
 pub(crate) struct Manager {
     events: Option<tokio::sync::mpsc::Sender<crate::daemon::SessionEvent>>,
     #[cfg(target_os = "linux")]
-    underlay_owner: Option<std::sync::Arc<tokio::sync::Mutex<crate::underlay::LinuxUnderlay>>>,
+    underlay_owner:
+        Option<std::sync::Arc<tokio::sync::Mutex<meshway_agent_underlay::LinuxUnderlay>>>,
     #[cfg(target_os = "linux")]
-    underlay_dns: Option<crate::underlay::SystemDnsSnapshot>,
-    underlay_generation: Option<crate::underlay::PreparedGeneration>,
+    underlay_dns: Option<meshway_agent_underlay::SystemDnsSnapshot>,
+    underlay_generation: Option<meshway_agent_underlay::PreparedGeneration>,
     socket_protection: std::sync::Arc<dyn sockets::Protection>,
     profiles: Option<PathBuf>,
     managed_materials: Vec<meshway_protocol::ManagedVlessMaterial>,
@@ -254,14 +254,13 @@ impl Manager {
     #[allow(dead_code)]
     pub(crate) async fn install_prepared_underlay(
         &mut self,
-        generation: crate::underlay::PreparedGeneration,
-        upstreams: crate::underlay::SystemDnsSnapshot,
+        generation: meshway_agent_underlay::PreparedGeneration,
+        upstreams: meshway_agent_underlay::SystemDnsSnapshot,
     ) {
         self.withdraw(Reason::ShuttingDown).await;
-        self.socket_protection = std::sync::Arc::new(crate::underlay::ManagedProtection::new(
-            generation.factory(),
-            upstreams,
-        ));
+        self.socket_protection = std::sync::Arc::new(
+            crate::control::transport::ManagedProtection::new(generation.factory(), upstreams),
+        );
         // Drop retires the former generation only after its session joined.
         self.underlay_generation = Some(generation);
     }
@@ -269,7 +268,7 @@ impl Manager {
     #[cfg(target_os = "linux")]
     pub(crate) async fn install_linux_underlay(
         &mut self,
-        owner: std::sync::Arc<tokio::sync::Mutex<crate::underlay::LinuxUnderlay>>,
+        owner: std::sync::Arc<tokio::sync::Mutex<meshway_agent_underlay::LinuxUnderlay>>,
     ) -> Result<(), AgentError> {
         let (generation, upstreams) = {
             let owner = owner.lock().await;
@@ -775,7 +774,7 @@ impl Manager {
                 owner
                     .lock()
                     .await
-                    .activate_tun(&[crate::underlay::CapturePrefix {
+                    .activate_tun(&[meshway_agent_underlay::CapturePrefix {
                         prefix: plan.prefix.into(),
                         tun: Some(&binding),
                     }])

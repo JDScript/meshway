@@ -19,7 +19,7 @@ use super::{Purpose, SocketFactory, closed, invalid};
 /// DNS, local resolver daemons, proxy and encrypted upstreams need an adapter;
 /// they must not be converted to an unmarked system lookup.
 #[derive(Clone, PartialEq, Eq)]
-pub(crate) struct SystemDnsSnapshot {
+pub struct SystemDnsSnapshot {
     system: bool,
     // All entries are ordered alternatives in ONE trusted system/VPN resolution
     // scope. Never flatten servers from multiple split-DNS scopes into this list.
@@ -28,6 +28,7 @@ pub(crate) struct SystemDnsSnapshot {
 }
 
 impl SystemDnsSnapshot {
+    #[cfg(test)]
     pub(crate) fn plain_servers(servers: Vec<SocketAddr>) -> io::Result<Self> {
         if servers.is_empty()
             || servers.iter().any(|s| {
@@ -50,7 +51,7 @@ impl SystemDnsSnapshot {
 
     /// Preserve files-before-DNS and Docker's actual embedded resolver. Never
     /// substitute a public server or flatten systemd-resolved per-link scopes.
-    pub(crate) fn from_system() -> io::Result<Self> {
+    pub fn from_system() -> io::Result<Self> {
         if std::path::Path::new("/run/systemd/resolve").exists() {
             return Err(invalid(
                 "systemd-resolved split/stub DNS requires a protected per-link adapter",
@@ -159,37 +160,6 @@ impl SystemDnsSnapshot {
         }
         Ok(snapshot)
     }
-
-    /// Only a plain resolv.conf topology. Preserve ordered system/VPN servers;
-    /// never bind a physical interface or infer a public resolver.
-    pub(crate) fn from_plain_system() -> io::Result<Self> {
-        if std::path::Path::new("/run/systemd/resolve").exists() {
-            return Err(invalid(
-                "systemd-resolved split/stub DNS requires a protected per-link adapter",
-            ));
-        }
-        let text = std::fs::read_to_string("/etc/resolv.conf")?;
-        let mut servers = Vec::new();
-        for line in text.lines() {
-            let mut words = line
-                .split(['#', ';'])
-                .next()
-                .unwrap_or_default()
-                .split_whitespace();
-            if words.next() == Some("nameserver") {
-                let ip: IpAddr = words
-                    .next()
-                    .ok_or_else(|| invalid("missing nameserver"))?
-                    .parse()
-                    .map_err(|_| invalid("non-IP nameserver"))?;
-                if words.next().is_some() {
-                    return Err(invalid("invalid nameserver line"));
-                }
-                servers.push(SocketAddr::new(ip, 53));
-            }
-        }
-        Self::plain_servers(servers)
-    }
 }
 
 fn bounded_system_file(path: &str) -> io::Result<String> {
@@ -209,14 +179,14 @@ struct Cached {
     expires: Instant,
 }
 
-pub(crate) struct BootstrapResolver {
+pub struct BootstrapResolver {
     factory: SocketFactory,
     upstreams: SystemDnsSnapshot,
     cache: Mutex<HashMap<(Purpose, Name, RecordType), Cached>>,
 }
 
 impl BootstrapResolver {
-    pub(super) fn check_system(&self) -> io::Result<()> {
+    pub fn check_system(&self) -> io::Result<()> {
         if self.upstreams.system && SystemDnsSnapshot::from_system()? != self.upstreams {
             self.factory.0.retire();
             return Err(invalid(
@@ -225,7 +195,7 @@ impl BootstrapResolver {
         }
         Ok(())
     }
-    pub(crate) fn new(factory: SocketFactory, upstreams: SystemDnsSnapshot) -> Self {
+    pub fn new(factory: SocketFactory, upstreams: SystemDnsSnapshot) -> Self {
         Self {
             factory,
             upstreams,
@@ -233,11 +203,7 @@ impl BootstrapResolver {
         }
     }
 
-    pub(crate) async fn resolve(
-        &self,
-        purpose: Purpose,
-        hostname: &str,
-    ) -> io::Result<Vec<IpAddr>> {
+    pub async fn resolve(&self, purpose: Purpose, hostname: &str) -> io::Result<Vec<IpAddr>> {
         if let Err(error) = self.check_system() {
             self.factory.0.retire();
             return Err(error);

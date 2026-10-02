@@ -3,27 +3,65 @@ use std::{io, net::SocketAddr, sync::Arc, time::Duration};
 
 use tokio::io::AsyncWriteExt;
 
-use super::{
-    dns::{BootstrapResolver, SystemDnsSnapshot},
-    http::ControllerHttp,
-    *,
+use super::{ManagedProtection, http::ControllerHttp};
+use meshway_agent_underlay::{
+    BootstrapResolver, CapturePrefix, LinuxUnderlay, Preparation, PreparedGeneration, Purpose,
+    SocketFactory, SystemDnsSnapshot,
 };
 use meshway_control_client::{
     client::{ApiOpError, HttpClient, HttpTransport},
     types::EnrollAgentRequest,
 };
 
-fn reservation(generation: u64, foreign_bits: u32) -> Reservation {
-    Reservation {
-        owner: "isolated-rust-fixture".into(),
-        generation,
-        mark: MarkReservation::new(0x4d570000, 0xffff0000).unwrap(),
-        foreign_bits,
-        first_priority: 18000,
-        last_priority: 18003,
-        capture_tables: vec![18401, 18402],
-        mesh_sink_table: None,
+type FixtureOwner = tokio::sync::Mutex<Option<(tempfile::TempDir, LinuxUnderlay)>>;
+static OWNER: std::sync::OnceLock<FixtureOwner> = std::sync::OnceLock::new();
+static TRANSPORTS: std::sync::Mutex<Vec<Arc<ControllerHttp>>> = std::sync::Mutex::new(Vec::new());
+
+async fn prepared() -> PreparedGeneration {
+    let mut fixture = OWNER
+        .get_or_init(|| tokio::sync::Mutex::new(None))
+        .lock()
+        .await;
+    if let Some((_, owner)) = fixture.as_ref() {
+        return owner.socket_generation().await.unwrap();
     }
+    let directory = tempfile::Builder::new().tempdir_in("/run").unwrap();
+    let mut owner = LinuxUnderlay::prepare(Preparation {
+        state_directory: directory.path(),
+        identity: "isolated-app-fixture",
+        network: "fixture-network",
+    })
+    .await
+    .unwrap();
+    owner
+        .capture(&[
+            CapturePrefix {
+                prefix: "172.30.247.20/32".parse().unwrap(),
+                tun: None,
+            },
+            CapturePrefix {
+                prefix: "fd74:6d77:247::20/128".parse().unwrap(),
+                tun: None,
+            },
+        ])
+        .await
+        .unwrap();
+    // The test process keeps the real owner and private directory. Factories
+    // retain its namespace lease; no reservation or device identity is fabricated.
+    let generation = owner.socket_generation().await.unwrap();
+    *fixture = Some((directory, owner));
+    generation
+}
+
+async fn finish() {
+    let transports = std::mem::take(&mut *TRANSPORTS.lock().unwrap());
+    for transport in &transports {
+        transport.join().await;
+    }
+    drop(transports);
+    let (directory, owner) = OWNER.get().unwrap().lock().await.take().unwrap();
+    owner.relinquish().await.unwrap();
+    drop(directory);
 }
 
 fn native_config(version: u8, phase: usize, server: bool) -> meshway_dataplane::LabConfig {
@@ -128,33 +166,26 @@ async fn native_peer() {
 #[tokio::test]
 #[ignore = "requires disposable Docker native peer plus dual-stack capture"]
 async fn native_runtime_paths() {
+    native_runtime_paths_inner().await;
+    finish().await;
+}
+
+async fn native_runtime_paths_inner() {
     assert_eq!(
         std::env::var("MESHWAY_UNDERLAY_FIXTURE").as_deref(),
         Ok("1")
     );
     for version in [4, 6] {
         for phase in 0..4 {
-            let generation = PreparedGeneration::prepare(reservation(100 + phase as u64, 0))
-                .await
-                .unwrap();
+            let generation = prepared().await;
             let factory = generation.factory();
-            let upstream = if version == 4 {
-                "172.30.247.20:41864"
-            } else {
-                "[fd74:6d77:247::20]:41864"
-            }
-            .parse()
-            .unwrap();
-            let protection = Arc::new(ManagedProtection::new(
-                factory,
-                SystemDnsSnapshot::plain_servers(vec![upstream]).unwrap(),
-            ));
+            let protection = Arc::new(ManagedProtection::new(factory, system_dns(version)));
             let mut config = native_config(version, phase, false);
             // Same protected bootstrap seam used by Manager::resolve_targets;
             // Runtime receives only the resulting numeric candidate.
             for candidate in &mut config.outgoing {
                 let endpoint: SocketAddr = candidate.endpoint.parse().unwrap();
-                let targets = crate::managed_connections::sockets::Protection::resolve(
+                let targets = meshway_agent_connections::sockets::Protection::resolve(
                     protection.as_ref(),
                     &format!("v{version}.underlay.fixture"),
                     endpoint.port(),
@@ -231,13 +262,8 @@ async fn native_runtime_paths() {
                     .await
                     .is_err()
             );
-            let next = PreparedGeneration::prepare(reservation(200 + phase as u64, 0))
-                .await
-                .unwrap();
-            let protection = Arc::new(ManagedProtection::new(
-                next.factory(),
-                SystemDnsSnapshot::plain_servers(vec![upstream]).unwrap(),
-            ));
+            let next = prepared().await;
+            let protection = Arc::new(ManagedProtection::new(next.factory(), system_dns(version)));
             runtime
                 .replace_native_socket_factory(protection)
                 .await
@@ -277,6 +303,11 @@ async fn native_runtime_paths() {
 #[tokio::test]
 #[ignore = "requires disposable Docker prepared generation"]
 async fn managed_native_owner_lifecycle() {
+    managed_native_owner_lifecycle_inner().await;
+    finish().await;
+}
+
+async fn managed_native_owner_lifecycle_inner() {
     use crate::managed_connections::{
         Manager,
         tests::{fixture_at_port, snapshot},
@@ -294,12 +325,9 @@ async fn managed_native_owner_lifecycle() {
             26002
         };
         let (server, key, _, _) = fixture_at_port(transport, port);
-        let generation = PreparedGeneration::prepare(reservation(300, 0))
-            .await
-            .unwrap();
+        let generation = prepared().await;
         let old = generation.factory();
-        let upstreams =
-            SystemDnsSnapshot::plain_servers(vec!["172.30.247.20:41864".parse().unwrap()]).unwrap();
+        let upstreams = system_dns(4);
         let mut manager = Manager::new(None, Duration::from_secs(30));
         manager
             .install_prepared_underlay(generation, upstreams)
@@ -312,7 +340,7 @@ async fn managed_native_owner_lifecycle() {
             )
             .await;
         assert_eq!(manager.observation().state, ConnectionRuntimeState::Applied);
-        old.0.retire();
+        old.retire();
         tokio::time::timeout(Duration::from_secs(2), async {
             while manager.observation().state == ConnectionRuntimeState::Applied {
                 tokio::task::yield_now().await;
@@ -320,16 +348,8 @@ async fn managed_native_owner_lifecycle() {
         })
         .await
         .unwrap();
-        let next = PreparedGeneration::prepare(reservation(301, 0))
-            .await
-            .unwrap();
-        manager
-            .install_prepared_underlay(
-                next,
-                SystemDnsSnapshot::plain_servers(vec!["172.30.247.20:41864".parse().unwrap()])
-                    .unwrap(),
-            )
-            .await;
+        let next = prepared().await;
+        manager.install_prepared_underlay(next, system_dns(4)).await;
         manager
             .reconcile(snapshot(server), key, tokio::time::Instant::now())
             .await;
@@ -340,16 +360,17 @@ async fn managed_native_owner_lifecycle() {
     }
 }
 
-fn resolver(factory: &SocketFactory, version: u8) -> BootstrapResolver {
+fn system_dns(version: u8) -> SystemDnsSnapshot {
     let address = if version == 4 {
-        "172.30.247.20:41864"
+        "172.30.247.20"
     } else {
-        "[fd74:6d77:247::20]:41864"
+        "fd74:6d77:247::20"
     };
-    BootstrapResolver::new(
-        factory.clone(),
-        SystemDnsSnapshot::plain_servers(vec![address.parse().unwrap()]).unwrap(),
-    )
+    std::fs::write("/etc/resolv.conf", format!("nameserver {address}\n")).unwrap();
+    SystemDnsSnapshot::from_system().unwrap()
+}
+fn resolver(factory: &SocketFactory, version: u8) -> BootstrapResolver {
+    BootstrapResolver::new(factory.clone(), system_dns(version))
 }
 
 fn transport(
@@ -365,7 +386,7 @@ fn transport(
             roots.add(certificate.unwrap()).unwrap();
         }
     }
-    Arc::new(
+    let transport = Arc::new(
         ControllerHttp::new(
             factory.clone(),
             resolver(factory, version),
@@ -373,7 +394,9 @@ fn transport(
             roots,
         )
         .unwrap(),
-    )
+    );
+    TRANSPORTS.lock().unwrap().push(transport.clone());
+    transport
 }
 
 async fn request(
@@ -391,13 +414,16 @@ async fn request(
 #[tokio::test]
 #[ignore = "requires isolated Docker RPDB/default capture and observer"]
 async fn production_paths() {
+    production_paths_inner().await;
+    finish().await;
+}
+
+async fn production_paths_inner() {
     assert_eq!(
         std::env::var("MESHWAY_UNDERLAY_FIXTURE").as_deref(),
         Ok("1")
     );
-    let generation = PreparedGeneration::prepare(reservation(1, 0))
-        .await
-        .unwrap();
+    let generation = prepared().await;
     let factory = generation.factory();
     for version in [4, 6] {
         let host = format!("v{version}.underlay.fixture");
@@ -502,30 +528,6 @@ async fn production_paths() {
         commanded.unwrap();
     }
 
-    // Preserve external low bits and actually traverse the original VPN table.
-    let vpn = PreparedGeneration::prepare(reservation(2, 0x20))
-        .await
-        .unwrap();
-    let vpn_factory = vpn.factory();
-    for (version, expected) in [(4, "172.30.247.11"), (6, "fd74:6d77:247::11")] {
-        let origin = format!("http://v{version}.underlay.fixture:41861");
-        let client = transport(&vpn_factory, &origin, version, true);
-        let text = request(&client, &format!("{origin}/actual"))
-            .await
-            .unwrap()
-            .text()
-            .await
-            .unwrap();
-        assert!(text.contains(expected), "wrong VPN source: {text}");
-    }
-    vpn.retire();
-    assert!(
-        vpn_factory
-            .tcp(Purpose::Controller, "172.30.247.20:41861".parse().unwrap())
-            .await
-            .is_err()
-    );
-
     let origin = "http://v4.underlay.fixture:41861";
     let client = transport(&factory, origin, 4, true);
     let response = request(&client, &format!("{origin}/slow")).await.unwrap();
@@ -597,9 +599,7 @@ async fn production_paths() {
             .is_err()
     );
 
-    let new_generation = PreparedGeneration::prepare(reservation(3, 0))
-        .await
-        .unwrap();
+    let new_generation = prepared().await;
     let new_factory = new_generation.factory();
     let new_client = transport(&new_factory, origin, 4, true);
     assert!(
@@ -628,14 +628,14 @@ async fn production_paths() {
     for host in ["172.30.247.20", "fd74:6d77:247::20"] {
         let ip: std::net::IpAddr = host.parse().unwrap();
         for port in [41861, 41862, 41864] {
-            assert!(
+            assert!(!matches!(
                 tokio::time::timeout(
                     Duration::from_millis(300),
                     tokio::net::TcpStream::connect(SocketAddr::new(ip, port))
                 )
-                .await
-                .is_err()
-            );
+                .await,
+                Ok(Ok(_))
+            ));
         }
         for port in [41864, 41865] {
             let socket = tokio::net::UdpSocket::bind(SocketAddr::new(
@@ -648,10 +648,13 @@ async fn production_paths() {
             ))
             .await
             .unwrap();
-            socket
+            if socket
                 .send_to(b"ordinary-captured", SocketAddr::new(ip, port))
                 .await
-                .unwrap();
+                .is_err()
+            {
+                continue; // The owner's explicit reject-only capture has no fall-through.
+            }
             let mut bytes = [0; 64];
             assert!(
                 tokio::time::timeout(Duration::from_millis(100), socket.recv_from(&mut bytes))
@@ -661,134 +664,4 @@ async fn production_paths() {
         }
     }
     println!("production socket/HTTP/TLS/DNS/generation paths verified");
-}
-
-#[tokio::test]
-#[ignore = "runner drops capabilities and UID in an isolated namespace"]
-async fn permission_denied() {
-    assert_eq!(
-        std::env::var("MESHWAY_UNDERLAY_FIXTURE").as_deref(),
-        Ok("1")
-    );
-    let error = match PreparedGeneration::prepare(reservation(99, 0)).await {
-        Ok(_) => panic!("SO_MARK unexpectedly permitted after dropping capabilities"),
-        Err(error) => error,
-    };
-    assert_eq!(error.kind(), io::ErrorKind::PermissionDenied);
-}
-
-#[tokio::test]
-#[ignore = "isolated namespace installs an aliased external reserve-table rule"]
-async fn alias_capture_reference_rejected() {
-    assert_eq!(
-        std::env::var("MESHWAY_UNDERLAY_FIXTURE").as_deref(),
-        Ok("1")
-    );
-    let error = match PreparedGeneration::prepare(reservation(100, 0)).await {
-        Ok(_) => panic!("aliased external reserve-table reference was admitted"),
-        Err(error) => error,
-    };
-    assert!(
-        error
-            .to_string()
-            .contains("owned capture table referenced outside guarded block"),
-        "{error}"
-    );
-}
-
-#[tokio::test]
-#[ignore = "isolated namespace provides SERVFAIL primary and configured DNS alternatives"]
-async fn dns_configured_backup_paths() {
-    assert_eq!(
-        std::env::var("MESHWAY_UNDERLAY_FIXTURE").as_deref(),
-        Ok("1")
-    );
-    for version in [4, 6] {
-        let generation = PreparedGeneration::prepare(reservation(200 + version, 0))
-            .await
-            .unwrap();
-        let factory = generation.factory();
-        let host: std::net::IpAddr = if version == 4 {
-            "172.30.247.20"
-        } else {
-            "fd74:6d77:247::20"
-        }
-        .parse()
-        .unwrap();
-        let make = |backup_port| {
-            BootstrapResolver::new(
-                factory.clone(),
-                SystemDnsSnapshot::plain_servers(vec![
-                    SocketAddr::new(host, 41866),
-                    SocketAddr::new(host, backup_port),
-                ])
-                .unwrap(),
-            )
-        };
-        let healthy = make(41864);
-        assert_eq!(
-            healthy
-                .resolve(Purpose::Controller, "backup.underlay.fixture")
-                .await
-                .unwrap()
-                .len(),
-            2
-        );
-        // A truncated answer at the configured backup uses protected TCP too.
-        assert_eq!(
-            healthy
-                .resolve(Purpose::Controller, "tcpbackup.underlay.fixture")
-                .await
-                .unwrap()
-                .len(),
-            2
-        );
-        let failing = make(41867);
-        let error = failing
-            .resolve(Purpose::Controller, "allfail.underlay.fixture")
-            .await
-            .unwrap_err();
-        assert_eq!(
-            error.to_string(),
-            format!(
-                "bootstrap DNS response: {}",
-                hickory_proto::op::ResponseCode::ServFail
-            )
-        );
-        for (name, code) in [
-            (
-                "nxdomainbackup.underlay.fixture",
-                hickory_proto::op::ResponseCode::NXDomain,
-            ),
-            (
-                "refused.underlay.fixture",
-                hickory_proto::op::ResponseCode::Refused,
-            ),
-        ] {
-            let error = healthy
-                .resolve(Purpose::Controller, name)
-                .await
-                .unwrap_err();
-            assert_eq!(error.to_string(), format!("bootstrap DNS response: {code}"));
-        }
-        let waiting = healthy.resolve(Purpose::Controller, "cancelbackup.underlay.fixture");
-        tokio::pin!(waiting);
-        assert!(
-            tokio::time::timeout(Duration::from_millis(100), &mut waiting)
-                .await
-                .is_err()
-        );
-        generation.retire();
-        assert_eq!(
-            tokio::time::timeout(Duration::from_secs(1), waiting)
-                .await
-                .unwrap()
-                .unwrap_err()
-                .kind(),
-            io::ErrorKind::ConnectionAborted
-        );
-    }
-    println!(
-        "UR2 protected same-scope DNS fallback, terminal responses and generation cancel verified"
-    );
 }

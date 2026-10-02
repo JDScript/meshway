@@ -83,12 +83,7 @@ async fn guard_only_capability_requires_retirement_and_preserves_foreign_resourc
         owner.core.remove_one(3).await.unwrap();
         drop(owner); // interruption after an exactly evidenced deletion
         let owner = BootstrapUnderlay::prepare(prepare()).await.unwrap();
-        assert!(
-            owner
-                .channel(reqwest::Url::parse("http://127.0.0.1:8420").unwrap())
-                .await
-                .is_err()
-        );
+        assert!(owner.controller_generation().await.is_err());
         let bound = owner
             .bind(Preparation {
                 state_directory: directory.path(),

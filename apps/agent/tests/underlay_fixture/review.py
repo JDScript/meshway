@@ -41,8 +41,8 @@ def run(args):
         previous[sig] = signal.signal(sig, stop)
 
     def case(container, name, extra=(), module='review_tests', ignored=True):
-        output = docker('exec', '-e', 'MESHWAY_UNDERLAY_FIXTURE=1', *extra, container, '/underlay-tests', '--exact',
-                       'underlay::owner::' + module + '::' + name, *(['--ignored'] if ignored else []), '--nocapture', check=False, timeout=90)
+        output = docker('exec', '-e', 'MESHWAY_UNDERLAY_FIXTURE=1', *extra, container, '/underlay-core-tests', '--exact',
+                       'owner::' + module + '::' + name, *(['--ignored'] if ignored else []), '--nocapture', check=False, timeout=90)
         row = {'name': name, 'exit': output.returncode, 'stdout': output.stdout, 'stderr': output.stderr}
         result['cases'].append(row)
         (directory / f'{len(result["cases"]):02}-{name}.json').write_text(json.dumps(row, indent=2))
@@ -89,11 +89,11 @@ def run(args):
         case(client, 'legacy_and_damage_refused', module='cookie_tests')
         unsupported = docker('exec', '-e', 'MESHWAY_UNDERLAY_FIXTURE=1', client, 'strace',
             '-f', '-e', 'trace=getsockopt', '-e', 'inject=getsockopt:error=ENOPROTOOPT:when=1', '-o', '/run/cookie-unsupported.log',
-            '/underlay-tests', '--exact', 'underlay::owner::cookie_tests::cookie_unsupported', '--ignored', '--nocapture', check=False, timeout=30)
+            '/underlay-core-tests', '--exact', 'owner::cookie_tests::cookie_unsupported', '--ignored', '--nocapture', check=False, timeout=30)
         result['cookie_unsupported'] = {'exit': unsupported.returncode, 'stdout': unsupported.stdout, 'stderr': unsupported.stderr}
         unsupported_trace = docker('exec', client, 'cat', '/run/cookie-unsupported.log').stdout
         (directory / 'cookie-unsupported.log').write_text(unsupported_trace)
-        assert unsupported.returncode == 0 and 'SO_NETNS_COOKIE' in unsupported_trace and 'ENOPROTOOPT' in unsupported_trace, result['cookie_unsupported']
+        assert unsupported.returncode == 0 and '1 passed' in unsupported.stdout and 'SO_NETNS_COOKIE' in unsupported_trace and 'ENOPROTOOPT' in unsupported_trace, result['cookie_unsupported']
         for boundary in ['archived', 'fresh-journal']:
             case(client, 'scope_crash_stage', ['-e', 'MESHWAY_UNDERLAY_SCOPE_BOUNDARY=' + boundary,
                 '-e', 'MESHWAY_UNDERLAY_TEST_SCOPE_EXIT=' + boundary], module='cookie_tests')
@@ -107,7 +107,7 @@ def run(args):
                       '-e', 'MESHWAY_UNDERLAY_TEST_COMMIT=' + str(boundary)])
                 case(client, 'operation_crash_recover', ['-e', 'MESHWAY_UNDERLAY_TEST_RECOVER_KIND=' + kind])
         docker('exec', '-d', '-e', 'MESHWAY_UNDERLAY_FIXTURE=1', client, 'sh', '-c',
-               '/underlay-tests --exact underlay::owner::review_tests::singleton_hold --ignored --nocapture > /run/singleton-holder.log 2>&1; echo $? > /run/singleton-holder.exit')
+               '/underlay-core-tests --exact owner::review_tests::singleton_hold --ignored --nocapture > /run/singleton-holder.log 2>&1; echo $? > /run/singleton-holder.exit')
         deadline = time.monotonic() + 15
         while time.monotonic() < deadline:
             if docker('exec', client, 'test', '-f', '/run/underlay-singleton-ready', check=False).returncode == 0:
@@ -132,6 +132,7 @@ def run(args):
         else:
             raise RuntimeError('singleton holder did not release/restore ownership')
         result['singleton_holder'] = docker('exec', client, 'cat', '/run/singleton-holder.log').stdout
+        assert '1 passed' in result['singleton_holder'], 'singleton holder test was not collected'
         # Remove only our owned containers before recreating the namespace.
         for name in [other, client]:
             assert mechanism.owns(json.loads(docker('inspect', name).stdout), owner)

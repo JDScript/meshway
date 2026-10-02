@@ -298,8 +298,8 @@ async fn scope_create() {
         .retain_mesh_sink("198.18.76.0/24".parse().unwrap())
         .await
         .unwrap();
-    let _tun = crate::managed_dataplane::tun::Tun::open_with_underlay(
-        &crate::managed_dataplane::TunOptions {
+    let _tun = super::test_support::Tun::open_with_underlay(
+        &super::test_support::TunOptions {
             name: "mwoldscope0".into(),
             mtu: 1000,
         },

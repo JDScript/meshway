@@ -76,8 +76,7 @@ async fn controller_bootstrap_recovers_identity_and_disabled_scope() {
         })
         .await
         .unwrap();
-        let mut channel = owner
-            .channel(reqwest::Url::parse(&origin).unwrap())
+        let mut channel = BootstrapChannel::prepare(&owner, reqwest::Url::parse(&origin).unwrap())
             .await
             .unwrap();
         let response = channel

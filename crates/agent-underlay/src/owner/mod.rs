@@ -21,36 +21,37 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use tokio::{io::AsyncReadExt, process::Command};
 
+use super::generation::{MarkReservation, Reservation};
 use super::{
-    ControllerChannel, MarkReservation, PreparedGeneration, Reservation, SystemDnsSnapshot,
+    PreparedGeneration, SystemDnsSnapshot,
     generation::{table_identity, validate_rules},
     invalid,
 };
 
 /// Supplied from enrolled identity and the selected network, before capture.
 /// The directory is existing private Agent state, not a caller-chosen RPDB ID.
-pub(crate) struct Preparation<'a> {
-    pub(crate) state_directory: &'a Path,
-    pub(crate) identity: &'a str,
-    pub(crate) network: &'a str,
+pub struct Preparation<'a> {
+    pub state_directory: &'a Path,
+    pub identity: &'a str,
+    pub network: &'a str,
 }
 
 /// Only a canonical prefix and an optional *already owned* TUN. Neither a
 /// gateway nor a physical-interface bypass is expressible through this API.
-pub(crate) struct CapturePrefix<'a> {
-    pub(crate) prefix: IpNet,
-    pub(crate) tun: Option<&'a TunBinding>,
+pub struct CapturePrefix<'a> {
+    pub prefix: IpNet,
+    pub tun: Option<&'a TunBinding>,
 }
 
 /// Created from the actual owned TUN device; callers cannot fabricate an
 /// interface name/index pair from policy or an external request.
-pub(crate) struct TunBinding {
+pub struct TunBinding {
     name: String,
     index: u32,
 }
 
 impl TunBinding {
-    pub(crate) fn from_created_device(device: &meshway_agent_tun::Device) -> io::Result<Self> {
+    pub fn from_created_device(device: &meshway_agent_tun::Device) -> io::Result<Self> {
         let proof = device.identity()?;
         let name = proof.name()?;
         verify_tun(&name)?;
@@ -320,6 +321,7 @@ pub(crate) struct Transactions {
 
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(from = "BoundJournal", into = "BoundJournal")]
+#[doc(hidden)]
 pub(crate) struct Journal {
     version: u8,
     identity: String,
@@ -529,7 +531,7 @@ pub(crate) struct NamespaceOwner<J> {
 pub(crate) type LinuxUnderlay = NamespaceOwner<Journal>;
 
 mod bootstrap;
-pub(crate) use bootstrap::{BootstrapChannel, BootstrapPreparation, BootstrapUnderlay};
+pub use bootstrap::{BootstrapPreparation, BootstrapUnderlay};
 
 #[cfg(test)]
 struct InstallCheckpoint {
@@ -888,7 +890,7 @@ fn select_reservation(
 }
 
 impl LinuxUnderlay {
-    pub(crate) async fn prepare(input: Preparation<'_>) -> io::Result<Self> {
+    pub async fn prepare(input: Preparation<'_>) -> io::Result<Self> {
         if input.identity.is_empty()
             || input.network.is_empty()
             || input.identity.len() > 256
@@ -1091,19 +1093,11 @@ impl LinuxUnderlay {
         Ok(owner)
     }
 
-    pub(crate) async fn socket_generation(&self) -> io::Result<PreparedGeneration> {
+    pub async fn socket_generation(&self) -> io::Result<PreparedGeneration> {
         self.prepare_generation(false).await
     }
 
-    pub(crate) async fn controller_channel(
-        &self,
-        origin: reqwest::Url,
-    ) -> io::Result<ControllerChannel> {
-        let generation = self.socket_generation().await?;
-        ControllerChannel::from_prepared(generation, origin, SystemDnsSnapshot::from_system()?)
-    }
-
-    pub(crate) fn system_dns(&self) -> io::Result<SystemDnsSnapshot> {
+    pub fn system_dns(&self) -> io::Result<SystemDnsSnapshot> {
         SystemDnsSnapshot::from_system()
     }
 }
@@ -1799,7 +1793,7 @@ impl LinuxUnderlay {
     /// Every prefix receives a persistent unreachable sink before lookup. Drop,
     /// lease withdrawal and process death retain that sink. No legacy route is
     /// adopted or removed here; migration must present its real ownership proof.
-    pub(crate) async fn capture(&mut self, prefixes: &[CapturePrefix<'_>]) -> io::Result<()> {
+    pub async fn capture(&mut self, prefixes: &[CapturePrefix<'_>]) -> io::Result<()> {
         self.recover_operation().await?;
         self.verify().await?;
         if self
@@ -1963,7 +1957,7 @@ impl LinuxUnderlay {
     /// packets (which deliberately do not match local iif-lo profile capture).
     /// This never routes an internal socket into TUN; overlapping underlay and
     /// Mesh addresses remain unreachable. It is not a destination bypass.
-    pub(crate) async fn retain_mesh_sink(&mut self, prefix: IpNet) -> io::Result<()> {
+    pub async fn retain_mesh_sink(&mut self, prefix: IpNet) -> io::Result<()> {
         self.recover_operation().await?;
         self.verify().await?;
         if prefix.prefix_len() == 0 || prefix != prefix.trunc() {
@@ -1990,7 +1984,7 @@ impl LinuxUnderlay {
         self.verify().await
     }
 
-    pub(crate) async fn install_tun(&mut self, prefixes: &[CapturePrefix<'_>]) -> io::Result<()> {
+    pub async fn install_tun(&mut self, prefixes: &[CapturePrefix<'_>]) -> io::Result<()> {
         self.recover_operation().await?;
         if self
             .journal
@@ -2006,7 +2000,7 @@ impl LinuxUnderlay {
 
     /// Packet owner must fence/join before calling this. It never retires the
     /// independent controller recovery owner or removes Mesh unreachable sinks.
-    pub(crate) async fn withdraw_tun(&mut self) -> io::Result<()> {
+    pub async fn withdraw_tun(&mut self) -> io::Result<()> {
         self.verify().await?;
         for index in (0..self.journal.installed.len()).rev() {
             if matches!(self.journal.installed[index].resource, Resource::Tun { .. }) {
@@ -2019,7 +2013,7 @@ impl LinuxUnderlay {
     /// Reattach a newly owned TUN after packet/carrier withdrawal. Prefixes and
     /// existing capture rules cannot change through this seam: all old sinks
     /// remain in force while preparing, installing, or rolling back new routes.
-    pub(crate) async fn activate_tun(&mut self, prefixes: &[CapturePrefix<'_>]) -> io::Result<()> {
+    pub async fn activate_tun(&mut self, prefixes: &[CapturePrefix<'_>]) -> io::Result<()> {
         self.recover_operation().await?;
         self.verify().await?;
         if self
@@ -2080,7 +2074,7 @@ impl LinuxUnderlay {
 
     /// Explicit cancellation of ALL capture, not lease withdrawal. Caller must
     /// first drop controller and carrier retirement owners (not just factories).
-    pub(crate) async fn relinquish(mut self) -> io::Result<()> {
+    pub async fn relinquish(mut self) -> io::Result<()> {
         if Arc::strong_count(&self.lease) != 1 {
             return Err(invalid(
                 "live socket owners still hold namespace reservation",
@@ -2157,6 +2151,10 @@ mod tun_recovery_tests;
 #[path = "tests/lifetime.rs"]
 mod cookie_tests;
 
+#[cfg(test)]
+#[path = "tests/support.rs"]
+mod test_support;
+
 async fn link_index(name: &str) -> io::Result<u32> {
     let links: Vec<Value> = serde_json::from_slice(
         &ip(vec![
@@ -2181,6 +2179,7 @@ async fn link_index(name: &str) -> io::Result<u32> {
 
 #[cfg(test)]
 mod tests {
+    use super::test_support as support;
     use super::*;
 
     #[test]
@@ -2303,8 +2302,7 @@ mod tests {
         assert!(owner.socket_generation().await.is_err());
         std::fs::write("/etc/iproute2/rt_tables", aliases).unwrap();
         let controller = owner.socket_generation().await.unwrap();
-        let channel = owner
-            .controller_channel(reqwest::Url::parse("http://underlay-owner-server:41861/").unwrap())
+        let channel = support::ControllerTestChannel::prepare(&owner)
             .await
             .unwrap();
         let carrier = owner.socket_generation().await.unwrap();
@@ -2364,26 +2362,7 @@ mod tests {
             ])
             .await
             .unwrap();
-        async fn control_request(channel: &ControllerChannel) {
-            let error = channel
-                .client()
-                .with_api_key("fixture-only")
-                .enroll_agent(meshway_control_client::types::EnrollAgentRequest {
-                    agent_version: "namespace-owner-fixture".into(),
-                    name: "isolated".into(),
-                    node_credential: "a".repeat(64),
-                })
-                .await
-                .unwrap_err();
-            match error {
-                meshway_control_client::client::ApiOpError::Api(error) => {
-                    assert_eq!(error.status, 401);
-                    assert!(error.raw_body.is_empty());
-                }
-                error => panic!("prepared controller channel failed: {error:?}"),
-            }
-        }
-        control_request(&channel).await;
+        channel.request().await.unwrap();
         for address in ["172.30.247.20:41861", "[fd74:6d77:247::20]:41861"] {
             let remote = address.parse().unwrap();
             let socket = controller_factory
@@ -2424,7 +2403,7 @@ mod tests {
         // deliberately absent here: this API cannot revive it or confer access.
         let replacement = owner.socket_generation().await.unwrap();
         carrier.retire();
-        control_request(&channel).await;
+        channel.request().await.unwrap();
         assert!(
             old_factory
                 .tcp(
@@ -2625,11 +2604,9 @@ mod tests {
             std::env::var("MESHWAY_UNDERLAY_FIXTURE").as_deref(),
             Ok("1")
         );
-        // This separate kernel-resource case uses the existing typed PacketPlan
-        // fixture's loopback availability allocator; it is not part of the outer
-        // socket syscall audit and never sends ordinary egress traffic.
-        let (payloads, _) = crate::managed_dataplane::tests::fixtures(2);
-        let plan = crate::managed_dataplane::PacketPlan::compile(&payloads[0], 1000).unwrap();
+        // Kernel-resource orchestration over the public Device API. The normal
+        // App bootstrap and packet lifecycle are exercised separately by main_loop.
+        let plan = tun_recovery_tests::plan();
         let state = tempfile::Builder::new().tempdir_in("/run").unwrap();
         std::fs::set_permissions(state.path(), std::fs::Permissions::from_mode(0o700)).unwrap();
         let original4 = objects(4, true).await.unwrap();
@@ -2642,14 +2619,13 @@ mod tests {
         .await
         .unwrap();
         let control = owner.socket_generation().await.unwrap();
-        let options = crate::managed_dataplane::TunOptions {
+        let options = support::TunOptions {
             name: "mwowner0".into(),
             mtu: 1000,
         };
-        let tun =
-            crate::managed_dataplane::tun::Tun::open_with_underlay(&options, &plan, &mut owner)
-                .await
-                .unwrap();
+        let tun = support::Tun::open_with_underlay(&options, &plan, &mut owner)
+            .await
+            .unwrap();
         let _binding = tun.underlay_binding().unwrap();
         let lookup = ip(vec![
             "-j".into(),
@@ -2707,8 +2683,8 @@ mod tests {
             .unwrap();
             assert_eq!(socket.local_addr().unwrap().ip(), expected);
         }
-        let replacement = crate::managed_dataplane::tun::Tun::open_with_underlay(
-            &crate::managed_dataplane::TunOptions {
+        let replacement = support::Tun::open_with_underlay(
+            &support::TunOptions {
                 name: "mwowner1".into(),
                 mtu: 1000,
             },

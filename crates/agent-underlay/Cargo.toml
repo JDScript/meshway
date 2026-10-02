@@ -1,0 +1,24 @@
+[package]
+name = "meshway-agent-underlay"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+meshway-agent-tun = { path = "../agent-tun" }
+meshway-dataplane = { path = "../dataplane" }
+getrandom.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+tokio = { workspace = true, features = ["io-util", "process"] }
+tokio-util = { version = "0.7", features = ["rt"] }
+socket2 = { version = "0.6", features = ["all"] }
+rustix.workspace = true
+hickory-proto = { version = "=0.26.3", default-features = false, features = ["std"] }
+ipnet = "2.11"
+
+[dev-dependencies]
+tempfile.workspace = true
+
+[lints]
+workspace = true
