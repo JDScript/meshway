@@ -13,6 +13,7 @@ Rust 控制面与 agent、Next.js + shadcn/ui 控制台、VitePress 文档站。
 
 ## 协议与类型安全
 
+- 用户最新决定：项目仍处于大规模开发期，当前策略统一命名为 `policy`，不保留 `policy-v3`、`policy_v3`、`legacy_v2` / `mesh_v3` 双轨或为旧策略构建兼容层。可破坏式更新当前契约并同步所有现行消费者；数据库采用当前 schema 初始化，允许在协调切换时重置本机开发数据，不再以旧数据无损迁移作为这次收敛前置。重置是明确部署操作，不能让普通启动因任意数据库错误静默清库。现行鉴权、网络隔离、CAS、密钥/凭据保护与同 revision 执行仍须保持。
 - Rust 契约及实际路由声明是 HTTP API 的权威来源，生成 OpenAPI 和客户端。
 - Controller ↔ agent、controller ↔ web 均使用生成接口，不手工复制 DTO 或客户端 endpoint。
 - Web 对外部响应使用生成的运行时 schema 校验；TypeScript 类型声明不能代替校验。
@@ -22,7 +23,7 @@ Rust 控制面与 agent、Next.js + shadcn/ui 控制台、VitePress 文档站。
 
 ## 实现与验证
 
-- 用户明确强调代码洁癖：源码组织、命名和职责须干净可解释；关注 `apps/controller/src/store` 中散落的 tests、`policy_v3` 与 `schema_v*`。完整 dump / 审查不等于已完成源码清理，不再混报。生产领域模块优先职责命名，必要 wire / 数据库历史版本集中在兼容与迁移边界；测试支持和历史 fixture 应有清楚归属，避免持续堆叠阶段名、临时修复名和重复实现。收敛时保留已有身份 / 数据的真实迁移路径及有价值的行为回归，不能靠删除必要迁移或测试制造表面整洁。
+- 用户明确强调代码洁癖：源码组织、命名和职责须干净可解释；关注 `apps/controller/src/store` 中散落的 tests、`policy_v3` 与 `schema_v*`。完整 dump / 审查不等于已完成源码清理，不再混报。生产领域模块按职责命名，避免阶段名、临时修复名和重复实现。当前权限、数据完整性、所有权与生命周期回归须保留；历史迁移与旧模式 fixture 可随最新明确废弃的兼容层一并删除。
 - 全仓 Rust 手写代码统一模块与测试组织：单文件模块 `foo.rs`；有子模块使用 `foo/mod.rs`，避免 `foo.rs` 旁再开仅含子测试的 `foo/`。私有实现单元测试作为所属模块的 `#[cfg(test)]` 子模块；公共 API 黑盒测试放 crate 顶层 `tests/`，入口遵守 Cargo 自动发现（`tests/*.rs` 或 `tests/<suite>/main.rs`），共享 helper 放子目录。不得为搬测试扩大生产可见性、复制实现或用临时 path/autotests 配置绕过边界；生成代码与 vendor 按各自权威来源维护。
 - DNS、TUN 设备和生成 Rust 控制客户端已独立为 `agent-dns`、`agent-tun`、`control-client`。库不反向依赖 App；快照校验/私有保存、业务计划、CLI/IPC 投影与日志归 Agent，路由 capture/sink/journal 归 underlay。Apple core 直接消费 control-client，不再为 HTTP 客户端依赖 Agent。其余领域库仍在提取，不能提前记作完成。
 - 用户明确要求 `agent-dataplane`、`agent-connections`、`agent-diagnostics` 同样纳入独立库拆分：分别负责节点执行计划/包流适配、邻接与承载连接运行、本地诊断 IPC。现有 `dataplane` 继续拥有底层加密/转发，不复制算法。Connections 不再持有 TUN 或依赖上层 PacketPlan；Diagnostics 经窄 provider 获取状态/探测，消除与 Prober 的双向依赖；跨组件编排、HTTP与私有身份、CLI输出留 App。按依赖分清晰提交，未提取项不得写成现状。
@@ -63,10 +64,10 @@ Rust 控制面与 agent、Next.js + shadcn/ui 控制台、VitePress 文档站。
      - 方案不能绕过授权：使用出口或网段须 grants 允许，含未授权目标的方案分配时保存报错。切换方案会中断经旧出口的存量连接。
      - 节点须由管理员在 Web 开启“可作为出口”后才能成为出口（服务器与用户设备相同），设备侧不做通告或本地配置，转发 / NAT 由 Agent 按下发自动完成。不单独做 subnet router：出口路由覆盖所有离开 Mesh 的流量，目标节点转发到其本地网络（局域网或互联网）；授权目的地可写“互联网”或具体 IP 段 / 域名后缀；“互联网”按 Tailscale 基线只含公网地址（排除 RFC1918、ULA、CGNAT、链路本地），局域网须单独授权具体网段。
      - 规则集（IP / 域名）由 controller 下载、管理、更新并编译下发，设备不下载数据集；格式与来源参考 sing-box rule-set、mihomo rule-providers；首版仅域名后缀与 IP 段，无法精确转换的条目必须报告。控制面把有序规则编译为设备可安装的等价不重叠前缀表，并提示被前序规则完全遮蔽的规则。
-     - 原 routing 初始空策略 reject 废止，现有策略须无损迁移或明确报告无法等价转换的部分。
+     - 原 routing 初始空策略 reject 废止；开发期统一使用当前策略模型，旧策略兼容与迁移按上面的最新清库/破坏式更新决定收敛。
 - 用户要求设备不做本地配置：节点能力、listener、承载、出口、DNS 等全部由控制面管理和下发，设备侧只保留接入 / 登录，以及用户在允许范围内切换路由方案这类使用选择；现有 Agent 本地 profiles 与 `--dns-listen`、`--stun-server` 等参数是待收敛的实现现状，新功能不得再引入需要在设备上手工配置的入口。
 - 配置 ACK 只表示 Agent 已校验并持久保存，不等同于数据面生效；逻辑路径预览不等同于真实 trace 或访问授权。
-- 托管 IPv4 数据面显式启用。Access 采用端点授权模型，与 routing 的路径选择分开。用户已确认 Access 改为参照 Tailscale grants 的叠加授权：只写允许规则、未匹配即拒绝、规则取并集且与顺序无关，新网络默认模板为成员全部允许；原有序 first-match allow/reject 待迁移，现有策略须无损转换。selector 支持当前 network 内的 `*`、管理员分配的 tag、node，后续加入用户 / 组；每条规则可显式双向。内部完整路径授权由控制面联合编译，不跳过必经节点；状态型回包另行推进。
+- 托管 IPv4 数据面显式启用。Access 采用端点授权模型，与 routing 的路径选择分开。当前模型参照 Tailscale grants：只写允许规则、未匹配即拒绝、规则取并集且与顺序无关，新网络默认模板为成员全部允许；旧有序 allow/reject 不再保留兼容层。selector 支持当前 network 内的 `*`、管理员分配的 tag、node，后续加入用户 / 组；每条规则可显式双向。内部完整路径授权由控制面联合编译，不跳过必经节点；状态型回包另行推进。
 - Access 与 routing 的图形化及带 schema 的 JSONC 编辑器必须共享同一份草稿和 CAS 基准；无效文本、注释和未保存编辑不得被切换视图静默覆盖。
 - 用户指定：前端（`apps/web` 控制台）委派使用 `anthropic/claude-opus-5-5`，其余委派统一使用 `openai/gpt-6.1-sol`。用户已确认控制台可整体推翻重做，按已确认产品模型重整产品逻辑与视觉，但 App 依赖的 Web 端点与服务端鉴权边界必须保持兼容；独立任务按需要使用 worktree，根 manifest、lockfile 和合并验证由协调者维护。前端一致性与信息架构整理应和后端功能主线并行推进。
 - 已交付账户 / Web 首批重整：日常仅用户账户登录，所有者 / 管理员 / 成员是网络内角色；实例凭据收敛到专门初始化 / 恢复入口，不扩大网络 Owner 的跨网权限。成员 / 邀请 / 角色 / 设备归属、我的账户、登录初始化及节点列表 / 详情 / 配置已接通；导航为概览 / 节点 / 成员 / 访问控制 / 路由 / 设置，保留地图方向。
