@@ -41,15 +41,15 @@ fn packet(source: [u8; 4], destination: [u8; 4]) -> Vec<u8> {
 #[test]
 fn exact_execution_does_not_infer_reverse_authorization_and_withdrawal_retains_only_sink() {
     let mut execution = execution();
-    let plan = PacketPlan::compile_mesh(&execution, 1000).unwrap();
+    let plan = PacketPlan::compile(&execution, 1000).unwrap();
     let forward = packet([100, 64, 0, 1], [100, 64, 0, 2]);
     let reverse = packet([100, 64, 0, 2], [100, 64, 0, 1]);
     assert!(plan.outgoing(&forward).is_some());
     assert!(plan.outgoing(&reverse).is_none());
-    assert!(PacketPlan::compile_mesh(&execution, 1400).is_err());
+    assert!(PacketPlan::compile(&execution, 1400).is_err());
     execution.valid = false;
-    assert!(PacketPlan::compile_mesh(&execution, 1000).is_err());
-    let sink = PacketPlan::sink_mesh(&execution, 1000).unwrap();
+    assert!(PacketPlan::compile(&execution, 1000).is_err());
+    let sink = PacketPlan::sink(&execution, 1000).unwrap();
     assert!(sink.route_policy().retain_fail_closed_sink);
     assert!(sink.outgoing(&forward).is_none());
     assert!(sink.paths.is_empty());

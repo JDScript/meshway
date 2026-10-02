@@ -3,7 +3,7 @@
 use super::TunOptions;
 use crate::managed_connections::Manager;
 use meshway_dataplane::PrivateKey;
-use meshway_protocol::{ConnectionRuntimeReason, NodeDataplane, local};
+use meshway_protocol::{ConnectionRuntimeReason, NodeMeshExecution, local};
 use serde::{Deserialize, Serialize};
 use std::{net::SocketAddr, path::PathBuf, time::Duration};
 use tokio::time::Instant;
@@ -19,7 +19,7 @@ pub(super) fn observe_runtime(runtime: &std::sync::Arc<meshway_dataplane::Runtim
 
 #[derive(Serialize, Deserialize)]
 struct Fixture {
-    payload: NodeDataplane,
+    payload: NodeMeshExecution,
     private_key: PrivateKey,
 }
 
@@ -36,9 +36,9 @@ fn generate() {
     local::private_dir(&directory).unwrap();
     let (payloads, keys) = super::tests::fixtures(endpoints.len());
     for (index, (mut payload, private_key)) in payloads.into_iter().zip(keys).enumerate() {
-        payload.configuration.network.ipv4_prefix = "198.18.1.0/24".into();
-        payload.configuration.node.mesh_ipv4 = format!("198.18.1.{}", index + 1);
-        for node in &mut payload.configuration.peers {
+        payload.network.ipv4_prefix = "198.18.1.0/24".into();
+        payload.node.mesh_ipv4 = format!("198.18.1.{}", index + 1);
+        for node in &mut payload.peers {
             let ordinal = usize::from_str_radix(&node.id, 16).unwrap();
             node.mesh_ipv4 = format!("198.18.1.{ordinal}");
         }

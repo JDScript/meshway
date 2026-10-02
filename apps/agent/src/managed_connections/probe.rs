@@ -507,7 +507,7 @@ mod live_tests {
             mesh_ipv6: format!("fd00::{index}"),
         };
         NodeConfiguration {
-            schema_version: 1,
+            schema_version: meshway_protocol::CONFIGURATION_SCHEMA_VERSION,
             revision: 1,
             network: meshway_protocol::MeshNetwork {
                 ipv4_prefix: "100.64.0.0/24".into(),
@@ -515,9 +515,6 @@ mod live_tests {
             },
             node: node(own, "LAX", 1),
             peers: vec![node(peer, "SHA", 2), node(&"c".repeat(64), "NYC", 3)],
-            routing_policy: Default::default(),
-            policy_valid: true,
-            diagnostics: vec![],
         }
     }
 

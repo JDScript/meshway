@@ -17,7 +17,7 @@ enum Evidence {
 }
 
 struct View {
-    snapshot: AgentDataplaneSnapshot,
+    snapshot: MeshExecutionSnapshot,
     armed: Option<Evidence>,
     stall_get: bool,
     armed_gets: usize,
@@ -25,13 +25,12 @@ struct View {
     connections_acks: usize,
 }
 
-fn withdraw_grants(snapshot: &mut AgentDataplaneSnapshot) {
+fn withdraw_grants(snapshot: &mut MeshExecutionSnapshot) {
     snapshot.payload.revision += 1;
-    snapshot.payload.configuration.revision += 1;
     snapshot.payload.connections.revision += 1;
-    snapshot.payload.access_policy.grants.clear();
+    snapshot.payload.paths.clear();
     snapshot.payload.identities = snapshot.payload.connections.peers.clone();
-    snapshot.digest = dataplane_digest(&snapshot.payload).unwrap();
+    snapshot.digest = mesh_execution_digest(&snapshot.payload).unwrap();
 }
 
 impl View {
@@ -75,7 +74,7 @@ async fn publish(
 
 async fn dataplane(
     HttpState(controller): HttpState<Arc<Controller>>,
-) -> Json<meshway_protocol::AgentManagedDataplaneSnapshot> {
+) -> Json<MeshExecutionResponse> {
     let snapshot = {
         let mut view = controller.view.lock().unwrap();
         if view.armed.is_some() {
@@ -96,10 +95,7 @@ async fn configuration_ack(
 ) -> axum::response::Response {
     let mut view = controller.view.lock().unwrap();
     assert_eq!(request.revision, view.snapshot.payload.revision);
-    assert_eq!(
-        request.digest,
-        configuration_digest(&view.snapshot.payload.configuration).unwrap()
-    );
+    assert_eq!(request.digest, projections(&view.snapshot).0.digest);
     view.configuration_acks += 1;
     if view.stale_at(Evidence::ConfigurationAck) {
         return StatusCode::CONFLICT.into_response();
@@ -143,13 +139,13 @@ impl Drop for Server {
 /// Complete one real E2E delivery, then leave a second plaintext write blocked
 /// inside the mock TUN. Both stale-control and terminal-auth tests use this flow.
 pub(super) async fn blocked_peer(
-    payload: &NodeDataplane,
+    payload: &NodeMeshExecution,
     remote_identity: meshway_dataplane::Identity,
     device: &MockDevice,
     delivered: &mut tokio::sync::mpsc::Receiver<Vec<u8>>,
 ) -> Runtime {
     let remote = Runtime::start(LabConfig {
-        node_id: payload.configuration.peers[0].id.clone(),
+        node_id: payload.peers[0].id.clone(),
         private_key: PrivateKey::from_hex(&remote_identity.private_key_hex()).unwrap(),
         public_key: remote_identity.public_key_hex(),
         trusted_peers: vec![PeerConfig {
@@ -158,10 +154,9 @@ pub(super) async fn blocked_peer(
             transports: vec![TransportKind::NativeUdp],
         }],
         allowed_paths: payload
-            .access_policy
-            .grants
+            .paths
             .iter()
-            .map(|grant| grant.path.clone())
+            .map(|grant| grant.nodes.clone())
             .collect(),
         listeners: vec![],
         outgoing: vec![OutgoingCandidate {
@@ -179,7 +174,7 @@ pub(super) async fn blocked_peer(
         .wait_for_peer(&payload.node_id, Duration::from_secs(4))
         .await
         .unwrap();
-    let reverse = payload.access_policy.grants[1].path.clone();
+    let reverse = payload.paths[1].nodes.clone();
     let bytes = crate::managed_dataplane::tests::packet("100.64.0.2", "100.64.0.1", 1);
     device.allow_writes();
     remote
@@ -211,7 +206,7 @@ async fn known_stale_evidence_cancels_delivery(evidence: Evidence, saved_ahead: 
     let base = format!("http://{}", listener.local_addr().unwrap());
     let (mut agent, mut payload) = enrolled(dir.path(), &base);
     let remote_identity = meshway_dataplane::Identity::generate().unwrap();
-    let remote_id = payload.configuration.peers[0].id.clone();
+    let remote_id = payload.peers[0].id.clone();
     for peer in payload
         .connections
         .peers
@@ -239,8 +234,20 @@ async fn known_stale_evidence_cancels_delivery(evidence: Evidence, saved_ahead: 
             axum::routing::post(publish),
         )
         .route(
-            "/api/v1/agent/managed-dataplane",
-            axum::routing::get(dataplane),
+            "/api/v1/agents/mesh-execution",
+            axum::routing::post(dataplane),
+        )
+        .route(
+            "/api/v1/agents/configuration",
+            axum::routing::get(
+                |HttpState(controller): HttpState<Arc<Controller>>| async move {
+                    Json(projections(&controller.view.lock().unwrap().snapshot).0)
+                },
+            ),
+        )
+        .route(
+            "/api/v1/agents/mesh-execution/ack",
+            axum::routing::post(execution_ack),
         )
         .route(
             "/api/v1/agents/configuration/ack",
@@ -270,7 +277,10 @@ async fn known_stale_evidence_cancels_delivery(evidence: Evidence, saved_ahead: 
         device.clone(),
         &PacketPlan::compile(&payload, 1000).unwrap(),
     ));
-    let synced = cache.sync(&mut agent, &mut manager).await.unwrap();
+    let synced = cache
+        .sync(&mut agent, &mut manager, &RUNTIME)
+        .await
+        .unwrap();
     let fresh_at = synced.fresh_at;
     let key = agent
         .connections
@@ -287,7 +297,7 @@ async fn known_stale_evidence_cancels_delivery(evidence: Evidence, saved_ahead: 
     // The peer actively dials this Agent's approved listener, then sends the
     // explicitly granted reverse business path through the real Noise/UDP core.
     let remote = blocked_peer(&payload, remote_identity, &device, &mut delivered).await;
-    let reverse = payload.access_policy.grants[1].path.clone();
+    let reverse = payload.paths[1].nodes.clone();
     let bytes = crate::managed_dataplane::tests::packet("100.64.0.2", "100.64.0.1", 1);
     assert_eq!(manager.observation().state, ConnectionRuntimeState::Applied);
 
@@ -296,7 +306,7 @@ async fn known_stale_evidence_cancels_delivery(evidence: Evidence, saved_ahead: 
         // the durable floor while preserving active R to catch cache-based tests.
         let mut newer = original.clone();
         withdraw_grants(&mut newer);
-        let (configuration, connections) = projections(&newer).unwrap();
+        let (configuration, connections) = projections(&newer);
         cache.persist(&agent, newer).unwrap();
         agent.persist_configuration(configuration).unwrap();
         agent
@@ -317,7 +327,7 @@ async fn known_stale_evidence_cancels_delivery(evidence: Evidence, saved_ahead: 
     controller.view.lock().unwrap().armed = Some(evidence);
     let started = Instant::now();
     {
-        let sync = cache.sync(&mut agent, &mut manager);
+        let sync = cache.sync(&mut agent, &mut manager, &RUNTIME);
         tokio::pin!(sync);
         tokio::select! {
             result = &mut sync => panic!("retry GET unexpectedly completed: {}", result.is_ok()),
@@ -350,7 +360,7 @@ async fn known_stale_evidence_cancels_delivery(evidence: Evidence, saved_ahead: 
     {
         let view = controller.view.lock().unwrap();
         assert_eq!(view.snapshot.payload.revision, payload.revision + 1);
-        assert!(view.snapshot.payload.access_policy.grants.is_empty());
+        assert!(view.snapshot.payload.paths.is_empty());
         assert_eq!(
             view.armed_gets,
             if evidence == Evidence::Publication {

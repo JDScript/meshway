@@ -456,11 +456,10 @@ mod tests {
         assert!(ready.tun_ready);
         assert_eq!(
             ready.digest,
-            meshway_protocol::dataplane_digest(old).unwrap()
+            meshway_protocol::mesh_execution_digest(old).unwrap()
         );
         let mut newer = old.clone();
         newer.revision += 1;
-        newer.configuration.revision += 1;
         newer.connections.revision += 1;
         let replacement = PacketPlan::compile(&newer, 1000).unwrap();
         assert_ne!(replacement.digest, generation.digest);
@@ -478,7 +477,7 @@ mod tests {
         assert_eq!(ready.revision, newer.revision);
         assert_eq!(
             ready.digest,
-            meshway_protocol::dataplane_digest(&newer).unwrap()
+            meshway_protocol::mesh_execution_digest(&newer).unwrap()
         );
     }
 }

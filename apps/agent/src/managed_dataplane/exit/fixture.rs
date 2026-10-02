@@ -13,7 +13,7 @@ use tokio::{sync::watch, time::Instant as TokioInstant};
 #[derive(Serialize, Deserialize)]
 struct Fixture {
     runtime: LabConfig,
-    payload: meshway_protocol::NodeDataplane,
+    payload: meshway_protocol::NodeMeshExecution,
     path: Vec<String>,
     prefix: String,
     role: String,
@@ -56,9 +56,9 @@ fn generate() {
     let ids: Vec<_> = payloads.iter().map(|p| p.node_id.clone()).collect();
     local::private_dir(&directory).unwrap();
     for (index, payload) in payloads.iter_mut().enumerate() {
-        payload.configuration.network.ipv4_prefix = "198.19.90.0/24".into();
-        payload.configuration.node.mesh_ipv4 = format!("198.19.90.{}", index + 1);
-        for peer in &mut payload.configuration.peers {
+        payload.network.ipv4_prefix = "198.19.90.0/24".into();
+        payload.node.mesh_ipv4 = format!("198.19.90.{}", index + 1);
+        for peer in &mut payload.peers {
             let n = usize::from_str_radix(&peer.id, 16).unwrap();
             peer.mesh_ipv4 = format!("198.19.90.{n}");
         }
@@ -184,7 +184,7 @@ fn generate() {
 }
 
 fn plan(f: &Fixture) -> ExitPlan {
-    let local = f.payload.configuration.node.mesh_ipv4.parse().unwrap();
+    let local = f.payload.node.mesh_ipv4.parse().unwrap();
     let route = |path: Vec<String>, prefix| ExitRoute {
         return_path: path.iter().rev().cloned().collect(),
         path,

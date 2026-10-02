@@ -4,13 +4,15 @@ use crate::managed_dataplane::{
     tests::{MockDevice, fixtures, snapshot},
     tun::Tun,
 };
+use crate::state::connection_key;
 use meshway_protocol::{
     AcknowledgeAgentConnectionsRequest, AcknowledgeConfigurationRequest,
     AcknowledgeConfigurationResponse, ConnectionRuntimeReason, ConnectionRuntimeState,
-    NodeDataplane, PublishConnectionIdentityResponse, RoutingPolicy,
+    NodeMeshExecution, PublishConnectionIdentityResponse,
 };
 use std::{
     os::unix::fs::PermissionsExt,
+    path::Path,
     sync::{
         Arc, Mutex,
         atomic::{AtomicBool, Ordering},
@@ -22,37 +24,63 @@ mod dns;
 mod revocation;
 mod stale;
 
-fn managed(snapshot: AgentDataplaneSnapshot) -> meshway_protocol::AgentManagedDataplaneSnapshot {
-    let network_id = "0".repeat(32);
-    let materials = Vec::new();
-    let digest = meshway_protocol::managed_digest(&network_id, &snapshot, &materials).unwrap();
-    meshway_protocol::AgentManagedDataplaneSnapshot {
-        network_id,
-        dataplane: snapshot,
-        materials,
-        digest,
+static RUNTIME: std::sync::LazyLock<MeshExecutionRequest> =
+    std::sync::LazyLock::new(|| MeshExecutionRequest {
+        epoch: 1,
+        instance_id: "a".repeat(64),
+        capabilities: vec![MeshExecutionCapability::Ipv4ExactPathV1],
+    });
+
+fn managed(snapshot: MeshExecutionSnapshot) -> MeshExecutionResponse {
+    MeshExecutionResponse {
+        revision: snapshot.payload.revision,
+        snapshot,
     }
 }
 
-fn identity(snapshot: &AgentDataplaneSnapshot) -> Identity {
-    Identity {
-        format_version: 1,
-        controller: "http://127.0.0.1".into(),
-        name: snapshot.payload.configuration.node.name.clone(),
-        enrollment_version: "test".into(),
-        enrollment_token_hash: vec![0; 32],
-        node_credential: "a".repeat(64),
-        node_id: Some(snapshot.payload.node_id.clone()),
-    }
+fn projections(
+    snapshot: &MeshExecutionSnapshot,
+) -> (ConfigurationSnapshot, AgentConnectionsSnapshot) {
+    let payload = NodeConfiguration {
+        schema_version: CONFIGURATION_SCHEMA_VERSION,
+        revision: snapshot.payload.revision,
+        network: snapshot.payload.network.clone(),
+        node: snapshot.payload.node.clone(),
+        peers: snapshot.payload.peers.clone(),
+    };
+    (
+        ConfigurationSnapshot {
+            digest: configuration_digest(&payload).unwrap(),
+            payload,
+        },
+        AgentConnectionsSnapshot {
+            digest: connection_digest(&snapshot.payload.connections).unwrap(),
+            payload: snapshot.payload.connections.clone(),
+        },
+    )
+}
+
+async fn execution_ack(
+    axum::Json(request): axum::Json<AcknowledgeMeshExecutionRequest>,
+) -> axum::Json<AcknowledgeMeshExecutionResponse> {
+    assert_eq!(request.runtime.epoch, 1);
+    assert_eq!(request.runtime.capabilities, RUNTIME.capabilities);
+    axum::Json(AcknowledgeMeshExecutionResponse {
+        revision: request.revision,
+        digest: request.digest,
+        saved: true,
+    })
 }
 
 #[test]
 fn coherent_validation_rejects_digest_binding_revision_and_identity_scope_mismatches() {
-    let (payloads, _) = fixtures(3);
+    let dir = directory();
+    let (agent, local) = enrolled(dir.path(), "http://127.0.0.1");
+    let (mut payloads, _) = fixtures(3);
+    payloads[0].connections.public_key = local.connections.public_key;
     let original = snapshot(payloads[0].clone());
-    let id = identity(&original);
     let own_key = original.payload.connections.public_key.as_deref().unwrap();
-    validate(&original, &id, own_key, None).unwrap();
+    validate(&agent, &original, None).unwrap();
     for mode in 0..11 {
         let mut value = original.clone();
         match mode {
@@ -67,10 +95,10 @@ fn coherent_validation_rejects_digest_binding_revision_and_identity_scope_mismat
                     .public_key_hex()
             }
             6 => {
-                value.payload.access_policy.grants[0].path.remove(0);
+                value.payload.paths[0].nodes.remove(0);
             }
-            7 => value.payload.access_valid = false,
-            8 => value.payload.configuration.node.mesh_ipv4 = "100.64.0.20".into(),
+            7 => value.payload.valid = false,
+            8 => value.payload.node.mesh_ipv4 = "100.64.0.20".into(),
             9 => {
                 value.payload.connections.public_key = Some(
                     meshway_dataplane::Identity::generate()
@@ -81,33 +109,32 @@ fn coherent_validation_rejects_digest_binding_revision_and_identity_scope_mismat
             10 => value.payload.identities.reverse(),
             _ => unreachable!(),
         }
-        value.digest = dataplane_digest(&value.payload).unwrap();
-        assert!(validate(&value, &id, own_key, None).is_err(), "mode {mode}");
+        value.digest = mesh_execution_digest(&value.payload).unwrap();
+        assert!(validate(&agent, &value, None).is_err(), "mode {mode}");
     }
     let mut value = original.clone();
     value.digest = "f".repeat(64);
-    assert!(validate(&value, &id, own_key, None).is_err());
+    assert!(validate(&agent, &value, None).is_err());
     let mut rollback = original.clone();
     rollback.payload.revision -= 1;
-    rollback.payload.configuration.revision -= 1;
     rollback.payload.connections.revision -= 1;
-    rollback.digest = dataplane_digest(&rollback.payload).unwrap();
-    assert!(validate(&rollback, &id, own_key, Some(&original)).is_err());
+    rollback.digest = mesh_execution_digest(&rollback.payload).unwrap();
+    assert!(validate(&agent, &rollback, Some(&original)).is_err());
     let mut mutation = original.clone();
-    mutation.payload.access_policy.grants.clear();
+    mutation.payload.paths.clear();
     mutation.payload.identities = mutation.payload.connections.peers.clone();
-    mutation.digest = dataplane_digest(&mutation.payload).unwrap();
-    assert!(validate(&mutation, &id, own_key, Some(&original)).is_err());
+    mutation.digest = mesh_execution_digest(&mutation.payload).unwrap();
+    assert!(validate(&agent, &mutation, Some(&original)).is_err());
 }
 
-fn enrolled(directory: &Path, controller: &str) -> (Agent, NodeDataplane) {
+fn enrolled(directory: &Path, controller: &str) -> (Agent, NodeMeshExecution) {
     let (payloads, _) = fixtures(2);
     let mut payload = payloads[0].clone();
     let mut agent = Agent::prepare_enrollment(
         directory.join("agent.json"),
         controller,
         &"a".repeat(64),
-        &payload.configuration.node.name,
+        &payload.node.name,
     )
     .unwrap();
     agent.identity.node_id = Some(payload.node_id.clone());
@@ -142,7 +169,7 @@ fn dataplane_cache_is_private_bound_to_credential_and_reuses_existing_identity_k
     let mut state = State { cache: None };
     state.persist(&agent, snapshot(payload)).unwrap();
     assert_eq!(
-        std::fs::metadata(path(&state_path))
+        std::fs::metadata(path(&agent))
             .unwrap()
             .permissions()
             .mode()
@@ -160,6 +187,26 @@ fn dataplane_cache_is_private_bound_to_credential_and_reuses_existing_identity_k
     assert_eq!(local::read_private(&key_file).unwrap(), key);
     agent.identity.node_credential = "b".repeat(64);
     assert!(load(&agent).is_err());
+}
+
+#[test]
+fn unsupported_packet_cache_is_refused_without_rebinding_or_removal() {
+    let dir = directory();
+    let (mut agent, _) = enrolled(dir.path(), "http://127.0.0.1");
+    let identity = local::read_private(&agent.path).unwrap();
+    let key_path = connection_key::path(&agent.path);
+    let key = local::read_private(&key_path).unwrap();
+    let old_path = agent.path.with_extension("json.dataplane.json");
+    local::atomic_write(&old_path, b"{}", false).unwrap();
+    assert!(matches!(
+        State::load(&mut agent),
+        Err(AgentError::Invalid(
+            "unsupported old dataplane cache; explicit cleanup required"
+        ))
+    ));
+    assert_eq!(local::read_private(&old_path).unwrap(), "{}");
+    assert_eq!(local::read_private(&agent.path).unwrap(), identity);
+    assert_eq!(local::read_private(&key_path).unwrap(), key);
 }
 
 #[tokio::test]
@@ -194,14 +241,28 @@ async fn changed_policy_withdraws_before_stalled_ack() {
             }),
         )
         .route(
-            "/api/v1/agent/managed-dataplane",
-            axum::routing::get({
+            "/api/v1/agents/mesh-execution",
+            axum::routing::post({
                 let current = current.clone();
                 move || {
                     let value = current.lock().unwrap().clone();
                     async move { axum::Json(managed(value)) }
                 }
             }),
+        )
+        .route(
+            "/api/v1/agents/configuration",
+            axum::routing::get({
+                let current = current.clone();
+                move || {
+                    let inventory = projections(&current.lock().unwrap()).0;
+                    async move { axum::Json(inventory) }
+                }
+            }),
+        )
+        .route(
+            "/api/v1/agents/mesh-execution/ack",
+            axum::routing::post(execution_ack),
         )
         .route(
             "/api/v1/agents/configuration/ack",
@@ -253,7 +314,10 @@ async fn changed_policy_withdraws_before_stalled_ack() {
         device,
         &PacketPlan::compile(&payload, 1000).unwrap(),
     ));
-    let fresh = cache.sync(&mut agent, &mut manager).await.unwrap();
+    let fresh = cache
+        .sync(&mut agent, &mut manager, &RUNTIME)
+        .await
+        .unwrap();
     let key = agent
         .connections
         .as_ref()
@@ -271,14 +335,13 @@ async fn changed_policy_withdraws_before_stalled_ack() {
     {
         let mut value = current.lock().unwrap();
         value.payload.revision += 1;
-        value.payload.configuration.revision += 1;
         value.payload.connections.revision += 1;
-        value.payload.configuration.routing_policy = RoutingPolicy::default();
-        value.digest = dataplane_digest(&value.payload).unwrap();
+        value.payload.paths.clear();
+        value.digest = mesh_execution_digest(&value.payload).unwrap();
     }
     stalled.store(true, Ordering::SeqCst);
     {
-        let sync = cache.sync(&mut agent, &mut manager);
+        let sync = cache.sync(&mut agent, &mut manager, &RUNTIME);
         tokio::pin!(sync);
         tokio::select! {
             result = &mut sync => panic!("ACK unexpectedly completed: {}", result.is_ok()),

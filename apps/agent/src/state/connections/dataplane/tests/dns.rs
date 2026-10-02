@@ -13,8 +13,8 @@ use std::sync::atomic::AtomicUsize;
 use tokio::{sync::Notify, time};
 
 struct Controller {
-    current: Mutex<AgentDataplaneSnapshot>,
-    recovered: AgentDataplaneSnapshot,
+    current: Mutex<MeshExecutionSnapshot>,
+    recovered: MeshExecutionSnapshot,
     gets: AtomicUsize,
     acks: AtomicUsize,
     applied: Notify,
@@ -27,7 +27,7 @@ async fn operation(
     let (parts, body) = request.into_parts();
     let body = axum::body::to_bytes(body, 8192).await.unwrap();
     let path = parts.uri.path();
-    if path == "/api/v1/agent/managed-dataplane" {
+    if path == "/api/v1/agents/mesh-execution" {
         let previous = state.gets.fetch_add(1, Ordering::SeqCst);
         if previous == 1 {
             // The first DNS failure must have retried the actual GET, without
@@ -93,7 +93,7 @@ async fn startup_dns_failure_retries_fresh_bundle_without_ack_or_new_identity() 
         .push(OutgoingConnectionCandidate {
             id: "dns-startup".into(),
             listener_id: "peer-listener".into(),
-            peer_node_id: payload.configuration.peers[0].id.clone(),
+            peer_node_id: payload.peers[0].id.clone(),
             transport: ConnectionTransport::NativeUdp,
             endpoint: ConnectionEndpoint {
                 host: "meshway-peer-not-started.invalid".into(),
@@ -104,7 +104,6 @@ async fn startup_dns_failure_retries_fresh_bundle_without_ack_or_new_identity() 
         });
     let old = snapshot(payload.clone());
     payload.revision += 1;
-    payload.configuration.revision += 1;
     payload.connections.revision += 1;
     payload.connections.outgoing[0].endpoint.host = "127.0.0.1".into();
     let recovered = snapshot(payload.clone());
@@ -157,8 +156,8 @@ async fn startup_dns_failure_retries_fresh_bundle_without_ack_or_new_identity() 
         }
     }
     assert!(
-        control.gets.load(Ordering::SeqCst) >= 3,
-        "retry plus a fresh fetch while holding the runtime epoch"
+        control.gets.load(Ordering::SeqCst) >= 2,
+        "fresh execution retry while holding the runtime epoch"
     );
     assert_eq!(manager.observation().state, ConnectionRuntimeState::Applied);
     assert_eq!(

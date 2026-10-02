@@ -112,8 +112,8 @@ async fn managed_tcp_and_websocket_tls_noise_deliver_real_ipv4_both_directions_a
         }
         for (source, target) in [(0, 1), (1, 0)] {
             let bytes = packet(
-                &payloads[source].configuration.node.mesh_ipv4,
-                &payloads[target].configuration.node.mesh_ipv4,
+                &payloads[source].node.mesh_ipv4,
+                &payloads[target].node.mesh_ipv4,
                 1,
             );
             time::timeout(Duration::from_secs(4),async{loop{sends[source].send(bytes.clone()).await.unwrap();tokio::select!{value=receives[target].recv()=>{assert_eq!(value,Some(bytes.clone()));break;},_=time::sleep(Duration::from_millis(50))=>{}}}}).await.expect("TLS/VLESS/Noise must deliver real IPv4 packet");
@@ -123,7 +123,6 @@ async fn managed_tcp_and_websocket_tls_noise_deliver_real_ipv4_both_directions_a
         // and require real IPv4 delivery again rather than retrying a failed bind.
         for i in 0..2 {
             payloads[i].revision += 1;
-            payloads[i].configuration.revision += 1;
             payloads[i].connections.revision += 1;
             for material in &mut managers[i].managed_materials {
                 material.version += 1;
@@ -143,8 +142,8 @@ async fn managed_tcp_and_websocket_tls_noise_deliver_real_ipv4_both_directions_a
         }
         for (source, target) in [(0, 1), (1, 0)] {
             let bytes = packet(
-                &payloads[source].configuration.node.mesh_ipv4,
-                &payloads[target].configuration.node.mesh_ipv4,
+                &payloads[source].node.mesh_ipv4,
+                &payloads[target].node.mesh_ipv4,
                 2,
             );
             time::timeout(Duration::from_secs(4),async{loop{sends[source].send(bytes.clone()).await.unwrap();tokio::select!{value=receives[target].recv()=>{assert_eq!(value,Some(bytes.clone()));break;},_=time::sleep(Duration::from_millis(50))=>{}}}}).await.expect("replacement TLS generation must rebind and deliver");

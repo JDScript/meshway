@@ -356,11 +356,11 @@ impl Agent {
             guard.observe_revision(published);
         }
         manager.invalidate_dataplane_revision(published).await;
-        let publication = self.publish_connection_identity().await?;
-        manager
-            .invalidate_dataplane_revision(publication.revision)
-            .await;
         if lease.epoch.is_none() {
+            let publication = self.publish_connection_identity().await?;
+            manager
+                .invalidate_dataplane_revision(publication.revision)
+                .await;
             if lease.expected_epoch.is_none() {
                 let response: GetConnectionRuntimeEpochResponse =
                     convert(self.runtime_client().get_connection_runtime_epoch().await?)?;

@@ -5,14 +5,14 @@ use meshway_protocol::*;
 use std::{collections::BTreeMap, io, net::Ipv4Addr, sync::Arc};
 use tokio::sync::{Mutex, Semaphore, mpsc};
 
-pub(crate) fn snapshot(payload: NodeDataplane) -> AgentDataplaneSnapshot {
-    AgentDataplaneSnapshot {
-        digest: dataplane_digest(&payload).unwrap(),
+pub(crate) fn snapshot(payload: NodeMeshExecution) -> MeshExecutionSnapshot {
+    MeshExecutionSnapshot {
+        digest: mesh_execution_digest(&payload).unwrap(),
         payload,
     }
 }
 
-pub(crate) fn fixtures(count: usize) -> (Vec<NodeDataplane>, Vec<PrivateKey>) {
+pub(crate) fn fixtures(count: usize) -> (Vec<NodeMeshExecution>, Vec<PrivateKey>) {
     let nodes: Vec<_> = (1..=count)
         .map(|index| MeshNode {
             id: format!("{index:064x}"),
@@ -26,40 +26,10 @@ pub(crate) fn fixtures(count: usize) -> (Vec<NodeDataplane>, Vec<PrivateKey>) {
     let path: Vec<_> = nodes.iter().map(|node| node.id.clone()).collect();
     let mut reverse = path.clone();
     reverse.reverse();
-    let policy = RoutingPolicy {
-        default_action: DefaultRouteAction::Reject,
-        rules: [path.clone(), reverse.clone()]
-            .into_iter()
-            .enumerate()
-            .map(|(index, path)| RouteRule {
-                id: format!("route-{index}"),
-                source: SourceSelector {
-                    node_ids: vec![path[0].clone()],
-                    countries: vec![],
-                },
-                destination_scope: DestinationScope::Mesh,
-                destination_any: vec![DestinationSelector {
-                    kind: DestinationSelectorKind::Node,
-                    value: path.last().unwrap().clone(),
-                }],
-                action: RouteAction {
-                    kind: RouteActionKind::Route,
-                    via: path[1..path.len() - 1].to_vec(),
-                    exit_node_id: None,
-                },
-            })
-            .collect(),
-    };
-    let access = MeshPathAuthorization {
-        grants: [path, reverse]
-            .into_iter()
-            .enumerate()
-            .map(|(index, path)| MeshAccessGrant {
-                id: format!("grant-{index}"),
-                path,
-            })
-            .collect(),
-    };
+    let paths: Vec<_> = [path, reverse]
+        .into_iter()
+        .map(|nodes| MeshExecutionPath { nodes })
+        .collect();
     let ports: Vec<_> = (0..count)
         .map(|_| crate::managed_connections::tests::listener_port(ConnectionTransport::NativeUdp))
         .collect();
@@ -123,30 +93,26 @@ pub(crate) fn fixtures(count: usize) -> (Vec<NodeDataplane>, Vec<PrivateKey>) {
                     vec![]
                 },
             };
-            NodeDataplane {
-                schema_version: 1,
+            NodeMeshExecution {
+                schema_version: MESH_EXECUTION_VERSION,
+                network_id: "0".repeat(32),
                 revision: 7,
                 node_id: node.id.clone(),
-                configuration: NodeConfiguration {
-                    schema_version: 1,
-                    revision: 7,
-                    network: MeshNetwork {
-                        ipv4_prefix: "100.64.0.0/24".into(),
-                        ipv6_prefix: "fd42::/64".into(),
-                    },
-                    node: node.clone(),
-                    peers: nodes
-                        .iter()
-                        .filter(|other| other.id != node.id)
-                        .cloned()
-                        .collect(),
-                    routing_policy: policy.clone(),
-                    policy_valid: true,
-                    diagnostics: vec![],
+                required_capability: MeshExecutionCapability::Ipv4ExactPathV1,
+                network: MeshNetwork {
+                    ipv4_prefix: "100.64.0.0/24".into(),
+                    ipv6_prefix: "fd42::/64".into(),
                 },
+                node: node.clone(),
+                peers: nodes
+                    .iter()
+                    .filter(|other| other.id != node.id)
+                    .cloned()
+                    .collect(),
                 connections,
-                access_policy: access.clone(),
-                access_valid: true,
+                paths: paths.clone(),
+                valid: true,
+                materials: vec![],
                 identities: (0..count)
                     .filter(|other| *other != index)
                     .map(peer)
@@ -271,7 +237,7 @@ fn pair_boundary_all_protocols_exact_source_path_and_strict_ipv4() {
     let (payloads, _) = fixtures(3);
     let source = PacketPlan::compile(&payloads[0], 1000).unwrap();
     let target = PacketPlan::compile(&payloads[2], 1000).unwrap();
-    let path = &payloads[0].access_policy.grants[0].path;
+    let path = &payloads[0].paths[0].nodes;
     for protocol in 0..=255 {
         let bytes = packet("100.64.0.1", "100.64.0.3", protocol);
         assert_eq!(source.outgoing(&bytes), Some(path));
@@ -332,21 +298,21 @@ fn pair_boundary_all_protocols_exact_source_path_and_strict_ipv4() {
 #[test]
 fn grants_routes_reverse_and_mtu_are_independent_constraints() {
     let (mut payloads, _) = fixtures(3);
-    payloads[0].access_policy.grants.clear();
+    payloads[0].paths.clear();
     assert!(
         PacketPlan::compile(&payloads[0], 1000)
             .unwrap()
             .paths
             .is_empty()
     );
-    payloads[1].configuration.routing_policy = RoutingPolicy::default();
+    payloads[1].paths.clear();
     assert!(
         PacketPlan::compile(&payloads[1], 1000)
             .unwrap()
             .paths
             .is_empty()
     );
-    payloads[2].access_policy.grants.pop();
+    payloads[2].paths.pop();
     let target = PacketPlan::compile(&payloads[2], 1000).unwrap();
     assert!(
         target

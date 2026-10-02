@@ -1,7 +1,6 @@
 use super::*;
 use meshway_protocol::{
-    ConfigurationSnapshot, MeshNetwork, MeshNode, NodeConfiguration, RoutingPolicy,
-    configuration_digest,
+    ConfigurationSnapshot, MeshNetwork, MeshNode, NodeConfiguration, configuration_digest,
 };
 
 fn disabled(id: &str, revision: u32) -> AgentDnsSnapshot {
@@ -14,7 +13,7 @@ fn disabled(id: &str, revision: u32) -> AgentDnsSnapshot {
 
 fn assigned_configuration(agent: &mut Agent, revision: u32, v4: &str, v6: &str) {
     let payload = NodeConfiguration {
-        schema_version: 1,
+        schema_version: meshway_protocol::CONFIGURATION_SCHEMA_VERSION,
         revision,
         network: MeshNetwork {
             ipv4_prefix: "100.64.0.0/24".into(),
@@ -28,9 +27,6 @@ fn assigned_configuration(agent: &mut Agent, revision: u32, v4: &str, v6: &str) 
             mesh_ipv6: v6.into(),
         },
         peers: vec![],
-        routing_policy: RoutingPolicy::default(),
-        policy_valid: true,
-        diagnostics: vec![],
     };
     let snapshot = ConfigurationSnapshot {
         digest: configuration_digest(&payload).unwrap(),

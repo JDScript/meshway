@@ -20,7 +20,7 @@ fn inventory(own: &str, peer: &str) -> meshway_protocol::NodeConfiguration {
         mesh_ipv6: format!("fd00::{index}"),
     };
     meshway_protocol::NodeConfiguration {
-        schema_version: 1,
+        schema_version: meshway_protocol::CONFIGURATION_SCHEMA_VERSION,
         revision: 1,
         network: meshway_protocol::MeshNetwork {
             ipv4_prefix: "10.0.0.0/24".into(),
@@ -28,9 +28,6 @@ fn inventory(own: &str, peer: &str) -> meshway_protocol::NodeConfiguration {
         },
         node: node(own, "LAX", 1),
         peers: vec![node(peer, "SHA", 2), node(&"c".repeat(64), "NYC", 3)],
-        routing_policy: Default::default(),
-        policy_valid: true,
-        diagnostics: vec![],
     }
 }
 

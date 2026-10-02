@@ -204,6 +204,7 @@ async fn roundtrip(apply_connections: bool) {
     let network: NetworkSnapshot = serde_json::from_slice(&network.bytes().await.unwrap()).unwrap();
     let mut dns = network.dns;
     dns.enabled = true;
+    dns.zone = "meshway.test".into();
     let saved = client
         .post(admin_url(&base, &admin, "/network").await)
         .bearer_auth(&admin)

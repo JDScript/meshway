@@ -1,7 +1,7 @@
 use super::*;
 use meshway_protocol::{
-    ConfigurationSnapshot, MeshNetwork, MeshNode, NodeConfiguration, RoutingPolicy,
-    compile_dns_records, configuration_digest,
+    ConfigurationSnapshot, MeshNetwork, MeshNode, NodeConfiguration, compile_dns_records,
+    configuration_digest,
 };
 
 #[tokio::test]
@@ -27,7 +27,7 @@ async fn forged_rootnode_alias_cannot_point_to_another_assigned_identity() {
     dns.payload.records = compile_dns_records(&dns.payload.dns, &nodes).unwrap().0;
     rehash(&mut dns);
     let mut payload = NodeConfiguration {
-        schema_version: 1,
+        schema_version: meshway_protocol::CONFIGURATION_SCHEMA_VERSION,
         revision: 1,
         network: MeshNetwork {
             ipv4_prefix: "100.64.0.0/24".into(),
@@ -35,9 +35,6 @@ async fn forged_rootnode_alias_cannot_point_to_another_assigned_identity() {
         },
         node: nodes[0].clone(),
         peers: vec![nodes[1].clone()],
-        routing_policy: RoutingPolicy::default(),
-        policy_valid: true,
-        diagnostics: vec![],
     };
     let config = ConfigurationSnapshot {
         digest: configuration_digest(&payload).unwrap(),

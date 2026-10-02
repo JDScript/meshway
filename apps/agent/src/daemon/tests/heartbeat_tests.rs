@@ -28,10 +28,10 @@ async fn heartbeat_new_revision_fences_real_packets_before_stalled_publication()
         dir.path().join("agent.json"),
         &base,
         &"a".repeat(64),
-        &payload.configuration.node.name,
+        &payload.node.name,
     )
     .unwrap();
-    let node = &payload.configuration.node;
+    let node = &payload.node;
     let now = chrono::Utc::now();
     let response = AgentNodeResponse {
         node: NodeSummary {
@@ -140,7 +140,7 @@ async fn heartbeat_new_revision_fences_real_packets_before_stalled_publication()
         .await
         .unwrap();
     let remote = Runtime::start(LabConfig {
-        node_id: payload.configuration.peers[0].id.clone(),
+        node_id: payload.peers[0].id.clone(),
         private_key: PrivateKey::from_hex(&remote_identity.private_key_hex()).unwrap(),
         public_key: remote_identity.public_key_hex(),
         trusted_peers: vec![PeerConfig {
@@ -148,12 +148,7 @@ async fn heartbeat_new_revision_fences_real_packets_before_stalled_publication()
             public_key: payload.connections.public_key.clone().unwrap(),
             transports: vec![TransportKind::NativeUdp],
         }],
-        allowed_paths: payload
-            .access_policy
-            .grants
-            .iter()
-            .map(|g| g.path.clone())
-            .collect(),
+        allowed_paths: payload.paths.iter().map(|g| g.nodes.clone()).collect(),
         listeners: vec![],
         outgoing: vec![OutgoingCandidate {
             peer: payload.node_id.clone(),
@@ -170,7 +165,7 @@ async fn heartbeat_new_revision_fences_real_packets_before_stalled_publication()
         .wait_for_peer(&payload.node_id, Duration::from_secs(4))
         .await
         .unwrap();
-    let reverse = payload.access_policy.grants[1].path.clone();
+    let reverse = payload.paths[1].nodes.clone();
     let bytes = packet("100.64.0.2", "100.64.0.1", 1);
     device.allow_writes();
     remote

@@ -71,25 +71,49 @@ async fn normal_mesh_tick_restarts_after_offline_revision_change_and_same_config
     let node_http = HttpClient::new()
         .with_base_url(&base)
         .with_api_key(&agent.identity.node_credential);
-    let mut policy = meshway_policy::v3::NetworkPolicy::default_template();
+    let mut policy = meshway_policy::NetworkPolicy::default_template();
     let revision = node_http
         .get_agent_configuration()
         .await
         .unwrap()
         .payload
         .revision;
-    let source_url = format!("{base}/api/v1/networks/{network}/policy-v3/save");
-    let _: serde_json::Value = response(json_body(
+    let source_url = format!("{base}/api/v1/networks/{network}/policy/save");
+    json_body(
         http.post(&source_url).bearer_auth(&admin),
         &serde_json::json!({"expected_revision":revision,"policy":policy}),
-    ))
-    .await;
-    let legacy: AgentManagedDataplaneSnapshot =
-        convert(node_http.get_agent_managed_dataplane().await.unwrap()).unwrap();
-    assert!(
-        !legacy.dataplane.payload.access_valid
-            && !legacy.dataplane.payload.configuration.policy_valid
-    );
+    )
+    .send()
+    .await
+    .unwrap()
+    .error_for_status()
+    .unwrap();
+    let epoch = node_http.get_connection_runtime_epoch().await.unwrap();
+    let runtime = RuntimeLease::new().unwrap();
+    let begun = node_http
+        .begin_connection_runtime(
+            convert(BeginConnectionRuntimeRequest {
+                expected_epoch: u32::try_from(epoch.epoch).unwrap(),
+                instance_id: runtime.instance_id.clone(),
+            })
+            .unwrap(),
+        )
+        .await
+        .unwrap();
+    let execution: MeshExecutionResponse = convert(
+        node_http
+            .negotiate_mesh_execution(
+                convert(MeshExecutionRequest {
+                    epoch: u32::try_from(begun.epoch).unwrap(),
+                    instance_id: runtime.instance_id,
+                    capabilities: vec![MeshExecutionCapability::Ipv4ExactPathV1],
+                })
+                .unwrap(),
+            )
+            .await
+            .unwrap(),
+    )
+    .unwrap();
     let make_manager = || {
         let (device, send, receive) = MockDevice::new();
         let mut manager = Manager::new_dataplane(
@@ -104,7 +128,7 @@ async fn normal_mesh_tick_restarts_after_offline_revision_change_and_same_config
         );
         manager.mock_tun(Tun::mock(
             device,
-            &PacketPlan::sink(&legacy.dataplane.payload, 1000).unwrap(),
+            &PacketPlan::sink(&execution.snapshot.payload, 1000).unwrap(),
         ));
         (manager, send, receive)
     };
@@ -126,12 +150,24 @@ async fn normal_mesh_tick_restarts_after_offline_revision_change_and_same_config
     for advance in [false, true] {
         if advance {
             policy.grants.clear();
-            let source: serde_json::Value = response(json_body(
+            json_body(
                 http.post(&source_url).bearer_auth(&admin),
                 &serde_json::json!({"expected_revision":saved_revision,"policy":policy}),
-            ))
-            .await;
-            assert!(source["revision"].as_u64().unwrap() > u64::from(saved_revision));
+            )
+            .send()
+            .await
+            .unwrap()
+            .error_for_status()
+            .unwrap();
+            assert!(
+                node_http
+                    .get_agent_configuration()
+                    .await
+                    .unwrap()
+                    .payload
+                    .revision
+                    > i64::from(saved_revision)
+            );
         }
         let mut agent = Agent::load(&path).unwrap();
         let (mut manager, send, receive) = make_manager();

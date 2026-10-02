@@ -660,9 +660,7 @@ async fn sync_rejects_replay_mutation_invalid_hash_policy_and_write_failure_with
                     3 => snapshot.digest = "0".repeat(64),
                     4 => {
                         snapshot.payload.revision += 1;
-                        snapshot.payload.policy_valid = false;
-                        snapshot.payload.routing_policy.default_action =
-                            meshway_protocol::DefaultRouteAction::Direct;
+                        snapshot.payload.schema_version = 1;
                     }
                     5 => {
                         snapshot.payload.revision += 1;
@@ -691,7 +689,11 @@ async fn sync_rejects_replay_mutation_invalid_hash_policy_and_write_failure_with
     let token = token(&server.base, &admin).await;
     let mut agent = Agent::prepare_enrollment(&path, &server.base, &token, "checked").unwrap();
     let node = agent.enroll(&token).await.unwrap().node;
-    agent.sync().await.unwrap();
+    let receipt = serde_json::to_value(agent.sync().await.unwrap()).unwrap();
+    assert!(
+        receipt.get("policy_valid").is_none(),
+        "inventory receipt is not policy authorization"
+    );
     let old = std::fs::read(&cache_path).unwrap();
     for invalid in 1..=6 {
         mode.store(invalid, Ordering::SeqCst);

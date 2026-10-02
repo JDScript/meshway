@@ -22,7 +22,10 @@ pub(crate) mod validation;
 mod validation_tests;
 
 #[cfg(all(target_os = "linux", feature = "managed-connections"))]
-pub(crate) fn historical_networks(agent: &Agent) -> Result<Vec<String>, AgentError> {
+pub(crate) fn historical_networks(agent: &mut Agent) -> Result<Vec<String>, AgentError> {
+    // Protected startup precedes publication. Restore the existing private key
+    // before validating execution history; this neither creates nor publishes it.
+    agent.load_connections()?;
     Ok([
         materials::cached_network(agent)?,
         dataplane::cached_network(agent)?,

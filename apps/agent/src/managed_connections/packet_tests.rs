@@ -12,7 +12,7 @@ struct Mesh {
     devices: Vec<Arc<MockDevice>>,
     sends: Vec<mpsc::Sender<Vec<u8>>>,
     receives: Vec<mpsc::Receiver<Vec<u8>>>,
-    payloads: Vec<meshway_protocol::NodeDataplane>,
+    payloads: Vec<meshway_protocol::NodeMeshExecution>,
     keys: Vec<PrivateKey>,
 }
 
@@ -107,8 +107,8 @@ impl Mesh {
 
     async fn attempt(&self, source: usize, target: usize) -> Vec<u8> {
         let bytes = packet(
-            &self.payloads[source].configuration.node.mesh_ipv4,
-            &self.payloads[target].configuration.node.mesh_ipv4,
+            &self.payloads[source].node.mesh_ipv4,
+            &self.payloads[target].node.mesh_ipv4,
             1,
         );
         time::timeout(Duration::from_secs(8), async {
@@ -191,10 +191,9 @@ async fn withdrawal_and_reconfigure_cancel_inflight_tun_injection_and_destroy_e2
     let generation = mesh.managers[2].running.as_ref().unwrap().task.id();
     let mut changed = mesh.payloads[2].clone();
     changed.revision += 1;
-    changed.configuration.revision += 1;
     changed.connections.revision += 1;
     // Routing reject changes no physical adjacency. Early invalidation must still cancel.
-    changed.configuration.routing_policy = meshway_protocol::RoutingPolicy::default();
+    changed.paths.clear();
     let changed = snapshot(changed);
     mesh.managers[2].invalidate_dataplane(&changed).await;
     assert_eq!(mesh.managers[2].observation().state, Phase::Withdrawn);

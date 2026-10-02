@@ -398,13 +398,30 @@ impl State {
         manager: &mut Manager,
         runtime: &MeshExecutionRequest,
     ) -> Result<Synced, AgentError> {
+        let publication = agent.publish_connection_identity().await?;
+        manager
+            .invalidate_dataplane_revision(publication.revision)
+            .await;
         let client = agent
             .controller_client()
             .with_api_key(&agent.identity.node_credential)
             .with_max_response_body_bytes(MAX_DATAPLANE_BYTES);
         for _ in 0..3 {
-            let response: MeshExecutionResponse =
-                convert(client.negotiate_mesh_execution(convert(runtime)?).await?)?;
+            let response = client.negotiate_mesh_execution(convert(runtime)?).await;
+            let response: MeshExecutionResponse = match response {
+                Err(error) if error.api().is_some_and(|error| error.status == 409) => {
+                    // Negotiation has no source CAS: conflict means the epoch /
+                    // instance no longer owns execution. Never reacquire it.
+                    manager
+                        .withdraw(ConnectionRuntimeReason::LeaseSuperseded)
+                        .await;
+                    return Err(AgentError::Invalid(
+                        "execution runtime lease superseded; refusing to reacquire",
+                    ));
+                }
+                Err(error) => return Err(error.into()),
+                Ok(response) => convert(response)?,
+            };
             manager
                 .invalidate_dataplane_revision(response.revision)
                 .await;
@@ -421,9 +438,11 @@ impl State {
                     .as_ref()
                     .expect("published connections")
                     .published_revision
+                || snapshot.payload.connections.capabilities
+                    != super::compiled_connection_capabilities()
             {
                 return Err(AgentError::Invalid(
-                    "Mesh execution predates key publication",
+                    "Mesh execution predates key publication or differs from compiled capabilities",
                 ));
             }
             if let Some(guard) = &agent.dns_guard {
@@ -471,6 +490,9 @@ impl State {
             manager
                 .invalidate_dataplane_revision(inventory.payload.revision)
                 .await;
+            if let Some(guard) = &agent.dns_guard {
+                guard.observe_revision(inventory.payload.revision);
+            }
             if inventory.payload.revision != p.revision {
                 manager
                     .withdraw(ConnectionRuntimeReason::InvalidConfiguration)
@@ -495,6 +517,9 @@ impl State {
                 .await;
             let ack: AcknowledgeConfigurationResponse = match ack {
                 Err(e) if e.api().is_some_and(|e| e.status == 409) => {
+                    if let Some(guard) = &agent.dns_guard {
+                        guard.conflict(p.revision);
+                    }
                     manager
                         .withdraw(ConnectionRuntimeReason::InvalidConfiguration)
                         .await;
@@ -531,6 +556,9 @@ impl State {
                 .await;
             let ack: AcknowledgeMeshExecutionResponse = match ack {
                 Err(e) if e.api().is_some_and(|e| e.status == 409) => {
+                    if let Some(guard) = &agent.dns_guard {
+                        guard.conflict(p.revision);
+                    }
                     manager
                         .withdraw(ConnectionRuntimeReason::InvalidConfiguration)
                         .await;
@@ -552,6 +580,9 @@ impl State {
                 .await;
             let ack: AcknowledgeAgentConnectionsResponse = match ack {
                 Err(e) if e.api().is_some_and(|e| e.status == 409) => {
+                    if let Some(guard) = &agent.dns_guard {
+                        guard.conflict(p.revision);
+                    }
                     manager
                         .withdraw(ConnectionRuntimeReason::InvalidConfiguration)
                         .await;
@@ -605,7 +636,7 @@ mod execution_tests {
             directory.join("agent.json"),
             "http://127.0.0.1",
             &"a".repeat(64),
-            &old.configuration.node.name,
+            &old.node.name,
         )
         .unwrap();
         agent.identity.node_id = Some(old.node_id.clone());
@@ -627,18 +658,11 @@ mod execution_tests {
             revision: old.revision,
             node_id: old.node_id.clone(),
             required_capability: MeshExecutionCapability::Ipv4ExactPathV1,
-            network: old.configuration.network.clone(),
-            node: old.configuration.node.clone(),
-            peers: old.configuration.peers.clone(),
+            network: old.network.clone(),
+            node: old.node.clone(),
+            peers: old.peers.clone(),
             valid: true,
-            paths: old
-                .access_policy
-                .grants
-                .iter()
-                .map(|g| MeshExecutionPath {
-                    nodes: g.path.clone(),
-                })
-                .collect(),
+            paths: old.paths.clone(),
             identities: old.identities.clone(),
             connections,
             materials: vec![],
@@ -694,13 +718,6 @@ mod execution_tests {
             network: fresh.payload.network.clone(),
             node: fresh.payload.node.clone(),
             peers: fresh.payload.peers.clone(),
-            routing_policy: RoutingPolicy::default(),
-            policy_valid: false,
-            diagnostics: vec![PolicyDiagnostic {
-                rule_id: None,
-                field: "source_mode".into(),
-                message: "inventory-only".into(),
-            }],
         };
         agent
             .persist_configuration(ConfigurationSnapshot {
@@ -718,7 +735,7 @@ mod execution_tests {
     }
 
     #[test]
-    fn v3_defensive_admission_rejects_forged_scope_version_budget_and_rollback() {
+    fn defensive_admission_rejects_forged_scope_version_budget_and_rollback() {
         use std::os::unix::fs::PermissionsExt;
         let dir = tempfile::Builder::new()
             .permissions(std::fs::Permissions::from_mode(0o700))
@@ -726,7 +743,7 @@ mod execution_tests {
             .unwrap();
         let (agent, snapshot) = fixture(dir.path());
         validate(&agent, &snapshot, None).unwrap();
-        crate::managed_dataplane::PacketPlan::compile_mesh(&snapshot.payload, 1000).unwrap();
+        crate::managed_dataplane::PacketPlan::compile(&snapshot.payload, 1000).unwrap();
         for mode in 0..10 {
             let mut bad = snapshot.clone();
             match mode {
@@ -762,19 +779,15 @@ mod execution_tests {
     }
 
     #[test]
-    fn real_generated_contract_preserves_null_requires_presence_and_rejects_unknowns() {
+    fn real_generated_contract_requires_snapshot_rejects_null_and_unknowns() {
         use meshway_control_client::types;
-        let legacy = MeshExecutionResponse {
-            source_mode: PolicySourceMode::LegacyV2,
-            revision: 1,
-            snapshot: None,
-        };
-        let mut json = serde_json::to_value(legacy).unwrap();
-        let generated: types::MeshExecutionResponse = serde_json::from_value(json.clone()).unwrap();
-        assert!(generated.snapshot.is_none());
-        assert_eq!(serde_json::to_value(generated).unwrap(), json);
-        json.as_object_mut().unwrap().remove("snapshot");
-        assert!(serde_json::from_value::<types::MeshExecutionResponse>(json).is_err());
+        for json in [
+            serde_json::json!({"revision": 1}),
+            serde_json::json!({"revision": 1, "snapshot": null}),
+        ] {
+            assert!(serde_json::from_value::<types::MeshExecutionResponse>(json.clone()).is_err());
+            assert!(serde_json::from_value::<MeshExecutionResponse>(json).is_err());
+        }
         use std::os::unix::fs::PermissionsExt;
         let dir = tempfile::Builder::new()
             .permissions(std::fs::Permissions::from_mode(0o700))
@@ -782,9 +795,8 @@ mod execution_tests {
             .unwrap();
         let (_, snapshot) = fixture(dir.path());
         let mut json = serde_json::to_value(MeshExecutionResponse {
-            source_mode: PolicySourceMode::MeshV3,
             revision: snapshot.payload.revision,
-            snapshot: Some(snapshot),
+            snapshot,
         })
         .unwrap();
         let generated: types::MeshExecutionResponse = serde_json::from_value(json.clone()).unwrap();
