@@ -9,7 +9,7 @@ export type GlobeLook = {
   landSize: number
   /** Latitude / longitude lines every 15°. */
   graticule: boolean
-  /** A far starfield that drifts with the camera. */
+  /** A far starfield; drawn in dark themes only. */
   stars: boolean
   /** Camera-facing scale rings around the globe. */
   guides: boolean
@@ -25,7 +25,7 @@ export const DEFAULT_LOOK: GlobeLook = {
   land: "dots",
   landSize: 1.5,
   graticule: false,
-  stars: false,
+  stars: true,
   guides: true,
   rim: 0.85,
   atmosphere: 0.14,

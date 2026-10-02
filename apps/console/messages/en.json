@@ -102,5 +102,8 @@
   "lab_revision": "Revision",
   "lab_date": "Date",
   "lab_north": "N",
-  "overview_title_line": "{nodes} nodes · {confirmed}/{total} links"
+  "overview_title_line": "{nodes} nodes · {confirmed}/{total} links",
+  "loading": "Loading",
+  "node_rtt_heading": "RTT",
+  "node_rtt_hint": "Round trip measured here · by the peer"
 }

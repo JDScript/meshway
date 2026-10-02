@@ -1,4 +1,4 @@
-import { useSyncExternalStore } from "react"
+import { create } from "zustand"
 
 import { DEFAULT_LOOK, type GlobeLook } from "./look"
 import { EMPTY_SCENE, type Scene } from "./scene"
@@ -21,24 +21,19 @@ export type GlobeState = {
   look: GlobeLook
 }
 
-let state: GlobeState = { framing: "welcome", scene: EMPTY_SCENE, selectedNodeId: null, rightInset: 0, look: DEFAULT_LOOK }
-const listeners = new Set<() => void>()
-let selectHandler: (nodeId: string | null) => void = () => undefined
+export const useGlobeStore = create<GlobeState>(() => ({
+  framing: "welcome",
+  scene: EMPTY_SCENE,
+  selectedNodeId: null,
+  rightInset: 0,
+  look: DEFAULT_LOOK,
+}))
 
 export function setGlobe(patch: Partial<GlobeState>) {
-  state = { ...state, ...patch }
-  for (const listener of listeners) listener()
+  useGlobeStore.setState(patch)
 }
 
-export function useGlobe(): GlobeState {
-  return useSyncExternalStore(
-    (listener) => {
-      listeners.add(listener)
-      return () => listeners.delete(listener)
-    },
-    () => state
-  )
-}
+let selectHandler: (nodeId: string | null) => void = () => undefined
 
 /** The route that shows a network owns what a click on a node means. Returns the cleanup. */
 export function onGlobeSelect(handler: (nodeId: string | null) => void): () => void {

@@ -36,7 +36,7 @@ function LoginPage() {
 
   return (
     <main className="pointer-events-none relative flex min-h-svh flex-col">
-      <div className="pointer-events-auto flex justify-end gap-1 p-4">
+      <div className="enter glass pointer-events-auto m-4 flex h-11 items-center gap-0.5 self-end rounded-full px-1.5 md:m-5">
         <LanguageSwitch />
         <ThemeSwitch />
       </div>

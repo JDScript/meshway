@@ -1,0 +1,6 @@
+html {
+  background: #f9f9fb;
+}
+html.dark {
+  background: #0b0c0f;
+}

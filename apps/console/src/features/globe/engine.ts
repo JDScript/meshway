@@ -35,6 +35,9 @@ import {
   type Vitality,
 } from "./scene"
 import type { GlobeLook } from "./look"
+import type { BootPhase } from "@/features/boot/boot-store"
+
+import { altitudeForRadius, LOADER_LAT, LOADER_RADIUS, LOADER_SPIN, loaderLng } from "./loader-view"
 import { emitSelectedScreen, type GlobeState } from "./store"
 
 // globe.gl provides the camera, controls, atmosphere and the DOM node
@@ -42,7 +45,7 @@ import { emitSelectedScreen, type GlobeState } from "./store"
 // with small shaders, so motion and light can be soft rather than stepped.
 // Everything shown comes in through update().
 
-export type EngineInput = GlobeState & { colors: GlobeColors; motion: boolean }
+export type EngineInput = GlobeState & { colors: GlobeColors; motion: boolean; boot: BootPhase }
 
 export type GlobeEngine = {
   update(input: EngineInput): void
@@ -61,7 +64,9 @@ type MarkerDatum = {
 type Pov = { lat: number; lng: number; altitude: number }
 
 const HOME: Pov = { lat: 26, lng: 105, altitude: 2.5 }
-const WELCOME: Pov = { lat: 20, lng: 112, altitude: 1.7 }
+const WELCOME: Pov = { lat: 20, lng: 112, altitude: 2.05 }
+/** Longitudes worth landing on after the loader: Asia, Europe–Africa, the Americas. */
+const LANDINGS = [105, 15, -85]
 const FOCUS_ALTITUDE = { ground: 1.65, orbit: 1.95 }
 const ROTATION_SPEED = 0.32
 const RESUME_ROTATION_MS = 8_000
@@ -131,18 +136,18 @@ const pointShader = (land: boolean) =>
     uniforms: {
       uColor: { value: new Color() },
       uOpacity: { value: 0 },
-      uReveal: { value: 0 },
       uScale: { value: 450 },
       uPixelRatio: { value: 1 },
       uSize: { value: 1 },
+      uMinSize: { value: land ? 1.15 : 0 },
     },
     vertexShader: /* glsl */ `
       attribute float aAlpha;
       attribute float aSize;
-      uniform float uReveal;
       uniform float uScale;
       uniform float uPixelRatio;
       uniform float uSize;
+      uniform float uMinSize;
       varying float vAlpha;
       void main() {
         vec4 world = modelMatrix * vec4(position, 1.0);
@@ -150,13 +155,17 @@ const pointShader = (land: boolean) =>
         ${
           land
             ? `float facing = dot(normalize(world.xyz), normalize(cameraPosition - world.xyz));
-               float threshold = 1.0 - 1.3 * uReveal;
-               vAlpha = mix(0.16, 1.0, smoothstep(0.0, 0.7, facing)) * smoothstep(threshold - 0.18, threshold, facing);
+               vAlpha = mix(0.16, 1.0, smoothstep(0.0, 0.7, facing));
                float size = uSize;`
             : `vAlpha = aAlpha;
                float size = aSize;`
         }
-        gl_PointSize = size * uPixelRatio * (uScale / -mv.z);
+        // Never thinner than a pixel; below that, dim instead of shrinking,
+        // so a far globe keeps the same overall brightness.
+        float raw = size * (uScale / -mv.z);
+        float shown = max(raw, uMinSize);
+        vAlpha *= uMinSize > 0.0 ? clamp(raw / max(uMinSize, 0.0001), 0.3, 1.0) : 1.0;
+        gl_PointSize = shown * uPixelRatio;
         gl_Position = projectionMatrix * mv;
       }`,
     fragmentShader: /* glsl */ `
@@ -185,7 +194,11 @@ type LinkObject = {
   streams: { reverse: boolean; phase: number }[]
 }
 
-export function createGlobeEngine(container: HTMLElement, onSelect: (nodeId: string | null) => void): GlobeEngine {
+export function createGlobeEngine(
+  container: HTMLElement,
+  onSelect: (nodeId: string | null) => void,
+  onRevealed: () => void
+): GlobeEngine {
   const globe = new Globe(container, {
     rendererConfig: { antialias: true, alpha: true, powerPreference: "high-performance" },
     animateIn: false,
@@ -211,7 +224,6 @@ export function createGlobeEngine(container: HTMLElement, onSelect: (nodeId: str
       element.tabIndex = visible ? 0 : -1
     })
     .onGlobeClick(() => onSelect(null))
-    .pointOfView(WELCOME)
 
   const scene = globe.scene()
   const layer = new Group()
@@ -342,9 +354,13 @@ export function createGlobeEngine(container: HTMLElement, onSelect: (nodeId: str
   let interacting = false
   /** After a drag the globe stays still for a while before drifting again. */
   let pausedUntil = 0
-  let reveal = 0
-  const revealStart = performance.now()
+  /** Set when the interface is revealed; everything beyond the bare globe fades in from it. */
+  let extrasShownAt: number | null = null
   let linksShownAt = performance.now()
+  /** The first-load hand-off: from the loader's pose, grow into the frame. */
+  let intro: { start: number; ms: number; fromAlt: number; fromLng: number; spin: number; v0: number; to: Pov; toOffset: [number, number] } | null = null
+  const loaderAltitude = () => altitudeForRadius(LOADER_RADIUS, Math.max(height, 1))
+  const framingPov = (input: EngineInput): Pov => (input.framing === "welcome" ? WELCOME : HOME)
   let offset: [number, number] = [0, 0]
   let offsetTween: { from: [number, number]; to: [number, number]; start: number; ms: number } | null = null
   let fly: { from: Pov; to: Pov; start: number; ms: number; bump: number } | null = null
@@ -375,7 +391,7 @@ export function createGlobeEngine(container: HTMLElement, onSelect: (nodeId: str
   }
 
   const offsetFor = (input: EngineInput): [number, number] =>
-    input.framing === "welcome" ? [Math.min(width * 0.075, 140), height * 0.02] : [-input.rightInset / 2, 0]
+    input.framing === "welcome" ? (width >= 900 ? [Math.min(width * 0.14, 260), 0] : [0, height * 0.18]) : [-input.rightInset / 2, 0]
 
   let frame = 0
   let previousTime = performance.now()
@@ -385,12 +401,39 @@ export function createGlobeEngine(container: HTMLElement, onSelect: (nodeId: str
     previousTime = time
     const motion = last?.motion ?? true
 
-    // Entrance: the surface fades in, the dots spread out from the centre.
-    reveal = motion ? easeOut(clamp01((time - revealStart) / 1800)) : 1
-    surface.uniforms.uOpacity = { value: clamp01(reveal * 1.6) * (last?.look.surfaceOpacity ?? 1) }
-    landMaterial.uniforms.uReveal = { value: reveal }
+    // While loading, follow the loader's spin exactly; then grow into the frame.
+    if (last?.boot === "loading" || (intro && time < intro.start)) {
+      globe.pointOfView({ lat: LOADER_LAT, lng: loaderLng(time), altitude: loaderAltitude() })
+    } else if (intro) {
+      const t = clamp01((time - intro.start) / intro.ms)
+      const k = easeInOut(t)
+      // Interpolate apparent size, not altitude, so the growth reads evenly.
+      const from = 1 / (1 + intro.fromAlt)
+      const to = 1 / (1 + intro.to.altitude)
+      const scale = from + (to - from) * k
+      globe.pointOfView({
+        lat: LOADER_LAT + (intro.to.lat - LOADER_LAT) * k,
+        // Cubic Hermite: leaves at the loader's spin, settles at rest on the landing.
+        lng: intro.fromLng + (t ** 3 - 2 * t ** 2 + t) * intro.v0 + (-2 * t ** 3 + 3 * t ** 2) * intro.spin,
+        altitude: 1 / scale - 1,
+      })
+      offset = [intro.toOffset[0] * k, intro.toOffset[1] * k]
+      globe.globeOffset(offset)
+      if (t >= 1) {
+        intro = null
+        controls.maxDistance = 560
+        extrasShownAt = time
+        linksShownAt = time
+        onRevealed()
+      }
+    }
+
+    const extras = extrasShownAt === null ? 0 : motion ? easeOut(clamp01((time - extrasShownAt) / 1000)) : 1
+    const reveal = extras
+    surface.uniforms.uOpacity = { value: last?.look.surfaceOpacity ?? 1 }
     landMaterial.uniforms.uOpacity = { value: 1 }
-    pulseMaterial.uniforms.uOpacity = { value: reveal }
+    pulseMaterial.uniforms.uOpacity = { value: extras }
+    orbitMaterial.opacity = (last?.colors.dark ? 0.55 : 0.7) * extras
 
     const look = last?.look
     const dark = last?.colors.dark ?? true
@@ -401,7 +444,8 @@ export function createGlobeEngine(container: HTMLElement, onSelect: (nodeId: str
     })
     graticule.visible = look?.graticule ?? false
     graticuleMaterial.opacity = (dark ? 0.22 : 0.32) * reveal
-    stars.visible = look?.stars ?? false
+    // Stars belong to a dark sky only.
+    stars.visible = (look?.stars ?? false) && dark
     starMaterial.uniforms.uOpacity = { value: reveal * (0.85 + 0.15 * Math.sin(time / 1300)) }
 
     // Rotation eases in and out instead of starting or stopping dead.
@@ -409,7 +453,7 @@ export function createGlobeEngine(container: HTMLElement, onSelect: (nodeId: str
     rotationSpeed += (target - rotationSpeed) * (1 - Math.exp(-dt / 0.7))
     controls.autoRotateSpeed = rotationSpeed
 
-    if (offsetTween) {
+    if (offsetTween && !intro) {
       const t = clamp01((time - offsetTween.start) / offsetTween.ms)
       const k = easeInOut(t)
       offset = [
@@ -420,7 +464,7 @@ export function createGlobeEngine(container: HTMLElement, onSelect: (nodeId: str
       if (t >= 1) offsetTween = null
     }
 
-    if (fly) {
+    if (fly && !intro) {
       const t = clamp01((time - fly.start) / fly.ms)
       const k = easeInOut(t)
       globe.pointOfView({
@@ -438,6 +482,7 @@ export function createGlobeEngine(container: HTMLElement, onSelect: (nodeId: str
     const sizeAttribute = pulseGeometry.getAttribute("aSize")
     let count = 0
     links.forEach((link, index) => {
+      link.line.visible = extrasShownAt !== null
       const local = motion ? easeOut(clamp01((time - linksShownAt - index * 90) / 900)) : drawn
       link.line.geometry.setDrawRange(0, Math.max(2, Math.round(local * link.curve.length)))
       for (const stream of link.streams) {
@@ -638,7 +683,31 @@ export function createGlobeEngine(container: HTMLElement, onSelect: (nodeId: str
     }
     emphasise(input.selectedNodeId)
 
-    if (!previous || previous.framing !== input.framing || previous.rightInset !== input.rightInset) {
+    if (!previous && input.boot === "loading") {
+      controls.maxDistance = Infinity
+      offset = [0, 0]
+      globe.globeOffset(offset)
+    }
+    if (previous?.boot === "loading" && input.boot !== "loading") {
+      const hold = input.motion ? 220 : 0
+      const start = performance.now() + hold
+      const ms = input.motion ? 2000 : 0
+      const fromLng = loaderLng(start)
+      const ahead = (lng: number) => ((((lng - fromLng - 40) % 360) + 360) % 360) + 40
+      intro = {
+        start,
+        ms: Math.max(ms, 1),
+        fromAlt: loaderAltitude(),
+        fromLng,
+        spin: input.motion ? Math.min(...LANDINGS.map(ahead)) : 0,
+        v0: input.motion ? (LOADER_SPIN * ms) / 1000 : 0,
+        to: framingPov(input),
+        toOffset: offsetFor(input),
+      }
+    }
+    if (input.boot === "loading" || intro) {
+      // The intro owns the camera and offset until it is done.
+    } else if (!previous || previous.framing !== input.framing || previous.rightInset !== input.rightInset) {
       const to = offsetFor(input)
       if (!previous || !input.motion) {
         offset = to
@@ -649,10 +718,14 @@ export function createGlobeEngine(container: HTMLElement, onSelect: (nodeId: str
       }
     }
 
-    if (!previous) globe.pointOfView(input.framing === "welcome" ? WELCOME : HOME)
-    else if (previous.framing !== input.framing) flyTo(input.framing === "welcome" ? WELCOME : HOME, transitionMs)
+    if (input.boot === "loading" || intro) {
+      // As above.
+    } else if (!previous) {
+      globe.pointOfView(framingPov(input))
+      extrasShownAt ??= performance.now()
+    } else if (previous.framing !== input.framing) flyTo(framingPov(input), transitionMs)
 
-    if (previous && previous.selectedNodeId !== input.selectedNodeId) {
+    if (previous && previous.selectedNodeId !== input.selectedNodeId && !intro && input.boot !== "loading") {
       const anchor = input.selectedNodeId ? anchors.get(input.selectedNodeId) : undefined
       if (anchor) {
         flyTo({ lat: anchor.lat, lng: anchor.lng, altitude: anchor.orbit ? FOCUS_ALTITUDE.orbit : FOCUS_ALTITUDE.ground }, transitionMs)
@@ -660,7 +733,7 @@ export function createGlobeEngine(container: HTMLElement, onSelect: (nodeId: str
         flyTo({ ...globe.pointOfView(), altitude: HOME.altitude }, transitionMs)
       }
     }
-    rotationTarget = rotationFor(input)
+    rotationTarget = input.boot === "ready" ? rotationFor(input) : 0
   }
 
   return {
@@ -674,7 +747,7 @@ export function createGlobeEngine(container: HTMLElement, onSelect: (nodeId: str
         material.uniforms.uScale = { value: nextHeight * 0.5 }
         material.uniforms.uPixelRatio = { value: pixelRatio }
       }
-      if (last) {
+      if (last && last.boot !== "loading" && !intro) {
         offsetTween = null
         offset = offsetFor(last)
         globe.globeOffset(offset)

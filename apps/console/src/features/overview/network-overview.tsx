@@ -2,7 +2,6 @@ import { useQuery } from "@tanstack/react-query"
 import { useEffect, useMemo, useRef } from "react"
 import { toast } from "sonner"
 
-import { BrandMark } from "@/components/chrome/brand"
 import { LanguageSwitch, ThemeSwitch } from "@/components/chrome/preferences"
 import { AccountMenu } from "@/features/auth/account-menu"
 import { DEFAULT_LOOK } from "@/features/globe/look"
@@ -15,7 +14,7 @@ import { m } from "@/paraglide/messages.js"
 
 import { linkSummary, overviewScene } from "./model"
 import { NodeCard } from "./node-card"
-import { StatsPanel } from "./stats-panel"
+import { NetworkChip } from "./network-chip"
 
 const CARD_WIDTH = 380
 const EDGE = 24
@@ -79,11 +78,15 @@ export function NetworkOverview({
   return (
     <main className="pointer-events-none fixed inset-0">
       <header className="absolute inset-x-0 top-0 flex items-center justify-between gap-3 p-4 md:p-5">
-        <div className="glass pointer-events-auto flex h-11 items-center gap-2.5 rounded-full pr-5 pl-3.5">
-          <BrandMark className="size-5" />
-          <span className="max-w-[40vw] truncate text-sm font-medium">{network?.name ?? "\u00a0"}</span>
+        <div className="enter">
+          <NetworkChip
+            name={network?.name ?? null}
+            nodes={nodes.data ? scene.nodes.length : null}
+            links={nodes.data ? linkSummary(observation, runtimes.data !== undefined) : null}
+            stale={stale}
+          />
         </div>
-        <div className="glass pointer-events-auto flex h-11 items-center gap-0.5 rounded-full px-1.5">
+        <div className="enter glass pointer-events-auto flex h-11 items-center gap-0.5 rounded-full px-1.5" style={{ "--enter-delay": "80ms" }}>
           <LanguageSwitch />
           <ThemeSwitch />
           <AccountMenu />
@@ -93,19 +96,11 @@ export function NetworkOverview({
       {shownSelection && selected ? (
         <aside
           key={selected.id}
-          className="node-card-enter pointer-events-auto absolute inset-x-3 bottom-3 h-[62svh] md:inset-x-auto md:top-[84px] md:right-6 md:bottom-6 md:h-auto md:w-[380px]"
+          className="node-card-enter pointer-events-auto absolute inset-x-3 bottom-3 max-h-[64svh] md:inset-x-auto md:top-[84px] md:right-6 md:bottom-6 md:max-h-none md:w-[380px]"
         >
           <NodeCard node={selected} nodes={byId} observation={observation} runtimes={runtimes.data ?? null} now={now} onSelect={onSelect} />
         </aside>
       ) : null}
-
-      <footer className={shownSelection && mobile ? "hidden" : "absolute bottom-0 left-0 p-4 md:p-6"}>
-        <StatsPanel
-          nodes={nodes.data ? scene.nodes.length : null}
-          links={nodes.data ? linkSummary(observation, runtimes.data !== undefined) : null}
-          stale={stale}
-        />
-      </footer>
     </main>
   )
 }

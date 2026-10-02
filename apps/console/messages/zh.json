@@ -74,5 +74,8 @@
   "lab_revision": "版本",
   "lab_date": "日期",
   "lab_north": "北",
-  "overview_title_line": "{nodes} 节点 · {confirmed}/{total} 连接"
+  "overview_title_line": "{nodes} 节点 · {confirmed}/{total} 连接",
+  "loading": "正在加载",
+  "node_rtt_heading": "延迟",
+  "node_rtt_hint": "本端测得 · 对端测得的往返时间"
 }

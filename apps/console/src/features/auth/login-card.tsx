@@ -66,7 +66,8 @@ export function LoginCard({ reason, returnTo }: { reason: LoginReason | undefine
   return (
     <div
       data-leaving={leaving}
-      className="glass w-full max-w-[380px] rounded-[28px] p-8 transition-[opacity,transform,filter] duration-500 ease-[cubic-bezier(0.16,1,0.3,1)] data-[leaving=true]:-translate-y-3 data-[leaving=true]:scale-[0.98] data-[leaving=true]:opacity-0 data-[leaving=true]:blur-md motion-reduce:transition-none"
+      style={{ "--enter-from": "16px", "--enter-scale": "0.985", "--enter-delay": "60ms" }}
+      className="enter glass w-full max-w-[380px] rounded-[28px] p-8 transition-[opacity,transform,filter] duration-500 ease-[cubic-bezier(0.16,1,0.3,1)] data-[leaving=true]:-translate-y-3 data-[leaving=true]:scale-[0.98] data-[leaving=true]:opacity-0 data-[leaving=true]:blur-md motion-reduce:transition-none"
     >
       <Brand />
       <h1 className="mt-10 text-[26px] leading-tight font-semibold tracking-tight">{m.login_title()}</h1>

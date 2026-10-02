@@ -2,6 +2,8 @@ import type { QueryClient } from "@tanstack/react-query"
 import { createRootRouteWithContext, Outlet } from "@tanstack/react-router"
 
 import { Toaster } from "@/components/ui/sonner"
+import { BootScreen } from "@/features/boot/boot-screen"
+import { useBootStore } from "@/features/boot/boot-store"
 import { GlobeStage } from "@/features/globe/globe-stage"
 
 export type RouterContext = {
@@ -13,10 +15,14 @@ export const Route = createRootRouteWithContext<RouterContext>()({
 })
 
 function Root() {
+  const phase = useBootStore((state) => state.phase)
   return (
     <>
       <GlobeStage />
-      <Outlet />
+      <div data-boot={phase} className="contents">
+        <Outlet />
+      </div>
+      <BootScreen />
       <Toaster position="top-center" />
     </>
   )

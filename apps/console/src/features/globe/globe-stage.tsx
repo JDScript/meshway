@@ -1,10 +1,11 @@
 import { useEffect, useRef, useState, useSyncExternalStore } from "react"
 
+import { useBootStore } from "@/features/boot/boot-store"
 import { m } from "@/paraglide/messages.js"
 
 import { readGlobeColors, type GlobeColors } from "./colors"
 import type { GlobeEngine } from "./engine"
-import { selectFromGlobe, useGlobe } from "./store"
+import { selectFromGlobe, useGlobeStore } from "./store"
 
 const REDUCED_MOTION = "(prefers-reduced-motion: reduce)"
 
@@ -37,7 +38,10 @@ function useGlobeColors(): GlobeColors {
 export function GlobeStage() {
   const host = useRef<HTMLDivElement>(null)
   const [engine, setEngine] = useState<GlobeEngine | null>(null)
-  const state = useGlobe()
+  const state = useGlobeStore()
+  const boot = useBootStore((store) => store.phase)
+  const markEngineReady = useBootStore((store) => store.markEngineReady)
+  const markRevealed = useBootStore((store) => store.markRevealed)
   const colors = useGlobeColors()
   const motion = usePrefersMotion()
 
@@ -49,7 +53,7 @@ export function GlobeStage() {
     let observer: ResizeObserver | null = null
     void import("./engine").then(({ createGlobeEngine }) => {
       if (disposed) return
-      created = createGlobeEngine(element, selectFromGlobe)
+      created = createGlobeEngine(element, selectFromGlobe, markRevealed)
       const instance = created
       observer = new ResizeObserver(([entry]) => {
         if (entry) instance.resize(entry.contentRect.width, entry.contentRect.height)
@@ -64,15 +68,17 @@ export function GlobeStage() {
       created?.destroy()
       setEngine(null)
     }
-  }, [])
+  }, [markRevealed])
 
   useEffect(() => {
-    engine?.update({ ...state, colors, motion })
-  }, [engine, state, colors, motion])
+    if (!engine) return
+    engine.update({ ...state, colors, motion, boot })
+    markEngineReady()
+  }, [engine, state, colors, motion, boot, markEngineReady])
 
   return (
     <div className="globe-backdrop fixed inset-0">
-      <div ref={host} role="region" aria-label={m.globe_region()} className="size-full" />
+      <div ref={host} role="region" aria-label={m.globe_region()} data-boot={boot} className="globe-stage size-full" />
     </div>
   )
 }
