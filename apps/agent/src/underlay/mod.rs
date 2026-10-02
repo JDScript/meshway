@@ -1,7 +1,14 @@
 //! Internal outer-socket capability. Does not grant business access or own sinks.
+mod controller;
+mod dns;
 mod generation;
+mod http;
 mod socket;
 
+#[allow(unused_imports)]
+pub(crate) use controller::ControllerChannel;
+#[allow(unused_imports)] // Routing owner and carrier bootstrap adapter.
+pub(crate) use dns::{BootstrapResolver, SystemDnsSnapshot};
 #[allow(unused_imports)] // Staged owner integration is in the handoff.
 pub(crate) use generation::{MarkReservation, PreparedGeneration, Reservation};
 #[allow(unused_imports)] // Carrier integration names these wrapper types.
