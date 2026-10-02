@@ -14,12 +14,12 @@ Rust wire/schema test 对照三个实际 serde variant 的序列化字节、反�
 
 复核修复使用有类型 typed-map helper 替代 Zod 4 record：验证全部 own JSON 键和值、预算按输入键数计算，用 `Object.defineProperty` 安全构造输出，保留 `__proto__` / `constructor` / `toString`，不改变原型。`scripts/fixtures/policy-map-cases.json` 是 Rust serde 与生成 Zod 共用的真实输入；两侧对 `AutomaticRouting` 和完整 `NetworkPolicy` 验证相同的接受 / 拒绝与合法数据保留。enum / const `propertyNames` 仅验证出现键，不强造必填键；boolean `propertyNames`、不能证明 null 互斥的 nullable `oneOf`、nullable type + const 均明确生成失败。`anyOf` 的 null 重叠仍正确允许。相关 runtime 回归与 strict TS 输出检查已加入生成器测试。
 
-根命令建议：协调者在根 `package.json` scripts 加 `"test:codegen": "node --test scripts/generate-protocol.test.mjs"`，并将它纳入合并检查；本切片未改根 manifest / lock / CI。当前可直接运行该命令。
+协调者已加入 `pnpm test:codegen`（执行 `node --test scripts/generate-protocol.test.mjs`）及 CI 入口；依赖锁没有因本切片变化。七项行为测试与完整消费者组合验收已通过，结果见[里程碑](/milestones)。
 
 ## 三个边界
 
 1. **源策略**：`NetworkPolicy` 是可编辑 / 保存 / 迁移的用户配置；管理 DTO 携带它、CAS 基准、原始 JSONC 和诊断。字段验证不替代 policy 编译的引用、授权和预算校验。
-2. **compiler internal**：`NetworkCompilation` / 索引 / matcher / planner 状态是可信进程内输出，不能通过 Deserialize 或节点客户端重新构造，更不能直接当 stable node wire DTO 下发。共享缓存与安装预算仍按源、方案及最终安装结果计数，任何错误拒绝整个发布。
+2. **compiler internal**：`NetworkCompilation` / 索引 / matcher / planner 状态是进程内编译对象，不提供顶层 Deserialize，但公开字段仍可被 Rust 调用者修改，并非不可伪造的 validated plan。不能直接信任网络输入重建这些对象或把它们当 stable node wire DTO 下发。共享缓存与安装预算仍按源、方案及最终安装结果计数，任何错误拒绝整个发布。
 3. **stable node execution snapshot**：另建显式、封闭、版本化 DTO，从编译成功输出投影本节点的执行所需计划、授权路径、端点公钥与 typed carrier 参数。生成客户端负责解码，Agent 仍须防御性验证身份、revision / digest、资源限额、支持能力及本机资源。schema 验证不是执行成功证据，ACK 只代表校验与持久保存。
 
 `meshway-policy` 已依赖 `meshway-protocol`，禁止让 protocol 反向依赖 policy。最小可行接线是管理源 DTO 先留在 policy 的专用 source/API 模块（或 controller 的管理 envelope 引用 policy 源类型），Controller 实际路由注册这些 schemas；stable 节点 wire DTO 放现有 protocol 模块，policy / controller 单向投影到它。源类型是否后续整体下沉到 protocol 应单独迁移，不手工复制 NetworkPolicy。

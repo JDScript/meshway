@@ -2,7 +2,7 @@
 
 审查基线：`c72cebb`。Rust / Web 专项读取同一冻结 checkout，协调者复核关键调用链与工具链。
 Rust、Web 与工具链专题均已完成；协调者复核了发布事务、账户双向依赖、草稿生命周期及 SDK 错误处理等关键证据。
-这是源码结构审查，不是漏洞利用、性能或远端验收；本页建议的模块尚未创建，不能当成现状。
+这是源码结构审查，不是漏洞利用、性能或远端验收；建议与实施状态分别记录，已落地部分见末尾增量记录。
 原始报告保留在批准 TMP 的 `meshway-architecture-{rust,web,tooling}-c72cebb.md`。
 
 ## 总结
@@ -273,3 +273,14 @@ Native owning factory 与 SocketGeneration 接线以 `46a7b42` / `94c65ea` 合�
 独立复核先复现旧 carrier 入站跨 rebind 交付，再验证修复后的 UDP/TCP × endpoint/relay
 四种交错、新 carrier 恢复和已退休 PacketGeneration 不复活。R5 的统一 owning I/O 接点已落地，
 正式主循环 prepared 激活、RPDB owner / capture 与后续 registry 仍待接通；不计作生产全 IP 保护已启用。
+
+Controller `store::publication` 以 `d9e8b41` 合入，见[发布上下文](/controller-publication)。
+独立差分探针在既有测试实际调用的 GET 路径核对完整快照 / digest 与基线字节一致；publication
+上下文内一次编译复用端点评估与邻接投影。其缓存仅在本次调用 / 事务中有效，不是跨请求缓存，
+也不把该计数称为整个 HTTP 请求只运行一次任意校验。R1 的当前 v2 发布入口已收拢，
+v3 source / 稳定节点合同和 Agent 执行接线仍待完成。
+
+契约生成前置以 `889c752` / `b38b8ff` / `fa0f1d9` 合入：直接消费真实封闭 `ExitMatch` /
+`NetworkPolicy` schema，支持受约束 tagged union 与 typed map；独立复核发现并关闭特殊键丢失、
+键名枚举必填误判及 nullable 组合等五项偏差。旧生产产物保持字节兼容，生成器测试已进入 CI。
+这部分收敛 T2 的生成形状门槛；Rust stable node DTO 与实际 v3 API 仍待接线。

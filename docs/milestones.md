@@ -51,6 +51,8 @@ Native UDP/TCP owning factory 与 Manager prepared owner 接点已合入 `46a7b4
 原复核发现的 rebind 返回后旧 carrier 入站交付问题已修复并独立关闭；UDP/TCP 的 endpoint / relay
 四种交错及新 carrier E2E 恢复通过。正式主循环调用、捕获规则 ownership / 恢复与系统 split-DNS
 仍待接通；默认仍为 unmarked，现网尚未启用完整 socket 级系统保护。
+该批主线组合检查完成：Rust **562 passed / 7 ignored**、fmt 与 workspace all-features / all-targets
+Clippy 通过，日志在批准 TMP 的 `native-underlay-main-validation/`；作者及审查工作树已清理。
 
 ### 已完成整合与验证
 
@@ -66,6 +68,9 @@ packet 7 与 workspace Clippy 通过；它不延长超时或 lease，RTT 包含�
 Docker demo 已从已审定主线 `bdbd13f` 构建并原位更新，三个容器 ID、可写层工具、身份、密钥和旧 profiles 均保留。
 端节点双向 ICMP 各 3 包通过；部署回执与包验证位于
 `.meshway/services/binary-update-b1188f16dea2/`。本次没有修改策略，也没有导入实验 offload。
+随后 `d9e8b41` 发布上下文与已审定 native 修复更新到本地 Controller / 三个 Demo Agent；
+保留同一容器、身份和当前配置，现有配置下正常 Agent/TUN 的端节点双向 ICMP 各 3 包通过。
+最新回执为 `.meshway/services/binary-update-4120ea711460/`；不将此项记为自动组网或打洞完成。
 
 最终整合已包含账户、托管承载、历史与 Apple 多接入改动：Rust **548 passed / 7 ignored**、
 SDK 14 tests、Web 176 tests、Clippy、drift、各消费者类型检查与生产构建通过。
@@ -97,6 +102,17 @@ module 边界，随 P3a / P3b 和控制台重整逐步落地；当前未实施�
 P3a 前置发布边界修复已合入 `ddaee7c` / `a1b992f`：实际安装前缀预算、完整 global 方案 ID
 与 Agent 消费者校验、移除编译对象直接 Deserialize。独立行为复核、fmt / Clippy 和主线
 workspace 全 feature / target 编译通过；正式 Controller / Agent v3 合同和发布接线仍待完成。
+Controller 正常发布链路已按独立复核合入 `d9e8b41`，见[发布上下文](/controller-publication)：
+同次事务共享事实、编译与节点投影，保留现有 v2 / CAS / 鉴权和预算回滚语义；主线 101 单测、
+6 codegen、39 HTTP、14 SDK 测试及 fmt / Clippy / drift 通过，日志在批准 TMP 的
+`controller-publication-main-validation/`，本地 Controller 已更新。
+v3 契约生成前置已合入 `889c752` / `b38b8ff` / `fa0f1d9`：五项 typed map / nullable 复核问题关闭，
+完整真实源 schema 直接生成验证；`pnpm test:codegen` 已纳入 CI。尚未接入 v3 正式下发。
+隔离固定依赖快照的组合验收通过：Rust **566 passed / 7 ignored**、生成器 **7**、SDK **14**、
+既有 Web **184**，fmt / Clippy / drift、既有 TS 消费者与五个实验 tsconfig、Web / 文档构建均通过。
+SDK fixture 的绝对 Cargo target 路径拼接问题已修为 `9160f26` 并重跑剩余检查；未重复无变化的 Rust 全套。
+日志及初次失败保留在批准 TMP 的 `backend-integrated-validation/`。本次排除由用户独立维护的
+`apps/console`，未替换该工作流的 workspace / lockfile 或源文件。
 远端验收前补齐正式配置链路和 Docker 部署流程。容器只保留接入和私有持久化，
 listener、承载与业务策略由 Web 管理。独立 namespace 内开放必要 TUN / 网络权限，
 不修改宿主管理路由、DNS、防火墙或 Docker daemon，不使用 host network / privileged。
