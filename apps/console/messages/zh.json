@@ -1,0 +1,7 @@
+{
+  "$schema": "https://inlang.com/schema/inlang-message-format",
+  "app_name": "Meshway",
+  "language_name": "中文",
+  "scaffold_title": "控制台脚手架",
+  "scaffold_body": "Vite、TanStack Router、TanStack Query 与双语文案已就绪。"
+}
