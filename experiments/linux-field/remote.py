@@ -40,7 +40,25 @@ def main(data):
         if value.decode().strip() != run_id:
             raise RuntimeError('resource owner mismatch')
 
+    def prepare_directory(directory, image, role):
+        # With ALL capabilities dropped, uid 0 cannot traverse a uid 1000/1001
+        # mode-0700 bind mount. Transfer only this fresh bootstrap directory to
+        # container uid 0; do not grant DAC_OVERRIDE to the running Agent.
+        if directory.stat().st_uid == 0:
+            return
+        allowed = {'field.json', 'container.py', 'ca.pem', 'server.pem', 'server.key'}
+        files = list(directory.iterdir())
+        if any(p.is_symlink() or not p.is_file() or p.name not in allowed for p in files):
+            raise RuntimeError('ownership setup only accepts fresh bootstrap files')
+        code = "import os,pathlib; p=pathlib.Path('/private'); os.chown(p,0,0); [os.chown(f,0,0) for f in p.iterdir()]"
+        dk(['run', '--rm', '--name', name + '-' + role + '-prepare', '--label', OWNER + '=' + run_id,
+            '--network', 'none', '--cap-drop', 'ALL', '--cap-add', 'CHOWN', '--security-opt', 'no-new-privileges',
+            '--read-only', '--memory', '64m', '--cpus', '.25', '--pids-limit', '16',
+            '--mount', f'type=bind,source={directory},target=/private', '--entrypoint', 'python3', image, '-I', '-c', code])
+
     action = data['action']
+    if action == 'inventory' and not root.exists():
+        return {'initialized': False, 'roles': []}
     if action == 'initialize':
         if root.parent.is_symlink():
             raise ValueError('deployment parent must not be a symlink')
@@ -63,6 +81,12 @@ def main(data):
         return {'root': str(root), 'network': name}
     if not root.is_dir() or (root / 'owner').read_text() != run_id:
         raise RuntimeError('private deployment owner mismatch')
+    if action == 'inventory':
+        owned('network', name)
+        roles = [role for role in ['agent', 'controller'] if (root / (role + '.id')).exists()]
+        for role in roles:
+            owned('container', (root / (role + '.id')).read_text())
+        return {'initialized': True, 'roles': roles}
     if action == 'create':
         role = data['role']
         if role not in ['agent', 'controller']:
@@ -77,6 +101,7 @@ def main(data):
             if filename not in ['field.json', 'container.py', 'ca.pem', 'server.pem', 'server.key']:
                 raise ValueError('invalid deployment file')
             (directory / filename).write_bytes(base64.b64decode(encoded, validate=True))
+        prepare_directory(directory, image, role)
         container = name + '-' + role
         args = ['create', '--name', container, '--init', '--label', OWNER + '=' + run_id,
                 '--network', name, '--cap-drop', 'ALL', '--security-opt', 'no-new-privileges',
@@ -121,6 +146,12 @@ def main(data):
         raise ValueError('invalid role')
     container = (root / (role + '.id')).read_text()
     owned('container', container)
+    if action == 'repair-bootstrap-owner':
+        view = json.loads(dk(['inspect', container]))[0]
+        if view['State']['Running']:
+            raise RuntimeError('bootstrap ownership repair requires stopped container')
+        prepare_directory(root / role, view['Image'], role)
+        return {'bootstrap_owner_repaired': True}
     if action == 'helper':
         return json.loads(dk(['exec', '-i', container, 'python3', '-I', '/private/container.py', data['helper']],
                              input=json.dumps(data.get('input', {})).encode(), timeout=70))

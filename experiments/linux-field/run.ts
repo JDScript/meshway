@@ -16,6 +16,8 @@ import type { NodeSummary, RoutingPolicy, ConnectionCandidate } from "../../pack
 process.umask(0o077);
 const HERE = dirname(fileURLToPath(import.meta.url));
 const filename = process.argv[2]; assert(filename);
+const resume = process.argv[3] === "--resume";
+assert(process.argv.length === (resume ? 4 : 3));
 const config = parse(await readFile(filename, "utf8"));
 const runId = text(config.run_id); assert(/^[a-z0-9-]{10,48}$/.test(runId));
 const artifacts = dirname(filename);
@@ -61,9 +63,16 @@ async function until<T>(label: string, check: () => Promise<T | false>, timeout 
   throw new Error(`readiness timeout: ${label}`);
 }
 async function initialize(h: Host) {
+  if (resume && boolean((await remote(h, "inventory")).initialized)) { initialized.push(h); return; }
   await remote(h, "initialize"); initialized.push(h); await save();
 }
 async function create(h: Host, role: "agent" | "controller") {
+  if (resume && array((await remote(h, "inventory")).roles).includes(role)) {
+    const existing = await remote(h, "inspect", { role }); assert.equal(existing.image, h.image);
+    if (!boolean(record(existing.state).Running)) await remote(h, "start", { role });
+    await evidence("retained-existing-container", { host: h.name, role, inspect: existing });
+    return;
+  }
   const files: Record<string, string> = {
     "container.py": helperSource.toString("base64"), "ca.pem": ca.toString("base64"),
     "field.json": Buffer.from(JSON.stringify({ role, name: h.name, controller: base,
@@ -74,6 +83,16 @@ async function create(h: Host, role: "agent" | "controller") {
   await evidence("isolated-container", { host: h.name, role, inspect: await remote(h, "inspect", { role }) });
 }
 async function enroll(h: Host) {
+  if (resume) {
+    const existing = (await listNodesOperation(base, admin, networkId)).nodes.filter(n => n.name === h.name);
+    assert(existing.length <= 1);
+    if (existing[0]) {
+      const observation = await helper(h, "observe"); assert.equal(observation.node_id, existing[0].id);
+      nodes.set(h.name, existing[0]); bodies.set(h.name, `meshway-field:${runId}:${h.name}\n`);
+      await evidence("retained-existing-node-identity", { host: h.name, node_id: existing[0].id, state_sha256: observation.state_sha256 });
+      return;
+    }
+  }
   const enrollment = h.listener
     ? await createManagedEnrollmentTokenOperation(base, admin, networkId, {
       expires_in_seconds: 600,
@@ -116,14 +135,41 @@ async function httpStart(h: Host) {
   await helper(h, "http-start", { address: node.mesh_ipv4, body: bodies.get(h.name) });
 }
 async function probe(source: Host, target: Host, expectSuccess = true) {
+  const observation = await collectProbe(source, target);
+  if (expectSuccess) assert(probeSucceeded(observation), `${source.name} -> ${target.name}: real TUN probe failed`);
+  else assert(!boolean(observation.http_ok) && observation.ping_exit !== 0, "traffic unexpectedly survived required-node/control outage");
+  return observation;
+}
+function probeSucceeded(observation: Record<string, unknown>) {
+  return observation.ping_exit === 0 && boolean(observation.http_ok) && boolean(observation.body_matches);
+}
+async function collectProbe(source: Host, target: Host) {
   const node = nodes.get(target.name); assert(node);
   const observation = await helper(source, "probe", { address: node.mesh_ipv4, body: bodies.get(target.name) });
-  const ok = observation.ping_exit === 0 && boolean(observation.http_ok) && boolean(observation.body_matches);
-  if (expectSuccess) assert(ok, `${source.name} -> ${target.name}: real TUN probe failed`);
-  else assert(!boolean(observation.http_ok) && observation.ping_exit !== 0, "traffic unexpectedly survived required-node/control outage");
-  return { source: source.name, target: target.name, ...observation, route: observation.route };
+  return { source: source.name, target: target.name, ...observation, route: observation.route,
+    ping_exit: observation.ping_exit, http_ok: observation.http_ok, body_matches: observation.body_matches };
+}
+async function recovery(label: string, pairs: [Host, Host][], started: number) {
+  // Authentication/current ACK are not business readiness. Measure bounded
+  // recovery with actual traffic and retain every failed probe, including the
+  // interval where the old sender's E2E session may still be cached.
+  do {
+    const results = await Promise.all(pairs.map(([source, target]) => collectProbe(source, target)));
+    const elapsed_ms = Math.round(performance.now() - started);
+    await evidence(`${label}-traffic-attempt`, { elapsed_ms, results });
+    if (results.every(probeSucceeded)) return { elapsed_ms, results };
+    await delay(2000);
+  } while (performance.now() - started < 120_000);
+  throw new Error(`${label}: business traffic did not recover within 120s`);
 }
 try {
+  if (resume) {
+    const previous = await readFile(join(artifacts, "result.json"));
+    const parsed = parse(previous.toString()); assert.equal(parsed.run_id, runId); assert.equal(parsed.status, "FAIL");
+    const name = `result.previous-${Date.now()}.json`;
+    await writeFile(join(artifacts, name), previous, { mode: 0o600, flag: "wx" });
+    await evidence("resume-after-diagnosed-fixture-failure", { previous_report: name, sha256: createHash("sha256").update(previous).digest("hex") });
+  }
   await evidence("fixture-provenance", { backend_source: report.source,
     files: Object.fromEntries(await Promise.all(["run.ts", "remote.py", "container.py"].map(async name =>
       [name, createHash("sha256").update(await readFile(join(HERE, name))).digest("hex")]))),
@@ -150,11 +196,13 @@ try {
     await helper(lax, "dns", { address: nodes.get(tyo.name)!.mesh_ipv4 }),
   ] });
   const identity = await helper(tyo, "observe");
+  const restartStarted = performance.now();
   await remote(tyo, "restart", { role: "agent" });
   await ready([lax, tyo]);
   const restored = await helper(tyo, "observe");
   assert.equal(restored.node_id, identity.node_id); assert.equal(restored.state_sha256, identity.state_sha256);
-  await evidence("container-restart-same-identity", { before: identity, after: restored, results: [await probe(tyo, lax), await probe(lax, tyo)] });
+  await evidence("container-restart-same-identity", { before: identity, after: restored,
+    recovery: await recovery("container-restart", [[tyo, lax], [lax, tyo]], restartStarted) });
 
   if (hosts.length > 2) {
     const nyc = host("us-nyc"); const icn = host("kr-icn");
@@ -175,9 +223,10 @@ try {
     await remote(nyc, "stop", { role: "agent" });
     await evidence("required-node-down-no-bypass", { results: [await probe(tyo, icn, false), await probe(icn, tyo, false)],
       surviving_direct_edge: await probe(icn, lax) });
+    const relayRestartStarted = performance.now();
     await remote(nyc, "start", { role: "agent" });
     await ready(hosts);
-    await evidence("required-node-restored", { results: [await probe(tyo, icn), await probe(icn, tyo)] });
+    await evidence("required-node-restored", { recovery: await recovery("required-node-restart", [[tyo, icn], [icn, tyo]], relayRestartStarted) });
   }
   const listeners = await getManagedListenersOperation(base, admin, networkId);
   await evidence("managed-listeners-public", { listeners });
@@ -192,9 +241,10 @@ try {
     return route.dst === "198.18.42.0/24" && ["blackhole", "unreachable", "prohibit"].includes(String(route.type));
   }), "missing Mesh no-fallback guard");
   await evidence("control-outage-lease-withdrawal", { observation: stopped, proof: blocked });
+  const controlRestartStarted = performance.now();
   await remote(lax, "start", { role: "controller" });
   await ready(hosts);
-  await evidence("controller-restart-recovery", { results: [await probe(tyo, lax), await probe(lax, tyo)] });
+  await evidence("controller-restart-recovery", { recovery: await recovery("controller-restart", [[tyo, lax], [lax, tyo]], controlRestartStarted) });
   report.status = "PASS";
 } catch (error) {
   report.status = "FAIL"; report.failure_step = report.step; report.failure = error instanceof Error ? error.message : "unknown";
