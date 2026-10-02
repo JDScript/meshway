@@ -759,7 +759,7 @@ impl Manager {
             && let Err(error) = plan.check_targets(&targets)
         {
             self.withdraw(Reason::InvalidConfiguration).await;
-            return Err(error);
+            return Err(error.into());
         }
         if self.material.as_ref() == Some(&material)
             && self.running.as_ref().is_some_and(Running::active)

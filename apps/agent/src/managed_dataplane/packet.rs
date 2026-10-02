@@ -15,12 +15,8 @@ pub(crate) async fn run(
 ) -> io::Result<()> {
     #[cfg(all(test, target_os = "linux"))]
     super::throughput::observe_runtime(&runtime);
-    meshway_dataplane::packet_io::run_with_activation(
-        device,
-        runtime,
-        plan.admission.clone(),
-        deadline,
-        || super::tun::proof(name, &plan, true, "generation_active", events),
-    )
+    plan.run(device, runtime, deadline, || {
+        super::tun::proof(name, &plan, true, "generation_active", events)
+    })
     .await
 }

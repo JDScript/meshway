@@ -65,6 +65,15 @@ impl AgentError {
     }
 }
 
+#[cfg(feature = "managed-connections")]
+impl From<meshway_agent_dataplane::PlanError> for AgentError {
+    fn from(error: meshway_agent_dataplane::PlanError) -> Self {
+        match error {
+            meshway_agent_dataplane::PlanError::Invalid(message) => Self::Invalid(message),
+        }
+    }
+}
+
 impl<E: std::fmt::Debug> From<ApiOpError<E>> for AgentError {
     fn from(error: ApiOpError<E>) -> Self {
         match error {

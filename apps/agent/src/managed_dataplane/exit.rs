@@ -99,7 +99,7 @@ pub(crate) struct ExitPlan {
     pub selected_profile: Option<String>,
     pub effective_profile: Option<String>,
     pub grants: Vec<ExitGrant>,
-    mesh_admission: Option<meshway_dataplane::packet_io::Ipv4PacketPlan>,
+    mesh_admission: Option<super::PacketPlan>,
     flows: Mutex<BTreeMap<Flow, Instant>>,
     returns: Mutex<BTreeMap<Flow, (Vec<String>, Instant)>>,
 }
@@ -299,7 +299,7 @@ impl ExitPlan {
                 "exit and Mesh plans have different address bindings",
             ));
         }
-        self.mesh_admission = Some(mesh.admission.clone());
+        self.mesh_admission = Some(mesh.clone());
         Ok(self)
     }
 
