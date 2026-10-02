@@ -13,10 +13,9 @@ import uuid
 
 ROOT = Path(__file__).resolve().parents[4]
 TMP = Path('/private/var/folders/8n/20x15sl9797cdg9sdqfj803w0000gn/T/opencode')
-# Coordination moved this helper to scripts; support the frozen worktree copy
-# until that independent change is integrated. Both hold the identical lock.
-sys.path.insert(0, str(ROOT / ('scripts' if (ROOT / 'scripts/performance_lock.py').exists() else 'experiments/transport')))
+sys.path.insert(0, str(ROOT / 'scripts'))
 from performance_lock import performance_lock, validate_descriptor
+from source_manifest import inventory
 
 
 def run(args):
@@ -34,7 +33,8 @@ def run(args):
     result = {'owner': name, 'status': 'failed', 'cleanup_errors': [], 'commands': [], 'inspect': []}
     source = logs / 'source'
     source.mkdir()
-    for relative in ('Cargo.toml', 'Cargo.lock', 'crates', 'apps/controller', 'apps/agent', 'apps/apple/core'):
+    for relative in ('Cargo.toml', 'Cargo.lock', '.dockerignore', 'crates', 'apps/controller', 'apps/agent', 'apps/apple/core',
+                     'experiments/underlay-routing/helper.py', 'experiments/underlay-routing/fixture.py'):
         origin, destination = ROOT / relative, source / relative
         destination.parent.mkdir(parents=True, exist_ok=True)
         if origin.is_dir():
@@ -98,9 +98,18 @@ def run(args):
                     and item.get('executable') and item['target']['name'] == 'meshway_agent']
                 assert len(tests) == 1
                 shutil.copy2(work / Path(tests[0]).relative_to('/work'), context / 'underlay-tests')
+                (context / 'source-manifest.json').write_text(json.dumps(inventory(source), sort_keys=True))
+                for relative, output in (
+                    ('apps/agent/tests/underlay_fixture/namespace.py', 'production.py'),
+                    ('experiments/underlay-routing/helper.py', 'helper.py'),
+                    ('experiments/underlay-routing/fixture.py', 'fixture.py'),
+                ):
+                    shutil.copy2(source / relative, context / output)
                 (context / 'Dockerfile').write_text(f'FROM {args.runtime}\n'
                     'COPY --chmod=755 meshway-agent meshway-controller /usr/local/bin/\n'
                     'COPY --chmod=755 underlay-tests /underlay-tests\n'
+                    'COPY source-manifest.json /source-manifest.json\n'
+                    'COPY production.py helper.py fixture.py /lab/\n'
                     'ENTRYPOINT ["python3", "-c", "import signal; signal.pause()"]\n')
                 image = 'meshway-underlay-main-loop:' + name
                 docker('build', '--builder', 'default', '-t', image, str(context), timeout=600)

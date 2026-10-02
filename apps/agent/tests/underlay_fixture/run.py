@@ -20,6 +20,7 @@ sys.path.insert(0, str(ROOT / 'scripts'))
 from performance_lock import locked_launch
 sys.path.insert(0, str(HERE))
 from trace import audit
+from source_manifest import inventory, verify
 
 
 def run(args):
@@ -30,7 +31,7 @@ def run(args):
               'source_commit': subprocess.check_output(['git', 'rev-parse', 'HEAD'], cwd=ROOT, text=True).strip(),
               'source_diff_sha256': hashlib.sha256(subprocess.check_output(['git', 'diff', 'HEAD'], cwd=ROOT)).hexdigest(),
               'fixture_source_sha256': {name: hashlib.sha256((HERE / name).read_bytes()).hexdigest()
-                                        for name in ['namespace.py', 'run.py', 'Dockerfile', 'trace.py']}}
+                                        for name in ['namespace.py', 'run.py', 'source_manifest.py', 'trace.py']}}
     containers, networks, transients = [], [], []
     docker = mechanism.docker
     previous = {}
@@ -40,17 +41,15 @@ def run(args):
         previous[sig] = signal.signal(sig, stop)
     try:
         if not args.skip_build:
-            docker('build', '-f', str(HERE / 'Dockerfile'), '-t', args.image, str(ROOT), timeout=1200)
+            raise ValueError('build with main_loop.py, then pass --skip-build --image from its result.json')
         result['image_id'] = json.loads(docker('image', 'inspect', args.image).stdout)[0]['Id']
-        result['source_sha256'] = {str(p.relative_to(ROOT)): hashlib.sha256(p.read_bytes()).hexdigest()
-                                  for p in sorted((ROOT / 'apps/agent/src/underlay').glob('*.rs'))}
-        result['source_sha256']['apps/agent/src/managed_dataplane/tun.rs'] = hashlib.sha256((ROOT / 'apps/agent/src/managed_dataplane/tun.rs').read_bytes()).hexdigest()
+        result['source_manifest'] = inventory(ROOT)
+        result['source_sha256'] = result['source_manifest']['files']
         source_check = owner + '-sources'
         transients.append(source_check)
         actual_sources = json.loads(docker('run', '--rm', '--name', source_check, '--label', mechanism.LABEL + '=' + owner, '--network', 'none', '--cap-drop', 'ALL', '--read-only', '--entrypoint', 'python3', args.image, '-c',
-            'import hashlib,json,pathlib; s={"apps/agent/src/underlay/"+p.name:hashlib.sha256(p.read_bytes()).hexdigest() for p in pathlib.Path("/sources/underlay").glob("*.rs")}; s["apps/agent/src/managed_dataplane/tun.rs"]=hashlib.sha256(pathlib.Path("/sources/tun.rs").read_bytes()).hexdigest(); print(json.dumps(s))').stdout)
-        if actual_sources != result['source_sha256']:
-            raise RuntimeError('image Rust sources do not match checkout; rebuild')
+            'from pathlib import Path; print(Path("/source-manifest.json").read_text())').stdout)
+        verify(actual_sources, result['source_manifest'])
         networks.append(owner)
         docker('network', 'create', '--internal', '--ipv6', '--subnet', '172.30.247.0/24', '--subnet', 'fd74:6d77:247::/64', '--label', mechanism.LABEL + '=' + owner, owner)
         for role, v4, v6 in [('server', '.20', '::20'), ('client', '.10', '::10')]:

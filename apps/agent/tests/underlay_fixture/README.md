@@ -6,12 +6,18 @@ test traffic; it does not create or substitute the client's sockets.
 
 ```sh
 python3 -m unittest discover -s apps/agent/tests/underlay_fixture -p 'test_*.py' -v
-python3 apps/agent/tests/underlay_fixture/run.py
+python3 apps/agent/tests/underlay_fixture/main_loop.py
+# Reuse the image ID from that run's result.json for the lower-level checks:
+python3 apps/agent/tests/underlay_fixture/run.py --skip-build --image <image-id>
 ```
 
-The runner retains the shared performance lock through Docker build, namespace
-tests and exact cleanup. Acquisition/build/run is bounded to 2400 seconds.
-`--skip-build` verifies the image's Rust source hashes against the checkout.
+`main_loop.py` compiles in a non-root, cap-drop-ALL container with explicit CPU
+and memory limits, builds the runtime layer with the ordinary Docker builder,
+and validates the normal Controller/Agent/TUN lifecycle. The mechanism runners
+reuse its image under the same performance lock, with a 2400-second budget.
+`--skip-build` compares the complete input path set and hashes, including nested
+modules, extracted crates, manifests and runtime helpers. Images without this
+manifest must be rebuilt. There is no separate in-builder Rust compilation path.
 All traffic is in a fresh internal dual-stack Docker network, with no published
 ports, host networking, privileged containers or host routing/DNS/firewall
 changes. NET_ADMIN is confined to disposable containers. UID/GID 65534 tests
@@ -73,7 +79,7 @@ not appear in the TUN alongside the expected ordinary controls.
 
 ```sh
 # Current source: namespace ownership, partial transactions and restart cases.
-python3 apps/agent/tests/underlay_fixture/review.py
+python3 apps/agent/tests/underlay_fixture/review.py --skip-build --image <image-id>
 ```
 
 Each run records its actual source hashes and cleanup result. Historical

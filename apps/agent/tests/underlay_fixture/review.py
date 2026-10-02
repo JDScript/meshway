@@ -18,6 +18,7 @@ sys.path.insert(0, str(ROOT / 'experiments/underlay-routing'))
 import run as mechanism
 sys.path.insert(0, str(ROOT / 'scripts'))
 from performance_lock import locked_launch
+from source_manifest import inventory, verify
 
 
 def run(args):
@@ -26,12 +27,11 @@ def run(args):
     directory.mkdir(parents=True, mode=0o700)
     result = {'status': 'failed', 'owner': owner, 'started_at': datetime.now(timezone.utc).isoformat(),
               'cleanup_errors': [], 'cases': [], 'source_commit': subprocess.check_output(['git', 'rev-parse', 'HEAD'], cwd=ROOT, text=True).strip(),
-              'source_sha256': {str(p.relative_to(ROOT)): hashlib.sha256(p.read_bytes()).hexdigest()
-                  for p in sorted((ROOT / 'apps/agent/src/underlay').glob('*.rs'))}}
-    result['source_sha256']['apps/agent/src/managed_dataplane/tun.rs'] = hashlib.sha256((ROOT / 'apps/agent/src/managed_dataplane/tun.rs').read_bytes()).hexdigest()
+              'source_manifest': inventory(ROOT)}
+    result['source_sha256'] = result['source_manifest']['files']
     result['dependency_sha256'] = {name: hashlib.sha256((ROOT / name).read_bytes()).hexdigest() for name in (
         'Cargo.toml', 'Cargo.lock', 'crates/vendor/README.md', 'crates/vendor/socket2-upstream-sha256.json', 'crates/vendor/socket2/src/sys/unix.rs')}
-    result['fixture_sha256'] = {name: hashlib.sha256((HERE / name).read_bytes()).hexdigest() for name in ('review.py', 'Dockerfile')}
+    result['fixture_sha256'] = {name: hashlib.sha256((HERE / name).read_bytes()).hexdigest() for name in ('review.py', 'source_manifest.py')}
     containers, networks, volumes = [], [], []
     docker = mechanism.docker
     previous = {}
@@ -65,18 +65,14 @@ def run(args):
 
     try:
         if not args.skip_build:
-            builder_name = docker('context', 'show').stdout.strip()
-            builder = docker('buildx', 'inspect', builder_name).stdout
-            result['builder'] = builder
-            assert any(line.split() == ['Driver:', 'docker'] for line in builder.splitlines()), 'default builder must be ordinary docker driver'
-            docker('build', '--builder', builder_name, '-f', str(HERE / 'Dockerfile'), '-t', args.image, str(ROOT), timeout=1200)
+            raise ValueError('build with main_loop.py, then pass --skip-build --image from its result.json')
         result['image_id'] = json.loads(docker('image', 'inspect', args.image).stdout)[0]['Id']
         source_name = owner + '-sources'
         containers.append(source_name)
         actual = json.loads(docker('run', '--rm', '--name', source_name, '--label', mechanism.LABEL + '=' + owner,
             '--network', 'none', '--cap-drop', 'ALL', '--read-only', '--entrypoint', 'python3', args.image, '-c',
-            'import pathlib,hashlib,json; s={"apps/agent/src/underlay/"+p.name:hashlib.sha256(p.read_bytes()).hexdigest() for p in pathlib.Path("/sources/underlay").glob("*.rs")}; s["apps/agent/src/managed_dataplane/tun.rs"]=hashlib.sha256(pathlib.Path("/sources/tun.rs").read_bytes()).hexdigest(); print(json.dumps(s))').stdout)
-        assert actual == result['source_sha256'], 'image source bytes do not match checkout'
+            'from pathlib import Path; print(Path("/source-manifest.json").read_text())').stdout)
+        verify(actual, result['source_manifest'])
         network = owner + '-network'
         networks.append(network)
         docker('network', 'create', '--internal', '--ipv6', '--subnet', '172.30.247.0/24', '--subnet', 'fd74:6d77:247::/64',
