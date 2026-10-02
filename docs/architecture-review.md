@@ -1,7 +1,7 @@
 # 代码架构审查：边界与收敛顺序
 
 审查基线：`c72cebb`。Rust / Web 专项读取同一冻结 checkout，协调者复核关键调用链与工具链。
-当前已完成 Rust 与工具链结论，Web 分层专题仍在审查，完成后汇入本页。
+Rust、Web 与工具链专题均已完成；协调者复核了发布事务、账户双向依赖、草稿生命周期及 SDK 错误处理等关键证据。
 这是源码结构审查，不是漏洞利用、性能或远端验收；本页建议的模块尚未创建，不能当成现状。
 原始报告保留在批准 TMP 的 `meshway-architecture-{rust,web,tooling}-c72cebb.md`。
 
@@ -125,6 +125,84 @@ core 保留 Noise、认证 channel、buffer / batch 和精确路径，Controller
 先保留兼容的内部 client facade；Apple 恢复或存在独立 SDK 发布需求时，再考虑一个独立
 生成 `control-client` crate。它有真实的多个消费者，是较有依据的未来拆包候选，当前不阻塞 Linux。
 
+## Web 分层与共享职责
+
+会话 Cookie、渲染登录 marker、URL 网络作用域、生成 SDK 响应校验、草稿 owner 和真实地图
+数据边界已形成合理设计。本次发现主要是这些边界的执行代码重复，以及契约限制在 UI 中另有来源。
+`packages/control-client` 保持一个包；当前没有将仅 Web 使用的 UI / model 再抽共享包的需求。
+
+### W1 · CAS 编辑会话复制了三份（P3a 新编辑器前收敛）
+
+Routing `components/routing/policy-editor.tsx:466–525`、Access
+`components/access/access-editor.tsx:319–361` 和 Connections
+`components/connections/connections-editor.tsx:401–450` 分别实现相同的保存 / 重读生命周期：
+捕获 base 与发送序号、判断当前 owner、处理卸载后的保存结果、屏蔽过时重读。
+claim / release、持久化 effect 和 Provider 也各自重复。草稿种类同时登记在
+`lib/draft-vault.ts:6–49`、`components/network/network-workspace.tsx:64–70` 和导航等位置；
+managed listener 已计入 vault，却没有对应导航草稿种类。
+
+**建议**：提取窄的 CAS session hook 和草稿注册描述，业务文档的保存归并逻辑仍由具体 feature 提供。
+先迁移一个编辑器验证，再用于新 grants / 连接模板 / 路由方案。每个文档保留自己的 CAS 基准；
+网络共用 revision 不意味着草稿可以自动跟随它。owner、sentSeq、注释 / 无效 JSONC 和冲突保留
+是必须保持的行为，不能为了抽象减少这些状态。
+
+### W2 · Server Action 边界由重复骨架维持（随账户 / 策略收敛）
+
+`lib/connections-actions.ts:49–85`、`policy-actions.ts:75–113`、
+`managed-listener-actions.ts:44–73` 等反复实现登录 marker / 网络检查、调用、状态映射与 401 跳转。
+`MAX_REVISION` 和输入大小检查也多处手写，结果类型集中在全局 `lib/action-state.ts`。
+
+**建议**：一个 server-only 的 network-action helper 只负责共同边界，状态映射和结果类型归各 feature。
+Next `redirect` 以异常实现，继续在错误捕获之外执行；401 跳转不误删新登录 Cookie，403 保留会话。
+上限校验尽量直接消费生成 schema。少数 scope 从已绑定的数据 / query 组装的调用可统一接
+`useActionScope`；本次只确认写法不统一，未证明这些等价来源造成跨网越权。
+
+### W3 · 限值、枚举与镜像校验缺少单一来源（跨前后端接线）
+
+`lib/connections-model.ts:21–30`、`managed-listener-model.ts:55–60`、
+`tags-model.ts:9`、`access-model.ts:19–26` 手写 OpenAPI 已有的上限 / 枚举。
+`policy-model.ts:19–25` 的部分规则限值尚未表达在 wire schema。
+`managed-listener-model.ts:14–18` 明确说明它在镜像 Controller 校验。
+
+这里表单到 DTO 的 adapter 方向本身正确，问题是约束数据需要人工同步且不受 drift 检查。
+SDK `packages/control-client/src/transport.ts:37–40` 丢弃失败 body，只暴露状态码；
+这不等于 Controller 完全没有错误 body，而是 UI 缺少可消费的字段级诊断。
+
+**建议**：优先从现有生成 schema 派生枚举 / 限值；必要时由生成器输出紧凑的 limits 产物。
+纯策略限值进入权威契约后随 drift 检查。后续提供生成的字段级 422 诊断，使 UI 不必复制服务端
+业务校验；保留有界读取、脱敏和 status-first 认证错误处理，不直接回显任意错误 body。
+不同用途的同名视图类型按真实语义命名，不为减少类型数量强行统一。
+
+### W4 · 观测轮询与多源状态合并混在一起（节点重整后收敛）
+
+`components/nodes/node-detail.tsx:125–174` 与
+`components/topology/topology-view.tsx:101–125` 复制多源读取 / 合并逻辑，
+`components/connections/use-runtimes.ts:37–95` 的 runtime 轮询实际驱动多个资源。
+历史和 endpoint 观测另有自己的可见性轮询。
+
+**建议**：提取只管理可见性、调度、取消和序号的 poll helper；多源结果归 observation / nodes
+状态模块。各数据源继续保留自身缓存 / 失败策略和时间：失败保留旧值不代表旧值仍新鲜，
+读取得到的观测不移动编辑草稿基准，也不创造新的延迟样本。由现有节点任务采用，或在其合入后迁移。
+
+### W5 · 目录与检查入口强化了 lib 平铺（渐进整理）
+
+`apps/web/package.json:13` 的测试入口只收集 `lib/*.test.ts`，把纯模型移到 feature
+子目录后不会自动执行其测试。`components/network/network-workspace.tsx:5–11,23–70`
+实际承担全控制台的登录 / 网络 / 草稿基础设施，其他 feature 为取得 action scope 反向依赖
+“网络设置”目录。两个 `network-context` 名字分别代表服务端 action 边界与客户端路由 context。
+
+**建议**：先让测试发现支持 feature 子目录，再把控制台公共工作区与 feature UI 分清；
+纯 model / result / action 与对应 feature 逐步归拢，保持 server-only 与可在 Node 中测试的纯模块边界。
+冻结树有无调用的 `selectedNetworkId` / `requireActionCredential`；弃用的 `requireAdminToken`
+仍有两个调用方，应先迁移调用后删除别名。账户工作树合入前不抢改其 session / shell 文件。
+
+### SDK 公开面补充
+
+`packages/control-client/src/index.ts:1–55` 是手写 re-export 清单，部分实验因此深导入生成文件；
+Apple 脚本还从 SDK 的 `node_modules/zod` 路径取依赖。由生成流程维护公开 operation 导出，
+需要时提供明确 agent 子路径，消费者声明自己的直接依赖。该调整与生成器一起由协调者推进，
+无需新建 UI / domain 包。
+
 ## 工具与实验的长期归属
 
 ### T1 · 日常入口反向依赖 experiments
@@ -169,6 +247,7 @@ underlay，通过字符串锚点和 `docs/underlay-*.patch` 拼装历史组合�
 | 时机 | 结构工作 | 保留的交付边界 |
 | --- | --- | --- |
 | 当前三条实现线 | policy 发布预算 / ID、native owning I/O、账户 / 控制台功能 | 不做全树 rename、不覆盖活跃文件；根 manifest / lock / 生成物由协调者维护 |
+| Web 首批页面合入后 / P3a 编辑器之前 | feature 测试发现、network action helper、CAS 编辑会话与草稿注册 | 现有用户页面先交付；归拢共享机制再扩展新编辑器，按文档保留基准与 owner |
 | P3a + underlay | Controller publication；policy → wire → validated plan | 同事务鉴权 / CAS、一致快照、撤回、迁移与预算；不急于锁外缓存 |
 | P3b / P3d | carrier 目录 / 装配、Agent control / session / CLI 职责 | 主备不改变逻辑路径，socket 与 packet 退休独立有效 |
 | 四地 Linux 联测 | 固定边界，以真实部署和故障恢复验收 | 不插入大规模拆包 / 性能矩阵；用测量决定后续调度优化 |

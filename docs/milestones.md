@@ -77,6 +77,10 @@ offload 有局部收益但仍有完整性 / 延迟问题，NEON 和 worker 调�
 
 ### 后续并行与发布边界
 
+[代码架构审查](/architecture-review)已对冻结主线完成 Rust / Web / 工具链核对。
+建议先收敛 Controller publication、policy 到执行合同、Agent control / session 和 Web 共享编辑会话等
+module 边界，随 P3a / P3b 和控制台重整逐步落地；当前未实施大规模拆 crate 或目录搬迁。
+
 后端策略 / underlay 与前端账户 / 控制台按文件所有权并行；Rust 关键改动独立审查。
 远端验收前补齐正式配置链路和 Docker 部署流程。容器只保留接入和私有持久化，
 listener、承载与业务策略由 Web 管理。独立 namespace 内开放必要 TUN / 网络权限，
