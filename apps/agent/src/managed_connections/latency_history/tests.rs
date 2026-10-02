@@ -376,6 +376,34 @@ async fn real_authenticated_udp_timeout_and_missing_channel_are_distinct() {
     .unwrap();
     assert_eq!(good.outcome, LatencyOutcome::Success);
     blocked.store(true, Ordering::SeqCst);
+    {
+        // Reserve a real pending nonce slot first. Local capacity pressure must
+        // expire inside the original budget without inventing a timeout sample.
+        let pending = a
+            .runtime
+            .probe_neighbor_observed(&client.node_id, Duration::from_secs(1));
+        tokio::pin!(pending);
+        std::future::poll_fn(|cx| {
+            assert!(pending.as_mut().poll(cx).is_pending());
+            std::task::Poll::Ready(())
+        })
+        .await;
+        let began = Instant::now();
+        assert!(
+            measure(
+                &a.runtime,
+                &config,
+                1,
+                &generation,
+                &client.node_id,
+                Duration::from_millis(100),
+            )
+            .await
+            .is_none()
+        );
+        assert!(began.elapsed() >= Duration::from_millis(100));
+        assert!(began.elapsed() < Duration::from_secs(1));
+    }
     let timeout = measure(
         &a.runtime,
         &config,

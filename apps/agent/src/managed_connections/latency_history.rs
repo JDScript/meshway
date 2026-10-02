@@ -26,6 +26,7 @@ use tokio::{sync::mpsc, time};
 const QUEUE_CAPACITY: usize = 256;
 const CONCURRENCY: usize = 4;
 const PROBE_TIMEOUT: Duration = Duration::from_secs(2);
+const CAPACITY_RETRY_INTERVAL: Duration = Duration::from_millis(25);
 const HTTP_TIMEOUT: Duration = Duration::from_secs(10);
 
 pub(super) struct Source {
@@ -167,7 +168,10 @@ async fn measure(
     peer: &str,
     timeout: Duration,
 ) -> Option<LatencySample> {
-    // No waiting/dial retry for missing peers. Capacity is a sampling gap.
+    // No waiting/dial retry for missing peers. Pending-slot pressure can come
+    // from the ordinary five-second neighbor probe on this exact channel. Wait
+    // within this measurement's original budget, not another sampling period.
+    // Capacity until that budget expires is still a gap, not packet loss.
     // Attempt failures are sanitized local outcomes, never network-loss rates.
     if !runtime
         .peer_connections()
@@ -178,7 +182,21 @@ async fn measure(
     }
     let measurement_id = local::credential().ok()?;
     let measured_at = Utc::now();
-    let result = runtime.probe_neighbor_observed(peer, timeout).await;
+    let started = time::Instant::now();
+    let deadline = started + timeout;
+    let result = loop {
+        let remaining = deadline
+            .checked_duration_since(time::Instant::now())
+            .filter(|remaining| !remaining.is_zero())?;
+        match runtime.probe_neighbor_observed(peer, remaining).await {
+            Err(meshway_dataplane::Error::Capacity) => {
+                time::sleep_until(deadline.min(time::Instant::now() + CAPACITY_RETRY_INTERVAL))
+                    .await;
+            }
+            result => break result,
+        }
+    };
+    let elapsed = started.elapsed();
     let completed_at = Utc::now();
     let (outcome, channel, rtt_us, failure_reasons) = match result {
         Ok(proof) => {
@@ -192,7 +210,9 @@ async fn measure(
                     candidate_id: association.candidate_id,
                 }],
                 Some(
-                    u32::try_from(proof.round_trip.as_nanos().div_ceil(1000))
+                    // Includes pending-slot queueing, core retries and result
+                    // delivery. Never borrow another probe's nonce or sample.
+                    u32::try_from(elapsed.as_nanos().div_ceil(1000))
                         .ok()?
                         .max(1),
                 ),
