@@ -230,8 +230,7 @@ impl Compiled {
             .iter()
             .any(|g| grants.range_grants.contains(g))
     }
-    /// Same complete, directional path semantics as MeshPathAuthorization. Legacy
-    /// publication budgets and v2 routing intersection still require integration.
+    /// Complete directional Mesh paths; publication applies node execution budgets.
     pub fn exact_authorization(&self, node: usize) -> meshway_protocol::MeshPathAuthorization {
         self.exact_paths(node, PathScope::Mesh)
     }
@@ -256,7 +255,7 @@ impl Compiled {
                 .filter(|f| self.paths[f.path as usize].len() > 1)
                 .filter(|f| unique.insert(&self.paths[f.path as usize]))
                 .map(|f| meshway_protocol::MeshAccessGrant {
-                    id: format!("v3-{}", f.path),
+                    id: format!("path-{}", f.path),
                     path: self.paths[f.path as usize]
                         .iter()
                         .map(|i| self.nodes[usize::from(*i)].clone())

@@ -27,7 +27,7 @@ Controller 维护与编译控制意图，不默认中继业务流量。Agent 执
 
 ### 当前实现
 
-当前是多网络、单实例 SQLite。v11 已接本地用户账户、网络成员权限和设备归属；用户 session、实例 bootstrap、注册令牌、节点 bearer 分权。管理查询在根事务内校验身份 / 网络权限并显式携带网络 ID；Agent 由凭据推导网络，SQL 绑定网络列，不使用连接级环境作用域。App 已有用户浏览器批准 / PKCE、隔离多接入和库存显示，暂无隧道。托管 Agent 支持公钥绑定、认证邻接、路径绑定的 Noise E2E、Linux Mesh IPv4 TUN、节点 DNS 与私有 daemon 诊断。
+当前是多网络、单实例 SQLite，已接本地用户账户、网络成员权限和设备归属；用户 session、实例 bootstrap、注册令牌、节点 bearer 分权。管理查询在根事务内校验身份 / 网络权限并显式携带网络 ID；Agent 由凭据推导网络，SQL 绑定网络列，不使用连接级环境作用域。App 已有用户浏览器批准 / PKCE、隔离多接入和库存显示，暂无隧道。托管 Agent 支持公钥绑定、认证邻接、路径绑定的 Noise E2E、Linux Mesh IPv4 TUN、节点 DNS 与私有 daemon 诊断。
 
 VLESS TCP/TLS与WebSocket/TLS listener/材料由平台管理。四层NetworkPolicy是唯一源，Controller同事务publication投影稳定NodeMeshExecution；手工候选尚待自动组网收敛。完整出口、状态型Mesh回包、域名上下文、IPv6 overlay、打洞与真实trace仍未完成。
 
@@ -69,13 +69,13 @@ Linux 正常接入、控制同步与 TUN 生命周期已接受保护 socket、HT
 HTTP 契约由 Rust DTO 与实际路由生成，禁止手写平行 DTO / endpoint。WASM 仅是未来共享策略逻辑的可选方案。生成路径与限制见[协议参考](/protocol)。
 
 Controller 内部由 `http/` 装配路由，`contracts/` 保存不依赖 handler 的契约，`accounts/` 管账户领域；
-`store/` 管事务与持久化，`store/migrations/` 统一拥有历史升级和结构校验，`store/test_support/` 只用于测试。
+`store/` 管事务与持久化，`store/schema/` 拥有当前结构的原子初始化与完整性校验，`store/test_support/` 只用于测试。
 策略源 / CAS 位于 `store/network_policy/`，节点执行租约与回执位于 `store/mesh_execution.rs`；
 `network_scope.rs` 提供受限的网络存在性类型，不代替成员权限检查。`lib.rs` 保留组合与公开入口。
 
 ## 部署与继续阅读
 
-当前 SQLite 数据目录由独占锁保护，不提供多 controller 复制或 HA；Unix 私有目录 / 文件保护本地凭据，非本地 HTTP 凭据通道由部署层提供 TLS。开发数据库采用事务增量升级，特定升级证据不等于长期混合版本兼容保证。
+当前 SQLite 数据目录由独占锁保护，不提供多 controller 复制或 HA；Unix 私有目录 / 文件保护本地凭据，非本地 HTTP 凭据通道由部署层提供 TLS。开发数据库仅使用当前 schema，切换时由部署者显式重置旧数据；普通启动拒绝旧版本、结构损坏和缺失归属，不自动修复或清库。
 
 - [注册与持久化](/enrollment)、[浏览器接入](/device-login)：身份、事务恢复与撤销。
 - [地址与配置分发](/configuration)、[连接配置](/connections)：revision、CAS、摘要与保存回执。

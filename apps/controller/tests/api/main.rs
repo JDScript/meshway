@@ -154,9 +154,7 @@ fn is_admin_path(path: &str) -> bool {
         "/api/v1/network",
         "/api/v1/device-authorizations",
         "/api/v1/enrollment-tokens",
-        "/api/v1/access",
         "/api/v1/tags",
-        "/api/v1/flows/preview",
     ]
     .contains(&path)
         || path.starts_with("/api/v1/nodes")
