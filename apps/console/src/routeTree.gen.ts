@@ -9,50 +9,170 @@
 // Additionally, you should also exclude this file from your linter and/or formatter to prevent it from being checked or modified.
 
 import { Route as rootRouteImport } from './routes/__root'
-import { Route as IndexRouteImport } from './routes/index'
+import { Route as AuthedRouteImport } from './routes/_authed'
+import { Route as LoginRouteImport } from './routes/login'
+import { Route as AuthedIndexRouteImport } from './routes/_authed/index'
+import { Route as AuthedNetworksNetworkRouteImport } from './routes/_authed/networks/$network'
+import { Route as AuthedNetworksNetworkIndexRouteImport } from './routes/_authed/networks/$network/index'
+import { Route as AuthedNetworksNetworkOverviewRouteImport } from './routes/_authed/networks/$network/overview'
 
-const IndexRoute = IndexRouteImport.update({
-  id: '/',
-  path: '/',
+const AuthedRoute = AuthedRouteImport.update({
+  id: '/_authed',
   getParentRoute: () => rootRouteImport,
 } as any)
+const LoginRoute = LoginRouteImport.update({
+  id: '/login',
+  path: '/login',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const AuthedIndexRoute = AuthedIndexRouteImport.update({
+  id: '/',
+  path: '/',
+  getParentRoute: () => AuthedRoute,
+} as any)
+const AuthedNetworksNetworkRoute = AuthedNetworksNetworkRouteImport.update({
+  id: '/networks/$network',
+  path: '/networks/$network',
+  getParentRoute: () => AuthedRoute,
+} as any)
+const AuthedNetworksNetworkIndexRoute =
+  AuthedNetworksNetworkIndexRouteImport.update({
+    id: '/',
+    path: '/',
+    getParentRoute: () => AuthedNetworksNetworkRoute,
+  } as any)
+const AuthedNetworksNetworkOverviewRoute =
+  AuthedNetworksNetworkOverviewRouteImport.update({
+    id: '/overview',
+    path: '/overview',
+    getParentRoute: () => AuthedNetworksNetworkRoute,
+  } as any)
 
 export interface FileRoutesByFullPath {
-  '/': typeof IndexRoute
+  '/': typeof AuthedIndexRoute
+  '/login': typeof LoginRoute
+  '/networks/$network': typeof AuthedNetworksNetworkRouteWithChildren
+  '/networks/$network/overview': typeof AuthedNetworksNetworkOverviewRoute
+  '/networks/$network/': typeof AuthedNetworksNetworkIndexRoute
 }
 export interface FileRoutesByTo {
-  '/': typeof IndexRoute
+  '/login': typeof LoginRoute
+  '/': typeof AuthedIndexRoute
+  '/networks/$network/overview': typeof AuthedNetworksNetworkOverviewRoute
+  '/networks/$network': typeof AuthedNetworksNetworkIndexRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
-  '/': typeof IndexRoute
+  '/_authed': typeof AuthedRouteWithChildren
+  '/login': typeof LoginRoute
+  '/_authed/': typeof AuthedIndexRoute
+  '/_authed/networks/$network': typeof AuthedNetworksNetworkRouteWithChildren
+  '/_authed/networks/$network/overview': typeof AuthedNetworksNetworkOverviewRoute
+  '/_authed/networks/$network/': typeof AuthedNetworksNetworkIndexRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
-  fullPaths: '/'
+  fullPaths:
+    | '/'
+    | '/login'
+    | '/networks/$network'
+    | '/networks/$network/overview'
+    | '/networks/$network/'
   fileRoutesByTo: FileRoutesByTo
-  to: '/'
-  id: '__root__' | '/'
+  to: '/login' | '/' | '/networks/$network/overview' | '/networks/$network'
+  id:
+    | '__root__'
+    | '/_authed'
+    | '/login'
+    | '/_authed/'
+    | '/_authed/networks/$network'
+    | '/_authed/networks/$network/overview'
+    | '/_authed/networks/$network/'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
-  IndexRoute: typeof IndexRoute
+  AuthedRoute: typeof AuthedRouteWithChildren
+  LoginRoute: typeof LoginRoute
 }
 
 declare module '@tanstack/react-router' {
   interface FileRoutesByPath {
-    '/': {
-      id: '/'
+    '/_authed': {
+      id: '/_authed'
+      path: ''
+      fullPath: '/'
+      preLoaderRoute: typeof AuthedRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/login': {
+      id: '/login'
+      path: '/login'
+      fullPath: '/login'
+      preLoaderRoute: typeof LoginRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/_authed/': {
+      id: '/_authed/'
       path: '/'
       fullPath: '/'
-      preLoaderRoute: typeof IndexRouteImport
-      parentRoute: typeof rootRouteImport
+      preLoaderRoute: typeof AuthedIndexRouteImport
+      parentRoute: typeof AuthedRoute
+    }
+    '/_authed/networks/$network': {
+      id: '/_authed/networks/$network'
+      path: '/networks/$network'
+      fullPath: '/networks/$network'
+      preLoaderRoute: typeof AuthedNetworksNetworkRouteImport
+      parentRoute: typeof AuthedRoute
+    }
+    '/_authed/networks/$network/': {
+      id: '/_authed/networks/$network/'
+      path: '/'
+      fullPath: '/networks/$network/'
+      preLoaderRoute: typeof AuthedNetworksNetworkIndexRouteImport
+      parentRoute: typeof AuthedNetworksNetworkRoute
+    }
+    '/_authed/networks/$network/overview': {
+      id: '/_authed/networks/$network/overview'
+      path: '/overview'
+      fullPath: '/networks/$network/overview'
+      preLoaderRoute: typeof AuthedNetworksNetworkOverviewRouteImport
+      parentRoute: typeof AuthedNetworksNetworkRoute
     }
   }
 }
 
+interface AuthedNetworksNetworkRouteChildren {
+  AuthedNetworksNetworkOverviewRoute: typeof AuthedNetworksNetworkOverviewRoute
+  AuthedNetworksNetworkIndexRoute: typeof AuthedNetworksNetworkIndexRoute
+}
+
+const AuthedNetworksNetworkRouteChildren: AuthedNetworksNetworkRouteChildren = {
+  AuthedNetworksNetworkOverviewRoute: AuthedNetworksNetworkOverviewRoute,
+  AuthedNetworksNetworkIndexRoute: AuthedNetworksNetworkIndexRoute,
+}
+
+const AuthedNetworksNetworkRouteWithChildren =
+  AuthedNetworksNetworkRoute._addFileChildren(
+    AuthedNetworksNetworkRouteChildren,
+  )
+
+interface AuthedRouteChildren {
+  AuthedIndexRoute: typeof AuthedIndexRoute
+  AuthedNetworksNetworkRoute: typeof AuthedNetworksNetworkRouteWithChildren
+}
+
+const AuthedRouteChildren: AuthedRouteChildren = {
+  AuthedIndexRoute: AuthedIndexRoute,
+  AuthedNetworksNetworkRoute: AuthedNetworksNetworkRouteWithChildren,
+}
+
+const AuthedRouteWithChildren =
+  AuthedRoute._addFileChildren(AuthedRouteChildren)
+
 const rootRouteChildren: RootRouteChildren = {
-  IndexRoute: IndexRoute,
+  AuthedRoute: AuthedRouteWithChildren,
+  LoginRoute: LoginRoute,
 }
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)

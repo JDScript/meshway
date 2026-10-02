@@ -2,6 +2,105 @@
   "$schema": "https://inlang.com/schema/inlang-message-format",
   "app_name": "Meshway",
   "language_name": "English",
-  "scaffold_title": "Console scaffold",
-  "scaffold_body": "Vite, TanStack Router, TanStack Query and bilingual copy are ready."
+  "language_switch": "Change language",
+  "theme_switch": "Toggle theme",
+  "retry": "Retry",
+  "close": "Close",
+  "copy": "Copy",
+  "copied": "Copied",
+  "globe_region": "Network globe",
+  "vitality_live": "Active",
+  "vitality_contact": "Heartbeat only",
+  "vitality_quiet": "Silent",
+  "login_title": "Sign in",
+  "login_email": "Email",
+  "login_password": "Password",
+  "login_submit": "Sign in",
+  "login_missing": "Enter your email and password.",
+  "login_invalid": "Incorrect email or password.",
+  "login_limited": "Too many attempts. Try again later.",
+  "login_unavailable": "The control plane is unreachable.",
+  "login_clock": "The session is already expired. Check this device's clock.",
+  "login_expired": "Your session expired. Sign in again.",
+  "login_signed_out": "Signed out.",
+  "login_signed_out_unconfirmed": "Signed out here; the control plane did not confirm revoking the session.",
+  "account_menu": "Account",
+  "sign_out": "Sign out",
+  "networks_failed": "Could not read networks",
+  "networks_none_title": "No network yet",
+  "networks_none_body": "Ask a network owner or admin for an invitation link.",
+  "network_not_found": "Network not found",
+  "stat_nodes": [
+    {
+      "declarations": [
+        "input count",
+        "local countPlural = count: plural"
+      ],
+      "selectors": [
+        "countPlural"
+      ],
+      "match": {
+        "countPlural=one": "Node",
+        "countPlural=other": "Nodes"
+      }
+    }
+  ],
+  "stat_links": [
+    {
+      "declarations": [
+        "input count",
+        "local countPlural = count: plural"
+      ],
+      "selectors": [
+        "countPlural"
+      ],
+      "match": {
+        "countPlural=one": "Link",
+        "countPlural=other": "Links"
+      }
+    }
+  ],
+  "stat_one_sided": "{count} one-sided",
+  "stat_degraded": "{count} unauthenticated",
+  "stat_unreported": "{count} no report",
+  "overview_refresh_failed": "Refresh failed · {time}",
+  "overview_nodes_failed": "Could not read nodes",
+  "node_mesh_address": "Mesh address",
+  "node_report": "Runtime report",
+  "node_contact": "Control plane",
+  "node_receipt": "Configuration",
+  "node_version": "Version",
+  "node_location": "Location",
+  "node_location_unknown": "Unknown",
+  "node_links": "Links",
+  "node_links_none": "None",
+  "node_receipt_current": "r{revision}",
+  "node_receipt_pending": "r{acknowledged} → r{target}",
+  "node_never": "Never",
+  "node_rtt": "{ms} ms",
+  "node_rtt_sub": "<1 ms",
+  "node_rtt_pair": "{own} · {theirs}",
+  "report_unreported": "Not reported",
+  "report_awaiting": "Awaiting",
+  "report_withdrawn": "Withdrawn",
+  "report_outdated": "Older config",
+  "report_expired": "Expired",
+  "report_fresh": "Current",
+  "link_confirmed": "Connected",
+  "link_one_sided": "One-sided",
+  "link_degraded": "Unauthenticated",
+  "link_configured": "No report",
+  "lab_title": "Design lab · sample data",
+  "lab_observatory": "Observatory",
+  "lab_cartograph": "Cartograph",
+  "lab_aurora": "Aurora",
+  "lab_schematic": "Schematic",
+  "lab_legend": "Legend",
+  "lab_node": "Node",
+  "lab_network": "Network",
+  "lab_state": "State",
+  "lab_revision": "Revision",
+  "lab_date": "Date",
+  "lab_north": "N",
+  "overview_title_line": "{nodes} nodes · {confirmed}/{total} links"
 }

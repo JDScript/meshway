@@ -1,0 +1,33 @@
+/**
+ * How the globe is drawn, independent of what it shows. Colours always come
+ * from theme tokens; this only selects layers and their weights.
+ */
+export type GlobeLook = {
+  /** Land as round dots, or not at all. */
+  land: "dots" | "none"
+  /** Dot size in globe units. */
+  landSize: number
+  /** Latitude / longitude lines every 15°. */
+  graticule: boolean
+  /** A far starfield that drifts with the camera. */
+  stars: boolean
+  /** Camera-facing scale rings around the globe. */
+  guides: boolean
+  /** Fresnel rim weight, 0–1. */
+  rim: number
+  /** Atmosphere height in globe radii; 0 hides it. */
+  atmosphere: number
+  /** Below 1 the far side shows through, x-ray style. */
+  surfaceOpacity: number
+}
+
+export const DEFAULT_LOOK: GlobeLook = {
+  land: "dots",
+  landSize: 1.5,
+  graticule: false,
+  stars: false,
+  guides: true,
+  rim: 0.85,
+  atmosphere: 0.14,
+  surfaceOpacity: 1,
+}

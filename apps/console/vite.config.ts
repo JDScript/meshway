@@ -18,6 +18,7 @@ export default defineConfig({
       // Keep in sync with the `i18n` script in package.json.
       strategy: ["localStorage", "preferredLanguage", "baseLocale"],
       emitTsDeclarations: true,
+      outputStructure: "message-modules",
     }),
     react(),
     tailwindcss(),
