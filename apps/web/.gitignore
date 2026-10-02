@@ -6,3 +6,6 @@ next-env.d.ts
 *.tsbuildinfo
 .env*.local
 /.next-review/
+# Isolated review / native-check build dirs; ignoring them also keeps the dev
+# server's Tailwind source scan away from their compiled output.
+/.next-*/
