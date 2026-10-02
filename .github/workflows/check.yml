@@ -27,8 +27,7 @@ jobs:
       - run: pnpm test:protocol
       - run: pnpm test:web
       - run: pnpm build:docs
-      - run: pnpm exec playwright install --with-deps chromium
-      - run: pnpm test:e2e
+      - run: pnpm build:web
 
   agent-features:
     name: Agent ${{ matrix.build.name }} / ${{ matrix.os }}

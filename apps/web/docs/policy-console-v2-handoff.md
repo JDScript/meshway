@@ -27,10 +27,10 @@
 
 所有 server action 都先 `requireActionAdminToken()`，请求体由生成 SDK 的 Zod 校验。没有客户端规则评估器；`matched_direction` 用比较而不是类型断言收窄。
 
-## 3. 给 main 的验证清单（本分支未运行 next build / dev / e2e）
+## 3. 验证入口
 
-- `e2e/access.spec.ts` 需按 v2 重写。可用 testid：`access-editor`、`access-default-action`、`access-add-rule`、`access-rule-list`、`access-rule-card`（`data-rule-id`）、`access-rule-action`、`access-rule-direction`、`access-rule-builder`、`access-rule-source`、`access-rule-destination`、`access-rule-bidirectional`、`access-rule-id`、`access-rule-apply`、`access-save`、`access-save-status`、`access-base-revision`、`access-base-invalid`、`access-behind`、`access-text-invalid`、`access-flow-check`、`flow-stages`、`flow-stage-<access|route|neighbors|execution>`（`data-status`）、`jsonc-pane`；标签页 `tags-workspace`、`tags-base-revision`、`tag-catalog`、`tag-row`、`tag-new-name`、`tag-add`、`tag-catalog-save`、`tag-assignments`、`node-tags-row`、`node-tags-save`、`tags-save-status`；节点详情 `node-tags`。
-- 路由页拓扑相关 e2e 中"规划路径"按钮名保持不变；拓扑面板标题改为"流量预览"。
+- 浏览器套件已移除。策略/标签交互在开发页面手工验证，模型与草稿边界继续使用 `apps/web/lib/*.test.ts`，不再按旧交接说明重建浏览器用例。
+- 路由页的"规划路径"入口与拓扑"流量预览"面板按真实预览接口检查。
 - 手动检查 CodeMirror（懒加载、补全、错误跳转、切换视图保留无效文本、导航后恢复）。
 - 保存标签或节点标签会推进全局版本，access / routing 未保存草稿随后会提示"controller 已有更新版本"，这是预期的 CAS 行为。
 

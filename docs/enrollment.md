@@ -75,7 +75,7 @@ Next.js 服务端用管理员令牌调用网络列表 API，验证成功后才�
 
 每次受保护读取和管理 server action 都检查 cookie；controller 对每次 API 调用再次检查 bearer。无 cookie 跳转 `/login`，本地过期或 API HTTP `401` 跳转 `/login?reason=expired`。创建注册令牌、撤销节点在 action 内检查身份，匿名重放已捕获的真实 Next.js action 请求也会被拒绝并跳转登录。
 
-策略预览 / 保存和国家编辑沿用相同服务端身份检查，并消费生成的请求类型和响应 schema；国家编辑 / 策略保存还检查全局 `expected_revision`。策略保存 action 的匿名重放拒绝与 `409` 冲突草稿保留已由 `e2e/routing.spec.ts` 验证；预览不会自动更新编辑器的保存基准 revision。
+策略预览 / 保存沿用相同服务端身份检查，并消费生成的请求类型和响应 schema；保存检查网络内 `expected_revision`。草稿、注释和冲突处理保留模型单测，服务端鉴权由 Controller 行为测试覆盖；页面交互手工验证。预览不会自动更新编辑器的保存基准 revision，手工国家编辑入口已移除。
 
 GET 页面渲染不修改 cookie。登录页通过 POST server action `discardRejectedSession` 重新检查会话，仅在本地过期或 controller 明确返回 `401` 时清除；controller 不可达时保留会话并显示真实错误。管理 action 在发现会话失效时也会清除 cookie。
 

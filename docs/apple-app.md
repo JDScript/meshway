@@ -71,10 +71,9 @@ open apps/apple/build/DerivedData/Build/Products/Debug/Meshway.app
 pnpm exec tsc -p apps/apple/scripts/tsconfig.json
 MESHWAY_WEB_DIST_DIR=.next-apple-check pnpm build:web
 MESHWAY_WEB_DIST_DIR=.next-apple-check node apps/apple/scripts/check-signin.ts
-pnpm exec playwright test e2e/device-login.spec.ts
 ```
 
-smoke 自行分配回环端口与临时 controller 数据，使用真实 Keychain 的唯一测试 item，完成 Swift → FFI → 生成 Rust client → Web proxy → controller 的接入、重启读取、心跳、第二个真实节点的配置 / DNS 库存、撤销；退出时删除测试 item / 数据并停止子进程。可在命令末尾传入独立 bundle prefix 构建的 macOS executable 路径，短暂启动 unsigned App（同样由脚本停止）。批准由 test-only 生成客户端 fixture 完成，不注入 App 管理员权限、不将 code 写日志；它不验证 ASWebAuthenticationSession UI。Playwright 单独验证真实 Web 登录 / 批准 / 拒绝、proxy 幂等兑换 / 心跳、GET peers / DNS、方法限制、错误透传与 admin 路由未暴露。
+smoke 自行分配回环端口与临时 controller 数据，使用真实 Keychain 的唯一测试 item，完成 Swift → FFI → 生成 Rust client → Web proxy → controller 的接入、重启读取、心跳、第二个真实节点的配置 / DNS 库存、撤销；退出时删除测试 item / 数据并停止子进程。可在命令末尾传入独立 bundle prefix 构建的 macOS executable 路径，短暂启动 unsigned App（同样由脚本停止）。批准由 test-only 生成客户端 fixture 完成，不注入 App 管理员权限、不将 code 写日志；它不验证 ASWebAuthenticationSession UI。辅助进程/HTTP helper 独立于浏览器框架，Web 登录与批准界面改为手工验证。
 
 真实 macOS 窗口视觉验收（无需 screen recording）：
 
@@ -91,7 +90,7 @@ MESHWAY_WEB_DIST_DIR=.next-apple-check node apps/apple/scripts/snapshot.ts \
 
 签名默认无 Team，bundle prefix 为 `dev.example`。需要签名时创建忽略的 `apps/apple/Config/Local.xcconfig`，设置 `DEVELOPMENT_TEAM`、`MESHWAY_BUNDLE_PREFIX`，必要时覆盖 `MESHWAY_APP_GROUP`。`MESHWAY_KEYCHAIN_ACCESS_GROUP` 默认空，unsigned 使用默认 Keychain；需要 extension 共享时设置此变量并为 App / extension 添加匹配的 `keychain-access-groups` entitlement 与有效 provisioning。App Group 不能替代 Keychain access group。会员未续费，不能据编译声称签名权限、真机 NE 或隧道已验证。
 
-本地验收：Rust bridge + 真实 controller ephemeral-port 联测；Swift 覆盖严格 callback、各持久化 phase 恢复、镜像中断修复、原绑定重试、Keychain 错误 / 丢失、取消 / 拒绝、过期重开。多接入专项覆盖旧身份迁移的每个写入 / 删除中断、凭据隔离、Pending 恢复、移除与活动 fallback、heartbeat / configuration / DNS / exchange 迟到结果 fencing。真实 Keychain / FFI / proxy smoke、三平台 XCFramework、macOS / iOS Simulator unsigned build 通过；双网络真实窗口截图使用隔离数据与生成客户端。既有 Web Playwright 验证见浏览器登录文档。系统浏览器 UI 自动化因 Accessibility 未启用无法执行；未安装 Simulator runtime，未验证 native iOS 运行；真机 NE 生命周期待有签名宿主验证。
+本地验收：Rust bridge + 真实 controller ephemeral-port 联测；Swift 覆盖严格 callback、各持久化 phase 恢复、镜像中断修复、原绑定重试、Keychain 错误 / 丢失、取消 / 拒绝、过期重开。多接入专项覆盖旧身份迁移的每个写入 / 删除中断、凭据隔离、Pending 恢复、移除与活动 fallback、heartbeat / configuration / DNS / exchange 迟到结果 fencing。真实 Keychain / FFI / proxy smoke、三平台 XCFramework、macOS / iOS Simulator unsigned build 通过；双网络真实窗口截图使用隔离数据与生成客户端。Web 与系统浏览器 UI 由用户手工验证；未安装 Simulator runtime，未验证 native iOS 运行；真机 NE 生命周期待有签名宿主验证。
 
 ## FFI 审计边界
 

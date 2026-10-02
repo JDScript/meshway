@@ -29,12 +29,11 @@ pnpm test:web
 pnpm typecheck
 pnpm lint
 pnpm build
-pnpm test:e2e
 ```
 
-修改 Rust 契约后先 `pnpm protocol:generate`，再做 drift check；生成不能代替比较。仅文档改动运行 `pnpm --filter @meshway/docs build`（等价 `pnpm build:docs`），保留 VitePress 默认死链检查。完整类型检查包含根 E2E TypeScript。
+修改 Rust 契约后先 `pnpm protocol:generate`，再做 drift check；生成不能代替比较。仅文档改动运行 `pnpm --filter @meshway/docs build`（等价 `pnpm build:docs`），保留 VitePress 默认死链检查。完整类型检查包含 Apple 原生联测脚本的 TypeScript。
 
-首次浏览器测试需 `pnpm exec playwright install chromium`。`pnpm test:e2e` 构建 Rust（Agent transport-lab feature）与生产 Web，再用独立临时数据和端口执行 Playwright。`MESHWAY_E2E_TMPDIR` 可指定临时目录父路径；测试 feature 不自动开启 TUN。Apple 专用检查由[Apple 文档](/apple-app)维护。
+按用户要求，浏览器自动化套件、依赖与 CI 入口已移除。Web 日常检查为类型、lint、单测与构建，UI 在开发页面手工验证；不默认重建浏览器测试。Controller/Agent 的协议、鉴权和数据面行为测试继续保留。Apple 原生检查使用不依赖浏览器框架的进程与 HTTP helper，入口见[Apple 文档](/apple-app)。
 
 ## 注册与持久化验收矩阵
 
@@ -44,10 +43,10 @@ pnpm test:e2e
 | --- | --- |
 | 单事务消费、并发仅一身份、原绑定幂等恢复、过期 / 撤销不复活、权限分离 | `apps/controller/tests/api.rs`、`apps/agent/tests/roundtrip.rs` |
 | 私有 0700 / 0600、独占锁、错误 / 损坏状态不覆盖、响应丢失复用身份 | `apps/agent/tests/roundtrip.rs`、controller store 测试 |
-| Web 登录 / 登出、匿名 action 重放拒绝、真实注册与撤销、故障显示 | `e2e/control-plane.spec.ts` |
+| 用户会话、网络权限与设备授权 | `apps/controller/tests/api/accounts*.rs`、Web 会话/模型单测；页面交互手工验证 |
 | 必填可空、未知字段、Unicode 长度、类型化 HTTP 错误与真实往返 | `packages/control-client/test/client.test.ts`、生成 Rust client 测试 |
 
-App 浏览器批准 / PKCE 兑换、原绑定恢复与 v8 迁移见[设备登录](/device-login)及 `e2e/device-login.spec.ts`；现有管理员批准不代表本地用户账户体系完成。
+App 浏览器批准 / PKCE 兑换、原绑定恢复与迁移见[设备登录](/device-login)，Controller/Apple core 保留真实接口行为测试；浏览器登录与批准界面手工验证。
 
 ## 配置与路由切片
 
@@ -60,8 +59,8 @@ App 浏览器批准 / PKCE 兑换、原绑定恢复与 v8 迁移见[设备登录
 | v1 地址升级保留身份、稳定地址、容量失败回滚、revision / CAS / ACK | `apps/controller/src/store/tests.rs`、`apps/controller/tests/api.rs` |
 | schema / digest / 绑定校验、旧版本拒绝、缓存与回执恢复 | `apps/agent/tests/roundtrip.rs` |
 | 文件发布前失败与 `CommittedNotDurable`、重试 / 重启仍须 fsync 后 ACK | `crates/protocol/src/local/write.rs`、`apps/agent/src/state/durability_tests.rs`、Agent roundtrip 测试 |
-| suffix 标签边界、CIDR、非法 / 映射地址、池内归属、循环与必经节点约束 | `crates/policy/src/tests.rs`、`e2e/routing.spec.ts` |
-| 图形 / JSONC 共用草稿、注释保存、409 保留原基准、匿名 mutation 拒绝 | `e2e/access.spec.ts`、`e2e/routing.spec.ts`、`e2e/connections.spec.ts` |
+| suffix 标签边界、CIDR、非法 / 映射地址、池内归属、循环与必经节点约束 | `crates/policy/src/tests.rs`、Controller API 行为测试 |
+| 图形 / JSONC 共用草稿、注释保存、409 保留原基准、会话绑定 | `apps/web/lib/*.test.ts`；页面切换、保存与错误展示手工验证 |
 
 测试文件中的具体用例是证据入口，不维护会随新增测试过期的总数。当前接口与容量以[协议](/protocol)和[配置分发](/configuration)为准。
 

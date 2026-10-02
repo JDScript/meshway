@@ -38,17 +38,12 @@ cookie envelope 未签名，浏览器内多个标签页共享同一 cookie。为
 - 用户会话：显示登录邮箱与“切换账户”，只列出该用户的活动 membership 网络及角色（Member 也可批准本人设备），批准时显式提交 network，调用 `authorizeDevice(userSession)`；403 显示“不是该网络成员”，401 结束会话。GET 与页面查看不批准任何东西；拒绝也先校验用户会话。
 - 管理员令牌会话：不显示批准表单，提示“需要账户登录”，可退出后用账户登录（保留 returnTo）或去认领首个 Owner；server action 被重放也只返回错误，不产生 code。
 
-## 验证（本 worktree，`9c02e22` 之上）
+## 验证
 
-- `pnpm --filter @meshway/web check`（strict typecheck + eslint 0 warning）、Web 单元测试 **156** 项、`pnpm build:web`、`tsc -p tsconfig.e2e.json`。
-- Playwright 全部 **14** 个 spec（原 13 个 + 新 `account-session.spec.ts`），真实临时 controller + `next start`，未注入 cookie：
-  - `device-login.spec.ts`：管理员令牌登录后不能批准（UI 与直接 API 均拒绝）→ UI 认领首个 Owner → 切换为账户登录 → 批准 → PKCE 兑换经 Web proxy → 节点归属 Owner 的 membership；proxy、拒绝、非法 redirect 原有断言保留。
-  - `account-session.spec.ts`：错误密码不建 cookie、任意 returnTo 落回网络、cookie HttpOnly/Strict/≤controller 期限；Owner 发邀请 → 受邀人经链接注册；Member 读页面、写入 403 不注销、跨网 404、替换 network 的重放被拒、批准本人设备并归属本人；退出后先前批准的 code 不能首次兑换；密码 reset 后 code 失效且浏览器转登录；管理员令牌仍能管理、不能批准、用户会话不能当令牌；跨 origin / 匿名 / 管理员令牌重放批准均不产生 callback；已有账户在 UI 认领另一网络 Owner；另一标签切换账户后原标签草稿被丢弃；密码、会话、管理员令牌不出现在 HTML / Flight，所有秘密不出现在 Web / controller 日志；390 / 1440 无横向溢出。
-  - `multi-network.spec.ts` 的浏览器批准改为真实账户（两网 Owner）批准；其余 spec 未改，管理员令牌入口保持原选择器。
-
-- `session-fence.spec.ts`（新增）：同一 cookie jar 内真实 UI 登录 A、渲染并捕获 App 批准与 Access 保存，另一标签真实登录同网 Owner B（A 的标签禁用 BroadcastChannel）；以浏览器当前 B cookie 重放旧载荷不产生 code / ownership / revision，A 标签真实点击保存跳到“登录已变化”，B 会话仍有效；B 自己渲染的批准（节点归 B）与保存成功；把 A cookie 的 session ID 改成 B 的再重放 B 的渲染载荷被拒；A 被挂起请求的迟到 401 与迟到登出均不清 B 的 cookie。修复前同一 spec 两项测试均失败（code 签发、revision 1→2、草稿保存、B cookie 被清）。
-
-- `session-cleanup.spec.ts`（新增）：用 Node fetch（独立、无 cookie jar 的客户端）代理请求，把服务器已生成的、带删除 Set-Cookie 的**最终响应**扣住，等另一标签真实 UI 登录 B 后再交给浏览器。修复前：A 的登出删除与登录页对 A 的拒绝清理都删掉了 B 的 cookie；修复后两者都只删 A 自身凭据，B cookie 与会话有效，凭据 cookie 只剩一个、期限不超过 controller 绝对期限；用户与管理员令牌的正常退出都不留凭据。
+- 日常入口：`pnpm --filter @meshway/web check`、`pnpm test:web`、`pnpm build:web`。
+- Web 单测保留 Cookie 解析、凭据绑定的 sign-in marker、期限与命名空间边界；Controller/Apple core 保留真实账户、权限、PKCE 与归属行为测试。
+- 浏览器自动化套件已按用户要求移除。登录、首个 Owner、邀请、App 批准及跨标签页体验在开发页面手工验证。
+- 历史隔离验收曾复现并关闭旧页面借新账户执行、伪造 session ID、迟到 401，以及最终 Cookie 删除响应清除新会话的问题；相关证据保留在交付提交中，不再作为日常浏览器检查入口。
 
 ## 未做（明确边界）
 

@@ -46,14 +46,9 @@
 
 ## 验证
 
-- `pnpm test`（含 `managed-listener-model.test.ts`、vault 测试）、`pnpm check`、`pnpm build:web`、
-  `pnpm typecheck:e2e`。
-- `e2e/managed-listeners.spec.ts`：独立临时 controller + 真实 `meshway-agent enroll`；带 WS 监听的令牌注册、
-  能力由节点凭据报告前后两种状态、编辑 / 字段错误 / 稍后继续、CAS 冲突与重新基于、停用影响与恢复、
-  rebase 后以新基准判定修改且只发送一次保存、只让托管读取失败（loopback 代理）时的缓存提示 / 重试恢复、
-  手工编辑器只读、Native TCP 创建与 ID 冲突、跨网络 404 与隔离、匿名 Server Action 重放、HTML/Flight 中无令牌
-  以外的秘密（含节点专属 UUID / 私钥 / 证书）、绕过 UI 的 422、退出清空草稿；截图设
-  `MESHWAY_SHOTS_DIR` 时另存。
+- `pnpm test`（含表单、缓存和草稿模型单测）、`pnpm check`、`pnpm build:web`。
+- Controller 的托管承载与账户 API 行为测试验证能力、CAS、材料隔离及权限。
+  浏览器套件已移除；监听表单、错误提示和草稿恢复在开发页面手工验证，历史交付证据保留在提交记录中。
 
 ## 剩余
 

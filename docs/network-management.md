@@ -74,7 +74,7 @@ let nodes = store.nodes(&network)?;
 
 Discovery 仍是按不可变全局 node ID 保存的有界内存记录：同进程网络切换不清空报告，展示仅遍历当前网络成员；controller 重启后重新等待上报，保持 v8 已有的非持久语义。
 
-2026-10-01 已对固定 schema 重做 SQLite backup 只读复制演练：14 张旧表所有原列逐行一致，4 个节点、revision 42、ID `baf5c8095f41b92ea539a10456da64e3`、IPv4 `100.96.0.0/16`、IPv6 `fd73:96a6:cf5e::/64`、名称与 DNS 不变，FK 校验通过且物理表名保留。私有副本迁移后删除，live 未升级。回归覆盖完整 v8 数据、失败整体回滚、旧版本迁移、跨网拒绝、相同地址独立分配、并发 / 交错请求与旧 Agent 快照字节兼容。可复现命令：`cargo test -p meshway-controller --tests`、`pnpm exec playwright test e2e/multi-network.spec.ts`。
+2026-10-01 已对固定 schema 重做 SQLite backup 只读复制演练：14 张旧表所有原列逐行一致，4 个节点、revision 42、ID `baf5c8095f41b92ea539a10456da64e3`、IPv4 `100.96.0.0/16`、IPv6 `fd73:96a6:cf5e::/64`、名称与 DNS 不变，FK 校验通过且物理表名保留。私有副本迁移后删除，该次演练不修改 live。回归覆盖完整 v8 数据、失败整体回滚、旧版本迁移、跨网拒绝、相同地址独立分配、并发 / 交错请求与旧 Agent 快照字节兼容。接口验证命令：`cargo test -p meshway-controller --tests`；Web 网络切换与草稿交互手工验证。
 
 ## Web 网络与草稿边界
 

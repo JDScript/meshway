@@ -84,7 +84,7 @@ P1a 的 v8→v9 升级为接入令牌与兑换码增加不可变网络归属，�
 
 - RFC 7636 标准 S256 向量；controller 的错误 PKCE、回调 / 元数据绑定、首次过期、并发单节点、期限后恢复、换凭据拒绝、撤销不可恢复与匿名签发拒绝测试。
 - v7→v8 迁移逐表比较既有行，再验证原节点凭据、旧 token 与重启。
-- Web 参数 / allowlist / 登录安全返回单测；隔离端口与数据目录的 Playwright 实测登录→批准→回调 Location→真实兑换、匿名 action 重放、拒绝与非法回调页。
+- Web 参数 / allowlist / 登录安全返回与会话模型单测；Controller/Apple core 保留真实兑换与身份绑定验证，浏览器登录、批准、拒绝和回调页面手工验证。
 - 生成漂移与工作区 Rust / TypeScript 检查；具体运行结果见本切片提交报告。
 
 背景参考：[RFC 8252](https://www.rfc-editor.org/rfc/rfc8252) 的系统浏览器原生登录与 [RFC 7636](https://www.rfc-editor.org/rfc/rfc7636) 的 S256 PKCE。Tailscale 是常规产品基线；具体 Meshway 确认项见[产品对齐](/product-alignment)，固定研究实现不自动定义本项目的 wire 契约。

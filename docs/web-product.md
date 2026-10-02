@@ -54,4 +54,4 @@ Web 控制台以 Tailscale 管理控制台为产品基线：在明确的网络�
 ## 验证入口
 
 - `pnpm --filter @meshway/web check`、`pnpm test:web`：严格类型、lint，以及路由构造、旧 URL 映射、草稿 registry、JSONC 与模型单测。
-- `pnpm test:e2e`：真实 controller / agent / 生产 Web，覆盖登录与 Cookie、匿名重放 Server Action 被拒、接入与撤销、App 授权与同源接口、多网络创建 / 切换 / 他网 404 / 逐网络草稿与多标签页保存、双编辑器草稿保留与 CAS 冲突、内容列与顶栏对齐（390–1920px、三态侧栏）、侧边栏收起记忆与手机抽屉、概览沉浸 / 管理切换、位置与连线的数据边界。
+- `pnpm build:web`：生产构建。浏览器自动化套件已移除；登录、网络切换、草稿保存、地图与响应式交互由用户在开发页面手工验证。

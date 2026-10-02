@@ -78,8 +78,9 @@ Web 使用真实清单、授权 / 路由、标签与连接配置，保存使用 
 ```sh
 pnpm build:docs
 pnpm --filter @meshway/docs preview
-pnpm exec playwright install chromium
-pnpm test:e2e
+pnpm --filter @meshway/web check
+pnpm test:web
+pnpm build:web
 ```
 
-文档 preview 与开发服务共用 5173，不应同时运行。E2E 使用独立临时数据与端口。生成契约、检查命令和隔离实验入口集中在[开发与验收](/development)；修改契约须重新生成并通过 drift check。
+文档 preview 与开发服务共用 5173，不应同时运行。Web UI 在开发页面手工验证，不安装浏览器自动化套件。生成契约、检查命令和隔离实验入口集中在[开发与验收](/development)；修改契约须重新生成并通过 drift check。

@@ -85,6 +85,6 @@ v8→v9 将现有 ID / 名称 / DNS / IPAM / 节点 / 凭据 / 接入绑定 / ta
 
 v9 原样复制 v2 与 JSONC 字节，不顺带转换规则或默认动作；空网络没有自动连接或真实出口。v3 源文档、默认模板与迁移属于 P3a。迁移 / 启动检查包括撤销节点的双栈地址、配置池、语义地址唯一性及 FK；固定身份不可变 trigger 仅阻止 node / credential / key / 已消费接入绑定换绑，不选择 scope 或重写查询。
 
-验证入口：`e2e/multi-network.spec.ts` 使用真实 controller + production Web，覆盖空网络、接入令牌、批准选网、跨网 Agent 快照、逐网络无效草稿 / CAS，以及多标签页原网络保存；其他 11 个原行为 e2e 通过生成接口在第一张网络运行。
+历史交付曾用隔离真实栈验证空网络、接入、批准选网、跨网快照、逐网络无效草稿/CAS 和多标签页原网络保存。浏览器套件现已按用户要求移除；保留 Controller 隔离测试与草稿模型单测，Web 交互手工验证。
 
 存储验收：`store/networks/original_v8.rs` 直接用原始 v8 DDL / 数据构造独立库，逐表比较全部旧列、JSONC 及 v1 Node / configuration / connections / DNS / dataplane 字节和 digest，验证恢复 / 撤销与失败回滚。`tests/api/network_endpoint_matrix.rs` 对 OpenAPI 全部声明做覆盖核对，交错全局 list / create、A 读取、B writes / previews、C Agent 请求及失败返回，检查同数字 CAS、报告、ACK 和公钥投影不串网。

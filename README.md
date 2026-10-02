@@ -59,7 +59,6 @@ pnpm test:web
 pnpm typecheck
 pnpm lint
 pnpm build
-pnpm test:e2e
 ```
 
-Rust fmt / Clippy / 行为测试、浏览器安装与实验入口见 [开发与验收](docs/development.md)。文档构建保留死链检查；实验结果必须保留负载、资源与加密条件，不能把原生 L4 与完整 L3 隧道差值当作包装增量成本。
+Rust fmt / Clippy / 行为测试与实验入口见 [开发与验收](docs/development.md)。Web 不保留浏览器自动化套件，UI 在开发页面手工验证。文档构建保留死链检查；实验结果必须保留负载、资源与加密条件，不能把原生 L4 与完整 L3 隧道差值当作包装增量成本。
