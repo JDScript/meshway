@@ -23,7 +23,7 @@ def run(args):
     name = 'mw-underlay-main-loop-' + uuid.uuid4().hex[:12]
     logs = TMP / 'meshway-underlay-main-loop-runs' / name
     logs.mkdir(parents=True, mode=0o700)
-    work = TMP / 'meshway-agent-components-linux'
+    work = Path(args.build_work).resolve() if args.build_work else logs / 'linux-work'
     work.mkdir(mode=0o700, exist_ok=True)
     for child in ('cargo', 'home', 'target'):
         (work / child).mkdir(exist_ok=True)
@@ -209,7 +209,7 @@ def normal_acceptance(docker, container, name, logs, result, networks):
         networks.append(network)
     control_net, carrier_net = networks[-2:]
     controller = container('controller', control_net, 'controller.mesh.test', ('--ip', '100.96.1.10'), agent=False)
-    agents = {role: container(role, carrier_net, role + '.mesh.test') for role in ('agent-a', 'agent-b')}
+    agents = {role: container(role, carrier_net, role + '.mesh.test') for role in ('agent-a', 'agent-b', 'agent-c')}
     for role, cid in agents.items():
         docker('network', 'connect', '--alias', role + '-control.mesh.test', control_net, cid)
 
@@ -244,9 +244,12 @@ def normal_acceptance(docker, container, name, logs, result, networks):
     def rpc(path, body=None):
         return json.loads(docker('exec', '-i', controller, 'python3', '-c', rpc_code,
             input=json.dumps({'token': admin, 'path': path, 'body': body})).stdout)
-    network = until('controller API readiness', lambda: rpc('/api/v1/networks'), 20)['networks'][0]['network_id']
+    network_snapshot = until('controller API readiness', lambda: rpc('/api/v1/networks'), 20)['networks'][0]
+    network = network_snapshot['network_id']
     prefix = '/api/v1/networks/' + network
-    mesh_prefix = rpc(prefix + '/policy')['network']['ipv4_prefix']
+    mesh_prefix = network_snapshot['network']['ipv4_prefix']
+    initial = rpc(prefix + '/policy')
+    assert initial['valid'] and initial['policy']['grants'], 'fresh network must have current default policy'
     nodes = {}
     for role, cid in agents.items():
         token = rpc(prefix + '/enrollment-tokens', {'expires_in_seconds': 300})['token']
@@ -259,21 +262,22 @@ def normal_acceptance(docker, container, name, logs, result, networks):
             '--interval-seconds', '2', '--connection-lease-seconds', '20', '--dns-listen', '127.0.0.1:5353'])
     inventory = until('normal key publication', lambda: (lambda s: s if all(any(n['node']['id'] == node and n['public_key']
         for n in s['nodes']) for node in nodes.values()) else False)(rpc(prefix + '/connections')))
-    a, b = nodes['agent-a'], nodes['agent-b']
+    a, b, c = (nodes['agent-' + role] for role in ('a', 'b', 'c'))
     addresses = {entry['node']['id']: entry['node']['mesh_ipv4'] for entry in inventory['nodes']}
     rpc(prefix + '/connections', {'expected_revision': inventory['revision'], 'configuration': {
-        'listeners': [{'id': 'normal-udp', 'node_id': b, 'transport': 'native_udp', 'bind': '0.0.0.0:43101',
-            'advertised_endpoints': [{'host': 'agent-b.mesh.test', 'port': 43101}], 'credential_ref': None}],
-        'candidates': [{'id': 'normal-dial', 'dialer_node_id': a, 'listener_id': 'normal-udp',
-            'endpoint': {'host': 'agent-b.mesh.test', 'port': 43101}, 'priority': 0, 'credential_ref': None}]}})
-    rules = [{'id': 'normal-' + str(i), 'source': {'node_ids': [source], 'countries': []}, 'destination_scope': 'mesh',
-        'destination_any': [{'kind': 'node', 'value': destination}], 'action': {'kind': 'route', 'via': [], 'exit_node_id': None}}
-        for i, (source, destination) in enumerate(((a, b), (b, a)))]
-    rpc(prefix + '/policy/save', {'expected_revision': rpc(prefix + '/policy')['revision'],
-        'policy': {'default_action': 'reject', 'rules': rules}, 'source_jsonc': None})
-    rpc(prefix + '/access', {'expected_revision': rpc(prefix + '/access')['revision'], 'policy': {
-        'default_action': 'reject', 'rules': [{'id': 'normal-grant', 'source': ['node:' + a], 'destination': ['node:' + b],
-            'action': 'allow', 'bidirectional': True}]}, 'source_jsonc': None})
+        'listeners': [{'id': 'listen-' + role, 'node_id': nodes['agent-' + role], 'transport': 'native_udp', 'bind': '0.0.0.0:43101',
+            'advertised_endpoints': [{'host': 'agent-' + role + '.mesh.test', 'port': 43101}], 'credential_ref': None} for role in ('b', 'c')],
+        'candidates': [{'id': 'dial-' + source + '-' + destination, 'dialer_node_id': nodes['agent-' + source], 'listener_id': 'listen-' + destination,
+            'endpoint': {'host': 'agent-' + destination + '.mesh.test', 'port': 43101}, 'priority': 0, 'credential_ref': None}
+            for source, destination in (('a', 'b'), ('a', 'c'), ('c', 'b'))]}})
+    policy = rpc(prefix + '/policy')['policy']
+    policy['grants'] = [{'id': 'endpoints', 'src': ['node:' + a], 'dst': ['node:' + b], 'bidirectional': True}]
+    def save_policy():
+        response = rpc(prefix + '/policy/save', {'expected_revision': rpc(prefix + '/policy')['revision'],
+            'policy': policy, 'source_jsonc': None})
+        assert response['valid'], response['diagnostics']
+        return response['revision']
+    save_policy()
 
     for role, cid in agents.items():
         ip = addresses[nodes[role]]
@@ -289,6 +293,53 @@ def normal_acceptance(docker, container, name, logs, result, networks):
         return True
     until('bidirectional real TUN HTTP', traffic)
     result['normal_tun'] = {'nodes': nodes, 'addresses': addresses, 'bidirectional_http': True}
+    def coherent_paths(expected):
+        revision = rpc(prefix + '/policy')['revision']
+        observations = {}
+        code = ('import hashlib,json,pathlib; root="/run/agent.json"; '
+            's=json.loads(pathlib.Path(root+".mesh-execution.json").read_text())["snapshot"]; p=s["payload"]; '
+            'c=json.loads(pathlib.Path(root+".connections.json").read_text())["snapshot"]; '
+            'i=json.loads(pathlib.Path(root+".config.json").read_text())["snapshot"]["payload"]; '
+            'assert hashlib.sha256(json.dumps(p,sort_keys=True,separators=(",",":"),ensure_ascii=False).encode()).hexdigest()==s["digest"]; '
+            'assert p["connections"]==c["payload"]; assert i["schema_version"]==2; '
+            'assert all(i[k]==p[k] for k in ("revision","network","node","peers")); '
+            'assert "policy_valid" not in i and "routing_policy" not in i; '
+            'print(json.dumps({k:p[k] for k in ("revision","network_id","node_id","paths","identities","connections")}))')
+        for role, cid in agents.items():
+            observed = json.loads(docker('exec', cid, 'python3', '-c', code).stdout)
+            local_paths = [path for path in expected if nodes[role] in path]
+            if observed['revision'] != revision or observed['network_id'] != network or sorted(p['nodes'] for p in observed['paths']) != sorted(local_paths):
+                return False
+            observations[role] = observed
+        result['normal_tun']['coherent_execution'] = observations
+        return True
+    def denied():
+        return all(docker('exec', agents[role], 'python3', '-c', probe_code, addresses[destination], check=False, timeout=6).returncode != 0
+            for role, destination in (('agent-a', b), ('agent-b', a)))
+    policy['mesh'] = [{'id': 'via-' + str(index), 'src': 'node:' + source, 'dst': 'node:' + destination, 'via': ['node:' + c]}
+        for index, (source, destination) in enumerate(((a, b), (b, a)))]
+    save_policy()
+    exact_paths = [[a, c, b], [b, c, a]]
+    until('same-revision exact paths, inventory and keys', lambda: coherent_paths(exact_paths))
+    until('bidirectional required-relay TUN HTTP', traffic)
+    result['normal_tun']['required_relay_http'] = True
+    stop(agents['agent-c'], 'agent')
+    until('relay withdrawal', lambda: docker('exec', agents['agent-c'], 'ip', 'link', 'show', 'meshway0', check=False).returncode != 0, 20)
+    assert denied(), 'required relay failure silently bypassed the configured path'
+    spawn(agents['agent-c'], 'agent', ['/usr/local/bin/meshway-agent', 'run', '--state', '/run/agent.json', '--apply-dataplane',
+        '--interval-seconds', '2', '--connection-lease-seconds', '20', '--dns-listen', '127.0.0.1:5353'])
+    until('same identity relay recovery', traffic)
+    result['normal_tun']['required_relay_no_bypass_and_recovery'] = True
+    grants = policy['grants']
+    policy['grants'] = []
+    save_policy()
+    until('withdrawn grants reach all execution snapshots', lambda: coherent_paths([]))
+    assert denied(), 'ungranted endpoints still exchange TUN traffic'
+    policy['grants'] = grants
+    save_policy()
+    until('restored exact path snapshots', lambda: coherent_paths(exact_paths))
+    until('restored grants TUN HTTP', traffic)
+    result['normal_tun']['grant_withdrawal_and_recovery'] = True
     # Controller address deliberately lies inside the Mesh prefix. Only its
     # internal marked sockets may reach main; ordinary business must enter TUN.
     ordinary = docker('exec', agents['agent-a'], 'python3', '-c',
@@ -315,7 +366,8 @@ def normal_acceptance(docker, container, name, logs, result, networks):
     spawn(agents['agent-a'], 'agent', ['/usr/local/bin/meshway-agent', 'run', '--state', '/run/agent.json', '--apply-dataplane',
         '--interval-seconds', '2', '--connection-lease-seconds', '20', '--dns-listen', '127.0.0.1:5353'])
     until('same identity Agent restart', traffic)
-    assert {node['id'] for node in rpc(prefix + '/nodes')['nodes']} == {a, b}
+    assert {node['id'] for node in rpc(prefix + '/nodes')['nodes']} == set(nodes.values())
+    until('restarted same-revision execution', lambda: coherent_paths(exact_paths))
     result['normal_tun']['same_identity_restart'] = True
     for role, cid in agents.items():
         (logs / (role + '.log')).write_text(docker('exec', cid, 'cat', '/run/agent.log').stdout)
@@ -330,6 +382,7 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument('--check-only', action='store_true')
     parser.add_argument('--compile-only', action='store_true')
+    parser.add_argument('--build-work', help='private build cache directory; defaults to this run only')
     parser.add_argument('--compiler', default='meshway-underlay-compiler:mw-underlay-431-60aab4705c43')
     parser.add_argument('--runtime', default='meshway-underlay-integration:mw-underlay-431-60aab4705c43')
     sys.exit(run(parser.parse_args()))
