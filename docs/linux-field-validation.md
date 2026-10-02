@@ -1,5 +1,10 @@
 # Linux 跨地域 Docker 验收
 
+**第一轮已于 2026-10-02 执行完成，结果为 `COMPLETED_WITH_FINDINGS`。**
+真实两地 / 四地 TUN 互访、DNS、必经节点故障约束和代表端点的 lease 撤回通过；
+原严格 runner 保留 `FAIL`，原因是控制面恢复后首尔 runtime 上报未在等待窗口内恢复新鲜度。
+后续独立业务探测已证明四地实际包流恢复，不将这一结果代替失败的状态上报检查。
+
 用户最新同意把第一轮提前到打洞之前：使用已验证主线，先核对主机与 Docker 部署条件，
 在两地验证固定链路的正常 Controller / Agent / TUN，再扩展四地。
 自动建连 / 主备、打洞完成后做第二轮，完整出口 / 域名分流仍属首版。
@@ -10,10 +15,10 @@
 
 | 登记别名 | 地区 | 当前状态 |
 | --- | --- | --- |
-| `jp-tyo` | 东京 | SSH / Docker / TUN 设备预检通过；ARM64 |
-| `us-nyc` | 纽约 | SSH / Docker / TUN 设备预检通过；x86_64 |
-| `kr-icn` | 首尔 | SSH / Docker / TUN 设备预检通过；ARM64 |
-| `us-lax` | 洛杉矶 | SSH / Docker / TUN 设备预检通过；x86_64 |
+| `jp-tyo` | 东京 | ARM64；两地 / 四地包流与同身份重启已测，存在 E2E 恢复窗口 |
+| `us-nyc` | 纽约 | x86_64；直连与必经中转、停止 / 恢复已测 |
+| `kr-icn` | 首尔 | ARM64；四地包流已测，发现 runtime 上报间歇过期 |
+| `us-lax` | 洛杉矶 | x86_64；独立 Controller、监听 / 中转、控制面停止 / 恢复已测 |
 
 别名是测试库存，不作为地图定位证据；地图位置须来自有效观测。
 连接地址沿用用户登记记录，不把登录凭据放进仓库或实验报告。
@@ -21,6 +26,82 @@
 2026-10-02 的只读预检还确认其管理路径经 WARP；本轮 overlay 使用独立的 `198.18.42.0/24`，
 Docker bridge 使用逐机检查不冲突的 `172.31.249.0/28`。设备文件存在不等于容器 TUN 已成功工作，
 实际 ioctl、包流和恢复仍须通过后面的运行验收。
+
+固定镜像源码为 `4d106e01ef31c3bd3d1fa0ecf8528d9ddcc3c54f`，源归档 SHA-256 为
+`48070b8b6edce69f568d0481ddc70caa0af7e6f1a806ee2ea3e32dd6fd71b0e1`。
+两种架构的 Controller 实际 OpenAPI 导出均与该冻结合同一致；四地 image ID 可解析。
+Docker 存储后端不同，构建机显示 OCI manifest digest、接收机显示 config digest，不能直接比较 raw ID 字符串；
+本轮已核验每架构的 canonical config digest、全部归档 blobs 与 RootFS，确认复制的是同一镜像内容。
+完整交付位于批准 TMP 的 `meshway-field-images-cccn4rq4/result.json` 与 `cleanup-manifest.json`。
+镜像送达不代表 TLS、TUN 或真实跨地域互通已通过；容器部署 / 包流验收使用 `experiments/linux-field/run.ts`。
+
+### 第一轮已取得的运行证据
+
+2026-10-02，独立 run `r1-5038bd8a8e3f` 已完成东京 ARM64 ↔ 洛杉矶 x86_64 的正常注册、
+平台托管 VLESS WebSocket/TLS、真实 TUN 双向 ICMP / HTTP，以及实际 DNS UDP/TCP 的 PTR / A 查询。
+overlay 为 `198.18.42.0/24`，HTTP canary 只绑定各自 Mesh IP，实际 route get 均为 `meshway0`。
+
+- 首批东京→洛杉矶 3/3：321、106、107 ms；反向 3/3：约 106–107 ms，两方向 HTTP 内容完全匹配。
+  首包建连成本保留，不将其删去后声称全部样本都是稳态延迟；本轮没有吞吐性能结论。
+- 首次启动修正了 fixture 的私有 bind 目录所有权：仅新 bootstrap 文件经一次性 CHOWN 容器移交，
+  运行 Agent 仍只有 NET_ADMIN，没有增加 DAC_OVERRIDE；洛杉矶既有测试节点身份未重建。
+- **重启恢复仍需单独测量**：首次仅重启东京后，原身份、TUN 和邻接认证已恢复，但业务请求一度失败；
+  后续没有修改身份或配置即恢复。独立真实 Runtime 复现现已确认同一机制：存活端仍使用重启端已丢失的 E2E receiver 会话。
+  后续 fixture 按 120 秒有界恢复采样，逐次保留失败 / 成功和实际恢复耗时，不能以邻接 current 提前判业务成功。
+
+首批证据和原失败报告保存在批准 TMP 的 `meshway-field-r1-5038bd8a8e3f/`；
+`--resume` 会把原 `result.json` 留为独立 `result.previous-*.json`，不覆盖失败证据。
+整轮结果与已知缺口如下，不将部分通过扩张为全部恢复验收成功。
+
+### 四地结果与收尾
+
+| 检查 | 实际结果 |
+| --- | --- |
+| 东京↔洛杉矶 | ICMP / HTTP / DNS 通过，TUN MTU 1000；稳定 ICMP 约 106–109 ms，保留首包建连成本 |
+| 东京→洛杉矶→纽约→首尔及反向 | 两方向 ICMP 3/3、HTTP 内容匹配；本批稳态样本约 368–374 ms，首个冷请求 ICMP 可达约 1108 ms |
+| 纽约↔洛杉矶 | 两方向 ICMP 3/3、HTTP 内容匹配；本批稳态样本约 60–66 ms |
+| 必经纽约停止 | 东京↔首尔失败；首尔→洛杉矶备用边仍可实际通信，没有绕过必经纽约 |
+| 必经纽约恢复 | 有序路径业务恢复，本次从启动到成功采样约 9.111 秒 |
+| 东京容器重启 | 原 identity 文件字节保持；本次记录 4 轮探测，其中 3 轮失败，55.606 秒时双向业务采样成功 |
+| Controller 停止 / lease 到期 | 东京实际业务失败、TUN proof withdrawn，Mesh 路由未落回底层；本批此项直接核对的是东京端点 |
+| Controller 恢复 | 后续四个方向 TUN ICMP / HTTP 均成功；首尔 runtime 报告仍间歇 stale，严格状态恢复 gate 未过 |
+
+这些是本次有限采样及从操作开始到成功探测结束的耗时，不是首次恢复精确时间、总体 SLA 或吞吐性能结论。
+逻辑有序路径经过真实包流和停必经点的故障验证，本轮没有实现逐包 trace。
+底层查询还发现首尔→纽约的未标记转发 FIB 指向现有 `CloudflareWARP`；其他已查目标指向物理接口。
+这份证据是路由查询而非抓包 trace，因此本轮不宣称每段均为纯公网直连，更不代表打洞成功。
+
+**第二项恢复缺口：runtime 上报间歇停滞。** 首尔 Agent 在继续同步配置、DNS active 和真实业务恢复时，
+反复报 `connection runtime observation changed; resynchronizing`；Controller 上记录一度停在 sequence 25，
+后来推进到 66，但截至后续查询仍再次超过 60 秒而 stale。该现象已交独立本地复现 / 修复，
+不把偶尔提交成功写成持续新鲜，也不为了 runner 变绿而移除 guard 或把旧报告更新时间伪装成新样本。
+
+收尾已完成：
+
+- 删除精确 owner label 匹配的 **5 个测试容器、4 个 bridge**，清理错误为 0，测试端口不再监听。
+- 两个专用 buildx daemon 已停止；镜像、构建 cache、归档、独立 Controller / Agent 私有数据和身份均保留。
+- 四台 SSH 正常，既有容器 ID / 镜像 / 端口 / 运行及原 healthy 状态保留；IPv4 / IPv6 RPDB、物理 / WARP IPv4 路由、resolver 文件和 forwarding 值与预检一致。
+- IPv6 差异如实保留：纽约 WARP 的 link-local 地址变化，首尔 RA 默认路由 lifetime 从 8995 刷新为 8999，gateway / interface / metric 未变。
+  未恢复旧配置，不声称全部 IPv6 观测逐字节一致。未手工编辑宿主防火墙或 Docker daemon 配置。
+
+完整收尾证据在上述 run 目录：`round-summary.json`、`runtime-cleanup.json`、`host-postflight-comparison.json`、
+`host-observed-ipv6-differences.json`、`underlay-fib-lookups.json`、`control-restored-business-probes.json`。
+原 `result.json` 的 FAIL 与所有前次失败报告原样保留；summary 记录公开证据 SHA-256。
+优先修复 E2E 重同步及运行上报这两个实际缺口后做针对性远端复验；自动建连 / 主备 / 打洞仍按第二轮验收。
+
+### 已独立确认的 E2E 重启恢复缺口
+
+固定 `4d106e0` 与主线 `1b6d061` 的相关 Runtime 文件相同。独立的一跳和 A–中转–B 测试均确认：
+A 重启后，新的外层认证、邻接探测、fresh E2E echo 与 A→B 请求成功；B 旧 sender ID / 到期时间不变，
+B→A 回包因 A 已无对应 receiver session 被正确拒绝。外层重连但端点未重启的控制组则可继续使用旧 E2E 会话。
+
+- 三项独立测试通过，真实 TCP / Noise、未缩短或暂停时钟。约 58.13 秒仍拒绝；旧预算约 59.05–59.07 秒到期后新会话交付成功。
+- 59 秒是旧 sender cache 的预算，不是业务恢复上界：还要等待下一次发包、握手、排队与应用重传。
+- B–中转通道在多跳反例中从未变化，因此仅清“邻接重连缓存”不能完整修复；普通 rekey 时盲目清反向 cache 还可能造成双向反复握手。
+- 后续修复需经端到端认证的接收状态代际或有界 resync，并明确 wire / 能力协商、旧版本行为和 anti-replay；本轮没有降低加密、缩短 TTL 或修改固定远端 binary 来掩盖问题。
+
+独立报告：批准 TMP 的 `meshway-field-e2e-restart-recovery-review.md`；原远端报告没有 sender ID 采样，
+只证明其现象与已独立复现的机制一致，不将后一次成功探测时间伪称为远端首次恢复时刻。
 
 - 使用独立 Docker 网络、测试目录和容器，保持原 SSH 与现有服务。
 - TUN 设备及必要网络权限限定在容器 namespace 内，不用 host network / privileged，
