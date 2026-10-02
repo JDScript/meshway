@@ -124,6 +124,15 @@ pub struct LatencyHistoryRecord {
 #[serde(deny_unknown_fields)]
 pub struct LatencyHistoryResponse {
     pub records: Vec<LatencyHistoryRecord>,
+    /// Current TTL floor. This is a maximum age, not a promise of continuous data.
+    pub retention_from: DateTime<Utc>,
+    /// Conservative source-wide capacity watermark (all peers). Some earlier
+    /// events were evicted; it does not describe offline time or continuous coverage.
+    #[schema(required = true)]
+    #[serde(deserialize_with = "crate::deserialize_required_nullable")]
+    pub capacity_trimmed_before: Option<DateTime<Utc>>,
+    /// The requested window intersects the conservative capacity-trimmed range.
+    pub capacity_trimmed: bool,
     #[schema(required = true)]
     #[serde(deserialize_with = "crate::deserialize_required_nullable")]
     pub next: Option<String>,

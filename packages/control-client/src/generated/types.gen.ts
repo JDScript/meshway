@@ -328,6 +328,85 @@ export type IncomingConnectionApproval = {
     transport: ConnectionTransport;
 };
 
+export type LatencyChannelAssociation = {
+    candidate_id: string | null;
+    initiator_node_id: string;
+    listener_id: string;
+    transport: ConnectionTransport;
+};
+
+export type LatencyDirection = 'source_to_peer';
+
+export type LatencyFailureReason = 'channel_unavailable' | 'authentication_failed' | 'local_send_failed';
+
+export type LatencyHistoryRecord = {
+    cursor: string;
+    /**
+     * Always true: a retained measurement never asserts present connectivity.
+     */
+    historical: boolean;
+    network_id: string;
+    received_at: string;
+    sample: LatencySample;
+    source_node_id: string;
+};
+
+export type LatencyHistoryResponse = {
+    /**
+     * The requested window intersects the conservative capacity-trimmed range.
+     */
+    capacity_trimmed: boolean;
+    /**
+     * Conservative source-wide capacity watermark (all peers). Some earlier
+     * events were evicted; it does not describe offline time or continuous coverage.
+     */
+    capacity_trimmed_before: string | null;
+    expected_interval_seconds: number;
+    next: string | null;
+    records: Array<LatencyHistoryRecord>;
+    /**
+     * Current TTL floor. This is a maximum age, not a promise of continuous data.
+     */
+    retention_from: string;
+    retention_seconds: number;
+};
+
+export type LatencyOutcome = 'success' | 'timeout' | 'failed';
+
+export type LatencySample = {
+    /**
+     * Runtime returns exact channel metadata only with successful proof. A
+     * timeout leaves this empty rather than racing a separate registry read.
+     * Exactly one association for success, zero for timeout.
+     */
+    channel_associations: Array<LatencyChannelAssociation>;
+    completed_at: string;
+    digest: string;
+    direction: LatencyDirection;
+    /**
+     * One sanitized attempt failure for Failed, otherwise empty. This is not
+     * a network loss classification; local send failures are kept separate.
+     */
+    failure_reasons: Array<LatencyFailureReason>;
+    /**
+     * Actual probe invocation start; retained unchanged through queue/retry.
+     */
+    measured_at: string;
+    measurement_id: string;
+    outcome: LatencyOutcome;
+    peer_node_id: string;
+    revision: number;
+    /**
+     * Integer microseconds, measured using a monotonic clock, never HTTP RTT.
+     */
+    rtt_us: number | null;
+    runtime_epoch: number;
+    /**
+     * Local sampler generation, not an assertion of physical channel identity.
+     */
+    sampler_generation: string;
+};
+
 export type ManagedListenerSettings = {
     /**
      * Explicit announcement, not proof of reachability. Empty means no dial endpoint.
@@ -635,6 +714,18 @@ export type PublishManagedTransportCapabilitiesResponse = {
     revision: number;
 };
 
+/**
+ * Raw events for one directed pair. Exclusive row cursor, not an offset.
+ */
+export type QueryLatencyHistoryRequest = {
+    after: string | null;
+    from: string;
+    limit: number;
+    peer_node_id: string;
+    source_node_id: string;
+    until: string;
+};
+
 export type ReportConnectionRuntimeRequest = {
     digest: string;
     epoch: number;
@@ -671,6 +762,15 @@ export type ReportEndpointDiscoveryResponse = {
     epoch: number;
     reported_at: string;
     sequence: number;
+};
+
+export type ReportLatencySamplesRequest = {
+    samples: Array<LatencySample>;
+};
+
+export type ReportLatencySamplesResponse = {
+    duplicates: number;
+    inserted: number;
 };
 
 export type RevokeNodeRequest = {
@@ -1217,6 +1317,59 @@ export type GetAgentDnsResponses = {
 };
 
 export type GetAgentDnsResponse = GetAgentDnsResponses[keyof GetAgentDnsResponses];
+
+export type ReportLatencySamplesData = {
+    body: ReportLatencySamplesRequest;
+    path?: never;
+    query?: never;
+    url: '/api/v1/agent/latency/samples';
+};
+
+export type ReportLatencySamplesErrors = {
+    /**
+     * Invalid JSON
+     */
+    400: ErrorResponse;
+    /**
+     * Node credential required
+     */
+    401: ErrorResponse;
+    /**
+     * Node revoked
+     */
+    403: ErrorResponse;
+    /**
+     * Runtime superseded, stale or inactive, or changed duplicate event
+     */
+    409: ErrorResponse;
+    /**
+     * Request exceeds 128 KiB
+     */
+    413: ErrorResponse;
+    /**
+     * Expected application/json
+     */
+    415: ErrorResponse;
+    /**
+     * Invalid event scope, clock or budget
+     */
+    422: ErrorResponse;
+    /**
+     * Storage unavailable
+     */
+    500: ErrorResponse;
+};
+
+export type ReportLatencySamplesError = ReportLatencySamplesErrors[keyof ReportLatencySamplesErrors];
+
+export type ReportLatencySamplesResponses = {
+    /**
+     * Immutable directed probe events; duplicate IDs preserve original receipt time
+     */
+    200: ReportLatencySamplesResponse;
+};
+
+export type ReportLatencySamplesResponse2 = ReportLatencySamplesResponses[keyof ReportLatencySamplesResponses];
 
 export type GetAgentManagedConnectionsData = {
     body?: never;
@@ -2049,6 +2202,60 @@ export type PreviewFlowResponses = {
 };
 
 export type PreviewFlowResponse2 = PreviewFlowResponses[keyof PreviewFlowResponses];
+
+export type QueryLatencyHistoryData = {
+    body: QueryLatencyHistoryRequest;
+    path: {
+        /**
+         * Stable network ID
+         */
+        network_id: string;
+    };
+    query?: never;
+    url: '/api/v1/networks/{network_id}/latency/history/query';
+};
+
+export type QueryLatencyHistoryErrors = {
+    /**
+     * Invalid JSON
+     */
+    400: ErrorResponse;
+    /**
+     * Read-network credential required
+     */
+    401: ErrorResponse;
+    /**
+     * Network or pair not found in network
+     */
+    404: ErrorResponse;
+    /**
+     * Request exceeds 128 KiB
+     */
+    413: ErrorResponse;
+    /**
+     * Expected application/json
+     */
+    415: ErrorResponse;
+    /**
+     * Window or point budget exceeded
+     */
+    422: ErrorResponse;
+    /**
+     * Storage unavailable
+     */
+    500: ErrorResponse;
+};
+
+export type QueryLatencyHistoryError = QueryLatencyHistoryErrors[keyof QueryLatencyHistoryErrors];
+
+export type QueryLatencyHistoryResponses = {
+    /**
+     * Bounded raw historical events for one directed pair; no synthetic gap or loss points
+     */
+    200: LatencyHistoryResponse;
+};
+
+export type QueryLatencyHistoryResponse = QueryLatencyHistoryResponses[keyof QueryLatencyHistoryResponses];
 
 export type CreateManagedEnrollmentTokenData = {
     body: CreateManagedEnrollmentTokenRequest;

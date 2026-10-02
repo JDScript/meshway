@@ -493,6 +493,54 @@ export const zHeartbeatRequest = z.strictObject({
   "agent_version": z.string().refine(value => [...value].length >= 1, "minLength 1 Unicode code points").refine(value => [...value].length <= 64, "maxLength 64 Unicode code points").regex(new RegExp("[^\\u0009-\\u000D\\u0020\\u0085\\u00A0\\u1680\\u2000-\\u200A\\u2028\\u2029\\u202F\\u205F\\u3000]", "u"))
 });
 
+export const zLatencyChannelAssociation = z.strictObject({
+  "candidate_id": z.string().nullable(),
+  "initiator_node_id": z.string(),
+  "listener_id": z.string(),
+  "transport": zConnectionTransport
+});
+
+export const zLatencyDirection = z.enum(["source_to_peer"]);
+
+export const zLatencyFailureReason = z.enum(["channel_unavailable","authentication_failed","local_send_failed"]);
+
+export const zLatencyOutcome = z.enum(["success","timeout","failed"]);
+
+export const zLatencySample = z.strictObject({
+  "channel_associations": z.array(zLatencyChannelAssociation).max(1),
+  "completed_at": z.iso.datetime({ offset: true }),
+  "digest": z.string().refine(value => [...value].length >= 64, "minLength 64 Unicode code points").refine(value => [...value].length <= 64, "maxLength 64 Unicode code points").regex(new RegExp("^[0-9a-f]{64}$", "u")),
+  "direction": zLatencyDirection,
+  "failure_reasons": z.array(zLatencyFailureReason).max(1),
+  "measured_at": z.iso.datetime({ offset: true }),
+  "measurement_id": z.string().refine(value => [...value].length >= 64, "minLength 64 Unicode code points").refine(value => [...value].length <= 64, "maxLength 64 Unicode code points").regex(new RegExp("^[0-9a-f]{64}$", "u")),
+  "outcome": zLatencyOutcome,
+  "peer_node_id": z.string(),
+  "revision": z.int().gte(1).lte(4294967295),
+  "rtt_us": z.int().gte(1).lte(60000000).nullable(),
+  "runtime_epoch": z.int().gte(1).lte(4294967295),
+  "sampler_generation": z.string().refine(value => [...value].length >= 64, "minLength 64 Unicode code points").refine(value => [...value].length <= 64, "maxLength 64 Unicode code points").regex(new RegExp("^[0-9a-f]{64}$", "u"))
+});
+
+export const zLatencyHistoryRecord = z.strictObject({
+  "cursor": z.string(),
+  "historical": z.boolean(),
+  "network_id": z.string(),
+  "received_at": z.iso.datetime({ offset: true }),
+  "sample": zLatencySample,
+  "source_node_id": z.string()
+});
+
+export const zLatencyHistoryResponse = z.strictObject({
+  "capacity_trimmed": z.boolean(),
+  "capacity_trimmed_before": z.iso.datetime({ offset: true }).nullable(),
+  "expected_interval_seconds": z.int().gte(1).lte(4294967295),
+  "next": z.string().nullable(),
+  "records": z.array(zLatencyHistoryRecord),
+  "retention_from": z.iso.datetime({ offset: true }),
+  "retention_seconds": z.int().gte(1).lte(4294967295)
+});
+
 export const zManagedListenerSummary = z.strictObject({
   "certificate_sha256": z.string().nullable(),
   "compiled_capability_available": z.boolean(),
@@ -619,6 +667,15 @@ export const zPublishManagedTransportCapabilitiesResponse = z.strictObject({
   "revision": z.int().gte(1).lte(4294967295)
 });
 
+export const zQueryLatencyHistoryRequest = z.strictObject({
+  "after": z.string().refine(value => [...value].length >= 1, "minLength 1 Unicode code points").refine(value => [...value].length <= 20, "maxLength 20 Unicode code points").regex(new RegExp("^[0-9]+$", "u")).nullable(),
+  "from": z.iso.datetime({ offset: true }),
+  "limit": z.int().gte(1).lte(1000),
+  "peer_node_id": z.string(),
+  "source_node_id": z.string(),
+  "until": z.iso.datetime({ offset: true })
+});
+
 export const zReportConnectionRuntimeRequest = z.strictObject({
   "digest": z.string().refine(value => [...value].length >= 64, "minLength 64 Unicode code points").refine(value => [...value].length <= 64, "maxLength 64 Unicode code points").regex(new RegExp("^[0-9a-f]{64}$", "u")),
   "epoch": z.int().gte(1).lte(4294967295),
@@ -649,6 +706,15 @@ export const zReportEndpointDiscoveryResponse = z.strictObject({
   "epoch": z.int().gte(1).lte(4294967295),
   "reported_at": z.iso.datetime({ offset: true }),
   "sequence": z.int().gte(1).lte(4294967295)
+});
+
+export const zReportLatencySamplesRequest = z.strictObject({
+  "samples": z.array(zLatencySample).min(1).max(64)
+});
+
+export const zReportLatencySamplesResponse = z.strictObject({
+  "duplicates": z.int().gte(0).lte(64),
+  "inserted": z.int().gte(0).lte(64)
 });
 
 export const zRevokeNodeRequest = z.strictObject({

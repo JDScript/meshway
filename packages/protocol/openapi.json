@@ -792,6 +792,118 @@
         ]
       }
     },
+    "/api/v1/agent/latency/samples": {
+      "post": {
+        "operationId": "reportLatencySamples",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ReportLatencySamplesRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Immutable directed probe events; duplicate IDs preserve original receipt time",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReportLatencySamplesResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid JSON",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Node credential required",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Node revoked",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Runtime superseded, stale or inactive, or changed duplicate event",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "Request exceeds 128 KiB",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "415": {
+            "description": "Expected application/json",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Invalid event scope, clock or budget",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Storage unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "nodeBearer": []
+          }
+        ]
+      }
+    },
     "/api/v1/agent/managed-connections": {
       "get": {
         "operationId": "getAgentManagedConnections",
@@ -2367,6 +2479,119 @@
           },
           "415": {
             "description": "Expected application/json",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "adminBearer": []
+          }
+        ]
+      }
+    },
+    "/api/v1/networks/{network_id}/latency/history/query": {
+      "post": {
+        "operationId": "queryLatencyHistory",
+        "parameters": [
+          {
+            "name": "network_id",
+            "in": "path",
+            "description": "Stable network ID",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/QueryLatencyHistoryRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Bounded raw historical events for one directed pair; no synthetic gap or loss points",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LatencyHistoryResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid JSON",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Read-network credential required",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Network or pair not found in network",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "Request exceeds 128 KiB",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "415": {
+            "description": "Expected application/json",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Window or point budget exceeded",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Storage unavailable",
             "content": {
               "application/json": {
                 "schema": {
@@ -5018,6 +5243,241 @@
         },
         "additionalProperties": false
       },
+      "LatencyChannelAssociation": {
+        "type": "object",
+        "required": [
+          "transport",
+          "initiator_node_id",
+          "listener_id",
+          "candidate_id"
+        ],
+        "properties": {
+          "candidate_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "initiator_node_id": {
+            "type": "string"
+          },
+          "listener_id": {
+            "type": "string"
+          },
+          "transport": {
+            "$ref": "#/components/schemas/ConnectionTransport"
+          }
+        },
+        "additionalProperties": false
+      },
+      "LatencyDirection": {
+        "type": "string",
+        "enum": [
+          "source_to_peer"
+        ]
+      },
+      "LatencyFailureReason": {
+        "type": "string",
+        "enum": [
+          "channel_unavailable",
+          "authentication_failed",
+          "local_send_failed"
+        ]
+      },
+      "LatencyHistoryRecord": {
+        "type": "object",
+        "required": [
+          "cursor",
+          "network_id",
+          "source_node_id",
+          "sample",
+          "received_at",
+          "historical"
+        ],
+        "properties": {
+          "cursor": {
+            "type": "string"
+          },
+          "historical": {
+            "type": "boolean",
+            "description": "Always true: a retained measurement never asserts present connectivity."
+          },
+          "network_id": {
+            "type": "string"
+          },
+          "received_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "sample": {
+            "$ref": "#/components/schemas/LatencySample"
+          },
+          "source_node_id": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": false
+      },
+      "LatencyHistoryResponse": {
+        "type": "object",
+        "required": [
+          "records",
+          "retention_from",
+          "capacity_trimmed_before",
+          "capacity_trimmed",
+          "next",
+          "retention_seconds",
+          "expected_interval_seconds"
+        ],
+        "properties": {
+          "capacity_trimmed": {
+            "type": "boolean",
+            "description": "The requested window intersects the conservative capacity-trimmed range."
+          },
+          "capacity_trimmed_before": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time",
+            "description": "Conservative source-wide capacity watermark (all peers). Some earlier\nevents were evicted; it does not describe offline time or continuous coverage."
+          },
+          "expected_interval_seconds": {
+            "type": "integer",
+            "format": "int64",
+            "maximum": 4294967295,
+            "minimum": 1
+          },
+          "next": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "records": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/LatencyHistoryRecord"
+            }
+          },
+          "retention_from": {
+            "type": "string",
+            "format": "date-time",
+            "description": "Current TTL floor. This is a maximum age, not a promise of continuous data."
+          },
+          "retention_seconds": {
+            "type": "integer",
+            "format": "int64",
+            "maximum": 4294967295,
+            "minimum": 1
+          }
+        },
+        "additionalProperties": false
+      },
+      "LatencyOutcome": {
+        "type": "string",
+        "enum": [
+          "success",
+          "timeout",
+          "failed"
+        ]
+      },
+      "LatencySample": {
+        "type": "object",
+        "required": [
+          "measurement_id",
+          "peer_node_id",
+          "direction",
+          "runtime_epoch",
+          "revision",
+          "digest",
+          "sampler_generation",
+          "measured_at",
+          "completed_at",
+          "outcome",
+          "failure_reasons",
+          "channel_associations",
+          "rtt_us"
+        ],
+        "properties": {
+          "channel_associations": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/LatencyChannelAssociation"
+            },
+            "description": "Runtime returns exact channel metadata only with successful proof. A\ntimeout leaves this empty rather than racing a separate registry read.\nExactly one association for success, zero for timeout.",
+            "maxItems": 1
+          },
+          "completed_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "digest": {
+            "type": "string",
+            "maxLength": 64,
+            "minLength": 64,
+            "pattern": "^[0-9a-f]{64}$"
+          },
+          "direction": {
+            "$ref": "#/components/schemas/LatencyDirection"
+          },
+          "failure_reasons": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/LatencyFailureReason"
+            },
+            "description": "One sanitized attempt failure for Failed, otherwise empty. This is not\na network loss classification; local send failures are kept separate.",
+            "maxItems": 1
+          },
+          "measured_at": {
+            "type": "string",
+            "format": "date-time",
+            "description": "Actual probe invocation start; retained unchanged through queue/retry."
+          },
+          "measurement_id": {
+            "type": "string",
+            "maxLength": 64,
+            "minLength": 64,
+            "pattern": "^[0-9a-f]{64}$"
+          },
+          "outcome": {
+            "$ref": "#/components/schemas/LatencyOutcome"
+          },
+          "peer_node_id": {
+            "type": "string"
+          },
+          "revision": {
+            "type": "integer",
+            "format": "int64",
+            "maximum": 4294967295,
+            "minimum": 1
+          },
+          "rtt_us": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "Integer microseconds, measured using a monotonic clock, never HTTP RTT.",
+            "maximum": 60000000,
+            "minimum": 1
+          },
+          "runtime_epoch": {
+            "type": "integer",
+            "format": "int64",
+            "maximum": 4294967295,
+            "minimum": 1
+          },
+          "sampler_generation": {
+            "type": "string",
+            "description": "Local sampler generation, not an assertion of physical channel identity.",
+            "maxLength": 64,
+            "minLength": 64,
+            "pattern": "^[0-9a-f]{64}$"
+          }
+        },
+        "additionalProperties": false
+      },
       "ManagedListenerSettings": {
         "type": "object",
         "required": [
@@ -6270,6 +6730,50 @@
         },
         "additionalProperties": false
       },
+      "QueryLatencyHistoryRequest": {
+        "type": "object",
+        "description": "Raw events for one directed pair. Exclusive row cursor, not an offset.",
+        "required": [
+          "source_node_id",
+          "peer_node_id",
+          "from",
+          "until",
+          "limit",
+          "after"
+        ],
+        "properties": {
+          "after": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "maxLength": 20,
+            "minLength": 1,
+            "pattern": "^[0-9]+$"
+          },
+          "from": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "limit": {
+            "type": "integer",
+            "format": "int64",
+            "maximum": 1000,
+            "minimum": 1
+          },
+          "peer_node_id": {
+            "type": "string"
+          },
+          "source_node_id": {
+            "type": "string"
+          },
+          "until": {
+            "type": "string",
+            "format": "date-time"
+          }
+        },
+        "additionalProperties": false
+      },
       "ReportConnectionRuntimeRequest": {
         "type": "object",
         "required": [
@@ -6430,6 +6934,45 @@
             "format": "int64",
             "maximum": 4294967295,
             "minimum": 1
+          }
+        },
+        "additionalProperties": false
+      },
+      "ReportLatencySamplesRequest": {
+        "type": "object",
+        "required": [
+          "samples"
+        ],
+        "properties": {
+          "samples": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/LatencySample"
+            },
+            "maxItems": 64,
+            "minItems": 1
+          }
+        },
+        "additionalProperties": false
+      },
+      "ReportLatencySamplesResponse": {
+        "type": "object",
+        "required": [
+          "inserted",
+          "duplicates"
+        ],
+        "properties": {
+          "duplicates": {
+            "type": "integer",
+            "format": "int64",
+            "maximum": 64,
+            "minimum": 0
+          },
+          "inserted": {
+            "type": "integer",
+            "format": "int64",
+            "maximum": 64,
+            "minimum": 0
           }
         },
         "additionalProperties": false
