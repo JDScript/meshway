@@ -201,8 +201,9 @@ attempts). Plans exceeding these bounds fail closed with invalid_configuration.
 
 ## Verification / ownership
 
-Agent-owned implementation is in `src/managed_connections` and
-`src/state/connections/managed.rs`. Main owns generated SDKs and Cargo.lock.
+Connection implementation is in `src/managed_connections`; `src/daemon` owns
+the run loop, `src/control` owns protected HTTP and `src/state` owns persistence.
+Generated HTTP operations live in `crates/control-client`.
 Checks: `cargo test -p meshway-agent --features managed-connections --locked`,
 `cargo clippy -p meshway-agent --features managed-connections --all-targets --locked -- -D warnings`,
 plus the ordinary non-feature Agent suite. Unit fixtures use real loopback UDP,
@@ -212,21 +213,6 @@ durable key reuse, grant removal, stalled HTTP lease expiry, epoch supersession,
 lost-begin CAS races, revocation, shutdown, and recovery of the same epoch/revision
 after controller downtime grows retry backoff beyond the config lease. Docker
 validation is coordinated separately by the main session.
-
-Initial MAIN verification: 49 feature-enabled Agent tests and 31 ordinary Agent
-tests passed; strict Clippy (all targets, managed feature) and package formatting
-passed. The lost-begin regression checks A0→1, B1→2, then retry A0 is fenced,
-with exactly one startup epoch read by A and B preserved at epoch 2/sequence 0.
-
-Follow-up recovery/dedup verification: the real-controller long-outage regression
-failed before the fix, with both agents retaining a 30-second retry after fenced
-reports while their configuration leases were only 10 seconds. It passes after
-resetting backoff on durable control sync: the same epoch/revision/digest recovers,
-sequences advance, actual listeners return and fresh neighbor probes succeed.
-The five retained controller roundtrips, ten managed runtime unit fixtures,
-strict Clippy and formatting also pass. Native alias regressions cover UDP and
-TCP, preferred metadata, waiting standbys, unrelated listeners, no-flap resync,
-dedup before core count limits, and distinct peer/carrier boundaries.
 
 Focused recovery command (includes a real outage long enough to reach 30s backoff):
 

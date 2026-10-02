@@ -33,7 +33,7 @@ python3 experiments/managed-dns/run.py --image meshway-manageddns:YOUR_NATIVE_TA
 
 所有 HTTP 调用均通过现有生成 SDK 和运行时 schema：`getNetwork`、`saveNetwork`（ADMIN CAS）、`createEnrollmentToken`、`enrollAgentOperation`、`listNodes`、`getAgentDnsOperation`、连接/数据面查询与撤销。没有手写 endpoint 或 HTTP DTO。
 
-当前 CLI enrollment 只有 `--token`，所以 fixture 不调用该命令：helper 接收 stdin grant，在私有 tmpfs **先原子持久保存** Agent 的 `Identity` 本地格式（`apps/agent/src/state.rs`），host SDK 用同一 credential 登记，再原子回填服务端 ID，并通过真实 `meshway-agent status` 验证。该本地磁盘格式是 fixture 唯一耦合点；协议响应始终采用生成类型。grant/admin/node credential 不进入任何子进程 argv 或日志，admin 从不进入 Agent 容器。真实服务是 `meshway-agent run --state /private/agent.json --dns-listen 127.0.0.1:5353`；data 节点再加 `--apply-dataplane`。
+当前 CLI enrollment 只有 `--token`，所以 fixture 不调用该命令：helper 接收 stdin grant，在私有 tmpfs **先原子持久保存** Agent 的 `Identity` 本地格式（`apps/agent/src/state/mod.rs`），host SDK 用同一 credential 登记，再原子回填服务端 ID，并通过真实 `meshway-agent status` 验证。该本地磁盘格式是 fixture 唯一耦合点；协议响应始终采用生成类型。grant/admin/node credential 不进入任何子进程 argv 或日志，admin 从不进入 Agent 容器。真实服务是 `meshway-agent run --state /private/agent.json --dns-listen 127.0.0.1:5353`；data 节点再加 `--apply-dataplane`。
 
 `wire.py` 仅是查询客户端，不是 DNS server：随机事务 ID、请求/响应 question 和类型核对、TCP framing 与精确读、压缩 name 边界/循环、rcode/RA/AA/TC、RR owner/class/type/TTL 全部解析和校验；不缓存结果。另以 dnsutils 的 `dig` UDP/TCP header 作独立 smoke check。没有以空 stdout、dig exit=0 或 controller 配置 ACK 作为查询成功证据。
 

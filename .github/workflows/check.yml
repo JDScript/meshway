@@ -78,6 +78,8 @@ jobs:
             command: python3 -B experiments/managed-discovery/host.test.py
           - directory: scripts
             command: python3 -B -m unittest discover -s scripts -p 'test_*.py'
+          - directory: apps/agent/tests/underlay_fixture
+            command: python3 -B -m unittest discover -s apps/agent/tests/underlay_fixture -p 'test_*.py'
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5

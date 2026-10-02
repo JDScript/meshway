@@ -57,9 +57,11 @@ VLESS TCP/TLS 与 WebSocket/TLS 的 listener/凭据已由平台生成和下发�
 | `crates/policy` | 纯策略规范化、引用校验与逻辑编译，无网络 I/O |
 | `crates/dataplane` | Noise、认证邻接、E2E 与转发核心 |
 | `crates/agent-dns` | 本地权威 DNS、Zone 与租约 / 代际发送边界 |
+| `crates/agent-tun` | Linux TUN 设备创建、配置、I/O 与真实设备身份，不拥有业务路由 |
+| `crates/control-client` | Rust 生成 HTTP 客户端与 checked transport 注入 |
 | `crates/transport-*` | 编译期承载适配，保留 stream / datagram 与 buffer 所有权语义 |
 | `apps/controller` | 实际 API 路由、权限、SQLite、快照与配置编译 |
-| `apps/agent` | 生成 Rust client、身份、同步、运行层、Linux TUN / DNS 与诊断 |
+| `apps/agent` | 身份、控制同步、领域库运行编排与诊断 |
 | `packages/control-client` | 生成 TS SDK、运行时与编辑器 schema |
 | `apps/web` | 真实 API 驱动的控制台，读取与每个管理 mutation 均做服务端身份检查 |
 | `apps/apple` | SwiftUI / NetworkExtension、UniFFI Rust bridge，当前接入与库存显示已实现，隧道未实现 |

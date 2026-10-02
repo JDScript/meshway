@@ -5,7 +5,7 @@ Rust 控制面与 agent、Next.js + shadcn/ui 控制台、VitePress 文档站。
 ## 项目边界
 
 - `apps/controller`：控制面服务。`apps/agent`：节点进程。
-- `crates/`：按清楚职责拆分的 Rust 库。用户明确支持把 Agent 内可独立构建、测试的能力抽出（如 `agent-dns`），不为压低 crate 数量把实现堆回 App；也不按临时阶段机械拆包。Agent 生成客户端当前位于 `apps/agent/src/generated`。
+- `crates/`：按清楚职责拆分的 Rust 库。用户明确支持把 Agent 内可独立构建、测试的能力抽出（如 `agent-dns`），不为压低 crate 数量把实现堆回 App；也不按临时阶段机械拆包。Rust 生成客户端位于 `crates/control-client/src/generated`，由 Agent 与 Apple core 直接消费。
 - `apps/web`：Next.js 控制台。`apps/apple`：iOS / macOS App。`packages/`：生成的前端协议与客户端。
 - `docs`：VitePress 产品设计、架构和开发文档。
 - `references`：独立的上游参考 checkout；研究版本见其 README，默认不修改。
