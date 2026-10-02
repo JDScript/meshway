@@ -9,6 +9,7 @@ import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { NativeSelect, NativeSelectOption } from "@/components/ui/native-select"
+import { SIGN_IN_FIELD } from "@/lib/action-scope"
 import { roleLabels, type InvitationIssueState } from "@/lib/account-model"
 import { createInvitationAction } from "@/lib/invitation-actions"
 
@@ -22,7 +23,7 @@ const origin = () => window.location.origin
 const noOrigin = () => ""
 
 /** One invitation link; shown once, to be handed over manually (no e-mail is sent). */
-export function InvitationIssueForm({ networkId, roles }: { networkId: string; roles: AccountRole[] }) {
+export function InvitationIssueForm({ signIn, networkId, roles }: { signIn: string; networkId: string; roles: AccountRole[] }) {
   const [state, action, pending] = useActionState(createInvitationAction, initialState)
   const base = useSyncExternalStore(() => () => undefined, origin, noOrigin)
   const ids = { email: useId(), role: useId(), ttl: useId(), link: useId() }
@@ -30,6 +31,7 @@ export function InvitationIssueForm({ networkId, roles }: { networkId: string; r
     <div className="flex flex-col gap-4">
       <form action={action} className="flex flex-col gap-3" aria-label="创建邀请链接">
         <input type="hidden" name="network_id" value={networkId} />
+        <input type="hidden" name={SIGN_IN_FIELD} value={signIn} />
         <div className="flex flex-col gap-1.5">
           <Label htmlFor={ids.email}>受邀邮箱</Label>
           <Input id={ids.email} name="email" type="email" required autoComplete="off" autoCapitalize="off" spellCheck={false} disabled={pending} className="h-9" />

@@ -1,6 +1,6 @@
 "use client"
 
-import { useNetworkId } from "@/components/network/network-workspace"
+import { useActionScope } from "@/components/network/network-workspace"
 
 import type { ConnectionRuntimesSnapshot } from "@meshway/control-client"
 import { useCallback, useEffect, useRef, useState, useTransition } from "react"
@@ -38,8 +38,8 @@ export function useConnectionRuntimes(
   initial: InitialRuntimes,
   read?: () => Promise<RuntimeReadResult>
 ): Runtimes {
-  const networkId = useNetworkId()
-  const scopedRead = useCallback(() => readConnectionRuntimesAction(networkId), [networkId])
+  const actionScope = useActionScope()
+  const scopedRead = useCallback(() => readConnectionRuntimesAction(actionScope), [actionScope])
   const chosenRead = read ?? scopedRead
   const reader = useRef(chosenRead)
   useEffect(() => {

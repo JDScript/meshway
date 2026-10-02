@@ -18,6 +18,7 @@ import {
 } from "@/lib/controller"
 import { POLICY_LIMITS } from "@/lib/policy-model"
 import { rejectActionSession } from "@/lib/session"
+import type { ActionScope } from "@/lib/action-scope"
 import { requireNetworkActionContext } from "@/lib/network-context"
 
 // Arguments arrive from the browser and are untrusted: every action checks the
@@ -38,11 +39,11 @@ function oversized(value: unknown): boolean {
 }
 
 export async function previewPolicyAction(
-  networkId: string,
+  scope: ActionScope,
   policy: RoutingPolicy,
   flow: FlowQuery
 ): Promise<PreviewResult> {
-  const { token } = await requireNetworkActionContext(networkId)
+  const { token, networkId } = await requireNetworkActionContext(scope)
   const body = { policy, flow }
   if (oversized(body)) {
     return { status: "error", message: "策略超过大小上限，未发送。" }
@@ -66,12 +67,12 @@ export async function previewPolicyAction(
  * controller stores it only if it parses to exactly `policy`.
  */
 export async function savePolicyAction(
-  networkId: string,
+  scope: ActionScope,
   expectedRevision: number,
   policy: RoutingPolicy,
   sourceJsonc: string | null
 ): Promise<SaveResult> {
-  const { token } = await requireNetworkActionContext(networkId)
+  const { token, networkId } = await requireNetworkActionContext(scope)
   if (
     !Number.isSafeInteger(expectedRevision) ||
     expectedRevision < 1 ||
@@ -113,8 +114,8 @@ export async function savePolicyAction(
 }
 
 /** Fresh snapshot for an explicit reload; callers decide to discard the draft. */
-export async function reloadPolicyAction(networkId: string): Promise<ReloadResult> {
-  const { token } = await requireNetworkActionContext(networkId)
+export async function reloadPolicyAction(scope: ActionScope): Promise<ReloadResult> {
+  const { token, networkId } = await requireNetworkActionContext(scope)
   const baseUrl = controllerUrl()
   try {
     const [snapshot, nodes] = await Promise.all([

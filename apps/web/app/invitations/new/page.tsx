@@ -10,7 +10,7 @@ import { fetchConsoleIdentity } from "@/lib/account-session"
 import { roleIn } from "@/lib/account-model"
 import { controllerUrl, describeError, isCredentialRejected } from "@/lib/controller"
 import { consoleRoutes, isNetworkId } from "@/lib/routes"
-import { EXPIRED_LOGIN_PATH, requireConsoleCredential } from "@/lib/session"
+import { EXPIRED_LOGIN_PATH, requireConsoleCredential, sessionKey } from "@/lib/session"
 
 export const metadata: Metadata = { title: "邀请成员", robots: { index: false, follow: false }, referrer: "no-referrer" }
 
@@ -53,7 +53,7 @@ export default async function NewInvitationPage({ searchParams }: { searchParams
         </p>
       </div>
       {roles.length > 0 ? (
-        <InvitationIssueForm networkId={network} roles={roles} />
+        <InvitationIssueForm signIn={await sessionKey()} networkId={network} roles={roles} />
       ) : (
         <p role="status" className="text-[0.8125rem] text-muted-foreground">只有本网络的所有者或管理员可以邀请成员。</p>
       )}

@@ -1,6 +1,6 @@
 "use client"
 
-import { useNetworkId } from "@/components/network/network-workspace"
+import { useActionScope } from "@/components/network/network-workspace"
 import { useRoutes } from "@/components/shell/network-context"
 
 import type { CreateEnrollmentTokenResponse, ManagedListenerSettings } from "@meshway/control-client"
@@ -56,7 +56,7 @@ const ttlOptions = enrollmentTtlOptions.map(({ seconds, label }) => ({
 }))
 
 export function EnrollmentPanel({ existingListenerIds }: { existingListenerIds: string[] | null }) {
-  const networkId = useNetworkId()
+  const actionScope = useActionScope()
   const routes = useRoutes()
   const drafts = useManagedListenerDraftVersion()
   const [state, setState] = useState<EnrollmentState>(initialState)
@@ -105,11 +105,11 @@ export function EnrollmentPanel({ existingListenerIds }: { existingListenerIds: 
     startCreate(async () => {
       let result: EnrollmentState
       if (included) {
-        result = await createManagedEnrollmentAction(networkId, seconds, toSettings(sent.form, ""))
+        result = await createManagedEnrollmentAction(actionScope, seconds, toSettings(sent.form, ""))
       } else {
         const data = new FormData()
         data.set("expires_in_seconds", ttl)
-        result = await createEnrollment(networkId, state, data)
+        result = await createEnrollment(actionScope, state, data)
       }
       setState(result)
       // The intent is now bound to the token; a new token starts from defaults.

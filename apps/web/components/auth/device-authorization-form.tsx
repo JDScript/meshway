@@ -7,6 +7,7 @@ import { useActionState, useId } from "react"
 import { Button } from "@/components/ui/button"
 import { Label } from "@/components/ui/label"
 import { NativeSelect, NativeSelectOption } from "@/components/ui/native-select"
+import { SIGN_IN_FIELD, type SignInKey } from "@/lib/action-scope"
 import { roleLabels } from "@/lib/account-model"
 import type { DeviceAuthorization } from "@/lib/device-login"
 import { decideDevice } from "@/lib/device-login-actions"
@@ -18,7 +19,7 @@ export type DeviceNetworkChoice = { networkId: string; name: string; ipv4Prefix:
  * inputs and are revalidated on the server; only the chosen network is new.
  * Any member, including a Member, may approve their own device.
  */
-export function DeviceAuthorizationForm({ value, networks }: { value: DeviceAuthorization; networks: DeviceNetworkChoice[] }) {
+export function DeviceAuthorizationForm({ signIn, value, networks }: { signIn: SignInKey; value: DeviceAuthorization; networks: DeviceNetworkChoice[] }) {
   const [state, action, pending] = useActionState(decideDevice, { error: null })
   const selectId = useId()
   return (
@@ -26,6 +27,7 @@ export function DeviceAuthorizationForm({ value, networks }: { value: DeviceAuth
       {Object.entries({ ...value.request, state: value.state }).map(([key, item]) => (
         <input key={key} type="hidden" name={key} value={item} />
       ))}
+      <input type="hidden" name={SIGN_IN_FIELD} value={signIn} />
       <div className="flex flex-col gap-1.5">
         <Label htmlFor={selectId}>接入网络</Label>
         <NativeSelect
@@ -45,10 +47,17 @@ export function DeviceAuthorizationForm({ value, networks }: { value: DeviceAuth
         <p className="text-xs text-muted-foreground">设备归属你在该网络的成员身份；一台设备一次只接入一张网络。</p>
       </div>
       {state.error ? (
-        <p role="alert" className="flex items-start gap-1.5 text-xs text-destructive">
-          <CircleAlertIcon className="mt-px size-3.5 shrink-0" />
-          {state.error}
-        </p>
+        <div role="alert" className="flex flex-col items-start gap-2 text-xs text-destructive">
+          <p className="flex items-start gap-1.5">
+            <CircleAlertIcon className="mt-px size-3.5 shrink-0" />
+            {state.error}
+          </p>
+          {state.stale ? (
+            <Button type="button" variant="outline" size="sm" onClick={() => window.location.reload()}>
+              刷新页面
+            </Button>
+          ) : null}
+        </div>
       ) : null}
       <div className="flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
         <Button type="submit" name="decision" value="deny" variant="outline" size="lg" disabled={pending}>

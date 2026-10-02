@@ -1,31 +1,34 @@
 "use client"
 
-import { useFormStatus } from "react-dom"
+import { useTransition } from "react"
 
+import { signOutRendered } from "@/components/auth/sign-out"
 import { Button } from "@/components/ui/button"
-import { switchAccount } from "@/lib/auth-actions"
+import type { SignInKey } from "@/lib/action-scope"
 
-function Submit({ label, variant }: { label: string; variant: "outline" | "link" }) {
-  const { pending } = useFormStatus()
+/** Signs out the rendered sign-in (revoking a user session on the controller) and returns to login, then to `returnTo`. */
+export function SwitchAccountButton({
+  signIn,
+  returnTo,
+  label,
+  variant = "outline",
+}: {
+  signIn: SignInKey
+  returnTo: string
+  label: string
+  variant?: "outline" | "link"
+}) {
+  const [pending, start] = useTransition()
   return (
     <Button
-      type="submit"
+      type="button"
       variant={variant}
       size={variant === "link" ? "sm" : "lg"}
       disabled={pending}
       className={variant === "link" ? "h-auto p-0 text-xs" : "w-full"}
+      onClick={() => start(() => signOutRendered(signIn, returnTo))}
     >
       {pending ? "正在退出…" : label}
     </Button>
-  )
-}
-
-/** Signs out (revoking a user session on the controller) and returns to login, then to `returnTo`. */
-export function SwitchAccountButton({ returnTo, label, variant = "outline" }: { returnTo: string; label: string; variant?: "outline" | "link" }) {
-  return (
-    <form action={switchAccount}>
-      <input type="hidden" name="returnTo" value={returnTo} />
-      <Submit label={label} variant={variant} />
-    </form>
   )
 }

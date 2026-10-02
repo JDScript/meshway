@@ -8,13 +8,14 @@ import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { NativeSelect, NativeSelectOption } from "@/components/ui/native-select"
+import { SIGN_IN_FIELD, type SignInKey } from "@/lib/action-scope"
 import type { OwnerClaimState } from "@/lib/account-model"
 import { claimOwnerAction } from "@/lib/onboarding-actions"
 
 const initialState: OwnerClaimState = { status: "idle" }
 
 /** Explicit first-Owner claim for one network; the email and password are the person's own. */
-export function OwnerClaimForm({ networkId, networkName }: { networkId: string; networkName: string }) {
+export function OwnerClaimForm({ signIn, networkId, networkName }: { signIn: SignInKey; networkId: string; networkName: string }) {
   const [state, action, pending] = useActionState(claimOwnerAction, initialState)
   const [kind, setKind] = useState<"new_account" | "existing_account">("new_account")
   const ids = { kind: useId(), email: useId(), password: useId(), confirmation: useId() }
@@ -29,7 +30,7 @@ export function OwnerClaimForm({ networkId, networkName }: { networkId: string; 
           </span>
         </p>
         {state.note ? <p className="text-xs text-muted-foreground">{state.note}</p> : null}
-        <SwitchAccountButton returnTo="/" label="退出管理员会话，使用该账户登录" />
+        <SwitchAccountButton signIn={signIn} returnTo="/" label="退出管理员会话，使用该账户登录" />
       </div>
     )
   }
@@ -53,6 +54,7 @@ export function OwnerClaimForm({ networkId, networkName }: { networkId: string; 
     <form action={action} className="flex flex-col gap-3" aria-label={`认领「${networkName}」的所有者`}>
       <input type="hidden" name="network_id" value={networkId} />
       <input type="hidden" name="kind" value={kind} />
+      <input type="hidden" name={SIGN_IN_FIELD} value={signIn} />
       <div className="flex flex-col gap-1.5">
         <Label htmlFor={ids.email}>邮箱</Label>
         <Input id={ids.email} name="email" type="email" required key={state.status === "error" ? state.email : ""} defaultValue={state.status === "error" ? state.email : undefined} autoComplete="username" autoCapitalize="off" spellCheck={false} disabled={pending} className="h-9" />

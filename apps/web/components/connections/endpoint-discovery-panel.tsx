@@ -1,7 +1,7 @@
 "use client"
 
 import { useRoutes } from "@/components/shell/network-context"
-import { useNetworkId } from "@/components/network/network-workspace"
+import { useActionScope } from "@/components/network/network-workspace"
 
 import type { EndpointDiscoveriesSnapshot, NodeEndpointDiscovery, UdpSocketDiscovery } from "@meshway/control-client"
 import Link from "next/link"
@@ -31,7 +31,7 @@ export type EndpointDiscoveries = {
 /** Polled discovery reports with a clock that keeps leases ageing between reads. */
 export function useEndpointDiscoveries(initial: ControllerResult<EndpointDiscoveriesSnapshot>): EndpointDiscoveries {
   const [read, setRead] = useState({ initial, result: initial })
-  const networkId = useNetworkId()
+  const actionScope = useActionScope()
   const [now, setNow] = useState<DiscoveryClock>({ time: initial.fetchedAt, monotonicTime: null })
   const [refreshing, startRefresh] = useTransition()
   const sequence = useRef(0)
@@ -50,13 +50,13 @@ export function useEndpointDiscoveries(initial: ControllerResult<EndpointDiscove
   const refresh = useCallback(() => {
     const seq = ++sequence.current
     startRefresh(async () => {
-      const result = await readEndpointDiscoveriesAction(networkId)
+      const result = await readEndpointDiscoveriesAction(actionScope)
       if (seq !== sequence.current) return
       // A failed read replaces the snapshot: never present last-good as live.
       setRead({ initial, result })
       sampleClock(result.fetchedAt)
     })
-  }, [initial, sampleClock, networkId])
+  }, [initial, sampleClock, actionScope])
   useEffect(() => {
     const tick = window.setInterval(() => sampleClock(), 1_000)
     const poll = window.setInterval(() => { if (document.visibilityState === "visible") refresh() }, 12_000)

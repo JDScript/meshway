@@ -1,5 +1,6 @@
 "use client"
 
+import { useSignIn } from "@/components/network/network-workspace"
 import { useRoutes } from "@/components/shell/network-context"
 import type { NetworkSnapshot, SaveNetworkRequest } from "@meshway/control-client"
 import { zSaveNetworkRequest } from "@meshway/control-client/schemas"
@@ -36,6 +37,7 @@ const draftOf = (snapshot: NetworkSnapshot): Draft => ({ name: snapshot.name, en
 export function NetworkSettings({ snapshot, section }: { snapshot: NetworkSnapshot; section: "general" | "dns" }) {
   const routes = useRoutes()
   const router = useRouter()
+  const signIn = useSignIn()
   const hash = useLocationHash()
   const [base, setBase] = useState(snapshot)
   const [draft, setDraft] = useState(() => draftOf(snapshot))
@@ -74,7 +76,7 @@ export function NetworkSettings({ snapshot, section }: { snapshot: NetworkSnapsh
   const save = () => {
     if (!dirty || pending || issues.length > 0) return
     start(async () => {
-      const result = await saveNetworkAction(snapshot.network_id, request)
+      const result = await saveNetworkAction({ networkId: snapshot.network_id, signIn }, request)
       setFeedback(result)
       if (result.status === "saved") {
         adopt(result.snapshot)
@@ -85,7 +87,7 @@ export function NetworkSettings({ snapshot, section }: { snapshot: NetworkSnapsh
   const reload = () => {
     setConfirmReload(false)
     start(async () => {
-      const result = await readNetworkAction(snapshot.network_id)
+      const result = await readNetworkAction({ networkId: snapshot.network_id, signIn })
       if (result.status === "error") { setReloadError(result.message); return }
       adopt(result.snapshot)
       setFeedback(null)

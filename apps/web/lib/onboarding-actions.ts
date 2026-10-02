@@ -7,7 +7,8 @@ import { redirect } from "next/navigation"
 import { passwordProblem, type OwnerClaimState } from "@/lib/account-model"
 import { controllerUrl, describeError, isCredentialRejected } from "@/lib/controller"
 import { formField } from "@/lib/sign-in"
-import { EXPIRED_LOGIN_PATH, endSession, LOGIN_PATH, readSession } from "@/lib/session"
+import { SIGN_IN_FIELD } from "@/lib/action-scope"
+import { EXPIRED_LOGIN_PATH, requireRenderedSignIn } from "@/lib/session"
 
 function claimFailure(error: unknown, secrets: string[], email: string): OwnerClaimState {
   if (error instanceof ControlApiError) {
@@ -29,15 +30,12 @@ function claimFailure(error: unknown, secrets: string[], email: string): OwnerCl
  */
 export async function claimOwnerAction(_previous: OwnerClaimState, formData: FormData): Promise<OwnerClaimState> {
   const email = formField(formData, "email").trim().slice(0, 254)
-  const session = await readSession()
-  if (session.kind !== "active") {
-    if (session.kind === "expired") await endSession()
-    redirect(session.kind === "expired" ? EXPIRED_LOGIN_PATH : LOGIN_PATH)
-  }
-  if (session.credential.kind !== "bootstrap") {
+  // Only for the sign-in this form was rendered for (see lib/action-scope.ts).
+  const credential = await requireRenderedSignIn(formData.get(SIGN_IN_FIELD))
+  if (credential.kind !== "bootstrap") {
     return { status: "error", message: "认领第一个所有者需要管理员令牌会话。", email }
   }
-  const bootstrap = session.credential.token
+  const bootstrap = credential.token
   const networkId = zNetworkSnapshot.shape.network_id.safeParse(formField(formData, "network_id"))
   if (!networkId.success) return { status: "error", message: "网络无效，请刷新后重试。", email }
   const kind = formField(formData, "kind")
@@ -51,10 +49,7 @@ export async function claimOwnerAction(_previous: OwnerClaimState, formData: For
     try {
       await claimFirstOwner(controllerUrl(), bootstrap, networkId.data, { kind: "new_account", email, password })
     } catch (error) {
-      if (isCredentialRejected(error)) {
-        await endSession()
-        redirect(EXPIRED_LOGIN_PATH)
-      }
+      if (isCredentialRejected(error)) redirect(EXPIRED_LOGIN_PATH)
       return claimFailure(error, [password, bootstrap], email)
     }
     return { status: "claimed", email, networkId: networkId.data, note: null }
@@ -81,7 +76,6 @@ export async function claimOwnerAction(_previous: OwnerClaimState, formData: For
   } catch (error) {
     if (isCredentialRejected(error) && !(await bootstrapStillValid(bootstrap))) {
       await revokeProof(proof)
-      await endSession()
       redirect(EXPIRED_LOGIN_PATH)
     }
     result = claimFailure(error, [password, proof, bootstrap], email)

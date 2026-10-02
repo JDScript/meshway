@@ -1,6 +1,6 @@
 import assert from "node:assert/strict"
 import test from "node:test"
-import { encodeSessionCookie, isUserSessionToken, parseSessionCookie, userSessionMaxAge } from "./session-cookie.ts"
+import { encodeSessionCookie, isUserSessionToken, parseSessionCookie, signInKeyOf, userSessionMaxAge } from "./session-cookie.ts"
 
 const user = `mws_${"a".repeat(64)}`
 const sessionId = "0123456789abcdef0123456789abcdef"
@@ -32,4 +32,17 @@ test("user cookie lifetime never exceeds the controller's expiry", () => {
   assert.equal(userSessionMaxAge(999, 1000), null)
   assert.ok(isUserSessionToken(user))
   assert.ok(!isUserSessionToken(`mws_${"A".repeat(64)}`))
+})
+
+test("the sign-in fence key commits to the credential, not only to the editable cookie fields", () => {
+  const other = `mws_${"c".repeat(64)}`
+  const key = signInKeyOf({ kind: "user", token: user, expiresAt: 2000, sessionId })
+  assert.match(key, /^user:[0-9a-f]{32}$/)
+  assert.ok(!key.includes(user.slice(4, 36)))
+  // Same session ID (as in a forged cookie), different credential: a different key.
+  assert.notEqual(signInKeyOf({ kind: "user", token: other, expiresAt: 2000, sessionId }), key)
+  // Same credential, new sign-in ID: a different key.
+  assert.notEqual(signInKeyOf({ kind: "user", token: user, expiresAt: 2000, sessionId: "f".repeat(32) }), key)
+  // Expiry metadata is not part of the identity.
+  assert.equal(signInKeyOf({ kind: "user", token: user, expiresAt: 9999, sessionId }), key)
 })

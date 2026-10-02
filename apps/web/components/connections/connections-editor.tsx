@@ -1,7 +1,7 @@
 "use client"
 
 import { useRoutes } from "@/components/shell/network-context"
-import { useNetworkId } from "@/components/network/network-workspace"
+import { useActionScope } from "@/components/network/network-workspace"
 
 import type { ConnectionsSnapshot } from "@meshway/control-client"
 import {
@@ -136,7 +136,7 @@ export function ConnectionsEditor({
 }) {
   const routes = useRoutes()
   const drafts = useConnectionsDraftStore()
-  const networkId = useNetworkId()
+  const actionScope = useActionScope()
   const [restored] = useState(() => drafts.read())
   const [restoredNotice, setRestoredNotice] = useState(restored !== null)
   const [base, setBase] = useState(restored?.base ?? snapshot)
@@ -404,7 +404,7 @@ export function ConnectionsEditor({
     const sentKey = currentKey
     const saver = owner.current
     startSave(async () => {
-      const result = await saveConnectionsAction(networkId, expected, plan)
+      const result = await saveConnectionsAction(actionScope, expected, plan)
       if (result.status === "saved") onSnapshot?.(result.snapshot, result.fetchedAt)
       if (!drafts.owns(saver)) {
         // This editor unmounted meanwhile. Only kept work still based on
@@ -429,7 +429,7 @@ export function ConnectionsEditor({
     const generation = ++reloadGeneration.current
     const loader = owner.current
     startReload(async () => {
-      const result = await reloadConnectionsAction(networkId)
+      const result = await reloadConnectionsAction(actionScope)
       // Superseded, or this editor unmounted: newer work must survive.
       if (generation !== reloadGeneration.current || !drafts.owns(loader)) return
       if (result.status === "error") {

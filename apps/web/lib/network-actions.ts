@@ -3,10 +3,11 @@
 import { ControlApiError, createNetwork, listNetworks, getNetwork, saveNetwork, type NetworkSnapshot, type SaveNetworkRequest } from "@meshway/control-client"
 import { cookies } from "next/headers"
 import { refresh } from "next/cache"
+import type { ActionScope, SignInKey } from "@/lib/action-scope"
 import { NETWORK_COOKIE, requireNetworkActionContext } from "@/lib/network-context"
 
 import { controllerUrl, describeError, isCredentialRejected } from "@/lib/controller"
-import { rejectActionSession, requireActionAdminToken, secureCookie } from "@/lib/session"
+import { rejectActionSession, requireRenderedSignIn, secureCookie } from "@/lib/session"
 
 export type NetworkSaveResult =
   | { status: "saved"; snapshot: NetworkSnapshot }
@@ -17,8 +18,8 @@ export type NetworkReadResult =
   | { status: "error"; message: string }
 
 /** Global CAS; only the generated SDK constructs and validates the HTTP request. */
-export async function saveNetworkAction(networkId: string, request: SaveNetworkRequest): Promise<NetworkSaveResult> {
-  const { token } = await requireNetworkActionContext(networkId)
+export async function saveNetworkAction(scope: ActionScope, request: SaveNetworkRequest): Promise<NetworkSaveResult> {
+  const { token, networkId } = await requireNetworkActionContext(scope)
   if (!Number.isSafeInteger(request.expected_revision) || request.expected_revision < 1 || request.expected_revision > 4_294_967_295) {
     return { status: "error", message: "编辑基础版本无效，请重新读取。" }
   }
@@ -36,8 +37,8 @@ export async function saveNetworkAction(networkId: string, request: SaveNetworkR
   return rejectActionSession()
 }
 
-export async function readNetworkAction(networkId: string): Promise<NetworkReadResult> {
-  const { token } = await requireNetworkActionContext(networkId)
+export async function readNetworkAction(scope: ActionScope): Promise<NetworkReadResult> {
+  const { token, networkId } = await requireNetworkActionContext(scope)
   try {
     return { status: "loaded", snapshot: await getNetwork(controllerUrl(), token, networkId) }
   } catch (error) {
@@ -51,8 +52,8 @@ async function selectNetworkCookie(id: string) {
   refresh()
 }
 
-export async function switchNetworkAction(id: string): Promise<{ error: string | null }> {
-  const token = await requireActionAdminToken()
+export async function switchNetworkAction(signIn: SignInKey, id: string): Promise<{ error: string | null }> {
+  const { token } = await requireRenderedSignIn(signIn)
   try {
     const networks = await listNetworks(controllerUrl(), token)
     if (!networks.networks.some(network => network.network_id === id)) return { error: "网络不存在。" }
@@ -66,8 +67,8 @@ export async function switchNetworkAction(id: string): Promise<{ error: string |
 
 export type CreateNetworkState = { error: string | null; networkId?: string }
 
-export async function createNetworkAction(_previous: CreateNetworkState, form: FormData): Promise<CreateNetworkState> {
-  const token = await requireActionAdminToken()
+export async function createNetworkAction(signIn: SignInKey, _previous: CreateNetworkState, form: FormData): Promise<CreateNetworkState> {
+  const { token } = await requireRenderedSignIn(signIn)
   const name = form.get("name")
   if (typeof name !== "string" || name.trim() === "") return { error: "请输入网络名称。" }
   try {

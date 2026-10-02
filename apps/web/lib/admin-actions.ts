@@ -18,6 +18,7 @@ import {
   isCredentialRejected,
 } from "@/lib/controller"
 import { rejectActionSession } from "@/lib/session"
+import type { ActionScope } from "@/lib/action-scope"
 import { requireNetworkActionContext } from "@/lib/network-context"
 
 const MAX_NODE_ID_LENGTH = 128
@@ -29,11 +30,11 @@ function readNodeId(formData: FormData): string | null {
 }
 
 export async function createEnrollment(
-  networkId: string,
+  scope: ActionScope,
   _previous: EnrollmentState,
   formData: FormData
 ): Promise<EnrollmentState> {
-  const { token } = await requireNetworkActionContext(networkId)
+  const { token, networkId } = await requireNetworkActionContext(scope)
 
   const raw = formData.get("expires_in_seconds")
   const option = enrollmentTtlOptions.find(
@@ -65,11 +66,11 @@ export async function createEnrollment(
 }
 
 export async function revokeNodeAction(
-  networkId: string,
+  scope: ActionScope,
   _previous: RevokeState,
   formData: FormData
 ): Promise<RevokeState> {
-  const { token } = await requireNetworkActionContext(networkId)
+  const { token, networkId } = await requireNetworkActionContext(scope)
 
   const nodeId = readNodeId(formData)
   if (!nodeId) return { status: "error", message: "节点 ID 无效。" }

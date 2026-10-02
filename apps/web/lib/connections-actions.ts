@@ -24,6 +24,7 @@ import {
   isCredentialRejected,
 } from "@/lib/controller"
 import { rejectActionSession } from "@/lib/session"
+import type { ActionScope } from "@/lib/action-scope"
 import { requireNetworkActionContext } from "@/lib/network-context"
 
 // Arguments arrive from the browser and are untrusted: every action checks the
@@ -41,11 +42,11 @@ function oversized(value: unknown): boolean {
 }
 
 export async function saveConnectionsAction(
-  networkId: string,
+  scope: ActionScope,
   expectedRevision: number,
   configuration: ConnectionPlan
 ): Promise<ConnectionsSaveResult> {
-  const { token } = await requireNetworkActionContext(networkId)
+  const { token, networkId } = await requireNetworkActionContext(scope)
   if (
     !Number.isSafeInteger(expectedRevision) ||
     expectedRevision < 1 ||
@@ -85,8 +86,8 @@ export async function saveConnectionsAction(
 }
 
 /** Fresh snapshot for an explicit reload; callers decide to discard the draft. */
-export async function reloadConnectionsAction(networkId: string): Promise<ConnectionsReloadResult> {
-  const { token } = await requireNetworkActionContext(networkId)
+export async function reloadConnectionsAction(scope: ActionScope): Promise<ConnectionsReloadResult> {
+  const { token, networkId } = await requireNetworkActionContext(scope)
   try {
     const snapshot = await getConnections(controllerUrl(), token, networkId)
     return { status: "loaded", snapshot, fetchedAt: Date.now() }
@@ -102,8 +103,8 @@ export async function reloadConnectionsAction(networkId: string): Promise<Connec
 }
 
 /** Read-only runtime observations for the bounded background refresh. */
-export async function readConnectionRuntimesAction(networkId: string): Promise<RuntimeReadResult> {
-  const { token } = await requireNetworkActionContext(networkId)
+export async function readConnectionRuntimesAction(scope: ActionScope): Promise<RuntimeReadResult> {
+  const { token, networkId } = await requireNetworkActionContext(scope)
   try {
     const snapshot = await getConnectionRuntimes(controllerUrl(), token, networkId)
     return { status: "loaded", snapshot, fetchedAt: Date.now() }
@@ -120,8 +121,8 @@ export async function readConnectionRuntimesAction(networkId: string): Promise<R
  * (contact, IP receipts), connection snapshot (plan, connection receipts) and
  * runtime reports in one request, so a single bounded poll covers all of them.
  */
-export async function readNodeStatusAction(networkId: string): Promise<NodeStatusResult> {
-  const { token } = await requireNetworkActionContext(networkId)
+export async function readNodeStatusAction(scope: ActionScope): Promise<NodeStatusResult> {
+  const { token, networkId } = await requireNetworkActionContext(scope)
   const base = controllerUrl()
   const [nodes, connections, runtimes, managed] = await Promise.allSettled([
     listNodes(base, token, networkId),

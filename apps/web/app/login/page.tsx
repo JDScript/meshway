@@ -50,7 +50,7 @@ export default async function LoginPage({
       </div>
       {expired ? (
         <>
-          {session.kind !== "none" ? <DiscardRejectedSession /> : null}
+          {session.kind !== "none" ? <DiscardRejectedSession destination={destination} /> : null}
           <Alert>
             <InfoIcon />
             <AlertTitle>需要重新登录</AlertTitle>

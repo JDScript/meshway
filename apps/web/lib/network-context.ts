@@ -6,17 +6,21 @@ import { cookies } from "next/headers"
 import { cache } from "react"
 import { controllerUrl } from "@/lib/controller-config"
 import { consoleCookieName } from "@/lib/cookie-name"
-import { requireActionCredential } from "@/lib/session"
+import type { ActionScope } from "@/lib/action-scope"
+import { requireRenderedSignIn } from "@/lib/session"
 
 export const NETWORK_COOKIE = consoleCookieName("meshway_network")
 
-/** Every network action authenticates first, then validates its explicit scope.
- * Scope comes from the rendered workspace, never from a mutable selection
+/** Every network action first checks that the request's cookie is the
+ * sign-in its page was rendered for, then validates its explicit network.
+ * Both come from the rendered workspace, never from a mutable selection
  * cookie. The credential may be a user session or the administrator token;
  * the controller authorizes every call against the session's live role in
- * this network inside the same transaction as the write. */
-export async function requireNetworkActionContext(networkId: string) {
-  const credential = await requireActionCredential()
+ * this network inside the same transaction as the write. Network CAS
+ * (expected revisions) stays the caller's own, independent check. */
+export async function requireNetworkActionContext(scope: ActionScope) {
+  const credential = await requireRenderedSignIn(typeof scope === "object" && scope !== null ? scope.signIn : undefined)
+  const networkId: unknown = typeof scope === "object" && scope !== null ? scope.networkId : undefined
   return {
     token: credential.token,
     kind: credential.kind,

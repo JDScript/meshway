@@ -5,6 +5,7 @@ import { zQueryLatencyHistoryRequest } from "@meshway/control-client/schemas"
 
 import { controllerUrl, describeError, isCredentialRejected } from "@/lib/controller"
 import { PAGE_LIMIT, type LatencyPageResult } from "@/lib/latency-history-model"
+import type { ActionScope } from "@/lib/action-scope"
 import { requireNetworkActionContext } from "@/lib/network-context"
 import { rejectActionSession } from "@/lib/session"
 
@@ -17,10 +18,10 @@ const MAX_WINDOW_MS = 24 * 60 * 60_000
  * validates the body against the generated schema before sending it.
  */
 export async function readLatencyHistoryPageAction(
-  networkId: string,
+  scope: ActionScope,
   input: { sourceNodeId: string; peerNodeId: string; from: string; until: string; after: string | null }
 ): Promise<LatencyPageResult> {
-  const { token } = await requireNetworkActionContext(networkId)
+  const { token, networkId } = await requireNetworkActionContext(scope)
   const parsed = zQueryLatencyHistoryRequest.safeParse({
     source_node_id: input.sourceNodeId,
     peer_node_id: input.peerNodeId,

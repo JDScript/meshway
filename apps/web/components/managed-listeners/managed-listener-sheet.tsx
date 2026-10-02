@@ -4,7 +4,7 @@ import type { ConnectionNode, ConnectionsSnapshot, ManagedListenersSnapshot } fr
 import { CircleAlertIcon, InfoIcon, RefreshCwIcon, TriangleAlertIcon } from "lucide-react"
 import { useEffect, useMemo, useRef, useState, useTransition, type ReactNode } from "react"
 
-import { useNetworkId } from "@/components/network/network-workspace"
+import { useActionScope } from "@/components/network/network-workspace"
 import { ManagedListenerFields } from "@/components/managed-listeners/managed-listener-fields"
 import { useManagedListenerDrafts } from "@/components/managed-listeners/draft-store"
 import {
@@ -167,7 +167,7 @@ function SheetForm({
   onReadFailed: (message: string, at: number) => void
   onDone: () => void
 }) {
-  const networkId = useNetworkId()
+  const actionScope = useActionScope()
   const drafts = useManagedListenerDrafts()
   const [draft, setDraft] = useState<ManagedListenerDraft>(() => drafts.get(session.key) ?? session)
   const [attempted, setAttempted] = useState(draft !== session)
@@ -225,7 +225,7 @@ function SheetForm({
     setDraft(sent)
     const settings = toSettings(sent.form, nodeId)
     startSave(async () => {
-      const result = await saveManagedListenerAction(networkId, sent.baseRevision ?? 0, settings)
+      const result = await saveManagedListenerAction(actionScope, sent.baseRevision ?? 0, settings)
       if (result.status === "saved") {
         drafts.settle(sent.key, sent)
         onSaved(result)
@@ -238,7 +238,7 @@ function SheetForm({
 
   const rebase = () => {
     startRead(async () => {
-      const result = await readManagedListenersAction(networkId)
+      const result = await readManagedListenersAction(actionScope)
       if (result.status !== "loaded") {
         onReadFailed(result.message, result.fetchedAt)
         if (mounted.current) setOutcome({ status: "error", message: result.message })

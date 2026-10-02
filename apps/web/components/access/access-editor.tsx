@@ -1,7 +1,7 @@
 "use client"
 
 import { useRoutes } from "@/components/shell/network-context"
-import { useNetworkId } from "@/components/network/network-workspace"
+import { useActionScope } from "@/components/network/network-workspace"
 
 import type {
   AccessAction,
@@ -147,7 +147,7 @@ export function AccessEditor({
   focusRuleId?: string | null
 }) {
   const drafts = useAccessDraftStore()
-  const networkId = useNetworkId()
+  const actionScope = useActionScope()
   const routes = useRoutes()
   const [restored] = useState(() => drafts.read())
   const [restoredNotice, setRestoredNotice] = useState(restored !== null)
@@ -323,7 +323,7 @@ export function AccessEditor({
     const sentSeq = document.seq
     const saver = owner.current
     startSave(async () => {
-      const result = await saveMeshAccessAction(networkId, expected, body, source)
+      const result = await saveMeshAccessAction(actionScope, expected, body, source)
       if (!drafts.owns(saver)) {
         if (result.status === "saved") drafts.adoptOrphanSave(expected, sentSeq, result.snapshot, zMeshAccessPolicy)
         return
@@ -342,7 +342,7 @@ export function AccessEditor({
     const requested = ++reloadGeneration.current
     const loader = owner.current
     startReload(async () => {
-      const result = await reloadMeshAccessAction(networkId)
+      const result = await reloadMeshAccessAction(actionScope)
       if (requested !== reloadGeneration.current || !drafts.owns(loader)) return
       if (result.status === "error") {
         setReloadError(result.message)

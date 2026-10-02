@@ -3,6 +3,8 @@
 import type { LatencyHistoryRecord } from "@meshway/control-client"
 import { useCallback, useEffect, useRef, useState } from "react"
 
+import { useSignIn } from "@/components/network/network-workspace"
+import type { SignInKey } from "@/lib/action-scope"
 import { readLatencyHistoryPageAction } from "@/lib/latency-actions"
 import {
   NO_COVERAGE,
@@ -43,9 +45,9 @@ const empty: LatencyHistoryState = {
   loading: false,
 }
 
-async function page(query: LatencyQuery, after: string | null): Promise<LatencyPageResult> {
+async function page(signIn: SignInKey, query: LatencyQuery, after: string | null): Promise<LatencyPageResult> {
   try {
-    return await readLatencyHistoryPageAction(query.networkId, {
+    return await readLatencyHistoryPageAction({ networkId: query.networkId, signIn }, {
       sourceNodeId: query.sourceNodeId,
       peerNodeId: query.peerNodeId,
       from: query.from,
@@ -77,6 +79,7 @@ export function useLatencyHistory({
   span: LatencyWindow
   enabled: boolean
 }) {
+  const signIn = useSignIn()
   const [state, setState] = useState<LatencyHistoryState>(empty)
   const sequence = useRef(0)
   const stateRef = useRef(state)
@@ -108,7 +111,7 @@ export function useLatencyHistory({
         } else {
           query = { networkId, sourceNodeId, peerNodeId, ...windowRange(span, Date.now()) }
         }
-        const result = await readPages((cursor) => page(query, cursor), { after, cancelled, from: query.from, coverage })
+        const result = await readPages((cursor) => page(signIn, query, cursor), { after, cancelled, from: query.from, coverage })
         if (cancelled() || result.status === "cancelled") return
         if (result.status === "error") {
           setState((current) => ({ ...current, loading: false, error: result.message }))
@@ -126,7 +129,7 @@ export function useLatencyHistory({
         })
       })()
     },
-    [networkId, sourceNodeId, peerNodeId, span]
+    [signIn, networkId, sourceNodeId, peerNodeId, span]
   )
 
   useEffect(() => {

@@ -1,22 +1,26 @@
 "use client"
 
-import { createContext, useContext, useEffect, useState, type ReactNode } from "react"
+import { createContext, useContext, useEffect, useMemo, useState, type ReactNode } from "react"
 
 import { AccessDraftProvider } from "@/components/access/draft-store"
 import { ConnectionsDraftProvider } from "@/components/connections/draft-store"
 import { ManagedListenerDraftProvider } from "@/components/managed-listeners/draft-store"
 import { RoutingDraftProvider } from "@/components/routing/draft-store"
 import { NetworkProvider, useNetwork } from "@/components/shell/network-context"
+import type { ActionScope, SignInKey } from "@/lib/action-scope"
 import { DraftVault } from "@/lib/draft-vault"
 
 const VaultContext = createContext<DraftVault | null>(null)
+const SignInContext = createContext<SignInKey | null>(null)
 
 /**
- * Holds the console's per-network draft registries. It sits above the
- * `/<network>` segment so switching networks neither drops nor mixes drafts.
- * Nothing is persisted to storage.
+ * Holds the console's per-network draft registries for one sign-in (the
+ * console layout keys it by `signIn`). It sits above the `/<network>` segment
+ * so switching networks neither drops nor mixes drafts. Nothing is persisted
+ * to storage. Every action from here carries `signIn`, and the server refuses
+ * it once the browser's cookie is another sign-in.
  */
-export function DraftVaultProvider({ children }: { children: ReactNode }) {
+export function DraftVaultProvider({ signIn, children }: { signIn: SignInKey; children: ReactNode }) {
   const [vault] = useState(() => new DraftVault())
   useEffect(() => {
     const warn = (event: BeforeUnloadEvent) => {
@@ -25,7 +29,25 @@ export function DraftVaultProvider({ children }: { children: ReactNode }) {
     window.addEventListener("beforeunload", warn)
     return () => window.removeEventListener("beforeunload", warn)
   }, [vault])
-  return <VaultContext.Provider value={vault}>{children}</VaultContext.Provider>
+  return (
+    <SignInContext.Provider value={signIn}>
+      <VaultContext.Provider value={vault}>{children}</VaultContext.Provider>
+    </SignInContext.Provider>
+  )
+}
+
+/** The sign-in this console was rendered for; passed to global actions. */
+export function useSignIn(): SignInKey {
+  const signIn = useContext(SignInContext)
+  if (signIn === null) throw new Error("Sign-in is unavailable")
+  return signIn
+}
+
+/** First argument of every network action: the rendered network and sign-in. */
+export function useActionScope(): ActionScope {
+  const networkId = useNetwork().networkId
+  const signIn = useSignIn()
+  return useMemo(() => ({ networkId, signIn }), [networkId, signIn])
 }
 
 export function useDraftVault(): DraftVault {

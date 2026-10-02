@@ -18,6 +18,7 @@ import {
   type PartRead,
 } from "@/lib/action-state"
 import { describeError, isCredentialRejected } from "@/lib/controller"
+import type { ActionScope } from "@/lib/action-scope"
 import { requireNetworkActionContext } from "@/lib/network-context"
 import { rejectActionSession } from "@/lib/session"
 
@@ -36,11 +37,11 @@ async function readConnections(base: string, token: string, networkId: string): 
 }
 
 export async function saveManagedListenerAction(
-  networkId: string,
+  scope: ActionScope,
   expectedRevision: number,
   settings: unknown
 ): Promise<ManagedListenerSaveResult> {
-  const { token, baseUrl } = await requireNetworkActionContext(networkId)
+  const { token, baseUrl, networkId } = await requireNetworkActionContext(scope)
   const body = zSaveManagedListenerRequest.safeParse({ expected_revision: expectedRevision, settings })
   if (!body.success || body.data.settings.node_id === "") {
     return { status: "invalid", message: "表单内容不符合监听协议，未发送。" }
@@ -72,8 +73,8 @@ export async function saveManagedListenerAction(
   return rejectActionSession()
 }
 
-export async function readManagedListenersAction(networkId: string): Promise<ManagedListenerReadResult> {
-  const { token, baseUrl } = await requireNetworkActionContext(networkId)
+export async function readManagedListenersAction(scope: ActionScope): Promise<ManagedListenerReadResult> {
+  const { token, baseUrl, networkId } = await requireNetworkActionContext(scope)
   try {
     const managed = await getManagedListeners(baseUrl, token, networkId)
     const connections = await readConnections(baseUrl, token, networkId)
@@ -91,11 +92,11 @@ export async function readManagedListenersAction(networkId: string): Promise<Man
  * new node. The token value appears only in this response.
  */
 export async function createManagedEnrollmentAction(
-  networkId: string,
+  scope: ActionScope,
   expiresInSeconds: number,
   listener: unknown
 ): Promise<EnrollmentState> {
-  const { token, baseUrl } = await requireNetworkActionContext(networkId)
+  const { token, baseUrl, networkId } = await requireNetworkActionContext(scope)
   const option = enrollmentTtlOptions.find(({ seconds }) => seconds === expiresInSeconds)
   if (!option) return { status: "error", message: "请选择有效期。" }
   const initial = zManagedListenerSettings.safeParse(listener)

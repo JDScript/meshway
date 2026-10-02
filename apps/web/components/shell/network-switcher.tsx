@@ -5,7 +5,7 @@ import Link from "next/link"
 import { usePathname, useRouter } from "next/navigation"
 import { useActionState, useEffect, useState, useTransition } from "react"
 
-import { useDraftVault } from "@/components/network/network-workspace"
+import { useDraftVault, useSignIn } from "@/components/network/network-workspace"
 import { BrandMark } from "@/components/shell/brand"
 import { useNetwork } from "@/components/shell/network-context"
 import { sectionSegment } from "@/components/shell/nav"
@@ -46,6 +46,7 @@ function sameSection(pathname: string, fromBase: string, networkId: string): str
 export function NetworkSwitcher({ networks, controllerHost }: { networks: NetworkChoices; controllerHost: string }) {
   const { networkId, name, routes } = useNetwork()
   const vault = useDraftVault()
+  const signIn = useSignIn()
   const router = useRouter()
   const pathname = usePathname()
   const [pending, startTransition] = useTransition()
@@ -59,7 +60,7 @@ export function NetworkSwitcher({ networks, controllerHost }: { networks: Networ
     if (target === networkId) return
     setError(null)
     startTransition(async () => {
-      const result = await switchNetworkAction(target)
+      const result = await switchNetworkAction(signIn, target)
       if (result.error) setError(result.error)
       else router.push(sameSection(pathname, routes.base, target))
     })
@@ -148,7 +149,8 @@ export function NetworkSwitcher({ networks, controllerHost }: { networks: Networ
 }
 
 function CreateNetworkForm({ onCancel }: { onCancel: () => void }) {
-  const [state, action, pending] = useActionState<CreateNetworkState, FormData>(createNetworkAction, { error: null })
+  const signIn = useSignIn()
+  const [state, action, pending] = useActionState<CreateNetworkState, FormData>(createNetworkAction.bind(null, signIn), { error: null })
   const router = useRouter()
   useEffect(() => {
     if (state.networkId) router.push(consoleRoutes(state.networkId).overview)

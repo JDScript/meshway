@@ -9,7 +9,8 @@ import type { LoginState } from "@/lib/action-state"
 import { verifyCredential } from "@/lib/account-session"
 import { safeLoginReturn } from "@/lib/device-login"
 import { controllerUrl, describeError, isCredentialRejected, isPermissionDenied } from "@/lib/controller"
-import { endSession, LOGIN_PATH, readSession, sessionKey, startBootstrapSession, startUserSession } from "@/lib/session"
+import type { SignInKey } from "@/lib/action-scope"
+import { endSession, endSessionIfCurrent, LOGIN_PATH, readSession, requireRenderedSignIn, sessionKey, startBootstrapSession, startUserSession } from "@/lib/session"
 import { isUserSessionToken } from "@/lib/session-cookie"
 import { formField, revokePreviousUserSession } from "@/lib/sign-in"
 
@@ -74,40 +75,38 @@ export async function loginWithPassword(_previous: AccountLoginState, formData: 
 }
 
 /**
- * Ends the sign-in. A user session is revoked on the controller first; the
- * local cookie is cleared either way. If the controller could not confirm
- * the revocation the login page says so instead of claiming it happened.
+ * Sign-out, step one: for the sign-in the page was rendered for, revoke a
+ * user session on the controller. The cookie is not touched here, because
+ * this response may arrive late, after another tab signed in; see
+ * `discardSignInAction`. If the controller could not confirm the revocation,
+ * the login page says so instead of claiming it happened.
  */
-async function signOut(): Promise<"revoked" | "unconfirmed" | "local"> {
-  const session = await readSession()
+export async function signOutAction(signIn: SignInKey, returnTo: unknown): Promise<{ path: string }> {
+  const credential = await requireRenderedSignIn(signIn)
   let outcome: "revoked" | "unconfirmed" | "local" = "local"
-  if (session.kind === "active" && session.credential.kind === "user") {
+  if (credential.kind === "user") {
     try {
-      await logoutAccount(controllerUrl(), session.credential.token)
+      await logoutAccount(controllerUrl(), credential.token)
       outcome = "revoked"
     } catch (error) {
       // 401: the controller no longer accepts it, which is the goal.
       outcome = isCredentialRejected(error) ? "revoked" : "unconfirmed"
     }
   }
-  await endSession()
-  return outcome
-}
-
-export async function logout(): Promise<void> {
-  const outcome = await signOut()
-  redirect(outcome === "unconfirmed" ? `${LOGIN_PATH}?reason=logout-unconfirmed` : LOGIN_PATH)
-}
-
-/** Sign out, then sign in again (as someone else) and continue to a validated return path. */
-export async function switchAccount(formData: FormData): Promise<void> {
-  const destination = safeLoginReturn(formData.get("returnTo"))
-  const outcome = await signOut()
+  const destination = safeLoginReturn(returnTo)
   const query = new URLSearchParams()
   if (destination !== "/") query.set("returnTo", destination)
   if (outcome === "unconfirmed") query.set("reason", "logout-unconfirmed")
   const search = query.toString()
-  redirect(search ? `${LOGIN_PATH}?${search}` : LOGIN_PATH)
+  return { path: search ? `${LOGIN_PATH}?${search}` : LOGIN_PATH }
+}
+
+/**
+ * Sign-out, step two, sent as a fresh request: clears the cookie only if the
+ * browser still holds that same sign-in. A newer sign-in is left alone.
+ */
+export async function discardSignInAction(signIn: SignInKey): Promise<void> {
+  await endSessionIfCurrent(signIn)
 }
 
 /**
@@ -116,18 +115,25 @@ export async function switchAccount(formData: FormData): Promise<void> {
  * this cannot be abused to sign someone out, and a controller outage is not
  * mistaken for an authentication failure.
  */
-export async function discardRejectedSession(): Promise<void> {
+export async function discardRejectedSession(): Promise<"none" | "cleared" | "kept" | "unavailable"> {
+  // Runs as its own request from the login page, so this is the cookie the
+  // browser holds now (not one an older request was issued with).
   const session = await readSession()
-  if (session.kind === "none") return
+  if (session.kind === "none") return "none"
   if (session.kind === "expired") {
     await endSession()
-    return
+    return "cleared"
   }
   try {
     await verifyCredential(session.credential)
   } catch (error) {
-    if (isCredentialRejected(error)) await endSession()
+    if (isCredentialRejected(error)) {
+      await endSession()
+      return "cleared"
+    }
+    return "unavailable"
   }
+  return "kept"
 }
 
 /** Non-secret key of the current sign-in; lets an open console notice an account switch. */

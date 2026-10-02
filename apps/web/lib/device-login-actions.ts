@@ -5,9 +5,11 @@ import { zNetworkSnapshot } from "@meshway/control-client/schemas"
 import { redirect } from "next/navigation"
 import { controllerUrl, isCredentialRejected, isPermissionDenied } from "@/lib/controller"
 import { authorizationPath, deviceCallback, parseDeviceAuthorization } from "@/lib/device-login"
-import { endSession, readSession } from "@/lib/session"
+import { SIGN_IN_FIELD } from "@/lib/action-scope"
+import { isRenderedSignIn, readSession } from "@/lib/session"
 
-export type DeviceLoginState = { error: string | null }
+/** `stale`: the page was rendered for another sign-in than the browser now holds. */
+export type DeviceLoginState = { error: string | null; stale?: boolean }
 
 /**
  * Approve or deny one App sign-in as the signed-in *user*. The controller
@@ -24,9 +26,13 @@ export async function decideDevice(_previous: DeviceLoginState, form: FormData):
   if (!value) return { error: "授权请求无效，请从 App 重新发起登录。" }
   const loginPath = `/login?returnTo=${encodeURIComponent(authorizationPath(value))}`
   const session = await readSession()
-  if (session.kind !== "active") {
-    if (session.kind === "expired") await endSession()
-    redirect(session.kind === "expired" ? `${loginPath}&reason=expired` : loginPath)
+  // An unusable cookie is cleared by the login page, never by this (possibly late) response.
+  if (session.kind !== "active") redirect(session.kind === "expired" ? `${loginPath}&reason=expired` : loginPath)
+  // The decision belongs to the sign-in this page was rendered for. If the
+  // browser now holds another one (another tab signed in), nothing is
+  // approved or denied with it; the page must be reloaded and confirmed again.
+  if (!(await isRenderedSignIn(form.get(SIGN_IN_FIELD)))) {
+    return { error: "这个页面属于之前的登录，浏览器现在是另一个账户或已重新登录。未批准也未拒绝，请刷新页面后重新确认。", stale: true }
   }
   if (session.credential.kind !== "user") {
     return { error: "管理员令牌会话不代表用户，不能批准设备。请使用账户登录后再批准。" }
@@ -47,10 +53,7 @@ export async function decideDevice(_previous: DeviceLoginState, form: FormData):
       callback = deviceCallback(value, { error: "access_denied" })
     }
   } catch (error) {
-    if (isCredentialRejected(error)) {
-      await endSession()
-      redirect(`${loginPath}&reason=expired`)
-    }
+    if (isCredentialRejected(error)) redirect(`${loginPath}&reason=expired`)
     if (isPermissionDenied(error)) return { error: "你不是所选网络的成员，不能把设备接入该网络。" }
     return { error: "Controller 未完成授权，请稍后重试或从 App 重新发起。" }
   }

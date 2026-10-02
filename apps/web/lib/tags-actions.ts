@@ -13,6 +13,7 @@ import {
 import type { TagReloadResult, TagSaveResult } from "@/lib/action-state"
 import { controllerUrl, describeError, isCredentialRejected } from "@/lib/controller"
 import { rejectActionSession } from "@/lib/session"
+import type { ActionScope } from "@/lib/action-scope"
 import { requireNetworkActionContext } from "@/lib/network-context"
 
 // Tag catalog and node tag bindings. Both mutations use the global
@@ -48,8 +49,8 @@ function failure(error: unknown, token: string, expectedRevision: number): TagSa
   return { status: "error", message: `保存失败：${describeError(error, token)}` }
 }
 
-export async function saveTagsAction(networkId: string, expectedRevision: number, tags: TagDefinition[]): Promise<TagSaveResult> {
-  const { token } = await requireNetworkActionContext(networkId)
+export async function saveTagsAction(scope: ActionScope, expectedRevision: number, tags: TagDefinition[]): Promise<TagSaveResult> {
+  const { token, networkId } = await requireNetworkActionContext(scope)
   if (badRevision(expectedRevision)) return { status: "error", message: "编辑基础版本无效，请重新读取。" }
   const body = { expected_revision: expectedRevision, tags }
   if (oversized(body)) return { status: "error", message: "标签目录超过大小上限，未保存。" }
@@ -62,12 +63,12 @@ export async function saveTagsAction(networkId: string, expectedRevision: number
 }
 
 export async function setNodeTagsAction(
-  networkId: string,
+  scope: ActionScope,
   expectedRevision: number,
   nodeId: string,
   tags: string[]
 ): Promise<TagSaveResult> {
-  const { token } = await requireNetworkActionContext(networkId)
+  const { token, networkId } = await requireNetworkActionContext(scope)
   if (badRevision(expectedRevision)) return { status: "error", message: "编辑基础版本无效，请重新读取。" }
   const body = { expected_revision: expectedRevision, node_id: nodeId, tags }
   if (oversized(body)) return { status: "error", message: "节点标签超过大小上限，未保存。" }
@@ -80,8 +81,8 @@ export async function setNodeTagsAction(
 }
 
 /** Catalog, inventory and saved access rules (for "referenced by") read together. */
-export async function reloadTagsAction(networkId: string): Promise<TagReloadResult> {
-  const { token } = await requireNetworkActionContext(networkId)
+export async function reloadTagsAction(scope: ActionScope): Promise<TagReloadResult> {
+  const { token, networkId } = await requireNetworkActionContext(scope)
   const baseUrl = controllerUrl()
   try {
     const [snapshot, connections, access] = await Promise.all([

@@ -7,7 +7,7 @@ import { connection } from "next/server"
 import { OwnerClaimForm } from "@/components/auth/owner-claim-form"
 import { StandaloneFrame } from "@/components/shell/standalone-frame"
 import { controllerUrl, describeError, isCredentialRejected } from "@/lib/controller"
-import { EXPIRED_LOGIN_PATH, requireConsoleCredential } from "@/lib/session"
+import { EXPIRED_LOGIN_PATH, requireConsoleCredential, sessionKey } from "@/lib/session"
 
 export const metadata: Metadata = { title: "认领网络所有者", robots: { index: false, follow: false }, referrer: "no-referrer" }
 
@@ -35,6 +35,7 @@ export default async function OnboardingPage() {
     )
   }
   const token = credential.token
+  const signIn = await sessionKey()
   let rows: Row[]
   try {
     const networks = await listNetworks(controllerUrl(), token)
@@ -85,7 +86,7 @@ export default async function OnboardingPage() {
               已有所有者：<span className="break-all text-foreground">{owners.emails.join("、")}</span>
             </p>
           ) : (
-            <OwnerClaimForm networkId={network.network_id} networkName={network.name} />
+            <OwnerClaimForm signIn={signIn} networkId={network.network_id} networkName={network.name} />
           )}
         </section>
       ))}

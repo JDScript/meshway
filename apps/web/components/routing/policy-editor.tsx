@@ -1,6 +1,6 @@
 "use client"
 
-import { useNetworkId } from "@/components/network/network-workspace"
+import { useActionScope } from "@/components/network/network-workspace"
 
 import type {
   NodeSummary,
@@ -191,7 +191,7 @@ export function PolicyEditor({
   focusRuleId?: string | null
 }) {
   const drafts = useRoutingDraftStore()
-  const networkId = useNetworkId()
+  const actionScope = useActionScope()
   // A draft kept from an earlier visit brings back its own base snapshot; the
   // page's fresher snapshot then only shows up as "controller is ahead".
   const [restored] = useState(() => drafts.read())
@@ -448,7 +448,7 @@ export function PolicyEditor({
     const query = toFlow(flow)
     const submittedFlow = flow
     startPreview(async () => {
-      const result = await previewPolicyAction(networkId, body, query)
+      const result = await previewPolicyAction(actionScope, body, query)
       // A newer preview or a reload supersedes this response.
       if (seq !== previewSeq.current) return
       setPreview({ result, key, flow: submittedFlow })
@@ -470,7 +470,7 @@ export function PolicyEditor({
     const sentSeq = policyDoc.seq
     const saver = owner.current
     startSave(async () => {
-      const result = await savePolicyAction(networkId, expected, body, source)
+      const result = await savePolicyAction(actionScope, expected, body, source)
       if (!drafts.owns(saver)) {
         // This editor unmounted meanwhile: kept work that is exactly what
         // was saved moves onto the new base; anything else is left alone.
@@ -500,7 +500,7 @@ export function PolicyEditor({
     const generation = ++reloadGeneration.current
     const loader = owner.current
     startReload(async () => {
-      const result = await reloadPolicyAction(networkId)
+      const result = await reloadPolicyAction(actionScope)
       // Superseded, or this editor unmounted: newer work must survive.
       if (generation !== reloadGeneration.current || !drafts.owns(loader)) return
       if (result.status === "error") {

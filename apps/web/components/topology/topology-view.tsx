@@ -1,7 +1,7 @@
 "use client"
 
 import { useRoutes } from "@/components/shell/network-context"
-import { useNetworkId } from "@/components/network/network-workspace"
+import { useActionScope } from "@/components/network/network-workspace"
 
 import type { ConnectionsSnapshot, NodeSummary, PolicySnapshot } from "@meshway/control-client"
 import { ArrowRightIcon, CircleAlertIcon, RefreshCwIcon } from "lucide-react"
@@ -95,7 +95,7 @@ export function TopologyView({
 }) {
   const routes = useRoutes()
   const router = useRouter()
-  const networkId = useNetworkId()
+  const actionScope = useActionScope()
 
   const [polledNodes, setPolledNodes] = useState<{ nodes: NodeSummary[]; fetchedAt: number } | null>(null)
   const [polledConnections, setPolledConnections] = useState<StampedSnapshot | null>(null)
@@ -105,7 +105,7 @@ export function TopologyView({
     error: initialConnections.ok ? null : initialConnections.error,
   })
   const poll = useCallback(async (): Promise<RuntimeReadResult> => {
-    const result = await readNodeStatusAction(networkId)
+    const result = await readNodeStatusAction(actionScope)
     if (result.status === "error") return result
     const read = result.fetchedAt
     if (result.nodes.ok) {
@@ -121,7 +121,7 @@ export function TopologyView({
     return result.runtimes.ok
       ? { status: "loaded", snapshot: result.runtimes.data, fetchedAt: read }
       : { status: "error", message: result.runtimes.error }
-  }, [networkId])
+  }, [actionScope])
   const runtimes = useConnectionRuntimes(initialRuntimes, poll)
 
   const shownInventory =
@@ -178,7 +178,7 @@ export function TopologyView({
     const query = toFlow(flow)
     const submittedFlow = flow
     startPlan(async () => {
-      const result = await previewFlowAction(networkId, query)
+      const result = await previewFlowAction(actionScope, query)
       if (current !== seq.current) return
       setPlan({ result, key, flow: submittedFlow })
     })

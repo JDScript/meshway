@@ -4,7 +4,7 @@ import { connection } from "next/server"
 import { InvitationForm } from "@/components/auth/invitation-form"
 import { StandaloneFrame } from "@/components/shell/standalone-frame"
 import { fetchConsoleIdentity } from "@/lib/account-session"
-import { readSession } from "@/lib/session"
+import { readSession, sessionKey } from "@/lib/session"
 
 export const metadata: Metadata = { title: "接受邀请", robots: { index: false, follow: false }, referrer: "no-referrer" }
 
@@ -22,6 +22,7 @@ export default async function InvitePage() {
         </p>
       </div>
       <InvitationForm
+        signIn={await sessionKey()}
         signedInEmail={identity?.kind === "user" ? identity.email : null}
         administrator={session.kind === "active" && session.credential.kind === "bootstrap"}
       />

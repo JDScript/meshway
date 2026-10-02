@@ -1,7 +1,7 @@
 "use client"
 
 import { useRoutes } from "@/components/shell/network-context"
-import { useNetworkId } from "@/components/network/network-workspace"
+import { useActionScope } from "@/components/network/network-workspace"
 
 import type { ConnectionNode, ConnectionsSnapshot, EndpointDiscoveriesSnapshot, ManagedListenersSnapshot, NodeSummary } from "@meshway/control-client"
 import {
@@ -111,7 +111,7 @@ export function NodeDetail({
   // The URL is the source of truth: history navigation can restore a cached
   // render whose server-provided tab is older than the entry's URL.
   const params = useSearchParams()
-  const networkId = useNetworkId()
+  const actionScope = useActionScope()
   const hasConnectionDraft = useConnectionsHasDraft()
   const tab: NodeTab = params.has("tab") ? (params.get("tab") === "connections" ? "connections" : "overview") : initialTab
   const [dialog, setDialog] = useState<"revoke" | null>(null)
@@ -153,7 +153,7 @@ export function NodeDetail({
     setManagedRead((current) => recordManagedFailure(current, error, readAt))
   }, [])
   const poll = useCallback(async (): Promise<RuntimeReadResult> => {
-    const result = await readNodeStatusAction(networkId)
+    const result = await readNodeStatusAction(actionScope)
     if (result.status === "error") return result
     const read = result.fetchedAt
     if (result.managed.ok) adoptManaged(result.managed.data, read)
@@ -170,7 +170,7 @@ export function NodeDetail({
     return result.runtimes.ok
       ? { status: "loaded", snapshot: result.runtimes.data, fetchedAt: read }
       : { status: "error", message: result.runtimes.error }
-  }, [nodeId, networkId, adoptManaged, failManaged])
+  }, [nodeId, actionScope, adoptManaged, failManaged])
   const runtimes = useConnectionRuntimes(initialRuntimes, poll)
   const managedSnapshot = managedRead.snapshot
   // Editing from a cached snapshot is allowed: the form's CAS base is that
@@ -218,7 +218,7 @@ export function NodeDetail({
   const [retryingManaged, setRetryingManaged] = useState(false)
   const retryManaged = async () => {
     setRetryingManaged(true)
-    const result = await readManagedListenersAction(networkId)
+    const result = await readManagedListenersAction(actionScope)
     setRetryingManaged(false)
     if (result.status === "loaded") {
       adoptManaged(result.managed, result.fetchedAt)

@@ -209,7 +209,8 @@ test("accounts: email login, invitation, Member read-only without logout, networ
       expect(anonymousReplay.headers()["x-action-redirect"] ?? anonymousReplay.headers().location).toContain("/login");
       const bootstrapReplay = await adminPage.request.post(device.url(webUrl), { headers: { ...headers, origin: webUrl }, data: submitted.postData() ?? "", maxRedirects: 0 });
       expect(bootstrapReplay.headers()["x-action-redirect"] ?? "").not.toContain("meshway://");
-      expect(await bootstrapReplay.text()).toContain("管理员令牌会话不代表用户");
+      // The Owner's rendered form never runs with the administrator cookie (sign-in fence).
+      expect(await bootstrapReplay.text()).toContain("这个页面属于之前的登录");
       expect((await sdk.listNodes(base, admin)).nodes.length).toBe(before);
 
       // First Owner of the other network: an existing account proven by its own password.

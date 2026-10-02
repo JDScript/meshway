@@ -10,7 +10,7 @@ import { SwitchAccountButton } from "@/components/auth/switch-account-button"
 import { StandaloneFrame } from "@/components/shell/standalone-frame"
 import { controllerUrl, isCredentialRejected } from "@/lib/controller"
 import { authorizationPath, parseDeviceAuthorization } from "@/lib/device-login"
-import { readSession } from "@/lib/session"
+import { readSession, sessionKey } from "@/lib/session"
 
 export const metadata: Metadata = { title: "授权设备", robots: { index: false, follow: false }, referrer: "no-referrer" }
 
@@ -46,6 +46,8 @@ export default async function AuthorizeDevicePage({ searchParams }: {
   const loginPath = `/login?returnTo=${encodeURIComponent(returnTo)}`
   const session = await readSession()
   if (session.kind !== "active") redirect(session.kind === "expired" ? `${loginPath}&reason=expired` : loginPath)
+  // The sign-in this page is rendered for; the decision is refused for any other.
+  const signIn = await sessionKey()
   if (session.credential.kind !== "user") {
     // The administrator token manages the controller but is not a user, so
     // it cannot own a device. Offer the account sign-in (or first Owner).
@@ -61,7 +63,7 @@ export default async function AuthorizeDevicePage({ searchParams }: {
           </p>
         </div>
         <div className="flex flex-col gap-2">
-          <SwitchAccountButton returnTo={returnTo} label="退出管理员会话并使用账户登录" />
+          <SwitchAccountButton signIn={signIn} returnTo={returnTo} label="退出管理员会话并使用账户登录" />
           <Link href="/onboarding" className="text-center text-xs text-muted-foreground underline underline-offset-4">
             还没有账户？为网络认领第一个所有者
           </Link>
@@ -114,7 +116,7 @@ export default async function AuthorizeDevicePage({ searchParams }: {
         <span className="min-w-0 truncate">
           登录为 <span className="font-medium text-foreground">{account.user.email}</span>
         </span>
-        <SwitchAccountButton returnTo={returnTo} label="切换账户" variant="link" />
+        <SwitchAccountButton signIn={signIn} returnTo={returnTo} label="切换账户" variant="link" />
       </div>
       {choices.length === 0 ? (
         <p role="status" className="rounded-md border border-dashed px-3 py-2.5 text-[0.8125rem] text-muted-foreground">
@@ -122,6 +124,7 @@ export default async function AuthorizeDevicePage({ searchParams }: {
         </p>
       ) : null}
       <DeviceAuthorizationForm
+        signIn={signIn}
         value={value}
         networks={choices}
       />

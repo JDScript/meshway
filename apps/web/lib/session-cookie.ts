@@ -1,3 +1,5 @@
+import { createHash } from "node:crypto"
+
 // Pure encoding of the console session cookie (no Next.js imports, so it can
 // be unit-tested). The cookie is HttpOnly and only ever read on the server.
 //
@@ -82,3 +84,25 @@ export function userSessionMaxAge(expiresAt: number, nowSeconds: number): number
   const remaining = expiresAt - nowSeconds
   return remaining > 0 ? remaining : null
 }
+
+/**
+ * The rendered sign-in fence key. The cookie envelope is not signed, so its
+ * kind / session ID alone could be edited; the marker therefore commits to
+ * the high-entropy credential itself (domain-separated SHA-256, truncated).
+ * It is not reversible into the credential and is not an authorization:
+ * the controller still authenticates the credential on every call. A new
+ * sign-in (even of the same user) has a new credential, hence a new key.
+ */
+export function signInKeyOf(credential: ConsoleCredential): string {
+  const marker = createHash("sha256")
+    .update("meshway-web-sign-in-fence-v1\0")
+    .update(credential.kind)
+    .update("\0")
+    .update(credential.sessionId)
+    .update("\0")
+    .update(credential.token)
+    .digest("hex")
+    .slice(0, 32)
+  return `${credential.kind}:${marker}`
+}
+

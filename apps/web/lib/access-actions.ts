@@ -19,6 +19,7 @@ import {
   isCredentialRejected,
 } from "@/lib/controller"
 import { rejectActionSession } from "@/lib/session"
+import type { ActionScope } from "@/lib/action-scope"
 import { requireNetworkActionContext } from "@/lib/network-context"
 
 // Arguments arrive from the browser and are untrusted: every action checks the
@@ -40,12 +41,12 @@ function oversized(value: unknown, limit: number = ACCESS_LIMITS.requestBytes): 
  * controller stores it only if it parses to exactly `policy`.
  */
 export async function saveMeshAccessAction(
-  networkId: string,
+  scope: ActionScope,
   expectedRevision: number,
   policy: MeshAccessPolicy,
   sourceJsonc: string | null
 ): Promise<AccessSaveResult> {
-  const { token } = await requireNetworkActionContext(networkId)
+  const { token, networkId } = await requireNetworkActionContext(scope)
   if (
     !Number.isSafeInteger(expectedRevision) ||
     expectedRevision < 1 ||
@@ -73,8 +74,8 @@ export async function saveMeshAccessAction(
 }
 
 /** Fresh snapshot for an explicit reload; callers decide to discard the draft. */
-export async function reloadMeshAccessAction(networkId: string): Promise<AccessReloadResult> {
-  const { token } = await requireNetworkActionContext(networkId)
+export async function reloadMeshAccessAction(scope: ActionScope): Promise<AccessReloadResult> {
+  const { token, networkId } = await requireNetworkActionContext(scope)
   const baseUrl = controllerUrl()
   try {
     const [snapshot, connections, tags] = await Promise.all([
@@ -99,8 +100,8 @@ export async function reloadMeshAccessAction(networkId: string): Promise<AccessR
  * policies: authorization, route and whether the runtime could execute it.
  * A plan, never a trace.
  */
-export async function previewFlowAction(networkId: string, flow: FlowQuery): Promise<FlowPreviewResult> {
-  const { token } = await requireNetworkActionContext(networkId)
+export async function previewFlowAction(scope: ActionScope, flow: FlowQuery): Promise<FlowPreviewResult> {
+  const { token, networkId } = await requireNetworkActionContext(scope)
   const body = { flow }
   if (oversized(body, 16 * 1024)) {
     return { status: "error", message: "流量参数过大，未发送。" }

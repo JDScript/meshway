@@ -5,7 +5,8 @@ import Link from "next/link"
 import { useTheme } from "next-themes"
 import { useTransition } from "react"
 
-import { useDraftVault } from "@/components/network/network-workspace"
+import { signOutRendered } from "@/components/auth/sign-out"
+import { useDraftVault, useSignIn } from "@/components/network/network-workspace"
 import { useNetwork } from "@/components/shell/network-context"
 import { Avatar, AvatarFallback } from "@/components/ui/avatar"
 import {
@@ -21,7 +22,6 @@ import {
 } from "@/components/ui/dropdown-menu"
 import { SidebarMenu, SidebarMenuButton, SidebarMenuItem, useSidebar } from "@/components/ui/sidebar"
 import { roleIn, roleLabels, type ConsoleIdentity } from "@/lib/account-model"
-import { logout } from "@/lib/auth-actions"
 import { docsUrl } from "@/lib/config"
 
 const themes = [
@@ -61,6 +61,7 @@ export function NavUser({ identity }: { identity: ConsoleIdentity }) {
   const { theme, setTheme } = useTheme()
   const [pending, startTransition] = useTransition()
   const vault = useDraftVault()
+  const signIn = useSignIn()
   const { networkId } = useNetwork()
   const view = describe(identity, networkId)
   const role = roleIn(identity, networkId)
@@ -139,7 +140,7 @@ export function NavUser({ identity }: { identity: ConsoleIdentity }) {
               onClick={() => {
                 // Unsaved drafts of every network belong to this session only.
                 vault.reset()
-                startTransition(() => logout())
+                startTransition(() => signOutRendered(signIn))
               }}
             >
               <LogOutIcon />

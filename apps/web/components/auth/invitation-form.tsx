@@ -7,6 +7,7 @@ import { SwitchAccountButton } from "@/components/auth/switch-account-button"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
+import { SIGN_IN_FIELD } from "@/lib/action-scope"
 import { invitationTokenFromHash, type InvitationState } from "@/lib/account-model"
 import { acceptInvitationAction, registerInvitationAction } from "@/lib/invitation-actions"
 
@@ -38,7 +39,7 @@ function Failure({ state }: { state: InvitationState }) {
   ) : null
 }
 
-export function InvitationForm({ signedInEmail, administrator }: { signedInEmail: string | null; administrator: boolean }) {
+export function InvitationForm({ signIn, signedInEmail, administrator }: { signIn: string; signedInEmail: string | null; administrator: boolean }) {
   const token = useInvitationToken()
   const [registerState, register, registering] = useActionState(registerInvitationAction, initialState)
   const [acceptState, accept, accepting] = useActionState(acceptInvitationAction, initialState)
@@ -58,6 +59,7 @@ export function InvitationForm({ signedInEmail, administrator }: { signedInEmail
       <div className="flex flex-col gap-3">
         <form action={accept} className="flex flex-col gap-3">
           <input type="hidden" name="invitation_token" value={token} />
+          <input type="hidden" name={SIGN_IN_FIELD} value={signIn} />
           <p className="text-[0.8125rem] text-muted-foreground">
             以 <span className="font-medium break-all text-foreground">{signedInEmail}</span> 接受邀请。邀请绑定受邀邮箱，与当前账户不符时会被拒绝。
           </p>
@@ -66,7 +68,7 @@ export function InvitationForm({ signedInEmail, administrator }: { signedInEmail
             {accepting ? "正在加入" : "接受邀请"}
           </Button>
         </form>
-        <SwitchAccountButton returnTo="/" label="不是这个账户？退出登录" variant="link" />
+        <SwitchAccountButton signIn={signIn} returnTo="/" label="不是这个账户？退出登录" variant="link" />
       </div>
     )
   }

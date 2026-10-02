@@ -14,7 +14,8 @@ import { redirect } from "next/navigation"
 import { invitationPath, passwordProblem, type InvitationIssueState, type InvitationState } from "@/lib/account-model"
 import { controllerUrl, describeError, isCredentialRejected, isPermissionDenied } from "@/lib/controller"
 import { consoleRoutes } from "@/lib/routes"
-import { EXPIRED_LOGIN_PATH, endSession, LOGIN_PATH, readSession, requireActionCredential, startUserSession } from "@/lib/session"
+import { SIGN_IN_FIELD } from "@/lib/action-scope"
+import { EXPIRED_LOGIN_PATH, LOGIN_PATH, readSession, requireRenderedSignIn, startUserSession } from "@/lib/session"
 import { formField, revokePreviousUserSession } from "@/lib/sign-in"
 
 const invitationRejected = "邀请链接无效、已过期、已被撤销或已使用，或邮箱与邀请不符。请向网络所有者索取新的链接。"
@@ -69,6 +70,8 @@ export async function acceptInvitationAction(_previous: InvitationState, formDat
   if (session.kind !== "active" || session.credential.kind !== "user") {
     return { status: "error", message: "请先用账户登录，再重新打开邀请链接。" }
   }
+  // Accept only as the account this page was rendered for.
+  await requireRenderedSignIn(formData.get(SIGN_IN_FIELD))
   const token = invitationToken(formData)
   if (!token) return { status: "error", message: invitationRejected }
   let networkId: string
@@ -80,10 +83,7 @@ export async function acceptInvitationAction(_previous: InvitationState, formDat
       try {
         await getAccountSession(controllerUrl(), session.credential.token)
       } catch (check) {
-        if (isCredentialRejected(check)) {
-          await endSession()
-          redirect(EXPIRED_LOGIN_PATH)
-        }
+        if (isCredentialRejected(check)) redirect(EXPIRED_LOGIN_PATH)
       }
       return { status: "error", message: invitationRejected }
     }
@@ -97,7 +97,7 @@ const ttlOptions = [86_400, 3 * 86_400, 7 * 86_400]
 
 /** One invitation link for one email and role; the secret is shown once and never stored by the Web. */
 export async function createInvitationAction(_previous: InvitationIssueState, formData: FormData): Promise<InvitationIssueState> {
-  const credential = await requireActionCredential()
+  const credential = await requireRenderedSignIn(formData.get(SIGN_IN_FIELD))
   const networkId = zNetworkSnapshot.shape.network_id.safeParse(formField(formData, "network_id"))
   if (!networkId.success) return { status: "error", message: "网络无效。" }
   const role = zAccountRole.safeParse(formField(formData, "role"))
@@ -120,10 +120,7 @@ export async function createInvitationAction(_previous: InvitationIssueState, fo
       path: invitationPath(created.invitation_token),
     }
   } catch (error) {
-    if (isCredentialRejected(error)) {
-      await endSession()
-      redirect(EXPIRED_LOGIN_PATH)
-    }
+    if (isCredentialRejected(error)) redirect(EXPIRED_LOGIN_PATH)
     if (isPermissionDenied(error)) return { status: "error", message: "你在该网络没有发出这个角色邀请的权限。" }
     if (error instanceof ControlApiError && (error.status === 400 || error.status === 422)) {
       return { status: "error", message: "邮箱或有效期不符合要求。" }
