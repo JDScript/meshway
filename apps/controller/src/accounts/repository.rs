@@ -3,7 +3,6 @@ use zeroize::Zeroizing;
 
 use super::*;
 
-pub(crate) const SCHEMA_FRAGMENT: &str = include_str!("schema.sql");
 const INVITE_MAX: i64 = 7 * 86400;
 const RESET_MAX: i64 = 3600;
 const SESSION_MAX: i64 = 7 * 86400;
@@ -61,7 +60,7 @@ fn atomic<T>(tx: &mut Transaction<'_>, f: impl FnOnce(&Connection) -> Result<T>)
 }
 
 /// Reads have no DDL side effects. The caller must enable foreign keys once and
-/// install SCHEMA_FRAGMENT in its explicit, versioned migration transaction.
+/// install the account schema in its explicit, versioned migration transaction.
 pub(crate) struct Accounts<'a> {
     db: &'a Connection,
 }

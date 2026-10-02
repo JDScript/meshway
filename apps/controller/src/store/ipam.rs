@@ -4,8 +4,8 @@ use std::{
 };
 
 use ipnet::{Ipv4Net, Ipv6Net};
-use meshway_protocol::{MeshNetwork, local};
-use rusqlite::{Connection, TransactionBehavior, params};
+use meshway_protocol::MeshNetwork;
+use rusqlite::Connection;
 
 use super::NetworkId;
 use crate::{Error, NetworkOptions};
@@ -46,97 +46,6 @@ pub(super) fn network(connection: &Connection, network: &NetworkId) -> Result<Me
     )?)
 }
 
-fn initial_network(options: &NetworkOptions) -> Result<MeshNetwork, Error> {
-    let random = local::credential()?;
-    // RFC 4193: locally assigned /48 with a random 40-bit global ID, subnet 0.
-    let ula = format!(
-        "fd{}:{}:{}::/64",
-        &random[..2],
-        &random[2..6],
-        &random[6..10]
-    );
-    let network = MeshNetwork {
-        ipv4_prefix: options
-            .ipv4_prefix
-            .clone()
-            .unwrap_or_else(|| "100.96.0.0/16".into()),
-        ipv6_prefix: options.ipv6_prefix.clone().unwrap_or(ula),
-    };
-    let (v4, v6) = parse(&network)?;
-    Ok(MeshNetwork {
-        ipv4_prefix: v4.to_string(),
-        ipv6_prefix: v6.to_string(),
-    })
-}
-
-/// Additive, all-or-nothing upgrade; includes revoked identities in allocation.
-pub(super) fn upgrade(connection: &mut Connection, options: &NetworkOptions) -> Result<(), Error> {
-    let version: u32 = connection.pragma_query_value(None, "user_version", |row| row.get(0))?;
-    if version == 1 {
-        let network = initial_network(options)?;
-        let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
-        transaction.execute_batch(
-            "CREATE TABLE configuration (
-                id INTEGER PRIMARY KEY CHECK (id = 1),
-                revision INTEGER NOT NULL CHECK (revision BETWEEN 1 AND 4294967295),
-                ipv4_prefix TEXT NOT NULL, ipv6_prefix TEXT NOT NULL, policy TEXT NOT NULL
-             );
-             ALTER TABLE nodes ADD COLUMN mesh_ipv4 TEXT;
-             ALTER TABLE nodes ADD COLUMN mesh_ipv6 TEXT;
-             ALTER TABLE nodes ADD COLUMN country TEXT;
-             ALTER TABLE nodes ADD COLUMN acknowledged_revision INTEGER NOT NULL DEFAULT 0;
-             ALTER TABLE nodes ADD COLUMN acknowledged_digest TEXT;
-             CREATE UNIQUE INDEX node_ipv4 ON nodes(mesh_ipv4);
-             CREATE UNIQUE INDEX node_ipv6 ON nodes(mesh_ipv6);",
-        )?;
-        transaction.execute(
-            "INSERT INTO configuration VALUES (1, 1, ?1, ?2, ?3)",
-            params![
-                network.ipv4_prefix,
-                network.ipv6_prefix,
-                r#"{"default_action":"reject","rules":[]}"#
-            ],
-        )?;
-        let ids: Vec<String> = transaction
-            .prepare("SELECT id FROM nodes ORDER BY id")?
-            .query_map([], |row| row.get(0))?
-            .collect::<Result<_, _>>()?;
-        if ids.len() > meshway_protocol::MAX_INVENTORY_NODES {
-            return Err(Error::Capacity(
-                "existing inventory exceeds configuration capacity",
-            ));
-        }
-        for id in ids {
-            let used = transaction
-                .prepare("SELECT mesh_ipv4 FROM nodes WHERE mesh_ipv4 IS NOT NULL")?
-                .query_map([], |row| row.get(0))?
-                .collect::<Result<BTreeSet<String>, _>>()?;
-            let (v4, v6) = allocate_used(&network, &used)?;
-            transaction.execute(
-                "UPDATE nodes SET mesh_ipv4 = ?1, mesh_ipv6 = ?2 WHERE id = ?3",
-                params![v4, v6, id],
-            )?;
-        }
-        transaction.pragma_update(None, "user_version", 2)?;
-        transaction.commit()?;
-    } else if !(2..=8).contains(&version) {
-        return Err(Error::Configuration(
-            "unsupported or incomplete controller database schema",
-        ));
-    }
-    let stored = connection.query_row(
-        "SELECT ipv4_prefix,ipv6_prefix FROM configuration WHERE id=1",
-        [],
-        |row| {
-            Ok(MeshNetwork {
-                ipv4_prefix: row.get(0)?,
-                ipv6_prefix: row.get(1)?,
-            })
-        },
-    )?;
-    compare_options(&stored, options)
-}
-
 pub(super) fn check_options(
     connection: &Connection,
     scope: &NetworkId,
@@ -145,7 +54,10 @@ pub(super) fn check_options(
     compare_options(&network(connection, scope)?, options)
 }
 
-fn compare_options(stored: &MeshNetwork, options: &NetworkOptions) -> Result<(), Error> {
+pub(in crate::store) fn compare_options(
+    stored: &MeshNetwork,
+    options: &NetworkOptions,
+) -> Result<(), Error> {
     let (v4, v6) = parse(stored)?;
     if options
         .ipv4_prefix
@@ -174,7 +86,7 @@ pub(super) fn allocate(
     allocate_used(&network(connection, scope)?, &used)
 }
 
-fn allocate_used(
+pub(in crate::store) fn allocate_used(
     network: &MeshNetwork,
     used: &BTreeSet<String>,
 ) -> Result<(String, String), Error> {

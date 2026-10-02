@@ -527,7 +527,7 @@ fn actual_v5_migration_deduplicates_paths_folds_reverse_and_bumps_revision() {
             .connection
             .pragma_query_value(None, "user_version", |row| row.get::<_, i64>(0))
             .unwrap(),
-        crate::store::release_schema::VERSION
+        crate::store::migrations::VERSION
     );
 }
 

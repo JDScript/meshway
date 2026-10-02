@@ -77,7 +77,7 @@ fn shape(connection: &Connection, table: &str) -> Result<Shape, Error> {
 
 pub(crate) fn validate_schema(connection: &Connection) -> Result<(), Error> {
     let reference = Connection::open_in_memory()?;
-    reference.execute_batch(include_str!("schema.sql"))?;
+    reference.execute_batch(include_str!("sql/latency.sql"))?;
     for table in TABLES {
         if shape(connection, table)? != shape(&reference, table)? {
             return Err(Error::Configuration(
@@ -96,7 +96,7 @@ pub(crate) fn validate_schema(connection: &Connection) -> Result<(), Error> {
 pub(crate) fn validate_if_present(connection: &Connection) -> Result<(), Error> {
     let any: bool = connection.query_row("SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type='table' AND name IN ('latency_runtime_epochs','latency_samples','latency_admissions','latency_coverage'))",[],|r|r.get(0))?;
     if any {
-        super::validate_schema(connection)?;
+        validate_schema(connection)?;
     }
     Ok(())
 }

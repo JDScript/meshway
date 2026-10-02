@@ -7,10 +7,8 @@ use sha2::{Digest, Sha256};
 use super::{NetworkId, Store, connection_runtime, connections};
 use crate::Error;
 
-mod schema;
 #[cfg(test)]
 mod tests;
-pub(crate) use schema::{validate_if_present, validate_schema};
 
 const REPORT_MAX_AGE_SECONDS: i64 = 120;
 const CLOCK_SKEW_SECONDS: i64 = 5;

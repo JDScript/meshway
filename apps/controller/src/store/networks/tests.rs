@@ -1,4 +1,4 @@
-use super::{TABLES, upgrade};
+use crate::store::migrations::networks::{TABLES, upgrade};
 use crate::{
     Error, NetworkOptions,
     store::{

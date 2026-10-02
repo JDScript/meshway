@@ -1,6 +1,6 @@
 //! Recognize only the complete known unversioned account fragment. This is a
 //! release-migration gate, not an IF NOT EXISTS repair of an unknown schema.
-use crate::{Error, accounts};
+use crate::Error;
 use rusqlite::{Connection, types::Value};
 use std::collections::BTreeMap;
 
@@ -101,9 +101,9 @@ pub(in crate::store) fn validate(db: &Connection) -> Result<(), Error> {
     // Build the expected structural manifest from the authoritative fragments,
     // with the actual v9 parent contracts. No serving database DDL is performed.
     let expected = Connection::open_in_memory()?;
-    expected.execute_batch(include_str!("../schema_v9.sql"))?;
-    expected.execute_batch(accounts::SCHEMA_FRAGMENT)?;
-    expected.execute_batch(include_str!("../ownership.sql"))?;
+    expected.execute_batch(include_str!("../sql/schema_v9.sql"))?;
+    expected.execute_batch(super::SCHEMA)?;
+    expected.execute_batch(include_str!("../sql/ownership.sql"))?;
     if definitions(db)? != definitions(&expected)? {
         return Err(incompatible());
     }
@@ -174,9 +174,11 @@ mod tests {
     fn complete_schema_with_unrelated_same_name_extension_objects_is_compatible() {
         let db = Connection::open_in_memory().unwrap();
         db.pragma_update(None, "foreign_keys", true).unwrap();
-        db.execute_batch(include_str!("../schema_v9.sql")).unwrap();
-        db.execute_batch(accounts::SCHEMA_FRAGMENT).unwrap();
-        db.execute_batch(include_str!("../ownership.sql")).unwrap();
+        db.execute_batch(include_str!("../sql/schema_v9.sql"))
+            .unwrap();
+        db.execute_batch(super::super::SCHEMA).unwrap();
+        db.execute_batch(include_str!("../sql/ownership.sql"))
+            .unwrap();
         validate(&db).unwrap();
         db.execute_batch("CREATE TABLE unrelated_extension(id TEXT PRIMARY KEY); CREATE TRIGGER unrelated_twin BEFORE INSERT ON unrelated_extension BEGIN SELECT 1; END; CREATE INDEX unrelated_twin ON unrelated_extension(id);").unwrap();
         validate(&db).unwrap();

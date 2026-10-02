@@ -1,5 +1,4 @@
 use meshway_protocol::*;
-use rusqlite::params;
 
 use super::test_support::{SingleNetworkFixture, directory, enroll, request};
 use crate::{Error, NetworkOptions};
@@ -14,7 +13,11 @@ fn device_login_v8_migration_preserves_existing_rows_and_reopens() {
         connection: &rusqlite::Connection,
     ) -> Vec<(String, Vec<Vec<rusqlite::types::Value>>)> {
         let mut tables: Vec<String> = std::iter::once("settings")
-            .chain(super::networks::TABLES.iter().map(|(name, _)| *name))
+            .chain(
+                super::migrations::networks::TABLES
+                    .iter()
+                    .map(|(name, _)| *name),
+            )
             .map(str::to_owned)
             .collect();
         tables.sort();
@@ -65,7 +68,7 @@ fn device_login_v8_migration_preserves_existing_rows_and_reopens() {
             .connection
             .pragma_query_value(None, "user_version", |r| r.get::<_, i64>(0))
             .unwrap(),
-        crate::store::release_schema::VERSION
+        crate::store::migrations::VERSION
     );
     assert_eq!(snapshot(&store.connection), before);
     assert_eq!(
@@ -424,7 +427,7 @@ fn additive_v2_to_v3_preserves_configuration_credentials_addresses_and_receipts(
     let dir = directory();
     let (admin, requests, tokens) = legacy(dir.path());
     let mut db = rusqlite::Connection::open(dir.path().join("controller.sqlite3")).unwrap();
-    super::ipam::upgrade(&mut db, &NetworkOptions::default()).unwrap();
+    super::migrations::legacy::address_pool(&mut db, &NetworkOptions::default()).unwrap();
     db.execute("UPDATE configuration SET revision = 17, policy = '{\"default_action\":\"direct\",\"rules\":[]}'", []).unwrap();
     db.execute("UPDATE nodes SET country = 'US', acknowledged_revision = 16, acknowledged_digest = ?1 WHERE id = 'z'", ["ab".repeat(32)]).unwrap();
     let receipt_digest = |connection: &rusqlite::Connection| {
@@ -465,7 +468,7 @@ fn additive_v2_to_v3_preserves_configuration_credentials_addresses_and_receipts(
             .connection
             .pragma_query_value(None, "user_version", |row| row.get::<_, i64>(0))
             .unwrap(),
-        crate::store::release_schema::VERSION
+        crate::store::migrations::VERSION
     );
     assert_eq!(
         std::fs::read(dir.path().join("admin.token")).unwrap(),

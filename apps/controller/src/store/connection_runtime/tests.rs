@@ -609,7 +609,7 @@ fn v3_to_v4_preserves_every_existing_sql_value_and_schema1_payload_bytes() {
     let mut reopened = SingleNetworkFixture::open(dir.path(), &NetworkOptions::default()).unwrap();
     assert_eq!(existing_rows(&reopened.connection), rows);
     assert_eq!(
-        serde_json::to_vec(&reopened.agent_connections(&token).unwrap()).unwrap(),
+        serde_json::to_vec(&reopened.agent_connections(token).unwrap()).unwrap(),
         before
     );
     assert_eq!(
@@ -621,13 +621,13 @@ fn v3_to_v4_preserves_every_existing_sql_value_and_schema1_payload_bytes() {
             .connection
             .pragma_query_value(None, "user_version", |row| row.get::<_, i64>(0))
             .unwrap(),
-        crate::store::release_schema::VERSION
+        crate::store::migrations::VERSION
     );
     assert!(reopened.connection_runtimes().unwrap().nodes.is_empty());
     assert!(matches!(
-        reopened.heartbeat(&peer_token, "test"),
+        reopened.heartbeat(peer_token, "test"),
         Err(Error::Forbidden)
     ));
-    assert_eq!(begin(&mut reopened, &token, 1, 0).epoch, 1);
+    assert_eq!(begin(&mut reopened, token, 1, 0).epoch, 1);
     assert_eq!(existing_rows(&reopened.connection), rows);
 }

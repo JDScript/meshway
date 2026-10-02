@@ -1,22 +1,22 @@
-//! One atomic v10 -> v11 installation of accounts, ownership and probe history.
+//! Atomic v10/11 -> v12 installation of accounts, history and Mesh policy.
 //! Recognized unversioned development fragments may be adopted without rewriting
 //! their rows; partial or unknown structures are rejected before versioning.
-use super::{account_schema, latency_history};
+use super::{accounts, latency};
 use crate::Error;
 use rusqlite::{Connection, TransactionBehavior, params};
 
-pub(super) const VERSION: i64 = 12;
+pub(in crate::store) const VERSION: i64 = 12;
 
-pub(super) fn upgrade(connection: &mut Connection) -> Result<(), Error> {
+pub(in crate::store) fn upgrade(connection: &mut Connection) -> Result<(), Error> {
     let tx = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
     let version: i64 = tx.pragma_query_value(None, "user_version", |row| row.get(0))?;
     match version {
         10 => {
-            latency_history::validate_if_present(&tx)?;
-            if account_schema::present(&tx)? {
-                account_schema::validate(&tx)?;
+            latency::validate_if_present(&tx)?;
+            if accounts::present(&tx)? {
+                accounts::validate(&tx)?;
             } else {
-                account_schema::install(&tx)?;
+                accounts::install(&tx)?;
             }
             let history_present: bool = tx.query_row(
                 "SELECT EXISTS(SELECT 1 FROM sqlite_schema WHERE name GLOB 'latency_*' OR tbl_name GLOB 'latency_*')",
@@ -24,7 +24,7 @@ pub(super) fn upgrade(connection: &mut Connection) -> Result<(), Error> {
                 |row| row.get(0),
             )?;
             if !history_present {
-                tx.execute_batch(include_str!("latency_history/schema.sql"))?;
+                tx.execute_batch(include_str!("sql/latency.sql"))?;
             }
             // A pre-v11 lease has no recorded acquisition time. Establish a
             // conservative activation floor, not a fabricated earlier probe or
@@ -35,17 +35,17 @@ pub(super) fn upgrade(connection: &mut Connection) -> Result<(), Error> {
                 params![chrono::Utc::now().timestamp_millis()],
             )?;
             validate(&tx)?;
-            super::policy_v3_schema::install(&tx)?;
+            super::mesh_policy::install(&tx)?;
             tx.pragma_update(None, "user_version", VERSION)?;
         }
         11 => {
             validate(&tx)?;
-            super::policy_v3_schema::install(&tx)?;
+            super::mesh_policy::install(&tx)?;
             tx.pragma_update(None, "user_version", VERSION)?;
         }
         VERSION => {
             validate(&tx)?;
-            super::policy_v3_schema::validate(&tx)?;
+            super::mesh_policy::validate(&tx)?;
         }
         _ => {
             return Err(Error::Configuration(
@@ -58,8 +58,8 @@ pub(super) fn upgrade(connection: &mut Connection) -> Result<(), Error> {
 }
 
 fn validate(connection: &Connection) -> Result<(), Error> {
-    account_schema::validate(connection)?;
-    latency_history::validate_schema(connection)?;
+    accounts::validate(connection)?;
+    latency::validate_schema(connection)?;
     if connection.prepare("PRAGMA foreign_key_check")?.exists([])? {
         return Err(Error::Configuration("schema 11 foreign key failure"));
     }
@@ -187,9 +187,8 @@ mod tests {
         let body = serde_json::to_vec(&sample).unwrap();
         {
             let tx = db.transaction().unwrap();
-            account_schema::install(&tx).unwrap();
-            tx.execute_batch(include_str!("latency_history/schema.sql"))
-                .unwrap();
+            accounts::install(&tx).unwrap();
+            tx.execute_batch(include_str!("sql/latency.sql")).unwrap();
             tx.execute(
                 "INSERT INTO latency_runtime_epochs VALUES(?1,?2,3,12345)",
                 params![NODE, NETWORK],
@@ -233,7 +232,7 @@ mod tests {
                 .unwrap(),
             10
         );
-        assert!(!account_schema::present(&db).unwrap());
+        assert!(!accounts::present(&db).unwrap());
     }
 
     #[test]

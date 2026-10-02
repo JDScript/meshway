@@ -8,7 +8,11 @@ fn old_rows(connection: &Connection) -> Vec<(String, Vec<Vec<Value>>)> {
     // Compare the historical columns, not additive release tables whose initial
     // ownership/history activation rows are intentionally created by v11.
     let mut tables: Vec<String> = std::iter::once("settings")
-        .chain(super::super::networks::TABLES.iter().map(|(name, _)| *name))
+        .chain(
+            super::super::migrations::networks::TABLES
+                .iter()
+                .map(|(name, _)| *name),
+        )
         .filter(|name| *name != "network_identity")
         .map(str::to_owned)
         .collect();

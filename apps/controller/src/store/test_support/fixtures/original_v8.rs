@@ -1,7 +1,7 @@
 //! Independent frozen v8 fixture: direct old DDL and rows, never Store::open,
 //! v9 schema, a downgrade, or a v9 business mutation. Reference projections
 //! use the unchanged v1 wire types and pure v2 compiler/projection functions.
-use crate::store::networks::{TABLES, upgrade};
+use crate::store::migrations::networks::{TABLES, upgrade};
 use crate::{Error, NetworkOptions, store::Store};
 use meshway_protocol::*;
 use rusqlite::{Connection, OptionalExtension, params, types::Value};
@@ -279,7 +279,8 @@ impl V8 {
     pub(crate) fn database(&self) -> Connection {
         Connection::open(self.directory.path().join("controller.sqlite3")).unwrap()
     }
-    pub(crate) fn write_v10_schema(&self) {
+    pub(crate) fn write_scoped_schema(&self, version: u32) {
+        assert!(matches!(version, 9 | 10));
         let path = self.directory.path().join("historical.sqlite3");
         local::atomic_write(&path, &[], false).unwrap();
         let db = Connection::open(&path).unwrap();
@@ -288,7 +289,11 @@ impl V8 {
         )
         .unwrap();
         db.execute_batch(include_str!("schema_v9.sql")).unwrap();
-        db.execute_batch(include_str!("schema_v10.sql")).unwrap();
+        if version == 10 {
+            db.execute_batch(include_str!("schema_v10.sql")).unwrap();
+        } else {
+            db.pragma_update(None, "user_version", 9).unwrap();
+        }
         db.execute(
             "INSERT INTO networks VALUES(?1,?2,1)",
             params![NETWORK, STAMP],

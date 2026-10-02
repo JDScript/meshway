@@ -10,34 +10,6 @@ use crate::Error;
 #[cfg(test)]
 mod tests;
 
-pub(super) fn upgrade(connection: &mut Connection) -> Result<(), Error> {
-    let version: u32 = connection.pragma_query_value(None, "user_version", |row| row.get(0))?;
-    if (4..=8).contains(&version) {
-        return Ok(());
-    }
-    if version != 3 {
-        return Err(Error::Configuration(
-            "runtime schema upgrade requires schema 3",
-        ));
-    }
-    let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
-    transaction.execute_batch(
-        "CREATE TABLE connection_runtime_leases (
-            node_id TEXT PRIMARY KEY REFERENCES nodes(id),
-            instance_id TEXT NOT NULL,
-            epoch INTEGER NOT NULL CHECK (epoch BETWEEN 1 AND 4294967295)
-         );
-         CREATE TABLE connection_runtime_reports (
-            node_id TEXT PRIMARY KEY REFERENCES connection_runtime_leases(node_id),
-            sequence INTEGER NOT NULL CHECK (sequence BETWEEN 1 AND 4294967295),
-            body BLOB NOT NULL, reported_at TEXT NOT NULL
-         );
-         PRAGMA user_version = 4;",
-    )?;
-    transaction.commit()?;
-    Ok(())
-}
-
 pub(super) fn bound_node(
     connection: &Connection,
     network: &NetworkId,

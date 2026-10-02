@@ -11,37 +11,6 @@ use crate::Error;
 mod tests;
 pub(super) mod validation;
 
-pub(super) fn upgrade(connection: &mut Connection) -> Result<(), Error> {
-    let version: u32 = connection.pragma_query_value(None, "user_version", |row| row.get(0))?;
-    if (3..=8).contains(&version) {
-        return Ok(());
-    }
-    if version != 2 {
-        return Err(Error::Configuration(
-            "connection schema upgrade requires schema 2",
-        ));
-    }
-    let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
-    transaction.execute_batch(
-        "CREATE TABLE connection_identities (
-            node_id TEXT PRIMARY KEY REFERENCES nodes(id), public_key TEXT NOT NULL UNIQUE,
-            capabilities TEXT NOT NULL
-         );
-         CREATE TABLE connection_source (
-            id INTEGER PRIMARY KEY CHECK (id = 1), configuration TEXT NOT NULL
-         );
-         INSERT INTO connection_source VALUES (1, '{\"listeners\":[],\"candidates\":[]}');
-         CREATE TABLE connection_receipts (
-            node_id TEXT PRIMARY KEY REFERENCES nodes(id),
-            revision INTEGER NOT NULL CHECK (revision BETWEEN 1 AND 4294967295),
-            digest TEXT NOT NULL, saved_at TEXT NOT NULL
-         );
-         PRAGMA user_version = 3;",
-    )?;
-    transaction.commit()?;
-    Ok(())
-}
-
 fn nodes(connection: &Connection, network: &NetworkId) -> Result<Vec<ConnectionNode>, Error> {
     let inventory = connection
         .prepare(&format!("{NODE_SELECT} WHERE network_id=?1 ORDER BY id"))?

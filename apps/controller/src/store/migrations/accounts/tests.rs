@@ -27,7 +27,7 @@ fn snapshot(db: &Connection) -> Vec<(String, Vec<Vec<Value>>)> {
 #[test]
 fn standalone_v10_fragment_preserves_every_legacy_cell_and_identity_without_version_assignment() {
     let historical = crate::store::test_support::fixtures::original_v8::V8::create();
-    historical.write_v10_schema();
+    historical.write_scoped_schema(10);
     // Independent old DDL/rows, without opening or downgrading a current Store.
     let mut db = historical.database();
     let node_id = &historical.ids[0];
@@ -90,7 +90,8 @@ fn standalone_v10_fragment_preserves_every_legacy_cell_and_identity_without_vers
 fn fragment_failure_rolls_back_all_ddl_and_preserves_v9() {
     let mut db = Connection::open_in_memory().unwrap();
     db.pragma_update(None, "foreign_keys", true).unwrap();
-    db.execute_batch(include_str!("../schema_v9.sql")).unwrap();
+    db.execute_batch(include_str!("../../test_support/fixtures/schema_v9.sql"))
+        .unwrap();
     db.execute_batch("PRAGMA user_version=9; CREATE TABLE node_ownership(injected INTEGER);")
         .unwrap();
     {
@@ -124,9 +125,11 @@ fn fragment_failure_rolls_back_all_ddl_and_preserves_v9() {
 fn structural_fixture() -> Connection {
     let db = Connection::open_in_memory().unwrap();
     db.pragma_update(None, "foreign_keys", true).unwrap();
-    db.execute_batch(include_str!("../schema_v9.sql")).unwrap();
-    db.execute_batch(crate::accounts::SCHEMA_FRAGMENT).unwrap();
-    db.execute_batch(include_str!("../ownership.sql")).unwrap();
+    db.execute_batch(include_str!("../../test_support/fixtures/schema_v9.sql"))
+        .unwrap();
+    db.execute_batch(super::SCHEMA).unwrap();
+    db.execute_batch(include_str!("../sql/ownership.sql"))
+        .unwrap();
     super::validate(&db).unwrap();
     db
 }
@@ -207,9 +210,10 @@ fn installed_gate_checks_partial_unique_index_and_composite_foreign_keys() {
     ] {
         let db = Connection::open_in_memory().unwrap();
         db.pragma_update(None, "foreign_keys", true).unwrap();
-        db.execute_batch(include_str!("../schema_v9.sql")).unwrap();
-        db.execute_batch(crate::accounts::SCHEMA_FRAGMENT).unwrap();
-        let ddl = include_str!("../ownership.sql");
+        db.execute_batch(include_str!("../../test_support/fixtures/schema_v9.sql"))
+            .unwrap();
+        db.execute_batch(super::SCHEMA).unwrap();
+        let ddl = include_str!("../sql/ownership.sql");
         assert!(ddl.contains(from));
         db.execute_batch(&ddl.replace(from, to)).unwrap();
         assert!(

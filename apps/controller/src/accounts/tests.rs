@@ -7,6 +7,7 @@ use rusqlite::{Connection, TransactionBehavior, params};
 use tempfile::TempDir;
 
 use super::*;
+use crate::store::migrations::accounts::SCHEMA;
 
 const A: &str = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
 const B: &str = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
@@ -26,7 +27,7 @@ impl Fixture {
         let path = dir.path().join("accounts.sqlite");
         let mut db = connect(&path);
         // The entire actual v9 schema, not a substitute networks table.
-        db.execute_batch(include_str!("../store/schema_v9.sql"))
+        db.execute_batch(include_str!("../store/test_support/fixtures/schema_v9.sql"))
             .unwrap();
         for (id, initial) in [(A, 1), (B, 0)] {
             db.execute(
@@ -38,7 +39,7 @@ impl Fixture {
         let tx = db
             .transaction_with_behavior(TransactionBehavior::Immediate)
             .unwrap();
-        tx.execute_batch(SCHEMA_FRAGMENT).unwrap();
+        tx.execute_batch(SCHEMA).unwrap();
         tx.commit().unwrap();
         Self {
             _dir: dir,
@@ -136,10 +137,10 @@ fn normalized_email_and_input_budget() {
 fn explicit_schema_rollback_and_actual_v9_fk() {
     let mut db = Connection::open_in_memory().unwrap();
     db.pragma_update(None, "foreign_keys", true).unwrap();
-    db.execute_batch(include_str!("../store/schema_v9.sql"))
+    db.execute_batch(include_str!("../store/test_support/fixtures/schema_v9.sql"))
         .unwrap();
     let tx = db.transaction().unwrap();
-    tx.execute_batch(SCHEMA_FRAGMENT).unwrap();
+    tx.execute_batch(SCHEMA).unwrap();
     tx.rollback().unwrap();
     let exists: bool = db
         .query_row(
@@ -149,7 +150,7 @@ fn explicit_schema_rollback_and_actual_v9_fk() {
         )
         .unwrap();
     assert!(!exists);
-    db.execute_batch(SCHEMA_FRAGMENT).unwrap();
+    db.execute_batch(SCHEMA).unwrap();
     assert!(db.execute("INSERT INTO account_invitations VALUES ('i',zeroblob(32),'missing','a@b','member',NULL,2000,NULL,NULL,NULL)",[]).is_err());
     let version: i64 = db
         .pragma_query_value(None, "user_version", |r| r.get(0))

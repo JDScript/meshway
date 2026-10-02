@@ -19,13 +19,13 @@ pub(super) fn install(tx: &Transaction<'_>) -> Result<(), Error> {
             ));
         }
     }
-    tx.execute_batch(include_str!("schema_v12.sql"))?;
+    tx.execute_batch(include_str!("sql/schema_v12.sql"))?;
     validate(tx)
 }
 
 pub(super) fn validate(db: &Connection) -> Result<(), Error> {
     let reference = Connection::open_in_memory()?;
-    reference.execute_batch(include_str!("schema_v12.sql"))?;
+    reference.execute_batch(include_str!("sql/schema_v12.sql"))?;
     for name in TABLES {
         let expected: String =
             reference.query_row("SELECT sql FROM sqlite_schema WHERE name=?1", [name], |r| {

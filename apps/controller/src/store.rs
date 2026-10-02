@@ -13,7 +13,6 @@ use crate::Error;
 mod access;
 mod account_authorization;
 mod account_operations;
-mod account_schema;
 mod configuration;
 mod connection_runtime;
 mod connections;
@@ -22,13 +21,12 @@ mod ipam;
 mod jsonc;
 mod latency_history;
 mod managed_transports;
+pub(crate) mod migrations;
 mod network;
 mod networks;
 mod ownership;
 mod policy_v3;
-mod policy_v3_schema;
 mod publication;
-mod release_schema;
 pub(crate) use networks::NetworkId;
 mod tags;
 #[cfg(test)]
@@ -99,72 +97,7 @@ impl Store {
         connection.busy_timeout(Duration::from_secs(5))?;
         connection.pragma_update(None, "foreign_keys", true)?;
         connection.pragma_update(None, "synchronous", "FULL")?;
-        if new {
-            let transaction =
-                connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
-            transaction.execute_batch(
-                "CREATE TABLE settings (id INTEGER PRIMARY KEY CHECK (id = 1), admin_hash BLOB NOT NULL);
-                 CREATE TABLE nodes (
-                    id TEXT PRIMARY KEY,
-                    credential_hash BLOB NOT NULL UNIQUE,
-                    name TEXT NOT NULL,
-                    agent_version TEXT NOT NULL,
-                    registered_at TEXT NOT NULL,
-                    last_seen TEXT NOT NULL,
-                    revoked_at TEXT
-                 );
-                 CREATE TABLE enrollment_tokens (
-                    id TEXT PRIMARY KEY,
-                    token_hash BLOB NOT NULL UNIQUE,
-                    expires_at INTEGER NOT NULL,
-                    used_node_id TEXT REFERENCES nodes(id),
-                    binding_hash BLOB,
-                    CHECK ((used_node_id IS NULL) = (binding_hash IS NULL))
-                 );
-                 PRAGMA user_version = 1;",
-            )?;
-            transaction.execute("INSERT INTO settings VALUES (1, ?1)", [digest(admin)])?;
-            transaction.commit()?;
-            File::open(path)?.sync_all()?;
-        }
-        let version: i64 = connection.pragma_query_value(None, "user_version", |row| row.get(0))?;
-        if !(1..=release_schema::VERSION).contains(&version) {
-            return Err(Error::Configuration(
-                "unsupported or incomplete controller database schema",
-            ));
-        }
-        let stored: Vec<u8> =
-            connection.query_row("SELECT admin_hash FROM settings WHERE id = 1", [], |row| {
-                row.get(0)
-            })?;
-        if stored != digest(admin) {
-            return Err(Error::Configuration(
-                "admin.token does not match the database; refusing to reinitialize",
-            ));
-        }
-        if version < 9 {
-            ipam::upgrade(&mut connection, options)?;
-            connections::upgrade(&mut connection)?;
-            connection_runtime::upgrade(&mut connection)?;
-            access::upgrade(&mut connection)?;
-            network::upgrade(&mut connection)?;
-        }
-        if version < 8 {
-            let transaction =
-                connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
-            transaction.execute_batch("ALTER TABLE enrollment_tokens ADD COLUMN device_binding TEXT; PRAGMA user_version = 8;")?;
-            transaction.commit()?;
-        }
-        if version < 9 {
-            networks::upgrade(&mut connection)?;
-        }
-        if version < 10 {
-            managed_transports::upgrade(&mut connection)?;
-        }
-        let material_key = managed_transports::key(path, &connection)?;
-        networks::validate_integrity(&connection)?;
-        networks::install_identity_guards(&connection)?;
-        release_schema::upgrade(&mut connection)?;
+        let material_key = migrations::initialize(&mut connection, path, new, admin, options)?;
         // Initialization flags still refer to the original network; never
         // renumber any network on restart.
         let initial = NetworkId::initial(&connection)?;

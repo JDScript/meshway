@@ -476,16 +476,19 @@ fn initial_intent_consumption_is_atomic_identity_bound_and_cannot_restore_revoca
 
 #[test]
 fn migration_preserves_existing_rows_revision_and_rolls_back_all_ddl() {
-    let dir = directory();
+    let historical = crate::store::test_support::fixtures::original_v8::V8::create();
+    let dir = &historical.directory;
+    historical.write_scoped_schema(9);
+    let db = historical.database();
+    let expected = canonical_json(&historical.configuration(&db, 0)).unwrap();
+    drop(db);
     let store = Store::open(dir.path(), &NetworkOptions::default()).unwrap();
     let network = store.initial_network_id().unwrap();
-    let revision = store.revision(&network).unwrap();
-    let db = &store.connection;
-    db.execute_batch("DROP TABLE mesh_execution_receipts; DROP TABLE mesh_execution_capabilities; DROP TABLE network_policy_sources;").unwrap();
-    db.execute_batch("DROP TABLE managed_enrollment_intents; DROP TABLE managed_transport_capabilities; DROP TABLE managed_listeners; DROP INDEX enrollment_tokens_network_id; PRAGMA user_version=9;").unwrap();
-    drop(store);
-    let store = Store::open(dir.path(), &NetworkOptions::default()).unwrap();
-    assert_eq!(store.revision(&network).unwrap(), revision);
+    assert_eq!(store.revision(&network).unwrap(), 42);
+    assert_eq!(
+        canonical_json(&store.configuration(&historical.credentials[0]).unwrap()).unwrap(),
+        expected
+    );
     assert!(
         store
             .managed_listeners(&network)
@@ -494,9 +497,14 @@ fn migration_preserves_existing_rows_revision_and_rolls_back_all_ddl() {
             .is_empty()
     );
     drop(store);
-    let mut db = Connection::open(dir.path().join("controller.sqlite3")).unwrap();
-    db.execute_batch("DROP TABLE managed_enrollment_intents; DROP TABLE managed_transport_capabilities; DROP TABLE managed_listeners; DROP INDEX enrollment_tokens_network_id; CREATE TABLE managed_enrollment_intents(blocker TEXT); PRAGMA user_version=9;").unwrap();
-    assert!(upgrade(&mut db).is_err());
+    let mut db = Connection::open_in_memory().unwrap();
+    db.execute_batch(include_str!("../test_support/fixtures/schema_v9.sql"))
+        .unwrap();
+    db.execute_batch(
+        "CREATE TABLE managed_enrollment_intents(blocker TEXT); PRAGMA user_version=9;",
+    )
+    .unwrap();
+    assert!(crate::store::migrations::transport_materials::upgrade(&mut db).is_err());
     assert_eq!(
         db.pragma_query_value::<u32, _>(None, "user_version", |r| r.get(0))
             .unwrap(),

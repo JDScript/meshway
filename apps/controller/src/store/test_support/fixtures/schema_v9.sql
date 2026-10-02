@@ -13,4 +13,3 @@ CREATE TABLE mesh_access_source(network_id TEXT NOT NULL REFERENCES networks(net
 CREATE TABLE mesh_access_legacy_v5(network_id TEXT NOT NULL REFERENCES networks(network_id),id INTEGER NOT NULL CHECK(id=1),policy TEXT NOT NULL,PRIMARY KEY(network_id,id));
 CREATE TABLE tag_definitions(network_id TEXT NOT NULL REFERENCES networks(network_id),tag TEXT NOT NULL,description TEXT NOT NULL,PRIMARY KEY(network_id,tag));
 CREATE TABLE node_tags(network_id TEXT NOT NULL REFERENCES networks(network_id),node_id TEXT NOT NULL,tag TEXT NOT NULL,PRIMARY KEY(network_id,node_id,tag),FOREIGN KEY(network_id,node_id) REFERENCES nodes(network_id,id),FOREIGN KEY(network_id,tag) REFERENCES tag_definitions(network_id,tag));
-PRAGMA user_version=9;

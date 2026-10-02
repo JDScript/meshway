@@ -1,5 +1,6 @@
 use super::*;
 use crate::NetworkOptions;
+use crate::store::migrations::latency::validate_schema;
 use std::os::unix::fs::PermissionsExt;
 
 struct Fixture {

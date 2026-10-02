@@ -160,7 +160,9 @@ fn v12_schema_gate_rolls_back_fragments_and_preserves_v11_rows() {
         .connection
         .execute_batch("CREATE TABLE mesh_execution_receipts(dummy TEXT)")
         .unwrap();
-    assert!(super::super::release_schema::upgrade(&mut store.connection).is_err());
+    assert!(
+        super::super::migrations::execution_and_accounts::upgrade(&mut store.connection).is_err()
+    );
     assert_eq!(
         store
             .connection
@@ -182,7 +184,7 @@ fn v12_schema_gate_rolls_back_fragments_and_preserves_v11_rows() {
         .connection
         .execute_batch("DROP TABLE mesh_execution_receipts")
         .unwrap();
-    super::super::release_schema::upgrade(&mut store.connection).unwrap();
+    super::super::migrations::execution_and_accounts::upgrade(&mut store.connection).unwrap();
     assert_eq!(
         store
             .connection
@@ -208,12 +210,14 @@ fn v12_schema_gate_rolls_back_fragments_and_preserves_v11_rows() {
     )
     .unwrap();
     assert!(!active(&store.connection, &scope).unwrap());
-    super::super::release_schema::upgrade(&mut store.connection).unwrap();
+    super::super::migrations::execution_and_accounts::upgrade(&mut store.connection).unwrap();
     store
         .connection
         .execute_batch("ALTER TABLE mesh_execution_receipts ADD COLUMN unexpected TEXT")
         .unwrap();
-    assert!(super::super::release_schema::upgrade(&mut store.connection).is_err());
+    assert!(
+        super::super::migrations::execution_and_accounts::upgrade(&mut store.connection).is_err()
+    );
 }
 
 #[test]

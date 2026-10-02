@@ -1,6 +1,6 @@
 use meshway_protocol::{
     AgentDnsSnapshot, DNS_SCHEMA_VERSION, MAX_DNS_BYTES, MeshDnsConfiguration, NetworkSnapshot,
-    NodeDnsConfiguration, SaveNetworkRequest, compile_dns_records, dns_digest, local,
+    NodeDnsConfiguration, SaveNetworkRequest, compile_dns_records, dns_digest,
 };
 use rusqlite::{Connection, TransactionBehavior, params};
 
@@ -9,36 +9,6 @@ use crate::Error;
 
 #[cfg(test)]
 mod tests;
-
-/// Additive v6 -> v7. Existing payloads and address pools do not change, so
-/// retain the global revision. The new DNS body starts at that same revision.
-pub(super) fn upgrade(connection: &mut Connection) -> Result<(), Error> {
-    let version: u32 = connection.pragma_query_value(None, "user_version", |row| row.get(0))?;
-    if (7..=8).contains(&version) {
-        return Ok(());
-    }
-    if version != 6 {
-        return Err(Error::Configuration("network upgrade requires schema 6"));
-    }
-    let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
-    transaction.execute_batch(
-        "CREATE TABLE network_identity (
-        id INTEGER PRIMARY KEY CHECK (id=1),
-        network_id TEXT NOT NULL UNIQUE CHECK (length(network_id)=32),
-        name TEXT NOT NULL, dns TEXT NOT NULL
-    );",
-    )?;
-    let network_id = local::credential()?[..32].to_owned();
-    let dns = serde_json::to_string(&MeshDnsConfiguration::default())
-        .map_err(|_| Error::Configuration("cannot encode network DNS"))?;
-    transaction.execute(
-        "INSERT INTO network_identity VALUES (1, ?1, 'Meshway', ?2)",
-        params![network_id, dns],
-    )?;
-    transaction.pragma_update(None, "user_version", 7)?;
-    transaction.commit()?;
-    Ok(())
-}
 
 fn snapshot(connection: &Connection, network: &NetworkId) -> Result<NetworkSnapshot, Error> {
     let (network_id, name, json): (String, String, String) = connection.query_row(
