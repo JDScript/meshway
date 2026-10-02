@@ -91,3 +91,33 @@ export type PartStatus = { at: number; error: string | null }
 export function nextPartStatus(previous: PartStatus, at: number, error: string | null): PartStatus {
   return at > previous.at ? { at, error } : previous
 }
+
+/**
+ * Worth a look on the inventory: an active node whose configuration was
+ * never or not yet acknowledged, or that has not contacted the controller
+ * for over an hour. Neither says anything about tunnels.
+ */
+export function needsAttention(node: NodeSummary, reference: number): boolean {
+  if (node.revoked_at !== null) return false
+  const receipt = receiptState(node)
+  return receipt === "behind" || receipt === "never" || contactBucket(node, reference) === "stale"
+}
+
+export type NodeCarriers = { listeners: string[]; outgoing: number }
+
+/** Saved carriers per node: listener transports it accepts on, and how many connections it dials. */
+export function carriersByNode(
+  plan: { listeners: { node_id: string; transport: string }[]; candidates: { dialer_node_id: string }[] }
+): Map<string, NodeCarriers> {
+  const result = new Map<string, NodeCarriers>()
+  const entry = (nodeId: string) => {
+    const existing = result.get(nodeId)
+    if (existing) return existing
+    const created: NodeCarriers = { listeners: [], outgoing: 0 }
+    result.set(nodeId, created)
+    return created
+  }
+  for (const listener of plan.listeners) entry(listener.node_id).listeners.push(listener.transport)
+  for (const candidate of plan.candidates) entry(candidate.dialer_node_id).outgoing += 1
+  return result
+}

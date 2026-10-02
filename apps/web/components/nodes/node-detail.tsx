@@ -9,7 +9,6 @@ import {
   CircleAlertIcon,
   EllipsisIcon,
   RefreshCwIcon,
-  CableIcon,
   ShieldOffIcon,
   ShieldCheckIcon,
   WaypointsIcon,
@@ -35,7 +34,6 @@ import { Hint } from "@/components/common/hint"
 import { Panel } from "@/components/common/panel"
 import { DiagnosticDetails } from "@/components/common/diagnostic-details"
 import { SectionHeader } from "@/components/common/section-header"
-import { Metric, StatusSummary } from "@/components/common/status-summary"
 import { FailureNotice } from "@/components/common/failure-notice"
 import { LastContact, ReceiptBadge, StatusBadge } from "@/components/nodes/node-status"
 import { RevokeDialog } from "@/components/nodes/revoke-dialog"
@@ -69,9 +67,13 @@ import { nextPartStatus, type PartStatus } from "@/lib/node-status"
 import { formatClock, formatDateTime } from "@/lib/time"
 import { topologyFlowHref } from "@/lib/flow-navigation"
 import { diagnosticsHref } from "@/lib/connectivity-guidance"
-import { cn } from "@/lib/utils"
+import type { NodeOwner } from "@/lib/members-model"
+import { roleLabels } from "@/lib/account-model"
 
 export type NodeTab = "overview" | "connections"
+
+/** Who owns the node, from the ownership and member reads. */
+export type NodeOwnerRead = { ok: true; owner: NodeOwner | null } | { ok: false; error: string }
 
 type ConnectionsRead = { ok: true; data: ConnectionsSnapshot } | { ok: false; error: string }
 /** Page render input: the read also carries the server time it was made at. */
@@ -92,8 +94,10 @@ export function NodeDetail({
   discoveries,
   tags,
   network,
+  owner,
   managed: initialManaged,
 }: {
+  owner: NodeOwnerRead
   node: NodeSummary
   fetchedAt: number
   initialTab: NodeTab
@@ -248,7 +252,7 @@ export function NodeDetail({
               {node.mesh_ipv4}
               <CopyButton value={node.mesh_ipv4} label="复制 Mesh IPv4" iconOnly variant="ghost" />
             </span>
-            <LastContact node={node} fetchedAt={fetchedAt} />
+            <OwnerLabel owner={owner} />
           </>
         }
         actions={
@@ -301,39 +305,35 @@ export function NodeDetail({
         onRetry={runtimes.refresh}
       />
 
+      <NodeFacts
+        node={node}
+        fetchedAt={fetchedAt}
+        entry={entry}
+        revision={latest.ok ? latest.data.revision : null}
+        connectionsError={latest.ok ? null : latest.error}
+        listeners={savedScope?.listeners.length ?? null}
+        outgoing={savedScope?.outgoing.length ?? null}
+        runtimes={runtimes}
+        onOpenConfiguration={() => changeTab("connections")}
+      />
+
       <Tabs value={tab} onValueChange={(value) => changeTab(value === "connections" ? "connections" : "overview")}>
         <TabsList variant="line" className="w-full justify-start border-b">
           <TabsTrigger value="overview" className="flex-none px-3">
             概览
           </TabsTrigger>
           <TabsTrigger value="connections" className="flex-none px-3">
-            <CableIcon />
-            配置
+            承载与配置
           </TabsTrigger>
         </TabsList>
 
         <TabsContent value="overview" className="pt-4">
-          <Overview
-            node={node}
-            fetchedAt={fetchedAt}
-            entry={entry}
-            connections={latest}
-            runtimes={runtimes}
-            onOpenConnections={() => changeTab("connections")}
-            tags={tags}
-            network={network}
-          />
+          <Overview node={node} connections={latest} runtimes={runtimes} tags={tags} network={network} owner={owner} />
         </TabsContent>
 
         <TabsContent value="connections" className="flex flex-col gap-4 pt-4">
           {latest.ok ? (
             <>
-              <StatusSummary>
-                <Metric label="已保存">{savedScope?.listeners.length ?? 0} 个监听 · {savedScope?.outgoing.length ?? 0} 个主动连接</Metric>
-                {entry ? <Metric label="节点回执"><ConnectionReceipt entry={entry} revision={latest.data.revision} /></Metric> : null}
-                {entry && readiness(entry) !== "ready" ? <span className="text-warning">{readinessLabels[readiness(entry)]} · 展开连接身份详情检查</span> : null}
-                <Link href={diagnosticsHref(routes, node.id)} className={cn(buttonVariants({ variant: "ghost", size: "sm" }), "ml-auto")}>诊断此节点</Link>
-              </StatusSummary>
               <NodeCarriers
                 nodeId={node.id}
                 snapshot={latest.data}
@@ -374,7 +374,6 @@ export function NodeDetail({
                   }}
                 />
               ) : null}
-              <NodeRuntimePanel nodeId={node.id} nodes={latest.data.nodes} runtimes={runtimes} />
               <DiagnosticDetails title="连接身份与当前启用帮助">
                 {entry ? <ConnectionIdentityDetails entry={entry} revision={latest.data.revision} /> : null}
                 {!revoked ? <ManagedDataplanePanel /> : null}
@@ -409,137 +408,185 @@ export function NodeDetail({
 
 function Overview({
   node,
-  fetchedAt,
-  entry,
   connections,
   runtimes,
-  onOpenConnections,
   tags,
   network,
+  owner,
 }: {
   node: NodeSummary
-  fetchedAt: number
-  entry: ConnectionNode | undefined
   connections: ConnectionsRead
   runtimes: Runtimes
-  onOpenConnections: () => void
   tags: { ok: true; tags: string[] } | { ok: false; error: string }
   network: NodeDnsNetwork
+  owner: NodeOwnerRead
 }) {
   const routes = useRoutes()
-  const scope = connections.ok ? nodeScope(fromPlan(connections.data.configuration), node.id) : null
   return (
-    <div className="grid items-start gap-4 lg:grid-cols-2">
-      <Panel title="身份与地址" bodyClassName="px-4 py-1 sm:px-5">
-        <dl className="divide-y">
-          <Row label="名称">{node.name}</Row>
-          <Row label="Mesh IPv4" hint="隧道内地址，不是其他节点建连用的对外地址。">
-            <CopyValue value={node.mesh_ipv4} label="复制 IPv4" />
-          </Row>
-          <Row label="Mesh IPv6">
-            <CopyValue value={node.mesh_ipv6} label="复制 IPv6" />
-          </Row>
-          <Row label="标签" hint="管理员维护的分组，供访问授权引用。">
-            <span className="flex items-center justify-between gap-2">
-              {!tags.ok ? (
-                <span className="text-destructive">读取失败</span>
-              ) : tags.tags.length === 0 ? (
-                <span className="text-muted-foreground">没有标签</span>
-              ) : (
-                <span data-testid="node-tags" className="flex flex-wrap gap-1">
-                  {tags.tags.map((tag) => (
-                    <Badge key={tag} variant="outline" className="font-mono">
-                      {tag.slice(4)}
-                    </Badge>
-                  ))}
-                </span>
-              )}
-              {node.revoked_at === null ? (
-                <Link
-                  href={routes.tags({ node: node.id })}
-                  className={buttonVariants({ variant: "ghost", size: "sm" })}
-                >
-                  修改
-                </Link>
-              ) : null}
-            </span>
-          </Row>
-          {node.revoked_at !== null ? (
-            <Row label="撤销于">
-              <span className="font-mono">{formatDateTime(node.revoked_at)}</span>
-            </Row>
-          ) : null}
-        </dl>
-        <div className="py-3">
-          <DiagnosticDetails title="节点身份技术详情">
-            <dl>
-              <Row label="节点 ID"><CopyValue value={node.id} label="复制节点 ID" /></Row>
-              <Row label="Agent 版本"><span className="font-mono">{node.agent_version}</span></Row>
-              <Row label="注册于">{formatDateTime(node.registered_at)}</Row>
-              {node.country !== null ? (
-                <Row label="旧版国家标注" hint="v2 路由国家条件仍可能引用；不是位置，也不再在节点上维护。">
-                  <span className="font-mono">{node.country}</span>
-                </Row>
-              ) : null}
-            </dl>
-          </DiagnosticDetails>
-        </div>
-      </Panel>
+    <div className="grid items-start gap-4 lg:grid-cols-[minmax(0,1.35fr)_minmax(0,1fr)]">
+      <div className="flex min-w-0 flex-col gap-4">
+        {connections.ok ? (
+          <NodeRuntimePanel nodeId={node.id} nodes={connections.data.nodes} runtimes={runtimes} />
+        ) : (
+          <FailureNotice title="连接配置读取失败，无法列出邻居" nextStep="稍后重试；持续失败时检查控制面。" error={connections.error} />
+        )}
+      </div>
 
-      <div className="flex flex-col gap-4">
-        <Panel title="控制面" bodyClassName="px-4 py-1 sm:px-5">
+      <div className="flex min-w-0 flex-col gap-4">
+        <Panel title="身份与地址" bodyClassName="px-4 py-1 sm:px-5">
           <dl className="divide-y">
-            <Row label="控制面联系" hint="controller 最近一次接受注册或心跳；不代表在线或隧道连通。">
-              <LastContact node={node} fetchedAt={fetchedAt} detail />
+            <Row label="Mesh IPv4" hint="隧道内地址，不是其他节点建连用的对外地址。">
+              <CopyValue value={node.mesh_ipv4} label="复制 IPv4" />
             </Row>
-            <Row label="IP / 路由配置">
-              <ReceiptBadge node={node} />
+            <Row label="Mesh IPv6">
+              <CopyValue value={node.mesh_ipv6} label="复制 IPv6" />
             </Row>
+            <Row label="归属">
+              <span className="flex items-center justify-between gap-2">
+                <OwnerLabel owner={owner} full />
+                <Link href={routes.members} className={buttonVariants({ variant: "ghost", size: "sm" })}>
+                  成员
+                </Link>
+              </span>
+            </Row>
+            <Row label="标签" hint="管理员维护的分组，供访问控制引用。">
+              <span className="flex items-center justify-between gap-2">
+                {!tags.ok ? (
+                  <span className="text-destructive">读取失败</span>
+                ) : tags.tags.length === 0 ? (
+                  <span className="text-muted-foreground">没有标签</span>
+                ) : (
+                  <span data-testid="node-tags" className="flex flex-wrap gap-1">
+                    {tags.tags.map((tag) => (
+                      <Badge key={tag} variant="outline" className="font-mono">
+                        {tag.slice(4)}
+                      </Badge>
+                    ))}
+                  </span>
+                )}
+                {node.revoked_at === null ? (
+                  <Link href={routes.tags({ node: node.id })} className={buttonVariants({ variant: "ghost", size: "sm" })}>
+                    修改
+                  </Link>
+                ) : null}
+              </span>
+            </Row>
+            <Row label="Agent 版本">
+              <span className="font-mono">{node.agent_version}</span>
+            </Row>
+            <Row label="注册于">{formatDateTime(node.registered_at)}</Row>
+            {node.revoked_at !== null ? (
+              <Row label="撤销于">
+                <span className="font-mono">{formatDateTime(node.revoked_at)}</span>
+              </Row>
+            ) : null}
           </dl>
-        </Panel>
-
-        <Panel
-          title="承载与连接"
-          actions={
-            <Button size="sm" variant="outline" onClick={onOpenConnections}>
-              <CableIcon data-icon="inline-start" />
-              配置
-            </Button>
-          }
-          bodyClassName="px-4 py-1 sm:px-5"
-        >
-          {!connections.ok ? (
-            <div className="py-3"><FailureNotice title="连接配置读取失败" nextStep="进入连接页重试；持续失败时检查控制面。" error={connections.error} /></div>
-          ) : !entry ? (
-            <p className="py-3 text-xs text-muted-foreground">连接清单中没有这个节点。</p>
-          ) : (
-            <div>
-            <dl className="divide-y">
-              <Row label="已保存配置">
-                {scope
-                  ? `接收 ${scope.listeners.length} 个监听 · 主动连接 ${scope.outgoing.length} 个 · 被连接 ${scope.incoming.length} 个`
-                  : "—"}
-              </Row>
-              <Row label="节点回执">
-                <ConnectionReceipt entry={entry} revision={connections.data.revision} />
-              </Row>
-              <Row label="运行状态">
-                <RuntimeChip
-                  observation={runtimeFor(runtimes.snapshot, node.id)}
-                  now={runtimes.now}
-                  readFailed={runtimes.snapshot === null}
-                />
-              </Row>
-            </dl>
-            <div className="py-3"><ConnectionIdentityDetails entry={entry} revision={connections.data.revision} /></div>
-            </div>
-          )}
+          <div className="py-3">
+            <DiagnosticDetails title="技术详情">
+              <dl>
+                <Row label="节点 ID"><CopyValue value={node.id} label="复制节点 ID" /></Row>
+                {node.country !== null ? (
+                  <Row label="旧版国家标注" hint="v2 路由国家条件仍可能引用；不是位置，也不再在节点上维护。">
+                    <span className="font-mono">{node.country}</span>
+                  </Row>
+                ) : null}
+              </dl>
+            </DiagnosticDetails>
+          </div>
         </Panel>
 
         <NodeDnsPanel node={node} network={network} />
       </div>
     </div>
   )
+}
+
+/**
+ * Four independent facts about the node, never merged into one "online"
+ * state: control-plane contact, configuration receipt, the agent's own
+ * runtime report, and the saved carriers.
+ */
+function NodeFacts({
+  node,
+  fetchedAt,
+  entry,
+  revision,
+  connectionsError,
+  listeners,
+  outgoing,
+  runtimes,
+  onOpenConfiguration,
+}: {
+  node: NodeSummary
+  fetchedAt: number
+  entry: ConnectionNode | undefined
+  revision: number | null
+  connectionsError: string | null
+  listeners: number | null
+  outgoing: number | null
+  runtimes: Runtimes
+  onOpenConfiguration: () => void
+}) {
+  const ready = entry ? readiness(entry) : null
+  return (
+    <dl data-slot="node-facts" className="grid overflow-hidden rounded-xl border bg-card shadow-xs sm:grid-cols-2 xl:grid-cols-4 [&>div]:border-b sm:[&>div:nth-child(odd)]:border-r xl:[&>div]:border-b-0 xl:[&>div:not(:last-child)]:border-r">
+      <FactCell label="控制面联系" hint="controller 最近一次接受注册或心跳；不代表在线或隧道连通。">
+        <LastContact node={node} fetchedAt={fetchedAt} />
+      </FactCell>
+      <FactCell label="IP / 路由配置" hint="Agent 已校验并保存该版本；不代表数据面已生效。">
+        <ReceiptBadge node={node} />
+      </FactCell>
+      <FactCell label="运行报告" hint="Agent 自报的运行阶段与邻居认证探测。">
+        <RuntimeChip observation={runtimeFor(runtimes.snapshot, node.id)} now={runtimes.now} readFailed={runtimes.snapshot === null} />
+      </FactCell>
+      <FactCell label="承载">
+        {connectionsError !== null ? (
+          <span className="text-xs text-destructive">读取失败</span>
+        ) : (
+          <button
+            type="button"
+            onClick={onOpenConfiguration}
+            className="inline-flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1 rounded text-left text-[0.8125rem] outline-none hover:underline focus-visible:ring-2 focus-visible:ring-ring/40"
+          >
+            <span>
+              {listeners === 0 ? "无监听，只拨出" : `${listeners ?? 0} 个监听`} · {outgoing ?? 0} 个主动连接
+            </span>
+            {entry && revision !== null ? <ConnectionReceipt entry={entry} revision={revision} /> : null}
+            {ready !== null && ready !== "ready" ? <span className="text-xs text-warning">{readinessLabels[ready]}</span> : null}
+          </button>
+        )}
+      </FactCell>
+    </dl>
+  )
+}
+
+function FactCell({ label, hint, children }: { label: string; hint?: string; children: ReactNode }) {
+  return (
+    <div className="flex min-w-0 flex-col gap-1.5 px-4 py-3">
+      <dt className="flex items-center gap-1 text-xs text-muted-foreground">
+        {label}
+        {hint ? <Hint label={label}>{hint}</Hint> : null}
+      </dt>
+      <dd className="min-w-0 text-[0.8125rem]">{children}</dd>
+    </div>
+  )
+}
+
+function OwnerLabel({ owner, full = false }: { owner: NodeOwnerRead; full?: boolean }) {
+  if (!owner.ok) return <span className="text-destructive" title={owner.error}>归属读取失败</span>
+  const value = owner.owner
+  if (value === null) return full ? <span className="text-muted-foreground">未知</span> : null
+  if (value.kind === "member") {
+    return (
+      <span className="inline-flex min-w-0 items-center gap-1.5">
+        <span className="truncate">{value.email}</span>
+        {full ? <span className="text-xs text-muted-foreground">{roleLabels[value.role]}</span> : null}
+      </span>
+    )
+  }
+  if (value.kind === "unassigned") return <span className="text-warning">未分配</span>
+  if (value.kind === "former") return <span className="text-muted-foreground">已离开的成员</span>
+  return <span className="text-muted-foreground">未知</span>
 }
 
 function Row({ label, hint, children }: { label: string; hint?: string; children: ReactNode }) {
