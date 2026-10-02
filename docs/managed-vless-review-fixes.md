@@ -24,6 +24,18 @@
 - 日志：`managed-vless-mv1-original-scenario.log`、`managed-vless-mv1-tests.log`、
   `managed-vless-mv1-dataplane.log`（均位于批准TMP）。
 
-## MV2 / MV3
+## MV2 — generated异常脱敏
+
+- `secret_debug::adapt_client`作为checked生成源adapter，统一opaque ApiError
+  Debug/Display；成功解码失败和异常成功status均丢弃body/raw_body，解码错误只存
+  固定分类，不保留serde错误中的secret value。status/retryable和公开category
+  保留；status-first非2xx仍在body I/O之前返回。未修改transport注入构造模板。
+- 生成重建后实际loopback HTTP：malformed 200、unknown-field 200、携带secret
+  enum值的200、unexpected201，异常/ApiError/nested Option的Display和Debug
+  均无UUID/private-key sentinel，body/raw_body为空。既有DTO直接/嵌套sentinel
+  同时通过：`secret_debug` **2 passed**。
+- 日志 `managed-vless-mv2-tests.log` / `managed-vless-mv2-generate.log` 位于批准TMP。
+
+## MV3
 
 待修复验证。公共HTTP DTO/endpoint保持固定合同；最终全消费者矩阵尚未运行。

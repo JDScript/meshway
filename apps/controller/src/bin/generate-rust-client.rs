@@ -149,6 +149,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
     client.content = client.content.replace(constructor, "let reqwest_client = reqwest::Client::builder().redirect(reqwest::redirect::Policy::none()).timeout(std::time::Duration::from_secs(10)).build().expect(\"valid static HTTP client configuration\");");
     status_first::adapt(&mut client.content, operations.len())?;
+    secret_debug::adapt_client(&mut client.content, operations.len())?;
     let types = result
         .files
         .iter_mut()
