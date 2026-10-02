@@ -194,6 +194,22 @@ HTTP upgrade累计读取另限制64KiB，避免单个未完成header无限增长
 pre-connect保护**。全IP出口接入必须先完成平台保护；accept后标记不能补救SYNACK，
 不能用目的IP或整个Agent进程豁免替代。参照主线 `docs/underlay-routing.md` 实验。
 
+### 与 protected-underlay 并行任务的最小整合点
+
+- `apps/agent/src/managed_connections/sockets.rs`：`Protection::prepare` 接收
+  `Purpose::Listener { listener_id }` 或 `Purpose::Dial { candidate_id, peer_node_id }`，
+  先创建/保护 `TcpSocket`，然后公共 `listen` / `dial` 才调用 bind/listen/connect。
+  `accepted` 仅作接受后补充检查，不能代替listen前保护。
+- `Session::start_with_packet` 已接收 `Arc<dyn Protection>`；Manager保存工厂，
+  当前由 `Manager::new` 使用 `SystemUnderlay`。协调者可在整合时增加模块可见性/
+  constructor或setter，把真正平台工厂注入；不需要重写TLS/WS/VLESS握手。
+- 生成器秘密保护独立在
+  `apps/controller/src/bin/generate-rust-client/secret_debug.rs`，只适配生成models。
+  `generate-rust-client.rs` 调用 `secret_debug::adapt`；transport注入模板仍针对
+  client构造，两者不要互相覆盖。该adapter没有改变request序列化。
+- `init/ready`、packet `Generation` 和 writer退休继续使用最新主线 Runtime /
+  packet_io；本切片未改它们，不能为适配WS回退旧接口。
+
 ## 旧 profiles 私有导入 / 切换
 
 旧节点继续原 profiles，迁移不会扫描或替换它们。协调者仅对自己的 demo进行：

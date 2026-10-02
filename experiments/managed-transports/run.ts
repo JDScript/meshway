@@ -78,7 +78,13 @@ try {
   listeners=await saveManagedListenerOperation(base,admin,networkId,{expected_revision:listeners.revision,settings:{...ws.settings,vless:{stream:"tcp",server_name:"meshway.test",websocket_path:null,websocket_host:null}}});
   assert.equal(listeners.listeners[0]?.certificate_sha256,original.certificate_sha256);await until(ready);await bidirectional("managed-tcp-tls-vless-two-directions");
   await helper("controller","controller-stop");await delay(18_000);
-  const withdrawn=await helper("NYC","observe",{destinations:[b.mesh_ipv4]});const proof=record(withdrawn.dataplane_proof);assert.equal(boolean(proof.tun_ready),false);assert(array(withdrawn.routes).every(r=>record(r).kind==="guard"));assert(!(await docker(["exec",names.NYC,"ss","-H","-ltn"])).includes(":18444"));report.evidence.push({phase:"lease-expiry-controller-outage",withdrawn});
+  const withdrawn=await helper("NYC","observe",{destinations:[b.mesh_ipv4]});const proof=record(withdrawn.dataplane_proof);
+  const stoppedTraffic=await helper("NYC","probe",{address:b.mesh_ipv4,body:bodies.SHA});
+  report.evidence.push({phase:"lease-expiry-controller-outage",withdrawn,stoppedTraffic});
+  assert.equal(boolean(proof.tun_ready),false);
+  assert(array(withdrawn.routes).every(r=>{const route=record(r);return route.kind==="guard"||(route.kind==="tun"&&route.device==="meshway0"&&boolean(proof.route_sink_retained));}));
+  assert(!boolean(stoppedTraffic.http_ok)&&!boolean(stoppedTraffic.body_matches)&&stoppedTraffic.ping_exit!==0);
+  assert(!(await docker(["exec",names.NYC,"ss","-H","-ltn"])).includes(":18444"));
   report.status="PASS";
 } catch(error) {report.status="FAIL";report.failure=error instanceof Error?error.name:"unknown";if(report.operation)report.failure_operation=report.operation;try{await failureEvidence?.();}catch{}process.exitCode=1;} finally {
   cleaning=true;

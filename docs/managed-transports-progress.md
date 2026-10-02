@@ -75,3 +75,57 @@ Branch: `feat/managed-vless`; base: `564780e`. Started 2026-10-01.
 - Final work remaining: integrate latest main/accounts without altering account
   production schema, finish combined Rust/consumer checks, complete commits and
   report exact totals / remaining product boundaries.
+
+## Final combined validation (main `0831272`, includes `9c7d922`)
+
+The entries above are chronological evidence; earlier pending/FAIL entries are
+not the final result. Rebased onto current main, preserving the accounts module,
+Argon2/getrandom dependencies and lock entries, and the reviewed R3/R5 Generation
+interfaces. No account production schema or HTTP integration was added by P2a.
+
+- Final `cargo test --workspace --all-features --locked --offline -- --test-threads=1`:
+  **485 passed, 0 failed, 7 ignored**, 45 suite result records (includes doc suites,
+  Agent and Apple core). Agent lib 125; controller lib 70; dataplane lib 70.
+  All consumers completed. Log: `$OPENCODE_TMP/managed-vless-workspace-tests-final.log`.
+- Final workspace all-target/all-feature Clippy with `-D warnings`: **PASS**.
+  Format applied and final generation drift: **PASS**. Independent Cargo targets
+  were used for feature/CLI combinations; SDK builds did not replace test CLIs.
+- Default / lab / managed all-target checks: **3 passed**; corresponding CLI-state
+  behavior cases: **1 + 1 + 2 passed**. Managed no longer implies the lab CLI.
+- SDK tests **12 passed**, Web tests **134 passed**, fixture TS tests **88 passed**,
+  selected lock/dataplane/discovery/DNS Python fixtures **6 passed**.
+- Web, SDK, e2e TypeScript and all five experiment tsconfigs: **PASS**;
+  VitePress docs build and both new Python helper syntax checks: **PASS**.
+- Final WS adapter **5 passed**; generated direct/nested secret Debug sentinel
+  **1 passed**. Managed controller behavior tests **6 passed**, covering scoped
+  minimum disclosure/restart/CAS, token identity transaction, DDL rollback,
+  unknown fields/URI rejection, authenticated legacy import and material budget.
+- Final Linux Docker acceptance on the combined main/R3/R5 code: **PASS**, seven
+  evidence phases, cleanup errors **0**:
+  `/private/var/folders/8n/20x15sl9797cdg9sdqfj803w0000gn/T/opencode/meshway-managed-vless-muq8aoep-3cc836e7b296-1uPMrD/result.json`.
+  The final lease check requires stopped HTTP/ICMP and no listener, plus an
+  explicit guard or retained `meshway0` sink; it does not wrongly require kernel
+  route removal when the existing safe sink is deliberately retained.
+- Earlier timed-out host check attempts and the extra material-size compile
+  fixture failure are retained in log history; corrected SQLite size conversion
+  uses i64 -> checked usize, and the final full build/tests above passed.
+
+### Current independent commits / coordination hooks
+
+- R1 immediate heartbeat fence: `61c9df5`.
+- Leaf lock candidate: `fd7035d` (coordinator reviews with accounts dependencies).
+- WS carrier: `20e0aae`; controller/material contracts: `c0a8c8b`;
+  Agent execution: `bcc51c0`; feature separation: `ab11fa1`.
+- URI and rebind hardening: `451da1f` / `93cdb84`; private publication budget:
+  `14bfe98`; independent generated secret Debug adapter: `18c4313`.
+- Stable protected-underlay hooks and API/forms/state-source handoff are in
+  `docs/managed-transports-api.md`; generator redaction is independent of the
+  parallel transport-injection template. No push, live/demo or remote deployment.
+
+### Explicit product follow-ups
+
+Web form integration, automatic adjacency/full primary-backup orchestration,
+production protected-underlay injection, actual VLESS TCP dial socket detail in
+M2, external Xray WS interoperability, public CA/automatic certificate renewal,
+GeoIP/UPnP and remote host deployment are not claimed by this slice. The backend
+TCP/TLS and WS/TLS managed vertical paths and private legacy migration are real.

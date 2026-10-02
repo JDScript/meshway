@@ -395,7 +395,8 @@ pub(super) fn material_budget(
     let mut total = 512usize;
     for id in ids {
         let size:Option<i64>=connection.query_row("SELECT length(material_ciphertext) FROM managed_listeners WHERE network_id=?1 AND listener_id=?2 AND material_ciphertext IS NOT NULL",params![network.as_str(),id],|r|r.get(0)).optional()?;
-        let size=usize::try_from(size.unwrap_or(0)).map_err(|_|Error::Capacity("managed material publication budget exhausted"))?;
+        let size = usize::try_from(size.unwrap_or(0))
+            .map_err(|_| Error::Capacity("managed material publication budget exhausted"))?;
         total = total.checked_add(size).ok_or(Error::Capacity(
             "managed material publication budget exhausted",
         ))?;
