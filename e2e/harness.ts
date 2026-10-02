@@ -130,6 +130,27 @@ export async function contentAlignment(page: Page) {
   });
 }
 
+/** Overview stage geometry: the map fills the viewport while immersive, else the inset below its header. */
+export async function overviewStage(page: Page) {
+  return page.evaluate(() => {
+    const stage = document.querySelector('[data-testid="network-overview"]');
+    const inset = document.querySelector('main[data-slot="sidebar-inset"]');
+    const topbar = document.querySelector('[data-slot="console-topbar"]');
+    if (!stage || !inset || !topbar) throw new Error("Missing overview stage");
+    const s = stage.getBoundingClientRect();
+    const i = inset.getBoundingClientRect();
+    return {
+      left: Math.round(s.left - i.left),
+      width: Math.round(s.width - i.width),
+      top: Math.round(s.top),
+      bottom: Math.round(innerHeight - s.bottom),
+      header: Math.round(topbar.getBoundingClientRect().height),
+      inset: Math.round(i.width),
+      overflow: document.documentElement.scrollWidth > innerWidth,
+    };
+  });
+}
+
 /** No horizontal page scroll; on failure names the elements that stick out. */
 export async function expectNoOverflow(page: Page) {
   const offenders = await page.evaluate(() => {

@@ -103,15 +103,15 @@ test("console task surfaces preserve disclosures, expired copy eligibility, deep
 
     for (const width of [1440, 390]) {
       await page.setViewportSize({ width, height: 900 });
-      for (const path of ["", "/machines", `/machines/${node.id}?tab=connections`, "/machines/add", "/settings", "/dns", "/access", "/routing", "/tags", "/connections", "/topology", "/diagnostics"]) {
+      for (const path of ["/machines", `/machines/${node.id}?tab=connections`, "/machines/add", "/settings", "/dns", "/access", "/routing", "/tags", "/connections", "/topology", "/diagnostics"]) {
         await page.goto(ui.at(path));
         await expect(page.locator('[data-slot="page-body"]')).toBeVisible();
         // The page column lines up with the top bar beside the sidebar and never scrolls sideways.
         const alignment = await contentAlignment(page);
         const inset = width >= 768 ? width - SIDEBAR_WIDTH : width;
         expect(alignment).toEqual({ left: 0, right: 0, gutter: consoleGutter(width, inset), asymmetry: 0, inset, header: HEADER_HEIGHT, overflow: false });
-        if (process.env.MESHWAY_PRODUCT_SCREENSHOTS && (path === "" || path.startsWith("/machines/"))) {
-          await page.screenshot({ path: test.info().outputPath(`product-${width}-${path === "" ? "overview" : "node"}.png`), fullPage: true });
+        if (process.env.MESHWAY_PRODUCT_SCREENSHOTS && path.startsWith("/machines/")) {
+          await page.screenshot({ path: test.info().outputPath(`product-${width}-node.png`), fullPage: true });
         }
       }
     }

@@ -100,6 +100,8 @@
     --neutral: oklch(0.6 0.012 258);
     --canvas: oklch(0.982 0.003 247);
     --header: oklch(1 0 0 / 88%);
+    --map-bg: oklch(0.972 0.006 240);
+    --map-dot: oklch(0.62 0.03 240 / 34%);
 }
 
 .dark {
@@ -142,6 +144,8 @@
     --neutral: oklch(0.66 0.014 258);
     --canvas: oklch(0.158 0.009 258);
     --header: oklch(0.178 0.01 258 / 88%);
+    --map-bg: oklch(0.155 0.014 255);
+    --map-dot: oklch(0.72 0.05 210 / 26%);
 }
 
 @layer base {
@@ -201,6 +205,43 @@
   margin-inline: auto;
   padding: 1.5rem var(--console-gutter);
   padding-bottom: calc(3rem + env(safe-area-inset-bottom, 0px));
+}
+
+/* The overview stage fills the inset below its header, or the whole
+   viewport while immersive; height and the sidebar gap animate together so
+   the map shrinks into the management layout. */
+.overview-stage {
+  height: calc(100svh - 4rem);
+  transition: height 300ms cubic-bezier(0.2, 0, 0, 1);
+}
+
+[data-slot="sidebar-wrapper"]:has([data-collapsible="icon"]) .overview-stage {
+  height: calc(100svh - 3rem);
+}
+
+[data-slot="sidebar-wrapper"][data-immersive="true"] .overview-stage {
+  height: 100svh;
+}
+
+.overview-backdrop {
+  background:
+    radial-gradient(60% 55% at 50% 48%, color-mix(in oklch, var(--brand) 12%, transparent), transparent 70%),
+    var(--map-bg);
+}
+
+[data-slot="sidebar-wrapper"] [data-slot="sidebar-gap"],
+[data-slot="sidebar-wrapper"] [data-slot="sidebar-container"] {
+  transition-duration: 300ms;
+  transition-timing-function: cubic-bezier(0.2, 0, 0, 1);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .overview-stage,
+  .console-header,
+  [data-slot="sidebar-gap"],
+  [data-slot="sidebar-container"] {
+    transition: none !important;
+  }
 }
 
 /* In-flow height reserves the full bar at the end of the editor. Sticky keeps

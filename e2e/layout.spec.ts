@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { createEnrollmentToken, getConnections, getMeshAccess, getPolicy, savePolicy } from "./network-client.ts";
-import { consoleAt, consoleGutter, contentAlignment, executable, HEADER_HEIGHT, HEADER_HEIGHT_ICON, root, run, service, SIDEBAR_ICON_WIDTH, SIDEBAR_WIDTH, unusedPort } from "./harness.ts";
+import { consoleAt, consoleGutter, contentAlignment, executable, HEADER_HEIGHT, overviewStage, HEADER_HEIGHT_ICON, root, run, service, SIDEBAR_ICON_WIDTH, SIDEBAR_WIDTH, unusedPort } from "./harness.ts";
 import { revealAdvanced } from "./web-actions.ts";
 
 const barSelector = '[data-slot="draft-action-bar"]';
@@ -40,7 +40,19 @@ test("the content column aligns with the shell and animated draft actions stay s
     for (const width of [1920, 1440, 1024, 768, 390]) {
       await page.setViewportSize({ width, height: width === 390 ? 844 : 1000 });
       const inset = width >= 768 ? width - SIDEBAR_WIDTH : width;
-      for (const path of ["", "/machines", "/machines/add", "/access", "/routing", "/tags", "/connections", "/dns", "/settings", "/diagnostics", "/topology"]) {
+      // A full load of the overview is the immersive map: no sidebar, no header.
+      await page.goto(ui.at(""));
+      await expect.poll(() => overviewStage(page)).toEqual({ left: 0, width: 0, top: 0, bottom: 0, header: 0, inset: width, overflow: false });
+      await page.getByRole("button", { name: "管理网络", exact: true }).click();
+      if (width >= 768) {
+        // The same map shrinks into the inset beside the sidebar.
+        await expect.poll(() => overviewStage(page)).toEqual({ left: 0, width: 0, top: HEADER_HEIGHT, bottom: 0, header: HEADER_HEIGHT, inset, overflow: false });
+      } else {
+        await expect(page.getByRole("dialog", { name: "导航" })).toBeVisible();
+        await page.keyboard.press("Escape");
+        await expect.poll(() => overviewStage(page)).toEqual({ left: 0, width: 0, top: HEADER_HEIGHT, bottom: 0, header: HEADER_HEIGHT, inset, overflow: false });
+      }
+      for (const path of ["/machines", "/machines/add", "/access", "/routing", "/tags", "/connections", "/dns", "/settings", "/diagnostics", "/topology"]) {
         await page.goto(ui.at(path));
         await expect(page.locator('[data-slot="page-header"]')).toBeVisible();
         expect(await contentAlignment(page)).toEqual({ left: 0, right: 0, gutter: consoleGutter(width, inset), asymmetry: 0, inset, header: HEADER_HEIGHT, overflow: false });

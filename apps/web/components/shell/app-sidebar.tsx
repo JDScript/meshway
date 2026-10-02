@@ -18,17 +18,20 @@ export function AppSidebar({
   networks,
   controllerHost,
   drafts,
+  collapsible,
 }: {
   networks: NetworkChoices
   controllerHost: string
   drafts: Record<DraftKind, boolean>
+  /** "offcanvas" while the overview is an immersive map; otherwise the icon rail. */
+  collapsible: "icon" | "offcanvas"
 }) {
   const pathname = usePathname()
   const { routes } = useNetwork()
   const active = activeNavItem(pathname, routes.base)?.item
 
   return (
-    <Sidebar collapsible="icon">
+    <Sidebar collapsible={collapsible}>
       <SidebarHeader>
         <NetworkSwitcher networks={networks} controllerHost={controllerHost} />
       </SidebarHeader>

@@ -2,7 +2,7 @@
 
 import Link from "next/link"
 import { usePathname } from "next/navigation"
-import { useEffect, type ReactNode } from "react"
+import { useEffect, useState, type ReactNode } from "react"
 
 import { useAccessHasDraft } from "@/components/access/draft-store"
 import { useConnectionsHasDraft } from "@/components/connections/draft-store"
@@ -10,6 +10,7 @@ import { NetworkWorkspace } from "@/components/network/network-workspace"
 import { useRoutingHasDraft } from "@/components/routing/draft-store"
 import { AppSidebar } from "@/components/shell/app-sidebar"
 import { CommandMenu } from "@/components/shell/command-menu"
+import { isOverviewPath, useConsoleFocus } from "@/components/shell/console-focus"
 import { activeNavItem, type DraftKind } from "@/components/shell/nav"
 import { useNetwork } from "@/components/shell/network-context"
 import type { NetworkChoices } from "@/components/shell/network-switcher"
@@ -45,10 +46,26 @@ export function ConsoleShell({
   children: ReactNode
 }) {
   const current = networks.ok ? networks.networks.find((network) => network.networkId === networkId) : undefined
+  const pathname = usePathname()
+  const { focus, setFocus } = useConsoleFocus()
+  const immersive = focus && isOverviewPath(pathname)
+  // Controlled so the immersive overview can hide the sidebar without
+  // overwriting the user's remembered (cookie) state.
+  const [desktopOpen, setDesktopOpen] = useState(sidebarOpen)
   return (
     <NetworkWorkspace networkId={networkId} name={current?.name ?? null}>
-      <SidebarProvider defaultOpen={sidebarOpen}>
-        <ConsoleFrame networks={networks} controllerHost={controllerHost}>
+      <SidebarProvider
+        data-immersive={immersive ? "true" : undefined}
+        open={immersive ? false : desktopOpen}
+        onOpenChange={(next) => {
+          // ⌘B or the rail while immersive enters management.
+          if (immersive) {
+            setFocus(false)
+            setDesktopOpen(true)
+          } else setDesktopOpen(next)
+        }}
+      >
+        <ConsoleFrame networks={networks} controllerHost={controllerHost} immersive={immersive}>
           {children}
         </ConsoleFrame>
       </SidebarProvider>
@@ -67,10 +84,12 @@ export function useDrafts(): Record<DraftKind, boolean> {
 function ConsoleFrame({
   networks,
   controllerHost,
+  immersive,
   children,
 }: {
   networks: NetworkChoices
   controllerHost: string
+  immersive: boolean
   children: ReactNode
 }) {
   const drafts = useDrafts()
@@ -89,9 +108,9 @@ function ConsoleFrame({
       >
         跳到主要内容
       </a>
-      <AppSidebar networks={networks} controllerHost={controllerHost} drafts={drafts} />
+      <AppSidebar networks={networks} controllerHost={controllerHost} drafts={drafts} collapsible={immersive ? "offcanvas" : "icon"} />
       <SidebarInset className="min-w-0">
-        <ConsoleHeader />
+        <ConsoleHeader hidden={immersive} />
         <div id="main" tabIndex={-1} className="flex min-w-0 flex-1 flex-col outline-none">
           {children}
         </div>
@@ -105,7 +124,7 @@ function ConsoleFrame({
  * and 3rem while the sidebar is an icon rail. Sticky so search and the
  * sidebar stay reachable on long pages; the row shares the page column.
  */
-function ConsoleHeader() {
+function ConsoleHeader({ hidden }: { hidden: boolean }) {
   const pathname = usePathname()
   const { routes, name } = useNetwork()
   const { isMobile, open } = useSidebar()
@@ -115,7 +134,9 @@ function ConsoleHeader() {
   return (
     <header
       data-slot="console-topbar"
-      className="sticky top-0 z-30 flex h-16 shrink-0 items-center border-b bg-header backdrop-blur-md transition-[width,height] ease-linear group-has-data-[collapsible=icon]/sidebar-wrapper:h-12"
+      data-hidden={hidden ? "true" : undefined}
+      inert={hidden}
+      className="console-header sticky top-0 z-30 flex h-16 shrink-0 items-center overflow-hidden border-b bg-header backdrop-blur-md transition-[width,height,opacity,border-color] duration-300 ease-out group-has-data-[collapsible=icon]/sidebar-wrapper:h-12 data-[hidden=true]:h-0! data-[hidden=true]:border-b-0 data-[hidden=true]:opacity-0"
     >
       <div className="console-column flex items-center gap-2">
         <SidebarTrigger className="-ml-1" aria-label={isMobile ? "打开导航" : open ? "收起导航" : "展开导航"} aria-keyshortcuts="Meta+B" />
