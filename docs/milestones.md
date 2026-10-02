@@ -25,11 +25,13 @@ P3c 完整出网仍属首版。模型 / API 大清理、GeoIP 与前端不阻塞
 | P3b 自动建连 | 按授权流量及路径按需连接 / 自动中转，手工候选收敛为高级覆盖 | P2a、P3a |
 | P3c 路由方案与分流 | 公共规则 + 方案规则 + 兜底；仅 Mesh / 全局经 X / 自动按 STUN 地区；规则集与可信域名上下文 | P1c、P3a |
 | P3d 打洞 | 获准候选分发、认证探测与打洞，失败经允许中转并保持 E2E | P3b |
-| Linux 跨地域联测（第一轮已执行，带缺口） | 固定 4d106e0 在四地完成真实 TUN 互访、DNS、必经点故障和代表端点 lease 撤回；发现 E2E 重启缓存窗口及 runtime 上报间歇 stale，原严格验收保留 FAIL。测试 runtime 已精确清理、身份与证据保留；修复后复验，再做自动组网 / 主备 / 打洞 | 第一轮：已验证主线；第二轮：P3a、系统保护通路、P3b、P3d |
+| Linux 跨地域联测（恢复复验已通过） | 原 4d106e0 四地 TUN / DNS / 必经点故障通过，恢复缺口原 FAIL 保留；修复版 4c9a5be 同身份直连 / 有序路径重启、四节点 lease 撤回与 ≥60s 持续报告检查均 PASS。测试 runtime 已精确清理、身份与证据保留；后续自动组网 / 主备 / 打洞另验 | 第一轮：已验证主线；第二轮：P3a、系统保护通路、P3b、P3d |
 
 第一轮发现的 E2E、运行报告及组合暴露的 history pending-slot 争用均已独立复核，修复已合至
-`4c9a5be`，完整新组合 Rust 613 / 7 ignored、Clippy/fmt 通过。新镜像将按原四地身份 / 源配置复验，
-原 4d 现场 FAIL 与 f399 中间组合 FAIL 都保留。正常 underlay owner 主循环仍未启用，不与恢复修复混计。
+`4c9a5be`，完整新组合 Rust 613 / 7 ignored、Clippy/fmt 通过。新镜像已按原四地身份 / 源配置复验通过，
+原 4d 现场 FAIL 与 f399 中间组合 FAIL 都保留；远端持久 latency history 查询本轮未验，不用 runtime 更新替代。
+正常 underlay owner 主循环接线正在实现，尚未启用。后续开发联调使用已核对的 Mac Controller
+`meshway-dev-api.jdscript.dev`，构建优先本机 Linux ARM64 / NYC AMD64；完整证据见[远端验收记录](/linux-field-validation)。
 
 ### 已部署账户与控制台（后续重整暂缓）
 
@@ -130,7 +132,7 @@ P3a IPv4 Mesh 切片随后通过独立复核并合入 `6050413` 至 `07a8039`：
 第一轮继续保存完整中断窗口，详见[远端验收记录](/linux-field-validation)。
 E2E 有界认证重同步修复随后以 `9c26105` 合入，独立重放原一跳 / 多跳方向和安全反例通过；
 全消费者实际完成 Rust 595 / 7 ignored、生成器 7、SDK 16、旧 Web 184 及 Clippy / fmt / drift / TS / 构建。
-远端同身份复验待运行状态上报边界修复闭合后执行；不将本机毫秒级机制验证当作现场恢复时间。
+运行状态上报修复闭合后，远端同身份直连 / 四地有序路径复验已通过；不将本机毫秒级机制验证当作现场恢复时间。
 第一轮远端使用当前正式下发链路，部署已验证的固定后端快照；容器只保留接入和私有持久化，
 listener、承载与业务策略由生成管理 API 配置，记录当前启动 opt-in 的实现边界。独立 namespace 内开放必要 TUN / 网络权限，
 不修改宿主管理路由、DNS、防火墙或 Docker daemon，不使用 host network / privileged。

@@ -1,6 +1,7 @@
 # Linux 跨地域 Docker 验收
 
-**第一轮已于 2026-10-02 执行完成，结果为 `COMPLETED_WITH_FINDINGS`。**
+**2026-10-02：修复版 `4c9a5be` 的同身份直连 / 四地有序路径复验均为 `PASS`。**
+原第一轮结果仍为 `COMPLETED_WITH_FINDINGS`，原失败与中断窗口保留。
 真实两地 / 四地 TUN 互访、DNS、必经节点故障约束和代表端点的 lease 撤回通过；
 原严格 runner 保留 `FAIL`，原因是控制面恢复后首尔 runtime 上报未在等待窗口内恢复新鲜度。
 后续独立业务探测已证明四地实际包流恢复，不将这一结果代替失败的状态上报检查。
@@ -89,7 +90,7 @@ overlay 为 `198.18.42.0/24`，HTTP canary 只绑定各自 Mesh IP，实际 rout
 组合检查保留 **169 passed / 1 failed（仅停止前部分）**，不批准合入 / 部署运行报告候选，未把该超时当作环境噪声重跑到绿。
 原日志及诊断交接：批准 TMP 的 `meshway-field-recovery-integration-f399931.md` 与对应 `-logs/`。
 
-### 恢复修复已合入，等待同身份复验
+### 恢复修复与同身份复验
 
 后续诊断用原样 CLI 及真实 UDP 延迟对照确认了一种可稳定复现的触发机制：报告更早被接受后，
 sampler 的首个 tick 尚无 peer，30 秒 tick 又与邻接探测争用同一 pending 槽；原逻辑直接跳过，
@@ -101,15 +102,15 @@ sampler 的首个 tick 尚无 peer，30 秒 tick 又与邻接探测争用同一 
 workspace Clippy / fmt 通过，未变消费者按源码及日志哈希核验沿用。
 三项修复已以 `1144875`、`461f7d6`、`4c9a5be` 合入主线。
 
-原 `f399931` 失败与其镜像的未批准状态保留。新的固定源码 `4c9a5be` 正通过非 privileged 流程构建，
-将由 `retest.ts` 复用原 Controller DB、身份、公钥、CA、连接 / 路径 / Access 配置验证；
+原 `f399931` 失败与其镜像的未批准状态保留。新的固定源码 `4c9a5be` 已通过非 privileged 流程构建，
+并由 `retest.ts` 复用原 Controller DB、身份、公钥、CA、连接 / 路径 / Access 配置完成复验；
 原 v11 源快照已从只读数据副本经原 Controller 和生成 GET 接口补齐，不能以候选启动后的响应充当旧基准。
-此处是代码合入与验收通过，尚不代表新镜像的远端复验通过。
+新版交付目录为批准 TMP 的 `meshway-field-recovery-images-4rmjuxgc`，不使用旧 `f399931` 镜像。
 
 交接报告：批准 TMP 的 `meshway-runtime-report-review-fixed-da8b9b7.md`、
 `meshway-report-history-review-fff98d1.md`、`meshway-combined-recovery-integration-3b346b8.md`。
 
-收尾已完成：
+原第一轮收尾已完成：
 
 - 删除精确 owner label 匹配的 **5 个测试容器、4 个 bridge**，清理错误为 0，测试端口不再监听。
 - 两个专用 buildx daemon 先停止，后完成上述特权构建器精确移除；镜像、构建 cache、归档、独立 Controller / Agent 私有数据和身份均保留。
@@ -120,7 +121,60 @@ workspace Clippy / fmt 通过，未变消费者按源码及日志哈希核验沿
 完整收尾证据在上述 run 目录：`round-summary.json`、`runtime-cleanup.json`、`host-postflight-comparison.json`、
 `host-observed-ipv6-differences.json`、`underlay-fib-lookups.json`、`control-restored-business-probes.json`。
 原 `result.json` 的 FAIL 与所有前次失败报告原样保留；summary 记录公开证据 SHA-256。
-优先修复 E2E 重同步及运行上报这两个实际缺口后做针对性远端复验；自动建连 / 主备 / 打洞仍按第二轮验收。
+上述恢复缺口的修复与针对性复验见下节；自动建连 / 主备 / 打洞仍按第二轮验收。
+
+### 修复版复验结果（16:20–16:33 UTC）
+
+`direct-attempt2` 与 `ordered-attempt` 均通过正常 Controller 下发、Agent 启停与真实 TUN ICMP / HTTP / DNS。
+每个方向先用业务流量预热存活端，再只重启目标；核对原身份、存活源 epoch，四地场景同时核对源的下一跳 epoch。
+源配置保持原值，无重新注册、策略重置或旧快照回写。
+
+| 场景 | 从目标启动到首个成功采样结束 | 失败采样数 |
+| --- | --- | --- |
+| 东京→重启洛杉矶（直连） | 7.862 秒 | 0 |
+| 洛杉矶→重启东京（直连） | 18.813 秒 | 1 |
+| 东京→洛杉矶→纽约→重启首尔 | 23.488 秒 | 1 |
+| 首尔→纽约→洛杉矶→重启东京 | 12.854 秒 | 0 |
+
+这些值含 Agent 启动、调度与整个探测耗时；0 次失败不表示没有中断。
+探测间隔包含请求执行及 2 秒等待，不能作为连续断流时长上界、纯握手延迟或 SLA。
+
+- 两次 Controller 失联后均观察四节点 lease 到期、packet proof 撤回和 Mesh sink 保留；所选双向业务实际失败，未落回底层默认路由。
+  此版本撤回时 TUN 设备 / 路由可仍存在，证据不是“设备已删除”，正式 underlay owner 接线另验。
+- Controller 恢复后直连两个方向首次成功采样在 42.565 / 46.526 秒，有序路径在 23.343 / 29.259 秒。
+  每组双向顺序测量、共用 Controller 启动起点，不能按两个独立恢复时延解读。
+- 业务恢复后继续观察全部四节点：直连窗口 68.518 秒，有序路径窗口 66.314 秒；两轮各节点分别取得 7–13 次新 runtime 报告，
+  各自服务端接收时间跨度至少 60 秒，之后再次验证双向业务成功。
+  **本轮未查询持久 latency history API**；runtime 新鲜度不替代历史采样 / 存储验收。
+- 每轮精确移除 5 个测试容器、4 个 bridge，清理错误均为 0；原身份、CA、数据库、源配置与镜像保留。
+  最初 `direct-attempt` 在空网络 gateway 检查失败，未进入业务启动；失败与空网清理补充保留。
+  `efc9352` 显式设置 Docker gateway 后才开始新的 attempt。
+- 16:34 UTC 四地主机只读 postflight 确认 SSH、原服务 ID / image / ports 及现有运行 / healthy 状态、双栈 RPDB、物理 / WARP IPv4 路由、resolver 和 forwarding。
+  测试容器、bridge、测试端口均已消失。纽约服务 uptime 从早期的两周变为两小时、默认 bridge ID 改变但 IPAM 相同；
+  快照不能确定重启原因，也不证明期间持续运行。纽约 WARP IPv6 link-local 和首尔 RA lifetime 的动态差异保留，未恢复旧配置。
+
+证据目录：批准 TMP 的 `meshway-field-retest-4c9a5be/`，汇总为 `recovery-summary.json`、`postflight-comparison.json`。
+原始结果 SHA-256：
+
+| 文件 | SHA-256 |
+| --- | --- |
+| `direct-attempt2/retest-result.json` | `739fd0b7087da5c7f2a32df78b8b854543684a8bf8ff9b926512c5123a959659` |
+| `ordered-attempt/retest-result.json` | `285bf9bd3ceca83b0e36d2a946595553b2106b527436d82652b97ccca0541a9f` |
+
+复验关闭的是这一版固定连接的恢复检查；原第一轮 `FAIL`、`f399931` 组合 `FAIL`、KR 底层 WARP 路由事实仍保留。
+没有新增逐包 trace、自动建连、主备或打洞的完成声明。
+
+### 后续 Mac Controller 入口
+
+用户已提供本机 `:8420` → `https://meshway-dev-api.jdscript.dev`，后续开发联调优先使用该入口。
+2026-10-02 16:42 UTC 四地以正常系统 DNS / TLS 访问均取得 Controller 未鉴权 `401`；
+Mac 本机系统解析当时仍为 `ENOTFOUND`，诊断中使用公共 DNS 返回的地址并保留域名、SNI 和证书校验后访问成功。
+通过生成 GET 接口及运行时 schema 核对，域名与 `127.0.0.1:8420` 返回同一网络、revision 48 和相同 5 个节点身份。
+Python urllib 默认 User-Agent 曾触发 Cloudflare 1010；curl 默认 / 无 User-Agent 均通过，该差异保留，未把 curl 当原生 Agent 接入验收。
+
+原 LAX Controller 是本轮独立停机 / 恢复的测试实例，已完成清理；其私有身份数据与 Mac 开发网络分别保留。
+后续构建优先 Mac 的 Linux ARM64 环境与 NYC AMD64，固定源码、受限普通编译容器；无需东京 / 首尔目标机承担日常构建。
+系统保护正常主循环接线已进入实现，独立审查与真实 Linux 验收通过后再发布。
 
 ### 已独立确认的 E2E 重启恢复缺口
 
@@ -135,7 +189,7 @@ B→A 回包因 A 已无对应 receiver session 被正确拒绝。外层重连�
 
 该 Runtime 缺口随后通过有界 authenticated `resync-v1` 修复，已独立审查、全消费者验收并合入 `9c26105`，
 详见[E2E 恢复合同](/e2e-session-recovery)。快速路径要求参与节点支持扩展；旧参与节点、控制丢包 / 预算竞争仍保留原 TTL 边界。
-这是代码层关闭，原现场 FAIL 不改为 PASS；新的同身份 Controller / Agent / TUN 复验尚未执行。
+原现场 FAIL 不改为 PASS；新的同身份 Controller / Agent / TUN 复验已单独通过，测量窗口见上节。
 
 独立报告：批准 TMP 的 `meshway-field-e2e-restart-recovery-review.md`；原远端报告没有 sender ID 采样，
 只证明其现象与已独立复现的机制一致，不将后一次成功探测时间伪称为远端首次恢复时刻。
