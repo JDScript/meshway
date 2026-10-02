@@ -7,6 +7,7 @@ default-run = "meshway-controller"
 
 [features]
 codegen = ["dep:openapi-to-rust"]
+# Retained for existing fixture commands; schema 11 is installed in all builds.
 latency-history-fixture = []
 
 [dependencies]

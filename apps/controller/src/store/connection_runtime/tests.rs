@@ -632,9 +632,9 @@ fn v3_to_v4_preserves_every_existing_sql_value_and_schema1_payload_bytes() {
     assert_eq!(
         reopened
             .connection
-            .pragma_query_value(None, "user_version", |row| row.get::<_, u32>(0))
+            .pragma_query_value(None, "user_version", |row| row.get::<_, i64>(0))
             .unwrap(),
-        10
+        crate::store::release_schema::VERSION
     );
     assert!(reopened.connection_runtimes().unwrap().nodes.is_empty());
     assert!(matches!(

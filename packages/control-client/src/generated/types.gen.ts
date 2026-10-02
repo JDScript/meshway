@@ -2821,6 +2821,10 @@ export type QueryLatencyHistoryErrors = {
      */
     401: ErrorResponse;
     /**
+     * Network membership required
+     */
+    403: ErrorResponse;
+    /**
      * Network or pair not found in network
      */
     404: ErrorResponse;

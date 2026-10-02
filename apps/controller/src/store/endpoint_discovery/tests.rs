@@ -241,9 +241,9 @@ fn retries_expiry_and_monotonic_observations_are_not_renewal() {
     assert_eq!(
         f.store
             .connection
-            .pragma_query_value::<u32, _>(None, "user_version", |row| row.get(0))
+            .pragma_query_value::<i64, _>(None, "user_version", |row| row.get(0))
             .unwrap(),
-        10
+        crate::store::release_schema::VERSION
     );
 }
 

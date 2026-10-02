@@ -27,6 +27,7 @@ mod managed_transports;
 mod network;
 mod networks;
 mod ownership;
+mod release_schema;
 pub(crate) use networks::NetworkId;
 mod tags;
 #[cfg(test)]
@@ -126,7 +127,7 @@ impl Store {
             File::open(path)?.sync_all()?;
         }
         let version: i64 = connection.pragma_query_value(None, "user_version", |row| row.get(0))?;
-        if !(1..=10).contains(&version) {
+        if !(1..=release_schema::VERSION).contains(&version) {
             return Err(Error::Configuration(
                 "unsupported or incomplete controller database schema",
             ));
@@ -156,13 +157,13 @@ impl Store {
         if version < 9 {
             networks::upgrade(&mut connection)?;
         }
-        managed_transports::upgrade(&mut connection)?;
+        if version < 10 {
+            managed_transports::upgrade(&mut connection)?;
+        }
         let material_key = managed_transports::key(path, &connection)?;
         networks::validate_integrity(&connection)?;
         networks::install_identity_guards(&connection)?;
-        #[cfg(any(test, feature = "latency-history-fixture"))]
-        latency_history::upgrade(&mut connection)?;
-        latency_history::validate_if_present(&connection)?;
+        release_schema::upgrade(&mut connection)?;
         // Initialization flags still refer to the original network; never
         // renumber any network on restart.
         let initial = NetworkId::initial(&connection)?;

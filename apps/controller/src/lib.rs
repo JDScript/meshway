@@ -115,10 +115,7 @@ impl AppState {
         data_dir: impl AsRef<Path>,
         options: NetworkOptions,
     ) -> Result<Self, Error> {
-        let mut store = Store::open(data_dir.as_ref(), &options)?;
-        // Branch-only P2b fragment installation; release schema version is
-        // deliberately left to the coordinated migration integration.
-        store.install_account_integration_schema()?;
+        let store = Store::open(data_dir.as_ref(), &options)?;
         Ok(Self {
             store: Arc::new(Mutex::new(store)),
             accounts: Arc::new(accounts_api::Runtime::new()?),

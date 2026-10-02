@@ -82,21 +82,6 @@ pub(super) fn withdraw_user(
 }
 
 impl Store {
-    /// Branch integration hook only: additive fragment, no schema version claim.
-    /// Release integration must place install in the coordinated versioned migration.
-    pub(crate) fn install_account_integration_schema(&mut self) -> Result<(), Error> {
-        let tx = self
-            .connection
-            .transaction_with_behavior(TransactionBehavior::Immediate)?;
-        if super::account_schema::present(&tx)? {
-            super::account_schema::validate(&tx)?;
-        } else {
-            super::account_schema::install(&tx)?;
-        }
-        tx.commit()?;
-        Ok(())
-    }
-
     pub(crate) fn authorize_user_device(
         &mut self,
         token: &str,

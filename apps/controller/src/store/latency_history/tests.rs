@@ -368,11 +368,14 @@ fn timeout_null_gaps_pagination_direction_and_query_isolation() {
         f.store.latency_history(&other, &q),
         Err(Error::NotFound)
     ));
-    assert!(matches!(
-        f.store
-            .authorize_latency_history_read(&f.peer_token, f.network.as_str()),
-        Err(Error::Unauthorized)
-    ));
+    let error = f
+        .store
+        .authorized_latency_history(&f.peer_token, f.network.as_str(), &q)
+        .unwrap_err();
+    assert_eq!(
+        axum::response::IntoResponse::into_response(error).status(),
+        axum::http::StatusCode::UNAUTHORIZED
+    );
 }
 
 #[test]

@@ -527,9 +527,9 @@ fn actual_v5_migration_deduplicates_paths_folds_reverse_and_bumps_revision() {
     assert_eq!(
         reopened
             .connection
-            .pragma_query_value(None, "user_version", |row| row.get::<_, u32>(0))
+            .pragma_query_value(None, "user_version", |row| row.get::<_, i64>(0))
             .unwrap(),
-        10
+        crate::store::release_schema::VERSION
     );
 }
 

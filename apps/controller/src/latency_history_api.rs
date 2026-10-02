@@ -39,11 +39,12 @@ async fn report_latency_samples(
         .await
 }
 
-#[utoipa::path(post, path = "/api/v1/networks/{network_id}/latency/history/query", operation_id = "queryLatencyHistory", security(("adminBearer" = [])), request_body = QueryLatencyHistoryRequest,
+#[utoipa::path(post, path = "/api/v1/networks/{network_id}/latency/history/query", operation_id = "queryLatencyHistory", security(("managementBearer" = [])), request_body = QueryLatencyHistoryRequest,
     params(("network_id" = String, Path, description = "Stable network ID")),
     responses((status = 200, description = "Bounded raw historical events for one directed pair; no synthetic gap or loss points", body = LatencyHistoryResponse),
     (status = 400, description = "Invalid JSON", body = ErrorResponse),
     (status = 401, description = "Read-network credential required", body = ErrorResponse),
+    (status = 403, description = "Network membership required", body = ErrorResponse),
     (status = 404, description = "Network or pair not found in network", body = ErrorResponse),
     (status = 422, description = "Window or point budget exceeded", body = ErrorResponse),
     (status = 413, description = "Request exceeds 128 KiB", body = ErrorResponse),
@@ -59,8 +60,9 @@ async fn query_latency_history(
     let request = json(body)?;
     state
         .access(move |store| {
-            let network = store.authorize_latency_history_read(&token, &network_id)?;
-            store.latency_history(&network, &request).map(Json)
+            store
+                .authorized_latency_history(&token, &network_id, &request)
+                .map(Json)
         })
         .await
 }

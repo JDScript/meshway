@@ -62,7 +62,11 @@ fn device_login_v8_migration_preserves_existing_rows_and_reopens() {
     fn snapshot(
         connection: &rusqlite::Connection,
     ) -> Vec<(String, Vec<Vec<rusqlite::types::Value>>)> {
-        let tables: Vec<String> = connection.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' AND name NOT LIKE 'managed_%' AND name NOT IN ('networks','latency_samples','latency_runtime_epochs','latency_admissions','latency_coverage') ORDER BY name").unwrap().query_map([],|r|r.get(0)).unwrap().collect::<Result<_,_>>().unwrap();
+        let mut tables: Vec<String> = std::iter::once("settings")
+            .chain(super::networks::TABLES.iter().map(|(name, _)| *name))
+            .map(str::to_owned)
+            .collect();
+        tables.sort();
         tables
             .into_iter()
             .map(|table| {
@@ -108,9 +112,9 @@ fn device_login_v8_migration_preserves_existing_rows_and_reopens() {
     assert_eq!(
         store
             .connection
-            .pragma_query_value(None, "user_version", |r| r.get::<_, u32>(0))
+            .pragma_query_value(None, "user_version", |r| r.get::<_, i64>(0))
             .unwrap(),
-        10
+        crate::store::release_schema::VERSION
     );
     assert_eq!(snapshot(&store.connection), before);
     assert_eq!(
@@ -550,9 +554,9 @@ fn additive_v2_to_v3_preserves_configuration_credentials_addresses_and_receipts(
     assert_eq!(
         store
             .connection
-            .pragma_query_value(None, "user_version", |row| row.get::<_, u32>(0))
+            .pragma_query_value(None, "user_version", |row| row.get::<_, i64>(0))
             .unwrap(),
-        10
+        crate::store::release_schema::VERSION
     );
     assert_eq!(
         std::fs::read(dir.path().join("admin.token")).unwrap(),

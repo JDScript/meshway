@@ -96,11 +96,9 @@ impl TestStore {
         let db = &mut self.inner.connection;
         db.pragma_update(None, "foreign_keys", false).unwrap();
         let tx = db.transaction().unwrap();
-        // Export the exact historical v8 fixture, excluding post-v9 telemetry.
-        tx.execute_batch(
-            "DROP TABLE IF EXISTS latency_admissions; DROP TABLE IF EXISTS latency_coverage; DROP TABLE IF EXISTS latency_samples; DROP TABLE IF EXISTS latency_runtime_epochs;",
-        )
-        .unwrap();
+        // Export the exact historical v8 fixture, excluding v11-only objects
+        // whose foreign keys otherwise retain references to the renamed tables.
+        remove_v11_fixture_objects(&tx);
         for (table, _) in super::networks::TABLES {
             tx.execute_batch(&format!("ALTER TABLE {table} RENAME TO {table}_v9;"))
                 .unwrap();
@@ -145,6 +143,27 @@ impl TestStore {
         db.pragma_update(None, "foreign_keys", true).unwrap();
         self.network_id = self.inner.network_id(id).unwrap();
     }
+}
+
+/// Historical-fixture construction only; never a production downgrade path.
+/// Call with FK enforcement disabled, then verify the reconstructed old schema.
+pub(super) fn remove_v11_fixture_objects(db: &rusqlite::Connection) {
+    db.execute_batch(
+        "DROP TRIGGER IF EXISTS ownership_new_node;
+         DROP INDEX IF EXISTS account_enrollment_scope;
+         DROP TABLE IF EXISTS device_account_bindings;
+         DROP TABLE IF EXISTS node_ownership;
+         DROP TABLE IF EXISTS account_password_resets;
+         DROP TABLE IF EXISTS account_sessions;
+         DROP TABLE IF EXISTS account_invitations;
+         DROP TABLE IF EXISTS account_memberships;
+         DROP TABLE IF EXISTS account_users;
+         DROP TABLE IF EXISTS latency_admissions;
+         DROP TABLE IF EXISTS latency_coverage;
+         DROP TABLE IF EXISTS latency_samples;
+         DROP TABLE IF EXISTS latency_runtime_epochs;",
+    )
+    .unwrap();
 }
 
 pub(super) fn original_columns(db: &rusqlite::Connection, table: &str) -> String {

@@ -62,8 +62,8 @@ retained row 的 identity 仍一直约束内容；row 已被淘汰且 ledger 超
 
 - Agent：`POST /api/v1/agent/latency/samples`，node bearer，1–64 个事件，128 KiB body limit。
 - 管理读取：`POST /api/v1/networks/{network_id}/latency/history/query`。
-  首版 admin bearer；P2b 唯一 read-network 权限接点为
-  `Store::authorize_latency_history_read(token, network_id)`。
+  `managementBearer` 接受 bootstrap 或当前网络成员的用户会话；统一入口
+  `Store::authorized_latency_history` 在同一 `network_operation(Read)` 事务内检查权限和查询。
 - 查询必选一个有方向的节点对、半开 `[from, until)` 时间窗（SQL 毫秒精度），最长 24 小时，
   窗口必须处于 7 天保留期内；`limit` 为 1–1000；`after`/`next` 为排他的十进制 row cursor。
   Cursor 是接收顺序，不是测量时间顺序；乱序送达仍能取全，图表按真实 `measured_at` 排序。
@@ -108,13 +108,12 @@ Summary 的部分 counters 不涵盖所有被取消的 queued/in-flight 条目�
 采样不拨通新邻接；但它并非完全被动，现有 Runtime probe timeout 会 unregister **该 exact
 channel**。本任务保留既有认证/超时语义，没有调整数据面或性能对照。
 
-DDL 在 `apps/controller/src/store/latency_history/schema.sql`。生产默认不自动安装 IF NOT EXISTS
-片段；`latency-history-fixture` 仅显式测试构建安装，Agent dev-dependency 启用该 feature。
-正常 controller 启动若已有 latency 表，执行无副作用完整 `validate_schema`（columns/PK/
-AUTOINCREMENT/UNIQUE/FK/index 形状及 FK integrity），缺失约束的同名表拒绝启动。
-这不等于验证了生产 versioned migration。协调者负责最终版本与既有 epoch 的启用时间下界；
-候选接点见 `docs/latency-history-migration.patch`。尚未安装 schema 时旧 runtime begin 保持
-可用，不从管理 HTTP 创建表；history 会报 storage unavailable，producer 有界退避。
+DDL 在 `apps/controller/src/store/latency_history/schema.sql`；整合候选通过
+[`store/release_schema.rs` 的 v11 统一迁移](/schema-v11)与账户/ownership 在同一事务安装，
+校验后才更新版本。正常构建不依赖 fixture feature；原 `latency-history-fixture` 名称只保留
+测试命令兼容。已有完整开发片段可在验证后采用，partial/未知结构拒绝，不用同名空壳修补。
+旧 lease 缺少起点时建立保守的历史启用下界，已知起点和历史游标不重写。此处是代码整合状态，
+不是现网部署声明；最终消费者与真实旧数据副本验收沿[统一迁移说明](/schema-v11)执行。
 
 ### 并行交付整合（只读核对 `56da5ad`）
 

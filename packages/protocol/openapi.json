@@ -3241,6 +3241,16 @@
               }
             }
           },
+          "403": {
+            "description": "Network membership required",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
           "404": {
             "description": "Network or pair not found in network",
             "content": {
@@ -3294,7 +3304,7 @@
         },
         "security": [
           {
-            "adminBearer": []
+            "managementBearer": []
           }
         ]
       }

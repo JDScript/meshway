@@ -25,7 +25,7 @@ fn snapshot(db: &Connection) -> Vec<(String, Vec<Vec<Value>>)> {
 }
 
 #[test]
-fn standalone_v9_fragment_preserves_every_legacy_cell_and_identity_without_version_assignment() {
+fn standalone_v10_fragment_preserves_every_legacy_cell_and_identity_without_version_assignment() {
     use std::os::unix::fs::PermissionsExt;
     let dir = tempfile::Builder::new()
         .permissions(std::fs::Permissions::from_mode(0o700))
@@ -70,6 +70,29 @@ fn standalone_v9_fragment_preserves_every_legacy_cell_and_identity_without_versi
             ],
         )
         .unwrap();
+    // Build the pre-account v10 fixture explicitly. Production startup now
+    // installs v11, so testing this fragment must first exclude v11 objects.
+    store
+        .connection
+        .pragma_update(None, "foreign_keys", false)
+        .unwrap();
+    super::super::test_store::remove_v11_fixture_objects(&store.connection);
+    store
+        .connection
+        .pragma_update(None, "user_version", 10)
+        .unwrap();
+    store
+        .connection
+        .pragma_update(None, "foreign_keys", true)
+        .unwrap();
+    assert!(
+        !store
+            .connection
+            .prepare("PRAGMA foreign_key_check")
+            .unwrap()
+            .exists([])
+            .unwrap()
+    );
     let before = snapshot(&store.connection);
     let version_before = store
         .connection

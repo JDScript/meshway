@@ -12,15 +12,6 @@ mod schema;
 mod tests;
 pub(crate) use schema::{validate_if_present, validate_schema};
 
-#[cfg(any(test, feature = "latency-history-fixture"))]
-pub(crate) fn upgrade(connection: &mut Connection) -> Result<(), Error> {
-    let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
-    transaction.execute_batch(include_str!("schema.sql"))?;
-    validate_schema(&transaction)?;
-    transaction.commit()?;
-    Ok(())
-}
-
 const REPORT_MAX_AGE_SECONDS: i64 = 120;
 const CLOCK_SKEW_SECONDS: i64 = 5;
 const CLEANUP_BUDGET: u32 = 1024;
@@ -43,15 +34,20 @@ pub(super) fn begin_epoch(
 }
 
 impl Store {
-    /// P2b read-network permission integration point. Scope is resolved only
-    /// after authentication; callers never interpret a raw ID as permission.
-    pub(crate) fn authorize_latency_history_read(
-        &self,
+    /// Keep the current session/membership check and history read in one root
+    /// transaction, like the other network-scoped management reads.
+    pub(crate) fn authorized_latency_history(
+        &mut self,
         token: &str,
         network: &str,
-    ) -> Result<NetworkId, Error> {
-        self.authorize_admin(token)?;
-        self.network_id(network)
+        query: &QueryLatencyHistoryRequest,
+    ) -> Result<LatencyHistoryResponse, Error> {
+        self.network_operation(
+            token,
+            network,
+            crate::accounts::NetworkPermission::Read,
+            |store, scope| store.latency_history(scope, query),
+        )
     }
 
     pub(crate) fn report_latency_samples(

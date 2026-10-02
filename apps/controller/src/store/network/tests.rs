@@ -8,8 +8,14 @@ use super::super::{
 use crate::{Error, NetworkOptions};
 
 fn old_rows(connection: &Connection) -> Vec<(String, Vec<Vec<Value>>)> {
-    let tables: Vec<String> = connection.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' AND name NOT IN ('network_identity','networks') ORDER BY name")
-        .unwrap().query_map([], |row| row.get(0)).unwrap().collect::<Result<_, _>>().unwrap();
+    // Compare the historical columns, not additive release tables whose initial
+    // ownership/history activation rows are intentionally created by v11.
+    let mut tables: Vec<String> = std::iter::once("settings")
+        .chain(super::super::networks::TABLES.iter().map(|(name, _)| *name))
+        .filter(|name| *name != "network_identity")
+        .map(str::to_owned)
+        .collect();
+    tables.sort();
     tables
         .into_iter()
         .map(|table| {
