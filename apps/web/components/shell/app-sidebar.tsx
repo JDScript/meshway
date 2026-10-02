@@ -7,7 +7,7 @@ import { NavMain } from "@/components/shell/nav-main"
 import { NavUser } from "@/components/shell/nav-user"
 import { useNetwork } from "@/components/shell/network-context"
 import { NetworkSwitcher, type NetworkChoices } from "@/components/shell/network-switcher"
-import { Sidebar, SidebarContent, SidebarFooter, SidebarHeader, SidebarRail } from "@/components/ui/sidebar"
+import { Sidebar, SidebarContent, SidebarFooter, SidebarHeader, SidebarRail, useSidebar } from "@/components/ui/sidebar"
 
 /**
  * shadcn sidebar-07 `AppSidebar`: network switcher (the block's team
@@ -28,10 +28,15 @@ export function AppSidebar({
 }) {
   const pathname = usePathname()
   const { routes } = useNetwork()
+  const { isMobile } = useSidebar()
+  // Off-canvas while the overview is immersive: out of the tab order and the
+  // accessibility tree until management opens it. The phone drawer is a
+  // dialog that is only mounted when opened, so it is never made inert.
+  const offscreen = collapsible === "offcanvas" && !isMobile
   const active = activeNavItem(pathname, routes.base)?.item
 
   return (
-    <Sidebar collapsible={collapsible}>
+    <Sidebar collapsible={collapsible} {...(offscreen ? { inert: true, "aria-hidden": true } : {})}>
       <SidebarHeader>
         <NetworkSwitcher networks={networks} controllerHost={controllerHost} />
       </SidebarHeader>

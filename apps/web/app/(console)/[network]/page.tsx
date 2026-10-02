@@ -2,6 +2,7 @@ import type { Metadata } from "next"
 
 import { ControllerUnavailable } from "@/components/common/controller-states"
 import { NetworkOverview } from "@/components/overview/network-overview"
+import { EndImmersive } from "@/components/shell/end-immersive"
 import { PageBody, PageHeader } from "@/components/shell/page-header"
 import { controllerUrl, fetchConnectionRuntimes, fetchConnections, fetchMeshAccess, fetchNodes, fetchPolicy } from "@/lib/controller"
 import { requireNetwork } from "@/lib/network-scope"
@@ -24,6 +25,7 @@ export default async function OverviewPage({ params }: { params: Promise<{ netwo
   if (!nodes.ok) {
     return (
       <PageBody>
+        <EndImmersive />
         <PageHeader title={network?.name ?? "概览"} />
         <ControllerUnavailable url={controllerUrl()} error={nodes.error} />
       </PageBody>

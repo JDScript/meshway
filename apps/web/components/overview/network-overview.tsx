@@ -12,7 +12,7 @@ import {
 } from "lucide-react"
 import Link from "next/link"
 import { useRouter } from "next/navigation"
-import { useMemo, useState, useTransition, type ReactNode } from "react"
+import { useEffect, useMemo, useRef, useState, useTransition, type ReactNode } from "react"
 
 import { DiagnosticDetails } from "@/components/common/diagnostic-details"
 import { StatusDot, type Tone } from "@/components/common/status-badge"
@@ -36,10 +36,12 @@ import {
   observeOverview,
   overviewSummary,
   relationshipLayout,
+  runtimeRead,
   type EdgeFacts,
   type EdgeLook,
   type NodePlacement,
   type OverviewSummary,
+  type RuntimeRead,
 } from "@/lib/overview-map-model"
 import { formatClock } from "@/lib/time"
 import { reportUnusableLabels, summarizeNode, type TopologyObservation } from "@/lib/topology-model"
@@ -84,16 +86,29 @@ export function NetworkOverview({
   const placements = useMemo(() => new Map<string, NodePlacement>(active.map((node) => [node.id, nodePlacement(node)])), [active])
   const unplaced = active.filter((node) => placements.get(node.id)?.kind !== "geo")
   const observation = observeOverview(connections.ok ? connections.data : null, runtimes.snapshot, active, runtimes.now)
-  const summary = overviewSummary({ nodes: active, placements, observation, runtimesRead: runtimes.snapshot !== null })
+  const read = runtimeRead(runtimes)
+  const summary = overviewSummary({ nodes: active, placements, observation, runtimes: read })
   const edges = observation ? observation.adjacencies.map(edgeFacts) : []
   const layout = useMemo(() => relationshipLayout(unplaced, LENS), [unplaced])
   const byId = new Map(active.map((node) => [node.id, node]))
   const selectedNode = selection?.kind === "node" ? byId.get(selection.id) : undefined
   const selectedEdge = selection?.kind === "edge" ? edges.find((edge) => edge.key === selection.key) : undefined
 
+  // The mode button is replaced on switch; keep keyboard focus on its successor.
+  const modeButton = useRef<HTMLButtonElement>(null)
+  const moveFocus = useRef(false)
+  const previousFocus = useRef(focus)
+  useEffect(() => {
+    if (previousFocus.current === focus) return
+    previousFocus.current = focus
+    // Also after ⌘B: the focused 管理网络 button no longer exists.
+    if (moveFocus.current || document.activeElement === document.body) modeButton.current?.focus()
+    moveFocus.current = false
+  }, [focus])
   const manage = () => {
     setFocus(false)
     if (isMobile) setOpenMobile(true)
+    else moveFocus.current = true
   }
   const refresh = () => {
     runtimes.refresh()
@@ -155,12 +170,21 @@ export function NetworkOverview({
 
       <div className="absolute top-4 right-4 flex items-center gap-2 sm:top-6 sm:right-6">
         {focus ? (
-          <Button size="lg" onClick={manage} className="shadow-md">
+          <Button ref={modeButton} size="lg" onClick={manage} className="shadow-md">
             <LayoutPanelLeftIcon data-icon="inline-start" />
             管理网络
           </Button>
         ) : (
-          <Button variant="outline" size="sm" onClick={() => setFocus(true)} className="bg-background/80 backdrop-blur-md">
+          <Button
+            ref={modeButton}
+            variant="outline"
+            size="sm"
+            onClick={() => {
+              moveFocus.current = true
+              setFocus(true)
+            }}
+            className="bg-background/80 backdrop-blur-md"
+          >
             <MaximizeIcon data-icon="inline-start" />
             专注地图
           </Button>
@@ -173,14 +197,14 @@ export function NetworkOverview({
         </FloatingCard>
       ) : selectedEdge ? (
         <FloatingCard onClose={() => setSelection(null)} label="连接">
-          <EdgeCard edge={selectedEdge} byId={byId} />
+          <EdgeCard edge={selectedEdge} byId={byId} read={read} />
         </FloatingCard>
       ) : null}
 
       <StatusBar
         summary={summary}
         connectionsError={connections.ok ? null : connections.error}
-        runtimeError={runtimes.error}
+        read={read}
         attention={attention}
         updatedAt={runtimes.fetchedAt}
         refreshing={runtimes.refreshing || reloading}
@@ -366,7 +390,7 @@ function NodeSummaryCard({
   )
 }
 
-function EdgeCard({ edge, byId }: { edge: EdgeFacts; byId: Map<string, NodeSummary> }) {
+function EdgeCard({ edge, byId, read }: { edge: EdgeFacts; byId: Map<string, NodeSummary>; read: RuntimeRead }) {
   const { routes } = useNetwork()
   const name = (id: string) => byId.get(id)?.name ?? "未知节点"
   const [a, b] = edge.nodeIds
@@ -380,6 +404,11 @@ function EdgeCard({ edge, byId }: { edge: EdgeFacts; byId: Map<string, NodeSumma
           {edgeLookLabels[edge.look]}
         </p>
       </div>
+      {read.kind === "cached" ? (
+        <p role="status" className="rounded-lg border border-warning/40 bg-warning/10 px-2.5 py-1.5 text-xs">
+          运行报告刷新失败，以下是 {formatClock(read.at)} 读取的报告（仍按原有效期过期）。
+        </p>
+      ) : null}
       <ul className="flex flex-col gap-2.5">
         {edge.channels.map((channel) => (
           <li key={channel.candidateId} data-testid="overview-channel" className="rounded-xl border bg-background/60 p-3">
@@ -423,7 +452,7 @@ function EdgeCard({ edge, byId }: { edge: EdgeFacts; byId: Map<string, NodeSumma
 function StatusBar({
   summary,
   connectionsError,
-  runtimeError,
+  read,
   attention,
   updatedAt,
   refreshing,
@@ -431,7 +460,7 @@ function StatusBar({
 }: {
   summary: OverviewSummary
   connectionsError: string | null
-  runtimeError: string | null
+  read: RuntimeRead
   attention: Attention[]
   updatedAt: number | null
   refreshing: boolean
@@ -445,20 +474,32 @@ function StatusBar({
         : "连接未知：运行报告读取失败"
       : connections.kind === "none"
         ? "没有已配置的连接"
-        : `${connections.confirmed} / ${connections.configured} 连接双向确认${connections.oneSided ? ` · ${connections.oneSided} 单侧` : ""}${connections.unverified ? ` · ${connections.unverified} 未验证` : ""}`
+        : `${connections.cachedAt !== null ? `缓存 ${formatClock(connections.cachedAt)}：` : ""}${connections.confirmed} / ${connections.configured} 连接双向确认${connections.oneSided ? ` · ${connections.oneSided} 单侧` : ""}${connections.unverified ? ` · ${connections.unverified} 未验证` : ""}`
   const linkTone: Tone =
-    connections.kind === "unknown" ? "danger" : connections.kind === "none" ? "neutral" : connections.unverified + connections.oneSided > 0 ? "warning" : "success"
-  const error = connectionsError ?? runtimeError
+    connections.kind === "unknown"
+      ? "danger"
+      : connections.kind === "none"
+        ? "neutral"
+        : connections.cachedAt !== null || connections.unverified + connections.oneSided > 0
+          ? "warning"
+          : "success"
+  const failure = connectionsError !== null
+    ? `连接配置读取失败：${connectionsError}`
+    : read.kind === "failed"
+      ? `运行报告读取失败：${read.error}`
+      : read.kind === "cached"
+        ? `运行报告刷新失败：${read.error}`
+        : null
   return (
     <div
       data-testid="overview-status"
-      className="absolute bottom-3 left-3 flex max-w-[calc(100%-1.5rem)] flex-wrap items-center gap-x-4 gap-y-1.5 rounded-2xl border bg-background/80 px-4 py-2.5 text-xs shadow-sm backdrop-blur-md sm:bottom-6 sm:left-6"
+      className="absolute bottom-3 left-3 flex max-w-[calc(100%-1.5rem)] flex-wrap lg:max-w-[min(44rem,calc(100%-15rem))] items-center gap-x-4 gap-y-1.5 rounded-2xl border bg-background/80 px-4 py-2.5 text-xs shadow-sm backdrop-blur-md sm:bottom-6 sm:left-6"
     >
       <span className="flex items-center gap-1.5">
         <span className="text-lg leading-none font-semibold tabular-nums">{summary.nodes}</span>
         <span className="text-muted-foreground">节点</span>
       </span>
-      <span className="flex items-center gap-1.5" title={error ?? undefined}>
+      <span className="flex items-center gap-1.5">
         <StatusDot tone={linkTone} />
         {linkText}
       </span>
@@ -479,11 +520,20 @@ function StatusBar({
         </Popover>
       ) : null}
       <span className="flex items-center gap-1 text-muted-foreground tabular-nums">
-        {updatedAt !== null ? `更新于 ${formatClock(updatedAt)}` : "尚未读取运行报告"}
+        {updatedAt === null ? "尚无成功的运行报告读取" : read.kind === "current" ? `更新于 ${formatClock(updatedAt)}` : `上次成功 ${formatClock(updatedAt)}`}
         <Button variant="ghost" size="icon-sm" aria-label="刷新概览" disabled={refreshing} onClick={onRefresh}>
           <RefreshCwIcon className={refreshing ? "animate-spin" : undefined} />
         </Button>
       </span>
+      {failure ? (
+        <p role="alert" data-testid="overview-read-error" className="flex w-full min-w-0 items-center gap-2 text-destructive">
+          <CircleAlertIcon className="size-3.5 shrink-0" aria-hidden="true" />
+          <span className="min-w-0 flex-1 break-words">{failure}</span>
+          <Button variant="outline" size="sm" disabled={refreshing} onClick={onRefresh}>
+            重试
+          </Button>
+        </p>
+      ) : null}
     </div>
   )
 }

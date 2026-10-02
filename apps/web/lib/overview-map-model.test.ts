@@ -9,6 +9,7 @@ import {
   nodePlacement,
   observeOverview,
   overviewSummary,
+  runtimeRead,
   project,
   relationshipLayout,
   type GeoPlacement,
@@ -72,17 +73,17 @@ test("the relationship layout is deterministic and does not depend on any locati
 })
 
 test("connection evidence is unknown without the plan or the runtime reports, never healthy", () => {
-  assert.deepEqual(overviewSummary({ nodes, placements: placements(), observation: null, runtimesRead: true }).connections, { kind: "unknown", reason: "plan" })
+  assert.deepEqual(overviewSummary({ nodes, placements: placements(), observation: null, runtimes: { kind: "current" } }).connections, { kind: "unknown", reason: "plan" })
   const configured = observeOverview(plan(), null, nodes, at)
-  assert.deepEqual(overviewSummary({ nodes, placements: placements(), observation: configured, runtimesRead: false }).connections, { kind: "unknown", reason: "runtime" })
+  assert.deepEqual(overviewSummary({ nodes, placements: placements(), observation: configured, runtimes: { kind: "failed", error: "boom" } }).connections, { kind: "unknown", reason: "runtime" })
   const none = observeOverview(plan(false), { nodes: [] }, nodes, at)
-  assert.deepEqual(overviewSummary({ nodes, placements: placements(), observation: none, runtimesRead: true }).connections, { kind: "none" })
+  assert.deepEqual(overviewSummary({ nodes, placements: placements(), observation: none, runtimes: { kind: "current" } }).connections, { kind: "none" })
   // Read, but nobody reports: configured, not connected.
   const silent = observeOverview(plan(), { nodes: [] }, nodes, at)
-  assert.deepEqual(overviewSummary({ nodes, placements: placements(), observation: silent, runtimesRead: true }).connections, { kind: "known", configured: 1, confirmed: 0, oneSided: 0, unverified: 1 })
+  assert.deepEqual(overviewSummary({ nodes, placements: placements(), observation: silent, runtimes: { kind: "current" } }).connections, { kind: "known", configured: 1, confirmed: 0, oneSided: 0, unverified: 1, cachedAt: null })
   assert.equal(edgeFacts(only(only(silent).adjacencies[0])).look, "configured")
   assert.equal(edgeFacts(only(only(silent).adjacencies[0])).live, false)
-  assert.equal(overviewSummary({ nodes, placements: placements(), observation: silent, runtimesRead: true }).placed, 0)
+  assert.equal(overviewSummary({ nodes, placements: placements(), observation: silent, runtimes: { kind: "current" } }).placed, 0)
 })
 
 test("edge facts carry each side's own fresh RTT and nothing from a stale probe", () => {
@@ -96,4 +97,19 @@ test("edge facts carry each side's own fresh RTT and nothing from a stale probe"
   assert.equal(stale.look, "degraded")
   assert.equal(stale.live, false)
   assert.equal(stale.channels[0]?.dialer.rtt, null)
+})
+
+test("a failed refresh keeps the last snapshot only as a dated cache; recovery is current again", () => {
+  const snapshot = { nodes: [report(HK, [peer({})]), report(SG, [peer({ peer_node_id: HK, candidate_id: null, probe_rtt_ms: 29 })])] }
+  assert.deepEqual(runtimeRead({ snapshot: null, fetchedAt: null, error: "down" }), { kind: "failed", error: "down" })
+  assert.deepEqual(runtimeRead({ snapshot, fetchedAt: at, error: null }), { kind: "current" })
+  const cached = runtimeRead({ snapshot, fetchedAt: at, error: "down" })
+  assert.deepEqual(cached, { kind: "cached", at, error: "down" })
+  const observation = observeOverview(plan(), snapshot, nodes, at + 5_000)
+  const summary = overviewSummary({ nodes, placements: placements(), observation, runtimes: cached })
+  assert.deepEqual(summary.connections, { kind: "known", configured: 1, confirmed: 1, oneSided: 0, unverified: 0, cachedAt: at })
+  // The cache keeps ageing on the reports' own lease: no proof once it lapses.
+  const aged = observeOverview(plan(), snapshot, nodes, at + 61_000)
+  assert.equal(overviewSummary({ nodes, placements: placements(), observation: aged, runtimes: cached }).connections.kind, "known")
+  assert.equal(edgeFacts(only(only(aged).adjacencies[0])).look, "configured")
 })

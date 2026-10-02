@@ -117,9 +117,23 @@ export function edgeFacts(adjacency: Adjacency): EdgeFacts {
 }
 
 /**
+ * Outcome of the latest runtime read. `cached` keeps the last successful
+ * snapshot for context after a failed refresh: its reports keep ageing on
+ * their own lease and it is never presented as the current read.
+ */
+export type RuntimeRead = { kind: "current" } | { kind: "cached"; at: number; error: string } | { kind: "failed"; error: string }
+
+export function runtimeRead(runtimes: { snapshot: unknown; fetchedAt: number | null; error: string | null }): RuntimeRead {
+  if (runtimes.error === null && runtimes.snapshot !== null) return { kind: "current" }
+  if (runtimes.snapshot !== null && runtimes.fetchedAt !== null) return { kind: "cached", at: runtimes.fetchedAt, error: runtimes.error ?? "" }
+  return { kind: "failed", error: runtimes.error ?? "运行报告不可用" }
+}
+
+/**
  * The corner summary. Connection evidence is `unknown` when the runtime
- * reports could not be read or the plan is unavailable; configured channels
- * without any proof are counted as unverified, never as healthy.
+ * reports could not be read or the plan is unavailable, and marked as cached
+ * when only an earlier read is available; configured channels without any
+ * proof are counted as unverified, never as healthy.
  */
 export type OverviewSummary = {
   nodes: number
@@ -127,26 +141,26 @@ export type OverviewSummary = {
   connections:
     | { kind: "unknown"; reason: "plan" | "runtime" }
     | { kind: "none" }
-    | { kind: "known"; configured: number; confirmed: number; oneSided: number; unverified: number }
+    | { kind: "known"; configured: number; confirmed: number; oneSided: number; unverified: number; cachedAt: number | null }
 }
 
 export function overviewSummary({
   nodes,
   placements,
   observation,
-  runtimesRead,
+  runtimes,
 }: {
   nodes: NodeSummary[]
   placements: Map<string, NodePlacement>
   observation: TopologyObservation | null
-  runtimesRead: boolean
+  runtimes: RuntimeRead
 }): OverviewSummary {
   const active = nodes.filter((node) => node.revoked_at === null)
   const placed = active.filter((node) => placements.get(node.id)?.kind === "geo").length
   const base = { nodes: active.length, placed }
   if (!observation) return { ...base, connections: { kind: "unknown", reason: "plan" } }
   if (observation.adjacencies.length === 0) return { ...base, connections: { kind: "none" } }
-  if (!runtimesRead) return { ...base, connections: { kind: "unknown", reason: "runtime" } }
+  if (runtimes.kind === "failed") return { ...base, connections: { kind: "unknown", reason: "runtime" } }
   const confirmed = observation.adjacencies.filter((adjacency) => adjacency.status === "confirmed").length
   const oneSided = observation.adjacencies.filter((adjacency) => adjacency.status === "one_sided").length
   return {
@@ -157,6 +171,7 @@ export function overviewSummary({
       confirmed,
       oneSided,
       unverified: observation.adjacencies.length - confirmed - oneSided,
+      cachedAt: runtimes.kind === "cached" ? runtimes.at : null,
     },
   }
 }

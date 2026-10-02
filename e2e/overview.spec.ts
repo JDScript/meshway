@@ -20,7 +20,8 @@ test("the overview map shows only sourced places and reported links, and opens i
   const webPort = await unusedPort();
   const base = `http://127.0.0.1:${controllerPort}`;
   const webUrl = `http://127.0.0.1:${webPort}`;
-  const controller = service(executable("meshway-controller"), ["serve", "--data-dir", join(temporary, "controller"), "--bind", `127.0.0.1:${controllerPort}`]);
+  const startController = () => service(executable("meshway-controller"), ["serve", "--data-dir", join(temporary, "controller"), "--bind", `127.0.0.1:${controllerPort}`]);
+  let controller = startController();
   let web: ReturnType<typeof service> | undefined;
   const errors: string[] = [];
   page.on("pageerror", error => errors.push(error.message));
@@ -62,6 +63,21 @@ test("the overview map shows only sourced places and reported links, and opens i
     await expect(overview).toHaveAttribute("data-immersive", "true");
     await expect.poll(() => overviewStage(page)).toMatchObject({ top: 0, bottom: 0, header: 0 });
     await expect(page.getByTestId("overview-lens")).toContainText("2 个节点待定位");
+    // The off-canvas sidebar and hidden header are out of the tab order and the accessibility tree.
+    await expect(page.getByRole("button", { name: "当前网络", exact: true })).toHaveCount(0);
+    await expect(page.getByRole("navigation", { name: "控制台" })).toHaveCount(0);
+    const tabStops: string[] = [];
+    for (let index = 0; index < 12; index += 1) {
+      await page.keyboard.press("Tab");
+      tabStops.push(await page.evaluate(() => {
+        const active = document.activeElement;
+        if (!active || active === document.body) return "body";
+        if (active.closest('[data-slot="sidebar"], [data-slot="console-topbar"]')) return "hidden-shell";
+        return active.getAttribute("aria-label") ?? active.textContent?.trim() ?? active.tagName;
+      }));
+    }
+    expect(tabStops).not.toContain("hidden-shell");
+    expect(tabStops).toContain("管理网络");
     // Configured, but no agent has reported: drawn as configuration only.
     const edge = page.getByTestId("overview-edge");
     await expect(edge).toHaveCount(1);
@@ -104,11 +120,16 @@ test("the overview map shows only sourced places and reported links, and opens i
     // No history interface yet: an explicit empty state, never a drawn curve.
     await expect(page.getByTestId("overview-history-empty")).toHaveText("尚无历史数据");
 
-    // Entering management keeps the selection; the map shrinks into the inset.
-    await page.getByRole("button", { name: "管理网络", exact: true }).click();
+    // Entering management keeps the selection; the map shrinks into the inset,
+    // keyboard focus moves to the mode button that replaced 管理网络, and the
+    // sidebar is reachable again.
+    await page.getByRole("button", { name: "管理网络", exact: true }).focus();
+    await page.keyboard.press("Enter");
     await expect(overview).not.toHaveAttribute("data-immersive", "true");
+    await expect(page.getByRole("button", { name: "专注地图", exact: true })).toBeFocused();
+    await expect(page.getByRole("button", { name: "当前网络", exact: true })).toBeVisible();
     await expect.poll(() => overviewStage(page)).toEqual({ left: 0, width: 0, top: HEADER_HEIGHT, bottom: 0, header: HEADER_HEIGHT, inset: 1440 - SIDEBAR_WIDTH, overflow: false });
-    await expect(page.getByTestId("overview-selection")).toContainText("hk-relay ⇄ sg-edge");
+    await expect(page.getByTestId("overview-selection")).toContainText(/hk-relay ⇄ sg-edge|sg-edge ⇄ hk-relay/);
     // Leaving and coming back does not replay the immersive intro.
     await page.getByRole("navigation", { name: "控制台" }).getByRole("link", { name: "路由", exact: true }).click();
     await page.getByRole("navigation", { name: "控制台" }).getByRole("link", { name: "概览", exact: true }).click();
@@ -122,6 +143,41 @@ test("the overview map shows only sourced places and reported links, and opens i
     // Reduced motion: no transitions on the stage.
     await page.emulateMedia({ reducedMotion: "reduce" });
     expect(await overview.evaluate(element => getComputedStyle(element).transitionDuration)).toBe("0s");
+
+    // A failed refresh keeps the last read only as a dated cache, visibly and with a retry.
+    const status = page.getByTestId("overview-status");
+    await expect(status).toContainText("更新于");
+    await controller.stop();
+    // The bounded background poll (12 s) reads only the runtime reports; the
+    // page's own data stays as rendered.
+    const failure = page.getByTestId("overview-read-error");
+    await expect(failure).toContainText("运行报告刷新失败", { timeout: 25_000 });
+    await expect(status).toContainText("缓存");
+    await expect(status).toContainText("上次成功");
+    await expect(status).not.toContainText("更新于");
+    // The edge's evidence is marked as cached, with its read time.
+    if (await edge.getAttribute("aria-pressed") !== "true") {
+      await edge.focus();
+      await page.keyboard.press("Enter");
+    }
+    await expect(edge).toHaveAttribute("aria-pressed", "true");
+    await expect(page.getByTestId("overview-selection")).toContainText("运行报告刷新失败");
+    // Recovery: the same controller data comes back and the read is current again.
+    controller = startController();
+    await controller.ready(`${base}/api/v1/overview`, 401);
+    await failure.getByRole("button", { name: "重试", exact: true }).click();
+    await expect(failure).toHaveCount(0);
+    await expect(status).toContainText("更新于");
+    await expect(status).not.toContainText("缓存");
+
+    // The overview's own read fails on a fresh load: the error is real, and
+    // the management layout (navigation, retry) is there instead of a blank map.
+    await controller.stop();
+    await page.goto(ui.at(""));
+    await expect(page.getByText("无法读取 controller", { exact: true })).toBeVisible();
+    await expect(page.getByRole("button", { name: "重新读取", exact: true })).toBeVisible();
+    await expect(page.getByRole("navigation", { name: "控制台" }).getByRole("link", { name: "路由", exact: true })).toBeVisible();
+    await expect(page.locator('[data-slot="console-topbar"]')).not.toHaveAttribute("data-hidden", "true");
     expect(errors).toEqual([]);
   } finally {
     await web?.stop();
