@@ -30,4 +30,8 @@
 - 注入撤回错误保持会员 / 节点状态；成功撤回后原 node-only endpoints 与精确 App retry 均拒绝，仍活动 dialer 的 managed-connections / managed-dataplane 材料投影为空，源逻辑路径保持并报告失效，不换路径。
 - 公有 `compiled_capability_available=false`，保留归档材料；不修改 P2a UUID / key identity，不自动把 tag 变为身份。
 
-生成、drift、SDK14 tests、Web/SDK/e2e typecheck、5个 experiments TypeScript 与 Controller/Apple core全target/allfeature Clippy 已通过；组合全workspace allfeatures验证结果在最终交付追加。没有 Docker 或宿主网络操作。
+生成、drift、SDK **14** tests、Web **145** tests、Web/SDK/e2e typecheck、5个 experiments TypeScript、fmt及Controller/Apple core全target/allfeature Clippy均通过。
+
+组合副本最终执行 `CARGO_TARGET_DIR=target cargo test --workspace --all-features --locked -- --test-threads=2`：**494 passed / 0 failed / 7 ignored**（含1项doctest；显式外部代理/Docker/性能专项未执行）。其中Controller **73 单元 + 30 HTTP**，Apple core真实Controller用户归属接入与生成客户端secret Debug回归通过。原账户独立分支同命令477 passed / 0 failed / 7 ignored。
+
+所有验收进程已退出；没有Docker、宿主路由/DNS/防火墙、真实控制面数据或live端口操作。两个worktree保持clean，分支与生成产物供协调者按同一权威源整合；schema v10仍归P2a，账户后续版本及正式启动迁移部署未声称完成。
