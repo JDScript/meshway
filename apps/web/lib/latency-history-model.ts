@@ -162,9 +162,9 @@ const changeLabels: [keyof Omit<NonNullable<ReturnType<typeof segmentFields>>, "
 /**
  * Builds the chart model for one directed pair. Successes are ordered by
  * their own `measured_at`, deduplicated by `measurement_id`, and grouped by
- * the full segment key; a line never joins two segments, and a stretch longer
- * than `breakAfterMs` without a record starts a new run (unrecorded, not
- * offline). Timeouts and failures carry no channel association, so they are
+ * the full segment key; a line never joins two segments, never crosses a
+ * timeout / failure, and a stretch longer than `breakAfterMs` without a
+ * record starts a new run (unrecorded, not offline). Timeouts and failures carry no channel association, so they are
  * pair events, never attached to a carrier line.
  */
 export function buildHistory(records: LatencyHistoryRecord[], query: LatencyQuery, breakAfterMs: number): LatencyHistory {
@@ -195,10 +195,13 @@ export function buildHistory(records: LatencyHistoryRecord[], query: LatencyQuer
   const segments = new Map<string, Segment>()
   const changes: SegmentChange[] = []
   let previous: ReturnType<typeof segmentFields> = null
+  // A timeout or failure between two successes is a measured miss: the line breaks there.
+  let interrupted = false
   for (const { record, at } of kept) {
     const sample = record.sample
     if (sample.outcome !== "success") {
       events.push({ id: sample.measurement_id, at, outcome: sample.outcome, reason: sample.failure_reasons[0] ?? null })
+      interrupted = true
       continue
     }
     const fields = segmentFields(record)
@@ -230,10 +233,11 @@ export function buildHistory(records: LatencyHistoryRecord[], query: LatencyQuer
     const run = segment.runs.at(-1)
     const lastPoint = run?.at(-1)
     // A different segment in between, or a long unrecorded stretch, ends the run.
-    const contiguous = run && lastPoint && previous?.key === fields.key && at - lastPoint.at <= breakAfterMs
+    const contiguous = run && lastPoint && !interrupted && previous?.key === fields.key && at - lastPoint.at <= breakAfterMs
     if (contiguous) run.push(point)
     else segment.runs.push([point])
     previous = fields
+    interrupted = false
   }
 
   const values = successes.map((point) => point.ms).sort((a, b) => a - b)

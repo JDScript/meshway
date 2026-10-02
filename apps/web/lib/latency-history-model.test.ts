@@ -115,3 +115,13 @@ test("windows are half-open, whole-second and at most 24 hours", () => {
   assert.equal(range.until, new Date(t0 + 1000).toISOString())
   assert.equal(Date.parse(range.until) - Date.parse(range.from), 24 * 3_600_000)
 })
+
+test("a timeout or failure between successes breaks the line instead of interpolating over it", () => {
+  const history = buildHistory(
+    [record(1, 0), record(2, 30, { outcome: "timeout" }), record(3, 60), record(4, 90), record(5, 120, { outcome: "failed" }), record(6, 150)],
+    query,
+    breakAfter(30)
+  )
+  assert.equal(history.segments.length, 1)
+  assert.deepEqual(history.segments[0]?.runs.map((run) => run.map((point) => point.id)), [[hex(1)], [hex(3), hex(4)], [hex(6)]])
+})

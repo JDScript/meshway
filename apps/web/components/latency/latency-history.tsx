@@ -77,7 +77,12 @@ export function LatencyHistory({
   return (
     <section aria-label="延迟历史" data-testid="latency-history" className="flex flex-col gap-2">
       <div className="flex items-center justify-between gap-2">
-        <h3 className="text-xs font-medium">延迟历史 <span className="font-normal text-muted-foreground">· 已认证邻接 RTT · 近 {windowLabel}</span></h3>
+        <h3 className="text-xs font-medium">
+          延迟历史{" "}
+          <span className="font-normal text-muted-foreground" title="认证邻接探测往返耗时，含排队和可能的重试等待；不是纯网络 RTT 或丢包率">
+            · 认证邻接往返时间 · 近 {windowLabel}
+          </span>
+        </h3>
         <Button variant="ghost" size="icon-sm" aria-label="展开延迟历史" onClick={() => setExpanded(true)}>
           <Maximize2Icon />
         </Button>
@@ -91,7 +96,7 @@ export function LatencyHistory({
             <DialogTitle>
               {name(source)} <ArrowRightIcon className="inline size-4 align-[-2px]" aria-hidden="true" /> {name(peer)} 延迟历史
             </DialogTitle>
-            <DialogDescription>由 {name(source)} 测得的已认证邻接往返时间；均为历史记录，不代表当前连通。</DialogDescription>
+            <DialogDescription>由 {name(source)} 测得的认证邻接探测往返耗时（含排队和可能的重试等待）；均为历史记录，不代表当前连通。</DialogDescription>
           </DialogHeader>
           <div className="flex flex-col gap-3">
             <div className="flex flex-wrap items-center gap-2">
