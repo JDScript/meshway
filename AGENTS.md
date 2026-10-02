@@ -75,11 +75,11 @@ Rust 控制面与 agent、Next.js + shadcn/ui 控制台、VitePress 文档站。
 - 用户要求控制台可见每个 listener / 实际承载 socket 的绑定地址、对外候选、发现来源、验证与过期状态；拨号 socket 的候选也须正确关联，不能统一假定为 listener。STUN 观测、NAT 打洞与 UPnP/NAT-PMP/PCP 显式映射不同，UDP 的映射不能推广成 TCP/VLESS 可达性。自动路由方案的地区判断复用当前底层公网 IP 观测，由控制面 GeoIP 推导并展示来源/时间/选中方案；不得把 Mesh IP、所选出口 IP 或管理员国家标注当作设备的实测地区，缺少有效观测时使用已定义兜底。UPnP 实现范围尚未由本条确认。
 - 控制面通信、STUN/认证建连探测、transport 外层 socket 及必要 bootstrap DNS 必须使用不进入 Meshway 自身 TUN 的系统保护通路，优先于公共/方案业务规则且不可被用户排序覆盖。以 Agent 内部 socket 用途和路由标记/平台等效机制限定豁免，不按整个进程或目标 IP/域名全局放行；普通业务访问相同地址仍受其策略约束。只豁免外层传输，不改变逻辑路径/Access/必经节点。网络与endpoint变化时先准备底层保护再启用新通道；IPv4/IPv6一致，缺少有效底层观测时不伪报地区。P1c的全IP /32 pin仅为已记录原型限制，正式出口下发前须收敛。
 - 业务配置、连接和端点公钥须来自同一 revision 的快照；撤回和 lease 到期独立于 HTTP 请求终止旧运行代际，TUN 停止后 Mesh 网段不得落回底层默认路由。
-- 远端真实联测留待 TUN 与打洞完善后进行，现阶段仅登记主机。测试限定独立 Docker 网络命名空间，保留原 SSH/管理连接，不改宿主机路由、DNS、防火墙或 Docker daemon 配置，不使用 host network/privileged；测试网段、端口和数据目录须与现有服务隔离。
+- 用户已确认把第一轮远端联测提前到打洞之前：先用已验证主线，在已登记 Linux 主机的独立 Docker 容器核对部署、固定链路、跨地域 TUN 互访和重启恢复，先两台再四台；自动建连 / 打洞 / 主备完成后另做第二轮。测试保留原 SSH/管理连接，不手工改宿主机路由、DNS、防火墙或 Docker daemon 配置，不用 host network/privileged；Docker 创建的测试网络、端口及数据目录必须隔离且可精确清理，不恢复旧配置快照覆盖用户工作。
 - Rust 使用 `cargo fmt`、Clippy 和必要的行为测试；JS 使用严格 TypeScript 与各包检查。修改协议、HTTP 路由或生成客户端时，合并前必须跑全部消费者：`cargo test --workspace --all-features`（含 Agent 与 Apple core）、Web 与 SDK 检查，以及 `experiments/*/tsconfig.json` 的 `tsc --noEmit`。
 - 用户已明确移除 Meshway 的浏览器自动化检查：不保留或默认重建 Playwright / 浏览器 E2E 套件，不以浏览器全量回归阻塞日常开发或部署。Web 默认做严格类型检查、lint、必要单测与构建，UI 由用户在开发页面手工验证；协议、鉴权、迁移和数据面仍运行各自必要的非浏览器行为测试。
 - 并行任务明确文件所有权；根 workspace 配置、lockfile 和整体验证由协调者维护。
 - 不同 feature 组合的 CLI 行为测试与 SDK / 原生联测构建不得并行共用同一 Cargo target 目录；后者可能替换前者正在执行的 `target/debug/meshway-agent`。使用独立 target 或串行执行。
 - 所有后续 worktree 统一创建在本仓库 `.worktree/<任务名>`，不再散放上级目录。独立任务完成、提交已整合且无未提交 / 未跟踪工作后及时移除 worktree；保留分支和测量产物。活跃任务须在不影响进程与构建的安全边界迁移，不能直接删改其目录。
-- 当前推进顺序已由用户确认：收尾既有整合 / 更新 Demo → P3a 四层策略上线与系统保护通路 → P3b 自动建连 / 承载主备及 P3d 打洞 → 东京 / 纽约 / 首尔 / 洛杉矶 Linux 服务器独立 Docker 联测 → P3c 完整出口与域名分流（仍属首版）。远端先单台部署、两地互通，再四地多跳 / 故障恢复；打洞完成前仅保留登记。transport registry 随真实接线需要分步收敛，前端和 Apple 新增开发暂缓。性能本批已结束，无无保留可上线的吞吐优化候选；offload / NEON 等保留实验分支和证据，不整分支部署或继续扩大矩阵。未确认归属或仍有进程/未提交工作的工作树须保留。
+- 当前推进：已验证主线先开展远端固定链路 Docker 联测（用户已同意提前）；P3a / underlay 候选完成现有阻断修复及复核后合入，再推进 P3b 自动建连 / 主备、P3d 打洞和第二轮四地验证，P3c 完整出口 / 域名分流仍属首版。模型/API大清理、GeoIP和前端不阻塞第一轮基础联测；未审定候选不部署。transport registry 按真实接线分步收敛，前端及 Apple 后续由各自工作流安排。性能本批已结束，不整分支部署 offload / NEON 实验或扩大矩阵；保留分支与证据，未知归属或仍有进程/未提交工作的树须保留。
 - 独立完成的工作形成清晰提交。提交前检查生成产物、文档和实际运行命令一致。
