@@ -77,6 +77,7 @@ Rust 控制面与 agent、Next.js + shadcn/ui 控制台、VitePress 文档站。
 - 业务配置、连接和端点公钥须来自同一 revision 的快照；撤回和 lease 到期独立于 HTTP 请求终止旧运行代际，TUN 停止后 Mesh 网段不得落回底层默认路由。
 - 用户已确认把第一轮远端联测提前到打洞之前：先用已验证主线，在已登记 Linux 主机的独立 Docker 容器核对部署、固定链路、跨地域 TUN 互访和重启恢复，先两台再四台；自动建连 / 打洞 / 主备完成后另做第二轮。测试保留原 SSH/管理连接，不手工改宿主机路由、DNS、防火墙或 Docker daemon 配置，不用 host network/privileged；Docker 创建的测试网络、端口及数据目录必须隔离且可精确清理，不恢复旧配置快照覆盖用户工作。
 - 第一轮远端已验证东京↔洛杉矶的双向 TUN ICMP/HTTP 和 DNS，并独立复现 E2E packet 会话恢复缺口：端点重启后存活端 sender cache 可继续使用已失效密钥，约 59 秒预算到期后才按需重握手；实际业务恢复还含下一次发送、握手和应用重试，不承诺 59 秒总上界。一跳与多跳均受影响，邻接认证 / probe / 新 echo 成功不能证明旧 packet 会话恢复；完整失败窗口必须保留。修复需端到端认证的 incarnation/resync 与 wire 兼容边界，不能仅清邻居缓存、每次 fresh incoming 都清反向会话或缩短 TTL 掩盖；与尚未实现的单向 grants 状态型业务回包分开跟踪。
+- E2E 有界 authenticated resync 已独立审查、全消费者验收并以 `9c26105` 合入；Rust 595 / 7 ignored、SDK 16、旧 Web 184 等检查通过，远端尚未部署。快速路径要求参与节点支持新内部 phase / `resync-v1`，旧节点及丢包 / 竞争保留 TTL 回退边界；首个 stale packet 不重放。运行报告重试的 RR1/RR2 边界修复仍待复核。复验须复用原四地 Controller DB / 节点身份 / 公钥 / 源配置，原 FAIL 与失效窗口保留，不重新注册或重置策略来求通过。
 - Rust 使用 `cargo fmt`、Clippy 和必要的行为测试；JS 使用严格 TypeScript 与各包检查。修改协议、HTTP 路由或生成客户端时，合并前必须跑全部消费者：`cargo test --workspace --all-features`（含 Agent 与 Apple core）、Web 与 SDK 检查，以及 `experiments/*/tsconfig.json` 的 `tsc --noEmit`。
 - 用户已明确移除 Meshway 的浏览器自动化检查：不保留或默认重建 Playwright / 浏览器 E2E 套件，不以浏览器全量回归阻塞日常开发或部署。Web 默认做严格类型检查、lint、必要单测与构建，UI 由用户在开发页面手工验证；协议、鉴权、迁移和数据面仍运行各自必要的非浏览器行为测试。
 - 并行任务明确文件所有权；根 workspace 配置、lockfile 和整体验证由协调者维护。

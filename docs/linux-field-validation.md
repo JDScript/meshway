@@ -100,6 +100,10 @@ B→A 回包因 A 已无对应 receiver session 被正确拒绝。外层重连�
 - B–中转通道在多跳反例中从未变化，因此仅清“邻接重连缓存”不能完整修复；普通 rekey 时盲目清反向 cache 还可能造成双向反复握手。
 - 后续修复需经端到端认证的接收状态代际或有界 resync，并明确 wire / 能力协商、旧版本行为和 anti-replay；本轮没有降低加密、缩短 TTL 或修改固定远端 binary 来掩盖问题。
 
+该 Runtime 缺口随后通过有界 authenticated `resync-v1` 修复，已独立审查、全消费者验收并合入 `9c26105`，
+详见[E2E 恢复合同](/e2e-session-recovery)。快速路径要求参与节点支持扩展；旧参与节点、控制丢包 / 预算竞争仍保留原 TTL 边界。
+这是代码层关闭，原现场 FAIL 不改为 PASS；新的同身份 Controller / Agent / TUN 复验尚未执行。
+
 独立报告：批准 TMP 的 `meshway-field-e2e-restart-recovery-review.md`；原远端报告没有 sender ID 采样，
 只证明其现象与已独立复现的机制一致，不将后一次成功探测时间伪称为远端首次恢复时刻。
 

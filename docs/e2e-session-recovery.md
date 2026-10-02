@@ -1,6 +1,7 @@
 # E2E packet 接收状态丢失后的恢复
 
-本修复基于 `1b6d061`，在独立 `fix/e2e-session-recovery` 分支实现并进行本机 Runtime 行为验证，尚未部署到远端或主线。原第一轮远端报告及固定 `4d106e0` 的真实 59s 反例保留不变。
+本修复基于 `1b6d061`，已完成独立审查和全消费者验收，并以 `9c26105` 合入主线；尚未部署到远端。
+原第一轮远端报告及固定 `4d106e0` 的真实 59s 反例保留不变。
 
 ## 恢复语义
 
@@ -58,4 +59,18 @@ UnknownSession body 为精确 `unknown-session-v1`；ResyncInit / Ready Noise pa
 
 行为覆盖包括真实一跳/多跳重启（源端–中转 socket 不变）、仅正向 grant、原外层重连、真实 60s 双向滚动、假 hint 与 authenticated positive、重放 Init/query、错误 ID/path/key/mode/challenge/密文、迟到 missing answer、nonce replay/MAC 错误不发 hint、全局/逐路径限速与 receiver/pending capacity、caller 取消及网络 await 中 packet generation 撤回。
 
-协调者后续负责全部消费者、独立 Rust 审查及正常 Controller/Agent/TUN 生命周期的部署验收。本分支没有修改 Agent Manager/state/underlay/TUN、Controller/HTTP、生成产物、根 manifests/lock、console 或远端测试运行数据。
+作者交接时列出的独立审查与全消费者检查现已完成，结果见下节；正常 Controller/Agent/TUN 的远端部署验收仍待执行。
+本修复未改变 Agent Manager/state/underlay/TUN、Controller/HTTP 或生成产物，原远端测试数据保持不变。
+
+## 独立关闭与合并验收
+
+- 原复现者在冻结 `6262bc1` 新副本中独立验证 31 项既有定向测试和 5 项新增探针。
+  原方向、多跳且无反向业务 grant / 无新目标主动反向业务的重启恢复成功；首个 stale packet 仍真实丢弃。
+  本机 loopback 一跳 9.112 ms、多跳 7.615 ms，不能当作远端恢复 SLA。
+- 固定依赖整合树 `40d2bd8` 实际完成 Rust workspace/all-features **595 passed / 7 ignored**（含 Agent / Apple core），
+  Clippy、fmt、drift、独立 target 的无默认 feature CLI 2 项；生成器 7、SDK 16、旧 Web 184，以及严格 TS / lint / build、Apple 脚本和七组实验 TS 全部通过。
+- 合成后端与候选逐字节一致。原 HTTP schema / 客户端未改；这次内部 wire 扩展仍按全消费者要求验收。
+- 运行状态上报的另一修复与正式 underlay 不在本次合并中；正常 Controller / Agent / TUN 的同身份远端复验另行推进。
+
+原始报告位于批准 TMP：`meshway-e2e-session-review-6262bc1.md`、`meshway-e2e-integration-40d2bd8.md`，
+完整日志在对应 `meshway-e2e-integration-40d2bd8-logs/`。原失败窗口、旧库互操作来源及 reviewer 的初次 fixture 错误日志均保留。
