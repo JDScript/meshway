@@ -1,5 +1,5 @@
 //! Network-scoped public settings and encrypted recoverable carrier materials.
-use super::{NetworkId, Store, access, configuration, connections};
+use super::{NetworkId, Store, configuration, connections};
 use crate::Error;
 use chacha20poly1305::{
     ChaCha20Poly1305, KeyInit,
@@ -589,9 +589,11 @@ impl Store {
             {
                 configuration::bump(&tx, &network)?;
             }
-            configuration::ensure_publishable(&tx, &network)?;
-            connections::ensure_publishable(&tx, &network)?;
-            access::ensure_publishable(&tx, &network)?;
+            super::publication::finish_change(
+                &tx,
+                &network,
+                super::publication::ChangeKind::Adjacency,
+            )?;
         }
         let revision = configuration::revision(&tx, &network)?;
         tx.commit()?;
@@ -774,9 +776,11 @@ impl Store {
                 .map_err(|_| Error::Configuration("cannot encode settings"))?;
             tx.execute("INSERT INTO managed_listeners(network_id,listener_id,node_id,settings,material_version,certificate_sha256,material_nonce,material_ciphertext) VALUES (?1,?2,?3,?4,?5,?6,?7,?8) ON CONFLICT(network_id,listener_id) DO UPDATE SET settings=excluded.settings,material_version=excluded.material_version,certificate_sha256=excluded.certificate_sha256,material_nonce=excluded.material_nonce,material_ciphertext=excluded.material_ciphertext",params![network.as_str(),item.id,item.node_id,encoded,version,material.as_ref().map(|m|&m.certificate_sha256),nonce,ciphertext])?;
             configuration::bump(&tx, network)?;
-            configuration::ensure_publishable(&tx, network)?;
-            connections::ensure_publishable(&tx, network)?;
-            access::ensure_publishable(&tx, network)?;
+            super::publication::finish_change(
+                &tx,
+                network,
+                super::publication::ChangeKind::Adjacency,
+            )?;
         }
         let response = ManagedListenersSnapshot {
             revision: configuration::revision(&tx, network)?,

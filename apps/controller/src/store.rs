@@ -27,6 +27,7 @@ mod managed_transports;
 mod network;
 mod networks;
 mod ownership;
+mod publication;
 mod release_schema;
 pub(crate) use networks::NetworkId;
 mod tags;
@@ -351,10 +352,11 @@ impl Store {
             ownership::assign(&transaction, network, &id, &owner.owner().id)?;
         }
         configuration::bump(&transaction, network)?;
-        configuration::ensure_publishable(&transaction, network)?;
-        connections::ensure_publishable(&transaction, network)?;
-        access::ensure_publishable(&transaction, network)?;
-        network::ensure_publishable(&transaction, network)?;
+        publication::finish_change(
+            &transaction,
+            network,
+            publication::ChangeKind::NetworkOrEnrollment,
+        )?;
         let node = find_node(&transaction, network, &id)?;
         transaction.commit()?;
         Ok(node)
@@ -406,9 +408,11 @@ impl Store {
                 params![id, network.as_str()],
             )?;
             configuration::bump(&transaction, network)?;
-            configuration::ensure_publishable(&transaction, network)?;
-            connections::ensure_publishable(&transaction, network)?;
-            access::ensure_publishable(&transaction, network)?;
+            publication::finish_change(
+                &transaction,
+                network,
+                publication::ChangeKind::NodeWithdrawal,
+            )?;
         }
         let node = find_node(&transaction, network, id)?;
         transaction.commit()?;

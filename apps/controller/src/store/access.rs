@@ -3,7 +3,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use meshway_protocol::*;
 use rusqlite::{Connection, TransactionBehavior, params};
 
-use super::{NetworkId, Store, configuration, connections, ipam, jsonc, tags};
+use super::{NetworkId, Store, configuration, ipam, jsonc, publication, tags};
 use crate::Error;
 
 #[cfg(test)]
@@ -152,7 +152,10 @@ fn source_jsonc(connection: &Connection, scope: &NetworkId) -> Result<Option<Str
     )?)
 }
 
-fn bindings(connection: &Connection, scope: &NetworkId) -> Result<BTreeMap<String, String>, Error> {
+pub(super) fn bindings(
+    connection: &Connection,
+    scope: &NetworkId,
+) -> Result<BTreeMap<String, String>, Error> {
     Ok(connection.prepare(
         "SELECT node_id, public_key FROM connection_identities JOIN nodes ON nodes.id = node_id AND nodes.network_id=connection_identities.network_id WHERE nodes.revoked_at IS NULL AND nodes.network_id=?1 ORDER BY node_id",
     )?.query_map([scope.as_str()], |row| Ok((row.get(0)?, row.get(1)?)))?.collect::<Result<_, _>>()?)
@@ -190,186 +193,23 @@ fn admin_snapshot(connection: &Connection, scope: &NetworkId) -> Result<MeshAcce
     })
 }
 
-fn authorization_id(path: &[String]) -> String {
-    local::digest(&format!("effective:{}", path.join(":")))
-        .iter()
-        .map(|byte| format!("{byte:02x}"))
-        .collect()
-}
-
 fn compiled_authorizations(
     connection: &Connection,
     scope: &NetworkId,
 ) -> Result<(bool, BTreeMap<String, MeshPathAuthorization>), Error> {
-    compiled_authorizations_with(connection, scope, || {})
+    Ok(publication::Publication::read(connection, scope)?.into_authorizations())
 }
 
+#[cfg(test)]
 fn compiled_authorizations_with(
     connection: &Connection,
     scope: &NetworkId,
-    mut route_evaluated: impl FnMut(),
+    route_evaluated: impl FnMut(),
 ) -> Result<(bool, BTreeMap<String, MeshPathAuthorization>), Error> {
-    let nodes = configuration::active_nodes(connection, scope)?;
-    let mut result: BTreeMap<_, _> = nodes
-        .iter()
-        .map(|node| (node.id.clone(), MeshPathAuthorization::default()))
-        .collect();
-    let access = source(connection, scope)?;
-    let catalog = tags::catalog(connection, scope)?;
-    if !validate(&access, &nodes, &catalog).is_empty() {
-        return Ok((false, result));
-    }
-    if access.default_action == AccessAction::Reject
-        && access
-            .rules
-            .iter()
-            .all(|rule| rule.action == AccessAction::Reject)
-    {
-        return Ok((true, result));
-    }
-    let keys: BTreeMap<_, _> = bindings(connection, scope)?
-        .into_iter()
-        .filter(|(_, key)| valid_connection_public_key(key))
-        .collect();
-    let eligible: Vec<_> = nodes
-        .iter()
-        .filter(|node| keys.contains_key(&node.id))
-        .collect();
-    if eligible.len() < 2 {
-        return Ok((true, result));
-    }
-    let routing = configuration::source_policy(connection, scope)?;
-    let network = ipam::network(connection, scope)?;
-    let prepared = meshway_policy::prepare_routing(&routing, &network, &nodes);
-    if !prepared.report().is_valid() {
-        return Ok((true, result));
-    }
-    let assignments = tags::assignments(connection, scope)?;
-    let eligible_ids: BTreeSet<_> = eligible.iter().map(|node| node.id.as_str()).collect();
-    let mut connection_source = None;
-    let mut identity_unions: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
-    for source in &eligible {
-        for destination in &eligible {
-            if source.id == destination.id
-                || meshway_policy::evaluate_access(
-                    &access,
-                    &source.id,
-                    &destination.id,
-                    &assignments,
-                )
-                .action
-                    != FlowAuthorizationAction::Allow
-            {
-                continue;
-            }
-            route_evaluated();
-            let Some(path) = prepared.compile_mesh_endpoint(&source.id, &destination.id) else {
-                continue;
-            };
-            if path.first() != Some(&source.id)
-                || path.last() != Some(&destination.id)
-                || path.iter().any(|id| !eligible_ids.contains(id.as_str()))
-            {
-                continue;
-            }
-            if path.len() > MAX_MESH_ACCESS_PATH_NODES {
-                return Err(Error::Capacity(
-                    "authorized route exceeds the 8-node exact-path limit",
-                ));
-            }
-            let grant = MeshAccessGrant {
-                id: authorization_id(&path),
-                path,
-            };
-            for participant in &grant.path {
-                let authorization = result.get(participant).ok_or(Error::Configuration(
-                    "routing returned an inactive path node",
-                ))?;
-                if authorization.grants.len() == MAX_MESH_ACCESS_GRANTS {
-                    return Err(Error::Capacity(
-                        "effective access exceeds 128 exact paths for a node",
-                    ));
-                }
-                if !identity_unions.contains_key(participant) {
-                    let source = if let Some(source) = &connection_source {
-                        source
-                    } else {
-                        connection_source.insert(connections::admin_snapshot(connection, scope)?)
-                    };
-                    let adjacency = connections::projection(source, participant)?.payload;
-                    identity_unions.insert(
-                        participant.clone(),
-                        adjacency
-                            .peers
-                            .into_iter()
-                            .map(|peer| peer.node_id)
-                            .collect(),
-                    );
-                }
-                let union = identity_unions
-                    .get_mut(participant)
-                    .expect("inserted participant identity union");
-                union.extend(grant.path.iter().filter(|id| *id != participant).cloned());
-                if union.len() > MAX_DATAPLANE_IDENTITIES {
-                    return Err(Error::Capacity(
-                        "dataplane exceeds 64 union peer identities",
-                    ));
-                }
-            }
-            for participant in &grant.path {
-                result
-                    .get_mut(participant)
-                    .expect("validated path participant")
-                    .grants
-                    .push(grant.clone());
-            }
-        }
-    }
-    Ok((true, result))
-}
-
-fn identities(
-    id: &str,
-    connections: &NodeConnections,
-    access: &MeshPathAuthorization,
-    keys: &BTreeMap<String, String>,
-) -> Result<Vec<ConnectionPeer>, Error> {
-    let ids: BTreeSet<_> = connections
-        .peers
-        .iter()
-        .map(|peer| peer.node_id.as_str())
-        .chain(
-            access
-                .grants
-                .iter()
-                .flat_map(|grant| grant.path.iter().map(String::as_str)),
-        )
-        .filter(|peer| *peer != id)
-        .collect();
-    if ids.len() > MAX_DATAPLANE_IDENTITIES {
-        return Err(Error::Capacity(
-            "dataplane exceeds 64 union peer identities",
-        ));
-    }
-    ids.into_iter()
-        .map(|id| {
-            let key = keys
-                .get(id)
-                .filter(|key| valid_connection_public_key(key))
-                .ok_or(Error::Configuration(
-                    "dataplane peer has no canonical immutable binding",
-                ))?;
-            Ok(ConnectionPeer {
-                node_id: id.to_owned(),
-                public_key: key.clone(),
-            })
-        })
-        .collect()
-}
-
-pub(super) fn ensure_publishable(connection: &Connection, scope: &NetworkId) -> Result<(), Error> {
-    compiled_authorizations(connection, scope)?;
-    Ok(())
+    Ok(
+        publication::Publication::read_with(connection, scope, route_evaluated)?
+            .into_authorizations(),
+    )
 }
 
 impl Store {
@@ -419,9 +259,7 @@ impl Store {
                 params![encoded, request.source_jsonc, scope.as_str()],
             )?;
             configuration::bump(&transaction, scope)?;
-            configuration::ensure_publishable(&transaction, scope)?;
-            connections::ensure_publishable(&transaction, scope)?;
-            ensure_publishable(&transaction, scope)?;
+            publication::finish_change(&transaction, scope, publication::ChangeKind::Adjacency)?;
         }
         let response = admin_snapshot(&transaction, scope)?;
         transaction.commit()?;
@@ -537,46 +375,7 @@ impl Store {
             TransactionBehavior::Deferred,
         )?;
         let node_id = configuration::node_id(&transaction, &scope, token)?;
-        let configuration = configuration::snapshot(&transaction, &scope, &node_id)?.payload;
-        let connections = connections::projection(
-            &connections::admin_snapshot(&transaction, &scope)?,
-            &node_id,
-        )?
-        .payload;
-        let (access_valid, mut authorizations) = compiled_authorizations(&transaction, &scope)?;
-        let access_policy = authorizations.remove(&node_id).unwrap_or_default();
-        let identities = identities(
-            &node_id,
-            &connections,
-            &access_policy,
-            &bindings(&transaction, &scope)?,
-        )?;
-        let revision = configuration.revision;
-        if connections.revision != revision {
-            return Err(Error::Configuration("incoherent dataplane revision"));
-        }
-        let payload = NodeDataplane {
-            schema_version: DATAPLANE_SCHEMA_VERSION,
-            revision,
-            node_id,
-            configuration,
-            connections,
-            access_policy,
-            access_valid,
-            identities,
-        };
-        let digest = dataplane_digest(&payload)
-            .map_err(|_| Error::Configuration("cannot encode dataplane"))?;
-        let snapshot = AgentDataplaneSnapshot { digest, payload };
-        if serde_json::to_vec(&snapshot)
-            .map_err(|_| Error::Configuration("cannot encode dataplane"))?
-            .len()
-            > MAX_DATAPLANE_BYTES
-        {
-            return Err(Error::Capacity(
-                "dataplane exceeds 2 MiB publication budget",
-            ));
-        }
+        let snapshot = publication::Publication::read(&transaction, &scope)?.dataplane(&node_id)?;
         transaction.commit()?;
         Ok(snapshot)
     }

@@ -1,4 +1,4 @@
-use super::{NetworkId, Store, access, configuration, connections, network};
+use super::{NetworkId, Store, configuration, publication};
 use crate::{Error, accounts::*};
 use meshway_protocol::{AuthorizeDeviceRequest, AuthorizeDeviceResponse, accounts::*};
 use rusqlite::{Connection, OptionalExtension, TransactionBehavior, params};
@@ -73,10 +73,7 @@ pub(super) fn withdraw_user(
     db.execute(&format!("DELETE FROM connection_runtime_reports WHERE network_id=?1 AND node_id IN ({withdrawn})"),params![scope.as_str(),user.as_str()])?;
     if changed > 0 || tags > 0 {
         configuration::bump(db, scope)?;
-        configuration::ensure_publishable(db, scope)?;
-        connections::ensure_publishable(db, scope)?;
-        access::ensure_publishable(db, scope)?;
-        network::ensure_publishable(db, scope)?;
+        publication::finish_change(db, scope, publication::ChangeKind::MembershipWithdrawal)?;
     }
     Ok(())
 }

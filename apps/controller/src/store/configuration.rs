@@ -1,20 +1,18 @@
 use meshway_protocol::{
-    AcknowledgeConfigurationRequest, AcknowledgeConfigurationResponse,
-    CONFIGURATION_SCHEMA_VERSION, ConfigurationSnapshot, MAX_CONFIGURATION_BYTES, MeshNode,
-    NodeConfiguration, NodeSummary, PolicyDiagnostic, PolicySnapshot, PreviewPolicyRequest,
-    PreviewPolicyResponse, RoutingPolicy, SavePolicyRequest, SetNodeCountryRequest,
-    configuration_digest, local::digest,
+    AcknowledgeConfigurationRequest, AcknowledgeConfigurationResponse, ConfigurationSnapshot,
+    MeshNode, NodeSummary, PolicyDiagnostic, PolicySnapshot, PreviewPolicyRequest,
+    PreviewPolicyResponse, RoutingPolicy, SavePolicyRequest, SetNodeCountryRequest, local::digest,
 };
 use rusqlite::{Connection, OptionalExtension, TransactionBehavior, params};
 
-use super::{NetworkId, Store, access, find_node, ipam, jsonc};
+use super::{NetworkId, Store, find_node, ipam, jsonc, publication};
 use crate::Error;
 
-const DIAGNOSTIC_BUDGET: usize = 32 * 1024;
+pub(super) const DIAGNOSTIC_BUDGET: usize = 32 * 1024;
 
 /// Diagnostic references can repeat a long user-supplied rule ID. Keep reports
 /// useful while bounding their serialized size independently of policy size.
-fn bounded_diagnostics(diagnostics: Vec<PolicyDiagnostic>) -> Vec<PolicyDiagnostic> {
+pub(super) fn bounded_diagnostics(diagnostics: Vec<PolicyDiagnostic>) -> Vec<PolicyDiagnostic> {
     let mut bounded = Vec::new();
     let mut remaining = DIAGNOSTIC_BUDGET - 512;
     for diagnostic in diagnostics {
@@ -130,62 +128,7 @@ pub(super) fn snapshot(
     scope: &NetworkId,
     id: &str,
 ) -> Result<ConfigurationSnapshot, Error> {
-    let mut nodes = active_nodes(connection, scope)?;
-    let network = ipam::network(connection, scope)?;
-    let policy = source_policy(connection, scope)?;
-    let report = meshway_policy::compile(&policy, &network, &nodes);
-    let node_index = nodes
-        .iter()
-        .position(|node| node.id == id)
-        .ok_or(Error::Forbidden)?;
-    let node = nodes.remove(node_index);
-    let valid = report.is_valid();
-    let payload = NodeConfiguration {
-        schema_version: CONFIGURATION_SCHEMA_VERSION,
-        revision: revision(connection, scope)?,
-        network,
-        node,
-        peers: nodes,
-        routing_policy: if valid {
-            report.normalized_policy
-        } else {
-            RoutingPolicy::default()
-        },
-        policy_valid: valid,
-        diagnostics: bounded_diagnostics(report.diagnostics),
-    };
-    let digest = configuration_digest(&payload)
-        .map_err(|_| Error::Configuration("cannot encode configuration"))?;
-    Ok(ConfigurationSnapshot { digest, payload })
-}
-
-/// Every active node appears exactly once (self or peers). Moving an object
-/// between those positions preserves the encoded size, so one snapshot suffices.
-pub(super) fn ensure_publishable(
-    connection: &Connection,
-    network: &NetworkId,
-) -> Result<(), Error> {
-    let id: Option<String> = connection
-        .query_row(
-            "SELECT id FROM nodes WHERE revoked_at IS NULL AND network_id=?1 ORDER BY id LIMIT 1",
-            [network.as_str()],
-            |row| row.get(0),
-        )
-        .optional()?;
-    if let Some(id) = id {
-        let mut snapshot = snapshot(connection, network, &id)?;
-        // Always reserve room for a future fail-closed report. Withdrawing a
-        // revoked peer can never make this base projection larger.
-        snapshot.payload.diagnostics.clear();
-        let bytes = serde_json::to_vec(&snapshot)
-            .map_err(|_| Error::Configuration("cannot encode configuration"))?;
-        if bytes.len() > MAX_CONFIGURATION_BYTES - DIAGNOSTIC_BUDGET {
-            return Err(Error::Capacity(
-                "configuration exceeds 1 MiB publication budget",
-            ));
-        }
-    }
-    Ok(())
+    publication::RoutingFacts::read(connection, scope)?.configuration(id)
 }
 
 impl Store {
@@ -266,8 +209,11 @@ impl Store {
                 params![json, request.source_jsonc, network.as_str()],
             )?;
             bump(&transaction, network)?;
-            ensure_publishable(&transaction, network)?;
-            access::ensure_publishable(&transaction, network)?;
+            publication::finish_change(
+                &transaction,
+                network,
+                publication::ChangeKind::RoutingOrSelectors,
+            )?;
         }
         let snapshot = policy_snapshot(&transaction, network)?;
         transaction.commit()?;
@@ -301,8 +247,11 @@ impl Store {
                 params![country, request.node_id, network.as_str()],
             )?;
             bump(&transaction, network)?;
-            ensure_publishable(&transaction, network)?;
-            access::ensure_publishable(&transaction, network)?;
+            publication::finish_change(
+                &transaction,
+                network,
+                publication::ChangeKind::RoutingOrSelectors,
+            )?;
         }
         let node = find_node(&transaction, network, &request.node_id)?;
         transaction.commit()?;

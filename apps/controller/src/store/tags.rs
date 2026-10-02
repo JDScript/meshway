@@ -143,8 +143,11 @@ impl Store {
                 )?;
             }
             configuration::bump(&transaction, network)?;
-            configuration::ensure_publishable(&transaction, network)?;
-            access::ensure_publishable(&transaction, network)?;
+            super::publication::finish_change(
+                &transaction,
+                network,
+                super::publication::ChangeKind::RoutingOrSelectors,
+            )?;
         }
         let result = snapshot(&transaction, network)?;
         transaction.commit()?;
@@ -199,8 +202,11 @@ impl Store {
                 )?;
             }
             configuration::bump(&transaction, network)?;
-            configuration::ensure_publishable(&transaction, network)?;
-            access::ensure_publishable(&transaction, network)?;
+            super::publication::finish_change(
+                &transaction,
+                network,
+                super::publication::ChangeKind::RoutingOrSelectors,
+            )?;
         }
         let result = snapshot(&transaction, network)?;
         transaction.commit()?;

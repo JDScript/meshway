@@ -2,9 +2,9 @@ use meshway_protocol::{
     AgentDnsSnapshot, DNS_SCHEMA_VERSION, MAX_DNS_BYTES, MeshDnsConfiguration, NetworkSnapshot,
     NodeDnsConfiguration, SaveNetworkRequest, compile_dns_records, dns_digest, local,
 };
-use rusqlite::{Connection, OptionalExtension, TransactionBehavior, params};
+use rusqlite::{Connection, TransactionBehavior, params};
 
-use super::{NetworkId, Store, access, configuration, connections, ipam};
+use super::{NetworkId, Store, configuration, ipam, publication};
 use crate::Error;
 
 #[cfg(test)]
@@ -66,11 +66,20 @@ fn dns_snapshot(
     node_id: String,
 ) -> Result<AgentDnsSnapshot, Error> {
     let network = snapshot(connection, scope)?;
-    let (records, diagnostics) = compile_dns_records(
-        &network.dns,
+    dns_projection(
+        network,
         &configuration::active_nodes(connection, scope)?,
+        node_id,
     )
-    .map_err(Error::Unprocessable)?;
+}
+
+fn dns_projection(
+    network: NetworkSnapshot,
+    nodes: &[meshway_protocol::MeshNode],
+    node_id: String,
+) -> Result<AgentDnsSnapshot, Error> {
+    let (records, diagnostics) =
+        compile_dns_records(&network.dns, nodes).map_err(Error::Unprocessable)?;
     let payload = NodeDnsConfiguration {
         schema_version: DNS_SCHEMA_VERSION,
         revision: network.revision,
@@ -96,19 +105,13 @@ fn dns_snapshot(
     Ok(snapshot)
 }
 
-pub(super) fn ensure_publishable(
+pub(super) fn ensure_publishable_with_nodes(
     connection: &Connection,
     network: &NetworkId,
+    nodes: &[meshway_protocol::MeshNode],
 ) -> Result<(), Error> {
-    let id: Option<String> = connection
-        .query_row(
-            "SELECT id FROM nodes WHERE revoked_at IS NULL AND network_id=?1 ORDER BY id LIMIT 1",
-            [network.as_str()],
-            |row| row.get(0),
-        )
-        .optional()?;
-    if let Some(id) = id {
-        dns_snapshot(connection, network, id)?;
+    if let Some(node) = nodes.first() {
+        dns_projection(snapshot(connection, network)?, nodes, node.id.clone())?;
     }
     Ok(())
 }
@@ -147,10 +150,11 @@ impl Store {
                 params![request.name, json, network.as_str()],
             )?;
             configuration::bump(&transaction, network)?;
-            configuration::ensure_publishable(&transaction, network)?;
-            connections::ensure_publishable(&transaction, network)?;
-            access::ensure_publishable(&transaction, network)?;
-            ensure_publishable(&transaction, network)?;
+            publication::finish_change(
+                &transaction,
+                network,
+                publication::ChangeKind::NetworkOrEnrollment,
+            )?;
         }
         let result = snapshot(&transaction, network)?;
         transaction.commit()?;

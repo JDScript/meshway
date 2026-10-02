@@ -4,7 +4,7 @@ use chrono::Utc;
 use meshway_protocol::*;
 use rusqlite::{Connection, OptionalExtension, TransactionBehavior, params};
 
-use super::{NODE_SELECT, NetworkId, Store, access, configuration, node_row, timestamp};
+use super::{NODE_SELECT, NetworkId, Store, configuration, node_row, publication, timestamp};
 use crate::Error;
 
 #[cfg(test)]
@@ -218,6 +218,7 @@ pub(super) fn projection(
 
 /// Bound every node-scoped projection, not just a representative inventory.
 /// Reserve enough for future fail-closed diagnostics and global revision growth.
+#[cfg(test)]
 pub(super) fn ensure_publishable(
     connection: &Connection,
     network: &NetworkId,
@@ -226,18 +227,7 @@ pub(super) fn ensure_publishable(
     for node in &snapshot.nodes {
         if node.node.revoked_at.is_none() {
             let projected = projection(&snapshot, &node.node.id)?;
-            let encoded = serde_json::to_vec(&projected)
-                .map_err(|_| Error::Configuration("cannot encode connections"))?;
-            let private_budget = super::managed_transports::material_budget(
-                connection,
-                network,
-                &projected.payload,
-            )?;
-            if encoded.len().saturating_add(private_budget) > MAX_CONNECTIONS_BYTES - 4096 {
-                return Err(Error::Capacity(
-                    "connections exceed 1 MiB publication budget",
-                ));
-            }
+            publication::budget::connections(connection, network, &projected)?;
         }
     }
     Ok(())
@@ -290,9 +280,7 @@ impl Store {
                 transaction.execute("INSERT INTO connection_identities (node_id,public_key,capabilities,network_id) VALUES (?1,?2,?3,?4)", params![id,request.public_key,encoded,network.as_str()])?;
             }
             configuration::bump(&transaction, &network)?;
-            configuration::ensure_publishable(&transaction, &network)?;
-            ensure_publishable(&transaction, &network)?;
-            access::ensure_publishable(&transaction, &network)?;
+            publication::finish_change(&transaction, &network, publication::ChangeKind::Adjacency)?;
         }
         let response = PublishConnectionIdentityResponse {
             revision: configuration::revision(&transaction, &network)?,
@@ -359,9 +347,7 @@ impl Store {
                 params![encoded, network.as_str()],
             )?;
             configuration::bump(&transaction, network)?;
-            configuration::ensure_publishable(&transaction, network)?;
-            ensure_publishable(&transaction, network)?;
-            access::ensure_publishable(&transaction, network)?;
+            publication::finish_change(&transaction, network, publication::ChangeKind::Adjacency)?;
         }
         let response = admin_snapshot(&transaction, network)?;
         transaction.commit()?;
