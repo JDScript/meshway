@@ -110,6 +110,20 @@ class RestoreBoundary(unittest.TestCase):
         with self.assertRaises(ValueError):
             self.call()
 
+    def test_created_network_has_explicit_gateway_before_first_endpoint(self):
+        previous = self.fake_run
+
+        def capture(args, **kwargs):
+            if args[1:3] == ['network', 'create']:
+                self.commands.append(args)
+                self.assertEqual(args[args.index('--gateway') + 1], '172.31.249.1')
+                return subprocess.CompletedProcess(args, 0, b'a' * 64, b'')
+            return previous(args, **kwargs)
+
+        with patch('restore.subprocess.run', side_effect=capture):
+            result = restore(self.data, self.root, ['docker'])
+        self.assertFalse(result['resumed'])
+
 
 class ContainerInspectionBoundary(unittest.TestCase):
     def test_docker_capability_spellings_preserve_exact_agent_and_controller_sets(self):

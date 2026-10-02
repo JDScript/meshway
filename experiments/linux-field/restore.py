@@ -127,7 +127,7 @@ def restore(data, root, docker):
             if route.get('dst', 'default') != 'default' and ipaddress.IPv6Network(route['dst'], strict=False).overlaps(ipaddress.IPv6Network('fd62:bfaa:4242::/64')):
                 raise ValueError('non-default IPv6 route conflict')
         if not existing:
-            dk(['network', 'create', '--driver', 'bridge', '--subnet', '172.31.249.0/28',
+            dk(['network', 'create', '--driver', 'bridge', '--subnet', '172.31.249.0/28', '--gateway', '172.31.249.1',
                 '--label', OWNER + '=' + run_id, '--label', ATTEMPT + '=' + attempt, name])
         return {'network': name, 'resumed': bool(existing)}
 
