@@ -118,12 +118,16 @@ async fn scenario(wire_delay: Duration, label: &'static str) {
                     if mode.load(Ordering::SeqCst) == 1
                         && request.uri().path() == "/api/v1/agent/managed-transport-capabilities"
                     {
+                        recorder.mark("a request /api/v1/agent/managed-transport-capabilities");
+                        recorder.mark("publication stalled");
                         publication.notify_one();
                         std::future::pending::<()>().await;
                     }
                     if mode.load(Ordering::SeqCst) == 2
                         && request.uri().path() == "/api/v1/agents/heartbeat"
                     {
+                        recorder.mark("a request /api/v1/agents/heartbeat");
+                        recorder.mark("heartbeat stalled");
                         heartbeat.notify_one();
                         std::future::pending::<()>().await;
                     }
@@ -281,6 +285,7 @@ async fn scenario(wire_delay: Duration, label: &'static str) {
     );
     // Keep the next publication pending after an actual higher-revision heartbeat.
     mode.store(1, Ordering::SeqCst);
+    evidence.recorder.mark("mode 1");
     let response = reqwest::Client::new()
         .get(admin_url(&server.base, &admin, "/connections").await)
         .bearer_auth(&admin)
@@ -310,17 +315,27 @@ async fn scenario(wire_delay: Duration, label: &'static str) {
         count,
         "old samples continued during publication stall"
     );
+    // A tick already admitted before mode 1 can install the higher revision and
+    // report a sample before the following publication stalls. Retained history
+    // from that now-expired source is not recovery. Coordinate on a new sampler
+    // generation after the stall, rather than merely finding a higher revision.
+    let stalled_generations: std::collections::HashSet<_> = history(&server, &admin, &a_id, &b_id)
+        .await
+        .records
+        .into_iter()
+        .map(|record| record.sample.sampler_generation)
+        .collect();
     mode.store(0, Ordering::SeqCst);
+    evidence.recorder.mark("mode 0 after publication stall");
     // The generated client's bounded wait recovers; then expire a live lease by
     // holding heartbeat indefinitely, independently of the sampler HTTP loop.
     let renewed = timeout(Duration::from_secs(45), async {
         loop {
             let h = history(&server, &admin, &a_id, &b_id).await;
-            if let Some(r) = h
-                .records
-                .iter()
-                .find(|r| r.sample.revision > restarted.sample.revision)
-            {
+            if let Some(r) = h.records.iter().find(|r| {
+                r.sample.revision > restarted.sample.revision
+                    && !stalled_generations.contains(&r.sample.sampler_generation)
+            }) {
                 break r.clone();
             }
             sleep(Duration::from_millis(100)).await;
@@ -329,7 +344,16 @@ async fn scenario(wire_delay: Duration, label: &'static str) {
     .await
     .unwrap();
     assert_ne!(renewed.sample.revision, restarted.sample.revision);
+    evidence.recorder.mark(&format!(
+        "renewed sample revision={} epoch={} generation={} completed={} historical={}",
+        renewed.sample.revision,
+        renewed.sample.runtime_epoch,
+        renewed.sample.sampler_generation,
+        renewed.sample.completed_at,
+        renewed.historical
+    ));
     mode.store(2, Ordering::SeqCst);
+    evidence.recorder.mark("mode 2");
     timeout(Duration::from_secs(5), heartbeat_stalled.notified())
         .await
         .unwrap();

@@ -21,12 +21,25 @@ struct Event {
     status: u16,
     request: PublicRequest,
 }
+#[derive(Serialize)]
+struct Timing {
+    at_ms: u128,
+    event: String,
+}
 pub(super) struct Recorder {
     pub tokens: [Arc<Mutex<Option<String>>>; 2],
     start: Instant,
     events: Mutex<Vec<Event>>,
+    diagnostics: Mutex<Vec<Timing>>,
 }
 impl Recorder {
+    pub fn mark(&self, event: &str) {
+        self.diagnostics.lock().unwrap().push(Timing {
+            at_ms: self.start.elapsed().as_millis(),
+            event: event.to_owned(),
+        });
+    }
+
     pub async fn forward(&self, request: Request, next: Next) -> Response {
         let node = self.tokens.iter().enumerate().find_map(|(index, token)| {
             token.lock().unwrap().as_ref().and_then(|token| {
@@ -38,10 +51,13 @@ impl Recorder {
                 .then_some(if index == 0 { "a" } else { "b" })
             })
         });
-        let path = request.uri().path();
+        let path = request.uri().path().to_owned();
+        if let Some(node) = node {
+            self.mark(&format!("{node} request {path}"));
+        }
         let runtime = path == "/api/v1/agent/connections/runtime";
         let history = path == "/api/v1/agent/latency/samples";
-        if let Some(node) = node
+        let response = if let Some(node) = node
             && request.method() == axum::http::Method::POST
             && (runtime || history)
         {
@@ -64,7 +80,11 @@ impl Recorder {
             response
         } else {
             next.run(request).await
+        };
+        if let Some(node) = node {
+            self.mark(&format!("{node} response {path} {}", response.status()));
         }
+        response
     }
 }
 
@@ -80,6 +100,7 @@ impl Evidence {
                 tokens: [Arc::default(), Arc::default()],
                 start: Instant::now(),
                 events: Mutex::new(Vec::new()),
+                diagnostics: Mutex::new(Vec::new()),
             }),
             directory: directory.to_owned(),
             label,
@@ -105,6 +126,11 @@ impl Drop for Evidence {
                     output.join(format!("{}-controller-events.json", self.label)),
                     bytes,
                 );
+            }
+            if let Ok(bytes) =
+                serde_json::to_vec_pretty(&*self.recorder.diagnostics.lock().unwrap())
+            {
+                let _ = std::fs::write(output.join(format!("{}-timing.json", self.label)), bytes);
             }
         }
         for name in ["a.log", "b.log", "a-restart.log"] {
