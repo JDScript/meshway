@@ -8,6 +8,7 @@ use tokio::io::{AsyncRead, AsyncWrite, AsyncWriteExt, ReadBuf};
 use tokio::net::UdpSocket;
 
 mod connectivity;
+mod connectivity_review;
 mod control_recovery;
 mod discovery;
 mod e2e_recovery;
