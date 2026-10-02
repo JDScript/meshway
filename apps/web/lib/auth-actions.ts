@@ -10,7 +10,7 @@ import { verifyCredential } from "@/lib/account-session"
 import { safeLoginReturn } from "@/lib/device-login"
 import { controllerUrl, describeError, isCredentialRejected, isPermissionDenied } from "@/lib/controller"
 import type { SignInKey } from "@/lib/action-scope"
-import { endSession, endSessionIfCurrent, LOGIN_PATH, readSession, requireRenderedSignIn, sessionKey, startBootstrapSession, startUserSession } from "@/lib/session"
+import { endSession, endSignIn, LOGIN_PATH, readSession, requireRenderedSignIn, sessionKey, startBootstrapSession, startUserSession } from "@/lib/session"
 import { isUserSessionToken } from "@/lib/session-cookie"
 import { formField, revokePreviousUserSession } from "@/lib/sign-in"
 
@@ -75,11 +75,12 @@ export async function loginWithPassword(_previous: AccountLoginState, formData: 
 }
 
 /**
- * Sign-out, step one: for the sign-in the page was rendered for, revoke a
- * user session on the controller. The cookie is not touched here, because
- * this response may arrive late, after another tab signed in; see
- * `discardSignInAction`. If the controller could not confirm the revocation,
- * the login page says so instead of claiming it happened.
+ * Sign-out of the sign-in the page was rendered for: revoke a user session on
+ * the controller, then delete that sign-in's own credential cookie. The
+ * deletion names only that credential (never the active pointer or another
+ * sign-in's cookie), so even if this response arrives after another tab
+ * signed in, the newer sign-in is untouched. If the controller could not
+ * confirm the revocation, the login page says so instead of claiming it.
  */
 export async function signOutAction(signIn: SignInKey, returnTo: unknown): Promise<{ path: string }> {
   const credential = await requireRenderedSignIn(signIn)
@@ -93,6 +94,8 @@ export async function signOutAction(signIn: SignInKey, returnTo: unknown): Promi
       outcome = isCredentialRejected(error) ? "revoked" : "unconfirmed"
     }
   }
+  // The administrator token has nothing to revoke; its credential cookie is deleted all the same.
+  await endSignIn(signIn)
   const destination = safeLoginReturn(returnTo)
   const query = new URLSearchParams()
   if (destination !== "/") query.set("returnTo", destination)
@@ -102,22 +105,14 @@ export async function signOutAction(signIn: SignInKey, returnTo: unknown): Promi
 }
 
 /**
- * Sign-out, step two, sent as a fresh request: clears the cookie only if the
- * browser still holds that same sign-in. A newer sign-in is left alone.
- */
-export async function discardSignInAction(signIn: SignInKey): Promise<void> {
-  await endSessionIfCurrent(signIn)
-}
-
-/**
  * Drops the session cookie only when it is actually unusable: expired locally
  * or rejected by the controller. A still-valid session is left untouched, so
  * this cannot be abused to sign someone out, and a controller outage is not
  * mistaken for an authentication failure.
  */
 export async function discardRejectedSession(): Promise<"none" | "cleared" | "kept" | "unavailable"> {
-  // Runs as its own request from the login page, so this is the cookie the
-  // browser holds now (not one an older request was issued with).
+  // Deletes only the checked sign-in's own credential cookie, so a delayed
+  // response cannot remove a sign-in made in the meantime.
   const session = await readSession()
   if (session.kind === "none") return "none"
   if (session.kind === "expired") {

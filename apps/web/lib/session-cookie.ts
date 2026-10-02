@@ -1,9 +1,23 @@
 import { createHash } from "node:crypto"
 
-// Pure encoding of the console session cookie (no Next.js imports, so it can
-// be unit-tested). The cookie is HttpOnly and only ever read on the server.
+// Pure encoding of the console session cookies (no Next.js imports, so it
+// can be unit-tested). They are HttpOnly and only ever read on the server.
 //
-//   v2.<kind>.<expires_at>.<session_id>.<credential>
+// Each sign-in keeps its credential in its own cookie, named after its
+// random Web sign-in ID:
+//
+//   meshway_console_credential_<session_id>[_<namespace>]
+//     = v3.<kind>.<expires_at>.<session_id>.<credential>
+//
+// and a credential-free pointer names the active one:
+//
+//   meshway_console_active[_<namespace>] = <session_id>
+//
+// Only a sign-in writes the pointer. Sign-out and cleanup delete only the
+// credential cookie of the sign-in they handled, never the pointer, so a
+// delayed deletion for an older sign-in cannot remove a newer sign-in's
+// credential (it has another name). A pointer without its credential means
+// signed out.
 //
 // `kind` says which controller credential the cookie carries and therefore
 // which authority the console may claim:
@@ -30,9 +44,36 @@ export type SessionState =
   | { kind: "expired" }
   | { kind: "active"; credential: ConsoleCredential }
 
-export const COOKIE_VERSION = "v2"
+export const COOKIE_VERSION = "v3"
 /** Fixed lifetime of an administrator-token console session. */
 export const BOOTSTRAP_LIFETIME_SECONDS = 8 * 60 * 60
+
+const CREDENTIAL_COOKIE = "meshway_console_credential_"
+const ACTIVE_COOKIE = "meshway_console_active"
+
+const withNamespace = (name: string, namespace: string | undefined) => (namespace ? `${name}_${namespace}` : name)
+
+export function activeCookieName(namespace: string | undefined): string {
+  return withNamespace(ACTIVE_COOKIE, namespace)
+}
+
+export function credentialCookieName(sessionId: string, namespace: string | undefined): string {
+  if (!SESSION_ID.test(sessionId)) throw new Error("Invalid sign-in ID")
+  return withNamespace(`${CREDENTIAL_COOKIE}${sessionId}`, namespace)
+}
+
+/** The sign-in ID of a credential cookie of exactly this namespace, else null (other namespaces, other cookies). */
+export function credentialCookieSessionId(name: string, namespace: string | undefined): string | null {
+  const suffix = namespace ? `_${namespace}` : ""
+  if (!name.startsWith(CREDENTIAL_COOKIE) || !name.endsWith(suffix)) return null
+  const sessionId = name.slice(CREDENTIAL_COOKIE.length, name.length - suffix.length)
+  return SESSION_ID.test(sessionId) ? sessionId : null
+}
+
+/** The active pointer's sign-in ID, if well-formed. */
+export function parseActivePointer(value: string | undefined): string | null {
+  return value !== undefined && SESSION_ID.test(value) ? value : null
+}
 
 const USER_TOKEN = /^mws_[0-9a-f]{64}$/
 const SESSION_ID = /^[0-9a-f]{32}$/

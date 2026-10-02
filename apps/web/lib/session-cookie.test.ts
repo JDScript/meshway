@@ -1,6 +1,6 @@
 import assert from "node:assert/strict"
 import test from "node:test"
-import { encodeSessionCookie, isUserSessionToken, parseSessionCookie, signInKeyOf, userSessionMaxAge } from "./session-cookie.ts"
+import { activeCookieName, credentialCookieName, credentialCookieSessionId, encodeSessionCookie, isUserSessionToken, parseActivePointer, parseSessionCookie, signInKeyOf, userSessionMaxAge } from "./session-cookie.ts"
 
 const user = `mws_${"a".repeat(64)}`
 const sessionId = "0123456789abcdef0123456789abcdef"
@@ -14,14 +14,14 @@ test("cookies roundtrip with their kind; kinds cannot be swapped", () => {
   // A user session never passes as the administrator token and vice versa.
   assert.throws(() => encodeSessionCookie({ kind: "bootstrap", token: user, expiresAt: 2000, sessionId }))
   assert.throws(() => encodeSessionCookie({ kind: "user", token: "admin-token", expiresAt: 2000, sessionId }))
-  assert.equal(parseSessionCookie(`v2.bootstrap.2000.${sessionId}.${user}`, 1000).kind, "expired")
-  assert.equal(parseSessionCookie(`v2.user.2000.${sessionId}.admin-token`, 1000).kind, "expired")
+  assert.equal(parseSessionCookie(`v3.bootstrap.2000.${sessionId}.${user}`, 1000).kind, "expired")
+  assert.equal(parseSessionCookie(`v3.user.2000.${sessionId}.admin-token`, 1000).kind, "expired")
 })
 
 test("expiry is absolute and malformed or legacy cookies are unusable", () => {
   const value = encodeSessionCookie({ kind: "user", token: user, expiresAt: 2000, sessionId })
   assert.equal(parseSessionCookie(value, 2000).kind, "expired")
-  for (const bad of ["", `v1.2000.${user}`, `v2.admin.2000.${sessionId}.${user}`, `v2.user.x.${sessionId}.${user}`, `v2.user.2000.short.${user}`]) {
+  for (const bad of ["", `v2.user.2000.${sessionId}.${user}`, `v1.2000.${user}`, `v3.admin.2000.${sessionId}.${user}`, `v3.user.x.${sessionId}.${user}`, `v3.user.2000.short.${user}`]) {
     assert.equal(parseSessionCookie(bad, 1000).kind, "expired")
   }
 })
@@ -45,4 +45,25 @@ test("the sign-in fence key commits to the credential, not only to the editable 
   assert.notEqual(signInKeyOf({ kind: "user", token: user, expiresAt: 2000, sessionId: "f".repeat(32) }), key)
   // Expiry metadata is not part of the identity.
   assert.equal(signInKeyOf({ kind: "user", token: user, expiresAt: 9999, sessionId }), key)
+})
+
+test("each sign-in's credential has its own cookie name; parsing is strict per namespace", () => {
+  const other = "0".repeat(32)
+  assert.equal(credentialCookieName(sessionId, undefined), `meshway_console_credential_${sessionId}`)
+  assert.notEqual(credentialCookieName(sessionId, undefined), credentialCookieName(other, undefined))
+  assert.equal(credentialCookieName(sessionId, "preview"), `meshway_console_credential_${sessionId}_preview`)
+  assert.equal(activeCookieName("preview"), "meshway_console_active_preview")
+  assert.throws(() => credentialCookieName("not-an-id", undefined))
+  assert.equal(credentialCookieSessionId(credentialCookieName(sessionId, undefined), undefined), sessionId)
+  assert.equal(credentialCookieSessionId(credentialCookieName(sessionId, "preview"), "preview"), sessionId)
+  // Another namespace's cookies are never this namespace's (and vice versa).
+  assert.equal(credentialCookieSessionId(credentialCookieName(sessionId, "preview"), undefined), null)
+  assert.equal(credentialCookieSessionId(credentialCookieName(sessionId, undefined), "preview"), null)
+  assert.equal(credentialCookieSessionId(credentialCookieName(sessionId, "a_preview"), "preview"), null)
+  for (const name of ["meshway_console_active", "meshway_console_session", `meshway_console_credential_${sessionId}x`, "meshway_console_credential_"]) {
+    assert.equal(credentialCookieSessionId(name, undefined), null)
+  }
+  assert.equal(parseActivePointer(sessionId), sessionId)
+  assert.equal(parseActivePointer(`${sessionId}.x`), null)
+  assert.equal(parseActivePointer(undefined), null)
 })

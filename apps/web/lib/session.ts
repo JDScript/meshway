@@ -5,10 +5,14 @@ import { cookies, headers } from "next/headers"
 import { redirect } from "next/navigation"
 
 import { isSignInKey, SESSION_CHANGED_PATH } from "@/lib/action-scope"
-import { consoleCookieName } from "@/lib/cookie-name"
+import { consoleCookieName, cookieNamespace } from "@/lib/cookie-name"
 import {
+  activeCookieName,
   BOOTSTRAP_LIFETIME_SECONDS,
+  credentialCookieName,
+  credentialCookieSessionId,
   encodeSessionCookie,
+  parseActivePointer,
   parseSessionCookie,
   signInKeyOf,
   userSessionMaxAge,
@@ -18,25 +22,39 @@ import {
 
 export type { ConsoleCredential, CredentialKind, SessionState } from "@/lib/session-cookie"
 
-// One console sign-in per browser: either a controller user session or the
-// instance administrator token (compatibility entry). The credential lives in
-// an HttpOnly, SameSite=Strict cookie and is only read on the server. The
-// cookie carries its own absolute expiry, so the lifetime is enforced here
-// and not only by the browser's Max-Age handling.
-const COOKIE_NAME = consoleCookieName("meshway_console_session")
-// Pre-account cookie (administrator token only); dropped on any sign-in/out.
-const LEGACY_COOKIE_NAME = consoleCookieName("meshway_admin_session")
+// One active console sign-in per browser: either a controller user session
+// or the instance administrator token (compatibility entry). Each sign-in's
+// credential lives in its own HttpOnly, SameSite=Strict cookie, and a
+// credential-free pointer names the active one (lib/session-cookie.ts). The
+// credential cookie carries its own absolute expiry, so the lifetime is
+// enforced here and not only by the browser's Max-Age handling.
+// Earlier single-cookie layouts (never a valid sign-in now); removed on sign-in and cleanup.
+const LEGACY_COOKIE_NAMES = ["meshway_console_session", "meshway_admin_session"]
 
 export const LOGIN_PATH = "/login"
 export const EXPIRED_LOGIN_PATH = "/login?reason=expired"
 
 const now = () => Math.floor(Date.now() / 1000)
 
-export async function readSession(): Promise<SessionState> {
+type StoredSession = { state: SessionState; sessionId: string | null }
+
+/** The active pointer and its own credential cookie, from this request's cookies. */
+async function readStored(): Promise<StoredSession> {
   const jar = await cookies()
-  const cookie = jar.get(COOKIE_NAME)
-  if (!cookie) return jar.get(LEGACY_COOKIE_NAME) ? { kind: "expired" } : { kind: "none" }
-  return parseSessionCookie(cookie.value, now())
+  const namespace = cookieNamespace()
+  const sessionId = parseActivePointer(jar.get(activeCookieName(namespace))?.value)
+  const legacy = LEGACY_COOKIE_NAMES.some((name) => jar.get(consoleCookieName(name)))
+  // No credential for the pointer: signed out ("expired" only so the login page tidies old layouts).
+  const credential = sessionId === null ? undefined : jar.get(credentialCookieName(sessionId, namespace))
+  if (sessionId === null || !credential) return { state: legacy ? { kind: "expired" } : { kind: "none" }, sessionId }
+  const state = parseSessionCookie(credential.value, now())
+  // The pointer, the cookie name and the envelope must all name the same sign-in.
+  if (state.kind === "active" && state.credential.sessionId !== sessionId) return { state: { kind: "expired" }, sessionId }
+  return { state, sessionId }
+}
+
+export async function readSession(): Promise<SessionState> {
+  return (await readStored()).state
 }
 
 /** For Server Component renders: redirects when no usable session exists. */
@@ -129,9 +147,19 @@ async function writeCookie(name: string, value: string, maxAge: number) {
 }
 
 async function start(credential: Omit<ConsoleCredential, "sessionId">, maxAge: number) {
-  const value = encodeSessionCookie({ ...credential, sessionId: randomBytes(16).toString("hex") })
-  await writeCookie(COOKIE_NAME, value, maxAge)
-  if ((await cookies()).get(LEGACY_COOKIE_NAME)) await writeCookie(LEGACY_COOKIE_NAME, "", 0)
+  const jar = await cookies()
+  const namespace = cookieNamespace()
+  const sessionId = randomBytes(16).toString("hex")
+  const value = encodeSessionCookie({ ...credential, sessionId })
+  await writeCookie(credentialCookieName(sessionId, namespace), value, maxAge)
+  // Only a sign-in moves the pointer; it lives no longer than its credential.
+  await writeCookie(activeCookieName(namespace), sessionId, maxAge)
+  // Bounded cleanup: every other credential of this namespace, and old layouts.
+  for (const cookie of jar.getAll()) {
+    const other = credentialCookieSessionId(cookie.name, namespace)
+    if (other !== null && other !== sessionId) await writeCookie(cookie.name, "", 0)
+  }
+  for (const name of LEGACY_COOKIE_NAMES) if (jar.get(consoleCookieName(name))) await writeCookie(consoleCookieName(name), "", 0)
 }
 
 /** Server Actions only. The administrator token, after the controller proved it. */
@@ -150,25 +178,32 @@ export async function startUserSession(token: string, expiresAt: number): Promis
   return true
 }
 
-/** Server Actions only, for the cookie of this very request (see `endSessionIfCurrent`). */
+/**
+ * Server Actions only. Deletes the credential cookie of exactly the active
+ * sign-in this request carries (and old layouts). Never the pointer, never
+ * another sign-in's credential: if this response is delayed past a newer
+ * sign-in, it only removes the old, already replaced credential.
+ */
 export async function endSession() {
   const jar = await cookies()
-  await writeCookie(COOKIE_NAME, "", 0)
-  if (jar.get(LEGACY_COOKIE_NAME)) await writeCookie(LEGACY_COOKIE_NAME, "", 0)
+  const { sessionId } = await readStored()
+  if (sessionId !== null) await writeCookie(credentialCookieName(sessionId, cookieNamespace()), "", 0)
+  for (const name of LEGACY_COOKIE_NAMES) if (jar.get(consoleCookieName(name))) await writeCookie(consoleCookieName(name), "", 0)
 }
 
 /**
- * Server Actions only. Clears the cookie only when the request carries the
- * sign-in `key` (or an unusable cookie). Sent as its own request right after
- * a sign-out, so it sees the browser's cookie at that moment, never the
- * cookie an older, possibly delayed request was issued with.
+ * Server Actions only. Deletes the credential cookie(s) of the sign-in `key`
+ * that this request carries, wherever the pointer is; nothing else.
  */
-export async function endSessionIfCurrent(key: unknown): Promise<boolean> {
-  const session = await readSession()
-  if (session.kind === "none") return true
-  if (session.kind === "active" && (!isSignInKey(key) || signInKeyOf(session.credential) !== key)) return false
-  await endSession()
-  return true
+export async function endSignIn(key: unknown): Promise<void> {
+  if (!isSignInKey(key)) return
+  const jar = await cookies()
+  const namespace = cookieNamespace()
+  for (const cookie of jar.getAll()) {
+    if (credentialCookieSessionId(cookie.name, namespace) === null) continue
+    const parsed = parseSessionCookie(cookie.value, Number.MIN_SAFE_INTEGER)
+    if (parsed.kind === "active" && signInKeyOf(parsed.credential) === key) await writeCookie(cookie.name, "", 0)
+  }
 }
 
 /** Non-secret key of the current sign-in ("none" / "expired" without one), for fencing and keying client state. */

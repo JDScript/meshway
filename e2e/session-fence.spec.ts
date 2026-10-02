@@ -160,13 +160,21 @@ test("a page rendered for account A cannot approve or save with account B's cook
       await switchTo(tabA, webUrl, networkId, a.email, a.password);
       const aCookie = await consoleCookie(context);
       if (!bCookie || !aCookie) throw new Error("Missing console cookie");
+      // A's credential in a cookie that claims B's sign-in ID everywhere: envelope, cookie name and active pointer.
+      const bSessionId = bCookie.value.split(".")[3] ?? "";
+      const aSessionId = aCookie.value.split(".")[3] ?? "";
       const forged = aCookie.value.split(".");
-      forged[3] = bCookie.value.split(".")[3] ?? "";
-      await context.addCookies([{ ...aCookie, value: forged.join(".") }]);
+      forged[3] = bSessionId;
+      const pointer = (await context.cookies()).find(cookie => cookie.name === "meshway_console_active");
+      if (!pointer) throw new Error("Missing active pointer");
+      await context.addCookies([
+        { ...aCookie, name: `meshway_console_credential_${bSessionId}`, value: forged.join(".") },
+        { ...pointer, value: bSessionId },
+      ]);
       const replay = await context.request.post(bRendered.url, { headers: { ...bRendered.headers, origin: webUrl }, data: bRendered.data, maxRedirects: 0 });
       expect(replay.headers()["x-action-redirect"] ?? "").toContain("/session-changed");
       expect((await sdk.getMeshAccess(base, admin)).revision).toBe(base0.revision);
-      await context.addCookies([aCookie]);
+      await context.addCookies([{ ...pointer, value: aSessionId }]);
     });
 
   } finally {

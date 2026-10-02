@@ -90,6 +90,12 @@ test("a delayed final cookie deletion for account A (logout or login-page cleanu
       await sdk.getAccountSession(base, bToken!);
       await tabB.goto(machines);
       await expect.soft(tabB).toHaveURL(machines);
+      // Old credentials are bounded: only B's remains. Neither cookie outlives the controller's absolute expiry.
+      const credentials = await credentialCookies(context);
+      expect.soft(credentials.length, "one credential cookie").toBe(1);
+      const pointer = (await context.cookies()).find(cookie => cookie.name === "meshway_console_active");
+      expect.soft(credentials[0]?.expires ?? Infinity).toBeLessThanOrEqual(Date.now() / 1000 + 7 * 86400 + 5);
+      expect.soft(Math.abs((pointer?.expires ?? 0) - (credentials[0]?.expires ?? Infinity))).toBeLessThanOrEqual(2);
     });
 
     await test.step("login-page cleanup of A's rejected cookie, delivered after B signed in", async () => {
