@@ -37,6 +37,18 @@ export const MOBILE_SHEET_BOTTOM = MOBILE_BAR_SPACE + MOBILE_EDGE
 export const MOBILE_PAGE_HEIGHT = 0.52
 export const MOBILE_PEEK_HEIGHT = 0.6
 
+/**
+ * Popups opened from a workspace keep clear of the screen's edges and of
+ * the commit bar (on phones, the commit bar in its sheet above the bottom
+ * bar, the larger of the two).
+ */
+export const POPUP_CLEARANCE = {
+  top: EDGE,
+  right: EDGE,
+  bottom: MOBILE_SHEET_BOTTOM + 6 + BAR_HEIGHT + GAP,
+  left: EDGE,
+}
+
 /** Room an editor keeps free at the bottom of its workspace for the commit bar floating there. */
 export const COMMIT_SPACE = BAR_HEIGHT + 32
 

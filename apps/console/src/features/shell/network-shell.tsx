@@ -29,7 +29,6 @@ import { useReadFailureToast } from "@/lib/use-read-failure-toast"
 import { useViewportHeight } from "@/lib/use-viewport-height"
 import { m } from "@/paraglide/messages.js"
 
-import { CommitBar } from "./commit-bar"
 import { Dock, DockLauncher } from "./dock"
 import { CHROME } from "./glass-drawer"
 import { globeLayout } from "./layout"
@@ -169,8 +168,6 @@ export function NetworkShell({ networkId }: { networkId: string }) {
           <AccountMenu />
         </span>
       </GlassToolbar>
-
-      <CommitBar />
     </NetworkViewProvider>
   )
 }

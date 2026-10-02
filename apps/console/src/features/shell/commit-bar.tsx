@@ -1,21 +1,11 @@
 import { useEffect, useId, useState } from "react"
-import { createPortal } from "react-dom"
 import { create } from "zustand"
 
 import { Button } from "@/components/ui/button"
 import { Spinner } from "@/components/ui/spinner"
-import { useIsMobile } from "@/hooks/use-mobile"
 import { m } from "@/paraglide/messages.js"
 
-import { CHROME } from "./glass-drawer"
-import {
-  EDGE,
-  MOBILE_EDGE,
-  MOBILE_SHEET_BOTTOM,
-  PAGE_LEFT,
-  WORKSPACE_LEFT,
-} from "./layout"
-import { PAGES, useCurrentPage, useWorkspaceOpen, type PageId } from "./pages"
+import type { PageId } from "./pages"
 import { Surface } from "./surface"
 
 /** What the editor on screen offers to save: one draft, against the revision it was loaded at. */
@@ -60,16 +50,23 @@ export function useCommit(commit: Commit | null) {
 }
 
 /**
- * One floating bar for every editor: it rises at the bottom of the open
- * workspace while that workspace holds a draft. Its size is fixed, so its
- * states only change words. ⌘S / Ctrl+S saves.
+ * The bar inside a page's workspace frame (drawn by `PageFrame`): it rises
+ * at the bottom of the workspace while that workspace holds a draft, and
+ * leaves with it. Being inside the frame, popups opened from the editor
+ * float above it. Its size is fixed, so its states only change words.
+ * ⌘S / Ctrl+S saves.
  */
-export function CommitBar() {
+export function CommitBar({
+  page,
+  workspaceShown,
+  mobile,
+}: {
+  page: PageId
+  workspaceShown: boolean
+  mobile: boolean
+}) {
   const commit = useCommitStore((store) => store.commit)
-  const page = useCurrentPage()
-  const workspaceOpen = useWorkspaceOpen()
-  const mobile = useIsMobile()
-  const shown = commit !== null && commit.page === page && workspaceOpen
+  const shown = workspaceShown && commit !== null && commit.page === page
   const [kept, setKept] = useState(commit)
   if (shown && commit !== kept) setKept(commit)
   const current = shown ? commit : kept
@@ -86,26 +83,16 @@ export function CommitBar() {
     return () => window.removeEventListener("keydown", onKey)
   }, [shown, commit])
 
-  if (!current) return null
+  if (!current || current.page !== page) return null
   const busy = current.saving
-  const bar = (
-    // Chrome: on phones, touching the bar must not dismiss the sheet it serves.
+  return (
     <div
-      {...CHROME}
-      className="pointer-events-none fixed z-60 flex justify-center"
+      className="pointer-events-none absolute flex justify-center"
       style={
         mobile
-          ? // Inside the sheet, concentric with its corners: 28 − 6 = 22, the bar's own radius.
-            {
-              left: MOBILE_EDGE + SHEET_INSET,
-              right: MOBILE_EDGE + SHEET_INSET,
-              bottom: MOBILE_SHEET_BOTTOM + SHEET_INSET,
-            }
-          : {
-              left: PAGES[current.page].panel ? WORKSPACE_LEFT : PAGE_LEFT,
-              right: EDGE,
-              bottom: EDGE + 16,
-            }
+          ? // In the sheet, concentric with its corners: 28 − 6 = 22, the bar's own radius.
+            { left: SHEET_INSET, right: SHEET_INSET, bottom: SHEET_INSET }
+          : { left: 0, right: 0, bottom: 16 }
       }
     >
       <Surface
@@ -148,5 +135,4 @@ export function CommitBar() {
       </Surface>
     </div>
   )
-  return createPortal(bar, document.body)
 }
