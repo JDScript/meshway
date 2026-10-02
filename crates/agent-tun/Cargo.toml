@@ -1,0 +1,18 @@
+[package]
+name = "meshway-agent-tun"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+meshway-dataplane = { path = "../dataplane" }
+tokio = { workspace = true, features = ["io-util", "process"] }
+
+[target.'cfg(target_os = "linux")'.dependencies]
+tun-rs = { version = "2.8.11", features = ["async_tokio"] }
+
+[dev-dependencies]
+tempfile.workspace = true
+
+[lints]
+workspace = true

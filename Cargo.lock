@@ -1980,6 +1980,7 @@ dependencies = [
  "idna",
  "ipnet",
  "meshway-agent-dns",
+ "meshway-agent-tun",
  "meshway-controller",
  "meshway-dataplane",
  "meshway-policy",
@@ -2001,7 +2002,6 @@ dependencies = [
  "tokio",
  "tokio-rustls",
  "tokio-util",
- "tun-rs",
  "x25519-dalek",
  "zeroize",
 ]
@@ -2013,6 +2013,16 @@ dependencies = [
  "hickory-proto",
  "thiserror",
  "tokio",
+]
+
+[[package]]
+name = "meshway-agent-tun"
+version = "0.1.0"
+dependencies = [
+ "meshway-dataplane",
+ "tempfile",
+ "tokio",
+ "tun-rs",
 ]
 
 [[package]]

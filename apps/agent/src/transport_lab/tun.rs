@@ -56,13 +56,15 @@ impl TunConfig {
 }
 
 #[cfg(target_os = "linux")]
-pub fn open(config: &TunConfig) -> io::Result<tun_rs::AsyncDevice> {
-    tun_rs::DeviceBuilder::new()
-        .name(&config.name)
-        .mtu(config.mtu)
-        .ipv4(config.local_ipv4, 32, Some(config.peer_ipv4))
-        .offload(false)
-        .build_async()
+pub async fn open(config: &TunConfig) -> io::Result<meshway_agent_tun::Device> {
+    meshway_agent_tun::Device::open(&meshway_agent_tun::Configuration {
+        name: config.name.clone(),
+        mtu: config.mtu,
+        address: Some(config.local_ipv4),
+        prefix_len: 32,
+        peer: Some(config.peer_ipv4),
+    })
+    .await
 }
 
 #[cfg(test)]

@@ -11,10 +11,7 @@ use crate::AgentError;
 
 pub(crate) enum Device {
     #[cfg(target_os = "linux")]
-    Linux {
-        device: tun_rs::AsyncDevice,
-        buffer: tokio::sync::Mutex<Vec<u8>>,
-    },
+    Linux(meshway_agent_tun::Device),
     #[cfg(test)]
     Mock(Arc<super::tests::MockDevice>),
 }
@@ -23,22 +20,7 @@ impl PacketDevice for Device {
     async fn recv_batch(&self) -> io::Result<PacketBatch> {
         match self {
             #[cfg(target_os = "linux")]
-            Self::Linux { device, buffer } => {
-                let mut bytes = buffer.lock().await;
-                loop {
-                    let length = device.recv(&mut bytes).await?;
-                    if length == 0 {
-                        return Err(io::Error::other("TUN closed"));
-                    }
-                    // Previously these malformed, over-MTU packets were discarded
-                    // by admission. Preserve that disposition, not a device failure.
-                    if length > meshway_dataplane::MAX_PACKET_PAYLOAD {
-                        tokio::task::yield_now().await;
-                        continue;
-                    }
-                    return PacketBatch::new(vec![bytes[..length].to_vec()]);
-                }
-            }
+            Self::Linux(device) => device.recv_batch().await,
             #[cfg(test)]
             Self::Mock(device) => {
                 let mut bytes = vec![0; 65_536];
@@ -62,7 +44,7 @@ impl PacketDevice for Device {
             for bytes in packets.into_packets() {
                 let length = match self {
                     #[cfg(target_os = "linux")]
-                    Self::Linux { device, .. } => device.send(&bytes).await?,
+                    Self::Linux(device) => device.send(&bytes).await?,
                     #[cfg(test)]
                     Self::Mock(device) => device.send(&bytes).await?,
                     #[cfg(not(any(target_os = "linux", test)))]
@@ -79,7 +61,7 @@ impl PacketDevice for Device {
     fn drain(&self) -> io::Result<()> {
         match self {
             #[cfg(target_os = "linux")]
-            Self::Linux { device, .. } => linux::drain(device),
+            Self::Linux(device) => device.drain(),
             #[cfg(test)]
             Self::Mock(device) => device.drain(),
             #[cfg(not(any(target_os = "linux", test)))]
@@ -94,38 +76,6 @@ pub(crate) struct Tun {
     local: Ipv4Addr,
     prefix: Ipv4Net,
     mtu: u16,
-}
-
-/// Some Linux kernels omit the per-interface IPv6 sysctl entirely when default
-/// disable_ipv6=1 was inherited at link creation. Only that verified inheritance
-/// (or absence of the entire IPv6 subsystem) permits an absent interface entry.
-#[cfg(any(target_os = "linux", test))]
-fn disable_ipv6(tree: &std::path::Path, name: &str) -> io::Result<()> {
-    let interface = tree.join("conf").join(name).join("disable_ipv6");
-    match std::fs::read_to_string(&interface) {
-        Ok(value) if value.trim() == "1" => Ok(()),
-        Ok(value) if value.trim() == "0" => {
-            std::fs::write(&interface, b"1\n")?;
-            if std::fs::read_to_string(&interface)?.trim() != "1" {
-                return Err(io::Error::other("TUN IPv6 disable did not take effect"));
-            }
-            Ok(())
-        }
-        Ok(_) => Err(io::Error::other("invalid TUN IPv6 sysctl value")),
-        Err(error) if error.kind() == io::ErrorKind::NotFound => {
-            if !tree.try_exists()? {
-                return Ok(());
-            }
-            match std::fs::read_to_string(tree.join("conf/default/disable_ipv6")) {
-                Ok(value) if value.trim() == "1" => Ok(()),
-                Ok(_) => Err(io::Error::other(
-                    "missing TUN IPv6 sysctl without verified disabled inheritance",
-                )),
-                Err(error) => Err(error),
-            }
-        }
-        Err(error) => Err(error),
-    }
 }
 
 impl Tun {
@@ -144,10 +94,7 @@ impl Tun {
             .map_err(|_| AgentError::Invalid("invalid Mesh prefix"))?;
         // Install the durable reject-only sink BEFORE enabling any new device.
         owner.retain_mesh_sink(prefix.into()).await?;
-        let device = linux::create_device(options, plan).await?;
-        device.enabled(true)?;
-        disable_ipv6(std::path::Path::new("/proc/sys/net/ipv6"), &options.name)?;
-        linux::verify_no_ipv6(&options.name).await?;
+        let device = create_device(options, plan).await?;
         let binding = crate::underlay::TunBinding::from_created_device(&device)?;
         owner
             .install_tun(&[crate::underlay::CapturePrefix {
@@ -156,10 +103,7 @@ impl Tun {
             }])
             .await?;
         Ok(Self {
-            device: Arc::new(Device::Linux {
-                device,
-                buffer: tokio::sync::Mutex::new(vec![0; 65_536]),
-            }),
+            device: Arc::new(Device::Linux(device)),
             name: options.name.clone(),
             local: plan.local,
             prefix: plan.prefix,
@@ -171,9 +115,7 @@ impl Tun {
     #[allow(dead_code)] // P3a mainloop owner installs this binding at the shared seam.
     pub(crate) fn underlay_binding(&self) -> io::Result<crate::underlay::TunBinding> {
         match self.device.as_ref() {
-            Device::Linux { device, .. } => {
-                crate::underlay::TunBinding::from_created_device(device)
-            }
+            Device::Linux(device) => crate::underlay::TunBinding::from_created_device(device),
             #[cfg(test)]
             Device::Mock(_) => Err(io::Error::new(
                 io::ErrorKind::Unsupported,
@@ -281,6 +223,23 @@ pub(crate) fn proof(
 }
 
 #[cfg(target_os = "linux")]
+async fn create_device(
+    options: &TunOptions,
+    plan: &PacketPlan,
+) -> Result<meshway_agent_tun::Device, AgentError> {
+    Ok(
+        meshway_agent_tun::Device::open(&meshway_agent_tun::Configuration {
+            name: options.name.clone(),
+            mtu: options.mtu,
+            address: Some(plan.local),
+            prefix_len: 32,
+            peer: None,
+        })
+        .await?,
+    )
+}
+
+#[cfg(all(target_os = "linux", test))]
 mod linux {
     use super::*;
     #[cfg(test)]
@@ -294,21 +253,6 @@ mod linux {
     const TUN_METRIC: &str = "42759";
     #[cfg(test)]
     const PROTOCOL: &str = "242";
-
-    pub(super) fn drain(device: &tun_rs::AsyncDevice) -> io::Result<()> {
-        let mut bytes = [0; 65_536];
-        for _ in 0..256 {
-            match device.try_recv(&mut bytes) {
-                Err(error) if error.kind() == io::ErrorKind::WouldBlock => return Ok(()),
-                Err(error) => return Err(error),
-                Ok(0) => return Err(io::Error::other("TUN closed")),
-                Ok(_) => {}
-            }
-        }
-        Err(io::Error::other(
-            "TUN queue did not quiesce before generation activation",
-        ))
-    }
 
     async fn ip(args: &[&str]) -> Result<Vec<u8>, AgentError> {
         let binary = ["/usr/sbin/ip", "/sbin/ip", "/usr/bin/ip", "/bin/ip"]
@@ -397,59 +341,6 @@ mod linux {
         gateway: Option<String>,
     }
 
-    #[derive(serde::Deserialize)]
-    struct InterfaceAddresses {
-        #[serde(default)]
-        addr_info: Vec<InterfaceAddress>,
-    }
-
-    #[derive(serde::Deserialize)]
-    struct InterfaceAddress {
-        family: String,
-    }
-
-    pub(super) async fn verify_no_ipv6(name: &str) -> Result<(), AgentError> {
-        let addresses: Vec<InterfaceAddresses> =
-            serde_json::from_slice(&ip(&["-j", "-6", "address", "show", "dev", name]).await?)
-                .map_err(|_| AgentError::Invalid("cannot verify TUN IPv6 address absence"))?;
-        if addresses
-            .iter()
-            .flat_map(|interface| &interface.addr_info)
-            .any(|address| address.family == "inet6")
-        {
-            return Err(AgentError::Invalid(
-                "managed IPv4 TUN unexpectedly has an IPv6 address",
-            ));
-        }
-        Ok(())
-    }
-
-    pub(super) async fn create_device(
-        options: &TunOptions,
-        plan: &PacketPlan,
-    ) -> Result<tun_rs::AsyncDevice, AgentError> {
-        if Path::new("/sys/class/net")
-            .join(&options.name)
-            .try_exists()?
-        {
-            return Err(AgentError::Invalid(
-                "requested TUN name already exists; refusing to adopt",
-            ));
-        }
-        let device = tun_rs::DeviceBuilder::new()
-            .enable(false)
-            .mtu(options.mtu)
-            .offload(false)
-            .build_async()?;
-        if device.name()? != options.name {
-            device.set_name(&options.name)?;
-        }
-        disable_ipv6(Path::new("/proc/sys/net/ipv6"), &options.name)?;
-        device.set_network_address(plan.local, 32, None)?;
-        device.set_tx_queue_len(128)?;
-        Ok(device)
-    }
-
     #[cfg(test)]
     pub(super) async fn open(
         options: &TunOptions,
@@ -516,10 +407,6 @@ mod linux {
         }
         // No replace, no default route, no forwarding/NAT. A failed add drops
         // only this owned nonpersistent device; the unreachable guard remains.
-        device.enabled(true)?;
-        // Check again after link-up, when an IPv6 context could be instantiated.
-        disable_ipv6(Path::new("/proc/sys/net/ipv6"), &options.name)?;
-        verify_no_ipv6(&options.name).await?;
         ip(&[
             "-4",
             "route",
@@ -536,10 +423,7 @@ mod linux {
         ])
         .await?;
         Ok(Tun {
-            device: Arc::new(Device::Linux {
-                device,
-                buffer: tokio::sync::Mutex::new(vec![0; 65_536]),
-            }),
+            device: Arc::new(Device::Linux(device)),
             name: options.name.clone(),
             local: plan.local,
             prefix: plan.prefix,
@@ -593,36 +477,6 @@ mod tests {
         assert_eq!(
             ready.digest,
             meshway_protocol::dataplane_digest(&newer).unwrap()
-        );
-    }
-
-    #[test]
-    fn missing_per_interface_ipv6_sysctl_requires_verified_disabled_inheritance() {
-        let dir = tempfile::tempdir().unwrap();
-        let tree = dir.path().join("ipv6");
-        assert!(disable_ipv6(&tree, "meshway0").is_ok());
-        std::fs::create_dir_all(tree.join("conf/default")).unwrap();
-        assert!(disable_ipv6(&tree, "meshway0").is_err());
-        let default = tree.join("conf/default/disable_ipv6");
-        std::fs::write(&default, b"0\n").unwrap();
-        assert!(disable_ipv6(&tree, "meshway0").is_err());
-        std::fs::write(&default, b"1\n").unwrap();
-        assert!(disable_ipv6(&tree, "meshway0").is_ok());
-        std::fs::create_dir_all(tree.join("conf/meshway0")).unwrap();
-        let own = tree.join("conf/meshway0/disable_ipv6");
-        std::fs::write(&own, b"0\n").unwrap();
-        disable_ipv6(&tree, "meshway0").unwrap();
-        assert_eq!(std::fs::read_to_string(&own).unwrap(), "1\n");
-        std::fs::write(&own, b"unknown\n").unwrap();
-        assert!(
-            disable_ipv6(&tree, "meshway0").is_err(),
-            "default=1 cannot mask invalid own settings"
-        );
-        std::fs::remove_file(&own).unwrap();
-        std::fs::create_dir(&own).unwrap();
-        assert!(
-            disable_ipv6(&tree, "meshway0").is_err(),
-            "default=1 cannot mask non-ENOENT failures"
         );
     }
 }

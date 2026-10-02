@@ -54,11 +54,16 @@ async fn guard_only_capability_requires_retirement_and_preserves_foreign_resourc
         return;
     }
     if case == "foreign-tun" {
-        let device = tun_rs::DeviceBuilder::new()
-            .enable(false)
-            .build_async()
-            .unwrap();
-        let name = device.name().unwrap();
+        let device = meshway_agent_tun::Device::open(&meshway_agent_tun::Configuration {
+            name: "foreign-tun".into(),
+            mtu: 1000,
+            address: None,
+            prefix_len: 32,
+            peer: None,
+        })
+        .await
+        .unwrap();
+        let name = device.identity().unwrap().name().unwrap();
         assert!(BootstrapUnderlay::prepare(prepare()).await.is_err());
         assert!(Path::new("/sys/class/net").join(name).exists());
         return;

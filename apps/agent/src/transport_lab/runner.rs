@@ -78,7 +78,7 @@ impl Session {
         }
         #[cfg(target_os = "linux")]
         if let Some(settings) = config.tun.as_ref().filter(|_| enable_tun) {
-            let device = match super::tun::open(settings) {
+            let device = match super::tun::open(settings).await {
                 Ok(device) => Arc::new(device),
                 Err(error) => {
                     session.stop().await;
@@ -193,7 +193,7 @@ async fn connect_vless(
 #[cfg(target_os = "linux")]
 async fn run_tun(
     runtime: Arc<Runtime>,
-    device: Arc<tun_rs::AsyncDevice>,
+    device: Arc<meshway_agent_tun::Device>,
     settings: super::tun::TunConfig,
     mut incoming: tokio::sync::mpsc::Receiver<meshway_dataplane::ReceivedPacket>,
     counters: Arc<Counters>,

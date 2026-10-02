@@ -50,14 +50,11 @@ pub(crate) struct TunBinding {
 }
 
 impl TunBinding {
-    pub(crate) fn from_created_device(device: &tun_rs::AsyncDevice) -> io::Result<Self> {
-        let name = device.name()?;
+    pub(crate) fn from_created_device(device: &meshway_agent_tun::Device) -> io::Result<Self> {
+        let proof = device.identity()?;
+        let name = proof.name()?;
         verify_tun(&name)?;
-        let index =
-            std::fs::read_to_string(Path::new("/sys/class/net").join(&name).join("ifindex"))?
-                .trim()
-                .parse()
-                .map_err(|_| invalid("unknown owned TUN identity"))?;
+        let index = proof.index()?;
         Ok(Self { name, index })
     }
 }
