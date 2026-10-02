@@ -186,16 +186,21 @@ async fn endpoint_access_tags_preview_and_dataplane_enforce_roles_and_saved_cont
 fn access_v2_contract_is_live_closed_annotated_and_legacy_dataplane_only_contains_grants() {
     let api: Value = serde_json::from_str(&openapi_json().unwrap()).unwrap();
     for (path, verb, operation, role) in [
-        (ACCESS, "get", "getMeshAccess", "adminBearer"),
-        (ACCESS, "post", "saveMeshAccess", "adminBearer"),
-        ("/api/v1/tags", "get", "getTags", "adminBearer"),
-        ("/api/v1/tags", "post", "saveTags", "adminBearer"),
-        ("/api/v1/nodes/tags", "post", "setNodeTags", "adminBearer"),
+        (ACCESS, "get", "getMeshAccess", "managementBearer"),
+        (ACCESS, "post", "saveMeshAccess", "managementBearer"),
+        ("/api/v1/tags", "get", "getTags", "managementBearer"),
+        ("/api/v1/tags", "post", "saveTags", "managementBearer"),
+        (
+            "/api/v1/nodes/tags",
+            "post",
+            "setNodeTags",
+            "managementBearer",
+        ),
         (
             "/api/v1/flows/preview",
             "post",
             "previewFlow",
-            "adminBearer",
+            "managementBearer",
         ),
         (DATAPLANE, "get", "getAgentDataplane", "nodeBearer"),
     ] {

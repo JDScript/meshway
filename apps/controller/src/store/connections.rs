@@ -244,9 +244,10 @@ impl Store {
         request: &PublishConnectionIdentityRequest,
     ) -> Result<PublishConnectionIdentityResponse, Error> {
         let network = self.node_network(token)?;
-        let transaction = self
-            .connection
-            .transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let transaction = super::account_authorization::transaction(
+            &mut self.connection,
+            TransactionBehavior::Immediate,
+        )?;
         let id = configuration::node_id(&transaction, &network, token)?;
         request.validate().map_err(Error::Invalid)?;
         let mut capabilities = request.capabilities.clone();
@@ -306,9 +307,10 @@ impl Store {
         network: &NetworkId,
         request: &SaveConnectionsRequest,
     ) -> Result<ConnectionsSnapshot, Error> {
-        let transaction = self
-            .connection
-            .transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let transaction = super::account_authorization::transaction(
+            &mut self.connection,
+            TransactionBehavior::Immediate,
+        )?;
         if configuration::revision(&transaction, network)? != request.expected_revision {
             return Err(Error::Conflict);
         }
@@ -372,9 +374,10 @@ impl Store {
         request: &AcknowledgeAgentConnectionsRequest,
     ) -> Result<AcknowledgeAgentConnectionsResponse, Error> {
         let network = self.node_network(token)?;
-        let transaction = self
-            .connection
-            .transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let transaction = super::account_authorization::transaction(
+            &mut self.connection,
+            TransactionBehavior::Immediate,
+        )?;
         let id = configuration::node_id(&transaction, &network, token)?;
         if request.revision == 0 || !local::valid_credential(&request.digest) {
             return Err(Error::Invalid(

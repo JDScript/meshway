@@ -85,7 +85,7 @@ async fn report_connection_runtime(
         .await
 }
 
-#[utoipa::path(get, path = "/api/v1/networks/{network_id}/connections/runtime", operation_id = "getConnectionRuntimes", security(("adminBearer" = [])),
+#[utoipa::path(get, path = "/api/v1/networks/{network_id}/connections/runtime", operation_id = "getConnectionRuntimes", security(("managementBearer" = [])),
     params(("network_id" = String, Path, description = "Stable network ID")),
     responses((status = 200, description = "Leased node self-reports with server receive TTL and current configuration matching; not authorization", body = ConnectionRuntimesSnapshot),
     (status = 404, description = "Network not found", body = ErrorResponse),
@@ -98,10 +98,11 @@ async fn get_connection_runtimes(
 ) -> Result<Json<ConnectionRuntimesSnapshot>, Error> {
     let token = bearer(&headers)?;
     state
-        .access(move |store| {
-            store.authorize_admin(&token)?;
-            let network_id = store.network_id(&network_id)?;
-            store.connection_runtimes(&network_id).map(Json)
-        })
+        .network_access(
+            token,
+            network_id,
+            crate::accounts::NetworkPermission::Read,
+            move |store, network_id| store.connection_runtimes(network_id).map(Json),
+        )
         .await
 }

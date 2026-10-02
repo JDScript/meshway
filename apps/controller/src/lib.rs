@@ -2,6 +2,7 @@
 
 mod access_api;
 mod accounts;
+mod accounts_api;
 mod configuration_api;
 mod connection_runtime_api;
 mod connections_api;
@@ -95,6 +96,7 @@ impl IntoResponse for Error {
 #[derive(Clone)]
 pub struct AppState {
     store: Arc<Mutex<Store>>,
+    accounts: Arc<accounts_api::Runtime>,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -112,8 +114,13 @@ impl AppState {
         data_dir: impl AsRef<Path>,
         options: NetworkOptions,
     ) -> Result<Self, Error> {
+        let mut store = Store::open(data_dir.as_ref(), &options)?;
+        // Branch-only P2b fragment installation; release schema version is
+        // deliberately left to the coordinated migration integration.
+        store.install_account_integration_schema()?;
         Ok(Self {
-            store: Arc::new(Mutex::new(Store::open(data_dir.as_ref(), &options)?)),
+            store: Arc::new(Mutex::new(store)),
+            accounts: Arc::new(accounts_api::Runtime::new()?),
         })
     }
 
@@ -125,6 +132,17 @@ impl AppState {
         tokio::task::spawn_blocking(move || action(&mut *store.lock().map_err(|_| Error::Worker)?))
             .await
             .map_err(|_| Error::Worker)?
+    }
+
+    async fn network_access<T: Send + 'static>(
+        &self,
+        token: String,
+        network_id: String,
+        permission: accounts::NetworkPermission,
+        action: impl FnOnce(&mut Store, &store::NetworkId) -> Result<T, Error> + Send + 'static,
+    ) -> Result<T, Error> {
+        self.access(move |store| store.network_operation(&token, &network_id, permission, action))
+            .await
     }
 }
 
@@ -174,13 +192,20 @@ fn contract_router() -> OpenApiRouter<AppState> {
         .merge(network_api::routes())
         .merge(device_login_api::routes())
         .merge(managed_transports_api::routes())
+        .merge(accounts_api::routes())
 }
 
 fn describe(api: &mut OpenApi) {
     api.info = Info::new("Meshway control API", env!("CARGO_PKG_VERSION"));
     api.info.description = Some("Durable control-plane identity, public-key associations and configuration intent. Receipts mean saved only; not runtime peer proof, connectivity or tunnel health.".to_owned());
     let components = api.components.get_or_insert_with(Default::default);
-    for name in ["adminBearer", "enrollmentBearer", "nodeBearer"] {
+    for name in [
+        "adminBearer",
+        "enrollmentBearer",
+        "nodeBearer",
+        "userSession",
+        "managementBearer",
+    ] {
         components.add_security_scheme(
             name,
             SecurityScheme::Http(Http::new(HttpAuthScheme::Bearer)),
@@ -317,7 +342,12 @@ fn bearer(headers: &HeaderMap) -> Result<String, Error> {
         return Err(Error::Unauthorized);
     }
     let (scheme, token) = value.split_once(' ').ok_or(Error::Unauthorized)?;
-    if !scheme.eq_ignore_ascii_case("bearer") || !local::valid_credential(token) {
+    if !scheme.eq_ignore_ascii_case("bearer")
+        || !(local::valid_credential(token)
+            || token
+                .strip_prefix("mws_")
+                .is_some_and(local::valid_credential))
+    {
         return Err(Error::Unauthorized);
     }
     Ok(token.to_owned())
@@ -339,7 +369,7 @@ fn json<T>(body: Result<Json<T>, JsonRejection>) -> Result<T, Error> {
 }
 
 #[utoipa::path(
-    get, path = "/api/v1/networks/{network_id}/overview", operation_id = "getOverview", security(("adminBearer" = [])),
+    get, path = "/api/v1/networks/{network_id}/overview", operation_id = "getOverview", security(("managementBearer" = [])),
     params(("network_id" = String, Path, description = "Stable network ID")),
     responses((status = 200, description = "Controller identity and total stored nodes including revoked nodes", body = Overview),
         (status = 404, description = "Network not found", body = ErrorResponse),
@@ -353,21 +383,24 @@ async fn get_overview(
 ) -> Result<Json<Overview>, Error> {
     let token = bearer(&headers)?;
     state
-        .access(move |store| {
-            store.authorize_admin(&token)?;
-            let network_id = store.network_id(&network_id)?;
-            Ok(Json(Overview {
-                name: store.network(&network_id)?.name,
-                version: env!("CARGO_PKG_VERSION").into(),
-                node_count: store.count(&network_id)?,
-                configuration_revision: store.revision(&network_id)?,
-            }))
-        })
+        .network_access(
+            token,
+            network_id,
+            accounts::NetworkPermission::Read,
+            move |store, network_id| {
+                Ok(Json(Overview {
+                    name: store.network(network_id)?.name,
+                    version: env!("CARGO_PKG_VERSION").into(),
+                    node_count: store.count(network_id)?,
+                    configuration_revision: store.revision(network_id)?,
+                }))
+            },
+        )
         .await
 }
 
 #[utoipa::path(
-    get, path = "/api/v1/networks/{network_id}/nodes", operation_id = "listNodes", security(("adminBearer" = [])),
+    get, path = "/api/v1/networks/{network_id}/nodes", operation_id = "listNodes", security(("managementBearer" = [])),
     params(("network_id" = String, Path, description = "Stable network ID")),
     responses((status = 200, description = "Stored nodes sorted by ID", body = NodeList),
         (status = 404, description = "Network not found", body = ErrorResponse),
@@ -381,18 +414,21 @@ async fn list_nodes(
 ) -> Result<Json<NodeList>, Error> {
     let token = bearer(&headers)?;
     state
-        .access(move |store| {
-            store.authorize_admin(&token)?;
-            let network_id = store.network_id(&network_id)?;
-            Ok(Json(NodeList {
-                nodes: store.nodes(&network_id)?,
-            }))
-        })
+        .network_access(
+            token,
+            network_id,
+            accounts::NetworkPermission::Read,
+            move |store, network_id| {
+                Ok(Json(NodeList {
+                    nodes: store.nodes(network_id)?,
+                }))
+            },
+        )
         .await
 }
 
 #[utoipa::path(
-    post, path = "/api/v1/networks/{network_id}/enrollment-tokens", operation_id = "createEnrollmentToken", security(("adminBearer" = [])),
+    post, path = "/api/v1/networks/{network_id}/enrollment-tokens", operation_id = "createEnrollmentToken", security(("managementBearer" = [])),
     params(("network_id" = String, Path, description = "Stable network ID")),
     request_body = CreateEnrollmentTokenRequest,
     responses((status = 200, description = "One-use token, plaintext revealed only here", body = CreateEnrollmentTokenResponse),
@@ -412,18 +448,21 @@ async fn create_enrollment_token(
     let token = bearer(&headers)?;
     let request = json(body)?;
     state
-        .access(move |store| {
-            store.authorize_admin(&token)?;
-            let network_id = store.network_id(&network_id)?;
-            store
-                .create_token(&network_id, request.expires_in_seconds)
-                .map(Json)
-        })
+        .network_access(
+            token,
+            network_id,
+            accounts::NetworkPermission::Manage,
+            move |store, network_id| {
+                store
+                    .create_token(network_id, request.expires_in_seconds)
+                    .map(Json)
+            },
+        )
         .await
 }
 
 #[utoipa::path(
-    post, path = "/api/v1/networks/{network_id}/nodes/revoke", operation_id = "revokeNode", security(("adminBearer" = [])),
+    post, path = "/api/v1/networks/{network_id}/nodes/revoke", operation_id = "revokeNode", security(("managementBearer" = [])),
     params(("network_id" = String, Path, description = "Stable network ID")),
     request_body = RevokeNodeRequest,
     responses((status = 200, description = "Revoked node; repeated revocation preserves its timestamp", body = RevokeNodeResponse),
@@ -447,13 +486,16 @@ async fn revoke_node(
         return Err(Error::Invalid("invalid node_id"));
     }
     state
-        .access(move |store| {
-            store.authorize_admin(&token)?;
-            let network_id = store.network_id(&network_id)?;
-            Ok(Json(RevokeNodeResponse {
-                node: store.revoke(&network_id, &request.node_id)?,
-            }))
-        })
+        .network_access(
+            token,
+            network_id,
+            accounts::NetworkPermission::Manage,
+            move |store, network_id| {
+                Ok(Json(RevokeNodeResponse {
+                    node: store.revoke(network_id, &request.node_id)?,
+                }))
+            },
+        )
         .await
 }
 

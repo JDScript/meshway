@@ -220,7 +220,7 @@ async fn discovery_routes_auth_json_contract_lease_and_openapi() {
     );
     assert_eq!(
         api["paths"][contract_path(SNAPSHOT)]["get"]["security"],
-        json!([{"adminBearer":[]}])
+        json!([{"managementBearer":[]}])
     );
     let required = api["components"]["schemas"]["StunEndpointObservation"]["required"]
         .as_array()

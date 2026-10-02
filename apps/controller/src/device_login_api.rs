@@ -17,7 +17,7 @@ pub(super) fn routes() -> OpenApiRouter<AppState> {
         .layer(axum::extract::DefaultBodyLimit::max(8192))
 }
 
-#[utoipa::path(post, path = "/api/v1/networks/{network_id}/device-authorizations", operation_id = "authorizeDevice", security(("adminBearer" = [])), request_body = AuthorizeDeviceRequest,
+#[utoipa::path(post, path = "/api/v1/networks/{network_id}/device-authorizations", operation_id = "authorizeDevice", security(("userSession" = [])), request_body = AuthorizeDeviceRequest,
     params(("network_id" = String, Path, description = "Approved destination network")),
     responses((status = 200, description = "PKCE-bound code; first use expires in five minutes", body = AuthorizeDeviceResponse),
     (status = 404, description = "Approved network not found", body = ErrorResponse),
@@ -36,9 +36,9 @@ async fn authorize_device(
     let request = json(body)?;
     state
         .access(move |store| {
-            store.authorize_admin(&token)?;
-            let network_id = store.network_id(&network_id)?;
-            store.authorize_device(&network_id, &request).map(Json)
+            store
+                .authorize_user_device(&token, &network_id, &request)
+                .map(Json)
         })
         .await
 }

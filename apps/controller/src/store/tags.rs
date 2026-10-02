@@ -94,9 +94,10 @@ impl Store {
         request: &SaveTagsRequest,
     ) -> Result<TagSnapshot, Error> {
         let normalized = validate_definitions(&request.tags)?;
-        let transaction = self
-            .connection
-            .transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let transaction = super::account_authorization::transaction(
+            &mut self.connection,
+            TransactionBehavior::Immediate,
+        )?;
         if configuration::revision(&transaction, network)? != request.expected_revision {
             return Err(Error::Conflict);
         }
@@ -162,9 +163,10 @@ impl Store {
         if requested.len() != request.tags.len() {
             return Err(Error::Unprocessable("node tags must be unique"));
         }
-        let transaction = self
-            .connection
-            .transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let transaction = super::account_authorization::transaction(
+            &mut self.connection,
+            TransactionBehavior::Immediate,
+        )?;
         if configuration::revision(&transaction, network)? != request.expected_revision {
             return Err(Error::Conflict);
         }

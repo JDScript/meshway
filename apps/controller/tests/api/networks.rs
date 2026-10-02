@@ -176,7 +176,8 @@ async fn network_resources_and_credentials_enforce_isolation_under_interleaved_r
         assert_eq!(agent.1["payload"]["node"]["id"], enrolled[0].0.id);
         assert_eq!(agent.1["payload"]["peers"], json!([]));
     }
-    let (_, code) = request(&f.app,"POST",&format!("{second_path}/device-authorizations"),Some(&f.admin),Some(json!({"redirect_uri":meshway_protocol::DEVICE_CALLBACK_URI,"code_challenge":meshway_protocol::s256(&"v".repeat(43)),"name":"App","agent_version":"test"}))).await;
+    let user = f.user_for(second_path.rsplit('/').next().unwrap()).await;
+    let (_, code) = request(&f.app,"POST",&format!("{second_path}/device-authorizations"),Some(&user),Some(json!({"redirect_uri":meshway_protocol::DEVICE_CALLBACK_URI,"code_challenge":meshway_protocol::s256(&"v".repeat(43)),"name":"App","agent_version":"test"}))).await;
     let (_, exchange) = request(&f.app,"POST","/api/v1/devices/exchange",code["code"].as_str(),Some(json!({"redirect_uri":meshway_protocol::DEVICE_CALLBACK_URI,"code_verifier":"v".repeat(43),"node_credential":local::credential().unwrap(),"name":"App","agent_version":"test"}))).await;
     assert_eq!(exchange["node"]["mesh_ipv4"], "100.96.0.2");
     let (_, first_nodes) = request(
@@ -213,7 +214,10 @@ fn all_network_admin_operations_declare_required_scope() {
     let api: Value = serde_json::from_str(&openapi_json().unwrap()).unwrap();
     for (path, item) in api["paths"].as_object().unwrap() {
         for operation in item.as_object().unwrap().values() {
-            if operation["security"] == json!([{"adminBearer":[]}]) && path != "/api/v1/networks" {
+            if operation["security"] == json!([{"managementBearer":[]}])
+                && path != "/api/v1/networks"
+                && !path.starts_with("/api/v1/auth/")
+            {
                 assert!(path.starts_with("/api/v1/networks/{network_id}/"));
                 assert_eq!(operation["parameters"][0]["name"], "network_id");
                 assert_eq!(operation["parameters"][0]["required"], true);

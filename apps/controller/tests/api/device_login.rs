@@ -4,7 +4,8 @@ use meshway_protocol::{AuthorizeDeviceResponse, DEVICE_CALLBACK_URI, s256};
 const VERIFIER: &str = "dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk";
 
 async fn code(f: &Fixture) -> String {
-    let (status, body) = request(&f.app, "POST", "/api/v1/device-authorizations", Some(&f.admin), Some(json!({"redirect_uri":DEVICE_CALLBACK_URI,"code_challenge":s256(VERIFIER),"name":"Mac","agent_version":"v1"}))).await;
+    let user = f.original_user().await;
+    let (status, body) = request(&f.app, "POST", "/api/v1/device-authorizations", Some(&user), Some(json!({"redirect_uri":DEVICE_CALLBACK_URI,"code_challenge":s256(VERIFIER),"name":"Mac","agent_version":"v1"}))).await;
     assert_eq!(status, StatusCode::OK, "{body}");
     serde_json::from_value::<AuthorizeDeviceResponse>(body)
         .unwrap()
@@ -16,9 +17,21 @@ fn exchange(credential: &str) -> Value {
 }
 
 #[tokio::test]
-async fn device_authorization_requires_admin_and_valid_callback() {
+async fn device_authorization_requires_user_and_valid_callback() {
     let f = Fixture::new();
     let body = json!({"redirect_uri":DEVICE_CALLBACK_URI,"code_challenge":s256(VERIFIER),"name":"Mac","agent_version":"v1"});
+    assert_eq!(
+        request(
+            &f.app,
+            "POST",
+            "/api/v1/device-authorizations",
+            Some(&f.admin),
+            Some(body.clone())
+        )
+        .await
+        .0,
+        StatusCode::UNAUTHORIZED
+    );
     for token in [None, Some("invalid")] {
         assert_eq!(
             request(

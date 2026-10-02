@@ -292,7 +292,7 @@ fn openapi_dns_contract_is_closed_bounded_and_role_scoped() {
     );
     assert_eq!(
         document["paths"][contract_path("/api/v1/network")]["post"]["security"],
-        json!([{"adminBearer":[]}])
+        json!([{"managementBearer":[]}])
     );
     for component in [
         "MeshDnsConfiguration",

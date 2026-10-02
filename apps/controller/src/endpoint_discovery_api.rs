@@ -39,7 +39,7 @@ async fn report_endpoint_discovery(
         .await
 }
 
-#[utoipa::path(get, path = "/api/v1/networks/{network_id}/connections/discovery", operation_id = "getEndpointDiscoveries", security(("adminBearer" = [])),
+#[utoipa::path(get, path = "/api/v1/networks/{network_id}/connections/discovery", operation_id = "getEndpointDiscoveries", security(("managementBearer" = [])),
     params(("network_id" = String, Path, description = "Stable network ID")),
     responses((status = 200, description = "Current leased UDP self-observations; missing reports explicitly await reporting", body = EndpointDiscoveriesSnapshot),
     (status = 404, description = "Network not found", body = ErrorResponse),
@@ -52,10 +52,11 @@ async fn get_endpoint_discoveries(
 ) -> Result<Json<EndpointDiscoveriesSnapshot>, Error> {
     let token = bearer(&headers)?;
     state
-        .access(move |store| {
-            store.authorize_admin(&token)?;
-            let network_id = store.network_id(&network_id)?;
-            store.endpoint_discoveries(&network_id).map(Json)
-        })
+        .network_access(
+            token,
+            network_id,
+            crate::accounts::NetworkPermission::Read,
+            move |store, network_id| store.endpoint_discoveries(network_id).map(Json),
+        )
         .await
 }
