@@ -318,19 +318,40 @@ async fn execute(command: Command) -> Result<(), Box<dyn std::error::Error>> {
             {
                 service.enable_diagnostics(&agent).await?;
             }
+            #[cfg(feature = "managed-connections")]
+            let cancellation = tokio_util::sync::CancellationToken::new();
+            #[cfg(feature = "managed-connections")]
+            let (events, mut receive) = tokio::sync::mpsc::channel(32);
+            #[cfg(feature = "managed-connections")]
+            let event_task = tokio::spawn(async move {
+                while let Some(event) = receive.recv().await {
+                    match event {
+                        meshway_agent::SessionEvent::Receipt(receipt) => println!("{receipt}"),
+                        meshway_agent::SessionEvent::Retry { message, delay } => {
+                            eprintln!("{message}; retrying in {}s", delay.as_secs());
+                        }
+                    }
+                }
+            });
             let run = async {
                 #[cfg(feature = "managed-connections")]
                 if apply_dataplane {
                     agent
-                        .run_managed_dataplane_with_discovery(
-                            connection_profiles,
-                            Duration::from_secs(interval_seconds),
-                            Duration::from_secs(connection_lease_seconds),
-                            meshway_agent::TunOptions {
-                                name: tun_name,
-                                mtu: tun_mtu,
+                        .run_managed_session(
+                            meshway_agent::ManagedSession {
+                                profiles: connection_profiles,
+                                interval: Duration::from_secs(interval_seconds),
+                                lease: Duration::from_secs(connection_lease_seconds),
+                                tun: Some(meshway_agent::TunOptions {
+                                    name: tun_name,
+                                    mtu: tun_mtu,
+                                }),
+                                discovery,
                             },
-                            discovery,
+                            meshway_agent::SessionControl {
+                                cancellation: cancellation.clone(),
+                                events: events.clone(),
+                            },
                         )
                         .await?;
                     return Ok::<(), Box<dyn std::error::Error>>(());
@@ -338,11 +359,18 @@ async fn execute(command: Command) -> Result<(), Box<dyn std::error::Error>> {
                 #[cfg(feature = "managed-connections")]
                 if apply_connections {
                     agent
-                        .run_managed_connections_with_discovery(
-                            connection_profiles,
-                            Duration::from_secs(interval_seconds),
-                            Duration::from_secs(connection_lease_seconds),
-                            discovery,
+                        .run_managed_session(
+                            meshway_agent::ManagedSession {
+                                profiles: connection_profiles,
+                                interval: Duration::from_secs(interval_seconds),
+                                lease: Duration::from_secs(connection_lease_seconds),
+                                tun: None,
+                                discovery,
+                            },
+                            meshway_agent::SessionControl {
+                                cancellation: cancellation.clone(),
+                                events: events.clone(),
+                            },
                         )
                         .await?;
                     return Ok(());
@@ -365,7 +393,13 @@ async fn execute(command: Command) -> Result<(), Box<dyn std::error::Error>> {
                                 agent.sync().await.map(RunReceipt::Configuration)
                             }
                         } => result,
-                        _ = tokio::signal::ctrl_c() => return Ok::<(), Box<dyn std::error::Error>>(()),
+                         _ = tokio::signal::ctrl_c() => return Ok::<(), Box<dyn std::error::Error>>(()),
+                        _ = async {
+                            #[cfg(feature = "managed-connections")]
+                            cancellation.cancelled().await;
+                            #[cfg(not(feature = "managed-connections"))]
+                            std::future::pending::<()>().await;
+                        } => return Ok(()),
                     };
                     let delay = match result {
                         Ok(response) => {
@@ -384,23 +418,59 @@ async fn execute(command: Command) -> Result<(), Box<dyn std::error::Error>> {
                     tokio::select! {
                         _ = tokio::time::sleep(Duration::from_secs(delay)) => {},
                         _ = tokio::signal::ctrl_c() => return Ok(()),
+                        _ = async {
+                            #[cfg(feature = "managed-connections")]
+                            cancellation.cancelled().await;
+                            #[cfg(not(feature = "managed-connections"))]
+                            std::future::pending::<()>().await;
+                        } => return Ok(()),
                     }
                 }
             };
             #[cfg(feature = "managed-connections")]
-            if let Some(service) = dns_service {
-                tokio::select! {
-                    result = run => result?,
-                    result = service.run() => result?,
-                }
-            } else {
-                run.await?;
+            {
+                let dns = async {
+                    match dns_service {
+                        Some(service) => service.run().await,
+                        None => std::future::pending().await,
+                    }
+                };
+                let result = supervise_run(run, dns, &cancellation).await;
+                drop(events);
+                event_task.abort();
+                let _ = event_task.await;
+                result?;
             }
             #[cfg(not(feature = "managed-connections"))]
             run.await?;
         }
     }
     Ok(())
+}
+
+#[cfg(feature = "managed-connections")]
+async fn supervise_run(
+    run: impl std::future::Future<Output = Result<(), Box<dyn std::error::Error>>>,
+    dns: impl std::future::Future<Output = Result<(), meshway_agent::AgentError>>,
+    cancellation: &tokio_util::sync::CancellationToken,
+) -> Result<(), Box<dyn std::error::Error>> {
+    tokio::pin!(run);
+    tokio::select! {
+        result = &mut run => result,
+        result = dns => {
+            cancellation.cancel();
+            let cleanup = run.await;
+            // Preserve the original DNS error after supervised withdrawal.
+            if let Err(error) = &cleanup {
+                eprintln!("daemon shutdown failed: {error}");
+            }
+            result.map_err(Into::into).and(cleanup)
+        },
+        _ = tokio::signal::ctrl_c() => {
+            cancellation.cancel();
+            run.await
+        },
+    }
 }
 
 #[cfg(feature = "managed-connections")]
@@ -417,6 +487,43 @@ fn parse_dns_listen(value: &str) -> Result<std::net::SocketAddr, String> {
 #[cfg(all(test, feature = "managed-connections"))]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn dns_http_and_local_service_errors_wait_for_daemon_and_preserve_cause() {
+        for error in [
+            meshway_agent::AgentError::Http {
+                status: 403,
+                retryable: false,
+            },
+            meshway_agent::AgentError::File(std::io::Error::other("local DNS service failed")),
+        ] {
+            let expected = error.to_string();
+            let cancellation = tokio_util::sync::CancellationToken::new();
+            let (started, ready) = tokio::sync::oneshot::channel();
+            let (stopping, stopped) = tokio::sync::oneshot::channel();
+            let (release, barrier) = tokio::sync::oneshot::channel();
+            let run = async {
+                started.send(()).unwrap();
+                cancellation.cancelled().await;
+                stopping.send(()).unwrap();
+                barrier.await.unwrap();
+                Err("cleanup diagnostic".into())
+            };
+            let dns = async {
+                ready.await.unwrap();
+                Err(error)
+            };
+            let supervised = supervise_run(run, dns, &cancellation);
+            tokio::pin!(supervised);
+            tokio::select! {
+                _ = &mut supervised => panic!("daemon was dropped before join"),
+                _ = stopped => {},
+            }
+            assert!(cancellation.is_cancelled());
+            release.send(()).unwrap();
+            assert_eq!(supervised.await.unwrap_err().to_string(), expected);
+        }
+    }
 
     #[test]
     fn stun_is_opt_in_numeric_and_requires_managed_application() {

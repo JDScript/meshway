@@ -5,6 +5,64 @@ use meshway_protocol::{
     OutgoingConnectionCandidate,
 };
 
+#[tokio::test]
+async fn interrupted_withdraw_retains_exact_generation_until_join() {
+    let mut manager = Manager::new(None, Duration::from_secs(10));
+    let (deadline, mut cancelled) = watch::channel(Some(Instant::now() + Duration::from_secs(10)));
+    let (_, observed) = watch::channel(Observation::empty(Phase::Applied, Reason::None));
+    let (_, discovery) = watch::channel(discovery::Publication::new(
+        discovery::Source {
+            revision: 7,
+            digest: "a".repeat(64),
+        },
+        meshway_protocol::EndpointDiscoveryState::Disabled,
+    ));
+    let (stopping, stopped) = tokio::sync::oneshot::channel();
+    let (release, barrier) = tokio::sync::oneshot::channel();
+    let task = tokio::spawn(async move {
+        cancelled.changed().await.unwrap();
+        assert!(cancelled.borrow().is_none());
+        stopping.send(()).unwrap();
+        barrier.await.unwrap();
+    });
+    let task_id = task.id();
+    manager.running = Some(Running {
+        revision: 7,
+        deadline,
+        observed,
+        task,
+        discovery,
+        discovery_task: None,
+    });
+    {
+        let withdraw = manager.withdraw(Reason::ShuttingDown);
+        tokio::pin!(withdraw);
+        tokio::select! {
+            _ = &mut withdraw => panic!("withdraw completed before session join"),
+            _ = stopped => {},
+        }
+        // Drop the first teardown while its exact child is behind the barrier.
+    }
+    let running = manager
+        .running
+        .as_ref()
+        .expect("in-progress owner retained");
+    assert_eq!(running.revision, 7);
+    assert_eq!(running.task.id(), task_id);
+    assert!(!running.active());
+    {
+        let withdraw = manager.withdraw(Reason::ShuttingDown);
+        tokio::pin!(withdraw);
+        tokio::select! {
+            _ = &mut withdraw => panic!("second withdraw skipped old join"),
+            _ = tokio::time::sleep(Duration::from_millis(20)) => {},
+        }
+        release.send(()).unwrap();
+        withdraw.await;
+    }
+    assert!(manager.running.is_none());
+}
+
 // These tests deliberately release and rebind listeners during reconcile. Keep
 // their ports outside the usual auto-assigned client source-port range; otherwise
 // concurrent real TCP dial fixtures can acquire the just-released ephemeral port.

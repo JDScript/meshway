@@ -60,12 +60,17 @@ impl Default for Owner {
 }
 
 impl Owner {
-    pub async fn stop(&mut self) {
-        if let Some(mut task) = self.task.take() {
+    async fn join_current(&mut self) {
+        if let Some(task) = &mut self.task {
             task.handle.abort();
             // Join completes after probe/report futures and their queues drop.
             harvest((&mut task.handle).await);
         }
+        self.task = None;
+    }
+
+    pub async fn stop(&mut self) {
+        self.join_current().await;
         self.attempted = None;
         self.backoff = Duration::from_secs(30);
         self.retry_at = Instant::now();
@@ -96,10 +101,7 @@ impl Owner {
             return;
         }
         let same = self.attempted.as_ref() == Some(&key);
-        if let Some(mut task) = self.task.take() {
-            task.handle.abort();
-            harvest((&mut task.handle).await);
-        }
+        self.join_current().await;
         if !same {
             self.backoff = Duration::from_secs(30);
             self.retry_at = Instant::now();

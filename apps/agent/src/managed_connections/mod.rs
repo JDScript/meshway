@@ -145,13 +145,14 @@ impl Running {
             && self.observed.borrow().state == Phase::Applied
     }
 
-    async fn stop(self) {
+    async fn stop(&mut self) {
         let _ = self.deadline.send(None);
-        if let Some(task) = self.discovery_task {
+        if let Some(task) = &mut self.discovery_task {
             task.abort();
             let _ = task.await;
         }
-        let _ = self.task.await;
+        self.discovery_task = None;
+        let _ = (&mut self.task).await;
     }
 }
 
@@ -641,13 +642,20 @@ impl Manager {
     }
 
     pub async fn withdraw(&mut self, reason: Reason) {
+        // Fence packet/carrier work before any await. Keep the exact generation
+        // and its join handles in Manager until both joins complete; cancelling
+        // this future must leave a re-entrant teardown, never an empty slot.
+        if let Some(running) = &self.running {
+            let _ = running.deadline.send(None);
+        }
         #[cfg(unix)]
         self.probes.withdraw();
         #[cfg(unix)]
         self.stop_latency_history().await;
-        if let Some(running) = self.running.take() {
+        if let Some(running) = &mut self.running {
             running.stop().await;
         }
+        self.running = None;
         #[cfg(target_os = "linux")]
         if let Some(owner) = &self.underlay_owner
             && let Err(error) = owner.lock().await.withdraw_tun().await
