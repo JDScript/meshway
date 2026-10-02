@@ -39,6 +39,11 @@ socket 变成产品上的入站 listener。配置值和动态观测独立，地�
 底层观测时使用自动方案的兜底。GeoIP 推导与自动方案下发尚待 P3c，不能将当前
 endpoint 上报描述为自动地区切换已完成。
 
+实际进度分为四项：socket STUN 与上报已经实现；平台默认观察点 / 配置下发尚未完成；
+Controller 尚无 GeoIP 数据库查询 / 更新与有来源的位置接口；纯策略引擎仅接受外部提供的
+`StunLocation.region`，不负责取得它。自动方案使用真实数据并应用到节点仍待 P3c。
+逐项验收及仅 TCP/VLESS、无 UDP、换网、多源冲突等场景见[里程碑核对表](/milestones#发现与地区信息的闭环核对)。
+
 ## 显式启动
 
 以下是当前诊断 / 实验参数。已确认目标是 STUN 与承载配置由控制面管理下发，设备不维护本地业务配置；自动方案将使用 STUN 观测公网 IP 的地区，但当前观测切片尚未实现方案切换。
@@ -79,5 +84,7 @@ Rust 契约位于 `crates/protocol/src/endpoint_discovery.rs`，经实际路由�
 2026-10-01 原生 ARM64 历史验收通过 8 阶段、10 项主要检查，run `mupsr1dt-09b3d16f20327dee`，独立资源清理无错误。Artifact 对照 observer `recvfrom`、Agent UDP FD / inode、`ss`、生成 API 关联与 Noise nonce；镜像 digest 由结果记录。重现入口为 `experiments/managed-discovery/run.py`，构建与参数见目录 README。
 
 没有配置观察点的 demo 真实报告 `disabled`；当前现场需重新检查，历史验收不表示所有已接入设备都已开启发现。
+2026-10-02 本轮只读查询确认三个本地 Demo 均为 `disabled`，socket / observation 为 0。
+这不否定已运行的邻接延迟采样，也不表示已有 GeoIP 依据。
 
 下一片在有身份与有效期的观测基础上，向获准的同一逻辑邻接分发候选，并做真实 peer 连接验证、打洞与优先级主备切换。
