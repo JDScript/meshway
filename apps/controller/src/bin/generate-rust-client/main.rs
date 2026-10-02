@@ -5,15 +5,10 @@ use std::path::PathBuf;
 use clap::Parser;
 use openapi_to_rust::{CodeGenerator, GeneratorConfig, HttpClientConfig, SchemaAnalyzer};
 
-#[path = "generate-rust-client/closed_objects.rs"]
 mod closed_objects;
-#[path = "generate-rust-client/required_nullable.rs"]
 mod required_nullable;
-#[path = "generate-rust-client/secret_debug.rs"]
 mod secret_debug;
-#[path = "generate-rust-client/status_first.rs"]
 mod status_first;
-#[path = "generate-rust-client/transport.rs"]
 mod transport;
 
 const OPERATIONS: [&str; 20] = [

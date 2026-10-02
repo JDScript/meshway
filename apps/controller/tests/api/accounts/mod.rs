@@ -1,15 +1,10 @@
 use super::*;
 use meshway_protocol::{DEVICE_CALLBACK_URI, s256};
 
-#[path = "accounts_expiry.rs"]
 mod expiry;
-#[path = "accounts_history.rs"]
 mod history;
-#[path = "accounts_managed.rs"]
 mod managed;
-#[path = "accounts_schema.rs"]
 mod schema;
-#[path = "accounts_withdrawal.rs"]
 mod withdrawal;
 
 pub(super) fn is_account_path(path: &str) -> bool {

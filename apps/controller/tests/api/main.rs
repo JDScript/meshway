@@ -10,21 +10,13 @@ use meshway_protocol::{
 use serde_json::{Value, json};
 use tower::ServiceExt;
 
-#[path = "api/access.rs"]
 mod access;
-#[path = "api/accounts.rs"]
 mod accounts;
-#[path = "api/connection_runtime.rs"]
 mod connection_runtime;
-#[path = "api/device_login.rs"]
 mod device_login;
-#[path = "api/endpoint_discovery.rs"]
 mod endpoint_discovery;
-#[path = "api/network.rs"]
 mod network;
-#[path = "api/network_endpoint_matrix.rs"]
 mod network_endpoint_matrix;
-#[path = "api/networks.rs"]
 mod networks;
 
 fn tempdir() -> tempfile::TempDir {
@@ -789,7 +781,7 @@ fn private_bootstrap_rejects_partial_mismatched_and_concurrently_owned_state() {
 fn committed_openapi_matches_live_routes_and_current_version() {
     assert_eq!(
         openapi_json().unwrap(),
-        include_str!("../../../packages/protocol/openapi.json"),
+        include_str!("../../../../packages/protocol/openapi.json"),
         "Run pnpm --filter @meshway/control-client generate"
     );
 }
