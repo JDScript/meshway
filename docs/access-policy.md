@@ -13,9 +13,11 @@
 
 ## 当前实现与迁移
 
-当前 `MeshAccessPolicy` 仍是默认 allow/reject、first-match 的端点规则；selector 支持 node/tag/`*` 和显式双向，控制面根据 Access、Routing、标签和公钥编译内部 `{ grants: [{ id, path }] }`。这些内部精确路径 grants **不等于目标管理员 grants 模型已上线**。
+IPv4 Mesh v3 已在正常 Controller/Agent/TUN 执行叠加 grants，并编译精确有向路径。旧 `MeshAccessPolicy` 的默认allow/reject、first-match端点规则仅在兼容源模式保留；内部 `{ grants: [{ id, path }] }` 是执行投影，不是管理员源模型。显式激活与版本边界见[Mesh 执行合同](/p3a-mesh-execution)。
 
-旧语义仅作为迁移输入保留：默认允许且零规则应等价转为全部允许 grant；已有 allow/reject 必须无损转换，无法等价表达的部分报告给管理员，不能静默放宽。此前 SQLite v5→v6 的完整路径到端点授权迁移保留身份、地址与旧授权记录，不代表本次 grants 迁移已经完成。
+旧源迁移须等价：不能表达的allow/reject或路径行为报告诊断，不能静默放宽或自动激活。默认模板与空grants也分开，空grants不能在反序列化时变成全允许。
+
+单向grant当前只允许请求方向，尚无状态型Mesh回包；需要往返业务须显式双向grant。后续响应授权不能用无条件反向grant替代。
 
 当前未知 / 已撤销的明确节点引用或未知 tag 使源策略失效，生效授权整体为空，保留原文供修复。通配符和标签按活动成员展开；尚无绑定公钥的端点不安装业务路径。每节点联合 peer 上限 64、内部路径上限 128，超限拒绝而非截断许可。精确字段与容量以[生成协议](/protocol)为准。
 

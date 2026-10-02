@@ -1,6 +1,6 @@
 # 架构与实现边界
 
-Meshway 是 Rust controller / Agent、Next.js 控制台与终端 App 组成的身份驱动网络。已确认产品模型见[概览与概念](/concepts)：以 Tailscale 为基线，扩展自定义 transport 和有序指定路径。
+Meshway 是 Rust controller / Agent、Web 控制台与终端 App 组成的身份驱动网络。既有 Next.js Web 可用于联调，新 pure SPA console 由用户独立工作流维护。已确认产品模型见[概览与概念](/concepts)：以 Tailscale 为基线，扩展自定义 transport 和有序指定路径。
 
 ## 控制面与数据面
 
@@ -29,7 +29,7 @@ Controller 维护与编译控制意图，不默认中继业务流量。Agent 执
 
 当前是多网络、单实例 SQLite。v11 已接本地用户账户、网络成员权限和设备归属；用户 session、实例 bootstrap、注册令牌、节点 bearer 分权。管理查询在根事务内校验身份 / 网络权限并显式携带网络 ID；Agent 由凭据推导网络，SQL 绑定网络列，不使用连接级环境作用域。App 已有用户浏览器批准 / PKCE、隔离多接入和库存显示，暂无隧道。托管 Agent 支持公钥绑定、认证邻接、路径绑定的 Noise E2E、Linux Mesh IPv4 TUN、节点 DNS 与私有 daemon 诊断。
 
-VLESS TCP/TLS 与 WebSocket/TLS 的 listener / 凭据已由平台生成和下发，旧 profiles 保留等价导入路径；手工连接候选仍待自动组网替代。Access 与 Routing 的正式下发仍是旧版；独立 v3 四层引擎和 Linux 出口 / 状态型回包原型已合入，正式策略 / 出口接线尚待完成。迁移保留身份、凭据、地址及策略行为，不能等价转换的规则须报告。可信域名上下文、IPv6 TUN、自动打洞和真实逐跳 trace 未完成。
+VLESS TCP/TLS 与 WebSocket/TLS 的 listener/凭据已由平台生成和下发，旧 profiles 保留等价导入；手工候选仍待自动组网替代。IPv4 Mesh v3 已接通同事务 publication、生成执行 DTO与正常 Agent/TUN，旧策略源保留且须显式 CAS 激活新模式。Linux 出口/状态回包原型已验，但完整出口及 Mesh 状态型回包尚未正式接线。不能等价迁移的策略报告诊断，保留身份/数据；可信域名上下文、IPv6 TUN、打洞与逐跳 trace 未完成。
 
 受保护 socket、HTTP/TLS、bootstrap DNS、原生 Runtime owning factory 和 Manager prepared owner 接点已合入；正式主循环激活与 RPDB 生命周期仍待接通，默认仍 unmarked，不能据模块存在就宣称现网已启用全 IP 系统保护。当前优先 Linux 自动组网 / 打洞及跨地域 Docker 验收，进一步前端和 Apple 开发暂缓，见[里程碑](/milestones)。
 
@@ -49,7 +49,7 @@ VLESS TCP/TLS 与 WebSocket/TLS 的 listener / 凭据已由平台生成和下发
 
 ## Rust 与前端边界
 
-当前 module / crate 的具体耦合、应保留的隔离以及增量收敛顺序见[代码架构审查](/architecture-review)。该审查是对当前实现的分析，建议的 publication / control / session 等模块尚未整体落地。
+保持 source、compiler internal、稳定 node execution DTO 和 Agent 本机执行四个边界。Controller publication 共享同事务事实/编译/投影，Agent 保留防御性校验。领域模块按职责命名；历史 schema/wire 版本集中于迁移/兼容，测试支持与历史 fixture 有明确归属。完整 dump/审查不等于源码组织清理完成。
 
 | 目录 | 职责 |
 | --- | --- |

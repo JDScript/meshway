@@ -54,7 +54,7 @@ P2a在一个IMMEDIATE事务中添加 `managed_listeners`、
 已有表、身份、公钥、地址、JSONC、leases与网络revision不变，不把旧profiles自动换成新密钥。
 可恢复的VLESS材料在SQLite内加密，仅节点专属接口最小下发；恢复须一并保存私有
 `transport-material.key`。材料、初始接入意图、Agent执行与显式旧材料导入见
-[托管承载对接](/managed-transports-api)。后续 v10→v11 已在统一事务安装账户、ownership 和延迟历史，见[统一迁移](/schema-v11)；旧节点初始未认领，不自动创建账户。
+[托管承载对接](/managed-transports-api)。账户/ownership和延迟历史已由统一事务安装，见[账户迁移边界](/local-accounts#存储与迁移)；旧节点初始未认领，不自动创建账户。随后Mesh v3迁移保留旧源并要求显式CAS激活，见[执行合同](/p3a-mesh-execution)。
 
 ## 显式类型作用域
 
@@ -74,7 +74,7 @@ let nodes = store.nodes(&network)?;
 
 Discovery 仍是按不可变全局 node ID 保存的有界内存记录：同进程网络切换不清空报告，展示仅遍历当前网络成员；controller 重启后重新等待上报，保持 v8 已有的非持久语义。
 
-2026-10-01 已对固定 schema 重做 SQLite backup 只读复制演练：14 张旧表所有原列逐行一致，4 个节点、revision 42、ID `baf5c8095f41b92ea539a10456da64e3`、IPv4 `100.96.0.0/16`、IPv6 `fd73:96a6:cf5e::/64`、名称与 DNS 不变，FK 校验通过且物理表名保留。私有副本迁移后删除，该次演练不修改 live。回归覆盖完整 v8 数据、失败整体回滚、旧版本迁移、跨网拒绝、相同地址独立分配、并发 / 交错请求与旧 Agent 快照字节兼容。接口验证命令：`cargo test -p meshway-controller --tests`；Web 网络切换与草稿交互手工验证。
+真实旧库只读副本迁移已验证原列/身份/地址/revision/名称/DNS保留与FK完整性。回归保留旧schema fixtures、失败整体回滚、跨网拒绝、相同地址独立分配、并发/交错与旧Agent库存兼容。接口检查`cargo test -p meshway-controller --tests`，Web选网/草稿手工验证；具体历史库/日志由Git和私有证据追溯。
 
 ## Web 网络与草稿边界
 

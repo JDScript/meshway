@@ -13,7 +13,7 @@
 
 ## 当前切片：HTTP 控制面凭据身份
 
-已交付的注册与配置切片使用三类 HTTP bearer：管理员凭据用于清单及管理操作，限时一次性令牌用于注册，节点凭据用于该节点心跳、拉取自身配置及提交 ACK。controller 从节点凭据派生身份，Agent 在私有状态文件中持久保存凭据，controller 保存节点凭据摘要。Web 采用管理员令牌登录、8 小时 `HttpOnly` / `SameSite=Strict` cookie 及逐次检查身份的 server action；匿名重放策略保存 action 也已通过拒绝验收。完整选择与测试范围见[注册与持久化](/enrollment)。
+用户session/网络RBAC、实例bootstrap、接入令牌、节点bearer分权；controller从节点凭据推导身份/网络，只存摘要，Agent私有持久化。日常Web用本地账户，每个管理操作在服务端与Controller根事务重新鉴权；Owner不反向获得实例权限。App/CLI一次性结果不携带浏览器/管理员会话。实现和测试入口见[注册](/enrollment)与[账户](/local-accounts)。
 
 这些凭据建立的是控制面 API 身份，**并非 mesh 公钥认证或 E2E 密钥协商**。TLS 保护控制通道的 HTTP 凭据；非本地部署必须通过独立部署层提供 TLS，不能把 bearer 本身当作加密。托管邻接使用节点本地私钥及 controller 绑定公钥，通过 Noise 完成真实对等认证；控制面关联和握手证明仍是两件事。独立传输实验继续使用自己的静态身份与业务路径授权。
 

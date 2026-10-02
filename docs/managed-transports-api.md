@@ -1,8 +1,6 @@
-# P2a 托管 listener / VLESS API 对接
+# 托管 listener / VLESS API
 
-状态：后端实现分支 `feat/managed-vless`；具体验收记录见
-[`managed-transports-progress.md`](./managed-transports-progress.md)。Web 表单尚未接入。
-本页的类型、schema 和操作均由 Rust / 实际路由生成，不另维护 TS DTO。
+平台托管listener/材料、VLESS TCP/TLS与WebSocket/TLS已合入，既有Web节点配置与接入可选listener已接通。本页保留公开配置、私有材料、CAS/权限与迁移合同；精确类型/schema由Rust实际routes生成，不另维护TS DTO。
 
 ## 实际支持
 
@@ -18,7 +16,7 @@
 
 ## 管理 API（当前网络 membership 鉴权）
 
-前缀 `/api/v1/networks/{network_id}`。账户组合候选采用 `managementBearer`：
+前缀 `/api/v1/networks/{network_id}`。当前采用 `managementBearer`：
 用户 session 的当前网络 membership，或既有 global bootstrap 兼容入口。
 GET 允许本网 Member / Admin / Owner；两个 POST 只允许本网 Admin / Owner。
 所有检查与实际保存处于同一根 IMMEDIATE 事务，合法 NetworkId 本身不是权限。
@@ -192,25 +190,9 @@ HTTP upgrade累计读取另限制64KiB，避免单个未完成header无限增长
 取消握手或部分写入时关闭整个carrier，不在截断流上重试；核心重放检查不变。
 
 外层 TCP 工厂在 connect / listen 前提供用途保护边界，TLS / WS共用它。
-当前仅Mesh网段接管使用系统underlay；**本切片没有实现SO_MARK/RPDB或reqwest
-pre-connect保护**。全IP出口接入必须先完成平台保护；accept后标记不能补救SYNACK，
-不能用目的IP或整个Agent进程豁免替代。参照主线 `docs/underlay-routing.md` 实验。
+用途受限SO_MARK/RPDB、protected HTTP与owning工厂模块已合入，**正常主循环尚未启用生产owner**。全IP出口必须先完成真实保护；accept后标记不能补救SYNACK，不能用目的IP或整个进程豁免替代。见[系统保护合同](/underlay-routing)。
 
-### 与 protected-underlay 并行任务的最小整合点
-
-- `apps/agent/src/managed_connections/sockets.rs`：`Protection::prepare` 接收
-  `Purpose::Listener { listener_id }` 或 `Purpose::Dial { candidate_id, peer_node_id }`，
-  先创建/保护 `TcpSocket`，然后公共 `listen` / `dial` 才调用 bind/listen/connect。
-  `accepted` 仅作接受后补充检查，不能代替listen前保护。
-- `Session::start_with_packet` 已接收 `Arc<dyn Protection>`；Manager保存工厂，
-  当前由 `Manager::new` 使用 `SystemUnderlay`。协调者可在整合时增加模块可见性/
-  constructor或setter，把真正平台工厂注入；不需要重写TLS/WS/VLESS握手。
-- 生成器秘密保护独立在
-  `apps/controller/src/bin/generate-rust-client/secret_debug.rs`，只适配生成models。
-  `generate-rust-client.rs` 调用 `secret_debug::adapt`；transport注入模板仍针对
-  client构造，两者不要互相覆盖。该adapter没有改变request序列化。
-- `init/ready`、packet `Generation` 和 writer退休继续使用最新主线 Runtime /
-  packet_io；本切片未改它们，不能为适配WS回退旧接口。
+TLS/WS/VLESS共用protected外层stream注入边界，不重写各自握手。Manager prepared owner换代先withdraw/join；生成器secret Debug适配与HTTP transport注入分别维护，不能相互覆盖。
 
 ## 旧 profiles 私有导入 / 切换
 

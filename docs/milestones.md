@@ -1,205 +1,45 @@
-# 首版交付与后续里程碑
+# 当前交付状态与首版剩余工作
 
-此页记录最新已确认的推进顺序及实际交付边界；产品语义见[产品对齐记录](/product-alignment)，验证入口见[开发与验收](/development)。
+**Mesh 私网互访与按域名 / IP 经指定路径出网同为首版核心。** 产品语义见[产品概念](/concepts)与[产品要求](/product-alignment)，这里仅列最新实现边界。
 
-## 首版主线
+## 已交付
 
-**Mesh 私网互访与按域名 / IP 经指定路径出网同为首版核心。** 共同基础是多网络、用户身份、平台托管、四层策略及按需自动建连。互联网出口与域名分流不再推迟到旧 M4 之后。
-
-用户已确认提前开始四地 Linux 服务器第一轮固定链路 Docker 联测，以已验证主线完成部署、TUN 和恢复检查。
-P3a 与系统保护通路候选继续修复 / 复核，随后推进 P3b 自动组网及 P3d 打洞，做第二轮跨地域 Mesh 验收；
-P3c 完整出网仍属首版。模型 / API 大清理、GeoIP 与前端不阻塞第一轮。
-用户最新决定暂缓进一步前端重整，后续可自行另派 agent；Apple 同样暂停新增开发。
-当前集中完成正常 Controller 下发 → Agent 生命周期 → 真实 TUN 包流的 Linux 组网闭环。
-已部署 Web 用于联调，协议变化仍须维护生成客户端兼容并检查全部消费者。
-
-| 阶段 | 内容与实现边界 | 依赖 |
-| --- | --- | --- |
-| P1a 多网络（已实现） | v8→v9 无损迁移；成员、接入、IPAM、DNS、策略、连接与报告隔离；管理 API 显式选网、Agent 由凭据推导；Web 选网 / 创建与逐网络草稿。Apple 已保存隔离多接入及活动网络切换，CLI 多接入仍待实现 | — |
-| P1b 策略引擎 v3（已合入） | 独立 Rust 四层校验 / 编译：连接 allow/block、grants 并集、Mesh / 出口有序 first-match 与遮挡提示、路由方案、规则集展开及迁移报告；controller 接入在 P3a | — |
-| P1c 出口数据面（原型已验收） | Linux NAT、状态型回包、撤回终止存量流与方案切换；12 个隔离 Docker 场景通过；控制面下发、出口 DNS 和正式产品接入仍待 P3c | — |
-| P2a 承载托管（已合入） | 平台材料生成/下发、VLESS TCP/TLS 与 WebSocket/TLS、v10 迁移和私有 profiles 等价导入已完成隔离验收；WS 退休晚写、错误脱敏与能力投影问题已修复并独立复核。节点 listener 与添加节点的可选配置表单已部署，Demo Agent 已原位更新；旧 profiles 保留，托管导入另行推进 | P1a |
-| P2b 用户与登录（首批管理界面已部署） | Controller API、事务内网络 RBAC、设备归属及 App PKCE 已合入；Web 邮箱登录、首 Owner、成员 / 邀请 / 角色 / 归属管理、我的账户、实例初始化 / 恢复已接通。CLI 链接登录尚待交付；当前没有全局无网络成员关系账户清单与逐会话清单，用户 / 组策略随契约落地 | P1a；共享迁移 / 接口已统一 |
-| P3a 策略上线（IPv4 Mesh 切片已合入） | v12 源存储 / 显式 CAS 激活、epoch 能力协商、同 revision 节点执行 DTO、正常 Agent / TUN 已接通；独立关闭重启和发布问题。正式 underlay 接线、状态型回包及余下策略范围仍待完成 | P1a、P1b |
-| 系统保护（内部 owner 模块已合入） | boot + netns cookie、整组持久资源事务、精确恢复、独立 controller/carrier owner 与正式 TUN 准备入口；F1/F2/R1/R2 独立关闭，Rust 597 与 Linux 组合验收通过。正常主循环与生产激活尚未接通 | P3a 接线另验 |
-| P3b 自动建连 | 按授权流量及路径按需连接 / 自动中转，手工候选收敛为高级覆盖 | P2a、P3a |
-| P3c 路由方案与分流 | 公共规则 + 方案规则 + 兜底；仅 Mesh / 全局经 X / 自动按 STUN 地区；规则集与可信域名上下文 | P1c、P3a |
-| P3d 打洞 | 获准候选分发、认证探测与打洞，失败经允许中转并保持 E2E | P3b |
-| Linux 跨地域联测（恢复复验已通过） | 原 4d106e0 四地 TUN / DNS / 必经点故障通过，恢复缺口原 FAIL 保留；修复版 4c9a5be 同身份直连 / 有序路径重启、四节点 lease 撤回与 ≥60s 持续报告检查均 PASS。测试 runtime 已精确清理、身份与证据保留；后续自动组网 / 主备 / 打洞另验 | 第一轮：已验证主线；第二轮：P3a、系统保护通路、P3b、P3d |
-
-第一轮发现的 E2E、运行报告及组合暴露的 history pending-slot 争用均已独立复核，修复已合至
-`4c9a5be`，完整新组合 Rust 613 / 7 ignored、Clippy/fmt 通过。新镜像已按原四地身份 / 源配置复验通过，
-原 4d 现场 FAIL 与 f399 中间组合 FAIL 都保留；远端持久 latency history 查询本轮未验，不用 runtime 更新替代。
-正常 underlay owner 主循环接线正在实现，尚未启用。后续开发联调使用已核对的 Mac Controller
-`meshway-dev-api.jdscript.dev`，构建优先本机 Linux ARM64 / NYC AMD64；完整证据见[远端验收记录](/linux-field-validation)。
-首次接入的源码核对发现 node/network 绑定取得与 protected Controller channel 准备之间的 bootstrap 依赖，
-当前正在独立复核最小接线合同；已有 mock TUN 基线检查不算生产接线或真实 Linux 验收完成。
-
-用户进一步要求把无需可拨入端口的真实自动组网放回验证中心。P3b/P3d 最小连接闭环与系统保护接线
-按文件所有权并行推进，不再扩展固定链路矩阵。参考已固定的 Tailscale `netcheck`、`disco`、`magicsock`：
-平台观察点与获准候选分发、认证双向探测、直连选择与中继兜底须串入正常生命周期。
-下一验收目标为隔离 NAT 下两端仅出站、无发布端口 / 手工对端候选；可打洞条件下以真实包流证明转直连，
-UDP blocked 则经允许中转且不改变 Access / 必经节点 / E2E。纽约已存在防火墙、首尔对纽约的 FIB 指向 WARP，
-第一轮结果不能充当这一目标的证据，也不能把所有防火墙都假定为可打洞。
-连接协调的公共边界按承载实际能力设计，不把 UDP 定为产品必选。当前 VLESS TCP/TLS、WebSocket/TLS
-运行在 TCP 上；部分环境可尝试 TCP simultaneous-open，但相关 socket 协调、角色选择与真实穿透仍未实现。
-仅允许 VLESS 时不能静默启用 UDP 业务承载；TCP 打洞、反向拨号与中继也不能混称。具体 TCP 打洞交付范围须明确，
-不能由“先做 Native UDP”的工程建议自动排除。
-
-### 已部署账户与控制台（后续重整暂缓）
-
-首批管理页面已合入并更新本地 3000：主入口为概览 / 节点 / 成员 / 访问控制 / 路由 / 设置；
-成员 / 邀请 / 角色 / 设备归属、我的账户、节点列表→详情→配置，以及登录→初始化→进入网络
-流程已接真实 API。地图延续已有方向；用户仍不满意其余前端，决定先完成组网，后续独立安排 UI / 产品逻辑工作。
-
-日常只有用户账户登录，所有者 / 管理员 / 成员是网络角色；实例凭据留在专门初始化 / 恢复入口，
-不授予网络 Owner 额外跨网权限。`/login` 为日常邮箱登录，`/setup` 为实例初始化 / 恢复；
-旧 bootstrap 深链保留既有兼容权限。没有逐会话清单时只提供真实的全部会话撤销；
-实例恢复页目前按各网络 membership 汇总账户，不冒充完整全局账户清单。
-地图保留有来源的位置与真实连接证据，缺少 GeoIP 的节点仍明确待定位；不伪造健康与流量。
-真实邻接延迟采样、幂等上报、滚动存储、查询与 Web 曲线已合入；正常 Agent 生命周期在
-新鲜 Applied 报告获接受后启动唯一采样任务，撤回/lease/版本变化取消旧任务。
-容量停写和 schema gate 问题已独立复核关闭，查询显示保留范围与容量裁剪。
-三个本地 Demo 已运行新版 Agent，四个有方向的直接邻接开始产生真实历史；端节点之间没有直邻接，因此不生成它们的邻接样本。不补旧数据、不当作端到端路径 RTT，也没有主动检测命令。
-性能复测与 Rust 代码审查独立并行，输出证据与可验证的改动；共享 Docker 实验使用同一性能锁。
-系统保护通路的[独立 Linux socket/策略路由实验](/underlay-routing)已完成双栈 148 项
-检查与 10 项 host-only 测试。受保护 socket 工厂、HTTP/TLS connector、bootstrap DNS 与
-代际取消的代码切片也已交付；实际 Linux namespace fixture 通过 137 次 mark/readback
-审计与 4 个 listener 的 premark 检查。命名路由表漏检 block 外捕获表引用、DNS SERVFAIL
-未尝试备用上游两项问题已修复并通过独立复核；基础模块及修复已合入并完成主线组合检查。
-R1 心跳发现更高 revision 时立即撤旧执行的独立修复也已合入，原阻塞 HTTP 反例通过。
-Native UDP/TCP owning factory 与 Manager prepared owner 接点已合入 `46a7b42` / `94c65ea`。
-原复核发现的 rebind 返回后旧 carrier 入站交付问题已修复并独立关闭；UDP/TCP 的 endpoint / relay
-四种交错及新 carrier E2E 恢复通过。正式主循环调用、捕获规则 ownership / 恢复与系统 split-DNS
-仍待接通；默认仍为 unmarked，现网尚未启用完整 socket 级系统保护。
-该批主线组合检查完成：Rust **562 passed / 7 ignored**、fmt 与 workspace all-features / all-targets
-Clippy 通过，日志在批准 TMP 的 `native-underlay-main-validation/`；作者及审查工作树已清理。
-
-### 已完成整合与验证
-
-用户最新要求移除浏览器自动化检查：套件、依赖、运行脚本及 CI 入口已清理，Web 默认保留
-类型、lint、模型单测和生产构建，UI 在开发页面手工验证。此前浏览器验收数字仅为历史证据，
-不再作为日常检查要求；原生 Apple 联测的公共进程 helper 已解除浏览器框架依赖。
-
-第一批整合已完成：R1、underlay 基础及 UR1/UR2 修复通过全工作区 **475 passed / 7 ignored**、
-Clippy、生成 drift、SDK 12 / Web 150 tests、各 TypeScript 消费者与文档检查。
-随后独立合入邻接探测原期限内的有界重试，增量 dataplane 74、Agent managed 28 / dataplane 16 /
-packet 7 与 workspace Clippy 通过；它不延长超时或 lease，RTT 包含可能的重试等待。
-已移除 underlay 实现/审查及邻接重试审查工作树，保留分支与证据；本地 Controller 已更新。
-Docker demo 已从已审定主线 `bdbd13f` 构建并原位更新，三个容器 ID、可写层工具、身份、密钥和旧 profiles 均保留。
-端节点双向 ICMP 各 3 包通过；部署回执与包验证位于
-`.meshway/services/binary-update-b1188f16dea2/`。本次没有修改策略，也没有导入实验 offload。
-随后 `d9e8b41` 发布上下文与已审定 native 修复更新到本地 Controller / 三个 Demo Agent；
-保留同一容器、身份和当前配置，现有配置下正常 Agent/TUN 的端节点双向 ICMP 各 3 包通过。
-最新回执为 `.meshway/services/binary-update-4120ea711460/`；不将此项记为自动组网或打洞完成。
-
-最终整合已包含账户、托管承载、历史与 Apple 多接入改动：Rust **548 passed / 7 ignored**、
-SDK 14 tests、Web 176 tests、Clippy、drift、各消费者类型检查与生产构建通过。
-最后一次浏览器回归 19 项通过后，按用户要求删除整个浏览器套件和相关依赖/CI。
-现网已从 v9 向前迁到 v11，4 个旧节点、身份和配置内容保留，迁移前后网络 revision 为 **43**；
-未自动创建用户或认领旧节点。升级前私有备份位于 `.meshway/services/db-backups/`。
-此前独立真实副本演练还逐项验证了 15 张原表及重启不变，见[统一迁移](/schema-v11)。
-
-账户 / 控制台首批 `4939fa2` 至 `5cc3ecf` 已完成聚焦权限复核，并修复邀请错误处理、
-密码操作提示、缺少连接配置的状态文案和退出全部会话失败时的草稿保留。
-合入后主线 Web typecheck / lint、**184 单测**与生产构建通过；开发服务 ready，
-`/login`、`/setup`、`/reset-password` HTTP 读取和旧 onboarding 重定向通过。
-该只读部署检查未创建账户、网络或修改配置，不代替用户手工 UI 验证。
-
-性能本批最终报告已完成，见 `perf/tunnel-next` 分支的
-`experiments/tunnel-throughput/HANDOFF.md`（`dba5f49`）。邻接丢包恢复修复已审合；
-offload 有局部收益但仍有完整性 / 延迟问题，NEON 和 worker 调整无稳定收益，
-没有无保留可上线的新吞吐候选。保留原始产物，不整分支部署、不扩展实验矩阵。
-已核对性能工作树无未提交内容或进程引用并移除，分支与外部测量产物保留。
-
-### 后续并行与发布边界
-
-[代码架构审查](/architecture-review)已对冻结主线完成 Rust / Web / 工具链核对。
-建议先收敛 Controller publication、policy 到执行合同、Agent control / session 和 Web 共享编辑会话等
-module 边界，随 P3a / P3b 和控制台重整逐步落地；当前未实施大规模拆 crate 或目录搬迁。
-
-后端策略与 underlay 按文件所有权并行，Rust 关键改动独立审查；不再主动开启前端体验或结构重构。
-先完成当前 native 入站代际修复及复核，再接正式保护生命周期与 v3 下发；生成器只扩展真实契约所需形状。
-P3a 前置发布边界修复已合入 `ddaee7c` / `a1b992f`：实际安装前缀预算、完整 global 方案 ID
-与 Agent 消费者校验、移除编译对象直接 Deserialize。独立行为复核、fmt / Clippy 和主线
-workspace 全 feature / target 编译通过；正式 Controller / Agent v3 合同和发布接线仍待完成。
-Controller 正常发布链路已按独立复核合入 `d9e8b41`，见[发布上下文](/controller-publication)：
-同次事务共享事实、编译与节点投影，保留现有 v2 / CAS / 鉴权和预算回滚语义；主线 101 单测、
-6 codegen、39 HTTP、14 SDK 测试及 fmt / Clippy / drift 通过，日志在批准 TMP 的
-`controller-publication-main-validation/`，本地 Controller 已更新。
-v3 契约生成前置已合入 `889c752` / `b38b8ff` / `fa0f1d9`：五项 typed map / nullable 复核问题关闭，
-完整真实源 schema 直接生成验证；`pnpm test:codegen` 已纳入 CI。后续的 v3 正常下发 / 执行切片已合入，见下段。
-隔离固定依赖快照的组合验收通过：Rust **566 passed / 7 ignored**、生成器 **7**、SDK **14**、
-既有 Web **184**，fmt / Clippy / drift、既有 TS 消费者与五个实验 tsconfig、Web / 文档构建均通过。
-SDK fixture 的绝对 Cargo target 路径拼接问题已修为 `9160f26` 并重跑剩余检查；未重复无变化的 Rust 全套。
-日志及初次失败保留在批准 TMP 的 `backend-integrated-validation/`。本次排除由用户独立维护的
-`apps/console`，未替换该工作流的 workspace / lockfile 或源文件。
-P3a IPv4 Mesh 切片随后通过独立复核并合入 `6050413` 至 `07a8039`：v12 保留旧源 / 身份 / 地址，
-新增源策略显式激活与 epoch 绑定执行协议；正常 Linux TUN 的修复验收为 21 条证据、清理错误 0。
-重启误判回滚 A1、管理源丢失 C1、材料超额 C2 均独立关闭；消费者实跑生成器 7、SDK 16、旧 Web 184
-及全部相关 TS / build，完整 Rust 578 / 7 ignored、Clippy / drift 按精确代码版本核验沿用。
-详见[实施合同](/p3a-mesh-execution)与[审查关闭](/p3a-review-fixes)；现网尚未更新，正式 underlay 与状态型回包仍未完成。
-第一轮远端已取得东京↔洛杉矶真实 TUN / DNS 基础互通证据，并发现独立于单向 grant 回包的 E2E 恢复缺口：
-端点重启后存活端会继续使用旧 sender cache，直到约 59 秒预算到期及后续握手 / 应用重试。
-一跳与多跳已独立复现；邻接认证或 fresh echo 不证明旧 packet 会话恢复。后续需明确协议化重同步，
-第一轮继续保存完整中断窗口，详见[远端验收记录](/linux-field-validation)。
-E2E 有界认证重同步修复随后以 `9c26105` 合入，独立重放原一跳 / 多跳方向和安全反例通过；
-全消费者实际完成 Rust 595 / 7 ignored、生成器 7、SDK 16、旧 Web 184 及 Clippy / fmt / drift / TS / 构建。
-运行状态上报修复闭合后，远端同身份直连 / 四地有序路径复验已通过；不将本机毫秒级机制验证当作现场恢复时间。
-第一轮远端使用当前正式下发链路，部署已验证的固定后端快照；容器只保留接入和私有持久化，
-listener、承载与业务策略由生成管理 API 配置，记录当前启动 opt-in 的实现边界。独立 namespace 内开放必要 TUN / 网络权限，
-不修改宿主管理路由、DNS、防火墙或 Docker daemon，不使用 host network / privileged。
-区分公网端口映射与真实打洞，受限 NAT 仍由本地隔离场景验证，远端不代替该覆盖。
-
-用户最新要求的[承载扩展架构审查](/transport-registry)已完成源码核对：统一强类型目录、
-控制面权威验证、Agent 编译/实际能力报告及混合版本协商是下一轮收敛方向。
-先统一现有三协议及生成器，再用一个现有库级协议验证注册扩展流程；不继续复制 VLESS 特判。
-
-各任务分别拥有领域模块、协议文件与测试；中心 Store / 路由注册、最终 schema 版本、
-生成器与产物整合、根依赖锁和跨消费者验收由协调者统一处理。独立任务先交可运行的
-隔离验证与小范围接线提交，合入依赖不代表开发必须串行；尚未合入或部署的能力不计为上线。
-
-## 已有基础及验收入口
-
-| 能力 | 已交付边界 |
+| 能力 | 当前边界 |
 | --- | --- |
-| 控制面与配置 | 多网络稳定 ID、SQLite、注册 / 心跳 / 撤销、网络内 IPAM、公钥绑定、revision / digest / ACK、网络内 CAS 与逐网络双编辑器草稿 |
-| 托管 IPv4 | Linux TUN、路径绑定 Noise E2E、旧版端点授权与有序路由、Native UDP / TCP / TLS-VLESS、反向 dial |
-| 节点 DNS | loopback UDP/TCP A/AAAA/PTR；隔离容器 resolver / search、真实 glibc / curl、退出恢复 |
-| CLI | 保存状态与 live IPC 分开，whois、邻接 ping、DNS status/query |
-| Endpoint 观测 | 独立 netcheck 的 kernel NAT 场景；真实 carrier socket STUN、身份 / 代际 / 期限上报 |
-| App 接入（暂停新增） | 用户浏览器授权 / PKCE、设备归属、Apple Keychain、多接入与库存显示；App 隧道未实现 |
+| 网络与身份 | 多网络 SQLite、显式作用域、IPAM、注册/心跳/撤销、公钥绑定；本地邮箱账户、邀请、网络 RBAC、设备归属与 App PKCE |
+| 配置与策略 | 网络内 revision/CAS、JSONC 草稿、digest/私有保存/ACK；四层纯引擎及正常 Controller→Agent→Linux TUN 的 IPv4 Mesh v3 执行 |
+| 承载 | 平台托管 Native UDP/TCP、VLESS TCP/TLS 与 WebSocket/TLS listener/凭据；保留旧 profiles 等价私有导入 |
+| 数据面 | 路径绑定 Noise E2E、反向 dial、节点 DNS、daemon 诊断；认证有界 E2E resync 与运行报告/历史槽位恢复修复 |
+| 观测 | 真实邻接 probe、滚动 latency history 存储/查询、UDP carrier socket STUN 与有期限上报；端到端路径测量未实现 |
+| 系统保护模块 | 用途受限 socket、独立 controller/carrier、Journal v3 与真实 namespace/TUN fixture 通过；**正常主循环尚未启用** |
+| 远端固定链路 | 固定 `4c9a5be` 同身份直连与四地有序路径恢复复验 PASS；[证据及限制](/linux-field-validation) |
+| 用户入口 | 既有 Web 账户/成员/节点配置可用于联调；Apple 多接入/Keychain/浏览器接入和库存已实现，隧道未实现 |
 
-用户体系基础已接通，完整用户管理界面、正式 grants 下发、全平台配置托管与公网出口仍待上述阶段交付。行为证据集中见[开发验收](/development#数据面与实验)，具体边界见各功能页。
+ACK 只表示校验与持久保存；心跳、配置候选、逻辑路径和邻接探测都不能替代真实业务包流。
 
-## 后续验证边界
+## 当前两个独立实现线
 
-### 发现与地区信息的闭环核对
+1. **underlay-main-loop**：窄 guard-only bootstrap，通过已有 `get_agent_dns` 取得真实网络绑定，接正常 Agent / TUN 的用途受限保护及 sink 生命周期。[集成合同](/underlay-routing)。尚未交付或正式启用。
+2. **nat-connectivity**：transport-neutral 候选/协调第一步，后续串入获准候选、认证探测、按需邻接与主备。[承载扩展](/transport-registry)。尚未交付真实自动建连或打洞闭环。
 
-STUN 核心通过不表示默认发现、GeoIP 或自动路由方案已完成。当前明确逐项跟踪：
+## 首版剩余工作
 
-| 子项 | 当前状态 | 交付 / 验收边界 |
-| --- | --- | --- |
-| 真实 UDP socket 的 STUN 及有期限上报 | 已实现，区分 listener / outgoing、IPv4 / IPv6、节点 / epoch / revision / socket generation | 新采样才更新时间，退出 / 换代 / lease / 过期撤销资格；UDP 映射不代表 TCP/VLESS 可达 |
-| 平台托管发现与默认观察点 | 未完成；当前仍需设备 `--stun-server`，无参数则 disabled | P3b/P3d 前置：正常接入后从控制面取得观察点与发现意图，设备不手工维护；所有探测走系统保护通路 |
-| 公网 IP → 国家 / 地区与有来源的位置数据 | 未实现；`StunLocation` 仅是纯引擎输入 | 与发现数据链路独立跟踪，作为 P3c 自动方案前置；保留观测 IP / 来源 / 时间、GeoIP 数据源 / 版本，位置是近似地区而非 GPS |
-| 根据实测地区选择自动方案 | 纯引擎选择 / 兜底已测试，真实数据和执行未接通 | P3c：有效底层 IP → GeoIP → 允许的方案 → 实际执行 / 回执；缺测、过期、无数据或多源地区冲突使用兜底 |
+| 工作 | 必须完成的真实闭环 |
+| --- | --- |
+| 系统保护 | 正常主循环激活、原型 `/32` pin 迁移、endpoint/DNS/网络变化、撤回与 crash/restart；Mesh sink 不落回底层 |
+| 自动组网与优先级主备 | 按 grants/路径/可达性按需连接，直连受阻经允许连接中转，手工候选收敛为高级覆盖；不绕过必经节点 |
+| NAT 连接能力 | 两端仅出站、无发布端口/手工对端候选，在可打洞环境证明真实转直连；UDP blocked 中继兜底保持 E2E。UDP/TCP 打洞、反向拨号与中继分别表达 |
+| Mesh 状态型回包 | 单向 grant 的响应可回程，反向主动访问仍拒绝；现阶段往返业务须显式双向 grant |
+| 完整出口与分流 | 公共规则+方案规则+兜底、域名/IP/规则集、出口开关、grants、NAT/回包、方案切换与撤回；Linux 原型不等于正式下发 |
+| 托管发现与地区 | 平台默认观察点/发现意图未完成，仍有本地 `--stun-server` 兼容入口；GeoIP 查询/更新/来源 API 未实现，自动方案真实执行未接通 |
+| 客户端 | CLI 链接登录、多接入与允许方案选择待实现；Apple 新增开发暂停，NE 包流待恢复 |
 
-2026-10-02 用户再次核对这批功能：**GeoIP 查询 / 数据更新 / 有来源的位置 API 均未实现**；
-当前 `StunLocation` 只是纯策略输入，不能当作已完成地区功能。GeoIP 查询与来源元数据可独立于打洞推进，
-自动方案真正生效还依赖 P3c。固定链路或恢复复验 PASS 不关闭这张表里的未完成项。
+NAT 接口不能把 UDP 写成产品必选；VLESS TCP/TLS、WS/TLS 外层为 TCP，TCP simultaneous-open 的 socket 协调与上层角色尚未实现/验证。仅允许 VLESS 时不能静默启用 UDP 业务承载。IPv6 overlay、真实逐跳 trace、OIDC、邮件与 HA 分别后续推进。
 
-本轮只读查询三个本地 Demo 的发现状态均为 `disabled`，socket 与 observation 数量均为 0；
-现网已经有的邻接 RTT 历史与 STUN / 地区观测是不同数据，不相互替代。
+## 验收与发布
 
-容易遗漏的场景一并纳入后续联测：仅使用 TCP/VLESS、没有 UDP carrier；所有 UDP 观察点失败；
-网络 / IP 变化与旧样本过期；IPv4/IPv6 或多网卡观测不一致；GeoIP 数据缺失 / 更新失败；
-Docker 多层 NAT 与端口暴露。独立探测 socket 若用于地区依据，须有独立来源，不能当 listener
-映射或 peer 打洞候选。端到端业务测试还须区分单向 grant 的状态型回包与反向主动访问，
-不能只用全部双向允许的模板掩盖回包能力缺口。
-
-- **打洞 / 主备**：验证 NAT、UDP blocked、反向 stream、endpoint 重绑定、失败 / 回切、防重放与 lease。承载变化不得跳过必经节点，不交付首版同流聚合。
-- **DNS / 出口**：域名上下文来源仍待确认；解析路径与出口一致、回包 / NAT / 授权撤回及无泄漏均须真实隔离验收。设备不再新增手工 DNS / STUN 配置流程。
-- **IPv6**：需真实双栈 TUN、ACL、MTU / ICMP 与 fail-closed，AAAA / 底层 IPv6 观测不是完成证据。
-- **Trace**：需受认证的实际逐跳探测，规划路径和邻接 nonce 不冒充 trace；原生 traceroute 兼容另行评估。
-- **身份 / 平台**：密钥轮换、通用 resolver 安装与恢复、Apple 真机 NE（待签名条件）、兼容 / HA 独立推进。OIDC、邮件发送不阻塞首版本地邀请账户。
+- 后续联调优先已核对的 Mac Controller `https://meshway-dev-api.jdscript.dev`；构建优先 Mac Linux ARM64 / NYC AMD64，普通受限容器，不用 privileged/host network。
+- 第二轮四地验证覆盖自动建连、主备及真实打洞，不能重复固定链路 PASS 代替。NYC 在防火墙后，原 KR→NYC FIB 经 WARP，第一轮不是纯公网直连/穿透证明。
+- 远端持久 latency history 查询未验；持续 runtime 新鲜报告不替代历史存储查询。
+- `apps/console` pure SPA 由用户另一工作流维护；本轮后端仅维护契约兼容与消费者检查，进一步 Web/Apple 重整暂停。性能本批已结束，保留产物，不整分支部署 offload/NEON 实验。
+- 验收走正常 Controller 下发、Agent 生命周期和真实 TUN 包流；未审定候选不部署。检查入口见[开发与验收](/development)。

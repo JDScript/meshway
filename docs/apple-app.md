@@ -88,7 +88,7 @@ MESHWAY_WEB_DIST_DIR=.next-apple-check node apps/apple/scripts/snapshot.ts \
   "${TMPDIR%/}/opencode/apple-saved-networks"
 ```
 
-脚本自行启动隔离端口、临时数据及唯一 Keychain / defaults namespace，经真实 API 创建第二张网络，App 分别接入两张网络，再捕获保存条目、切回第一张网络与移除后的 fallback。Debug-only AppKit hook 捕获实际主窗口 / sheets；系统 ⋯ popup 无 Accessibility 时以同一真实条目和操作的 in-content sheet 验收，面板仍使用 `MeshwayMenuView` 的 native host fallback。不注入伪造节点 / 隧道状态。结束后删除 `.next-apple-check` 并恢复 Next 自动修改的 `apps/web/tsconfig.json`。既有布局验收与平台边界见 [视觉验收](./apple-ui-verification.md)。
+脚本启动隔离端口/临时数据和唯一Keychain/defaults namespace，经真实API创建第二张网络，分别接入并验证保存/切回/移除fallback。Debug-only AppKit hook捕获实际窗口/sheets；无Accessibility时原生菜单用同真实条目的sheet验证。不注入假节点/隧道，结束清理独立Next构建目录及临时配置改动。当前保留必要兼容检查，Apple新增开发暂停。
 
 签名默认无 Team，bundle prefix 为 `dev.example`。需要签名时创建忽略的 `apps/apple/Config/Local.xcconfig`，设置 `DEVELOPMENT_TEAM`、`MESHWAY_BUNDLE_PREFIX`，必要时覆盖 `MESHWAY_APP_GROUP`。`MESHWAY_KEYCHAIN_ACCESS_GROUP` 默认空，unsigned 使用默认 Keychain；需要 extension 共享时设置此变量并为 App / extension 添加匹配的 `keychain-access-groups` entitlement 与有效 provisioning。App Group 不能替代 Keychain access group。会员未续费，不能据编译声称签名权限、真机 NE 或隧道已验证。
 

@@ -33,9 +33,9 @@ features:
 
 ## 当前实现
 
-已交付多网络 SQLite、显式网络作用域 API、全局管理员 bearer / 网络内一次性接入、App 浏览器 PKCE 批准选网、网络内 IPAM / revision、配置 ACK、公钥认证邻接、Linux Mesh IPv4 TUN 与 Noise E2E，以及节点 DNS 和只读诊断。既有网络无损迁移；真实 ICMP / HTTP、反向 TLS-VLESS、授权 / 必经节点 / lease 撤回均有隔离验收，入口见[开发与验收](/development)。
+已交付多网络 SQLite、用户账户/邀请/网络 RBAC/设备归属、App PKCE、IPAM/revision/CAS/ACK、平台托管 Native UDP/TCP 与 VLESS TCP/TLS、WebSocket/TLS、Linux Mesh IPv4 v3 正常执行和 Noise E2E、节点 DNS/daemon 诊断与真实邻接历史。固定同身份直连/四地有序路径恢复复验 PASS，边界见[Linux 验收](/linux-field-validation)。
 
-**已确认但仍待交付**：多网络真实隔离、本地邮箱密码 / 仅邀请用户体系、平台托管全部配置、grants 与四层模型迁移、按需自动建连、出口 / 路由方案 / 规则集与可信域名上下文。旧 first-match Access、混合 Routing 和本地 profiles 仅是迁移前现状，不能当作目标流程。
+**仍待交付**：正式 underlay 主循环启用、自动建连/主备、真实打洞、Mesh 状态型回包、完整出口/方案/域名分流、默认 STUN/GeoIP 与 CLI 链接登录。当前固定链路结果含既有 WARP 底层，不能证明公网穿透；旧策略和 profiles 是兼容/迁移入口。
 
 IPv6 地址和 AAAA 不代表 IPv6 TUN；Apple App 接入 / 库存不代表 App 隧道。配置 ACK 是持久保存回执，心跳是联系记录，规划路径不是实测 trace。实现边界见[架构](/architecture)，首版闭环和依赖见[里程碑](/milestones)。
 

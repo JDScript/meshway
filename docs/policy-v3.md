@@ -1,6 +1,6 @@
 # 四层策略引擎 v3
 
-本页描述 `meshway_policy::v3` 的纯 Rust 实现，按 2026-10-01 的最终确认：连接、授权是整张网络共享、顺序无关的配置；Mesh 内路由与按**路由方案**组织的出口路由都使用有序 first-match。前三层仍为所有设备共享的一套策略。产品源模型为 `NetworkPolicy`，入口为 `compile_network`；接收同一网络、同一 revision 的节点、管理员 tag、listener、出口开关、可达性事实与已解析规则集。不执行 DNS、拨号、NAT、加密、下载或网络 I/O。Controller 与 Agent 仍使用 v2，编译成功不表示隧道或出口已生效。底层 `Policy` / `compile` 保留为纯选路与迁移验证内核，不是产品方案配置入口。
+本页描述 `meshway_policy::v3` 的纯Rust实现：连接/授权顺序无关，Mesh/出口有序first-match。源为`NetworkPolicy`，入口`compile_network`消费同网络/revision的库存、tag、listener、出口/可达性事实与已解析规则集，不做DNS/拨号/NAT/加密/下载。IPv4 Mesh范围已接正常Controller/Agent/TUN，完整出口尚未接线；纯编译成功不表示生效。[执行合同](/p3a-mesh-execution)说明发布边界，底层`Policy/compile`只作选路/迁移内核。
 
 ## 四层语义
 
@@ -150,24 +150,6 @@ Schema 表达字段与类型；fallback 的每个字段均必需，并以 `maxPr
 
 无约束路径查询一般 O(N+E)，直接路径 O(log N)，共同邻居 O(degree×log N)；桥识别 O(N+E)。每个 primary 最多 H−1 次备选搜索；约束启发式 O(H(N+E)log N)，简单路径搜索最坏指数，以 S 限制，预算内约 O(S×degree×H + S log S)。总路径输出 O(QH)，存储 O(N² + 索引 + 共享表 + 路径节点 + 转发投影)。不是声称所有任意千节点策略都能在线性时间内编译。
 
-下表保留此前具体度匹配版本的历史计时基线（release、macOS Apple Silicon、1000 节点、所有成员授权；不计构造输入，包含全部编译输出）；尚未对当前 first-match / 库存 lint / 公网授权版本重测。计时测试无需 Docker，不设脆弱的 CI 时间断言：
-
-```sh
-cargo test -p meshway-policy --release timing -- --ignored --nocapture
-```
-
-| 场景 | 编译时间 | 输出 |
-| --- | --- | --- |
-| 1000 节点全可达、allow-all、主路径 | 471.86 ms | 999,000 paths |
-| 同上，主路径 + 一条备选 | 675.46 ms | 1,998,000 paths |
-| 1000 节点星型图，主备搜索 | 195.88 ms | 999,000 paths；桥边没有备选 |
-| 底层单表：1000 节点、规则集 8000 CIDR + 前置 direct | 20.18 ms | 7969 个互不重叠前缀，1 份共享表 |
-| 路由方案：1000 源、8000 CIDR、公用 direct + 自定义 regional + global | 26.28 ms | 2 份共享表，1000 外部路径，允许方案共用路径池 |
-
-8000 CIDR 场景的 100,000 次出口 lookup 合计 **8.73 ms**（约 87 ns / 次；含 grant fence 与返回决策，不含构造地址）。该次 release 计时测试可并行运行两个场景，数字是本机一次测量，不是实时控制面 SLA。
-
-路由方案 API 的 100,000 次 lookup 合计 **9.93 ms**（含方案选择与 grant fence，约 99 ns / 次）；对应测试为 profile_eight_thousand_cidr_timing。方案和前缀展平 property tests 同时验证三层共享结果、公共优先、按 STUN 地区自动选择、未知兜底、锁定、授权分配失败与所有候选出口侧精确路径覆盖。
-
 行为测试包含四节点全部 64 种无向图的简单路径穷举 oracle；80 组随机 IPv4 / IPv6 策略、每源 200 地址，验证不重叠表 == 顺序求值；另覆盖千节点 mandatory、连接 / grants 规则置换、Mesh 与出口顺序变化、库存 lint 与 tag 成员变更、mixed domain / IP、公网与私网 grant 边界、direct、默认选择、锁定、出口开关、规则集报告与迁移。
 
 ## v2 → v3 迁移
@@ -191,38 +173,16 @@ profiles[0].rules[0].candidates[0]: Referenced node is not enabled as an exit by
 
 这是保守的可证明子集转换器：Mesh 重叠无需 predicate subtraction，直接保留 first-match 原顺序；Access reject 例外等不可表达部分仍明确报告需要重写，不声称无损。输出后的引用有效性仍由当前网络 `validate` 检查。原 v2 Access 的节点成员 grants 不会被迁移成 internet 或出口 LAN 授权。
 
-## 后续集成边界
+## 发布与执行边界
 
-本切片没有新增 controller route、节点本地配置或设备自报开关。类型暂留 policy crate；正式 HTTP 契约接入时迁入 protocol 并同步生成 OpenAPI、运行时 schema、Agent/Web 客户端及 drift check。接入层负责 revision / network fencing、管理员出口开关、用户运行时选择、可信 DNS 上下文、真实出口转发 / NAT、状态型回包与数据面生效证据。
+IPv4 Mesh已使用网络内CAS源存储、同事务事实/编译/投影和版本化执行DTO；`Snapshot`自身不能代替外围网络/revision绑定。`Compiled/NetworkCompilation`公开字段不构成不可信wire的受控构造API，不恢复无条件Deserialize。
 
-### P3a 发布边界修复与 Controller handoff
-
-本轮是接线前的 policy 库修复，**不表示 P3a 已上线**。最小接线顺序：
-
-1. **源存储与 CAS**：在网络作用域持久化类型化 `NetworkPolicy` 与原始 JSONC 草稿，沿用 `apps/controller/src/store/configuration.rs` 的 `configuration.revision` / `compare_revision` / `bump` 事务边界及 `store/access.rs` 的作用域；新增存储迁移由 Controller 主线处理。保存必须检查网络内管理员身份。源策略、JSONC、库存与发布 revision 一致，冲突返回 CAS 错误；失败不写入部分编译结果、不覆盖未保存草稿。
-2. **迁移**：同事务读取原 v2 Access / Routing，调用 `migrate_access` / `migrate_routing`；任一 `converted = None` 时保留原 v2 源与运行版本，返回字段诊断，不标记迁移成功。可证明转换也须经当前库存完整编译，并通过发布预算后才原子切换。尚未定义的外部授权不自动补授；缺少出口属性或授权时保留 v2 并报告。v2 消费者退出前保留既有兼容入口。
-3. **同 revision 输入与权限**：一次一致性读取提供本网络有效身份 / 地址 / 公钥、管理员 tag / listener / exit_enabled、连接约束与有来源且未过期的可达事实、已解析规则集版本、账户 / 成员权限及方案分配。`Snapshot` 自身没有 network/revision 字段，调用方须绑定外围类型化作用域与版本，不能把独立请求结果混拼。库存、grants 或出口开关变动重编译；STUN 位置与用户方案选择不能扩张授权。
-4. **发布 / 执行预算**：`compile_network` 成功后逐节点计算真实安装投影，除本库逐方案展平 + final 预算外，还校验所有入向源 / 路径的出口 grants 前缀**总和**、完整授权路径 / 身份数、允许方案目录及配置字节上限，不能用共享表的存储去重数代替某节点实际安装总数。既有 v2 128 grants / 64 identities 与出口原型 64 grants / 16 concrete profiles 的限制仍须协商或明确报超限；原型只支持 IPv4，不能把 v3 IPv6 悄悄丢弃后报告完整生效。失败保留最后可用运行代际，并明确区分保存、ACK 和 apply 状态。
-5. **执行契约与 underlay**：可信进程内重编译源策略取得 `Compiled` / `NetworkCompilation`；目前没有已验证 compiled wire 解码入口，公开字段仅用于检查，不构成不可信输入的受控构造 API。正式 wire 必须使用类型化契约和受控执行计划构造，校验索引 / 排序 / 唯一身份、完整方向路径 / 授权 / mandatory hops、revision / lease 与安装预算，再生成全部消费者；不能恢复无条件 `Deserialize`。准备系统保护 socket 通路后才启用 TUN / 新承载，撤回与 lease 到期独立终止旧运行代际；该部分由 underlay / Controller / Agent 主线实施。
+完整出口接线仍须管理员出口开关、用户允许方案选择、可信DNS上下文、转发/NAT、状态回包与真实生效证据。逐节点检查入向源/路径grants总量、最终安装前缀、身份/路径与字节预算，不能以共享表去重数替代真实安装总数，也不能悄悄丢弃IPv6。业务lease/撤回独立fence旧代际，正式[系统保护](/underlay-routing)先准备后捕获。
 
 #### 方案 ID 的兼容边界
 
 保留既有源 ID：自定义 ID 为 1..64 字节 ASCII 字母数字及 `._-`；内置 `mesh-only` / `auto`；具体 global 为 `global:` + **完整小写 64-hex 身份**，长度 71。`v3::valid_profile_id` 是共用的具体 ID 语法检查；自定义定义另外拒绝保留 ID。`global:*` 只允许出现在分配 allowed 中作展开 token，不能进入执行目录；不能截断、哈希改名或把所有自定义 ID 长度泛化到 71。
 
-真实出口消费者为 `apps/agent/src/managed_dataplane/exit.rs` 的 `ExitPlan::with_profiles`。现已把原 `p.id.is_empty() || p.id.len() > 64` 替换为 `!meshway_policy::v3::valid_profile_id(&p.id)`，保留 `p.id == "auto"`（auto 不在 concrete profiles 中）与重复 ID 检查；default / automatic / 用户选择继续对完整 ID 做允许目录成员校验。`exit/profile_tests.rs` 覆盖 71 字节 global 经默认选择、用户切换和自动解析保留完整身份，以及残缺 / 大写 / 非 hex / 重复身份、`global:*`、concrete `auto` 的拒绝。目录 16 项限制及 Controller 投影仍是独立的未接线限制。
+出口原型`ExitPlan::with_profiles`使用相同ID语法，拒绝concrete `auto`、`global:*`及重复ID，完整global身份在默认/切换/自动解析中保留。未来不合规旧值必须报告并保留源，不能静默改名。原型目录16项与正式Controller投影是独立预算，未据此完成产品下发。
 
-**无损边界**：v3 已接受的自定义源 ID 仍原样保留，不截断、不重命名。只读调查现有出口原型构造点（`exit/fixture.rs`、`exit.rs` 单测、`exit/profile_tests.rs`）和 `experiments/exit-dataplane` 使用 `e` / `f` / `mesh` / `global`，均兼容；测试另覆盖含大小写、`._-` 的自定义 ID 和 64 字节边界。旧原型只检查非空及 64 字节，理论上曾接受空格、斜线、冒号、非 ASCII 等不符合 v3 源语法的 ID；本次会明确拒绝这些值，不能声称任意原型输入均无损。原型目录为内部测试构造，未接 Controller 持久化方案；未发现上述字符用于已知配置。未来迁移遇到不合规外部旧值须报告并保留旧源，不能静默改名。
-
-本 worktree 的检查命令（独立 Cargo target，限制两项构建并发）：
-
-```sh
-CARGO_TARGET_DIR="$PWD/target/policy-v3-publication" CARGO_BUILD_JOBS=2 cargo fmt -p meshway-policy -- --check
-CARGO_TARGET_DIR="$PWD/target/policy-v3-publication" CARGO_BUILD_JOBS=2 cargo test -p meshway-policy --all-features --locked
-CARGO_TARGET_DIR="$PWD/target/policy-v3-publication" CARGO_BUILD_JOBS=2 cargo clippy -p meshway-policy --all-features --all-targets --locked -- -D warnings
-CARGO_TARGET_DIR="$PWD/target/policy-v3-publication" CARGO_BUILD_JOBS=2 cargo fmt -p meshway-agent -- --check
-CARGO_TARGET_DIR="$PWD/target/policy-v3-publication" CARGO_BUILD_JOBS=2 cargo test -p meshway-agent --features managed-connections --lib managed_dataplane::exit --locked
-CARGO_TARGET_DIR="$PWD/target/policy-v3-publication" CARGO_BUILD_JOBS=2 cargo check -p meshway-agent --features managed-connections --all-targets --locked
-CARGO_TARGET_DIR="$PWD/target/policy-v3-publication" CARGO_BUILD_JOBS=2 cargo clippy -p meshway-agent --features managed-connections --all-targets --locked -- -D warnings
-```
-
-Mesh / 出口有序 first-match、公网 internet 范围、库存相关遮挡提醒、路由方案、公共优先、规则集、direct、STUN 定位、用户切换、管理员开启与锁定均已确认，不再列为待决。方案分配仍使用 node > tag > * 的具体度（不是 Mesh 路由匹配）；其 template / auto 允许集合语义及资源预算沿用既有实现。
+方案分配仍按node > tag > *具体度选择（不是Mesh路由规则匹配）。真实地区观测、GeoIP和方案执行未接通，不能把`StunLocation`纯引擎输入写成已实现位置服务。定向测试可运行 `cargo test -p meshway-policy --all-features --locked`；消费者与真实执行验收见[开发入口](/development)。

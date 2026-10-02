@@ -2,17 +2,17 @@
 
 App 登录本质是 SSO：App 打开 controller Web，由 Web 完成人类登录与接入授权，再通过回调交付一次性兑换码。App 不对接外部 IdP，也不持有管理员会话。这是 authorization-code + S256 PKCE 形状的 Meshway 专用协议，**不是通用 OAuth 授权服务器**。
 
-## 本切片与后续边界
+## 当前实现与后续边界
 
-已实现 controller 契约、事务兑换、SQLite v8 升级、生成 OpenAPI / Rust / TypeScript 客户端与 Zod、Web 授权页及登录返回。当前人类登录是已有管理员会话；批准 / 拒绝都在服务端重新验证登录，批准经管理员 bearer 调用 controller。未来替换 controller 侧的人类认证 / 授权，不改变 App 请求与回调契约。
+已实现controller事务兑换、生成客户端、Web授权页与登录返回，并接入真实用户session、当前网络membership和设备归属。批准/拒绝逐次检查登录，批准使用用户session；bootstrap不能签发user-owned设备批准。App请求与回调保持兼容。
 
-**外部 OIDC、接入资格、用户权限、节点接入有效期及审批策略：controller 侧后续决定，App 不感知。** 本切片不新增 users、principals、owners、节点到期或 App 节点类别。兑换码的五分钟期限仅限制首次消费，不是节点有效期。
+兑换码五分钟只限制首次消费，不是节点有效期；controller检查账户/网络资格，App不持有人类会话。外部OIDC后续，不另建App节点类别。
 
-**已确认产品目标**已包括 controller 本地邮箱 + 密码账户、安全哈希、仅邀请加入指定网络、Owner 与设备归属；Agent 也须提供浏览器链接登录。OIDC 后续接入。这里“后续”指该切片尚未接入这些能力，不表示用户身份仍是未确认提案；App 保持浏览器 / 兑换契约，不持有管理权限，见[产品概念](/concepts#网络、用户与设备)。
+本地邮箱/密码、仅邀请、Owner与设备归属已实现；Agent浏览器链接登录及结果领取仍待交付，见[账户合同](/local-accounts)。
 
 Apple 已接线 `ASWebAuthenticationSession`、Keychain、Rust 生成客户端兑换和真实心跳，见 [Apple App](./apple-app.md)。注册 / 心跳成功不代表隧道已建立；X25519 发布、agent 生命周期、NE 包流及真机验证仍待后续。
 
-## 本地账户下的统一登录（P2b 目标）
+## 本地账户下的统一登录
 
 本地账户是认证来源，SSO 是 Web、App 与 CLI 共用登录的方式。用户只在 controller
 Web 输入邮箱和密码；浏览器已有有效会话时直接进入设备授权页。controller 校验用户
@@ -26,8 +26,7 @@ Web 输入邮箱和密码；浏览器已有有效会话时直接进入设备授�
   不把现有 App 专用 callback 直接当作已经支持 CLI。
 
 本地账户先落地，外部 OIDC 后续只扩展 controller 的用户认证来源。现阶段不需要为
-其他第三方应用提供通用 IdP、ID token 或客户端注册服务。当前已实现的管理员批准
-切片仍按下文运行；用户会话与成员权限替代该批准身份的接线属于 P2b。
+其他第三方应用提供通用IdP、ID token或客户端注册服务。App用户会话/membership批准已接线，CLI仍待实现。
 
 ## 单一服务器地址
 
@@ -48,7 +47,7 @@ App 只要求 **Web 控制台 origin**（HTTPS；回环 HTTP 仅开发），浏�
 | `agent_version` | 1–64 个 Unicode 字符，包含非空白文本 |
 
 4. Web 先验证请求；非法回调仅显示错误页，不跳转。未登录时进入现有登录页，成功后返回**重新验证并规范化的授权路径**。确认页展示设备名称 / 版本、网络名称与 controller 地址；GET 不创建兑换码或节点。
-5. 管理员在确认页选择设备要加入的网络后明确批准，Web 调用该网络的 `authorizeDevice`，服务端验证网络存在并将兑换码绑定到该网络；回调 `meshway://enroll/callback?code=…&state=…`。拒绝回调 `?error=access_denied&state=…`。controller 故障留在页面显示真实错误。
+5. 用户选择自己有活动membership的网络并批准本人设备，Web调用该网络的`authorizeDevice`，服务端绑定session/version/membership和网络；回调 `meshway://enroll/callback?code=…&state=…`。拒绝回调 `?error=access_denied&state=…`。controller故障留页显示真实错误。
 6. App 使用 `ASWebAuthenticationSession(callbackURLScheme: "meshway")`，核对完整 callback URI、state 与选定 controller；取消 / 拒绝不创建节点。
 7. 校验回调后，App 先把兑换码写入私有待注册状态，再使用它作为 bearer，通过生成的 `exchangeDevice` 发送原 verifier、redirect URI、已保存节点凭据及相同名称 / 版本；成功返回既有 `AgentNodeResponse`，原子保存服务端节点 ID 后清除待注册秘密。响应丢失时复用整份绑定重试。
 8. 后续使用既有节点 bearer 接口。X25519 公钥继续经 `publishConnectionIdentity` 单独不可替换地绑定，本次兑换不改变其语义。
@@ -63,7 +62,7 @@ Rust DTO 位于 `crates/protocol/src/device_login.rs`，实际路由位于 `apps
 
 | 路由 / 操作 | 认证 | 请求 | HTTP 200 |
 | --- | --- | --- | --- |
-| `POST /api/v1/networks/{network_id}/device-authorizations` / `authorizeDevice` | 管理员 bearer | `{ redirect_uri, code_challenge, name, agent_version }` | `{ code, expires_at }` |
+| `POST /api/v1/networks/{network_id}/device-authorizations` / `authorizeDevice` | 用户session/活动membership | `{ redirect_uri, code_challenge, name, agent_version }` | `{ code, expires_at }` |
 | `POST /api/v1/devices/exchange` / `exchangeDevice` | 兑换码 bearer（`enrollmentBearer` scheme） | `{ code_verifier, redirect_uri, node_credential, name, agent_version }` | 既有 `{ node: NodeSummary }` |
 
 `state` 只在 Web / App 往返中回传，controller 不需要它来验证 PKCE。回调 allowlist 采用协议常量，首片只允许一个精确 URI，避免增加尚无消费者的部署配置或任意客户端注册。Web 校验来自 Rust 约束生成的 Zod schema。
@@ -74,11 +73,11 @@ Rust DTO 位于 `crates/protocol/src/device_login.rs`，实际路由位于 `apps
 
 SQLite v8 只给 `enrollment_tokens` 增加可空 `device_binding`，存储公开的 redirect URI、challenge、名称 / 版本。旧 token 该列为 null；原身份、凭据摘要、IP、公钥、策略及 revision 保留。
 
-P1a 的 v8→v9 升级为接入令牌与兑换码增加不可变网络归属，已有绑定整体迁为第一张网络。App 的 exchange / heartbeat / configuration / DNS 请求、回调和 `AgentNodeResponse` 保持原契约；App 无需知道批准时的网络 ID，controller 从兑换码 / 节点凭据解析。客户端保存多个接入、一次一个活动网络的切换属于后续客户端生命周期，P1a 不修改 Apple 代码。详见[多网络迁移](./network-management.md)。
+接入令牌/兑换码有不可变网络归属，App exchange/heartbeat/configuration/DNS和回调兼容保留，网络由凭据推导。Apple现已保存隔离多接入、一次一个活动接入，暂无隧道可切换；CLI待实现。详见[网络边界](/network-management)。
 
-兑换码为随机 256-bit bearer，服务端仅保存摘要，首次消费期限固定 300 秒。新增绑定复用原注册事务：校验 PKCE / 元数据 / 期限，分配地址、创建相同 nodes 记录、绑定节点 ID 与请求摘要、推进配置 revision，全部一起提交。首次校验失败或容量不足不消费代码。新节点没有 App 标志、owner 或另一套身份系统，Access / Routing / 撤销语义与 token 注册一致。
+兑换码为随机256-bit bearer，只存摘要，首次消费300秒。PKCE/元数据/期限、当前session/version/membership、node/IP、ownership、code消费与revision同事务；失败不消费。统一nodes记录，没有App类别或另一套身份系统。
 
-同代码 + 同 verifier / callback / 凭据 / 原名称 / 版本重试返回同一个仍有效节点，原首次期限已过也能恢复；不同绑定拒绝，撤销永远不恢复。已消费记录保留去重依据。摘要比较使用固定长度的累积差异比较；不宣称 SQLite 查询整体恒定时间。
+同code/verifier/callback/凭据/原名称版本的精确重试可恢复原节点，首次期限过后也不重新注册；仍检查节点未撤销、原membership活动和ownership一致。移除再加入不能复活旧批准，不同绑定拒绝，已消费记录保留去重依据。
 
 ## 验证与背景
 

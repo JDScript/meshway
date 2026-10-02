@@ -1,6 +1,6 @@
 # 本地联调：当前可运行流程
 
-本页是**当前实现**的开发联调，不是最终用户使用说明。目标流程为邀请 / 链接登录、Web 托管配置与自动建连，见[产品概念](/concepts#平台托管与使用流程)。当前使用多网络控制面、全局管理员 bearer 和网络内一次性节点注册令牌；Web 先选择网络再创建接入令牌，已有单网络状态自动无损迁为第一张网络。
+本页是当前开发联调。多网络、用户账户/邀请/权限/设备归属已实现；Agent仍使用一次性接入令牌，链接登录/自动建连待交付。目标流程见[产品概念](/concepts#平台托管与使用流程)。Web操作先选网，服务端检查实际membership，既有身份/数据由启动迁移保留。
 
 ## 准备与启动
 
@@ -29,15 +29,15 @@ pnpm dev:docs
 
 每个服务使用独立终端。Controller 首次创建私有 SQLite 与管理员 token，后续复用同目录；不要与统一入口重复启动。同数据目录受独占锁保护。首次地址池默认 IPv4 `100.96.0.0/16` 与持久 ULA `/64`，已有库不因启动参数重新编号，见[地址分发](/configuration#持久双栈地址池)。
 
-## 1. 管理员登录与创建接入令牌
+## 1. 初始化、用户登录与接入令牌
 
-显式读取管理员 token，在 Web 登录：
+新实例在Web `/setup` 使用实例bootstrap完成首Owner初始化；显式读取该私有token：
 
 ```sh
 cargo run --locked -p meshway-controller -- admin-token --data-dir .meshway/controller
 ```
 
-在当前接入页面创建一次性注册令牌（有效期 60–86400 秒）。Agent 使用的是创建响应中的注册 token，不能交给它管理员 token。当前 App 可走[浏览器批准与兑换](/device-login)，但人类登录仍是管理员会话，本地邀请账户尚待实现。
+随后日常在`/login`邮箱登录。本网Owner/Admin创建邀请/接入令牌，添加节点可选listener，后续节点配置可修改。Agent使用创建时单次返回的注册token，不能拿用户session或实例token运行。App走[用户浏览器批准/PKCE](/device-login)，Member也可批准本人设备；CLI链接登录仍待实现。
 
 Web 默认使用 `MESHWAY_CONTROLLER_URL=http://127.0.0.1:8420`；远程凭据通道须有 TLS，cookie 配置见[部署边界](/enrollment#本地与远程部署)。
 
@@ -65,11 +65,11 @@ cargo run --locked -p meshway-agent -- status --state .meshway/agent.json
 
 `sync` 校验配置、私有原子发布、确认文件与目录持久性后 ACK；`status` 只读本地保存状态。地址分配、心跳、缓存版本或 ACK 都不是隧道证明。文件发布后 fsync 失败也不能报保存成功，见[提交阶段](/configuration#文件发布与持久性是两个阶段)。
 
-具备 managed feature 并运行相应模式后，`status --live`、邻接 `ping` 与 DNS 查询提供各自真实证据，见[CLI](/cli)。Linux TUN / 真实 ICMP、HTTP 的显式启用和隔离验收见[托管数据面](/managed-dataplane)。当前本地 profiles 等参数仅是待迁移的开发 / 实验入口。
+具备managed feature并运行相应模式后，`status --live`、邻接`ping`与DNS查询提供各自证据，见[CLI](/cli)。Linux TUN显式启用见[数据面](/managed-dataplane)，v3源模式见[执行合同](/p3a-mesh-execution)。平台托管VLESS/WS不传本地profiles；旧profiles只作兼容/等价私有迁移。
 
 ## 4. 管理与撤销
 
-Web 使用真实清单、授权 / 路由、标签与连接配置，保存使用 revision CAS，冲突保留草稿。当前旧版策略仅作为现状使用，目标及迁移见[Access](/access-policy)、[路由方案](/routing)。路径预览不发 trace，也不代替访问授权。
+Web使用真实清单、授权/路由、标签和连接配置，保存CAS冲突保留草稿。旧编辑入口保留兼容源；Mesh v3须显式激活，完整出口尚未接线。见[Access](/access-policy)、[路由方案](/routing)。preview不发trace、不代替授权。
 
 撤销后节点保留在清单，控制面请求被拒绝；托管运行层撤回旧代际，控制面失联则由 lease 到期终止。`last_seen` 只是联系时间。若只运行基本心跳，不应宣称建立或切断了业务隧道。
 

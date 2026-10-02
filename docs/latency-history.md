@@ -55,7 +55,7 @@ RTT 与 wall-clock 尝试时长做合理性核对。时钟异常事件拒绝，�
 retained row 的 identity 仍一直约束内容；row 已被淘汰且 ledger 超出上述窗口后，旧 ID
 不再有永久 tombstone，重新标时的新事件可按新 admission 验证。TTL 外不承诺永久 ID 记忆。
 
-## API 与前端 handoff
+## API 与消费
 
 权威契约：`crates/protocol/src/latency_history.rs`。OpenAPI、Rust Agent client、TS、Zod
 由既有生成命令生成；Web 使用生成的 `queryLatencyHistory` operation 与运行时 schema。
@@ -108,12 +108,7 @@ Summary 的部分 counters 不涵盖所有被取消的 queued/in-flight 条目�
 采样不拨通新邻接；但它并非完全被动，现有 Runtime probe timeout 会 unregister **该 exact
 channel**。本任务保留既有认证/超时语义，没有调整数据面或性能对照。
 
-DDL 在 `apps/controller/src/store/latency_history/schema.sql`；整合候选通过
-[`store/release_schema.rs` 的 v11 统一迁移](/schema-v11)与账户/ownership 在同一事务安装，
-校验后才更新版本。正常构建不依赖 fixture feature；原 `latency-history-fixture` 名称只保留
-测试命令兼容。已有完整开发片段可在验证后采用，partial/未知结构拒绝，不用同名空壳修补。
-旧 lease 缺少起点时建立保守的历史启用下界，已知起点和历史游标不重写。此处是代码整合状态，
-不是现网部署声明；最终消费者与真实旧数据副本验收沿[统一迁移说明](/schema-v11)执行。
+DDL在`apps/controller/src/store/latency_history/schema.sql`，正式启动与账户/ownership同事务安装/校验，见[迁移边界](/local-accounts#存储与迁移)。正常构建不依赖fixture feature，旧feature仅保留命令兼容。完整已知片段可验证采用，partial/未知拒绝不补壳；旧lease缺起点时建立保守启用下界，已知起点/游标不重写。
 正常 controller 启动若已有 latency 表，执行无副作用完整 `validate_schema`（columns/PK/
 AUTOINCREMENT/UNIQUE/FK/index 形状、完整 trigger 集合/归属/精确定义及 FK integrity），缺失
 约束的同名表拒绝启动。当前四张 history 表没有合法 trigger，额外 main/temp trigger 均拒绝；
@@ -122,29 +117,17 @@ AUTOINCREMENT/UNIQUE/FK/index 形状、完整 trigger 集合/归属/精确定义
 不会虚报 inserted 或提交半份 ledger/淘汰水位。合法同 epoch 重试和已有 victim identity 是
 明确核对的零变更分支，不在每个请求扫描整库 schema。
 
-### 并行交付整合（只读核对 `56da5ad`）
+### 可视化边界
 
-- P2a 的 managed materials 已占用 schema v10；此切片不申请 v10，DDL 留给统一后续迁移。
-- P2a 的 `probe.rs` publication / weak Runtime / deadline / Phase fence，以及
-  `session::describe` / Runtime 原子 probe proof 接口未变。`history_source` 小 hook 可沿用。
-  新的 NodeConnections materials 属于完整快照与 digest；不可拆出来重新拼接旧 intent。
-- `reconcile_dataplane` 从 coherent payload 提取同一份 connections，随后保存 Manager snapshot；
-  采样 context 使用该 snapshot 的 revision/digest，publication 撤回后整体取消。
-- Agent 新增 `transport-runtime`，managed 不再隐式带 lab CLI；采样模块仍只挂在
-  managed-connections，不新增 lab CLI 或本地配置入口，整合时由协调者重生成全部消费者。
-- **R1 heartbeat 告知更高 revision 的现有 Manager withdrawal 已纳入 sampler abort/join**，
-  与旧 dataplane/DNS 撤回一同执行；然后等待新 coherent bundle 与 Applied report。
-  不能等旧 HTTP 请求结束或等下一采样周期。即使邻接 Runtime 暂时仍在，旧 revision/digest
-  的 queued event 也不应再发。Controller 的 current revision/digest 校验是第二道 fence。
-
-与 `feat/sidebar-07:apps/web/docs/console-design.md` §6.6 的交接映射：唯一 ID 为
-`sample.measurement_id`；横轴 `sample.measured_at`，迟到信息 `received_at`；方向由
+唯一ID为`sample.measurement_id`；横轴`sample.measured_at`，迟到信息`received_at`；方向由
 `source_node_id → sample.peer_node_id` 与 `sample.direction` 表达；carrier/epoch/revision 对应
 `channel_associations/runtime_epoch/revision/digest/sampler_generation`。
 此 endpoint 的方法由契约固定为 authenticated-neighbor nonce，生产 producer 为定期 runner；
 首版不提供“检测一次”命令或完整路径，不应提前显示操作按钮。缺口原因未持久化，按未知
 未采样/未上报表达，不能伪报历史离线原因。承载变化可由相邻成功 proof 的分段键变化标注，
 单个 failed/timeout 不能推导真实 disconnect/reconnect 生命周期事件。
+
+新sampler在原2秒预算内有界等待共享pending槽位，RTT含排队/重试等待；持续占用仍缺测，不延长周期/检查窗口。远端恢复复验只验持续runtime报告，**未查询持久history API**。客户端遵守[固定窗口分页](/spa-api-audit#历史分页)，不能沿用cursor跨扩大窗口。
 
 ## 验证入口
 

@@ -25,13 +25,15 @@ cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
 cargo test --workspace --all-features --locked
 pnpm protocol:check
 pnpm test:protocol
+pnpm test:codegen
+pnpm check:experiments
 pnpm test:web
 pnpm typecheck
 pnpm lint
 pnpm build
 ```
 
-修改 Rust 契约后先 `pnpm protocol:generate`，再做 drift check；生成不能代替比较。仅文档改动运行 `pnpm --filter @meshway/docs build`（等价 `pnpm build:docs`），保留 VitePress 默认死链检查。完整类型检查包含 Apple 原生联测脚本的 TypeScript。
+修改 Rust 契约/HTTP路由/客户端后先 `pnpm protocol:generate`，再drift，并检查全部消费者：workspace all-features（含Agent/Apple core）、Web/SDK以及 `pnpm check:experiments`。后者通过 `scripts/check-experiments.mjs` 自动发现全部 `experiments/*/tsconfig.json`，执行严格 `tsc --noEmit` 与存在的 `*.test.ts`，不维护手写项目清单。仅文档改动运行 `pnpm --filter @meshway/docs build`（等价 `pnpm build:docs`）与 `git diff --check`，保留VitePress死链检查。
 
 按用户要求，浏览器自动化套件、依赖与 CI 入口已移除。Web 日常检查为类型、lint、单测与构建，UI 在开发页面手工验证；不默认重建浏览器测试。Controller/Agent 的协议、鉴权和数据面行为测试继续保留。Apple 原生检查使用不依赖浏览器框架的进程与 HTTP helper，入口见[Apple 文档](/apple-app)。
 
@@ -50,7 +52,7 @@ App 浏览器批准 / PKCE 兑换、原绑定恢复与迁移见[设备登录](/d
 
 ## 配置与路由切片
 
-旧版路由 / 端点授权已贯通配置、生成客户端和管理编辑；first-match allow/reject、初始 routing reject 是**待迁移现状**，目标为[四层模型](/concepts#四层策略)。控制意图验收不代替 TUN 或真实访问。
+IPv4 Mesh v3 的grants/有序first-match已贯通正常执行；旧模式allow/reject与初始routing reject仅作兼容迁移输入。源模式/CAS/epoch/同revision发布和正常TUN验收见[Mesh执行合同](/p3a-mesh-execution)，完整出口尚待正式接线。
 
 ### 新切片验收清单
 
@@ -70,10 +72,13 @@ App 浏览器批准 / PKCE 兑换、原绑定恢复与迁移见[设备登录](/d
 | --- | --- |
 | 托管邻接 | `experiments/managed-connections/run.py`：真实注册、公钥认证、反向 TLS-VLESS、撤回与 lease，见[运行层](/connection-runtime) |
 | 托管 IPv4 | `experiments/managed-dataplane/run.py`：隔离 no-bypass、真实 ICMP / HTTP、授权 / 必经节点 / lease / 撤销，见[数据面](/managed-dataplane) |
+| IPv4 Mesh v3 | `experiments/p3a-mesh/run.py`：正常Controller/Agent/TUN、grants、有序路径、重启、撤回、HTTP stall/lease |
+| 系统保护 | `apps/agent/tests/underlay_fixture/run.py` / `review.py`：真实namespace/socket/TUN；正常主循环启用另验 |
+| 跨地域 | `experiments/linux-field`：固定同身份恢复已复验，自动组网/打洞另验，见[远端边界](/linux-field-validation) |
 | 节点 DNS / resolver | `experiments/managed-dns/run.py`，加 `--system-resolver` 验 glibc 与恢复，见[DNS](/dns) |
 | Netcheck / carrier 观测 | `experiments/netcheck`、`experiments/managed-discovery`：kernel NAT 与真实 UDP FD / 来源 / 期限，见[Netcheck](/netcheck)、[endpoint 观测](/endpoint-discovery) |
 | Transport / 性能 | `experiments/transport`、`experiments/tunnel-throughput`：方法与非秘密 artifact 由目录 README 维护，见[实验](/transport-lab) |
 
 各 runner 的非秘密结果文件记录镜像、资源、负载、运行 ID 与清理结果；私有配置、凭据与密钥不进入 Git。旧运行 artifact 是历史证据，重现用当前 runner 和其 README，不依赖本机临时目录仍存在。
 
-网络实验限定独立 Docker namespace，共享 performance lock 串行运行；不改宿主路由、DNS、防火墙或 Docker daemon，不使用 host network / privileged。独立 transport 实验身份与生产注册身份分开。远端联测留待 TUN / 打洞完善，不用本机城市标签冒充跨区域结果。
+网络实验限定独立Docker namespace，通过同一 `scripts/performance_lock.py`（含继承FD）串行；不改宿主路由/DNS/防火墙/daemon，不用host network/privileged，构建器也遵守。独立实验身份与生产身份分开。不同feature/CLI与SDK原生构建不得并行共用Cargo target，以免替换被测二进制。远端固定链路不代表自动打洞，不用城市标签冒充实测位置。

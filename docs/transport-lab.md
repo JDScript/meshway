@@ -72,7 +72,7 @@ target/debug/meshway-agent transport-lab probe \
 Docker 镜像构建：
 
 ```sh
-python3 experiments/transport/performance_lock.py \
+python3 scripts/performance_lock.py \
   docker build -f apps/agent/Dockerfile.lab -t meshway-agent-lab:local .
 ```
 
@@ -92,29 +92,11 @@ python3 experiments/transport/benchmark.py --output "$LAB_DIR/baseline.json"
 
 批量接口以有限数量的 owned frame 传递数据；当前仍有复制，UDP 收发尚未使用 `sendmmsg` / `recvmmsg`，TUN offload 未开启。本轮测量用于定位实现成本，不能作为最终优化上限。
 
-### 历史性能结论（2026-09-30）
+### 性能结论与方法
 
-环境为 OrbStack 原生 Linux ARM64，同一镜像、iperf3 3.18，每节点 1 CPU / 256 MiB，每项 3 秒、一次采样；内层 1280 / 外层 1500 MTU，裸路由链路 MTU 1280。镜像 digest、资源和负载在原始 artifact 中记录。
+本批性能专项已结束，没有无保留可上线的offload/NEON候选，不整分支部署或扩大矩阵。完整隧道的TUN队列/用户态/socket丢弃与加载下RTT仍需分层解释；裸Docker、原生L4与L3 E2E隧道不能直接相减称作包装损失。
 
-下表为接收端吞吐，单位 Mbit/s：
-
-| 路径 | TCP 单流正向 | TCP 单流反向 | TCP 四流正向 | TCP 四流反向 |
-| --- | ---: | ---: | ---: | ---: |
-| 裸内核三节点路由，链路 MTU 1280 | 72,898.08 | 74,888.74 | 67,428.15 | 70,594.30 |
-| Meshway，两段原生 UDP | 329.14 | 336.32 | 340.75 | 348.69 |
-| Meshway，UDP + 反向建连 VLESS | 314.67 | 317.96 | 324.11 | 325.68 |
-
-Meshway 使用 1280 内层 / 1500 外层 MTU；裸基线为 1280 链路 MTU。相同镜像与载荷预算有助比较，但上述差值不是独立的“加密成本”，尤其裸基线在同一 VM 内利用内核及虚拟网络批处理，未经过物理网卡。
-
-20 Mbit/s UDP 定速测试约 19.98–19.99 Mbit/s、报告零丢包；TCP 压测有重传和 Agent 丢弃，平均约 31.6–40.9% 单核 CPU、未 quota 节流，不能把定速结果推广到压力场景。两种承载均通过双向 ICMP 和停止必经 LAX 后失败，资源已清理。瓶颈定位需 profiling、队列 / 丢弃细分与批量 syscall / buffer / offload 分层实验。
-
-Artifact：`meshway-bare-final-20260930.json`（run `meshway-lab-20260930234154-e74bcd1c`）、`meshway-tun-final-20260930.json`（run `meshway-lab-20260930234231-e86ddcbd`）。历史本机临时产物不保证仍存在；当前重现命令与输出由 `experiments/transport/README.md` 维护，CI 手动 `Linux transport laboratory` workflow 上传本次非秘密结果。匹配适配层增量实验见 `experiments/transport/MATCHED.md`，完整隧道定位工具见 `experiments/tunnel-throughput/README.md`。
-
-### 共享 packet pump 复测（2026-10-01）
-
-后续 `4edb70e` 源基线已使用共享 `meshway_dataplane::packet_io` / PacketDevice batch，不能拿上述早期表格当作当前性能。Native ARM64、每节点 1 CPU / 256 MiB、Noise 逐跳 + E2E、MTU1000 / MSS948、P4、`iperf3 -O2 -t20` 的 queue32 / 128 同二进制 ABBA 双样本对照确认：TUN TX 队列是突发丢包点，queue128 的直连 / 中继两方向均值提升约 14.6–25.6%，同时用户态 / socket 丢包增加、加载下 RTT 变长，瓶颈未全部解决。
-
-完整方法、样本、CPU / 丢弃 / RTT 与复现命令集中在 `experiments/tunnel-throughput/SHARED-PUMP.md`；`RESULTS.md` 是旧 pump 历史，未做新旧 pump 匹配 A/B，不直接据两份表推断重构损耗。用户反馈的裸 Docker / 隧道量级与包装增量仍分别衡量。
+当前重现入口与输出在`experiments/transport/README.md`、`experiments/tunnel-throughput/README.md`；匹配适配层增量见`experiments/transport/MATCHED.md`，共享pump对照方法见`experiments/tunnel-throughput/SHARED-PUMP.md`。已结束批次交接在`perf/tunnel-next`分支的`experiments/tunnel-throughput/HANDOFF.md`，Git/原始产物保留负载、CPU、MTU、并发、加密、方向及失败窗口，不将旧样本表当当前性能。
 
 ### 认证与缓存复核
 
@@ -123,8 +105,8 @@ Artifact：`meshway-bare-final-20260930.json`（run `meshway-lab-20260930234154-
 ## 后续接入条件
 
 - 控制面已提供[托管邻接](/connection-runtime)与[托管 IPv4](/managed-dataplane)，消费真实注册身份及版本化授权。本独立实验仍使用静态身份 / allowlist，不与生产接入数据混用；全托管配置与密钥轮换仍待推进。
-- 原生 UDP 握手和数据为 best effort；缓存的 E2E packet session 约 60 秒过期，终点重启后可能在过期前出现黑洞。
+- Native UDP握手/数据best effort；新E2E认证resync可恢复丢失receiver，旧节点/丢包/竞争仍保留原TTL边界，首个stale packet不重放，见[恢复合同](/e2e-session-recovery)。
 - 原生 UDP 邻接有经过认证的心跳与过期；stream 的静默黑洞检测目前依赖操作系统，后续需业务探测与防抖。
 - 原生承载有同邻接优先级选择；实验 CLI 的 VLESS 每个 peer 仅维护一个候选，并拒绝与 native outgoing 混配，避免声称完整 multi-transport 回切已交付。
-- 多队列、buffer pool、平台批量 syscall 与 TUN GSO/GRO 的优化应由本轮 profiling 推进。
+- 多队列/buffer pool/批量syscall/TUN GSO-GRO后续须匹配测量与完整性审查，不以局部收益扩大上线声明。
 - 接入控制台后，配置保存、ACK、数据面应用和实际通道状态继续分开显示。

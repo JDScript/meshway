@@ -59,11 +59,11 @@ TUN 包没有域名；DNS 关联、Fake-IP 与嗅探的取舍仍待数据面设�
 
 ## 当前实现与迁移边界
 
-当前 `crates/protocol/src/routing.rs` 与 `crates/policy` 仍实现旧版 `RoutingPolicy`：Mesh / internet / any 混合、有序 first-match、`default_action` direct/reject、来源管理员国家元数据，以及 `via` / `exit_node_id`。旧初始空策略 reject 已被目标模型废止；这里的字段只描述现状与迁移输入，不是目标四层 schema。
+旧 `RoutingPolicy` 兼容模式保留Mesh/internet/any混合、default direct/reject、管理员国家元数据与via/exit字段；初始空策略reject已被目标模型废止。IPv4 Mesh v3已正式接Controller/Agent/TUN，源模式/CAS/迁移见[执行合同](/p3a-mesh-execution)。
 
 旧版纯预览已贯通 controller、生成 SDK、Agent 缓存和 Web 条件保存。托管 TUN 只执行已注册节点间的 Mesh IPv4 路径，使用独立 Access 与路径绑定 E2E；互联网出口、路由方案、规则集和可信域名上下文未由该切片接通，IPv6 CIDR 预览也不证明 IPv6 数据面。
 
-新版独立实现见 [v3 策略引擎](/policy-v3) 与 [出口数据面原型](/exit-dataplane)。两者已合入，正式下发与旧配置迁移仍在后续集成阶段。
+完整[v3纯引擎](/policy-v3)和[出口原型](/exit-dataplane)已验；当前只正式执行IPv4 Mesh范围，出口方案/域名分流还待控制面到常规Agent的完整接线，不能据纯编译或原型PASS写成已生效。
 
 迁移须无损保留旧策略行为；混合 scope、国家条件或拒绝语义不能等价表达时须明确报告，不静默改变授权或删除必经节点。
 

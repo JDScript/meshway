@@ -48,7 +48,7 @@ cargo run --locked -p meshway-agent --features managed-connections -- run \
   --interval-seconds 5 --connection-lease-seconds 45
 ```
 
-`--apply-connections` 包含同步；`run --connections` 仅保存。Native UDP / TCP 不需 profiles；VLESS 当前私有文件引用 UUID、证书与信任 CA，待平台托管迁移。同一身份不可同时启动两个实例。
+`--apply-connections`包含同步，`run --connections`仅保存。平台托管Native/VLESS/WS不需本地profiles，UUID/证书/信任按节点最小披露下发；旧私有文件只作兼容/等价导入。同一身份不可同时启动两实例。
 
 隔离入口 `experiments/managed-connections/run.py` 通过真实 controller / Agent / 生成 SDK 验证三节点注册、UDP 与反向 TLS-VLESS、DNS 公告入口、profile 缺失 / 恢复、配置撤回、控制面断联后 lease、原数据库恢复及节点撤销。数据 bridge 隔离且 kernel forwarding 关闭，结果以 runner 的非秘密 `result.json` 为准。
 

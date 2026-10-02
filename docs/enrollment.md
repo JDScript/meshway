@@ -1,21 +1,18 @@
 # 控制面注册与持久化
 
-本页记录已交付控制面切片的**当前实现选择**：多网络 SQLite、全局管理员 bearer、网络内一次性注册令牌与节点专属 bearer。它建立 HTTP 控制面身份；托管邻接与 E2E 另行使用[绑定公钥](/connections)及[数据面认证](/managed-dataplane)。
+当前控制面使用多网络SQLite、本地用户session/网络RBAC、实例bootstrap、网络内接入令牌与节点专属bearer，分别授权。注册建立HTTP身份；托管邻接/E2E另用[绑定公钥](/connections)和[数据面认证](/managed-dataplane)。
 
-**已确认目标**：本地邮箱 + 密码账户（安全哈希）、仅凭管理员 / 网络 Owner 邀请加入指定网络，首版邀请 / 重置链接手动转交；现有管理员迁移为第一个 Owner。设备归属用户，服务器类设备可用预分配 tag 的接入密钥，Agent 浏览器链接登录、App 系统浏览器 SSO；OIDC 后续。多网络隔离已实现，该用户 / Owner 体系仍待交付，不能混同登录、接入凭据与管理权限。
+用户账户/邀请/网络角色/设备归属已接线，见[账户](/local-accounts)。CLI链接登录与tag身份接入的后续范围独立推进，OIDC后续；不能混同人类登录、实例权限、接入秘密与节点身份。
 
 这套身份已扩展到通过集成验收的[地址与配置分发](/configuration)。注册基线和新增配置 / 路由闭环分别记录实际证据，见[开发路线](/development)。
 
-::: info 已实现并通过控制面集成验收
-控制面基线通过 Rust / SDK 与真实服务浏览器验收，覆盖见[验收矩阵](/development#注册与持久化验收矩阵)；托管 TUN 另有独立流量验收，注册成功不表示已启用隧道。
-:::
-
-## 三类凭据与权限
+## 凭据与权限
 
 | 凭据 | 获取与保存 | 权限边界 |
 | --- | --- | --- |
-| 管理员 bearer | controller 首次启动创建私有 `admin.token`；显式命令或读取文件获取 | 全局管理员可列出 / 创建网络；概览、节点、注册令牌、撤销和配置操作均在明确选择的网络内执行 |
-| 注册 bearer | 管理员创建，响应返回原始令牌与到期时间 | 为一个节点绑定凭据；有效期为 `60..86400` 秒，不能读取管理清单 |
+| 用户session | 邮箱密码登录返回不透明`mws_`，浏览器私有保存 | 当前membership/网络角色；本人设备批准与账户操作，不得跨网 |
+| 实例bootstrap bearer | 首次启动创建私有`admin.token`，显式读取 | 初始化/恢复与兼容管理入口；不成为用户设备owner，不授给网络Owner |
+| 注册bearer | 本网Owner/Admin创建，原值仅返回一次 | 原子绑定一个节点；不能读取管理清单 |
 | 节点 bearer | Agent 在首次注册请求前生成随机凭据并持久保存；controller 保存摘要 | 代表该节点提交心跳；本轮增加读取自身公共配置及 ACK，仍不能调用管理 API |
 
 HTTP 使用 `Authorization: Bearer …`。节点 ID 由服务端建立并从节点凭据解析，心跳和本轮配置 / ACK 请求没有调用方任选的节点 ID。节点名、版本、国家和分配地址都不能代替身份凭据或访问授权。
@@ -24,7 +21,7 @@ HTTP 使用 `Authorization: Bearer …`。节点 ID 由服务端建立并从节�
 
 ## 注册与恢复
 
-原生 App 另有[浏览器 SSO 接入](/device-login)：管理员在 Web 确认，App 用短期、S256 PKCE 绑定的兑换码注册。它复用下述节点创建事务与恢复 / 撤销语义，生成同一种节点；不增加 App 节点类别。SQLite v8 增加公开的可空设备绑定，旧 token、身份、地址、公钥与策略保留。
+App经[用户浏览器SSO](/device-login)批准本人设备，用短期S256 PKCE结果兑换；membership/ownership与node/IP/code消费同事务，生成统一节点。不增加App类别；原token/身份/地址/公钥/策略保留。
 
 为避免“controller 已提交，但 Agent 丢失成功响应”造成身份丢失，采用可恢复注册方案：
 
@@ -47,6 +44,7 @@ controller 使用 `--data-dir` 指定目录，创建以下文件：
 | --- | --- |
 | `controller.sqlite3` | 节点、令牌期限与消费绑定、凭据摘要及撤销状态 |
 | `admin.token` | 供管理员显式读取的原始管理员凭据 |
+| `transport-material.key` | 托管材料加密密钥，与数据库一同私有备份 |
 | `controller.lock` | 保证同一数据目录只由一个 controller 使用 |
 
 首次启动创建状态，后续启动复用；`admin-token` 只显式读取既有令牌，不初始化状态。既有数据库与令牌只剩其一，或两者不匹配时拒绝启动，不会静默建立另一份管理员身份。
@@ -71,17 +69,11 @@ Agent 通过 `--state` 指定状态文件，默认 `.meshway/agent.json`；对�
 
 ## Web 管理员边界
 
-Next.js 服务端用管理员令牌调用网络列表 API，验证成功后才设置 `meshway_admin_session` cookie。cookie 内容是 `v1.<expiresAt>.<token>`，属性为 `HttpOnly`、`SameSite=Strict`、`Path=/`，有效期 8 小时；服务端也检查其中的绝对到期时间。管理员令牌仅在服务端读取并交给生成 SDK，不写入 HTML 或 React Flight 页面载荷。登出清除登录 cookie，未登录时不读取或展示管理数据。
+既有Next Web日常用用户账户登录，会话仅服务端私有cookie持有；每个受保护读取/管理Server Action重新检查身份，再经生成SDK请求，Controller也在根事务验证membership/role/过期。实例凭据只在setup/恢复兼容入口，不写HTML/Flight或日志，匿名action不能执行。
 
-每次受保护读取和管理 server action 都检查 cookie；controller 对每次 API 调用再次检查 bearer。无 cookie 跳转 `/login`，本地过期或 API HTTP `401` 跳转 `/login?reason=expired`。创建注册令牌、撤销节点在 action 内检查身份，匿名重放已捕获的真实 Next.js action 请求也会被拒绝并跳转登录。
+编辑器显式绑定渲染时network ID与CAS，选择cookie只是界面上下文，另一标签页不能改保存目标。图形/JSONC草稿与注释/错误保留，preview不推进base，手工国家入口已移除。仅明确过期/401清会话；暂时不可达保留会话并报错。
 
-策略预览 / 保存沿用相同服务端身份检查，并消费生成的请求类型和响应 schema；保存检查网络内 `expected_revision`。草稿、注释和冲突处理保留模型单测，服务端鉴权由 Controller 行为测试覆盖；页面交互手工验证。预览不会自动更新编辑器的保存基准 revision，手工国家编辑入口已移除。
-
-GET 页面渲染不修改 cookie。登录页通过 POST server action `discardRejectedSession` 重新检查会话，仅在本地过期或 controller 明确返回 `401` 时清除；controller 不可达时保留会话并显示真实错误。管理 action 在发现会话失效时也会清除 cookie。
-
-P1a 将管理路径移到 `/api/v1/networks/{network_id}/…`，注册和心跳等 Agent 路径不变。Web 的选择 cookie 只是界面上下文；controller 的持久 network ownership 和服务端作用域才是隔离边界。编辑器保存显式绑定渲染时的网络，避免另一标签页的选择 cookie 改变目标；CAS 在同一网络的配置间共享，不同网络独立。详见[网络管理](./network-management.md)。
-
-`HttpOnly` 限制浏览器脚本读取 cookie；`Secure` 控制浏览器是否仅通过 HTTPS 发送，具体配置见下节。
+新`apps/console` pure SPA由独立工作流维护，已确认不透明`mws_`/LocalStorage/内存捕获/Authorization，无BFF；实例token仅内存。它不沿用Next cookie实现，仍由Controller逐请求鉴权。见[SPA合同](/spa-api-audit)。Next的HttpOnly/Secure配置见下节。
 
 ## 本地与远程部署
 

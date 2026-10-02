@@ -1,7 +1,6 @@
 # E2E packet 接收状态丢失后的恢复
 
-本修复基于 `1b6d061`，已完成独立审查和全消费者验收，并以 `9c26105` 合入主线；尚未部署到远端。
-原第一轮远端报告及固定 `4d106e0` 的真实 59s 反例保留不变。
+端到端认证的有界`resync-v1`已合入并完成独立审查/消费者验收；固定`4c9a5be`正常Controller/Agent/TUN的同身份直连与四地有序路径恢复复验已PASS。原`4d106e0`的真实TTL失败窗口保留不变，见[远端证据](/linux-field-validation)。
 
 ## 恢复语义
 
@@ -37,7 +36,7 @@ UnknownSession body 为精确 `unknown-session-v1`；ResyncInit / Ready Noise pa
 
 这是**机会式内部扩展**，不是已协商的全路径能力合同。旧节点的固定 Phase decoder 拒绝新增 phase：旧 receiver 不发 hint，旧 sender 不理解 hint，旧中转无法转发 hint/resync，旧 endpoint 不响应 resync。以上组合保持原 packet-v1 / echo-v1 和原自然 TTL 语义，不降加密、不因不支持而清 key。快速恢复要求这条路径参与节点均支持扩展；这里没有宣称混合版本也快速恢复。
 
-独立 TMP harness 同时链接本候选和逐字节核验的 `4d106e0` Rust 源码；仅 TMP package manifests 重命名以链接两个版本。实际旧 endpoint 拒绝 ResyncInit 后，发送端保留旧 key，自然 59s 后恢复；实际旧 relay、旧 sender 丢弃 hint，原 packet-v1 同样自然恢复。旧 endpoint 对 `resync-v1` / `unknown-session-v1` 等 echo payload 仍原样返回。完整证据见交接报告。
+真实旧endpoint/relay/sender互操作已验证：拒绝或丢弃新phase时保留旧key及自然TTL行为，原echo payload（含扩展名字符串）仍原样返回；不以“全新版快速恢复”替代旧版本边界。
 
 ## 有界工作与生命周期
 
@@ -59,18 +58,8 @@ UnknownSession body 为精确 `unknown-session-v1`；ResyncInit / Ready Noise pa
 
 行为覆盖包括真实一跳/多跳重启（源端–中转 socket 不变）、仅正向 grant、原外层重连、真实 60s 双向滚动、假 hint 与 authenticated positive、重放 Init/query、错误 ID/path/key/mode/challenge/密文、迟到 missing answer、nonce replay/MAC 错误不发 hint、全局/逐路径限速与 receiver/pending capacity、caller 取消及网络 await 中 packet generation 撤回。
 
-作者交接时列出的独立审查与全消费者检查现已完成，结果见下节；正常 Controller/Agent/TUN 的远端部署验收仍待执行。
-本修复未改变 Agent Manager/state/underlay/TUN、Controller/HTTP 或生成产物，原远端测试数据保持不变。
+## 验证入口
 
-## 独立关闭与合并验收
+`crates/dataplane`的实际Runtime行为回归覆盖一跳/多跳、单向业务grant、旧wire互操作、错误绑定、限速/容量、取消和packet fence；正常Linux同身份恢复另由`experiments/linux-field/retest.ts`验收。局部机制时延不是现场SLA。
 
-- 原复现者在冻结 `6262bc1` 新副本中独立验证 31 项既有定向测试和 5 项新增探针。
-  原方向、多跳且无反向业务 grant / 无新目标主动反向业务的重启恢复成功；首个 stale packet 仍真实丢弃。
-  本机 loopback 一跳 9.112 ms、多跳 7.615 ms，不能当作远端恢复 SLA。
-- 固定依赖整合树 `40d2bd8` 实际完成 Rust workspace/all-features **595 passed / 7 ignored**（含 Agent / Apple core），
-  Clippy、fmt、drift、独立 target 的无默认 feature CLI 2 项；生成器 7、SDK 16、旧 Web 184，以及严格 TS / lint / build、Apple 脚本和七组实验 TS 全部通过。
-- 合成后端与候选逐字节一致。原 HTTP schema / 客户端未改；这次内部 wire 扩展仍按全消费者要求验收。
-- 运行状态上报的另一修复与正式 underlay 不在本次合并中；正常 Controller / Agent / TUN 的同身份远端复验另行推进。
-
-原始报告位于批准 TMP：`meshway-e2e-session-review-6262bc1.md`、`meshway-e2e-integration-40d2bd8.md`，
-完整日志在对应 `meshway-e2e-integration-40d2bd8-logs/`。原失败窗口、旧库互操作来源及 reviewer 的初次 fixture 错误日志均保留。
+批准TMP保留`meshway-e2e-session-review-6262bc1.md`、`meshway-e2e-integration-40d2bd8.md`及对应日志；原失败窗口/旧库来源不改写。新完整复验入口见[Linux验收](/linux-field-validation)。

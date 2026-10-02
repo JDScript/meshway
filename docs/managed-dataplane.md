@@ -1,14 +1,14 @@
 # 托管 Mesh IPv4 数据面
 
-已实现切片将注册节点身份、旧版路由与独立端点授权接入 Linux TUN。应用访问 Mesh IPv4，Agent 按指定路径转发 Noise E2E 密文，中间节点不解开业务负载。
+Linux TUN已将注册节点身份、授权路径和Noise E2E接通；当前支持显式激活Mesh v3，旧源模式兼容保留。应用访问Mesh IPv4，中间节点只转发端到端密文。
 
-**目标与现状**：四层策略、grants、出口路由方案和全平台下发已经确认；本页 first-match / reject / 本地 profiles 是迁移前实现与验收。互联网出口、状态型回包、可信域名上下文与 IPv6 TUN 尚未由本切片接通。
+当前v3执行合同见[IPv4 Mesh执行](/p3a-mesh-execution)，本页保留TUN运行边界与旧模式验收入口。完整互联网出口、Mesh状态型回包、可信域名上下文和IPv6 TUN尚未正式接通。
 
 ## 三项条件分别满足
 
 `NYC → LAX → SHA` 需要认证邻接、路由结果与端点访问授权共同成立。SHA 可主动连接 LAX，后者复用通道向 SHA 转发；通道双向不授予双向业务权限。`direct` 不放行 Access，Access allow 不修改必经节点。
 
-控制面联合编译内部精确路径，沿途身份须有不可替换绑定公钥，不能重复 hop。当前外部 Access 使用 node / tag / `*`、默认 allow/reject 与有序双向规则，待迁移为叠加 grants，见[Access](/access-policy)。未知明确引用导致整体授权为空，源文档保留供修复。
+控制面联合编译精确路径，沿途身份有不可替换公钥，不重复hop。v3 Access使用叠加grants，有序路由first-match；旧模式仍保留allow/reject作为兼容迁移源，见[Access](/access-policy)。非法明确引用导致完整执行失效，源文档保留。
 
 ### 回程也是一个方向
 
@@ -32,11 +32,10 @@ Agent 编入 `managed-connections`，在提供 `/dev/net/tun` 与所需权限的
 ```sh
 meshway-agent run --state /state/agent.json \
   --apply-dataplane --tun-name meshway0 --tun-mtu 1000 \
-  --connection-profiles /state/profiles.json \
   --interval-seconds 2 --connection-lease-seconds 15
 ```
 
-无 VLESS 配置时不需 profiles；当前保守 MTU 1000 不是通用 PMTU，须检查完整 ID / 路径的封装预算。普通 `--apply-connections` 只安装邻接。
+平台托管VLESS/WS不传profiles；旧私有profiles只作兼容/等价迁移。保守MTU1000不是通用PMTU，须检查完整路径封装预算。普通`--apply-connections`只安装邻接。
 
 - `getAgentDataplane` 一次读取同 revision 的配置、连接、授权和公钥，不混合新旧快照。
 - 使用原节点凭据和私钥；E2E peer 信任不额外授予直连权限。

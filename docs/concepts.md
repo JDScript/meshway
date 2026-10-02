@@ -1,6 +1,6 @@
 # 产品概览与概念
 
-Meshway 以 **Tailscale 为常规产品基线**，提供身份驱动的私网互访，并扩展可插拔的自定义 transport 与按域名 / IP 经有序指定路径的路由。Mesh 私网互访和互联网分流同为首版目标。本文描述**已确认目标**；实现差距见下方表格，决策原文见[产品对齐记录](/product-alignment)。
+Meshway 以 **Tailscale 为常规产品基线**，提供身份驱动的私网互访，并扩展可插拔的自定义 transport 与按域名 / IP 经有序指定路径的路由。Mesh 私网互访和互联网分流同为首版目标。本文描述**已确认目标**；实现差距见[当前状态](/milestones)，约束见[产品要求](/product-alignment)。
 
 ## 网络、用户与设备
 
@@ -42,15 +42,8 @@ Meshway 以 **Tailscale 为常规产品基线**，提供身份驱动的私网互
 
 设备侧仅保留接入 / 登录及路由方案选择。手工 profiles、DNS / STUN 启动参数、逐对拨号均是需要收敛的现状，不是目标日常流程。
 
-## 当前实现（文档基线）
+## 实现与目标的区别
 
-| 已实现 | 已确认但尚待交付 |
-| --- | --- |
-| 多网络 SQLite / 管理 API / 凭据快照隔离、原网络无损迁移、全局管理员 bearer、网络内一次性注册与 App PKCE 批准选网 | 本地邮箱账户、仅邀请与用户归属、Agent 链接登录、客户端多接入切换 |
-| 公钥绑定、版本化配置 / ACK、手工 listener / 候选、Native UDP / TCP 与 TLS-VLESS 托管邻接 | 平台托管全部承载配置、按需自动建连与完整主备生命周期 |
-| Linux Mesh IPv4 TUN、Noise E2E、有序路径与旧版端点授权、节点 DNS / 容器 resolver 验收 | grants / 四层模型迁移、出口 NAT 与状态回包、路由方案、规则集与可信域名上下文 |
+多网络、本地账户/网络权限/设备归属、托管 VLESS/WS 与 IPv4 Mesh v3 已接正常 Controller/Agent/TUN；自动建连、完整出口、默认 STUN/GeoIP 尚未形成产品闭环。Apple 多接入/浏览器授权已实现，隧道未实现且新增开发暂停；CLI 链接登录与多接入待交付。
 
-独立的 [v3 策略引擎](/policy-v3) 和 [Linux 出口原型](/exit-dataplane) 已合入并验收；
-上表中的迁移、路由方案及出口仍指尚待接入控制面与常规 Agent 的产品闭环。
-
-本地浏览器接入目前使用管理员批准，不能视为用户账户体系已完成。IPv6 地址 / AAAA 已分配，不表示 IPv6 TUN 已实现。配置 ACK 只表示校验并持久保存；路径预览不是 trace，心跳不是隧道健康。可执行现状见[本地联调](/getting-started)，后续交付见[里程碑](/milestones)。
+IPv6 地址/AAAA 不表示 IPv6 TUN。ACK 只表示校验并持久保存；路径预览不是 trace，心跳不是隧道健康。运行入口见[本地联调](/getting-started)，独立模块/原型和已交付能力的完整边界见[当前状态](/milestones)。
