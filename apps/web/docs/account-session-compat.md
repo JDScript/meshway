@@ -7,6 +7,7 @@
 - 一个浏览器一次只有一个**活动**登录。每次登录的凭据各自存放在以随机 Web sign-in ID 命名的 cookie `meshway_console_credential_<id>[_<namespace>]` = `v3.<kind>.<expires_at>.<id>.<credential>`，另有不含凭据的指针 `meshway_console_active[_<namespace>]` = `<id>`（均 HttpOnly、SameSite=Strict、`MESHWAY_WEB_COOKIE_SECURE` 的 auto/true/false 语义不变）。只有登录写指针；退出与清理只删除自己处理的那个凭据 cookie，从不删除或覆盖指针，因此任何迟到的删除响应都碰不到后来登录的凭据（名字不同）。指针没有对应凭据即视为未登录；指针、cookie 名与 envelope 中的 ID 不一致即无效。登录时删除本 namespace 内其他全部凭据 cookie 与旧版单 cookie（`meshway_console_session` / `meshway_admin_session`），数量有界；名字解析严格区分 namespace，不会删到其他 preview 的 cookie。`kind` 为 `user`（仅 `mws_` + 64 hex）或 `bootstrap`（管理员令牌，不得以 `mws_` 开头）；类型与格式不符即视为过期（`lib/session-cookie.ts`，有单元测试）。
 - 用户会话的 Max-Age 与内部过期时间都取 controller 返回的绝对 `expires_at`，Web 不续期、不滑动；管理员令牌会话保持原 8 小时。旧 `meshway_admin_session` cookie 视为过期，登录 / 退出时清除。
 - `session_id` 是 Web 随机生成的非秘密标识，只用于给客户端状态加键，不是凭据。
+- 第四轮起 `/login` 只有账户表单；管理员令牌表单移到 `/setup`，登录后固定落地 `/setup`（不再接受 returnTo）。
 - 账户登录：密码仅 浏览器 → Web server action → `loginAccount`；不进 localStorage、日志或 ActionState（失败时只回显邮箱）。管理员令牌登录改用 bootstrap-only 的 `listAccountPasswordResets` 证明，用户会话贴进令牌框会被拒绝。新登录前会撤销仍存在的旧用户会话（尽力而为）。
 - 退出：`signOutAction`（受登录栅栏约束）对渲染时的登录调 `logoutAccount`，然后只删除该登录自己的凭据 cookie（管理员令牌同样被删除，不留可恢复的标记）。controller 不可达时仍清本地 cookie 与草稿，并跳转 `/login?reason=logout-unconfirmed` 明确说明“未确认撤销，原到期前可能仍有效”，不伪称已撤销。401 视为已失效。
 
@@ -28,7 +29,8 @@ cookie envelope 未签名，浏览器内多个标签页共享同一 cookie。为
 
 ## 首个 Owner、邀请
 
-- `/onboarding`（仅管理员令牌会话）：列出网络及已有 Owner；对没有 Owner 的网络显式 `claimFirstOwner`：`new_account`（本人邮箱 + 本人在此设置的密码，二次确认）或 `existing_account`（本人邮箱密码登录取得临时会话作为证明，认领后立即撤销）。不认领旧节点，不改管理员会话；成功后可“退出管理员会话，使用该账户登录”。Web 不为现网生成邮箱或密码。
+- 第四轮：`/onboarding` 重定向到 `/setup`，`/invitations/new?network=` 重定向到 `/<n>/members?invite=1`；邀请创建改为网络 action（`ActionScope`），成员管理、我的账户与重置见 `console-design.md` §2.5。认领可选「以该账户进入网络」：新账户认领后登录，已有账户直接沿用证明会话，替换管理员 Cookie。
+- `/onboarding`（旧，仅管理员令牌会话）：列出网络及已有 Owner；对没有 Owner 的网络显式 `claimFirstOwner`：`new_account`（本人邮箱 + 本人在此设置的密码，二次确认）或 `existing_account`（本人邮箱密码登录取得临时会话作为证明，认领后立即撤销）。不认领旧节点，不改管理员会话；成功后可“退出管理员会话，使用该账户登录”。Web 不为现网生成邮箱或密码。
 - `/invitations/new?network=`：Owner / Admin / 管理员令牌为单个邮箱创建一次邀请（`createAccountInvitation`），链接 `/<origin>/invite#token=mwi_…` 把秘密放在 fragment，只在创建结果中显示一次。角色选项只是提示，role ceiling 由 controller 执行。
 - `/invite`：客户端读取 fragment 后立即从地址栏移除；未登录 / 管理员令牌会话用 `registerInvitedAccount` 注册并自动登录；已登录用户用 `acceptAccountInvitation` 接受，不改密码。没有无邀请的公开注册。
 
@@ -47,6 +49,6 @@ cookie envelope 未签名，浏览器内多个标签页共享同一 cookie。为
 
 ## 未做（明确边界）
 
-- 完整成员管理（列表、改角色、移除）、批量邀请、邀请撤销 / 列表 UI、密码修改与重置 UI、账户中心、旧节点 ownership 认领 UI。
+- ~~完整成员管理、邀请撤销 / 列表、密码修改与重置、账户中心、旧节点认领~~ 第四轮已实现；仍未做：批量邀请、会话列表（控制面无 API）。
 - CLI request / poll 链接登录、外部 OIDC。
 - 会话绝对过期的端到端等待未做（7 天）；过期竞态由 controller AR1 测试覆盖，Web 侧以 cookie 内的绝对期限 + 401 处理。
