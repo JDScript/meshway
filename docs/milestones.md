@@ -20,7 +20,7 @@ P3c 完整出网仍属首版。模型 / API 大清理、GeoIP 与前端不阻塞
 | P1c 出口数据面（原型已验收） | Linux NAT、状态型回包、撤回终止存量流与方案切换；12 个隔离 Docker 场景通过；控制面下发、出口 DNS 和正式产品接入仍待 P3c | — |
 | P2a 承载托管（已合入） | 平台材料生成/下发、VLESS TCP/TLS 与 WebSocket/TLS、v10 迁移和私有 profiles 等价导入已完成隔离验收；WS 退休晚写、错误脱敏与能力投影问题已修复并独立复核。节点 listener 与添加节点的可选配置表单已部署，Demo Agent 已原位更新；旧 profiles 保留，托管导入另行推进 | P1a |
 | P2b 用户与登录（首批管理界面已部署） | Controller API、事务内网络 RBAC、设备归属及 App PKCE 已合入；Web 邮箱登录、首 Owner、成员 / 邀请 / 角色 / 归属管理、我的账户、实例初始化 / 恢复已接通。CLI 链接登录尚待交付；当前没有全局无网络成员关系账户清单与逐会话清单，用户 / 组策略随契约落地 | P1a；共享迁移 / 接口已统一 |
-| P3a 策略上线 | 优先 controller / Agent 接通四层模型、正常下发和既有策略迁移；生成管理接口供联调，Web v3 编辑体验另行推进 | P1a、P1b |
+| P3a 策略上线（IPv4 Mesh 切片已合入） | v12 源存储 / 显式 CAS 激活、epoch 能力协商、同 revision 节点执行 DTO、正常 Agent / TUN 已接通；独立关闭重启和发布问题。正式 underlay 接线、状态型回包及余下策略范围仍待完成 | P1a、P1b |
 | P3b 自动建连 | 按授权流量及路径按需连接 / 自动中转，手工候选收敛为高级覆盖 | P2a、P3a |
 | P3c 路由方案与分流 | 公共规则 + 方案规则 + 兜底；仅 Mesh / 全局经 X / 自动按 STUN 地区；规则集与可信域名上下文 | P1c、P3a |
 | P3d 打洞 | 获准候选分发、认证探测与打洞，失败经允许中转并保持 E2E | P3b |
@@ -108,12 +108,17 @@ Controller 正常发布链路已按独立复核合入 `d9e8b41`，见[发布上�
 6 codegen、39 HTTP、14 SDK 测试及 fmt / Clippy / drift 通过，日志在批准 TMP 的
 `controller-publication-main-validation/`，本地 Controller 已更新。
 v3 契约生成前置已合入 `889c752` / `b38b8ff` / `fa0f1d9`：五项 typed map / nullable 复核问题关闭，
-完整真实源 schema 直接生成验证；`pnpm test:codegen` 已纳入 CI。尚未接入 v3 正式下发。
+完整真实源 schema 直接生成验证；`pnpm test:codegen` 已纳入 CI。后续的 v3 正常下发 / 执行切片已合入，见下段。
 隔离固定依赖快照的组合验收通过：Rust **566 passed / 7 ignored**、生成器 **7**、SDK **14**、
 既有 Web **184**，fmt / Clippy / drift、既有 TS 消费者与五个实验 tsconfig、Web / 文档构建均通过。
 SDK fixture 的绝对 Cargo target 路径拼接问题已修为 `9160f26` 并重跑剩余检查；未重复无变化的 Rust 全套。
 日志及初次失败保留在批准 TMP 的 `backend-integrated-validation/`。本次排除由用户独立维护的
 `apps/console`，未替换该工作流的 workspace / lockfile 或源文件。
+P3a IPv4 Mesh 切片随后通过独立复核并合入 `6050413` 至 `07a8039`：v12 保留旧源 / 身份 / 地址，
+新增源策略显式激活与 epoch 绑定执行协议；正常 Linux TUN 的修复验收为 21 条证据、清理错误 0。
+重启误判回滚 A1、管理源丢失 C1、材料超额 C2 均独立关闭；消费者实跑生成器 7、SDK 16、旧 Web 184
+及全部相关 TS / build，完整 Rust 578 / 7 ignored、Clippy / drift 按精确代码版本核验沿用。
+详见[实施合同](/p3a-mesh-execution)与[审查关闭](/p3a-review-fixes)；现网尚未更新，正式 underlay 与状态型回包仍未完成。
 第一轮远端使用当前正式下发链路，部署已验证的固定后端快照；容器只保留接入和私有持久化，
 listener、承载与业务策略由生成管理 API 配置，记录当前启动 opt-in 的实现边界。独立 namespace 内开放必要 TUN / 网络权限，
 不修改宿主管理路由、DNS、防火墙或 Docker daemon，不使用 host network / privileged。

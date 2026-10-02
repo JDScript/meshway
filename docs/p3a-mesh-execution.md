@@ -1,5 +1,8 @@
 # P3a Mesh 执行切片（实施合同）
 
+本 IPv4 Mesh 切片已于 2026-10-02 经独立复核与消费者验收合入主线；修复及提交对应见
+[审查关闭记录](/p3a-review-fixes)。现有服务尚未更新到此版，完整 P3a 仍受下文 underlay / 回包等边界限制。
+
 本批目标是 IPv4 Mesh source v3 → 同事务 publication → 生成客户端 → 正常 Agent run / TUN；完成证据另行记录。Mesh 外 profile/domain/NAT、自动邻接/主备和打洞不在本批执行合同内。
 
 - 源唯一为 policy 的 `NetworkPolicy`，管理 envelope 引用它。v12 新表保存显式 source mode、v3 JSON/JSONC，旧 v2 表、身份、地址、注释原样保留；升级不自动激活或放宽 reject。不能等价迁移的旧意图报告诊断，激活必须经管理鉴权事务和网络 revision CAS。

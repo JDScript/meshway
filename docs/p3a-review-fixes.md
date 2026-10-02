@@ -1,6 +1,7 @@
 # P3a 3834a9d 审查修复交接
 
-冻结候选 `3834a9d` 暂未合入。原独立审查报告/探针仍保留在批准 TMP；以下为作者修复与复跑，不能冒称 reviewer 已关闭问题。
+原冻结候选为 `3834a9d`。三项修复已独立复核关闭并完成消费者验收，现已合入主线；
+下文保留作者修复 / 复跑的原始归属，最终独立结论见本页末尾。现有运行服务尚未随这次合并更新。
 
 ## A1：历史 journal 与 incoming floor 分离
 
@@ -31,3 +32,29 @@
 `TMP` = `/private/var/folders/8n/20x15sl9797cdg9sdqfj803w0000gn/T/opencode`。初次测试 helper 使用了未启用的 reqwest JSON feature，已改为既有 serde bytes API；一次材料测试先提交了重复 normalized endpoint，已改为同一 listener 两个合法 advertised endpoint，未放宽生产验证。初次失败日志保留。
 
 原文件所有权保持；未改 underlay/tun*、根 manifest/lock、main/live/远端，不扩状态型 Mesh 回包、GeoIP、UI，也未再委派。
+
+## 独立关闭与主线整合
+
+2026-10-02，两个原 reviewer 分别在冻结 `a36e24e` 的新副本重放原反例，旧证据保持原样：
+
+- **A1 关闭**：8 项定向检查通过。真实 Controller / 生成客户端 / `managed_tick` 验证历史 R5 → bootstrap R6，
+  journal 原字节保留且旧代未激活 → 新 epoch 安装 R8。真正 rollback、same-revision mutation 和地址 / key / network 篡改仍拒绝。
+- **C1 / C2 关闭**：7 项独立探针与 7 项冻结树定向测试通过。saved intent 不丢失，编译新 policy 不使用旧 block；
+  owner / dialer / legacy 激活 / enable / unblock 的超额投影均原子拒绝，重复 endpoint 只计同一份材料。
+- **隔离消费者通过**：本次实跑生成器 7、SDK 16、旧 Web 184；严格 TS / lint / Web build、Apple 脚本、七组实验 TS、docs、fmt。
+  核验并沿用作者精确代码版本的 Rust 578 / 7 ignored、Clippy 与 drift，没有将沿用结果伪称本次重跑。
+- OpenAPI 原有 161 schemas / 58 paths / 67 operations 定义完全相同；新增 24 schemas 和 4 operations，
+  主线现在为 185 schemas / 62 paths / 71 operations。
+
+主线提交对应：`6050413`（Controller）、`0dac17d`（Agent）、`d88fa84`（原验收记录）、
+`08502cb`（C1/C2）、`fdadd59`（A1）、`07a8039`（修复验收）。合并后的后端与冻结 `a36e24e` 一致，
+独立 console 的源码、workspace 和 lockfile 保持原样；本线程未 push。
+
+最终报告均在批准 TMP：
+
+- `meshway-p3a-agent-review-fixed-a36e24e.md`
+- `meshway-p3a-control-review-fixed-a36e24e.md`
+- `meshway-p3a-integration-consumers-a36e24e.md` 及同名 `-logs/`
+
+本次合入的是 IPv4 Mesh v3 正常发布 / 执行切片。正式 underlay 准备 / 主循环接线仍未合入，
+单向 grant 状态型回包、P3b / P3c / P3d 仍未完成；远端第一轮继续固定使用已选定的 `4d106e0`。
