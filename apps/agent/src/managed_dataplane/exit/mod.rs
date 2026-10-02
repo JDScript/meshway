@@ -213,7 +213,7 @@ impl ExitPlan {
         if catalog.profiles.is_empty()
             || catalog.profiles.len() > 16
             || catalog.profiles.iter().any(|p| {
-                !meshway_policy::v3::valid_profile_id(&p.id)
+                !meshway_policy::valid_profile_id(&p.id)
                     || p.id == "auto"
                     || !ids.insert(p.id.as_str())
             })

@@ -323,22 +323,6 @@ impl Manager {
         (publication.state, publication.sockets, guard)
     }
 
-    /// Complete generation teardown immediately after validation, before disk
-    /// persistence or any further HTTP request can stall. Runtime shutdown also
-    /// destroys all established endpoint sessions and queued plaintext delivery.
-    pub async fn invalidate_dataplane(
-        &mut self,
-        snapshot: &meshway_protocol::AgentDataplaneSnapshot,
-    ) {
-        if self.packet_digest.as_ref() != Some(&snapshot.digest)
-            || !snapshot.payload.access_valid
-            || !snapshot.payload.configuration.policy_valid
-            || !snapshot.payload.connections.valid
-        {
-            self.withdraw(Reason::InvalidConfiguration).await;
-        }
-    }
-
     /// A validated publication can prove this generation stale before the next
     /// coherent GET completes. It never renews a lease or relies on disk receipts.
     pub async fn invalidate_dataplane_revision(&mut self, revision: u32) {
@@ -349,73 +333,6 @@ impl Manager {
         {
             self.withdraw(Reason::InvalidConfiguration).await;
         }
-    }
-
-    pub async fn reconcile_dataplane(
-        &mut self,
-        snapshot: meshway_protocol::AgentDataplaneSnapshot,
-        key: PrivateKey,
-        fresh_at: Instant,
-    ) -> Result<(), AgentError> {
-        self.invalidate_dataplane(&snapshot).await;
-        self.prepare_dataplane_sink(&snapshot).await?;
-        self.packet_digest = Some(snapshot.digest);
-        let payload = snapshot.payload;
-        let connections = AgentConnectionsSnapshot {
-            digest: meshway_protocol::connection_digest(&payload.connections)
-                .map_err(|_| AgentError::Invalid("cannot hash coherent adjacency projection"))?,
-            payload: payload.connections.clone(),
-        };
-        if !payload.access_valid
-            || !payload.configuration.policy_valid
-            || !payload.connections.valid
-        {
-            self.snapshot = Some(connections);
-            self.withdraw(Reason::InvalidConfiguration).await;
-            self.observation.state = Phase::Error;
-            return Ok(());
-        }
-        let options = &self
-            .dataplane
-            .as_ref()
-            .ok_or(AgentError::Invalid("dataplane was not explicitly enabled"))?
-            .options;
-        let plan = PacketPlan::compile(&payload, options.mtu)?;
-        self.reconcile_inner(connections, key, fresh_at, Some(plan))
-            .await
-    }
-
-    /// Install the drop sink before saved ACK HTTP waits, even when a structurally
-    /// valid bundle publishes invalid/withdrawn source intent. It authorizes no I/O.
-    pub async fn prepare_dataplane_sink(
-        &mut self,
-        snapshot: &meshway_protocol::AgentDataplaneSnapshot,
-    ) -> Result<(), AgentError> {
-        let result = self.prepare_dataplane_sink_inner(snapshot).await;
-        if let Err(error) = &result {
-            let reason = if matches!(error, AgentError::DataplaneResolveFailed) {
-                Reason::ResolveFailed
-            } else {
-                Reason::InvalidConfiguration
-            };
-            // Preparation never authorizes renewal. Retain the owned route sink,
-            // but close all old channels/packet tasks before returning to retry.
-            self.withdraw(reason).await;
-        }
-        result
-    }
-
-    async fn prepare_dataplane_sink_inner(
-        &mut self,
-        snapshot: &meshway_protocol::AgentDataplaneSnapshot,
-    ) -> Result<(), AgentError> {
-        let settings = self
-            .dataplane
-            .as_ref()
-            .ok_or(AgentError::Invalid("dataplane was not explicitly enabled"))?;
-        let plan = PacketPlan::sink(&snapshot.payload, settings.options.mtu)?;
-        self.prepare_packet_sink(plan, &snapshot.payload.connections)
-            .await
     }
 
     async fn prepare_packet_sink(
@@ -488,7 +405,8 @@ impl Manager {
         .await
     }
 
-    pub async fn invalidate_mesh_execution(
+    /// Fence the complete generation before persistence or ACK HTTP can stall.
+    pub async fn invalidate_dataplane(
         &mut self,
         snapshot: &meshway_protocol::MeshExecutionSnapshot,
     ) {
@@ -500,7 +418,23 @@ impl Manager {
         }
     }
 
-    pub async fn prepare_mesh_sink(
+    pub async fn prepare_dataplane_sink(
+        &mut self,
+        snapshot: &meshway_protocol::MeshExecutionSnapshot,
+    ) -> Result<(), AgentError> {
+        let result = self.prepare_dataplane_sink_inner(snapshot).await;
+        if let Err(error) = &result {
+            let reason = if matches!(error, AgentError::DataplaneResolveFailed) {
+                Reason::ResolveFailed
+            } else {
+                Reason::InvalidConfiguration
+            };
+            self.withdraw(reason).await;
+        }
+        result
+    }
+
+    async fn prepare_dataplane_sink_inner(
         &mut self,
         snapshot: &meshway_protocol::MeshExecutionSnapshot,
     ) -> Result<(), AgentError> {
@@ -510,29 +444,24 @@ impl Manager {
             .ok_or(AgentError::Invalid("dataplane was not explicitly enabled"))?
             .options
             .mtu;
-        let plan = PacketPlan::sink_mesh(&snapshot.payload, mtu)?;
+        let plan = PacketPlan::sink(&snapshot.payload, mtu)?;
         if snapshot.payload.valid && snapshot.payload.connections.valid {
             // ACK is saved/validated, not applied. Still reject an impossible
             // exact-path MTU/admission plan before issuing that saved receipt.
-            PacketPlan::compile_mesh(&snapshot.payload, mtu)?;
+            PacketPlan::compile(&snapshot.payload, mtu)?;
         }
-        let result = self
-            .prepare_packet_sink(plan, &snapshot.payload.connections)
-            .await;
-        if result.is_err() {
-            self.withdraw(Reason::InvalidConfiguration).await;
-        }
-        result
+        self.prepare_packet_sink(plan, &snapshot.payload.connections)
+            .await
     }
 
-    pub async fn reconcile_mesh_execution(
+    pub async fn reconcile_dataplane(
         &mut self,
         snapshot: meshway_protocol::MeshExecutionSnapshot,
         key: PrivateKey,
         fresh_at: Instant,
     ) -> Result<(), AgentError> {
-        self.invalidate_mesh_execution(&snapshot).await;
-        self.prepare_mesh_sink(&snapshot).await?;
+        self.invalidate_dataplane(&snapshot).await;
+        self.prepare_dataplane_sink(&snapshot).await?;
         self.packet_digest = Some(snapshot.digest);
         let payload = snapshot.payload;
         let connections = AgentConnectionsSnapshot {
@@ -546,7 +475,7 @@ impl Manager {
             self.observation.state = Phase::Error;
             return Ok(());
         }
-        let plan = PacketPlan::compile_mesh(
+        let plan = PacketPlan::compile(
             &payload,
             self.dataplane
                 .as_ref()

@@ -2,7 +2,7 @@ use std::path::{Path, PathBuf};
 
 use meshway_protocol::{
     CONFIGURATION_SCHEMA_VERSION, ConfigurationSnapshot, MAX_CONFIGURATION_BYTES,
-    MAX_INVENTORY_NODES, RoutingPolicy, configuration_digest,
+    MAX_INVENTORY_NODES, configuration_digest,
 };
 use serde::{Deserialize, Serialize};
 
@@ -24,7 +24,7 @@ impl Cache {
     }
 }
 
-/// Receipt for saved control intent, never a dataplane application claim.
+/// Receipt for saved inventory, never policy authorization or application.
 #[derive(Debug, Serialize)]
 pub struct SyncReceipt {
     pub controller: String,
@@ -33,7 +33,6 @@ pub struct SyncReceipt {
     pub digest: String,
     pub mesh_ipv4: String,
     pub mesh_ipv6: String,
-    pub policy_valid: bool,
 }
 
 pub(crate) fn cache_path(path: &Path) -> PathBuf {
@@ -158,24 +157,7 @@ pub(crate) fn validate(
             ));
         }
     }
-    let report = meshway_policy::compile(&payload.routing_policy, &payload.network, &nodes);
-    if !report.is_valid() || report.normalized_policy != payload.routing_policy {
-        return Err(AgentError::Invalid(
-            "configuration network, node inventory, or policy validation failed",
-        ));
-    }
-    if payload.policy_valid {
-        if !payload.diagnostics.is_empty() {
-            return Err(AgentError::Invalid("valid policy must have no diagnostics"));
-        }
-    } else if payload.routing_policy != RoutingPolicy::default()
-        || payload.diagnostics.is_empty()
-        || payload.diagnostics.len() > 64
-    {
-        return Err(AgentError::Invalid(
-            "invalid source policy must publish deny-all with bounded diagnostics",
-        ));
-    }
+    meshway_policy::validate_inventory(&payload.network, &nodes).map_err(AgentError::Invalid)?;
     Ok(())
 }
 

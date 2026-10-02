@@ -15,8 +15,6 @@ use meshway_control_client::types::AcknowledgeAgentConnectionsRequest;
 pub(crate) mod dataplane;
 #[cfg(feature = "managed-connections")]
 pub(crate) mod materials;
-#[cfg(feature = "managed-connections")]
-pub(crate) mod mesh_execution;
 #[cfg(test)]
 mod tests;
 pub(crate) mod validation;
@@ -27,7 +25,7 @@ mod validation_tests;
 pub(crate) fn historical_networks(agent: &Agent) -> Result<Vec<String>, AgentError> {
     Ok([
         materials::cached_network(agent)?,
-        mesh_execution::cached_network(agent)?,
+        dataplane::cached_network(agent)?,
     ]
     .into_iter()
     .flatten()

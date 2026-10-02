@@ -13,7 +13,7 @@ use tokio::time::{self, Instant};
 use crate::managed_connections::Manager;
 use crate::state::connections::{
     ConnectionSyncReceipt, ControlSyncReceipts, cache_path, convert, dataplane, materials,
-    mesh_execution, validation,
+    validation,
 };
 use crate::state::{Agent, AgentError, connection_key, local};
 use meshway_control_client::client::HttpClient;
@@ -356,8 +356,10 @@ impl Agent {
             guard.observe_revision(published);
         }
         manager.invalidate_dataplane_revision(published).await;
-        let (mut receipt, mut packet_snapshot, mut fresh_at) =
-            self.managed_sync_mode(manager, dataplane, lease).await?;
+        let publication = self.publish_connection_identity().await?;
+        manager
+            .invalidate_dataplane_revision(publication.revision)
+            .await;
         if lease.epoch.is_none() {
             if lease.expected_epoch.is_none() {
                 let response: GetConnectionRuntimeEpochResponse =
@@ -388,10 +390,10 @@ impl Agent {
                 return Err(AgentError::Invalid("invalid runtime lease response"));
             }
             lease.epoch = Some(response.epoch);
-            // Pull while holding the runtime lease, not merely before begin.
-            (receipt, packet_snapshot, fresh_at) =
-                self.managed_sync_mode(manager, dataplane, lease).await?;
         }
+        // Execution negotiation is always bound to this process's acquired epoch.
+        let (receipt, packet_snapshot, fresh_at) =
+            self.managed_sync_mode(manager, dataplane, lease).await?;
         let state = self
             .connections
             .as_ref()
@@ -407,16 +409,7 @@ impl Agent {
             .clone();
         *control_synced = true;
         if let Some((snapshot, fresh_at)) = packet_snapshot {
-            match snapshot {
-                mesh_execution::Execution::Legacy(snapshot) => {
-                    manager.reconcile_dataplane(snapshot, key, fresh_at).await?
-                }
-                mesh_execution::Execution::Mesh(snapshot) => {
-                    manager
-                        .reconcile_mesh_execution(snapshot, key, fresh_at)
-                        .await?
-                }
-            }
+            manager.reconcile_dataplane(snapshot, key, fresh_at).await?;
         } else {
             manager.reconcile(snapshot, key, fresh_at).await;
         }
@@ -727,36 +720,23 @@ impl Agent {
     ) -> Result<
         (
             ControlSyncReceipts,
-            Option<(mesh_execution::Execution, Instant)>,
+            Option<(meshway_protocol::MeshExecutionSnapshot, Instant)>,
             Instant,
         ),
         AgentError,
     > {
         if let Some(dataplane) = dataplane {
-            if let Some(epoch) = lease.epoch {
-                let runtime = meshway_protocol::MeshExecutionRequest {
-                    epoch,
-                    instance_id: lease.instance_id.clone(),
-                    capabilities: vec![meshway_protocol::MeshExecutionCapability::Ipv4ExactPathV1],
-                };
-                if let Some(synced) = mesh_execution::sync(self, manager, &runtime).await? {
-                    return Ok((
-                        synced.receipt,
-                        Some((
-                            mesh_execution::Execution::Mesh(synced.snapshot),
-                            synced.fresh_at,
-                        )),
-                        synced.fresh_at,
-                    ));
-                }
-            }
-            let synced = dataplane.sync(self, manager).await?;
+            let runtime = meshway_protocol::MeshExecutionRequest {
+                epoch: lease
+                    .epoch
+                    .ok_or(AgentError::Invalid("execution requires runtime epoch"))?,
+                instance_id: lease.instance_id.clone(),
+                capabilities: vec![meshway_protocol::MeshExecutionCapability::Ipv4ExactPathV1],
+            };
+            let synced = dataplane.sync(self, manager, &runtime).await?;
             Ok((
                 synced.receipt,
-                Some((
-                    mesh_execution::Execution::Legacy(synced.snapshot),
-                    synced.fresh_at,
-                )),
+                Some((synced.snapshot, synced.fresh_at)),
                 synced.fresh_at,
             ))
         } else {

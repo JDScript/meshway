@@ -11,7 +11,7 @@ use ipnet::Ipv4Net;
 use meshway_dataplane::ReceivedPacket;
 use meshway_dataplane::packet_io::{Ipv4PacketPlan, RoutePolicy};
 use meshway_dataplane::{LabConfig, PeerConfig, native_udp_datagram_len};
-use meshway_protocol::{ConnectionPeer, NodeDataplane};
+use meshway_protocol::{ConnectionPeer, NodeMeshExecution};
 
 use crate::PlanError;
 
@@ -30,23 +30,7 @@ pub struct PacketPlan {
 
 impl PacketPlan {
     /// A drop sink needs only the validated address binding, never access grants.
-    pub fn sink(payload: &NodeDataplane, mtu: u16) -> Result<Self, PlanError> {
-        let configuration = &payload.configuration;
-        Self::address_sink(
-            &payload.node_id,
-            payload.revision,
-            meshway_protocol::dataplane_digest(payload)
-                .map_err(|_| PlanError::Invalid("cannot hash managed packet generation"))?,
-            &configuration.network.ipv4_prefix,
-            &configuration.node.mesh_ipv4,
-            mtu,
-        )
-    }
-
-    pub fn sink_mesh(
-        payload: &meshway_protocol::NodeMeshExecution,
-        mtu: u16,
-    ) -> Result<Self, PlanError> {
+    pub fn sink(payload: &NodeMeshExecution, mtu: u16) -> Result<Self, PlanError> {
         Self::address_sink(
             &payload.node_id,
             payload.revision,
@@ -100,16 +84,13 @@ impl PacketPlan {
         })
     }
 
-    /// V3 installs the controller's exact plan directly. No legacy source policy
-    /// interpretation, inferred reverse authorization, or adjacency replanning.
-    pub fn compile_mesh(
-        payload: &meshway_protocol::NodeMeshExecution,
-        mtu: u16,
-    ) -> Result<Self, PlanError> {
+    /// Install the controller's exact plan, without inferring reverse
+    /// authorization or replanning from the inventory or physical adjacency.
+    pub fn compile(payload: &NodeMeshExecution, mtu: u16) -> Result<Self, PlanError> {
         if !payload.valid || !payload.connections.valid {
             return Err(PlanError::Invalid("Mesh execution withdrawn"));
         }
-        let mut plan = Self::sink_mesh(payload, mtu)?;
+        let mut plan = Self::sink(payload, mtu)?;
         let ips: BTreeMap<_, Ipv4Addr> = std::iter::once(&payload.node)
             .chain(&payload.peers)
             .map(|n| {
@@ -154,74 +135,6 @@ impl PacketPlan {
             }
         }
         plan.paths = payload.paths.iter().map(|p| p.nodes.clone()).collect();
-        plan.identities = payload.identities.clone();
-        plan.admission = Ipv4PacketPlan::new(plan.local, mtu, outgoing, incoming);
-        Ok(plan)
-    }
-
-    /// Compile once from the coherent bundle, including at relay nodes. This
-    /// deliberately never infers a path from physical adjacency or adds reverse grants.
-    pub fn compile(payload: &NodeDataplane, mtu: u16) -> Result<Self, PlanError> {
-        if !payload.access_valid
-            || !payload.configuration.policy_valid
-            || !payload.connections.valid
-        {
-            return Err(PlanError::Invalid("dataplane source intent is invalid"));
-        }
-        let mut plan = Self::sink(payload, mtu)?;
-        let configuration = &payload.configuration;
-        let ips: BTreeMap<_, Ipv4Addr> = std::iter::once(&configuration.node)
-            .chain(&configuration.peers)
-            .map(|node| {
-                Ok((
-                    node.id.as_str(),
-                    node.mesh_ipv4
-                        .parse()
-                        .map_err(|_| PlanError::Invalid("invalid mesh node IPv4"))?,
-                ))
-            })
-            .collect::<Result<_, PlanError>>()?;
-        let paths =
-            meshway_policy::access::compile_mesh_paths(configuration, &payload.access_policy)
-                .map_err(|_| {
-                    PlanError::Invalid("cannot compile mesh access and routing intersection")
-                })?;
-        let mut outgoing = BTreeMap::new();
-        let mut incoming = BTreeMap::new();
-        for path in &paths {
-            if !path.contains(&payload.node_id) {
-                return Err(PlanError::Invalid(
-                    "dataplane grant exceeds local projection",
-                ));
-            }
-            // Full enrolled IDs, not short lab labels. Conservatively budget for
-            // either outer address family even when today's preferred hop is TCP.
-            if !native_udp_datagram_len(path, usize::from(mtu))
-                .is_ok_and(|bytes| bytes + 48 <= 1500)
-            {
-                return Err(PlanError::Invalid(
-                    "TUN MTU exceeds the 1500-byte outer IPv6/UDP budget for an authorized full path; choose a smaller explicit MTU",
-                ));
-            }
-            if path.first() == Some(&payload.node_id) {
-                let destination = *ips
-                    .get(path.last().expect("compiled full path").as_str())
-                    .ok_or(PlanError::Invalid(
-                        "path destination missing from inventory",
-                    ))?;
-                if outgoing.insert(destination, path.clone()).is_some() {
-                    return Err(PlanError::Invalid("ambiguous mesh IPv4 destination path"));
-                }
-            }
-            if path.last() == Some(&payload.node_id) {
-                incoming.insert(
-                    path.clone(),
-                    *ips.get(path[0].as_str())
-                        .ok_or(PlanError::Invalid("path source missing from inventory"))?,
-                );
-            }
-        }
-        plan.paths = paths;
         plan.identities = payload.identities.clone();
         plan.admission = Ipv4PacketPlan::new(plan.local, mtu, outgoing, incoming);
         Ok(plan)

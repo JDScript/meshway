@@ -63,7 +63,6 @@ impl Agent {
                         digest: cache.snapshot.digest.clone(),
                         mesh_ipv4: cache.snapshot.payload.node.mesh_ipv4.clone(),
                         mesh_ipv6: cache.snapshot.payload.node.mesh_ipv6.clone(),
-                        policy_valid: cache.snapshot.payload.policy_valid,
                     });
                 }
             }
