@@ -15,6 +15,7 @@ import { activeNavItem, type DraftKind } from "@/components/shell/nav"
 import { useNetwork } from "@/components/shell/network-context"
 import type { NetworkChoices } from "@/components/shell/network-switcher"
 import { ThemeToggle } from "@/components/shell/theme-toggle"
+import type { ConsoleIdentity } from "@/lib/account-model"
 import {
   Breadcrumb,
   BreadcrumbItem,
@@ -34,12 +35,15 @@ import { SidebarInset, SidebarProvider, SidebarTrigger, useSidebar } from "@/com
 export function ConsoleShell({
   networkId,
   networks,
+  identity,
   controllerHost,
   sidebarOpen,
   children,
 }: {
   networkId: string
   networks: NetworkChoices
+  /** Who is signed in, read live from the controller for this render. */
+  identity: ConsoleIdentity
   controllerHost: string
   /** Desktop sidebar state remembered by the sidebar's own cookie. */
   sidebarOpen: boolean
@@ -65,7 +69,7 @@ export function ConsoleShell({
           } else setDesktopOpen(next)
         }}
       >
-        <ConsoleFrame networks={networks} controllerHost={controllerHost} immersive={immersive}>
+        <ConsoleFrame networks={networks} identity={identity} controllerHost={controllerHost} immersive={immersive}>
           {children}
         </ConsoleFrame>
       </SidebarProvider>
@@ -83,11 +87,13 @@ export function useDrafts(): Record<DraftKind, boolean> {
 
 function ConsoleFrame({
   networks,
+  identity,
   controllerHost,
   immersive,
   children,
 }: {
   networks: NetworkChoices
+  identity: ConsoleIdentity
   controllerHost: string
   immersive: boolean
   children: ReactNode
@@ -108,7 +114,7 @@ function ConsoleFrame({
       >
         跳到主要内容
       </a>
-      <AppSidebar networks={networks} controllerHost={controllerHost} drafts={drafts} collapsible={immersive ? "offcanvas" : "icon"} />
+      <AppSidebar networks={networks} identity={identity} controllerHost={controllerHost} drafts={drafts} collapsible={immersive ? "offcanvas" : "icon"} />
       <SidebarInset className="min-w-0">
         <ConsoleHeader hidden={immersive} />
         <div id="main" tabIndex={-1} className="flex min-w-0 flex-1 flex-col outline-none">

@@ -3,6 +3,7 @@ import type { ReactNode } from "react"
 
 import { ConsoleShell } from "@/components/shell/console-shell"
 import type { NetworkChoices } from "@/components/shell/network-switcher"
+import { fetchConsoleIdentity } from "@/lib/account-session"
 import { controllerUrl } from "@/lib/controller"
 import { requireNetwork } from "@/lib/network-scope"
 
@@ -21,7 +22,7 @@ export default async function NetworkLayout({
   children: ReactNode
   params: Promise<{ network: string }>
 }) {
-  const [scope, jar] = await Promise.all([requireNetwork(params), cookies()])
+  const [scope, jar, identity] = await Promise.all([requireNetwork(params), cookies(), fetchConsoleIdentity()])
   // Written by the sidebar itself; only a layout preference.
   const sidebarOpen = jar.get("sidebar_state")?.value !== "false"
   const networks: NetworkChoices = scope.networks.ok
@@ -36,7 +37,7 @@ export default async function NetworkLayout({
     : { ok: false, error: scope.networks.error }
 
   return (
-    <ConsoleShell networkId={scope.networkId} networks={networks} controllerHost={hostOf(controllerUrl())} sidebarOpen={sidebarOpen}>
+    <ConsoleShell networkId={scope.networkId} networks={networks} identity={identity} controllerHost={hostOf(controllerUrl())} sidebarOpen={sidebarOpen}>
       {children}
     </ConsoleShell>
   )

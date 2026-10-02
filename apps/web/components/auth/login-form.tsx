@@ -12,6 +12,11 @@ import { login } from "@/lib/auth-actions"
 
 const initialState: LoginState = { status: "idle" }
 
+/**
+ * Compatibility entry for the instance administrator token (bootstrap). It
+ * manages the controller but is not a user: it cannot approve user-owned
+ * device sign-ins.
+ */
 export function LoginForm({ returnTo = "/" }: { returnTo?: string }) {
   const [state, formAction, pending] = useActionState(login, initialState)
   const inputId = useId()
@@ -20,16 +25,17 @@ export function LoginForm({ returnTo = "/" }: { returnTo?: string }) {
     state.status === "malformed"
       ? state.message
       : state.status === "invalid"
-        ? "Controller 拒绝了这个管理员令牌。请确认令牌完整且属于当前 controller 的数据目录。"
+        ? "Controller 不接受这个管理员令牌。请确认令牌完整且属于当前 controller 的数据目录；账户会话不能在此使用。"
         : null
 
   return (
-    <form action={formAction} className="flex flex-col gap-4">
+    <form action={formAction} className="flex flex-col gap-2" aria-label="管理员令牌登录">
       <input type="hidden" name="returnTo" value={returnTo} />
       <div className="flex flex-col gap-2">
-        <Label htmlFor={inputId}>
+        <Label htmlFor={inputId} className="text-xs text-muted-foreground">
           管理员令牌
         </Label>
+        <div className="flex gap-2">
         <Input
           id={inputId}
           name="token"
@@ -41,9 +47,12 @@ export function LoginForm({ returnTo = "/" }: { returnTo?: string }) {
           disabled={pending}
           aria-invalid={fieldError !== null || undefined}
           aria-describedby={fieldError !== null ? errorId : undefined}
-          className="h-9 font-mono"
-          autoFocus
+          className="h-9 min-w-0 flex-1 font-mono"
         />
+        <Button type="submit" variant="outline" disabled={pending} className="h-9 shrink-0">
+          {pending ? "正在验证" : "登录"}
+        </Button>
+        </div>
         {fieldError !== null ? (
           <p id={errorId} role="alert" className="text-sm text-destructive">
             {fieldError}
@@ -63,10 +72,6 @@ export function LoginForm({ returnTo = "/" }: { returnTo?: string }) {
           </AlertDescription>
         </Alert>
       ) : null}
-
-      <Button type="submit" size="lg" disabled={pending} className="h-9 w-full">
-        {pending ? "正在验证" : "登录"}
-      </Button>
     </form>
   )
 }

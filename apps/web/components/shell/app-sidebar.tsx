@@ -7,6 +7,7 @@ import { NavMain } from "@/components/shell/nav-main"
 import { NavUser } from "@/components/shell/nav-user"
 import { useNetwork } from "@/components/shell/network-context"
 import { NetworkSwitcher, type NetworkChoices } from "@/components/shell/network-switcher"
+import type { ConsoleIdentity } from "@/lib/account-model"
 import { Sidebar, SidebarContent, SidebarFooter, SidebarHeader, SidebarRail, useSidebar } from "@/components/ui/sidebar"
 
 /**
@@ -16,11 +17,13 @@ import { Sidebar, SidebarContent, SidebarFooter, SidebarHeader, SidebarRail, use
  */
 export function AppSidebar({
   networks,
+  identity,
   controllerHost,
   drafts,
   collapsible,
 }: {
   networks: NetworkChoices
+  identity: ConsoleIdentity
   controllerHost: string
   drafts: Record<DraftKind, boolean>
   /** "offcanvas" while the overview is an immersive map; otherwise the icon rail. */
@@ -44,7 +47,7 @@ export function AppSidebar({
         <NavMain active={active} drafts={drafts} />
       </SidebarContent>
       <SidebarFooter>
-        <NavUser />
+        <NavUser identity={identity} />
       </SidebarFooter>
       <SidebarRail />
     </Sidebar>

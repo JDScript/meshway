@@ -1,26 +1,24 @@
 "use server"
 
-import { listNetworks } from "@meshway/control-client"
+import { ControlApiError, loginAccount, logoutAccount } from "@meshway/control-client"
+import { zLoginRequest } from "@meshway/control-client/schemas"
 import { redirect } from "next/navigation"
 
+import type { AccountLoginState } from "@/lib/account-model"
 import type { LoginState } from "@/lib/action-state"
+import { verifyCredential } from "@/lib/account-session"
 import { safeLoginReturn } from "@/lib/device-login"
-import {
-  controllerUrl,
-  describeError,
-  isCredentialRejected,
-} from "@/lib/controller"
-import { endSession, LOGIN_PATH, readSession, startSession } from "@/lib/session"
+import { controllerUrl, describeError, isCredentialRejected, isPermissionDenied } from "@/lib/controller"
+import { endSession, LOGIN_PATH, readSession, sessionKey, startBootstrapSession, startUserSession } from "@/lib/session"
+import { isUserSessionToken } from "@/lib/session-cookie"
+import { formField, revokePreviousUserSession } from "@/lib/sign-in"
 
 const MAX_TOKEN_LENGTH = 1024
 const VISIBLE_ASCII = /^[\x21-\x7E]+$/
 
-export async function login(
-  _previous: LoginState,
-  formData: FormData
-): Promise<LoginState> {
-  const raw = formData.get("token")
-  const token = typeof raw === "string" ? raw.trim() : ""
+/** Compatibility entry: the instance administrator token (bootstrap). */
+export async function login(_previous: LoginState, formData: FormData): Promise<LoginState> {
+  const token = formField(formData, "token").trim()
   if (!token) return { status: "malformed", message: "请输入管理员令牌。" }
   if (token.length > MAX_TOKEN_LENGTH || !VISIBLE_ASCII.test(token)) {
     return {
@@ -28,28 +26,95 @@ export async function login(
       message: "管理员令牌只包含可见 ASCII 字符，不含空格。请检查是否完整复制。",
     }
   }
+  // A user session is never accepted as the administrator credential.
+  if (isUserSessionToken(token) || token.startsWith("mws_")) return { status: "invalid" }
 
   try {
-    await listNetworks(controllerUrl(), token)
+    await verifyCredential({ kind: "bootstrap", token })
   } catch (error) {
-    if (isCredentialRejected(error)) return { status: "invalid" }
+    if (isCredentialRejected(error) || isPermissionDenied(error)) return { status: "invalid" }
     return { status: "unavailable", detail: describeError(error, token) }
   }
 
-  await startSession(token)
+  await revokePreviousUserSession()
+  await startBootstrapSession(token)
   redirect(safeLoginReturn(formData.get("returnTo")))
 }
 
-export async function logout(): Promise<void> {
+/**
+ * Email + password sign-in. The password goes browser → Web server →
+ * controller only; it is never stored, logged or returned in the state.
+ * The resulting `mws_` session is kept in the HttpOnly cookie for exactly
+ * the controller's absolute lifetime.
+ */
+export async function loginWithPassword(_previous: AccountLoginState, formData: FormData): Promise<AccountLoginState> {
+  const email = formField(formData, "email").trim().slice(0, 254)
+  const parsed = zLoginRequest.safeParse({ email, password: formField(formData, "password") })
+  if (!parsed.success || !parsed.data.password) return { status: "malformed", message: "请输入邮箱和密码。", email }
+  const { password } = parsed.data
+
+  let response
+  try {
+    response = await loginAccount(controllerUrl(), parsed.data)
+  } catch (error) {
+    if (error instanceof ControlApiError) {
+      // 400/401/422 all mean "these credentials do not sign in"; which part
+      // was wrong is deliberately not distinguished.
+      if ([400, 401, 422].includes(error.status)) return { status: "invalid", email }
+      if (error.status === 429) return { status: "limited", email }
+    }
+    return { status: "unavailable", detail: describeError(error, password), email }
+  }
+
+  await revokePreviousUserSession()
+  if (!(await startUserSession(response.session_token, response.expires_at))) {
+    return { status: "unavailable", detail: "Controller 返回的会话已过期，请检查 Web 与 controller 的系统时间。", email }
+  }
+  redirect(safeLoginReturn(formData.get("returnTo")))
+}
+
+/**
+ * Ends the sign-in. A user session is revoked on the controller first; the
+ * local cookie is cleared either way. If the controller could not confirm
+ * the revocation the login page says so instead of claiming it happened.
+ */
+async function signOut(): Promise<"revoked" | "unconfirmed" | "local"> {
+  const session = await readSession()
+  let outcome: "revoked" | "unconfirmed" | "local" = "local"
+  if (session.kind === "active" && session.credential.kind === "user") {
+    try {
+      await logoutAccount(controllerUrl(), session.credential.token)
+      outcome = "revoked"
+    } catch (error) {
+      // 401: the controller no longer accepts it, which is the goal.
+      outcome = isCredentialRejected(error) ? "revoked" : "unconfirmed"
+    }
+  }
   await endSession()
-  redirect(LOGIN_PATH)
+  return outcome
+}
+
+export async function logout(): Promise<void> {
+  const outcome = await signOut()
+  redirect(outcome === "unconfirmed" ? `${LOGIN_PATH}?reason=logout-unconfirmed` : LOGIN_PATH)
+}
+
+/** Sign out, then sign in again (as someone else) and continue to a validated return path. */
+export async function switchAccount(formData: FormData): Promise<void> {
+  const destination = safeLoginReturn(formData.get("returnTo"))
+  const outcome = await signOut()
+  const query = new URLSearchParams()
+  if (destination !== "/") query.set("returnTo", destination)
+  if (outcome === "unconfirmed") query.set("reason", "logout-unconfirmed")
+  const search = query.toString()
+  redirect(search ? `${LOGIN_PATH}?${search}` : LOGIN_PATH)
 }
 
 /**
  * Drops the session cookie only when it is actually unusable: expired locally
  * or rejected by the controller. A still-valid session is left untouched, so
- * this cannot be abused to sign an administrator out, and a controller outage
- * is not mistaken for an authentication failure.
+ * this cannot be abused to sign someone out, and a controller outage is not
+ * mistaken for an authentication failure.
  */
 export async function discardRejectedSession(): Promise<void> {
   const session = await readSession()
@@ -59,8 +124,13 @@ export async function discardRejectedSession(): Promise<void> {
     return
   }
   try {
-    await listNetworks(controllerUrl(), session.token)
+    await verifyCredential(session.credential)
   } catch (error) {
     if (isCredentialRejected(error)) await endSession()
   }
+}
+
+/** Non-secret key of the current sign-in; lets an open console notice an account switch. */
+export async function currentSessionKey(): Promise<string> {
+  return sessionKey()
 }

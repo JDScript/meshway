@@ -27,7 +27,7 @@ import { redirect } from "next/navigation"
 import { connection } from "next/server"
 import { cache } from "react"
 
-import { EXPIRED_LOGIN_PATH, requireAdminToken } from "@/lib/session"
+import { EXPIRED_LOGIN_PATH, requireConsoleToken } from "@/lib/session"
 import { controllerUrl } from "@/lib/controller-config"
 
 export { controllerUrl } from "@/lib/controller-config"
@@ -36,9 +36,20 @@ export type ControllerResult<T> =
   | { ok: true; data: T; fetchedAt: number }
   | { ok: false; error: string; fetchedAt: number }
 
-/** The controller rejected the administrator credential itself. */
+/**
+ * The controller rejected the console credential itself (HTTP 401): expired,
+ * logged out, revoked or reset. Only this ends the console session.
+ */
 export function isCredentialRejected(error: unknown): boolean {
   return error instanceof ControlApiError && error.status === 401
+}
+
+/**
+ * The credential is valid but lacks the permission (HTTP 403), e.g. a Member
+ * writing configuration. The session stays; the caller shows the error.
+ */
+export function isPermissionDenied(error: unknown): boolean {
+  return error instanceof ControlApiError && error.status === 403
 }
 
 export function describeError(error: unknown, secret?: string): string {
@@ -55,6 +66,7 @@ export function describeError(error: unknown, secret?: string): string {
   if (error instanceof ControlApiError && !messages.some((m) => m.includes(String(error.status)))) {
     messages.unshift(`HTTP ${error.status}`)
   }
+  if (isPermissionDenied(error)) messages.unshift("当前账户没有此操作的权限")
   const text = messages.length > 0 ? messages.join(": ") : "未知错误"
   // Bearer values are never meant to appear in SDK errors; redact defensively.
   return secret ? text.replaceAll(secret, "[已隐藏]") : text
@@ -62,13 +74,14 @@ export function describeError(error: unknown, secret?: string): string {
 
 // Each call hits the controller at request time; nothing is cached. A missing
 // or expired session redirects to login; a 401 from the controller redirects
-// to login where the stale cookie is discarded. Any other failure is shown as
-// a controller error rather than treated as an authentication failure.
+// to login where the stale cookie is discarded. Any other failure (including
+// a 403 permission refusal) is shown as a controller error rather than
+// treated as an authentication failure.
 async function authorizedRead<T>(
   call: (baseUrl: string, token: string) => Promise<T>
 ): Promise<ControllerResult<T>> {
   await connection()
-  const token = await requireAdminToken()
+  const token = await requireConsoleToken()
   try {
     const data = await call(controllerUrl(), token)
     return { ok: true, data, fetchedAt: Date.now() }
@@ -133,5 +146,5 @@ export function fetchTags(networkId: string): Promise<ControllerResult<TagSnapsh
 /** Network metadata and saved DNS intent, shared by the shell and pages within one request. */
 export const fetchNetwork = cache((networkId: string) => networkRead(networkId, getNetwork))
 
-/** Global: every network this administrator manages. Shared within one request. */
+/** Global: every network this credential may see (a user: its live memberships). Shared within one request. */
 export const fetchNetworks = cache(() => authorizedRead(listNetworks))
