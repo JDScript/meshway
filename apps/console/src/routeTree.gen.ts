@@ -11,7 +11,9 @@
 import { Route as rootRouteImport } from './routes/__root'
 import { Route as AuthedRouteImport } from './routes/_authed'
 import { Route as AuthorizeDeviceRouteImport } from './routes/authorize-device'
+import { Route as InviteRouteImport } from './routes/invite'
 import { Route as LoginRouteImport } from './routes/login'
+import { Route as ResetPasswordRouteImport } from './routes/reset-password'
 import { Route as AuthedIndexRouteImport } from './routes/_authed/index'
 import { Route as AuthedNetworksNetworkRouteImport } from './routes/_authed/networks/$network'
 import { Route as AuthedNetworksNetworkIndexRouteImport } from './routes/_authed/networks/$network/index'
@@ -39,9 +41,19 @@ const AuthorizeDeviceRoute = AuthorizeDeviceRouteImport.update({
   path: '/authorize-device',
   getParentRoute: () => rootRouteImport,
 } as any)
+const InviteRoute = InviteRouteImport.update({
+  id: '/invite',
+  path: '/invite',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const LoginRoute = LoginRouteImport.update({
   id: '/login',
   path: '/login',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ResetPasswordRoute = ResetPasswordRouteImport.update({
+  id: '/reset-password',
+  path: '/reset-password',
   getParentRoute: () => rootRouteImport,
 } as any)
 const AuthedIndexRoute = AuthedIndexRouteImport.update({
@@ -148,7 +160,9 @@ const AuthedNetworksNetworkSettingsSectionRoute =
 export interface FileRoutesByFullPath {
   '/': typeof AuthedIndexRoute
   '/authorize-device': typeof AuthorizeDeviceRoute
+  '/invite': typeof InviteRoute
   '/login': typeof LoginRoute
+  '/reset-password': typeof ResetPasswordRoute
   '/networks/$network': typeof AuthedNetworksNetworkRouteWithChildren
   '/networks/$network/account': typeof AuthedNetworksNetworkAccountRoute
   '/networks/$network/members': typeof AuthedNetworksNetworkMembersRouteWithChildren
@@ -168,7 +182,9 @@ export interface FileRoutesByFullPath {
 }
 export interface FileRoutesByTo {
   '/authorize-device': typeof AuthorizeDeviceRoute
+  '/invite': typeof InviteRoute
   '/login': typeof LoginRoute
+  '/reset-password': typeof ResetPasswordRoute
   '/': typeof AuthedIndexRoute
   '/networks/$network/account': typeof AuthedNetworksNetworkAccountRoute
   '/networks/$network/overview': typeof AuthedNetworksNetworkOverviewRoute
@@ -186,7 +202,9 @@ export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/_authed': typeof AuthedRouteWithChildren
   '/authorize-device': typeof AuthorizeDeviceRoute
+  '/invite': typeof InviteRoute
   '/login': typeof LoginRoute
+  '/reset-password': typeof ResetPasswordRoute
   '/_authed/': typeof AuthedIndexRoute
   '/_authed/networks/$network': typeof AuthedNetworksNetworkRouteWithChildren
   '/_authed/networks/$network/account': typeof AuthedNetworksNetworkAccountRoute
@@ -210,7 +228,9 @@ export interface FileRouteTypes {
   fullPaths:
     | '/'
     | '/authorize-device'
+    | '/invite'
     | '/login'
+    | '/reset-password'
     | '/networks/$network'
     | '/networks/$network/account'
     | '/networks/$network/members'
@@ -230,7 +250,9 @@ export interface FileRouteTypes {
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/authorize-device'
+    | '/invite'
     | '/login'
+    | '/reset-password'
     | '/'
     | '/networks/$network/account'
     | '/networks/$network/overview'
@@ -247,7 +269,9 @@ export interface FileRouteTypes {
     | '__root__'
     | '/_authed'
     | '/authorize-device'
+    | '/invite'
     | '/login'
+    | '/reset-password'
     | '/_authed/'
     | '/_authed/networks/$network'
     | '/_authed/networks/$network/account'
@@ -270,7 +294,9 @@ export interface FileRouteTypes {
 export interface RootRouteChildren {
   AuthedRoute: typeof AuthedRouteWithChildren
   AuthorizeDeviceRoute: typeof AuthorizeDeviceRoute
+  InviteRoute: typeof InviteRoute
   LoginRoute: typeof LoginRoute
+  ResetPasswordRoute: typeof ResetPasswordRoute
 }
 
 declare module '@tanstack/react-router' {
@@ -289,11 +315,25 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AuthorizeDeviceRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/invite': {
+      id: '/invite'
+      path: '/invite'
+      fullPath: '/invite'
+      preLoaderRoute: typeof InviteRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/login': {
       id: '/login'
       path: '/login'
       fullPath: '/login'
       preLoaderRoute: typeof LoginRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/reset-password': {
+      id: '/reset-password'
+      path: '/reset-password'
+      fullPath: '/reset-password'
+      preLoaderRoute: typeof ResetPasswordRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/_authed/': {
@@ -532,7 +572,9 @@ const AuthedRouteWithChildren =
 const rootRouteChildren: RootRouteChildren = {
   AuthedRoute: AuthedRouteWithChildren,
   AuthorizeDeviceRoute: AuthorizeDeviceRoute,
+  InviteRoute: InviteRoute,
   LoginRoute: LoginRoute,
+  ResetPasswordRoute: ResetPasswordRoute,
 }
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)
