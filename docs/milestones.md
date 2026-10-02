@@ -11,7 +11,7 @@
 | P1a 多网络（已实现） | v8→v9 无损迁移；成员、接入、IPAM、DNS、策略、连接与报告隔离；管理 API 显式选网、Agent 由凭据推导；Web 最小选网 / 创建与批准选网，逐网络草稿。客户端多接入切换另行实现 | — |
 | P1b 策略引擎 v3（已合入） | 独立 Rust 四层校验 / 编译：连接 allow/block、grants 并集、Mesh / 出口有序 first-match 与遮挡提示、路由方案、规则集展开及迁移报告；controller 接入在 P3a | — |
 | P1c 出口数据面（原型已验收） | Linux NAT、状态型回包、撤回终止存量流与方案切换；12 个隔离 Docker 场景通过；控制面下发、出口 DNS 和正式产品接入仍待 P3c | — |
-| P2a 承载托管（后端交付待合入，Web 接线中） | 后端候选 `56da5ad` 已完成平台材料生成/下发、VLESS TCP/TLS 与 WebSocket/TLS、v9→v10 和私有 profiles 等价导入的隔离验收；独立审查中，节点配置与添加节点的可选 listener 表单并行接入，尚未部署托管后端 | P1a |
+| P2a 承载托管（审查修复中，Web 接线中） | 后端候选 `56da5ad` 已完成平台材料生成/下发、VLESS TCP/TLS 与 WebSocket/TLS、v9→v10 和私有 profiles 等价导入的隔离验收；独立审查发现 WS 退休后晚写、生成客户端错误脱敏与 WS 能力投影问题，修复后再合入；节点配置与添加节点的可选 listener 表单并行接入，尚未部署托管后端 | P1a |
 | P2b 用户与登录（领域已合入，接线并行推进） | 本地账户、邀请、会话、按网络权限与统一设备授权模块已实现；独立任务接入 Controller API、网络权限、设备归属和 App PKCE，生产迁移与 Web / CLI 闭环仍待集成验收，用户 / 组策略随契约落地 | P1a；共享迁移 / 接口由协调者整合 |
 | P3a 策略上线 | controller / Web 接入四层模型，图形 / JSONC 共用草稿 / CAS，既有策略迁移 | P1a、P1b |
 | P3b 自动建连 | 按授权流量及路径按需连接 / 自动中转，手工候选收敛为高级覆盖 | P2a、P3a |
@@ -34,11 +34,15 @@ shadcn `sidebar-07` 管理骨架与定制点状地图概览已合入并更新到
 真实邻接延迟采样 runner、幂等上报、持久历史与查询接口已在独立分支交付并验证重启查询；
 正在审查与接入正式 Agent 生命周期、统一版本迁移。Web 链路历史组件同步接入生成 API，
 尚未部署自动采样或历史曲线；首切片不将邻接 RTT 当作端到端路径测量，也没有主动检测命令。
+历史审查发现固定行数配额会导致普通多邻居场景连续多天停写，正修复为有界滚动保留，
+并向查询端表达容量裁剪范围；生产启用前须通过修复复核与生命周期验收。
 P2a 已交付生成契约，VLESS/WebSocket 表单在独立工作树接入；地图部署不等待该表单。
 性能复测与 Rust 代码审查独立并行，输出证据与可验证的改动；共享 Docker 实验使用同一性能锁。
 系统保护通路的[独立 Linux socket/策略路由实验](/underlay-routing)已完成双栈 148 项
-检查与 10 项 host-only 测试；正式 Agent socket 工厂、HTTP connector、DNS 与生命周期
-接入仍待交付，实验不等于现网已经采用 socket 级保护。
+检查与 10 项 host-only 测试。受保护 socket 工厂、HTTP/TLS connector、bootstrap DNS 与
+代际取消的代码切片也已交付；实际 Linux namespace fixture 通过 137 次 mark/readback
+审计与 4 个 listener 的 premark 检查，目前独立审查中。正式主循环、Native UDP/TCP、
+捕获规则 ownership 与恢复仍待接通，现网尚未采用 socket 级保护。
 
 ### 并行开发与合入依赖
 
