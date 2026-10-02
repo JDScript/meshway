@@ -818,3 +818,49 @@ async fn accounts_http_ingress_budgets_are_bounded_and_ignore_forwarded_source_h
         StatusCode::TOO_MANY_REQUESTS
     );
 }
+
+#[tokio::test]
+async fn accounts_http_login_and_reset_share_the_same_account_budget() {
+    let f = Fixture::new();
+    let owner = f.original_user().await;
+    let session = ok(&f, "GET", "/api/v1/auth/session", Some(&owner), None).await;
+    let reset = ok(
+        &f,
+        "POST",
+        "/api/v1/auth/password-resets",
+        Some(&f.admin),
+        Some(json!({"user_id":session["user"]["user_id"],"expires_in_seconds":3600})),
+    )
+    .await;
+    // Owner claim + login already reserved two entries for the normalized email.
+    for _ in 0..8 {
+        assert_eq!(
+            request(
+                &f.app,
+                "POST",
+                "/api/v1/auth/login",
+                None,
+                Some(json!({"email":session["user"]["email"],"password":"x"}))
+            )
+            .await
+            .0,
+            StatusCode::BAD_REQUEST
+        );
+    }
+    assert_eq!(request(&f.app,"POST","/api/v1/auth/password-resets/redeem",None,Some(json!({"reset_token":reset["reset_token"],"new_password":"replacement password secret"}))).await.0,StatusCode::TOO_MANY_REQUESTS);
+    // Budget rejection does not consume the reset or replace credentials/session.
+    ok(&f, "GET", "/api/v1/auth/session", Some(&owner), None).await;
+    let metadata = ok(
+        &f,
+        "GET",
+        &format!(
+            "/api/v1/auth/password-resets/{}",
+            reset["reset"]["reset_id"].as_str().unwrap()
+        ),
+        Some(&f.admin),
+        None,
+    )
+    .await;
+    assert_eq!(metadata["consumed_at"], Value::Null);
+    assert_eq!(metadata["credential_current"], true);
+}

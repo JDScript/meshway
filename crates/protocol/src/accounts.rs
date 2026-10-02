@@ -15,7 +15,9 @@ pub enum AccountRole {
 pub struct LoginRequest {
     #[schema(min_length = 3, max_length = 254)]
     pub email: String,
-    #[schema(min_length = 12, max_length = 1024)]
+    /// Controller enforces 12–1024 UTF-8 bytes. JSON Schema string lengths count
+    /// Unicode code points, so a byte minimum must not be emitted as minLength.
+    #[schema(max_length = 1024)]
     pub password: String,
 }
 
@@ -23,6 +25,7 @@ pub struct LoginRequest {
 #[derive(Serialize, Deserialize, ToSchema)]
 #[serde(deny_unknown_fields)]
 pub struct LoginResponse {
+    #[schema(min_length = 68, max_length = 68, pattern = "^mws_[0-9a-f]{64}$")]
     pub session_token: String,
     pub expires_at: i64,
 }
@@ -110,12 +113,14 @@ pub struct AccountInvitations {
 #[serde(deny_unknown_fields)]
 pub struct CreateInvitationResponse {
     pub invitation: AccountInvitation,
+    #[schema(min_length = 68, max_length = 68, pattern = "^mwi_[0-9a-f]{64}$")]
     pub invitation_token: String,
 }
 
 #[derive(Serialize, Deserialize, ToSchema)]
 #[serde(deny_unknown_fields)]
 pub struct RegisterInvitationRequest {
+    #[schema(min_length = 68, max_length = 68, pattern = "^mwi_[0-9a-f]{64}$")]
     pub invitation_token: String,
     pub email: String,
     pub password: String,
@@ -124,6 +129,7 @@ pub struct RegisterInvitationRequest {
 #[derive(Serialize, Deserialize, ToSchema)]
 #[serde(deny_unknown_fields)]
 pub struct AcceptInvitationRequest {
+    #[schema(min_length = 68, max_length = 68, pattern = "^mwi_[0-9a-f]{64}$")]
     pub invitation_token: String,
 }
 
@@ -211,6 +217,7 @@ pub struct AccountPasswordResets {
 #[serde(deny_unknown_fields)]
 pub struct CreatePasswordResetResponse {
     pub reset: AccountPasswordReset,
+    #[schema(min_length = 68, max_length = 68, pattern = "^mwr_[0-9a-f]{64}$")]
     pub reset_token: String,
 }
 
@@ -223,6 +230,7 @@ pub struct RevokePasswordResetRequest {
 #[derive(Serialize, Deserialize, ToSchema)]
 #[serde(deny_unknown_fields)]
 pub struct RedeemPasswordResetRequest {
+    #[schema(min_length = 68, max_length = 68, pattern = "^mwr_[0-9a-f]{64}$")]
     pub reset_token: String,
     pub new_password: String,
 }

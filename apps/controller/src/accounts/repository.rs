@@ -83,10 +83,11 @@ pub(crate) struct ResetIntent {
     digest: Vec<u8>,
     user: UserId,
     version: i64,
+    email: Email,
 }
 impl ResetIntent {
     pub(crate) fn account_key(&self) -> &str {
-        self.user.as_str()
+        self.email.as_str()
     }
 }
 
@@ -327,11 +328,12 @@ impl<'a> Accounts<'a> {
 
     pub(crate) fn prepare_reset(&self, token: &str, now: i64) -> Result<ResetIntent> {
         let digest = Secret::digest(token, SecretKind::Reset)?;
-        let (user, version) = self.db.query_row("SELECT r.user_id,r.credential_version FROM account_password_resets r JOIN account_users u ON u.user_id=r.user_id WHERE r.token_hash=?1 AND r.expires_at>?2 AND r.revoked_at IS NULL AND r.consumed_at IS NULL AND r.credential_version=u.credential_version", params![digest,now], |r| Ok((UserId(r.get(0)?), r.get::<_, i64>(1)?))).optional()?.ok_or(AccountError::Unauthorized)?;
+        let (user, version, email) = self.db.query_row("SELECT r.user_id,r.credential_version,u.email FROM account_password_resets r JOIN account_users u ON u.user_id=r.user_id WHERE r.token_hash=?1 AND r.expires_at>?2 AND r.revoked_at IS NULL AND r.consumed_at IS NULL AND r.credential_version=u.credential_version", params![digest,now], |r| Ok((UserId(r.get(0)?), r.get::<_, i64>(1)?,r.get::<_,String>(2)?))).optional()?.ok_or(AccountError::Unauthorized)?;
         Ok(ResetIntent {
             digest,
             user,
             version,
+            email: Email::parse(&email).map_err(|_| AccountError::Storage)?,
         })
     }
 
