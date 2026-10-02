@@ -23,6 +23,7 @@ Rust 控制面与 agent、Next.js + shadcn/ui 控制台、VitePress 文档站。
 ## 实现与验证
 
 - 用户明确强调代码洁癖：源码组织、命名和职责须干净可解释；关注 `apps/controller/src/store` 中散落的 tests、`policy_v3` 与 `schema_v*`。完整 dump / 审查不等于已完成源码清理，不再混报。生产领域模块优先职责命名，必要 wire / 数据库历史版本集中在兼容与迁移边界；测试支持和历史 fixture 应有清楚归属，避免持续堆叠阶段名、临时修复名和重复实现。收敛时保留已有身份 / 数据的真实迁移路径及有价值的行为回归，不能靠删除必要迁移或测试制造表面整洁。
+- 全仓 Rust 手写代码统一模块与测试组织：单文件模块 `foo.rs`；有子模块使用 `foo/mod.rs`，避免 `foo.rs` 旁再开仅含子测试的 `foo/`。私有实现单元测试作为所属模块的 `#[cfg(test)]` 子模块；公共 API 黑盒测试放 crate 顶层 `tests/`，入口遵守 Cargo 自动发现（`tests/*.rs` 或 `tests/<suite>/main.rs`），共享 helper 放子目录。不得为搬测试扩大生产可见性、复制实现或用临时 path/autotests 配置绕过边界；生成代码与 vendor 按各自权威来源维护。
 - `crates/agent-dns` 已独立：本地权威 DNS 的 TCP/UDP、Zone、TTL/lease/代际发送边界及内部观测归库；Controller 快照校验/持久化、HTTP、CLI/IPC 投影和日志归 Agent，库不能反向依赖 App。用户明确要求同时审视 TUN 等其他边界：TUN 设备创建/配置/包 I/O 可提取 `agent-tun`，不能携带 AgentError、Controller URL、业务 PacketPlan 或 proof 日志；路由 capture/sink/journal 归 underlay，启动撤回顺序归 Agent。生成控制客户端与底层保护同为独立库候选，尚未提取的不得写成已完成。
 - 文档只保留当前用法、架构、契约和真实未完成项；合并重复说明，删除过时交接、逐次修复流水账和已被权威生成物替代的旧 dump。Git 历史与私有原始证据负责追溯，不持续新建清理报告 / changelog；必要的现行安全和兼容边界保留。
 - 前后端按契约推进真实纵向功能；空状态和错误状态必须真实，不伪造节点、流量、健康状态。
