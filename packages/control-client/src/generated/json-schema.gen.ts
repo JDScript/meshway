@@ -4,12 +4,280 @@ export const schemaDocument = {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "components": {
     "schemas": {
+      "AcceptInvitationRequest": {
+        "type": "object",
+        "required": [
+          "invitation_token"
+        ],
+        "properties": {
+          "invitation_token": {
+            "type": "string",
+            "maxLength": 68,
+            "minLength": 68,
+            "pattern": "^mwi_[0-9a-f]{64}$"
+          }
+        },
+        "additionalProperties": false
+      },
       "AccessAction": {
         "type": "string",
         "enum": [
           "allow",
           "reject"
         ]
+      },
+      "AccountInvitation": {
+        "type": "object",
+        "required": [
+          "invitation_id",
+          "network_id",
+          "email",
+          "role",
+          "issuer_user_id",
+          "expires_at",
+          "revoked_at",
+          "consumed_by",
+          "consumed_at"
+        ],
+        "properties": {
+          "consumed_at": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64"
+          },
+          "consumed_by": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "email": {
+            "type": "string"
+          },
+          "expires_at": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "invitation_id": {
+            "type": "string"
+          },
+          "issuer_user_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "network_id": {
+            "type": "string"
+          },
+          "revoked_at": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64"
+          },
+          "role": {
+            "$ref": "#/components/schemas/AccountRole"
+          }
+        },
+        "additionalProperties": false
+      },
+      "AccountInvitations": {
+        "type": "object",
+        "required": [
+          "invitations"
+        ],
+        "properties": {
+          "invitations": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/AccountInvitation"
+            }
+          }
+        },
+        "additionalProperties": false
+      },
+      "AccountMember": {
+        "type": "object",
+        "required": [
+          "membership",
+          "user"
+        ],
+        "properties": {
+          "membership": {
+            "$ref": "#/components/schemas/AccountMembership"
+          },
+          "user": {
+            "$ref": "#/components/schemas/AccountUser"
+          }
+        },
+        "additionalProperties": false
+      },
+      "AccountMembers": {
+        "type": "object",
+        "required": [
+          "members"
+        ],
+        "properties": {
+          "members": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/AccountMember"
+            }
+          }
+        },
+        "additionalProperties": false
+      },
+      "AccountMembership": {
+        "type": "object",
+        "required": [
+          "membership_id",
+          "network_id",
+          "user_id",
+          "role"
+        ],
+        "properties": {
+          "membership_id": {
+            "type": "string"
+          },
+          "network_id": {
+            "type": "string"
+          },
+          "role": {
+            "$ref": "#/components/schemas/AccountRole"
+          },
+          "user_id": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": false
+      },
+      "AccountMembershipChange": {
+        "type": "string",
+        "enum": [
+          "owner",
+          "admin",
+          "member",
+          "remove"
+        ]
+      },
+      "AccountPasswordReset": {
+        "type": "object",
+        "required": [
+          "reset_id",
+          "user_id",
+          "expires_at",
+          "revoked_at",
+          "consumed_at",
+          "credential_current"
+        ],
+        "properties": {
+          "consumed_at": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64"
+          },
+          "credential_current": {
+            "type": "boolean"
+          },
+          "expires_at": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "reset_id": {
+            "type": "string"
+          },
+          "revoked_at": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64"
+          },
+          "user_id": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": false
+      },
+      "AccountPasswordResets": {
+        "type": "object",
+        "required": [
+          "resets"
+        ],
+        "properties": {
+          "resets": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/AccountPasswordReset"
+            }
+          }
+        },
+        "additionalProperties": false
+      },
+      "AccountReceipt": {
+        "type": "object",
+        "required": [
+          "saved"
+        ],
+        "properties": {
+          "saved": {
+            "type": "boolean"
+          }
+        },
+        "additionalProperties": false
+      },
+      "AccountRole": {
+        "type": "string",
+        "enum": [
+          "owner",
+          "admin",
+          "member"
+        ]
+      },
+      "AccountSession": {
+        "type": "object",
+        "required": [
+          "user",
+          "memberships"
+        ],
+        "properties": {
+          "memberships": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/AccountMembership"
+            }
+          },
+          "user": {
+            "$ref": "#/components/schemas/AccountUser"
+          }
+        },
+        "additionalProperties": false
+      },
+      "AccountUser": {
+        "type": "object",
+        "required": [
+          "user_id",
+          "email",
+          "email_verified"
+        ],
+        "properties": {
+          "email": {
+            "type": "string"
+          },
+          "email_verified": {
+            "type": "boolean"
+          },
+          "user_id": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": false
       },
       "AcknowledgeAgentConnectionsRequest": {
         "type": "object",
@@ -316,6 +584,76 @@ export const schemaDocument = {
             "format": "int64",
             "maximum": 4294967295,
             "minimum": 1
+          }
+        },
+        "additionalProperties": false
+      },
+      "ChangePasswordRequest": {
+        "type": "object",
+        "required": [
+          "current_password",
+          "new_password"
+        ],
+        "properties": {
+          "current_password": {
+            "type": "string"
+          },
+          "new_password": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": false
+      },
+      "ClaimNodeOwnershipRequest": {
+        "type": "object",
+        "required": [
+          "node_id",
+          "membership_id"
+        ],
+        "properties": {
+          "membership_id": {
+            "type": "string"
+          },
+          "node_id": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": false
+      },
+      "ClaimOwnerKind": {
+        "type": "string",
+        "enum": [
+          "new_account",
+          "existing_account"
+        ]
+      },
+      "ClaimOwnerRequest": {
+        "type": "object",
+        "description": "Bootstrap proof comes from adminBearer; existing accounts must prove their own session.",
+        "required": [
+          "kind"
+        ],
+        "properties": {
+          "email": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "kind": {
+            "$ref": "#/components/schemas/ClaimOwnerKind"
+          },
+          "password": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "session_token": {
+            "type": [
+              "string",
+              "null"
+            ]
           }
         },
         "additionalProperties": false
@@ -935,6 +1273,47 @@ export const schemaDocument = {
         },
         "additionalProperties": false
       },
+      "CreateInvitationRequest": {
+        "type": "object",
+        "required": [
+          "email",
+          "role",
+          "expires_in_seconds"
+        ],
+        "properties": {
+          "email": {
+            "type": "string"
+          },
+          "expires_in_seconds": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          },
+          "role": {
+            "$ref": "#/components/schemas/AccountRole"
+          }
+        },
+        "additionalProperties": false
+      },
+      "CreateInvitationResponse": {
+        "type": "object",
+        "required": [
+          "invitation",
+          "invitation_token"
+        ],
+        "properties": {
+          "invitation": {
+            "$ref": "#/components/schemas/AccountInvitation"
+          },
+          "invitation_token": {
+            "type": "string",
+            "maxLength": 68,
+            "minLength": 68,
+            "pattern": "^mwi_[0-9a-f]{64}$"
+          }
+        },
+        "additionalProperties": false
+      },
       "CreateManagedEnrollmentTokenRequest": {
         "type": "object",
         "required": [
@@ -966,6 +1345,43 @@ export const schemaDocument = {
             "maxLength": 128,
             "minLength": 1,
             "pattern": "[^\\u0009-\\u000D\\u0020\\u0085\\u00A0\\u1680\\u2000-\\u200A\\u2028\\u2029\\u202F\\u205F\\u3000]"
+          }
+        },
+        "additionalProperties": false
+      },
+      "CreatePasswordResetRequest": {
+        "type": "object",
+        "required": [
+          "user_id",
+          "expires_in_seconds"
+        ],
+        "properties": {
+          "expires_in_seconds": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          },
+          "user_id": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": false
+      },
+      "CreatePasswordResetResponse": {
+        "type": "object",
+        "required": [
+          "reset",
+          "reset_token"
+        ],
+        "properties": {
+          "reset": {
+            "$ref": "#/components/schemas/AccountPasswordReset"
+          },
+          "reset_token": {
+            "type": "string",
+            "maxLength": 68,
+            "minLength": 68,
+            "pattern": "^mwr_[0-9a-f]{64}$"
           }
         },
         "additionalProperties": false
@@ -1266,6 +1682,47 @@ export const schemaDocument = {
           },
           "transport": {
             "$ref": "#/components/schemas/ConnectionTransport"
+          }
+        },
+        "additionalProperties": false
+      },
+      "LoginRequest": {
+        "type": "object",
+        "required": [
+          "email",
+          "password"
+        ],
+        "properties": {
+          "email": {
+            "type": "string",
+            "maxLength": 254,
+            "minLength": 3
+          },
+          "password": {
+            "type": "string",
+            "description": "Controller enforces 12–1024 UTF-8 bytes. JSON Schema string lengths count\nUnicode code points, so a byte minimum must not be emitted as minLength.",
+            "maxLength": 1024
+          }
+        },
+        "additionalProperties": false
+      },
+      "LoginResponse": {
+        "type": "object",
+        "description": "Returned only after durable session commit; the Web server keeps it private.",
+        "required": [
+          "session_token",
+          "expires_at"
+        ],
+        "properties": {
+          "expires_at": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "session_token": {
+            "type": "string",
+            "maxLength": 68,
+            "minLength": 68,
+            "pattern": "^mws_[0-9a-f]{64}$"
           }
         },
         "additionalProperties": false
@@ -2109,6 +2566,45 @@ export const schemaDocument = {
         },
         "additionalProperties": false
       },
+      "NodeOwnership": {
+        "type": "object",
+        "required": [
+          "node_id",
+          "network_id",
+          "membership_id"
+        ],
+        "properties": {
+          "membership_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Null means legacy-unassigned; tags remain ordinary node attributes."
+          },
+          "network_id": {
+            "type": "string"
+          },
+          "node_id": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": false
+      },
+      "NodeOwnershipList": {
+        "type": "object",
+        "required": [
+          "nodes"
+        ],
+        "properties": {
+          "nodes": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/NodeOwnership"
+            }
+          }
+        },
+        "additionalProperties": false
+      },
       "NodeSummary": {
         "type": "object",
         "description": "Durable control-plane identity. Last contact is not tunnel health.",
@@ -2522,6 +3018,48 @@ export const schemaDocument = {
         },
         "additionalProperties": false
       },
+      "RedeemPasswordResetRequest": {
+        "type": "object",
+        "required": [
+          "reset_token",
+          "new_password"
+        ],
+        "properties": {
+          "new_password": {
+            "type": "string"
+          },
+          "reset_token": {
+            "type": "string",
+            "maxLength": 68,
+            "minLength": 68,
+            "pattern": "^mwr_[0-9a-f]{64}$"
+          }
+        },
+        "additionalProperties": false
+      },
+      "RegisterInvitationRequest": {
+        "type": "object",
+        "required": [
+          "invitation_token",
+          "email",
+          "password"
+        ],
+        "properties": {
+          "email": {
+            "type": "string"
+          },
+          "invitation_token": {
+            "type": "string",
+            "maxLength": 68,
+            "minLength": 68,
+            "pattern": "^mwi_[0-9a-f]{64}$"
+          },
+          "password": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": false
+      },
       "ReportConnectionRuntimeRequest": {
         "type": "object",
         "required": [
@@ -2686,6 +3224,30 @@ export const schemaDocument = {
         },
         "additionalProperties": false
       },
+      "RevokeAccountSessionsRequest": {
+        "type": "object",
+        "required": [
+          "user_id"
+        ],
+        "properties": {
+          "user_id": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": false
+      },
+      "RevokeInvitationRequest": {
+        "type": "object",
+        "required": [
+          "invitation_id"
+        ],
+        "properties": {
+          "invitation_id": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": false
+      },
       "RevokeNodeRequest": {
         "type": "object",
         "required": [
@@ -2708,6 +3270,18 @@ export const schemaDocument = {
         "properties": {
           "node": {
             "$ref": "#/components/schemas/NodeSummary"
+          }
+        },
+        "additionalProperties": false
+      },
+      "RevokePasswordResetRequest": {
+        "type": "object",
+        "required": [
+          "reset_id"
+        ],
+        "properties": {
+          "reset_id": {
+            "type": "string"
           }
         },
         "additionalProperties": false
@@ -2876,6 +3450,22 @@ export const schemaDocument = {
           },
           "settings": {
             "$ref": "#/components/schemas/ManagedListenerSettings"
+          }
+        },
+        "additionalProperties": false
+      },
+      "SaveMembershipRequest": {
+        "type": "object",
+        "required": [
+          "user_id",
+          "role"
+        ],
+        "properties": {
+          "role": {
+            "$ref": "#/components/schemas/AccountMembershipChange"
+          },
+          "user_id": {
+            "type": "string"
           }
         },
         "additionalProperties": false

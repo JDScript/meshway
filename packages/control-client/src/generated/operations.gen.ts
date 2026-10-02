@@ -1,8 +1,8 @@
 // Generated from the controller OpenAPI by scripts/generate-protocol.mjs. Do not edit.
 
 import { request } from "../transport.ts";
-import type { AcknowledgeAgentConnectionsRequest, AcknowledgeAgentConnectionsResponse, AcknowledgeConfigurationRequest, AcknowledgeConfigurationResponse, AgentConnectionsSnapshot, AgentDataplaneSnapshot, AgentDnsSnapshot, AgentManagedConnectionsSnapshot, AgentManagedDataplaneSnapshot, AgentNodeResponse, AuthorizeDeviceRequest, AuthorizeDeviceResponse, BeginConnectionRuntimeRequest, BeginConnectionRuntimeResponse, ConfigurationSnapshot, ConnectionRuntimesSnapshot, ConnectionsSnapshot, CreateEnrollmentTokenRequest, CreateEnrollmentTokenResponse, CreateManagedEnrollmentTokenRequest, CreateNetworkRequest, EndpointDiscoveriesSnapshot, EnrollAgentRequest, ExchangeDeviceRequest, GetConnectionRuntimeEpochResponse, HeartbeatRequest, ManagedListenersSnapshot, MeshAccessSnapshot, NetworkList, NetworkSnapshot, NodeList, Overview, PolicySnapshot, PreviewFlowRequest, PreviewFlowResponse, PreviewPolicyRequest, PreviewPolicyResponse, PublishConnectionIdentityRequest, PublishConnectionIdentityResponse, PublishManagedTransportCapabilitiesRequest, PublishManagedTransportCapabilitiesResponse, ReportConnectionRuntimeRequest, ReportConnectionRuntimeResponse, ReportEndpointDiscoveryRequest, ReportEndpointDiscoveryResponse, RevokeNodeRequest, RevokeNodeResponse, SaveConnectionsRequest, SaveManagedListenerRequest, SaveMeshAccessRequest, SaveNetworkRequest, SavePolicyRequest, SaveTagsRequest, SetNodeCountryRequest, SetNodeTagsRequest, TagSnapshot } from "./types.gen.ts";
-import { zAcknowledgeAgentConnectionsRequest, zAcknowledgeAgentConnectionsResponse, zAcknowledgeConfigurationRequest, zAcknowledgeConfigurationResponse, zAgentConnectionsSnapshot, zAgentDataplaneSnapshot, zAgentDnsSnapshot, zAgentManagedConnectionsSnapshot, zAgentManagedDataplaneSnapshot, zAgentNodeResponse, zAuthorizeDeviceRequest, zAuthorizeDeviceResponse, zBeginConnectionRuntimeRequest, zBeginConnectionRuntimeResponse, zConfigurationSnapshot, zConnectionRuntimesSnapshot, zConnectionsSnapshot, zCreateEnrollmentTokenRequest, zCreateEnrollmentTokenResponse, zCreateManagedEnrollmentTokenRequest, zCreateNetworkRequest, zEndpointDiscoveriesSnapshot, zEnrollAgentRequest, zExchangeDeviceRequest, zGetConnectionRuntimeEpochResponse, zHeartbeatRequest, zManagedListenersSnapshot, zMeshAccessSnapshot, zNetworkList, zNetworkSnapshot, zNodeList, zOverview, zPolicySnapshot, zPreviewFlowRequest, zPreviewFlowResponse, zPreviewPolicyRequest, zPreviewPolicyResponse, zPublishConnectionIdentityRequest, zPublishConnectionIdentityResponse, zPublishManagedTransportCapabilitiesRequest, zPublishManagedTransportCapabilitiesResponse, zReportConnectionRuntimeRequest, zReportConnectionRuntimeResponse, zReportEndpointDiscoveryRequest, zReportEndpointDiscoveryResponse, zRevokeNodeRequest, zRevokeNodeResponse, zSaveConnectionsRequest, zSaveManagedListenerRequest, zSaveMeshAccessRequest, zSaveNetworkRequest, zSavePolicyRequest, zSaveTagsRequest, zSetNodeCountryRequest, zSetNodeTagsRequest, zTagSnapshot } from "./zod.gen.ts";
+import type { AcceptInvitationRequest, AccountInvitation, AccountInvitations, AccountMembers, AccountMembership, AccountPasswordReset, AccountPasswordResets, AccountReceipt, AccountSession, AcknowledgeAgentConnectionsRequest, AcknowledgeAgentConnectionsResponse, AcknowledgeConfigurationRequest, AcknowledgeConfigurationResponse, AgentConnectionsSnapshot, AgentDataplaneSnapshot, AgentDnsSnapshot, AgentManagedConnectionsSnapshot, AgentManagedDataplaneSnapshot, AgentNodeResponse, AuthorizeDeviceRequest, AuthorizeDeviceResponse, BeginConnectionRuntimeRequest, BeginConnectionRuntimeResponse, ChangePasswordRequest, ClaimNodeOwnershipRequest, ClaimOwnerRequest, ConfigurationSnapshot, ConnectionRuntimesSnapshot, ConnectionsSnapshot, CreateEnrollmentTokenRequest, CreateEnrollmentTokenResponse, CreateInvitationRequest, CreateInvitationResponse, CreateManagedEnrollmentTokenRequest, CreateNetworkRequest, CreatePasswordResetRequest, CreatePasswordResetResponse, EndpointDiscoveriesSnapshot, EnrollAgentRequest, ExchangeDeviceRequest, GetConnectionRuntimeEpochResponse, HeartbeatRequest, LoginRequest, LoginResponse, ManagedListenersSnapshot, MeshAccessSnapshot, NetworkList, NetworkSnapshot, NodeList, NodeOwnershipList, Overview, PolicySnapshot, PreviewFlowRequest, PreviewFlowResponse, PreviewPolicyRequest, PreviewPolicyResponse, PublishConnectionIdentityRequest, PublishConnectionIdentityResponse, PublishManagedTransportCapabilitiesRequest, PublishManagedTransportCapabilitiesResponse, RedeemPasswordResetRequest, RegisterInvitationRequest, ReportConnectionRuntimeRequest, ReportConnectionRuntimeResponse, ReportEndpointDiscoveryRequest, ReportEndpointDiscoveryResponse, RevokeAccountSessionsRequest, RevokeInvitationRequest, RevokeNodeRequest, RevokeNodeResponse, RevokePasswordResetRequest, SaveConnectionsRequest, SaveManagedListenerRequest, SaveMembershipRequest, SaveMeshAccessRequest, SaveNetworkRequest, SavePolicyRequest, SaveTagsRequest, SetNodeCountryRequest, SetNodeTagsRequest, TagSnapshot } from "./types.gen.ts";
+import { zAcceptInvitationRequest, zAccountInvitation, zAccountInvitations, zAccountMembers, zAccountMembership, zAccountPasswordReset, zAccountPasswordResets, zAccountReceipt, zAccountSession, zAcknowledgeAgentConnectionsRequest, zAcknowledgeAgentConnectionsResponse, zAcknowledgeConfigurationRequest, zAcknowledgeConfigurationResponse, zAgentConnectionsSnapshot, zAgentDataplaneSnapshot, zAgentDnsSnapshot, zAgentManagedConnectionsSnapshot, zAgentManagedDataplaneSnapshot, zAgentNodeResponse, zAuthorizeDeviceRequest, zAuthorizeDeviceResponse, zBeginConnectionRuntimeRequest, zBeginConnectionRuntimeResponse, zChangePasswordRequest, zClaimNodeOwnershipRequest, zClaimOwnerRequest, zConfigurationSnapshot, zConnectionRuntimesSnapshot, zConnectionsSnapshot, zCreateEnrollmentTokenRequest, zCreateEnrollmentTokenResponse, zCreateInvitationRequest, zCreateInvitationResponse, zCreateManagedEnrollmentTokenRequest, zCreateNetworkRequest, zCreatePasswordResetRequest, zCreatePasswordResetResponse, zEndpointDiscoveriesSnapshot, zEnrollAgentRequest, zExchangeDeviceRequest, zGetConnectionRuntimeEpochResponse, zHeartbeatRequest, zLoginRequest, zLoginResponse, zManagedListenersSnapshot, zMeshAccessSnapshot, zNetworkList, zNetworkSnapshot, zNodeList, zNodeOwnershipList, zOverview, zPolicySnapshot, zPreviewFlowRequest, zPreviewFlowResponse, zPreviewPolicyRequest, zPreviewPolicyResponse, zPublishConnectionIdentityRequest, zPublishConnectionIdentityResponse, zPublishManagedTransportCapabilitiesRequest, zPublishManagedTransportCapabilitiesResponse, zRedeemPasswordResetRequest, zRegisterInvitationRequest, zReportConnectionRuntimeRequest, zReportConnectionRuntimeResponse, zReportEndpointDiscoveryRequest, zReportEndpointDiscoveryResponse, zRevokeAccountSessionsRequest, zRevokeInvitationRequest, zRevokeNodeRequest, zRevokeNodeResponse, zRevokePasswordResetRequest, zSaveConnectionsRequest, zSaveManagedListenerRequest, zSaveMembershipRequest, zSaveMeshAccessRequest, zSaveNetworkRequest, zSavePolicyRequest, zSaveTagsRequest, zSetNodeCountryRequest, zSetNodeTagsRequest, zTagSnapshot } from "./zod.gen.ts";
 
 export async function publishConnectionIdentityOperation(baseUrl: string, token: string, body: PublishConnectionIdentityRequest): Promise<PublishConnectionIdentityResponse> {
   return request(baseUrl, { method: "POST", path: "/api/v1/agent/connection-identity", token, body: zPublishConnectionIdentityRequest.parse(body) }, zPublishConnectionIdentityResponse);
@@ -68,8 +68,56 @@ export async function heartbeatAgentOperation(baseUrl: string, token: string, bo
   return request(baseUrl, { method: "POST", path: "/api/v1/agents/heartbeat", token, body: zHeartbeatRequest.parse(body) }, zAgentNodeResponse);
 }
 
+export async function acceptAccountInvitationOperation(baseUrl: string, token: string, body: AcceptInvitationRequest): Promise<AccountMembership> {
+  return request(baseUrl, { method: "POST", path: "/api/v1/auth/invitations/accept", token, body: zAcceptInvitationRequest.parse(body) }, zAccountMembership);
+}
+
+export async function registerInvitedAccountOperation(baseUrl: string, body: RegisterInvitationRequest): Promise<AccountMembership> {
+  return request(baseUrl, { method: "POST", path: "/api/v1/auth/invitations/register", body: zRegisterInvitationRequest.parse(body) }, zAccountMembership);
+}
+
+export async function loginAccountOperation(baseUrl: string, body: LoginRequest): Promise<LoginResponse> {
+  return request(baseUrl, { method: "POST", path: "/api/v1/auth/login", body: zLoginRequest.parse(body) }, zLoginResponse);
+}
+
+export async function logoutAccountOperation(baseUrl: string, token: string): Promise<AccountReceipt> {
+  return request(baseUrl, { method: "POST", path: "/api/v1/auth/logout", token }, zAccountReceipt);
+}
+
+export async function listAccountPasswordResetsOperation(baseUrl: string, token: string): Promise<AccountPasswordResets> {
+  return request(baseUrl, { method: "GET", path: "/api/v1/auth/password-resets", token }, zAccountPasswordResets);
+}
+
+export async function createAccountPasswordResetOperation(baseUrl: string, token: string, body: CreatePasswordResetRequest): Promise<CreatePasswordResetResponse> {
+  return request(baseUrl, { method: "POST", path: "/api/v1/auth/password-resets", token, body: zCreatePasswordResetRequest.parse(body) }, zCreatePasswordResetResponse);
+}
+
+export async function redeemAccountPasswordResetOperation(baseUrl: string, body: RedeemPasswordResetRequest): Promise<AccountReceipt> {
+  return request(baseUrl, { method: "POST", path: "/api/v1/auth/password-resets/redeem", body: zRedeemPasswordResetRequest.parse(body) }, zAccountReceipt);
+}
+
+export async function revokeAccountPasswordResetOperation(baseUrl: string, token: string, body: RevokePasswordResetRequest): Promise<AccountReceipt> {
+  return request(baseUrl, { method: "POST", path: "/api/v1/auth/password-resets/revoke", token, body: zRevokePasswordResetRequest.parse(body) }, zAccountReceipt);
+}
+
+export async function getAccountPasswordResetOperation(baseUrl: string, token: string, reset_id: string): Promise<AccountPasswordReset> {
+  return request(baseUrl, { method: "GET", path: `/api/v1/auth/password-resets/${encodeURIComponent(reset_id)}`, token }, zAccountPasswordReset);
+}
+
+export async function getAccountSessionOperation(baseUrl: string, token: string): Promise<AccountSession> {
+  return request(baseUrl, { method: "GET", path: "/api/v1/auth/session", token }, zAccountSession);
+}
+
+export async function revokeAccountSessionsOperation(baseUrl: string, token: string, body: RevokeAccountSessionsRequest): Promise<AccountReceipt> {
+  return request(baseUrl, { method: "POST", path: "/api/v1/auth/sessions/revoke", token, body: zRevokeAccountSessionsRequest.parse(body) }, zAccountReceipt);
+}
+
 export async function exchangeDeviceOperation(baseUrl: string, token: string, body: ExchangeDeviceRequest): Promise<AgentNodeResponse> {
   return request(baseUrl, { method: "POST", path: "/api/v1/devices/exchange", token, body: zExchangeDeviceRequest.parse(body) }, zAgentNodeResponse);
+}
+
+export async function changeAccountPasswordOperation(baseUrl: string, token: string, body: ChangePasswordRequest): Promise<AccountReceipt> {
+  return request(baseUrl, { method: "POST", path: "/api/v1/me/password", token, body: zChangePasswordRequest.parse(body) }, zAccountReceipt);
 }
 
 export async function listNetworksOperation(baseUrl: string, token: string): Promise<NetworkList> {
@@ -116,6 +164,22 @@ export async function previewFlowOperation(baseUrl: string, token: string, netwo
   return request(baseUrl, { method: "POST", path: `/api/v1/networks/${encodeURIComponent(network_id)}/flows/preview`, token, body: zPreviewFlowRequest.parse(body) }, zPreviewFlowResponse);
 }
 
+export async function listAccountInvitationsOperation(baseUrl: string, token: string, network_id: string): Promise<AccountInvitations> {
+  return request(baseUrl, { method: "GET", path: `/api/v1/networks/${encodeURIComponent(network_id)}/invitations`, token }, zAccountInvitations);
+}
+
+export async function createAccountInvitationOperation(baseUrl: string, token: string, network_id: string, body: CreateInvitationRequest): Promise<CreateInvitationResponse> {
+  return request(baseUrl, { method: "POST", path: `/api/v1/networks/${encodeURIComponent(network_id)}/invitations`, token, body: zCreateInvitationRequest.parse(body) }, zCreateInvitationResponse);
+}
+
+export async function revokeAccountInvitationOperation(baseUrl: string, token: string, network_id: string, body: RevokeInvitationRequest): Promise<AccountReceipt> {
+  return request(baseUrl, { method: "POST", path: `/api/v1/networks/${encodeURIComponent(network_id)}/invitations/revoke`, token, body: zRevokeInvitationRequest.parse(body) }, zAccountReceipt);
+}
+
+export async function getAccountInvitationOperation(baseUrl: string, token: string, network_id: string, invitation_id: string): Promise<AccountInvitation> {
+  return request(baseUrl, { method: "GET", path: `/api/v1/networks/${encodeURIComponent(network_id)}/invitations/${encodeURIComponent(invitation_id)}`, token }, zAccountInvitation);
+}
+
 export async function createManagedEnrollmentTokenOperation(baseUrl: string, token: string, network_id: string, body: CreateManagedEnrollmentTokenRequest): Promise<CreateEnrollmentTokenResponse> {
   return request(baseUrl, { method: "POST", path: `/api/v1/networks/${encodeURIComponent(network_id)}/managed-enrollment-tokens`, token, body: zCreateManagedEnrollmentTokenRequest.parse(body) }, zCreateEnrollmentTokenResponse);
 }
@@ -128,12 +192,32 @@ export async function saveManagedListenerOperation(baseUrl: string, token: strin
   return request(baseUrl, { method: "POST", path: `/api/v1/networks/${encodeURIComponent(network_id)}/managed-listeners`, token, body: zSaveManagedListenerRequest.parse(body) }, zManagedListenersSnapshot);
 }
 
+export async function listAccountMembersOperation(baseUrl: string, token: string, network_id: string): Promise<AccountMembers> {
+  return request(baseUrl, { method: "GET", path: `/api/v1/networks/${encodeURIComponent(network_id)}/members`, token }, zAccountMembers);
+}
+
+export async function leaveAccountNetworkOperation(baseUrl: string, token: string, network_id: string): Promise<AccountReceipt> {
+  return request(baseUrl, { method: "POST", path: `/api/v1/networks/${encodeURIComponent(network_id)}/members/leave`, token }, zAccountReceipt);
+}
+
+export async function saveAccountMemberOperation(baseUrl: string, token: string, network_id: string, body: SaveMembershipRequest): Promise<AccountReceipt> {
+  return request(baseUrl, { method: "POST", path: `/api/v1/networks/${encodeURIComponent(network_id)}/members/save`, token, body: zSaveMembershipRequest.parse(body) }, zAccountReceipt);
+}
+
 export async function getNetworkOperation(baseUrl: string, token: string, network_id: string): Promise<NetworkSnapshot> {
   return request(baseUrl, { method: "GET", path: `/api/v1/networks/${encodeURIComponent(network_id)}/network`, token }, zNetworkSnapshot);
 }
 
 export async function saveNetworkOperation(baseUrl: string, token: string, network_id: string, body: SaveNetworkRequest): Promise<NetworkSnapshot> {
   return request(baseUrl, { method: "POST", path: `/api/v1/networks/${encodeURIComponent(network_id)}/network`, token, body: zSaveNetworkRequest.parse(body) }, zNetworkSnapshot);
+}
+
+export async function listNodeOwnershipOperation(baseUrl: string, token: string, network_id: string): Promise<NodeOwnershipList> {
+  return request(baseUrl, { method: "GET", path: `/api/v1/networks/${encodeURIComponent(network_id)}/node-ownership`, token }, zNodeOwnershipList);
+}
+
+export async function claimNodeOwnershipOperation(baseUrl: string, token: string, network_id: string, body: ClaimNodeOwnershipRequest): Promise<AccountReceipt> {
+  return request(baseUrl, { method: "POST", path: `/api/v1/networks/${encodeURIComponent(network_id)}/node-ownership/claim`, token, body: zClaimNodeOwnershipRequest.parse(body) }, zAccountReceipt);
 }
 
 export async function listNodesOperation(baseUrl: string, token: string, network_id: string): Promise<NodeList> {
@@ -154,6 +238,10 @@ export async function setNodeTagsOperation(baseUrl: string, token: string, netwo
 
 export async function getOverviewOperation(baseUrl: string, token: string, network_id: string): Promise<Overview> {
   return request(baseUrl, { method: "GET", path: `/api/v1/networks/${encodeURIComponent(network_id)}/overview`, token }, zOverview);
+}
+
+export async function claimFirstOwnerOperation(baseUrl: string, token: string, network_id: string, body: ClaimOwnerRequest): Promise<AccountMembership> {
+  return request(baseUrl, { method: "POST", path: `/api/v1/networks/${encodeURIComponent(network_id)}/owner-claim`, token, body: zClaimOwnerRequest.parse(body) }, zAccountMembership);
 }
 
 export async function getPolicyOperation(baseUrl: string, token: string, network_id: string): Promise<PolicySnapshot> {
