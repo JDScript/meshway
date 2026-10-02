@@ -26,7 +26,7 @@ Rust 控制面与 agent、Next.js + shadcn/ui 控制台、VitePress 文档站。
 - 用户明确强调代码洁癖：源码组织、命名和职责须干净可解释；关注 `apps/controller/src/store` 中散落的 tests、`policy_v3` 与 `schema_v*`。完整 dump / 审查不等于已完成源码清理，不再混报。生产领域模块按职责命名，避免阶段名、临时修复名和重复实现。当前权限、数据完整性、所有权与生命周期回归须保留；历史迁移与旧模式 fixture 可随最新明确废弃的兼容层一并删除。
 - 全仓 Rust 手写代码统一模块与测试组织：单文件模块 `foo.rs`；有子模块使用 `foo/mod.rs`，避免 `foo.rs` 旁再开仅含子测试的 `foo/`。私有实现单元测试作为所属模块的 `#[cfg(test)]` 子模块；公共 API 黑盒测试放 crate 顶层 `tests/`，入口遵守 Cargo 自动发现（`tests/*.rs` 或 `tests/<suite>/main.rs`），共享 helper 放子目录。不得为搬测试扩大生产可见性、复制实现或用临时 path/autotests 配置绕过边界；生成代码与 vendor 按各自权威来源维护。
 - DNS、TUN、underlay、连接运行、节点执行、诊断与生成控制客户端分别位于 `agent-dns`、`agent-tun`、`agent-underlay`、`agent-connections`、`agent-dataplane`、`agent-diagnostics`、`control-client`。库不反向依赖 App，底层加密/转发仍由 `dataplane` 唯一实现。Apple core 直接消费 control-client，不再为 HTTP 客户端依赖 Agent。
-- Connections 库不持有 TUN/上层 PacketPlan；Diagnostics 经窄 provider 获取状态/探测。App 负责跨组件编排、HTTP、私有身份/profile 文件、CLI/IPC 投影与日志，underlay 库负责 socket/capture/sink/journal。拥有的 TCP 也须经过实际用途/代际/namespace/mark acceptance；拆分不得静默开启 TLS 默认 features 或扩大生产 test helper 可见性。当前单一 policy 新契约仍需同步这些消费者，不把库提取验收当新契约已交付。
+- Connections 库不持有 TUN/上层 PacketPlan；Diagnostics 经窄 provider 获取状态/探测。App 负责跨组件编排、HTTP、私有身份/profile 文件、CLI/IPC 投影与日志，underlay 库负责 socket/capture/sink/journal。拥有的 TCP 也须经过实际用途/代际/namespace/mark acceptance；拆分不得静默开启 TLS 默认 features 或扩大生产 test helper 可见性。Agent 已统一消费当前必填 execution snapshot，库存不携带业务授权；单一 policy 的正常三节点 Linux TUN、必经中继、撤回与同身份恢复已验，自动组网和完整出口仍未交付。
 - 文档只保留当前用法、架构、契约和真实未完成项；合并重复说明，删除过时交接、逐次修复流水账和已被权威生成物替代的旧 dump。Git 历史与私有原始证据负责追溯，不持续新建清理报告 / changelog；必要的现行安全和兼容边界保留。
 - 前后端按契约推进真实纵向功能；空状态和错误状态必须真实，不伪造节点、流量、健康状态。
 - 将提案、用户已确认需求和已实现功能明确区分。控制面注册和心跳不代表隧道已建立。
@@ -97,6 +97,6 @@ Rust 控制面与 agent、Next.js + shadcn/ui 控制台、VitePress 文档站。
 - 所有后续 worktree 统一创建在本仓库 `.worktree/<任务名>`，不再散放上级目录。独立任务完成、提交已整合且无未提交 / 未跟踪工作后及时移除 worktree；保留分支和测量产物。活跃任务须在不影响进程与构建的安全边界迁移，不能直接删改其目录。
 - 当前状态：`4c9a5be` 同身份直连 / 四地有序路径恢复复验 PASS，测试资源已清理，私有身份 / 源配置 / 旧 FAIL 及失败窗口保留。远端持久 latency history 查询未验；KR→NYC 底层 FIB 经 WARP，不能当公网直连或打洞证据。
 - Controller 按 `http/`、`contracts/`、`accounts/`、`store/` 分责；`store/schema/` 拥有当前 schema 原子初始化与结构/数据完整性校验，历史升级链已删除，普通启动不自动重置。共享测试辅助在 `test_support/`；网络存在性类型位于中性 `network_scope`，不代替权限；单一策略源/CAS与执行epoch/ACK分别归 `network_policy`、`mesh_execution`。不为测试读取SQL扩大生产可见性。
-- 当前并行工作：单一 policy 的 Agent 消费者与真实 Linux 整合验收、按实际承载能力的自动建连 / 打洞。状态型业务回包、完整出口 / 域名分流、平台默认 STUN、GeoIP 与自动地区方案尚未交付；Apple 新增开发暂停，console 由用户独立工作流维护。未审定候选不部署。
+- 当前主线：单一 policy、当前 schema 初始化及 Agent 消费者已通过独立审查与正常 Linux 整合验收；旧开发服务切换须显式重置和重新接入，部署状态单独核对。后续推进按实际承载能力的自动建连 / 打洞；状态型业务回包、完整出口 / 域名分流、平台默认 STUN、GeoIP 与自动地区方案尚未交付。Apple 新增开发暂停，console 由用户独立工作流维护。未审定候选不部署。
 - 性能本批已结束，不整分支部署 offload / NEON 实验或扩大矩阵；未知归属或仍有进程 / 未提交工作的树须保留。
 - 独立完成的工作形成清晰提交。提交前检查生成产物、文档和实际运行命令一致。

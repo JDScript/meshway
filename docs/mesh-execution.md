@@ -1,6 +1,6 @@
 # IPv4 Mesh 执行合同
 
-Controller 只保存当前四层 `NetworkPolicy`。纯编译器与正常 Agent/TUN 的 IPv4 Mesh 执行边界已接通；新单模型合同的消费者整合与正常 Linux 包流仍须验收，编译或 fixture 通过不替代真实组网。
+Controller 只保存当前四层 `NetworkPolicy`。Agent 统一消费当前执行快照，已通过正常三节点 Linux TUN 的直连、必经中继、grants 撤回、lease sink 与同身份恢复验收。该固定可达环境的包流验证不代表自动组网或 NAT 打洞已交付。
 
 ## 源与发布
 

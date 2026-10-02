@@ -31,7 +31,7 @@ Controller 维护与编译控制意图，不默认中继业务流量。Agent 执
 
 VLESS TCP/TLS与WebSocket/TLS listener/材料由平台管理。四层NetworkPolicy是唯一源，Controller同事务publication投影稳定NodeMeshExecution；手工候选尚待自动组网收敛。完整出口、状态型Mesh回包、域名上下文、IPv6 overlay、打洞与真实trace仍未完成。
 
-Linux 正常接入、控制同步与 TUN 生命周期已接受保护 socket、HTTP/TLS、bootstrap DNS 和 RPDB owner；同地址普通业务不获全局豁免，退出保留 Mesh sink。隔离包流与恢复验证不代表远端已部署或所有宿主/VPN均受支持。当前继续 Agent 领域库收敛、自动组网 / 打洞及跨地域 Docker 验收；旧 Web 由新 console 替代，Apple 新增开发暂停，见[里程碑](/milestones)。
+Linux 正常接入、控制同步与 TUN 生命周期已接受保护 socket、HTTP/TLS、bootstrap DNS 和 RPDB owner；同地址普通业务不获全局豁免，退出保留 Mesh sink。隔离包流与恢复验证不代表远端已部署或所有宿主/VPN均受支持。Agent 领域库已独立并统一消费当前执行合同，后续推进自动组网 / 打洞及跨地域 Docker 验收；旧 Web 由新 console 替代，Apple 新增开发暂停，见[里程碑](/milestones)。
 
 ## 证据与生命周期
 

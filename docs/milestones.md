@@ -12,6 +12,7 @@
 | 数据面 | 路径绑定 Noise E2E、反向 dial、节点 DNS、daemon 诊断；认证有界 E2E resync 与运行报告/历史槽位恢复修复 |
 | 观测 | 真实邻接 probe、滚动 latency history 存储/查询、UDP carrier socket STUN 与有期限上报；端到端路径测量未实现 |
 | 系统保护 | Linux 正常接入/daemon/TUN 使用用途受限 socket、独立 controller/carrier 与 Journal v3；隔离 namespace 内包流、退出/恢复及资源保留已验，远端未部署 |
+| Agent 领域库 | DNS、TUN、underlay、连接、节点执行、诊断与生成控制客户端已独立，统一消费当前 policy 执行合同 |
 | 远端固定链路 | 固定 `4c9a5be` 同身份直连与四地有序路径恢复复验 PASS；[证据及限制](/linux-field-validation) |
 | 用户入口 | 既有 Web 账户/成员/节点配置可用于联调；Apple 多接入/Keychain/浏览器接入和库存已实现，隧道未实现 |
 
@@ -19,9 +20,8 @@ ACK 只表示校验与持久保存；心跳、配置候选、逻辑路径和邻�
 
 ## 当前工作
 
-1. **Agent 领域库**：DNS、TUN、underlay、连接、节点数据面执行、诊断与生成控制客户端已独立，保持[正常保护生命周期](/underlay-routing)；接下来同步单一 policy 的当前 Node 合同。
+1. **开发部署**：单一 policy、Agent 消费者和正常三节点 TUN 已通过整合验收。旧开发库须显式重置并重新接入，实际服务部署与源码状态分别核对。
 2. **nat-connectivity**：transport-neutral 候选/协调第一步，后续串入获准候选、认证探测、按需邻接与主备。[承载扩展](/transport-registry)。尚未交付真实自动建连或打洞闭环。
-3. **单一 policy**：按开发期决定收敛为当前策略模型、统一 `/policy`，删除旧模式兼容与历史 schema 升级链。契约、当前消费者及新 schema 准备好后，协调重置本机开发数据并部署。
 
 ## 首版剩余工作
 
