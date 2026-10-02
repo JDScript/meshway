@@ -20,6 +20,7 @@ export function GlassDrawer({
   onDismiss,
   side,
   label,
+  labelledBy,
   dismissOnOutside = true,
   className,
   style,
@@ -30,6 +31,8 @@ export function GlassDrawer({
   side: "right" | "bottom"
   /** Names the drawer when it has no title of its own. */
   label?: string
+  /** The id of the heading that names it. */
+  labelledBy?: string
   dismissOnOutside?: boolean
   className?: string
   style?: CSSProperties
@@ -63,6 +66,7 @@ export function GlassDrawer({
         initialFocus={false}
         finalFocus={false}
         aria-label={label}
+        aria-labelledby={labelledBy}
         className={cn(
           "glass text-foreground data-ending-style:opacity-100",
           className

@@ -2,6 +2,7 @@ import {
   getAccountSession,
   getConnectionRuntimes,
   getConnections,
+  getNetwork,
   listNetworks,
   listNodes,
 } from "@meshway/control-client"
@@ -23,6 +24,14 @@ export const networksQuery = () =>
   queryOptions({
     queryKey: ["networks"],
     queryFn: () => authed(listNetworks),
+    staleTime: 30_000,
+  })
+
+/** The network's own settings (name, DNS) and immutable pools, with their revision. */
+export const networkQuery = (networkId: string) =>
+  queryOptions({
+    queryKey: ["network", networkId, "network"],
+    queryFn: () => authed((base, token) => getNetwork(base, token, networkId)),
     staleTime: 30_000,
   })
 

@@ -74,5 +74,18 @@
   "node_tab_links": "连接",
   "node_not_found": "节点不存在",
   "node_registered": "注册于",
-  "node_id": "节点 ID"
+  "node_id": "节点 ID",
+  "nav_settings": "设置",
+  "commit_label": "未保存的更改",
+  "commit_unsaved": "未保存的更改",
+  "commit_outdated": "已被其他人更新",
+  "commit_discard": "放弃",
+  "commit_save": "保存",
+  "commit_overwrite": "覆盖保存",
+  "commit_saved": "已保存",
+  "failure_forbidden": "没有权限",
+  "failure_conflict": "已被其他人更新，未保存",
+  "failure_invalid": "未通过校验，未保存",
+  "failure_missing": "已不存在",
+  "failure_unknown": "请求失败，结果未知"
 }

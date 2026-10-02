@@ -1,10 +1,11 @@
 import { createFileRoute } from "@tanstack/react-router"
 
 import { prefetchOverview } from "@/features/network/prefetch"
-import { zPeekSearch } from "@/features/shell/url"
+import { zPeekSearch } from "@/features/overview/url"
 
-/** The globe on its own. The network shell draws every surface; see `$network.tsx`. */
+/** The globe on its own; `features/overview/page.tsx` draws the peek. */
 export const Route = createFileRoute("/_authed/networks/$network/overview")({
+  staticData: { page: "overview" },
   validateSearch: zPeekSearch,
   loader: ({ context, params }) =>
     prefetchOverview(context.queryClient, params.network),

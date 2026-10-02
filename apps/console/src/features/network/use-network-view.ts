@@ -1,9 +1,10 @@
 import { useQuery } from "@tanstack/react-query"
-import { useMemo } from "react"
+import { createContext, useContext, useMemo } from "react"
 
 import { clockTime } from "@/lib/format"
 import { useNow } from "@/lib/use-now"
 
+import type { NodeContext } from "../nodes/node-facts"
 import { linkSummary, overviewScene } from "../overview/model"
 import {
   connectionsQuery,
@@ -40,6 +41,11 @@ export function useNetworkView(networkId: string) {
     [inventory, connections.data, runtimes.data, now]
   )
 
+  const context: NodeContext = useMemo(
+    () => ({ nodes: byId, observation, runtimes: runtimes.data ?? null, now }),
+    [byId, observation, runtimes.data, now]
+  )
+
   return {
     network:
       networks.data?.networks.find(
@@ -51,6 +57,8 @@ export function useNetworkView(networkId: string) {
     byId,
     scene,
     observation,
+    /** What node surfaces read about every node. */
+    context,
     now,
     /** null while the inventory is unread. */
     nodeCount: nodes.data ? scene.nodes.length : null,
@@ -63,4 +71,18 @@ export function useNetworkView(networkId: string) {
         ? clockTime(runtimes.dataUpdatedAt)
         : null,
   }
+}
+
+export type NetworkView = ReturnType<typeof useNetworkView>
+
+const NetworkViewContext = createContext<NetworkView | null>(null)
+
+/** The shell reads the network once and hands it to every page. */
+export const NetworkViewProvider = NetworkViewContext.Provider
+
+/** The network as the shell read it; only inside a network's pages. */
+export function useNetwork(): NetworkView {
+  const view = useContext(NetworkViewContext)
+  if (!view) throw new Error("useNetwork outside a network's pages")
+  return view
 }

@@ -29,12 +29,16 @@ export const MOBILE_PANEL_TOP = MOBILE_EDGE + BAR_HEIGHT + GAP
 export const MOBILE_PAGE_HEIGHT = 0.52
 export const MOBILE_PEEK_HEIGHT = 0.6
 
+/** Room an editor keeps free at the bottom of its workspace for the commit bar floating there. */
+export const COMMIT_SPACE = BAR_HEIGHT + 32
+
 /** The geometry above as CSS variables, for surfaces placed with classes; set once on the document. */
 export const LAYOUT_VARIABLES: Record<`--${string}`, string> = {
   "--edge": `${EDGE}px`,
   "--bar-height": `${BAR_HEIGHT}px`,
   "--panel-top": `${PANEL_TOP}px`,
   "--mobile-edge": `${MOBILE_EDGE}px`,
+  "--commit-space": `${COMMIT_SPACE}px`,
 }
 
 export type Arrangement = {

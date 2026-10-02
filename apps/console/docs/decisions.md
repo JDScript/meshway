@@ -59,6 +59,60 @@ flow and breathing; states stay distinguishable by stroke and text.
   or filter on a glass panel's wrapper stops its blur, so surfaces animate on
   the glass element itself.
 
+## Pages
+
+Only what the controller can do has an entry: no switch, field or page
+stands in for an interface that does not exist yet.
+
+| Page | Panel | Workspaces | Dialogs |
+| --- | --- | --- | --- |
+| Overview `/overview?node=` | none: the globe is its index | none; the node peek | |
+| Nodes `/nodes?view=nodes\|tags` | nodes (search, state) or tags | `/nodes/<id>?tab=overview\|links\|transport\|manage`, `/nodes/add`, `/nodes/tags/<tag>` | revoke, enrolment token |
+| Members `/members?view=members\|invitations` | members or invitations | `/members/<id>` (role, devices, removal) | invite (link shown once), removal |
+| Policy `/policy` | the four layers with their diagnostics | `/policy/<layer>`: connections, grants, mesh routes, egress (public rules, profiles, automatic, assignments), source (JSONC); flow preview inside | |
+| Settings `/settings` | sections | `/settings/<section>`: network, DNS | |
+| Account `/account` (from the account menu) | none | memberships, password, sessions | |
+
+Outside the shell, one card over the globe like the sign-in: `/login`,
+`/invite`, `/reset-password`, `/setup` (instance), `/authorize-device`
+(path unchanged for the App).
+
+- Policy is one page because v3 is one document with one revision: one
+  draft, one commit bar. Networks still on `legacy_v2` get the controller's
+  migration proposal and its unconvertible items; adopting saves v3. The v2
+  editors are not rebuilt.
+- Tag definitions sit beside the nodes they group; a node's own tags are
+  set in its workspace (`manage`).
+- The old hand-made connections (`ConnectionPlan`) are not in the console;
+  managed listeners and the policy's connection layer replace them.
+
+## Nesting
+
+| Level | What | Rule |
+| --- | --- | --- |
+| Canvas | the globe | always |
+| Chrome | network card, toolbar, dock | always |
+| Page panel | a page's index | one at a time |
+| Workspace | one entity or one editor in full | one at a time; the deepest level |
+| Dialog | an irreversible confirmation, a secret shown once, a very short create | never in the URL |
+
+- Opening another thing at the same level replaces; a reference to another
+  page (a node in a policy rule) goes to that page's workspace and Back
+  returns. Detail below a workspace is tabs, inline expansion or a split
+  inside it, never a second workspace.
+- Secrets (enrolment tokens, invitation and reset links) never enter the
+  URL, the history or the query cache.
+- Editing happens in place. Drafts live in memory per sign-in and network,
+  with the revision they were loaded at; polling never moves them. One
+  floating commit bar (bottom centre) serves every editor; a 409 or 422
+  keeps the draft. The dock marks pages holding a draft; closing or
+  reloading the tab with one asks first; signing out drops them.
+- Members read; owners and admins change (the controller's `Manage`).
+  Controls a role cannot use are not offered; the controller still decides.
+- Pages own their surfaces (`features/<page>/page.tsx`) through
+  `PageFrame`, which frames them as surfaces on wide screens and drawers on
+  phones; the shell only places the chrome and drives the globe.
+
 ## Surfaces
 
 The globe is always the canvas; everything else floats over it. Each
@@ -99,13 +153,21 @@ surface kind has one slot, so nothing stacks:
 | Transient UI (a menu is open) | component state |
 | Preferences (theme, locale) | `localStorage` |
 
-Routes: `/networks/<id>/overview?node=` (peek), `/networks/<id>/nodes?q=&state=`
-(list), `/networks/<id>/nodes/<node>?q=&state=&tab=` (workspace over the list).
-Opening a peek or a workspace from nothing pushes a history entry marked
-`opened`; switching entities replaces it; closing an `opened` entry goes back,
-so Back and the close button agree. Typing into a search replaces. Switching
-networks keeps the page and opens nothing. Every move goes through
-`useShellNavigation`.
+Each page states its routes in `features/<page>/url.ts` and its moves in
+`features/<page>/navigation.ts`, built on `useSurfaceHistory`
+(`features/shell/history.ts`): opening a peek, a workspace or a page sheet
+from nothing pushes a history entry marked `opened`; switching entities
+replaces it; closing an `opened` entry goes back, so Back and the close
+button agree. Typing into a search replaces. Switching networks keeps the
+page and opens nothing. Routes say what they are through `staticData`
+(`page`, `workspace`), which the shell reads to place the chrome and the
+globe; `features/shell/pages.ts` lists the pages and the dock.
+
+| Draft state | Owner |
+| --- | --- |
+| A draft and its base revision | `createDraft` (`features/shell/drafts.ts`), one per resource |
+| Saving it, conflicts, the bar | `useDraftCommit` → `CommitBar` |
+| Field validity | the generated schemas, before the controller's own checks |
 
 ## Design tokens
 

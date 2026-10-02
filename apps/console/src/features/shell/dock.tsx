@@ -1,6 +1,6 @@
 import { Link, type HistoryState } from "@tanstack/react-router"
 import { cn } from "cn"
-import { GlobeIcon, ServerIcon, type LucideIcon } from "lucide-react"
+import { GlobeIcon } from "lucide-react"
 import { motion, useReducedMotion } from "motion/react"
 import { useId, useState, type ComponentProps, type ReactNode } from "react"
 
@@ -18,15 +18,10 @@ import {
 import { SPRING_LAYOUT } from "@/lib/ease"
 import { m } from "@/paraglide/messages.js"
 
+import { useDraftPages } from "./drafts"
 import { CHROME } from "./glass-drawer"
 import { DOCK_WIDTH } from "./layout"
-import type { Page } from "./route"
-
-/** The pages of a network, in dock order. Only pages that exist are listed. */
-const PAGES: { page: Page; icon: LucideIcon; label: () => string }[] = [
-  { page: "overview", icon: GlobeIcon, label: () => m.nav_overview() },
-  { page: "nodes", icon: ServerIcon, label: () => m.nav_nodes() },
-]
+import { DOCK, PAGES, type PageId } from "./pages"
 
 const ITEM = 36
 const PADDING = (DOCK_WIDTH - ITEM) / 2
@@ -40,26 +35,15 @@ function PageLink({
   ...props
 }: {
   networkId: string
-  page: Page
+  page: PageId
   state?: HistoryState
   className: string
   children: ReactNode
 } & Omit<ComponentProps<"a">, "href" | "children">) {
-  const params = { network: networkId }
-  return page === "nodes" ? (
+  return (
     <Link
-      to="/networks/$network/nodes"
-      params={params}
-      state={state}
-      className={className}
-      {...props}
-    >
-      {children}
-    </Link>
-  ) : (
-    <Link
-      to="/networks/$network/overview"
-      params={params}
+      to={PAGES[page].route}
+      params={{ network: networkId }}
       state={state}
       className={className}
       {...props}
@@ -76,9 +60,10 @@ function PageLink({
  * which glides when the page changes. Flat fills only, so the two can
  * overlap without a seam.
  */
-export function Dock({ networkId, page }: { networkId: string; page: Page }) {
+export function Dock({ networkId, page }: { networkId: string; page: PageId }) {
   const activeLayout = useId()
   const reduce = useReducedMotion()
+  const drafts = useDraftPages(networkId)
   return (
     <nav
       {...CHROME}
@@ -98,7 +83,7 @@ export function Dock({ networkId, page }: { networkId: string; page: Page }) {
         pillContainerClassName="inset-y-auto top-0 h-9"
         className="gap-1"
       >
-        {PAGES.map((item) => {
+        {DOCK.map((item) => {
           const active = item.page === page
           return (
             <li key={item.page}>
@@ -125,6 +110,7 @@ export function Dock({ networkId, page }: { networkId: string; page: Page }) {
                         />
                       ) : null}
                       <item.icon className="relative size-4.5" />
+                      {drafts[item.page] ? <DraftMark /> : null}
                     </PageLink>
                   }
                 />
@@ -140,6 +126,16 @@ export function Dock({ networkId, page }: { networkId: string; page: Page }) {
   )
 }
 
+/** A page holding an unsaved draft. */
+function DraftMark() {
+  return (
+    <span
+      aria-label={m.commit_unsaved()}
+      className="absolute top-1.5 right-1.5 size-1.5 rounded-full bg-warning"
+    />
+  )
+}
+
 /**
  * Small screens: one round button showing the current page; it unfolds the
  * pages below it as labelled buttons, one after another.
@@ -149,10 +145,11 @@ export function DockLauncher({
   page,
 }: {
   networkId: string
-  page: Page
+  page: PageId
 }) {
   const [open, setOpen] = useState(false)
-  const current = PAGES.find((item) => item.page === page) ?? PAGES[0]
+  const drafts = useDraftPages(networkId)
+  const current = DOCK.find((item) => item.page === page)
   const Icon = current?.icon ?? GlobeIcon
   return (
     <Popover open={open} onOpenChange={setOpen}>
@@ -170,7 +167,7 @@ export function DockLauncher({
         className="launcher w-auto gap-2 bg-transparent p-0 shadow-none ring-0"
         render={<nav aria-label={m.nav_label()} />}
       >
-        {PAGES.map((item, index) => (
+        {DOCK.map((item, index) => (
           <PageLink
             key={item.page}
             networkId={networkId}
@@ -187,6 +184,12 @@ export function DockLauncher({
           >
             <item.icon className="size-4" />
             {item.label()}
+            {drafts[item.page] ? (
+              <span
+                aria-label={m.commit_unsaved()}
+                className="size-1.5 rounded-full bg-warning"
+              />
+            ) : null}
           </PageLink>
         ))}
       </PopoverContent>

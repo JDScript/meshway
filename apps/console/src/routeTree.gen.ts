@@ -16,8 +16,11 @@ import { Route as AuthedNetworksNetworkRouteImport } from './routes/_authed/netw
 import { Route as AuthedNetworksNetworkIndexRouteImport } from './routes/_authed/networks/$network/index'
 import { Route as AuthedNetworksNetworkNodesRouteImport } from './routes/_authed/networks/$network/nodes'
 import { Route as AuthedNetworksNetworkOverviewRouteImport } from './routes/_authed/networks/$network/overview'
+import { Route as AuthedNetworksNetworkSettingsRouteImport } from './routes/_authed/networks/$network/settings'
 import { Route as AuthedNetworksNetworkNodesIndexRouteImport } from './routes/_authed/networks/$network/nodes/index'
 import { Route as AuthedNetworksNetworkNodesNodeRouteImport } from './routes/_authed/networks/$network/nodes/$node'
+import { Route as AuthedNetworksNetworkSettingsIndexRouteImport } from './routes/_authed/networks/$network/settings/index'
+import { Route as AuthedNetworksNetworkSettingsSectionRouteImport } from './routes/_authed/networks/$network/settings/$section'
 
 const AuthedRoute = AuthedRouteImport.update({
   id: '/_authed',
@@ -56,6 +59,12 @@ const AuthedNetworksNetworkOverviewRoute =
     path: '/overview',
     getParentRoute: () => AuthedNetworksNetworkRoute,
   } as any)
+const AuthedNetworksNetworkSettingsRoute =
+  AuthedNetworksNetworkSettingsRouteImport.update({
+    id: '/settings',
+    path: '/settings',
+    getParentRoute: () => AuthedNetworksNetworkRoute,
+  } as any)
 const AuthedNetworksNetworkNodesIndexRoute =
   AuthedNetworksNetworkNodesIndexRouteImport.update({
     id: '/',
@@ -68,6 +77,18 @@ const AuthedNetworksNetworkNodesNodeRoute =
     path: '/$node',
     getParentRoute: () => AuthedNetworksNetworkNodesRoute,
   } as any)
+const AuthedNetworksNetworkSettingsIndexRoute =
+  AuthedNetworksNetworkSettingsIndexRouteImport.update({
+    id: '/',
+    path: '/',
+    getParentRoute: () => AuthedNetworksNetworkSettingsRoute,
+  } as any)
+const AuthedNetworksNetworkSettingsSectionRoute =
+  AuthedNetworksNetworkSettingsSectionRouteImport.update({
+    id: '/$section',
+    path: '/$section',
+    getParentRoute: () => AuthedNetworksNetworkSettingsRoute,
+  } as any)
 
 export interface FileRoutesByFullPath {
   '/': typeof AuthedIndexRoute
@@ -75,9 +96,12 @@ export interface FileRoutesByFullPath {
   '/networks/$network': typeof AuthedNetworksNetworkRouteWithChildren
   '/networks/$network/nodes': typeof AuthedNetworksNetworkNodesRouteWithChildren
   '/networks/$network/overview': typeof AuthedNetworksNetworkOverviewRoute
+  '/networks/$network/settings': typeof AuthedNetworksNetworkSettingsRouteWithChildren
   '/networks/$network/': typeof AuthedNetworksNetworkIndexRoute
   '/networks/$network/nodes/$node': typeof AuthedNetworksNetworkNodesNodeRoute
+  '/networks/$network/settings/$section': typeof AuthedNetworksNetworkSettingsSectionRoute
   '/networks/$network/nodes/': typeof AuthedNetworksNetworkNodesIndexRoute
+  '/networks/$network/settings/': typeof AuthedNetworksNetworkSettingsIndexRoute
 }
 export interface FileRoutesByTo {
   '/login': typeof LoginRoute
@@ -85,7 +109,9 @@ export interface FileRoutesByTo {
   '/networks/$network/overview': typeof AuthedNetworksNetworkOverviewRoute
   '/networks/$network': typeof AuthedNetworksNetworkIndexRoute
   '/networks/$network/nodes/$node': typeof AuthedNetworksNetworkNodesNodeRoute
+  '/networks/$network/settings/$section': typeof AuthedNetworksNetworkSettingsSectionRoute
   '/networks/$network/nodes': typeof AuthedNetworksNetworkNodesIndexRoute
+  '/networks/$network/settings': typeof AuthedNetworksNetworkSettingsIndexRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
@@ -95,9 +121,12 @@ export interface FileRoutesById {
   '/_authed/networks/$network': typeof AuthedNetworksNetworkRouteWithChildren
   '/_authed/networks/$network/nodes': typeof AuthedNetworksNetworkNodesRouteWithChildren
   '/_authed/networks/$network/overview': typeof AuthedNetworksNetworkOverviewRoute
+  '/_authed/networks/$network/settings': typeof AuthedNetworksNetworkSettingsRouteWithChildren
   '/_authed/networks/$network/': typeof AuthedNetworksNetworkIndexRoute
   '/_authed/networks/$network/nodes/$node': typeof AuthedNetworksNetworkNodesNodeRoute
+  '/_authed/networks/$network/settings/$section': typeof AuthedNetworksNetworkSettingsSectionRoute
   '/_authed/networks/$network/nodes/': typeof AuthedNetworksNetworkNodesIndexRoute
+  '/_authed/networks/$network/settings/': typeof AuthedNetworksNetworkSettingsIndexRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
@@ -107,9 +136,12 @@ export interface FileRouteTypes {
     | '/networks/$network'
     | '/networks/$network/nodes'
     | '/networks/$network/overview'
+    | '/networks/$network/settings'
     | '/networks/$network/'
     | '/networks/$network/nodes/$node'
+    | '/networks/$network/settings/$section'
     | '/networks/$network/nodes/'
+    | '/networks/$network/settings/'
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/login'
@@ -117,7 +149,9 @@ export interface FileRouteTypes {
     | '/networks/$network/overview'
     | '/networks/$network'
     | '/networks/$network/nodes/$node'
+    | '/networks/$network/settings/$section'
     | '/networks/$network/nodes'
+    | '/networks/$network/settings'
   id:
     | '__root__'
     | '/_authed'
@@ -126,9 +160,12 @@ export interface FileRouteTypes {
     | '/_authed/networks/$network'
     | '/_authed/networks/$network/nodes'
     | '/_authed/networks/$network/overview'
+    | '/_authed/networks/$network/settings'
     | '/_authed/networks/$network/'
     | '/_authed/networks/$network/nodes/$node'
+    | '/_authed/networks/$network/settings/$section'
     | '/_authed/networks/$network/nodes/'
+    | '/_authed/networks/$network/settings/'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
@@ -187,6 +224,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AuthedNetworksNetworkOverviewRouteImport
       parentRoute: typeof AuthedNetworksNetworkRoute
     }
+    '/_authed/networks/$network/settings': {
+      id: '/_authed/networks/$network/settings'
+      path: '/settings'
+      fullPath: '/networks/$network/settings'
+      preLoaderRoute: typeof AuthedNetworksNetworkSettingsRouteImport
+      parentRoute: typeof AuthedNetworksNetworkRoute
+    }
     '/_authed/networks/$network/nodes/': {
       id: '/_authed/networks/$network/nodes/'
       path: '/'
@@ -200,6 +244,20 @@ declare module '@tanstack/react-router' {
       fullPath: '/networks/$network/nodes/$node'
       preLoaderRoute: typeof AuthedNetworksNetworkNodesNodeRouteImport
       parentRoute: typeof AuthedNetworksNetworkNodesRoute
+    }
+    '/_authed/networks/$network/settings/': {
+      id: '/_authed/networks/$network/settings/'
+      path: '/'
+      fullPath: '/networks/$network/settings/'
+      preLoaderRoute: typeof AuthedNetworksNetworkSettingsIndexRouteImport
+      parentRoute: typeof AuthedNetworksNetworkSettingsRoute
+    }
+    '/_authed/networks/$network/settings/$section': {
+      id: '/_authed/networks/$network/settings/$section'
+      path: '/$section'
+      fullPath: '/networks/$network/settings/$section'
+      preLoaderRoute: typeof AuthedNetworksNetworkSettingsSectionRouteImport
+      parentRoute: typeof AuthedNetworksNetworkSettingsRoute
     }
   }
 }
@@ -220,15 +278,36 @@ const AuthedNetworksNetworkNodesRouteWithChildren =
     AuthedNetworksNetworkNodesRouteChildren,
   )
 
+interface AuthedNetworksNetworkSettingsRouteChildren {
+  AuthedNetworksNetworkSettingsSectionRoute: typeof AuthedNetworksNetworkSettingsSectionRoute
+  AuthedNetworksNetworkSettingsIndexRoute: typeof AuthedNetworksNetworkSettingsIndexRoute
+}
+
+const AuthedNetworksNetworkSettingsRouteChildren: AuthedNetworksNetworkSettingsRouteChildren =
+  {
+    AuthedNetworksNetworkSettingsSectionRoute:
+      AuthedNetworksNetworkSettingsSectionRoute,
+    AuthedNetworksNetworkSettingsIndexRoute:
+      AuthedNetworksNetworkSettingsIndexRoute,
+  }
+
+const AuthedNetworksNetworkSettingsRouteWithChildren =
+  AuthedNetworksNetworkSettingsRoute._addFileChildren(
+    AuthedNetworksNetworkSettingsRouteChildren,
+  )
+
 interface AuthedNetworksNetworkRouteChildren {
   AuthedNetworksNetworkNodesRoute: typeof AuthedNetworksNetworkNodesRouteWithChildren
   AuthedNetworksNetworkOverviewRoute: typeof AuthedNetworksNetworkOverviewRoute
+  AuthedNetworksNetworkSettingsRoute: typeof AuthedNetworksNetworkSettingsRouteWithChildren
   AuthedNetworksNetworkIndexRoute: typeof AuthedNetworksNetworkIndexRoute
 }
 
 const AuthedNetworksNetworkRouteChildren: AuthedNetworksNetworkRouteChildren = {
   AuthedNetworksNetworkNodesRoute: AuthedNetworksNetworkNodesRouteWithChildren,
   AuthedNetworksNetworkOverviewRoute: AuthedNetworksNetworkOverviewRoute,
+  AuthedNetworksNetworkSettingsRoute:
+    AuthedNetworksNetworkSettingsRouteWithChildren,
   AuthedNetworksNetworkIndexRoute: AuthedNetworksNetworkIndexRoute,
 }
 

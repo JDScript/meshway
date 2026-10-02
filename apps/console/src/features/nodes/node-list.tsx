@@ -16,9 +16,10 @@ import { highlightOnGlobe } from "@/features/globe/store"
 import { vitalityLabel } from "@/features/overview/labels"
 import { vitalityOf } from "@/features/overview/model"
 import { VitalityDot } from "@/features/overview/status-dots"
-import type { NodeListView } from "@/features/shell/route"
-import { NODE_STATES, type NodeStateFilter } from "@/features/shell/url"
+import { surfaceTitleId } from "@/features/shell/page-frame"
 import { m } from "@/paraglide/messages.js"
+
+import { NODE_STATES, type NodeListView, type NodeStateFilter } from "./url"
 
 const PLACEHOLDER_ROWS = 5
 const ALL = "all"
@@ -189,7 +190,7 @@ export function NodeList({
       <header className="flex flex-col gap-3 px-4 pt-4 pb-3">
         <div className="flex items-baseline justify-between">
           <h2
-            id="node-list-title"
+            id={surfaceTitleId("nodes", "panel")}
             className="text-base font-semibold tracking-tight"
           >
             {m.nav_nodes()}
@@ -216,7 +217,7 @@ export function NodeList({
 
       <ul
         ref={list}
-        aria-labelledby="node-list-title"
+        aria-labelledby={surfaceTitleId("nodes", "panel")}
         onKeyDown={onKeyDown}
         onPointerLeave={() => highlightOnGlobe(null)}
         className="min-h-0 flex-1 overflow-y-auto px-2 pb-2"

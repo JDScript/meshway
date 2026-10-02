@@ -3,10 +3,9 @@ import type {
   ConnectionTransport,
   NodeSummary,
 } from "@meshway/control-client"
-import { cn } from "cn"
-import type { ReactNode } from "react"
 
 import { CopyButton } from "@/components/chrome/copy-button"
+import { Tile } from "@/components/chrome/tile"
 import {
   Tooltip,
   TooltipContent,
@@ -58,36 +57,6 @@ export function VitalityLine({ vitality }: { vitality: Vitality }) {
 
 export const nodeVitality = (node: NodeSummary, context: NodeContext) =>
   vitalityOf(node, context.runtimes, context.now)
-
-/** One labelled fact; `action` sits at its end (a copy button). */
-export function Tile({
-  label,
-  children,
-  tone,
-  action,
-}: {
-  label: string
-  children: ReactNode
-  tone?: "warning"
-  action?: ReactNode
-}) {
-  return (
-    <div className="flex min-w-0 items-center gap-1 rounded-tile bg-fill-subtle py-3 pr-2 pl-3.5">
-      <div className="min-w-0 flex-1">
-        <div className="text-meta text-muted-foreground">{label}</div>
-        <div
-          className={cn(
-            "mt-1 truncate text-row font-medium",
-            tone === "warning" && "text-warning"
-          )}
-        >
-          {children}
-        </div>
-      </div>
-      {action}
-    </div>
-  )
-}
 
 export function NodeAddresses({ node }: { node: NodeSummary }) {
   return (

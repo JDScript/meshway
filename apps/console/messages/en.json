@@ -102,5 +102,18 @@
   "node_tab_links": "Links",
   "node_not_found": "Node not found",
   "node_registered": "Registered",
-  "node_id": "Node ID"
+  "node_id": "Node ID",
+  "nav_settings": "Settings",
+  "commit_label": "Unsaved changes",
+  "commit_unsaved": "Unsaved changes",
+  "commit_outdated": "Updated by someone else",
+  "commit_discard": "Discard",
+  "commit_save": "Save",
+  "commit_overwrite": "Overwrite",
+  "commit_saved": "Saved",
+  "failure_forbidden": "Not permitted",
+  "failure_conflict": "Changed by someone else; not saved",
+  "failure_invalid": "Rejected as invalid; not saved",
+  "failure_missing": "No longer exists",
+  "failure_unknown": "Request failed; outcome unknown"
 }

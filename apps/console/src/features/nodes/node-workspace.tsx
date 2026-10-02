@@ -4,9 +4,10 @@ import { CloseButton } from "@/components/chrome/close-button"
 import { CopyButton } from "@/components/chrome/copy-button"
 import { SegmentedTabs } from "@/components/chrome/segmented-control"
 import { SurfaceHeader } from "@/components/chrome/surface-header"
+import { Tile } from "@/components/chrome/tile"
+import { surfaceTitleId } from "@/features/shell/page-frame"
 import { Skeleton } from "@/components/ui/skeleton"
 import { Tabs, TabsContent } from "@/components/ui/tabs"
-import { NODE_TABS, type NodeTab } from "@/features/shell/url"
 import { nodeAdjacencies } from "@/features/topology/topology"
 import { dateTime, relativeTime } from "@/lib/format"
 import { m } from "@/paraglide/messages.js"
@@ -16,10 +17,10 @@ import {
   NodeLinks,
   NodeStatusTiles,
   nodeVitality,
-  Tile,
   VitalityLine,
   type NodeContext,
 } from "./node-facts"
+import { NODE_TABS, type NodeTab } from "./url"
 
 const isTab = (value: unknown): value is NodeTab =>
   NODE_TABS.some((tab) => tab === value)
@@ -77,7 +78,7 @@ function Missing({
         loading ? (
           <Skeleton className="h-6 w-40 flex-1 rounded-full" />
         ) : (
-          <h2 id="node-workspace-title" className={className}>
+          <h2 id={surfaceTitleId("nodes", "workspace")} className={className}>
             {m.node_not_found()}
           </h2>
         )
@@ -111,7 +112,7 @@ function Body({
         size="lg"
         className="px-6 pt-6 pb-4"
         title={(className) => (
-          <h2 id="node-workspace-title" className={className}>
+          <h2 id={surfaceTitleId("nodes", "workspace")} className={className}>
             {node.name}
           </h2>
         )}
