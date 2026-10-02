@@ -89,6 +89,26 @@ overlay 为 `198.18.42.0/24`，HTTP canary 只绑定各自 Mesh IP，实际 rout
 组合检查保留 **169 passed / 1 failed（仅停止前部分）**，不批准合入 / 部署运行报告候选，未把该超时当作环境噪声重跑到绿。
 原日志及诊断交接：批准 TMP 的 `meshway-field-recovery-integration-f399931.md` 与对应 `-logs/`。
 
+### 恢复修复已合入，等待同身份复验
+
+后续诊断用原样 CLI 及真实 UDP 延迟对照确认了一种可稳定复现的触发机制：报告更早被接受后，
+sampler 的首个 tick 尚无 peer，30 秒 tick 又与邻接探测争用同一 pending 槽；原逻辑直接跳过，
+下一次机会推迟至 60 秒。修复仅在原 2 秒测量预算内有界等待槽位，成功耗时包含真实等待和自己的 nonce 探测，
+持续占用仍为缺测；未缩短 5 秒 / 30 秒周期或扩大原 45 秒检查。原 169/1 episode 缺少的事件未被补造。
+
+运行报告 RR1/RR2 和该 Capacity 机制均已独立复核关闭。新组合 `3b346b8` 实际完整 Rust
+**613 passed / 7 ignored**，包含原 CLI、100ms 每向延迟压力、报告 guard、E2E、underlay 与 Apple core；
+workspace Clippy / fmt 通过，未变消费者按源码及日志哈希核验沿用。
+三项修复已以 `1144875`、`461f7d6`、`4c9a5be` 合入主线。
+
+原 `f399931` 失败与其镜像的未批准状态保留。新的固定源码 `4c9a5be` 正通过非 privileged 流程构建，
+将由 `retest.ts` 复用原 Controller DB、身份、公钥、CA、连接 / 路径 / Access 配置验证；
+原 v11 源快照已从只读数据副本经原 Controller 和生成 GET 接口补齐，不能以候选启动后的响应充当旧基准。
+此处是代码合入与验收通过，尚不代表新镜像的远端复验通过。
+
+交接报告：批准 TMP 的 `meshway-runtime-report-review-fixed-da8b9b7.md`、
+`meshway-report-history-review-fff98d1.md`、`meshway-combined-recovery-integration-3b346b8.md`。
+
 收尾已完成：
 
 - 删除精确 owner label 匹配的 **5 个测试容器、4 个 bridge**，清理错误为 0，测试端口不再监听。
