@@ -2,7 +2,7 @@
 
 ## 状态与边界
 
-账户领域、Controller HTTP、网络管理权限与 App PKCE ownership 已合入主线并随 v11 部署；AR1/AR2/SG1 修复已独立复核。Web 邮箱登录、首 Owner、邀请接入与用户批准已接通，完整成员 / 账户管理界面正在本轮产品重整中推进，CLI 链接登录尚未实现。权威 DTO 位于 `crates/protocol/src/accounts.rs`，生成 OpenAPI / Rust / TypeScript / Zod；没有另造账户领域或数据库。
+账户领域、Controller HTTP、网络管理权限与 App PKCE ownership 已合入主线并随 v11 部署；AR1/AR2/SG1 修复已独立复核。首批 Web 成员 / 邀请 / 角色 / 设备归属、我的账户、邮箱登录与实例初始化 / 恢复已接通并部署；CLI 链接登录尚未实现。权威 DTO 位于 `crates/protocol/src/accounts.rs`，生成 OpenAPI / Rust / TypeScript / Zod；没有另造账户领域或数据库。
 
 账户按 controller 全局唯一；membership 按网络隔离。同一用户可属于多网，Owner 不等于实例管理员。账户已经复用原 `Store::NetworkId`，不存在第二套 `AccountNetwork`。网络 ID 是资源作用域，不是授权。App 回调、exchange、heartbeat 请求 / 响应合同兼容，批准入口改用真正的用户 session。
 
@@ -56,7 +56,7 @@ membership 移除 / 退出在同根事务撤销其原稳定 membership 所属节
 
 ## 尚待交付
 
-- 完整成员 / 邀请管理、角色与设备归属、我的账户，以及日常登录与初始化 / 恢复入口分离由控制台主线交付；现有邮箱登录、Cookie / sign-in fence、目标网络批准已接通。
+- 首批成员 / 邀请 / 角色 / 设备归属、我的账户及独立初始化 / 恢复入口已部署；后续逐会话清单、全局无网络成员关系账户的枚举仍缺 API。当前恢复页按网络 membership 汇总账户，“退出所有会话”不显示虚构的逐会话清单。
 - CLI request/approve/poll/exchange、code 临时加密重交付与本地 journal 尚未实现，沿用本文末尾 polling handoff；不交付半接 CLI endpoint。
 - 正式 v11 已部署；Apple 暂停新增开发，真实 NE 尚未实现，Linux 自动组网 / 打洞与跨地域联测按里程碑推进。
 
