@@ -4,18 +4,22 @@ use super::*;
 #[tokio::test(start_paused = true)]
 async fn retried_probe_cancellation_and_shutdown_leave_no_timer_or_pending_slot() {
     for shutdown in [false, true] {
-        let fixture=capacity_one_fixture(3_000).await;
-        let token=lock(&fixture.nyc.handle.inner.peers)["lax"].token;
-        let (mut requests,_original)=intercept_peer(&fixture.nyc,"lax");
-        let source=fixture.nyc.clone();
-        let call=tokio::spawn(async move {source.probe_neighbor_observed("lax",Duration::from_secs(3)).await});
-        let first=requests.recv().await.unwrap().batch.into_frames();
-        let retry=requests.recv().await.unwrap().batch.into_frames();
-        assert_eq!(first,retry);
-        assert_eq!(lock(&fixture.nyc.handle.inner.neighbor_pending).len(),1);
+        let fixture = capacity_one_fixture(3_000).await;
+        let token = lock(&fixture.nyc.handle.inner.peers)["lax"].token;
+        let (mut requests, _original) = intercept_peer(&fixture.nyc, "lax");
+        let source = fixture.nyc.clone();
+        let call = tokio::spawn(async move {
+            source
+                .probe_neighbor_observed("lax", Duration::from_secs(3))
+                .await
+        });
+        let first = requests.recv().await.unwrap().batch.into_frames();
+        let retry = requests.recv().await.unwrap().batch.into_frames();
+        assert_eq!(first, retry);
+        assert_eq!(lock(&fixture.nyc.handle.inner.neighbor_pending).len(), 1);
         if shutdown {
             fixture.nyc.shutdown().await;
-            assert!(matches!(call.await.unwrap(),Err(Error::Closed)));
+            assert!(matches!(call.await.unwrap(), Err(Error::Closed)));
         } else {
             call.abort();
             assert!(call.await.unwrap_err().is_cancelled());
@@ -23,11 +27,14 @@ async fn retried_probe_cancellation_and_shutdown_leave_no_timer_or_pending_slot(
         tokio::time::advance(Duration::from_secs(4)).await;
         tokio::task::yield_now().await;
         assert!(lock(&fixture.nyc.handle.inner.neighbor_pending).is_empty());
-        assert!(requests.try_recv().is_err(),"cancelled retry must not send later");
+        assert!(
+            requests.try_recv().is_err(),
+            "cancelled retry must not send later"
+        );
         if shutdown {
             assert!(fixture.nyc.peer_connections().is_empty());
         } else {
-            assert_eq!(lock(&fixture.nyc.handle.inner.peers)["lax"].token,token);
+            assert_eq!(lock(&fixture.nyc.handle.inner.peers)["lax"].token, token);
         }
         fixture.shutdown().await;
     }
