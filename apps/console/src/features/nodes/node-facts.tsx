@@ -1,6 +1,5 @@
 import type {
   ConnectionRuntimesSnapshot,
-  ConnectionTransport,
   NodeSummary,
 } from "@meshway/control-client"
 
@@ -30,6 +29,8 @@ import {
 import { relativeTime } from "@/lib/format"
 import { m } from "@/paraglide/messages.js"
 
+import { transportLabel } from "./labels"
+
 // The facts about one node, as pieces both the overview's peek and the
 // node workspace lay out.
 
@@ -38,12 +39,6 @@ export type NodeContext = {
   observation: TopologyObservation | null
   runtimes: ConnectionRuntimesSnapshot | null
   now: number
-}
-
-const transportLabel: Record<ConnectionTransport, string> = {
-  native_udp: "UDP",
-  native_tcp: "TCP",
-  vless: "VLESS",
 }
 
 export function VitalityLine({ vitality }: { vitality: Vitality }) {
@@ -183,7 +178,7 @@ export function NodeLinks({
                     </span>
                     <span className="block text-meta text-muted-foreground">
                       {channel
-                        ? `${transportLabel[channel.transport]} · `
+                        ? `${transportLabel[channel.transport]()} · `
                         : null}
                       {lookLabel[look]()}
                     </span>
