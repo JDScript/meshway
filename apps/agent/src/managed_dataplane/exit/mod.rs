@@ -20,7 +20,6 @@ mod fixture;
 #[cfg(target_os = "linux")]
 pub(crate) mod linux;
 #[cfg(test)]
-#[path = "exit/profile_tests.rs"]
 mod profile_tests;
 
 #[derive(Clone, Debug)]
