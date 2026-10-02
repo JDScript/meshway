@@ -49,6 +49,8 @@ VLESS TCP/TLS 与 WebSocket/TLS 的 listener / 凭据已由平台生成和下发
 
 ## Rust 与前端边界
 
+当前 module / crate 的具体耦合、应保留的隔离以及增量收敛顺序见[代码架构审查](/architecture-review)。该审查是对当前实现的分析，建议的 publication / control / session 等模块尚未整体落地。
+
 | 目录 | 职责 |
 | --- | --- |
 | `crates/protocol` | Rust HTTP / 配置契约、校验、摘要与私有存储原语 |

@@ -32,6 +32,7 @@ export default defineConfig({
         text: "架构",
         items: [
           { text: "总览与实现边界", link: "/architecture" },
+          { text: "代码边界审查与收敛", link: "/architecture-review" },
           { text: "控制面注册与持久化", link: "/enrollment" },
           { text: "浏览器登录与节点接入", link: "/device-login" },
           { text: "本地账户领域与 SSO 接线", link: "/local-accounts" },
