@@ -1,6 +1,6 @@
 //! Sole owner of schema installation, the complete 1 -> 12 path and startup
 //! structural validation. Identity files are established by Store before entry.
-pub(crate) mod accounts;
+mod accounts;
 pub(in crate::store) mod execution_and_accounts;
 pub(in crate::store) mod latency;
 pub(in crate::store) mod legacy;

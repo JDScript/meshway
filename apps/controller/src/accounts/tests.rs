@@ -7,7 +7,7 @@ use rusqlite::{Connection, TransactionBehavior, params};
 use tempfile::TempDir;
 
 use super::*;
-use crate::store::migrations::accounts::SCHEMA;
+const SCHEMA: &str = include_str!("../store/migrations/sql/accounts.sql");
 
 const A: &str = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
 const B: &str = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";

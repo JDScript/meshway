@@ -22,7 +22,7 @@ mod jsonc;
 mod latency_history;
 mod managed_transports;
 mod mesh_execution;
-pub(crate) mod migrations;
+mod migrations;
 mod network;
 mod network_policy;
 mod networks;
