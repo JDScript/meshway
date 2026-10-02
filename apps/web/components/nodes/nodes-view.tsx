@@ -342,7 +342,7 @@ function NodeRow({
             </DropdownMenuItem>
             <DropdownMenuItem render={<Link href={routes.machine(node.id, "connections")} />}>
               <CableIcon />
-              监听与承载
+              节点配置
             </DropdownMenuItem>
             <DropdownMenuItem render={<Link href={routes.topology({ node: node.id })} />}>
               <WaypointsIcon />

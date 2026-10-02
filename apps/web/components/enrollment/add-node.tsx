@@ -61,7 +61,7 @@ export function AddNode() {
         <CableIcon className="mt-0.5 size-4 shrink-0" aria-hidden="true" />
         <p>
           <span className="font-medium text-foreground">监听与承载：</span>
-          注册后在节点页「监听与承载」查看与配置（当前为手工）。可选的托管监听设置（含 VLESS / WebSocket）待控制面接口就绪后在此提供。
+          注册后在节点「配置」中查看与调整。
         </p>
       </div>
     </div>

@@ -30,7 +30,7 @@ export default async function ConnectionsPage({
     <PageBody>
       <PageHeader
         title="手工连接"
-        description="跨节点检查与调整当前的监听和主动连接配置。日常修改在节点的「监听与承载」完成。"
+        description="跨节点检查监听与主动连接；日常修改在节点「配置」中完成。"
         meta={connections.ok ? <span>读取于 {formatClock(connections.fetchedAt)}</span> : null}
         actions={
           <>

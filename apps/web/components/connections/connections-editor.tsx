@@ -732,7 +732,7 @@ export function ConnectionsEditor({
 
           <Panel
             title={<PanelTitle icon={<ArrowRightLeftIcon />} label="主动连接" count={draft.candidates.length} limit={CONNECTION_LIMITS.candidates} />}
-            description="箭头是建连方向，不是业务方向：通道建立后两个方向都能复用，访问授权仍由路由策略决定。"
+            description="箭头是建连方向；建立后两个方向都可复用。"
             actions={addCandidateButton("主动连接节点")}
           >
             {draft.candidates.length === 0 ? (
@@ -755,7 +755,7 @@ export function ConnectionsEditor({
 
           <Panel
             title={<PanelTitle icon={<EarIcon />} label="接收连接的节点" count={draft.listeners.length} limit={CONNECTION_LIMITS.listeners} />}
-            description="谁在哪里等待连接。本机监听地址与其他节点使用的地址分开填写。"
+            description="本机监听地址与对外地址分开填写。"
             actions={addListenerButton("接收其他节点连接", "outline")}
           >
             {draft.listeners.length === 0 ? (

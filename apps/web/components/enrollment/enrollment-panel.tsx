@@ -50,7 +50,7 @@ export function EnrollmentPanel() {
 
   return (
     <div className="grid items-start gap-6 lg:grid-cols-[19rem_minmax(0,1fr)]">
-      <Panel title="接入令牌" description="一次性使用，过期未用也会失效。令牌只把节点加入当前网络。">
+      <Panel title="接入令牌" description="一次性使用，只加入当前网络。">
         <form action={formAction} className="flex flex-col gap-4 p-4">
           <div className="flex flex-col gap-1.5">
             <Label htmlFor={ttlId}>有效期</Label>
