@@ -79,6 +79,13 @@ overlay 为 `198.18.42.0/24`，HTTP canary 只绑定各自 Mesh IP，实际 rout
 底层查询还发现首尔→纽约的未标记转发 FIB 指向现有 `CloudflareWARP`；其他已查目标指向物理接口。
 这份证据是路由查询而非抓包 trace，因此本轮不宣称每段均为纯公网直连，更不代表打洞成功。
 
+**纽约防火墙边界补充（用户复核）**：纽约位于防火墙后；原配置中首尔拨号目标确为
+`128.238.177.131:28443`，而上述首尔 FIB 选择 `CloudflareWARP` / table `65743`。
+Docker 的 `28443→18443` 只暴露宿主端口，不能证明上游防火墙放行，也不是 NAT 打洞。
+现有证据不足以解释完整防火墙穿越路径；不能从应用互通反推出纽约普通公网可直接拨入。
+本轮对 TUN / E2E / 多跳 / 恢复有效，对 Meshway 自身穿透纽约防火墙的能力没有完成证明。
+后续 NAT 验收须记录真实边界与实际承载路径，既有 VPN 不能被算作 Meshway 打洞成功。
+
 **第二项恢复缺口：runtime 上报间歇停滞。** 首尔 Agent 在继续同步配置、DNS active 和真实业务恢复时，
 反复报 `connection runtime observation changed; resynchronizing`；Controller 上记录一度停在 sequence 25，
 后来推进到 66，但截至后续查询仍再次超过 60 秒而 stale。该现象已交独立本地复现 / 修复，

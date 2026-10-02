@@ -42,6 +42,7 @@ Rust 控制面与 agent、Next.js + shadcn/ui 控制台、VitePress 文档站。
 - 用户已确认产品定位：常规场景以 Tailscale 为基线，Meshway 的差异是可插拔的自定义 transport 承载，以及按域名 / IP 经有序指定路径的 routing。网络、设备 / 用户、接入、授权、DNS、出口、控制台与客户端等产品定义默认参照 Tailscale 官方做法；只有这两项扩展需要时才偏离，偏离须说明理由。既有确认项与 Tailscale 冲突时逐项向用户复核，不擅自推翻。
 - 用户已确认 Apple 终端 App 位于 `apps/apple`：SwiftUI 多平台 + NetworkExtension Packet Tunnel，Rust 核心经 UniFFI 复用，FFI unsafe 仅限受审计的桥接 crate。App 经系统浏览器跳转 controller Web 完成用户登录 / 授权，以一次性 PKCE 结果和本地持久化节点身份接入。用户账户、网络权限、设备归属、Keychain、多接入、生成客户端兑换与心跳、只读清单已接通；隧道与 NE 包流未实现。用户最新决定暂停 Apple 新增开发，优先 Linux 自动组网、打洞及跨地域 Docker 联测；保留已有接口兼容与必要消费者检查，真机 NE 待后续恢复及签名条件满足。
 - 用户已确认先推进 Linux 传输实验；协议按编译期插件边界扩展，批量与 buffer 所有权属于公共接口。实验密钥、授权和网络必须与现有控制面身份及运行数据隔离。
+- 用户最新再次强调纽约位于防火墙后，质疑固定可达链路联测对真实打洞的价值，要求按已有 Tailscale 对照推进核心连接能力。原KR→NYC配置目标128.238.177.131:28443但KR转发FIB为CloudflareWARP/table65743；Docker端口暴露不证明上游防火墙放行，原PASS只覆盖固定底层可达下TUN/E2E/多跳/恢复。P3b/P3d最小闭环与underlay接线独立并行：两端仅出站，无发布端口/手工对端候选，正常Controller下发、认证探测/打洞、实际直连与UDP blocked中继兜底；不以既有VPN或STUN映射冒充Meshway直连，不承诺穿透任意防火墙。
 - 用户进一步要求审查 multi-transport 扩展架构，重点收敛 controller/agent 的 transport registry、控制面提供的可用目录与配置校验、以及 Agent 版本/能力协商。审查需明确控制面允许使用的协议与 Agent 实际编译支持的能力，保留 Agent 执行前的防御性和本机资源校验；不把 registry 理解为动态下载任意执行代码。具体统一注册接口与兼容迁移方案见承载扩展审查，尚未实现部分不得写成现状。
 - 性能目标优先衡量 Meshway 包装的增量损失：同一协议 / 实现、资源和负载建立匹配基线，分开记录适配层、认证 / 加密、转发与 TUN 成本；不得用原生 L4 流代理与 L3 E2E 隧道的差值直接声称包装损耗。
 - 性能深挖与新 transport 实现可委派独立 worktree 并行推进；共享 Docker VM 的压测通过同一 performance lock 串行执行，避免阻塞协议主线或互相干扰。
