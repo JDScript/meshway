@@ -122,20 +122,32 @@ export function withNodeNames(text: string, names: SelectorNames): string {
 const CHIP =
   "inline-flex h-6 max-w-full min-w-0 items-center gap-1.5 rounded-full border border-divider bg-fill-raised/60 px-2 text-row leading-none"
 
-/** One selector, by name. */
-export function SelectorChip({
+/**
+ * A chip that opens a picker, 28px: pointing at it and its open picker tint
+ * it (`.live-chip`; a ring would read as a fault); the keyboard rings it.
+ */
+const LIVE_CHIP =
+  "live-chip h-7 outline-none has-focus-visible:ring-2 has-focus-visible:ring-ring/50 focus-visible:ring-2 focus-visible:ring-ring/50"
+
+/** A selector the controller refused, or one that names nothing known. */
+const flagged = (known: boolean, invalid: boolean) =>
+  cn(
+    !known && "border-warning/50",
+    invalid && "border-destructive/60 bg-destructive/8"
+  )
+
+/** A selector's icon and name, inside a chip. */
+function ChipContent({
   selector,
   names,
-  className,
 }: {
   selector: string
   names: SelectorNames
-  className?: string
 }) {
   const shown = selectorShown(selector, names)
   const Icon = shown.icon
   return (
-    <span className={cn(CHIP, !shown.known && "border-warning/50", className)}>
+    <>
       <Icon
         aria-hidden="true"
         className={cn(
@@ -146,6 +158,24 @@ export function SelectorChip({
       <span className={cn("truncate", shown.mono && "font-mono text-meta")}>
         {shown.label}
       </span>
+    </>
+  )
+}
+
+/** One selector, by name. */
+export function SelectorChip({
+  selector,
+  names,
+  className,
+}: {
+  selector: string
+  names: SelectorNames
+  className?: string
+}) {
+  const known = selectorShown(selector, names).known
+  return (
+    <span className={cn(CHIP, flagged(known, false), className)}>
+      <ChipContent selector={selector} names={names} />
     </span>
   )
 }
@@ -228,7 +258,8 @@ const GROUP_LABEL: Record<SelectorKind, () => string> = {
 
 /**
  * Picks a selector from the network's tags and nodes, searchable by name.
- * `children` is what opens it (the chip to replace, or "add"). It keeps
+ * Its trigger has no look of its own: `className` and `children` make it
+ * the chip to replace, or "add". It keeps
  * clear of the screen's edges and the commit bar, and its list shrinks to
  * the room there is. While it shows a node, it also leads to the node.
  */
@@ -283,7 +314,7 @@ export function SelectorPicker({
         aria-label={label}
         aria-invalid={invalid || undefined}
         className={cn(
-          "inline-flex min-w-0 items-center rounded-full transition-colors outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:pointer-events-none aria-invalid:ring-2 aria-invalid:ring-destructive/60 data-popup-open:ring-2 data-popup-open:ring-ring/60",
+          "inline-flex min-w-0 items-center disabled:pointer-events-none",
           className
         )}
       >
@@ -381,10 +412,6 @@ export function SelectorPicker({
   )
 }
 
-/** A chip that opens the picker when the rule can change, and is a plain chip when it cannot. */
-const pickable = (disabled: boolean | undefined) =>
-  cn("h-7", !disabled && "hover:bg-fill-hover")
-
 /** One selector, chosen with the picker (a connection's end, a route's source). */
 export function SelectorField({
   value,
@@ -392,7 +419,7 @@ export function SelectorField({
   kinds,
   label,
   disabled,
-  invalid,
+  invalid = false,
   autoOpen,
   onClosed,
   onOpenNode,
@@ -409,25 +436,24 @@ export function SelectorField({
   onOpenNode?: (nodeId: string) => void
   onChange: (selector: string) => void
 }) {
+  const known = selectorShown(value, names).known
+  if (disabled)
+    return <SelectorChip selector={value} names={names} className="h-7" />
   return (
     <SelectorPicker
       names={names}
       kinds={kinds}
       chosen={[value]}
       label={label}
-      disabled={disabled}
       invalid={invalid}
       autoOpen={autoOpen}
       onClosed={onClosed}
       node={value}
       onOpenNode={onOpenNode}
       onPick={onChange}
+      className={cn(CHIP, LIVE_CHIP, flagged(known, invalid))}
     >
-      <SelectorChip
-        selector={value}
-        names={names}
-        className={pickable(disabled)}
-      />
+      <ChipContent selector={value} names={names} />
     </SelectorPicker>
   )
 }
@@ -480,58 +506,59 @@ export function SelectorSetField({
           {empty ?? m.policy_selector_none()}
         </span>
       ) : null}
-      {values.map((selector, index) => (
-        <span
-          key={`${selector}-${index}`}
-          className="inline-flex min-w-0 items-center gap-1"
-        >
-          {index > 0 ? joiner : null}
+      {values.map((selector, index) => {
+        const shown = selectorShown(selector, names)
+        return (
           <span
-            className={cn(
-              "inline-flex min-w-0 items-center rounded-full",
-              invalid?.(index) && "ring-2 ring-destructive/60"
-            )}
+            key={`${selector}-${index}`}
+            className="inline-flex min-w-0 items-center gap-1"
           >
-            <SelectorPicker
-              names={names}
-              kinds={kinds}
-              chosen={values}
-              label={label}
-              disabled={disabled}
-              autoOpen={autoOpen && index === 0}
-              onClosed={onClosed}
-              node={selector}
-              onOpenNode={onOpenNode}
-              onPick={(next) =>
-                onChange(
-                  values.map((value, at) => (at === index ? next : value))
-                )
-              }
-            >
-              <SelectorChip
-                selector={selector}
-                names={names}
+            {index > 0 ? joiner : null}
+            {disabled ? (
+              <SelectorChip selector={selector} names={names} className="h-7" />
+            ) : (
+              // One pill: the name opens the picker, the × inside removes (a 20px circle, 4px in: 14 − 4 = 10).
+              <span
                 className={cn(
-                  pickable(disabled),
-                  !disabled && "rounded-r-none border-r-0 pr-1.5"
+                  CHIP,
+                  LIVE_CHIP,
+                  "gap-0 px-0",
+                  flagged(shown.known, invalid?.(index) ?? false)
                 )}
-              />
-            </SelectorPicker>
-            {disabled ? null : (
-              <button
-                type="button"
-                aria-label={m.policy_selector_remove({
-                  name: selectorShown(selector, names).label,
-                })}
-                onClick={() => onChange(values.filter((_, at) => at !== index))}
-                className="inline-flex h-7 items-center rounded-r-full border border-l-0 border-divider bg-fill-raised/60 pr-2 pl-1 text-muted-foreground transition-colors outline-none hover:bg-fill-hover hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring"
               >
-                <XIcon className="size-3" />
-              </button>
+                <SelectorPicker
+                  names={names}
+                  kinds={kinds}
+                  chosen={values}
+                  label={label}
+                  autoOpen={autoOpen && index === 0}
+                  onClosed={onClosed}
+                  node={selector}
+                  onOpenNode={onOpenNode}
+                  onPick={(next) =>
+                    onChange(
+                      values.map((value, at) => (at === index ? next : value))
+                    )
+                  }
+                  className="h-full min-w-0 gap-1.5 rounded-l-full pr-1 pl-2 outline-none"
+                >
+                  <ChipContent selector={selector} names={names} />
+                </SelectorPicker>
+                <button
+                  type="button"
+                  aria-label={m.policy_selector_remove({ name: shown.label })}
+                  onClick={() =>
+                    onChange(values.filter((_, at) => at !== index))
+                  }
+                  className="mr-1 inline-flex size-5 shrink-0 items-center justify-center rounded-full text-muted-foreground transition-colors outline-none hover:bg-fill-selected hover:text-foreground"
+                >
+                  <XIcon className="size-3" />
+                </button>
+              </span>
             )}
           </span>
-        </span>
-      ))}
+        )
+      })}
       {disabled ? null : (
         <SelectorPicker
           names={names}
@@ -539,17 +566,13 @@ export function SelectorSetField({
           chosen={values}
           label={addLabel}
           onPick={(selector) => onChange([...values, selector])}
+          className={cn(
+            "size-7 justify-center rounded-full border border-dashed border-divider text-muted-foreground transition-[color,background-color,opacity] outline-none hover:bg-fill-hover hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring data-popup-open:bg-fill-selected data-popup-open:text-foreground",
+            quietAdd &&
+              "opacity-0 group-focus-within/rule:opacity-100 group-hover/rule:opacity-100 data-popup-open:opacity-100 pointer-coarse:opacity-100"
+          )}
         >
-          <span
-            aria-hidden="true"
-            className={cn(
-              "inline-flex size-7 items-center justify-center rounded-full border border-dashed border-divider text-muted-foreground transition-[color,background-color,opacity] hover:bg-fill-hover hover:text-foreground",
-              quietAdd &&
-                "opacity-0 group-focus-within/rule:opacity-100 group-hover/rule:opacity-100 pointer-coarse:opacity-100"
-            )}
-          >
-            <PlusIcon className="size-3" />
-          </span>
+          <PlusIcon aria-hidden="true" className="size-3" />
         </SelectorPicker>
       )}
     </span>

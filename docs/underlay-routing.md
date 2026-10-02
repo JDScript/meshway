@@ -13,7 +13,7 @@
 
 ## 当前实现
 
-`apps/agent/src/underlay` 提供 namespace owner、用途受限 socket factory、HTTP/TLS connector、bootstrap resolver 和代际退休。正常 Linux daemon 在启动承载前安装 prepared owner，托管 Native UDP / TCP 与 VLESS 外层共用 owning 注入边界；未准备保护不能回落到 `SystemUnderlay` 继续执行。
+`crates/agent-underlay` 提供 namespace owner、用途受限 socket factory、bootstrap resolver 和代际退休；`apps/agent/src/control/transport` 负责 HTTP/TLS 与承载注入适配。正常 Linux daemon 在启动承载前安装 prepared owner，托管 Native UDP / TCP 与 VLESS 外层共用 owning 注入边界；未准备保护不能回落到 `SystemUnderlay` 继续执行。
 
 Linux owner 要求 Linux 5.7+ 的非零 `SO_NETNS_COOKIE`、namespace 内 NET_ADMIN、TUN 和必要 iproute2 / nft / legacy-save 审计工具。应用 crate 保持 `unsafe_code = forbid`；cookie getter 的细边界位于受审依赖。
 

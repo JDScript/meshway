@@ -1,10 +1,8 @@
 import type { QueryClient } from "@tanstack/react-query"
 import { createRootRouteWithContext, Outlet } from "@tanstack/react-router"
 
-import { Toaster } from "@/components/ui/sonner"
 import { BootScreen } from "@/features/boot/boot-screen"
 import { useBootStore } from "@/features/boot/boot-store"
-import { GlobeStage } from "@/features/globe/globe-stage"
 import { LayoutGuides } from "@/features/shell/layout-guides"
 
 export type RouterContext = {
@@ -18,8 +16,8 @@ export const Route = createRootRouteWithContext<RouterContext>()({
 function Root() {
   const phase = useBootStore((state) => state.phase)
   return (
+    // The globe and the toasts sit outside the router (main.tsx), beneath and above this.
     <>
-      <GlobeStage />
       <div
         data-boot={phase}
         className="ui-root pointer-events-none fixed inset-0 z-10"
@@ -27,7 +25,6 @@ function Root() {
         <Outlet />
       </div>
       <BootScreen />
-      <Toaster position="top-center" />
       {import.meta.env.DEV ? <LayoutGuides /> : null}
     </>
   )

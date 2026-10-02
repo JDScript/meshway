@@ -79,6 +79,7 @@ export function GlassDialog({
     return (
       <Drawer open={open} onOpenChange={change}>
         <DrawerContent
+          forceBackdrop
           className="glass text-foreground"
           style={{ "--drawer-inset": MOBILE_INSET, "--bleed": "0px" }}
         >

@@ -22,6 +22,9 @@
 | `crates/protocol` / `crates/policy` / `crates/dataplane` | Rust 契约、纯策略编译、认证与加密转发 |
 | `crates/agent-dns` | 独立本地 DNS 服务、记录索引与租约 / 代际发送边界 |
 | `crates/agent-tun` | Linux TUN 设备、配置、包 I/O 与活设备身份 |
+| `crates/agent-underlay` | 用途受限 socket、底层解析与路由资源所有权 |
+| `crates/agent-connections` / `crates/agent-dataplane` | 承载连接运行、节点执行计划与包流适配 |
+| `crates/agent-diagnostics` | Provider 驱动的本地诊断 IPC |
 | `crates/control-client` | Rust 生成 HTTP 客户端，供 Agent / Apple core 使用 |
 | `crates/transport-*` | 编译期承载适配 |
 | `apps/web` | Next.js + shadcn/ui 控制台 |

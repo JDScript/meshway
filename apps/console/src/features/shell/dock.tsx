@@ -19,6 +19,7 @@ import { SPRING_LAYOUT } from "@/lib/ease"
 import { m } from "@/paraglide/messages.js"
 
 import { useDraftPages } from "./drafts"
+import { useSurfaceHistory } from "./history"
 import { CHROME } from "./glass-drawer"
 import { DOCK_WIDTH } from "./layout"
 import { DOCK, PAGES, type PageId } from "./pages"
@@ -30,6 +31,7 @@ function PageLink({
   networkId,
   page,
   state,
+  replace,
   className,
   children,
   ...props
@@ -37,6 +39,7 @@ function PageLink({
   networkId: string
   page: PageId
   state?: HistoryState
+  replace?: boolean
   className: string
   children: ReactNode
 } & Omit<ComponentProps<"a">, "href" | "children">) {
@@ -45,6 +48,7 @@ function PageLink({
       to={PAGES[page].route}
       params={{ network: networkId }}
       state={state}
+      replace={replace}
       className={className}
       {...props}
     >
@@ -150,6 +154,7 @@ export function DockLauncher({
 }) {
   const [open, setOpen] = useState(false)
   const drafts = useDraftPages(networkId)
+  const history = useSurfaceHistory(networkId)
   const current = DOCK.find((item) => item.page === page)
   const Icon = current?.icon ?? GlobeIcon
   return (
@@ -174,9 +179,18 @@ export function DockLauncher({
             networkId={networkId}
             page={item.page}
             aria-current={item.page === page ? "page" : undefined}
-            // A page other than the overview opens as a sheet here: dismissing it goes back.
-            state={item.page === "overview" ? undefined : { opened: true }}
-            onClick={() => setOpen(false)}
+            // Pages open as sheets over the overview: the first one remembers it, the next ones replace.
+            {...(item.page === "overview" || item.page === page
+              ? {}
+              : history.toPage(page === "overview"))}
+            onClick={(event) => {
+              setOpen(false)
+              // The overview from a page is leaving the pages, as a swipe would.
+              if (item.page === "overview" && page !== "overview") {
+                event.preventDefault()
+                history.leavePage()
+              }
+            }}
             className={cn(
               "launcher-item glass flex h-(--bar-height) items-center gap-3 self-start rounded-full pr-5 pl-3.5 text-sm font-medium outline-none focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring",
               item.page === page ? "text-foreground" : "text-muted-foreground"
