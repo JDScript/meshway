@@ -96,6 +96,11 @@ impl TestStore {
         let db = &mut self.inner.connection;
         db.pragma_update(None, "foreign_keys", false).unwrap();
         let tx = db.transaction().unwrap();
+        // Export the exact historical v8 fixture, excluding post-v9 telemetry.
+        tx.execute_batch(
+            "DROP TABLE IF EXISTS latency_admissions; DROP TABLE IF EXISTS latency_coverage; DROP TABLE IF EXISTS latency_samples; DROP TABLE IF EXISTS latency_runtime_epochs;",
+        )
+        .unwrap();
         for (table, _) in super::networks::TABLES {
             tx.execute_batch(&format!("ALTER TABLE {table} RENAME TO {table}_v9;"))
                 .unwrap();

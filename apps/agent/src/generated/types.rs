@@ -9,6 +9,12 @@
 use serde::{Deserialize, Serialize};
 #[derive(Clone, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
+pub struct ReportLatencySamplesRequest {
+    ///Constraint: minItems=1, maxItems=64
+    pub samples: Vec<LatencySample>,
+}
+#[derive(Clone, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
 pub struct ReportEndpointDiscoveryRequest {
     ///Constraint: minLength=64, maxLength=64, pattern=`^[0-9a-f]{64}$`
     pub digest: String,
@@ -65,6 +71,130 @@ pub struct PublishConnectionIdentityRequest {
     pub capabilities: Vec<ConnectionCapability>,
     ///Constraint: minLength=64, maxLength=64, pattern=`^[0-9a-f]{64}$`
     pub public_key: String,
+}
+#[derive(Clone, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct LatencySample {
+    /**Runtime returns exact channel metadata only with successful proof. A
+    timeout leaves this empty rather than racing a separate registry read.
+    Exactly one association for success, zero for timeout.*/
+    ///Constraint: maxItems=1
+    pub channel_associations: Vec<LatencyChannelAssociation>,
+    pub completed_at: chrono::DateTime<chrono::Utc>,
+    ///Constraint: minLength=64, maxLength=64, pattern=`^[0-9a-f]{64}$`
+    pub digest: String,
+    pub direction: LatencyDirection,
+    /**One sanitized attempt failure for Failed, otherwise empty. This is not
+    a network loss classification; local send failures are kept separate.*/
+    ///Constraint: maxItems=1
+    pub failure_reasons: Vec<LatencyFailureReason>,
+    ///Actual probe invocation start; retained unchanged through queue/retry.
+    pub measured_at: chrono::DateTime<chrono::Utc>,
+    ///Constraint: minLength=64, maxLength=64, pattern=`^[0-9a-f]{64}$`
+    pub measurement_id: String,
+    pub outcome: LatencyOutcome,
+    pub peer_node_id: String,
+    ///Constraint: minimum=1, maximum=4294967295
+    pub revision: i64,
+    ///Integer microseconds, measured using a monotonic clock, never HTTP RTT.
+    ///Constraint: minimum=1, maximum=60000000
+    #[serde(deserialize_with = "deserialize_required_nullable")]
+    pub rtt_us: Option<i64>,
+    ///Constraint: minimum=1, maximum=4294967295
+    pub runtime_epoch: i64,
+    ///Local sampler generation, not an assertion of physical channel identity.
+    ///Constraint: minLength=64, maxLength=64, pattern=`^[0-9a-f]{64}$`
+    pub sampler_generation: String,
+}
+#[derive(Clone, PartialEq, Eq, Deserialize, Serialize, Default)]
+pub enum LatencyOutcome {
+    #[default]
+    #[serde(rename = "success")]
+    Success,
+    #[serde(rename = "timeout")]
+    Timeout,
+    #[serde(rename = "failed")]
+    Failed,
+}
+impl LatencyOutcome {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::Success => "success",
+            Self::Timeout => "timeout",
+            Self::Failed => "failed",
+        }
+    }
+}
+impl ::std::fmt::Display for LatencyOutcome {
+    fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+impl AsRef<str> for LatencyOutcome {
+    fn as_ref(&self) -> &str {
+        self.as_str()
+    }
+}
+#[derive(Clone, PartialEq, Eq, Deserialize, Serialize, Default)]
+pub enum LatencyFailureReason {
+    #[default]
+    #[serde(rename = "channel_unavailable")]
+    ChannelUnavailable,
+    #[serde(rename = "authentication_failed")]
+    AuthenticationFailed,
+    #[serde(rename = "local_send_failed")]
+    LocalSendFailed,
+}
+impl LatencyFailureReason {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::ChannelUnavailable => "channel_unavailable",
+            Self::AuthenticationFailed => "authentication_failed",
+            Self::LocalSendFailed => "local_send_failed",
+        }
+    }
+}
+impl ::std::fmt::Display for LatencyFailureReason {
+    fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+impl AsRef<str> for LatencyFailureReason {
+    fn as_ref(&self) -> &str {
+        self.as_str()
+    }
+}
+#[derive(Clone, PartialEq, Eq, Deserialize, Serialize, Default)]
+pub enum LatencyDirection {
+    #[default]
+    #[serde(rename = "source_to_peer")]
+    SourceToPeer,
+}
+impl LatencyDirection {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::SourceToPeer => "source_to_peer",
+        }
+    }
+}
+impl ::std::fmt::Display for LatencyDirection {
+    fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+impl AsRef<str> for LatencyDirection {
+    fn as_ref(&self) -> &str {
+        self.as_str()
+    }
+}
+#[derive(Clone, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct LatencyChannelAssociation {
+    #[serde(deserialize_with = "deserialize_required_nullable")]
+    pub candidate_id: Option<String>,
+    pub initiator_node_id: String,
+    pub listener_id: String,
+    pub transport: ConnectionTransport,
 }
 #[derive(Clone, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
@@ -1077,6 +1207,14 @@ pub struct ReportEndpointDiscoveryResponse {
     ///Constraint: minimum=1, maximum=4294967295
     pub sequence: i64,
 }
+#[derive(Clone, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct ReportLatencySamplesResponse {
+    ///Constraint: minimum=0, maximum=64
+    pub duplicates: i64,
+    ///Constraint: minimum=0, maximum=64
+    pub inserted: i64,
+}
 
 // Generated from required nullable OpenAPI properties. deserialize_with makes
 // serde require presence; Option accepts explicit null. Never skip None on output.
@@ -1086,6 +1224,12 @@ where
     T: serde::Deserialize<'de>,
 {
     Option::<T>::deserialize(deserializer)
+}
+
+impl std::fmt::Debug for ReportLatencySamplesRequest {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("ReportLatencySamplesRequest([REDACTED])")
+    }
 }
 
 impl std::fmt::Debug for ReportEndpointDiscoveryRequest {
@@ -1115,6 +1259,36 @@ impl std::fmt::Debug for PublishConnectionIdentityResponse {
 impl std::fmt::Debug for PublishConnectionIdentityRequest {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_str("PublishConnectionIdentityRequest([REDACTED])")
+    }
+}
+
+impl std::fmt::Debug for LatencySample {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("LatencySample([REDACTED])")
+    }
+}
+
+impl std::fmt::Debug for LatencyOutcome {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("LatencyOutcome([REDACTED])")
+    }
+}
+
+impl std::fmt::Debug for LatencyFailureReason {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("LatencyFailureReason([REDACTED])")
+    }
+}
+
+impl std::fmt::Debug for LatencyDirection {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("LatencyDirection([REDACTED])")
+    }
+}
+
+impl std::fmt::Debug for LatencyChannelAssociation {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("LatencyChannelAssociation([REDACTED])")
     }
 }
 
@@ -1517,5 +1691,11 @@ impl std::fmt::Debug for ReportConnectionRuntimeResponse {
 impl std::fmt::Debug for ReportEndpointDiscoveryResponse {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_str("ReportEndpointDiscoveryResponse([REDACTED])")
+    }
+}
+
+impl std::fmt::Debug for ReportLatencySamplesResponse {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("ReportLatencySamplesResponse([REDACTED])")
     }
 }

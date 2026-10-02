@@ -1686,6 +1686,241 @@ export const schemaDocument = {
         },
         "additionalProperties": false
       },
+      "LatencyChannelAssociation": {
+        "type": "object",
+        "required": [
+          "transport",
+          "initiator_node_id",
+          "listener_id",
+          "candidate_id"
+        ],
+        "properties": {
+          "candidate_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "initiator_node_id": {
+            "type": "string"
+          },
+          "listener_id": {
+            "type": "string"
+          },
+          "transport": {
+            "$ref": "#/components/schemas/ConnectionTransport"
+          }
+        },
+        "additionalProperties": false
+      },
+      "LatencyDirection": {
+        "type": "string",
+        "enum": [
+          "source_to_peer"
+        ]
+      },
+      "LatencyFailureReason": {
+        "type": "string",
+        "enum": [
+          "channel_unavailable",
+          "authentication_failed",
+          "local_send_failed"
+        ]
+      },
+      "LatencyHistoryRecord": {
+        "type": "object",
+        "required": [
+          "cursor",
+          "network_id",
+          "source_node_id",
+          "sample",
+          "received_at",
+          "historical"
+        ],
+        "properties": {
+          "cursor": {
+            "type": "string"
+          },
+          "historical": {
+            "type": "boolean",
+            "description": "Always true: a retained measurement never asserts present connectivity."
+          },
+          "network_id": {
+            "type": "string"
+          },
+          "received_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "sample": {
+            "$ref": "#/components/schemas/LatencySample"
+          },
+          "source_node_id": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": false
+      },
+      "LatencyHistoryResponse": {
+        "type": "object",
+        "required": [
+          "records",
+          "retention_from",
+          "capacity_trimmed_before",
+          "capacity_trimmed",
+          "next",
+          "retention_seconds",
+          "expected_interval_seconds"
+        ],
+        "properties": {
+          "capacity_trimmed": {
+            "type": "boolean",
+            "description": "The requested window intersects the conservative capacity-trimmed range."
+          },
+          "capacity_trimmed_before": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time",
+            "description": "Conservative source-wide capacity watermark (all peers). Some earlier\nevents were evicted; it does not describe offline time or continuous coverage."
+          },
+          "expected_interval_seconds": {
+            "type": "integer",
+            "format": "int64",
+            "maximum": 4294967295,
+            "minimum": 1
+          },
+          "next": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "records": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/LatencyHistoryRecord"
+            }
+          },
+          "retention_from": {
+            "type": "string",
+            "format": "date-time",
+            "description": "Current TTL floor. This is a maximum age, not a promise of continuous data."
+          },
+          "retention_seconds": {
+            "type": "integer",
+            "format": "int64",
+            "maximum": 4294967295,
+            "minimum": 1
+          }
+        },
+        "additionalProperties": false
+      },
+      "LatencyOutcome": {
+        "type": "string",
+        "enum": [
+          "success",
+          "timeout",
+          "failed"
+        ]
+      },
+      "LatencySample": {
+        "type": "object",
+        "required": [
+          "measurement_id",
+          "peer_node_id",
+          "direction",
+          "runtime_epoch",
+          "revision",
+          "digest",
+          "sampler_generation",
+          "measured_at",
+          "completed_at",
+          "outcome",
+          "failure_reasons",
+          "channel_associations",
+          "rtt_us"
+        ],
+        "properties": {
+          "channel_associations": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/LatencyChannelAssociation"
+            },
+            "description": "Runtime returns exact channel metadata only with successful proof. A\ntimeout leaves this empty rather than racing a separate registry read.\nExactly one association for success, zero for timeout.",
+            "maxItems": 1
+          },
+          "completed_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "digest": {
+            "type": "string",
+            "maxLength": 64,
+            "minLength": 64,
+            "pattern": "^[0-9a-f]{64}$"
+          },
+          "direction": {
+            "$ref": "#/components/schemas/LatencyDirection"
+          },
+          "failure_reasons": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/LatencyFailureReason"
+            },
+            "description": "One sanitized attempt failure for Failed, otherwise empty. This is not\na network loss classification; local send failures are kept separate.",
+            "maxItems": 1
+          },
+          "measured_at": {
+            "type": "string",
+            "format": "date-time",
+            "description": "Actual probe invocation start; retained unchanged through queue/retry."
+          },
+          "measurement_id": {
+            "type": "string",
+            "maxLength": 64,
+            "minLength": 64,
+            "pattern": "^[0-9a-f]{64}$"
+          },
+          "outcome": {
+            "$ref": "#/components/schemas/LatencyOutcome"
+          },
+          "peer_node_id": {
+            "type": "string"
+          },
+          "revision": {
+            "type": "integer",
+            "format": "int64",
+            "maximum": 4294967295,
+            "minimum": 1
+          },
+          "rtt_us": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "Integer microseconds, measured using a monotonic clock, never HTTP RTT.",
+            "maximum": 60000000,
+            "minimum": 1
+          },
+          "runtime_epoch": {
+            "type": "integer",
+            "format": "int64",
+            "maximum": 4294967295,
+            "minimum": 1
+          },
+          "sampler_generation": {
+            "type": "string",
+            "description": "Local sampler generation, not an assertion of physical channel identity.",
+            "maxLength": 64,
+            "minLength": 64,
+            "pattern": "^[0-9a-f]{64}$"
+          }
+        },
+        "additionalProperties": false
+      },
       "LoginRequest": {
         "type": "object",
         "required": [
@@ -3018,6 +3253,50 @@ export const schemaDocument = {
         },
         "additionalProperties": false
       },
+      "QueryLatencyHistoryRequest": {
+        "type": "object",
+        "description": "Raw events for one directed pair. Exclusive row cursor, not an offset.",
+        "required": [
+          "source_node_id",
+          "peer_node_id",
+          "from",
+          "until",
+          "limit",
+          "after"
+        ],
+        "properties": {
+          "after": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "maxLength": 20,
+            "minLength": 1,
+            "pattern": "^[0-9]+$"
+          },
+          "from": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "limit": {
+            "type": "integer",
+            "format": "int64",
+            "maximum": 1000,
+            "minimum": 1
+          },
+          "peer_node_id": {
+            "type": "string"
+          },
+          "source_node_id": {
+            "type": "string"
+          },
+          "until": {
+            "type": "string",
+            "format": "date-time"
+          }
+        },
+        "additionalProperties": false
+      },
       "RedeemPasswordResetRequest": {
         "type": "object",
         "required": [
@@ -3220,6 +3499,45 @@ export const schemaDocument = {
             "format": "int64",
             "maximum": 4294967295,
             "minimum": 1
+          }
+        },
+        "additionalProperties": false
+      },
+      "ReportLatencySamplesRequest": {
+        "type": "object",
+        "required": [
+          "samples"
+        ],
+        "properties": {
+          "samples": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/LatencySample"
+            },
+            "maxItems": 64,
+            "minItems": 1
+          }
+        },
+        "additionalProperties": false
+      },
+      "ReportLatencySamplesResponse": {
+        "type": "object",
+        "required": [
+          "inserted",
+          "duplicates"
+        ],
+        "properties": {
+          "duplicates": {
+            "type": "integer",
+            "format": "int64",
+            "maximum": 64,
+            "minimum": 0
+          },
+          "inserted": {
+            "type": "integer",
+            "format": "int64",
+            "maximum": 64,
+            "minimum": 0
           }
         },
         "additionalProperties": false

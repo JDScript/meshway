@@ -22,6 +22,7 @@ mod connections;
 mod endpoint_discovery;
 mod ipam;
 mod jsonc;
+mod latency_history;
 mod managed_transports;
 mod network;
 mod networks;
@@ -159,6 +160,9 @@ impl Store {
         let material_key = managed_transports::key(path, &connection)?;
         networks::validate_integrity(&connection)?;
         networks::install_identity_guards(&connection)?;
+        #[cfg(any(test, feature = "latency-history-fixture"))]
+        latency_history::upgrade(&mut connection)?;
+        latency_history::validate_if_present(&connection)?;
         // Initialization flags still refer to the original network; never
         // renumber any network on restart.
         let initial = NetworkId::initial(&connection)?;

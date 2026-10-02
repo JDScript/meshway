@@ -8,6 +8,7 @@ mod connection_runtime_api;
 mod connections_api;
 mod device_login_api;
 mod endpoint_discovery_api;
+mod latency_history_api;
 mod managed_transports_api;
 mod network_api;
 mod store;
@@ -186,6 +187,7 @@ fn contract_router() -> OpenApiRouter<AppState> {
         .merge(configuration_api::routes())
         .merge(connections_api::routes())
         .merge(connection_runtime_api::routes())
+        .merge(latency_history_api::routes())
         .merge(endpoint_discovery_api::routes())
         .merge(access_api::routes())
         .merge(tags_api::routes())

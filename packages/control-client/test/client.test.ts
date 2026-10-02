@@ -87,7 +87,7 @@ test("generated authenticated TS operations roundtrip, retry, revoke and survive
   const build = spawnSync("cargo", ["build", "--locked", "--quiet", "-p", "meshway-controller"], { cwd: root, encoding: "utf8" });
   assert.equal(build.status, 0, build.stderr);
   const data = await mkdtemp(join(tmpdir(), "meshway-ts-"));
-  const binary = resolve(root, "target/debug/meshway-controller");
+  const binary = resolve(root, process.env.CARGO_TARGET_DIR ?? "target", "debug/meshway-controller");
   async function start() {
     const child = spawn(binary, ["serve", "--bind", "127.0.0.1:0", "--data-dir", data], { cwd: root, stdio: ["ignore", "ignore", "pipe"] });
     let logs = "";

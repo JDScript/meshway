@@ -16,7 +16,7 @@ mod status_first;
 #[path = "generate-rust-client/transport.rs"]
 mod transport;
 
-const OPERATIONS: [&str; 17] = [
+const OPERATIONS: [&str; 18] = [
     "enrollAgent",
     "exchangeDevice",
     "heartbeatAgent",
@@ -34,6 +34,7 @@ const OPERATIONS: [&str; 17] = [
     "getAgentManagedConnections",
     "getAgentManagedDataplane",
     "publishManagedTransportCapabilities",
+    "reportLatencySamples",
 ];
 
 #[derive(Parser)]

@@ -65,7 +65,7 @@ test("generated connection operations bind immutable keys, scope projections and
   const built = spawnSync("cargo", ["build", "--locked", "--quiet", "-p", "meshway-controller"], { cwd: root, encoding: "utf8" });
   assert.equal(built.status, 0, built.stderr);
   const directory = await mkdtemp(join(tmpdir(), "meshway-connection-sdk-"));
-  const binary = join(root, "target/debug/meshway-controller");
+  const binary = join(root, process.env.CARGO_TARGET_DIR ?? "target", "debug/meshway-controller");
   async function start() {
     const child = spawn(binary, ["serve", "--bind", "127.0.0.1:0", "--data-dir", directory], { cwd: root, stdio: ["ignore", "ignore", "pipe"] });
     const exited = once(child, "exit");

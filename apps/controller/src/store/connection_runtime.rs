@@ -127,6 +127,8 @@ impl Store {
         if let Some((instance_id, epoch)) = &lease
             && instance_id == &request.instance_id
         {
+            super::latency_history::begin_epoch(&transaction, &network, &id, *epoch)?;
+            transaction.commit()?;
             return Ok(BeginConnectionRuntimeResponse { epoch: *epoch });
         }
         let current_epoch = lease.map_or(0, |(_, epoch)| epoch);
@@ -144,6 +146,7 @@ impl Store {
             "DELETE FROM connection_runtime_reports WHERE node_id = ?1 AND network_id=?2",
             params![id, network.as_str()],
         )?;
+        super::latency_history::begin_epoch(&transaction, &network, &id, epoch)?;
         transaction.commit()?;
         Ok(BeginConnectionRuntimeResponse { epoch })
     }

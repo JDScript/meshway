@@ -184,6 +184,108 @@ async fn every_declared_endpoint_is_scoped_under_global_admin_mutations_node_req
         StatusCode::OK
     );
 
+    // Independent history events are credential-derived and cannot leak through
+    // a scoped query, even when another network has the same numeric revision.
+    let measured = chrono::Utc::now();
+    let event = json!({
+        "measurement_id": local::credential().unwrap(),
+        "peer_node_id": nodes[2][1], "direction": "source_to_peer",
+        "runtime_epoch": 1, "revision": c_connections["payload"]["revision"],
+        "digest": c_connections["digest"], "sampler_generation": local::credential().unwrap(),
+        "measured_at": measured, "completed_at": measured + chrono::Duration::milliseconds(2),
+        "outcome": "success", "failure_reasons": [], "rtt_us": 1000,
+        "channel_associations": [{"transport": "native_udp", "initiator_node_id": nodes[2][0], "listener_id": "listen", "candidate_id": "dial"}]
+    });
+    let latency = json!({"samples": [event.clone()]});
+    assert_eq!(
+        call!(
+            "POST",
+            "/api/v1/agent/latency/samples",
+            Some(c),
+            Some(latency.clone())
+        )
+        .0,
+        StatusCode::OK
+    );
+    assert_eq!(
+        call!(
+            "POST",
+            "/api/v1/agent/latency/samples",
+            Some(&f.admin),
+            Some(latency.clone())
+        )
+        .0,
+        StatusCode::UNAUTHORIZED
+    );
+    let mut forged = latency.clone();
+    forged["source_node_id"] = json!(nodes[1][0]);
+    assert_eq!(
+        call!(
+            "POST",
+            "/api/v1/agent/latency/samples",
+            Some(c),
+            Some(forged)
+        )
+        .0,
+        StatusCode::BAD_REQUEST
+    );
+    let mut foreign_peer = event;
+    foreign_peer["measurement_id"] = json!(local::credential().unwrap());
+    foreign_peer["peer_node_id"] = json!(nodes[1][1]);
+    assert_eq!(
+        call!(
+            "POST",
+            "/api/v1/agent/latency/samples",
+            Some(c),
+            Some(json!({"samples": [foreign_peer]}))
+        )
+        .0,
+        StatusCode::UNPROCESSABLE_ENTITY
+    );
+    let query = json!({"source_node_id": nodes[2][0], "peer_node_id": nodes[2][1], "from": measured - chrono::Duration::seconds(30), "until": measured + chrono::Duration::seconds(4), "limit": 10, "after": null});
+    let (status, history) = call!(
+        "POST",
+        format!("{}/latency/history/query", bases[2]),
+        Some(&f.admin),
+        Some(query.clone())
+    );
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(history["records"].as_array().unwrap().len(), 1);
+    assert_eq!(history["records"][0]["network_id"], networks[2]);
+    assert_eq!(history["records"][0]["source_node_id"], nodes[2][0]);
+    assert_eq!(history["records"][0]["historical"], true);
+    assert_eq!(
+        call!(
+            "POST",
+            format!("{}/latency/history/query", bases[2]),
+            Some(c),
+            Some(query.clone())
+        )
+        .0,
+        StatusCode::UNAUTHORIZED
+    );
+    assert_eq!(
+        call!(
+            "POST",
+            format!("{}/latency/history/query", bases[1]),
+            Some(&f.admin),
+            Some(query.clone())
+        )
+        .0,
+        StatusCode::NOT_FOUND
+    );
+    let mut b_query = query;
+    b_query["source_node_id"] = json!(nodes[1][0]);
+    b_query["peer_node_id"] = json!(nodes[1][1]);
+    let (status, empty) = call!(
+        "POST",
+        format!("{}/latency/history/query", bases[1]),
+        Some(&f.admin),
+        Some(b_query)
+    );
+    assert_eq!(status, StatusCode::OK);
+    assert!(empty["records"].as_array().unwrap().is_empty());
+
     let (_, b_network) = call!("GET", format!("{}/network", bases[1]), Some(&f.admin), None);
     let (_, b_tags) = call!("GET", format!("{}/tags", bases[1]), Some(&f.admin), None);
     let (_, b_access) = call!("GET", format!("{}/access", bases[1]), Some(&f.admin), None);
