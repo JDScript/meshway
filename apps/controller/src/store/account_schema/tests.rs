@@ -1,5 +1,5 @@
 use crate::{NetworkOptions, store::Store};
-use meshway_protocol::{EnrollAgentRequest, local};
+use meshway_protocol::EnrollAgentRequest;
 use rusqlite::{Connection, TransactionBehavior, types::Value};
 
 fn snapshot(db: &Connection) -> Vec<(String, Vec<Vec<Value>>)> {
@@ -26,123 +26,64 @@ fn snapshot(db: &Connection) -> Vec<(String, Vec<Vec<Value>>)> {
 
 #[test]
 fn standalone_v10_fragment_preserves_every_legacy_cell_and_identity_without_version_assignment() {
-    use std::os::unix::fs::PermissionsExt;
-    let dir = tempfile::Builder::new()
-        .permissions(std::fs::Permissions::from_mode(0o700))
-        .tempdir()
-        .unwrap();
-    let mut store = Store::open(dir.path(), &NetworkOptions::default()).unwrap();
-    let scope = store.initial_network_id().unwrap();
-    let token = store.create_token(&scope, 3600).unwrap();
-    let request = EnrollAgentRequest {
-        node_credential: local::credential().unwrap(),
-        name: "legacy identity".into(),
-        agent_version: "fixture".into(),
-    };
-    let node = store.enroll(&token.token, &request).unwrap();
-    store.create_token(&scope, 3600).unwrap();
-    store.connection.execute("INSERT INTO tag_definitions(network_id,tag,description) VALUES(?1,'tag:old','old tag bytes')",[scope.as_str()]).unwrap();
-    store
-        .connection
-        .execute(
-            "INSERT INTO node_tags(network_id,node_id,tag) VALUES(?1,?2,'tag:old')",
-            rusqlite::params![scope.as_str(), node.id],
-        )
-        .unwrap();
-    store.connection.execute("INSERT INTO connection_identities(network_id,node_id,public_key,capabilities) VALUES(?1,?2,?3,'[\"quic\"]')",rusqlite::params![scope.as_str(),node.id,"11".repeat(32)]).unwrap();
-    store
-        .connection
-        .execute(
-            "UPDATE configuration SET source_jsonc=?1 WHERE network_id=?2",
-            rusqlite::params![
-                "// exact comment\n{ \"default_action\": \"reject\", \"rules\": [] }",
-                scope.as_str()
-            ],
-        )
-        .unwrap();
-    store
-        .connection
-        .execute(
-            "UPDATE mesh_access_source SET source_jsonc=?1 WHERE network_id=?2",
-            rusqlite::params![
-                "// access comment\n{ \"default_action\": \"allow\", \"rules\": [] }",
-                scope.as_str()
-            ],
-        )
-        .unwrap();
-    // Build the pre-account v10 fixture explicitly. Production startup now
-    // installs v11, so testing this fragment must first exclude v11 objects.
-    store
-        .connection
-        .pragma_update(None, "foreign_keys", false)
-        .unwrap();
-    super::super::test_store::remove_v11_fixture_objects(&store.connection);
-    store
-        .connection
-        .pragma_update(None, "user_version", 10)
-        .unwrap();
-    store
-        .connection
-        .pragma_update(None, "foreign_keys", true)
-        .unwrap();
+    let historical = crate::store::test_support::fixtures::original_v8::V8::create();
+    historical.write_v10_schema();
+    // Independent old DDL/rows, without opening or downgrading a current Store.
+    let mut db = historical.database();
+    let node_id = &historical.ids[0];
     assert!(
-        !store
-            .connection
-            .prepare("PRAGMA foreign_key_check")
+        !db.prepare("PRAGMA foreign_key_check")
             .unwrap()
             .exists([])
             .unwrap()
     );
-    let before = snapshot(&store.connection);
-    let version_before = store
-        .connection
+    let before = snapshot(&db);
+    let version_before = db
         .pragma_query_value(None, "user_version", |r| r.get::<_, i64>(0))
         .unwrap();
-    let tx = store
-        .connection
+    let tx = db
         .transaction_with_behavior(TransactionBehavior::Immediate)
         .unwrap();
     super::install(&tx).unwrap();
     tx.commit().unwrap();
-    assert_eq!(snapshot(&store.connection), before);
-    assert!(
-        store
-            .connection
-            .execute("DELETE FROM node_ownership", [])
-            .is_err()
-    );
+    assert_eq!(snapshot(&db), before);
+    assert!(db.execute("DELETE FROM node_ownership", []).is_err());
     assert_eq!(
-        store
-            .connection
-            .pragma_query_value(None, "user_version", |r| r.get::<_, i64>(0))
+        db.pragma_query_value(None, "user_version", |r| r.get::<_, i64>(0))
             .unwrap(),
         version_before
     );
     assert_eq!(
-        store
-            .connection
-            .query_row(
-                "SELECT membership_id FROM node_ownership WHERE node_id=?1",
-                [&node.id],
-                |r| r.get::<_, Option<String>>(0)
-            )
-            .unwrap(),
+        db.query_row(
+            "SELECT membership_id FROM node_ownership WHERE node_id=?1",
+            [node_id],
+            |r| r.get::<_, Option<String>>(0)
+        )
+        .unwrap(),
         None
     );
     assert_eq!(
-        store
-            .connection
-            .query_row("SELECT COUNT(*) FROM account_users", [], |r| r
-                .get::<_, i64>(0))
+        db.query_row("SELECT COUNT(*) FROM account_users", [], |r| r
+            .get::<_, i64>(0))
             .unwrap(),
         0
     );
+    drop(db);
+    let mut store = Store::open(historical.directory.path(), &NetworkOptions::default()).unwrap();
     assert!(
         store
-            .heartbeat(&request.node_credential, "after migration")
+            .heartbeat(&historical.credentials[0], "after migration")
             .is_ok()
     );
-    assert_eq!(store.enroll(&token.token, &request).unwrap().id, node.id);
+    let request = EnrollAgentRequest {
+        node_credential: historical.credentials[0].clone(),
+        name: "alpha".into(),
+        agent_version: "v8".into(),
+    };
+    assert_eq!(
+        store.enroll(&historical.bound_token, &request).unwrap().id,
+        *node_id
+    );
 }
 
 #[test]

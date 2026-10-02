@@ -1,6 +1,6 @@
 use super::*;
 use crate::NetworkOptions;
-use crate::store::test_store::TestStore as Store;
+use crate::store::test_support::SingleNetworkFixture;
 
 fn directory() -> tempfile::TempDir {
     use std::os::unix::fs::PermissionsExt;
@@ -10,7 +10,7 @@ fn directory() -> tempfile::TempDir {
         .unwrap()
 }
 
-fn enrolled(store: &mut Store, name: &str) -> (String, String) {
+fn enrolled(store: &mut SingleNetworkFixture, name: &str) -> (String, String) {
     let token = store.create_token(3600).unwrap();
     let credential = local::credential().unwrap();
     let node = store
@@ -79,7 +79,10 @@ fn plan(lax: &str, sha: &str) -> ConnectionPlan {
     }
 }
 
-fn save(store: &mut Store, plan: ConnectionPlan) -> Result<ConnectionsSnapshot, Error> {
+fn save(
+    store: &mut SingleNetworkFixture,
+    plan: ConnectionPlan,
+) -> Result<ConnectionsSnapshot, Error> {
     store.save_connections(&SaveConnectionsRequest {
         expected_revision: store.revision().unwrap(),
         configuration: plan,
@@ -89,7 +92,7 @@ fn save(store: &mut Store, plan: ConnectionPlan) -> Result<ConnectionsSnapshot, 
 #[test]
 fn immutable_unique_binding_capability_updates_and_revision_exhaustion_are_atomic() {
     let dir = directory();
-    let mut store = Store::open(dir.path(), &NetworkOptions::default()).unwrap();
+    let mut store = SingleNetworkFixture::open(dir.path(), &NetworkOptions::default()).unwrap();
     let (one_id, one) = enrolled(&mut store, "one");
     let (_, two) = enrolled(&mut store, "two");
     let first = identity(9);
@@ -182,7 +185,7 @@ fn immutable_unique_binding_capability_updates_and_revision_exhaustion_are_atomi
         1
     );
     drop(store);
-    let mut reopened = Store::open(dir.path(), &NetworkOptions::default()).unwrap();
+    let mut reopened = SingleNetworkFixture::open(dir.path(), &NetworkOptions::default()).unwrap();
     assert!(matches!(
         reopened.publish_connection_identity(&two, &first),
         Err(Error::Conflict)
@@ -192,7 +195,7 @@ fn immutable_unique_binding_capability_updates_and_revision_exhaustion_are_atomi
 #[test]
 fn reverse_dial_projection_is_scoped_deterministic_and_acknowledged_independently() {
     let dir = directory();
-    let mut store = Store::open(dir.path(), &NetworkOptions::default()).unwrap();
+    let mut store = SingleNetworkFixture::open(dir.path(), &NetworkOptions::default()).unwrap();
     let (lax_id, lax) = enrolled(&mut store, "LAX");
     let (sha_id, sha) = enrolled(&mut store, "SHA");
     let (_, other) = enrolled(&mut store, "other");
@@ -325,7 +328,7 @@ fn reverse_dial_projection_is_scoped_deterministic_and_acknowledged_independentl
         Err(Error::Conflict)
     ));
     drop(store);
-    let mut reopened = Store::open(dir.path(), &NetworkOptions::default()).unwrap();
+    let mut reopened = SingleNetworkFixture::open(dir.path(), &NetworkOptions::default()).unwrap();
     assert_eq!(
         reopened.agent_connections(&sha).unwrap().digest,
         sha_snapshot.digest
@@ -376,7 +379,7 @@ fn reverse_dial_projection_is_scoped_deterministic_and_acknowledged_independentl
 #[test]
 fn validation_rejects_unbound_roles_endpoints_references_duplicates_and_bad_profiles() {
     let dir = directory();
-    let mut store = Store::open(dir.path(), &NetworkOptions::default()).unwrap();
+    let mut store = SingleNetworkFixture::open(dir.path(), &NetworkOptions::default()).unwrap();
     let (lax_id, lax) = enrolled(&mut store, "LAX");
     let (sha_id, sha) = enrolled(&mut store, "SHA");
     assert!(matches!(

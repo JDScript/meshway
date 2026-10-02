@@ -1,30 +1,30 @@
 //! Independent frozen v8 fixture: direct old DDL and rows, never Store::open,
 //! v9 schema, a downgrade, or a v9 business mutation. Reference projections
 //! use the unchanged v1 wire types and pure v2 compiler/projection functions.
-use super::super::{TABLES, upgrade};
+use crate::store::networks::{TABLES, upgrade};
 use crate::{Error, NetworkOptions, store::Store};
 use meshway_protocol::*;
 use rusqlite::{Connection, OptionalExtension, params, types::Value};
 
-const NETWORK: &str = "baf5c8095f41b92ea539a10456da64e3";
+pub(crate) const NETWORK: &str = "baf5c8095f41b92ea539a10456da64e3";
 const STAMP: &str = "2026-10-01T00:00:00Z";
 
-struct V8 {
-    directory: tempfile::TempDir,
-    admin: String,
-    ids: Vec<String>,
-    credentials: Vec<String>,
-    unused_token: String,
-    bound_token: String,
-    device_code: String,
-    exchange: ExchangeDeviceRequest,
+pub(crate) struct V8 {
+    pub directory: tempfile::TempDir,
+    pub admin: String,
+    pub ids: Vec<String>,
+    pub credentials: Vec<String>,
+    pub unused_token: String,
+    pub bound_token: String,
+    pub device_code: String,
+    pub exchange: ExchangeDeviceRequest,
     routing_jsonc: String,
     access_jsonc: String,
 }
 
 impl V8 {
-    fn create() -> Self {
-        let directory = crate::store::tests::directory();
+    pub(crate) fn create() -> Self {
+        let directory = crate::store::test_support::directory();
         let admin = "aa".repeat(32);
         local::atomic_write(
             &directory.path().join("admin.token"),
@@ -39,8 +39,7 @@ impl V8 {
             "CREATE TABLE settings(id INTEGER PRIMARY KEY CHECK(id=1),admin_hash BLOB NOT NULL);",
         )
         .unwrap();
-        db.execute_batch(include_str!("../schema_v8_test.sql"))
-            .unwrap();
+        db.execute_batch(include_str!("schema_v8.sql")).unwrap();
         db.execute("INSERT INTO settings VALUES(1,?1)", [local::digest(&admin)])
             .unwrap();
         let ids: Vec<_> = (1..=4).map(|n| format!("{n:064x}")).collect();
@@ -277,13 +276,128 @@ impl V8 {
         );
         fixture
     }
-    fn database(&self) -> Connection {
+    pub(crate) fn database(&self) -> Connection {
         Connection::open(self.directory.path().join("controller.sqlite3")).unwrap()
     }
-    fn nodes(&self, db: &Connection) -> Vec<NodeSummary> {
+    pub(crate) fn write_v10_schema(&self) {
+        let path = self.directory.path().join("historical.sqlite3");
+        local::atomic_write(&path, &[], false).unwrap();
+        let db = Connection::open(&path).unwrap();
+        db.execute_batch(
+            "CREATE TABLE settings(id INTEGER PRIMARY KEY CHECK(id=1),admin_hash BLOB NOT NULL);",
+        )
+        .unwrap();
+        db.execute_batch(include_str!("schema_v9.sql")).unwrap();
+        db.execute_batch(include_str!("schema_v10.sql")).unwrap();
+        db.execute(
+            "INSERT INTO networks VALUES(?1,?2,1)",
+            params![NETWORK, STAMP],
+        )
+        .unwrap();
+        db.execute(
+            "ATTACH DATABASE ?1 AS frozen",
+            [self
+                .directory
+                .path()
+                .join("controller.sqlite3")
+                .to_str()
+                .unwrap()],
+        )
+        .unwrap();
+        db.execute_batch("INSERT INTO settings SELECT * FROM frozen.settings;")
+            .unwrap();
+        for (table, columns) in TABLES {
+            if *table == "network_identity" {
+                db.execute_batch(&format!(
+                    "INSERT INTO main.{table}({columns}) SELECT {columns} FROM frozen.{table};"
+                ))
+                .unwrap();
+            } else {
+                db.execute(&format!("INSERT INTO main.{table}({columns},network_id) SELECT {columns},?1 FROM frozen.{table}"), [NETWORK]).unwrap();
+            }
+        }
+        db.execute_batch("DETACH DATABASE frozen;").unwrap();
+        db.pragma_update(None, "foreign_keys", true).unwrap();
+        assert!(
+            !db.prepare("PRAGMA foreign_key_check")
+                .unwrap()
+                .exists([])
+                .unwrap()
+        );
+        drop(db);
+        std::fs::rename(path, self.directory.path().join("controller.sqlite3")).unwrap();
+    }
+    /// Construct a fixed older schema and copy only its original row columns.
+    /// The row source is the frozen v8 fixture above, never the current Store.
+    pub(crate) fn write_earlier_schema(&self, version: u32) {
+        assert!(matches!(version, 3 | 5 | 6 | 7));
+        let path = self.directory.path().join("historical.sqlite3");
+        local::atomic_write(&path, &[], false).unwrap();
+        let db = Connection::open(&path).unwrap();
+        db.execute_batch(include_str!("schema_v3.sql")).unwrap();
+        if version >= 5 {
+            db.execute_batch(include_str!("schema_v5_additions.sql"))
+                .unwrap();
+        }
+        if version >= 6 {
+            db.execute_batch(include_str!("schema_v6_additions.sql"))
+                .unwrap();
+        }
+        if version >= 7 {
+            db.execute_batch(include_str!("schema_v7_additions.sql"))
+                .unwrap();
+        }
+        db.execute(
+            "ATTACH DATABASE ?1 AS frozen",
+            [self
+                .directory
+                .path()
+                .join("controller.sqlite3")
+                .to_str()
+                .unwrap()],
+        )
+        .unwrap();
+        let tables = db
+            .prepare("SELECT name FROM main.sqlite_schema WHERE type='table'")
+            .unwrap()
+            .query_map([], |r| r.get::<_, String>(0))
+            .unwrap()
+            .collect::<Result<Vec<_>, _>>()
+            .unwrap();
+        for table in tables {
+            let columns = db
+                .prepare(&format!("PRAGMA main.table_info({table})"))
+                .unwrap()
+                .query_map([], |r| r.get::<_, String>(1))
+                .unwrap()
+                .collect::<Result<Vec<_>, _>>()
+                .unwrap()
+                .join(",");
+            let source = if version == 5 && table == "mesh_access_source" {
+                "mesh_access_legacy_v5"
+            } else {
+                &table
+            };
+            db.execute_batch(&format!(
+                "INSERT INTO main.{table}({columns}) SELECT {columns} FROM frozen.{source};"
+            ))
+            .unwrap();
+        }
+        db.execute_batch("DETACH DATABASE frozen;").unwrap();
+        db.pragma_update(None, "foreign_keys", true).unwrap();
+        assert!(
+            !db.prepare("PRAGMA foreign_key_check")
+                .unwrap()
+                .exists([])
+                .unwrap()
+        );
+        drop(db);
+        std::fs::rename(path, self.directory.path().join("controller.sqlite3")).unwrap();
+    }
+    pub(crate) fn nodes(&self, db: &Connection) -> Vec<NodeSummary> {
         db.prepare("SELECT id,name,agent_version,registered_at,last_seen,revoked_at,mesh_ipv4,mesh_ipv6,country,(SELECT revision FROM configuration WHERE id=1),acknowledged_revision FROM nodes ORDER BY id").unwrap().query_map([],crate::store::node_row).unwrap().collect::<Result<Vec<_>,_>>().unwrap()
     }
-    fn configuration(&self, db: &Connection, index: usize) -> ConfigurationSnapshot {
+    pub(crate) fn configuration(&self, db: &Connection, index: usize) -> ConfigurationSnapshot {
         let mut nodes: Vec<_> = self
             .nodes(db)
             .into_iter()
@@ -325,7 +439,7 @@ impl V8 {
             payload,
         }
     }
-    fn connections(&self, db: &Connection, index: usize) -> AgentConnectionsSnapshot {
+    pub(crate) fn connections(&self, db: &Connection, index: usize) -> AgentConnectionsSnapshot {
         let nodes=self.nodes(db).into_iter().map(|node| {
             let (key,capabilities):(String,String)=db.query_row("SELECT public_key,capabilities FROM connection_identities WHERE node_id=?1",[&node.id],|r|Ok((r.get(0)?,r.get(1)?))).unwrap();
             let receipt:Option<(u32,String,String)>=db.query_row("SELECT revision,digest,saved_at FROM connection_receipts WHERE node_id=?1",[&node.id],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?))).optional().unwrap();
@@ -347,7 +461,7 @@ impl V8 {
         };
         crate::store::connections::projection(&source, &self.ids[index]).unwrap()
     }
-    fn dns(&self, db: &Connection, index: usize) -> AgentDnsSnapshot {
+    pub(crate) fn dns(&self, db: &Connection, index: usize) -> AgentDnsSnapshot {
         let nodes = self.configuration(db, index);
         let mut inventory = nodes.payload.peers;
         inventory.push(nodes.payload.node);
@@ -371,7 +485,7 @@ impl V8 {
             payload,
         }
     }
-    fn dataplane(&self, db: &Connection, index: usize) -> AgentDataplaneSnapshot {
+    pub(crate) fn dataplane(&self, db: &Connection, index: usize) -> AgentDataplaneSnapshot {
         let access_policy = if index == 2 {
             MeshPathAuthorization::default()
         } else {

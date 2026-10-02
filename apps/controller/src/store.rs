@@ -9,8 +9,6 @@ use meshway_protocol::{
 use rusqlite::{Connection, OptionalExtension, Row, TransactionBehavior, params};
 
 use crate::Error;
-#[cfg(test)]
-use meshway_protocol::AuthorizeDeviceResponse;
 
 mod access;
 mod account_authorization;
@@ -34,7 +32,7 @@ mod release_schema;
 pub(crate) use networks::NetworkId;
 mod tags;
 #[cfg(test)]
-mod test_store;
+mod test_support;
 #[cfg(test)]
 mod tests;
 
@@ -240,21 +238,6 @@ impl Store {
     ) -> Result<NodeSummary, Error> {
         let network = self.enrollment_network(token)?;
         self.enroll_bound(&network, token, request, None)
-    }
-
-    #[cfg(test)] // Legacy PKCE fixtures; human admission uses user-owned service.
-    pub fn authorize_device(
-        &self,
-        network: &NetworkId,
-        request: &AuthorizeDeviceRequest,
-    ) -> Result<AuthorizeDeviceResponse, Error> {
-        request.validate().map_err(Error::Invalid)?;
-        let code = local::credential()?;
-        let expires_at = Utc::now() + chrono::Duration::seconds(300);
-        let binding = serde_json::to_string(request)
-            .map_err(|_| Error::Invalid("invalid device authorization"))?;
-        self.connection.execute("INSERT INTO enrollment_tokens (id, token_hash, expires_at, device_binding, network_id) VALUES (?1, ?2, ?3, ?4, ?5)", params![local::credential()?, digest(&code), expires_at.timestamp_millis(), binding, network.as_str()])?;
-        Ok(AuthorizeDeviceResponse { code, expires_at })
     }
 
     pub fn exchange_device(

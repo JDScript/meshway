@@ -1,6 +1,6 @@
 use super::*;
 use crate::NetworkOptions;
-use crate::store::test_store::TestStore as Store;
+use crate::store::test_support::SingleNetworkFixture;
 use rusqlite::params;
 
 fn directory() -> tempfile::TempDir {
@@ -11,7 +11,7 @@ fn directory() -> tempfile::TempDir {
         .unwrap()
 }
 
-fn enrolled(store: &mut Store, seed: u8, bind: bool) -> (String, String) {
+fn enrolled(store: &mut SingleNetworkFixture, seed: u8, bind: bool) -> (String, String) {
     let token = store.create_token(3600).unwrap();
     let credential = local::credential().unwrap();
     let node = store
@@ -38,7 +38,7 @@ fn enrolled(store: &mut Store, seed: u8, bind: bool) -> (String, String) {
     (node.id, credential)
 }
 
-fn direct(store: &mut Store) {
+fn direct(store: &mut SingleNetworkFixture) {
     store
         .save_policy(&SavePolicyRequest {
             expected_revision: store.revision().unwrap(),
@@ -67,7 +67,7 @@ fn rule(
     }
 }
 
-fn save(store: &mut Store, policy: MeshAccessPolicy) -> MeshAccessSnapshot {
+fn save(store: &mut SingleNetworkFixture, policy: MeshAccessPolicy) -> MeshAccessSnapshot {
     store
         .save_mesh_access(&SaveMeshAccessRequest {
             expected_revision: store.revision().unwrap(),
@@ -80,7 +80,7 @@ fn save(store: &mut Store, policy: MeshAccessPolicy) -> MeshAccessSnapshot {
 #[test]
 fn ordered_first_match_tags_bidirectional_and_keyless_nodes_compile_exact_paths() {
     let dir = directory();
-    let mut store = Store::open(dir.path(), &NetworkOptions::default()).unwrap();
+    let mut store = SingleNetworkFixture::open(dir.path(), &NetworkOptions::default()).unwrap();
     let (a, token_a) = enrolled(&mut store, 9, true);
     let (b, _) = enrolled(&mut store, 10, true);
     let (c, token_c) = enrolled(&mut store, 11, true);
@@ -242,7 +242,7 @@ fn ordered_first_match_tags_bidirectional_and_keyless_nodes_compile_exact_paths(
 #[test]
 fn jsonc_is_strict_equal_atomic_and_comment_text_is_a_cas_change() {
     let dir = directory();
-    let mut store = Store::open(dir.path(), &NetworkOptions::default()).unwrap();
+    let mut store = SingleNetworkFixture::open(dir.path(), &NetworkOptions::default()).unwrap();
     let source = "{ // retained\n \"default_action\": \"reject\", \"rules\": [], }";
     let policy = MeshAccessPolicy::default();
     let before = store.revision().unwrap();
@@ -285,7 +285,7 @@ fn jsonc_is_strict_equal_atomic_and_comment_text_is_a_cas_change() {
 #[test]
 fn routing_jsonc_preserves_exact_admin_policy_but_agents_receive_normalized_projection() {
     let dir = directory();
-    let mut store = Store::open(dir.path(), &NetworkOptions::default()).unwrap();
+    let mut store = SingleNetworkFixture::open(dir.path(), &NetworkOptions::default()).unwrap();
     let (_, token) = enrolled(&mut store, 9, false);
     let policy = RoutingPolicy {
         default_action: DefaultRouteAction::Reject,
@@ -345,7 +345,7 @@ fn routing_jsonc_preserves_exact_admin_policy_but_agents_receive_normalized_proj
 #[test]
 fn assigned_tag_catalog_updates_are_differential_and_failed_removal_is_atomic() {
     let dir = directory();
-    let mut store = Store::open(dir.path(), &NetworkOptions::default()).unwrap();
+    let mut store = SingleNetworkFixture::open(dir.path(), &NetworkOptions::default()).unwrap();
     let (node, _) = enrolled(&mut store, 9, false);
     store
         .save_tags(&SaveTagsRequest {
@@ -414,7 +414,7 @@ fn assigned_tag_catalog_updates_are_differential_and_failed_removal_is_atomic() 
 #[test]
 fn revocation_cleans_hidden_tag_membership_but_not_policy_references() {
     let dir = directory();
-    let mut store = Store::open(dir.path(), &NetworkOptions::default()).unwrap();
+    let mut store = SingleNetworkFixture::open(dir.path(), &NetworkOptions::default()).unwrap();
     let (node, _) = enrolled(&mut store, 9, false);
     let definitions = vec![
         TagDefinition {
@@ -486,10 +486,11 @@ fn revocation_cleans_hidden_tag_membership_but_not_policy_references() {
 
 #[test]
 fn actual_v5_migration_deduplicates_paths_folds_reverse_and_bumps_revision() {
-    let dir = directory();
-    let mut store = Store::open_v8(dir.path(), &NetworkOptions::default()).unwrap();
-    let (a, _) = enrolled(&mut store, 9, false);
-    let (b, _) = enrolled(&mut store, 10, false);
+    let fixture = crate::store::test_support::fixtures::original_v8::V8::create();
+    let dir = &fixture.directory;
+    let db = fixture.database();
+    let a = &fixture.ids[0];
+    let b = &fixture.ids[1];
     let legacy = MeshPathAuthorization {
         grants: vec![
             MeshAccessGrant {
@@ -506,18 +507,15 @@ fn actual_v5_migration_deduplicates_paths_folds_reverse_and_bumps_revision() {
             },
         ],
     };
-    let revision = store.revision().unwrap();
-    store
-        .connection
-        .execute(
-            "UPDATE mesh_access_legacy_v5 SET policy=?1",
-            [serde_json::to_string(&legacy).unwrap()],
-        )
-        .unwrap();
-    store.downgrade_v8();
-    store.connection.execute_batch("ALTER TABLE enrollment_tokens DROP COLUMN device_binding; DROP TABLE network_identity; DROP TABLE mesh_access_source; ALTER TABLE mesh_access_legacy_v5 RENAME TO mesh_access_source; DROP TABLE node_tags; DROP TABLE tag_definitions; ALTER TABLE configuration DROP COLUMN source_jsonc; PRAGMA user_version=5;").unwrap();
-    drop(store);
-    let reopened = Store::open_v8(dir.path(), &NetworkOptions::default()).unwrap();
+    let revision = 42;
+    db.execute(
+        "UPDATE mesh_access_legacy_v5 SET policy=?1",
+        [serde_json::to_string(&legacy).unwrap()],
+    )
+    .unwrap();
+    drop(db);
+    fixture.write_earlier_schema(5);
+    let reopened = SingleNetworkFixture::open(dir.path(), &NetworkOptions::default()).unwrap();
     let snapshot = reopened.mesh_access().unwrap();
     assert_eq!(snapshot.revision, revision + 1);
     assert_eq!(snapshot.policy.default_action, AccessAction::Reject);
@@ -557,7 +555,7 @@ fn node_dataplane_keeps_the_v1_access_json_shape() {
 #[test]
 fn wildcard_expansion_rejects_identity_overflow_without_truncation_or_revision_change() {
     let dir = directory();
-    let mut store = Store::open(dir.path(), &NetworkOptions::default()).unwrap();
+    let mut store = SingleNetworkFixture::open(dir.path(), &NetworkOptions::default()).unwrap();
     direct(&mut store);
     let ipv6 = store.policy().unwrap().network.ipv6_prefix;
     let ipv6 = ipv6.trim_end_matches("/64");
@@ -606,7 +604,7 @@ fn thousand_keyless_acl_subjects_do_not_trigger_route_pair_evaluation() {
     use std::net::{Ipv4Addr, Ipv6Addr};
 
     let dir = directory();
-    let store = Store::open(dir.path(), &NetworkOptions::default()).unwrap();
+    let store = SingleNetworkFixture::open(dir.path(), &NetworkOptions::default()).unwrap();
     let network = store.policy().unwrap().network;
     let ipv4_base = u32::from(
         network

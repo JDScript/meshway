@@ -1,14 +1,11 @@
 use super::*;
 use crate::{
     NetworkOptions,
-    store::{
-        test_store::TestStore,
-        tests::{directory, enroll, request},
-    },
+    store::test_support::{SingleNetworkFixture, directory, enroll, request},
 };
 
 fn node(
-    store: &mut TestStore,
+    store: &mut SingleNetworkFixture,
     seed: u8,
     transport: ConnectionTransport,
 ) -> (NodeSummary, String, MeshExecutionRequest) {
@@ -65,7 +62,7 @@ fn node(
 }
 
 fn save(
-    store: &mut TestStore,
+    store: &mut SingleNetworkFixture,
     policy: NetworkPolicy,
 ) -> Result<crate::policy_v3_api::NetworkPolicySnapshot, Error> {
     let scope = store.network_id.clone();
@@ -102,7 +99,7 @@ fn listener(id: usize, owner: &str) -> ManagedListenerSettings {
 }
 
 fn add_listener(
-    store: &mut TestStore,
+    store: &mut SingleNetworkFixture,
     settings: ManagedListenerSettings,
 ) -> Result<ManagedListenersSnapshot, Error> {
     let scope = store.network_id.clone();
@@ -119,7 +116,7 @@ fn add_listener(
 #[test]
 fn blocked_management_get_save_preserves_intent_and_unblock_restores_same_candidate() {
     let dir = directory();
-    let mut store = TestStore::open(dir.path(), &NetworkOptions::default()).unwrap();
+    let mut store = SingleNetworkFixture::open(dir.path(), &NetworkOptions::default()).unwrap();
     let a = node(&mut store, 9, ConnectionTransport::NativeUdp);
     let b = node(&mut store, 10, ConnectionTransport::NativeUdp);
     let endpoint = ConnectionEndpoint {
@@ -193,7 +190,7 @@ fn blocked_management_get_save_preserves_intent_and_unblock_restores_same_candid
 #[test]
 fn owner_65th_material_rolls_back_listener_source_and_revision() {
     let dir = directory();
-    let mut store = TestStore::open(dir.path(), &NetworkOptions::default()).unwrap();
+    let mut store = SingleNetworkFixture::open(dir.path(), &NetworkOptions::default()).unwrap();
     let a = node(&mut store, 9, ConnectionTransport::Vless);
     save(&mut store, NetworkPolicy::default_template()).unwrap();
     for i in 0..64 {
@@ -227,7 +224,7 @@ fn owner_65th_material_rolls_back_listener_source_and_revision() {
 #[test]
 fn legacy_65_materials_cannot_activate_v3_or_download_above_contract() {
     let dir = directory();
-    let mut store = TestStore::open(dir.path(), &NetworkOptions::default()).unwrap();
+    let mut store = SingleNetworkFixture::open(dir.path(), &NetworkOptions::default()).unwrap();
     let a = node(&mut store, 9, ConnectionTransport::Vless);
     for i in 0..65 {
         add_listener(&mut store, listener(i, &a.0.id)).unwrap();
@@ -262,7 +259,7 @@ fn legacy_65_materials_cannot_activate_v3_or_download_above_contract() {
 #[test]
 fn candidate_65th_dialer_material_rolls_back_and_multiple_endpoints_count_once() {
     let dir = directory();
-    let mut store = TestStore::open(dir.path(), &NetworkOptions::default()).unwrap();
+    let mut store = SingleNetworkFixture::open(dir.path(), &NetworkOptions::default()).unwrap();
     let a = node(&mut store, 9, ConnectionTransport::Vless);
     let b = node(&mut store, 10, ConnectionTransport::Vless);
     let dialer = node(&mut store, 11, ConnectionTransport::Vless);

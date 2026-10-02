@@ -1,10 +1,7 @@
 use meshway_protocol::*;
 use rusqlite::{Connection, types::Value};
 
-use super::super::{
-    test_store::TestStore as Store,
-    tests::{directory, enroll, request},
-};
+use super::super::test_support::{SingleNetworkFixture, directory, enroll, request};
 use crate::{Error, NetworkOptions};
 
 fn old_rows(connection: &Connection) -> Vec<(String, Vec<Vec<Value>>)> {
@@ -22,7 +19,11 @@ fn old_rows(connection: &Connection) -> Vec<(String, Vec<Vec<Value>>)> {
             let mut statement = connection
                 .prepare(&format!(
                     "SELECT {} FROM \"{table}\" ORDER BY rowid",
-                    crate::store::test_store::original_columns(connection, &table)
+                    crate::store::test_support::original_columns(connection, &table)
+                        .split(',')
+                        .filter(|c| *c != "device_binding")
+                        .collect::<Vec<_>>()
+                        .join(",")
                 ))
                 .unwrap();
             let count = statement.column_count();
@@ -42,78 +43,31 @@ fn old_rows(connection: &Connection) -> Vec<(String, Vec<Vec<Value>>)> {
 
 #[test]
 fn additive_v6_upgrade_preserves_all_rows_revision_and_old_payloads_then_id_survives_restart() {
-    let dir = directory();
-    let mut store = Store::open_v8(dir.path(), &NetworkOptions::default()).unwrap();
-    let first = request("one");
-    let second = request("two");
-    let node = enroll(&mut store, &first);
-    let peer = enroll(&mut store, &second);
-    store.revoke(&peer.id).unwrap();
-    store.connection.execute("UPDATE nodes SET country='US', acknowledged_revision=2, acknowledged_digest=?1 WHERE id=?2",
-        rusqlite::params!["a".repeat(64), node.id]).unwrap();
-    // Real persisted identity/capability rows are retained even though DNS does
-    // not filter inventory by key presence.
-    let key = x_key();
-    store
-        .connection
-        .execute(
-            "INSERT INTO connection_identities(node_id,public_key,capabilities,network_id) VALUES(?1,?2,'[]',?3)",
-            rusqlite::params![node.id, key,store.network_id.as_str()],
-        )
-        .unwrap();
-    store
-        .connection
-        .execute(
-            "INSERT INTO tag_definitions(tag,description,network_id) VALUES ('tag:test','preserve',?1)",
-            [store.network_id.as_str()],
-        )
-        .unwrap();
-    store
-        .connection
-        .execute(
-            "INSERT INTO node_tags(node_id,tag,network_id) VALUES (?1,'tag:test',?2)",
-            rusqlite::params![node.id, store.network_id.as_str()],
-        )
-        .unwrap();
-    store
-        .connection
-        .execute(
-            "INSERT INTO connection_runtime_leases(node_id,instance_id,epoch,network_id) VALUES (?1,?2,3,?3)",
-            rusqlite::params![node.id, "b".repeat(64),store.network_id.as_str()],
-        )
-        .unwrap();
-    store
-        .connection
-        .execute(
-            "INSERT INTO connection_runtime_reports(node_id,sequence,body,reported_at,network_id) VALUES (?1,4,?2,'2026-10-01T00:00:00Z',?3)",
-            rusqlite::params![node.id, b"preserve opaque persisted report".as_slice(),store.network_id.as_str()],
-        )
-        .unwrap();
-    let configuration =
-        serde_json::to_vec(&store.configuration(&first.node_credential).unwrap()).unwrap();
-    let dataplane =
-        serde_json::to_vec(&store.agent_dataplane(&first.node_credential).unwrap()).unwrap();
-    let rows = old_rows(&store.connection);
-    let revision = store.revision().unwrap();
+    let fixture = crate::store::test_support::fixtures::original_v8::V8::create();
+    let dir = &fixture.directory;
+    let credential = &fixture.credentials[0];
+    let db = fixture.database();
+    let configuration = serde_json::to_vec(&fixture.configuration(&db, 0)).unwrap();
+    let dataplane = serde_json::to_vec(&fixture.dataplane(&db, 0)).unwrap();
+    drop(db);
+    fixture.write_earlier_schema(6);
+    let db = fixture.database();
+    let rows = old_rows(&db);
+    let revision = 42;
     let admin = std::fs::read(dir.path().join("admin.token")).unwrap();
-    store.downgrade_v8();
-    store
-        .connection
-        .execute_batch("ALTER TABLE enrollment_tokens DROP COLUMN device_binding; DROP TABLE network_identity; PRAGMA user_version=6;")
-        .unwrap();
-    drop(store);
-    let mut store = Store::open_v8(dir.path(), &NetworkOptions::default()).unwrap();
+    drop(db);
+    let mut store = SingleNetworkFixture::open(dir.path(), &NetworkOptions::default()).unwrap();
     assert_eq!(old_rows(&store.connection), rows);
     assert_eq!(
         std::fs::read(dir.path().join("admin.token")).unwrap(),
         admin
     );
     assert_eq!(
-        serde_json::to_vec(&store.configuration(&first.node_credential).unwrap()).unwrap(),
+        serde_json::to_vec(&store.configuration(credential).unwrap()).unwrap(),
         configuration
     );
     assert_eq!(
-        serde_json::to_vec(&store.agent_dataplane(&first.node_credential).unwrap()).unwrap(),
+        serde_json::to_vec(&store.agent_dataplane(credential).unwrap()).unwrap(),
         dataplane
     );
     let network = store.network().unwrap();
@@ -121,27 +75,19 @@ fn additive_v6_upgrade_preserves_all_rows_revision_and_old_payloads_then_id_surv
     assert_eq!(network.name, "Meshway");
     assert_eq!(network.dns, MeshDnsConfiguration::default());
     assert_eq!(network.network_id.len(), 32);
-    let dns = store.agent_dns(&first.node_credential).unwrap();
+    let dns = store.agent_dns(credential).unwrap();
     assert_eq!(dns.payload.revision, revision);
     assert!(dns.payload.records.is_empty());
     drop(store);
-    let mut store = Store::open(dir.path(), &NetworkOptions::default()).unwrap();
+    let mut store = SingleNetworkFixture::open(dir.path(), &NetworkOptions::default()).unwrap();
     assert_eq!(store.network().unwrap().network_id, network.network_id);
-    assert_eq!(
-        store.agent_dns(&first.node_credential).unwrap().digest,
-        dns.digest
-    );
-}
-
-fn x_key() -> String {
-    // Valid public key already used throughout the controller behavior tests.
-    "09".to_owned() + &"00".repeat(31)
+    assert_eq!(store.agent_dns(credential).unwrap().digest, dns.digest);
 }
 
 #[test]
 fn global_cas_normalized_noop_and_zone_withdrawal_are_durable() {
     let dir = directory();
-    let mut store = Store::open(dir.path(), &NetworkOptions::default()).unwrap();
+    let mut store = SingleNetworkFixture::open(dir.path(), &NetworkOptions::default()).unwrap();
     let req = request("BÜCHER");
     enroll(&mut store, &req);
     let initial = store.network().unwrap();

@@ -1,64 +1,15 @@
 use meshway_protocol::*;
 use rusqlite::params;
 
-use super::test_store::TestStore as Store;
+use super::test_support::{SingleNetworkFixture, directory, enroll, request};
 use crate::{Error, NetworkOptions};
-
-pub(super) fn directory() -> tempfile::TempDir {
-    use std::os::unix::fs::PermissionsExt;
-    tempfile::Builder::new()
-        .permissions(std::fs::Permissions::from_mode(0o700))
-        .tempdir()
-        .unwrap()
-}
-
-pub(super) fn request(name: &str) -> EnrollAgentRequest {
-    EnrollAgentRequest {
-        node_credential: local::credential().unwrap(),
-        name: name.into(),
-        agent_version: "v1".into(),
-    }
-}
-
-pub(super) fn enroll(store: &mut Store, request: &EnrollAgentRequest) -> NodeSummary {
-    let token = store.create_token(3600).unwrap();
-    store.enroll(&token.token, request).unwrap()
-}
 
 #[test]
 fn device_login_v8_migration_preserves_existing_rows_and_reopens() {
-    let dir = directory();
-    let mut store = Store::open_v8(dir.path(), &NetworkOptions::default()).unwrap();
-    let enrollment = request("existing");
-    let node = enroll(&mut store, &enrollment);
-    store
-        .publish_connection_identity(
-            &enrollment.node_credential,
-            &PublishConnectionIdentityRequest {
-                public_key: "09".repeat(32),
-                capabilities: vec![],
-            },
-        )
-        .unwrap();
-    let current = store.policy().unwrap();
-    store
-        .save_policy(&SavePolicyRequest {
-            expected_revision: current.revision,
-            policy: RoutingPolicy {
-                default_action: DefaultRouteAction::Direct,
-                ..current.policy
-            },
-            source_jsonc: None,
-        })
-        .unwrap();
-    let token = store.create_token(3600).unwrap();
-    store.downgrade_v8();
-    store
-        .connection
-        .execute_batch(
-            "ALTER TABLE enrollment_tokens DROP COLUMN device_binding; PRAGMA user_version=7;",
-        )
-        .unwrap();
+    let fixture = super::test_support::fixtures::original_v8::V8::create();
+    let dir = &fixture.directory;
+    fixture.write_earlier_schema(7);
+    let db = fixture.database();
     fn snapshot(
         connection: &rusqlite::Connection,
     ) -> Vec<(String, Vec<Vec<rusqlite::types::Value>>)> {
@@ -106,9 +57,9 @@ fn device_login_v8_migration_preserves_existing_rows_and_reopens() {
             })
             .collect()
     }
-    let before = snapshot(&store.connection);
-    drop(store);
-    let mut store = Store::open_v8(dir.path(), &NetworkOptions::default()).unwrap();
+    let before = snapshot(&db);
+    drop(db);
+    let mut store = SingleNetworkFixture::open(dir.path(), &NetworkOptions::default()).unwrap();
     assert_eq!(
         store
             .connection
@@ -118,15 +69,12 @@ fn device_login_v8_migration_preserves_existing_rows_and_reopens() {
     );
     assert_eq!(snapshot(&store.connection), before);
     assert_eq!(
-        store
-            .heartbeat(&enrollment.node_credential, "v1")
-            .unwrap()
-            .id,
-        node.id
+        store.heartbeat(&fixture.credentials[0], "v1").unwrap().id,
+        fixture.ids[0]
     );
-    assert!(store.enroll(&token.token, &request("new")).is_ok());
+    assert!(store.enroll(&fixture.unused_token, &request("new")).is_ok());
     drop(store);
-    assert!(Store::open(dir.path(), &NetworkOptions::default()).is_ok());
+    assert!(SingleNetworkFixture::open(dir.path(), &NetworkOptions::default()).is_ok());
 }
 
 #[test]
@@ -136,7 +84,7 @@ fn dualstack_allocation_revision_and_exhaustion_are_transactional() {
         ipv4_prefix: Some("100.96.0.0/30".into()),
         ipv6_prefix: Some("fd12:3456:789a::/64".into()),
     };
-    let mut store = Store::open(dir.path(), &options).unwrap();
+    let mut store = SingleNetworkFixture::open(dir.path(), &options).unwrap();
     let initial = store.policy().unwrap();
     assert_eq!(initial.revision, 1);
     assert_eq!(initial.policy, RoutingPolicy::default());
@@ -189,7 +137,7 @@ fn dualstack_allocation_revision_and_exhaustion_are_transactional() {
     ));
     let before = serde_json::to_value(store.nodes().unwrap()).unwrap();
     drop(store);
-    let reopened = Store::open(dir.path(), &NetworkOptions::default()).unwrap();
+    let reopened = SingleNetworkFixture::open(dir.path(), &NetworkOptions::default()).unwrap();
     assert_eq!(reopened.policy().unwrap().network, initial.network);
     assert_eq!(
         serde_json::to_value(reopened.nodes().unwrap()).unwrap(),
@@ -197,7 +145,7 @@ fn dualstack_allocation_revision_and_exhaustion_are_transactional() {
     );
     drop(reopened);
     assert!(
-        Store::open(
+        SingleNetworkFixture::open(
             dir.path(),
             &NetworkOptions {
                 ipv4_prefix: Some("100.97.0.0/16".into()),
@@ -206,13 +154,13 @@ fn dualstack_allocation_revision_and_exhaustion_are_transactional() {
         )
         .is_err()
     );
-    assert!(Store::open(dir.path(), &options).is_ok());
+    assert!(SingleNetworkFixture::open(dir.path(), &options).is_ok());
 }
 
 #[test]
 fn policy_cas_country_and_node_scoped_receipts_preserve_revision_semantics() {
     let dir = directory();
-    let mut store = Store::open(dir.path(), &NetworkOptions::default()).unwrap();
+    let mut store = SingleNetworkFixture::open(dir.path(), &NetworkOptions::default()).unwrap();
     let one = request("one");
     let two = request("two");
     let source = enroll(&mut store, &one);
@@ -392,7 +340,7 @@ fn policy_cas_country_and_node_scoped_receipts_preserve_revision_semantics() {
         Err(Error::Forbidden)
     ));
     drop(store);
-    let reopened = Store::open(dir.path(), &NetworkOptions::default()).unwrap();
+    let reopened = SingleNetworkFixture::open(dir.path(), &NetworkOptions::default()).unwrap();
     assert_eq!(
         reopened.configuration(&one.node_credential).unwrap().digest,
         effective.digest
@@ -405,46 +353,7 @@ fn policy_cas_country_and_node_scoped_receipts_preserve_revision_semantics() {
     );
 }
 
-/// Construct an actual historical v1 database, not a v2 database with its
-/// version number changed. Token bindings include active and revoked nodes.
-fn legacy(path: &std::path::Path) -> (String, Vec<EnrollAgentRequest>, Vec<String>) {
-    let admin = local::credential().unwrap();
-    local::atomic_write(&path.join("admin.token"), admin.as_bytes(), false).unwrap();
-    local::atomic_write(&path.join("controller.sqlite3"), &[], false).unwrap();
-    let db = rusqlite::Connection::open(path.join("controller.sqlite3")).unwrap();
-    db.execute_batch("CREATE TABLE settings (id INTEGER PRIMARY KEY CHECK (id = 1), admin_hash BLOB NOT NULL);
-        CREATE TABLE nodes (id TEXT PRIMARY KEY, credential_hash BLOB NOT NULL UNIQUE, name TEXT NOT NULL, agent_version TEXT NOT NULL, registered_at TEXT NOT NULL, last_seen TEXT NOT NULL, revoked_at TEXT);
-        CREATE TABLE enrollment_tokens (id TEXT PRIMARY KEY, token_hash BLOB NOT NULL UNIQUE, expires_at INTEGER NOT NULL, used_node_id TEXT REFERENCES nodes(id), binding_hash BLOB, CHECK ((used_node_id IS NULL) = (binding_hash IS NULL)));
-        PRAGMA user_version = 1;").unwrap();
-    db.execute(
-        "INSERT INTO settings VALUES (1, ?1)",
-        [local::digest(&admin)],
-    )
-    .unwrap();
-    let mut requests = Vec::new();
-    let mut tokens = Vec::new();
-    for (id, revoked) in [
-        ("z", None),
-        ("a", Some("2026-09-30T00:00:00Z")),
-        ("m", None),
-    ] {
-        let request = request(id);
-        let token = local::credential().unwrap();
-        db.execute("INSERT INTO nodes VALUES (?1, ?2, ?1, 'v1', '2026-09-30T00:00:00Z', '2026-09-30T00:00:00Z', ?3)", params![id, local::digest(&request.node_credential), revoked]).unwrap();
-        db.execute(
-            "INSERT INTO enrollment_tokens VALUES (?1, ?2, 0, ?1, ?3)",
-            params![
-                id,
-                local::digest(&token),
-                local::digest(&serde_json::to_string(&request).unwrap())
-            ],
-        )
-        .unwrap();
-        requests.push(request);
-        tokens.push(token);
-    }
-    (admin, requests, tokens)
-}
+use super::test_support::fixtures::original_v1::create as legacy;
 
 #[test]
 fn additive_v1_upgrade_preserves_binding_revocation_and_rolls_back_on_exhaustion() {
@@ -455,7 +364,7 @@ fn additive_v1_upgrade_preserves_binding_revocation_and_rolls_back_on_exhaustion
         ipv6_prefix: None,
     };
     assert!(matches!(
-        Store::open(dir.path(), &small),
+        SingleNetworkFixture::open(dir.path(), &small),
         Err(Error::Capacity(_))
     ));
     let db = rusqlite::Connection::open(dir.path().join("controller.sqlite3")).unwrap();
@@ -467,7 +376,7 @@ fn additive_v1_upgrade_preserves_binding_revocation_and_rolls_back_on_exhaustion
     assert!(db.prepare("SELECT mesh_ipv4 FROM nodes").is_err());
     assert!(db.prepare("SELECT * FROM configuration").is_err());
     drop(db);
-    let mut store = Store::open(dir.path(), &NetworkOptions::default()).unwrap();
+    let mut store = SingleNetworkFixture::open(dir.path(), &NetworkOptions::default()).unwrap();
     store.authorize_admin(&admin).unwrap();
     let nodes = store.nodes().unwrap();
     assert_eq!(
@@ -497,7 +406,7 @@ fn additive_v1_upgrade_preserves_binding_revocation_and_rolls_back_on_exhaustion
     assert_eq!(store.revision().unwrap(), 1);
     let network = store.policy().unwrap().network;
     drop(store);
-    let reopened = Store::open(dir.path(), &NetworkOptions::default()).unwrap();
+    let reopened = SingleNetworkFixture::open(dir.path(), &NetworkOptions::default()).unwrap();
     assert_eq!(reopened.policy().unwrap().network, network);
     assert_eq!(
         reopened
@@ -529,7 +438,7 @@ fn additive_v2_to_v3_preserves_configuration_credentials_addresses_and_receipts(
     };
     let before_digest = receipt_digest(&db);
     let before = db
-        .prepare(super::test_store::LEGACY_NODE_SELECT)
+        .prepare(super::test_support::LEGACY_NODE_SELECT)
         .unwrap()
         .query_map([], super::node_row)
         .unwrap()
@@ -549,7 +458,7 @@ fn additive_v2_to_v3_preserves_configuration_credentials_addresses_and_receipts(
         )
         .unwrap();
     drop(db);
-    let mut store = Store::open_v8(dir.path(), &NetworkOptions::default()).unwrap();
+    let mut store = SingleNetworkFixture::open(dir.path(), &NetworkOptions::default()).unwrap();
     assert_eq!(receipt_digest(&store.connection), before_digest);
     assert_eq!(
         store
@@ -596,7 +505,7 @@ fn additive_v2_to_v3_preserves_configuration_credentials_addresses_and_receipts(
     ));
     assert_eq!(store.enroll(&tokens[2], &requests[2]).unwrap().id, "m");
     drop(store);
-    let reopened = Store::open(dir.path(), &NetworkOptions::default()).unwrap();
+    let reopened = SingleNetworkFixture::open(dir.path(), &NetworkOptions::default()).unwrap();
     assert_eq!(receipt_digest(&reopened.connection), before_digest);
     reopened.authorize_admin(&admin).unwrap();
     assert_eq!(reopened.revision().unwrap(), 17);

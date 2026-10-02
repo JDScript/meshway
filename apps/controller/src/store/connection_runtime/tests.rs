@@ -1,6 +1,6 @@
 use super::*;
 use crate::NetworkOptions;
-use crate::store::test_store::TestStore as Store;
+use crate::store::test_support::SingleNetworkFixture;
 
 fn directory() -> tempfile::TempDir {
     use std::os::unix::fs::PermissionsExt;
@@ -10,7 +10,7 @@ fn directory() -> tempfile::TempDir {
         .unwrap()
 }
 
-fn enrolled(store: &mut Store, seed: u8) -> (String, String) {
+fn enrolled(store: &mut SingleNetworkFixture, seed: u8) -> (String, String) {
     let token = store.create_token(3600).unwrap();
     let credential = local::credential().unwrap();
     let node = store
@@ -41,7 +41,7 @@ fn enrolled(store: &mut Store, seed: u8) -> (String, String) {
 }
 
 fn begin(
-    store: &mut Store,
+    store: &mut SingleNetworkFixture,
     token: &str,
     instance: u8,
     expected_epoch: u32,
@@ -57,7 +57,11 @@ fn begin(
         .unwrap()
 }
 
-fn applied(store: &Store, token: &str, epoch: u32) -> ReportConnectionRuntimeRequest {
+fn applied(
+    store: &SingleNetworkFixture,
+    token: &str,
+    epoch: u32,
+) -> ReportConnectionRuntimeRequest {
     let snapshot = store.agent_connections(token).unwrap();
     ReportConnectionRuntimeRequest {
         epoch,
@@ -80,7 +84,7 @@ fn applied(store: &Store, token: &str, epoch: u32) -> ReportConnectionRuntimeReq
     }
 }
 
-fn connected_plan(store: &mut Store, acceptor: &str, dialer: &str) {
+fn connected_plan(store: &mut SingleNetworkFixture, acceptor: &str, dialer: &str) {
     store
         .save_connections(&SaveConnectionsRequest {
             expected_revision: store.revision().unwrap(),
@@ -129,7 +133,7 @@ fn peer(peer: &str, initiator: &str) -> ConnectionNeighborObservation {
 #[test]
 fn leases_retries_sequences_and_ttl_do_not_change_configuration_or_receipts() {
     let dir = directory();
-    let mut store = Store::open(dir.path(), &NetworkOptions::default()).unwrap();
+    let mut store = SingleNetworkFixture::open(dir.path(), &NetworkOptions::default()).unwrap();
     let (id, token) = enrolled(&mut store, 9);
     let config = store.agent_connections(&token).unwrap();
     store
@@ -208,7 +212,7 @@ fn leases_retries_sequences_and_ttl_do_not_change_configuration_or_receipts() {
         Err(Error::Conflict)
     ));
     drop(store);
-    let mut store = Store::open(dir.path(), &NetworkOptions::default()).unwrap();
+    let mut store = SingleNetworkFixture::open(dir.path(), &NetworkOptions::default()).unwrap();
     assert_eq!(begin(&mut store, &token, 2, 1).epoch, 2);
     store
         .connection
@@ -254,7 +258,7 @@ fn leases_retries_sequences_and_ttl_do_not_change_configuration_or_receipts() {
 #[test]
 fn report_scope_states_and_probe_claims_are_validated_against_node_projection() {
     let dir = directory();
-    let mut store = Store::open(dir.path(), &NetworkOptions::default()).unwrap();
+    let mut store = SingleNetworkFixture::open(dir.path(), &NetworkOptions::default()).unwrap();
     let (acceptor_id, acceptor) = enrolled(&mut store, 9);
     let (dialer_id, dialer) = enrolled(&mut store, 10);
     connected_plan(&mut store, &acceptor_id, &dialer_id);
@@ -382,7 +386,7 @@ fn peer_failure_reasons_preserve_applied_state_and_lease_expiry_withdraws_resour
     use ConnectionRuntimeReason as Reason;
 
     let dir = directory();
-    let mut store = Store::open(dir.path(), &NetworkOptions::default()).unwrap();
+    let mut store = SingleNetworkFixture::open(dir.path(), &NetworkOptions::default()).unwrap();
     let (acceptor_id, _) = enrolled(&mut store, 9);
     let (dialer_id, dialer) = enrolled(&mut store, 10);
     connected_plan(&mut store, &acceptor_id, &dialer_id);
@@ -464,7 +468,7 @@ fn peer_failure_reasons_preserve_applied_state_and_lease_expiry_withdraws_resour
 #[test]
 fn configuration_mismatch_withdrawal_and_revocation_never_leave_current_authenticated_claims() {
     let dir = directory();
-    let mut store = Store::open(dir.path(), &NetworkOptions::default()).unwrap();
+    let mut store = SingleNetworkFixture::open(dir.path(), &NetworkOptions::default()).unwrap();
     let (acceptor_id, acceptor) = enrolled(&mut store, 9);
     let (dialer_id, dialer) = enrolled(&mut store, 10);
     connected_plan(&mut store, &acceptor_id, &dialer_id);
@@ -562,7 +566,7 @@ fn configuration_mismatch_withdrawal_and_revocation_never_leave_current_authenti
 }
 
 fn existing_rows(connection: &Connection) -> Vec<(String, Vec<Vec<rusqlite::types::Value>>)> {
-    let tables: Vec<String> = connection.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' AND name NOT LIKE 'connection_runtime_%' AND name NOT IN ('network_identity','networks','latency_samples','latency_runtime_epochs','latency_admissions','latency_coverage') ORDER BY name")
+    let tables: Vec<String> = connection.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name IN ('settings','nodes','enrollment_tokens','configuration','connection_identities','connection_source','connection_receipts') ORDER BY name")
         .unwrap().query_map([], |row| row.get(0)).unwrap().collect::<Result<_, _>>().unwrap();
     tables
         .into_iter()
@@ -570,7 +574,11 @@ fn existing_rows(connection: &Connection) -> Vec<(String, Vec<Vec<rusqlite::type
             let mut query = connection
                 .prepare(&format!(
                     "SELECT {} FROM {table} ORDER BY 1",
-                    crate::store::test_store::original_columns(connection, &table)
+                    crate::store::test_support::original_columns(connection, &table)
+                        .split(',')
+                        .filter(|c| !matches!(*c, "device_binding" | "source_jsonc"))
+                        .collect::<Vec<_>>()
+                        .join(",")
                 ))
                 .unwrap();
             let columns = query.column_count();
@@ -586,40 +594,19 @@ fn existing_rows(connection: &Connection) -> Vec<(String, Vec<Vec<rusqlite::type
 
 #[test]
 fn v3_to_v4_preserves_every_existing_sql_value_and_schema1_payload_bytes() {
-    let dir = directory();
-    let mut store = Store::open_v8(dir.path(), &NetworkOptions::default()).unwrap();
-    let (id, token) = enrolled(&mut store, 9);
-    let (peer_id, peer_token) = enrolled(&mut store, 10);
-    connected_plan(&mut store, &id, &peer_id);
-    let before = store.agent_connections(&token).unwrap();
-    store
-        .acknowledge_connections(
-            &token,
-            &AcknowledgeAgentConnectionsRequest {
-                revision: before.payload.revision,
-                digest: before.digest.clone(),
-            },
-        )
-        .unwrap();
-    let ip = store.configuration(&token).unwrap();
-    store
-        .acknowledge(
-            &token,
-            &AcknowledgeConfigurationRequest {
-                revision: ip.payload.revision,
-                digest: ip.digest,
-            },
-        )
-        .unwrap();
-    store.create_token(3600).unwrap();
-    store.revoke(&peer_id).unwrap();
-    let before = serde_json::to_vec(&store.agent_connections(&token).unwrap()).unwrap();
-    let rows = existing_rows(&store.connection);
+    let fixture = crate::store::test_support::fixtures::original_v8::V8::create();
+    let dir = &fixture.directory;
+    let token = &fixture.credentials[0];
+    let peer_token = &fixture.credentials[3];
+    let db = fixture.database();
+    let before = serde_json::to_vec(&fixture.connections(&db, 0)).unwrap();
+    drop(db);
+    fixture.write_earlier_schema(3);
+    let db = fixture.database();
+    let rows = existing_rows(&db);
     let admin_before = std::fs::read(dir.path().join("admin.token")).unwrap();
-    store.downgrade_v8();
-    store.connection.execute_batch("ALTER TABLE enrollment_tokens DROP COLUMN device_binding; DROP TABLE network_identity; DROP TABLE mesh_access_source; DROP TABLE mesh_access_legacy_v5; DROP TABLE node_tags; DROP TABLE tag_definitions; DROP TABLE connection_runtime_reports; DROP TABLE connection_runtime_leases; ALTER TABLE configuration DROP COLUMN source_jsonc; PRAGMA user_version=3;").unwrap();
-    drop(store);
-    let mut reopened = Store::open_v8(dir.path(), &NetworkOptions::default()).unwrap();
+    drop(db);
+    let mut reopened = SingleNetworkFixture::open(dir.path(), &NetworkOptions::default()).unwrap();
     assert_eq!(existing_rows(&reopened.connection), rows);
     assert_eq!(
         serde_json::to_vec(&reopened.agent_connections(&token).unwrap()).unwrap(),

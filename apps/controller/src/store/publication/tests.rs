@@ -1,8 +1,8 @@
 use super::*;
-use crate::{NetworkOptions, store::test_store::TestStore};
+use crate::{NetworkOptions, store::test_support::SingleNetworkFixture};
 use std::cell::Cell;
 
-fn node(store: &mut TestStore, seed: u8) -> (String, String) {
+fn node(store: &mut SingleNetworkFixture, seed: u8) -> (String, String) {
     let enrollment = store.create_token(3600).unwrap();
     let credential = local::credential().unwrap();
     let node = store
@@ -29,8 +29,8 @@ fn node(store: &mut TestStore, seed: u8) -> (String, String) {
 
 #[test]
 fn one_compilation_is_shared_by_budget_gates_and_multiple_node_snapshots() {
-    let dir = crate::store::tests::directory();
-    let mut store = TestStore::open(dir.path(), &NetworkOptions::default()).unwrap();
+    let dir = crate::store::test_support::directory();
+    let mut store = SingleNetworkFixture::open(dir.path(), &NetworkOptions::default()).unwrap();
     let nodes: Vec<_> = (9..12).map(|seed| node(&mut store, seed)).collect();
     store
         .save_policy(&SavePolicyRequest {
@@ -113,8 +113,8 @@ fn one_compilation_is_shared_by_budget_gates_and_multiple_node_snapshots() {
 
 #[test]
 fn routing_repair_keeps_its_existing_dependency_closure() {
-    let dir = crate::store::tests::directory();
-    let mut store = TestStore::open(dir.path(), &NetworkOptions::default()).unwrap();
+    let dir = crate::store::test_support::directory();
+    let mut store = SingleNetworkFixture::open(dir.path(), &NetworkOptions::default()).unwrap();
     node(&mut store, 9);
     // Deliberately unreadable unrelated connection source. No executable paths
     // exist under deny-all; routing repair must not acquire an adjacency gate.

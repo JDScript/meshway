@@ -1,12 +1,9 @@
 use super::{TABLES, upgrade};
-#[path = "original_v8.rs"]
-mod original_v8;
 use crate::{
     Error, NetworkOptions,
     store::{
         NetworkId, Store,
-        test_store::TestStore,
-        tests::{directory, request},
+        test_support::{SingleNetworkFixture, directory, request},
     },
 };
 use meshway_protocol::*;
@@ -40,109 +37,31 @@ fn enrolled(store: &mut Store, network: &NetworkId, request: &EnrollAgentRequest
 
 #[test]
 fn complete_v8_upgrade_is_lossless_and_rolls_back_on_invalid_ownership() {
-    let dir = directory();
-    let mut fixture = TestStore::open(
-        dir.path(),
-        &NetworkOptions {
-            ipv4_prefix: Some("100.96.0.0/16".into()),
-            ipv6_prefix: Some("fd73:96a6:cf5e::/64".into()),
-        },
-    )
-    .unwrap();
-    fixture.set_fixture_network_id("baf5c8095f41b92ea539a10456da64e3");
-    let network = fixture.network_id.clone();
-    let first = request("existing");
-    let node = enrolled(&mut fixture, &network, &first);
-    let second = request("revoked");
-    let revoked = enrolled(&mut fixture, &network, &second);
-    fixture.revoke(&revoked.id).unwrap();
-    fixture
-        .connection
-        .execute(
-            "UPDATE network_identity SET dns=?1 WHERE network_id=?2",
-            params![
-                r#"{"enabled":true,"zone":"meshway.test","ttl_seconds":30}"#,
-                network.as_str()
-            ],
-        )
+    let fixture = crate::store::test_support::fixtures::original_v8::V8::create();
+    let dir = &fixture.directory;
+    let mut db = fixture.database();
+    let config = canonical_json(&fixture.configuration(&db, 0)).unwrap();
+    let dns = canonical_json(&fixture.dns(&db, 0)).unwrap();
+    let before = rows(&db);
+    db.pragma_update(None, "foreign_keys", false).unwrap();
+    db.execute("INSERT INTO node_tags VALUES('missing','tag:peer')", [])
         .unwrap();
-    fixture
-        .connection
-        .execute(
-            "UPDATE configuration SET revision=42,policy=?1,source_jsonc=?1 WHERE network_id=?2",
-            params![
-                r#"{"default_action":"direct","rules":[]}"#,
-                network.as_str()
-            ],
-        )
-        .unwrap();
-    fixture.connection.execute("INSERT INTO connection_identities(node_id,public_key,capabilities,network_id) VALUES(?1,?2,'[]',?3)",params![node.id,"09".to_owned()+&"00".repeat(31),network.as_str()]).unwrap();
-    fixture.connection.execute("INSERT INTO connection_receipts(node_id,revision,digest,saved_at,network_id) VALUES(?1,42,?2,'2026-10-01T00:00:00Z',?3)",params![node.id,"a".repeat(64),network.as_str()]).unwrap();
-    fixture.connection.execute("INSERT INTO connection_runtime_leases(node_id,instance_id,epoch,network_id) VALUES(?1,?2,7,?3)",params![node.id,"b".repeat(64),network.as_str()]).unwrap();
-    fixture.connection.execute("INSERT INTO connection_runtime_reports(node_id,sequence,body,reported_at,network_id) VALUES(?1,3,?2,'2026-10-01T00:00:00Z',?3)",params![node.id,b"opaque runtime evidence".as_slice(),network.as_str()]).unwrap();
-    fixture.connection.execute("INSERT INTO tag_definitions(tag,description,network_id) VALUES('tag:existing','preserved',?1)",[network.as_str()]).unwrap();
-    fixture
-        .connection
-        .execute(
-            "INSERT INTO node_tags(node_id,tag,network_id) VALUES(?1,'tag:existing',?2)",
-            params![node.id, network.as_str()],
-        )
-        .unwrap();
-    fixture
-        .connection
-        .execute(
-            "UPDATE mesh_access_source SET policy=?1,source_jsonc=?1 WHERE network_id=?2",
-            params![r#"{"default_action":"allow","rules":[]}"#, network.as_str()],
-        )
-        .unwrap();
-    fixture.connection.execute("UPDATE connection_source SET configuration=?1 WHERE network_id=?2",params![serde_json::json!({"listeners":[{"id":"preserved","node_id":node.id,"transport":"native_udp","bind":"0.0.0.0:42000","advertised_endpoints":[],"credential_ref":null}],"candidates":[]}).to_string(),network.as_str()]).unwrap();
-    fixture.connection.execute("UPDATE nodes SET acknowledged_revision=42,acknowledged_digest=?1 WHERE id=?2 AND network_id=?3",params!["c".repeat(64),node.id,network.as_str()]).unwrap();
-    let token = fixture.create_token(3600).unwrap();
-    let code = fixture
-        .authorize_device(&AuthorizeDeviceRequest {
-            redirect_uri: DEVICE_CALLBACK_URI.into(),
-            code_challenge: s256(&"v".repeat(43)),
-            name: "App".into(),
-            agent_version: "test".into(),
-        })
-        .unwrap();
-    let config = canonical_json(&fixture.configuration(&first.node_credential).unwrap()).unwrap();
-    let dns = canonical_json(&fixture.agent_dns(&first.node_credential).unwrap()).unwrap();
-    fixture.downgrade_v8();
-    let before = rows(&fixture.connection);
-    fixture
-        .connection
-        .pragma_update(None, "foreign_keys", false)
-        .unwrap();
-    fixture
-        .connection
-        .execute("INSERT INTO node_tags VALUES('missing','tag:existing')", [])
-        .unwrap();
-    fixture
-        .connection
-        .pragma_update(None, "foreign_keys", true)
-        .unwrap();
-    let invalid = rows(&fixture.connection);
-    assert!(upgrade(&mut fixture.connection).is_err());
-    assert_eq!(rows(&fixture.connection), invalid);
+    db.pragma_update(None, "foreign_keys", true).unwrap();
+    let invalid = rows(&db);
+    assert!(upgrade(&mut db).is_err());
+    assert_eq!(rows(&db), invalid);
     assert_eq!(
-        fixture
-            .connection
-            .pragma_query_value(None, "user_version", |row| row.get::<_, u32>(0))
+        db.pragma_query_value(None, "user_version", |row| row.get::<_, u32>(0))
             .unwrap(),
         8
     );
     assert!(
-        fixture
-            .connection
-            .pragma_query_value(None, "foreign_keys", |row| row.get::<_, bool>(0))
+        db.pragma_query_value(None, "foreign_keys", |row| row.get::<_, bool>(0))
             .unwrap()
     );
-    fixture
-        .connection
-        .execute("DELETE FROM node_tags WHERE node_id='missing'", [])
+    db.execute("DELETE FROM node_tags WHERE node_id='missing'", [])
         .unwrap();
-    drop(fixture);
+    drop(db);
     let mut store = Store::open(dir.path(), &NetworkOptions::default()).unwrap();
     let network = store
         .network_id("baf5c8095f41b92ea539a10456da64e3")
@@ -150,32 +69,27 @@ fn complete_v8_upgrade_is_lossless_and_rolls_back_on_invalid_ownership() {
     assert_eq!(rows(&store.connection), before);
     assert_eq!(store.revision(&network).unwrap(), 42);
     assert_eq!(
-        canonical_json(&store.configuration(&first.node_credential).unwrap()).unwrap(),
+        canonical_json(&store.configuration(&fixture.credentials[0]).unwrap()).unwrap(),
         config
     );
     assert_eq!(
-        canonical_json(&store.agent_dns(&first.node_credential).unwrap()).unwrap(),
+        canonical_json(&store.agent_dns(&fixture.credentials[0]).unwrap()).unwrap(),
         dns
     );
     assert!(matches!(
-        store.heartbeat(&second.node_credential, "test"),
+        store.heartbeat(&fixture.credentials[3], "test"),
         Err(Error::Forbidden)
     ));
     assert!(
         store
-            .exchange_device(
-                &code.code,
-                &ExchangeDeviceRequest {
-                    code_verifier: "v".repeat(43),
-                    redirect_uri: DEVICE_CALLBACK_URI.into(),
-                    node_credential: local::credential().unwrap(),
-                    name: "App".into(),
-                    agent_version: "test".into()
-                }
-            )
+            .exchange_device(&fixture.device_code, &fixture.exchange)
             .is_ok()
     );
-    assert!(store.enroll(&token.token, &request("legacy token")).is_ok());
+    assert!(
+        store
+            .enroll(&fixture.unused_token, &request("legacy token"))
+            .is_ok()
+    );
     assert!(
         store
             .connection
@@ -319,9 +233,9 @@ fn networks_isolate_inventory_addresses_revision_tags_and_agent_snapshots() {
 }
 
 #[test]
-fn live_discovery_and_runtime_leases_survive_migration_and_network_switches() {
+fn live_discovery_and_runtime_leases_survive_network_switches() {
     let dir = directory();
-    let mut fixture = TestStore::open(dir.path(), &NetworkOptions::default()).unwrap();
+    let mut fixture = SingleNetworkFixture::open(dir.path(), &NetworkOptions::default()).unwrap();
     let enrollment = request("reporting");
     let network = fixture.network_id.clone();
     let node = enrolled(&mut fixture, &network, &enrollment);
@@ -376,10 +290,6 @@ fn live_discovery_and_runtime_leases_survive_migration_and_network_switches() {
         .unwrap();
     let runtime = canonical_json(&fixture.connection_runtimes().unwrap()).unwrap();
     let discovery = canonical_json(&fixture.endpoint_discoveries().unwrap()).unwrap();
-    fixture.downgrade_v8();
-    upgrade(&mut fixture.connection).unwrap();
-    crate::store::managed_transports::upgrade(&mut fixture.connection).unwrap();
-    crate::store::release_schema::upgrade(&mut fixture.connection).unwrap();
     assert_eq!(
         canonical_json(&fixture.connection_runtimes().unwrap()).unwrap(),
         runtime

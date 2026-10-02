@@ -71,60 +71,7 @@ mod tests {
     use super::*;
     use rusqlite::types::Value;
 
-    const NETWORK: &str = "0123456789abcdef0123456789abcdef";
-    const NODE: &str = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
-    const PEER: &str = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
-
-    fn v10() -> Connection {
-        let db = Connection::open_in_memory().unwrap();
-        db.pragma_update(None, "foreign_keys", true).unwrap();
-        db.execute_batch(include_str!("schema_v9.sql")).unwrap();
-        db.execute_batch(include_str!("schema_v10.sql")).unwrap();
-        db.execute(
-            "INSERT INTO networks VALUES(?1,'2026-10-01T00:00:00Z',1)",
-            [NETWORK],
-        )
-        .unwrap();
-        db.execute("INSERT INTO nodes(id,network_id,credential_hash,name,agent_version,registered_at,last_seen,mesh_ipv4,mesh_ipv6,country,acknowledged_revision,acknowledged_digest) VALUES(?1,?2,?3,'legacy','old-build','2026-10-01T00:00:00Z','2026-10-01T00:00:00Z','100.96.0.2','fd73::2','US',42,'saved-digest')",params![NODE,NETWORK,vec![7_u8;32]]).unwrap();
-        db.execute("INSERT INTO nodes(id,network_id,credential_hash,name,agent_version,registered_at,last_seen,mesh_ipv4,mesh_ipv6,acknowledged_revision) VALUES(?1,?2,?3,'peer','old-build','2026-10-01T00:00:00Z','2026-10-01T00:00:00Z','100.96.0.3','fd73::3',42)",params![PEER,NETWORK,vec![8_u8;32]]).unwrap();
-        db.execute(
-            "INSERT INTO configuration VALUES(?1,1,42,'100.96.0.0/16','fd73::/64',?2,?3)",
-            params![
-                NETWORK,
-                r#"{"default_action":"direct","rules":[]}"#,
-                "// preserve comments\n{\"default_action\":\"direct\",\"rules\":[]}"
-            ],
-        )
-        .unwrap();
-        db.execute(
-            "INSERT INTO connection_identities VALUES(?1,?2,?3,'[]')",
-            params![NODE, NETWORK, "11".repeat(32)],
-        )
-        .unwrap();
-        db.execute(
-            "INSERT INTO connection_runtime_leases VALUES(?1,?2,'old-instance',3)",
-            params![NODE, NETWORK],
-        )
-        .unwrap();
-        db.execute(
-            "INSERT INTO tag_definitions VALUES(?1,'tag:existing','preserve this description')",
-            [NETWORK],
-        )
-        .unwrap();
-        db.execute(
-            "INSERT INTO node_tags VALUES(?1,?2,'tag:existing')",
-            params![NETWORK, NODE],
-        )
-        .unwrap();
-        // Synthetic opaque material bytes prove preservation without pretending
-        // this fixture generated a real private certificate.
-        db.execute(
-            "INSERT INTO managed_listeners VALUES(?1,'existing',?2,'{}',4,'fingerprint',?3,?4)",
-            params![NETWORK, NODE, vec![5_u8; 12], vec![9_u8; 80]],
-        )
-        .unwrap();
-        db
-    }
+    use crate::store::test_support::fixtures::release::{NETWORK, NODE, PEER, v10};
 
     fn legacy_rows(db: &Connection) -> Vec<(String, Vec<Vec<Value>>)> {
         let mut tables: Vec<_> = super::super::networks::TABLES
@@ -291,15 +238,14 @@ mod tests {
 
     #[test]
     fn version_eleven_restart_rejects_partial_schema_without_repairing_it() {
-        let mut db = v10();
-        upgrade(&mut db).unwrap();
+        let mut db = crate::store::test_support::fixtures::release::v11();
         db.execute_batch("DROP TRIGGER ownership_new_node").unwrap();
         assert!(upgrade(&mut db).is_err());
         assert_eq!(db.query_row("SELECT COUNT(*) FROM sqlite_schema WHERE type='trigger' AND name='ownership_new_node'",[],|row|row.get::<_,i64>(0)).unwrap(),0);
         assert_eq!(
             db.pragma_query_value(None, "user_version", |row| row.get::<_, i64>(0))
                 .unwrap(),
-            VERSION
+            11
         );
     }
 }

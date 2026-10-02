@@ -1,16 +1,13 @@
 use super::*;
 use crate::{
     NetworkOptions,
-    store::{
-        test_store::TestStore,
-        tests::{directory, enroll, request},
-    },
+    store::test_support::{SingleNetworkFixture, directory, enroll, request},
 };
 
 #[test]
 fn explicit_cas_activation_preserves_legacy_jsonc_and_withdraws_old_execution() {
     let dir = directory();
-    let mut store = TestStore::open(dir.path(), &NetworkOptions::default()).unwrap();
+    let mut store = SingleNetworkFixture::open(dir.path(), &NetworkOptions::default()).unwrap();
     let request = request("preserved");
     let node = enroll(&mut store, &request);
     let scope = store.network_id.clone();
@@ -139,7 +136,7 @@ fn explicit_cas_activation_preserves_legacy_jsonc_and_withdraws_old_execution() 
         0
     );
     drop(store);
-    let store = TestStore::open(dir.path(), &NetworkOptions::default()).unwrap();
+    let store = SingleNetworkFixture::open(dir.path(), &NetworkOptions::default()).unwrap();
     assert_eq!(
         store.network_policy(&store.network_id).unwrap().source_mode,
         PolicySourceMode::MeshV3
@@ -149,12 +146,16 @@ fn explicit_cas_activation_preserves_legacy_jsonc_and_withdraws_old_execution() 
 
 #[test]
 fn v12_schema_gate_rolls_back_fragments_and_preserves_v11_rows() {
-    let dir = directory();
-    let mut store = TestStore::open(dir.path(), &NetworkOptions::default()).unwrap();
-    let request = request("v11");
-    let node = enroll(&mut store, &request);
-    let before = store.revision().unwrap();
-    store.connection.execute_batch("DROP TABLE mesh_execution_receipts; DROP TABLE mesh_execution_capabilities; DROP TABLE network_policy_sources; PRAGMA user_version=11;").unwrap();
+    struct Fixture {
+        connection: Connection,
+    }
+    let mut store = Fixture {
+        connection: crate::store::test_support::fixtures::release::v11(),
+    };
+    let before: u32 = store
+        .connection
+        .query_row("SELECT revision FROM configuration", [], |r| r.get(0))
+        .unwrap();
     store
         .connection
         .execute_batch("CREATE TABLE mesh_execution_receipts(dummy TEXT)")
@@ -182,9 +183,30 @@ fn v12_schema_gate_rolls_back_fragments_and_preserves_v11_rows() {
         .execute_batch("DROP TABLE mesh_execution_receipts")
         .unwrap();
     super::super::release_schema::upgrade(&mut store.connection).unwrap();
-    assert_eq!(store.revision().unwrap(), before);
-    assert_eq!(store.nodes().unwrap()[0].mesh_ipv4, node.mesh_ipv4);
-    let scope = store.network_id.clone();
+    assert_eq!(
+        store
+            .connection
+            .query_row("SELECT revision FROM configuration", [], |r| r
+                .get::<_, u32>(0))
+            .unwrap(),
+        before
+    );
+    assert_eq!(
+        store
+            .connection
+            .query_row(
+                "SELECT mesh_ipv4 FROM nodes WHERE id=?1",
+                [crate::store::test_support::fixtures::release::NODE],
+                |r| r.get::<_, String>(0)
+            )
+            .unwrap(),
+        "100.96.0.2"
+    );
+    let scope = NetworkId::lookup(
+        &store.connection,
+        crate::store::test_support::fixtures::release::NETWORK,
+    )
+    .unwrap();
     assert!(!active(&store.connection, &scope).unwrap());
     super::super::release_schema::upgrade(&mut store.connection).unwrap();
     store
@@ -197,7 +219,7 @@ fn v12_schema_gate_rolls_back_fragments_and_preserves_v11_rows() {
 #[test]
 fn mixed_epoch_support_withdraws_whole_mandatory_plan_without_replanning_around_old_agent() {
     let dir = directory();
-    let mut store = TestStore::open(dir.path(), &NetworkOptions::default()).unwrap();
+    let mut store = SingleNetworkFixture::open(dir.path(), &NetworkOptions::default()).unwrap();
     let scope = store.network_id.clone();
     let mut participants = Vec::new();
     for seed in 9..12 {

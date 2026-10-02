@@ -1,7 +1,7 @@
 use super::*;
 use crate::{
     NetworkOptions,
-    store::tests::{directory, request},
+    store::test_support::{directory, request},
 };
 
 fn settings(node_id: &str) -> ManagedListenerSettings {
@@ -436,7 +436,7 @@ fn initial_intent_consumption_is_atomic_identity_bound_and_cannot_restore_revoca
     assert!(!listeners.listeners[0].compiled_capability_available);
     assert_eq!(store.enroll(&token.token, &request).unwrap().id, node.id);
     assert_eq!(store.revision(&network).unwrap(), revision + 1);
-    let mut different = super::super::tests::request("initial");
+    let mut different = super::super::test_support::request("initial");
     different.node_credential = local::credential().unwrap();
     assert!(matches!(
         store.enroll(&token.token, &different),
@@ -451,7 +451,7 @@ fn initial_intent_consumption_is_atomic_identity_bound_and_cannot_restore_revoca
             },
         )
         .unwrap();
-    let attempted = super::super::tests::request("collision");
+    let attempted = super::super::test_support::request("collision");
     assert!(matches!(
         store.enroll(&another.token, &attempted),
         Err(Error::Conflict)

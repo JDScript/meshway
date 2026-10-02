@@ -1,10 +1,10 @@
 use super::*;
 use crate::NetworkOptions;
-use crate::store::test_store::TestStore as Store;
+use crate::store::test_support::SingleNetworkFixture;
 
 struct Fixture {
     directory: tempfile::TempDir,
-    store: Store,
+    store: SingleNetworkFixture,
     token: String,
     other: String,
     id: String,
@@ -20,7 +20,8 @@ impl Fixture {
             .permissions(std::fs::Permissions::from_mode(0o700))
             .tempdir()
             .unwrap();
-        let mut store = Store::open(directory.path(), &NetworkOptions::default()).unwrap();
+        let mut store =
+            SingleNetworkFixture::open(directory.path(), &NetworkOptions::default()).unwrap();
         let mut enroll = |seed: u8| {
             let enrollment = store.create_token(3600).unwrap();
             let token = local::credential().unwrap();
@@ -345,7 +346,7 @@ fn runtime_evidence_config_revocation_restart_and_server_ttl_filter_claims() {
     assert!(!f.view(now).current);
     let network_id = f.store.network().unwrap().network_id;
     drop(f.store);
-    f.store = Store::open(f.directory.path(), &NetworkOptions::default()).unwrap();
+    f.store = SingleNetworkFixture::open(f.directory.path(), &NetworkOptions::default()).unwrap();
     assert_eq!(f.view(now).state, EndpointDiscoveryState::AwaitingReport);
     assert!(f.view(now).reported_at.is_none());
     assert_eq!(f.store.network().unwrap().network_id, network_id);
