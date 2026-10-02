@@ -11,6 +11,7 @@ import {
   NetworkViewProvider,
   useNetworkView,
 } from "@/features/network/use-network-view"
+import { MembersPage } from "@/features/members/page"
 import { useNodeNavigation, useNodesRoute } from "@/features/nodes/navigation"
 import { NodesPage } from "@/features/nodes/page"
 import {
@@ -108,6 +109,7 @@ export function NetworkShell({ networkId }: { networkId: string }) {
     <NetworkViewProvider value={view}>
       <OverviewPage networkId={networkId} />
       <NodesPage networkId={networkId} />
+      <MembersPage networkId={networkId} />
       <SettingsPage networkId={networkId} />
 
       {mobile && page !== "overview" ? null : (
