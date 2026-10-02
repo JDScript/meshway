@@ -1,6 +1,8 @@
 //! Internal outer-socket capability. Does not grant business access or own sinks.
 mod controller;
 mod dns;
+#[cfg(all(test, target_os = "linux"))]
+mod fixture;
 mod generation;
 mod http;
 mod socket;
