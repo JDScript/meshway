@@ -51,4 +51,27 @@
   `available=false, valid=false, listeners=0, materials=0`，退出0。
 - 日志 `managed-vless-mv3-tests.log` / `managed-vless-mv2-mv3-original-scenarios.log`。
 
-公共HTTP DTO/endpoint保持固定合同；最终全消费者矩阵尚未运行。
+## 最终作者验证（新增修复，仍待固定SHA独立复核）
+
+- 公共HTTP DTO/endpoint/OpenAPI保持固定合同；Rust client错误内部行为重生成。
+  生成drift和workspace all-target/all-feature Clippy `-D warnings`通过。
+- `CARGO_BUILD_JOBS=2 CARGO_TARGET_DIR=target/mv-fix cargo test --workspace
+  --all-features --locked --offline -- --test-threads=1`：**491 passed，0 failed，
+  7 ignored**，46个suite结果；包括Agent/Apple core及原R3/R5回归。
+- SDK **12 passed**，Web **145 passed**；Web/SDK/e2e TypeScript与所有experiment
+  tsconfig通过。原反例目录/锁/输出未改；新拷贝和独立target另存。
+- 同一共享performance lock等待后执行关键完整Linux Docker正常链路：**PASS**，
+  七阶段（WS/TLS/Noise、双向IPv4 TUN HTTP/ICMP、端口/path变更、重启、TLS/TCP、
+  lease撤退）、cleanup errors=0。镜像编译专用Dockerfile限制jobs=2；没有hostnet、
+  privileged、远端或live/demo修改。
+- 新Docker证据：
+  `$OPENCODE_TMP/meshway-managed-vless-muqaqcdg-5194a1a38e79-5uN8SV/result.json`。
+- 最终日志：`managed-vless-mv-workspace.log`、`managed-vless-mv-clippy.log`、
+  `managed-vless-mv-drift.log`、`managed-vless-mv-sdk.log`、`managed-vless-mv-web.log`、
+  `managed-vless-mv-docker.log`（均在批准TMP）。
+- MV1 `28949f9`；MV2 `61d5c80`；MV3 `727014d`。后续证据/格式提交不改旧
+  `56da5ad`历史，不rebase。未争用sampler生命周期/transport注入模板，root
+  manifest和Cargo.lock无额外变化。剩余产品scope仍按原P2a handoff，不扩registry。
+
+本文件的pass为作者实际执行结果；不代替Astra对交付新HEAD的固定复核，也不自行
+宣布独立审查已关闭。

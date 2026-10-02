@@ -36,7 +36,7 @@ async function until<T>(test:()=>Promise<T|false>,timeout=60_000):Promise<T>{con
 try {
   const fd=Number(process.env.MESHWAY_MANAGED_TRANSPORTS_LOCK_FD);assert(Number.isSafeInteger(fd)&&fd>=3);
   const lock=process.env.MESHWAY_PERF_LOCK;assert(lock);const held=fstatSync(fd);const disk=await lstat(lock);assert(held.dev===disk.dev&&held.ino===disk.ino&&held.uid===process.getuid?.()&&(held.mode&0o077)===0);
-  if(args.length===0)await docker(["build","-f","experiments/managed-connections/Dockerfile","-t",image,"."],1_200_000);
+  if(args.length===0)await docker(["build","-f","experiments/managed-transports/Dockerfile","-t",image,"."],1_200_000);
   const imageId=(await docker(["image","inspect",image,"--format","{{.Id}}"])).trim();assert(/^sha256:[0-9a-f]{64}$/.test(imageId));
   await docker(["network","create","--label",`${OWNER}=${runId}`,control]);ownedNetworks.push(control);
   await docker(["network","create","--internal","--label",`${OWNER}=${runId}`,network]);ownedNetworks.push(network);

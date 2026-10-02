@@ -142,7 +142,9 @@ fn packet(marker: u8) -> Vec<u8> {
     p[16..20].copy_from_slice(&[100, 96, 0, 2]);
     p[20] = marker;
     let mut sum: u32 = p[..20]
-        .chunks_exact(2)
+        .as_chunks::<2>()
+        .0
+        .iter()
         .map(|b| u16::from_be_bytes([b[0], b[1]]) as u32)
         .sum();
     while sum > 0xffff {
