@@ -1,4 +1,23 @@
 {
   "$schema": "https://inlang.com/schema/inlang-message-format",
-  "entry_password_reset_done": "密码已重置，该账户的所有会话已退出。"
+  "entry_password_reset_done": "密码已重置，该账户的所有会话已退出。",
+  "device_title": "授权设备",
+  "device_invalid": "授权请求无效",
+  "device_name": "设备",
+  "device_version": "版本",
+  "device_controller": "控制面",
+  "device_network": "网络",
+  "device_network_option": "{name} · {prefix}",
+  "device_no_network": "这个账户没有网络",
+  "device_approve": "批准",
+  "device_deny": "拒绝",
+  "device_approved": "已批准",
+  "device_denied": "已拒绝",
+  "device_signed_in": "已登录 {email}",
+  "device_switch_account": "切换账户",
+  "device_choose_network": "请选择网络。",
+  "device_forbidden": "这个账户不是所选网络的成员。",
+  "device_rejected": "控制面拒绝了这个授权请求。",
+  "device_unconfirmed": "授权未完成。",
+  "device_read_failed": "读取账户失败"
 }

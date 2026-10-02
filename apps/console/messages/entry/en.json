@@ -1,4 +1,23 @@
 {
   "$schema": "https://inlang.com/schema/inlang-message-format",
-  "entry_password_reset_done": "Password reset. Every session of the account is signed out."
+  "entry_password_reset_done": "Password reset. Every session of the account is signed out.",
+  "device_title": "Authorize device",
+  "device_invalid": "Invalid authorization request",
+  "device_name": "Device",
+  "device_version": "Version",
+  "device_controller": "Controller",
+  "device_network": "Network",
+  "device_network_option": "{name} · {prefix}",
+  "device_no_network": "This account has no network",
+  "device_approve": "Approve",
+  "device_deny": "Deny",
+  "device_approved": "Approved",
+  "device_denied": "Denied",
+  "device_signed_in": "Signed in as {email}",
+  "device_switch_account": "Switch account",
+  "device_choose_network": "Choose a network.",
+  "device_forbidden": "This account is not a member of that network.",
+  "device_rejected": "The controller rejected this request.",
+  "device_unconfirmed": "Authorization not completed.",
+  "device_read_failed": "Could not read the account"
 }
