@@ -49,6 +49,7 @@ export {
   saveTagsOperation as saveTags,
   setNodeTagsOperation as setNodeTags,
   previewFlowOperation as previewFlow,
+  queryLatencyHistoryOperation as queryLatencyHistory,
 } from "./generated/operations.gen.ts";
 export type * from "./generated/types.gen.ts";
 export { ControlApiError } from "./transport.ts";
