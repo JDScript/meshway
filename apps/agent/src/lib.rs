@@ -3,6 +3,11 @@
 #[allow(dead_code, clippy::all)]
 pub mod generated;
 
+// Internal capability: never exported to IPC, Web or business `direct` routing.
+#[cfg(feature = "managed-connections")]
+#[allow(dead_code)] // Independently staged; runtime hooks are a separate handoff.
+mod underlay;
+
 #[cfg(feature = "managed-connections")]
 mod endpoint_discovery;
 pub mod netcheck;
