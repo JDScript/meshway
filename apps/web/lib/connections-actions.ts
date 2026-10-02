@@ -4,6 +4,7 @@ import {
   ControlApiError,
   getConnectionRuntimes,
   getConnections,
+  getManagedListeners,
   listNodes,
   saveConnections,
   type ConnectionPlan,
@@ -122,13 +123,14 @@ export async function readConnectionRuntimesAction(networkId: string): Promise<R
 export async function readNodeStatusAction(networkId: string): Promise<NodeStatusResult> {
   const { token } = await requireNetworkActionContext(networkId)
   const base = controllerUrl()
-  const [nodes, connections, runtimes] = await Promise.allSettled([
+  const [nodes, connections, runtimes, managed] = await Promise.allSettled([
     listNodes(base, token, networkId),
     getConnections(base, token, networkId),
     getConnectionRuntimes(base, token, networkId),
+    getManagedListeners(base, token, networkId),
   ])
   const fetchedAt = Date.now()
-  const settled = [nodes, connections, runtimes]
+  const settled = [nodes, connections, runtimes, managed]
   if (settled.some((part) => part.status === "rejected" && isCredentialRejected(part.reason))) {
     return rejectActionSession()
   }
@@ -142,5 +144,6 @@ export async function readNodeStatusAction(networkId: string): Promise<NodeStatu
     nodes: part(nodes, "节点"),
     connections: part(connections, "连接配置"),
     runtimes: part(runtimes, "运行状态"),
+    managed: part(managed, "托管监听"),
   }
 }

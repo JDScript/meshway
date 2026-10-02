@@ -51,6 +51,7 @@ export async function createEnrollment(
       enrollment,
       controllerUrl: baseUrl,
       createdAt: Date.now(),
+      initialListener: null,
     }
   } catch (error) {
     if (!isCredentialRejected(error)) {

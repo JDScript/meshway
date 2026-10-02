@@ -6,6 +6,7 @@ import { zMeshAccessPolicy, zMeshAccessSnapshot } from "@meshway/control-client/
 
 import { accessBase, type StoredAccessDraft } from "./access-draft-registry.ts"
 import { DraftVault } from "./draft-vault.ts"
+import { newManagedForm } from "./managed-listener-model.ts"
 import { editText, openDocument, storeDocument } from "./policy-document.ts"
 
 const FIRST = "a".repeat(32)
@@ -60,10 +61,13 @@ test("clearing one network leaves the others; logout clears every network", () =
   second.access.write(secondOwner, invalidDraft(snapshot(1), "// second"))
   first.access.clear(firstOwner)
   assert.equal(vault.hasDrafts(FIRST), false)
+  second.managedListeners.put({ key: "enroll", kind: "enroll", nodeId: null, baseRevision: null, original: null, initial: newManagedForm("vless_tcp", []), form: newManagedForm("vless_websocket", []), idFollows: true, open: true })
+  assert.equal(vault.hasDrafts(FIRST), false, "a managed listener form belongs to its own network")
   assert.equal(vault.hasDrafts(SECOND), true)
   assert.equal(vault.anyDrafts(), true)
   vault.reset()
   assert.equal(vault.anyDrafts(), false)
   assert.equal(second.access.read(), null)
+  assert.equal(second.managedListeners.hasDraft(), false)
   assert.equal(vault.hasDrafts("c".repeat(32)), false)
 })

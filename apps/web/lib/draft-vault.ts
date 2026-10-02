@@ -1,10 +1,12 @@
 import { AccessDraftRegistry } from "./access-draft-registry.ts"
 import { ConnectionsDraftRegistry } from "./connections-draft-registry.ts"
+import { ManagedListenerDraftRegistry } from "./managed-listener-draft-registry.ts"
 import { RoutingDraftRegistry } from "./routing-draft-registry.ts"
 
 export type NetworkDrafts = {
   access: AccessDraftRegistry
   connections: ConnectionsDraftRegistry
+  managedListeners: ManagedListenerDraftRegistry
   routing: RoutingDraftRegistry
 }
 
@@ -20,7 +22,7 @@ export class DraftVault {
   drafts(networkId: string): NetworkDrafts {
     let drafts = this.networks.get(networkId)
     if (!drafts) {
-      drafts = { access: new AccessDraftRegistry(), connections: new ConnectionsDraftRegistry(), routing: new RoutingDraftRegistry() }
+      drafts = { access: new AccessDraftRegistry(), connections: new ConnectionsDraftRegistry(), managedListeners: new ManagedListenerDraftRegistry(), routing: new RoutingDraftRegistry() }
       this.networks.set(networkId, drafts)
     }
     return drafts
@@ -29,7 +31,7 @@ export class DraftVault {
   /** Whether a network keeps unsaved work. */
   hasDrafts(networkId: string): boolean {
     const drafts = this.networks.get(networkId)
-    return drafts !== undefined && (drafts.access.hasDraft() || drafts.connections.hasDraft() || drafts.routing.hasDraft())
+    return drafts !== undefined && (drafts.access.hasDraft() || drafts.connections.hasDraft() || drafts.managedListeners.hasDraft() || drafts.routing.hasDraft())
   }
 
   /** Whether any network keeps unsaved work (the page-leave prompt). */
@@ -42,6 +44,7 @@ export class DraftVault {
     for (const drafts of this.networks.values()) {
       drafts.access.reset()
       drafts.connections.reset()
+      drafts.managedListeners.reset()
       drafts.routing.reset()
     }
   }

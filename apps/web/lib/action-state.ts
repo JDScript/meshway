@@ -3,6 +3,8 @@ import type {
   ConnectionRuntimesSnapshot,
   ConnectionsSnapshot,
   CreateEnrollmentTokenResponse,
+  ManagedListenerSettings,
+  ManagedListenersSnapshot,
   MeshAccessSnapshot,
   NodeList,
   NodeSummary,
@@ -29,6 +31,8 @@ export type EnrollmentState =
       enrollment: CreateEnrollmentTokenResponse
       controllerUrl: string
       createdAt: number
+      /** Initial listener intent bound at enrollment, or null for a plain token. */
+      initialListener: ManagedListenerSettings | null
     }
 
 export type RevokeState =
@@ -110,7 +114,26 @@ export type NodeStatusResult =
       nodes: PartRead<NodeList>
       connections: PartRead<ConnectionsSnapshot>
       runtimes: PartRead<ConnectionRuntimesSnapshot>
+      managed: PartRead<ManagedListenersSnapshot>
     }
+  | { status: "error"; message: string }
+
+/**
+ * Managed listener save. Only `saved` carries snapshots; every other outcome
+ * leaves the form, its CAS base and the page's last reads untouched.
+ * `connections` is re-read after the save so plan validity and candidate
+ * references reflect it; its failure does not undo the save.
+ */
+export type ManagedListenerSaveResult =
+  | { status: "saved"; managed: ManagedListenersSnapshot; connections: PartRead<ConnectionsSnapshot>; fetchedAt: number }
+  | { status: "conflict"; message: string }
+  | { status: "invalid"; message: string }
+  | { status: "not_found"; message: string }
+  | { status: "error"; message: string }
+
+/** Managed listeners and the connection plan read together (rebase / refresh). */
+export type ManagedListenerReadResult =
+  | { status: "loaded"; managed: ManagedListenersSnapshot; connections: PartRead<ConnectionsSnapshot>; fetchedAt: number }
   | { status: "error"; message: string }
 
 export const enrollmentTtlOptions = [

@@ -5,6 +5,7 @@ import {
   getConnectionRuntimes,
   getConnections,
   getEndpointDiscoveries,
+  getManagedListeners,
   getMeshAccess,
   getNetwork,
   getOverview,
@@ -15,6 +16,7 @@ import {
   type ConnectionRuntimesSnapshot,
   type ConnectionsSnapshot,
   type EndpointDiscoveriesSnapshot,
+  type ManagedListenersSnapshot,
   type MeshAccessSnapshot,
   type NodeList,
   type Overview,
@@ -111,6 +113,11 @@ export function fetchConnectionRuntimes(networkId: string): Promise<ControllerRe
 
 export function fetchEndpointDiscoveries(networkId: string): Promise<ControllerResult<EndpointDiscoveriesSnapshot>> {
   return networkRead(networkId, getEndpointDiscoveries)
+}
+
+/** Platform-managed listener intent and public material status (never secrets). */
+export function fetchManagedListeners(networkId: string): Promise<ControllerResult<ManagedListenersSnapshot>> {
+  return networkRead(networkId, getManagedListeners)
 }
 
 /** Saved endpoint access rules (with their JSONC source, if stored). */

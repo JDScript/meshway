@@ -4,6 +4,7 @@ import { createContext, useContext, useEffect, useState, type ReactNode } from "
 
 import { AccessDraftProvider } from "@/components/access/draft-store"
 import { ConnectionsDraftProvider } from "@/components/connections/draft-store"
+import { ManagedListenerDraftProvider } from "@/components/managed-listeners/draft-store"
 import { RoutingDraftProvider } from "@/components/routing/draft-store"
 import { NetworkProvider, useNetwork } from "@/components/shell/network-context"
 import { DraftVault } from "@/lib/draft-vault"
@@ -40,7 +41,9 @@ export function NetworkWorkspace({ networkId, name, children }: { networkId: str
     <NetworkProvider networkId={networkId} name={name}>
       <RoutingDraftProvider key={networkId} registry={drafts.routing}>
         <ConnectionsDraftProvider registry={drafts.connections}>
-          <AccessDraftProvider registry={drafts.access}>{children}</AccessDraftProvider>
+          <ManagedListenerDraftProvider registry={drafts.managedListeners}>
+            <AccessDraftProvider registry={drafts.access}>{children}</AccessDraftProvider>
+          </ManagedListenerDraftProvider>
         </ConnectionsDraftProvider>
       </RoutingDraftProvider>
     </NetworkProvider>
