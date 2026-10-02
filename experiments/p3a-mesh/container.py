@@ -60,7 +60,7 @@ def main(action, data):
         if not path.exists():
             return {"revision": None, "digest": None, "paths": [], "valid": False}
         snapshot = json.loads(path.read_text())["snapshot"]
-        return {"revision": snapshot["payload"]["revision"], "digest": snapshot["digest"], "paths": snapshot["payload"]["paths"], "valid": snapshot["payload"]["valid"]}
+        return {"revision": snapshot["payload"]["revision"], "digest": snapshot["digest"], "paths": snapshot["payload"]["paths"], "valid": snapshot["payload"]["valid"], "material_count": len(snapshot["payload"]["materials"])}
     if action == "agent-errors":
         path = ROOT / "agent.log"
         # Agent non-JSON errors are already redacted; omit every serialized

@@ -5,7 +5,7 @@ import { lstat, mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { setTimeout as delay } from "node:timers/promises";
-import { listNetworks, listNodes, createEnrollmentToken, getConnections, saveConnections, getManagedListeners, saveManagedListener, revokeNode } from "../../packages/control-client/src/index.ts";
+import { ControlApiError, listNetworks, listNodes, createEnrollmentToken, getConnections, saveConnections, getManagedListeners, saveManagedListener, revokeNode } from "../../packages/control-client/src/index.ts";
 import { getNetworkPolicyOperation, saveNetworkPolicyOperation, getAgentDataplaneOperation } from "../../packages/control-client/src/generated/operations.gen.ts";
 import type { NetworkPolicy } from "../../packages/control-client/src/generated/types.gen.ts";
 import { command, parse, text, boolean } from "../managed-connections/local.ts";
@@ -113,13 +113,34 @@ try {
   await put(union);await success("independent one-way grants form an additive union");
   await put({...union,grants:[...union.grants].reverse()});await success("grant reorder preserves both authorized directions");
   await put({...through,connections:[...policy.connections,{id:"block-b-c",a:`node:${ids.LAX}`,b:`node:${ids.SHA}`,action:"block"}]});await ready();await deny("connection block dominates allow and cannot bypass mandatory B");
+  const blockedEdit=await getConnections(baseUrl,admin,scope);
+  assert(blockedEdit.configuration.candidates.some(c=>c.id==="c-b"),"management must retain blocked saved intent");
+  await saveConnections(baseUrl,admin,scope,{expected_revision:blockedEdit.revision,configuration:blockedEdit.configuration});
+  assert((await getConnections(baseUrl,admin,scope)).configuration.candidates.some(c=>c.id==="c-b"));
   await put(through);await success("restore explicitly authorized mandatory path");
+  assert((await getConnections(baseUrl,admin,scope)).configuration.candidates.some(c=>c.id==="c-b"));
+  await capture("C1 block GET-save unblock restores original candidate without rewriting it");
   await helper("NYC","agent-stop");await helper("NYC","agent-start");await success("restart renegotiates runtime epoch and never activates saved cache offline");
+  await helper("NYC","agent-stop");
+  await put({...through,grants:[]}); // Genuine revision advance while NYC is stopped.
+  await helper("NYC","agent-start");await ready();await deny("A1 offline revision change then normal restart installs current denied plan");
+  await put(through);await success("A1 restarted daemon receives restored grants without clearing its journal");
   await helper("LAX","stall",{mode:"execution"});await put({...through,grants:[]});await delay(4_000);await deny("heartbeat higher revision fences before stalled execution GET");
   await helper("LAX","stall",{mode:"off"});await ready();await put(through);await success("recover from execution HTTP stall");
   await helper("LAX","stall",{mode:"all"});await delay(18_000);await deny("independent watchdog expires while HTTP stalls");
   for(const role of ROLES) assert((await observe(role)).routes.every(noFallback),"Mesh pool remains TUN sink or guard");
   await helper("LAX","stall",{mode:"off"});await success("recover after lease expiry");
+  // Normal managed listeners and a running owner's generated download. The
+  // 65th mutation must roll back; the owner must still consume the 64 plan.
+  for(let i=0;i<64;i++) {
+    const revision=(await getManagedListeners(baseUrl,admin,scope)).revision;
+    await saveManagedListener(baseUrl,admin,scope,{expected_revision:revision,settings:{id:`budget-${i}`,node_id:ids.NYC,enabled:true,transport:"vless",bind_address:"0.0.0.0",bind_port:21000+i,advertised_endpoints:[],vless:{stream:"tcp",server_name:"meshway.test",websocket_path:null,websocket_host:null}}});
+  }
+  const budgetBefore=await getManagedListeners(baseUrl,admin,scope);
+  await assert.rejects(saveManagedListener(baseUrl,admin,scope,{expected_revision:budgetBefore.revision,settings:{id:"budget-64",node_id:ids.NYC,enabled:true,transport:"vless",bind_address:"0.0.0.0",bind_port:21064,advertised_endpoints:[],vless:{stream:"tcp",server_name:"meshway.test",websocket_path:null,websocket_host:null}}}),e=>e instanceof ControlApiError&&e.status===422);
+  const budgetAfter=await getManagedListeners(baseUrl,admin,scope);assert.equal(budgetAfter.revision,budgetBefore.revision);assert(!budgetAfter.listeners.some(l=>l.settings.id==="budget-64"));
+  await ready();await until("normal owner consumes exactly 64 managed materials",async()=>(await helper("NYC","execution-proof")).material_count===64);
+  await success("C2 rejected 65th listener preserves current 64-material normal TUN execution");
   await revokeNode(baseUrl,admin,scope,{node_id:ids.LAX});await delay(5_000);await deny("withdraw mandatory relay cannot fall back to direct candidate");
   const remaining=await listNodes(baseUrl,admin,scope);assert(remaining.nodes.some(n=>n.id===ids.LAX&&n.revoked_at!==null));
   status="PASS";
