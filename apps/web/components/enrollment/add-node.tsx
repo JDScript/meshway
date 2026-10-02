@@ -16,7 +16,7 @@ type Method = "agent" | "app"
  * one-time token; the Meshway App signs in through the browser approval page.
  * Both produce the same kind of node; there is no node class to choose.
  */
-export function AddNode() {
+export function AddNode({ existingListenerIds }: { existingListenerIds: string[] | null }) {
   const [method, setMethod] = useState<Method>("agent")
   const routes = useRoutes()
   return (
@@ -39,7 +39,7 @@ export function AddNode() {
       </div>
 
       {method === "agent" ? (
-        <EnrollmentPanel />
+        <EnrollmentPanel existingListenerIds={existingListenerIds} />
       ) : (
         <Panel title="通过 Meshway App 接入">
           <ol className="flex flex-col gap-4 p-5 text-xs leading-relaxed text-muted-foreground">

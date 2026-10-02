@@ -3,10 +3,26 @@
 import { useNetworkId } from "@/components/network/network-workspace"
 import { useRoutes } from "@/components/shell/network-context"
 
-import type { CreateEnrollmentTokenResponse } from "@meshway/control-client"
-import { CircleAlertIcon, EyeOffIcon, KeyRoundIcon } from "lucide-react"
+import type { CreateEnrollmentTokenResponse, ManagedListenerSettings } from "@meshway/control-client"
+import { CableIcon, CircleAlertIcon, EyeOffIcon, KeyRoundIcon } from "lucide-react"
 import Link from "next/link"
-import { useActionState, useId, useState, type ReactNode } from "react"
+import { useId, useMemo, useState, useTransition, type ReactNode } from "react"
+
+import { ManagedListenerFields } from "@/components/managed-listeners/managed-listener-fields"
+import { useManagedListenerDraftVersion } from "@/components/managed-listeners/draft-store"
+import { Switch } from "@/components/ui/switch"
+import { createManagedEnrollmentAction } from "@/lib/managed-listener-actions"
+import { ENROLL_KEY, type ManagedListenerDraft } from "@/lib/managed-listener-draft-registry"
+import {
+  changePreset,
+  describeSettings,
+  followSuggestions,
+  newManagedForm,
+  sameForm,
+  toSettings,
+  validateManagedForm,
+  type ManagedListenerForm,
+} from "@/lib/managed-listener-model"
 
 import { CopyButton } from "@/components/common/copy-button"
 import { OptionSelect } from "@/components/common/option-select"
@@ -25,6 +41,7 @@ import { shellCommand } from "@/lib/shell"
 import { formatDateTime } from "@/lib/time"
 
 const AGENT = ["cargo", "run", "-p", "meshway-agent", "--"]
+const MANAGED_AGENT = ["cargo", "run", "-p", "meshway-agent", "--features", "managed-connections", "--"]
 const STATE_PATH = ".meshway/agent.json"
 const MAX_NAME_LENGTH = 128
 // Rust's char::is_whitespace set, which the controller trims when validating.
@@ -38,20 +55,79 @@ const ttlOptions = enrollmentTtlOptions.map(({ seconds, label }) => ({
   label,
 }))
 
-export function EnrollmentPanel() {
+export function EnrollmentPanel({ existingListenerIds }: { existingListenerIds: string[] | null }) {
   const networkId = useNetworkId()
   const routes = useRoutes()
-  const [state, formAction, pending] = useActionState(createEnrollment.bind(null, networkId), initialState)
+  const drafts = useManagedListenerDraftVersion()
+  const [state, setState] = useState<EnrollmentState>(initialState)
+  const [pending, startCreate] = useTransition()
   const [dismissedAt, setDismissedAt] = useState<number | null>(null)
   const [ttl, setTtl] = useState(String(defaultEnrollmentTtl))
+  const [attempted, setAttempted] = useState(false)
   const ttlId = useId()
   const errorId = useId()
   const showResult = state.status === "created" && state.createdAt !== dismissedAt
 
+  // The optional listener lives in the network's draft store: switching
+  // networks or pages keeps it; logout clears it. Its `open` flag means
+  // "include with the token".
+  const taken = useMemo(() => existingListenerIds ?? [], [existingListenerIds])
+  const kept = drafts.get(ENROLL_KEY)
+  const [pristine] = useState(() => newManagedForm("vless_tcp", taken))
+  const listener: ManagedListenerDraft = kept ?? {
+    key: ENROLL_KEY,
+    kind: "enroll",
+    nodeId: null,
+    baseRevision: null,
+    original: null,
+    initial: pristine,
+    form: pristine,
+    idFollows: true,
+    open: false,
+  }
+  const included = listener.open
+  const issues = useMemo(
+    () => (included ? validateManagedForm(listener.form, { creating: true, takenIds: taken }) : []),
+    [included, listener.form, taken]
+  )
+  const write = (next: ManagedListenerDraft) => {
+    if (!next.open && sameForm(next.form, next.initial)) drafts.remove(ENROLL_KEY)
+    else drafts.put(next)
+  }
+  const setForm = (form: ManagedListenerForm) =>
+    write({ ...listener, form: followSuggestions(listener.form, form), idFollows: listener.idFollows && form.id === listener.form.id })
+
+  const submit = () => {
+    setAttempted(true)
+    const seconds = Number(ttl)
+    if (included && issues.length > 0) return
+    const sent = listener
+    startCreate(async () => {
+      let result: EnrollmentState
+      if (included) {
+        result = await createManagedEnrollmentAction(networkId, seconds, toSettings(sent.form, ""))
+      } else {
+        const data = new FormData()
+        data.set("expires_in_seconds", ttl)
+        result = await createEnrollment(networkId, state, data)
+      }
+      setState(result)
+      // The intent is now bound to the token; a new token starts from defaults.
+      if (result.status === "created" && included) drafts.settle(ENROLL_KEY, sent)
+      if (result.status === "created") setAttempted(false)
+    })
+  }
+
   return (
     <div className="grid items-start gap-6 lg:grid-cols-[19rem_minmax(0,1fr)]">
       <Panel title="接入令牌" description="一次性使用，只加入当前网络。">
-        <form action={formAction} className="flex flex-col gap-4 p-4">
+        <form
+          onSubmit={(event) => {
+            event.preventDefault()
+            submit()
+          }}
+          className="flex flex-col gap-4 p-4"
+        >
           <div className="flex flex-col gap-1.5">
             <Label htmlFor={ttlId}>有效期</Label>
             <OptionSelect
@@ -66,10 +142,32 @@ export function EnrollmentPanel() {
               className="w-full"
             />
           </div>
+          <div className="flex items-start gap-2.5 rounded-lg border bg-muted/30 p-3 text-[0.8125rem]">
+            <Switch
+              checked={included}
+              onCheckedChange={(open) => write({ ...listener, open })}
+              disabled={pending}
+              aria-label="同时配置监听"
+              aria-describedby={`${ttlId}-listener`}
+              className="mt-0.5"
+            />
+            <span className="flex min-w-0 flex-col gap-0.5">
+              <span className="font-medium" aria-hidden="true">同时配置监听（可选）</span>
+              <span id={`${ttlId}-listener`} className="text-xs text-muted-foreground">
+                {included ? describeSettings(toSettings(listener.form, "")) : "节点注册时一并保存一个平台托管监听；之后可在节点「配置」中修改。"}
+              </span>
+            </span>
+          </div>
           {state.status === "error" ? (
             <p id={errorId} role="alert" className="flex items-start gap-1.5 text-xs text-destructive">
               <CircleAlertIcon className="mt-0.5 size-3.5 shrink-0" />
               <span className="break-all">{state.message}</span>
+            </p>
+          ) : null}
+          {included && attempted && issues.length > 0 ? (
+            <p role="alert" className="flex items-start gap-1.5 text-xs text-destructive">
+              <CircleAlertIcon className="mt-0.5 size-3.5 shrink-0" />
+              <span>监听设置还有 {issues.length} 处需要修改。</span>
             </p>
           ) : null}
           <Button type="submit" size="lg" disabled={pending}>
@@ -78,7 +176,7 @@ export function EnrollmentPanel() {
             ) : (
               <KeyRoundIcon data-icon="inline-start" />
             )}
-            生成接入令牌
+            {included ? "生成令牌并绑定监听" : "生成接入令牌"}
           </Button>
           <p className="text-xs text-muted-foreground">
             注册时 agent 生成并保存自己的控制面凭据，之后不再需要令牌。控制台不会再次显示已创建的令牌。
@@ -92,12 +190,36 @@ export function EnrollmentPanel() {
           key={state.enrollment.token_id}
           enrollment={state.enrollment}
           controllerUrl={state.controllerUrl}
+          initialListener={state.initialListener}
           onDismiss={() => setDismissedAt(state.createdAt)}
         />
+      ) : included ? (
+        <Panel
+          title="监听设置"
+          description={
+            existingListenerIds === null
+              ? "无法读取已有监听，不能提前检查 ID 是否重复；重复时注册会失败。"
+              : "随令牌保存为初始意图；节点注册时绑定到新节点。"
+          }
+          data-testid="enrollment-listener"
+        >
+          <ManagedListenerFields
+            form={listener.form}
+            onChange={setForm}
+            onPresetChange={(preset) =>
+              write({ ...listener, form: changePreset(listener.form, preset, { idFollows: listener.idFollows, taken }) })
+            }
+            creating
+            allowed={["native_udp", "native_tcp", "vless_tcp", "vless_websocket"]}
+            issues={attempted ? issues : []}
+            disabled={pending}
+            showEnabled={false}
+          />
+        </Panel>
       ) : (
         <Panel title="接入步骤">
           <ol className="flex flex-col gap-4 p-4">
-            <Step index={1} title="生成令牌">选择有效期，生成一次性接入令牌。</Step>
+            <Step index={1} title="生成令牌">选择有效期，生成一次性接入令牌；需要时同时配置监听。</Step>
             <Step index={2} title="在节点上注册">
               复制生成的 enroll 命令，在仓库根目录执行；节点凭据保存在本地状态文件中。
             </Step>
@@ -143,10 +265,12 @@ function CommandBlock({ value, label }: { value: string; label: string }) {
 function EnrollmentResult({
   enrollment,
   controllerUrl,
+  initialListener,
   onDismiss,
 }: {
   enrollment: CreateEnrollmentTokenResponse
   controllerUrl: string
+  initialListener: ManagedListenerSettings | null
   onDismiss: () => void
 }) {
   const [name, setName] = useState("node-1")
@@ -166,7 +290,10 @@ function EnrollmentResult({
     `--name=${nameValid ? trimmedName : "NAME"}`,
     `--state=${STATE_PATH}`,
   ])
-  const runCommand = shellCommand([...AGENT, "run", `--state=${STATE_PATH}`])
+  // A managed listener runs only in the agent's connection-applying mode.
+  const runCommand = initialListener
+    ? shellCommand([...MANAGED_AGENT, "run", `--state=${STATE_PATH}`, "--apply-connections"])
+    : shellCommand([...AGENT, "run", `--state=${STATE_PATH}`])
 
   return (
     <Panel
@@ -202,6 +329,21 @@ function EnrollmentResult({
             <span>只显示这一次，离开或刷新页面后无法再查看；只交给要注册的那台节点。</span>
           </div>
         </Step>
+        {initialListener ? (
+          <li data-testid="enrollment-listener-summary" className="flex gap-3 rounded-lg border border-info/30 bg-info/5 p-3 text-xs">
+            <CableIcon className="mt-0.5 size-4 shrink-0 text-info" aria-hidden="true" />
+            <span className="flex min-w-0 flex-col gap-0.5">
+              <span className="text-[0.8125rem] font-medium">
+                注册时保存监听 <code className="font-mono">{initialListener.id}</code>
+              </span>
+              <span className="text-muted-foreground">
+                {describeSettings(initialListener)}
+                {initialListener.advertised_endpoints.length === 0 ? " · 未填写对外地址" : null}
+                。这只是入口意图：其他节点仍需拨号候选才会连接，节点报告承载能力后才会执行。
+              </span>
+            </span>
+          </li>
+        ) : null}
         <Step index={2} title="节点名称">
           <div className="flex flex-col gap-1.5">
             <Label htmlFor={nameId} className="sr-only">
