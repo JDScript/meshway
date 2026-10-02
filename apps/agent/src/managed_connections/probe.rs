@@ -183,6 +183,47 @@ pub(crate) struct Prober {
 }
 
 impl Prober {
+    pub(super) fn history_source(
+        &self,
+        snapshot: &meshway_protocol::AgentConnectionsSnapshot,
+        epoch: u32,
+    ) -> Option<super::latency_history::Source> {
+        if epoch == 0 {
+            return None;
+        }
+        let generation = self.generation().ok()?;
+        let mut intent = generation.intent.clone();
+        intent.revision = generation.source_revision;
+        if intent != snapshot.payload {
+            return None;
+        }
+        let mut current = self.current.clone();
+        current.borrow_and_update();
+        if !self.current(&generation) {
+            return None;
+        }
+        let runtime = generation.runtime.clone();
+        Some(super::latency_history::Source {
+            runtime,
+            snapshot: snapshot.clone(),
+            epoch,
+            invalidated: Box::pin(async move {
+                if !current
+                    .borrow()
+                    .as_ref()
+                    .is_some_and(|g| Arc::ptr_eq(g, &generation))
+                {
+                    return;
+                }
+                tokio::select! {
+                    biased;
+                    _ = generation.invalidated() => {},
+                    _ = current.changed() => {},
+                }
+            }),
+        })
+    }
+
     fn current(&self, generation: &Arc<Generation>) -> bool {
         self.current.has_changed().is_ok()
             && self

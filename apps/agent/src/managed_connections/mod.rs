@@ -30,6 +30,10 @@ use crate::{
 mod discovery;
 #[cfg(test)]
 mod managed_material_tests;
+// Runtime-loop launch is handed off as a focused integration hook.
+#[cfg(unix)]
+#[allow(dead_code)]
+mod latency_history;
 #[cfg(unix)]
 mod probe;
 mod profiles;

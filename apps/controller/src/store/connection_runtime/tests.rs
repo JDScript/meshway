@@ -562,7 +562,7 @@ fn configuration_mismatch_withdrawal_and_revocation_never_leave_current_authenti
 }
 
 fn existing_rows(connection: &Connection) -> Vec<(String, Vec<Vec<rusqlite::types::Value>>)> {
-    let tables: Vec<String> = connection.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'connection_runtime_%' AND name NOT IN ('network_identity','networks') ORDER BY name")
+    let tables: Vec<String> = connection.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' AND name NOT LIKE 'connection_runtime_%' AND name NOT IN ('network_identity','networks','latency_samples','latency_runtime_epochs') ORDER BY name")
         .unwrap().query_map([], |row| row.get(0)).unwrap().collect::<Result<_, _>>().unwrap();
     tables
         .into_iter()

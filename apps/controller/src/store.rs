@@ -18,6 +18,7 @@ mod endpoint_discovery;
 mod ipam;
 mod jsonc;
 mod managed_transports;
+mod latency_history;
 mod network;
 mod networks;
 use networks::NetworkId;
@@ -153,6 +154,7 @@ impl Store {
         let material_key = managed_transports::key(path, &connection)?;
         networks::validate_integrity(&connection)?;
         networks::install_identity_guards(&connection)?;
+        latency_history::upgrade(&mut connection)?;
         // Initialization flags still refer to the original network; never
         // renumber any network on restart.
         let initial = NetworkId::initial(&connection)?;
