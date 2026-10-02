@@ -109,7 +109,11 @@ test("managed listeners: optional listener at enrollment, node configuration edi
     const dialerState = join(temporary, "dialer.json");
     await run(executable("meshway-agent"), ["enroll", "--controller", base, "--token", dialerToken.token, "--name", "dialer", "--state", dialerState]);
     await run(executable("meshway-agent"), ["connections", "publish", "--state", dialerState]);
-    secrets.push(await nodeCredential(dialerState));
+    const dialerCredential = await nodeCredential(dialerState);
+    // Generic VLESS capability does not imply support for its managed stream
+    // variants. Both sides of the later WS candidate must declare those facts.
+    await publishManagedTransportCapabilitiesOperation(base, dialerCredential, { vless_streams: ["tcp", "websocket"] });
+    secrets.push(dialerCredential);
 
     let edgeState = "";
     let edgeId = "";
