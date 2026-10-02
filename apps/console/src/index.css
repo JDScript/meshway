@@ -561,6 +561,25 @@
     box-shadow: inset 0 0 0 1.5px currentColor;
   }
 
+  /*
+   * A chip that opens a picker. Its states tint over its own fill rather
+   * than replace it, so they read on either theme: pointing at it a little,
+   * its picker open more. A ring is for the keyboard only.
+   */
+  .live-chip {
+    transition: background-color 200ms ease;
+  }
+  .live-chip:hover {
+    background-image: linear-gradient(var(--fill-hover), var(--fill-hover));
+  }
+  .live-chip[data-popup-open],
+  .live-chip:has([data-popup-open]) {
+    background-image: linear-gradient(
+      var(--fill-selected),
+      var(--fill-selected)
+    );
+  }
+
   /* A choosable row inside a surface. */
   .list-row {
     display: flex;
