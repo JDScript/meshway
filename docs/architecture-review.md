@@ -255,3 +255,13 @@ underlay，通过字符串锚点和 `docs/underlay-*.patch` 拼装历史组合�
 | Apple 恢复后 | 评估独立 Rust control-client | 沿生成链兼容迁移，避免 Agent-core 大拆迁 |
 
 实现时只为关键行为边界运行必要测试；本次审查本身不运行行为测试或浏览器自动化。
+
+## 审查后独立修复记录
+
+原已启动的 policy 发布边界任务以 `ddaee7c` / `a1b992f` 合入：实际展平安装表计入双栈、
+direct 与 nodes final，超限整体失败；Agent 与 policy 共用完整 global / 自定义方案 ID 校验；
+编译计划顶层及索引不再提供直接 `Deserialize`。独立复核通过，随后主线 workspace
+all-features / all-targets 编译检查通过。这些变更不改 HTTP 契约。
+
+此处只关闭直接解码入口；公开字段仍可由 Rust 调用者修改，不构成不可伪造的 validated plan。
+R1 / R2 的正式 publication / 节点 wire 转换、原型目录上限及出口侧总预算仍待后续接线。
