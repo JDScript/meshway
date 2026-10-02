@@ -33,7 +33,11 @@ export type ReportUnusable =
 
 export type NodeReport =
   | { usable: true; observation: ConnectionRuntimeObservation }
-  | { usable: false; reason: ReportUnusable; observation: ConnectionRuntimeObservation | undefined }
+  | {
+      usable: false
+      reason: ReportUnusable
+      observation: ConnectionRuntimeObservation | undefined
+    }
 
 /**
  * A report may make claims only when it is fresh at `now` (it keeps ageing
@@ -51,9 +55,14 @@ export function nodeReport(
   if (!active) return { usable: false, reason: "inactive", observation }
   const freshness = runtimeFreshness(observation, now)
   if (freshness !== "fresh" || !observation) {
-    return { usable: false, reason: freshness === "fresh" ? "unreported" : freshness, observation }
+    return {
+      usable: false,
+      reason: freshness === "fresh" ? "unreported" : freshness,
+      observation,
+    }
   }
-  if (observation.revision !== planRevision) return { usable: false, reason: "revision", observation }
+  if (observation.revision !== planRevision)
+    return { usable: false, reason: "revision", observation }
   if (observation.state !== "applied" && observation.state !== "applying") {
     return { usable: false, reason: "state", observation }
   }
@@ -62,7 +71,9 @@ export function nodeReport(
 
 /** An authenticated neighbor with a recent probe and no sanitized failure. */
 export function isProof(peer: ConnectionNeighborObservation): boolean {
-  return peer.state === "authenticated" && peer.probe_fresh && peer.reason === "none"
+  return (
+    peer.state === "authenticated" && peer.probe_fresh && peer.reason === "none"
+  )
 }
 
 /** What one side of a configured channel says about it. */
@@ -82,7 +93,8 @@ export type SideClaim =
  * - `degraded`: listed by a side, but not authenticated / probed.
  * - `unobserved`: no usable report mentions it.
  */
-export type ChannelStatus = "confirmed" | "one_sided" | "degraded" | "unobserved"
+export type ChannelStatus =
+  "confirmed" | "one_sided" | "degraded" | "unobserved"
 
 export type Channel = {
   candidateId: string
@@ -116,13 +128,20 @@ export type TopologyObservation = {
   unmatchedReports: number
 }
 
-const statusRank: Record<ChannelStatus, number> = { unobserved: 0, degraded: 1, one_sided: 2, confirmed: 3 }
+const statusRank: Record<ChannelStatus, number> = {
+  unobserved: 0,
+  degraded: 1,
+  one_sided: 2,
+  confirmed: 3,
+}
 
 function claimStatus(dialer: SideClaim, acceptor: SideClaim): ChannelStatus {
-  const proofs = Number(dialer.kind === "proof") + Number(acceptor.kind === "proof")
+  const proofs =
+    Number(dialer.kind === "proof") + Number(acceptor.kind === "proof")
   if (proofs === 2) return "confirmed"
   if (proofs === 1) return "one_sided"
-  if (dialer.kind === "degraded" || acceptor.kind === "degraded") return "degraded"
+  if (dialer.kind === "degraded" || acceptor.kind === "degraded")
+    return "degraded"
   return "unobserved"
 }
 
@@ -151,7 +170,9 @@ export function observeTopology(
       .filter((node) => node.revoked_at === null)
       .map((node) => node.id)
       .filter((id) => {
-        const entry = connections.nodes.find((candidate) => candidate.node.id === id)
+        const entry = connections.nodes.find(
+          (candidate) => candidate.node.id === id
+        )
         return entry === undefined || entry.node.revoked_at === null
       })
   )
@@ -166,13 +187,19 @@ export function observeTopology(
   }
   for (const id of active) reportOf(id)
 
-  const listeners = new Map(connections.configuration.listeners.map((listener) => [listener.id, listener]))
+  const listeners = new Map(
+    connections.configuration.listeners.map((listener) => [
+      listener.id,
+      listener,
+    ])
+  )
   const relations: (CandidateRelation & { priority: number })[] = []
   for (const candidate of connections.configuration.candidates) {
     const listener = listeners.get(candidate.listener_id)
     if (!listener) continue
     if (candidate.dialer_node_id === listener.node_id) continue
-    if (!active.has(candidate.dialer_node_id) || !active.has(listener.node_id)) continue
+    if (!active.has(candidate.dialer_node_id) || !active.has(listener.node_id))
+      continue
     relations.push({
       id: candidate.id,
       dialerNodeId: candidate.dialer_node_id,
@@ -187,13 +214,26 @@ export function observeTopology(
   const channels: Channel[] = relations.map((relation) => {
     const dialerReport = reportOf(relation.dialerNodeId)
     let dialer: SideClaim
-    if (!dialerReport.usable) dialer = { kind: "unusable", reason: dialerReport.reason }
+    if (!dialerReport.usable)
+      dialer = { kind: "unusable", reason: dialerReport.reason }
     else {
-      const peer = candidateNeighbors(dialerReport.observation, relation, relation.dialerNodeId)[0]
+      const peer = candidateNeighbors(
+        dialerReport.observation,
+        relation,
+        relation.dialerNodeId
+      )[0]
       if (peer) used.add(peer)
-      dialer = peer ? { kind: isProof(peer) ? "proof" : "degraded", peer } : { kind: "absent" }
+      dialer = peer
+        ? { kind: isProof(peer) ? "proof" : "degraded", peer }
+        : { kind: "absent" }
     }
-    return { ...relation, candidateId: relation.id, dialer, acceptor: { kind: "absent" }, status: "unobserved" }
+    return {
+      ...relation,
+      candidateId: relation.id,
+      dialer,
+      acceptor: { kind: "absent" },
+      status: "unobserved",
+    }
   })
 
   // Acceptor side: an exact candidate ID binds directly; a null ID binds to
@@ -201,21 +241,32 @@ export function observeTopology(
   // proves. Siblings share dialer and listener, hence carrier and pair.
   for (const channel of channels) {
     const report = reportOf(channel.acceptorNodeId)
-    if (!report.usable) channel.acceptor = { kind: "unusable", reason: report.reason }
+    if (!report.usable)
+      channel.acceptor = { kind: "unusable", reason: report.reason }
   }
   const acceptorIds = new Set(channels.map((channel) => channel.acceptorNodeId))
   for (const acceptorId of acceptorIds) {
     const report = reportOf(acceptorId)
     if (!report.usable) continue
-    const mine = channels.filter((channel) => channel.acceptorNodeId === acceptorId)
+    const mine = channels.filter(
+      (channel) => channel.acceptorNodeId === acceptorId
+    )
     for (const peer of report.observation.peers) {
       const fits = mine.filter((channel) =>
-        candidateNeighbors(report.observation, { ...channel, id: channel.candidateId }, acceptorId).includes(peer)
+        candidateNeighbors(
+          report.observation,
+          { ...channel, id: channel.candidateId },
+          acceptorId
+        ).includes(peer)
       )
       if (fits.length === 0) continue
       used.add(peer)
-      const exact = peer.candidate_id === null ? undefined : fits.find((channel) => channel.candidateId === peer.candidate_id)
-      let target: Channel | undefined = exact ?? (fits.length === 1 ? fits[0] : undefined)
+      const exact =
+        peer.candidate_id === null
+          ? undefined
+          : fits.find((channel) => channel.candidateId === peer.candidate_id)
+      let target: Channel | undefined =
+        exact ?? (fits.length === 1 ? fits[0] : undefined)
       if (!target) {
         const proven = fits.filter((channel) => channel.dialer.kind === "proof")
         if (proven.length === 1) target = proven[0]
@@ -225,7 +276,8 @@ export function observeTopology(
         if (target.acceptor.kind !== "proof") target.acceptor = { kind, peer }
       } else {
         for (const channel of fits) {
-          if (channel.acceptor.kind === "absent") channel.acceptor = { kind: "ambiguous", peer }
+          if (channel.acceptor.kind === "absent")
+            channel.acceptor = { kind: "ambiguous", peer }
         }
       }
     }
@@ -238,20 +290,36 @@ export function observeTopology(
     const key = nodeIds.join("|")
     let pair = pairs.get(key)
     if (!pair) {
-      pair = { key, nodeIds, channels: [], status: "unobserved", ambiguousProof: false }
+      pair = {
+        key,
+        nodeIds,
+        channels: [],
+        status: "unobserved",
+        ambiguousProof: false,
+      }
       pairs.set(key, pair)
     }
     pair.channels.push(channel)
   }
   for (const pair of pairs.values()) {
-    pair.channels.sort((a, b) => a.priority - b.priority || a.candidateId.localeCompare(b.candidateId))
+    pair.channels.sort(
+      (a, b) =>
+        a.priority - b.priority || a.candidateId.localeCompare(b.candidateId)
+    )
     pair.ambiguousProof = pair.channels.some(
-      (channel) => channel.acceptor.kind === "ambiguous" && isProof(channel.acceptor.peer)
+      (channel) =>
+        channel.acceptor.kind === "ambiguous" && isProof(channel.acceptor.peer)
     )
     let status: ChannelStatus = "unobserved"
-    for (const channel of pair.channels) if (statusRank[channel.status] > statusRank[status]) status = channel.status
-    if (pair.ambiguousProof && statusRank[status] < statusRank.one_sided) status = "one_sided"
-    if (status === "unobserved" && pair.channels.some((channel) => channel.acceptor.kind === "ambiguous")) {
+    for (const channel of pair.channels)
+      if (statusRank[channel.status] > statusRank[status])
+        status = channel.status
+    if (pair.ambiguousProof && statusRank[status] < statusRank.one_sided)
+      status = "one_sided"
+    if (
+      status === "unobserved" &&
+      pair.channels.some((channel) => channel.acceptor.kind === "ambiguous")
+    ) {
       status = "degraded"
     }
     pair.status = status
@@ -260,10 +328,13 @@ export function observeTopology(
   let unmatchedReports = 0
   for (const report of reports.values()) {
     if (!report.usable) continue
-    for (const peer of report.observation.peers) if (!used.has(peer)) unmatchedReports += 1
+    for (const peer of report.observation.peers)
+      if (!used.has(peer)) unmatchedReports += 1
   }
 
-  const adjacencies = [...pairs.values()].sort((a, b) => a.key.localeCompare(b.key))
+  const adjacencies = [...pairs.values()].sort((a, b) =>
+    a.key.localeCompare(b.key)
+  )
   return { revision, adjacencies, reports, unmatchedReports }
 }
 
@@ -273,9 +344,15 @@ export function isLive(adjacency: Adjacency): boolean {
 }
 
 /** Whether a live adjacency joins two nodes; a planned hop without one is not reachability. */
-export function liveBetween(observation: TopologyObservation, a: string, b: string): boolean {
+export function liveBetween(
+  observation: TopologyObservation,
+  a: string,
+  b: string
+): boolean {
   const key = pairKey(a, b).join("|")
-  return observation.adjacencies.some((adjacency) => adjacency.key === key && isLive(adjacency))
+  return observation.adjacencies.some(
+    (adjacency) => adjacency.key === key && isLive(adjacency)
+  )
 }
 
 export type NodeAdjacencySummary = {
@@ -284,21 +361,33 @@ export type NodeAdjacencySummary = {
   oneSided: number
 }
 
-export function nodeAdjacencies(observation: TopologyObservation, nodeId: string): Adjacency[] {
-  return observation.adjacencies.filter((adjacency) => adjacency.nodeIds.includes(nodeId))
+export function nodeAdjacencies(
+  observation: TopologyObservation,
+  nodeId: string
+): Adjacency[] {
+  return observation.adjacencies.filter((adjacency) =>
+    adjacency.nodeIds.includes(nodeId)
+  )
 }
 
-export function summarizeNode(observation: TopologyObservation, nodeId: string): NodeAdjacencySummary {
+export function summarizeNode(
+  observation: TopologyObservation,
+  nodeId: string
+): NodeAdjacencySummary {
   const mine = nodeAdjacencies(observation, nodeId)
   return {
     configured: mine.length,
-    confirmed: mine.filter((adjacency) => adjacency.status === "confirmed").length,
-    oneSided: mine.filter((adjacency) => adjacency.status === "one_sided").length,
+    confirmed: mine.filter((adjacency) => adjacency.status === "confirmed")
+      .length,
+    oneSided: mine.filter((adjacency) => adjacency.status === "one_sided")
+      .length,
   }
 }
 
 export function otherEnd(adjacency: Adjacency, nodeId: string): string {
-  return adjacency.nodeIds[0] === nodeId ? adjacency.nodeIds[1] : adjacency.nodeIds[0]
+  return adjacency.nodeIds[0] === nodeId
+    ? adjacency.nodeIds[1]
+    : adjacency.nodeIds[0]
 }
 
 /**

@@ -49,12 +49,21 @@ const FOV = 50
 const HALF_FOV_TAN = Math.tan(((FOV / 2) * Math.PI) / 180)
 
 /** Camera altitude (globe radii above the surface) that draws the globe `radius` px tall-half. */
-export function altitudeForRadius(radius: number, viewportHeight: number): number {
+export function altitudeForRadius(
+  radius: number,
+  viewportHeight: number
+): number {
   const k = (radius * HALF_FOV_TAN) / (viewportHeight / 2)
   return 1 / Math.sin(Math.atan(k)) - 1
 }
 
 /** Inverse of `altitudeForRadius`. */
-export function radiusForAltitude(altitude: number, viewportHeight: number): number {
-  return (Math.tan(Math.asin(1 / (1 + altitude))) * (viewportHeight / 2)) / HALF_FOV_TAN
+export function radiusForAltitude(
+  altitude: number,
+  viewportHeight: number
+): number {
+  return (
+    (Math.tan(Math.asin(1 / (1 + altitude))) * (viewportHeight / 2)) /
+    HALF_FOV_TAN
+  )
 }

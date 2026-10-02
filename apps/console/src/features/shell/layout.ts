@@ -46,17 +46,34 @@ export type Arrangement = {
 }
 
 /** The globe's view of the surfaces: how much of each edge they cover, and whether it is covered. */
-export function globeLayout({ mobile, page, peek, workspace, viewportHeight }: Arrangement): { insets: Insets; recede: boolean } {
+export function globeLayout({
+  mobile,
+  page,
+  peek,
+  workspace,
+  viewportHeight,
+}: Arrangement): { insets: Insets; recede: boolean } {
   if (mobile) {
     const share = peek ? MOBILE_PEEK_HEIGHT : page ? MOBILE_PAGE_HEIGHT : 0
     return {
-      insets: { top: 0, right: 0, bottom: share > 0 ? Math.round(share * viewportHeight) + MOBILE_EDGE : 0, left: 0 },
+      insets: {
+        top: 0,
+        right: 0,
+        bottom:
+          share > 0 ? Math.round(share * viewportHeight) + MOBILE_EDGE : 0,
+        left: 0,
+      },
       recede: workspace,
     }
   }
   return {
     // Under a workspace the globe keeps the place it had beside the page panel.
-    insets: { top: 0, right: peek ? PEEK_WIDTH + EDGE + GAP : 0, bottom: 0, left: page ? WORKSPACE_LEFT : 0 },
+    insets: {
+      top: 0,
+      right: peek ? PEEK_WIDTH + EDGE + GAP : 0,
+      bottom: 0,
+      left: page ? WORKSPACE_LEFT : 0,
+    },
     recede: workspace,
   }
 }

@@ -31,7 +31,9 @@ export function BootScreen() {
       data-phase={phase}
       className="fixed inset-0 z-50 data-[phase=revealing]:pointer-events-none"
     >
-      {phase === "loading" ? <div className="globe-backdrop absolute inset-0" /> : null}
+      {phase === "loading" ? (
+        <div className="globe-backdrop absolute inset-0" />
+      ) : null}
       <LoaderGlobe visible={phase === "loading"} />
     </div>
   )

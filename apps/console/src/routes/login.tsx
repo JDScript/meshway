@@ -11,10 +11,18 @@ import { currentSession } from "@/lib/session"
 const zReturnTo = z
   .string()
   .max(2048)
-  .refine((path) => path.startsWith("/") && !path.startsWith("//") && !path.startsWith("/login"))
+  .refine(
+    (path) =>
+      path.startsWith("/") &&
+      !path.startsWith("//") &&
+      !path.startsWith("/login")
+  )
 
 const zSearch = z.object({
-  reason: z.enum(["expired", "signed_out", "signed_out_unconfirmed"]).optional().catch(undefined),
+  reason: z
+    .enum(["expired", "signed_out", "signed_out_unconfirmed"])
+    .optional()
+    .catch(undefined),
   returnTo: zReturnTo.optional().catch(undefined),
 })
 

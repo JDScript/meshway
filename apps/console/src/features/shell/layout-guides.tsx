@@ -68,7 +68,11 @@ export function LayoutGuides() {
         { at: MOBILE_EDGE + BAR_HEIGHT / 2, label: "bar mid", tone: "edge" },
         { at: MOBILE_EDGE + BAR_HEIGHT, label: "bar end", tone: "panel" },
         { at: MOBILE_PANEL_TOP, label: "panel", tone: "panel" },
-        { at: height - MOBILE_EDGE - BAR_HEIGHT, label: "bottom bar", tone: "panel" },
+        {
+          at: height - MOBILE_EDGE - BAR_HEIGHT,
+          label: "bottom bar",
+          tone: "panel",
+        },
         { at: height - MOBILE_EDGE, label: "edge", tone: "edge" },
       ]
     : [
@@ -79,7 +83,8 @@ export function LayoutGuides() {
         { at: height - EDGE, label: "edge", tone: "edge" },
       ]
 
-  const colour = (tone: Guide["tone"]) => (tone === "edge" ? "rgb(236 72 153 / 0.8)" : "rgb(14 165 233 / 0.8)")
+  const colour = (tone: Guide["tone"]) =>
+    tone === "edge" ? "rgb(236 72 153 / 0.8)" : "rgb(14 165 233 / 0.8)"
   return (
     <div
       aria-hidden="true"
@@ -91,15 +96,29 @@ export function LayoutGuides() {
       }}
     >
       {vertical.map((guide) => (
-        <div key={`v${guide.at}`} className="absolute inset-y-0 w-px" style={{ left: guide.at, background: colour(guide.tone) }}>
-          <span className="absolute top-1 left-1 font-mono text-[9px] whitespace-nowrap" style={{ color: colour(guide.tone) }}>
+        <div
+          key={`v${guide.at}`}
+          className="absolute inset-y-0 w-px"
+          style={{ left: guide.at, background: colour(guide.tone) }}
+        >
+          <span
+            className="absolute top-1 left-1 font-mono text-[9px] whitespace-nowrap"
+            style={{ color: colour(guide.tone) }}
+          >
             {guide.label} {Math.round(guide.at)}
           </span>
         </div>
       ))}
       {horizontal.map((guide) => (
-        <div key={`h${guide.at}`} className="absolute inset-x-0 h-px" style={{ top: guide.at, background: colour(guide.tone) }}>
-          <span className="absolute top-0.5 right-1 font-mono text-[9px] whitespace-nowrap" style={{ color: colour(guide.tone) }}>
+        <div
+          key={`h${guide.at}`}
+          className="absolute inset-x-0 h-px"
+          style={{ top: guide.at, background: colour(guide.tone) }}
+        >
+          <span
+            className="absolute top-0.5 right-1 font-mono text-[9px] whitespace-nowrap"
+            style={{ color: colour(guide.tone) }}
+          >
             {guide.label} {Math.round(guide.at)}
           </span>
         </div>

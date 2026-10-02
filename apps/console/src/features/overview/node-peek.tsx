@@ -5,9 +5,22 @@ import { CloseButton } from "@/components/chrome/close-button"
 import { SurfaceHeader } from "@/components/chrome/surface-header"
 import { Button } from "@/components/ui/button"
 import { DrawerClose, DrawerTitle } from "@/components/ui/drawer"
-import { NodeAddresses, NodeLinks, NodeStatusTiles, nodeVitality, VitalityLine, type NodeContext } from "@/features/nodes/node-facts"
+import {
+  NodeAddresses,
+  NodeLinks,
+  NodeStatusTiles,
+  nodeVitality,
+  VitalityLine,
+  type NodeContext,
+} from "@/features/nodes/node-facts"
 import { GlassDrawer } from "@/features/shell/glass-drawer"
-import { EDGE, MOBILE_EDGE, MOBILE_PEEK_HEIGHT, PANEL_TOP, PEEK_WIDTH } from "@/features/shell/layout"
+import {
+  EDGE,
+  MOBILE_EDGE,
+  MOBILE_PEEK_HEIGHT,
+  PANEL_TOP,
+  PEEK_WIDTH,
+} from "@/features/shell/layout"
 import { m } from "@/paraglide/messages.js"
 
 /**
@@ -41,15 +54,24 @@ export function NodePeek({
       dismissOnOutside={false}
       style={
         mobile
-          ? { "--drawer-inset": `${MOBILE_EDGE}px`, height: `${MOBILE_PEEK_HEIGHT * 100}svh` }
-          : { "--drawer-inset": `${EDGE}px`, "--drawer-content-width": `${PEEK_WIDTH}px`, marginTop: PANEL_TOP }
+          ? {
+              "--drawer-inset": `${MOBILE_EDGE}px`,
+              height: `${MOBILE_PEEK_HEIGHT * 100}svh`,
+            }
+          : {
+              "--drawer-inset": `${EDGE}px`,
+              "--drawer-content-width": `${PEEK_WIDTH}px`,
+              marginTop: PANEL_TOP,
+            }
       }
     >
       {node ? (
         <div key={node.id} className="swap-in flex min-h-0 flex-1 flex-col">
           <SurfaceHeader
             className="px-4 pt-5 pb-4"
-            title={(className) => <DrawerTitle className={className}>{node.name}</DrawerTitle>}
+            title={(className) => (
+              <DrawerTitle className={className}>{node.name}</DrawerTitle>
+            )}
             action={<DrawerClose render={<CloseButton />} />}
             meta={<VitalityLine vitality={nodeVitality(node, context)} />}
           />
@@ -63,7 +85,11 @@ export function NodePeek({
             <NodeLinks node={node} context={context} onOpenPeer={onPeek} />
           </div>
           <footer className="px-4 pb-4">
-            <Button variant="secondary" className="h-10 w-full rounded-tile" onClick={() => onOpenWorkspace(node.id)}>
+            <Button
+              variant="secondary"
+              className="h-10 w-full rounded-tile"
+              onClick={() => onOpenWorkspace(node.id)}
+            >
               {m.node_open_workspace()}
               <ArrowUpRightIcon />
             </Button>

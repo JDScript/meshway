@@ -24,7 +24,12 @@ export function AccountMenu() {
     <DropdownMenu>
       <DropdownMenuTrigger
         render={
-          <Button variant="ghost" size="icon" aria-label={m.account_menu()} className="bar-button">
+          <Button
+            variant="ghost"
+            size="icon"
+            aria-label={m.account_menu()}
+            className="bar-button"
+          >
             <span className="flex size-8 items-center justify-center rounded-full bg-foreground text-xs font-semibold text-background uppercase">
               {email?.[0] ?? "·"}
             </span>
@@ -33,7 +38,9 @@ export function AccountMenu() {
       />
       <DropdownMenuContent align="end" className="min-w-56">
         <DropdownMenuGroup>
-          <DropdownMenuLabel className="truncate font-normal text-muted-foreground">{email ?? m.account_menu()}</DropdownMenuLabel>
+          <DropdownMenuLabel className="truncate font-normal text-muted-foreground">
+            {email ?? m.account_menu()}
+          </DropdownMenuLabel>
         </DropdownMenuGroup>
         <DropdownMenuSeparator />
         <DropdownMenuItem onClick={() => void signOut()}>

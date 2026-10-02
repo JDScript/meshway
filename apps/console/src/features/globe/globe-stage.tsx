@@ -25,7 +25,10 @@ function useGlobeColors(): GlobeColors {
   const [colors, setColors] = useState(readGlobeColors)
   useEffect(() => {
     const observer = new MutationObserver(() => setColors(readGlobeColors()))
-    observer.observe(document.documentElement, { attributes: true, attributeFilter: ["class", "style"] })
+    observer.observe(document.documentElement, {
+      attributes: true,
+      attributeFilter: ["class", "style"],
+    })
     return () => observer.disconnect()
   }, [])
   return colors
@@ -56,7 +59,8 @@ export function GlobeStage() {
       created = createGlobeEngine(element, selectFromGlobe, markRevealed)
       const instance = created
       observer = new ResizeObserver(([entry]) => {
-        if (entry) instance.resize(entry.contentRect.width, entry.contentRect.height)
+        if (entry)
+          instance.resize(entry.contentRect.width, entry.contentRect.height)
       })
       observer.observe(element)
       instance.resize(element.clientWidth, element.clientHeight)
@@ -88,7 +92,14 @@ export function GlobeStage() {
   return (
     <>
       <div className="globe-backdrop fixed inset-0" />
-      <div ref={host} role="region" aria-label={m.globe_region()} data-boot={boot} data-receded={state.recede} className="globe-stage fixed inset-0" />
+      <div
+        ref={host}
+        role="region"
+        aria-label={m.globe_region()}
+        data-boot={boot}
+        data-receded={state.recede}
+        className="globe-stage fixed inset-0"
+      />
     </>
   )
 }

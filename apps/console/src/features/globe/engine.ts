@@ -59,7 +59,11 @@ import { sameInsets, type GlobeState } from "./store"
 // or a node is focused, the springs are re-aimed and carry their current
 // velocity into the new target, so motion never stops dead or restarts.
 
-export type EngineInput = GlobeState & { colors: GlobeColors; motion: boolean; boot: BootPhase }
+export type EngineInput = GlobeState & {
+  colors: GlobeColors
+  motion: boolean
+  boot: BootPhase
+}
 
 export type GlobeEngine = {
   update(input: EngineInput): void
@@ -111,12 +115,29 @@ const vitalityText: Record<Vitality, () => string> = {
 const easeOut = (t: number) => 1 - (1 - t) ** 4
 const clamp01 = (t: number) => Math.min(1, Math.max(0, t))
 /** The equivalent of `degrees` in (-180, 180]. */
-const wrapDegrees = (degrees: number) => ((((degrees + 180) % 360) + 360) % 360) - 180
+const wrapDegrees = (degrees: number) =>
+  ((((degrees + 180) % 360) + 360) % 360) - 180
 const scaleOf = (altitude: number) => 1 / (1 + altitude)
 
-type Spring = { x: number; v: number; target: number; rate: number; active: boolean; dirty: boolean; epsilon: number }
+type Spring = {
+  x: number
+  v: number
+  target: number
+  rate: number
+  active: boolean
+  dirty: boolean
+  epsilon: number
+}
 
-const spring = (x: number, epsilon: number): Spring => ({ x, v: 0, target: x, rate: LAYOUT_RATE, active: false, dirty: false, epsilon })
+const spring = (x: number, epsilon: number): Spring => ({
+  x,
+  v: 0,
+  target: x,
+  rate: LAYOUT_RATE,
+  active: false,
+  dirty: false,
+  epsilon,
+})
 
 /** One implicit step of a critically damped spring: stable for any frame time. */
 function stepSpring(s: Spring, dt: number) {
@@ -172,7 +193,12 @@ const color = (rgb: Rgb) => new Color(css(rgb))
 const surfaceShader = () =>
   new ShaderMaterial({
     transparent: true,
-    uniforms: { uSurface: { value: new Color() }, uRim: { value: new Color() }, uOpacity: { value: 0 }, uRimStrength: { value: 0.85 } },
+    uniforms: {
+      uSurface: { value: new Color() },
+      uRim: { value: new Color() },
+      uOpacity: { value: 0 },
+      uRimStrength: { value: 0.85 },
+    },
     vertexShader: /* glsl */ `
       varying vec3 vNormal;
       varying vec3 vWorld;
@@ -251,14 +277,17 @@ const pointShader = (land: boolean) =>
       }`,
   })
 
-
 /** Constant-size screen points (CSS px), drawn over everything: the loader's comet. */
 const cometShader = () =>
   new ShaderMaterial({
     transparent: true,
     depthWrite: false,
     depthTest: false,
-    uniforms: { uColor: { value: new Color() }, uOpacity: { value: 1 }, uPixelRatio: { value: 1 } },
+    uniforms: {
+      uColor: { value: new Color() },
+      uOpacity: { value: 1 },
+      uPixelRatio: { value: 1 },
+    },
     vertexShader: /* glsl */ `
       attribute float aAlpha;
       attribute float aSize;
@@ -300,7 +329,11 @@ export function createGlobeEngine(
   onRevealed: () => void
 ): GlobeEngine {
   const globe = new Globe(container, {
-    rendererConfig: { antialias: true, alpha: true, powerPreference: "high-performance" },
+    rendererConfig: {
+      antialias: true,
+      alpha: true,
+      powerPreference: "high-performance",
+    },
     animateIn: false,
   })
   const renderer = globe.renderer()
@@ -335,7 +368,13 @@ export function createGlobeEngine(
 
   // Land dots.
   const landGeometry = new BufferGeometry()
-  landGeometry.setAttribute("position", new Float32BufferAttribute(landPoints().flatMap(({ lat, lng }) => cartesian(lat, lng, 0.004)), 3))
+  landGeometry.setAttribute(
+    "position",
+    new Float32BufferAttribute(
+      landPoints().flatMap(({ lat, lng }) => cartesian(lat, lng, 0.004)),
+      3
+    )
+  )
   const landMaterial = pointShader(true)
   landMaterial.uniforms.uSize = { value: look.landSize }
   landMaterial.uniforms.uOpacity = { value: 1 }
@@ -350,14 +389,23 @@ export function createGlobeEngine(
   const graticulePoints: number[] = []
   const segment = (a: Vec3, b: Vec3) => graticulePoints.push(...a, ...b)
   for (let lat = -75; lat <= 75; lat += 15) {
-    for (let lng = -180; lng < 180; lng += 3) segment(cartesian(lat, lng, 0.002), cartesian(lat, lng + 3, 0.002))
+    for (let lng = -180; lng < 180; lng += 3)
+      segment(cartesian(lat, lng, 0.002), cartesian(lat, lng + 3, 0.002))
   }
   for (let lng = -180; lng < 180; lng += 15) {
-    for (let lat = -84; lat < 84; lat += 3) segment(cartesian(lat, lng, 0.002), cartesian(lat + 3, lng, 0.002))
+    for (let lat = -84; lat < 84; lat += 3)
+      segment(cartesian(lat, lng, 0.002), cartesian(lat + 3, lng, 0.002))
   }
   const graticuleGeometry = new BufferGeometry()
-  graticuleGeometry.setAttribute("position", new Float32BufferAttribute(graticulePoints, 3))
-  const graticuleMaterial = new LineBasicMaterial({ transparent: true, depthWrite: false, opacity: 0 })
+  graticuleGeometry.setAttribute(
+    "position",
+    new Float32BufferAttribute(graticulePoints, 3)
+  )
+  const graticuleMaterial = new LineBasicMaterial({
+    transparent: true,
+    depthWrite: false,
+    opacity: 0,
+  })
   const graticule = new LineSegments(graticuleGeometry, graticuleMaterial)
   graticule.renderOrder = 1
   graticule.visible = look.graticule
@@ -377,9 +425,18 @@ export function createGlobeEngine(
     starPositions.push(r * s * Math.cos(theta), r * u, r * s * Math.sin(theta))
     starSizes.push(random() ** 3 * 2.4 + 0.5)
   }
-  starGeometry.setAttribute("position", new Float32BufferAttribute(starPositions, 3))
+  starGeometry.setAttribute(
+    "position",
+    new Float32BufferAttribute(starPositions, 3)
+  )
   starGeometry.setAttribute("aSize", new Float32BufferAttribute(starSizes, 1))
-  starGeometry.setAttribute("aAlpha", new Float32BufferAttribute(starSizes.map((size) => Math.min(1, 0.25 + size / 3)), 1))
+  starGeometry.setAttribute(
+    "aAlpha",
+    new Float32BufferAttribute(
+      starSizes.map((size) => Math.min(1, 0.25 + size / 3)),
+      1
+    )
+  )
   const starMaterial = pointShader(false)
   const stars = new Points(starGeometry, starMaterial)
   stars.renderOrder = -1
@@ -398,11 +455,21 @@ export function createGlobeEngine(
     const points: number[] = []
     for (let i = 0; i <= 256; i += 1) {
       const angle = (i / 256) * Math.PI * 2
-      points.push(Math.cos(angle) * radius * GLOBE_RADIUS, Math.sin(angle) * radius * GLOBE_RADIUS, 0)
+      points.push(
+        Math.cos(angle) * radius * GLOBE_RADIUS,
+        Math.sin(angle) * radius * GLOBE_RADIUS,
+        0
+      )
     }
     const geometry = new BufferGeometry()
     geometry.setAttribute("position", new Float32BufferAttribute(points, 3))
-    const material = new LineDashedMaterial({ transparent: true, depthWrite: false, dashSize: dash, gapSize: gap, opacity: 0 })
+    const material = new LineDashedMaterial({
+      transparent: true,
+      depthWrite: false,
+      dashSize: dash,
+      gapSize: gap,
+      opacity: 0,
+    })
     guideMaterials.push(material)
     const ring = new Line(geometry, material)
     ring.computeLineDistances()
@@ -413,10 +480,22 @@ export function createGlobeEngine(
 
   // The loader's comet, continued in place while the globe grows, then gone.
   const cometGeometry = new BufferGeometry()
-  cometGeometry.setAttribute("position", new BufferAttribute(new Float32Array(LOADER_COMET.points * 3), 3))
+  cometGeometry.setAttribute(
+    "position",
+    new BufferAttribute(new Float32Array(LOADER_COMET.points * 3), 3)
+  )
   const cometPoints = Array.from({ length: LOADER_COMET.points }, (_, k) => k)
-  cometGeometry.setAttribute("aAlpha", new Float32BufferAttribute(cometPoints.map(cometPointAlpha), 1))
-  cometGeometry.setAttribute("aSize", new Float32BufferAttribute(cometPoints.map((k) => cometPointRadius(k) * 2 + 1), 1))
+  cometGeometry.setAttribute(
+    "aAlpha",
+    new Float32BufferAttribute(cometPoints.map(cometPointAlpha), 1)
+  )
+  cometGeometry.setAttribute(
+    "aSize",
+    new Float32BufferAttribute(
+      cometPoints.map((k) => cometPointRadius(k) * 2 + 1),
+      1
+    )
+  )
   const cometMaterial = cometShader()
   const comet = new Points(cometGeometry, cometMaterial)
   comet.frustumCulled = false
@@ -439,9 +518,18 @@ export function createGlobeEngine(
   const allocatePulses = (capacity: number) => {
     pulseGeometry.dispose()
     pulseGeometry = new BufferGeometry()
-    pulseGeometry.setAttribute("position", new BufferAttribute(new Float32Array(capacity * 3), 3))
-    pulseGeometry.setAttribute("aAlpha", new BufferAttribute(new Float32Array(capacity), 1))
-    pulseGeometry.setAttribute("aSize", new BufferAttribute(new Float32Array(capacity), 1))
+    pulseGeometry.setAttribute(
+      "position",
+      new BufferAttribute(new Float32Array(capacity * 3), 3)
+    )
+    pulseGeometry.setAttribute(
+      "aAlpha",
+      new BufferAttribute(new Float32Array(capacity), 1)
+    )
+    pulseGeometry.setAttribute(
+      "aSize",
+      new BufferAttribute(new Float32Array(capacity), 1)
+    )
     pulseGeometry.setDrawRange(0, 0)
     pulses.geometry = pulseGeometry
   }
@@ -470,9 +558,17 @@ export function createGlobeEngine(
   let revealedAt: number | null = null
   let linksShownAt = performance.now()
   /** The first-load hand-off: the loader's spin eases out onto a landing longitude. */
-  let reveal: { start: number; ms: number; fromLng: number; turn: number; v0: number; aimed: boolean } | null = null
+  let reveal: {
+    start: number
+    ms: number
+    fromLng: number
+    turn: number
+    v0: number
+    aimed: boolean
+  } | null = null
   let cometFadeFrom: number | null = null
-  const loaderAltitude = () => altitudeForRadius(LOADER_RADIUS, Math.max(height, 1))
+  const loaderAltitude = () =>
+    altitudeForRadius(LOADER_RADIUS, Math.max(height, 1))
   const springs = {
     scale: spring(scaleOf(loaderAltitude()), 1e-4),
     lat: spring(LOADER_LAT, 0.005),
@@ -494,14 +590,23 @@ export function createGlobeEngine(
   })
 
   const focusOf = (input: EngineInput): Anchor | null =>
-    input.framing === "network" && input.selectedNodeId ? (anchors.get(input.selectedNodeId) ?? null) : null
-  const framingLat = (input: EngineInput) => (input.framing === "welcome" ? WELCOME.lat : HOME.lat)
+    input.framing === "network" && input.selectedNodeId
+      ? (anchors.get(input.selectedNodeId) ?? null)
+      : null
+  const framingLat = (input: EngineInput) =>
+    input.framing === "welcome" ? WELCOME.lat : HOME.lat
   /** The rest view: home size, or smaller when the free space between panels is narrow. */
   const restAltitude = (input: EngineInput) => {
     if (input.framing === "welcome") return WELCOME.altitude
     const { top, right, bottom, left } = input.insets
-    const free = Math.max(Math.min(width - left - right, height - top - bottom), 160)
-    const radius = Math.min(radiusForAltitude(HOME.altitude, Math.max(height, 1)), free * FIT)
+    const free = Math.max(
+      Math.min(width - left - right, height - top - bottom),
+      160
+    )
+    const radius = Math.min(
+      radiusForAltitude(HOME.altitude, Math.max(height, 1)),
+      free * FIT
+    )
     return altitudeForRadius(radius, Math.max(height, 1))
   }
   const targetAltitude = (input: EngineInput) => {
@@ -510,17 +615,25 @@ export function createGlobeEngine(
   }
   /** Centre of the free space, relative to the viewport's centre. */
   const offsetFor = (input: EngineInput): [number, number] => {
-    if (input.framing === "welcome") return width >= 900 ? [Math.min(width * 0.14, 260), 0] : [0, height * 0.18]
+    if (input.framing === "welcome")
+      return width >= 900
+        ? [Math.min(width * 0.14, 260), 0]
+        : [0, height * 0.18]
     const { top, right, bottom, left } = input.insets
     return [(left - right) / 2, (top - bottom) / 2]
   }
 
   /** Points the springs where `input` wants the camera; `aimView` also re-aims latitude and the focus longitude. */
-  const retarget = (input: EngineInput, requested: number, aimView: boolean) => {
+  const retarget = (
+    input: EngineInput,
+    requested: number,
+    aimView: boolean
+  ) => {
     const pov = globe.pointOfView()
     // Nothing hurries the reveal along.
     const rate = reveal ? Math.min(requested, REVEAL_RATE) : requested
-    const to = (s: Spring, target: number, current?: number) => (input.motion ? aim(s, target, rate, current) : jump(s, target))
+    const to = (s: Spring, target: number, current?: number) =>
+      input.motion ? aim(s, target, rate, current) : jump(s, target)
     to(springs.scale, scaleOf(targetAltitude(input)), scaleOf(pov.altitude))
     const [x, y] = offsetFor(input)
     to(springs.x, x)
@@ -528,7 +641,8 @@ export function createGlobeEngine(
     if (!aimView) return
     const focus = focusOf(input)
     to(springs.lat, focus ? focus.lat : framingLat(input), pov.lat)
-    if (focus && !reveal) to(springs.lng, pov.lng + wrapDegrees(focus.lng - pov.lng), pov.lng)
+    if (focus && !reveal)
+      to(springs.lng, pov.lng + wrapDegrees(focus.lng - pov.lng), pov.lng)
     else springs.lng.active = false
   }
 
@@ -544,7 +658,8 @@ export function createGlobeEngine(
     cometFadeFrom = start
     const fromLng = loaderLng(start)
     const focus = focusOf(input)
-    const ahead = (lng: number) => ((((lng - fromLng - 40) % 360) + 360) % 360) + 40
+    const ahead = (lng: number) =>
+      ((((lng - fromLng - 40) % 360) + 360) % 360) + 40
     reveal = {
       start,
       ms: REVEAL_SPIN_MS,
@@ -573,7 +688,11 @@ export function createGlobeEngine(
 
     if (loading || holding) {
       // Follow the loader exactly; the springs wait at the same pose.
-      globe.pointOfView({ lat: LOADER_LAT, lng: loaderLng(motion ? time : 0), altitude: loaderAltitude() })
+      globe.pointOfView({
+        lat: LOADER_LAT,
+        lng: loaderLng(motion ? time : 0),
+        altitude: loaderAltitude(),
+      })
       springs.scale.x = scaleOf(loaderAltitude())
       springs.lat.x = LOADER_LAT
     } else {
@@ -589,7 +708,10 @@ export function createGlobeEngine(
       if (reveal) {
         const t = clamp01((time - reveal.start) / reveal.ms)
         // Cubic Hermite: leaves at the loader's spin, settles at rest on the landing.
-        lng = reveal.fromLng + (t ** 3 - 2 * t ** 2 + t) * reveal.v0 + (-2 * t ** 3 + 3 * t ** 2) * reveal.turn
+        lng =
+          reveal.fromLng +
+          (t ** 3 - 2 * t ** 2 + t) * reveal.v0 +
+          (-2 * t ** 3 + 3 * t ** 2) * reveal.turn
         if (revealedAt === null && time - reveal.start >= REVEAL_UI_MS) {
           revealedAt = time
           linksShownAt = time
@@ -603,17 +725,29 @@ export function createGlobeEngine(
         globe.pointOfView({
           lat: springs.lat.dirty ? springs.lat.x : pov.lat,
           lng: lng ?? pov.lng,
-          altitude: springs.scale.dirty ? 1 / springs.scale.x - 1 : pov.altitude,
+          altitude: springs.scale.dirty
+            ? 1 / springs.scale.x - 1
+            : pov.altitude,
         })
       }
-      if (springs.x.dirty || springs.y.dirty) globe.globeOffset([springs.x.x, springs.y.x])
+      if (springs.x.dirty || springs.y.dirty)
+        globe.globeOffset([springs.x.x, springs.y.x])
       for (const s of Object.values(springs)) s.dirty = false
-      controls.maxDistance = Math.max(560, GLOBE_RADIUS / springs.scale.x + 1, (GLOBE_RADIUS / springs.scale.target) * 1.25)
+      controls.maxDistance = Math.max(
+        560,
+        GLOBE_RADIUS / springs.scale.x + 1,
+        (GLOBE_RADIUS / springs.scale.target) * 1.25
+      )
     }
     controls.enabled = !loading && reveal === null
 
     // The comet: exactly where the loader drew it, fading as the globe grows.
-    const cometOpacity = cometFadeFrom === null ? 1 : motion ? 1 - easeOut(clamp01((time - cometFadeFrom) / COMET_FADE_MS)) : 0
+    const cometOpacity =
+      cometFadeFrom === null
+        ? 1
+        : motion
+          ? 1 - easeOut(clamp01((time - cometFadeFrom) / COMET_FADE_MS))
+          : 0
     comet.visible = cometOpacity > 0.001
     if (comet.visible) {
       cometPlane.quaternion.copy(globe.camera().quaternion)
@@ -624,25 +758,39 @@ export function createGlobeEngine(
       for (let k = 0; k < LOADER_COMET.points; k += 1) {
         const angle = head - k * LOADER_COMET.spacing
         // Screen y runs down, the camera's up.
-        position.setXYZ(k, Math.cos(angle) * radius, -Math.sin(angle) * radius * LOADER_COMET.squash, 0)
+        position.setXYZ(
+          k,
+          Math.cos(angle) * radius,
+          -Math.sin(angle) * radius * LOADER_COMET.squash,
+          0
+        )
       }
       position.needsUpdate = true
     }
 
-    const extras = revealedAt === null ? 0 : motion ? easeOut(clamp01((time - revealedAt) / 1000)) : 1
+    const extras =
+      revealedAt === null
+        ? 0
+        : motion
+          ? easeOut(clamp01((time - revealedAt) / 1000))
+          : 1
     pulseMaterial.uniforms.uOpacity = { value: extras }
     const dark = last?.colors.dark ?? true
     guides.quaternion.copy(globe.camera().quaternion)
     guideMaterials.forEach((material, index) => {
-      material.opacity = ((dark ? [0.14, 0.09, 0.06] : [0.2, 0.13, 0.08])[index] ?? 0) * extras
+      material.opacity =
+        ((dark ? [0.14, 0.09, 0.06] : [0.2, 0.13, 0.08])[index] ?? 0) * extras
     })
     graticuleMaterial.opacity = (dark ? 0.22 : 0.32) * extras
     // Stars belong to a dark sky only.
     stars.visible = look.stars && dark
-    starMaterial.uniforms.uOpacity = { value: extras * (0.85 + 0.15 * Math.sin(time / 1300)) }
+    starMaterial.uniforms.uOpacity = {
+      value: extras * (0.85 + 0.15 * Math.sin(time / 1300)),
+    }
 
     // Rotation eases in and out instead of starting or stopping dead.
-    const target = interacting || time < pausedUntil || reveal ? 0 : rotationTarget
+    const target =
+      interacting || time < pausedUntil || reveal ? 0 : rotationTarget
     rotationSpeed += (target - rotationSpeed) * (1 - Math.exp(-dt / 0.7))
     controls.autoRotateSpeed = rotationSpeed
 
@@ -654,10 +802,16 @@ export function createGlobeEngine(
     let count = 0
     links.forEach((link, index) => {
       link.line.visible = revealedAt !== null
-      const local = motion ? easeOut(clamp01((time - linksShownAt - index * 90) / 900)) : drawn
-      link.line.geometry.setDrawRange(0, Math.max(2, Math.round(local * link.curve.length)))
+      const local = motion
+        ? easeOut(clamp01((time - linksShownAt - index * 90) / 900))
+        : drawn
+      link.line.geometry.setDrawRange(
+        0,
+        Math.max(2, Math.round(local * link.curve.length))
+      )
       for (const stream of link.streams) {
-        const head = ((time / 1000 / link.duration + stream.phase) % 1 + 1) % 1
+        const head =
+          (((time / 1000 / link.duration + stream.phase) % 1) + 1) % 1
         for (let k = 0; k < TRAIL; k += 1) {
           const along = head - k * TRAIL_SPACING
           if (along < 0) continue
@@ -667,7 +821,14 @@ export function createGlobeEngine(
           const fade = Math.min(1, along / 0.06, (1 - along) / 0.06)
           positionAttribute.setXYZ(count, x, y, z)
           const tail = 1 - k / TRAIL
-          alphaAttribute.setX(count, local * fade * tail ** 2.2 * 0.55 * (link.material.opacity / Math.max(link.baseOpacity, 0.01)))
+          alphaAttribute.setX(
+            count,
+            local *
+              fade *
+              tail ** 2.2 *
+              0.55 *
+              (link.material.opacity / Math.max(link.baseOpacity, 0.01))
+          )
           sizeAttribute.setX(count, k === 0 ? 8 : 4.6 * tail + 1)
           count += 1
         }
@@ -701,14 +862,18 @@ export function createGlobeEngine(
     element.type = "button"
     element.className = "globe-node"
     element.style.setProperty("--enter-delay", `${order * 70}ms`)
-    const parts = ["hit", "halo", "halo globe-node__halo--late", "dot"].map((name) => {
-      const span = document.createElement("span")
-      span.className = name
-        .split(" ")
-        .map((part) => (part.startsWith("globe-node") ? part : `globe-node__${part}`))
-        .join(" ")
-      return span
-    })
+    const parts = ["hit", "halo", "halo globe-node__halo--late", "dot"].map(
+      (name) => {
+        const span = document.createElement("span")
+        span.className = name
+          .split(" ")
+          .map((part) =>
+            part.startsWith("globe-node") ? part : `globe-node__${part}`
+          )
+          .join(" ")
+        return span
+      }
+    )
     const label = document.createElement("span")
     label.className = "globe-node__label"
     element.append(...parts, label)
@@ -755,8 +920,13 @@ export function createGlobeEngine(
       const curve = linkCurve(a, b)
       const style = lineStyle(sceneLink.look)
       const geometry = new BufferGeometry()
-      geometry.setAttribute("position", new Float32BufferAttribute(curve.flat(), 3))
-      const material = style.dashed ? new LineDashedMaterial({ dashSize: style.dash, gapSize: style.gap }) : new LineBasicMaterial()
+      geometry.setAttribute(
+        "position",
+        new Float32BufferAttribute(curve.flat(), 3)
+      )
+      const material = style.dashed
+        ? new LineDashedMaterial({ dashSize: style.dash, gapSize: style.gap })
+        : new LineBasicMaterial()
       material.transparent = true
       material.depthWrite = false
       material.color = color(lookColor(input.colors, sceneLink.look))
@@ -777,7 +947,9 @@ export function createGlobeEngine(
         streams: pulseStreams(sceneLink.look, input.motion),
       })
     }
-    allocatePulses(links.reduce((total, link) => total + link.streams.length * TRAIL, 0))
+    allocatePulses(
+      links.reduce((total, link) => total + link.streams.length * TRAIL, 0)
+    )
     linksShownAt = performance.now()
   }
 
@@ -785,11 +957,20 @@ export function createGlobeEngine(
   const emphasise = (highlight: string | null) => {
     for (const link of links) {
       const touches = highlight === null || link.nodeIds.includes(highlight)
-      link.material.opacity = touches ? link.baseOpacity : link.baseOpacity * 0.22
+      link.material.opacity = touches
+        ? link.baseOpacity
+        : link.baseOpacity * 0.22
     }
-    const neighbours = new Set(links.filter((link) => highlight && link.nodeIds.includes(highlight)).flatMap((link) => link.nodeIds))
+    const neighbours = new Set(
+      links
+        .filter((link) => highlight && link.nodeIds.includes(highlight))
+        .flatMap((link) => link.nodeIds)
+    )
     for (const [id, datum] of markers) {
-      datum.element.dataset.dimmed = highlight !== null && id !== highlight && !neighbours.has(id) ? "true" : "false"
+      datum.element.dataset.dimmed =
+        highlight !== null && id !== highlight && !neighbours.has(id)
+          ? "true"
+          : "false"
     }
   }
 
@@ -807,12 +988,24 @@ export function createGlobeEngine(
     placed.forEach((node, order) => {
       const anchor = anchors.get(node.id)
       const datum = markerFor(node, order)
-      if (anchor) Object.assign(datum, { lat: anchor.lat, lng: anchor.lng, altitude: anchor.altitude })
+      if (anchor)
+        Object.assign(datum, {
+          lat: anchor.lat,
+          lng: anchor.lng,
+          altitude: anchor.altitude,
+        })
       datum.label.textContent = node.name
       datum.element.dataset.vitality = node.vitality
-      datum.element.dataset.selected = node.id === input.selectedNodeId ? "true" : "false"
-      datum.element.setAttribute("aria-label", `${node.name} · ${vitalityText[node.vitality]()}`)
-      datum.element.setAttribute("aria-pressed", node.id === input.selectedNodeId ? "true" : "false")
+      datum.element.dataset.selected =
+        node.id === input.selectedNodeId ? "true" : "false"
+      datum.element.setAttribute(
+        "aria-label",
+        `${node.name} · ${vitalityText[node.vitality]()}`
+      )
+      datum.element.setAttribute(
+        "aria-pressed",
+        node.id === input.selectedNodeId ? "true" : "false"
+      )
     })
     const shown = new Set(placed.map((node) => node.id))
     for (const [id, datum] of markers) {
@@ -821,18 +1014,28 @@ export function createGlobeEngine(
         markers.delete(id)
       }
     }
-    const nextMarkersKey = JSON.stringify(placed.map((node) => [node.id, anchors.get(node.id)]))
+    const nextMarkersKey = JSON.stringify(
+      placed.map((node) => [node.id, anchors.get(node.id)])
+    )
     if (nextMarkersKey !== markersKey) {
       markersKey = nextMarkersKey
-      globe.htmlElementsData(placed.flatMap((node) => markers.get(node.id) ?? []))
+      globe.htmlElementsData(
+        placed.flatMap((node) => markers.get(node.id) ?? [])
+      )
     }
 
-    const nextLinksKey = JSON.stringify([input.framing === "welcome" ? [] : input.scene.links, nextMarkersKey, input.motion, input.colors])
+    const nextLinksKey = JSON.stringify([
+      input.framing === "welcome" ? [] : input.scene.links,
+      nextMarkersKey,
+      input.motion,
+      input.colors,
+    ])
     if (nextLinksKey !== linksKey) {
       linksKey = nextLinksKey
       buildLinks(input)
     }
-    const onGlobe = (id: string | null) => (id !== null && anchors.has(id) ? id : null)
+    const onGlobe = (id: string | null) =>
+      id !== null && anchors.has(id) ? id : null
     emphasise(onGlobe(input.hoveredNodeId) ?? onGlobe(input.selectedNodeId))
 
     const focus = focusOf(input)
@@ -848,13 +1051,20 @@ export function createGlobeEngine(
       }
     } else if (previous.framing !== input.framing) {
       retarget(input, LAYOUT_RATE, true)
-    } else if (focus !== previousFocus && (focus === null || previousFocus === null || focus.lat !== previousFocus.lat || focus.lng !== previousFocus.lng)) {
+    } else if (
+      focus !== previousFocus &&
+      (focus === null ||
+        previousFocus === null ||
+        focus.lat !== previousFocus.lat ||
+        focus.lng !== previousFocus.lng)
+    ) {
       retarget(input, FOCUS_RATE, true)
     } else if (!sameInsets(previous.insets, input.insets)) {
       retarget(input, LAYOUT_RATE, false)
     }
 
-    rotationTarget = input.boot === "ready" && input.motion && !focus ? ROTATION_SPEED : 0
+    rotationTarget =
+      input.boot === "ready" && input.motion && !focus ? ROTATION_SPEED : 0
     container.dataset.framing = input.framing
   }
 
@@ -892,7 +1102,8 @@ export function createGlobeEngine(
         ...guideMaterials,
       ])
         disposable.dispose()
-      for (const ring of guides.children) if (ring instanceof Line) ring.geometry.dispose()
+      for (const ring of guides.children)
+        if (ring instanceof Line) ring.geometry.dispose()
       globe._destructor()
       markers.clear()
       container.replaceChildren()
@@ -908,5 +1119,9 @@ function sampleAt(curve: readonly Vec3[], t: number): Vec3 {
   const b = curve[index + 1]
   if (!a || !b) return a ?? [0, GLOBE_RADIUS, 0]
   const f = scaled - index
-  return [a[0] + (b[0] - a[0]) * f, a[1] + (b[1] - a[1]) * f, a[2] + (b[2] - a[2]) * f]
+  return [
+    a[0] + (b[0] - a[0]) * f,
+    a[1] + (b[1] - a[1]) * f,
+    a[2] + (b[2] - a[2]) * f,
+  ]
 }

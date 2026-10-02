@@ -20,7 +20,10 @@ function Root() {
   return (
     <>
       <GlobeStage />
-      <div data-boot={phase} className="ui-root pointer-events-none fixed inset-0 z-10">
+      <div
+        data-boot={phase}
+        className="ui-root pointer-events-none fixed inset-0 z-10"
+      >
         <Outlet />
       </div>
       <BootScreen />

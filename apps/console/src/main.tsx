@@ -18,7 +18,11 @@ const queryClient = new QueryClient({
       // Client errors (401 is handled centrally, 403/404/422) do not improve on retry.
       retry: (failures, error) =>
         !(error instanceof SessionRejected) &&
-        !(error instanceof ControlApiError && error.status >= 400 && error.status < 500) &&
+        !(
+          error instanceof ControlApiError &&
+          error.status >= 400 &&
+          error.status < 500
+        ) &&
         failures < 2,
     },
   },
@@ -46,7 +50,8 @@ handleSessionRejected(() => {
 })
 
 document.documentElement.lang = getLocale()
-for (const [name, value] of Object.entries(LAYOUT_VARIABLES)) document.documentElement.style.setProperty(name, value)
+for (const [name, value] of Object.entries(LAYOUT_VARIABLES))
+  document.documentElement.style.setProperty(name, value)
 
 const root = document.getElementById("root")
 if (!root) throw new Error("#root is missing from index.html")

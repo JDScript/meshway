@@ -22,8 +22,17 @@ export function StatusCard({
     <main className="pointer-events-none relative flex min-h-svh items-center px-6 md:px-[8vw]">
       <div className="glass pointer-events-auto w-full max-w-sm rounded-3xl p-7">
         <Brand />
-        <h1 className={cn("mt-8 text-xl font-semibold tracking-tight", tone === "destructive" && "text-destructive")}>{title}</h1>
-        {body ? <p className="mt-2 text-sm text-muted-foreground">{body}</p> : null}
+        <h1
+          className={cn(
+            "mt-8 text-xl font-semibold tracking-tight",
+            tone === "destructive" && "text-destructive"
+          )}
+        >
+          {title}
+        </h1>
+        {body ? (
+          <p className="mt-2 text-sm text-muted-foreground">{body}</p>
+        ) : null}
         <div className="mt-6 flex gap-2">
           {onRetry ? <Button onClick={onRetry}>{m.retry()}</Button> : null}
           <Button variant="outline" onClick={() => void signOut()}>

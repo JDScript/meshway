@@ -11,6 +11,11 @@ export function useSignOut(): () => Promise<void> {
   return useCallback(async () => {
     const outcome = await signOut()
     queryClient.clear()
-    await navigate({ to: "/login", search: { reason: outcome === "revoked" ? "signed_out" : "signed_out_unconfirmed" } })
+    await navigate({
+      to: "/login",
+      search: {
+        reason: outcome === "revoked" ? "signed_out" : "signed_out_unconfirmed",
+      },
+    })
   }, [navigate, queryClient])
 }

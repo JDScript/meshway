@@ -21,17 +21,29 @@ const failures: Record<Exclude<SignInOutcome, "signed_in">, () => string> = {
   clock: () => m.login_clock(),
 }
 
-const reasons: Record<LoginReason, { tone: "info" | "warning"; text: () => string }> = {
+const reasons: Record<
+  LoginReason,
+  { tone: "info" | "warning"; text: () => string }
+> = {
   expired: { tone: "warning", text: () => m.login_expired() },
   signed_out: { tone: "info", text: () => m.login_signed_out() },
-  signed_out_unconfirmed: { tone: "warning", text: () => m.login_signed_out_unconfirmed() },
+  signed_out_unconfirmed: {
+    tone: "warning",
+    text: () => m.login_signed_out_unconfirmed(),
+  },
 }
 
 /**
  * A plain form (named fields, autocomplete, Enter submits) handled in the
  * page. Feedback goes to toasts, so the card never changes size.
  */
-export function LoginCard({ reason, returnTo }: { reason: LoginReason | undefined; returnTo: string | undefined }) {
+export function LoginCard({
+  reason,
+  returnTo,
+}: {
+  reason: LoginReason | undefined
+  returnTo: string | undefined
+}) {
   const navigate = useNavigate()
   const [pending, setPending] = useState(false)
   const [leaving, setLeaving] = useState(false)
@@ -50,7 +62,10 @@ export function LoginCard({ reason, returnTo }: { reason: LoginReason | undefine
     const email = form.get("email")
     const secret = form.get("password")
     setPending(true)
-    const outcome = await signIn(typeof email === "string" ? email : "", typeof secret === "string" ? secret : "")
+    const outcome = await signIn(
+      typeof email === "string" ? email : "",
+      typeof secret === "string" ? secret : ""
+    )
     if (outcome !== "signed_in") {
       setPending(false)
       toast.error(failures[outcome](), { id: "login" })
@@ -66,12 +81,23 @@ export function LoginCard({ reason, returnTo }: { reason: LoginReason | undefine
   return (
     <div
       data-leaving={leaving}
-      style={{ "--enter-from": "16px", "--enter-scale": "0.985", "--enter-delay": "60ms" }}
+      style={{
+        "--enter-from": "16px",
+        "--enter-scale": "0.985",
+        "--enter-delay": "60ms",
+      }}
       className="enter glass w-full max-w-95 rounded-sheet p-8 transition-[opacity,transform,filter] duration-500 ease-entrance data-[leaving=true]:-translate-y-3 data-[leaving=true]:scale-[0.98] data-[leaving=true]:opacity-0 data-[leaving=true]:blur-md motion-reduce:transition-none"
     >
       <Brand />
-      <h1 className="mt-10 text-display font-semibold tracking-tight">{m.login_title()}</h1>
-      <form method="post" action="/login" className="mt-7" onSubmit={(event) => void submit(event)}>
+      <h1 className="mt-10 text-display font-semibold tracking-tight">
+        {m.login_title()}
+      </h1>
+      <form
+        method="post"
+        action="/login"
+        className="mt-7"
+        onSubmit={(event) => void submit(event)}
+      >
         <FieldGroup className="gap-5">
           <Field>
             <FieldLabel htmlFor="login-email">{m.login_email()}</FieldLabel>
@@ -90,7 +116,9 @@ export function LoginCard({ reason, returnTo }: { reason: LoginReason | undefine
             />
           </Field>
           <Field>
-            <FieldLabel htmlFor="login-password">{m.login_password()}</FieldLabel>
+            <FieldLabel htmlFor="login-password">
+              {m.login_password()}
+            </FieldLabel>
             <Input
               ref={password}
               id="login-password"
@@ -102,9 +130,21 @@ export function LoginCard({ reason, returnTo }: { reason: LoginReason | undefine
               className="h-11 rounded-tile bg-field px-3.5"
             />
           </Field>
-          <Button type="submit" size="lg" className="mt-2 h-11 w-full rounded-tile" disabled={pending} aria-busy={pending}>
+          <Button
+            type="submit"
+            size="lg"
+            className="mt-2 h-11 w-full rounded-tile"
+            disabled={pending}
+            aria-busy={pending}
+          >
             <span className="relative inline-flex items-center justify-center">
-              <Spinner className={pending ? "absolute -left-6 opacity-100" : "absolute -left-6 opacity-0"} />
+              <Spinner
+                className={
+                  pending
+                    ? "absolute -left-6 opacity-100"
+                    : "absolute -left-6 opacity-0"
+                }
+              />
               {m.login_submit()}
             </span>
           </Button>

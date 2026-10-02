@@ -28,7 +28,13 @@ type BootState = {
 export const useBootStore = create<BootState>((set, get) => {
   const advance = () => {
     const state = get()
-    if (state.phase === "loading" && state.engineReady && state.routesReady && state.minimumElapsed) set({ phase: "revealing" })
+    if (
+      state.phase === "loading" &&
+      state.engineReady &&
+      state.routesReady &&
+      state.minimumElapsed
+    )
+      set({ phase: "revealing" })
   }
   window.setTimeout(() => {
     set({ minimumElapsed: true })

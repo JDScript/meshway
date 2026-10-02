@@ -73,4 +73,5 @@ export function readGlobeColors(): GlobeColors {
   return colors
 }
 
-export const css = ({ r, g, b }: Rgb, alpha = 1) => (alpha >= 1 ? `rgb(${r}, ${g}, ${b})` : `rgba(${r}, ${g}, ${b}, ${alpha})`)
+export const css = ({ r, g, b }: Rgb, alpha = 1) =>
+  alpha >= 1 ? `rgb(${r}, ${g}, ${b})` : `rgba(${r}, ${g}, ${b}, ${alpha})`

@@ -59,19 +59,44 @@ export function NetworkShell({ networkId }: { networkId: string }) {
   const detailId = route.page === "nodes" ? route.detail : null
   const tab = route.page === "nodes" ? route.tab : "overview"
   const peekCandidate = peekId ? view.byId.get(peekId) : undefined
-  const peekNode = ready && peekCandidate && peekCandidate.revoked_at === null ? peekCandidate : null
+  const peekNode =
+    ready && peekCandidate && peekCandidate.revoked_at === null
+      ? peekCandidate
+      : null
   const pageShown = ready && route.page === "nodes"
   const workspaceId = ready ? detailId : null
 
   const { insets, recede } = useMemo(
-    () => globeLayout({ mobile, page: pageShown, peek: peekNode !== null, workspace: workspaceId !== null, viewportHeight }),
+    () =>
+      globeLayout({
+        mobile,
+        page: pageShown,
+        peek: peekNode !== null,
+        workspace: workspaceId !== null,
+        viewportHeight,
+      }),
     [mobile, pageShown, peekNode, workspaceId, viewportHeight]
   )
   const focusId = peekNode?.id ?? workspaceId
   useEffect(() => {
-    setGlobe({ framing: "network", scene: view.scene, selectedNodeId: focusId, insets, recede })
+    setGlobe({
+      framing: "network",
+      scene: view.scene,
+      selectedNodeId: focusId,
+      insets,
+      recede,
+    })
   }, [view.scene, focusId, insets, recede])
-  useEffect(() => () => setGlobe({ scene: EMPTY_SCENE, selectedNodeId: null, hoveredNodeId: null, recede: false }), [])
+  useEffect(
+    () => () =>
+      setGlobe({
+        scene: EMPTY_SCENE,
+        selectedNodeId: null,
+        hoveredNodeId: null,
+        recede: false,
+      }),
+    []
+  )
 
   // A node on the globe: a peek on the overview, its workspace on the nodes page.
   const page = route.page
@@ -89,7 +114,12 @@ export function NetworkShell({ networkId }: { networkId: string }) {
   useReadFailureToast("nodes", view.nodes.isError, m.overview_nodes_failed())
 
   const context: NodeContext = useMemo(
-    () => ({ nodes: view.byId, observation: view.observation, runtimes: view.runtimes.data ?? null, now: view.now }),
+    () => ({
+      nodes: view.byId,
+      observation: view.observation,
+      runtimes: view.runtimes.data ?? null,
+      now: view.now,
+    }),
     [view.byId, view.observation, view.runtimes.data, view.now]
   )
   const unplaced = view.scene.nodes.filter((node) => node.placement === null)
@@ -141,7 +171,11 @@ export function NetworkShell({ networkId }: { networkId: string }) {
             onDismiss={nav.leavePage}
             side="bottom"
             label={m.nav_nodes()}
-            style={{ "--drawer-inset": `${MOBILE_EDGE}px`, "--drawer-radius": "var(--radius-surface)", height: `${MOBILE_PAGE_HEIGHT * 100}svh` }}
+            style={{
+              "--drawer-inset": `${MOBILE_EDGE}px`,
+              "--drawer-radius": "var(--radius-surface)",
+              height: `${MOBILE_PAGE_HEIGHT * 100}svh`,
+            }}
           >
             {list}
           </GlassDrawer>
@@ -149,7 +183,10 @@ export function NetworkShell({ networkId }: { networkId: string }) {
             open={workspaceId !== null}
             onDismiss={nav.closeNode}
             side="bottom"
-            style={{ "--drawer-inset": `${MOBILE_EDGE}px`, height: `calc(100svh - ${MOBILE_PANEL_TOP + MOBILE_EDGE}px)` }}
+            style={{
+              "--drawer-inset": `${MOBILE_EDGE}px`,
+              height: `calc(100svh - ${MOBILE_PANEL_TOP + MOBILE_EDGE}px)`,
+            }}
           >
             {workspace}
           </GlassDrawer>
@@ -161,7 +198,12 @@ export function NetworkShell({ networkId }: { networkId: string }) {
             from="left"
             aria-labelledby="node-list-title"
             className="glass pointer-events-auto absolute overflow-hidden rounded-surface"
-            style={{ left: PAGE_LEFT, top: PANEL_TOP, bottom: EDGE, width: PAGE_WIDTH }}
+            style={{
+              left: PAGE_LEFT,
+              top: PANEL_TOP,
+              bottom: EDGE,
+              width: PAGE_WIDTH,
+            }}
           >
             {list}
           </Surface>
@@ -170,7 +212,12 @@ export function NetworkShell({ networkId }: { networkId: string }) {
             from="rise"
             aria-labelledby="node-workspace-title"
             className="glass pointer-events-auto absolute flex flex-col overflow-hidden rounded-sheet"
-            style={{ left: WORKSPACE_LEFT, top: PANEL_TOP, right: EDGE, bottom: EDGE }}
+            style={{
+              left: WORKSPACE_LEFT,
+              top: PANEL_TOP,
+              right: EDGE,
+              bottom: EDGE,
+            }}
           >
             {workspace}
           </Surface>
@@ -178,8 +225,19 @@ export function NetworkShell({ networkId }: { networkId: string }) {
       )}
 
       {mobile && page !== "overview" ? null : (
-        <div className={cn("pointer-events-none absolute flex", mobile ? "inset-x-0 bottom-0 justify-center p-(--mobile-edge)" : "top-(--edge) left-(--edge)")}>
-          <div {...CHROME} className="enter max-w-full min-w-0" style={mobile ? { "--enter-from": "10px" } : undefined}>
+        <div
+          className={cn(
+            "pointer-events-none absolute flex",
+            mobile
+              ? "inset-x-0 bottom-0 justify-center p-(--mobile-edge)"
+              : "top-(--edge) left-(--edge)"
+          )}
+        >
+          <div
+            {...CHROME}
+            className="enter max-w-full min-w-0"
+            style={mobile ? { "--enter-from": "10px" } : undefined}
+          >
             <NetworkChip
               networkId={networkId}
               onSwitchNetwork={(target) => nav.switchNetwork(target, page)}
@@ -193,7 +251,11 @@ export function NetworkShell({ networkId }: { networkId: string }) {
                     nodes={unplaced}
                     selectedId={focusId}
                     side={mobile ? "top" : "bottom"}
-                    onSelect={(nodeId) => (page === "overview" ? nav.peek(nodeId, peekId !== null) : nav.openNode(nodeId, detailId !== null))}
+                    onSelect={(nodeId) =>
+                      page === "overview"
+                        ? nav.peek(nodeId, peekId !== null)
+                        : nav.openNode(nodeId, detailId !== null)
+                    }
                   />
                 ) : undefined
               }
@@ -202,7 +264,11 @@ export function NetworkShell({ networkId }: { networkId: string }) {
         </div>
       )}
 
-      {mobile ? <DockLauncher networkId={networkId} page={page} /> : <Dock networkId={networkId} page={page} />}
+      {mobile ? (
+        <DockLauncher networkId={networkId} page={page} />
+      ) : (
+        <Dock networkId={networkId} page={page} />
+      )}
 
       <GlassToolbar
         {...CHROME}

@@ -1,9 +1,16 @@
-import type { ConnectionRuntimesSnapshot, NodeSummary } from "@meshway/control-client"
+import type {
+  ConnectionRuntimesSnapshot,
+  NodeSummary,
+} from "@meshway/control-client"
 import { SearchIcon } from "lucide-react"
 import { useEffect, useMemo, useRef, type KeyboardEvent } from "react"
 
 import { SegmentedControl } from "@/components/chrome/segmented-control"
-import { InputGroup, InputGroupAddon, InputGroupInput } from "@/components/ui/input-group"
+import {
+  InputGroup,
+  InputGroupAddon,
+  InputGroupInput,
+} from "@/components/ui/input-group"
 import { Skeleton } from "@/components/ui/skeleton"
 import { highlightOnGlobe } from "@/features/globe/store"
 import { vitalityLabel } from "@/features/overview/labels"
@@ -21,11 +28,17 @@ const SEARCH_SETTLE_MS = 150
 
 const filters = (): { value: Filter; label: string }[] => [
   { value: ALL, label: m.nodes_filter_all() },
-  ...NODE_STATES.map((state) => ({ value: state, label: vitalityLabel[state]() })),
+  ...NODE_STATES.map((state) => ({
+    value: state,
+    label: vitalityLabel[state](),
+  })),
 ]
 
 const matches = (node: NodeSummary, needle: string) =>
-  needle === "" || [node.name, node.mesh_ipv4, node.mesh_ipv6].some((value) => value.toLowerCase().includes(needle))
+  needle === "" ||
+  [node.name, node.mesh_ipv4, node.mesh_ipv6].some((value) =>
+    value.toLowerCase().includes(needle)
+  )
 
 /**
  * The list's search field, bound to the URL without ever setting the field
@@ -33,7 +46,13 @@ const matches = (node: NodeSummary, needle: string) =>
  * an IME composition (pinyin and the like), and a URL change made elsewhere
  * (back / forward) is copied in only if it is not the one this field wrote.
  */
-function SearchField({ value, onSettle }: { value: string; onSettle: (value: string) => void }) {
+function SearchField({
+  value,
+  onSettle,
+}: {
+  value: string
+  onSettle: (value: string) => void
+}) {
   const field = useRef<HTMLInputElement>(null)
   const composing = useRef(false)
   const written = useRef(value)
@@ -120,27 +139,48 @@ export function NodeList({
     () =>
       nodes
         .filter((node) => node.revoked_at === null)
-        .sort((a, b) => a.name.localeCompare(b.name) || a.id.localeCompare(b.id))
+        .sort(
+          (a, b) => a.name.localeCompare(b.name) || a.id.localeCompare(b.id)
+        )
         .map((node) => ({ node, vitality: vitalityOf(node, runtimes, now) })),
     [nodes, runtimes, now]
   )
   const needle = view.q.trim().toLowerCase()
-  const shown = rows.filter((row) => (view.state === null || row.vitality === view.state) && matches(row.node, needle))
+  const shown = rows.filter(
+    (row) =>
+      (view.state === null || row.vitality === view.state) &&
+      matches(row.node, needle)
+  )
 
   // Keep the open row in view, wherever it was opened from.
   useEffect(() => {
     if (!openId) return
-    list.current?.querySelector(`[data-node-id="${openId}"]`)?.scrollIntoView({ block: "nearest" })
+    list.current
+      ?.querySelector(`[data-node-id="${openId}"]`)
+      ?.scrollIntoView({ block: "nearest" })
   }, [openId])
 
   const onKeyDown = (event: KeyboardEvent<HTMLUListElement>) => {
     if (event.key !== "ArrowDown" && event.key !== "ArrowUp") return
     event.preventDefault()
-    const focused = document.activeElement instanceof HTMLElement ? document.activeElement.dataset.nodeId : undefined
+    const focused =
+      document.activeElement instanceof HTMLElement
+        ? document.activeElement.dataset.nodeId
+        : undefined
     const index = shown.findIndex((row) => row.node.id === (focused ?? openId))
-    const next = shown[index === -1 ? 0 : Math.min(shown.length - 1, Math.max(0, index + (event.key === "ArrowDown" ? 1 : -1)))]
+    const next =
+      shown[
+        index === -1
+          ? 0
+          : Math.min(
+              shown.length - 1,
+              Math.max(0, index + (event.key === "ArrowDown" ? 1 : -1))
+            )
+      ]
     if (!next) return
-    list.current?.querySelector<HTMLButtonElement>(`[data-node-id="${next.node.id}"]`)?.focus()
+    list.current
+      ?.querySelector<HTMLButtonElement>(`[data-node-id="${next.node.id}"]`)
+      ?.focus()
     if (openId) onOpen(next.node.id)
   }
 
@@ -148,11 +188,18 @@ export function NodeList({
     <div className="flex h-full min-h-0 flex-col">
       <header className="flex flex-col gap-3 px-4 pt-4 pb-3">
         <div className="flex items-baseline justify-between">
-          <h2 id="node-list-title" className="text-base font-semibold tracking-tight">
+          <h2
+            id="node-list-title"
+            className="text-base font-semibold tracking-tight"
+          >
             {m.nav_nodes()}
           </h2>
           <span className="text-xs text-muted-foreground tabular-nums">
-            {loading ? "—" : shown.length === rows.length ? rows.length : `${shown.length} / ${rows.length}`}
+            {loading
+              ? "—"
+              : shown.length === rows.length
+                ? rows.length
+                : `${shown.length} / ${rows.length}`}
           </span>
         </div>
         <SearchField value={view.q} onSettle={(q) => onView({ ...view, q })} />
@@ -160,7 +207,9 @@ export function NodeList({
           label={m.nodes_filter()}
           value={view.state ?? ALL}
           options={filters()}
-          onChange={(value) => onView({ ...view, state: value === ALL ? null : value })}
+          onChange={(value) =>
+            onView({ ...view, state: value === ALL ? null : value })
+          }
           className="self-start"
         />
       </header>
@@ -182,7 +231,11 @@ export function NodeList({
           : null}
         {!loading && shown.length === 0 ? (
           <li className="flex h-14 items-center px-2 text-row text-muted-foreground">
-            {failed ? m.overview_nodes_failed() : rows.length === 0 ? m.nodes_empty() : m.nodes_no_match()}
+            {failed
+              ? m.overview_nodes_failed()
+              : rows.length === 0
+                ? m.nodes_empty()
+                : m.nodes_no_match()}
           </li>
         ) : null}
         {shown.map(({ node, vitality }) => (
@@ -197,10 +250,16 @@ export function NodeList({
             >
               <VitalityDot vitality={vitality} />
               <span className="min-w-0 flex-1">
-                <span className="block truncate text-row font-medium">{node.name}</span>
-                <span className="block truncate font-mono text-meta text-muted-foreground">{node.mesh_ipv4}</span>
+                <span className="block truncate text-row font-medium">
+                  {node.name}
+                </span>
+                <span className="block truncate font-mono text-meta text-muted-foreground">
+                  {node.mesh_ipv4}
+                </span>
               </span>
-              <span className="shrink-0 text-meta text-muted-foreground">{vitalityLabel[vitality]()}</span>
+              <span className="shrink-0 text-meta text-muted-foreground">
+                {vitalityLabel[vitality]()}
+              </span>
             </button>
           </li>
         ))}

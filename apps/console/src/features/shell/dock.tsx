@@ -5,8 +5,16 @@ import { motion, useReducedMotion } from "motion/react"
 import { useId, useState, type ComponentProps, type ReactNode } from "react"
 
 import { SharedLayoutBg } from "@/components/motion/shared-layout-bg"
-import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
-import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
+import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from "@/components/ui/popover"
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from "@/components/ui/tooltip"
 import { SPRING_LAYOUT } from "@/lib/ease"
 import { m } from "@/paraglide/messages.js"
 
@@ -30,14 +38,32 @@ function PageLink({
   className,
   children,
   ...props
-}: { networkId: string; page: Page; state?: HistoryState; className: string; children: ReactNode } & Omit<ComponentProps<"a">, "href" | "children">) {
+}: {
+  networkId: string
+  page: Page
+  state?: HistoryState
+  className: string
+  children: ReactNode
+} & Omit<ComponentProps<"a">, "href" | "children">) {
   const params = { network: networkId }
   return page === "nodes" ? (
-    <Link to="/networks/$network/nodes" params={params} state={state} className={className} {...props}>
+    <Link
+      to="/networks/$network/nodes"
+      params={params}
+      state={state}
+      className={className}
+      {...props}
+    >
       {children}
     </Link>
   ) : (
-    <Link to="/networks/$network/overview" params={params} state={state} className={className} {...props}>
+    <Link
+      to="/networks/$network/overview"
+      params={params}
+      state={state}
+      className={className}
+      {...props}
+    >
       {children}
     </Link>
   )
@@ -58,7 +84,12 @@ export function Dock({ networkId, page }: { networkId: string; page: Page }) {
       {...CHROME}
       aria-label={m.nav_label()}
       className="enter glass pointer-events-auto absolute rounded-full"
-      style={{ left: "var(--edge)", top: "var(--panel-top)", width: DOCK_WIDTH, padding: PADDING }}
+      style={{
+        left: "var(--edge)",
+        top: "var(--panel-top)",
+        width: DOCK_WIDTH,
+        padding: PADDING,
+      }}
     >
       <SharedLayoutBg
         as="ul"
@@ -80,8 +111,10 @@ export function Dock({ networkId, page }: { networkId: string; page: Page }) {
                       aria-label={item.label()}
                       aria-current={active ? "page" : undefined}
                       className={cn(
-                        "relative flex size-9 items-center justify-center rounded-full outline-none transition-colors duration-200 focus-visible:ring-2 focus-visible:ring-ring",
-                        active ? "text-foreground" : "text-muted-foreground hover:text-foreground"
+                        "relative flex size-9 items-center justify-center rounded-full transition-colors duration-200 outline-none focus-visible:ring-2 focus-visible:ring-ring",
+                        active
+                          ? "text-foreground"
+                          : "text-muted-foreground hover:text-foreground"
                       )}
                     >
                       {active ? (
@@ -111,7 +144,13 @@ export function Dock({ networkId, page }: { networkId: string; page: Page }) {
  * Small screens: one round button showing the current page; it unfolds the
  * pages below it as labelled buttons, one after another.
  */
-export function DockLauncher({ networkId, page }: { networkId: string; page: Page }) {
+export function DockLauncher({
+  networkId,
+  page,
+}: {
+  networkId: string
+  page: Page
+}) {
   const [open, setOpen] = useState(false)
   const current = PAGES.find((item) => item.page === page) ?? PAGES[0]
   const Icon = current?.icon ?? GlobeIcon

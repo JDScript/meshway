@@ -3,7 +3,11 @@ import { useEffect } from "react"
 
 import { StatusCard } from "@/components/chrome/status-card"
 import { showWelcomeGlobe } from "@/features/globe/store"
-import { NETWORK_ID, networksQuery, rememberNetwork } from "@/features/network/queries"
+import {
+  NETWORK_ID,
+  networksQuery,
+  rememberNetwork,
+} from "@/features/network/queries"
 import { NetworkShell } from "@/features/shell/network-shell"
 import { m } from "@/paraglide/messages.js"
 
@@ -14,8 +18,10 @@ import { m } from "@/paraglide/messages.js"
 export const Route = createFileRoute("/_authed/networks/$network")({
   loader: async ({ context, params }) => {
     if (!NETWORK_ID.test(params.network)) throw notFound()
-    const { networks } = await context.queryClient.ensureQueryData(networksQuery())
-    if (!networks.some((network) => network.network_id === params.network)) throw notFound()
+    const { networks } =
+      await context.queryClient.ensureQueryData(networksQuery())
+    if (!networks.some((network) => network.network_id === params.network))
+      throw notFound()
     rememberNetwork(params.network)
   },
   component: NetworkLayout,
@@ -45,5 +51,11 @@ function NetworkNotFound() {
 
 function NetworksFailed({ reset }: { reset: () => void }) {
   useWelcomeGlobe()
-  return <StatusCard title={m.networks_failed()} tone="destructive" onRetry={reset} />
+  return (
+    <StatusCard
+      title={m.networks_failed()}
+      tone="destructive"
+      onRetry={reset}
+    />
+  )
 }

@@ -7,6 +7,11 @@ import { zNodeWorkspaceSearch } from "@/features/shell/url"
 export const Route = createFileRoute("/_authed/networks/$network/nodes/$node")({
   validateSearch: zNodeWorkspaceSearch,
   beforeLoad: ({ params }) => {
-    if (!NODE_ID.test(params.node)) throw redirect({ to: "/networks/$network/nodes", params: { network: params.network }, replace: true })
+    if (!NODE_ID.test(params.node))
+      throw redirect({
+        to: "/networks/$network/nodes",
+        params: { network: params.network },
+        replace: true,
+      })
   },
 })

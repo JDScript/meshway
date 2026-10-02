@@ -13,11 +13,20 @@ import { EMPTY_SCENE, type Scene } from "./scene.ts"
 export type Framing = "welcome" | "network"
 
 /** CSS pixels covered by floating panels along each edge. */
-export type Insets = { top: number; right: number; bottom: number; left: number }
+export type Insets = {
+  top: number
+  right: number
+  bottom: number
+  left: number
+}
 
 export const NO_INSETS: Insets = { top: 0, right: 0, bottom: 0, left: 0 }
 
-export const sameInsets = (a: Insets, b: Insets) => a.top === b.top && a.right === b.right && a.bottom === b.bottom && a.left === b.left
+export const sameInsets = (a: Insets, b: Insets) =>
+  a.top === b.top &&
+  a.right === b.right &&
+  a.bottom === b.bottom &&
+  a.left === b.left
 
 export type GlobeState = {
   framing: Framing
@@ -42,24 +51,35 @@ export const useGlobeStore = create<GlobeState>(() => ({
 export function setGlobe(patch: Partial<GlobeState>) {
   const current = useGlobeStore.getState()
   // Panels re-measure often; equal insets are not a change.
-  if (patch.insets && sameInsets(patch.insets, current.insets)) patch = { ...patch, insets: current.insets }
+  if (patch.insets && sameInsets(patch.insets, current.insets))
+    patch = { ...patch, insets: current.insets }
   useGlobeStore.setState(patch)
 }
 
 /** The empty globe beside the sign-in card or a status card. */
 export function showWelcomeGlobe() {
-  setGlobe({ framing: "welcome", scene: EMPTY_SCENE, selectedNodeId: null, hoveredNodeId: null, insets: NO_INSETS, recede: false })
+  setGlobe({
+    framing: "welcome",
+    scene: EMPTY_SCENE,
+    selectedNodeId: null,
+    hoveredNodeId: null,
+    insets: NO_INSETS,
+    recede: false,
+  })
 }
 
 /** Lists point at a node on the globe (or stop pointing). The shell writes everything else. */
 export function highlightOnGlobe(nodeId: string | null) {
-  if (useGlobeStore.getState().hoveredNodeId !== nodeId) useGlobeStore.setState({ hoveredNodeId: nodeId })
+  if (useGlobeStore.getState().hoveredNodeId !== nodeId)
+    useGlobeStore.setState({ hoveredNodeId: nodeId })
 }
 
 let selectHandler: (nodeId: string | null) => void = () => undefined
 
 /** The view that shows a network owns what a click on a node means. Returns the cleanup. */
-export function onGlobeSelect(handler: (nodeId: string | null) => void): () => void {
+export function onGlobeSelect(
+  handler: (nodeId: string | null) => void
+): () => void {
   selectHandler = handler
   return () => {
     if (selectHandler === handler) selectHandler = () => undefined

@@ -11,9 +11,18 @@ import { nodeAdjacencies } from "@/features/topology/topology"
 import { dateTime, relativeTime } from "@/lib/format"
 import { m } from "@/paraglide/messages.js"
 
-import { NodeAddresses, NodeLinks, NodeStatusTiles, nodeVitality, Tile, VitalityLine, type NodeContext } from "./node-facts"
+import {
+  NodeAddresses,
+  NodeLinks,
+  NodeStatusTiles,
+  nodeVitality,
+  Tile,
+  VitalityLine,
+  type NodeContext,
+} from "./node-facts"
 
-const isTab = (value: unknown): value is NodeTab => NODE_TABS.some((tab) => tab === value)
+const isTab = (value: unknown): value is NodeTab =>
+  NODE_TABS.some((tab) => tab === value)
 
 /**
  * One node in full: everything the peek has and room for what only a
@@ -39,13 +48,27 @@ export function NodeWorkspace({
 }) {
   const node = context.nodes.get(nodeId) ?? null
   return node ? (
-    <Body key={node.id} node={node} tab={tab} context={context} onClose={onClose} onTab={onTab} onOpenNode={onOpenNode} />
+    <Body
+      key={node.id}
+      node={node}
+      tab={tab}
+      context={context}
+      onClose={onClose}
+      onTab={onTab}
+      onOpenNode={onOpenNode}
+    />
   ) : (
     <Missing loading={!inventoryRead} onClose={onClose} />
   )
 }
 
-function Missing({ loading, onClose }: { loading: boolean; onClose: () => void }) {
+function Missing({
+  loading,
+  onClose,
+}: {
+  loading: boolean
+  onClose: () => void
+}) {
   return (
     <SurfaceHeader
       size="lg"
@@ -79,7 +102,9 @@ function Body({
   onTab: (tab: NodeTab) => void
   onOpenNode: (nodeId: string) => void
 }) {
-  const links = context.observation ? nodeAdjacencies(context.observation, node.id).length : null
+  const links = context.observation
+    ? nodeAdjacencies(context.observation, node.id).length
+    : null
   return (
     <div className="swap-in flex min-h-0 flex-1 flex-col">
       <SurfaceHeader
@@ -94,7 +119,9 @@ function Body({
         meta={
           <div className="flex items-center gap-3">
             <VitalityLine vitality={nodeVitality(node, context)} />
-            <span className="font-mono text-xs text-muted-foreground">{node.mesh_ipv4}</span>
+            <span className="font-mono text-xs text-muted-foreground">
+              {node.mesh_ipv4}
+            </span>
           </div>
         }
       />
@@ -116,28 +143,42 @@ function Body({
               label: (
                 <>
                   {m.node_tab_links()}
-                  <span className="text-muted-foreground tabular-nums">{links ?? ""}</span>
+                  <span className="text-muted-foreground tabular-nums">
+                    {links ?? ""}
+                  </span>
                 </>
               ),
             },
           ]}
         />
-        <TabsContent value="overview" className="min-h-0 overflow-y-auto px-6 pt-5 pb-6">
+        <TabsContent
+          value="overview"
+          className="min-h-0 overflow-y-auto px-6 pt-5 pb-6"
+        >
           <div className="grid grid-cols-2 gap-2 xl:grid-cols-4">
             <div className="col-span-2">
               <NodeAddresses node={node} />
             </div>
             <Tile label={m.node_registered()}>
               {dateTime(node.registered_at) ?? "—"}
-              <span className="font-normal text-muted-foreground"> · {relativeTime(node.registered_at, context.now)}</span>
+              <span className="font-normal text-muted-foreground">
+                {" "}
+                · {relativeTime(node.registered_at, context.now)}
+              </span>
             </Tile>
-            <Tile label={m.node_id()} action={<CopyButton value={node.id} label={m.node_id()} />}>
+            <Tile
+              label={m.node_id()}
+              action={<CopyButton value={node.id} label={m.node_id()} />}
+            >
               <span className="font-mono font-normal">{node.id}</span>
             </Tile>
             <NodeStatusTiles node={node} context={context} />
           </div>
         </TabsContent>
-        <TabsContent value="links" className="min-h-0 overflow-y-auto px-6 pt-5 pb-6">
+        <TabsContent
+          value="links"
+          className="min-h-0 overflow-y-auto px-6 pt-5 pb-6"
+        >
           <NodeLinks node={node} context={context} onOpenPeer={onOpenNode} />
         </TabsContent>
       </Tabs>

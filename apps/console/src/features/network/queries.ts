@@ -36,7 +36,8 @@ export const nodesQuery = (networkId: string) =>
 export const connectionsQuery = (networkId: string) =>
   queryOptions({
     queryKey: ["network", networkId, "connections"],
-    queryFn: () => authed((base, token) => getConnections(base, token, networkId)),
+    queryFn: () =>
+      authed((base, token) => getConnections(base, token, networkId)),
     refetchInterval: 30_000,
   })
 
@@ -44,7 +45,8 @@ export const connectionsQuery = (networkId: string) =>
 export const runtimesQuery = (networkId: string) =>
   queryOptions({
     queryKey: ["network", networkId, "runtimes"],
-    queryFn: () => authed((base, token) => getConnectionRuntimes(base, token, networkId)),
+    queryFn: () =>
+      authed((base, token) => getConnectionRuntimes(base, token, networkId)),
     refetchInterval: 12_000,
   })
 

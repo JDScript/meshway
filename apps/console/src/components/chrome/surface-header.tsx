@@ -25,7 +25,12 @@ export function SurfaceHeader({
   return (
     <header className={cn("flex flex-col gap-1.5", className)}>
       <div className="flex min-w-0 items-center gap-3">
-        {title(cn("min-w-0 flex-1 truncate font-sans font-semibold tracking-tight", TITLE[size]))}
+        {title(
+          cn(
+            "min-w-0 flex-1 truncate font-sans font-semibold tracking-tight",
+            TITLE[size]
+          )
+        )}
         {action}
       </div>
       {meta}

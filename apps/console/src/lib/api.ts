@@ -25,7 +25,9 @@ export function handleSessionRejected(callback: () => void) {
  * that session and hands over to the router; 403 and every other failure
  * propagate unchanged to the caller.
  */
-export async function authed<T>(call: (base: string, token: string) => Promise<T>): Promise<T> {
+export async function authed<T>(
+  call: (base: string, token: string) => Promise<T>
+): Promise<T> {
   const session = currentSession()
   if (!session) {
     onRejected()

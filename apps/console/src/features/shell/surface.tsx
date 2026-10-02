@@ -19,7 +19,10 @@ export function Surface({
   className,
   children,
   ...props
-}: { shown: boolean; from: SurfaceFrom; children: ReactNode } & Omit<ComponentProps<"section">, "children">) {
+}: { shown: boolean; from: SurfaceFrom; children: ReactNode } & Omit<
+  ComponentProps<"section">,
+  "children"
+>) {
   const [mounted, setMounted] = useState(shown)
   if (shown && !mounted) setMounted(true)
   const [kept, setKept] = useState(children)
@@ -33,7 +36,13 @@ export function Surface({
 
   if (!mounted) return null
   return (
-    <section data-shown={shown} data-from={from} inert={!shown} className={cn("surface", className)} {...props}>
+    <section
+      data-shown={shown}
+      data-from={from}
+      inert={!shown}
+      className={cn("surface", className)}
+      {...props}
+    >
       {shown ? children : kept}
     </section>
   )

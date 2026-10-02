@@ -6,7 +6,8 @@ import { Drawer, DrawerContent } from "@/components/ui/drawer"
 /** Marks the chrome (network card, toolbar, dock): touching it never dismisses a drawer. */
 export const CHROME = { "data-shell-chrome": "" } as const
 /** The chrome, and the menus and popovers it opens. */
-const NOT_OUTSIDE = '[data-shell-chrome], [role="menu"], [data-slot="popover-content"]'
+const NOT_OUTSIDE =
+  '[data-shell-chrome], [role="menu"], [data-slot="popover-content"]'
 
 /**
  * shadcn's Drawer as a floating glass sheet, not modal: the globe stays
@@ -44,7 +45,10 @@ export function GlassDrawer({
         if (next) return
         if (details.reason === "outside-press") {
           const target = details.event.target
-          if (!dismissOnOutside || (target instanceof Element && target.closest(NOT_OUTSIDE))) {
+          if (
+            !dismissOnOutside ||
+            (target instanceof Element && target.closest(NOT_OUTSIDE))
+          ) {
             details.cancel()
             return
           }
@@ -59,7 +63,10 @@ export function GlassDrawer({
         initialFocus={false}
         finalFocus={false}
         aria-label={label}
-        className={cn("glass text-foreground data-ending-style:opacity-100", className)}
+        className={cn(
+          "glass text-foreground data-ending-style:opacity-100",
+          className
+        )}
         style={{ "--bleed": "0px", ...style }}
       >
         {open ? children : kept}

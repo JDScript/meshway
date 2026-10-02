@@ -60,14 +60,23 @@ export function cartesian(lat: number, lng: number, altitude = 0): Vec3 {
   const phi = rad(90 - lat)
   const theta = rad(90 - lng)
   const r = GLOBE_RADIUS * (1 + altitude)
-  return [r * Math.sin(phi) * Math.cos(theta), r * Math.cos(phi), r * Math.sin(phi) * Math.sin(theta)]
+  return [
+    r * Math.sin(phi) * Math.cos(theta),
+    r * Math.cos(phi),
+    r * Math.sin(phi) * Math.sin(theta),
+  ]
 }
 
 /** Where each placed node sits; unplaced nodes have no anchor and are not drawn. */
 export function anchorsOf(nodes: readonly SceneNode[]): Map<string, Anchor> {
   const anchors = new Map<string, Anchor>()
   for (const node of nodes) {
-    if (node.placement) anchors.set(node.id, { lat: node.placement.lat, lng: node.placement.lng, altitude: 0.01 })
+    if (node.placement)
+      anchors.set(node.id, {
+        lat: node.placement.lat,
+        lng: node.placement.lng,
+        altitude: 0.01,
+      })
   }
   return anchors
 }
@@ -79,7 +88,11 @@ const unit = (v: Vec3): Vec3 => {
 }
 
 const dot = (a: Vec3, b: Vec3) => a[0] * b[0] + a[1] * b[1] + a[2] * b[2]
-const cross = (a: Vec3, b: Vec3): Vec3 => [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]]
+const cross = (a: Vec3, b: Vec3): Vec3 => [
+  a[1] * b[2] - a[2] * b[1],
+  a[2] * b[0] - a[0] * b[2],
+  a[0] * b[1] - a[1] * b[0],
+]
 
 /**
  * A link's path: the great circle between its ends, lifted into an arc whose
@@ -104,20 +117,26 @@ export function linkCurve(a: Anchor, b: Anchor, samples = 72): Vec3[] {
       i === samples
         ? db
         : omega < 1e-6
-        ? da
-        : unit([
-            da[0] * Math.cos(angle) + towards[0] * Math.sin(angle),
-            da[1] * Math.cos(angle) + towards[1] * Math.sin(angle),
-            da[2] * Math.cos(angle) + towards[2] * Math.sin(angle),
-          ])
-    const altitude = a.altitude + (b.altitude - a.altitude) * t + bulge * Math.sin(Math.PI * t)
+          ? da
+          : unit([
+              da[0] * Math.cos(angle) + towards[0] * Math.sin(angle),
+              da[1] * Math.cos(angle) + towards[1] * Math.sin(angle),
+              da[2] * Math.cos(angle) + towards[2] * Math.sin(angle),
+            ])
+    const altitude =
+      a.altitude + (b.altitude - a.altitude) * t + bulge * Math.sin(Math.PI * t)
     const r = GLOBE_RADIUS * (1 + altitude)
     points.push([direction[0] * r, direction[1] * r, direction[2] * r])
   }
   return points
 }
 
-export type LineStyle = { dashed: boolean; dash: number; gap: number; opacity: number }
+export type LineStyle = {
+  dashed: boolean
+  dash: number
+  gap: number
+  opacity: number
+}
 
 /** The steady line every link has; only its pattern tells the evidence apart. */
 export function lineStyle(look: LinkLook): LineStyle {
@@ -139,7 +158,10 @@ export function lineStyle(look: LinkLook): LineStyle {
  * traffic is measured. Nothing flows without fresh two-sided evidence or
  * when reduced motion is requested.
  */
-export function pulseStreams(look: LinkLook, motion: boolean): { reverse: boolean; phase: number }[] {
+export function pulseStreams(
+  look: LinkLook,
+  motion: boolean
+): { reverse: boolean; phase: number }[] {
   if (look !== "confirmed" || !motion) return []
   return [
     { reverse: false, phase: 0 },

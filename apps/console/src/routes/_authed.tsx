@@ -6,7 +6,12 @@ import { currentSession } from "@/lib/session"
 export const Route = createFileRoute("/_authed")({
   beforeLoad: ({ location }) => {
     if (!currentSession()) {
-      throw redirect({ to: "/login", search: { returnTo: location.pathname === "/" ? undefined : location.href } })
+      throw redirect({
+        to: "/login",
+        search: {
+          returnTo: location.pathname === "/" ? undefined : location.href,
+        },
+      })
     }
   },
   component: Outlet,

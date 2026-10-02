@@ -1,18 +1,30 @@
-import { ControlApiError, loginAccount, logoutAccount } from "@meshway/control-client"
+import {
+  ControlApiError,
+  loginAccount,
+  logoutAccount,
+} from "@meshway/control-client"
 import { zLoginRequest } from "@meshway/control-client/schemas"
 
 import { apiBase } from "@/lib/api"
 import { currentSession, endSession, startSession } from "@/lib/session"
 
-export type SignInOutcome = "signed_in" | "missing" | "invalid" | "limited" | "unavailable" | "clock"
+export type SignInOutcome =
+  "signed_in" | "missing" | "invalid" | "limited" | "unavailable" | "clock"
 
 /**
  * Email and password go from this page to the controller only; neither is
  * kept. A previous session still held by this tab is revoked first.
  */
-export async function signIn(email: string, password: string): Promise<SignInOutcome> {
-  const parsed = zLoginRequest.safeParse({ email: email.trim().slice(0, 254), password })
-  if (!parsed.success || !parsed.data.email || !parsed.data.password) return "missing"
+export async function signIn(
+  email: string,
+  password: string
+): Promise<SignInOutcome> {
+  const parsed = zLoginRequest.safeParse({
+    email: email.trim().slice(0, 254),
+    password,
+  })
+  if (!parsed.success || !parsed.data.email || !parsed.data.password)
+    return "missing"
   let response
   try {
     response = await loginAccount(apiBase(), parsed.data)
@@ -30,7 +42,9 @@ export async function signIn(email: string, password: string): Promise<SignInOut
     await logoutAccount(apiBase(), previous.token).catch(() => undefined)
     endSession(previous)
   }
-  return startSession(response.session_token, response.expires_at) ? "signed_in" : "clock"
+  return startSession(response.session_token, response.expires_at)
+    ? "signed_in"
+    : "clock"
 }
 
 /** Revokes this tab's session on the controller, then forgets it here. */
@@ -42,7 +56,8 @@ export async function signOut(): Promise<"revoked" | "unconfirmed"> {
     await logoutAccount(apiBase(), session.token)
   } catch (error) {
     // 401: the controller no longer accepts it, which is the goal.
-    if (!(error instanceof ControlApiError && error.status === 401)) outcome = "unconfirmed"
+    if (!(error instanceof ControlApiError && error.status === 401))
+      outcome = "unconfirmed"
   }
   endSession(session)
   return outcome

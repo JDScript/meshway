@@ -16,7 +16,9 @@ export function CopyButton({ value, label }: { value: string; label: string }) {
       variant="ghost"
       size="icon-xs"
       aria-label={copied ? m.copied() : `${m.copy()} ${label}`}
-      onClick={() => void navigator.clipboard.writeText(value).then(() => setCopied(true))}
+      onClick={() =>
+        void navigator.clipboard.writeText(value).then(() => setCopied(true))
+      }
     >
       {copied ? <CheckIcon /> : <CopyIcon />}
     </Button>

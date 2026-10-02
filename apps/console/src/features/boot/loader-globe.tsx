@@ -37,7 +37,8 @@ export function LoaderGlobe({ visible }: { visible: boolean }) {
       .filter((_, index) => index % 2 === 0)
       .map(({ lat, lng }) => ({ phi: lat * rad, lambda: lng * rad }))
     const colors = readGlobeColors()
-    const motion = !window.matchMedia("(prefers-reduced-motion: reduce)").matches
+    const motion = !window.matchMedia("(prefers-reduced-motion: reduce)")
+      .matches
     const centre = SIZE / 2
     const tilt = LOADER_LAT * rad
     const [sinTilt, cosTilt] = [Math.sin(tilt), Math.cos(tilt)]
@@ -49,7 +50,14 @@ export function LoaderGlobe({ visible }: { visible: boolean }) {
       const facing = loaderLng(motion ? time : 0) * rad
 
       // Atmosphere: a soft glow just outside the limb.
-      const glow = context.createRadialGradient(centre, centre, LOADER_RADIUS * 0.96, centre, centre, LOADER_RADIUS * 1.2)
+      const glow = context.createRadialGradient(
+        centre,
+        centre,
+        LOADER_RADIUS * 0.96,
+        centre,
+        centre,
+        LOADER_RADIUS * 1.2
+      )
       glow.addColorStop(0, css(colors.atmosphere, colors.dark ? 0.32 : 0.45))
       glow.addColorStop(1, css(colors.atmosphere, 0))
       context.fillStyle = glow
@@ -58,7 +66,14 @@ export function LoaderGlobe({ visible }: { visible: boolean }) {
       context.fill()
 
       // Surface and rim.
-      const surface = context.createRadialGradient(centre, centre, LOADER_RADIUS * 0.55, centre, centre, LOADER_RADIUS)
+      const surface = context.createRadialGradient(
+        centre,
+        centre,
+        LOADER_RADIUS * 0.55,
+        centre,
+        centre,
+        LOADER_RADIUS
+      )
       surface.addColorStop(0, css(colors.surface))
       surface.addColorStop(1, css(colors.rim, 0.9))
       context.fillStyle = surface
@@ -78,7 +93,12 @@ export function LoaderGlobe({ visible }: { visible: boolean }) {
         const zView = y * sinTilt + z * cosTilt
         if (zView <= 0) continue
         context.globalAlpha = Math.min(1, 0.15 + zView * 1.2)
-        context.fillRect(centre + x * LOADER_RADIUS - 0.6, centre - yView * LOADER_RADIUS - 0.6, 1.2, 1.2)
+        context.fillRect(
+          centre + x * LOADER_RADIUS - 0.6,
+          centre - yView * LOADER_RADIUS - 0.6,
+          1.2,
+          1.2
+        )
       }
 
       // The comet: the "working" signal, continued by the real globe.

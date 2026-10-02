@@ -90,7 +90,10 @@ export function NetworkChip({
           <NetworkMenuItems current={networkId} onSwitch={onSwitchNetwork} />
         </DropdownMenuContent>
       </DropdownMenu>
-      <span aria-hidden="true" className="ml-auto h-4 w-px shrink-0 bg-divider" />
+      <span
+        aria-hidden="true"
+        className="ml-auto h-4 w-px shrink-0 bg-divider"
+      />
       <Stat
         value={nodes === null ? DASH : String(nodes)}
         label={m.stat_nodes({ count: nodes ?? 0 })}

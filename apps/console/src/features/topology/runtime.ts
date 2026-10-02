@@ -18,7 +18,8 @@ import type {
  * - `expired`: received too long ago (server flag or aged past the TTL here).
  * - `fresh`: current configuration, received within the TTL.
  */
-export type RuntimeFreshness = "unreported" | "awaiting" | "withdrawn" | "outdated" | "expired" | "fresh"
+export type RuntimeFreshness =
+  "unreported" | "awaiting" | "withdrawn" | "outdated" | "expired" | "fresh"
 
 export function runtimeFor(
   snapshot: ConnectionRuntimesSnapshot | null,
@@ -28,7 +29,10 @@ export function runtimeFor(
 }
 
 /** Seconds since the controller received the report, at `now`; null when never reported. */
-export function reportAge(observation: ConnectionRuntimeObservation, now: number): number | null {
+export function reportAge(
+  observation: ConnectionRuntimeObservation,
+  now: number
+): number | null {
   if (observation.reported_at === null) return null
   const received = Date.parse(observation.reported_at)
   if (Number.isNaN(received)) return null
@@ -39,13 +43,25 @@ export function reportAge(observation: ConnectionRuntimeObservation, now: number
  * Freshness at `now`. The server's `current` / `stale` flags are honoured as
  * read, and the report keeps ageing in the browser after it was fetched.
  */
-export function runtimeFreshness(observation: ConnectionRuntimeObservation | undefined, now: number): RuntimeFreshness {
+export function runtimeFreshness(
+  observation: ConnectionRuntimeObservation | undefined,
+  now: number
+): RuntimeFreshness {
   if (!observation) return "unreported"
   if (observation.state === "withdrawn") return "withdrawn"
-  if (observation.state === "awaiting_report" || observation.reported_at === null) return "awaiting"
+  if (
+    observation.state === "awaiting_report" ||
+    observation.reported_at === null
+  )
+    return "awaiting"
   if (!observation.current) return "outdated"
   const age = reportAge(observation, now)
-  if (observation.stale || age === null || age >= observation.stale_after_seconds) return "expired"
+  if (
+    observation.stale ||
+    age === null ||
+    age >= observation.stale_after_seconds
+  )
+    return "expired"
   return "fresh"
 }
 
@@ -79,7 +95,10 @@ export function candidateNeighbors(
       peer.transport === candidate.transport &&
       peer.listener_id === candidate.listenerId &&
       peer.initiator_node_id === candidate.dialerNodeId &&
-      peer.peer_node_id === (outgoing ? candidate.acceptorNodeId : candidate.dialerNodeId) &&
-      (outgoing ? peer.candidate_id === id : peer.candidate_id === null || peer.candidate_id === id)
+      peer.peer_node_id ===
+        (outgoing ? candidate.acceptorNodeId : candidate.dialerNodeId) &&
+      (outgoing
+        ? peer.candidate_id === id
+        : peer.candidate_id === null || peer.candidate_id === id)
   )
 }
