@@ -198,21 +198,23 @@ async fn websocket_wrong_uuid_host_path_and_noise_peer_key_never_authenticate() 
         let targets = resolve_targets(&client, &sockets::SystemUnderlay)
             .await
             .unwrap_or_else(|_| panic!("targets"));
-        let mut a = session::Session::start(
+        let mut a = session::Session::start_prepared(
             &server,
-            skey,
             profiles::load_combined(None, &server, &[owner])
                 .unwrap_or_else(|_| panic!("server material")),
             &BTreeMap::new(),
+            core_config(&server, skey, &BTreeMap::new()).unwrap(),
+            std::sync::Arc::new(sockets::SystemUnderlay),
         )
         .await
         .unwrap_or_else(|_| panic!("server start"));
-        let mut b = session::Session::start(
+        let mut b = session::Session::start_prepared(
             &client,
-            ckey,
             profiles::load_combined(None, &client, &[dialer])
                 .unwrap_or_else(|_| panic!("client material")),
             &targets,
+            core_config(&client, ckey, &targets).unwrap(),
+            std::sync::Arc::new(sockets::SystemUnderlay),
         )
         .await
         .unwrap_or_else(|_| panic!("client start"));

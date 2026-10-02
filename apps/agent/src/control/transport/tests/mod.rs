@@ -522,6 +522,21 @@ async fn production_paths_inner() {
         let command = format!("{origin}/dial?address={source}&port={}", local.port());
         let accept_and_reply = async {
             let (mut accepted, _) = listener.accept().await.unwrap();
+            let protection = ManagedProtection::new(factory.clone(), system_dns(version));
+            meshway_agent_connections::sockets::Protection::accepted_owned(
+                &protection,
+                &accepted,
+                "fixture-listener",
+            )
+            .unwrap();
+            assert!(factory.verify_tcp(&accepted, Purpose::Controller).is_err());
+            let unrelated = prepared().await;
+            assert!(
+                unrelated
+                    .factory()
+                    .verify_tcp(&accepted, Purpose::Carrier)
+                    .is_err()
+            );
             accepted.write_all(b"inherited-mark").await.unwrap();
         };
         let ((), commanded) = tokio::join!(accept_and_reply, request(&client, &command));

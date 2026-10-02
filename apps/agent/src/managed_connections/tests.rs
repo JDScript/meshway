@@ -272,14 +272,33 @@ pub(super) async fn session(
     let targets = resolve_targets(intent, &sockets::SystemUnderlay)
         .await
         .unwrap_or_else(|_| panic!("resolve fixture"));
-    session::Session::start(
+    session::Session::start_prepared(
         intent,
-        key,
         profiles::load(path, intent).unwrap_or_else(|_| panic!("load fixture")),
         &targets,
+        core_config(intent, key, &targets).unwrap(),
+        std::sync::Arc::new(sockets::SystemUnderlay),
     )
     .await
     .unwrap_or_else(|_| panic!("start fixture"))
+}
+
+async fn sample_neighbors(
+    session: &mut session::Session,
+    intent: &NodeConnections,
+) -> Vec<meshway_protocol::ConnectionNeighborObservation> {
+    let (deadlines, lease) = watch::channel(Some(Instant::now() + Duration::from_secs(5)));
+    let (observed, mut current) = watch::channel(session.initial_observation(intent));
+    let run = session.run(intent.clone(), lease, observed);
+    tokio::pin!(run);
+    tokio::select! {
+        result = &mut run => panic!("session ended before observing: {result:?}"),
+        result = current.changed() => result.unwrap(),
+    }
+    let result = current.borrow().peers.clone();
+    deadlines.send(None).unwrap();
+    assert_eq!(run.await, Reason::ShuttingDown);
+    result
 }
 
 #[tokio::test]
@@ -782,7 +801,7 @@ async fn tls_vless_neighbors_verify_san_ca_and_profile_reload() {
             .is_err()
     );
     assert!(a.runtime.connected_peers().is_empty());
-    let failed = b.sample_neighbors(&client).await;
+    let failed = sample_neighbors(&mut b, &client).await;
     assert_eq!(
         failed[0].state,
         meshway_protocol::ConnectionNeighborState::Unreachable
@@ -892,7 +911,7 @@ async fn tls_vless_listener_admission_is_scoped_before_noise_confirmation() {
             .is_err()
     );
     assert!(a.runtime.connected_peers().is_empty());
-    let failed = b.sample_neighbors(&client).await;
+    let failed = sample_neighbors(&mut b, &client).await;
     assert_eq!(failed[0].reason, Reason::AuthenticationFailed);
     assert!(!failed[0].probe_fresh);
     b.shutdown().await;

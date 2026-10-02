@@ -51,10 +51,21 @@ impl Protection for ManagedProtection {
             "protected accept requires owning listener",
         ))
     }
+    fn accepted_owned(&self, socket: &dyn NativeTcp, _: &str) -> io::Result<()> {
+        let actual = (socket as &dyn std::any::Any)
+            .downcast_ref::<meshway_agent_underlay::ProtectedTcp>()
+            .ok_or_else(|| {
+                io::Error::new(
+                    io::ErrorKind::PermissionDenied,
+                    "not an owning underlay TCP socket",
+                )
+            })?;
+        self.factory.verify_tcp(actual, Purpose::Carrier)
+    }
     fn listen(&self, bind: SocketAddr, _: &str) -> io::Result<sockets::OuterListener> {
         self.factory
             .listener(Purpose::Carrier, bind)
-            .map(|listener| sockets::OuterListener::Prepared(Box::new(listener)))
+            .map(|listener| sockets::OuterListener::Owned(Box::new(listener)))
     }
     fn dial<'a>(
         &'a self,
@@ -66,7 +77,7 @@ impl Protection for ManagedProtection {
             self.factory
                 .tcp(Purpose::Carrier, address)
                 .await
-                .map(|stream| sockets::OuterTcp::Prepared(Box::new(stream)))
+                .map(|stream| sockets::OuterTcp::Owned(Box::new(stream)))
         })
     }
 }

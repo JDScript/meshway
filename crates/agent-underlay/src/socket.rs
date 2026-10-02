@@ -47,6 +47,22 @@ impl SocketFactory {
         self.0.reservation.generation
     }
 
+    /// Validate the actual owning TCP wrapper, purpose and originating factory.
+    /// A generic NativeTcp implementation cannot manufacture this capability.
+    pub fn verify_tcp(&self, socket: &ProtectedTcp, purpose: Purpose) -> io::Result<()> {
+        self.check_active()?;
+        if !Arc::ptr_eq(&self.0, &socket.generation) || socket.purpose != purpose {
+            return Err(super::invalid(
+                "TCP socket belongs to another underlay capability",
+            ));
+        }
+        let state = self.0.state.lock().map_err(|_| closed())?;
+        if !state.active {
+            return Err(closed());
+        }
+        self.0.reservation.mark.verify(&socket.socket)
+    }
+
     pub(super) fn socket(
         &self,
         purpose: Purpose,

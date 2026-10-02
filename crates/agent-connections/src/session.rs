@@ -6,9 +6,7 @@ use std::{
 };
 
 use futures_util::{StreamExt, stream};
-use meshway_dataplane::{
-    PeerConnection, PrivateKey, Runtime, StreamContext, StreamRole, TransportKind,
-};
+use meshway_dataplane::{PeerConnection, Runtime, StreamContext, StreamRole, TransportKind};
 use meshway_protocol::{
     ConnectionListenerObservation, ConnectionListenerState, ConnectionNeighborObservation,
     ConnectionNeighborState, ConnectionTransport, NodeConnections, OutgoingConnectionCandidate,
@@ -21,7 +19,6 @@ use tokio::{
 
 use super::{
     Failure, Observation, Phase, Reason, allowed_peers, candidate_label, controller_candidate,
-    core_config,
     profiles::{self, Profiles},
     protocol_transport,
     sockets::OuterListener,
@@ -44,40 +41,10 @@ struct HandshakeResources {
 }
 
 impl Session {
-    pub async fn sample_neighbors(
-        &self,
-        intent: &NodeConnections,
-    ) -> Vec<ConnectionNeighborObservation> {
-        probe_peers(
-            &self.runtime,
-            intent,
-            &self.outcomes,
-            &self.standby_candidates,
-            Instant::now(),
-        )
-        .await
-    }
-
     pub async fn shutdown(&mut self) {
         self.tasks.abort_all();
         while self.tasks.join_next().await.is_some() {}
         self.runtime.shutdown().await;
-    }
-
-    pub async fn start(
-        intent: &NodeConnections,
-        key: PrivateKey,
-        profiles: Profiles,
-        targets: &BTreeMap<String, Vec<SocketAddr>>,
-    ) -> Result<Self, Failure> {
-        Self::start_prepared(
-            intent,
-            profiles,
-            targets,
-            core_config(intent, key, targets)?,
-            Arc::new(super::sockets::SystemUnderlay),
-        )
-        .await
     }
 
     pub async fn start_prepared(

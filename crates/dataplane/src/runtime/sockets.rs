@@ -19,7 +19,7 @@ pub enum NativeSocketPurpose<'a> {
     Dial { id: Option<&'a str>, peer: &'a str },
 }
 
-pub trait NativeTcp: crate::DuplexStream {
+pub trait NativeTcp: crate::DuplexStream + std::any::Any {
     fn peer_addr(&self) -> io::Result<SocketAddr>;
     fn set_nodelay(&self, value: bool) -> io::Result<()>;
 }

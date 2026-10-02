@@ -31,6 +31,14 @@ pub trait Protection: Send + Sync {
     }
     fn prepare(&self, address: SocketAddr, purpose: Purpose<'_>) -> io::Result<TcpSocket>;
     fn accepted(&self, socket: &TcpStream, listener_id: &str) -> io::Result<()>;
+    /// Owning wrappers carry I/O fences, not an implicit acceptance proof.
+    /// Platform adapters must validate their concrete socket and generation.
+    fn accepted_owned(&self, _: &dyn NativeTcp, _: &str) -> io::Result<()> {
+        Err(io::Error::new(
+            io::ErrorKind::PermissionDenied,
+            "owning socket acceptance adapter required",
+        ))
+    }
 
     fn resolve<'a>(&'a self, host: &'a str, port: u16) -> SocketFuture<'a, Vec<SocketAddr>> {
         Box::pin(async move {
@@ -118,17 +126,17 @@ pub async fn dial(
 
 pub enum OuterListener {
     System(TcpListener),
-    Prepared(Box<dyn NativeListener>),
+    Owned(Box<dyn NativeListener>),
 }
 pub enum OuterTcp {
     System(TcpStream),
-    Prepared(Box<dyn NativeTcp>),
+    Owned(Box<dyn NativeTcp>),
 }
 impl OuterListener {
     pub async fn accept(&self) -> io::Result<(OuterTcp, SocketAddr)> {
         match self {
             Self::System(s) => s.accept().await.map(|(s, a)| (OuterTcp::System(s), a)),
-            Self::Prepared(s) => s.accept().await.map(|(s, a)| (OuterTcp::Prepared(s), a)),
+            Self::Owned(s) => s.accept().await.map(|(s, a)| (OuterTcp::Owned(s), a)),
         }
     }
 }
@@ -136,19 +144,19 @@ impl OuterTcp {
     pub fn accepted(&self, protection: &dyn Protection, id: &str) -> io::Result<()> {
         match self {
             Self::System(s) => protection.accepted(s, id),
-            Self::Prepared(_) => Ok(()),
+            Self::Owned(s) => protection.accepted_owned(s.as_ref(), id),
         }
     }
     pub fn peer_addr(&self) -> io::Result<SocketAddr> {
         match self {
             Self::System(s) => s.peer_addr(),
-            Self::Prepared(s) => s.peer_addr(),
+            Self::Owned(s) => s.peer_addr(),
         }
     }
     pub fn set_nodelay(&self, value: bool) -> io::Result<()> {
         match self {
             Self::System(s) => s.set_nodelay(value),
-            Self::Prepared(s) => s.set_nodelay(value),
+            Self::Owned(s) => s.set_nodelay(value),
         }
     }
 }
@@ -160,7 +168,7 @@ impl tokio::io::AsyncRead for OuterTcp {
     ) -> Poll<io::Result<()>> {
         match self.get_mut() {
             Self::System(s) => Pin::new(s).poll_read(cx, b),
-            Self::Prepared(s) => Pin::new(s.as_mut()).poll_read(cx, b),
+            Self::Owned(s) => Pin::new(s.as_mut()).poll_read(cx, b),
         }
     }
 }
@@ -168,19 +176,19 @@ impl tokio::io::AsyncWrite for OuterTcp {
     fn poll_write(self: Pin<&mut Self>, cx: &mut Context<'_>, b: &[u8]) -> Poll<io::Result<usize>> {
         match self.get_mut() {
             Self::System(s) => Pin::new(s).poll_write(cx, b),
-            Self::Prepared(s) => Pin::new(s.as_mut()).poll_write(cx, b),
+            Self::Owned(s) => Pin::new(s.as_mut()).poll_write(cx, b),
         }
     }
     fn poll_flush(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
         match self.get_mut() {
             Self::System(s) => Pin::new(s).poll_flush(cx),
-            Self::Prepared(s) => Pin::new(s.as_mut()).poll_flush(cx),
+            Self::Owned(s) => Pin::new(s.as_mut()).poll_flush(cx),
         }
     }
     fn poll_shutdown(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
         match self.get_mut() {
             Self::System(s) => Pin::new(s).poll_shutdown(cx),
-            Self::Prepared(s) => Pin::new(s.as_mut()).poll_shutdown(cx),
+            Self::Owned(s) => Pin::new(s.as_mut()).poll_shutdown(cx),
         }
     }
 }
