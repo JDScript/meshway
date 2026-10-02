@@ -4,6 +4,7 @@ pub use discovery::{UdpDiscoveryObservation, UdpDiscoveryOutcome, UdpSocketInfo}
 mod neighbor;
 mod packet;
 mod probe;
+mod recovery;
 pub mod sockets;
 mod statistics;
 mod stream;
@@ -244,6 +245,7 @@ struct Inner {
     packet_setup: BTreeMap<Vec<String>, tokio::sync::Mutex<()>>,
     packet_generation: Mutex<Arc<generation::Fence>>,
     packet_retries: Mutex<BTreeMap<Vec<String>, packet::Setup>>,
+    recovery: Mutex<recovery::Control>,
     sending: tokio::sync::Mutex<BTreeMap<Vec<String>, SendingSession>>,
     delivery: Mutex<Option<mpsc::Sender<ReceivedPacket>>>,
     handles: Mutex<Vec<JoinHandle<()>>>,
@@ -479,6 +481,7 @@ impl Runtime {
                 .filter(|path| path.first() == Some(&config.node_id))
                 .map(|path| (path.clone(), tokio::sync::Mutex::new(())))
                 .collect(),
+            recovery: Mutex::new(recovery::Control::new(&config.allowed_paths)),
             config,
             identity,
             keys,
@@ -758,6 +761,7 @@ impl Runtime {
         lock(&inner.neighbor_pending).clear();
         lock(&inner.endpoints).clear();
         lock(&inner.packet_retries).clear();
+        lock(&inner.recovery).clear();
         if let Ok(mut sessions) = tokio::time::timeout_at(deadline, inner.sending.lock()).await {
             sessions.clear();
         }
@@ -866,7 +870,8 @@ impl Inner {
             .get(peer)
             .cloned()
             .ok_or(Error::Unavailable)?;
-        let generation = (packet.phase == Phase::Packet).then(|| self.packet_generation());
+        let generation = (packet.phase == Phase::Packet || packet.phase.recovery())
+            .then(|| self.packet_generation());
         let batch = Batch::new(vec![packet.encode()?])?;
         self.enqueue_scoped(&channel, batch, generation)
     }

@@ -9,6 +9,7 @@ use tokio::net::UdpSocket;
 
 mod control_recovery;
 mod discovery;
+mod e2e_recovery;
 mod managed;
 mod native_sockets;
 mod observability;
@@ -22,7 +23,7 @@ fn path() -> Vec<String> {
     PATH.iter().map(|id| (*id).to_owned()).collect()
 }
 
-fn configs() -> Vec<LabConfig> {
+pub(super) fn configs() -> Vec<LabConfig> {
     let identities: Vec<_> = (0..3).map(|_| Identity::generate().unwrap()).collect();
     PATH.iter()
         .enumerate()

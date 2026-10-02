@@ -126,6 +126,7 @@ pub(super) async fn dispatch(inner: Arc<Inner>, mut receiver: mpsc::Receiver<Inc
                 let now = Instant::now();
                 lock(&inner.endpoints).retain(|_, session| session.expires > now);
                 lock(&inner.packet_retries).retain(|_, setup| setup.current());
+                lock(&inner.recovery).cleanup(now);
             }
             incoming = receiver.recv() => {
                 let Some(incoming) = incoming else { break };
@@ -164,7 +165,7 @@ fn process(inner: &Inner, incoming: &Incoming) -> StageResult<()> {
     // polls. They are independent owners; never nest these fences in reverse.
     let _generation = if packet
         .as_ref()
-        .is_some_and(|packet| packet.phase == Phase::Packet)
+        .is_some_and(|packet| packet.phase == Phase::Packet || packet.phase.recovery())
     {
         Some(incoming.generation.enter()?)
     } else {
@@ -220,6 +221,10 @@ fn process(inner: &Inner, incoming: &Incoming) -> StageResult<()> {
             .forwarded
             .fetch_add(1, Ordering::Relaxed);
         return Ok(());
+    }
+    if packet.phase.recovery() {
+        let previous = previous.clone();
+        return super::recovery::process(inner, packet, &previous);
     }
     match packet.phase {
         Phase::Init => {
@@ -318,8 +323,18 @@ fn process(inner: &Inner, incoming: &Incoming) -> StageResult<()> {
         Phase::Request | Phase::Packet => {
             let origin = packet.path.first().ok_or(Error::Protocol)?;
             let mut sessions = lock(&inner.endpoints);
+            let session_key = (origin.clone(), packet.id);
+            if packet.phase == Phase::Packet
+                && sessions
+                    .get(&session_key)
+                    .is_none_or(|session| session.expires <= Instant::now())
+            {
+                drop(sessions);
+                super::recovery::unknown(inner, &packet, previous);
+                return Err(Error::Authentication.into());
+            }
             let session = sessions
-                .get_mut(&(origin.clone(), packet.id))
+                .get_mut(&session_key)
                 .ok_or(Error::Authentication)?;
             if session.path != packet.path
                 || session.expires <= Instant::now()
@@ -396,5 +411,6 @@ fn process(inner: &Inner, incoming: &Incoming) -> StageResult<()> {
                 .try_send(packet)
                 .map_err(|_| Error::Capacity.into())
         }
+        _ => Err(Error::Protocol.into()),
     }
 }

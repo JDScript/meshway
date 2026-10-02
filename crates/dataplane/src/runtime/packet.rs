@@ -58,7 +58,10 @@ pub(super) async fn send(
         let mut sessions = inner.sending.lock().await;
         let now = Instant::now();
         sessions.retain(|_, session| session.expires > now);
-        if !sessions.contains_key(&path) {
+        let hinted = sessions
+            .get(&path)
+            .is_some_and(|session| lock(&inner.recovery).hinted(&path, session.id));
+        if !sessions.contains_key(&path) || hinted {
             drop(sessions);
             let _setup = inner
                 .packet_setup
@@ -68,6 +71,34 @@ pub(super) async fn send(
                 .await;
             sessions = inner.sending.lock().await;
             sessions.retain(|_, session| session.expires > Instant::now());
+            if let Some(old_id) = sessions.get(&path).map(|session| session.id)
+                && lock(&inner.recovery).requested(&path, old_id)
+            {
+                let old_key = sessions.get(&path).ok_or(Error::Protocol)?.cipher.id;
+                drop(sessions);
+                // Unsupported old peers, forged feedback, capacity and timeouts
+                // keep the active cipher. Leave half the original call budget
+                // for a packet handshake/enqueue; never extend its deadline.
+                let budget =
+                    Duration::from_millis((inner.config.limits.probe_timeout_ms / 2).max(1));
+                let missing = matches!(
+                    tokio::time::timeout(
+                        budget,
+                        super::recovery::missing(&inner, &path, old_id, old_key)
+                    )
+                    .await,
+                    Ok(Ok(true))
+                );
+                sessions = inner.sending.lock().await;
+                if missing
+                    && sessions
+                        .get(&path)
+                        .is_some_and(|session| session.id == old_id && session.cipher.id == old_key)
+                {
+                    sessions.remove(&path);
+                }
+                sessions.retain(|_, session| session.expires > Instant::now());
+            }
             // A preceding caller may have established this exact path while we
             // waited. Cancellation releases the permit and PendingGuard without
             // spawning work that could later publish a session.
@@ -96,10 +127,11 @@ pub(super) async fn send(
                 let Some(SetupState::Ready(session)) = setup.state else {
                     return Err(Error::Protocol);
                 };
+                lock(&inner.recovery).installed(&path, session.id);
                 sessions.insert(path.clone(), *session);
             }
         }
-        if *inner.shutdown.borrow() || generation.retired() {
+        if *inner.shutdown.borrow() {
             return Err(Error::Closed);
         }
         let session = sessions.get_mut(&path).ok_or(Error::Protocol)?;
@@ -128,7 +160,7 @@ pub(super) async fn send(
     tokio::select! {
         biased;
         _ = shutdown.changed() => Err(Error::Closed),
-        result = tokio::time::timeout(Duration::from_millis(inner.config.limits.probe_timeout_ms), operation) => result.map_err(|_| Error::Timeout)?,
+        result = tokio::time::timeout(Duration::from_millis(inner.config.limits.probe_timeout_ms), generation.run(operation)) => result.map_err(|_| Error::Timeout)?,
     }
 }
 

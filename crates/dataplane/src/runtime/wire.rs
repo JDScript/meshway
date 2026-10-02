@@ -21,11 +21,30 @@ pub(super) enum Phase {
     Request = 3,
     Echo = 4,
     Packet = 5,
+    UnknownSession = 6,
+    ResyncInit = 7,
+    ResyncReady = 8,
+    ResyncQuery = 9,
+    ResyncAnswer = 10,
 }
 
 impl Phase {
     pub fn forward(self) -> bool {
-        matches!(self, Self::Init | Self::Request | Self::Packet)
+        matches!(
+            self,
+            Self::Init | Self::Request | Self::Packet | Self::ResyncInit | Self::ResyncQuery
+        )
+    }
+
+    pub fn recovery(self) -> bool {
+        matches!(
+            self,
+            Self::UnknownSession
+                | Self::ResyncInit
+                | Self::ResyncReady
+                | Self::ResyncQuery
+                | Self::ResyncAnswer
+        )
     }
 }
 
@@ -69,6 +88,11 @@ impl Packet {
             3 => Phase::Request,
             4 => Phase::Echo,
             5 => Phase::Packet,
+            6 => Phase::UnknownSession,
+            7 => Phase::ResyncInit,
+            8 => Phase::ResyncReady,
+            9 => Phase::ResyncQuery,
+            10 => Phase::ResyncAnswer,
             _ => return Err(Error::Protocol),
         };
         let id = input[2..18].try_into().map_err(|_| Error::Protocol)?;
