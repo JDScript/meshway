@@ -5,7 +5,7 @@ Rust 控制面与 agent、Next.js + shadcn/ui 控制台、VitePress 文档站。
 ## 项目边界
 
 - `apps/controller`：控制面服务。`apps/agent`：节点进程。
-- `crates/`：共享 Rust 协议基础，保持 crate 数量克制；Agent 生成客户端位于 `apps/agent/src/generated`。
+- `crates/`：按清楚职责拆分的 Rust 库。用户明确支持把 Agent 内可独立构建、测试的能力抽出（如 `agent-dns`），不为压低 crate 数量把实现堆回 App；也不按临时阶段机械拆包。Agent 生成客户端当前位于 `apps/agent/src/generated`。
 - `apps/web`：Next.js 控制台。`apps/apple`：iOS / macOS App。`packages/`：生成的前端协议与客户端。
 - `docs`：VitePress 产品设计、架构和开发文档。
 - `references`：独立的上游参考 checkout；研究版本见其 README，默认不修改。
@@ -23,6 +23,7 @@ Rust 控制面与 agent、Next.js + shadcn/ui 控制台、VitePress 文档站。
 ## 实现与验证
 
 - 用户明确强调代码洁癖：源码组织、命名和职责须干净可解释；关注 `apps/controller/src/store` 中散落的 tests、`policy_v3` 与 `schema_v*`。完整 dump / 审查不等于已完成源码清理，不再混报。生产领域模块优先职责命名，必要 wire / 数据库历史版本集中在兼容与迁移边界；测试支持和历史 fixture 应有清楚归属，避免持续堆叠阶段名、临时修复名和重复实现。收敛时保留已有身份 / 数据的真实迁移路径及有价值的行为回归，不能靠删除必要迁移或测试制造表面整洁。
+- 当前独立提取 `crates/agent-dns`：本地权威 DNS 的 TCP/UDP、Zone、TTL/lease/代际发送边界及内部观测归库；Controller 快照校验/持久化、HTTP、CLI/IPC 投影和日志归 Agent，库不能反向依赖 App。生成控制客户端与底层保护是后续可独立拆分边界，尚未提取的不得写成已完成。
 - 文档只保留当前用法、架构、契约和真实未完成项；合并重复说明，删除过时交接、逐次修复流水账和已被权威生成物替代的旧 dump。Git 历史与私有原始证据负责追溯，不持续新建清理报告 / changelog；必要的现行安全和兼容边界保留。
 - 前后端按契约推进真实纵向功能；空状态和错误状态必须真实，不伪造节点、流量、健康状态。
 - 将提案、用户已确认需求和已实现功能明确区分。控制面注册和心跳不代表隧道已建立。

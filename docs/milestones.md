@@ -17,10 +17,11 @@
 
 ACK 只表示校验与持久保存；心跳、配置候选、逻辑路径和邻接探测都不能替代真实业务包流。
 
-## 当前两个独立实现线
+## 当前工作
 
 1. **underlay-main-loop**：窄 guard-only bootstrap，通过已有 `get_agent_dns` 取得真实网络绑定，接正常 Agent / TUN 的用途受限保护及 sink 生命周期。[集成合同](/underlay-routing)。尚未交付或正式启用。
 2. **nat-connectivity**：transport-neutral 候选/协调第一步，后续串入获准候选、认证探测、按需邻接与主备。[承载扩展](/transport-registry)。尚未交付真实自动建连或打洞闭环。
+3. **结构收敛**：Controller 迁移、测试支持与策略/执行职责整理；Agent 运行编排归位，并提取独立 `agent-dns` 库。代码候选须保留原行为、通过消费者检查后合入。
 
 ## 首版剩余工作
 
