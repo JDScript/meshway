@@ -269,7 +269,7 @@ def main():
     if "--help" in sys.argv[1:]:
         return subprocess.run(["node", str(here / "demo.ts"), "--help"], check=False).returncode
     sys.dont_write_bytecode = True
-    sys.path.insert(0, str(here.parent / "transport"))
+    sys.path.insert(0, str(here.parents[1] / "scripts"))
     from performance_lock import locked_launch
 
     return locked_launch(["node", str(here / "demo.ts"), *sys.argv[1:]],

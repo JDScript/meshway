@@ -28,7 +28,7 @@ The approved temporary artifact directory is
 
 Only `experiments/managed-discovery/**` is owned by this slice. Shared helpers are
 host-read from `managed-dns/container.py`, `managed-dns/wire.py`, `netcheck/wire.py`,
-and `transport/performance_lock.py`. Runner installs source via Docker exec stdin
+and `scripts/performance_lock.py`. Runner installs source via Docker exec stdin
 into `/private`, rather than `docker cp` into a read-only root or relying on the
 older helper embedded in the image. Enrollment extends the existing private
 identity helper: credential is persisted first, generated enrollment runs on the
@@ -63,7 +63,7 @@ Build from the integrated source, using a unique tag and the same VM lock:
 
 ```sh
 MESHWAY_PERF_LOCK=/private/var/folders/8n/20x15sl9797cdg9sdqfj803w0000gn/T/opencode/meshway-performance.lock \
-  python3 experiments/transport/performance_lock.py \
+  python3 scripts/performance_lock.py \
   docker build --file experiments/managed-connections/Dockerfile.dev \
   --tag meshway-manageddiscovery:m2-INTEGRATED_SHA .
 

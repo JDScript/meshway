@@ -7,7 +7,7 @@
 在仓库根执行（macOS host 使用 Python 3.10+、Docker Linux VM）：
 
 ```sh
-python3 experiments/transport/performance_lock.py python3 -m unittest discover -s experiments/underlay-routing -p 'test_*.py' -v
+python3 scripts/performance_lock.py python3 -m unittest discover -s experiments/underlay-routing -p 'test_*.py' -v
 python3 experiments/underlay-routing/run.py
 ```
 

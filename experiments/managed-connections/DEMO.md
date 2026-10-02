@@ -78,7 +78,7 @@ release it):
 
 ```sh
 export MESHWAY_PERF_LOCK=/private/var/folders/8n/20x15sl9797cdg9sdqfj803w0000gn/T/opencode/meshway-performance.lock
-demo_docker() { python3 experiments/transport/performance_lock.py docker "$@"; }
+demo_docker() { python3 scripts/performance_lock.py docker "$@"; }
 demo_docker ps --filter label=io.meshway.demo.project=managed-neighbors \
   --format 'table {{.Names}}\t{{.Label "io.meshway.demo.resource"}}\t{{.Status}}'
 
@@ -104,7 +104,7 @@ Build and scratch-test a unique image before changing the persistent demo:
 
 ```sh
 MESHWAY_PERF_LOCK=/private/var/folders/8n/20x15sl9797cdg9sdqfj803w0000gn/T/opencode/meshway-performance.lock \
-  python3 experiments/transport/performance_lock.py docker build \
+  python3 scripts/performance_lock.py docker build \
   --file experiments/managed-connections/Dockerfile.dev \
   --tag meshway-managedtest:ubuntu-dev-20261001-a .
 
@@ -180,7 +180,7 @@ Build and validate a new, host-native image before touching the persistent demo:
 
 ```sh
 MESHWAY_PERF_LOCK=/private/var/folders/8n/20x15sl9797cdg9sdqfj803w0000gn/T/opencode/meshway-performance.lock \
-  python3 experiments/transport/performance_lock.py docker build \
+  python3 scripts/performance_lock.py docker build \
   --file experiments/managed-connections/Dockerfile \
   --tag meshway-managedtest:NEW .
 

@@ -20,7 +20,6 @@ import urllib.request
 import uuid
 
 ROOT = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(ROOT / "experiments/transport"))
 from performance_lock import DEFAULT_LOCK as LOCK, LOCK_FD_ENV, performance_environment as lock_environment, validate_descriptor
 SERVICES = {"controller": (8420, "/api/v1/networks"), "web": (3000, "/login"), "docs": (5173, "/")}
 WEB_ENV = {"MESHWAY_CONTROLLER_URL": "http://127.0.0.1:8420", "MESHWAY_WEB_COOKIE_SECURE": "auto", "NEXT_TELEMETRY_DISABLED": "1"}

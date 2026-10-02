@@ -456,6 +456,7 @@ def main(argv=None):
 
 
 if __name__ == "__main__":
+    sys.path.insert(0, str(HERE.parents[1] / "scripts"))
     from performance_lock import performance_lock
     with performance_lock():
         sys.exit(main())

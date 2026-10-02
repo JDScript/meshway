@@ -10,9 +10,9 @@
 
 ```sh
 export MESHWAY_PERF_LOCK=/private/var/folders/8n/20x15sl9797cdg9sdqfj803w0000gn/T/opencode/meshway-performance.lock
-python3 experiments/transport/performance_lock.py docker build \
+python3 scripts/performance_lock.py docker build \
   -t meshway-exit:p1c -f experiments/exit-dataplane/Dockerfile .
-python3 experiments/transport/performance_lock.py docker build \
+python3 scripts/performance_lock.py docker build \
   --target verification -t meshway-exit:verified -f experiments/exit-dataplane/Dockerfile .
 python3 experiments/exit-dataplane/launch.py \
   --image meshway-exit:p1c \

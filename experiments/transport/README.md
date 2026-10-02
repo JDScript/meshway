@@ -15,7 +15,7 @@ queue, scheduling, socket-buffer and native TCP NODELAY controls.
 
 All runners serialize on `MESHWAY_PERF_LOCK`; set the same absolute private path
 across worktrees. Builds sharing the VM must use that lock too, for example
-`python3 experiments/transport/performance_lock.py docker build ...`.
+`python3 scripts/performance_lock.py docker build ...`.
 
 ## Run
 

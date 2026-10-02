@@ -24,7 +24,7 @@ TEMP = Path("/private/var/folders/8n/20x15sl9797cdg9sdqfj803w0000gn/T/opencode")
 LABEL = "io.meshway.netcheck.run"
 ROLE_LABEL = "io.meshway.netcheck.role"
 HERE = Path(__file__).resolve().parent
-sys.path.insert(0, str(HERE.parent / "transport"))
+sys.path.insert(0, str(HERE.parents[1] / "scripts"))
 from performance_lock import performance_lock
 ID = re.compile(r"[0-9a-f]{64}")
 IMAGE = re.compile(r"meshway-netcheck:[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}")

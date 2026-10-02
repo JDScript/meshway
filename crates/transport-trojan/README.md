@@ -165,7 +165,7 @@ MESHWAY_PERF_LOCK=/private/var/folders/8n/20x15sl9797cdg9sdqfj803w0000gn/T/openc
   python3 crates/transport-trojan/interop/run.py
 ```
 
-The runner imports `experiments/transport/performance_lock.py` and holds the lock
+The runner imports `scripts/performance_lock.py` and holds the lock
 for every Docker action. It uses unique names/labels and loopback-only published
 ports, generates a fresh private CA, leaf key and random password, writes fixture
 files mode 0600 in a private temporary directory under this worktree's `target`,

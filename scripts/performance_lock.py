@@ -1,4 +1,4 @@
-"""Serialize performance jobs across worktrees sharing one Docker engine."""
+"""Shared process lock for development and isolated Docker jobs across worktrees."""
 
 from contextlib import contextmanager
 import fcntl

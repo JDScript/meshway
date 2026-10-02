@@ -58,7 +58,7 @@ a dedicated core. Raw reports are private JSON outside Git.
 
 ```sh
 export MESHWAY_PERF_LOCK=/private/var/folders/8n/20x15sl9797cdg9sdqfj803w0000gn/T/opencode/meshway-performance.lock
-python3 experiments/transport/performance_lock.py \
+python3 scripts/performance_lock.py \
   docker build -f experiments/transport/Dockerfile.carrier -t meshway-agent-lab:perf-<revision> .
 python3 experiments/transport/carrier.py --image meshway-agent-lab:perf-<revision> \
   --output <private-scratch>/matched-carrier.json --temp-dir <private-scratch>

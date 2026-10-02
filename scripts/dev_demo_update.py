@@ -130,7 +130,6 @@ def update(demo, image=None):
     require(not any((demo.data / name).exists() for name in ("upgrade.json", "mode-transition.json", "mode.json")), "pending demo transition requires existing recovery flow")
     # Reuse the shared runner implementation, with its FD inherited by EVERY Docker child.
     sys.dont_write_bytecode = True
-    sys.path.insert(0, str(demo.root / "experiments/transport"))
     from performance_lock import performance_lock
     with performance_lock() as descriptor:
         return deploy(demo, meta, image, Docker(demo.root, descriptor))
@@ -174,7 +173,6 @@ def lifecycle(demo, action):
     require(meta.get("shell") == "development" and meta.get("phase") == "ready", "writable lifecycle needs an initialized development demo")
     require(not any((demo.data / name).exists() for name in ("upgrade.json", "mode.json")), "pending demo transition requires existing recovery flow")
     sys.dont_write_bytecode = True
-    sys.path.insert(0, str(demo.root / "experiments/transport"))
     from performance_lock import performance_lock
     with performance_lock() as descriptor:
         docker = Docker(demo.root, descriptor)

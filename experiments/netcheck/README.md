@@ -43,7 +43,7 @@ shared performance-lock wrapper:
 
 ```sh
 MESHWAY_PERF_LOCK=/private/var/folders/8n/20x15sl9797cdg9sdqfj803w0000gn/T/opencode/meshway-performance.lock \
-  python3 experiments/transport/performance_lock.py \
+  python3 scripts/performance_lock.py \
   docker build --file experiments/netcheck/Dockerfile.tools \
   --build-arg BASE_IMAGE=MAIN_FRESH_NATIVE_AGENT_IMAGE \
   --tag meshway-netcheck:m2-d4d5dec .

@@ -45,7 +45,7 @@ same lock, then give the runner its tag. Choose a unique tag:
 
 ```sh
 MESHWAY_PERF_LOCK=/private/var/folders/8n/20x15sl9797cdg9sdqfj803w0000gn/T/opencode/meshway-performance.lock \
-  python3 experiments/transport/performance_lock.py docker build \
+  python3 scripts/performance_lock.py docker build \
   --file experiments/managed-connections/Dockerfile \
   --tag meshway-managedtest:integration-20260930-a .
 

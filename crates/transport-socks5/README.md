@@ -168,7 +168,7 @@ MESHWAY_PERF_LOCK=/private/var/folders/8n/20x15sl9797cdg9sdqfj803w0000gn/T/openc
   python3 crates/transport-socks5/scripts/xray_interop.py
 ```
 
-All Docker operations hold `experiments/transport/performance_lock.py`'s shared
+All Docker operations hold `scripts/performance_lock.py`'s shared
 lock, selected explicitly by `MESHWAY_PERF_LOCK`. Containers and their dedicated
 network have unique names/labels; cleanup runs in `finally`. Native listeners and
 Docker publications use ephemeral loopback ports. Secrets are random per run,

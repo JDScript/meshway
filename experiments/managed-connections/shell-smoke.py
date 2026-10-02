@@ -13,7 +13,7 @@ import sys
 
 sys.dont_write_bytecode = True
 HERE = Path(__file__).resolve().parent
-sys.path.insert(0, str(HERE.parent / "transport"))
+sys.path.insert(0, str(HERE.parents[1] / "scripts"))
 from performance_lock import DEFAULT_LOCK, performance_lock
 LOCK_FD = None
 

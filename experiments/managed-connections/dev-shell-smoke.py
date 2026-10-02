@@ -11,7 +11,7 @@ import uuid
 
 sys.dont_write_bytecode = True
 HERE = Path(__file__).resolve().parent
-sys.path.insert(0, str(HERE.parent / "transport"))
+sys.path.insert(0, str(HERE.parents[1] / "scripts"))
 from performance_lock import performance_lock
 
 TEMP = Path("/private/var/folders/8n/20x15sl9797cdg9sdqfj803w0000gn/T/opencode")

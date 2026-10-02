@@ -5,8 +5,6 @@ HTTP transport and generated Rust client**. The Python observer only serves
 test traffic; it does not create or substitute the client's sockets.
 
 ```sh
-# In an isolated checkout, apply the coordinator's root-lock candidate first.
-git apply docs/underlay-lock-candidate.patch
 python3 -m unittest discover -s apps/agent/tests/underlay_fixture -p 'test_*.py' -v
 python3 apps/agent/tests/underlay_fixture/run.py
 ```
@@ -54,15 +52,13 @@ Both families cover:
 - ordinary same-IP/port TCP and UDP hitting the real default capture sink;
 - capability failure before factory publication.
 
-The RPDB setup is guard/goto plus a real stable NOP, not mark-to-main or a target
-IP allowlist. It is namespace fixture ownership, **not production deployment or
-crash recovery**. Runtime session/state hooks and platform routing ownership are
-the coordinator's integration step; see `docs/underlay-routing.md` and the
-unapplied `docs/underlay-integration.patch`. There is no real Mesh tunnel, VLESS
-or WebSocket handshake, public NAT, authenticated probe or business DNS policy
-in this fixture.
+The RPDB setup uses guard/goto and a stable NOP. The fixture includes the current
+namespace owner, lifetime-cookie recovery, TUN capture/withdrawal and protected
+Native/Manager socket paths. It does not prove the normal Agent main loop has
+enabled this owner or that public NAT traversal works. See
+`docs/underlay-routing.md` for the current integration boundary.
 
-## UR1 / UR2 regression
+## Routing and resolver regression
 
 The repair fixture adds namespace-only `rt_tables` alias 18402, its default TUN
 route and an outside-block 19001 lookup while keeping 18001 capture and omitting
@@ -76,12 +72,10 @@ and TCP counts, failure/terminal/cancel behavior for both families. A separate
 not appear in the TUN alongside the expected ordinary controls.
 
 ```sh
-# Replays the immutable Astra counterexamples in a new TMP copy, with current
-# byte-for-byte source and corrected expectations. The memory double tests
-# resolver control flow, not kernel protection. Needs the original review repro.
-python3 apps/agent/tests/underlay_fixture/review_regression.py --stage all
-python3 apps/agent/tests/underlay_fixture/run.py --image meshway-rust-underlay-ur-fixes:local
+# Current source: namespace ownership, partial transactions and restart cases.
+python3 apps/agent/tests/underlay_fixture/review.py
 ```
 
-Old `0f2e5cad741b` evidence is frozen. New repair runs record commit/diff/source
-hashes and additional checks; old passing counts do not establish UR1/UR2 fixes.
+Each run records its actual source hashes and cleanup result. Historical
+counterexamples and branch-composition scripts remain in Git history; current
+checks build the checkout directly without applying handoff patches.

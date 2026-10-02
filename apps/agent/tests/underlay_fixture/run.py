@@ -16,7 +16,7 @@ HERE = Path(__file__).resolve().parent
 ROOT = HERE.parents[3]
 sys.path.insert(0, str(ROOT / 'experiments/underlay-routing'))
 import run as mechanism
-sys.path.insert(0, str(ROOT / 'experiments/transport'))
+sys.path.insert(0, str(ROOT / 'scripts'))
 from performance_lock import locked_launch
 sys.path.insert(0, str(HERE))
 from trace import audit

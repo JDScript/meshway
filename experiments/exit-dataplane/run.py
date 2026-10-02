@@ -15,7 +15,7 @@ import uuid
 ROOT = Path(__file__).resolve().parents[2]
 HERE = Path(__file__).resolve().parent
 RUN = '/run/meshway-exit'
-sys.path.insert(0, str(ROOT / 'experiments/transport'))
+sys.path.insert(0, str(ROOT / 'scripts'))
 from performance_lock import performance_environment, performance_lock, validate_descriptor
 
 LOCK_DESCRIPTOR = None

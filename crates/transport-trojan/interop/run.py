@@ -10,7 +10,7 @@ import tempfile
 import uuid
 
 ROOT = Path(__file__).resolve().parents[3]
-sys.path.insert(0, str(ROOT / "experiments" / "transport"))
+sys.path.insert(0, str(ROOT / "scripts"))
 from performance_lock import performance_lock  # noqa: E402
 
 

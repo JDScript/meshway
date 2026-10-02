@@ -3,7 +3,7 @@
 从仓库根目录运行：
 
 ```sh
-python3 experiments/transport/performance_lock.py docker build -f experiments/p3a-mesh/Dockerfile -t meshway-managedtest:p3a-execution-final .
+python3 scripts/performance_lock.py docker build -f experiments/p3a-mesh/Dockerfile -t meshway-managedtest:p3a-execution-final .
 python3 experiments/p3a-mesh/run.py meshway-managedtest:p3a-execution-final
 ```
 

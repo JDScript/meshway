@@ -51,9 +51,9 @@ p95 / max 及采样时刻，两臂同条件。非响应与 `<` 上界不会被�
 export MESHWAY_PERF_LOCK=/private/var/folders/8n/20x15sl9797cdg9sdqfj803w0000gn/T/opencode/meshway-performance.lock
 export ART=/private/var/folders/8n/20x15sl9797cdg9sdqfj803w0000gn/T/opencode/throughput-e69cb3d-20261001
 
-python3 experiments/transport/performance_lock.py docker build --platform linux/arm64 \
+python3 scripts/performance_lock.py docker build --platform linux/arm64 \
   -f experiments/tunnel-throughput/Dockerfile -t meshway-throughput:runtime-e69cb3d .
-python3 experiments/transport/performance_lock.py docker build --platform linux/arm64 \
+python3 scripts/performance_lock.py docker build --platform linux/arm64 \
   -f experiments/tunnel-throughput/Dockerfile.managed -t meshway-throughput:managed-tun128-e69cb3d .
 
 python3 experiments/tunnel-throughput/run.py --image meshway-throughput:runtime-e69cb3d \
@@ -64,8 +64,8 @@ python3 experiments/tunnel-throughput/managed.py --image meshway-throughput:mana
   --output "$ART/managed-treatment128-new.json" --temp-dir "$ART" --seconds 20 --iterations 2 --tun-queue-length 128
 python3 experiments/tunnel-throughput/runtime.py --image meshway-throughput:runtime-e69cb3d \
   --output "$ART/runtime-new.json" --temp-dir "$ART"
-python3 experiments/transport/performance_lock.py python3 experiments/tunnel-throughput/summarize.py "$ART/managed-treatment128-new.json"
-python3 experiments/transport/performance_lock.py python3 -m unittest discover -s experiments/tunnel-throughput -p 'test_*.py'
+python3 scripts/performance_lock.py python3 experiments/tunnel-throughput/summarize.py "$ART/managed-treatment128-new.json"
+python3 scripts/performance_lock.py python3 -m unittest discover -s experiments/tunnel-throughput -p 'test_*.py'
 ```
 
 本目录不操作宿主机 route / DNS / firewall、Docker daemon、现有 demo 或 SSH。

@@ -186,7 +186,7 @@ python3 crates/transport-shadowsocks/tests/run_sing_box_interop.py \
   --temp-dir /private/var/folders/8n/20x15sl9797cdg9sdqfj803w0000gn/T/opencode
 ```
 
-The helper imports this worktree's `experiments/transport/performance_lock.py`,
+The helper imports this worktree's `scripts/performance_lock.py`,
 requires `MESHWAY_PERF_LOCK`, and holds it for **all Docker operations and probe
 execution**. Compilation occurs before the lock. Each cipher gets a fresh random
 256-bit password, mode-0600 config in a private temporary directory, unique

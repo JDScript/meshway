@@ -17,6 +17,7 @@ from benchmark import (Fixture, LabError, architecture, benchmark_case, bounded_
                        docker_json, interrupted, now, wait_until, write_result)
 from diagnose import DiagnosticFixture, counter_delta
 from meshway import MESH_IP, RUN_DIRECTORY, TUN_NAME, authenticated_graph, cpu_window
+sys.path.insert(0, str(ROOT / "scripts"))
 from performance_lock import performance_lock
 
 

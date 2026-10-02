@@ -77,7 +77,7 @@ jobs:
           - directory: experiments/managed-discovery
             command: python3 -B experiments/managed-discovery/host.test.py
           - directory: scripts
-            command: python3 -B -m unittest discover -s scripts -p 'test_dev.py'
+            command: python3 -B -m unittest discover -s scripts -p 'test_*.py'
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -88,12 +88,8 @@ jobs:
       - run: ${{ matrix.fixture.command }}
 
   fixture-typescript:
-    name: TypeScript fixture / ${{ matrix.fixture }}
+    name: TypeScript fixtures
     runs-on: ubuntu-latest
-    strategy:
-      fail-fast: false
-      matrix:
-        fixture: [managed-connections, managed-dataplane, managed-dns, managed-discovery]
     steps:
       - uses: actions/checkout@v4
       - uses: pnpm/action-setup@v4
@@ -102,5 +98,4 @@ jobs:
           node-version: 24
           cache: pnpm
       - run: pnpm install --frozen-lockfile
-      - run: pnpm exec tsc --noEmit -p experiments/${{ matrix.fixture }}/tsconfig.json
-      - run: node --test experiments/${{ matrix.fixture }}/*.test.ts
+      - run: pnpm check:experiments

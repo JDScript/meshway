@@ -15,7 +15,7 @@ import uuid
 
 
 WORKSPACE = Path(__file__).resolve().parents[3]
-sys.path.insert(0, str(WORKSPACE / "experiments/transport"))
+sys.path.insert(0, str(WORKSPACE / "scripts"))
 from performance_lock import performance_lock
 
 IMAGE = "ghcr.io/sagernet/sing-box@sha256:3c1ee82d450df9b336b6f63b1d272cf86e3835392d99596ef8c35f206a457999"

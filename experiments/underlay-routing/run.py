@@ -13,7 +13,7 @@ import time
 import uuid
 
 HERE = Path(__file__).resolve().parent
-sys.path.insert(0, str(HERE.parent / 'transport'))
+sys.path.insert(0, str(HERE.parents[1] / 'scripts'))
 from performance_lock import LOCK_FD_ENV, locked_launch, validate_descriptor
 
 TMP = Path('/private/var/folders/8n/20x15sl9797cdg9sdqfj803w0000gn/T/opencode')
