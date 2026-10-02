@@ -26,26 +26,33 @@ export function NodesPage({ networkId }: { networkId: string }) {
           failed={!inventoryRead && view.nodes.isError}
           view={{ q: route.q, state: route.state }}
           openId={route.node}
-          onView={(next) => nav.setListView(next, route.tab)}
+          onView={nav.setListView}
           onOpen={(nodeId) => nav.openNode(nodeId)}
         />
       }
       workspace={
         route.node ? (
           <NodeWorkspace
+            networkId={networkId}
             nodeId={route.node}
             tab={route.tab}
+            detail={route.detail}
             inventoryRead={inventoryRead}
             context={view.context}
-            onClose={nav.closeNode}
+            onClose={nav.closeWorkspace}
             onTab={(tab) =>
               route.node ? nav.setTab(route.node, tab) : undefined
+            }
+            onDetail={(detail) =>
+              route.node
+                ? nav.setDetail(route.node, route.tab, detail)
+                : undefined
             }
             onOpenNode={(nodeId) => nav.openNode(nodeId)}
           />
         ) : null
       }
-      onCloseWorkspace={nav.closeNode}
+      onCloseWorkspace={nav.closeWorkspace}
     />
   )
 }

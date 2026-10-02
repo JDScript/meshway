@@ -1,61 +1,76 @@
 import type { NodeSummary } from "@meshway/control-client"
+import { useQuery } from "@tanstack/react-query"
 
 import { CloseButton } from "@/components/chrome/close-button"
 import { CopyButton } from "@/components/chrome/copy-button"
 import { SegmentedTabs } from "@/components/chrome/segmented-control"
 import { SurfaceHeader } from "@/components/chrome/surface-header"
 import { Tile } from "@/components/chrome/tile"
-import { surfaceTitleId } from "@/features/shell/page-frame"
 import { Skeleton } from "@/components/ui/skeleton"
 import { Tabs, TabsContent } from "@/components/ui/tabs"
+import { useCanManage } from "@/features/network/role"
+import { surfaceTitleId } from "@/features/shell/page-frame"
 import { nodeAdjacencies } from "@/features/topology/topology"
 import { dateTime, relativeTime } from "@/lib/format"
 import { m } from "@/paraglide/messages.js"
 
+import { listenersOf } from "./listener-model"
 import {
   NodeAddresses,
-  NodeLinks,
   NodeStatusTiles,
   nodeVitality,
   VitalityLine,
   type NodeContext,
 } from "./node-facts"
-import { NODE_TABS, type NodeTab } from "./url"
+import { NodeLinksTab } from "./node-links"
+import { NodeManage } from "./node-manage"
+import { NodeTransport } from "./node-transport"
+import { managedListenersQuery } from "./queries"
+import { NODE_TABS, type NodeDetail, type NodeTab } from "./url"
 
 const isTab = (value: unknown): value is NodeTab =>
   NODE_TABS.some((tab) => tab === value)
 
 /**
- * One node in full: everything the peek has and room for what only a
- * workspace holds. Sections that do not exist yet are not shown. The shell
- * frames it (a surface over the globe, or a sheet on small screens).
+ * One node in full: its facts, its links with their history, its managed
+ * transport with what the node reports about it, and its management. The
+ * shell frames it (a surface over the globe, or a sheet on small screens).
  */
 export function NodeWorkspace({
+  networkId,
   nodeId,
   tab,
+  detail,
   inventoryRead,
   context,
   onClose,
   onTab,
+  onDetail,
   onOpenNode,
 }: {
+  networkId: string
   nodeId: string
   tab: NodeTab
+  detail: NodeDetail
   inventoryRead: boolean
   context: NodeContext
   onClose: () => void
   onTab: (tab: NodeTab) => void
+  onDetail: (detail: NodeDetail) => void
   onOpenNode: (nodeId: string) => void
 }) {
   const node = context.nodes.get(nodeId) ?? null
   return node ? (
     <Body
       key={node.id}
+      networkId={networkId}
       node={node}
       tab={tab}
+      detail={detail}
       context={context}
       onClose={onClose}
       onTab={onTab}
+      onDetail={onDetail}
       onOpenNode={onOpenNode}
     />
   ) : (
@@ -88,24 +103,41 @@ function Missing({
   )
 }
 
+const PANE = "min-h-0 overflow-y-auto px-6 pt-5 pb-(--commit-space)"
+
 function Body({
+  networkId,
   node,
   tab,
+  detail,
   context,
   onClose,
   onTab,
+  onDetail,
   onOpenNode,
 }: {
+  networkId: string
   node: NodeSummary
   tab: NodeTab
+  detail: NodeDetail
   context: NodeContext
   onClose: () => void
   onTab: (tab: NodeTab) => void
+  onDetail: (detail: NodeDetail) => void
   onOpenNode: (nodeId: string) => void
 }) {
+  const canManage = useCanManage(networkId)
+  const listeners = useQuery(managedListenersQuery(networkId))
   const links = context.observation
     ? nodeAdjacencies(context.observation, node.id).length
     : null
+  const listenerCount = listeners.data
+    ? listenersOf(listeners.data, node.id).length
+    : null
+  const count = (value: number | null) => (
+    <span className="text-muted-foreground tabular-nums">{value ?? ""}</span>
+  )
+
   return (
     <div className="swap-in flex min-h-0 flex-1 flex-col">
       <SurfaceHeader
@@ -119,7 +151,11 @@ function Body({
         action={<CloseButton onClick={onClose} />}
         meta={
           <div className="flex items-center gap-3">
-            <VitalityLine vitality={nodeVitality(node, context)} />
+            {node.revoked_at === null ? (
+              <VitalityLine vitality={nodeVitality(node, context)} />
+            ) : (
+              <span className="text-xs text-warning">{m.node_revoked()}</span>
+            )}
             <span className="font-mono text-xs text-muted-foreground">
               {node.mesh_ipv4}
             </span>
@@ -134,28 +170,34 @@ function Body({
         }}
         className="min-h-0 flex-1 gap-0"
       >
-        <SegmentedTabs
-          value={tab}
-          className="mx-6"
-          options={[
-            { value: "overview", label: m.node_tab_overview() },
-            {
-              value: "links",
-              label: (
-                <>
-                  {m.node_tab_links()}
-                  <span className="text-muted-foreground tabular-nums">
-                    {links ?? ""}
-                  </span>
-                </>
-              ),
-            },
-          ]}
-        />
-        <TabsContent
-          value="overview"
-          className="min-h-0 overflow-y-auto px-6 pt-5 pb-6"
-        >
+        <div className="mx-6 overflow-x-auto">
+          <SegmentedTabs
+            value={tab}
+            options={[
+              { value: "overview", label: m.node_tab_overview() },
+              {
+                value: "links",
+                label: (
+                  <>
+                    {m.node_tab_links()}
+                    {count(links)}
+                  </>
+                ),
+              },
+              {
+                value: "transport",
+                label: (
+                  <>
+                    {m.node_tab_transport()}
+                    {count(listenerCount)}
+                  </>
+                ),
+              },
+              { value: "manage", label: m.node_tab_manage() },
+            ]}
+          />
+        </div>
+        <TabsContent value="overview" className={PANE}>
           <div className="grid grid-cols-2 gap-2 xl:grid-cols-4">
             <div className="col-span-2">
               <NodeAddresses node={node} />
@@ -174,13 +216,35 @@ function Body({
               <span className="font-mono font-normal">{node.id}</span>
             </Tile>
             <NodeStatusTiles node={node} context={context} />
+            {node.country !== null ? (
+              <Tile label={m.node_legacy_country()}>
+                <span className="font-mono font-normal">{node.country}</span>
+              </Tile>
+            ) : null}
           </div>
         </TabsContent>
-        <TabsContent
-          value="links"
-          className="min-h-0 overflow-y-auto px-6 pt-5 pb-6"
-        >
-          <NodeLinks node={node} context={context} onOpenPeer={onOpenNode} />
+        <TabsContent value="links" className={PANE}>
+          <NodeLinksTab
+            networkId={networkId}
+            node={node}
+            context={context}
+            detail={detail}
+            onDetail={onDetail}
+            onOpenNode={onOpenNode}
+          />
+        </TabsContent>
+        <TabsContent value="transport" className={PANE}>
+          <NodeTransport
+            networkId={networkId}
+            node={node}
+            context={context}
+            canManage={canManage}
+            editing={detail.listener}
+            onEdit={(listener) => onDetail({ ...detail, listener })}
+          />
+        </TabsContent>
+        <TabsContent value="manage" className={PANE}>
+          <NodeManage networkId={networkId} node={node} canManage={canManage} />
         </TabsContent>
       </Tabs>
     </div>
