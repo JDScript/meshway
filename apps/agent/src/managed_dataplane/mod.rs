@@ -16,6 +16,7 @@ use meshway_protocol::{ConnectionPeer, NodeDataplane};
 
 use crate::AgentError;
 
+#[cfg(test)]
 pub(crate) mod exit;
 pub(crate) mod packet;
 #[cfg(test)]
