@@ -817,3 +817,99 @@ async fn tls_vless_listener_admission_is_scoped_before_noise_confirmation() {
     b.shutdown().await;
     a.shutdown().await;
 }
+/// Injection boundary for report races; the recovery regression separately uses
+/// real Manager sessions, normal probes and a real Controller.
+pub(crate) fn report_generation(
+    value: Observation,
+    lease: Duration,
+) -> (
+    Manager,
+    watch::Sender<Observation>,
+    watch::Sender<Option<Instant>>,
+) {
+    let (observations, observed) = watch::channel(value);
+    let (renew, mut deadlines) = watch::channel(Some(Instant::now() + lease));
+    let (_, discovery) = watch::channel(discovery::Publication::new(
+        discovery::Source {
+            revision: 1,
+            digest: "fixture".into(),
+        },
+        meshway_protocol::EndpointDiscoveryState::Disabled,
+    ));
+    let task = tokio::spawn(async move {
+        loop {
+            let deadline = *deadlines.borrow_and_update();
+            let Some(deadline) = deadline else {
+                return;
+            };
+            tokio::select! {
+                _ = time::sleep_until(deadline) => return,
+                changed = deadlines.changed() => if changed.is_err() { return; },
+            }
+        }
+    });
+    let mut manager = Manager::new(None, lease);
+    manager.running = Some(Running {
+        revision: 1,
+        deadline: renew.clone(),
+        observed,
+        task,
+        discovery,
+        discovery_task: None,
+    });
+    (manager, observations, renew)
+}
+
+#[tokio::test]
+async fn runtime_report_guard_negative_withdraw_and_generation_fences() {
+    let mut value = Observation::empty(Phase::Applied, Reason::None);
+    value
+        .peers
+        .push(meshway_protocol::ConnectionNeighborObservation {
+            peer_node_id: "b".repeat(64),
+            transport: ConnectionTransport::NativeTcp,
+            initiator_node_id: "a".repeat(64),
+            listener_id: Some("listener".into()),
+            candidate_id: Some("candidate".into()),
+            state: meshway_protocol::ConnectionNeighborState::Authenticated,
+            reason: Reason::None,
+            probe_fresh: true,
+            probe_rtt_ms: Some(200),
+        });
+    let (mut manager, observations, deadlines) =
+        report_generation(value.clone(), Duration::from_secs(30));
+    let (_, proof) = manager.report_snapshot();
+    let mut proof = proof.unwrap();
+    observations.send_modify(|value| {
+        value.peers[0].state = meshway_protocol::ConnectionNeighborState::Unreachable;
+        value.peers[0].reason = Reason::ProbeFailed;
+        value.peers[0].probe_fresh = false;
+        value.peers[0].probe_rtt_ms = None;
+    });
+    assert!(!proof.current());
+    time::timeout(Duration::from_millis(100), proof.changed())
+        .await
+        .unwrap();
+    observations.send_replace(value.clone());
+    assert!(!proof.current());
+    let (_, proof) = manager.report_snapshot();
+    let mut proof = proof.unwrap();
+    observations.send_replace(Observation::empty(
+        Phase::Withdrawn,
+        Reason::TransportFailed,
+    ));
+    // Even if a later publication recovers before the reader runs, the old watch
+    // version must not become valid again.
+    observations.send_replace(value.clone());
+    assert!(!proof.current());
+    time::timeout(Duration::from_millis(100), proof.changed())
+        .await
+        .unwrap();
+    let (_, proof) = manager.report_snapshot();
+    let proof = proof.unwrap();
+    deadlines.send_replace(None);
+    deadlines.send_replace(Some(Instant::now() + Duration::from_secs(30)));
+    assert!(!proof.current());
+    manager.withdraw(Reason::ShuttingDown).await;
+    assert!(!proof.current());
+}

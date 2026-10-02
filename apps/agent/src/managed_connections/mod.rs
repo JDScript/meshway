@@ -94,13 +94,20 @@ pub(crate) struct ReportGuard {
 }
 
 impl ReportGuard {
-    pub fn current(&self) -> bool {
+    /// Probe publications may be recaptured, but never a revoked, expired,
+    /// renewed or replaced generation. The watch channels belong to one session.
+    pub fn generation_current(&self) -> bool {
         self.deadline
             .borrow()
             .is_some_and(|deadline| deadline > Instant::now())
             && self.observed.borrow().state == Phase::Applied
-            && !self.observed.has_changed().unwrap_or(true)
+            && self.observed.has_changed().is_ok()
             && !self.deadline.has_changed().unwrap_or(true)
+    }
+
+    pub fn current(&self) -> bool {
+        self.generation_current()
+            && !self.observed.has_changed().unwrap_or(true)
             && self
                 .observation_expiry
                 .is_none_or(|expiry| expiry > Instant::now())
@@ -521,6 +528,8 @@ impl Manager {
     /// Per-generation watch channels are never shared with a replacement. This
     /// captures the actual proof snapshot and watch version in one read, fences
     /// the HTTP wait against later probe outcomes/withdrawal, and never renews.
+    /// A caller may recapture after a probe update only while the old guard's
+    /// generation remains current, within its original bounded HTTP budget.
     pub fn report_snapshot(&self) -> (Observation, Option<ReportGuard>) {
         if let Some(running) = &self.running
             && running.active()

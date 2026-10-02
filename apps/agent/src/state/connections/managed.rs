@@ -338,58 +338,8 @@ impl Agent {
             serde_json::to_string(&receipt)
                 .map_err(|_| AgentError::Invalid("cannot encode saved receipt"))?
         );
-        lease.sequence = lease
-            .sequence
-            .checked_add(1)
-            .ok_or(AgentError::Invalid("runtime report sequence exhausted"))?;
-        let snapshot = manager.snapshot.as_ref().expect("reconciled snapshot");
-        let (observed, mut guard) = manager.report_snapshot();
-        let request = ReportConnectionRuntimeRequest {
-            epoch: lease.epoch.expect("runtime lease acquired"),
-            sequence: lease.sequence,
-            revision: snapshot.payload.revision,
-            digest: snapshot.digest.clone(),
-            state: observed.state,
-            reason: observed.reason,
-            listeners: observed.listeners,
-            peers: observed.peers,
-        };
         let client = self.runtime_client();
-        let body = convert(&request)?;
-        if guard.as_ref().is_some_and(|guard| !guard.current()) {
-            return Err(AgentError::RuntimeObservationChanged);
-        }
-        let response = if let Some(guard) = &mut guard {
-            tokio::select! {
-                biased;
-                _ = guard.changed() => return Err(AgentError::RuntimeObservationChanged),
-                response = client.report_connection_runtime(body) => response,
-            }
-        } else {
-            client.report_connection_runtime(body).await
-        };
-        let response = match response {
-            Err(error) if error.api().is_some_and(|error| error.status == 409) => {
-                manager.withdraw(Reason::LeaseSuperseded).await;
-                return Err(AgentError::Invalid(
-                    "runtime lease superseded; refusing to reacquire",
-                ));
-            }
-            Err(error) if error.api().is_some_and(|error| error.status == 422) => {
-                return Err(AgentError::Http {
-                    status: 422,
-                    retryable: true,
-                });
-            }
-            Err(error) => return Err(error.into()),
-            Ok(response) => convert::<ReportConnectionRuntimeResponse>(response)?,
-        };
-        if response.epoch != request.epoch || response.sequence != request.sequence {
-            return Err(AgentError::Invalid("runtime report response mismatch"));
-        }
-        if guard.as_ref().is_some_and(|guard| !guard.current()) {
-            return Err(AgentError::RuntimeObservationChanged);
-        }
+        let (request, response) = self.report_runtime(manager, lease, &client).await?;
         #[cfg(unix)]
         manager
             .latency_report_accepted(request.epoch, request.state, client.clone())
@@ -412,6 +362,108 @@ impl Agent {
         })
         .await?;
         Ok(())
+    }
+
+    async fn report_runtime(
+        &self,
+        manager: &mut Manager,
+        lease: &mut RuntimeLease,
+        client: &HttpClient,
+    ) -> Result<
+        (
+            ReportConnectionRuntimeRequest,
+            ReportConnectionRuntimeResponse,
+        ),
+        AgentError,
+    > {
+        // Match the generated client's original ten-second request budget across
+        // all attempts. Never perform another sync, renew a lease or restart the
+        // Manager merely because its ordinary five-second probe published.
+        let http_deadline = Instant::now() + Duration::from_secs(10);
+        for _ in 0..3 {
+            lease.sequence = lease
+                .sequence
+                .checked_add(1)
+                .ok_or(AgentError::Invalid("runtime report sequence exhausted"))?;
+            let snapshot = manager.snapshot.as_ref().expect("reconciled snapshot");
+            let (observed, mut guard) = manager.report_snapshot();
+            let request = ReportConnectionRuntimeRequest {
+                epoch: lease.epoch.expect("runtime lease acquired"),
+                sequence: lease.sequence,
+                revision: snapshot.payload.revision,
+                digest: snapshot.digest.clone(),
+                state: observed.state,
+                reason: observed.reason,
+                listeners: observed.listeners,
+                peers: observed.peers,
+            };
+            let body = convert(&request)?;
+            if Instant::now() >= http_deadline {
+                return Err(AgentError::Transport { retryable: true });
+            }
+            if guard.as_ref().is_some_and(|guard| !guard.current()) {
+                if guard
+                    .as_ref()
+                    .is_some_and(|guard| guard.generation_current())
+                {
+                    continue;
+                }
+                return Err(AgentError::RuntimeObservationChanged);
+            }
+            let response = tokio::select! {
+                biased;
+                // Received status evidence takes precedence over a simultaneous
+                // observation/lease fence, including late 403 and 409 responses.
+                response = client.report_connection_runtime(body) => Some(response),
+                _ = time::sleep_until(http_deadline) => return Err(AgentError::Transport { retryable: true }),
+                _ = async { match &mut guard { Some(guard) => guard.changed().await, None => std::future::pending().await } } => None,
+            };
+            let Some(response) = response else {
+                // Drop the old HTTP future/body even on peer failure. Only a
+                // fresh snapshot (possibly negative) may be retried. Withdrawal,
+                // source changes and expiry forbid recapturing a new generation.
+                if guard
+                    .as_ref()
+                    .is_some_and(|guard| guard.generation_current())
+                {
+                    continue;
+                }
+                return Err(AgentError::RuntimeObservationChanged);
+            };
+            let response = match response {
+                Err(error) if error.api().is_some_and(|error| error.status == 409) => {
+                    manager.withdraw(Reason::LeaseSuperseded).await;
+                    return Err(AgentError::Invalid(
+                        "runtime lease superseded; refusing to reacquire",
+                    ));
+                }
+                Err(error) if error.api().is_some_and(|error| error.status == 422) => {
+                    return Err(AgentError::Http {
+                        status: 422,
+                        retryable: true,
+                    });
+                }
+                Err(error) => return Err(error.into()),
+                Ok(response) => convert::<ReportConnectionRuntimeResponse>(response)?,
+            };
+            if response.epoch != request.epoch || response.sequence != request.sequence {
+                return Err(AgentError::Invalid("runtime report response mismatch"));
+            }
+            if guard.as_ref().is_some_and(|guard| !guard.current()) {
+                if guard
+                    .as_ref()
+                    .is_some_and(|guard| guard.generation_current())
+                {
+                    continue;
+                }
+                return Err(AgentError::RuntimeObservationChanged);
+            }
+            if Instant::now() >= http_deadline {
+                return Err(AgentError::Transport { retryable: true });
+            }
+            return Ok((request, response));
+        }
+        Err(AgentError::RuntimeObservationChanged)
     }
 
     async fn report_discovery(
@@ -712,3 +764,7 @@ mod discovery_tests;
 mod heartbeat_tests;
 #[cfg(test)]
 mod mesh_restart_tests;
+#[cfg(test)]
+mod runtime_report_race_tests;
+#[cfg(test)]
+mod runtime_report_tests;
