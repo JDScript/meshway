@@ -1,6 +1,6 @@
 # Meshway Apple
 
-iOS / macOS SwiftUI App 与 Packet Tunnel 骨架。设备使用统一 Meshway 节点模型；已支持单一控制台 origin 的浏览器授权、Keychain 身份、真实节点兑换、前台心跳与只读设备 / DNS 库存。紧凑设备列表支持搜索、详情和复制；顶部网络菜单只列真实接入，Connect switch 因隧道未实现而禁用。心跳不是隧道状态。
+iOS / macOS SwiftUI App 与 Packet Tunnel 骨架。设备使用统一 Meshway 节点模型；已支持浏览器授权、多网络接入保存 / 单活动切换、每接入独立 Keychain 身份、真实节点兑换、前台心跳与只读设备 / DNS 库存。紧凑设备列表支持搜索、详情和复制；⋯ 菜单列出真实保存接入，支持添加、详情与确认后本地移除。Connect switch 因隧道未实现而禁用；心跳不是隧道状态。
 
 首次打开 `Meshway.xcodeproj` 或运行 Swift package 检查前：
 

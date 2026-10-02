@@ -46,9 +46,7 @@
       let model = AppModel(
         enrollment: EnrollmentCoordinator(
           browser: SnapshotBrowser(directory: directory),
-          secrets: KeychainSecretStore(service: service),
-          snapshots: FileEnrollmentSnapshotStore(
-            url: directory.appendingPathComponent("enrollment.json"))),
+          profiles: EnrollmentProfiles.system(service: service, directory: directory)),
         tunnel: SystemTunnelController(providerBundleID: "dev.meshway.snapshot.PacketTunnel"),
         defaults: defaults)
       model.deviceName = "Zeyu’s MacBook Pro"
@@ -97,8 +95,14 @@
             lastID = command.id
             switch command.action {
             case "sign-in": await model.signIn()
+            case "add-network":
+              await model.addNetwork()
+              await model.signIn()
+            case "choose-add": await model.addNetwork()
+            case "switch-first":
+              if let first = model.enrollment.profiles.first { await model.switchNetwork(first.id) }
             case "refresh": await model.enrollment.refresh()
-            case "detail", "alias-detail", "network", "dismiss", "search":
+            case "detail", "alias-detail", "network", "saved-networks", "dismiss", "search":
               NotificationCenter.default.post(
                 name: Notification.Name("MeshwaySnapshotAction"), object: command.action)
               if command.action == "dismiss" {
@@ -142,7 +146,7 @@
                 self.panel = nil
               }
             case "reset":
-              model.enrollment.reset()
+              await model.removeNetwork()
               if let service = environment["MESHWAY_SNAPSHOT_KEYCHAIN"] {
                 UserDefaults.standard.removePersistentDomain(forName: service)
               }

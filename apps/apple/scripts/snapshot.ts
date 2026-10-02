@@ -5,7 +5,8 @@ import { createHash, randomBytes, randomUUID } from "node:crypto";
 import { dirname, join, resolve } from "node:path";
 import { homedir, tmpdir } from "node:os";
 import { setTimeout as delay } from "node:timers/promises";
-import { authorizeDevice, exchangeDevice, getNetwork, listNetworks, listNodes, revokeNode, saveNetwork, setNodeCountry } from "../../../packages/control-client/src/index.ts";
+import { authorizeDevice, createNetwork, exchangeDevice, getNetwork, listNetworks, listNodes, revokeNode, saveNetwork, setNodeCountry } from "../../../packages/control-client/src/index.ts";
+import { z } from "../../../packages/control-client/node_modules/zod/index.js";
 import { executable, root, run, service, unusedPort } from "../../../e2e/harness.ts";
 
 const output = resolve(process.argv[2] ?? join(tmpdir(), "opencode/apple-ui-polish/round-1"));
@@ -22,12 +23,25 @@ let web: ReturnType<typeof service> | undefined;
 let app: ReturnType<typeof spawn> | undefined;
 let appExit: Promise<void> | undefined;
 let keychainService: string | undefined;
+let keychainDirectory: string | undefined;
 let isolatedBundle = false;
 const appExecutable = process.argv[3] ?? join(root, "apps/apple/build/DerivedData/Build/Products/Debug/Meshway.app/Contents/MacOS/Meshway");
 let interrupted = false;
 process.once("SIGINT", () => { interrupted = true; });
 process.once("SIGTERM", () => { interrupted = true; });
-async function cleanupNamespace(namespace: string) {
+async function cleanupNamespace(namespace: string, directory?: string) {
+  if (directory) {
+    try {
+      const catalog = z.object({ profiles: z.array(z.object({ id: z.union([z.uuid(), z.literal("legacy")]) })),
+        removed: z.array(z.union([z.uuid(), z.literal("legacy")])) }).parse(
+          JSON.parse(await readFile(join(directory, "profiles.json"), "utf8")));
+      for (const id of new Set([...catalog.profiles.map(profile => profile.id), ...catalog.removed])) {
+        await cleanupNamespace(`${namespace}.profile.${id}`);
+      }
+    } catch {
+      if (await exists(join(directory, "profiles.json"))) throw new Error("Cannot read snapshot profile cleanup metadata");
+    }
+  }
   for (const [command, args] of [
     ["/usr/bin/security", ["delete-generic-password", "-s", namespace, "-a", "identity-journal"]],
     ["/usr/bin/defaults", ["delete", namespace]],
@@ -66,6 +80,11 @@ try {
   const network = await getNetwork(controllerURL, admin, networkId);
   await saveNetwork(controllerURL, admin, networkId, { expected_revision: network.revision, name: network.name,
     dns: { enabled: true, zone: "mesh.example", ttl_seconds: 60 } });
+  const secondNetwork = await createNetwork(controllerURL, admin, { name: "Second saved network" });
+  await saveNetwork(controllerURL, admin, secondNetwork.network_id, {
+    expected_revision: secondNetwork.revision, name: secondNetwork.name,
+    dns: { enabled: true, zone: "studio.example", ttl_seconds: 60 },
+  });
   const names = ["Atlas", "Home studio", "iPhone", "Office workstation — 東京", "Travel companion with a very long device name for truncation review"];
   for (const [index, name] of names.entries()) {
     const verifier = randomBytes(32).toString("base64url");
@@ -89,6 +108,7 @@ try {
       const ipc = join(temporary, `${appearance}-${size}`);
       await mkdir(ipc, { mode: 0o700 });
       keychainService = `dev.meshway.snapshot.${randomUUID()}`;
+      keychainDirectory = ipc;
       // Public cleanup metadata only; never write the credential to a file.
       await writeFile(join(ipc, "namespace"), keychainService, { mode: 0o600 });
       app = spawn(appExecutable, ["-ApplePersistenceIgnoreState", "YES", "-NSQuitAlwaysKeepsWindows", "NO"], { cwd: root, stdio: "ignore", env: { ...process.env,
@@ -129,24 +149,33 @@ try {
       }
       await capture("signed-out");
       await command("panel"); await capture("signed-out-panel");
-      const signingIn = command("sign-in");
-      await waitFor(() => exists(join(ipc, "authorization-request")), "real device-flow request");
-      const request = new URL(await readFile(join(ipc, "authorization-request"), "utf8"));
-      const required = (name: string) => { const value = request.searchParams.get(name); if (!value) throw new Error("Missing device-flow parameter"); return value; };
-      const authorization = await authorizeDevice(controllerURL, admin, networkId, {
-        redirect_uri: required("redirect_uri"), code_challenge: required("code_challenge"),
-        name: required("name"), agent_version: required("agent_version"),
-      });
-      const callback = new URL(required("redirect_uri"));
-      callback.searchParams.set("state", required("state")); callback.searchParams.set("code", authorization.code);
-      await writeFile(join(ipc, "authorization-callback"), callback.toString(), { mode: 0o600 });
-      await signingIn;
+      async function enroll(action: string, targetNetwork: string) {
+        await rm(join(ipc, "authorization-request"), { force: true });
+        const signingIn = command(action);
+        await waitFor(() => exists(join(ipc, "authorization-request")), "real device-flow request");
+        const request = new URL(await readFile(join(ipc, "authorization-request"), "utf8"));
+        const required = (name: string) => { const value = request.searchParams.get(name); if (!value) throw new Error("Missing device-flow parameter"); return value; };
+        const authorization = await authorizeDevice(controllerURL, admin, targetNetwork, {
+          redirect_uri: required("redirect_uri"), code_challenge: required("code_challenge"),
+          name: required("name"), agent_version: required("agent_version"),
+        });
+        const callback = new URL(required("redirect_uri"));
+        callback.searchParams.set("state", required("state")); callback.searchParams.set("code", authorization.code);
+        await writeFile(join(ipc, "authorization-callback"), callback.toString(), { mode: 0o600 });
+        await signingIn;
+      }
+      await enroll("sign-in", networkId);
       await command("refresh"); await capture("devices");
       await command("detail"); await capture("detail"); await command("dismiss");
       await command("alias-detail"); await capture("alias-detail"); await command("dismiss");
       await command("network"); await capture("network"); await command("dismiss");
       await command("panel"); await capture("panel");
       await command("search"); await capture("no-matches"); await command("search");
+      await command("choose-add"); await capture("saved-signed-out");
+      await enroll("sign-in", secondNetwork.network_id);
+      await command("refresh"); await capture("second-network");
+      await command("saved-networks"); await capture("saved-networks"); await command("dismiss");
+      await command("switch-first"); await capture("switched-first");
       await controller.stop(); await command("refresh"); await capture("error");
       controller = startController(); await controller.ready(`${controllerURL}/api/v1/overview`, 401);
       const own = (await listNodes(controllerURL, admin, networkId)).nodes.find(node => node.name === "Zeyu’s MacBook Pro" && !node.revoked_at);
@@ -155,17 +184,25 @@ try {
       await command("refresh"); await capture("revoked");
       await command("panel"); await capture("revoked-panel");
       await command("reset");
+      await capture("remove-fallback");
+      // Test-fixture cleanup only; keep the next size run's inventory isolated.
+      const remaining = (await listNodes(controllerURL, admin, secondNetwork.network_id)).nodes
+        .find(node => node.name === "Zeyu’s MacBook Pro" && !node.revoked_at);
+      if (!remaining) throw new Error("The active fallback node was unexpectedly revoked");
+      await revokeNode(controllerURL, admin, secondNetwork.network_id, { node_id: remaining.id });
       app.kill("SIGTERM"); await appExit; app = undefined;
-      await cleanupNamespace(keychainService);
+      await cleanupNamespace(keychainService, ipc);
       keychainService = undefined;
+      keychainDirectory = undefined;
       console.log(`Captured real windows: ${appearance}/${size}`);
     }
   }
 } finally {
   if (app && app.exitCode === null && app.signalCode === null) { app.kill("SIGTERM"); await appExit; }
+  await web?.stop(); await controller.stop();
   if (keychainService) {
     // Delete only this invocation's unique item; never access developer credentials.
-    await cleanupNamespace(keychainService);
+    await cleanupNamespace(keychainService, keychainDirectory);
   }
   if (isolatedBundle) {
     const preferences = spawn("/usr/bin/defaults", ["delete", "dev.meshway.snapshot.meshway"], { stdio: "ignore" });
@@ -173,7 +210,7 @@ try {
     await rm(join(homedir(), "Library/Preferences/dev.meshway.snapshot.meshway.plist"), { force: true });
     await rm(join(homedir(), "Library/Saved Application State/dev.meshway.snapshot.meshway.savedState"), { recursive: true, force: true });
   }
-  await web?.stop(); await controller.stop(); await rm(temporary, { recursive: true, force: true });
+  await rm(temporary, { recursive: true, force: true });
 }
 const images = [...capturedFiles].sort();
 await writeFile(join(output, "png-paths.txt"), `${images.map(name => join(output, name)).join("\n")}\n`);

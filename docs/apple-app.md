@@ -4,11 +4,11 @@
 
 **已确认**：`apps/apple` 使用 SwiftUI 多平台 App、NetworkExtension Packet Tunnel、UniFFI Rust 核心及 XCFramework。设备是统一的 Meshway 节点；不引入 App / 服务器节点类别或中继角色开关。
 
-**已实现**：单一服务器地址（Web 控制台 origin）、系统浏览器授权、Keychain 节点凭据与待兑换状态、生成 Rust 客户端兑换、心跳和只读设备 / DNS 快照。macOS 为默认 500 × 680 的单列普通窗口与 window-style 菜单栏面板；iOS 使用 NavigationStack、insetGrouped 设备列表、搜索、下拉刷新、侧滑 / 上下文复制与详情。macOS in-content header 使用静态网络名（启用的 DNS zone）与真实服务器 host 副标题；无 label 时使用通用 Meshway 标题，不呈现单网络 switcher。⋯ 菜单提供详情、复制服务器 URL 与本地重置，refresh 在 header 内。右上角原生 mini switch 禁用、off，旁边为 Not connected，help / accessibility 说明隧道未实现。首次接入为居中浏览器登录引导，窄 / 矮窗口使用 compact layout；撤销、加载和错误使用相同视觉层级。
+**已实现**：多网络接入保存、一次一个活动接入、系统浏览器授权、每接入独立 Keychain 身份与待兑换状态、生成 Rust 客户端兑换、心跳和只读设备 / DNS 快照。macOS 为默认 500 × 680 的单列普通窗口与 window-style 菜单栏面板；iOS 使用 NavigationStack、insetGrouped 设备列表、搜索、下拉刷新、侧滑 / 上下文复制与详情。静态标题与服务器 host 保持不变；macOS 窗口、菜单栏面板与 iOS 的 ⋯ 菜单提供保存的网络（活动勾选、Pending / Revoked）、Add network…、详情与本地移除。退出当前选择后的登录页也列出保存接入。右上角原生 mini switch 禁用、off，旁边为 Not connected，明确隧道未实现。
 
 前台出现 / 接入成功时读取，自动刷新跨窗口每 30 秒至多一次；手动刷新可立即发起，整个心跳 → 配置 → DNS 流程禁止重叠，各 HTTP 请求限时 10 秒。自身成功 contact 只展示一行真实最近时间，失败显示 orange reason；section header 显示 updated / previous fetch。peer 展示名称、IPv4、真实 friendly DNS alias 与管理员 country；canonical DNS / IPv6 留在详情 / copy action。行使用真实名称 initials 与 node-ID 稳定 tint 的 monogram，不表示设备类型或在线状态。DNS 仅在配置同 revision、ID / 地址一致时合并。403 进入持久撤销状态并清除库存。快照只用于显示，**不 ACK、不持久化配置、不激活数据面**。
 
-**未实现**：外部 OIDC、X25519 公钥发布、嵌入 agent 生命周期、多网络接入保存 / 切换、NE 包流适配、隧道、流量及诊断导出。后端已支持多网络，浏览器批准时选择目标网络；App 的接入保存 / 切换仍待实现，界面只显示当前真实接入，没有虚构的添加网络或 network switcher。浏览器当前使用控制台管理员登录 / 批准；App 不获得管理员凭据。保存 URL、注册及心跳均不代表隧道已建立。
+**未实现**：外部 OIDC、X25519 公钥发布、嵌入 agent 生命周期、NE 包流适配、隧道、流量及诊断导出。浏览器批准时选择目标网络；用户账户接线仍在另一主线，App 不获得密码、会话或管理员凭据。节点端尚无网络显示名 / Owner 身份接口，保存条目使用真实 DNS zone、IPv4 prefix、服务器 host，未取得配置时使用已接入节点 IPv4；同来源标签相同时补充已保存 node ID 区分接入，不冒充网络名。待接入显示本地尝试标识，不能本地重命名网络。保存 URL、注册及心跳均不代表隧道已建立。
 
 ## 结构与依赖
 
@@ -32,9 +32,13 @@ apps/apple/
 
 依赖方向：UI → `AppModel` / `EnrollmentCoordinator` → `EnrollmentService` / `BrowserAuthorizing` / `SecretStore` / `TunnelController`；`RustEnrollmentService` → 生成 Swift → UniFFI → `meshway-agent::generated`。bridge 使用 agent 默认 features，没有启用 Linux / TUN 功能。extension → `MeshwayTunnel` → `MeshwayIPC`。
 
-状态协调器在 MainActor 上使用 Observation；Swift 6 严格并发。`ASWebAuthenticationSession` 使用前台 window anchor、`meshway` scheme，非 ephemeral 以复用控制台人类登录 cookie；App 不读取 cookie。回调严格核对 scheme / host / path、唯一且相等的 state、互斥 code / error。取消 / 拒绝保留节点凭据；网络失败重试原绑定。首次无效 / 过期（401）可显式重开新尝试并保留凭据；已消费的相同绑定即使过期也恢复原节点。403 标为撤销，409 不更换身份。重置需用户确认，只清本地，**不撤销服务端节点**。
+状态协调器在 MainActor 上使用 Observation；Swift 6 严格并发。`ASWebAuthenticationSession` 使用前台 window anchor、`meshway` scheme，非 ephemeral 以复用控制台人类登录 cookie；App 不读取 cookie。回调严格核对 scheme / host / path、唯一且相等的 state、互斥 code / error。Add network… 进入新接入的浏览器登录流程；每次新接入产生独立身份，同服务器的不同网络也不复用凭据。取消 / 拒绝保留可继续或明确移除的 Pending 条目；网络失败重试原绑定。401 可显式重开尝试并保留凭据；403 只撤销当前接入，409 不更换身份。移除需确认，仅清本地，**不撤销服务端节点**；移除活动接入后选择另一已接入网络，否则回到未选择状态。
 
-节点凭据、PKCE verifier / state、收到但尚未兑换的 code 放在一个原子更新的 Keychain journal，accessibility 为 `AfterFirstUnlockThisDeviceOnly`、不同步。journal 同时保留恢复所需公开绑定与节点快照；非敏感 server / node / IP / phase 另写 Application Support 的原子 JSON 镜像。先提交 journal，再写镜像；重启以 journal 修复镜像。打开浏览器前保存凭据 + 完整尝试；兑换前保存 code；成功后一次提交节点 + 清 pending。任何写入失败阻止后续请求 / 自动生成，重启恢复或显式重置；Keychain 不可用显示真实错误，无明文 fallback。保留公开身份却缺少秘密时要求显式重置，不当作新设备；重置先删镜像再删 Keychain，途中失败 / 崩溃由原 journal 恢复，用户可重复重置。前台自动恢复 `redeeming`；`awaitingBrowser` 由按钮重开原尝试。
+每接入有稳定本地 ID、server URL、独立原子 Keychain journal（凭据、PKCE、未兑换 code、节点记录）及原子公开镜像；`profiles.json` 保存非敏感目录 / 真实标签，`active-profile.json` 单独保存活动指针。Keychain 为 `AfterFirstUnlockThisDeviceOnly`、不同步、无明文 fallback。先提交 journal，再镜像 / 目录；重启由 journal 修复公开状态。打开浏览器前保存凭据 + 完整尝试；兑换前保存 code；成功后一次提交节点 + 清 pending。缺少秘密且仍有公开身份时阻止重新生成。
+
+旧单接入无损迁移到固定 `legacy` profile：先复制原 journal、修复镜像、写目录及活动指针，再移除旧镜像 / Keychain，最后标记完成；每步可重复恢复，不重新接入、不改变凭据 / 节点 / 待兑换绑定。新接入先写目录意图，未完成首次 journal 的条目明确 Pending。移除先提交目录 tombstone，再更新活动指针、删除镜像 / journal，重启完成未结束的清理。
+
+切换先递增运行 generation、取消浏览器并立即清库存，再等待旧 heartbeat / configuration / DNS / exchange 整段完成，才加载新身份。每个异步结果同时核对 profile ID 与 generation；新旧请求不重叠，迟到响应不能显示在新网络下。清除旧 contact、错误、节流时间和设备详情；新接入独立保存撤销状态。当前没有数据面可切换，未来嵌入 agent / NE 时须在此边界停止旧隧道后再启动新隧道。
 
 SystemTunnelController 仍只读 VPN preferences；provider 的 startTunnel 返回 “not implemented in this build”，不设置网络、路由或 DNS。
 
@@ -61,11 +65,12 @@ open apps/apple/build/DerivedData/Build/Products/Debug/Meshway.app
 
 全检查：`bash apps/apple/scripts/check.sh`。首次打开 Xcode 或运行 swift test 前必须先 build-core；脚本锁定 UniFFI 0.32.2，构建 arm64 macOS / iOS / iOS Simulator 静态库，生成 Swift/header/modulemap 并组装 XCFramework。生成绑定与二进制均忽略，不手工编辑。当前不包含 Intel macOS / x86_64 Simulator slice。
 
-真实接入 smoke（先 `cargo build -p meshway-controller --locked`、`pnpm install --frozen-lockfile`、`pnpm build:web`）：
+真实接入 smoke（先 `cargo build -p meshway-controller --locked`、`pnpm install --frozen-lockfile`；隔离 Web build）：
 
 ```sh
 pnpm exec tsc -p apps/apple/scripts/tsconfig.json
-node apps/apple/scripts/check-signin.ts
+MESHWAY_WEB_DIST_DIR=.next-apple-check pnpm build:web
+MESHWAY_WEB_DIST_DIR=.next-apple-check node apps/apple/scripts/check-signin.ts
 pnpm exec playwright test e2e/device-login.spec.ts
 ```
 
@@ -78,14 +83,15 @@ xcodebuild -quiet -project apps/apple/Meshway.xcodeproj -scheme Meshway \
   -configuration Debug -destination 'platform=macOS,arch=arm64' \
   -derivedDataPath apps/apple/build/DerivedData CODE_SIGNING_ALLOWED=NO \
   MESHWAY_BUNDLE_PREFIX=dev.meshway.snapshot build
-node apps/apple/scripts/snapshot.ts "${TMPDIR%/}/opencode/apple-ui-polish/round-7"
+MESHWAY_WEB_DIST_DIR=.next-apple-check node apps/apple/scripts/snapshot.ts \
+  "${TMPDIR%/}/opencode/apple-saved-networks"
 ```
 
-脚本需先构建 controller / Web（见下方链接中的完整命令），自行启动隔离端口、临时数据及唯一 Keychain / defaults namespace，经真实 device flow 接入并创建五个真实 peers。Debug-only AppKit hook 捕获实际主窗口 titlebar、header 的原生控件和 sheets；面板使用真实 `MeshwayMenuView` 内容的 native host fallback。列表采用名称 + IPv4 第一行，只将真实 friendly DNS alias 放在第二行，canonical name 与 IPv6 在详情 / copy action。FFI 保留已校验 DNS record 的 alias 与 canonical 字段，不从显示名称手工猜造 canonical name；HTTP / OpenAPI 契约未改。`RenderTests.swift` 的 test-only ImageRenderer 只作为 iPhone-width / accessibility-size 共享布局辅助检查，不冒充 native iOS chrome 或 Simulator 运行。产物、逐轮缺陷和具体边界见 [视觉验收](./apple-ui-verification.md)。
+脚本自行启动隔离端口、临时数据及唯一 Keychain / defaults namespace，经真实 API 创建第二张网络，App 分别接入两张网络，再捕获保存条目、切回第一张网络与移除后的 fallback。Debug-only AppKit hook 捕获实际主窗口 / sheets；系统 ⋯ popup 无 Accessibility 时以同一真实条目和操作的 in-content sheet 验收，面板仍使用 `MeshwayMenuView` 的 native host fallback。不注入伪造节点 / 隧道状态。结束后删除 `.next-apple-check` 并恢复 Next 自动修改的 `apps/web/tsconfig.json`。既有布局验收与平台边界见 [视觉验收](./apple-ui-verification.md)。
 
 签名默认无 Team，bundle prefix 为 `dev.example`。需要签名时创建忽略的 `apps/apple/Config/Local.xcconfig`，设置 `DEVELOPMENT_TEAM`、`MESHWAY_BUNDLE_PREFIX`，必要时覆盖 `MESHWAY_APP_GROUP`。`MESHWAY_KEYCHAIN_ACCESS_GROUP` 默认空，unsigned 使用默认 Keychain；需要 extension 共享时设置此变量并为 App / extension 添加匹配的 `keychain-access-groups` entitlement 与有效 provisioning。App Group 不能替代 Keychain access group。会员未续费，不能据编译声称签名权限、真机 NE 或隧道已验证。
 
-本地验收：Rust bridge + 真实 controller ephemeral-port 联测；Swift 覆盖严格 callback、各持久化 phase 恢复、镜像写入中断修复、原绑定重试、Keychain 错误 / 丢失、取消 / 拒绝、过期重开、撤销与重置中断；真实 Keychain / FFI / proxy smoke 和 Web Playwright 通过。三平台 XCFramework、macOS / iOS Simulator unsigned build 通过；独立 bundle prefix 的真实 macOS App 已完成隔离接入、真实设备 / DNS 库存和撤销窗口截图验收。原生浏览器 UI 自动化因 macOS Accessibility 未启用无法执行；未安装 Simulator runtime，未验证 native iOS 运行；真机 NE 生命周期待有签名宿主验证。
+本地验收：Rust bridge + 真实 controller ephemeral-port 联测；Swift 覆盖严格 callback、各持久化 phase 恢复、镜像中断修复、原绑定重试、Keychain 错误 / 丢失、取消 / 拒绝、过期重开。多接入专项覆盖旧身份迁移的每个写入 / 删除中断、凭据隔离、Pending 恢复、移除与活动 fallback、heartbeat / configuration / DNS / exchange 迟到结果 fencing。真实 Keychain / FFI / proxy smoke、三平台 XCFramework、macOS / iOS Simulator unsigned build 通过；双网络真实窗口截图使用隔离数据与生成客户端。既有 Web Playwright 验证见浏览器登录文档。系统浏览器 UI 自动化因 Accessibility 未启用无法执行；未安装 Simulator runtime，未验证 native iOS 运行；真机 NE 生命周期待有签名宿主验证。
 
 ## FFI 审计边界
 
