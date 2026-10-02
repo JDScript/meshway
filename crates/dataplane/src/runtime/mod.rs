@@ -4,6 +4,7 @@ pub use discovery::{UdpDiscoveryObservation, UdpDiscoveryOutcome, UdpSocketInfo}
 mod neighbor;
 mod packet;
 mod probe;
+pub mod sockets;
 mod statistics;
 mod stream;
 #[cfg(test)]
@@ -29,7 +30,6 @@ use std::{
     time::Duration,
 };
 use tokio::{
-    net::TcpListener,
     sync::{Notify, Semaphore, mpsc, watch},
     task::JoinHandle,
     time::Instant,
@@ -257,9 +257,174 @@ struct Inner {
 }
 
 struct Handle {
+    native: tokio::sync::Mutex<NativeRunning>,
     inner: Arc<Inner>,
     bound: Vec<BoundListener>,
     receiver: Mutex<Option<mpsc::Receiver<ReceivedPacket>>>,
+}
+
+struct NativeRunning {
+    generation: sockets::SocketGeneration,
+    tasks: Vec<JoinHandle<()>>,
+}
+impl NativeRunning {
+    async fn stop(&mut self) {
+        self.generation.retire();
+        for task in self.tasks.drain(..) {
+            let _ = task.await;
+        }
+    }
+}
+
+type PreparedTcp = (Box<dyn sockets::NativeListener>, StreamContext);
+type PreparedUdp = (
+    Box<dyn sockets::NativeUdp>,
+    Option<crate::OutgoingCandidate>,
+    StreamContext,
+);
+
+fn prepare_native(
+    config: &LabConfig,
+    factory: &dyn sockets::NativeSocketFactory,
+    bound: Option<&[BoundListener]>,
+) -> Result<(Vec<PreparedTcp>, Vec<PreparedUdp>, Vec<BoundListener>)> {
+    factory.check_active()?;
+    let mut tcp = Vec::new();
+    let mut udp = Vec::new();
+    let mut addresses = Vec::new();
+    for (index, listener) in config.listeners.iter().enumerate() {
+        let bind = bound.map_or(listener.bind, |b| b[index].address);
+        let purpose = sockets::NativeSocketPurpose::Listener {
+            id: listener.id.as_deref(),
+        };
+        let context = StreamContext {
+            listener_id: listener.id.clone(),
+            allowed_peers: listener.allowed_peers.clone(),
+            ..Default::default()
+        };
+        let address = match listener.transport {
+            TransportKind::NativeTcp => {
+                let s = factory.listen(bind, purpose)?;
+                let a = s.local_addr()?;
+                tcp.push((s, context));
+                a
+            }
+            TransportKind::NativeUdp => {
+                let s = factory.udp(bind, config.limits.udp_receive_buffer_bytes, purpose)?;
+                let a = s.local_addr()?;
+                udp.push((s, None, context));
+                a
+            }
+            TransportKind::Vless => {
+                return Err(Error::InvalidConfig("external VLESS listener required"));
+            }
+        };
+        addresses.push(BoundListener {
+            transport: listener.transport,
+            address,
+            id: listener.id.clone(),
+        });
+    }
+    for candidate in &config.outgoing {
+        if candidate.transport != TransportKind::NativeUdp {
+            continue;
+        }
+        let remote = candidate
+            .endpoint
+            .parse::<SocketAddr>()
+            .map_err(|_| Error::Protocol)?;
+        let bind = if remote.is_ipv4() {
+            SocketAddr::from(([0, 0, 0, 0], 0))
+        } else {
+            SocketAddr::from(([0_u16; 8], 0))
+        };
+        let socket = factory.udp(
+            bind,
+            config.limits.udp_receive_buffer_bytes,
+            sockets::NativeSocketPurpose::Dial {
+                id: candidate.id.as_deref(),
+                peer: &candidate.peer,
+            },
+        )?;
+        udp.push((
+            socket,
+            Some(candidate.clone()),
+            StreamContext {
+                candidate_id: candidate.id.clone(),
+                ..Default::default()
+            },
+        ));
+    }
+    Ok((tcp, udp, addresses))
+}
+
+fn launch_native(
+    inner: &Arc<Inner>,
+    generation: sockets::SocketGeneration,
+    factory: Arc<dyn sockets::NativeSocketFactory>,
+    tcp: Vec<PreparedTcp>,
+    udp: Vec<PreparedUdp>,
+) -> Result<NativeRunning> {
+    let mut running = NativeRunning {
+        generation,
+        tasks: Vec::new(),
+    };
+    let mut spawn = |future: std::pin::Pin<Box<dyn Future<Output = ()> + Send>>| {
+        let fence = running.generation.0.clone();
+        running.tasks.push(tokio::spawn(async move {
+            tokio::select! { biased; _ = fence.cancelled() => (), _ = future => () }
+        }));
+    };
+    for (listener, context) in tcp {
+        spawn(Box::pin(stream::listen(
+            inner.clone(),
+            listener,
+            context,
+            running.generation.0.clone(),
+        )));
+    }
+    for (ordinal, (socket, candidate, context)) in udp.into_iter().enumerate() {
+        let socket_id = u32::try_from(ordinal).map_err(|_| Error::Capacity)?;
+        let info = UdpSocketInfo {
+            socket_id,
+            local_addr: socket.local_addr()?,
+            listener_id: context.listener_id.clone(),
+            candidate_id: context.candidate_id.clone(),
+        };
+        let (tx, rx) = mpsc::channel(1);
+        lock(&inner.udp_sockets).insert(
+            socket_id,
+            discovery::Registration {
+                info,
+                tx,
+                slot: Arc::new(Semaphore::new(1)),
+                generation: running.generation.0.clone(),
+            },
+        );
+        let live = discovery::LiveSocket {
+            inner: inner.clone(),
+            id: socket_id,
+            rx,
+        };
+        spawn(Box::pin(udp::run(
+            inner.clone(),
+            socket,
+            candidate,
+            context,
+            live,
+        )));
+    }
+    for candidate in inner.config.outgoing.clone() {
+        if candidate.transport == TransportKind::NativeTcp {
+            spawn(Box::pin(stream::maintain(
+                inner.clone(),
+                candidate,
+                factory.clone(),
+                running.generation.0.clone(),
+            )));
+        }
+    }
+    Ok(running)
 }
 
 impl Drop for Handle {
@@ -284,6 +449,13 @@ fn lock<T>(mutex: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
 
 impl Runtime {
     pub async fn start(config: LabConfig) -> Result<Self> {
+        Self::start_with_socket_factory(config, Arc::new(sockets::SystemSocketFactory)).await
+    }
+
+    pub async fn start_with_socket_factory(
+        config: LabConfig,
+        sockets: Arc<dyn sockets::NativeSocketFactory>,
+    ) -> Result<Self> {
         config.validate()?;
         let identity = Identity::from_private_key(config.private_key.clone());
         let keys = config
@@ -325,98 +497,55 @@ impl Runtime {
             #[cfg(test)]
             observed_transit: Mutex::default(),
         });
-        // Prepare native listeners and UDP candidates before spawning any tasks, so
-        // socket-option/bind failure is an explicit, atomic startup error.
-        let mut tcp = Vec::new();
-        let mut udp = Vec::new();
-        let mut bound = Vec::new();
-        for listener in &inner.config.listeners {
-            let context = StreamContext {
-                listener_id: listener.id.clone(),
-                allowed_peers: listener.allowed_peers.clone(),
-                ..Default::default()
-            };
-            let address = match listener.transport {
-                TransportKind::NativeTcp => {
-                    let socket = TcpListener::bind(listener.bind).await?;
-                    let address = socket.local_addr()?;
-                    tcp.push((socket, context));
-                    address
-                }
-                TransportKind::NativeUdp => {
-                    let socket =
-                        udp::bind(listener.bind, inner.config.limits.udp_receive_buffer_bytes)?;
-                    let address = socket.local_addr()?;
-                    udp.push((socket, None, context));
-                    address
-                }
-                TransportKind::Vless => {
-                    return Err(Error::InvalidConfig("external VLESS listener required"));
-                }
-            };
-            bound.push(BoundListener {
-                transport: listener.transport,
-                address,
-                id: listener.id.clone(),
-            });
-        }
-        for candidate in &inner.config.outgoing {
-            if candidate.transport == TransportKind::NativeUdp {
-                let socket =
-                    udp::bind_outgoing(candidate, inner.config.limits.udp_receive_buffer_bytes)?;
-                udp.push((
-                    socket,
-                    Some(candidate.clone()),
-                    StreamContext {
-                        candidate_id: candidate.id.clone(),
-                        ..Default::default()
-                    },
-                ));
-            }
-        }
+        // Atomic setup before any engine is spawned. A separate socket owner
+        // fences native I/O even for the compatible unmarked implementation.
+        let generation = sockets::SocketGeneration::new();
+        let sockets = generation.factory(sockets);
+        let (tcp, udp, bound) = prepare_native(&inner.config, sockets.as_ref(), None)?;
+        let native = launch_native(&inner, generation, sockets, tcp, udp)?;
         let runtime = Self {
             handle: Arc::new(Handle {
+                native: tokio::sync::Mutex::new(native),
                 inner: inner.clone(),
                 bound,
                 receiver: Mutex::new(Some(delivery_receiver)),
             }),
         };
         inner.spawn(probe::dispatch(inner.clone(), receiver));
-        for (listener, context) in tcp {
-            inner.spawn(stream::listen(inner.clone(), listener, context));
-        }
-        for (ordinal, (socket, candidate, context)) in udp.into_iter().enumerate() {
-            let socket_id = u32::try_from(ordinal).map_err(|_| Error::Capacity)?;
-            let info = UdpSocketInfo {
-                socket_id,
-                local_addr: socket.local_addr()?,
-                listener_id: context.listener_id.clone(),
-                candidate_id: context.candidate_id.clone(),
-            };
-            let (tx, rx) = mpsc::channel(1);
-            lock(&inner.udp_sockets).insert(
-                socket_id,
-                discovery::Registration {
-                    info,
-                    tx,
-                    slot: Arc::new(Semaphore::new(1)),
-                },
-            );
-            let live = discovery::LiveSocket {
-                inner: inner.clone(),
-                id: socket_id,
-                rx,
-            };
-            inner.spawn(udp::run(inner.clone(), socket, candidate, context, live));
-        }
-        for candidate in inner.config.outgoing.clone() {
-            match candidate.transport {
-                TransportKind::NativeTcp => inner.spawn(stream::maintain(inner.clone(), candidate)),
-                TransportKind::NativeUdp => (), // Prepared above; reconnect reuses this socket.
-                TransportKind::Vless => (),     // Established by CLI adapter, then attach_stream.
-            }
-        }
         Ok(runtime)
+    }
+
+    /// Rebind native I/O in the same Runtime, retaining E2E identity, policy and
+    /// the independent packet fence. Caller prepares the new platform capability
+    /// first. Failure leaves native I/O retired; never retries with system sockets.
+    /// Existing listeners retain their initially assigned port (including :0).
+    pub async fn replace_native_socket_factory(
+        &self,
+        factory: Arc<dyn sockets::NativeSocketFactory>,
+    ) -> Result<()> {
+        let mut native = self.handle.native.lock().await;
+        native.stop().await;
+        let inner = &self.handle.inner;
+        {
+            let mut peers = lock(&inner.peers);
+            peers.retain(|_, channel| {
+                if channel.transport == TransportKind::Vless {
+                    return true;
+                }
+                channel.close.send_replace(true);
+                false
+            });
+        }
+        inner.changed.notify_waiters();
+        if *inner.shutdown.borrow() {
+            return Err(Error::Closed);
+        }
+        let generation = sockets::SocketGeneration::new();
+        let factory = generation.factory(factory);
+        let (tcp, udp, _) =
+            prepare_native(&inner.config, factory.as_ref(), Some(&self.handle.bound))?;
+        *native = launch_native(inner, generation, factory, tcp, udp)?;
+        Ok(())
     }
 
     pub fn node_id(&self) -> &str {
@@ -603,6 +732,7 @@ impl Runtime {
         inner.shutdown.send_replace(true);
         inner.packet_generation().retire();
         inner.changed.notify_waiters();
+        self.handle.native.lock().await.stop().await;
         lock(&inner.delivery).take();
         lock(&self.handle.receiver).take();
         let handles = std::mem::take(&mut *lock(&inner.handles));

@@ -1,6 +1,7 @@
 FROM rust:1.98-trixie AS build
 RUN rustup component add clippy
 WORKDIR /src
+ENV CARGO_TARGET_DIR=/src/target/native-underlay
 COPY Cargo.toml Cargo.lock ./
 COPY crates ./crates
 COPY apps/controller ./apps/controller

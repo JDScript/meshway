@@ -5,6 +5,9 @@ mod dns;
 mod fixture;
 mod generation;
 mod http;
+mod managed;
+#[allow(unused_imports)]
+pub(crate) use managed::ManagedProtection;
 mod socket;
 
 #[allow(unused_imports)]

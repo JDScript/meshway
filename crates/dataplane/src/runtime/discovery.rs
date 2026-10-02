@@ -1,4 +1,5 @@
 //! Bounded observations on the carrier socket; never connection endpoint selection.
+use super::sockets::NativeUdp;
 use super::{Inner, Runtime, lock};
 use crate::{Error, Result};
 use meshway_protocol::stun::{self, Response};
@@ -11,7 +12,6 @@ use std::{
     time::Duration,
 };
 use tokio::{
-    net::UdpSocket,
     sync::{OwnedSemaphorePermit, Semaphore, mpsc, oneshot},
     time::Instant,
 };
@@ -48,6 +48,7 @@ pub struct UdpDiscoveryObservation {
 }
 
 pub(super) struct Registration {
+    pub generation: Arc<super::generation::Fence>,
     pub info: UdpSocketInfo,
     pub tx: mpsc::Sender<Request>,
     pub slot: Arc<Semaphore>,
@@ -88,7 +89,7 @@ impl Runtime {
         }
         sockets
             .values()
-            .filter(|entry| !entry.tx.is_closed())
+            .filter(|entry| !entry.tx.is_closed() && !entry.generation.retired())
             .map(|entry| entry.info.clone())
             .collect()
     }
@@ -108,19 +109,27 @@ impl Runtime {
             ));
         }
         let deadline = Instant::now() + timeout;
-        let (tx, info, socket_permit) = {
+        let (tx, info, socket_permit, generation) = {
             let sockets = lock(&inner.udp_sockets);
             if *inner.shutdown.borrow() {
                 return Err(Error::Closed);
             }
             let entry = sockets.get(&socket_id).ok_or(Error::Unavailable)?;
+            if entry.generation.retired() {
+                return Err(Error::Closed);
+            }
             validate_server(server, entry.info.local_addr)?;
             let permit = entry
                 .slot
                 .clone()
                 .try_acquire_owned()
                 .map_err(|_| Error::Capacity)?;
-            (entry.tx.clone(), entry.info.clone(), permit)
+            (
+                entry.tx.clone(),
+                entry.info.clone(),
+                permit,
+                entry.generation.clone(),
+            )
         };
         let global_permit = inner
             .udp_discovery_slots
@@ -166,9 +175,12 @@ impl Runtime {
         // its response had already entered the oneshot queue before retirement.
         let sockets = lock(&inner.udp_sockets);
         if *inner.shutdown.borrow()
-            || !sockets
-                .get(&socket_id)
-                .is_some_and(|entry| entry.info == info && !entry.tx.is_closed())
+            || generation.retired()
+            || !sockets.get(&socket_id).is_some_and(|entry| {
+                entry.info == info
+                    && Arc::ptr_eq(&entry.generation, &generation)
+                    && !entry.tx.is_closed()
+            })
         {
             return Err(Error::Closed);
         }
@@ -282,7 +294,10 @@ pub(super) async fn cancelled(pending: &Option<Request>) {
     }
 }
 
-pub(super) async fn writable(socket: &UdpSocket, pending: &Option<Request>) -> std::io::Result<()> {
+pub(super) async fn writable(
+    socket: &dyn NativeUdp,
+    pending: &Option<Request>,
+) -> std::io::Result<()> {
     if pending
         .as_ref()
         .is_some_and(|request| request.sent.is_none())
@@ -293,7 +308,11 @@ pub(super) async fn writable(socket: &UdpSocket, pending: &Option<Request>) -> s
     }
 }
 
-pub(super) fn send(socket: &UdpSocket, pending: &mut Option<Request>, ready: std::io::Result<()>) {
+pub(super) fn send(
+    socket: &dyn NativeUdp,
+    pending: &mut Option<Request>,
+    ready: std::io::Result<()>,
+) {
     let Some(request) = pending.as_mut() else {
         return;
     };

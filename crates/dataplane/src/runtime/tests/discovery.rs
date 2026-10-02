@@ -206,8 +206,8 @@ async fn discovery_engine_exit_removes_socket_and_closes_pending() {
             .await
     });
     request(&observer).await;
-    // Dispatch is first; this Runtime has exactly one UDP engine afterward.
-    lock(&runtime.handle.inner.handles)[1].abort();
+    // Native engines have their own owning lifecycle, separate from dispatch.
+    runtime.handle.native.lock().await.tasks[0].abort();
     assert_eq!(
         tokio::time::timeout(Duration::from_millis(100), call)
             .await

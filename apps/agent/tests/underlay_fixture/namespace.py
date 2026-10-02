@@ -13,6 +13,21 @@ from urllib.parse import urlparse, parse_qs
 
 sys.path.insert(0, '/lab')
 from fixture import TunSink, ip, dns_reply, SERVER
+import fixture
+
+
+def detailed_packet(packet):
+    decoded = original_packet(packet)
+    offset = (packet[0] & 15) * 4 if decoded['version'] == 4 else 40
+    if decoded['protocol'] == 6 and len(packet) >= offset + 20:
+        decoded['tcp_flags'] = packet[offset + 13]
+        decoded['tcp_payload_bytes'] = len(packet) - offset - (packet[offset + 12] >> 4) * 4
+    decoded['raw_hex'] = packet.hex()
+    return decoded
+
+
+original_packet = fixture.parse_packet
+fixture.parse_packet = detailed_packet
 
 
 def record(**event):
@@ -72,6 +87,13 @@ def server():
             request, peer = sock.recvfrom(65535)
             record(service='udp-receive', port=port, source=peer[0], source_port=peer[1], version=version, payload=request.hex())
             reply = dns(request, port=port, version=version) if port in (41864, 41866, 41867) else request
+            if port == 41865 and len(request) == 20 and request[:8] == bytes.fromhex('000100002112a442'):
+                raw = socket.inet_pton(socket.AF_INET if version == 4 else socket.AF_INET6, peer[0])
+                mask = request[4:8] + (request[8:20] if version == 6 else b'')
+                attribute = struct.pack('!BBH', 0, 1 if version == 4 else 2, peer[1] ^ 0x2112) + bytes(a ^ b for a, b in zip(raw, mask))
+                body = struct.pack('!HH', 0x20, len(attribute)) + attribute
+                reply = struct.pack('!HH', 0x101, len(body)) + request[4:20] + body
+                record(service='native-stun', version=version, source=peer[0], source_port=peer[1])
             if reply is not None:
                 sock.sendto(reply, peer)
 
@@ -92,6 +114,9 @@ def server():
                 request += exact(conn, 1)
             path = request.split(b' ', 2)[1].decode()
             record(service='http-request', path=path, version=version, source=peer[0])
+            if path.startswith('/native-done?'):
+                params = parse_qs(urlparse(path).query)
+                Path(f"/run/native-complete-{int(params['version'][0])}-{int(params['phase'][0])}").touch()
             if path == '/headers':
                 record(service='retirement-eof', path=path, eof=conn.recv(1) == b'')
                 return
@@ -191,6 +216,18 @@ def client():
         result['ur2_dns_check'] = {'rust_exit': dns_checked.returncode, 'stdout': dns_checked.stdout, 'stderr': dns_checked.stderr}
         if dns_checked.returncode:
             raise RuntimeError('configured protected DNS backup paths failed')
+        native = subprocess.run(['strace', '-f', '-e', 'trace=socket,setsockopt,getsockopt,connect,bind,listen,accept4,sendto,shutdown,close',
+            '-o', '/run/syscalls-native.log', '/underlay-tests', '--exact', 'underlay::fixture::native_runtime_paths', '--ignored', '--nocapture'],
+            env=env, capture_output=True, text=True, timeout=100)
+        result['native_runtime'] = {'rust_exit': native.returncode, 'stdout': native.stdout, 'stderr': native.stderr}
+        if native.returncode:
+            raise RuntimeError('protected native Runtime paths failed')
+        managed = subprocess.run(['strace', '-f', '-e', 'trace=socket,setsockopt,getsockopt,connect,bind,listen,accept4,sendto,shutdown,close',
+            '-o', '/run/syscalls-managed.log', '/underlay-tests', '--exact', 'underlay::fixture::managed_native_owner_lifecycle', '--ignored', '--nocapture'],
+            env=env, capture_output=True, text=True, timeout=15)
+        result['managed_native_owner'] = {'rust_exit': managed.returncode, 'stdout': managed.stdout, 'stderr': managed.stderr}
+        if managed.returncode:
+            raise RuntimeError('managed native owning lifecycle failed')
         def drop():
             os.setgroups([])
             os.setgid(65534)
@@ -202,8 +239,22 @@ def client():
         result['packets'] = [p for sink in sinks for p in sink.packets]
         if {p['version'] for p in result['packets'] if p['destination_port'] == 41861} != {4, 6}:
             raise RuntimeError('ordinary same-destination SYN missing from capture')
-        # Protected sockets may not have leaked SYN, DNS, UDP or data to TUN.
-        if len({(p['version'], p['source_port']) for p in result['packets']}) != 10:
+        # An incoming retry while a native listener is closed may produce a
+        # socket-less kernel RST. It has no owning FD/mark and is correctly
+        # captured, rather than bypassed with a destination/process exemption.
+        # Audit the full packet: never excuse SYN/SYN-ACK or application data.
+        resets = [p for p in result['packets'] if p['source_port'] in (41874, 41878)]
+        result['native_closed_port_resets'] = resets
+        for p in resets:
+            expected = (41874, '172.30.247.10', '172.30.247.20') if p['version'] == 4 else (41878, 'fd74:6d77:247::10', 'fd74:6d77:247::20')
+            if (p['source_port'], p['source'], p['destination']) != expected or p['protocol'] != 6 or p.get('tcp_flags') != 0x14 or p.get('tcp_payload_bytes') != 0:
+                raise RuntimeError('unexpected native listener capture (not a closed-port RST/ACK)')
+        if len(resets) > 8:
+            raise RuntimeError('unbounded closed-port native retries')
+        # Preserve the ten ordinary socket controls, with no protected SYN,
+        # DNS, UDP or application bytes in the capture table.
+        ordinary = [p for p in result['packets'] if p not in resets]
+        if len({(p['version'], p['source_port']) for p in ordinary}) != 10:
             raise RuntimeError('unexpected protected socket or unmarked fallback captured')
         result['status'] = 'ok'
     except BaseException as error:

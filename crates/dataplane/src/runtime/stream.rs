@@ -1,6 +1,7 @@
 use super::{
     Channel, DropReason, Failure, Incoming, Inner, Outbound, StageResult, StreamContext,
     StreamRole, lock,
+    sockets::{NativeListener, NativeSocketPurpose, NativeTcp},
     wire::{HOP_ACK, HOP_CONFIRM, hop_prologue},
 };
 use crate::{
@@ -17,7 +18,6 @@ use std::{
 };
 use tokio::{
     io::{AsyncRead, AsyncWrite, ReadBuf},
-    net::{TcpListener, TcpStream},
     sync::{OwnedSemaphorePermit, mpsc, watch},
 };
 
@@ -324,7 +324,12 @@ async fn run<S: DuplexStream>(
     }
 }
 
-pub(super) async fn listen(inner: Arc<Inner>, listener: TcpListener, context: StreamContext) {
+pub(super) async fn listen(
+    inner: Arc<Inner>,
+    listener: Box<dyn NativeListener>,
+    context: StreamContext,
+    socket_generation: Arc<super::generation::Fence>,
+) {
     let mut shutdown = inner.shutdown.subscribe();
     if *shutdown.borrow() {
         return;
@@ -339,14 +344,19 @@ pub(super) async fn listen(inner: Arc<Inner>, listener: TcpListener, context: St
                     continue;
                 };
                 let inner = inner.clone();
+                let socket_generation = socket_generation.clone();
                 let context = StreamContext { remote_addr: Some(remote_addr), ..context.clone() };
                 inner.clone().spawn(async move {
-                    if let Err(error) = configure_socket(&socket, inner.config.limits.native_tcp_nodelay) {
+                    if let Err(error) = configure_socket(socket.as_ref(), inner.config.limits.native_tcp_nodelay) {
                         inner.counters(TransportKind::NativeTcp).drop(error.into());
                         return;
                     }
                     match authenticate_with_context(&inner, socket, StreamRole::Acceptor, TransportKind::NativeTcp, 0, context).await {
-                        Ok(established) => { let _ = install(inner, established, TransportKind::NativeTcp, permit); }
+                        Ok(established) => {
+                            if let Ok(_guard) = socket_generation.enter() {
+                                let _ = install(inner, established, TransportKind::NativeTcp, permit);
+                            }
+                        }
                         Err(error) => { inner.counters(TransportKind::NativeTcp).drop(error.into()); }
                     }
                 });
@@ -355,7 +365,12 @@ pub(super) async fn listen(inner: Arc<Inner>, listener: TcpListener, context: St
     }
 }
 
-pub(super) async fn maintain(inner: Arc<Inner>, candidate: OutgoingCandidate) {
+pub(super) async fn maintain(
+    inner: Arc<Inner>,
+    candidate: OutgoingCandidate,
+    sockets: Arc<dyn super::sockets::NativeSocketFactory>,
+    socket_generation: Arc<super::generation::Fence>,
+) {
     let mut shutdown = inner.shutdown.subscribe();
     let timeout = Duration::from_millis(inner.config.limits.handshake_timeout_ms);
     let delay = Duration::from_millis(inner.config.limits.reconnect_delay_ms);
@@ -368,10 +383,19 @@ pub(super) async fn maintain(inner: Arc<Inner>, candidate: OutgoingCandidate) {
             .is_none_or(|peer| peer.priority > candidate.priority);
         if need && let Ok(permit) = inner.semaphore.clone().try_acquire_owned() {
             let attempt = async {
-                let socket = tokio::time::timeout(timeout, TcpStream::connect(&candidate.endpoint))
-                    .await
-                    .map_err(|_| Error::Timeout)??;
-                configure_socket(&socket, inner.config.limits.native_tcp_nodelay)?;
+                let socket = tokio::time::timeout(
+                    timeout,
+                    sockets.dial(
+                        candidate.endpoint.parse().map_err(|_| Error::Protocol)?,
+                        NativeSocketPurpose::Dial {
+                            id: candidate.id.as_deref(),
+                            peer: &candidate.peer,
+                        },
+                    ),
+                )
+                .await
+                .map_err(|_| Error::Timeout)??;
+                configure_socket(socket.as_ref(), inner.config.limits.native_tcp_nodelay)?;
                 let context = StreamContext {
                     candidate_id: candidate.id.clone(),
                     remote_addr: Some(socket.peer_addr()?),
@@ -388,6 +412,7 @@ pub(super) async fn maintain(inner: Arc<Inner>, candidate: OutgoingCandidate) {
                     context,
                 )
                 .await?;
+                let _guard = socket_generation.enter()?;
                 install(inner.clone(), established, TransportKind::NativeTcp, permit)
             };
             tokio::select! {
@@ -399,7 +424,7 @@ pub(super) async fn maintain(inner: Arc<Inner>, candidate: OutgoingCandidate) {
     }
 }
 
-pub(super) fn configure_socket(socket: &TcpStream, nodelay: bool) -> Result<()> {
+pub(super) fn configure_socket(socket: &dyn NativeTcp, nodelay: bool) -> Result<()> {
     socket.set_nodelay(nodelay)?;
     Ok(())
 }

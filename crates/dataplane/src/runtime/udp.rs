@@ -1,6 +1,7 @@
 use super::{
     Channel, DropReason, Failure, Incoming, Inner, Outbound, StageResult, StreamContext, discovery,
     lock,
+    sockets::NativeUdp,
     wire::{HOP_ACK, HOP_CONFIRM, hop_prologue},
     work_budget::WorkBudget,
 };
@@ -95,6 +96,7 @@ pub(super) fn bind(address: SocketAddr, receive_buffer_bytes: usize) -> Result<U
     Ok(UdpSocket::from_std(socket.into())?)
 }
 
+#[cfg(test)]
 pub(super) fn bind_outgoing(
     candidate: &OutgoingCandidate,
     receive_buffer_bytes: usize,
@@ -113,7 +115,7 @@ pub(super) fn bind_outgoing(
 
 pub(super) async fn run(
     inner: Arc<Inner>,
-    socket: UdpSocket,
+    socket: Box<dyn NativeUdp>,
     candidate: Option<OutgoingCandidate>,
     context: StreamContext,
     mut live: discovery::LiveSocket,
@@ -142,8 +144,8 @@ pub(super) async fn run(
             }
             _ = discovery::deadline(&discovery_pending) => discovery::expire(&mut discovery_pending),
             _ = discovery::cancelled(&discovery_pending) => discovery_pending = None,
-            ready = discovery::writable(&socket, &discovery_pending) => {
-                discovery::send(&socket, &mut discovery_pending, ready);
+            ready = discovery::writable(socket.as_ref(), &discovery_pending) => {
+                discovery::send(socket.as_ref(), &mut discovery_pending, ready);
                 work.completed_frame().await;
             }
             _ = tick.tick() => {
@@ -159,13 +161,13 @@ pub(super) async fn run(
                     if now.duration_since(pending.retried) >= CONFIRM_RETRY {
                         pending.retried = now;
                         // Fresh nonce for every retry; exact ciphertext replay remains rejected.
-                        let _ = send_encrypted(&socket, pending.address, &mut pending.cipher, Kind::Confirm, HOP_CONFIRM).await;
+                        let _ = send_encrypted(socket.as_ref(), pending.address, &mut pending.cipher, Kind::Confirm, HOP_CONFIRM).await;
                     }
                 }
                 for session in sessions.values_mut() {
                     if now.duration_since(session.pinged) >= PING_EVERY {
                         session.pinged = now;
-                        if let Err(error) = send_datagram(&socket, session, &[0]).await {
+                        if let Err(error) = send_datagram(socket.as_ref(), session, &[0]).await {
                             inner.counters(TransportKind::NativeUdp).drop(error.into());
                         }
                     }
@@ -174,7 +176,7 @@ pub(super) async fn run(
                     let need = lock(&inner.peers).get(&candidate.peer).is_none_or(|peer| peer.priority > candidate.priority);
                     if need && pending.is_none() && !confirming.values().any(|pending| pending.initiator) && now >= next_attempt {
                         next_attempt = now + Duration::from_millis(inner.config.limits.reconnect_delay_ms);
-                        pending = initiate(&inner, &socket, candidate).await.ok();
+                        pending = initiate(&inner, socket.as_ref(), candidate).await.ok();
                     }
                 }
             }
@@ -195,7 +197,7 @@ pub(super) async fn run(
                     let mut plaintext = Vec::with_capacity(frame.len() + 1);
                     plaintext.push(1);
                     plaintext.extend_from_slice(&frame);
-                    let send = send_datagram(&socket, session, &plaintext);
+                    let send = send_datagram(socket.as_ref(), session, &plaintext);
                     let result = if let Some(fence) = &outbound.generation {
                         fence.run(send).await
                     } else {
@@ -217,7 +219,7 @@ pub(super) async fn run(
                 let Ok((size, source)) = datagram else { break };
                 let result = if discovery::receive(&mut discovery_pending, &buffer[..size], source) { Ok(()) }
                     else if size == 0 || size > UDP_LIMIT { Err(Error::Oversize.into()) }
-                    else { receive(&inner, &socket, &tx, &mut sessions, &mut pending, &mut confirming, &buffer[..size], source, candidate.is_none(), &context).await };
+                    else { receive(&inner, socket.as_ref(), &tx, &mut sessions, &mut pending, &mut confirming, &buffer[..size], source, candidate.is_none(), &context).await };
                 if let Err(failure) = result { inner.counters(TransportKind::NativeUdp).drop(failure.reason); }
                 // All datagrams consume work, including rejected input and hop control.
                 // Authentication/confirmation and any reply finish before yielding.
@@ -232,7 +234,7 @@ pub(super) async fn run(
 
 async fn initiate(
     inner: &Inner,
-    socket: &UdpSocket,
+    socket: &dyn NativeUdp,
     candidate: &OutgoingCandidate,
 ) -> Result<Pending> {
     inner.authorize_transport(&candidate.peer, TransportKind::NativeUdp)?;
@@ -267,7 +269,7 @@ async fn initiate(
 #[allow(clippy::too_many_arguments)]
 async fn receive(
     inner: &Inner,
-    socket: &UdpSocket,
+    socket: &dyn NativeUdp,
     tx: &mpsc::Sender<Outbound>,
     sessions: &mut BTreeMap<[u8; 32], Session>,
     pending: &mut Option<Pending>,
@@ -489,7 +491,11 @@ fn install(
     Ok(())
 }
 
-async fn send_datagram(socket: &UdpSocket, session: &mut Session, plaintext: &[u8]) -> Result<()> {
+async fn send_datagram(
+    socket: &dyn NativeUdp,
+    session: &mut Session,
+    plaintext: &[u8],
+) -> Result<()> {
     send_encrypted(
         socket,
         session.address,
@@ -501,7 +507,7 @@ async fn send_datagram(socket: &UdpSocket, session: &mut Session, plaintext: &[u
 }
 
 async fn send_encrypted(
-    socket: &UdpSocket,
+    socket: &dyn NativeUdp,
     address: SocketAddr,
     cipher: &mut Cipher,
     kind: Kind,
@@ -515,7 +521,7 @@ async fn send_encrypted(
     send_raw(socket, &datagram, address).await
 }
 
-async fn send_raw(socket: &UdpSocket, datagram: &[u8], address: SocketAddr) -> Result<()> {
+async fn send_raw(socket: &dyn NativeUdp, datagram: &[u8], address: SocketAddr) -> Result<()> {
     if datagram.len() > UDP_LIMIT {
         return Err(Error::Oversize);
     }

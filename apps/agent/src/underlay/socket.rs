@@ -100,12 +100,24 @@ impl SocketFactory {
     }
 
     pub(crate) fn udp(&self, purpose: Purpose, bind: SocketAddr) -> io::Result<ProtectedUdp> {
+        self.udp_buffered(purpose, bind, 0)
+    }
+
+    pub(crate) fn udp_buffered(
+        &self,
+        purpose: Purpose,
+        bind: SocketAddr,
+        receive_buffer_bytes: usize,
+    ) -> io::Result<ProtectedUdp> {
         let socket = self.socket(purpose, bind, Type::DGRAM, Protocol::UDP)?;
         let state = self.0.state.lock().map_err(|_| closed())?;
         if !state.active {
             return Err(closed());
         }
         self.0.reservation.mark.verify(&socket)?;
+        if receive_buffer_bytes != 0 {
+            socket.set_recv_buffer_size(receive_buffer_bytes)?;
+        }
         socket.bind(&bind.into())?;
         let udp = UdpSocket::from_std(socket.try_clone()?.into())?;
         Ok(ProtectedUdp {
@@ -127,6 +139,8 @@ impl SocketFactory {
             return Err(closed());
         }
         self.0.reservation.mark.verify(&socket)?;
+        // Rebind after generation retirement without sharing live listeners.
+        socket.set_reuse_address(true)?;
         socket.bind(&bind.into())?;
         socket.listen(128)?;
         let listener = TcpListener::from_std(socket.try_clone()?.into())?;
@@ -147,6 +161,22 @@ pub(crate) struct ProtectedUdp {
 }
 
 impl ProtectedUdp {
+    pub(crate) async fn writable(&self) -> io::Result<()> {
+        tokio::select! {
+            biased;
+            _ = self.generation.cancelled.cancelled() => Err(closed()),
+            result = self.udp.writable() => result,
+        }
+    }
+
+    pub(crate) fn try_send_to(&self, bytes: &[u8], remote: SocketAddr) -> io::Result<usize> {
+        let state = self.generation.state.lock().map_err(|_| closed())?;
+        if !state.active {
+            return Err(closed());
+        }
+        self.generation.reservation.mark.verify(&self.socket)?;
+        self.udp.try_send_to(bytes, remote)
+    }
     pub(crate) fn purpose(&self) -> Purpose {
         self.purpose
     }

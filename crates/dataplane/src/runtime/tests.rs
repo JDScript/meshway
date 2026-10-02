@@ -10,6 +10,7 @@ use tokio::net::UdpSocket;
 mod control_recovery;
 mod discovery;
 mod managed;
+mod native_sockets;
 mod observability;
 mod packet_io;
 mod security;

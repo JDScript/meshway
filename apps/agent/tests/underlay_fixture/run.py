@@ -73,7 +73,8 @@ def run(args):
             time.sleep(.1)
         else:
             raise RuntimeError('observer or IPv6 DAD not ready')
-        child = docker('exec', containers[1], 'python3', '/lab/production.py', 'client', check=False, timeout=120)
+        docker('exec', '-d', containers[0], 'sh', '-c', 'MESHWAY_UNDERLAY_FIXTURE=1 /underlay-tests --exact underlay::fixture::native_peer --ignored --nocapture > /run/native-peer.log 2>&1; echo $? > /run/native-peer.exit')
+        child = docker('exec', containers[1], 'python3', '/lab/production.py', 'client', check=False, timeout=220)
         (directory / 'client.stdout').write_text(child.stdout)
         (directory / 'client.stderr').write_text(child.stderr)
         result.update(json.loads(child.stdout))
@@ -83,6 +84,17 @@ def run(args):
         (directory / 'syscalls.log').write_text(syscall)
         ur2_syscall = docker('exec', containers[1], 'cat', '/run/syscalls-ur2.log', check=False).stdout
         (directory / 'syscalls-ur2.log').write_text(ur2_syscall)
+        for name in ('native', 'managed'):
+            trace = docker('exec', containers[1], 'cat', f'/run/syscalls-{name}.log', check=False).stdout
+            (directory / f'syscalls-{name}.log').write_text(trace)
+            if result['status'] == 'ok':
+                result[f'{name}_syscall_audit'] = audit(trace, ordinary_connects=0, ordinary_binds=0)
+        peer = docker('exec', containers[0], 'cat', '/run/native-peer.log', check=False).stdout
+        (directory / 'native-peer.log').write_text(peer)
+        peer_exit = docker('exec', containers[0], 'cat', '/run/native-peer.exit', check=False).stdout.strip()
+        result['native_peer_exit'] = peer_exit
+        if result['status'] == 'ok' and peer_exit != '0':
+            raise RuntimeError('native peer did not finish successfully')
         observer = docker('exec', containers[0], 'cat', '/run/observer.jsonl').stdout
         (directory / 'observer.jsonl').write_text(observer)
         events = [json.loads(line) for line in observer.splitlines()]
@@ -93,6 +105,7 @@ def run(args):
                     assert any(e.get('service') == 'accept' and e['version'] == version and e['port'] == port for e in events), (version, port)
                 assert any(e.get('service') == 'listener-synack' and e['version'] == version for e in events)
             assert all(e.get('payload') != b'must-not-send'.hex() for e in events)
+            assert sum(e.get('service') == 'native-stun' for e in events) == 4
             assert sum(e.get('service') == 'dns' and e.get('hostname') == 'tcp.underlay.fixture' and e.get('transport') == 'tcp' for e in events) == 8
             for path in ('/slow', '/headers'):
                 assert any(e.get('service') == 'retirement-eof' and e.get('path') == path and e.get('eof') for e in events), path

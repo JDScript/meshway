@@ -1,6 +1,6 @@
 # Linux socket 级系统保护通路
 
-状态：**内核机制证明 + Agent 内部可复用工厂 / HTTP / bootstrap DNS 实现**。`apps/agent/src/underlay` 已提供生产代码与独立 namespace 真实路径 fixture；现有 Agent 主循环尚未接线，P1c 当前目标 IP `/32` bypass 仍是已知原型限制。fixture 不代表生产已部署，不证明 VLESS/WebSocket、真实公网 NAT、GeoIP 或完整出口闭环已经完成。
+状态：**内核机制证明 + Agent owning 工厂 / HTTP / bootstrap DNS + 托管 Native Runtime 接线**。托管 session 已统一注入 Native UDP/TCP 和 VLESS 外层 socket；内部 `Manager::install_prepared_underlay` 持有准备好的退休 owner，并在换代前 withdraw/join。Agent 日常构造仍使用明确 unmarked 的 `SystemUnderlay`；生产 RPDB owner/capture 尚未激活，P1c 目标 IP `/32` bypass 仍是已知原型限制。fixture 不代表生产已部署，不证明 VLESS/WebSocket、真实公网 NAT、GeoIP 或完整出口闭环已经完成。下方冻结 handoff / 旧实测是历史记录；最新接线边界见本文末节。
 
 ## 推荐：只跳过自有连续捕获规则
 
@@ -137,7 +137,7 @@ syscall audit 实际验证 **137 次** protected bind/connect/listen 前的 mark
 - 新 `underlay::ManagedProtection` 构造只接受已准备的 `SocketFactory` 与内部 `SystemDnsSnapshot`。listener / candidate / peer ID 在 P2a 的原 `StreamContext` 保持关联，不作为 bypass 条件。protected adapter 对旧 raw `prepare/accepted` 路径返回 Unsupported，避免无 ownership 的 FD 逃逸；实际统一 helper 使用 owned seam。
 - `Manager::new_with_protection` 与 async `install_socket_protection` 是内部注入点，后者先 withdraw / join 旧 session，再替换 factory；withdraw 保留既有业务 sink。`resolve_targets` protected 分支调用同一 generation 的 bootstrap resolver，不再对 carrier 域名调用 unmarked `lookup_host`；legacy SystemUnderlay 的默认行为保留。
 - P2a 新材料能力 HTTP 调用也通过 `Agent::controller_client`；生成器的 `secret_debug.rs` 与 `secret_debug::adapt` 原样保留，transport adapter 独立作用于 client。补充生成使用 P2a OpenAPI，17 个操作全部通过 checked transport adapter。
-- **Native UDP / core Native TCP 的 Runtime socket 注入仍未接线**；这些 sockets 不经过 P2a 的 VLESS/TLS/WS outer hook。factory 已提供受保护 UDP/TCP，但协调者须补 Runtime I/O 接口后才能激活整张网络的全 IP capture。guard/capture allocator、ownership/恢复、系统 DNS 非 plain 拓扑和 sink 迁移门槛也仍由正式 routing owner 完成。
+- 此冻结 handoff 当时 **Native UDP / core Native TCP 的 Runtime socket 注入未接线**；已由本文末节的后续切片接入。guard/capture allocator、ownership/恢复、系统 DNS 非 plain 拓扑和 sink 迁移门槛仍由正式 routing owner 完成。
 
 组合检查入口 `python3 apps/agent/tests/underlay_fixture/combine.py --p2a 56da5ad`：在批准 TMP 的独立 archive 组合代码 / manifest candidates / 两个 handoff patch，保留 P2a secret Debug 保护并重生成客户端，检查 Agent all-features/all-targets Clippy、默认无 features、仅 managed-connections 三种组合。它不会修改 P2a 冻结 checkout、当前分支源码或协调者 lock，不执行 Docker，也不把组合编译当作新的数据面实测。
 
@@ -164,3 +164,46 @@ UR2：合法 SERVFAIL 现在记录真实错误并尝试同一个 `SystemDnsSnaps
 复现命令：`python3 apps/agent/tests/underlay_fixture/review_regression.py --stage all`；Linux 用 `python3 apps/agent/tests/underlay_fixture/run.py --image meshway-rust-underlay-ur-fixes:local`，runner 仍持同一 performance.lock 到精确 cleanup。构建与 host 检查均 `CARGO_BUILD_JOBS=2`，新 target 为 `target/underlay-ur-fixes` / `target/underlay-ur-repro`，旧 target / Astra 原副本保持。root lock 只临时使用原已交付 candidate，候选内容未变，结束恢复协调者维护边界。
 
 针对修复的 host 检查：Agent `--all-features --lib underlay::` 5 tests 通过；Agent `--all-features --all-targets` Clippy `-D warnings` 通过；fmt check 与 syscall auditor 2 tests 通过。Linux image 构建同样执行 Agent lib/tests Clippy。公共契约、生成器和产品接线未改变，本轮没有把旧全消费者 / P2a 组合结果冒充新增复测。
+
+## Native owning Runtime 接线切片
+
+- `meshway_dataplane::sockets` 提供克制的 owning `NativeSocketFactory`、UDP/listener/TCP I/O trait 与 typed listener/dial metadata。无 raw FD、`into_inner` 或业务 `direct` 接口；原有 owned buffer、Batch、队列上限、身份、Noise/E2E、Access 与路径校验保持原边界。`Runtime::start` 兼容原 system sockets，`start_with_socket_factory` 注入失败不重试默认工厂。UDP receive buffer 在 bind 前保留原配置语义。
+- `Session::start_with_packet` 将同一 `Protection` 用于外部 VLESS、core native bind/listen/dial；`resolve_targets` 也经该对象解析。`ManagedProtection` 只使用已 prepared factory 与 plain DNS snapshot：Native UDP/TCP hostname 在管理层由同一 bootstrap resolver 解析成数值候选，每个地址重新创建 owning socket；Runtime factory 只接受 typed `SocketAddr`，不另开 DNS。TLS/WS/VLESS 握手仅换 owning 外层 stream，没有重写协议。
+- `ProtectedUdp::writable/try_send_to` 使 STUN 的既有 readiness/try-send 路径也在同一个实际 carrier FD 上执行 mark 回读与退休 fence。其余 send/recv 同样持有保护代际。accepted TCP 继续验证完整继承 mark；listener 使用 `SO_REUSEADDR` 支持换代重绑，未启用 `SO_REUSEPORT`。
+- `Manager::install_prepared_underlay` 先 withdraw/join 旧 session，保留业务 sink，然后安装 `ManagedProtection` 并持有唯一 `PreparedGeneration` owner；替换或 Manager drop 使旧保护代际退休。session watchdog 独立监听保护取消、业务 withdraw 与 lease；保护退休不继续报告 Applied，也不能通过一次成功保存 ACK 续命。controller 恢复通道的 owner 仍独立，业务 Manager 不持有它。
+- Runtime 另有独立 `SocketGeneration`：每次 native I/O poll/try-send 和退休共享 fence，等待 read/accept/connect 会被唤醒；`replace_native_socket_factory` 先退休/join native engines，再在原 listener 地址/端口上重绑，失败保持 native 关闭，可用新 capability 在**同一 Runtime**恢复。它不恢复 PacketGeneration、不重新授权、不更换节点身份；保留 Runtime 的 E2E 缓存。初次 `:0` 分配的 listener 端口在该 Runtime 重绑时固定；outgoing UDP 是新 socket，可获得新端口。旧 STUN 请求按不可复用的内部 socket-generation identity 校验，不能因 ordinal/地址恰好相同而接受旧结果。
+- 退休只 fence 未发出的应用 I/O；不能撤回已经进入内核/网络的字节。被外部调用者保留的 wrapper 可能仍持 FD，不能描述成全部 FD 已关闭。native engine join 后 listener 已丢弃；core TCP channel 和认证任务被取消/错误唤醒后丢弃。可用 listener 列表描述初次 bind，失败/退休状态须结合 manager observation，而非把固定地址清单当作持续可达证明。
+
+### 激活门槛与剩余项
+
+正常托管 Runtime 现在确实走统一注入 seam；**正常 Agent 默认仍 unmarked**。`install_prepared_underlay` 是 routing owner 的内部接点，并不是 CLI flag 或新本地配置入口。正式主循环尚无生产 reservation allocator、持久 ownership/恢复、外部 RPDB/nft mark 监控、全自有 capture block 发布或 `/32` pin/sink 迁移事务；它也尚未自动调用 `PreparedGeneration::prepare` / 安装 prepared controller channel。没有准备并验证这些资源之前，不能声称系统保护或全 IP 接管已激活。
+
+后续 owner 必须先 prepare 双栈 guard/capability 和 bootstrap scope，在自有 capture 发布前安装 controller channel 与业务 Manager capability；换网/endpoint/DNS scope 更新先准备新代际，取消旧观测并 withdraw/join，再安装/重建或显式 Runtime rebind。保护失败保留 sink，禁止将 Manager 改回默认 system factory续跑。完整系统 split-DNS/NSS/local overrides、真实公网 NAT 打洞、自动建连主备策略及正式出口捕获仍是后续主线。本切片不安装/删除宿主路由、DNS、防火墙，不改 HTTP 契约/生成器/根 manifests。
+
+### 验证入口
+
+```sh
+CARGO_BUILD_JOBS=2 CARGO_TARGET_DIR=target/native-underlay cargo test --locked -p meshway-dataplane native_sockets -- --test-threads=1
+CARGO_BUILD_JOBS=2 CARGO_TARGET_DIR=target/native-underlay cargo test --locked -p meshway-agent -p meshway-dataplane --all-features --lib -- --test-threads=1
+CARGO_BUILD_JOBS=2 CARGO_TARGET_DIR=target/native-underlay cargo clippy --locked -p meshway-agent -p meshway-dataplane --all-features --all-targets -- -D warnings
+python3 apps/agent/tests/underlay_fixture/run.py --image meshway-native-underlay:local
+```
+
+Host native tests是实际 loopback sockets 与注入失败测试，不能证明 SO_MARK。Linux runner 在同一 performance lock 下使用原隔离 capture/TUN fixture：新增双栈远端 Native UDP/TCP listen/dial、Noise/E2E probe、同 Runtime prepared 换代与失败关闭、实际 UDP FD STUN；独立 `syscalls-native.log` / `syscalls-managed.log` 审计 pre-bind/connect/listen mark/readback，旧普通同 IP capture 对照继续运行。server peer 仅在无 capture 的隔离 server namespace 使用 system sockets；client Native Runtime 必须通过 prepared 工厂。Linux 与 host target 独立，旧 run 证据不修改；本轮结果在完成实测后追加。
+
+Host 最终检查：Agent lib 134 tests 通过；dataplane lib 80 tests（含 4 个新增 native owning/failure/rebind/等待唤醒行为测试）通过；测试 fixture 拆出固定端口入口后，Agent `managed_connections::tests::` 11 tests 再通过。Agent/dataplane all-features/all-targets Clippy `-D warnings`、fmt check、syscall auditor 2 tests 均通过。默认无 features、仅 managed-connections、仅 transport-lab 的 lib Clippy 使用独立 `target/native-underlay-features` 串行通过。
+
+过程中的失败保留：首个全套 Agent run 的既有延迟历史 `received_at >= measured_at` 时间顺序断言失败，隔离复测与随后完整 134 tests 均通过，未修改该断言。dataplane 原 engine-abort 测试依赖旧 `Inner.handles[1]` 的位置，已改为明确取消独立 native owner 的 engine，仍验证 pending STUN 关闭、端口释放和 permit 回收，最终完整 80 tests 通过。
+
+Linux fixture 进一步区分关闭 listener 窗口的 **socket-less kernel RST/ACK** 与受保护 socket 的发送：记录完整 raw packet、TCP flags 与 payload 长度，只允许明确 native listener 源端口的 `RST|ACK=0x14`、零 payload、正确双栈源/目的组合作为该控制包；任何 SYN/SYN-ACK、数据或其它额外 socket 仍报错。此 RST 继续进入自有 capture/sink，未新增豁免。Native UDP 保持原 unconnected sendto 模型，STUN 与邻接握手复用实际 FD；没有为规避捕获而改成 connected UDP 或跳过其验证。
+
+### 2026-10-02 Native 实测结果
+
+最终 `mw-rust-underlay-60c61dc9ee96`：`status=ok`、`cleanup_errors=[]`，UTC `05:55:28.154945` → `05:56:29.383110`，镜像 `sha256:a4b0760e8d431a33c3d8de6e2f1a03e18d34c70589fc230903e0c83ffc1459ec`。材料在批准 TMP `meshway-underlay-artifacts/mw-rust-underlay-60c61dc9ee96/`，`result.json` SHA256 `9d3d428694c63d0652f859096c02d5ecdcd1dc30ad0b3322b8a82f65797d31f1`。
+
+- Native 双栈 UDP/TCP dial/listen、Noise/E2E 往返、prepared 退休后的失败关闭、同 Runtime 新代恢复均通过；peer test exit 0。`syscalls-native.log` 验证 76 次 protected pre-network calls、4 个 premarked listeners，ordinary bind/connect 均为 0。
+- Manager 固定端口 owner 安装、保护退休使 Applied 撤回、新 owner 恢复、withdraw 均通过。`syscalls-managed.log` 验证 6 次 protected pre-network calls、2 个 premarked listeners，ordinary bind/connect 均为 0。测试不用 host 的端口可用性 allocator，因此没有未标记的测试预探 listener。
+- 4 次真实 STUN 返回对应实际 UDP FD 的端口，IPv4/IPv6 源地址按真实系统选择校验。capture 共 12 包：原 10 个 ordinary socket 对照，另 2 个 native listener 关闭窗口的 RST/ACK，flags 均 0x14、payload 均 0；raw packet 保留。没有 protected SYN/SYN-ACK、DNS、UDP 或应用字节泄漏。
+- 同次重新执行旧 production_paths / UR1 / UR2 / permission_denied：基本路径 137 次、4 个 listeners premark；UR2 76 次且无 ordinary bind/connect；权限不足拒绝、双栈 alias 与 backup DNS 规则都通过。Linux image 构建同样执行 Agent lib/tests Clippy `-D warnings`。
+
+此前 run 均保留为失败：`8d8545d52360` 构建期间源码继续编辑导致 image/source hash 不同；`60e2506d6c9a` fixture 对通配 IPv6 bind 误要求唯一源地址；`50c5d5d7669e` 原 capture 计数未区分关闭端口 RST；`0836b8d48052` 逐包 RST 校验已通过，但 Manager fixture 调用了 host 端口 allocator 的 ordinary availability listener，严格 syscall auditor 正确拒绝。最终用独立固定端口 fixture 消除此测试噪声，没有放宽 mark/readback 或应用 I/O 验收。

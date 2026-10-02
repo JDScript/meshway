@@ -105,11 +105,17 @@ async fn bind_failure(address: &str, protocol: &str, error: std::io::Error) -> !
 pub(crate) fn fixture(
     kind: ConnectionTransport,
 ) -> (NodeConnections, PrivateKey, NodeConnections, PrivateKey) {
+    fixture_at_port(kind, listener_port(kind))
+}
+
+pub(crate) fn fixture_at_port(
+    kind: ConnectionTransport,
+    port: u16,
+) -> (NodeConnections, PrivateKey, NodeConnections, PrivateKey) {
     let a = Identity::generate().unwrap();
     let b = Identity::generate().unwrap();
     let a_id = "a".repeat(64);
     let b_id = "b".repeat(64);
-    let port = listener_port(kind);
     let base = |id: String, key: String| NodeConnections {
         schema_version: 1,
         revision: 1,
@@ -182,7 +188,7 @@ pub(super) async fn session(
     key: PrivateKey,
     path: Option<&std::path::Path>,
 ) -> session::Session {
-    let targets = resolve_targets(intent)
+    let targets = resolve_targets(intent, &sockets::SystemUnderlay)
         .await
         .unwrap_or_else(|_| panic!("resolve fixture"));
     session::Session::start(

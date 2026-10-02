@@ -195,7 +195,7 @@ async fn websocket_wrong_uuid_host_path_and_noise_peer_key_never_authenticate() 
             }
             _ => unreachable!(),
         }
-        let targets = resolve_targets(&client)
+        let targets = resolve_targets(&client, &sockets::SystemUnderlay)
             .await
             .unwrap_or_else(|_| panic!("targets"));
         let mut a = session::Session::start(

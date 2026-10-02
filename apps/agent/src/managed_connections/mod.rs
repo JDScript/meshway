@@ -38,7 +38,7 @@ mod managed_material_tests;
 mod probe;
 mod profiles;
 mod session;
-mod sockets;
+pub(crate) mod sockets;
 #[cfg(unix)]
 pub(crate) use probe::Prober;
 #[cfg(test)]
@@ -153,6 +153,7 @@ impl Drop for Manager {
 }
 
 pub(crate) struct Manager {
+    underlay_generation: Option<crate::underlay::PreparedGeneration>,
     socket_protection: std::sync::Arc<dyn sockets::Protection>,
     profiles: Option<PathBuf>,
     managed_materials: Vec<meshway_protocol::ManagedVlessMaterial>,
@@ -189,6 +190,7 @@ struct Material {
 impl Manager {
     pub fn new(profiles: Option<PathBuf>, lease: Duration) -> Self {
         Self {
+            underlay_generation: None,
             socket_protection: std::sync::Arc::new(sockets::SystemUnderlay),
             profiles,
             managed_materials: Vec::new(),
@@ -229,6 +231,23 @@ impl Manager {
 
     pub fn enable_discovery(&mut self, options: crate::EndpointDiscoveryOptions) {
         self.discovery_options = options;
+    }
+
+    /// Routing owner supplies an already prepared dual-stack capability. No
+    /// capture is activated here. Withdraw/join preserves the business sink.
+    #[allow(dead_code)]
+    pub(crate) async fn install_prepared_underlay(
+        &mut self,
+        generation: crate::underlay::PreparedGeneration,
+        upstreams: crate::underlay::SystemDnsSnapshot,
+    ) {
+        self.withdraw(Reason::ShuttingDown).await;
+        self.socket_protection = std::sync::Arc::new(crate::underlay::ManagedProtection::new(
+            generation.factory(),
+            upstreams,
+        ));
+        // Drop retires the former generation only after its session joined.
+        self.underlay_generation = Some(generation);
     }
 
     pub fn discovery_snapshot(
@@ -367,7 +386,10 @@ impl Manager {
         }
         let targets = match time::timeout(
             Duration::from_secs(5),
-            resolve_targets(&snapshot.payload.connections),
+            resolve_targets(
+                &snapshot.payload.connections,
+                self.socket_protection.as_ref(),
+            ),
         )
         .await
         {
@@ -538,7 +560,7 @@ impl Manager {
                 })
                 .await
                 .map_err(|_| Failure(Reason::InternalError))??;
-                let targets = resolve_targets(&semantic).await?;
+                let targets = resolve_targets(&semantic, self.socket_protection.as_ref()).await?;
                 Ok::<_, Failure>((profiles, targets))
             },
         )
@@ -760,17 +782,18 @@ fn controller_candidate<'a>(
 
 async fn resolve_targets(
     intent: &NodeConnections,
+    protection: &dyn sockets::Protection,
 ) -> Result<BTreeMap<String, Vec<SocketAddr>>, Failure> {
     stream::iter(intent.outgoing.iter().map(|candidate| async move {
         let resolved = time::timeout(
             Duration::from_secs(2),
-            tokio::net::lookup_host((candidate.endpoint.host.as_str(), candidate.endpoint.port)),
+            protection.resolve(candidate.endpoint.host.as_str(), candidate.endpoint.port),
         )
         .await
         .map_err(|_| Failure(Reason::ResolveFailed))?
         .map_err(|_| Failure(Reason::ResolveFailed))?;
         let mut addresses = BTreeSet::new();
-        for address in resolved.take(32) {
+        for address in resolved.into_iter().take(32) {
             let ip = match address.ip() {
                 std::net::IpAddr::V6(ip) => ip
                     .to_ipv4_mapped()

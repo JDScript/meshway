@@ -14,7 +14,6 @@ use meshway_protocol::{
     ConnectionNeighborState, ConnectionTransport, NodeConnections, OutgoingConnectionCandidate,
 };
 use tokio::{
-    net::TcpListener,
     sync::{Semaphore, watch},
     task::JoinSet,
     time::{self, Instant},
@@ -25,9 +24,11 @@ use super::{
     core_config,
     profiles::{self, Profiles},
     protocol_transport,
+    sockets::OuterListener,
 };
 
 pub(super) struct Session {
+    protection: Arc<dyn super::sockets::Protection>,
     pub runtime: Arc<Runtime>,
     tasks: JoinSet<()>,
     outcomes: Outcomes,
@@ -90,6 +91,9 @@ impl Session {
         packet: Option<&crate::managed_dataplane::PacketPlan>,
         protection: Arc<dyn super::sockets::Protection>,
     ) -> Result<Self, Failure> {
+        protection
+            .check_active()
+            .map_err(|_| Failure(Reason::TransportFailed))?;
         let mut config = core_config(intent, key, targets)?;
         if let Some(plan) = packet {
             plan.augment(&mut config)
@@ -139,11 +143,15 @@ impl Session {
         // All external binds precede core's atomic native bind/start. Failure
         // drops those sockets; no partially installed listener survives.
         let runtime = Arc::new(
-            Runtime::start(config)
-                .await
-                .map_err(|_| Failure(Reason::BindFailed))?,
+            Runtime::start_with_socket_factory(
+                config,
+                Arc::new(super::sockets::NativeAdapter(protection.clone())),
+            )
+            .await
+            .map_err(|_| Failure(Reason::BindFailed))?,
         );
         let mut session = Self {
+            protection: protection.clone(),
             runtime,
             tasks: JoinSet::new(),
             outcomes: Arc::default(),
@@ -279,6 +287,7 @@ impl Session {
             tokio::select! {
                 biased;
                 _ = time::sleep_until(deadline) => break Reason::LeaseExpired,
+                _ = self.protection.cancelled() => break Reason::TransportFailed,
                 result = deadlines.changed() => if result.is_err() { break Reason::ShuttingDown; },
                 _ = &mut packet_io => break Reason::InternalError,
                 _ = &mut probe => break Reason::InternalError,
@@ -461,7 +470,7 @@ async fn probe_peers(
 
 async fn accept(
     runtime: Arc<Runtime>,
-    listener: TcpListener,
+    listener: OuterListener,
     id: String,
     peers: Vec<String>,
     profile: profiles::Server,
@@ -475,7 +484,7 @@ async fn accept(
         tokio::select! {
             incoming = listener.accept() => {
                 let Ok((socket, remote)) = incoming else { return; };
-                if protection.accepted(&socket, &id).is_err() { continue; }
+                if socket.accepted(protection.as_ref(), &id).is_err() { continue; }
                 if pending.len() >= 32 || socket.set_nodelay(true).is_err() { continue; }
                 let Ok(permit) = handshakes.clone().try_acquire_owned() else { continue; };
                 let runtime = runtime.clone();

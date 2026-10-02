@@ -4,6 +4,7 @@ mod config;
 mod crypto;
 mod framing;
 pub mod packet_io;
+pub use runtime::sockets;
 mod runtime;
 
 pub use config::{
