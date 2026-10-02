@@ -10,7 +10,7 @@ import { Label } from "@/components/ui/label"
 import { NativeSelect, NativeSelectOption } from "@/components/ui/native-select"
 import { SIGN_IN_FIELD, type SignInKey } from "@/lib/action-scope"
 import type { OwnerClaimState } from "@/lib/account-model"
-import { claimOwnerAction } from "@/lib/onboarding-actions"
+import { claimOwnerAction } from "@/lib/setup-actions"
 
 const initialState: OwnerClaimState = { status: "idle" }
 
@@ -26,11 +26,11 @@ export function OwnerClaimForm({ signIn, networkId, networkName }: { signIn: Sig
         <p className="flex items-start gap-2">
           <CheckCircle2Icon className="mt-0.5 size-4 shrink-0 text-emerald-600 dark:text-emerald-400" />
           <span>
-            <span className="font-medium break-all">{state.email}</span> 已成为「{networkName}」的所有者。现有节点仍为未分配状态，不会自动归属。
+            <span className="font-medium break-all">{state.email}</span> 已成为「{networkName}」的所有者。现有节点仍未分配，由所有者在「成员」中认领。
           </span>
         </p>
         {state.note ? <p className="text-xs text-muted-foreground">{state.note}</p> : null}
-        <SwitchAccountButton signIn={signIn} returnTo="/" label="退出管理员会话，使用该账户登录" />
+        <SwitchAccountButton signIn={signIn} returnTo="/" label="退出管理员会话并用该账户登录" />
       </div>
     )
   }
@@ -70,7 +70,7 @@ export function OwnerClaimForm({ signIn, networkId, networkName }: { signIn: Sig
           disabled={pending}
           className="h-9"
         />
-        {kind === "new_account" ? <p className="text-xs text-muted-foreground">至少 12 个字节。只在这里设置，Web 不保存。</p> : null}
+        {kind === "new_account" ? <p className="text-xs text-muted-foreground">由所有者本人设置，至少 12 个字节。</p> : null}
       </div>
       {kind === "new_account" ? (
         <div className="flex flex-col gap-1.5">
@@ -78,13 +78,20 @@ export function OwnerClaimForm({ signIn, networkId, networkName }: { signIn: Sig
           <Input id={ids.confirmation} name="password_confirmation" type="password" required autoComplete="new-password" disabled={pending} className="h-9" />
         </div>
       ) : null}
+      <label className="flex items-start gap-2 text-[0.8125rem]">
+        <input type="checkbox" name="continue" defaultChecked disabled={pending} className="mt-0.5 size-4 accent-primary" />
+        <span>
+          认领后以该账户进入网络
+          <span className="block text-xs text-muted-foreground">退出管理员会话，以所有者身份登录并打开成员页。</span>
+        </span>
+      </label>
       {state.status === "error" ? (
         <p role="alert" className="flex items-start gap-1.5 text-xs break-words text-destructive">
           <CircleAlertIcon className="mt-px size-3.5 shrink-0" />
           {state.message}
         </p>
       ) : null}
-      <Button type="submit" size="lg" disabled={pending}>
+      <Button type="submit" disabled={pending}>
         {pending ? "正在认领" : "认领为所有者"}
       </Button>
     </form>

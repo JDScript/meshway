@@ -6,7 +6,8 @@ import { RefreshButton } from "@/components/common/refresh-button"
 import { StandaloneFrame } from "@/components/shell/standalone-frame"
 import { landingNetwork } from "@/lib/network-scope"
 import { consoleRoutes, legacyTarget, type ConsoleRoutes } from "@/lib/routes"
-import { requireAdminToken } from "@/lib/session"
+import { SwitchAccountButton } from "@/components/auth/switch-account-button"
+import { requireConsoleCredential, sessionKey } from "@/lib/session"
 
 type SearchParams = Record<string, string | string[] | undefined>
 
@@ -14,11 +15,26 @@ type SearchParams = Record<string, string | string[] | undefined>
  * Entry points without a network segment: `/` and the pre-network URLs
  * (`/nodes`, `/routing`, …). They land in the remembered or first network.
  */
-export async function NetworkLanding({ target }: { target: (routes: ConsoleRoutes) => string }) {
+export async function NetworkLanding({ target, root = false }: { target: (routes: ConsoleRoutes) => string; root?: boolean }) {
   await connection()
-  await requireAdminToken()
+  const credential = await requireConsoleCredential()
+  // The instance credential's home is setup and recovery, not a network.
+  if (root && credential.kind === "bootstrap") redirect("/setup")
   const landing = await landingNetwork()
   if (landing.ok) redirect(target(consoleRoutes(landing.networkId)))
+  if (landing.empty && credential.kind === "user") {
+    return (
+      <StandaloneFrame>
+        <div className="flex flex-col gap-1.5">
+          <h1 className="text-lg font-semibold tracking-tight">还没有加入网络</h1>
+          <p className="text-[0.8125rem] leading-relaxed text-muted-foreground">
+            你的账户目前不属于任何网络。请向网络所有者索取邀请链接，打开后接受即可。
+          </p>
+        </div>
+        <SwitchAccountButton signIn={await sessionKey()} returnTo="/" label="退出登录" />
+      </StandaloneFrame>
+    )
+  }
   return (
     <StandaloneFrame>
       <div className="flex flex-col gap-1.5">

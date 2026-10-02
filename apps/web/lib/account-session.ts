@@ -33,8 +33,14 @@ export const fetchConsoleIdentity = cache(async (): Promise<ConsoleIdentity> => 
     const session = await getAccountSession(controllerUrl(), credential.token)
     return {
       kind: "user",
+      userId: session.user.user_id,
       email: session.user.email,
-      memberships: session.memberships.map((membership) => ({ networkId: membership.network_id, role: membership.role })),
+      emailVerified: session.user.email_verified,
+      memberships: session.memberships.map((membership) => ({
+        networkId: membership.network_id,
+        membershipId: membership.membership_id,
+        role: membership.role,
+      })),
     }
   } catch (error) {
     if (!isCredentialRejected(error)) return { kind: "user-unverified", error: describeError(error, credential.token) }

@@ -41,6 +41,8 @@ export function consoleRoutes(networkId: string) {
     diagnostics: (query?: { source?: string }, hash?: string) => withQuery(`${base}/diagnostics`, query, hash),
     topology: (query?: Query, hash?: string) => withQuery(`${base}/topology`, query, hash),
     settings: `${base}/settings`,
+    members: `${base}/members`,
+    account: `${base}/account`,
   }
 }
 

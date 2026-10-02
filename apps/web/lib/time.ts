@@ -47,3 +47,14 @@ export function formatDateTime(timestamp: string) {
 export function byLastSeenDesc<T extends { last_seen: string }>(a: T, b: T) {
   return (Date.parse(b.last_seen) || 0) - (Date.parse(a.last_seen) || 0)
 }
+
+/** Controller account timestamps are Unix seconds. */
+export function formatEpochSeconds(seconds: number) {
+  return new Intl.DateTimeFormat("zh-CN", {
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false,
+  }).format(seconds * 1000)
+}

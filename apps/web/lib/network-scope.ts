@@ -38,12 +38,12 @@ export async function requireNetwork(params: Promise<{ network: string }>): Prom
  * Where `/` and pre-network URLs land: the last network chosen in the
  * switcher if it still exists, else the controller's first network.
  */
-export async function landingNetwork(): Promise<{ ok: true; networkId: string } | { ok: false; error: string }> {
+export async function landingNetwork(): Promise<{ ok: true; networkId: string } | { ok: false; error: string; empty: boolean }> {
   const networks = await fetchNetworks()
-  if (!networks.ok) return { ok: false, error: networks.error }
+  if (!networks.ok) return { ok: false, error: networks.error, empty: false }
   const selected = (await cookies()).get(NETWORK_COOKIE)?.value
   const network =
     networks.data.networks.find((candidate) => candidate.network_id === selected) ?? networks.data.networks[0]
-  if (!network) return { ok: false, error: "Controller 没有任何网络。" }
+  if (!network) return { ok: false, error: "Controller 没有任何网络。", empty: true }
   return { ok: true, networkId: network.network_id }
 }

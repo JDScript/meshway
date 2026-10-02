@@ -1,6 +1,6 @@
 "use client"
 
-import { BookOpenIcon, ChevronsUpDownIcon, LogOutIcon, MonitorIcon, MoonIcon, SunIcon, UserPlusIcon, CrownIcon } from "lucide-react"
+import { BookOpenIcon, ChevronsUpDownIcon, KeyRoundIcon, LogOutIcon, MonitorIcon, MoonIcon, SunIcon, UserPlusIcon, UserRoundIcon } from "lucide-react"
 import Link from "next/link"
 import { useTheme } from "next-themes"
 import { useTransition } from "react"
@@ -34,9 +34,9 @@ function describe(identity: ConsoleIdentity, networkId: string): { initial: stri
   if (identity.kind === "bootstrap") {
     return {
       initial: "管",
-      title: "实例管理员",
-      detail: "管理员令牌会话",
-      note: "兼容管理入口，不代表用户，不能批准用户设备。8 小时内有效。",
+      title: "实例管理员令牌",
+      detail: "初始化与恢复会话",
+      note: "不是任何人的账户，不能批准设备。日常管理请用账户登录。",
     }
   }
   if (identity.kind === "user-unverified") {
@@ -46,8 +46,8 @@ function describe(identity: ConsoleIdentity, networkId: string): { initial: stri
   return {
     initial: identity.email.slice(0, 1).toUpperCase(),
     title: identity.email,
-    detail: role ? `本网络${roleLabels[role]}` : "不是本网络成员",
-    note: "账户会话，到期时间由 controller 决定。",
+    detail: role ? roleLabels[role] : "不是本网络成员",
+    note: "",
   }
 }
 
@@ -62,7 +62,7 @@ export function NavUser({ identity }: { identity: ConsoleIdentity }) {
   const [pending, startTransition] = useTransition()
   const vault = useDraftVault()
   const signIn = useSignIn()
-  const { networkId } = useNetwork()
+  const { networkId, routes } = useNetwork()
   const view = describe(identity, networkId)
   const role = roleIn(identity, networkId)
   const identityRow = (
@@ -93,25 +93,29 @@ export function NavUser({ identity }: { identity: ConsoleIdentity }) {
               <DropdownMenuLabel className="p-0 font-normal">
                 <span className="flex items-center gap-2 px-1 py-1.5 text-left text-foreground">{identityRow}</span>
               </DropdownMenuLabel>
-              <p className="px-2 pb-1.5 text-xs break-words text-muted-foreground">{view.note}</p>
+              {view.note ? <p className="px-2 pb-1.5 text-xs break-words text-muted-foreground">{view.note}</p> : null}
             </DropdownMenuGroup>
-            {identity.kind === "bootstrap" || role === "owner" || role === "admin" ? (
-              <>
-                <DropdownMenuSeparator />
-                <DropdownMenuGroup>
-                  <DropdownMenuItem render={<Link href={`/invitations/new?${new URLSearchParams({ network: networkId })}`} />}>
-                    <UserPlusIcon />
-                    邀请成员
-                  </DropdownMenuItem>
-                  {identity.kind === "bootstrap" ? (
-                    <DropdownMenuItem render={<Link href="/onboarding" />}>
-                      <CrownIcon />
-                      认领网络所有者
-                    </DropdownMenuItem>
-                  ) : null}
-                </DropdownMenuGroup>
-              </>
-            ) : null}
+            <DropdownMenuSeparator />
+            <DropdownMenuGroup>
+              {identity.kind === "user" ? (
+                <DropdownMenuItem render={<Link href={routes.account} />}>
+                  <UserRoundIcon />
+                  我的账户
+                </DropdownMenuItem>
+              ) : null}
+              {identity.kind === "bootstrap" || role === "owner" || role === "admin" ? (
+                <DropdownMenuItem render={<Link href={`${routes.members}?invite=1`} />}>
+                  <UserPlusIcon />
+                  邀请成员
+                </DropdownMenuItem>
+              ) : null}
+              {identity.kind === "bootstrap" ? (
+                <DropdownMenuItem render={<Link href="/setup" />}>
+                  <KeyRoundIcon />
+                  实例初始化与恢复
+                </DropdownMenuItem>
+              ) : null}
+            </DropdownMenuGroup>
             <DropdownMenuSeparator />
             <DropdownMenuGroup>
               <DropdownMenuLabel>外观</DropdownMenuLabel>

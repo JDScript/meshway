@@ -64,7 +64,7 @@ export default async function AuthorizeDevicePage({ searchParams }: {
         </div>
         <div className="flex flex-col gap-2">
           <SwitchAccountButton signIn={signIn} returnTo={returnTo} label="退出管理员会话并使用账户登录" />
-          <Link href="/onboarding" className="text-center text-xs text-muted-foreground underline underline-offset-4">
+          <Link href="/setup" className="text-center text-xs text-muted-foreground underline underline-offset-4">
             还没有账户？为网络认领第一个所有者
           </Link>
         </div>

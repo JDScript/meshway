@@ -3,16 +3,15 @@
 import {
   ControlApiError,
   acceptAccountInvitation,
-  createAccountInvitation,
   getAccountSession,
   loginAccount,
   registerInvitedAccount,
 } from "@meshway/control-client"
-import { zAccountRole, zAcceptInvitationRequest, zNetworkSnapshot } from "@meshway/control-client/schemas"
+import { zAcceptInvitationRequest } from "@meshway/control-client/schemas"
 import { redirect } from "next/navigation"
 
-import { invitationPath, passwordProblem, type InvitationIssueState, type InvitationState } from "@/lib/account-model"
-import { controllerUrl, describeError, isCredentialRejected, isPermissionDenied } from "@/lib/controller"
+import { passwordProblem, type InvitationState } from "@/lib/account-model"
+import { controllerUrl, describeError, isCredentialRejected } from "@/lib/controller"
 import { consoleRoutes } from "@/lib/routes"
 import { SIGN_IN_FIELD } from "@/lib/action-scope"
 import { EXPIRED_LOGIN_PATH, LOGIN_PATH, readSession, requireRenderedSignIn, startUserSession } from "@/lib/session"
@@ -91,40 +90,4 @@ export async function acceptInvitationAction(_previous: InvitationState, formDat
     return { status: "error", message: `接受邀请失败：${describeError(error, session.credential.token)}` }
   }
   redirect(consoleRoutes(networkId).overview)
-}
-
-const ttlOptions = [86_400, 3 * 86_400, 7 * 86_400]
-
-/** One invitation link for one email and role; the secret is shown once and never stored by the Web. */
-export async function createInvitationAction(_previous: InvitationIssueState, formData: FormData): Promise<InvitationIssueState> {
-  const credential = await requireRenderedSignIn(formData.get(SIGN_IN_FIELD))
-  const networkId = zNetworkSnapshot.shape.network_id.safeParse(formField(formData, "network_id"))
-  if (!networkId.success) return { status: "error", message: "网络无效。" }
-  const role = zAccountRole.safeParse(formField(formData, "role"))
-  if (!role.success) return { status: "error", message: "请选择角色。" }
-  const email = formField(formData, "email").trim()
-  if (!email) return { status: "error", message: "请输入受邀人的邮箱。" }
-  const ttl = Number(formField(formData, "expires_in_seconds"))
-  if (!ttlOptions.includes(ttl)) return { status: "error", message: "请选择有效期。" }
-  try {
-    const created = await createAccountInvitation(controllerUrl(), credential.token, networkId.data, {
-      email,
-      role: role.data,
-      expires_in_seconds: ttl,
-    })
-    return {
-      status: "created",
-      email: created.invitation.email,
-      role: created.invitation.role,
-      expiresAt: created.invitation.expires_at,
-      path: invitationPath(created.invitation_token),
-    }
-  } catch (error) {
-    if (isCredentialRejected(error)) redirect(EXPIRED_LOGIN_PATH)
-    if (isPermissionDenied(error)) return { status: "error", message: "你在该网络没有发出这个角色邀请的权限。" }
-    if (error instanceof ControlApiError && (error.status === 400 || error.status === 422)) {
-      return { status: "error", message: "邮箱或有效期不符合要求。" }
-    }
-    return { status: "error", message: `创建邀请失败：${describeError(error, credential.token)}` }
-  }
 }

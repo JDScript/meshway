@@ -11,8 +11,14 @@ import {
   getOverview,
   getPolicy,
   getTags,
+  listAccountInvitations,
+  listAccountMembers,
+  listNodeOwnership,
   listNodes,
   listNetworks,
+  type AccountInvitations,
+  type AccountMembers,
+  type NodeOwnershipList,
   type ConnectionRuntimesSnapshot,
   type ConnectionsSnapshot,
   type EndpointDiscoveriesSnapshot,
@@ -142,6 +148,17 @@ export function fetchMeshAccess(networkId: string): Promise<ControllerResult<Mes
 export function fetchTags(networkId: string): Promise<ControllerResult<TagSnapshot>> {
   return networkRead(networkId, getTags)
 }
+
+/** Live memberships of this network (any member may read). Shared within one request. */
+export const fetchMembers = cache((networkId: string): Promise<ControllerResult<AccountMembers>> => networkRead(networkId, listAccountMembers))
+
+/** Invitation metadata (never secrets); Owners see all, Admins the Member ones, Members are refused (403). */
+export function fetchInvitations(networkId: string): Promise<ControllerResult<AccountInvitations>> {
+  return networkRead(networkId, listAccountInvitations)
+}
+
+/** Which membership owns each node; null is a legacy node nobody has claimed. Shared within one request. */
+export const fetchNodeOwnership = cache((networkId: string): Promise<ControllerResult<NodeOwnershipList>> => networkRead(networkId, listNodeOwnership))
 
 /** Network metadata and saved DNS intent, shared by the shell and pages within one request. */
 export const fetchNetwork = cache((networkId: string) => networkRead(networkId, getNetwork))

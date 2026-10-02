@@ -6,7 +6,13 @@ import type { AccountRole } from "@meshway/control-client"
 /** Who the console is signed in as; derived on the server from the controller. */
 export type ConsoleIdentity =
   | { kind: "bootstrap" }
-  | { kind: "user"; email: string; memberships: { networkId: string; role: AccountRole }[] }
+  | {
+      kind: "user"
+      userId: string
+      email: string
+      emailVerified: boolean
+      memberships: { networkId: string; membershipId: string; role: AccountRole }[]
+    }
   | { kind: "user-unverified"; error: string }
 
 /** `email` is echoed back so a failed attempt keeps it; the password never is. */

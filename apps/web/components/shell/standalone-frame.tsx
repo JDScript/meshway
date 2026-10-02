@@ -11,7 +11,7 @@ export function StandaloneFrame({
 }: {
   children: ReactNode
   footer?: ReactNode
-  width?: "sm" | "md"
+  width?: "sm" | "md" | "lg"
 }) {
   return (
     <main className="relative flex min-h-svh flex-col items-center justify-center overflow-hidden px-4 py-12">
@@ -19,7 +19,7 @@ export function StandaloneFrame({
         aria-hidden="true"
         className="bg-grid-dots pointer-events-none absolute inset-0 opacity-50 [mask-image:radial-gradient(ellipse_at_top,black_15%,transparent_65%)]"
       />
-      <div className={cn("relative flex w-full flex-col gap-6", width === "sm" ? "max-w-sm" : "max-w-md")}>
+      <div className={cn("relative flex w-full flex-col gap-6", width === "sm" ? "max-w-sm" : width === "md" ? "max-w-md" : "max-w-3xl")}>
         <div className="flex items-center justify-center gap-2.5">
           <BrandMark className="size-8" />
           <span className="text-base font-semibold tracking-tight">Meshway</span>

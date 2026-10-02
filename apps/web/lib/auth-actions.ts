@@ -17,7 +17,10 @@ import { formField, revokePreviousUserSession } from "@/lib/sign-in"
 const MAX_TOKEN_LENGTH = 1024
 const VISIBLE_ASCII = /^[\x21-\x7E]+$/
 
-/** Compatibility entry: the instance administrator token (bootstrap). */
+/**
+ * Instance setup / operator recovery: the administrator token (bootstrap).
+ * Only offered on /setup; it is not a person and never part of daily sign-in.
+ */
 export async function login(_previous: LoginState, formData: FormData): Promise<LoginState> {
   const token = formField(formData, "token").trim()
   if (!token) return { status: "malformed", message: "请输入管理员令牌。" }
@@ -39,7 +42,7 @@ export async function login(_previous: LoginState, formData: FormData): Promise<
 
   await revokePreviousUserSession()
   await startBootstrapSession(token)
-  redirect(safeLoginReturn(formData.get("returnTo")))
+  redirect("/setup")
 }
 
 /**

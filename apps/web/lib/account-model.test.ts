@@ -15,7 +15,13 @@ test("invitation secret stays in the fragment and roundtrips", () => {
 })
 
 test("roles come only from live memberships; the administrator token has none", () => {
-  const identity = { kind: "user" as const, email: "a@b.test", memberships: [{ networkId: "n1", role: "member" as const }] }
+  const identity = {
+    kind: "user" as const,
+    userId: "u1",
+    email: "a@b.test",
+    emailVerified: false,
+    memberships: [{ networkId: "n1", membershipId: "m1", role: "member" as const }],
+  }
   assert.equal(roleIn(identity, "n1"), "member")
   assert.equal(roleIn(identity, "n2"), null)
   assert.equal(roleIn({ kind: "bootstrap" }, "n1"), null)

@@ -36,12 +36,12 @@ export function AppSidebar({
   // accessibility tree until management opens it. The phone drawer is a
   // dialog that is only mounted when opened, so it is never made inert.
   const offscreen = collapsible === "offcanvas" && !isMobile
-  const active = activeNavItem(pathname, routes.base)?.item
+  const active = activeNavItem(pathname, routes.base)?.main ?? null
 
   return (
     <Sidebar collapsible={collapsible} {...(offscreen ? { inert: true, "aria-hidden": true } : {})}>
       <SidebarHeader>
-        <NetworkSwitcher networks={networks} controllerHost={controllerHost} />
+        <NetworkSwitcher networks={networks} controllerHost={controllerHost} canCreate={identity.kind === "bootstrap"} />
       </SidebarHeader>
       <SidebarContent>
         <NavMain active={active} drafts={drafts} />

@@ -13,11 +13,10 @@ import { login } from "@/lib/auth-actions"
 const initialState: LoginState = { status: "idle" }
 
 /**
- * Compatibility entry for the instance administrator token (bootstrap). It
- * manages the controller but is not a user: it cannot approve user-owned
- * device sign-ins.
+ * The instance administrator token (bootstrap), only on /setup: first-run
+ * setup and operator recovery. It is not a user and cannot approve devices.
  */
-export function LoginForm({ returnTo = "/" }: { returnTo?: string }) {
+export function LoginForm() {
   const [state, formAction, pending] = useActionState(login, initialState)
   const inputId = useId()
   const errorId = useId()
@@ -30,11 +29,8 @@ export function LoginForm({ returnTo = "/" }: { returnTo?: string }) {
 
   return (
     <form action={formAction} className="flex flex-col gap-2" aria-label="管理员令牌登录">
-      <input type="hidden" name="returnTo" value={returnTo} />
       <div className="flex flex-col gap-2">
-        <Label htmlFor={inputId} className="text-xs text-muted-foreground">
-          管理员令牌
-        </Label>
+        <Label htmlFor={inputId}>实例管理员令牌</Label>
         <div className="flex gap-2">
         <Input
           id={inputId}
@@ -49,8 +45,8 @@ export function LoginForm({ returnTo = "/" }: { returnTo?: string }) {
           aria-describedby={fieldError !== null ? errorId : undefined}
           className="h-9 min-w-0 flex-1 font-mono"
         />
-        <Button type="submit" variant="outline" disabled={pending} className="h-9 shrink-0">
-          {pending ? "正在验证" : "登录"}
+        <Button type="submit" disabled={pending} className="h-9 shrink-0">
+          {pending ? "正在验证" : "继续"}
         </Button>
         </div>
         {fieldError !== null ? (
