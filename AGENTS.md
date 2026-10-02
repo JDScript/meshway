@@ -6,7 +6,7 @@ Rust 控制面与 agent、Next.js + shadcn/ui 控制台、VitePress 文档站。
 
 - `apps/controller`：控制面服务。`apps/agent`：节点进程。
 - `crates/`：按清楚职责拆分的 Rust 库。用户明确支持把 Agent 内可独立构建、测试的能力抽出（如 `agent-dns`），不为压低 crate 数量把实现堆回 App；也不按临时阶段机械拆包。Agent 生成客户端当前位于 `apps/agent/src/generated`。
-- `apps/web`：Next.js 控制台。`apps/apple`：iOS / macOS App。`packages/`：生成的前端协议与客户端。
+- `apps/web`：将被新 console 替代的旧 Next.js 控制台，本后端线程不再维护或默认验收。`apps/apple`：iOS / macOS App。`packages/`：生成的前端协议与客户端。
 - `docs`：VitePress 产品设计、架构和开发文档。
 - `references`：独立的上游参考 checkout；研究版本见其 README，默认不修改。
 - 旧 Meshing 项目已废弃，不将其代码、记忆或合同作为本项目依据。
@@ -70,7 +70,7 @@ Rust 控制面与 agent、Next.js + shadcn/ui 控制台、VitePress 文档站。
 - Access 与 routing 的图形化及带 schema 的 JSONC 编辑器必须共享同一份草稿和 CAS 基准；无效文本、注释和未保存编辑不得被切换视图静默覆盖。
 - 用户指定：前端（`apps/web` 控制台）委派使用 `anthropic/claude-opus-5-5`，其余委派统一使用 `openai/gpt-6.1-sol`。用户已确认控制台可整体推翻重做，按已确认产品模型重整产品逻辑与视觉，但 App 依赖的 Web 端点与服务端鉴权边界必须保持兼容；独立任务按需要使用 worktree，根 manifest、lockfile 和合并验证由协调者维护。前端一致性与信息架构整理应和后端功能主线并行推进。
 - 已交付账户 / Web 首批重整：日常仅用户账户登录，所有者 / 管理员 / 成员是网络内角色；实例凭据收敛到专门初始化 / 恢复入口，不扩大网络 Owner 的跨网权限。成员 / 邀请 / 角色 / 设备归属、我的账户、登录初始化及节点列表 / 详情 / 配置已接通；导航为概览 / 节点 / 成员 / 访问控制 / 路由 / 设置，保留地图方向。
-- 用户最新决定暂缓进一步前端设计和产品重整，后续可由用户自行另派 agent。当前集中完成真实 Linux 组网；保留已部署 Web 作为联调入口，仅做后端契约变化所必需的兼容修复与消费者检查，不再主动开启 UI / 账户体验 / Web 架构重构任务。验收必须走正常 Controller 下发、Agent 生命周期和真实 TUN 包流，独立编译器或 fixture 原型通过不算真实组网闭环。
+- 用户最新决定旧 `apps/web` 后续 deprecated，由 `apps/console` 替代；本线程不再承担旧 Web 的维护、兼容修补或默认 typecheck/lint/test/build。集中完成 Rust 后端、生成契约/SDK和真实 Linux 组网，新 console 由用户独立工作流处理。Controller 鉴权、网络作用域及 App/CLI 浏览器接入等公共契约仍须保持。验收必须走正常 Controller 下发、Agent 生命周期和真实 TUN 包流，独立编译器或 fixture 原型通过不算真实组网闭环。
 - `apps/console` 是用户与另一个 agent 进行的新 Web 设计工作，当前后端线程忽略该目录并保护其相关 workspace / lockfile 改动。后端验收可使用独立、固定依赖的快照，不重置或替换另一工作流的依赖，不因它的未完成状态扩展前端任务。
 - 用户已确认新 console 为 pure SPA，并要求完整导出 / 审查 model、字段、schema 与 HTTP API。接口独立于 Next Server Actions，明确会话 / 网络权限、错误、配置 CAS、观测新鲜度、轮询与分页；已发布契约和开发中 v3 候选分开。字段可省略、可 null、未知 / 不适用 / 已失效是不同语义，不为清理而统一删除空值。
 - 已核对用户在 console 线程确认的方案：沿用不透明 `mws_` 用户会话，不改 JWT；LocalStorage 持久化，标签页捕获到内存后以 Authorization 携带，storage 变化时锁定 / 重载并隔离缓存和草稿；实例管理员令牌只放内存。新控制台无 BFF，同源由 Controller 从运行时配置目录提供静态 dist，API / App 路径保持有效，静态导航 fallback 不得吞掉 API / 缺失资源错误；Rust 构建与测试不依赖前端构建。Cookie 会话是未采用的备选审查提案，不再当作此迁移前置要求；Controller 仍逐请求 / 事务检查真实身份与网络权限。
@@ -88,8 +88,8 @@ Rust 控制面与 agent、Next.js + shadcn/ui 控制台、VitePress 文档站。
 - no-host-network / no-privileged 同样覆盖构建器。已披露并移除的两个特权 buildx builder 不再启动；原证据保留。使用既有普通 builder 构造环境 / runtime 层，Rust 在非 root、cap-drop-ALL、CPU/内存有界的普通容器内编译，不开放 insecure / host-network entitlement、不改 daemon。
 - E2E 重启恢复已采用端到端认证的有界 `resync-v1`；快速路径要求参与节点支持扩展，旧节点及丢包 / 竞争保留原 TTL 边界，首个 stale packet 不重放。邻接恢复不证明旧 packet 会话恢复；不缩 TTL、无条件清反向 cache 或降低加密掩盖失败，与状态型 grants 回包分开跟踪。
 - underlay 内部 owner 已审合，正常主循环接线尚在实现、未生产启用。Journal v3 使用 boot + 非零 netns cookie；旧无 cookie / 不明归属 journal 保留并拒绝，不按 inode/形状接管。受审 socket2 单 API 补丁限 vendor 边界，应用 crate 继续 forbid unsafe。
-- Rust 使用 `cargo fmt`、Clippy 和必要的行为测试；JS 使用严格 TypeScript 与各包检查。修改协议、HTTP 路由或生成客户端时，合并前必须跑全部消费者：`cargo test --workspace --all-features`（含 Agent 与 Apple core）、Web 与 SDK 检查，以及 `experiments/*/tsconfig.json` 的 `tsc --noEmit`。
-- 用户已明确移除 Meshway 的浏览器自动化检查：不保留或默认重建 Playwright / 浏览器 E2E 套件，不以浏览器全量回归阻塞日常开发或部署。Web 默认做严格类型检查、lint、必要单测与构建，UI 由用户在开发页面手工验证；协议、鉴权、迁移和数据面仍运行各自必要的非浏览器行为测试。
+- Rust 使用 `cargo fmt`、Clippy 和必要的行为测试；JS 使用严格 TypeScript 与各包检查。修改协议、HTTP 路由或生成客户端时，合并前检查 Rust workspace/all-features（含 Agent 与 Apple core）、生成 drift、SDK、Apple 脚本及 `experiments/*/tsconfig.json` 消费者。旧 `apps/web` 不再作为本线程验收项；新 console 的 UI/构建由独立工作流负责，后端提供兼容的生成契约与变更说明。
+- 用户已明确移除 Meshway 的浏览器自动化检查：不保留或默认重建 Playwright / 浏览器 E2E 套件，不以浏览器全量回归阻塞日常开发或部署。UI 由用户在开发页面手工验证；协议、鉴权、迁移和数据面仍运行各自必要的非浏览器行为测试。
 - 并行任务明确文件所有权；根 workspace 配置、lockfile 和整体验证由协调者维护。
 - 不同 feature 组合的 CLI 行为测试与 SDK / 原生联测构建不得并行共用同一 Cargo target 目录；后者可能替换前者正在执行的 `target/debug/meshway-agent`。使用独立 target 或串行执行。
 - 所有后续 worktree 统一创建在本仓库 `.worktree/<任务名>`，不再散放上级目录。独立任务完成、提交已整合且无未提交 / 未跟踪工作后及时移除 worktree；保留分支和测量产物。活跃任务须在不影响进程与构建的安全边界迁移，不能直接删改其目录。
