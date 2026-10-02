@@ -4,17 +4,23 @@ import { NODE_ID } from "@/features/network/queries"
 
 // The nodes page in the address; values at their default are left out.
 //
-//   /networks/<network>/nodes?q=&state=               the list
+//   /networks/<network>/nodes?q=&state=&view=        the list (view=tags: the tags)
 //   /networks/<network>/nodes/<node>?…&tab=          one node's workspace, over the list
+//   /networks/<network>/nodes/add                     adding a node
+//   /networks/<network>/nodes/tags/<tag>              one tag's workspace
 
 export { NODE_ID }
 
 export const NODE_STATES = ["live", "contact", "quiet"] as const
 export type NodeStateFilter = (typeof NODE_STATES)[number]
 
+export const PANEL_VIEWS = ["nodes", "tags"] as const
+export type PanelView = (typeof PANEL_VIEWS)[number]
+
 export const zNodeListSearch = z.object({
   q: z.string().max(120).optional().catch(undefined),
   state: z.enum(NODE_STATES).optional().catch(undefined),
+  view: z.enum(["tags"]).optional().catch(undefined),
 })
 
 export type NodeListView = { q: string; state: NodeStateFilter | null }

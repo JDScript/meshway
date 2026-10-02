@@ -3,7 +3,13 @@ import type {
   NodeSummary,
 } from "@meshway/control-client"
 import { SearchIcon } from "lucide-react"
-import { useEffect, useMemo, useRef, type KeyboardEvent } from "react"
+import {
+  useEffect,
+  useMemo,
+  useRef,
+  type KeyboardEvent,
+  type ReactNode,
+} from "react"
 
 import { SegmentedControl } from "@/components/chrome/segmented-control"
 import {
@@ -120,6 +126,8 @@ export function NodeList({
   openId,
   onView,
   onOpen,
+  switcher,
+  action,
 }: {
   nodes: readonly NodeSummary[]
   runtimes: ConnectionRuntimesSnapshot | null
@@ -133,6 +141,10 @@ export function NodeList({
   openId: string | null
   onView: (view: NodeListView) => void
   onOpen: (nodeId: string) => void
+  /** Nodes or tags. */
+  switcher: ReactNode
+  /** Adding a node, for those who can. */
+  action: ReactNode
 }) {
   const list = useRef<HTMLUListElement>(null)
 
@@ -187,22 +199,17 @@ export function NodeList({
 
   return (
     <div className="flex h-full min-h-0 flex-col">
-      <header className="flex flex-col gap-3 px-4 pt-4 pb-3">
-        <div className="flex items-baseline justify-between">
-          <h2
-            id={surfaceTitleId("nodes", "panel")}
-            className="text-base font-semibold tracking-tight"
-          >
-            {m.nav_nodes()}
-          </h2>
-          <span className="text-xs text-muted-foreground tabular-nums">
-            {loading
-              ? "—"
-              : shown.length === rows.length
-                ? rows.length
-                : `${shown.length} / ${rows.length}`}
-          </span>
-        </div>
+      <PanelHeader
+        count={
+          loading
+            ? "—"
+            : shown.length === rows.length
+              ? String(rows.length)
+              : `${shown.length} / ${rows.length}`
+        }
+        switcher={switcher}
+        action={action}
+      >
         <SearchField value={view.q} onSettle={(q) => onView({ ...view, q })} />
         <SegmentedControl<Filter>
           label={m.nodes_filter()}
@@ -213,7 +220,7 @@ export function NodeList({
           }
           className="self-start"
         />
-      </header>
+      </PanelHeader>
 
       <ul
         ref={list}
@@ -266,5 +273,38 @@ export function NodeList({
         ))}
       </ul>
     </div>
+  )
+}
+
+/** The head of the nodes page's panel, for either view: the title, a count, the view switch and its add control. */
+export function PanelHeader({
+  count,
+  switcher,
+  action,
+  children,
+}: {
+  count: string
+  switcher: ReactNode
+  action: ReactNode
+  children?: ReactNode
+}) {
+  return (
+    <header className="flex flex-col gap-3 px-4 pt-4 pb-3">
+      <div className="flex h-7 items-center gap-2">
+        <h2
+          id={surfaceTitleId("nodes", "panel")}
+          className="text-base font-semibold tracking-tight"
+        >
+          {m.nav_nodes()}
+        </h2>
+        <span className="text-xs text-muted-foreground tabular-nums">
+          {count}
+        </span>
+        <span className="flex-1" />
+        {action}
+      </div>
+      {switcher}
+      {children}
+    </header>
   )
 }

@@ -11,6 +11,7 @@ export const Route = createFileRoute("/_authed/networks/$network/nodes/$node")({
       throw redirect({
         to: "/networks/$network/nodes",
         params: { network: params.network },
+        search: params.node === "tags" ? { view: "tags" } : {},
         replace: true,
       })
   },

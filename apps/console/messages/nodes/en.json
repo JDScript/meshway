@@ -185,7 +185,73 @@
   "node_revoke_effect": "The controller refuses the node's requests and its managed runtime is withdrawn; the node and its addresses stay in the inventory and the addresses are not reused. Revocation cannot be undone.",
   "node_revoked_at": "Revoked",
   "node_revoked_toast": "{name} revoked",
+  "nodes_view": "Show",
+  "nodes_view_nodes": "Nodes",
+  "nodes_view_tags": "Tags",
   "nodes_tags_none": "No tags",
   "nodes_tags_failed": "Tags could not be read",
+  "nodes_tag_new": "New tag",
+  "nodes_tag_add": "Add",
+  "nodes_tag_name": "Name",
+  "nodes_tag_description": "Description",
+  "nodes_tag_members": "Nodes",
+  "nodes_tag_members_none": "None",
+  "nodes_tag_members_count": [
+    {
+      "declarations": [
+        "input count",
+        "local countPlural = count: plural"
+      ],
+      "selectors": [
+        "countPlural"
+      ],
+      "match": {
+        "countPlural=one": "{count} node",
+        "countPlural=other": "{count} nodes"
+      }
+    }
+  ],
+  "nodes_tag_not_found": "No such tag",
+  "nodes_tag_removal": "Removal",
+  "nodes_tag_remove": "Delete tag",
+  "nodes_tag_restore": "Restore",
+  "nodes_tag_removing": "To be deleted",
+  "nodes_tag_assigned": [
+    {
+      "declarations": [
+        "input count",
+        "local countPlural = count: plural"
+      ],
+      "selectors": [
+        "countPlural"
+      ],
+      "match": {
+        "countPlural=one": "Assigned to {count} node",
+        "countPlural=other": "Assigned to {count} nodes"
+      }
+    }
+  ],
+  "nodes_tag_unassigned": "Not assigned to any node",
+  "nodes_tag_name_invalid": "Names are 1–48 lowercase letters, digits, - or _, starting with a letter or digit",
+  "nodes_tag_duplicate": "A tag has this name",
+  "nodes_tag_description_invalid": "Descriptions are at most 256 characters",
+  "nodes_tag_too_many": "At most {max} tags",
+  "nodes_add_title": "Add node",
+  "nodes_add_name": "Node name",
+  "nodes_add_name_invalid": "Node names are 1–{max} characters",
+  "nodes_add_expiry": "Token expiry",
+  "nodes_add_expiry_10m": "10 min",
+  "nodes_add_expiry_1h": "1 h",
+  "nodes_add_expiry_24h": "24 h",
+  "nodes_add_listener_section": "Listener",
+  "nodes_add_listener": "Initial listener",
+  "nodes_add_listener_none": "None",
+  "nodes_add_submit": "Create enrolment token",
+  "nodes_add_token_title": "Enrolment token",
+  "nodes_add_token": "Token",
+  "nodes_add_token_id": "Token ID",
+  "nodes_add_expires": "Expires",
+  "nodes_add_enroll_command": "Enrol command",
+  "nodes_add_run_command": "Run command",
   "node_latency_unreadable": "Latency history could not be read"
 }
