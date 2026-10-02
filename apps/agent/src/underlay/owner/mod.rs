@@ -298,7 +298,7 @@ struct Installed {
 
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-struct Journal {
+struct BoundJournal {
     version: u8,
     namespace: Namespace,
     identity: String,
@@ -310,6 +310,80 @@ struct Journal {
     pending: Option<Resource>,
     #[serde(default)]
     operation: Option<Operation>,
+}
+
+#[derive(Clone)]
+pub(crate) struct Transactions {
+    namespace: Namespace,
+    reservation: Reservation,
+    installed: Vec<Installed>,
+    pending: Option<Resource>,
+    operation: Option<Operation>,
+}
+
+#[derive(Clone, Serialize, Deserialize)]
+#[serde(from = "BoundJournal", into = "BoundJournal")]
+pub(crate) struct Journal {
+    version: u8,
+    identity: String,
+    network: String,
+    transactions: Transactions,
+}
+
+impl From<BoundJournal> for Journal {
+    fn from(value: BoundJournal) -> Self {
+        Self {
+            version: value.version,
+            identity: value.identity,
+            network: value.network,
+            transactions: Transactions {
+                namespace: value.namespace,
+                reservation: value.reservation,
+                installed: value.installed,
+                pending: value.pending,
+                operation: value.operation,
+            },
+        }
+    }
+}
+
+impl From<Journal> for BoundJournal {
+    fn from(value: Journal) -> Self {
+        Self {
+            version: value.version,
+            identity: value.identity,
+            network: value.network,
+            namespace: value.transactions.namespace,
+            reservation: value.transactions.reservation,
+            installed: value.transactions.installed,
+            pending: value.transactions.pending,
+            operation: value.transactions.operation,
+        }
+    }
+}
+
+pub(crate) trait OwnerJournal:
+    Clone + Serialize + std::ops::Deref<Target = Transactions> + std::ops::DerefMut
+{
+    const FILE: &'static str;
+    fn restrict_resources(&self) -> io::Result<()> {
+        Ok(())
+    }
+}
+
+impl std::ops::Deref for Journal {
+    type Target = Transactions;
+    fn deref(&self) -> &Transactions {
+        &self.transactions
+    }
+}
+impl std::ops::DerefMut for Journal {
+    fn deref_mut(&mut self) -> &mut Transactions {
+        &mut self.transactions
+    }
+}
+impl OwnerJournal for Journal {
+    const FILE: &'static str = "underlay.json";
 }
 
 #[derive(Clone, Serialize, Deserialize)]
@@ -429,13 +503,36 @@ impl Lease {
     }
 }
 
-pub(crate) struct LinuxUnderlay {
+fn acquire_lease(directory: &Path) -> io::Result<Arc<Lease>> {
+    private_directory(directory)?;
+    let singleton = UnixDatagram::bind_addr(&UnixAddr::from_abstract_name(
+        b"meshway.underlay.rpdb-owner.v1",
+    )?)?;
+    let (scope, namespace) = current_namespace(&singleton)?;
+    let state_lock = private_file(&directory.join("underlay.lock"), true)?;
+    state_lock
+        .try_lock()
+        .map_err(|error| io::Error::other(format!("underlay state busy: {error}")))?;
+    Ok(Arc::new(Lease {
+        scope,
+        _namespace: namespace,
+        _singleton: singleton,
+        _state_lock: state_lock,
+    }))
+}
+
+pub(crate) struct NamespaceOwner<J> {
     lease: Arc<Lease>,
     directory: PathBuf,
-    journal: Journal,
+    journal: J,
     #[cfg(test)]
     checkpoint: Option<Arc<InstallCheckpoint>>,
 }
+
+pub(crate) type LinuxUnderlay = NamespaceOwner<Journal>;
+
+mod bootstrap;
+pub(crate) use bootstrap::{BootstrapChannel, BootstrapPreparation, BootstrapUnderlay};
 
 #[cfg(test)]
 struct InstallCheckpoint {
@@ -565,7 +662,8 @@ fn private_file(path: &Path, create: bool) -> io::Result<File> {
     Ok(file)
 }
 
-fn write_journal(directory: &Path, journal: &Journal) -> io::Result<()> {
+fn write_journal<J: OwnerJournal>(directory: &Path, journal: &J) -> io::Result<()> {
+    journal.restrict_resources()?;
     let bytes = serde_json::to_vec(journal).map_err(|error| invalid(error.to_string()))?;
     if bytes.len() > 1_048_576 {
         return Err(invalid("underlay journal exceeds durable recovery budget"));
@@ -583,7 +681,7 @@ fn write_journal(directory: &Path, journal: &Journal) -> io::Result<()> {
             .open(&temporary)?;
         file.write_all(&bytes)?;
         file.sync_all()?;
-        std::fs::rename(&temporary, directory.join("underlay.json"))?;
+        std::fs::rename(&temporary, directory.join(J::FILE))?;
         File::open(directory)?.sync_all()
     })();
     if result.is_err() {
@@ -793,11 +891,6 @@ fn select_reservation(
 }
 
 impl LinuxUnderlay {
-    async fn owned_ip(&self, args: Vec<String>) -> io::Result<Vec<u8>> {
-        self.lease.check_current()?;
-        ip(args).await
-    }
-
     pub(crate) async fn prepare(input: Preparation<'_>) -> io::Result<Self> {
         if input.identity.is_empty()
             || input.network.is_empty()
@@ -806,24 +899,35 @@ impl LinuxUnderlay {
         {
             return Err(invalid("missing or oversized enrolled identity binding"));
         }
-        private_directory(input.state_directory)?;
-        // Linux abstract AF_UNIX names belong to the network namespace, not a
-        // mount view. The fixed singleton cannot be bypassed with private /run,
-        // a different node ID or another state directory. Safe std APIs only.
-        let singleton = UnixDatagram::bind_addr(&UnixAddr::from_abstract_name(
-            b"meshway.underlay.rpdb-owner.v1",
-        )?)?;
-        let (namespace, namespace_file) = current_namespace(&singleton)?;
-        let state_lock = private_file(&input.state_directory.join("underlay.lock"), true)?;
-        state_lock
-            .try_lock()
-            .map_err(|error| io::Error::other(format!("underlay state busy: {error}")))?;
-        let lease = Arc::new(Lease {
-            scope: namespace.clone(),
-            _namespace: namespace_file,
-            _singleton: singleton,
-            _state_lock: state_lock,
-        });
+        let lease = acquire_lease(input.state_directory)?;
+        Self::prepare_with_lease(input, lease).await
+    }
+
+    async fn prepare_with_lease(input: Preparation<'_>, lease: Arc<Lease>) -> io::Result<Self> {
+        lease.check_current()?;
+        let namespace = lease.scope.clone();
+        for family in [4, 6] {
+            if objects(family, false).await?.iter().any(|route| {
+                route
+                    .get("table")
+                    .map(table_identity)
+                    .transpose()
+                    .is_ok_and(|table| table.unwrap_or(254) == 254)
+                    && route
+                        .get("protocol")
+                        .and_then(|value| numeric_attribute("protocol", value))
+                        == Some(242)
+            }) {
+                return Err(invalid(
+                    "legacy main Mesh sink/pin lacks journal ownership; preserve resource",
+                ));
+            }
+        }
+        if input.state_directory.join("bootstrap.json").try_exists()? {
+            return Err(invalid(
+                "bootstrap journal must be reconciled before bound preparation",
+            ));
+        }
         audit_marks().await?;
         let path = input.state_directory.join("underlay.json");
         let previous = match private_file(&path, false) {
@@ -930,7 +1034,7 @@ impl LinuxUnderlay {
             &reserved_aliases()?,
             format!("{}/{}", input.network, input.identity),
         )?;
-        let journal = Journal {
+        let journal: Journal = BoundJournal {
             version: 3,
             namespace,
             identity: input.identity.into(),
@@ -939,7 +1043,8 @@ impl LinuxUnderlay {
             installed: Vec::new(),
             pending: None,
             operation: None,
-        };
+        }
+        .into();
         lease.check_current()?;
         write_journal(input.state_directory, &journal)?;
         #[cfg(test)]
@@ -990,14 +1095,7 @@ impl LinuxUnderlay {
     }
 
     pub(crate) async fn socket_generation(&self) -> io::Result<PreparedGeneration> {
-        self.verify().await?;
-        let mut reservation = self.journal.reservation.clone();
-        let mut identity = [0; 8];
-        getrandom::fill(&mut identity).map_err(|error| io::Error::other(error.to_string()))?;
-        reservation.generation = u64::from_ne_bytes(identity);
-        let mut generation = PreparedGeneration::prepare(reservation).await?;
-        generation.retain_namespace(self.lease.clone());
-        Ok(generation)
+        self.prepare_generation(false).await
     }
 
     pub(crate) async fn controller_channel(
@@ -1010,6 +1108,26 @@ impl LinuxUnderlay {
 
     pub(crate) fn system_dns(&self) -> io::Result<SystemDnsSnapshot> {
         SystemDnsSnapshot::from_system()
+    }
+}
+
+impl<J: OwnerJournal> NamespaceOwner<J> {
+    async fn prepare_generation(&self, controller_only: bool) -> io::Result<PreparedGeneration> {
+        self.verify().await?;
+        let mut reservation = self.journal.reservation.clone();
+        let mut identity = [0; 8];
+        getrandom::fill(&mut identity).map_err(|error| io::Error::other(error.to_string()))?;
+        reservation.generation = u64::from_ne_bytes(identity);
+        let mut generation = PreparedGeneration::prepare(reservation).await?;
+        generation.retain_namespace(self.lease.clone());
+        if controller_only {
+            generation.restrict_to_controller();
+        }
+        Ok(generation)
+    }
+    async fn owned_ip(&self, args: Vec<String>) -> io::Result<Vec<u8>> {
+        self.lease.check_current()?;
+        ip(args).await
     }
 
     async fn rollback_partial_reservation(&mut self) -> io::Result<()> {
@@ -1068,7 +1186,7 @@ impl LinuxUnderlay {
         while !self.journal.installed.is_empty() {
             self.remove_one(self.journal.installed.len() - 1).await?;
         }
-        std::fs::remove_file(self.directory.join("underlay.json"))?;
+        std::fs::remove_file(self.directory.join(J::FILE))?;
         File::open(&self.directory)?.sync_all()
     }
 
@@ -1285,6 +1403,7 @@ impl LinuxUnderlay {
     }
 
     fn validate_journal_resources(&self) -> io::Result<()> {
+        self.journal.restrict_resources()?;
         let reservation = &self.journal.reservation;
         if reservation.first_priority == 0
             || reservation.last_priority >= 32766
@@ -1397,7 +1516,7 @@ impl LinuxUnderlay {
             ));
         }
         let start = self.journal.installed.len();
-        self.journal.operation = projected.operation;
+        self.journal.operation = projected.operation.take();
         if let Err(error) = self.validate_operation_intent(
             self.journal
                 .operation
@@ -1676,7 +1795,9 @@ impl LinuxUnderlay {
         }
         Ok(())
     }
+}
 
+impl LinuxUnderlay {
     /// Publish only after normal mainloop installed controller/carrier owners.
     /// Every prefix receives a persistent unreachable sink before lookup. Drop,
     /// lease withdrawal and process death retain that sink. No legacy route is
@@ -2028,15 +2149,15 @@ async fn binding_unavailable(name: &str, index: u32) -> io::Result<bool> {
 }
 
 #[cfg(test)]
-#[path = "owner_review_tests.rs"]
+#[path = "tests/namespace.rs"]
 mod review_tests;
 
 #[cfg(test)]
-#[path = "owner_tun_recovery_tests.rs"]
+#[path = "tests/recovery.rs"]
 mod tun_recovery_tests;
 
 #[cfg(test)]
-#[path = "owner_cookie_tests.rs"]
+#[path = "tests/lifetime.rs"]
 mod cookie_tests;
 
 async fn link_index(name: &str) -> io::Result<u32> {

@@ -155,6 +155,20 @@ fn validate(
     Ok(zone)
 }
 
+#[cfg(target_os = "linux")]
+pub(crate) fn validate_scope(
+    snapshot: &AgentDnsSnapshot,
+    node_id: &str,
+    previous: Option<&AgentDnsSnapshot>,
+) -> Result<(), AgentError> {
+    validate(snapshot, node_id, previous).map(|_| ())
+}
+
+#[cfg(target_os = "linux")]
+pub(crate) fn cached_scope(agent: &Agent) -> Result<Option<AgentDnsSnapshot>, AgentError> {
+    Ok(load(&agent.path, &agent.identity)?.map(|cache| cache.snapshot))
+}
+
 fn load(state: &Path, identity: &Identity) -> Result<Option<Cache>, AgentError> {
     let file = path(state);
     match std::fs::symlink_metadata(&file) {
@@ -241,6 +255,7 @@ impl Drop for ListenerLifetime {
 }
 
 struct Sync {
+    client: HttpClient,
     state: PathBuf,
     identity: Identity,
     cache: Option<Cache>,
@@ -257,6 +272,7 @@ impl Agent {
         interval: Duration,
         lease: Duration,
     ) -> Result<DnsService, AgentError> {
+        self.prepare_control_plane().await?;
         if !(Duration::from_secs(10)..=Duration::from_secs(300)).contains(&lease)
             || interval.is_zero()
             || interval >= lease
@@ -292,6 +308,7 @@ impl Agent {
             #[cfg(unix)]
             control: None,
             sync: Sync {
+                client: self.controller_client(),
                 state: self.path.clone(),
                 identity,
                 cache,
@@ -402,8 +419,9 @@ impl Sync {
     }
 
     async fn pull(&mut self) -> Result<(), AgentError> {
-        let client = HttpClient::new()
-            .with_base_url(&self.identity.controller)
+        let client = self
+            .client
+            .clone()
             .with_api_key(&self.identity.node_credential)
             .with_max_response_body_bytes(MAX_DNS_BYTES);
         let response = client.get_agent_dns().await;

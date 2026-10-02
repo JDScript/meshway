@@ -7,20 +7,19 @@ use meshway_protocol::{
 use serde::{Deserialize, Serialize};
 
 use super::{Agent, AgentError, AgentStatus, Identity, local};
-use crate::generated::{client::HttpClient, types::AcknowledgeConfigurationRequest};
 
 #[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub(super) struct Cache {
+pub(crate) struct Cache {
     format_version: u32,
     controller: String,
-    node_id: String,
-    snapshot: ConfigurationSnapshot,
+    pub(crate) node_id: String,
+    pub(crate) snapshot: ConfigurationSnapshot,
 }
 
 #[cfg(feature = "managed-connections")]
 impl Cache {
-    pub(super) fn public_inventory(&self) -> &meshway_protocol::NodeConfiguration {
+    pub(crate) fn public_inventory(&self) -> &meshway_protocol::NodeConfiguration {
         &self.snapshot.payload
     }
 }
@@ -37,7 +36,7 @@ pub struct SyncReceipt {
     pub policy_valid: bool,
 }
 
-pub(super) fn cache_path(path: &Path) -> PathBuf {
+pub(crate) fn cache_path(path: &Path) -> PathBuf {
     let mut value = path.as_os_str().to_owned();
     value.push(".config.json");
     PathBuf::from(value)
@@ -67,7 +66,7 @@ pub(super) fn load(path: &Path, identity: &Identity) -> Result<Option<Cache>, Ag
     Ok(Some(cache))
 }
 
-pub(super) fn validate(
+pub(crate) fn validate(
     snapshot: &ConfigurationSnapshot,
     identity: &Identity,
     previous: Option<&Cache>,
@@ -192,76 +191,7 @@ pub(super) fn status(identity: &Identity, cache: Option<&Cache>) -> AgentStatus 
 }
 
 impl Agent {
-    pub async fn sync(&mut self) -> Result<SyncReceipt, AgentError> {
-        local::ensure_durable(&self.path)?;
-        if self.identity.node_id.is_none() {
-            self.heartbeat().await?;
-        }
-        let client = HttpClient::new()
-            .with_base_url(&self.identity.controller)
-            .with_api_key(&self.identity.node_credential);
-        for _ in 0..3 {
-            let wire = client.get_agent_configuration().await?;
-            // Reuse authoritative DTOs and the pure compiler after the generated
-            // transport has decoded the response; no handwritten wire model.
-            let snapshot: ConfigurationSnapshot = serde_json::from_value(
-                serde_json::to_value(wire)
-                    .map_err(|_| AgentError::Invalid("cannot decode configuration"))?,
-            )
-            .map_err(|_| AgentError::Invalid("invalid configuration response"))?;
-            #[cfg(feature = "managed-connections")]
-            if let Some(guard) = &self.dns_guard {
-                guard.observe_revision(snapshot.payload.revision);
-            }
-            validate(&snapshot, &self.identity, self.cache.as_ref())?;
-            self.persist_configuration(snapshot)?;
-            // Even an unchanged cache (including one loaded after restart) may
-            // have been published by a write whose final fsync failed. ACK only
-            // after both its file and directory durability have been confirmed.
-            local::ensure_durable(&cache_path(&self.path))?;
-            let cache = self.cache.as_ref().expect("persisted cache");
-            let response = client
-                .acknowledge_configuration(AcknowledgeConfigurationRequest {
-                    revision: cache.snapshot.payload.revision.into(),
-                    digest: cache.snapshot.digest.clone(),
-                })
-                .await;
-            match response {
-                Err(error) if error.api().is_some_and(|error| error.status == 409) => {
-                    #[cfg(feature = "managed-connections")]
-                    if let Some(guard) = &self.dns_guard {
-                        guard.conflict(cache.snapshot.payload.revision);
-                    }
-                    continue;
-                }
-                Err(error) => return Err(error.into()),
-                Ok(receipt) => {
-                    if receipt.revision != i64::from(cache.snapshot.payload.revision)
-                        || receipt.digest != cache.snapshot.digest
-                    {
-                        return Err(AgentError::Invalid(
-                            "ACK receipt does not match saved configuration",
-                        ));
-                    }
-                    return Ok(SyncReceipt {
-                        controller: self.identity.controller.clone(),
-                        node_id: cache.node_id.clone(),
-                        stored_revision: cache.snapshot.payload.revision,
-                        digest: cache.snapshot.digest.clone(),
-                        mesh_ipv4: cache.snapshot.payload.node.mesh_ipv4.clone(),
-                        mesh_ipv6: cache.snapshot.payload.node.mesh_ipv6.clone(),
-                        policy_valid: cache.snapshot.payload.policy_valid,
-                    });
-                }
-            }
-        }
-        Err(AgentError::Http {
-            status: 409,
-            retryable: true,
-        })
-    }
-
-    pub(super) fn persist_configuration(
+    pub(crate) fn persist_configuration(
         &mut self,
         snapshot: ConfigurationSnapshot,
     ) -> Result<(), AgentError> {

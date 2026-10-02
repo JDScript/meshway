@@ -30,6 +30,7 @@ trait Io: AsyncRead + AsyncWrite + Send + Unpin {}
 impl<T: AsyncRead + AsyncWrite + Send + Unpin> Io for T {}
 
 pub(crate) struct ControllerHttp {
+    tasks: tokio_util::task::TaskTracker,
     factory: SocketFactory,
     resolver: BootstrapResolver,
     origin: reqwest::Url,
@@ -86,6 +87,7 @@ impl ControllerHttp {
             .with_no_client_auth();
         tls.alpn_protocols = vec![b"http/1.1".to_vec()];
         Ok(Self {
+            tasks: tokio_util::task::TaskTracker::new(),
             factory,
             resolver,
             origin,
@@ -98,6 +100,10 @@ impl ControllerHttp {
         request: reqwest::Request,
         deadline: Instant,
     ) -> io::Result<reqwest::Response> {
+        if let Err(error) = self.resolver.check_system() {
+            self.factory.0.retire();
+            return Err(error);
+        }
         if request.url().origin() != self.origin.origin() {
             return Err(invalid("request escaped controller origin"));
         }
@@ -150,7 +156,7 @@ impl ControllerHttp {
             hyper::client::conn::http1::handshake::<_, Full<Bytes>>(TokioIo::new(stream))
                 .await
                 .map_err(|error| io::Error::other(error.to_string()))?;
-        let connection_task = tokio::spawn(async move {
+        let connection_task = self.tasks.spawn(async move {
             let _ = connection.await;
         });
         // Abort even if headers fail or this future is cancelled by timeout.
@@ -210,6 +216,11 @@ impl ControllerHttp {
             parts,
             reqwest::Body::wrap_stream(stream),
         )))
+    }
+
+    pub(super) async fn join(&self) {
+        self.tasks.close();
+        self.tasks.wait().await;
     }
 }
 

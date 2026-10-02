@@ -9,34 +9,43 @@ use meshway_protocol::{
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
 
 use super::{Agent, AgentError, Identity, SyncReceipt, connection_key::KeyStore, local};
-use crate::generated::{client::HttpClient, types::AcknowledgeAgentConnectionsRequest};
+use crate::generated::types::AcknowledgeAgentConnectionsRequest;
 
 #[cfg(feature = "managed-connections")]
-mod dataplane;
+pub(crate) mod dataplane;
 #[cfg(feature = "managed-connections")]
-mod managed;
+pub(crate) mod materials;
 #[cfg(feature = "managed-connections")]
-mod materials;
-#[cfg(feature = "managed-connections")]
-mod mesh_execution;
+pub(crate) mod mesh_execution;
 #[cfg(test)]
 mod tests;
-mod validation;
+pub(crate) mod validation;
 #[cfg(test)]
 mod validation_tests;
 
+#[cfg(all(target_os = "linux", feature = "managed-connections"))]
+pub(crate) fn historical_networks(agent: &Agent) -> Result<Vec<String>, AgentError> {
+    Ok([
+        materials::cached_network(agent)?,
+        mesh_execution::cached_network(agent)?,
+    ]
+    .into_iter()
+    .flatten()
+    .collect())
+}
+
 #[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-struct Cache {
+pub(crate) struct Cache {
     format_version: u32,
     controller: String,
     node_id: String,
-    snapshot: AgentConnectionsSnapshot,
+    pub(crate) snapshot: AgentConnectionsSnapshot,
 }
 
-pub(super) struct State {
-    keys: KeyStore,
-    cache: Option<Cache>,
+pub(crate) struct State {
+    pub(crate) keys: KeyStore,
+    pub(crate) cache: Option<Cache>,
     published_revision: u32,
 }
 
@@ -98,7 +107,7 @@ pub struct ControlSyncReceipts {
     pub connections: ConnectionSyncReceipt,
 }
 
-fn cache_path(state: &Path) -> PathBuf {
+pub(crate) fn cache_path(state: &Path) -> PathBuf {
     let mut value = state.as_os_str().to_owned();
     value.push(".connections.json");
     PathBuf::from(value)
@@ -168,7 +177,7 @@ impl State {
         }
     }
 
-    fn check(&self, path: &Path, identity: &Identity) -> Result<(), AgentError> {
+    pub(crate) fn check(&self, path: &Path, identity: &Identity) -> Result<(), AgentError> {
         self.keys.check(path, identity)?;
         let disk = load_cache(path, identity, &self.keys)?;
         if disk.as_ref().map(|cache| &cache.snapshot.digest)
@@ -179,7 +188,7 @@ impl State {
         Ok(())
     }
 
-    fn persist(
+    pub(crate) fn persist(
         &mut self,
         path: &Path,
         identity: &Identity,
@@ -234,7 +243,7 @@ pub fn connections_status(path: impl AsRef<Path>) -> Result<ConnectionStatus, Ag
 
 // Generated transport DTOs are converted into the authoritative protocol types
 // for digest/reference checks. No handwritten HTTP DTO or untyped JSON escapes.
-pub(super) fn convert<T: DeserializeOwned>(value: impl Serialize) -> Result<T, AgentError> {
+pub(crate) fn convert<T: DeserializeOwned>(value: impl Serialize) -> Result<T, AgentError> {
     let bytes = zeroize::Zeroizing::new(
         serde_json::to_vec(&value)
             .map_err(|_| AgentError::Invalid("cannot encode connection contract"))?,
@@ -243,7 +252,7 @@ pub(super) fn convert<T: DeserializeOwned>(value: impl Serialize) -> Result<T, A
 }
 
 impl Agent {
-    fn load_connections(&mut self) -> Result<(), AgentError> {
+    pub(crate) fn load_connections(&mut self) -> Result<(), AgentError> {
         if self.connections.is_none() {
             self.connections = Some(State::load(&self.path, &self.identity)?);
         }
@@ -262,10 +271,12 @@ impl Agent {
     pub async fn publish_connection_identity(
         &mut self,
     ) -> Result<PublishConnectionIdentityResponse, AgentError> {
+        self.prepare_control_plane().await?;
         if self.identity.node_id.is_none() {
             self.heartbeat().await?;
         }
         self.load_connections()?;
+        let client = self.controller_client();
         let state = self.connections.as_mut().expect("loaded connection state");
         state.check(&self.path, &self.identity)?;
         let public_key = state.keys.prepare(&self.path, &self.identity)?.to_owned();
@@ -274,8 +285,7 @@ impl Agent {
             public_key: public_key.clone(),
             capabilities: capabilities.clone(),
         })?;
-        let response = HttpClient::new()
-            .with_base_url(&self.identity.controller)
+        let response = client
             .with_api_key(&self.identity.node_credential)
             .publish_connection_identity(request)
             .await?;
@@ -329,8 +339,8 @@ impl Agent {
         &mut self,
         mut on_saved: impl FnMut(&AgentConnectionsSnapshot, tokio::time::Instant),
     ) -> Result<ConnectionSyncReceipt, AgentError> {
-        let client = HttpClient::new()
-            .with_base_url(&self.identity.controller)
+        let client = self
+            .controller_client()
             .with_api_key(&self.identity.node_credential);
         let state = self
             .connections

@@ -4,9 +4,9 @@ use std::{
 };
 
 #[cfg(test)]
-use crate::test_local as local;
+pub(crate) use crate::test_local as local;
 #[cfg(not(test))]
-use meshway_protocol::local;
+pub(crate) use meshway_protocol::local;
 use serde::{Deserialize, Serialize};
 
 use crate::generated::{
@@ -14,13 +14,15 @@ use crate::generated::{
     types::{AgentNodeResponse, EnrollAgentRequest, HeartbeatRequest},
 };
 
-mod configuration;
+pub(crate) mod configuration;
 #[cfg(feature = "managed-connections")]
-mod dns;
+pub(crate) mod dns;
+#[cfg(all(target_os = "linux", feature = "managed-connections"))]
+pub(crate) mod network_binding;
 #[cfg(feature = "managed-connections")]
 pub use dns::DnsService;
-mod connection_key;
-mod connections;
+pub(crate) mod connection_key;
+pub(crate) mod connections;
 pub use connections::{
     ConnectionStatus, ConnectionSyncReceipt, ControlSyncReceipts, compiled_connection_capabilities,
     connections_status,
@@ -77,22 +79,28 @@ impl<E: std::fmt::Debug> From<ApiOpError<E>> for AgentError {
     }
 }
 
+impl<E: std::fmt::Debug> From<Box<ApiOpError<E>>> for AgentError {
+    fn from(error: Box<ApiOpError<E>>) -> Self {
+        Self::from(*error)
+    }
+}
+
 // This is a local disk format, not an HTTP DTO. No Debug implementation: it
 // contains the node's only plaintext credential and must never be logged.
 #[derive(PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-struct Identity {
+pub(crate) struct Identity {
     format_version: u32,
-    controller: String,
-    name: String,
-    enrollment_version: String,
+    pub(crate) controller: String,
+    pub(crate) name: String,
+    pub(crate) enrollment_version: String,
     enrollment_token_hash: Vec<u8>,
-    node_credential: String,
-    node_id: Option<String>,
+    pub(crate) node_credential: String,
+    pub(crate) node_id: Option<String>,
 }
 
 impl Identity {
-    fn load(path: &Path) -> Result<Self, AgentError> {
+    pub(crate) fn load(path: &Path) -> Result<Self, AgentError> {
         let identity: Self = serde_json::from_str(&local::read_private(path)?).map_err(|_| {
             AgentError::Invalid("unrecognized or damaged agent state; refusing to overwrite")
         })?;
@@ -153,14 +161,20 @@ pub fn status(path: impl AsRef<Path>) -> Result<AgentStatus, AgentError> {
 }
 
 pub struct Agent {
-    path: PathBuf,
-    identity: Identity,
-    cache: Option<configuration::Cache>,
+    #[cfg(all(target_os = "linux", feature = "managed-connections"))]
+    pub(crate) underlay: Option<crate::control::Control>,
+    #[cfg(all(target_os = "linux", feature = "managed-connections"))]
+    pub(crate) bootstrap: Option<crate::control::Bootstrap>,
+    #[cfg(all(test, target_os = "linux", feature = "managed-connections"))]
+    pub(crate) protect_underlay: bool,
+    pub(crate) path: PathBuf,
+    pub(crate) identity: Identity,
+    pub(crate) cache: Option<configuration::Cache>,
     // Opt-in and lazy: ordinary heartbeat/routing commands do not touch sidecars.
-    connections: Option<connections::State>,
+    pub(crate) connections: Option<connections::State>,
     #[cfg(feature = "managed-connections")]
-    dns_guard: Option<meshway_agent_dns::Guard>,
-    _lock: File,
+    pub(crate) dns_guard: Option<meshway_agent_dns::Guard>,
+    pub(crate) _lock: File,
 }
 
 impl Agent {
@@ -214,6 +228,12 @@ impl Agent {
         };
         let cache = configuration::load(&path, &identity)?;
         Ok(Self {
+            #[cfg(all(target_os = "linux", feature = "managed-connections"))]
+            underlay: None,
+            #[cfg(all(target_os = "linux", feature = "managed-connections"))]
+            bootstrap: None,
+            #[cfg(all(test, target_os = "linux", feature = "managed-connections"))]
+            protect_underlay: false,
             path,
             identity,
             cache,
@@ -230,6 +250,12 @@ impl Agent {
         let identity = Identity::load(&path)?;
         let cache = configuration::load(&path, &identity)?;
         Ok(Self {
+            #[cfg(all(target_os = "linux", feature = "managed-connections"))]
+            underlay: None,
+            #[cfg(all(target_os = "linux", feature = "managed-connections"))]
+            bootstrap: None,
+            #[cfg(all(test, target_os = "linux", feature = "managed-connections"))]
+            protect_underlay: false,
             path,
             identity,
             cache,
@@ -249,8 +275,12 @@ impl Agent {
         // A previous creation/replacement may be visible but have failed its
         // directory sync. Confirm credential durability before network use.
         local::ensure_durable(&self.path)?;
-        let response = HttpClient::new()
-            .with_base_url(&self.identity.controller)
+        #[cfg(all(target_os = "linux", feature = "managed-connections"))]
+        if let Some(response) = self.prepare_underlay(Some(token)).await? {
+            return Ok(response);
+        }
+        let response = self
+            .controller_client()
             .with_api_key(token)
             .enroll_agent(EnrollAgentRequest {
                 name: self.identity.name.clone(),
@@ -265,8 +295,12 @@ impl Agent {
     /// its response was lost. No enrollment token is needed for this recovery.
     pub async fn heartbeat(&mut self) -> Result<AgentNodeResponse, AgentError> {
         local::ensure_durable(&self.path)?;
-        let response = HttpClient::new()
-            .with_base_url(&self.identity.controller)
+        #[cfg(all(target_os = "linux", feature = "managed-connections"))]
+        if let Some(response) = self.prepare_underlay(None).await? {
+            return Ok(response);
+        }
+        let response = self
+            .controller_client()
             .with_api_key(&self.identity.node_credential)
             .heartbeat_agent(HeartbeatRequest {
                 agent_version: env!("CARGO_PKG_VERSION").to_owned(),
@@ -285,7 +319,10 @@ impl Agent {
         self.accept(response)
     }
 
-    fn accept(&mut self, response: AgentNodeResponse) -> Result<AgentNodeResponse, AgentError> {
+    pub(crate) fn accept(
+        &mut self,
+        response: AgentNodeResponse,
+    ) -> Result<AgentNodeResponse, AgentError> {
         if !local::valid_credential(&response.node.id)
             || response.node.name != self.identity.name
             || response.node.revoked_at.is_some()
@@ -318,6 +355,31 @@ impl Agent {
 
     pub fn status(&self) -> AgentStatus {
         configuration::status(&self.identity, self.cache.as_ref())
+    }
+
+    /// Complete Linux protected preparation before creating concurrent consumers.
+    pub async fn prepare_control_plane(&mut self) -> Result<(), AgentError> {
+        #[cfg(all(target_os = "linux", feature = "managed-connections"))]
+        self.prepare_underlay(None).await?;
+        Ok(())
+    }
+
+    pub(crate) fn controller_client(&self) -> HttpClient {
+        #[cfg(all(target_os = "linux", feature = "managed-connections"))]
+        {
+            if let Some(control) = &self.underlay {
+                return control.client();
+            }
+            #[cfg(not(test))]
+            panic!("controller consumer used before protected preparation");
+            #[cfg(test)]
+            assert!(
+                !self.protect_underlay,
+                "protected fixture consumer used before preparation"
+            );
+        }
+        #[cfg(any(not(all(target_os = "linux", feature = "managed-connections")), test))]
+        HttpClient::new().with_base_url(&self.identity.controller)
     }
 }
 

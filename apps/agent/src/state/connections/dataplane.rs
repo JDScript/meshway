@@ -19,10 +19,7 @@ use super::{
     Agent, AgentError, ConnectionSyncReceipt, ControlSyncReceipts, Identity, convert, local,
 };
 use crate::{
-    generated::{
-        client::HttpClient,
-        types::{AcknowledgeAgentConnectionsRequest, AcknowledgeConfigurationRequest},
-    },
+    generated::types::{AcknowledgeAgentConnectionsRequest, AcknowledgeConfigurationRequest},
     managed_connections::Manager,
 };
 
@@ -36,17 +33,17 @@ struct Cache {
     snapshot: AgentDataplaneSnapshot,
 }
 
-pub(super) struct State {
+pub(crate) struct State {
     cache: Option<Cache>,
 }
 
-pub(super) struct Synced {
+pub(crate) struct Synced {
     pub receipt: ControlSyncReceipts,
     pub snapshot: AgentDataplaneSnapshot,
     pub fresh_at: Instant,
 }
 
-pub(super) struct SyncedMesh {
+pub(crate) struct SyncedMesh {
     pub receipt: ControlSyncReceipts,
     pub snapshot: meshway_protocol::MeshExecutionSnapshot,
     pub fresh_at: Instant,
@@ -289,8 +286,8 @@ impl State {
         manager
             .invalidate_dataplane_revision(publication.revision)
             .await;
-        let client = HttpClient::new()
-            .with_base_url(&agent.identity.controller)
+        let client = agent
+            .controller_client()
             .with_api_key(&agent.identity.node_credential)
             .with_max_response_body_bytes(MAX_DATAPLANE_BYTES);
         for _ in 0..3 {

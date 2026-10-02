@@ -166,6 +166,11 @@ impl Drop for Manager {
 }
 
 pub(crate) struct Manager {
+    events: Option<tokio::sync::mpsc::Sender<crate::daemon::SessionEvent>>,
+    #[cfg(target_os = "linux")]
+    underlay_owner: Option<std::sync::Arc<tokio::sync::Mutex<crate::underlay::LinuxUnderlay>>>,
+    #[cfg(target_os = "linux")]
+    underlay_dns: Option<crate::underlay::SystemDnsSnapshot>,
     underlay_generation: Option<crate::underlay::PreparedGeneration>,
     socket_protection: std::sync::Arc<dyn sockets::Protection>,
     profiles: Option<PathBuf>,
@@ -190,7 +195,9 @@ pub(crate) struct Manager {
 
 struct DataplaneSettings {
     options: TunOptions,
+    #[cfg(any(not(target_os = "linux"), test))]
     controller: String,
+    #[cfg(any(not(target_os = "linux"), test))]
     may_reuse_guard: bool,
 }
 
@@ -203,6 +210,11 @@ struct Material {
 impl Manager {
     pub fn new(profiles: Option<PathBuf>, lease: Duration) -> Self {
         Self {
+            events: None,
+            #[cfg(target_os = "linux")]
+            underlay_owner: None,
+            #[cfg(target_os = "linux")]
+            underlay_dns: None,
             underlay_generation: None,
             socket_protection: std::sync::Arc::new(sockets::SystemUnderlay),
             profiles,
@@ -234,9 +246,13 @@ impl Manager {
         may_reuse_guard: bool,
     ) -> Self {
         let mut manager = Self::new(profiles, lease);
+        #[cfg(all(target_os = "linux", not(test)))]
+        let _ = (controller, may_reuse_guard);
         manager.dataplane = Some(DataplaneSettings {
             options,
+            #[cfg(any(not(target_os = "linux"), test))]
             controller,
+            #[cfg(any(not(target_os = "linux"), test))]
             may_reuse_guard,
         });
         manager
@@ -244,6 +260,13 @@ impl Manager {
 
     pub fn enable_discovery(&mut self, options: crate::EndpointDiscoveryOptions) {
         self.discovery_options = options;
+    }
+
+    pub(crate) fn set_events(
+        &mut self,
+        events: tokio::sync::mpsc::Sender<crate::daemon::SessionEvent>,
+    ) {
+        self.events = Some(events);
     }
 
     /// Routing owner supplies an already prepared dual-stack capability. No
@@ -261,6 +284,34 @@ impl Manager {
         ));
         // Drop retires the former generation only after its session joined.
         self.underlay_generation = Some(generation);
+    }
+
+    #[cfg(target_os = "linux")]
+    pub(crate) async fn install_linux_underlay(
+        &mut self,
+        owner: std::sync::Arc<tokio::sync::Mutex<crate::underlay::LinuxUnderlay>>,
+    ) -> Result<(), AgentError> {
+        let (generation, upstreams) = {
+            let owner = owner.lock().await;
+            (owner.socket_generation().await?, owner.system_dns()?)
+        };
+        self.underlay_dns = Some(upstreams.clone());
+        self.install_prepared_underlay(generation, upstreams).await;
+        self.underlay_owner = Some(owner);
+        Ok(())
+    }
+
+    #[cfg(target_os = "linux")]
+    pub(crate) async fn refresh_underlay(&mut self) -> Result<(), AgentError> {
+        if let Some(owner) = self.underlay_owner.clone() {
+            let upstreams = owner.lock().await.system_dns()?;
+            if self.underlay_dns.as_ref() != Some(&upstreams)
+                || self.socket_protection.check_active().is_err()
+            {
+                self.install_linux_underlay(owner).await?;
+            }
+        }
+        Ok(())
     }
 
     pub fn discovery_snapshot(
@@ -392,8 +443,7 @@ impl Manager {
         plan: PacketPlan,
         connections: &NodeConnections,
     ) -> Result<(), AgentError> {
-        let settings = self
-            .dataplane
+        self.dataplane
             .as_ref()
             .ok_or(AgentError::Invalid("dataplane was not explicitly enabled"))?;
         for listener in &connections.listeners {
@@ -430,16 +480,32 @@ impl Manager {
         if self.tun.is_some() {
             return Ok(());
         }
-        self.tun = Some(
-            Tun::open(
-                &settings.options,
-                &plan,
-                &settings.controller,
-                settings.may_reuse_guard,
-            )
-            .await?,
-        );
+        self.tun = Some(self.open_tun(&plan).await?);
         Ok(())
+    }
+
+    async fn open_tun(&self, plan: &PacketPlan) -> Result<Tun, AgentError> {
+        let settings = self
+            .dataplane
+            .as_ref()
+            .ok_or(AgentError::Invalid("dataplane not enabled"))?;
+        #[cfg(target_os = "linux")]
+        if let Some(owner) = &self.underlay_owner {
+            return Tun::open_with_underlay(&settings.options, plan, &mut *owner.lock().await)
+                .await;
+        }
+        #[cfg(all(target_os = "linux", not(test)))]
+        return Err(AgentError::Invalid(
+            "dataplane requires prepared namespace ownership",
+        ));
+        #[cfg(any(not(target_os = "linux"), test))]
+        Tun::open(
+            &settings.options,
+            plan,
+            &settings.controller,
+            settings.may_reuse_guard,
+        )
+        .await
     }
 
     pub async fn invalidate_mesh_execution(
@@ -582,6 +648,14 @@ impl Manager {
         if let Some(running) = self.running.take() {
             running.stop().await;
         }
+        #[cfg(target_os = "linux")]
+        if let Some(owner) = &self.underlay_owner
+            && let Err(error) = owner.lock().await.withdraw_tun().await
+        {
+            // No fallback or foreign cleanup. The retained sink/device still
+            // reject; the journal blocks a future activation until reconciled.
+            eprintln!("underlay TUN withdrawal failed; resources retained: {error}");
+        }
         self.material = None;
         self.observation = Observation::empty(Phase::Withdrawn, reason);
     }
@@ -702,16 +776,23 @@ impl Manager {
                 ));
             }
             if self.tun.is_none() {
-                let settings = self.dataplane.as_ref().expect("explicit dataplane options");
-                self.tun = Some(
-                    Tun::open(
-                        &settings.options,
-                        plan,
-                        &settings.controller,
-                        settings.may_reuse_guard,
-                    )
-                    .await?,
-                );
+                self.tun = Some(self.open_tun(plan).await?);
+            }
+            #[cfg(target_os = "linux")]
+            if let Some(owner) = &self.underlay_owner {
+                let binding = self
+                    .tun
+                    .as_ref()
+                    .expect("configured TUN")
+                    .underlay_binding()?;
+                owner
+                    .lock()
+                    .await
+                    .activate_tun(&[crate::underlay::CapturePrefix {
+                        prefix: plan.prefix.into(),
+                        tun: Some(&binding),
+                    }])
+                    .await?;
             }
             // Flush the bounded kernel queue while no generation owns the fd.
             meshway_dataplane::packet_io::Device::drain(
@@ -802,12 +883,24 @@ impl Manager {
                     let tun = self.tun.as_ref().expect("configured TUN");
                     (tun.device.clone(), tun.name.clone(), plan)
                 });
-                let task = tokio::spawn(session.run_with_packet(
-                    semantic,
-                    deadlines,
-                    observations,
-                    packet_io,
-                ));
+                #[cfg(target_os = "linux")]
+                let underlay = self.underlay_owner.clone();
+                let events = self.events.clone();
+                let task = tokio::spawn(async move {
+                    session
+                        .run_with_packet(semantic, deadlines, observations, packet_io, events)
+                        .await;
+                    // Session owns packet/carrier teardown. Even cancellation of
+                    // the controlling HTTP future cannot skip this joined fence.
+                    #[cfg(target_os = "linux")]
+                    if let Some(owner) = underlay
+                        && let Err(error) = owner.lock().await.withdraw_tun().await
+                    {
+                        eprintln!(
+                            "underlay watchdog withdrawal failed; resources retained: {error}"
+                        );
+                    }
+                });
                 self.running = Some(Running {
                     revision,
                     deadline: renew,
@@ -823,6 +916,7 @@ impl Manager {
                     Ok(Err(Failure(reason))) => reason,
                     _ => Reason::LeaseExpired,
                 };
+                self.withdraw(reason).await;
                 self.observation = Observation::empty(Phase::Error, reason);
             }
         }

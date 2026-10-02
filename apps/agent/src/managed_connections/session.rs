@@ -236,6 +236,7 @@ impl Session {
             String,
             crate::managed_dataplane::PacketPlan,
         )>,
+        events: Option<tokio::sync::mpsc::Sender<crate::daemon::SessionEvent>>,
     ) {
         let probe_runtime = self.runtime.clone();
         let probe_observed = observed.clone();
@@ -270,6 +271,7 @@ impl Session {
                         plan.clone(),
                         packet_deadline,
                         name,
+                        events.as_ref(),
                     )
                     .await
                 }
@@ -305,6 +307,7 @@ impl Session {
                     Reason::ShuttingDown => "generation_withdrawn",
                     _ => "runtime_or_device_failure",
                 },
+                events.as_ref(),
             );
         }
         self.shutdown().await;

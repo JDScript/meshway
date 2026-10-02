@@ -230,6 +230,7 @@ async fn fixture() -> (
 
 fn sync(agent: &Agent, cache: Option<Cache>) -> Sync {
     Sync {
+        client: agent.controller_client(),
         state: agent.path.clone(),
         identity: Identity::load(&agent.path).unwrap(),
         cache,

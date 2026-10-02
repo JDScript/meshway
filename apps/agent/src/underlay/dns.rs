@@ -18,7 +18,9 @@ use super::{Purpose, SocketFactory, closed, invalid};
 /// Ordered plain DNS servers from a trusted system/VPN routing snapshot. Split
 /// DNS, local resolver daemons, proxy and encrypted upstreams need an adapter;
 /// they must not be converted to an unmarked system lookup.
+#[derive(Clone, PartialEq, Eq)]
 pub(crate) struct SystemDnsSnapshot {
+    system: bool,
     // All entries are ordered alternatives in ONE trusted system/VPN resolution
     // scope. Never flatten servers from multiple split-DNS scopes into this list.
     servers: Vec<SocketAddr>,
@@ -40,6 +42,7 @@ impl SystemDnsSnapshot {
             ));
         }
         Ok(Self {
+            system: false,
             servers,
             hosts: HashMap::new(),
         })
@@ -74,6 +77,7 @@ impl SystemDnsSnapshot {
             ));
         }
         let mut snapshot = Self {
+            system: true,
             servers: Vec::new(),
             hosts: HashMap::new(),
         };
@@ -212,6 +216,15 @@ pub(crate) struct BootstrapResolver {
 }
 
 impl BootstrapResolver {
+    pub(super) fn check_system(&self) -> io::Result<()> {
+        if self.upstreams.system && SystemDnsSnapshot::from_system()? != self.upstreams {
+            self.factory.0.retire();
+            return Err(invalid(
+                "system DNS scope changed; prepare a new protected generation",
+            ));
+        }
+        Ok(())
+    }
     pub(crate) fn new(factory: SocketFactory, upstreams: SystemDnsSnapshot) -> Self {
         Self {
             factory,
@@ -225,6 +238,10 @@ impl BootstrapResolver {
         purpose: Purpose,
         hostname: &str,
     ) -> io::Result<Vec<IpAddr>> {
+        if let Err(error) = self.check_system() {
+            self.factory.0.retire();
+            return Err(error);
+        }
         let _ = purpose.bootstrap()?;
         if self.factory.0.cancelled.is_cancelled() {
             return Err(closed());

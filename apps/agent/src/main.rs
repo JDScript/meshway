@@ -296,6 +296,7 @@ async fn execute(command: Command) -> Result<(), Box<dyn std::error::Error>> {
                 })
             };
             let mut agent = Agent::load(state)?;
+            agent.prepare_control_plane().await?;
             #[cfg(feature = "managed-connections")]
             let mut dns_service = if let Some(listen) = dns_listen {
                 Some(

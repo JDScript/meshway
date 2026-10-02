@@ -8,7 +8,7 @@ use meshway_protocol::{
 
 use super::super::{AgentError, Identity, local};
 
-pub(super) fn validate(
+pub(crate) fn validate(
     snapshot: &AgentConnectionsSnapshot,
     identity: &Identity,
     own_key: &str,

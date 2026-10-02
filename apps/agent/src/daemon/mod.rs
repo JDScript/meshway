@@ -1,4 +1,4 @@
-//! Generated-HTTP orchestration; the runtime watchdog never waits on HTTP.
+//! Normal session orchestration. Persistence belongs to state; watchdogs never wait on HTTP.
 
 use std::{future::Future, path::PathBuf, task::Poll, time::Duration};
 
@@ -10,11 +10,39 @@ use meshway_protocol::{
 };
 use tokio::time::{self, Instant};
 
-use super::dataplane;
-use super::{Agent, AgentError, HttpClient, cache_path, convert, local};
+use crate::generated::client::HttpClient;
 use crate::managed_connections::Manager;
+use crate::state::connections::{
+    ConnectionSyncReceipt, ControlSyncReceipts, cache_path, convert, dataplane, materials,
+    mesh_execution, validation,
+};
+use crate::state::{Agent, AgentError, connection_key, local};
+
+mod cli;
+
+/// The library receives cancellation and observations; terminal policy belongs
+/// to the CLI adapter. Neither reporting nor an observer renews authorization.
+#[derive(Clone)]
+pub struct SessionControl {
+    pub cancellation: tokio_util::sync::CancellationToken,
+    pub events: tokio::sync::mpsc::Sender<SessionEvent>,
+}
+
+pub enum SessionEvent {
+    Receipt(String),
+    Retry { message: String, delay: Duration },
+}
+
+pub struct ManagedSession {
+    pub profiles: Option<PathBuf>,
+    pub interval: Duration,
+    pub lease: Duration,
+    pub tun: Option<crate::TunOptions>,
+    pub discovery: crate::EndpointDiscoveryOptions,
+}
 
 struct RuntimeLease {
+    events: Option<tokio::sync::mpsc::Sender<SessionEvent>>,
     instance_id: String,
     expected_epoch: Option<u32>,
     epoch: Option<u32>,
@@ -31,12 +59,19 @@ enum DiscoveryReportMode {
 impl RuntimeLease {
     fn new() -> Result<Self, AgentError> {
         Ok(Self {
+            events: None,
             instance_id: local::credential()?,
             expected_epoch: None,
             epoch: None,
             sequence: 0,
             discovery_sequence: 0,
         })
+    }
+
+    fn receipt(&self, encoded: String) {
+        if let Some(events) = &self.events {
+            let _ = events.try_send(SessionEvent::Receipt(encoded));
+        }
     }
 }
 
@@ -115,6 +150,38 @@ impl Agent {
         options: Option<crate::TunOptions>,
         discovery: crate::EndpointDiscoveryOptions,
     ) -> Result<(), AgentError> {
+        let cli = cli::Context::new();
+        self.run_managed_session(
+            ManagedSession {
+                profiles,
+                interval,
+                lease,
+                tun: options,
+                discovery,
+            },
+            cli.control.clone(),
+        )
+        .await
+    }
+
+    pub async fn run_managed_session(
+        &mut self,
+        session: ManagedSession,
+        control: SessionControl,
+    ) -> Result<(), AgentError> {
+        let ManagedSession {
+            profiles,
+            interval,
+            lease,
+            tun: options,
+            discovery,
+        } = session;
+        if let Some(options) = &options {
+            options.validate()?;
+            if !cfg!(target_os = "linux") {
+                return Err(AgentError::Invalid("managed IPv4 TUN requires Linux"));
+            }
+        }
         if !(Duration::from_secs(10)..=Duration::from_secs(300)).contains(&lease)
             || interval.is_zero()
             || interval >= lease
@@ -122,6 +189,11 @@ impl Agent {
             return Err(AgentError::Invalid(
                 "connection lease must be 10–300 seconds and exceed the polling interval",
             ));
+        }
+        tokio::select! {
+            biased;
+            _ = control.cancellation.cancelled() => return Ok(()),
+            result = self.prepare_control_plane() => result?,
         }
         let mut dataplane = options
             .as_ref()
@@ -138,10 +210,18 @@ impl Agent {
         } else {
             Manager::new(profiles, lease)
         };
+        #[cfg(target_os = "linux")]
+        if let Some(control) = &self.underlay {
+            manager
+                .install_linux_underlay(control.owner.clone())
+                .await?;
+        }
         manager.enable_discovery(discovery);
+        manager.set_events(control.events.clone());
         let mut runtime_lease = RuntimeLease::new()?;
+        runtime_lease.events = Some(control.events);
         #[cfg(unix)]
-        let control = crate::diagnostics::Server::bind(&self.path, &self._lock).await?;
+        let diagnostics = crate::diagnostics::Server::bind(&self.path, &self._lock).await?;
         #[cfg(unix)]
         let prober = manager.prober();
         #[cfg(unix)]
@@ -149,13 +229,13 @@ impl Agent {
         #[cfg(unix)]
         let result = tokio::select! {
             result = self.managed_loop_with_lease(&mut manager, interval, &mut dataplane, &mut runtime_lease) => result,
-            result = control.serve_with_dns(Some(prober), dns_guard) => result.map_err(AgentError::from),
-            _ = tokio::signal::ctrl_c() => Ok(()),
+            result = diagnostics.serve_with_dns(Some(prober), dns_guard) => result.map_err(AgentError::from),
+            _ = control.cancellation.cancelled() => Ok(()),
         };
         #[cfg(not(unix))]
         let result = tokio::select! {
             result = self.managed_loop_with_lease(&mut manager, interval, &mut dataplane, &mut runtime_lease) => result,
-            _ = tokio::signal::ctrl_c() => Ok(()),
+            _ = control.cancellation.cancelled() => Ok(()),
         };
         if let Some(guard) = &self.dns_guard {
             guard.shutdown();
@@ -229,7 +309,12 @@ impl Agent {
                 Err(error) if error.retryable() => {
                     let delay = Duration::from_secs(backoff);
                     backoff = (backoff * 2).min(30);
-                    eprintln!("{error}; retrying in {}s", delay.as_secs());
+                    if let Some(events) = &lease.events {
+                        let _ = events.try_send(SessionEvent::Retry {
+                            message: error.to_string(),
+                            delay,
+                        });
+                    }
                     delay
                 }
                 Err(error) => {
@@ -251,6 +336,8 @@ impl Agent {
         control_synced: &mut bool,
         dataplane: &mut Option<dataplane::State>,
     ) -> Result<(), AgentError> {
+        #[cfg(target_os = "linux")]
+        manager.refresh_underlay().await?;
         let heartbeat = self.heartbeat().await?;
         // A trusted response is stale-generation evidence before any subsequent
         // HTTP can block. This never renews a lease or installs a lower revision.
@@ -264,7 +351,7 @@ impl Agent {
             guard.observe_revision(revision);
         }
         manager.invalidate_dataplane_revision(revision).await;
-        let published = super::materials::publish(self).await?;
+        let published = materials::publish(self).await?;
         if let Some(guard) = &self.dns_guard {
             guard.observe_revision(published);
         }
@@ -321,10 +408,10 @@ impl Agent {
         *control_synced = true;
         if let Some((snapshot, fresh_at)) = packet_snapshot {
             match snapshot {
-                super::mesh_execution::Execution::Legacy(snapshot) => {
+                mesh_execution::Execution::Legacy(snapshot) => {
                     manager.reconcile_dataplane(snapshot, key, fresh_at).await?
                 }
-                super::mesh_execution::Execution::Mesh(snapshot) => {
+                mesh_execution::Execution::Mesh(snapshot) => {
                     manager
                         .reconcile_mesh_execution(snapshot, key, fresh_at)
                         .await?
@@ -333,10 +420,9 @@ impl Agent {
         } else {
             manager.reconcile(snapshot, key, fresh_at).await;
         }
-        println!(
-            "{}",
+        lease.receipt(
             serde_json::to_string(&receipt)
-                .map_err(|_| AgentError::Invalid("cannot encode saved receipt"))?
+                .map_err(|_| AgentError::Invalid("cannot encode saved receipt"))?,
         );
         let client = self.runtime_client();
         let (request, response) = self.report_runtime(manager, lease, &client).await?;
@@ -349,16 +435,18 @@ impl Agent {
             runtime: &'a ReportConnectionRuntimeRequest,
             reported_at: chrono::DateTime<chrono::Utc>,
         }
-        println!(
-            "{}",
+        lease.receipt(
             serde_json::to_string(&RuntimeReceipt {
                 runtime: &request,
-                reported_at: response.reported_at
+                reported_at: response.reported_at,
             })
-            .map_err(|_| AgentError::Invalid("cannot encode runtime receipt"))?
+            .map_err(|_| AgentError::Invalid("cannot encode runtime receipt"))?,
         );
+        let events = lease.events.clone();
         self.report_discovery(manager, lease, DiscoveryReportMode::Normal, |receipt| {
-            println!("{receipt}")
+            if let Some(events) = &events {
+                let _ = events.try_send(SessionEvent::Receipt(receipt.to_owned()));
+            }
         })
         .await?;
         Ok(())
@@ -584,13 +672,8 @@ impl Agent {
                 else {
                     return Ok(());
                 };
-                if super::validation::validate(
-                    &fresh,
-                    &self.identity,
-                    key,
-                    manager.snapshot.as_ref(),
-                )
-                .is_err()
+                if validation::validate(&fresh, &self.identity, key, manager.snapshot.as_ref())
+                    .is_err()
                     || (fresh.payload.revision == request.revision
                         && fresh.digest == request.digest)
                 {
@@ -632,8 +715,7 @@ impl Agent {
     }
 
     fn runtime_client(&self) -> HttpClient {
-        HttpClient::new()
-            .with_base_url(&self.identity.controller)
+        self.controller_client()
             .with_api_key(&self.identity.node_credential)
     }
 
@@ -644,8 +726,8 @@ impl Agent {
         lease: &RuntimeLease,
     ) -> Result<
         (
-            super::ControlSyncReceipts,
-            Option<(super::mesh_execution::Execution, Instant)>,
+            ControlSyncReceipts,
+            Option<(mesh_execution::Execution, Instant)>,
             Instant,
         ),
         AgentError,
@@ -657,11 +739,11 @@ impl Agent {
                     instance_id: lease.instance_id.clone(),
                     capabilities: vec![meshway_protocol::MeshExecutionCapability::Ipv4ExactPathV1],
                 };
-                if let Some(synced) = super::mesh_execution::sync(self, manager, &runtime).await? {
+                if let Some(synced) = mesh_execution::sync(self, manager, &runtime).await? {
                     return Ok((
                         synced.receipt,
                         Some((
-                            super::mesh_execution::Execution::Mesh(synced.snapshot),
+                            mesh_execution::Execution::Mesh(synced.snapshot),
                             synced.fresh_at,
                         )),
                         synced.fresh_at,
@@ -672,7 +754,7 @@ impl Agent {
             Ok((
                 synced.receipt,
                 Some((
-                    super::mesh_execution::Execution::Legacy(synced.snapshot),
+                    mesh_execution::Execution::Legacy(synced.snapshot),
                     synced.fresh_at,
                 )),
                 synced.fresh_at,
@@ -686,7 +768,7 @@ impl Agent {
     async fn managed_sync(
         &mut self,
         manager: &mut Manager,
-    ) -> Result<(super::ControlSyncReceipts, Instant), AgentError> {
+    ) -> Result<(ControlSyncReceipts, Instant), AgentError> {
         let publication = self.publish_connection_identity().await?;
         manager
             .invalidate_dataplane_revision(publication.revision)
@@ -714,7 +796,7 @@ impl Agent {
                 .invalidate_dataplane_revision(snapshot.payload.revision)
                 .await;
             manager.validate_materials(&snapshot.payload, &bundle.materials)?;
-            super::materials::persist(
+            materials::persist(
                 self,
                 &bundle.network_id,
                 snapshot.payload.revision,
@@ -725,8 +807,8 @@ impl Agent {
             let state = self.connections.as_mut().expect("published connections");
             state.persist(&self.path, &self.identity, snapshot.clone())?;
             state.check(&self.path, &self.identity)?;
-            local::ensure_durable(&super::cache_path(&self.path))?;
-            local::ensure_durable(&super::super::connection_key::path(&self.path))?;
+            local::ensure_durable(&cache_path(&self.path))?;
+            local::ensure_durable(&connection_key::path(&self.path))?;
             let response = client
                 .acknowledge_agent_connections(convert(
                     meshway_protocol::AcknowledgeAgentConnectionsRequest {
@@ -752,7 +834,7 @@ impl Agent {
             state.check(&self.path, &self.identity)?;
             manager.install_materials(bundle.materials);
             saved = Some((
-                super::ConnectionSyncReceipt {
+                ConnectionSyncReceipt {
                     controller: self.identity.controller.clone(),
                     node_id: snapshot.payload.node_id.clone(),
                     stored_revision: snapshot.payload.revision,
@@ -770,7 +852,7 @@ impl Agent {
             retryable: true,
         })?;
         Ok((
-            super::ControlSyncReceipts {
+            ControlSyncReceipts {
                 configuration,
                 connections,
             },
@@ -780,15 +862,4 @@ impl Agent {
 }
 
 #[cfg(test)]
-mod discovery_tests;
-#[cfg(test)]
-#[path = "managed/heartbeat_tests.rs"]
-mod heartbeat_tests;
-#[cfg(test)]
-mod mesh_restart_tests;
-#[cfg(test)]
-mod runtime_report_boundary_tests;
-#[cfg(test)]
-mod runtime_report_race_tests;
-#[cfg(test)]
-mod runtime_report_tests;
+mod tests;

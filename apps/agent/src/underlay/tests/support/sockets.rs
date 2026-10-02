@@ -1,4 +1,4 @@
-//! Executed by tests/underlay_fixture/run.py inside disposable namespaces only.
+//! Protected socket/HTTP/carrier support in disposable namespace fixtures only.
 use std::{io, net::SocketAddr, sync::Arc, time::Duration};
 
 use tokio::io::AsyncWriteExt;

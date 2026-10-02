@@ -101,6 +101,7 @@ struct Registered {
 }
 
 pub(super) struct Generation {
+    controller_only: bool,
     pub(super) reservation: Reservation,
     pub(super) state: Mutex<State>,
     pub(super) cancelled: CancellationToken,
@@ -109,6 +110,26 @@ pub(super) struct Generation {
 }
 
 impl Generation {
+    pub(super) fn admit_purpose(&self, purpose: Purpose) -> io::Result<()> {
+        if self.controller_only
+            && !matches!(
+                purpose,
+                Purpose::Controller | Purpose::BootstrapDns(super::BootstrapFor::Controller)
+            )
+        {
+            return Err(invalid(
+                "bootstrap capability admits only controller sockets and its DNS",
+            ));
+        }
+        Ok(())
+    }
+
+    pub(super) fn admit_listener(&self) -> io::Result<()> {
+        if self.controller_only {
+            return Err(invalid("bootstrap capability cannot listen"));
+        }
+        Ok(())
+    }
     pub(super) fn check_namespace(&self) -> io::Result<()> {
         #[cfg(target_os = "linux")]
         if let Some(lease) = &self.namespace_lease {
@@ -121,6 +142,7 @@ impl Generation {
         socket: Arc<Socket>,
         purpose: Purpose,
     ) -> io::Result<Arc<Socket>> {
+        self.admit_purpose(purpose)?;
         let mut state = self.state.lock().map_err(|_| closed())?;
         if !state.active {
             return Err(closed());
@@ -234,6 +256,7 @@ impl PreparedGeneration {
             reservation.mark.protect(&socket)?;
         }
         Ok(Self(Arc::new(Generation {
+            controller_only: false,
             reservation,
             state: Mutex::new(State {
                 active: true,
@@ -248,8 +271,19 @@ impl PreparedGeneration {
     pub(crate) fn factory(&self) -> SocketFactory {
         SocketFactory(self.0.clone())
     }
+
+    #[cfg(target_os = "linux")]
+    pub(super) fn restrict_to_controller(&mut self) {
+        Arc::get_mut(&mut self.0)
+            .expect("unpublished bootstrap generation")
+            .controller_only = true;
+    }
     pub(crate) fn retire(&self) {
         self.0.retire();
+    }
+
+    pub(super) fn active(&self) -> bool {
+        self.0.state.lock().is_ok_and(|state| state.active)
     }
 
     #[cfg(target_os = "linux")]

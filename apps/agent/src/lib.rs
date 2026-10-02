@@ -24,7 +24,12 @@ mod test_local;
 #[path = "../tests/support/network_scope.rs"]
 mod test_network_scope;
 
+mod control;
+#[cfg(feature = "managed-connections")]
+mod daemon;
 mod state;
+#[cfg(feature = "managed-connections")]
+pub use daemon::{ManagedSession, SessionControl, SessionEvent};
 pub use state::{
     Agent, AgentError, AgentStatus, ConnectionStatus, ConnectionSyncReceipt, ControlSyncReceipts,
     SyncReceipt, compiled_connection_capabilities, connections_status, status,

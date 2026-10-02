@@ -1,4 +1,4 @@
-//! New regression evidence. The frozen reviewer models/artifacts stay unchanged.
+//! Namespace reservation and exact-resource ownership regression cases.
 use super::*;
 use std::os::unix::fs::DirBuilderExt;
 

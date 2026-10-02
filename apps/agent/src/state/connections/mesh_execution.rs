@@ -1,7 +1,7 @@
 //! V3 saved journal and normal-run orchestration. The wire plan is not converted
 //! into a v2 routing policy. Compatibility inventory is separately fetched.
 use super::{Agent, AgentError, convert, local};
-use crate::{generated::client::HttpClient, managed_connections::Manager};
+use crate::managed_connections::Manager;
 use meshway_protocol::*;
 use serde::{Deserialize, Serialize};
 use std::{
@@ -10,7 +10,7 @@ use std::{
 };
 use tokio::time::Instant;
 
-pub(super) enum Execution {
+pub(crate) enum Execution {
     Legacy(AgentDataplaneSnapshot),
     Mesh(MeshExecutionSnapshot),
 }
@@ -58,6 +58,11 @@ fn load(agent: &Agent) -> Result<Option<Cache>, AgentError> {
     // file. Its intrinsic integrity and immutable bindings still must hold.
     validate_snapshot(agent, &cache.snapshot)?;
     Ok(Some(cache))
+}
+
+#[cfg(target_os = "linux")]
+pub(super) fn cached_network(agent: &Agent) -> Result<Option<String>, AgentError> {
+    Ok(load(agent)?.map(|cache| cache.snapshot.payload.network_id))
 }
 
 fn validate(
@@ -318,13 +323,13 @@ fn validate_snapshot(agent: &Agent, snapshot: &MeshExecutionSnapshot) -> Result<
     Ok(())
 }
 
-pub(super) async fn sync(
+pub(crate) async fn sync(
     agent: &mut Agent,
     manager: &mut Manager,
     runtime: &MeshExecutionRequest,
 ) -> Result<Option<super::dataplane::SyncedMesh>, AgentError> {
-    let client = HttpClient::new()
-        .with_base_url(&agent.identity.controller)
+    let client = agent
+        .controller_client()
         .with_api_key(&agent.identity.node_credential)
         .with_max_response_body_bytes(MAX_DATAPLANE_BYTES);
     for _ in 0..3 {

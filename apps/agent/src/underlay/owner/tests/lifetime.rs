@@ -1,4 +1,4 @@
-//! Actual fixed-dependency getter and Journal v3 negative/lifetime evidence.
+//! Actual namespace cookie getter and strict journal lifetime evidence.
 use super::*;
 
 #[test]

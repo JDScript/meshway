@@ -79,7 +79,7 @@ fn encode_hex(bytes: &[u8]) -> String {
     value
 }
 
-pub(super) fn path(state: &Path) -> PathBuf {
+pub(crate) fn path(state: &Path) -> PathBuf {
     let mut value = state.as_os_str().to_owned();
     value.push(".connection-key.json");
     PathBuf::from(value)
@@ -100,7 +100,7 @@ fn load(state: &Path, identity: &Identity) -> Result<Option<Key>, AgentError> {
     Ok(Some(key))
 }
 
-pub(super) struct KeyStore {
+pub(crate) struct KeyStore {
     key: Option<Key>,
 }
 
@@ -111,14 +111,14 @@ impl KeyStore {
         })
     }
 
-    pub(super) fn public_key(&self) -> Option<&str> {
+    pub(crate) fn public_key(&self) -> Option<&str> {
         self.key.as_ref().map(|key| key.public_key.as_str())
     }
 
     /// Export only through the existing binding and durability checks while the
     /// Agent lock is held. The core type owns a zeroizing decoded private buffer.
     #[cfg(feature = "managed-connections")]
-    pub(super) fn application_key(
+    pub(crate) fn application_key(
         &self,
         state: &Path,
         identity: &Identity,
@@ -149,7 +149,7 @@ impl KeyStore {
     }
 
     /// The returned public key always has confirmed private-key durability.
-    pub(super) fn prepare(
+    pub(crate) fn prepare(
         &mut self,
         state: &Path,
         identity: &Identity,

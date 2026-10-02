@@ -11,6 +11,7 @@ pub(crate) async fn run(
     plan: PacketPlan,
     deadline: watch::Receiver<Option<Instant>>,
     name: &str,
+    events: Option<&tokio::sync::mpsc::Sender<crate::daemon::SessionEvent>>,
 ) -> io::Result<()> {
     #[cfg(all(test, target_os = "linux"))]
     super::throughput::observe_runtime(&runtime);
@@ -19,7 +20,7 @@ pub(crate) async fn run(
         runtime,
         plan.admission.clone(),
         deadline,
-        || super::tun::proof(name, &plan, true, "generation_active"),
+        || super::tun::proof(name, &plan, true, "generation_active", events),
     )
     .await
 }

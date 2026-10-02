@@ -190,6 +190,7 @@ impl Tun {
             && self.mtu == policy.mtu
     }
 
+    #[cfg(any(not(target_os = "linux"), test))]
     pub async fn open(
         options: &TunOptions,
         plan: &PacketPlan,
@@ -264,41 +265,34 @@ fn proof_json(
     serde_json::to_string(&proof)
 }
 
-pub(crate) fn proof(name: &str, plan: &PacketPlan, ready: bool, reason: &str) {
-    if let Ok(json) = proof_json(name, plan, ready, reason) {
-        // A full stdout pipe must not block the packet watchdog. One bounded
-        // logger thread handles public, point-in-time proofs; overload drops
-        // observations rather than extending authorization or spawning tasks.
-        static OUTPUT: std::sync::OnceLock<Option<std::sync::mpsc::SyncSender<String>>> =
-            std::sync::OnceLock::new();
-        if let Some(sender) = OUTPUT.get_or_init(|| {
-            let (send, receive) = std::sync::mpsc::sync_channel::<String>(32);
-            std::thread::Builder::new()
-                .name("meshway-tun-proof".into())
-                .spawn(move || {
-                    use std::io::Write;
-                    for json in receive {
-                        if writeln!(std::io::stdout(), "{json}").is_err() {
-                            break;
-                        }
-                    }
-                })
-                .ok()
-                .map(|_| send)
-        }) {
-            let _ = sender.try_send(json);
-        }
+pub(crate) fn proof(
+    name: &str,
+    plan: &PacketPlan,
+    ready: bool,
+    reason: &str,
+    events: Option<&tokio::sync::mpsc::Sender<crate::daemon::SessionEvent>>,
+) {
+    if let Some(events) = events
+        && let Ok(json) = proof_json(name, plan, ready, reason)
+    {
+        // Terminal backpressure never retains packet authorization or a socket.
+        let _ = events.try_send(crate::daemon::SessionEvent::Receipt(json));
     }
 }
 
 #[cfg(target_os = "linux")]
 mod linux {
     use super::*;
-    use std::{net::IpAddr, path::Path, process::Stdio, time::Duration};
+    #[cfg(test)]
+    use std::net::IpAddr;
+    use std::{path::Path, process::Stdio, time::Duration};
     use tokio::{io::AsyncReadExt, process::Command, time};
 
+    #[cfg(test)]
     const GUARD_METRIC: &str = "42760";
+    #[cfg(test)]
     const TUN_METRIC: &str = "42759";
+    #[cfg(test)]
     const PROTOCOL: &str = "242";
 
     pub(super) fn drain(device: &tun_rs::AsyncDevice) -> io::Result<()> {
@@ -336,6 +330,7 @@ mod linux {
         }).await.map_err(|_| AgentError::Invalid("managed TUN route operation timed out"))?
     }
 
+    #[cfg(test)]
     async fn underlay(controller: &str, prefix: Ipv4Net) -> Result<(), AgentError> {
         let url = reqwest::Url::parse(controller)
             .map_err(|_| AgentError::Invalid("invalid controller URL"))?;
@@ -391,6 +386,7 @@ mod linux {
     }
 
     #[derive(serde::Deserialize)]
+    #[cfg(test)]
     struct Route {
         dst: Option<String>,
         #[serde(rename = "type")]
@@ -454,6 +450,7 @@ mod linux {
         Ok(device)
     }
 
+    #[cfg(test)]
     pub(super) async fn open(
         options: &TunOptions,
         plan: &PacketPlan,

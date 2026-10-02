@@ -24,10 +24,10 @@ fn path(state: &Path) -> PathBuf {
     PathBuf::from(path)
 }
 
-pub(super) async fn publish(agent: &Agent) -> Result<u32, AgentError> {
+pub(crate) async fn publish(agent: &Agent) -> Result<u32, AgentError> {
     let response: meshway_protocol::PublishManagedTransportCapabilitiesResponse = super::convert(
-        crate::generated::client::HttpClient::new()
-            .with_base_url(&agent.identity.controller)
+        agent
+            .controller_client()
             .with_api_key(&agent.identity.node_credential)
             .publish_managed_transport_capabilities(super::convert(
                 meshway_protocol::PublishManagedTransportCapabilitiesRequest {
@@ -45,7 +45,7 @@ pub(super) async fn publish(agent: &Agent) -> Result<u32, AgentError> {
     Ok(response.revision)
 }
 
-pub(super) fn persist<T: Serialize>(
+pub(crate) fn persist<T: Serialize>(
     agent: &Agent,
     network_id: &str,
     revision: u32,
@@ -53,6 +53,8 @@ pub(super) fn persist<T: Serialize>(
     materials: &[ManagedVlessMaterial],
     digest: &str,
 ) -> Result<(), AgentError> {
+    #[cfg(target_os = "linux")]
+    crate::state::network_binding::check_network(agent, network_id)?;
     if network_id.len() != 32
         || !network_id
             .bytes()
@@ -67,14 +69,7 @@ pub(super) fn persist<T: Serialize>(
         ));
     }
     let path = path(&agent.path);
-    let existing = match std::fs::symlink_metadata(&path) {
-        Ok(_) => Some(
-            serde_json::from_str::<Cache>(&local::read_private_bounded(&path, 2 * 1024 * 1024)?)
-                .map_err(|_| AgentError::Invalid("invalid material journal; refusing overwrite"))?,
-        ),
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => None,
-        Err(e) => return Err(e.into()),
-    };
+    let existing = load_cache(agent)?;
     let node_id = agent
         .identity
         .node_id
@@ -83,14 +78,7 @@ pub(super) fn persist<T: Serialize>(
     let journal_digest = managed_digest(network_id, &revision, materials)
         .map_err(|_| AgentError::Invalid("cannot hash material journal"))?;
     if let Some(old) = &existing
-        && (old.format_version != 1
-            || old.controller != agent.identity.controller
-            || &old.node_id != node_id
-            || old.credential_hash != local::digest(&agent.identity.node_credential)
-            || old.network_id != network_id
-            || managed_digest(&old.network_id, &old.revision, &old.materials)
-                .map_err(|_| AgentError::Invalid("cannot hash old material journal"))?
-                != old.digest
+        && (old.network_id != network_id
             || old.revision > revision
             || (old.revision == revision && old.digest != journal_digest))
     {
@@ -133,6 +121,42 @@ pub(super) fn persist<T: Serialize>(
     }
     local::ensure_durable(&path)?;
     Ok(())
+}
+
+fn load_cache(agent: &Agent) -> Result<Option<Cache>, AgentError> {
+    let path = path(&agent.path);
+    let cache = match std::fs::symlink_metadata(&path) {
+        Ok(_) => {
+            serde_json::from_str::<Cache>(&local::read_private_bounded(&path, 2 * 1024 * 1024)?)
+                .map_err(|_| AgentError::Invalid("invalid material journal; refusing overwrite"))?
+        }
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(e) => return Err(e.into()),
+    };
+    if cache.format_version != 1
+        || cache.controller != agent.identity.controller
+        || Some(&cache.node_id) != agent.identity.node_id.as_ref()
+        || cache.credential_hash != local::digest(&agent.identity.node_credential)
+        || cache.network_id.len() != 32
+        || !cache
+            .network_id
+            .bytes()
+            .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
+        || cache.revision == 0
+        || managed_digest(&cache.network_id, &cache.revision, &cache.materials)
+            .map_err(|_| AgentError::Invalid("cannot hash old material journal"))?
+            != cache.digest
+    {
+        return Err(AgentError::Invalid(
+            "material journal binding, rollback or same-revision mismatch",
+        ));
+    }
+    Ok(Some(cache))
+}
+
+#[cfg(target_os = "linux")]
+pub(super) fn cached_network(agent: &Agent) -> Result<Option<String>, AgentError> {
+    Ok(load_cache(agent)?.map(|cache| cache.network_id))
 }
 
 #[cfg(test)]

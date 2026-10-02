@@ -1,11 +1,50 @@
-use std::{io, sync::Arc};
+use std::{
+    future::Future,
+    io,
+    pin::Pin,
+    sync::{Arc, RwLock},
+};
 
 use super::{
     PreparedGeneration, Reservation,
     dns::{BootstrapResolver, SystemDnsSnapshot},
     http::ControllerHttp,
 };
-use crate::generated::client::HttpClient;
+use crate::generated::client::{HttpClient, HttpError, HttpResult, HttpTransport};
+
+/// All generated consumer clones observe one replacement point. An empty or
+/// retired slot fails closed, including already-created DNS consumers.
+pub(crate) struct ControllerClients {
+    transport: RwLock<Option<Arc<ControllerHttp>>>,
+}
+impl ControllerClients {
+    pub(crate) fn new(channel: &ControllerChannel) -> Arc<Self> {
+        Arc::new(Self {
+            transport: RwLock::new(Some(channel.transport.clone())),
+        })
+    }
+    pub(crate) fn install(&self, channel: &ControllerChannel) -> io::Result<()> {
+        *self.transport.write().map_err(|_| super::closed())? = Some(channel.transport.clone());
+        Ok(())
+    }
+    pub(crate) fn close(&self) {
+        if let Ok(mut transport) = self.transport.write() {
+            *transport = None;
+        }
+    }
+}
+impl HttpTransport for ControllerClients {
+    fn execute(
+        &self,
+        request: reqwest::Request,
+    ) -> Pin<Box<dyn Future<Output = HttpResult<reqwest::Response>> + Send + '_>> {
+        let transport = self.transport.read().ok().and_then(|slot| slot.clone());
+        Box::pin(async move {
+            let transport = transport.ok_or_else(|| HttpError::Io(super::closed()))?;
+            transport.execute(request).await
+        })
+    }
+}
 
 /// Controller lifecycle, independent of business lease/sink retirement.
 pub(crate) struct ControllerChannel {
@@ -56,5 +95,14 @@ impl ControllerChannel {
 
     pub(crate) fn retire(&self) {
         self.owner.retire();
+    }
+
+    pub(crate) fn active(&self) -> bool {
+        self.owner.active()
+    }
+
+    pub(crate) async fn retire_and_join(self) {
+        self.owner.retire();
+        self.transport.join().await;
     }
 }

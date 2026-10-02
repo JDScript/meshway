@@ -31,8 +31,31 @@ async fn heartbeat_new_revision_fences_real_packets_before_stalled_publication()
         &payload.configuration.node.name,
     )
     .unwrap();
-    agent.identity.node_id = Some(payload.node_id.clone());
-    crate::state::write_identity(&agent.path, &agent.identity, true).unwrap();
+    let node = &payload.configuration.node;
+    let now = chrono::Utc::now();
+    let response = AgentNodeResponse {
+        node: NodeSummary {
+            id: node.id.clone(),
+            name: node.name.clone(),
+            country: node.country.clone(),
+            mesh_ipv4: node.mesh_ipv4.clone(),
+            mesh_ipv6: node.mesh_ipv6.clone(),
+            configuration_revision: payload.revision + 1,
+            acknowledged_revision: 0,
+            agent_version: agent.identity.enrollment_version.clone(),
+            registered_at: now,
+            last_seen: now,
+            revoked_at: None,
+        },
+    };
+    agent
+        .accept(
+            convert(AgentNodeResponse {
+                node: response.node.clone(),
+            })
+            .unwrap(),
+        )
+        .unwrap();
     agent.load_connections().unwrap();
     payload.connections.public_key = Some(
         agent
@@ -53,23 +76,6 @@ async fn heartbeat_new_revision_fences_real_packets_before_stalled_publication()
     {
         peer.public_key = remote_identity.public_key_hex();
     }
-    let node = &payload.configuration.node;
-    let now = chrono::Utc::now();
-    let response = AgentNodeResponse {
-        node: NodeSummary {
-            id: node.id.clone(),
-            name: node.name.clone(),
-            country: node.country.clone(),
-            mesh_ipv4: node.mesh_ipv4.clone(),
-            mesh_ipv6: node.mesh_ipv6.clone(),
-            configuration_revision: payload.revision + 1,
-            acknowledged_revision: 0,
-            agent_version: agent.identity.enrollment_version.clone(),
-            registered_at: now,
-            last_seen: now,
-            revoked_at: None,
-        },
-    };
     let stalled = Arc::new(Notify::new());
     let signal = stalled.clone();
     let app = axum::Router::new()

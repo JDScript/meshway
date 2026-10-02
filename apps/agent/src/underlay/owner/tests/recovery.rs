@@ -1,4 +1,4 @@
-//! R1: normal nonpersistent TUN open/cancel/restart, not a tun:None matrix.
+//! Nonpersistent TUN cancellation/restart and exact journal convergence.
 use super::*;
 use crate::managed_dataplane::{PacketPlan, TunOptions, tun::Tun};
 

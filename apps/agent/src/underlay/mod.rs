@@ -2,6 +2,7 @@
 mod controller;
 mod dns;
 #[cfg(all(test, target_os = "linux"))]
+#[path = "tests/support/sockets.rs"]
 mod fixture;
 mod generation;
 mod http;
@@ -11,12 +12,14 @@ mod owner;
 #[allow(unused_imports)]
 pub(crate) use managed::ManagedProtection;
 #[cfg(target_os = "linux")]
+pub(crate) use owner::{BootstrapChannel, BootstrapPreparation, BootstrapUnderlay};
+#[cfg(target_os = "linux")]
 #[allow(unused_imports)]
 pub(crate) use owner::{CapturePrefix, LinuxUnderlay, Preparation, TunBinding};
 mod socket;
 
 #[allow(unused_imports)]
-pub(crate) use controller::ControllerChannel;
+pub(crate) use controller::{ControllerChannel, ControllerClients};
 #[allow(unused_imports)] // Routing owner and carrier bootstrap adapter.
 pub(crate) use dns::{BootstrapResolver, SystemDnsSnapshot};
 #[allow(unused_imports)] // Staged owner integration is in the handoff.
