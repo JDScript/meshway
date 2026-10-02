@@ -7,6 +7,7 @@ import { Spinner } from "@/components/ui/spinner"
 import { useIsMobile } from "@/hooks/use-mobile"
 import { m } from "@/paraglide/messages.js"
 
+import { CHROME } from "./glass-drawer"
 import { EDGE, MOBILE_EDGE, PAGE_LEFT, WORKSPACE_LEFT } from "./layout"
 import { PAGES, useCurrentPage, useWorkspaceOpen, type PageId } from "./pages"
 import { Surface } from "./surface"
@@ -82,7 +83,9 @@ export function CommitBar() {
   if (!current) return null
   const busy = current.saving
   const bar = (
+    // Chrome: on phones, touching the bar must not dismiss the sheet it serves.
     <div
+      {...CHROME}
       className="pointer-events-none fixed z-60 flex justify-center"
       style={
         mobile
