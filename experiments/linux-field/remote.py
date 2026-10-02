@@ -57,6 +57,11 @@ def main(data):
             '--mount', f'type=bind,source={directory},target=/private', '--entrypoint', 'python3', image, '-I', '-c', code])
 
     action = data['action']
+    if action.startswith('restore-'):
+        # Separate lifecycle: never initialize, enroll, bootstrap-chown or configure.
+        from_restore = {'__name__': 'field_restore'}
+        exec(compile(data['restore_source'], '<field-restore>', 'exec'), from_restore)
+        return from_restore['restore'](data, root, docker)
     if action == 'inventory' and not root.exists():
         return {'initialized': False, 'roles': []}
     if action == 'initialize':
