@@ -135,7 +135,7 @@ pub struct SourceProfiles {
 /// `compile_network`, never by decoding compiled indexes or authorizations.
 ///
 /// ```compile_fail
-/// let _: meshway_policy::v3::NetworkCompilation = serde_json::from_str("{}").unwrap();
+/// let _: meshway_policy::NetworkCompilation = serde_json::from_str("{}").unwrap();
 /// ```
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, ToSchema)]
 #[serde(deny_unknown_fields)]

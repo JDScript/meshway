@@ -1,4 +1,4 @@
-use meshway_policy::v3::*;
+use meshway_policy::*;
 use serde::de::DeserializeOwned;
 use serde_json::{Value, json};
 

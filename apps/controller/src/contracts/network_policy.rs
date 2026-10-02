@@ -1,5 +1,4 @@
-use meshway_policy::v3::{Diagnostic, NetworkPolicy};
-use meshway_protocol::PolicySourceMode;
+use meshway_policy::{Diagnostic, NetworkPolicy};
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 
@@ -8,7 +7,6 @@ use utoipa::ToSchema;
 pub struct SaveNetworkPolicyRequest {
     #[schema(format = Int64, minimum = 1, maximum = 4294967295_u64)]
     pub expected_revision: u32,
-    /// Explicit replacement/activation; not an assertion of equivalent migration.
     pub policy: NetworkPolicy,
     #[serde(default)]
     pub source_jsonc: Option<String>,
@@ -21,14 +19,9 @@ pub struct NetworkPolicySnapshot {
     pub network_id: String,
     #[schema(format = Int64, minimum = 1, maximum = 4294967295_u64)]
     pub revision: u32,
-    pub source_mode: PolicySourceMode,
-    #[schema(required = true)]
-    pub policy: Option<NetworkPolicy>,
+    pub policy: NetworkPolicy,
     #[schema(required = true)]
     pub source_jsonc: Option<String>,
     pub valid: bool,
     pub diagnostics: Vec<Diagnostic>,
-    /// Proposal only, never automatically activated.
-    #[schema(required = true)]
-    pub migration_proposal: Option<NetworkPolicy>,
 }

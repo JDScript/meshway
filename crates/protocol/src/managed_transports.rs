@@ -1,6 +1,6 @@
 //! Public intent is deliberately distinct from node-only recoverable material.
 use crate::{
-    AgentConnectionsSnapshot, AgentDataplaneSnapshot, ConnectionEndpoint, ConnectionTransport,
+    AgentConnectionsSnapshot, ConnectionEndpoint, ConnectionTransport,
 };
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
@@ -133,16 +133,6 @@ impl Drop for ManagedVlessMaterial {
 pub struct AgentManagedConnectionsSnapshot {
     pub network_id: String,
     pub connections: AgentConnectionsSnapshot,
-    #[schema(max_items = 128)]
-    pub materials: Vec<ManagedVlessMaterial>,
-    pub digest: String,
-}
-
-#[derive(Clone, Serialize, Deserialize, ToSchema)]
-#[serde(deny_unknown_fields)]
-pub struct AgentManagedDataplaneSnapshot {
-    pub network_id: String,
-    pub dataplane: AgentDataplaneSnapshot,
     #[schema(max_items = 128)]
     pub materials: Vec<ManagedVlessMaterial>,
     pub digest: String,

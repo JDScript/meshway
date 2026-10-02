@@ -11,13 +11,6 @@ pub const MAX_MESH_EXECUTION_MATERIALS: usize = 64;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 #[serde(rename_all = "snake_case")]
-pub enum PolicySourceMode {
-    LegacyV2,
-    MeshV3,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
-#[serde(rename_all = "snake_case")]
 pub enum MeshExecutionCapability {
     Ipv4ExactPathV1,
 }
@@ -74,12 +67,9 @@ pub struct MeshExecutionSnapshot {
 #[derive(Clone, Serialize, Deserialize, ToSchema)]
 #[serde(deny_unknown_fields)]
 pub struct MeshExecutionResponse {
-    pub source_mode: PolicySourceMode,
     #[schema(format = Int64, minimum = 1, maximum = 4294967295_u64)]
     pub revision: u32,
-    #[schema(required = true)]
-    #[serde(deserialize_with = "crate::deserialize_required_nullable")]
-    pub snapshot: Option<MeshExecutionSnapshot>,
+    pub snapshot: MeshExecutionSnapshot,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, ToSchema)]

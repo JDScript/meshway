@@ -18,7 +18,7 @@ impl Default for CompileOptions {
 /// this structure. Public fields support inspection, not untrusted construction.
 ///
 /// ```compile_fail
-/// let _: meshway_policy::v3::Compiled = serde_json::from_str("{}").unwrap();
+/// let _: meshway_policy::Compiled = serde_json::from_str("{}").unwrap();
 /// ```
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, ToSchema)]
 #[serde(deny_unknown_fields)]

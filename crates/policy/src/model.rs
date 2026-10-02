@@ -1,29 +1,9 @@
 //! Four-layer engine: connections and grants are order-independent;
 //! Mesh and external routing are ordered first-match. Facts belong to one network snapshot.
-mod compiled;
-mod engine;
-mod graph;
-mod index;
-mod internet;
-mod mesh_lints;
-mod migration;
-mod path_search;
-mod profile_plan;
-mod profile_projection;
-mod profile_validation;
-mod profiles;
-mod rule_sets;
-mod validation;
-pub use compiled::*;
-pub use engine::compile;
-pub use index::{DestinationIndex, FlattenedPrefix};
-pub use migration::*;
-pub use profiles::*;
-pub use rule_sets::*;
+use crate::ParsedRuleSet;
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
 use utoipa::ToSchema;
-pub use validation::validate;
 
 pub const MAX_NODES: usize = 1024;
 pub const MAX_RULES: usize = 128;
@@ -37,7 +17,7 @@ pub const MAX_INSTALLED_PREFIXES: usize = 16384;
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 #[serde(deny_unknown_fields)]
-/// Flat planning / migration kernel. Product configuration uses `NetworkPolicy`
+/// Flat planning kernel. Product configuration uses `NetworkPolicy`
 /// and `compile_network`; route schemes never change these shared three layers.
 pub struct Policy {
     pub connections: Vec<ConnectionRule>,
@@ -249,5 +229,3 @@ impl Policy {
         }
     }
 }
-#[cfg(test)]
-mod tests;

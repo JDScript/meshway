@@ -1,5 +1,5 @@
 //! Standalone JSON Schema for the independent policy editor contract.
-use meshway_policy::v3::*;
+use meshway_policy::*;
 use serde_json::{Value, json};
 use utoipa::OpenApi;
 

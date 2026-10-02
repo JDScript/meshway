@@ -4,52 +4,11 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use utoipa::ToSchema;
 
-use crate::{FlowQuery, MeshNetwork, MeshNode, PolicyDiagnostic, RouteDecision, RoutingPolicy};
+use crate::{MeshNetwork, MeshNode};
 
-pub const CONFIGURATION_SCHEMA_VERSION: u32 = 1;
+pub const CONFIGURATION_SCHEMA_VERSION: u32 = 2;
 pub const MAX_CONFIGURATION_BYTES: usize = 1024 * 1024;
 pub const MAX_INVENTORY_NODES: usize = 1024;
-
-#[derive(Debug, Serialize, Deserialize, ToSchema)]
-#[serde(deny_unknown_fields)]
-pub struct PolicySnapshot {
-    #[schema(format = Int64, minimum = 1, maximum = 4294967295_u64)]
-    pub revision: u32,
-    pub network: MeshNetwork,
-    pub policy: RoutingPolicy,
-    #[schema(required = true)]
-    #[serde(deserialize_with = "crate::deserialize_required_nullable")]
-    pub source_jsonc: Option<String>,
-    pub valid: bool,
-    pub diagnostics: Vec<PolicyDiagnostic>,
-}
-
-#[derive(Debug, Serialize, Deserialize, ToSchema)]
-#[serde(deny_unknown_fields)]
-pub struct PreviewPolicyRequest {
-    pub policy: RoutingPolicy,
-    pub flow: FlowQuery,
-}
-
-#[derive(Debug, Serialize, Deserialize, ToSchema)]
-#[serde(deny_unknown_fields)]
-pub struct PreviewPolicyResponse {
-    #[schema(format = Int64, minimum = 1, maximum = 4294967295_u64)]
-    pub revision: u32,
-    pub valid: bool,
-    pub diagnostics: Vec<PolicyDiagnostic>,
-    pub decision: RouteDecision,
-}
-
-#[derive(Debug, Serialize, Deserialize, ToSchema)]
-#[serde(deny_unknown_fields)]
-pub struct SavePolicyRequest {
-    #[schema(format = Int64, minimum = 1, maximum = 4294967295_u64)]
-    pub expected_revision: u32,
-    pub policy: RoutingPolicy,
-    #[serde(default)]
-    pub source_jsonc: Option<String>,
-}
 
 #[derive(Debug, Serialize, Deserialize, ToSchema)]
 #[serde(deny_unknown_fields)]
@@ -72,9 +31,6 @@ pub struct NodeConfiguration {
     pub network: MeshNetwork,
     pub node: MeshNode,
     pub peers: Vec<MeshNode>,
-    pub routing_policy: RoutingPolicy,
-    pub policy_valid: bool,
-    pub diagnostics: Vec<PolicyDiagnostic>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, ToSchema)]
