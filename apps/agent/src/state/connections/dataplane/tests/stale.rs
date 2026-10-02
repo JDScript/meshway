@@ -75,7 +75,7 @@ async fn publish(
 
 async fn dataplane(
     HttpState(controller): HttpState<Arc<Controller>>,
-) -> Json<AgentDataplaneSnapshot> {
+) -> Json<meshway_protocol::AgentManagedDataplaneSnapshot> {
     let snapshot = {
         let mut view = controller.view.lock().unwrap();
         if view.armed.is_some() {
@@ -84,7 +84,7 @@ async fn dataplane(
         (!view.stall_get).then(|| view.snapshot.clone())
     };
     if let Some(snapshot) = snapshot {
-        return Json(snapshot);
+        return Json(managed(snapshot));
     }
     controller.stalled_get.notify_one();
     std::future::pending().await
@@ -238,7 +238,10 @@ async fn known_stale_evidence_cancels_delivery(evidence: Evidence, saved_ahead: 
             "/api/v1/agent/connection-identity",
             axum::routing::post(publish),
         )
-        .route("/api/v1/agent/dataplane", axum::routing::get(dataplane))
+        .route(
+            "/api/v1/agent/managed-dataplane",
+            axum::routing::get(dataplane),
+        )
         .route(
             "/api/v1/agents/configuration/ack",
             axum::routing::post(configuration_ack),

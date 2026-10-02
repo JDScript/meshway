@@ -105,6 +105,12 @@ async fn request(stream: &mut TcpStream, credential: &str) -> (String, Vec<u8>) 
 pub(super) fn success(path: &str, body: &[u8], snapshot: &AgentDataplaneSnapshot) -> Vec<u8> {
     let payload = &snapshot.payload;
     match path {
+        "/api/v1/agent/managed-transport-capabilities" => serde_json::to_vec(
+            &meshway_protocol::PublishManagedTransportCapabilitiesResponse {
+                revision: payload.revision,
+            },
+        )
+        .unwrap(),
         "/api/v1/agents/heartbeat" => {
             let _: meshway_protocol::HeartbeatRequest = serde_json::from_slice(body).unwrap();
             let node = &payload.configuration.node;
@@ -141,7 +147,9 @@ pub(super) fn success(path: &str, body: &[u8], snapshot: &AgentDataplaneSnapshot
             })
             .unwrap()
         }
-        "/api/v1/agent/dataplane" => serde_json::to_vec(snapshot).unwrap(),
+        "/api/v1/agent/managed-dataplane" => {
+            serde_json::to_vec(&managed(snapshot.clone())).unwrap()
+        }
         "/api/v1/agents/configuration/ack" => {
             let request: AcknowledgeConfigurationRequest = serde_json::from_slice(body).unwrap();
             assert_eq!(request.revision, payload.revision);
@@ -277,5 +285,5 @@ async fn heartbeat_partial_403_stops_active_packet_generation_without_reading_bo
 
 #[tokio::test]
 async fn dataplane_partial_403_stops_active_packet_generation_without_reading_body() {
-    partial_403_withdraws_active_packets("/api/v1/agent/dataplane").await;
+    partial_403_withdraws_active_packets("/api/v1/agent/managed-dataplane").await;
 }

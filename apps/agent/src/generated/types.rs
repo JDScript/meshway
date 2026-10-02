@@ -7,7 +7,7 @@
 #![allow(clippy::let_unit_value)]
 #![allow(unreachable_patterns)]
 use serde::{Deserialize, Serialize};
-#[derive(Debug, Clone, Deserialize, Serialize)]
+#[derive(Clone, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct ReportEndpointDiscoveryRequest {
     ///Constraint: minLength=64, maxLength=64, pattern=`^[0-9a-f]{64}$`
@@ -24,7 +24,7 @@ pub struct ReportEndpointDiscoveryRequest {
     pub sockets: Vec<UdpSocketDiscovery>,
     pub state: EndpointDiscoveryState,
 }
-#[derive(Debug, Clone, Deserialize, Serialize)]
+#[derive(Clone, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct ReportConnectionRuntimeRequest {
     ///Constraint: minLength=64, maxLength=64, pattern=`^[0-9a-f]{64}$`
@@ -42,7 +42,13 @@ pub struct ReportConnectionRuntimeRequest {
     pub sequence: i64,
     pub state: ConnectionRuntimeState,
 }
-#[derive(Debug, Clone, Deserialize, Serialize)]
+#[derive(Clone, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct PublishManagedTransportCapabilitiesRequest {
+    ///Constraint: maxItems=2
+    pub vless_streams: Vec<VlessStreamTransport>,
+}
+#[derive(Clone, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct PublishConnectionIdentityResponse {
     pub capabilities: Vec<ConnectionCapability>,
@@ -52,7 +58,7 @@ pub struct PublishConnectionIdentityResponse {
     ///Constraint: minimum=1, maximum=4294967295
     pub revision: i64,
 }
-#[derive(Debug, Clone, Deserialize, Serialize)]
+#[derive(Clone, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct PublishConnectionIdentityRequest {
     ///Constraint: maxItems=3
@@ -60,7 +66,7 @@ pub struct PublishConnectionIdentityRequest {
     ///Constraint: minLength=64, maxLength=64, pattern=`^[0-9a-f]{64}$`
     pub public_key: String,
 }
-#[derive(Debug, Clone, Deserialize, Serialize)]
+#[derive(Clone, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct UdpSocketDiscovery {
     ///Constraint: minLength=3, maxLength=64
@@ -78,7 +84,7 @@ pub struct UdpSocketDiscovery {
     pub socket_id: i64,
     pub source: EndpointDiscoverySource,
 }
-#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize, Default)]
+#[derive(Clone, PartialEq, Eq, Deserialize, Serialize, Default)]
 pub enum UdpDiscoveryResourceKind {
     #[default]
     #[serde(rename = "listener")]
@@ -104,7 +110,7 @@ impl AsRef<str> for UdpDiscoveryResourceKind {
         self.as_str()
     }
 }
-#[derive(Debug, Clone, Deserialize, Serialize)]
+#[derive(Clone, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct StunEndpointObservation {
     pub expires_at: chrono::DateTime<chrono::Utc>,
@@ -121,7 +127,7 @@ pub struct StunEndpointObservation {
     #[serde(deserialize_with = "deserialize_required_nullable")]
     pub rtt_ms: Option<i64>,
 }
-#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize, Default)]
+#[derive(Clone, PartialEq, Eq, Deserialize, Serialize, Default)]
 pub enum StunDiscoveryOutcome {
     #[default]
     #[serde(rename = "mapped")]
@@ -156,7 +162,7 @@ impl AsRef<str> for StunDiscoveryOutcome {
         self.as_str()
     }
 }
-#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize, Default)]
+#[derive(Clone, PartialEq, Eq, Deserialize, Serialize, Default)]
 pub enum EndpointDiscoverySource {
     #[default]
     #[serde(rename = "managed_udp_socket_stun")]
@@ -179,7 +185,7 @@ impl AsRef<str> for EndpointDiscoverySource {
         self.as_str()
     }
 }
-#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize, Default)]
+#[derive(Clone, PartialEq, Eq, Deserialize, Serialize, Default)]
 pub enum EndpointDiscoveryState {
     #[default]
     #[serde(rename = "awaiting_report")]
@@ -220,7 +226,7 @@ impl AsRef<str> for EndpointDiscoveryState {
         self.as_str()
     }
 }
-#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize, Default)]
+#[derive(Clone, PartialEq, Eq, Deserialize, Serialize, Default)]
 pub enum ConnectionRuntimeState {
     #[default]
     #[serde(rename = "awaiting_report")]
@@ -258,7 +264,7 @@ impl AsRef<str> for ConnectionRuntimeState {
         self.as_str()
     }
 }
-#[derive(Debug, Clone, Deserialize, Serialize)]
+#[derive(Clone, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct ConnectionNeighborObservation {
     ///Constraint: minLength=1, maxLength=64, pattern=`^[A-Za-z0-9._-]+$`
@@ -280,7 +286,7 @@ pub struct ConnectionNeighborObservation {
     pub state: ConnectionNeighborState,
     pub transport: ConnectionTransport,
 }
-#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize, Default)]
+#[derive(Clone, PartialEq, Eq, Deserialize, Serialize, Default)]
 pub enum ConnectionNeighborState {
     #[default]
     #[serde(rename = "authenticated")]
@@ -309,7 +315,7 @@ impl AsRef<str> for ConnectionNeighborState {
         self.as_str()
     }
 }
-#[derive(Debug, Clone, Deserialize, Serialize)]
+#[derive(Clone, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct ConnectionListenerObservation {
     ///Constraint: minLength=1, maxLength=64, pattern=`^[A-Za-z0-9._-]+$`
@@ -317,7 +323,7 @@ pub struct ConnectionListenerObservation {
     pub reason: ConnectionRuntimeReason,
     pub state: ConnectionListenerState,
 }
-#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize, Default)]
+#[derive(Clone, PartialEq, Eq, Deserialize, Serialize, Default)]
 pub enum ConnectionRuntimeReason {
     #[default]
     #[serde(rename = "none")]
@@ -376,7 +382,7 @@ impl AsRef<str> for ConnectionRuntimeReason {
         self.as_str()
     }
 }
-#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize, Default)]
+#[derive(Clone, PartialEq, Eq, Deserialize, Serialize, Default)]
 pub enum ConnectionListenerState {
     #[default]
     #[serde(rename = "bound")]
@@ -402,7 +408,7 @@ impl AsRef<str> for ConnectionListenerState {
         self.as_str()
     }
 }
-#[derive(Debug, Clone, Deserialize, Serialize)]
+#[derive(Clone, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct ConfigurationSnapshot {
     ///Constraint: minLength=64, maxLength=64, pattern=`^[0-9a-f]{64}$`
@@ -410,13 +416,13 @@ pub struct ConfigurationSnapshot {
     pub payload: NodeConfiguration,
 }
 ///Also lets a pending local enrollment recover its server-assigned node ID.
-#[derive(Debug, Clone, Deserialize, Serialize)]
+#[derive(Clone, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct AgentNodeResponse {
     pub node: NodeSummary,
 }
 ///Durable control-plane identity. Last contact is not tunnel health.
-#[derive(Debug, Clone, Deserialize, Serialize)]
+#[derive(Clone, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct NodeSummary {
     ///Constraint: minimum=0, maximum=4294967295
@@ -435,14 +441,90 @@ pub struct NodeSummary {
     #[serde(deserialize_with = "deserialize_required_nullable")]
     pub revoked_at: Option<chrono::DateTime<chrono::Utc>>,
 }
-#[derive(Debug, Clone, Deserialize, Serialize)]
+#[derive(Clone, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct AgentManagedDataplaneSnapshot {
+    pub dataplane: AgentDataplaneSnapshot,
+    pub digest: String,
+    ///Constraint: maxItems=128
+    pub materials: Vec<ManagedVlessMaterial>,
+    pub network_id: String,
+}
+#[derive(Clone, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct AgentManagedConnectionsSnapshot {
+    pub connections: AgentConnectionsSnapshot,
+    pub digest: String,
+    ///Constraint: maxItems=128
+    pub materials: Vec<ManagedVlessMaterial>,
+    pub network_id: String,
+}
+///No Debug: serialization is permitted only on the node-authenticated endpoint.
+#[derive(Clone, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct ManagedVlessMaterial {
+    ///Constraint: minLength=1, maxLength=32768
+    pub certificate_pem: String,
+    pub certificate_sha256: String,
+    pub credential_ref: String,
+    pub listener_id: String,
+    ///Only listener owner receives this; dialers receive null.
+    ///Constraint: minLength=1, maxLength=16384
+    #[serde(deserialize_with = "deserialize_required_nullable")]
+    pub private_key_pem: Option<String>,
+    pub settings: ManagedVlessSettings,
+    pub uuid: String,
+    ///Constraint: minimum=1, maximum=4294967295
+    pub version: i64,
+}
+#[derive(Clone, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct ManagedVlessSettings {
+    ///Certificate name and client verification name, independent of HTTP Host.
+    ///Constraint: minLength=1, maxLength=253
+    pub server_name: String,
+    pub stream: VlessStreamTransport,
+    ///Constraint: minLength=1, maxLength=253
+    #[serde(deserialize_with = "deserialize_required_nullable")]
+    pub websocket_host: Option<String>,
+    ///Constraint: minLength=1, maxLength=1024
+    #[serde(deserialize_with = "deserialize_required_nullable")]
+    pub websocket_path: Option<String>,
+}
+#[derive(Clone, PartialEq, Eq, Deserialize, Serialize, Default)]
+pub enum VlessStreamTransport {
+    #[default]
+    #[serde(rename = "tcp")]
+    Tcp,
+    #[serde(rename = "websocket")]
+    Websocket,
+}
+impl VlessStreamTransport {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::Tcp => "tcp",
+            Self::Websocket => "websocket",
+        }
+    }
+}
+impl ::std::fmt::Display for VlessStreamTransport {
+    fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+impl AsRef<str> for VlessStreamTransport {
+    fn as_ref(&self) -> &str {
+        self.as_str()
+    }
+}
+#[derive(Clone, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct AgentDnsSnapshot {
     ///Constraint: minLength=64, maxLength=64, pattern=`^[0-9a-f]{64}$`
     pub digest: String,
     pub payload: NodeDnsConfiguration,
 }
-#[derive(Debug, Clone, Deserialize, Serialize)]
+#[derive(Clone, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct NodeDnsConfiguration {
     ///Constraint: maxItems=64
@@ -459,7 +541,7 @@ pub struct NodeDnsConfiguration {
     ///Constraint: minimum=1, maximum=1
     pub schema_version: i32,
 }
-#[derive(Debug, Clone, Deserialize, Serialize)]
+#[derive(Clone, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct NodeDnsRecord {
     ///Constraint: maxItems=1
@@ -471,7 +553,7 @@ pub struct NodeDnsRecord {
     ///Constraint: minLength=64, maxLength=64, pattern=`^[0-9a-f]{64}$`
     pub node_id: String,
 }
-#[derive(Debug, Clone, Deserialize, Serialize)]
+#[derive(Clone, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct MeshDnsConfiguration {
     pub enabled: bool,
@@ -480,7 +562,7 @@ pub struct MeshDnsConfiguration {
     ///Constraint: minLength=3, maxLength=128
     pub zone: String,
 }
-#[derive(Debug, Clone, Deserialize, Serialize)]
+#[derive(Clone, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct AgentDataplaneSnapshot {
     ///Constraint: minLength=64, maxLength=64, pattern=`^[0-9a-f]{64}$`
@@ -488,7 +570,7 @@ pub struct AgentDataplaneSnapshot {
     pub payload: NodeDataplane,
 }
 ///One coherent global revision, projected for the authenticated node.
-#[derive(Debug, Clone, Deserialize, Serialize)]
+#[derive(Clone, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct NodeDataplane {
     pub access_policy: MeshPathAuthorization,
@@ -503,7 +585,7 @@ pub struct NodeDataplane {
     ///Constraint: minimum=1, maximum=1
     pub schema_version: i64,
 }
-#[derive(Debug, Clone, Deserialize, Serialize)]
+#[derive(Clone, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct NodeConfiguration {
     pub diagnostics: Vec<PolicyDiagnostic>,
@@ -517,13 +599,13 @@ pub struct NodeConfiguration {
     ///Constraint: minimum=1, maximum=4294967295
     pub schema_version: i64,
 }
-#[derive(Debug, Clone, Deserialize, Serialize)]
+#[derive(Clone, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct RoutingPolicy {
     pub default_action: DefaultRouteAction,
     pub rules: Vec<RouteRule>,
 }
-#[derive(Debug, Clone, Deserialize, Serialize)]
+#[derive(Clone, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct RouteRule {
     pub action: RouteAction,
@@ -533,13 +615,13 @@ pub struct RouteRule {
     pub source: SourceSelector,
 }
 ///Empty dimensions are wildcards; dimensions combine with AND, members with OR.
-#[derive(Debug, Clone, Deserialize, Serialize)]
+#[derive(Clone, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct SourceSelector {
     pub countries: Vec<String>,
     pub node_ids: Vec<String>,
 }
-#[derive(Debug, Clone, Deserialize, Serialize)]
+#[derive(Clone, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct RouteAction {
     #[serde(deserialize_with = "deserialize_required_nullable")]
@@ -547,7 +629,7 @@ pub struct RouteAction {
     pub kind: RouteActionKind,
     pub via: Vec<String>,
 }
-#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize, Default)]
+#[derive(Clone, PartialEq, Eq, Deserialize, Serialize, Default)]
 pub enum RouteActionKind {
     #[default]
     #[serde(rename = "route")]
@@ -573,13 +655,13 @@ impl AsRef<str> for RouteActionKind {
         self.as_str()
     }
 }
-#[derive(Debug, Clone, Deserialize, Serialize)]
+#[derive(Clone, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct DestinationSelector {
     pub kind: DestinationSelectorKind,
     pub value: String,
 }
-#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize, Default)]
+#[derive(Clone, PartialEq, Eq, Deserialize, Serialize, Default)]
 pub enum DestinationSelectorKind {
     #[default]
     #[serde(rename = "node")]
@@ -611,7 +693,7 @@ impl AsRef<str> for DestinationSelectorKind {
         self.as_str()
     }
 }
-#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize, Default)]
+#[derive(Clone, PartialEq, Eq, Deserialize, Serialize, Default)]
 pub enum DestinationScope {
     #[default]
     #[serde(rename = "any")]
@@ -640,7 +722,7 @@ impl AsRef<str> for DestinationScope {
         self.as_str()
     }
 }
-#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize, Default)]
+#[derive(Clone, PartialEq, Eq, Deserialize, Serialize, Default)]
 pub enum DefaultRouteAction {
     #[default]
     #[serde(rename = "direct")]
@@ -666,7 +748,7 @@ impl AsRef<str> for DefaultRouteAction {
         self.as_str()
     }
 }
-#[derive(Debug, Clone, Deserialize, Serialize)]
+#[derive(Clone, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct PolicyDiagnostic {
     pub field: String,
@@ -675,7 +757,7 @@ pub struct PolicyDiagnostic {
     pub rule_id: Option<String>,
 }
 ///Public active-node inventory; country is administrator-managed metadata.
-#[derive(Debug, Clone, Deserialize, Serialize)]
+#[derive(Clone, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct MeshNode {
     #[serde(deserialize_with = "deserialize_required_nullable")]
@@ -685,7 +767,7 @@ pub struct MeshNode {
     pub mesh_ipv6: String,
     pub name: String,
 }
-#[derive(Debug, Clone, Deserialize, Serialize)]
+#[derive(Clone, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct MeshNetwork {
     pub ipv4_prefix: String,
@@ -693,13 +775,13 @@ pub struct MeshNetwork {
 }
 /**Internal compiled path authorization. Its JSON remains `{ "grants": [...] }`
 so schema-version-1 NodeDataplane remains byte-contract compatible.*/
-#[derive(Debug, Clone, Deserialize, Serialize)]
+#[derive(Clone, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct MeshPathAuthorization {
     ///Constraint: maxItems=128
     pub grants: Vec<MeshAccessGrant>,
 }
-#[derive(Debug, Clone, Deserialize, Serialize)]
+#[derive(Clone, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct MeshAccessGrant {
     ///Constraint: minLength=1, maxLength=64, pattern=`^[A-Za-z0-9._-]+$`
@@ -708,14 +790,14 @@ pub struct MeshAccessGrant {
     ///Constraint: minItems=2, maxItems=8
     pub path: Vec<String>,
 }
-#[derive(Debug, Clone, Deserialize, Serialize)]
+#[derive(Clone, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct AgentConnectionsSnapshot {
     ///Constraint: minLength=64, maxLength=64, pattern=`^[0-9a-f]{64}$`
     pub digest: String,
     pub payload: NodeConnections,
 }
-#[derive(Debug, Clone, Deserialize, Serialize)]
+#[derive(Clone, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct NodeConnections {
     pub capabilities: Vec<ConnectionCapability>,
@@ -734,7 +816,7 @@ pub struct NodeConnections {
     pub schema_version: i64,
     pub valid: bool,
 }
-#[derive(Debug, Clone, Deserialize, Serialize)]
+#[derive(Clone, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct OutgoingConnectionCandidate {
     #[serde(deserialize_with = "deserialize_required_nullable")]
@@ -747,7 +829,7 @@ pub struct OutgoingConnectionCandidate {
     pub priority: i32,
     pub transport: ConnectionTransport,
 }
-#[derive(Debug, Clone, Deserialize, Serialize)]
+#[derive(Clone, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct IncomingConnectionApproval {
     pub candidate_id: String,
@@ -755,17 +837,17 @@ pub struct IncomingConnectionApproval {
     pub peer_node_id: String,
     pub transport: ConnectionTransport,
 }
-#[derive(Debug, Clone, Deserialize, Serialize)]
+#[derive(Clone, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct ConnectionPeer {
     pub node_id: String,
     ///Constraint: minLength=64, maxLength=64, pattern=`^[0-9a-f]{64}$`
     pub public_key: String,
 }
-#[derive(Debug, Clone, Deserialize, Serialize)]
+#[derive(Clone, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct ConnectionListener {
-    ///Constraint: minItems=1, maxItems=16
+    ///Constraint: maxItems=16
     pub advertised_endpoints: Vec<ConnectionEndpoint>,
     pub bind: String,
     ///Constraint: minLength=1, maxLength=64, pattern=`^[A-Za-z0-9._-]+$`
@@ -776,7 +858,7 @@ pub struct ConnectionListener {
     pub node_id: String,
     pub transport: ConnectionTransport,
 }
-#[derive(Debug, Clone, Deserialize, Serialize)]
+#[derive(Clone, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct ConnectionEndpoint {
     ///Constraint: minLength=1, maxLength=253
@@ -784,7 +866,7 @@ pub struct ConnectionEndpoint {
     ///Constraint: minimum=1, maximum=65535
     pub port: i32,
 }
-#[derive(Debug, Clone, Deserialize, Serialize)]
+#[derive(Clone, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct ConnectionDiagnostic {
     pub field: String,
@@ -792,7 +874,7 @@ pub struct ConnectionDiagnostic {
     pub item_id: Option<String>,
     pub message: String,
 }
-#[derive(Debug, Clone, Deserialize, Serialize)]
+#[derive(Clone, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct ConnectionCapability {
     pub can_accept: bool,
@@ -800,7 +882,7 @@ pub struct ConnectionCapability {
     pub semantics: ConnectionSemantics,
     pub transport: ConnectionTransport,
 }
-#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize, Default)]
+#[derive(Clone, PartialEq, Eq, Deserialize, Serialize, Default)]
 pub enum ConnectionTransport {
     #[default]
     #[serde(rename = "native_udp")]
@@ -829,7 +911,7 @@ impl AsRef<str> for ConnectionTransport {
         self.as_str()
     }
 }
-#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize, Default)]
+#[derive(Clone, PartialEq, Eq, Deserialize, Serialize, Default)]
 pub enum ConnectionSemantics {
     #[default]
     #[serde(rename = "datagram")]
@@ -855,7 +937,7 @@ impl AsRef<str> for ConnectionSemantics {
         self.as_str()
     }
 }
-#[derive(Debug, Clone, Deserialize, Serialize)]
+#[derive(Clone, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct AcknowledgeAgentConnectionsResponse {
     ///Constraint: minLength=64, maxLength=64, pattern=`^[0-9a-f]{64}$`
@@ -864,7 +946,7 @@ pub struct AcknowledgeAgentConnectionsResponse {
     pub revision: i64,
     pub status: ConnectionReceiptStatus,
 }
-#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize, Default)]
+#[derive(Clone, PartialEq, Eq, Deserialize, Serialize, Default)]
 pub enum ConnectionReceiptStatus {
     #[default]
     #[serde(rename = "saved")]
@@ -887,7 +969,7 @@ impl AsRef<str> for ConnectionReceiptStatus {
         self.as_str()
     }
 }
-#[derive(Debug, Clone, Deserialize, Serialize)]
+#[derive(Clone, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct AcknowledgeAgentConnectionsRequest {
     ///Constraint: minLength=64, maxLength=64, pattern=`^[0-9a-f]{64}$`
@@ -895,7 +977,7 @@ pub struct AcknowledgeAgentConnectionsRequest {
     ///Constraint: minimum=1, maximum=4294967295
     pub revision: i64,
 }
-#[derive(Debug, Clone, Deserialize, Serialize)]
+#[derive(Clone, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct AcknowledgeConfigurationRequest {
     ///Constraint: minLength=64, maxLength=64, pattern=`^[0-9a-f]{64}$`
@@ -903,7 +985,7 @@ pub struct AcknowledgeConfigurationRequest {
     ///Constraint: minimum=1, maximum=4294967295
     pub revision: i64,
 }
-#[derive(Debug, Clone, Deserialize, Serialize)]
+#[derive(Clone, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct AcknowledgeConfigurationResponse {
     ///Constraint: minLength=64, maxLength=64, pattern=`^[0-9a-f]{64}$`
@@ -911,7 +993,7 @@ pub struct AcknowledgeConfigurationResponse {
     ///Constraint: minimum=1, maximum=4294967295
     pub revision: i64,
 }
-#[derive(Debug, Clone, Deserialize, Serialize)]
+#[derive(Clone, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct BeginConnectionRuntimeRequest {
     ///Pin the initial epoch read across retries; never refresh after a conflict.
@@ -920,7 +1002,7 @@ pub struct BeginConnectionRuntimeRequest {
     ///Constraint: minLength=64, maxLength=64, pattern=`^[0-9a-f]{64}$`
     pub instance_id: String,
 }
-#[derive(Debug, Clone, Deserialize, Serialize)]
+#[derive(Clone, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct BeginConnectionRuntimeResponse {
     ///Constraint: minimum=1, maximum=4294967295
@@ -928,7 +1010,7 @@ pub struct BeginConnectionRuntimeResponse {
 }
 /**Persist the proposed random credential before sending this request. Retry
 with the same enrollment token, credential, name and enrollment version.*/
-#[derive(Debug, Clone, Deserialize, Serialize)]
+#[derive(Clone, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct EnrollAgentRequest {
     ///Constraint: minLength=1, maxLength=64, pattern=`[^\u0009-\u000D\u0020\u0085\u00A0\u1680\u2000-\u200A\u2028\u2029\u202F\u205F\u3000]`
@@ -938,12 +1020,12 @@ pub struct EnrollAgentRequest {
     ///Constraint: minLength=64, maxLength=64, pattern=`^[0-9a-f]{64}$`
     pub node_credential: String,
 }
-#[derive(Debug, Clone, Deserialize, Serialize)]
+#[derive(Clone, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct ErrorResponse {
     pub message: String,
 }
-#[derive(Debug, Clone, Deserialize, Serialize)]
+#[derive(Clone, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct ExchangeDeviceRequest {
     ///Constraint: minLength=1, maxLength=64, pattern=`[^\u0009-\u000D\u0020\u0085\u00A0\u1680\u2000-\u200A\u2028\u2029\u202F\u205F\u3000]`
@@ -957,7 +1039,7 @@ pub struct ExchangeDeviceRequest {
     ///Constraint: minLength=25, maxLength=25, pattern=`^meshway://enroll/callback$`
     pub redirect_uri: String,
 }
-#[derive(Debug, Clone, Deserialize, Serialize)]
+#[derive(Clone, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct GetConnectionRuntimeEpochResponse {
     ///Zero means this node has never acquired a runtime lease.
@@ -965,13 +1047,19 @@ pub struct GetConnectionRuntimeEpochResponse {
     pub epoch: i64,
 }
 ///Node identity is derived exclusively from the node bearer credential.
-#[derive(Debug, Clone, Deserialize, Serialize)]
+#[derive(Clone, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct HeartbeatRequest {
     ///Constraint: minLength=1, maxLength=64, pattern=`[^\u0009-\u000D\u0020\u0085\u00A0\u1680\u2000-\u200A\u2028\u2029\u202F\u205F\u3000]`
     pub agent_version: String,
 }
-#[derive(Debug, Clone, Deserialize, Serialize)]
+#[derive(Clone, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct PublishManagedTransportCapabilitiesResponse {
+    ///Constraint: minimum=1, maximum=4294967295
+    pub revision: i64,
+}
+#[derive(Clone, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct ReportConnectionRuntimeResponse {
     ///Constraint: minimum=1, maximum=4294967295
@@ -980,7 +1068,7 @@ pub struct ReportConnectionRuntimeResponse {
     ///Constraint: minimum=1, maximum=4294967295
     pub sequence: i64,
 }
-#[derive(Debug, Clone, Deserialize, Serialize)]
+#[derive(Clone, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct ReportEndpointDiscoveryResponse {
     ///Constraint: minimum=1, maximum=4294967295
@@ -998,4 +1086,436 @@ where
     T: serde::Deserialize<'de>,
 {
     Option::<T>::deserialize(deserializer)
+}
+
+impl std::fmt::Debug for ReportEndpointDiscoveryRequest {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("ReportEndpointDiscoveryRequest([REDACTED])")
+    }
+}
+
+impl std::fmt::Debug for ReportConnectionRuntimeRequest {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("ReportConnectionRuntimeRequest([REDACTED])")
+    }
+}
+
+impl std::fmt::Debug for PublishManagedTransportCapabilitiesRequest {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("PublishManagedTransportCapabilitiesRequest([REDACTED])")
+    }
+}
+
+impl std::fmt::Debug for PublishConnectionIdentityResponse {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("PublishConnectionIdentityResponse([REDACTED])")
+    }
+}
+
+impl std::fmt::Debug for PublishConnectionIdentityRequest {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("PublishConnectionIdentityRequest([REDACTED])")
+    }
+}
+
+impl std::fmt::Debug for UdpSocketDiscovery {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("UdpSocketDiscovery([REDACTED])")
+    }
+}
+
+impl std::fmt::Debug for UdpDiscoveryResourceKind {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("UdpDiscoveryResourceKind([REDACTED])")
+    }
+}
+
+impl std::fmt::Debug for StunEndpointObservation {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("StunEndpointObservation([REDACTED])")
+    }
+}
+
+impl std::fmt::Debug for StunDiscoveryOutcome {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("StunDiscoveryOutcome([REDACTED])")
+    }
+}
+
+impl std::fmt::Debug for EndpointDiscoverySource {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("EndpointDiscoverySource([REDACTED])")
+    }
+}
+
+impl std::fmt::Debug for EndpointDiscoveryState {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("EndpointDiscoveryState([REDACTED])")
+    }
+}
+
+impl std::fmt::Debug for ConnectionRuntimeState {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("ConnectionRuntimeState([REDACTED])")
+    }
+}
+
+impl std::fmt::Debug for ConnectionNeighborObservation {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("ConnectionNeighborObservation([REDACTED])")
+    }
+}
+
+impl std::fmt::Debug for ConnectionNeighborState {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("ConnectionNeighborState([REDACTED])")
+    }
+}
+
+impl std::fmt::Debug for ConnectionListenerObservation {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("ConnectionListenerObservation([REDACTED])")
+    }
+}
+
+impl std::fmt::Debug for ConnectionRuntimeReason {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("ConnectionRuntimeReason([REDACTED])")
+    }
+}
+
+impl std::fmt::Debug for ConnectionListenerState {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("ConnectionListenerState([REDACTED])")
+    }
+}
+
+impl std::fmt::Debug for ConfigurationSnapshot {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("ConfigurationSnapshot([REDACTED])")
+    }
+}
+
+impl std::fmt::Debug for AgentNodeResponse {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("AgentNodeResponse([REDACTED])")
+    }
+}
+
+impl std::fmt::Debug for NodeSummary {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("NodeSummary([REDACTED])")
+    }
+}
+
+impl std::fmt::Debug for AgentManagedDataplaneSnapshot {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("AgentManagedDataplaneSnapshot([REDACTED])")
+    }
+}
+
+impl std::fmt::Debug for AgentManagedConnectionsSnapshot {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("AgentManagedConnectionsSnapshot([REDACTED])")
+    }
+}
+
+impl std::fmt::Debug for ManagedVlessMaterial {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("ManagedVlessMaterial([REDACTED])")
+    }
+}
+
+impl std::fmt::Debug for ManagedVlessSettings {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("ManagedVlessSettings([REDACTED])")
+    }
+}
+
+impl std::fmt::Debug for VlessStreamTransport {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("VlessStreamTransport([REDACTED])")
+    }
+}
+
+impl std::fmt::Debug for AgentDnsSnapshot {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("AgentDnsSnapshot([REDACTED])")
+    }
+}
+
+impl std::fmt::Debug for NodeDnsConfiguration {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("NodeDnsConfiguration([REDACTED])")
+    }
+}
+
+impl std::fmt::Debug for NodeDnsRecord {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("NodeDnsRecord([REDACTED])")
+    }
+}
+
+impl std::fmt::Debug for MeshDnsConfiguration {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("MeshDnsConfiguration([REDACTED])")
+    }
+}
+
+impl std::fmt::Debug for AgentDataplaneSnapshot {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("AgentDataplaneSnapshot([REDACTED])")
+    }
+}
+
+impl std::fmt::Debug for NodeDataplane {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("NodeDataplane([REDACTED])")
+    }
+}
+
+impl std::fmt::Debug for NodeConfiguration {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("NodeConfiguration([REDACTED])")
+    }
+}
+
+impl std::fmt::Debug for RoutingPolicy {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("RoutingPolicy([REDACTED])")
+    }
+}
+
+impl std::fmt::Debug for RouteRule {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("RouteRule([REDACTED])")
+    }
+}
+
+impl std::fmt::Debug for SourceSelector {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("SourceSelector([REDACTED])")
+    }
+}
+
+impl std::fmt::Debug for RouteAction {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("RouteAction([REDACTED])")
+    }
+}
+
+impl std::fmt::Debug for RouteActionKind {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("RouteActionKind([REDACTED])")
+    }
+}
+
+impl std::fmt::Debug for DestinationSelector {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("DestinationSelector([REDACTED])")
+    }
+}
+
+impl std::fmt::Debug for DestinationSelectorKind {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("DestinationSelectorKind([REDACTED])")
+    }
+}
+
+impl std::fmt::Debug for DestinationScope {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("DestinationScope([REDACTED])")
+    }
+}
+
+impl std::fmt::Debug for DefaultRouteAction {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("DefaultRouteAction([REDACTED])")
+    }
+}
+
+impl std::fmt::Debug for PolicyDiagnostic {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("PolicyDiagnostic([REDACTED])")
+    }
+}
+
+impl std::fmt::Debug for MeshNode {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("MeshNode([REDACTED])")
+    }
+}
+
+impl std::fmt::Debug for MeshNetwork {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("MeshNetwork([REDACTED])")
+    }
+}
+
+impl std::fmt::Debug for MeshPathAuthorization {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("MeshPathAuthorization([REDACTED])")
+    }
+}
+
+impl std::fmt::Debug for MeshAccessGrant {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("MeshAccessGrant([REDACTED])")
+    }
+}
+
+impl std::fmt::Debug for AgentConnectionsSnapshot {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("AgentConnectionsSnapshot([REDACTED])")
+    }
+}
+
+impl std::fmt::Debug for NodeConnections {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("NodeConnections([REDACTED])")
+    }
+}
+
+impl std::fmt::Debug for OutgoingConnectionCandidate {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("OutgoingConnectionCandidate([REDACTED])")
+    }
+}
+
+impl std::fmt::Debug for IncomingConnectionApproval {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("IncomingConnectionApproval([REDACTED])")
+    }
+}
+
+impl std::fmt::Debug for ConnectionPeer {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("ConnectionPeer([REDACTED])")
+    }
+}
+
+impl std::fmt::Debug for ConnectionListener {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("ConnectionListener([REDACTED])")
+    }
+}
+
+impl std::fmt::Debug for ConnectionEndpoint {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("ConnectionEndpoint([REDACTED])")
+    }
+}
+
+impl std::fmt::Debug for ConnectionDiagnostic {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("ConnectionDiagnostic([REDACTED])")
+    }
+}
+
+impl std::fmt::Debug for ConnectionCapability {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("ConnectionCapability([REDACTED])")
+    }
+}
+
+impl std::fmt::Debug for ConnectionTransport {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("ConnectionTransport([REDACTED])")
+    }
+}
+
+impl std::fmt::Debug for ConnectionSemantics {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("ConnectionSemantics([REDACTED])")
+    }
+}
+
+impl std::fmt::Debug for AcknowledgeAgentConnectionsResponse {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("AcknowledgeAgentConnectionsResponse([REDACTED])")
+    }
+}
+
+impl std::fmt::Debug for ConnectionReceiptStatus {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("ConnectionReceiptStatus([REDACTED])")
+    }
+}
+
+impl std::fmt::Debug for AcknowledgeAgentConnectionsRequest {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("AcknowledgeAgentConnectionsRequest([REDACTED])")
+    }
+}
+
+impl std::fmt::Debug for AcknowledgeConfigurationRequest {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("AcknowledgeConfigurationRequest([REDACTED])")
+    }
+}
+
+impl std::fmt::Debug for AcknowledgeConfigurationResponse {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("AcknowledgeConfigurationResponse([REDACTED])")
+    }
+}
+
+impl std::fmt::Debug for BeginConnectionRuntimeRequest {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("BeginConnectionRuntimeRequest([REDACTED])")
+    }
+}
+
+impl std::fmt::Debug for BeginConnectionRuntimeResponse {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("BeginConnectionRuntimeResponse([REDACTED])")
+    }
+}
+
+impl std::fmt::Debug for EnrollAgentRequest {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("EnrollAgentRequest([REDACTED])")
+    }
+}
+
+impl std::fmt::Debug for ErrorResponse {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("ErrorResponse([REDACTED])")
+    }
+}
+
+impl std::fmt::Debug for ExchangeDeviceRequest {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("ExchangeDeviceRequest([REDACTED])")
+    }
+}
+
+impl std::fmt::Debug for GetConnectionRuntimeEpochResponse {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("GetConnectionRuntimeEpochResponse([REDACTED])")
+    }
+}
+
+impl std::fmt::Debug for HeartbeatRequest {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("HeartbeatRequest([REDACTED])")
+    }
+}
+
+impl std::fmt::Debug for PublishManagedTransportCapabilitiesResponse {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("PublishManagedTransportCapabilitiesResponse([REDACTED])")
+    }
+}
+
+impl std::fmt::Debug for ReportConnectionRuntimeResponse {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("ReportConnectionRuntimeResponse([REDACTED])")
+    }
+}
+
+impl std::fmt::Debug for ReportEndpointDiscoveryResponse {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("ReportEndpointDiscoveryResponse([REDACTED])")
+    }
 }

@@ -27,7 +27,7 @@ async fn operation(
     let (parts, body) = request.into_parts();
     let body = axum::body::to_bytes(body, 8192).await.unwrap();
     let path = parts.uri.path();
-    if path == "/api/v1/agent/dataplane" {
+    if path == "/api/v1/agent/managed-dataplane" {
         let previous = state.gets.fetch_add(1, Ordering::SeqCst);
         if previous == 1 {
             // The first DNS failure must have retried the actual GET, without

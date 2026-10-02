@@ -15,7 +15,7 @@ pub(super) fn identifier(value: &str) -> bool {
             .all(|byte| byte.is_ascii_alphanumeric() || b"._-".contains(&byte))
 }
 
-fn usable_ip(ip: IpAddr, bind: bool) -> bool {
+pub(crate) fn usable_ip(ip: IpAddr, bind: bool) -> bool {
     let ip = match ip {
         IpAddr::V6(v6) => v6.to_ipv4_mapped().map(IpAddr::V4).unwrap_or(ip),
         _ => ip,
@@ -25,7 +25,7 @@ fn usable_ip(ip: IpAddr, bind: bool) -> bool {
         && !matches!(ip, IpAddr::V4(v4) if v4.is_broadcast())
 }
 
-fn endpoint(value: &ConnectionEndpoint) -> Result<ConnectionEndpoint, &'static str> {
+pub(crate) fn endpoint(value: &ConnectionEndpoint) -> Result<ConnectionEndpoint, &'static str> {
     if value.port == 0 || value.host.is_empty() || value.host.chars().count() > 253 {
         return Err("endpoint requires a valid host and a nonzero port");
     }
@@ -158,7 +158,7 @@ pub(super) fn compile(
                 "VLESS requires a bounded local profile identifier; native transports require null",
             );
         }
-        if listener.advertised_endpoints.is_empty() || listener.advertised_endpoints.len() > 16 {
+        if listener.advertised_endpoints.len() > 16 {
             report(
                 Some(&listener.id),
                 "listeners.advertised_endpoints",

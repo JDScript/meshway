@@ -602,6 +602,75 @@ async fn every_declared_endpoint_is_scoped_under_global_admin_mutations_node_req
         call!("GET", "/api/v1/agent/dataplane", Some(c), None).1,
         c_dataplane
     );
+    let (status, managed) = call!("GET", "/api/v1/agent/managed-dataplane", Some(c), None);
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(managed["dataplane"], c_dataplane);
+    assert_eq!(managed["materials"], json!([]));
+    assert_eq!(
+        call!("GET", "/api/v1/agent/managed-connections", Some(c), None).0,
+        StatusCode::OK
+    );
+    assert_eq!(
+        call!(
+            "GET",
+            "/api/v1/agent/managed-dataplane",
+            Some(&f.admin),
+            None
+        )
+        .0,
+        StatusCode::UNAUTHORIZED
+    );
+    let (status, public) = call!(
+        "GET",
+        format!("{}/managed-listeners", bases[0]),
+        Some(&f.admin),
+        None
+    );
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(public["listeners"], json!([]));
+    let intent = json!({"id":"optional","node_id":"","enabled":true,"transport":"native_udp","bind_address":"0.0.0.0","bind_port":18443,"advertised_endpoints":[],"vless":null});
+    let mut wrong_scope = intent.clone();
+    wrong_scope["node_id"] = nodes[2][0].clone().into();
+    assert_eq!(
+        call!(
+            "POST",
+            format!("{}/managed-listeners", bases[0]),
+            Some(&f.admin),
+            Some(json!({"expected_revision":public["revision"],"settings":wrong_scope}))
+        )
+        .0,
+        StatusCode::NOT_FOUND
+    );
+    assert_eq!(
+        call!(
+            "GET",
+            format!("{}/managed-listeners", bases[0]),
+            Some(c),
+            None
+        )
+        .0,
+        StatusCode::UNAUTHORIZED
+    );
+    assert_eq!(
+        call!(
+            "POST",
+            format!("{}/managed-enrollment-tokens", bases[0]),
+            Some(&f.admin),
+            Some(json!({"expires_in_seconds":600,"initial_listener":intent}))
+        )
+        .0,
+        StatusCode::OK
+    );
+    assert_eq!(
+        call!(
+            "POST",
+            "/api/v1/agent/managed-transport-capabilities",
+            Some(c),
+            Some(json!({"vless_streams":[]}))
+        )
+        .0,
+        StatusCode::OK
+    );
     let api: Value = serde_json::from_str(&openapi_json().unwrap()).unwrap();
     let declared: BTreeSet<_> = api["paths"]
         .as_object()

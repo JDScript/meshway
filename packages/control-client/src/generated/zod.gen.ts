@@ -57,7 +57,7 @@ export const zConnectionEndpoint = z.strictObject({
 });
 
 export const zConnectionListener = z.strictObject({
-  "advertised_endpoints": z.array(zConnectionEndpoint).min(1).max(16),
+  "advertised_endpoints": z.array(zConnectionEndpoint).max(16),
   "bind": z.string(),
   "credential_ref": z.string().refine(value => [...value].length >= 1, "minLength 1 Unicode code points").refine(value => [...value].length <= 64, "maxLength 64 Unicode code points").regex(new RegExp("^[A-Za-z0-9._-]+$", "u")).nullable(),
   "id": z.string().refine(value => [...value].length >= 1, "minLength 1 Unicode code points").refine(value => [...value].length <= 64, "maxLength 64 Unicode code points").regex(new RegExp("^[A-Za-z0-9._-]+$", "u")),
@@ -220,6 +220,40 @@ export const zAgentDnsSnapshot = z.strictObject({
   "payload": zNodeDnsConfiguration
 });
 
+export const zVlessStreamTransport = z.enum(["tcp","websocket"]);
+
+export const zManagedVlessSettings = z.strictObject({
+  "server_name": z.string().refine(value => [...value].length >= 1, "minLength 1 Unicode code points").refine(value => [...value].length <= 253, "maxLength 253 Unicode code points"),
+  "stream": zVlessStreamTransport,
+  "websocket_host": z.string().refine(value => [...value].length >= 1, "minLength 1 Unicode code points").refine(value => [...value].length <= 253, "maxLength 253 Unicode code points").nullable(),
+  "websocket_path": z.string().refine(value => [...value].length >= 1, "minLength 1 Unicode code points").refine(value => [...value].length <= 1024, "maxLength 1024 Unicode code points").nullable()
+});
+
+export const zManagedVlessMaterial = z.strictObject({
+  "certificate_pem": z.string().refine(value => [...value].length >= 1, "minLength 1 Unicode code points").refine(value => [...value].length <= 32768, "maxLength 32768 Unicode code points"),
+  "certificate_sha256": z.string(),
+  "credential_ref": z.string(),
+  "listener_id": z.string(),
+  "private_key_pem": z.string().refine(value => [...value].length >= 1, "minLength 1 Unicode code points").refine(value => [...value].length <= 16384, "maxLength 16384 Unicode code points").nullable(),
+  "settings": zManagedVlessSettings,
+  "uuid": z.string(),
+  "version": z.int().gte(1).lte(4294967295)
+});
+
+export const zAgentManagedConnectionsSnapshot = z.strictObject({
+  "connections": zAgentConnectionsSnapshot,
+  "digest": z.string(),
+  "materials": z.array(zManagedVlessMaterial).max(128),
+  "network_id": z.string()
+});
+
+export const zAgentManagedDataplaneSnapshot = z.strictObject({
+  "dataplane": zAgentDataplaneSnapshot,
+  "digest": z.string(),
+  "materials": z.array(zManagedVlessMaterial).max(128),
+  "network_id": z.string()
+});
+
 export const zNodeSummary = z.strictObject({
   "acknowledged_revision": z.int().gte(0).lte(4294967295),
   "agent_version": z.string(),
@@ -351,6 +385,22 @@ export const zCreateEnrollmentTokenResponse = z.strictObject({
   "token_id": z.string()
 });
 
+export const zManagedListenerSettings = z.strictObject({
+  "advertised_endpoints": z.array(zConnectionEndpoint).max(16),
+  "bind_address": z.string(),
+  "bind_port": z.int().gte(1).lte(65535),
+  "enabled": z.boolean(),
+  "id": z.string().refine(value => [...value].length >= 1, "minLength 1 Unicode code points").refine(value => [...value].length <= 48, "maxLength 48 Unicode code points").regex(new RegExp("^[A-Za-z0-9._-]+$", "u")),
+  "node_id": z.string(),
+  "transport": zConnectionTransport,
+  "vless": zManagedVlessSettings.nullable()
+});
+
+export const zCreateManagedEnrollmentTokenRequest = z.strictObject({
+  "expires_in_seconds": z.int().gte(60).lte(86400),
+  "initial_listener": zManagedListenerSettings
+});
+
 export const zCreateNetworkRequest = z.strictObject({
   "name": z.string().refine(value => [...value].length >= 1, "minLength 1 Unicode code points").refine(value => [...value].length <= 128, "maxLength 128 Unicode code points").regex(new RegExp("[^\\u0009-\\u000D\\u0020\\u0085\\u00A0\\u1680\\u2000-\\u200A\\u2028\\u2029\\u202F\\u205F\\u3000]", "u"))
 });
@@ -441,6 +491,18 @@ export const zGetConnectionRuntimeEpochResponse = z.strictObject({
 
 export const zHeartbeatRequest = z.strictObject({
   "agent_version": z.string().refine(value => [...value].length >= 1, "minLength 1 Unicode code points").refine(value => [...value].length <= 64, "maxLength 64 Unicode code points").regex(new RegExp("[^\\u0009-\\u000D\\u0020\\u0085\\u00A0\\u1680\\u2000-\\u200A\\u2028\\u2029\\u202F\\u205F\\u3000]", "u"))
+});
+
+export const zManagedListenerSummary = z.strictObject({
+  "certificate_sha256": z.string().nullable(),
+  "compiled_capability_available": z.boolean(),
+  "material_version": z.int().gte(1).lte(4294967295),
+  "settings": zManagedListenerSettings
+});
+
+export const zManagedListenersSnapshot = z.strictObject({
+  "listeners": z.array(zManagedListenerSummary),
+  "revision": z.int().gte(1).lte(4294967295)
 });
 
 export const zMeshAccessRule = z.strictObject({
@@ -549,6 +611,14 @@ export const zPublishConnectionIdentityResponse = z.strictObject({
   "revision": z.int().gte(1).lte(4294967295)
 });
 
+export const zPublishManagedTransportCapabilitiesRequest = z.strictObject({
+  "vless_streams": z.array(zVlessStreamTransport).max(2)
+});
+
+export const zPublishManagedTransportCapabilitiesResponse = z.strictObject({
+  "revision": z.int().gte(1).lte(4294967295)
+});
+
 export const zReportConnectionRuntimeRequest = z.strictObject({
   "digest": z.string().refine(value => [...value].length >= 64, "minLength 64 Unicode code points").refine(value => [...value].length <= 64, "maxLength 64 Unicode code points").regex(new RegExp("^[0-9a-f]{64}$", "u")),
   "epoch": z.int().gte(1).lte(4294967295),
@@ -592,6 +662,11 @@ export const zRevokeNodeResponse = z.strictObject({
 export const zSaveConnectionsRequest = z.strictObject({
   "configuration": zConnectionPlan,
   "expected_revision": z.int().gte(1).lte(4294967295)
+});
+
+export const zSaveManagedListenerRequest = z.strictObject({
+  "expected_revision": z.int().gte(1).lte(4294967295),
+  "settings": zManagedListenerSettings
 });
 
 export const zSaveMeshAccessRequest = z.strictObject({

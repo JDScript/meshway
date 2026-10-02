@@ -160,6 +160,62 @@ export const schemaDocument = {
         },
         "additionalProperties": false
       },
+      "AgentManagedConnectionsSnapshot": {
+        "type": "object",
+        "required": [
+          "network_id",
+          "connections",
+          "materials",
+          "digest"
+        ],
+        "properties": {
+          "connections": {
+            "$ref": "#/components/schemas/AgentConnectionsSnapshot"
+          },
+          "digest": {
+            "type": "string"
+          },
+          "materials": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ManagedVlessMaterial"
+            },
+            "maxItems": 128
+          },
+          "network_id": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": false
+      },
+      "AgentManagedDataplaneSnapshot": {
+        "type": "object",
+        "required": [
+          "network_id",
+          "dataplane",
+          "materials",
+          "digest"
+        ],
+        "properties": {
+          "dataplane": {
+            "$ref": "#/components/schemas/AgentDataplaneSnapshot"
+          },
+          "digest": {
+            "type": "string"
+          },
+          "materials": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ManagedVlessMaterial"
+            },
+            "maxItems": 128
+          },
+          "network_id": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": false
+      },
       "AgentNodeResponse": {
         "type": "object",
         "description": "Also lets a pending local enrollment recover its server-assigned node ID.",
@@ -411,8 +467,7 @@ export const schemaDocument = {
             "items": {
               "$ref": "#/components/schemas/ConnectionEndpoint"
             },
-            "maxItems": 16,
-            "minItems": 1
+            "maxItems": 16
           },
           "bind": {
             "type": "string"
@@ -880,6 +935,26 @@ export const schemaDocument = {
         },
         "additionalProperties": false
       },
+      "CreateManagedEnrollmentTokenRequest": {
+        "type": "object",
+        "required": [
+          "expires_in_seconds",
+          "initial_listener"
+        ],
+        "properties": {
+          "expires_in_seconds": {
+            "type": "integer",
+            "format": "int32",
+            "maximum": 86400,
+            "minimum": 60
+          },
+          "initial_listener": {
+            "$ref": "#/components/schemas/ManagedListenerSettings",
+            "description": "Initial intent only: node_id MUST be empty and is bound by enrollment."
+          }
+        },
+        "additionalProperties": false
+      },
       "CreateNetworkRequest": {
         "type": "object",
         "required": [
@@ -1191,6 +1266,208 @@ export const schemaDocument = {
           },
           "transport": {
             "$ref": "#/components/schemas/ConnectionTransport"
+          }
+        },
+        "additionalProperties": false
+      },
+      "ManagedListenerSettings": {
+        "type": "object",
+        "required": [
+          "id",
+          "node_id",
+          "enabled",
+          "transport",
+          "bind_address",
+          "bind_port",
+          "advertised_endpoints",
+          "vless"
+        ],
+        "properties": {
+          "advertised_endpoints": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ConnectionEndpoint"
+            },
+            "description": "Explicit announcement, not proof of reachability. Empty means no dial endpoint.",
+            "maxItems": 16
+          },
+          "bind_address": {
+            "type": "string"
+          },
+          "bind_port": {
+            "type": "integer",
+            "format": "int32",
+            "maximum": 65535,
+            "minimum": 1
+          },
+          "enabled": {
+            "type": "boolean"
+          },
+          "id": {
+            "type": "string",
+            "maxLength": 48,
+            "minLength": 1,
+            "pattern": "^[A-Za-z0-9._-]+$"
+          },
+          "node_id": {
+            "type": "string"
+          },
+          "transport": {
+            "$ref": "#/components/schemas/ConnectionTransport"
+          },
+          "vless": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/ManagedVlessSettings"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "additionalProperties": false
+      },
+      "ManagedListenerSummary": {
+        "type": "object",
+        "required": [
+          "settings",
+          "material_version",
+          "certificate_sha256",
+          "compiled_capability_available"
+        ],
+        "properties": {
+          "certificate_sha256": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "compiled_capability_available": {
+            "type": "boolean",
+            "description": "False is retained intent awaiting a compatible identity/capability report."
+          },
+          "material_version": {
+            "type": "integer",
+            "format": "int32",
+            "maximum": 4294967295,
+            "minimum": 1
+          },
+          "settings": {
+            "$ref": "#/components/schemas/ManagedListenerSettings"
+          }
+        },
+        "additionalProperties": false
+      },
+      "ManagedListenersSnapshot": {
+        "type": "object",
+        "required": [
+          "revision",
+          "listeners"
+        ],
+        "properties": {
+          "listeners": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ManagedListenerSummary"
+            }
+          },
+          "revision": {
+            "type": "integer",
+            "format": "int32",
+            "maximum": 4294967295,
+            "minimum": 1
+          }
+        },
+        "additionalProperties": false
+      },
+      "ManagedVlessMaterial": {
+        "type": "object",
+        "description": "No Debug: serialization is permitted only on the node-authenticated endpoint.",
+        "required": [
+          "listener_id",
+          "credential_ref",
+          "version",
+          "settings",
+          "uuid",
+          "certificate_pem",
+          "certificate_sha256",
+          "private_key_pem"
+        ],
+        "properties": {
+          "certificate_pem": {
+            "type": "string",
+            "maxLength": 32768,
+            "minLength": 1
+          },
+          "certificate_sha256": {
+            "type": "string"
+          },
+          "credential_ref": {
+            "type": "string"
+          },
+          "listener_id": {
+            "type": "string"
+          },
+          "private_key_pem": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "password",
+            "description": "Only listener owner receives this; dialers receive null.",
+            "maxLength": 16384,
+            "minLength": 1
+          },
+          "settings": {
+            "$ref": "#/components/schemas/ManagedVlessSettings"
+          },
+          "uuid": {
+            "type": "string",
+            "format": "password"
+          },
+          "version": {
+            "type": "integer",
+            "format": "int32",
+            "maximum": 4294967295,
+            "minimum": 1
+          }
+        },
+        "additionalProperties": false
+      },
+      "ManagedVlessSettings": {
+        "type": "object",
+        "required": [
+          "stream",
+          "server_name",
+          "websocket_path",
+          "websocket_host"
+        ],
+        "properties": {
+          "server_name": {
+            "type": "string",
+            "description": "Certificate name and client verification name, independent of HTTP Host.",
+            "maxLength": 253,
+            "minLength": 1
+          },
+          "stream": {
+            "$ref": "#/components/schemas/VlessStreamTransport"
+          },
+          "websocket_host": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "maxLength": 253,
+            "minLength": 1
+          },
+          "websocket_path": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "maxLength": 1024,
+            "minLength": 1
           }
         },
         "additionalProperties": false
@@ -2214,6 +2491,37 @@ export const schemaDocument = {
         },
         "additionalProperties": false
       },
+      "PublishManagedTransportCapabilitiesRequest": {
+        "type": "object",
+        "required": [
+          "vless_streams"
+        ],
+        "properties": {
+          "vless_streams": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/VlessStreamTransport"
+            },
+            "maxItems": 2
+          }
+        },
+        "additionalProperties": false
+      },
+      "PublishManagedTransportCapabilitiesResponse": {
+        "type": "object",
+        "required": [
+          "revision"
+        ],
+        "properties": {
+          "revision": {
+            "type": "integer",
+            "format": "int32",
+            "maximum": 4294967295,
+            "minimum": 1
+          }
+        },
+        "additionalProperties": false
+      },
       "ReportConnectionRuntimeRequest": {
         "type": "object",
         "required": [
@@ -2549,6 +2857,25 @@ export const schemaDocument = {
             "format": "int64",
             "maximum": 4294967295,
             "minimum": 1
+          }
+        },
+        "additionalProperties": false
+      },
+      "SaveManagedListenerRequest": {
+        "type": "object",
+        "required": [
+          "expected_revision",
+          "settings"
+        ],
+        "properties": {
+          "expected_revision": {
+            "type": "integer",
+            "format": "int32",
+            "maximum": 4294967295,
+            "minimum": 1
+          },
+          "settings": {
+            "$ref": "#/components/schemas/ManagedListenerSettings"
           }
         },
         "additionalProperties": false
@@ -2899,6 +3226,13 @@ export const schemaDocument = {
           }
         },
         "additionalProperties": false
+      },
+      "VlessStreamTransport": {
+        "type": "string",
+        "enum": [
+          "tcp",
+          "websocket"
+        ]
       }
     }
   }

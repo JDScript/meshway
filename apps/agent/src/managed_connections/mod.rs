@@ -28,10 +28,13 @@ use crate::{
 };
 
 mod discovery;
+#[cfg(test)]
+mod managed_material_tests;
 #[cfg(unix)]
 mod probe;
 mod profiles;
 mod session;
+mod sockets;
 #[cfg(unix)]
 pub(crate) use probe::Prober;
 #[cfg(test)]
@@ -146,7 +149,9 @@ impl Drop for Manager {
 }
 
 pub(crate) struct Manager {
+    socket_protection: std::sync::Arc<dyn sockets::Protection>,
     profiles: Option<PathBuf>,
+    managed_materials: Vec<meshway_protocol::ManagedVlessMaterial>,
     lease: Duration,
     running: Option<Running>,
     semantic: Option<NodeConnections>,
@@ -178,7 +183,9 @@ struct Material {
 impl Manager {
     pub fn new(profiles: Option<PathBuf>, lease: Duration) -> Self {
         Self {
+            socket_protection: std::sync::Arc::new(sockets::SystemUnderlay),
             profiles,
+            managed_materials: Vec::new(),
             lease,
             running: None,
             semantic: None,
@@ -452,6 +459,20 @@ impl Manager {
         self.observation = Observation::empty(Phase::Withdrawn, reason);
     }
 
+    pub fn validate_materials(
+        &self,
+        intent: &NodeConnections,
+        materials: &[meshway_protocol::ManagedVlessMaterial],
+    ) -> Result<(), AgentError> {
+        profiles::load_combined(self.profiles.as_deref(), intent, materials)
+            .map(|_| ())
+            .map_err(|_| AgentError::Invalid("invalid managed carrier materials"))
+    }
+
+    pub fn install_materials(&mut self, materials: Vec<meshway_protocol::ManagedVlessMaterial>) {
+        self.managed_materials = materials;
+    }
+
     /// Only called after a fresh validated sync and repeated disk/binding/fsync
     /// checks under the Agent state lock. Reports never call this method.
     pub async fn reconcile(
@@ -501,8 +522,9 @@ impl Manager {
             async {
                 let profile_path = self.profiles.clone();
                 let profile_intent = semantic.clone();
+                let materials = self.managed_materials.clone();
                 let profiles = tokio::task::spawn_blocking(move || {
-                    profiles::load(profile_path.as_deref(), &profile_intent)
+                    profiles::load_combined(profile_path.as_deref(), &profile_intent, &materials)
                 })
                 .await
                 .map_err(|_| Failure(Reason::InternalError))??;
@@ -581,6 +603,7 @@ impl Manager {
                 profiles,
                 &targets,
                 packet.as_ref(),
+                self.socket_protection.clone(),
             ),
         )
         .await;

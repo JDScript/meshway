@@ -378,6 +378,7 @@ fn live_discovery_and_runtime_leases_survive_migration_and_network_switches() {
     let discovery = canonical_json(&fixture.endpoint_discoveries().unwrap()).unwrap();
     fixture.downgrade_v8();
     upgrade(&mut fixture.connection).unwrap();
+    crate::store::managed_transports::upgrade(&mut fixture.connection).unwrap();
     assert_eq!(
         canonical_json(&fixture.connection_runtimes().unwrap()).unwrap(),
         runtime

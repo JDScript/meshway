@@ -12,6 +12,13 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Command {
+    /// Offline, private one-time VLESS migration; preserves imported UUID/cert/key.
+    ImportManagedVless {
+        #[arg(long)]
+        data_dir: PathBuf,
+        #[arg(long)]
+        input: PathBuf,
+    },
     /// Serve the authenticated control API, initializing a new private data directory if needed.
     Serve {
         #[arg(long, default_value = "127.0.0.1:8420")]
@@ -52,6 +59,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
         }
         Command::AdminToken { data_dir } => println!("{}", admin_token(data_dir)?),
+        Command::ImportManagedVless { data_dir, input } => {
+            let summary = meshway_controller::import_managed_vless(&data_dir, &input)?;
+            println!("{}", serde_json::to_string(&summary)?);
+        }
         Command::Serve {
             bind,
             data_dir,

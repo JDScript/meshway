@@ -25,7 +25,7 @@ Meshway traffic direction.
   does not equal IPv4-mapped IPv6.
 - TCP only, version 0, **empty addons only**. Rejects UDP, mux/XUDP, unknown
   commands/versions/address types, Vision/flows and every nonempty addon body
-  (including malformed protobuf). No Reality, Trojan, WebSocket, gRPC, or VLESS
+  (including malformed protobuf). No Reality, Trojan, gRPC, or VLESS
   extension support is claimed. A caller may supply an already-established outer
   TLS stream; this crate does not configure TLS or implement Reality.
 - UUID parsing is strict canonical hyphenated ASCII hex; arbitrary usernames are
@@ -320,3 +320,20 @@ needed no protocol correction.
    targeting its private Meshway Noise endpoint; verify no client-first deadlock.
 5. Stall a partial VLESS/Noise handshake and verify the CLI's configured timeout
    closes the connection. VLESS ACK alone must never be reported as Meshway-ready.
+## WebSocket byte carrier
+
+`websocket::{accept, connect}` wraps an already-created stream (normally
+certificate-verified TLS) using tokio-tungstenite 0.30. Exact path and Host are
+validated independently of TLS SNI. `ByteStream` exposes binary payloads as
+`AsyncRead + AsyncWrite`; fragmentation, client masking and control framing are
+handled by tungstenite. Text payloads are rejected. Bounds: 64 KiB total HTTP
+upgrade reads, 256 KiB per frame/message, 16 KiB write chunks and bounded control
+frame work per poll. Ping/pong, close/EOF and sink backpressure are preserved.
+
+The caller must enforce a joint TLS/WS/VLESS/Noise deadline and connection limit,
+and close the whole carrier after cancellation or partial-handshake/write error.
+There is no plaintext TCP fallback or arbitrary destination proxying here.
+The Agent's managed runtime composes this adapter with VLESS and Noise; platform
+socket protection is applied before the outer TCP connect/listen, outside this
+crate. Run `cargo test -p meshway-transport-vless --test websocket` for bounded
+framing, masking, fragmentation/control, mismatch, close and cancellation tests.

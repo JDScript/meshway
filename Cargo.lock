@@ -2029,6 +2029,7 @@ version = "0.1.0"
 dependencies = [
  "argon2",
  "axum",
+ "chacha20poly1305 0.10.1",
  "chrono",
  "clap",
  "getrandom 0.3.4",
@@ -2038,7 +2039,10 @@ dependencies = [
  "meshway-policy",
  "meshway-protocol",
  "openapi-to-rust",
+ "rcgen",
  "rusqlite",
+ "rustls",
+ "rustls-pemfile",
  "serde",
  "serde_json",
  "sha2",
@@ -2094,6 +2098,7 @@ dependencies = [
  "tempfile",
  "utoipa",
  "x25519-dalek",
+ "zeroize",
 ]
 
 [[package]]
@@ -2134,8 +2139,10 @@ dependencies = [
 name = "meshway-transport-vless"
 version = "0.1.0"
 dependencies = [
+ "futures-util",
  "subtle",
  "tokio",
+ "tokio-tungstenite",
  "zeroize",
 ]
 
@@ -3752,6 +3759,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "tokio-tungstenite"
+version = "0.30.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "17a073bfed563fa236697a068031408a93cd9522e08abf9933ead3e73411bd71"
+dependencies = [
+ "futures-util",
+ "log",
+ "tokio",
+ "tungstenite",
+]
+
+[[package]]
 name = "tokio-util"
 version = "0.7.19"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3951,6 +3970,22 @@ dependencies = [
  "widestring",
  "windows-sys 0.61.2",
  "winreg",
+]
+
+[[package]]
+name = "tungstenite"
+version = "0.30.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e48ac77174b19c110a50ab2128b24215ac9cb40e0e12e093fb602d175c569d22"
+dependencies = [
+ "bytes",
+ "data-encoding",
+ "http",
+ "httparse",
+ "log",
+ "rand",
+ "sha1",
+ "thiserror",
 ]
 
 [[package]]

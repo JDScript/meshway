@@ -9,12 +9,14 @@ use openapi_to_rust::{CodeGenerator, GeneratorConfig, HttpClientConfig, SchemaAn
 mod closed_objects;
 #[path = "generate-rust-client/required_nullable.rs"]
 mod required_nullable;
+#[path = "generate-rust-client/secret_debug.rs"]
+mod secret_debug;
 #[path = "generate-rust-client/status_first.rs"]
 mod status_first;
 #[path = "generate-rust-client/transport.rs"]
 mod transport;
 
-const OPERATIONS: [&str; 14] = [
+const OPERATIONS: [&str; 17] = [
     "enrollAgent",
     "exchangeDevice",
     "heartbeatAgent",
@@ -29,6 +31,9 @@ const OPERATIONS: [&str; 14] = [
     "getConnectionRuntimeEpoch",
     "reportConnectionRuntime",
     "reportEndpointDiscovery",
+    "getAgentManagedConnections",
+    "getAgentManagedDataplane",
+    "publishManagedTransportCapabilities",
 ];
 
 #[derive(Parser)]
@@ -145,8 +150,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         return Err("upstream client constructor changed; review transport adapter".into());
     }
     client.content = client.content.replace(constructor, "let reqwest_client = reqwest::Client::builder().redirect(reqwest::redirect::Policy::none()).timeout(std::time::Duration::from_secs(10)).build().expect(\"valid static HTTP client configuration\");");
+    // The status adapter checks the upstream req.send() anchor. Inject the
+    // transport afterwards, preserving those status-first response guards,
+    // then sanitize every generated error path against the composed client.
     status_first::adapt(&mut client.content, operations.len())?;
     transport::adapt(&mut client.content, operations.len())?;
+    secret_debug::adapt_client(&mut client.content, operations.len())?;
     let types = result
         .files
         .iter_mut()
@@ -154,6 +163,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .ok_or("missing generated types")?;
     required_nullable::adapt(&document, &operations, &mut types.content)?;
     closed_objects::adapt(&document, &operations, &mut types.content)?;
+    secret_debug::adapt(&mut types.content)?;
     generator.write_files(&result)?;
     Ok(())
 }

@@ -46,6 +46,16 @@ SQLite v6→v7 保留原身份、凭据、公钥、地址、路由、Access、ta
 
 固定建表语句位于 `apps/controller/src/store/schema_v9.sql`，逐表复制的原列清单位于 `store/networks.rs`，不解析或替换旧 `CREATE TABLE` 文本。持久表保留 `nodes`、`enrollment_tokens` 等清晰名称，带不可空 `network_id` 外键。单例配置为 `(network_id,id)` 主键；标签为 `(network_id,tag)`；IPv4 / IPv6 唯一约束包含网络。节点 ID、凭据摘要和身份公钥仍 controller 全局唯一，防止同一身份同时加入两张网络；复合外键拒绝跨网络令牌消费、节点标签与运行报告绑定。
 
+## 后续 v9 → v10 承载托管
+
+P2a在一个IMMEDIATE事务中添加 `managed_listeners`、
+`managed_transport_capabilities`、`managed_enrollment_intents` 和注册令牌复合唯一索引；
+固定DDL为 `apps/controller/src/store/schema_v10.sql`，失败回滚整份DDL/user_version。
+已有表、身份、公钥、地址、JSONC、leases与网络revision不变，不把旧profiles自动换成新密钥。
+可恢复的VLESS材料在SQLite内加密，仅节点专属接口最小下发；恢复须一并保存私有
+`transport-material.key`。材料、初始接入意图、Agent执行与显式旧材料导入见
+[托管承载对接](/managed-transports-api)。该迁移没有接入账户domain的生产schema或用户HTTP。
+
 ## 显式类型作用域
 
 Store 没有“当前网络”，也没有 TEMP scope、过滤视图或作用域触发器。管理业务方法和内部查询显式接收已验证的 `NetworkId`，每条业务 SQL 显式绑定网络 ID。Agent、注册令牌与 App 兑换码通过全局唯一的凭据关联构造同一个类型；全局凭据 / 公钥唯一性检查单独存在。列出或创建网络不切换连接状态，并发 / 交错请求不会沿用上一请求的网络。

@@ -2,7 +2,7 @@
 
 连接配置将“节点身份”“谁监听”“谁主动建连”和“保存回执”分别表达。业务路由仍由独立策略决定；配置一个邻接不自动授予转发、出口或业务访问权限。
 
-**已确认目标**：平台按授权、路径和可达性按需自动建连，默认连接图允许可达直连、阻断优先；Web 保留 listener 与承载优先级 / 逐段覆盖，平台生成下发参数和凭据。下文手工 listener / candidate 与本地 profile 引用是当前契约，须迁移为托管配置和高级覆盖，不是日常主流程。
+**已确认目标**：平台按授权、路径和可达性按需自动建连，默认连接图允许可达直连、阻断优先；Web 保留 listener 与承载优先级 / 逐段覆盖。**P2a后端已提供**平台托管 listener、VLESS TCP / WS（均TLS）、材料生成与节点专属下发，见[承载API对接](/managed-transports-api)。下文手工 candidate 与本地 profile 引用保留为高级覆盖 / 受控兼容；按需图编译和Web便捷表单仍待后续接入。
 
 ## 交付边界
 
@@ -38,7 +38,7 @@
 - bind 可使用 `0.0.0.0` 等未指定接口地址，但端口必须非零。
 - advertised endpoint 是独立的 host / port，不能把 wildcard bind 当成可达入口；局域网与 loopback 可用于开发。
 - hostname 规范化为小写 IDNA，不保留末尾点；发布地址不证明真实可达性。
-- VLESS 使用本地 profile 引用；原生 UDP / TCP 的该字段必须为 null。
+- 旧 VLESS 使用本地 profile 引用；托管 VLESS 在兼容投影中使用 `managed.<listener-id>`，秘密不在这个引用里。原生 UDP / TCP 的该字段必须为 null。
 
 ### Dial candidate
 

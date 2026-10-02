@@ -5,6 +5,7 @@ edition.workspace = true
 rust-version.workspace = true
 
 [dependencies]
+zeroize = "1.8"
 chrono.workspace = true
 getrandom.workspace = true
 idna = "1.1"

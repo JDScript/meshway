@@ -529,7 +529,7 @@ fn actual_v5_migration_deduplicates_paths_folds_reverse_and_bumps_revision() {
             .connection
             .pragma_query_value(None, "user_version", |row| row.get::<_, u32>(0))
             .unwrap(),
-        9
+        10
     );
 }
 

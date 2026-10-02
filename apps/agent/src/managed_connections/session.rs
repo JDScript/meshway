@@ -14,7 +14,7 @@ use meshway_protocol::{
     ConnectionNeighborState, ConnectionTransport, NodeConnections, OutgoingConnectionCandidate,
 };
 use tokio::{
-    net::{TcpListener, TcpStream},
+    net::TcpListener,
     sync::{Semaphore, watch},
     task::JoinSet,
     time::{self, Instant},
@@ -35,6 +35,12 @@ pub(super) struct Session {
 }
 
 type Outcomes = Arc<Mutex<BTreeMap<String, Reason>>>;
+
+#[derive(Clone)]
+struct HandshakeResources {
+    limit: Arc<Semaphore>,
+    protection: Arc<dyn super::sockets::Protection>,
+}
 
 impl Session {
     #[cfg(test)]
@@ -65,7 +71,15 @@ impl Session {
         profiles: Profiles,
         targets: &BTreeMap<String, Vec<SocketAddr>>,
     ) -> Result<Self, Failure> {
-        Self::start_with_packet(intent, key, profiles, targets, None).await
+        Self::start_with_packet(
+            intent,
+            key,
+            profiles,
+            targets,
+            None,
+            Arc::new(super::sockets::SystemUnderlay),
+        )
+        .await
     }
 
     pub async fn start_with_packet(
@@ -74,6 +88,7 @@ impl Session {
         profiles: Profiles,
         targets: &BTreeMap<String, Vec<SocketAddr>>,
         packet: Option<&crate::managed_dataplane::PacketPlan>,
+        protection: Arc<dyn super::sockets::Protection>,
     ) -> Result<Self, Failure> {
         let mut config = core_config(intent, key, targets)?;
         if let Some(plan) = packet {
@@ -112,8 +127,7 @@ impl Session {
                 .bind
                 .parse::<SocketAddr>()
                 .map_err(|_| Failure(Reason::InvalidConfiguration))?;
-            let socket = TcpListener::bind(address)
-                .await
+            let socket = super::sockets::listen(protection.as_ref(), address, &listener.id)
                 .map_err(|_| Failure(Reason::BindFailed))?;
             listeners.push((
                 socket,
@@ -135,7 +149,10 @@ impl Session {
             outcomes: Arc::default(),
             standby_candidates,
         };
-        let handshakes = Arc::new(Semaphore::new(32));
+        let resources = HandshakeResources {
+            limit: Arc::new(Semaphore::new(32)),
+            protection,
+        };
         for (socket, id, peers, profile) in listeners {
             session.tasks.spawn(accept(
                 session.runtime.clone(),
@@ -143,7 +160,7 @@ impl Session {
                 id,
                 peers,
                 profile,
-                handshakes.clone(),
+                resources.clone(),
             ));
         }
         let priorities: Arc<BTreeMap<String, u16>> = Arc::new(
@@ -178,7 +195,7 @@ impl Session {
                 profile,
                 priorities.clone(),
                 session.outcomes.clone(),
-                handshakes.clone(),
+                resources.clone(),
             ));
         }
         Ok(session)
@@ -448,25 +465,32 @@ async fn accept(
     id: String,
     peers: Vec<String>,
     profile: profiles::Server,
-    handshakes: Arc<Semaphore>,
+    resources: HandshakeResources,
 ) {
+    let handshakes = resources.limit;
+    let protection = resources.protection;
     let acceptor = tokio_rustls::TlsAcceptor::from(profile.tls);
     let mut pending = JoinSet::new();
     loop {
         tokio::select! {
             incoming = listener.accept() => {
                 let Ok((socket, remote)) = incoming else { return; };
+                if protection.accepted(&socket, &id).is_err() { continue; }
                 if pending.len() >= 32 || socket.set_nodelay(true).is_err() { continue; }
                 let Ok(permit) = handshakes.clone().try_acquire_owned() else { continue; };
                 let runtime = runtime.clone();
                 let acceptor = acceptor.clone();
                 let adapter = profile.vless.clone();
+                let websocket = profile.websocket.clone();
                 let context = StreamContext { listener_id: Some(id.clone()), allowed_peers: Some(peers.clone()),
                     remote_addr: Some(remote), ..Default::default() };
                 pending.spawn(async move {
                     let _permit = permit;
                     let _ = time::timeout(Duration::from_secs(5), async {
-                        let mut stream = acceptor.accept(socket).await.map_err(|_| ())?;
+                        let stream = acceptor.accept(socket).await.map_err(|_| ())?;
+                        let mut stream: Box<dyn Carrier> = if let Some(parameters) = websocket {
+                            Box::new(meshway_transport_vless::websocket::accept(stream, &parameters).await.map_err(|_| ())?)
+                        } else { Box::new(stream) };
                         meshway_transport_vless::server_handshake(&mut stream, &adapter).await.map_err(|_| ())?;
                         runtime.attach_stream_with_context(stream, StreamRole::Acceptor, TransportKind::Vless, 0, context)
                             .await.map_err(|_| ())
@@ -485,8 +509,10 @@ async fn dial(
     profile: profiles::Client,
     priorities: Arc<BTreeMap<String, u16>>,
     outcomes: Outcomes,
-    handshakes: Arc<Semaphore>,
+    resources: HandshakeResources,
 ) {
+    let handshakes = resources.limit;
+    let protection = resources.protection;
     let connector = tokio_rustls::TlsConnector::from(profile.tls);
     loop {
         let current = runtime
@@ -510,9 +536,14 @@ async fn dial(
                         .acquire_owned()
                         .await
                         .map_err(|_| Reason::InternalError)?;
-                    let socket = TcpStream::connect(address)
-                        .await
-                        .map_err(|_| Reason::TransportFailed)?;
+                    let socket = super::sockets::dial(
+                        protection.as_ref(),
+                        *address,
+                        &candidate.id,
+                        &candidate.peer_node_id,
+                    )
+                    .await
+                    .map_err(|_| Reason::TransportFailed)?;
                     socket
                         .set_nodelay(true)
                         .map_err(|_| Reason::TransportFailed)?;
@@ -531,6 +562,15 @@ async fn dial(
                                 Reason::TransportFailed
                             }
                         })?;
+                    let stream: Box<dyn Carrier> = if let Some(parameters) = &profile.websocket {
+                        Box::new(
+                            meshway_transport_vless::websocket::connect(stream, parameters)
+                                .await
+                                .map_err(|_| Reason::TransportFailed)?,
+                        )
+                    } else {
+                        Box::new(stream)
+                    };
                     let stream = meshway_transport_vless::client_stream(stream, &profile.vless)
                         .await
                         .map_err(|_| Reason::TransportFailed)?;
@@ -582,3 +622,6 @@ async fn dial(
         time::sleep(Duration::from_millis(500)).await;
     }
 }
+
+trait Carrier: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin + Send {}
+impl<T: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin + Send> Carrier for T {}

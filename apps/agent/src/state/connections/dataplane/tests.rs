@@ -22,6 +22,18 @@ mod dns;
 mod revocation;
 mod stale;
 
+fn managed(snapshot: AgentDataplaneSnapshot) -> meshway_protocol::AgentManagedDataplaneSnapshot {
+    let network_id = "0".repeat(32);
+    let materials = Vec::new();
+    let digest = meshway_protocol::managed_digest(&network_id, &snapshot, &materials).unwrap();
+    meshway_protocol::AgentManagedDataplaneSnapshot {
+        network_id,
+        dataplane: snapshot,
+        materials,
+        digest,
+    }
+}
+
 fn identity(snapshot: &AgentDataplaneSnapshot) -> Identity {
     Identity {
         format_version: 1,
@@ -182,12 +194,12 @@ async fn changed_policy_withdraws_before_stalled_ack() {
             }),
         )
         .route(
-            "/api/v1/agent/dataplane",
+            "/api/v1/agent/managed-dataplane",
             axum::routing::get({
                 let current = current.clone();
                 move || {
                     let value = current.lock().unwrap().clone();
-                    async move { axum::Json(value) }
+                    async move { axum::Json(managed(value)) }
                 }
             }),
         )

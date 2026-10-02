@@ -9,7 +9,7 @@ use crate::Error;
 
 #[cfg(test)]
 mod tests;
-mod validation;
+pub(super) mod validation;
 
 pub(super) fn upgrade(connection: &mut Connection) -> Result<(), Error> {
     let version: u32 = connection.pragma_query_value(None, "user_version", |row| row.get(0))?;
@@ -93,7 +93,10 @@ fn nodes(connection: &Connection, network: &NetworkId) -> Result<Vec<ConnectionN
         .collect()
 }
 
-fn source(connection: &Connection, network: &NetworkId) -> Result<ConnectionPlan, Error> {
+pub(super) fn source(
+    connection: &Connection,
+    network: &NetworkId,
+) -> Result<ConnectionPlan, Error> {
     let json: String = connection.query_row(
         "SELECT configuration FROM connection_source WHERE id = 1 AND network_id=?1",
         [network.as_str()],
@@ -106,9 +109,16 @@ pub(super) fn admin_snapshot(
     connection: &Connection,
     network: &NetworkId,
 ) -> Result<ConnectionsSnapshot, Error> {
-    let configuration = source(connection, network)?;
+    let mut configuration = source(connection, network)?;
+    super::managed_transports::append(connection, network, &mut configuration)?;
     let nodes = nodes(connection, network)?;
-    let (_, diagnostics) = validation::compile(&configuration, &nodes);
+    let (_, mut diagnostics) = validation::compile(&configuration, &nodes);
+    diagnostics.extend(super::managed_transports::stream_diagnostics(
+        connection,
+        network,
+        &configuration,
+    )?);
+    diagnostics.truncate(64);
     Ok(ConnectionsSnapshot {
         revision: configuration::revision(connection, network)?,
         configuration,
@@ -215,9 +225,15 @@ pub(super) fn ensure_publishable(
     let snapshot = admin_snapshot(connection, network)?;
     for node in &snapshot.nodes {
         if node.node.revoked_at.is_none() {
-            let encoded = serde_json::to_vec(&projection(&snapshot, &node.node.id)?)
+            let projected = projection(&snapshot, &node.node.id)?;
+            let encoded = serde_json::to_vec(&projected)
                 .map_err(|_| Error::Configuration("cannot encode connections"))?;
-            if encoded.len() > MAX_CONNECTIONS_BYTES - 4096 {
+            let private_budget = super::managed_transports::material_budget(
+                connection,
+                network,
+                &projected.payload,
+            )?;
+            if encoded.len().saturating_add(private_budget) > MAX_CONNECTIONS_BYTES - 4096 {
                 return Err(Error::Capacity(
                     "connections exceed 1 MiB publication budget",
                 ));
@@ -302,14 +318,35 @@ impl Store {
         if configuration::revision(&transaction, network)? != request.expected_revision {
             return Err(Error::Conflict);
         }
-        let (normalized, diagnostics) =
-            validation::compile(&request.configuration, &nodes(&transaction, network)?);
+        let managed = super::managed_transports::listeners(&transaction, network)?;
+        let mut source = request.configuration.clone();
+        let current = admin_snapshot(&transaction, network)?;
+        for summary in &managed {
+            let id = &summary.settings.id;
+            if source.listeners.iter().find(|l| &l.id == id)
+                != current.configuration.listeners.iter().find(|l| &l.id == id)
+            {
+                return Err(Error::Unprocessable(
+                    "managed listener edits require managed listener API",
+                ));
+            }
+        }
+        source
+            .listeners
+            .retain(|l| !managed.iter().any(|m| m.settings.id == l.id));
+        let mut effective = source.clone();
+        super::managed_transports::append(&transaction, network, &mut effective)?;
+        let (mut normalized, diagnostics) =
+            validation::compile(&effective, &nodes(&transaction, network)?);
         if !diagnostics.is_empty() {
             return Err(Error::Unprocessable(
                 "invalid connection plan: check node identities, roles, listeners, endpoints and local profile references",
             ));
         }
-        if source(&transaction, network)? != normalized {
+        normalized
+            .listeners
+            .retain(|l| !managed.iter().any(|m| m.settings.id == l.id));
+        if self::source(&transaction, network)? != normalized {
             let encoded = serde_json::to_string(&normalized)
                 .map_err(|_| Error::Configuration("cannot encode connection plan"))?;
             if encoded.len() > 128 * 1024 {

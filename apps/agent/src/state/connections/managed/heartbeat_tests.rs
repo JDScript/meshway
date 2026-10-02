@@ -74,6 +74,14 @@ async fn heartbeat_new_revision_fences_real_packets_before_stalled_publication()
     let signal = stalled.clone();
     let app = axum::Router::new()
         .route(
+            "/api/v1/agent/managed-transport-capabilities",
+            axum::routing::post(|| async {
+                axum::Json(
+                    meshway_protocol::PublishManagedTransportCapabilitiesResponse { revision: 8 },
+                )
+            }),
+        )
+        .route(
             "/api/v1/agents/heartbeat",
             axum::routing::post(move || {
                 let response = AgentNodeResponse {

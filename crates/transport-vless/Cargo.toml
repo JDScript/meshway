@@ -6,6 +6,8 @@ rust-version.workspace = true
 description = "Bounded VLESS v0 TCP stream carrier for Meshway experiments"
 
 [dependencies]
+futures-util = { version = "0.3", features = ["sink"] }
+tokio-tungstenite = { version = "0.30", default-features = false, features = ["handshake"] }
 subtle = "2.6"
 tokio = { workspace = true, features = ["io-util"] }
 zeroize = "1.8"

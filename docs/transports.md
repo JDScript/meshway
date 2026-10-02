@@ -2,13 +2,13 @@
 
 **已确认：每条逻辑邻接允许多个传输候选，首版采用优先级主备。** 平台提供默认优先级、生成下发参数与凭据，Web 支持允许协议 / 优先级 / 逐段覆盖，并保留可选 listener。按流负载分担、同流多路径及逐包聚合不属于首版要求。
 
-**当前实现**：Native UDP / TCP 与 TLS-VLESS 已接[托管运行层](/connection-runtime)，独立实验用于验证插件与性能；VLESS 本地 profiles 尚待托管迁移，完整主备回切与按需自动建连未由候选优先级字段完成。
+**当前实现**：Native UDP / TCP、TLS-VLESS TCP 与 TLS-VLESS WebSocket 已接[托管运行层](/connection-runtime)。控制面管理 listener 与私有材料，Agent自动校验、保存并执行；旧 profiles 保留受控兼容与私有导入。精确字段、API与迁移见[托管承载对接](/managed-transports-api)。完整主备回切与按需自动建连仍未由候选优先级字段完成。
 
 ## 当前库级适配器
 
 | Crate | 已验证能力 | 运行层接入状态 |
 | --- | --- | --- |
-| `meshway-transport-vless` | VLESS v0 TCP CONNECT、双向字节流、Xray 互通 | 已接独立传输实验 |
+| `meshway-transport-vless` | VLESS v0 TCP CONNECT、双向字节流、Xray TCP互通、基于tungstenite的有界WS字节流 | TLS TCP / WS已接托管执行与独立验收；未声称Xray WS外部互通已验收 |
 | `meshway-transport-trojan` | Trojan TCP、校验 CA / server name 的 TLS、Xray 双向互通 | 库级完成，待 Agent 统一装配 |
 | `meshway-transport-socks5` | TCP CONNECT、显式无认证 / 用户名密码、Xray 双角色互通 | 库级完成，待 Agent 统一装配 |
 | `meshway-transport-shadowsocks` | 经典 AEAD TCP 三种 cipher、基于 shadowsocks-rust、sing-box 双角色互通 | 库级完成，待 Agent 统一装配 |

@@ -264,6 +264,11 @@ impl Agent {
             guard.observe_revision(revision);
         }
         manager.invalidate_dataplane_revision(revision).await;
+        let published = super::materials::publish(self).await?;
+        if let Some(guard) = &self.dns_guard {
+            guard.observe_revision(published);
+        }
+        manager.invalidate_dataplane_revision(published).await;
         let (mut receipt, mut packet_snapshot, mut fresh_at) =
             self.managed_sync_mode(manager, dataplane).await?;
         if lease.epoch.is_none() {
@@ -572,7 +577,7 @@ impl Agent {
 
     async fn managed_sync(
         &mut self,
-        manager: &Manager,
+        manager: &mut Manager,
     ) -> Result<(super::ControlSyncReceipts, Instant), AgentError> {
         self.publish_connection_identity().await?;
         let configuration = self.sync().await?;
@@ -583,13 +588,74 @@ impl Agent {
                 .expect("freshly synced configuration")
                 .public_inventory(),
         );
-        let mut fresh_at = Instant::now();
-        let connections = self
-            .sync_published_connections_observe(|snapshot, received_at| {
-                fresh_at = received_at;
-                manager.invalidate_if_changed(snapshot);
-            })
-            .await?;
+        let client = self.runtime_client();
+        let mut saved = None;
+        for _ in 0..3 {
+            let bundle: meshway_protocol::AgentManagedConnectionsSnapshot =
+                convert(client.get_agent_managed_connections().await?)?;
+            let snapshot = &bundle.connections;
+            let fresh_at = Instant::now();
+            // Fence the old generation before material validation or persistence.
+            manager.invalidate_if_changed(snapshot);
+            manager
+                .invalidate_dataplane_revision(snapshot.payload.revision)
+                .await;
+            manager.validate_materials(&snapshot.payload, &bundle.materials)?;
+            super::materials::persist(
+                self,
+                &bundle.network_id,
+                snapshot.payload.revision,
+                snapshot,
+                &bundle.materials,
+                &bundle.digest,
+            )?;
+            let state = self.connections.as_mut().expect("published connections");
+            state.persist(&self.path, &self.identity, snapshot.clone())?;
+            state.check(&self.path, &self.identity)?;
+            local::ensure_durable(&super::cache_path(&self.path))?;
+            local::ensure_durable(&super::super::connection_key::path(&self.path))?;
+            let response = client
+                .acknowledge_agent_connections(convert(
+                    meshway_protocol::AcknowledgeAgentConnectionsRequest {
+                        revision: snapshot.payload.revision,
+                        digest: snapshot.digest.clone(),
+                    },
+                )?)
+                .await;
+            let ack: meshway_protocol::AcknowledgeAgentConnectionsResponse = match response {
+                Err(e) if e.api().is_some_and(|e| e.status == 409) => {
+                    manager.withdraw(Reason::InvalidConfiguration).await;
+                    continue;
+                }
+                Err(e) => return Err(e.into()),
+                Ok(value) => convert(value)?,
+            };
+            if ack.revision != snapshot.payload.revision
+                || ack.digest != snapshot.digest
+                || ack.status != meshway_protocol::ConnectionReceiptStatus::Saved
+            {
+                return Err(AgentError::Invalid("managed connection ACK mismatch"));
+            }
+            state.check(&self.path, &self.identity)?;
+            manager.install_materials(bundle.materials);
+            saved = Some((
+                super::ConnectionSyncReceipt {
+                    controller: self.identity.controller.clone(),
+                    node_id: snapshot.payload.node_id.clone(),
+                    stored_revision: snapshot.payload.revision,
+                    digest: snapshot.digest.clone(),
+                    configuration_valid: snapshot.payload.valid,
+                    status: ack.status,
+                    applied: false,
+                },
+                fresh_at,
+            ));
+            break;
+        }
+        let (connections, fresh_at) = saved.ok_or(AgentError::Http {
+            status: 409,
+            retryable: true,
+        })?;
         Ok((
             super::ControlSyncReceipts {
                 configuration,
