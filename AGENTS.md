@@ -94,6 +94,7 @@ Rust 控制面与 agent、Next.js + shadcn/ui 控制台、VitePress 文档站。
 - 不同 feature 组合的 CLI 行为测试与 SDK / 原生联测构建不得并行共用同一 Cargo target 目录；后者可能替换前者正在执行的 `target/debug/meshway-agent`。使用独立 target 或串行执行。
 - 所有后续 worktree 统一创建在本仓库 `.worktree/<任务名>`，不再散放上级目录。独立任务完成、提交已整合且无未提交 / 未跟踪工作后及时移除 worktree；保留分支和测量产物。活跃任务须在不影响进程与构建的安全边界迁移，不能直接删改其目录。
 - 当前状态：`4c9a5be` 同身份直连 / 四地有序路径恢复复验 PASS，测试资源已清理，私有身份 / 源配置 / 旧 FAIL 及失败窗口保留。远端持久 latency history 查询未验；KR→NYC 底层 FIB 经 WARP，不能当公网直连或打洞证据。
-- 当前并行工作：正常 underlay 主循环接线、按实际承载能力的自动建连 / 打洞、Controller 结构收敛与文档精简。状态型业务回包、完整出口 / 域名分流、平台默认 STUN、GeoIP 与自动地区方案尚未交付；Apple / 前端新增开发继续暂停。未审定候选不部署。
+- Controller 已按 `http/`、`contracts/`、`accounts/`、`store/` 整理；`store/migrations/` 统一拥有1→12升级，历史输入和共享测试辅助在 `test_support/`；网络存在性类型位于中性 `network_scope`，不代替权限；策略源/CAS与执行epoch/ACK分别归 `network_policy`、`mesh_execution`。历史升级仍保留原逐步骤事务，不宣称整个1→12为单事务。迁移安装入口私有，不能为测试读取SQL扩大可见性。
+- 当前并行工作：Agent 领域库提取、正常 underlay 主循环接线、按实际承载能力的自动建连 / 打洞。状态型业务回包、完整出口 / 域名分流、平台默认 STUN、GeoIP 与自动地区方案尚未交付；Apple / 前端新增开发继续暂停。未审定候选不部署。
 - 性能本批已结束，不整分支部署 offload / NEON 实验或扩大矩阵；未知归属或仍有进程 / 未提交工作的树须保留。
 - 独立完成的工作形成清晰提交。提交前检查生成产物、文档和实际运行命令一致。

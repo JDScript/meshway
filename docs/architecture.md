@@ -56,6 +56,7 @@ VLESS TCP/TLS 与 WebSocket/TLS 的 listener/凭据已由平台生成和下发�
 | `crates/protocol` | Rust HTTP / 配置契约、校验、摘要与私有存储原语 |
 | `crates/policy` | 纯策略规范化、引用校验与逻辑编译，无网络 I/O |
 | `crates/dataplane` | Noise、认证邻接、E2E 与转发核心 |
+| `crates/agent-dns` | 本地权威 DNS、Zone 与租约 / 代际发送边界 |
 | `crates/transport-*` | 编译期承载适配，保留 stream / datagram 与 buffer 所有权语义 |
 | `apps/controller` | 实际 API 路由、权限、SQLite、快照与配置编译 |
 | `apps/agent` | 生成 Rust client、身份、同步、运行层、Linux TUN / DNS 与诊断 |
@@ -64,6 +65,11 @@ VLESS TCP/TLS 与 WebSocket/TLS 的 listener/凭据已由平台生成和下发�
 | `apps/apple` | SwiftUI / NetworkExtension、UniFFI Rust bridge，当前接入与库存显示已实现，隧道未实现 |
 
 HTTP 契约由 Rust DTO 与实际路由生成，禁止手写平行 DTO / endpoint。WASM 仅是未来共享策略逻辑的可选方案。生成路径与限制见[协议参考](/protocol)。
+
+Controller 内部由 `http/` 装配路由，`contracts/` 保存不依赖 handler 的契约，`accounts/` 管账户领域；
+`store/` 管事务与持久化，`store/migrations/` 统一拥有历史升级和结构校验，`store/test_support/` 只用于测试。
+策略源 / CAS 位于 `store/network_policy/`，节点执行租约与回执位于 `store/mesh_execution.rs`；
+`network_scope.rs` 提供受限的网络存在性类型，不代替成员权限检查。`lib.rs` 保留组合与公开入口。
 
 ## 部署与继续阅读
 

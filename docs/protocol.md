@@ -13,8 +13,8 @@ Agent Rust client      TS SDK + Zod / JSON Schema
 ```
 
 - `crates/protocol/src/`：共享 HTTP/执行 DTO；`crates/policy/src/v3/`：策略源与纯编译器。
-- `apps/controller/src/lib.rs::contract_router` 与各 `*_api.rs`：实际操作、认证声明、请求/响应。
-- `apps/controller/src/bin/generate-rust-client.rs`：节点操作白名单与 checked 生成适配。
+- `apps/controller/src/http/`：实际操作、认证声明、请求/响应；独立于 handler 的控制面契约位于 `src/contracts/`。
+- `apps/controller/src/bin/generate-rust-client/main.rs`：节点操作白名单与 checked 生成适配。
 - `scripts/generate-protocol.mjs`：统一导出/生成；产物位于 `apps/agent/src/generated`、`packages/control-client/src/generated`。
 
 ```sh

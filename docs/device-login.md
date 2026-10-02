@@ -58,7 +58,7 @@ Apple 将 credential + 完整 pending binding 作为单个 Keychain journal 原�
 
 ## Controller 契约
 
-Rust DTO 位于 `crates/protocol/src/device_login.rs`，实际路由位于 `apps/controller/src/device_login_api.rs`，约束与错误以生成 OpenAPI 为准。
+Rust DTO 位于 `crates/protocol/src/device_login.rs`，实际路由位于 `apps/controller/src/http/device_login.rs`，约束与错误以生成 OpenAPI 为准。
 
 | 路由 / 操作 | 认证 | 请求 | HTTP 200 |
 | --- | --- | --- | --- |

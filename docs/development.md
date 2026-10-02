@@ -43,7 +43,7 @@ pnpm build
 
 | 行为 | 源证据 |
 | --- | --- |
-| 单事务消费、并发仅一身份、原绑定幂等恢复、过期 / 撤销不复活、权限分离 | `apps/controller/tests/api.rs`、`apps/agent/tests/roundtrip.rs` |
+| 单事务消费、并发仅一身份、原绑定幂等恢复、过期 / 撤销不复活、权限分离 | `apps/controller/tests/api/main.rs`、`apps/agent/tests/roundtrip.rs` |
 | 私有 0700 / 0600、独占锁、错误 / 损坏状态不覆盖、响应丢失复用身份 | `apps/agent/tests/roundtrip.rs`、controller store 测试 |
 | 用户会话、网络权限与设备授权 | `apps/controller/tests/api/accounts*.rs`、Web 会话/模型单测；页面交互手工验证 |
 | 必填可空、未知字段、Unicode 长度、类型化 HTTP 错误与真实往返 | `packages/control-client/test/client.test.ts`、生成 Rust client 测试 |
@@ -58,7 +58,7 @@ IPv4 Mesh v3 的grants/有序first-match已贯通正常执行；旧模式allow/r
 
 | 行为 | 源证据 |
 | --- | --- |
-| v1 地址升级保留身份、稳定地址、容量失败回滚、revision / CAS / ACK | `apps/controller/src/store/tests.rs`、`apps/controller/tests/api.rs` |
+| v1 地址升级保留身份、稳定地址、容量失败回滚、revision / CAS / ACK | `apps/controller/src/store/tests.rs`、`apps/controller/tests/api/main.rs` |
 | schema / digest / 绑定校验、旧版本拒绝、缓存与回执恢复 | `apps/agent/tests/roundtrip.rs` |
 | 文件发布前失败与 `CommittedNotDurable`、重试 / 重启仍须 fsync 后 ACK | `crates/protocol/src/local/write.rs`、`apps/agent/src/state/durability_tests.rs`、Agent roundtrip 测试 |
 | suffix 标签边界、CIDR、非法 / 映射地址、池内归属、循环与必经节点约束 | `crates/policy/src/tests.rs`、Controller API 行为测试 |

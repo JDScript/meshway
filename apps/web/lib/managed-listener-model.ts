@@ -13,7 +13,7 @@ import { endpointLabel, hostProblem, stableId } from "./connections-model.ts"
 
 // Form model for platform-managed listeners. Text inputs keep their raw
 // strings; `toSettings` produces the exact generated DTO. Local checks mirror
-// the controller's validation (apps/controller/src/store/managed_transports.rs)
+// the controller's validation (apps/controller/src/store/managed_transports/mod.rs)
 // because a rejected save carries only its HTTP status; the controller stays
 // the authority and normalizes bind, endpoints and the TLS name.
 
