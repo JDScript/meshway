@@ -22,6 +22,7 @@ Rust 控制面与 agent、Next.js + shadcn/ui 控制台、VitePress 文档站。
 
 ## 实现与验证
 
+- 用户明确强调代码洁癖：源码组织、命名和职责须干净可解释；关注 `apps/controller/src/store` 中散落的 tests、`policy_v3` 与 `schema_v*`。完整 dump / 审查不等于已完成源码清理，不再混报。生产领域模块优先职责命名，必要 wire / 数据库历史版本集中在兼容与迁移边界；测试支持和历史 fixture 应有清楚归属，避免持续堆叠阶段名、临时修复名和重复实现。收敛时保留已有身份 / 数据的真实迁移路径及有价值的行为回归，不能靠删除必要迁移或测试制造表面整洁。
 - 前后端按契约推进真实纵向功能；空状态和错误状态必须真实，不伪造节点、流量、健康状态。
 - 将提案、用户已确认需求和已实现功能明确区分。控制面注册和心跳不代表隧道已建立。
 - 管理员、注册令牌、节点凭据的权限分开；Web 的每个管理 mutation 都必须在服务端检查登录身份。
@@ -43,6 +44,7 @@ Rust 控制面与 agent、Next.js + shadcn/ui 控制台、VitePress 文档站。
 - 用户已确认 Apple 终端 App 位于 `apps/apple`：SwiftUI 多平台 + NetworkExtension Packet Tunnel，Rust 核心经 UniFFI 复用，FFI unsafe 仅限受审计的桥接 crate。App 经系统浏览器跳转 controller Web 完成用户登录 / 授权，以一次性 PKCE 结果和本地持久化节点身份接入。用户账户、网络权限、设备归属、Keychain、多接入、生成客户端兑换与心跳、只读清单已接通；隧道与 NE 包流未实现。用户最新决定暂停 Apple 新增开发，优先 Linux 自动组网、打洞及跨地域 Docker 联测；保留已有接口兼容与必要消费者检查，真机 NE 待后续恢复及签名条件满足。
 - 用户已确认先推进 Linux 传输实验；协议按编译期插件边界扩展，批量与 buffer 所有权属于公共接口。实验密钥、授权和网络必须与现有控制面身份及运行数据隔离。
 - 用户最新再次强调纽约位于防火墙后，质疑固定可达链路联测对真实打洞的价值，要求按已有 Tailscale 对照推进核心连接能力。原KR→NYC配置目标128.238.177.131:28443但KR转发FIB为CloudflareWARP/table65743；Docker端口暴露不证明上游防火墙放行，原PASS只覆盖固定底层可达下TUN/E2E/多跳/恢复。P3b/P3d最小闭环与underlay接线独立并行：两端仅出站，无发布端口/手工对端候选，正常Controller下发、认证探测/打洞、实际直连与UDP blocked中继兜底；不以既有VPN或STUN映射冒充Meshway直连，不承诺穿透任意防火墙。
+- 用户进一步质疑把打洞限定为UDP，以及仅允许VLESS时是否不能打洞。通用候选/协调接口不得把UDP写成产品必选：NAT穿透取决于外层socket能力，当前VLESS TCP/TLS和WS/TLS外层为TCP；TCP simultaneous-open在部分环境可能可用，但Meshway尚未实现/验证其socket协调与上层角色接线。UDP打洞、TCP打洞、反向拨号和中继分别表达，不能把UDP映射推广到VLESS/TCP或静默启用被禁止的业务承载；具体TCP打洞交付范围不因工程上优先UDP而被擅自排除。
 - 用户进一步要求审查 multi-transport 扩展架构，重点收敛 controller/agent 的 transport registry、控制面提供的可用目录与配置校验、以及 Agent 版本/能力协商。审查需明确控制面允许使用的协议与 Agent 实际编译支持的能力，保留 Agent 执行前的防御性和本机资源校验；不把 registry 理解为动态下载任意执行代码。具体统一注册接口与兼容迁移方案见承载扩展审查，尚未实现部分不得写成现状。
 - 性能目标优先衡量 Meshway 包装的增量损失：同一协议 / 实现、资源和负载建立匹配基线，分开记录适配层、认证 / 加密、转发与 TUN 成本；不得用原生 L4 流代理与 L3 E2E 隧道的差值直接声称包装损耗。
 - 性能深挖与新 transport 实现可委派独立 worktree 并行推进；共享 Docker VM 的压测通过同一 performance lock 串行执行，避免阻塞协议主线或互相干扰。
