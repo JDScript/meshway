@@ -2,6 +2,8 @@
 
 import type { ConnectionsSnapshot } from "@meshway/control-client"
 
+import { useState } from "react"
+
 import { ConnectionsEditor } from "@/components/connections/connections-editor"
 import { useConnectionRuntimes, type InitialRuntimes } from "@/components/connections/use-runtimes"
 
@@ -9,10 +11,14 @@ import { useConnectionRuntimes, type InitialRuntimes } from "@/components/connec
 export function ConnectionsWorkspace({
   snapshot,
   initialRuntimes,
+  managedListenerIds,
 }: {
   snapshot: ConnectionsSnapshot
   initialRuntimes: InitialRuntimes
+  /** Platform-managed listener IDs, or null when the managed read failed. */
+  managedListenerIds: string[] | null
 }) {
   const runtimes = useConnectionRuntimes(initialRuntimes)
-  return <ConnectionsEditor snapshot={snapshot} scopeNodeId={null} runtimes={runtimes} />
+  const [managed] = useState(() => (managedListenerIds === null ? null : new Set(managedListenerIds)))
+  return <ConnectionsEditor snapshot={snapshot} managedListenerIds={managed} scopeNodeId={null} runtimes={runtimes} />
 }

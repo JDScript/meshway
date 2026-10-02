@@ -9,6 +9,7 @@ import {
   fetchConnectionRuntimes,
   fetchConnections,
   fetchEndpointDiscoveries,
+  fetchManagedListeners,
   fetchNetwork,
   fetchNodes,
   fetchTags,
@@ -34,13 +35,14 @@ export default async function MachinePage({
 }) {
   const [{ networkId, routes }, { node: encoded }, query] = await Promise.all([requireNetwork(params), params, searchParams])
   const nodeId = safeDecode(encoded)
-  const [nodes, connections, runtimes, tags, network, discoveries] = await Promise.all([
+  const [nodes, connections, runtimes, tags, network, discoveries, managed] = await Promise.all([
     fetchNodes(networkId),
     fetchConnections(networkId),
     fetchConnectionRuntimes(networkId),
     fetchTags(networkId),
     fetchNetwork(networkId),
     fetchEndpointDiscoveries(networkId),
+    fetchManagedListeners(networkId),
   ])
 
   if (!nodes.ok) {
@@ -71,6 +73,7 @@ export default async function MachinePage({
         initialRuntimes={runtimes}
         discoveries={discoveries}
         network={network}
+        managed={managed}
         tags={
           tags.ok
             ? { ok: true, tags: tags.data.assignments.find((assignment) => assignment.node_id === node.id)?.tags ?? [] }

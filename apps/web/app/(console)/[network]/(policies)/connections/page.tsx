@@ -6,7 +6,7 @@ import { ControllerUnavailable } from "@/components/common/controller-states"
 import { ConnectionsWorkspace } from "@/components/connections/connections-workspace"
 import { PageBody, PageHeader } from "@/components/shell/page-header"
 import { buttonVariants } from "@/components/ui/button"
-import { controllerUrl, fetchConnectionRuntimes, fetchConnections } from "@/lib/controller"
+import { controllerUrl, fetchConnectionRuntimes, fetchConnections, fetchManagedListeners } from "@/lib/controller"
 import { requireNetwork } from "@/lib/network-scope"
 import { formatClock } from "@/lib/time"
 
@@ -24,7 +24,11 @@ export default async function ConnectionsPage({
   if (typeof query.node === "string" && query.node !== "" && query.node.length <= 128) {
     redirect(routes.machine(query.node, "connections"))
   }
-  const [connections, runtimes] = await Promise.all([fetchConnections(networkId), fetchConnectionRuntimes(networkId)])
+  const [connections, runtimes, managed] = await Promise.all([
+    fetchConnections(networkId),
+    fetchConnectionRuntimes(networkId),
+    fetchManagedListeners(networkId),
+  ])
 
   return (
     <PageBody>
@@ -40,7 +44,11 @@ export default async function ConnectionsPage({
         }
       />
       {connections.ok ? (
-        <ConnectionsWorkspace snapshot={connections.data} initialRuntimes={runtimes} />
+        <ConnectionsWorkspace
+          snapshot={connections.data}
+          initialRuntimes={runtimes}
+          managedListenerIds={managed.ok ? managed.data.listeners.map((listener) => listener.settings.id) : null}
+        />
       ) : (
         <ControllerUnavailable url={controllerUrl()} error={connections.error} />
       )}

@@ -28,6 +28,7 @@ import { CandidateRow, ListenerRow, problemCount } from "@/components/connection
 import { useConnectionsDraftStore, type Owner } from "@/components/connections/draft-store"
 import { IdentityPanel } from "@/components/connections/identity-panel"
 import { ListenerSheet } from "@/components/connections/listener-sheet"
+import { isManagedListener } from "@/lib/managed-listener-model"
 import type { Runtimes } from "@/components/connections/use-runtimes"
 import { DraftActionBar } from "@/components/common/draft-action-bar"
 import { Panel } from "@/components/common/panel"
@@ -110,11 +111,18 @@ type Confirm =
  */
 export function ConnectionsEditor({
   snapshot,
+  managedListenerIds = null,
   scopeNodeId,
   runtimes,
   onSnapshot,
 }: {
   snapshot: ConnectionsSnapshot
+  /**
+   * IDs of platform-managed listeners (null when unknown). They appear in
+   * the plan but are changed only through the managed listener API: here
+   * they are read-only and link to the node's configuration.
+   */
+  managedListenerIds?: ReadonlySet<string> | null
   /** Per-node view, or null for the whole network. */
   scopeNodeId: string | null
   /** Live self-reports, displayed only; never part of the draft. */
@@ -505,6 +513,11 @@ export function ConnectionsEditor({
         onEdit={() => editListener(listener)}
         onDial={() => allowIntoListener(listener)}
         onDelete={() => requestRemoveListener(listener)}
+        managedHref={
+          isManagedListener(managedListenerIds, listener.id.trim(), listener.credentialRef.trim() || null) && listenerChange(listener, base.configuration) === "unchanged"
+            ? `${routes.machine(listener.nodeId, "connections")}#node-carriers`
+            : null
+        }
       />
     )
   }

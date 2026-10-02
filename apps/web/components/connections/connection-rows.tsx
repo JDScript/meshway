@@ -2,6 +2,7 @@
 
 import type { ConnectionNode, ConnectionNeighborObservation } from "@meshway/control-client"
 import { ArrowRightIcon, CircleAlertIcon, PlusIcon, XIcon } from "lucide-react"
+import Link from "next/link"
 import { useEffect, useRef, type ReactNode } from "react"
 
 import { Badge } from "@/components/ui/badge"
@@ -92,8 +93,11 @@ export function ListenerRow({
   onEdit,
   onDial,
   onDelete,
+  managedHref,
 }: {
   listener: ListenerDraft
+  /** Platform-managed: read-only here, edited in the node's configuration at this link. */
+  managedHref?: string | null
   nodes: ConnectionNode[]
   /** Global view: lead with the owning node. */
   showOwner: boolean
@@ -121,12 +125,11 @@ export function ListenerRow({
       aria-label={`监听器 ${label}`}
       className={rowClass(highlighted, problems)}
     >
-      <button
-        type="button"
-        onClick={onEdit}
+      <RowTarget
+        managedHref={managedHref ?? null}
+        onEdit={onEdit}
         disabled={disabled}
-        aria-label={`编辑监听器 ${label}`}
-        className="flex min-w-0 flex-1 flex-col gap-1.5 text-left focus-visible:outline-none disabled:cursor-not-allowed"
+        label={label}
       >
         <span className="flex min-w-0 flex-wrap items-center gap-2">
           {showOwner ? (
@@ -141,6 +144,11 @@ export function ListenerRow({
             <span className="truncate text-sm font-medium group-hover/row:underline">
               {endpoints.length > 0 ? endpointLabel(endpoints[0]?.host ?? "", endpoints[0]?.port ?? "") : "未填写对外地址"}
             </span>
+          ) : null}
+          {managedHref ? (
+            <Badge variant="outline" className="border-brand/40 font-normal text-brand">
+              平台托管 · 在节点配置中编辑
+            </Badge>
           ) : null}
           <RowBadges change={change} problems={problems} />
           {runtime ? (
@@ -170,7 +178,7 @@ export function ListenerRow({
           ) : null}
           <span className="font-mono text-[0.6875rem]">ID {label}</span>
         </Secondary>
-      </button>
+      </RowTarget>
       <div className="flex shrink-0 items-center gap-0.5">
         <Button
           type="button"
@@ -184,19 +192,49 @@ export function ListenerRow({
           <PlusIcon data-icon="inline-start" />
           <span className="hidden sm:inline">允许连接</span>
         </Button>
-        <Button
-          type="button"
-          variant="ghost"
-          size="icon-sm"
-          disabled={disabled}
-          onClick={onDelete}
-          aria-label={`删除监听器 ${label}`}
-          className="text-muted-foreground hover:text-destructive"
-        >
-          <XIcon />
-        </Button>
+        {managedHref ? null : (
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon-sm"
+            disabled={disabled}
+            onClick={onDelete}
+            aria-label={`删除监听器 ${label}`}
+            className="text-muted-foreground hover:text-destructive"
+          >
+            <XIcon />
+          </Button>
+        )}
       </div>
     </li>
+  )
+}
+
+function RowTarget({
+  managedHref,
+  onEdit,
+  disabled,
+  label,
+  children,
+}: {
+  managedHref: string | null
+  onEdit: () => void
+  disabled: boolean
+  label: string
+  children: ReactNode
+}) {
+  const className = "flex min-w-0 flex-1 flex-col gap-1.5 text-left focus-visible:outline-none disabled:cursor-not-allowed"
+  if (managedHref) {
+    return (
+      <Link href={managedHref} aria-label={`在节点配置中编辑托管监听 ${label}`} className={className}>
+        {children}
+      </Link>
+    )
+  }
+  return (
+    <button type="button" onClick={onEdit} disabled={disabled} aria-label={`编辑监听器 ${label}`} className={className}>
+      {children}
+    </button>
   )
 }
 

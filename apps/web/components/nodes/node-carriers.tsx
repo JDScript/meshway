@@ -1,12 +1,15 @@
 "use client"
 
 import type {
+  ConnectionListener,
   ConnectionNeighborObservation,
   ConnectionNode,
   ConnectionsSnapshot,
   EndpointDiscoveriesSnapshot,
+  ManagedListenerSummary,
+  ManagedListenersSnapshot,
 } from "@meshway/control-client"
-import { ArrowRightIcon, RefreshCwIcon } from "lucide-react"
+import { ArrowRightIcon, PencilIcon, PlusIcon, RefreshCwIcon } from "lucide-react"
 import type { ReactNode } from "react"
 
 import { CopyButton } from "@/components/common/copy-button"
@@ -32,6 +35,8 @@ import { neighborLabel, reasonLabels, runtimeFor, runtimeNextSteps } from "@/lib
 import type { ControllerResult } from "@/lib/controller"
 import { nodeName, transportLabels } from "@/lib/connections-model"
 import { discoveryLabel, discoveryStateLabels } from "@/lib/endpoint-discovery-model"
+import type { ManagedListenerDraft } from "@/lib/managed-listener-draft-registry"
+import { certificatePreview, describeSettings, managedFor, presetLabels, presetOf, referencingCandidates } from "@/lib/managed-listener-model"
 import { formatDateTime } from "@/lib/time"
 import { cn } from "@/lib/utils"
 
@@ -40,16 +45,33 @@ import { cn } from "@/lib/utils"
  * what the agent bound, external addresses with their source and expiry,
  * and what each peer verified. Raw report fields stay folded below.
  */
+export type ManagedRead = { ok: true; data: ManagedListenersSnapshot } | { ok: false; error: string }
+
 export function NodeCarriers({
   nodeId,
   snapshot,
   runtimes,
   discoveries: initialDiscoveries,
+  managed,
+  editable,
+  drafts,
+  onCreateListener,
+  onEditListener,
+  onRetryManaged,
 }: {
   nodeId: string
   snapshot: ConnectionsSnapshot
   runtimes: Runtimes
   discoveries: ControllerResult<EndpointDiscoveriesSnapshot>
+  /** Platform-managed listener intent; a failed read hides editing, never the observed facts. */
+  managed: ManagedRead
+  /** Active node: managed listeners can be added and edited. */
+  editable: boolean
+  /** This node's unsaved managed-listener forms. */
+  drafts: ManagedListenerDraft[]
+  onCreateListener: () => void
+  onEditListener: (listenerId: string) => void
+  onRetryManaged: () => void
 }) {
   const discoveries = useEndpointDiscoveries(initialDiscoveries)
   const report = discoveries.shown.ok ? discoveries.shown.data.nodes.find((node) => node.node_id === nodeId) : undefined
@@ -68,14 +90,21 @@ export function NodeCarriers({
   // The server may call a report current while it describes another plan
   // revision or runtime generation than the one shown here.
   const discoveryStatus = serverStatus === discoveryStateLabels.observed && !view.discoveryCurrent ? "与当前配置 / 运行代际不一致（历史）" : serverStatus
+  const managedOwn = managed.ok ? managedFor(managed.data, nodeId) : []
+  const managedById = new Map(managedOwn.map((summary) => [summary.settings.id, summary]))
+  const planListeners = new Map(snapshot.configuration.listeners.map((listener) => [listener.id, listener]))
+  const disabled = managedOwn.filter((summary) => !summary.settings.enabled)
+  const createDraft = drafts.find((draft) => draft.kind === "create")
+  const editDraft = (id: string) => drafts.some((draft) => draft.kind === "edit" && draft.original?.id === id)
+  const listenerCount = view.listeners.length + disabled.length
 
   return (
-    <div data-testid="node-carriers" className="flex flex-col gap-4">
+    <div id="node-carriers" data-testid="node-carriers" className="flex flex-col gap-4">
       <Panel
         title="监听"
-        description={view.listeners.length === 0 ? "没有监听：此节点只主动拨出，其他节点不能拨入。" : "其他节点可拨入的入口。"}
+        description={listenerCount === 0 ? "没有监听：此节点只主动拨出，其他节点不能拨入。" : "其他节点可拨入的入口。"}
         actions={
-          <span className="flex items-center gap-1.5 text-xs text-muted-foreground">
+          <span className="flex flex-wrap items-center gap-1.5 text-xs text-muted-foreground">
             <span>UDP 地址观测：{discoveryStatus}</span>
             <Hint label="UDP 地址观测">
               STUN 观测来自 Agent 实际承载的 UDP socket，是未经对端验证的候选；不代表可达，也不适用于 TCP / VLESS。
@@ -86,6 +115,16 @@ export function NodeCarriers({
           </span>
         }
       >
+        {!managed.ok ? (
+          <div className="border-b px-4 py-3 sm:px-5">
+            <FailureNotice
+              title="托管监听读取失败"
+              nextStep="暂时不能添加或编辑监听；下方仍显示已保存连接与运行报告。"
+              error={managed.error}
+              actions={<Button variant="outline" size="sm" onClick={onRetryManaged}>重试</Button>}
+            />
+          </div>
+        ) : null}
         {!discoveries.shown.ok ? (
           <div className="border-b px-4 py-3 sm:px-5">
             <FailureNotice title="地址观测读取失败" nextStep="点击刷新地址观测重试。" error={discoveries.shown.error} />
@@ -94,9 +133,46 @@ export function NodeCarriers({
         {view.listeners.length > 0 ? (
           <ul aria-label="监听" className="divide-y">
             {view.listeners.map((listener) => (
-              <ListenerRow key={listener.id} listener={listener} nodes={nodes} now={now} />
+              <ListenerRow
+                key={listener.id}
+                listener={listener}
+                nodes={nodes}
+                now={now}
+                ownership={
+                  <Ownership
+                    summary={managedById.get(listener.id)}
+                    plan={planListeners.get(listener.id)}
+                    managedKnown={managed.ok}
+                    editable={editable}
+                    hasDraft={editDraft(listener.id)}
+                    onEdit={() => onEditListener(listener.id)}
+                  />
+                }
+              />
             ))}
           </ul>
+        ) : null}
+        {disabled.length > 0 ? (
+          <ul aria-label="已停用的监听" className="divide-y border-t">
+            {disabled.map((summary) => (
+              <DisabledListenerRow
+                key={summary.settings.id}
+                summary={summary}
+                snapshot={snapshot}
+                editable={editable}
+                hasDraft={editDraft(summary.settings.id)}
+                onEdit={() => onEditListener(summary.settings.id)}
+              />
+            ))}
+          </ul>
+        ) : null}
+        {editable && managed.ok ? (
+          <div className="border-t px-4 py-3 sm:px-5">
+            <Button variant="outline" size="sm" onClick={onCreateListener} data-testid="managed-listener-create">
+              {createDraft ? <PencilIcon data-icon="inline-start" /> : <PlusIcon data-icon="inline-start" />}
+              {createDraft ? "继续添加监听（有未保存的修改）" : "添加监听"}
+            </Button>
+          </div>
         ) : null}
       </Panel>
 
@@ -135,7 +211,7 @@ export function NodeCarriers({
   )
 }
 
-function ListenerRow({ listener, nodes, now }: { listener: ListenerView; nodes: ConnectionNode[]; now: number }) {
+function ListenerRow({ listener, nodes, now, ownership }: { listener: ListenerView; nodes: ConnectionNode[]; now: number; ownership: ReactNode }) {
   const runtime = listener.runtime
   const tone: Tone = !runtime ? "neutral" : runtime.state === "bound" ? "success" : "danger"
   const state = !runtime ? "未报告" : runtime.state === "bound" ? "已监听" : `监听失败${reasonLabels[runtime.reason] ? `：${reasonLabels[runtime.reason]}` : ""}`
@@ -169,6 +245,7 @@ function ListenerRow({ listener, nodes, now }: { listener: ListenerView; nodes: 
             ) : null}
           </ul>
         </Fact>
+        {ownership}
         <Fact label="对端验证" className="md:col-span-2" hint="Agent 报告的邻居认证探测结果，按配置的拨入关系逐个列出。">
           {listener.incoming.length === 0 ? (
             <span className="text-muted-foreground">没有节点配置拨入。</span>
@@ -207,7 +284,7 @@ function OutgoingRow({ candidate, nodes, now }: { candidate: OutgoingView; nodes
         </Fact>
         <Fact label="本地 socket" hint="Agent 报告的拨号 socket 本地地址；只有 UDP socket 上报。">
           {candidate.udp.kind === "not_applicable" ? (
-            <span className="text-muted-foreground">不适用</span>
+            <span className="text-muted-foreground">未知 · {candidate.transport ? transportLabels[candidate.transport] : "该承载"} 拨号 socket 暂不上报</span>
           ) : (
             <BoundSockets sockets={sockets} copyLabel={`复制 ${candidate.id} 的本地 socket`} empty="未上报" />
           )}
@@ -232,6 +309,151 @@ function OutgoingRow({ candidate, nodes, now }: { candidate: OutgoingView; nodes
         </Fact>
       </dl>
       <SocketDetails sockets={sockets} />
+    </li>
+  )
+}
+
+/**
+ * Who owns a listener's configuration: the platform (editable here, with its
+ * public material status) or a manual / legacy plan entry (read-only here).
+ */
+function Ownership({
+  summary,
+  plan,
+  managedKnown,
+  editable,
+  hasDraft,
+  onEdit,
+}: {
+  summary: ManagedListenerSummary | undefined
+  plan: ConnectionListener | undefined
+  managedKnown: boolean
+  editable: boolean
+  hasDraft: boolean
+  onEdit: () => void
+}) {
+  if (summary) {
+    return (
+      <Fact label="平台托管" className="md:col-span-2" hint="由控制面保存并下发；保存表示意图，Agent 回执、实际绑定与对端验证分别显示。">
+        <ManagedFacts summary={summary} editable={editable} hasDraft={hasDraft} onEdit={onEdit} />
+      </Fact>
+    )
+  }
+  if (!managedKnown) {
+    return (
+      <Fact label="配置来源" className="md:col-span-2">
+        <span className="text-muted-foreground">未知（托管监听读取失败）</span>
+      </Fact>
+    )
+  }
+  const reference = plan?.credential_ref ?? null
+  return (
+    <Fact label="配置来源" className="md:col-span-2" hint="旧手工连接配置；不在这里编辑。">
+      <span data-testid="manual-listener" className="flex flex-col gap-1">
+        <span className="flex flex-wrap items-center gap-2">
+          <StatusBadge tone="neutral">手工配置（旧）</StatusBadge>
+          {reference ? (
+            <span className="text-xs text-muted-foreground">
+              引用节点本地 profile <code className="font-mono">{reference}</code>
+            </span>
+          ) : null}
+        </span>
+        <span className="text-xs text-muted-foreground">在下方「高级手工连接配置」查看；不建议在节点上手工维护 profile。</span>
+      </span>
+    </Fact>
+  )
+}
+
+function ManagedFacts({
+  summary,
+  editable,
+  hasDraft,
+  onEdit,
+}: {
+  summary: ManagedListenerSummary
+  editable: boolean
+  hasDraft: boolean
+  onEdit: () => void
+}) {
+  const settings = summary.settings
+  const vless = settings.vless
+  return (
+    <span data-testid="managed-listener" data-listener-id={settings.id} className="flex flex-col gap-1.5">
+      <span className="flex flex-wrap items-center gap-x-2 gap-y-1">
+        <span className="font-medium">{presetLabels[presetOf(settings)]}</span>
+        {vless ? (
+          <span className="text-xs text-muted-foreground">
+            SNI <code className="font-mono">{vless.server_name}</code>
+            {vless.stream === "websocket" ? (
+              <>
+                {" · "}路径 <code className="font-mono">{vless.websocket_path}</code>
+                {" · "}Host <code className="font-mono">{vless.websocket_host}</code>
+              </>
+            ) : null}
+          </span>
+        ) : null}
+        {editable ? (
+          <Button variant="outline" size="sm" className="ml-auto" onClick={onEdit} aria-label={`编辑监听 ${settings.id}`}>
+            <PencilIcon data-icon="inline-start" />
+            {hasDraft ? "继续编辑" : "编辑"}
+          </Button>
+        ) : null}
+      </span>
+      <span className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs">
+        {summary.compiled_capability_available ? (
+          <StatusBadge tone="success">节点已报告此承载能力</StatusBadge>
+        ) : (
+          <StatusBadge tone="warning" title="节点尚未报告能运行这种承载；已保存的意图会保留，节点报告后才会下发执行。">等待节点报告承载能力</StatusBadge>
+        )}
+        {hasDraft ? <StatusBadge tone="warning">有未保存的修改</StatusBadge> : null}
+        {vless ? (
+          <span className="text-muted-foreground">
+            材料 v{summary.material_version}
+            {summary.certificate_sha256 ? (
+              <>
+                {" · "}证书 SHA-256 <code className="font-mono" title={summary.certificate_sha256}>{certificatePreview(summary.certificate_sha256)}</code>
+              </>
+            ) : null}
+          </span>
+        ) : null}
+        {vless ? (
+          <Hint label="证书">平台自签证书，拨号方按下发的证书精确信任；不是公网 CA 签发，也不证明已安装或可达。</Hint>
+        ) : null}
+      </span>
+    </span>
+  )
+}
+
+function DisabledListenerRow({
+  summary,
+  snapshot,
+  editable,
+  hasDraft,
+  onEdit,
+}: {
+  summary: ManagedListenerSummary
+  snapshot: ConnectionsSnapshot
+  editable: boolean
+  hasDraft: boolean
+  onEdit: () => void
+}) {
+  const settings = summary.settings
+  const references = referencingCandidates(snapshot, settings.id, [])
+  return (
+    <li data-testid="carrier-listener-disabled" data-listener-id={settings.id} className="flex flex-col gap-2 px-4 py-3.5 sm:px-5">
+      <RowTitle transport={presetLabels[presetOf(settings)]} id={settings.id} status={<StatusBadge tone="neutral">已停用</StatusBadge>} />
+      <p className="text-xs text-muted-foreground">{describeSettings(settings)} · 设置与材料保留，执行已撤回。</p>
+      {references.length > 0 ? (
+        <p role="status" className="text-xs text-warning">
+          仍有 {references.length} 个拨号候选引用它（{references.map((candidate) => candidate.id).join("、")}）：已保存的连接配置无效，直到重新启用或在高级入口中修复。
+        </p>
+      ) : null}
+      {editable ? (
+        <Button variant="outline" size="sm" className="self-start" onClick={onEdit} aria-label={`编辑监听 ${settings.id}`}>
+          <PencilIcon data-icon="inline-start" />
+          {hasDraft ? "继续编辑" : "编辑 / 重新启用"}
+        </Button>
+      ) : null}
     </li>
   )
 }

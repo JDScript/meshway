@@ -49,7 +49,7 @@ export function ManagedDataplanePanel() {
       </div>
       <p className="text-muted-foreground">
         这是参数模板：把 <code className="font-mono text-foreground">--apply-dataplane</code>{" "}
-        加到该节点现有的 agent 启动配置里，沿用它自己的 <code className="font-mono">--state</code>（VLESS 另需本地{" "}
+        加到该节点现有的 agent 启动配置里，沿用它自己的 <code className="font-mono">--state</code>（平台托管监听无需本地 profile；只有旧手工 VLESS 监听仍依赖{" "}
         <code className="font-mono">--connection-profiles</code>），不要另起第二个 agent；持久运行的 Docker 演示请按文档启用。流量还须被
         <Link href={routes.access()} className="mx-0.5 underline underline-offset-4">
           访问授权

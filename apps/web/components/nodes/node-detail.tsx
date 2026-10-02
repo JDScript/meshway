@@ -3,7 +3,7 @@
 import { useRoutes } from "@/components/shell/network-context"
 import { useNetworkId } from "@/components/network/network-workspace"
 
-import type { ConnectionNode, ConnectionsSnapshot, EndpointDiscoveriesSnapshot, NodeSummary } from "@meshway/control-client"
+import type { ConnectionNode, ConnectionsSnapshot, EndpointDiscoveriesSnapshot, ManagedListenersSnapshot, NodeSummary } from "@meshway/control-client"
 import {
   ActivityIcon,
   CircleAlertIcon,
@@ -21,6 +21,8 @@ import { useCallback, useState, type ReactNode } from "react"
 import { PageHeader } from "@/components/shell/page-header"
 import { ManagedDataplanePanel } from "@/components/nodes/managed-dataplane-panel"
 import { NodeCarriers } from "@/components/nodes/node-carriers"
+import { useManagedListenerDraftVersion } from "@/components/managed-listeners/draft-store"
+import { ManagedListenerSheet, managedIdPrefix } from "@/components/managed-listeners/managed-listener-sheet"
 import { NodeDnsPanel, type NodeDnsNetwork } from "@/components/nodes/node-dns-panel"
 import { ConnectionsEditor } from "@/components/connections/connections-editor"
 import { useConnectionsHasDraft } from "@/components/connections/draft-store"
@@ -53,6 +55,9 @@ import {
 import type { RuntimeReadResult } from "@/lib/action-state"
 import type { ControllerResult } from "@/lib/controller"
 import { readNodeStatusAction } from "@/lib/connections-actions"
+import { readManagedListenersAction } from "@/lib/managed-listener-actions"
+import { createKey, editKey, type ManagedListenerDraft } from "@/lib/managed-listener-draft-registry"
+import { fromSettings, managedById, newManagedForm, takenListenerIds } from "@/lib/managed-listener-model"
 import { nextPartStatus, type PartStatus } from "@/lib/node-status"
 import { formatClock, formatDateTime } from "@/lib/time"
 import { topologyFlowHref } from "@/lib/flow-navigation"
@@ -64,6 +69,17 @@ export type NodeTab = "overview" | "connections"
 type ConnectionsRead = { ok: true; data: ConnectionsSnapshot } | { ok: false; error: string }
 /** Page render input: the read also carries the server time it was made at. */
 type ConnectionsPageRead = { ok: true; data: ConnectionsSnapshot; fetchedAt: number } | { ok: false; error: string }
+type StampedManaged = { snapshot: ManagedListenersSnapshot; readAt: number }
+
+/** Newer revision wins; at the same revision the later read wins. */
+function latestManaged(...sources: (StampedManaged | null)[]): StampedManaged | null {
+  return sources.reduce<StampedManaged | null>((best, next) => {
+    if (next === null) return best
+    if (best === null) return next
+    if (next.snapshot.revision !== best.snapshot.revision) return next.snapshot.revision > best.snapshot.revision ? next : best
+    return next.readAt >= best.readAt ? next : best
+  }, null)
+}
 
 /**
  * One node: identity and control-plane contact on the overview tab; its
@@ -80,10 +96,13 @@ export function NodeDetail({
   discoveries,
   tags,
   network,
+  managed: initialManaged,
 }: {
   node: NodeSummary
   fetchedAt: number
   initialTab: NodeTab
+  /** Platform-managed listeners at render time. */
+  managed: ControllerResult<ManagedListenersSnapshot>
   connections: ConnectionsPageRead
   controllerUrl: string
   initialRuntimes: InitialRuntimes
@@ -128,10 +147,17 @@ export function NodeDetail({
     at: connections.ok ? connections.fetchedAt : 0,
     error: connections.ok ? null : connections.error,
   })
+  const [managedAdopted, setManagedAdopted] = useState<StampedManaged | null>(null)
+  const [managedError, setManagedError] = useState<string | null>(null)
+  const adoptManaged = useCallback((snapshot: ManagedListenersSnapshot, readAt: number) => {
+    setManagedAdopted((current) => latestManaged(current, { snapshot, readAt }))
+    setManagedError(null)
+  }, [])
   const poll = useCallback(async (): Promise<RuntimeReadResult> => {
     const result = await readNodeStatusAction(networkId)
     if (result.status === "error") return result
     const read = result.fetchedAt
+    if (result.managed.ok) adoptManaged(result.managed.data, read)
     const found = result.nodes.ok ? result.nodes.data.nodes.find((candidate) => candidate.id === nodeId) : undefined
     if (found) setPolledNode((current) => (current && current.fetchedAt >= read ? current : { node: found, fetchedAt: read }))
     const inventoryError = !result.nodes.ok ? result.nodes.error : found ? null : "节点不在清单中"
@@ -144,11 +170,65 @@ export function NodeDetail({
     return result.runtimes.ok
       ? { status: "loaded", snapshot: result.runtimes.data, fetchedAt: read }
       : { status: "error", message: result.runtimes.error }
-  }, [nodeId, networkId])
+  }, [nodeId, networkId, adoptManaged])
   const runtimes = useConnectionRuntimes(initialRuntimes, poll)
+  const managedLatest = latestManaged(initialManaged.ok ? { snapshot: initialManaged.data, readAt: initialManaged.fetchedAt } : null, managedAdopted)
+  const managedShown = managedLatest
+    ? ({ ok: true, data: managedLatest.snapshot } as const)
+    : ({ ok: false, error: managedError ?? (initialManaged.ok ? "未读取" : initialManaged.error) } as const)
   const revoked = node.revoked_at !== null
   const entry = latest.ok ? latest.data.nodes.find((candidate) => candidate.node.id === node.id) : undefined
   const savedScope = latest.ok ? nodeScope(fromPlan(latest.data.configuration), node.id) : null
+
+  // Managed listener sheet: an unsaved form reopens when the configuration tab returns.
+  const managedDrafts = useManagedListenerDraftVersion()
+  const nodeDrafts = managedDrafts.forNode(nodeId).filter((draft) => draft.kind !== "enroll")
+  const [sessionKey, setSessionKey] = useState<string | null>(() => nodeDrafts.find((draft) => draft.open)?.key ?? null)
+  const [pristine, setPristine] = useState<ManagedListenerDraft | null>(null)
+  const session = sessionKey === null ? null : (managedDrafts.get(sessionKey) ?? (pristine?.key === sessionKey ? pristine : null))
+  const openCreate = () => {
+    if (!managedShown.ok) return
+    const key = createKey(nodeId)
+    const kept = managedDrafts.get(key)
+    if (kept) managedDrafts.put({ ...kept, open: true })
+    else {
+      const form = newManagedForm("vless_tcp", takenListenerIds(managedShown.data, latest.ok ? latest.data : null), managedIdPrefix(latest.ok ? latest.data.nodes : [], nodeId))
+      setPristine({ key, kind: "create", nodeId, baseRevision: managedShown.data.revision, original: null, initial: form, form, idFollows: true, open: true })
+    }
+    setSessionKey(key)
+  }
+  const openEdit = (listenerId: string) => {
+    if (!managedShown.ok) return
+    const key = editKey(nodeId, listenerId)
+    const kept = managedDrafts.get(key)
+    if (kept) managedDrafts.put({ ...kept, open: true })
+    else {
+      const summary = managedById(managedShown.data, listenerId)
+      if (!summary) return
+      const form = fromSettings(summary.settings)
+      setPristine({ key, kind: "edit", nodeId, baseRevision: managedShown.data.revision, original: summary.settings, initial: form, form, idFollows: false, open: true })
+    }
+    setSessionKey(key)
+  }
+  const closeSession = () => {
+    const kept = sessionKey === null ? undefined : managedDrafts.get(sessionKey)
+    if (kept) managedDrafts.put({ ...kept, open: false })
+    setSessionKey(null)
+  }
+  const [retryingManaged, setRetryingManaged] = useState(false)
+  const retryManaged = async () => {
+    setRetryingManaged(true)
+    const result = await readManagedListenersAction(networkId)
+    setRetryingManaged(false)
+    if (result.status === "loaded") {
+      adoptManaged(result.managed, result.fetchedAt)
+      const connectionsRead = result.connections
+      if (connectionsRead.ok) {
+        const stamped = { snapshot: connectionsRead.data, readAt: result.fetchedAt }
+        setAdopted((current) => latestSnapshot(current, stamped))
+      }
+    } else setManagedError(result.message)
+  }
 
   const changeTab = (next: NodeTab) => {
     const url = new URL(window.location.href)
@@ -259,7 +339,38 @@ export function NodeDetail({
                 snapshot={latest.data}
                 runtimes={runtimes}
                 discoveries={discoveries}
+                managed={managedShown}
+                editable={!revoked}
+                drafts={nodeDrafts}
+                onCreateListener={openCreate}
+                onEditListener={openEdit}
+                onRetryManaged={() => {
+                  if (!retryingManaged) void retryManaged()
+                }}
               />
+              {managedShown.ok && !revoked ? (
+                <ManagedListenerSheet
+                  session={session}
+                  managed={managedShown.data}
+                  connections={latest.data}
+                  nodes={latest.data.nodes}
+                  onClose={closeSession}
+                  onSaved={(result) => {
+                    adoptManaged(result.managed, result.fetchedAt)
+                    if (result.connections.ok) {
+                      const stamped = { snapshot: result.connections.data, readAt: result.fetchedAt }
+                      setAdopted((current) => latestSnapshot(current, stamped))
+                    }
+                  }}
+                  onRead={(result) => {
+                    adoptManaged(result.managed, result.fetchedAt)
+                    if (result.connections.ok) {
+                      const stamped = { snapshot: result.connections.data, readAt: result.fetchedAt }
+                      setAdopted((current) => latestSnapshot(current, stamped))
+                    }
+                  }}
+                />
+              ) : null}
               <NodeRuntimePanel nodeId={node.id} nodes={latest.data.nodes} runtimes={runtimes} />
               <DiagnosticDetails title="连接身份与当前启用帮助">
                 {entry ? <ConnectionIdentityDetails entry={entry} revision={latest.data.revision} /> : null}
@@ -269,6 +380,7 @@ export function NodeDetail({
                 <SectionHeader id="node-connections-plan" title="连接配置（草稿）" description="保存的是意图；实际状态以上方报告为准。" />
                 <ConnectionsEditor
                   snapshot={latest.data}
+                  managedListenerIds={managedShown.ok ? new Set(managedShown.data.listeners.map((listener) => listener.settings.id)) : null}
                   scopeNodeId={node.id}
                   runtimes={runtimes}
                   onSnapshot={(snapshot, readAt) =>
