@@ -57,6 +57,13 @@ impl Fence {
             }) => result,
         }
     }
+
+    pub(super) async fn cancelled(&self) {
+        let mut changed = self.changed.subscribe();
+        if !*changed.borrow_and_update() {
+            let _ = changed.changed().await;
+        }
+    }
 }
 
 /// Owned by the unique packet pump, including while a caller drops its future.

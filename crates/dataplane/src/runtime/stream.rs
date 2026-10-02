@@ -9,13 +9,97 @@ use crate::{
     framing::{read_record, write_record},
 };
 use std::{
+    io,
+    pin::Pin,
     sync::{Arc, Mutex, atomic::Ordering},
+    task::{Context, Poll},
     time::Duration,
 };
 use tokio::{
+    io::{AsyncRead, AsyncWrite, ReadBuf},
     net::{TcpListener, TcpStream},
     sync::{OwnedSemaphorePermit, mpsc, watch},
 };
+
+/// Adapters may flush queued application bytes from AsyncRead (WS control
+/// handling, TLS, etc.). Fence the *whole* carrier below split, not just the
+/// writer future. A retired dirty carrier can only be dropped, never reused.
+#[derive(Default)]
+struct CarrierFence(Mutex<Option<Arc<super::generation::Fence>>>);
+
+impl CarrierFence {
+    fn begin(&self, fence: Option<Arc<super::generation::Fence>>) -> Result<()> {
+        let mut dirty = lock(&self.0);
+        if dirty.is_some() {
+            return Err(Error::Closed);
+        }
+        if let Some(fence) = &fence {
+            let _guard = fence.enter()?;
+        }
+        *dirty = fence;
+        Ok(())
+    }
+
+    fn flushed(&self) -> Result<()> {
+        let mut dirty = lock(&self.0);
+        if let Some(fence) = dirty.as_ref() {
+            let _guard = fence.enter()?;
+        }
+        *dirty = None;
+        Ok(())
+    }
+
+    fn poll<T>(&self, operation: impl FnOnce() -> Poll<io::Result<T>>) -> Poll<io::Result<T>> {
+        let dirty = lock(&self.0);
+        let _guard = match dirty.as_ref().map(|fence| fence.enter()).transpose() {
+            Ok(guard) => guard,
+            Err(_) => {
+                return Poll::Ready(Err(io::Error::new(
+                    io::ErrorKind::BrokenPipe,
+                    "packet generation retired",
+                )));
+            }
+        };
+        operation()
+    }
+}
+
+struct FencedCarrier<S> {
+    stream: S,
+    fence: Arc<CarrierFence>,
+}
+impl<S: AsyncRead + Unpin> AsyncRead for FencedCarrier<S> {
+    fn poll_read(
+        self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+        buffer: &mut ReadBuf<'_>,
+    ) -> Poll<io::Result<()>> {
+        let this = self.get_mut();
+        this.fence
+            .poll(|| Pin::new(&mut this.stream).poll_read(cx, buffer))
+    }
+}
+impl<S: AsyncWrite + Unpin> AsyncWrite for FencedCarrier<S> {
+    fn poll_write(
+        self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+        bytes: &[u8],
+    ) -> Poll<io::Result<usize>> {
+        let this = self.get_mut();
+        this.fence
+            .poll(|| Pin::new(&mut this.stream).poll_write(cx, bytes))
+    }
+    fn poll_flush(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
+        let this = self.get_mut();
+        this.fence
+            .poll(|| Pin::new(&mut this.stream).poll_flush(cx))
+    }
+    fn poll_shutdown(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
+        let this = self.get_mut();
+        this.fence
+            .poll(|| Pin::new(&mut this.stream).poll_shutdown(cx))
+    }
+}
 
 pub(super) struct Established<S> {
     stream: S,
@@ -168,7 +252,11 @@ async fn run<S: DuplexStream>(
     } = established;
     let token = cipher.id;
     let cipher = Mutex::new(cipher);
-    let (mut reader, mut writer) = tokio::io::split(stream);
+    let carrier_fence = Arc::new(CarrierFence::default());
+    let (mut reader, mut writer) = tokio::io::split(FencedCarrier {
+        stream,
+        fence: carrier_fence.clone(),
+    });
     let mut shutdown = inner.shutdown.subscribe();
     if *shutdown.borrow() || *closed.borrow() {
         return Ok(());
@@ -201,13 +289,17 @@ async fn run<S: DuplexStream>(
             {
                 continue;
             }
+            carrier_fence.begin(outbound.generation.clone())?;
             for frame in outbound.batch.into_frames() {
                 let record = lock(&cipher).seal(&frame)?;
                 if let Some(fence) = &outbound.generation {
                     // Cancellation after entering a record closes this carrier:
                     // an adapter may already have emitted a partial frame. Never
                     // reuse that stream with the next record / nonce.
-                    fence.run(write_record(&mut writer, &record)).await?;
+                    tokio::select! {
+                        _ = fence.cancelled() => return Err(Error::Closed.into()),
+                        result = write_record(&mut writer, &record) => result?,
+                    }
                 } else {
                     write_record(&mut writer, &record).await?;
                 }
@@ -218,6 +310,7 @@ async fn run<S: DuplexStream>(
                         .fetch_add(1, Ordering::Relaxed);
                 }
             }
+            carrier_fence.flushed()?;
         }
         Ok(())
     };
@@ -309,4 +402,63 @@ pub(super) async fn maintain(inner: Arc<Inner>, candidate: OutgoingCandidate) {
 pub(super) fn configure_socket(socket: &TcpStream, nodelay: bool) -> Result<()> {
     socket.set_nodelay(nodelay)?;
     Ok(())
+}
+
+#[cfg(test)]
+mod carrier_fence_tests {
+    use super::*;
+
+    #[test]
+    fn read_side_first_cannot_poll_a_retired_dirty_adapter() {
+        let generation = super::super::generation::Fence::new();
+        let carrier = CarrierFence::default();
+        carrier.begin(Some(generation.clone())).unwrap();
+        generation.retire();
+        let mut called = false;
+        let result = carrier.poll(|| {
+            called = true;
+            Poll::Ready(Ok(()))
+        });
+        assert!(matches!(result, Poll::Ready(Err(_))));
+        assert!(
+            !called,
+            "read/flush/control side effect must not even be polled"
+        );
+        assert!(
+            carrier.flushed().is_err(),
+            "retired dirty state cannot become reusable"
+        );
+    }
+
+    #[test]
+    fn concurrent_retire_waits_for_whole_read_side_poll_then_blocks_all_future_polls() {
+        let generation = super::super::generation::Fence::new();
+        let carrier = Arc::new(CarrierFence::default());
+        carrier.begin(Some(generation.clone())).unwrap();
+        let (entered_tx, entered_rx) = std::sync::mpsc::channel();
+        let (release_tx, release_rx) = std::sync::mpsc::channel();
+        let polled = carrier.clone();
+        let reader = std::thread::spawn(move || {
+            polled.poll(|| {
+                entered_tx.send(()).unwrap();
+                release_rx.recv().unwrap();
+                Poll::Ready(Ok(98usize))
+            })
+        });
+        entered_rx.recv().unwrap();
+        let (retired_tx, retired_rx) = std::sync::mpsc::channel();
+        let retire = std::thread::spawn(move || {
+            generation.retire();
+            retired_tx.send(()).unwrap();
+        });
+        assert!(retired_rx.try_recv().is_err());
+        release_tx.send(()).unwrap();
+        assert!(matches!(reader.join().unwrap(), Poll::Ready(Ok(98))));
+        retired_rx.recv().unwrap();
+        retire.join().unwrap();
+        assert!(matches!(
+            carrier.poll(|| panic!("late adapter poll")),
+            Poll::<io::Result<()>>::Ready(Err(_))
+        ));
+    }
 }
