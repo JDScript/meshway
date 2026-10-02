@@ -34,6 +34,7 @@ mod latency_history;
 mod latency_lifecycle;
 #[cfg(test)]
 mod managed_material_tests;
+pub(crate) mod observations;
 #[cfg(unix)]
 mod probe;
 mod profiles;

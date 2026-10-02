@@ -1,5 +1,19 @@
 use super::*;
-use crate::managed_connections::Manager;
+struct Unavailable;
+impl Provider for Unavailable {
+    fn live_status(&self, _: bool, _: u32, _: u32) -> Result<LiveStatus, ProbeError> {
+        Err(ProbeError::Unavailable)
+    }
+    fn whois(&self, _: &str) -> Result<WhoisObservation, ProbeError> {
+        Err(ProbeError::Unavailable)
+    }
+    fn probe_neighbor_observed(
+        &self,
+        _: ProbeRequest,
+    ) -> Pin<Box<dyn Future<Output = Result<ProbeObservation, ProbeError>> + Send + '_>> {
+        Box::pin(async { Err(ProbeError::Unavailable) })
+    }
+}
 
 #[tokio::test]
 async fn versioned_requests_are_closed_and_response_bound_is_independent() {
@@ -17,8 +31,7 @@ async fn versioned_requests_are_closed_and_response_bound_is_independent() {
     let dir = directory();
     let state = dir.path().join("a");
     let lock = meshway_protocol::local::lock(&dir.path().join("a.lock")).unwrap();
-    let manager = Manager::new(None, Duration::from_secs(30));
-    let prober = manager.prober();
+    let prober = Arc::new(Unavailable);
     let server = Server::bind(&state, &lock).await.unwrap();
     let task = tokio::spawn(async move { server.serve(prober).await });
     for version in [0, 2, u32::MAX] {
@@ -313,8 +326,7 @@ async fn bounded_connections_deadline_and_cancellation() {
     let state = dir.path().join("a");
     let path = socket_path(&state);
     let lock = meshway_protocol::local::lock(&dir.path().join("a.lock")).unwrap();
-    let manager = Manager::new(None, Duration::from_secs(30));
-    let prober = manager.prober();
+    let prober = Arc::new(Unavailable);
     let server = Server::bind(&state, &lock).await.unwrap();
     let task = tokio::spawn(async move { server.serve(prober).await });
     let mut stalled = Vec::new();
@@ -349,8 +361,7 @@ async fn request_rate_is_bounded_even_for_fast_failures() {
     let dir = directory();
     let state = dir.path().join("a");
     let lock = meshway_protocol::local::lock(&dir.path().join("a.lock")).unwrap();
-    let manager = Manager::new(None, Duration::from_secs(30));
-    let prober = manager.prober();
+    let prober = Arc::new(Unavailable);
     let server = Server::bind(&state, &lock).await.unwrap();
     let task = tokio::spawn(async move { server.serve(prober).await });
     for _ in 0..8 {
@@ -383,8 +394,7 @@ async fn incomplete_request_deadline_closes_connection_without_stopping_service(
     let dir = directory();
     let state = dir.path().join("a");
     let lock = meshway_protocol::local::lock(&dir.path().join("a.lock")).unwrap();
-    let manager = Manager::new(None, Duration::from_secs(30));
-    let prober = manager.prober();
+    let prober = Arc::new(Unavailable);
     let server = Server::bind(&state, &lock).await.unwrap();
     let task = tokio::spawn(async move { server.serve(prober).await });
     let mut client = UnixStream::connect(socket_path(&state)).await.unwrap();

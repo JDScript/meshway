@@ -15,11 +15,11 @@ use tokio::{
     time::{self, Instant},
 };
 
-use super::{Manager, Observation, Phase, session};
-use crate::diagnostics::{
-    AuthenticatedChannel, Evidence, LiveState, LiveStatus, MAX_PEERS, ProbeError, ProbeObservation,
-    ProbeRequest, PublicIdentity, SCHEMA_VERSION, WhoisObservation,
+use super::observations::{
+    AuthenticatedChannel, LiveStatus, MAX_PEERS, ProbeError, ProbeObservation, ProbeRequest,
+    PublicIdentity, WhoisObservation,
 };
+use super::{Manager, Observation, Phase, session};
 
 #[derive(Clone, PartialEq, Eq)]
 struct Inventory {
@@ -323,27 +323,20 @@ impl Prober {
             .filter(|next| *next < count);
         let deadline = (*generation.deadline.borrow()).ok_or(ProbeError::Unavailable)?;
         let result = LiveStatus {
-            schema_version: SCHEMA_VERSION,
-            state: LiveState::Installed,
             generation: generation.number,
             installed_revision: generation.installed_revision,
             source_revision: generation.source_revision,
-            lease_remaining_ms: deadline
-                .saturating_duration_since(Instant::now())
-                .as_millis()
-                .min(u64::MAX as u128) as u64,
+            lease_remaining: deadline.saturating_duration_since(Instant::now()),
             local_node_id: generation.intent.node_id.clone(),
             local_identity: generation
                 .inventory
                 .as_ref()
                 .and_then(|inventory| inventory.nodes.get(&generation.intent.node_id))
                 .cloned(),
-            network_id: None,
             authenticated_channel_count: count,
             peers: page,
             peer_offset: offset,
             next_peer_offset: next,
-            evidence: Evidence::CurrentAuthenticatedChannelRegistry,
         };
         if !self.current(&generation) {
             return Err(ProbeError::Unavailable);
@@ -382,12 +375,10 @@ impl Prober {
                 identity
             };
             Ok(WhoisObservation {
-                schema_version: SCHEMA_VERSION,
                 generation: generation.number,
                 installed_revision: generation.installed_revision,
                 source_revision: generation.source_revision,
                 identity: identity.clone(),
-                evidence: Evidence::CurrentTrustedInventory,
             })
         })();
         if !self.current(&generation) {
@@ -421,7 +412,7 @@ impl Prober {
             .runtime
             .upgrade()
             .ok_or(ProbeError::Unavailable)?;
-        let deadline = Instant::now() + Duration::from_millis(request.timeout_ms);
+        let deadline = Instant::now() + request.timeout;
         let probe = async {
             // A background probe can temporarily occupy the single channel slot.
             // At most 20 short retries; the total request deadline also bounds it.
@@ -438,14 +429,13 @@ impl Prober {
                             generation: generation.number,
                             installed_revision: generation.installed_revision,
                             source_revision: generation.source_revision,
-                            evidence: Evidence::DirectAuthenticatedNeighborRoundTrip,
                             peer_node_id: described.peer_node_id,
                             peer_name: name,
                             local_node_id: generation.intent.node_id.clone(),
                             initiator_node_id: described.initiator_node_id,
                             transport: described.transport,
                             // Preserve sub-microsecond precision without formatting secrets.
-                            rtt_ns: proof.round_trip.as_nanos().min(u64::MAX as u128) as u64,
+                            round_trip: proof.round_trip,
                         });
                     }
                     Err(meshway_dataplane::Error::Capacity) if attempt < 20 => {
@@ -505,7 +495,7 @@ mod live_tests {
     )]
     enum HistoricalResponse {
         Ok(HistoricalObservation),
-        Error(ProbeError),
+        Error(diagnostics::ProbeError),
     }
 
     fn inventory(own: &str, peer: &str) -> NodeConfiguration {
@@ -604,7 +594,7 @@ mod live_tests {
         let mut legacy = tokio::net::UnixStream::connect(diagnostics::socket_path(&state))
             .await
             .unwrap();
-        let request = serde_json::to_vec(&ProbeRequest {
+        let request = serde_json::to_vec(&diagnostics::ProbeRequest {
             peer: "SHA".into(),
             timeout_ms: 3000,
         })
@@ -636,7 +626,7 @@ mod live_tests {
         assert_eq!(enriched.source_revision, 1);
         assert!(matches!(
             enriched.evidence,
-            Evidence::DirectAuthenticatedNeighborRoundTrip
+            diagnostics::Evidence::DirectAuthenticatedNeighborRoundTrip
         ));
         assert_eq!(
             prober.whois("unknown").unwrap_err(),
@@ -655,7 +645,7 @@ mod live_tests {
             prober
                 .probe_neighbor_observed(ProbeRequest {
                     peer: "NYC".into(),
-                    timeout_ms: 1000
+                    timeout: Duration::from_secs(1)
                 })
                 .await
                 .unwrap_err(),
@@ -671,7 +661,7 @@ mod live_tests {
         );
         assert_eq!(
             diagnostics::whois(&state, "SHA").await.unwrap_err(),
-            ProbeError::AmbiguousPeer
+            diagnostics::ProbeError::AmbiguousPeer
         );
         assert_eq!(
             diagnostics::whois(&state, &client.node_id)
@@ -731,7 +721,7 @@ mod live_tests {
             diagnostics::live_status(&state, false, 0, 64)
                 .await
                 .unwrap_err(),
-            ProbeError::Unavailable
+            diagnostics::ProbeError::Unavailable
         );
         task.abort();
         let _ = task.await;

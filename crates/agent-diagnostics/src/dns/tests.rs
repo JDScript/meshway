@@ -1,7 +1,50 @@
 use super::*;
-use crate::diagnostics::Server as Control;
+use crate::Server as Control;
 use meshway_agent_dns::{Guard, Server, Zone};
 use std::{collections::BTreeMap, fs, os::unix::fs::PermissionsExt};
+
+struct DnsProvider(Guard);
+impl crate::Provider for DnsProvider {
+    fn live_status(&self, _: bool, _: u32, _: u32) -> Result<crate::LiveStatus, ProbeError> {
+        Err(ProbeError::Unavailable)
+    }
+    fn whois(&self, _: &str) -> Result<crate::WhoisObservation, ProbeError> {
+        Err(ProbeError::Unavailable)
+    }
+    fn probe_neighbor_observed(
+        &self,
+        _: crate::ProbeRequest,
+    ) -> std::pin::Pin<
+        Box<
+            dyn std::future::Future<Output = Result<crate::ProbeObservation, ProbeError>>
+                + Send
+                + '_,
+        >,
+    > {
+        Box::pin(async { Err(ProbeError::Unavailable) })
+    }
+    fn dns_status(&self) -> Status {
+        let snapshot = self.0.status();
+        let mut result = Status::unavailable();
+        result.state = match snapshot.state {
+            meshway_agent_dns::StatusState::Active => State::Active,
+            meshway_agent_dns::StatusState::Disabled => State::Disabled,
+            meshway_agent_dns::StatusState::Expired => State::Expired,
+            meshway_agent_dns::StatusState::Unavailable => State::Unavailable,
+        };
+        result.generation = snapshot.generation;
+        result.revision_floor = snapshot.revision_floor;
+        result.active_revision = snapshot.active_revision;
+        result.zone = snapshot.zone;
+        result.ttl = snapshot.ttl;
+        result.lease_remaining_ms = snapshot.lease_remaining_ms;
+        result.listener = snapshot.listener;
+        result.listener_bound = snapshot.listener_bound;
+        result.network_id = snapshot.network_id;
+        result.node_id = snapshot.node_id;
+        result
+    }
+}
 
 fn zone() -> Zone {
     let owner = Name::from_ascii("node.meshway.test.").unwrap();
@@ -52,8 +95,11 @@ async fn dns_only_private_ipc_and_real_udp_tcp_queries_follow_guard_transitions(
     let task_guard = guard.clone();
     let dns_task = tokio::spawn(async move { server.serve(task_guard).await });
     let task_guard = guard.clone();
-    let control_task =
-        tokio::spawn(async move { control.serve_with_dns(None, Some(task_guard)).await });
+    let control_task = tokio::spawn(async move {
+        control
+            .serve(std::sync::Arc::new(DnsProvider(task_guard)))
+            .await
+    });
     let waiting = paced_status(&state).await.unwrap();
     assert_eq!(waiting.state, State::Unavailable);
     assert!(waiting.listener_bound);
@@ -161,9 +207,7 @@ async fn dns_only_private_ipc_and_real_udp_tcp_queries_follow_guard_transitions(
     guard.shutdown();
     assert_eq!(paced_status(&state).await.unwrap().active_revision, None);
     assert_eq!(
-        crate::diagnostics::live_status(&state, false, 0, 64)
-            .await
-            .unwrap_err(),
+        crate::live_status(&state, false, 0, 64).await.unwrap_err(),
         ProbeError::Unavailable
     );
     control_task.abort();

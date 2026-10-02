@@ -19,7 +19,7 @@ pub enum Command {
     /// Query the daemon's actual loopback listener; IP input defaults to PTR.
     Query {
         name_or_ip: String,
-        #[arg(long = "type", value_enum)]
+        #[arg(long = "type", value_parser = parse_query_type)]
         query_type: Option<QueryType>,
         #[arg(long)]
         tcp: bool,
@@ -28,6 +28,15 @@ pub enum Command {
         #[arg(long)]
         json: bool,
     },
+}
+
+fn parse_query_type(value: &str) -> Result<QueryType, String> {
+    match value {
+        "A" => Ok(QueryType::A),
+        "AAAA" => Ok(QueryType::AAAA),
+        "PTR" => Ok(QueryType::PTR),
+        _ => Err("DNS query type must be A, AAAA or PTR".into()),
+    }
 }
 
 #[derive(Serialize)]

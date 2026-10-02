@@ -75,39 +75,10 @@ impl Status {
     }
 }
 
-impl From<meshway_agent_dns::Status> for Status {
-    fn from(status: meshway_agent_dns::Status) -> Self {
-        use meshway_agent_dns::StatusState;
-        Self {
-            schema_version: SCHEMA_VERSION,
-            state: match status.state {
-                StatusState::Active => State::Active,
-                StatusState::Disabled => State::Disabled,
-                StatusState::Expired => State::Expired,
-                StatusState::Unavailable => State::Unavailable,
-            },
-            generation: status.generation,
-            revision_floor: status.revision_floor,
-            active_revision: status.active_revision,
-            zone: status.zone,
-            ttl: status.ttl,
-            lease_remaining_ms: status.lease_remaining_ms,
-            listener: status.listener,
-            listener_bound: status.listener_bound,
-            network_id: status.network_id,
-            node_id: status.node_id,
-            evidence: StatusEvidence::CurrentDnsGuard,
-        }
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, clap::ValueEnum)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum QueryType {
-    #[value(name = "A")]
     A,
-    #[value(name = "AAAA")]
     AAAA,
-    #[value(name = "PTR")]
     PTR,
 }
 

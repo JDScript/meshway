@@ -6,9 +6,10 @@ use std::{
     },
 };
 
+use super::observations::{ProbeError as ConnectionError, ProbeRequest};
 use super::tests::{fixture, session, snapshot, tls_profiles};
 use super::*;
-use crate::diagnostics::{self, ProbeError, ProbeRequest};
+use crate::diagnostics::{self, ProbeError};
 
 fn inventory(own: &str, peer: &str) -> meshway_protocol::NodeConfiguration {
     let node = |id: &str, name: &str, index: u8| meshway_protocol::MeshNode {
@@ -184,7 +185,7 @@ async fn pending_probe_cancellation_lease_expiry_and_generation_replacement_are_
         let socket_task = tokio::spawn(async move { socket.serve(socket_prober).await });
         let request = ProbeRequest {
             peer: "SHA".into(),
-            timeout_ms: 1000,
+            timeout: Duration::from_secs(1),
         };
         paused.store(true, Ordering::SeqCst);
         let pending = {
@@ -239,17 +240,17 @@ async fn pending_probe_cancellation_lease_expiry_and_generation_replacement_are_
                 .unwrap()
                 .unwrap_err(),
             if mode == "timeout" {
-                ProbeError::Timeout
+                ConnectionError::Timeout
             } else {
-                ProbeError::Unavailable
+                ConnectionError::Unavailable
             }
         );
         assert_eq!(
             prober.probe_neighbor_observed(request).await.unwrap_err(),
             match mode {
-                "replace" => ProbeError::UnconfiguredPeer,
-                "expire" => ProbeError::Unavailable,
-                _ => ProbeError::ChannelUnavailable,
+                "replace" => ConnectionError::UnconfiguredPeer,
+                "expire" => ConnectionError::Unavailable,
+                _ => ConnectionError::ChannelUnavailable,
             }
         );
         socket_task.abort();

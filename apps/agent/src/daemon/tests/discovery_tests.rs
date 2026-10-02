@@ -201,9 +201,9 @@ async fn manager(agent: &Agent, lease: Duration) -> (Manager, Manager, String) {
         loop {
             if left
                 .prober()
-                .probe_neighbor_observed(crate::diagnostics::ProbeRequest {
+                .probe_neighbor_observed(crate::managed_connections::observations::ProbeRequest {
                     peer: peer.clone(),
-                    timeout_ms: 1000,
+                    timeout: Duration::from_secs(1),
                 })
                 .await
                 .is_ok()
@@ -231,9 +231,9 @@ async fn same_epoch_watermark_conflict_preserves_noise_and_next_report_recovers(
     assert_eq!(server.reads.load(Ordering::SeqCst), 1);
     assert_eq!(server.begins.load(Ordering::SeqCst), 1);
     left.prober()
-        .probe_neighbor_observed(crate::diagnostics::ProbeRequest {
+        .probe_neighbor_observed(crate::managed_connections::observations::ProbeRequest {
             peer,
-            timeout_ms: 1000,
+            timeout: Duration::from_secs(1),
         })
         .await
         .unwrap();
@@ -371,9 +371,9 @@ async fn diagnostic_422_same_source_preserves_noise_and_real_dns_same_revision()
             .await
             .unwrap();
         left.prober()
-            .probe_neighbor_observed(crate::diagnostics::ProbeRequest {
+            .probe_neighbor_observed(crate::managed_connections::observations::ProbeRequest {
                 peer: peer.clone(),
-                timeout_ms: 1000,
+                timeout: Duration::from_secs(1),
             })
             .await
             .unwrap();

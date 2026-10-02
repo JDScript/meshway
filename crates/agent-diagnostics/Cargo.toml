@@ -1,0 +1,23 @@
+[package]
+name = "meshway-agent-diagnostics"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+getrandom.workspace = true
+meshway-protocol = { path = "../protocol" }
+serde.workspace = true
+serde_json.workspace = true
+thiserror = "2"
+tokio = { workspace = true, features = ["io-util"] }
+rustix.workspace = true
+hickory-proto = { version = "=0.26.3", default-features = false, features = ["std"] }
+
+[dev-dependencies]
+tempfile.workspace = true
+rustix = { workspace = true, features = ["net"] }
+meshway-agent-dns = { path = "../agent-dns" }
+
+[lints]
+workspace = true
