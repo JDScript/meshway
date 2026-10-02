@@ -35,6 +35,13 @@ Docker 存储后端不同，构建机显示 OCI manifest digest、接收机显�
 完整交付位于批准 TMP 的 `meshway-field-images-cccn4rq4/result.json` 与 `cleanup-manifest.json`。
 镜像送达不代表 TLS、TUN 或真实跨地域互通已通过；容器部署 / 包流验收使用 `experiments/linux-field/run.ts`。
 
+**构建器执行偏差补充**：后续核对原 `jp-tyo-builder-limits.json` / `us-nyc-builder-limits.json`
+发现两个专用 buildx `docker-container` 构建器实际为 `Privileged=true`。Agent / Controller 五个运行容器始终非 privileged，
+但构建器也不符合本轮限制，不能将“运行容器非 privileged”扩张为整条构建流程都符合。
+两个构建器已按精确 ID 移除 container / metadata，`--keep-state` 保留原缓存与证据，清理错误 0；后续改用无专用特权构建器的流程，
+非 root、cap-drop-ALL 的普通编译容器显式限制资源，不再启动这些构建器。原镜像内容校验 PASS、现场 FAIL 和原 inspect 均不改写。
+整改明细见原镜像目录的 `builder-privilege-remediation.json`，原状态、移除命令和缓存前后核验分别记录。
+
 ### 第一轮已取得的运行证据
 
 2026-10-02，独立 run `r1-5038bd8a8e3f` 已完成东京 ARM64 ↔ 洛杉矶 x86_64 的正常注册、
@@ -79,7 +86,7 @@ overlay 为 `198.18.42.0/24`，HTTP canary 只绑定各自 Mesh IP，实际 rout
 收尾已完成：
 
 - 删除精确 owner label 匹配的 **5 个测试容器、4 个 bridge**，清理错误为 0，测试端口不再监听。
-- 两个专用 buildx daemon 已停止；镜像、构建 cache、归档、独立 Controller / Agent 私有数据和身份均保留。
+- 两个专用 buildx daemon 先停止，后完成上述特权构建器精确移除；镜像、构建 cache、归档、独立 Controller / Agent 私有数据和身份均保留。
 - 四台 SSH 正常，既有容器 ID / 镜像 / 端口 / 运行及原 healthy 状态保留；IPv4 / IPv6 RPDB、物理 / WARP IPv4 路由、resolver 文件和 forwarding 值与预检一致。
 - IPv6 差异如实保留：纽约 WARP 的 link-local 地址变化，首尔 RA 默认路由 lifetime 从 8995 刷新为 8999，gateway / interface / metric 未变。
   未恢复旧配置，不声称全部 IPv6 观测逐字节一致。未手工编辑宿主防火墙或 Docker daemon 配置。
