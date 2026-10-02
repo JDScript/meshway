@@ -9,6 +9,11 @@
 
 - `success`：成功匹配 nonce 的真实 RTT；`rtt_us` 使用单调时钟，向上取整到微秒。
   `channel_associations` 恰好一个，来自 Runtime 同一次 proof，而非后续 registry 读取。
+  耗时口径为一次 authenticated-neighbor probe 调用的最终 observation；组合已交付稳定性修复
+  `58ce66c/fa5ebcd` 后，`round_trip` 从首次请求开始，**包含排队、丢失及内部重试等待**，
+  不是去掉重试等待后的纯网络 RTT。Runtime 的 absolute deadline 内内部最多 3 次同 request ID
+  请求、使用 fresh hop nonces，但 runner 仍每 API call 只记录一个最终样本，不拆成 3 个事件。
+  cancellation/shutdown/replacement 不续重试，timeout 仍退休该 exact channel。
 - `timeout`：真实已发出的邻接 probe 到期，`rtt_us = null`、通道关联为空。
 - `failed`：已建立且配置允许的邻接上的 probe 尝试失败；`failure_reasons` 恰好一个，
   区分 `channel_unavailable`、`authentication_failed` 与 `local_send_failed`。
