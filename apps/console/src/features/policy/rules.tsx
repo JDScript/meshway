@@ -135,7 +135,7 @@ export function RuleRow({
       aria-label={label}
       aria-current={current ? "true" : undefined}
       onKeyDown={onKeyDown}
-      className="group/rule flex flex-col gap-1.5 rounded-surface bg-fill-subtle p-2 transition-colors duration-200 hover:bg-fill-hover aria-[current=true]:bg-fill-selected aria-[current=true]:hover:bg-fill-selected"
+      className="rule-row group/rule flex flex-col gap-1.5 rounded-surface p-2"
     >
       <div className="flex min-h-7 flex-wrap items-center gap-x-3 gap-y-2">
         {/* The rule keeps at least this much of the line; short of it, the end moves to its own line. */}
@@ -164,6 +164,8 @@ export function RuleList({
   )
 }
 
+const ID_SLOT = "w-36 shrink-0 font-mono text-meta text-muted-foreground"
+
 /** A rule's ID at its row's end: quiet text until pointed at, edited in place. */
 export function RuleIdInput({
   value,
@@ -176,11 +178,10 @@ export function RuleIdInput({
   editable: boolean
   onChange: (value: string) => void
 }) {
+  // One fixed slot, so the controls before it line up from row to row; a longer ID ends in an ellipsis until edited.
   if (!editable)
     return (
-      <span className="truncate px-2.5 font-mono text-meta text-muted-foreground">
-        {value}
-      </span>
+      <span className={cn(ID_SLOT, "truncate px-2.5 leading-7")}>{value}</span>
     )
   return (
     <FieldInput
@@ -191,9 +192,10 @@ export function RuleIdInput({
       autoCapitalize="none"
       spellCheck={false}
       maxLength={64}
-      // Monospace, so the width follows the text in characters.
-      style={{ width: `${Math.max(value.length, 8) + 3}ch` }}
-      className="h-7 max-w-56 rounded-full bg-transparent px-2.5 font-mono text-meta text-muted-foreground hover:bg-fill-hover focus-visible:bg-field focus-visible:text-foreground md:text-meta"
+      className={cn(
+        ID_SLOT,
+        "h-7 rounded-full bg-transparent px-2.5 text-ellipsis hover:bg-fill-hover focus-visible:bg-field focus-visible:text-foreground md:text-meta dark:bg-transparent dark:hover:bg-fill-hover dark:focus-visible:bg-field"
+      )}
       value={value}
       aria-invalid={invalid || undefined}
       onChange={(event) => onChange(event.target.value)}
@@ -289,10 +291,13 @@ export function OrderedRules({
   items,
   end,
   label,
+  add,
 }: {
   items: readonly { key: string; node: ReactNode }[]
   end: ReactNode
   label: string
+  /** Adding a rule, in the rules' column. */
+  add?: ReactNode
 }) {
   const reduce = useReducedMotion()
   return (
@@ -309,16 +314,22 @@ export function OrderedRules({
         </motion.li>
       ))}
       <li className="relative grid grid-cols-[1.75rem_minmax(0,1fr)] gap-2.5">
-        <span className="relative flex justify-center pt-4">
+        <span className="relative flex justify-center pt-4.5">
           <span
             aria-hidden="true"
             className="size-2 rounded-full border border-dashed border-muted-foreground/60"
           />
         </span>
-        <div className="flex min-h-10 items-center rounded-row border border-dashed border-divider px-3.5 text-row text-muted-foreground">
+        <div className="flex min-h-11 items-center rounded-surface border border-dashed border-divider px-4 text-row text-muted-foreground">
           {end}
         </div>
       </li>
+      {add ? (
+        <li className="grid grid-cols-[1.75rem_minmax(0,1fr)] gap-2.5">
+          <span aria-hidden="true" />
+          {add}
+        </li>
+      ) : null}
     </ol>
   )
 }
@@ -326,10 +337,11 @@ export function OrderedRules({
 /** The number on the rail, joined to the next by a hairline. */
 function Rail({ index }: { index: number }) {
   return (
-    <span className="relative flex justify-center pt-4">
+    // Centred on the row's first line: 10 + 24 / 2 = 22, half the 44px row.
+    <span className="relative flex justify-center pt-2.5">
       <span
         aria-hidden="true"
-        className="absolute top-10 -bottom-4 left-1/2 w-px -translate-x-1/2 bg-linear-to-b from-divider to-divider/40"
+        className="absolute top-8.5 -bottom-4.5 left-1/2 w-px -translate-x-1/2 bg-linear-to-b from-divider to-divider/40"
       />
       <span className="relative flex size-6 items-center justify-center rounded-full border border-divider bg-fill-raised font-mono text-meta font-medium tabular-nums shadow-xs">
         {index + 1}
@@ -350,7 +362,7 @@ export function AddRule({
     <button
       type="button"
       onClick={onAdd}
-      className="flex h-11 w-full items-center justify-center gap-1.5 rounded-row border border-dashed border-divider text-row text-muted-foreground transition-colors outline-none hover:bg-fill-hover hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring"
+      className="flex h-11 w-full items-center justify-center gap-1.5 rounded-surface border border-dashed border-divider text-row text-muted-foreground transition-colors outline-none hover:bg-fill-hover hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring"
     >
       <PlusIcon className="size-3.5" />
       {label}

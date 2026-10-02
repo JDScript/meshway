@@ -133,13 +133,17 @@ export function PolicyPanel({
       </header>
       <ul
         aria-labelledby={surfaceTitleId("policy", "panel")}
-        className="min-h-0 flex-1 overflow-y-auto px-2 pb-2"
+        className="flex min-h-0 flex-1 flex-col gap-0.5 overflow-y-auto px-2 pb-2"
       >
         {POLICY_LAYERS.map((layer) => {
           const Icon = layerIcon[layer]
-          const notes = diagnostics.filter(
-            (diagnostic) => diagnosticLayer(diagnostic) === layer
-          )
+          // The controller's notes are about what is saved: while the draft's source is invalid they are set aside.
+          const notes =
+            document && !document.policy
+              ? []
+              : diagnostics.filter(
+                  (diagnostic) => diagnosticLayer(diagnostic) === layer
+                )
           const changed =
             layer === "source"
               ? state.draft.dirty
@@ -177,7 +181,7 @@ export function PolicyPanel({
                     <span className="truncate">{layerLabel[layer]()}</span>
                     {changed ? (
                       <span
-                        className="size-1.5 shrink-0 rounded-full bg-brand"
+                        className="size-1.5 shrink-0 rounded-full bg-warning"
                         aria-label={m.policy_changed()}
                       />
                     ) : null}

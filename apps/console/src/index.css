@@ -153,6 +153,8 @@
 
     --fill-subtle: color-mix(in oklab, var(--foreground) 4%, transparent);
     --fill-hover: color-mix(in oklab, var(--foreground) 5%, transparent);
+    /* Pointing at something already filled: laid over its fill. */
+    --fill-tint: color-mix(in oklab, var(--foreground) 3%, transparent);
     --fill-selected: color-mix(in oklab, var(--foreground) 9%, transparent);
     --divider: color-mix(in oklab, var(--foreground) 12%, transparent);
     /* A chosen segment, raised off its track. */
@@ -584,6 +586,23 @@
       var(--fill-selected),
       var(--fill-selected)
     );
+  }
+
+  /*
+   * A rule row: filled at rest; pointing at it tints over that fill (a
+   * step below the rule a link points at, which is filled as selected and
+   * keeps that fill while pointed at).
+   */
+  .rule-row {
+    background-color: var(--fill-subtle);
+    transition: background-color 200ms ease;
+  }
+  .rule-row:hover {
+    background-image: linear-gradient(var(--fill-tint), var(--fill-tint));
+  }
+  .rule-row[aria-current="true"] {
+    background-color: var(--fill-selected);
+    background-image: none;
   }
 
   /* A choosable row inside a surface. */

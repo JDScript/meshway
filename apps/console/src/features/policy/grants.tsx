@@ -106,28 +106,29 @@ export function GrantsLayer(props: LayerProps) {
                   autoOpen={rows.autoOpen(index)}
                   onClosed={rows.settled}
                   onOpenNode={props.onOpenNode}
-                  quietAdd
                   onChange={(src) => update(index, { ...rule, src })}
                 />
-                <Direction
-                  both={rule.bidirectional}
-                  editable={editable}
-                  onChange={(bidirectional) =>
-                    update(index, { ...rule, bidirectional })
-                  }
-                />
-                <SelectorSetField
-                  values={rule.dst}
-                  names={names}
-                  kinds={KINDS}
-                  label={m.policy_grant_dst()}
-                  addLabel={m.policy_grant_dst_add()}
-                  disabled={!editable}
-                  invalid={invalidAt("dst")}
-                  onOpenNode={props.onOpenNode}
-                  quietAdd
-                  onChange={(dst) => update(index, { ...rule, dst })}
-                />
+                {/* The direction keeps to the destinations when the row wraps. */}
+                <span className="inline-flex min-w-0 flex-wrap items-center gap-1.5">
+                  <Direction
+                    both={rule.bidirectional}
+                    editable={editable}
+                    onChange={(bidirectional) =>
+                      update(index, { ...rule, bidirectional })
+                    }
+                  />
+                  <SelectorSetField
+                    values={rule.dst}
+                    names={names}
+                    kinds={KINDS}
+                    label={m.policy_grant_dst()}
+                    addLabel={m.policy_grant_dst_add()}
+                    disabled={!editable}
+                    invalid={invalidAt("dst")}
+                    onOpenNode={props.onOpenNode}
+                    onChange={(dst) => update(index, { ...rule, dst })}
+                  />
+                </span>
               </RuleRow>
             </li>
           )

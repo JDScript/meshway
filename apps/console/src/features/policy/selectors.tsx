@@ -477,7 +477,6 @@ export function SelectorSetField({
   onChange,
   joiner,
   empty,
-  quietAdd = false,
 }: {
   values: readonly string[]
   names: SelectorNames
@@ -489,8 +488,6 @@ export function SelectorSetField({
   joiner?: ReactNode
   /** Said when there is none and none can be added. */
   empty?: string
-  /** "Add" shows only while its rule row is pointed at (always on touch), for rows with several sets. */
-  quietAdd?: boolean
   disabled?: boolean
   invalid?: (index: number) => boolean
   /** Opens the first chip's picker as soon as it is shown (a rule just added). */
@@ -566,11 +563,7 @@ export function SelectorSetField({
           chosen={values}
           label={addLabel}
           onPick={(selector) => onChange([...values, selector])}
-          className={cn(
-            "size-7 justify-center rounded-full border border-dashed border-divider text-muted-foreground transition-[color,background-color,opacity] outline-none hover:bg-fill-hover hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring data-popup-open:bg-fill-selected data-popup-open:text-foreground",
-            quietAdd &&
-              "opacity-0 group-focus-within/rule:opacity-100 group-hover/rule:opacity-100 data-popup-open:opacity-100 pointer-coarse:opacity-100"
-          )}
+          className="size-7 justify-center rounded-full border border-dashed border-divider text-muted-foreground transition-colors outline-none hover:bg-fill-hover hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring data-popup-open:bg-fill-selected data-popup-open:text-foreground"
         >
           <PlusIcon aria-hidden="true" className="size-3" />
         </SelectorPicker>

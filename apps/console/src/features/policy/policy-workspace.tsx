@@ -82,7 +82,10 @@ export function PolicyWorkspace({
       <div
         className={cn(
           "@container/workspace flex min-h-0 flex-1 flex-col gap-4 px-6",
-          layer === "source" ? "pb-6" : "overflow-y-auto pb-(--commit-space)"
+          // The source editor ends above the commit bar, like every other layer's content.
+          layer === "source"
+            ? "pb-(--commit-space)"
+            : "overflow-y-auto pb-(--commit-space)"
         )}
       >
         {!data || !document ? (

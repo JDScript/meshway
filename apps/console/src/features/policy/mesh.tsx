@@ -204,8 +204,8 @@ export function MeshLayer(props: LayerProps) {
                   onOpenNode={props.onOpenNode}
                   onChange={(dst) => update(index, { ...rule, dst })}
                 />
-                <span className="inline-flex min-w-0 items-center gap-1.5 pl-1.5">
-                  <span className="text-meta text-muted-foreground">
+                <span className="inline-flex min-w-0 items-start gap-1.5 pl-1.5">
+                  <span className="shrink-0 text-meta leading-7 text-muted-foreground">
                     {m.policy_mesh_via()}
                   </span>
                   <SelectorSetField
@@ -234,20 +234,22 @@ export function MeshLayer(props: LayerProps) {
             ),
           }
         })}
+        add={
+          editable ? (
+            <AddRule
+              label={m.policy_mesh_add()}
+              onAdd={() => {
+                const id = freshId(policy, "route")
+                edit((current) => ({
+                  ...current,
+                  mesh: [...current.mesh, { id, src: "*", dst: "*", via: [] }],
+                }))
+                rows.added()
+              }}
+            />
+          ) : undefined
+        }
       />
-      {editable ? (
-        <AddRule
-          label={m.policy_mesh_add()}
-          onAdd={() => {
-            const id = freshId(policy, "route")
-            edit((current) => ({
-              ...current,
-              mesh: [...current.mesh, { id, src: "*", dst: "*", via: [] }],
-            }))
-            rows.added()
-          }}
-        />
-      ) : null}
     </div>
   )
 }

@@ -89,14 +89,31 @@ export function ConnectionsLayer(props: LayerProps) {
                         size="sm"
                         label={m.policy_connection_action()}
                         value={rule.action}
+                        // The chosen action wears the colour of its read-only badge.
                         options={[
                           {
                             value: "allow",
-                            label: m.policy_connection_allow(),
+                            label: (
+                              <span
+                                className={cn(
+                                  rule.action === "allow" && "text-success"
+                                )}
+                              >
+                                {m.policy_connection_allow()}
+                              </span>
+                            ),
                           },
                           {
                             value: "block",
-                            label: m.policy_connection_block(),
+                            label: (
+                              <span
+                                className={cn(
+                                  rule.action === "block" && "text-destructive"
+                                )}
+                              >
+                                {m.policy_connection_block()}
+                              </span>
+                            ),
                           },
                         ]}
                         onChange={(action) =>

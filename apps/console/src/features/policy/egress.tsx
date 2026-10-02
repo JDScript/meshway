@@ -19,7 +19,16 @@ import { m } from "@/paraglide/messages.js"
 
 import { notesOn, type LayerProps } from "./layer"
 import { HopChain } from "./mesh"
-import { Fact, LayerFacts, NoteCounts, OrderedRules, RuleNotes } from "./rules"
+import type { PlacedDiagnostic } from "./document"
+import {
+  Fact,
+  LayerFacts,
+  NoteCounts,
+  OrderedRules,
+  RuleIdInput,
+  RuleNotes,
+  RuleRow,
+} from "./rules"
 import { SelectorChip, type SelectorNames } from "./selectors"
 import { EGRESS_SECTIONS, type EgressSection } from "./url"
 
@@ -43,7 +52,7 @@ const MATCH: Record<ExitMatch["kind"], LucideIcon> = {
 function Destination({ match }: { match: ExitMatch }) {
   const Icon = MATCH[match.kind]
   return (
-    <span className="inline-flex h-6 min-w-0 items-center gap-1.5 rounded-full border border-divider bg-fill-raised/60 px-2 text-meta">
+    <span className="inline-flex h-7 min-w-0 items-center gap-1.5 rounded-full border border-divider bg-fill-raised/60 px-2 text-meta">
       <Icon
         aria-hidden="true"
         className="size-3 shrink-0 text-muted-foreground"
@@ -127,7 +136,7 @@ function fallbackTarget(fallback: ProfileFallback) {
     : { target: fallback.kind, candidates: [], via: [] }
 }
 
-/** One exit rule, as a card on an ordered list. */
+/** One exit rule: a rule row like every layer's, read-only (the controller does not take egress yet). */
 function ExitCard({
   rule,
   names,
@@ -135,37 +144,47 @@ function ExitCard({
 }: {
   rule: ExitRule
   names: SelectorNames
-  notes: Parameters<typeof RuleNotes>[0]["notes"]
+  notes: readonly PlacedDiagnostic[]
 }) {
   return (
-    <div className="flex flex-col gap-2 rounded-row bg-fill-subtle py-2.5 pr-3 pl-3.5">
-      <div className="flex min-w-0 items-start gap-3">
-        <span className="flex min-w-0 flex-1 flex-wrap items-center gap-1.5">
-          <SelectorChip selector={rule.src ?? "*"} names={names} />
-          <ArrowRightIcon
-            aria-hidden="true"
-            className="size-3.5 shrink-0 text-muted-foreground"
+    <RuleRow
+      current={false}
+      label={rule.id}
+      notes={notes}
+      names={names}
+      end={
+        <>
+          <NoteCounts notes={notes} />
+          <RuleIdInput
+            value={rule.id}
+            invalid={false}
+            editable={false}
+            onChange={() => undefined}
           />
-          {rule.destinations.map((match, index) => (
-            <Destination
-              key={`${match.kind}-${match.value}-${index}`}
-              match={match}
-            />
-          ))}
-        </span>
-        <NoteCounts notes={notes} />
-      </div>
-      <Target
-        target={rule.target}
-        candidates={rule.candidates}
-        via={rule.via}
-        names={names}
+        </>
+      }
+    >
+      <SelectorChip selector={rule.src ?? "*"} names={names} className="h-7" />
+      <ArrowRightIcon
+        aria-hidden="true"
+        className="size-3.5 shrink-0 text-muted-foreground"
       />
-      <span className="truncate font-mono text-meta text-muted-foreground">
-        {rule.id}
+      {rule.destinations.map((match, index) => (
+        <Destination
+          key={`${match.kind}-${match.value}-${index}`}
+          match={match}
+        />
+      ))}
+      {/* Where it goes, on its own line under what it matches. */}
+      <span className="basis-full">
+        <Target
+          target={rule.target}
+          candidates={rule.candidates}
+          via={rule.via}
+          names={names}
+        />
       </span>
-      <RuleNotes notes={notes} names={names} />
-    </div>
+    </RuleRow>
   )
 }
 

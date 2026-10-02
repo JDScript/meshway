@@ -46,6 +46,49 @@ export type EditorHandle = { focusAt: (from: number, to?: number) => void }
 /** Marks a replacement made from outside (a graphical edit), which must not echo back. */
 const external = Annotation.define<boolean>()
 
+/** CodeMirror's own line inset, kept under the hanging indent. */
+const LINE_INSET = "6px"
+const hangs = new Map<number, Decoration>()
+const hang = (columns: number) => {
+  let decoration = hangs.get(columns)
+  if (!decoration) {
+    decoration = Decoration.line({
+      attributes: {
+        style: `padding-left: calc(${LINE_INSET} + ${columns}ch); text-indent: -${columns}ch`,
+      },
+    })
+    hangs.set(columns, decoration)
+  }
+  return decoration
+}
+
+/** A wrapped line continues under its own indentation and one level more, not at the margin. */
+const hangingIndent = ViewPlugin.fromClass(
+  class {
+    decorations: DecorationSet
+    constructor(view: EditorView) {
+      this.decorations = this.build(view)
+    }
+    update(update: ViewUpdate) {
+      if (update.docChanged || update.viewportChanged)
+        this.decorations = this.build(update.view)
+    }
+    build(view: EditorView): DecorationSet {
+      const builder = new RangeSetBuilder<Decoration>()
+      for (const { from, to } of view.visibleRanges) {
+        for (let at = from; at <= to;) {
+          const line = view.state.doc.lineAt(at)
+          const indent = /^[ \t]*/.exec(line.text)?.[0].length ?? 0
+          builder.add(line.from, line.from, hang(indent + 2))
+          at = line.to + 1
+        }
+      }
+      return builder.finish()
+    }
+  },
+  { decorations: (plugin) => plugin.decorations }
+)
+
 const theme = EditorView.theme({
   "&": {
     height: "100%",
@@ -220,6 +263,7 @@ export function CodeEditor({
           theme,
           EditorState.tabSize.of(2),
           EditorView.lineWrapping,
+          hangingIndent,
           editable.current.of([
             EditorState.readOnly.of(readOnly),
             EditorView.editable.of(!readOnly),

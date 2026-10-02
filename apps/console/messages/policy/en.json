@@ -140,7 +140,7 @@
   "policy_egress_profiles": "Profiles",
   "policy_egress_automatic": "Automatic",
   "policy_egress_assignments": "Assignments",
-  "policy_egress_summary": "Public {public} · profiles {profiles} · assignments {assignments}",
+  "policy_egress_summary": "Public {public} · Profiles {profiles} · Assignments {assignments}",
   "policy_egress_not_saved": "Controller does not accept egress yet",
   "policy_egress_public_end": "No match · the current profile's rules",
   "policy_egress_profiles_none": "No custom profiles",
