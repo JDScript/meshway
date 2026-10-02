@@ -2,6 +2,7 @@
 // inherited by a terminal/log. The App itself never possesses admin authority.
 import { readFile } from "node:fs/promises";
 import { authorizeDevice, listNetworks, revokeNode } from "../../../packages/control-client/src/index.ts";
+import { createFixtureUserSession } from "./fixture-accounts.ts";
 
 const [mode, controller, adminFile, value] = process.argv.slice(2);
 if (!controller || !adminFile || !value) throw new Error("Missing isolated test inputs");
@@ -15,7 +16,8 @@ if (mode === "authorize") {
     if (!value) throw new Error("Missing authorization parameter");
     return value;
   };
-  const response = await authorizeDevice(controller, admin, networkId, {
+  const session = await createFixtureUserSession(controller, admin, [networkId]);
+  const response = await authorizeDevice(controller, session, networkId, {
     redirect_uri: required("redirect_uri"), code_challenge: required("code_challenge"),
     name: required("name"), agent_version: required("agent_version"),
   });

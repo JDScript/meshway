@@ -7,7 +7,8 @@ import { homedir, tmpdir } from "node:os";
 import { setTimeout as delay } from "node:timers/promises";
 import { authorizeDevice, createNetwork, exchangeDevice, getNetwork, listNetworks, listNodes, revokeNode, saveNetwork, setNodeCountry } from "../../../packages/control-client/src/index.ts";
 import { z } from "../../../packages/control-client/node_modules/zod/index.js";
-import { executable, root, run, service, unusedPort } from "../../../e2e/harness.ts";
+import { executable, root, run, service, unusedPort } from "./processes.ts";
+import { createFixtureUserSession } from "./fixture-accounts.ts";
 
 const output = resolve(process.argv[2] ?? join(tmpdir(), "opencode/apple-ui-polish/round-1"));
 const capturedFiles = new Set<string>();
@@ -85,11 +86,12 @@ try {
     expected_revision: secondNetwork.revision, name: secondNetwork.name,
     dns: { enabled: true, zone: "studio.example", ttl_seconds: 60 },
   });
+  const userSession = await createFixtureUserSession(controllerURL, admin, [networkId, secondNetwork.network_id]);
   const names = ["Atlas", "Home studio", "iPhone", "Office workstation — 東京", "Travel companion with a very long device name for truncation review"];
   for (const [index, name] of names.entries()) {
     const verifier = randomBytes(32).toString("base64url");
     const redirect = "meshway://enroll/callback";
-    const authorization = await authorizeDevice(controllerURL, admin, networkId, {
+    const authorization = await authorizeDevice(controllerURL, userSession, networkId, {
       name, agent_version: "snapshot-review", redirect_uri: redirect,
       code_challenge: createHash("sha256").update(verifier).digest("base64url"),
     });
@@ -155,7 +157,7 @@ try {
         await waitFor(() => exists(join(ipc, "authorization-request")), "real device-flow request");
         const request = new URL(await readFile(join(ipc, "authorization-request"), "utf8"));
         const required = (name: string) => { const value = request.searchParams.get(name); if (!value) throw new Error("Missing device-flow parameter"); return value; };
-        const authorization = await authorizeDevice(controllerURL, admin, targetNetwork, {
+        const authorization = await authorizeDevice(controllerURL, userSession, targetNetwork, {
           redirect_uri: required("redirect_uri"), code_challenge: required("code_challenge"),
           name: required("name"), agent_version: required("agent_version"),
         });

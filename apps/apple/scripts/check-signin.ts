@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { spawn } from "node:child_process";
 import { setTimeout as delay } from "node:timers/promises";
 import { listNetworks, listNodes } from "../../../packages/control-client/src/index.ts";
-import { executable, root, run, service, unusedPort } from "../../../e2e/harness.ts";
+import { executable, root, run, service, unusedPort } from "./processes.ts";
 
 const directory = await mkdtemp(join(process.env.TMPDIR ?? tmpdir(), "meshway-apple-signin-"));
 const controllerPort = await unusedPort(), webPort = await unusedPort();
