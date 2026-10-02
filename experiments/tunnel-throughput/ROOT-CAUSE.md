@@ -83,9 +83,16 @@ UDP 都可因缓冲/调度突发在低平均 CPU 下丢包，进一步说明只�
 
 ### 5. 有些低吞吐样本包含真实 blackout，不能全归为稳态每包成本
 
-`inbound-r2` relay P4 forward 的20秒内有约6个1秒区间为0，并出现 authentication /
-stale-channel 计数；`safe-after-r2` direct P4 forward 末段也有约4秒0吞吐。这些
+按实际 **receiver** JSON、排除 omitted 窗口：`inbound-r2` relay P4 forward 有
+6.002秒零字节区间，占实际receiver窗口30.01%；整窗252.68Mbps，非零窗口等价
+361.00Mbps、有效非零1秒区间中位372.85Mbps。并出现 authentication/stale-channel
+计数。`safe-after-r2` direct P4 forward 有5.000秒零字节，占其实际21.64秒receiver
+窗口23.10%；整窗248.08Mbps，非零窗口等价322.62Mbps、中位350.36Mbps。这些
 原值没有删掉。它们与另一类“整个窗口持续较慢”的样本应分开诊断。
+“非零窗口/中位”只作稳态参考，仍包含ramp与拥塞变化，不替代整窗A/B。已发现
+iperf首个post-omit interval的start/end与seconds不一致；工具单独报告该项，不
+把该异常半速区间当稳态或用它虚构时长。统计只用receiver，避免误把sender暂停
+等同于精确网络断流；1秒采样分辨率也不是逐包的精确断流时刻。
 当前 Runtime 邻接探测一次 timeout 会注销 channel，而 probe 和业务共用有界队列；
 这是需要时序证据 / 丢控制包回归的具体候选，尚不把全部 blackout 指定给它。
 后续优先用有界时序关联 probe admission/timeout、channel退休/重连、错误计数和
@@ -105,6 +112,8 @@ lease/config/fence，区分正常timeout failover与nonce/retry缺陷；稳定�
 全部原始数据位于 [NEXT.md](NEXT.md) 的 ART；`cpu-profile.json`、五个
 `*.perf.data`、`profile-<mode>-<node>.txt`、`primitives-soft.log`、
 `pps-size-100us.json`、`raw-udp-ceiling.json`、`pps-burst-1ms.json` 可独立审计。
+`receiver-window-diagnostics.json` 保存48个已完成A/B case的整窗/零字节/非零
+窗口和interval不一致明细；`intervals.py` 及其测试固定计算口径。
 
 ## 环境与解释限制
 
