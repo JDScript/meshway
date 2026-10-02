@@ -6,6 +6,10 @@ use std::{
     fs::{File, OpenOptions},
     io::{self, Read, Write},
     os::unix::fs::{MetadataExt, OpenOptionsExt, PermissionsExt},
+    os::{
+        linux::net::SocketAddrExt,
+        unix::net::{SocketAddr as UnixAddr, UnixDatagram},
+    },
     path::{Path, PathBuf},
     process::Stdio,
     sync::Arc,
@@ -66,7 +70,7 @@ struct Namespace {
     inode: u64,
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
 enum Resource {
     Nop {
@@ -301,11 +305,27 @@ struct Journal {
     // A crash between a kernel mutation and durable evidence is ambiguous.
     // Recovery reports it; it does NOT adopt/delete a matching foreign object.
     pending: Option<Resource>,
+    #[serde(default)]
+    operation: Option<Operation>,
+}
+
+#[derive(Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct Operation {
+    start: usize,
+    resources: Vec<Resource>,
+    phase: OperationPhase,
+}
+
+#[derive(Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+enum OperationPhase {
+    Install,
+    Rollback,
 }
 
 pub(super) struct Lease {
     _namespace: File,
-    _namespace_lock: File,
+    _singleton: UnixDatagram,
     _state_lock: File,
 }
 
@@ -313,6 +333,37 @@ pub(crate) struct LinuxUnderlay {
     lease: Arc<Lease>,
     directory: PathBuf,
     journal: Journal,
+    #[cfg(test)]
+    checkpoint: Option<Arc<InstallCheckpoint>>,
+}
+
+#[cfg(test)]
+struct InstallCheckpoint {
+    after: usize,
+    crash: bool,
+    reached: tokio::sync::Notify,
+    release: tokio::sync::Notify,
+}
+
+#[cfg(test)]
+fn crash_checkpoint(kind: &str) -> Option<Arc<InstallCheckpoint>> {
+    if std::env::var("MESHWAY_UNDERLAY_TEST_OPERATION")
+        .ok()
+        .as_deref()
+        != Some(kind)
+    {
+        return None;
+    }
+    let after = std::env::var("MESHWAY_UNDERLAY_TEST_COMMIT")
+        .ok()?
+        .parse()
+        .ok()?;
+    Some(Arc::new(InstallCheckpoint {
+        after,
+        crash: true,
+        reached: tokio::sync::Notify::new(),
+        release: tokio::sync::Notify::new(),
+    }))
 }
 
 async fn command(binary: &str, args: &[String]) -> io::Result<Vec<u8>> {
@@ -419,6 +470,27 @@ fn write_journal(directory: &Path, journal: &Journal) -> io::Result<()> {
         let _ = std::fs::remove_file(temporary);
     }
     result
+}
+
+fn archive_scope(directory: &Path) -> io::Result<()> {
+    use std::os::unix::fs::DirBuilderExt;
+    let archives = directory.join("underlay-scopes");
+    match std::fs::DirBuilder::new().mode(0o700).create(&archives) {
+        Ok(()) => {}
+        Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {}
+        Err(error) => return Err(error),
+    }
+    private_directory(&archives)?;
+    let mut random = [0; 16];
+    getrandom::fill(&mut random).map_err(|error| io::Error::other(error.to_string()))?;
+    let name: String = random.iter().map(|byte| format!("{byte:02x}")).collect();
+    let destination = archives.join(format!("scope-{name}.json"));
+    if destination.try_exists()? {
+        return Err(invalid("archive collision; no replacement"));
+    }
+    std::fs::rename(directory.join("underlay.json"), destination)?;
+    File::open(&archives)?.sync_all()?;
+    File::open(directory)?.sync_all()
 }
 
 fn same_object(actual: &Value, expected: &Value) -> bool {
@@ -619,29 +691,19 @@ impl LinuxUnderlay {
             device: metadata.dev(),
             inode: metadata.ino(),
         };
-        let lock_directory = Path::new("/run/meshway-underlay");
-        match std::fs::create_dir(lock_directory) {
-            Ok(()) => {
-                std::fs::set_permissions(lock_directory, std::fs::Permissions::from_mode(0o700))?
-            }
-            Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {}
-            Err(error) => return Err(error),
-        }
-        private_directory(lock_directory)?;
-        let namespace_lock = private_file(
-            &lock_directory.join(format!("{}-{}.lock", namespace.device, namespace.inode)),
-            true,
-        )?;
-        namespace_lock
-            .try_lock()
-            .map_err(|error| io::Error::other(format!("namespace reservation busy: {error}")))?;
+        // Linux abstract AF_UNIX names belong to the network namespace, not a
+        // mount view. The fixed singleton cannot be bypassed with private /run,
+        // a different node ID or another state directory. Safe std APIs only.
+        let singleton = UnixDatagram::bind_addr(&UnixAddr::from_abstract_name(
+            b"meshway.underlay.rpdb-owner.v1",
+        )?)?;
         let state_lock = private_file(&input.state_directory.join("underlay.lock"), true)?;
         state_lock
             .try_lock()
             .map_err(|error| io::Error::other(format!("underlay state busy: {error}")))?;
         let lease = Arc::new(Lease {
             _namespace: namespace_file,
-            _namespace_lock: namespace_lock,
+            _singleton: singleton,
             _state_lock: state_lock,
         });
         audit_marks().await?;
@@ -662,8 +724,7 @@ impl LinuxUnderlay {
             Err(error) => return Err(error),
         };
         if let Some(journal) = previous {
-            if journal.version != 1
-                || journal.namespace != namespace
+            if ![1, 2].contains(&journal.version)
                 || journal.identity != input.identity
                 || journal.network != input.network
             {
@@ -671,34 +732,61 @@ impl LinuxUnderlay {
                     "underlay journal namespace/identity mismatch; no adoption",
                 ));
             }
-            if journal.pending.is_some() {
-                return Err(invalid(
-                    "ambiguous interrupted RPDB mutation; manual ownership reconciliation required",
-                ));
+            if journal.namespace != namespace {
+                // Fresh scope is never recovery of the old permissions. Audit
+                // and allocation preflight precede durable archival; no old
+                // resource shape is adopted or removed in this namespace.
+                let mut rules = objects(4, true).await?;
+                rules.extend(objects(6, true).await?);
+                let mut routes = objects(4, false).await?;
+                routes.extend(objects(6, false).await?);
+                let candidate = select_reservation(
+                    &rules,
+                    &routes,
+                    &reserved_aliases()?,
+                    format!("{}/{}", input.network, input.identity),
+                )?;
+                for domain in [socket2::Domain::IPV4, socket2::Domain::IPV6] {
+                    candidate.mark.protect(&socket2::Socket::new(
+                        domain,
+                        socket2::Type::STREAM,
+                        Some(socket2::Protocol::TCP),
+                    )?)?;
+                }
+                archive_scope(input.state_directory)?;
+            } else {
+                if journal.pending.is_some() {
+                    return Err(invalid(
+                        "ambiguous interrupted RPDB mutation; manual ownership reconciliation required",
+                    ));
+                }
+                let mut owner = Self {
+                    lease,
+                    directory: input.state_directory.into(),
+                    journal,
+                    #[cfg(test)]
+                    checkpoint: None,
+                };
+                owner.recover_operation().await?;
+                if owner.journal.installed.len() < 4
+                    && owner.journal.installed.iter().all(|item| {
+                        matches!(item.resource, Resource::Nop { .. } | Resource::Guard { .. })
+                    })
+                {
+                    owner.rollback_partial_reservation().await?;
+                    // Known committed partial prepare is cleaned exactly. The caller
+                    // retries preparation, never receives a half-ready capability.
+                    return Err(io::Error::new(
+                        io::ErrorKind::Interrupted,
+                        "interrupted reservation rolled back exactly; retry preparation",
+                    ));
+                }
+                owner.verify().await?;
+                // Recovery only restores the protected capability. Old packet/TUN
+                // generations are never revived; their active routes are withdrawn.
+                owner.withdraw_tun().await?;
+                return Ok(owner);
             }
-            let mut owner = Self {
-                lease,
-                directory: input.state_directory.into(),
-                journal,
-            };
-            if owner.journal.installed.len() < 4
-                && owner.journal.installed.iter().all(|item| {
-                    matches!(item.resource, Resource::Nop { .. } | Resource::Guard { .. })
-                })
-            {
-                owner.rollback_partial_reservation().await?;
-                // Known committed partial prepare is cleaned exactly. The caller
-                // retries preparation, never receives a half-ready capability.
-                return Err(io::Error::new(
-                    io::ErrorKind::Interrupted,
-                    "interrupted reservation rolled back exactly; retry preparation",
-                ));
-            }
-            owner.verify().await?;
-            // Recovery only restores the protected capability. Old packet/TUN
-            // generations are never revived; their active routes are withdrawn.
-            owner.withdraw_tun().await?;
-            return Ok(owner);
         }
         let mut rules = objects(4, true).await?;
         rules.extend(objects(6, true).await?);
@@ -711,19 +799,22 @@ impl LinuxUnderlay {
             format!("{}/{}", input.network, input.identity),
         )?;
         let journal = Journal {
-            version: 1,
+            version: 2,
             namespace,
             identity: input.identity.into(),
             network: input.network.into(),
             reservation,
             installed: Vec::new(),
             pending: None,
+            operation: None,
         };
         write_journal(input.state_directory, &journal)?;
         let mut owner = Self {
             lease,
             directory: input.state_directory.into(),
             journal,
+            #[cfg(test)]
+            checkpoint: crash_checkpoint("reservation"),
         };
         let first = owner.journal.reservation.first_priority;
         let last = owner.journal.reservation.last_priority;
@@ -847,11 +938,16 @@ impl LinuxUnderlay {
     }
 
     async fn verify(&self) -> io::Result<()> {
-        if self.journal.pending.is_some() {
+        if self.journal.pending.is_some() || self.journal.operation.is_some() {
             return Err(invalid(
                 "pending ownership mutation; capability unavailable until reconciliation",
             ));
         }
+        self.verify_topology()?;
+        self.verify_resources(false).await
+    }
+
+    async fn verify_resources(&self, partial_reservation: bool) -> io::Result<()> {
         self.validate_journal_resources()?;
         let aliases = reserved_aliases()?;
         if self
@@ -870,9 +966,31 @@ impl LinuxUnderlay {
         audit_marks().await?;
         for family in [4, 6] {
             let rules = objects(family, true).await?;
+            let mut checked_rules = rules.clone();
+            if partial_reservation {
+                for resource in [
+                    Resource::Nop {
+                        family,
+                        priority: self.journal.reservation.last_priority,
+                    },
+                    Resource::Guard {
+                        family,
+                        priority: self.journal.reservation.first_priority,
+                        mark: self.journal.reservation.mark.merge(0)?,
+                        target: self.journal.reservation.last_priority,
+                    },
+                ] {
+                    if !checked_rules
+                        .iter()
+                        .any(|rule| same_object(rule, &resource.expected()))
+                    {
+                        checked_rules.push(resource.expected());
+                    }
+                }
+            }
             validate_rules(
                 &self.journal.reservation,
-                &serde_json::to_vec(&rules).map_err(|error| invalid(error.to_string()))?,
+                &serde_json::to_vec(&checked_rules).map_err(|error| invalid(error.to_string()))?,
             )?;
             for rule in &rules {
                 if rule
@@ -941,6 +1059,14 @@ impl LinuxUnderlay {
     }
 
     async fn install_one(&mut self, resource: Resource) -> io::Result<()> {
+        if let Resource::Tun { name, index, .. } = &resource {
+            verify_tun(name)?;
+            if link_index(name).await? != *index {
+                return Err(invalid(
+                    "original TUN ownership no longer exists; no resurrection",
+                ));
+            }
+        }
         for object in objects(resource.family(), resource.is_rule()).await? {
             if resource.occupies_slot(&object)? {
                 return Err(invalid(
@@ -1030,7 +1156,22 @@ impl LinuxUnderlay {
         {
             return Err(invalid("invalid journal priority reservation"));
         }
-        for installed in &self.journal.installed {
+        let intent: Vec<_> = self
+            .journal
+            .operation
+            .as_ref()
+            .map(|operation| {
+                operation
+                    .resources
+                    .iter()
+                    .map(|resource| Installed {
+                        resource: resource.clone(),
+                        observed: resource.expected(),
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
+        for installed in self.journal.installed.iter().chain(&intent) {
             let resource = &installed.resource;
             let bound = match resource {
                 Resource::Nop { priority, .. } => *priority == reservation.last_priority,
@@ -1086,7 +1227,7 @@ impl LinuxUnderlay {
     }
 
     async fn install_transaction(&mut self, resources: Vec<Resource>) -> io::Result<()> {
-        if self.journal.pending.is_some() {
+        if self.journal.pending.is_some() || self.journal.operation.is_some() {
             return Err(invalid(
                 "cannot continue an ambiguous ownership transaction",
             ));
@@ -1095,6 +1236,11 @@ impl LinuxUnderlay {
         // Reserve space for numeric/string iproute2 representation differences
         // and the write-ahead pending row; never write a journal we cannot read.
         let mut projected = self.journal.clone();
+        projected.operation = Some(Operation {
+            start: self.journal.installed.len(),
+            resources: resources.clone(),
+            phase: OperationPhase::Install,
+        });
         projected.pending = resources.last().cloned();
         projected
             .installed
@@ -1112,6 +1258,8 @@ impl LinuxUnderlay {
             ));
         }
         let start = self.journal.installed.len();
+        self.journal.operation = projected.operation;
+        write_journal(&self.directory, &self.journal)?;
         for resource in resources {
             if let Err(error) = self.install_one(resource).await {
                 if self.journal.pending.is_some() {
@@ -1119,13 +1267,143 @@ impl LinuxUnderlay {
                         "{error}; ambiguous mutation journal retained; capability unavailable"
                     )));
                 }
+                self.journal
+                    .operation
+                    .as_mut()
+                    .ok_or_else(|| invalid("missing operation intent"))?
+                    .phase = OperationPhase::Rollback;
+                write_journal(&self.directory, &self.journal)?;
                 while self.journal.installed.len() > start {
                     let last = self.journal.installed.len() - 1;
                     self.remove_one(last).await.map_err(|rollback| {
                         io::Error::other(format!("{error}; rollback failed: {rollback}"))
                     })?;
                 }
+                self.journal.operation = None;
+                write_journal(&self.directory, &self.journal)?;
                 return Err(error);
+            }
+            #[cfg(test)]
+            if let Some(checkpoint) = &self.checkpoint
+                && self.journal.installed.len() - start == checkpoint.after
+            {
+                if checkpoint.crash {
+                    std::process::exit(0);
+                }
+                checkpoint.reached.notify_one();
+                checkpoint.release.notified().await;
+            }
+        }
+        self.finish_operation().await
+    }
+
+    async fn finish_operation(&mut self) -> io::Result<()> {
+        let intent = self
+            .journal
+            .operation
+            .as_ref()
+            .ok_or_else(|| invalid("missing full operation intent"))?;
+        if self.journal.pending.is_some()
+            || intent.start > self.journal.installed.len()
+            || (intent.phase == OperationPhase::Install
+                && (self.journal.installed.len() - intent.start != intent.resources.len()
+                    || self.journal.installed[intent.start..]
+                        .iter()
+                        .zip(&intent.resources)
+                        .any(|(installed, expected)| &installed.resource != expected)))
+            || (intent.phase == OperationPhase::Rollback
+                && self.journal.installed.len() != intent.start)
+        {
+            return Err(invalid("whole operation resource set is not committed"));
+        }
+        let empty_rollback = self.journal.installed.is_empty()
+            && self.journal.operation.as_ref().is_some_and(|operation| {
+                operation.start == 0 && operation.phase == OperationPhase::Rollback
+            });
+        if !empty_rollback {
+            self.verify_topology()?;
+        }
+        self.verify_resources(empty_rollback).await?;
+        let operation = self.journal.operation.take();
+        if let Err(error) = write_journal(&self.directory, &self.journal) {
+            self.journal.operation = operation;
+            return Err(error);
+        }
+        Ok(())
+    }
+
+    /// Resolve only a fully evidenced resource-level prefix of the durable
+    /// operation. Ambiguous single mutations remain terminal. This never
+    /// reconstructs a vanished TUN, old socket or PacketGeneration.
+    pub(crate) async fn recover_operation(&mut self) -> io::Result<()> {
+        if self.journal.pending.is_some() {
+            return Err(invalid(
+                "ambiguous mutation requires ownership reconciliation",
+            ));
+        }
+        let Some(operation) = self.journal.operation.clone() else {
+            return Ok(());
+        };
+        if operation.start > self.journal.installed.len() {
+            return Err(invalid("invalid operation baseline"));
+        }
+        let completed = self.journal.installed.len() - operation.start;
+        if completed > operation.resources.len()
+            || self.journal.installed[operation.start..]
+                .iter()
+                .zip(&operation.resources)
+                .any(|(installed, resource)| &installed.resource != resource)
+        {
+            return Err(invalid(
+                "operation does not match its exact owned resource prefix",
+            ));
+        }
+        self.verify_resources(true).await?;
+        match operation.phase {
+            OperationPhase::Install => {
+                for resource in operation.resources.into_iter().skip(completed) {
+                    self.install_one(resource).await?;
+                }
+                self.finish_operation().await
+            }
+            OperationPhase::Rollback => {
+                while self.journal.installed.len() > operation.start {
+                    self.remove_one(self.journal.installed.len() - 1).await?;
+                }
+                self.finish_operation().await
+            }
+        }
+    }
+
+    fn verify_topology(&self) -> io::Result<()> {
+        let resources: Vec<_> = self
+            .journal
+            .installed
+            .iter()
+            .map(|item| &item.resource)
+            .collect();
+        for family in [4, 6] {
+            if resources.iter().filter(|resource| matches!(resource, Resource::Nop { family: f, .. } if *f == family)).count() != 1
+                || resources.iter().filter(|resource| matches!(resource, Resource::Guard { family: f, .. } if *f == family)).count() != 1 {
+                return Err(invalid("incomplete dual-stack guard reservation"));
+            }
+        }
+        for resource in &resources {
+            match resource {
+                Resource::Sink { family, table, .. } if Some(*table) == self.journal.reservation.mesh_sink_table => {
+                    if resources.iter().filter(|resource| matches!(resource, Resource::MeshLookup { family: f, table: t, .. } if f == family && t == table)).count() != 1 { return Err(invalid("Mesh sink lacks its effective lookup")); }
+                },
+                Resource::Sink { table, .. } | Resource::Tun { table, .. } | Resource::Capture { table, .. } => {
+                    for family in [4, 6] {
+                        if resources.iter().filter(|resource| matches!(resource, Resource::Capture { family: f, table: t, .. } if *f == family && t == table)).count() != 1 { return Err(invalid("capture manifest requires both address-family lookups")); }
+                    }
+                    if !resources.iter().any(|resource| matches!(resource, Resource::Sink { table: t, .. } if t == table)) { return Err(invalid("capture lookup lacks owned sinks")); }
+                    if let Resource::Tun { family, prefix, .. } = resource
+                        && !resources.iter().any(|resource| matches!(resource, Resource::Sink { family: f, table: t, prefix: p } if f == family && t == table && p == prefix)) { return Err(invalid("active TUN lacks its exact persistent sink")); }
+                },
+                Resource::MeshLookup { family, table, .. }
+                    if !resources.iter().any(|resource| matches!(resource, Resource::Sink { family: f, table: t, .. } if f == family && t == table)) => { return Err(invalid("Mesh lookup lacks owned rejecting prefixes")); },
+                _ => {},
             }
         }
         Ok(())
@@ -1136,7 +1414,84 @@ impl LinuxUnderlay {
     /// lease withdrawal and process death retain that sink. No legacy route is
     /// adopted or removed here; migration must present its real ownership proof.
     pub(crate) async fn capture(&mut self, prefixes: &[CapturePrefix<'_>]) -> io::Result<()> {
+        self.recover_operation().await?;
         self.verify().await?;
+        if self
+            .journal
+            .installed
+            .iter()
+            .any(|item| matches!(item.resource, Resource::Capture { .. }))
+        {
+            let table = self.journal.reservation.capture_tables[0];
+            let sinks: BTreeSet<_> = self
+                .journal
+                .installed
+                .iter()
+                .filter_map(|item| match &item.resource {
+                    Resource::Sink {
+                        family,
+                        table: t,
+                        prefix,
+                    } if *t == table => Some((*family, prefix.clone())),
+                    _ => None,
+                })
+                .collect();
+            let requested: BTreeSet<_> = prefixes
+                .iter()
+                .map(|prefix| {
+                    (
+                        if prefix.prefix.addr().is_ipv4() { 4 } else { 6 },
+                        prefix.prefix.to_string(),
+                    )
+                })
+                .collect();
+            let active: BTreeSet<_> = self
+                .journal
+                .installed
+                .iter()
+                .filter_map(|item| match &item.resource {
+                    Resource::Tun {
+                        family,
+                        table: t,
+                        prefix,
+                        name,
+                        index,
+                    } if *t == table => Some((*family, prefix.clone(), name.clone(), *index)),
+                    _ => None,
+                })
+                .collect();
+            let requested_active: BTreeSet<_> = prefixes
+                .iter()
+                .filter_map(|prefix| {
+                    prefix.tun.map(|tun| {
+                        (
+                            if prefix.prefix.addr().is_ipv4() { 4 } else { 6 },
+                            prefix.prefix.to_string(),
+                            tun.name.clone(),
+                            tun.index,
+                        )
+                    })
+                })
+                .collect();
+            if !requested.is_empty()
+                && requested.len() == prefixes.len()
+                && sinks == requested
+                && active == requested_active
+            {
+                for prefix in prefixes {
+                    if let Some(binding) = prefix.tun {
+                        verify_tun(&binding.name)?;
+                        if link_index(&binding.name).await? != binding.index {
+                            return Err(invalid("idempotent TUN binding changed"));
+                        }
+                    }
+                }
+                return Ok(());
+            }
+            return Err(invalid(
+                "existing capture differs; withdraw then activate exact owned prefix set",
+            ));
+        }
         // Do not publish capture without verified dual-stack socket privileges
         // and a supported real bootstrap topology, even if a caller skipped
         // the intended mainloop capability-installation sequence.
@@ -1223,6 +1578,7 @@ impl LinuxUnderlay {
     /// This never routes an internal socket into TUN; overlapping underlay and
     /// Mesh addresses remain unreachable. It is not a destination bypass.
     pub(crate) async fn retain_mesh_sink(&mut self, prefix: IpNet) -> io::Result<()> {
+        self.recover_operation().await?;
         self.verify().await?;
         if prefix.prefix_len() == 0 || prefix != prefix.trunc() {
             return Err(invalid(
@@ -1249,6 +1605,7 @@ impl LinuxUnderlay {
     }
 
     pub(crate) async fn install_tun(&mut self, prefixes: &[CapturePrefix<'_>]) -> io::Result<()> {
+        self.recover_operation().await?;
         if self
             .journal
             .installed
@@ -1277,6 +1634,7 @@ impl LinuxUnderlay {
     /// existing capture rules cannot change through this seam: all old sinks
     /// remain in force while preparing, installing, or rolling back new routes.
     pub(crate) async fn activate_tun(&mut self, prefixes: &[CapturePrefix<'_>]) -> io::Result<()> {
+        self.recover_operation().await?;
         self.verify().await?;
         if self
             .journal
@@ -1382,6 +1740,10 @@ fn verify_tun(name: &str) -> io::Result<()> {
     }
     Ok(())
 }
+
+#[cfg(test)]
+#[path = "owner_review_tests.rs"]
+mod review_tests;
 
 async fn link_index(name: &str) -> io::Result<u32> {
     let links: Vec<Value> = serde_json::from_slice(

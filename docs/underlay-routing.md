@@ -2,6 +2,10 @@
 
 ## Namespace owner 接线合同（本轮切片）
 
+**审查后的修复候选**：冻结 `337c334 + 987cbc2` 的 Request changes 报告和旧 artifact
+保留。下述整组 operation、netns singleton 与 scope rollover 是后续修复，须交原
+reviewer 复核；旧 `2186c3ba6d71` 证据不用于声称关闭 F1/F2。
+
 `underlay::LinuxUnderlay` 是正常 Agent 可调用的内部准备入口；不接受设备提供的
 mark、priority、table 或 nameserver 参数。主循环接线由 P3a owner 完成，本切片
 本身不代表正常 Agent 已自动启用保护或完成真实 Controller/TUN 组网闭环。
@@ -60,7 +64,8 @@ netfilter mark 使用或 legacy netfilter 状态均报告失败；不删 foreign
 所有权以当前 netns 的 dev/inode、boot ID、节点/网络绑定和完整 numeric kernel
 属性写入 `underlay.json`。state 和 namespace 的锁文件保持 0600，目录 0700；
 journal 使用同目录随机临时文件、fsync、rename、目录 fsync。namespace lock 位于
-`/run/meshway-underlay`，不同 statepath 的 Agent 也不能同时分配；capability/退休后
+固定命名 Linux abstract AF_UNIX datagram socket `meshway.underlay.rpdb-owner.v1`，
+属于 netns 而非 `/run` mount；不同私有 mount/statepath 的 Agent 也不能同时分配；capability/退休后
 仍持 FD 的 wrapper 会继续持有锁。正常退出和 crash 均保留 committed sink/guard
 与 journal；恢复核对实际资源，不复活旧 socket/packet generation。无法区分的
 半提交（kernel mutation 和持久证据之间 crash）明确保留 pending 并拒绝 capability，
@@ -68,6 +73,16 @@ journal 使用同目录随机临时文件、fsync、rename、目录 fsync。name
 mutation 的安装失败按完整属性逆序 rollback；rollback 失败不返回可用 capability。
 已经有持久证据但未完成 guard 的 partial reservation 会核对全部资源并精确 rollback，
 返回明确的 retry 错误；下次正常 prepare 重新分配，不能在半配置下继续运行。
+
+Journal v2 在首个 mutation 前持久化**完整 operation intent**：baseline、完整期望
+resource set、Install/Rollback phase；单条资源写回后的 `pending=None` 不再代表
+整组完成。每次资源完成至下一条 pending 之前，operation 始终保留。完整期望集合、
+双栈 guard、双族 capture lookup、Mesh sink/lookup 关联和真实 kernel evidence
+全部核验后才能清除 operation 并发布 capability。已证明 ownership 的 committed
+prefix 可由 `recover_operation()` 精确续做/收敛；ambiguous 单条 pending 仍拒绝。
+消失/换身份的 TUN 不重建、不恢复旧 packet/socket generation。旧 v1 row-only 的
+缺 lookup / 单族 capture / orphan sink 明确拒绝，不凭 shape 修补未知 ownership。
+`retain_mesh_sink` 的幂等返回也经过完整关联及实际 lookup 核验。
 
 DNS 新入口 `SystemDnsSnapshot::from_system` 保留 `hosts: files dns` 下的 `/etc/hosts`
 优先级，并在真实 Docker 环境中保留唯一 `127.0.0.11:53` embedded resolver。
@@ -89,6 +104,42 @@ fence 不由这个准备合同证明。准备、capture、恢复和 capability �
 持续环境监控与普通主循环切换编排仍是协调者接线边界。下文旧验收记录保持冻结。
 
 ### 本轮实证与 P3a 接线边界
+
+#### F1/F2 修复候选实证（旧证据保留）
+
+`python3 apps/agent/tests/underlay_fixture/review.py` 的新 run
+`mw-underlay-review-fix-127fb9bfd8cd`：`status=ok`、`cleanup_errors=[]`，25 个进程级
+case exit 均为 0。result SHA256
+`370436df98ff3618ec4c7a50699d0582f1da88238b979f3d84c323d7cd6a2157`，镜像
+`sha256:078314788750a13fd2b1acab207c1dcb3e7c6e51a153fdb87940a94a58265c53`。
+材料在批准 TMP `meshway-underlay-artifacts/mw-underlay-review-fix-127fb9bfd8cd/`。
+
+- 冻结 A/B/C 的三个 row-only 不完整状态在真实 FIB 中重建，全部拒绝 capability、
+  idempotent sink success 或 activate success；原 TMP 状态模型及日志未改。
+- Mesh 两个资源、双栈 capture 四个资源的每个 committed-row 边界取消 future，
+  `pending=None/operation=Some` 时 capability 被拒；同 owner 重试可靠续做并幂等成功。
+- 初始 reservation 四个、Mesh 两个、双栈 capture 四个提交边界，逐点独立进程直接
+  exit；新进程核对完整 intent/实际 ownership 后完成整组，仅完整拓扑可用。实际
+  local lookup、Mesh forwarding `iif eth0` 及 IPv4/IPv6 capture 分界均校验。
+- 同一 netns inode `4026532827`，不同 mount inode `4026532607/4026532618`，两容器
+  都有独立私有 `/run` 和 state。retired factory 仍持有 abstract singleton 时，
+  contender 得到 `AddrInUse`，没有 journal 或 kernel mutation；释放最后引用后可恢复。
+- 测试持久 volume 不在 `/run`。旧容器 namespace 销毁后，新容器保留原始 journal、
+  身份和配置文件；旧 scope 被私有归档，新 namespace 仅新建空闲 resources，身份 /
+  配置字节未变。prior-boot 分支另外用 metadata 模拟验证，不冒称宿主 reboot 实测。
+
+同一镜像重新执行原 fixture：
+`python3 apps/agent/tests/underlay_fixture/run.py --skip-build --image meshway-underlay-review-fix:local`。
+run `mw-rust-underlay-57c317201245` 为 `ok/cleanup_errors=[]`，result SHA256
+`3186cce4e038839b1140ca91c942e782d17aee2e8efb3b8681aa55fb049388b0`；新 owner 20 次
+protected pre-network calls / 2 ordinary connect / 0 ordinary bind，原 production /
+UR2 / Native / Manager audits 保持 137 / 76 / 76 / 6。正常 TUN 创建、停止后的本地 /
+转发拒绝、新 TUN 重接、controller/carrier 分离和双栈物理源继续通过。
+
+host 独立 `target/underlay-review-fix-host`、`CARGO_BUILD_JOBS=2`：underlay lib 7 tests
+及 all-features/all-targets Clippy 通过；Linux image 同样执行 Agent lib/tests Clippy。
+两个早期 Clippy 构建失败 `fc447ffd8421/cc7009cd100a` 及首个通过 run `e8184b05fd0a`
+保持原样。当前仍是待原 reviewer 复核的候选，未改 state/Manager/P3a，未生产启用。
 
 Linux run `mw-rust-underlay-2186c3ba6d71`：`status=ok`、`cleanup_errors=[]`，UTC
 `08:21:34.297782` → `08:22:54.820843`。镜像
@@ -133,8 +184,15 @@ image 构建执行 Agent all-features lib/tests Clippy。额外全量 Agent lib 
 138 passed / 1 failed：既有 latency history 的 `received_at >= measured_at` 断言，
 该项隔离复测通过；失败日志保留，未修改并行 owner 的测试或将其记成全量通过。
 
-真正支持的恢复范围为**同 boot / 同 netns 的进程恢复**。boot / netns / identity /
-network 不匹配明确拒绝，不能把旧 journal 自动搬到新 namespace 或凭形状认领。
+旧 run 真正验证的恢复范围为**同 boot / 同 netns 的进程恢复**。修复候选对相同
+身份/网络的 boot 或 netns 变化另走**旧 scope 归档 + 新 scope 初始化**：先取得
+新 netns singleton 和持久 state lock，审计实际新 namespace、预检分配与双栈 mark
+权限，再把原始 journal 原子归档到私有 `underlay-scopes/scope-*.json` 并 fsync，
+随后仅从新 namespace 的真实空闲资源初始化。归档保留旧 operation/pending/evidence，
+不恢复旧权限，不按旧形状删除/认领新资源，不修改节点凭据与已保存配置。
+身份/网络不匹配仍拒绝；旧 holder 仍持有共享 state lock 时也拒绝。该迁移不把
+journal 放临时 `/run` 来丢弃历史。没有正常主循环及真机 reboot 验收前不宣称完整
+生产恢复；真实容器新 netns 验证与 prior-boot metadata 分支验证分别记录。
 只读 `/proc/sys` 下没有可靠 disabled inheritance 的 TUN 环境同样失败关闭。
 真实物理换网、nested NAT、公网打洞、外部并发 RPDB / nft 监控以及 systemd-resolved
 split scope 仍需后续环境适配与主循环联测。
