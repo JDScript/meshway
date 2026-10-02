@@ -1,6 +1,6 @@
-# Meshway 控制台设计（第一阶段）
+# Meshway 控制台设计
 
-> 状态：2026-10-01 第一阶段交付稿；同日第二轮改为侧边栏导航、精简说明并重组节点「监听与承载」（见 §2.2、§3.2、§5.7、§6.4）。已实现部分只接 controller 已有 API；标注「线框」的页面尚无后端，只作为后续阶段的设计依据，**不在控制台中出现可操作入口**。产品语义以 `docs/product-alignment.md` 为准，冲突时以该文件为准。
+> 状态：2026-10-01。第三轮：shadcn `sidebar-07` 骨架（§2.2）、四个主入口「概览 / 节点 / 路由 / 设置」、沉浸式网络地图概览（§3.0）、节点「配置」聚合与删除日常国家入口；延迟检测 / 历史的目标流程与后端交接见 §6.6。已实现部分只接 controller 已有 API；标注「线框」的页面尚无后端，只作为后续阶段的设计依据，**不在控制台中出现可操作入口**。产品语义以 `docs/product-alignment.md` 为准，冲突时以该文件为准。
 
 ## 1. 设计原则
 
@@ -9,7 +9,8 @@
 3. **只显示真实数据。** 没有上报的指标显示「未测量 / 未上报」；空状态说明真实原因；失败给出「哪里失败 / 下一步 / 技术详情（折叠）」。
 4. **意图、回执与生效分开。** 「已保存」「节点已确认（ACK）」「数据面已生效」「实测」是四种不同状态，界面用不同措辞与颜色，绝不合并。
 5. **默认简洁，细节可达。** 默认视图回答用户任务；ID、revision、digest、socket、generation 等放进「高级 / 技术详情」折叠区。折叠不卸载内容，草稿与计时不受影响。
-6. **设备侧零配置。** 节点能力、listener、承载、出口、DNS 都在 Web 管理；页面不引导用户去设备上改配置（现有 `--dns-listen` 等参数只作为「当前实现」的帮助折叠出现）。
+6. **布局参考 sidebar-07，视觉不受模板限制。** Base UI / shadcn 负责菜单、表单、焦点与无障碍；网络画布、排版层级、悬浮控件和过渡按产品需要定制，不把每页都做成灰框卡片集合。
+7. **设备侧零配置。** 节点能力、listener、承载、出口、DNS 都在 Web 管理；页面不引导用户去设备上改配置（现有 `--dns-listen` 等参数只作为「当前实现」的帮助折叠出现）。
 
 ## 2. 信息架构
 
@@ -20,66 +21,54 @@
 /login                     管理员令牌登录（用户账户上线前）
 /authorize-device          Meshway App 浏览器授权（选择网络、批准 / 拒绝）
 
-/<network_id>              概览
-/<network_id>/machines     节点列表
+/<network_id>              概览：网络地图（登录后首屏沉浸式）
+/<network_id>/machines     节点 › 全部节点
 /<network_id>/machines/add 添加节点（agent 接入令牌 / App 授权说明）
-/<network_id>/machines/<node_id>[?tab=connections]  节点详情：概览 | 监听与承载
-/<network_id>/access       访问控制 › 访问授权（v2：有序 allow/reject，默认动作）
-/<network_id>/routing      访问控制 › 路由（v2：有序 first-match、经由与出口）
-/<network_id>/tags         访问控制 › 标签
-/<network_id>/connections  访问控制 › 手工连接（当前实现的高级入口）
-/<network_id>/dns          DNS：节点 DNS 意图与节点名称
-/<network_id>/diagnostics  诊断 › 诊断工作台
-/<network_id>/topology     诊断 › 拓扑与流量检查
-/<network_id>/settings     设置：网络名称、ID、地址前缀
+/<network_id>/machines/<node_id>[?tab=connections]  节点详情：概览 | 配置
+/<network_id>/tags         节点 › 标签
+/<network_id>/connections  节点 › 手工连接（当前实现的高级入口）
+/<network_id>/routing      路由（v2：有序 first-match、经由与出口）
+/<network_id>/settings     设置 › 网络：名称、ID、地址前缀
+/<network_id>/dns          设置 › DNS：节点 DNS 意图与节点名称
+/<network_id>/access       设置 › 访问授权（v2：有序 allow/reject，默认动作）
+/<network_id>/diagnostics  诊断工作台（从节点 / 连线上下文与 ⌘K 进入，不在侧栏）
+/<network_id>/topology     拓扑与流量检查（同上）
 ```
 
 - `network_id` 是 controller 的 32 位小写十六进制稳定 ID，不用名称（名称可改、可重名）。格式不对或不在 controller 网络列表中 → 404，**不回退到其他网络**。
 - 节点详情只在本网络清单中查找节点；他网节点 ID → 404。
 - 静态路由（`/login`、`/authorize-device`、`/api/v1/…`、旧 URL）优先于 `[network]` 动态段，App 依赖的路径不受影响。
 
-### 2.2 导航（侧边栏）
+### 2.2 布局与导航（shadcn sidebar-07）
+
+来源：`npx shadcn@latest add sidebar-07 --yes --overwrite`，shadcn CLI 4.21.1，`components.json` 为 `base-mira` / Base UI（registry 有该 block，未改用其他模板）。CLI 生成 `app/dashboard/page.tsx`、`components/{app-sidebar,nav-main,nav-projects,nav-user,team-switcher}.tsx` 并覆盖 `ui/{sidebar,button,input,dropdown-menu}.tsx` 与 `hooks/use-mobile.ts`；审查后保留 registry 版 `ui/sidebar.tsx`（16rem / 3rem，去掉被 lint 禁止的类型断言，中文化读屏文案），回退 button / input / dropdown-menu（保留控制台较大的控件与字号）与 use-mobile（保留 `useSyncExternalStore` 实现）。未新增依赖。示例数据、`/dashboard` 与 `nav-projects` 已删除，block 结构适配为：
 
 ```
-┌──────────────┬──────────────────────────────────────────────────────────┐
-│ [M] Meshway  │ ☰  访问控制 / 访问授权              [⌕ 搜索或跳转… ⌘K] [☾] │
-│┌────────────┐├──────────────────────────────────────────────────────────┤
-││[N] 生产网络 ⇅││  访问授权                                                │
-││100.96.0.0/16││  哪些节点之间可以访问。规则自上而下首条命中……              │
-│└────────────┘│                                                          │
-│ ▦ 概览        │                                                          │
-│ ▤ 节点        │                                                          │
-│ ◎ DNS         │                                                          │
-│ 访问控制      │                                                          │
-│ ⛨ 访问授权 •  │                                                          │
-│ ⇆ 路由        │                                                          │
-│ ⌗ 标签        │                                                          │
-│ ⚯ 手工连接 高级│                                                          │
-│ 诊断          │                                                          │
-│ ∿ 诊断工作台  │                                                          │
-│ ⌖ 拓扑与流量检查│                                                         │
-│  …            │                                                          │
-│ ⚙ 网络设置    │                                                          │
-│ (管) 管理员 ⇅ │                                                          │
-└──────────────┴──────────────────────────────────────────────────────────┘
+SidebarProvider ─ AppSidebar (collapsible="icon"; 沉浸概览时 "offcanvas")
+                │   SidebarHeader  NetworkSwitcher（team-switcher 位置，真实网络）
+                │   SidebarContent NavMain「网络」：概览 · 节点▸ · 路由 · 设置▸
+                │   SidebarFooter  NavUser（管理员令牌会话，无虚构用户 / 头像）
+                │   SidebarRail
+                └ SidebarInset (main)
+                    header 4rem（图标栏时 3rem）：Trigger | Separator | Breadcrumb … ⌘K 主题
+                    #main 页面内容
 ```
 
-- **侧边栏**（`components/shell/app-sidebar.tsx`，shadcn `Sidebar`，宽 15rem）：顶部品牌 + 网络切换器（名称与 IPv4 前缀，网络是第一层上下文）；无标题组「概览 · 节点 · DNS」；「访问控制」组（访问授权、路由、标签、手工连接〔高级〕）；「诊断」组（诊断工作台、拓扑与流量检查）；底部固定「网络设置」与账户菜单。分组与 URL 一一对应，不再有二级 Tab。
-- **收起**：桌面可收起为 3rem 图标栏（⌘B、顶栏按钮或边缘 rail），图标带 tooltip；状态写入 `sidebar_state` Cookie（只是布局偏好），服务端渲染时读取，刷新不闪。
-- **移动端**（< 768px）：侧边栏变为左侧抽屉（含网络切换器与账户菜单），顶栏显示「☰ 网络名 / 页面」；任何导航（链接、⌘K、网络切换、浏览器历史）都会关闭抽屉。
-- **顶栏只留必要上下文与动作**：收起 / 打开导航、当前位置（分组 / 页面；详情页可点回列表）、⌘K、主题切换。顶栏内容与页面内容列共用同一宽度和边距，标题、操作与顶栏两端对齐。
-- **网络切换器**：列出全部网络（名称 + IPv4 前缀，未保存草稿的网络有琥珀色点）、创建网络、网络设置；切换 = 导航到另一网络的同一分区，详情页回到列表。
-- **⌘K 命令面板**：跳转到任意页面、在节点中搜索、添加节点、切换主题；有其他模态窗口时不打开。
-- **未保存提示**：侧边栏条目右侧琥珀色点（收起时在图标角上），读屏文字「有未保存的草稿」；整页刷新 / 关闭标签页触发浏览器离开确认。
+- **主入口**：概览、节点（全部节点 · 标签 · 手工连接〔高级〕）、路由、设置（网络 · DNS · 访问授权）。诊断工作台与拓扑不在侧栏：从节点详情、地图节点 / 连线、路由预览与 ⌘K 进入，面包屑归在「节点」下。分组仍在讨论中，`nav.ts` 是唯一数据源，调整不影响 URL。
+- **可折叠分组**：与 block 相同，当前页所在分组默认展开，其他折叠；用户可手动开合，再次进入该分组时重新展开。折叠的分组若含未保存草稿，在分组名后显示琥珀点。图标栏中分组图标直接打开其第一页，tooltip 写出名称。
+- **内容列**：顶栏内容与页面共用一列，`--console-column: 80rem` 居中，左右留白对称：手机 1rem，≥768px 1.5rem；侧栏展开、图标栏、抽屉三态都对齐。页面距顶栏 1.5rem。
+- **收起**：⌘B / Ctrl+B、顶栏按钮或 rail；桌面状态写入 `sidebar_state` Cookie（布局偏好），服务端渲染读取。
+- **移动端**（< 768px）：抽屉（网络切换器 + 导航 + 账户），任何导航后自动关闭；顶栏面包屑为「网络 › 页面」，分组名只在 ≥1024px 显示，⌘K 在 <1024px 收为图标。
+- **网络切换器 / ⌘K / 账户菜单**：行为同前；账户菜单在侧栏底部，退出登录清空全部网络草稿。
 
 ### 2.3 页面清单
 
 | 页面 | 状态 | 数据来源 | 用户任务 |
 | --- | --- | --- | --- |
-| 概览 | 已实现 | overview、nodes、access、policy | 看待处理事项，进入节点 / 策略 / 诊断 |
-| 节点列表 | 已实现 | nodes、tags | 搜索（名称 / 地址 / 标签 / 国家）、筛选、进入详情、设置国家、撤销 |
-| 节点详情 · 概览 | 已实现 | nodes、tags、connections、runtime、network | 地址复制、国家 / 标签、控制面联系与回执、连接摘要、DNS 名称 |
-| 节点详情 · 监听与承载 | 已实现（承载托管待接） | connections、runtime、discovery | 每个监听 / 拨号 socket 的配置、实际绑定、对外候选与来源、对端验证；运行报告；手工草稿（高级） |
+| 概览 | 已实现 | nodes、connections、runtime、policy、access | 网络地图：节点、真实连线、待处理；进入节点配置 / 诊断（§3.0） |
+| 节点列表 | 已实现 | nodes、tags | 搜索（名称 / 地址 / 标签）、筛选、进入详情、撤销 |
+| 节点详情 · 概览 | 已实现 | nodes、tags、connections、runtime、network | 地址复制、标签、控制面联系与回执、承载摘要、DNS 名称 |
+| 节点详情 · 配置 | 已实现（承载托管待接） | connections、runtime、discovery | 每个监听 / 拨号 socket 的配置、实际绑定、对外候选与来源、对端验证；运行报告；手工草稿（高级） |
 | 添加节点 | 已实现 | enrollment-tokens | 选择接入方式；生成一次性令牌与命令；App 授权说明 |
 | 访问授权 | 已实现（v2） | access、connections、tags | 图形 / JSONC 双编辑器、默认动作、规则卡片 |
 | 路由 | 已实现（v2） | policy、nodes | 图形 / JSONC 双编辑器、草稿预览 |
@@ -113,6 +102,31 @@
 
 ## 3. 核心任务流程
 
+### 3.0 概览：网络地图
+
+```
+┌───────────────────────────────────────────────────────────────────────┐
+│ [M] 生产网络 100.96.0.0/16                               [管理网络]     │
+│        · · · · ·  · ·  点状世界地图（装饰底图）  · · · ·               │
+│              ╭──── 4 个节点待定位 · 按连接关系排布，不代表地理位置 ────╮  │
+│              │        hk-relay ○                                  │  │
+│              │       ┊                                            │  │
+│              │  sg-edge ◉━━━━━━━━◉ laptop        ○ home-gw          │  │
+│              ╰────────────────────────────────────────────────────╯  │
+│ 4 节点 · 1/2 连接双向确认 · 1 未验证 · ⚠ 1 项待处理 · 更新于 16:40 ⟳   图例 │
+└───────────────────────────────────────────────────────────────────────┘
+```
+
+- **沉浸式首屏**：会话中第一次落在概览（登录后）时，侧栏与顶栏隐藏，地图铺满视口。「管理网络」或 ⌘B 进入管理：侧栏滑入、顶栏展开，同一张地图缩进 `SidebarInset`（高度与侧栏间隙同 300ms 过渡），选中的节点 / 连线保持。离开概览即结束沉浸模式，之后回到概览不再重播；地图右上角「专注地图」可回到沉浸。手机上「管理网络」打开导航抽屉。`prefers-reduced-motion` 时无过渡。
+- **底图**：`lib/world-dots.gen.ts`，由 `scripts/generate-world-dots.ts` 从 Natural Earth 1:110m Land（公有领域，v5.1.2，sha256 `9e0729ee…`）生成 1.5° 等距圆柱格点，仅作装饰，不参与任何节点定位。
+- **位置**：节点只有带来源的 `GeoPlacement`（地区级经纬度、来源、观测时间）才画在地图上；控制面目前没有 GeoIP / 位置接口，所以全部节点进入「待定位」关系视图。节点名、Mesh IP 和旧管理员 country 永远不当位置。关系视图是名称排序的环，独立的虚线圆框并写明「不代表地理位置」。未来接入时地区级聚合显示，不宣称精确坐标。
+- **连线**：只画已保存连接配置中的通道，按两端 agent 自己的新鲜报告分为：双向确认（实线，success）、单侧报告（warning）、未认证（红色虚线）、仅配置无报告（灰色点线）。授权允许、规划路径都不是连线，不画全连接图。
+- **角落状态**：活动节点数；连接「x / y 双向确认 · 单侧 · 未验证」；连接配置或运行报告读取失败时写「连接未知」；待处理项（访问授权 / 路由无效或读取失败、未确认配置、超过 1 小时无控制面联系）展开为列表；运行报告读取时间与刷新。没有任何「健康度」分数。
+- **节点卡**：控制面联系、配置确认、运行报告新鲜度、连接计数、位置（待定位）；进入「节点配置」、详情、诊断。
+- **连线卡**：每个通道的承载、发起方、两端各自的认证结果与 RTT（只取 `probe_fresh` 的认证探测，分别显示，不平均、不相加）；延迟历史显示明确空状态；进入访问与路径检查、拓扑；候选 / listener ID 折叠在技术详情。
+- **键盘**：节点、连线是可聚焦按钮（Enter / Space 选中，Esc 关闭卡片）；Tab 顺序先地图后状态条。
+
+
 ### 3.1 添加节点
 
 1. 节点列表或概览右上「添加节点」。
@@ -124,7 +138,7 @@
 
 Tailscale 对照：Machines › Add device（Linux server 生成 auth key 命令；客户端登录）。差异：Meshway 不区分服务器 / 客户端节点类别，两种方式产出同一种节点。
 
-### 3.2 监听与承载（节点详情第二个 Tab）
+### 3.2 节点配置（节点详情「配置」Tab，`?tab=connections`）
 
 已实现（只用已有生成 API：connections、connection runtimes、endpoint discovery）：
 
@@ -249,7 +263,7 @@ lucide，统一 16px（小控件 14px），线宽默认。一级导航每项一�
 ### 5.7 说明文字
 
 - 页面标题下最多一行任务说明，或直接省去；面板说明同样一行以内。
-- 反复出现的边界（「控制面联系不代表在线」「配置确认不代表生效」「规划不是 trace」「国家是管理员标注」等）用清晰的状态名称表达，补充说明放在列名 / 字段名旁的 ⓘ（`components/common/hint.tsx`，悬停、聚焦或点按都能打开）。
+- 反复出现的边界（「控制面联系不代表在线」「配置确认不代表生效」「规划不是 trace」等）用清晰的状态名称表达，补充说明放在列名 / 字段名旁的 ⓘ（`components/common/hint.tsx`，悬停、聚焦或点按都能打开）。
 - 规则释义、执行范围、当前启用参数等长说明收进折叠区（`DiagnosticDetails`）；错误与失败原因始终直接可见。
 - 正文 13px、导航 14px，不为压缩空间缩小正文。
 
@@ -344,25 +358,58 @@ lucide，统一 16px（小控件 14px），线宽默认。一级导航每项一�
                缺少有效观测时：使用兜底方案「…」（并写明原因）
 ```
 
-- 只用底层公网 IP 观测；不使用 Mesh IP、所选出口 IP、控制面连接来源 IP，也不把管理员「国家」标注当自动地区。当前没有 GeoIP 下发，界面不显示任何自动地区结果；节点「国家」字段的提示写明「管理员标注，不是定位或自动地区结果」。
+- 只用底层公网 IP 观测；不使用 Mesh IP、所选出口 IP、控制面连接来源 IP，也不把管理员「国家」标注当自动地区。当前没有 GeoIP 下发，界面不显示任何自动地区结果。日常「设置国家」入口已删除；旧 v2 country 值只在节点技术详情中只读显示（路由国家条件可能仍引用），路由规则与 JSONC 中的国家条件保持原样以便审阅。
 
 ### 6.5 接入密钥（P2b）
 
 设置 › 接入密钥：列表（ID、创建者、预分配 tag、一次性 / 可复用、过期、已用次数）与撤销；添加节点页的令牌生成复用同一表单。
 
+### 6.6 链路延迟检测与历史（目标流程；后端在 `.worktree/latency-history` 开发）
+
+当前真实数据只有邻接运行报告里每个对端的 `probe_rtt_ms` / `probe_fresh`（最近一次认证探测，各端自报）。没有持久历史、样本 ID、丢包统计或端到端路径 RTT，因此：连线卡只显示两端当前 RTT 与「尚无历史数据」；不画曲线、不用重复读取同一报告堆样本、缺测 / 超时不填 0、不把逐跳 RTT 相加称为端到端。
+
+目标交互（同一视图内，不新增菜单）：
+
+```
+地图选中连线 → 连线卡
+  当前   laptop→sg-edge  Native UDP   laptop 测得 38 ms · sg-edge 测得 37 ms   12 秒前
+  趋势   ▁▂▂▃▂▁▁▂ （最近 1 小时，每端一条；缺口画断开，不插值）       [展开时间轴]
+  事件   16:02 承载切换 UDP → VLESS · 15:40 断开（认证失败）→ 15:41 恢复
+  检测   [检测一次]（仅在有真实命令接口时出现；结果作为一条带来源的样本进入时间轴）
+展开时间轴 → 卡片展开为宽面板：按方向 / 承载分轨、可缩放时间窗、悬停显示样本详情
+节点卡 → 「与该节点相连的链路」迷你趋势列表；路由预览中的路径 → 逐跳当前值（不相加）
+```
+
+前端接入所需字段（后端交接项，**不是已确认的 HTTP 契约**；以生成 SDK 为准）：
+
+| 字段 | 用途 |
+| --- | --- |
+| 样本唯一 ID | 去重；重复读取不产生新样本 |
+| 测量时刻（agent 测量时间）与上报时刻 | 横轴使用测量时刻；区分迟到上报 |
+| 测量来源 / 方法 | 邻接认证探测、按需检测、未来端到端任务分开显示 |
+| 方向（测量端 → 对端） | 每端单独成轨，不合并 |
+| 承载（transport）与 listener / candidate | 承载切换可见 |
+| 运行代际（epoch）与配置 revision | 代际变化标为事件，旧代际样本不混入当前 |
+| 完整路径（逐跳节点，端到端任务时） | 区分邻接 RTT 与路径 RTT |
+| 结果（成功 / 超时 / 失败原因） | 超时、失败作为事件或缺口，不记为 0 |
+| 缺口（未采样区间与原因） | 断开画缺口，不插值 |
+| 采样间隔 / 窗口与保留期 | 横轴范围与「数据保留至」提示 |
+
+## 7. 组件规范
 ## 7. 组件规范
 
 | 组件 | 位置 | 规则 |
 | --- | --- | --- |
-| `ConsoleShell` | `components/shell/console-shell.tsx` | `SidebarProvider` + 侧边栏 + 顶栏；包裹 `NetworkWorkspace` |
-| `AppSidebar` / `nav.ts` | `components/shell/app-sidebar.tsx` | 分组导航（`navGroups`、`settingsItem`），⌘K 共用同一份定义 |
+| `ConsoleShell` | `components/shell/console-shell.tsx` | `SidebarProvider`（受控 open，沉浸概览时 offcanvas）+ `AppSidebar` + `SidebarInset` 与 block 顶栏 |
+| `ConsoleFocusProvider` | `components/shell/console-focus.tsx` | 沉浸概览状态；位于网络段之上 |
+| `NetworkOverview` | `components/overview/network-overview.tsx` | 地图、关系视图、连线、状态条、选中卡；模型 `lib/overview-map-model.ts` |
+| `AppSidebar` / `NavMain` / `NavUser` / `nav.ts` | `components/shell/` | sidebar-07 结构；`navMain` 是侧栏与 ⌘K 的唯一定义 |
 | `NetworkWorkspace` / `DraftVault` | `components/network/network-workspace.tsx` | 每网络一组草稿 registry；Vault 在网络段之上，切换网络不丢草稿 |
 | `PageHeader` / `PageBody` / `SectionTitle` | `components/shell/page-header.tsx` | 返回链接、标题 + 状态、说明、meta（读取时间）、右侧操作 |
 | `Hint` / `HintLabel` | `components/common/hint.tsx` | 列名 / 字段名旁的说明弹层 |
 | `NodeCarriers` | `components/nodes/node-carriers.tsx` | 节点监听与拨号 socket 的四类事实（模型 `lib/carrier-view-model.ts`） |
 | `Panel` / `Fields` / `Field` | `components/common/panel.tsx` | 唯一卡片面；标签 / 值行 |
 | `StatusBadge` / `StatusDot` | `components/common/status-badge.tsx` | 五种语义色调，见 §5.1 |
-| `StatStrip` | `components/dashboard/stat-strip.tsx` | 关键数字横条，可跳转 |
 | `ControllerUnavailable` / `NoNodes` | `components/common/controller-states.tsx` | 读取失败 / 真实空网络 |
 | `FailureNotice` | `components/common/failure-notice.tsx` | 失败原因：标题、下一步、折叠的原始错误 |
 | `DiagnosticDetails` | `components/common/diagnostic-details.tsx` | 原生 `<details>`，内容常驻挂载 |
