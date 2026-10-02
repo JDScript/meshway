@@ -87,5 +87,7 @@
   "failure_conflict": "已被其他人更新，未保存",
   "failure_invalid": "未通过校验，未保存",
   "failure_missing": "已不存在",
-  "failure_unknown": "请求失败，结果未知"
+  "failure_unknown": "请求失败，结果未知",
+  "dialog_cancel": "取消",
+  "secret_once": "仅显示这一次"
 }

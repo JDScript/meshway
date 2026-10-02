@@ -115,5 +115,7 @@
   "failure_conflict": "Changed by someone else; not saved",
   "failure_invalid": "Rejected as invalid; not saved",
   "failure_missing": "No longer exists",
-  "failure_unknown": "Request failed; outcome unknown"
+  "failure_unknown": "Request failed; outcome unknown",
+  "dialog_cancel": "Cancel",
+  "secret_once": "Shown once"
 }

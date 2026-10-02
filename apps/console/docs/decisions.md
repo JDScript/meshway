@@ -169,6 +169,24 @@ globe; `features/shell/pages.ts` lists the pages and the dock.
 | Saving it, conflicts, the bar | `useDraftCommit` → `CommitBar` |
 | Field validity | the generated schemas, before the controller's own checks |
 
+## Adding a page
+
+1. `features/<page>/url.ts` (search schema, sections, tabs),
+   `navigation.ts` (the route read with typed `useMatch(…, shouldThrow:
+   false)`, the moves on `useSurfaceHistory`), `page.tsx` (`PageFrame`).
+   Surface content takes the URL state as props: it stays on screen while
+   it leaves, after its route has stopped matching.
+2. Routes under `routes/_authed/networks/$network/<page>…`, with
+   `staticData: { page }` on the page and `{ workspace: true }` on each
+   workspace.
+3. List it in `features/shell/pages.ts` (and the dock) and mount it in
+   `network-shell.tsx`.
+4. Copy in `messages/<feature>/{zh,en}.json`, keys prefixed by the feature.
+5. Editors: `createDraft` and `useDraftCommit`; members get the same view,
+   read-only (`useCanManage`).
+6. Secrets: `useSecretMutation`, shown in a `GlassDialog` with
+   `SecretField`. Irreversible actions: `ConfirmDialog`.
+
 ## Design tokens
 
 Tokens beyond shadcn's are in `src/index.css` (`@theme static` / `@theme
