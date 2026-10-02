@@ -1,6 +1,6 @@
 import { zMeshDnsConfiguration, zNodeDnsRecord } from "@meshway/control-client/schemas"
 
-/** Mirrors crates/protocol/src/network.rs::canonical_node_dns_name.
+/** Mirrors crates/protocol/src/network/mod.rs::canonical_node_dns_name.
  * Only use the controller's saved, normalized zone; never normalize a draft or
  * infer aliases from display names. Validate both identity and resulting name
  * against the generated wire schemas before presenting a copyable value.
