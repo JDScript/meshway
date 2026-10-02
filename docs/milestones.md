@@ -41,11 +41,17 @@ P2a 已交付生成契约，VLESS/WebSocket 表单在独立工作树接入；地
 系统保护通路的[独立 Linux socket/策略路由实验](/underlay-routing)已完成双栈 148 项
 检查与 10 项 host-only 测试。受保护 socket 工厂、HTTP/TLS connector、bootstrap DNS 与
 代际取消的代码切片也已交付；实际 Linux namespace fixture 通过 137 次 mark/readback
-审计与 4 个 listener 的 premark 检查。独立审查发现命名路由表漏检 block 外捕获表引用、
-DNS SERVFAIL 未尝试备用上游两项问题，修复后再验收基础模块。正式主循环、Native UDP/TCP、
+审计与 4 个 listener 的 premark 检查。命名路由表漏检 block 外捕获表引用、DNS SERVFAIL
+未尝试备用上游两项问题已修复并通过独立复核；基础模块及修复已合入，正在做主线组合检查。
+R1 心跳发现更高 revision 时立即撤旧执行的独立修复也已合入，原阻塞 HTTP 反例通过。
+正式主循环、Native UDP/TCP、
 捕获规则 ownership 与恢复仍待接通，现网尚未采用 socket 级保护。
 
 ### 并行开发与合入依赖
+
+当前按用户要求进入收尾整合：先合入已审定的独立改动，其余完成修复复核后组合验收；
+统一迁移、生成产物和依赖锁，再清理已完成的工作树。下一轮 registry 重构待本批整合后开始。
+性能完成已启动批次，保留原始结果；未经完整验收的候选留在实验分支，不为清理而强行合入。
 
 当前按六条工作流推进：承载托管、Web 体验、性能与正确性、账户接线、延迟历史、
 系统保护通路代码。后三项在独立 worktree 开发，不等待 P2a 全部合入才开始。
