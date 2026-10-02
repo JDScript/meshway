@@ -1,0 +1,58 @@
+field,required,meaning,disposition,pointer
+AccountInvitation.consumed_at,True,未消费；二者须配对,保留输出；内部可合为 consumption,#/components/schemas/AccountInvitation/properties/consumed_at
+AccountInvitation.consumed_by,True,未消费；二者须配对,保留输出；内部可合为 consumption,#/components/schemas/AccountInvitation/properties/consumed_by
+AccountInvitation.issuer_user_id,True,实例凭据发行时没有用户 issuer,保留，不编造用户 ID,#/components/schemas/AccountInvitation/properties/issuer_user_id
+AccountInvitation.revoked_at,True,没有撤销事件,保留，不填零时间,#/components/schemas/AccountInvitation/properties/revoked_at
+AccountPasswordReset.consumed_at,True,尚未兑换,保留，区别于 revoked 和 credential_current,#/components/schemas/AccountPasswordReset/properties/consumed_at
+AccountPasswordReset.revoked_at,True,没有撤销事件,保留，不填零时间,#/components/schemas/AccountPasswordReset/properties/revoked_at
+ClaimOwnerRequest.email,False,分支不适用或字段缺失合为 None,规范输入拆分支；兼容旧显式 null,#/components/schemas/ClaimOwnerRequest/properties/email
+ClaimOwnerRequest.password,False,分支不适用或字段缺失合为 None,规范输入拆分支；兼容旧显式 null,#/components/schemas/ClaimOwnerRequest/properties/password
+ClaimOwnerRequest.session_token,False,分支不适用或字段缺失合为 None,规范输入拆分支；兼容旧显式 null,#/components/schemas/ClaimOwnerRequest/properties/session_token
+ConnectionCandidate.credential_ref,True,native 不需要代理 credential ref,按 transport 限制；不是节点身份或明文密钥,#/components/schemas/ConnectionCandidate/properties/credential_ref
+ConnectionDiagnostic.item_id,True,全局或非单项诊断,保留，不伪造规则 ID,#/components/schemas/ConnectionDiagnostic/properties/item_id
+ConnectionListener.credential_ref,True,native 不需要代理 credential ref,按 transport 限制；不是节点身份或明文密钥,#/components/schemas/ConnectionListener/properties/credential_ref
+ConnectionNeighborObservation.candidate_id,True,入站侧可能没有精确 candidate 关联,保留，不能和 listener 一起非空化,#/components/schemas/ConnectionNeighborObservation/properties/candidate_id
+ConnectionNeighborObservation.listener_id,True,类型可空，但当前上报 validator 要求存在,收紧当前报告输入；后续不同 socket 来源另建明确分支,#/components/schemas/ConnectionNeighborObservation/properties/listener_id
+ConnectionNeighborObservation.probe_rtt_ms,True,无可报告的 RTT,保留缺测；不填 0,#/components/schemas/ConnectionNeighborObservation/properties/probe_rtt_ms
+ConnectionNode.acknowledged_at,True,尚无连接回执；revision 同时为 0,保留旧输出；内部可 Option<Receipt>,#/components/schemas/ConnectionNode/properties/acknowledged_at
+ConnectionNode.acknowledged_digest,True,尚无连接回执；revision 同时为 0,保留旧输出；内部可 Option<Receipt>,#/components/schemas/ConnectionNode/properties/acknowledged_digest
+ConnectionNode.public_key,True,没有 connection identity 记录,保留；不是 SQL 公钥列为空,#/components/schemas/ConnectionNode/properties/public_key
+ConnectionRuntimeObservation.digest,True,暂无报告或撤销后隐藏报告,保留；不得用当前配置补旧报告,#/components/schemas/ConnectionRuntimeObservation/properties/digest
+ConnectionRuntimeObservation.reported_at,True,暂无报告或撤销后隐藏报告,保留；不得用当前配置补旧报告,#/components/schemas/ConnectionRuntimeObservation/properties/reported_at
+ConnectionRuntimeObservation.revision,True,暂无报告或撤销后隐藏报告,保留；不得用当前配置补旧报告,#/components/schemas/ConnectionRuntimeObservation/properties/revision
+FlowAuthorizationDecision.matched_direction,True,默认、无匹配或 invalid 没有具体规则/方向,按结果解释，不强造 ID,#/components/schemas/FlowAuthorizationDecision/properties/matched_direction
+FlowAuthorizationDecision.rule_id,True,默认、无匹配或 invalid 没有具体规则/方向,按结果解释，不强造 ID,#/components/schemas/FlowAuthorizationDecision/properties/rule_id
+FlowQuery.destination_country,True,可组合的目标与上下文信息,保留 node+IP、domain+IP 等合法组合；不是简单互斥三选一,#/components/schemas/FlowQuery/properties/destination_country
+FlowQuery.destination_ip,True,可组合的目标与上下文信息,保留 node+IP、domain+IP 等合法组合；不是简单互斥三选一,#/components/schemas/FlowQuery/properties/destination_ip
+FlowQuery.destination_node_id,True,可组合的目标与上下文信息,保留 node+IP、domain+IP 等合法组合；不是简单互斥三选一,#/components/schemas/FlowQuery/properties/destination_node_id
+FlowQuery.domain,True,可组合的目标与上下文信息,保留 node+IP、domain+IP 等合法组合；不是简单互斥三选一,#/components/schemas/FlowQuery/properties/domain
+LatencyChannelAssociation.candidate_id,True,入站侧可能没有精确 candidate 关联,保留，不能和 listener 一起非空化,#/components/schemas/LatencyChannelAssociation/properties/candidate_id
+LatencyHistoryResponse.capacity_trimmed_before,True,没有容量淘汰水位,保留，不代表历史完整连续,#/components/schemas/LatencyHistoryResponse/properties/capacity_trimmed_before
+LatencyHistoryResponse.next,True,没有下一页或初始游标,保留；仅固定窗口内直接沿用游标,#/components/schemas/LatencyHistoryResponse/properties/next
+LatencySample.rtt_us,True,timeout/failed 没有 RTT；success 必须有,用 outcome 分支收紧关系，不填 0,#/components/schemas/LatencySample/properties/rtt_us
+ManagedListenerSettings.vless,True,非 VLESS 不适用,规范配置按 transport 分支,#/components/schemas/ManagedListenerSettings/properties/vless
+ManagedListenerSummary.certificate_sha256,True,native 不需要托管 VLESS 证书,保留，不是证书未知,#/components/schemas/ManagedListenerSummary/properties/certificate_sha256
+ManagedVlessMaterial.private_key_pem,True,拨号端无权取得 listener 私钥,保留保密投影，不能给所有节点填值,#/components/schemas/ManagedVlessMaterial/properties/private_key_pem
+ManagedVlessSettings.websocket_host,True,TCP 不适用；WebSocket 必须有,按 stream 分支收紧关系,#/components/schemas/ManagedVlessSettings/properties/websocket_host
+ManagedVlessSettings.websocket_path,True,TCP 不适用；WebSocket 必须有,按 stream 分支收紧关系,#/components/schemas/ManagedVlessSettings/properties/websocket_path
+MeshAccessSnapshot.source_jsonc,True,没有保存原始 JSONC,保留,#/components/schemas/MeshAccessSnapshot/properties/source_jsonc
+MeshNode.country,True,未设置或清除管理员 country,旧字段保留；不是 STUN/GeoIP,#/components/schemas/MeshNode/properties/country
+NodeConnections.public_key,True,没有 connection identity 记录,保留；不是 SQL 公钥列为空,#/components/schemas/NodeConnections/properties/public_key
+NodeEndpointDiscovery.digest,True,尚无发现报告；失效后可保留历史值,保留，null 不等于 expired,#/components/schemas/NodeEndpointDiscovery/properties/digest
+NodeEndpointDiscovery.reported_at,True,尚无发现报告；失效后可保留历史值,保留，null 不等于 expired,#/components/schemas/NodeEndpointDiscovery/properties/reported_at
+NodeEndpointDiscovery.revision,True,尚无发现报告；失效后可保留历史值,保留，null 不等于 expired,#/components/schemas/NodeEndpointDiscovery/properties/revision
+NodeOwnership.membership_id,True,尚未绑定账户 membership,保留；新 token 节点也可能为空，不等于 legacy,#/components/schemas/NodeOwnership/properties/membership_id
+NodeSummary.country,True,未设置或清除管理员 country,旧字段保留；不是 STUN/GeoIP,#/components/schemas/NodeSummary/properties/country
+NodeSummary.revoked_at,True,没有撤销事件,保留，不填零时间,#/components/schemas/NodeSummary/properties/revoked_at
+OutgoingConnectionCandidate.credential_ref,True,native 不需要代理 credential ref,按 transport 限制；不是节点身份或明文密钥,#/components/schemas/OutgoingConnectionCandidate/properties/credential_ref
+PolicyDiagnostic.rule_id,True,全局或非单项诊断,保留，不伪造规则 ID,#/components/schemas/PolicyDiagnostic/properties/rule_id
+PolicySnapshot.source_jsonc,True,没有保存原始 JSONC,保留,#/components/schemas/PolicySnapshot/properties/source_jsonc
+QueryLatencyHistoryRequest.after,True,没有下一页或初始游标,保留；仅固定窗口内直接沿用游标,#/components/schemas/QueryLatencyHistoryRequest/properties/after
+RouteAction.exit_node_id,True,Mesh 路径或不使用专门出口时不适用,按 action/scope 解释，保留,#/components/schemas/RouteAction/properties/exit_node_id
+RouteDecision.exit_node_id,True,Mesh 路径或不使用专门出口时不适用,按 action/scope 解释，保留,#/components/schemas/RouteDecision/properties/exit_node_id
+RouteDecision.rule_id,True,默认动作或 invalid 没有具体匹配规则,保留,#/components/schemas/RouteDecision/properties/rule_id
+SaveMeshAccessRequest.source_jsonc,False,缺失/null 都清除 source,明确全量替换；不得误当 preserve,#/components/schemas/SaveMeshAccessRequest/properties/source_jsonc
+SavePolicyRequest.source_jsonc,False,缺失/null 都清除 source,明确全量替换；不得误当 preserve,#/components/schemas/SavePolicyRequest/properties/source_jsonc
+SetNodeCountryRequest.country,True,未设置或清除管理员 country,旧字段保留；不是 STUN/GeoIP,#/components/schemas/SetNodeCountryRequest/properties/country
+StunEndpointObservation.mapped_endpoint,True,失败无映射/RTT；mapped 必须有,按 outcome 收紧，不填零或虚构 endpoint,#/components/schemas/StunEndpointObservation/properties/mapped_endpoint
+StunEndpointObservation.rtt_ms,True,失败无映射/RTT；mapped 必须有,按 outcome 收紧，不填零或虚构 endpoint,#/components/schemas/StunEndpointObservation/properties/rtt_ms
