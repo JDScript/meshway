@@ -175,7 +175,7 @@ async fn managed_permissions_initial_enrollment_legacy_claim_and_membership_with
     for token in [&owner, &member, &f.admin] {
         for path in [
             "/api/v1/agent/managed-connections",
-            "/api/v1/agent/managed-dataplane",
+            "/api/v1/agent/managed-connections",
         ] {
             assert_eq!(
                 request(&f.app, "GET", path, Some(token), None).await.0,
@@ -390,7 +390,7 @@ async fn managed_permissions_initial_enrollment_legacy_claim_and_membership_with
     for token in [&credential, &legacy_credential] {
         for path in [
             "/api/v1/agent/managed-connections",
-            "/api/v1/agent/managed-dataplane",
+            "/api/v1/agent/managed-connections",
         ] {
             assert_eq!(
                 request(&f.app, "GET", path, Some(token), None).await.0,
@@ -440,7 +440,7 @@ async fn managed_permissions_initial_enrollment_legacy_claim_and_membership_with
     assert_eq!(encrypted_rows(&db), rows_before);
     for path in [
         "/api/v1/agent/managed-connections",
-        "/api/v1/agent/managed-dataplane",
+        "/api/v1/agent/managed-connections",
     ] {
         let projected = node_material(&f, &observer_credential, path).await;
         assert!(projected["materials"].as_array().unwrap().is_empty());

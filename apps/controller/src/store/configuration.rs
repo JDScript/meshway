@@ -1,35 +1,12 @@
 use meshway_protocol::{
-    AcknowledgeConfigurationRequest, AcknowledgeConfigurationResponse, ConfigurationSnapshot,
-    MeshNode, NodeSummary, PolicyDiagnostic, PolicySnapshot, PreviewPolicyRequest,
-    PreviewPolicyResponse, RoutingPolicy, SavePolicyRequest, SetNodeCountryRequest, local::digest,
+    AcknowledgeConfigurationRequest, AcknowledgeConfigurationResponse,
+    CONFIGURATION_SCHEMA_VERSION, ConfigurationSnapshot, MeshNode, NodeConfiguration, NodeSummary,
+    SetNodeCountryRequest, configuration_digest, local::digest,
 };
 use rusqlite::{Connection, OptionalExtension, TransactionBehavior, params};
 
-use super::{NetworkId, Store, find_node, ipam, jsonc, publication};
+use super::{NetworkId, Store, find_node, ipam, publication};
 use crate::Error;
-
-pub(super) const DIAGNOSTIC_BUDGET: usize = 32 * 1024;
-
-/// Diagnostic references can repeat a long user-supplied rule ID. Keep reports
-/// useful while bounding their serialized size independently of policy size.
-pub(super) fn bounded_diagnostics(diagnostics: Vec<PolicyDiagnostic>) -> Vec<PolicyDiagnostic> {
-    let mut bounded = Vec::new();
-    let mut remaining = DIAGNOSTIC_BUDGET - 512;
-    for diagnostic in diagnostics {
-        let size = serde_json::to_vec(&diagnostic).map_or(usize::MAX, |bytes| bytes.len() + 1);
-        if size > remaining || bounded.len() == 63 {
-            bounded.push(PolicyDiagnostic {
-                rule_id: None,
-                field: "policy".into(),
-                message: "Additional diagnostics omitted by the bounded publication budget".into(),
-            });
-            break;
-        }
-        remaining -= size;
-        bounded.push(diagnostic);
-    }
-    bounded
-}
 
 pub(super) fn revision(connection: &Connection, network: &NetworkId) -> Result<u32, Error> {
     Ok(connection.query_row(
@@ -70,40 +47,6 @@ pub(super) fn active_nodes(
         .collect::<Result<_, _>>()?)
 }
 
-pub(super) fn source_policy(
-    connection: &Connection,
-    network: &NetworkId,
-) -> Result<RoutingPolicy, Error> {
-    let json: String = connection.query_row(
-        "SELECT policy FROM configuration WHERE id = 1 AND network_id=?1",
-        [network.as_str()],
-        |row| row.get(0),
-    )?;
-    serde_json::from_str(&json).map_err(|_| Error::Configuration("invalid persisted policy"))
-}
-
-fn source_jsonc(connection: &Connection, network: &NetworkId) -> Result<Option<String>, Error> {
-    Ok(connection.query_row(
-        "SELECT source_jsonc FROM configuration WHERE id=1 AND network_id=?1",
-        [network.as_str()],
-        |row| row.get(0),
-    )?)
-}
-
-fn policy_snapshot(connection: &Connection, scope: &NetworkId) -> Result<PolicySnapshot, Error> {
-    let policy = source_policy(connection, scope)?;
-    let network = ipam::network(connection, scope)?;
-    let report = meshway_policy::compile(&policy, &network, &active_nodes(connection, scope)?);
-    Ok(PolicySnapshot {
-        revision: revision(connection, scope)?,
-        network,
-        policy,
-        source_jsonc: source_jsonc(connection, scope)?,
-        valid: report.is_valid(),
-        diagnostics: bounded_diagnostics(report.diagnostics),
-    })
-}
-
 pub(super) fn node_id(
     connection: &Connection,
     network: &NetworkId,
@@ -128,96 +71,29 @@ pub(super) fn snapshot(
     scope: &NetworkId,
     id: &str,
 ) -> Result<ConfigurationSnapshot, Error> {
-    publication::LegacyRoutingFacts::read(connection, scope)?.configuration(id)
+    let mut peers = active_nodes(connection, scope)?;
+    let index = peers
+        .iter()
+        .position(|n| n.id == id)
+        .ok_or(Error::Forbidden)?;
+    let node = peers.remove(index);
+    let payload = NodeConfiguration {
+        schema_version: CONFIGURATION_SCHEMA_VERSION,
+        revision: revision(connection, scope)?,
+        network: ipam::network(connection, scope)?,
+        node,
+        peers,
+    };
+    let digest = configuration_digest(&payload)
+        .map_err(|_| Error::Configuration("cannot hash inventory"))?;
+    let snapshot = ConfigurationSnapshot { digest, payload };
+    publication::budget::configuration(snapshot.clone())?;
+    Ok(snapshot)
 }
 
 impl Store {
     pub fn revision(&self, network: &NetworkId) -> Result<u32, Error> {
         revision(&self.connection, network)
-    }
-
-    pub fn policy(&self, network: &NetworkId) -> Result<PolicySnapshot, Error> {
-        policy_snapshot(&self.connection, network)
-    }
-
-    pub fn preview(
-        &self,
-        network: &NetworkId,
-        request: &PreviewPolicyRequest,
-    ) -> Result<PreviewPolicyResponse, Error> {
-        let result = meshway_policy::preview(
-            &request.policy,
-            &ipam::network(&self.connection, network)?,
-            &active_nodes(&self.connection, network)?,
-            &request.flow,
-        );
-        Ok(PreviewPolicyResponse {
-            revision: self.revision(network)?,
-            valid: result.valid,
-            diagnostics: bounded_diagnostics(result.diagnostics),
-            decision: result.decision,
-        })
-    }
-
-    pub fn save_policy(
-        &mut self,
-        network: &NetworkId,
-        request: &SavePolicyRequest,
-    ) -> Result<PolicySnapshot, Error> {
-        if request
-            .source_jsonc
-            .as_ref()
-            .is_some_and(|source| source.len() > meshway_protocol::MAX_SOURCE_JSONC_BYTES)
-        {
-            return Err(Error::Unprocessable("source_jsonc exceeds 256 KiB"));
-        }
-        if let Some(source) = &request.source_jsonc {
-            let parsed: RoutingPolicy = jsonc::parse_source(source)?;
-            if parsed != request.policy {
-                return Err(Error::Unprocessable(
-                    "source_jsonc policy does not equal request.policy",
-                ));
-            }
-        }
-        let transaction = super::account_authorization::transaction(
-            &mut self.connection,
-            TransactionBehavior::Immediate,
-        )?;
-        compare_revision(&transaction, network, request.expected_revision)?;
-        let report = meshway_policy::compile(
-            &request.policy,
-            &ipam::network(&transaction, network)?,
-            &active_nodes(&transaction, network)?,
-        );
-        if !report.is_valid() {
-            return Err(Error::Unprocessable(
-                "policy is invalid; preview it for diagnostics",
-            ));
-        }
-        let stored_policy = if request.source_jsonc.is_some() {
-            &request.policy
-        } else {
-            &report.normalized_policy
-        };
-        if source_policy(&transaction, network)? != *stored_policy
-            || source_jsonc(&transaction, network)? != request.source_jsonc
-        {
-            let json = serde_json::to_string(stored_policy)
-                .map_err(|_| Error::Configuration("cannot encode policy"))?;
-            transaction.execute(
-                "UPDATE configuration SET policy=?1, source_jsonc=?2 WHERE id=1 AND network_id=?3",
-                params![json, request.source_jsonc, network.as_str()],
-            )?;
-            bump(&transaction, network)?;
-            publication::finish_change(
-                &transaction,
-                network,
-                publication::ChangeKind::RoutingOrSelectors,
-            )?;
-        }
-        let snapshot = policy_snapshot(&transaction, network)?;
-        transaction.commit()?;
-        Ok(snapshot)
     }
 
     pub fn set_country(

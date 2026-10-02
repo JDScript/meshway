@@ -5,7 +5,7 @@ use meshway_protocol::{
 };
 use rusqlite::{Connection, TransactionBehavior, params};
 
-use super::{NetworkId, Store, access, configuration};
+use super::{NetworkId, Store, configuration};
 use crate::Error;
 
 pub(super) fn catalog(
@@ -106,16 +106,24 @@ impl Store {
             .into_values()
             .flatten()
             .collect();
+        let (policy, _) = super::network_policy::source(&transaction, network)?;
         referenced.extend(
-            access::source(&transaction, network)?
-                .rules
+            policy
+                .grants
                 .into_iter()
-                .flat_map(|rule| rule.source.into_iter().chain(rule.destination))
-                .filter(|selector| selector.starts_with("tag:")),
+                .flat_map(|g| g.src.into_iter().chain(g.dst))
+                .chain(policy.connections.into_iter().flat_map(|r| [r.a, r.b]))
+                .chain(
+                    policy
+                        .mesh
+                        .into_iter()
+                        .flat_map(|r| [r.src, r.dst].into_iter().chain(r.via)),
+                )
+                .filter(|s| s.starts_with("tag:")),
         );
         if !referenced.iter().all(|tag| retained.contains(tag.as_str())) {
             return Err(Error::Unprocessable(
-                "an assigned or access-policy-referenced tag cannot be deleted",
+                "an assigned or policy-referenced tag cannot be deleted",
             ));
         }
         let current = snapshot(&transaction, network)?.tags;

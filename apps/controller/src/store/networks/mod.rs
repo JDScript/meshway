@@ -77,10 +77,9 @@ impl Store {
             "INSERT INTO network_identity(id,network_id,name,dns) VALUES(1,?1,?2,?3)",
             params![id.as_str(), request.name, dns],
         )?;
-        transaction.execute("INSERT INTO configuration(id,revision,ipv4_prefix,ipv6_prefix,policy,source_jsonc,network_id) VALUES(1,1,'100.96.0.0/16',?1,'{\"default_action\":\"reject\",\"rules\":[]}',NULL,?2)",params![ipv6,id.as_str()])?;
+        transaction.execute("INSERT INTO configuration(id,revision,ipv4_prefix,ipv6_prefix,network_id) VALUES(1,1,'100.96.0.0/16',?1,?2)",params![ipv6,id.as_str()])?;
         transaction.execute("INSERT INTO connection_source(id,configuration,network_id) VALUES(1,'{\"listeners\":[],\"candidates\":[]}',?1)",[id.as_str()])?;
-        transaction.execute("INSERT INTO mesh_access_source(id,policy,source_jsonc,network_id) VALUES(1,'{\"default_action\":\"allow\",\"rules\":[]}',NULL,?1)",[id.as_str()])?;
-        transaction.execute("INSERT INTO mesh_access_legacy_v5(id,policy,network_id) VALUES(1,'{\"grants\":[]}',?1)",[id.as_str()])?;
+        super::network_policy::initialize(&transaction, &id)?;
         transaction.commit()?;
         self.network(&id)
     }

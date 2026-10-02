@@ -7,19 +7,6 @@ mod managed;
 mod schema;
 mod withdrawal;
 
-pub(super) fn is_account_path(path: &str) -> bool {
-    path.starts_with("/api/v1/auth/")
-        || path.starts_with("/api/v1/me/")
-        || [
-            "/owner-claim",
-            "/members",
-            "/invitations",
-            "/node-ownership",
-        ]
-        .iter()
-        .any(|s| path.contains(s))
-}
-
 async fn ok(
     f: &Fixture,
     method: &str,
@@ -128,7 +115,6 @@ async fn accounts_http_multinetwork_rbac_and_public_link_management() {
         "nodes",
         "overview",
         "policy",
-        "access",
         "tags",
         "connections",
         "connections/runtime",
@@ -178,12 +164,8 @@ async fn accounts_http_multinetwork_rbac_and_public_link_management() {
             json!({"expected_revision":1,"node_id":"missing","country":null}),
         ),
         (
-            "access",
-            json!({"expected_revision":1,"policy":{"default_action":"allow","rules":[]}}),
-        ),
-        (
             "policy/save",
-            json!({"expected_revision":1,"policy":{"default_action":"reject","rules":[]}}),
+            json!({"expected_revision":1,"policy":meshway_policy::NetworkPolicy::default_template()}),
         ),
         (
             "connections",

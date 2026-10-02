@@ -40,27 +40,14 @@ impl Store {
         let changed= !tx.query_row("SELECT EXISTS(SELECT 1 FROM mesh_execution_capabilities WHERE network_id=?1 AND node_id=?2 AND epoch=?3 AND instance_id=?4)",params![network.as_str(),id,request.epoch,request.instance_id],|r|r.get::<_,bool>(0))?;
         if changed {
             tx.execute("INSERT INTO mesh_execution_capabilities(node_id,network_id,epoch,instance_id) VALUES(?1,?2,?3,?4) ON CONFLICT(node_id) DO UPDATE SET epoch=excluded.epoch,instance_id=excluded.instance_id WHERE network_id=excluded.network_id",params![id,network.as_str(),request.epoch,request.instance_id])?;
-            if network_policy::active(&tx, &network)? {
-                configuration::bump(&tx, &network)?;
-                publication::finish_change(&tx, &network, publication::ChangeKind::Adjacency)?;
-            }
+            configuration::bump(&tx, &network)?;
+            publication::finish_change(&tx, &network, publication::ChangeKind::Adjacency)?;
         }
         let revision = configuration::revision(&tx, &network)?;
-        let response = if let Some((policy, _)) = network_policy::source(&tx, &network)? {
-            let snapshot = publication::mesh_execution::Publication::read(&tx, &network, &policy)?
-                .project(&id, &self.material_key)?;
-            MeshExecutionResponse {
-                source_mode: PolicySourceMode::MeshV3,
-                revision,
-                snapshot: Some(snapshot),
-            }
-        } else {
-            MeshExecutionResponse {
-                source_mode: PolicySourceMode::LegacyV2,
-                revision,
-                snapshot: None,
-            }
-        };
+        let (policy, _) = network_policy::source(&tx, &network)?;
+        let snapshot = publication::mesh_execution::Publication::read(&tx, &network, &policy)?
+            .project(&id, &self.material_key)?;
+        let response = MeshExecutionResponse { revision, snapshot };
         tx.commit()?;
         Ok(response)
     }
@@ -79,7 +66,7 @@ impl Store {
         if request.runtime.capabilities != [MeshExecutionCapability::Ipv4ExactPathV1] {
             return Err(Error::Conflict);
         }
-        let (policy, _) = network_policy::source(&tx, &network)?.ok_or(Error::Conflict)?;
+        let (policy, _) = network_policy::source(&tx, &network)?;
         let current = publication::mesh_execution::Publication::read(&tx, &network, &policy)?
             .project(&id, &self.material_key)?;
         if request.revision != current.payload.revision || request.digest != current.digest {

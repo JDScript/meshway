@@ -3,13 +3,14 @@ import { once } from "node:events";
 import { createServer } from "node:http";
 import test from "node:test";
 
-import { getMeshAccess, saveMeshAccess } from "../src/index.ts";
+import { getNetworkPolicy, saveNetworkPolicy } from "../src/index.ts";
 
 const first = "a".repeat(64);
 const last = "b".repeat(64);
 const snapshot = {
+  network_id: "a".repeat(32),
   revision: 1,
-  policy: { default_action: "reject" as const, rules: [{ id: "source-to-target", source: [`node:${first}`], destination: [`node:${last}`], action: "allow" as const, bidirectional: false }] },
+  policy: { connections: [], grants: [{ id: "source-to-target", src: [`node:${first}`], dst: [`node:${last}`], bidirectional: false }], mesh: [], public_rules: [], profiles: [], assignments: [], automatic: { regions: {}, fallback: "mesh-only" } },
   source_jsonc: null,
   valid: true,
   diagnostics: [],
@@ -35,32 +36,32 @@ async function response(body: unknown, use: (base: string) => Promise<void>) {
   }
 }
 
-test("access responses reject unauthorized extensions, missing fields and malformed nested rules", async () => {
+test("policy responses reject unauthorized extensions, missing fields and malformed nested rules", async () => {
   const badRules = [
-    { id: "grant", source: [], destination: [`node:${last}`], action: "allow", bidirectional: false },
-    { id: "grant", source: [`node:${first}`], destination: [], action: "allow", bidirectional: false },
-    { id: "grant", source: [`node:${first}`], destination: [`node:${last}`], action: "permit", bidirectional: false },
-    { id: "grant", source: [`node:${first}`], destination: [`node:${last}`], action: "allow", bidirectional: false, secret: "unexpected" },
+    { id:"grant", src:"*", dst:[`node:${last}`], bidirectional:false },
+    { id:"grant", src:[`node:${first}`], dst:null, bidirectional:false },
+    { id:"grant", src:[`node:${first}`], dst:[`node:${last}`], bidirectional:"false" },
+    { id:"grant", src:[`node:${first}`], dst:[`node:${last}`], bidirectional:false, action:"reject" },
   ];
   for (const invalid of [
     { ...snapshot, valid: undefined },
     { ...snapshot, valid: "true" },
     { ...snapshot, revision: 0 },
     { ...snapshot, applied: true },
-    ...badRules.map(rule => ({ ...snapshot, policy: { default_action: "reject", rules: [rule] } })),
+    ...badRules.map(rule => ({ ...snapshot, policy: { ...snapshot.policy, grants: [rule] } })),
   ]) {
     await response(invalid, async base => {
-      await assert.rejects(getMeshAccess(base, "fixture-token", "a".repeat(32)));
+      await assert.rejects(getNetworkPolicy(base, "fixture-token", "a".repeat(32)));
     });
   }
   await response(snapshot, async base => {
-    assert.deepEqual(await getMeshAccess(base, "fixture-token", "a".repeat(32)), snapshot);
+    assert.deepEqual(await getNetworkPolicy(base, "fixture-token", "a".repeat(32)), snapshot);
   });
 });
 
-test("access save does not turn a malformed successful HTTP response into a saved receipt", async () => {
+test("policy save does not turn a malformed successful HTTP response into a saved receipt", async () => {
   await response({ ...snapshot, revision: 1.5 }, async base => {
-    await assert.rejects(saveMeshAccess(base, "fixture-token", "a".repeat(32), {
+    await assert.rejects(saveNetworkPolicy(base, "fixture-token", "a".repeat(32), {
       expected_revision: 1,
       policy: snapshot.policy,
     }));

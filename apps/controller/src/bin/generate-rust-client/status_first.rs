@@ -114,11 +114,11 @@ mod tests {
         let mut source = generated_client();
         let original = source.clone();
         let operations = super::super::OPERATIONS;
-        assert!(operations.contains(&"getAgentDataplane"));
+        assert!(operations.contains(&"negotiateMeshExecution"));
         assert!(operations.contains(&"getAgentDns"));
         adapt(&mut source, operations.len()).unwrap();
         assert_eq!(source.matches(STATUS_GUARD).count(), operations.len());
-        assert!(source.contains("pub async fn get_agent_dataplane("));
+        assert!(source.contains("pub async fn negotiate_mesh_execution("));
         assert!(source.contains("pub async fn get_agent_dns("));
         // Every send is followed immediately by status extraction and the guard,
         // so no awaited reader can precede rejection within any operation.

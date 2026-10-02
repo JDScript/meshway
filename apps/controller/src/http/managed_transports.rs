@@ -15,7 +15,6 @@ pub(crate) fn routes() -> OpenApiRouter<AppState> {
             save_managed_listener
         ))
         .routes(utoipa_axum::routes!(get_agent_managed_connections))
-        .routes(utoipa_axum::routes!(get_agent_managed_dataplane))
         .routes(utoipa_axum::routes!(create_managed_enrollment_token))
         .routes(utoipa_axum::routes!(publish_managed_transport_capabilities))
         .layer(DefaultBodyLimit::max(32 * 1024))
@@ -106,17 +105,5 @@ async fn get_agent_managed_connections(
     let token = bearer(&headers)?;
     state
         .access(move |store| store.agent_managed_connections(&token).map(Json))
-        .await
-}
-
-#[utoipa::path(get,path="/api/v1/agent/managed-dataplane",operation_id="getAgentManagedDataplane",security(("nodeBearer"=[])),
- responses((status=200,description="Coherent policy, public keys, connections and node-only material snapshot",body=AgentManagedDataplaneSnapshot),(status=401,description="Node required",body=ErrorResponse),(status=403,description="Node revoked",body=ErrorResponse),(status=422,description="Publication capacity exhausted",body=ErrorResponse),(status=500,description="Storage unavailable",body=ErrorResponse)))]
-async fn get_agent_managed_dataplane(
-    State(state): State<AppState>,
-    headers: HeaderMap,
-) -> Result<Json<AgentManagedDataplaneSnapshot>, Error> {
-    let token = bearer(&headers)?;
-    state
-        .access(move |store| store.agent_managed_dataplane(&token).map(Json))
         .await
 }

@@ -10,24 +10,24 @@ use rusqlite::{Connection, OptionalExtension, Row, TransactionBehavior, params};
 
 use crate::Error;
 
-mod access;
 mod account_authorization;
 mod account_operations;
 mod configuration;
 mod connection_runtime;
 mod connections;
 mod endpoint_discovery;
+mod identity;
 mod ipam;
 mod jsonc;
 mod latency_history;
 mod managed_transports;
 mod mesh_execution;
-mod migrations;
 mod network;
 mod network_policy;
 mod networks;
 mod ownership;
 mod publication;
+mod schema;
 pub(crate) use crate::network_scope::NetworkId;
 mod tags;
 #[cfg(test)]
@@ -98,7 +98,7 @@ impl Store {
         connection.busy_timeout(Duration::from_secs(5))?;
         connection.pragma_update(None, "foreign_keys", true)?;
         connection.pragma_update(None, "synchronous", "FULL")?;
-        let material_key = migrations::initialize(&mut connection, path, new, admin, options)?;
+        let material_key = schema::initialize(&mut connection, path, new, admin, options)?;
         // Initialization flags still refer to the original network; never
         // renumber any network on restart.
         let initial = NetworkId::initial(&connection)?;

@@ -1,5 +1,5 @@
 //! Explicit offline administration. No HTTP handlers or automatic recovery.
-use crate::{Error, NetworkOptions, store::Store};
+use crate::Error;
 use meshway_protocol::local;
 use std::path::Path;
 
@@ -29,32 +29,4 @@ pub fn admin_token(data_dir: impl AsRef<Path>) -> Result<String, Error> {
         ));
     }
     Ok(token.to_owned())
-}
-
-/// Takes the controller's exclusive directory lock; private input and errors
-/// never expose secret values or file contents.
-pub fn import_managed_vless(
-    data_dir: &Path,
-    input: &Path,
-) -> Result<meshway_protocol::ManagedListenersSnapshot, Error> {
-    #[derive(serde::Deserialize)]
-    #[serde(deny_unknown_fields)]
-    struct Import {
-        network_id: String,
-        legacy_profiles: std::path::PathBuf,
-        request: meshway_protocol::SaveManagedListenerRequest,
-        material: meshway_protocol::ManagedVlessMaterial,
-    }
-    let bytes = zeroize::Zeroizing::new(local::read_private_bounded(input, 256 * 1024)?);
-    let import: Import = serde_json::from_str(&bytes)
-        .map_err(|_| Error::Invalid("invalid private managed VLESS import"))?;
-    let mut store = Store::open(data_dir, &NetworkOptions::default())?;
-    let network = store.network_id(&import.network_id)?;
-    store.verify_legacy_material(
-        &network,
-        &import.request.settings,
-        &import.material,
-        &import.legacy_profiles,
-    )?;
-    store.import_managed_listener(&network, &import.request, import.material)
 }

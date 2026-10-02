@@ -7,7 +7,7 @@ use rusqlite::{Connection, TransactionBehavior, params};
 use tempfile::TempDir;
 
 use super::*;
-const SCHEMA: &str = include_str!("../store/migrations/sql/accounts.sql");
+const SCHEMA: &str = include_str!("../store/schema/schema.sql");
 
 const A: &str = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
 const B: &str = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
@@ -25,10 +25,8 @@ impl Fixture {
     fn new() -> Self {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("accounts.sqlite");
-        let mut db = connect(&path);
-        // The entire actual v9 schema, not a substitute networks table.
-        db.execute_batch(include_str!("../store/test_support/fixtures/schema_v9.sql"))
-            .unwrap();
+        let db = connect(&path);
+        db.execute_batch(SCHEMA).unwrap();
         for (id, initial) in [(A, 1), (B, 0)] {
             db.execute(
                 "INSERT INTO networks VALUES (?1,'2026-10-01',?2)",
@@ -36,11 +34,6 @@ impl Fixture {
             )
             .unwrap();
         }
-        let tx = db
-            .transaction_with_behavior(TransactionBehavior::Immediate)
-            .unwrap();
-        tx.execute_batch(SCHEMA).unwrap();
-        tx.commit().unwrap();
         Self {
             _dir: dir,
             db,
@@ -134,11 +127,9 @@ fn normalized_email_and_input_budget() {
 }
 
 #[test]
-fn explicit_schema_rollback_and_actual_v9_fk() {
+fn explicit_schema_rollback_and_current_fk() {
     let mut db = Connection::open_in_memory().unwrap();
     db.pragma_update(None, "foreign_keys", true).unwrap();
-    db.execute_batch(include_str!("../store/test_support/fixtures/schema_v9.sql"))
-        .unwrap();
     let tx = db.transaction().unwrap();
     tx.execute_batch(SCHEMA).unwrap();
     tx.rollback().unwrap();
@@ -155,7 +146,7 @@ fn explicit_schema_rollback_and_actual_v9_fk() {
     let version: i64 = db
         .pragma_query_value(None, "user_version", |r| r.get(0))
         .unwrap();
-    assert_eq!(version, 0);
+    assert_eq!(version, 13);
     assert!(Accounts::new(&db).network("missing").is_err());
 }
 

@@ -128,7 +128,7 @@ impl Store {
             "DELETE FROM mesh_execution_receipts WHERE node_id=?1 AND network_id=?2",
             params![id, network.as_str()],
         )?;
-        if had_capability && super::network_policy::active(&transaction, &network)? {
+        if had_capability {
             configuration::bump(&transaction, &network)?;
             super::publication::finish_change(
                 &transaction,

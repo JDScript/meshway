@@ -11,7 +11,7 @@ mod secret_debug;
 mod status_first;
 mod transport;
 
-const OPERATIONS: [&str; 20] = [
+const OPERATIONS: [&str; 18] = [
     "enrollAgent",
     "exchangeDevice",
     "heartbeatAgent",
@@ -19,7 +19,6 @@ const OPERATIONS: [&str; 20] = [
     "acknowledgeConfiguration",
     "publishConnectionIdentity",
     "getAgentConnections",
-    "getAgentDataplane",
     "getAgentDns",
     "acknowledgeAgentConnections",
     "beginConnectionRuntime",
@@ -27,7 +26,6 @@ const OPERATIONS: [&str; 20] = [
     "reportConnectionRuntime",
     "reportEndpointDiscovery",
     "getAgentManagedConnections",
-    "getAgentManagedDataplane",
     "publishManagedTransportCapabilities",
     "reportLatencySamples",
     "negotiateMeshExecution",

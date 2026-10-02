@@ -10,8 +10,8 @@ test("JSONC schemas preserve the complete Rust OpenAPI components and reference 
   const components = document.components;
   assert(components && typeof components === "object" && "schemas" in components);
   assert.deepEqual(componentSchemas, components.schemas);
-  assert.equal(schemaFor("RoutingPolicy").$ref, "#/components/schemas/RoutingPolicy");
-  assert.equal(schemaFor("RoutingPolicy").components.schemas.RoutingPolicy, componentSchemas.RoutingPolicy);
-  assert.equal(componentSchemas.MeshAccessGrant.properties.path.maxItems, 8);
-  assert.equal(componentSchemas.MeshAccessGrant.properties.id.maxLength, 64);
+  assert.equal(schemaFor("NetworkPolicy").$ref, "#/components/schemas/NetworkPolicy");
+  assert.equal(schemaFor("NetworkPolicy").components.schemas.NetworkPolicy, componentSchemas.NetworkPolicy);
+  assert.equal(componentSchemas.MeshExecutionPath.properties.nodes.maxItems, 8);
+  assert.equal(componentSchemas.NodeMeshExecution.properties.paths.maxItems, 128);
 });

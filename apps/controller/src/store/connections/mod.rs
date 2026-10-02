@@ -103,17 +103,14 @@ pub(super) fn effective_snapshot(
     connection: &Connection,
     network: &NetworkId,
 ) -> Result<ConnectionsSnapshot, Error> {
-    let snapshot = admin_snapshot(connection, network)?;
-    match super::network_policy::source(connection, network)? {
-        Some((policy, _)) => filter_effective(connection, network, snapshot, &policy),
-        None => Ok(snapshot),
-    }
+    let (policy, _) = super::network_policy::source(connection, network)?;
+    effective_with_policy(connection, network, &policy)
 }
 
 pub(super) fn effective_with_policy(
     connection: &Connection,
     network: &NetworkId,
-    policy: &meshway_policy::v3::NetworkPolicy,
+    policy: &meshway_policy::NetworkPolicy,
 ) -> Result<ConnectionsSnapshot, Error> {
     filter_effective(
         connection,
@@ -127,10 +124,10 @@ fn filter_effective(
     connection: &Connection,
     network: &NetworkId,
     mut snapshot: ConnectionsSnapshot,
-    policy: &meshway_policy::v3::NetworkPolicy,
+    policy: &meshway_policy::NetworkPolicy,
 ) -> Result<ConnectionsSnapshot, Error> {
     let assignments = super::tags::assignments(connection, network)?;
-    let make = |id: &str| meshway_policy::v3::Node {
+    let make = |id: &str| meshway_policy::Node {
         id: id.to_owned(),
         tags: assignments.get(id).cloned().unwrap_or_default(),
         listener: true,
@@ -143,7 +140,7 @@ fn filter_effective(
             .iter()
             .find(|l| l.id == candidate.listener_id)
             .is_some_and(|l| {
-                meshway_policy::v3::connection_allowed(
+                meshway_policy::connection_allowed(
                     &policy.connections,
                     &make(&candidate.dialer_node_id),
                     &make(&l.node_id),

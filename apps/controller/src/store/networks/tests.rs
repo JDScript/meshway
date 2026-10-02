@@ -1,4 +1,3 @@
-use crate::store::migrations::networks::{TABLES, upgrade};
 use crate::{
     Error, NetworkOptions,
     store::{
@@ -7,102 +6,11 @@ use crate::{
     },
 };
 use meshway_protocol::*;
-use rusqlite::{Connection, params, types::Value};
+use rusqlite::params;
 
-fn rows(db: &Connection) -> Vec<(String, Vec<Vec<Value>>)> {
-    TABLES
-        .iter()
-        .map(|(table, columns)| {
-            let mut query = db
-                .prepare(&format!("SELECT {columns} FROM {table} ORDER BY 1,2"))
-                .unwrap();
-            let count = query.column_count();
-            let values = query
-                .query_map([], |row| {
-                    (0..count)
-                        .map(|i| row.get(i))
-                        .collect::<Result<Vec<Value>, _>>()
-                })
-                .unwrap()
-                .collect::<Result<Vec<_>, _>>()
-                .unwrap();
-            ((*table).to_owned(), values)
-        })
-        .collect()
-}
 fn enrolled(store: &mut Store, network: &NetworkId, request: &EnrollAgentRequest) -> NodeSummary {
     let token = store.create_token(network, 3600).unwrap();
     store.enroll(&token.token, request).unwrap()
-}
-
-#[test]
-fn complete_v8_upgrade_is_lossless_and_rolls_back_on_invalid_ownership() {
-    let fixture = crate::store::test_support::fixtures::original_v8::V8::create();
-    let dir = &fixture.directory;
-    let mut db = fixture.database();
-    let config = canonical_json(&fixture.configuration(&db, 0)).unwrap();
-    let dns = canonical_json(&fixture.dns(&db, 0)).unwrap();
-    let before = rows(&db);
-    db.pragma_update(None, "foreign_keys", false).unwrap();
-    db.execute("INSERT INTO node_tags VALUES('missing','tag:peer')", [])
-        .unwrap();
-    db.pragma_update(None, "foreign_keys", true).unwrap();
-    let invalid = rows(&db);
-    assert!(upgrade(&mut db).is_err());
-    assert_eq!(rows(&db), invalid);
-    assert_eq!(
-        db.pragma_query_value(None, "user_version", |row| row.get::<_, u32>(0))
-            .unwrap(),
-        8
-    );
-    assert!(
-        db.pragma_query_value(None, "foreign_keys", |row| row.get::<_, bool>(0))
-            .unwrap()
-    );
-    db.execute("DELETE FROM node_tags WHERE node_id='missing'", [])
-        .unwrap();
-    drop(db);
-    let mut store = Store::open(dir.path(), &NetworkOptions::default()).unwrap();
-    let network = store
-        .network_id("baf5c8095f41b92ea539a10456da64e3")
-        .unwrap();
-    assert_eq!(rows(&store.connection), before);
-    assert_eq!(store.revision(&network).unwrap(), 42);
-    assert_eq!(
-        canonical_json(&store.configuration(&fixture.credentials[0]).unwrap()).unwrap(),
-        config
-    );
-    assert_eq!(
-        canonical_json(&store.agent_dns(&fixture.credentials[0]).unwrap()).unwrap(),
-        dns
-    );
-    assert!(matches!(
-        store.heartbeat(&fixture.credentials[3], "test"),
-        Err(Error::Forbidden)
-    ));
-    assert!(
-        store
-            .exchange_device(&fixture.device_code, &fixture.exchange)
-            .is_ok()
-    );
-    assert!(
-        store
-            .enroll(&fixture.unused_token, &request("legacy token"))
-            .is_ok()
-    );
-    assert!(
-        store
-            .connection
-            .prepare("SELECT name FROM sqlite_temp_master WHERE type IN ('view','trigger','table')")
-            .unwrap()
-            .query([])
-            .unwrap()
-            .next()
-            .unwrap()
-            .is_none()
-    );
-    drop(store);
-    assert!(Store::open(dir.path(), &NetworkOptions::default()).is_ok());
 }
 
 #[test]
@@ -157,19 +65,18 @@ fn networks_isolate_inventory_addresses_revision_tags_and_agent_snapshots() {
     ));
     assert!(
         store
-            .save_mesh_access(
+            .save_network_policy(
                 &second_network,
-                &SaveMeshAccessRequest {
+                &crate::contracts::network_policy::SaveNetworkPolicyRequest {
                     expected_revision: 2,
-                    policy: MeshAccessPolicy {
-                        default_action: AccessAction::Reject,
-                        rules: vec![MeshAccessRule {
+                    policy: meshway_policy::NetworkPolicy {
+                        grants: vec![meshway_policy::Grant {
                             id: "cross".into(),
-                            source: vec![format!("node:{}", one.id)],
-                            destination: vec!["*".into()],
-                            action: AccessAction::Allow,
+                            src: vec![format!("node:{}", one.id)],
+                            dst: vec!["*".into()],
                             bidirectional: false
-                        }]
+                        }],
+                        ..meshway_policy::NetworkPolicy::default_template()
                     },
                     source_jsonc: None
                 }
@@ -224,10 +131,11 @@ fn networks_isolate_inventory_addresses_revision_tags_and_agent_snapshots() {
     }
     assert_eq!(
         store
-            .agent_dataplane(&second.node_credential)
+            .configuration(&second.node_credential)
             .unwrap()
             .payload
-            .node_id,
+            .node
+            .id,
         two.id
     );
 }

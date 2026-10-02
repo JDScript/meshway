@@ -5,8 +5,7 @@ use axum::{
 };
 use meshway_protocol::{
     AcknowledgeConfigurationRequest, AcknowledgeConfigurationResponse, ConfigurationSnapshot,
-    ErrorResponse, PolicySnapshot, PreviewPolicyRequest, PreviewPolicyResponse, RevokeNodeResponse,
-    SavePolicyRequest, SetNodeCountryRequest,
+    ErrorResponse, RevokeNodeResponse, SetNodeCountryRequest,
 };
 use utoipa_axum::router::OpenApiRouter;
 
@@ -15,91 +14,10 @@ use crate::{AppState, Error};
 
 pub(crate) fn routes() -> OpenApiRouter<AppState> {
     OpenApiRouter::new()
-        .routes(utoipa_axum::routes!(get_policy))
-        .routes(utoipa_axum::routes!(preview_policy))
-        .routes(utoipa_axum::routes!(save_policy))
         .routes(utoipa_axum::routes!(set_node_country))
         .routes(utoipa_axum::routes!(get_agent_configuration))
         .routes(utoipa_axum::routes!(acknowledge_configuration))
         .layer(DefaultBodyLimit::max(512 * 1024))
-}
-
-#[utoipa::path(get, path = "/api/v1/networks/{network_id}/policy", operation_id = "getPolicy", security(("managementBearer" = [])),
-    params(("network_id" = String, Path, description = "Stable network ID")),
-    responses((status = 200, description = "Saved source policy and current diagnostics", body = PolicySnapshot),
-    (status = 404, description = "Network not found", body = ErrorResponse),
-    (status = 401, description = "Admin credential required", body = ErrorResponse),
-    (status = 500, description = "Storage unavailable", body = ErrorResponse)))]
-async fn get_policy(
-    State(state): State<AppState>,
-    Path(network_id): Path<String>,
-    headers: HeaderMap,
-) -> Result<Json<PolicySnapshot>, Error> {
-    let token = bearer(&headers)?;
-    state
-        .network_access(
-            token,
-            network_id,
-            crate::accounts::NetworkPermission::Read,
-            move |store, network_id| store.policy(network_id).map(Json),
-        )
-        .await
-}
-
-#[utoipa::path(post, path = "/api/v1/networks/{network_id}/policy/preview", operation_id = "previewPolicy", security(("managementBearer" = [])), request_body = PreviewPolicyRequest,
-    params(("network_id" = String, Path, description = "Stable network ID")),
-    responses((status = 200, description = "Pure preview; no persistence", body = PreviewPolicyResponse),
-    (status = 404, description = "Network not found", body = ErrorResponse),
-    (status = 400, description = "Invalid JSON", body = ErrorResponse),
-    (status = 401, description = "Admin credential required", body = ErrorResponse),
-    (status = 413, description = "Request exceeds 512 KiB", body = ErrorResponse),
-    (status = 415, description = "Expected application/json", body = ErrorResponse),
-    (status = 500, description = "Storage unavailable", body = ErrorResponse)))]
-async fn preview_policy(
-    State(state): State<AppState>,
-    Path(network_id): Path<String>,
-    headers: HeaderMap,
-    body: Result<Json<PreviewPolicyRequest>, JsonRejection>,
-) -> Result<Json<PreviewPolicyResponse>, Error> {
-    let token = bearer(&headers)?;
-    let request = json(body)?;
-    state
-        .network_access(
-            token,
-            network_id,
-            crate::accounts::NetworkPermission::Read,
-            move |store, network_id| store.preview(network_id, &request).map(Json),
-        )
-        .await
-}
-
-#[utoipa::path(post, path = "/api/v1/networks/{network_id}/policy/save", operation_id = "savePolicy", security(("managementBearer" = [])), request_body = SavePolicyRequest,
-    params(("network_id" = String, Path, description = "Stable network ID")),
-    responses((status = 200, description = "Canonical conditional policy save", body = PolicySnapshot),
-    (status = 404, description = "Network not found", body = ErrorResponse),
-    (status = 400, description = "Invalid JSON", body = ErrorResponse),
-    (status = 401, description = "Admin credential required", body = ErrorResponse),
-    (status = 409, description = "Stale global revision", body = ErrorResponse),
-    (status = 422, description = "Invalid policy or capacity exhausted", body = ErrorResponse),
-    (status = 413, description = "Request exceeds 512 KiB", body = ErrorResponse),
-    (status = 415, description = "Expected application/json", body = ErrorResponse),
-    (status = 500, description = "Storage unavailable", body = ErrorResponse)))]
-async fn save_policy(
-    State(state): State<AppState>,
-    Path(network_id): Path<String>,
-    headers: HeaderMap,
-    body: Result<Json<SavePolicyRequest>, JsonRejection>,
-) -> Result<Json<PolicySnapshot>, Error> {
-    let token = bearer(&headers)?;
-    let request = json(body)?;
-    state
-        .network_access(
-            token,
-            network_id,
-            crate::accounts::NetworkPermission::Manage,
-            move |store, network_id| store.save_policy(network_id, &request).map(Json),
-        )
-        .await
 }
 
 #[utoipa::path(post, path = "/api/v1/networks/{network_id}/nodes/country", operation_id = "setNodeCountry", security(("managementBearer" = [])), request_body = SetNodeCountryRequest,

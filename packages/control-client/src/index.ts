@@ -34,9 +34,6 @@ export {
   getManagedListenersOperation as getManagedListeners,
   saveManagedListenerOperation as saveManagedListener,
   revokeNodeOperation as revokeNode,
-  getPolicyOperation as getPolicy,
-  previewPolicyOperation as previewPolicy,
-  savePolicyOperation as savePolicy,
   getNetworkPolicyOperation as getNetworkPolicy,
   saveNetworkPolicyOperation as saveNetworkPolicy,
   setNodeCountryOperation as setNodeCountry,
@@ -45,12 +42,9 @@ export {
   getConnectionRuntimesOperation as getConnectionRuntimes,
   getEndpointDiscoveriesOperation as getEndpointDiscoveries,
   reportEndpointDiscoveryOperation as reportEndpointDiscovery,
-  getMeshAccessOperation as getMeshAccess,
-  saveMeshAccessOperation as saveMeshAccess,
   getTagsOperation as getTags,
   saveTagsOperation as saveTags,
   setNodeTagsOperation as setNodeTags,
-  previewFlowOperation as previewFlow,
   queryLatencyHistoryOperation as queryLatencyHistory,
 } from "./generated/operations.gen.ts";
 export type * from "./generated/types.gen.ts";

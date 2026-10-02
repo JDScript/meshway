@@ -244,7 +244,7 @@ fn retries_expiry_and_monotonic_observations_are_not_renewal() {
             .connection
             .pragma_query_value::<i64, _>(None, "user_version", |row| row.get(0))
             .unwrap(),
-        crate::store::migrations::VERSION
+        crate::store::schema::VERSION
     );
 }
 

@@ -1,7 +1,9 @@
 //! Coherent Mesh source -> compiler -> stable node execution projection.
-use super::super::{NetworkId, access, configuration, connections, ipam, managed_transports, tags};
+use super::super::{
+    NetworkId, configuration, connections, identity, ipam, managed_transports, tags,
+};
 use crate::Error;
-use meshway_policy::v3::{self, NetworkCompilation, NetworkPolicy};
+use meshway_policy::{self as policy, NetworkCompilation, NetworkPolicy};
 use meshway_protocol::*;
 use rusqlite::{Connection, params};
 use std::collections::{BTreeMap, BTreeSet};
@@ -13,7 +15,7 @@ pub(crate) struct Publication<'a> {
     nodes: Vec<MeshNode>,
     adjacency: ConnectionsSnapshot,
     keys: BTreeMap<String, String>,
-    compiled: Result<NetworkCompilation, Vec<v3::Diagnostic>>,
+    compiled: Result<NetworkCompilation, Vec<policy::Diagnostic>>,
 }
 
 impl<'a> Publication<'a> {
@@ -35,16 +37,16 @@ impl<'a> Publication<'a> {
                     .iter()
                     .find(|l| l.id == candidate.listener_id)
                     .ok_or(Error::Configuration("candidate listener missing"))?;
-                reachable.insert(v3::Dial {
+                reachable.insert(policy::Dial {
                     from: candidate.dialer_node_id.clone(),
                     to: listener.node_id.clone(),
                 });
             }
         }
-        let facts = v3::Snapshot {
+        let facts = policy::Snapshot {
             nodes: nodes
                 .iter()
-                .map(|n| v3::Node {
+                .map(|n| policy::Node {
                     id: n.id.clone(),
                     tags: assignments.get(&n.id).cloned().unwrap_or_default(),
                     listener: adjacency
@@ -59,14 +61,14 @@ impl<'a> Publication<'a> {
             reachable,
             rule_sets: BTreeMap::new(),
         };
-        let compiled = v3::compile_network(policy, &facts, v3::CompileOptions { paths: 1 });
+        let compiled = policy::compile_network(policy, &facts, policy::CompileOptions { paths: 1 });
         Ok(Self {
             db,
             scope,
             network,
             nodes,
             adjacency,
-            keys: access::bindings(db, scope)?,
+            keys: identity::bindings(db, scope)?,
             compiled,
         })
     }
@@ -75,7 +77,7 @@ impl<'a> Publication<'a> {
         self.compiled.is_ok()
     }
 
-    pub(in crate::store) fn diagnostics(&self) -> Vec<v3::Diagnostic> {
+    pub(in crate::store) fn diagnostics(&self) -> Vec<policy::Diagnostic> {
         match &self.compiled {
             Err(d) => d.iter().take(64).cloned().collect(),
             Ok(c) => c
@@ -83,14 +85,14 @@ impl<'a> Publication<'a> {
                 .failures
                 .iter()
                 .take(64)
-                .map(|f| v3::Diagnostic {
+                .map(|f| policy::Diagnostic {
                     field: format!("mesh.{}", c.base.nodes[usize::from(f.src)]),
                     message: format!(
                         "Candidate path unavailable for {}: {}",
                         f.destination, f.reason
                     ),
                 })
-                .chain(c.base.mesh_lints.iter().take(64).map(|l| v3::Diagnostic {
+                .chain(c.base.mesh_lints.iter().take(64).map(|l| policy::Diagnostic {
                     field: format!("mesh.{}", l.rule_id),
                     message: format!(
                         "{} of {} matching flows {} shadowed (inventory-dependent); example node:{} -> node:{} first matches {} before {}",

@@ -3,6 +3,9 @@ use crate::{
     NetworkOptions,
     store::test_support::{SingleNetworkFixture, directory, enroll, request},
 };
+use meshway_policy as policy;
+use meshway_policy::NetworkPolicy;
+use meshway_protocol::*;
 
 fn node(
     store: &mut SingleNetworkFixture,
@@ -148,11 +151,11 @@ fn blocked_management_get_save_preserves_intent_and_unblock_restores_same_candid
         })
         .unwrap();
     let mut blocked = NetworkPolicy::default_template();
-    blocked.connections.push(v3::ConnectionRule {
+    blocked.connections.push(policy::ConnectionRule {
         id: "block".into(),
         a: format!("node:{}", a.0.id),
         b: format!("node:{}", b.0.id),
-        action: v3::ConnectionAction::Block,
+        action: policy::ConnectionAction::Block,
     });
     save(&mut store, blocked).unwrap();
     let edit = store.connections().unwrap();
@@ -182,7 +185,7 @@ fn blocked_management_get_save_preserves_intent_and_unblock_restores_same_candid
         store.agent_connections(&b.1).unwrap().payload.outgoing[0].id,
         "retained"
     );
-    let current = store.mesh_execution(&b.1, &b.2).unwrap().snapshot.unwrap();
+    let current = store.mesh_execution(&b.1, &b.2).unwrap().snapshot;
     assert!(current.payload.valid);
     assert!(!current.payload.paths.is_empty());
 }
@@ -198,7 +201,7 @@ fn owner_65th_material_rolls_back_listener_source_and_revision() {
     }
     let revision = store.revision().unwrap();
     let scope = store.network_id.clone();
-    let before = store.mesh_execution(&a.1, &a.2).unwrap().snapshot.unwrap();
+    let before = store.mesh_execution(&a.1, &a.2).unwrap().snapshot;
     assert_eq!(before.payload.materials.len(), 64);
     assert!(matches!(
         add_listener(&mut store, listener(64, &a.0.id)),
@@ -206,7 +209,7 @@ fn owner_65th_material_rolls_back_listener_source_and_revision() {
     ));
     assert_eq!(store.revision().unwrap(), revision);
     assert_eq!(store.managed_listeners(&scope).unwrap().listeners.len(), 64);
-    let after = store.mesh_execution(&a.1, &a.2).unwrap().snapshot.unwrap();
+    let after = store.mesh_execution(&a.1, &a.2).unwrap().snapshot;
     assert_eq!(after.digest, before.digest);
     assert_eq!(
         store
@@ -219,44 +222,6 @@ fn owner_65th_material_rolls_back_listener_source_and_revision() {
             .unwrap(),
         0
     );
-}
-
-#[test]
-fn legacy_65_materials_cannot_activate_v3_or_download_above_contract() {
-    let dir = directory();
-    let mut store = SingleNetworkFixture::open(dir.path(), &NetworkOptions::default()).unwrap();
-    let a = node(&mut store, 9, ConnectionTransport::Vless);
-    for i in 0..65 {
-        add_listener(&mut store, listener(i, &a.0.id)).unwrap();
-    }
-    let scope = store.network_id.clone();
-    let revision = store.revision().unwrap();
-    let legacy = store.policy().unwrap();
-    let intent = store.connections().unwrap();
-    assert!(matches!(
-        save(&mut store, NetworkPolicy::default_template()),
-        Err(Error::Capacity(_))
-    ));
-    assert_eq!(store.revision().unwrap(), revision);
-    assert!(!active(&store.connection, &scope).unwrap());
-    assert_eq!(store.policy().unwrap().policy, legacy.policy);
-    assert_eq!(
-        store.connections().unwrap().configuration,
-        intent.configuration
-    );
-    // Defensive download projection has the same count gate even without the
-    // mutation gate; no fixture-only activation or malformed database writes.
-    let policy = NetworkPolicy::default_template();
-    let publication = super::super::publication::mesh_execution::Publication::read(
-        &store.connection,
-        &scope,
-        &policy,
-    )
-    .unwrap();
-    assert!(matches!(
-        publication.project(&a.0.id, &store.material_key),
-        Err(Error::Capacity(_))
-    ));
 }
 
 #[test]
@@ -299,11 +264,7 @@ fn candidate_65th_dialer_material_rolls_back_and_multiple_endpoints_count_once()
             configuration: intent,
         })
         .unwrap();
-    let before = store
-        .mesh_execution(&dialer.1, &dialer.2)
-        .unwrap()
-        .snapshot
-        .unwrap();
+    let before = store.mesh_execution(&dialer.1, &dialer.2).unwrap().snapshot;
     assert_eq!(before.payload.materials.len(), 64);
     assert!(
         before
@@ -331,7 +292,6 @@ fn candidate_65th_dialer_material_rolls_back_and_multiple_endpoints_count_once()
             .mesh_execution(&dialer.1, &dialer.2)
             .unwrap()
             .snapshot
-            .unwrap()
             .digest,
         before.digest
     );

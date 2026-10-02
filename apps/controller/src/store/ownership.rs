@@ -4,19 +4,11 @@ use meshway_protocol::{AuthorizeDeviceRequest, AuthorizeDeviceResponse, accounts
 use rusqlite::{Connection, OptionalExtension, TransactionBehavior, params};
 use std::result::Result;
 
-pub(super) fn installed(db: &Connection) -> Result<bool, Error> {
-    Ok(db.query_row("SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type='table' AND name='device_account_bindings')",[],|r|r.get(0))?)
-}
-
 pub(super) fn binding(
     db: &Connection,
     network: &NetworkId,
     code: &str,
 ) -> Result<Option<DeviceAuthorizationBinding>, Error> {
-    // Uninstalled legacy Store fixtures retain their original enrollment contract.
-    if !installed(db)? {
-        return Ok(None);
-    }
     let stored = db.query_row("SELECT b.user_id,b.membership_id,b.session_digest,b.credential_version FROM device_account_bindings b JOIN enrollment_tokens e ON e.id=b.token_id AND e.network_id=b.network_id WHERE e.token_hash=?1 AND b.network_id=?2", params![meshway_protocol::local::digest(code),network.as_str()], |r| Ok((r.get::<_,String>(0)?,r.get::<_,String>(1)?,r.get::<_,Vec<u8>>(2)?,r.get::<_,i64>(3)?))).optional()?;
     stored
         .map(|(user, id, digest, version)| {

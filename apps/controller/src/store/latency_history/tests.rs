@@ -1,6 +1,6 @@
 use super::*;
 use crate::NetworkOptions;
-use crate::store::migrations::latency::validate_schema;
+use crate::store::schema::validate as validate_schema;
 use std::os::unix::fs::PermissionsExt;
 
 struct Fixture {
@@ -681,7 +681,7 @@ fn incompatible_schema_is_detected_without_side_effects() {
 }
 
 #[test]
-fn history_trigger_set_is_exact_pure_and_does_not_reject_base_triggers() {
+fn current_trigger_set_is_exact_and_validation_is_pure() {
     let f = fixture();
     f.store
         .connection
@@ -689,7 +689,11 @@ fn history_trigger_set_is_exact_pure_and_does_not_reject_base_triggers() {
             "CREATE TRIGGER legitimate_base_fixture AFTER INSERT ON nodes BEGIN SELECT 1; END;",
         )
         .unwrap();
-    validate_schema(&f.store.connection).unwrap();
+    assert!(validate_schema(&f.store.connection).is_err());
+    f.store
+        .connection
+        .execute_batch("DROP TRIGGER legitimate_base_fixture")
+        .unwrap();
     for table in [
         "latency_samples",
         "latency_admissions",

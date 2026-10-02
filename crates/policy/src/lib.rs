@@ -7,6 +7,7 @@ mod engine;
 mod graph;
 mod index;
 mod internet;
+mod inventory;
 mod mesh_lints;
 mod model;
 mod path_search;
@@ -19,17 +20,24 @@ mod validation;
 pub use compiled::*;
 pub use engine::compile;
 pub use index::{DestinationIndex, FlattenedPrefix};
+pub use inventory::validate_inventory;
 pub use model::*;
+pub(crate) use model::{allowed, default_rules, matches, specificity};
 pub use profiles::*;
 pub use rule_sets::*;
 pub use validation::validate;
-pub(crate) use model::{allowed, default_rules, matches, specificity};
 #[cfg(test)]
 mod tests;
 
 pub fn valid_tag_selector(value: &str) -> bool {
-    let Some(name) = value.strip_prefix("tag:") else { return false; };
-    !name.is_empty() && name.len() <= 48 && name.bytes().enumerate().all(|(index, byte)| {
-        byte.is_ascii_lowercase() || byte.is_ascii_digit() || (index != 0 && (byte == b'_' || byte == b'-'))
-    })
+    let Some(name) = value.strip_prefix("tag:") else {
+        return false;
+    };
+    !name.is_empty()
+        && name.len() <= 48
+        && name.bytes().enumerate().all(|(index, byte)| {
+            byte.is_ascii_lowercase()
+                || byte.is_ascii_digit()
+                || (index != 0 && (byte == b'_' || byte == b'-'))
+        })
 }

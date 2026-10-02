@@ -10,7 +10,6 @@ use meshway_protocol::{
 use serde_json::{Value, json};
 use tower::ServiceExt;
 
-mod access;
 mod accounts;
 mod connection_runtime;
 mod device_login;
@@ -18,6 +17,7 @@ mod endpoint_discovery;
 mod network;
 mod network_endpoint_matrix;
 mod networks;
+mod policy;
 
 fn tempdir() -> tempfile::TempDir {
     use std::os::unix::fs::PermissionsExt;
@@ -783,203 +783,6 @@ fn committed_openapi_matches_live_routes_and_current_version() {
         openapi_json().unwrap(),
         include_str!("../../../../packages/protocol/openapi.json"),
         "Run pnpm --filter @meshway/control-client generate"
-    );
-}
-
-#[tokio::test]
-async fn policy_metadata_and_configuration_routes_enforce_roles_and_conditional_writes() {
-    let fixture = Fixture::new();
-    let enrollment_token = fixture.token().await.token;
-    let credential = local::credential().unwrap();
-    let node = enroll(&fixture, &enrollment_token, &credential, "policy-source")
-        .await
-        .node;
-    let policy = json!({"default_action":"direct","rules":[]});
-    let flow = json!({"source_node_id":node.id,"destination_node_id":null,"destination_ip":null,"domain":"example.com","destination_country":null});
-    for wrong in [&credential, &enrollment_token] {
-        assert_eq!(
-            request(&fixture.app, "GET", "/api/v1/policy", Some(wrong), None)
-                .await
-                .0,
-            StatusCode::UNAUTHORIZED
-        );
-        for (path, body) in [
-            (
-                "/api/v1/policy/preview",
-                json!({"policy":policy,"flow":flow}),
-            ),
-            (
-                "/api/v1/policy/save",
-                json!({"expected_revision":2,"policy":policy}),
-            ),
-            (
-                "/api/v1/nodes/country",
-                json!({"node_id":node.id,"country":"us","expected_revision":2}),
-            ),
-        ] {
-            assert_eq!(
-                request(&fixture.app, "POST", path, Some(wrong), Some(body))
-                    .await
-                    .0,
-                StatusCode::UNAUTHORIZED
-            );
-        }
-    }
-    for wrong in [&fixture.admin, &enrollment_token] {
-        assert_eq!(
-            request(
-                &fixture.app,
-                "GET",
-                "/api/v1/agents/configuration",
-                Some(wrong),
-                None
-            )
-            .await
-            .0,
-            StatusCode::UNAUTHORIZED
-        );
-        assert_eq!(
-            request(
-                &fixture.app,
-                "POST",
-                "/api/v1/agents/configuration/ack",
-                Some(wrong),
-                Some(json!({"revision":2,"digest":"0".repeat(64)}))
-            )
-            .await
-            .0,
-            StatusCode::UNAUTHORIZED
-        );
-    }
-    let (code, preview) = request(
-        &fixture.app,
-        "POST",
-        "/api/v1/policy/preview",
-        Some(&fixture.admin),
-        Some(json!({"policy":policy,"flow":flow})),
-    )
-    .await;
-    assert_eq!(code, StatusCode::OK);
-    assert_eq!(preview["revision"], 2);
-    assert_eq!(preview["decision"]["action"], "route");
-    assert_eq!(
-        request(
-            &fixture.app,
-            "GET",
-            "/api/v1/policy",
-            Some(&fixture.admin),
-            None
-        )
-        .await
-        .1["policy"]["default_action"],
-        "reject"
-    );
-    assert_eq!(
-        request(
-            &fixture.app,
-            "POST",
-            "/api/v1/policy/save",
-            Some(&fixture.admin),
-            Some(json!({"expected_revision":1,"policy":policy}))
-        )
-        .await
-        .0,
-        StatusCode::CONFLICT
-    );
-    let invalid = json!({"default_action":"direct","rules":[{"id":"invalid","source":{"node_ids":[],"countries":[]},"destination_scope":"mesh","destination_any":[],"action":{"kind":"route","via":["missing"],"exit_node_id":null}}]});
-    assert_eq!(
-        request(
-            &fixture.app,
-            "POST",
-            "/api/v1/policy/save",
-            Some(&fixture.admin),
-            Some(json!({"expected_revision":2,"policy":invalid}))
-        )
-        .await
-        .0,
-        StatusCode::UNPROCESSABLE_ENTITY
-    );
-    assert_eq!(
-        request(
-            &fixture.app,
-            "GET",
-            "/api/v1/policy",
-            Some(&fixture.admin),
-            None
-        )
-        .await
-        .1["revision"],
-        2
-    );
-    assert_eq!(
-        request(
-            &fixture.app,
-            "POST",
-            "/api/v1/nodes/country",
-            Some(&fixture.admin),
-            Some(json!({"node_id":node.id,"expected_revision":2}))
-        )
-        .await
-        .0,
-        StatusCode::BAD_REQUEST,
-        "country is required even when null"
-    );
-    assert_eq!(
-        request(
-            &fixture.app,
-            "POST",
-            "/api/v1/nodes/country",
-            Some(&fixture.admin),
-            Some(json!({"node_id":node.id,"country":"USA","expected_revision":2}))
-        )
-        .await
-        .0,
-        StatusCode::BAD_REQUEST
-    );
-    let updated = request(
-        &fixture.app,
-        "POST",
-        "/api/v1/nodes/country",
-        Some(&fixture.admin),
-        Some(json!({"node_id":node.id,"country":"us","expected_revision":2})),
-    )
-    .await;
-    assert_eq!(updated.0, StatusCode::OK);
-    assert_eq!(updated.1["node"]["country"], "US");
-    let snapshot = request(
-        &fixture.app,
-        "GET",
-        "/api/v1/agents/configuration?node_id=someone-else",
-        Some(&credential),
-        None,
-    )
-    .await;
-    assert_eq!(snapshot.0, StatusCode::OK);
-    assert_eq!(snapshot.1["payload"]["node"]["id"], node.id);
-    assert_eq!(snapshot.1["payload"]["revision"], 3);
-    assert_eq!(
-        request(
-            &fixture.app,
-            "POST",
-            "/api/v1/agents/configuration/ack",
-            Some(&credential),
-            Some(json!({"revision":2,"digest":snapshot.1["digest"]}))
-        )
-        .await
-        .0,
-        StatusCode::CONFLICT
-    );
-    assert_eq!(
-        request(
-            &fixture.app,
-            "POST",
-            "/api/v1/agents/configuration/ack",
-            Some(&credential),
-            Some(json!({"revision":3,"digest":snapshot.1["digest"]}))
-        )
-        .await
-        .0,
-        StatusCode::OK
     );
 }
 

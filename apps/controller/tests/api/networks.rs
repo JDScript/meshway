@@ -68,12 +68,8 @@ async fn network_resources_and_credentials_enforce_isolation_under_interleaved_r
             json!({"node_id":enrolled[0].0.id,"tags":[],"expected_revision":2}),
         ),
         (
-            "access",
-            json!({"expected_revision":2,"policy":{"default_action":"reject","rules":[{"id":"cross","source":[format!("node:{}",enrolled[0].0.id)],"destination":["*"],"action":"allow","bidirectional":false}]}}),
-        ),
-        (
             "policy/save",
-            json!({"expected_revision":2,"policy":{"default_action":"direct","rules":[{"id":"cross","source":{"node_ids":[enrolled[0].0.id],"countries":[]},"destination_scope":"any","destination_any":[],"action":{"kind":"route","via":[],"exit_node_id":null}}]}}),
+            json!({"expected_revision":2,"policy":{"connections":[],"grants":[{"id":"cross","src":[format!("node:{}",enrolled[0].0.id)],"dst":["*"],"bidirectional":false}],"mesh":[],"public_rules":[],"profiles":[],"assignments":[],"automatic":{"regions":{},"fallback":"mesh-only"}}}),
         ),
         (
             "connections",

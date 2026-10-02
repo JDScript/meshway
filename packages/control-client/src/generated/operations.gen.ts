@@ -1,8 +1,8 @@
 // Generated from the controller OpenAPI by scripts/generate-protocol.mjs. Do not edit.
 
 import { request } from "../transport.ts";
-import type { AcceptInvitationRequest, AccountInvitation, AccountInvitations, AccountMembers, AccountMembership, AccountPasswordReset, AccountPasswordResets, AccountReceipt, AccountSession, AcknowledgeAgentConnectionsRequest, AcknowledgeAgentConnectionsResponse, AcknowledgeConfigurationRequest, AcknowledgeConfigurationResponse, AcknowledgeMeshExecutionRequest, AcknowledgeMeshExecutionResponse, AgentConnectionsSnapshot, AgentDataplaneSnapshot, AgentDnsSnapshot, AgentManagedConnectionsSnapshot, AgentManagedDataplaneSnapshot, AgentNodeResponse, AuthorizeDeviceRequest, AuthorizeDeviceResponse, BeginConnectionRuntimeRequest, BeginConnectionRuntimeResponse, ChangePasswordRequest, ClaimNodeOwnershipRequest, ClaimOwnerRequest, ConfigurationSnapshot, ConnectionRuntimesSnapshot, ConnectionsSnapshot, CreateEnrollmentTokenRequest, CreateEnrollmentTokenResponse, CreateInvitationRequest, CreateInvitationResponse, CreateManagedEnrollmentTokenRequest, CreateNetworkRequest, CreatePasswordResetRequest, CreatePasswordResetResponse, EndpointDiscoveriesSnapshot, EnrollAgentRequest, ExchangeDeviceRequest, GetConnectionRuntimeEpochResponse, HeartbeatRequest, LatencyHistoryResponse, LoginRequest, LoginResponse, ManagedListenersSnapshot, MeshAccessSnapshot, MeshExecutionRequest, MeshExecutionResponse, NetworkList, NetworkPolicySnapshot, NetworkSnapshot, NodeList, NodeOwnershipList, Overview, PolicySnapshot, PreviewFlowRequest, PreviewFlowResponse, PreviewPolicyRequest, PreviewPolicyResponse, PublishConnectionIdentityRequest, PublishConnectionIdentityResponse, PublishManagedTransportCapabilitiesRequest, PublishManagedTransportCapabilitiesResponse, QueryLatencyHistoryRequest, RedeemPasswordResetRequest, RegisterInvitationRequest, ReportConnectionRuntimeRequest, ReportConnectionRuntimeResponse, ReportEndpointDiscoveryRequest, ReportEndpointDiscoveryResponse, ReportLatencySamplesRequest, ReportLatencySamplesResponse, RevokeAccountSessionsRequest, RevokeInvitationRequest, RevokeNodeRequest, RevokeNodeResponse, RevokePasswordResetRequest, SaveConnectionsRequest, SaveManagedListenerRequest, SaveMembershipRequest, SaveMeshAccessRequest, SaveNetworkPolicyRequest, SaveNetworkRequest, SavePolicyRequest, SaveTagsRequest, SetNodeCountryRequest, SetNodeTagsRequest, TagSnapshot } from "./types.gen.ts";
-import { zAcceptInvitationRequest, zAccountInvitation, zAccountInvitations, zAccountMembers, zAccountMembership, zAccountPasswordReset, zAccountPasswordResets, zAccountReceipt, zAccountSession, zAcknowledgeAgentConnectionsRequest, zAcknowledgeAgentConnectionsResponse, zAcknowledgeConfigurationRequest, zAcknowledgeConfigurationResponse, zAcknowledgeMeshExecutionRequest, zAcknowledgeMeshExecutionResponse, zAgentConnectionsSnapshot, zAgentDataplaneSnapshot, zAgentDnsSnapshot, zAgentManagedConnectionsSnapshot, zAgentManagedDataplaneSnapshot, zAgentNodeResponse, zAuthorizeDeviceRequest, zAuthorizeDeviceResponse, zBeginConnectionRuntimeRequest, zBeginConnectionRuntimeResponse, zChangePasswordRequest, zClaimNodeOwnershipRequest, zClaimOwnerRequest, zConfigurationSnapshot, zConnectionRuntimesSnapshot, zConnectionsSnapshot, zCreateEnrollmentTokenRequest, zCreateEnrollmentTokenResponse, zCreateInvitationRequest, zCreateInvitationResponse, zCreateManagedEnrollmentTokenRequest, zCreateNetworkRequest, zCreatePasswordResetRequest, zCreatePasswordResetResponse, zEndpointDiscoveriesSnapshot, zEnrollAgentRequest, zExchangeDeviceRequest, zGetConnectionRuntimeEpochResponse, zHeartbeatRequest, zLatencyHistoryResponse, zLoginRequest, zLoginResponse, zManagedListenersSnapshot, zMeshAccessSnapshot, zMeshExecutionRequest, zMeshExecutionResponse, zNetworkList, zNetworkPolicySnapshot, zNetworkSnapshot, zNodeList, zNodeOwnershipList, zOverview, zPolicySnapshot, zPreviewFlowRequest, zPreviewFlowResponse, zPreviewPolicyRequest, zPreviewPolicyResponse, zPublishConnectionIdentityRequest, zPublishConnectionIdentityResponse, zPublishManagedTransportCapabilitiesRequest, zPublishManagedTransportCapabilitiesResponse, zQueryLatencyHistoryRequest, zRedeemPasswordResetRequest, zRegisterInvitationRequest, zReportConnectionRuntimeRequest, zReportConnectionRuntimeResponse, zReportEndpointDiscoveryRequest, zReportEndpointDiscoveryResponse, zReportLatencySamplesRequest, zReportLatencySamplesResponse, zRevokeAccountSessionsRequest, zRevokeInvitationRequest, zRevokeNodeRequest, zRevokeNodeResponse, zRevokePasswordResetRequest, zSaveConnectionsRequest, zSaveManagedListenerRequest, zSaveMembershipRequest, zSaveMeshAccessRequest, zSaveNetworkPolicyRequest, zSaveNetworkRequest, zSavePolicyRequest, zSaveTagsRequest, zSetNodeCountryRequest, zSetNodeTagsRequest, zTagSnapshot } from "./zod.gen.ts";
+import type { AcceptInvitationRequest, AccountInvitation, AccountInvitations, AccountMembers, AccountMembership, AccountPasswordReset, AccountPasswordResets, AccountReceipt, AccountSession, AcknowledgeAgentConnectionsRequest, AcknowledgeAgentConnectionsResponse, AcknowledgeConfigurationRequest, AcknowledgeConfigurationResponse, AcknowledgeMeshExecutionRequest, AcknowledgeMeshExecutionResponse, AgentConnectionsSnapshot, AgentDnsSnapshot, AgentManagedConnectionsSnapshot, AgentNodeResponse, AuthorizeDeviceRequest, AuthorizeDeviceResponse, BeginConnectionRuntimeRequest, BeginConnectionRuntimeResponse, ChangePasswordRequest, ClaimNodeOwnershipRequest, ClaimOwnerRequest, ConfigurationSnapshot, ConnectionRuntimesSnapshot, ConnectionsSnapshot, CreateEnrollmentTokenRequest, CreateEnrollmentTokenResponse, CreateInvitationRequest, CreateInvitationResponse, CreateManagedEnrollmentTokenRequest, CreateNetworkRequest, CreatePasswordResetRequest, CreatePasswordResetResponse, EndpointDiscoveriesSnapshot, EnrollAgentRequest, ExchangeDeviceRequest, GetConnectionRuntimeEpochResponse, HeartbeatRequest, LatencyHistoryResponse, LoginRequest, LoginResponse, ManagedListenersSnapshot, MeshExecutionRequest, MeshExecutionResponse, NetworkList, NetworkPolicySnapshot, NetworkSnapshot, NodeList, NodeOwnershipList, Overview, PublishConnectionIdentityRequest, PublishConnectionIdentityResponse, PublishManagedTransportCapabilitiesRequest, PublishManagedTransportCapabilitiesResponse, QueryLatencyHistoryRequest, RedeemPasswordResetRequest, RegisterInvitationRequest, ReportConnectionRuntimeRequest, ReportConnectionRuntimeResponse, ReportEndpointDiscoveryRequest, ReportEndpointDiscoveryResponse, ReportLatencySamplesRequest, ReportLatencySamplesResponse, RevokeAccountSessionsRequest, RevokeInvitationRequest, RevokeNodeRequest, RevokeNodeResponse, RevokePasswordResetRequest, SaveConnectionsRequest, SaveManagedListenerRequest, SaveMembershipRequest, SaveNetworkPolicyRequest, SaveNetworkRequest, SaveTagsRequest, SetNodeCountryRequest, SetNodeTagsRequest, TagSnapshot } from "./types.gen.ts";
+import { zAcceptInvitationRequest, zAccountInvitation, zAccountInvitations, zAccountMembers, zAccountMembership, zAccountPasswordReset, zAccountPasswordResets, zAccountReceipt, zAccountSession, zAcknowledgeAgentConnectionsRequest, zAcknowledgeAgentConnectionsResponse, zAcknowledgeConfigurationRequest, zAcknowledgeConfigurationResponse, zAcknowledgeMeshExecutionRequest, zAcknowledgeMeshExecutionResponse, zAgentConnectionsSnapshot, zAgentDnsSnapshot, zAgentManagedConnectionsSnapshot, zAgentNodeResponse, zAuthorizeDeviceRequest, zAuthorizeDeviceResponse, zBeginConnectionRuntimeRequest, zBeginConnectionRuntimeResponse, zChangePasswordRequest, zClaimNodeOwnershipRequest, zClaimOwnerRequest, zConfigurationSnapshot, zConnectionRuntimesSnapshot, zConnectionsSnapshot, zCreateEnrollmentTokenRequest, zCreateEnrollmentTokenResponse, zCreateInvitationRequest, zCreateInvitationResponse, zCreateManagedEnrollmentTokenRequest, zCreateNetworkRequest, zCreatePasswordResetRequest, zCreatePasswordResetResponse, zEndpointDiscoveriesSnapshot, zEnrollAgentRequest, zExchangeDeviceRequest, zGetConnectionRuntimeEpochResponse, zHeartbeatRequest, zLatencyHistoryResponse, zLoginRequest, zLoginResponse, zManagedListenersSnapshot, zMeshExecutionRequest, zMeshExecutionResponse, zNetworkList, zNetworkPolicySnapshot, zNetworkSnapshot, zNodeList, zNodeOwnershipList, zOverview, zPublishConnectionIdentityRequest, zPublishConnectionIdentityResponse, zPublishManagedTransportCapabilitiesRequest, zPublishManagedTransportCapabilitiesResponse, zQueryLatencyHistoryRequest, zRedeemPasswordResetRequest, zRegisterInvitationRequest, zReportConnectionRuntimeRequest, zReportConnectionRuntimeResponse, zReportEndpointDiscoveryRequest, zReportEndpointDiscoveryResponse, zReportLatencySamplesRequest, zReportLatencySamplesResponse, zRevokeAccountSessionsRequest, zRevokeInvitationRequest, zRevokeNodeRequest, zRevokeNodeResponse, zRevokePasswordResetRequest, zSaveConnectionsRequest, zSaveManagedListenerRequest, zSaveMembershipRequest, zSaveNetworkPolicyRequest, zSaveNetworkRequest, zSaveTagsRequest, zSetNodeCountryRequest, zSetNodeTagsRequest, zTagSnapshot } from "./zod.gen.ts";
 
 export async function publishConnectionIdentityOperation(baseUrl: string, token: string, body: PublishConnectionIdentityRequest): Promise<PublishConnectionIdentityResponse> {
   return request(baseUrl, { method: "POST", path: "/api/v1/agent/connection-identity", token, body: zPublishConnectionIdentityRequest.parse(body) }, zPublishConnectionIdentityResponse);
@@ -32,10 +32,6 @@ export async function beginConnectionRuntimeOperation(baseUrl: string, token: st
   return request(baseUrl, { method: "POST", path: "/api/v1/agent/connections/runtime/begin", token, body: zBeginConnectionRuntimeRequest.parse(body) }, zBeginConnectionRuntimeResponse);
 }
 
-export async function getAgentDataplaneOperation(baseUrl: string, token: string): Promise<AgentDataplaneSnapshot> {
-  return request(baseUrl, { method: "GET", path: "/api/v1/agent/dataplane", token }, zAgentDataplaneSnapshot);
-}
-
 export async function getAgentDnsOperation(baseUrl: string, token: string): Promise<AgentDnsSnapshot> {
   return request(baseUrl, { method: "GET", path: "/api/v1/agent/dns", token }, zAgentDnsSnapshot);
 }
@@ -46,10 +42,6 @@ export async function reportLatencySamplesOperation(baseUrl: string, token: stri
 
 export async function getAgentManagedConnectionsOperation(baseUrl: string, token: string): Promise<AgentManagedConnectionsSnapshot> {
   return request(baseUrl, { method: "GET", path: "/api/v1/agent/managed-connections", token }, zAgentManagedConnectionsSnapshot);
-}
-
-export async function getAgentManagedDataplaneOperation(baseUrl: string, token: string): Promise<AgentManagedDataplaneSnapshot> {
-  return request(baseUrl, { method: "GET", path: "/api/v1/agent/managed-dataplane", token }, zAgentManagedDataplaneSnapshot);
 }
 
 export async function publishManagedTransportCapabilitiesOperation(baseUrl: string, token: string, body: PublishManagedTransportCapabilitiesRequest): Promise<PublishManagedTransportCapabilitiesResponse> {
@@ -140,14 +132,6 @@ export async function createNetworkOperation(baseUrl: string, token: string, bod
   return request(baseUrl, { method: "POST", path: "/api/v1/networks", token, body: zCreateNetworkRequest.parse(body) }, zNetworkSnapshot);
 }
 
-export async function getMeshAccessOperation(baseUrl: string, token: string, network_id: string): Promise<MeshAccessSnapshot> {
-  return request(baseUrl, { method: "GET", path: `/api/v1/networks/${encodeURIComponent(network_id)}/access`, token }, zMeshAccessSnapshot);
-}
-
-export async function saveMeshAccessOperation(baseUrl: string, token: string, network_id: string, body: SaveMeshAccessRequest): Promise<MeshAccessSnapshot> {
-  return request(baseUrl, { method: "POST", path: `/api/v1/networks/${encodeURIComponent(network_id)}/access`, token, body: zSaveMeshAccessRequest.parse(body) }, zMeshAccessSnapshot);
-}
-
 export async function getConnectionsOperation(baseUrl: string, token: string, network_id: string): Promise<ConnectionsSnapshot> {
   return request(baseUrl, { method: "GET", path: `/api/v1/networks/${encodeURIComponent(network_id)}/connections`, token }, zConnectionsSnapshot);
 }
@@ -170,10 +154,6 @@ export async function authorizeDeviceOperation(baseUrl: string, token: string, n
 
 export async function createEnrollmentTokenOperation(baseUrl: string, token: string, network_id: string, body: CreateEnrollmentTokenRequest): Promise<CreateEnrollmentTokenResponse> {
   return request(baseUrl, { method: "POST", path: `/api/v1/networks/${encodeURIComponent(network_id)}/enrollment-tokens`, token, body: zCreateEnrollmentTokenRequest.parse(body) }, zCreateEnrollmentTokenResponse);
-}
-
-export async function previewFlowOperation(baseUrl: string, token: string, network_id: string, body: PreviewFlowRequest): Promise<PreviewFlowResponse> {
-  return request(baseUrl, { method: "POST", path: `/api/v1/networks/${encodeURIComponent(network_id)}/flows/preview`, token, body: zPreviewFlowRequest.parse(body) }, zPreviewFlowResponse);
 }
 
 export async function listAccountInvitationsOperation(baseUrl: string, token: string, network_id: string): Promise<AccountInvitations> {
@@ -260,24 +240,12 @@ export async function claimFirstOwnerOperation(baseUrl: string, token: string, n
   return request(baseUrl, { method: "POST", path: `/api/v1/networks/${encodeURIComponent(network_id)}/owner-claim`, token, body: zClaimOwnerRequest.parse(body) }, zAccountMembership);
 }
 
-export async function getPolicyOperation(baseUrl: string, token: string, network_id: string): Promise<PolicySnapshot> {
-  return request(baseUrl, { method: "GET", path: `/api/v1/networks/${encodeURIComponent(network_id)}/policy`, token }, zPolicySnapshot);
-}
-
 export async function getNetworkPolicyOperation(baseUrl: string, token: string, network_id: string): Promise<NetworkPolicySnapshot> {
-  return request(baseUrl, { method: "GET", path: `/api/v1/networks/${encodeURIComponent(network_id)}/policy-v3`, token }, zNetworkPolicySnapshot);
+  return request(baseUrl, { method: "GET", path: `/api/v1/networks/${encodeURIComponent(network_id)}/policy`, token }, zNetworkPolicySnapshot);
 }
 
 export async function saveNetworkPolicyOperation(baseUrl: string, token: string, network_id: string, body: SaveNetworkPolicyRequest): Promise<NetworkPolicySnapshot> {
-  return request(baseUrl, { method: "POST", path: `/api/v1/networks/${encodeURIComponent(network_id)}/policy-v3/save`, token, body: zSaveNetworkPolicyRequest.parse(body) }, zNetworkPolicySnapshot);
-}
-
-export async function previewPolicyOperation(baseUrl: string, token: string, network_id: string, body: PreviewPolicyRequest): Promise<PreviewPolicyResponse> {
-  return request(baseUrl, { method: "POST", path: `/api/v1/networks/${encodeURIComponent(network_id)}/policy/preview`, token, body: zPreviewPolicyRequest.parse(body) }, zPreviewPolicyResponse);
-}
-
-export async function savePolicyOperation(baseUrl: string, token: string, network_id: string, body: SavePolicyRequest): Promise<PolicySnapshot> {
-  return request(baseUrl, { method: "POST", path: `/api/v1/networks/${encodeURIComponent(network_id)}/policy/save`, token, body: zSavePolicyRequest.parse(body) }, zPolicySnapshot);
+  return request(baseUrl, { method: "POST", path: `/api/v1/networks/${encodeURIComponent(network_id)}/policy/save`, token, body: zSaveNetworkPolicyRequest.parse(body) }, zNetworkPolicySnapshot);
 }
 
 export async function getTagsOperation(baseUrl: string, token: string, network_id: string): Promise<TagSnapshot> {

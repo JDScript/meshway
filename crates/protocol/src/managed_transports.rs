@@ -1,7 +1,5 @@
 //! Public intent is deliberately distinct from node-only recoverable material.
-use crate::{
-    AgentConnectionsSnapshot, ConnectionEndpoint, ConnectionTransport,
-};
+use crate::{AgentConnectionsSnapshot, ConnectionEndpoint, ConnectionTransport};
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 

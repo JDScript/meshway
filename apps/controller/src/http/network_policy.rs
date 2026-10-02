@@ -20,7 +20,7 @@ pub(crate) fn routes() -> OpenApiRouter<AppState> {
         .layer(DefaultBodyLimit::max(512 * 1024))
 }
 
-#[utoipa::path(get, path="/api/v1/networks/{network_id}/policy-v3", operation_id="getNetworkPolicy", security(("managementBearer"=[])), params(("network_id"=String, Path)), responses((status=200, description="Saved source or conservative migration proposal", body=NetworkPolicySnapshot),(status=401,description="Unauthorized",body=ErrorResponse),(status=404,description="Network missing",body=ErrorResponse)))]
+#[utoipa::path(get, path="/api/v1/networks/{network_id}/policy", operation_id="getNetworkPolicy", security(("managementBearer"=[])), params(("network_id"=String, Path)), responses((status=200, description="Current network policy and compiler diagnostics", body=NetworkPolicySnapshot),(status=401,description="Unauthorized",body=ErrorResponse),(status=404,description="Network missing",body=ErrorResponse)))]
 async fn get_network_policy(
     State(state): State<AppState>,
     Path(network_id): Path<String>,
@@ -36,7 +36,7 @@ async fn get_network_policy(
         .await
 }
 
-#[utoipa::path(post, path="/api/v1/networks/{network_id}/policy-v3/save", operation_id="saveNetworkPolicy", security(("managementBearer"=[])), params(("network_id"=String, Path)), request_body=SaveNetworkPolicyRequest, responses((status=200,description="Explicit source activation and conditional save",body=NetworkPolicySnapshot),(status=401,description="Unauthorized",body=ErrorResponse),(status=409,description="CAS conflict",body=ErrorResponse),(status=422,description="Invalid source or budget",body=ErrorResponse)))]
+#[utoipa::path(post, path="/api/v1/networks/{network_id}/policy/save", operation_id="saveNetworkPolicy", security(("managementBearer"=[])), params(("network_id"=String, Path)), request_body=SaveNetworkPolicyRequest, responses((status=200,description="Conditional policy save",body=NetworkPolicySnapshot),(status=401,description="Unauthorized",body=ErrorResponse),(status=409,description="CAS conflict",body=ErrorResponse),(status=422,description="Invalid source or budget",body=ErrorResponse)))]
 async fn save_network_policy(
     State(state): State<AppState>,
     Path(network_id): Path<String>,

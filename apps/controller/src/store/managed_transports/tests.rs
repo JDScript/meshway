@@ -290,9 +290,9 @@ fn materials_are_encrypted_scope_minimized_revision_coherent_and_stable_after_re
             },
         )
         .unwrap();
-    let owner = store.agent_managed_dataplane(&ca).unwrap();
-    let dialer = store.agent_managed_dataplane(&cb).unwrap();
-    let unrelated = store.agent_managed_dataplane(&cc).unwrap();
+    let owner = store.agent_managed_connections(&ca).unwrap();
+    let dialer = store.agent_managed_connections(&cb).unwrap();
+    let unrelated = store.agent_managed_connections(&cc).unwrap();
     assert_eq!(owner.materials.len(), 1);
     assert_eq!(dialer.materials.len(), 1);
     assert!(unrelated.materials.is_empty());
@@ -301,11 +301,11 @@ fn materials_are_encrypted_scope_minimized_revision_coherent_and_stable_after_re
     assert_eq!(owner.materials[0].uuid, dialer.materials[0].uuid);
     assert_eq!(
         owner.digest,
-        managed_digest(&owner.network_id, &owner.dataplane, &owner.materials).unwrap()
+        managed_digest(&owner.network_id, &owner.connections, &owner.materials).unwrap()
     );
     assert_eq!(
-        owner.dataplane.payload.revision,
-        owner.dataplane.payload.connections.revision
+        owner.connections.payload.revision,
+        store.configuration(&ca).unwrap().payload.revision
     );
     assert!(
         !serde_json::to_string(&store.connections(&network).unwrap())
@@ -350,7 +350,7 @@ fn materials_are_encrypted_scope_minimized_revision_coherent_and_stable_after_re
     );
     drop(store);
     let mut store = Store::open(dir.path(), &NetworkOptions::default()).unwrap();
-    let restored = store.agent_managed_dataplane(&ca).unwrap();
+    let restored = store.agent_managed_connections(&ca).unwrap();
     assert_eq!(owner.digest, restored.digest);
     assert_eq!(owner.materials[0].uuid, restored.materials[0].uuid);
     let mut changed = settings(&a.id);
@@ -360,13 +360,13 @@ fn materials_are_encrypted_scope_minimized_revision_coherent_and_stable_after_re
         .save_managed_listener(
             &network,
             &SaveManagedListenerRequest {
-                expected_revision: owner.dataplane.payload.revision,
+                expected_revision: owner.connections.payload.revision,
                 settings: changed.clone(),
             },
         )
         .unwrap();
     assert_eq!(next.listeners[0].material_version, 2);
-    let updated = store.agent_managed_dataplane(&ca).unwrap();
+    let updated = store.agent_managed_connections(&ca).unwrap();
     assert_eq!(updated.materials[0].uuid, owner.materials[0].uuid);
     assert_eq!(
         updated.materials[0].certificate_pem,
@@ -398,12 +398,12 @@ fn materials_are_encrypted_scope_minimized_revision_coherent_and_stable_after_re
     ));
     store.revoke(&network, &a.id).unwrap();
     assert!(matches!(
-        store.agent_managed_dataplane(&ca),
+        store.agent_managed_connections(&ca),
         Err(Error::Forbidden)
     ));
     assert!(
         store
-            .agent_managed_dataplane(&cb)
+            .agent_managed_connections(&cb)
             .unwrap()
             .materials
             .is_empty()
@@ -475,50 +475,6 @@ fn initial_intent_consumption_is_atomic_identity_bound_and_cannot_restore_revoca
 }
 
 #[test]
-fn migration_preserves_existing_rows_revision_and_rolls_back_all_ddl() {
-    let historical = crate::store::test_support::fixtures::original_v8::V8::create();
-    let dir = &historical.directory;
-    historical.write_scoped_schema(9);
-    let db = historical.database();
-    let expected = canonical_json(&historical.configuration(&db, 0)).unwrap();
-    drop(db);
-    let store = Store::open(dir.path(), &NetworkOptions::default()).unwrap();
-    let network = store.initial_network_id().unwrap();
-    assert_eq!(store.revision(&network).unwrap(), 42);
-    assert_eq!(
-        canonical_json(&store.configuration(&historical.credentials[0]).unwrap()).unwrap(),
-        expected
-    );
-    assert!(
-        store
-            .managed_listeners(&network)
-            .unwrap()
-            .listeners
-            .is_empty()
-    );
-    drop(store);
-    let mut db = Connection::open_in_memory().unwrap();
-    db.execute_batch(include_str!("../test_support/fixtures/schema_v9.sql"))
-        .unwrap();
-    db.execute_batch(
-        "CREATE TABLE managed_enrollment_intents(blocker TEXT); PRAGMA user_version=9;",
-    )
-    .unwrap();
-    assert!(crate::store::migrations::transport_materials::upgrade(&mut db).is_err());
-    assert_eq!(
-        db.pragma_query_value::<u32, _>(None, "user_version", |r| r.get(0))
-            .unwrap(),
-        9
-    );
-    assert!(
-        !db.prepare("SELECT 1 FROM sqlite_master WHERE name='managed_listeners'")
-            .unwrap()
-            .exists([])
-            .unwrap()
-    );
-}
-
-#[test]
 fn closed_settings_reject_unknown_transport_tls_ws_fields_and_bad_binding() {
     let mut value = serde_json::to_value(settings("node")).unwrap();
     value["vless"]["unexpected"] = true.into();
@@ -579,122 +535,5 @@ fn material_bytes_are_included_in_the_publication_budget_without_partial_commit(
     assert_eq!(
         store.agent_managed_connections(&credential).unwrap().digest,
         original
-    );
-}
-
-#[test]
-fn offline_import_preserves_legacy_uuid_certificate_key_and_refuses_non_equivalent_listener() {
-    let dir = directory();
-    let mut store = Store::open(dir.path(), &NetworkOptions::default()).unwrap();
-    let network = store.initial_network_id().unwrap();
-    let (node, credential) = enroll(
-        &mut store,
-        &network,
-        "legacy",
-        &format!("09{}", "00".repeat(31)),
-    );
-    let mut item = settings(&node.id);
-    let vless = item.vless.as_mut().unwrap();
-    vless.stream = VlessStreamTransport::Tcp;
-    vless.websocket_path = None;
-    vless.websocket_host = None;
-    let legacy = ConnectionListener {
-        id: item.id.clone(),
-        node_id: node.id.clone(),
-        transport: item.transport,
-        bind: "0.0.0.0:18443".into(),
-        advertised_endpoints: item.advertised_endpoints.clone(),
-        credential_ref: Some("old-local-server".into()),
-    };
-    let saved = store
-        .save_connections(
-            &network,
-            &SaveConnectionsRequest {
-                expected_revision: store.revision(&network).unwrap(),
-                configuration: ConnectionPlan {
-                    listeners: vec![legacy],
-                    candidates: vec![],
-                },
-            },
-        )
-        .unwrap();
-    let material = generate(&item.id, 1, item.vless.as_ref().unwrap()).unwrap();
-    let uuid = material.uuid.clone();
-    let cert = material.certificate_pem.clone();
-    let key = material.private_key_pem.clone();
-    let profiles = dir.path().join("legacy-profiles.json");
-    local::atomic_write(&dir.path().join("legacy-cert.pem"), cert.as_bytes(), false).unwrap();
-    local::atomic_write(
-        &dir.path().join("legacy-key.pem"),
-        key.as_ref().unwrap().as_bytes(),
-        false,
-    )
-    .unwrap();
-    let file = serde_json::json!({"version":1,"profiles":[{"role":"server","id":"old-local-server","uuid":uuid,"certificate":"legacy-cert.pem","private_key":"legacy-key.pem"}]});
-    local::atomic_write(&profiles, &serde_json::to_vec(&file).unwrap(), false).unwrap();
-    store
-        .verify_legacy_material(&network, &item, &material, &profiles)
-        .unwrap();
-    let mut replacement = material.clone();
-    replacement.uuid = "00000000-0000-4000-a000-000000000000".into();
-    assert!(
-        store
-            .verify_legacy_material(&network, &item, &replacement, &profiles)
-            .is_err()
-    );
-    let mut incompatible = item.clone();
-    incompatible.bind_port += 1;
-    assert!(matches!(
-        store.import_managed_listener(
-            &network,
-            &SaveManagedListenerRequest {
-                expected_revision: saved.revision,
-                settings: incompatible
-            },
-            material.clone()
-        ),
-        Err(Error::Conflict)
-    ));
-    assert_eq!(store.revision(&network).unwrap(), saved.revision);
-    let mut invalid = material.clone();
-    invalid.certificate_sha256 = "0".repeat(64);
-    assert!(
-        store
-            .import_managed_listener(
-                &network,
-                &SaveManagedListenerRequest {
-                    expected_revision: saved.revision,
-                    settings: item.clone()
-                },
-                invalid
-            )
-            .is_err()
-    );
-    store
-        .import_managed_listener(
-            &network,
-            &SaveManagedListenerRequest {
-                expected_revision: saved.revision,
-                settings: item,
-            },
-            material,
-        )
-        .unwrap();
-    let imported = store.agent_managed_connections(&credential).unwrap();
-    assert_eq!(imported.materials[0].uuid, uuid);
-    assert_eq!(imported.materials[0].certificate_pem, cert);
-    assert_eq!(imported.materials[0].private_key_pem, key);
-    assert_eq!(
-        connections::source(&store.connection, &network)
-            .unwrap()
-            .listeners
-            .len(),
-        0
-    );
-    assert_eq!(
-        imported.connections.payload.listeners[0]
-            .credential_ref
-            .as_deref(),
-        Some("managed.vless")
     );
 }

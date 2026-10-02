@@ -1,8 +1,6 @@
 //! Shared fixture construction; behavior tests remain beside their owner.
-pub(crate) mod fixtures;
 mod single_network;
 pub(crate) use single_network::SingleNetworkFixture;
-pub(crate) use single_network::{LEGACY_NODE_SELECT, original_columns};
 
 use meshway_protocol::{EnrollAgentRequest, NodeSummary, local};
 

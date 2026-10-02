@@ -23,4 +23,3 @@ pub struct MeshPathAuthorization {
     #[schema(max_items = 128)]
     pub grants: Vec<MeshAccessGrant>,
 }
-

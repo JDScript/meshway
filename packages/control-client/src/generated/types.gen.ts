@@ -8,8 +8,6 @@ export type AcceptInvitationRequest = {
     invitation_token: string;
 };
 
-export type AccessAction = 'allow' | 'reject';
-
 export type AccountInvitation = {
     consumed_at: number | null;
     consumed_by: string | null;
@@ -112,11 +110,6 @@ export type AgentConnectionsSnapshot = {
     payload: NodeConnections;
 };
 
-export type AgentDataplaneSnapshot = {
-    digest: string;
-    payload: NodeDataplane;
-};
-
 export type AgentDnsSnapshot = {
     digest: string;
     payload: NodeDnsConfiguration;
@@ -124,13 +117,6 @@ export type AgentDnsSnapshot = {
 
 export type AgentManagedConnectionsSnapshot = {
     connections: AgentConnectionsSnapshot;
-    digest: string;
-    materials: Array<ManagedVlessMaterial>;
-    network_id: string;
-};
-
-export type AgentManagedDataplaneSnapshot = {
-    dataplane: AgentDataplaneSnapshot;
     digest: string;
     materials: Array<ManagedVlessMaterial>;
     network_id: string;
@@ -383,17 +369,6 @@ export type CreatePasswordResetResponse = {
     reset_token: string;
 };
 
-export type DefaultRouteAction = 'direct' | 'reject';
-
-export type DestinationScope = 'any' | 'mesh' | 'internet';
-
-export type DestinationSelector = {
-    kind: DestinationSelectorKind;
-    value: string;
-};
-
-export type DestinationSelectorKind = 'node' | 'domain_suffix' | 'cidr' | 'country';
-
 export type Diagnostic = {
     field: string;
     message: string;
@@ -451,27 +426,6 @@ export type ExitRule = {
 };
 
 export type ExitTarget = 'nodes' | 'direct';
-
-export type FlowAuthorizationAction = 'allow' | 'reject' | 'invalid';
-
-export type FlowAuthorizationDecision = {
-    action: FlowAuthorizationAction;
-    matched_direction: string | null;
-    reason: string;
-    rule_id: string | null;
-};
-
-/**
- * Internet country is a preview hint, not automatic geolocation. Mesh country
- * and source country always come from the active-node inventory.
- */
-export type FlowQuery = {
-    destination_country: string | null;
-    destination_ip: string | null;
-    destination_node_id: string | null;
-    domain: string | null;
-    source_node_id: string;
-};
 
 export type GetConnectionRuntimeEpochResponse = {
     /**
@@ -653,38 +607,6 @@ export type ManagedVlessSettings = {
     websocket_path: string | null;
 };
 
-export type MeshAccessGrant = {
-    id: string;
-    /**
-     * Exact ordered full path, including source and destination. No repeats.
-     */
-    path: Array<string>;
-};
-
-export type MeshAccessPolicy = {
-    default_action: AccessAction;
-    rules: Array<MeshAccessRule>;
-};
-
-export type MeshAccessRule = {
-    action: AccessAction;
-    bidirectional: boolean;
-    destination: Array<string>;
-    id: string;
-    source: Array<string>;
-};
-
-export type MeshAccessSnapshot = {
-    diagnostics: Array<PolicyDiagnostic>;
-    /**
-     * Saved source intent, retained even when references become invalid.
-     */
-    policy: MeshAccessPolicy;
-    revision: number;
-    source_jsonc: string | null;
-    valid: boolean;
-};
-
 export type MeshDnsConfiguration = {
     enabled: boolean;
     ttl_seconds: number;
@@ -705,8 +627,7 @@ export type MeshExecutionRequest = {
 
 export type MeshExecutionResponse = {
     revision: number;
-    snapshot: MeshExecutionSnapshot | null;
-    source_mode: PolicySourceMode;
+    snapshot: MeshExecutionSnapshot;
 };
 
 export type MeshExecutionSnapshot = {
@@ -728,14 +649,6 @@ export type MeshNode = {
     mesh_ipv4: string;
     mesh_ipv6: string;
     name: string;
-};
-
-/**
- * Internal compiled path authorization. Its JSON remains `{ "grants": [...] }`
- * so schema-version-1 NodeDataplane remains byte-contract compatible.
- */
-export type MeshPathAuthorization = {
-    grants: Array<MeshAccessGrant>;
 };
 
 export type MeshRule = {
@@ -761,12 +674,10 @@ export type NetworkPolicy = {
 
 export type NetworkPolicySnapshot = {
     diagnostics: Array<Diagnostic>;
-    migration_proposal: NetworkPolicy | null;
     network_id: string;
-    policy: NetworkPolicy | null;
+    policy: NetworkPolicy;
     revision: number;
     source_jsonc: string | null;
-    source_mode: PolicySourceMode;
     valid: boolean;
 };
 
@@ -782,13 +693,10 @@ export type NetworkSnapshot = {
 };
 
 export type NodeConfiguration = {
-    diagnostics: Array<PolicyDiagnostic>;
     network: MeshNetwork;
     node: MeshNode;
     peers: Array<MeshNode>;
-    policy_valid: boolean;
     revision: number;
-    routing_policy: RoutingPolicy;
     schema_version: number;
 };
 
@@ -804,20 +712,6 @@ export type NodeConnections = {
     revision: number;
     schema_version: number;
     valid: boolean;
-};
-
-/**
- * One coherent global revision, projected for the authenticated node.
- */
-export type NodeDataplane = {
-    access_policy: MeshPathAuthorization;
-    access_valid: boolean;
-    configuration: NodeConfiguration;
-    connections: NodeConnections;
-    identities: Array<ConnectionPeer>;
-    node_id: string;
-    revision: number;
-    schema_version: number;
 };
 
 export type NodeDnsConfiguration = {
@@ -923,47 +817,13 @@ export type Overview = {
     version: string;
 };
 
+/**
+ * Bounded diagnostics shared by address and DNS publication.
+ */
 export type PolicyDiagnostic = {
     field: string;
     message: string;
     rule_id: string | null;
-};
-
-export type PolicySnapshot = {
-    diagnostics: Array<PolicyDiagnostic>;
-    network: MeshNetwork;
-    policy: RoutingPolicy;
-    revision: number;
-    source_jsonc: string | null;
-    valid: boolean;
-};
-
-export type PolicySourceMode = 'legacy_v2' | 'mesh_v3';
-
-export type PreviewFlowRequest = {
-    flow: FlowQuery;
-};
-
-export type PreviewFlowResponse = {
-    authorization: FlowAuthorizationDecision;
-    diagnostics: Array<PolicyDiagnostic>;
-    execution_reason: string;
-    execution_supported: boolean;
-    revision: number;
-    routing: RouteDecision;
-    valid: boolean;
-};
-
-export type PreviewPolicyRequest = {
-    flow: FlowQuery;
-    policy: RoutingPolicy;
-};
-
-export type PreviewPolicyResponse = {
-    decision: RouteDecision;
-    diagnostics: Array<PolicyDiagnostic>;
-    revision: number;
-    valid: boolean;
 };
 
 export type ProfileAssignment = {
@@ -1093,37 +953,6 @@ export type RevokePasswordResetRequest = {
     reset_id: string;
 };
 
-export type RouteAction = {
-    exit_node_id: string | null;
-    kind: RouteActionKind;
-    via: Array<string>;
-};
-
-export type RouteActionKind = 'route' | 'reject';
-
-export type RouteDecision = {
-    action: RouteDecisionAction;
-    exit_node_id: string | null;
-    path: Array<string>;
-    reason: string;
-    rule_id: string | null;
-};
-
-export type RouteDecisionAction = 'route' | 'reject' | 'invalid';
-
-export type RouteRule = {
-    action: RouteAction;
-    destination_any: Array<DestinationSelector>;
-    destination_scope: DestinationScope;
-    id: string;
-    source: SourceSelector;
-};
-
-export type RoutingPolicy = {
-    default_action: DefaultRouteAction;
-    rules: Array<RouteRule>;
-};
-
 export type RoutingProfile = {
     fallback: ProfileFallback;
     id: string;
@@ -1145,17 +974,8 @@ export type SaveMembershipRequest = {
     user_id: string;
 };
 
-export type SaveMeshAccessRequest = {
-    expected_revision: number;
-    policy: MeshAccessPolicy;
-    source_jsonc?: string | null;
-};
-
 export type SaveNetworkPolicyRequest = {
     expected_revision: number;
-    /**
-     * Explicit replacement/activation; not an assertion of equivalent migration.
-     */
     policy: NetworkPolicy;
     source_jsonc?: string | null;
 };
@@ -1164,12 +984,6 @@ export type SaveNetworkRequest = {
     dns: MeshDnsConfiguration;
     expected_revision: number;
     name: string;
-};
-
-export type SavePolicyRequest = {
-    expected_revision: number;
-    policy: RoutingPolicy;
-    source_jsonc?: string | null;
 };
 
 export type SaveTagsRequest = {
@@ -1187,14 +1001,6 @@ export type SetNodeTagsRequest = {
     expected_revision: number;
     node_id: string;
     tags: Array<string>;
-};
-
-/**
- * Empty dimensions are wildcards; dimensions combine with AND, members with OR.
- */
-export type SourceSelector = {
-    countries: Array<string>;
-    node_ids: Array<string>;
 };
 
 export type StunDiscoveryOutcome = 'mapped' | 'timeout' | 'invalid_response' | 'io_error' | 'stun_error';
@@ -1576,43 +1382,6 @@ export type BeginConnectionRuntimeResponses = {
 
 export type BeginConnectionRuntimeResponse2 = BeginConnectionRuntimeResponses[keyof BeginConnectionRuntimeResponses];
 
-export type GetAgentDataplaneData = {
-    body?: never;
-    path?: never;
-    query?: never;
-    url: '/api/v1/agent/dataplane';
-};
-
-export type GetAgentDataplaneErrors = {
-    /**
-     * Node credential required
-     */
-    401: ErrorResponse;
-    /**
-     * Node revoked
-     */
-    403: ErrorResponse;
-    /**
-     * Fails closed above 64 union identities or 2 MiB snapshot
-     */
-    422: ErrorResponse;
-    /**
-     * Storage unavailable
-     */
-    500: ErrorResponse;
-};
-
-export type GetAgentDataplaneError = GetAgentDataplaneErrors[keyof GetAgentDataplaneErrors];
-
-export type GetAgentDataplaneResponses = {
-    /**
-     * Atomic node-scoped configuration, adjacency, directional access and public identities. Invalid access projects empty grants. No runtime or ACK assertion.
-     */
-    200: AgentDataplaneSnapshot;
-};
-
-export type GetAgentDataplaneResponse = GetAgentDataplaneResponses[keyof GetAgentDataplaneResponses];
-
 export type GetAgentDnsData = {
     body?: never;
     path?: never;
@@ -1735,43 +1504,6 @@ export type GetAgentManagedConnectionsResponses = {
 };
 
 export type GetAgentManagedConnectionsResponse = GetAgentManagedConnectionsResponses[keyof GetAgentManagedConnectionsResponses];
-
-export type GetAgentManagedDataplaneData = {
-    body?: never;
-    path?: never;
-    query?: never;
-    url: '/api/v1/agent/managed-dataplane';
-};
-
-export type GetAgentManagedDataplaneErrors = {
-    /**
-     * Node required
-     */
-    401: ErrorResponse;
-    /**
-     * Node revoked
-     */
-    403: ErrorResponse;
-    /**
-     * Publication capacity exhausted
-     */
-    422: ErrorResponse;
-    /**
-     * Storage unavailable
-     */
-    500: ErrorResponse;
-};
-
-export type GetAgentManagedDataplaneError = GetAgentManagedDataplaneErrors[keyof GetAgentManagedDataplaneErrors];
-
-export type GetAgentManagedDataplaneResponses = {
-    /**
-     * Coherent policy, public keys, connections and node-only material snapshot
-     */
-    200: AgentManagedDataplaneSnapshot;
-};
-
-export type GetAgentManagedDataplaneResponse = GetAgentManagedDataplaneResponses[keyof GetAgentManagedDataplaneResponses];
 
 export type PublishManagedTransportCapabilitiesData = {
     body: PublishManagedTransportCapabilitiesRequest;
@@ -2509,102 +2241,6 @@ export type CreateNetworkResponses = {
 
 export type CreateNetworkResponse = CreateNetworkResponses[keyof CreateNetworkResponses];
 
-export type GetMeshAccessData = {
-    body?: never;
-    path: {
-        /**
-         * Stable network ID
-         */
-        network_id: string;
-    };
-    query?: never;
-    url: '/api/v1/networks/{network_id}/access';
-};
-
-export type GetMeshAccessErrors = {
-    /**
-     * Admin credential required
-     */
-    401: ErrorResponse;
-    /**
-     * Network not found
-     */
-    404: ErrorResponse;
-    /**
-     * Storage unavailable
-     */
-    500: ErrorResponse;
-};
-
-export type GetMeshAccessError = GetMeshAccessErrors[keyof GetMeshAccessErrors];
-
-export type GetMeshAccessResponses = {
-    /**
-     * Saved ordered endpoint authorization source and current diagnostics
-     */
-    200: MeshAccessSnapshot;
-};
-
-export type GetMeshAccessResponse = GetMeshAccessResponses[keyof GetMeshAccessResponses];
-
-export type SaveMeshAccessData = {
-    body: SaveMeshAccessRequest;
-    path: {
-        /**
-         * Stable network ID
-         */
-        network_id: string;
-    };
-    query?: never;
-    url: '/api/v1/networks/{network_id}/access';
-};
-
-export type SaveMeshAccessErrors = {
-    /**
-     * Invalid JSON
-     */
-    400: ErrorResponse;
-    /**
-     * Admin credential required
-     */
-    401: ErrorResponse;
-    /**
-     * Network not found
-     */
-    404: ErrorResponse;
-    /**
-     * Stale global revision
-     */
-    409: ErrorResponse;
-    /**
-     * Request exceeds 512 KiB
-     */
-    413: ErrorResponse;
-    /**
-     * Expected application/json
-     */
-    415: ErrorResponse;
-    /**
-     * Invalid selectors or references, JSONC mismatch, or expanded publication capacity exhausted
-     */
-    422: ErrorResponse;
-    /**
-     * Storage unavailable
-     */
-    500: ErrorResponse;
-};
-
-export type SaveMeshAccessError = SaveMeshAccessErrors[keyof SaveMeshAccessErrors];
-
-export type SaveMeshAccessResponses = {
-    /**
-     * Global-CAS ordered endpoint authorization save; missing keys defer only affected runtime paths
-     */
-    200: MeshAccessSnapshot;
-};
-
-export type SaveMeshAccessResponse = SaveMeshAccessResponses[keyof SaveMeshAccessResponses];
-
 export type GetConnectionsData = {
     body?: never;
     path: {
@@ -2876,52 +2512,6 @@ export type CreateEnrollmentTokenResponses = {
 };
 
 export type CreateEnrollmentTokenResponse2 = CreateEnrollmentTokenResponses[keyof CreateEnrollmentTokenResponses];
-
-export type PreviewFlowData = {
-    body: PreviewFlowRequest;
-    path: {
-        /**
-         * Stable network ID
-         */
-        network_id: string;
-    };
-    query?: never;
-    url: '/api/v1/networks/{network_id}/flows/preview';
-};
-
-export type PreviewFlowErrors = {
-    /**
-     * Invalid JSON
-     */
-    400: ErrorResponse;
-    /**
-     * Admin credential required
-     */
-    401: ErrorResponse;
-    /**
-     * Network not found
-     */
-    404: ErrorResponse;
-    /**
-     * Request exceeds 512 KiB
-     */
-    413: ErrorResponse;
-    /**
-     * Expected application/json
-     */
-    415: ErrorResponse;
-};
-
-export type PreviewFlowError = PreviewFlowErrors[keyof PreviewFlowErrors];
-
-export type PreviewFlowResponses = {
-    /**
-     * Combined saved endpoint authorization and routing preview
-     */
-    200: PreviewFlowResponse;
-};
-
-export type PreviewFlowResponse2 = PreviewFlowResponses[keyof PreviewFlowResponses];
 
 export type ListAccountInvitationsData = {
     body?: never;
@@ -3735,51 +3325,13 @@ export type ClaimFirstOwnerResponses = {
 
 export type ClaimFirstOwnerResponse = ClaimFirstOwnerResponses[keyof ClaimFirstOwnerResponses];
 
-export type GetPolicyData = {
-    body?: never;
-    path: {
-        /**
-         * Stable network ID
-         */
-        network_id: string;
-    };
-    query?: never;
-    url: '/api/v1/networks/{network_id}/policy';
-};
-
-export type GetPolicyErrors = {
-    /**
-     * Admin credential required
-     */
-    401: ErrorResponse;
-    /**
-     * Network not found
-     */
-    404: ErrorResponse;
-    /**
-     * Storage unavailable
-     */
-    500: ErrorResponse;
-};
-
-export type GetPolicyError = GetPolicyErrors[keyof GetPolicyErrors];
-
-export type GetPolicyResponses = {
-    /**
-     * Saved source policy and current diagnostics
-     */
-    200: PolicySnapshot;
-};
-
-export type GetPolicyResponse = GetPolicyResponses[keyof GetPolicyResponses];
-
 export type GetNetworkPolicyData = {
     body?: never;
     path: {
         network_id: string;
     };
     query?: never;
-    url: '/api/v1/networks/{network_id}/policy-v3';
+    url: '/api/v1/networks/{network_id}/policy';
 };
 
 export type GetNetworkPolicyErrors = {
@@ -3797,7 +3349,7 @@ export type GetNetworkPolicyError = GetNetworkPolicyErrors[keyof GetNetworkPolic
 
 export type GetNetworkPolicyResponses = {
     /**
-     * Saved source or conservative migration proposal
+     * Current network policy and compiler diagnostics
      */
     200: NetworkPolicySnapshot;
 };
@@ -3810,7 +3362,7 @@ export type SaveNetworkPolicyData = {
         network_id: string;
     };
     query?: never;
-    url: '/api/v1/networks/{network_id}/policy-v3/save';
+    url: '/api/v1/networks/{network_id}/policy/save';
 };
 
 export type SaveNetworkPolicyErrors = {
@@ -3832,120 +3384,12 @@ export type SaveNetworkPolicyError = SaveNetworkPolicyErrors[keyof SaveNetworkPo
 
 export type SaveNetworkPolicyResponses = {
     /**
-     * Explicit source activation and conditional save
+     * Conditional policy save
      */
     200: NetworkPolicySnapshot;
 };
 
 export type SaveNetworkPolicyResponse = SaveNetworkPolicyResponses[keyof SaveNetworkPolicyResponses];
-
-export type PreviewPolicyData = {
-    body: PreviewPolicyRequest;
-    path: {
-        /**
-         * Stable network ID
-         */
-        network_id: string;
-    };
-    query?: never;
-    url: '/api/v1/networks/{network_id}/policy/preview';
-};
-
-export type PreviewPolicyErrors = {
-    /**
-     * Invalid JSON
-     */
-    400: ErrorResponse;
-    /**
-     * Admin credential required
-     */
-    401: ErrorResponse;
-    /**
-     * Network not found
-     */
-    404: ErrorResponse;
-    /**
-     * Request exceeds 512 KiB
-     */
-    413: ErrorResponse;
-    /**
-     * Expected application/json
-     */
-    415: ErrorResponse;
-    /**
-     * Storage unavailable
-     */
-    500: ErrorResponse;
-};
-
-export type PreviewPolicyError = PreviewPolicyErrors[keyof PreviewPolicyErrors];
-
-export type PreviewPolicyResponses = {
-    /**
-     * Pure preview; no persistence
-     */
-    200: PreviewPolicyResponse;
-};
-
-export type PreviewPolicyResponse2 = PreviewPolicyResponses[keyof PreviewPolicyResponses];
-
-export type SavePolicyData = {
-    body: SavePolicyRequest;
-    path: {
-        /**
-         * Stable network ID
-         */
-        network_id: string;
-    };
-    query?: never;
-    url: '/api/v1/networks/{network_id}/policy/save';
-};
-
-export type SavePolicyErrors = {
-    /**
-     * Invalid JSON
-     */
-    400: ErrorResponse;
-    /**
-     * Admin credential required
-     */
-    401: ErrorResponse;
-    /**
-     * Network not found
-     */
-    404: ErrorResponse;
-    /**
-     * Stale global revision
-     */
-    409: ErrorResponse;
-    /**
-     * Request exceeds 512 KiB
-     */
-    413: ErrorResponse;
-    /**
-     * Expected application/json
-     */
-    415: ErrorResponse;
-    /**
-     * Invalid policy or capacity exhausted
-     */
-    422: ErrorResponse;
-    /**
-     * Storage unavailable
-     */
-    500: ErrorResponse;
-};
-
-export type SavePolicyError = SavePolicyErrors[keyof SavePolicyErrors];
-
-export type SavePolicyResponses = {
-    /**
-     * Canonical conditional policy save
-     */
-    200: PolicySnapshot;
-};
-
-export type SavePolicyResponse = SavePolicyResponses[keyof SavePolicyResponses];
 
 export type GetTagsData = {
     body?: never;

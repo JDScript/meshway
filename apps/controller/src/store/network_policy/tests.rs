@@ -1,148 +1,153 @@
-use super::*;
-use crate::{
-    NetworkOptions,
-    store::test_support::{SingleNetworkFixture, directory, enroll, request},
-};
+use meshway_policy as policy;
+use meshway_policy::NetworkPolicy;
+use meshway_protocol::*;
 
 #[test]
-fn explicit_cas_activation_preserves_legacy_jsonc_and_withdraws_old_execution() {
+fn policy_default_jsonc_cas_budget_and_saved_receipts_are_current_only() {
     let dir = directory();
     let mut store = SingleNetworkFixture::open(dir.path(), &NetworkOptions::default()).unwrap();
-    let request = request("preserved");
-    let node = enroll(&mut store, &request);
     let scope = store.network_id.clone();
-    store
-        .publish_connection_identity(
-            &request.node_credential,
-            &PublishConnectionIdentityRequest {
-                public_key: "09".repeat(32),
-                capabilities: vec![],
-            },
-        )
-        .unwrap();
-    let source = store.policy().unwrap();
-    let mut external = NetworkPolicy::default_template();
-    external.grants[0].dst = vec!["autogroup:internet".into()];
-    assert!(matches!(
-        store.save_network_policy(
-            &scope,
-            &SaveNetworkPolicyRequest {
-                expected_revision: source.revision,
-                policy: external,
-                source_jsonc: None
-            }
-        ),
-        Err(Error::Unprocessable(_))
-    ));
-    assert_eq!(store.revision().unwrap(), source.revision);
-    assert!(
-        store
-            .network_policy(&scope)
-            .unwrap()
-            .migration_proposal
-            .is_none(),
-        "legacy default reject cannot silently become automatic routing"
+    let initial = store.network_policy(&scope).unwrap();
+    assert_eq!(initial.policy, NetworkPolicy::default_template());
+    assert!(initial.valid);
+    let mut current = initial.policy.clone();
+    current.grants.clear();
+    let text = format!(
+        "// exact draft retained\n{}",
+        serde_json::to_string(&current).unwrap()
     );
+    let request = SaveNetworkPolicyRequest {
+        expected_revision: initial.revision,
+        policy: current.clone(),
+        source_jsonc: Some(text.clone()),
+    };
+    let saved = store.save_network_policy(&scope, &request).unwrap();
+    assert_eq!(saved.revision, initial.revision + 1);
+    assert_eq!(saved.source_jsonc, Some(text));
+    assert!(matches!(
+        store.save_network_policy(&scope, &request),
+        Err(Error::Conflict)
+    ));
+    let request = SaveNetworkPolicyRequest {
+        expected_revision: saved.revision,
+        ..request
+    };
+    assert_eq!(
+        store
+            .save_network_policy(&scope, &request)
+            .unwrap()
+            .revision,
+        saved.revision
+    );
+    for bad in [
+        Some("{}".into()),
+        Some("x".repeat(MAX_SOURCE_JSONC_BYTES + 1)),
+    ] {
+        assert!(
+            store
+                .save_network_policy(
+                    &scope,
+                    &SaveNetworkPolicyRequest {
+                        expected_revision: saved.revision,
+                        policy: current.clone(),
+                        source_jsonc: bad
+                    }
+                )
+                .is_err()
+        );
+    }
+    let mut external = current.clone();
+    external.automatic.fallback = "unsupported".into();
     assert!(
         store
             .save_network_policy(
                 &scope,
                 &SaveNetworkPolicyRequest {
-                    expected_revision: source.revision - 1,
-                    policy: NetworkPolicy::default_template(),
+                    expected_revision: saved.revision,
+                    policy: external,
                     source_jsonc: None
                 }
             )
             .is_err()
     );
-    let text = serde_json::to_string(&NetworkPolicy::default_template()).unwrap();
-    let v3 = store
-        .save_network_policy(
-            &scope,
-            &SaveNetworkPolicyRequest {
-                expected_revision: source.revision,
-                policy: NetworkPolicy::default_template(),
-                source_jsonc: Some(format!("// explicit replacement\n{text}")),
+    assert_eq!(store.revision().unwrap(), saved.revision);
+    let r = crate::store::test_support::request("receipt");
+    let node = enroll(&mut store, &r);
+    store
+        .publish_connection_identity(
+            &r.node_credential,
+            &PublishConnectionIdentityRequest {
+                public_key: format!("09{}", "00".repeat(31)),
+                capabilities: vec![],
             },
         )
         .unwrap();
-    assert_eq!(v3.source_mode, PolicySourceMode::MeshV3);
-    assert_eq!(v3.revision, source.revision + 1);
-    assert_eq!(store.policy().unwrap().policy, source.policy);
-    let legacy = store.agent_dataplane(&request.node_credential).unwrap();
-    assert!(!legacy.payload.access_valid);
-    assert!(legacy.payload.access_policy.grants.is_empty());
-    assert!(!legacy.payload.configuration.policy_valid);
-    assert_eq!(legacy.payload.configuration.node.id, node.id);
-    let lease = store
+    let instance_id = local::credential().unwrap();
+    let begin = store
         .begin_connection_runtime(
-            &request.node_credential,
+            &r.node_credential,
             &BeginConnectionRuntimeRequest {
-                instance_id: "a".repeat(64),
+                instance_id: instance_id.clone(),
                 expected_epoch: 0,
             },
         )
         .unwrap();
     let runtime = MeshExecutionRequest {
-        epoch: lease.epoch,
-        instance_id: "a".repeat(64),
+        epoch: begin.epoch,
+        instance_id,
         capabilities: vec![MeshExecutionCapability::Ipv4ExactPathV1],
     };
-    let current = store
-        .mesh_execution(&request.node_credential, &runtime)
+    let execution = store
+        .mesh_execution(&r.node_credential, &runtime)
         .unwrap()
-        .snapshot
-        .unwrap();
-    assert_eq!(current.payload.node.mesh_ipv4, node.mesh_ipv4);
+        .snapshot;
+    assert_eq!(execution.payload.network_id, scope.as_str());
+    assert_eq!(execution.payload.node_id, node.id);
+    assert_eq!(
+        mesh_execution_digest(&execution.payload).unwrap(),
+        execution.digest
+    );
     let ack = AcknowledgeMeshExecutionRequest {
         runtime: runtime.clone(),
-        revision: current.payload.revision,
-        digest: current.digest.clone(),
+        revision: execution.payload.revision,
+        digest: execution.digest.clone(),
     };
     assert!(
         store
-            .acknowledge_mesh_execution(&request.node_credential, &ack)
+            .acknowledge_mesh_execution(&r.node_credential, &ack)
             .unwrap()
             .saved
     );
-    let before = store.revision().unwrap();
+    let wrong = AcknowledgeMeshExecutionRequest {
+        digest: "0".repeat(64),
+        ..ack.clone()
+    };
+    assert!(matches!(
+        store.acknowledge_mesh_execution(&r.node_credential, &wrong),
+        Err(Error::Conflict)
+    ));
     store
         .begin_connection_runtime(
-            &request.node_credential,
+            &r.node_credential,
             &BeginConnectionRuntimeRequest {
-                instance_id: "b".repeat(64),
-                expected_epoch: lease.epoch,
+                instance_id: local::credential().unwrap(),
+                expected_epoch: begin.epoch,
             },
         )
         .unwrap();
-    assert_eq!(store.revision().unwrap(), before + 1);
     assert!(matches!(
-        store.mesh_execution(&request.node_credential, &runtime),
+        store.acknowledge_mesh_execution(&r.node_credential, &ack),
         Err(Error::Conflict)
     ));
-    assert!(matches!(
-        store.acknowledge_mesh_execution(&request.node_credential, &ack),
-        Err(Error::Conflict)
-    ));
-    assert_eq!(
-        store
-            .connection
-            .query_row(
-                "SELECT COUNT(*) FROM mesh_execution_capabilities",
-                [],
-                |r| r.get::<_, u32>(0)
-            )
-            .unwrap(),
-        0
-    );
     drop(store);
     let store = SingleNetworkFixture::open(dir.path(), &NetworkOptions::default()).unwrap();
-    assert_eq!(
-        store.network_policy(&store.network_id).unwrap().source_mode,
-        PolicySourceMode::MeshV3
-    );
-    assert_eq!(store.policy().unwrap().policy, source.policy);
+    assert_eq!(store.network_policy(&scope).unwrap().policy, current);
 }
+use super::*;
+use crate::{
+    NetworkOptions,
+    store::test_support::{SingleNetworkFixture, directory, enroll, request},
+};
 
 #[test]
 fn mixed_epoch_support_withdraws_whole_mandatory_plan_without_replanning_around_old_agent() {
@@ -251,13 +256,13 @@ fn mixed_epoch_support_withdraws_whole_mandatory_plan_without_replanning_around_
             .unwrap();
     }
     let policy = NetworkPolicy {
-        grants: vec![v3::Grant {
+        grants: vec![policy::Grant {
             id: "one-way".into(),
             src: vec![format!("node:{a}")],
             dst: vec![format!("node:{c}")],
             bidirectional: false,
         }],
-        mesh: vec![v3::MeshRule {
+        mesh: vec![policy::MeshRule {
             id: "mandatory-b".into(),
             src: "*".into(),
             dst: "*".into(),
@@ -279,8 +284,7 @@ fn mixed_epoch_support_withdraws_whole_mandatory_plan_without_replanning_around_
     let denied = store
         .mesh_execution(&participants[0].1, &participants[0].2)
         .unwrap()
-        .snapshot
-        .unwrap();
+        .snapshot;
     assert!(!denied.payload.valid);
     assert!(denied.payload.paths.is_empty());
     assert!(
@@ -298,8 +302,7 @@ fn mixed_epoch_support_withdraws_whole_mandatory_plan_without_replanning_around_
     let allowed = store
         .mesh_execution(&participants[0].1, &participants[0].2)
         .unwrap()
-        .snapshot
-        .unwrap();
+        .snapshot;
     assert!(allowed.payload.valid);
     assert_eq!(allowed.payload.paths.len(), 1);
     assert_eq!(
@@ -309,8 +312,7 @@ fn mixed_epoch_support_withdraws_whole_mandatory_plan_without_replanning_around_
     let reverse = store
         .mesh_execution(&participants[2].1, &participants[2].2)
         .unwrap()
-        .snapshot
-        .unwrap();
+        .snapshot;
     assert!(
         reverse
             .payload
@@ -332,39 +334,11 @@ fn mixed_epoch_support_withdraws_whole_mandatory_plan_without_replanning_around_
     let denied = store
         .mesh_execution(&participants[0].1, &participants[0].2)
         .unwrap()
-        .snapshot
-        .unwrap();
+        .snapshot;
     assert!(!denied.payload.valid);
     assert!(denied.payload.paths.is_empty());
     assert!(matches!(
         store.mesh_execution(&participants[1].1, &old_b),
         Err(Error::Conflict)
     ));
-    let old = store.agent_dataplane(&participants[1].1).unwrap();
-    assert!(!old.payload.access_valid);
-    assert!(old.payload.access_policy.grants.is_empty());
-    // Retired source is not an execution dependency. Simulate corruption only
-    // in this private fixture: v3/compatibility publication must not decode or
-    // reinterpret that legacy policy to authorize the current network.
-    store
-        .connection
-        .execute(
-            "UPDATE configuration SET policy='retired malformed source' WHERE network_id=?1",
-            [scope.as_str()],
-        )
-        .unwrap();
-    store
-        .connection
-        .execute(
-            "UPDATE mesh_access_source SET policy='retired malformed source' WHERE network_id=?1",
-            [scope.as_str()],
-        )
-        .unwrap();
-    let current = store
-        .mesh_execution(&participants[0].1, &participants[0].2)
-        .unwrap();
-    assert_eq!(current.source_mode, PolicySourceMode::MeshV3);
-    let legacy = store.agent_dataplane(&participants[0].1).unwrap();
-    assert!(!legacy.payload.access_valid);
-    assert!(!legacy.payload.configuration.policy_valid);
 }

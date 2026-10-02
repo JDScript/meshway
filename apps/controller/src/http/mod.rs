@@ -1,5 +1,4 @@
 //! HTTP routing, decoding, error responses and live OpenAPI assembly.
-mod access;
 mod accounts;
 mod configuration;
 mod connection_runtime;
@@ -72,7 +71,6 @@ fn contract_router() -> OpenApiRouter<AppState> {
         .merge(connection_runtime::routes())
         .merge(latency_history::routes())
         .merge(endpoint_discovery::routes())
-        .merge(access::routes())
         .merge(tags::routes())
         .merge(networks::routes())
         .merge(device_login::routes())
@@ -103,34 +101,6 @@ fn describe(api: &mut OpenApi) {
 fn annotate_references(api: &mut OpenApi) {
     let mut document = serde_json::to_value(&*api).expect("OpenAPI must serialize");
     let references = [
-        (
-            "/components/schemas/MeshAccessRule/properties/source/items",
-            "selector",
-        ),
-        (
-            "/components/schemas/MeshAccessRule/properties/destination/items",
-            "selector",
-        ),
-        (
-            "/components/schemas/FlowQuery/properties/source_node_id",
-            "node",
-        ),
-        (
-            "/components/schemas/FlowQuery/properties/destination_node_id",
-            "node",
-        ),
-        (
-            "/components/schemas/SourceSelector/properties/node_ids/items",
-            "node",
-        ),
-        (
-            "/components/schemas/RouteAction/properties/via/items",
-            "node",
-        ),
-        (
-            "/components/schemas/RouteAction/properties/exit_node_id",
-            "node",
-        ),
         (
             "/components/schemas/SetNodeCountryRequest/properties/node_id",
             "node",

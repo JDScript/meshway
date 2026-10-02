@@ -1048,7 +1048,7 @@ fn rule_set_expansion_reports_unsupported_predicates_and_lints_union_coverage() 
 
 #[test]
 fn documented_policy_deserializes_and_compiles_with_authoritative_facts() {
-    let doc = include_str!("../../../docs/policy-v3.md");
+    let doc = include_str!("../../../docs/policy.md");
     let json = doc
         .split("```jsonc\n")
         .nth(1)

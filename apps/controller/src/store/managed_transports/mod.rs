@@ -113,7 +113,7 @@ pub(super) fn append(
         }
         if plan.listeners.iter().any(|l| l.id == item.id) {
             return Err(Error::Configuration(
-                "managed and legacy listener IDs collide",
+                "managed and explicit listener IDs collide",
             ));
         }
         plan.listeners.push(ConnectionListener {
@@ -466,100 +466,6 @@ pub(super) fn material_budget(
 }
 
 impl Store {
-    pub(crate) fn verify_legacy_material(
-        &self,
-        network: &NetworkId,
-        settings: &ManagedListenerSettings,
-        material: &ManagedVlessMaterial,
-        profiles: &Path,
-    ) -> Result<(), Error> {
-        #[derive(serde::Deserialize)]
-        #[serde(deny_unknown_fields)]
-        struct LegacyFile {
-            version: u32,
-            profiles: Vec<LegacyProfile>,
-        }
-        #[derive(serde::Deserialize)]
-        #[serde(tag = "role", rename_all = "snake_case", deny_unknown_fields)]
-        enum LegacyProfile {
-            Server {
-                id: String,
-                uuid: String,
-                certificate: String,
-                private_key: String,
-            },
-            Client {
-                id: String,
-                uuid: String,
-                ca_certificate: String,
-                server_name: String,
-            },
-        }
-        let invalid = || {
-            Error::Unprocessable(
-                "legacy profile/material equivalence could not be proven; input preserved",
-            )
-        };
-        let source = connections::source(&self.connection, network)?;
-        let listener = source
-            .listeners
-            .iter()
-            .find(|l| {
-                l.id == settings.id
-                    && l.node_id == settings.node_id
-                    && l.transport == ConnectionTransport::Vless
-            })
-            .ok_or_else(invalid)?;
-        let reference = listener.credential_ref.as_ref().ok_or_else(invalid)?;
-        let bytes = Zeroizing::new(local::read_private_bounded(profiles, 128 * 1024)?);
-        let file: LegacyFile = serde_json::from_str(&bytes).map_err(|_| invalid())?;
-        if file.version != 1 || file.profiles.len() > 128 {
-            return Err(invalid());
-        }
-        let mut found = false;
-        for profile in file.profiles {
-            match profile {
-                LegacyProfile::Server {
-                    id,
-                    uuid,
-                    certificate,
-                    private_key,
-                } if &id == reference => {
-                    if found || !uuid.eq_ignore_ascii_case(&material.uuid) {
-                        return Err(invalid());
-                    }
-                    found = true;
-                    let parent = profiles.parent().unwrap_or(Path::new("."));
-                    let cert = Zeroizing::new(local::read_private_bounded(
-                        &parent.join(certificate),
-                        32768,
-                    )?);
-                    let key = Zeroizing::new(local::read_private_bounded(
-                        &parent.join(private_key),
-                        16384,
-                    )?);
-                    if !material.certificate_pem.starts_with(cert.as_str())
-                        || material.private_key_pem.as_deref() != Some(key.as_str())
-                    {
-                        return Err(invalid());
-                    }
-                }
-                LegacyProfile::Client {
-                    id,
-                    uuid,
-                    ca_certificate,
-                    server_name,
-                } => {
-                    let _ = (id, uuid, ca_certificate, server_name);
-                }
-                _ => {}
-            }
-        }
-        if !found {
-            return Err(invalid());
-        }
-        Ok(())
-    }
     pub fn publish_managed_capabilities(
         &mut self,
         token: &str,
@@ -588,7 +494,7 @@ impl Store {
         let old:Option<String>=tx.query_row("SELECT vless_streams FROM managed_transport_capabilities WHERE network_id=?1 AND node_id=?2",params![network.as_str(),id],|r|r.get(0)).optional()?;
         if old.as_ref() != Some(&encoded) {
             tx.execute("INSERT INTO managed_transport_capabilities(network_id,node_id,vless_streams) VALUES(?1,?2,?3) ON CONFLICT(network_id,node_id) DO UPDATE SET vless_streams=excluded.vless_streams",params![network.as_str(),id,encoded])?;
-            // Unused carrier facts do not mutate legacy/public execution
+            // Unused carrier facts do not mutate public execution
             // snapshots. Once managed VLESS exists this becomes publication
             // input and must fence the network's old generation.
             if listeners(&tx, &network)?
@@ -660,23 +566,6 @@ impl Store {
         network: &NetworkId,
         request: &SaveManagedListenerRequest,
     ) -> Result<ManagedListenersSnapshot, Error> {
-        self.save_managed_listener_inner(network, request, None)
-    }
-    pub(crate) fn import_managed_listener(
-        &mut self,
-        network: &NetworkId,
-        request: &SaveManagedListenerRequest,
-        material: ManagedVlessMaterial,
-    ) -> Result<ManagedListenersSnapshot, Error> {
-        validate_import(&request.settings, &material)?;
-        self.save_managed_listener_inner(network, request, Some(material))
-    }
-    fn save_managed_listener_inner(
-        &mut self,
-        network: &NetworkId,
-        request: &SaveManagedListenerRequest,
-        imported: Option<ManagedVlessMaterial>,
-    ) -> Result<ManagedListenersSnapshot, Error> {
         let normalized = normalize(&request.settings)?;
         let item = &normalized;
         let tx = super::account_authorization::transaction(
@@ -695,43 +584,11 @@ impl Store {
         }) {
             return Err(Error::Conflict);
         }
-        let mut legacy = connections::source(&tx, network)?;
-        if let Some(old) = legacy.listeners.iter().find(|l| l.id == item.id) {
-            let bind = std::net::SocketAddr::new(
-                item.bind_address
-                    .parse()
-                    .map_err(|_| Error::Unprocessable("invalid bind"))?,
-                item.bind_port,
-            )
-            .to_string();
-            if imported.is_none()
-                || old.node_id != item.node_id
-                || old.transport != item.transport
-                || old.bind != bind
-                || old.advertised_endpoints != item.advertised_endpoints
-                || item
-                    .vless
-                    .as_ref()
-                    .is_none_or(|v| v.stream != VlessStreamTransport::Tcp)
-            {
-                return Err(Error::Conflict);
-            }
-            legacy.listeners.retain(|l| l.id != item.id);
-            for candidate in &mut legacy.candidates {
-                if candidate.listener_id == item.id {
-                    candidate.credential_ref = Some(reference(&item.id));
-                }
-            }
-            tx.execute(
-                "UPDATE connection_source SET configuration=?1 WHERE network_id=?2",
-                params![
-                    serde_json::to_string(&legacy)
-                        .map_err(|_| Error::Configuration("cannot encode imported source"))?,
-                    network.as_str()
-                ],
-            )?;
-        }
-        if imported.is_some() && existing.is_some() {
+        if connections::source(&tx, network)?
+            .listeners
+            .iter()
+            .any(|l| l.id == item.id)
+        {
             return Err(Error::Conflict);
         }
         if existing.as_ref().is_none_or(|l| l.settings != *item) {
@@ -744,9 +601,8 @@ impl Store {
                 .ok_or(Error::Capacity("material version exhausted"))?;
             let material = if let Some(vless) = &item.vless {
                 let old = decrypt(&tx, network, &item.id, &self.material_key)?;
-                Some(match (imported, old) {
-                    (Some(material), _) => material,
-                    (None, Some(mut old)) if old.settings.server_name == vless.server_name => {
+                Some(match old {
+                    Some(mut old) if old.settings.server_name == vless.server_name => {
                         old.version = version;
                         old.settings = vless.clone();
                         old
@@ -827,133 +683,6 @@ impl Store {
         }
         Ok(snapshot)
     }
-    pub fn agent_managed_dataplane(
-        &mut self,
-        token: &str,
-    ) -> Result<AgentManagedDataplaneSnapshot, Error> {
-        // Store is exclusively owned by the request closure; no writes can
-        // interleave this read with the following material projection.
-        let network = self.node_network(token)?;
-        let dataplane = self.agent_dataplane(token)?;
-        let materials = materials(
-            &self.connection,
-            &network,
-            &dataplane.payload.connections,
-            &self.material_key,
-        )?;
-        let network_id = network.as_str().to_owned();
-        let digest = managed_digest(&network_id, &dataplane, &materials)
-            .map_err(|_| Error::Configuration("cannot hash managed dataplane"))?;
-        let snapshot = AgentManagedDataplaneSnapshot {
-            network_id,
-            dataplane,
-            materials,
-            digest,
-        };
-        if serde_json::to_vec(&snapshot)
-            .map_err(|_| Error::Configuration("cannot encode managed snapshot"))?
-            .len()
-            > MAX_DATAPLANE_BYTES
-        {
-            return Err(Error::Capacity("managed dataplane exceeds 2 MiB"));
-        }
-        Ok(snapshot)
-    }
-}
-
-fn validate_import(
-    settings: &ManagedListenerSettings,
-    material: &ManagedVlessMaterial,
-) -> Result<(), Error> {
-    let invalid = || {
-        Error::Unprocessable(
-            "invalid private import material, certificate name, validity or key binding",
-        )
-    };
-    if settings.transport != ConnectionTransport::Vless
-        || material.listener_id != settings.id
-        || material.credential_ref != reference(&settings.id)
-        || material.version != 1
-        || Some(&material.settings) != settings.vless.as_ref()
-    {
-        return Err(invalid());
-    }
-    if material.certificate_pem.len() > 32768
-        || material
-            .private_key_pem
-            .as_ref()
-            .is_none_or(|key| key.len() > 16384)
-    {
-        return Err(invalid());
-    }
-    let uuid = &material.uuid;
-    if uuid.len() != 36
-        || uuid.bytes().enumerate().any(|(i, b)| {
-            if [8, 13, 18, 23].contains(&i) {
-                b != b'-'
-            } else {
-                !b.is_ascii_hexdigit()
-            }
-        })
-    {
-        return Err(invalid());
-    }
-    let certs = rustls_pemfile::certs(&mut std::io::Cursor::new(
-        material.certificate_pem.as_bytes(),
-    ))
-    .collect::<Result<Vec<_>, _>>()
-    .map_err(|_| invalid())?;
-    if certs.is_empty() || certs.len() > 16 {
-        return Err(invalid());
-    }
-    let fingerprint: String = Sha256::digest(certs[0].as_ref())
-        .iter()
-        .map(|b| format!("{b:02x}"))
-        .collect();
-    if fingerprint != material.certificate_sha256 {
-        return Err(invalid());
-    }
-    let key = material.private_key_pem.as_ref().ok_or_else(invalid)?;
-    let mut cursor = std::io::Cursor::new(key.as_bytes());
-    let key = rustls_pemfile::private_key(&mut cursor)
-        .map_err(|_| invalid())?
-        .ok_or_else(invalid)?;
-    if rustls_pemfile::private_key(&mut cursor)
-        .map_err(|_| invalid())?
-        .is_some()
-    {
-        return Err(invalid());
-    }
-    let provider = std::sync::Arc::new(rustls::crypto::ring::default_provider());
-    rustls::ServerConfig::builder_with_provider(provider.clone())
-        .with_safe_default_protocol_versions()
-        .map_err(|_| invalid())?
-        .with_no_client_auth()
-        .with_single_cert(certs.clone(), key)
-        .map_err(|_| invalid())?;
-    let mut roots = rustls::RootCertStore::empty();
-    roots
-        .add(certs.last().expect("nonempty").clone())
-        .map_err(|_| invalid())?;
-    let verifier = rustls::client::WebPkiServerVerifier::builder_with_provider(
-        std::sync::Arc::new(roots),
-        provider,
-    )
-    .build()
-    .map_err(|_| invalid())?;
-    use rustls::client::danger::ServerCertVerifier;
-    let name = rustls::pki_types::ServerName::try_from(material.settings.server_name.clone())
-        .map_err(|_| invalid())?;
-    verifier
-        .verify_server_cert(
-            &certs[0],
-            &certs[1..],
-            &name,
-            &[],
-            rustls::pki_types::UnixTime::now(),
-        )
-        .map_err(|_| invalid())?;
-    Ok(())
 }
 
 pub(super) fn enroll_initial(

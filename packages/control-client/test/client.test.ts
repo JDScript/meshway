@@ -8,12 +8,13 @@ import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
-import { ControlApiError, createEnrollmentToken, getOverview, getPolicy, previewPolicy, savePolicy, setNodeCountry, listNodes, revokeNode, listNetworks } from "../src/index.ts";
+import { ControlApiError, createEnrollmentToken, getOverview, getNetworkPolicy, saveNetworkPolicy, setNodeCountry, listNodes, revokeNode, listNetworks } from "../src/index.ts";
 import { acknowledgeConfigurationOperation, getAgentConfigurationOperation, enrollAgentOperation, heartbeatAgentOperation } from "../src/generated/operations.gen.ts";
-import { zFlowQuery, zPolicySnapshot, zSetNodeCountryRequest } from "../src/generated/zod.gen.ts";
+import { zNetworkPolicySnapshot, zSetNodeCountryRequest } from "../src/generated/zod.gen.ts";
 
 const credential = () => randomBytes(32).toString("hex");
 const fixtureNetwork = "a".repeat(32);
+const defaultPolicy = {connections:[{id:"default",a:"*",b:"*",action:"allow" as const}],grants:[{id:"members",src:["*"],dst:["*"],bidirectional:false}],mesh:[],public_rules:[],profiles:[],assignments:[],automatic:{regions:{},fallback:"mesh-only"}};
 
 async function withResponse(body: string, use: (baseUrl: string) => Promise<void>, status = 200, contentType = "application/json"): Promise<void> {
   const server = createServer((request, response) => {
@@ -57,14 +58,12 @@ test("generated node validation requires nullable revocation and validates neste
 });
 
 test("generated policy schemas require nullable context, closed enums, booleans and bounded revisions", () => {
-  const flow = { source_node_id: "source", destination_node_id: null, destination_ip: null, domain: "example.com", destination_country: null };
-  assert.deepEqual(zFlowQuery.parse(flow), flow);
-  assert.equal(zFlowQuery.safeParse({ ...flow, destination_country: undefined }).success, false);
-  const snapshot = { revision: 1, network: { ipv4_prefix: "100.96.0.0/16", ipv6_prefix: "fd12::/64" }, policy: { default_action: "reject", rules: [] }, source_jsonc: null, valid: true, diagnostics: [] };
-  assert.deepEqual(zPolicySnapshot.parse(snapshot), snapshot);
-  for (const revision of [0, -1, 1.5, 4294967296]) assert.equal(zPolicySnapshot.safeParse({ ...snapshot, revision }).success, false);
-  assert.equal(zPolicySnapshot.safeParse({ ...snapshot, valid: "true" }).success, false);
-  assert.equal(zPolicySnapshot.safeParse({ ...snapshot, policy: { default_action: "allow", rules: [] } }).success, false);
+  const snapshot = { network_id: fixtureNetwork, revision: 1, policy: defaultPolicy, source_jsonc: null, valid: true, diagnostics: [] };
+  assert.deepEqual(zNetworkPolicySnapshot.parse(snapshot), snapshot);
+  for (const revision of [0, -1, 1.5, 4294967296]) assert.equal(zNetworkPolicySnapshot.safeParse({ ...snapshot, revision }).success, false);
+  assert.equal(zNetworkPolicySnapshot.safeParse({ ...snapshot, valid: "true" }).success, false);
+  assert.equal(zNetworkPolicySnapshot.safeParse({ ...snapshot, source_jsonc: undefined }).success, false);
+  assert.equal(zNetworkPolicySnapshot.safeParse({ ...snapshot, source_mode: "mesh_v3" }).success, false);
   assert.equal(zSetNodeCountryRequest.safeParse({ node_id: "source", expected_revision: 1 }).success, false);
   assert.equal(zSetNodeCountryRequest.safeParse({ node_id: "source", country: null, expected_revision: 1 }).success, true);
 });
@@ -148,21 +147,14 @@ test("generated authenticated TS operations roundtrip, retry, revoke and survive
     server = await start();
     assert.deepEqual((await listNodes(server.base, admin, networkId)).nodes, [heartbeat.node]);
     assert.equal((await enrollAgentOperation(server.base, enrollment.token, body)).node.id, registered.node.id);
-    const initialPolicy = await getPolicy(server.base, admin, networkId);
+    const initialPolicy = await getNetworkPolicy(server.base, admin, networkId);
     assert.equal(initialPolicy.revision, 2);
-    assert.deepEqual(initialPolicy.policy, { default_action: "reject", rules: [] });
-    await assert.rejects(getPolicy(server.base, nodeCredential, networkId), httpError(401));
-    const preview = await previewPolicy(server.base, admin, networkId, {
-      policy: { default_action: "direct", rules: [] },
-      flow: { source_node_id: registered.node.id, destination_node_id: null, destination_ip: null, domain: "example.com", destination_country: null },
-    });
-    assert.equal(preview.valid, true);
-    assert.equal(preview.decision.action, "route");
-    assert.equal((await getPolicy(server.base, admin, networkId)).revision, 2);
-    const saved = await savePolicy(server.base, admin, networkId, { expected_revision: 2, policy: { default_action: "direct", rules: [] } });
+    assert.deepEqual(initialPolicy.policy, defaultPolicy);
+    await assert.rejects(getNetworkPolicy(server.base, nodeCredential, networkId), httpError(401));
+    const saved = await saveNetworkPolicy(server.base, admin, networkId, { expected_revision: 2, policy: { ...defaultPolicy, grants: [] } });
     assert.equal(saved.revision, 3);
-    await assert.rejects(savePolicy(server.base, admin, networkId, { expected_revision: 2, policy: saved.policy }), httpError(409));
-    assert.equal((await savePolicy(server.base, admin, networkId, { expected_revision: 3, policy: saved.policy })).revision, 3);
+    await assert.rejects(saveNetworkPolicy(server.base, admin, networkId, { expected_revision: 2, policy: saved.policy }), httpError(409));
+    assert.equal((await saveNetworkPolicy(server.base, admin, networkId, { expected_revision: 3, policy: saved.policy })).revision, 3);
     const country = await setNodeCountry(server.base, admin, networkId, { node_id: registered.node.id, country: "us", expected_revision: 3 });
     assert.equal(country.node.country, "US");
     assert.equal(country.node.configuration_revision, 4);

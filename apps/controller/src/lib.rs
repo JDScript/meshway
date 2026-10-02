@@ -10,5 +10,5 @@ mod store;
 
 pub use error::Error;
 pub use http::{openapi_json, router, router_and_openapi};
-pub use maintenance::{admin_token, import_managed_vless};
+pub use maintenance::admin_token;
 pub use state::{AppState, NetworkOptions};

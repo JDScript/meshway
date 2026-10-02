@@ -242,8 +242,19 @@ async fn withdrawal_preserves_active_assignments_and_access_references() {
         StatusCode::UNPROCESSABLE_ENTITY
     );
     // Remove the last active assignment, but a policy reference still fences deletion.
-    let access = ok(&f, "GET", &format!("{base}/access"), Some(&owner), None).await;
-    ok(&f,"POST",&format!("{base}/access"),Some(&owner),Some(json!({"expected_revision":access["revision"],"policy":{"default_action":"allow","rules":[{"id":"tag-reference","source":["tag:shared"],"destination":["*"],"action":"allow","bidirectional":false}]}}))).await;
+    let current = ok(&f, "GET", &format!("{base}/policy"), Some(&owner), None).await;
+    let mut policy =
+        serde_json::to_value(meshway_policy::NetworkPolicy::default_template()).unwrap();
+    policy["grants"] =
+        json!([{"id":"tag-reference","src":["tag:shared"],"dst":["*"],"bidirectional":false}]);
+    ok(
+        &f,
+        "POST",
+        &format!("{base}/policy/save"),
+        Some(&owner),
+        Some(json!({"expected_revision":current["revision"],"policy":policy})),
+    )
+    .await;
     ok(
         &f,
         "POST",

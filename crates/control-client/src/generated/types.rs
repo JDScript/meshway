@@ -77,35 +77,7 @@ pub struct PublishConnectionIdentityRequest {
 pub struct MeshExecutionResponse {
     ///Constraint: minimum=1, maximum=4294967295
     pub revision: i64,
-    #[serde(deserialize_with = "deserialize_required_nullable")]
-    pub snapshot: Option<MeshExecutionSnapshot>,
-    pub source_mode: PolicySourceMode,
-}
-#[derive(Clone, PartialEq, Eq, Deserialize, Serialize, Default)]
-pub enum PolicySourceMode {
-    #[default]
-    #[serde(rename = "legacy_v2")]
-    LegacyV2,
-    #[serde(rename = "mesh_v3")]
-    MeshV3,
-}
-impl PolicySourceMode {
-    pub fn as_str(&self) -> &'static str {
-        match self {
-            Self::LegacyV2 => "legacy_v2",
-            Self::MeshV3 => "mesh_v3",
-        }
-    }
-}
-impl ::std::fmt::Display for PolicySourceMode {
-    fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
-        f.write_str(self.as_str())
-    }
-}
-impl AsRef<str> for PolicySourceMode {
-    fn as_ref(&self) -> &str {
-        self.as_str()
-    }
+    pub snapshot: MeshExecutionSnapshot,
 }
 #[derive(Clone, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
@@ -616,6 +588,34 @@ pub struct ConfigurationSnapshot {
     pub digest: String,
     pub payload: NodeConfiguration,
 }
+#[derive(Clone, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct NodeConfiguration {
+    pub network: MeshNetwork,
+    pub node: MeshNode,
+    pub peers: Vec<MeshNode>,
+    ///Constraint: minimum=1, maximum=4294967295
+    pub revision: i64,
+    ///Constraint: minimum=1, maximum=4294967295
+    pub schema_version: i64,
+}
+///Public active-node inventory; country is administrator-managed metadata.
+#[derive(Clone, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct MeshNode {
+    #[serde(deserialize_with = "deserialize_required_nullable")]
+    pub country: Option<String>,
+    pub id: String,
+    pub mesh_ipv4: String,
+    pub mesh_ipv6: String,
+    pub name: String,
+}
+#[derive(Clone, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct MeshNetwork {
+    pub ipv4_prefix: String,
+    pub ipv6_prefix: String,
+}
 ///Also lets a pending local enrollment recover its server-assigned node ID.
 #[derive(Clone, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
@@ -641,15 +641,6 @@ pub struct NodeSummary {
     pub registered_at: chrono::DateTime<chrono::Utc>,
     #[serde(deserialize_with = "deserialize_required_nullable")]
     pub revoked_at: Option<chrono::DateTime<chrono::Utc>>,
-}
-#[derive(Clone, Deserialize, Serialize)]
-#[serde(deny_unknown_fields)]
-pub struct AgentManagedDataplaneSnapshot {
-    pub dataplane: AgentDataplaneSnapshot,
-    pub digest: String,
-    ///Constraint: maxItems=128
-    pub materials: Vec<ManagedVlessMaterial>,
-    pub network_id: String,
 }
 #[derive(Clone, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
@@ -742,6 +733,15 @@ pub struct NodeDnsConfiguration {
     ///Constraint: minimum=1, maximum=1
     pub schema_version: i32,
 }
+///Bounded diagnostics shared by address and DNS publication.
+#[derive(Clone, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct PolicyDiagnostic {
+    pub field: String,
+    pub message: String,
+    #[serde(deserialize_with = "deserialize_required_nullable")]
+    pub rule_id: Option<String>,
+}
 #[derive(Clone, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct NodeDnsRecord {
@@ -762,234 +762,6 @@ pub struct MeshDnsConfiguration {
     pub ttl_seconds: i32,
     ///Constraint: minLength=3, maxLength=128
     pub zone: String,
-}
-#[derive(Clone, Deserialize, Serialize)]
-#[serde(deny_unknown_fields)]
-pub struct AgentDataplaneSnapshot {
-    ///Constraint: minLength=64, maxLength=64, pattern=`^[0-9a-f]{64}$`
-    pub digest: String,
-    pub payload: NodeDataplane,
-}
-///One coherent global revision, projected for the authenticated node.
-#[derive(Clone, Deserialize, Serialize)]
-#[serde(deny_unknown_fields)]
-pub struct NodeDataplane {
-    pub access_policy: MeshPathAuthorization,
-    pub access_valid: bool,
-    pub configuration: NodeConfiguration,
-    pub connections: NodeConnections,
-    ///Constraint: maxItems=64
-    pub identities: Vec<ConnectionPeer>,
-    pub node_id: String,
-    ///Constraint: minimum=1, maximum=4294967295
-    pub revision: i64,
-    ///Constraint: minimum=1, maximum=1
-    pub schema_version: i64,
-}
-#[derive(Clone, Deserialize, Serialize)]
-#[serde(deny_unknown_fields)]
-pub struct NodeConfiguration {
-    pub diagnostics: Vec<PolicyDiagnostic>,
-    pub network: MeshNetwork,
-    pub node: MeshNode,
-    pub peers: Vec<MeshNode>,
-    pub policy_valid: bool,
-    ///Constraint: minimum=1, maximum=4294967295
-    pub revision: i64,
-    pub routing_policy: RoutingPolicy,
-    ///Constraint: minimum=1, maximum=4294967295
-    pub schema_version: i64,
-}
-#[derive(Clone, Deserialize, Serialize)]
-#[serde(deny_unknown_fields)]
-pub struct RoutingPolicy {
-    pub default_action: DefaultRouteAction,
-    pub rules: Vec<RouteRule>,
-}
-#[derive(Clone, Deserialize, Serialize)]
-#[serde(deny_unknown_fields)]
-pub struct RouteRule {
-    pub action: RouteAction,
-    pub destination_any: Vec<DestinationSelector>,
-    pub destination_scope: DestinationScope,
-    pub id: String,
-    pub source: SourceSelector,
-}
-///Empty dimensions are wildcards; dimensions combine with AND, members with OR.
-#[derive(Clone, Deserialize, Serialize)]
-#[serde(deny_unknown_fields)]
-pub struct SourceSelector {
-    pub countries: Vec<String>,
-    pub node_ids: Vec<String>,
-}
-#[derive(Clone, Deserialize, Serialize)]
-#[serde(deny_unknown_fields)]
-pub struct RouteAction {
-    #[serde(deserialize_with = "deserialize_required_nullable")]
-    pub exit_node_id: Option<String>,
-    pub kind: RouteActionKind,
-    pub via: Vec<String>,
-}
-#[derive(Clone, PartialEq, Eq, Deserialize, Serialize, Default)]
-pub enum RouteActionKind {
-    #[default]
-    #[serde(rename = "route")]
-    Route,
-    #[serde(rename = "reject")]
-    Reject,
-}
-impl RouteActionKind {
-    pub fn as_str(&self) -> &'static str {
-        match self {
-            Self::Route => "route",
-            Self::Reject => "reject",
-        }
-    }
-}
-impl ::std::fmt::Display for RouteActionKind {
-    fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
-        f.write_str(self.as_str())
-    }
-}
-impl AsRef<str> for RouteActionKind {
-    fn as_ref(&self) -> &str {
-        self.as_str()
-    }
-}
-#[derive(Clone, Deserialize, Serialize)]
-#[serde(deny_unknown_fields)]
-pub struct DestinationSelector {
-    pub kind: DestinationSelectorKind,
-    pub value: String,
-}
-#[derive(Clone, PartialEq, Eq, Deserialize, Serialize, Default)]
-pub enum DestinationSelectorKind {
-    #[default]
-    #[serde(rename = "node")]
-    Node,
-    #[serde(rename = "domain_suffix")]
-    DomainSuffix,
-    #[serde(rename = "cidr")]
-    Cidr,
-    #[serde(rename = "country")]
-    Country,
-}
-impl DestinationSelectorKind {
-    pub fn as_str(&self) -> &'static str {
-        match self {
-            Self::Node => "node",
-            Self::DomainSuffix => "domain_suffix",
-            Self::Cidr => "cidr",
-            Self::Country => "country",
-        }
-    }
-}
-impl ::std::fmt::Display for DestinationSelectorKind {
-    fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
-        f.write_str(self.as_str())
-    }
-}
-impl AsRef<str> for DestinationSelectorKind {
-    fn as_ref(&self) -> &str {
-        self.as_str()
-    }
-}
-#[derive(Clone, PartialEq, Eq, Deserialize, Serialize, Default)]
-pub enum DestinationScope {
-    #[default]
-    #[serde(rename = "any")]
-    Any,
-    #[serde(rename = "mesh")]
-    Mesh,
-    #[serde(rename = "internet")]
-    Internet,
-}
-impl DestinationScope {
-    pub fn as_str(&self) -> &'static str {
-        match self {
-            Self::Any => "any",
-            Self::Mesh => "mesh",
-            Self::Internet => "internet",
-        }
-    }
-}
-impl ::std::fmt::Display for DestinationScope {
-    fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
-        f.write_str(self.as_str())
-    }
-}
-impl AsRef<str> for DestinationScope {
-    fn as_ref(&self) -> &str {
-        self.as_str()
-    }
-}
-#[derive(Clone, PartialEq, Eq, Deserialize, Serialize, Default)]
-pub enum DefaultRouteAction {
-    #[default]
-    #[serde(rename = "direct")]
-    Direct,
-    #[serde(rename = "reject")]
-    Reject,
-}
-impl DefaultRouteAction {
-    pub fn as_str(&self) -> &'static str {
-        match self {
-            Self::Direct => "direct",
-            Self::Reject => "reject",
-        }
-    }
-}
-impl ::std::fmt::Display for DefaultRouteAction {
-    fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
-        f.write_str(self.as_str())
-    }
-}
-impl AsRef<str> for DefaultRouteAction {
-    fn as_ref(&self) -> &str {
-        self.as_str()
-    }
-}
-#[derive(Clone, Deserialize, Serialize)]
-#[serde(deny_unknown_fields)]
-pub struct PolicyDiagnostic {
-    pub field: String,
-    pub message: String,
-    #[serde(deserialize_with = "deserialize_required_nullable")]
-    pub rule_id: Option<String>,
-}
-///Public active-node inventory; country is administrator-managed metadata.
-#[derive(Clone, Deserialize, Serialize)]
-#[serde(deny_unknown_fields)]
-pub struct MeshNode {
-    #[serde(deserialize_with = "deserialize_required_nullable")]
-    pub country: Option<String>,
-    pub id: String,
-    pub mesh_ipv4: String,
-    pub mesh_ipv6: String,
-    pub name: String,
-}
-#[derive(Clone, Deserialize, Serialize)]
-#[serde(deny_unknown_fields)]
-pub struct MeshNetwork {
-    pub ipv4_prefix: String,
-    pub ipv6_prefix: String,
-}
-/**Internal compiled path authorization. Its JSON remains `{ "grants": [...] }`
-so schema-version-1 NodeDataplane remains byte-contract compatible.*/
-#[derive(Clone, Deserialize, Serialize)]
-#[serde(deny_unknown_fields)]
-pub struct MeshPathAuthorization {
-    ///Constraint: maxItems=128
-    pub grants: Vec<MeshAccessGrant>,
-}
-#[derive(Clone, Deserialize, Serialize)]
-#[serde(deny_unknown_fields)]
-pub struct MeshAccessGrant {
-    ///Constraint: minLength=1, maxLength=64, pattern=`^[A-Za-z0-9._-]+$`
-    pub id: String,
-    ///Exact ordered full path, including source and destination. No repeats.
-    ///Constraint: minItems=2, maxItems=8
-    pub path: Vec<String>,
 }
 #[derive(Clone, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
@@ -1387,12 +1159,6 @@ impl std::fmt::Debug for MeshExecutionResponse {
     }
 }
 
-impl std::fmt::Debug for PolicySourceMode {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str("PolicySourceMode([REDACTED])")
-    }
-}
-
 impl std::fmt::Debug for MeshExecutionSnapshot {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_str("MeshExecutionSnapshot([REDACTED])")
@@ -1519,6 +1285,24 @@ impl std::fmt::Debug for ConfigurationSnapshot {
     }
 }
 
+impl std::fmt::Debug for NodeConfiguration {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("NodeConfiguration([REDACTED])")
+    }
+}
+
+impl std::fmt::Debug for MeshNode {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("MeshNode([REDACTED])")
+    }
+}
+
+impl std::fmt::Debug for MeshNetwork {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("MeshNetwork([REDACTED])")
+    }
+}
+
 impl std::fmt::Debug for AgentNodeResponse {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_str("AgentNodeResponse([REDACTED])")
@@ -1528,12 +1312,6 @@ impl std::fmt::Debug for AgentNodeResponse {
 impl std::fmt::Debug for NodeSummary {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_str("NodeSummary([REDACTED])")
-    }
-}
-
-impl std::fmt::Debug for AgentManagedDataplaneSnapshot {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str("AgentManagedDataplaneSnapshot([REDACTED])")
     }
 }
 
@@ -1573,6 +1351,12 @@ impl std::fmt::Debug for NodeDnsConfiguration {
     }
 }
 
+impl std::fmt::Debug for PolicyDiagnostic {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("PolicyDiagnostic([REDACTED])")
+    }
+}
+
 impl std::fmt::Debug for NodeDnsRecord {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_str("NodeDnsRecord([REDACTED])")
@@ -1582,108 +1366,6 @@ impl std::fmt::Debug for NodeDnsRecord {
 impl std::fmt::Debug for MeshDnsConfiguration {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_str("MeshDnsConfiguration([REDACTED])")
-    }
-}
-
-impl std::fmt::Debug for AgentDataplaneSnapshot {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str("AgentDataplaneSnapshot([REDACTED])")
-    }
-}
-
-impl std::fmt::Debug for NodeDataplane {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str("NodeDataplane([REDACTED])")
-    }
-}
-
-impl std::fmt::Debug for NodeConfiguration {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str("NodeConfiguration([REDACTED])")
-    }
-}
-
-impl std::fmt::Debug for RoutingPolicy {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str("RoutingPolicy([REDACTED])")
-    }
-}
-
-impl std::fmt::Debug for RouteRule {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str("RouteRule([REDACTED])")
-    }
-}
-
-impl std::fmt::Debug for SourceSelector {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str("SourceSelector([REDACTED])")
-    }
-}
-
-impl std::fmt::Debug for RouteAction {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str("RouteAction([REDACTED])")
-    }
-}
-
-impl std::fmt::Debug for RouteActionKind {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str("RouteActionKind([REDACTED])")
-    }
-}
-
-impl std::fmt::Debug for DestinationSelector {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str("DestinationSelector([REDACTED])")
-    }
-}
-
-impl std::fmt::Debug for DestinationSelectorKind {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str("DestinationSelectorKind([REDACTED])")
-    }
-}
-
-impl std::fmt::Debug for DestinationScope {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str("DestinationScope([REDACTED])")
-    }
-}
-
-impl std::fmt::Debug for DefaultRouteAction {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str("DefaultRouteAction([REDACTED])")
-    }
-}
-
-impl std::fmt::Debug for PolicyDiagnostic {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str("PolicyDiagnostic([REDACTED])")
-    }
-}
-
-impl std::fmt::Debug for MeshNode {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str("MeshNode([REDACTED])")
-    }
-}
-
-impl std::fmt::Debug for MeshNetwork {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str("MeshNetwork([REDACTED])")
-    }
-}
-
-impl std::fmt::Debug for MeshPathAuthorization {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str("MeshPathAuthorization([REDACTED])")
-    }
-}
-
-impl std::fmt::Debug for MeshAccessGrant {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str("MeshAccessGrant([REDACTED])")
     }
 }
 

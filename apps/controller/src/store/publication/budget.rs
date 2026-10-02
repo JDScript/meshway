@@ -1,12 +1,13 @@
-//! Publication limits reserve the same headroom as the legacy write gates.
-use super::*;
+//! Serialized inventory and adjacency publication budgets.
+use super::super::NetworkId;
+use crate::Error;
+use meshway_protocol::*;
+use rusqlite::Connection;
 
-pub(in crate::store) fn configuration(mut snapshot: ConfigurationSnapshot) -> Result<(), Error> {
-    // Revocation can add diagnostics; reserve their bounded report in advance.
-    snapshot.payload.diagnostics.clear();
+pub(in crate::store) fn configuration(snapshot: ConfigurationSnapshot) -> Result<(), Error> {
     let bytes = serde_json::to_vec(&snapshot)
         .map_err(|_| Error::Configuration("cannot encode configuration"))?;
-    if bytes.len() > MAX_CONFIGURATION_BYTES - configuration::DIAGNOSTIC_BUDGET {
+    if bytes.len() > MAX_CONFIGURATION_BYTES {
         return Err(Error::Capacity(
             "configuration exceeds 1 MiB publication budget",
         ));

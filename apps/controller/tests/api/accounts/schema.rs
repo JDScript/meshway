@@ -32,7 +32,7 @@ fn startup_rejects_partial_account_install_without_repairing_or_enrolling() {
         assert!(matches!(
             AppState::open(directory.path()),
             Err(meshway_controller::Error::Configuration(
-                "incomplete or incompatible account integration schema"
+                "invalid current controller schema; refusing repair"
             ))
         ));
         let after: Vec<(String, Option<String>)> = db
@@ -103,7 +103,7 @@ async fn startup_rejects_same_name_membership_ignore_trigger_before_registration
             .unwrap();
         match AppState::open(directory.path()) {
             Err(meshway_controller::Error::Configuration(
-                "incomplete or incompatible account integration schema",
+                "invalid current controller schema; refusing repair",
             )) => {}
             Ok(state) => {
                 let app = router(state);
