@@ -1,5 +1,5 @@
 //! Pure validation of the supplied connection. A separate in-memory reference
-//! checks every column/PK/FK/index definition; no persistent schema is modified.
+//! checks every column/PK/FK/index/trigger definition; no schema is modified.
 use crate::Error;
 use rusqlite::{Connection, OptionalExtension, types::Value};
 use std::collections::BTreeMap;
@@ -17,6 +17,7 @@ struct Shape {
     columns: Vec<Vec<Value>>,
     foreign_keys: Vec<Vec<Value>>,
     indexes: BTreeMap<String, (Vec<Value>, Vec<Vec<Value>>)>,
+    triggers: BTreeMap<(String, String), (String, String)>,
 }
 
 fn rows(connection: &Connection, sql: &str) -> Result<Vec<Vec<Value>>, Error> {
@@ -53,6 +54,11 @@ fn shape(connection: &Connection, table: &str) -> Result<Shape, Error> {
             ),
         );
     }
+    let triggers = connection.prepare(
+        "SELECT 'main',name,tbl_name,sql FROM sqlite_master WHERE type='trigger' AND tbl_name=?1 COLLATE NOCASE
+         UNION ALL SELECT 'temp',name,tbl_name,sql FROM sqlite_temp_master WHERE type='trigger' AND tbl_name=?1 COLLATE NOCASE",
+    )?.query_map([table], |r| Ok(((r.get::<_,String>(0)?,r.get::<_,String>(1)?),(r.get::<_,String>(2)?,r.get::<_,String>(3)?))))?
+        .collect::<Result<BTreeMap<_,_>,_>>()?;
     Ok(Shape {
         sql: sql
             .split_whitespace()
@@ -62,6 +68,10 @@ fn shape(connection: &Connection, table: &str) -> Result<Shape, Error> {
         columns: rows(connection, &format!("PRAGMA table_xinfo({table})"))?,
         foreign_keys: rows(connection, &format!("PRAGMA foreign_key_list({table})"))?,
         indexes,
+        // Compare the complete set, ownership and exact SQL (including literal
+        // case). The current reference has no history triggers at all. Base and
+        // account triggers attached to other tables are deliberately untouched.
+        triggers,
     })
 }
 
@@ -71,7 +81,7 @@ pub(crate) fn validate_schema(connection: &Connection) -> Result<(), Error> {
     for table in TABLES {
         if shape(connection, table)? != shape(&reference, table)? {
             return Err(Error::Configuration(
-                "incompatible latency columns, PK/AUTOINCREMENT, UNIQUE, FK or indexes",
+                "incompatible latency columns, PK/AUTOINCREMENT, UNIQUE, FK, indexes or triggers",
             ));
         }
     }

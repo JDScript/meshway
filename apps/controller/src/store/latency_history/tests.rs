@@ -680,6 +680,200 @@ fn incompatible_schema_is_detected_without_side_effects() {
 }
 
 #[test]
+fn history_trigger_set_is_exact_pure_and_does_not_reject_base_triggers() {
+    let f = fixture();
+    f.store
+        .connection
+        .execute_batch(
+            "CREATE TRIGGER legitimate_base_fixture AFTER INSERT ON nodes BEGIN SELECT 1; END;",
+        )
+        .unwrap();
+    validate_schema(&f.store.connection).unwrap();
+    for table in [
+        "latency_samples",
+        "latency_admissions",
+        "latency_coverage",
+        "latency_runtime_epochs",
+    ] {
+        for body in ["SELECT RAISE(IGNORE);", "SELECT 1;"] {
+            f.store.connection.execute_batch(&format!("CREATE TRIGGER same_name_history_guard BEFORE INSERT ON {table} BEGIN {body} END;")).unwrap();
+            let before: String = f
+                .store
+                .connection
+                .query_row(
+                    "SELECT sql FROM sqlite_master WHERE name='same_name_history_guard'",
+                    [],
+                    |r| r.get(0),
+                )
+                .unwrap();
+            assert!(
+                validate_schema(&f.store.connection).is_err(),
+                "unexpected {table} trigger must be rejected"
+            );
+            let after: String = f
+                .store
+                .connection
+                .query_row(
+                    "SELECT sql FROM sqlite_master WHERE name='same_name_history_guard'",
+                    [],
+                    |r| r.get(0),
+                )
+                .unwrap();
+            assert_eq!(
+                before, after,
+                "validation must not remove/repair the trigger"
+            );
+            f.store
+                .connection
+                .execute_batch("DROP TRIGGER same_name_history_guard;")
+                .unwrap();
+            validate_schema(&f.store.connection).unwrap();
+        }
+        f.store.connection.execute_batch(&format!("CREATE TEMP TRIGGER temporary_history_guard BEFORE INSERT ON main.{table} BEGIN SELECT RAISE(IGNORE); END;")).unwrap();
+        assert!(validate_schema(&f.store.connection).is_err());
+        f.store
+            .connection
+            .execute_batch("DROP TRIGGER temporary_history_guard;")
+            .unwrap();
+        validate_schema(&f.store.connection).unwrap();
+    }
+    // SQLite permits trigger/index names to collide. Separate object collections
+    // must retain the trigger rather than letting the expected index hide it.
+    f.store.connection.execute_batch("CREATE TRIGGER latency_source_oldest BEFORE INSERT ON latency_samples BEGIN SELECT RAISE(IGNORE); END;").unwrap();
+    assert!(validate_schema(&f.store.connection).is_err());
+    assert_eq!(f.store.connection.query_row("SELECT COUNT(*) FROM sqlite_master WHERE name='latency_source_oldest' AND type IN ('index','trigger')",[],|r|r.get::<_,u32>(0)).unwrap(),2);
+    f.store
+        .connection
+        .execute_batch("DROP TRIGGER latency_source_oldest;")
+        .unwrap();
+    validate_schema(&f.store.connection).unwrap();
+}
+
+#[test]
+fn ignored_history_insert_cannot_claim_receipt_or_half_commit_batch() {
+    for table in ["latency_samples", "latency_admissions"] {
+        let mut f = fixture();
+        let first = f.sample.clone();
+        let mut ignored = first.clone();
+        ignored.measurement_id = local::credential().unwrap();
+        f.store.connection.execute_batch(&format!("CREATE TRIGGER ignore_after_startup BEFORE INSERT ON {table} WHEN NEW.measurement_id='{}' BEGIN SELECT RAISE(IGNORE); END;", ignored.measurement_id)).unwrap();
+        assert!(
+            send(&mut f, vec![first.clone(), ignored.clone()]).is_err(),
+            "ignored {table} insertion must fail the batch"
+        );
+        for history_table in ["latency_samples", "latency_admissions", "latency_coverage"] {
+            assert_eq!(
+                f.store
+                    .connection
+                    .query_row(&format!("SELECT COUNT(*) FROM {history_table}"), [], |r| {
+                        r.get::<_, u32>(0)
+                    })
+                    .unwrap(),
+                0
+            );
+        }
+        f.store
+            .connection
+            .execute_batch("DROP TRIGGER ignore_after_startup;")
+            .unwrap();
+        assert_eq!(send(&mut f, vec![first, ignored]).unwrap().inserted, 2);
+    }
+}
+
+#[test]
+fn ignored_capacity_watermark_rolls_back_eviction_and_admission() {
+    let mut f = fixture();
+    let oldest = seed_full(&mut f);
+    for target in [
+        "BEFORE INSERT ON latency_coverage".to_owned(),
+        format!("BEFORE INSERT ON latency_admissions WHEN NEW.measurement_id='{oldest}'"),
+        format!("BEFORE DELETE ON latency_samples WHEN OLD.measurement_id='{oldest}'"),
+    ] {
+        f.store
+            .connection
+            .execute_batch(&format!(
+                "CREATE TRIGGER ignore_after_startup {target} BEGIN SELECT RAISE(IGNORE); END;"
+            ))
+            .unwrap();
+        let sample = f.sample.clone();
+        assert!(send(&mut f, vec![sample]).is_err());
+        assert_eq!(
+            f.store
+                .connection
+                .query_row("SELECT COUNT(*) FROM latency_samples", [], |r| r
+                    .get::<_, u32>(0))
+                .unwrap(),
+            NODE_ROW_BUDGET
+        );
+        assert!(
+            f.store
+                .connection
+                .query_row(
+                    "SELECT EXISTS(SELECT 1 FROM latency_samples WHERE measurement_id=?1)",
+                    [&oldest],
+                    |r| r.get::<_, bool>(0)
+                )
+                .unwrap()
+        );
+        assert_eq!(
+            f.store
+                .connection
+                .query_row("SELECT COUNT(*) FROM latency_admissions", [], |r| r
+                    .get::<_, u32>(0))
+                .unwrap(),
+            0
+        );
+        assert_eq!(
+            f.store
+                .connection
+                .query_row("SELECT COUNT(*) FROM latency_coverage", [], |r| r
+                    .get::<_, u32>(0))
+                .unwrap(),
+            0
+        );
+        f.store
+            .connection
+            .execute_batch("DROP TRIGGER ignore_after_startup;")
+            .unwrap();
+    }
+}
+
+#[test]
+fn ignored_epoch_insert_cannot_half_commit_a_new_runtime_lease() {
+    let mut f = fixture();
+    f.store.connection.execute_batch("CREATE TRIGGER ignore_epoch_after_startup BEFORE INSERT ON latency_runtime_epochs BEGIN SELECT RAISE(IGNORE); END;").unwrap();
+    let before = f
+        .store
+        .get_connection_runtime_epoch(&f.token)
+        .unwrap()
+        .epoch;
+    assert!(
+        f.store
+            .begin_connection_runtime(
+                &f.token,
+                &BeginConnectionRuntimeRequest {
+                    expected_epoch: before,
+                    instance_id: local::credential().unwrap()
+                }
+            )
+            .is_err()
+    );
+    assert_eq!(
+        f.store
+            .get_connection_runtime_epoch(&f.token)
+            .unwrap()
+            .epoch,
+        before
+    );
+    let sample = f.sample.clone();
+    assert_eq!(
+        send(&mut f, vec![sample]).unwrap().inserted,
+        1,
+        "original applied epoch remains usable"
+    );
+}
+
+#[test]
 fn rolling_is_source_scoped_and_eviction_failure_rolls_back_admission_and_coverage() {
     let mut f = fixture();
     seed_full(&mut f);

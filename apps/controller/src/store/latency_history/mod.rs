@@ -29,7 +29,23 @@ pub(super) fn begin_epoch(
     if !installed {
         return Ok(());
     }
-    connection.execute("INSERT INTO latency_runtime_epochs(node_id,network_id,epoch,started_ms) VALUES (?1,?2,?3,?4) ON CONFLICT(node_id) DO UPDATE SET epoch=excluded.epoch,started_ms=excluded.started_ms WHERE latency_runtime_epochs.epoch<>excluded.epoch AND latency_runtime_epochs.network_id=excluded.network_id", params![source,network.as_str(),epoch,Utc::now().timestamp_millis()])?;
+    let changed = connection.execute("INSERT INTO latency_runtime_epochs(node_id,network_id,epoch,started_ms) VALUES (?1,?2,?3,?4) ON CONFLICT(node_id) DO UPDATE SET epoch=excluded.epoch,started_ms=excluded.started_ms WHERE latency_runtime_epochs.epoch<>excluded.epoch AND latency_runtime_epochs.network_id=excluded.network_id", params![source,network.as_str(),epoch,Utc::now().timestamp_millis()])?;
+    if changed == 0 {
+        // A same-epoch retry intentionally leaves the floor unchanged; an
+        // ignored new epoch must not commit the enclosing runtime lease change.
+        let saved: Option<u32> = connection
+            .query_row(
+                "SELECT epoch FROM latency_runtime_epochs WHERE node_id=?1 AND network_id=?2",
+                params![source, network.as_str()],
+                |r| r.get(0),
+            )
+            .optional()?;
+        if saved != Some(epoch) {
+            return Err(Error::Configuration("latency epoch write was not applied"));
+        }
+    } else {
+        expect_one(changed)?;
+    }
     Ok(())
 }
 
@@ -166,11 +182,11 @@ impl Store {
             let expiry =
                 (sample.measured_at.timestamp_millis() + REPORT_MAX_AGE_SECONDS * 1000 + 1)
                     .max(now.timestamp_millis() + 60_001);
-            tx.execute("INSERT INTO latency_admissions(network_id,source_node_id,measurement_id,body_digest,received_ms,expires_ms) VALUES (?1,?2,?3,?4,?5,?6) ON CONFLICT(network_id,source_node_id,measurement_id) DO UPDATE SET body_digest=excluded.body_digest,received_ms=excluded.received_ms,expires_ms=excluded.expires_ms",params![network.as_str(),source,sample.measurement_id,digest,now.timestamp_millis(),expiry])?;
-            tx.execute(
+            expect_one(tx.execute("INSERT INTO latency_admissions(network_id,source_node_id,measurement_id,body_digest,received_ms,expires_ms) VALUES (?1,?2,?3,?4,?5,?6) ON CONFLICT(network_id,source_node_id,measurement_id) DO UPDATE SET body_digest=excluded.body_digest,received_ms=excluded.received_ms,expires_ms=excluded.expires_ms",params![network.as_str(),source,sample.measurement_id,digest,now.timestamp_millis(),expiry])?)?;
+            expect_one(tx.execute(
                 "INSERT INTO latency_samples(network_id,source_node_id,peer_node_id,measurement_id,runtime_epoch,measured_ms,received_ms,body) VALUES (?1,?2,?3,?4,?5,?6,?7,?8)",
                 params![network.as_str(),source,sample.peer_node_id,sample.measurement_id,epoch,sample.measured_at.timestamp_millis(),now.timestamp_millis(),body],
-            )?;
+            )?)?;
             response.inserted += 1;
         }
         cleanup_source(&tx, &network, &source, now)?;
@@ -325,13 +341,35 @@ fn roll_source(connection: &Connection, network: &NetworkId, source: &str) -> Re
     for (row, id, measured, received, body) in victims {
         // Also protect recently received fixture/previous-version rows that did
         // not yet have an admission ledger. Never rewrite a prior live identity.
-        connection.execute("INSERT OR IGNORE INTO latency_admissions(network_id,source_node_id,measurement_id,body_digest,received_ms,expires_ms) VALUES (?1,?2,?3,?4,?5,?6)",params![network.as_str(),source,id,Sha256::digest(&body).to_vec(),received,(measured+REPORT_MAX_AGE_SECONDS*1000+1).max(received+60_001)])?;
-        connection.execute(
+        let digest = Sha256::digest(&body).to_vec();
+        let changed = connection.execute("INSERT OR IGNORE INTO latency_admissions(network_id,source_node_id,measurement_id,body_digest,received_ms,expires_ms) VALUES (?1,?2,?3,?4,?5,?6)",params![network.as_str(),source,id,digest,received,(measured+REPORT_MAX_AGE_SECONDS*1000+1).max(received+60_001)])?;
+        if changed == 0 {
+            // OR IGNORE is legitimate only if the identity/receipt already has
+            // protection. It cannot silently lose a victim's retry/rate guard.
+            let protected: bool = connection.query_row("SELECT EXISTS(SELECT 1 FROM latency_admissions WHERE network_id=?1 AND source_node_id=?2 AND measurement_id=?3 AND body_digest=?4 AND received_ms=?5)",params![network.as_str(),source,id,digest,received],|r|r.get(0))?;
+            if !protected {
+                return Err(Error::Configuration(
+                    "latency victim identity write was not applied",
+                ));
+            }
+        } else {
+            expect_one(changed)?;
+        }
+        expect_one(connection.execute(
             "DELETE FROM latency_samples WHERE row_id=?1 AND network_id=?2 AND source_node_id=?3",
             params![row, network.as_str(), source],
-        )?;
+        )?)?;
     }
-    connection.execute("INSERT INTO latency_coverage(network_id,source_node_id,capacity_before_ms) VALUES (?1,?2,?3) ON CONFLICT(network_id,source_node_id) DO UPDATE SET capacity_before_ms=MAX(latency_coverage.capacity_before_ms,excluded.capacity_before_ms)",params![network.as_str(),source,watermark])?;
+    expect_one(connection.execute("INSERT INTO latency_coverage(network_id,source_node_id,capacity_before_ms) VALUES (?1,?2,?3) ON CONFLICT(network_id,source_node_id) DO UPDATE SET capacity_before_ms=MAX(latency_coverage.capacity_before_ms,excluded.capacity_before_ms)",params![network.as_str(),source,watermark])?)?;
+    Ok(())
+}
+
+fn expect_one(changed: usize) -> Result<(), Error> {
+    if changed != 1 {
+        return Err(Error::Configuration(
+            "latency write was not applied exactly once",
+        ));
+    }
     Ok(())
 }
 

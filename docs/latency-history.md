@@ -114,6 +114,13 @@ DDL 在 `apps/controller/src/store/latency_history/schema.sql`；整合候选通
 测试命令兼容。已有完整开发片段可在验证后采用，partial/未知结构拒绝，不用同名空壳修补。
 旧 lease 缺少起点时建立保守的历史启用下界，已知起点和历史游标不重写。此处是代码整合状态，
 不是现网部署声明；最终消费者与真实旧数据副本验收沿[统一迁移说明](/schema-v11)执行。
+正常 controller 启动若已有 latency 表，执行无副作用完整 `validate_schema`（columns/PK/
+AUTOINCREMENT/UNIQUE/FK/index 形状、完整 trigger 集合/归属/精确定义及 FK integrity），缺失
+约束的同名表拒绝启动。当前四张 history 表没有合法 trigger，额外 main/temp trigger 均拒绝；
+不影响 base/account 表上的合法 trigger。验证不删除或修复表、索引或 trigger。
+关键 epoch/admission/sample、victim 删除及 coverage 写入核对 affected-row count；忽略写入
+不会虚报 inserted 或提交半份 ledger/淘汰水位。合法同 epoch 重试和已有 victim identity 是
+明确核对的零变更分支，不在每个请求扫描整库 schema。
 
 ### 并行交付整合（只读核对 `56da5ad`）
 
