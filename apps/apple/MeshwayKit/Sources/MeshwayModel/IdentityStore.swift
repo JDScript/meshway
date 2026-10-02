@@ -14,14 +14,14 @@ public struct EnrollmentSnapshot: Codable, Sendable, Equatable {
 
 // One Keychain item is the write-ahead journal. The binding is never assembled
 // from independently written fields. Public metadata is mirrored separately.
-struct IdentityJournal: Codable, CustomStringConvertible, CustomDebugStringConvertible {
+struct IdentityJournal: Codable, Equatable, CustomStringConvertible, CustomDebugStringConvertible {
   var description: String { "IdentityJournal(<redacted>)" }
   var debugDescription: String { description }
   var credential: String
   var snapshot: EnrollmentSnapshot
   var pending: PendingBinding?
 }
-struct PendingBinding: Codable, CustomStringConvertible, CustomDebugStringConvertible {
+struct PendingBinding: Codable, Equatable, CustomStringConvertible, CustomDebugStringConvertible {
   var description: String { "PendingBinding(<redacted>)" }
   var debugDescription: String { description }
   var url: URL

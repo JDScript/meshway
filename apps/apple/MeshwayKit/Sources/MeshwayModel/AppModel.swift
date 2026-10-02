@@ -55,20 +55,23 @@ public enum AppStatus: Equatable, Sendable {
 
   public init(
     core: any CoreService = RustCoreService(),
-    enrollment: EnrollmentCoordinator = EnrollmentCoordinator(),
+    enrollment: EnrollmentCoordinator = EnrollmentCoordinator(profiles: .system()),
     tunnel: any TunnelController, defaults: UserDefaults = .standard
   ) {
     self.enrollment = enrollment
     self.tunnel = tunnel
     self.defaults = defaults
     coreInfo = core.buildInfo()
-    controllerDraft = enrollment.snapshot?.server ?? defaults.string(forKey: "controllerURL") ?? ""
+    controllerDraft =
+      enrollment.snapshot?.server
+      ?? enrollment.profiles.first { $0.id == enrollment.activeProfileID }?.server
+      ?? defaults.string(forKey: "controllerURL") ?? ""
     controller = try? ControllerAddress(controllerDraft)
   }
 
   public func saveController() {
     guard !enrollment.hasIdentity else {
-      validationMessage = "Reset this device explicitly before changing its server."
+      validationMessage = "Use Add network… to sign in to another server."
       return
     }
     do {
@@ -84,7 +87,7 @@ public enum AppStatus: Equatable, Sendable {
 
   public func clearController() {
     guard !enrollment.hasIdentity else {
-      validationMessage = "Reset this device explicitly before clearing its server."
+      validationMessage = "Remove this enrollment explicitly before clearing its server."
       return
     }
     defaults.removeObject(forKey: "controllerURL")
@@ -97,6 +100,36 @@ public enum AppStatus: Equatable, Sendable {
     guard let controller else { return }
     await enrollment.signIn(
       server: controller.url.absoluteString, name: deviceName, version: coreInfo.version)
+  }
+
+  public func switchNetwork(_ id: String) async {
+    await enrollment.switchProfile(id)
+    if let server = enrollment.snapshot?.server
+      ?? enrollment.profiles.first(where: { $0.id == id })?.server
+    {
+      controllerDraft = server
+      controller = try? ControllerAddress(server)
+    }
+    validationMessage = nil
+    await enrollment.foregroundContact()
+  }
+
+  public func addNetwork() async {
+    let server = enrollment.snapshot?.server ?? controllerDraft
+    await enrollment.addNetwork()
+    controllerDraft = server
+    controller = try? ControllerAddress(server)
+    validationMessage = nil
+  }
+
+  public func removeNetwork() async {
+    await enrollment.removeActiveProfile()
+    if let server = enrollment.snapshot?.server {
+      controllerDraft = server
+      controller = try? ControllerAddress(server)
+    }
+    validationMessage = nil
+    await enrollment.foregroundContact()
   }
 
   public func inspectPreferences() async {

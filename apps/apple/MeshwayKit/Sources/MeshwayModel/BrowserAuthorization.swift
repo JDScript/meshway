@@ -11,8 +11,8 @@ public enum BrowserError: Error, LocalizedError, Sendable, Equatable {
   case cancelled, denied, invalidCallback, unavailable
   public var errorDescription: String? {
     switch self {
-    case .cancelled: "Sign-in was cancelled. No new local identity was generated."
-    case .denied: "Device access was denied."
+    case .cancelled: "Sign-in was cancelled. This pending enrollment can be resumed or removed."
+    case .denied: "Device access was denied. This pending enrollment can be resumed or removed."
     case .invalidCallback: "The authorization callback did not match the saved attempt."
     case .unavailable: "The system browser session could not be opened."
     }

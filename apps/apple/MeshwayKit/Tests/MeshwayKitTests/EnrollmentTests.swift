@@ -180,13 +180,13 @@ actor TestEnrollmentService: EnrollmentService {
     let coordinator = EnrollmentCoordinator(
       service: TestEnrollmentService(), browser: browser, secrets: secrets, snapshots: snapshots)
     await coordinator.signIn(server: server, name: "Mac", version: "v1")
-    #expect(coordinator.snapshot?.phase == .notSignedIn)
+    #expect(coordinator.snapshot?.phase == .awaitingBrowser)
     let journal = try JSONDecoder().decode(IdentityJournal.self, from: #require(secrets.data))
     #expect(journal.credential == nodeCredential)
-    #expect(journal.pending == nil)
+    #expect(journal.pending?.state == state)
     let restored = EnrollmentCoordinator(
       service: TestEnrollmentService(), browser: browser, secrets: secrets, snapshots: snapshots)
-    #expect(restored.snapshot?.phase == .notSignedIn)
+    #expect(restored.snapshot?.phase == .awaitingBrowser)
   }
   let secrets = MemorySecrets()
   let snapshots = MemorySnapshots()

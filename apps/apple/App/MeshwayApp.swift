@@ -11,7 +11,7 @@ import SwiftUI
     #endif
     return AppModel(
       enrollment: EnrollmentCoordinator(
-        secrets: KeychainSecretStore(
+        profiles: EnrollmentProfiles.system(
           accessGroup: Bundle.main.object(forInfoDictionaryKey: "MeshwayKeychainAccessGroup")
             as? String)),
       tunnel: SystemTunnelController(
