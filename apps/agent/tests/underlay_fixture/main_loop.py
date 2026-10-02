@@ -6,6 +6,7 @@ import json
 import os
 from pathlib import Path
 import shutil
+import signal
 import subprocess
 import sys
 import time
@@ -14,7 +15,7 @@ import uuid
 ROOT = Path(__file__).resolve().parents[4]
 TMP = Path('/private/var/folders/8n/20x15sl9797cdg9sdqfj803w0000gn/T/opencode')
 sys.path.insert(0, str(ROOT / 'scripts'))
-from performance_lock import performance_lock, validate_descriptor
+from performance_lock import performance_lock, validate_descriptor, LOCK_FD_ENV
 from source_manifest import inventory
 
 
@@ -52,7 +53,8 @@ def run(args):
                 if value == '--token': safe[i + 1] = '<private>'
             result['commands'].append(safe)
             completed = subprocess.run(['docker', *map(str, command)], cwd=ROOT,
-                env=dict(os.environ, DOCKER_CONTEXT='default', BUILDX_BUILDER='default'),
+                env=dict(os.environ, DOCKER_CONTEXT='default', BUILDX_BUILDER='default',
+                    **{LOCK_FD_ENV: str(descriptor)}), pass_fds=(descriptor,),
                 text=True, capture_output=True, timeout=timeout, input=input)
             if check and completed.returncode:
                 raise RuntimeError(completed.stderr[-4000:] + completed.stdout[-4000:])
@@ -159,6 +161,10 @@ def run(args):
             result['status'] = 'failed'
             result['error'] = str(error)
         finally:
+            # A second termination request must not interrupt resource cleanup
+            # or release the lock while its Docker children are still running.
+            handlers = {sig: signal.signal(sig, signal.SIG_IGN)
+                for sig in (signal.SIGINT, signal.SIGTERM)}
             for cid in reversed(owned):
                 try:
                     inspection = json.loads(docker('inspect', cid).stdout)[0]
@@ -182,6 +188,8 @@ def run(args):
                 except Exception as error:
                     result['cleanup_errors'].append(str(error))
             (logs / 'result.json').write_text(json.dumps(result, indent=2) + '\n')
+            for sig, handler in handlers.items():
+                signal.signal(sig, handler)
     print(json.dumps({'status': result['status'], 'result': str(logs / 'result.json'), 'error': result.get('error')}))
     expected = 'compiled' if args.check_only or args.compile_only else 'passed'
     return int(result['status'] != expected or bool(result['cleanup_errors']))
@@ -311,6 +319,9 @@ def normal_acceptance(docker, container, name, logs, result, networks):
 
 
 if __name__ == '__main__':
+    def terminate(_signal, _frame):
+        raise KeyboardInterrupt('termination requested; cleaning owned resources')
+    signal.signal(signal.SIGTERM, terminate)
     parser = argparse.ArgumentParser()
     parser.add_argument('--check-only', action='store_true')
     parser.add_argument('--compile-only', action='store_true')
