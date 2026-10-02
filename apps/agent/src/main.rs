@@ -323,16 +323,22 @@ async fn execute(command: Command) -> Result<(), Box<dyn std::error::Error>> {
             #[cfg(feature = "managed-connections")]
             let (events, mut receive) = tokio::sync::mpsc::channel(32);
             #[cfg(feature = "managed-connections")]
-            let event_task = tokio::spawn(async move {
-                while let Some(event) = receive.recv().await {
-                    match event {
-                        meshway_agent::SessionEvent::Receipt(receipt) => println!("{receipt}"),
-                        meshway_agent::SessionEvent::Retry { message, delay } => {
-                            eprintln!("{message}; retrying in {}s", delay.as_secs());
+            // Terminal writes can block indefinitely. Keep them off Tokio
+            // workers and outside the joined network shutdown boundary. The
+            // bounded channel carries best-effort observations, not leases;
+            // process exit may discard queued or blocked output.
+            std::thread::Builder::new()
+                .name("meshway-cli-events".into())
+                .spawn(move || {
+                    while let Some(event) = receive.blocking_recv() {
+                        match event {
+                            meshway_agent::SessionEvent::Receipt(receipt) => println!("{receipt}"),
+                            meshway_agent::SessionEvent::Retry { message, delay } => {
+                                eprintln!("{message}; retrying in {}s", delay.as_secs());
+                            }
                         }
                     }
-                }
-            });
+                })?;
             let run = async {
                 #[cfg(feature = "managed-connections")]
                 if apply_dataplane {
@@ -437,8 +443,6 @@ async fn execute(command: Command) -> Result<(), Box<dyn std::error::Error>> {
                 };
                 let result = supervise_run(run, dns, &cancellation).await;
                 drop(events);
-                event_task.abort();
-                let _ = event_task.await;
                 result?;
             }
             #[cfg(not(feature = "managed-connections"))]
