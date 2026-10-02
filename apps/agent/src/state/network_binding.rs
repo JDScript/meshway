@@ -24,7 +24,11 @@ fn valid_network(value: &str) -> bool {
             .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
 }
 pub(crate) fn load_binding(agent: &Agent) -> Result<Option<Binding>, AgentError> {
-    let path = sidecar(&agent.path, ".network-binding.json");
+    load_for(&agent.path, &agent.identity)
+}
+
+pub(crate) fn load_for(state: &Path, identity: &Identity) -> Result<Option<Binding>, AgentError> {
+    let path = sidecar(state, ".network-binding.json");
     match std::fs::symlink_metadata(&path) {
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
         Err(e) => return Err(e.into()),
@@ -33,9 +37,9 @@ pub(crate) fn load_binding(agent: &Agent) -> Result<Option<Binding>, AgentError>
     let binding: Binding = serde_json::from_str(&local::read_private_bounded(&path, 16_384)?)
         .map_err(|_| AgentError::Invalid("damaged network binding; preserve sidecar"))?;
     if binding.version != 1
-        || binding.controller != agent.identity.controller
-        || Some(&binding.node_id) != agent.identity.node_id.as_ref()
-        || binding.credential_hash != local::digest(&agent.identity.node_credential)
+        || binding.controller != identity.controller
+        || Some(&binding.node_id) != identity.node_id.as_ref()
+        || binding.credential_hash != local::digest(&identity.node_credential)
         || !valid_network(&binding.network_id)
     {
         return Err(AgentError::Invalid(

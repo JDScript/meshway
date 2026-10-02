@@ -458,6 +458,19 @@ impl Sync {
             self.identity.node_id.as_deref().expect("enrolled DNS"),
             self.cache.as_ref().map(|c| &c.snapshot),
         )?;
+        // Business publication cannot establish its own scope. Protected
+        // bootstrap alone acquires the authoritative network, even when there
+        // has never been a DNS cache (or DNS is disabled).
+        #[cfg(target_os = "linux")]
+        {
+            let binding = super::network_binding::load_for(&self.state, &self.identity)?
+                .ok_or(AgentError::Invalid("DNS requires durable network binding"))?;
+            if binding.network_id != snapshot.payload.network_id {
+                return Err(AgentError::Invalid(
+                    "DNS snapshot differs from durable network binding",
+                ));
+            }
+        }
         let mut self_addresses = self
             .cache
             .as_ref()

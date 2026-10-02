@@ -211,6 +211,8 @@ async fn fixture() -> (
     .unwrap();
     agent.identity.node_id = Some("a".repeat(64));
     write_identity(&agent.path, &agent.identity, true).unwrap();
+    #[cfg(target_os = "linux")]
+    crate::state::network_binding::persist_binding(&agent, &"0".repeat(32)).unwrap();
     let shared = (
         Arc::new(RwLock::new(Source::Snapshot(snapshot(
             agent.identity.node_id.as_deref().unwrap(),
@@ -238,6 +240,36 @@ fn sync(agent: &Agent, cache: Option<Cache>) -> Sync {
         listen: "127.0.0.1:5353".parse().unwrap(),
         interval: Duration::from_secs(1),
         lease: Duration::from_secs(10),
+    }
+}
+
+#[cfg(target_os = "linux")]
+#[tokio::test]
+async fn first_business_snapshot_requires_durable_scope_even_when_disabled() {
+    for enabled in [true, false] {
+        let (_directory, agent, shared, task) = fixture().await;
+        let binding_path =
+            crate::state::network_binding::sidecar(&agent.path, ".network-binding.json");
+        let binding = std::fs::read(&binding_path).unwrap();
+        let mut wrong = snapshot(agent.identity.node_id.as_deref().unwrap(), 1);
+        wrong.payload.network_id = "f".repeat(32);
+        wrong.payload.dns.enabled = enabled;
+        if !enabled {
+            wrong.payload.records.clear();
+        }
+        rehash(&mut wrong);
+        validate(&wrong, agent.identity.node_id.as_deref().unwrap(), None).unwrap();
+        *shared.0.write().unwrap() = Source::Snapshot(wrong);
+        let runtime = sync(&agent, None);
+        let guard = runtime.guard.clone();
+        assert!(runtime.run().await.is_err());
+        assert!(!path(&agent.path).exists());
+        assert_eq!(std::fs::read(&binding_path).unwrap(), binding);
+        assert_eq!(
+            query(&guard, "demo-sha.meshway.test.").await.response_code,
+            ResponseCode::ServFail
+        );
+        task.abort();
     }
 }
 
