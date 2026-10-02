@@ -37,6 +37,35 @@ export function queryKey(query: LatencyQuery): string {
   return [query.networkId, query.sourceNodeId, query.peerNodeId, query.from, query.until].join("|")
 }
 
+/**
+ * What the controller says about retained history, merged over every page
+ * of a read. Pages are not a snapshot: each reports the watermark at its own
+ * time, so the merge only ever becomes more conservative (later floor, later
+ * capacity watermark, trimmed once seen). It never asserts continuous
+ * coverage, offline time or loss.
+ */
+export type LatencyCoverage = {
+  /** TTL floor: nothing older is retained. */
+  retentionFrom: string | null
+  /** Conservative source-wide (all peers) capacity watermark: some earlier events were evicted. */
+  trimmedBefore: string | null
+  /** The requested window intersects the capacity-trimmed range. */
+  trimmed: boolean
+}
+
+export const NO_COVERAGE: LatencyCoverage = { retentionFrom: null, trimmedBefore: null, trimmed: false }
+
+const later = (a: string | null, b: string | null) => (a === null ? b : b === null ? a : Date.parse(b) > Date.parse(a) ? b : a)
+
+export function mergeCoverage(current: LatencyCoverage, page: Pick<LatencyHistoryResponse, "retention_from" | "capacity_trimmed_before" | "capacity_trimmed">, from: string): LatencyCoverage {
+  const trimmedBefore = later(current.trimmedBefore, page.capacity_trimmed_before)
+  return {
+    retentionFrom: later(current.retentionFrom, page.retention_from),
+    trimmedBefore,
+    trimmed: current.trimmed || page.capacity_trimmed || (trimmedBefore !== null && Date.parse(from) < Date.parse(trimmedBefore)),
+  }
+}
+
 export type LatencyPageResult =
   | { status: "loaded"; page: LatencyHistoryResponse }
   | { status: "error"; message: string }
@@ -48,9 +77,9 @@ export type LatencyPageResult =
  */
 export async function readPages(
   readPage: (after: string | null) => Promise<LatencyPageResult>,
-  options: { budget?: number; after?: string | null; cancelled?: () => boolean } = {}
+  options: { budget?: number; after?: string | null; cancelled?: () => boolean; from: string; coverage?: LatencyCoverage }
 ): Promise<
-  | { status: "loaded"; records: LatencyHistoryRecord[]; next: string | null; pages: number; expectedIntervalSeconds: number | null }
+  | { status: "loaded"; records: LatencyHistoryRecord[]; next: string | null; pages: number; expectedIntervalSeconds: number | null; coverage: LatencyCoverage }
   | { status: "error"; message: string; records: LatencyHistoryRecord[] }
   | { status: "cancelled" }
 > {
@@ -58,6 +87,7 @@ export async function readPages(
   const records: LatencyHistoryRecord[] = []
   let after = options.after ?? null
   let interval: number | null = null
+  let coverage = options.coverage ?? NO_COVERAGE
   for (let pages = 0; pages < budget; ) {
     const result = await readPage(after)
     if (options.cancelled?.()) return { status: "cancelled" }
@@ -65,11 +95,12 @@ export async function readPages(
     pages += 1
     records.push(...result.page.records)
     interval = result.page.expected_interval_seconds
-    if (result.page.next === null) return { status: "loaded", records, next: null, pages, expectedIntervalSeconds: interval }
+    coverage = mergeCoverage(coverage, result.page, options.from)
+    if (result.page.next === null) return { status: "loaded", records, next: null, pages, expectedIntervalSeconds: interval, coverage }
     after = result.page.next
-    if (pages === budget) return { status: "loaded", records, next: after, pages, expectedIntervalSeconds: interval }
+    if (pages === budget) return { status: "loaded", records, next: after, pages, expectedIntervalSeconds: interval, coverage }
   }
-  return { status: "loaded", records, next: after, pages: 0, expectedIntervalSeconds: interval }
+  return { status: "loaded", records, next: after, pages: 0, expectedIntervalSeconds: interval, coverage }
 }
 
 export type SuccessPoint = { id: string; at: number; ms: number; segment: string }

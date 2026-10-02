@@ -17,6 +17,7 @@ import {
   failureReasonLabels,
   formatMs,
   LATENCY_WINDOWS,
+  type LatencyCoverage,
   type LatencyHistory as History,
   type LatencyWindow,
 } from "@/lib/latency-history-model"
@@ -159,8 +160,10 @@ function HistoryBody({
         )
       ) : !history || !hasData ? (
         <div data-testid="latency-empty" className="flex min-h-14 flex-col items-center justify-center gap-0.5 rounded-lg border border-dashed px-3 py-2 text-center text-xs text-muted-foreground">
-          <span>这段时间没有记录</span>
-          <span className="text-[0.6875rem]">未采样或未上报，不代表断开</span>
+          <span>这段时间没有可返回的记录</span>
+          <span className="text-[0.6875rem]">
+            {state.coverage.trimmed ? "部分历史已因容量被淘汰，其余为未采样或未上报；不代表断开" : "未采样或未上报，不代表断开"}
+          </span>
         </div>
       ) : (
         <>
@@ -180,6 +183,7 @@ function HistoryBody({
           </p>
         </>
       )}
+      {query !== null ? <CoverageNotice coverage={state.coverage} from={query.from} compact={compact} /> : null}
       {query !== null && state.next !== null ? (
         <p role="status" data-testid="latency-truncated" className="flex items-center gap-2 text-xs text-warning">
           <span className="flex-1">只读取了前 {state.records.length} 条（按接收顺序），这段时间还有更多记录。</span>
@@ -196,6 +200,25 @@ function HistoryBody({
         </p>
       ) : null}
     </div>
+  )
+}
+
+/**
+ * Retention and capacity, as the controller reports them. The capacity
+ * watermark is conservative and covers all of the source's peers: it says
+ * some earlier events were evicted, not that the window is otherwise
+ * complete, and never that the link was down.
+ */
+function CoverageNotice({ coverage, from, compact }: { coverage: LatencyCoverage; from: string; compact: boolean }) {
+  const beyondRetention = coverage.retentionFrom !== null && Date.parse(from) < Date.parse(coverage.retentionFrom)
+  if (!coverage.trimmed && !beyondRetention) return null
+  return (
+    <p role="status" data-testid="latency-coverage" className="text-xs text-warning">
+      {coverage.trimmed
+        ? `此前部分历史因容量被淘汰${coverage.trimmedBefore && !compact ? `（${formatDateTime(coverage.trimmedBefore)} 之前，按该节点的全部对端统计）` : ""}，所示记录可能不完整。`
+        : null}
+      {beyondRetention && coverage.retentionFrom ? `${compact ? "" : `${formatDateTime(coverage.retentionFrom)} `}之前超出保留期。` : null}
+    </p>
   )
 }
 

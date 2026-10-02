@@ -177,6 +177,8 @@ test("the selected link shows its real directed RTT history from the controller"
     await expect(summary).toContainText("0.42 ms");
     await expect(summary).toContainText("超时 1 · 失败 1");
     await expect(summary).toContainText("2 段");
+    // Nothing was evicted for capacity: no coverage warning.
+    await expect(history.getByTestId("latency-coverage")).toHaveCount(0);
     // Current RTT and history stay separate surfaces.
     await expect(page.getByTestId("overview-channel")).toBeVisible();
 
@@ -240,7 +242,7 @@ test("the selected link shows its real directed RTT history from the controller"
     // A configured link without any record: an explicit empty state, never zero.
     await page.getByRole("button", { name: "关闭" }).click();
     await openEdge(page, /^home-gw 与 sg-edge|^sg-edge 与 home-gw/);
-    await expect(page.getByTestId("latency-empty")).toContainText("这段时间没有记录");
+    await expect(page.getByTestId("latency-empty")).toContainText("这段时间没有可返回的记录");
     await expect(page.getByTestId("latency-empty")).toContainText("不代表断开");
     expect(errors).toEqual([]);
   } finally {

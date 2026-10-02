@@ -118,7 +118,7 @@ test("the overview map shows only sourced places and reported links, and opens i
     await expect(channel).toContainText("31 ms");
     await expect(channel).toContainText("29 ms");
     // No latency record was reported for this pair: an explicit empty state, never a drawn curve.
-    await expect(page.getByTestId("latency-empty")).toContainText("这段时间没有记录");
+    await expect(page.getByTestId("latency-empty")).toContainText("这段时间没有可返回的记录");
 
     // Entering management keeps the selection; the map shrinks into the inset,
     // keyboard focus moves to the mode button that replaced 管理网络, and the

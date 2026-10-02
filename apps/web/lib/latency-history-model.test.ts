@@ -4,7 +4,7 @@ import { test } from "node:test"
 import type { LatencyHistoryRecord, LatencyHistoryResponse } from "@meshway/control-client"
 
 import { zLatencyHistoryRecord } from "../../../packages/control-client/src/generated/zod.gen.ts"
-import { breakAfter, buildHistory, formatMs, readPages, windowRange, type LatencyQuery } from "./latency-history-model.ts"
+import { breakAfter, buildHistory, formatMs, mergeCoverage, NO_COVERAGE, readPages, windowRange, type LatencyQuery } from "./latency-history-model.ts"
 
 // Test values only.
 const NET = "a".repeat(32)
@@ -86,6 +86,9 @@ test("pages follow the cursor, stop at the budget with a continuation, and honou
     next: index < 2 ? String(index + 1) : null,
     expected_interval_seconds: 30,
     retention_seconds: 604800,
+    retention_from: new Date(t0 - 604800_000).toISOString(),
+    capacity_trimmed_before: null,
+    capacity_trimmed: false,
   }))
   const seen: (string | null)[] = []
   const reader = async (after: string | null) => {
@@ -94,19 +97,19 @@ test("pages follow the cursor, stop at the budget with a continuation, and honou
     assert.ok(page)
     return { status: "loaded" as const, page }
   }
-  const all = await readPages(reader)
+  const all = await readPages(reader, { from: query.from })
   assert.equal(all.status, "loaded")
   if (all.status === "loaded") assert.deepEqual([all.records.length, all.next, all.pages], [3, null, 3])
   assert.deepEqual(seen, [null, "1", "2"])
-  const truncated = await readPages(reader, { budget: 2 })
+  const truncated = await readPages(reader, { budget: 2, from: query.from })
   if (truncated.status !== "loaded") assert.fail("expected a page result")
   assert.deepEqual([truncated.records.length, truncated.next], [2, "2"])
-  const resumed = await readPages(reader, { after: truncated.next })
+  const resumed = await readPages(reader, { after: truncated.next, from: query.from })
   if (resumed.status === "loaded") assert.deepEqual([resumed.records.length, resumed.next], [1, null])
   let calls = 0
-  const cancelled = await readPages(async (after) => { calls += 1; return reader(after) }, { cancelled: () => calls >= 1 })
+  const cancelled = await readPages(async (after) => { calls += 1; return reader(after) }, { cancelled: () => calls >= 1, from: query.from })
   assert.equal(cancelled.status, "cancelled")
-  const failing = await readPages(async () => ({ status: "error", message: "down" }))
+  const failing = await readPages(async () => ({ status: "error", message: "down" }), { from: query.from })
   assert.deepEqual(failing, { status: "error", message: "down", records: [] })
 })
 
@@ -124,4 +127,24 @@ test("a timeout or failure between successes breaks the line instead of interpol
   )
   assert.equal(history.segments.length, 1)
   assert.deepEqual(history.segments[0]?.runs.map((run) => run.map((point) => point.id)), [[hex(1)], [hex(3), hex(4)], [hex(6)]])
+})
+
+test("coverage merges across pages only towards the more conservative watermark", () => {
+  const floor = new Date(t0 - 604800_000).toISOString()
+  const page = (before: string | null, trimmed: boolean) => ({ retention_from: floor, capacity_trimmed_before: before, capacity_trimmed: trimmed })
+  const early = new Date(t0 + 600_000).toISOString()
+  const late = new Date(t0 + 1_200_000).toISOString()
+  // First page trimmed, a later page reports nothing: still trimmed, watermark kept.
+  let coverage = mergeCoverage(NO_COVERAGE, page(early, true), query.from)
+  coverage = mergeCoverage(coverage, page(null, false), query.from)
+  assert.deepEqual(coverage, { retentionFrom: floor, trimmedBefore: early, trimmed: true })
+  // A later page with a later watermark moves it forward, never back.
+  coverage = mergeCoverage(coverage, page(late, true), query.from)
+  coverage = mergeCoverage(coverage, page(early, true), query.from)
+  assert.equal(coverage.trimmedBefore, late)
+  // A watermark before the window does not trim it.
+  const before = mergeCoverage(NO_COVERAGE, page(new Date(t0 - 1_000).toISOString(), false), query.from)
+  assert.equal(before.trimmed, false)
+  // A watermark inside the window trims it even if a page said otherwise.
+  assert.equal(mergeCoverage(NO_COVERAGE, page(early, false), query.from).trimmed, true)
 })

@@ -5,8 +5,10 @@ import { useCallback, useEffect, useRef, useState } from "react"
 
 import { readLatencyHistoryPageAction } from "@/lib/latency-actions"
 import {
+  NO_COVERAGE,
   readPages,
   windowRange,
+  type LatencyCoverage,
   type LatencyPageResult,
   type LatencyQuery,
   type LatencyWindow,
@@ -22,6 +24,8 @@ export type LatencyHistoryState = {
   /** Continuation cursor when the page budget ended before the window did. */
   next: string | null
   expectedIntervalSeconds: number | null
+  /** Retention / capacity metadata merged conservatively over the pages read. */
+  coverage: LatencyCoverage
   /** Time of the last successful read of `query`. */
   fetchedAt: number | null
   error: string | null
@@ -33,6 +37,7 @@ const empty: LatencyHistoryState = {
   records: [],
   next: null,
   expectedIntervalSeconds: null,
+  coverage: NO_COVERAGE,
   fetchedAt: null,
   error: null,
   loading: false,
@@ -94,14 +99,16 @@ export function useLatencyHistory({
         let query: LatencyQuery
         let after: string | null = null
         let base: LatencyHistoryRecord[] = []
+        let coverage = NO_COVERAGE
         if (mode === "continue" && stateRef.current.query && stateRef.current.next) {
           query = stateRef.current.query
           after = stateRef.current.next
           base = stateRef.current.records
+          coverage = stateRef.current.coverage
         } else {
           query = { networkId, sourceNodeId, peerNodeId, ...windowRange(span, Date.now()) }
         }
-        const result = await readPages((cursor) => page(query, cursor), { after, cancelled })
+        const result = await readPages((cursor) => page(query, cursor), { after, cancelled, from: query.from, coverage })
         if (cancelled() || result.status === "cancelled") return
         if (result.status === "error") {
           setState((current) => ({ ...current, loading: false, error: result.message }))
@@ -112,6 +119,7 @@ export function useLatencyHistory({
           records: [...base, ...result.records],
           next: result.next,
           expectedIntervalSeconds: result.expectedIntervalSeconds,
+          coverage: result.coverage,
           fetchedAt: Date.now(),
           error: null,
           loading: false,
