@@ -159,7 +159,7 @@ pub struct Agent {
     // Opt-in and lazy: ordinary heartbeat/routing commands do not touch sidecars.
     connections: Option<connections::State>,
     #[cfg(feature = "managed-connections")]
-    dns_guard: Option<crate::managed_dns::Guard>,
+    dns_guard: Option<meshway_agent_dns::Guard>,
     _lock: File,
 }
 

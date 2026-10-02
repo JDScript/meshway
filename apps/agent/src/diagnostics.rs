@@ -378,7 +378,7 @@ impl Server {
     pub async fn serve_with_dns(
         &self,
         prober: Option<Prober>,
-        dns: Option<crate::managed_dns::Guard>,
+        dns: Option<meshway_agent_dns::Guard>,
     ) -> io::Result<()> {
         let mut tasks = JoinSet::new();
         let mut since = Instant::now();
@@ -430,7 +430,7 @@ impl Server {
                                         LiveResponse::Error(ProbeError::UnsupportedVersion)
                                     } else {
                                         match request.operation {
-                                            Operation::DnsStatus {} => LiveResponse::DnsStatus(dns.as_ref().map_or_else(dns::Status::unavailable, crate::managed_dns::Guard::status)),
+                                            Operation::DnsStatus {} => LiveResponse::DnsStatus(dns.as_ref().map_or_else(dns::Status::unavailable, |guard| dns::Status::from(guard.status()))),
                                             Operation::Status { peers, offset, limit } => match prober.as_ref().ok_or(ProbeError::Unavailable).and_then(|prober| prober.live_status(peers, offset, limit)) {
                                                 Ok(value) => LiveResponse::Status(value),
                                                 Err(error) => LiveResponse::Error(error),

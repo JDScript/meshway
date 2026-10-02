@@ -14,6 +14,23 @@ use tokio::{net::TcpListener, sync::Notify};
 mod inventory;
 mod pins;
 
+#[test]
+fn service_errors_preserve_agent_validation_and_io_causes() {
+    let invalid = meshway_agent_dns::validate_listen("0.0.0.0:5353".parse().unwrap()).unwrap_err();
+    assert!(matches!(
+        AgentError::from(invalid),
+        AgentError::Invalid("DNS listen requires a loopback IP and port >= 1024")
+    ));
+    let error = std::io::Error::new(std::io::ErrorKind::AddrInUse, "occupied DNS listener");
+    match AgentError::from(meshway_agent_dns::Error::Io(error)) {
+        AgentError::File(error) => {
+            assert_eq!(error.kind(), std::io::ErrorKind::AddrInUse);
+            assert_eq!(error.to_string(), "occupied DNS listener");
+        }
+        error => panic!("DNS IO cause was lost: {error}"),
+    }
+}
+
 fn snapshot(id: &str, revision: u32) -> AgentDnsSnapshot {
     let zone = "meshway.test";
     let payload = NodeDnsConfiguration {
@@ -45,13 +62,28 @@ fn rehash(snapshot: &mut AgentDnsSnapshot) {
     snapshot.digest = dns_digest(&snapshot.payload).unwrap();
 }
 
-fn query(guard: &Guard, owner: &str) -> Message {
+async fn query(guard: &Guard, owner: &str) -> Message {
+    let reservation = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let listen = reservation.local_addr().unwrap();
+    drop(reservation);
+    let server = Server::bind(listen).await.unwrap();
+    let service = tokio::spawn(server.serve(guard.clone()));
     let mut request = Message::new(5432, hickory_proto::op::MessageType::Query, OpCode::Query);
     request.add_query(Query::query(
         Name::from_ascii(owner).unwrap(),
         RecordType::A,
     ));
-    Message::from_vec(&guard.respond(&request.to_vec().unwrap(), false).unwrap()).unwrap()
+    let socket = tokio::net::UdpSocket::bind("127.0.0.1:0").await.unwrap();
+    socket.connect(listen).await.unwrap();
+    socket.send(&request.to_vec().unwrap()).await.unwrap();
+    let mut bytes = [0; 512];
+    let length = tokio::time::timeout(Duration::from_secs(2), socket.recv(&mut bytes))
+        .await
+        .unwrap()
+        .unwrap();
+    service.abort();
+    assert!(service.await.unwrap_err().is_cancelled());
+    Message::from_vec(&bytes[..length]).unwrap()
 }
 
 #[test]
@@ -219,6 +251,7 @@ async fn fresh_get_private_cache_identity_stability_disabled_changed_zone_and_ba
     runtime.tick().await.unwrap();
     assert_eq!(
         query(&runtime.guard, "demo-sha.meshway.test.")
+            .await
             .answers
             .len(),
         1
@@ -227,6 +260,7 @@ async fn fresh_get_private_cache_identity_stability_disabled_changed_zone_and_ba
     let mut restarted = sync(&agent, Some(cache));
     assert_eq!(
         query(&restarted.guard, "demo-sha.meshway.test.")
+            .await
             .metadata
             .response_code,
         ResponseCode::ServFail
@@ -242,11 +276,13 @@ async fn fresh_get_private_cache_identity_stability_disabled_changed_zone_and_ba
     restarted.tick().await.unwrap();
     assert!(
         query(&restarted.guard, "demo-sha.meshway.test.")
+            .await
             .answers
             .is_empty()
     );
     assert_eq!(
         query(&restarted.guard, "demo-sha.changed.meshway.test.")
+            .await
             .answers
             .len(),
         1
@@ -259,6 +295,7 @@ async fn fresh_get_private_cache_identity_stability_disabled_changed_zone_and_ba
     restarted.tick().await.unwrap();
     assert_eq!(
         query(&restarted.guard, "demo-sha.changed.meshway.test.")
+            .await
             .metadata
             .response_code,
         ResponseCode::Refused
@@ -272,6 +309,7 @@ async fn fresh_get_private_cache_identity_stability_disabled_changed_zone_and_ba
     assert!(restarted.tick().await.is_err());
     assert!(
         query(&restarted.guard, "demo-sha.meshway.test.")
+            .await
             .answers
             .is_empty()
     );
@@ -302,13 +340,23 @@ async fn known_revision_conflict_revocation_and_lease_with_stalled_http() {
     runtime.tick().await.unwrap();
     let guard = runtime.guard.clone();
     guard.observe_revision(2);
-    assert!(query(&guard, "demo-sha.meshway.test.").answers.is_empty());
+    assert!(
+        query(&guard, "demo-sha.meshway.test.")
+            .await
+            .answers
+            .is_empty()
+    );
     assert!(runtime.tick().await.unwrap_err().retryable());
     *shared.0.write().unwrap() =
         Source::Snapshot(snapshot(agent.identity.node_id.as_deref().unwrap(), 2));
     runtime.tick().await.unwrap();
     guard.conflict(2);
-    assert!(query(&guard, "demo-sha.meshway.test.").answers.is_empty());
+    assert!(
+        query(&guard, "demo-sha.meshway.test.")
+            .await
+            .answers
+            .is_empty()
+    );
     *shared.0.write().unwrap() =
         Source::Snapshot(snapshot(agent.identity.node_id.as_deref().unwrap(), 3));
     runtime.tick().await.unwrap();
@@ -317,7 +365,12 @@ async fn known_revision_conflict_revocation_and_lease_with_stalled_http() {
         runtime.tick().await,
         Err(AgentError::Http { status: 403, .. })
     ));
-    assert!(query(&guard, "demo-sha.meshway.test.").answers.is_empty());
+    assert!(
+        query(&guard, "demo-sha.meshway.test.")
+            .await
+            .answers
+            .is_empty()
+    );
     *shared.0.write().unwrap() =
         Source::Snapshot(snapshot(agent.identity.node_id.as_deref().unwrap(), 4));
     runtime.tick().await.unwrap();
@@ -332,7 +385,12 @@ async fn known_revision_conflict_revocation_and_lease_with_stalled_http() {
         _ = shared.1.notified() => {},
     }
     assert!(guard.expire(Instant::now() + Duration::from_secs(11)));
-    assert!(query(&guard, "demo-sha.meshway.test.").answers.is_empty());
+    assert!(
+        query(&guard, "demo-sha.meshway.test.")
+            .await
+            .answers
+            .is_empty()
+    );
     task.abort();
 }
 
@@ -344,6 +402,7 @@ async fn cache_bindings_and_failed_durability_cannot_publish() {
     assert!(runtime.tick().await.is_err());
     assert!(
         query(&runtime.guard, "demo-sha.meshway.test.")
+            .await
             .answers
             .is_empty()
     );

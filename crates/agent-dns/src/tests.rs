@@ -134,7 +134,6 @@ fn expired_withdrawn_disabled_and_fractional_lease_never_answer() {
     );
 }
 
-#[cfg(unix)]
 fn leased_disabled() -> Guard {
     let guard = Guard::default();
     guard.listener_bound("127.0.0.1:5353".parse().unwrap(), None);
@@ -154,10 +153,9 @@ fn leased_disabled() -> Guard {
     guard
 }
 
-#[cfg(unix)]
 #[tokio::test(start_paused = true)]
 async fn disabled_snapshot_newer_revision_withdraws_status_answers_and_generation() {
-    use crate::diagnostics::dns::State as DnsState;
+    use crate::StatusState as DnsState;
     let guard = leased_disabled();
     let before = guard.status();
     let generation = guard.0.read().unwrap().generation.clone();
@@ -186,10 +184,9 @@ async fn disabled_snapshot_newer_revision_withdraws_status_answers_and_generatio
     );
 }
 
-#[cfg(unix)]
 #[tokio::test(start_paused = true)]
 async fn disabled_snapshot_expires_before_watchdog_and_can_recover_only_with_fresh_publication() {
-    use crate::diagnostics::dns::State as DnsState;
+    use crate::StatusState as DnsState;
     let guard = leased_disabled();
     let before = guard.status();
     let generation = guard.0.read().unwrap().generation.clone();
@@ -379,10 +376,10 @@ async fn actual_udp_tcp_queries_withdrawal_and_socket_cleanup() {
 async fn either_bind_failure_closes_partial_startup_and_ipv6_loopback_serves() {
     let tcp = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let address = tcp.local_addr().unwrap();
-    assert!(Server::bind(address).await.is_err());
+    assert!(matches!(Server::bind(address).await, Err(Error::Io(_))));
     let udp = UdpSocket::bind(address).await.unwrap();
     drop(tcp);
-    assert!(Server::bind(address).await.is_err());
+    assert!(matches!(Server::bind(address).await, Err(Error::Io(_))));
     let tcp = TcpListener::bind(address).await.unwrap();
     drop((tcp, udp));
 
@@ -421,7 +418,10 @@ fn only_unprivileged_loopback_listeners() {
         "127.0.0.1:53",
         "[::]:5353",
     ] {
-        assert!(validate_listen(address.parse().unwrap()).is_err());
+        assert!(matches!(
+            validate_listen(address.parse().unwrap()),
+            Err(Error::InvalidListen)
+        ));
     }
     for address in ["127.0.0.1:5353", "[::1]:5353"] {
         validate_listen(address.parse().unwrap()).unwrap();

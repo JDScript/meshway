@@ -1,8 +1,6 @@
 use super::*;
-use crate::{
-    diagnostics::Server as Control,
-    managed_dns::{Guard, Server, Zone},
-};
+use crate::diagnostics::Server as Control;
+use meshway_agent_dns::{Guard, Server, Zone};
 use std::{collections::BTreeMap, fs, os::unix::fs::PermissionsExt};
 
 fn zone() -> Zone {
@@ -88,6 +86,25 @@ async fn dns_only_private_ipc_and_real_udp_tcp_queries_follow_guard_transitions(
     assert_eq!(active.network_id.as_deref(), Some("real-network"));
     assert_eq!(active.active_revision, Some(2));
     assert!(active.generation > waiting.generation);
+    let value = serde_json::to_value(&active).unwrap();
+    assert_eq!(
+        value,
+        serde_json::json!({
+            "schema_version": SCHEMA_VERSION,
+            "state": "active",
+            "generation": active.generation,
+            "revision_floor": 2,
+            "active_revision": 2,
+            "zone": "meshway.test.",
+            "ttl": 30,
+            "lease_remaining_ms": active.lease_remaining_ms,
+            "listener": address.to_string(),
+            "listener_bound": true,
+            "network_id": "real-network",
+            "node_id": "real-node",
+            "evidence": "current_dns_guard",
+        })
+    );
     for tcp in [false, true] {
         for (input, kind, expected) in [
             ("node.meshway.test", Some(QueryType::A), "100.64.0.2"),

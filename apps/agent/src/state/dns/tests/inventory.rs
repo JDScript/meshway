@@ -50,6 +50,7 @@ async fn forged_rootnode_alias_cannot_point_to_another_assigned_identity() {
     runtime.tick().await.unwrap();
     assert_eq!(
         query(&runtime.guard, "rootnode.meshway.test.")
+            .await
             .answers
             .len(),
         1
@@ -71,6 +72,7 @@ async fn forged_rootnode_alias_cannot_point_to_another_assigned_identity() {
     assert!(runtime.tick().await.is_err());
     assert!(
         query(&runtime.guard, "rootnode.meshway.test.")
+            .await
             .answers
             .is_empty()
     );

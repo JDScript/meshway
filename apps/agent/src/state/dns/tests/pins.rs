@@ -62,6 +62,7 @@ async fn disabled_and_disabled_restart_preserve_self_pin_reject_renumber_and_res
             runtime = sync(&agent, load(&agent.path, &agent.identity).unwrap());
             assert!(
                 query(&runtime.guard, "demo-sha.meshway.test.")
+                    .await
                     .answers
                     .is_empty()
             );
@@ -80,6 +81,7 @@ async fn disabled_and_disabled_restart_preserve_self_pin_reject_renumber_and_res
         ));
         assert!(
             query(&runtime.guard, "demo-sha.meshway.test.")
+                .await
                 .answers
                 .is_empty()
         );
@@ -89,6 +91,7 @@ async fn disabled_and_disabled_restart_preserve_self_pin_reject_renumber_and_res
         runtime.tick().await.unwrap();
         assert_eq!(
             query(&runtime.guard, "demo-sha.meshway.test.")
+                .await
                 .answers
                 .len(),
             1

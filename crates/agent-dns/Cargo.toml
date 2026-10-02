@@ -1,0 +1,17 @@
+[package]
+name = "meshway-agent-dns"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+description = "Lease-fenced local authoritative DNS service for Meshway nodes"
+
+[dependencies]
+hickory-proto = { version = "=0.26.3", default-features = false, features = ["std"] }
+thiserror = "2"
+tokio = { workspace = true, features = ["io-util"] }
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["test-util"] }
+
+[lints]
+workspace = true

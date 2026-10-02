@@ -1,5 +1,5 @@
 use super::*;
-use crate::managed_dns::Zone;
+use crate::Zone;
 use hickory_proto::{
     op::{Message, MessageType, OpCode, Query},
     rr::{Name, RecordType},
@@ -305,4 +305,42 @@ async fn fresh_query_after_expiry_before_watchdog_gets_servfail() {
         reply.metadata.response_code,
         hickory_proto::op::ResponseCode::ServFail
     );
+}
+
+#[test]
+fn seconds_boundary_at_final_write_reencodes_or_cancels_without_stale_ttl() {
+    for tcp in [false, true] {
+        for expired in [false, true] {
+            let (guard, response) = prepared(tcp, Duration::from_secs(10));
+            let deadline = response.deadline.unwrap();
+            let times = Mutex::new(std::collections::VecDeque::from([
+                deadline - Duration::from_secs(2),
+                deadline - Duration::from_secs(1),
+                deadline - Duration::from_secs(1),
+                deadline
+                    - if expired {
+                        Duration::from_millis(500)
+                    } else {
+                        Duration::from_secs(1)
+                    },
+            ]));
+            let writer = PendingWriter::new(false);
+            writer.first_would_block.store(false, Ordering::SeqCst);
+            let result = guard
+                .try_send(&response, &writer, &|| {
+                    times.lock().unwrap().pop_front().unwrap()
+                })
+                .unwrap();
+            let sent = writer.sent.lock().unwrap();
+            if expired {
+                assert_eq!(result, None);
+                assert!(sent.is_empty());
+                assert!(writer.attempts.lock().unwrap().is_empty());
+            } else {
+                assert_eq!(result, Some(()));
+                assert_eq!(sent.len(), 1);
+                assert_eq!(decode(&sent[0], tcp).answers[0].ttl, 1);
+            }
+        }
+    }
 }

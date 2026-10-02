@@ -13,10 +13,21 @@ use serde::{Deserialize, Serialize};
 use tokio::time::{Instant, sleep};
 
 use super::{Agent, AgentError, Identity, local};
-use crate::{
-    generated::client::HttpClient,
-    managed_dns::{Guard, Server, Zone, log},
-};
+use crate::generated::client::HttpClient;
+use meshway_agent_dns::{Guard, Server, Zone};
+
+mod log;
+
+impl From<meshway_agent_dns::Error> for AgentError {
+    fn from(error: meshway_agent_dns::Error) -> Self {
+        match error {
+            meshway_agent_dns::Error::InvalidListen => {
+                Self::Invalid("DNS listen requires a loopback IP and port >= 1024")
+            }
+            meshway_agent_dns::Error::Io(error) => Self::File(error),
+        }
+    }
+}
 
 #[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -322,7 +333,7 @@ impl DnsService {
             std::future::pending::<std::io::Result<()>>().await
         };
         tokio::select! {
-            result = self.server.serve(guard.clone()) => result,
+            result = self.server.serve(guard.clone()) => result.map_err(AgentError::from),
             result = self.sync.run() => result,
             result = control => result.map_err(AgentError::from),
             _ = expiry => unreachable!("DNS expiry watchdog runs until cancellation"),

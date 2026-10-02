@@ -1,5 +1,8 @@
 //! Local authoritative name publication, not OS DNS integration or domain routing.
-//! Only a freshly validated and privately persisted controller snapshot can publish.
+//! Callers supply validated DNS indexes and a publication lease; the service
+//! fences answers at send time independently of the caller's control-plane IO.
+
+#![forbid(unsafe_code)]
 
 use std::{
     collections::BTreeMap,
@@ -24,18 +27,28 @@ use tokio::{
     time::{Instant, timeout},
 };
 
-use crate::AgentError;
-
-pub(crate) mod log;
 mod send;
+mod status;
+
+pub use status::{Status, StatusState};
+
+/// DNS listener validation and socket failures retain their distinct causes.
+#[derive(Debug, thiserror::Error)]
+pub enum Error {
+    #[error("DNS listen requires a loopback IP and port >= 1024")]
+    InvalidListen,
+    #[error(transparent)]
+    Io(#[from] std::io::Error),
+}
 
 pub(crate) const MAX_UDP: usize = 1232;
 pub(crate) const MAX_REQUEST: usize = 4096;
 const MAX_TCP_CLIENTS: usize = 32;
 const TCP_TIMEOUT: Duration = Duration::from_secs(3);
 
-/// Parsed DNS-only view. These are internal indexes, never duplicate HTTP DTOs.
-pub(crate) struct Zone {
+/// Parsed DNS-only view supplied by the caller, independent of HTTP DTOs.
+/// Owners must be lowercase, fully qualified and validated before publication.
+pub struct Zone {
     pub name: Name,
     pub ttl: u32,
     pub forward: BTreeMap<Name, (Ipv4Addr, Ipv6Addr)>,
@@ -68,7 +81,7 @@ struct State {
 
 /// Query-side freshness checks remain independent of any stalled HTTP future.
 #[derive(Clone)]
-pub(crate) struct Guard(Arc<RwLock<State>>, watch::Sender<()>);
+pub struct Guard(Arc<RwLock<State>>, watch::Sender<()>);
 
 impl Default for Guard {
     fn default() -> Self {
@@ -108,9 +121,7 @@ impl Guard {
         self.changed(&mut state);
     }
 
-    #[cfg(unix)]
-    pub fn status(&self) -> crate::diagnostics::dns::Status {
-        use crate::diagnostics::dns::{State as StatusState, Status, StatusEvidence};
+    pub fn status(&self) -> Status {
         let state = self.0.read().expect("DNS guard poisoned");
         let remaining = state.accepted.as_ref().map_or(Duration::ZERO, |accepted| {
             accepted.deadline.saturating_duration_since(Instant::now())
@@ -127,7 +138,6 @@ impl Guard {
             StatusState::Unavailable
         };
         Status {
-            schema_version: crate::diagnostics::SCHEMA_VERSION,
             state: status,
             generation: state.generation_number,
             revision_floor: state.revision_floor,
@@ -149,7 +159,6 @@ impl Guard {
             listener_bound: state.listener_bound,
             network_id: state.network_id.clone(),
             node_id: state.node_id.clone(),
-            evidence: StatusEvidence::CurrentDnsGuard,
         }
     }
 
@@ -162,7 +171,7 @@ impl Guard {
     }
 
     #[cfg(test)]
-    pub fn disable(&self) {
+    fn disable(&self) {
         let mut state = self.0.write().expect("DNS guard poisoned");
         state.disabled = !state.terminated && state.accepted.is_some();
         state.expired = false;
@@ -223,7 +232,7 @@ impl Guard {
     }
 
     #[cfg(test)]
-    pub fn publish(&self, zone: Zone, deadline: Instant, revision: u32) -> bool {
+    fn publish(&self, zone: Zone, deadline: Instant, revision: u32) -> bool {
         self.publish_snapshot(zone, deadline, revision, true, None, None)
     }
 
@@ -382,7 +391,7 @@ impl Guard {
     // Tests inspect point-in-time bytes. Production socket writes exclusively
     // use send's readiness/generation fence and locked nonblocking syscall.
     #[cfg(test)]
-    pub fn respond(&self, bytes: &[u8], tcp: bool) -> Option<Vec<u8>> {
+    fn respond(&self, bytes: &[u8], tcp: bool) -> Option<Vec<u8>> {
         let response = self.prepare(bytes, tcp)?;
         let state = self.0.read().expect("DNS guard poisoned");
         encode_bounded(
@@ -402,31 +411,29 @@ fn encode_bounded(response: Message, limit: usize) -> Option<Vec<u8>> {
     (bytes.len() <= limit).then_some(bytes)
 }
 
-pub fn validate_listen(address: SocketAddr) -> Result<(), AgentError> {
+pub fn validate_listen(address: SocketAddr) -> Result<(), Error> {
     if !address.ip().is_loopback() || address.port() < 1024 {
-        return Err(AgentError::Invalid(
-            "DNS listen requires a loopback IP and port >= 1024",
-        ));
+        return Err(Error::InvalidListen);
     }
     Ok(())
 }
 
 /// Both protocols bind before readiness. Cancellation drops listeners and every
 /// accepted connection; no detached socket tasks can keep stale answers alive.
-pub(crate) struct Server {
+pub struct Server {
     udp: UdpSocket,
     tcp: TcpListener,
 }
 
 impl Server {
-    pub async fn bind(address: SocketAddr) -> Result<Self, AgentError> {
+    pub async fn bind(address: SocketAddr) -> Result<Self, Error> {
         validate_listen(address)?;
         let udp = UdpSocket::bind(address).await?;
         let tcp = TcpListener::bind(address).await?;
         Ok(Self { udp, tcp })
     }
 
-    pub async fn serve(self, guard: Guard) -> Result<(), AgentError> {
+    pub async fn serve(self, guard: Guard) -> Result<(), Error> {
         let mut requests = [0; MAX_UDP + 1];
         let mut clients = JoinSet::new();
         loop {

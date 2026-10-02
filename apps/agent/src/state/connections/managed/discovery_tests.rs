@@ -324,11 +324,11 @@ async fn stalled_epoch_confirmation_is_bounded_and_does_not_renew_runtime() {
 
 #[tokio::test]
 async fn diagnostic_422_same_source_preserves_noise_and_real_dns_same_revision() {
-    use crate::managed_dns::{Guard, Server as DnsServer, Zone};
     use hickory_proto::{
         op::{Message, MessageType, OpCode, Query},
         rr::{Name, RecordType},
     };
+    use meshway_agent_dns::{Guard, Server as DnsServer, Zone};
     let (mut agent, mut lease, server, _directory) = setup().await;
     let (mut left, mut right, peer) = manager(&agent, Duration::from_secs(10)).await;
     let source = left.snapshot.as_ref().unwrap().clone();
@@ -341,7 +341,7 @@ async fn diagnostic_422_same_source_preserves_noise_and_real_dns_same_revision()
     let guard = Guard::default();
     guard.listener_bound(listen, agent.identity.node_id.clone());
     let owner = Name::from_ascii("diagnostic.meshway.test.").unwrap();
-    assert!(guard.publish(
+    assert!(guard.publish_snapshot(
         Zone {
             name: Name::from_ascii("meshway.test.").unwrap(),
             ttl: 30,
@@ -352,7 +352,10 @@ async fn diagnostic_422_same_source_preserves_noise_and_real_dns_same_revision()
             reverse: Default::default(),
         },
         Instant::now() + Duration::from_secs(10),
-        source.payload.revision
+        source.payload.revision,
+        true,
+        None,
+        None,
     ));
     agent.dns_guard = Some(guard.clone());
     let dns_guard = guard.clone();
@@ -375,7 +378,7 @@ async fn diagnostic_422_same_source_preserves_noise_and_real_dns_same_revision()
             .await
             .unwrap();
         let after = guard.status();
-        assert_eq!(after.state, crate::diagnostics::dns::State::Active);
+        assert_eq!(after.state, meshway_agent_dns::StatusState::Active);
         assert_eq!(after.revision_floor, before.revision_floor);
         assert_eq!(after.active_revision, before.active_revision);
         assert_eq!(after.generation, before.generation);
