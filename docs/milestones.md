@@ -47,10 +47,10 @@
 审计与 4 个 listener 的 premark 检查。命名路由表漏检 block 外捕获表引用、DNS SERVFAIL
 未尝试备用上游两项问题已修复并通过独立复核；基础模块及修复已合入并完成主线组合检查。
 R1 心跳发现更高 revision 时立即撤旧执行的独立修复也已合入，原阻塞 HTTP 反例通过。
-正式主循环、Native UDP/TCP、
-捕获规则 ownership 与恢复仍待接通，现网尚未采用 socket 级保护。
-Native owning factory 候选 `e5e7f94` 已完成独立 Linux 场景，但复核发现同 Runtime rebind
-返回后仍可能由公共 dispatcher 交付旧 carrier 数据；正在补齐入站代际栅栏，暂未合入或部署。
+Native UDP/TCP owning factory 与 Manager prepared owner 接点已合入 `46a7b42` / `94c65ea`。
+原复核发现的 rebind 返回后旧 carrier 入站交付问题已修复并独立关闭；UDP/TCP 的 endpoint / relay
+四种交错及新 carrier E2E 恢复通过。正式主循环调用、捕获规则 ownership / 恢复与系统 split-DNS
+仍待接通；默认仍为 unmarked，现网尚未启用完整 socket 级系统保护。
 
 ### 已完成整合与验证
 

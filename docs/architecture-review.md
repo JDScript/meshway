@@ -268,3 +268,8 @@ all-features / all-targets 编译检查通过。这些变更不改 HTTP 契约�
 
 此处只关闭直接解码入口；公开字段仍可由 Rust 调用者修改，不构成不可伪造的 validated plan。
 R1 / R2 的正式 publication / 节点 wire 转换、原型目录上限及出口侧总预算仍待后续接线。
+
+Native owning factory 与 SocketGeneration 接线以 `46a7b42` / `94c65ea` 合入。
+独立复核先复现旧 carrier 入站跨 rebind 交付，再验证修复后的 UDP/TCP × endpoint/relay
+四种交错、新 carrier 恢复和已退休 PacketGeneration 不复活。R5 的统一 owning I/O 接点已落地，
+正式主循环 prepared 激活、RPDB owner / capture 与后续 registry 仍待接通；不计作生产全 IP 保护已启用。

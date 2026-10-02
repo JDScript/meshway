@@ -31,7 +31,7 @@ Controller 维护与编译控制意图，不默认中继业务流量。Agent 执
 
 VLESS TCP/TLS 与 WebSocket/TLS 的 listener / 凭据已由平台生成和下发，旧 profiles 保留等价导入路径；手工连接候选仍待自动组网替代。Access 与 Routing 的正式下发仍是旧版；独立 v3 四层引擎和 Linux 出口 / 状态型回包原型已合入，正式策略 / 出口接线尚待完成。迁移保留身份、凭据、地址及策略行为，不能等价转换的规则须报告。可信域名上下文、IPv6 TUN、自动打洞和真实逐跳 trace 未完成。
 
-受保护 socket、HTTP/TLS 与 bootstrap DNS 基础已经合入，原生 Runtime 的统一注入和正式 RPDB 生命周期仍待接通；不能据模块存在就宣称现网已启用全 IP 系统保护。当前优先 Linux 自动组网 / 打洞及跨地域 Docker 验收，账户与控制台并行，Apple 暂停新增开发，见[里程碑](/milestones)。
+受保护 socket、HTTP/TLS、bootstrap DNS、原生 Runtime owning factory 和 Manager prepared owner 接点已合入；正式主循环激活与 RPDB 生命周期仍待接通，默认仍 unmarked，不能据模块存在就宣称现网已启用全 IP 系统保护。当前优先 Linux 自动组网 / 打洞及跨地域 Docker 验收，进一步前端和 Apple 开发暂缓，见[里程碑](/milestones)。
 
 ## 证据与生命周期
 
