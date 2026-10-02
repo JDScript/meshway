@@ -58,7 +58,7 @@ export function LanguageSwitch() {
           </Button>
         }
       />
-      <DropdownMenuContent align="end" className="min-w-36">
+      <DropdownMenuContent align="end">
         <DropdownMenuRadioGroup
           value={getLocale()}
           onValueChange={(value) => {
