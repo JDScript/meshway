@@ -125,8 +125,9 @@ export function ClaimDialog({
     onLeave()
     window.setTimeout(
       () =>
+        // As the earlier console: the new owner starts by inviting the network's people.
         void navigate({
-          to: "/networks/$network/overview",
+          to: "/networks/$network/members",
           params: { network: networkId },
         }),
       320
