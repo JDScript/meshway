@@ -15,7 +15,7 @@
   "node_rtt_heading": "延迟",
   "node_rtt_hint": "本端测得 · 对端测得的往返时间",
   "nodes_empty": "这张网络还没有节点",
-  "nodes_search": "搜索名称或地址",
+  "nodes_search": "搜索名称、地址或标签",
   "nodes_filter": "按状态筛选",
   "nodes_filter_all": "全部",
   "nodes_no_match": "没有匹配的节点",
@@ -218,5 +218,6 @@
   "node_listener_server_name_placeholder": "edge.example.com",
   "node_listener_ws_path_placeholder": "/meshway",
   "node_listener_ws_host_placeholder": "edge.example.com",
-  "nodes_tag_description_placeholder": "办公室服务器"
+  "nodes_tag_description_placeholder": "办公室服务器",
+  "nodes_row_tags": "标签：{tags}"
 }

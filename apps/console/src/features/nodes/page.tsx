@@ -1,6 +1,6 @@
 import { useQuery } from "@tanstack/react-query"
 import { PlusIcon } from "lucide-react"
-import { useState } from "react"
+import { useMemo, useState } from "react"
 
 import { SegmentedControl } from "@/components/chrome/segmented-control"
 import { Button } from "@/components/ui/button"
@@ -27,6 +27,16 @@ export function NodesPage({ networkId }: { networkId: string }) {
     ...tagsQuery(networkId),
     enabled: route.current,
   })
+  const tagsByNode = useMemo(
+    () =>
+      new Map(
+        (tags.data?.assignments ?? []).map((assignment) => [
+          assignment.node_id,
+          assignment.tags.map((tag) => tag.replace(/^tag:/, "")).sort(),
+        ])
+      ),
+    [tags.data]
+  )
   const [naming, setNaming] = useState(false)
   const inventoryRead = view.nodes.data !== undefined
   const tagView = route.view === "tags"
@@ -88,6 +98,7 @@ export function NodesPage({ networkId }: { networkId: string }) {
             </div>
           ) : (
             <NodeList
+              tags={tagsByNode}
               nodes={view.inventory}
               runtimes={view.context.runtimes}
               now={view.now}

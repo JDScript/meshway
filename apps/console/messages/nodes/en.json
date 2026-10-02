@@ -15,7 +15,7 @@
   "node_rtt_heading": "RTT",
   "node_rtt_hint": "Round trip measured here · by the peer",
   "nodes_empty": "This network has no nodes yet",
-  "nodes_search": "Search name or address",
+  "nodes_search": "Search names, addresses or tags",
   "nodes_filter": "Filter by state",
   "nodes_filter_all": "All",
   "nodes_no_match": "No matching nodes",
@@ -260,5 +260,6 @@
   "node_listener_server_name_placeholder": "edge.example.com",
   "node_listener_ws_path_placeholder": "/meshway",
   "node_listener_ws_host_placeholder": "edge.example.com",
-  "nodes_tag_description_placeholder": "Office servers"
+  "nodes_tag_description_placeholder": "Office servers",
+  "nodes_row_tags": "Tags: {tags}"
 }

@@ -41,11 +41,14 @@ const filters = (): { value: Filter; label: string }[] => [
   })),
 ]
 
-const matches = (node: NodeSummary, needle: string) =>
+const matches = (node: NodeSummary, tags: readonly string[], needle: string) =>
   needle === "" ||
-  [node.name, node.mesh_ipv4, node.mesh_ipv6].some((value) =>
+  [node.name, node.mesh_ipv4, node.mesh_ipv6, ...tags].some((value) =>
     value.toLowerCase().includes(needle)
   )
+
+/** How many tags a row shows before it counts the rest. */
+const SHOWN_TAGS = 2
 
 /**
  * The list's search field, bound to the URL without ever setting the field
@@ -128,8 +131,11 @@ export function NodeList({
   onOpen,
   switcher,
   action,
+  tags,
 }: {
   nodes: readonly NodeSummary[]
+  /** Each node's tag names (without `tag:`); unread tags show none. */
+  tags: ReadonlyMap<string, readonly string[]>
   runtimes: ConnectionRuntimesSnapshot | null
   now: number
   /** No inventory read has finished yet. */
@@ -155,14 +161,18 @@ export function NodeList({
         .sort(
           (a, b) => a.name.localeCompare(b.name) || a.id.localeCompare(b.id)
         )
-        .map((node) => ({ node, vitality: vitalityOf(node, runtimes, now) })),
-    [nodes, runtimes, now]
+        .map((node) => ({
+          node,
+          vitality: vitalityOf(node, runtimes, now),
+          tags: tags.get(node.id) ?? NO_TAGS,
+        })),
+    [nodes, runtimes, now, tags]
   )
   const needle = view.q.trim().toLowerCase()
   const shown = rows.filter(
     (row) =>
       (view.state === null || row.vitality === view.state) &&
-      matches(row.node, needle)
+      matches(row.node, row.tags, needle)
   )
 
   // Keep the open row in view, wherever it was opened from.
@@ -246,7 +256,7 @@ export function NodeList({
                 : m.nodes_no_match()}
           </li>
         ) : null}
-        {shown.map(({ node, vitality }) => (
+        {shown.map(({ node, vitality, tags: nodeTags }) => (
           <li key={node.id}>
             <button
               type="button"
@@ -261,8 +271,9 @@ export function NodeList({
                 <span className="block truncate text-row font-medium">
                   {node.name}
                 </span>
-                <span className="block truncate font-mono text-meta text-muted-foreground">
-                  {node.mesh_ipv4}
+                <span className="flex h-4 min-w-0 items-center gap-1.5 text-meta text-muted-foreground">
+                  <span className="shrink-0 font-mono">{node.mesh_ipv4}</span>
+                  <RowTags tags={nodeTags} />
                 </span>
               </span>
               <span className="shrink-0 text-meta text-muted-foreground">
@@ -273,6 +284,35 @@ export function NodeList({
         ))}
       </ul>
     </div>
+  )
+}
+
+const NO_TAGS: readonly string[] = []
+
+/** A row's tags after its address: the first few as pills, then how many more (all of them named for assistive tech). */
+function RowTags({ tags }: { tags: readonly string[] }) {
+  if (tags.length === 0) return null
+  const more = tags.length - SHOWN_TAGS
+  return (
+    <span
+      aria-label={m.nodes_row_tags({ tags: tags.join(", ") })}
+      className="flex min-w-0 items-center gap-1"
+    >
+      {tags.slice(0, SHOWN_TAGS).map((tag) => (
+        <span
+          key={tag}
+          aria-hidden="true"
+          className="h-4 min-w-0 truncate rounded-full bg-fill-selected px-1.5 leading-4"
+        >
+          {tag}
+        </span>
+      ))}
+      {more > 0 ? (
+        <span aria-hidden="true" className="shrink-0 tabular-nums">
+          +{more}
+        </span>
+      ) : null}
+    </span>
   )
 }
 
