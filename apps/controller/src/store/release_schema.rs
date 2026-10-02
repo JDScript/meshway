@@ -5,7 +5,7 @@ use super::{account_schema, latency_history};
 use crate::Error;
 use rusqlite::{Connection, TransactionBehavior, params};
 
-pub(super) const VERSION: i64 = 11;
+pub(super) const VERSION: i64 = 12;
 
 pub(super) fn upgrade(connection: &mut Connection) -> Result<(), Error> {
     let tx = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
@@ -35,12 +35,21 @@ pub(super) fn upgrade(connection: &mut Connection) -> Result<(), Error> {
                 params![chrono::Utc::now().timestamp_millis()],
             )?;
             validate(&tx)?;
+            super::policy_v3_schema::install(&tx)?;
             tx.pragma_update(None, "user_version", VERSION)?;
         }
-        VERSION => validate(&tx)?,
+        11 => {
+            validate(&tx)?;
+            super::policy_v3_schema::install(&tx)?;
+            tx.pragma_update(None, "user_version", VERSION)?;
+        }
+        VERSION => {
+            validate(&tx)?;
+            super::policy_v3_schema::validate(&tx)?;
+        }
         _ => {
             return Err(Error::Configuration(
-                "account and history migration requires schema 10 or 11",
+                "release migration requires schema 10, 11 or 12",
             ));
         }
     }

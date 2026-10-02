@@ -11,7 +11,7 @@ pub(super) fn configuration(
         .position(|node| node.id == id)
         .ok_or(Error::Forbidden)?;
     let node = nodes.remove(index);
-    let valid = report.is_valid();
+    let valid = report.is_valid() && !facts.mesh_v3;
     let payload = NodeConfiguration {
         schema_version: CONFIGURATION_SCHEMA_VERSION,
         revision: facts.revision,
@@ -24,7 +24,11 @@ pub(super) fn configuration(
             RoutingPolicy::default()
         },
         policy_valid: valid,
-        diagnostics: configuration::bounded_diagnostics(report.diagnostics.clone()),
+        diagnostics: if facts.mesh_v3 {
+            vec![PolicyDiagnostic { rule_id: None, field: "source_mode".into(), message: "Network uses Mesh v3 execution; this legacy view is inventory-only and authorizes no packets".into() }]
+        } else {
+            configuration::bounded_diagnostics(report.diagnostics.clone())
+        },
     };
     let digest = configuration_digest(&payload)
         .map_err(|_| Error::Configuration("cannot encode configuration"))?;

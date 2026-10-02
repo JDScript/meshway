@@ -371,6 +371,52 @@ export const schemaDocument = {
         },
         "additionalProperties": false
       },
+      "AcknowledgeMeshExecutionRequest": {
+        "type": "object",
+        "required": [
+          "runtime",
+          "revision",
+          "digest"
+        ],
+        "properties": {
+          "digest": {
+            "type": "string"
+          },
+          "revision": {
+            "type": "integer",
+            "format": "int64",
+            "maximum": 4294967295,
+            "minimum": 1
+          },
+          "runtime": {
+            "$ref": "#/components/schemas/MeshExecutionRequest"
+          }
+        },
+        "additionalProperties": false
+      },
+      "AcknowledgeMeshExecutionResponse": {
+        "type": "object",
+        "required": [
+          "revision",
+          "digest",
+          "saved"
+        ],
+        "properties": {
+          "digest": {
+            "type": "string"
+          },
+          "revision": {
+            "type": "integer",
+            "format": "int64",
+            "maximum": 4294967295,
+            "minimum": 1
+          },
+          "saved": {
+            "type": "boolean"
+          }
+        },
+        "additionalProperties": false
+      },
       "AgentConnectionsSnapshot": {
         "type": "object",
         "required": [
@@ -550,6 +596,28 @@ export const schemaDocument = {
         },
         "additionalProperties": false
       },
+      "AutomaticRouting": {
+        "type": "object",
+        "required": [
+          "regions",
+          "fallback"
+        ],
+        "properties": {
+          "fallback": {
+            "type": "string"
+          },
+          "regions": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "string"
+            },
+            "propertyNames": {
+              "type": "string"
+            }
+          }
+        },
+        "additionalProperties": false
+      },
       "BeginConnectionRuntimeRequest": {
         "type": "object",
         "required": [
@@ -676,6 +744,13 @@ export const schemaDocument = {
           }
         },
         "additionalProperties": false
+      },
+      "ConnectionAction": {
+        "type": "string",
+        "enum": [
+          "allow",
+          "block"
+        ]
       },
       "ConnectionCandidate": {
         "type": "object",
@@ -1044,6 +1119,30 @@ export const schemaDocument = {
         "enum": [
           "saved"
         ]
+      },
+      "ConnectionRule": {
+        "type": "object",
+        "required": [
+          "id",
+          "a",
+          "b",
+          "action"
+        ],
+        "properties": {
+          "a": {
+            "type": "string"
+          },
+          "action": {
+            "$ref": "#/components/schemas/ConnectionAction"
+          },
+          "b": {
+            "type": "string"
+          },
+          "id": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": false
       },
       "ConnectionRuntimeObservation": {
         "type": "object",
@@ -1426,6 +1525,22 @@ export const schemaDocument = {
           "country"
         ]
       },
+      "Diagnostic": {
+        "type": "object",
+        "required": [
+          "field",
+          "message"
+        ],
+        "properties": {
+          "field": {
+            "type": "string"
+          },
+          "message": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": false
+      },
       "EndpointDiscoveriesSnapshot": {
         "type": "object",
         "required": [
@@ -1548,6 +1663,117 @@ export const schemaDocument = {
         },
         "additionalProperties": false
       },
+      "ExitMatch": {
+        "oneOf": [
+          {
+            "type": "object",
+            "required": [
+              "value",
+              "kind"
+            ],
+            "properties": {
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "domain_suffix"
+                ]
+              },
+              "value": {
+                "type": "string"
+              }
+            },
+            "additionalProperties": false,
+            "maxProperties": 2
+          },
+          {
+            "type": "object",
+            "required": [
+              "value",
+              "kind"
+            ],
+            "properties": {
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "cidr"
+                ]
+              },
+              "value": {
+                "type": "string"
+              }
+            },
+            "additionalProperties": false,
+            "maxProperties": 2
+          },
+          {
+            "type": "object",
+            "required": [
+              "value",
+              "kind"
+            ],
+            "properties": {
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "rule_set"
+                ]
+              },
+              "value": {
+                "type": "string"
+              }
+            },
+            "additionalProperties": false,
+            "maxProperties": 2
+          }
+        ]
+      },
+      "ExitRule": {
+        "type": "object",
+        "required": [
+          "id",
+          "destinations",
+          "target",
+          "candidates",
+          "via"
+        ],
+        "properties": {
+          "candidates": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "destinations": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ExitMatch"
+            }
+          },
+          "id": {
+            "type": "string"
+          },
+          "src": {
+            "type": "string"
+          },
+          "target": {
+            "$ref": "#/components/schemas/ExitTarget"
+          },
+          "via": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        },
+        "additionalProperties": false
+      },
+      "ExitTarget": {
+        "type": "string",
+        "enum": [
+          "nodes",
+          "direct"
+        ]
+      },
       "FlowAuthorizationAction": {
         "type": "string",
         "enum": [
@@ -1642,6 +1868,36 @@ export const schemaDocument = {
             "description": "Zero means this node has never acquired a runtime lease.",
             "maximum": 4294967295,
             "minimum": 0
+          }
+        },
+        "additionalProperties": false
+      },
+      "Grant": {
+        "type": "object",
+        "required": [
+          "id",
+          "src",
+          "dst",
+          "bidirectional"
+        ],
+        "properties": {
+          "bidirectional": {
+            "type": "boolean"
+          },
+          "dst": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "id": {
+            "type": "string"
+          },
+          "src": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
           }
         },
         "additionalProperties": false
@@ -2315,6 +2571,105 @@ export const schemaDocument = {
         },
         "additionalProperties": false
       },
+      "MeshExecutionCapability": {
+        "type": "string",
+        "enum": [
+          "ipv4_exact_path_v1"
+        ]
+      },
+      "MeshExecutionPath": {
+        "type": "object",
+        "required": [
+          "nodes"
+        ],
+        "properties": {
+          "nodes": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 8,
+            "minItems": 2
+          }
+        },
+        "additionalProperties": false
+      },
+      "MeshExecutionRequest": {
+        "type": "object",
+        "required": [
+          "epoch",
+          "instance_id",
+          "capabilities"
+        ],
+        "properties": {
+          "capabilities": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/MeshExecutionCapability"
+            },
+            "maxItems": 1
+          },
+          "epoch": {
+            "type": "integer",
+            "format": "int64",
+            "maximum": 4294967295,
+            "minimum": 1
+          },
+          "instance_id": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": false
+      },
+      "MeshExecutionResponse": {
+        "type": "object",
+        "required": [
+          "source_mode",
+          "revision",
+          "snapshot"
+        ],
+        "properties": {
+          "revision": {
+            "type": "integer",
+            "format": "int64",
+            "maximum": 4294967295,
+            "minimum": 1
+          },
+          "snapshot": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/MeshExecutionSnapshot"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "source_mode": {
+            "$ref": "#/components/schemas/PolicySourceMode"
+          }
+        },
+        "additionalProperties": false
+      },
+      "MeshExecutionSnapshot": {
+        "type": "object",
+        "required": [
+          "digest",
+          "payload"
+        ],
+        "properties": {
+          "digest": {
+            "type": "string",
+            "maxLength": 64,
+            "minLength": 64,
+            "pattern": "^[0-9a-f]{64}$"
+          },
+          "payload": {
+            "$ref": "#/components/schemas/NodeMeshExecution"
+          }
+        },
+        "additionalProperties": false
+      },
       "MeshNetwork": {
         "type": "object",
         "required": [
@@ -2380,6 +2735,33 @@ export const schemaDocument = {
         },
         "additionalProperties": false
       },
+      "MeshRule": {
+        "type": "object",
+        "required": [
+          "id",
+          "src",
+          "dst",
+          "via"
+        ],
+        "properties": {
+          "dst": {
+            "type": "string"
+          },
+          "id": {
+            "type": "string"
+          },
+          "src": {
+            "type": "string"
+          },
+          "via": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        },
+        "additionalProperties": false
+      },
       "NetworkList": {
         "type": "object",
         "required": [
@@ -2391,6 +2773,126 @@ export const schemaDocument = {
             "items": {
               "$ref": "#/components/schemas/NetworkSnapshot"
             }
+          }
+        },
+        "additionalProperties": false
+      },
+      "NetworkPolicy": {
+        "type": "object",
+        "required": [
+          "connections",
+          "grants",
+          "mesh",
+          "public_rules",
+          "profiles",
+          "assignments"
+        ],
+        "properties": {
+          "assignments": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ProfileAssignment"
+            }
+          },
+          "automatic": {
+            "$ref": "#/components/schemas/AutomaticRouting"
+          },
+          "connections": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ConnectionRule"
+            }
+          },
+          "grants": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Grant"
+            }
+          },
+          "mesh": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/MeshRule"
+            }
+          },
+          "profiles": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/RoutingProfile"
+            }
+          },
+          "public_rules": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ExitRule"
+            }
+          }
+        },
+        "additionalProperties": false
+      },
+      "NetworkPolicySnapshot": {
+        "type": "object",
+        "required": [
+          "network_id",
+          "revision",
+          "source_mode",
+          "policy",
+          "source_jsonc",
+          "valid",
+          "diagnostics",
+          "migration_proposal"
+        ],
+        "properties": {
+          "diagnostics": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Diagnostic"
+            }
+          },
+          "migration_proposal": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/NetworkPolicy",
+                "description": "Proposal only, never automatically activated."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "network_id": {
+            "type": "string",
+            "maxLength": 32,
+            "minLength": 32,
+            "pattern": "^[0-9a-f]{32}$"
+          },
+          "policy": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/NetworkPolicy"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "revision": {
+            "type": "integer",
+            "format": "int64",
+            "maximum": 4294967295,
+            "minimum": 1
+          },
+          "source_jsonc": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "source_mode": {
+            "$ref": "#/components/schemas/PolicySourceMode"
+          },
+          "valid": {
+            "type": "boolean"
           }
         },
         "additionalProperties": false
@@ -2801,6 +3303,88 @@ export const schemaDocument = {
         },
         "additionalProperties": false
       },
+      "NodeMeshExecution": {
+        "type": "object",
+        "required": [
+          "schema_version",
+          "network_id",
+          "revision",
+          "node_id",
+          "required_capability",
+          "network",
+          "node",
+          "peers",
+          "valid",
+          "paths",
+          "identities",
+          "connections",
+          "materials"
+        ],
+        "properties": {
+          "connections": {
+            "$ref": "#/components/schemas/NodeConnections"
+          },
+          "identities": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ConnectionPeer"
+            },
+            "maxItems": 64
+          },
+          "materials": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ManagedVlessMaterial"
+            },
+            "maxItems": 64
+          },
+          "network": {
+            "$ref": "#/components/schemas/MeshNetwork"
+          },
+          "network_id": {
+            "type": "string"
+          },
+          "node": {
+            "$ref": "#/components/schemas/MeshNode"
+          },
+          "node_id": {
+            "type": "string"
+          },
+          "paths": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/MeshExecutionPath"
+            },
+            "maxItems": 128
+          },
+          "peers": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/MeshNode"
+            },
+            "maxItems": 1023
+          },
+          "required_capability": {
+            "$ref": "#/components/schemas/MeshExecutionCapability"
+          },
+          "revision": {
+            "type": "integer",
+            "format": "int64",
+            "maximum": 4294967295,
+            "minimum": 1
+          },
+          "schema_version": {
+            "type": "integer",
+            "format": "int64",
+            "maximum": 1,
+            "minimum": 1
+          },
+          "valid": {
+            "type": "boolean"
+          }
+        },
+        "additionalProperties": false
+      },
       "NodeOwnership": {
         "type": "object",
         "required": [
@@ -3066,6 +3650,13 @@ export const schemaDocument = {
         },
         "additionalProperties": false
       },
+      "PolicySourceMode": {
+        "type": "string",
+        "enum": [
+          "legacy_v2",
+          "mesh_v3"
+        ]
+      },
       "PreviewFlowRequest": {
         "type": "object",
         "required": [
@@ -3165,6 +3756,96 @@ export const schemaDocument = {
           }
         },
         "additionalProperties": false
+      },
+      "ProfileAssignment": {
+        "type": "object",
+        "required": [
+          "src",
+          "allowed",
+          "default_profile",
+          "locked"
+        ],
+        "properties": {
+          "allowed": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "default_profile": {
+            "type": "string"
+          },
+          "locked": {
+            "type": "boolean"
+          },
+          "src": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": false
+      },
+      "ProfileFallback": {
+        "oneOf": [
+          {
+            "type": "object",
+            "required": [
+              "kind"
+            ],
+            "properties": {
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "none"
+                ]
+              }
+            },
+            "maxProperties": 1
+          },
+          {
+            "type": "object",
+            "required": [
+              "kind"
+            ],
+            "properties": {
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "direct"
+                ]
+              }
+            },
+            "maxProperties": 1
+          },
+          {
+            "type": "object",
+            "required": [
+              "candidates",
+              "via",
+              "kind"
+            ],
+            "properties": {
+              "candidates": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "nodes"
+                ]
+              },
+              "via": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              }
+            },
+            "maxProperties": 3
+          }
+        ]
       },
       "PublishConnectionIdentityRequest": {
         "type": "object",
@@ -3734,6 +4415,29 @@ export const schemaDocument = {
         },
         "additionalProperties": false
       },
+      "RoutingProfile": {
+        "type": "object",
+        "required": [
+          "id",
+          "rules",
+          "fallback"
+        ],
+        "properties": {
+          "fallback": {
+            "$ref": "#/components/schemas/ProfileFallback"
+          },
+          "id": {
+            "type": "string"
+          },
+          "rules": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ExitRule"
+            }
+          }
+        },
+        "additionalProperties": false
+      },
       "SaveConnectionsRequest": {
         "type": "object",
         "required": [
@@ -3803,6 +4507,32 @@ export const schemaDocument = {
           },
           "policy": {
             "$ref": "#/components/schemas/MeshAccessPolicy"
+          },
+          "source_jsonc": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "additionalProperties": false
+      },
+      "SaveNetworkPolicyRequest": {
+        "type": "object",
+        "required": [
+          "expected_revision",
+          "policy"
+        ],
+        "properties": {
+          "expected_revision": {
+            "type": "integer",
+            "format": "int64",
+            "maximum": 4294967295,
+            "minimum": 1
+          },
+          "policy": {
+            "$ref": "#/components/schemas/NetworkPolicy",
+            "description": "Explicit replacement/activation; not an assertion of equivalent migration."
           },
           "source_jsonc": {
             "type": [

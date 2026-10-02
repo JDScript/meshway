@@ -481,6 +481,7 @@ fn migration_preserves_existing_rows_revision_and_rolls_back_all_ddl() {
     let network = store.initial_network_id().unwrap();
     let revision = store.revision(&network).unwrap();
     let db = &store.connection;
+    db.execute_batch("DROP TABLE mesh_execution_receipts; DROP TABLE mesh_execution_capabilities; DROP TABLE network_policy_sources;").unwrap();
     db.execute_batch("DROP TABLE managed_enrollment_intents; DROP TABLE managed_transport_capabilities; DROP TABLE managed_listeners; DROP INDEX enrollment_tokens_network_id; PRAGMA user_version=9;").unwrap();
     drop(store);
     let store = Store::open(dir.path(), &NetworkOptions::default()).unwrap();

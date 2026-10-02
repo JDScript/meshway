@@ -146,6 +146,24 @@ impl Store {
             "DELETE FROM connection_runtime_reports WHERE node_id = ?1 AND network_id=?2",
             params![id, network.as_str()],
         )?;
+        // Support is process/epoch-scoped, never a permanent node property.
+        let had_capability: bool = transaction.query_row("SELECT EXISTS(SELECT 1 FROM mesh_execution_capabilities WHERE node_id=?1 AND network_id=?2)",params![id,network.as_str()],|r|r.get(0))?;
+        transaction.execute(
+            "DELETE FROM mesh_execution_capabilities WHERE node_id=?1 AND network_id=?2",
+            params![id, network.as_str()],
+        )?;
+        transaction.execute(
+            "DELETE FROM mesh_execution_receipts WHERE node_id=?1 AND network_id=?2",
+            params![id, network.as_str()],
+        )?;
+        if had_capability && super::policy_v3::active(&transaction, &network)? {
+            configuration::bump(&transaction, &network)?;
+            super::publication::finish_change(
+                &transaction,
+                &network,
+                super::publication::ChangeKind::Adjacency,
+            )?;
+        }
         super::latency_history::begin_epoch(&transaction, &network, &id, epoch)?;
         transaction.commit()?;
         Ok(BeginConnectionRuntimeResponse { epoch })

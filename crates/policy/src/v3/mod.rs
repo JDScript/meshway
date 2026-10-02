@@ -195,6 +195,21 @@ pub struct Diagnostic {
 pub(crate) fn matches(s: &str, n: &Node) -> bool {
     s == "*" || s.strip_prefix("node:") == Some(n.id.as_str()) || n.tags.contains(s)
 }
+/// Unordered connection permission; block dominates allow. This does not assert
+/// transport reachability or grant business access in either direction.
+pub fn connection_allowed(rules: &[ConnectionRule], a: &Node, b: &Node) -> bool {
+    let matching = |r: &&ConnectionRule| {
+        (matches(&r.a, a) && matches(&r.b, b)) || (matches(&r.b, a) && matches(&r.a, b))
+    };
+    rules
+        .iter()
+        .filter(matching)
+        .any(|r| r.action == ConnectionAction::Allow)
+        && !rules
+            .iter()
+            .filter(matching)
+            .any(|r| r.action == ConnectionAction::Block)
+}
 pub(crate) fn specificity(s: &str) -> u8 {
     if s.starts_with("node:") {
         2

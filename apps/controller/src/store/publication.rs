@@ -10,6 +10,7 @@ use crate::Error;
 
 pub(super) mod budget;
 mod compile;
+pub(super) mod mesh_v3;
 mod project;
 #[cfg(test)]
 mod tests;
@@ -31,6 +32,7 @@ pub(super) enum ChangeKind {
 }
 
 pub(super) struct RoutingFacts {
+    mesh_v3: bool,
     revision: u32,
     network: MeshNetwork,
     nodes: Vec<MeshNode>,
@@ -39,11 +41,20 @@ pub(super) struct RoutingFacts {
 
 impl RoutingFacts {
     pub(super) fn read(db: &Connection, scope: &NetworkId) -> Result<Self, Error> {
+        let mesh_v3 = super::policy_v3::active(db, scope)?;
         Ok(Self {
+            mesh_v3,
             revision: configuration::revision(db, scope)?,
             network: ipam::network(db, scope)?,
             nodes: configuration::active_nodes(db, scope)?,
-            policy: configuration::source_policy(db, scope)?,
+            // Inventory-only v2 compatibility view. Retired v2 source is still
+            // available through its management API, but never interpreted as
+            // v3 execution or a dependency of its publication budget.
+            policy: if mesh_v3 {
+                RoutingPolicy::default()
+            } else {
+                configuration::source_policy(db, scope)?
+            },
         })
     }
 
@@ -64,9 +75,15 @@ struct Facts {
 
 impl Facts {
     fn read(db: &Connection, scope: &NetworkId) -> Result<Self, Error> {
+        let routing = RoutingFacts::read(db, scope)?;
+        let access = if routing.mesh_v3 {
+            MeshAccessPolicy::default()
+        } else {
+            access::source(db, scope)?
+        };
         Ok(Self {
-            routing: RoutingFacts::read(db, scope)?,
-            access: access::source(db, scope)?,
+            routing,
+            access,
             catalog: tags::catalog(db, scope)?,
             assignments: tags::assignments(db, scope)?,
             keys: access::bindings(db, scope)?,
@@ -133,8 +150,12 @@ impl<'a> Publication<'a> {
             source: None,
             nodes: BTreeMap::new(),
         };
-        let (access_valid, authorizations) =
+        let (mut access_valid, mut authorizations) =
             compile::authorizations(&facts, &prepared, &mut adjacency, route_evaluated)?;
+        if facts.routing.mesh_v3 {
+            access_valid = false;
+            authorizations.clear();
+        }
         Ok(Self {
             facts,
             routing,
@@ -226,5 +247,9 @@ pub(super) fn finish_change(
     scope: &NetworkId,
     kind: ChangeKind,
 ) -> Result<(), Error> {
+    if let Some((policy, _)) = super::policy_v3::source(db, scope)? {
+        let publication = mesh_v3::Publication::read(db, scope, &policy)?;
+        publication.ensure_publishable()?;
+    }
     Publication::read(db, scope)?.ensure_publishable(kind)
 }

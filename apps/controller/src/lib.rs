@@ -11,6 +11,7 @@ mod endpoint_discovery_api;
 mod latency_history_api;
 mod managed_transports_api;
 mod network_api;
+mod policy_v3_api;
 mod store;
 mod tags_api;
 
@@ -191,6 +192,7 @@ fn contract_router() -> OpenApiRouter<AppState> {
         .merge(network_api::routes())
         .merge(device_login_api::routes())
         .merge(managed_transports_api::routes())
+        .merge(policy_v3_api::routes())
         .merge(accounts_api::routes())
 }
 

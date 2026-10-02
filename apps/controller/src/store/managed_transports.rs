@@ -391,7 +391,7 @@ fn decrypt(
         .map_err(|_| Error::Configuration("invalid stored transport material"))
 }
 
-fn materials(
+pub(super) fn materials(
     connection: &Connection,
     network: &NetworkId,
     intent: &NodeConnections,

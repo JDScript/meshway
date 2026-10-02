@@ -74,6 +74,77 @@ pub struct PublishConnectionIdentityRequest {
 }
 #[derive(Clone, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
+pub struct MeshExecutionResponse {
+    ///Constraint: minimum=1, maximum=4294967295
+    pub revision: i64,
+    #[serde(deserialize_with = "deserialize_required_nullable")]
+    pub snapshot: Option<MeshExecutionSnapshot>,
+    pub source_mode: PolicySourceMode,
+}
+#[derive(Clone, PartialEq, Eq, Deserialize, Serialize, Default)]
+pub enum PolicySourceMode {
+    #[default]
+    #[serde(rename = "legacy_v2")]
+    LegacyV2,
+    #[serde(rename = "mesh_v3")]
+    MeshV3,
+}
+impl PolicySourceMode {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::LegacyV2 => "legacy_v2",
+            Self::MeshV3 => "mesh_v3",
+        }
+    }
+}
+impl ::std::fmt::Display for PolicySourceMode {
+    fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+impl AsRef<str> for PolicySourceMode {
+    fn as_ref(&self) -> &str {
+        self.as_str()
+    }
+}
+#[derive(Clone, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct MeshExecutionSnapshot {
+    ///Constraint: minLength=64, maxLength=64, pattern=`^[0-9a-f]{64}$`
+    pub digest: String,
+    pub payload: NodeMeshExecution,
+}
+#[derive(Clone, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct NodeMeshExecution {
+    pub connections: NodeConnections,
+    ///Constraint: maxItems=64
+    pub identities: Vec<ConnectionPeer>,
+    ///Constraint: maxItems=64
+    pub materials: Vec<ManagedVlessMaterial>,
+    pub network: MeshNetwork,
+    pub network_id: String,
+    pub node: MeshNode,
+    pub node_id: String,
+    ///Constraint: maxItems=128
+    pub paths: Vec<MeshExecutionPath>,
+    ///Constraint: maxItems=1023
+    pub peers: Vec<MeshNode>,
+    pub required_capability: MeshExecutionCapability,
+    ///Constraint: minimum=1, maximum=4294967295
+    pub revision: i64,
+    ///Constraint: minimum=1, maximum=1
+    pub schema_version: i64,
+    pub valid: bool,
+}
+#[derive(Clone, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct MeshExecutionPath {
+    ///Constraint: minItems=2, maxItems=8
+    pub nodes: Vec<String>,
+}
+#[derive(Clone, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
 pub struct LatencySample {
     /**Runtime returns exact channel metadata only with successful proof. A
     timeout leaves this empty rather than racing a separate registry read.
@@ -1069,6 +1140,46 @@ impl AsRef<str> for ConnectionSemantics {
 }
 #[derive(Clone, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
+pub struct AcknowledgeMeshExecutionRequest {
+    pub digest: String,
+    ///Constraint: minimum=1, maximum=4294967295
+    pub revision: i64,
+    pub runtime: MeshExecutionRequest,
+}
+#[derive(Clone, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct MeshExecutionRequest {
+    ///Constraint: maxItems=1
+    pub capabilities: Vec<MeshExecutionCapability>,
+    ///Constraint: minimum=1, maximum=4294967295
+    pub epoch: i64,
+    pub instance_id: String,
+}
+#[derive(Clone, PartialEq, Eq, Deserialize, Serialize, Default)]
+pub enum MeshExecutionCapability {
+    #[default]
+    #[serde(rename = "ipv4_exact_path_v1")]
+    Ipv4ExactPathV1,
+}
+impl MeshExecutionCapability {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::Ipv4ExactPathV1 => "ipv4_exact_path_v1",
+        }
+    }
+}
+impl ::std::fmt::Display for MeshExecutionCapability {
+    fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+impl AsRef<str> for MeshExecutionCapability {
+    fn as_ref(&self) -> &str {
+        self.as_str()
+    }
+}
+#[derive(Clone, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
 pub struct AcknowledgeAgentConnectionsResponse {
     ///Constraint: minLength=64, maxLength=64, pattern=`^[0-9a-f]{64}$`
     pub digest: String,
@@ -1122,6 +1233,14 @@ pub struct AcknowledgeConfigurationResponse {
     pub digest: String,
     ///Constraint: minimum=1, maximum=4294967295
     pub revision: i64,
+}
+#[derive(Clone, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct AcknowledgeMeshExecutionResponse {
+    pub digest: String,
+    ///Constraint: minimum=1, maximum=4294967295
+    pub revision: i64,
+    pub saved: bool,
 }
 #[derive(Clone, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
@@ -1259,6 +1378,36 @@ impl std::fmt::Debug for PublishConnectionIdentityResponse {
 impl std::fmt::Debug for PublishConnectionIdentityRequest {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_str("PublishConnectionIdentityRequest([REDACTED])")
+    }
+}
+
+impl std::fmt::Debug for MeshExecutionResponse {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("MeshExecutionResponse([REDACTED])")
+    }
+}
+
+impl std::fmt::Debug for PolicySourceMode {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("PolicySourceMode([REDACTED])")
+    }
+}
+
+impl std::fmt::Debug for MeshExecutionSnapshot {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("MeshExecutionSnapshot([REDACTED])")
+    }
+}
+
+impl std::fmt::Debug for NodeMeshExecution {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("NodeMeshExecution([REDACTED])")
+    }
+}
+
+impl std::fmt::Debug for MeshExecutionPath {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("MeshExecutionPath([REDACTED])")
     }
 }
 
@@ -1604,6 +1753,24 @@ impl std::fmt::Debug for ConnectionSemantics {
     }
 }
 
+impl std::fmt::Debug for AcknowledgeMeshExecutionRequest {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("AcknowledgeMeshExecutionRequest([REDACTED])")
+    }
+}
+
+impl std::fmt::Debug for MeshExecutionRequest {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("MeshExecutionRequest([REDACTED])")
+    }
+}
+
+impl std::fmt::Debug for MeshExecutionCapability {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("MeshExecutionCapability([REDACTED])")
+    }
+}
+
 impl std::fmt::Debug for AcknowledgeAgentConnectionsResponse {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_str("AcknowledgeAgentConnectionsResponse([REDACTED])")
@@ -1631,6 +1798,12 @@ impl std::fmt::Debug for AcknowledgeConfigurationRequest {
 impl std::fmt::Debug for AcknowledgeConfigurationResponse {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_str("AcknowledgeConfigurationResponse([REDACTED])")
+    }
+}
+
+impl std::fmt::Debug for AcknowledgeMeshExecutionResponse {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("AcknowledgeMeshExecutionResponse([REDACTED])")
     }
 }
 

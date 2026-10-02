@@ -324,6 +324,13 @@ pub enum AcknowledgeConfigurationApiError {
     Status415(ErrorResponse),
     Status500(ErrorResponse),
 }
+///Typed error responses for `acknowledgeMeshExecution`. One variant per declared non-2xx response.
+#[derive(Debug, Clone)]
+pub enum AcknowledgeMeshExecutionApiError {
+    Status401(ErrorResponse),
+    Status403(ErrorResponse),
+    Status409(ErrorResponse),
+}
 ///Typed error responses for `beginConnectionRuntime`. One variant per declared non-2xx response.
 #[derive(Debug, Clone)]
 pub enum BeginConnectionRuntimeApiError {
@@ -422,6 +429,14 @@ pub enum HeartbeatAgentApiError {
     Status413(ErrorResponse),
     Status415(ErrorResponse),
     Status500(ErrorResponse),
+}
+///Typed error responses for `negotiateMeshExecution`. One variant per declared non-2xx response.
+#[derive(Debug, Clone)]
+pub enum NegotiateMeshExecutionApiError {
+    Status401(ErrorResponse),
+    Status403(ErrorResponse),
+    Status409(ErrorResponse),
+    Status422(ErrorResponse),
 }
 ///Typed error responses for `publishConnectionIdentity`. One variant per declared non-2xx response.
 #[derive(Debug, Clone)]
@@ -773,6 +788,122 @@ impl HttpClient {
                 500u16 => match serde_json::from_str::<ErrorResponse>(&body_text) {
                     Ok(v) => {
                         typed = Some(AcknowledgeConfigurationApiError::Status500(v));
+                        parse_error = None;
+                    }
+                    Err(e) => {
+                        typed = None;
+                        parse_error = Some(e.to_string());
+                    }
+                },
+                _ => {
+                    typed = None;
+                    parse_error = None;
+                }
+            }
+            Err(ApiOpError::Api(ApiError {
+                status: status_code,
+                headers,
+                body: String::new(),
+                raw_body: Vec::new(),
+                typed,
+                parse_error,
+            }))
+        }
+    }
+    /// `POST /api/v1/agents/mesh-execution/ack`
+    pub async fn acknowledge_mesh_execution(
+        &self,
+        request: AcknowledgeMeshExecutionRequest,
+    ) -> Result<AcknowledgeMeshExecutionResponse, ApiOpError<AcknowledgeMeshExecutionApiError>>
+    {
+        let request_url = format!("{}{}", self.base_url, "/api/v1/agents/mesh-execution/ack");
+        let mut req = self.http_client.post(request_url);
+        req = req
+            .body(serde_json::to_vec(&request).map_err(HttpError::serialization_error)?)
+            .header("content-type", "application/json");
+        if let Some(api_key) = &self.api_key {
+            req = req.bearer_auth(api_key);
+        }
+        for (name, value) in &self.custom_headers {
+            if !name.eq_ignore_ascii_case("accept") {
+                req = req.header(name, value);
+            }
+        }
+        req = req.header(reqwest::header::ACCEPT, "application/json");
+        let response = if let Some(transport) = &self.transport {
+            transport.execute(req.build()?).await?
+        } else {
+            req.send().await?
+        };
+        let status = response.status();
+        let status_code = status.as_u16();
+        let headers = response.headers().clone();
+        // Meshway acts on HTTP rejection immediately; error bodies are not consumed.
+        if !status.is_success() {
+            return Err(ApiOpError::Api(ApiError {
+                status: status_code,
+                headers,
+                body: String::new(),
+                raw_body: Vec::new(),
+                typed: None,
+                parse_error: None,
+            }));
+        }
+        let body_bytes =
+            __read_bounded_response_body(response, self.max_response_body_bytes).await?;
+        let raw_body = body_bytes;
+        let body_text = String::from_utf8_lossy(&raw_body).into_owned();
+        if false || status_code == 200u16 {
+            match serde_json::from_str(&body_text) {
+                Ok(body) => Ok(body),
+                Err(_e) => Err(ApiOpError::Api(ApiError {
+                    status: status_code,
+                    headers: headers,
+                    body: String::new(),
+                    raw_body: Vec::new(),
+                    typed: None,
+                    parse_error: Some("success_response_decode".to_owned()),
+                })),
+            }
+        } else if status.is_success() {
+            Err(ApiOpError::Api(ApiError {
+                status: status_code,
+                headers,
+                body: String::new(),
+                raw_body: Vec::new(),
+                typed: None,
+                parse_error: Some(format!(
+                    "unexpected successful status {}; generated return type selects `{}`",
+                    status_code, "200",
+                )),
+            }))
+        } else {
+            let typed: Option<AcknowledgeMeshExecutionApiError>;
+            let parse_error: Option<String>;
+            match status_code {
+                401u16 => match serde_json::from_str::<ErrorResponse>(&body_text) {
+                    Ok(v) => {
+                        typed = Some(AcknowledgeMeshExecutionApiError::Status401(v));
+                        parse_error = None;
+                    }
+                    Err(e) => {
+                        typed = None;
+                        parse_error = Some(e.to_string());
+                    }
+                },
+                403u16 => match serde_json::from_str::<ErrorResponse>(&body_text) {
+                    Ok(v) => {
+                        typed = Some(AcknowledgeMeshExecutionApiError::Status403(v));
+                        parse_error = None;
+                    }
+                    Err(e) => {
+                        typed = None;
+                        parse_error = Some(e.to_string());
+                    }
+                },
+                409u16 => match serde_json::from_str::<ErrorResponse>(&body_text) {
+                    Ok(v) => {
+                        typed = Some(AcknowledgeMeshExecutionApiError::Status409(v));
                         parse_error = None;
                     }
                     Err(e) => {
@@ -2233,6 +2364,131 @@ impl HttpClient {
                 500u16 => match serde_json::from_str::<ErrorResponse>(&body_text) {
                     Ok(v) => {
                         typed = Some(HeartbeatAgentApiError::Status500(v));
+                        parse_error = None;
+                    }
+                    Err(e) => {
+                        typed = None;
+                        parse_error = Some(e.to_string());
+                    }
+                },
+                _ => {
+                    typed = None;
+                    parse_error = None;
+                }
+            }
+            Err(ApiOpError::Api(ApiError {
+                status: status_code,
+                headers,
+                body: String::new(),
+                raw_body: Vec::new(),
+                typed,
+                parse_error,
+            }))
+        }
+    }
+    /// `POST /api/v1/agents/mesh-execution`
+    pub async fn negotiate_mesh_execution(
+        &self,
+        request: MeshExecutionRequest,
+    ) -> Result<MeshExecutionResponse, ApiOpError<NegotiateMeshExecutionApiError>> {
+        let request_url = format!("{}{}", self.base_url, "/api/v1/agents/mesh-execution");
+        let mut req = self.http_client.post(request_url);
+        req = req
+            .body(serde_json::to_vec(&request).map_err(HttpError::serialization_error)?)
+            .header("content-type", "application/json");
+        if let Some(api_key) = &self.api_key {
+            req = req.bearer_auth(api_key);
+        }
+        for (name, value) in &self.custom_headers {
+            if !name.eq_ignore_ascii_case("accept") {
+                req = req.header(name, value);
+            }
+        }
+        req = req.header(reqwest::header::ACCEPT, "application/json");
+        let response = if let Some(transport) = &self.transport {
+            transport.execute(req.build()?).await?
+        } else {
+            req.send().await?
+        };
+        let status = response.status();
+        let status_code = status.as_u16();
+        let headers = response.headers().clone();
+        // Meshway acts on HTTP rejection immediately; error bodies are not consumed.
+        if !status.is_success() {
+            return Err(ApiOpError::Api(ApiError {
+                status: status_code,
+                headers,
+                body: String::new(),
+                raw_body: Vec::new(),
+                typed: None,
+                parse_error: None,
+            }));
+        }
+        let body_bytes =
+            __read_bounded_response_body(response, self.max_response_body_bytes).await?;
+        let raw_body = body_bytes;
+        let body_text = String::from_utf8_lossy(&raw_body).into_owned();
+        if false || status_code == 200u16 {
+            match serde_json::from_str(&body_text) {
+                Ok(body) => Ok(body),
+                Err(_e) => Err(ApiOpError::Api(ApiError {
+                    status: status_code,
+                    headers: headers,
+                    body: String::new(),
+                    raw_body: Vec::new(),
+                    typed: None,
+                    parse_error: Some("success_response_decode".to_owned()),
+                })),
+            }
+        } else if status.is_success() {
+            Err(ApiOpError::Api(ApiError {
+                status: status_code,
+                headers,
+                body: String::new(),
+                raw_body: Vec::new(),
+                typed: None,
+                parse_error: Some(format!(
+                    "unexpected successful status {}; generated return type selects `{}`",
+                    status_code, "200",
+                )),
+            }))
+        } else {
+            let typed: Option<NegotiateMeshExecutionApiError>;
+            let parse_error: Option<String>;
+            match status_code {
+                401u16 => match serde_json::from_str::<ErrorResponse>(&body_text) {
+                    Ok(v) => {
+                        typed = Some(NegotiateMeshExecutionApiError::Status401(v));
+                        parse_error = None;
+                    }
+                    Err(e) => {
+                        typed = None;
+                        parse_error = Some(e.to_string());
+                    }
+                },
+                403u16 => match serde_json::from_str::<ErrorResponse>(&body_text) {
+                    Ok(v) => {
+                        typed = Some(NegotiateMeshExecutionApiError::Status403(v));
+                        parse_error = None;
+                    }
+                    Err(e) => {
+                        typed = None;
+                        parse_error = Some(e.to_string());
+                    }
+                },
+                409u16 => match serde_json::from_str::<ErrorResponse>(&body_text) {
+                    Ok(v) => {
+                        typed = Some(NegotiateMeshExecutionApiError::Status409(v));
+                        parse_error = None;
+                    }
+                    Err(e) => {
+                        typed = None;
+                        parse_error = Some(e.to_string());
+                    }
+                },
+                422u16 => match serde_json::from_str::<ErrorResponse>(&body_text) {
+                    Ok(v) => {
+                        typed = Some(NegotiateMeshExecutionApiError::Status422(v));
                         parse_error = None;
                     }
                     Err(e) => {

@@ -778,6 +778,110 @@ async fn every_declared_endpoint_is_scoped_under_global_admin_mutations_node_req
         .0,
         StatusCode::OK
     );
+    // V3 source activation and execution remain network/credential/epoch scoped.
+    let source_path = format!("{}/policy-v3", bases[0]);
+    let (status, source) = call!("GET", &source_path, Some(&f.admin), None);
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(source["source_mode"], "legacy_v2");
+    let p = serde_json::to_value(meshway_policy::v3::NetworkPolicy::default_template()).unwrap();
+    let write = json!({"expected_revision":source["revision"],"policy":p});
+    assert_eq!(
+        call!(
+            "POST",
+            format!("{source_path}/save"),
+            Some(c),
+            Some(write.clone())
+        )
+        .0,
+        StatusCode::UNAUTHORIZED
+    );
+    let (status, saved) = call!(
+        "POST",
+        format!("{source_path}/save"),
+        Some(&f.admin),
+        Some(write.clone())
+    );
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(saved["source_mode"], "mesh_v3");
+    assert_eq!(
+        call!(
+            "POST",
+            format!("{source_path}/save"),
+            Some(&f.admin),
+            Some(write)
+        )
+        .0,
+        StatusCode::CONFLICT
+    );
+    assert_eq!(
+        call!(
+            "GET",
+            format!("{}/policy-v3", bases[2]),
+            Some(&f.admin),
+            None
+        )
+        .1["source_mode"],
+        "legacy_v2"
+    );
+    let a = &credentials[0][0];
+    let instance = local::credential().unwrap();
+    assert_eq!(
+        call!(
+            "POST",
+            "/api/v1/agent/connections/runtime/begin",
+            Some(a),
+            Some(json!({"expected_epoch":0,"instance_id":instance}))
+        )
+        .0,
+        StatusCode::OK
+    );
+    let runtime = json!({"epoch":1,"instance_id":instance,"capabilities":["ipv4_exact_path_v1"]});
+    let (status, execution) = call!(
+        "POST",
+        "/api/v1/agents/mesh-execution",
+        Some(a),
+        Some(runtime.clone())
+    );
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(execution["snapshot"]["payload"]["network_id"], networks[0]);
+    assert_eq!(execution["snapshot"]["payload"]["node_id"], nodes[0][0]);
+    assert_eq!(execution["snapshot"]["payload"]["peers"], json!([]));
+    assert_eq!(
+        call!(
+            "POST",
+            "/api/v1/agents/mesh-execution",
+            Some(c),
+            Some(runtime.clone())
+        )
+        .0,
+        StatusCode::CONFLICT
+    );
+    let ack = json!({"runtime":runtime,"revision":execution["revision"],"digest":execution["snapshot"]["digest"]});
+    assert_eq!(
+        call!(
+            "POST",
+            "/api/v1/agents/mesh-execution/ack",
+            Some(c),
+            Some(ack.clone())
+        )
+        .0,
+        StatusCode::CONFLICT
+    );
+    let (status, receipt) = call!(
+        "POST",
+        "/api/v1/agents/mesh-execution/ack",
+        Some(a),
+        Some(ack)
+    );
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(receipt["saved"], true);
+    let legacy = call!("GET", "/api/v1/agent/dataplane", Some(a), None).1;
+    assert_eq!(legacy["payload"]["access_valid"], false);
+    assert_eq!(legacy["payload"]["access_policy"]["grants"], json!([]));
+    assert_eq!(
+        call!("GET", format!("{}/policy", bases[2]), Some(&f.admin), None).1,
+        c_policy
+    );
     let api: Value = serde_json::from_str(&openapi_json().unwrap()).unwrap();
     let declared: BTreeSet<_> = api["paths"]
         .as_object()

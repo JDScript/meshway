@@ -32,19 +32,7 @@ impl<'a> Graph<'a> {
                 if !dial[a][b] && !dial[b][a] {
                     continue;
                 }
-                let mut allow = false;
-                let mut block = false;
-                for r in &p.connections {
-                    if (matches(&r.a, nodes[a]) && matches(&r.b, nodes[b]))
-                        || (matches(&r.b, nodes[a]) && matches(&r.a, nodes[b]))
-                    {
-                        match r.action {
-                            ConnectionAction::Allow => allow = true,
-                            ConnectionAction::Block => block = true,
-                        }
-                    }
-                }
-                if allow && !block {
+                if connection_allowed(&p.connections, nodes[a], nodes[b]) {
                     edges[a].push(b as u16);
                     edges[b].push(a as u16);
                 }

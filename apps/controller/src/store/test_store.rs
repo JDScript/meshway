@@ -150,6 +150,9 @@ impl TestStore {
 pub(super) fn remove_v11_fixture_objects(db: &rusqlite::Connection) {
     db.execute_batch(
         "DROP TRIGGER IF EXISTS ownership_new_node;
+         DROP TABLE IF EXISTS mesh_execution_receipts;
+         DROP TABLE IF EXISTS mesh_execution_capabilities;
+         DROP TABLE IF EXISTS network_policy_sources;
          DROP INDEX IF EXISTS account_enrollment_scope;
          DROP TABLE IF EXISTS device_account_bindings;
          DROP TABLE IF EXISTS node_ownership;

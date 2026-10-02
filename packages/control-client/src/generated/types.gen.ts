@@ -95,6 +95,18 @@ export type AcknowledgeConfigurationResponse = {
     revision: number;
 };
 
+export type AcknowledgeMeshExecutionRequest = {
+    digest: string;
+    revision: number;
+    runtime: MeshExecutionRequest;
+};
+
+export type AcknowledgeMeshExecutionResponse = {
+    digest: string;
+    revision: number;
+    saved: boolean;
+};
+
 export type AgentConnectionsSnapshot = {
     digest: string;
     payload: NodeConnections;
@@ -143,6 +155,13 @@ export type AuthorizeDeviceResponse = {
     expires_at: string;
 };
 
+export type AutomaticRouting = {
+    fallback: string;
+    regions: {
+        [key: string]: string;
+    };
+};
+
 export type BeginConnectionRuntimeRequest = {
     /**
      * Pin the initial epoch read across retries; never refresh after a conflict.
@@ -181,6 +200,8 @@ export type ConfigurationSnapshot = {
     digest: string;
     payload: NodeConfiguration;
 };
+
+export type ConnectionAction = 'allow' | 'block';
 
 export type ConnectionCandidate = {
     credential_ref: string | null;
@@ -266,6 +287,13 @@ export type ConnectionPlan = {
 };
 
 export type ConnectionReceiptStatus = 'saved';
+
+export type ConnectionRule = {
+    a: string;
+    action: ConnectionAction;
+    b: string;
+    id: string;
+};
 
 export type ConnectionRuntimeObservation = {
     /**
@@ -366,6 +394,11 @@ export type DestinationSelector = {
 
 export type DestinationSelectorKind = 'node' | 'domain_suffix' | 'cidr' | 'country';
 
+export type Diagnostic = {
+    field: string;
+    message: string;
+};
+
 export type EndpointDiscoveriesSnapshot = {
     network_id: string;
     nodes: Array<NodeEndpointDiscovery>;
@@ -397,6 +430,28 @@ export type ExchangeDeviceRequest = {
     redirect_uri: string;
 };
 
+export type ExitMatch = {
+    kind: 'domain_suffix';
+    value: string;
+} | {
+    kind: 'cidr';
+    value: string;
+} | {
+    kind: 'rule_set';
+    value: string;
+};
+
+export type ExitRule = {
+    candidates: Array<string>;
+    destinations: Array<ExitMatch>;
+    id: string;
+    src?: string;
+    target: ExitTarget;
+    via: Array<string>;
+};
+
+export type ExitTarget = 'nodes' | 'direct';
+
 export type FlowAuthorizationAction = 'allow' | 'reject' | 'invalid';
 
 export type FlowAuthorizationDecision = {
@@ -423,6 +478,13 @@ export type GetConnectionRuntimeEpochResponse = {
      * Zero means this node has never acquired a runtime lease.
      */
     epoch: number;
+};
+
+export type Grant = {
+    bidirectional: boolean;
+    dst: Array<string>;
+    id: string;
+    src: Array<string>;
 };
 
 /**
@@ -629,6 +691,29 @@ export type MeshDnsConfiguration = {
     zone: string;
 };
 
+export type MeshExecutionCapability = 'ipv4_exact_path_v1';
+
+export type MeshExecutionPath = {
+    nodes: Array<string>;
+};
+
+export type MeshExecutionRequest = {
+    capabilities: Array<MeshExecutionCapability>;
+    epoch: number;
+    instance_id: string;
+};
+
+export type MeshExecutionResponse = {
+    revision: number;
+    snapshot: MeshExecutionSnapshot | null;
+    source_mode: PolicySourceMode;
+};
+
+export type MeshExecutionSnapshot = {
+    digest: string;
+    payload: NodeMeshExecution;
+};
+
 export type MeshNetwork = {
     ipv4_prefix: string;
     ipv6_prefix: string;
@@ -653,8 +738,36 @@ export type MeshPathAuthorization = {
     grants: Array<MeshAccessGrant>;
 };
 
+export type MeshRule = {
+    dst: string;
+    id: string;
+    src: string;
+    via: Array<string>;
+};
+
 export type NetworkList = {
     networks: Array<NetworkSnapshot>;
+};
+
+export type NetworkPolicy = {
+    assignments: Array<ProfileAssignment>;
+    automatic?: AutomaticRouting;
+    connections: Array<ConnectionRule>;
+    grants: Array<Grant>;
+    mesh: Array<MeshRule>;
+    profiles: Array<RoutingProfile>;
+    public_rules: Array<ExitRule>;
+};
+
+export type NetworkPolicySnapshot = {
+    diagnostics: Array<Diagnostic>;
+    migration_proposal: NetworkPolicy | null;
+    network_id: string;
+    policy: NetworkPolicy | null;
+    revision: number;
+    source_jsonc: string | null;
+    source_mode: PolicySourceMode;
+    valid: boolean;
 };
 
 /**
@@ -742,6 +855,22 @@ export type NodeList = {
     nodes: Array<NodeSummary>;
 };
 
+export type NodeMeshExecution = {
+    connections: NodeConnections;
+    identities: Array<ConnectionPeer>;
+    materials: Array<ManagedVlessMaterial>;
+    network: MeshNetwork;
+    network_id: string;
+    node: MeshNode;
+    node_id: string;
+    paths: Array<MeshExecutionPath>;
+    peers: Array<MeshNode>;
+    required_capability: MeshExecutionCapability;
+    revision: number;
+    schema_version: number;
+    valid: boolean;
+};
+
 export type NodeOwnership = {
     /**
      * Null means legacy-unassigned; tags remain ordinary node attributes.
@@ -809,6 +938,8 @@ export type PolicySnapshot = {
     valid: boolean;
 };
 
+export type PolicySourceMode = 'legacy_v2' | 'mesh_v3';
+
 export type PreviewFlowRequest = {
     flow: FlowQuery;
 };
@@ -833,6 +964,23 @@ export type PreviewPolicyResponse = {
     diagnostics: Array<PolicyDiagnostic>;
     revision: number;
     valid: boolean;
+};
+
+export type ProfileAssignment = {
+    allowed: Array<string>;
+    default_profile: string;
+    locked: boolean;
+    src: string;
+};
+
+export type ProfileFallback = {
+    kind: 'none';
+} | {
+    kind: 'direct';
+} | {
+    candidates: Array<string>;
+    kind: 'nodes';
+    via: Array<string>;
 };
 
 export type PublishConnectionIdentityRequest = {
@@ -976,6 +1124,12 @@ export type RoutingPolicy = {
     rules: Array<RouteRule>;
 };
 
+export type RoutingProfile = {
+    fallback: ProfileFallback;
+    id: string;
+    rules: Array<ExitRule>;
+};
+
 export type SaveConnectionsRequest = {
     configuration: ConnectionPlan;
     expected_revision: number;
@@ -994,6 +1148,15 @@ export type SaveMembershipRequest = {
 export type SaveMeshAccessRequest = {
     expected_revision: number;
     policy: MeshAccessPolicy;
+    source_jsonc?: string | null;
+};
+
+export type SaveNetworkPolicyRequest = {
+    expected_revision: number;
+    /**
+     * Explicit replacement/activation; not an assertion of equivalent migration.
+     */
+    policy: NetworkPolicy;
     source_jsonc?: string | null;
 };
 
@@ -1838,6 +2001,76 @@ export type HeartbeatAgentResponses = {
 };
 
 export type HeartbeatAgentResponse = HeartbeatAgentResponses[keyof HeartbeatAgentResponses];
+
+export type NegotiateMeshExecutionData = {
+    body: MeshExecutionRequest;
+    path?: never;
+    query?: never;
+    url: '/api/v1/agents/mesh-execution';
+};
+
+export type NegotiateMeshExecutionErrors = {
+    /**
+     * Unauthorized
+     */
+    401: ErrorResponse;
+    /**
+     * Revoked
+     */
+    403: ErrorResponse;
+    /**
+     * Runtime superseded
+     */
+    409: ErrorResponse;
+    /**
+     * Unsupported execution capability
+     */
+    422: ErrorResponse;
+};
+
+export type NegotiateMeshExecutionError = NegotiateMeshExecutionErrors[keyof NegotiateMeshExecutionErrors];
+
+export type NegotiateMeshExecutionResponses = {
+    /**
+     * Mutation: publish current-epoch execution capability and atomically fetch coherent private node configuration; not a status read or applied proof
+     */
+    200: MeshExecutionResponse;
+};
+
+export type NegotiateMeshExecutionResponse = NegotiateMeshExecutionResponses[keyof NegotiateMeshExecutionResponses];
+
+export type AcknowledgeMeshExecutionData = {
+    body: AcknowledgeMeshExecutionRequest;
+    path?: never;
+    query?: never;
+    url: '/api/v1/agents/mesh-execution/ack';
+};
+
+export type AcknowledgeMeshExecutionErrors = {
+    /**
+     * Unauthorized
+     */
+    401: ErrorResponse;
+    /**
+     * Revoked
+     */
+    403: ErrorResponse;
+    /**
+     * Runtime or publication changed
+     */
+    409: ErrorResponse;
+};
+
+export type AcknowledgeMeshExecutionError = AcknowledgeMeshExecutionErrors[keyof AcknowledgeMeshExecutionErrors];
+
+export type AcknowledgeMeshExecutionResponses = {
+    /**
+     * Validated durable receipt, not applied
+     */
+    200: AcknowledgeMeshExecutionResponse;
+};
+
+export type AcknowledgeMeshExecutionResponse2 = AcknowledgeMeshExecutionResponses[keyof AcknowledgeMeshExecutionResponses];
 
 export type AcceptAccountInvitationData = {
     body: AcceptInvitationRequest;
@@ -3539,6 +3772,72 @@ export type GetPolicyResponses = {
 };
 
 export type GetPolicyResponse = GetPolicyResponses[keyof GetPolicyResponses];
+
+export type GetNetworkPolicyData = {
+    body?: never;
+    path: {
+        network_id: string;
+    };
+    query?: never;
+    url: '/api/v1/networks/{network_id}/policy-v3';
+};
+
+export type GetNetworkPolicyErrors = {
+    /**
+     * Unauthorized
+     */
+    401: ErrorResponse;
+    /**
+     * Network missing
+     */
+    404: ErrorResponse;
+};
+
+export type GetNetworkPolicyError = GetNetworkPolicyErrors[keyof GetNetworkPolicyErrors];
+
+export type GetNetworkPolicyResponses = {
+    /**
+     * Saved source or conservative migration proposal
+     */
+    200: NetworkPolicySnapshot;
+};
+
+export type GetNetworkPolicyResponse = GetNetworkPolicyResponses[keyof GetNetworkPolicyResponses];
+
+export type SaveNetworkPolicyData = {
+    body: SaveNetworkPolicyRequest;
+    path: {
+        network_id: string;
+    };
+    query?: never;
+    url: '/api/v1/networks/{network_id}/policy-v3/save';
+};
+
+export type SaveNetworkPolicyErrors = {
+    /**
+     * Unauthorized
+     */
+    401: ErrorResponse;
+    /**
+     * CAS conflict
+     */
+    409: ErrorResponse;
+    /**
+     * Invalid source or budget
+     */
+    422: ErrorResponse;
+};
+
+export type SaveNetworkPolicyError = SaveNetworkPolicyErrors[keyof SaveNetworkPolicyErrors];
+
+export type SaveNetworkPolicyResponses = {
+    /**
+     * Explicit source activation and conditional save
+     */
+    200: NetworkPolicySnapshot;
+};
+
+export type SaveNetworkPolicyResponse = SaveNetworkPolicyResponses[keyof SaveNetworkPolicyResponses];
 
 export type PreviewPolicyData = {
     body: PreviewPolicyRequest;

@@ -119,6 +119,28 @@ pub(super) fn admin_snapshot(
         &configuration,
     )?);
     diagnostics.truncate(64);
+    if let Some((policy, _)) = super::policy_v3::source(connection, network)? {
+        let assignments = super::tags::assignments(connection, network)?;
+        let make = |id: &str| meshway_policy::v3::Node {
+            id: id.to_owned(),
+            tags: assignments.get(id).cloned().unwrap_or_default(),
+            listener: true,
+            exit_enabled: false,
+        };
+        configuration.candidates.retain(|candidate| {
+            configuration
+                .listeners
+                .iter()
+                .find(|l| l.id == candidate.listener_id)
+                .is_some_and(|l| {
+                    meshway_policy::v3::connection_allowed(
+                        &policy.connections,
+                        &make(&candidate.dialer_node_id),
+                        &make(&l.node_id),
+                    )
+                })
+        });
+    }
     Ok(ConnectionsSnapshot {
         revision: configuration::revision(connection, network)?,
         configuration,

@@ -34,6 +34,9 @@ pub(super) fn authorizations(
         .map(|node| (node.id.clone(), MeshPathAuthorization::default()))
         .collect();
     let access = &facts.access;
+    if facts.routing.mesh_v3 {
+        return Ok((false, result));
+    }
     if !meshway_policy::validate_access_policy(access, nodes, &facts.catalog).is_empty() {
         return Ok((false, result));
     }

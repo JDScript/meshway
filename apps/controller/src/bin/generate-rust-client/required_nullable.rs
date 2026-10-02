@@ -28,7 +28,7 @@ pub fn adapt(document: &Value, operation_ids: &[&str], source: &mut String) -> R
         if !contains_nullable(schema) {
             continue;
         }
-        adapt_nullable_component(source, &name, schema)?;
+        adapt_nullable_component(source, &name, schema, document)?;
         adapted = true;
     }
     if adapted {
@@ -72,7 +72,12 @@ pub(super) fn reachable_components(
     Ok(visited)
 }
 
-fn adapt_nullable_component(source: &mut String, name: &str, schema: &Value) -> Result<(), String> {
+fn adapt_nullable_component(
+    source: &mut String,
+    name: &str,
+    schema: &Value,
+    document: &Value,
+) -> Result<(), String> {
     // Nullable aliases, compositions, inline objects, array items and
     // optional nullable fields need their own presence-aware mappings.
     if schema["type"] != "object" || schema.get("nullable").is_some() {
@@ -88,6 +93,40 @@ fn adapt_nullable_component(source: &mut String, name: &str, schema: &Value) -> 
         .ok_or("nullable component has no required fields")?;
     for (field, property) in properties {
         if !contains_nullable(property) {
+            continue;
+        }
+        if let Some(variants) = property.get("oneOf").and_then(Value::as_array) {
+            if !required.iter().any(|value| value == field) || variants.len() != 2 {
+                return Err(format!("unsupported nullable union {name}.{field}"));
+            }
+            let nulls = variants
+                .iter()
+                .filter(|v| **v == serde_json::json!({"type":"null"}))
+                .count();
+            let reference = variants
+                .iter()
+                .find_map(|v| {
+                    let object = v.as_object()?;
+                    (object.len() == 1).then(|| v["$ref"].as_str()).flatten()
+                })
+                .and_then(|r| r.strip_prefix("#/components/schemas/"));
+            let target = reference.map(|r| &document["components"]["schemas"][r]);
+            if nulls != 1
+                || target.is_none_or(|s| {
+                    s["type"] != "object"
+                        || s["additionalProperties"] != false
+                        || !s["properties"].is_object()
+                })
+                || property.as_object().is_none_or(|o| {
+                    o.keys()
+                        .any(|k| !matches!(k.as_str(), "oneOf" | "description" | "title"))
+                })
+            {
+                return Err(format!(
+                    "nullable union {name}.{field} requires one closed object component and null"
+                ));
+            }
+            adapt_field(source, name, field)?;
             continue;
         }
         let types = property["type"]
@@ -288,6 +327,21 @@ mod tests {
             source.matches("fn deserialize_required_nullable").count(),
             1
         );
+    }
+
+    #[test]
+    fn required_nullable_closed_component_reference_is_presence_checked() {
+        let mut doc = document(
+            serde_json::json!({"oneOf":[{"$ref":"#/components/schemas/Payload"},{"type":"null"}]}),
+            true,
+        );
+        doc["components"]["schemas"]["Payload"] = serde_json::json!({"type":"object","properties":{"digest":{"type":"string"}},"required":["digest"],"additionalProperties":false});
+        let source = "pub struct Example {\n    pub deleted_at: Option<Payload>,\n}\npub struct Payload {\n    pub digest: String,\n}\n";
+        let mut adapted = source.to_owned();
+        adapt(&doc, &["selected"], &mut adapted).unwrap();
+        assert!(adapted.contains("#[serde(deserialize_with = \"deserialize_required_nullable\")]"));
+        doc["components"]["schemas"]["Payload"]["additionalProperties"] = serde_json::json!(true);
+        assert!(adapt(&doc, &["selected"], &mut source.to_owned()).is_err());
     }
 
     #[test]

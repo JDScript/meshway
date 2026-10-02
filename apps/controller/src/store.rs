@@ -27,6 +27,8 @@ mod managed_transports;
 mod network;
 mod networks;
 mod ownership;
+mod policy_v3;
+mod policy_v3_schema;
 mod publication;
 mod release_schema;
 pub(crate) use networks::NetworkId;

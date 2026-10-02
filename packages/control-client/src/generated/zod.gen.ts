@@ -2,6 +2,47 @@
 
 import * as z from "zod";
 
+function typedMap<Value extends z.ZodType>(
+  keySchema: z.ZodType<string>,
+  valueSchema: Value,
+  bounds: { minProperties?: number; maxProperties?: number },
+) {
+  return z.custom<Record<string, unknown>>((input: unknown) =>
+    input !== null && typeof input === "object" && !Array.isArray(input) &&
+    (Object.getPrototypeOf(input) === Object.prototype || Object.getPrototypeOf(input) === null),
+    "Expected a JSON object",
+  ).transform((input, ctx) => {
+    const entries = Object.entries(input);
+    let invalid = false;
+    for (const [limit, violated] of [
+      ["minProperties", bounds.minProperties !== undefined && entries.length < bounds.minProperties],
+      ["maxProperties", bounds.maxProperties !== undefined && entries.length > bounds.maxProperties],
+    ] as const) {
+      if (violated) {
+        ctx.addIssue({ code: "custom", message: limit + " exceeded" });
+        invalid = true;
+      }
+    }
+    const output: Record<string, z.output<Value>> = {};
+    for (const [name, value] of entries) {
+      const key = keySchema.safeParse(name);
+      const parsed = valueSchema.safeParse(value);
+      for (const result of [key, parsed]) {
+        if (!result.success) {
+          invalid = true;
+          for (const issue of result.error.issues) ctx.addIssue({ ...issue, path: [name, ...issue.path] });
+        }
+      }
+      if (key.success && parsed.success) {
+        // Defining an own data property preserves __proto__ without invoking
+        // Object.prototype's setter or changing the output prototype.
+        Object.defineProperty(output, name, { value: parsed.data, enumerable: true, writable: true, configurable: true });
+      }
+    }
+    return invalid ? z.NEVER : output;
+  });
+}
+
 export const zAcceptInvitationRequest = z.strictObject({
   "invitation_token": z.string().refine(value => [...value].length >= 68, "minLength 68 Unicode code points").refine(value => [...value].length <= 68, "maxLength 68 Unicode code points").regex(new RegExp("^mwi_[0-9a-f]{64}$", "u"))
 });
@@ -93,6 +134,26 @@ export const zAcknowledgeConfigurationRequest = z.strictObject({
 export const zAcknowledgeConfigurationResponse = z.strictObject({
   "digest": z.string().refine(value => [...value].length >= 64, "minLength 64 Unicode code points").refine(value => [...value].length <= 64, "maxLength 64 Unicode code points").regex(new RegExp("^[0-9a-f]{64}$", "u")),
   "revision": z.int().gte(1).lte(4294967295)
+});
+
+export const zMeshExecutionCapability = z.enum(["ipv4_exact_path_v1"]);
+
+export const zMeshExecutionRequest = z.strictObject({
+  "capabilities": z.array(zMeshExecutionCapability).max(1),
+  "epoch": z.int().gte(1).lte(4294967295),
+  "instance_id": z.string()
+});
+
+export const zAcknowledgeMeshExecutionRequest = z.strictObject({
+  "digest": z.string(),
+  "revision": z.int().gte(1).lte(4294967295),
+  "runtime": zMeshExecutionRequest
+});
+
+export const zAcknowledgeMeshExecutionResponse = z.strictObject({
+  "digest": z.string(),
+  "revision": z.int().gte(1).lte(4294967295),
+  "saved": z.boolean()
 });
 
 export const zConnectionSemantics = z.enum(["datagram","stream"]);
@@ -352,6 +413,11 @@ export const zAuthorizeDeviceResponse = z.strictObject({
   "expires_at": z.iso.datetime({ offset: true })
 });
 
+export const zAutomaticRouting = z.strictObject({
+  "fallback": z.string(),
+  "regions": typedMap(z.string(), z.string(), {})
+});
+
 export const zBeginConnectionRuntimeRequest = z.strictObject({
   "expected_epoch": z.int().gte(0).lte(4294967295),
   "instance_id": z.string().refine(value => [...value].length >= 64, "minLength 64 Unicode code points").refine(value => [...value].length <= 64, "maxLength 64 Unicode code points").regex(new RegExp("^[0-9a-f]{64}$", "u"))
@@ -384,6 +450,8 @@ export const zConfigurationSnapshot = z.strictObject({
   "digest": z.string().refine(value => [...value].length >= 64, "minLength 64 Unicode code points").refine(value => [...value].length <= 64, "maxLength 64 Unicode code points").regex(new RegExp("^[0-9a-f]{64}$", "u")),
   "payload": zNodeConfiguration
 });
+
+export const zConnectionAction = z.enum(["allow","block"]);
 
 export const zConnectionCandidate = z.strictObject({
   "credential_ref": z.string().refine(value => [...value].length >= 1, "minLength 1 Unicode code points").refine(value => [...value].length <= 64, "maxLength 64 Unicode code points").regex(new RegExp("^[A-Za-z0-9._-]+$", "u")).nullable(),
@@ -430,6 +498,13 @@ export const zConnectionNode = z.strictObject({
 export const zConnectionPlan = z.strictObject({
   "candidates": z.array(zConnectionCandidate).max(256),
   "listeners": z.array(zConnectionListener).max(128)
+});
+
+export const zConnectionRule = z.strictObject({
+  "a": z.string(),
+  "action": zConnectionAction,
+  "b": z.string(),
+  "id": z.string()
 });
 
 export const zConnectionRuntimeState = z.enum(["awaiting_report","disabled","applying","applied","error","withdrawn"]);
@@ -513,6 +588,11 @@ export const zCreatePasswordResetResponse = z.strictObject({
   "reset_token": z.string().refine(value => [...value].length >= 68, "minLength 68 Unicode code points").refine(value => [...value].length <= 68, "maxLength 68 Unicode code points").regex(new RegExp("^mwr_[0-9a-f]{64}$", "u"))
 });
 
+export const zDiagnostic = z.strictObject({
+  "field": z.string(),
+  "message": z.string()
+});
+
 export const zStunDiscoveryOutcome = z.enum(["mapped","timeout","invalid_response","io_error","stun_error"]);
 
 export const zStunEndpointObservation = z.strictObject({
@@ -576,6 +656,28 @@ export const zExchangeDeviceRequest = z.strictObject({
   "redirect_uri": z.string().refine(value => [...value].length >= 25, "minLength 25 Unicode code points").refine(value => [...value].length <= 25, "maxLength 25 Unicode code points").regex(new RegExp("^meshway://enroll/callback$", "u"))
 });
 
+export const zExitMatch = z.union([z.strictObject({
+  "kind": z.enum(["domain_suffix"]),
+  "value": z.string()
+}).refine(value => Object.keys(value).length <= 2, "maxProperties 2"), z.strictObject({
+  "kind": z.enum(["cidr"]),
+  "value": z.string()
+}).refine(value => Object.keys(value).length <= 2, "maxProperties 2"), z.strictObject({
+  "kind": z.enum(["rule_set"]),
+  "value": z.string()
+}).refine(value => Object.keys(value).length <= 2, "maxProperties 2")]);
+
+export const zExitTarget = z.enum(["nodes","direct"]);
+
+export const zExitRule = z.strictObject({
+  "candidates": z.array(z.string()),
+  "destinations": z.array(zExitMatch),
+  "id": z.string(),
+  "src": z.string().exactOptional(),
+  "target": zExitTarget,
+  "via": z.array(z.string())
+});
+
 export const zFlowAuthorizationAction = z.enum(["allow","reject","invalid"]);
 
 export const zFlowAuthorizationDecision = z.strictObject({
@@ -595,6 +697,13 @@ export const zFlowQuery = z.strictObject({
 
 export const zGetConnectionRuntimeEpochResponse = z.strictObject({
   "epoch": z.int().gte(0).lte(4294967295)
+});
+
+export const zGrant = z.strictObject({
+  "bidirectional": z.boolean(),
+  "dst": z.array(z.string()),
+  "id": z.string(),
+  "src": z.array(z.string())
 });
 
 export const zHeartbeatRequest = z.strictObject({
@@ -692,6 +801,46 @@ export const zMeshAccessSnapshot = z.strictObject({
   "valid": z.boolean()
 });
 
+export const zMeshExecutionPath = z.strictObject({
+  "nodes": z.array(z.string()).min(2).max(8)
+});
+
+export const zNodeMeshExecution = z.strictObject({
+  "connections": zNodeConnections,
+  "identities": z.array(zConnectionPeer).max(64),
+  "materials": z.array(zManagedVlessMaterial).max(64),
+  "network": zMeshNetwork,
+  "network_id": z.string(),
+  "node": zMeshNode,
+  "node_id": z.string(),
+  "paths": z.array(zMeshExecutionPath).max(128),
+  "peers": z.array(zMeshNode).max(1023),
+  "required_capability": zMeshExecutionCapability,
+  "revision": z.int().gte(1).lte(4294967295),
+  "schema_version": z.int().gte(1).lte(1),
+  "valid": z.boolean()
+});
+
+export const zMeshExecutionSnapshot = z.strictObject({
+  "digest": z.string().refine(value => [...value].length >= 64, "minLength 64 Unicode code points").refine(value => [...value].length <= 64, "maxLength 64 Unicode code points").regex(new RegExp("^[0-9a-f]{64}$", "u")),
+  "payload": zNodeMeshExecution
+});
+
+export const zPolicySourceMode = z.enum(["legacy_v2","mesh_v3"]);
+
+export const zMeshExecutionResponse = z.strictObject({
+  "revision": z.int().gte(1).lte(4294967295),
+  "snapshot": zMeshExecutionSnapshot.nullable(),
+  "source_mode": zPolicySourceMode
+});
+
+export const zMeshRule = z.strictObject({
+  "dst": z.string(),
+  "id": z.string(),
+  "src": z.string(),
+  "via": z.array(z.string())
+});
+
 export const zNetworkSnapshot = z.strictObject({
   "dns": zMeshDnsConfiguration,
   "name": z.string().refine(value => [...value].length >= 1, "minLength 1 Unicode code points").refine(value => [...value].length <= 128, "maxLength 128 Unicode code points").regex(new RegExp("[^\\u0009-\\u000D\\u0020\\u0085\\u00A0\\u1680\\u2000-\\u200A\\u2028\\u2029\\u202F\\u205F\\u3000]", "u")),
@@ -702,6 +851,50 @@ export const zNetworkSnapshot = z.strictObject({
 
 export const zNetworkList = z.strictObject({
   "networks": z.array(zNetworkSnapshot)
+});
+
+export const zProfileAssignment = z.strictObject({
+  "allowed": z.array(z.string()),
+  "default_profile": z.string(),
+  "locked": z.boolean(),
+  "src": z.string()
+});
+
+export const zProfileFallback = z.union([z.strictObject({
+  "kind": z.enum(["none"])
+}).refine(value => Object.keys(value).length <= 1, "maxProperties 1"), z.strictObject({
+  "kind": z.enum(["direct"])
+}).refine(value => Object.keys(value).length <= 1, "maxProperties 1"), z.strictObject({
+  "candidates": z.array(z.string()),
+  "kind": z.enum(["nodes"]),
+  "via": z.array(z.string())
+}).refine(value => Object.keys(value).length <= 3, "maxProperties 3")]);
+
+export const zRoutingProfile = z.strictObject({
+  "fallback": zProfileFallback,
+  "id": z.string(),
+  "rules": z.array(zExitRule)
+});
+
+export const zNetworkPolicy = z.strictObject({
+  "assignments": z.array(zProfileAssignment),
+  "automatic": zAutomaticRouting.exactOptional(),
+  "connections": z.array(zConnectionRule),
+  "grants": z.array(zGrant),
+  "mesh": z.array(zMeshRule),
+  "profiles": z.array(zRoutingProfile),
+  "public_rules": z.array(zExitRule)
+});
+
+export const zNetworkPolicySnapshot = z.strictObject({
+  "diagnostics": z.array(zDiagnostic),
+  "migration_proposal": zNetworkPolicy.nullable(),
+  "network_id": z.string().refine(value => [...value].length >= 32, "minLength 32 Unicode code points").refine(value => [...value].length <= 32, "maxLength 32 Unicode code points").regex(new RegExp("^[0-9a-f]{32}$", "u")),
+  "policy": zNetworkPolicy.nullable(),
+  "revision": z.int().gte(1).lte(4294967295),
+  "source_jsonc": z.string().nullable(),
+  "source_mode": zPolicySourceMode,
+  "valid": z.boolean()
 });
 
 export const zNodeList = z.strictObject({
@@ -894,6 +1087,12 @@ export const zSaveMembershipRequest = z.strictObject({
 export const zSaveMeshAccessRequest = z.strictObject({
   "expected_revision": z.int().gte(1).lte(4294967295),
   "policy": zMeshAccessPolicy,
+  "source_jsonc": z.string().nullable().optional()
+});
+
+export const zSaveNetworkPolicyRequest = z.strictObject({
+  "expected_revision": z.int().gte(1).lte(4294967295),
+  "policy": zNetworkPolicy,
   "source_jsonc": z.string().nullable().optional()
 });
 
