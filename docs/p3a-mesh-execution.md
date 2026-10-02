@@ -48,10 +48,21 @@ nullable 与省略明确区分：保存请求 `source_jsonc` 可省略或 null�
 ## 复现入口
 
 ```sh
-CARGO_BUILD_JOBS=2 CARGO_TARGET_DIR=target/p3a-execution cargo test --workspace --all-features --locked
+CARGO_BUILD_JOBS=2 CARGO_TARGET_DIR=target/p3a-execution cargo test --workspace --all-features --locked -- --test-threads=2
 CARGO_BUILD_JOBS=2 CARGO_TARGET_DIR=target/p3a-execution cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
 python3 experiments/transport/performance_lock.py docker build -f experiments/p3a-mesh/Dockerfile -t meshway-managedtest:p3a-execution .
 python3 experiments/p3a-mesh/run.py meshway-managedtest:p3a-execution
 ```
 
 新 fixture 使用普通 Controller、生成管理操作、正常 Agent run 和真实 TUN；托管 UDP listener 与连接意图均在平台设置，无本地 profiles。容器仅 `NET_ADMIN`/TUN、drop ALL、独立 bridge/私有 tmpfs，无 host network/privileged/宿主配置修改，完整功能验收持有共享 performance lock。报告输出到批准 TMP，失败证据保留，容器/网络均清理。首次 fixture 调试失败不能计作验收通过。
+
+## 本批完成证据（2026-10-02）
+
+实现提交：`4b00e7f`（Controller / v12 / source 与执行合同 / 生成器）和 `fe6c9e4`（Agent 正常 run / packet admission / 隔离 fixture）。两提交组成此 Mesh 纵向切片；单独第一提交不代表节点已执行 v3。
+
+- 最终正常 Controller + Agent run + Linux TUN 验收 **PASS**，16 条证据、cleanup errors 为 0。包含 ICMP/HTTP 双向业务、必经点、first-match 与源遮挡示例、有序规则重排、grants 并集/无序与拒绝、单向请求的真实内核计数、重启、HTTP stall、lease 和必经点撤回。日志：批准 TMP 的 `p3a-execution-tun-final-2.log`；报告目录 `meshway-p3a-muqoy9ko-3c5452d16a44-3P8zLD/`。
+- 镜像 `meshway-managedtest:p3a-execution-final` 的不可变 ID 为 `sha256:f0a1871ed57128b45b14f154664c5f32a553565d440e6c5c421e640fdb04245d`。使用专用 Dockerfile 和独立 Cargo cache / jobs=2；未碰 live Demo、真实 DB 或远端。
+- 最终全 Rust 消费者 **572 passed / 7 ignored**，workspace all-features/all-targets Clippy、fmt 通过。默认并发的一次旧 roundtrip restart 检查遇到 `state is already in use`；最终相同 feature / 独立 target、test-threads=2 全套通过。精度修正仅在既有 history 测试按实际持久化的毫秒精度比较时间，未修改生产时间语义。最终日志 `p3a-execution-rust-final-4.log`；最后源遮挡提示文案调整再通过 Store 定向检查与 Clippy。
+- 真实生成器 **7**、SDK **16**、既有 Web **184** 测试通过；最终 drift、SDK / Web strict typecheck 与 lint、Apple scripts、五个既有实验及新 fixture 的 TS 检查通过，既有 Web 与文档构建通过。SDK 原生 fixture 使用绝对独立 `target/p3a-sdk-validation`，与 CLI 验收 target 分开；没有浏览器自动化。
+
+本批交付结论为 **IPv4 Mesh v3 的真实正常执行纵向闭环**。完整 P3a 的正式系统保护生命周期集成仍待协调者衔接；状态型 Mesh 回包、新网络默认模式的进一步产品收敛、P3b/P3c/P3d、STUN 平台下发/GeoIP 等保持上述边界，不用本批通过结果代替它们。
