@@ -71,6 +71,10 @@ fn standalone_v9_fragment_preserves_every_legacy_cell_and_identity_without_versi
         )
         .unwrap();
     let before = snapshot(&store.connection);
+    let version_before = store
+        .connection
+        .pragma_query_value(None, "user_version", |r| r.get::<_, i64>(0))
+        .unwrap();
     let tx = store
         .connection
         .transaction_with_behavior(TransactionBehavior::Immediate)
@@ -89,7 +93,7 @@ fn standalone_v9_fragment_preserves_every_legacy_cell_and_identity_without_versi
             .connection
             .pragma_query_value(None, "user_version", |r| r.get::<_, i64>(0))
             .unwrap(),
-        9
+        version_before
     );
     assert_eq!(
         store

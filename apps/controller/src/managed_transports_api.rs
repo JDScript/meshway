@@ -38,7 +38,7 @@ async fn publish_managed_transport_capabilities(
         .await
 }
 
-#[utoipa::path(post,path="/api/v1/networks/{network_id}/managed-enrollment-tokens",operation_id="createManagedEnrollmentToken",security(("adminBearer"=[])),params(("network_id"=String,Path)),request_body=CreateManagedEnrollmentTokenRequest,
+#[utoipa::path(post,path="/api/v1/networks/{network_id}/managed-enrollment-tokens",operation_id="createManagedEnrollmentToken",security(("managementBearer"=[])),params(("network_id"=String,Path)),request_body=CreateManagedEnrollmentTokenRequest,
  responses((status=200,description="One-time token bound to initial public listener intent; enrollment binds node atomically",body=CreateEnrollmentTokenResponse),(status=400,description="Invalid JSON or TTL",body=ErrorResponse),(status=401,description="Administrator required",body=ErrorResponse),(status=404,description="Network not found",body=ErrorResponse),(status=422,description="Invalid listener intent",body=ErrorResponse),(status=413,description="Body exceeds 32 KiB",body=ErrorResponse),(status=415,description="Expected JSON",body=ErrorResponse),(status=500,description="Storage unavailable",body=ErrorResponse)))]
 async fn create_managed_enrollment_token(
     State(state): State<AppState>,
@@ -49,15 +49,16 @@ async fn create_managed_enrollment_token(
     let token = bearer(&headers)?;
     let request = json(body)?;
     state
-        .access(move |store| {
-            store.authorize_admin(&token)?;
-            let network = store.network_id(&id)?;
-            store.create_managed_token(&network, &request).map(Json)
-        })
+        .network_access(
+            token,
+            id,
+            crate::accounts::NetworkPermission::Manage,
+            move |store, network| store.create_managed_token(network, &request).map(Json),
+        )
         .await
 }
 
-#[utoipa::path(get,path="/api/v1/networks/{network_id}/managed-listeners",operation_id="getManagedListeners",security(("adminBearer"=[])),params(("network_id"=String,Path)),
+#[utoipa::path(get,path="/api/v1/networks/{network_id}/managed-listeners",operation_id="getManagedListeners",security(("managementBearer"=[])),params(("network_id"=String,Path)),
  responses((status=200,description="Public listener intent and material metadata only; not active or reachable",body=ManagedListenersSnapshot),(status=401,description="Administrator required",body=ErrorResponse),(status=404,description="Network not found",body=ErrorResponse),(status=500,description="Storage unavailable",body=ErrorResponse)))]
 async fn get_managed_listeners(
     State(state): State<AppState>,
@@ -66,15 +67,16 @@ async fn get_managed_listeners(
 ) -> Result<Json<ManagedListenersSnapshot>, Error> {
     let token = bearer(&headers)?;
     state
-        .access(move |store| {
-            store.authorize_admin(&token)?;
-            let network = store.network_id(&id)?;
-            store.managed_listeners(&network).map(Json)
-        })
+        .network_access(
+            token,
+            id,
+            crate::accounts::NetworkPermission::Read,
+            move |store, network| store.managed_listeners(network).map(Json),
+        )
         .await
 }
 
-#[utoipa::path(post,path="/api/v1/networks/{network_id}/managed-listeners",operation_id="saveManagedListener",security(("adminBearer"=[])),params(("network_id"=String,Path)),request_body=SaveManagedListenerRequest,
+#[utoipa::path(post,path="/api/v1/networks/{network_id}/managed-listeners",operation_id="saveManagedListener",security(("managementBearer"=[])),params(("network_id"=String,Path)),request_body=SaveManagedListenerRequest,
  responses((status=200,description="CAS public settings save; secrets are generated and never returned here",body=ManagedListenersSnapshot),(status=400,description="Invalid JSON",body=ErrorResponse),(status=401,description="Administrator required",body=ErrorResponse),(status=404,description="Network or node not found",body=ErrorResponse),(status=409,description="Stale revision or immutable owner/transport conflict",body=ErrorResponse),(status=422,description="Invalid settings or publication capacity",body=ErrorResponse),(status=413,description="Body exceeds 32 KiB",body=ErrorResponse),(status=415,description="Expected JSON",body=ErrorResponse),(status=500,description="Storage unavailable",body=ErrorResponse)))]
 async fn save_managed_listener(
     State(state): State<AppState>,
@@ -85,11 +87,12 @@ async fn save_managed_listener(
     let token = bearer(&headers)?;
     let request = json(body)?;
     state
-        .access(move |store| {
-            store.authorize_admin(&token)?;
-            let network = store.network_id(&id)?;
-            store.save_managed_listener(&network, &request).map(Json)
-        })
+        .network_access(
+            token,
+            id,
+            crate::accounts::NetworkPermission::Manage,
+            move |store, network| store.save_managed_listener(network, &request).map(Json),
+        )
         .await
 }
 

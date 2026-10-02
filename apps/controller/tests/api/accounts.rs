@@ -1,6 +1,9 @@
 use super::*;
 use meshway_protocol::{DEVICE_CALLBACK_URI, s256};
 
+#[path = "accounts_managed.rs"]
+mod managed;
+
 pub(super) fn is_account_path(path: &str) -> bool {
     path.starts_with("/api/v1/auth/")
         || path.starts_with("/api/v1/me/")
