@@ -123,7 +123,7 @@ SidebarProvider ─ AppSidebar (collapsible="icon"; 沉浸概览时 "offcanvas")
 - **连线**：只画已保存连接配置中的通道，按两端 agent 自己的新鲜报告分为：双向确认（实线，success）、单侧报告（warning）、未认证（红色虚线）、仅配置无报告（灰色点线）。授权允许、规划路径都不是连线，不画全连接图。
 - **角落状态**：活动节点数；连接「x / y 双向确认 · 单侧 · 未验证」；连接配置或运行报告从未读到时写「连接未知」；之后的刷新失败时保留上次报告但标为「缓存 HH:MM」与「上次成功 HH:MM」（报告仍按原有效期过期，不续期），并直接显示错误与「重试」，连线卡同样标注；待处理项（访问授权 / 路由无效或读取失败、未确认配置、超过 1 小时无控制面联系）展开为列表；运行报告读取时间与刷新。没有任何「健康度」分数。
 - **节点卡**：控制面联系、配置确认、运行报告新鲜度、连接计数、位置（待定位）；进入「节点配置」、详情、诊断。
-- **连线卡**：每个通道的承载、发起方、两端各自的认证结果与 RTT（只取 `probe_fresh` 的认证探测，分别显示，不平均、不相加）；延迟历史显示明确空状态；进入访问与路径检查、拓扑；候选 / listener ID 折叠在技术详情。
+- **连线卡**：每个通道的承载、发起方、两端各自的认证结果与 RTT（只取 `probe_fresh` 的认证探测，分别显示，不平均、不相加）；下方是有方向的延迟历史（§6.6）；进入访问与路径检查、拓扑；候选 / listener ID 折叠在技术详情。
 - **键盘**：节点、连线是可聚焦按钮（Enter / Space 选中，Esc 关闭卡片）；Tab 顺序先地图后状态条。
 - **沉浸时的隐藏界面**：桌面上移出屏幕的侧栏与收起的顶栏设为 `inert`，不在 Tab 顺序与辅助技术中；进入管理立即恢复，焦点落到替换「管理网络」的「专注地图」按钮（⌘B 进入时同理）。手机抽屉只在打开时挂载，不受影响。
 - **概览读取失败**：节点清单读不到时显示真实错误与「重新读取」，并结束沉浸模式，侧栏、顶栏与 ⌘K 可用。
@@ -133,9 +133,9 @@ SidebarProvider ─ AppSidebar (collapsible="icon"; 沉浸概览时 "offcanvas")
 
 1. 节点列表或概览右上「添加节点」。
 2. 选择接入方式（单选卡片）：
-   - **服务器 · meshway-agent**：选择有效期 → 生成一次性接入令牌（只显示一次）→ 填写节点名称 → 复制 enroll 命令 → 复制 run 命令。令牌只把节点加入当前网络。
+   - **服务器 · meshway-agent**：选择有效期 → 可选「同时配置监听」→ 生成一次性接入令牌（只显示一次）→ 填写节点名称 → 复制 enroll 命令 → 复制 run 命令。令牌只把节点加入当前网络。不配置监听时用普通接入令牌；配置时用托管接入令牌与 `initial_listener`（节点 ID 为空，由注册事务绑定新节点），结果中显示绑定的监听摘要（`feat/managed-listeners-web` 已实现，见 §6.4）。
    - **Meshway App**：说明 App → 系统浏览器 → `/authorize-device` 选网络批准 → App 兑换的流程；此页不伪造进度。
-3. 底部说明「监听与承载」：当前在节点页手工配置；承载托管上线后这里出现可选 listener 配置（§6.4）。
+3. 注册后在节点「配置」中查看与调整监听（§3.2、§6.4）。
 4. 节点注册后出现在列表；「控制面联系」「配置确认」各自独立显示。
 
 Tailscale 对照：Machines › Add device（Linux server 生成 auth key 命令；客户端登录）。差异：Meshway 不区分服务器 / 客户端节点类别，两种方式产出同一种节点。
@@ -175,7 +175,7 @@ Agent 运行报告（运行阶段、全部邻居认证探测）
 - 地址观测与运行报告分别读取，本地再做一次栅栏：观测报告须属于本节点、对应当前已保存 revision、服务端标为当前，且与一份最近的同 revision 运行报告 epoch / digest 一致，才是当前证据；否则其中的实际绑定与映射全部显示为「历史报告」，不可复制。socket 的新鲜度与单次 STUN 结果分开：实际绑定只在该 socket 自己至少一条测量（任意结果，超时也算）的有效期覆盖当前时间时才是当前，新的运行报告不会延长旧 socket 的观测期限。不在当前配置中、或已改为 TCP / VLESS 的资源，其旧 UDP socket 一律是历史。所有有效期共用一个只前进的时钟。对端「已认证」但最近没有新鲜探测时不显示 RTT。
 - epoch、digest、generation、socket 序号、observer、STUN RTT 只在折叠区。
 
-尚未实现、不出现入口：VLESS / WebSocket 托管表单、监听新增向导、NAT 打洞、UPnP / NAT-PMP / PCP 映射开关。目标见 §6.4。
+托管监听的创建 / 编辑 / 停用表单在 `feat/managed-listeners-web` 实现（§6.4），每个监听标明「平台托管」或「手工配置（旧）」来源。仍不出现入口：NAT 打洞、UPnP / NAT-PMP / PCP 映射开关、承载优先级与「可作为出口」。
 
 ### 3.3 授权
 
@@ -201,7 +201,7 @@ DNS 页：开启节点 DNS 意图、zone、TTL（与名称共享网络 CAS）；
 | --- | --- | --- |
 | Tailnet 切换器 | 网络切换器（`/<network_id>` URL） | URL 绑定网络，避免多标签页写错网络；Tailscale 用会话选择 |
 | Machines | 节点 | 同一种节点，无服务器 / 客户端类别；「控制面联系」不叫 online |
-| Machine › Edit route settings / exit node | 节点 › 监听与承载（只读事实 + 手工草稿）→ 托管编辑与「可作为出口」 | 出口由管理员在 Web 开启，设备不做通告（已确认问题 13） |
+| Machine › Edit route settings / exit node | 节点 › 配置（观测事实、托管监听表单〔分支〕、手工草稿）→「可作为出口」 | 出口由管理员在 Web 开启，设备不做通告（已确认问题 13） |
 | Add device | 添加节点 | 同 |
 | Users | （线框） | 本地邮箱 + 密码、仅邀请（P2b） |
 | Access controls（Visual / JSON editor） | 访问控制 › 访问授权 / 路由 / 标签（图形 + JSONC 共享草稿） | Meshway 有四层策略；路由独立于授权，不合并为 `via` |
@@ -322,33 +322,18 @@ lucide，统一 16px（小控件 14px），线宽默认。一级导航每项一�
 
 ### 6.4 节点承载与出口（P2a / P3c）
 
-当前局部受限：P2a 的托管 listener / VLESS 契约尚在 `.worktree/managed-vless` 开发，HTTP 路径与 DTO 未冻结。控制台**不猜路径、不手写 DTO、不放假表单**；契约生成 SDK 后按下述目标接入 Server Action 与真实表单。
+状态：托管监听表单已在分支 `feat/managed-listeners-web`（`5dc2f24`）实现，只消费冻结的 P2a 生成 SDK（`getManagedListeners` / `saveManagedListener` / `createManagedEnrollmentToken`，契约见 `docs/managed-transports-api.md`）；与 P2a WebSocket 后端修复一同组合合入后才部署，**尚未上线**。实现细节与验证见该分支的 `apps/web/docs/managed-listeners.md`。
 
-目标入口：节点详情 ›「监听与承载」（§3.2 的只读视图之上增加编辑），以及添加节点流程的可选「监听设置」。
+已实现（分支）：
 
-```
-监听                                                    [+ 添加监听]
- [VLESS · WebSocket] edge-ws                  ● 已监听   [编辑] [⋯]
-   …（§3.2 的四类事实不变）
-承载偏好   平台默认：UDP › TCP › VLESS   允许协议 ☑ UDP ☑ TCP ☑ VLESS   优先级 ⇅
-可作为出口 ○ 关闭 ● 开启（转发 / NAT 由 Agent 按下发完成）     （P3c）
+- **节点详情 ›「配置」› 监听**：每个监听标明来源。平台托管：协议 · SNI · WS 路径 / Host、材料版本、证书 SHA-256 前后缀、承载能力是否已报告（未报告显示「等待节点报告承载能力」）、编辑；手工配置（旧）：只读，旧 VLESS 显示本地 profile 引用，不提供编辑或私钥导入。已停用的托管监听单列，并列出仍引用它的拨号候选与「连接配置无效」影响。底部「添加监听」。
+- **监听表单（Sheet）**：协议 Native UDP / Native TCP / VLESS · TLS / VLESS · WebSocket；启用；本机监听地址与端口；对外地址列表（可空，最多 16）；WS 路径；高级：TLS 名称（SNI）、WS Host、ID。创建后 ID、节点与协议固定（VLESS 可在 TLS / WS 间切换）。保存前列出影响（引用的拨号候选、停用后计划失效、删除对外地址使候选失效、SNI 变化重新签发证书与 UUID）。
+- **添加节点 › 服务器**：可选「同时配置监听」，见 §3.1。
+- **高级手工连接**：托管监听行只读并链接到节点配置；拨号候选不被静默删除。TCP / VLESS 拨号 socket 的本地地址显示「未知 · 暂不上报」。
+- **状态来源不合并**：已保存意图来自 `getManagedListeners`；节点回执、实际绑定、对端验证沿用 §3.2；证书为平台自签、精确信任，控制台永不接收 UUID / PEM / 私钥。
+- **草稿与 CAS**：每网络 `DraftVault.managedListeners`；表单打开时记录网络 revision 为 `expected_revision`，后台变新只提示；409 保留输入并提供显式「以最新版本为基础」；退出登录清空。
 
-添加 / 编辑监听（Sheet）
-  协议         ( ) Native UDP  ( ) Native TCP  (•) VLESS
-  VLESS 底层   (•) TCP  ( ) WebSocket
-  监听地址     bind 地址 [0.0.0.0]  端口 [443]           —— 本机 bind，平台给默认值
-  对外地址     host [edge.example.com]  端口 [443] [+]    —— 对端拨号用，可多个
-  TLS          server name [edge.example.com]  证书状态：由控制面报告（未签发 / 有效至… / 失败原因）
-  WebSocket    path [/mesh]  Host 头 [edge.example.com]   —— 仅底层为 WebSocket 时出现
-  凭据         平台生成并下发（不显示私钥、不要求本地 profile ID）
-  [取消]                                   [保存为草稿]（与现有连接草稿共用 CAS）
-```
-
-- 字段只在契约有对应字段时出现；后端未给出的状态（如证书签发）显示「未上报」，不伪造可用。
-- 默认值与凭据由平台生成；Web 只提供显式覆盖。保存是意图，实际绑定 / 证书 / 对端验证仍按 §3.2 分开显示。
-- WebSocket / TLS 是 VLESS 承载的参数，不是新的节点类别；节点仍是统一模型。
-- 添加节点：令牌生成后的可选步骤「监听设置（可选）」，复用同一表单；跳过时由平台按默认策略决定。
-- NAT 打洞、UPnP / NAT-PMP / PCP 显式映射属于 transport socket 能力，与 STUN 观测分开建模；UPnP 范围未经用户确认，不预留开关。
+仍未实现、不出现入口：承载偏好（允许协议 / 优先级 / 逐段覆盖）、按需自动建连、「可作为出口」（P3c）、接入令牌列表 / 撤销、NAT 打洞与 UPnP / NAT-PMP / PCP（UPnP 范围未经用户确认）。422 的具体原因需 SDK 暴露错误 body 后再显示。WebSocket / TLS 是 VLESS 承载参数，不是新的节点类别。
 
 #### 自动路由方案的地区依据（P3c，预留）
 
@@ -366,38 +351,31 @@ lucide，统一 16px（小控件 14px），线宽默认。一级导航每项一�
 
 设置 › 接入密钥：列表（ID、创建者、预分配 tag、一次性 / 可复用、过期、已用次数）与撤销；添加节点页的令牌生成复用同一表单。
 
-### 6.6 链路延迟检测与历史（目标流程；后端在 `.worktree/latency-history` 开发）
+### 6.6 链路延迟历史（已接入生成接口 `queryLatencyHistory`；契约见 `docs/latency-history.md`）
 
-当前真实数据只有邻接运行报告里每个对端的 `probe_rtt_ms` / `probe_fresh`（最近一次认证探测，各端自报）。没有持久历史、样本 ID、丢包统计或端到端路径 RTT，因此：连线卡只显示两端当前 RTT 与「尚无历史数据」；不画曲线、不用重复读取同一报告堆样本、缺测 / 超时不填 0、不把逐跳 RTT 相加称为端到端。
+**状态**：在分支 `feat/latency-web` 实现，基于历史后端 `13af9c5`；后端仍在评审，Agent 主循环的正式采样启动 hook 尚未启用，也**尚未部署**。未启用采样时连线卡如实显示「这段时间没有记录」。
 
-目标交互（同一视图内，不新增菜单）：
+**已实现（分支）**（地图连线卡 → 延迟历史；`components/latency/`，模型 `lib/latency-history-model.ts`，读取 `lib/latency-actions.ts`）：
 
 ```
-地图选中连线 → 连线卡
-  当前   laptop→sg-edge  Native UDP   laptop 测得 38 ms · sg-edge 测得 37 ms   12 秒前
-  趋势   ▁▂▂▃▂▁▁▂ （最近 1 小时，每端一条；缺口画断开，不插值）       [展开时间轴]
-  事件   16:02 承载切换 UDP → VLESS · 15:40 断开（认证失败）→ 15:41 恢复
-  检测   [检测一次]（仅在有真实命令接口时出现；结果作为一条带来源的样本进入时间轴）
-展开时间轴 → 卡片展开为宽面板：按方向 / 承载分轨、可缩放时间窗、悬停显示样本详情
-节点卡 → 「与该节点相连的链路」迷你趋势列表；路由预览中的路径 → 逐跳当前值（不相加）
+连线卡
+  当前   Native UDP  hk 发起   hk：已认证 2 ms · sg：已认证 2 ms        ← 运行报告，当前状态
+  延迟历史 · 已认证邻接 RTT · 近 1 小时                       [⤢ 展开]
+         [hk-relay → sg-edge | sg-edge → hk-relay]               ← 有方向，测量端 → 对端
+         ▁▂▂▃  ▂▁ ╎ ▁▂   ▮                                       ← 分段折线、超时 / 失败刻度
+         成功 3（中位 1.5 ms，0.42–1.6 ms）· 超时 1 · 失败 1 · 2 段
+展开面板  方向 · 时间范围（15 分钟 / 1 小时 / 6 小时 / 24 小时）· 重新读取
+         大图（←/→/Home/End 逐条读出，aria-live）+ 时间刻度
+         分段图例（承载 · 监听 · 运行代际 · 配置版本 · 采样代际）
+         事件（超时、失败原因、分段变化，均为真实记录）· 全部记录（按测量时间，最多 200 条）
 ```
 
-前端接入所需字段（后端交接项，**不是已确认的 HTTP 契约**；以生成 SDK 为准）：
+- **读取**：Server Action 每次校验管理员会话与固定网络作用域，用生成的 operation 与 Zod 校验；查询虽是 POST 但只读。窗口为半开 `[from, until)`、整秒、≤ 24 小时（默认 1 小时）。按接收顺序 cursor 分页，每页 1,000 条，每次读取最多 6 页；仍有 `next` 时显示「只读取了前 N 条…」与「继续读取」，绝不把截断说成完整。
+- **围栏**：网络、方向、节点对或时间窗改变即清空并以序号丢弃旧响应（Server Action 串行执行，旧响应仍会返回）；记录还按网络 / source / peer / 方向 / 窗口在本地过滤。刷新失败保留上次记录并显示读取时间、错误与「重试」。只在连线卡打开（组件挂载）且页面可见时每 60 秒有界刷新，不使整个概览重绘。
+- **图表**：按 `sample.measured_at` 排序，按 `measurement_id` 去重；分段键 = 网络 · source · peer · 方向 · 运行代际 · revision · digest · 采样代际 · 承载 · 发起方 · listener · candidate，键变化断线并画淡色分隔；超过 `max(4 × 期望间隔, 120 s)` 无记录时断线（未采样 / 未上报，不叫离线）。timeout / failed 没有通道关联，画在节点对的事件带上，不归入任何承载折线。统计只取成功值的最小 / 中位 / 最大，空值不计 0；µs 转 ms 按量级保留精度，<0.01 ms 显示「<0.01 ms」。
+- **状态**：读取中、无记录（「未采样或未上报，不代表断开」）、错误（可重试）、缓存（上次读取时间）、截断（继续读取）。历史与连线卡上方的当前 RTT 分开显示。
+- **不做**：「检测一次」（无命令接口）、端到端路径 RTT、丢包率、断开 / 重连事件推断、「已覆盖 7 天」等覆盖率说法。后端正在为容量裁剪增加实际保留范围字段，生成后再显示，不以最早记录推断连续覆盖。
 
-| 字段 | 用途 |
-| --- | --- |
-| 样本唯一 ID | 去重；重复读取不产生新样本 |
-| 测量时刻（agent 测量时间）与上报时刻 | 横轴使用测量时刻；区分迟到上报 |
-| 测量来源 / 方法 | 邻接认证探测、按需检测、未来端到端任务分开显示 |
-| 方向（测量端 → 对端） | 每端单独成轨，不合并 |
-| 承载（transport）与 listener / candidate | 承载切换可见 |
-| 运行代际（epoch）与配置 revision | 代际变化标为事件，旧代际样本不混入当前 |
-| 完整路径（逐跳节点，端到端任务时） | 区分邻接 RTT 与路径 RTT |
-| 结果（成功 / 超时 / 失败原因） | 超时、失败作为事件或缺口，不记为 0 |
-| 缺口（未采样区间与原因） | 断开画缺口，不插值 |
-| 采样间隔 / 窗口与保留期 | 横轴范围与「数据保留至」提示 |
-
-## 7. 组件规范
 ## 7. 组件规范
 
 | 组件 | 位置 | 规则 |
@@ -405,6 +383,7 @@ lucide，统一 16px（小控件 14px），线宽默认。一级导航每项一�
 | `ConsoleShell` | `components/shell/console-shell.tsx` | `SidebarProvider`（受控 open，沉浸概览时 offcanvas）+ `AppSidebar` + `SidebarInset` 与 block 顶栏 |
 | `ConsoleFocusProvider` | `components/shell/console-focus.tsx` | 沉浸概览状态；位于网络段之上 |
 | `NetworkOverview` | `components/overview/network-overview.tsx` | 地图、关系视图、连线、状态条、选中卡；模型 `lib/overview-map-model.ts` |
+| `LatencyHistory` / `LatencyChart` | `components/latency/` | 连线卡中的有方向延迟历史与展开面板；模型 `lib/latency-history-model.ts` |
 | `AppSidebar` / `NavMain` / `NavUser` / `nav.ts` | `components/shell/` | sidebar-07 结构；`navMain` 是侧栏与 ⌘K 的唯一定义 |
 | `NetworkWorkspace` / `DraftVault` | `components/network/network-workspace.tsx` | 每网络一组草稿 registry；Vault 在网络段之上，切换网络不丢草稿 |
 | `PageHeader` / `PageBody` / `SectionTitle` | `components/shell/page-header.tsx` | 返回链接、标题 + 状态、说明、meta（读取时间）、右侧操作 |
