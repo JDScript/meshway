@@ -42,3 +42,59 @@ pub(super) fn validate(db: &Connection) -> Result<(), Error> {
     }
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    use crate::store::migrations::execution_and_accounts::upgrade;
+    use crate::store::test_support::fixtures::release::{NODE, v11};
+
+    #[test]
+    fn v12_schema_gate_rolls_back_fragments_and_preserves_v11_rows() {
+        let mut db = v11();
+        let before: u32 = db
+            .query_row("SELECT revision FROM configuration", [], |r| r.get(0))
+            .unwrap();
+        db.execute_batch("CREATE TABLE mesh_execution_receipts(dummy TEXT)")
+            .unwrap();
+        assert!(upgrade(&mut db).is_err());
+        assert_eq!(
+            db.pragma_query_value(None, "user_version", |r| r.get::<_, i64>(0))
+                .unwrap(),
+            11
+        );
+        assert!(
+            !db.query_row(
+                "SELECT EXISTS(SELECT 1 FROM sqlite_schema WHERE name='network_policy_sources')",
+                [],
+                |r| r.get::<_, bool>(0)
+            )
+            .unwrap()
+        );
+        db.execute_batch("DROP TABLE mesh_execution_receipts")
+            .unwrap();
+        upgrade(&mut db).unwrap();
+        assert_eq!(
+            db.query_row("SELECT revision FROM configuration", [], |r| r
+                .get::<_, u32>(0))
+                .unwrap(),
+            before
+        );
+        assert_eq!(
+            db.query_row("SELECT mesh_ipv4 FROM nodes WHERE id=?1", [NODE], |r| {
+                r.get::<_, String>(0)
+            })
+            .unwrap(),
+            "100.96.0.2"
+        );
+        assert!(
+            !db.prepare("SELECT 1 FROM network_policy_sources WHERE source_mode='mesh_v3'")
+                .unwrap()
+                .exists([])
+                .unwrap()
+        );
+        upgrade(&mut db).unwrap();
+        db.execute_batch("ALTER TABLE mesh_execution_receipts ADD COLUMN unexpected TEXT")
+            .unwrap();
+        assert!(upgrade(&mut db).is_err());
+    }
+}

@@ -1,7 +1,8 @@
 //! Independent frozen v8 fixture: direct old DDL and rows, never Store::open,
 //! v9 schema, a downgrade, or a v9 business mutation. Reference projections
 //! use the unchanged v1 wire types and pure v2 compiler/projection functions.
-use crate::store::migrations::networks::{TABLES, upgrade};
+use super::SINGLE_NETWORK_COLUMNS as TABLES;
+use crate::store::migrations::networks::upgrade;
 use crate::{Error, NetworkOptions, store::Store};
 use meshway_protocol::*;
 use rusqlite::{Connection, OptionalExtension, params, types::Value};

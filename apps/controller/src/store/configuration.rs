@@ -128,7 +128,7 @@ pub(super) fn snapshot(
     scope: &NetworkId,
     id: &str,
 ) -> Result<ConfigurationSnapshot, Error> {
-    publication::RoutingFacts::read(connection, scope)?.configuration(id)
+    publication::LegacyRoutingFacts::read(connection, scope)?.configuration(id)
 }
 
 impl Store {

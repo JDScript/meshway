@@ -42,7 +42,7 @@ fn one_compilation_is_shared_by_budget_gates_and_multiple_node_snapshots() {
             source_jsonc: None,
         })
         .unwrap();
-    compile::COMPILATIONS.with(|count| count.set(0));
+    legacy_access::COMPILATIONS.with(|count| count.set(0));
     store
         .save_mesh_access(&SaveMeshAccessRequest {
             expected_revision: store.revision().unwrap(),
@@ -53,7 +53,7 @@ fn one_compilation_is_shared_by_budget_gates_and_multiple_node_snapshots() {
             source_jsonc: None,
         })
         .unwrap();
-    compile::COMPILATIONS.with(|count| {
+    legacy_access::COMPILATIONS.with(|count| {
         assert_eq!(
             count.get(),
             1,
@@ -70,10 +70,11 @@ fn one_compilation_is_shared_by_budget_gates_and_multiple_node_snapshots() {
         .connection
         .transaction_with_behavior(rusqlite::TransactionBehavior::Deferred)
         .unwrap();
-    compile::COMPILATIONS.with(|count| count.set(0));
+    legacy_access::COMPILATIONS.with(|count| count.set(0));
     ADJACENCY_PROJECTIONS.with(|count| count.set(0));
     let mut publication =
-        Publication::read_with(&tx, &scope, || evaluations.set(evaluations.get() + 1)).unwrap();
+        LegacyPublication::read_with(&tx, &scope, || evaluations.set(evaluations.get() + 1))
+            .unwrap();
     publication
         .ensure_publishable(ChangeKind::NetworkOrEnrollment)
         .unwrap();
@@ -99,7 +100,7 @@ fn one_compilation_is_shared_by_budget_gates_and_multiple_node_snapshots() {
         6,
         "each eligible directed pair evaluated once for all projections"
     );
-    compile::COMPILATIONS.with(|count| assert_eq!(count.get(), 1));
+    legacy_access::COMPILATIONS.with(|count| assert_eq!(count.get(), 1));
     assert_eq!(publication.adjacency.nodes.len(), 3);
     ADJACENCY_PROJECTIONS.with(|count| {
         assert_eq!(

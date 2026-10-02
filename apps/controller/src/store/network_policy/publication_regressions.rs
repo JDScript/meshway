@@ -64,7 +64,7 @@ fn node(
 fn save(
     store: &mut SingleNetworkFixture,
     policy: NetworkPolicy,
-) -> Result<crate::policy_v3_api::NetworkPolicySnapshot, Error> {
+) -> Result<crate::contracts::network_policy::NetworkPolicySnapshot, Error> {
     let scope = store.network_id.clone();
     let expected_revision = store.revision().unwrap();
     store.save_network_policy(
@@ -247,9 +247,12 @@ fn legacy_65_materials_cannot_activate_v3_or_download_above_contract() {
     // Defensive download projection has the same count gate even without the
     // mutation gate; no fixture-only activation or malformed database writes.
     let policy = NetworkPolicy::default_template();
-    let publication =
-        super::super::publication::mesh_v3::Publication::read(&store.connection, &scope, &policy)
-            .unwrap();
+    let publication = super::super::publication::mesh_execution::Publication::read(
+        &store.connection,
+        &scope,
+        &policy,
+    )
+    .unwrap();
     assert!(matches!(
         publication.project(&a.0.id, &store.material_key),
         Err(Error::Capacity(_))

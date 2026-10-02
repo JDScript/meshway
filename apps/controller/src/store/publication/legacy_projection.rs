@@ -1,7 +1,7 @@
 use super::*;
 
 pub(super) fn configuration(
-    facts: &RoutingFacts,
+    facts: &LegacyRoutingFacts,
     report: &meshway_policy::CompileReport,
     id: &str,
 ) -> Result<ConfigurationSnapshot, Error> {
@@ -11,7 +11,7 @@ pub(super) fn configuration(
         .position(|node| node.id == id)
         .ok_or(Error::Forbidden)?;
     let node = nodes.remove(index);
-    let valid = report.is_valid() && !facts.mesh_v3;
+    let valid = report.is_valid() && !facts.mesh_policy_active;
     let payload = NodeConfiguration {
         schema_version: CONFIGURATION_SCHEMA_VERSION,
         revision: facts.revision,
@@ -24,7 +24,7 @@ pub(super) fn configuration(
             RoutingPolicy::default()
         },
         policy_valid: valid,
-        diagnostics: if facts.mesh_v3 {
+        diagnostics: if facts.mesh_policy_active {
             vec![PolicyDiagnostic { rule_id: None, field: "source_mode".into(), message: "Network uses Mesh v3 execution; this legacy view is inventory-only and authorizes no packets".into() }]
         } else {
             configuration::bounded_diagnostics(report.diagnostics.clone())

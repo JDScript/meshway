@@ -104,7 +104,7 @@ pub(super) fn effective_snapshot(
     network: &NetworkId,
 ) -> Result<ConnectionsSnapshot, Error> {
     let snapshot = admin_snapshot(connection, network)?;
-    match super::policy_v3::source(connection, network)? {
+    match super::network_policy::source(connection, network)? {
         Some((policy, _)) => filter_effective(connection, network, snapshot, &policy),
         None => Ok(snapshot),
     }

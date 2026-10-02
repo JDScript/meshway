@@ -9,9 +9,9 @@ use super::{NetworkId, access, configuration, connections, ipam, network, tags};
 use crate::Error;
 
 pub(super) mod budget;
-mod compile;
-pub(super) mod mesh_v3;
-mod project;
+mod legacy_access;
+mod legacy_projection;
+pub(super) mod mesh_execution;
 #[cfg(test)]
 mod tests;
 
@@ -31,26 +31,26 @@ pub(super) enum ChangeKind {
     MembershipWithdrawal,
 }
 
-pub(super) struct RoutingFacts {
-    mesh_v3: bool,
+pub(super) struct LegacyRoutingFacts {
+    mesh_policy_active: bool,
     revision: u32,
     network: MeshNetwork,
     nodes: Vec<MeshNode>,
     policy: RoutingPolicy,
 }
 
-impl RoutingFacts {
+impl LegacyRoutingFacts {
     pub(super) fn read(db: &Connection, scope: &NetworkId) -> Result<Self, Error> {
-        let mesh_v3 = super::policy_v3::active(db, scope)?;
+        let mesh_policy_active = super::network_policy::active(db, scope)?;
         Ok(Self {
-            mesh_v3,
+            mesh_policy_active,
             revision: configuration::revision(db, scope)?,
             network: ipam::network(db, scope)?,
             nodes: configuration::active_nodes(db, scope)?,
             // Inventory-only v2 compatibility view. Retired v2 source is still
             // available through its management API, but never interpreted as
             // v3 execution or a dependency of its publication budget.
-            policy: if mesh_v3 {
+            policy: if mesh_policy_active {
                 RoutingPolicy::default()
             } else {
                 configuration::source_policy(db, scope)?
@@ -59,14 +59,14 @@ impl RoutingFacts {
     }
 
     pub(super) fn configuration(&self, id: &str) -> Result<ConfigurationSnapshot, Error> {
-        let prepared = compile::prepare(&self.policy, &self.network, &self.nodes);
-        project::configuration(self, prepared.report(), id)
+        let prepared = legacy_access::prepare(&self.policy, &self.network, &self.nodes);
+        legacy_projection::configuration(self, prepared.report(), id)
     }
 }
 
 /// Only public facts: node identities are public keys, never material secrets.
 struct Facts {
-    routing: RoutingFacts,
+    routing: LegacyRoutingFacts,
     access: MeshAccessPolicy,
     catalog: BTreeSet<String>,
     assignments: BTreeMap<String, BTreeSet<String>>,
@@ -75,8 +75,8 @@ struct Facts {
 
 impl Facts {
     fn read(db: &Connection, scope: &NetworkId) -> Result<Self, Error> {
-        let routing = RoutingFacts::read(db, scope)?;
-        let access = if routing.mesh_v3 {
+        let routing = LegacyRoutingFacts::read(db, scope)?;
+        let access = if routing.mesh_policy_active {
             MeshAccessPolicy::default()
         } else {
             access::source(db, scope)?
@@ -91,10 +91,9 @@ impl Facts {
     }
 }
 
-/// The concrete compiler boundary: database facts -> policy internal report and
-/// exact paths -> protocol node DTOs. A future v3 adapter belongs here, not in
-/// protocol or in the Store mutation handlers.
-pub(super) struct Publication<'a> {
+/// Legacy v2 compiler/projection and fail-closed compatibility inventory.
+/// Active Mesh execution is projected by the mesh_execution sibling module.
+pub(super) struct LegacyPublication<'a> {
     facts: Facts,
     routing: meshway_policy::CompileReport,
     access_valid: bool,
@@ -127,7 +126,7 @@ impl Adjacency<'_> {
     }
 }
 
-impl<'a> Publication<'a> {
+impl<'a> LegacyPublication<'a> {
     pub(super) fn read(db: &'a Connection, scope: &'a NetworkId) -> Result<Self, Error> {
         Self::read_with(db, scope, || {})
     }
@@ -138,7 +137,7 @@ impl<'a> Publication<'a> {
         route_evaluated: impl FnMut(),
     ) -> Result<Self, Error> {
         let facts = Facts::read(db, scope)?;
-        let prepared = compile::prepare(
+        let prepared = legacy_access::prepare(
             &facts.routing.policy,
             &facts.routing.network,
             &facts.routing.nodes,
@@ -151,8 +150,8 @@ impl<'a> Publication<'a> {
             nodes: BTreeMap::new(),
         };
         let (mut access_valid, mut authorizations) =
-            compile::authorizations(&facts, &prepared, &mut adjacency, route_evaluated)?;
-        if facts.routing.mesh_v3 {
+            legacy_access::authorizations(&facts, &prepared, &mut adjacency, route_evaluated)?;
+        if facts.routing.mesh_policy_active {
             access_valid = false;
             authorizations.clear();
         }
@@ -170,10 +169,12 @@ impl<'a> Publication<'a> {
     }
 
     pub(super) fn dataplane(&mut self, id: &str) -> Result<AgentDataplaneSnapshot, Error> {
-        let configuration = project::configuration(&self.facts.routing, &self.routing, id)?.payload;
+        let configuration =
+            legacy_projection::configuration(&self.facts.routing, &self.routing, id)?.payload;
         let connections = self.adjacency.project(id)?.payload.clone();
         let access_policy = self.authorizations.get(id).cloned().unwrap_or_default();
-        let identities = project::identities(id, &connections, &access_policy, &self.facts.keys)?;
+        let identities =
+            legacy_projection::identities(id, &connections, &access_policy, &self.facts.keys)?;
         if connections.revision != configuration.revision {
             return Err(Error::Configuration("incoherent dataplane revision"));
         }
@@ -206,7 +207,8 @@ impl<'a> Publication<'a> {
         // The same active inventory occurs exactly once as self + peers; moving
         // a node between these positions preserves size, so one config suffices.
         if let Some(node) = self.facts.routing.nodes.first() {
-            let snapshot = project::configuration(&self.facts.routing, &self.routing, &node.id)?;
+            let snapshot =
+                legacy_projection::configuration(&self.facts.routing, &self.routing, &node.id)?;
             budget::configuration(snapshot)?;
         }
         if !matches!(kind, ChangeKind::RoutingOrSelectors) {
@@ -247,9 +249,9 @@ pub(super) fn finish_change(
     scope: &NetworkId,
     kind: ChangeKind,
 ) -> Result<(), Error> {
-    if let Some((policy, _)) = super::policy_v3::source(db, scope)? {
-        let publication = mesh_v3::Publication::read(db, scope, &policy)?;
+    if let Some((policy, _)) = super::network_policy::source(db, scope)? {
+        let publication = mesh_execution::Publication::read(db, scope, &policy)?;
         publication.ensure_publishable()?;
     }
-    Publication::read(db, scope)?.ensure_publishable(kind)
+    LegacyPublication::read(db, scope)?.ensure_publishable(kind)
 }

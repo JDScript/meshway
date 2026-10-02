@@ -74,7 +74,7 @@ fn compiled_authorizations(
     connection: &Connection,
     scope: &NetworkId,
 ) -> Result<(bool, BTreeMap<String, MeshPathAuthorization>), Error> {
-    Ok(publication::Publication::read(connection, scope)?.into_authorizations())
+    Ok(publication::LegacyPublication::read(connection, scope)?.into_authorizations())
 }
 
 #[cfg(test)]
@@ -84,7 +84,7 @@ fn compiled_authorizations_with(
     route_evaluated: impl FnMut(),
 ) -> Result<(bool, BTreeMap<String, MeshPathAuthorization>), Error> {
     Ok(
-        publication::Publication::read_with(connection, scope, route_evaluated)?
+        publication::LegacyPublication::read_with(connection, scope, route_evaluated)?
             .into_authorizations(),
     )
 }
@@ -252,7 +252,8 @@ impl Store {
             TransactionBehavior::Deferred,
         )?;
         let node_id = configuration::node_id(&transaction, &scope, token)?;
-        let snapshot = publication::Publication::read(&transaction, &scope)?.dataplane(&node_id)?;
+        let snapshot =
+            publication::LegacyPublication::read(&transaction, &scope)?.dataplane(&node_id)?;
         transaction.commit()?;
         Ok(snapshot)
     }

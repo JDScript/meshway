@@ -6,6 +6,7 @@ mod accounts_api;
 mod configuration_api;
 mod connection_runtime_api;
 mod connections_api;
+mod contracts;
 mod device_login_api;
 mod endpoint_discovery_api;
 mod latency_history_api;
