@@ -1,5 +1,5 @@
 import { cn } from "cn"
-import { CircleAlertIcon } from "lucide-react"
+import { CircleAlertIcon, RouteIcon } from "lucide-react"
 import { useMemo } from "react"
 
 import { CloseButton } from "@/components/chrome/close-button"
@@ -13,9 +13,11 @@ import { m } from "@/paraglide/messages.js"
 import { ConnectionsLayer } from "./connections"
 import { policyText, readDocument } from "./document"
 import { EgressLayer } from "./egress"
+import { FlowPreview } from "./flow-preview"
 import { GrantsLayer } from "./grants"
 import { lineColumn } from "./jsonc"
 import type { LayerProps } from "./layer"
+import { LegacyNotice } from "./legacy"
 import { MeshLayer } from "./mesh"
 import type { PolicyNavigation } from "./navigation"
 import { layerLabel } from "./policy-panel"
@@ -96,6 +98,22 @@ export function PolicyWorkspace({
         }
         action={
           <span className="flex items-center gap-1">
+            {legacy ? (
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                aria-pressed={view.flow}
+                className={cn(
+                  "h-8 rounded-full px-3",
+                  view.flow && "bg-fill-selected"
+                )}
+                onClick={() => nav.setFlow(!view.flow)}
+              >
+                <RouteIcon />
+                {m.policy_flow_title()}
+              </Button>
+            ) : null}
             <CloseButton onClick={nav.closeLayer} />
           </span>
         }
@@ -106,6 +124,19 @@ export function PolicyWorkspace({
           layer === "source" ? "pb-6" : "overflow-y-auto pb-(--commit-space)"
         )}
       >
+        {legacy && data ? (
+          <LegacyNotice
+            proposal={data.migration_proposal}
+            diagnostics={data.diagnostics}
+            started={document !== null}
+            canManage={state.canManage}
+            names={names}
+            onStart={state.start}
+          />
+        ) : null}
+        {legacy && view.flow ? (
+          <FlowPreview networkId={networkId} names={names} />
+        ) : null}
         {!data ? (
           <Placeholder />
         ) : layer === "source" ? (
