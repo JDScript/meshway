@@ -12,6 +12,7 @@ mod endpoint_discovery_api;
 mod latency_history_api;
 mod managed_transports_api;
 mod network_api;
+mod network_scope;
 mod policy_v3_api;
 mod store;
 mod tags_api;

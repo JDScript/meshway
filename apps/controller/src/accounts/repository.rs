@@ -531,7 +531,7 @@ pub(crate) fn accept_invitation(
 }
 
 /// Explicit first-Owner claim, not a migration-generated fictitious user.
-/// Caller has proven the existing instance bearer through prove_bootstrap.
+/// Caller has authenticated the existing instance bearer in its snapshot.
 pub(crate) fn claim_first_owner(
     tx: &mut Transaction<'_>,
     principal: &Principal,

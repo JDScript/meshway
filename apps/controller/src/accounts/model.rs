@@ -191,7 +191,7 @@ impl Email {
     }
 }
 
-pub(crate) use crate::store::NetworkId;
+pub(crate) use crate::network_scope::NetworkId;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum Role {
@@ -321,34 +321,6 @@ pub(super) enum PrincipalKind {
 pub(crate) struct Principal(pub(super) PrincipalKind);
 
 impl Principal {
-    /// Authenticate against the caller's current transaction snapshot. The
-    /// caller obtains its write lock before choosing the absolute-expiry clock.
-    pub(crate) fn authenticate_source(
-        db: &rusqlite::Connection,
-        token: &str,
-        now: i64,
-    ) -> Result<Self> {
-        if token.starts_with("mws_") {
-            return super::Accounts::new(db).authenticate(token, now);
-        }
-        let valid: bool = db.query_row(
-            "SELECT EXISTS(SELECT 1 FROM settings WHERE id=1 AND admin_hash=?1)",
-            [meshway_protocol::local::digest(token)],
-            |r| r.get(0),
-        )?;
-        if !valid {
-            return Err(AccountError::Unauthorized);
-        }
-        Ok(Self(PrincipalKind::Bootstrap))
-    }
-    #[cfg(test)]
-    pub(crate) fn prove_bootstrap(store: &crate::store::Store, bearer: &str) -> Result<Self> {
-        store
-            .authorize_admin(bearer)
-            .map_err(|_| AccountError::Unauthorized)?;
-        Ok(Self(PrincipalKind::Bootstrap))
-    }
-
     /// A node credential can never authorize human account operations. The
     /// existing node authenticator may use this marker after its own validation.
     #[allow(dead_code)] // Used by domain rejection tests; node auth stays a separate API.

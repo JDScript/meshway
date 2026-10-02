@@ -681,8 +681,10 @@ async fn bootstrap_claim_requires_real_proof_and_never_replaces_user() {
     std::fs::set_permissions(dir.path(), std::fs::Permissions::from_mode(0o700)).unwrap();
     let store = crate::store::Store::open(dir.path(), &crate::NetworkOptions::default()).unwrap();
     let token = std::fs::read_to_string(dir.path().join("admin.token")).unwrap();
-    assert!(Principal::prove_bootstrap(&store, "wrong").is_err());
-    let proof = Principal::prove_bootstrap(&store, token.trim()).unwrap();
+    assert!(store.authorize_admin("wrong").is_err());
+    let db = Connection::open(dir.path().join("controller.sqlite3")).unwrap();
+    assert!(Principal::authenticate_source(&db, "wrong", NOW).is_err());
+    let proof = Principal::authenticate_source(&db, token.trim(), NOW).unwrap();
     let worker = worker().await;
     let mut f = Fixture::new();
     let a = f.network(A);

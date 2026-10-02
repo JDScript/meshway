@@ -105,7 +105,7 @@ pub(super) fn validate_integrity(connection: &Connection) -> Result<(), Error> {
     let mut query = connection.prepare("SELECT n.network_id,n.mesh_ipv4,n.mesh_ipv6,c.ipv4_prefix,c.ipv6_prefix FROM nodes n LEFT JOIN configuration c ON c.network_id=n.network_id AND c.id=1 ORDER BY n.id")?;
     let mut rows = query.query([])?;
     while let Some(row) = rows.next()? {
-        let network = NetworkId::stored(row.get(0)?)?;
+        let network = NetworkId::read(row, 0)?;
         let invalid =
             || Error::Configuration("node has invalid or missing persistent mesh addresses");
         let ipv4: Ipv4Addr = row

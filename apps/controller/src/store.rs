@@ -28,7 +28,7 @@ mod network_policy;
 mod networks;
 mod ownership;
 mod publication;
-pub(crate) use networks::NetworkId;
+pub(crate) use crate::network_scope::NetworkId;
 mod tags;
 #[cfg(test)]
 mod test_support;

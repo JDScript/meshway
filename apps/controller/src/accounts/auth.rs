@@ -7,7 +7,31 @@ use argon2::{
 use tokio::sync::Semaphore;
 use zeroize::Zeroizing;
 
-use super::{AccountError, HashedPassword, Password, Result, UserId};
+use super::model::PrincipalKind;
+use super::{AccountError, HashedPassword, Password, Principal, Result, UserId};
+
+impl Principal {
+    /// Authenticate against the caller's current transaction snapshot. The
+    /// caller obtains its write lock before choosing the absolute-expiry clock.
+    pub(crate) fn authenticate_source(
+        db: &rusqlite::Connection,
+        token: &str,
+        now: i64,
+    ) -> Result<Self> {
+        if token.starts_with("mws_") {
+            return super::Accounts::new(db).authenticate(token, now);
+        }
+        let valid: bool = db.query_row(
+            "SELECT EXISTS(SELECT 1 FROM settings WHERE id=1 AND admin_hash=?1)",
+            [meshway_protocol::local::digest(token)],
+            |r| r.get(0),
+        )?;
+        if !valid {
+            return Err(AccountError::Unauthorized);
+        }
+        Ok(Self(PrincipalKind::Bootstrap))
+    }
+}
 
 pub(crate) struct CredentialSnapshot {
     pub(super) user: UserId,
