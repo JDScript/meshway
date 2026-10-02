@@ -23,6 +23,11 @@ generation；join / drop 旧 pump 时同步 retire。generation 跟随 outbound 
 - 邻接诊断、E2E setup 等控制记录不绑定 packet admission generation；其生命周期
   仍由 Runtime / carrier 控制。没有全 Runtime shutdown 或 wire/prologue 变更。
 
+承载 adapter 必须保持唯一 writer 所有权：Runtime 退出 stream task 并 drop duplex
+时，底层关闭并终止 pending write，不得把已经取消的 write 留给独立后台任务继续
+发送。VLESS/WS 等外接 `DuplexStream` 也适用；Runtime 对同步 poll 做 fence，无法
+替任意违背这一所有权约定的外部 adapter 召回其私自提交的后台 I/O。
+
 调用者仍须先停止并 join 旧 pump，再 drain 平台设备、激活新 pump。直接使用
 Runtime packet API 的实验默认拥有初始 generation；一旦 pump 退休，该 Runtime
 的业务发送须等待新 pump 激活，不能经原 API 绕过退休 fence。没有新设备配置项。

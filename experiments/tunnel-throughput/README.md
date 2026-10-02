@@ -4,8 +4,11 @@
 
 旧 `e69cb3d` Agent pump 的测量见 [RESULTS.md](RESULTS.md)，只作为历史证据。
 `5029c0a` 起 Agent 已接入共享 `packet_io::run_with_activation` / PacketDevice；
-当前完整集成源 `4edb70e` 的 native Linux queue32/128 复测见
+历史集成源 `4edb70e` 的 native Linux queue32/128 复测见
 [SHARED-PUMP.md](SHARED-PUMP.md)，两者不得混作当前版本性能。
+P1c 后的 `564780e` 专项、安全修复基线与入站单因素复测见
+[NEXT.md](NEXT.md)；R3/R5 retirement / setup retry 保证见
+[CORRECTNESS.md](CORRECTNESS.md)。
 
 用户反馈的 Docker 原生约 100 Gbit/s、Meshway 约 300 Mbit/s 是待复现测量；其
 iperf 参数、资源、方向和运行版本未知。本目录提供独立复测，不补造这些参数。
