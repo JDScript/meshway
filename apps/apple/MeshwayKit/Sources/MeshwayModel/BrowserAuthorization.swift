@@ -56,8 +56,8 @@ public final class SystemBrowserAuthorization: NSObject, BrowserAuthorizing,
   private var anchor: ASPresentationAnchor?
   public override init() { super.init() }
   public func presentationAnchor(for session: ASWebAuthenticationSession) -> ASPresentationAnchor {
-    // Set before start(); a missing foreground window is a real start error.
-    anchor!
+    // Set before start(); authorize() refuses to start without a window.
+    anchor ?? ASPresentationAnchor()
   }
   public func authorize(_ url: URL) async throws -> URL {
     guard session == nil else { throw BrowserError.unavailable }
@@ -78,16 +78,9 @@ public final class SystemBrowserAuthorization: NSObject, BrowserAuthorizing,
     }
     return try await withTaskCancellationHandler {
       try await withCheckedThrowingContinuation { continuation in
-        let session = ASWebAuthenticationSession(url: url, callbackURLScheme: "meshway") {
-          callback, error in
-          if let error = error as? ASWebAuthenticationSessionError, error.code == .canceledLogin {
-            continuation.resume(throwing: BrowserError.cancelled)
-          } else if error != nil || callback == nil {
-            continuation.resume(throwing: BrowserError.unavailable)
-          } else if let callback {
-            continuation.resume(returning: callback)
-          }
-        }
+        let session = ASWebAuthenticationSession(
+          url: url, callbackURLScheme: "meshway",
+          completionHandler: Self.completion(resuming: continuation))
         session.presentationContextProvider = self
         // Reuse the console's human-login cookie; App never reads that cookie.
         session.prefersEphemeralWebBrowserSession = false
@@ -99,4 +92,21 @@ public final class SystemBrowserAuthorization: NSObject, BrowserAuthorizing,
     }
   }
   public func cancel() { session?.cancel() }
+
+  /// AuthenticationServices calls this on an XPC reply queue, not the main
+  /// thread. It is built outside the actor so it cannot inherit main-actor
+  /// isolation, which would trap at runtime under Swift 6 checks.
+  nonisolated static func completion(
+    resuming continuation: CheckedContinuation<URL, any Error>
+  ) -> @Sendable (URL?, (any Error)?) -> Void {
+    { callback, error in
+      if let error = error as? ASWebAuthenticationSessionError, error.code == .canceledLogin {
+        continuation.resume(throwing: BrowserError.cancelled)
+      } else if error != nil || callback == nil {
+        continuation.resume(throwing: BrowserError.unavailable)
+      } else if let callback {
+        continuation.resume(returning: callback)
+      }
+    }
+  }
 }
