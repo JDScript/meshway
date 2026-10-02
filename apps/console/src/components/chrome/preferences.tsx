@@ -15,7 +15,8 @@ import {
   TooltipTrigger,
 } from "@/components/ui/tooltip"
 import { m } from "@/paraglide/messages.js"
-import { getLocale, isLocale, locales, setLocale } from "@/paraglide/runtime.js"
+import { switchLocale, useLocale } from "@/lib/locale"
+import { isLocale, locales } from "@/paraglide/runtime.js"
 
 export function ThemeSwitch() {
   const { theme, setTheme } = useTheme()
@@ -44,6 +45,7 @@ export function ThemeSwitch() {
 }
 
 export function LanguageSwitch() {
+  const locale = useLocale()
   return (
     <DropdownMenu>
       <DropdownMenuTrigger
@@ -60,14 +62,10 @@ export function LanguageSwitch() {
       />
       <DropdownMenuContent align="end">
         <DropdownMenuRadioGroup
-          value={getLocale()}
+          value={locale}
           onValueChange={(value) => {
-            if (
-              typeof value === "string" &&
-              isLocale(value) &&
-              value !== getLocale()
-            )
-              setLocale(value)
+            if (typeof value === "string" && isLocale(value))
+              switchLocale(value)
           }}
         >
           {locales.map((locale) => (
