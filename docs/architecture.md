@@ -27,9 +27,11 @@ Controller 维护与编译控制意图，不默认中继业务流量。Agent 执
 
 ### 当前实现
 
-当前是多网络、单实例 SQLite，管理员 bearer 与节点 bearer 分权；管理查询显式携带已验证的网络 ID，Agent 由凭据推导网络，业务 SQL 绑定网络列，不使用连接级环境作用域。App 有管理员批准选网的 PKCE 接入切片，用户账户与客户端多接入切换尚待落地。托管 Agent 已支持公钥绑定、认证邻接、路径绑定的 Noise E2E、Linux Mesh IPv4 TUN、节点 DNS 与私有 daemon 诊断。
+当前是多网络、单实例 SQLite。v11 已接本地用户账户、网络成员权限和设备归属；用户 session、实例 bootstrap、注册令牌、节点 bearer 分权。管理查询在根事务内校验身份 / 网络权限并显式携带网络 ID；Agent 由凭据推导网络，SQL 绑定网络列，不使用连接级环境作用域。App 已有用户浏览器批准 / PKCE、隔离多接入和库存显示，暂无隧道。托管 Agent 支持公钥绑定、认证邻接、路径绑定的 Noise E2E、Linux Mesh IPv4 TUN、节点 DNS 与私有 daemon 诊断。
 
-管理员目前手工维护连接候选，VLESS 仍依赖本地 profiles；Access 与 Routing 仍使用旧版有序策略。迁移须保留既有身份、凭据、地址及策略行为；不能等价转换的规则须报告。互联网出口、路由方案、状态型回包、可信域名上下文、IPv6 TUN、自动打洞和真实逐跳 trace 尚未由这些切片完成。
+VLESS TCP/TLS 与 WebSocket/TLS 的 listener / 凭据已由平台生成和下发，旧 profiles 保留等价导入路径；手工连接候选仍待自动组网替代。Access 与 Routing 的正式下发仍是旧版；独立 v3 四层引擎和 Linux 出口 / 状态型回包原型已合入，正式策略 / 出口接线尚待完成。迁移保留身份、凭据、地址及策略行为，不能等价转换的规则须报告。可信域名上下文、IPv6 TUN、自动打洞和真实逐跳 trace 未完成。
+
+受保护 socket、HTTP/TLS 与 bootstrap DNS 基础已经合入，原生 Runtime 的统一注入和正式 RPDB 生命周期仍待接通；不能据模块存在就宣称现网已启用全 IP 系统保护。当前优先 Linux 自动组网 / 打洞及跨地域 Docker 验收，账户与控制台并行，Apple 暂停新增开发，见[里程碑](/milestones)。
 
 ## 证据与生命周期
 
