@@ -3,7 +3,7 @@ import { lookColor } from "@/features/overview/labels"
 import type { LinkSummary } from "@/features/overview/model"
 
 const SIZE = 60
-const RADIUS = 28.5
+const RADIUS = 28
 const GAP = 2.2
 
 /**

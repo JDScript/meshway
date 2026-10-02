@@ -1,114 +1,99 @@
-import { Link, Outlet, useNavigate } from "@tanstack/react-router"
-import { GlobeIcon, ServerIcon, type LucideIcon } from "lucide-react"
+import { Outlet, useNavigate, useRouterState } from "@tanstack/react-router"
 import { useLayoutEffect, useRef } from "react"
 
-import { LanguageSwitch, ThemeSwitch } from "@/components/chrome/preferences"
-import { AccountMenu } from "@/features/auth/account-menu"
+import { Breadcrumb, BreadcrumbItem, BreadcrumbList, BreadcrumbPage, BreadcrumbSeparator } from "@/components/ui/breadcrumb"
+import { Separator } from "@/components/ui/separator"
+import {
+  Sidebar,
+  SidebarContent,
+  SidebarFooter,
+  SidebarHeader,
+  SidebarInset,
+  SidebarProvider,
+  SidebarRail,
+  SidebarTrigger,
+} from "@/components/ui/sidebar"
 import { DEFAULT_LOOK } from "@/features/globe/look"
 import { setGlobe } from "@/features/globe/store"
 import { useNetworkView } from "@/features/network/use-network-view"
 import { useIsMobile } from "@/hooks/use-mobile"
-import { m } from "@/paraglide/messages.js"
 
-import { OrbRing } from "./orb-ring"
+import { NAV, NavMain } from "./nav-main"
+import { NavUser } from "./nav-user"
+import { NetworkSwitcher } from "./network-switcher"
+import { Orb } from "./orb"
 
-/** Radius of the docked globe; the ring sits just outside it. */
-const ORB_RADIUS = 16
-
-type NavItem = { to: "/networks/$network/overview" | "/networks/$network/nodes"; label: () => string; icon: LucideIcon }
-
-const NAV: NavItem[] = [
-  { to: "/networks/$network/overview", label: () => m.nav_overview(), icon: GlobeIcon },
-  { to: "/networks/$network/nodes", label: () => m.nav_nodes(), icon: ServerIcon },
-]
+/** The block's own persistence: `SidebarProvider` writes this cookie. */
+const sidebarOpen = () => !document.cookie.split("; ").includes("sidebar_state=false")
 
 /**
- * Console mode. The globe shrinks into the orb at the top of the sidebar and
- * keeps turning there, still drawing its links; the ring around it is the
- * link-state bar of globe mode. The orb leads back to the globe.
+ * Console mode, on shadcn's sidebar-07 layout. The globe docks into the orb
+ * of the network switcher (desktop) or of the top bar (mobile, where the
+ * sidebar is a sheet) and keeps drawing its links there.
  */
 export function ConsoleLayout({ networkId }: { networkId: string }) {
   const view = useNetworkView(networkId)
-  const orb = useRef<HTMLButtonElement>(null)
   const navigate = useNavigate()
   const mobile = useIsMobile()
+  const sidebarOrb = useRef<HTMLButtonElement>(null)
+  const headerOrb = useRef<HTMLButtonElement>(null)
+  const pathname = useRouterState({ select: (state) => state.location.pathname })
+  const active = NAV.find((item) => pathname.endsWith(item.to.split("/").at(-1) ?? "")) ?? NAV[1]
 
   useLayoutEffect(() => {
-    const element = orb.current
-    if (!element) return
-    const place = () => {
-      const box = element.getBoundingClientRect()
-      setGlobe({
-        framing: "dock",
-        dock: { x: box.left + box.width / 2, y: box.top + box.height / 2, radius: ORB_RADIUS },
-        selectedNodeId: null,
-        rightInset: 0,
-        look: DEFAULT_LOOK,
-      })
-    }
-    place()
-    const observer = new ResizeObserver(place)
-    observer.observe(document.documentElement)
-    return () => observer.disconnect()
+    setGlobe({
+      framing: "dock",
+      dock: (mobile ? headerOrb : sidebarOrb).current,
+      selectedNodeId: null,
+      rightInset: 0,
+      look: DEFAULT_LOOK,
+    })
   }, [mobile])
 
-  const known = view.links?.kind === "known" ? view.links : null
+  const backToGlobe = () => void navigate({ to: "/networks/$network/overview", params: { network: networkId } })
 
   return (
-    <div className="ui-layer fixed inset-0 flex flex-col md:flex-row">
-      <aside className="pointer-events-auto flex shrink-0 flex-col px-4 pt-4 md:w-[248px] md:pt-5 md:pb-4">
-        <div className="flex items-center gap-3">
-          <button
-            ref={orb}
-            type="button"
-            aria-label={m.console_back_to_globe()}
-            onClick={() => void navigate({ to: "/networks/$network/overview", params: { network: networkId } })}
-            className="enter relative size-[60px] shrink-0 rounded-full outline-none focus-visible:ring-2 focus-visible:ring-ring"
-            style={{ "--enter-delay": "650ms", "--enter-from": "0px", "--enter-scale": "0.8" }}
-          >
-            <OrbRing links={view.links} />
-          </button>
-          <div className="enter min-w-0" style={{ "--enter-delay": "200ms", "--enter-from": "6px" }}>
-            <div className="truncate text-sm font-semibold">{view.network?.name ?? "\u00a0"}</div>
-            <div className="mt-0.5 text-xs text-muted-foreground tabular-nums">
-              {m.console_summary({
-                nodes: view.nodeCount === null ? "—" : String(view.nodeCount),
-                confirmed: known ? String(known.confirmed) : "—",
-                total: known ? String(known.total) : "—",
-              })}
-            </div>
+    <SidebarProvider defaultOpen={sidebarOpen()} className="console-enter pointer-events-auto h-svh overflow-hidden">
+      <Sidebar collapsible="icon">
+        <SidebarHeader>
+          <NetworkSwitcher
+            networkId={networkId}
+            name={view.network?.name ?? null}
+            nodes={view.nodeCount}
+            links={view.links}
+            orbRef={sidebarOrb}
+            onOrb={backToGlobe}
+          />
+        </SidebarHeader>
+        <SidebarContent>
+          <NavMain networkId={networkId} active={active?.to ?? "/networks/$network/nodes"} />
+        </SidebarContent>
+        <SidebarFooter>
+          <NavUser networkId={networkId} />
+        </SidebarFooter>
+        <SidebarRail />
+      </Sidebar>
+      <SidebarInset className="min-h-0 overflow-y-auto">
+        <header className="flex h-16 shrink-0 items-center gap-2 transition-[width,height] ease-linear group-has-data-[collapsible=icon]/sidebar-wrapper:h-12">
+          <div className="flex items-center gap-2 px-4">
+            <SidebarTrigger className="-ml-1" />
+            <Orb ref={headerOrb} links={view.links} onClick={backToGlobe} className="size-8 md:hidden" />
+            <Separator orientation="vertical" className="mr-2 data-[orientation=vertical]:h-4" />
+            <Breadcrumb>
+              <BreadcrumbList>
+                <BreadcrumbItem className="hidden md:block">{view.network?.name ?? "\u00a0"}</BreadcrumbItem>
+                <BreadcrumbSeparator className="hidden md:block" />
+                <BreadcrumbItem>
+                  <BreadcrumbPage>{active?.label()}</BreadcrumbPage>
+                </BreadcrumbItem>
+              </BreadcrumbList>
+            </Breadcrumb>
           </div>
+        </header>
+        <div className="flex flex-1 flex-col">
+          <Outlet />
         </div>
-
-        <nav className="mt-4 flex gap-1 md:mt-8 md:flex-col md:gap-0.5" aria-label={m.console_navigation()}>
-          {NAV.map((item, index) => (
-            <Link
-              key={item.to}
-              to={item.to}
-              params={{ network: networkId }}
-              className="enter flex h-9 items-center gap-3 rounded-xl px-3 text-sm text-muted-foreground transition-colors hover:bg-foreground/5 hover:text-foreground data-[status=active]:bg-foreground/7 data-[status=active]:font-medium data-[status=active]:text-foreground"
-              style={{ "--enter-delay": `${260 + index * 50}ms`, "--enter-from": "6px" }}
-            >
-              <item.icon className="size-4" />
-              {item.label()}
-            </Link>
-          ))}
-        </nav>
-
-        <div className="enter mt-auto hidden items-center gap-0.5 md:flex" style={{ "--enter-delay": "400ms", "--enter-from": "6px" }}>
-          <LanguageSwitch />
-          <ThemeSwitch />
-          <AccountMenu />
-        </div>
-      </aside>
-
-      <main
-        className="enter console-panel pointer-events-auto m-3 min-h-0 min-w-0 flex-1 overflow-y-auto rounded-[28px] md:my-3 md:mr-3 md:ml-0"
-        // Starts once the globe has visibly set off for the dock.
-        style={{ "--enter-delay": "380ms", "--enter-from": "22px" }}
-      >
-        <Outlet />
-      </main>
-    </div>
+      </SidebarInset>
+    </SidebarProvider>
   )
 }

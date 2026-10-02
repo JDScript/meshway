@@ -76,9 +76,19 @@ export function GlobeStage() {
     markEngineReady()
   }, [engine, state, colors, motion, boot, markEngineReady])
 
+  // Docked, the globe is drawn above the interface, over its slot; the
+  // canvas is transparent elsewhere and lets every click through.
   return (
-    <div className="globe-layer globe-backdrop fixed inset-0">
-      <div ref={host} role="region" aria-label={m.globe_region()} data-boot={boot} className="globe-stage size-full" />
-    </div>
+    <>
+      <div className="globe-backdrop fixed inset-0" />
+      <div
+        ref={host}
+        role="region"
+        aria-label={m.globe_region()}
+        data-boot={boot}
+        data-docked={state.framing === "dock"}
+        className="globe-layer globe-stage fixed inset-0 data-[docked=true]:pointer-events-none data-[docked=true]:z-20 [&_canvas]:pointer-events-auto data-[docked=true]:[&_canvas]:pointer-events-none"
+      />
+    </>
   )
 }

@@ -25,3 +25,6 @@ export function altitudeForRadius(radius: number, viewportHeight: number): numbe
   const k = (radius * Math.tan(((FOV / 2) * Math.PI) / 180)) / (viewportHeight / 2)
   return 1 / Math.sin(Math.atan(k)) - 1
 }
+
+/** Globe radius as a fraction of the dock slot's half-width; the slot's ring sits outside it. */
+export const ORB_GLOBE_FRACTION = 0.5

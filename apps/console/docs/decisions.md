@@ -72,3 +72,36 @@ flow and breathing; states stay distinguishable by stroke and text.
 `/lab?v=<concept>` (development builds only) shows whole-direction concepts
 over sample data: Observatory, Cartograph, Aurora and Schematic. They exist to
 choose a direction and are removed once one is chosen.
+
+## Modes
+
+- **Globe mode** (`/networks/<id>/overview`): the globe fills the screen. Top
+  left, the network chip (switcher, node and link counts, link-state bar);
+  top right, console entry and preferences; the selected node's card on the
+  right.
+- **Console mode** (`/networks/<id>/<page>`): shadcn `sidebar-07`. Added with
+  `shadcn@4.21.1 add sidebar-07` (style `base-nova`); it generated
+  `app-sidebar`, `nav-main`, `nav-projects`, `nav-user` and `team-switcher`
+  and skipped 12 existing primitives. Those five were adapted into
+  `features/console/` without their sample data: the team switcher became the
+  network switcher, `nav-main` is flat (only pages that exist), `nav-user`
+  carries the account, its role here, theme, language and sign-out;
+  `nav-projects` is not used. `ui/sidebar.tsx` is unchanged.
+- The globe docks into the orb of the network switcher (or of the top bar on
+  mobile, where the sidebar is a sheet), keeps turning and drawing its links
+  there, ringed by the link-state bar; the engine tracks the slot every frame,
+  so collapsing the sidebar carries it along. The orb leads back to the globe.
+- Switching networks keeps the page and drops its selection. Both modes
+  share one network view (`useNetworkView`), so the globe and every summary
+  agree.
+- Route changes are view transitions: the interface layer cross-fades while
+  the live globe animates itself underneath.
+
+## First load
+
+A held screen with a 2D loader globe (no three.js) shows from the first paint
+until the renderer chunk and the first route's data are in (zustand
+`boot-store`; data itself goes through the TanStack Query cache via route
+loaders). The WebGL globe then takes over at the same size, view and
+longitude, grows into its frame and settles on a continent; the interface
+fades in after it.

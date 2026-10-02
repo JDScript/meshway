@@ -20,8 +20,8 @@ export type GlobeState = {
   /** Width (px) covered by a panel on the right; the globe centres in the rest. */
   rightInset: number
   look: GlobeLook
-  /** Centre and radius (CSS px, viewport) of the orb in `dock` framing. */
-  dock: { x: number; y: number; radius: number } | null
+  /** The slot the globe docks into; tracked every frame, so it follows layout changes. */
+  dock: HTMLElement | null
 }
 
 export const useGlobeStore = create<GlobeState>(() => ({

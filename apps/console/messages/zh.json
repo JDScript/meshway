@@ -80,10 +80,13 @@
   "node_rtt_hint": "本端测得 · 对端测得的往返时间",
   "console_open": "控制台",
   "console_back_to_globe": "回到地球",
-  "console_navigation": "导航",
   "console_summary": "{nodes} 节点 · {confirmed}/{total} 连接",
   "nav_overview": "概览",
   "nav_nodes": "节点",
   "nodes_col_node": "名称",
-  "nodes_empty": "这张网络还没有节点"
+  "nodes_empty": "这张网络还没有节点",
+  "networks_label": "网络",
+  "role_owner": "所有者",
+  "role_admin": "管理员",
+  "role_member": "成员"
 }

@@ -37,7 +37,7 @@ import {
 import type { GlobeLook } from "./look"
 import type { BootPhase } from "@/features/boot/boot-store"
 
-import { altitudeForRadius, LOADER_LAT, LOADER_RADIUS, LOADER_SPIN, loaderLng } from "./loader-view"
+import { altitudeForRadius, LOADER_LAT, LOADER_RADIUS, LOADER_SPIN, loaderLng, ORB_GLOBE_FRACTION } from "./loader-view"
 import { emitSelectedScreen, type GlobeState } from "./store"
 
 // globe.gl provides the camera, controls, atmosphere and the DOM node
@@ -400,15 +400,25 @@ export function createGlobeEngine(
     fly = { from, to: target, start: performance.now(), ms, bump: Math.min(0.8, distance * 0.9) }
   }
 
+  /** Where the dock slot is right now (it may move: sidebar collapse, scroll, resize). */
+  const dockSlot = (input: EngineInput) => {
+    const element = input.dock
+    if (!element || !element.isConnected) return null
+    const box = element.getBoundingClientRect()
+    if (box.width === 0) return null
+    return { x: box.left + box.width / 2, y: box.top + box.height / 2, radius: (box.width / 2) * ORB_GLOBE_FRACTION }
+  }
+
   const offsetFor = (input: EngineInput): [number, number] => {
-    if (input.framing === "dock" && input.dock) return [input.dock.x - width / 2, input.dock.y - height / 2]
+    const slot = input.framing === "dock" ? dockSlot(input) : null
+    if (slot) return [slot.x - width / 2, slot.y - height / 2]
     if (input.framing === "welcome") return width >= 900 ? [Math.min(width * 0.14, 260), 0] : [0, height * 0.18]
     return [-input.rightInset / 2, 0]
   }
-  const framePov = (input: EngineInput): Pov =>
-    input.framing === "dock" && input.dock
-      ? { lat: 18, lng: globe.pointOfView().lng, altitude: altitudeForRadius(input.dock.radius, Math.max(height, 1)) }
-      : framingPov(input)
+  const framePov = (input: EngineInput): Pov => {
+    const slot = input.framing === "dock" ? dockSlot(input) : null
+    return slot ? { lat: 18, lng: globe.pointOfView().lng, altitude: altitudeForRadius(slot.radius, Math.max(height, 1)) } : framingPov(input)
+  }
   const scaleOf = (altitude: number) => 1 / (1 + altitude)
 
   let frame = 0
@@ -475,7 +485,12 @@ export function createGlobeEngine(
     if (frameTween && !intro) {
       const t = clamp01((time - frameTween.start) / frameTween.ms)
       const k = easeInOut(t)
-      const { from, to } = frameTween
+      const { from } = frameTween
+      let to = frameTween.to
+      if (last?.framing === "dock") {
+        // The slot may still be moving (the layout is entering); aim at where it is now.
+        to = { ...to, scale: scaleOf(framePov(last).altitude), offset: offsetFor(last) }
+      }
       const scale = from.scale + (to.scale - from.scale) * k
       globe.pointOfView({
         lat: from.lat + (to.lat - from.lat) * k,
@@ -488,6 +503,17 @@ export function createGlobeEngine(
       if (t >= 1) frameTween = null
     } else {
       docked = dockTarget
+      if (last?.framing === "dock" && !intro) {
+        // Docked: follow the slot every frame.
+        const next = offsetFor(last)
+        if (Math.abs(next[0] - offset[0]) > 0.25 || Math.abs(next[1] - offset[1]) > 0.25) {
+          offset = next
+          globe.globeOffset(offset)
+        }
+        const altitude = framePov(last).altitude
+        const current = globe.pointOfView()
+        if (Math.abs(current.altitude - altitude) > 0.002 || Math.abs(current.lat - 18) > 0.05) globe.pointOfView({ lat: 18, altitude })
+      }
     }
     container.style.setProperty("--globe-docked", docked.toFixed(3))
 
@@ -767,11 +793,8 @@ export function createGlobeEngine(
         offset = offsetFor(input)
         globe.globeOffset(offset)
       }
-    } else if (input.framing === "dock" && previous && previous.dock !== input.dock && !frameTween) {
-      // The orb moved (resize): follow at once.
-      offset = offsetFor(input)
-      globe.globeOffset(offset)
-      globe.pointOfView({ altitude: framePov(input).altitude })
+    } else if (input.framing === "dock") {
+      // Docked: the frame loop follows the slot.
     } else if (!previous || previous.framing !== input.framing || previous.rightInset !== input.rightInset) {
       const to = offsetFor(input)
       if (!previous || !input.motion) {
@@ -821,7 +844,6 @@ export function createGlobeEngine(
         offsetTween = null
         offset = offsetFor(last)
         globe.globeOffset(offset)
-        if (last.framing === "dock") globe.pointOfView({ altitude: framePov(last).altitude })
       }
     },
     destroy() {

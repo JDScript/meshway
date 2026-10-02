@@ -24,7 +24,7 @@ export function NodesPage({ networkId }: { networkId: string }) {
     void navigate({ to: "/networks/$network/overview", params: { network: networkId }, search: { node: nodeId } })
 
   return (
-    <div className="px-6 pt-7 pb-8 md:px-9">
+    <div className="px-4 pt-2 pb-8 md:px-6">
       <div className="flex items-baseline gap-3">
         <h1 className="text-2xl font-semibold tracking-tight">{m.nav_nodes()}</h1>
         <span className="text-sm text-muted-foreground tabular-nums">{view.nodeCount ?? "—"}</span>

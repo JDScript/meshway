@@ -1,5 +1,9 @@
-import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
+import { ChevronsUpDownIcon } from "lucide-react"
+
 import { BrandMark } from "@/components/chrome/brand"
+import { DropdownMenu, DropdownMenuContent, DropdownMenuTrigger } from "@/components/ui/dropdown-menu"
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
+import { NetworkMenuItems } from "@/features/network/network-menu"
 import type { LinkLook } from "@/features/globe/scene"
 import { m } from "@/paraglide/messages.js"
 
@@ -13,11 +17,13 @@ const DASH = "—"
  * always present, so reads, failures and refreshes never change its size.
  */
 export function NetworkChip({
+  networkId,
   name,
   nodes,
   links,
   stale,
 }: {
+  networkId: string
   name: string | null
   /** null while unread or unreadable. */
   nodes: number | null
@@ -37,9 +43,24 @@ export function NetworkChip({
   const linkValue = known ? `${known.confirmed}/${known.total}` : links?.kind === "none" ? "0" : DASH
 
   return (
-    <div className="glass pointer-events-auto flex h-11 items-center gap-3 rounded-full pr-4 pl-3.5">
-      <BrandMark className="size-5 shrink-0" />
-      <span className="max-w-[28vw] truncate text-sm font-medium">{name ?? "\u00a0"}</span>
+    <div className="glass pointer-events-auto flex h-11 items-center gap-3 rounded-full pr-4 pl-1.5">
+      <DropdownMenu>
+        <DropdownMenuTrigger
+          render={
+            <button
+              type="button"
+              className="flex h-8 min-w-0 items-center gap-2.5 rounded-full pr-2.5 pl-2 transition-colors outline-none hover:bg-foreground/6 focus-visible:ring-2 focus-visible:ring-ring data-open:bg-foreground/6"
+            />
+          }
+        >
+          <BrandMark className="size-5 shrink-0" />
+          <span className="max-w-[28vw] truncate text-sm font-medium">{name ?? "\u00a0"}</span>
+          <ChevronsUpDownIcon className="size-3.5 shrink-0 text-muted-foreground" />
+        </DropdownMenuTrigger>
+        <DropdownMenuContent align="start" sideOffset={8} className="min-w-60">
+          <NetworkMenuItems current={networkId} />
+        </DropdownMenuContent>
+      </DropdownMenu>
       <span aria-hidden="true" className="h-4 w-px shrink-0 bg-foreground/12" />
       <Stat value={nodes === null ? DASH : String(nodes)} label={m.stat_nodes({ count: nodes ?? 0 })} />
       <Stat value={linkValue} label={m.stat_links({ count: known?.total ?? 0 })} />

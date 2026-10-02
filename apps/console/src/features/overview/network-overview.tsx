@@ -65,7 +65,7 @@ export function NetworkOverview({
     <main className="ui-layer pointer-events-none fixed inset-0">
       <header className="absolute inset-x-0 top-0 flex items-center justify-between gap-3 p-4 md:p-5">
         <div className="enter">
-          <NetworkChip name={view.network?.name ?? null} nodes={view.nodeCount} links={view.links} stale={view.stale} />
+          <NetworkChip networkId={networkId} name={view.network?.name ?? null} nodes={view.nodeCount} links={view.links} stale={view.stale} />
         </div>
         <div className="enter glass pointer-events-auto flex h-11 items-center gap-0.5 rounded-full px-1.5" style={{ "--enter-delay": "80ms" }}>
           <Tooltip>
