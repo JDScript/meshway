@@ -71,7 +71,7 @@ surface kind has one slot, so nothing stacks:
 | Page panel | left, beside the dock | one page's list (the node list today) |
 | Peek | right | the overview's quick look at one node (shadcn Drawer, not modal) |
 | Workspace | right of the page panel, covering the globe | one entity in full (a node: tabs, more to come); the globe dims and keeps its place |
-| Unplaced | bottom left, overview only | a round count ringed by states; opens the list of nodes without a sourced location |
+| Unplaced | the network card's far end, every page | a round count ringed by states; opens the list of nodes without a sourced location |
 
 - Unplaced nodes are not drawn on the globe (no location source exists yet);
   links to them are listed in the node's surfaces only.
@@ -83,6 +83,10 @@ surface kind has one slot, so nothing stacks:
   writes the globe's inputs (lists may highlight a node).
 - Surfaces appear in place with a fade and a short shift and keep their last
   content while leaving (`Surface`); the peek slides as a drawer.
+- On phones the page panel, the peek and the workspace are glass drawers
+  (`GlassDrawer`): swiping one away, Escape, or a tap outside it (not on the
+  chrome or its menus) steps back - the list to the overview, the workspace
+  to the list.
 
 ## URL and state
 

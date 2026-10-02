@@ -25,8 +25,6 @@ export const PEEK_WIDTH = 380
 export const MOBILE_EDGE = 12
 /** Below the round buttons of the top bar. */
 export const MOBILE_PANEL_TOP = MOBILE_EDGE + BAR_HEIGHT + GAP
-/** The network card spans the dock and the page panel, so its right edge is the panel's. */
-export const CHIP_WIDTH = PAGE_LEFT + PAGE_WIDTH - EDGE
 /** Share of the viewport height the bottom sheets take on small screens. */
 export const MOBILE_PAGE_HEIGHT = 0.52
 export const MOBILE_PEEK_HEIGHT = 0.6
@@ -37,7 +35,6 @@ export const LAYOUT_VARIABLES: Record<`--${string}`, string> = {
   "--bar-height": `${BAR_HEIGHT}px`,
   "--panel-top": `${PANEL_TOP}px`,
   "--mobile-edge": `${MOBILE_EDGE}px`,
-  "--chip-width": `${CHIP_WIDTH}px`,
 }
 
 export type Arrangement = {

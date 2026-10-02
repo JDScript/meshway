@@ -1,5 +1,4 @@
-import { cn } from "cn"
-import { useState, type CSSProperties } from "react"
+import { useState } from "react"
 
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
 import type { SceneNode, Vitality } from "@/features/globe/scene"
@@ -9,10 +8,11 @@ import { vitalityColor, vitalityLabel } from "./labels"
 import { VitalityDot } from "./status-dots"
 
 const ORDER: Vitality[] = ["live", "contact", "quiet"]
-const SIZE = 48
-const RING = 20.5
-const STROKE = 2.5
-const GAP = 0.06
+/** Sits 6px inside the 44px network card: concentric (22 − 6 = 16 = 32 / 2). */
+const SIZE = 32
+const RING = 13
+const STROKE = 2
+const GAP = 0.08
 
 /** The ring around the count: one arc per state, in proportion. */
 function StateRing({ nodes }: { nodes: readonly SceneNode[] }) {
@@ -50,22 +50,21 @@ function StateRing({ nodes }: { nodes: readonly SceneNode[] }) {
 }
 
 /**
- * Nodes without a sourced location: the globe has no place for them, so a
- * round button beside it counts them (ringed by their states) and opens the
- * list.
+ * Nodes without a sourced location: the globe has no place for them, so the
+ * network card counts them (ringed by their states) at its end, and the
+ * count opens their list.
  */
-export function UnplacedOrb({
+export function UnplacedButton({
   nodes,
   selectedId,
   onSelect,
-  className,
-  style,
+  side,
 }: {
   nodes: readonly SceneNode[]
   selectedId: string | null
   onSelect: (nodeId: string) => void
-  className?: string
-  style?: CSSProperties
+  /** Where the list opens: away from the screen edge the card sits on. */
+  side: "top" | "bottom"
 }) {
   const [open, setOpen] = useState(false)
   const sorted = [...nodes].sort((a, b) => a.name.localeCompare(b.name) || a.id.localeCompare(b.id))
@@ -74,16 +73,13 @@ export function UnplacedOrb({
     <Popover open={open} onOpenChange={setOpen}>
       <PopoverTrigger
         aria-label={label}
-        className={cn(
-          "glass pointer-events-auto flex items-center justify-center rounded-full outline-none focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring",
-          className
-        )}
-        style={{ width: SIZE, height: SIZE, ...style }}
+        className="relative flex shrink-0 items-center justify-center rounded-full transition-colors outline-none hover:bg-fill-hover focus-visible:ring-2 focus-visible:ring-ring data-popup-open:bg-fill-selected"
+        style={{ width: SIZE, height: SIZE }}
       >
         <StateRing nodes={nodes} />
-        <span className="relative text-sm font-semibold tabular-nums">{nodes.length}</span>
+        <span className="relative text-meta font-semibold tabular-nums">{nodes.length}</span>
       </PopoverTrigger>
-      <PopoverContent side="top" align="start" sideOffset={10} className="glass w-64 gap-0 rounded-surface p-2">
+      <PopoverContent side={side} align="end" alignOffset={-6} sideOffset={14} className="glass w-64 gap-0 rounded-surface p-2">
         <header className="flex items-baseline justify-between px-2 pt-1.5 pb-1.5">
           <h2 className="text-xs text-muted-foreground">{m.unplaced_title()}</h2>
           <span className="text-xs text-muted-foreground tabular-nums">{nodes.length}</span>

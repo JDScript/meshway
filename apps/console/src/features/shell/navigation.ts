@@ -49,6 +49,11 @@ export function useShellNavigation(networkId: string, list: NodeListView) {
           state: (previous) => ({ opened: previous.opened }),
         })
       },
+      /** Leaves a page for the overview (dismissing a page sheet): back if the page was opened as one. */
+      leavePage() {
+        if (opened) router.history.back()
+        else void navigate({ to: "/networks/$network/overview", params, replace: true })
+      },
       /** The list's search and filter, wherever the list is shown. */
       setListView(next: NodeListView, nodeId: string | null, tab: NodeTab) {
         const search = { q: next.q === "" ? undefined : next.q, state: next.state ?? undefined }

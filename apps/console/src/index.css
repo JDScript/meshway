@@ -32,9 +32,9 @@
     --text-display--line-height: 32px;
 
     /* Motion: panels settle softly; first entrances are longer (AgentUI's EASE_OUT, lib/ease.ts); leaving is quick. Springs live in lib/ease.ts. */
-    --ease-settle: var(--ease-settle);
-    --ease-entrance: var(--ease-entrance);
-    --ease-leave: var(--ease-leave);
+    --ease-settle: cubic-bezier(0.22, 1, 0.36, 1);
+    --ease-entrance: cubic-bezier(0.16, 1, 0.3, 1);
+    --ease-leave: cubic-bezier(0.4, 0, 1, 1);
 }
 
 @theme inline {
@@ -633,8 +633,8 @@
   backdrop-filter: blur(36px) saturate(1.6);
   box-shadow: inset 0 1px 0 0 var(--glass-highlight), var(--glass-shadow);
 }
-/* shadcn's Drawer popup, wearing the glass: no edge line, one corner radius. */
+/* shadcn's Drawer popup, wearing the glass: no edge line, one corner radius (a sheet's unless `--drawer-radius` says otherwise). */
 [data-slot="drawer-popup"].glass {
   border: 0;
-  border-radius: 28px;
+  border-radius: var(--drawer-radius, var(--radius-sheet));
 }
