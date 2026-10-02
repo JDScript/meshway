@@ -5,6 +5,47 @@
 
 @custom-variant dark (&:is(.dark *));
 
+/*
+ * Meshway's tokens beyond shadcn's. Surfaces float over the globe; anything
+ * set close inside one follows its corner (inner radius = outer − inset).
+ * Geometry (edges, panel sizes) is not here: it is shared with the globe and
+ * lives in features/shell/layout.ts, which publishes it as CSS variables.
+ */
+@theme static {
+    /* Page panels and popovers over the globe. */
+    --radius-surface: 22px;
+    /* The peek, workspaces and the sign-in card. */
+    --radius-sheet: 28px;
+    /* Rows 8px inside a 22px surface (22 − 8). */
+    --radius-row: 14px;
+    /* Tiles and buttons 16px inside a 28px sheet (28 − 16). */
+    --radius-tile: 12px;
+
+    /* Type roles Tailwind's scale lacks. */
+    --text-meta: 11px;
+    --text-meta--line-height: 16px;
+    --text-row: 13px;
+    --text-row--line-height: 18px;
+    --text-lead: 15px;
+    --text-lead--line-height: 20px;
+    --text-display: 26px;
+    --text-display--line-height: 32px;
+
+    /* Motion: panels settle softly; first entrances are longer (AgentUI's EASE_OUT, lib/ease.ts); leaving is quick. Springs live in lib/ease.ts. */
+    --ease-settle: var(--ease-settle);
+    --ease-entrance: var(--ease-entrance);
+    --ease-leave: var(--ease-leave);
+}
+
+@theme inline {
+    /* Fills on glass: a resting inset, a hovered row, the current row. */
+    --color-fill-subtle: var(--fill-subtle);
+    --color-fill-hover: var(--fill-hover);
+    --color-fill-selected: var(--fill-selected);
+    --color-fill-raised: var(--fill-raised);
+    --color-divider: var(--divider);
+}
+
 @theme inline {
     --font-heading: var(--font-sans);
     --font-sans: 'Inter Variable', "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
@@ -109,11 +150,21 @@
     --glass-edge-weak: oklch(0.25 0.01 270 / 0.1);
     --glass-shadow: 0 28px 70px -28px oklch(0.25 0.02 270 / 0.28), 0 2px 8px -2px oklch(0.25 0.02 270 / 0.08);
 
+    --fill-subtle: color-mix(in oklab, var(--foreground) 4%, transparent);
+    --fill-hover: color-mix(in oklab, var(--foreground) 5%, transparent);
+    --fill-selected: color-mix(in oklab, var(--foreground) 9%, transparent);
+    --divider: color-mix(in oklab, var(--foreground) 12%, transparent);
+    /* A chosen segment, raised off its track. */
+    --fill-raised: var(--background);
+    /* A node's vitality: lit, contact only, quiet (shapes differ too, see .status-dot). */
+    --vitality-live: var(--brand);
+    --vitality-contact: oklch(0.6 0.01 270);
+    --vitality-quiet: oklch(0.7 0.008 270);
+
     --globe-surface: oklch(0.997 0.001 270);
     --globe-rim: color-mix(in oklab, var(--signal) 10%, oklch(0.86 0.006 270));
     --globe-land: oklch(0.52 0.012 270);
     --globe-atmosphere: color-mix(in oklab, var(--signal) 16%, oklch(0.9 0.004 270));
-    --globe-orbit: oklch(0.68 0.01 270);
     --globe-guide: oklch(0.35 0.01 270);
     --globe-graticule: oklch(0.6 0.01 270);
     --globe-star: oklch(0.4 0.01 270);
@@ -159,6 +210,9 @@
 
     --success: oklch(0.76 0.14 165);
     --warning: oklch(0.8 0.15 75);
+    --fill-raised: oklch(0.32 0.009 270);
+    --vitality-contact: oklch(0.64 0.01 270);
+    --vitality-quiet: oklch(0.5 0.01 270);
     --field: oklch(1 0 0 / 0.045);
     --grid-dot: oklch(1 0 0 / 0.055);
 
@@ -173,7 +227,6 @@
     --globe-rim: color-mix(in oklab, var(--signal) 22%, oklch(0.32 0.01 270));
     --globe-land: oklch(0.72 0.01 270);
     --globe-atmosphere: color-mix(in oklab, var(--signal) 30%, oklch(0.32 0.01 270));
-    --globe-orbit: oklch(0.52 0.01 270);
     --globe-guide: oklch(0.85 0.008 270);
     --globe-graticule: oklch(0.5 0.01 270);
     --globe-star: oklch(0.92 0.01 270);
@@ -199,15 +252,13 @@
 @layer components {
   /*
    * Floating glass: a translucent gradient fill, a strong blur, a lit top
-   * edge and a gradient hairline border. Every floating surface uses it.
+   * edge and a gradient hairline border. Every floating surface uses it. The
+   * fill, blur and shadow are set unlayered (end of file) so a component's
+   * own background or ring utilities never show through the glass.
    */
   .glass {
     position: relative;
     isolation: isolate;
-    background: linear-gradient(180deg, var(--glass-top), var(--glass-bottom));
-    -webkit-backdrop-filter: blur(36px) saturate(1.6);
-    backdrop-filter: blur(36px) saturate(1.6);
-    box-shadow: inset 0 1px 0 0 var(--glass-highlight), var(--glass-shadow);
   }
   .glass::before {
     content: "";
@@ -259,7 +310,7 @@
 
   /* A zero-size anchor: CSS2DRenderer centres (and transforms) the element. */
   .globe-node {
-    --node-color: var(--muted-foreground);
+    --node-color: var(--vitality-quiet);
     position: relative;
     width: 0;
     height: 0;
@@ -267,34 +318,21 @@
     border: 0;
     background: none;
     pointer-events: auto;
-    transition: opacity 500ms cubic-bezier(0.16, 1, 0.3, 1);
-  }
-  /* Markers shrink away into the orb as the dock takes over. */
-  .globe-stage {
-    --globe-docked: 0;
-  }
-  .globe-stage .globe-node {
-    opacity: calc(1 - var(--globe-docked));
-  }
-  .globe-stage[data-framing="dock"] .globe-node {
-    pointer-events: none;
-  }
-  .globe-stage .globe-node[data-behind="true"] {
-    opacity: 0;
+    transition: opacity 500ms var(--ease-entrance);
   }
   /* Markers wait for the reveal, then fade in one after another. */
   .globe-stage:not([data-boot="ready"]) .globe-node {
     visibility: hidden;
   }
   .globe-stage[data-boot="ready"] .globe-node {
-    animation: globe-node-enter 900ms cubic-bezier(0.16, 1, 0.3, 1) backwards;
+    animation: globe-node-enter 900ms var(--ease-entrance) backwards;
     animation-delay: calc(var(--enter-delay, 0ms) + 150ms);
   }
   .globe-node[data-vitality="live"] {
-    --node-color: var(--brand);
+    --node-color: var(--vitality-live);
   }
   .globe-node[data-vitality="contact"] {
-    --node-color: color-mix(in oklab, var(--foreground) 85%, transparent);
+    --node-color: var(--vitality-contact);
   }
   .globe-node[data-behind="true"] {
     opacity: 0;
@@ -332,7 +370,7 @@
     box-shadow:
       0 0 0 1.5px var(--background),
       0 0 14px 2px color-mix(in oklab, var(--node-color) 55%, transparent);
-    transition: transform 400ms cubic-bezier(0.16, 1, 0.3, 1), box-shadow 400ms ease;
+    transition: transform 400ms var(--ease-entrance), box-shadow 400ms ease;
   }
   .globe-node[data-vitality="quiet"] .globe-node__dot {
     box-shadow: 0 0 0 1.5px var(--background);
@@ -421,40 +459,6 @@
 
 @layer components {
   /*
-   * Fill backwards only: a filter or opacity left on the wrapper after the
-   * animation would make it a backdrop root and stop the glass from blurring.
-   */
-  .node-card-enter {
-    animation: node-card-in 700ms cubic-bezier(0.16, 1, 0.3, 1) backwards;
-  }
-  @media (max-width: 767px) {
-    .node-card-enter {
-      animation-name: node-card-up;
-    }
-  }
-  @keyframes node-card-in {
-    from {
-      opacity: 0;
-      transform: translateX(28px) scale(0.985);
-      filter: blur(8px);
-    }
-  }
-  @keyframes node-card-up {
-    from {
-      opacity: 0;
-      transform: translateY(28px);
-      filter: blur(8px);
-    }
-  }
-  @media (prefers-reduced-motion: reduce) {
-    .node-card-enter {
-      animation: none;
-    }
-  }
-}
-
-@layer components {
-  /*
    * Interface pieces enter once the first-load reveal is done (`data-boot`
    * on the route wrapper), or on mount afterwards. Opacity and transform
    * only, filling backwards: nothing lingers that would break the glass.
@@ -463,7 +467,7 @@
     visibility: hidden;
   }
   [data-boot="ready"] .enter {
-    animation: enter-rise 900ms cubic-bezier(0.16, 1, 0.3, 1) backwards;
+    animation: enter-rise 900ms var(--ease-entrance) backwards;
     animation-delay: var(--enter-delay, 0ms);
   }
   @keyframes enter-rise {
@@ -480,58 +484,157 @@
 }
 
 @layer components {
-  /* Console mode rises in once the globe has visibly set off for its slot. */
-  .console-enter {
-    animation: console-in 650ms cubic-bezier(0.16, 1, 0.3, 1) 420ms backwards;
+  /*
+   * A surface that comes and goes with the URL (see shell/surface.tsx):
+   * it appears in place with a fade and a short shift, and leaves a little
+   * faster than it came. `data-from` picks the shift.
+   */
+  .surface {
+    --surface-from: 0 0;
+    --surface-scale: 1;
+    transition:
+      opacity 340ms var(--ease-settle),
+      translate 520ms var(--ease-settle),
+      scale 520ms var(--ease-settle);
   }
-  @keyframes console-in {
-    from {
+  .surface[data-from="left"] {
+    --surface-from: -10px 0;
+  }
+  .surface[data-from="right"] {
+    --surface-from: 10px 0;
+  }
+  .surface[data-from="bottom"] {
+    --surface-from: 0 14px;
+  }
+  .surface[data-from="rise"] {
+    --surface-from: 0 12px;
+    --surface-scale: 0.985;
+  }
+  .surface[data-shown="false"] {
+    opacity: 0;
+    translate: var(--surface-from);
+    scale: var(--surface-scale);
+    pointer-events: none;
+    transition-duration: 200ms, 240ms, 240ms;
+    transition-timing-function: var(--ease-leave);
+  }
+  @starting-style {
+    .surface[data-shown="true"] {
       opacity: 0;
-      transform: translateY(14px);
-    }
-  }
-  @media (prefers-reduced-motion: reduce) {
-    .console-enter {
-      animation: none;
+      translate: var(--surface-from);
+      scale: var(--surface-scale);
     }
   }
 
+  /* An icon button in a glass bar: round, and marked flat while its menu is open (hover is the bar's moving pill). */
+  .bar-button {
+    border-radius: 9999px;
+  }
+  .bar-button:hover {
+    background: transparent;
+  }
+  .bar-button[aria-expanded="true"],
+  .bar-button[data-popup-open] {
+    background: var(--fill-selected);
+  }
+
   /*
-   * Route changes run as view transitions: the interface layer cross-fades
-   * while the globe stays live underneath and animates itself.
+   * A status dot, colour in `color`. `live`: lit (a glow on dark, a soft
+   * halo on light, where a dark glow reads as a smudge); `solid`; `hollow`.
+   * The shape tells states apart without relying on colour.
    */
-  .globe-layer {
-    view-transition-name: globe;
+  .status-dot {
+    display: inline-block;
+    flex-shrink: 0;
+    border-radius: 9999px;
+    background: currentColor;
   }
-  .ui-root {
-    view-transition-name: ui;
+  .status-dot[data-shape="live"] {
+    box-shadow: 0 0 0 3px color-mix(in oklab, currentColor 16%, transparent);
+  }
+  .dark .status-dot[data-shape="live"] {
+    box-shadow: 0 0 9px 1px currentColor;
+  }
+  .status-dot[data-shape="hollow"] {
+    background: transparent;
+    box-shadow: inset 0 0 0 1.5px currentColor;
+  }
+
+  /* A choosable row inside a surface. */
+  .list-row {
+    display: flex;
+    width: 100%;
+    align-items: center;
+    border-radius: var(--radius-row);
+    text-align: left;
+    outline: none;
+    transition: background-color 200ms ease;
+  }
+  .list-row:hover {
+    background: var(--fill-hover);
+  }
+  .list-row[aria-current="true"] {
+    background: var(--fill-selected);
+  }
+  .list-row:focus-visible {
+    outline: 2px solid var(--ring);
+    outline-offset: -2px;
+  }
+
+  /* The small-screen launcher unfolds its pages one after another. */
+  .launcher-item {
+    animation: launcher-in 360ms var(--ease-settle) backwards;
+    animation-delay: calc(var(--launcher-index, 0) * 45ms);
+  }
+  @keyframes launcher-in {
+    from {
+      opacity: 0;
+      translate: 0 -8px;
+      scale: 0.96;
+    }
+  }
+
+  /* Content swapped inside a surface (another node) eases in. */
+  .swap-in {
+    animation: swap-in 320ms var(--ease-settle) backwards;
+  }
+  @keyframes swap-in {
+    from {
+      opacity: 0;
+      translate: 0 6px;
+    }
+  }
+
+  /* Under a workspace the globe dims and keeps turning where it was. */
+  .globe-stage {
+    transition: opacity 600ms ease;
+  }
+  .globe-stage[data-receded="true"] {
+    opacity: 0.4;
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .surface,
+    .surface[data-shown="false"],
+    .globe-stage {
+      transition: none;
+    }
+    .launcher-item,
+    .swap-in {
+      animation: none;
+    }
   }
 }
-::view-transition-old(globe) {
-  display: none;
+
+/* Unlayered, so it wins over a component's own fill, ring and shadow utilities. */
+.glass {
+  background: linear-gradient(180deg, var(--glass-top), var(--glass-bottom));
+  -webkit-backdrop-filter: blur(36px) saturate(1.6);
+  backdrop-filter: blur(36px) saturate(1.6);
+  box-shadow: inset 0 1px 0 0 var(--glass-highlight), var(--glass-shadow);
 }
-::view-transition-new(globe) {
-  animation: none;
-}
-::view-transition-old(ui) {
-  animation: 260ms cubic-bezier(0.4, 0, 1, 1) both ui-out;
-}
-::view-transition-new(ui) {
-  animation: none;
-}
-::view-transition-old(root),
-::view-transition-new(root) {
-  animation: none;
-}
-@keyframes ui-out {
-  to {
-    opacity: 0;
-    transform: scale(0.985);
-    filter: blur(4px);
-  }
-}
-@media (prefers-reduced-motion: reduce) {
-  ::view-transition-old(ui) {
-    animation: none;
-  }
+/* shadcn's Drawer popup, wearing the glass: no edge line, one corner radius. */
+[data-slot="drawer-popup"].glass {
+  border: 0;
+  border-radius: 28px;
 }

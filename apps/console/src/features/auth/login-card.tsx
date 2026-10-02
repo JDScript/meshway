@@ -67,10 +67,10 @@ export function LoginCard({ reason, returnTo }: { reason: LoginReason | undefine
     <div
       data-leaving={leaving}
       style={{ "--enter-from": "16px", "--enter-scale": "0.985", "--enter-delay": "60ms" }}
-      className="enter glass w-full max-w-[380px] rounded-[28px] p-8 transition-[opacity,transform,filter] duration-500 ease-[cubic-bezier(0.16,1,0.3,1)] data-[leaving=true]:-translate-y-3 data-[leaving=true]:scale-[0.98] data-[leaving=true]:opacity-0 data-[leaving=true]:blur-md motion-reduce:transition-none"
+      className="enter glass w-full max-w-95 rounded-sheet p-8 transition-[opacity,transform,filter] duration-500 ease-entrance data-[leaving=true]:-translate-y-3 data-[leaving=true]:scale-[0.98] data-[leaving=true]:opacity-0 data-[leaving=true]:blur-md motion-reduce:transition-none"
     >
       <Brand />
-      <h1 className="mt-10 text-[26px] leading-tight font-semibold tracking-tight">{m.login_title()}</h1>
+      <h1 className="mt-10 text-display font-semibold tracking-tight">{m.login_title()}</h1>
       <form method="post" action="/login" className="mt-7" onSubmit={(event) => void submit(event)}>
         <FieldGroup className="gap-5">
           <Field>
@@ -86,7 +86,7 @@ export function LoginCard({ reason, returnTo }: { reason: LoginReason | undefine
               autoFocus
               required
               maxLength={254}
-              className="h-11 rounded-xl bg-field px-3.5"
+              className="h-11 rounded-tile bg-field px-3.5"
             />
           </Field>
           <Field>
@@ -99,10 +99,10 @@ export function LoginCard({ reason, returnTo }: { reason: LoginReason | undefine
               autoComplete="current-password"
               required
               maxLength={1024}
-              className="h-11 rounded-xl bg-field px-3.5"
+              className="h-11 rounded-tile bg-field px-3.5"
             />
           </Field>
-          <Button type="submit" size="lg" className="mt-2 h-11 w-full rounded-xl" disabled={pending} aria-busy={pending}>
+          <Button type="submit" size="lg" className="mt-2 h-11 w-full rounded-tile" disabled={pending} aria-busy={pending}>
             <span className="relative inline-flex items-center justify-center">
               <Spinner className={pending ? "absolute -left-6 opacity-100" : "absolute -left-6 opacity-0"} />
               {m.login_submit()}

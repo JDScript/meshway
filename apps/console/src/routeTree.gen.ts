@@ -10,22 +10,17 @@
 
 import { Route as rootRouteImport } from './routes/__root'
 import { Route as AuthedRouteImport } from './routes/_authed'
-import { Route as LabRouteImport } from './routes/lab'
 import { Route as LoginRouteImport } from './routes/login'
 import { Route as AuthedIndexRouteImport } from './routes/_authed/index'
 import { Route as AuthedNetworksNetworkRouteImport } from './routes/_authed/networks/$network'
 import { Route as AuthedNetworksNetworkIndexRouteImport } from './routes/_authed/networks/$network/index'
-import { Route as AuthedNetworksNetworkConsoleRouteImport } from './routes/_authed/networks/$network/_console'
+import { Route as AuthedNetworksNetworkNodesRouteImport } from './routes/_authed/networks/$network/nodes'
 import { Route as AuthedNetworksNetworkOverviewRouteImport } from './routes/_authed/networks/$network/overview'
-import { Route as AuthedNetworksNetworkConsoleNodesRouteImport } from './routes/_authed/networks/$network/_console/nodes'
+import { Route as AuthedNetworksNetworkNodesIndexRouteImport } from './routes/_authed/networks/$network/nodes/index'
+import { Route as AuthedNetworksNetworkNodesNodeRouteImport } from './routes/_authed/networks/$network/nodes/$node'
 
 const AuthedRoute = AuthedRouteImport.update({
   id: '/_authed',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const LabRoute = LabRouteImport.update({
-  id: '/lab',
-  path: '/lab',
   getParentRoute: () => rootRouteImport,
 } as any)
 const LoginRoute = LoginRouteImport.update({
@@ -49,9 +44,10 @@ const AuthedNetworksNetworkIndexRoute =
     path: '/',
     getParentRoute: () => AuthedNetworksNetworkRoute,
   } as any)
-const AuthedNetworksNetworkConsoleRoute =
-  AuthedNetworksNetworkConsoleRouteImport.update({
-    id: '/_console',
+const AuthedNetworksNetworkNodesRoute =
+  AuthedNetworksNetworkNodesRouteImport.update({
+    id: '/nodes',
+    path: '/nodes',
     getParentRoute: () => AuthedNetworksNetworkRoute,
   } as any)
 const AuthedNetworksNetworkOverviewRoute =
@@ -60,76 +56,83 @@ const AuthedNetworksNetworkOverviewRoute =
     path: '/overview',
     getParentRoute: () => AuthedNetworksNetworkRoute,
   } as any)
-const AuthedNetworksNetworkConsoleNodesRoute =
-  AuthedNetworksNetworkConsoleNodesRouteImport.update({
-    id: '/nodes',
-    path: '/nodes',
-    getParentRoute: () => AuthedNetworksNetworkConsoleRoute,
+const AuthedNetworksNetworkNodesIndexRoute =
+  AuthedNetworksNetworkNodesIndexRouteImport.update({
+    id: '/',
+    path: '/',
+    getParentRoute: () => AuthedNetworksNetworkNodesRoute,
+  } as any)
+const AuthedNetworksNetworkNodesNodeRoute =
+  AuthedNetworksNetworkNodesNodeRouteImport.update({
+    id: '/$node',
+    path: '/$node',
+    getParentRoute: () => AuthedNetworksNetworkNodesRoute,
   } as any)
 
 export interface FileRoutesByFullPath {
   '/': typeof AuthedIndexRoute
-  '/lab': typeof LabRoute
   '/login': typeof LoginRoute
   '/networks/$network': typeof AuthedNetworksNetworkRouteWithChildren
+  '/networks/$network/nodes': typeof AuthedNetworksNetworkNodesRouteWithChildren
   '/networks/$network/overview': typeof AuthedNetworksNetworkOverviewRoute
   '/networks/$network/': typeof AuthedNetworksNetworkIndexRoute
-  '/networks/$network/nodes': typeof AuthedNetworksNetworkConsoleNodesRoute
+  '/networks/$network/nodes/$node': typeof AuthedNetworksNetworkNodesNodeRoute
+  '/networks/$network/nodes/': typeof AuthedNetworksNetworkNodesIndexRoute
 }
 export interface FileRoutesByTo {
-  '/lab': typeof LabRoute
   '/login': typeof LoginRoute
   '/': typeof AuthedIndexRoute
-  '/networks/$network': typeof AuthedNetworksNetworkIndexRoute
   '/networks/$network/overview': typeof AuthedNetworksNetworkOverviewRoute
-  '/networks/$network/nodes': typeof AuthedNetworksNetworkConsoleNodesRoute
+  '/networks/$network': typeof AuthedNetworksNetworkIndexRoute
+  '/networks/$network/nodes/$node': typeof AuthedNetworksNetworkNodesNodeRoute
+  '/networks/$network/nodes': typeof AuthedNetworksNetworkNodesIndexRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/_authed': typeof AuthedRouteWithChildren
-  '/lab': typeof LabRoute
   '/login': typeof LoginRoute
   '/_authed/': typeof AuthedIndexRoute
   '/_authed/networks/$network': typeof AuthedNetworksNetworkRouteWithChildren
-  '/_authed/networks/$network/_console': typeof AuthedNetworksNetworkConsoleRouteWithChildren
+  '/_authed/networks/$network/nodes': typeof AuthedNetworksNetworkNodesRouteWithChildren
   '/_authed/networks/$network/overview': typeof AuthedNetworksNetworkOverviewRoute
   '/_authed/networks/$network/': typeof AuthedNetworksNetworkIndexRoute
-  '/_authed/networks/$network/_console/nodes': typeof AuthedNetworksNetworkConsoleNodesRoute
+  '/_authed/networks/$network/nodes/$node': typeof AuthedNetworksNetworkNodesNodeRoute
+  '/_authed/networks/$network/nodes/': typeof AuthedNetworksNetworkNodesIndexRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
   fullPaths:
     | '/'
-    | '/lab'
     | '/login'
     | '/networks/$network'
+    | '/networks/$network/nodes'
     | '/networks/$network/overview'
     | '/networks/$network/'
-    | '/networks/$network/nodes'
+    | '/networks/$network/nodes/$node'
+    | '/networks/$network/nodes/'
   fileRoutesByTo: FileRoutesByTo
   to:
-    | '/lab'
     | '/login'
     | '/'
-    | '/networks/$network'
     | '/networks/$network/overview'
+    | '/networks/$network'
+    | '/networks/$network/nodes/$node'
     | '/networks/$network/nodes'
   id:
     | '__root__'
     | '/_authed'
-    | '/lab'
     | '/login'
     | '/_authed/'
     | '/_authed/networks/$network'
-    | '/_authed/networks/$network/_console'
+    | '/_authed/networks/$network/nodes'
     | '/_authed/networks/$network/overview'
     | '/_authed/networks/$network/'
-    | '/_authed/networks/$network/_console/nodes'
+    | '/_authed/networks/$network/nodes/$node'
+    | '/_authed/networks/$network/nodes/'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
   AuthedRoute: typeof AuthedRouteWithChildren
-  LabRoute: typeof LabRoute
   LoginRoute: typeof LoginRoute
 }
 
@@ -140,13 +143,6 @@ declare module '@tanstack/react-router' {
       path: ''
       fullPath: '/'
       preLoaderRoute: typeof AuthedRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/lab': {
-      id: '/lab'
-      path: '/lab'
-      fullPath: '/lab'
-      preLoaderRoute: typeof LabRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/login': {
@@ -177,11 +173,11 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AuthedNetworksNetworkIndexRouteImport
       parentRoute: typeof AuthedNetworksNetworkRoute
     }
-    '/_authed/networks/$network/_console': {
-      id: '/_authed/networks/$network/_console'
-      path: ''
-      fullPath: '/networks/$network'
-      preLoaderRoute: typeof AuthedNetworksNetworkConsoleRouteImport
+    '/_authed/networks/$network/nodes': {
+      id: '/_authed/networks/$network/nodes'
+      path: '/nodes'
+      fullPath: '/networks/$network/nodes'
+      preLoaderRoute: typeof AuthedNetworksNetworkNodesRouteImport
       parentRoute: typeof AuthedNetworksNetworkRoute
     }
     '/_authed/networks/$network/overview': {
@@ -191,40 +187,47 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AuthedNetworksNetworkOverviewRouteImport
       parentRoute: typeof AuthedNetworksNetworkRoute
     }
-    '/_authed/networks/$network/_console/nodes': {
-      id: '/_authed/networks/$network/_console/nodes'
-      path: '/nodes'
-      fullPath: '/networks/$network/nodes'
-      preLoaderRoute: typeof AuthedNetworksNetworkConsoleNodesRouteImport
-      parentRoute: typeof AuthedNetworksNetworkConsoleRoute
+    '/_authed/networks/$network/nodes/': {
+      id: '/_authed/networks/$network/nodes/'
+      path: '/'
+      fullPath: '/networks/$network/nodes/'
+      preLoaderRoute: typeof AuthedNetworksNetworkNodesIndexRouteImport
+      parentRoute: typeof AuthedNetworksNetworkNodesRoute
+    }
+    '/_authed/networks/$network/nodes/$node': {
+      id: '/_authed/networks/$network/nodes/$node'
+      path: '/$node'
+      fullPath: '/networks/$network/nodes/$node'
+      preLoaderRoute: typeof AuthedNetworksNetworkNodesNodeRouteImport
+      parentRoute: typeof AuthedNetworksNetworkNodesRoute
     }
   }
 }
 
-interface AuthedNetworksNetworkConsoleRouteChildren {
-  AuthedNetworksNetworkConsoleNodesRoute: typeof AuthedNetworksNetworkConsoleNodesRoute
+interface AuthedNetworksNetworkNodesRouteChildren {
+  AuthedNetworksNetworkNodesNodeRoute: typeof AuthedNetworksNetworkNodesNodeRoute
+  AuthedNetworksNetworkNodesIndexRoute: typeof AuthedNetworksNetworkNodesIndexRoute
 }
 
-const AuthedNetworksNetworkConsoleRouteChildren: AuthedNetworksNetworkConsoleRouteChildren =
+const AuthedNetworksNetworkNodesRouteChildren: AuthedNetworksNetworkNodesRouteChildren =
   {
-    AuthedNetworksNetworkConsoleNodesRoute:
-      AuthedNetworksNetworkConsoleNodesRoute,
+    AuthedNetworksNetworkNodesNodeRoute: AuthedNetworksNetworkNodesNodeRoute,
+    AuthedNetworksNetworkNodesIndexRoute: AuthedNetworksNetworkNodesIndexRoute,
   }
 
-const AuthedNetworksNetworkConsoleRouteWithChildren =
-  AuthedNetworksNetworkConsoleRoute._addFileChildren(
-    AuthedNetworksNetworkConsoleRouteChildren,
+const AuthedNetworksNetworkNodesRouteWithChildren =
+  AuthedNetworksNetworkNodesRoute._addFileChildren(
+    AuthedNetworksNetworkNodesRouteChildren,
   )
 
 interface AuthedNetworksNetworkRouteChildren {
-  AuthedNetworksNetworkConsoleRoute: typeof AuthedNetworksNetworkConsoleRouteWithChildren
+  AuthedNetworksNetworkNodesRoute: typeof AuthedNetworksNetworkNodesRouteWithChildren
   AuthedNetworksNetworkOverviewRoute: typeof AuthedNetworksNetworkOverviewRoute
   AuthedNetworksNetworkIndexRoute: typeof AuthedNetworksNetworkIndexRoute
 }
 
 const AuthedNetworksNetworkRouteChildren: AuthedNetworksNetworkRouteChildren = {
-  AuthedNetworksNetworkConsoleRoute:
-    AuthedNetworksNetworkConsoleRouteWithChildren,
+  AuthedNetworksNetworkNodesRoute: AuthedNetworksNetworkNodesRouteWithChildren,
   AuthedNetworksNetworkOverviewRoute: AuthedNetworksNetworkOverviewRoute,
   AuthedNetworksNetworkIndexRoute: AuthedNetworksNetworkIndexRoute,
 }
@@ -249,7 +252,6 @@ const AuthedRouteWithChildren =
 
 const rootRouteChildren: RootRouteChildren = {
   AuthedRoute: AuthedRouteWithChildren,
-  LabRoute: LabRoute,
   LoginRoute: LoginRoute,
 }
 export const routeTree = rootRouteImport

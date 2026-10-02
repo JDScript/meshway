@@ -40,7 +40,7 @@ Motion only shows fresh evidence; nothing animates by default.
 | --- | --- | --- |
 | Link flow | Both ends report the channel authenticated within its freshness window. Particles run both ways at a fixed speed: dial direction is not business direction. | One-sided: static amber. Unauthenticated: static red dashed. Configured with no report: static grey dotted. |
 | Node breathing | The agent's runtime report is current (within its TTL). | Recent control-plane contact only: solid, no breathing. Neither: dimmed. |
-| Rotation | Idle globe mode, nothing selected. | Stops on interaction or selection. |
+| Rotation | Nothing on the globe is focused. | Stops on interaction or on focusing a placed node. |
 
 Speed and density are not tied to RTT or traffic. Traffic is not measured;
 when it is, flow may map to it. `prefers-reduced-motion` turns off rotation,
@@ -51,57 +51,96 @@ flow and breathing; states stay distinguishable by stroke and text.
 - No layout shift, ever. Feedback that is not part of a component's own shape
   (sign-in failures, read failures, confirmations) goes to a toast; panels
   reserve every slot and only change values.
-- Forms are real forms: named fields, `autocomplete`, Enter submits.
-- Floating surfaces use one frosted-glass style (`.glass`): mostly opaque fill,
-  strong blur, lit top edge, gradient hairline. Readability first.
-- Wrappers that animate in fill backwards only; a lingering filter or opacity
-  would turn them into backdrop roots and stop the glass from blurring.
+- Forms are real forms: named fields, `autocomplete`, Enter submits. Text
+  fields bound to the URL are uncontrolled and never written during an IME
+  composition.
+- Floating surfaces use one frosted-glass style (`.glass`); its fill, blur and
+  shadow are unlayered so component utilities never show through. An opacity
+  or filter on a glass panel's wrapper stops its blur, so surfaces animate on
+  the glass element itself.
+
+## Surfaces
+
+The globe is always the canvas; everything else floats over it. Each
+surface kind has one slot, so nothing stacks:
+
+| Surface | Where | What |
+| --- | --- | --- |
+| Chrome | always | network card top left (switcher, counts, link bar; on phones bottom centre), preferences and account top right, the dock |
+| Dock | left, under the network card | icon rail on wide screens; on phones a round launcher that unfolds the pages |
+| Page panel | left, beside the dock | one page's list (the node list today) |
+| Peek | right | the overview's quick look at one node (shadcn Drawer, not modal) |
+| Workspace | right of the page panel, covering the globe | one entity in full (a node: tabs, more to come); the globe dims and keeps its place |
+| Unplaced | bottom left, overview only | a round count ringed by states; opens the list of nodes without a sourced location |
+
+- Unplaced nodes are not drawn on the globe (no location source exists yet);
+  links to them are listed in the node's surfaces only.
+- `features/shell/layout.ts` is the single source of geometry. The globe
+  centres (and shrinks if needed) in the space the surfaces leave free, and the
+  same numbers are published as CSS variables for class-placed surfaces.
+- The shell (`features/shell/network-shell.tsx`) is mounted once for all of a
+  network's pages, so changing pages only brings surfaces in and out; it alone
+  writes the globe's inputs (lists may highlight a node).
+- Surfaces appear in place with a fade and a short shift and keep their last
+  content while leaving (`Surface`); the peek slides as a drawer.
+
+## URL and state
+
+| State | Owner |
+| --- | --- |
+| What is open: page, entity, peek, tab, list search and filter | the URL (TanStack Router, Zod-validated; defaults left out) |
+| Server data | TanStack Query cache, filled by route loaders |
+| Globe inputs | `features/globe/store.ts` (zustand), written by the shell |
+| First-load sequence | `features/boot/boot-store.ts` |
+| Transient UI (a menu is open) | component state |
+| Preferences (theme, locale) | `localStorage` |
+
+Routes: `/networks/<id>/overview?node=` (peek), `/networks/<id>/nodes?q=&state=`
+(list), `/networks/<id>/nodes/<node>?q=&state=&tab=` (workspace over the list).
+Opening a peek or a workspace from nothing pushes a history entry marked
+`opened`; switching entities replaces it; closing an `opened` entry goes back,
+so Back and the close button agree. Typing into a search replaces. Switching
+networks keeps the page and opens nothing. Every move goes through
+`useShellNavigation`.
+
+## Design tokens
+
+Tokens beyond shadcn's are in `src/index.css` (`@theme static` / `@theme
+inline`): surface radii (`surface` 22, `sheet` 28) and concentric inner radii
+(`row` 14, `tile` 12: inner = outer − inset); type roles (`meta`, `row`,
+`lead`, `display`); motion curves (`settle`, `entrance`, `leave`; springs in
+`lib/ease.ts`); fills on glass (`fill-subtle`, `-hover`, `-selected`,
+`-raised`, `divider`); vitality colours with distinct dot shapes (lit,
+solid, hollow). Components use these instead of literal values.
+
+## AgentUI
+
+The dock's hover pill, active pill and the segmented controls follow
+AgentUI's animated sidebar and segment patterns
+(https://www.agentui.pro). `components/motion/shared-layout-bg.tsx` and
+`lib/ease.ts` are its registry source, only reformatted; they need `motion`.
 
 ## Globe
 
 - One globe for the whole console, rendered by globe.gl (camera, controls,
   atmosphere, DOM markers) plus our own shader layers (surface, land dots,
-  orbit, links, comet pulses). Visual weights come from a `GlobeLook`; colours
-  only from theme tokens.
-- Unplaced nodes sit on an orbit; with GeoIP they move to the ground.
+  links, pulses, the loader's comet). Colours come only from theme tokens.
+- The camera and the offset follow critically damped springs, re-aimed
+  whenever surfaces change, so motion never stops dead or restarts.
 - The engine chunk is lazy-loaded (~550 kB gzip, mostly three.js and
   three-globe); trimming it is open work.
-
-## Design lab
-
-`/lab?v=<concept>` (development builds only) shows whole-direction concepts
-over sample data: Observatory, Cartograph, Aurora and Schematic. They exist to
-choose a direction and are removed once one is chosen.
-
-## Modes
-
-- **Globe mode** (`/networks/<id>/overview`): the globe fills the screen. Top
-  left, the network chip (switcher, node and link counts, link-state bar);
-  top right, console entry and preferences; the selected node's card on the
-  right.
-- **Console mode** (`/networks/<id>/<page>`): shadcn `sidebar-07`. Added with
-  `shadcn@4.21.1 add sidebar-07` (style `base-nova`); it generated
-  `app-sidebar`, `nav-main`, `nav-projects`, `nav-user` and `team-switcher`
-  and skipped 12 existing primitives. Those five were adapted into
-  `features/console/` without their sample data: the team switcher became the
-  network switcher, `nav-main` is flat (only pages that exist), `nav-user`
-  carries the account, its role here, theme, language and sign-out;
-  `nav-projects` is not used. `ui/sidebar.tsx` is unchanged.
-- The globe docks into the orb of the network switcher (or of the top bar on
-  mobile, where the sidebar is a sheet), keeps turning and drawing its links
-  there, ringed by the link-state bar; the engine tracks the slot every frame,
-  so collapsing the sidebar carries it along. The orb leads back to the globe.
-- Switching networks keeps the page and drops its selection. Both modes
-  share one network view (`useNetworkView`), so the globe and every summary
-  agree.
-- Route changes are view transitions: the interface layer cross-fades while
-  the live globe animates itself underneath.
 
 ## First load
 
 A held screen with a 2D loader globe (no three.js) shows from the first paint
-until the renderer chunk and the first route's data are in (zustand
-`boot-store`; data itself goes through the TanStack Query cache via route
-loaders). The WebGL globe then takes over at the same size, view and
-longitude, grows into its frame and settles on a continent; the interface
-fades in after it.
+until the renderer has drawn and the first route's data are in. Its backdrop
+then goes at once (the stage draws the same one); the loader cross-fades into
+the WebGL globe in the same pose, comet included, and the globe grows into
+its frame and settles on a continent while the interface comes in. View
+transitions are not used: during the first load they would lift the interface
+above the held screen.
+
+## Development aids
+
+- Alt+G toggles the layout guides (development builds only): every line of
+  `layout.ts` and a 4px grid, for checking alignment by eye or in crops.

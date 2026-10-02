@@ -7,6 +7,7 @@ import { createRoot } from "react-dom/client"
 import "./index.css"
 import { ThemeProvider } from "@/components/theme-provider"
 import { TooltipProvider } from "@/components/ui/tooltip"
+import { LAYOUT_VARIABLES } from "@/features/shell/layout"
 import { handleSessionRejected, SessionRejected } from "@/lib/api"
 import { getLocale } from "@/paraglide/runtime.js"
 import { routeTree } from "./routeTree.gen"
@@ -29,8 +30,6 @@ const router = createRouter({
   defaultPreload: "intent",
   defaultPreloadStaleTime: 0,
   scrollRestoration: true,
-  // Mode switches cross-fade the interface while the live globe animates.
-  defaultViewTransition: true,
 })
 
 declare module "@tanstack/react-router" {
@@ -47,6 +46,7 @@ handleSessionRejected(() => {
 })
 
 document.documentElement.lang = getLocale()
+for (const [name, value] of Object.entries(LAYOUT_VARIABLES)) document.documentElement.style.setProperty(name, value)
 
 const root = document.getElementById("root")
 if (!root) throw new Error("#root is missing from index.html")

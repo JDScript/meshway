@@ -25,7 +25,7 @@ function useGlobeColors(): GlobeColors {
   const [colors, setColors] = useState(readGlobeColors)
   useEffect(() => {
     const observer = new MutationObserver(() => setColors(readGlobeColors()))
-    observer.observe(document.documentElement, { attributes: true, attributeFilter: ["class", "style", "data-lab"] })
+    observer.observe(document.documentElement, { attributes: true, attributeFilter: ["class", "style"] })
     return () => observer.disconnect()
   }, [])
   return colors
@@ -73,22 +73,22 @@ export function GlobeStage() {
   useEffect(() => {
     if (!engine) return
     engine.update({ ...state, colors, motion, boot })
-    markEngineReady()
-  }, [engine, state, colors, motion, boot, markEngineReady])
+  }, [engine, state, colors, motion, boot])
 
-  // Docked, the globe is drawn above the interface, over its slot; the
-  // canvas is transparent elsewhere and lets every click through.
+  // Ready once the renderer has drawn the loader's pose at least once, so
+  // the hand-off never uncovers an empty canvas.
+  useEffect(() => {
+    if (!engine) return
+    let frame = requestAnimationFrame(() => {
+      frame = requestAnimationFrame(markEngineReady)
+    })
+    return () => cancelAnimationFrame(frame)
+  }, [engine, markEngineReady])
+
   return (
     <>
       <div className="globe-backdrop fixed inset-0" />
-      <div
-        ref={host}
-        role="region"
-        aria-label={m.globe_region()}
-        data-boot={boot}
-        data-docked={state.framing === "dock"}
-        className="globe-layer globe-stage fixed inset-0 data-[docked=true]:pointer-events-none data-[docked=true]:z-20 [&_canvas]:pointer-events-auto data-[docked=true]:[&_canvas]:pointer-events-none"
-      />
+      <div ref={host} role="region" aria-label={m.globe_region()} data-boot={boot} data-receded={state.recede} className="globe-stage fixed inset-0" />
     </>
   )
 }

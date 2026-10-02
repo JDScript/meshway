@@ -15,10 +15,24 @@ import {
   ShaderMaterial,
 } from "three"
 
+import type { BootPhase } from "@/features/boot/boot-store"
 import { m } from "@/paraglide/messages.js"
 
 import { css, type GlobeColors, type Rgb } from "./colors"
 import { landPoints } from "./land"
+import {
+  altitudeForRadius,
+  cometPointAlpha,
+  cometPointRadius,
+  LOADER_COMET,
+  LOADER_LAT,
+  LOADER_RADIUS,
+  LOADER_SPIN,
+  loaderCometHead,
+  loaderLng,
+  radiusForAltitude,
+} from "./loader-view"
+import { DEFAULT_LOOK } from "./look"
 import {
   anchorsOf,
   cartesian,
@@ -26,7 +40,6 @@ import {
   GLOBE_RADIUS,
   lineStyle,
   linkCurve,
-  orbitPath,
   pulseStreams,
   type Anchor,
   type LinkLook,
@@ -34,16 +47,17 @@ import {
   type Vec3,
   type Vitality,
 } from "./scene"
-import type { GlobeLook } from "./look"
-import type { BootPhase } from "@/features/boot/boot-store"
-
-import { altitudeForRadius, LOADER_LAT, LOADER_RADIUS, LOADER_SPIN, loaderLng, ORB_GLOBE_FRACTION } from "./loader-view"
-import { emitSelectedScreen, type GlobeState } from "./store"
+import { sameInsets, type GlobeState } from "./store"
 
 // globe.gl provides the camera, controls, atmosphere and the DOM node
-// markers. The surface, land dots, orbit, links and pulses are drawn here
-// with small shaders, so motion and light can be soft rather than stepped.
-// Everything shown comes in through update().
+// markers. The surface, land dots, links, pulses and the loader's comet are
+// drawn here with small shaders, so motion and light can be soft rather than
+// stepped. Everything shown comes in through update().
+//
+// The camera (zoom, latitude, the focus longitude) and the globe's offset
+// follow critically damped springs: whenever panels open, close or resize,
+// or a node is focused, the springs are re-aimed and carry their current
+// velocity into the new target, so motion never stops dead or restarts.
 
 export type EngineInput = GlobeState & { colors: GlobeColors; motion: boolean; boot: BootPhase }
 
@@ -61,16 +75,29 @@ type MarkerDatum = {
   label: HTMLSpanElement
 }
 
-type Pov = { lat: number; lng: number; altitude: number }
-
-const HOME: Pov = { lat: 26, lng: 105, altitude: 2.5 }
-const WELCOME: Pov = { lat: 20, lng: 112, altitude: 2.05 }
+const HOME = { lat: 24, altitude: 2.5 }
+const WELCOME = { lat: 20, altitude: 2.05 }
 /** Longitudes worth landing on after the loader: Asia, Europe–Africa, the Americas. */
 const LANDINGS = [105, 15, -85]
-const FOCUS_ALTITUDE = { ground: 1.65, orbit: 1.95 }
+/** Focusing a placed node comes this much closer than the rest view, and no closer than the floor. */
+const FOCUS_CLOSER = 0.85
+const FOCUS_FLOOR = 1.65
+/** As a radius, the globe takes at most this share of the free space's smaller side. */
+const FIT = 0.44
 const ROTATION_SPEED = 0.32
 const RESUME_ROTATION_MS = 8_000
-/** Points per comet; dense enough that the tail reads as one tapered streak. */
+/** Spring rates (1/s): the reveal is unhurried, following panels is brisk. */
+const REVEAL_RATE = 3.4
+const LAYOUT_RATE = 6
+const FOCUS_RATE = 4
+/** The loader cross-fades into the globe, both in the same pose, before anything moves. */
+const REVEAL_HOLD_MS = 200
+/** The reveal turns the globe from the loader's spin to rest on a landing over this long. */
+const REVEAL_SPIN_MS = 1800
+/** The interface comes in this far into the reveal, while the globe settles. */
+const REVEAL_UI_MS = 850
+const COMET_FADE_MS = 900
+/** Points per pulse; dense enough that the tail reads as one tapered streak. */
 const TRAIL = 44
 const TRAIL_SPACING = 0.0032
 const PULSE_SPEED = 70 // globe units per second
@@ -81,9 +108,51 @@ const vitalityText: Record<Vitality, () => string> = {
   quiet: () => m.vitality_quiet(),
 }
 
-const easeInOut = (t: number) => (t < 0.5 ? 4 * t * t * t : 1 - (-2 * t + 2) ** 3 / 2)
 const easeOut = (t: number) => 1 - (1 - t) ** 4
 const clamp01 = (t: number) => Math.min(1, Math.max(0, t))
+/** The equivalent of `degrees` in (-180, 180]. */
+const wrapDegrees = (degrees: number) => ((((degrees + 180) % 360) + 360) % 360) - 180
+const scaleOf = (altitude: number) => 1 / (1 + altitude)
+
+type Spring = { x: number; v: number; target: number; rate: number; active: boolean; dirty: boolean; epsilon: number }
+
+const spring = (x: number, epsilon: number): Spring => ({ x, v: 0, target: x, rate: LAYOUT_RATE, active: false, dirty: false, epsilon })
+
+/** One implicit step of a critically damped spring: stable for any frame time. */
+function stepSpring(s: Spring, dt: number) {
+  if (!s.active) return
+  const f = 1 + 2 * dt * s.rate
+  const hww = dt * s.rate * s.rate
+  const det = f + dt * hww
+  const v = (s.v + hww * (s.target - s.x)) / det
+  s.x += dt * v
+  s.v = v
+  s.dirty = true
+  if (Math.abs(s.target - s.x) < s.epsilon && Math.abs(v) < s.epsilon * 4) {
+    s.x = s.target
+    s.v = 0
+    s.active = false
+  }
+}
+
+/** Re-aims a spring; a moving one keeps its velocity, a resting one starts from `current`. */
+function aim(s: Spring, target: number, rate: number, current?: number) {
+  if (!s.active && current !== undefined) {
+    s.x = current
+    s.v = 0
+  }
+  s.target = target
+  s.rate = rate
+  s.active = true
+}
+
+function jump(s: Spring, value: number) {
+  s.x = value
+  s.target = value
+  s.v = 0
+  s.active = false
+  s.dirty = true
+}
 
 function lookColor(colors: GlobeColors, look: LinkLook): Rgb {
   switch (look) {
@@ -182,6 +251,37 @@ const pointShader = (land: boolean) =>
       }`,
   })
 
+
+/** Constant-size screen points (CSS px), drawn over everything: the loader's comet. */
+const cometShader = () =>
+  new ShaderMaterial({
+    transparent: true,
+    depthWrite: false,
+    depthTest: false,
+    uniforms: { uColor: { value: new Color() }, uOpacity: { value: 1 }, uPixelRatio: { value: 1 } },
+    vertexShader: /* glsl */ `
+      attribute float aAlpha;
+      attribute float aSize;
+      uniform float uPixelRatio;
+      varying float vAlpha;
+      void main() {
+        vAlpha = aAlpha;
+        gl_PointSize = aSize * uPixelRatio;
+        gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+      }`,
+    fragmentShader: /* glsl */ `
+      uniform vec3 uColor;
+      uniform float uOpacity;
+      varying float vAlpha;
+      void main() {
+        float d = length(gl_PointCoord - 0.5);
+        float a = smoothstep(0.5, 0.3, d) * vAlpha * uOpacity;
+        if (a < 0.004) discard;
+        gl_FragColor = vec4(uColor, a);
+        #include <colorspace_fragment>
+      }`,
+  })
+
 type LinkObject = {
   key: string
   nodeIds: [string, string]
@@ -205,13 +305,17 @@ export function createGlobeEngine(
   })
   const renderer = globe.renderer()
   renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2))
+  const look = DEFAULT_LOOK
 
   const surface = surfaceShader()
+  surface.uniforms.uRimStrength = { value: look.rim }
+  surface.uniforms.uOpacity = { value: look.surfaceOpacity }
+  surface.depthWrite = look.surfaceOpacity >= 1
   globe
     .backgroundColor("rgba(0,0,0,0)")
     .showGraticules(false)
-    .showAtmosphere(true)
-    .atmosphereAltitude(0.14)
+    .showAtmosphere(look.atmosphere > 0)
+    .atmosphereAltitude(look.atmosphere)
     .globeMaterial(surface)
     .htmlElementsData([])
     .htmlLat("lat")
@@ -233,11 +337,13 @@ export function createGlobeEngine(
   const landGeometry = new BufferGeometry()
   landGeometry.setAttribute("position", new Float32BufferAttribute(landPoints().flatMap(({ lat, lng }) => cartesian(lat, lng, 0.004)), 3))
   const landMaterial = pointShader(true)
-  landMaterial.uniforms.uSize = { value: 1.5 }
+  landMaterial.uniforms.uSize = { value: look.landSize }
+  landMaterial.uniforms.uOpacity = { value: 1 }
   const land = new Points(landGeometry, landMaterial)
   // Transparent objects sort by distance; explicit orders keep everything
-  // drawn after the (fading) surface, which is order 0.
+  // drawn after the surface, which is order 0.
   land.renderOrder = 1
+  land.visible = look.land === "dots"
   layer.add(land)
 
   // Graticule: every 15° of latitude and longitude, just above the land.
@@ -254,6 +360,7 @@ export function createGlobeEngine(
   const graticuleMaterial = new LineBasicMaterial({ transparent: true, depthWrite: false, opacity: 0 })
   const graticule = new LineSegments(graticuleGeometry, graticuleMaterial)
   graticule.renderOrder = 1
+  graticule.visible = look.graticule
   layer.add(graticule)
 
   // Starfield: far points on a shell, twinkling slowly.
@@ -279,16 +386,6 @@ export function createGlobeEngine(
   stars.frustumCulled = false
   layer.add(stars)
 
-  // The orbit of unplaced nodes.
-  const orbitGeometry = new BufferGeometry()
-  orbitGeometry.setAttribute("position", new Float32BufferAttribute(orbitPath().flat(), 3))
-  const orbitMaterial = new LineDashedMaterial({ transparent: true, depthWrite: false, dashSize: 0.9, gapSize: 2.6, opacity: 0 })
-  const orbit = new Line(orbitGeometry, orbitMaterial)
-  orbit.computeLineDistances()
-  orbit.visible = false
-  orbit.renderOrder = 2
-  layer.add(orbit)
-
   // Guide rings: concentric circles around the globe that always face the
   // camera, giving the empty space a quiet sense of scale.
   const guides = new Group()
@@ -311,7 +408,22 @@ export function createGlobeEngine(
     ring.computeLineDistances()
     guides.add(ring)
   }
+  guides.visible = look.guides
   layer.add(guides)
+
+  // The loader's comet, continued in place while the globe grows, then gone.
+  const cometGeometry = new BufferGeometry()
+  cometGeometry.setAttribute("position", new BufferAttribute(new Float32Array(LOADER_COMET.points * 3), 3))
+  const cometPoints = Array.from({ length: LOADER_COMET.points }, (_, k) => k)
+  cometGeometry.setAttribute("aAlpha", new Float32BufferAttribute(cometPoints.map(cometPointAlpha), 1))
+  cometGeometry.setAttribute("aSize", new Float32BufferAttribute(cometPoints.map((k) => cometPointRadius(k) * 2 + 1), 1))
+  const cometMaterial = cometShader()
+  const comet = new Points(cometGeometry, cometMaterial)
+  comet.frustumCulled = false
+  comet.renderOrder = 6
+  const cometPlane = new Group()
+  cometPlane.add(comet)
+  layer.add(cometPlane)
 
   // Links and their pulses.
   const linkGroup = new Group()
@@ -338,206 +450,201 @@ export function createGlobeEngine(
   const controls = globe.controls()
   controls.enablePan = false
   controls.minDistance = 150
-  controls.maxDistance = 560
+  controls.maxDistance = Infinity
   controls.autoRotate = true
   controls.autoRotateSpeed = 0
 
-  // ---- Animation state, advanced by one frame loop -----------------------
+  // ---- State, advanced by one frame loop ---------------------------------
   let last: EngineInput | null = null
   let width = container.clientWidth
   let height = container.clientHeight
   let anchors = new Map<string, Anchor>()
   let markersKey = ""
   let linksKey = ""
-  let rotationTarget = ROTATION_SPEED
+  let rotationTarget = 0
   let rotationSpeed = 0
   let interacting = false
   /** After a drag the globe stays still for a while before drifting again. */
   let pausedUntil = 0
-  /** Set when the interface is revealed; everything beyond the bare globe fades in from it. */
-  let extrasShownAt: number | null = null
+  /** When the interface came in; everything beyond the bare globe fades in from it. */
+  let revealedAt: number | null = null
   let linksShownAt = performance.now()
-  /** The first-load hand-off: from the loader's pose, grow into the frame. */
-  let intro: { start: number; ms: number; fromAlt: number; fromLng: number; spin: number; v0: number; to: Pov; toOffset: [number, number] } | null = null
+  /** The first-load hand-off: the loader's spin eases out onto a landing longitude. */
+  let reveal: { start: number; ms: number; fromLng: number; turn: number; v0: number; aimed: boolean } | null = null
+  let cometFadeFrom: number | null = null
   const loaderAltitude = () => altitudeForRadius(LOADER_RADIUS, Math.max(height, 1))
-  const framingPov = (input: EngineInput): Pov => (input.framing === "welcome" ? WELCOME : HOME)
-  let offset: [number, number] = [0, 0]
-  let offsetTween: { from: [number, number]; to: [number, number]; start: number; ms: number } | null = null
-  /** Moving between framings: apparent size, latitude and offset together; longitude keeps turning. */
-  let frameTween: {
-    start: number
-    ms: number
-    from: { scale: number; lat: number; lng: number; offset: [number, number] }
-    /** `lng` null: keep turning with the globe instead of aiming. */
-    to: { scale: number; lat: number; lng: number | null; offset: [number, number] }
-  } | null = null
-  /** How far the dock framing has taken over, 0–1 (markers, stars and rings fade with it). */
-  let docked = 0
-  let fly: { from: Pov; to: Pov; start: number; ms: number; bump: number } | null = null
+  const springs = {
+    scale: spring(scaleOf(loaderAltitude()), 1e-4),
+    lat: spring(LOADER_LAT, 0.005),
+    lng: spring(0, 0.005),
+    x: spring(0, 0.05),
+    y: spring(0, 0.05),
+  }
 
   controls.addEventListener("start", () => {
     interacting = true
-    fly = null
+    // The hand has the camera now; the next re-aim starts from wherever it leaves it.
+    springs.scale.active = false
+    springs.lat.active = false
+    springs.lng.active = false
   })
   controls.addEventListener("end", () => {
     interacting = false
     pausedUntil = performance.now() + RESUME_ROTATION_MS
   })
 
-  const rotationFor = (input: EngineInput) => (input.motion && input.selectedNodeId === null ? ROTATION_SPEED : 0)
+  const focusOf = (input: EngineInput): Anchor | null =>
+    input.framing === "network" && input.selectedNodeId ? (anchors.get(input.selectedNodeId) ?? null) : null
+  const framingLat = (input: EngineInput) => (input.framing === "welcome" ? WELCOME.lat : HOME.lat)
+  /** The rest view: home size, or smaller when the free space between panels is narrow. */
+  const restAltitude = (input: EngineInput) => {
+    if (input.framing === "welcome") return WELCOME.altitude
+    const { top, right, bottom, left } = input.insets
+    const free = Math.max(Math.min(width - left - right, height - top - bottom), 160)
+    const radius = Math.min(radiusForAltitude(HOME.altitude, Math.max(height, 1)), free * FIT)
+    return altitudeForRadius(radius, Math.max(height, 1))
+  }
+  const targetAltitude = (input: EngineInput) => {
+    const rest = restAltitude(input)
+    return focusOf(input) ? Math.max(FOCUS_FLOOR, rest - FOCUS_CLOSER) : rest
+  }
+  /** Centre of the free space, relative to the viewport's centre. */
+  const offsetFor = (input: EngineInput): [number, number] => {
+    if (input.framing === "welcome") return width >= 900 ? [Math.min(width * 0.14, 260), 0] : [0, height * 0.18]
+    const { top, right, bottom, left } = input.insets
+    return [(left - right) / 2, (top - bottom) / 2]
+  }
 
-  const flyTo = (to: Pov, ms: number) => {
-    const from = globe.pointOfView()
-    if (ms <= 0) {
-      fly = null
-      globe.pointOfView(to)
+  /** Points the springs where `input` wants the camera; `aimView` also re-aims latitude and the focus longitude. */
+  const retarget = (input: EngineInput, requested: number, aimView: boolean) => {
+    const pov = globe.pointOfView()
+    // Nothing hurries the reveal along.
+    const rate = reveal ? Math.min(requested, REVEAL_RATE) : requested
+    const to = (s: Spring, target: number, current?: number) => (input.motion ? aim(s, target, rate, current) : jump(s, target))
+    to(springs.scale, scaleOf(targetAltitude(input)), scaleOf(pov.altitude))
+    const [x, y] = offsetFor(input)
+    to(springs.x, x)
+    to(springs.y, y)
+    if (!aimView) return
+    const focus = focusOf(input)
+    to(springs.lat, focus ? focus.lat : framingLat(input), pov.lat)
+    if (focus && !reveal) to(springs.lng, pov.lng + wrapDegrees(focus.lng - pov.lng), pov.lng)
+    else springs.lng.active = false
+  }
+
+  const beginReveal = (input: EngineInput) => {
+    if (!input.motion) {
+      cometFadeFrom = performance.now()
+      retarget(input, REVEAL_RATE, true)
+      revealedAt = cometFadeFrom
+      queueMicrotask(onRevealed)
       return
     }
-    let dLng = to.lng - from.lng
-    dLng = ((((dLng + 180) % 360) + 360) % 360) - 180
-    const target = { ...to, lng: from.lng + dLng }
-    const distance = Math.hypot(target.lat - from.lat, dLng) / 180
-    fly = { from, to: target, start: performance.now(), ms, bump: Math.min(0.8, distance * 0.9) }
+    const start = performance.now() + REVEAL_HOLD_MS
+    cometFadeFrom = start
+    const fromLng = loaderLng(start)
+    const focus = focusOf(input)
+    const ahead = (lng: number) => ((((lng - fromLng - 40) % 360) + 360) % 360) + 40
+    reveal = {
+      start,
+      ms: REVEAL_SPIN_MS,
+      fromLng,
+      turn: focus ? ahead(focus.lng) : Math.min(...LANDINGS.map(ahead)),
+      v0: (LOADER_SPIN * REVEAL_SPIN_MS) / 1000,
+      aimed: false,
+    }
   }
-
-  /** Where the dock slot is right now (it may move: sidebar collapse, scroll, resize). */
-  const dockSlot = (input: EngineInput) => {
-    const element = input.dock
-    if (!element || !element.isConnected) return null
-    const box = element.getBoundingClientRect()
-    if (box.width === 0) return null
-    return { x: box.left + box.width / 2, y: box.top + box.height / 2, radius: (box.width / 2) * ORB_GLOBE_FRACTION }
-  }
-
-  const offsetFor = (input: EngineInput): [number, number] => {
-    const slot = input.framing === "dock" ? dockSlot(input) : null
-    if (slot) return [slot.x - width / 2, slot.y - height / 2]
-    if (input.framing === "welcome") return width >= 900 ? [Math.min(width * 0.14, 260), 0] : [0, height * 0.18]
-    return [-input.rightInset / 2, 0]
-  }
-  const framePov = (input: EngineInput): Pov => {
-    const slot = input.framing === "dock" ? dockSlot(input) : null
-    return slot ? { lat: 18, lng: globe.pointOfView().lng, altitude: altitudeForRadius(slot.radius, Math.max(height, 1)) } : framingPov(input)
-  }
-  const scaleOf = (altitude: number) => 1 / (1 + altitude)
 
   let frame = 0
   let previousTime = performance.now()
   const tick = (time: number) => {
     frame = requestAnimationFrame(tick)
-    const dt = Math.min(0.1, (time - previousTime) / 1000)
+    const dt = Math.min(0.05, (time - previousTime) / 1000)
     previousTime = time
     const motion = last?.motion ?? true
+    const loading = last === null || last.boot === "loading"
+    const holding = reveal !== null && time < reveal.start
 
-    // While loading, follow the loader's spin exactly; then grow into the frame.
-    if (last?.boot === "loading" || (intro && time < intro.start)) {
-      globe.pointOfView({ lat: LOADER_LAT, lng: loaderLng(time), altitude: loaderAltitude() })
-    } else if (intro) {
-      const t = clamp01((time - intro.start) / intro.ms)
-      const k = easeInOut(t)
-      // Interpolate apparent size, not altitude, so the growth reads evenly.
-      const from = 1 / (1 + intro.fromAlt)
-      const to = 1 / (1 + intro.to.altitude)
-      const scale = from + (to - from) * k
-      globe.pointOfView({
-        lat: LOADER_LAT + (intro.to.lat - LOADER_LAT) * k,
-        // Cubic Hermite: leaves at the loader's spin, settles at rest on the landing.
-        lng: intro.fromLng + (t ** 3 - 2 * t ** 2 + t) * intro.v0 + (-2 * t ** 3 + 3 * t ** 2) * intro.spin,
-        altitude: 1 / scale - 1,
-      })
-      offset = [intro.toOffset[0] * k, intro.toOffset[1] * k]
-      globe.globeOffset(offset)
-      if (t >= 1) {
-        intro = null
-        controls.maxDistance = 560
-        extrasShownAt = time
-        linksShownAt = time
-        onRevealed()
-      }
+    if (reveal && !holding && !reveal.aimed && last) {
+      // The springs rest at the loader's pose; from there they carry it into the frame.
+      reveal.aimed = true
+      retarget(last, REVEAL_RATE, true)
     }
 
-    const extras = extrasShownAt === null ? 0 : motion ? easeOut(clamp01((time - extrasShownAt) / 1000)) : 1
-    const reveal = extras
-    surface.uniforms.uOpacity = { value: last?.look.surfaceOpacity ?? 1 }
-    landMaterial.uniforms.uOpacity = { value: 1 }
-    pulseMaterial.uniforms.uOpacity = { value: extras }
-    orbitMaterial.opacity = (last?.colors.dark ? 0.55 : 0.7) * extras * (1 - docked * 0.5)
+    if (loading || holding) {
+      // Follow the loader exactly; the springs wait at the same pose.
+      globe.pointOfView({ lat: LOADER_LAT, lng: loaderLng(motion ? time : 0), altitude: loaderAltitude() })
+      springs.scale.x = scaleOf(loaderAltitude())
+      springs.lat.x = LOADER_LAT
+    } else {
+      if (!interacting) {
+        stepSpring(springs.scale, dt)
+        stepSpring(springs.lat, dt)
+        stepSpring(springs.lng, dt)
+      }
+      stepSpring(springs.x, dt)
+      stepSpring(springs.y, dt)
 
-    const look = last?.look
+      let lng: number | null = null
+      if (reveal) {
+        const t = clamp01((time - reveal.start) / reveal.ms)
+        // Cubic Hermite: leaves at the loader's spin, settles at rest on the landing.
+        lng = reveal.fromLng + (t ** 3 - 2 * t ** 2 + t) * reveal.v0 + (-2 * t ** 3 + 3 * t ** 2) * reveal.turn
+        if (revealedAt === null && time - reveal.start >= REVEAL_UI_MS) {
+          revealedAt = time
+          linksShownAt = time
+          onRevealed()
+        }
+        if (t >= 1) reveal = null
+      } else if (springs.lng.dirty) lng = springs.lng.x
+
+      if (springs.scale.dirty || springs.lat.dirty || lng !== null) {
+        const pov = globe.pointOfView()
+        globe.pointOfView({
+          lat: springs.lat.dirty ? springs.lat.x : pov.lat,
+          lng: lng ?? pov.lng,
+          altitude: springs.scale.dirty ? 1 / springs.scale.x - 1 : pov.altitude,
+        })
+      }
+      if (springs.x.dirty || springs.y.dirty) globe.globeOffset([springs.x.x, springs.y.x])
+      for (const s of Object.values(springs)) s.dirty = false
+      controls.maxDistance = Math.max(560, GLOBE_RADIUS / springs.scale.x + 1, (GLOBE_RADIUS / springs.scale.target) * 1.25)
+    }
+    controls.enabled = !loading && reveal === null
+
+    // The comet: exactly where the loader drew it, fading as the globe grows.
+    const cometOpacity = cometFadeFrom === null ? 1 : motion ? 1 - easeOut(clamp01((time - cometFadeFrom) / COMET_FADE_MS)) : 0
+    comet.visible = cometOpacity > 0.001
+    if (comet.visible) {
+      cometPlane.quaternion.copy(globe.camera().quaternion)
+      cometMaterial.uniforms.uOpacity = { value: cometOpacity }
+      const head = loaderCometHead(time, motion)
+      const radius = LOADER_COMET.radius * GLOBE_RADIUS
+      const position = cometGeometry.getAttribute("position")
+      for (let k = 0; k < LOADER_COMET.points; k += 1) {
+        const angle = head - k * LOADER_COMET.spacing
+        // Screen y runs down, the camera's up.
+        position.setXYZ(k, Math.cos(angle) * radius, -Math.sin(angle) * radius * LOADER_COMET.squash, 0)
+      }
+      position.needsUpdate = true
+    }
+
+    const extras = revealedAt === null ? 0 : motion ? easeOut(clamp01((time - revealedAt) / 1000)) : 1
+    pulseMaterial.uniforms.uOpacity = { value: extras }
     const dark = last?.colors.dark ?? true
     guides.quaternion.copy(globe.camera().quaternion)
-    guides.visible = look?.guides ?? false
     guideMaterials.forEach((material, index) => {
-      material.opacity = ((dark ? [0.14, 0.09, 0.06] : [0.2, 0.13, 0.08])[index] ?? 0) * reveal * (1 - docked)
+      material.opacity = ((dark ? [0.14, 0.09, 0.06] : [0.2, 0.13, 0.08])[index] ?? 0) * extras
     })
-    graticule.visible = look?.graticule ?? false
-    graticuleMaterial.opacity = (dark ? 0.22 : 0.32) * reveal
+    graticuleMaterial.opacity = (dark ? 0.22 : 0.32) * extras
     // Stars belong to a dark sky only.
-    stars.visible = (look?.stars ?? false) && dark
-    starMaterial.uniforms.uOpacity = { value: reveal * (1 - docked) * (0.85 + 0.15 * Math.sin(time / 1300)) }
+    stars.visible = look.stars && dark
+    starMaterial.uniforms.uOpacity = { value: extras * (0.85 + 0.15 * Math.sin(time / 1300)) }
 
     // Rotation eases in and out instead of starting or stopping dead.
-    const target = interacting || time < pausedUntil ? 0 : rotationTarget
+    const target = interacting || time < pausedUntil || reveal ? 0 : rotationTarget
     rotationSpeed += (target - rotationSpeed) * (1 - Math.exp(-dt / 0.7))
     controls.autoRotateSpeed = rotationSpeed
-
-    const dockTarget = last?.framing === "dock" ? 1 : 0
-    if (frameTween && !intro) {
-      const t = clamp01((time - frameTween.start) / frameTween.ms)
-      const k = easeInOut(t)
-      const { from } = frameTween
-      let to = frameTween.to
-      if (last?.framing === "dock") {
-        // The slot may still be moving (the layout is entering); aim at where it is now.
-        to = { ...to, scale: scaleOf(framePov(last).altitude), offset: offsetFor(last) }
-      }
-      const scale = from.scale + (to.scale - from.scale) * k
-      globe.pointOfView({
-        lat: from.lat + (to.lat - from.lat) * k,
-        lng: to.lng === null ? globe.pointOfView().lng : from.lng + (to.lng - from.lng) * k,
-        altitude: 1 / scale - 1,
-      })
-      offset = [from.offset[0] + (to.offset[0] - from.offset[0]) * k, from.offset[1] + (to.offset[1] - from.offset[1]) * k]
-      globe.globeOffset(offset)
-      docked = dockTarget === 1 ? k : 1 - k
-      if (t >= 1) frameTween = null
-    } else {
-      docked = dockTarget
-      if (last?.framing === "dock" && !intro) {
-        // Docked: follow the slot every frame.
-        const next = offsetFor(last)
-        if (Math.abs(next[0] - offset[0]) > 0.25 || Math.abs(next[1] - offset[1]) > 0.25) {
-          offset = next
-          globe.globeOffset(offset)
-        }
-        const altitude = framePov(last).altitude
-        const current = globe.pointOfView()
-        if (Math.abs(current.altitude - altitude) > 0.002 || Math.abs(current.lat - 18) > 0.05) globe.pointOfView({ lat: 18, altitude })
-      }
-    }
-    container.style.setProperty("--globe-docked", docked.toFixed(3))
-
-    if (offsetTween && !intro && !frameTween) {
-      const t = clamp01((time - offsetTween.start) / offsetTween.ms)
-      const k = easeInOut(t)
-      offset = [
-        offsetTween.from[0] + (offsetTween.to[0] - offsetTween.from[0]) * k,
-        offsetTween.from[1] + (offsetTween.to[1] - offsetTween.from[1]) * k,
-      ]
-      globe.globeOffset(offset)
-      if (t >= 1) offsetTween = null
-    }
-
-    if (fly && !intro && !frameTween) {
-      const t = clamp01((time - fly.start) / fly.ms)
-      const k = easeInOut(t)
-      globe.pointOfView({
-        lat: fly.from.lat + (fly.to.lat - fly.from.lat) * k,
-        lng: fly.from.lng + (fly.to.lng - fly.from.lng) * k,
-        altitude: fly.from.altitude + (fly.to.altitude - fly.from.altitude) * k + fly.bump * Math.sin(Math.PI * k),
-      })
-      if (t >= 1) fly = null
-    }
 
     // Links draw in from their first end; pulses travel along them.
     const drawn = motion ? easeOut(clamp01((time - linksShownAt) / 1100)) : 1
@@ -546,7 +653,7 @@ export function createGlobeEngine(
     const sizeAttribute = pulseGeometry.getAttribute("aSize")
     let count = 0
     links.forEach((link, index) => {
-      link.line.visible = extrasShownAt !== null
+      link.line.visible = revealedAt !== null
       const local = motion ? easeOut(clamp01((time - linksShownAt - index * 90) / 900)) : drawn
       link.line.geometry.setDrawRange(0, Math.max(2, Math.round(local * link.curve.length)))
       for (const stream of link.streams) {
@@ -570,12 +677,6 @@ export function createGlobeEngine(
     alphaAttribute.needsUpdate = true
     sizeAttribute.needsUpdate = true
     pulseGeometry.setDrawRange(0, count)
-
-    const selected = last?.selectedNodeId ? markers.get(last.selectedNodeId) : undefined
-    if (selected) {
-      const point = globe.getScreenCoords(selected.lat, selected.lng, selected.altitude)
-      emitSelectedScreen({ x: point.x, y: point.y, visible: selected.element.dataset.behind !== "true" })
-    } else emitSelectedScreen(null)
   }
   frame = requestAnimationFrame(tick)
 
@@ -624,25 +725,14 @@ export function createGlobeEngine(
     surface.uniforms.uSurface = { value: color(colors.surface) }
     surface.uniforms.uRim = { value: color(colors.rim) }
     landMaterial.uniforms.uColor = { value: color(colors.land) }
-    orbitMaterial.color = color(colors.orbit)
     graticuleMaterial.color = color(colors.graticule)
     starMaterial.uniforms.uColor = { value: color(colors.star) }
     for (const material of guideMaterials) material.color = color(colors.guide)
-    orbitMaterial.opacity = colors.dark ? 0.55 : 0.7
     pulseMaterial.uniforms.uColor = { value: color(colors.pulse) }
     pulseMaterial.blending = colors.dark ? AdditiveBlending : NormalBlending
     pulseMaterial.needsUpdate = true
+    cometMaterial.uniforms.uColor = { value: color(colors.pulse) }
     globe.atmosphereColor(css(colors.atmosphere))
-  }
-
-  const applyLook = (look: GlobeLook) => {
-    land.visible = look.land === "dots"
-    landMaterial.uniforms.uSize = { value: look.landSize }
-    surface.uniforms.uRimStrength = { value: look.rim }
-    // A translucent surface stops hiding the far side.
-    surface.depthWrite = look.surfaceOpacity >= 1
-    globe.showAtmosphere(look.atmosphere > 0)
-    if (look.atmosphere > 0) globe.atmosphereAltitude(look.atmosphere)
   }
 
   const disposeLinks = () => {
@@ -660,14 +750,13 @@ export function createGlobeEngine(
     for (const sceneLink of sceneLinks) {
       const a = anchors.get(sceneLink.nodeIds[0])
       const b = anchors.get(sceneLink.nodeIds[1])
+      // Links to unplaced nodes are not drawn: they have no place to end.
       if (!a || !b) continue
       const curve = linkCurve(a, b)
       const style = lineStyle(sceneLink.look)
       const geometry = new BufferGeometry()
       geometry.setAttribute("position", new Float32BufferAttribute(curve.flat(), 3))
-      const material = style.dashed
-        ? new LineDashedMaterial({ dashSize: style.dash, gapSize: style.gap })
-        : new LineBasicMaterial()
+      const material = style.dashed ? new LineDashedMaterial({ dashSize: style.dash, gapSize: style.gap }) : new LineBasicMaterial()
       material.transparent = true
       material.depthWrite = false
       material.color = color(lookColor(input.colors, sceneLink.look))
@@ -692,29 +781,30 @@ export function createGlobeEngine(
     linksShownAt = performance.now()
   }
 
-  const emphasise = (selected: string | null) => {
+  /** A highlighted node and its neighbours stay bright; the rest recede. */
+  const emphasise = (highlight: string | null) => {
     for (const link of links) {
-      const touches = selected === null || link.nodeIds.includes(selected)
+      const touches = highlight === null || link.nodeIds.includes(highlight)
       link.material.opacity = touches ? link.baseOpacity : link.baseOpacity * 0.22
     }
-    const neighbours = new Set(links.filter((link) => selected && link.nodeIds.includes(selected)).flatMap((link) => link.nodeIds))
+    const neighbours = new Set(links.filter((link) => highlight && link.nodeIds.includes(highlight)).flatMap((link) => link.nodeIds))
     for (const [id, datum] of markers) {
-      datum.element.dataset.dimmed = selected !== null && id !== selected && !neighbours.has(id) ? "true" : "false"
+      datum.element.dataset.dimmed = highlight !== null && id !== highlight && !neighbours.has(id) ? "true" : "false"
     }
   }
 
   const update = (input: EngineInput) => {
     const previous = last
+    const previousFocus = previous ? focusOf(previous) : null
     last = input
-    const transitionMs = input.motion ? 1400 : 0
 
     if (!previous || previous.colors !== input.colors) applyColors(input.colors)
-    if (!previous || previous.look !== input.look) applyLook(input.look)
 
     const nodes = input.framing === "welcome" ? [] : input.scene.nodes
     anchors = anchorsOf(nodes)
+    const placed = nodes.filter((node) => anchors.has(node.id))
 
-    nodes.forEach((node, order) => {
+    placed.forEach((node, order) => {
       const anchor = anchors.get(node.id)
       const datum = markerFor(node, order)
       if (anchor) Object.assign(datum, { lat: anchor.lat, lng: anchor.lng, altitude: anchor.altitude })
@@ -724,109 +814,48 @@ export function createGlobeEngine(
       datum.element.setAttribute("aria-label", `${node.name} · ${vitalityText[node.vitality]()}`)
       datum.element.setAttribute("aria-pressed", node.id === input.selectedNodeId ? "true" : "false")
     })
-    const visible = new Set(nodes.map((node) => node.id))
+    const shown = new Set(placed.map((node) => node.id))
     for (const [id, datum] of markers) {
-      if (!visible.has(id)) {
+      if (!shown.has(id)) {
         datum.element.remove()
         markers.delete(id)
       }
     }
-    const nextMarkersKey = JSON.stringify(nodes.map((node) => [node.id, anchors.get(node.id)]))
+    const nextMarkersKey = JSON.stringify(placed.map((node) => [node.id, anchors.get(node.id)]))
     if (nextMarkersKey !== markersKey) {
       markersKey = nextMarkersKey
-      globe.htmlElementsData(nodes.flatMap((node) => markers.get(node.id) ?? []))
+      globe.htmlElementsData(placed.flatMap((node) => markers.get(node.id) ?? []))
     }
-
-    const hasOrbit = [...anchors.values()].some((anchor) => anchor.orbit)
-    orbit.visible = hasOrbit
 
     const nextLinksKey = JSON.stringify([input.framing === "welcome" ? [] : input.scene.links, nextMarkersKey, input.motion, input.colors])
     if (nextLinksKey !== linksKey) {
       linksKey = nextLinksKey
       buildLinks(input)
     }
-    emphasise(input.selectedNodeId)
+    const onGlobe = (id: string | null) => (id !== null && anchors.has(id) ? id : null)
+    emphasise(onGlobe(input.hoveredNodeId) ?? onGlobe(input.selectedNodeId))
 
-    if (!previous && input.boot === "loading") {
-      controls.maxDistance = Infinity
-      offset = [0, 0]
-      globe.globeOffset(offset)
-    }
-    if (previous?.boot === "loading" && input.boot !== "loading") {
-      const hold = input.motion ? 220 : 0
-      const start = performance.now() + hold
-      const ms = input.motion ? 2000 : 0
-      const fromLng = loaderLng(start)
-      const ahead = (lng: number) => ((((lng - fromLng - 40) % 360) + 360) % 360) + 40
-      intro = {
-        start,
-        ms: Math.max(ms, 1),
-        fromAlt: loaderAltitude(),
-        fromLng,
-        spin: input.motion ? Math.min(...LANDINGS.map(ahead)) : 0,
-        v0: input.motion ? (LOADER_SPIN * ms) / 1000 : 0,
-        to: framingPov(input),
-        toOffset: offsetFor(input),
+    const focus = focusOf(input)
+    if (input.boot === "loading") {
+      // The frame loop follows the loader.
+    } else if (!previous || previous.boot === "loading") {
+      if (previous) beginReveal(input)
+      else {
+        // Created after the first load (a remount): no hand-off, just the frame.
+        cometFadeFrom = -Infinity
+        revealedAt = performance.now()
+        retarget({ ...input, motion: false }, LAYOUT_RATE, true)
       }
-    }
-    const enteringOrLeavingDock = previous && previous.framing !== input.framing && (previous.framing === "dock" || input.framing === "dock")
-    if (input.boot === "loading" || intro) {
-      // The intro owns the camera and offset until it is done.
-    } else if (enteringOrLeavingDock) {
-      fly = null
-      offsetTween = null
-      // Leaving the dock straight onto a node aims at it on the way out.
-      const focus = input.framing === "network" && input.selectedNodeId ? anchors.get(input.selectedNodeId) : undefined
-      const to = focus ? { lat: focus.lat, lng: focus.lng, altitude: focus.orbit ? FOCUS_ALTITUDE.orbit : FOCUS_ALTITUDE.ground } : framePov(input)
-      const current = globe.pointOfView()
-      const lngTarget = focus ? current.lng + (((((focus.lng - current.lng + 180) % 360) + 360) % 360) - 180) : null
-      frameTween = input.motion
-        ? {
-            start: performance.now(),
-            ms: input.framing === "dock" ? 1000 : 1200,
-            from: { scale: scaleOf(current.altitude), lat: current.lat, lng: current.lng, offset },
-            to: { scale: scaleOf(to.altitude), lat: to.lat, lng: lngTarget, offset: offsetFor(input) },
-          }
-        : null
-      if (!input.motion) {
-        globe.pointOfView(to)
-        offset = offsetFor(input)
-        globe.globeOffset(offset)
-      }
-    } else if (input.framing === "dock") {
-      // Docked: the frame loop follows the slot.
-    } else if (!previous || previous.framing !== input.framing || previous.rightInset !== input.rightInset) {
-      const to = offsetFor(input)
-      if (!previous || !input.motion) {
-        offset = to
-        offsetTween = null
-        globe.globeOffset(offset)
-      } else {
-        offsetTween = { from: offset, to, start: performance.now(), ms: 1100 }
-      }
+    } else if (previous.framing !== input.framing) {
+      retarget(input, LAYOUT_RATE, true)
+    } else if (focus !== previousFocus && (focus === null || previousFocus === null || focus.lat !== previousFocus.lat || focus.lng !== previousFocus.lng)) {
+      retarget(input, FOCUS_RATE, true)
+    } else if (!sameInsets(previous.insets, input.insets)) {
+      retarget(input, LAYOUT_RATE, false)
     }
 
-    if (input.boot === "loading" || intro) {
-      // As above.
-    } else if (!previous) {
-      globe.pointOfView(framingPov(input))
-      extrasShownAt ??= performance.now()
-    } else if (previous.framing !== input.framing && !enteringOrLeavingDock) flyTo(framingPov(input), transitionMs)
-
-    if (previous && previous.selectedNodeId !== input.selectedNodeId && !intro && input.boot !== "loading" && input.framing !== "dock" && !enteringOrLeavingDock) {
-      const anchor = input.selectedNodeId ? anchors.get(input.selectedNodeId) : undefined
-      if (anchor) {
-        flyTo({ lat: anchor.lat, lng: anchor.lng, altitude: anchor.orbit ? FOCUS_ALTITUDE.orbit : FOCUS_ALTITUDE.ground }, transitionMs)
-      } else if (previous.selectedNodeId) {
-        flyTo({ ...globe.pointOfView(), altitude: HOME.altitude }, transitionMs)
-      }
-    }
-    rotationTarget = input.boot === "ready" ? (input.framing === "dock" ? (input.motion ? ROTATION_SPEED * 2.5 : 0) : rotationFor(input)) : 0
-    // The orb is a picture, not a control.
-    controls.enabled = input.framing !== "dock"
+    rotationTarget = input.boot === "ready" && input.motion && !focus ? ROTATION_SPEED : 0
     container.dataset.framing = input.framing
-    if (input.framing === "dock") controls.maxDistance = Infinity
-    else if (!intro && input.boot !== "loading") controls.maxDistance = 560
   }
 
   return {
@@ -840,18 +869,29 @@ export function createGlobeEngine(
         material.uniforms.uScale = { value: nextHeight * 0.5 }
         material.uniforms.uPixelRatio = { value: pixelRatio }
       }
-      if (last && last.boot !== "loading" && !intro && !frameTween) {
-        offsetTween = null
-        offset = offsetFor(last)
-        globe.globeOffset(offset)
-      }
+      cometMaterial.uniforms.uPixelRatio = { value: pixelRatio }
+      if (last && last.boot !== "loading") retarget(last, LAYOUT_RATE, false)
     },
     destroy() {
       cancelAnimationFrame(frame)
       document.removeEventListener("visibilitychange", onVisibility)
       globe.pauseAnimation()
       disposeLinks()
-      for (const disposable of [landGeometry, landMaterial, orbitGeometry, orbitMaterial, pulseGeometry, pulseMaterial, surface, graticuleGeometry, graticuleMaterial, starGeometry, starMaterial, ...guideMaterials]) disposable.dispose()
+      for (const disposable of [
+        landGeometry,
+        landMaterial,
+        pulseGeometry,
+        pulseMaterial,
+        surface,
+        graticuleGeometry,
+        graticuleMaterial,
+        starGeometry,
+        starMaterial,
+        cometGeometry,
+        cometMaterial,
+        ...guideMaterials,
+      ])
+        disposable.dispose()
       for (const ring of guides.children) if (ring instanceof Line) ring.geometry.dispose()
       globe._destructor()
       markers.clear()

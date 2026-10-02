@@ -1,30 +1,12 @@
 import { createFileRoute } from "@tanstack/react-router"
-import { useCallback } from "react"
-import { z } from "zod"
 
 import { prefetchOverview } from "@/features/network/prefetch"
-import { NODE_ID } from "@/features/network/queries"
-import { NetworkOverview } from "@/features/overview/network-overview"
+import { zPeekSearch } from "@/features/shell/url"
 
-const zSearch = z.object({
-  node: z.string().regex(NODE_ID).optional().catch(undefined),
-})
-
+/** The globe on its own. The network shell draws every surface; see `$network.tsx`. */
 export const Route = createFileRoute("/_authed/networks/$network/overview")({
-  validateSearch: zSearch,
+  validateSearch: zPeekSearch,
   loader: ({ context, params }) => prefetchOverview(context.queryClient, params.network),
-  // Selection lives in the search params; picking a node must not re-run the prefetch.
+  // What is open lives in the search; opening must not re-run the prefetch.
   shouldReload: false,
-  component: OverviewPage,
 })
-
-function OverviewPage() {
-  const { network } = Route.useParams()
-  const { node } = Route.useSearch()
-  const navigate = Route.useNavigate()
-  const select = useCallback(
-    (next: string | null) => void navigate({ search: { node: next ?? undefined }, replace: true, viewTransition: false }),
-    [navigate]
-  )
-  return <NetworkOverview networkId={network} selectedNodeId={node ?? null} onSelect={select} />
-}

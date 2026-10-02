@@ -5,6 +5,7 @@ import { Toaster } from "@/components/ui/sonner"
 import { BootScreen } from "@/features/boot/boot-screen"
 import { useBootStore } from "@/features/boot/boot-store"
 import { GlobeStage } from "@/features/globe/globe-stage"
+import { LayoutGuides } from "@/features/shell/layout-guides"
 
 export type RouterContext = {
   queryClient: QueryClient
@@ -24,6 +25,7 @@ function Root() {
       </div>
       <BootScreen />
       <Toaster position="top-center" />
+      {import.meta.env.DEV ? <LayoutGuides /> : null}
     </>
   )
 }

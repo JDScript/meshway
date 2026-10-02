@@ -15,7 +15,7 @@ export function ThemeSwitch() {
     <Tooltip>
       <TooltipTrigger
         render={
-          <Button variant="ghost" size="icon" aria-label={m.theme_switch()} onClick={() => setTheme(dark ? "light" : "dark")}>
+          <Button variant="ghost" size="icon" className="bar-button" aria-label={m.theme_switch()} onClick={() => setTheme(dark ? "light" : "dark")}>
             {dark ? <SunIcon /> : <MoonIcon />}
           </Button>
         }
@@ -30,7 +30,7 @@ export function LanguageSwitch() {
     <DropdownMenu>
       <DropdownMenuTrigger
         render={
-          <Button variant="ghost" size="icon" aria-label={m.language_switch()}>
+          <Button variant="ghost" size="icon" className="bar-button" aria-label={m.language_switch()}>
             <LanguagesIcon />
           </Button>
         }

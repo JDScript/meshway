@@ -11,7 +11,6 @@ export type GlobeColors = {
   rim: Rgb
   land: Rgb
   atmosphere: Rgb
-  orbit: Rgb
   guide: Rgb
   graticule: Rgb
   star: Rgb
@@ -27,7 +26,6 @@ const TOKENS: Record<Exclude<keyof GlobeColors, "dark">, string> = {
   rim: "--globe-rim",
   land: "--globe-land",
   atmosphere: "--globe-atmosphere",
-  orbit: "--globe-orbit",
   guide: "--globe-guide",
   graticule: "--globe-graticule",
   star: "--globe-star",
@@ -62,7 +60,6 @@ export function readGlobeColors(): GlobeColors {
     rim: resolve(TOKENS.rim),
     land: resolve(TOKENS.land),
     atmosphere: resolve(TOKENS.atmosphere),
-    orbit: resolve(TOKENS.orbit),
     guide: resolve(TOKENS.guide),
     graticule: resolve(TOKENS.graticule),
     star: resolve(TOKENS.star),

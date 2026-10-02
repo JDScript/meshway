@@ -4,9 +4,7 @@ import { z } from "zod"
 
 import { LanguageSwitch, ThemeSwitch } from "@/components/chrome/preferences"
 import { LoginCard } from "@/features/auth/login-card"
-import { DEFAULT_LOOK } from "@/features/globe/look"
-import { setGlobe } from "@/features/globe/store"
-import { EMPTY_SCENE } from "@/features/globe/scene"
+import { showWelcomeGlobe } from "@/features/globe/store"
 import { currentSession } from "@/lib/session"
 
 /** Same-origin paths only, never back to the login page itself. */
@@ -31,7 +29,7 @@ export const Route = createFileRoute("/login")({
 function LoginPage() {
   const { reason, returnTo } = Route.useSearch()
   useEffect(() => {
-    setGlobe({ framing: "welcome", scene: EMPTY_SCENE, selectedNodeId: null, rightInset: 0, look: DEFAULT_LOOK })
+    showWelcomeGlobe()
   }, [])
 
   return (

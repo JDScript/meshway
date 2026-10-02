@@ -8,8 +8,10 @@ import { LoaderGlobe } from "./loader-globe"
 
 /**
  * The held loading screen of the first load. It covers everything until the
- * globe renderer and the first route's data are ready, then hands its globe
- * over to the real one in place and fades away.
+ * globe renderer and the first route's data are ready. Then its backdrop
+ * goes at once (the globe stage draws the very same one underneath) and only
+ * the loader globe cross-fades into the real globe, which is already in the
+ * same place and pose and starts growing straight away.
  */
 export function BootScreen() {
   const phase = useBootStore((state) => state.phase)
@@ -27,9 +29,9 @@ export function BootScreen() {
       aria-live="polite"
       aria-label={m.loading()}
       data-phase={phase}
-      className="fixed inset-0 z-50 transition-opacity delay-150 duration-500 data-[phase=revealing]:pointer-events-none data-[phase=revealing]:opacity-0"
+      className="fixed inset-0 z-50 data-[phase=revealing]:pointer-events-none"
     >
-      <div className="globe-backdrop absolute inset-0" />
+      {phase === "loading" ? <div className="globe-backdrop absolute inset-0" /> : null}
       <LoaderGlobe visible={phase === "loading"} />
     </div>
   )

@@ -34,9 +34,9 @@ export const lookColor: Record<LinkLook, string> = {
 }
 
 export const vitalityColor: Record<Vitality, string> = {
-  live: "var(--brand)",
-  contact: "var(--foreground)",
-  quiet: "var(--muted-foreground)",
+  live: "var(--vitality-live)",
+  contact: "var(--vitality-contact)",
+  quiet: "var(--vitality-quiet)",
 }
 
 export function rttText(ms: number | null): string | null {

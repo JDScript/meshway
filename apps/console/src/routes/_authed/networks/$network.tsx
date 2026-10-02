@@ -2,11 +2,9 @@ import { createFileRoute, notFound, Outlet } from "@tanstack/react-router"
 import { useEffect } from "react"
 
 import { StatusCard } from "@/components/chrome/status-card"
-import { DEFAULT_LOOK } from "@/features/globe/look"
-import { EMPTY_SCENE } from "@/features/globe/scene"
-import { setGlobe } from "@/features/globe/store"
+import { showWelcomeGlobe } from "@/features/globe/store"
 import { NETWORK_ID, networksQuery, rememberNetwork } from "@/features/network/queries"
-import { useNetworkView } from "@/features/network/use-network-view"
+import { NetworkShell } from "@/features/shell/network-shell"
 import { m } from "@/paraglide/messages.js"
 
 /**
@@ -25,21 +23,19 @@ export const Route = createFileRoute("/_authed/networks/$network")({
   errorComponent: NetworksFailed,
 })
 
-/** One scene for the whole network: the globe keeps it across every page below. */
+/** One shell for every page of the network, so changing pages only moves panels. */
 function NetworkLayout() {
   const { network } = Route.useParams()
-  const { scene } = useNetworkView(network)
-  useEffect(() => {
-    setGlobe({ scene })
-  }, [scene])
-  useEffect(() => () => setGlobe({ scene: EMPTY_SCENE }), [])
-  return <Outlet />
+  return (
+    <>
+      <NetworkShell networkId={network} />
+      <Outlet />
+    </>
+  )
 }
 
 function useWelcomeGlobe() {
-  useEffect(() => {
-    setGlobe({ framing: "welcome", scene: EMPTY_SCENE, selectedNodeId: null, rightInset: 0, look: DEFAULT_LOOK })
-  }, [])
+  useEffect(showWelcomeGlobe, [])
 }
 
 function NetworkNotFound() {

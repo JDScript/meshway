@@ -2,9 +2,7 @@ import { createFileRoute, redirect } from "@tanstack/react-router"
 import { useEffect } from "react"
 
 import { StatusCard } from "@/components/chrome/status-card"
-import { DEFAULT_LOOK } from "@/features/globe/look"
-import { setGlobe } from "@/features/globe/store"
-import { EMPTY_SCENE } from "@/features/globe/scene"
+import { showWelcomeGlobe } from "@/features/globe/store"
 import { networksQuery, rememberedNetwork } from "@/features/network/queries"
 import { m } from "@/paraglide/messages.js"
 
@@ -22,7 +20,7 @@ export const Route = createFileRoute("/_authed/")({
 
 function useWelcomeGlobe() {
   useEffect(() => {
-    setGlobe({ framing: "welcome", scene: EMPTY_SCENE, selectedNodeId: null, rightInset: 0, look: DEFAULT_LOOK })
+    showWelcomeGlobe()
   }, [])
 }
 

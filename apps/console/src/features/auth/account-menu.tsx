@@ -24,8 +24,8 @@ export function AccountMenu() {
     <DropdownMenu>
       <DropdownMenuTrigger
         render={
-          <Button variant="ghost" size="icon" aria-label={m.account_menu()} className="rounded-full">
-            <span className="flex size-7 items-center justify-center rounded-full bg-foreground text-xs font-semibold text-background uppercase">
+          <Button variant="ghost" size="icon" aria-label={m.account_menu()} className="bar-button">
+            <span className="flex size-8 items-center justify-center rounded-full bg-foreground text-xs font-semibold text-background uppercase">
               {email?.[0] ?? "·"}
             </span>
           </Button>

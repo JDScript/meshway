@@ -1,45 +1,64 @@
 import { create } from "zustand"
 
-import { DEFAULT_LOOK, type GlobeLook } from "./look"
-import { EMPTY_SCENE, type Scene } from "./scene"
+import { EMPTY_SCENE, type Scene } from "./scene.ts"
 
 // The globe is created once, above every route, and never re-created on
 // navigation. Routes describe what it should show through this store.
 
 /**
  * - `welcome`: signed out; the globe sits to one side of the sign-in card.
- * - `network`: a network's nodes and links, centred.
- * - `dock`: the console's pages; the globe shrinks into the orb at `dock`.
+ * - `network`: a network's placed nodes and their links, centred in the
+ *   space the floating panels leave free.
  */
-export type Framing = "welcome" | "network" | "dock"
+export type Framing = "welcome" | "network"
+
+/** CSS pixels covered by floating panels along each edge. */
+export type Insets = { top: number; right: number; bottom: number; left: number }
+
+export const NO_INSETS: Insets = { top: 0, right: 0, bottom: 0, left: 0 }
+
+export const sameInsets = (a: Insets, b: Insets) => a.top === b.top && a.right === b.right && a.bottom === b.bottom && a.left === b.left
 
 export type GlobeState = {
   framing: Framing
   scene: Scene
   selectedNodeId: string | null
-  /** Width (px) covered by a panel on the right; the globe centres in the rest. */
-  rightInset: number
-  look: GlobeLook
-  /** The slot the globe docks into; tracked every frame, so it follows layout changes. */
-  dock: HTMLElement | null
+  /** A node pointed at elsewhere (a list row); highlighted, the camera stays. */
+  hoveredNodeId: string | null
+  insets: Insets
+  /** A workspace covers the globe: it dims and stays where it is. */
+  recede: boolean
 }
 
 export const useGlobeStore = create<GlobeState>(() => ({
   framing: "welcome",
   scene: EMPTY_SCENE,
   selectedNodeId: null,
-  rightInset: 0,
-  look: DEFAULT_LOOK,
-  dock: null,
+  hoveredNodeId: null,
+  insets: NO_INSETS,
+  recede: false,
 }))
 
 export function setGlobe(patch: Partial<GlobeState>) {
+  const current = useGlobeStore.getState()
+  // Panels re-measure often; equal insets are not a change.
+  if (patch.insets && sameInsets(patch.insets, current.insets)) patch = { ...patch, insets: current.insets }
   useGlobeStore.setState(patch)
+}
+
+/** The empty globe beside the sign-in card or a status card. */
+export function showWelcomeGlobe() {
+  setGlobe({ framing: "welcome", scene: EMPTY_SCENE, selectedNodeId: null, hoveredNodeId: null, insets: NO_INSETS, recede: false })
+}
+
+/** Lists point at a node on the globe (or stop pointing). The shell writes everything else. */
+export function highlightOnGlobe(nodeId: string | null) {
+  if (useGlobeStore.getState().hoveredNodeId !== nodeId) useGlobeStore.setState({ hoveredNodeId: nodeId })
 }
 
 let selectHandler: (nodeId: string | null) => void = () => undefined
 
-/** The route that shows a network owns what a click on a node means. Returns the cleanup. */
+/** The view that shows a network owns what a click on a node means. Returns the cleanup. */
 export function onGlobeSelect(handler: (nodeId: string | null) => void): () => void {
   selectHandler = handler
   return () => {
@@ -49,23 +68,4 @@ export function onGlobeSelect(handler: (nodeId: string | null) => void): () => v
 
 export function selectFromGlobe(nodeId: string | null) {
   selectHandler(nodeId)
-}
-
-export type ScreenPoint = { x: number; y: number; visible: boolean }
-
-let screenListener: ((point: ScreenPoint | null) => void) | null = null
-
-/**
- * Per-frame screen position of the selected node, for overlays that attach
- * to it (leader lines). Updates go straight to the listener, not to React.
- */
-export function onSelectedScreen(listener: (point: ScreenPoint | null) => void): () => void {
-  screenListener = listener
-  return () => {
-    if (screenListener === listener) screenListener = null
-  }
-}
-
-export function emitSelectedScreen(point: ScreenPoint | null) {
-  screenListener?.(point)
 }

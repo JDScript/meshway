@@ -1,15 +1,25 @@
 import { useEffect, useRef } from "react"
 
-import { readGlobeColors, css } from "@/features/globe/colors"
+import { css, readGlobeColors } from "@/features/globe/colors"
 import { landPoints } from "@/features/globe/land"
-import { LOADER_LAT, LOADER_RADIUS, loaderLng } from "@/features/globe/loader-view"
+import {
+  cometPointAlpha,
+  cometPointRadius,
+  LOADER_COMET,
+  LOADER_LAT,
+  LOADER_RADIUS,
+  loaderCometHead,
+  loaderLng,
+} from "@/features/globe/loader-view"
 
 const rad = Math.PI / 180
+const SIZE = (LOADER_RADIUS + 26) * 2
 
 /**
  * A small dotted globe on a 2D canvas: it needs neither three.js nor the
  * network, so it is on screen from the first paint. It draws the same land
- * dots as the real globe, from the same view, so the hand-off is seamless.
+ * dots, atmosphere and comet as the real globe, from the same view, so the
+ * real one can take over in place.
  */
 export function LoaderGlobe({ visible }: { visible: boolean }) {
   const canvas = useRef<HTMLCanvasElement>(null)
@@ -19,23 +29,33 @@ export function LoaderGlobe({ visible }: { visible: boolean }) {
     const context = element?.getContext("2d")
     if (!element || !context) return
     const ratio = Math.min(window.devicePixelRatio, 2)
-    const size = (LOADER_RADIUS + 26) * 2
-    element.width = size * ratio
-    element.height = size * ratio
+    element.width = SIZE * ratio
+    element.height = SIZE * ratio
     context.scale(ratio, ratio)
     // Every other dot is plenty at this size.
-    const points = landPoints().filter((_, index) => index % 2 === 0).map(({ lat, lng }) => ({ phi: lat * rad, lambda: lng * rad }))
+    const points = landPoints()
+      .filter((_, index) => index % 2 === 0)
+      .map(({ lat, lng }) => ({ phi: lat * rad, lambda: lng * rad }))
     const colors = readGlobeColors()
-    const reduced = window.matchMedia("(prefers-reduced-motion: reduce)").matches
-    const centre = size / 2
+    const motion = !window.matchMedia("(prefers-reduced-motion: reduce)").matches
+    const centre = SIZE / 2
     const tilt = LOADER_LAT * rad
     const [sinTilt, cosTilt] = [Math.sin(tilt), Math.cos(tilt)]
     let frame = 0
 
     const draw = (time: number) => {
       frame = requestAnimationFrame(draw)
-      context.clearRect(0, 0, size, size)
-      const facing = loaderLng(reduced ? 0 : time) * rad
+      context.clearRect(0, 0, SIZE, SIZE)
+      const facing = loaderLng(motion ? time : 0) * rad
+
+      // Atmosphere: a soft glow just outside the limb.
+      const glow = context.createRadialGradient(centre, centre, LOADER_RADIUS * 0.96, centre, centre, LOADER_RADIUS * 1.2)
+      glow.addColorStop(0, css(colors.atmosphere, colors.dark ? 0.32 : 0.45))
+      glow.addColorStop(1, css(colors.atmosphere, 0))
+      context.fillStyle = glow
+      context.beginPath()
+      context.arc(centre, centre, LOADER_RADIUS * 1.2, 0, Math.PI * 2)
+      context.fill()
 
       // Surface and rim.
       const surface = context.createRadialGradient(centre, centre, LOADER_RADIUS * 0.55, centre, centre, LOADER_RADIUS)
@@ -60,18 +80,22 @@ export function LoaderGlobe({ visible }: { visible: boolean }) {
         context.globalAlpha = Math.min(1, 0.15 + zView * 1.2)
         context.fillRect(centre + x * LOADER_RADIUS - 0.6, centre - yView * LOADER_RADIUS - 0.6, 1.2, 1.2)
       }
-      context.globalAlpha = 1
 
-      // A comet circling the globe: the "working" signal.
-      const head = reduced ? -Math.PI / 2 : (time / 1000) * Math.PI * 1.25
-      const orbit = LOADER_RADIUS + 14
-      for (let k = 0; k < 28; k += 1) {
-        const angle = head - k * 0.06
-        context.globalAlpha = (1 - k / 28) ** 2
-        context.fillStyle = css(colors.pulse)
-        const radius = k === 0 ? 1.8 : 1.3 * (1 - k / 28) + 0.4
+      // The comet: the "working" signal, continued by the real globe.
+      const head = loaderCometHead(time, motion)
+      const orbit = LOADER_COMET.radius * LOADER_RADIUS
+      context.fillStyle = css(colors.pulse)
+      for (let k = 0; k < LOADER_COMET.points; k += 1) {
+        const angle = head - k * LOADER_COMET.spacing
+        context.globalAlpha = cometPointAlpha(k)
         context.beginPath()
-        context.arc(centre + Math.cos(angle) * orbit, centre + Math.sin(angle) * orbit * 0.42, radius, 0, Math.PI * 2)
+        context.arc(
+          centre + Math.cos(angle) * orbit,
+          centre + Math.sin(angle) * orbit * LOADER_COMET.squash,
+          cometPointRadius(k),
+          0,
+          Math.PI * 2
+        )
         context.fill()
       }
       context.globalAlpha = 1
@@ -80,14 +104,13 @@ export function LoaderGlobe({ visible }: { visible: boolean }) {
     return () => cancelAnimationFrame(frame)
   }, [])
 
-  const size = (LOADER_RADIUS + 26) * 2
   return (
     <canvas
       ref={canvas}
       aria-hidden="true"
       data-visible={visible}
-      className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 transition-opacity duration-300 data-[visible=false]:opacity-0"
-      style={{ width: size, height: size }}
+      className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 transition-opacity duration-200 ease-out data-[visible=false]:opacity-0"
+      style={{ width: SIZE, height: SIZE }}
     />
   )
 }
