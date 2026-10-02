@@ -1,6 +1,6 @@
 # 本地联调：当前可运行流程
 
-本页是当前开发联调。多网络、用户账户/邀请/权限/设备归属已实现；Agent仍使用一次性接入令牌，链接登录/自动建连待交付。目标流程见[产品概念](/concepts#平台托管与使用流程)。Web操作先选网，服务端检查实际membership，既有身份/数据由启动迁移保留。
+本页是当前开发联调。多网络、账户/邀请/权限/设备归属已实现；Agent链接登录与自动建连待交付。Web先选网，每次保存由Controller检查真实身份与本网membership。当前数据库只初始化当前schema，不自动转换旧开发数据。
 
 ## 准备与启动
 
@@ -65,11 +65,11 @@ cargo run --locked -p meshway-agent -- status --state .meshway/agent.json
 
 `sync` 校验配置、私有原子发布、确认文件与目录持久性后 ACK；`status` 只读本地保存状态。地址分配、心跳、缓存版本或 ACK 都不是隧道证明。文件发布后 fsync 失败也不能报保存成功，见[提交阶段](/configuration#文件发布与持久性是两个阶段)。
 
-具备managed feature并运行相应模式后，`status --live`、邻接`ping`与DNS查询提供各自证据，见[CLI](/cli)。Linux TUN显式启用见[数据面](/managed-dataplane)，v3源模式见[执行合同](/p3a-mesh-execution)。平台托管VLESS/WS不传本地profiles；旧profiles只作兼容/等价私有迁移。
+具备managed feature后status、邻接ping与DNS查询提供各自证据，见[CLI](/cli)。Linux TUN显式启用见[数据面](/managed-dataplane)，唯一policy执行见[执行合同](/mesh-execution)。平台托管VLESS/WS不需要本地profiles；设备配置入口仍待进一步收敛。
 
 ## 4. 管理与撤销
 
-Web使用真实清单、授权/路由、标签和连接配置，保存CAS冲突保留草稿。旧编辑入口保留兼容源；Mesh v3须显式激活，完整出口尚未接线。见[Access](/access-policy)、[路由方案](/routing)。preview不发trace、不代替授权。
+Web使用真实清单、授权/路由、标签和连接配置，保存CAS冲突保留草稿。唯一policy不需激活；新console的编辑体验由独立工作流接入，完整出口尚未接线。见[Access](/access-policy)、[路由方案](/routing)。preview不发trace、不代替授权。
 
 撤销后节点保留在清单，控制面请求被拒绝；托管运行层撤回旧代际，控制面失联则由 lease 到期终止。`last_seen` 只是联系时间。若只运行基本心跳，不应宣称建立或切断了业务隧道。
 

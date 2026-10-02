@@ -1,6 +1,6 @@
 # 托管 listener / VLESS API
 
-平台托管listener/材料、VLESS TCP/TLS与WebSocket/TLS已合入，既有Web节点配置与接入可选listener已接通。本页保留公开配置、私有材料、CAS/权限与迁移合同；精确类型/schema由Rust实际routes生成，不另维护TS DTO。
+平台托管listener/材料、VLESS TCP/TLS与WebSocket/TLS已合入，既有Web节点配置与接入可选listener已接通。本页保留公开配置、私有材料、CAS/权限合同；精确类型/schema由Rust实际routes生成，不另维护TS DTO。
 
 ## 实际支持
 
@@ -20,7 +20,7 @@
 用户 session 的当前网络 membership，或既有 global bootstrap 兼容入口。
 GET 允许本网 Member / Admin / Owner；两个 POST 只允许本网 Admin / Owner。
 所有检查与实际保存处于同一根 IMMEDIATE 事务，合法 NetworkId 本身不是权限。
-Web action 固定渲染时网络 ID 和 CAS，不能在 mutation 时改用选择 cookie。
+Console mutation 显式携带所选网络ID和CAS，Controller复核真实身份与权限。
 
 | 方法 / 路径 | 生成 operation ID / SDK 导出 | 成功响应 |
 | --- | --- | --- |
@@ -115,7 +115,7 @@ SDK：`(baseUrl, userSessionOrBootstrapToken, networkId[, body])`，由生成 Zo
 
 **初始意图的 `node_id` 必须空字符串**：消费令牌时由同一注册事务填入新身份，
 调用方不能指定另一身份。令牌原值仍只在创建时返回一次；只创建令牌不推进
-业务 revision。接入使用既有 `enrollAgent`，原 App 兑换、心跳、库存完全兼容。
+业务 revision。接入使用既有 `enrollAgent`，App兑换、心跳继续使用各自现行合同，库存改为纯元数据schema2。
 首次消费同时绑定节点、地址、令牌请求摘要和 listener/material；失败整体回滚。
 同绑定恢复不重新生成材料；撤销不能恢复；同网络 ID 冲突不会吞掉旧 listener。
 无需 listener 时继续既有 `createEnrollmentToken`。
@@ -167,7 +167,7 @@ GeoIP；不得使用 Mesh IP、选中出口 IP 或管理员 country；缺测/过
 | --- | --- |
 | POST `/api/v1/agent/managed-transport-capabilities` | `publishManagedTransportCapabilities` |
 | GET `/api/v1/agent/managed-connections` | `getAgentManagedConnections` |
-| GET `/api/v1/agent/managed-dataplane` | `getAgentManagedDataplane` |
+| POST `/api/v1/agents/mesh-execution` | `negotiateMeshExecution` |
 
 新快照显式包含 network ID、原公共 snapshot、获准材料和合并摘要。
 一个 Store 请求独占作用域读同 revision；无别的写入可穿插材料投影。
@@ -179,11 +179,10 @@ Agent验证角色、摘要、绑定、证书有效性/SAN/指纹、私钥匹配�
 
 控制面 `transport-material.key` 是独立0600加密密钥；恢复需要它和 SQLite一起备份。
 材料以 ChaCha20-Poly1305 加密，AAD绑定网络/listener/owner/版本。缺钥且已有材料
-时拒绝生成替代密钥。新增表与 v9→v10 DDL 均在 IMMEDIATE 事务中完成，失败回滚；
-旧身份、公钥、地址、JSONC、ACK、lease和revision不变。
+时拒绝生成替代密钥。完整当前schema在IMMEDIATE事务中初始化；普通启动拒绝损坏或未知结构，开发重置须显式执行。
 
 运行命令沿用 `run --apply-connections` 或显式 IPv4 `run --apply-dataplane`，
-新托管流程不传 `--connection-profiles`。保留旧 profiles 仅供兼容/迁移。
+新托管流程不传 `--connection-profiles`。平台生成并下发材料，不再提供旧profiles导入。
 心跳更高revision、源撤回、ACK冲突及lease期限独立 fence 旧代际；WS仍受5秒联合
 TLS/WS/VLESS/Noise握手deadline、32并发、256KiB消息/frame限额与backpressure约束。
 HTTP upgrade累计读取另限制64KiB，避免单个未完成header无限增长。
@@ -194,36 +193,6 @@ HTTP upgrade累计读取另限制64KiB，避免单个未完成header无限增长
 
 TLS/WS/VLESS共用protected外层stream注入边界，不重写各自握手。Manager prepared owner换代先withdraw/join；生成器secret Debug适配与HTTP transport注入分别维护，不能相互覆盖。
 
-## 旧 profiles 私有导入 / 切换
+## 验证
 
-旧节点继续原 profiles，迁移不会扫描或替换它们。协调者仅对自己的 demo进行：
-
-1. 停止该私有 controller（导入命令取得原目录独占锁），保留原SQLite与材料备份。
-2. 在0700目录生成0600的私有JSON输入：`{ network_id, legacy_profiles, request, material }`。
-   `legacy_profiles` 为显式指定的原server profiles私有副本绝对路径；关联原证书/私钥
-   在同目录保留路径关系，并使用0600。导入器从旧listener引用定位该server profile，
-   必须证明输入UUID、原certificate前缀和private key与这些文件完全一致，才允许切换；
-   不自动扫描主机或以调用方声称“原材料”代替对比。
-   `request` 为上述SaveManagedListenerRequest，使用当前CAS；TCP模式、listener ID、
-   owner、bind、公告端点必须与原监听严格一致。`material` 用生成权威
-   `ManagedVlessMaterial` 形状，version=1、credential_ref=`managed.<id>`，填入**原**
-   UUID、原server证书链（必要时附原CA）、原private key、原SNI和leaf DER指纹。
-   这是私有本地迁移文件，不能送入Web、普通日志或本任务产物。
-3. 执行（不会输出秘密）：
-
-   ```sh
-   cargo run -p meshway-controller -- import-managed-vless \
-     --data-dir /absolute/private/controller --input /absolute/private/import.json
-   ```
-
-4. 输入先验证 UUID、证书有效期/SAN、key匹配、fingerprint和原listener等价性，
-   然后同一CAS事务删除源中该legacy listener、改候选引用、保存**原材料**并发布。
-   任一无法证明的部分拒绝导入；原材料和源不变。不得为“迁移成功”新建替代UUID/key。
-5. 重新启动controller；Agent以原state/key运行，移除原profile参数后fresh同步。
-   检查current revision、saved ACK、listener bound、peer probe和真实业务；确认后
-   才清理由协调者拥有的私有导入文件与旧副本。第一轮导入限TLS/TCP；之后再通过
-   Web/API显式切WS，保留材料并发布新代际。
-
-协调者不要直接对live套本页示意命令。独立验收入口：
-`python3 experiments/managed-transports/run.py`，自带同一performance lock、独立
-Docker namespace、仅容器NET_ADMIN/TUN、所有权精确清理与私有外部产物。
+`python3 experiments/managed-transports/run.py` 使用正常 Controller、唯一policy与Agent生命周期，独立Docker namespace、仅容器NET_ADMIN/TUN、共享performance lock与精确清理。执行前须完成当前消费者整合；本次源码与契约检查不声称已经重跑真实VLESS包流。

@@ -7,11 +7,11 @@ import { setTimeout as delay } from "node:timers/promises";
 import { command, parse, record, text, boolean, array } from "../managed-connections/local.ts";
 import {
   listNetworksOperation, createEnrollmentTokenOperation, createManagedEnrollmentTokenOperation,
-  getConnectionsOperation, saveConnectionsOperation, savePolicyOperation, saveMeshAccessOperation,
+  getConnectionsOperation, saveConnectionsOperation, saveNetworkPolicyOperation,
   listNodesOperation, getConnectionRuntimesOperation, getManagedListenersOperation,
   saveNetworkOperation,
 } from "../../packages/control-client/src/generated/operations.gen.ts";
-import type { NodeSummary, RoutingPolicy, ConnectionCandidate } from "../../packages/control-client/src/generated/types.gen.ts";
+import type { NodeSummary, NetworkPolicy, ConnectionCandidate } from "../../packages/control-client/src/generated/types.gen.ts";
 
 process.umask(0o077);
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -111,15 +111,14 @@ function candidate(dialer: Host, listener: Host): ConnectionCandidate {
   return { id: `${dialer.name}-to-${listener.name}`, dialer_node_id: node.id, listener_id: listener.name,
     endpoint: { host: listener.endpoint, port: 28443 }, priority: 10, credential_ref: "managed.vless" };
 }
-async function configure(candidates: ConnectionCandidate[], policy: RoutingPolicy) {
+async function configure(candidates: ConnectionCandidate[], mesh: NetworkPolicy["mesh"]) {
   const old = await getConnectionsOperation(base, admin, networkId);
   const connections = await saveConnectionsOperation(base, admin, networkId, { expected_revision: old.revision,
     configuration: { listeners: old.configuration.listeners, candidates } });
   // Before Agent.run publishes managed stream capabilities the intent can be
   // saved but not yet executable. Readiness below requires actual fresh peers.
   await evidence("saved-connection-intent", { revision: connections.revision, valid: connections.valid, diagnostics: connections.diagnostics });
-  const saved = await savePolicyOperation(base, admin, networkId, { expected_revision: connections.revision, policy, source_jsonc: null });
-  await saveMeshAccessOperation(base, admin, networkId, { expected_revision: saved.revision, policy: { default_action: "allow", rules: [] }, source_jsonc: null });
+  await saveNetworkPolicyOperation(base,admin,networkId,{expected_revision:connections.revision,policy:{connections:[{id:"default",a:"*",b:"*",action:"allow"}],grants:[{id:"members",src:["*"],dst:["*"],bidirectional:false}],mesh,public_rules:[],profiles:[],assignments:[],automatic:{regions:{},fallback:"mesh-only"}},source_jsonc:null});
 }
 async function ready(expected: Host[]) {
   const ids = expected.map(h => { const n = nodes.get(h.name); assert(n); return n.id; });
@@ -184,7 +183,7 @@ try {
   await writeFile(join(artifacts, "controller-private.json"), JSON.stringify({ admin, network_id: networkId }) + "\n", { mode: 0o600 });
   await create(lax, "agent"); await enroll(lax);
   await initialize(tyo); await create(tyo, "agent"); await enroll(tyo);
-  await configure([candidate(tyo, lax)], { default_action: "direct", rules: [] });
+  await configure([candidate(tyo, lax)], []);
   for (const h of [lax, tyo]) await helper(h, "enable");
   await evidence("two-node-current-runtime", { runtime: await ready([lax, tyo]) });
   assert((await getConnectionsOperation(base, admin, networkId)).valid);
@@ -208,13 +207,11 @@ try {
     const nyc = host("us-nyc"); const icn = host("kr-icn");
     for (const h of [nyc, icn]) { await initialize(h); await create(h, "agent"); await enroll(h); }
     const n = (h: Host) => { const node = nodes.get(h.name); assert(node); return node.id; };
-    const rules: RoutingPolicy["rules"] = [
-      { id: "tyo-via-lax-nyc-icn", source: { node_ids: [n(tyo)], countries: [] }, destination_scope: "mesh",
-        destination_any: [{ kind: "node", value: n(icn) }], action: { kind: "route", via: [n(lax), n(nyc)], exit_node_id: null } },
-      { id: "icn-via-nyc-lax-tyo", source: { node_ids: [n(icn)], countries: [] }, destination_scope: "mesh",
-        destination_any: [{ kind: "node", value: n(tyo) }], action: { kind: "route", via: [n(nyc), n(lax)], exit_node_id: null } },
+    const rules:NetworkPolicy["mesh"]=[
+      {id:"tyo-via-lax-nyc-icn",src:`node:${n(tyo)}`,dst:`node:${n(icn)}`,via:[`node:${n(lax)}`,`node:${n(nyc)}`]},
+      {id:"icn-via-nyc-lax-tyo",src:`node:${n(icn)}`,dst:`node:${n(tyo)}`,via:[`node:${n(nyc)}`,`node:${n(lax)}`]},
     ];
-    await configure([candidate(tyo, lax), candidate(nyc, lax), candidate(icn, nyc), candidate(icn, lax)], { default_action: "direct", rules });
+    await configure([candidate(tyo,lax),candidate(nyc,lax),candidate(icn,nyc),candidate(icn,lax)],rules);
     for (const h of [nyc, icn]) await helper(h, "enable");
     await evidence("four-node-current-runtime", { runtime: await ready(hosts) });
     for (const h of [nyc, icn]) await httpStart(h);

@@ -108,7 +108,7 @@ Summary 的部分 counters 不涵盖所有被取消的 queued/in-flight 条目�
 采样不拨通新邻接；但它并非完全被动，现有 Runtime probe timeout 会 unregister **该 exact
 channel**。本任务保留既有认证/超时语义，没有调整数据面或性能对照。
 
-DDL在`apps/controller/src/store/latency_history/schema.sql`，正式启动与账户/ownership同事务安装/校验，见[迁移边界](/local-accounts#存储与迁移)。正常构建不依赖fixture feature，旧feature仅保留命令兼容。完整已知片段可验证采用，partial/未知拒绝不补壳；旧lease缺起点时建立保守启用下界，已知起点/游标不重写。
+DDL位于`apps/controller/src/store/schema/schema.sql`，历史、账户/ownership与当前policy一同初始化。普通启动严格验证完整当前结构，不采用未知片段或补壳；runtime epoch acquisition时间仍是实际采样边界。
 正常 controller 启动若已有 latency 表，执行无副作用完整 `validate_schema`（columns/PK/
 AUTOINCREMENT/UNIQUE/FK/index 形状、完整 trigger 集合/归属/精确定义及 FK integrity），缺失
 约束的同名表拒绝启动。当前四张 history 表没有合法 trigger，额外 main/temp trigger 均拒绝；

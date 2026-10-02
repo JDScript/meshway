@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { setTimeout as delay } from "node:timers/promises";
-import { getConnections, getMeshAccess, getPolicy, saveConnections, saveMeshAccess, savePolicy } from "../../packages/control-client/src/index.ts";
+import { getConnections, getNetworkPolicy, saveConnections, saveNetworkPolicy } from "../../packages/control-client/src/index.ts";
 import type { NetworkSnapshot, NodeSummary } from "../../packages/control-client/src/index.ts";
 import { array, boolean, record, text } from "../managed-connections/local.ts";
 import { response } from "./checks.ts";
@@ -120,8 +120,8 @@ export async function systemAcceptance(ctx: Context): Promise<SystemEvidence> {
     },
   });
   assert(connections.valid);
-  assert((await savePolicy(baseUrl, admin, networkId, { expected_revision: (await getPolicy(baseUrl, admin, networkId)).revision,
-    policy: { default_action: "direct", rules: [] }, source_jsonc: null })).valid);
+  assert((await saveNetworkPolicy(baseUrl, admin, networkId, { expected_revision: (await getNetworkPolicy(baseUrl, admin, networkId)).revision,
+    policy: { connections:[{id:"default",a:"*",b:"*",action:"allow"}],grants:[],mesh:[],public_rules:[],profiles:[],assignments:[],automatic:{regions:{},fallback:"mesh-only"} }, source_jsonc: null })).valid);
   await until("both actual TUN interfaces up", async () => {
     const values = await Promise.all(["one", "data"].map((role) => helper(role === "one" ? "one" : "data", "observe")));
     return values.every((value) => array(value.tun).length === 1) ? true : false;
@@ -137,12 +137,12 @@ export async function systemAcceptance(ctx: Context): Promise<SystemEvidence> {
     try { await resolve("solo", node("data").mesh_ipv4); return true; } catch { return false; }
   });
   check("name visibility does not authorize Mesh access");
-  assert.deepEqual((await getMeshAccess(baseUrl, admin, networkId)).policy, { default_action: "reject", rules: [] });
+  const policy = (await getNetworkPolicy(baseUrl, admin, networkId)).policy;
+  assert.deepEqual(policy.grants, []);
   assert.equal((await system("one", "route", { address: node("data").mesh_ipv4, prefix: network.network.ipv4_prefix })).kind, "tun");
   assert.notEqual((await curl()).exit, 0); passed("dns-visible-access-reject");
-  assert((await saveMeshAccess(baseUrl, admin, networkId, { expected_revision: (await getMeshAccess(baseUrl, admin, networkId)).revision,
-    source_jsonc: null, policy: { default_action: "reject", rules: [{ id: "resolver-application", source: [`node:${node("one").id}`],
-      destination: [`node:${node("data").id}`], action: "allow", bidirectional: true }] } })).valid);
+  assert((await saveNetworkPolicy(baseUrl, admin, networkId, { expected_revision: (await getNetworkPolicy(baseUrl, admin, networkId)).revision,
+    source_jsonc: null, policy: { ...policy, grants: [{ id:"resolver-application", src:[`node:${node("one").id}`], dst:[`node:${node("data").id}`],bidirectional:true }] } })).valid);
   await until("curl short name reaches exact Mesh service over TUN", async () => {
     const result = await curl(); return result.exit === 0 && result.body_matches === true && result.remote_ip === node("data").mesh_ipv4 ? result : false;
   });

@@ -65,7 +65,7 @@ cargo build --locked -p meshway-controller -p meshway-agent \
 ```
 
 `restart` 不编译；`update web/docs` 重启各自开发服务器，继续使用 HMR。
-SQLite 升级使用当前数据向前迁移，实时策略保留。构建失败不会进入重启步骤。
+数据库只接受当前schema；旧开发数据需协调者显式重置。普通更新不会因启动失败自动清库，构建失败不会进入重启步骤。
 
 ## 状态与退出码
 

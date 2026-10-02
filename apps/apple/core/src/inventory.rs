@@ -97,7 +97,7 @@ fn configuration(
             || node.country.as_ref().is_some_and(|country| {
                 country.len() != 2 || !country.bytes().all(|byte| byte.is_ascii_uppercase())
             })
-    }) || !meshway_policy::compile(&payload.routing_policy, &payload.network, &nodes).is_valid()
+    }) || meshway_policy::validate_inventory(&payload.network, &nodes).is_err()
     {
         return Err(SignInError::Server);
     }
@@ -204,9 +204,6 @@ mod tests {
                 mesh_ipv6: "fd42::1".into(),
             },
             peers: vec![],
-            routing_policy: Default::default(),
-            policy_valid: true,
-            diagnostics: vec![],
         };
         protocol::ConfigurationSnapshot {
             digest: protocol::configuration_digest(&payload).unwrap(),

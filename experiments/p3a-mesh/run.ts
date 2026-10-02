@@ -6,7 +6,7 @@ import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { setTimeout as delay } from "node:timers/promises";
 import { ControlApiError, listNetworks, listNodes, createEnrollmentToken, getConnections, saveConnections, getManagedListeners, saveManagedListener, revokeNode } from "../../packages/control-client/src/index.ts";
-import { getNetworkPolicyOperation, saveNetworkPolicyOperation, getAgentDataplaneOperation } from "../../packages/control-client/src/generated/operations.gen.ts";
+import { getNetworkPolicyOperation, saveNetworkPolicyOperation } from "../../packages/control-client/src/generated/operations.gen.ts";
 import type { NetworkPolicy } from "../../packages/control-client/src/generated/types.gen.ts";
 import { command, parse, text, boolean } from "../managed-connections/local.ts";
 import { fixtureNetworkId } from "../managed-connections/network-scope.ts";
@@ -73,7 +73,7 @@ try {
   const policy:NetworkPolicy={connections:[{id:"allow",a:"*",b:"*",action:"allow"}],grants:[{id:"endpoints",src:[`node:${ids.NYC}`],dst:[`node:${ids.SHA}`],bidirectional:true}],mesh:[],public_rules:[],profiles:[],assignments:[],automatic:{regions:{},fallback:"mesh-only"}};
   async function put(p:NetworkPolicy){return saveNetworkPolicyOperation(baseUrl,admin,scope,{expected_revision:(await getNetworkPolicyOperation(baseUrl,admin,scope)).revision,policy:p,source_jsonc:null});}
   async function ready() {
-    return until("normal run v3 ACK and active TUN",async()=>{
+    return until("normal run policy ACK and active TUN",async()=>{
       const revision=(await getNetworkPolicyOperation(baseUrl,admin,scope)).revision;
       const proof=await Promise.all(ROLES.map(role=>helper(role,"execution-proof")));
       const observations=await Promise.all(ROLES.map(observe));
@@ -91,7 +91,6 @@ try {
   const linted=await getNetworkPolicyOperation(baseUrl,admin,scope);
   assert(linted.diagnostics.some(d=>d.field==="mesh.later-direct"&&d.message.includes("fully")&&d.message.includes("example node:")&&d.message.includes("first-via-b")),"published source diagnostics must include a real inventory-dependent shadow example");
   const selected=await helper("NYC","execution-proof");assert(JSON.stringify(selected.paths).includes(ids.LAX));
-  const old=await getAgentDataplaneOperation(baseUrl,bearers.NYC);assert(!old.payload.access_valid&&!old.payload.configuration.policy_valid&&old.payload.access_policy.grants.length===0);
   await put({...policy,mesh:[through.mesh[1]!,through.mesh[0]!]});await success("reordering first-match selects direct");
   assert(!JSON.stringify((await helper("NYC","execution-proof")).paths).includes(ids.LAX));
   await put({...through,grants:[{...policy.grants[0]!,bidirectional:false}]});await ready();

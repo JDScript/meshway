@@ -51,10 +51,8 @@ Web/App/未来CLI 共用 controller 用户体系；设备不收集密码或浏�
 
 CLI 链接登录将复用授权服务，终端只打印链接并领取一次性结果；request/poll、响应丢失重交付与本地 journal 尚未实现，不将设计草案当作可调用 endpoint。OIDC 后续作为认证来源，不是内部统一浏览器登录的前提。
 
-## 存储与迁移
+## 存储
 
-正式启动迁移在单库事务中安装账户/ownership与邻接历史，再验证结构/FK并提交版本；随后 Mesh v3 迁移添加其源/执行状态，不修改旧身份/配置或自动激活。版本和 DDL 是兼容边界，业务方法使用显式 `NetworkId`。
-
-schema gate 比较真实 columns/PK/FK/index/partial/unique、完整owned guards及每node同网ownership，按 `(type,name)` 区分同名 trigger/index；缺失、partial、未知或弱化结构拒绝，不用 `IF NOT EXISTS` 补壳。保留旧 node ID/凭据摘要/公钥/地址/JSONC/revision/材料密文，不创建假账户。
+当前账户、ownership、邻接历史与唯一policy均在当前schema内初始化。业务方法使用显式NetworkId与根事务身份复核；不运行历史升级链或创建假账户。启动gate比较完整结构/owned guards/FK与网络配置；缺失、partial、未知或弱化结构拒绝，不自动补壳或清库。
 
 备份须同时保存 SQLite、`admin.token`、已有 `transport-material.key` 与必要私有状态；不能丢材料密钥后生成替代。网络 Owner 不获他人全局密码恢复权。当前没有逐会话清单/完整全局无membership账户枚举，UI仅显示真实已有操作。

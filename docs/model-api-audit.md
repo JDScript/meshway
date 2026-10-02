@@ -1,6 +1,6 @@
 # 模型、schema 与 API 导出
 
-当前 HTTP 定义以 [Rust 实际路由生成链](/protocol)为准；SQLite 结构以当前 Controller 安装/验证的迁移定义为准。导出是按需审查工具，不维护另一份“最新”模型大全，也不把历史冻结基线的统计作为现行接口数量。
+当前HTTP以[实际Rust路由生成链](/protocol)为准；SQLite以`apps/controller/src/store/schema/schema.sql`为准。导出是按需审查工具，不维护第二套模型大全或历史候选dump。
 
 ## 从当前 checkout 重现
 
@@ -18,7 +18,7 @@ cargo build --locked -p meshway-controller --bin meshway-controller
 cmp "$OUTPUT/openapi.actual.json" packages/protocol/openapi.json
 python3 scripts/dump-contract.py "$OUTPUT/openapi.actual.json" --output "$OUTPUT/http" --source-ref "$SOURCE_REF"
 
-cargo run --locked --quiet -p meshway-policy --example policy_v3_schema > "$OUTPUT/policy-source/schema.json"
+cargo run --locked --quiet -p meshway-policy --example policy_schema > "$OUTPUT/policy-source/schema.json"
 python3 scripts/dump-contract.py "$OUTPUT/policy-source/schema.json" --output "$OUTPUT/policy-source" --source-ref "$SOURCE_REF-policy-source"
 python3 scripts/dump-store-schema.py --controller-bin "$CARGO_TARGET_DIR/debug/meshway-controller" --output "$OUTPUT/storage" --source-ref "$SOURCE_REF"
 ```

@@ -9,8 +9,7 @@ import { command, parse, record, text, boolean, array } from "../managed-connect
 import {
   listNetworksOperation, createEnrollmentTokenOperation, createManagedEnrollmentTokenOperation,
   getManagedListenersOperation, saveManagedListenerOperation, getConnectionsOperation,
-  saveConnectionsOperation, savePolicyOperation, listNodesOperation, getConnectionRuntimesOperation,
-  saveMeshAccessOperation,
+  saveConnectionsOperation, saveNetworkPolicyOperation, listNodesOperation, getConnectionRuntimesOperation,
 } from "../../packages/control-client/src/generated/operations.gen.ts";
 import type { ManagedListenerSettings } from "../../packages/control-client/src/generated/types.gen.ts";
 
@@ -56,8 +55,7 @@ try {
   const nodes=(await listNodesOperation(base,admin,networkId)).nodes;const a=nodes.find(n=>n.name==="NYC");const b=nodes.find(n=>n.name==="SHA");assert(a&&b);
   let connections=await getConnectionsOperation(base,admin,networkId);
   connections=await saveConnectionsOperation(base,admin,networkId,{expected_revision:connections.revision,configuration:{listeners:connections.configuration.listeners,candidates:[{id:"reverse-dial",dialer_node_id:b.id,listener_id:"vless",endpoint:{host:"nyc.mesh.test",port:18443},priority:10,credential_ref:"managed.vless"}]}});
-  const policy=await savePolicyOperation(base,admin,networkId,{expected_revision:connections.revision,policy:{default_action:"direct",rules:[]},source_jsonc:null});
-  await saveMeshAccessOperation(base,admin,networkId,{expected_revision:policy.revision,policy:{default_action:"allow",rules:[]},source_jsonc:null});
+  await saveNetworkPolicyOperation(base,admin,networkId,{expected_revision:connections.revision,policy:{connections:[{id:"default",a:"*",b:"*",action:"allow"}],grants:[{id:"members",src:["*"],dst:["*"],bidirectional:false}],mesh:[],public_rules:[],profiles:[],assignments:[],automatic:{regions:{},fallback:"mesh-only"}},source_jsonc:null});
   for(const role of ["NYC","SHA"] as const)await helper(role,"agent-start");
   failureEvidence=async()=>{report.evidence.push({phase:"failure-public-runtime",runtime:await getConnectionRuntimesOperation(base,admin,networkId)});for(const role of ["NYC","SHA"] as const)report.evidence.push({phase:"failure-public-local",role,local:await helper(role,"observe")});};
   const ready=async()=>{const runtime=await getConnectionRuntimesOperation(base,admin,networkId);return runtime.nodes.filter(n=>n.current&&!n.stale&&n.state==="applied"&&n.peers.some(p=>p.probe_fresh)).length===2?runtime:false;};

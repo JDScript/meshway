@@ -9,7 +9,7 @@ COPY apps/agent ./apps/agent
 COPY apps/controller ./apps/controller
 COPY apps/apple/core ./apps/apple/core
 COPY packages/protocol ./packages/protocol
-COPY docs/policy-v3.md ./docs/policy-v3.md
+COPY docs/policy.md ./docs/policy.md
 RUN --mount=type=cache,target=/usr/local/cargo/registry \
     --mount=type=cache,target=/usr/local/cargo/git \
     --mount=type=cache,target=/src/target,id=meshway-lab-${TARGETARCH},sharing=locked \

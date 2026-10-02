@@ -1,6 +1,6 @@
 # Controller 一致发布与预算
 
-publication在当前网络、同次Store锁/SQLite事务内共享事实、编译结果和节点投影。旧模式与IPv4 Mesh v3都保留这一边界；控制面发布成功不等于Agent已应用或业务可达。[Mesh v3合同](/p3a-mesh-execution)说明源模式/执行协商。
+publication在当前网络、同次Store锁/SQLite事务内共享事实、编译结果和节点投影。控制面发布成功不等于Agent已应用或业务可达。[Mesh合同](/mesh-execution)说明执行协商。
 
 ## 源→事实→编译→节点DTO
 
@@ -9,13 +9,13 @@ publication在当前网络、同次Store锁/SQLite事务内共享事实、编译
 3. 从内部结果投影protocol定义的封闭版本化节点DTO，配置/连接/路径/公钥同revision；私有材料另在最小披露边界附加，不放入公共Facts。
 4. 对完整节点投影检查实际路径、identity union、安装前缀、连接/材料与序列化字节预算。失败整体回滚，不截断、不跳必经点、不返回可执行部分计划。
 
-`apps/controller/src/store/publication.rs`及相关源存储/执行模块是实际实现入口；`crates/policy`不做网络I/O，`crates/protocol`不反向依赖policy。compiler internal不作为不可信wire直接Deserialize。
+`apps/controller/src/store/publication/mod.rs`及相关源存储/执行模块是实际实现入口；`crates/policy`不做网络I/O，`crates/protocol`不反向依赖policy。compiler internal不作为不可信wire直接Deserialize。
 
 ## 保存与依赖闭包
 
 写入口保留根事务内权限/新时间检查、网络内CAS与revision bump，在commit前完成受影响依赖的发布校验。策略/tag、连接/能力/listener、公钥、网络/接入、节点/成员撤回各有明确依赖；不将所有写入变成“所有无关源都必须可用”。
 
-例如deny-all下修复路由不强制解码无关损坏连接；有执行路径时须核对邻接/身份预算。撤回可以使saved source引用失效，保留源/诊断、节点effective fail-closed；不能把过滤后的derived候选回存源，导致解除block后丢失原意图。
+当前唯一源与连接事实统一编译，损坏持久化事实明确拒绝。撤回可以使saved source引用失效，保留源/诊断、节点effective fail-closed；不能把过滤后的derived候选回存源，导致解除block后丢失原意图。
 
 幂等接入、无变化保存、心跳/ACK/运行观测不凭空制造业务revision。JSONC只改注释也按源CAS保存；注释必须与typed policy等价。任意预算或材料选择失败回滚身份/IPAM/token/owner/listener/revision的整个组合事务。
 

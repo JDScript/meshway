@@ -6,7 +6,7 @@
 
 `apps/agent/src/managed_dataplane/exit.rs` 提供内部 `ExitPlan`、`ExitRoute`、`ExitGrant`。类型不是 HTTP DTO，不修改 protocol：
 
-- 每源节点表：规范 IPv4 prefix → 当前选中的完整 `source → mandatory via → exit` 路径，以及 `direct_prefixes`。**产品出口规则现为有序 first-match**（后续确认覆盖初始最长匹配定义）：controller/v3 编译器先做前序集合减法，消解 IP / rule-set 重叠，生成互不冲突的有效前缀，Agent 只对该等价输出做内核最长前缀匹配，不能把原始有序规则直接排序后安装。域名/IP跨条件重叠需要 P3c 可信解析上下文联合编译；被完全遮蔽规则由 controller 提示。Agent 不下载规则集。每节点输出上限 16384 IPv4前缀，超限明确失败，不能部分应用。
+- 每源节点表：规范 IPv4 prefix → 当前选中的完整 `source → mandatory via → exit` 路径，以及 `direct_prefixes`。**产品出口规则现为有序 first-match**（后续确认覆盖初始最长匹配定义）：controller/policy 编译器先做前序集合减法，消解 IP / rule-set 重叠，生成互不冲突的有效前缀，Agent 只对该等价输出做内核最长前缀匹配，不能把原始有序规则直接排序后安装。域名/IP跨条件重叠需要 P3c 可信解析上下文联合编译；被完全遮蔽规则由 controller 提示。Agent 不下载规则集。每节点输出上限 16384 IPv4前缀，超限明确失败，不能部分应用。
 - **最新确认以路由方案取代默认出口候选模型**：`ProfileCatalog { profiles, default_profile, locked, automatic }`，每个 `RoutingProfile { id, routes, direct_prefixes, fallback }` 是controller已编译的“公共规则 + 方案有序规则 + 兜底”的有效表。`ProfileFallback`区分出口、direct、不接管；后两者在无具体匹配时均继续本地网络。公共规则排最前、在每个方案的等价表中保留。`select_profile`只接受允许方案ID，不携带规则、listener、NAT等配置。选择无需新policy revision，但创建新的packet/flow运行代际；锁定和可选范围由控制面决定。主备只在方案已授权的完整路径内切换，不按包随机挑出口。
 - 每出口授权表：源节点身份、唯一Mesh IPv4、完整正向路径、允许外部前缀的多行投影。相同源可有不同精确路径，地址/身份绑定须一致。目的前缀是**授权与所有允许方案的路径交集**，不是泛互联网grant原样复制：公共规则指定给E的目的地，F的授权表必须排除，防止已认证恶意客户端通过另一个已允许的出口绕路。回程路径明确编译为逆序，仅能传递状态回包。中继持有两条精确路径，不能自行缩短。
 - 表、端点公钥、承载配置、network、revision、lease 来自同一快照。P3a/P3c 必须在新 snapshot 的准备/原子激活流程接入；缓存旧出口表不能延长 lease。原型不在正常 Agent CLI 中启用，通过 ignored fixture 注入内部类型。
@@ -18,7 +18,7 @@
 
 旧E的NAT映射不能迁移到F；旧TCP/UDP被截断，应用需建新连接。原型在客户端截断旧流，旧出口conntrack可保留至内核timeout，但回包因不匹配当前出口和flow代际被拒；P3c可向旧出口下发源级清理，不能用本地选择提升出口授权或延长lease。纯本地direct流不由packet pump转发，不迁移NAT。
 
-`locked=true`时，`with_profiles`初始化忽略旧本地选择（包括已移除的ID），始终使用controller的 `default_profile`，与v3 compiler选择语义一致；因此由解锁改为锁定、或锁定默认从E改为F时，旧用户缓存不能覆盖新默认。后续 `select_profile`只接受该controller default，不与缓存的当前选择比较，拒绝其它请求（包括切换“仅Mesh”）；同值选择不扩大权限。锁定auto时用户仍只能选择auto，具体生效方案仅由可信 `resolve_automatic`更新。未授权ID拒绝且现有代际保持运行。“不使用出口”表达为选择内置“仅Mesh”方案：它仍执行公共规则，其余恢复main本地网络；不能删除公共规则。现阶段为Agent内部 `select_profile(id)` 与ignored fixture请求，不新增设备配置入口；P3c同UID私有IPC/CLI只承载“切换到哪个允许方案”。内置“全局经X”由controller为每个允许出口生成，不是Agent自建授权；所有方案分配时必须校验grants，未授权方案不能进入catalog。
+`locked=true`时，`with_profiles`初始化忽略旧本地选择（包括已移除的ID），始终使用controller的 `default_profile`，与policy compiler选择语义一致；因此由解锁改为锁定、或锁定默认从E改为F时，旧用户缓存不能覆盖新默认。后续 `select_profile`只接受该controller default，不与缓存的当前选择比较，拒绝其它请求（包括切换“仅Mesh”）；同值选择不扩大权限。锁定auto时用户仍只能选择auto，具体生效方案仅由可信 `resolve_automatic`更新。未授权ID拒绝且现有代际保持运行。“不使用出口”表达为选择内置“仅Mesh”方案：它仍执行公共规则，其余恢复main本地网络；不能删除公共规则。现阶段为Agent内部 `select_profile(id)` 与ignored fixture请求，不新增设备配置入口；P3c同UID私有IPC/CLI只承载“切换到哪个允许方案”。内置“全局经X”由controller为每个允许出口生成，不是Agent自建授权；所有方案分配时必须校验grants，未授权方案不能进入catalog。
 
 ### 自动方案与换网
 

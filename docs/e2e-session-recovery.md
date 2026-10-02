@@ -60,6 +60,6 @@ UnknownSession body 为精确 `unknown-session-v1`；ResyncInit / Ready Noise pa
 
 ## 验证入口
 
-`crates/dataplane`的实际Runtime行为回归覆盖一跳/多跳、单向业务grant、旧wire互操作、错误绑定、限速/容量、取消和packet fence；正常Linux同身份恢复另由`experiments/linux-field/retest.ts`验收。局部机制时延不是现场SLA。
+`crates/dataplane`的实际Runtime行为回归覆盖一跳/多跳、单向业务grant、旧wire互操作、错误绑定、限速/容量、取消和packet fence；正常Linux恢复由当前 `experiments/p3a-mesh/run.py` 与 `experiments/linux-field/run.ts` 在完成消费者整合后验收。局部机制时延不是现场SLA。
 
 批准TMP保留`meshway-e2e-session-review-6262bc1.md`、`meshway-e2e-integration-40d2bd8.md`及对应日志；原失败窗口/旧库来源不改写。新完整复验入口见[Linux验收](/linux-field-validation)。

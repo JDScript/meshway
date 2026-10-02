@@ -44,6 +44,6 @@ Meshway 以 **Tailscale 为常规产品基线**，提供身份驱动的私网互
 
 ## 实现与目标的区别
 
-多网络、本地账户/网络权限/设备归属、托管 VLESS/WS 与 IPv4 Mesh v3 已接正常 Controller/Agent/TUN；自动建连、完整出口、默认 STUN/GeoIP 尚未形成产品闭环。Apple 多接入/浏览器授权已实现，隧道未实现且新增开发暂停；CLI 链接登录与多接入待交付。
+多网络、本地账户/网络权限/设备归属、托管 VLESS/WS 与 IPv4 Mesh 已接正常 Controller/Agent/TUN；自动建连、完整出口、默认 STUN/GeoIP 尚未形成产品闭环。Apple 多接入/浏览器授权已实现，隧道未实现且新增开发暂停；CLI 链接登录与多接入待交付。
 
 IPv6 地址/AAAA 不表示 IPv6 TUN。ACK 只表示校验并持久保存；路径预览不是 trace，心跳不是隧道健康。运行入口见[本地联调](/getting-started)，独立模块/原型和已交付能力的完整边界见[当前状态](/milestones)。

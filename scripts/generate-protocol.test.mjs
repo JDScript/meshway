@@ -5,11 +5,12 @@ import { createRequire, stripTypeScriptTypes } from "node:module";
 import { dirname, join } from "node:path";
 import { pathToFileURL } from "node:url";
 import { test } from "node:test";
+import { tmpdir } from "node:os";
 import { operations, root, validators } from "./generate-protocol.mjs";
 
 const require = createRequire(join(root, "packages/control-client/package.json"));
 const zodUrl = pathToFileURL(require.resolve("zod")).href;
-const temp = await mkdtemp(join(root, "node_modules/.codegen-test-"));
+const temp = await mkdtemp(join(tmpdir(), "meshway-codegen-test-"));
 let sequence = 0;
 async function runtime(document) {
   const file = join(temp, `schema-${sequence++}.mjs`);
@@ -127,8 +128,8 @@ try {
   });
 
   await test("actual complete Rust NetworkPolicy schema validates runtime values and strict operation types", async () => {
-    const result = spawnSync("cargo", ["run", "--locked", "--quiet", "-p", "meshway-policy", "--example", "policy_v3_schema"], {
-      cwd: root, encoding: "utf8", env: { ...process.env, CARGO_BUILD_JOBS: "2", CARGO_TARGET_DIR: join(root, "target/p3a-codegen") },
+    const result = spawnSync("cargo", ["run", "--locked", "--quiet", "-p", "meshway-policy", "--example", "policy_schema"], {
+      cwd: root, encoding: "utf8", env: { ...process.env, CARGO_BUILD_JOBS: "2", CARGO_TARGET_DIR: process.env.CARGO_TARGET_DIR ?? join(temp, "cargo-target") },
     });
     assert.equal(result.status, 0, result.stderr);
     const schema = JSON.parse(result.stdout);
@@ -205,7 +206,7 @@ void [emptyEnum, partialEnum, emptyConst, partialConst, invalid];
       strict: true, noUncheckedIndexedAccess: true, exactOptionalPropertyTypes: true, noEmit: true, target: "ES2023", module: "ESNext", moduleResolution: "Bundler", allowImportingTsExtensions: true,
       paths: { zod: [join(dirname(require.resolve("zod/package.json")), "index.d.ts")] },
     }, include: ["**/*.ts"] }));
-    const checked = spawnSync("pnpm", ["exec", "tsc", "-p", join(temp, "tsconfig.json")], { cwd: root, encoding: "utf8" });
+    const checked = spawnSync(process.execPath, [require.resolve("typescript/bin/tsc"), "-p", join(temp, "tsconfig.json")], { cwd: root, encoding: "utf8" });
     assert.equal(checked.status, 0, checked.stdout + checked.stderr);
   });
 

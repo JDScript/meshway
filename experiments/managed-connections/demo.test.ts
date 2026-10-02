@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import type { AgentDataplaneSnapshot, ConnectionPlan, ConnectionRuntimesSnapshot, ConnectionsSnapshot } from "../../packages/control-client/src/index.ts";
+import type { MeshExecutionSnapshot, ConnectionPlan, ConnectionRuntimesSnapshot, ConnectionsSnapshot } from "../../packages/control-client/src/index.ts";
 import { assertDemoOwnership, boundNodeCredential, demoEpochFloor, demoHealthy, demoPacketReadiness, demoPlan, mergeDemoPlan } from "./demo.ts";
 import { packetProof } from "./packet-readiness.ts";
 import type { PacketControl } from "./packet-readiness.ts";
@@ -222,24 +222,20 @@ function packetGraph() {
     receipt.node.acknowledged_revision = 42;
   }
   for (const observation of runtime.nodes) observation.revision = 42;
-  const control: PacketControl = { config, runtime,
-    policy: { revision: 42, valid: true, diagnostics: [], source_jsonc: null, network: { ipv4_prefix: "100.64.0.0/16", ipv6_prefix: "fd00::/64" }, policy: { default_action: "reject", rules: [] } },
-    access: { revision: 42, valid: true, diagnostics: [], source_jsonc: null, policy: { default_action: "reject", rules: [] } } };
-  const snapshot = (role: keyof typeof ids): AgentDataplaneSnapshot => {
+  const control: PacketControl = { config, runtime, policy: { network_id:"a".repeat(32), revision:42,valid:true,diagnostics:[],source_jsonc:null,policy:{connections:[],grants:[],mesh:[],public_rules:[],profiles:[],assignments:[],automatic:{regions:{},fallback:"mesh-only"}} } };
+  const snapshot = (role: keyof typeof ids): MeshExecutionSnapshot => {
     const receipt = config.nodes.find((entry) => entry.node.id === ids[role]); assert(receipt);
     const { id, name, country, mesh_ipv4, mesh_ipv6 } = receipt.node;
-    return { digest: "d".repeat(64), payload: { schema_version: 1, revision: 42, node_id: id, access_policy: { grants: [] }, access_valid: true, identities: [],
-      configuration: { schema_version: 1, revision: 42, network: control.policy.network, node: { id, name, country, mesh_ipv4, mesh_ipv6 }, peers: [],
-        policy_valid: true, routing_policy: control.policy.policy, diagnostics: [] },
-      connections: { schema_version: 1, revision: 42, node_id: id, public_key: receipt.public_key, capabilities: [], diagnostics: [], valid: true,
+    return { digest:"d".repeat(64),payload:{schema_version:1,revision:42,node_id:id,network_id:"a".repeat(32),required_capability:"ipv4_exact_path_v1",network:{ipv4_prefix:"100.64.0.0/16",ipv6_prefix:"fd00::/64"},node:{id,name,country,mesh_ipv4,mesh_ipv6},peers:[],valid:true,paths:[],identities:[],materials:[],
+       connections: { schema_version: 1, revision: 42, node_id: id, public_key: receipt.public_key, capabilities: [], diagnostics: [], valid: true,
         listeners: config.configuration.listeners.filter((entry) => entry.node_id === id), incoming: [], outgoing: [], peers: [] } } };
   };
-  const proof = (snapshot: AgentDataplaneSnapshot) => ({ event: "managed_dataplane", node_id: snapshot.payload.node_id,
-    revision: snapshot.payload.revision, digest: snapshot.digest, ipv4: snapshot.payload.configuration.node.mesh_ipv4,
-    ipv4_prefix: snapshot.payload.configuration.network.ipv4_prefix, tun_name: "meshway0", mtu: 1000, ipv6: false,
+  const proof = (snapshot: MeshExecutionSnapshot) => ({ event: "managed_dataplane", node_id: snapshot.payload.node_id,
+    revision: snapshot.payload.revision, digest: snapshot.digest, ipv4: snapshot.payload.node.mesh_ipv4,
+    ipv4_prefix: snapshot.payload.network.ipv4_prefix, tun_name: "meshway0", mtu: 1000, ipv6: false,
     tun_ready: true, allowed_paths: 0, route_sink_retained: true, reason: "generation_active" });
   const actions = { control: async () => structuredClone(control), dataplane: async (role: keyof typeof ids) => snapshot(role),
-    packet: async (_role: keyof typeof ids, expected: AgentDataplaneSnapshot) => packetProof(JSON.stringify(proof(expected)), expected) };
+    packet: async (_role: keyof typeof ids, expected: MeshExecutionSnapshot) => packetProof(JSON.stringify(proof(expected)), expected) };
   return { control, snapshot, proof, actions };
 }
 
@@ -258,14 +254,14 @@ test("packet proof binds CURRENT generated bundle revision AND digest, including
     assert.equal(packetProof(`${JSON.stringify(proof)}\n${JSON.stringify(changed)}`, expected), false);
 });
 
-test("shared status/wait predicate requires configuration ACK AND connection ACK plus fresh epochs", async () => {
+test("shared status/wait predicate requires current publication and connection ACK plus fresh epochs", async () => {
   const f = packetGraph(); const floor = { nyc: 0, lax: 0, sha: 0 };
   assert.deepEqual(await demoPacketReadiness(ids, floor, f.actions), { nyc: true, lax: true, sha: true });
   const receipt = f.control.config.nodes[0]; assert(receipt);
-  receipt.node.acknowledged_revision = 41;
+  receipt.node.configuration_revision = 41;
   assert(demoHealthy(f.control.config, f.control.runtime, ids), "adjacency can be healthy while business configuration ACK lags");
   assert.deepEqual(await demoPacketReadiness(ids, floor, f.actions), { nyc: false, lax: false, sha: false });
-  receipt.node.acknowledged_revision = 42; receipt.acknowledged_revision = 41;
+  receipt.node.configuration_revision = 42; receipt.acknowledged_revision = 41;
   assert.deepEqual(await demoPacketReadiness(ids, floor, f.actions), { nyc: false, lax: false, sha: false });
   receipt.acknowledged_revision = 42;
   assert.deepEqual(await demoPacketReadiness(ids, { nyc: 1, lax: 0, sha: 0 }, f.actions), { nyc: false, lax: false, sha: false });
@@ -284,12 +280,12 @@ test("current ACKs/runtime cannot accept an earlier packet generation or digest,
 test("coherent reads reject stale node bundles, invalid or mixed global revisions, and wrong scoped identity", async () => {
   for (const mutate of [
     (f: ReturnType<typeof packetGraph>) => { f.control.policy.revision = 41; },
-    (f: ReturnType<typeof packetGraph>) => { f.control.access.revision = 41; },
+    (f: ReturnType<typeof packetGraph>) => { f.control.policy.network_id = "b".repeat(32); },
     (f: ReturnType<typeof packetGraph>) => { f.control.config.revision = 41; },
-    (f: ReturnType<typeof packetGraph>) => { f.control.access.valid = false; },
+    (f: ReturnType<typeof packetGraph>) => { f.control.config.valid = false; },
     (f: ReturnType<typeof packetGraph>) => { f.control.policy.valid = false; },
     (f: ReturnType<typeof packetGraph>) => { f.actions.dataplane = async (role) => { const snapshot = f.snapshot(role); snapshot.payload.revision = 41; return snapshot; }; },
-    (f: ReturnType<typeof packetGraph>) => { f.actions.dataplane = async (role) => { const snapshot = f.snapshot(role); snapshot.payload.configuration.revision = 41; return snapshot; }; },
+    (f: ReturnType<typeof packetGraph>) => { f.actions.dataplane = async (role) => { const snapshot = f.snapshot(role); snapshot.payload.valid = false; return snapshot; }; },
     (f: ReturnType<typeof packetGraph>) => { f.actions.dataplane = async (role) => { const snapshot = f.snapshot(role); snapshot.payload.connections.revision = 41; return snapshot; }; },
     (f: ReturnType<typeof packetGraph>) => { f.actions.dataplane = async () => f.snapshot("sha"); },
     (f: ReturnType<typeof packetGraph>) => { f.actions.dataplane = async () => { throw Error("generated response validation failed"); }; },
@@ -303,8 +299,8 @@ test("revision, ACK or epoch races after kernel/log checks return unknown and a 
   for (const mutate of [
     (control: PacketControl) => { control.config.revision++; },
     (control: PacketControl) => { control.policy.revision++; },
-    (control: PacketControl) => { control.access.revision++; },
-    (control: PacketControl) => { const node = control.config.nodes[0]; assert(node); node.node.acknowledged_revision--; },
+    (control: PacketControl) => { control.policy.network_id = "b".repeat(32); },
+    (control: PacketControl) => { const node = control.config.nodes[0]; assert(node); node.node.configuration_revision--; },
     (control: PacketControl) => { const node = control.runtime.nodes[0]; assert(node); node.epoch++; },
   ]) {
     const f = packetGraph(); let reads = 0;

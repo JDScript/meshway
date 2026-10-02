@@ -29,7 +29,7 @@ Controller 维护与编译控制意图，不默认中继业务流量。Agent 执
 
 当前是多网络、单实例 SQLite。v11 已接本地用户账户、网络成员权限和设备归属；用户 session、实例 bootstrap、注册令牌、节点 bearer 分权。管理查询在根事务内校验身份 / 网络权限并显式携带网络 ID；Agent 由凭据推导网络，SQL 绑定网络列，不使用连接级环境作用域。App 已有用户浏览器批准 / PKCE、隔离多接入和库存显示，暂无隧道。托管 Agent 支持公钥绑定、认证邻接、路径绑定的 Noise E2E、Linux Mesh IPv4 TUN、节点 DNS 与私有 daemon 诊断。
 
-VLESS TCP/TLS 与 WebSocket/TLS 的 listener/凭据已由平台生成和下发，旧 profiles 保留等价导入；手工候选仍待自动组网替代。IPv4 Mesh v3 已接通同事务 publication、生成执行 DTO与正常 Agent/TUN，旧策略源保留且须显式 CAS 激活新模式。Linux 出口/状态回包原型已验，但完整出口及 Mesh 状态型回包尚未正式接线。不能等价迁移的策略报告诊断，保留身份/数据；可信域名上下文、IPv6 TUN、打洞与逐跳 trace 未完成。
+VLESS TCP/TLS与WebSocket/TLS listener/材料由平台管理。四层NetworkPolicy是唯一源，Controller同事务publication投影稳定NodeMeshExecution；手工候选尚待自动组网收敛。完整出口、状态型Mesh回包、域名上下文、IPv6 overlay、打洞与真实trace仍未完成。
 
 Linux 正常接入、控制同步与 TUN 生命周期已接受保护 socket、HTTP/TLS、bootstrap DNS 和 RPDB owner；同地址普通业务不获全局豁免，退出保留 Mesh sink。隔离包流与恢复验证不代表远端已部署或所有宿主/VPN均受支持。当前继续 Agent 领域库收敛、自动组网 / 打洞及跨地域 Docker 验收；旧 Web 由新 console 替代，Apple 新增开发暂停，见[里程碑](/milestones)。
 
@@ -49,7 +49,7 @@ Linux 正常接入、控制同步与 TUN 生命周期已接受保护 socket、HT
 
 ## Rust 与前端边界
 
-保持 source、compiler internal、稳定 node execution DTO 和 Agent 本机执行四个边界。Controller publication 共享同事务事实/编译/投影，Agent 保留防御性校验。领域模块按职责命名；历史 schema/wire 版本集中于迁移/兼容，测试支持与历史 fixture 有明确归属。完整 dump/审查不等于源码组织清理完成。
+保持source、compiler internal、稳定node execution DTO和Agent本机执行四个边界。Controller共享同事务事实，Agent保留防御校验。当前schema一次初始化，普通启动严格拒绝未知/损坏状态，版本不扩散到业务兼容分支。
 
 | 目录 | 职责 |
 | --- | --- |

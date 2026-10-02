@@ -57,15 +57,15 @@ IP 使用规范化 CIDR。规则集由 controller 下载、管理、更新并编
 
 TUN 包没有域名；DNS 关联、Fake-IP 与嗅探的取舍仍待数据面设计确认，见[域名上下文](/dns#互联网域名路由需要什么)。`.cn`、国内域名集合和国内 IP 集合不是同一个输入。
 
-## 当前实现与迁移边界
+## 当前执行边界
 
-旧 `RoutingPolicy` 兼容模式保留Mesh/internet/any混合、default direct/reject、管理员国家元数据与via/exit字段；初始空策略reject已被目标模型废止。IPv4 Mesh v3已正式接Controller/Agent/TUN，源模式/CAS/迁移见[执行合同](/p3a-mesh-execution)。
+四层NetworkPolicy是唯一源模型；当前节点执行只覆盖IPv4Mesh，CAS/发布边界见[执行合同](/mesh-execution)。
 
 旧版纯预览已贯通 controller、生成 SDK、Agent 缓存和 Web 条件保存。托管 TUN 只执行已注册节点间的 Mesh IPv4 路径，使用独立 Access 与路径绑定 E2E；互联网出口、路由方案、规则集和可信域名上下文未由该切片接通，IPv6 CIDR 预览也不证明 IPv6 数据面。
 
-完整[v3纯引擎](/policy-v3)和[出口原型](/exit-dataplane)已验；当前只正式执行IPv4 Mesh范围，出口方案/域名分流还待控制面到常规Agent的完整接线，不能据纯编译或原型PASS写成已生效。
+完整[纯引擎](/policy)和[出口原型](/exit-dataplane)已验；当前只正式执行IPv4 Mesh范围，出口方案/域名分流还待控制面到常规Agent的完整接线，不能据纯编译或原型PASS写成已生效。
 
-迁移须无损保留旧策略行为；混合 scope、国家条件或拒绝语义不能等价表达时须明确报告，不静默改变授权或删除必经节点。
+开发期不保留旧策略兼容或迁移转换；不改变当前RBAC、授权、必经路径与E2E保护。
 
 ### 当前预览与保存约束
 

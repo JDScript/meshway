@@ -2,7 +2,7 @@
 
 **已确认：每条逻辑邻接允许多个传输候选，首版采用优先级主备。** 平台提供默认优先级、生成下发参数与凭据，Web 支持允许协议 / 优先级 / 逐段覆盖，并保留可选 listener。按流负载分担、同流多路径及逐包聚合不属于首版要求。
 
-**当前实现**：Native UDP / TCP、TLS-VLESS TCP 与 TLS-VLESS WebSocket 已接[托管运行层](/connection-runtime)。控制面管理 listener 与私有材料，Agent自动校验、保存并执行；旧 profiles 保留受控兼容与私有导入。精确字段、API与迁移见[托管承载对接](/managed-transports-api)。完整主备回切与按需自动建连仍未由候选优先级字段完成。
+**当前实现**：Native UDP/TCP、VLESS TCP/TLS与WebSocket/TLS已接托管运行层；Controller生成listener与材料，Agent验证/保存/执行。精确字段与API见[托管承载](/managed-transports-api)。完整主备回切与按需自动建连仍未完成。
 
 ## 当前库级适配器
 

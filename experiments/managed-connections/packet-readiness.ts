@@ -1,39 +1,38 @@
 import assert from "node:assert/strict";
 import { isIP } from "node:net";
-import { isDeepStrictEqual } from "node:util";
-import type { AgentDataplaneSnapshot, ConnectionsSnapshot, ConnectionRuntimesSnapshot, MeshAccessSnapshot, PolicySnapshot } from "../../packages/control-client/src/index.ts";
+import type { MeshExecutionSnapshot, ConnectionsSnapshot, ConnectionRuntimesSnapshot, NetworkPolicySnapshot } from "../../packages/control-client/src/index.ts";
 import { array, parse, record } from "./local.ts";
 import { TUN_MTU, TUN_NAME, TUN_ROUTE_PROTOCOL } from "./mode.ts";
 
 export type PacketIdentity = { node_id: string; ipv4: string; ipv4_prefix: string };
-export type PacketControl = { config: ConnectionsSnapshot; runtime: ConnectionRuntimesSnapshot; policy: PolicySnapshot; access: MeshAccessSnapshot };
+export type PacketControl = { config: ConnectionsSnapshot; runtime: ConnectionRuntimesSnapshot; policy: NetworkPolicySnapshot };
 const DIGEST = /^[0-9a-f]{64}$/;
 
-export function packetIdentity(snapshot: AgentDataplaneSnapshot): PacketIdentity {
-  return { node_id: snapshot.payload.node_id, ipv4: snapshot.payload.configuration.node.mesh_ipv4,
-    ipv4_prefix: snapshot.payload.configuration.network.ipv4_prefix };
+export function packetIdentity(snapshot: MeshExecutionSnapshot): PacketIdentity {
+  return { node_id: snapshot.payload.node_id, ipv4: snapshot.payload.node.mesh_ipv4,
+    ipv4_prefix: snapshot.payload.network.ipv4_prefix };
 }
 
-/** Generated node bundle + both ACKs must name the admin APIs' current global revision. */
-export function packetSnapshotCurrent(snapshot: AgentDataplaneSnapshot, nodeId: string, control: PacketControl): boolean {
+/** The saved current execution must match fresh network publication and runtime.
+ * Saved journals alone never prove a running generation or renew its lease. */
+export function packetSnapshotCurrent(snapshot: MeshExecutionSnapshot, nodeId: string, control: PacketControl): boolean {
   const { payload } = snapshot;
-  const { config, policy, access } = control;
-  const receipt = config.nodes.find((entry) => entry.node.id === nodeId);
-  return receipt !== undefined && Number.isSafeInteger(payload.revision) && payload.revision > 0 && DIGEST.test(snapshot.digest)
-    && config.valid && policy.valid && access.valid && payload.access_valid && payload.configuration.policy_valid && payload.connections.valid
-    && payload.revision === config.revision && payload.revision === policy.revision && payload.revision === access.revision
-    && payload.configuration.revision === payload.revision && payload.connections.revision === payload.revision
-    && payload.node_id === nodeId && payload.configuration.node.id === nodeId && payload.connections.node_id === nodeId
-    && receipt.node.revoked_at === null && receipt.node.configuration_revision === payload.revision
-    && receipt.node.acknowledged_revision === payload.revision && receipt.acknowledged_revision === payload.revision
-    && receipt.acknowledged_digest !== null && DIGEST.test(receipt.acknowledged_digest)
-    && receipt.acknowledged_at !== null && receipt.public_key !== null && receipt.public_key === payload.connections.public_key
-    && receipt.node.mesh_ipv4 === payload.configuration.node.mesh_ipv4
-    && isDeepStrictEqual(policy.network, payload.configuration.network);
+  const { config, policy } = control;
+  const node = config.nodes.find(entry => entry.node.id === nodeId);
+  return node !== undefined && payload.schema_version === 1 && payload.required_capability === "ipv4_exact_path_v1"
+    && Number.isSafeInteger(payload.revision) && payload.revision > 0 && DIGEST.test(snapshot.digest)
+    && config.valid && policy.valid && payload.valid && payload.connections.valid
+    && payload.revision === config.revision && payload.revision === policy.revision
+    && payload.network_id === policy.network_id && payload.connections.revision === payload.revision
+    && payload.node_id === nodeId && payload.node.id === nodeId && payload.connections.node_id === nodeId
+    && node.acknowledged_revision === payload.revision && node.acknowledged_digest !== null && DIGEST.test(node.acknowledged_digest)
+    && node.node.revoked_at === null && node.node.configuration_revision === payload.revision
+    && node.public_key !== null && node.public_key === payload.connections.public_key
+    && node.node.mesh_ipv4 === payload.node.mesh_ipv4 && node.node.mesh_ipv6 === payload.node.mesh_ipv6;
 }
 
 /** Agent-owned structured stdout proof, not an HTTP DTO or an inferred ACK. */
-export function packetProof(logs: string, snapshot: AgentDataplaneSnapshot): boolean {
+export function packetProof(logs: string, snapshot: MeshExecutionSnapshot): boolean {
   const expected = packetIdentity(snapshot);
   let latest: Record<string, unknown> | undefined;
   for (const line of logs.split("\n")) {

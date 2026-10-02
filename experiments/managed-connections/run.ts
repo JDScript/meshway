@@ -8,7 +8,7 @@ import { setTimeout as delay } from "node:timers/promises";
 import { fileURLToPath } from "node:url";
 import {
   ControlApiError, createEnrollmentToken, getConnections, getConnectionRuntimes,
-  getPolicy, listNetworks, revokeNode, saveConnections,
+  getNetworkPolicy, listNetworks, revokeNode, saveConnections,
 } from "../../packages/control-client/src/index.ts";
 import type {
   AgentConnectionsSnapshot, ConnectionNode, ConnectionPlan, ConnectionRuntimesSnapshot, ConnectionsSnapshot,
@@ -274,9 +274,9 @@ async function main() {
     });
     assert.equal(inventory.nodes.length, 3);
     assert.deepEqual(inventory.configuration, { listeners: [], candidates: [] });
-    const policy = await getPolicy(baseUrl, adminToken, networkId);
-    assert.equal(policy.policy.default_action, "reject");
-    assert.equal(policy.policy.rules.length, 0);
+    const policy = await getNetworkPolicy(baseUrl, adminToken, networkId);
+    assert.equal(policy.policy.connections[0]?.action, "allow");
+    assert.equal(policy.policy.mesh.length, 0);
 
     const plan: ConnectionPlan = {
       listeners: [

@@ -42,4 +42,4 @@
 3. **四地恢复与观测**：直连/有序路径、反向 dial、主备与回切、端点重绑定、重启、controller 失联/lease、授权撤回；保留失败窗口，独立查询真实 latency history。
 4. **完整出网**：正式下发公共/方案/兜底、域名/IP、出口开关与授权，验证 NAT/状态回包、DNS一致、局域网独立授权、切换与无泄漏。它仍是首版必需闭环。
 
-runner 与参数见 `experiments/linux-field/README.md`（`run.ts` / `retest.ts`）。Docker 功能/性能实验使用共享 `scripts/performance_lock.py`；每次记录源码、镜像摘要、拓扑、revision、命令、观测时间、结果与精确清理状态，不恢复旧宿主快照覆盖用户工作。
+runner 与参数见 `experiments/linux-field/README.md`（当前 `run.ts`）。Docker 功能/性能实验使用共享 `scripts/performance_lock.py`；每次记录源码、镜像摘要、拓扑、revision、命令、观测时间、结果与精确清理状态，不恢复旧宿主快照覆盖用户工作。

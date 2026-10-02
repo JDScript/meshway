@@ -8,7 +8,7 @@ import { setTimeout as delay } from "node:timers/promises";
 import { fileURLToPath } from "node:url";
 import { ControlApiError, createEnrollmentToken, getConnections, getNetwork, listNetworks, listNodes, revokeNode, saveNetwork } from "../../packages/control-client/src/index.ts";
 import { fixtureNetworkId } from "../managed-connections/network-scope.ts";
-import { enrollAgentOperation, getAgentConnectionsOperation, getAgentDataplaneOperation, getAgentDnsOperation } from "../../packages/control-client/src/generated/operations.gen.ts";
+import { enrollAgentOperation, getAgentConnectionsOperation, getAgentConfigurationOperation, getAgentDnsOperation } from "../../packages/control-client/src/generated/operations.gen.ts";
 import type { MeshDnsConfiguration, NetworkSnapshot, NodeSummary } from "../../packages/control-client/src/index.ts";
 import { array, boolean, command, parse, record, text } from "../managed-connections/local.ts";
 import { bound, canonical, negative, observation, positive, response, ROLES } from "./checks.ts";
@@ -285,7 +285,7 @@ async function main() {
     check("keyless nodes have DNS but no published data identity or grants");
     for (const role of ["one", "two"] as const) {
       assert.equal((await getAgentConnectionsOperation(baseUrl, bearer(role))).payload.public_key, null);
-      assert.deepEqual((await getAgentDataplaneOperation(baseUrl, bearer(role))).payload.access_policy.grants, []);
+      assert.equal((await getAgentConfigurationOperation(baseUrl, bearer(role))).payload.schema_version, 2);
     }
     const published = await getConnections(baseUrl, admin, networkId);
     assert(published.nodes.find((entry) => entry.node.id === node("data").id)?.public_key);

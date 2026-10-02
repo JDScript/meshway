@@ -1,4 +1,4 @@
-# P3a 正常 Mesh v3 / TUN 验收
+# P3a 正常 Mesh / TUN 验收
 
 从仓库根目录运行：
 
@@ -19,4 +19,4 @@ python3 experiments/p3a-mesh/run.py meshway-managedtest:p3a-execution-final
 - 正常 Agent 重启重新协商 epoch；Controller revision 提升在 execution GET stall 前撤旧代；全 HTTP stall 下独立 lease watchdog 撤回且 Mesh 网段不落回底层。
 - 必经节点撤回后不能直接绕行。
 
-使用真实 ICMP/HTTP 与内核计数，执行 journal 的 revision/digest 与正常 Manager 的 TUN 生效证明交叉核对；journal 本身不当作 trace。单向 grant **尚无状态型 Mesh 回包闭环**。完整系统 underlay 保护准备 API 接线、Mesh 外出网与 IPv6 overlay 也不属于此 fixture 的通过结论，见 `docs/p3a-mesh-execution.md`。
+使用真实 ICMP/HTTP 与内核计数，执行 journal 的 revision/digest 与正常 Manager 的 TUN 生效证明交叉核对；journal 本身不当作 trace。单向 grant **尚无状态型 Mesh 回包闭环**。完整系统 underlay 保护准备 API 接线、Mesh 外出网与 IPv6 overlay 也不属于此 fixture 的通过结论，见 `docs/mesh-execution.md`。

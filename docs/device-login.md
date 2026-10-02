@@ -82,7 +82,7 @@ SQLite v8 只给 `enrollment_tokens` 增加可空 `device_binding`，存储公�
 ## 验证与背景
 
 - RFC 7636 标准 S256 向量；controller 的错误 PKCE、回调 / 元数据绑定、首次过期、并发单节点、期限后恢复、换凭据拒绝、撤销不可恢复与匿名签发拒绝测试。
-- v7→v8 迁移逐表比较既有行，再验证原节点凭据、旧 token 与重启。
+- 当前schema初始化、身份幂等、权限、撤销与重启保持行为回归；历史升级fixtures已退役。
 - Web 参数 / allowlist / 登录安全返回与会话模型单测；Controller/Apple core 保留真实兑换与身份绑定验证，浏览器登录、批准、拒绝和回调页面手工验证。
 - 生成漂移与工作区 Rust / TypeScript 检查；具体运行结果见本切片提交报告。
 

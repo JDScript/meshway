@@ -1,4 +1,4 @@
 {
-  "extends": "../managed-dataplane/tsconfig.json",
+  "extends": "../managed-connections/tsconfig.json",
   "include": ["*.ts"]
 }

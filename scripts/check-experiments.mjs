@@ -2,9 +2,12 @@ import { readdirSync, existsSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { spawnSync } from "node:child_process";
+import { createRequire } from "node:module";
 
 const root = fileURLToPath(new URL("../", import.meta.url));
 const experiments = join(root, "experiments");
+const require = createRequire(join(root, "package.json"));
+const typescript = require.resolve("typescript/bin/tsc");
 const projects = readdirSync(experiments, { withFileTypes: true })
   .filter((entry) => entry.isDirectory() && existsSync(join(experiments, entry.name, "tsconfig.json")))
   .map((entry) => entry.name)
@@ -19,7 +22,7 @@ function run(command, args) {
 if (projects.length === 0) throw new Error("No experiment TypeScript projects found");
 for (const project of projects) {
   console.log(`Checking experiments/${project}`);
-  run("pnpm", ["exec", "tsc", "--noEmit", "-p", `experiments/${project}/tsconfig.json`]);
+  run(process.execPath, [typescript, "--noEmit", "-p", `experiments/${project}/tsconfig.json`]);
   const tests = readdirSync(join(experiments, project))
     .filter((name) => name.endsWith(".test.ts"))
     .sort()

@@ -8,11 +8,11 @@ import { setTimeout as delay } from "node:timers/promises";
 import { fileURLToPath } from "node:url";
 import { isDeepStrictEqual } from "node:util";
 import {
-  ControlApiError, createEnrollmentToken, getConnections, getConnectionRuntimes, getMeshAccess, getPolicy, listNodes, saveConnections,
+  ControlApiError, createEnrollmentToken, getConnections, getConnectionRuntimes, getNetworkPolicy, listNodes, saveConnections,
 } from "../../packages/control-client/src/index.ts";
-import { getAgentConnectionsOperation, getAgentDataplaneOperation } from "../../packages/control-client/src/generated/operations.gen.ts";
+import { getAgentConnectionsOperation } from "../../packages/control-client/src/generated/operations.gen.ts";
 import type {
-  AgentDataplaneSnapshot, ConnectionPlan, ConnectionRuntimesSnapshot, ConnectionsSnapshot, NodeList,
+  MeshExecutionSnapshot, ConnectionPlan, ConnectionRuntimesSnapshot, ConnectionsSnapshot, NodeList,
 } from "../../packages/control-client/src/index.ts";
 import { probed } from "./checks.ts";
 import { array, boolean, command, parse, record, text } from "./local.ts";
@@ -23,6 +23,7 @@ import { agentArguments, bootstrapArguments, BOOTSTRAP_CAPS, changeMode, demoMod
 import type { DemoMode, ModeJournal } from "./mode.ts";
 import { packetIdentity, packetInterface, packetSnapshotCurrent, PROCESS_PROOF } from "./packet-readiness.ts";
 import { dockerPacketLogReady } from "./packet-log.ts";
+import { zMeshExecutionSnapshot } from "../../packages/control-client/src/generated/zod.gen.ts";
 import type { PacketControl } from "./packet-readiness.ts";
 import { currentImageSource, imageInventory, retainImage } from "./images.ts";
 import { NetworkScopeError, resolveDemoNetworkId } from "./network-scope.ts";
@@ -206,8 +207,8 @@ type PacketReadiness = Record<Role, boolean>;
 /** Shared by status and wait: fence actual packet proof with current generated reads. */
 export async function demoPacketReadiness(ids: DemoIds, floor: EpochFloor | null, actions: {
   control(): Promise<PacketControl>;
-  dataplane(role: Role): Promise<AgentDataplaneSnapshot>;
-  packet(role: Role, snapshot: AgentDataplaneSnapshot): Promise<boolean>;
+  dataplane(role: Role): Promise<MeshExecutionSnapshot>;
+  packet(role: Role, snapshot: MeshExecutionSnapshot): Promise<boolean>;
 }): Promise<PacketReadiness> {
   const unknown = (): PacketReadiness => ({ nyc: false, lax: false, sha: false });
   try {
@@ -473,13 +474,31 @@ async function main() {
   };
   const currentPacketReadiness = (ids: DemoIds, token: string, floor: EpochFloor | null) => demoPacketReadiness(ids, floor, {
     control: async () => {
-      const [config, runtime, policy, access] = await Promise.all([getConnections(owner().controller, token, networkId()),
-        getConnectionRuntimes(owner().controller, token, networkId()), getPolicy(owner().controller, token, networkId()), getMeshAccess(owner().controller, token, networkId())]);
-      return { config, runtime, policy, access };
+      const [config, runtime, policy] = await Promise.all([getConnections(owner().controller, token, networkId()),
+        getConnectionRuntimes(owner().controller, token, networkId()), getNetworkPolicy(owner().controller, token, networkId())]);
+      return { config, runtime, policy };
     },
-    // Original node bearer stays in host memory and goes only to the generated
-    // read-only SDK operation. No CLI argv, Docker input, admin mount or logging.
-    dataplane: async (role) => getAgentDataplaneOperation(owner().controller, await nodeBearer(role)),
+    // Read the Agent-owned saved execution without negotiating another runtime
+    // or changing its epoch/capability. Fresh admin revision + runtime and kernel
+    // evidence below remain mandatory; the cache cannot assert readiness alone.
+    dataplane: async (role) => {
+      const credential = await nodeBearer(role);
+      const path = join(root, role, "agent.json.mesh-execution.json");
+      await privatePath(path);
+      assert((await lstat(path)).size <= 2 * 1024 * 1024 + 64 * 1024);
+      const cache = parse(await readFile(path, "utf8"));
+      assert(cache.format_version === 1 && cache.controller === owner().agent_controller && cache.node_id === owner().nodes[role].id);
+      assert(isDeepStrictEqual(cache.credential_hash, [...createHash("sha256").update(credential).digest()]));
+      const snapshot = zMeshExecutionSnapshot.parse(cache.snapshot);
+      const canonical = (value: unknown): unknown => {
+        if (Array.isArray(value)) return value.map(canonical);
+        if (value !== null && typeof value === "object") return Object.fromEntries(Object.entries(value).sort(([a],[b])=>a < b ? -1 : a > b ? 1 : 0).map(([key,item])=>[key,canonical(item)]));
+        return value;
+      };
+      assert(snapshot.digest === sha256(JSON.stringify(canonical(snapshot.payload))));
+      assert(snapshot.payload.node_id === cache.node_id && snapshot.payload.network_id === networkId());
+      return snapshot;
+    },
     packet: (role, snapshot) => packetReady(role, snapshot),
   });
   const publicStatus = async (token: string | null) => {
@@ -551,7 +570,7 @@ async function main() {
     for (const network of role === "lax" ? ["a", "b"] : [role === "nyc" ? "a" : "b"])
       await docker(["network", "connect", ...(role === "lax" ? ["--alias", "lax.mesh.test"] : []), networkName(network), containerName(role)]);
   };
-  const packetReady = async (role: Role, snapshot: AgentDataplaneSnapshot): Promise<boolean> => {
+  const packetReady = async (role: Role, snapshot: MeshExecutionSnapshot): Promise<boolean> => {
     const expected = packetIdentity(snapshot);
     const name = containerName(role);
     const before = await inspectOwned("container", name, role);
@@ -710,7 +729,7 @@ async function main() {
         assert(config.valid, "controller plan became invalid");
         const { mode: _mode, ...stableModeBinding } = disk;
         const { shell: _shell, ...stableUpgradeBinding } = disk;
-        const binding = upgrading ? { ...stableUpgradeBinding, image_id: "" } : { ...stableModeBinding, image_id: "", routing: await getPolicy(disk.controller, token, networkId()) };
+        const binding = upgrading ? { ...stableUpgradeBinding, image_id: "" } : { ...stableModeBinding, image_id: "", routing: await getNetworkPolicy(disk.controller, token, networkId()) };
         return { image_id: disk.image_id, shell: shellMode(disk.shell), binding: sha256(JSON.stringify(binding)), files,
           plan_revision: config.revision, plan_digest: sha256(JSON.stringify(config.configuration)) };
       };

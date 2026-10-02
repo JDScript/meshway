@@ -1,6 +1,6 @@
 import { spawn } from "node:child_process";
 import type { Readable } from "node:stream";
-import type { AgentDataplaneSnapshot } from "../../packages/control-client/src/index.ts";
+import type { MeshExecutionSnapshot } from "../../packages/control-client/src/index.ts";
 import { packetProof } from "./packet-readiness.ts";
 
 export type PacketLogProcess = {
@@ -105,7 +105,7 @@ export function readPacketLog(
 
 /** Caller already holds demo.py's shared performance lock and ownership fence. */
 export async function dockerPacketLogReady(
-  name: string, startedAt: string, snapshot: AgentDataplaneSnapshot, lockFd: number,
+  name: string, startedAt: string, snapshot: MeshExecutionSnapshot, lockFd: number,
 ): Promise<boolean> {
   if (!Number.isFinite(Date.parse(startedAt)) || !Number.isSafeInteger(lockFd) || lockFd < 3) return false;
   try {

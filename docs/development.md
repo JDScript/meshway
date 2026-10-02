@@ -52,7 +52,7 @@ App 浏览器批准 / PKCE 兑换、原绑定恢复与迁移见[设备登录](/d
 
 ## 配置与路由切片
 
-IPv4 Mesh v3 的grants/有序first-match已贯通正常执行；旧模式allow/reject与初始routing reject仅作兼容迁移输入。源模式/CAS/epoch/同revision发布和正常TUN验收见[Mesh执行合同](/p3a-mesh-execution)，完整出口尚待正式接线。
+IPv4 Mesh使用单一当前policy、grants并集与有序first-match。CAS/epoch/同revision发布和正常TUN验收见[执行合同](/mesh-execution)，完整出口尚待接线。
 
 ### 新切片验收清单
 
@@ -71,8 +71,8 @@ IPv4 Mesh v3 的grants/有序first-match已贯通正常执行；旧模式allow/r
 | 切片 | 验收入口与结论 |
 | --- | --- |
 | 托管邻接 | `experiments/managed-connections/run.py`：真实注册、公钥认证、反向 TLS-VLESS、撤回与 lease，见[运行层](/connection-runtime) |
-| 托管 IPv4 | `experiments/managed-dataplane/run.py`：隔离 no-bypass、真实 ICMP / HTTP、授权 / 必经节点 / lease / 撤销，见[数据面](/managed-dataplane) |
-| IPv4 Mesh v3 | `experiments/p3a-mesh/run.py`：正常Controller/Agent/TUN、grants、有序路径、重启、撤回、HTTP stall/lease |
+| 托管 IPv4 | `experiments/p3a-mesh/run.py`：隔离 no-bypass、真实 ICMP / HTTP、授权 / 必经节点 / lease / 撤销，见[数据面](/managed-dataplane) |
+| IPv4 Mesh | `experiments/p3a-mesh/run.py`：正常Controller/Agent/TUN、grants、有序路径、重启、撤回、HTTP stall/lease |
 | 系统保护 | `apps/agent/tests/underlay_fixture/run.py` / `review.py`：真实namespace/socket/TUN；正常主循环启用另验 |
 | 跨地域 | `experiments/linux-field`：固定同身份恢复已复验，自动组网/打洞另验，见[远端边界](/linux-field-validation) |
 | 节点 DNS / resolver | `experiments/managed-dns/run.py`，加 `--system-resolver` 验 glibc 与恢复，见[DNS](/dns) |

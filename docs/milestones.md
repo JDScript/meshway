@@ -7,7 +7,7 @@
 | 能力 | 当前边界 |
 | --- | --- |
 | 网络与身份 | 多网络 SQLite、显式作用域、IPAM、注册/心跳/撤销、公钥绑定；本地邮箱账户、邀请、网络 RBAC、设备归属与 App PKCE |
-| 配置与策略 | 网络内 revision/CAS、JSONC 草稿、digest/私有保存/ACK；四层纯引擎及正常 Controller→Agent→Linux TUN 的 IPv4 Mesh v3 执行 |
+| 配置与策略 | 网络内 revision/CAS、JSONC 草稿、digest/私有保存/ACK；四层纯引擎及正常 Controller→Agent→Linux TUN 的 IPv4 Mesh 执行 |
 | 承载 | 平台托管 Native UDP/TCP、VLESS TCP/TLS 与 WebSocket/TLS listener/凭据；保留旧 profiles 等价私有导入 |
 | 数据面 | 路径绑定 Noise E2E、反向 dial、节点 DNS、daemon 诊断；认证有界 E2E resync 与运行报告/历史槽位恢复修复 |
 | 观测 | 真实邻接 probe、滚动 latency history 存储/查询、UDP carrier socket STUN 与有期限上报；端到端路径测量未实现 |

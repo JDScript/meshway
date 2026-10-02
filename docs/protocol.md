@@ -12,7 +12,7 @@ packages/protocol/openapi.json
 Agent Rust client      TS SDK + Zod / JSON Schema
 ```
 
-- `crates/protocol/src/`：共享 HTTP/执行 DTO；`crates/policy/src/v3/`：策略源与纯编译器。
+- `crates/protocol/src/`：共享 HTTP/执行 DTO；`crates/policy/src/`：唯一策略源与纯编译器。
 - `apps/controller/src/http/`：实际操作、认证声明、请求/响应；独立于 handler 的控制面契约位于 `src/contracts/`。
 - `apps/controller/src/bin/generate-rust-client/main.rs`：节点操作白名单与 checked 生成适配。
 - `scripts/generate-protocol.mjs`：统一导出/生成；产物位于 `crates/control-client/src/generated`、`packages/control-client/src/generated`。
@@ -40,7 +40,7 @@ drift check 临时重生成并逐文件比较，不直接编辑产物。完整�
 
 ## 当前源与执行合同
 
-多网络、账户、托管承载与 IPv4 Mesh v3 管理/执行操作均已合入。旧 `policy` / `access` 等兼容 API 保留旧源语义；`policy-v3` 显式激活新源模式，不能把旧接口改口称为 grants。具体 [Mesh 执行合同](/p3a-mesh-execution)、[账户](/local-accounts)、[listener/材料](/managed-transports-api)按职责说明行为。
+多网络、账户、托管承载与IPv4Mesh管理/执行均进入实际Rust路由生成链。唯一 `/policy` 管理四层NetworkPolicy，旧独立policy/access/Flow source接口与source mode已删除。具体边界见[执行合同](/mesh-execution)。
 
 `NetworkPolicy` 是编辑源，compiler internal 不直接反序列化为可信计划；节点执行是独立版本化、封闭 DTO。publication 在同事务读取策略、库存、能力、邻接与公钥，投影同 revision 的完整配置。Agent 仍验证网络/身份/地址、digest、路径与容量及本机资源。
 
@@ -51,7 +51,7 @@ drift check 临时重生成并逐文件比较，不直接编辑产物。完整�
 - Rust 输入拒绝未知字段；节点成功响应按 schema 的 required/nullable 与封闭对象严格解码。非 2xx status-first，401/403/409 不等待错误 body，成功 body 有界。
 - TS 请求/成功响应使用生成 Zod，类型声明不能代替运行时检查。缺失、null、未知、不适用、失效是不同语义；不能补 0、当前时间或伪造状态。
 - 封闭对象、唯一判别 tagged union、typed map、字符串约束与属性预算由生成器检查；不支持的形状生成失败，不用任意 JSON/`any`/未验证断言绕过。合法 map own keys（含 `__proto__`）安全保留。
-- 成功 DTO 的 strict unknown-field 意味着新增字段也可能不兼容；需要新操作/版本、显式协商或协调全部消费者升级。策略 v3 不意味着全部 HTTP 路径改成 `/api/v3`。
+- 成功DTO严格拒绝未知字段，新增字段也须协调现行消费者；HTTP API仍为 `/api/v1`，与执行schema/capability版本独立。
 - 旧 App exchange/heartbeat/configuration/DNS 与浏览器批准路径保持兼容。数据面 wire/能力与 HTTP 成功 DTO 的演进分别处理。
 
 SDK `ControlApiError.status` 保留非成功 HTTP 状态，当前错误 body 不回显；schema/媒体类型/网络错误不会伪装成认证拒绝。每个操作的确切字段、status/security 见生成 OpenAPI，业务引用/资源/权限/总预算还须查实际 validator。
