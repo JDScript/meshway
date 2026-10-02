@@ -62,8 +62,16 @@ pub(super) fn withdraw_user(
     user: &UserId,
 ) -> Result<(), Error> {
     let changed = db.execute("UPDATE nodes SET revoked_at=?3 WHERE network_id=?1 AND revoked_at IS NULL AND id IN (SELECT o.node_id FROM node_ownership o JOIN account_memberships m ON m.membership_id=o.membership_id AND m.network_id=o.network_id WHERE o.network_id=?1 AND m.user_id=?2 AND m.revoked_at IS NOT NULL)",params![scope.as_str(),user.as_str(),chrono::Utc::now().to_rfc3339()])?;
-    if changed > 0 {
-        db.execute("DELETE FROM connection_runtime_reports WHERE network_id=?1 AND node_id IN (SELECT id FROM nodes WHERE network_id=?1 AND revoked_at IS NOT NULL)",[scope.as_str()])?;
+    // Include previously revoked devices of this user's revoked memberships.
+    // This repairs old orphans on an authorized retry, without touching another
+    // user's devices, an active membership, or the tag catalog.
+    let withdrawn = "SELECT n.id FROM nodes n JOIN node_ownership o ON o.network_id=n.network_id AND o.node_id=n.id JOIN account_memberships m ON m.network_id=o.network_id AND m.membership_id=o.membership_id WHERE n.network_id=?1 AND n.revoked_at IS NOT NULL AND m.user_id=?2 AND m.revoked_at IS NOT NULL";
+    let tags = db.execute(
+        &format!("DELETE FROM node_tags WHERE network_id=?1 AND node_id IN ({withdrawn})"),
+        params![scope.as_str(), user.as_str()],
+    )?;
+    db.execute(&format!("DELETE FROM connection_runtime_reports WHERE network_id=?1 AND node_id IN ({withdrawn})"),params![scope.as_str(),user.as_str()])?;
+    if changed > 0 || tags > 0 {
         configuration::bump(db, scope)?;
         configuration::ensure_publishable(db, scope)?;
         connections::ensure_publishable(db, scope)?;

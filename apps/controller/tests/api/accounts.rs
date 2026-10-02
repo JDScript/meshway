@@ -5,6 +5,8 @@ use meshway_protocol::{DEVICE_CALLBACK_URI, s256};
 mod expiry;
 #[path = "accounts_managed.rs"]
 mod managed;
+#[path = "accounts_withdrawal.rs"]
+mod withdrawal;
 
 pub(super) fn is_account_path(path: &str) -> bool {
     path.starts_with("/api/v1/auth/")

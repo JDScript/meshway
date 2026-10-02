@@ -771,7 +771,17 @@ pub(crate) fn set_membership(
 ) -> Result<()> {
     atomic(tx, |db| {
         let repo = Accounts::new(db);
-        let old = repo.role(network, user)?.ok_or(AccountError::Forbidden)?;
+        let Some(old) = repo.role(network, user)? else {
+            // Retry may clean assignments left by an older withdrawal. It is
+            // not a membership restore: require prior membership and the same
+            // current grant ceiling (most privileged revoked role wins).
+            if desired.is_some() {
+                return Err(AccountError::Forbidden);
+            }
+            let role:String=db.query_row("SELECT role FROM account_memberships WHERE network_id=?1 AND user_id=?2 AND revoked_at IS NOT NULL ORDER BY role='owner' DESC,role='admin' DESC,revoked_at DESC LIMIT 1",params![network.as_str(),user.0],|r|r.get(0)).optional()?.ok_or(AccountError::Forbidden)?;
+            repo.may_grant(principal, network, Role::stored(role)?, now)?;
+            return Ok(());
+        };
         repo.may_grant(principal, network, old, now)?;
         if let Some(new) = desired {
             repo.may_grant(principal, network, new, now)?;
@@ -823,7 +833,13 @@ pub(crate) fn leave_network(
     atomic(tx, |db| {
         let repo = Accounts::new(db);
         let user = repo.session_user(principal, now)?;
-        let role = repo.role(network, &user)?.ok_or(AccountError::Forbidden)?;
+        let Some(role) = repo.role(network, &user)? else {
+            let prior:bool=db.query_row("SELECT EXISTS(SELECT 1 FROM account_memberships WHERE network_id=?1 AND user_id=?2 AND revoked_at IS NOT NULL)",params![network.as_str(),user.0],|r|r.get(0))?;
+            if !prior {
+                return Err(AccountError::Forbidden);
+            }
+            return Ok(user);
+        };
         if role == Role::Owner {
             let owners: i64 = db.query_row("SELECT COUNT(*) FROM account_memberships WHERE network_id=?1 AND role='owner' AND revoked_at IS NULL", [network.as_str()], |r| r.get(0))?;
             if owners <= 1 {
