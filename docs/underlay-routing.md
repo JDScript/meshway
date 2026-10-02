@@ -1,6 +1,6 @@
 # Linux socket 级系统保护通路
 
-状态：**独立内核机制实验与集成建议**。没有接入生产 Agent；P1c 当前目标 IP `/32` bypass 仍是已知原型限制。实验不证明 VLESS/WebSocket、真实公网 NAT、GeoIP 或完整出口闭环已经完成。
+状态：**内核机制证明 + Agent 内部可复用工厂 / HTTP / bootstrap DNS 实现**。`apps/agent/src/underlay` 已提供生产代码与独立 namespace 真实路径 fixture；现有 Agent 主循环尚未接线，P1c 当前目标 IP `/32` bypass 仍是已知原型限制。fixture 不代表生产已部署，不证明 VLESS/WebSocket、真实公网 NAT、GeoIP 或完整出口闭环已经完成。
 
 ## 推荐：只跳过自有连续捕获规则
 
@@ -56,11 +56,15 @@ ProtectedSocketFactory(generation)
 
 ### controller HTTP / reqwest / DNS
 
-当前生成 `apps/agent/src/generated/client.rs::HttpClient::new` 自建 reqwest 客户端，没有注入受保护连接器入口。应在生成器模板增加传入已配置 HTTP transport/client 的构造入口并重生成，继续使用生成 endpoint 与响应；不直接编辑生成文件。
+生成 `apps/agent/src/generated/client.rs::HttpClient::new` 的原 reqwest 默认行为保持兼容；生成器的 checked `transport.rs` adapter 增加 `HttpTransport` / `with_transport`，所有 14 个操作均在生成器中核对并注入，同一份生成 URL、bearer、JSON body、status-first 与 bounded response 解码继续使用。注入失败绝不调用原 reqwest fallback；生成文件只通过生成器更新。
 
-本次核对本地依赖 **reqwest 0.13.5**：`ClientBuilder::interface` 是接口绑定，可能绕过其他 VPN，不是上述机制；`connector_layer` 包装连接服务，并不提供可靠的 pre-connect socket mark hook。它不能被描述为“加一个 layer 就保护了 SYN”。正式 controller 集成尚需可审计的底层 connector pre-connect mark hook（依赖提供/扩展此能力），以及生成客户端注入与消费者验证。这是本实验留下的实际接入缺口。
+本次核对本地依赖 **reqwest 0.13.5**：`ClientBuilder::interface` 是接口绑定，可能绕过其他 VPN，不是上述机制；`connector_layer` 包装连接服务，并不提供可靠的 pre-connect socket mark hook。实际实现选择维护中的 hyper 1 HTTP/1 connection API + tokio-rustls：`SocketFactory::tcp` 先创建 / 标记 / 读回 / connect，之后 TLS 和 HTTP 才获得 `ProtectedTcp`。未 vendor 或 patch reqwest。每个 IPv4/IPv6 候选单独走工厂，2 秒候选超时，整体请求 / 响应 10 秒期限；当前为顺序候选，不声称实现 happy-eyeballs。上层重试也只能重新进入同一个注入 transport。TLS 使用系统 trust roots、hostname 验证与 HTTP/1.1 ALPN；不关闭证书验证。
 
-`dns_resolver` 可以接入专用的 bootstrap resolver，但 resolver 自己的 UDP/TCP/DoH 外层也必须由工厂保护。不能把系统 `getaddrinfo` / `tokio::net::lookup_host` 自动等同于 protected DNS：请求可能交给另一个 daemon 的 unmarked socket。不要按 DNS server IP 或整台 resolver 进程放行。使用现有系统 DNS/VPN 上游语义，只有 controller/peer/probe bootstrap 查询进入此 resolver，业务 DNS 保持其业务策略；缓存绑定 underlay generation、TTL、用途并允许取消。happy-eyeballs 的每个 IPv4/IPv6 候选均须保护，HTTP pool、proxy 连接、DNS TCP fallback、重试和重定向须逐一检查；不得用 `local_address` 代替 mark。
+`ControllerHttp` 绑定 controller origin，拒绝 origin 变更和 proxy 环境变量；不跟随 redirect，不支持显式代理、HTTP/2、QUIC 或 DoH。这是有意收敛的 HTTP/1 实现，无连接池：每个请求独占一个已标记连接，response stream 持有唯一 driver 任务，body 完成 / 丢弃 / 错误 / 超时均 abort driver 并关闭 TCP。取消请求 future 也会 abort driver；不能靠只 drop client handle 宣称退休。生成客户端在注入 transport 时仍创建 reqwest request builder，但从不执行该 builder 的 `send`，它不会另开连接。
+
+`BootstrapResolver` 的 UDP 与 truncated response TCP fallback 都走同一代际 factory，socket 用途为 `BootstrapDns(Controller / Carrier / AuthenticationProbe / Stun)`；不接受业务 DNS 请求入口。查询随机 transaction ID，校验来源、question、响应类型与 opcode，仅采用对应 owner/CNAME 链的 A/AAAA，缓存按用途、name、type 和该 resolver 的 generation 隔离，并受真实最小 TTL 限制。缓存最多 256 项，不缓存失败 / NODATA，不刷新旧代际时间；每个上游 3 秒 timeout，按系统 snapshot 的顺序尝试。任一家族 transport 错误不会伪装成 NODATA 或触发 getaddrinfo。
+
+支持范围为内部 routing owner 提供的 **plain ordered system/VPN DNS snapshot**，保留其 server 顺序与原 RPDB，不选公共 resolver、不绑定物理接口。`from_plain_system` 只读取 plain `/etc/resolv.conf`，拒绝 loopback stub 和 systemd-resolved 拓扑。systemd-resolved / 其它 daemon、split-DNS、per-link/scoped IPv6 upstream、proxy / DoH / DoT 的完整系统语义尚无适配；NSS / mDNS / `/etc/hosts` override 也尚未适配，不宣称等价于完整系统 resolver。调用者不能把这些组合压成全局 nameserver 列表后声称保持系统分流。遇到已知或无法证明为 plain topology、或者目标依赖尚未适配的本地名称 override 的环境，正式 routing owner 必须拒绝激活，不静默用 DNS 替代该 override 或 unmarked fallback。绝对 hostname 不采用 search suffix；bootstrap 不是业务名称解析。不能把系统 `getaddrinfo` / `tokio::net::lookup_host` 自动等同于 protected DNS。
 
 ### UDP listener / outgoing / STUN
 
@@ -88,4 +92,53 @@ TCP listener 在 listen 前保护，Linux accepted socket 通常继承 listener 
 
 可重复命令、每项证据与实测结果见 `experiments/underlay-routing/README.md` 和 `RESULTS.md`。仅独立 Docker namespace，IPv6 检查是 **双栈 underlay**，不是 IPv6 overlay。
 
-协调者后续需：统一所有自有捕获入口；接入上述工厂、reqwest connector 与生成客户端注入；真实 bootstrap DNS 与业务 DNS 隔离；真实 Native UDP/STUN/认证探测、VLESS+WS、TCP listener inheritance；ownership 持久恢复与外部 RPDB/mark 改写监控；换网时并发取消与 R3 fence 联测；生产降权/cap 边界和协议消费者检查。CI 可先加入 host-only fixture tests，再在有 `/dev/net/tun` 的 Linux Docker runner 上运行隔离实验；本分支不编辑根 CI。
+协调者后续需：统一所有自有捕获入口；合并主循环接线与 socket 类型适配；真实 Native UDP/STUN/认证探测、VLESS+WS；ownership 持久恢复与外部 RPDB / nft/iptables mark 改写监控；系统 split-DNS adapter；换网时并发取消与 R3 fence 联测。CI 可加入 host-only tests，再在有 `/dev/net/tun` 的 Linux Docker runner 上运行生产代码 fixture；本分支不编辑根 CI。
+
+## 可复用生产切片与接线 handoff
+
+- `generation.rs`：`MarkReservation` 验证与保留 foreign bits；`PreparedGeneration::prepare` 核对双栈真实 RPDB 的连续 guard / capture / stable NOP，拒绝 duplicate / foreign / unknown selectors、保留 mask 冲突和 block 外捕获表引用；先验证双栈 SO_MARK 权限再返回工厂。这里只核对 routing owner **已经安装**的可信 reservation，不凭名字认领规则，不安装 / 删除 RPDB，不实现 ownership 恢复；外部并发改写监控和 nft/iptables 审计仍必须由 owner 完成。
+- `socket.rs`：crate-private typed purpose，UDP bind / connect / connected send / sendto，TCP optional local bind / pre-connect 与 listener pre-listen，accept 只验证继承而不事后修补。每个 application write / UDP send 都核验 mark；全代际 Mutex 与 I/O poll 共享退休 fence，取消唤醒等待任务，TCP shutdown。没有公开 raw FD、into_inner 或普通业务 `direct` 调用入口。不支持平台时明确 `Unsupported`，不降级。
+- `PreparedGeneration` 是唯一退休 owner，drop / explicit retire 都使 clone factory、resolver、HTTP 失效；FD wrapper 若被调用者继续持有，其 FD 可能仍保留，但 TCP 已 shutdown、application I/O 全部 fenced，后台 HTTP driver 随取消 / response drop 结束。该边界不能撤回已发送字节。不得把“仍持 FD 但退休”描述成 FD 已全部关闭。
+- `controller.rs::ControllerChannel` 持有独立 controller generation 与注入 transport。业务 lease / sink 退休不得连带撤回必要 controller 恢复通道。换 controller endpoint / DNS snapshot / network 时由 owner 先 prepare 新 channel，然后替换并退休旧 channel；更换业务 profile 不重新分配 underlay 资格。
+- `docs/underlay-integration.patch` 是 **未应用** 的最小 state HTTP 构造接线：所有生产 `HttpClient::new` 位置通过 `Agent::controller_client`，保留 enrollment token / node credential / response size 差异；独立 DNS service 的后台 Sync 保存注入 client，不能重新创建普通 client。验证应用命令 `git apply --check --unidiff-zero docs/underlay-integration.patch`；已在隔离的 HEAD archive 应用 candidate + handoff 后通过 Agent all-features/all-targets Clippy `-D warnings`，材料目录 `meshway-underlay-integration-a7sbmdfw`。P2a 稳定后协调者再合，并完成 channel 安装门槛：捕获发布之前必须已安装 prepared channel，退休后不得设回 None 或使用默认 reqwest 重试。独立 DNS service 在 controller generation 更换时须同步 restage，否则它保留的是已退休 client，并将持续失败关闭。patch 不实现 routing owner，也不触碰 P1c 主循环。
+- Carrier handoff：冻结 P2a `56da5ad` 后采用下方 `underlay-p2a.patch` 的统一 owning hook，不再直接替换或重写 session 握手。`peer_addr` / `local_addr` / `set_nodelay` 由 `ProtectedTcp` 提供。Native UDP/STUN 保留同一 `ProtectedUdp`，探测仅借用该 FD 的受限 send/recv，不另造 socket。接收协议与认证仍由 P2a owner 管理；补充 hook patch 未应用。
+
+### 依赖与复现
+
+未改变 root manifest；Agent 增加的直接依赖都已在原 lock 中存在，只需 root lock 的 package dependency list / tokio-util feature 闭包更新，候选单列 `docs/underlay-lock-candidate.patch` 供协调者维护。新依赖均使用安全 API；workspace `unsafe_code = forbid` 保持生效。
+
+```sh
+# 独立 worktree 初次复现，由协调者先应用 lock candidate。
+git apply docs/underlay-lock-candidate.patch
+CARGO_TARGET_DIR=target/underlay-host cargo test -p meshway-agent --all-features --lib underlay::
+python3 apps/agent/tests/underlay_fixture/run.py
+```
+
+新 fixture 编译 **实际 Agent 单元测试二进制**，独立 Docker 双栈 namespace 中安装原 guard/goto+stable NOP 与 default TUN sink，验证真实 HTTP / TLS / DNS UDP+TCP fallback、证书失败、generated status-first、listener SYN-ACK / accept、foreign bits / 原 VPN table、代际退休 / DNS 与 HTTP 取消、权限不足、同进程同 IP/端口普通 TCP / UDP 被捕获且没有 unmarked retry。完整 syscall log 和 observer 事件在批准 TMP `meshway-underlay-artifacts/mw-rust-underlay-*/`。runner 使用同一 performance lock / 继承 FD，最长 2400 秒包含等锁 / build / run；不使用 host network / privileged 或宿主配置。fixture RPDB 精确清理只属于 namespace 测试，不代表生产 crash recovery。
+
+### 2026-10-02 生产代码 fixture 实测
+
+最终 run `mw-rust-underlay-0f2e5cad741b`：`status=ok`，Rust 行为与真实降权测试 exit 均为 0，`cleanup_errors=[]`。镜像 `sha256:f0354bda2845e317f6daae3d0fef98079632fc7611d6b5e64bb7596ab7acae07`；运行时间 UTC `00:28:57.510445` → `00:30:19.634958`（含 image build / Linux Clippy）。
+
+syscall audit 实际验证 **137 次** protected bind/connect/listen 前的 mark + readback；**4 个** listener 均 premark，其中双栈 loopback listener 的 wrapper 被刻意保留跨退休，退休后真实 connect 均 `ConnectionRefused`、accept 返回取消，证明不是仅丢弃一个 owner handle。8 次普通 connect 包括 6 次同远端 HTTP/TLS/DNS capture 对照与 2 次退休 listener 反向验证；4 次普通 UDP bind/send 对照。真实 TUN 只出现预期的 10 个远端普通 socket，protected HTTP、TLS、DNS fallback、listener reply 及重试没有进入 capture。
+
+原始 `result.json`、`observer.jsonl`、`syscalls.log` 保留于批准 TMP `meshway-underlay-artifacts/mw-rust-underlay-0f2e5cad741b/`。首轮自签 CA 被错误当作 end-entity 的验收失败 `ae888cc93713`、缺 Linux Clippy component 的 build 失败 `082e46e8fea3` 都保留为失败记录，不计作通过；最终使用独立 CA 签发的 serverAuth leaf，未放宽 Rust TLS 校验。先前完整路径通过但尚无退休 listener / 完整 syscall audit 的 `166881604810` 也保留。
+
+已通过 host `cargo fmt --check`、workspace all-features/all-targets Clippy、Web check、SDK typecheck + 12 个行为 tests、4 个 experiments 的 `tsc --noEmit` 和 protocol drift check；Linux Docker build 另外执行 Agent all-features/lib/tests Clippy `-D warnings`。Host syscall auditor 2 个 tests 验证缺 readback / SO_MARK EPERM 会被拒绝。
+
+最终全消费者 Rust 检查也已通过：在同一 performance lock 下串行执行 `cargo test --locked --workspace --all-features --no-fail-fast -- --test-threads=1`，含 Agent、Apple core、Controller、dataplane、policy、protocol 与各 transport / doctests。此前并行构建时 dataplane 洪泛恢复测试曾得到 Timeout；当前分支和 `9c7d922` 隔离复测都通过，最终串行全套的 dataplane 70 tests 均通过。没有修改该测试或 dataplane 代码来规避失败。
+
+## 冻结 P2a `56da5ad` 的补充整合
+
+`docs/underlay-p2a.patch` 是 **未应用** 的补充 patch，顺序为本分支代码 → P2a `56da5ad` → state HTTP `underlay-integration.patch` → `git apply --recount --unidiff-zero docs/underlay-p2a.patch`。根 manifest / lock 由协调者合并，保留 P2a 的 `transport-runtime`、managed feature 脱离 lab，以及 v10 / 17 个生成操作；不替换其 schema 或模型。
+
+- `managed_connections::sockets` 增加 crate-private visibility；保留 `Protection::prepare/accepted` 的默认行为，新增 owning `listen/dial` 与 bootstrap `resolve` seam。默认 `SystemUnderlay` 仍是 **unmarked**，不因为存在这个 trait / patch 就具有 SO_MARK。
+- raw `TcpSocket/TcpStream` 不能携带代际应用写 fence。protected 分支通过 `OuterListener/OuterTcp` 直接持有已有 `ProtectedListener/ProtectedTcp`，不维护重复 FD 的强引用 ledger，不向 session 交付 `into_inner` raw socket。TLS / WS / VLESS 原握手逻辑只接收这个通用 AsyncRead/Write stream，没有重写协议。
+- 新 `underlay::ManagedProtection` 构造只接受已准备的 `SocketFactory` 与内部 `SystemDnsSnapshot`。listener / candidate / peer ID 在 P2a 的原 `StreamContext` 保持关联，不作为 bypass 条件。protected adapter 对旧 raw `prepare/accepted` 路径返回 Unsupported，避免无 ownership 的 FD 逃逸；实际统一 helper 使用 owned seam。
+- `Manager::new_with_protection` 与 async `install_socket_protection` 是内部注入点，后者先 withdraw / join 旧 session，再替换 factory；withdraw 保留既有业务 sink。`resolve_targets` protected 分支调用同一 generation 的 bootstrap resolver，不再对 carrier 域名调用 unmarked `lookup_host`；legacy SystemUnderlay 的默认行为保留。
+- P2a 新材料能力 HTTP 调用也通过 `Agent::controller_client`；生成器的 `secret_debug.rs` 与 `secret_debug::adapt` 原样保留，transport adapter 独立作用于 client。补充生成使用 P2a OpenAPI，17 个操作全部通过 checked transport adapter。
+- **Native UDP / core Native TCP 的 Runtime socket 注入仍未接线**；这些 sockets 不经过 P2a 的 VLESS/TLS/WS outer hook。factory 已提供受保护 UDP/TCP，但协调者须补 Runtime I/O 接口后才能激活整张网络的全 IP capture。guard/capture allocator、ownership/恢复、系统 DNS 非 plain 拓扑和 sink 迁移门槛也仍由正式 routing owner 完成。
+
+组合检查入口 `python3 apps/agent/tests/underlay_fixture/combine.py --p2a 56da5ad`：在批准 TMP 的独立 archive 组合代码 / manifest candidates / 两个 handoff patch，保留 P2a secret Debug 保护并重生成客户端，检查 Agent all-features/all-targets Clippy、默认无 features、仅 managed-connections 三种组合。它不会修改 P2a 冻结 checkout、当前分支源码或协调者 lock，不执行 Docker，也不把组合编译当作新的数据面实测。
+
+最终组合材料：批准 TMP `meshway-underlay-p2a-r2fyii3r/result.json`，`p2a_commit=56da5ad`、`status=ok`，5 个命令 exit 全部为 0。原 `0f2e5cad741b` namespace 证据对应独立切片 `8ad2729`；组合阶段只重生成 / 编译 / Clippy，没有重新运行 Docker 或扩大其握手 / 数据面验收声明。
