@@ -18,6 +18,7 @@ export const PAGES = {
   nodes: { route: "/networks/$network/nodes", panel: true },
   members: { route: "/networks/$network/members", panel: true },
   settings: { route: "/networks/$network/settings", panel: true },
+  account: { route: "/networks/$network/account", panel: false },
 } as const satisfies Record<
   string,
   { route: `/networks/$network/${string}`; panel: boolean }

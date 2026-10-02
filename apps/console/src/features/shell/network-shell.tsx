@@ -3,6 +3,7 @@ import { useCallback, useEffect, useMemo } from "react"
 
 import { GlassToolbar } from "@/components/chrome/glass-toolbar"
 import { LanguageSwitch, ThemeSwitch } from "@/components/chrome/preferences"
+import { AccountPage } from "@/features/account/page"
 import { AccountMenu } from "@/features/auth/account-menu"
 import { useBootStore } from "@/features/boot/boot-store"
 import { EMPTY_SCENE } from "@/features/globe/scene"
@@ -111,6 +112,7 @@ export function NetworkShell({ networkId }: { networkId: string }) {
       <NodesPage networkId={networkId} />
       <MembersPage networkId={networkId} />
       <SettingsPage networkId={networkId} />
+      <AccountPage networkId={networkId} />
 
       {mobile && page !== "overview" ? null : (
         <div

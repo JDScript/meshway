@@ -1,5 +1,6 @@
 import { useQuery } from "@tanstack/react-query"
-import { LogOutIcon } from "lucide-react"
+import { useParams } from "@tanstack/react-router"
+import { LogOutIcon, UserRoundIcon } from "lucide-react"
 
 import { Button } from "@/components/ui/button"
 import {
@@ -11,6 +12,7 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
+import { useAccountNavigation } from "@/features/account/navigation"
 import { sessionQuery } from "@/features/network/queries"
 import { m } from "@/paraglide/messages.js"
 
@@ -18,6 +20,10 @@ import { useSignOut } from "./use-sign-out"
 
 export function AccountMenu() {
   const session = useQuery(sessionQuery())
+  const networkId = useParams({
+    strict: false,
+    select: (params) => params.network ?? null,
+  })
   const signOut = useSignOut()
   const email = session.data?.user.email ?? null
   return (
@@ -43,11 +49,23 @@ export function AccountMenu() {
           </DropdownMenuLabel>
         </DropdownMenuGroup>
         <DropdownMenuSeparator />
+        {networkId ? <AccountItem networkId={networkId} /> : null}
         <DropdownMenuItem onClick={() => void signOut()}>
           <LogOutIcon />
           {m.sign_out()}
         </DropdownMenuItem>
       </DropdownMenuContent>
     </DropdownMenu>
+  )
+}
+
+/** The account page, opened over the network's current page. */
+function AccountItem({ networkId }: { networkId: string }) {
+  const account = useAccountNavigation(networkId)
+  return (
+    <DropdownMenuItem onClick={account.open}>
+      <UserRoundIcon />
+      {m.account_title()}
+    </DropdownMenuItem>
   )
 }
