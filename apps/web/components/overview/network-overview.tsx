@@ -21,6 +21,7 @@ import { LastContact, ReceiptBadge } from "@/components/nodes/node-status"
 import { BrandMark } from "@/components/shell/brand"
 import { useConsoleFocus } from "@/components/shell/console-focus"
 import { useNetwork } from "@/components/shell/network-context"
+import { LatencyHistory } from "@/components/latency/latency-history"
 import { WorldDots } from "@/components/overview/world-dots"
 import { Button, buttonVariants } from "@/components/ui/button"
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
@@ -426,12 +427,12 @@ function EdgeCard({ edge, byId, read }: { edge: EdgeFacts; byId: Map<string, Nod
         ))}
       </ul>
       <p className="text-xs text-muted-foreground">RTT 是各端认证探测的往返时间，分别显示。</p>
-      <section aria-label="延迟历史" className="flex flex-col gap-1.5">
-        <h3 className="text-xs font-medium">延迟历史</h3>
-        <div data-testid="overview-history-empty" className="flex h-12 items-center justify-center rounded-lg border border-dashed text-xs text-muted-foreground">
-          尚无历史数据
-        </div>
-      </section>
+      <LatencyHistory
+        key={edge.key}
+        nodeIds={edge.nodeIds}
+        names={new Map(edge.nodeIds.map((id) => [id, name(id)]))}
+        defaultSource={edge.channels[0]?.dialerNodeId ?? a}
+      />
       <div className="flex flex-wrap gap-2">
         <Link href={topologyFlowHref(routes, { sourceNodeId: a, targetNodeId: b })} className={buttonVariants({ variant: "outline", size: "sm" })}>
           检查访问与路径
