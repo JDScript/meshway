@@ -38,4 +38,17 @@
 
 ## MV3
 
-待修复验证。公共HTTP DTO/endpoint保持固定合同；最终全消费者矩阵尚未运行。
+- Managed stream capability进入controller联合连接编译，owner必须同时具有通用
+  accept和对应stream，每个dialer同时受通用dial和对应stream检查。管理source
+  保留；不兼容source使用既有whole-plan invalid/withdraw投影，秘密材料同步为空。
+  能力撤回/恢复沿既有网络revision发布；不降为TCP，不绕路径。
+- 新行为回归覆盖owner tcp-only/empty、每个不同dialer（tcp-only与WS可用）、
+  owner通用accept撤回、stream撤回/恢复及幂等能力报告。逐阶段核对summary、
+  source诊断、valid、有效listener/candidate/material、最小角色披露、同revision
+  digest及原材料不变；controller定向 **7 passed**。
+- 原API反例拷贝到 `$OPENCODE_TMP/meshway-managed-control-fix-audit`，原场景
+  仅改依赖树和修复期望；真实HTTP异常无sentinel，真实API tcp-only owner得到
+  `available=false, valid=false, listeners=0, materials=0`，退出0。
+- 日志 `managed-vless-mv3-tests.log` / `managed-vless-mv2-mv3-original-scenarios.log`。
+
+公共HTTP DTO/endpoint保持固定合同；最终全消费者矩阵尚未运行。

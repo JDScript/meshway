@@ -24,6 +24,182 @@ fn settings(node_id: &str) -> ManagedListenerSettings {
         }),
     }
 }
+
+fn assert_stream_projection(store: &Store, network: &NetworkId, tokens: &[&str], valid: bool) {
+    let revision = store.revision(network).unwrap();
+    let public = store.connections(network).unwrap();
+    assert_eq!(public.valid, valid);
+    for token in tokens {
+        let bundle = store.agent_managed_connections(token).unwrap();
+        assert_eq!(bundle.connections.payload.revision, revision);
+        assert_eq!(bundle.connections.payload.valid, valid);
+        assert_eq!(
+            bundle.digest,
+            managed_digest(&bundle.network_id, &bundle.connections, &bundle.materials).unwrap()
+        );
+        if !valid {
+            assert!(bundle.connections.payload.listeners.is_empty());
+            assert!(bundle.connections.payload.outgoing.is_empty());
+            assert!(bundle.connections.payload.incoming.is_empty());
+            assert!(bundle.materials.is_empty());
+        }
+    }
+}
+
+#[test]
+fn stream_capabilities_compile_owner_and_each_dialer_with_revoke_restore_revision_fences() {
+    let dir = directory();
+    let mut store = Store::open(dir.path(), &NetworkOptions::default()).unwrap();
+    let network = store.initial_network_id().unwrap();
+    let (a, ca) = enroll(
+        &mut store,
+        &network,
+        "owner",
+        &format!("09{}", "00".repeat(31)),
+    );
+    let (b, cb) = enroll(
+        &mut store,
+        &network,
+        "tcp-dialer",
+        &format!("0a{}", "00".repeat(31)),
+    );
+    let (c, cc) = enroll(
+        &mut store,
+        &network,
+        "ws-dialer",
+        &format!("0b{}", "00".repeat(31)),
+    );
+    let streams = |modes| PublishManagedTransportCapabilitiesRequest {
+        vless_streams: modes,
+    };
+    store
+        .publish_managed_capabilities(&ca, &streams(vec![VlessStreamTransport::Tcp]))
+        .unwrap();
+    let saved = store
+        .save_managed_listener(
+            &network,
+            &SaveManagedListenerRequest {
+                expected_revision: store.revision(&network).unwrap(),
+                settings: settings(&a.id),
+            },
+        )
+        .unwrap();
+    assert!(!saved.listeners[0].compiled_capability_available);
+    assert_stream_projection(&store, &network, &[&ca, &cb, &cc], false);
+    let empty = store
+        .publish_managed_capabilities(&ca, &streams(vec![]))
+        .unwrap();
+    assert_eq!(empty.revision, saved.revision + 1);
+    assert_stream_projection(&store, &network, &[&ca], false);
+    assert_eq!(
+        store
+            .publish_managed_capabilities(&ca, &streams(vec![]))
+            .unwrap()
+            .revision,
+        empty.revision
+    );
+    let restored = store
+        .publish_managed_capabilities(
+            &ca,
+            &streams(vec![
+                VlessStreamTransport::Tcp,
+                VlessStreamTransport::Websocket,
+            ]),
+        )
+        .unwrap();
+    assert_eq!(restored.revision, empty.revision + 1);
+    assert!(store.managed_listeners(&network).unwrap().listeners[0].compiled_capability_available);
+    assert_stream_projection(&store, &network, &[&ca], true);
+    store
+        .publish_managed_capabilities(&cb, &streams(vec![VlessStreamTransport::Tcp]))
+        .unwrap();
+    let mut plan = store.connections(&network).unwrap().configuration;
+    for (node, id) in [(&b, "tcp-candidate"), (&c, "ws-candidate")] {
+        plan.candidates.push(ConnectionCandidate {
+            id: id.into(),
+            dialer_node_id: node.id.clone(),
+            listener_id: "vless".into(),
+            endpoint: ConnectionEndpoint {
+                host: "localhost".into(),
+                port: 28443,
+            },
+            priority: 10,
+            credential_ref: Some("managed.vless".into()),
+        });
+    }
+    store
+        .save_connections(
+            &network,
+            &SaveConnectionsRequest {
+                expected_revision: store.revision(&network).unwrap(),
+                configuration: plan,
+            },
+        )
+        .unwrap();
+    let source = store.connections(&network).unwrap();
+    assert!(!source.valid);
+    assert_eq!(source.configuration.candidates.len(), 2);
+    assert!(
+        source
+            .diagnostics
+            .iter()
+            .any(|d| d.item_id.as_deref() == Some("tcp-candidate")
+                && d.field == "candidates.vless.stream")
+    );
+    assert!(
+        !source
+            .diagnostics
+            .iter()
+            .any(|d| d.item_id.as_deref() == Some("ws-candidate"))
+    );
+    assert!(store.managed_listeners(&network).unwrap().listeners[0].compiled_capability_available);
+    assert_stream_projection(&store, &network, &[&ca, &cb, &cc], false);
+    let before = source.revision;
+    let repaired = store
+        .publish_managed_capabilities(&cb, &streams(vec![VlessStreamTransport::Websocket]))
+        .unwrap();
+    assert_eq!(repaired.revision, before + 1);
+    assert_stream_projection(&store, &network, &[&ca, &cb, &cc], true);
+    let owner = store.agent_managed_connections(&ca).unwrap();
+    assert_eq!(owner.connections.payload.listeners.len(), 1);
+    assert!(owner.materials[0].private_key_pem.is_some());
+    for token in [&cb, &cc] {
+        let dialer = store.agent_managed_connections(token).unwrap();
+        assert_eq!(dialer.connections.payload.outgoing.len(), 1);
+        assert!(dialer.materials[0].private_key_pem.is_none());
+    }
+    let revoked = store
+        .publish_managed_capabilities(&ca, &streams(vec![VlessStreamTransport::Tcp]))
+        .unwrap();
+    assert_eq!(revoked.revision, repaired.revision + 1);
+    assert!(!store.managed_listeners(&network).unwrap().listeners[0].compiled_capability_available);
+    assert_stream_projection(&store, &network, &[&ca, &cb, &cc], false);
+    store
+        .publish_managed_capabilities(&ca, &streams(vec![VlessStreamTransport::Websocket]))
+        .unwrap();
+    assert_stream_projection(&store, &network, &[&ca, &cb, &cc], true);
+    assert_eq!(
+        store.agent_managed_connections(&ca).unwrap().materials[0].uuid,
+        owner.materials[0].uuid
+    );
+    // Generic role permission remains an independent necessary condition.
+    store
+        .publish_connection_identity(
+            &ca,
+            &PublishConnectionIdentityRequest {
+                public_key: format!("09{}", "00".repeat(31)),
+                capabilities: vec![ConnectionCapability {
+                    transport: ConnectionTransport::Vless,
+                    can_accept: false,
+                    can_dial: true,
+                    semantics: ConnectionSemantics::Stream,
+                }],
+            },
+        )
+        .unwrap();
+    assert!(!store.managed_listeners(&network).unwrap().listeners[0].compiled_capability_available);
+    assert_stream_projection(&store, &network, &[&ca, &cb, &cc], false);
+}
 fn enroll(store: &mut Store, network: &NetworkId, name: &str, key: &str) -> (NodeSummary, String) {
     let request = request(name);
     let credential = request.node_credential.clone();

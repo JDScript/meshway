@@ -162,6 +162,59 @@ pub(super) fn append(
     Ok(())
 }
 
+/// Managed stream support is executable compilation input, not a UI hint.
+/// Retain intent but let the existing whole-plan fail-closed projection withdraw
+/// every listener/candidate/material until owner AND all dialers support it.
+pub(super) fn stream_diagnostics(
+    connection: &Connection,
+    network: &NetworkId,
+    plan: &ConnectionPlan,
+) -> Result<Vec<ConnectionDiagnostic>, Error> {
+    let mut diagnostics = Vec::new();
+    let mut statement = connection.prepare(
+        "SELECT node_id,vless_streams FROM managed_transport_capabilities WHERE network_id=?1",
+    )?;
+    let mut streams = std::collections::BTreeMap::new();
+    for row in statement.query_map([network.as_str()], |r| {
+        Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?))
+    })? {
+        let (id, json) = row?;
+        let modes: Vec<VlessStreamTransport> = serde_json::from_str(&json)
+            .map_err(|_| Error::Configuration("invalid managed stream capabilities"))?;
+        streams.insert(id, modes);
+    }
+    for listener in listeners(connection, network)? {
+        if !listener.settings.enabled {
+            continue;
+        }
+        let Some(vless) = &listener.settings.vless else {
+            continue;
+        };
+        if !listener.compiled_capability_available {
+            diagnostics.push(ConnectionDiagnostic{item_id:Some(listener.settings.id.clone()),field:"listeners.vless.stream".into(),message:"Listener owner has not declared the required managed VLESS stream and accept capability".into()});
+        }
+        for candidate in plan
+            .candidates
+            .iter()
+            .filter(|c| c.listener_id == listener.settings.id)
+        {
+            if streams
+                .get(&candidate.dialer_node_id)
+                .is_none_or(|modes| !modes.contains(&vless.stream))
+            {
+                diagnostics.push(ConnectionDiagnostic {
+                    item_id: Some(candidate.id.clone()),
+                    field: "candidates.vless.stream".into(),
+                    message: "Dialer has not declared the required managed VLESS stream capability"
+                        .into(),
+                });
+            }
+        }
+    }
+    diagnostics.truncate(64);
+    Ok(diagnostics)
+}
+
 fn validate(settings: &ManagedListenerSettings) -> Result<(), Error> {
     let id = &settings.id;
     if id.is_empty()

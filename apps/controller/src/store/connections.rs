@@ -112,7 +112,13 @@ pub(super) fn admin_snapshot(
     let mut configuration = source(connection, network)?;
     super::managed_transports::append(connection, network, &mut configuration)?;
     let nodes = nodes(connection, network)?;
-    let (_, diagnostics) = validation::compile(&configuration, &nodes);
+    let (_, mut diagnostics) = validation::compile(&configuration, &nodes);
+    diagnostics.extend(super::managed_transports::stream_diagnostics(
+        connection,
+        network,
+        &configuration,
+    )?);
+    diagnostics.truncate(64);
     Ok(ConnectionsSnapshot {
         revision: configuration::revision(connection, network)?,
         configuration,
