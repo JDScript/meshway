@@ -1,6 +1,8 @@
 # v11：账户、设备归属与延迟历史统一迁移
 
-状态：整合候选的生产启动路径；部署与最终消费者验收由协调者完成，不表示现网已升级。
+状态：已合入正式启动路径并完成本地 v9→v11 升级；完整消费者检查与独立迁移审查通过。
+真实副本演练保留 15 张旧表和 4 个节点的原值，重启不改写已知起点；现网升级前另取最新备份，
+并核对身份、配置、tags、网络 revision 均未变化。不会自动创建账户或认领节点。
 
 ## 迁移顺序
 
@@ -38,4 +40,5 @@
   历史 fixture 显式排除 v11-only 对象，不能把新表的初始化内容当作旧表发生改写。
 - `accounts::history::historical_reads_use_current_network_membership_without_requiring_manage_permission`：
   真实 HTTP 的 Member/Owner/bootstrap 读取与退出/跨网拒绝。
-- 部署前还需真实旧数据副本演练，以及生成产物、Agent、Apple core、Web/SDK 和实验消费者检查。
+- 真实旧数据副本演练、生成产物、Agent、Apple core、Web/SDK 和实验消费者检查已完成；
+  Web UI 后续在开发页面手工验证，不再运行浏览器自动化套件。
