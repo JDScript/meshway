@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import { readFile, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -8,6 +9,7 @@ import {
   listNetworksOperation, createEnrollmentTokenOperation, createManagedEnrollmentTokenOperation,
   getConnectionsOperation, saveConnectionsOperation, savePolicyOperation, saveMeshAccessOperation,
   listNodesOperation, getConnectionRuntimesOperation, getManagedListenersOperation,
+  saveNetworkOperation,
 } from "../../packages/control-client/src/generated/operations.gen.ts";
 import type { NodeSummary, RoutingPolicy, ConnectionCandidate } from "../../packages/control-client/src/generated/types.gen.ts";
 
@@ -94,7 +96,9 @@ async function configure(candidates: ConnectionCandidate[], policy: RoutingPolic
   const old = await getConnectionsOperation(base, admin, networkId);
   const connections = await saveConnectionsOperation(base, admin, networkId, { expected_revision: old.revision,
     configuration: { listeners: old.configuration.listeners, candidates } });
-  assert(connections.valid);
+  // Before Agent.run publishes managed stream capabilities the intent can be
+  // saved but not yet executable. Readiness below requires actual fresh peers.
+  await evidence("saved-connection-intent", { revision: connections.revision, valid: connections.valid, diagnostics: connections.diagnostics });
   const saved = await savePolicyOperation(base, admin, networkId, { expected_revision: connections.revision, policy, source_jsonc: null });
   await saveMeshAccessOperation(base, admin, networkId, { expected_revision: saved.revision, policy: { default_action: "allow", rules: [] }, source_jsonc: null });
 }
@@ -120,16 +124,24 @@ async function probe(source: Host, target: Host, expectSuccess = true) {
   return { source: source.name, target: target.name, ...observation, route: observation.route };
 }
 try {
+  await evidence("fixture-provenance", { backend_source: report.source,
+    files: Object.fromEntries(await Promise.all(["run.ts", "remote.py", "container.py"].map(async name =>
+      [name, createHash("sha256").update(await readFile(join(HERE, name))).digest("hex")]))),
+    ca_sha256: createHash("sha256").update(ca).digest("hex"),
+  });
   await initialize(lax); await create(lax, "controller");
   admin = await until("controller private token", async () => { try { return text((await helper(lax, "admin-token", {}, "controller")).token); } catch { return false; } });
   const networks = await listNetworksOperation(base, admin); assert.equal(networks.networks.length, 1);
   networkId = networks.networks[0]!.network_id;
+  await saveNetworkOperation(base, admin, networkId, { expected_revision: networks.networks[0]!.revision,
+    name: `field-${runId}`, dns: { enabled: true, zone: "meshway-field.test", ttl_seconds: 30 } });
   await writeFile(join(artifacts, "controller-private.json"), JSON.stringify({ admin, network_id: networkId }) + "\n", { mode: 0o600 });
   await create(lax, "agent"); await enroll(lax);
   await initialize(tyo); await create(tyo, "agent"); await enroll(tyo);
   await configure([candidate(tyo, lax)], { default_action: "direct", rules: [] });
   for (const h of [lax, tyo]) await helper(h, "enable");
   await evidence("two-node-current-runtime", { runtime: await ready([lax, tyo]) });
+  assert((await getConnectionsOperation(base, admin, networkId)).valid);
   for (const h of [lax, tyo]) await httpStart(h);
   await delay(2000);
   await evidence("two-region-tun-websocket-tls", { results: [await probe(tyo, lax), await probe(lax, tyo)] });
