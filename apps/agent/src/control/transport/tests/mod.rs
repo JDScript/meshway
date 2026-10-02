@@ -1,4 +1,5 @@
 //! Protected socket/HTTP/carrier support in disposable namespace fixtures only.
+use std::os::unix::fs::PermissionsExt;
 use std::{io, net::SocketAddr, sync::Arc, time::Duration};
 
 use tokio::io::AsyncWriteExt;
@@ -25,7 +26,10 @@ async fn prepared() -> PreparedGeneration {
     if let Some((_, owner)) = fixture.as_ref() {
         return owner.socket_generation().await.unwrap();
     }
-    let directory = tempfile::Builder::new().tempdir_in("/run").unwrap();
+    let directory = tempfile::Builder::new()
+        .permissions(std::fs::Permissions::from_mode(0o700))
+        .tempdir_in("/run")
+        .unwrap();
     let mut owner = LinuxUnderlay::prepare(Preparation {
         state_directory: directory.path(),
         identity: "isolated-app-fixture",
