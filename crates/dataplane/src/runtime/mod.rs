@@ -203,6 +203,8 @@ impl Channel {
 }
 
 struct Incoming {
+    /// Originating native carrier owner, independent of packet admission.
+    socket_generation: Option<Arc<generation::Fence>>,
     peer: String,
     token: [u8; 32],
     transport: TransportKind,
@@ -254,6 +256,8 @@ struct Inner {
     delivery_high_water: HighWater,
     #[cfg(test)]
     observed_transit: Mutex<Vec<Vec<u8>>>,
+    #[cfg(test)]
+    blocking_dispatch_test: std::sync::atomic::AtomicBool,
 }
 
 struct Handle {
@@ -412,6 +416,7 @@ fn launch_native(
             candidate,
             context,
             live,
+            running.generation.0.clone(),
         )));
     }
     for candidate in inner.config.outgoing.clone() {
@@ -496,6 +501,8 @@ impl Runtime {
             delivery_high_water: HighWater::default(),
             #[cfg(test)]
             observed_transit: Mutex::default(),
+            #[cfg(test)]
+            blocking_dispatch_test: std::sync::atomic::AtomicBool::new(false),
         });
         // Atomic setup before any engine is spawned. A separate socket owner
         // fences native I/O even for the compatible unmarked implementation.

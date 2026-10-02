@@ -102,6 +102,7 @@ impl<S: AsyncWrite + Unpin> AsyncWrite for FencedCarrier<S> {
 }
 
 pub(super) struct Established<S> {
+    socket_generation: Option<Arc<super::generation::Fence>>,
     stream: S,
     cipher: Cipher,
     peer: String,
@@ -190,6 +191,7 @@ pub(super) async fn authenticate_with_context<S: DuplexStream>(
             write_record(&mut stream, &cipher.seal(HOP_ACK)?).await?;
         }
         Ok(Established {
+            socket_generation: None,
             stream,
             cipher,
             peer,
@@ -248,6 +250,7 @@ async fn run<S: DuplexStream>(
         stream,
         cipher,
         peer,
+        socket_generation,
         ..
     } = established;
     let token = cipher.id;
@@ -269,6 +272,7 @@ async fn run<S: DuplexStream>(
             }
             let body = lock(&cipher).open(&record)?;
             inner.deliver(Incoming {
+                socket_generation: socket_generation.clone(),
                 peer: peer.clone(),
                 token,
                 transport,
@@ -321,6 +325,12 @@ async fn run<S: DuplexStream>(
         result = writes => result,
         _ = shutdown.changed() => Ok(()),
         _ = closed.changed() => Ok(()),
+        _ = async {
+            match &socket_generation {
+                Some(generation) => generation.cancelled().await,
+                None => std::future::pending().await,
+            }
+        } => Ok(()),
     }
 }
 
@@ -351,9 +361,15 @@ pub(super) async fn listen(
                         inner.counters(TransportKind::NativeTcp).drop(error.into());
                         return;
                     }
-                    match authenticate_with_context(&inner, socket, StreamRole::Acceptor, TransportKind::NativeTcp, 0, context).await {
-                        Ok(established) => {
+                    let authenticated = tokio::select! {
+                        biased;
+                        _ = socket_generation.cancelled() => return,
+                        result = authenticate_with_context(&inner, socket, StreamRole::Acceptor, TransportKind::NativeTcp, 0, context) => result,
+                    };
+                    match authenticated {
+                        Ok(mut established) => {
                             if let Ok(_guard) = socket_generation.enter() {
+                                established.socket_generation = Some(socket_generation.clone());
                                 let _ = install(inner, established, TransportKind::NativeTcp, permit);
                             }
                         }
@@ -401,7 +417,7 @@ pub(super) async fn maintain(
                     remote_addr: Some(socket.peer_addr()?),
                     ..Default::default()
                 };
-                let established = authenticate_with_context(
+                let mut established = authenticate_with_context(
                     &inner,
                     socket,
                     StreamRole::Dialer {
@@ -413,6 +429,7 @@ pub(super) async fn maintain(
                 )
                 .await?;
                 let _guard = socket_generation.enter()?;
+                established.socket_generation = Some(socket_generation.clone());
                 install(inner.clone(), established, TransportKind::NativeTcp, permit)
             };
             tokio::select! {

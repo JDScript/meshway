@@ -5,12 +5,202 @@ use crate::sockets::{
 };
 use std::{io, sync::atomic::AtomicUsize};
 
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+#[allow(clippy::await_holding_lock)] // Deliberately pause synchronous dispatch on its real mutex; test-only block_in_place releases the worker queue.
+async fn rebind_waits_for_admitted_native_dispatch_and_never_delivers_old_ingress_later() {
+    for transport in [TransportKind::NativeUdp, TransportKind::NativeTcp] {
+        let direct = vec!["nyc".into(), "lax".into()];
+        let mut config = configs();
+        for node in &mut config {
+            node.allowed_paths.push(direct.clone());
+        }
+        config[1].listeners.push(ListenerConfig {
+            transport,
+            bind: "127.0.0.1:0".parse().unwrap(),
+            id: None,
+            allowed_peers: None,
+        });
+        let server = Runtime::start(config[1].clone()).await.unwrap();
+        config[0].outgoing.push(OutgoingCandidate {
+            transport,
+            endpoint: server.bound_listeners()[0].address.to_string(),
+            peer: "lax".into(),
+            priority: 0,
+            id: None,
+        });
+        let client = Runtime::start(config[0].clone()).await.unwrap();
+        client
+            .wait_for_peer("lax", Duration::from_secs(3))
+            .await
+            .unwrap();
+        let mut delivery = server.take_packet_receiver().unwrap();
+        client
+            .send_packet(direct.clone(), b"warmup".to_vec())
+            .await
+            .unwrap();
+        assert_eq!(
+            tokio::time::timeout(Duration::from_secs(2), delivery.recv())
+                .await
+                .unwrap()
+                .unwrap()
+                .payload,
+            b"warmup"
+        );
+        let packet_generation = server.handle.inner.packet_generation();
+        let socket_generation = server.handle.native.lock().await.generation.0.clone();
+        server
+            .handle
+            .inner
+            .blocking_dispatch_test
+            .store(true, Ordering::Relaxed);
+        // Exactly the independent review interleaving: real authenticated bytes
+        // have passed active/token + packet admission, then block on endpoints.
+        let endpoints = lock(&server.handle.inner.endpoints);
+        client
+            .send_packet(direct.clone(), b"old-carrier-payload".to_vec())
+            .await
+            .unwrap();
+        tokio::time::timeout(Duration::from_secs(2), async {
+            while !packet_generation.admission_held_for_test() {
+                tokio::time::sleep(Duration::from_millis(1)).await;
+            }
+        })
+        .await
+        .unwrap();
+        assert!(socket_generation.admission_held_for_test());
+        let clone = server.clone();
+        let rebind = tokio::spawn(async move {
+            clone
+                .replace_native_socket_factory(Arc::new(SystemSocketFactory))
+                .await
+        });
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        let returned_before_commit = rebind.is_finished();
+        assert!(delivery.try_recv().is_err());
+        drop(endpoints);
+        tokio::time::timeout(Duration::from_secs(2), rebind)
+            .await
+            .unwrap()
+            .unwrap()
+            .unwrap();
+        assert!(
+            !returned_before_commit,
+            "{transport:?}: rebind returned while old dispatch was still uncommitted"
+        );
+        // Admitted dispatch may commit before retirement completes, never after.
+        assert_eq!(delivery.try_recv().unwrap().payload, b"old-carrier-payload");
+        assert!(
+            tokio::time::timeout(Duration::from_millis(100), delivery.recv())
+                .await
+                .is_err()
+        );
+        assert!(Arc::ptr_eq(
+            &packet_generation,
+            &server.handle.inner.packet_generation()
+        ));
+        client
+            .replace_native_socket_factory(Arc::new(SystemSocketFactory))
+            .await
+            .unwrap();
+        client
+            .wait_for_peer("lax", Duration::from_secs(3))
+            .await
+            .unwrap();
+        client
+            .send_packet(direct, b"new-carrier-payload".to_vec())
+            .await
+            .unwrap();
+        assert_eq!(
+            tokio::time::timeout(Duration::from_secs(2), delivery.recv())
+                .await
+                .unwrap()
+                .unwrap()
+                .payload,
+            b"new-carrier-payload"
+        );
+        tokio::join!(client.shutdown(), server.shutdown());
+    }
+}
+
 #[derive(Default)]
 struct Recording {
     udp: AtomicUsize,
     listen: AtomicUsize,
     dial: AtomicUsize,
     fail: bool,
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+#[allow(clippy::await_holding_lock)] // Same deliberate cross-thread dispatch pause as the independent endpoint counterexample.
+async fn rebind_waits_for_admitted_native_forwarding_commit() {
+    for transport in [TransportKind::NativeUdp, TransportKind::NativeTcp] {
+        let fixture = Fixture::native(transport).await;
+        let mut delivery = fixture.sha.take_packet_receiver().unwrap();
+        fixture
+            .nyc
+            .send_packet(path(), b"warmup".to_vec())
+            .await
+            .unwrap();
+        assert_eq!(
+            tokio::time::timeout(Duration::from_secs(2), delivery.recv())
+                .await
+                .unwrap()
+                .unwrap()
+                .payload,
+            b"warmup"
+        );
+        let inner = fixture.lax.handle.inner.clone();
+        let packet_generation = inner.packet_generation();
+        inner.blocking_dispatch_test.store(true, Ordering::Relaxed);
+        // This real relay dispatch pauses immediately before next-hop enqueue.
+        let transit = lock(&inner.observed_transit);
+        let before = inner.counters(transport).forwarded.load(Ordering::Relaxed);
+        fixture
+            .nyc
+            .send_packet(path(), b"old-transit".to_vec())
+            .await
+            .unwrap();
+        tokio::time::timeout(Duration::from_secs(2), async {
+            while !packet_generation.admission_held_for_test() {
+                tokio::time::sleep(Duration::from_millis(1)).await;
+            }
+        })
+        .await
+        .unwrap();
+        let relay = fixture.lax.clone();
+        let rebind = tokio::spawn(async move {
+            relay
+                .replace_native_socket_factory(Arc::new(SystemSocketFactory))
+                .await
+        });
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        let returned_before_commit = rebind.is_finished();
+        assert_eq!(
+            inner.counters(transport).forwarded.load(Ordering::Relaxed),
+            before
+        );
+        drop(transit);
+        tokio::time::timeout(Duration::from_secs(2), rebind)
+            .await
+            .unwrap()
+            .unwrap()
+            .unwrap();
+        assert!(
+            !returned_before_commit,
+            "{transport:?}: rebind crossed pending forwarding admission"
+        );
+        assert_eq!(
+            inner.counters(transport).forwarded.load(Ordering::Relaxed),
+            before + 1
+        );
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        assert_eq!(
+            inner.counters(transport).forwarded.load(Ordering::Relaxed),
+            before + 1
+        );
+        assert!(Arc::ptr_eq(&packet_generation, &inner.packet_generation()));
+        fixture.shutdown().await;
+    }
 }
 impl NativeSocketFactory for Recording {
     fn udp(

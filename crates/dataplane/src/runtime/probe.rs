@@ -129,7 +129,8 @@ pub(super) async fn dispatch(inner: Arc<Inner>, mut receiver: mpsc::Receiver<Inc
             }
             incoming = receiver.recv() => {
                 let Some(incoming) = incoming else { break };
-                if let Err(failure) = process(&inner, &incoming) {
+                let result = process_dispatch(&inner, &incoming);
+                if let Err(failure) = result {
                     inner.counters(incoming.transport).drop(failure.reason);
                 }
                 // process is synchronous: no endpoint/registry/delivery lock crosses this yield.
@@ -139,6 +140,16 @@ pub(super) async fn dispatch(inner: Arc<Inner>, mut receiver: mpsc::Receiver<Inc
     }
 }
 
+fn process_dispatch(inner: &Inner, incoming: &Incoming) -> StageResult<()> {
+    // Only the regression opts into scheduler assistance while deliberately
+    // blocking a synchronous dispatcher on a real mutex. Production is unchanged.
+    #[cfg(test)]
+    if inner.blocking_dispatch_test.load(Ordering::Relaxed) {
+        return tokio::task::block_in_place(|| process(inner, incoming));
+    }
+    process(inner, incoming)
+}
+
 fn process(inner: &Inner, incoming: &Incoming) -> StageResult<()> {
     if !inner.active(&incoming.peer, &incoming.token) {
         return Err(Failure::new(
@@ -146,14 +157,35 @@ fn process(inner: &Inner, incoming: &Incoming) -> StageResult<()> {
             DropReason::StaleChannel,
         ));
     }
-    if incoming.body.first() == Some(&super::neighbor::NAMESPACE) {
-        return super::neighbor::process(inner, incoming);
-    }
-    let packet = Packet::decode(&incoming.body)?;
-    let _generation = if packet.phase == Phase::Packet {
+    let packet = (incoming.body.first() != Some(&super::neighbor::NAMESPACE))
+        .then(|| Packet::decode(&incoming.body))
+        .transpose()?;
+    // Keep the same Packet -> Socket lock order as the packet/carrier write
+    // polls. They are independent owners; never nest these fences in reverse.
+    let _generation = if packet
+        .as_ref()
+        .is_some_and(|packet| packet.phase == Phase::Packet)
+    {
         Some(incoming.generation.enter()?)
     } else {
         None
+    };
+    // Hold originating carrier admission through all synchronous forwarding,
+    // endpoint/cache mutation and final delivery. Retirement waits for admitted
+    // dispatches; queued old ingress cannot enter after rebind completes.
+    let _socket_generation = incoming
+        .socket_generation
+        .as_ref()
+        .map(|generation| generation.enter())
+        .transpose()?;
+    if !inner.active(&incoming.peer, &incoming.token) {
+        return Err(Failure::new(
+            Error::Authentication,
+            DropReason::StaleChannel,
+        ));
+    }
+    let Some(packet) = packet else {
+        return super::neighbor::process(inner, incoming);
     };
     let position = inner.authorize(&packet.path)?;
     let previous = if packet.phase.forward() {

@@ -207,3 +207,20 @@ Linux fixture 进一步区分关闭 listener 窗口的 **socket-less kernel RST/
 - 同次重新执行旧 production_paths / UR1 / UR2 / permission_denied：基本路径 137 次、4 个 listeners premark；UR2 76 次且无 ordinary bind/connect；权限不足拒绝、双栈 alias 与 backup DNS 规则都通过。Linux image 构建同样执行 Agent lib/tests Clippy `-D warnings`。
 
 此前 run 均保留为失败：`8d8545d52360` 构建期间源码继续编辑导致 image/source hash 不同；`60e2506d6c9a` fixture 对通配 IPv6 bind 误要求唯一源地址；`50c5d5d7669e` 原 capture 计数未区分关闭端口 RST；`0836b8d48052` 逐包 RST 校验已通过，但 Manager fixture 调用了 host 端口 allocator 的 ordinary availability listener，严格 syscall auditor 正确拒绝。最终用独立固定端口 fixture 消除此测试噪声，没有放宽 mark/readback 或应用 I/O 验收。
+
+## Native rebind 公共 dispatcher fence 修复
+
+独立审查发现 `e5e7f94` 的 socket I/O fence 没有覆盖已经读入公共 dispatcher 的旧代 ingress：一次瞬时 active/token 检查之后，处理线程可在 endpoint mutex 等处暂停，导致 rebind 返回之后才追加旧 payload 到 `ReceivedPacket`。这不是已发送字节或消费者晚读取的问题。审查报告及 TMP 原反例保持原样，不将本修复的结果回写到旧证据。
+
+- Native UDP 的接收记录与 core TCP authenticated channel 均携带 originating `SocketGeneration`，进入公共 `Incoming` 队列后仍持有这一身份。
+- dispatcher 的同步 admission 持有原 socket fence，覆盖邻接控制、路径检查、endpoint/cache mutation、next-hop enqueue 与最终 delivery。已经进入临界区的 dispatch 可先完成；retire/rebind 等待其完成后返回。尚未 admission 的旧代记录在退休后拒绝，不能靠新 channel/token 或仍有效的 PacketGeneration 续命。
+- 锁顺序保持 **PacketGeneration → SocketGeneration**，与 packet/carrier 写 poll 一致；不创建或更换 packet fence，不清空/复活独立 packet admission，也不变更身份、grants 或路径。
+- native TCP child authentication 显式监听 originating owner 取消；认证完成后的 channel 安装仍在同一 owner admission 下进行。channel read/write loop 也监听 owner 取消，已读出的记录通过上述 dispatcher fence 终止后续提交。child handles 仍由 Runtime 全局 task ledger 在 shutdown 时 join；rebind 的强边界是 owner cancellation、安装/应用 I/O/dispatch admission fence，并不宣称任意持有者的 FD 或所有 child task 已在 rebind 返回时销毁。
+
+新增 host 回归分别覆盖真实 Native UDP/TCP 的最终 endpoint delivery 和三节点 relay forwarding：真实 Noise/E2E warmup 后，用 endpoint/transit mutex 暂停已 admission 的同步 dispatch；验证 rebind 尚未返回、释放 mutex 后提交先于 rebind 完成，返回后无旧 delivery/forwarding 新提交，且同 Runtime 新 carrier 仍可恢复业务。仅这些测试显式启用 test-only `block_in_place` 调度辅助，生产 dispatch 不改变调度方式。
+
+验证使用 `CARGO_BUILD_JOBS=2`、独立 `CARGO_TARGET_DIR=target/native-underlay-p2-fix`；dataplane all-features lib **82 tests 通过**，Agent/dataplane all-features/all-targets Clippy `-D warnings`、fmt check、diff check 通过。真实回归保留在本树 `runtime/tests/native_sockets.rs`；原 TMP review 反例和 target 未修改。
+
+Agent 消费者行为命令 `cargo test --locked -p meshway-agent --all-features --lib managed_connections:: -- --test-threads=1` 同上述独立 target / jobs，**34 tests 通过**，覆盖 Native/TLS/WS、实际包流、lease/withdraw、STUN、IPC probe 与历史采样。
+
+对应既有 Linux fixture 复测命令 `python3 apps/agent/tests/underlay_fixture/run.py --image meshway-native-underlay-p2-fix:local`，同一 performance lock 与原隔离 namespace 约束，未新增网络/测量矩阵或改变 RST 验收条件。新 run `mw-rust-underlay-a920b015c443`：`status=ok`、`cleanup_errors=[]`，Native/Manager/peer tests exit 0；Native 76 次 protected pre-network calls / 4 listeners / 0 ordinary bind/connect，Manager 6 次 / 2 listeners / 0 ordinary bind/connect。capture 仍为原 10 个普通对照与 2 个严格验证的关闭端口 RST/ACK。新材料在批准 TMP `meshway-underlay-artifacts/mw-rust-underlay-a920b015c443/`，result SHA256 `1efb63cf83d41094dfa39379d1cc3550cf4402e40d91734fcc3317c2c6481b57`，镜像 `sha256:de371ee13f552342684a6e1176ba5aebdddd40531276d41085444fc24b6242ec`。此 run 验证改动后的正常 Linux 路径，确定性 dispatcher 交错由上述 host 回归验证；不将其宣称为生产主循环激活或真实组网闭环。

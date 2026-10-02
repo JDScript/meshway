@@ -13,6 +13,10 @@ pub(crate) struct Fence {
 }
 
 impl Fence {
+    #[cfg(test)]
+    pub(super) fn admission_held_for_test(&self) -> bool {
+        self.retired.try_lock().is_err()
+    }
     pub(super) fn new() -> Arc<Self> {
         Arc::new(Self {
             retired: Mutex::new(false),

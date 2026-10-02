@@ -119,6 +119,7 @@ pub(super) async fn run(
     candidate: Option<OutgoingCandidate>,
     context: StreamContext,
     mut live: discovery::LiveSocket,
+    socket_generation: Arc<super::generation::Fence>,
 ) {
     let mut shutdown = inner.shutdown.subscribe();
     if *shutdown.borrow() {
@@ -219,7 +220,7 @@ pub(super) async fn run(
                 let Ok((size, source)) = datagram else { break };
                 let result = if discovery::receive(&mut discovery_pending, &buffer[..size], source) { Ok(()) }
                     else if size == 0 || size > UDP_LIMIT { Err(Error::Oversize.into()) }
-                    else { receive(&inner, socket.as_ref(), &tx, &mut sessions, &mut pending, &mut confirming, &buffer[..size], source, candidate.is_none(), &context).await };
+                    else { receive(&inner, socket.as_ref(), &tx, &mut sessions, &mut pending, &mut confirming, &buffer[..size], source, candidate.is_none(), &context, &socket_generation).await };
                 if let Err(failure) = result { inner.counters(TransportKind::NativeUdp).drop(failure.reason); }
                 // All datagrams consume work, including rejected input and hop control.
                 // Authentication/confirmation and any reply finish before yielding.
@@ -278,6 +279,7 @@ async fn receive(
     source: SocketAddr,
     listener: bool,
     context: &StreamContext,
+    socket_generation: &Arc<super::generation::Fence>,
 ) -> StageResult<()> {
     match Kind::try_from(datagram[0])? {
         Kind::Hello => {
@@ -431,6 +433,7 @@ async fn receive(
                 [2] => Ok(()),
                 [1, body @ ..] if !body.is_empty() => {
                     inner.deliver(Incoming {
+                        socket_generation: Some(socket_generation.clone()),
                         peer: session.peer.clone(),
                         token,
                         transport: TransportKind::NativeUdp,

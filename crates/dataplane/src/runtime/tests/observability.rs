@@ -53,6 +53,7 @@ fn queue_channel_with_capacity(
 
 fn ingress(runtime: &Runtime) {
     runtime.handle.inner.deliver(Incoming {
+        socket_generation: None,
         generation: runtime.handle.inner.packet_generation(),
         peer: "nyc".into(),
         token: [17; 32],

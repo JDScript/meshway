@@ -731,6 +731,7 @@ async fn admission_fence_discards_queued_outbound_and_ingress_before_reactivatio
     let _next = fixture.sha.begin_packet_generation();
     let token = lock(&fixture.sha.handle.inner.peers)["lax"].token;
     fixture.sha.handle.inner.deliver(Incoming {
+        socket_generation: None,
         peer: "lax".into(),
         token,
         transport: TransportKind::Vless,
@@ -745,6 +746,7 @@ async fn admission_fence_discards_queued_outbound_and_ingress_before_reactivatio
     // The discarded old ingress did not consume the ciphertext nonce. This
     // deliberate fresh ingress injection proves the captured packet was valid.
     fixture.sha.handle.inner.deliver(Incoming {
+        socket_generation: None,
         peer: "lax".into(),
         token,
         transport: TransportKind::Vless,
