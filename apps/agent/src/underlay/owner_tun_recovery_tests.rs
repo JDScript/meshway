@@ -10,12 +10,12 @@ fn preparation(path: &Path) -> Preparation<'_> {
     }
 }
 
-fn plan() -> PacketPlan {
+pub(super) fn plan() -> PacketPlan {
     let (payloads, _) = crate::managed_dataplane::tests::fixtures(2);
     PacketPlan::compile(&payloads[0], 1000).unwrap()
 }
 
-async fn reject_mesh() {
+pub(super) async fn reject_mesh() {
     for forwarded in [false, true] {
         let mut args = vec![
             "-4".into(),
@@ -35,7 +35,7 @@ async fn reject_mesh() {
     }
 }
 
-async fn control(owner: &LinuxUnderlay) {
+pub(super) async fn control(owner: &LinuxUnderlay) {
     let channel = owner
         .controller_channel(reqwest::Url::parse("http://172.30.247.20:41861").unwrap())
         .await
@@ -67,7 +67,7 @@ async fn control(owner: &LinuxUnderlay) {
     .unwrap();
 }
 
-async fn fresh(owner: &mut LinuxUnderlay, plan: &PacketPlan) {
+pub(super) async fn fresh(owner: &mut LinuxUnderlay, plan: &PacketPlan) {
     let tun = Tun::open_with_underlay(
         &TunOptions {
             name: "mwfresh0".into(),

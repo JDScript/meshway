@@ -109,6 +109,13 @@ pub(super) struct Generation {
 }
 
 impl Generation {
+    pub(super) fn check_namespace(&self) -> io::Result<()> {
+        #[cfg(target_os = "linux")]
+        if let Some(lease) = &self.namespace_lease {
+            lease.check_current()?;
+        }
+        Ok(())
+    }
     pub(super) fn register(
         &self,
         socket: Arc<Socket>,

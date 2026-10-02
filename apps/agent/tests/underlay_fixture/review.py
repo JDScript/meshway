@@ -29,6 +29,8 @@ def run(args):
               'source_sha256': {str(p.relative_to(ROOT)): hashlib.sha256(p.read_bytes()).hexdigest()
                   for p in sorted((ROOT / 'apps/agent/src/underlay').glob('*.rs'))}}
     result['source_sha256']['apps/agent/src/managed_dataplane/tun.rs'] = hashlib.sha256((ROOT / 'apps/agent/src/managed_dataplane/tun.rs').read_bytes()).hexdigest()
+    result['dependency_sha256'] = {name: hashlib.sha256((ROOT / name).read_bytes()).hexdigest() for name in (
+        'Cargo.toml', 'Cargo.lock', 'crates/vendor/README.md', 'crates/vendor/socket2-upstream-sha256.json', 'crates/vendor/socket2/src/sys/unix.rs')}
     result['fixture_sha256'] = {name: hashlib.sha256((HERE / name).read_bytes()).hexdigest() for name in ('review.py', 'Dockerfile')}
     containers, networks, volumes = [], [], []
     docker = mechanism.docker
@@ -38,9 +40,9 @@ def run(args):
     for sig in (signal.SIGINT, signal.SIGTERM):
         previous[sig] = signal.signal(sig, stop)
 
-    def case(container, name, extra=(), module='review_tests'):
+    def case(container, name, extra=(), module='review_tests', ignored=True):
         output = docker('exec', '-e', 'MESHWAY_UNDERLAY_FIXTURE=1', *extra, container, '/underlay-tests', '--exact',
-                       'underlay::owner::' + module + '::' + name, '--ignored', '--nocapture', check=False, timeout=90)
+                       'underlay::owner::' + module + '::' + name, *(['--ignored'] if ignored else []), '--nocapture', check=False, timeout=90)
         row = {'name': name, 'exit': output.returncode, 'stdout': output.stdout, 'stderr': output.stderr}
         result['cases'].append(row)
         (directory / f'{len(result["cases"]):02}-{name}.json').write_text(json.dumps(row, indent=2))
@@ -63,7 +65,11 @@ def run(args):
 
     try:
         if not args.skip_build:
-            docker('build', '-f', str(HERE / 'Dockerfile'), '-t', args.image, str(ROOT), timeout=1200)
+            builder_name = docker('context', 'show').stdout.strip()
+            builder = docker('buildx', 'inspect', builder_name).stdout
+            result['builder'] = builder
+            assert any(line.split() == ['Driver:', 'docker'] for line in builder.splitlines()), 'default builder must be ordinary docker driver'
+            docker('build', '--builder', builder_name, '-f', str(HERE / 'Dockerfile'), '-t', args.image, str(ROOT), timeout=1200)
         result['image_id'] = json.loads(docker('image', 'inspect', args.image).stdout)[0]['Id']
         source_name = owner + '-sources'
         containers.append(source_name)
@@ -77,6 +83,26 @@ def run(args):
                '--label', mechanism.LABEL + '=' + owner, network)
         client = owner + '-client'
         create(client, network)
+        case(client, 'cookie_identity_has_no_inode_or_socket_fallback', module='cookie_tests', ignored=False)
+        result['cookie_observations'] = []
+        for _ in range(2):
+            case(client, 'cookie_observe', module='cookie_tests')
+            line = next(line for line in result['cases'][-1]['stdout'].splitlines() if line.startswith('NETNS_COOKIE_OBSERVATION '))
+            result['cookie_observations'].append(json.loads(line.split(' ', 1)[1]))
+        assert result['cookie_observations'][0] == result['cookie_observations'][1], 'same namespace cookie changed across processes'
+        case(client, 'legacy_and_damage_refused', module='cookie_tests')
+        unsupported = docker('exec', '-e', 'MESHWAY_UNDERLAY_FIXTURE=1', client, 'strace',
+            '-f', '-e', 'trace=getsockopt', '-e', 'inject=getsockopt:error=ENOPROTOOPT:when=1', '-o', '/run/cookie-unsupported.log',
+            '/underlay-tests', '--exact', 'underlay::owner::cookie_tests::cookie_unsupported', '--ignored', '--nocapture', check=False, timeout=30)
+        result['cookie_unsupported'] = {'exit': unsupported.returncode, 'stdout': unsupported.stdout, 'stderr': unsupported.stderr}
+        unsupported_trace = docker('exec', client, 'cat', '/run/cookie-unsupported.log').stdout
+        (directory / 'cookie-unsupported.log').write_text(unsupported_trace)
+        assert unsupported.returncode == 0 and 'SO_NETNS_COOKIE' in unsupported_trace and 'ENOPROTOOPT' in unsupported_trace, result['cookie_unsupported']
+        for boundary in ['archived', 'fresh-journal']:
+            case(client, 'scope_crash_stage', ['-e', 'MESHWAY_UNDERLAY_SCOPE_BOUNDARY=' + boundary,
+                '-e', 'MESHWAY_UNDERLAY_TEST_SCOPE_EXIT=' + boundary], module='cookie_tests')
+            case(client, 'scope_crash_recover', ['-e', 'MESHWAY_UNDERLAY_SCOPE_BOUNDARY=' + boundary], module='cookie_tests')
+        case(client, 'rollover_guard_refused', module='cookie_tests')
         case(client, 'legacy_incomplete_topology_refused')
         case(client, 'cancellation_boundaries')
         for kind, count in [('reservation', 4), ('mesh', 2), ('capture', 4)]:
@@ -118,15 +144,16 @@ def run(args):
         volumes.append(volume)
         docker('volume', 'create', '--label', mechanism.LABEL + '=' + owner, volume)
         first = owner + '-scope-one'
-        create(first, network, volume)
+        create(first, network, volume, tun=True)
         case(first, 'scope_create')
         assert mechanism.owns(json.loads(docker('inspect', first).stdout), owner)
         docker('rm', '-f', first)
         second = owner + '-scope-two'
-        create(second, network, volume)
-        case(second, 'scope_fresh')
-        assert mechanism.owns(json.loads(docker('inspect', second).stdout), owner)
-        docker('rm', '-f', second)
+        create(second, network, volume, tun=True)
+        case(second, 'cookie_observe', module='cookie_tests')
+        second_cookie = json.loads(next(line.split(' ', 1)[1] for line in result['cases'][-1]['stdout'].splitlines() if line.startswith('NETNS_COOKIE_OBSERVATION ')))
+        assert second_cookie['cookie'] != result['cookie_observations'][0]['cookie'], 'different namespace lifetime reused cookie'
+        result['second_namespace_cookie'] = second_cookie
         server = owner + '-tun-server'
         create(server, network, server=True)
         docker('exec', '-d', server, 'python3', '/lab/production.py', 'server')
@@ -137,6 +164,9 @@ def run(args):
             time.sleep(.05)
         else:
             raise RuntimeError('controller fixture server did not start')
+        case(second, 'scope_fresh')
+        assert mechanism.owns(json.loads(docker('inspect', second).stdout), owner)
+        docker('rm', '-f', second)
         tun_client = owner + '-tun-client'
         create(tun_client, network, tun=True)
         case(tun_client, 'normal_open_cancel', module='tun_recovery_tests')

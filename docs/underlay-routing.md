@@ -6,11 +6,11 @@
 保留。下述整组 operation、netns singleton 与 scope rollover 是后续修复，须交原
 reviewer 复核；旧 `2186c3ba6d71` 证据不用于声称关闭 F1/F2。
 
-**41008b2 复核后的状态**：原 F1/F2 已独立关闭；本轮补 R1 的真实非持久 TUN
-消失恢复，R2 namespace lifetime 身份仍为条件性阻断。当前 `{boot,dev,inode}`
-及 abstract singleton 不足以排除同 boot inode/dev 生命周期重用，不能作为生产
-自动 scope rollover 保证。本候选继续不接正常生产主循环；未触碰固定 `4d106e0`
-的远端工作。
+**当前候选状态**：原 F1/F2、`91f5963` 的 R1 已由原 reviewer 独立关闭。
+依赖前置 `3d2b7ce` 与本轮 R2 改用 boot + `SO_NETNS_COOKIE` lifetime 身份；
+`{dev,inode}` 仅定位/一致性证据，不再决定 scope rollover。依赖 wrapper 和 R2
+整体仍须原 reviewer 独立审查，不代表生产已启用。本候选继续不接正常生产主循环，
+未触碰任何真实远端或部署。
 
 `underlay::LinuxUnderlay` 是正常 Agent 可调用的内部准备入口；不接受设备提供的
 mark、priority、table 或 nameserver 参数。主循环接线由 P3a owner 完成，本切片
@@ -67,7 +67,7 @@ block 外表引用拒绝保持有效。专用 Mesh lookup 位于 NOP 之前，�
 netfilter mark 使用或 legacy netfilter 状态均报告失败；不删 foreign 条目。
 运行环境必须提供 iproute2、nft 和 legacy-save 审计命令及 namespace NET_ADMIN。
 
-所有权以当前 netns 的 dev/inode、boot ID、节点/网络绑定和完整 numeric kernel
+所有权以当前 netns 的非零 cookie、boot ID、dev/inode 定位证据、节点/网络绑定和完整 numeric kernel
 属性写入 `underlay.json`。state 和 namespace 的锁文件保持 0600，目录 0700；
 journal 使用同目录随机临时文件、fsync、rename、目录 fsync。namespace lock 位于
 固定命名 Linux abstract AF_UNIX datagram socket `meshway.underlay.rpdb-owner.v1`，
@@ -80,14 +80,15 @@ mutation 的安装失败按完整属性逆序 rollback；rollback 失败不返�
 已经有持久证据但未完成 guard 的 partial reservation 会核对全部资源并精确 rollback，
 返回明确的 retry 错误；下次正常 prepare 重新分配，不能在半配置下继续运行。
 
-Journal v2 在首个 mutation 前持久化**完整 operation intent**：baseline、完整期望
+Journal v3 保留 v2 在首个 mutation 前持久化的**完整 operation intent**：baseline、完整期望
 resource set、Install/Rollback phase；单条资源写回后的 `pending=None` 不再代表
 整组完成。每次资源完成至下一条 pending 之前，operation 始终保留。完整期望集合、
 双栈 guard、双族 capture lookup、Mesh sink/lookup 关联和真实 kernel evidence
 全部核验后才能清除 operation 并发布 capability。已证明 ownership 的 committed
 prefix 可由 `recover_operation()` 精确续做/收敛；ambiguous 单条 pending 仍拒绝。
-消失/换身份的 TUN 不重建、不恢复旧 packet/socket generation。旧 v1 row-only 的
-缺 lookup / 单族 capture / orphan sink 明确拒绝，不凭 shape 修补未知 ownership。
+消失/换身份的 TUN 不重建、不恢复旧 packet/socket generation。旧 v1/v2 或缺 cookie
+journal 明确拒绝且原文件/资源保留，不凭 shape 修补或自动迁移未知 ownership；
+即使资源恰好一致也不能证明它属于当前 lifetime。
 `retain_mesh_sink` 的幂等返回也经过完整关联及实际 lookup 核验。
 
 R1 的完整 intent 如果引用原绑定已消失/不可用的非持久 TUN，会先持久化
@@ -121,7 +122,87 @@ fence 不由这个准备合同证明。准备、capture、恢复和 capability �
 
 ### 本轮实证与 P3a 接线边界
 
-#### R1 完成 / R2 设计待协调者决定
+#### R2 boot + namespace lifetime cookie 候选
+
+固定外部依赖前置 `3d2b7ce` 在 `socket2 0.6.5` 增加 Linux/all safe
+`Socket::netns_cookie()`；本轮 Agent 经 `SockRef` 从 abstract singleton AF_UNIX
+socket 读取 `SO_NETNS_COOKIE`，不使用 `SO_COOKIE`。最低 Linux **5.7**，仍需本段
+已有 NET_ADMIN/TUN 与审计工具条件。getter 不需额外 SYS_ADMIN/NET_RAW；AF_UNIX
+见证 socket 不 bind/connect/send，不新增未保护 IP 通路。
+
+- Journal v3 必须有非零 cookie、非空 boot 与相同节点/网络绑定。boot+cookie 相同
+  才核对原 kernel evidence 并继续 operation/recovery。相同 cookie 但 dev/inode
+  不一致拒绝；相同 cookie 的 missing/foreign/ambiguous 资源不能变成 fresh scope。
+- boot/cookie 不同才允许既有新 scope 审计预检，随后私有 archive/fsync、fresh
+  reservation intent 和初始化。即使人为强制旧 dev/inode 等于新 scope，cookie
+  不同也不采用旧资源。归档原 journal、身份、配置保持；未知 foreign guard 仍拒绝，
+  不以 archive 绕过审计。
+- 旧 v1/v2、缺 cookie、零 cookie 或读取失败均拒绝；不自动 adopt、清空、修补或
+  宣称无损迁移。此 owner 尚未生产启用，若已有实验 journal 仍须保留并显式处理。
+  getter 的 ENOPROTOOPT/其他 errno 原样返回；不得落回 inode 或 socket cookie。
+- namespace fd 持续由 Lease pin；读取 `/proc/thread-self/ns/net`，核对 `/proc/self`
+  leader scope，在新 AF_UNIX witness 上重读 cookie。owner kernel mutation/资源核验
+  与 protected factory 创建 socket 前检查 lease，路由子命令 spawn 前也核对 thread /
+  leader locator。所有 Agent workers 必须同 scope，运行中不支持 setns/unshare；旧
+  namespace socket 不能授权当前不同 namespace 的操作。退休 factory/FD wrapper
+  原有 Lease 排他持有、mark admission 与取消语义保持。
+
+ABI：前置复用 socket2 上游 `getsockopt<c_ulonglong>`，Linux 该 opt 返回 native
+unsigned 64-bit（8 byte）；错误路径不读未初始化输出。上游 helper 仅在 debug 用
+`debug_assert_eq!(optlen, size_of::<T>())`，release 依赖已定义的 Linux opt ABI，
+**不是新增 release 长度错误检查**。Agent 额外拒绝零值，但不把它称为对底层 ABI
+的独立审定；前置 unsafe 细边界由原 reviewer 审查，本轮不修改 vendor/root lock。
+
+原报告、probes、36-case R1 artifact 保持。R2 fixture 的失败原始 run 同样保留：
+`mw-underlay-review-fix-4ff5f51067c9` 的 unsupported 注入未跟踪测试线程；
+`mw-underlay-review-fix-f1ac770e184c` 的跨 Docker context default builder 选择失败；
+`mw-underlay-review-fix-020e8528940d` 的 fresh-intent crash 用例未处理既有
+`Interrupted` exact rollback/retry 合同。修正均限 fixture；不能将这些 run 改标 PASS。
+runner 显式核对当前 context 的普通 docker driver，不创建/使用 docker-container
+特权 builder，所有 runtime 隔离和 shared performance lock 继续有效。
+
+最终 R2 reviewer runner `mw-underlay-review-fix-cf79403def2a`：**46 cases + 实际
+strace unsupported 注入**通过，`status=ok/cleanup_errors=[]`；包含原 36-case
+回归（scope case 增加真实 TUN）、新 cookie/legacy/damage/guard/crash 用例。
+result SHA256 `3fea32ad701a7848c676bad3d2a55ea12e3aa2fad80ada81935a4fafe6c927c8`，
+镜像 `sha256:494d52b04ec65bd4478f9055d1b5b60e6f9b1f7a44076f682a50cc21bb999082`。
+材料在批准 TMP `meshway-underlay-artifacts/mw-underlay-review-fix-cf79403def2a/`，
+逐文件 source/dependency/fixture SHA 与构建器 driver inspect 均记录。最终源码
+字节已对照 artifact；根/vendor 与 `3d2b7ce` 逐字节保持一致，原 13-file inventory
+仍仅协调者的 unix getter 与 archive 不同。
+
+实际内核 `7.0.14-orbstack-00380-ga7e0a2dc9535`，两次独立测试进程 AF_UNIX +
+IPv4/IPv6 getter cookie 同为 `93681`；第二 namespace 为 `93810`。持久 volume
+旧 scope cookie `93794` 与新 `93810` 不同，即使强制其 dev/inode 同为新 locator，
+仍精确归档/fresh；原 journal 含真实 `mwoldscope0` TUN，旧设备不存在，随后新 scope
+本地/iif Mesh reject、Controller 真实 HTTP 401 和 `mwfresh0` fresh binding 激活
+均通过。此前成功 `c05d9d385e1d` 的 getter 观察还真实遇到不同 namespace 同
+dev/inode `5/4026532827`、cookie `93447/93576`，不是仅靠模拟 metadata 演示。
+
+legacy v2 用实际省略 cookie 字段的旧 wire shape；缺/null/零 cookie、节点/网络
+不符、same-cookie locator 异常、same-cookie rule 损坏均保留 journal/kernel 证据
+并拒绝，不 archive。实际 strace `-f` 给 getter 注入 ENOPROTOOPT，保留 errno 92，
+没有 journal/RPDB/route mutation；零值拒绝还由纯行为测试覆盖，不宣称真实旧内核
+或内核自然返回零的实测。scope archive/fsync 后与 fresh journal（operation 尚未
+开始）后进程退出均覆盖，后者明确接受既有 Interrupted exact rollback/retry，
+不以无条件 retry 隐藏错误。prior-boot 仅 metadata 模拟，没有 host reboot。
+
+Linux 镜像实际编译并运行新 getter，构建执行 Agent all-features lib/tests Clippy；
+host 独立 `target/underlay-cookie-host` 的 7 个定向测试与 all-targets Clippy、fmt/diff
+及 2 个 syscall auditor 测试通过。最低 5.7 的版本门槛来自 opt ABI，不把 7.0 实测
+扩称为所有 5.7 环境验证。实现与 Linux 切片证据已具备，R2 与依赖前置仍待原
+reviewer 关闭；正常主循环、真实设备换网/重启与生产部署不在本次完成声明内。
+
+相同最终镜像的原完整 namespace/syscall runner
+`mw-rust-underlay-78ec799158a8` 为 `status=ok/cleanup_errors=[]`，result SHA256
+`9fd19f19a821c0ead4f9d60a63e640999a15695b27952603d300bea4229e37e4`。
+原 activation/production/UR2/Native/Manager protected pre-network audits 仍为
+**20/137/76/76/6**；各对照 ordinary bind/connect 和 premarked listener 计数保持。
+与 reviewer run 相同的源文件逐字节校验通过，无性能矩阵扩展。两份最终 artifact
+的 `source_commit` 为 build 时前置 `3d2b7ce`，未提交改动由 source SHA 绑定，
+最终实现提交通过相同源码 SHA 对照，不把前置 SHA 冒充实现提交。
+
+#### R1 完成时的冻结证据与 R2 历史设计提案
 
 新 run `mw-underlay-review-fix-2bb296e7ad42`，36 个 case exit 全为 0，`status=ok`、
 `cleanup_errors=[]`。result SHA256
@@ -146,7 +227,7 @@ host `target/underlay-tun-recovery-host` 的 all-features/all-targets Clippy、7
 underlay tests、fmt/diff check 和 2 个 Python syscall-auditor tests 已通过。提交前
 逐字节确认当前 underlay/TUN 源文件与两份 R1 artifact 的 source SHA 一致。
 
-R2 最小依赖/ABI提案（**未实现、待决定**）：在已审 `socket2` 层增加安全
+以下是 `91f5963` 当时的 R2 最小依赖/ABI提案（历史记录，现已由 `3d2b7ce` 及后续实现推进）：在 `socket2` 层增加安全
 `netns_cookie() -> io::Result<u64>`，由依赖内部调用 Linux `SO_NETNS_COOKIE`，检查
 8-byte optlen/非零值并保留真实 OS error；不是已有 `SO_COOKIE`（socket lifetime）。
 Agent 不加入 unsafe，新 socket 不 bind/connect/send。Linux 最低 5.7；ENOPROTOOPT /

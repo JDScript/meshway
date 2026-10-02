@@ -31,6 +31,7 @@ impl SocketFactory {
         kind: Type,
         protocol: Protocol,
     ) -> io::Result<Arc<Socket>> {
+        self.0.check_namespace()?;
         let state = self.0.state.lock().map_err(|_| closed())?;
         if !state.active {
             return Err(closed());

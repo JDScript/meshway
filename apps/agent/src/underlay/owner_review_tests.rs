@@ -298,6 +298,23 @@ async fn scope_create() {
         .retain_mesh_sink("198.18.76.0/24".parse().unwrap())
         .await
         .unwrap();
+    let _tun = crate::managed_dataplane::tun::Tun::open_with_underlay(
+        &crate::managed_dataplane::TunOptions {
+            name: "mwoldscope0".into(),
+            mtu: 1000,
+        },
+        &tun_recovery_tests::plan(),
+        &mut owner,
+    )
+    .await
+    .unwrap();
+    assert!(
+        owner
+            .journal
+            .installed
+            .iter()
+            .any(|row| matches!(row.resource, Resource::Tun { .. }))
+    );
     std::process::exit(0);
 }
 
@@ -305,9 +322,24 @@ async fn scope_create() {
 #[ignore = "same owned persistent volume, new namespace after stop/start"]
 async fn scope_fresh() {
     let directory = Path::new("/state/private");
-    let previous: Journal =
+    let mut previous: Journal =
         serde_json::from_slice(&std::fs::read(directory.join("underlay.json")).unwrap()).unwrap();
-    let owner = LinuxUnderlay::prepare(binding(directory)).await.unwrap();
+    let (current, _) = current_namespace(&UnixDatagram::unbound().unwrap()).unwrap();
+    assert!(!previous.namespace.same_lifetime(&current).unwrap());
+    let old_cookie = previous.namespace.cookie;
+    // Explicit inode/dev-reuse model against two actual different namespaces:
+    // only stored locator metadata is forced; the old kernel cookie is genuine.
+    previous.namespace.device = current.device;
+    previous.namespace.inode = current.inode;
+    write_journal(directory, &previous).unwrap();
+    let mut owner = LinuxUnderlay::prepare(binding(directory)).await.unwrap();
+    assert_eq!(owner.journal.namespace.device, previous.namespace.device);
+    assert_eq!(owner.journal.namespace.inode, previous.namespace.inode);
+    assert_ne!(owner.journal.namespace.cookie, old_cookie);
+    println!(
+        "forced same dev/inode: old cookie {:?}, new cookie {:?}; archive/fresh, never old evidence adoption",
+        old_cookie, owner.journal.namespace.cookie
+    );
     assert_ne!(previous.namespace, owner.journal.namespace);
     assert!(
         owner
@@ -323,6 +355,19 @@ async fn scope_fresh() {
     assert_eq!(archives.len(), 1);
     let archived: Journal = serde_json::from_slice(&std::fs::read(&archives[0]).unwrap()).unwrap();
     assert_eq!(archived.namespace, previous.namespace);
+    assert!(
+        archived
+            .installed
+            .iter()
+            .any(|row| matches!(row.resource, Resource::Tun { .. }))
+    );
+    assert!(!Path::new("/sys/class/net/mwoldscope0").exists());
+    let plan = tun_recovery_tests::plan();
+    owner.retain_mesh_sink(plan.prefix.into()).await.unwrap();
+    tun_recovery_tests::reject_mesh().await;
+    tun_recovery_tests::control(&owner).await;
+    tun_recovery_tests::fresh(&mut owner, &plan).await;
+    assert!(!Path::new("/sys/class/net/mwoldscope0").exists());
     assert_eq!(
         std::fs::read(directory.join("node-identity")).unwrap(),
         b"preserved-node-credential-fixture"

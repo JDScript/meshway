@@ -66,6 +66,9 @@ impl TunBinding {
 #[serde(deny_unknown_fields)]
 struct Namespace {
     boot: String,
+    /// None only permits decoding a legacy journal for explicit refusal.
+    #[serde(default)]
+    cookie: Option<u64>,
     device: u64,
     inode: u64,
 }
@@ -327,9 +330,103 @@ enum OperationPhase {
 }
 
 pub(super) struct Lease {
+    scope: Namespace,
     _namespace: File,
     _singleton: UnixDatagram,
     _state_lock: File,
+}
+
+impl Namespace {
+    fn same_lifetime(&self, other: &Self) -> io::Result<bool> {
+        let left = checked_cookie(
+            self.cookie
+                .ok_or_else(|| invalid("legacy scope has no netns lifetime cookie"))?,
+        )?;
+        let right = checked_cookie(
+            other
+                .cookie
+                .ok_or_else(|| invalid("current scope has no netns lifetime cookie"))?,
+        )?;
+        Ok(self.boot == other.boot && left == right)
+    }
+
+    fn matching_locator(&self, other: &Self) -> bool {
+        self.device == other.device && self.inode == other.inode
+    }
+}
+
+fn checked_cookie(cookie: u64) -> io::Result<u64> {
+    if cookie == 0 {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "zero SO_NETNS_COOKIE; lifetime identity unavailable",
+        ));
+    }
+    Ok(cookie)
+}
+
+fn checked_cookie_result(result: io::Result<u64>) -> io::Result<u64> {
+    checked_cookie(result?)
+}
+
+fn socket_cookie(socket: &UnixDatagram) -> io::Result<u64> {
+    // Fixed dependency's safe Linux wrapper, never SO_COOKIE or inode fallback.
+    checked_cookie_result(socket2::SockRef::from(socket).netns_cookie())
+}
+
+fn current_namespace(socket: &UnixDatagram) -> io::Result<(Namespace, File)> {
+    // /proc/self is the process leader. All normal Agent workers must share its
+    // namespace; a socket created by another thread scope cannot authorize it.
+    let file = File::open("/proc/thread-self/ns/net")?;
+    let metadata = file.metadata()?;
+    let leader = std::fs::metadata("/proc/self/ns/net")?;
+    if (metadata.dev(), metadata.ino()) != (leader.dev(), leader.ino()) {
+        return Err(invalid(
+            "Agent thread and process-leader network namespaces differ",
+        ));
+    }
+    let cookie = socket_cookie(socket)?;
+    let witness = UnixDatagram::unbound()?;
+    if socket_cookie(&witness)? != cookie {
+        return Err(invalid(
+            "socket does not belong to current thread netns lifetime",
+        ));
+    }
+    let after = std::fs::metadata("/proc/thread-self/ns/net")?;
+    if (after.dev(), after.ino()) != (metadata.dev(), metadata.ino()) {
+        return Err(invalid("namespace changed during lifetime preparation"));
+    }
+    let boot = std::fs::read_to_string("/proc/sys/kernel/random/boot_id")?
+        .trim()
+        .to_owned();
+    if boot.is_empty() {
+        return Err(invalid("missing boot binding for netns cookie"));
+    }
+    Ok((
+        Namespace {
+            boot,
+            cookie: Some(cookie),
+            device: metadata.dev(),
+            inode: metadata.ino(),
+        },
+        file,
+    ))
+}
+
+impl Lease {
+    pub(super) fn check_current(&self) -> io::Result<()> {
+        let (current, _) = current_namespace(&self._singleton)?;
+        if !self.scope.same_lifetime(&current)? || !self.scope.matching_locator(&current) {
+            return Err(invalid(
+                "namespace lease does not match current Agent thread scope",
+            ));
+        }
+        let pinned = self._namespace.metadata()?;
+        if (pinned.dev(), pinned.ino()) != (current.device, current.inode) {
+            return Err(invalid("pinned namespace locator changed"));
+        }
+        Ok(())
+    }
 }
 
 pub(crate) struct LinuxUnderlay {
@@ -369,8 +466,28 @@ fn crash_checkpoint(kind: &str) -> Option<Arc<InstallCheckpoint>> {
     }))
 }
 
+#[cfg(test)]
+fn scope_crash_checkpoint(directory: &Path, boundary: &str) {
+    if directory.join("scope-exit-armed").exists()
+        && std::env::var("MESHWAY_UNDERLAY_TEST_SCOPE_EXIT")
+            .ok()
+            .as_deref()
+            == Some(boundary)
+    {
+        println!("scope rollover process exit at {boundary}");
+        std::process::exit(0);
+    }
+}
+
 async fn command(binary: &str, args: &[String]) -> io::Result<Vec<u8>> {
     tokio::time::timeout(Duration::from_secs(3), async {
+        let thread = std::fs::metadata("/proc/thread-self/ns/net")?;
+        let leader = std::fs::metadata("/proc/self/ns/net")?;
+        if (thread.dev(), thread.ino()) != (leader.dev(), leader.ino()) {
+            return Err(invalid(
+                "routing command thread scope differs from Agent leader",
+            ));
+        }
         let mut child = Command::new(binary)
             .args(args)
             .stdin(Stdio::null())
@@ -676,6 +793,11 @@ fn select_reservation(
 }
 
 impl LinuxUnderlay {
+    async fn owned_ip(&self, args: Vec<String>) -> io::Result<Vec<u8>> {
+        self.lease.check_current()?;
+        ip(args).await
+    }
+
     pub(crate) async fn prepare(input: Preparation<'_>) -> io::Result<Self> {
         if input.identity.is_empty()
             || input.network.is_empty()
@@ -685,26 +807,19 @@ impl LinuxUnderlay {
             return Err(invalid("missing or oversized enrolled identity binding"));
         }
         private_directory(input.state_directory)?;
-        let namespace_file = File::open("/proc/self/ns/net")?;
-        let metadata = namespace_file.metadata()?;
-        let namespace = Namespace {
-            boot: std::fs::read_to_string("/proc/sys/kernel/random/boot_id")?
-                .trim()
-                .into(),
-            device: metadata.dev(),
-            inode: metadata.ino(),
-        };
         // Linux abstract AF_UNIX names belong to the network namespace, not a
         // mount view. The fixed singleton cannot be bypassed with private /run,
         // a different node ID or another state directory. Safe std APIs only.
         let singleton = UnixDatagram::bind_addr(&UnixAddr::from_abstract_name(
             b"meshway.underlay.rpdb-owner.v1",
         )?)?;
+        let (namespace, namespace_file) = current_namespace(&singleton)?;
         let state_lock = private_file(&input.state_directory.join("underlay.lock"), true)?;
         state_lock
             .try_lock()
             .map_err(|error| io::Error::other(format!("underlay state busy: {error}")))?;
         let lease = Arc::new(Lease {
+            scope: namespace.clone(),
             _namespace: namespace_file,
             _singleton: singleton,
             _state_lock: state_lock,
@@ -727,15 +842,21 @@ impl LinuxUnderlay {
             Err(error) => return Err(error),
         };
         if let Some(journal) = previous {
-            if ![1, 2].contains(&journal.version)
-                || journal.identity != input.identity
-                || journal.network != input.network
+            if journal.version != 3
+                || journal.namespace.cookie.is_none()
+                || journal.namespace.cookie == Some(0)
+                || journal.namespace.boot.is_empty()
             {
+                return Err(invalid(
+                    "unverified legacy/invalid journal lifetime; preserve journal and resources for explicit migration",
+                ));
+            }
+            if journal.identity != input.identity || journal.network != input.network {
                 return Err(invalid(
                     "underlay journal namespace/identity mismatch; no adoption",
                 ));
             }
-            if journal.namespace != namespace {
+            if !journal.namespace.same_lifetime(&namespace)? {
                 // Fresh scope is never recovery of the old permissions. Audit
                 // and allocation preflight precede durable archival; no old
                 // resource shape is adopted or removed in this namespace.
@@ -756,8 +877,16 @@ impl LinuxUnderlay {
                         Some(socket2::Protocol::TCP),
                     )?)?;
                 }
+                lease.check_current()?;
                 archive_scope(input.state_directory)?;
+                #[cfg(test)]
+                scope_crash_checkpoint(input.state_directory, "archived");
             } else {
+                if !journal.namespace.matching_locator(&namespace) {
+                    return Err(invalid(
+                        "same cookie but inconsistent namespace locator evidence",
+                    ));
+                }
                 if journal.pending.is_some() {
                     return Err(invalid(
                         "ambiguous interrupted RPDB mutation; manual ownership reconciliation required",
@@ -802,7 +931,7 @@ impl LinuxUnderlay {
             format!("{}/{}", input.network, input.identity),
         )?;
         let journal = Journal {
-            version: 2,
+            version: 3,
             namespace,
             identity: input.identity.into(),
             network: input.network.into(),
@@ -811,7 +940,10 @@ impl LinuxUnderlay {
             pending: None,
             operation: None,
         };
+        lease.check_current()?;
         write_journal(input.state_directory, &journal)?;
+        #[cfg(test)]
+        scope_crash_checkpoint(input.state_directory, "fresh-journal");
         let mut owner = Self {
             lease,
             directory: input.state_directory.into(),
@@ -951,6 +1083,7 @@ impl LinuxUnderlay {
     }
 
     async fn verify_resources(&self, partial_reservation: bool) -> io::Result<()> {
+        self.lease.check_current()?;
         self.validate_journal_resources()?;
         let aliases = reserved_aliases()?;
         if self
@@ -968,6 +1101,7 @@ impl LinuxUnderlay {
         }
         audit_marks().await?;
         for family in [4, 6] {
+            self.lease.check_current()?;
             let rules = objects(family, true).await?;
             let mut checked_rules = rules.clone();
             if partial_reservation {
@@ -1062,6 +1196,7 @@ impl LinuxUnderlay {
     }
 
     async fn install_one(&mut self, resource: Resource) -> io::Result<()> {
+        self.lease.check_current()?;
         if let Resource::Tun { name, index, .. } = &resource {
             verify_tun(name)?;
             if link_index(name).await? != *index {
@@ -1079,7 +1214,7 @@ impl LinuxUnderlay {
         }
         self.journal.pending = Some(resource.clone());
         write_journal(&self.directory, &self.journal)?;
-        if let Err(error) = ip(resource.args("add")).await {
+        if let Err(error) = self.owned_ip(resource.args("add")).await {
             // The command may have committed before timeout/exit failure. Only
             // a proven absence clears pending; otherwise preserve ambiguity.
             if error.kind() == io::ErrorKind::TimedOut {
@@ -1119,6 +1254,7 @@ impl LinuxUnderlay {
     }
 
     async fn remove_one(&mut self, index: usize) -> io::Result<()> {
+        self.lease.check_current()?;
         self.validate_journal_resources()?;
         let installed = self.journal.installed[index].clone();
         let objects = objects(installed.resource.family(), installed.resource.is_rule()).await?;
@@ -1142,7 +1278,7 @@ impl LinuxUnderlay {
         }
         self.journal.pending = Some(installed.resource.clone());
         write_journal(&self.directory, &self.journal)?;
-        ip(installed.resource.args("del")).await?;
+        self.owned_ip(installed.resource.args("del")).await?;
         self.journal.installed.remove(index);
         self.journal.pending = None;
         write_journal(&self.directory, &self.journal)
@@ -1898,6 +2034,10 @@ mod review_tests;
 #[cfg(test)]
 #[path = "owner_tun_recovery_tests.rs"]
 mod tun_recovery_tests;
+
+#[cfg(test)]
+#[path = "owner_cookie_tests.rs"]
+mod cookie_tests;
 
 async fn link_index(name: &str) -> io::Result<u32> {
     let links: Vec<Value> = serde_json::from_slice(
