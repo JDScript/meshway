@@ -21,6 +21,7 @@
     "protocol:generate": "pnpm --filter @meshway/control-client generate",
     "protocol:check": "pnpm --filter @meshway/control-client check:generated",
     "test:protocol": "pnpm --filter @meshway/control-client test",
+    "test:codegen": "node --test scripts/generate-protocol.test.mjs",
     "test:web": "pnpm --filter @meshway/web test",
     "typecheck": "pnpm -r --if-present typecheck && pnpm typecheck:apple-scripts",
     "typecheck:apple-scripts": "tsc --noEmit -p apps/apple/scripts/tsconfig.json",
