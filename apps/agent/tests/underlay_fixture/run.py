@@ -44,10 +44,11 @@ def run(args):
         result['image_id'] = json.loads(docker('image', 'inspect', args.image).stdout)[0]['Id']
         result['source_sha256'] = {str(p.relative_to(ROOT)): hashlib.sha256(p.read_bytes()).hexdigest()
                                   for p in sorted((ROOT / 'apps/agent/src/underlay').glob('*.rs'))}
+        result['source_sha256']['apps/agent/src/managed_dataplane/tun.rs'] = hashlib.sha256((ROOT / 'apps/agent/src/managed_dataplane/tun.rs').read_bytes()).hexdigest()
         source_check = owner + '-sources'
         transients.append(source_check)
         actual_sources = json.loads(docker('run', '--rm', '--name', source_check, '--label', mechanism.LABEL + '=' + owner, '--network', 'none', '--cap-drop', 'ALL', '--read-only', '--entrypoint', 'python3', args.image, '-c',
-            'import hashlib,json,pathlib; print(json.dumps({"apps/agent/src/underlay/"+p.name:hashlib.sha256(p.read_bytes()).hexdigest() for p in pathlib.Path("/sources/underlay").glob("*.rs")}))').stdout)
+            'import hashlib,json,pathlib; s={"apps/agent/src/underlay/"+p.name:hashlib.sha256(p.read_bytes()).hexdigest() for p in pathlib.Path("/sources/underlay").glob("*.rs")}; s["apps/agent/src/managed_dataplane/tun.rs"]=hashlib.sha256(pathlib.Path("/sources/tun.rs").read_bytes()).hexdigest(); print(json.dumps(s))').stdout)
         if actual_sources != result['source_sha256']:
             raise RuntimeError('image Rust sources do not match checkout; rebuild')
         networks.append(owner)
@@ -57,12 +58,25 @@ def run(args):
             containers.append(name)
             docker('run', '-d', '--name', name, '--label', mechanism.LABEL + '=' + owner,
                    '--network', owner, '--ip', '172.30.247' + v4, '--ip6', 'fd74:6d77:247' + v6,
+                   '--network-alias', 'underlay-owner-' + role, '--add-host', 'owner-host:172.30.247.20',
                    '--cap-drop', 'ALL', '--cap-add', 'NET_ADMIN', '--cap-add', 'SETUID', '--cap-add', 'SETGID',
                    '--device', '/dev/net/tun', '--security-opt', 'no-new-privileges', '--read-only',
                    '--tmpfs', '/run:rw,nosuid,nodev,size=64m', '--pids-limit', '128', '--memory', '256m',
                    '--tmpfs', '/etc/iproute2:rw,nosuid,nodev,size=1m',
                    '--sysctl', 'net.ipv6.conf.all.disable_ipv6=0', '--entrypoint', 'python3', args.image,
                    '-c', 'import signal; signal.pause()')
+        # Normal IPv4 TUN inherits disabled IPv6, while the real physical underlay
+        # stays dual-stack. This is the existing Linux TUN safety prerequisite,
+        # configured only in this disposable namespace (never a host sysctl).
+        containers.append(owner + '-tun')
+        docker('run', '-d', '--name', containers[2], '--label', mechanism.LABEL + '=' + owner,
+               '--network', owner, '--ip', '172.30.247.12', '--ip6', 'fd74:6d77:247::12',
+               '--cap-drop', 'ALL', '--cap-add', 'NET_ADMIN', '--device', '/dev/net/tun',
+               '--security-opt', 'no-new-privileges', '--read-only', '--tmpfs', '/run:rw,nosuid,nodev,size=64m',
+               '--tmpfs', '/etc/iproute2:rw,nosuid,nodev,size=1m', '--pids-limit', '128', '--memory', '256m',
+               '--sysctl', 'net.ipv6.conf.default.disable_ipv6=1',
+               '--entrypoint', 'python3', args.image,
+               '-c', 'import signal; signal.pause()')
         docker('exec', '-d', containers[0], 'python3', '/lab/production.py', 'server')
         deadline = time.monotonic() + 10
         while time.monotonic() < deadline:
@@ -80,8 +94,22 @@ def run(args):
         result.update(json.loads(child.stdout))
         if child.returncode:
             result['status'] = 'failed'
-        syscall = docker('exec', containers[1], 'cat', '/run/syscalls.log').stdout
+        result['normal_tun_ipv6_environment'] = json.loads(docker('exec', containers[2], 'python3', '-c',
+            'import json,pathlib; print(json.dumps({name:pathlib.Path("/proc/sys/net/ipv6/conf/"+name+"/disable_ipv6").read_text().strip() for name in ("all","default","eth0")}))').stdout)
+        normal_tun = docker('exec', '-e', 'MESHWAY_UNDERLAY_FIXTURE=1', containers[2], '/underlay-tests', '--exact',
+            'underlay::owner::tests::namespace_normal_tun_preparation', '--ignored', '--nocapture', check=False, timeout=60)
+        result['normal_tun_preparation'] = {'exit': normal_tun.returncode, 'stdout': normal_tun.stdout, 'stderr': normal_tun.stderr}
+        (directory / 'normal-tun.stdout').write_text(normal_tun.stdout)
+        (directory / 'normal-tun.stderr').write_text(normal_tun.stderr)
+        if normal_tun.returncode:
+            result['status'] = 'failed'
+            result.setdefault('error', 'normal TUN ownership preparation failed')
+        syscall = docker('exec', containers[1], 'cat', '/run/syscalls.log', check=False).stdout
         (directory / 'syscalls.log').write_text(syscall)
+        activation_trace = docker('exec', containers[1], 'cat', '/run/syscalls-activation.log', check=False).stdout
+        (directory / 'syscalls-activation.log').write_text(activation_trace)
+        if result['status'] == 'ok':
+            result['activation_syscall_audit'] = audit(activation_trace, ordinary_connects=2, ordinary_binds=0, mark=0x80000000, mask=0x80000000)
         ur2_syscall = docker('exec', containers[1], 'cat', '/run/syscalls-ur2.log', check=False).stdout
         (directory / 'syscalls-ur2.log').write_text(ur2_syscall)
         for name in ('native', 'managed'):
@@ -95,7 +123,7 @@ def run(args):
         result['native_peer_exit'] = peer_exit
         if result['status'] == 'ok' and peer_exit != '0':
             raise RuntimeError('native peer did not finish successfully')
-        observer = docker('exec', containers[0], 'cat', '/run/observer.jsonl').stdout
+        observer = docker('exec', containers[0], 'cat', '/run/observer.jsonl', check=False).stdout
         (directory / 'observer.jsonl').write_text(observer)
         events = [json.loads(line) for line in observer.splitlines()]
         result['observer_events'] = events

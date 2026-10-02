@@ -7,7 +7,7 @@ Async clone FD send fencing and accept inheritance are checked in Rust + TUN.
 import re
 
 
-def audit(text, *, ordinary_connects=8, ordinary_binds=4):
+def audit(text, *, ordinary_connects=8, ordinary_binds=4, mark=0x4d570000, mask=0xffff0000):
     descriptors, pending = {}, {}
     protected, plain_connects, plain_binds, listeners = 0, 0, 0, 0
     for line in text.splitlines():
@@ -40,7 +40,7 @@ def audit(text, *, ordinary_connects=8, ordinary_binds=4):
         elif readback:
             state['verified'] = state['mark'] == int(readback.group(1)) & 0xffffffff
         elif operation in ('bind', 'connect', 'listen') and 'AF_NETLINK' not in call:
-            is_protected = state['mark'] is not None and state['mark'] & 0xffff0000 == 0x4d570000 and state['verified']
+            is_protected = state['mark'] is not None and state['mark'] & mask == mark and state['verified']
             if is_protected:
                 protected += 1
                 listeners += operation == 'listen'

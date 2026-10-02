@@ -129,6 +129,59 @@ fn disable_ipv6(tree: &std::path::Path, name: &str) -> io::Result<()> {
 }
 
 impl Tun {
+    /// Normal mainloop seam: controller/carrier protection is installed first.
+    /// This path does no ambient DNS or main-table route/pin installation.
+    #[cfg(all(target_os = "linux", feature = "managed-connections"))]
+    #[allow(dead_code)] // Shared P3a mainloop chooses this instead of legacy open.
+    pub(crate) async fn open_with_underlay(
+        options: &TunOptions,
+        plan: &PacketPlan,
+        owner: &mut crate::underlay::LinuxUnderlay,
+    ) -> Result<Self, AgentError> {
+        options.validate()?;
+        let policy = plan.route_policy();
+        let prefix = Ipv4Net::new(policy.network, policy.prefix_len)
+            .map_err(|_| AgentError::Invalid("invalid Mesh prefix"))?;
+        // Install the durable reject-only sink BEFORE enabling any new device.
+        owner.retain_mesh_sink(prefix.into()).await?;
+        let device = linux::create_device(options, plan).await?;
+        device.enabled(true)?;
+        disable_ipv6(std::path::Path::new("/proc/sys/net/ipv6"), &options.name)?;
+        linux::verify_no_ipv6(&options.name).await?;
+        let binding = crate::underlay::TunBinding::from_created_device(&device)?;
+        owner
+            .install_tun(&[crate::underlay::CapturePrefix {
+                prefix: prefix.into(),
+                tun: Some(&binding),
+            }])
+            .await?;
+        Ok(Self {
+            device: Arc::new(Device::Linux {
+                device,
+                buffer: tokio::sync::Mutex::new(vec![0; 65_536]),
+            }),
+            name: options.name.clone(),
+            local: plan.local,
+            prefix: plan.prefix,
+            mtu: plan.mtu,
+        })
+    }
+
+    #[cfg(all(target_os = "linux", feature = "managed-connections"))]
+    #[allow(dead_code)] // P3a mainloop owner installs this binding at the shared seam.
+    pub(crate) fn underlay_binding(&self) -> io::Result<crate::underlay::TunBinding> {
+        match self.device.as_ref() {
+            Device::Linux { device, .. } => {
+                crate::underlay::TunBinding::from_created_device(device)
+            }
+            #[cfg(test)]
+            Device::Mock(_) => Err(io::Error::new(
+                io::ErrorKind::Unsupported,
+                "mock TUN has no Linux ownership binding",
+            )),
+        }
+    }
+
     pub fn matches(&self, plan: &PacketPlan) -> bool {
         let policy = plan.route_policy();
         self.local == policy.local
@@ -359,7 +412,7 @@ mod linux {
         family: String,
     }
 
-    async fn verify_no_ipv6(name: &str) -> Result<(), AgentError> {
+    pub(super) async fn verify_no_ipv6(name: &str) -> Result<(), AgentError> {
         let addresses: Vec<InterfaceAddresses> =
             serde_json::from_slice(&ip(&["-j", "-6", "address", "show", "dev", name]).await?)
                 .map_err(|_| AgentError::Invalid("cannot verify TUN IPv6 address absence"))?;
@@ -373,6 +426,32 @@ mod linux {
             ));
         }
         Ok(())
+    }
+
+    pub(super) async fn create_device(
+        options: &TunOptions,
+        plan: &PacketPlan,
+    ) -> Result<tun_rs::AsyncDevice, AgentError> {
+        if Path::new("/sys/class/net")
+            .join(&options.name)
+            .try_exists()?
+        {
+            return Err(AgentError::Invalid(
+                "requested TUN name already exists; refusing to adopt",
+            ));
+        }
+        let device = tun_rs::DeviceBuilder::new()
+            .enable(false)
+            .mtu(options.mtu)
+            .offload(false)
+            .build_async()?;
+        if device.name()? != options.name {
+            device.set_name(&options.name)?;
+        }
+        disable_ipv6(Path::new("/proc/sys/net/ipv6"), &options.name)?;
+        device.set_network_address(plan.local, 32, None)?;
+        device.set_tx_queue_len(128)?;
+        Ok(device)
     }
 
     pub(super) async fn open(
@@ -420,20 +499,10 @@ mod linux {
             ));
         }
         // No supplied name: kernel allocation always creates a new interface.
-        let device = tun_rs::DeviceBuilder::new()
-            .enable(false)
-            .mtu(options.mtu)
-            .offload(false)
-            .build_async()?;
-        if device.name()? != options.name {
-            device.set_name(&options.name)?;
-        }
-        disable_ipv6(Path::new("/proc/sys/net/ipv6"), &options.name)?;
-        device.set_network_address(plan.local, 32, None)?;
+        let device = create_device(options, plan).await?;
         // A 32-packet kernel queue drops TCP bursts before the packet task can
         // read them. Keep a bounded 128-packet cushion, below drain's 256-read
         // retirement budget so an old generation can still quiesce atomically.
-        device.set_tx_queue_len(128)?;
         if !existing_guard {
             ip(&[
                 "-4",

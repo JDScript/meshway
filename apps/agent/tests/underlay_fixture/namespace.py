@@ -168,6 +168,31 @@ def client():
     result = {'status': 'failed', 'cleanup_errors': []}
     owned = []
     try:
+        reservation_tests = subprocess.run(['/underlay-tests', 'underlay::owner::tests::reservation_preserves_aliases_masks_order_and_unknown_failures', '--exact', '--nocapture'], env=env, capture_output=True, text=True, timeout=10)
+        result['reservation_unit'] = {'exit': reservation_tests.returncode, 'stdout': reservation_tests.stdout, 'stderr': reservation_tests.stderr}
+        if reservation_tests.returncode:
+            raise RuntimeError('reservation conflict/unknown selector tests failed')
+        activation = subprocess.run(['strace', '-f', '-e', 'trace=socket,setsockopt,getsockopt,connect,bind,listen,accept4,sendto,shutdown,close',
+            '-o', '/run/syscalls-activation.log', '/underlay-tests', '--exact', 'underlay::owner::tests::namespace_ownership_and_default_docker_dns', '--ignored', '--nocapture'],
+            env=env, capture_output=True, text=True, timeout=60)
+        result['activation'] = {'rust_exit': activation.returncode, 'stdout': activation.stdout, 'stderr': activation.stderr,
+            'resolv_conf': Path('/etc/resolv.conf').read_text(), 'hosts': Path('/etc/hosts').read_text(), 'nsswitch': Path('/etc/nsswitch.conf').read_text()}
+        result['activation_namespace'] = {v: {'rules': json.loads(ip(v, '-N', '-j', 'rule', 'show').stdout),
+            'routes': json.loads(ip(v, '-N', '-j', 'route', 'show', 'table', 'all').stdout)} for v in (4, 6)}
+        if activation.returncode:
+            raise RuntimeError('namespace owner activation/recovery failed')
+        result['activation_packets'] = [p for sink in sinks for p in sink.packets]
+        if len({(p['version'], p['source_port']) for p in result['activation_packets']}) != 2 or any(p['destination_port'] != 41861 for p in result['activation_packets']):
+            raise RuntimeError('owner capture leaked protected traffic or missed ordinary same-address controls')
+        for sink in sinks:
+            sink.packets.clear()
+        result['process_restart'] = []
+        for stage in ('namespace_crash_prepare', 'namespace_crash_recover'):
+            restarted = subprocess.run(['/underlay-tests', '--exact', 'underlay::owner::tests::' + stage, '--ignored', '--nocapture'],
+                env=env, capture_output=True, text=True, timeout=30)
+            result['process_restart'].append({'stage': stage, 'exit': restarted.returncode, 'stdout': restarted.stdout, 'stderr': restarted.stderr})
+            if restarted.returncode:
+                raise RuntimeError('actual process-death/restart ownership recovery failed')
         for v in (4, 6):
             src = '172.30.247.11/24' if v == 4 else 'fd74:6d77:247::11/64'
             ip(v, 'address', 'add', src, 'dev', 'eth0', *(['nodad'] if v == 6 else []))

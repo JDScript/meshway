@@ -1,5 +1,151 @@
 # Linux socket 级系统保护通路
 
+## Namespace owner 接线合同（本轮切片）
+
+`underlay::LinuxUnderlay` 是正常 Agent 可调用的内部准备入口；不接受设备提供的
+mark、priority、table 或 nameserver 参数。主循环接线由 P3a owner 完成，本切片
+本身不代表正常 Agent 已自动启用保护或完成真实 Controller/TUN 组网闭环。
+
+```text
+LinuxUnderlay::prepare(Preparation {
+  state_directory: 已创建的私有 Agent 身份状态目录,
+  identity: 已接入的真实节点身份,
+  network: 当前唯一活动网络,
+}) -> namespace owner
+owner.system_dns() -> 当前系统解析 snapshot
+owner.controller_channel(已绑定 controller URL) -> 独立 controller 退休 owner
+owner.socket_generation() -> 独立 carrier PreparedGeneration
+owner.retain_mesh_sink(真实 Mesh 前缀) -> block 内专用 reject-only 表（也覆盖转发包）
+owner.capture(规范 Mesh/业务前缀 + 已拥有的 TUN 绑定) -> 自有表内 sink/capture
+owner.withdraw_tun() -> 仅撤回 active TUN route，保留 unreachable sink
+owner.activate_tun(相同前缀 + 新的真实 TUN binding) -> sink 不变的故障关闭重接
+owner.relinquish() -> 明确取消全部接管；要求所有 socket capability/FD wrapper 已释放
+```
+
+接线顺序：在开始任何 capture 前准备 owner、DNS 与 controller channel，并将
+controller client 注入所有 HTTP 消费者；再把独立 carrier generation 安装到现有
+`Manager::install_prepared_underlay`，最后发布自有捕获。变更 endpoint/DNS 时先准备
+新 channel/generation，再取消旧观测、withdraw/join 旧 carrier、切换。业务 lease
+退休仍由 RootPacketGeneration 执行；`withdraw_tun` 不能代替 packet fence。
+controller 恢复 owner 不属于 carrier lease，不能随 carrier 一起销毁或改回默认 client。
+`CapturePrefix::tun` 接受不可手造 name/index 的 `TunBinding`；现有 `Tun` 新增
+`underlay_binding()` 从自己持有的真实 `AsyncDevice` 创建该证明。
+`Tun::open_with_underlay(options, &PacketPlan, &mut owner)` 是新增的正式 TUN 准备入口：
+复用真实非持久 TUN 创建/MTU/地址逻辑，先保留 owned Mesh sink，随后安装自有表中的
+TUN route；不执行 ambient DNS，也不写 main route 或目标 `/32` pin。P3a owner 将
+旧 `Tun::open` 调用换成这个接口，并在 packet fence/join 后调用 `withdraw_tun`。
+旧入口的行为仍保留，仅以新入口接线时才收敛到正式 route owner。
+
+该 factory 同样接受既有 typed `Purpose::Stun` / `AuthenticationProbe`，其必要 DNS
+经 `BootstrapDns(Stun / AuthenticationProbe)`，保护准备不只覆盖 TCP/VLESS。
+首选复用实际 UDP carrier FD 的 STUN；仅 TCP/VLESS 或没有 UDP carrier 时，后续
+若启用独立 probe socket，须独立记录其 socket/source/namespace/generation，不能
+冒充 listener 映射或 peer 候选。本轮不启用默认 STUN，不新增 controller 观察点
+或 GeoIP。Docker embedded DNS 及隔离容器双栈 socket 证据不证明公网嵌套 NAT
+可达、打洞、换网实测或设备地区；全 UDP 失败仍应走后续已定义的方案兜底，不
+从 controller 来源 IP / 隧道出口 IP推造地区，多源/双栈冲突须保留原观测边界。
+
+本轮 namespace owner 保守支持标准 local/main/default RPDB，以及位于自有 block
+之后、受既有 validator 支持的系统/VPN规则。分配双栈共同空闲的连续五个 priority、
+未被 RPDB mark mask 使用的一个 bit，以及无 routes、无 rule 引用、无 rt_tables
+alias 预留的两张捕获数字表及一张 Mesh reject-only 数字表；UR1 的 numeric identity /
+block 外表引用拒绝保持有效。专用 Mesh lookup 位于 NOP 之前，不加 `iif lo`，
+因此转发到 Mesh 的包在 TUN 停止后也不能漏回默认路由；该表在每次 socket preparation
+中验证只含非 default 的 unreachable 前缀，不能含 TUN、gateway 或出口 default。
+普通本地 profile capture 仍保留 `iif lo`，不会把非 Mesh 转发卷入本地出口方案。
+未知 selector、先于 capture 的非 local lookup、mark 使用冲突、rt_tables drop-in、
+netfilter mark 使用或 legacy netfilter 状态均报告失败；不删 foreign 条目。
+运行环境必须提供 iproute2、nft 和 legacy-save 审计命令及 namespace NET_ADMIN。
+
+所有权以当前 netns 的 dev/inode、boot ID、节点/网络绑定和完整 numeric kernel
+属性写入 `underlay.json`。state 和 namespace 的锁文件保持 0600，目录 0700；
+journal 使用同目录随机临时文件、fsync、rename、目录 fsync。namespace lock 位于
+`/run/meshway-underlay`，不同 statepath 的 Agent 也不能同时分配；capability/退休后
+仍持 FD 的 wrapper 会继续持有锁。正常退出和 crash 均保留 committed sink/guard
+与 journal；恢复核对实际资源，不复活旧 socket/packet generation。无法区分的
+半提交（kernel mutation 和持久证据之间 crash）明确保留 pending 并拒绝 capability，
+要求可靠 ownership reconciliation，不凭形状 adopt/delete。活事务可确认未发生
+mutation 的安装失败按完整属性逆序 rollback；rollback 失败不返回可用 capability。
+已经有持久证据但未完成 guard 的 partial reservation 会核对全部资源并精确 rollback，
+返回明确的 retry 错误；下次正常 prepare 重新分配，不能在半配置下继续运行。
+
+DNS 新入口 `SystemDnsSnapshot::from_system` 保留 `hosts: files dns` 下的 `/etc/hosts`
+优先级，并在真实 Docker 环境中保留唯一 `127.0.0.11:53` embedded resolver。
+Docker 网络别名的 A/AAAA 查询仍使用 marked UDP/TCP 工厂，而不是 getaddrinfo 或
+手工传入 fixture DNS。plain 系统/VPN ordered upstream 仍受支持；只解析绝对名称，
+不扩展 search suffix。systemd-resolved、split-scope、其他 loopback daemon、NSS
+扩展、scoped IPv6、非已支持 resolver options 均明确拒绝，不展平或换公共 DNS。
+
+P1c 的既有 main sink、`/32` pin 尚未迁移：当前 owner 不按形状认领或删除旧资源。
+P3a 必须先接上新保护、确认既有资源的真实 ownership，再移除确实 owned 的 pin；
+没有可靠 ownership 的 legacy 条目报告冲突。TUN 在主表发布 Mesh route 的旧入口
+也必须迁到此 owner 的 capture block，不能在两套捕获长期共存时声称保护已上线。
+Mesh 防回落使用 block 内专用 reject-only lookup，不依赖普通 `iif lo` 的 profile
+capture，因此原系统/VPN lookup 消耗转发包之前就会拒绝已知 Mesh 前缀。新增表是
+既有 guard/goto/NOP 模型的受限扩展；既有 capture selector 校验仍保持不变。
+
+内核 RPDB 多条规则并非原子事务；外部管理员并发改变 routing/netfilter 的即时
+fence 不由这个准备合同证明。准备、capture、恢复和 capability 交付均重新核验；
+持续环境监控与普通主循环切换编排仍是协调者接线边界。下文旧验收记录保持冻结。
+
+### 本轮实证与 P3a 接线边界
+
+Linux run `mw-rust-underlay-2186c3ba6d71`：`status=ok`、`cleanup_errors=[]`，UTC
+`08:21:34.297782` → `08:22:54.820843`。镜像
+`sha256:d05119b42c8362bf649052cc1ea1d07a8afe46dca7dc93ad8596083b3c6ce1ad`。
+批准 TMP `meshway-underlay-artifacts/mw-rust-underlay-2186c3ba6d71/result.json` 的 SHA256
+为 `802630b5a880b2fbf9a4c067c6a714f51cf9774892087495c5cc474d1e4ac7a6`。
+run 记录基线 `4d106e0`、实际 diff digest、所有 underlay 与 TUN 源文件 digest；
+image 内源文件逐字节核对。原 namespace 反例和此前失败 run 均保留。
+
+- 自动选择真实双栈 RPDB reservation，无手工预装本轮 rules；验证 namespace / state
+  排他锁、空表 alias 预留、未知 selector / foreign 保留、alias 后占用冲突、live
+  部分安装精确回滚、完整 journal 预算在 mutation 前拒绝、已提交 partial prepare
+  回滚重试，以及 ambiguous pending 拒绝。capability / 已退休 wrapper 继续持有锁。
+- 新 `ControllerChannel` 经真实 Docker embedded DNS 发起生成 API 请求，HTTP 401
+  status-first 有界处理；carrier 退休后 controller 仍可请求。`/etc/hosts` 优先、
+  Docker 网络别名 A/AAAA、typed STUN bootstrap DNS / 独立 UDP probe purpose 均通过。
+  新 `syscalls-activation.log` 有 **20 次** protected pre-network calls；只有预期的
+  **2 次**同地址 ordinary TCP connect，真实 TUN 只捕获这两个双栈 SYN，无 protected
+  DNS / TCP / UDP 泄漏。独立 probe 没有发布 listener 映射、peer 候选或地区。
+- 两个**不同进程**执行 crash prepare / recover：第一个直接 `process::exit(0)`
+  绕过 Rust Drop，第二个从私有 durable journal 与真实 FIB 恢复，旧 sink 保留，
+  新 protected capability 可用。旧 socket / packet generation 不复活。
+- 独立 NET_ADMIN + TUN namespace 调用 `Tun::open_with_underlay`，真实 lookup 指向
+  `mwowner0` / table `10000`；withdraw / TUN 消失后本地与转发 Mesh lookup 均拒绝，
+  新 `mwowner1` 可重接。controller TCP 的真实物理源为 `172.30.247.12` 和
+  `fd74:6d77:247::12`。该 namespace 的实际 IPv6 状态为 `all=0/default=1/eth0=0`；
+  default disabled inheritance 是现有 IPv4 TUN 的安全前提。仅设置 namespace 的
+  `net.ipv6.conf.default.disable_ipv6=1`，没有宿主 sysctl、host network 或 privileged。
+- 同次原 production / UR1 / UR2 / Native / Manager / permission-denied 均重新通过：
+  protected pre-network audits 分别 **137 / 76 / 76 / 6**，原 listener 与普通同 IP
+  对照保留。Native 的零 payload 关闭端口 RST 仍按原严格条件校验。
+
+```sh
+CARGO_BUILD_JOBS=2 CARGO_TARGET_DIR=target/underlay-activation-host cargo test --locked -p meshway-agent --all-features --lib underlay:: -- --test-threads=1
+CARGO_BUILD_JOBS=2 CARGO_TARGET_DIR=target/underlay-activation-host cargo clippy --locked -p meshway-agent --all-features --all-targets -- -D warnings
+python3 -m unittest discover -s apps/agent/tests/underlay_fixture -p 'test_*.py'
+python3 apps/agent/tests/underlay_fixture/run.py --image meshway-underlay-activation:local
+```
+
+Host targeted underlay tests、fmt、all-targets Clippy 与 syscall auditor 已通过；Linux
+image 构建执行 Agent all-features lib/tests Clippy。额外全量 Agent lib run 为
+138 passed / 1 failed：既有 latency history 的 `received_at >= measured_at` 断言，
+该项隔离复测通过；失败日志保留，未修改并行 owner 的测试或将其记成全量通过。
+
+真正支持的恢复范围为**同 boot / 同 netns 的进程恢复**。boot / netns / identity /
+network 不匹配明确拒绝，不能把旧 journal 自动搬到新 namespace 或凭形状认领。
+只读 `/proc/sys` 下没有可靠 disabled inheritance 的 TUN 环境同样失败关闭。
+真实物理换网、nested NAT、公网打洞、外部并发 RPDB / nft 监控以及 systemd-resolved
+split scope 仍需后续环境适配与主循环联测。
+
+P3a 的共享文件接点：Agent 持有 owner 和独立 channel，把 `channel.client()` 注入
+所有 enrollment / heartbeat / material / DNS 同步 HTTP 消费者；在捕获之前把
+`owner.socket_generation()` 与 `owner.system_dns()` 安装到已有 Manager 接点，
+随后采用新 `Tun::open_with_underlay`。withdraw 时先 RootPacketGeneration fence
+与 carrier join，再 `withdraw_tun` / drop TUN。正常 Agent 此轮尚无这些调用点；
+正式已部署 Web、Apple、协议 / 生成器、根 manifest / lock 和 `state` / Manager 均未改。
+
 状态：**内核机制证明 + Agent owning 工厂 / HTTP / bootstrap DNS + 托管 Native Runtime 接线**。托管 session 已统一注入 Native UDP/TCP 和 VLESS 外层 socket；内部 `Manager::install_prepared_underlay` 持有准备好的退休 owner，并在换代前 withdraw/join。Agent 日常构造仍使用明确 unmarked 的 `SystemUnderlay`；生产 RPDB owner/capture 尚未激活，P1c 目标 IP `/32` bypass 仍是已知原型限制。fixture 不代表生产已部署，不证明 VLESS/WebSocket、真实公网 NAT、GeoIP 或完整出口闭环已经完成。下方冻结 handoff / 旧实测是历史记录；最新接线边界见本文末节。
 
 ## 推荐：只跳过自有连续捕获规则

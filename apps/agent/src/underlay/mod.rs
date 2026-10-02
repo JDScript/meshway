@@ -6,8 +6,13 @@ mod fixture;
 mod generation;
 mod http;
 mod managed;
+#[cfg(target_os = "linux")]
+mod owner;
 #[allow(unused_imports)]
 pub(crate) use managed::ManagedProtection;
+#[cfg(target_os = "linux")]
+#[allow(unused_imports)]
+pub(crate) use owner::{CapturePrefix, LinuxUnderlay, Preparation, TunBinding};
 mod socket;
 
 #[allow(unused_imports)]

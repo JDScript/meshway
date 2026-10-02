@@ -10,7 +10,8 @@ use tokio_util::sync::CancellationToken;
 
 use super::{Purpose, SocketFactory, closed, invalid};
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
 pub(crate) struct MarkReservation {
     value: u32,
     mask: u32,
@@ -72,7 +73,8 @@ impl MarkReservation {
 /// Supplied only by the internal routing owner, never by device CLI or IPC.
 /// This slice verifies an already installed reservation; it does not install,
 /// adopt, persist or remove RPDB rules, and cannot prove crash-recovery ownership.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
 pub(crate) struct Reservation {
     pub(crate) owner: String,
     pub(crate) generation: u64,
@@ -82,6 +84,10 @@ pub(crate) struct Reservation {
     pub(crate) first_priority: u32,
     pub(crate) last_priority: u32,
     pub(crate) capture_tables: Vec<u32>,
+    /// Optional owned reject-only Mesh table. Unlike local profile capture, its
+    /// lookup also fences forwarded Mesh packets; it must never contain TUN or
+    /// default routes. Guard still jumps over the entire owned block.
+    pub(crate) mesh_sink_table: Option<u32>,
 }
 
 pub(super) struct State {
@@ -98,6 +104,8 @@ pub(super) struct Generation {
     pub(super) reservation: Reservation,
     pub(super) state: Mutex<State>,
     pub(super) cancelled: CancellationToken,
+    #[cfg(target_os = "linux")]
+    namespace_lease: Option<Arc<super::owner::Lease>>,
 }
 
 impl Generation {
@@ -149,6 +157,7 @@ impl Drop for PreparedGeneration {
 
 impl PreparedGeneration {
     pub(crate) async fn prepare(reservation: Reservation) -> io::Result<Self> {
+        let _ = MarkReservation::new(reservation.mark.value, reservation.mark.mask)?;
         if reservation.owner.is_empty()
             || reservation.first_priority == 0
             || reservation.last_priority >= 32766
@@ -166,6 +175,9 @@ impl PreparedGeneration {
                 .len()
                 != reservation.capture_tables.len()
             || reservation.foreign_bits & reservation.mark.mask != 0
+            || reservation
+                .mesh_sink_table
+                .is_some_and(|table| table <= 255 || reservation.capture_tables.contains(&table))
         {
             return Err(invalid("invalid internal underlay reservation"));
         }
@@ -181,6 +193,33 @@ impl PreparedGeneration {
                 return Err(io::Error::other("cannot inspect RPDB"));
             }
             validate_rules(&reservation, &result.stdout)?;
+            if let Some(table) = reservation.mesh_sink_table {
+                let result = tokio::process::Command::new("ip")
+                    .args(["-N", "-j", family, "route", "show", "table", "all"])
+                    .output()
+                    .await?;
+                if !result.status.success() {
+                    return Err(io::Error::other("cannot inspect reject-only Mesh table"));
+                }
+                let routes: Vec<serde_json::Value> =
+                    serde_json::from_slice(&result.stdout).map_err(invalid_json)?;
+                let mut sinks = Vec::new();
+                for route in routes {
+                    if route
+                        .get("table")
+                        .map(table_identity)
+                        .transpose()?
+                        .unwrap_or(254)
+                        == table
+                    {
+                        sinks.push(route);
+                    }
+                }
+                // An unused reserved table may not yet exist in the FIB; a
+                // successful all-table dump proves emptiness without treating
+                // iproute2's missing-table error as permission to skip checks.
+                validate_mesh_sinks(table, &serde_json::to_vec(&sinks).map_err(invalid_json)?)?;
+            }
         }
         // Capability and both address families verified before publishing factory.
         for domain in [Domain::IPV4, Domain::IPV6] {
@@ -194,6 +233,8 @@ impl PreparedGeneration {
                 sockets: Vec::new(),
             }),
             cancelled: CancellationToken::new(),
+            #[cfg(target_os = "linux")]
+            namespace_lease: None,
         })))
     }
 
@@ -203,6 +244,61 @@ impl PreparedGeneration {
     pub(crate) fn retire(&self) {
         self.0.retire();
     }
+
+    #[cfg(target_os = "linux")]
+    pub(super) fn retain_namespace(&mut self, lease: Arc<super::owner::Lease>) {
+        // Only before handing out any factory. Retired wrappers may still hold
+        // FDs, so keep reservation locked until the last such wrapper is gone.
+        Arc::get_mut(&mut self.0)
+            .expect("unpublished generation")
+            .namespace_lease = Some(lease);
+    }
+}
+
+pub(super) fn validate_mesh_sinks(table: u32, bytes: &[u8]) -> io::Result<()> {
+    let routes: Vec<serde_json::Value> = serde_json::from_slice(bytes).map_err(invalid_json)?;
+    for route in routes {
+        let attributes = route
+            .as_object()
+            .ok_or_else(|| invalid("unknown Mesh sink route"))?;
+        let destination = route
+            .get("dst")
+            .and_then(serde_json::Value::as_str)
+            .ok_or_else(|| invalid("missing Mesh sink prefix"))?;
+        let prefix = destination
+            .parse::<ipnet::IpNet>()
+            .or_else(|_| {
+                destination
+                    .parse::<std::net::IpAddr>()
+                    .map(ipnet::IpNet::from)
+            })
+            .map_err(|_| invalid("invalid Mesh sink prefix"))?;
+        if prefix.prefix_len() == 0
+            || prefix != prefix.trunc()
+            || !route
+                .get("type")
+                .is_some_and(|kind| kind.as_str() == Some("unreachable") || number(kind) == Some(7))
+            || route
+                .get("table")
+                .map(table_identity)
+                .transpose()?
+                .is_some_and(|id| id != table)
+            || route
+                .get("dev")
+                .is_some_and(|dev| dev.as_str() != Some("lo") || prefix.addr().is_ipv4())
+            || attributes.keys().any(|key| {
+                ![
+                    "type", "dst", "table", "protocol", "metric", "flags", "pref", "dev", "scope",
+                ]
+                .contains(&key.as_str())
+            })
+        {
+            return Err(invalid(
+                "Mesh sink table must contain only non-default unreachable prefixes",
+            ));
+        }
+    }
+    Ok(())
 }
 
 #[derive(Deserialize)]
@@ -225,7 +321,7 @@ fn number(value: &serde_json::Value) -> Option<u32> {
         })
 }
 
-fn validate_rules(reservation: &Reservation, bytes: &[u8]) -> io::Result<()> {
+pub(super) fn validate_rules(reservation: &Reservation, bytes: &[u8]) -> io::Result<()> {
     let rules: Vec<Rule> = serde_json::from_slice(bytes).map_err(invalid_json)?;
     let mut guard = 0;
     let mut target = 0;
@@ -236,7 +332,10 @@ fn validate_rules(reservation: &Reservation, bytes: &[u8]) -> io::Result<()> {
         if !in_block {
             let a = &rule.attributes;
             let table = a.get("table").map(table_identity).transpose()?;
-            if table.is_some_and(|table| reservation.capture_tables.contains(&table)) {
+            if table.is_some_and(|table| {
+                reservation.capture_tables.contains(&table)
+                    || reservation.mesh_sink_table == Some(table)
+            }) {
                 return Err(invalid(
                     "owned capture table referenced outside guarded block",
                 ));
@@ -291,8 +390,12 @@ fn validate_rules(reservation: &Reservation, bytes: &[u8]) -> io::Result<()> {
             target += 1;
         } else {
             let table = a.remove("table").as_ref().map(table_identity).transpose()?;
-            if table.is_none_or(|table| !reservation.capture_tables.contains(&table))
-                || a.remove("iif").as_ref().and_then(serde_json::Value::as_str) != Some("lo")
+            let is_sink = table.is_some()
+                && table == reservation.mesh_sink_table
+                && rule.priority == reservation.last_priority - 1;
+            if !is_sink
+                && (table.is_none_or(|table| !reservation.capture_tables.contains(&table))
+                    || a.remove("iif").as_ref().and_then(serde_json::Value::as_str) != Some("lo"))
             {
                 return Err(invalid("foreign rule in reserved capture block"));
             }
@@ -312,7 +415,7 @@ fn invalid_json(error: serde_json::Error) -> io::Error {
     invalid(error.to_string())
 }
 
-fn table_identity(value: &serde_json::Value) -> io::Result<u32> {
+pub(super) fn table_identity(value: &serde_json::Value) -> io::Result<u32> {
     if let Some(id) = number(value) {
         return Ok(id);
     }
@@ -335,6 +438,36 @@ mod tests {
     use super::*;
 
     #[test]
+    fn forwarded_mesh_sink_is_reject_only_and_guarded() {
+        let reservation = Reservation {
+            owner: "sink".into(),
+            generation: 1,
+            mark: MarkReservation::new(0x80000000, 0x80000000).unwrap(),
+            foreign_bits: 0,
+            first_priority: 1,
+            last_priority: 5,
+            capture_tables: vec![10000, 10001],
+            mesh_sink_table: Some(10002),
+        };
+        let rules = serde_json::json!([
+            {"priority":0,"src":"all","table":255},
+            {"priority":1,"src":"all","fwmark":"0x80000000","fwmask":"0x80000000","iif":"lo","goto":5},
+            {"priority":2,"src":"all","table":10000,"iif":"lo"},
+            {"priority":4,"src":"all","table":10002},
+            {"priority":5,"src":"all","nop":null}
+        ]);
+        assert!(validate_rules(&reservation, &serde_json::to_vec(&rules).unwrap()).is_ok());
+        assert!(validate_mesh_sinks(10002, br#"[{"type":"unreachable","dst":"100.64.0.0/24","protocol":242,"metric":42760,"flags":[]}]"#).is_ok());
+        for invalid in [
+            br#"[{"type":"unreachable","dst":"default"}]"#.as_slice(),
+            br#"[{"dst":"100.64.0.0/24","dev":"tun0"}]"#,
+            br#"[{"type":"unreachable","dst":"100.64.0.0/24","encap":{}}]"#,
+        ] {
+            assert!(validate_mesh_sinks(10002, invalid).is_err());
+        }
+    }
+
+    #[test]
     fn foreign_bits_survive_and_conflicts_reject() {
         let mark = MarkReservation::new(0x4d570000, 0xffff0000).unwrap();
         assert_eq!(mark.merge(0x20).unwrap(), 0x4d570020);
@@ -354,6 +487,7 @@ mod tests {
             first_priority: 18000,
             last_priority: 18003,
             capture_tables: vec![18401],
+            mesh_sink_table: None,
         };
         let valid = r#"[{"priority":18000,"src":"all","fwmark":"0x4d570000","fwmask":"0xffff0000","iif":"lo","goto":18003},{"priority":18001,"src":"all","iif":"lo","table":18401},{"priority":18003,"src":"all","nop":null}]"#;
         assert!(validate_rules(&reservation, valid.as_bytes()).is_ok());
@@ -386,6 +520,7 @@ mod tests {
             first_priority: 18000,
             last_priority: 18003,
             capture_tables: vec![18401, 18402],
+            mesh_sink_table: None,
         };
         let guard = serde_json::json!({"priority":18000,"src":"all","fwmark":"0x4d570000","fwmask":"0xffff0000","iif":"lo","goto":18003});
         let nop = serde_json::json!({"priority":18003,"src":"all","nop":null});

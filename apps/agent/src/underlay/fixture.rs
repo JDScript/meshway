@@ -22,6 +22,7 @@ fn reservation(generation: u64, foreign_bits: u32) -> Reservation {
         first_priority: 18000,
         last_priority: 18003,
         capture_tables: vec![18401, 18402],
+        mesh_sink_table: None,
     }
 }
 
