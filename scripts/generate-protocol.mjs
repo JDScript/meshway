@@ -63,6 +63,7 @@ export function validators(document) {
   const emitted = new Set();
   const visiting = new Set();
   const definitions = [];
+  let usesTypedMap = false;
   const schemas = document.components?.schemas ?? document.$defs;
   const referencePrefix = document.components?.schemas ? "#/components/schemas/" : "#/$defs/";
   if (!schemas) throw new Error("Missing schema definitions");
@@ -100,6 +101,7 @@ export function validators(document) {
       if (empty) {
         const values = variants.filter(item => item !== empty);
         if (values.some(item => item.type === "null")) throw new Error("Duplicate null variant");
+        if (schema.oneOf && !values.every(item => excludesNull(item))) throw new Error("Nullable oneOf requires non-null remaining branches");
         return `${values.length === 1 ? emit(values[0]) : emit({ [schema.oneOf ? "oneOf" : "anyOf"]: values })}.nullable()`;
       }
       // Require disjoint, required string tags. A plain z.union then has exactly
@@ -128,6 +130,7 @@ export function validators(document) {
     }
     if (Array.isArray(schema.type)) {
       if (schema.type.length !== 2 || schema.type[1] !== "null" || typeof schema.type[0] !== "string") throw new Error("Only T|null unions are supported");
+      if (Object.hasOwn(schema, "const")) throw new Error("Nullable type with const is unsupported; use a plain string constant");
       return `${emit({ ...schema, type: schema.type[0] })}.nullable()`;
     }
     switch (schema.type) {
@@ -136,12 +139,22 @@ export function validators(document) {
         const properties = schema.properties ?? {};
         const required = schema.required ?? [];
         if (!Array.isArray(required) || new Set(required).size !== required.length || required.some(name => !Object.hasOwn(properties, name))) throw new Error("Invalid required properties");
+        const bounds = {};
+        for (const key of ["minProperties", "maxProperties"]) {
+          if (schema[key] !== undefined) {
+            if (!Number.isSafeInteger(schema[key]) || schema[key] < 0) throw new Error(`Invalid ${key}`);
+            bounds[key] = schema[key];
+          }
+        }
+        const isMap = schema.additionalProperties && typeof schema.additionalProperties === "object" && !Object.keys(properties).length && !required.length;
         let code;
-        if (schema.additionalProperties && typeof schema.additionalProperties === "object" && !Object.keys(properties).length && !required.length) {
-          if (schema.propertyNames && schema.propertyNames.type !== "string") throw new Error("Typed map keys must be strings");
-          code = `z.record(${schema.propertyNames ? emit(schema.propertyNames) : "z.string()"}, ${emit(schema.additionalProperties)})`;
+        if (isMap) {
+          const hasNames = Object.hasOwn(schema, "propertyNames");
+          if (hasNames && schema.propertyNames?.type !== "string") throw new Error("Typed map propertyNames must be a string schema");
+          usesTypedMap = true;
+          code = `typedMap(${hasNames ? emit(schema.propertyNames) : "z.string()"}, ${emit(schema.additionalProperties)}, ${JSON.stringify(bounds)})`;
         } else {
-          if (schema.propertyNames) throw new Error("propertyNames is only supported on typed maps");
+          if (Object.hasOwn(schema, "propertyNames")) throw new Error("propertyNames is only supported on typed maps");
           // utoipa tagged variants omit additionalProperties=false. Their
           // required full property set + matching maxProperties is equally closed.
           const boundedClosed = schema.additionalProperties === undefined && schema.maxProperties === Object.keys(properties).length && required.length === Object.keys(properties).length;
@@ -155,8 +168,7 @@ export function validators(document) {
           }).join(",\n")}\n})`;
         }
         for (const [key, operator] of [["minProperties", ">="], ["maxProperties", "<="]]) {
-          if (schema[key] !== undefined) {
-            if (!Number.isSafeInteger(schema[key]) || schema[key] < 0) throw new Error(`Invalid ${key}`);
+          if (!isMap && schema[key] !== undefined) {
             code += `.refine(value => Object.keys(value).length ${operator} ${schema[key]}, ${JSON.stringify(`${key} ${schema[key]}`)})`;
           }
         }
@@ -225,9 +237,61 @@ export function validators(document) {
     if (schema.$ref) return nullable(schemas[referenceName(schema.$ref)]);
     return schema.type === "null" || (Array.isArray(schema.type) && schema.type.includes("null")) || (schema.anyOf ?? schema.oneOf ?? []).some(item => item.type === "null");
   }
+  function excludesNull(schema, seen = new Set()) {
+    if (schema.$ref) {
+      const name = referenceName(schema.$ref);
+      if (seen.has(name)) return false;
+      return excludesNull(schemas[name], new Set([...seen, name]));
+    }
+    if (schema.anyOf || schema.oneOf) return (schema.anyOf ?? schema.oneOf).every(item => excludesNull(item, seen));
+    return typeof schema.type === "string" && schema.type !== "null";
+  }
   for (const name of Object.keys(schemas).sort()) component(name);
-  return `// Generated from the controller OpenAPI by scripts/generate-protocol.mjs. Do not edit.\n\nimport * as z from "zod";\n\n${definitions.join("\n\n")}\n`;
+  return `// Generated from the controller OpenAPI by scripts/generate-protocol.mjs. Do not edit.\n\nimport * as z from "zod";\n\n${usesTypedMap ? typedMapHelper + "\n\n" : ""}${definitions.join("\n\n")}\n`;
 }
+
+// Zod 4 record skips __proto__ before validation and makes enum keys exhaustive.
+// JSON maps require validation of every present own key, not either behavior.
+const typedMapHelper = `function typedMap<Value extends z.ZodType>(
+  keySchema: z.ZodType<string>,
+  valueSchema: Value,
+  bounds: { minProperties?: number; maxProperties?: number },
+) {
+  return z.custom<Record<string, unknown>>((input: unknown) =>
+    input !== null && typeof input === "object" && !Array.isArray(input) &&
+    (Object.getPrototypeOf(input) === Object.prototype || Object.getPrototypeOf(input) === null),
+    "Expected a JSON object",
+  ).transform((input, ctx) => {
+    const entries = Object.entries(input);
+    let invalid = false;
+    for (const [limit, violated] of [
+      ["minProperties", bounds.minProperties !== undefined && entries.length < bounds.minProperties],
+      ["maxProperties", bounds.maxProperties !== undefined && entries.length > bounds.maxProperties],
+    ] as const) {
+      if (violated) {
+        ctx.addIssue({ code: "custom", message: limit + " exceeded" });
+        invalid = true;
+      }
+    }
+    const output: Record<string, z.output<Value>> = {};
+    for (const [name, value] of entries) {
+      const key = keySchema.safeParse(name);
+      const parsed = valueSchema.safeParse(value);
+      for (const result of [key, parsed]) {
+        if (!result.success) {
+          invalid = true;
+          for (const issue of result.error.issues) ctx.addIssue({ ...issue, path: [name, ...issue.path] });
+        }
+      }
+      if (key.success && parsed.success) {
+        // Defining an own data property preserves __proto__ without invoking
+        // Object.prototype's setter or changing the output prototype.
+        Object.defineProperty(output, name, { value: parsed.data, enumerable: true, writable: true, configurable: true });
+      }
+    }
+    return invalid ? z.NEVER : output;
+  });
+}`;
 
 export function operations(document) {
   if (document.openapi !== "3.1.0") throw new Error("Expected native OpenAPI 3.1.0");

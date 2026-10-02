@@ -38,6 +38,7 @@ Rust 请求 / 响应类型 + 实际 API 路由声明
 - Hey API 0.99 生成 TypeScript DTO；`scripts/generate-protocol.mjs` 从同一 OpenAPI 生成严格 Zod schema 与操作函数，再调用共享 HTTP transport。字符串长度按 Unicode code point 计算，与 Rust 的 Unicode scalar 计数一致；已修复原先 UTF-16 长度差异。
 - TS 操作生成支持 JSON GET / POST、组件 schema、必填 POST body、单一 HTTP 200 成功响应，以及单个必需的 HTTP bearer 认证方案。schema 生成覆盖封闭对象、组件引用、数组、整数、布尔值、字符串枚举 / 常量、日期时间及 `T | null`。带共享必填字符串判别字段的 `oneOf` / `anyOf` 支持内联或引用 variant；判别值必须唯一，拒绝重叠分支，不选择第一个匹配来掩盖冲突。nullable 分支不改变对象字段的必填性。
 - typed map 使用 schema 型 `additionalProperties` 逐值验证，可带字符串 `propertyNames` 与 `minProperties` / `maxProperties`；不支持任意 JSON 值或混合固定字段 / 开放 map。对象必须显式 `additionalProperties: false`，或全部声明字段必填且 `maxProperties` 等于声明字段数（utoipa tagged variant 的等价封闭形状）。预算作用于实际对象键数，未知字段不会被静默丢弃。
+- typed map 的有类型 helper 逐个验证输入 own JSON 键和值，预算在输出构造前按输入键数计算；通过安全 own data property 构造保留 `__proto__` 等合法键，不调用 prototype setter。`propertyNames` 的字符串 enum / const 只约束出现的键，不要求所有允许键出现；boolean `propertyNames` 明确生成失败。nullable `oneOf` 仅在递归解析本地引用后证明其余分支均不接受 null 时简化；无法证明则生成失败，`anyOf` 可接受 null 重叠。nullable type 与 const 的组合目前明确拒绝，只支持 plain string const。
 - 非 nullable 可省略字段使用 Zod `exactOptional()`，与 Hey API DTO 的 `exactOptionalPropertyTypes` 保持一致；省略不会被扩展为可显式传入 `undefined`。既有 nullable optional DTO 的 `.optional()` 输出保持兼容。
 - 同一 Zod emitter 可直接读取 `policy_v3_schema` 的 `$defs` / 本地引用供行为测试；生产仍消费实际路由导出的 OpenAPI。实际 v3 schema 无 `allOf`，目前继续拒绝它及其他未支持关键字。`ExitMatch` 源 schema 已通过 typed utoipa builders 补齐 variant 封闭约束，完整真实 `NetworkPolicy` schema 可直接生成并通过运行时及严格 TS 验证；后续接线边界见 [P3a 契约交接](/p3a-contract-handoff)。这不是 v3 HTTP 下发或真实组网已完成。
 

@@ -80,6 +80,32 @@ fn internet() -> Grant {
 }
 
 #[test]
+fn automatic_routing_json_map_cases_match_wire_acceptance_and_preserve_keys() {
+    use serde_json::Value;
+
+    let cases: Vec<Value> = serde_json::from_str(include_str!(
+        "../../../../scripts/fixtures/policy-map-cases.json"
+    ))
+    .unwrap();
+    for case in cases {
+        let automatic = &case["automatic"];
+        let expected = case["valid"].as_bool().unwrap();
+        let parsed = serde_json::from_value::<AutomaticRouting>(automatic.clone());
+        assert_eq!(parsed.is_ok(), expected, "{}", case["label"]);
+        if let Ok(parsed) = parsed {
+            assert_eq!(serde_json::to_value(parsed).unwrap(), *automatic);
+        }
+        let mut policy = serde_json::to_value(NetworkPolicy::default_template()).unwrap();
+        policy["automatic"] = automatic.clone();
+        let parsed = serde_json::from_value::<NetworkPolicy>(policy.clone());
+        assert_eq!(parsed.is_ok(), expected, "{}", case["label"]);
+        if let Ok(parsed) = parsed {
+            assert_eq!(serde_json::to_value(parsed).unwrap(), policy);
+        }
+    }
+}
+
+#[test]
 fn exit_match_wire_and_schema_reject_unknown_or_missing_variant_fields() {
     use serde_json::json;
     use utoipa::OpenApi;

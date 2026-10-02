@@ -12,6 +12,8 @@
 
 Rust wire/schema test 对照三个实际 serde variant 的序列化字节、反序列化、缺失或未知字段、null / 错误类型 / unknown tag 拒绝，并核对实际导出的属性、required 与封闭约束。生成器行为测试直接消费未经修补的完整真实 `NetworkPolicy` schema：合法 / 非法实例经过生成 Zod，且 Hey API DTO、Zod 输出和生成操作共同通过严格 TypeScript 编译。没有 fixture 自动加约束；人工构造的开放 variant 仍作为 fail-closed 负例。
 
+复核修复使用有类型 typed-map helper 替代 Zod 4 record：验证全部 own JSON 键和值、预算按输入键数计算，用 `Object.defineProperty` 安全构造输出，保留 `__proto__` / `constructor` / `toString`，不改变原型。`scripts/fixtures/policy-map-cases.json` 是 Rust serde 与生成 Zod 共用的真实输入；两侧对 `AutomaticRouting` 和完整 `NetworkPolicy` 验证相同的接受 / 拒绝与合法数据保留。enum / const `propertyNames` 仅验证出现键，不强造必填键；boolean `propertyNames`、不能证明 null 互斥的 nullable `oneOf`、nullable type + const 均明确生成失败。`anyOf` 的 null 重叠仍正确允许。相关 runtime 回归与 strict TS 输出检查已加入生成器测试。
+
 根命令建议：协调者在根 `package.json` scripts 加 `"test:codegen": "node --test scripts/generate-protocol.test.mjs"`，并将它纳入合并检查；本切片未改根 manifest / lock / CI。当前可直接运行该命令。
 
 ## 三个边界

@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
-import { createRequire } from "node:module";
+import { createRequire, stripTypeScriptTypes } from "node:module";
 import { dirname, join } from "node:path";
 import { pathToFileURL } from "node:url";
 import { test } from "node:test";
@@ -13,7 +13,7 @@ const temp = await mkdtemp(join(root, "node_modules/.codegen-test-"));
 let sequence = 0;
 async function runtime(document) {
   const file = join(temp, `schema-${sequence++}.mjs`);
-  await writeFile(file, validators(document).replace('from "zod"', `from ${JSON.stringify(zodUrl)}`));
+  await writeFile(file, stripTypeScriptTypes(validators(document).replace('from "zod"', `from ${JSON.stringify(zodUrl)}`)));
   return import(pathToFileURL(file).href);
 }
 const ref = name => ({ $ref: `#/components/schemas/${name}` });
@@ -68,6 +68,64 @@ try {
     }
   });
 
+  await test("typed maps preserve and validate every own JSON key before applying budgets", async () => {
+    const { zMap, zBounded, zNamed } = await runtime(document({
+      Map: { type: "object", additionalProperties: { type: "string" } },
+      Bounded: { type: "object", additionalProperties: { type: "string" }, maxProperties: 1, minProperties: 1 },
+      Named: { type: "object", additionalProperties: { type: "string" }, propertyNames: { type: "string", pattern: "^[A-Z]{2}$" } },
+    }));
+    const valid = JSON.parse('{"__proto__":"custom","constructor":"mesh-only","toString":"mesh-only"}');
+    const parsed = zMap.parse(valid);
+    assert.deepEqual(parsed, valid);
+    assert.equal(Object.getPrototypeOf(parsed), Object.prototype);
+    assert.equal(Object.hasOwn(parsed, "__proto__"), true);
+    assert.equal(JSON.stringify(parsed), JSON.stringify(valid));
+    assert.equal(zMap.safeParse(JSON.parse('{"__proto__":42}')).success, false);
+    assert.equal(zNamed.safeParse(JSON.parse('{"__proto__":"custom"}')).success, false);
+    assert.equal(zBounded.safeParse(JSON.parse('{"__proto__":"custom","JP":"custom"}')).success, false);
+    assert.deepEqual(zBounded.parse(JSON.parse('{"__proto__":"custom"}')), JSON.parse('{"__proto__":"custom"}'));
+    for (const value of [{}, null, [], "x"]) assert.equal(zBounded.safeParse(value).success, false);
+    const nested = await runtime(document({ Map: { type: "object", additionalProperties: object({ allowed: { type: "boolean" } }) } }));
+    const safeObject = nested.zMap.parse(JSON.parse('{"__proto__":{"allowed":true}}'));
+    assert.equal(Object.getPrototypeOf(safeObject), Object.prototype);
+    assert.equal(Object.hasOwn(safeObject, "allowed"), false);
+    assert.deepEqual(safeObject, JSON.parse('{"__proto__":{"allowed":true}}'));
+  });
+
+  await test("propertyNames enum/const constrain present keys without requiring them; boolean names fail closed", async () => {
+    for (const propertyNames of [{ type: "string", enum: ["JP", "US"] }, { type: "string", const: "JP" }]) {
+      const { zMap } = await runtime(document({ Map: { type: "object", additionalProperties: { type: "string" }, propertyNames, maxProperties: 1 } }));
+      assert.deepEqual(zMap.parse({}), {});
+      assert.deepEqual(zMap.parse({ JP: "custom" }), { JP: "custom" });
+      assert.equal(zMap.safeParse({ KR: "custom" }).success, false);
+      assert.equal(zMap.safeParse({ JP: 42 }).success, false);
+      assert.equal(zMap.safeParse({ JP: "custom", US: "custom" }).success, false);
+    }
+    for (const propertyNames of [false, true, null]) {
+      assert.throws(() => validators(document({ Map: { type: "object", additionalProperties: { type: "string" }, propertyNames } })), /propertyNames must be a string schema/);
+    }
+  });
+
+  await test("nullable oneOf proves null exclusion through refs, while overlapping anyOf remains valid", async () => {
+    for (const nullableValue of [{ type: ["string", "null"] }, { anyOf: [{ type: "string" }, { type: "null" }] }]) {
+      for (const remaining of [nullableValue, ref("Nullable"), ref("Alias")]) {
+        const base = { Nullable: nullableValue, Alias: ref("Nullable") };
+        assert.throws(() => validators(document({ ...base, Union: { oneOf: [remaining, { type: "null" }] } })), /non-null remaining branches/);
+        const { zUnion } = await runtime(document({ ...base, Union: { anyOf: [remaining, { type: "null" }] } }));
+        assert.equal(zUnion.safeParse(null).success, true);
+        assert.equal(zUnion.safeParse("x").success, true);
+        assert.equal(zUnion.safeParse(42).success, false);
+      }
+    }
+    const { zUnion } = await runtime(document({ Text: { type: "string" }, Alias: ref("Text"), Union: { oneOf: [ref("Alias"), { type: "null" }] } }));
+    assert.equal(zUnion.safeParse(null).success, true);
+    assert.equal(zUnion.safeParse("x").success, true);
+    assert.throws(() => validators(document({ Literal: { type: ["string", "null"], const: "x" } })), /Nullable type with const/);
+    const { zLiteral } = await runtime(document({ Literal: { type: "string", const: "x" } }));
+    assert.equal(zLiteral.safeParse("x").success, true);
+    for (const value of [null, "y"]) assert.equal(zLiteral.safeParse(value).success, false);
+  });
+
   await test("actual complete Rust NetworkPolicy schema validates runtime values and strict operation types", async () => {
     const result = spawnSync("cargo", ["run", "--locked", "--quiet", "-p", "meshway-policy", "--example", "policy_v3_schema"], {
       cwd: root, encoding: "utf8", env: { ...process.env, CARGO_BUILD_JOBS: "2", CARGO_TARGET_DIR: join(root, "target/p3a-codegen") },
@@ -96,6 +154,17 @@ try {
       automatic: { regions: { JP: "custom" }, fallback: "mesh-only" },
     };
     assert.deepEqual(zNetworkPolicy.parse(policy), policy);
+    const mapCases = JSON.parse(await readFile(join(root, "scripts/fixtures/policy-map-cases.json"), "utf8"));
+    for (const { label, automatic, valid } of mapCases) {
+      const automaticResult = zAutomaticRouting.safeParse(automatic);
+      const fullResult = zNetworkPolicy.safeParse({ ...policy, automatic });
+      assert.equal(automaticResult.success, valid, label);
+      assert.equal(fullResult.success, valid, label);
+      if (valid) {
+        assert.deepEqual(automaticResult.data, automatic, label);
+        assert.deepEqual(fullResult.data.automatic, automatic, label);
+      }
+    }
     for (const mutate of [p => { p.automatic.regions.JP = 42; }, p => { p.profiles[0].fallback.unknown = true; }, p => { p.profiles[0].rules[0].destinations[0].unknown = true; }, p => { p.profiles[0].rules[0].destinations[0].kind = "unknown"; }, p => { delete p.grants; }]) {
       const invalid = structuredClone(policy);
       mutate(invalid);
@@ -104,6 +173,8 @@ try {
     // Use the same Hey API plugin as production, then compile generated
     // operations against both inferred Zod output and generated DTOs.
     const schemas = JSON.parse(JSON.stringify(schema.$defs).replaceAll("#/$defs/", "#/components/schemas/"));
+    schemas.EnumMap = { type: "object", additionalProperties: { type: "string" }, propertyNames: { type: "string", enum: ["JP", "US"] } };
+    schemas.ConstMap = { type: "object", additionalProperties: { type: "string" }, propertyNames: { type: "string", const: "JP" } };
     const doc = document(schemas);
     const content = { "application/json": { schema: ref("NetworkPolicy") } };
     doc.paths["/fixture/policy"] = { post: {
@@ -118,6 +189,16 @@ try {
     await createClient({ configFile: false, input, output: { path: generated }, plugins: ["@hey-api/typescript"] });
     await writeFile(join(generated, "zod.gen.ts"), validators(doc));
     await writeFile(join(generated, "operations.gen.ts"), operations(doc));
+    await writeFile(join(temp, "map-types.ts"), `import * as z from "zod";
+import { zEnumMap, zConstMap } from "./generated/zod.gen.ts";
+const emptyEnum: z.output<typeof zEnumMap> = {};
+const partialEnum: z.output<typeof zEnumMap> = { JP: "custom" };
+const emptyConst: z.output<typeof zConstMap> = {};
+const partialConst: z.output<typeof zConstMap> = { JP: "custom" };
+// @ts-expect-error map values must be validated strings
+const invalid: z.output<typeof zEnumMap> = { JP: 42 };
+void [emptyEnum, partialEnum, emptyConst, partialConst, invalid];
+`);
     await writeFile(join(temp, "transport.ts"), await readFile(join(root, "packages/control-client/src/transport.ts"), "utf8"));
     // Dependencies resolve through the actual SDK rather than adding a package.
     await writeFile(join(temp, "tsconfig.json"), JSON.stringify({ compilerOptions: {
