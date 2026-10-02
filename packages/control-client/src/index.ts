@@ -37,6 +37,8 @@ export {
   getPolicyOperation as getPolicy,
   previewPolicyOperation as previewPolicy,
   savePolicyOperation as savePolicy,
+  getNetworkPolicyOperation as getNetworkPolicy,
+  saveNetworkPolicyOperation as saveNetworkPolicy,
   setNodeCountryOperation as setNodeCountry,
   getConnectionsOperation as getConnections,
   saveConnectionsOperation as saveConnections,
