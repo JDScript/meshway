@@ -25,3 +25,27 @@ CREATE INDEX IF NOT EXISTS latency_pair_time
 CREATE INDEX IF NOT EXISTS latency_source_receive
     ON latency_samples(network_id, source_node_id, received_ms);
 CREATE INDEX IF NOT EXISTS latency_retention ON latency_samples(measured_ms);
+CREATE INDEX IF NOT EXISTS latency_source_oldest
+    ON latency_samples(network_id, source_node_id, measured_ms, row_id);
+-- Live retry identities and insert-rate accounting survive rolling eviction.
+CREATE TABLE IF NOT EXISTS latency_admissions (
+    network_id TEXT NOT NULL REFERENCES networks(network_id),
+    source_node_id TEXT NOT NULL,
+    measurement_id TEXT NOT NULL,
+    body_digest BLOB NOT NULL,
+    received_ms INTEGER NOT NULL,
+    expires_ms INTEGER NOT NULL,
+    PRIMARY KEY(network_id, source_node_id, measurement_id),
+    FOREIGN KEY(network_id,source_node_id) REFERENCES nodes(network_id,id)
+);
+CREATE INDEX IF NOT EXISTS latency_admission_receive
+    ON latency_admissions(network_id, source_node_id, received_ms);
+CREATE INDEX IF NOT EXISTS latency_admission_expiry
+    ON latency_admissions(network_id, source_node_id, expires_ms);
+CREATE TABLE IF NOT EXISTS latency_coverage (
+    network_id TEXT NOT NULL REFERENCES networks(network_id),
+    source_node_id TEXT NOT NULL,
+    capacity_before_ms INTEGER NOT NULL,
+    PRIMARY KEY(network_id, source_node_id),
+    FOREIGN KEY(network_id,source_node_id) REFERENCES nodes(network_id,id)
+);

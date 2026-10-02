@@ -37,10 +37,18 @@ revision/digest、sampler generation、真实开始/完成时刻与结果。
 RTT 与 wall-clock 尝试时长做合理性核对。时钟异常事件拒绝，不使用接收时间代替测量时间。
 相同 epoch 的 begin 重试不会刷新 epoch-start。
 
-保留 7 天；每次合法 report/query 最多清理 1,024 条过期记录；查询始终过滤保留窗，
-所以尚未清理的过期行也不可见。每 source 最多 50,000 行，每分钟最多 512 个新事件。
-触及预算时明确拒绝批量，Agent 的 drop 表示遥测缺口。有限清理避免单次长事务；无业务
-请求时不主动清理，后台定期维护可以复用同一个 bounded 清理接点。
+7 天是最大时间保留窗，不保证任何邻接规模都有完整 7 天。每 source/network 最多 50,000
+条记录；接纳新事件后，事务内按 `measured_ms,row_id` 淘汰该 source 最旧记录，使近期数据
+持续更新。正常批量最多淘汰 64 条；超出有界恢复范围的已损坏占用报错。验证、去重、新事件、
+必要淘汰、覆盖水位与 ledger 在同一事务，任何失败全部回滚。TTL 清理也仅该 source/network，
+每次最多 1,024 条；查询始终过滤保留窗，未清理的过期行不可见。
+
+512/minute 是**新事件 insert 预算**，不是请求频率限制；重复请求仍需资格与当前配置校验。
+独立的有界 admission ledger 保存 canonical body SHA-256、首次接收时刻和到期时间，直到
+原测量的 120 秒重试窗与其首次接收的 60 秒速率窗均结束（加 1 ms 边界余量）。滚动淘汰
+不会删除该约束，同 ID 重试不重建记录、不刷新 receipt、不占新样本预算；改变内容拒绝。
+retained row 的 identity 仍一直约束内容；row 已被淘汰且 ledger 超出上述窗口后，旧 ID
+不再有永久 tombstone，重新标时的新事件可按新 admission 验证。TTL 外不承诺永久 ID 记忆。
 
 ## API 与前端 handoff
 
@@ -57,6 +65,11 @@ RTT 与 wall-clock 尝试时长做合理性核对。时钟异常事件拒绝，�
 - 返回 `records[]` 包括 `network_id/source_node_id/sample/received_at/historical`，以及
   `next/retention_seconds/expected_interval_seconds`。`historical` 始终 true；即使当下已撤回、
   过期或切换承载，也只是历史证据，不能渲染成现在连通。没有原始事件时数组为空。
+- 覆盖元数据：`retention_from` 是当前 TTL 下界；`capacity_trimmed_before` 是持久的
+  source-wide 保守容量裁剪水位，覆盖所有 peer，不是“最早返回点”；请求 `from` 早于水位时
+  `capacity_trimmed=true`。Web 应显示“此前部分历史因容量被淘汰”，与“没有样本”区分。
+  它不证明任意区间连续覆盖，也不推导网络离线/丢包。分页不是固定快照，每页返回当前水位；
+  跨页裁剪会反映在元数据中。AUTOINCREMENT cursor 永不因删除重用。
 
 **曲线分段键**：网络、source、peer、direction、runtime epoch、revision/digest、sampler generation、
 transport、initiator、listener、candidate。任何键变化须断开；不能跨方向/承载/代际连线。
@@ -72,19 +85,31 @@ Failed/timeout 单独标记有方向的节点对，关联为空时不要硬归�
 
 新增 `apps/agent/src/managed_connections/latency_history.rs`：固定内部默认 30 秒间隔、
 4 个并发 probe、2 秒 timeout、每轮最多 64 个既有获准邻居（轮转）、256 个事件非阻塞队列。
-HTTP 使用调用者已有生成 `HttpClient`（含未来 underlay 注入），每批最多 64 条，10 秒请求
-timeout，最多 3 次重试，1/2/4 秒 backoff；HTTP 与数据面采样不互相阻塞。无 CLI 本地配置。
+HTTP 使用已接受 runtime report 的同一生成 `HttpClient`（含未来 underlay 注入），每批最多
+64 条，10 秒请求 timeout，**总共最多 3 次 attempt（初次 + 2 次重试）**，1/2/4 秒 backoff；
+没有同步日志/pipe I/O 阻塞健康上报。无 CLI 本地配置。
 无第二个 Agent/runtime。代际/watch 变化、withdrawal、lease 到期取消采样、队列与 in-flight HTTP。
 
-`Manager::start_latency_history(client, epoch)` 是启动接点：**在新鲜 Applied runtime report
-被 Controller 接受之后**由现有 Agent 主 loop 每代际启动一次，并持有 `JoinHandle<Summary>`。
-旧任务完成或 epoch/snapshot 变化时重新启动；不要每个 heartbeat 启动一个任务。底层 Prober
-publication fence 负责自主取消。此提交的真实 HTTP fixture 已调用启动接点；主 loop 对
-`state/connections` 的接线留给拥有该文件的协调者/P2a，生产入口尚未启用自动采样。
+正常 `meshway-agent run --apply-connections` 已接线：**新鲜 Applied runtime report 被
+Controller 接受后**调用 `Manager::latency_report_accepted`。Owner 根据 epoch、publication、
+revision/digest 只持有一个任务；同代际 finished/error 恢复以 30/60/120/240/300 秒有界 backoff
+并再次等待 fresh Applied 接受，不在每 heartbeat 生成任务，也不因遥测错误关闭健康 Runtime
+或 E2E cache。withdraw/shutdown、可信更高 revision、失效/变更 snapshot 与 ACK conflict
+走相同 abort + join 边界；Drop 也会 abort，不 detach。
 
-DDL 在 `apps/controller/src/store/latency_history/schema.sql`，`upgrade` 是无版本的启动事务片段，
-不会从 API 在运行服务建表。协调者应把它并入统一最终 schema version。现有 runtime begin
-仅增加调用 `begin_epoch` 的最小接点，lease 成功与记录 epoch-start 在同一事务。
+显式 stop 返回表示 probe/report futures 与队列已 drop，不再入队或发起旧事件请求。取消无法
+召回已由 Controller 提交的历史；in-flight HTTP 可能已被远端接收，因此仍有独立服务端 fence。
+Summary 的部分 counters 不涵盖所有被取消的 queued/in-flight 条目，不可当成丢包统计。
+采样不拨通新邻接；但它并非完全被动，现有 Runtime probe timeout 会 unregister **该 exact
+channel**。本任务保留既有认证/超时语义，没有调整数据面或性能对照。
+
+DDL 在 `apps/controller/src/store/latency_history/schema.sql`。生产默认不自动安装 IF NOT EXISTS
+片段；`latency-history-fixture` 仅显式测试构建安装，Agent dev-dependency 启用该 feature。
+正常 controller 启动若已有 latency 表，执行无副作用完整 `validate_schema`（columns/PK/
+AUTOINCREMENT/UNIQUE/FK/index 形状及 FK integrity），缺失约束的同名表拒绝启动。
+这不等于验证了生产 versioned migration。协调者负责最终版本与既有 epoch 的启用时间下界；
+候选接点见 `docs/latency-history-migration.patch`。尚未安装 schema 时旧 runtime begin 保持
+可用，不从管理 HTTP 创建表；history 会报 storage unavailable，producer 有界退避。
 
 ### 并行交付整合（只读核对 `56da5ad`）
 
@@ -96,8 +121,8 @@ DDL 在 `apps/controller/src/store/latency_history/schema.sql`，`upgrade` 是�
   采样 context 使用该 snapshot 的 revision/digest，publication 撤回后整体取消。
 - Agent 新增 `transport-runtime`，managed 不再隐式带 lab CLI；采样模块仍只挂在
   managed-connections，不新增 lab CLI 或本地配置入口，整合时由协调者重生成全部消费者。
-- **启动 hook 的调用方必须在 R1 heartbeat 告知更高 revision 时立即 abort 已持有的 sampler
-  handle**，与旧 dataplane/DNS 撤回一同执行；然后等待新 coherent bundle 与 Applied report。
+- **R1 heartbeat 告知更高 revision 的现有 Manager withdrawal 已纳入 sampler abort/join**，
+  与旧 dataplane/DNS 撤回一同执行；然后等待新 coherent bundle 与 Applied report。
   不能等旧 HTTP 请求结束或等下一采样周期。即使邻接 Runtime 暂时仍在，旧 revision/digest
   的 queued event 也不应再发。Controller 的 current revision/digest 校验是第二道 fence。
 

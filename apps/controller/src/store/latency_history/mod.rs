@@ -2,16 +2,21 @@
 use chrono::{DateTime, Utc};
 use meshway_protocol::*;
 use rusqlite::{Connection, OptionalExtension, TransactionBehavior, params};
+use sha2::{Digest, Sha256};
 
 use super::{NetworkId, Store, connection_runtime, connections};
 use crate::Error;
 
+mod schema;
 #[cfg(test)]
 mod tests;
+pub(crate) use schema::{validate_if_present, validate_schema};
 
+#[cfg(any(test, feature = "latency-history-fixture"))]
 pub(crate) fn upgrade(connection: &mut Connection) -> Result<(), Error> {
     let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
     transaction.execute_batch(include_str!("schema.sql"))?;
+    validate_schema(&transaction)?;
     transaction.commit()?;
     Ok(())
 }
@@ -27,6 +32,12 @@ pub(super) fn begin_epoch(
     source: &str,
     epoch: u32,
 ) -> Result<(), Error> {
+    // The coordinator owns production migration. Existing enrollment/runtime
+    // operations remain usable before that migration installs telemetry tables.
+    let installed: bool = connection.query_row("SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type='table' AND name='latency_runtime_epochs')",[],|r|r.get(0))?;
+    if !installed {
+        return Ok(());
+    }
     connection.execute("INSERT INTO latency_runtime_epochs(node_id,network_id,epoch,started_ms) VALUES (?1,?2,?3,?4) ON CONFLICT(node_id) DO UPDATE SET epoch=excluded.epoch,started_ms=excluded.started_ms WHERE latency_runtime_epochs.epoch<>excluded.epoch AND latency_runtime_epochs.network_id=excluded.network_id", params![source,network.as_str(),epoch,Utc::now().timestamp_millis()])?;
     Ok(())
 }
@@ -63,9 +74,12 @@ impl Store {
             ));
         }
         let network = self.node_network(token)?;
-        // Retention makes bounded progress even when admission later rejects a
-        // full source budget. Insert idempotency/atomicity remains in the tx.
-        cleanup(&self.connection, now)?;
+        // Cheap eligibility/shape rejection precedes cleanup/full projection;
+        // repeat credential binding under the write transaction for races.
+        connection_runtime::bound_node(&self.connection, &network, token)?;
+        for sample in &request.samples {
+            validate_shape(sample)?;
+        }
         let tx = self
             .connection
             .transaction_with_behavior(TransactionBehavior::Immediate)?;
@@ -90,6 +104,14 @@ impl Store {
                 >= chrono::Duration::seconds(i64::from(CONNECTION_RUNTIME_STALE_AFTER_SECONDS))
         {
             return Err(Error::Conflict);
+        }
+        for sample in &request.samples {
+            if sample.runtime_epoch != epoch
+                || sample.revision != report.revision
+                || sample.digest != report.digest
+            {
+                return Err(Error::Conflict);
+            }
         }
         let current =
             connections::projection(&connections::admin_snapshot(&tx, &network)?, &source)?;
@@ -123,6 +145,15 @@ impl Store {
                 response.duplicates += 1;
                 continue;
             }
+            let digest = Sha256::digest(&body).to_vec();
+            let tombstone: Option<Vec<u8>> = tx.query_row("SELECT body_digest FROM latency_admissions WHERE network_id=?1 AND source_node_id=?2 AND measurement_id=?3 AND expires_ms>=?4", params![network.as_str(),source,sample.measurement_id,now.timestamp_millis()], |r| r.get(0)).optional()?;
+            if let Some(previous) = tombstone {
+                if previous != digest {
+                    return Err(Error::Conflict);
+                }
+                response.duplicates += 1;
+                continue;
+            }
             validate(&tx, &network, &source, &current.payload, sample, now)?;
             if sample.measured_at.timestamp_millis() < started_ms - CLOCK_SKEW_SECONDS * 1000 {
                 return Err(Error::Unprocessable(
@@ -130,23 +161,24 @@ impl Store {
                 ));
             }
             let recent: u32 = tx.query_row(
-                "SELECT COUNT(*) FROM latency_samples WHERE network_id=?1 AND source_node_id=?2 AND received_ms>=?3",
+                "SELECT COUNT(*) FROM (SELECT measurement_id FROM latency_admissions WHERE network_id=?1 AND source_node_id=?2 AND received_ms>=?3 UNION SELECT measurement_id FROM latency_samples WHERE network_id=?1 AND source_node_id=?2 AND received_ms>=?3)",
                 params![network.as_str(),source,now.timestamp_millis()-60_000], |row| row.get(0),
             )?;
-            let rows: u32 = tx.query_row(
-                "SELECT COUNT(*) FROM latency_samples WHERE network_id=?1 AND source_node_id=?2",
-                params![network.as_str(), source],
-                |row| row.get(0),
-            )?;
-            if recent >= 512 || rows >= NODE_ROW_BUDGET {
-                return Err(Error::Capacity("latency sample storage budget reached"));
+            if recent >= 512 {
+                return Err(Error::Capacity("latency new-event insert budget reached"));
             }
+            let expiry =
+                (sample.measured_at.timestamp_millis() + REPORT_MAX_AGE_SECONDS * 1000 + 1)
+                    .max(now.timestamp_millis() + 60_001);
+            tx.execute("INSERT INTO latency_admissions(network_id,source_node_id,measurement_id,body_digest,received_ms,expires_ms) VALUES (?1,?2,?3,?4,?5,?6) ON CONFLICT(network_id,source_node_id,measurement_id) DO UPDATE SET body_digest=excluded.body_digest,received_ms=excluded.received_ms,expires_ms=excluded.expires_ms",params![network.as_str(),source,sample.measurement_id,digest,now.timestamp_millis(),expiry])?;
             tx.execute(
                 "INSERT INTO latency_samples(network_id,source_node_id,peer_node_id,measurement_id,runtime_epoch,measured_ms,received_ms,body) VALUES (?1,?2,?3,?4,?5,?6,?7,?8)",
                 params![network.as_str(),source,sample.peer_node_id,sample.measurement_id,epoch,sample.measured_at.timestamp_millis(),now.timestamp_millis(),body],
             )?;
             response.inserted += 1;
         }
+        cleanup_source(&tx, &network, &source, now)?;
+        roll_source(&tx, &network, &source)?;
         tx.commit()?;
         Ok(response)
     }
@@ -199,7 +231,8 @@ impl Store {
                 return Err(Error::NotFound);
             }
         }
-        cleanup(&self.connection, now)?;
+        cleanup_source(&self.connection, network, &query.source_node_id, now)?;
+        let capacity_ms: Option<i64> = self.connection.query_row("SELECT capacity_before_ms FROM latency_coverage WHERE network_id=?1 AND source_node_id=?2", params![network.as_str(),query.source_node_id],|r|r.get(0)).optional()?;
         let mut statement = self.connection.prepare(
             "SELECT row_id,body,received_ms FROM latency_samples WHERE network_id=?1 AND source_node_id=?2 AND peer_node_id=?3 AND measured_ms>=?4 AND measured_ms<?5 AND row_id>?6 ORDER BY row_id LIMIT ?7",
         )?;
@@ -246,6 +279,14 @@ impl Store {
         });
         Ok(LatencyHistoryResponse {
             records,
+            retention_from: now - chrono::Duration::seconds(i64::from(LATENCY_RETENTION_SECONDS)),
+            capacity_trimmed_before: capacity_ms
+                .map(|ms| {
+                    DateTime::from_timestamp_millis(ms)
+                        .ok_or(Error::Configuration("invalid capacity watermark"))
+                })
+                .transpose()?,
+            capacity_trimmed: capacity_ms.is_some_and(|ms| query.from.timestamp_millis() < ms),
             next,
             retention_seconds: LATENCY_RETENTION_SECONDS,
             expected_interval_seconds: LATENCY_SAMPLE_INTERVAL_SECONDS,
@@ -253,6 +294,91 @@ impl Store {
     }
 }
 
+fn cleanup_source(
+    connection: &Connection,
+    network: &NetworkId,
+    source: &str,
+    now: DateTime<Utc>,
+) -> Result<(), Error> {
+    connection.execute("DELETE FROM latency_samples WHERE row_id IN (SELECT row_id FROM latency_samples WHERE network_id=?1 AND source_node_id=?2 AND measured_ms<?3 ORDER BY measured_ms,row_id LIMIT ?4)",params![network.as_str(),source,now.timestamp_millis()-i64::from(LATENCY_RETENTION_SECONDS)*1000,CLEANUP_BUDGET])?;
+    connection.execute("DELETE FROM latency_admissions WHERE rowid IN (SELECT rowid FROM latency_admissions WHERE network_id=?1 AND source_node_id=?2 AND expires_ms<?3 ORDER BY expires_ms LIMIT ?4)",params![network.as_str(),source,now.timestamp_millis(),CLEANUP_BUDGET])?;
+    Ok(())
+}
+
+fn roll_source(connection: &Connection, network: &NetworkId, source: &str) -> Result<(), Error> {
+    let rows: u32 = connection.query_row(
+        "SELECT COUNT(*) FROM latency_samples WHERE network_id=?1 AND source_node_id=?2",
+        params![network.as_str(), source],
+        |r| r.get(0),
+    )?;
+    let excess = rows.saturating_sub(NODE_ROW_BUDGET);
+    if excess == 0 {
+        return Ok(());
+    }
+    if excess > LATENCY_BATCH_LIMIT as u32 {
+        return Err(Error::Configuration(
+            "latency source occupancy exceeds bounded admission",
+        ));
+    }
+    let victims = connection.prepare("SELECT row_id,measurement_id,measured_ms,received_ms,body FROM latency_samples WHERE network_id=?1 AND source_node_id=?2 ORDER BY measured_ms,row_id LIMIT ?3")?.query_map(params![network.as_str(),source,excess],|r|Ok((r.get::<_,i64>(0)?,r.get::<_,String>(1)?,r.get::<_,i64>(2)?,r.get::<_,i64>(3)?,r.get::<_,Vec<u8>>(4)?)))?.collect::<Result<Vec<_>,_>>()?;
+    let watermark = victims
+        .iter()
+        .map(|v| v.2 + 1)
+        .max()
+        .ok_or(Error::Configuration("missing latency quota victims"))?;
+    for (row, id, measured, received, body) in victims {
+        // Also protect recently received fixture/previous-version rows that did
+        // not yet have an admission ledger. Never rewrite a prior live identity.
+        connection.execute("INSERT OR IGNORE INTO latency_admissions(network_id,source_node_id,measurement_id,body_digest,received_ms,expires_ms) VALUES (?1,?2,?3,?4,?5,?6)",params![network.as_str(),source,id,Sha256::digest(&body).to_vec(),received,(measured+REPORT_MAX_AGE_SECONDS*1000+1).max(received+60_001)])?;
+        connection.execute(
+            "DELETE FROM latency_samples WHERE row_id=?1 AND network_id=?2 AND source_node_id=?3",
+            params![row, network.as_str(), source],
+        )?;
+    }
+    connection.execute("INSERT INTO latency_coverage(network_id,source_node_id,capacity_before_ms) VALUES (?1,?2,?3) ON CONFLICT(network_id,source_node_id) DO UPDATE SET capacity_before_ms=MAX(latency_coverage.capacity_before_ms,excluded.capacity_before_ms)",params![network.as_str(),source,watermark])?;
+    Ok(())
+}
+
+fn validate_shape(sample: &LatencySample) -> Result<(), Error> {
+    if !local::valid_credential(&sample.measurement_id)
+        || !local::valid_credential(&sample.sampler_generation)
+        || !local::valid_credential(&sample.peer_node_id)
+        || !local::valid_credential(&sample.digest)
+        || sample.runtime_epoch == 0
+        || sample.revision == 0
+        || sample.channel_associations.len() > 1
+        || sample.failure_reasons.len() > 1
+        || sample.completed_at < sample.measured_at
+        || sample.completed_at - sample.measured_at > chrono::Duration::seconds(60)
+    {
+        return Err(Error::Unprocessable("invalid latency event shape"));
+    }
+    let valid_outcome = match sample.outcome {
+        LatencyOutcome::Success => {
+            sample.channel_associations.len() == 1
+                && sample.failure_reasons.is_empty()
+                && sample
+                    .rtt_us
+                    .is_some_and(|rtt| (1..=60_000_000).contains(&rtt))
+        }
+        LatencyOutcome::Timeout => {
+            sample.channel_associations.is_empty()
+                && sample.failure_reasons.is_empty()
+                && sample.rtt_us.is_none()
+        }
+        LatencyOutcome::Failed => {
+            sample.channel_associations.is_empty()
+                && sample.failure_reasons.len() == 1
+                && sample.rtt_us.is_none()
+        }
+    };
+    if !valid_outcome {
+        return Err(Error::Unprocessable("invalid latency outcome shape"));
+    }
+    Ok(())
+}
+
+#[cfg(test)]
 fn cleanup(connection: &Connection, now: DateTime<Utc>) -> Result<usize, Error> {
     Ok(connection.execute("DELETE FROM latency_samples WHERE row_id IN (SELECT row_id FROM latency_samples WHERE measured_ms<?1 ORDER BY measured_ms LIMIT ?2)",
         params![now.timestamp_millis()-i64::from(LATENCY_RETENTION_SECONDS)*1000,CLEANUP_BUDGET])?)

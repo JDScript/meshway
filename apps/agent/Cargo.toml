@@ -47,7 +47,7 @@ tun-rs = { version = "2.8.11", features = ["async_tokio"], optional = true }
 [dev-dependencies]
 tokio = { workspace = true, features = ["test-util"] }
 rcgen = "0.14"
-meshway-controller = { path = "../controller" }
+meshway-controller = { path = "../controller", features = ["latency-history-fixture"] }
 axum.workspace = true
 tempfile.workspace = true
 rustix = { workspace = true, features = ["net"] }
