@@ -1,20 +1,24 @@
 "use client"
 
-import type { NetworkList } from "@meshway/control-client"
+import type { AccountRole } from "@meshway/control-client"
 import { CircleAlertIcon } from "lucide-react"
 import { useActionState, useId } from "react"
 
 import { Button } from "@/components/ui/button"
 import { Label } from "@/components/ui/label"
 import { NativeSelect, NativeSelectOption } from "@/components/ui/native-select"
+import { roleLabels } from "@/lib/account-model"
 import type { DeviceAuthorization } from "@/lib/device-login"
 import { decideDevice } from "@/lib/device-login-actions"
+
+export type DeviceNetworkChoice = { networkId: string; name: string; ipv4Prefix: string; role: AccountRole }
 
 /**
  * Approve or deny one App sign-in. The request fields travel back as hidden
  * inputs and are revalidated on the server; only the chosen network is new.
+ * Any member, including a Member, may approve their own device.
  */
-export function DeviceAuthorizationForm({ value, networks }: { value: DeviceAuthorization; networks: NetworkList }) {
+export function DeviceAuthorizationForm({ value, networks }: { value: DeviceAuthorization; networks: DeviceNetworkChoice[] }) {
   const [state, action, pending] = useActionState(decideDevice, { error: null })
   const selectId = useId()
   return (
@@ -29,15 +33,16 @@ export function DeviceAuthorizationForm({ value, networks }: { value: DeviceAuth
           name="network_id"
           required
           className="w-full"
-          defaultValue={networks.networks[0]?.network_id}
+          defaultValue={networks[0]?.networkId}
+          disabled={networks.length === 0}
         >
-          {networks.networks.map((network) => (
-            <NativeSelectOption key={network.network_id} value={network.network_id}>
-              {network.name}（{network.network.ipv4_prefix}）
+          {networks.map((network) => (
+            <NativeSelectOption key={network.networkId} value={network.networkId}>
+              {network.name}（{network.ipv4Prefix}）· {roleLabels[network.role]}
             </NativeSelectOption>
           ))}
         </NativeSelect>
-        <p className="text-xs text-muted-foreground">一台设备一次只接入一张网络；之后可在 App 中保存其他网络的接入。</p>
+        <p className="text-xs text-muted-foreground">设备归属你在该网络的成员身份；一台设备一次只接入一张网络。</p>
       </div>
       {state.error ? (
         <p role="alert" className="flex items-start gap-1.5 text-xs text-destructive">
@@ -49,7 +54,7 @@ export function DeviceAuthorizationForm({ value, networks }: { value: DeviceAuth
         <Button type="submit" name="decision" value="deny" variant="outline" size="lg" disabled={pending}>
           拒绝
         </Button>
-        <Button type="submit" name="decision" value="approve" size="lg" disabled={pending || networks.networks.length === 0}>
+        <Button type="submit" name="decision" value="approve" size="lg" disabled={pending || networks.length === 0}>
           批准接入
         </Button>
       </div>

@@ -1,10 +1,12 @@
-import { listNetworks, type NetworkList } from "@meshway/control-client"
-import { CircleAlertIcon, LaptopIcon } from "lucide-react"
+import { getAccountSession, listNetworks, type AccountSession, type NetworkList } from "@meshway/control-client"
+import { CircleAlertIcon, LaptopIcon, ShieldAlertIcon } from "lucide-react"
+import Link from "next/link"
 import type { Metadata } from "next"
 import { redirect } from "next/navigation"
 import type { ReactNode } from "react"
 
 import { DeviceAuthorizationForm } from "@/components/auth/device-authorization-form"
+import { SwitchAccountButton } from "@/components/auth/switch-account-button"
 import { StandaloneFrame } from "@/components/shell/standalone-frame"
 import { controllerUrl, isCredentialRejected } from "@/lib/controller"
 import { authorizationPath, parseDeviceAuthorization } from "@/lib/device-login"
@@ -28,9 +30,10 @@ function Problem({ title, children }: { title: string; children: ReactNode }) {
 
 /**
  * Browser half of the Apple App sign-in: the App opens this page in the
- * system browser; an administrator (until user accounts exist) approves it
- * into one network and the controller returns a one-time exchange code to the
- * App callback. Nothing here claims a tunnel or data-plane state.
+ * system browser; the signed-in user approves it into one of their networks
+ * and the controller returns a one-time exchange code to the App callback.
+ * The device is then owned by that user's membership. Viewing this page never
+ * approves anything. Nothing here claims a tunnel or data-plane state.
  */
 export default async function AuthorizeDevicePage({ searchParams }: {
   searchParams: Promise<Record<string, string | string[] | undefined>>
@@ -39,20 +42,54 @@ export default async function AuthorizeDevicePage({ searchParams }: {
   if (!value) {
     return <Problem title="授权请求无效">回调地址或请求参数不受支持。请从 Meshway App 重新发起登录。</Problem>
   }
-  const loginPath = `/login?returnTo=${encodeURIComponent(authorizationPath(value))}`
+  const returnTo = authorizationPath(value)
+  const loginPath = `/login?returnTo=${encodeURIComponent(returnTo)}`
   const session = await readSession()
-  if (session.kind !== "active") redirect(loginPath)
+  if (session.kind !== "active") redirect(session.kind === "expired" ? `${loginPath}&reason=expired` : loginPath)
+  if (session.credential.kind !== "user") {
+    // The administrator token manages the controller but is not a user, so
+    // it cannot own a device. Offer the account sign-in (or first Owner).
+    return (
+      <StandaloneFrame width="md">
+        <div className="flex flex-col items-center gap-3 text-center">
+          <span className="flex size-10 items-center justify-center rounded-full bg-amber-500/10 text-amber-600 dark:text-amber-400">
+            <ShieldAlertIcon className="size-5" />
+          </span>
+          <h1 className="text-lg font-semibold tracking-tight">需要账户登录</h1>
+          <p className="text-[0.8125rem] leading-relaxed text-muted-foreground">
+            当前使用的是管理员令牌，它不代表任何用户，不能批准设备。设备会归属批准它的账户，请使用账户登录后继续。
+          </p>
+        </div>
+        <div className="flex flex-col gap-2">
+          <SwitchAccountButton returnTo={returnTo} label="退出管理员会话并使用账户登录" />
+          <Link href="/onboarding" className="text-center text-xs text-muted-foreground underline underline-offset-4">
+            还没有账户？为网络认领第一个所有者
+          </Link>
+        </div>
+      </StandaloneFrame>
+    )
+  }
+  let account: AccountSession
   let networks: NetworkList
   try {
-    networks = await listNetworks(controllerUrl(), session.token)
+    ;[account, networks] = await Promise.all([
+      getAccountSession(controllerUrl(), session.credential.token),
+      listNetworks(controllerUrl(), session.credential.token),
+    ])
   } catch (error) {
     if (isCredentialRejected(error)) redirect(`${loginPath}&reason=expired`)
     return <Problem title="无法读取 Controller">授权尚未完成，请稍后重试。</Problem>
   }
+  const roles = new Map(account.memberships.map((membership) => [membership.network_id, membership.role]))
+  // The controller lists only this user's networks; keep only live memberships.
+  const choices = networks.networks.flatMap((network) => {
+    const role = roles.get(network.network_id)
+    return role ? [{ networkId: network.network_id, name: network.name, ipv4Prefix: network.network.ipv4_prefix, role }] : []
+  })
   return (
     <StandaloneFrame
       width="md"
-      footer={<span>批准后 App 可兑换一个节点身份。实际访问由网络策略决定，接入不代表隧道已建立。</span>}
+      footer={<span>批准后 App 可兑换一个归属于你的节点身份。实际访问由网络策略决定，接入不代表隧道已建立。</span>}
     >
       <div className="flex flex-col gap-1.5">
         <h1 className="text-lg font-semibold tracking-tight">授权设备接入</h1>
@@ -73,7 +110,21 @@ export default async function AuthorizeDevicePage({ searchParams }: {
           <dd className="font-mono text-xs break-all">{controllerUrl()}</dd>
         </dl>
       </div>
-      <DeviceAuthorizationForm value={value} networks={networks} />
+      <div className="flex items-center justify-between gap-3 text-xs text-muted-foreground">
+        <span className="min-w-0 truncate">
+          登录为 <span className="font-medium text-foreground">{account.user.email}</span>
+        </span>
+        <SwitchAccountButton returnTo={returnTo} label="切换账户" variant="link" />
+      </div>
+      {choices.length === 0 ? (
+        <p role="status" className="rounded-md border border-dashed px-3 py-2.5 text-[0.8125rem] text-muted-foreground">
+          这个账户还没有加入任何网络。请向网络所有者索取邀请链接。
+        </p>
+      ) : null}
+      <DeviceAuthorizationForm
+        value={value}
+        networks={choices}
+      />
     </StandaloneFrame>
   )
 }
