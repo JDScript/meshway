@@ -371,6 +371,38 @@ fn materials(
     Ok(result)
 }
 
+/// Encrypted plaintext-size upper bound. Owner material includes its key;
+/// dialer projections are smaller. This avoids decrypting/logging material in
+/// the network's publication-budget check and reserves the wrapper metadata.
+pub(super) fn material_budget(
+    connection: &Connection,
+    network: &NetworkId,
+    intent: &NodeConnections,
+) -> Result<usize, Error> {
+    let ids: std::collections::BTreeSet<_> = intent
+        .listeners
+        .iter()
+        .filter(|l| l.transport == ConnectionTransport::Vless)
+        .map(|l| l.id.as_str())
+        .chain(
+            intent
+                .outgoing
+                .iter()
+                .filter(|c| c.transport == ConnectionTransport::Vless)
+                .map(|c| c.listener_id.as_str()),
+        )
+        .collect();
+    let mut total = 512usize;
+    for id in ids {
+        let size:Option<i64>=connection.query_row("SELECT length(material_ciphertext) FROM managed_listeners WHERE network_id=?1 AND listener_id=?2 AND material_ciphertext IS NOT NULL",params![network.as_str(),id],|r|r.get(0)).optional()?;
+        let size=usize::try_from(size.unwrap_or(0)).map_err(|_|Error::Capacity("managed material publication budget exhausted"))?;
+        total = total.checked_add(size).ok_or(Error::Capacity(
+            "managed material publication budget exhausted",
+        ))?;
+    }
+    Ok(total)
+}
+
 impl Store {
     pub(crate) fn verify_legacy_material(
         &self,

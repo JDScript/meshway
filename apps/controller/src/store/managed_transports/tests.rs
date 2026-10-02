@@ -353,6 +353,51 @@ fn closed_settings_reject_unknown_transport_tls_ws_fields_and_bad_binding() {
 }
 
 #[test]
+fn material_bytes_are_included_in_the_publication_budget_without_partial_commit() {
+    let dir = directory();
+    let mut store = Store::open(dir.path(), &NetworkOptions::default()).unwrap();
+    let network = store.initial_network_id().unwrap();
+    let (node, credential) = enroll(
+        &mut store,
+        &network,
+        "budget",
+        &format!("09{}", "00".repeat(31)),
+    );
+    store
+        .save_managed_listener(
+            &network,
+            &SaveManagedListenerRequest {
+                expected_revision: store.revision(&network).unwrap(),
+                settings: settings(&node.id),
+            },
+        )
+        .unwrap();
+    let original = store.agent_managed_connections(&credential).unwrap().digest;
+    {
+        let tx = store
+            .connection
+            .transaction_with_behavior(TransactionBehavior::Immediate)
+            .unwrap();
+        // Budget checks need only stored size metadata, not the
+        // plaintext or private-key bytes. Force an oversized storage fixture.
+        tx.execute(
+            "UPDATE managed_listeners SET material_ciphertext=?1 WHERE network_id=?2",
+            params![vec![0u8; MAX_CONNECTIONS_BYTES], network.as_str()],
+        )
+        .unwrap();
+        assert!(matches!(
+            connections::ensure_publishable(&tx, &network),
+            Err(Error::Capacity(_))
+        ));
+        // Drop transaction: original authenticated material remains untouched.
+    }
+    assert_eq!(
+        store.agent_managed_connections(&credential).unwrap().digest,
+        original
+    );
+}
+
+#[test]
 fn offline_import_preserves_legacy_uuid_certificate_key_and_refuses_non_equivalent_listener() {
     let dir = directory();
     let mut store = Store::open(dir.path(), &NetworkOptions::default()).unwrap();

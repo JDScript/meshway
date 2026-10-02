@@ -219,9 +219,15 @@ pub(super) fn ensure_publishable(
     let snapshot = admin_snapshot(connection, network)?;
     for node in &snapshot.nodes {
         if node.node.revoked_at.is_none() {
-            let encoded = serde_json::to_vec(&projection(&snapshot, &node.node.id)?)
+            let projected = projection(&snapshot, &node.node.id)?;
+            let encoded = serde_json::to_vec(&projected)
                 .map_err(|_| Error::Configuration("cannot encode connections"))?;
-            if encoded.len() > MAX_CONNECTIONS_BYTES - 4096 {
+            let private_budget = super::managed_transports::material_budget(
+                connection,
+                network,
+                &projected.payload,
+            )?;
+            if encoded.len().saturating_add(private_budget) > MAX_CONNECTIONS_BYTES - 4096 {
                 return Err(Error::Capacity(
                     "connections exceed 1 MiB publication budget",
                 ));
