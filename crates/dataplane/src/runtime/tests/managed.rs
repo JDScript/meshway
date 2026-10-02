@@ -549,12 +549,17 @@ async fn neighbor_timeout_closes_blackhole_and_reconnects_without_false_health()
     assert_eq!(timeout.await, Err(Error::Timeout));
     assert!(server.peer_connections().is_empty());
     assert!(lock(&server.handle.inner.neighbor_pending).is_empty());
-    assert!(
-        tokio::time::timeout(Duration::from_secs(1), read_record(&mut stream))
-            .await
-            .unwrap()
-            .is_err()
-    );
+    // Only two bounded retransmissions may precede EOF. Each goes through the
+    // real hop writer, so decrypting both also checks distinct, non-reused nonces.
+    let mut retries = 0;
+    while let Ok(record) = tokio::time::timeout(Duration::from_secs(1), read_record(&mut stream))
+        .await
+        .unwrap()
+    {
+        assert_eq!(cipher.open(&record).unwrap(), request);
+        retries += 1;
+        assert!(retries <= 2);
+    }
     let client = Runtime::start(configs[0].clone()).await.unwrap();
     attach_pair(&client, &server, 0).await;
     server

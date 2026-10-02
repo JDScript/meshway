@@ -519,7 +519,7 @@ async fn capacity_one_rollover_preserves_live_key_until_fresh_key_proof_and_has_
 
 // Test-only interception at the authenticated relay's outbound queue. Frames still
 // traverse the real duplex carriers and endpoint crypto; no runtime fault hook.
-fn intercept_peer(
+pub(super) fn intercept_peer(
     runtime: &Runtime,
     peer: &str,
 ) -> (mpsc::Receiver<Outbound>, mpsc::Sender<Outbound>) {
@@ -529,7 +529,7 @@ fn intercept_peer(
     (rx, original)
 }
 
-async fn capacity_one_fixture(probe_timeout_ms: u64) -> Fixture {
+pub(super) async fn capacity_one_fixture(probe_timeout_ms: u64) -> Fixture {
     let mut configs = configs();
     for config in &mut configs {
         config.limits.max_pending_probes = 1;

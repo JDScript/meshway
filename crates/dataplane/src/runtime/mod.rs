@@ -513,6 +513,8 @@ impl Runtime {
 
     /// Round trip on the exact confirmed neighbor channel; no path/transit grant.
     /// Timeout disconnects only that channel, never a concurrently installed replacement.
+    /// At most three requests share the original deadline. The returned duration
+    /// starts at the first request, including queueing and any loss/retry delay.
     pub async fn probe_neighbor(&self, peer: &str, timeout: Duration) -> Result<Duration> {
         Ok(self
             .probe_neighbor_observed(peer, timeout)
@@ -523,6 +525,8 @@ impl Runtime {
     /// Return proof and locally captured metadata for the same confirmed channel.
     /// Replacement during the call returns Unavailable. This is a point-in-time
     /// observation: the selected connection may change after completion.
+    /// Uses the same bounded retries and first-request elapsed time as `probe_neighbor`;
+    /// this is not a loss-excluding latency sample. Final timeout still retires the channel.
     pub async fn probe_neighbor_observed(
         &self,
         peer: &str,

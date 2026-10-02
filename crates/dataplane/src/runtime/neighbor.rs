@@ -90,7 +90,7 @@ pub(super) async fn probe_observed(
     let deadline = started + timeout;
     let mut id = [0; 16];
     getrandom::fill(&mut id).map_err(|_| Error::Authentication)?;
-    let (tx, rx) = oneshot::channel();
+    let (tx, mut rx) = oneshot::channel();
     {
         let mut pending = lock(&inner.neighbor_pending);
         if pending.len() >= inner.config.limits.max_pending_probes
@@ -121,29 +121,49 @@ pub(super) async fn probe_observed(
     inner
         .enqueue(&channel, frame(REQUEST, &id)?)
         .map_err(|failure| inner.local_send_failure(failure))?;
-    tokio::select! {
-        biased;
-        _ = shutdown.changed() => Err(Error::Closed),
-        _ = closed.changed() => Err(Error::Unavailable),
-        _ = tokio::time::sleep_until(deadline) => {
-            // unregister compares the full private channel token under the registry
-            // lock and closes the selected engine; a replacement is never removed.
-            inner.unregister(peer, &snapshot.token);
-            Err(Error::Timeout)
-        }
-        result = rx => {
-            let received = result.map_err(|_| Error::Closed)?;
-            if received >= deadline || Instant::now() >= deadline {
+    let retry_interval = timeout / 3;
+    let mut retry_at = started + retry_interval;
+    let mut retries = 0;
+    loop {
+        tokio::select! {
+            biased;
+            _ = shutdown.changed() => return Err(Error::Closed),
+            _ = closed.changed() => return Err(Error::Unavailable),
+            _ = tokio::time::sleep_until(deadline) => {
+                // unregister compares the full private channel token under the registry
+                // lock and closes the selected engine; a replacement is never removed.
                 inner.unregister(peer, &snapshot.token);
                 return Err(Error::Timeout);
             }
-            if !inner.active(peer, &snapshot.token) {
-                return Err(Error::Unavailable);
+            result = &mut rx => {
+                let received = result.map_err(|_| Error::Closed)?;
+                if received >= deadline || Instant::now() >= deadline {
+                    inner.unregister(peer, &snapshot.token);
+                    return Err(Error::Timeout);
+                }
+                if !inner.active(peer, &snapshot.token) {
+                    return Err(Error::Unavailable);
+                }
+                return Ok(NeighborProbeObservation {
+                    connection: snapshot.connection,
+                    round_trip: received.duration_since(started),
+                });
             }
-            Ok(NeighborProbeObservation {
-                connection: snapshot.connection,
-                round_trip: received.duration_since(started),
-            })
+            _ = tokio::time::sleep_until(retry_at), if retries < 2 => {
+                retries += 1;
+                retry_at += retry_interval;
+                if !inner.active(peer, &snapshot.token) {
+                    return Err(Error::Unavailable);
+                }
+                // Retransmit the same unpredictable request on the exact channel.
+                // Its writer still assigns fresh hop nonces. One pending slot,
+                // responder's existing 8/s budget, and the original deadline remain.
+                // A full local queue must not discard an already in-flight reply.
+                if let Err(failure) = inner.enqueue(&channel, frame(REQUEST, &id)?) {
+                    let error = inner.local_send_failure(failure);
+                    if error != Error::Capacity { return Err(error); }
+                }
+            }
         }
     }
 }

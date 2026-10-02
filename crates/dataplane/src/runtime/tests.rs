@@ -7,6 +7,7 @@ use std::{
 use tokio::io::{AsyncRead, AsyncWrite, AsyncWriteExt, ReadBuf};
 use tokio::net::UdpSocket;
 
+mod control_recovery;
 mod discovery;
 mod managed;
 mod observability;
