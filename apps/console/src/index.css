@@ -664,3 +664,17 @@
   border: 0;
   border-radius: var(--drawer-radius, var(--radius-sheet));
 }
+/*
+ * A dialog opened from a glass sheet (a confirmation, a secret) floats
+ * above it behind its own backdrop: the sheet keeps its content, size and
+ * light instead of stepping back as a stacked drawer would.
+ */
+[data-slot="drawer-popup"].glass[data-nested-drawer-open] {
+  --stack-step: 0;
+  --peek: 0;
+  filter: none;
+}
+[data-slot="drawer-popup"].glass[data-nested-drawer-open]
+  [data-slot="drawer-content"] {
+  opacity: 1;
+}

@@ -99,8 +99,12 @@ function DrawerSwipeHandle({
 function DrawerContent({
   className,
   children,
+  forceBackdrop = false,
   ...props
-}: DrawerPrimitive.Popup.Props) {
+}: DrawerPrimitive.Popup.Props & {
+  /** Dims what is behind even when opened from another drawer (a dialog over a sheet). */
+  forceBackdrop?: boolean
+}) {
   const { hasSnapPoints, modal, showSwipeHandle, swipeDirection } = useDrawer()
   const swipeAxis =
     swipeDirection === "down" || swipeDirection === "up" ? "y" : "x"
@@ -108,7 +112,10 @@ function DrawerContent({
   return (
     <DrawerPortal data-slot="drawer-portal">
       {modal === true && (
-        <DrawerOverlay data-snap-points={hasSnapPoints ? "" : undefined} />
+        <DrawerOverlay
+          forceRender={forceBackdrop}
+          data-snap-points={hasSnapPoints ? "" : undefined}
+        />
       )}
       <DrawerPrimitive.Viewport
         data-slot="drawer-viewport"
