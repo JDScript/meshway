@@ -45,7 +45,10 @@ SQL 的 `notnull` 是 PRAGMA 标记，还需结合主键、STRICT、CHECK、trig
 
 ## 审查重点
 
-字段 / schema 与 pure SPA 专项正在基于同一冻结版本审查，具体发现和迁移建议将汇入本页：
+Pure SPA 专项已完成并校准：[接口消费、会话与轮询审查](/spa-api-audit)，附[全部 67 个操作的使用建议](/contract-audit/2132434/spa-usage)。
+字段 / schema 专项仍基于同一冻结版本审查，具体字段清理与迁移建议将汇入本页。
+
+核对范围：
 
 - null / 缺省是否有唯一含义；输入 / 输出 DTO、状态组合、默认值、范围 / 单位和约束是否一致。
 - SPA 的登录 / 会话、网络权限、跨登录响应 / cache 隔离如何由 HTTP 契约承接；不假设 Next Server Action 的保护会自动存在于 Controller。

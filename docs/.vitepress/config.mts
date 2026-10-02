@@ -34,6 +34,7 @@ export default defineConfig({
           { text: "总览与实现边界", link: "/architecture" },
           { text: "代码边界审查与收敛", link: "/architecture-review" },
           { text: "模型与 SPA 接口审查", link: "/model-api-audit" },
+          { text: "SPA 会话、查询与轮询", link: "/spa-api-audit" },
           { text: "控制面注册与持久化", link: "/enrollment" },
           { text: "控制面发布与预算", link: "/controller-publication" },
           { text: "浏览器登录与节点接入", link: "/device-login" },

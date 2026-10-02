@@ -24,7 +24,11 @@
 
 ## 正式生成接口与前端 handoff
 
-所有接口前缀 `/api/v1`，返回 `Cache-Control: no-store`。人类 API 不使用 Controller cookie：Web 服务端调用生成 SDK，私有保存 session，浏览器安全 cookie / CSRF / Origin 校验由 Web 主线接线。Controller 不接受 cookie 登录，不把 admin.token 返回给 App / CLI。不要把 login 返回的原 session 写入普通日志、localStorage 或 App 回调。
+所有接口前缀 `/api/v1`，返回 `Cache-Control: no-store`，当前 Controller 通过 Authorization Bearer 认证，不接受 Cookie 登录。
+旧 Next Web 由服务端私有持有会话并提供 Cookie / Server Action 边界；用户已确认的新 pure SPA 使用
+LocalStorage 保存不透明 `mws_` 会话，标签页捕获到内存再通过 Authorization 调生成 SDK，storage 变化时锁定 / 重载，
+隔离旧请求、缓存与草稿。实例管理员令牌仅内存保存，密码、会话和实例凭据都不进入普通日志或 App 回调；
+App / CLI 只取得其接入流程的一次性结果。新方案和接口改进边界见[SPA 接口审查](/spa-api-audit)。
 
 | 操作 ID（SDK 同名导出） | HTTP 路径 | 主体 / 结果 |
 | --- | --- | --- |
