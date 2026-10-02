@@ -1,6 +1,10 @@
 import { useQuery } from "@tanstack/react-query"
 
-import { sessionQuery } from "@/features/network/queries"
+import {
+  membersQuery,
+  ownershipQuery,
+  sessionQuery,
+} from "@/features/network/queries"
 import { useNetworkRole } from "@/features/network/role"
 import { useNodeNavigation } from "@/features/nodes/navigation"
 import { PageFrame } from "@/features/shell/page-frame"
@@ -11,7 +15,7 @@ import { m } from "@/paraglide/messages.js"
 import { MemberList } from "./member-list"
 import { MemberWorkspace } from "./member-workspace"
 import { useMemberNavigation, useMembersRoute } from "./navigation"
-import { invitationsQuery, membersQuery, ownershipQuery } from "./queries"
+import { invitationsQuery } from "./queries"
 import { grantableRoles } from "./roles"
 
 /** The members page: the members (or invitations), and one member's workspace over them. */

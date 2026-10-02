@@ -24,8 +24,10 @@ import { Button } from "@/components/ui/button"
 import { Skeleton } from "@/components/ui/skeleton"
 import { Spinner } from "@/components/ui/spinner"
 import {
+  membersQuery,
   networksQuery,
   nodesQuery,
+  ownershipQuery,
   sessionQuery,
 } from "@/features/network/queries"
 import { useNetwork } from "@/features/network/use-network-view"
@@ -38,7 +40,7 @@ import { failureOf, toastFailure } from "@/lib/failure"
 import { m } from "@/paraglide/messages.js"
 
 import { YouMark } from "./member-list"
-import { invitationsQuery, membersQuery, ownershipQuery } from "./queries"
+import { invitationsQuery } from "./queries"
 import { canChangeRole, canRemove, ROLES, roleLabel } from "./roles"
 
 type Read<T> = { data: T | null; loading: boolean }

@@ -1,9 +1,6 @@
 import {
   getEndpointDiscoveries,
   getManagedListeners,
-  getTags,
-  listAccountMembers,
-  listNodeOwnership,
 } from "@meshway/control-client"
 import { queryOptions } from "@tanstack/react-query"
 
@@ -30,28 +27,4 @@ export const discoveriesQuery = (networkId: string) =>
     queryFn: () =>
       authed((base, token) => getEndpointDiscoveries(base, token, networkId)),
     refetchInterval: 12_000,
-  })
-
-/** The tag catalog and its active assignments, under the network's revision. */
-export const tagsQuery = (networkId: string) =>
-  queryOptions({
-    queryKey: ["network", networkId, "tags"],
-    queryFn: () => authed((base, token) => getTags(base, token, networkId)),
-    staleTime: 30_000,
-  })
-
-export const ownershipQuery = (networkId: string) =>
-  queryOptions({
-    queryKey: ["network", networkId, "node-ownership"],
-    queryFn: () =>
-      authed((base, token) => listNodeOwnership(base, token, networkId)),
-    staleTime: 30_000,
-  })
-
-export const membersQuery = (networkId: string) =>
-  queryOptions({
-    queryKey: ["network", networkId, "members"],
-    queryFn: () =>
-      authed((base, token) => listAccountMembers(base, token, networkId)),
-    staleTime: 60_000,
   })

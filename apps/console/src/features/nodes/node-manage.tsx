@@ -17,8 +17,11 @@ import { Button } from "@/components/ui/button"
 import { Skeleton } from "@/components/ui/skeleton"
 import {
   connectionsQuery,
+  membersQuery,
   nodesQuery,
+  ownershipQuery,
   runtimesQuery,
+  tagsQuery,
 } from "@/features/network/queries"
 import { useNetworkRole } from "@/features/network/role"
 import { useDraftCommit } from "@/features/shell/draft-commit"
@@ -29,13 +32,7 @@ import { m } from "@/paraglide/messages.js"
 
 import { nodeTagsDraft } from "./drafts"
 import { EmptyLine, TabSection } from "./sections"
-import {
-  discoveriesQuery,
-  managedListenersQuery,
-  membersQuery,
-  ownershipQuery,
-  tagsQuery,
-} from "./queries"
+import { discoveriesQuery, managedListenersQuery } from "./queries"
 
 const MAX_NODE_TAGS = 32
 

@@ -15,7 +15,7 @@ import {
   InputGroupInput,
 } from "@/components/ui/input-group"
 import { Skeleton } from "@/components/ui/skeleton"
-import { nodesQuery } from "@/features/network/queries"
+import { nodesQuery, tagsQuery } from "@/features/network/queries"
 import { useCanManage } from "@/features/network/role"
 import { useDraftCommit } from "@/features/shell/draft-commit"
 import type { Saved } from "@/features/shell/drafts"
@@ -26,7 +26,6 @@ import { m } from "@/paraglide/messages.js"
 import { useTagCatalogDraft } from "./drafts"
 import type { NodeContext } from "./node-facts"
 import { EmptyLine, TabSection } from "./sections"
-import { tagsQuery } from "./queries"
 import {
   isTagName,
   MAX_TAGS,

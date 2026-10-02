@@ -25,7 +25,7 @@ import {
 import { useNetwork } from "@/features/network/use-network-view"
 import { m } from "@/paraglide/messages.js"
 
-import { tagsQuery } from "./queries"
+import { tagsQuery } from "@/features/network/queries"
 
 // Selectors as the policy writes them (`*`, `tag:<name>`, `node:<id>`,
 // `autogroup:internet`, `ip:<range>`, `domain:<suffix>`), shown by name

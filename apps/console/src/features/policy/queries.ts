@@ -1,4 +1,4 @@
-import { getNetworkPolicy, getTags } from "@meshway/control-client"
+import { getNetworkPolicy } from "@meshway/control-client"
 import { queryOptions } from "@tanstack/react-query"
 
 import { authed } from "@/lib/api"
@@ -11,13 +11,5 @@ export const policyQuery = (networkId: string) =>
     queryKey: ["network", networkId, "policy"],
     queryFn: () =>
       authed((base, token) => getNetworkPolicy(base, token, networkId)),
-    staleTime: 30_000,
-  })
-
-/** Tag definitions and which nodes carry them, to name and pick selectors. */
-export const tagsQuery = (networkId: string) =>
-  queryOptions({
-    queryKey: ["network", networkId, "tags"],
-    queryFn: () => authed((base, token) => getTags(base, token, networkId)),
     staleTime: 30_000,
   })

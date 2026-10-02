@@ -1,6 +1,7 @@
 import { createFileRoute } from "@tanstack/react-router"
 
-import { policyQuery, tagsQuery } from "@/features/policy/queries"
+import { tagsQuery } from "@/features/network/queries"
+import { policyQuery } from "@/features/policy/queries"
 
 /** The policy's layers; `features/policy/page.tsx` draws them. */
 export const Route = createFileRoute("/_authed/networks/$network/policy")({

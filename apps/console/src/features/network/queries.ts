@@ -3,7 +3,10 @@ import {
   getConnectionRuntimes,
   getConnections,
   getNetwork,
+  getTags,
+  listAccountMembers,
   listNetworks,
+  listNodeOwnership,
   listNodes,
 } from "@meshway/control-client"
 import { queryOptions } from "@tanstack/react-query"
@@ -57,6 +60,32 @@ export const runtimesQuery = (networkId: string) =>
     queryFn: () =>
       authed((base, token) => getConnectionRuntimes(base, token, networkId)),
     refetchInterval: 12_000,
+  })
+
+/** The tag catalog and its active assignments, under the network's revision. */
+export const tagsQuery = (networkId: string) =>
+  queryOptions({
+    queryKey: ["network", networkId, "tags"],
+    queryFn: () => authed((base, token) => getTags(base, token, networkId)),
+    staleTime: 30_000,
+  })
+
+/** Live memberships; every member may read them. */
+export const membersQuery = (networkId: string) =>
+  queryOptions({
+    queryKey: ["network", networkId, "members"],
+    queryFn: () =>
+      authed((base, token) => listAccountMembers(base, token, networkId)),
+    staleTime: 30_000,
+  })
+
+/** Which membership owns each node; null is a node no membership owns yet. */
+export const ownershipQuery = (networkId: string) =>
+  queryOptions({
+    queryKey: ["network", networkId, "ownership"],
+    queryFn: () =>
+      authed((base, token) => listNodeOwnership(base, token, networkId)),
+    staleTime: 30_000,
   })
 
 const REMEMBERED_NETWORK = "meshway.network"
