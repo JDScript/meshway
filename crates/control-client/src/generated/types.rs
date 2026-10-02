@@ -596,7 +596,7 @@ pub struct NodeConfiguration {
     pub peers: Vec<MeshNode>,
     ///Constraint: minimum=1, maximum=4294967295
     pub revision: i64,
-    ///Constraint: minimum=1, maximum=4294967295
+    ///Constraint: minimum=2, maximum=2
     pub schema_version: i64,
 }
 ///Public active-node inventory; country is administrator-managed metadata.

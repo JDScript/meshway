@@ -369,7 +369,7 @@ export const zNodeConfiguration = z.strictObject({
   "node": zMeshNode,
   "peers": z.array(zMeshNode),
   "revision": z.int().gte(1).lte(4294967295),
-  "schema_version": z.int().gte(1).lte(4294967295)
+  "schema_version": z.int().gte(2).lte(2)
 });
 
 export const zConfigurationSnapshot = z.strictObject({

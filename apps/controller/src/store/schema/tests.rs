@@ -68,3 +68,46 @@ fn current_identity_guards_forbid_node_and_enrollment_rebinding() {
     }
     assert_eq!(store.enroll(&token.token, &request).unwrap().id, node.id);
 }
+
+#[test]
+fn complete_structure_cannot_hide_missing_node_ownership_rows() {
+    let dir = directory();
+    let mut store = Store::open(dir.path(), &NetworkOptions::default()).unwrap();
+    let scope = store.initial_network_id().unwrap();
+    let token = store.create_token(&scope, 3600).unwrap();
+    store
+        .enroll(
+            &token.token,
+            &crate::store::test_support::request("ownership"),
+        )
+        .unwrap();
+    let guard: String = store
+        .connection
+        .query_row(
+            "SELECT sql FROM sqlite_schema WHERE name='ownership_no_delete'",
+            [],
+            |r| r.get(0),
+        )
+        .unwrap();
+    store
+        .connection
+        .execute_batch("DROP TRIGGER ownership_no_delete; DELETE FROM node_ownership;")
+        .unwrap();
+    store.connection.execute_batch(&guard).unwrap();
+    assert_eq!(
+        objects(&store.connection).unwrap(),
+        objects(
+            &Connection::open_in_memory()
+                .and_then(|db| {
+                    db.execute_batch(SQL)?;
+                    Ok(db)
+                })
+                .unwrap()
+        )
+        .unwrap()
+    );
+    assert!(matches!(
+        validate(&store.connection),
+        Err(Error::Configuration("incomplete node ownership binding"))
+    ));
+}

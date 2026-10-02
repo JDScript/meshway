@@ -38,6 +38,9 @@ pub(in crate::store) fn validate(db: &Connection) -> Result<(), Error> {
         return Err(Error::Configuration("corrupt controller database"));
     }
     integrity::validate_integrity(db)?;
+    if db.prepare("SELECT n.id FROM nodes n LEFT JOIN node_ownership o ON o.node_id=n.id AND o.network_id=n.network_id GROUP BY n.network_id,n.id HAVING COUNT(o.node_id)<>1")?.exists([])? {
+        return Err(Error::Configuration("incomplete node ownership binding"));
+    }
     // Every network owns its current policy and singleton configuration rows.
     if db.query_row("SELECT EXISTS(SELECT 1 FROM networks n LEFT JOIN network_policy p ON p.network_id=n.network_id LEFT JOIN configuration c ON c.network_id=n.network_id LEFT JOIN network_identity i ON i.network_id=n.network_id LEFT JOIN connection_source s ON s.network_id=n.network_id WHERE p.network_id IS NULL OR c.network_id IS NULL OR i.network_id IS NULL OR s.network_id IS NULL)",[],|r|r.get::<_,bool>(0))? {
         return Err(Error::Configuration("incomplete network configuration"));

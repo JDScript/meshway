@@ -2613,8 +2613,8 @@ export const schemaDocument = {
           "schema_version": {
             "type": "integer",
             "format": "int64",
-            "maximum": 4294967295,
-            "minimum": 1
+            "maximum": 2,
+            "minimum": 2
           }
         },
         "additionalProperties": false

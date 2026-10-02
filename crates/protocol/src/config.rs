@@ -24,7 +24,7 @@ pub struct SetNodeCountryRequest {
 #[derive(Clone, Debug, Serialize, Deserialize, ToSchema)]
 #[serde(deny_unknown_fields)]
 pub struct NodeConfiguration {
-    #[schema(format = Int64, minimum = 1, maximum = 4294967295_u64)]
+    #[schema(format = Int64, minimum = 2, maximum = 2)]
     pub schema_version: u32,
     #[schema(format = Int64, minimum = 1, maximum = 4294967295_u64)]
     pub revision: u32,

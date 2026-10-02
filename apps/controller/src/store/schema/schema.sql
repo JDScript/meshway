@@ -190,7 +190,6 @@ CREATE TABLE node_ownership (
  FOREIGN KEY(network_id,node_id) REFERENCES nodes(network_id,id),
  FOREIGN KEY(network_id,membership_id) REFERENCES account_memberships(network_id,membership_id)
 );
-INSERT INTO node_ownership(network_id,node_id) SELECT network_id,id FROM nodes;
 CREATE TRIGGER ownership_new_node AFTER INSERT ON nodes
 BEGIN INSERT INTO node_ownership(network_id,node_id) VALUES(NEW.network_id,NEW.id); END;
 CREATE TRIGGER ownership_immutable BEFORE UPDATE ON node_ownership
