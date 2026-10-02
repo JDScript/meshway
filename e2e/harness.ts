@@ -45,6 +45,8 @@ export function service(command: string, args: string[], environment: NodeJS.Pro
     child.once("error", (error) => { launchError = error; resolve(); });
   });
   return {
+    /** The last 32 KiB of the process's stdout/stderr. */
+    logs: () => output,
     async ready(url: string, status: number) {
       url = url.replace(/\/api\/v1\/overview$/, "/api/v1/networks");
       await Promise.race([

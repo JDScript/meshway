@@ -3,7 +3,8 @@ import { createHash, randomBytes } from "node:crypto";
 import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { createEnrollmentToken, exchangeDevice, getMeshAccess, listNetworks, listNodes } from "../packages/control-client/src/index.ts";
+import { claimFirstOwner, createEnrollmentToken, exchangeDevice, getMeshAccess, listNetworks, listNodes, loginAccount, logoutAccount } from "../packages/control-client/src/index.ts";
+import { signIn, testPassword } from "./accounts.ts";
 import { enrollAgentOperation, getAgentConfigurationOperation, getAgentDnsOperation } from "../packages/control-client/src/generated/operations.gen.ts";
 import { executable, root, service, unusedPort } from "./harness.ts";
 
@@ -101,6 +102,16 @@ test("network creation, empty inventory, scoped enrollment, browser approval and
     const verifier = randomBytes(32).toString("base64url");
     const params = { redirect_uri: "meshway://enroll/callback", state: "multi-network", code_challenge: createHash("sha256").update(verifier).digest("base64url"), name: "Selected App", agent_version: "e2e" };
     await page.goto(`${webUrl}/authorize-device?${new URLSearchParams(params)}`);
+    // The administrator token is not a user and cannot approve. A real account
+    // owning both networks approves into the explicitly chosen one.
+    await expect(page.getByRole("heading", { name: "需要账户登录" })).toBeVisible();
+    const email = "owner@example.test"; const password = testPassword("owner");
+    await claimFirstOwner(base, admin, initial.network_id, { kind: "new_account", email, password });
+    const proof = await loginAccount(base, { email, password });
+    await claimFirstOwner(base, admin, second.network_id, { kind: "existing_account", session_token: proof.session_token });
+    await logoutAccount(base, proof.session_token);
+    await page.getByRole("button", { name: "退出管理员会话并使用账户登录", exact: true }).click();
+    await signIn(page, email, password);
     await page.getByLabel("接入网络").selectOption(second.network_id);
     const approval = page.waitForResponse(response => response.request().method() === "POST" && new URL(response.url()).pathname === "/authorize-device");
     await page.getByRole("button", { name: "批准接入", exact: true }).click();
