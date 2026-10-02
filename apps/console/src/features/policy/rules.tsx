@@ -8,7 +8,7 @@ import {
   Trash2Icon,
 } from "lucide-react"
 import { motion, useReducedMotion } from "motion/react"
-import type { KeyboardEvent, ReactNode } from "react"
+import { useEffect, useRef, type KeyboardEvent, type ReactNode } from "react"
 
 import { FieldInput } from "@/components/chrome/form"
 import { Button } from "@/components/ui/button"
@@ -18,10 +18,12 @@ import { m } from "@/paraglide/messages.js"
 import type { PlacedDiagnostic } from "./document"
 import { withNodeNames, type SelectorNames } from "./selectors"
 
-// The pieces every layer is drawn with. Ordered layers (Mesh routes, egress
-// rules) are numbered lists that read top to bottom and end in what happens
-// when nothing matched; unordered layers (connections, grants) are a grid
-// of cards with no numbers, since their order means nothing.
+// The pieces every layer is drawn with. A rule is one row that is its own
+// editor: its selectors open pickers, its action toggles in place, its ID
+// is edited inline and it is removed at its end; nothing expands, so
+// nothing moves. Ordered layers (Mesh routes, egress rules) number their
+// rows on a rail that reads top to bottom and ends in what happens when
+// nothing matched; unordered layers (connections, grants) are a plain list.
 
 /** A diagnostic that reports a rule shadowed by earlier ones (inventory-dependent), not an error. */
 export const isLint = (diagnostic: PlacedDiagnostic) =>
@@ -94,67 +96,130 @@ export function NoteCounts({ notes }: { notes: readonly PlacedDiagnostic[] }) {
 }
 
 /**
- * One rule: a summary that opens it in place, and when open its fields.
- * Open is marked by its fill; hover only tints a closed rule.
+ * One rule's row. A pill while it fits one line (concentric with its 28px
+ * chips, 8px in), a rounded block when it wraps. `current` is the rule the
+ * address points at, marked by its fill; hover only tints the others.
  */
-export function RuleItem({
-  open,
-  onToggle,
-  summary,
-  aside,
-  actions,
-  children,
+export function RuleRow({
+  current,
+  added = false,
   label,
+  children,
+  end,
+  notes,
+  names,
   onKeyDown,
-  className,
 }: {
-  open: boolean
-  onToggle: () => void
-  summary: ReactNode
-  /** At the summary's end (counts, the action). */
-  aside?: ReactNode
-  /** Beside the summary button (reorder). */
-  actions?: ReactNode
-  children: ReactNode
+  current: boolean
+  /** Just added: it comes into view, as its first picker opens. */
+  added?: boolean
+  /** Names the row (the rule's ID). */
   label: string
-  onKeyDown?: (event: KeyboardEvent<HTMLButtonElement>) => void
-  className?: string
+  /** The rule itself: its selectors and what joins them. */
+  children: ReactNode
+  /** At the row's end: the action, the ID, moving, removing. */
+  end: ReactNode
+  notes: readonly PlacedDiagnostic[]
+  names: SelectorNames
+  onKeyDown?: (event: KeyboardEvent<HTMLDivElement>) => void
 }) {
+  const ref = useRef<HTMLDivElement>(null)
+  // The rule a link points at, or one just added, comes into view.
+  useEffect(() => {
+    if (current || added) ref.current?.scrollIntoView({ block: "nearest" })
+  }, [current, added])
   return (
     <div
-      data-open={open || undefined}
-      className={cn(
-        "rounded-row transition-colors duration-200",
-        open ? "bg-fill-selected" : "bg-fill-subtle hover:bg-fill-hover",
-        className
-      )}
+      ref={ref}
+      role="group"
+      aria-label={label}
+      aria-current={current ? "true" : undefined}
+      onKeyDown={onKeyDown}
+      className="group/rule flex flex-col gap-1.5 rounded-surface bg-fill-subtle p-2 transition-colors duration-200 hover:bg-fill-hover aria-[current=true]:bg-fill-selected aria-[current=true]:hover:bg-fill-selected"
     >
-      <div className="flex min-w-0 items-start">
-        <button
-          type="button"
-          aria-expanded={open}
-          aria-label={label}
-          onClick={onToggle}
-          onKeyDown={onKeyDown}
-          className="flex min-h-14 min-w-0 flex-1 items-center gap-3 rounded-row py-2.5 pr-2 pl-3.5 text-left outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset"
-        >
-          <span className="flex min-w-0 flex-1 flex-col gap-1.5">
-            {summary}
-          </span>
-          {aside}
-        </button>
-        {actions ? (
-          <span className="flex shrink-0 items-center gap-0.5 self-center pr-2">
-            {actions}
-          </span>
-        ) : null}
-      </div>
-      {open ? (
-        <div className="swap-in flex flex-col gap-3 border-t border-divider px-3.5 pt-3 pb-3.5">
+      <div className="flex min-h-7 flex-wrap items-center gap-x-3 gap-y-2">
+        {/* The rule keeps at least this much of the line; short of it, the end moves to its own line. */}
+        <div className="flex min-w-0 flex-[1_1_18rem] flex-wrap items-center gap-1.5">
           {children}
         </div>
-      ) : null}
+        <div className="ml-auto flex shrink-0 items-center gap-1">{end}</div>
+      </div>
+      <RuleNotes notes={notes} names={names} className="px-1.5 pb-0.5" />
     </div>
+  )
+}
+
+/** Unordered rules: a plain list, no numbers, since their order means nothing. */
+export function RuleList({
+  children,
+  label,
+}: {
+  children: ReactNode
+  label: string
+}) {
+  return (
+    <ul aria-label={label} className="flex flex-col gap-2">
+      {children}
+    </ul>
+  )
+}
+
+/** A rule's ID at its row's end: quiet text until pointed at, edited in place. */
+export function RuleIdInput({
+  value,
+  invalid,
+  editable,
+  onChange,
+}: {
+  value: string
+  invalid: boolean
+  editable: boolean
+  onChange: (value: string) => void
+}) {
+  if (!editable)
+    return (
+      <span className="truncate px-2.5 font-mono text-meta text-muted-foreground">
+        {value}
+      </span>
+    )
+  return (
+    <FieldInput
+      aria-label={m.policy_rule_id()}
+      name="rule-id"
+      placeholder={m.policy_rule_id_placeholder()}
+      autoComplete="off"
+      autoCapitalize="none"
+      spellCheck={false}
+      maxLength={64}
+      // Monospace, so the width follows the text in characters.
+      style={{ width: `${Math.max(value.length, 8) + 3}ch` }}
+      className="h-7 max-w-56 rounded-full bg-transparent px-2.5 font-mono text-meta text-muted-foreground hover:bg-fill-hover focus-visible:bg-field focus-visible:text-foreground md:text-meta"
+      value={value}
+      aria-invalid={invalid || undefined}
+      onChange={(event) => onChange(event.target.value)}
+    />
+  )
+}
+
+/** Removes a rule; quiet until its row is pointed at (always shown on touch). */
+export function RemoveRule({
+  label,
+  onRemove,
+}: {
+  label: string
+  onRemove: () => void
+}) {
+  return (
+    <Button
+      type="button"
+      variant="ghost"
+      size="icon-xs"
+      aria-label={m.policy_rule_remove_named({ name: label })}
+      onClick={onRemove}
+      className="rounded-full text-muted-foreground opacity-0 transition-opacity group-focus-within/rule:opacity-100 group-hover/rule:opacity-100 hover:text-destructive focus-visible:opacity-100 pointer-coarse:opacity-100"
+    >
+      <Trash2Icon />
+    </Button>
   )
 }
 
@@ -204,7 +269,7 @@ export function moveKeys(
   count: number,
   onMove: (delta: -1 | 1) => void
 ) {
-  return (event: KeyboardEvent<HTMLButtonElement>) => {
+  return (event: KeyboardEvent<HTMLElement>) => {
     if (!event.altKey) return
     if (event.key === "ArrowUp" && index > 0) {
       event.preventDefault()
@@ -270,116 +335,6 @@ function Rail({ index }: { index: number }) {
         {index + 1}
       </span>
     </span>
-  )
-}
-
-/** Unordered rules: cards in a grid; an open card takes the whole row. */
-export function RuleGrid({
-  children,
-  label,
-}: {
-  children: ReactNode
-  label: string
-}) {
-  return (
-    <ul
-      aria-label={label}
-      className="grid grid-cols-1 gap-2 @2xl/workspace:grid-cols-2"
-    >
-      {children}
-    </ul>
-  )
-}
-
-/** A labelled control inside an open rule. */
-export function RuleField({
-  label,
-  htmlFor,
-  children,
-}: {
-  label: string
-  htmlFor?: string
-  children: ReactNode
-}) {
-  return (
-    <div className="grid grid-cols-1 items-start gap-1.5 @md/workspace:grid-cols-[7rem_minmax(0,1fr)] @md/workspace:gap-3">
-      {htmlFor ? (
-        <label
-          htmlFor={htmlFor}
-          className="pt-1.5 text-meta text-muted-foreground"
-        >
-          {label}
-        </label>
-      ) : (
-        <span className="pt-1.5 text-meta text-muted-foreground">{label}</span>
-      )}
-      <div className="flex min-h-7 min-w-0 flex-wrap items-center gap-1.5">
-        {children}
-      </div>
-    </div>
-  )
-}
-
-/** A rule's ID, edited in place. */
-export function RuleIdField({
-  id,
-  value,
-  invalid,
-  disabled,
-  onChange,
-}: {
-  id: string
-  value: string
-  invalid: boolean
-  disabled: boolean
-  onChange: (value: string) => void
-}) {
-  return (
-    <RuleField label={m.policy_rule_id()} htmlFor={id}>
-      <FieldInput
-        id={id}
-        name={id}
-        placeholder={m.policy_rule_id_placeholder()}
-        autoComplete="off"
-        autoCapitalize="none"
-        spellCheck={false}
-        maxLength={64}
-        className="h-8 max-w-72 font-mono"
-        value={value}
-        aria-invalid={invalid || undefined}
-        disabled={disabled}
-        onChange={(event) => onChange(event.target.value)}
-      />
-    </RuleField>
-  )
-}
-
-/** The end of an open rule: remove it. */
-export function RuleFooter({
-  onRemove,
-  children,
-}: {
-  onRemove?: () => void
-  children?: ReactNode
-}) {
-  return (
-    <div className="flex min-h-7 items-center justify-between gap-2">
-      <span className="flex min-w-0 flex-wrap items-center gap-1">
-        {children}
-      </span>
-      {onRemove ? (
-        <Button
-          type="button"
-          variant="ghost"
-          size="sm"
-          className="rounded-full text-destructive hover:text-destructive"
-          onClick={onRemove}
-        >
-          <Trash2Icon />
-          {m.policy_rule_remove()}
-        </Button>
-      ) : null}
-    </div>
   )
 }
 

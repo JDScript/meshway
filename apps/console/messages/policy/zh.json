@@ -27,13 +27,11 @@
   "policy_fact_first_match": "自上而下 · 首条命中",
   "policy_fact_specific": "节点 > 标签 > *",
   "policy_rule_id": "规则 ID",
-  "policy_rule_remove": "删除",
   "policy_move_up": "上移 {name}",
   "policy_move_down": "下移 {name}",
   "policy_connection_allow": "允许",
   "policy_connection_block": "阻断",
   "policy_connection_between": "之间",
-  "policy_connection_ends": "两端",
   "policy_connection_a": "一端",
   "policy_connection_b": "另一端",
   "policy_connection_action": "动作",
@@ -48,7 +46,6 @@
   "policy_grant_to": "到",
   "policy_grant_add": "添加授权",
   "policy_grants_none": "没有授权 · 所有访问被拒绝",
-  "policy_mesh_flow": "流量",
   "policy_mesh_src": "来源",
   "policy_mesh_dst": "目的",
   "policy_mesh_hops": "必经节点",
@@ -85,7 +82,6 @@
   "policy_selector_internet": "互联网",
   "policy_selector_unknown_node": "未知节点 {id}",
   "policy_selector_none": "无",
-  "policy_selector_add": "添加",
   "policy_selector_remove": "移除 {name}",
   "policy_selector_search": "搜索节点或标签",
   "policy_selector_empty": "没有匹配项",
@@ -155,5 +151,7 @@
   "policy_flow_revision": "r{revision}",
   "policy_flow_executable": "可执行",
   "policy_flow_not_executable": "不可执行",
-  "policy_rule_id_placeholder": "office-to-lab"
+  "policy_rule_id_placeholder": "office-to-lab",
+  "policy_selector_open_node": "查看节点",
+  "policy_rule_remove_named": "删除 {name}"
 }

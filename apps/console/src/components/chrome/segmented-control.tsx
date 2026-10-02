@@ -13,6 +13,8 @@ const TRACK =
 /** Concentric with the track: full round, 4px in. */
 const SEGMENT =
   "relative isolate flex min-h-7 items-center gap-1.5 rounded-full px-3 text-xs font-medium whitespace-nowrap outline-none transition-colors focus-visible:ring-2 focus-visible:ring-ring"
+/** Compact, the height of a chip (28px) for a line of controls: 2px in, no edge. */
+const SMALL = { track: "border-0 p-0.5", segment: "min-h-6 px-2.5" }
 const segmentTone = (chosen: boolean) =>
   chosen ? "text-foreground" : "text-muted-foreground hover:text-foreground"
 
@@ -35,17 +37,20 @@ export function SegmentedControl<T extends string>({
   value,
   options,
   onChange,
+  size = "default",
   className,
 }: {
   label: string
   value: T
   options: readonly Option<T>[]
   onChange: (value: T) => void
+  size?: "default" | "sm"
   className?: string
 }) {
   const layoutId = useId()
+  const small = size === "sm"
   return (
-    <fieldset className={cn(TRACK, className)}>
+    <fieldset className={cn(TRACK, small && SMALL.track, className)}>
       <legend className="sr-only">{label}</legend>
       {options.map((option) => {
         const chosen = option.value === value
@@ -55,7 +60,7 @@ export function SegmentedControl<T extends string>({
             type="button"
             aria-pressed={chosen}
             onClick={() => onChange(option.value)}
-            className={cn(SEGMENT, segmentTone(chosen))}
+            className={cn(SEGMENT, small && SMALL.segment, segmentTone(chosen))}
           >
             {chosen ? <SegmentPill layoutId={layoutId} /> : null}
             {option.label}

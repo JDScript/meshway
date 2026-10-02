@@ -97,13 +97,11 @@
   "policy_fact_first_match": "Top to bottom · first match",
   "policy_fact_specific": "Node > tag > *",
   "policy_rule_id": "Rule ID",
-  "policy_rule_remove": "Remove",
   "policy_move_up": "Move {name} up",
   "policy_move_down": "Move {name} down",
   "policy_connection_allow": "Allow",
   "policy_connection_block": "Block",
   "policy_connection_between": "between",
-  "policy_connection_ends": "Ends",
   "policy_connection_a": "One end",
   "policy_connection_b": "Other end",
   "policy_connection_action": "Action",
@@ -118,7 +116,6 @@
   "policy_grant_to": "to",
   "policy_grant_add": "Add grant",
   "policy_grants_none": "No grants · all access is denied",
-  "policy_mesh_flow": "Flow",
   "policy_mesh_src": "Source",
   "policy_mesh_dst": "Destination",
   "policy_mesh_hops": "Mandatory hops",
@@ -169,7 +166,6 @@
   "policy_selector_internet": "Internet",
   "policy_selector_unknown_node": "Unknown node {id}",
   "policy_selector_none": "None",
-  "policy_selector_add": "Add",
   "policy_selector_remove": "Remove {name}",
   "policy_selector_search": "Search nodes or tags",
   "policy_selector_empty": "No match",
@@ -281,5 +277,7 @@
   "policy_flow_revision": "r{revision}",
   "policy_flow_executable": "Executable",
   "policy_flow_not_executable": "Not executable",
-  "policy_rule_id_placeholder": "office-to-lab"
+  "policy_rule_id_placeholder": "office-to-lab",
+  "policy_selector_open_node": "Open the node",
+  "policy_rule_remove_named": "Remove {name}"
 }

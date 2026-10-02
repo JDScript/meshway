@@ -23,6 +23,7 @@ import {
   PopoverTrigger,
 } from "@/components/ui/popover"
 import { useNetwork } from "@/features/network/use-network-view"
+import { POPUP_CLEARANCE } from "@/features/shell/layout"
 import { m } from "@/paraglide/messages.js"
 
 import { tagsQuery } from "@/features/network/queries"
@@ -134,10 +135,7 @@ export function SelectorChip({
   const shown = selectorShown(selector, names)
   const Icon = shown.icon
   return (
-    <span
-      className={cn(CHIP, !shown.known && "border-warning/50", className)}
-      title={selector}
-    >
+    <span className={cn(CHIP, !shown.known && "border-warning/50", className)}>
       <Icon
         aria-hidden="true"
         className={cn(
@@ -230,7 +228,9 @@ const GROUP_LABEL: Record<SelectorKind, () => string> = {
 
 /**
  * Picks a selector from the network's tags and nodes, searchable by name.
- * `trigger` is the button that opens it (a chip to replace, or "add").
+ * `children` is what opens it (the chip to replace, or "add"). It keeps
+ * clear of the screen's edges and the commit bar, and its list shrinks to
+ * the room there is. While it shows a node, it also leads to the node.
  */
 export function SelectorPicker({
   names,
@@ -242,6 +242,10 @@ export function SelectorPicker({
   onPick,
   children,
   className,
+  autoOpen = false,
+  onClosed,
+  node,
+  onOpenNode,
 }: {
   names: SelectorNames
   kinds: readonly SelectorKind[]
@@ -254,12 +258,26 @@ export function SelectorPicker({
   onPick: (selector: string) => void
   children: ReactNode
   className?: string
+  /** Opens as soon as it is shown (a rule just added). */
+  autoOpen?: boolean
+  onClosed?: () => void
+  /** The selector it replaces, when that is a node: offered as a way to the node. */
+  node?: string
+  onOpenNode?: (nodeId: string) => void
 }) {
-  const [open, setOpen] = useState(false)
+  const [open, setOpen] = useState(autoOpen && !disabled)
   const { inventory } = useNetwork()
   const all = options(names, kinds, inventory)
+  const nodeId = node?.startsWith("node:") ? node.slice(5) : null
+  const known = nodeId !== null && names.node(nodeId) !== undefined
   return (
-    <Popover open={open} onOpenChange={setOpen}>
+    <Popover
+      open={open}
+      onOpenChange={(next) => {
+        setOpen(next)
+        if (!next) onClosed?.()
+      }}
+    >
       <PopoverTrigger
         disabled={disabled}
         aria-label={label}
@@ -273,6 +291,8 @@ export function SelectorPicker({
       </PopoverTrigger>
       <PopoverContent
         align="start"
+        sideOffset={6}
+        collisionPadding={POPUP_CLEARANCE}
         className="glass w-72 gap-0 rounded-surface p-2"
       >
         <Command
@@ -291,7 +311,8 @@ export function SelectorPicker({
             placeholder={m.policy_selector_search()}
             className="mb-1 h-9 w-full rounded-row bg-field px-3 text-row outline-none placeholder:text-muted-foreground focus-visible:ring-2 focus-visible:ring-ring"
           />
-          <Command.List className="max-h-[min(50svh,300px)] overflow-y-auto">
+          {/* The search, the gaps and the way to a node take the rest of the room. */}
+          <Command.List className="max-h-[min(300px,calc(var(--available-height)-6rem))] overflow-y-auto overscroll-contain">
             <Command.Empty className="px-3 py-3 text-row text-muted-foreground">
               {m.policy_selector_empty()}
             </Command.Empty>
@@ -317,6 +338,7 @@ export function SelectorPicker({
                           onSelect={() => {
                             onPick(option.selector)
                             setOpen(false)
+                            onClosed?.()
                           }}
                           className="flex h-9 cursor-pointer items-center gap-2.5 rounded-row px-3 text-row outline-none data-[disabled=true]:cursor-default data-[selected=true]:bg-fill-hover"
                         >
@@ -341,10 +363,27 @@ export function SelectorPicker({
               })}
           </Command.List>
         </Command>
+        {nodeId !== null && known && onOpenNode ? (
+          <button
+            type="button"
+            onClick={() => {
+              setOpen(false)
+              onOpenNode(nodeId)
+            }}
+            className="list-row mt-1 h-9 gap-2 border-t border-divider px-3 text-row text-muted-foreground hover:text-foreground"
+          >
+            <ArrowUpRightIcon className="size-3.5" />
+            {m.policy_selector_open_node()}
+          </button>
+        ) : null}
       </PopoverContent>
     </Popover>
   )
 }
+
+/** A chip that opens the picker when the rule can change, and is a plain chip when it cannot. */
+const pickable = (disabled: boolean | undefined) =>
+  cn("h-7", !disabled && "hover:bg-fill-hover")
 
 /** One selector, chosen with the picker (a connection's end, a route's source). */
 export function SelectorField({
@@ -354,6 +393,9 @@ export function SelectorField({
   label,
   disabled,
   invalid,
+  autoOpen,
+  onClosed,
+  onOpenNode,
   onChange,
 }: {
   value: string
@@ -362,6 +404,9 @@ export function SelectorField({
   label: string
   disabled?: boolean
   invalid?: boolean
+  autoOpen?: boolean
+  onClosed?: () => void
+  onOpenNode?: (nodeId: string) => void
   onChange: (selector: string) => void
 }) {
   return (
@@ -372,65 +417,119 @@ export function SelectorField({
       label={label}
       disabled={disabled}
       invalid={invalid}
+      autoOpen={autoOpen}
+      onClosed={onClosed}
+      node={value}
+      onOpenNode={onOpenNode}
       onPick={onChange}
     >
       <SelectorChip
         selector={value}
         names={names}
-        className={cn("h-7", !disabled && "hover:bg-fill-hover")}
+        className={pickable(disabled)}
       />
     </SelectorPicker>
   )
 }
 
-/** A set of selectors (a grant's sources or destinations): chips to remove, one to add. */
+/**
+ * A set of selectors (a grant's sources or destinations), any of which
+ * matches: each chip opens the picker to replace it and has its own remove;
+ * one more can be added at the end.
+ */
 export function SelectorSetField({
   values,
   names,
   kinds,
   label,
+  addLabel,
   disabled,
   invalid,
+  autoOpen,
+  onClosed,
+  onOpenNode,
   onChange,
+  joiner,
+  empty,
+  quietAdd = false,
 }: {
   values: readonly string[]
   names: SelectorNames
   kinds: readonly SelectorKind[]
+  /** Names each chip's picker. */
   label: string
+  addLabel: string
+  /** Between chips, for a sequence (a route's hops). */
+  joiner?: ReactNode
+  /** Said when there is none and none can be added. */
+  empty?: string
+  /** "Add" shows only while its rule row is pointed at (always on touch), for rows with several sets. */
+  quietAdd?: boolean
   disabled?: boolean
   invalid?: (index: number) => boolean
+  /** Opens the first chip's picker as soon as it is shown (a rule just added). */
+  autoOpen?: boolean
+  onClosed?: () => void
+  onOpenNode?: (nodeId: string) => void
   onChange: (selectors: string[]) => void
 }) {
   return (
-    <span className="flex min-w-0 flex-wrap items-center gap-1">
+    <span className="inline-flex min-w-0 flex-wrap items-center gap-1">
+      {values.length === 0 && (disabled || empty === undefined) ? (
+        <span className="text-row text-muted-foreground">
+          {empty ?? m.policy_selector_none()}
+        </span>
+      ) : null}
       {values.map((selector, index) => (
         <span
           key={`${selector}-${index}`}
-          className={cn(
-            "inline-flex min-w-0 items-center rounded-full",
-            invalid?.(index) && "ring-2 ring-destructive/60"
-          )}
+          className="inline-flex min-w-0 items-center gap-1"
         >
-          <SelectorChip
-            selector={selector}
-            names={names}
+          {index > 0 ? joiner : null}
+          <span
             className={cn(
-              "h-7",
-              !disabled && "rounded-r-none border-r-0 pr-1.5"
+              "inline-flex min-w-0 items-center rounded-full",
+              invalid?.(index) && "ring-2 ring-destructive/60"
             )}
-          />
-          {disabled ? null : (
-            <button
-              type="button"
-              aria-label={m.policy_selector_remove({
-                name: selectorShown(selector, names).label,
-              })}
-              onClick={() => onChange(values.filter((_, at) => at !== index))}
-              className="inline-flex h-7 items-center rounded-r-full border border-l-0 border-divider bg-fill-raised/60 pr-2 pl-1 text-muted-foreground transition-colors outline-none hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring"
+          >
+            <SelectorPicker
+              names={names}
+              kinds={kinds}
+              chosen={values}
+              label={label}
+              disabled={disabled}
+              autoOpen={autoOpen && index === 0}
+              onClosed={onClosed}
+              node={selector}
+              onOpenNode={onOpenNode}
+              onPick={(next) =>
+                onChange(
+                  values.map((value, at) => (at === index ? next : value))
+                )
+              }
             >
-              <XIcon className="size-3" />
-            </button>
-          )}
+              <SelectorChip
+                selector={selector}
+                names={names}
+                className={cn(
+                  pickable(disabled),
+                  !disabled && "rounded-r-none border-r-0 pr-1.5"
+                )}
+              />
+            </SelectorPicker>
+            {disabled ? null : (
+              <button
+                type="button"
+                aria-label={m.policy_selector_remove({
+                  name: selectorShown(selector, names).label,
+                })}
+                onClick={() => onChange(values.filter((_, at) => at !== index))}
+                className="inline-flex h-7 items-center rounded-r-full border border-l-0 border-divider bg-fill-raised/60 pr-2 pl-1 text-muted-foreground transition-colors outline-none hover:bg-fill-hover hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring"
+              >
+                <XIcon className="size-3" />
+              </button>
+            )}
+          </span>
         </span>
       ))}
       {disabled ? null : (
@@ -438,41 +537,21 @@ export function SelectorSetField({
           names={names}
           kinds={kinds}
           chosen={values}
-          label={label}
+          label={addLabel}
           onPick={(selector) => onChange([...values, selector])}
         >
-          <span className="inline-flex h-7 items-center gap-1 rounded-full border border-dashed border-divider px-2.5 text-row text-muted-foreground transition-colors hover:bg-fill-hover hover:text-foreground">
+          <span
+            aria-hidden="true"
+            className={cn(
+              "inline-flex size-7 items-center justify-center rounded-full border border-dashed border-divider text-muted-foreground transition-[color,background-color,opacity] hover:bg-fill-hover hover:text-foreground",
+              quietAdd &&
+                "opacity-0 group-focus-within/rule:opacity-100 group-hover/rule:opacity-100 pointer-coarse:opacity-100"
+            )}
+          >
             <PlusIcon className="size-3" />
-            {m.policy_selector_add()}
           </span>
         </SelectorPicker>
       )}
     </span>
-  )
-}
-
-/** A node named in a rule, as a link to its workspace. */
-export function NodeLink({
-  selector,
-  names,
-  onOpenNode,
-}: {
-  selector: string
-  names: SelectorNames
-  onOpenNode: (nodeId: string) => void
-}) {
-  if (!selector.startsWith("node:")) return null
-  const id = selector.slice(5)
-  const node = names.node(id)
-  if (!node) return null
-  return (
-    <button
-      type="button"
-      onClick={() => onOpenNode(id)}
-      className="inline-flex h-7 items-center gap-1 rounded-full px-2 text-meta text-muted-foreground transition-colors outline-none hover:bg-fill-hover hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring"
-    >
-      {node.name}
-      <ArrowUpRightIcon className="size-3" />
-    </button>
   )
 }

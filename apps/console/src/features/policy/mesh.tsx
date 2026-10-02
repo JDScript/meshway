@@ -1,15 +1,14 @@
 import type { MeshRule } from "@meshway/control-client"
-import { ArrowRightIcon, ChevronRightIcon, PlusIcon, XIcon } from "lucide-react"
+import { ArrowRightIcon, ChevronRightIcon } from "lucide-react"
 
-import { Button } from "@/components/ui/button"
 import { m } from "@/paraglide/messages.js"
 
 import { freshId, type PlacedDiagnostic } from "./document"
 import {
   idInvalid,
-  useOpenRule,
   notesOn,
   replaceAt,
+  useRuleRows,
   type LayerProps,
 } from "./layer"
 import {
@@ -18,20 +17,15 @@ import {
   LayerFacts,
   MoveButtons,
   moveKeys,
-  NoteCounts,
   OrderedRules,
-  RuleField,
-  RuleFooter,
-  RuleIdField,
-  RuleItem,
-  RuleNotes,
+  RemoveRule,
+  RuleIdInput,
+  RuleRow,
 } from "./rules"
 import {
-  NodeLink,
   SelectorChip,
   SelectorField,
-  SelectorPicker,
-  selectorShown,
+  SelectorSetField,
   withNodeNames,
   type SelectorNames,
 } from "./selectors"
@@ -73,9 +67,9 @@ export function HopChain({
 
 /** Routes inside the mesh: the first rule matching source and destination decides the mandatory hops. */
 export function MeshLayer(props: LayerProps) {
-  const { policy, editable, names, edit, move, rule: initial, onRule } = props
+  const { policy, editable, names, edit, move, rule: linked, onRule } = props
   const rules = policy.mesh
-  const opened = useOpenRule(rules, initial, onRule)
+  const rows = useRuleRows(rules, linked, onRule)
   const failures = props.diagnostics.filter(
     (
       diagnostic
@@ -129,127 +123,114 @@ export function MeshLayer(props: LayerProps) {
         label={m.policy_layer_mesh()}
         end={m.policy_mesh_end()}
         items={rules.map((rule, index) => {
-          const open = opened.open === index
-          const notes = notesOn(props.diagnostics, "mesh", rule.id)
-          const fieldId = `mesh-${index}`
           const onMove = (delta: -1 | 1) => {
             move(["mesh"], index, delta)
-            opened.moved(index, delta)
+            rows.moved(index, delta)
           }
-          const hopInvalid = (at: number) =>
-            notesOn(props.diagnostics, "mesh", rule.id, "via", at).length > 0
+          const invalid = (field: "src" | "dst") =>
+            notesOn(props.diagnostics, "mesh", rule.id, field).length > 0
           return {
-            // A moved rule keeps its node, so it glides.
-            key: opened.key(index),
+            // A moved rule keeps its row, so it glides.
+            key: rows.key(index),
             node: (
-              <RuleItem
-                open={open}
+              <RuleRow
+                current={rows.current(index)}
+                added={rows.autoOpen(index)}
                 label={rule.id}
-                onToggle={() => opened.toggle(index)}
+                notes={notesOn(props.diagnostics, "mesh", rule.id)}
+                names={names}
                 onKeyDown={
                   editable ? moveKeys(index, rules.length, onMove) : undefined
                 }
-                summary={
+                end={
                   <>
-                    <span className="flex min-w-0 flex-wrap items-center gap-1.5">
-                      <SelectorChip selector={rule.src} names={names} />
-                      <ArrowRightIcon
-                        aria-label={m.policy_grant_to()}
-                        className="size-3.5 shrink-0 text-muted-foreground"
-                      />
-                      <SelectorChip selector={rule.dst} names={names} />
-                      <span className="truncate font-mono text-meta text-muted-foreground">
-                        {rule.id}
-                      </span>
-                    </span>
-                    <HopChain via={rule.via} names={names} />
+                    <RuleIdInput
+                      value={rule.id}
+                      invalid={idInvalid(props.problems, "mesh", index)}
+                      editable={editable}
+                      onChange={(id) => {
+                        update(index, { ...rule, id })
+                        rows.renamed(index, id)
+                      }}
+                    />
+                    {editable ? (
+                      <>
+                        <MoveButtons
+                          index={index}
+                          count={rules.length}
+                          label={rule.id}
+                          onMove={onMove}
+                        />
+                        <RemoveRule
+                          label={rule.id}
+                          onRemove={() => {
+                            edit((current) => ({
+                              ...current,
+                              mesh: current.mesh.filter(
+                                (_, at) => at !== index
+                              ),
+                            }))
+                            rows.removed(index)
+                          }}
+                        />
+                      </>
+                    ) : null}
                   </>
                 }
-                aside={<NoteCounts notes={notes} />}
-                actions={
-                  editable ? (
-                    <MoveButtons
-                      index={index}
-                      count={rules.length}
-                      label={rule.id}
-                      onMove={onMove}
-                    />
-                  ) : undefined
-                }
               >
-                <RuleNotes notes={notes} names={names} />
-                <RuleIdField
-                  id={`${fieldId}-id`}
-                  value={rule.id}
-                  invalid={idInvalid(props.problems, "mesh", index)}
+                <SelectorField
+                  value={rule.src}
+                  names={names}
+                  kinds={ENDS}
+                  label={m.policy_mesh_src()}
                   disabled={!editable}
-                  onChange={(id) => {
-                    update(index, { ...rule, id })
-                    opened.renamed(id)
-                  }}
+                  invalid={invalid("src")}
+                  autoOpen={rows.autoOpen(index)}
+                  onClosed={rows.settled}
+                  onOpenNode={props.onOpenNode}
+                  onChange={(src) => update(index, { ...rule, src })}
                 />
-                <RuleField label={m.policy_mesh_flow()}>
-                  <SelectorField
-                    value={rule.src}
+                <ArrowRightIcon
+                  aria-label={m.policy_grant_to()}
+                  className="size-3.5 shrink-0 text-muted-foreground"
+                />
+                <SelectorField
+                  value={rule.dst}
+                  names={names}
+                  kinds={ENDS}
+                  label={m.policy_mesh_dst()}
+                  disabled={!editable}
+                  invalid={invalid("dst")}
+                  onOpenNode={props.onOpenNode}
+                  onChange={(dst) => update(index, { ...rule, dst })}
+                />
+                <span className="inline-flex min-w-0 items-center gap-1.5 pl-1.5">
+                  <span className="text-meta text-muted-foreground">
+                    {m.policy_mesh_via()}
+                  </span>
+                  <SelectorSetField
+                    values={rule.via}
                     names={names}
-                    kinds={ENDS}
-                    label={m.policy_mesh_src()}
+                    kinds={HOPS}
+                    label={m.policy_mesh_hops()}
+                    addLabel={m.policy_mesh_hop_add()}
                     disabled={!editable}
-                    invalid={
-                      notesOn(props.diagnostics, "mesh", rule.id, "src")
+                    invalid={(at) =>
+                      notesOn(props.diagnostics, "mesh", rule.id, "via", at)
                         .length > 0
                     }
-                    onChange={(src) => update(index, { ...rule, src })}
-                  />
-                  <ArrowRightIcon
-                    aria-hidden="true"
-                    className="size-3.5 text-muted-foreground"
-                  />
-                  <SelectorField
-                    value={rule.dst}
-                    names={names}
-                    kinds={ENDS}
-                    label={m.policy_mesh_dst()}
-                    disabled={!editable}
-                    invalid={
-                      notesOn(props.diagnostics, "mesh", rule.id, "dst")
-                        .length > 0
+                    joiner={
+                      <ChevronRightIcon
+                        aria-hidden="true"
+                        className="size-3 shrink-0 text-muted-foreground"
+                      />
                     }
-                    onChange={(dst) => update(index, { ...rule, dst })}
-                  />
-                </RuleField>
-                <RuleField label={m.policy_mesh_hops()}>
-                  <HopsEditor
-                    via={rule.via}
-                    names={names}
-                    editable={editable}
-                    invalid={hopInvalid}
+                    empty={m.policy_mesh_no_hops()}
+                    onOpenNode={props.onOpenNode}
                     onChange={(via) => update(index, { ...rule, via })}
                   />
-                </RuleField>
-                <RuleFooter
-                  onRemove={
-                    editable
-                      ? () => {
-                          edit((current) => ({
-                            ...current,
-                            mesh: current.mesh.filter((_, at) => at !== index),
-                          }))
-                          opened.removed(index)
-                        }
-                      : undefined
-                  }
-                >
-                  {[rule.src, rule.dst, ...rule.via].map((selector, at) => (
-                    <NodeLink
-                      key={`${selector}-${at}`}
-                      selector={selector}
-                      names={names}
-                      onOpenNode={props.onOpenNode}
-                    />
-                  ))}
-                </RuleFooter>
-              </RuleItem>
+                </span>
+              </RuleRow>
             ),
           }
         })}
@@ -263,113 +244,10 @@ export function MeshLayer(props: LayerProps) {
               ...current,
               mesh: [...current.mesh, { id, src: "*", dst: "*", via: [] }],
             }))
-            opened.added(rules.length, id)
+            rows.added()
           }}
         />
       ) : null}
     </div>
-  )
-}
-
-/** The ordered mandatory hops: each one can move, go, or another can be added at the end. */
-function HopsEditor({
-  via,
-  names,
-  editable,
-  invalid,
-  onChange,
-}: {
-  via: readonly string[]
-  names: SelectorNames
-  editable: boolean
-  invalid: (index: number) => boolean
-  onChange: (via: string[]) => void
-}) {
-  const swap = (index: number, delta: -1 | 1) => {
-    const next = [...via]
-    const other = index + delta
-    const a = next[index]
-    const b = next[other]
-    if (a === undefined || b === undefined) return
-    next[index] = b
-    next[other] = a
-    onChange(next)
-  }
-  return (
-    <ol className="flex w-full flex-col gap-1">
-      {via.length === 0 ? (
-        <li className="flex h-7 items-center text-row text-muted-foreground">
-          {m.policy_mesh_no_hops()}
-        </li>
-      ) : null}
-      {via.map((hop, index) => {
-        const name = selectorShown(hop, names).label
-        return (
-          <li
-            key={`${hop}-${index}`}
-            aria-invalid={invalid(index) || undefined}
-            className="flex h-9 items-center gap-2 rounded-tile bg-fill-subtle pr-1 pl-2.5 aria-invalid:ring-2 aria-invalid:ring-destructive/60"
-          >
-            <span className="w-4 font-mono text-meta text-muted-foreground tabular-nums">
-              {index + 1}
-            </span>
-            <SelectorChip selector={hop} names={names} />
-            <span className="flex-1" />
-            {editable ? (
-              <>
-                <Button
-                  type="button"
-                  variant="ghost"
-                  size="icon-xs"
-                  className="rounded-full text-muted-foreground"
-                  disabled={index === 0}
-                  aria-label={m.policy_move_up({ name })}
-                  onClick={() => swap(index, -1)}
-                >
-                  <ArrowRightIcon className="-rotate-90" />
-                </Button>
-                <Button
-                  type="button"
-                  variant="ghost"
-                  size="icon-xs"
-                  className="rounded-full text-muted-foreground"
-                  disabled={index === via.length - 1}
-                  aria-label={m.policy_move_down({ name })}
-                  onClick={() => swap(index, 1)}
-                >
-                  <ArrowRightIcon className="rotate-90" />
-                </Button>
-                <Button
-                  type="button"
-                  variant="ghost"
-                  size="icon-xs"
-                  className="rounded-full text-muted-foreground"
-                  aria-label={m.policy_selector_remove({ name })}
-                  onClick={() => onChange(via.filter((_, at) => at !== index))}
-                >
-                  <XIcon />
-                </Button>
-              </>
-            ) : null}
-          </li>
-        )
-      })}
-      {editable ? (
-        <li>
-          <SelectorPicker
-            names={names}
-            kinds={HOPS}
-            chosen={via}
-            label={m.policy_mesh_hop_add()}
-            onPick={(hop) => onChange([...via, hop])}
-          >
-            <span className="inline-flex h-7 items-center gap-1 rounded-full border border-dashed border-divider px-2.5 text-row text-muted-foreground transition-colors hover:bg-fill-hover hover:text-foreground">
-              <PlusIcon className="size-3" />
-              {m.policy_mesh_hop_add()}
-            </span>
-          </SelectorPicker>
-        </li>
-      ) : null}
-    </ol>
   )
 }

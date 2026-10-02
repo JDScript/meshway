@@ -54,50 +54,61 @@ export const idInvalid = (
       problem.path[1] === index
   )
 
+let serial = 0
+const freshKey = () => `rule-${serial++}`
+
 /**
- * Which rule of a layer is open, by position: it follows the rule through
- * moves and renames in the same event (no frame where it closes), and is
- * mirrored into the address by ID for links.
+ * A layer's rows: a key per row that is not its ID (so an ID edited in
+ * place keeps its row, and focus, while it changes) and follows the row
+ * through moves (so it glides), removals and additions; which row the
+ * address points at (by ID); and which row was just added, whose first
+ * selector opens at once.
  */
-export function useOpenRule(
+export function useRuleRows(
   rules: readonly { id: string }[],
-  initial: string | null,
+  linked: string | null,
   onRule: (id: string | null) => void
 ) {
-  const [open, setOpen] = useState<number | null>(() => {
-    const index =
-      initial === null ? -1 : rules.findIndex((rule) => rule.id === initial)
-    return index < 0 ? null : index
-  })
-  const at = open !== null && open < rules.length ? open : null
+  const [keys, setKeys] = useState<string[]>(() => rules.map(freshKey))
+  const [added, setAdded] = useState<string | null>(null)
+  // Rules changed elsewhere (the source, a discard): rows are matched by position.
+  let rows = keys
+  if (keys.length !== rules.length) {
+    rows =
+      keys.length < rules.length
+        ? [...keys, ...rules.slice(keys.length).map(freshKey)]
+        : keys.slice(0, rules.length)
+    setKeys(rows)
+  }
   return {
-    open: at,
-    /** A stable key: the open rule keeps one while it is renamed or moved. */
-    key: (index: number) =>
-      index === at
-        ? "open"
-        : `${rules[index]?.id ?? ""}#${rules.slice(0, index).filter((rule) => rule.id === rules[index]?.id).length}`,
-    toggle(index: number) {
-      const next = at === index ? null : index
-      setOpen(next)
-      onRule(next === null ? null : (rules[index]?.id ?? null))
-    },
-    moved(index: number, delta: -1 | 1) {
-      if (at === index) setOpen(index + delta)
-      else if (at === index + delta) setOpen(index)
+    key: (index: number) => rows[index] ?? `rule-at-${index}`,
+    current: (index: number) => linked !== null && rules[index]?.id === linked,
+    autoOpen: (index: number) => added !== null && rows[index] === added,
+    /** The just-added row's picker has closed. */
+    settled: () => setAdded(null),
+    /** Call with the edit that appends a rule. */
+    added() {
+      const key = freshKey()
+      setKeys([...rows, key])
+      setAdded(key)
     },
     removed(index: number) {
-      if (at === index) {
-        setOpen(null)
-        onRule(null)
-      } else if (at !== null && at > index) setOpen(at - 1)
+      setKeys(rows.filter((_, at) => at !== index))
+      if (linked !== null && rules[index]?.id === linked) onRule(null)
     },
-    added(index: number, id: string) {
-      setOpen(index)
-      onRule(id)
+    moved(index: number, delta: -1 | 1) {
+      const next = [...rows]
+      const a = next[index]
+      const b = next[index + delta]
+      if (a === undefined || b === undefined) return
+      next[index] = b
+      next[index + delta] = a
+      setKeys(next)
     },
-    renamed(id: string) {
-      onRule(id === "" ? null : id)
+    /** The address follows the rule it points at when that rule is renamed. */
+    renamed(index: number, id: string) {
+      if (linked !== null && rules[index]?.id === linked)
+        onRule(id === "" ? null : id)
     },
   }
 }
