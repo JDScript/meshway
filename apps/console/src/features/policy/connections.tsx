@@ -26,7 +26,7 @@ import { SelectorField } from "./selectors"
 
 const KINDS = ["all", "tag", "node"] as const
 
-export function ActionBadge({ action }: { action: ConnectionRule["action"] }) {
+function ActionBadge({ action }: { action: ConnectionRule["action"] }) {
   return (
     <span
       className={cn(

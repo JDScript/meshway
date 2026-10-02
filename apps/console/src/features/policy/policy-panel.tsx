@@ -27,7 +27,7 @@ export const layerLabel: Record<PolicyLayer, () => string> = {
   source: () => m.policy_layer_source(),
 }
 
-export const layerIcon: Record<PolicyLayer, LucideIcon> = {
+const layerIcon: Record<PolicyLayer, LucideIcon> = {
   connections: ArrowLeftRightIcon,
   grants: KeyRoundIcon,
   mesh: WaypointsIcon,
@@ -43,7 +43,7 @@ const EGRESS_SECTIONS = new Set([
 ])
 
 /** The layer a controller diagnostic is about; the source holds the rest. */
-export function diagnosticLayer(diagnostic: PlacedDiagnostic): PolicyLayer {
+function diagnosticLayer(diagnostic: PlacedDiagnostic): PolicyLayer {
   if (diagnostic.placed.kind === "path") return "mesh"
   if (diagnostic.placed.kind === "general") return "source"
   const section = diagnostic.placed.anchor[0]

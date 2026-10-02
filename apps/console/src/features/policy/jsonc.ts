@@ -9,6 +9,8 @@ import {
   type ParseError,
 } from "jsonc-parser"
 
+import { sameData } from "../../lib/same-data.ts"
+
 // JSONC (JSON with comments and trailing commas) as the controller reads it,
 // on top of `jsonc-parser`: duplicate keys are errors (the controller rejects
 // them; last-wins would hide a typed value), values are built without the
@@ -77,7 +79,7 @@ function duplicateKeys(node: JsoncNode, errors: JsoncError[]) {
 }
 
 /** The plain value of a node. Keys are defined, never assigned, so `__proto__` stays data. */
-export function nodeValue(node: JsoncNode): unknown {
+function nodeValue(node: JsoncNode): unknown {
   switch (node.type) {
     case "object": {
       const result: Record<string, unknown> = {}
@@ -105,7 +107,7 @@ export function nodeValue(node: JsoncNode): unknown {
   }
 }
 
-export function propertyKey(property: JsoncNode): string | undefined {
+function propertyKey(property: JsoncNode): string | undefined {
   const value: unknown = property.children?.[0]?.value
   return typeof value === "string" ? value : undefined
 }
@@ -182,24 +184,6 @@ const isRecord = (value: unknown): value is Record<string, unknown> =>
 const own = (value: Record<string, unknown>, key: string) =>
   Object.prototype.hasOwnProperty.call(value, key)
 
-export function jsonEqual(a: unknown, b: unknown): boolean {
-  if (a === b) return true
-  if (Array.isArray(a) && Array.isArray(b))
-    return (
-      a.length === b.length &&
-      a.every((item, index) => jsonEqual(item, b[index]))
-    )
-  if (isRecord(a) && isRecord(b)) {
-    const keys = Object.keys(a).filter((key) => a[key] !== undefined)
-    const other = Object.keys(b).filter((key) => b[key] !== undefined)
-    return (
-      keys.length === other.length &&
-      keys.every((key) => own(b, key) && jsonEqual(a[key], b[key]))
-    )
-  }
-  return false
-}
-
 type Operation = { path: (string | number)[]; value: unknown; insert: boolean }
 
 /**
@@ -214,7 +198,7 @@ function operations(
   after: unknown,
   out: Operation[]
 ) {
-  if (jsonEqual(before, after)) return
+  if (sameData(before, after)) return
   if (isRecord(before) && isRecord(after)) {
     for (const key of Object.keys(before)) {
       if (own(after, key) && after[key] !== undefined)
@@ -232,14 +216,14 @@ function operations(
     while (
       prefix < before.length &&
       prefix < after.length &&
-      jsonEqual(before[prefix], after[prefix])
+      sameData(before[prefix], after[prefix])
     )
       prefix += 1
     let suffix = 0
     while (
       suffix < before.length - prefix &&
       suffix < after.length - prefix &&
-      jsonEqual(
+      sameData(
         before[before.length - 1 - suffix],
         after[after.length - 1 - suffix]
       )
@@ -514,7 +498,7 @@ export function patchJsonc(text: string, after: unknown): string {
       )
   }
   const check = parseJsonc(result)
-  if (!check.ok || !jsonEqual(check.value, after))
+  if (!check.ok || !sameData(check.value, after))
     throw new Error("JSONC edit did not produce the edited value")
   return result
 }
@@ -573,7 +557,7 @@ export function moveJsonc(
     expected[first],
   ]
   const moved = findNodeAtLocation(check.tree, [...path])
-  if (!moved || !jsonEqual(nodeValue(moved), expected))
+  if (!moved || !sameData(nodeValue(moved), expected))
     throw new Error("JSONC move did not produce the moved value")
   return result
 }
