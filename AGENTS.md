@@ -23,6 +23,7 @@ Rust 控制面与 agent、Next.js + shadcn/ui 控制台、VitePress 文档站。
 ## 实现与验证
 
 - 用户明确强调代码洁癖：源码组织、命名和职责须干净可解释；关注 `apps/controller/src/store` 中散落的 tests、`policy_v3` 与 `schema_v*`。完整 dump / 审查不等于已完成源码清理，不再混报。生产领域模块优先职责命名，必要 wire / 数据库历史版本集中在兼容与迁移边界；测试支持和历史 fixture 应有清楚归属，避免持续堆叠阶段名、临时修复名和重复实现。收敛时保留已有身份 / 数据的真实迁移路径及有价值的行为回归，不能靠删除必要迁移或测试制造表面整洁。
+- 文档只保留当前用法、架构、契约和真实未完成项；合并重复说明，删除过时交接、逐次修复流水账和已被权威生成物替代的旧 dump。Git 历史与私有原始证据负责追溯，不持续新建清理报告 / changelog；必要的现行安全和兼容边界保留。
 - 前后端按契约推进真实纵向功能；空状态和错误状态必须真实，不伪造节点、流量、健康状态。
 - 将提案、用户已确认需求和已实现功能明确区分。控制面注册和心跳不代表隧道已建立。
 - 管理员、注册令牌、节点凭据的权限分开；Web 的每个管理 mutation 都必须在服务端检查登录身份。
@@ -47,7 +48,7 @@ Rust 控制面与 agent、Next.js + shadcn/ui 控制台、VitePress 文档站。
 - 用户进一步质疑把打洞限定为UDP，以及仅允许VLESS时是否不能打洞。通用候选/协调接口不得把UDP写成产品必选：NAT穿透取决于外层socket能力，当前VLESS TCP/TLS和WS/TLS外层为TCP；TCP simultaneous-open在部分环境可能可用，但Meshway尚未实现/验证其socket协调与上层角色接线。UDP打洞、TCP打洞、反向拨号和中继分别表达，不能把UDP映射推广到VLESS/TCP或静默启用被禁止的业务承载；具体TCP打洞交付范围不因工程上优先UDP而被擅自排除。
 - 用户进一步要求审查 multi-transport 扩展架构，重点收敛 controller/agent 的 transport registry、控制面提供的可用目录与配置校验、以及 Agent 版本/能力协商。审查需明确控制面允许使用的协议与 Agent 实际编译支持的能力，保留 Agent 执行前的防御性和本机资源校验；不把 registry 理解为动态下载任意执行代码。具体统一注册接口与兼容迁移方案见承载扩展审查，尚未实现部分不得写成现状。
 - 性能目标优先衡量 Meshway 包装的增量损失：同一协议 / 实现、资源和负载建立匹配基线，分开记录适配层、认证 / 加密、转发与 TUN 成本；不得用原生 L4 流代理与 L3 E2E 隧道的差值直接声称包装损耗。
-- 性能深挖与新 transport 实现可委派独立 worktree 并行推进；共享 Docker VM 的压测通过同一 performance lock 串行执行，避免阻塞协议主线或互相干扰。
+- 性能深挖与新 transport 实现可委派独立 worktree 并行推进；共享 Docker VM 的压测通过 `scripts/performance_lock.py` 的同一把锁串行执行，保留 FD 继承，避免互相干扰。
 - 用户反馈 Docker 原生网络约 100 Gbps、Meshway 隧道约 300 Mbps 且中转更低，属于待复现的用户测量。优先排查真实直连 / 多跳吞吐瓶颈；区分环境基线、完整隧道成本与包装增量，保留负载、CPU、MTU、并发和加密条件。
 - 用户已确认首版 multi-transport 采用优先级主备；按流负载分担和同流多路径聚合不属于首版要求。
 - 用户已确认四层策略模型。连接、授权、Mesh 内路由属于整张网络的一套配置，对所有设备相同；出口路由按路由方案组织。权限类（连接、授权）与规则顺序无关，路由类（Mesh 内路由、出口路由）均为从上到下的有序 first-match：
@@ -80,15 +81,16 @@ Rust 控制面与 agent、Next.js + shadcn/ui 控制台、VitePress 文档站。
 - 业务配置、连接和端点公钥须来自同一 revision 的快照；撤回和 lease 到期独立于 HTTP 请求终止旧运行代际，TUN 停止后 Mesh 网段不得落回底层默认路由。
 - 用户已确认把第一轮远端联测提前到打洞之前：先用已验证主线，在已登记 Linux 主机的独立 Docker 容器核对部署、固定链路、跨地域 TUN 互访和重启恢复，先两台再四台；自动建连 / 打洞 / 主备完成后另做第二轮。测试保留原 SSH/管理连接，不手工改宿主机路由、DNS、防火墙或 Docker daemon 配置，不用 host network/privileged；Docker 创建的测试网络、端口及数据目录必须隔离且可精确清理，不恢复旧配置快照覆盖用户工作。
 - 用户早已提供本机 Mac Controller `:8420` 映射至 `meshway-dev-api.jdscript.dev` 的计划，部署选址必须先核对该入口，不能遗漏后默认另设控制面。本轮 LAX Controller 是隔离停机 / 恢复验收的临时安排，不是产品部署要求；已运行的同身份复验先收尾，不中途手改 controller URL / 身份。用户最新希望构建集中在本地 / NYC，允许评估跨平台编译，不再把东京 / 首尔目标机原生构建当作硬性前置；优先评估 Mac 的 Linux ARM64 环境与 NYC 的 AMD64 环境或固定交叉工具链，具体新流水线尚未实施。
-- 2026-10-02 16:42 UTC 已核对上述 Mac 域名：四地正常 DNS/TLS 的 curl 均收到 Controller 401；生成 GET / schema 诊断确认公网入口与本机8420为同一网络 revision48、5个节点身份。Mac 系统 DNS 当时 ENOTFOUND，公共 DNS 地址加原域名/SNI/证书校验可访问；Python urllib 默认 UA 被 Cloudflare1010 拦截，curl默认/无UA可通，未声称原生Agent接入已验。后续开发联调优先使用此入口，原LAX测试身份/数据另行保留。
-- no-host-network / no-privileged 同样覆盖专用构建器。首轮运行容器满足要求，但事后核对发现两个 buildx docker-container builder 默认为 privileged；这是已披露的执行偏差，原 inspect / 证据保留。两者现已用精确 ID 与 `buildx rm --keep-state` 移除 container / metadata，缓存和原镜像 / 来源 / 证据保留，错误 0，不再启动。后续使用 Docker 既有普通 builder 构造环境 / runtime 层，并用非 root、cap-drop-ALL、CPU/内存有界的普通容器编译；不创建新特权 builder、不开放 insecure / host-network entitlement、不修改 daemon 配置。
-- 第一轮远端已验证东京↔洛杉矶的双向 TUN ICMP/HTTP 和 DNS，并独立复现 E2E packet 会话恢复缺口：端点重启后存活端 sender cache 可继续使用已失效密钥，约 59 秒预算到期后才按需重握手；实际业务恢复还含下一次发送、握手和应用重试，不承诺 59 秒总上界。一跳与多跳均受影响，邻接认证 / probe / 新 echo 成功不能证明旧 packet 会话恢复；完整失败窗口必须保留。修复需端到端认证的 incarnation/resync 与 wire 兼容边界，不能仅清邻居缓存、每次 fresh incoming 都清反向会话或缩短 TTL 掩盖；与尚未实现的单向 grants 状态型业务回包分开跟踪。
-- E2E 有界 authenticated resync 已以 `9c26105` 合入；快速路径要求参与节点支持新 phase / `resync-v1`，旧节点及丢包 / 竞争保留 TTL 边界，首个 stale packet 不重放。运行报告 RR1/RR2 与 history pending-slot Capacity 争用已独立复核关闭，修复以 `1144875` / `461f7d6` / `4c9a5be` 合入，新组合 Rust 613 / 7 ignored、Clippy/fmt 通过。原 `f399931` 的 169/1 首样本45s失败及旧镜像未批准状态不改写；新固定4c源码已按非privileged流程构建并完成独立远端复验。复验复用原四地 Controller DB / 身份 / 公钥 / CA / 源配置，原 FAIL 和失效窗口保留，不重新注册或重置策略；原v11 source已由只读副本的原Controller生成GET补齐。
-- underlay F1/F2/R1/R2 已独立关闭，内部模块及受审 socket2 单 API 补丁已合入 `4ffe8a9` 至 `24795fb`；组合 Rust 597 / 7 ignored、Clippy/fmt/drift、生成器7/SDK16和真实Linux namespace/syscall/TUN检查通过。Journal v3 以 boot + 非零 netns cookie 识别 lifetime，旧无 cookie 试验 journal 拒绝并保留，不按 inode/形状自动接管；应用 crate 继续 forbid unsafe。正常主循环尚未调用生产 owner，未激活或远端部署；不得把模块验收当正式系统保护已启用。本组合不含报告修复，CLI history 通过不关闭 f399 的独立失败。
+- Mac 域名已从四地核对可达，生成 GET 确认与本机8420为同一网络；这不等于原生Agent接入验收。原LAX测试身份和数据独立保留。
+- no-host-network / no-privileged 同样覆盖构建器。已披露并移除的两个特权 buildx builder 不再启动；原证据保留。使用既有普通 builder 构造环境 / runtime 层，Rust 在非 root、cap-drop-ALL、CPU/内存有界的普通容器内编译，不开放 insecure / host-network entitlement、不改 daemon。
+- E2E 重启恢复已采用端到端认证的有界 `resync-v1`；快速路径要求参与节点支持扩展，旧节点及丢包 / 竞争保留原 TTL 边界，首个 stale packet 不重放。邻接恢复不证明旧 packet 会话恢复；不缩 TTL、无条件清反向 cache 或降低加密掩盖失败，与状态型 grants 回包分开跟踪。
+- underlay 内部 owner 已审合，正常主循环接线尚在实现、未生产启用。Journal v3 使用 boot + 非零 netns cookie；旧无 cookie / 不明归属 journal 保留并拒绝，不按 inode/形状接管。受审 socket2 单 API 补丁限 vendor 边界，应用 crate 继续 forbid unsafe。
 - Rust 使用 `cargo fmt`、Clippy 和必要的行为测试；JS 使用严格 TypeScript 与各包检查。修改协议、HTTP 路由或生成客户端时，合并前必须跑全部消费者：`cargo test --workspace --all-features`（含 Agent 与 Apple core）、Web 与 SDK 检查，以及 `experiments/*/tsconfig.json` 的 `tsc --noEmit`。
 - 用户已明确移除 Meshway 的浏览器自动化检查：不保留或默认重建 Playwright / 浏览器 E2E 套件，不以浏览器全量回归阻塞日常开发或部署。Web 默认做严格类型检查、lint、必要单测与构建，UI 由用户在开发页面手工验证；协议、鉴权、迁移和数据面仍运行各自必要的非浏览器行为测试。
 - 并行任务明确文件所有权；根 workspace 配置、lockfile 和整体验证由协调者维护。
 - 不同 feature 组合的 CLI 行为测试与 SDK / 原生联测构建不得并行共用同一 Cargo target 目录；后者可能替换前者正在执行的 `target/debug/meshway-agent`。使用独立 target 或串行执行。
 - 所有后续 worktree 统一创建在本仓库 `.worktree/<任务名>`，不再散放上级目录。独立任务完成、提交已整合且无未提交 / 未跟踪工作后及时移除 worktree；保留分支和测量产物。活跃任务须在不影响进程与构建的安全边界迁移，不能直接删改其目录。
-- 当前推进：固定 `4c9a5be` 的同身份直连 / 四地有序路径恢复复验均 PASS；正常 Controller/Agent/TUN、双向目标重启、四节点 lease 撤回及 ≥60s 新 runtime 报告检查通过。各轮5容器/4bridge精确清理，错误0，DB/身份/公钥/CA/源配置与旧FAIL保留；远端持久latency history查询未验。原4d现场FAIL和f399组合FAIL不改写；KR→NYC底层FIB经既有WARP，不声称纯公网直连/打洞。P3a IPv4 Mesh及underlay F1/F2/R1/R2已审合，正常主循环接线现进入独立实现，状态型回包未完成。随后推进P3b自动建连/主备、P3d打洞和第二轮四地验证，P3c完整出口/域名分流仍属首版。模型/API大清理、GeoIP和前端不阻塞；未审定候选不部署。性能本批已结束，不整分支部署offload/NEON实验或扩大矩阵；未知归属或仍有进程/未提交工作的树须保留。
+- 当前状态：`4c9a5be` 同身份直连 / 四地有序路径恢复复验 PASS，测试资源已清理，私有身份 / 源配置 / 旧 FAIL 及失败窗口保留。远端持久 latency history 查询未验；KR→NYC 底层 FIB 经 WARP，不能当公网直连或打洞证据。
+- 当前并行工作：正常 underlay 主循环接线、按实际承载能力的自动建连 / 打洞、Controller 结构收敛与文档精简。状态型业务回包、完整出口 / 域名分流、平台默认 STUN、GeoIP 与自动地区方案尚未交付；Apple / 前端新增开发继续暂停。未审定候选不部署。
+- 性能本批已结束，不整分支部署 offload / NEON 实验或扩大矩阵；未知归属或仍有进程 / 未提交工作的树须保留。
 - 独立完成的工作形成清晰提交。提交前检查生成产物、文档和实际运行命令一致。
