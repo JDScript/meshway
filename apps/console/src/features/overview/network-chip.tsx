@@ -1,4 +1,6 @@
+import { cn } from "cn"
 import { ChevronsUpDownIcon } from "lucide-react"
+import type { ReactNode } from "react"
 
 import { BrandMark } from "@/components/chrome/brand"
 import {
@@ -28,6 +30,7 @@ const DASH = "—"
 export function NetworkChip({
   networkId,
   onSwitchNetwork,
+  trailing,
   name,
   nodes,
   links,
@@ -35,6 +38,8 @@ export function NetworkChip({
 }: {
   networkId: string
   onSwitchNetwork: (networkId: string) => void
+  /** A control at the card's far end, set 6px in like the switcher (the unplaced count). */
+  trailing?: ReactNode
   name: string | null
   /** null while unread or unreadable. */
   nodes: number | null
@@ -58,8 +63,13 @@ export function NetworkChip({
       : DASH
 
   return (
-    // Concentric: the 32px trigger sits 6px in (22 − 6 = 16); the far side matches its 14px to the mark.
-    <div className="glass pointer-events-auto flex h-(--bar-height) max-w-full min-w-0 items-center gap-3 rounded-full pr-3.5 pl-1.5 md:w-(--chip-width)">
+    // Concentric: the 32px controls at either end sit 6px in (22 − 6 = 16); without one, the far side matches the 14px to the mark.
+    <div
+      className={cn(
+        "glass pointer-events-auto flex h-(--bar-height) max-w-full min-w-0 items-center gap-2 rounded-full pl-1.5 md:gap-3",
+        trailing ? "pr-1.5" : "pr-3.5"
+      )}
+    >
       <DropdownMenu>
         <DropdownMenuTrigger
           render={
@@ -69,7 +79,8 @@ export function NetworkChip({
             />
           }
         >
-          <BrandMark className="size-5 shrink-0" />
+          {/* Narrow screens give the name the room. */}
+          <BrandMark className="hidden size-5 shrink-0 md:block" />
           <span className="max-w-60 min-w-0 truncate text-sm font-medium">
             {name ?? "\u00a0"}
           </span>
@@ -147,6 +158,7 @@ export function NetworkChip({
           </Tooltip>
         ) : null}
       </span>
+      {trailing}
     </div>
   )
 }

@@ -1,5 +1,4 @@
 import type { NodeSummary } from "@meshway/control-client"
-import { useEffect, type CSSProperties } from "react"
 
 import { CloseButton } from "@/components/chrome/close-button"
 import { CopyButton } from "@/components/chrome/copy-button"
@@ -7,7 +6,6 @@ import { SegmentedTabs } from "@/components/chrome/segmented-control"
 import { SurfaceHeader } from "@/components/chrome/surface-header"
 import { Skeleton } from "@/components/ui/skeleton"
 import { Tabs, TabsContent } from "@/components/ui/tabs"
-import { Surface } from "@/features/shell/surface"
 import { NODE_TABS, type NodeTab } from "@/features/shell/url"
 import { nodeAdjacencies } from "@/features/topology/topology"
 import { dateTime, relativeTime } from "@/lib/format"
@@ -18,51 +16,32 @@ import { NodeAddresses, NodeLinks, NodeStatusTiles, nodeVitality, Tile, Vitality
 const isTab = (value: unknown): value is NodeTab => NODE_TABS.some((tab) => tab === value)
 
 /**
- * One node in full, over the globe: everything the peek has and room for
- * what only a workspace holds. Sections that do not exist yet are not shown.
+ * One node in full: everything the peek has and room for what only a
+ * workspace holds. Sections that do not exist yet are not shown. The shell
+ * frames it (a surface over the globe, or a sheet on small screens).
  */
 export function NodeWorkspace({
   nodeId,
   tab,
   inventoryRead,
   context,
-  className,
-  style,
   onClose,
   onTab,
   onOpenNode,
 }: {
-  /** null closes the workspace. */
-  nodeId: string | null
+  nodeId: string
   tab: NodeTab
   inventoryRead: boolean
   context: NodeContext
-  className?: string
-  style?: CSSProperties
   onClose: () => void
   onTab: (tab: NodeTab) => void
   onOpenNode: (nodeId: string) => void
 }) {
-  const shown = nodeId !== null
-
-  useEffect(() => {
-    if (!shown) return
-    const onKey = (event: KeyboardEvent) => {
-      if (event.key === "Escape" && !event.defaultPrevented) onClose()
-    }
-    window.addEventListener("keydown", onKey)
-    return () => window.removeEventListener("keydown", onKey)
-  }, [shown, onClose])
-
-  const node = nodeId ? (context.nodes.get(nodeId) ?? null) : null
-  return (
-    <Surface shown={shown} from="rise" aria-labelledby="node-workspace-title" className={className} style={style}>
-      {nodeId === null ? null : node ? (
-        <Body key={node.id} node={node} tab={tab} context={context} onClose={onClose} onTab={onTab} onOpenNode={onOpenNode} />
-      ) : (
-        <Missing loading={!inventoryRead} onClose={onClose} />
-      )}
-    </Surface>
+  const node = context.nodes.get(nodeId) ?? null
+  return node ? (
+    <Body key={node.id} node={node} tab={tab} context={context} onClose={onClose} onTab={onTab} onOpenNode={onOpenNode} />
+  ) : (
+    <Missing loading={!inventoryRead} onClose={onClose} />
   )
 }
 

@@ -1,4 +1,4 @@
-import { Link } from "@tanstack/react-router"
+import { Link, type HistoryState } from "@tanstack/react-router"
 import { cn } from "cn"
 import { GlobeIcon, ServerIcon, type LucideIcon } from "lucide-react"
 import { motion, useReducedMotion } from "motion/react"
@@ -10,6 +10,7 @@ import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip
 import { SPRING_LAYOUT } from "@/lib/ease"
 import { m } from "@/paraglide/messages.js"
 
+import { CHROME } from "./glass-drawer"
 import { DOCK_WIDTH } from "./layout"
 import type { Page } from "./route"
 
@@ -25,17 +26,18 @@ const PADDING = (DOCK_WIDTH - ITEM) / 2
 function PageLink({
   networkId,
   page,
+  state,
   className,
   children,
   ...props
-}: { networkId: string; page: Page; className: string; children: ReactNode } & Omit<ComponentProps<"a">, "href" | "children">) {
+}: { networkId: string; page: Page; state?: HistoryState; className: string; children: ReactNode } & Omit<ComponentProps<"a">, "href" | "children">) {
   const params = { network: networkId }
   return page === "nodes" ? (
-    <Link to="/networks/$network/nodes" params={params} className={className} {...props}>
+    <Link to="/networks/$network/nodes" params={params} state={state} className={className} {...props}>
       {children}
     </Link>
   ) : (
-    <Link to="/networks/$network/overview" params={params} className={className} {...props}>
+    <Link to="/networks/$network/overview" params={params} state={state} className={className} {...props}>
       {children}
     </Link>
   )
@@ -53,6 +55,7 @@ export function Dock({ networkId, page }: { networkId: string; page: Page }) {
   const reduce = useReducedMotion()
   return (
     <nav
+      {...CHROME}
       aria-label={m.nav_label()}
       className="enter glass pointer-events-auto absolute rounded-full"
       style={{ left: "var(--edge)", top: "var(--panel-top)", width: DOCK_WIDTH, padding: PADDING }}
@@ -115,10 +118,11 @@ export function DockLauncher({ networkId, page }: { networkId: string; page: Pag
   return (
     <Popover open={open} onOpenChange={setOpen}>
       <PopoverTrigger
+        {...CHROME}
         aria-label={m.nav_label()}
         className="enter glass pointer-events-auto absolute top-(--mobile-edge) left-(--mobile-edge) flex size-(--bar-height) items-center justify-center rounded-full outline-none focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
       >
-        <Icon className="size-4.5" />
+        <Icon className="size-4" />
       </PopoverTrigger>
       <PopoverContent
         side="bottom"
@@ -133,14 +137,16 @@ export function DockLauncher({ networkId, page }: { networkId: string; page: Pag
             networkId={networkId}
             page={item.page}
             aria-current={item.page === page ? "page" : undefined}
+            // A page other than the overview opens as a sheet here: dismissing it goes back.
+            state={item.page === "overview" ? undefined : { opened: true }}
             onClick={() => setOpen(false)}
             className={cn(
-              "launcher-item glass flex h-(--bar-height) items-center gap-3 self-start rounded-full pr-5 pl-3.25 text-sm font-medium outline-none focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring",
+              "launcher-item glass flex h-(--bar-height) items-center gap-3 self-start rounded-full pr-5 pl-3.5 text-sm font-medium outline-none focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring",
               item.page === page ? "text-foreground" : "text-muted-foreground"
             )}
             style={{ "--launcher-index": index }}
           >
-            <item.icon className="size-4.5" />
+            <item.icon className="size-4" />
             {item.label()}
           </PageLink>
         ))}
