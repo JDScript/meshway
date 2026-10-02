@@ -710,3 +710,5 @@ mod discovery_tests;
 #[cfg(test)]
 #[path = "managed/heartbeat_tests.rs"]
 mod heartbeat_tests;
+#[cfg(test)]
+mod mesh_restart_tests;

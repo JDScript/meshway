@@ -53,7 +53,10 @@ fn load(agent: &Agent) -> Result<Option<Cache>, AgentError> {
             "Mesh execution journal identity mismatch",
         ));
     }
-    validate(agent, &cache.snapshot, None)?;
+    // A journal is historical evidence, not an incoming publication. Startup
+    // inventory may already be newer; its revision must not invalidate this
+    // file. Its intrinsic integrity and immutable bindings still must hold.
+    validate_snapshot(agent, &cache.snapshot)?;
     Ok(Some(cache))
 }
 
@@ -62,36 +65,36 @@ fn validate(
     snapshot: &MeshExecutionSnapshot,
     old: Option<&MeshExecutionSnapshot>,
 ) -> Result<(), AgentError> {
+    validate_snapshot(agent, snapshot)?;
     let p = &snapshot.payload;
-    if p.schema_version != MESH_EXECUTION_VERSION
-        || p.required_capability != MeshExecutionCapability::Ipv4ExactPathV1
-        || p.revision == 0
-        || p.network_id.len() != 32
-        || !p
-            .network_id
-            .bytes()
-            .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
-        || Some(&p.node_id) != agent.identity.node_id.as_ref()
-        || p.node.id != p.node_id
-        || p.node.name != agent.identity.name
-        || p.connections.node_id != p.node_id
-        || p.connections.revision != p.revision
-        || p.paths.len() > MAX_MESH_EXECUTION_PATHS
-        || p.identities.len() > MAX_DATAPLANE_IDENTITIES
-        || p.peers.len() >= 1024
-        || p.materials.len() > 64
-        || (!p.valid && !p.paths.is_empty())
-        || mesh_execution_digest(p)
-            .map_err(|_| AgentError::Invalid("cannot hash Mesh execution"))?
-            != snapshot.digest
-        || serde_json::to_vec(snapshot)
-            .map_err(|_| AgentError::Invalid("cannot encode Mesh execution"))?
-            .len()
-            > MAX_DATAPLANE_BYTES
-    {
-        return Err(AgentError::Invalid(
-            "invalid Mesh execution version, binding, digest or budget",
-        ));
+    let connections = AgentConnectionsSnapshot {
+        digest: connection_digest(&p.connections)
+            .map_err(|_| AgentError::Invalid("cannot hash Mesh adjacency"))?,
+        payload: p.connections.clone(),
+    };
+    super::validation::validate(
+        &connections,
+        &agent.identity,
+        agent
+            .connections
+            .as_ref()
+            .and_then(|s| s.keys.public_key())
+            .ok_or(AgentError::Invalid("missing Mesh execution private key"))?,
+        agent
+            .connections
+            .as_ref()
+            .and_then(|s| s.cache.as_ref().map(|c| &c.snapshot)),
+    )?;
+    if let Some(cache) = &agent.cache {
+        let inventory = cache.public_inventory();
+        if p.revision < inventory.revision
+            || (p.revision == inventory.revision
+                && (p.node != inventory.node || p.peers != inventory.peers))
+        {
+            return Err(AgentError::Invalid(
+                "Mesh execution predates or mutates saved inventory",
+            ));
+        }
     }
     if let Some(old) = old {
         let o = &old.payload;
@@ -112,6 +115,64 @@ fn validate(
                 "Mesh execution rollback or immutable binding changed",
             ));
         }
+    }
+    Ok(())
+}
+
+fn validate_snapshot(agent: &Agent, snapshot: &MeshExecutionSnapshot) -> Result<(), AgentError> {
+    let p = &snapshot.payload;
+    if p.schema_version != MESH_EXECUTION_VERSION
+        || p.required_capability != MeshExecutionCapability::Ipv4ExactPathV1
+        || p.revision == 0
+        || p.network_id.len() != 32
+        || !p
+            .network_id
+            .bytes()
+            .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
+        || Some(&p.node_id) != agent.identity.node_id.as_ref()
+        || p.node.id != p.node_id
+        || p.node.name != agent.identity.name
+        || p.connections.node_id != p.node_id
+        || p.connections.revision != p.revision
+        || p.paths.len() > MAX_MESH_EXECUTION_PATHS
+        || p.identities.len() > MAX_DATAPLANE_IDENTITIES
+        || p.peers.len() >= 1024
+        || p.materials.len() > MAX_MESH_EXECUTION_MATERIALS
+        || (!p.valid && !p.paths.is_empty())
+        || mesh_execution_digest(p)
+            .map_err(|_| AgentError::Invalid("cannot hash Mesh execution"))?
+            != snapshot.digest
+        || serde_json::to_vec(snapshot)
+            .map_err(|_| AgentError::Invalid("cannot encode Mesh execution"))?
+            .len()
+            > MAX_DATAPLANE_BYTES
+    {
+        return Err(AgentError::Invalid(
+            "invalid Mesh execution version, binding, digest or budget",
+        ));
+    }
+    if let Some(cache) = &agent.cache {
+        let inventory = cache.public_inventory();
+        if p.network != inventory.network
+            || p.node.mesh_ipv4 != inventory.node.mesh_ipv4
+            || p.node.mesh_ipv6 != inventory.node.mesh_ipv6
+        {
+            return Err(AgentError::Invalid(
+                "Mesh journal immutable address binding changed",
+            ));
+        }
+    }
+    if let Some(cache) = agent.connections.as_ref().and_then(|s| s.cache.as_ref())
+        && p.identities.iter().any(|peer| {
+            cache.snapshot.payload.peers.iter().any(|other| {
+                (peer.node_id == other.node_id && peer.public_key != other.public_key)
+                    || (peer.public_key == other.public_key && peer.node_id != other.node_id)
+            })
+        })
+    {
+        return Err(AgentError::Invalid(
+            "Mesh journal immutable key binding changed",
+        ));
     }
     let prefix: ipnet::Ipv4Net = p
         .network
@@ -178,15 +239,7 @@ fn validate(
             .map_err(|_| AgentError::Invalid("cannot hash Mesh adjacency"))?,
         payload: p.connections.clone(),
     };
-    super::validation::validate(
-        &connections,
-        &agent.identity,
-        own_key,
-        agent
-            .connections
-            .as_ref()
-            .and_then(|s| s.cache.as_ref().map(|c| &c.snapshot)),
-    )?;
+    super::validation::validate(&connections, &agent.identity, own_key, None)?;
     let mut unique_paths = BTreeSet::new();
     let mut outgoing = BTreeSet::new();
     for path in &p.paths {
@@ -524,6 +577,76 @@ mod tests {
         };
         let digest = mesh_execution_digest(&payload).unwrap();
         (agent, MeshExecutionSnapshot { digest, payload })
+    }
+
+    #[test]
+    fn historical_journal_survives_newer_inventory_but_incoming_floors_remain_strict() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = tempfile::Builder::new()
+            .permissions(std::fs::Permissions::from_mode(0o700))
+            .tempdir()
+            .unwrap();
+        let (mut agent, historical) = fixture(dir.path());
+        let cache = Cache {
+            format_version: 1,
+            controller: agent.identity.controller.clone(),
+            node_id: historical.payload.node_id.clone(),
+            credential_hash: local::digest(&agent.identity.node_credential),
+            snapshot: historical.clone(),
+        };
+        local::atomic_write(&path(&agent), &serde_json::to_vec(&cache).unwrap(), false).unwrap();
+        let mut fresh = historical.clone();
+        fresh.payload.revision += 1;
+        fresh.payload.connections.revision += 1;
+        fresh.digest = mesh_execution_digest(&fresh.payload).unwrap();
+        let connections = AgentConnectionsSnapshot {
+            digest: connection_digest(&fresh.payload.connections).unwrap(),
+            payload: fresh.payload.connections.clone(),
+        };
+        agent
+            .connections
+            .as_mut()
+            .unwrap()
+            .persist(&agent.path, &agent.identity, connections)
+            .unwrap();
+        let loaded = load(&agent).unwrap().unwrap();
+        assert_eq!(loaded.snapshot.digest, historical.digest);
+        validate(&agent, &fresh, Some(&loaded.snapshot)).unwrap();
+        validate(&agent, &fresh, Some(&fresh)).unwrap(); // Same revision restart.
+        assert!(validate(&agent, &historical, Some(&historical)).is_err()); // Current connections floor.
+        let mut changed = fresh.clone();
+        changed.payload.paths.clear();
+        changed.digest = mesh_execution_digest(&changed.payload).unwrap();
+        assert!(validate(&agent, &changed, Some(&fresh)).is_err());
+        // A history reader cannot skip the immutable binding check merely
+        // because an inventory floor is newer than the journal.
+        let config = NodeConfiguration {
+            schema_version: CONFIGURATION_SCHEMA_VERSION,
+            revision: fresh.payload.revision + 1,
+            network: fresh.payload.network.clone(),
+            node: fresh.payload.node.clone(),
+            peers: fresh.payload.peers.clone(),
+            routing_policy: RoutingPolicy::default(),
+            policy_valid: false,
+            diagnostics: vec![PolicyDiagnostic {
+                rule_id: None,
+                field: "source_mode".into(),
+                message: "inventory-only".into(),
+            }],
+        };
+        agent
+            .persist_configuration(ConfigurationSnapshot {
+                digest: configuration_digest(&config).unwrap(),
+                payload: config,
+            })
+            .unwrap();
+        assert!(load(&agent).is_ok());
+        assert!(validate(&agent, &fresh, Some(&historical)).is_err()); // Inventory-only higher floor.
+        let mut corrupt = cache;
+        corrupt.snapshot.payload.node.mesh_ipv4 = "100.64.0.20".into();
+        corrupt.snapshot.digest = mesh_execution_digest(&corrupt.snapshot.payload).unwrap();
+        local::atomic_write(&path(&agent), &serde_json::to_vec(&corrupt).unwrap(), true).unwrap();
+        assert!(load(&agent).is_err());
     }
 
     #[test]
