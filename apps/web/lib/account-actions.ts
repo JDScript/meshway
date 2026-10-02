@@ -73,7 +73,11 @@ export async function changePasswordAction(signIn: SignInKey, returnTo: string, 
     await endSignIn(signIn)
     redirect(`${LOGIN_PATH}?reason=password-changed`)
   }
-  if (!(await startUserSession(session.session_token, session.expires_at))) redirect(`${LOGIN_PATH}?reason=password-changed`)
+  if (!(await startUserSession(session.session_token, session.expires_at))) {
+    // Only this page's own, now revoked sign-in; never a later one.
+    await endSignIn(signIn)
+    redirect(`${LOGIN_PATH}?reason=password-changed`)
+  }
   redirect(`${safeConsolePath(returnTo)}?changed=password`)
 }
 

@@ -35,12 +35,14 @@ export default async function LoginPage({
   const { reason, returnTo } = await searchParams
   const destination = safeLoginReturn(returnTo)
   const expired = reason === "expired"
+  const notice = typeof reason === "string" ? notices[reason] : undefined
   const session = await readSession()
   // Only a plain visit with a live cookie skips the form. After a rejection
-  // the cookie may still exist until it is discarded, so never bounce back.
-  if (!expired && session.kind === "active") redirect(destination)
+  // the cookie may still exist until it is discarded, so never bounce back;
+  // an outcome notice (password changed / reset, signed out everywhere) is
+  // always shown, even if the browser holds another sign-in.
+  if (!expired && notice === undefined && session.kind === "active") redirect(destination)
   const forDevice = destination.startsWith("/authorize-device?")
-  const notice = typeof reason === "string" ? notices[reason] : undefined
 
   return (
     <StandaloneFrame
@@ -71,6 +73,15 @@ export default async function LoginPage({
           <AlertTitle>{notice.title}</AlertTitle>
           <AlertDescription>{notice.body}</AlertDescription>
         </Alert>
+      ) : null}
+      {!expired && notice !== undefined && session.kind === "active" ? (
+        <p className="text-xs text-muted-foreground">
+          这个浏览器目前仍有一个登录会话。
+          <Link href={destination} className="ml-1 underline underline-offset-4 hover:text-foreground">
+            继续使用它
+          </Link>
+          ，或在下方用其他账户登录。
+        </p>
       ) : null}
       <AccountLoginForm returnTo={destination} />
     </StandaloneFrame>

@@ -211,7 +211,7 @@ function Sessions() {
               disabled={pending}
               onClick={() =>
                 start(async () => {
-                  vault.reset()
+                  // Success navigates away and the sign-in's vault goes with it; a failure keeps the drafts.
                   const result = await revokeAllSessionsAction(signIn)
                   setError(result.message)
                   setConfirm(false)

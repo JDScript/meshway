@@ -91,12 +91,19 @@ export async function createInvitationAction(
     return { status: "error", message: `创建邀请失败：${describeError(error, token)}` }
   }
   refresh()
+  let path: string
+  try {
+    path = invitationPath(created.invitation_token)
+  } catch {
+    // Committed, but the link cannot be built; never echo the secret.
+    return { status: "error", message: "邀请已创建，但无法生成链接。请在邀请列表中撤销它后重新创建。" }
+  }
   return {
     status: "created",
     email: created.invitation.email,
     role: created.invitation.role,
     expiresAt: created.invitation.expires_at,
-    path: invitationPath(created.invitation_token),
+    path,
   }
 }
 

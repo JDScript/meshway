@@ -542,6 +542,8 @@ function NodeFacts({
       <FactCell label="承载">
         {connectionsError !== null ? (
           <span className="text-xs text-destructive">读取失败</span>
+        ) : !entry ? (
+          <span className="text-xs text-muted-foreground">未出现在连接配置中</span>
         ) : (
           <button
             type="button"
