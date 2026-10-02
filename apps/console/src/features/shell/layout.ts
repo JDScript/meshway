@@ -6,6 +6,7 @@ import type { Insets } from "../globe/store.ts"
 // covers it.
 //
 //   chrome     always: network card top left, preferences top right, the dock
+//              (phones: preferences top right; the launcher and the card at the bottom)
 //   page       one at a time, left of the free space (a list)
 //   peek       the overview's quick look at one node, right
 //   workspace  one entity in full, covering the globe right of the page panel
@@ -25,6 +26,13 @@ export const PEEK_WIDTH = 380
 export const MOBILE_EDGE = 12
 /** Below the round buttons of the top bar. */
 export const MOBILE_PANEL_TOP = MOBILE_EDGE + BAR_HEIGHT + GAP
+/**
+ * The bottom bar (the page launcher, where the thumb is, and the network
+ * card) stays on every page; sheets float above it, this far from the
+ * bottom of the screen.
+ */
+export const MOBILE_BAR_SPACE = MOBILE_EDGE + BAR_HEIGHT
+export const MOBILE_SHEET_BOTTOM = MOBILE_BAR_SPACE + MOBILE_EDGE
 /** Share of the viewport height the bottom sheets take on small screens. */
 export const MOBILE_PAGE_HEIGHT = 0.52
 export const MOBILE_PEEK_HEIGHT = 0.6
@@ -64,7 +72,9 @@ export function globeLayout({
         top: 0,
         right: 0,
         bottom:
-          share > 0 ? Math.round(share * viewportHeight) + MOBILE_EDGE : 0,
+          share > 0
+            ? Math.round(share * viewportHeight) + MOBILE_SHEET_BOTTOM
+            : MOBILE_BAR_SPACE,
         left: 0,
       },
       recede: workspace,

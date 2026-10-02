@@ -66,7 +66,8 @@ export function NetworkChip({
     // Concentric: the 32px controls at either end sit 6px in (22 − 6 = 16); without one, the far side matches the 14px to the mark.
     <div
       className={cn(
-        "glass pointer-events-auto flex h-(--bar-height) max-w-full min-w-0 items-center gap-2 rounded-full pl-1.5 md:gap-3",
+        // On phones it fills the bottom bar beside the launcher: the name left, the counts right.
+        "glass pointer-events-auto flex h-(--bar-height) max-w-full min-w-0 items-center gap-2 rounded-full pl-1.5 max-md:w-full md:gap-3",
         trailing ? "pr-1.5" : "pr-3.5"
       )}
     >
@@ -102,8 +103,11 @@ export function NetworkChip({
         value={linkValue}
         label={m.stat_links({ count: known?.total ?? 0 })}
       />
-      {/* The stale mark overlays the bar's end, so nothing is reserved for it and nothing moves when it appears. */}
-      <span className="relative flex shrink-0">
+      {/*
+        The stale mark overlays the bar's end, so nothing is reserved for it and nothing moves when it appears.
+        Phones leave the bar out (its breakdown is a hover; the count beside it says the share, and the name needs the room) but keep the stale mark, right after the count.
+      */}
+      <span className="relative flex shrink-0 max-md:-ml-2 max-md:w-0">
         <Tooltip>
           <TooltipTrigger
             render={
@@ -114,7 +118,7 @@ export function NetworkChip({
                     .map((row) => `${lookLabel[row.look]()} ${row.value}`)
                     .join(", ") || undefined
                 }
-                className="relative flex h-1.5 w-12 gap-0.5 overflow-hidden rounded-full bg-fill-selected outline-none focus-visible:ring-2 focus-visible:ring-ring md:w-20"
+                className="relative flex h-1.5 w-20 gap-0.5 overflow-hidden rounded-full bg-fill-selected outline-none focus-visible:ring-2 focus-visible:ring-ring max-md:hidden"
               >
                 {rows.map((row) =>
                   row.value > 0 ? (
@@ -151,7 +155,7 @@ export function NetworkChip({
               render={
                 <span
                   aria-label={m.overview_refresh_failed({ time: stale })}
-                  className="absolute top-1/2 -right-2.5 size-1.5 -translate-y-1/2 rounded-full bg-warning"
+                  className="absolute top-1/2 -right-2.5 size-1.5 -translate-y-1/2 rounded-full bg-warning max-md:-right-1.75"
                 />
               }
             />

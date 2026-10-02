@@ -8,6 +8,7 @@ import {
   EDGE,
   MOBILE_EDGE,
   MOBILE_PANEL_TOP,
+  MOBILE_SHEET_BOTTOM,
   PAGE_LEFT,
   PAGE_WIDTH,
   PANEL_TOP,
@@ -68,10 +69,16 @@ export function LayoutGuides() {
         { at: MOBILE_EDGE + BAR_HEIGHT / 2, label: "bar mid", tone: "edge" },
         { at: MOBILE_EDGE + BAR_HEIGHT, label: "bar end", tone: "panel" },
         { at: MOBILE_PANEL_TOP, label: "panel", tone: "panel" },
+        { at: height - MOBILE_SHEET_BOTTOM, label: "sheet end", tone: "panel" },
         {
           at: height - MOBILE_EDGE - BAR_HEIGHT,
           label: "bottom bar",
           tone: "panel",
+        },
+        {
+          at: height - MOBILE_EDGE - BAR_HEIGHT / 2,
+          label: "bottom bar mid",
+          tone: "edge",
         },
         { at: height - MOBILE_EDGE, label: "edge", tone: "edge" },
       ]

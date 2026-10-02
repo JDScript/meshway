@@ -7,9 +7,9 @@ import { GlassDrawer } from "./glass-drawer"
 import { useSurfaceHistory } from "./history"
 import {
   EDGE,
-  MOBILE_EDGE,
   MOBILE_PAGE_HEIGHT,
   MOBILE_PANEL_TOP,
+  MOBILE_SHEET_BOTTOM,
   PAGE_LEFT,
   PAGE_WIDTH,
   PANEL_TOP,
@@ -73,7 +73,6 @@ export function PageFrame({
             side="bottom"
             labelledBy={surfaceTitleId(page, "panel")}
             style={{
-              "--drawer-inset": `${MOBILE_EDGE}px`,
               "--drawer-radius": "var(--radius-surface)",
               height: `${MOBILE_PAGE_HEIGHT * 100}svh`,
             }}
@@ -87,8 +86,7 @@ export function PageFrame({
           side="bottom"
           labelledBy={surfaceTitleId(page, "workspace")}
           style={{
-            "--drawer-inset": `${MOBILE_EDGE}px`,
-            height: `calc(100svh - ${MOBILE_PANEL_TOP + MOBILE_EDGE}px)`,
+            height: `calc(100svh - ${MOBILE_PANEL_TOP + MOBILE_SHEET_BOTTOM}px)`,
           }}
         >
           {workspace}

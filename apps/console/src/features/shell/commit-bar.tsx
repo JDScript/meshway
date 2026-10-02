@@ -8,7 +8,13 @@ import { useIsMobile } from "@/hooks/use-mobile"
 import { m } from "@/paraglide/messages.js"
 
 import { CHROME } from "./glass-drawer"
-import { EDGE, MOBILE_EDGE, PAGE_LEFT, WORKSPACE_LEFT } from "./layout"
+import {
+  EDGE,
+  MOBILE_EDGE,
+  MOBILE_SHEET_BOTTOM,
+  PAGE_LEFT,
+  WORKSPACE_LEFT,
+} from "./layout"
 import { PAGES, useCurrentPage, useWorkspaceOpen, type PageId } from "./pages"
 import { Surface } from "./surface"
 
@@ -93,7 +99,7 @@ export function CommitBar() {
             {
               left: MOBILE_EDGE + SHEET_INSET,
               right: MOBILE_EDGE + SHEET_INSET,
-              bottom: MOBILE_EDGE + SHEET_INSET,
+              bottom: MOBILE_SHEET_BOTTOM + SHEET_INSET,
             }
           : {
               left: PAGES[current.page].panel ? WORKSPACE_LEFT : PAGE_LEFT,

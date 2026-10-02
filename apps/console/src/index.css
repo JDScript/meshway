@@ -582,7 +582,7 @@
     outline-offset: -2px;
   }
 
-  /* The small-screen launcher unfolds its pages one after another. */
+  /* The small-screen launcher unfolds its pages upwards, one after another. */
   .launcher-item {
     animation: launcher-in 360ms var(--ease-settle) backwards;
     animation-delay: calc(var(--launcher-index, 0) * 45ms);
@@ -590,7 +590,7 @@
   @keyframes launcher-in {
     from {
       opacity: 0;
-      translate: 0 -8px;
+      translate: 0 8px;
       scale: 0.96;
     }
   }

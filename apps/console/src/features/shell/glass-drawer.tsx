@@ -3,6 +3,15 @@ import { useState, type CSSProperties, type ReactNode } from "react"
 
 import { Drawer, DrawerContent } from "@/components/ui/drawer"
 
+import { MOBILE_EDGE, MOBILE_SHEET_BOTTOM } from "./layout"
+
+/** A bottom sheet floats above the phone's bottom bar and leaves through the screen's edge. */
+const BOTTOM: CSSProperties = {
+  "--drawer-inset": `${MOBILE_EDGE}px`,
+  marginBottom: MOBILE_SHEET_BOTTOM,
+  "--closed-transform": `translate3d(0, calc(100% + ${MOBILE_SHEET_BOTTOM + 2}px), 0)`,
+}
+
 /** Marks the chrome (network card, toolbar, dock): touching it never dismisses a drawer. */
 export const CHROME = { "data-shell-chrome": "" } as const
 /** The chrome, and the menus and popovers it opens. */
@@ -71,7 +80,11 @@ export function GlassDrawer({
           "glass text-foreground data-ending-style:opacity-100",
           className
         )}
-        style={{ "--bleed": "0px", ...style }}
+        style={{
+          "--bleed": "0px",
+          ...(side === "bottom" ? BOTTOM : undefined),
+          ...style,
+        }}
       >
         {open ? children : kept}
       </DrawerContent>

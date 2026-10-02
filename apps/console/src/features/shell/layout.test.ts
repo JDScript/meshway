@@ -3,6 +3,9 @@ import { test } from "node:test"
 
 import {
   globeLayout,
+  MOBILE_BAR_SPACE,
+  MOBILE_PAGE_HEIGHT,
+  MOBILE_SHEET_BOTTOM,
   PAGE_WIDTH,
   PEEK_WIDTH,
   type Arrangement,
@@ -35,15 +38,16 @@ test("a page panel covers the left; a workspace covers the globe without moving 
   assert.equal(workspace.recede, true)
 })
 
-test("on small screens the sheets cover the bottom instead", () => {
+test("on small screens the globe sits above the bottom bar, and above the sheets over it", () => {
   const phone: Arrangement = { ...desktop, mobile: true, viewportHeight: 800 }
   assert.deepEqual(globeLayout(phone).insets, {
     top: 0,
     right: 0,
-    bottom: 0,
+    bottom: MOBILE_BAR_SPACE,
     left: 0,
   })
   const page = globeLayout({ ...phone, page: true }).insets.bottom
   const peek = globeLayout({ ...phone, peek: true }).insets.bottom
-  assert.ok(page > 0 && peek > page)
+  assert.equal(page, Math.round(MOBILE_PAGE_HEIGHT * 800) + MOBILE_SHEET_BOTTOM)
+  assert.ok(peek > page)
 })

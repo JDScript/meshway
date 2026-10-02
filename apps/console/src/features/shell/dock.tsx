@@ -137,8 +137,9 @@ function DraftMark() {
 }
 
 /**
- * Small screens: one round button showing the current page; it unfolds the
- * pages below it as labelled buttons, one after another.
+ * Small screens: one round button at the start of the bottom bar, under
+ * the thumb, showing the current page; it unfolds the pages above it as
+ * labelled buttons, the nearest first.
  */
 export function DockLauncher({
   networkId,
@@ -156,12 +157,12 @@ export function DockLauncher({
       <PopoverTrigger
         {...CHROME}
         aria-label={m.nav_label()}
-        className="enter glass pointer-events-auto absolute top-(--mobile-edge) left-(--mobile-edge) flex size-(--bar-height) items-center justify-center rounded-full outline-none focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
+        className="enter glass pointer-events-auto flex size-(--bar-height) shrink-0 items-center justify-center rounded-full outline-none focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
       >
         <Icon className="size-4" />
       </PopoverTrigger>
       <PopoverContent
-        side="bottom"
+        side="top"
         align="start"
         sideOffset={8}
         className="launcher w-auto gap-2 bg-transparent p-0 shadow-none ring-0"
@@ -180,7 +181,7 @@ export function DockLauncher({
               "launcher-item glass flex h-(--bar-height) items-center gap-3 self-start rounded-full pr-5 pl-3.5 text-sm font-medium outline-none focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring",
               item.page === page ? "text-foreground" : "text-muted-foreground"
             )}
-            style={{ "--launcher-index": index }}
+            style={{ "--launcher-index": DOCK.length - 1 - index }}
           >
             <item.icon className="size-4" />
             {item.label()}

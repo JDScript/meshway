@@ -116,47 +116,43 @@ export function NetworkShell({ networkId }: { networkId: string }) {
       <SettingsPage networkId={networkId} />
       <AccountPage networkId={networkId} />
 
-      {mobile && page !== "overview" ? null : (
+      {/* Desktop: the card top left, the dock below it. Phones: one bottom bar on every page, the launcher where the thumb is. */}
+      <div
+        className={cn(
+          "pointer-events-none absolute flex",
+          mobile
+            ? "inset-x-0 bottom-0 items-center gap-2 p-(--mobile-edge)"
+            : "top-(--edge) left-(--edge)"
+        )}
+      >
+        {mobile ? <DockLauncher networkId={networkId} page={page} /> : null}
         <div
-          className={cn(
-            "pointer-events-none absolute flex",
-            mobile
-              ? "inset-x-0 bottom-0 justify-center p-(--mobile-edge)"
-              : "top-(--edge) left-(--edge)"
-          )}
+          {...CHROME}
+          className="enter flex min-w-0 max-md:flex-1"
+          style={mobile ? { "--enter-from": "10px" } : undefined}
         >
-          <div
-            {...CHROME}
-            className="enter max-w-full min-w-0"
-            style={mobile ? { "--enter-from": "10px" } : undefined}
-          >
-            <NetworkChip
-              networkId={networkId}
-              onSwitchNetwork={switchNetwork}
-              name={view.network?.name ?? null}
-              nodes={view.nodeCount}
-              links={view.links}
-              stale={view.stale}
-              trailing={
-                unplaced.length > 0 ? (
-                  <UnplacedButton
-                    nodes={unplaced}
-                    selectedId={focusId}
-                    side={mobile ? "top" : "bottom"}
-                    onSelect={openNode}
-                  />
-                ) : undefined
-              }
-            />
-          </div>
+          <NetworkChip
+            networkId={networkId}
+            onSwitchNetwork={switchNetwork}
+            name={view.network?.name ?? null}
+            nodes={view.nodeCount}
+            links={view.links}
+            stale={view.stale}
+            trailing={
+              unplaced.length > 0 ? (
+                <UnplacedButton
+                  nodes={unplaced}
+                  selectedId={focusId}
+                  side={mobile ? "top" : "bottom"}
+                  onSelect={openNode}
+                />
+              ) : undefined
+            }
+          />
         </div>
-      )}
+      </div>
 
-      {mobile ? (
-        <DockLauncher networkId={networkId} page={page} />
-      ) : (
-        <Dock networkId={networkId} page={page} />
-      )}
+      {mobile ? null : <Dock networkId={networkId} page={page} />}
 
       <GlassToolbar
         {...CHROME}

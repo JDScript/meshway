@@ -16,7 +16,6 @@ import {
 import { GlassDrawer } from "@/features/shell/glass-drawer"
 import {
   EDGE,
-  MOBILE_EDGE,
   MOBILE_PEEK_HEIGHT,
   PANEL_TOP,
   PEEK_WIDTH,
@@ -54,10 +53,7 @@ export function NodePeek({
       dismissOnOutside={false}
       style={
         mobile
-          ? {
-              "--drawer-inset": `${MOBILE_EDGE}px`,
-              height: `${MOBILE_PEEK_HEIGHT * 100}svh`,
-            }
+          ? { height: `${MOBILE_PEEK_HEIGHT * 100}svh` }
           : {
               "--drawer-inset": `${EDGE}px`,
               "--drawer-content-width": `${PEEK_WIDTH}px`,

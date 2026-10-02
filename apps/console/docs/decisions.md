@@ -120,8 +120,8 @@ surface kind has one slot, so nothing stacks:
 
 | Surface | Where | What |
 | --- | --- | --- |
-| Chrome | always | network card top left (switcher, counts, link bar; on phones bottom centre), preferences and account top right, the dock |
-| Dock | left, under the network card | icon rail on wide screens; on phones a round launcher that unfolds the pages |
+| Chrome | always | network card top left (switcher, counts, link bar), preferences and account top right, the dock; on phones a bottom bar on every page (the launcher, then the card without its link bar) and preferences top right |
+| Dock | left, under the network card | icon rail on wide screens; on phones a round launcher at the bottom left, under the thumb, that unfolds the pages upwards |
 | Page panel | left, beside the dock | one page's list (the node list today) |
 | Peek | right | the overview's quick look at one node (shadcn Drawer, not modal) |
 | Workspace | right of the page panel, covering the globe | one entity in full (a node: tabs, more to come); the globe dims and keeps its place |
@@ -138,9 +138,9 @@ surface kind has one slot, so nothing stacks:
 - Surfaces appear in place with a fade and a short shift and keep their last
   content while leaving (`Surface`); the peek slides as a drawer.
 - On phones the page panel, the peek and the workspace are glass drawers
-  (`GlassDrawer`): swiping one away, Escape, or a tap outside it (not on the
-  chrome or its menus) steps back - the list to the overview, the workspace
-  to the list.
+  (`GlassDrawer`) floating above the bottom bar: swiping one away, Escape,
+  or a tap outside it (not on the chrome or its menus) steps back - the
+  list to the overview, the workspace to the list.
 
 ## URL and state
 
