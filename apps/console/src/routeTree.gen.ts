@@ -10,6 +10,7 @@
 
 import { Route as rootRouteImport } from './routes/__root'
 import { Route as AuthedRouteImport } from './routes/_authed'
+import { Route as LabRouteImport } from './routes/lab'
 import { Route as LoginRouteImport } from './routes/login'
 import { Route as AuthedIndexRouteImport } from './routes/_authed/index'
 import { Route as AuthedNetworksNetworkRouteImport } from './routes/_authed/networks/$network'
@@ -18,6 +19,11 @@ import { Route as AuthedNetworksNetworkOverviewRouteImport } from './routes/_aut
 
 const AuthedRoute = AuthedRouteImport.update({
   id: '/_authed',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const LabRoute = LabRouteImport.update({
+  id: '/lab',
+  path: '/lab',
   getParentRoute: () => rootRouteImport,
 } as any)
 const LoginRoute = LoginRouteImport.update({
@@ -50,12 +56,14 @@ const AuthedNetworksNetworkOverviewRoute =
 
 export interface FileRoutesByFullPath {
   '/': typeof AuthedIndexRoute
+  '/lab': typeof LabRoute
   '/login': typeof LoginRoute
   '/networks/$network': typeof AuthedNetworksNetworkRouteWithChildren
   '/networks/$network/overview': typeof AuthedNetworksNetworkOverviewRoute
   '/networks/$network/': typeof AuthedNetworksNetworkIndexRoute
 }
 export interface FileRoutesByTo {
+  '/lab': typeof LabRoute
   '/login': typeof LoginRoute
   '/': typeof AuthedIndexRoute
   '/networks/$network/overview': typeof AuthedNetworksNetworkOverviewRoute
@@ -64,6 +72,7 @@ export interface FileRoutesByTo {
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/_authed': typeof AuthedRouteWithChildren
+  '/lab': typeof LabRoute
   '/login': typeof LoginRoute
   '/_authed/': typeof AuthedIndexRoute
   '/_authed/networks/$network': typeof AuthedNetworksNetworkRouteWithChildren
@@ -74,15 +83,22 @@ export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
   fullPaths:
     | '/'
+    | '/lab'
     | '/login'
     | '/networks/$network'
     | '/networks/$network/overview'
     | '/networks/$network/'
   fileRoutesByTo: FileRoutesByTo
-  to: '/login' | '/' | '/networks/$network/overview' | '/networks/$network'
+  to:
+    | '/lab'
+    | '/login'
+    | '/'
+    | '/networks/$network/overview'
+    | '/networks/$network'
   id:
     | '__root__'
     | '/_authed'
+    | '/lab'
     | '/login'
     | '/_authed/'
     | '/_authed/networks/$network'
@@ -92,6 +108,7 @@ export interface FileRouteTypes {
 }
 export interface RootRouteChildren {
   AuthedRoute: typeof AuthedRouteWithChildren
+  LabRoute: typeof LabRoute
   LoginRoute: typeof LoginRoute
 }
 
@@ -102,6 +119,13 @@ declare module '@tanstack/react-router' {
       path: ''
       fullPath: '/'
       preLoaderRoute: typeof AuthedRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/lab': {
+      id: '/lab'
+      path: '/lab'
+      fullPath: '/lab'
+      preLoaderRoute: typeof LabRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/login': {
@@ -172,6 +196,7 @@ const AuthedRouteWithChildren =
 
 const rootRouteChildren: RootRouteChildren = {
   AuthedRoute: AuthedRouteWithChildren,
+  LabRoute: LabRoute,
   LoginRoute: LoginRoute,
 }
 export const routeTree = rootRouteImport
