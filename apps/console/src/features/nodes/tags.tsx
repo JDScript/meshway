@@ -262,6 +262,7 @@ export function TagWorkspace({
             <>
               <TextField
                 id="tag-description"
+                placeholder={m.nodes_tag_description_placeholder()}
                 name="tag-description"
                 label={m.nodes_tag_description()}
                 autoComplete="off"
@@ -423,6 +424,7 @@ export function NewTagDialog({
         </Field>
         <TextField
           id="new-tag-description"
+          placeholder={m.nodes_tag_description_placeholder()}
           name="tag-description"
           label={m.nodes_tag_description()}
           autoComplete="off"

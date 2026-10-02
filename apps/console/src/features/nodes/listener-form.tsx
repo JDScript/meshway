@@ -1,4 +1,4 @@
-import { cn } from "cn"
+import { cn } from "@/lib/utils"
 import { PlusIcon, XIcon } from "lucide-react"
 
 import {
@@ -101,6 +101,7 @@ export function ListenerForm({
         ) : (
           <TextField
             id={field("id")}
+            placeholder={m.node_listener_id_placeholder()}
             name="listener-id"
             label={m.node_listener_id()}
             autoComplete="off"
@@ -151,6 +152,7 @@ export function ListenerForm({
         <div className="grid grid-cols-[1fr_7rem] gap-3">
           <TextField
             id={field("bind-address")}
+            placeholder={m.node_listener_bind_address_placeholder()}
             name="bind-address"
             label={m.node_listener_bind_address()}
             autoComplete="off"
@@ -164,6 +166,7 @@ export function ListenerForm({
           />
           <TextField
             id={field("bind-port")}
+            placeholder={m.node_listener_port_placeholder()}
             name="bind-port"
             label={m.node_listener_port()}
             inputMode="numeric"
@@ -292,6 +295,7 @@ export function ListenerForm({
           <div className="grid gap-4 sm:grid-cols-2">
             <TextField
               id={field("server-name")}
+              placeholder={m.node_listener_server_name_placeholder()}
               name="server-name"
               label={m.node_listener_server_name()}
               autoComplete="off"
@@ -308,6 +312,7 @@ export function ListenerForm({
               <>
                 <TextField
                   id={field("ws-path")}
+                  placeholder={m.node_listener_ws_path_placeholder()}
                   name="websocket-path"
                   label={m.node_listener_ws_path()}
                   autoComplete="off"
@@ -322,6 +327,7 @@ export function ListenerForm({
                 />
                 <TextField
                   id={field("ws-host")}
+                  placeholder={m.node_listener_ws_host_placeholder()}
                   name="websocket-host"
                   label={m.node_listener_ws_host()}
                   autoComplete="off"

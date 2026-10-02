@@ -253,5 +253,12 @@
   "nodes_add_expires": "Expires",
   "nodes_add_enroll_command": "Enrol command",
   "nodes_add_run_command": "Run command",
-  "node_latency_unreadable": "Latency history could not be read"
+  "node_latency_unreadable": "Latency history could not be read",
+  "node_listener_id_placeholder": "vless-443",
+  "node_listener_bind_address_placeholder": "0.0.0.0",
+  "node_listener_port_placeholder": "8443",
+  "node_listener_server_name_placeholder": "edge.example.com",
+  "node_listener_ws_path_placeholder": "/meshway",
+  "node_listener_ws_host_placeholder": "edge.example.com",
+  "nodes_tag_description_placeholder": "Office servers"
 }
