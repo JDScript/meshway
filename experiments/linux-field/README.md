@@ -105,9 +105,14 @@ NODE_EXTRA_CA_CERTS="$ORIGINAL/ca.pem" node experiments/linux-field/retest.ts \
   `NetworkSnapshot` / `PolicySnapshot` / `MeshAccessSnapshot` schema。
   原 final-public-control 只有 nodes / connections / runtime，因此这些缺项需由协调者根据已保存来源提供并核对，
   不能拿候选启动后的响应充当旧基线。任何无法证明的旧源都应阻塞执行，不临时保存“等价新配置”。
+  协调者现已保存公开的 `TMP/meshway-field-baseline-inventory-r1-5038bd8a8e3f/control-source-inventory.json`
+  和 `source-provenance.json`：前者可直接作为本字段，后者记录原 v11 只读副本、生成 GET、原 OpenAPI 和来源证明。
+  对应 `public-inventory.json` 的 `hosts[host]` 可作为下述 `public` 字段；无需重建基线或访问私有 copy。
 - `hosts`：固定四项 `jp-tyo`、`us-lax`、`us-nyc`、`kr-icn`；每项包含原 `ssh` / `sudo` / `listener`，
   以及 `image: { id: "sha256:<64hex>", source: "<40hex verified commit>", verified: true, version_evidence: "<review/build inventory reference>" }`。
   不内置候选提交、镜像 tag 或自动 pull。两种架构的库存分别明确来源。
+  Docker image inspect 的 `Config.Labels["org.opencontainers.image.revision"]` 必须等于显式完整 `source`；
+  不能只依赖新容器自填的 source label。离线校验 `run` 和恢复 `create` 都使用 `--pull never`。
 - 每个 host 的 `public.agent` 是下述离线白名单输出的**先前核对库存**；LAX 还需 `public.controller`。
   不能跳过或把首次复验读取结果自动接受为库存。
 
@@ -147,7 +152,13 @@ hash 校验保留原 CA/HTTPS 绑定和 old helper SHA；此版本**不替换 he
 新资源名为 `meshway-field-<run_id>-<attempt>[-<role>]`。
 label 包含原 owner、attempt、角色与 source。重试仅接纳名称、label、immutable image、bind 路径、
 capability、入口和端口均一致的容器，不删除/接管未知资源；stopped owned 容器才 start，缺少资源则 create。
-bridge 核对 label/name/IPAM/非默认宿主路由冲突，只有自身 bridge 的精确 Docker 子网路由被豁免。
+能力只兼容 Docker 的 `NET_ADMIN` / `CAP_NET_ADMIN` 两种已知写法，精确比较并拒绝多余或重复能力；
+Controller CapAdd 仍为空、CapDrop 必须恰为 `ALL`。
+resume 同时核对声明的两个 SSL_CERT 环境路径、sysctls、128 pids、384 MiB、1 CPU 和 init；
+不对镜像未由 fixture 设置的其他环境变量或外部字段作一致性保证。
+bridge 核对 label/name/IPAM/非默认宿主路由冲突。豁免仅限完整 own bridge ID 对应的设备、kernel protocol、
+原 gateway prefsrc，以及精确 subnet unicast（main/link）、gateway local /32（local/host）、
+IPAM broadcast /32（local/link）；foreign alias、不同 dev/属性、overlay route 均拒绝。
 Agent 仍为 cap-drop ALL + NET_ADMIN + TUN；Controller 无 capability。宿主改动只来自 Docker 本轮 bridge/端口，
 不修改 route/DNS/firewall/daemon，不使用 host network。
 

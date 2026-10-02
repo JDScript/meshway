@@ -12,6 +12,57 @@ ROLE = OWNER + '.role'
 SOURCE = OWNER + '.source'
 
 
+def check_capabilities(add, drop, role):
+    # Only the spelling alias actually used by Docker is recognized. Unknown
+    # capabilities remain unknown, and duplicates are never collapsed into a set.
+    aliases = {'CAP_NET_ADMIN': 'NET_ADMIN'}
+    values = [] if add is None else add
+    if role not in ['agent', 'controller'] or not isinstance(values, list) or any(not isinstance(cap, str) for cap in values):
+        raise ValueError('invalid container capabilities')
+    normalized = [aliases.get(cap, cap) for cap in values]
+    if normalized != (['NET_ADMIN'] if role == 'agent' else []) or drop != ['ALL']:
+        raise ValueError('container capabilities mismatch')
+
+
+def own_kernel_bridge_route(route, network):
+    if not network or not re.fullmatch(r'[0-9a-f]{64}', network['Id']):
+        return False
+    if set(route) - {'type', 'dst', 'dev', 'table', 'protocol', 'scope', 'prefsrc', 'flags'}:
+        return False
+    subnet = ipaddress.IPv4Network(network['IPAM']['Config'][0]['Subnet'])
+    gateway = network['IPAM']['Config'][0]['Gateway']
+    if route.get('dev') != 'br-' + network['Id'][:12] or route.get('protocol') != 'kernel' or route.get('prefsrc') != gateway:
+        return False
+    if route.get('flags', []) not in [[], ['linkdown']]:
+        return False
+    prefix = ipaddress.IPv4Network(route['dst'], strict=False)
+    kind = route.get('type', 'unicast')
+    if kind == 'unicast':
+        return prefix == subnet and route.get('scope') == 'link' and route.get('table', 'main') == 'main'
+    if route.get('table') != 'local' or prefix.prefixlen != 32:
+        return False
+    return (kind == 'local' and str(prefix.network_address) == gateway and route.get('scope') == 'host') or (
+        kind == 'broadcast' and prefix.network_address == subnet.broadcast_address and route.get('scope') == 'link')
+
+
+def check_image_origin(view, image, source):
+    if view['Id'] != image or (view['Config'].get('Labels') or {}).get('org.opencontainers.image.revision') != source:
+        raise ValueError('local immutable image/source mismatch')
+
+
+def check_runtime_constants(config, hc, role):
+    for key, value in {'SSL_CERT_FILE': '/private/ca.pem', 'SSL_CERT_DIR': '/private/empty-certs'}.items():
+        entries = [item for item in (config.get('Env') or []) if item.split('=', 1)[0] == key]
+        if entries != [key + '=' + value]:
+            raise ValueError('container SSL environment mismatch')
+    sysctls = {'net.ipv4.ip_forward': '0', 'net.ipv6.conf.all.forwarding': '0',
+               'net.ipv4.ping_group_range': '0 2147483647'}
+    if role == 'agent':
+        sysctls['net.ipv6.conf.default.disable_ipv6'] = '1'
+    if hc.get('Sysctls') != sysctls or hc.get('PidsLimit') != 128 or hc.get('Memory') != 384 * 1024 * 1024 or hc.get('NanoCpus') != 1_000_000_000 or hc.get('Init') is not True:
+        raise ValueError('container runtime constants mismatch')
+
+
 def restore(data, root, docker):
     run_id, attempt = data['run_id'], data['attempt']
     if not re.fullmatch(r'[a-z0-9-]{10,48}', attempt) or attempt == run_id:
@@ -70,8 +121,7 @@ def restore(data, root, docker):
                 continue
             prefix = ipaddress.IPv4Network(route['dst'], strict=False)
             if any(prefix.overlaps(ipaddress.IPv4Network(v)) for v in ['172.31.249.0/28', '198.18.42.0/24']):
-                own_bridge = existing and route.get('dev') == 'br-' + existing['Id'][:12] and str(prefix) == '172.31.249.0/28'
-                if not own_bridge:
+                if not own_kernel_bridge_route(route, existing):
                     raise ValueError('non-default route conflict')
         for route in json.loads(run(['ip', '-j', '-6', 'route', 'show', 'table', 'all'])):
             if route.get('dst', 'default') != 'default' and ipaddress.IPv6Network(route['dst'], strict=False).overlaps(ipaddress.IPv6Network('fd62:bfaa:4242::/64')):
@@ -97,12 +147,11 @@ def restore(data, root, docker):
     if not re.fullmatch(r'sha256:[0-9a-f]{64}', image) or not re.fullmatch(r'[0-9a-f]{40}', source) or data['verified'] is not True:
         raise ValueError('verified immutable inventory required')
     view = json.loads(dk(['image', 'inspect', image]))[0]
-    if view['Id'] != image:
-        raise ValueError('local immutable image mismatch')
+    check_image_origin(view, image, source)
     public_code = data['public_source'] + '\nprint(json.dumps(public_state(' + repr(role) + ')))'
 
     def public():
-        return json.loads(dk(['run', '--rm', '--name', name + '-' + role + '-verify',
+        return json.loads(dk(['run', '--pull', 'never', '--rm', '--name', name + '-' + role + '-verify',
                              '--label', OWNER + '=' + run_id, '--label', ATTEMPT + '=' + attempt,
                              '--label', ROLE + '=' + role, '--label', SOURCE + '=' + source,
                              '--user', '0:0', '--network', 'none', '--cap-drop', 'ALL', '--read-only',
@@ -131,7 +180,9 @@ def restore(data, root, docker):
             raise ValueError('bind path mismatch')
         if any(m['Type'] != 'bind' and not (m['Type'] == 'tmpfs' and m['Destination'] == '/tmp') for m in v['Mounts']):
             raise ValueError('unknown additional mount')
-        if hc['Privileged'] or hc['NetworkMode'] != name or hc['CapDrop'] != ['ALL'] or (hc['CapAdd'] or []) != (['NET_ADMIN'] if role == 'agent' else []):
+        check_capabilities(hc['CapAdd'], hc['CapDrop'], role)
+        check_runtime_constants(v['Config'], hc, role)
+        if hc['Privileged'] or hc['NetworkMode'] != name:
             raise ValueError('container isolation mismatch')
         if not hc['ReadonlyRootfs'] or v['Config']['User'] != '0:0' or v['Config']['Entrypoint'] != ['python3'] or v['Config']['Cmd'] != ['-I', '/private/container.py', 'boot']:
             raise ValueError('container entrypoint mismatch')
@@ -153,7 +204,7 @@ def restore(data, root, docker):
             raise ValueError('existing container is not safely resumable')
     if action == 'restore-container':
         if not existing:
-            args = ['create', '--name', container, '--init', '--user', '0:0', '--network', name, '--cap-drop', 'ALL',
+            args = ['create', '--pull', 'never', '--name', container, '--init', '--user', '0:0', '--network', name, '--cap-drop', 'ALL',
                     '--security-opt', 'no-new-privileges', '--read-only', '--memory', '384m', '--cpus', '1', '--pids-limit', '128',
                     '--mount', f'type=bind,source={directory},target=/private', '--tmpfs', '/tmp:rw,nosuid,nodev,noexec,size=16m',
                     '--env', 'SSL_CERT_FILE=/private/ca.pem', '--env', 'SSL_CERT_DIR=/private/empty-certs',
