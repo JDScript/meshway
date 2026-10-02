@@ -370,7 +370,20 @@ impl Manager {
             .as_ref()
             .ok_or(AgentError::Invalid("dataplane was not explicitly enabled"))?;
         let plan = PacketPlan::sink(&snapshot.payload, settings.options.mtu)?;
-        for listener in &snapshot.payload.connections.listeners {
+        self.prepare_packet_sink(plan, &snapshot.payload.connections)
+            .await
+    }
+
+    async fn prepare_packet_sink(
+        &mut self,
+        plan: PacketPlan,
+        connections: &NodeConnections,
+    ) -> Result<(), AgentError> {
+        let settings = self
+            .dataplane
+            .as_ref()
+            .ok_or(AgentError::Invalid("dataplane was not explicitly enabled"))?;
+        for listener in &connections.listeners {
             let address: SocketAddr = listener
                 .bind
                 .parse()
@@ -386,10 +399,7 @@ impl Manager {
         }
         let targets = match time::timeout(
             Duration::from_secs(5),
-            resolve_targets(
-                &snapshot.payload.connections,
-                self.socket_protection.as_ref(),
-            ),
+            resolve_targets(connections, self.socket_protection.as_ref()),
         )
         .await
         {
@@ -417,6 +427,76 @@ impl Manager {
             .await?,
         );
         Ok(())
+    }
+
+    pub async fn invalidate_mesh_execution(
+        &mut self,
+        snapshot: &meshway_protocol::MeshExecutionSnapshot,
+    ) {
+        if self.packet_digest.as_ref() != Some(&snapshot.digest)
+            || !snapshot.payload.valid
+            || !snapshot.payload.connections.valid
+        {
+            self.withdraw(Reason::InvalidConfiguration).await;
+        }
+    }
+
+    pub async fn prepare_mesh_sink(
+        &mut self,
+        snapshot: &meshway_protocol::MeshExecutionSnapshot,
+    ) -> Result<(), AgentError> {
+        let mtu = self
+            .dataplane
+            .as_ref()
+            .ok_or(AgentError::Invalid("dataplane was not explicitly enabled"))?
+            .options
+            .mtu;
+        let plan = PacketPlan::sink_mesh(&snapshot.payload, mtu)?;
+        if snapshot.payload.valid && snapshot.payload.connections.valid {
+            // ACK is saved/validated, not applied. Still reject an impossible
+            // exact-path MTU/admission plan before issuing that saved receipt.
+            PacketPlan::compile_mesh(&snapshot.payload, mtu)?;
+        }
+        let result = self
+            .prepare_packet_sink(plan, &snapshot.payload.connections)
+            .await;
+        if result.is_err() {
+            self.withdraw(Reason::InvalidConfiguration).await;
+        }
+        result
+    }
+
+    pub async fn reconcile_mesh_execution(
+        &mut self,
+        snapshot: meshway_protocol::MeshExecutionSnapshot,
+        key: PrivateKey,
+        fresh_at: Instant,
+    ) -> Result<(), AgentError> {
+        self.invalidate_mesh_execution(&snapshot).await;
+        self.prepare_mesh_sink(&snapshot).await?;
+        self.packet_digest = Some(snapshot.digest);
+        let payload = snapshot.payload;
+        let connections = AgentConnectionsSnapshot {
+            digest: meshway_protocol::connection_digest(&payload.connections)
+                .map_err(|_| AgentError::Invalid("cannot hash Mesh adjacency"))?,
+            payload: payload.connections.clone(),
+        };
+        if !payload.valid || !payload.connections.valid {
+            self.snapshot = Some(connections);
+            self.withdraw(Reason::InvalidConfiguration).await;
+            self.observation.state = Phase::Error;
+            return Ok(());
+        }
+        let plan = PacketPlan::compile_mesh(
+            &payload,
+            self.dataplane
+                .as_ref()
+                .expect("explicit dataplane")
+                .options
+                .mtu,
+        )?;
+        self.reconcile_inner(connections, key, fresh_at, Some(plan))
+            .await
     }
 
     pub fn observation(&self) -> Observation {

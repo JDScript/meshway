@@ -65,9 +65,41 @@ impl PacketPlan {
     /// A drop sink needs only the validated address binding, never access grants.
     pub fn sink(payload: &NodeDataplane, mtu: u16) -> Result<Self, AgentError> {
         let configuration = &payload.configuration;
-        let prefix: Ipv4Net = configuration
-            .network
-            .ipv4_prefix
+        Self::address_sink(
+            &payload.node_id,
+            payload.revision,
+            meshway_protocol::dataplane_digest(payload)
+                .map_err(|_| AgentError::Invalid("cannot hash managed packet generation"))?,
+            &configuration.network.ipv4_prefix,
+            &configuration.node.mesh_ipv4,
+            mtu,
+        )
+    }
+
+    pub fn sink_mesh(
+        payload: &meshway_protocol::NodeMeshExecution,
+        mtu: u16,
+    ) -> Result<Self, AgentError> {
+        Self::address_sink(
+            &payload.node_id,
+            payload.revision,
+            meshway_protocol::mesh_execution_digest(payload)
+                .map_err(|_| AgentError::Invalid("cannot hash Mesh packet generation"))?,
+            &payload.network.ipv4_prefix,
+            &payload.node.mesh_ipv4,
+            mtu,
+        )
+    }
+
+    fn address_sink(
+        node_id: &str,
+        revision: u32,
+        digest: String,
+        network: &str,
+        address: &str,
+        mtu: u16,
+    ) -> Result<Self, AgentError> {
+        let prefix: Ipv4Net = network
             .parse()
             .map_err(|_| AgentError::Invalid("invalid mesh IPv4 pool"))?;
         // A managed pool must never capture the Internet, loopback, multicast,
@@ -85,16 +117,13 @@ impl PacketPlan {
                 "mesh IPv4 pool cannot be safely installed",
             ));
         }
-        let local = configuration
-            .node
-            .mesh_ipv4
+        let local = address
             .parse()
             .map_err(|_| AgentError::Invalid("invalid local mesh IPv4"))?;
         Ok(Self {
-            node_id: payload.node_id.clone(),
-            revision: payload.revision,
-            digest: meshway_protocol::dataplane_digest(payload)
-                .map_err(|_| AgentError::Invalid("cannot hash managed packet generation"))?,
+            node_id: node_id.to_owned(),
+            revision,
+            digest,
             local,
             prefix,
             mtu,
@@ -102,6 +131,65 @@ impl PacketPlan {
             identities: vec![],
             admission: Ipv4PacketPlan::new(local, mtu, BTreeMap::new(), BTreeMap::new()),
         })
+    }
+
+    /// V3 installs the controller's exact plan directly. No legacy source policy
+    /// interpretation, inferred reverse authorization, or adjacency replanning.
+    pub fn compile_mesh(
+        payload: &meshway_protocol::NodeMeshExecution,
+        mtu: u16,
+    ) -> Result<Self, AgentError> {
+        if !payload.valid || !payload.connections.valid {
+            return Err(AgentError::Invalid("Mesh execution withdrawn"));
+        }
+        let mut plan = Self::sink_mesh(payload, mtu)?;
+        let ips: BTreeMap<_, Ipv4Addr> = std::iter::once(&payload.node)
+            .chain(&payload.peers)
+            .map(|n| {
+                Ok((
+                    n.id.as_str(),
+                    n.mesh_ipv4
+                        .parse()
+                        .map_err(|_| AgentError::Invalid("invalid Mesh IPv4"))?,
+                ))
+            })
+            .collect::<Result<_, AgentError>>()?;
+        let mut outgoing = BTreeMap::new();
+        let mut incoming = BTreeMap::new();
+        for path in &payload.paths {
+            let path = &path.nodes;
+            if !(2..=8).contains(&path.len())
+                || !path.contains(&payload.node_id)
+                || path.iter().collect::<std::collections::BTreeSet<_>>().len() != path.len()
+                || path.iter().any(|id| !ips.contains_key(id.as_str()))
+            {
+                return Err(AgentError::Invalid("invalid exact Mesh path"));
+            }
+            if !native_udp_datagram_len(path, usize::from(mtu))
+                .is_ok_and(|bytes| bytes + 48 <= 1500)
+            {
+                return Err(AgentError::Invalid("Mesh path exceeds outer MTU budget"));
+            }
+            if path.first() == Some(&payload.node_id)
+                && outgoing
+                    .insert(
+                        ips[path.last().expect("checked path").as_str()],
+                        path.clone(),
+                    )
+                    .is_some()
+            {
+                return Err(AgentError::Invalid(
+                    "multiple Mesh paths for one destination",
+                ));
+            }
+            if path.last() == Some(&payload.node_id) {
+                incoming.insert(path.clone(), ips[path[0].as_str()]);
+            }
+        }
+        plan.paths = payload.paths.iter().map(|p| p.nodes.clone()).collect();
+        plan.identities = payload.identities.clone();
+        plan.admission = Ipv4PacketPlan::new(plan.local, mtu, outgoing, incoming);
+        Ok(plan)
     }
 
     /// Compile once from the coherent bundle, including at relay nodes. This

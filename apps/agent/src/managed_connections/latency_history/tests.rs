@@ -277,7 +277,12 @@ async fn real_agent_sampler_generated_http_persistence_restart_and_withdrawal() 
         first.sample.channel_associations[0].listener_id,
         "history-listener"
     );
-    assert!(first.historical && first.received_at >= first.sample.measured_at);
+    // The controller persists receipt timestamps as integer milliseconds;
+    // sample timestamps retain sub-ms precision. Compare at the stored precision.
+    assert!(
+        first.historical
+            && first.received_at.timestamp_millis() >= first.sample.measured_at.timestamp_millis()
+    );
     let response = a_http
         .report_latency_samples(wire(&ReportLatencySamplesRequest {
             samples: vec![first.sample.clone()],

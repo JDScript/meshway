@@ -46,6 +46,12 @@ pub(super) struct Synced {
     pub fresh_at: Instant,
 }
 
+pub(super) struct SyncedMesh {
+    pub receipt: ControlSyncReceipts,
+    pub snapshot: meshway_protocol::MeshExecutionSnapshot,
+    pub fresh_at: Instant,
+}
+
 fn path(state: &Path) -> PathBuf {
     let mut path = state.as_os_str().to_owned();
     path.push(".dataplane.json");

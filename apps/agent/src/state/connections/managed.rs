@@ -270,7 +270,7 @@ impl Agent {
         }
         manager.invalidate_dataplane_revision(published).await;
         let (mut receipt, mut packet_snapshot, mut fresh_at) =
-            self.managed_sync_mode(manager, dataplane).await?;
+            self.managed_sync_mode(manager, dataplane, lease).await?;
         if lease.epoch.is_none() {
             if lease.expected_epoch.is_none() {
                 let response: GetConnectionRuntimeEpochResponse =
@@ -303,7 +303,7 @@ impl Agent {
             lease.epoch = Some(response.epoch);
             // Pull while holding the runtime lease, not merely before begin.
             (receipt, packet_snapshot, fresh_at) =
-                self.managed_sync_mode(manager, dataplane).await?;
+                self.managed_sync_mode(manager, dataplane, lease).await?;
         }
         let state = self
             .connections
@@ -320,7 +320,16 @@ impl Agent {
             .clone();
         *control_synced = true;
         if let Some((snapshot, fresh_at)) = packet_snapshot {
-            manager.reconcile_dataplane(snapshot, key, fresh_at).await?;
+            match snapshot {
+                super::mesh_execution::Execution::Legacy(snapshot) => {
+                    manager.reconcile_dataplane(snapshot, key, fresh_at).await?
+                }
+                super::mesh_execution::Execution::Mesh(snapshot) => {
+                    manager
+                        .reconcile_mesh_execution(snapshot, key, fresh_at)
+                        .await?
+                }
+            }
         } else {
             manager.reconcile(snapshot, key, fresh_at).await;
         }
@@ -558,19 +567,40 @@ impl Agent {
         &mut self,
         manager: &mut Manager,
         dataplane: &mut Option<dataplane::State>,
+        lease: &RuntimeLease,
     ) -> Result<
         (
             super::ControlSyncReceipts,
-            Option<(meshway_protocol::AgentDataplaneSnapshot, Instant)>,
+            Option<(super::mesh_execution::Execution, Instant)>,
             Instant,
         ),
         AgentError,
     > {
         if let Some(dataplane) = dataplane {
+            if let Some(epoch) = lease.epoch {
+                let runtime = meshway_protocol::MeshExecutionRequest {
+                    epoch,
+                    instance_id: lease.instance_id.clone(),
+                    capabilities: vec![meshway_protocol::MeshExecutionCapability::Ipv4ExactPathV1],
+                };
+                if let Some(synced) = super::mesh_execution::sync(self, manager, &runtime).await? {
+                    return Ok((
+                        synced.receipt,
+                        Some((
+                            super::mesh_execution::Execution::Mesh(synced.snapshot),
+                            synced.fresh_at,
+                        )),
+                        synced.fresh_at,
+                    ));
+                }
+            }
             let synced = dataplane.sync(self, manager).await?;
             Ok((
                 synced.receipt,
-                Some((synced.snapshot, synced.fresh_at)),
+                Some((
+                    super::mesh_execution::Execution::Legacy(synced.snapshot),
+                    synced.fresh_at,
+                )),
                 synced.fresh_at,
             ))
         } else {

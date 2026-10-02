@@ -150,6 +150,17 @@ pub(super) fn success(path: &str, body: &[u8], snapshot: &AgentDataplaneSnapshot
         "/api/v1/agent/managed-dataplane" => {
             serde_json::to_vec(&managed(snapshot.clone())).unwrap()
         }
+        "/api/v1/agents/mesh-execution" => {
+            let request: meshway_protocol::MeshExecutionRequest =
+                serde_json::from_slice(body).unwrap();
+            assert_ne!(request.epoch, 0);
+            serde_json::to_vec(&meshway_protocol::MeshExecutionResponse {
+                source_mode: meshway_protocol::PolicySourceMode::LegacyV2,
+                revision: payload.revision,
+                snapshot: None,
+            })
+            .unwrap()
+        }
         "/api/v1/agents/configuration/ack" => {
             let request: AcknowledgeConfigurationRequest = serde_json::from_slice(body).unwrap();
             assert_eq!(request.revision, payload.revision);

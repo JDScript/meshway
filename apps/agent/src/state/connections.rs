@@ -17,6 +17,8 @@ mod dataplane;
 mod managed;
 #[cfg(feature = "managed-connections")]
 mod materials;
+#[cfg(feature = "managed-connections")]
+mod mesh_execution;
 #[cfg(test)]
 mod tests;
 mod validation;
