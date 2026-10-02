@@ -13,7 +13,7 @@ import {
 } from "../topology/topology.ts"
 
 /** Control-plane contact this recent counts as "contact" (not data-plane evidence). */
-export const CONTACT_WINDOW_MS = 2 * 60_000
+const CONTACT_WINDOW_MS = 2 * 60_000
 
 export function vitalityOf(
   node: NodeSummary,

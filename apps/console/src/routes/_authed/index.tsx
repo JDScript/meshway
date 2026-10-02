@@ -3,7 +3,8 @@ import { useEffect } from "react"
 
 import { StatusCard } from "@/components/chrome/status-card"
 import { showWelcomeGlobe } from "@/features/globe/store"
-import { networksQuery, rememberedNetwork } from "@/features/network/queries"
+import { networksQuery } from "@/features/network/queries"
+import { rememberedNetwork } from "@/features/network/preferences"
 import { m } from "@/paraglide/messages.js"
 
 /** `/`: the remembered network, else the first one this account may open. */

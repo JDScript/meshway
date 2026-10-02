@@ -8,7 +8,7 @@ import { useSurfaceHistory } from "@/features/shell/history"
 const OVERVIEW = "/_authed/networks/$network/overview" as const
 
 /** The node the overview peeks at, as the URL has it. */
-export function usePeekId(): string | null {
+function usePeekId(): string | null {
   return (
     useMatch({
       from: OVERVIEW,

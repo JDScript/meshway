@@ -44,7 +44,7 @@ export type NodeReport =
  * between reads), current, of exactly the plan's revision, from an active
  * node, and the agent is applying / has applied that plan.
  */
-export function nodeReport(
+function nodeReport(
   runtimes: ConnectionRuntimesSnapshot | null,
   nodeId: string,
   planRevision: number,
@@ -70,7 +70,7 @@ export function nodeReport(
 }
 
 /** An authenticated neighbor with a recent probe and no sanitized failure. */
-export function isProof(peer: ConnectionNeighborObservation): boolean {
+function isProof(peer: ConnectionNeighborObservation): boolean {
   return (
     peer.state === "authenticated" && peer.probe_fresh && peer.reason === "none"
   )

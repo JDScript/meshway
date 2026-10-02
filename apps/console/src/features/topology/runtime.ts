@@ -29,7 +29,7 @@ export function runtimeFor(
 }
 
 /** Seconds since the controller received the report, at `now`; null when never reported. */
-export function reportAge(
+function reportAge(
   observation: ConnectionRuntimeObservation,
   now: number
 ): number | null {

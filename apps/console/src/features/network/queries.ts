@@ -87,24 +87,3 @@ export const ownershipQuery = (networkId: string) =>
       authed((base, token) => listNodeOwnership(base, token, networkId)),
     staleTime: 30_000,
   })
-
-const REMEMBERED_NETWORK = "meshway.network"
-
-export function rememberedNetwork(): string | null {
-  try {
-    return window.localStorage.getItem(REMEMBERED_NETWORK)
-  } catch {
-    return null
-  }
-}
-
-export function rememberNetwork(networkId: string) {
-  try {
-    window.localStorage.setItem(REMEMBERED_NETWORK, networkId)
-  } catch {
-    // A preference only.
-  }
-}
-
-export const NETWORK_ID = /^[0-9a-f]{32}$/
-export const NODE_ID = /^[0-9a-f]{64}$/

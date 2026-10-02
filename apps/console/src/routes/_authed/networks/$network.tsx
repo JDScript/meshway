@@ -3,11 +3,9 @@ import { useEffect } from "react"
 
 import { StatusCard } from "@/components/chrome/status-card"
 import { showWelcomeGlobe } from "@/features/globe/store"
-import {
-  NETWORK_ID,
-  networksQuery,
-  rememberNetwork,
-} from "@/features/network/queries"
+import { NETWORK_ID } from "@/features/network/ids"
+import { rememberNetwork } from "@/features/network/preferences"
+import { networksQuery } from "@/features/network/queries"
 import { NetworkShell } from "@/features/shell/network-shell"
 import { m } from "@/paraglide/messages.js"
 
