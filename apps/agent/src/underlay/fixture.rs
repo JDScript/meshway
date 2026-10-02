@@ -361,3 +361,22 @@ async fn permission_denied() {
     };
     assert_eq!(error.kind(), io::ErrorKind::PermissionDenied);
 }
+
+#[tokio::test]
+#[ignore = "isolated namespace installs an aliased external reserve-table rule"]
+async fn alias_capture_reference_rejected() {
+    assert_eq!(
+        std::env::var("MESHWAY_UNDERLAY_FIXTURE").as_deref(),
+        Ok("1")
+    );
+    let error = match PreparedGeneration::prepare(reservation(100, 0)).await {
+        Ok(_) => panic!("aliased external reserve-table reference was admitted"),
+        Err(error) => error,
+    };
+    assert!(
+        error
+            .to_string()
+            .contains("owned capture table referenced outside guarded block"),
+        "{error}"
+    );
+}

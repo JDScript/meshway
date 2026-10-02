@@ -151,6 +151,29 @@ def client():
             ip(v, 'route', 'add', 'default', 'dev', sinks[0 if v == 4 else 1].name, 'table', '18401')
             ip(v, 'rule', 'add', 'priority', '18001', 'iif', 'lo', 'lookup', '18401')
             owned.append((v, 'capture'))
+        # Namespace-only rt_tables display alias. The inactive reserve must be
+        # checked even though priority 18002 has deliberately not been installed.
+        Path('/etc/iproute2/rt_tables').write_text('255 local\n254 main\n253 default\n0 unspec\n18402 mw_capture_two\n')
+        result['ur1_alias_checks'] = []
+        for v in (4, 6):
+            ip(v, 'route', 'add', 'default', 'dev', sinks[0 if v == 4 else 1].name, 'table', '18402')
+            try:
+                ip(v, 'rule', 'add', 'priority', '19001', 'lookup', '18402')
+                try:
+                    plain = json.loads(ip(v, '-j', 'rule', 'show').stdout)
+                    numeric = json.loads(ip(v, '-N', '-j', 'rule', 'show').stdout)
+                    assert not any(r['priority'] == 18002 for r in plain)
+                    assert next(r for r in plain if r['priority'] == 19001)['table'] == 'mw_capture_two'
+                    assert int(next(r for r in numeric if r['priority'] == 19001)['table']) == 18402
+                    checked = subprocess.run(['/underlay-tests', '--exact', 'underlay::fixture::alias_capture_reference_rejected', '--ignored', '--nocapture'], env=env, capture_output=True, text=True, timeout=10)
+                    result['ur1_alias_checks'].append({'version': v, 'ip_j_rules': plain, 'ip_N_j_rules': numeric,
+                        'rust_exit': checked.returncode, 'stdout': checked.stdout, 'stderr': checked.stderr})
+                    if checked.returncode:
+                        raise RuntimeError(f'v{v} aliased reserve table was not rejected')
+                finally:
+                    ip(v, 'rule', 'del', 'priority', '19001', 'lookup', '18402')
+            finally:
+                ip(v, 'route', 'del', 'default', 'dev', sinks[0 if v == 4 else 1].name, 'table', '18402')
         process = subprocess.run(['strace', '-f', '-e', 'trace=socket,setsockopt,getsockopt,connect,bind,listen,accept4,sendto,shutdown,close', '-o', '/run/syscalls.log', '/underlay-tests', '--exact', 'underlay::fixture::production_paths', '--ignored', '--nocapture'], env=env, capture_output=True, text=True, timeout=90)
         result['rust_stdout'], result['rust_stderr'], result['rust_exit'] = process.stdout, process.stderr, process.returncode
         if process.returncode:

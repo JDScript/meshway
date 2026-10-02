@@ -142,3 +142,9 @@ syscall audit 实际验证 **137 次** protected bind/connect/listen 前的 mark
 组合检查入口 `python3 apps/agent/tests/underlay_fixture/combine.py --p2a 56da5ad`：在批准 TMP 的独立 archive 组合代码 / manifest candidates / 两个 handoff patch，保留 P2a secret Debug 保护并重生成客户端，检查 Agent all-features/all-targets Clippy、默认无 features、仅 managed-connections 三种组合。它不会修改 P2a 冻结 checkout、当前分支源码或协调者 lock，不执行 Docker，也不把组合编译当作新的数据面实测。
 
 最终组合材料：批准 TMP `meshway-underlay-p2a-r2fyii3r/result.json`，`p2a_commit=56da5ad`、`status=ok`，5 个命令 exit 全部为 0。原 `0f2e5cad741b` namespace 证据对应独立切片 `8ad2729`；组合阶段只重生成 / 编译 / Clippy，没有重新运行 Docker 或扩大其握手 / 数据面验收声明。
+
+## UR1 / UR2 审查后修复（原证据保持冻结）
+
+UR1：`PreparedGeneration::prepare` 改为 `ip -N -j -4/-6 rule show`，table 的判断使用数值身份而非 rt_tables 显示 alias。validator 同步识别标准 local=255 / main=254 / default=253 / unspec=0 的数字、数字字符串与旧 canonical 名称；其它无法解释的名称明确拒绝，不再跳过。备用表尚无 block 内引用 / guard-only 仍可作为 prepared staging，但任何已存在的 block 外自有表引用都必须拒绝。未知 selector、外部 mark mask 冲突与 VPN table 检查保留。
+
+原 Astra 复现目录与 target 未修改。`python3 apps/agent/tests/underlay_fixture/review_regression.py --stage ur1` 在新的批准 TMP 副本以实际新源码回归原反例，9 tests 通过；命名 / 数字备用表外引用均拒绝，两个合法 staging 场景仍接受。该阶段刻意保留 UR2 的原坏结果断言，不能声称 DNS 已修复。材料 `meshway-underlay-review-fixed-n41wioum/`。新增 Linux alias case 的实测结果在后续 UR2 联合 fixture 中另行记录，旧 137-call 证据不用于证明此修复。

@@ -8,8 +8,8 @@ COPY apps/agent ./apps/agent
 COPY apps/apple/core ./apps/apple/core
 RUN --mount=type=cache,target=/usr/local/cargo/registry \
     --mount=type=cache,target=/src/target \
-    cargo clippy --locked -p meshway-agent --all-features --lib --tests -- -D warnings \
-    && cargo test --locked -p meshway-agent --all-features --lib --no-run --message-format=json > /tests.json \
+    CARGO_BUILD_JOBS=2 cargo clippy --locked -p meshway-agent --all-features --lib --tests -- -D warnings \
+    && CARGO_BUILD_JOBS=2 cargo test --locked -p meshway-agent --all-features --lib --no-run --message-format=json > /tests.json \
     && python3 -c 'import json,pathlib,shutil; a=[j["executable"] for l in pathlib.Path("/tests.json").read_text().splitlines() if (j:=json.loads(l)).get("reason")=="compiler-artifact" and j.get("executable") and j["target"]["name"]=="meshway_agent"]; assert len(a)==1,a; shutil.copyfile(a[0],"/underlay-tests")'
 
 FROM debian:trixie-slim@sha256:a99cfc517144bc59b1978475ec53b46ecabec7e43635402ee5b77cc54cd1b20a

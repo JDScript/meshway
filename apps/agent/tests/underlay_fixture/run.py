@@ -7,6 +7,7 @@ import json
 import os
 from pathlib import Path
 import signal
+import subprocess
 import sys
 import time
 import uuid
@@ -25,7 +26,11 @@ def run(args):
     owner = 'mw-rust-underlay-' + uuid.uuid4().hex[:12]
     directory = mechanism.TMP / 'meshway-underlay-artifacts' / owner
     directory.mkdir(mode=0o700, parents=True)
-    result = {'owner': owner, 'status': 'failed', 'cleanup_errors': [], 'started_at': datetime.now(timezone.utc).isoformat()}
+    result = {'owner': owner, 'status': 'failed', 'cleanup_errors': [], 'started_at': datetime.now(timezone.utc).isoformat(),
+              'source_commit': subprocess.check_output(['git', 'rev-parse', 'HEAD'], cwd=ROOT, text=True).strip(),
+              'source_diff_sha256': hashlib.sha256(subprocess.check_output(['git', 'diff', 'HEAD'], cwd=ROOT)).hexdigest(),
+              'fixture_source_sha256': {name: hashlib.sha256((HERE / name).read_bytes()).hexdigest()
+                                        for name in ['namespace.py', 'run.py', 'Dockerfile', 'trace.py']}}
     containers, networks, transients = [], [], []
     docker = mechanism.docker
     previous = {}
@@ -55,6 +60,7 @@ def run(args):
                    '--cap-drop', 'ALL', '--cap-add', 'NET_ADMIN', '--cap-add', 'SETUID', '--cap-add', 'SETGID',
                    '--device', '/dev/net/tun', '--security-opt', 'no-new-privileges', '--read-only',
                    '--tmpfs', '/run:rw,nosuid,nodev,size=64m', '--pids-limit', '128', '--memory', '256m',
+                   '--tmpfs', '/etc/iproute2:rw,nosuid,nodev,size=1m',
                    '--sysctl', 'net.ipv6.conf.all.disable_ipv6=0', '--entrypoint', 'python3', args.image,
                    '-c', 'import signal; signal.pause()')
         docker('exec', '-d', containers[0], 'python3', '/lab/production.py', 'server')

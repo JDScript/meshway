@@ -171,7 +171,10 @@ impl PreparedGeneration {
         }
         for family in ["-4", "-6"] {
             let result = tokio::process::Command::new("ip")
-                .args(["-j", family, "rule", "show"])
+                // rt_tables aliases are display names, not table identities.
+                // Ask the kernel/iproute2 boundary for numeric IDs before any
+                // ownership/reference decision (including inactive reserves).
+                .args(["-N", "-j", family, "rule", "show"])
                 .output()
                 .await?;
             if !result.status.success() {
@@ -232,10 +235,8 @@ fn validate_rules(reservation: &Reservation, bytes: &[u8]) -> io::Result<()> {
             (reservation.first_priority..=reservation.last_priority).contains(&rule.priority);
         if !in_block {
             let a = &rule.attributes;
-            if a.get("table")
-                .and_then(number)
-                .is_some_and(|table| reservation.capture_tables.contains(&table))
-            {
+            let table = a.get("table").map(table_identity).transpose()?;
+            if table.is_some_and(|table| reservation.capture_tables.contains(&table)) {
                 return Err(invalid(
                     "owned capture table referenced outside guarded block",
                 ));
@@ -256,9 +257,7 @@ fn validate_rules(reservation: &Reservation, bytes: &[u8]) -> io::Result<()> {
             }) {
                 return Err(invalid("unreviewed external RPDB selector"));
             }
-            if rule.priority < reservation.first_priority
-                && a.get("table").and_then(serde_json::Value::as_str) != Some("local")
-            {
+            if rule.priority < reservation.first_priority && table != Some(255) {
                 return Err(invalid(
                     "preceding system policy needs explicit capture-order integration",
                 ));
@@ -291,7 +290,7 @@ fn validate_rules(reservation: &Reservation, bytes: &[u8]) -> io::Result<()> {
             }
             target += 1;
         } else {
-            let table = a.remove("table").as_ref().and_then(number);
+            let table = a.remove("table").as_ref().map(table_identity).transpose()?;
             if table.is_none_or(|table| !reservation.capture_tables.contains(&table))
                 || a.remove("iif").as_ref().and_then(serde_json::Value::as_str) != Some("lo")
             {
@@ -311,6 +310,24 @@ fn validate_rules(reservation: &Reservation, bytes: &[u8]) -> io::Result<()> {
 
 fn invalid_json(error: serde_json::Error) -> io::Error {
     invalid(error.to_string())
+}
+
+fn table_identity(value: &serde_json::Value) -> io::Result<u32> {
+    if let Some(id) = number(value) {
+        return Ok(id);
+    }
+    // Canonical builtin forms are also accepted by the validator for legacy
+    // snapshots. prepare always requests numeric output, so custom rt_tables
+    // aliases (even aliases shadowing builtin names) cannot change its identity.
+    match value.as_str() {
+        Some("local") => Ok(255),
+        Some("main") => Ok(254),
+        Some("default") => Ok(253),
+        Some("unspec") => Ok(0),
+        _ => Err(invalid(
+            "unresolved RPDB table identity; numeric output required",
+        )),
+    }
 }
 
 #[cfg(test)]
@@ -357,5 +374,75 @@ mod tests {
             .is_err()
         );
         assert!(validate_rules(&reservation, valid.replace("18401", "18402").as_bytes()).is_err());
+    }
+
+    #[test]
+    fn numeric_and_builtin_forms_preserve_staging_and_external_checks() {
+        let reservation = Reservation {
+            owner: "ur1".into(),
+            generation: 1,
+            mark: MarkReservation::new(0x4d570000, 0xffff0000).unwrap(),
+            foreign_bits: 0,
+            first_priority: 18000,
+            last_priority: 18003,
+            capture_tables: vec![18401, 18402],
+        };
+        let guard = serde_json::json!({"priority":18000,"src":"all","fwmark":"0x4d570000","fwmask":"0xffff0000","iif":"lo","goto":18003});
+        let nop = serde_json::json!({"priority":18003,"src":"all","nop":null});
+        for (local, main, default) in [
+            (
+                serde_json::json!(255),
+                serde_json::json!(254),
+                serde_json::json!(253),
+            ),
+            (
+                serde_json::json!("255"),
+                serde_json::json!("254"),
+                serde_json::json!("253"),
+            ),
+            (
+                serde_json::json!("local"),
+                serde_json::json!("main"),
+                serde_json::json!("default"),
+            ),
+        ] {
+            let mut rules = vec![
+                serde_json::json!({"priority":0,"src":"all","table":local}),
+                guard.clone(),
+                nop.clone(),
+                serde_json::json!({"priority":32766,"src":"all","table":main}),
+                serde_json::json!({"priority":32767,"src":"all","table":default}),
+                serde_json::json!({"priority":19000,"src":"all","table":"18550","fwmark":"0x20","fwmask":"0xff"}),
+            ];
+            // Guard-only is legitimate preparation, not capture-applied.
+            assert!(validate_rules(&reservation, &serde_json::to_vec(&rules).unwrap()).is_ok());
+            rules.push(serde_json::json!({"priority":18001,"src":"all","iif":"lo","table":18401}));
+            assert!(validate_rules(&reservation, &serde_json::to_vec(&rules).unwrap()).is_ok());
+            // Reserve 18402 has no in-block rule, but every outside reference
+            // must reject, regardless of its display form.
+            for table in [
+                serde_json::json!(18402),
+                serde_json::json!("18402"),
+                serde_json::json!("mw_capture_two"),
+                serde_json::json!("unknown_vpn"),
+            ] {
+                let mut conflicting = rules.clone();
+                conflicting.push(serde_json::json!({"priority":19001,"src":"all","table":table}));
+                assert!(
+                    validate_rules(&reservation, &serde_json::to_vec(&conflicting).unwrap())
+                        .is_err()
+                );
+            }
+            let mut foreign = rules.clone();
+            foreign.push(
+                serde_json::json!({"priority":19002,"src":"all","table":18551,"uidrange":"1-2"}),
+            );
+            assert!(validate_rules(&reservation, &serde_json::to_vec(&foreign).unwrap()).is_err());
+            foreign = rules.clone();
+            foreign.push(serde_json::json!({"priority":19002,"src":"all","table":18551,"fwmark":"0x10000","fwmask":"0xffff0000"}));
+            assert!(validate_rules(&reservation, &serde_json::to_vec(&foreign).unwrap()).is_err());
+        }
+        assert_eq!(table_identity(&serde_json::json!("unspec")).unwrap(), 0);
+        assert!(table_identity(&serde_json::json!(true)).is_err());
     }
 }
