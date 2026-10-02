@@ -102,5 +102,6 @@
   "setup_reset_stale": "密码已变更",
   "setup_reset_revoke": "撤销",
   "setup_reset_revoke_body": "这个重置链接立即失效。",
-  "setup_reset_revoked_done": "已撤销重置链接"
+  "setup_reset_revoked_done": "已撤销重置链接",
+  "setup_token_placeholder": "admin.token 的内容"
 }

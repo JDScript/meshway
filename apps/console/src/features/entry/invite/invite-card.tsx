@@ -18,15 +18,10 @@ import { dropDrafts } from "@/features/shell/drafts"
 import { apiBase, SessionRejected } from "@/lib/api"
 import { failureMessage, failureOf } from "@/lib/failure"
 import { currentSession } from "@/lib/session"
+import { TextField } from "@/components/chrome/form"
 import { m } from "@/paraglide/messages.js"
 
-import {
-  EntryCard,
-  EntryField,
-  EntryFoot,
-  EntryLink,
-  EntrySubmit,
-} from "../frame"
+import { EntryCard, EntryFoot, EntryLink, EntrySubmit } from "../frame"
 import { heldInvitation } from "../held"
 import { formText } from "../form"
 import { usePasswordFields } from "../password-fields"
@@ -167,8 +162,10 @@ function RegisterForm({
         onSubmit={(event) => void submit(event)}
       >
         <FieldGroup className="gap-5">
-          <EntryField
+          <TextField
+            size="lg"
             id="invite-email"
+            placeholder={m.placeholder_email()}
             label={m.entry_email()}
             name="email"
             type="email"
@@ -180,8 +177,10 @@ function RegisterForm({
             required
             maxLength={254}
           />
-          <EntryField
+          <TextField
+            size="lg"
             id="invite-password"
+            placeholder={m.placeholder_new_password()}
             label={m.entry_new_password()}
             name="password"
             type="password"
@@ -191,8 +190,10 @@ function RegisterForm({
             invalid={password.invalid === "password"}
             onInput={password.clear}
           />
-          <EntryField
+          <TextField
+            size="lg"
             id="invite-confirmation"
+            placeholder={m.placeholder_confirm_password()}
             label={m.entry_confirm_password()}
             name="confirmation"
             type="password"

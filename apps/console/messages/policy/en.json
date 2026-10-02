@@ -280,5 +280,6 @@
   "policy_flow_reverse": "Matched in reverse",
   "policy_flow_revision": "r{revision}",
   "policy_flow_executable": "Executable",
-  "policy_flow_not_executable": "Not executable"
+  "policy_flow_not_executable": "Not executable",
+  "policy_rule_id_placeholder": "office-to-lab"
 }

@@ -229,6 +229,7 @@ export function ClaimDialog({
       >
         <TextField
           id="claim-email"
+          placeholder={m.placeholder_email()}
           label={m.entry_email()}
           name="email"
           type="email"
@@ -245,6 +246,9 @@ export function ClaimDialog({
           // A new account's password is not this browser's to fill in.
           key={kind}
           id="claim-password"
+          placeholder={
+            isNew ? m.placeholder_new_password() : m.placeholder_password()
+          }
           label={isNew ? m.entry_new_password() : m.entry_password()}
           name="password"
           type="password"
@@ -258,6 +262,7 @@ export function ClaimDialog({
         <div className={isNew ? undefined : "invisible"} aria-hidden={!isNew}>
           <TextField
             id="claim-confirmation"
+            placeholder={m.placeholder_confirm_password()}
             label={m.entry_confirm_password()}
             name="confirmation"
             type="password"

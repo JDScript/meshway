@@ -15,5 +15,8 @@
   "settings_dns_ttl": "TTL (s)",
   "settings_name_invalid": "Name must be 1–128 characters, not all blank",
   "settings_zone_invalid": "Zone must be 3–128 characters",
-  "settings_ttl_invalid": "TTL must be 1–300 seconds"
+  "settings_ttl_invalid": "TTL must be 1–300 seconds",
+  "settings_name_placeholder": "Home network",
+  "settings_dns_zone_placeholder": "mesh.internal",
+  "settings_dns_ttl_placeholder": "1–300"
 }

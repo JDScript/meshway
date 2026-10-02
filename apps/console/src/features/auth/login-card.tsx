@@ -3,9 +3,9 @@ import { useEffect, useRef, useState, type FormEvent } from "react"
 import { toast } from "sonner"
 
 import { Brand } from "@/components/chrome/brand"
+import { TextField } from "@/components/chrome/form"
 import { Button } from "@/components/ui/button"
-import { Field, FieldGroup, FieldLabel } from "@/components/ui/field"
-import { Input } from "@/components/ui/input"
+import { FieldGroup } from "@/components/ui/field"
 import { Spinner } from "@/components/ui/spinner"
 import { m } from "@/paraglide/messages.js"
 
@@ -111,37 +111,33 @@ export function LoginCard({
         onSubmit={(event) => void submit(event)}
       >
         <FieldGroup className="gap-5">
-          <Field>
-            <FieldLabel htmlFor="login-email">{m.login_email()}</FieldLabel>
-            <Input
-              id="login-email"
-              name="email"
-              type="email"
-              inputMode="email"
-              autoComplete="username"
-              autoCapitalize="none"
-              spellCheck={false}
-              autoFocus
-              required
-              maxLength={254}
-              className="h-11 rounded-tile bg-field px-3.5"
-            />
-          </Field>
-          <Field>
-            <FieldLabel htmlFor="login-password">
-              {m.login_password()}
-            </FieldLabel>
-            <Input
-              ref={password}
-              id="login-password"
-              name="password"
-              type="password"
-              autoComplete="current-password"
-              required
-              maxLength={1024}
-              className="h-11 rounded-tile bg-field px-3.5"
-            />
-          </Field>
+          <TextField
+            size="lg"
+            id="login-email"
+            label={m.login_email()}
+            placeholder={m.placeholder_email()}
+            name="email"
+            type="email"
+            inputMode="email"
+            autoComplete="username"
+            autoCapitalize="none"
+            spellCheck={false}
+            autoFocus
+            required
+            maxLength={254}
+          />
+          <TextField
+            size="lg"
+            ref={password}
+            id="login-password"
+            label={m.login_password()}
+            placeholder={m.placeholder_password()}
+            name="password"
+            type="password"
+            autoComplete="current-password"
+            required
+            maxLength={1024}
+          />
           <Button
             type="submit"
             size="lg"

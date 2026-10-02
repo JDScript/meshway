@@ -89,5 +89,9 @@
   "failure_missing": "已不存在",
   "failure_unknown": "请求失败，结果未知",
   "dialog_cancel": "取消",
-  "secret_once": "仅显示这一次"
+  "secret_once": "仅显示这一次",
+  "placeholder_email": "name@example.com",
+  "placeholder_password": "你的密码",
+  "placeholder_new_password": "至少 12 个字符",
+  "placeholder_confirm_password": "再输入一次新密码"
 }

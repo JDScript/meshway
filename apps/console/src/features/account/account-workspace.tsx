@@ -325,6 +325,7 @@ function PasswordForm({ email }: { email: string | null }) {
         />
         <TextField
           id="account-current-password"
+          placeholder={m.placeholder_password()}
           name="current-password"
           type="password"
           label={m.account_password_current()}
@@ -336,6 +337,7 @@ function PasswordForm({ email }: { email: string | null }) {
         />
         <TextField
           id="account-new-password"
+          placeholder={m.placeholder_new_password()}
           name="new-password"
           type="password"
           label={m.account_password_new()}
@@ -348,6 +350,7 @@ function PasswordForm({ email }: { email: string | null }) {
         />
         <TextField
           id="account-confirm-password"
+          placeholder={m.placeholder_confirm_password()}
           name="confirm-password"
           type="password"
           label={m.account_password_confirm()}

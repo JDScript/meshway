@@ -102,5 +102,6 @@
   "setup_reset_stale": "Password changed",
   "setup_reset_revoke": "Revoke",
   "setup_reset_revoke_body": "This reset link stops working now.",
-  "setup_reset_revoked_done": "Reset link revoked"
+  "setup_reset_revoked_done": "Reset link revoked",
+  "setup_token_placeholder": "Contents of admin.token"
 }

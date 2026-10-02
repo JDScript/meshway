@@ -1,4 +1,4 @@
-import { cn } from "cn"
+import { cn } from "@/lib/utils"
 import type { ComponentProps, ReactNode } from "react"
 
 import { Field, FieldLabel } from "@/components/ui/field"
@@ -28,15 +28,34 @@ export function FormSection({
   )
 }
 
-/** The text control on glass: the same fill, height and corners everywhere. */
+const SIZE = {
+  /** In a workspace or a dialog. */
+  default: {
+    control: "h-10 md:text-row",
+    label: "text-meta text-muted-foreground",
+  },
+  /** On an entry card (sign-in, invitation, setup). */
+  lg: { control: "h-11", label: "" },
+} as const
+
+/**
+ * The text control on glass: the same fill and corners everywhere. Every
+ * field shows a placeholder, an example of the value or its constraint
+ * (never a stand-in for the label).
+ */
 export function FieldInput({
   className,
+  size = "default",
   ...props
-}: ComponentProps<typeof Input>) {
+}: { placeholder: string; size?: keyof typeof SIZE } & Omit<
+  ComponentProps<typeof Input>,
+  "placeholder" | "size"
+>) {
   return (
     <Input
       className={cn(
-        "h-10 rounded-tile border-transparent bg-field px-3.5 md:text-row",
+        "rounded-tile border-transparent bg-field px-3.5",
+        SIZE[size].control,
         className
       )}
       {...props}
@@ -49,17 +68,26 @@ export function TextField({
   id,
   label,
   invalid,
+  size = "default",
   ...props
-}: { id: string; label: string; invalid?: boolean } & Omit<
-  ComponentProps<typeof Input>,
-  "id"
->) {
+}: {
+  id: string
+  label: string
+  invalid?: boolean
+  placeholder: string
+  size?: keyof typeof SIZE
+} & Omit<ComponentProps<typeof Input>, "id" | "placeholder" | "size">) {
   return (
     <Field data-invalid={invalid || undefined}>
-      <FieldLabel htmlFor={id} className="text-meta text-muted-foreground">
+      <FieldLabel htmlFor={id} className={SIZE[size].label}>
         {label}
       </FieldLabel>
-      <FieldInput id={id} aria-invalid={invalid || undefined} {...props} />
+      <FieldInput
+        id={id}
+        size={size}
+        aria-invalid={invalid || undefined}
+        {...props}
+      />
     </Field>
   )
 }

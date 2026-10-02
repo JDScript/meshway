@@ -117,5 +117,9 @@
   "failure_missing": "No longer exists",
   "failure_unknown": "Request failed; outcome unknown",
   "dialog_cancel": "Cancel",
-  "secret_once": "Shown once"
+  "secret_once": "Shown once",
+  "placeholder_email": "name@example.com",
+  "placeholder_password": "Your password",
+  "placeholder_new_password": "At least 12 characters",
+  "placeholder_confirm_password": "The new password again"
 }

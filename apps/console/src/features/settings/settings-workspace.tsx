@@ -144,6 +144,7 @@ function NetworkSection({
     <>
       <TextField
         id="network-name"
+        placeholder={m.settings_name_placeholder()}
         name="network-name"
         label={m.settings_name()}
         autoComplete="off"
@@ -199,6 +200,7 @@ function DnsSection({ fields, invalid, disabled, onChange }: SectionProps) {
       <div className="grid gap-4 sm:grid-cols-[1fr_8rem]">
         <TextField
           id="dns-zone"
+          placeholder={m.settings_dns_zone_placeholder()}
           name="dns-zone"
           label={m.settings_dns_zone()}
           autoComplete="off"
@@ -213,6 +215,7 @@ function DnsSection({ fields, invalid, disabled, onChange }: SectionProps) {
         />
         <TextField
           id="dns-ttl"
+          placeholder={m.settings_dns_ttl_placeholder()}
           name="dns-ttl"
           label={m.settings_dns_ttl()}
           inputMode="numeric"

@@ -1,11 +1,9 @@
-import { cn } from "cn"
+import { cn } from "@/lib/utils"
 import { useEffect, type ComponentProps, type ReactNode } from "react"
 
 import { Brand } from "@/components/chrome/brand"
 import { LanguageSwitch, ThemeSwitch } from "@/components/chrome/preferences"
 import { Button } from "@/components/ui/button"
-import { Field, FieldLabel } from "@/components/ui/field"
-import { Input } from "@/components/ui/input"
 import { Spinner } from "@/components/ui/spinner"
 import { showWelcomeGlobe } from "@/features/globe/store"
 
@@ -95,29 +93,6 @@ export function EntryCard({
 }
 
 export const ENTRY_BUTTON = "h-11 w-full rounded-tile"
-
-/** A labelled text field exactly like the sign-in card's; marked in place when invalid. */
-export function EntryField({
-  id,
-  label,
-  invalid = false,
-  ...props
-}: { id: string; label: string; invalid?: boolean } & Omit<
-  ComponentProps<typeof Input>,
-  "id" | "className"
->) {
-  return (
-    <Field data-invalid={invalid || undefined}>
-      <FieldLabel htmlFor={id}>{label}</FieldLabel>
-      <Input
-        id={id}
-        aria-invalid={invalid || undefined}
-        className="h-11 rounded-tile bg-field px-3.5"
-        {...props}
-      />
-    </Field>
-  )
-}
 
 /** A submit button with the sign-in's spinner, which never moves its label. */
 export function EntrySubmit({

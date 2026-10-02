@@ -190,6 +190,7 @@ function Invite({
       >
         <TextField
           id="invite-email"
+          placeholder={m.placeholder_email()}
           name="email"
           type="email"
           inputMode="email"

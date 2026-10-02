@@ -1,4 +1,4 @@
-import { cn } from "cn"
+import { cn } from "@/lib/utils"
 import {
   ArrowDownIcon,
   ArrowUpIcon,
@@ -339,6 +339,7 @@ export function RuleIdField({
       <FieldInput
         id={id}
         name={id}
+        placeholder={m.policy_rule_id_placeholder()}
         autoComplete="off"
         autoCapitalize="none"
         spellCheck={false}

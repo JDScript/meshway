@@ -154,5 +154,6 @@
   "policy_flow_reverse": "反向命中",
   "policy_flow_revision": "r{revision}",
   "policy_flow_executable": "可执行",
-  "policy_flow_not_executable": "不可执行"
+  "policy_flow_not_executable": "不可执行",
+  "policy_rule_id_placeholder": "office-to-lab"
 }

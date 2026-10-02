@@ -13,10 +13,11 @@ import { dropDrafts } from "@/features/shell/drafts"
 import { apiBase } from "@/lib/api"
 import { failureMessage } from "@/lib/failure"
 import { currentSession } from "@/lib/session"
+import { TextField } from "@/components/chrome/form"
 import { m } from "@/paraglide/messages.js"
 
 import { formText } from "../form"
-import { EntryCard, EntryField, EntrySubmit } from "../frame"
+import { EntryCard, EntrySubmit } from "../frame"
 import { heldReset } from "../held"
 import { usePasswordFields } from "../password-fields"
 
@@ -83,8 +84,10 @@ export function ResetCard({ secret }: { secret: string }) {
         onSubmit={(event) => void submit(event)}
       >
         <FieldGroup className="gap-5">
-          <EntryField
+          <TextField
+            size="lg"
             id="reset-password"
+            placeholder={m.placeholder_new_password()}
             label={m.entry_new_password()}
             name="password"
             type="password"
@@ -95,8 +98,10 @@ export function ResetCard({ secret }: { secret: string }) {
             invalid={password.invalid === "password"}
             onInput={password.clear}
           />
-          <EntryField
+          <TextField
+            size="lg"
             id="reset-confirmation"
+            placeholder={m.placeholder_confirm_password()}
             label={m.entry_confirm_password()}
             name="confirmation"
             type="password"

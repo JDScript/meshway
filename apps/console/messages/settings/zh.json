@@ -15,5 +15,8 @@
   "settings_dns_ttl": "TTL（秒）",
   "settings_name_invalid": "名称需为 1–128 个字符，且不能全是空白",
   "settings_zone_invalid": "域需为 3–128 个字符",
-  "settings_ttl_invalid": "TTL 需为 1–300 秒"
+  "settings_ttl_invalid": "TTL 需为 1–300 秒",
+  "settings_name_placeholder": "家庭网络",
+  "settings_dns_zone_placeholder": "mesh.internal",
+  "settings_dns_ttl_placeholder": "1–300"
 }

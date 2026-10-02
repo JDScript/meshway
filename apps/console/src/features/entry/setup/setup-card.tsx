@@ -11,10 +11,11 @@ import { toast } from "sonner"
 import { Brand } from "@/components/chrome/brand"
 import { FieldGroup } from "@/components/ui/field"
 import { SessionRejected } from "@/lib/api"
+import { TextField } from "@/components/chrome/form"
 import { m } from "@/paraglide/messages.js"
 
 import { formText } from "../form"
-import { EntryField, EntryLink, EntrySubmit } from "../frame"
+import { EntryLink, EntrySubmit } from "../frame"
 import { instanceCall, readInstance, type Instance } from "./instance"
 import { SetupSections } from "./setup-sections"
 
@@ -115,9 +116,11 @@ function TokenForm({ onSigned }: { onSigned: (signed: Signed) => void }) {
     >
       <FieldGroup className="gap-5">
         <div className="flex flex-col gap-2">
-          <EntryField
+          <TextField
+            size="lg"
             ref={field}
             id="setup-token"
+            placeholder={m.setup_token_placeholder()}
             label={m.setup_token()}
             name="token"
             type="password"
