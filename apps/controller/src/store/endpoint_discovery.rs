@@ -61,7 +61,7 @@ impl Store {
             return Err(Error::Conflict);
         }
         let current = connections::projection(
-            &connections::admin_snapshot(&self.connection, &network)?,
+            &connections::effective_snapshot(&self.connection, &network)?,
             &id,
         )?;
         if request.revision != current.payload.revision || request.digest != current.digest {
@@ -218,7 +218,7 @@ impl Store {
         network: &NetworkId,
         now: DateTime<Utc>,
     ) -> Result<EndpointDiscoveriesSnapshot, Error> {
-        let snapshot = connections::admin_snapshot(&self.connection, network)?;
+        let snapshot = connections::effective_snapshot(&self.connection, network)?;
         let runtimes = self.connection_runtimes_at(network, now)?;
         let mut nodes = Vec::with_capacity(snapshot.nodes.len());
         for node in &snapshot.nodes {

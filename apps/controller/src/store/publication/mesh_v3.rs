@@ -24,7 +24,7 @@ impl<'a> Publication<'a> {
     ) -> Result<Self, Error> {
         let network = ipam::network(db, scope)?;
         let nodes = configuration::active_nodes(db, scope)?;
-        let adjacency = connections::admin_snapshot(db, scope)?;
+        let adjacency = connections::effective_with_policy(db, scope, policy)?;
         let assignments = tags::assignments(db, scope)?;
         let mut reachable = BTreeSet::new();
         if adjacency.valid {
@@ -118,6 +118,15 @@ impl<'a> Publication<'a> {
             .ok_or(Error::Forbidden)?;
         let node = nodes.remove(index);
         let connections = connections::projection(&self.adjacency, id)?.payload;
+        // Applies both to transaction gates (without decrypting) and downloads.
+        // Byte budget alone cannot prove the fixed 64-material wire contract.
+        if managed_transports::material_count(self.db, self.scope, &connections)?
+            > MAX_MESH_EXECUTION_MATERIALS
+        {
+            return Err(Error::Capacity(
+                "Mesh execution exceeds 64 projected materials",
+            ));
+        }
         let mut paths = Vec::new();
         let mut valid = self.valid() && connections.valid;
         if let Ok(c) = &self.compiled {
@@ -188,6 +197,11 @@ impl<'a> Publication<'a> {
             .map(|key| managed_transports::materials(self.db, self.scope, &connections, key))
             .transpose()?
             .unwrap_or_default();
+        if materials.len() > MAX_MESH_EXECUTION_MATERIALS {
+            return Err(Error::Capacity(
+                "Mesh execution exceeds 64 projected materials",
+            ));
+        }
         Ok(NodeMeshExecution {
             schema_version: MESH_EXECUTION_VERSION,
             network_id: self.scope.as_str().to_owned(),

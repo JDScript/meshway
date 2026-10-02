@@ -207,8 +207,10 @@ impl Store {
         }) {
             return Err(Error::Conflict);
         }
-        let current =
-            connections::projection(&connections::admin_snapshot(&transaction, &network)?, &id)?;
+        let current = connections::projection(
+            &connections::effective_snapshot(&transaction, &network)?,
+            &id,
+        )?;
         if request.revision != current.payload.revision || request.digest != current.digest {
             return Err(Error::Unprocessable(
                 "runtime revision or digest does not match current node connections",
@@ -249,7 +251,7 @@ impl Store {
         network: &NetworkId,
         now: DateTime<Utc>,
     ) -> Result<ConnectionRuntimesSnapshot, Error> {
-        let snapshot = connections::admin_snapshot(&self.connection, network)?;
+        let snapshot = connections::effective_snapshot(&self.connection, network)?;
         let leases = self
             .connection
             .prepare("SELECT node_id, epoch FROM connection_runtime_leases WHERE network_id=?1 ORDER BY node_id")?

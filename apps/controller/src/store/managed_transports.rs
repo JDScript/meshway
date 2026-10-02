@@ -400,16 +400,7 @@ pub(super) fn materials(
     let mut result = Vec::new();
     for summary in listeners(connection, network)? {
         let id = &summary.settings.id;
-        if !summary.settings.enabled || summary.settings.transport != ConnectionTransport::Vless {
-            continue;
-        }
-        let owner = intent
-            .listeners
-            .iter()
-            .any(|l| l.id == *id && l.credential_ref.as_deref() == Some(reference(id).as_str()));
-        let dialer = intent.outgoing.iter().any(|c| {
-            c.listener_id == *id && c.credential_ref.as_deref() == Some(reference(id).as_str())
-        });
+        let (owner, dialer) = material_roles(&summary.settings, intent);
         if !owner && !dialer {
             continue;
         }
@@ -422,6 +413,42 @@ pub(super) fn materials(
         result.push(material);
     }
     Ok(result)
+}
+
+fn material_roles(settings: &ManagedListenerSettings, intent: &NodeConnections) -> (bool, bool) {
+    if !settings.enabled || settings.transport != ConnectionTransport::Vless {
+        return (false, false);
+    }
+    let id = &settings.id;
+    let credential = reference(id);
+    (
+        intent.listeners.iter().any(|l| {
+            l.id == *id
+                && l.transport == ConnectionTransport::Vless
+                && l.credential_ref.as_deref() == Some(credential.as_str())
+        }),
+        intent.outgoing.iter().any(|c| {
+            c.listener_id == *id
+                && c.transport == ConnectionTransport::Vless
+                && c.credential_ref.as_deref() == Some(credential.as_str())
+        }),
+    )
+}
+
+/// Count exactly the same enabled managed owner/outgoing projection as download.
+/// Each listener contributes once even if several candidate endpoints refer to it.
+pub(super) fn material_count(
+    connection: &Connection,
+    network: &NetworkId,
+    intent: &NodeConnections,
+) -> Result<usize, Error> {
+    Ok(listeners(connection, network)?
+        .iter()
+        .filter(|s| {
+            let (owner, dialer) = material_roles(&s.settings, intent);
+            owner || dialer
+        })
+        .count())
 }
 
 /// Encrypted plaintext-size upper bound. Owner material includes its key;

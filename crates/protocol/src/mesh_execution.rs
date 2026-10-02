@@ -7,6 +7,7 @@ use utoipa::ToSchema;
 
 pub const MESH_EXECUTION_VERSION: u32 = 1;
 pub const MAX_MESH_EXECUTION_PATHS: usize = 128;
+pub const MAX_MESH_EXECUTION_MATERIALS: usize = 64;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 #[serde(rename_all = "snake_case")]

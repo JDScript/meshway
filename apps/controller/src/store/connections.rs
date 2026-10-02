@@ -119,28 +119,6 @@ pub(super) fn admin_snapshot(
         &configuration,
     )?);
     diagnostics.truncate(64);
-    if let Some((policy, _)) = super::policy_v3::source(connection, network)? {
-        let assignments = super::tags::assignments(connection, network)?;
-        let make = |id: &str| meshway_policy::v3::Node {
-            id: id.to_owned(),
-            tags: assignments.get(id).cloned().unwrap_or_default(),
-            listener: true,
-            exit_enabled: false,
-        };
-        configuration.candidates.retain(|candidate| {
-            configuration
-                .listeners
-                .iter()
-                .find(|l| l.id == candidate.listener_id)
-                .is_some_and(|l| {
-                    meshway_policy::v3::connection_allowed(
-                        &policy.connections,
-                        &make(&candidate.dialer_node_id),
-                        &make(&l.node_id),
-                    )
-                })
-        });
-    }
     Ok(ConnectionsSnapshot {
         revision: configuration::revision(connection, network)?,
         configuration,
@@ -148,6 +126,62 @@ pub(super) fn admin_snapshot(
         diagnostics,
         nodes,
     })
+}
+
+/// Management returns saved intent; only execution/status projections apply
+/// policy. A management GET -> save must not erase temporarily blocked edges.
+pub(super) fn effective_snapshot(
+    connection: &Connection,
+    network: &NetworkId,
+) -> Result<ConnectionsSnapshot, Error> {
+    let snapshot = admin_snapshot(connection, network)?;
+    match super::policy_v3::source(connection, network)? {
+        Some((policy, _)) => filter_effective(connection, network, snapshot, &policy),
+        None => Ok(snapshot),
+    }
+}
+
+pub(super) fn effective_with_policy(
+    connection: &Connection,
+    network: &NetworkId,
+    policy: &meshway_policy::v3::NetworkPolicy,
+) -> Result<ConnectionsSnapshot, Error> {
+    filter_effective(
+        connection,
+        network,
+        admin_snapshot(connection, network)?,
+        policy,
+    )
+}
+
+fn filter_effective(
+    connection: &Connection,
+    network: &NetworkId,
+    mut snapshot: ConnectionsSnapshot,
+    policy: &meshway_policy::v3::NetworkPolicy,
+) -> Result<ConnectionsSnapshot, Error> {
+    let assignments = super::tags::assignments(connection, network)?;
+    let make = |id: &str| meshway_policy::v3::Node {
+        id: id.to_owned(),
+        tags: assignments.get(id).cloned().unwrap_or_default(),
+        listener: true,
+        exit_enabled: false,
+    };
+    snapshot.configuration.candidates.retain(|candidate| {
+        snapshot
+            .configuration
+            .listeners
+            .iter()
+            .find(|l| l.id == candidate.listener_id)
+            .is_some_and(|l| {
+                meshway_policy::v3::connection_allowed(
+                    &policy.connections,
+                    &make(&candidate.dialer_node_id),
+                    &make(&l.node_id),
+                )
+            })
+    });
+    Ok(snapshot)
 }
 
 pub(super) fn projection(
@@ -245,7 +279,7 @@ pub(super) fn ensure_publishable(
     connection: &Connection,
     network: &NetworkId,
 ) -> Result<(), Error> {
-    let snapshot = admin_snapshot(connection, network)?;
+    let snapshot = effective_snapshot(connection, network)?;
     for node in &snapshot.nodes {
         if node.node.revoked_at.is_none() {
             let projected = projection(&snapshot, &node.node.id)?;
@@ -379,7 +413,7 @@ impl Store {
     pub fn agent_connections(&self, token: &str) -> Result<AgentConnectionsSnapshot, Error> {
         let network = self.node_network(token)?;
         let id = configuration::node_id(&self.connection, &network, token)?;
-        projection(&admin_snapshot(&self.connection, &network)?, &id)
+        projection(&effective_snapshot(&self.connection, &network)?, &id)
     }
 
     pub fn acknowledge_connections(
@@ -398,7 +432,7 @@ impl Store {
                 "invalid connection receipt revision or digest",
             ));
         }
-        let current = projection(&admin_snapshot(&transaction, &network)?, &id)?;
+        let current = projection(&effective_snapshot(&transaction, &network)?, &id)?;
         if request.revision != current.payload.revision || request.digest != current.digest {
             return Err(Error::Conflict);
         }

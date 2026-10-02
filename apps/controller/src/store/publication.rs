@@ -115,7 +115,7 @@ impl Adjacency<'_> {
     fn project(&mut self, id: &str) -> Result<&AgentConnectionsSnapshot, Error> {
         if !self.nodes.contains_key(id) {
             if self.source.is_none() {
-                self.source = Some(connections::admin_snapshot(self.db, self.scope)?);
+                self.source = Some(connections::effective_snapshot(self.db, self.scope)?);
             }
             #[cfg(test)]
             ADJACENCY_PROJECTIONS.with(|count| count.set(count.get() + 1));

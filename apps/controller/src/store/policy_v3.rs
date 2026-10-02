@@ -251,4 +251,6 @@ impl Store {
 }
 
 #[cfg(test)]
+mod publication_regressions;
+#[cfg(test)]
 mod tests;

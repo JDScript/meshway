@@ -126,7 +126,7 @@ impl Store {
             }
         }
         let current =
-            connections::projection(&connections::admin_snapshot(&tx, &network)?, &source)?;
+            connections::projection(&connections::effective_snapshot(&tx, &network)?, &source)?;
         if !current.payload.valid
             || current.digest != report.digest
             || current.payload.revision != report.revision
