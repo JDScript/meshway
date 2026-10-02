@@ -4,6 +4,12 @@
 
 **已确认目标**：DNS 等设备业务配置全部由控制面管理 / 下发，下文 `--dns-listen` 与 resolver adapter 参数只描述现状 / 隔离验收，不是目标日常流程。出口路由方案与域名分流进入首版主线，具体域名上下文来源仍待确认。
 
+## 实现归属
+
+- `crates/agent-dns`：Zone 索引、TCP/UDP 服务、TTL/lease、最后发送时的代际围栏与内部状态；仅依赖 Hickory、Tokio、thiserror。独立验证：`cargo test --locked -p meshway-agent-dns`。
+- Agent：通过生成接口同步与校验 Controller 快照，私有保存后发布；负责身份绑定、CLI/IPC 状态投影与日志。
+- underlay bootstrap DNS：为控制通信和承载建连提供受保护的底层解析，与这里的本地权威 DNS 服务分开。
+
 ## 当前可用：显式本地节点解析器
 
 `/network` 保存 DNS 开关、zone 与 TTL，默认关闭、`meshway.test`、30 秒。启用配置后，修改现有 Agent 的启动参数，显式加入：
@@ -29,7 +35,7 @@ Agent 的 nameservice 本身不修改系统 DNS、搜索域或默认上游。普
 
 ### 已验证的本机隔离验收
 
-`experiments/managed-dns/run.py` 使用独立 controller、两个 keyless DNS-only 节点和一个同进程 TUN + DNS 节点。原生 ARM64 历史运行 `mupehmrf-285d57c8e26c99ff` 通过 8 阶段，非秘密结果含镜像 digest 和清理证据；构建 / 参数见该目录 README。
+`experiments/managed-dns/run.py` 使用独立 controller、两个 keyless DNS-only 节点和一个同进程 TUN + DNS 节点；构建 / 参数见该目录 README。
 
 验证覆盖真实 UDP/TCP、`dig`、A/AAAA/PTR、重复 alias 抑制、zone 更换、禁用/恢复、TTL 不超过 lease、控制面断联、带缓存离线重启、同数据库恢复和撤销。测试限定本机独立容器，没有修改宿主 DNS 或接入登记的远端主机。
 
@@ -45,7 +51,7 @@ M1 采用单独的实验 adapter，将新建 Linux 容器的 loopback `:53` 接�
 
 验收使用 glibc `getent`、真实 `curl` 响应与 Mesh IP / TUN 路由证明应用通路；Access 默认拒绝时，同样的名称可解析但 HTTP 访问失败。控制面失联后继续检查 lease 到期与内核拒绝路由，区分 DNS 可见性、解析器运行和业务授权。
 
-2026-10-01 系统 resolver / DNS CLI 历史验收通过：run `mupq9edz-37f8cdbf841d8edf`（ARM64），12 阶段 / 16 项接入检查，原 resolver 完整恢复、资源清理无错误。Artifact 记录镜像 digest、TCP 占用 / 只读失败、SIGKILL 恢复、第三方编辑冲突、CLI 过期 / SERVFAIL 与 daemon 退出后的 unreachable 路由；重现使用上方 `--system-resolver` 入口。
+系统 resolver / DNS CLI 验收还覆盖 TCP 占用、只读失败、SIGKILL 恢复、第三方编辑冲突、CLI 过期 / SERVFAIL 与 daemon 退出后的 unreachable 路由；重现使用上方 `--system-resolver` 入口，保存 resolver 恢复与资源清理结果。
 
 ## MagicDNS：从节点清单到本地解析器
 

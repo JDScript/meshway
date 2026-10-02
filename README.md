@@ -20,6 +20,7 @@
 | --- | --- |
 | `apps/controller` / `apps/agent` | Rust 控制面与节点进程；Agent 生成客户端位于 `apps/agent/src/generated` |
 | `crates/protocol` / `crates/policy` / `crates/dataplane` | Rust 契约、纯策略编译、认证与加密转发 |
+| `crates/agent-dns` | 独立本地 DNS 服务、记录索引与租约 / 代际发送边界 |
 | `crates/transport-*` | 编译期承载适配 |
 | `apps/web` | Next.js + shadcn/ui 控制台 |
 | `apps/console` | 用户独立工作流维护的新 pure SPA，后端仅维护必要契约兼容 |
