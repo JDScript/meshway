@@ -58,6 +58,13 @@ import { readNodeStatusAction } from "@/lib/connections-actions"
 import { readManagedListenersAction } from "@/lib/managed-listener-actions"
 import { createKey, editKey, type ManagedListenerDraft } from "@/lib/managed-listener-draft-registry"
 import { fromSettings, managedById, newManagedForm, takenListenerIds } from "@/lib/managed-listener-model"
+import {
+  initialManagedRead,
+  managedFreshness,
+  recordManagedFailure,
+  recordManagedSuccess,
+  type ManagedReadState,
+} from "@/lib/managed-read-state"
 import { nextPartStatus, type PartStatus } from "@/lib/node-status"
 import { formatClock, formatDateTime } from "@/lib/time"
 import { topologyFlowHref } from "@/lib/flow-navigation"
@@ -69,17 +76,6 @@ export type NodeTab = "overview" | "connections"
 type ConnectionsRead = { ok: true; data: ConnectionsSnapshot } | { ok: false; error: string }
 /** Page render input: the read also carries the server time it was made at. */
 type ConnectionsPageRead = { ok: true; data: ConnectionsSnapshot; fetchedAt: number } | { ok: false; error: string }
-type StampedManaged = { snapshot: ManagedListenersSnapshot; readAt: number }
-
-/** Newer revision wins; at the same revision the later read wins. */
-function latestManaged(...sources: (StampedManaged | null)[]): StampedManaged | null {
-  return sources.reduce<StampedManaged | null>((best, next) => {
-    if (next === null) return best
-    if (best === null) return next
-    if (next.snapshot.revision !== best.snapshot.revision) return next.snapshot.revision > best.snapshot.revision ? next : best
-    return next.readAt >= best.readAt ? next : best
-  }, null)
-}
 
 /**
  * One node: identity and control-plane contact on the overview tab; its
@@ -147,17 +143,21 @@ export function NodeDetail({
     at: connections.ok ? connections.fetchedAt : 0,
     error: connections.ok ? null : connections.error,
   })
-  const [managedAdopted, setManagedAdopted] = useState<StampedManaged | null>(null)
-  const [managedError, setManagedError] = useState<string | null>(null)
+  // Managed listeners: the shown snapshot and the latest read outcome are
+  // tracked apart, so a failed read leaves a visibly dated cache.
+  const [managedRead, setManagedRead] = useState<ManagedReadState>(() => initialManagedRead(initialManaged))
   const adoptManaged = useCallback((snapshot: ManagedListenersSnapshot, readAt: number) => {
-    setManagedAdopted((current) => latestManaged(current, { snapshot, readAt }))
-    setManagedError(null)
+    setManagedRead((current) => recordManagedSuccess(current, snapshot, readAt))
+  }, [])
+  const failManaged = useCallback((error: string, readAt: number) => {
+    setManagedRead((current) => recordManagedFailure(current, error, readAt))
   }, [])
   const poll = useCallback(async (): Promise<RuntimeReadResult> => {
     const result = await readNodeStatusAction(networkId)
     if (result.status === "error") return result
     const read = result.fetchedAt
     if (result.managed.ok) adoptManaged(result.managed.data, read)
+    else failManaged(result.managed.error, read)
     const found = result.nodes.ok ? result.nodes.data.nodes.find((candidate) => candidate.id === nodeId) : undefined
     if (found) setPolledNode((current) => (current && current.fetchedAt >= read ? current : { node: found, fetchedAt: read }))
     const inventoryError = !result.nodes.ok ? result.nodes.error : found ? null : "节点不在清单中"
@@ -170,12 +170,12 @@ export function NodeDetail({
     return result.runtimes.ok
       ? { status: "loaded", snapshot: result.runtimes.data, fetchedAt: read }
       : { status: "error", message: result.runtimes.error }
-  }, [nodeId, networkId, adoptManaged])
+  }, [nodeId, networkId, adoptManaged, failManaged])
   const runtimes = useConnectionRuntimes(initialRuntimes, poll)
-  const managedLatest = latestManaged(initialManaged.ok ? { snapshot: initialManaged.data, readAt: initialManaged.fetchedAt } : null, managedAdopted)
-  const managedShown = managedLatest
-    ? ({ ok: true, data: managedLatest.snapshot } as const)
-    : ({ ok: false, error: managedError ?? (initialManaged.ok ? "未读取" : initialManaged.error) } as const)
+  const managedSnapshot = managedRead.snapshot
+  // Editing from a cached snapshot is allowed: the form's CAS base is that
+  // revision, so a stale save conflicts instead of overwriting.
+  const managedCachedAt = managedFreshness(managedRead) === "cached" ? managedRead.snapshotAt : null
   const revoked = node.revoked_at !== null
   const entry = latest.ok ? latest.data.nodes.find((candidate) => candidate.node.id === node.id) : undefined
   const savedScope = latest.ok ? nodeScope(fromPlan(latest.data.configuration), node.id) : null
@@ -187,26 +187,26 @@ export function NodeDetail({
   const [pristine, setPristine] = useState<ManagedListenerDraft | null>(null)
   const session = sessionKey === null ? null : (managedDrafts.get(sessionKey) ?? (pristine?.key === sessionKey ? pristine : null))
   const openCreate = () => {
-    if (!managedShown.ok) return
+    if (!managedSnapshot) return
     const key = createKey(nodeId)
     const kept = managedDrafts.get(key)
     if (kept) managedDrafts.put({ ...kept, open: true })
     else {
-      const form = newManagedForm("vless_tcp", takenListenerIds(managedShown.data, latest.ok ? latest.data : null), managedIdPrefix(latest.ok ? latest.data.nodes : [], nodeId))
-      setPristine({ key, kind: "create", nodeId, baseRevision: managedShown.data.revision, original: null, initial: form, form, idFollows: true, open: true })
+      const form = newManagedForm("vless_tcp", takenListenerIds(managedSnapshot, latest.ok ? latest.data : null), managedIdPrefix(latest.ok ? latest.data.nodes : [], nodeId))
+      setPristine({ key, kind: "create", nodeId, baseRevision: managedSnapshot.revision, original: null, initial: form, form, idFollows: true, open: true })
     }
     setSessionKey(key)
   }
   const openEdit = (listenerId: string) => {
-    if (!managedShown.ok) return
+    if (!managedSnapshot) return
     const key = editKey(nodeId, listenerId)
     const kept = managedDrafts.get(key)
     if (kept) managedDrafts.put({ ...kept, open: true })
     else {
-      const summary = managedById(managedShown.data, listenerId)
+      const summary = managedById(managedSnapshot, listenerId)
       if (!summary) return
       const form = fromSettings(summary.settings)
-      setPristine({ key, kind: "edit", nodeId, baseRevision: managedShown.data.revision, original: summary.settings, initial: form, form, idFollows: false, open: true })
+      setPristine({ key, kind: "edit", nodeId, baseRevision: managedSnapshot.revision, original: summary.settings, initial: form, form, idFollows: false, open: true })
     }
     setSessionKey(key)
   }
@@ -227,7 +227,7 @@ export function NodeDetail({
         const stamped = { snapshot: connectionsRead.data, readAt: result.fetchedAt }
         setAdopted((current) => latestSnapshot(current, stamped))
       }
-    } else setManagedError(result.message)
+    } else failManaged(result.message, result.fetchedAt)
   }
 
   const changeTab = (next: NodeTab) => {
@@ -339,7 +339,8 @@ export function NodeDetail({
                 snapshot={latest.data}
                 runtimes={runtimes}
                 discoveries={discoveries}
-                managed={managedShown}
+                managed={managedRead}
+                retryingManaged={retryingManaged}
                 editable={!revoked}
                 drafts={nodeDrafts}
                 onCreateListener={openCreate}
@@ -348,10 +349,11 @@ export function NodeDetail({
                   if (!retryingManaged) void retryManaged()
                 }}
               />
-              {managedShown.ok && !revoked ? (
+              {managedSnapshot && !revoked ? (
                 <ManagedListenerSheet
                   session={session}
-                  managed={managedShown.data}
+                  managed={managedSnapshot}
+                  cachedAt={managedCachedAt}
                   connections={latest.data}
                   nodes={latest.data.nodes}
                   onClose={closeSession}
@@ -362,6 +364,7 @@ export function NodeDetail({
                       setAdopted((current) => latestSnapshot(current, stamped))
                     }
                   }}
+                  onReadFailed={failManaged}
                   onRead={(result) => {
                     adoptManaged(result.managed, result.fetchedAt)
                     if (result.connections.ok) {
@@ -380,7 +383,7 @@ export function NodeDetail({
                 <SectionHeader id="node-connections-plan" title="连接配置（草稿）" description="保存的是意图；实际状态以上方报告为准。" />
                 <ConnectionsEditor
                   snapshot={latest.data}
-                  managedListenerIds={managedShown.ok ? new Set(managedShown.data.listeners.map((listener) => listener.settings.id)) : null}
+                  managedListenerIds={managedSnapshot ? new Set(managedSnapshot.listeners.map((listener) => listener.settings.id)) : null}
                   scopeNodeId={node.id}
                   runtimes={runtimes}
                   onSnapshot={(snapshot, readAt) =>

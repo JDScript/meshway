@@ -80,7 +80,7 @@ export async function readManagedListenersAction(networkId: string): Promise<Man
     return { status: "loaded", managed, connections, fetchedAt: Date.now() }
   } catch (error) {
     if (!isCredentialRejected(error)) {
-      return { status: "error", message: `托管监听读取失败：${describeError(error, token)}` }
+      return { status: "error", message: `托管监听读取失败：${describeError(error, token)}`, fetchedAt: Date.now() }
     }
   }
   return rejectActionSession()

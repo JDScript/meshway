@@ -1,5 +1,6 @@
 import { expect, test, type Page } from "@playwright/test";
 import { mkdir, mkdtemp, readFile, rm } from "node:fs/promises";
+import { createServer, request as forward, type Server } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -12,7 +13,6 @@ import {
   listNodes,
   saveConnections,
   saveManagedListener,
-  setNodeCountry,
 } from "../packages/control-client/src/index.ts";
 import {
   getAgentManagedConnectionsOperation,
@@ -40,6 +40,35 @@ async function shoot(page: Page, name: string, fullPage = true) {
   }
 }
 
+/**
+ * Loopback proxy between the web server and the controller. While `failManaged`
+ * is set, only the managed listener read answers 500, so every other source
+ * of the same poll keeps succeeding.
+ */
+async function controllerProxy(target: string, port: number) {
+  const state = { failManaged: false, managedReads: 0 };
+  const upstream = new URL(target);
+  const server: Server = createServer((incoming, outgoing) => {
+    const path = incoming.url ?? "/";
+    if (incoming.method === "GET" && /\/managed-listeners$/.test(path)) {
+      state.managedReads += 1;
+      if (state.failManaged) {
+        incoming.resume();
+        outgoing.writeHead(500, { "content-type": "application/json" }).end(JSON.stringify({ message: "injected managed read failure" }));
+        return;
+      }
+    }
+    const proxied = forward({ host: upstream.hostname, port: upstream.port, method: incoming.method, path, headers: incoming.headers }, (response) => {
+      outgoing.writeHead(response.statusCode ?? 502, response.headers);
+      response.pipe(outgoing);
+    });
+    proxied.on("error", () => outgoing.writeHead(502).end());
+    incoming.pipe(proxied);
+  });
+  await new Promise<void>((resolve) => server.listen(port, "127.0.0.1", resolve));
+  return { state, url: `http://127.0.0.1:${port}`, close: () => new Promise<void>((resolve) => server.close(() => resolve())) };
+}
+
 async function theme(page: Page, value: "light" | "dark") {
   await page.evaluate((next) => localStorage.setItem("theme", next), value);
 }
@@ -52,6 +81,7 @@ test("managed listeners: optional listener at enrollment, node configuration edi
   const webUrl = `http://127.0.0.1:${webPort}`;
   const controller = service(executable("meshway-controller"), ["serve", "--data-dir", join(temporary, "controller"), "--bind", `127.0.0.1:${controllerPort}`]);
   let web: ReturnType<typeof service> | undefined;
+  let proxy: Awaited<ReturnType<typeof controllerProxy>> | undefined;
   const anonymous = await browser.newContext();
   const browserErrors: string[] = [];
   page.on("pageerror", (error) => browserErrors.push(error.message));
@@ -63,8 +93,9 @@ test("managed listeners: optional listener at enrollment, node configuration edi
     const first = (await listNetworks(base, admin)).networks[0]!;
     const second = await createNetwork(base, admin, { name: "Isolated network" });
     const secrets = [admin];
+    proxy = await controllerProxy(base, await unusedPort());
     web = service(process.execPath, [join(root, "apps/web/node_modules/next/dist/bin/next"), "start", join(root, "apps/web"), "--hostname", "127.0.0.1", "--port", String(webPort)], {
-      ...process.env, MESHWAY_CONTROLLER_URL: base, MESHWAY_WEB_COOKIE_SECURE: "auto", NEXT_TELEMETRY_DISABLED: "1",
+      ...process.env, MESHWAY_CONTROLLER_URL: proxy.url, MESHWAY_WEB_COOKIE_SECURE: "auto", NEXT_TELEMETRY_DISABLED: "1",
     });
     await web.ready(`${webUrl}/login`, 200);
     const at = (networkId: string, path = "") => `${webUrl}/${networkId}${path}`;
@@ -141,7 +172,7 @@ test("managed listeners: optional listener at enrollment, node configuration edi
     await test.step("node configuration: managed facts, capability state and no secrets", async () => {
       await page.goto(nodePage);
       const row = page.getByTestId("managed-listener").filter({ hasText: "VLESS · WebSocket" });
-      await expect(row).toContainText("等待节点报告承载能力");
+      await expect(row).toContainText("当前承载能力不可用");
       await expect(row).toContainText("/meshway");
       await expect(row).toContainText("材料 v1");
       // Capability reports come from the node itself (its real credential).
@@ -149,7 +180,7 @@ test("managed listeners: optional listener at enrollment, node configuration edi
       await run(executable("meshway-agent"), ["connections", "publish", "--state", edgeState]);
       await publishManagedTransportCapabilitiesOperation(base, credential, { vless_streams: ["tcp", "websocket"] });
       await page.reload();
-      await expect(page.getByTestId("managed-listener")).toContainText("节点已报告此承载能力");
+      await expect(page.getByTestId("managed-listener")).toContainText("承载能力可用");
       // Node-only material (UUID, PEM, private key) never reaches the browser.
       const material = (await getAgentManagedConnectionsOperation(base, credential)).materials[0]!;
       expect(material.private_key_pem).toBeTruthy();
@@ -201,22 +232,68 @@ test("managed listeners: optional listener at enrollment, node configuration edi
       expect((await getManagedListeners(base, admin, first.network_id)).revision).toBe(before);
     });
 
-    await test.step("CAS: a competing writer causes a conflict; the form stays until an explicit rebase", async () => {
+    await test.step("CAS: conflict keeps the form; after an explicit rebase the adopted version decides what is a change", async () => {
       await page.getByRole("button", { name: "编辑监听 edge-ws", exact: true }).click();
       const sheet = page.getByRole("dialog");
-      await sheet.getByLabel("监听端口", { exact: true }).fill("18444");
-      const latest = await getConnections(base, admin, first.network_id);
-      await setNodeCountry(base, admin, first.network_id, { node_id: edgeId, country: "US", expected_revision: latest.revision });
-      await sheet.getByRole("button", { name: "保存监听", exact: true }).click();
+      const port = sheet.getByLabel("监听端口", { exact: true });
+      const saveButton = sheet.getByRole("button", { name: "保存监听", exact: true });
+      await expect(port).toHaveValue("18443");
+      await port.fill("8443");
+      // A competing writer saves this listener with 9443.
+      const competing = await getManagedListeners(base, admin, first.network_id);
+      const current = competing.listeners.find((item) => item.settings.id === "edge-ws")!.settings;
+      await saveManagedListener(base, admin, first.network_id, { expected_revision: competing.revision, settings: { ...current, bind_port: 9443 } });
+      await saveButton.click();
       await expect(sheet.getByTestId("managed-listener-outcome")).toHaveAttribute("data-status", "conflict");
-      await expect(sheet.getByLabel("监听端口", { exact: true })).toHaveValue("18444");
-      expect((await getManagedListeners(base, admin, first.network_id)).listeners[0]?.settings.bind_port).toBe(18443);
+      await expect(port).toHaveValue("8443");
       await sheet.getByRole("button", { name: "读取最新版本", exact: true }).click();
-      await expect(sheet.getByTestId("managed-listener-rebased")).toBeVisible();
-      await expect(sheet.getByLabel("监听端口", { exact: true })).toHaveValue("18444");
-      await sheet.getByRole("button", { name: "保存监听", exact: true }).click();
+      await expect(sheet.getByTestId("managed-listener-rebased")).toContainText("本机监听");
+      await expect(port).toHaveValue("8443");
+      // The newly adopted saved value is "no change"; the value first opened is a real change.
+      await port.fill("9443");
+      await expect(saveButton).toBeDisabled();
+      await expect(sheet.getByText("没有修改", { exact: true })).toBeVisible();
+      await port.fill("18443");
+      await expect(saveButton).toBeEnabled();
+      await expect(sheet.getByText("未保存的修改", { exact: true })).toBeVisible();
+      const saves: string[] = [];
+      const collect = (request: { method(): string; postData(): string | null }) => {
+        const body = request.method() === "POST" ? request.postData() ?? "" : "";
+        if (body.includes('"bind_port":18443')) saves.push(body);
+      };
+      page.on("request", collect);
+      await saveButton.click();
       await expect(sheet).toBeHidden();
-      expect((await getManagedListeners(base, admin, first.network_id)).listeners[0]?.settings.bind_port).toBe(18444);
+      page.off("request", collect);
+      expect(saves).toHaveLength(1);
+      const saved = await getManagedListeners(base, admin, first.network_id);
+      expect(saved.listeners.find((item) => item.settings.id === "edge-ws")?.settings.bind_port).toBe(18443);
+      expect(saved.revision).toBe(competing.revision + 2);
+    });
+
+    await test.step("a failing managed read alone shows a dated cache with retry; listeners stay managed", async () => {
+      proxy!.state.failManaged = true;
+      const failure = page.getByTestId("managed-read-failure");
+      // The next background poll reads everything; only the managed part fails.
+      await expect(failure).toHaveAttribute("data-freshness", "cached", { timeout: 30_000 });
+      await expect(failure).toContainText("的缓存（r");
+      await expect(page.getByTestId("node-status-stale")).toHaveCount(0);
+      await expect(page.getByTestId("managed-listener").filter({ hasText: "VLESS · WebSocket" })).toContainText("缓存 · 托管设置 r");
+      await expect(page.getByTestId("manual-listener")).toHaveCount(0);
+      // Editing from the cache is possible and says so.
+      await page.getByRole("button", { name: "编辑监听 edge-ws", exact: true }).click();
+      await expect(page.getByRole("dialog").getByTestId("managed-listener-cached")).toBeVisible();
+      await page.keyboard.press("Escape");
+      await expect(page.getByRole("dialog")).toBeHidden();
+      // A retry while the API still fails keeps the error visible.
+      const reads = proxy!.state.managedReads;
+      await failure.getByRole("button", { name: "重试", exact: true }).click();
+      await expect.poll(() => proxy!.state.managedReads).toBeGreaterThan(reads);
+      await expect(failure).toHaveAttribute("data-freshness", "cached");
+      proxy!.state.failManaged = false;
+      await failure.getByRole("button", { name: "重试", exact: true }).click();
+      await expect(page.getByTestId("managed-read-failure")).toHaveCount(0);
+      await expect(page.getByTestId("managed-listener").filter({ hasText: "VLESS · WebSocket" })).not.toContainText("缓存");
     });
 
     await test.step("disable: referencing candidates are shown first and kept; the advanced editor is read-only for it", async () => {
@@ -326,6 +403,7 @@ test("managed listeners: optional listener at enrollment, node configuration edi
   } finally {
     await anonymous.close();
     await web?.stop();
+    await proxy?.close();
     await controller.stop();
     await rm(temporary, { recursive: true, force: true });
   }

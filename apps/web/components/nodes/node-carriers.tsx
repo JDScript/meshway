@@ -37,6 +37,8 @@ import { nodeName, transportLabels } from "@/lib/connections-model"
 import { discoveryLabel, discoveryStateLabels } from "@/lib/endpoint-discovery-model"
 import type { ManagedListenerDraft } from "@/lib/managed-listener-draft-registry"
 import { certificatePreview, describeSettings, managedFor, presetLabels, presetOf, referencingCandidates } from "@/lib/managed-listener-model"
+import { managedFreshness, type ManagedReadState } from "@/lib/managed-read-state"
+import { formatClock } from "@/lib/time"
 import { formatDateTime } from "@/lib/time"
 import { cn } from "@/lib/utils"
 
@@ -45,7 +47,14 @@ import { cn } from "@/lib/utils"
  * what the agent bound, external addresses with their source and expiry,
  * and what each peer verified. Raw report fields stay folded below.
  */
-export type ManagedRead = { ok: true; data: ManagedListenersSnapshot } | { ok: false; error: string }
+/** How the managed snapshot relates to the connection plan shown on this page. */
+type ManagedContext = {
+  /** The managed read is current and describes the same revision as the plan. */
+  sameRevision: boolean
+  freshness: ReturnType<typeof managedFreshness>
+  revision: number | null
+  planRevision: number
+}
 
 export function NodeCarriers({
   nodeId,
@@ -58,13 +67,15 @@ export function NodeCarriers({
   onCreateListener,
   onEditListener,
   onRetryManaged,
+  retryingManaged,
 }: {
   nodeId: string
   snapshot: ConnectionsSnapshot
   runtimes: Runtimes
   discoveries: ControllerResult<EndpointDiscoveriesSnapshot>
-  /** Platform-managed listener intent; a failed read hides editing, never the observed facts. */
-  managed: ManagedRead
+  /** Platform-managed listener intent with its read state; a failed read never hides observed facts. */
+  managed: ManagedReadState
+  retryingManaged: boolean
   /** Active node: managed listeners can be added and edited. */
   editable: boolean
   /** This node's unsaved managed-listener forms. */
@@ -90,7 +101,15 @@ export function NodeCarriers({
   // The server may call a report current while it describes another plan
   // revision or runtime generation than the one shown here.
   const discoveryStatus = serverStatus === discoveryStateLabels.observed && !view.discoveryCurrent ? "与当前配置 / 运行代际不一致（历史）" : serverStatus
-  const managedOwn = managed.ok ? managedFor(managed.data, nodeId) : []
+  const managedSnapshot: ManagedListenersSnapshot | null = managed.snapshot
+  const freshness = managedFreshness(managed)
+  const context: ManagedContext = {
+    freshness,
+    revision: managedSnapshot?.revision ?? null,
+    planRevision: snapshot.revision,
+    sameRevision: freshness === "current" && managedSnapshot?.revision === snapshot.revision,
+  }
+  const managedOwn = managedSnapshot ? managedFor(managedSnapshot, nodeId) : []
   const managedById = new Map(managedOwn.map((summary) => [summary.settings.id, summary]))
   const planListeners = new Map(snapshot.configuration.listeners.map((listener) => [listener.id, listener]))
   const disabled = managedOwn.filter((summary) => !summary.settings.enabled)
@@ -115,13 +134,26 @@ export function NodeCarriers({
           </span>
         }
       >
-        {!managed.ok ? (
-          <div className="border-b px-4 py-3 sm:px-5">
+        {freshness !== "current" ? (
+          <div data-testid="managed-read-failure" data-freshness={freshness} className="border-b px-4 py-3 sm:px-5">
             <FailureNotice
-              title="托管监听读取失败"
-              nextStep="暂时不能添加或编辑监听；下方仍显示已保存连接与运行报告。"
-              error={managed.error}
-              actions={<Button variant="outline" size="sm" onClick={onRetryManaged}>重试</Button>}
+              title={
+                freshness === "failed"
+                  ? "托管监听读取失败"
+                  : `托管监听读取失败，显示 ${formatClock(managed.snapshotAt)} 的缓存（r${managedSnapshot?.revision ?? "—"}）`
+              }
+              nextStep={
+                freshness === "failed"
+                  ? "暂时不能添加或编辑监听；下方仍显示已保存连接与运行报告。"
+                  : "缓存可能已过时；仍可基于它编辑，保存时以该版本做 CAS 校验，版本变化会冲突而不会覆盖。"
+              }
+              error={managed.status.error ?? "未读取"}
+              actions={
+                <Button variant="outline" size="sm" disabled={retryingManaged} onClick={onRetryManaged}>
+                  <RefreshCwIcon data-icon="inline-start" className={retryingManaged ? "animate-spin" : undefined} />
+                  重试
+                </Button>
+              }
             />
           </div>
         ) : null}
@@ -142,7 +174,7 @@ export function NodeCarriers({
                   <Ownership
                     summary={managedById.get(listener.id)}
                     plan={planListeners.get(listener.id)}
-                    managedKnown={managed.ok}
+                    context={context}
                     editable={editable}
                     hasDraft={editDraft(listener.id)}
                     onEdit={() => onEditListener(listener.id)}
@@ -159,6 +191,7 @@ export function NodeCarriers({
                 key={summary.settings.id}
                 summary={summary}
                 snapshot={snapshot}
+                context={context}
                 editable={editable}
                 hasDraft={editDraft(summary.settings.id)}
                 onEdit={() => onEditListener(summary.settings.id)}
@@ -166,7 +199,7 @@ export function NodeCarriers({
             ))}
           </ul>
         ) : null}
-        {editable && managed.ok ? (
+        {editable && managedSnapshot ? (
           <div className="border-t px-4 py-3 sm:px-5">
             <Button variant="outline" size="sm" onClick={onCreateListener} data-testid="managed-listener-create">
               {createDraft ? <PencilIcon data-icon="inline-start" /> : <PlusIcon data-icon="inline-start" />}
@@ -320,14 +353,14 @@ function OutgoingRow({ candidate, nodes, now }: { candidate: OutgoingView; nodes
 function Ownership({
   summary,
   plan,
-  managedKnown,
+  context,
   editable,
   hasDraft,
   onEdit,
 }: {
   summary: ManagedListenerSummary | undefined
   plan: ConnectionListener | undefined
-  managedKnown: boolean
+  context: ManagedContext
   editable: boolean
   hasDraft: boolean
   onEdit: () => void
@@ -335,14 +368,23 @@ function Ownership({
   if (summary) {
     return (
       <Fact label="平台托管" className="md:col-span-2" hint="由控制面保存并下发；保存表示意图，Agent 回执、实际绑定与对端验证分别显示。">
-        <ManagedFacts summary={summary} editable={editable} hasDraft={hasDraft} onEdit={onEdit} />
+        <ManagedFacts summary={summary} context={context} editable={editable} hasDraft={hasDraft} onEdit={onEdit} />
       </Fact>
     )
   }
-  if (!managedKnown) {
+  // Only a current managed read of the same revision can say a listener is not managed.
+  const markedManaged = plan !== undefined && plan.credential_ref === `managed.${plan.id}`
+  if (markedManaged || !context.sameRevision) {
     return (
       <Fact label="配置来源" className="md:col-span-2">
-        <span className="text-muted-foreground">未知（托管监听读取失败）</span>
+        <span data-testid="listener-source-unknown" className="text-muted-foreground">
+          {markedManaged ? "平台托管 · 托管设置未读取到" : "未确定"}
+          {context.freshness === "failed"
+            ? "（托管监听读取失败）"
+            : context.freshness === "cached"
+              ? `（托管监听读取失败，缓存 r${context.revision ?? "—"} 中没有它）`
+              : `（托管监听 r${context.revision ?? "—"} 与连接配置 r${context.planRevision} 不是同一版本）`}
+        </span>
       </Fact>
     )
   }
@@ -366,11 +408,13 @@ function Ownership({
 
 function ManagedFacts({
   summary,
+  context,
   editable,
   hasDraft,
   onEdit,
 }: {
   summary: ManagedListenerSummary
+  context: ManagedContext
   editable: boolean
   hasDraft: boolean
   onEdit: () => void
@@ -400,10 +444,17 @@ function ManagedFacts({
         ) : null}
       </span>
       <span className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs">
+        {!context.sameRevision ? (
+          <StatusBadge tone={context.freshness === "cached" ? "warning" : "neutral"}>
+            {context.freshness === "cached" ? `缓存 · 托管设置 r${context.revision ?? "—"}` : `托管设置 r${context.revision ?? "—"} · 连接配置 r${context.planRevision}`}
+          </StatusBadge>
+        ) : null}
         {summary.compiled_capability_available ? (
-          <StatusBadge tone="success">节点已报告此承载能力</StatusBadge>
+          <StatusBadge tone="success">承载能力可用</StatusBadge>
         ) : (
-          <StatusBadge tone="warning" title="节点尚未报告能运行这种承载；已保存的意图会保留，节点报告后才会下发执行。">等待节点报告承载能力</StatusBadge>
+          <StatusBadge tone="warning" title="节点未报告或不支持这种承载（含 VLESS 的 TCP / WebSocket 底层）；已保存的意图会保留，能力可用后才下发执行。">
+            当前承载能力不可用
+          </StatusBadge>
         )}
         {hasDraft ? <StatusBadge tone="warning">有未保存的修改</StatusBadge> : null}
         {vless ? (
@@ -427,12 +478,14 @@ function ManagedFacts({
 function DisabledListenerRow({
   summary,
   snapshot,
+  context,
   editable,
   hasDraft,
   onEdit,
 }: {
   summary: ManagedListenerSummary
   snapshot: ConnectionsSnapshot
+  context: ManagedContext
   editable: boolean
   hasDraft: boolean
   onEdit: () => void
@@ -441,7 +494,12 @@ function DisabledListenerRow({
   const references = referencingCandidates(snapshot, settings.id, [])
   return (
     <li data-testid="carrier-listener-disabled" data-listener-id={settings.id} className="flex flex-col gap-2 px-4 py-3.5 sm:px-5">
-      <RowTitle transport={presetLabels[presetOf(settings)]} id={settings.id} status={<StatusBadge tone="neutral">已停用</StatusBadge>} />
+      <RowTitle transport={presetLabels[presetOf(settings)]} id={settings.id} status={
+          <span className="flex items-center gap-1.5">
+            {!context.sameRevision ? <StatusBadge tone="warning">托管设置 r{context.revision ?? "—"}{context.freshness === "cached" ? " · 缓存" : ""}</StatusBadge> : null}
+            <StatusBadge tone="neutral">已停用</StatusBadge>
+          </span>
+        } />
       <p className="text-xs text-muted-foreground">{describeSettings(settings)} · 设置与材料保留，执行已撤回。</p>
       {references.length > 0 ? (
         <p role="status" className="text-xs text-warning">

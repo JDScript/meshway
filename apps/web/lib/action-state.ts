@@ -134,7 +134,8 @@ export type ManagedListenerSaveResult =
 /** Managed listeners and the connection plan read together (rebase / refresh). */
 export type ManagedListenerReadResult =
   | { status: "loaded"; managed: ManagedListenersSnapshot; connections: PartRead<ConnectionsSnapshot>; fetchedAt: number }
-  | { status: "error"; message: string }
+  /** `fetchedAt`: when the failed read finished, on the same clock as successful reads. */
+  | { status: "error"; message: string; fetchedAt: number }
 
 export const enrollmentTtlOptions = [
   { seconds: 900, label: "15 分钟" },

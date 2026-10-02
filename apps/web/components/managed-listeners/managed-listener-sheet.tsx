@@ -22,7 +22,8 @@ import { Spinner } from "@/components/ui/spinner"
 import type { ManagedListenerReadResult, ManagedListenerSaveResult } from "@/lib/action-state"
 import { nodeName } from "@/lib/connections-model"
 import { readManagedListenersAction, saveManagedListenerAction } from "@/lib/managed-listener-actions"
-import type { ManagedListenerDraft } from "@/lib/managed-listener-draft-registry"
+import { draftChanged, type ManagedListenerDraft } from "@/lib/managed-listener-draft-registry"
+import { formatClock } from "@/lib/time"
 import {
   allowedPresets,
   changedFields,
@@ -31,7 +32,6 @@ import {
   followSuggestions,
   managedById,
   referencingCandidates,
-  sameForm,
   takenListenerIds,
   toSettings,
   validateManagedForm,
@@ -53,21 +53,26 @@ type Outcome =
 export function ManagedListenerSheet({
   session,
   managed,
+  cachedAt,
   connections,
   nodes,
   onClose,
   onSaved,
   onRead,
+  onReadFailed,
 }: {
   /** The draft being edited, or null when closed. */
   session: ManagedListenerDraft | null
   /** Latest managed read on the page (display / rebase source, never the base by itself). */
   managed: ManagedListenersSnapshot
+  /** Read time of `managed` when the latest managed read failed (it is a cache), else null. */
+  cachedAt: number | null
   connections: ConnectionsSnapshot | null
   nodes: ConnectionNode[]
   onClose: () => void
   onSaved: (result: Extract<ManagedListenerSaveResult, { status: "saved" }>) => void
   onRead: (result: Extract<ManagedListenerReadResult, { status: "loaded" }>) => void
+  onReadFailed: (message: string, at: number) => void
 }) {
   const [confirmDiscard, setConfirmDiscard] = useState(false)
   const drafts = useManagedListenerDrafts()
@@ -90,12 +95,14 @@ export function ManagedListenerSheet({
               key={session.key}
               session={session}
               managed={managed}
+              cachedAt={cachedAt}
               connections={connections}
               nodes={nodes}
               dirty={dirty}
               onCancel={requestClose}
               onSaved={onSaved}
               onRead={onRead}
+              onReadFailed={onReadFailed}
               onDone={onClose}
             />
           ) : null}
@@ -138,22 +145,26 @@ export function ManagedListenerSheet({
 function SheetForm({
   session,
   managed,
+  cachedAt,
   connections,
   nodes,
   dirty,
   onCancel,
   onSaved,
   onRead,
+  onReadFailed,
   onDone,
 }: {
   session: ManagedListenerDraft
   managed: ManagedListenersSnapshot
+  cachedAt: number | null
   connections: ConnectionsSnapshot | null
   nodes: ConnectionNode[]
   dirty: boolean
   onCancel: () => void
   onSaved: (result: Extract<ManagedListenerSaveResult, { status: "saved" }>) => void
   onRead: (result: Extract<ManagedListenerReadResult, { status: "loaded" }>) => void
+  onReadFailed: (message: string, at: number) => void
   onDone: () => void
 }) {
   const networkId = useNetworkId()
@@ -181,16 +192,21 @@ function SheetForm({
     [connections, draft.original, draft.form.endpoints]
   )
   const impact = changeImpact(draft.original, draft.form, candidates)
-  const unchanged = !creating && sameForm(draft.form, draft.initial)
+  // Against the saved version currently adopted as the CAS base, not the one first opened.
+  const unchanged = !creating && !draftChanged(draft)
   const saved = draft.original ? managedById(managed, draft.original.id) : undefined
   const savedMoved =
     draft.original !== null && saved !== undefined && JSON.stringify(saved.settings) !== JSON.stringify(draft.original)
   const behind = draft.baseRevision !== null && managed.revision > draft.baseRevision
 
+  // The store keeps a draft only while it differs from its adopted baseline.
+  const keep = (next: ManagedListenerDraft) => {
+    if (draftChanged(next)) drafts.put({ ...next, open: true })
+    else drafts.remove(next.key)
+  }
   const update = (next: ManagedListenerDraft) => {
     setDraft(next)
-    if (sameForm(next.form, next.initial) && next.baseRevision === session.baseRevision) drafts.remove(next.key)
-    else drafts.put({ ...next, open: true })
+    keep(next)
   }
   // Typing an ID stops it following the preset's suggestion.
   const setForm = (form: ManagedListenerForm) =>
@@ -224,6 +240,7 @@ function SheetForm({
     startRead(async () => {
       const result = await readManagedListenersAction(networkId)
       if (result.status !== "loaded") {
+        onReadFailed(result.message, result.fetchedAt)
         if (mounted.current) setOutcome({ status: "error", message: result.message })
         return
       }
@@ -240,8 +257,9 @@ function SheetForm({
         baseRevision: result.managed.revision,
         original: latest?.settings ?? draft.original,
       }
+      // The typed form stays; only its baseline and CAS base move.
       setDraft(next)
-      drafts.put({ ...next, open: true })
+      keep(next)
       setOutcome({ status: "rebased", changed })
     })
   }
@@ -266,6 +284,13 @@ function SheetForm({
       </SheetHeader>
 
       <div className="flex-1 overflow-y-auto">
+        {cachedAt !== null ? (
+          <Notice tone="warning" icon={<TriangleAlertIcon />}>
+            <span data-testid="managed-listener-cached">
+              托管监听最近一次读取失败；页面显示 {formatClock(cachedAt)} 的缓存（r{managed.revision}）。表单基于 r{draft.baseRevision ?? "—"}，保存时由 controller 做 CAS 校验。
+            </span>
+          </Notice>
+        ) : null}
         {behind || savedMoved ? (
           <Notice tone="warning" icon={<TriangleAlertIcon />}>
             <span>

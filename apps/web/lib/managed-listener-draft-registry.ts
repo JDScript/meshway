@@ -1,6 +1,6 @@
 import type { ManagedListenerSettings } from "@meshway/control-client"
 
-import type { ManagedListenerForm } from "./managed-listener-model.ts"
+import { fromSettings, sameForm, type ManagedListenerForm } from "./managed-listener-model.ts"
 
 /**
  * One unsaved managed-listener form. `baseRevision` is the network CAS the
@@ -14,13 +14,27 @@ export type ManagedListenerDraft = {
   nodeId: string | null
   baseRevision: number | null
   original: ManagedListenerSettings | null
-  /** What the form held when opened; the draft is kept while `form` differs. */
+  /** What the form held when opened (create: the suggestion; edit: the saved settings then). */
   initial: ManagedListenerForm
   form: ManagedListenerForm
   /** The ID still follows the preset's suggestion (create / enroll only). */
   idFollows: boolean
   /** The node page reopens its sheet on return. */
   open: boolean
+}
+
+/**
+ * What the form is compared against to decide whether anything would be
+ * saved: the saved settings currently adopted as the CAS base (`original`,
+ * which an explicit rebase replaces), or the creation suggestion.
+ */
+export function draftBaseline(draft: ManagedListenerDraft): ManagedListenerForm {
+  return draft.original ? fromSettings(draft.original) : draft.initial
+}
+
+/** The form differs from its adopted baseline, so there is something to save or keep. */
+export function draftChanged(draft: ManagedListenerDraft): boolean {
+  return !sameForm(draft.form, draftBaseline(draft))
 }
 
 export function createKey(nodeId: string): string {
