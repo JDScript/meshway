@@ -59,11 +59,13 @@ function editorSchemas(document) {
 // when the API grows beyond JSON GET/POST operations with component schemas.
 // JSON Schema lengths count Unicode code points, unlike Zod's native min/max
 // string checks (UTF-16 code units). Generate explicit scalar-length refinements.
-function validators(document) {
+export function validators(document) {
   const emitted = new Set();
   const visiting = new Set();
   const definitions = [];
-  const schemas = document.components.schemas;
+  const schemas = document.components?.schemas ?? document.$defs;
+  const referencePrefix = document.components?.schemas ? "#/components/schemas/" : "#/$defs/";
+  if (!schemas) throw new Error("Missing schema definitions");
   function keys(schema, allowed) {
     if (schema["x-meshway-ref"] !== undefined && !["node", "tag", "selector"].includes(schema["x-meshway-ref"])) {
       throw new Error("Unsupported Meshway schema reference annotation");
@@ -77,27 +79,52 @@ function validators(document) {
     if (visiting.has(name)) throw new Error("Recursive schemas require an explicit generator extension");
     if (emitted.has(name)) return;
     visiting.add(name);
-    const code = emit(schemas[name]);
+    let code;
+    try {
+      code = emit(schemas[name]);
+    } catch (error) {
+      throw new Error(`Component ${name}: ${error.message}`, { cause: error });
+    }
     definitions.push(`export const z${name} = ${code};`);
     emitted.add(name);
     visiting.delete(name);
   }
   function emit(schema) {
+    if (!schema || typeof schema !== "object" || Array.isArray(schema)) throw new Error("Expected a typed schema object");
     if (schema.anyOf || schema.oneOf) {
       keys(schema, ["anyOf", "oneOf"]);
+      if (schema.anyOf && schema.oneOf) throw new Error("Mixed union keywords are unsupported");
       const variants = schema.anyOf ?? schema.oneOf;
-      if (variants.length !== 2) throw new Error("Only nullable component unions are supported");
-      const value = variants.find(item => item.$ref);
+      if (!Array.isArray(variants) || variants.length < 2) throw new Error("Union requires at least two variants");
       const empty = variants.find(item => item.type === "null" && Object.keys(item).length === 1);
-      if (!value || !empty) throw new Error("Only component|null unions are supported");
-      return `${emit(value)}.nullable()`;
+      if (empty) {
+        const values = variants.filter(item => item !== empty);
+        if (values.some(item => item.type === "null")) throw new Error("Duplicate null variant");
+        return `${values.length === 1 ? emit(values[0]) : emit({ [schema.oneOf ? "oneOf" : "anyOf"]: values })}.nullable()`;
+      }
+      // Require disjoint, required string tags. A plain z.union then has exactly
+      // one possible match, preserving both oneOf and anyOf without stripping
+      // fields or choosing an arbitrary overlapping variant.
+      const objects = variants.map(item => {
+        if (!item.$ref) return item;
+        keys(item, ["$ref"]);
+        return schemas[referenceName(item.$ref)];
+      });
+      const literal = property => property?.type === "string"
+        ? (typeof property.const === "string" ? property.const : property.enum?.length === 1 ? property.enum[0] : undefined)
+        : undefined;
+      const tags = Object.keys(objects[0]?.properties ?? {}).filter(name => objects.every(item =>
+        item?.type === "object" && item.required?.includes(name) && typeof literal(item.properties?.[name]) === "string"));
+      if (!tags.length) throw new Error("Union requires a shared required string discriminator");
+      const tag = tags.find(name => new Set(objects.map(item => literal(item.properties[name]))).size === variants.length);
+      if (!tag) throw new Error("Conflicting discriminator values");
+      return `z.union([${variants.map(emit).join(", ")}])`;
     }
     if (schema.$ref) {
       keys(schema, ["$ref"]);
-      const match = /^#\/components\/schemas\/([A-Za-z][A-Za-z0-9]*)$/.exec(schema.$ref);
-      if (!match) throw new Error("Only component references are supported");
-      component(match[1]);
-      return `z${match[1]}`;
+      const name = referenceName(schema.$ref);
+      component(name);
+      return `z${name}`;
     }
     if (Array.isArray(schema.type)) {
       if (schema.type.length !== 2 || schema.type[1] !== "null" || typeof schema.type[0] !== "string") throw new Error("Only T|null unions are supported");
@@ -105,13 +132,42 @@ function validators(document) {
     }
     switch (schema.type) {
       case "object": {
-        keys(schema, ["type", "properties", "required", "additionalProperties"]);
-        if (schema.additionalProperties !== false || !schema.properties || !Array.isArray(schema.required)) throw new Error("Only closed component objects are supported");
-        if (schema.required.some((name) => !Object.hasOwn(schema.properties, name))) throw new Error("Required property is missing");
-        return `z.strictObject({\n${Object.entries(schema.properties).map(([name, property]) => `  ${JSON.stringify(name)}: ${emit(property)}${schema.required.includes(name) ? "" : ".optional()"}`).join(",\n")}\n})`;
+        keys(schema, ["type", "properties", "required", "additionalProperties", "maxProperties", "minProperties", "propertyNames"]);
+        const properties = schema.properties ?? {};
+        const required = schema.required ?? [];
+        if (!Array.isArray(required) || new Set(required).size !== required.length || required.some(name => !Object.hasOwn(properties, name))) throw new Error("Invalid required properties");
+        let code;
+        if (schema.additionalProperties && typeof schema.additionalProperties === "object" && !Object.keys(properties).length && !required.length) {
+          if (schema.propertyNames && schema.propertyNames.type !== "string") throw new Error("Typed map keys must be strings");
+          code = `z.record(${schema.propertyNames ? emit(schema.propertyNames) : "z.string()"}, ${emit(schema.additionalProperties)})`;
+        } else {
+          if (schema.propertyNames) throw new Error("propertyNames is only supported on typed maps");
+          // utoipa tagged variants omit additionalProperties=false. Their
+          // required full property set + matching maxProperties is equally closed.
+          const boundedClosed = schema.additionalProperties === undefined && schema.maxProperties === Object.keys(properties).length && required.length === Object.keys(properties).length;
+          if (schema.additionalProperties !== false && !boundedClosed) throw new Error("Only closed objects or typed maps are supported");
+          code = `z.strictObject({\n${Object.entries(properties).map(([name, property]) => {
+            const value = emit(property);
+            // Existing nullable optional DTOs explicitly include undefined in
+            // Hey API output. Non-null optional JSON properties do not; preserve
+            // omission without broadening them under exactOptionalPropertyTypes.
+            return `  ${JSON.stringify(name)}: ${value}${required.includes(name) ? "" : nullable(property) ? ".optional()" : ".exactOptional()"}`;
+          }).join(",\n")}\n})`;
+        }
+        for (const [key, operator] of [["minProperties", ">="], ["maxProperties", "<="]]) {
+          if (schema[key] !== undefined) {
+            if (!Number.isSafeInteger(schema[key]) || schema[key] < 0) throw new Error(`Invalid ${key}`);
+            code += `.refine(value => Object.keys(value).length ${operator} ${schema[key]}, ${JSON.stringify(`${key} ${schema[key]}`)})`;
+          }
+        }
+        return code;
       }
       case "string": {
-        keys(schema, ["type", "format", "minLength", "maxLength", "pattern", "enum"]);
+        keys(schema, ["type", "format", "minLength", "maxLength", "pattern", "enum", "const"]);
+        if (schema.const !== undefined) {
+          if (typeof schema.const !== "string" || Object.keys(schema).some(key => !["type", "const", "description", "title", "x-meshway-ref"].includes(key))) throw new Error("Only plain string constants are supported");
+          return `z.literal(${JSON.stringify(schema.const)})`;
+        }
         if (schema.enum !== undefined) {
           if (!Array.isArray(schema.enum) || !schema.enum.length || schema.enum.some(value => typeof value !== "string") || Object.keys(schema).some(key => !["type", "enum", "description", "title", "x-meshway-ref"].includes(key))) throw new Error("Only plain string enums are supported");
           return `z.enum(${JSON.stringify(schema.enum)})`;
@@ -159,11 +215,21 @@ function validators(document) {
       default: throw new Error(`Unsupported schema type ${schema.type}`);
     }
   }
+  function referenceName(reference) {
+    if (typeof reference !== "string" || !reference.startsWith(referencePrefix)) throw new Error("Only local definition references are supported");
+    const name = reference.slice(referencePrefix.length);
+    if (!/^[A-Za-z][A-Za-z0-9]*$/.test(name) || !Object.hasOwn(schemas, name)) throw new Error(`Invalid component: ${name}`);
+    return name;
+  }
+  function nullable(schema) {
+    if (schema.$ref) return nullable(schemas[referenceName(schema.$ref)]);
+    return schema.type === "null" || (Array.isArray(schema.type) && schema.type.includes("null")) || (schema.anyOf ?? schema.oneOf ?? []).some(item => item.type === "null");
+  }
   for (const name of Object.keys(schemas).sort()) component(name);
   return `// Generated from the controller OpenAPI by scripts/generate-protocol.mjs. Do not edit.\n\nimport * as z from "zod";\n\n${definitions.join("\n\n")}\n`;
 }
 
-function operations(document) {
+export function operations(document) {
   if (document.openapi !== "3.1.0") throw new Error("Expected native OpenAPI 3.1.0");
   const types = new Set();
   const validators = new Set();
