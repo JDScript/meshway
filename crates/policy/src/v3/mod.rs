@@ -77,7 +77,7 @@ pub struct MeshRule {
     pub dst: String,
     pub via: Vec<String>,
 }
-#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, ToSchema)]
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(
     tag = "kind",
     content = "value",
@@ -89,6 +89,37 @@ pub enum ExitMatch {
     Cidr(String),
     RuleSet(String),
 }
+// utoipa 6 neither propagates deny_unknown_fields to adjacent-tagged tuple
+// variants nor accepts max_properties on them. Keep the existing enum / serde
+// wire contract and describe its closed objects explicitly at the source.
+impl utoipa::PartialSchema for ExitMatch {
+    fn schema() -> utoipa::openapi::RefOr<utoipa::openapi::schema::Schema> {
+        use utoipa::openapi::schema::{AdditionalProperties, ObjectBuilder, OneOfBuilder, Type};
+
+        ["domain_suffix", "cidr", "rule_set"]
+            .into_iter()
+            .fold(OneOfBuilder::new(), |union, kind| {
+                union.item(
+                    ObjectBuilder::new()
+                        .schema_type(Type::Object)
+                        .property(
+                            "kind",
+                            ObjectBuilder::new()
+                                .schema_type(Type::String)
+                                .enum_values(Some([kind])),
+                        )
+                        .property("value", <String as utoipa::PartialSchema>::schema())
+                        .required("value")
+                        .required("kind")
+                        .additional_properties(Some(AdditionalProperties::FreeForm(false)))
+                        .max_properties(Some(2)),
+                )
+            })
+            .into()
+    }
+}
+impl ToSchema for ExitMatch {}
+
 fn wildcard() -> String {
     "*".into()
 }

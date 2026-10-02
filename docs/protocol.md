@@ -39,7 +39,7 @@ Rust 请求 / 响应类型 + 实际 API 路由声明
 - TS 操作生成支持 JSON GET / POST、组件 schema、必填 POST body、单一 HTTP 200 成功响应，以及单个必需的 HTTP bearer 认证方案。schema 生成覆盖封闭对象、组件引用、数组、整数、布尔值、字符串枚举 / 常量、日期时间及 `T | null`。带共享必填字符串判别字段的 `oneOf` / `anyOf` 支持内联或引用 variant；判别值必须唯一，拒绝重叠分支，不选择第一个匹配来掩盖冲突。nullable 分支不改变对象字段的必填性。
 - typed map 使用 schema 型 `additionalProperties` 逐值验证，可带字符串 `propertyNames` 与 `minProperties` / `maxProperties`；不支持任意 JSON 值或混合固定字段 / 开放 map。对象必须显式 `additionalProperties: false`，或全部声明字段必填且 `maxProperties` 等于声明字段数（utoipa tagged variant 的等价封闭形状）。预算作用于实际对象键数，未知字段不会被静默丢弃。
 - 非 nullable 可省略字段使用 Zod `exactOptional()`，与 Hey API DTO 的 `exactOptionalPropertyTypes` 保持一致；省略不会被扩展为可显式传入 `undefined`。既有 nullable optional DTO 的 `.optional()` 输出保持兼容。
-- 同一 Zod emitter 可直接读取 `policy_v3_schema` 的 `$defs` / 本地引用供行为测试；生产仍消费实际路由导出的 OpenAPI。实际 v3 schema 无 `allOf`，目前继续拒绝它及其他未支持关键字。`ExitMatch` 当前源 schema 缺少 variant 封闭约束，完整 v3 生成仍会明确失败，最小源修复与后续接线边界见 [P3a 契约交接](/p3a-contract-handoff)。这不是 v3 HTTP 下发或真实组网已完成。
+- 同一 Zod emitter 可直接读取 `policy_v3_schema` 的 `$defs` / 本地引用供行为测试；生产仍消费实际路由导出的 OpenAPI。实际 v3 schema 无 `allOf`，目前继续拒绝它及其他未支持关键字。`ExitMatch` 源 schema 已通过 typed utoipa builders 补齐 variant 封闭约束，完整真实 `NetworkPolicy` schema 可直接生成并通过运行时及严格 TS 验证；后续接线边界见 [P3a 契约交接](/p3a-contract-handoff)。这不是 v3 HTTP 下发或真实组网已完成。
 
 P1a 增加来自实际路由声明的必需 string path parameter：管理操作都在 `/api/v1/networks/{network_id}/…`，TS SDK 签名统一为 `operation(baseUrl, token, networkId[, body])`，生成器用 `encodeURIComponent` 展开路径。`listNetworks(baseUrl, token)` 与 `createNetwork(baseUrl, token, { name })` 是全局资源操作。Agent / App 兑换、注册、心跳与快照操作无 path parameter、契约保持兼容；网络由凭据解析。文中的全局 revision / CAS 指**当前网络内所有配置共用**，不再是 controller 所有网络共用。
 

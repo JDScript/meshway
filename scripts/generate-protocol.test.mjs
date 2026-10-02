@@ -68,17 +68,19 @@ try {
     }
   });
 
-  await test("actual Rust policy schema: bounded variants/maps work and unclosed ExitMatch blocks publication", async () => {
+  await test("actual complete Rust NetworkPolicy schema validates runtime values and strict operation types", async () => {
     const result = spawnSync("cargo", ["run", "--locked", "--quiet", "-p", "meshway-policy", "--example", "policy_v3_schema"], {
       cwd: root, encoding: "utf8", env: { ...process.env, CARGO_BUILD_JOBS: "2", CARGO_TARGET_DIR: join(root, "target/p3a-codegen") },
     });
     assert.equal(result.status, 0, result.stderr);
     const schema = JSON.parse(result.stdout);
-    assert.throws(() => validators(schema), /Component ExitMatch: Only closed objects/);
-    const { zProfileFallback, zAutomaticRouting } = await runtime({ $defs: {
-      ProfileFallback: schema.$defs.ProfileFallback,
-      AutomaticRouting: schema.$defs.AutomaticRouting,
-    } });
+    const { zProfileFallback, zAutomaticRouting, zExitMatch, zNetworkPolicy } = await runtime(schema);
+    for (const match of [{ kind: "domain_suffix", value: "example.com" }, { kind: "cidr", value: "10.0.0.0/8" }, { kind: "rule_set", value: "regional" }]) {
+      assert.deepEqual(zExitMatch.parse(match), match);
+      for (const invalid of [{ ...match, unknown: true }, { kind: match.kind }, { value: match.value }, { ...match, value: null }, { ...match, value: 42 }, { ...match, kind: null }, { ...match, kind: "unknown" }]) {
+        assert.equal(zExitMatch.safeParse(invalid).success, false);
+      }
+    }
     for (const fallback of [{ kind: "none" }, { kind: "direct" }, { kind: "nodes", candidates: ["node:x"], via: [] }]) {
       assert.deepEqual(zProfileFallback.parse(fallback), fallback);
       assert.equal(zProfileFallback.safeParse({ ...fallback, unknown: true }).success, false);
@@ -86,10 +88,6 @@ try {
     assert.equal(zAutomaticRouting.safeParse({ regions: { JP: "mesh-only" }, fallback: "mesh-only" }).success, true);
     assert.equal(zAutomaticRouting.safeParse({ regions: { JP: 1 }, fallback: "mesh-only" }).success, false);
 
-    // Explicit fixture for the source-owner handoff patch: do not conceal or
-    // rewrite the authoritative schema in the production generator.
-    for (const item of schema.$defs.ExitMatch.oneOf) item.maxProperties = 2;
-    const { zNetworkPolicy } = await runtime(schema);
     const policy = {
       connections: [{ id: "default", a: "*", b: "*", action: "allow" }],
       grants: [{ id: "members", src: ["*"], dst: ["*"], bidirectional: false }],

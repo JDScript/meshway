@@ -2,26 +2,15 @@
 
 本切片补齐 TS runtime schema 的 tagged union、typed map、字符串 const 与属性预算支持；现有 HTTP OpenAPI、生成产物与操作签名保持字节兼容。未接入 v3 管理 API、节点执行快照或 Linux 数据面；不表示 P3a 完成。
 
-## 真实源 schema 与最小交接补丁
+## 真实源 schema 与已完成修复
 
 `CARGO_BUILD_JOBS=2 CARGO_TARGET_DIR=target/p3a-codegen cargo run --locked --quiet -p meshway-policy --example policy_v3_schema` 输出真实 `NetworkPolicy` JSON Schema。当前使用 `oneOf`、字符串 singleton enum、typed `additionalProperties`、字符串 `propertyNames` 和 `maxProperties`；没有 `allOf` / `const`。const 仅补齐下一步显式 tagged DTO 的字符串 literal 表达。
 
-`ProfileFallback` 的 variant 已通过 maxProperties 封闭，`AutomaticRouting.regions` 可生成并执行验证。但 `ExitMatch` 的 utoipa variant 未继承 serde 的 `deny_unknown_fields`，输出没有 `additionalProperties: false` 或 maxProperties。生成器拒绝它，不凭 Rust 类型名称推断封闭语义。
+`ProfileFallback` 的 variant 已通过 maxProperties 封闭，`AutomaticRouting.regions` 可生成并执行验证。`ExitMatch` 的 utoipa variant 原先未继承 serde 的 `deny_unknown_fields`，缺少封闭约束。**utoipa 6 不接受 tuple variant 上的 `max_properties` 注解**；第一提交建议的三行注解不可编译，已撤销该建议。
 
-源契约所有者需在 `crates/policy/src/v3/mod.rs` 给三个 `ExitMatch` variant 各加一行（不在本切片文件所有权内）：
+本切片第二提交在权威源 `crates/policy/src/v3/mod.rs` 为 `ExitMatch` 显式实现 `PartialSchema` / `ToSchema`，使用 typed `ObjectBuilder` / `OneOfBuilder` 构造三个 variant：字符串 singleton enum `kind`、原生 String schema 的 `value`，两字段必填，`additionalProperties: false`、`maxProperties: 2`。保留现有 tuple Rust API、serde tag/content/name 和序列化字节，不新增源 DTO 或依赖，不在生产生成器按名称修补 schema。
 
-```rust
-pub enum ExitMatch {
-    #[schema(max_properties = 2)]
-    DomainSuffix(String),
-    #[schema(max_properties = 2)]
-    Cidr(String),
-    #[schema(max_properties = 2)]
-    RuleSet(String),
-}
-```
-
-与现有 `ProfileFallback` 使用相同的源注解，明确两个必填键 `kind` / `value` 的上限；不修改产品语义。行为测试先验证未修复真实 schema 必须失败，再仅在显式 fixture 中加这三处 maxProperties，验证整个真实 NetworkPolicy 的合法 / 非法实例经过生成 Zod，且 Hey API DTO、Zod 输出和生成操作共同通过严格 TypeScript 编译。源补丁合入后，将测试中的失败断言及 fixture 修补替换为直接对真实 schema 成功生成，不能保留自动 schema 修补。
+Rust wire/schema test 对照三个实际 serde variant 的序列化字节、反序列化、缺失或未知字段、null / 错误类型 / unknown tag 拒绝，并核对实际导出的属性、required 与封闭约束。生成器行为测试直接消费未经修补的完整真实 `NetworkPolicy` schema：合法 / 非法实例经过生成 Zod，且 Hey API DTO、Zod 输出和生成操作共同通过严格 TypeScript 编译。没有 fixture 自动加约束；人工构造的开放 variant 仍作为 fail-closed 负例。
 
 根命令建议：协调者在根 `package.json` scripts 加 `"test:codegen": "node --test scripts/generate-protocol.test.mjs"`，并将它纳入合并检查；本切片未改根 manifest / lock / CI。当前可直接运行该命令。
 

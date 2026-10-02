@@ -80,6 +80,73 @@ fn internet() -> Grant {
 }
 
 #[test]
+fn exit_match_wire_and_schema_reject_unknown_or_missing_variant_fields() {
+    use serde_json::json;
+    use utoipa::OpenApi;
+
+    #[derive(OpenApi)]
+    #[openapi(components(schemas(ExitMatch)))]
+    struct Schema;
+
+    let document = serde_json::to_value(Schema::openapi()).unwrap();
+    let variants = document["components"]["schemas"]["ExitMatch"]["oneOf"]
+        .as_array()
+        .unwrap();
+    assert_eq!(variants.len(), 3);
+    for (kind, value, expected) in [
+        (
+            "domain_suffix",
+            "example.com",
+            ExitMatch::DomainSuffix("example.com".into()),
+        ),
+        ("cidr", "10.0.0.0/8", ExitMatch::Cidr("10.0.0.0/8".into())),
+        (
+            "rule_set",
+            "regional",
+            ExitMatch::RuleSet("regional".into()),
+        ),
+    ] {
+        let wire = serde_json::to_value(&expected).unwrap();
+        assert_eq!(wire, json!({"kind": kind, "value": value}));
+        assert_eq!(
+            serde_json::to_string(&expected).unwrap(),
+            format!(r#"{{"kind":"{kind}","value":"{value}"}}"#)
+        );
+        assert_eq!(
+            serde_json::from_value::<ExitMatch>(wire.clone()).unwrap(),
+            expected
+        );
+        let variant = variants
+            .iter()
+            .find(|variant| variant["properties"]["kind"]["enum"] == json!([kind]))
+            .unwrap();
+        assert_eq!(variant["type"], "object");
+        assert_eq!(variant["additionalProperties"], false);
+        assert_eq!(variant["maxProperties"], 2);
+        assert_eq!(variant["properties"].as_object().unwrap().len(), 2);
+        assert_eq!(variant["properties"]["kind"]["type"], "string");
+        assert_eq!(variant["properties"]["value"], json!({"type": "string"}));
+        let required = variant["required"].as_array().unwrap();
+        assert_eq!(required.len(), 2);
+        assert!(required.contains(&json!("kind")));
+        assert!(required.contains(&json!("value")));
+
+        let mut unknown = wire.clone();
+        unknown["extra"] = json!(true);
+        assert!(serde_json::from_value::<ExitMatch>(unknown).is_err());
+        for missing in ["kind", "value"] {
+            let mut invalid = wire.clone();
+            invalid.as_object_mut().unwrap().remove(missing);
+            assert!(serde_json::from_value::<ExitMatch>(invalid).is_err());
+        }
+        assert!(serde_json::from_value::<ExitMatch>(json!({"kind": kind, "value": null})).is_err());
+        assert!(serde_json::from_value::<ExitMatch>(json!({"kind": kind, "value": 42})).is_err());
+    }
+    assert!(serde_json::from_value::<ExitMatch>(json!({"kind": "unknown", "value": "x"})).is_err());
+    assert!(serde_json::from_value::<ExitMatch>(json!({"kind": null, "value": "x"})).is_err());
+}
+
+#[test]
 fn legal_small_cidr_input_cannot_publish_oversized_flattened_table() {
     // 1024 isolated host exceptions before /0 create 17416 disjoint prefixes,
     // despite only 1025 input destinations. Count with a separate interval
