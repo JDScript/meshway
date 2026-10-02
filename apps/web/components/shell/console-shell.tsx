@@ -154,10 +154,14 @@ function ConsoleHeader({ hidden }: { hidden: boolean }) {
                 {name ?? "网络"}
               </BreadcrumbLink>
             </BreadcrumbItem>
-            {active?.section ? (
+            {active?.main && active.main !== active.item && active.main.segment !== "" ? (
               <>
-                <BreadcrumbSeparator className="hidden lg:block" />
-                <BreadcrumbItem className="hidden shrink-0 lg:inline-flex">{active.section.label}</BreadcrumbItem>
+                <BreadcrumbSeparator />
+                <BreadcrumbItem className="min-w-0 shrink-0">
+                  <BreadcrumbLink render={<Link href={active.main.href(routes)} />} className="truncate">
+                    {active.main.label}
+                  </BreadcrumbLink>
+                </BreadcrumbItem>
               </>
             ) : null}
             {active && active.item.segment !== "" ? (

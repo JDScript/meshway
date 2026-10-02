@@ -5,6 +5,7 @@ import { redirect } from "next/navigation"
 import { ControllerUnavailable } from "@/components/common/controller-states"
 import { ConnectionsWorkspace } from "@/components/connections/connections-workspace"
 import { PageBody, PageHeader } from "@/components/shell/page-header"
+import { SectionTabs } from "@/components/shell/section-tabs"
 import { buttonVariants } from "@/components/ui/button"
 import { controllerUrl, fetchConnectionRuntimes, fetchConnections, fetchManagedListeners } from "@/lib/controller"
 import { requireNetwork } from "@/lib/network-scope"
@@ -33,8 +34,8 @@ export default async function ConnectionsPage({
   return (
     <PageBody>
       <PageHeader
-        title="手工连接"
-        description="跨节点检查监听与主动连接；日常修改在节点「配置」中完成。"
+        title="节点"
+        description="跨节点查看监听与主动连接。日常修改在每个节点的「配置」中完成。"
         meta={connections.ok ? <span>读取于 {formatClock(connections.fetchedAt)}</span> : null}
         actions={
           <>
@@ -43,6 +44,7 @@ export default async function ConnectionsPage({
           </>
         }
       />
+      <SectionTabs section="nodes" />
       {connections.ok ? (
         <ConnectionsWorkspace
           snapshot={connections.data}

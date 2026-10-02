@@ -2,6 +2,7 @@ import type { Metadata } from "next"
 
 import { ControllerUnavailable } from "@/components/common/controller-states"
 import { PageBody, PageHeader } from "@/components/shell/page-header"
+import { SectionTabs } from "@/components/shell/section-tabs"
 import { TagsWorkspace } from "@/components/tags/tags-workspace"
 import { controllerUrl, fetchConnections, fetchMeshAccess, fetchTags } from "@/lib/controller"
 import { requireNetwork } from "@/lib/network-scope"
@@ -26,10 +27,8 @@ export default async function TagsPage({
 
   return (
     <PageBody>
-      <PageHeader
-        title="标签"
-        description="管理员维护的节点分组，供访问授权以 tag:名称 引用。"
-      />
+      <PageHeader title="节点" description="标签是管理员维护的节点分组，访问控制以 tag:名称 引用。" />
+      <SectionTabs section="nodes" />
       {!tags.ok ? (
         <ControllerUnavailable url={controllerUrl()} error={tags.error} />
       ) : !connections.ok ? (

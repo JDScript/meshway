@@ -4,6 +4,7 @@ import { ControllerUnavailable } from "@/components/common/controller-states"
 import { DnsNames } from "@/components/network/dns-names"
 import { NetworkSettings } from "@/components/network/network-settings"
 import { PageBody, PageHeader } from "@/components/shell/page-header"
+import { SectionTabs } from "@/components/shell/section-tabs"
 import { controllerUrl, fetchNetwork, fetchNodes } from "@/lib/controller"
 import { requireNetwork } from "@/lib/network-scope"
 import { formatClock } from "@/lib/time"
@@ -16,10 +17,10 @@ export default async function DnsPage({ params }: { params: Promise<{ network: s
   return (
     <PageBody>
       <PageHeader
-        title="DNS"
-        description="节点在本网络 zone 下的名称与解析设置。"
+        title="设置"
         meta={network.ok ? <span>读取于 {formatClock(network.fetchedAt)}</span> : null}
       />
+      <SectionTabs section="settings" />
       {network.ok ? (
         <>
           <NetworkSettings snapshot={network.data} section="dns" />

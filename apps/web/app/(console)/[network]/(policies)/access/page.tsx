@@ -7,7 +7,7 @@ import { controllerUrl, fetchConnections, fetchMeshAccess, fetchTags } from "@/l
 import { requireNetwork } from "@/lib/network-scope"
 import { formatClock } from "@/lib/time"
 
-export const metadata: Metadata = { title: "访问授权" }
+export const metadata: Metadata = { title: "访问控制" }
 
 export default async function AccessPage({
   params,
@@ -31,8 +31,8 @@ export default async function AccessPage({
   return (
     <PageBody>
       <PageHeader
-        title="访问授权"
-        description="哪些节点之间可以访问。规则自上而下首条命中，其余流量走默认动作。"
+        title="访问控制"
+        description="当前保存的规则自上而下首条命中，未命中的流量走默认动作。"
         meta={access.ok ? <span>读取于 {formatClock(access.fetchedAt)}</span> : null}
       />
       {failed !== null || !access.ok || !connections.ok || !tags.ok ? (

@@ -1,11 +1,11 @@
 "use client"
 
-import { PlusIcon, SearchIcon, SunMoonIcon } from "lucide-react"
+import { PlusIcon, SearchIcon, SunMoonIcon, UserPlusIcon } from "lucide-react"
 import { useTheme } from "next-themes"
 import { useRouter } from "next/navigation"
 import { useEffect, useState } from "react"
 
-import { navMain } from "@/components/shell/nav"
+import { navItems, navMain } from "@/components/shell/nav"
 import { useRoutes } from "@/components/shell/network-context"
 import { Button } from "@/components/ui/button"
 import {
@@ -94,21 +94,20 @@ export function CommandMenu() {
               </CommandGroup>
             ) : null}
             <CommandGroup heading="页面">
-              {navMain.flatMap((entry) =>
-                (entry.kind === "link" ? [{ item: entry.item, section: null }] : entry.section.items.map((item) => ({ item, section: entry.section.label }))).map(
-                  ({ item, section }) => (
-                    <CommandItem
-                      key={item.segment}
-                      value={`${section ?? ""} ${item.label} ${item.keywords.join(" ")}`}
-                      onSelect={() => run(() => router.push(item.href(routes)))}
-                    >
-                      <item.icon />
-                      {item.label}
-                      {section ? <span className="ml-auto text-xs text-muted-foreground">{section}</span> : null}
-                    </CommandItem>
-                  )
+              {navItems.map((item) => {
+                const section = item.parent ? navMain.find((main) => main.segment === item.parent)?.label : undefined
+                return (
+                  <CommandItem
+                    key={item.segment}
+                    value={`${section ?? ""} ${item.label} ${item.keywords.join(" ")}`}
+                    onSelect={() => run(() => router.push(item.href(routes)))}
+                  >
+                    <item.icon />
+                    {item.label}
+                    {section ? <span className="ml-auto text-xs text-muted-foreground">{section}</span> : null}
+                  </CommandItem>
                 )
-              )}
+              })}
             </CommandGroup>
             <CommandSeparator />
             <CommandGroup heading="操作">
@@ -118,6 +117,10 @@ export function CommandMenu() {
               >
                 <PlusIcon />
                 添加节点
+              </CommandItem>
+              <CommandItem value="invite member 邀请成员 invitation" onSelect={() => run(() => router.push(`${routes.members}?invite=1`))}>
+                <UserPlusIcon />
+                邀请成员
               </CommandItem>
               <CommandItem
                 value="toggle theme 切换主题 深色 浅色"
