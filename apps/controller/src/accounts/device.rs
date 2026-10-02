@@ -7,7 +7,7 @@ use super::*;
 /// This is internal SQLite data, not an HTTP DTO. No cookie/token is copied;
 /// the session digest is enough to recheck revocation. Never expose it to App/CLI.
 pub(crate) struct DeviceAuthorizationBinding {
-    pub(crate) network: AccountNetwork,
+    pub(crate) network: NetworkId,
     pub(crate) user: UserId,
     pub(crate) membership_id: MembershipId,
     pub(crate) session_digest: Vec<u8>,
@@ -40,7 +40,7 @@ impl Accounts<'_> {
     pub(crate) fn authorize_device(
         &self,
         principal: &Principal,
-        network: &AccountNetwork,
+        network: &NetworkId,
         now: i64,
     ) -> Result<DeviceAuthorizationSubject> {
         let user = self.session_user(principal, now)?;
@@ -74,7 +74,7 @@ impl Accounts<'_> {
     pub(crate) fn revalidate_device(
         &self,
         binding: &DeviceAuthorizationBinding,
-        expected_network: &AccountNetwork,
+        expected_network: &NetworkId,
         now: i64,
     ) -> Result<DeviceAuthorizationSubject> {
         if binding.network != *expected_network || binding.session_digest.len() != 32 {

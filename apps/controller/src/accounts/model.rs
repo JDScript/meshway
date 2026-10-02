@@ -35,6 +35,48 @@ pub(crate) struct UserId(pub(super) String);
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct MembershipId(pub(super) String);
 
+impl UserId {
+    pub(crate) fn parse(value: &str) -> Result<Self> {
+        if !meshway_protocol::local::valid_credential(value) {
+            return Err(AccountError::Invalid);
+        }
+        Ok(Self(value.to_owned()))
+    }
+    pub(crate) fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+impl MembershipId {
+    pub(crate) fn parse(value: &str) -> Result<Self> {
+        if !meshway_protocol::local::valid_credential(value) {
+            return Err(AccountError::Invalid);
+        }
+        Ok(Self(value.to_owned()))
+    }
+    pub(crate) fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+impl From<meshway_protocol::accounts::AccountRole> for Role {
+    fn from(value: meshway_protocol::accounts::AccountRole) -> Self {
+        match value {
+            meshway_protocol::accounts::AccountRole::Owner => Self::Owner,
+            meshway_protocol::accounts::AccountRole::Admin => Self::Admin,
+            meshway_protocol::accounts::AccountRole::Member => Self::Member,
+        }
+    }
+}
+impl From<Role> for meshway_protocol::accounts::AccountRole {
+    fn from(value: Role) -> Self {
+        match value {
+            Role::Owner => Self::Owner,
+            Role::Admin => Self::Admin,
+            Role::Member => Self::Member,
+        }
+    }
+}
+
 /// Public resource references, not bearer credentials or permission proofs.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct InvitationId(pub(super) String);
@@ -72,7 +114,7 @@ impl PasswordResetId {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct InvitationMetadata {
     pub(crate) id: InvitationId,
-    pub(crate) network: AccountNetwork,
+    pub(crate) network: NetworkId,
     pub(crate) email: Email,
     pub(crate) role: Role,
     pub(crate) issuer: Option<UserId>,
@@ -149,10 +191,7 @@ impl Email {
     }
 }
 
-/// A database-validated resource scope, never a permission. Kept internal until
-/// Store's NetworkId string accessor is available to sibling modules.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub(crate) struct AccountNetwork(pub(super) String);
+pub(crate) use crate::store::NetworkId;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum Role {
@@ -191,7 +230,7 @@ pub(crate) struct User {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct Membership {
     pub(crate) id: MembershipId,
-    pub(crate) network: AccountNetwork,
+    pub(crate) network: NetworkId,
     pub(crate) user: UserId,
     pub(crate) role: Role,
 }
@@ -273,6 +312,7 @@ pub(super) enum PrincipalKind {
         user: UserId,
         version: i64,
     },
+    #[allow(dead_code)] // Reserved negative proof; no human API accepts a node principal.
     Node,
 }
 
@@ -290,6 +330,7 @@ impl Principal {
 
     /// A node credential can never authorize human account operations. The
     /// existing node authenticator may use this marker after its own validation.
+    #[allow(dead_code)] // Used by domain rejection tests; node auth stays a separate API.
     pub(crate) fn node() -> Self {
         Self(PrincipalKind::Node)
     }
