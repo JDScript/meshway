@@ -15,6 +15,8 @@ use super::*;
 
 #[path = "managed/discovery.rs"]
 mod discovery;
+#[path = "managed/latency.rs"]
+mod latency;
 
 struct Process(Child);
 

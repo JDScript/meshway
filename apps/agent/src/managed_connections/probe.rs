@@ -204,6 +204,7 @@ impl Prober {
         }
         let runtime = generation.runtime.clone();
         Some(super::latency_history::Source {
+            publication: generation.number,
             runtime,
             snapshot: snapshot.clone(),
             epoch,

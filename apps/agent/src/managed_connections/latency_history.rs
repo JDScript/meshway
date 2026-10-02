@@ -19,7 +19,9 @@ use std::{
     },
     time::Duration,
 };
-use tokio::{sync::mpsc, task::JoinHandle, time};
+#[cfg(test)]
+use tokio::task::JoinHandle;
+use tokio::{sync::mpsc, time};
 
 const QUEUE_CAPACITY: usize = 256;
 const CONCURRENCY: usize = 4;
@@ -27,6 +29,7 @@ const PROBE_TIMEOUT: Duration = Duration::from_secs(2);
 const HTTP_TIMEOUT: Duration = Duration::from_secs(10);
 
 pub(super) struct Source {
+    pub publication: u64,
     pub runtime: Weak<Runtime>,
     pub snapshot: AgentConnectionsSnapshot,
     pub epoch: u32,
@@ -51,6 +54,7 @@ impl Manager {
     /// Call after a fresh Applied runtime report has been accepted. The caller
     /// owns this task and restarts it after snapshot/epoch changes. No local CLI
     /// settings are added. Uses the caller's existing protected HTTP client.
+    #[cfg(test)]
     pub(crate) fn start_latency_history(
         &self,
         client: HttpClient,

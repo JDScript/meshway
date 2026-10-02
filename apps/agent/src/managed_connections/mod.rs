@@ -28,12 +28,12 @@ use crate::{
 };
 
 mod discovery;
+#[cfg(unix)]
+mod latency_history;
+#[cfg(unix)]
+mod latency_lifecycle;
 #[cfg(test)]
 mod managed_material_tests;
-// Runtime-loop launch is handed off as a focused integration hook.
-#[cfg(unix)]
-#[allow(dead_code)]
-mod latency_history;
 #[cfg(unix)]
 mod probe;
 mod profiles;
@@ -170,6 +170,8 @@ pub(crate) struct Manager {
     discovery_timestamps: std::sync::Arc<discovery::TimestampGate>,
     #[cfg(unix)]
     probes: probe::Publisher,
+    #[cfg(unix)]
+    latency: latency_lifecycle::Owner,
 }
 
 struct DataplaneSettings {
@@ -204,6 +206,8 @@ impl Manager {
             discovery_timestamps: std::sync::Arc::default(),
             #[cfg(unix)]
             probes: probe::Publisher::new(),
+            #[cfg(unix)]
+            latency: latency_lifecycle::Owner::default(),
         }
     }
 
@@ -456,6 +460,8 @@ impl Manager {
     pub async fn withdraw(&mut self, reason: Reason) {
         #[cfg(unix)]
         self.probes.withdraw();
+        #[cfg(unix)]
+        self.stop_latency_history().await;
         if let Some(running) = self.running.take() {
             running.stop().await;
         }

@@ -381,6 +381,10 @@ impl Agent {
         if guard.as_ref().is_some_and(|guard| !guard.current()) {
             return Err(AgentError::RuntimeObservationChanged);
         }
+        #[cfg(unix)]
+        manager
+            .latency_report_accepted(request.epoch, request.state, client.clone())
+            .await;
         #[derive(serde::Serialize)]
         struct RuntimeReceipt<'a> {
             runtime: &'a ReportConnectionRuntimeRequest,
@@ -579,7 +583,10 @@ impl Agent {
         &mut self,
         manager: &mut Manager,
     ) -> Result<(super::ControlSyncReceipts, Instant), AgentError> {
-        self.publish_connection_identity().await?;
+        let publication = self.publish_connection_identity().await?;
+        manager
+            .invalidate_dataplane_revision(publication.revision)
+            .await;
         let configuration = self.sync().await?;
         #[cfg(unix)]
         manager.set_probe_inventory(
@@ -596,6 +603,8 @@ impl Agent {
             let snapshot = &bundle.connections;
             let fresh_at = Instant::now();
             // Fence the old generation before material validation or persistence.
+            #[cfg(unix)]
+            manager.fence_latency_snapshot(snapshot).await;
             manager.invalidate_if_changed(snapshot);
             manager
                 .invalidate_dataplane_revision(snapshot.payload.revision)
