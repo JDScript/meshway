@@ -1,13 +1,12 @@
 import { expect, test, type BrowserContext, type Page, type Request, type Route } from "@playwright/test";
 import * as sdk from "./network-client.ts";
-import { accountStack, approve, deviceRequest, invitedAccount, replayHeaders, signIn, testPassword } from "./accounts.ts";
+import { accountStack, activeCredentialCookie, approve, deviceRequest, invitedAccount, replayHeaders, signIn, testPassword } from "./accounts.ts";
 
 // Two tabs of one browser (one cookie jar). Tab A renders forms and drafts as
 // account A; tab B then really signs in as account B. Anything tab A rendered
 // must not be carried out with B's cookie, and nothing late from A may sign B out.
 
-const consoleCookie = async (context: BrowserContext) =>
-  (await context.cookies()).find(cookie => cookie.name.startsWith("meshway_console_session") && cookie.value !== "");
+const consoleCookie = activeCredentialCookie;
 
 /** The bearer inside the browser's HttpOnly cookie; fixture memory only, never printed. */
 async function cookieToken(context: BrowserContext): Promise<string | null> {

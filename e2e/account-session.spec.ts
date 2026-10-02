@@ -1,7 +1,7 @@
 import { expect, test, type Page, type Response } from "@playwright/test";
 import { setTimeout as delay } from "node:timers/promises";
 import * as sdk from "./network-client.ts";
-import { accountStack, approve, deviceRequest, invitedAccount, replayHeaders, signIn, testPassword } from "./accounts.ts";
+import { accountStack, activeCredentialCookie, approve, credentialCookies, deviceRequest, invitedAccount, replayHeaders, signIn, testPassword } from "./accounts.ts";
 import { expectNoOverflow } from "./harness.ts";
 
 /** Every HTML / Flight body the browser received, to prove no secret crossed to the client. */
@@ -16,7 +16,7 @@ function recordBodies(page: Page) {
 }
 
 async function sessionToken(page: Page): Promise<string> {
-  const cookie = (await page.context().cookies()).find(item => item.name.startsWith("meshway_console_session"));
+  const cookie = await activeCredentialCookie(page.context());
   if (!cookie) throw new Error("Missing console session cookie");
   expect(cookie.httpOnly).toBe(true);
   expect(cookie.sameSite).toBe("Strict");
@@ -58,7 +58,7 @@ test("accounts: email login, invitation, Member read-only without logout, networ
       await expect(page).toHaveURL(`${webUrl}/${networkId}`);
       const token = await sessionToken(page); secrets.push(token);
       expect(await page.evaluate(() => document.cookie)).not.toContain("mws_");
-      const cookie = (await page.context().cookies()).find(item => item.name.startsWith("meshway_console_session"));
+      const cookie = await activeCredentialCookie(page.context());
       // The controller's absolute expiry (≤ 7 days), not a Web-extended one.
       expect(cookie?.expires).toBeLessThanOrEqual(Date.now() / 1000 + 7 * 86400 + 5);
       await page.goto(`${webUrl}/${networkId}/machines`);
@@ -142,7 +142,7 @@ test("accounts: email login, invitation, Member read-only without logout, networ
       await expect(memberPage).toHaveURL(`${webUrl}/login`);
       await expect(sdk.getAccountSession(base, revoked)).rejects.toMatchObject({ status: 401 });
       await expect(sdk.exchangeDevice(webUrl, code, device.binding)).rejects.toThrow();
-      expect((await memberContext.cookies()).filter(cookie => cookie.name.startsWith("meshway_console_session") && cookie.value)).toHaveLength(0);
+      expect(await credentialCookies(memberContext)).toHaveLength(0);
       await memberPage.close();
     });
 

@@ -1,6 +1,6 @@
 // Account fixtures: a real temporary controller and Web server, real accounts
 // created through the generated API or the Web UI. Nothing injects a session.
-import { expect, type Page } from "@playwright/test";
+import { expect, type BrowserContext, type Page } from "@playwright/test";
 import { createHash, randomBytes } from "node:crypto";
 import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -79,4 +79,21 @@ export async function approve(page: Page, network?: string) {
 
 export async function replayHeaders(request: { allHeaders(): Promise<Record<string, string>> }) {
   return Object.fromEntries(Object.entries(await request.allHeaders()).filter(([key]) => ["content-type", "next-action", "next-router-state-tree"].includes(key)));
+}
+
+/**
+ * The browser's active console credential cookie: the per-sign-in credential
+ * named by the active pointer, or the single pre-pointer session cookie.
+ * Tests read it only in fixture memory, never print it.
+ */
+export async function activeCredentialCookie(context: BrowserContext) {
+  const cookies = await context.cookies();
+  const pointer = cookies.find(cookie => cookie.name === "meshway_console_active" && cookie.value !== "");
+  if (pointer) return cookies.find(cookie => cookie.name === `meshway_console_credential_${pointer.value}` && cookie.value !== "");
+  return cookies.find(cookie => cookie.name === "meshway_console_session" && cookie.value !== "");
+}
+
+/** Every console credential the browser still holds (active or not). */
+export async function credentialCookies(context: BrowserContext) {
+  return (await context.cookies()).filter(cookie => /^meshway_console_(credential_[0-9a-f]{32}|session)$/.test(cookie.name) && cookie.value !== "");
 }
