@@ -1,4 +1,4 @@
-import { cn } from "cn"
+import { cn } from "@/lib/utils"
 import type { ReactNode } from "react"
 
 const TITLE = { md: "text-xl", lg: "text-2xl" } as const

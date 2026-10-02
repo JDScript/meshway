@@ -20,6 +20,22 @@ export default defineConfig([
     },
     rules: {
       "react-refresh/only-export-components": "off",
+      "no-restricted-imports": [
+        "error",
+        {
+          paths: [
+            {
+              name: "cn",
+              message:
+                "Import cn from @/lib/utils: it knows the theme's own scales.",
+            },
+          ],
+        },
+      ],
     },
+  },
+  {
+    files: ["src/lib/utils.ts"],
+    rules: { "no-restricted-imports": "off" },
   },
 ])

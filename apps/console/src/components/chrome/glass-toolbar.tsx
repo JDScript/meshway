@@ -1,4 +1,4 @@
-import { cn } from "cn"
+import { cn } from "@/lib/utils"
 import type { ComponentProps, ReactElement } from "react"
 
 import { SharedLayoutBg } from "@/components/motion/shared-layout-bg"

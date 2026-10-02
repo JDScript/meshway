@@ -1,5 +1,5 @@
 import type { NetworkPolicy } from "@meshway/control-client"
-import { cn } from "cn"
+import { cn } from "@/lib/utils"
 import {
   ArrowLeftRightIcon,
   BracesIcon,

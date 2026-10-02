@@ -1,5 +1,5 @@
 import { Link, type HistoryState } from "@tanstack/react-router"
-import { cn } from "cn"
+import { cn } from "@/lib/utils"
 import { GlobeIcon } from "lucide-react"
 import { motion, useReducedMotion } from "motion/react"
 import { useId, useState, type ComponentProps, type ReactNode } from "react"

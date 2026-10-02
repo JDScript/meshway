@@ -1,4 +1,4 @@
-import { cn } from "cn"
+import { cn } from "@/lib/utils"
 import { CircleAlertIcon, RouteIcon } from "lucide-react"
 import { useMemo } from "react"
 

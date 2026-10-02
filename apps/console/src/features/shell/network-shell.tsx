@@ -1,4 +1,4 @@
-import { cn } from "cn"
+import { cn } from "@/lib/utils"
 import { useCallback, useEffect, useMemo } from "react"
 
 import { GlassToolbar } from "@/components/chrome/glass-toolbar"

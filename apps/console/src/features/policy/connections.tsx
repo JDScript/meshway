@@ -1,5 +1,5 @@
 import type { ConnectionRule } from "@meshway/control-client"
-import { cn } from "cn"
+import { cn } from "@/lib/utils"
 import { ArrowLeftRightIcon } from "lucide-react"
 
 import { SegmentedControl } from "@/components/chrome/segmented-control"

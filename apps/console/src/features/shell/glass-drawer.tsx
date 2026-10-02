@@ -1,4 +1,4 @@
-import { cn } from "cn"
+import { cn } from "@/lib/utils"
 import { useState, type CSSProperties, type ReactNode } from "react"
 
 import { Drawer, DrawerContent } from "@/components/ui/drawer"

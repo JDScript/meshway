@@ -2,6 +2,8 @@ import assert from "node:assert/strict"
 import { readFileSync } from "node:fs"
 import { test } from "node:test"
 
+import { THEME_SCALES } from "./lib/utils.ts"
+
 const css = readFileSync(new URL("./index.css", import.meta.url), "utf8")
 
 test("no custom property refers to itself (that silently invalidates every rule using it)", () => {
@@ -24,4 +26,28 @@ test("every token used by a var() is defined", () => {
     if (!name || external.test(name)) continue
     assert.ok(defined.has(name), `${name} is used but never defined`)
   }
+})
+
+test("class merging knows every custom type size and radius of the theme", () => {
+  const theme = css.slice(css.indexOf("@theme"))
+  const named = (prefix: string) =>
+    Array.from(
+      theme.matchAll(new RegExp(`--${prefix}-([a-z]+):`, "g")),
+      ([, name]) => name
+    )
+  const tailwindRadii = new Set([
+    "xs",
+    "sm",
+    "md",
+    "lg",
+    "xl",
+    "2xl",
+    "3xl",
+    "4xl",
+  ])
+  assert.deepEqual(new Set(named("text")), new Set(THEME_SCALES.text))
+  assert.deepEqual(
+    new Set(named("radius").filter((name) => !tailwindRadii.has(name ?? ""))),
+    new Set(THEME_SCALES.radius)
+  )
 })

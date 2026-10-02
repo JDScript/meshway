@@ -4,7 +4,7 @@ import type {
   ProfileAssignment,
   ProfileFallback,
 } from "@meshway/control-client"
-import { cn } from "cn"
+import { cn } from "@/lib/utils"
 import {
   ArrowRightIcon,
   AtSignIcon,

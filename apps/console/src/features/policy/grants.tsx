@@ -1,5 +1,5 @@
 import type { Grant } from "@meshway/control-client"
-import { cn } from "cn"
+import { cn } from "@/lib/utils"
 import { ArrowLeftRightIcon, ArrowRightIcon } from "lucide-react"
 
 import { Switch } from "@/components/ui/switch"

@@ -1,4 +1,4 @@
-import { cn } from "cn"
+import { cn } from "@/lib/utils"
 import { useEffect, useState, type ComponentProps, type ReactNode } from "react"
 
 /** Matches the hidden-state transition in `index.css` (`.surface`). */

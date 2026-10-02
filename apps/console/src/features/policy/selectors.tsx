@@ -1,7 +1,7 @@
 import type { NodeSummary, TagDefinition } from "@meshway/control-client"
 import { useQuery } from "@tanstack/react-query"
 import { Command } from "cmdk"
-import { cn } from "cn"
+import { cn } from "@/lib/utils"
 import {
   ArrowUpRightIcon,
   AsteriskIcon,
