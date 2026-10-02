@@ -28,25 +28,19 @@ import { policyQuery } from "./queries"
 
 /**
  * The policy draft is its JSONC text: the graphical views and the source
- * editor read and write the same text, against one revision. A network
- * still on the v2 source has no text: its saved value is empty until the
- * migration proposal or the template is put into the draft.
+ * editor read and write the same text, against one revision. A policy
+ * saved without its source text is written out from the policy itself.
  */
-export const usePolicyDraft = createDraft<string>("policy")
+const usePolicyDraft = createDraft<string>("policy")
 
-export function savedPolicy(snapshot: NetworkPolicySnapshot): Saved<string> {
-  const text =
-    snapshot.source_mode === "mesh_v3"
-      ? (snapshot.source_jsonc ??
-        (snapshot.policy ? policyText(snapshot.policy) : ""))
-      : ""
-  return { revision: snapshot.revision, value: text }
+function savedPolicy(snapshot: NetworkPolicySnapshot): Saved<string> {
+  return {
+    revision: snapshot.revision,
+    value: snapshot.source_jsonc ?? policyText(snapshot.policy),
+  }
 }
 
-/** Where the policy the views show comes from. */
-export type PolicyOrigin = "saved" | "draft" | "proposal"
-
-export const POLICY_SECTIONS = [
+const POLICY_SECTIONS = [
   "connections",
   "grants",
   "mesh",
@@ -63,40 +57,30 @@ export function usePolicy(networkId: string, enabled = true) {
   const data = snapshot.data
   const saved = useMemo(() => (data ? savedPolicy(data) : undefined), [data])
   const draft = usePolicyDraft(networkId, saved)
-  const text = draft.value ?? ""
+  const text = draft.value
   const document: PolicyDocument | null = useMemo(
-    () => (text === "" ? null : readDocument(text)),
+    () => (text === undefined ? null : readDocument(text)),
     [text]
   )
-  const legacy = data?.source_mode === "legacy_v2"
-  const savedV3 = data && !legacy ? data.policy : null
+  const savedValue = data?.policy ?? null
 
   const diagnostics: PlacedDiagnostic[] = useMemo(
     () =>
       (data?.diagnostics ?? []).map((diagnostic) =>
-        // A v2 network's diagnostics are about its v2 source: none has a place in v3.
-        placeDiagnostic(diagnostic, legacy ? null : savedV3)
+        placeDiagnostic(diagnostic, savedValue)
       ),
-    [data, legacy, savedV3]
+    [data, savedValue]
   )
-
-  const shown: { policy: NetworkPolicy | null; origin: PolicyOrigin | null } =
-    document
-      ? { policy: document.policy, origin: draft.dirty ? "draft" : "saved" }
-      : legacy && data.migration_proposal
-        ? { policy: data.migration_proposal, origin: "proposal" }
-        : { policy: null, origin: null }
 
   /** Sections the draft changes from what is saved. */
   const changed = useMemo(() => {
     const out = new Set<string>()
     if (!draft.dirty || !document?.policy) return out
     for (const section of POLICY_SECTIONS)
-      if (!sameData(document.policy[section], savedV3?.[section]))
+      if (!sameData(document.policy[section], savedValue?.[section]))
         out.add(section)
-    if (!savedV3) for (const section of POLICY_SECTIONS) out.add(section)
     return out
-  }, [draft.dirty, document, savedV3])
+  }, [draft.dirty, document, savedValue])
 
   const { edit: editDraft } = draft
   const edit = useCallback(
@@ -113,30 +97,22 @@ export function usePolicy(networkId: string, enabled = true) {
     (next: string) => editDraft(() => next),
     [editDraft]
   )
-  /** Puts a whole policy (the proposal, the template) into the draft as text. */
-  const start = useCallback(
-    (policy: NetworkPolicy) => editDraft(() => policyText(policy)),
-    [editDraft]
-  )
 
   return {
     snapshot,
     data,
-    legacy,
     canManage,
     saved,
     draft,
-    text,
+    text: text ?? "",
     document,
-    savedPolicy: savedV3,
+    savedPolicy: savedValue,
     diagnostics,
-    shown,
     changed,
-    editable: canManage && shown.origin !== "proposal" && shown.origin !== null,
+    editable: canManage,
     edit,
     move,
     setText,
-    start,
   }
 }
 

@@ -2,11 +2,11 @@ import { z } from "zod"
 
 // The policy page in the address; values at their default are left out.
 //
-//   /networks/<network>/policy                                    the layers
-//   /networks/<network>/policy/<layer>?rule=&section=&flow=        one layer's workspace
+//   /networks/<network>/policy                           the layers
+//   /networks/<network>/policy/<layer>?rule=&section=     one layer's workspace
 //
-// `rule` is the rule open inline (by its ID), `section` the egress part
-// shown, `flow` whether the flow preview is open.
+// `rule` is the rule a link points at (by its ID), `section` the egress
+// part shown.
 
 export const POLICY_LAYERS = [
   "connections",
@@ -31,11 +31,9 @@ export type EgressSection = (typeof EGRESS_SECTIONS)[number]
 export const zPolicyWorkspaceSearch = z.object({
   rule: z.string().min(1).max(64).optional().catch(undefined),
   section: z.enum(EGRESS_SECTIONS).optional().catch(undefined),
-  flow: z.boolean().optional().catch(undefined),
 })
 
 export type PolicyWorkspaceView = {
   rule: string | null
   section: EgressSection
-  flow: boolean
 }

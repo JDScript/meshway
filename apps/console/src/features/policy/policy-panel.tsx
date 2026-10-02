@@ -91,11 +91,11 @@ export function PolicyPanel({
   openLayer: PolicyLayer | null
   onOpen: (layer: PolicyLayer) => void
 }) {
-  const { data, document, shown, diagnostics } = state
+  const { data, document, diagnostics } = state
   const lines = state.text === "" ? 0 : state.text.split("\n").length
 
   const sourceSummary = () => {
-    if (!document) return m.policy_source_none()
+    if (!document) return ""
     const problems = document.problems.length
     return problems > 0
       ? `${m.policy_count_lines({ count: lines })} · ${m.policy_count_problems({ count: problems })}`
@@ -117,25 +117,11 @@ export function PolicyPanel({
               <span className="font-mono tabular-nums">
                 {m.policy_revision({ revision: data.revision })}
               </span>
-              <span aria-hidden="true">·</span>
-              <span>
-                {data.source_mode === "mesh_v3"
-                  ? m.policy_mode_v3()
-                  : m.policy_mode_v2()}
-              </span>
-              {data.source_mode === "mesh_v3" && !data.valid ? (
+              {!data.valid ? (
                 <>
                   <span aria-hidden="true">·</span>
                   <span className="text-destructive">
                     {m.policy_saved_invalid()}
-                  </span>
-                </>
-              ) : null}
-              {shown.origin === "proposal" ? (
-                <>
-                  <span aria-hidden="true">·</span>
-                  <span className="text-warning">
-                    {m.policy_origin_proposal()}
                   </span>
                 </>
               ) : null}
@@ -163,8 +149,8 @@ export function PolicyPanel({
               ? data
                 ? sourceSummary()
                 : null
-              : shown.policy
-                ? summary(layer, shown.policy)
+              : document?.policy
+                ? summary(layer, document.policy)
                 : data
                   ? document
                     ? m.policy_source_invalid_short()

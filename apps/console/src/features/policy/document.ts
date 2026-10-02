@@ -194,7 +194,7 @@ const KEY_ORDER = [
   "locked",
 ]
 
-/** The text of a policy that has none yet (a migration proposal, the template). */
+/** The text of a policy saved without its source text. */
 export const policyText = (policy: NetworkPolicy) =>
   formatJsonc(policy, KEY_ORDER)
 

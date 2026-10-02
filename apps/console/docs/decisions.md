@@ -69,7 +69,7 @@ stands in for an interface that does not exist yet.
 | Overview `/overview?node=` | none: the globe is its index | none; the node peek | |
 | Nodes `/nodes?view=nodes\|tags` | nodes (search, state) or tags | `/nodes/<id>?tab=overview\|links\|transport\|manage`, `/nodes/add`, `/nodes/tags/<tag>` | revoke, enrolment token |
 | Members `/members?view=members\|invitations` | members or invitations | `/members/<id>` (role, devices, removal) | invite (link shown once), removal |
-| Policy `/policy` | the four layers with their diagnostics | `/policy/<layer>`: connections, grants, mesh routes, egress (public rules, profiles, automatic, assignments), source (JSONC); flow preview inside | |
+| Policy `/policy` | the four layers with their diagnostics | `/policy/<layer>`: connections, grants, mesh routes, egress (public rules, profiles, automatic, assignments), source (JSONC) | |
 | Settings `/settings` | sections | `/settings/<section>`: network, DNS | |
 | Account `/account` (from the account menu) | none | memberships, password, sessions | |
 
@@ -77,10 +77,9 @@ Outside the shell, one card over the globe like the sign-in: `/login`,
 `/invite`, `/reset-password`, `/setup` (instance), `/authorize-device`
 (path unchanged for the App).
 
-- Policy is one page because v3 is one document with one revision: one
-  draft, one commit bar. Networks still on `legacy_v2` get the controller's
-  migration proposal and its unconvertible items; adopting saves v3. The v2
-  editors are not rebuilt.
+- Policy is one page because the policy is one document with one revision:
+  one draft, one commit bar. Egress is shown but not editable while the
+  controller refuses it.
 - Tag definitions sit beside the nodes they group; a node's own tags are
   set in its workspace (`manage`).
 - The old hand-made connections (`ConnectionPlan`) are not in the console;

@@ -1,6 +1,4 @@
-import { cn } from "@/lib/utils"
-import { CircleAlertIcon, RouteIcon } from "lucide-react"
-import { useMemo } from "react"
+import { CircleAlertIcon } from "lucide-react"
 
 import { CloseButton } from "@/components/chrome/close-button"
 import { SurfaceHeader } from "@/components/chrome/surface-header"
@@ -10,14 +8,13 @@ import { useNodeNavigation } from "@/features/nodes/navigation"
 import { surfaceTitleId } from "@/features/shell/page-frame"
 import { m } from "@/paraglide/messages.js"
 
+import { cn } from "@/lib/utils"
+
 import { ConnectionsLayer } from "./connections"
-import { policyText, readDocument } from "./document"
 import { EgressLayer } from "./egress"
-import { FlowPreview } from "./flow-preview"
 import { GrantsLayer } from "./grants"
 import { lineColumn } from "./jsonc"
 import type { LayerProps } from "./layer"
-import { LegacyNotice } from "./legacy"
 import { MeshLayer } from "./mesh"
 import type { PolicyNavigation } from "./navigation"
 import { layerLabel } from "./policy-panel"
@@ -47,16 +44,13 @@ export function PolicyWorkspace({
   const commit = usePolicyCommit(networkId, state)
   const names = useSelectorNames(networkId)
   const nodes = useNodeNavigation(networkId)
-  const { data, document, shown, legacy } = state
+  const { data, document } = state
 
-  const origin =
-    shown.origin === "proposal"
-      ? m.policy_origin_proposal()
-      : state.draft.dirty
-        ? m.policy_origin_draft({ revision: state.draft.baseRevision ?? 0 })
-        : data
-          ? m.policy_revision({ revision: data.revision })
-          : null
+  const origin = state.draft.dirty
+    ? m.policy_origin_draft({ revision: state.draft.baseRevision ?? 0 })
+    : data
+      ? m.policy_revision({ revision: data.revision })
+      : null
 
   return (
     <div className="swap-in flex min-h-0 flex-1 flex-col" key={layer}>
@@ -71,52 +65,19 @@ export function PolicyWorkspace({
         meta={
           <p className="flex h-4 items-center gap-1.5 text-meta text-muted-foreground">
             {origin ? (
-              <span
-                className={cn(
-                  "font-mono tabular-nums",
-                  shown.origin === "proposal" && "text-warning"
-                )}
-              >
-                {origin}
-              </span>
+              <span className="font-mono tabular-nums">{origin}</span>
             ) : (
               <Skeleton className="h-2.5 w-24 rounded-full" />
             )}
-            {data ? (
+            {data && !state.canManage ? (
               <>
                 <span aria-hidden="true">·</span>
-                <span>{legacy ? m.policy_mode_v2() : m.policy_mode_v3()}</span>
-                {!state.canManage ? (
-                  <>
-                    <span aria-hidden="true">·</span>
-                    <span>{m.policy_read_only()}</span>
-                  </>
-                ) : null}
+                <span>{m.policy_read_only()}</span>
               </>
             ) : null}
           </p>
         }
-        action={
-          <span className="flex items-center gap-1">
-            {legacy ? (
-              <Button
-                type="button"
-                variant="ghost"
-                size="sm"
-                aria-pressed={view.flow}
-                className={cn(
-                  "h-8 rounded-full px-3",
-                  view.flow && "bg-fill-selected"
-                )}
-                onClick={() => nav.setFlow(!view.flow)}
-              >
-                <RouteIcon />
-                {m.policy_flow_title()}
-              </Button>
-            ) : null}
-            <CloseButton onClick={nav.closeLayer} />
-          </span>
-        }
+        action={<CloseButton onClick={nav.closeLayer} />}
       />
       <div
         className={cn(
@@ -124,30 +85,17 @@ export function PolicyWorkspace({
           layer === "source" ? "pb-6" : "overflow-y-auto pb-(--commit-space)"
         )}
       >
-        {legacy && data ? (
-          <LegacyNotice
-            proposal={data.migration_proposal}
-            diagnostics={data.diagnostics}
-            started={document !== null}
-            canManage={state.canManage}
-            names={names}
-            onStart={state.start}
-          />
-        ) : null}
-        {legacy && view.flow ? (
-          <FlowPreview networkId={networkId} names={names} />
-        ) : null}
-        {!data ? (
+        {!data || !document ? (
           <Placeholder />
         ) : layer === "source" ? (
           <Source state={state} names={names} />
-        ) : document && !document.policy ? (
+        ) : !document.policy ? (
           <InvalidSource
             text={document.text}
             problem={document.problems[0] ?? null}
             onOpenSource={() => nav.openLayer("source")}
           />
-        ) : shown.policy ? (
+        ) : (
           <form
             className="flex flex-col"
             onSubmit={(event) => {
@@ -161,11 +109,11 @@ export function PolicyWorkspace({
               view={view}
               nav={nav}
               props={{
-                policy: shown.policy,
+                policy: document.policy,
                 editable: state.editable,
                 names,
                 diagnostics: state.diagnostics,
-                problems: document?.problems ?? [],
+                problems: document.problems,
                 rule: view.rule,
                 onRule: nav.setRule,
                 edit: state.edit,
@@ -174,7 +122,7 @@ export function PolicyWorkspace({
               }}
             />
           </form>
-        ) : null}
+        )}
       </div>
     </div>
   )
@@ -216,21 +164,13 @@ function Source({
   state: ReturnType<typeof usePolicy>
   names: ReturnType<typeof useSelectorNames>
 }) {
-  const proposal = state.data?.migration_proposal ?? null
-  // A v2 network shows the proposal's text, read-only, until it is put into the draft.
-  const proposalDocument = useMemo(
-    () => (proposal ? readDocument(policyText(proposal)) : null),
-    [proposal]
-  )
-  const document = state.document ?? (state.legacy ? proposalDocument : null)
-  if (!document) return null
+  if (!state.document) return null
   return (
     <SourceEditor
-      key={state.document ? "draft" : "proposal"}
-      document={document}
-      diagnostics={state.document ? state.diagnostics : []}
+      document={state.document}
+      diagnostics={state.diagnostics}
       names={names}
-      editable={state.canManage && state.document !== null}
+      editable={state.canManage}
       onChange={state.setText}
     />
   )

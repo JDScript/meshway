@@ -3,10 +3,7 @@
   "policy_nav": "Policy",
   "policy_failed": "Could not read the policy",
   "policy_revision": "r{revision}",
-  "policy_mode_v3": "v3",
-  "policy_mode_v2": "v2 source",
   "policy_saved_invalid": "Saved policy invalid",
-  "policy_origin_proposal": "Migration proposal",
   "policy_origin_draft": "Draft · from r{revision}",
   "policy_read_only": "Read only",
   "policy_changed": "Unsaved changes",
@@ -236,47 +233,6 @@
   "policy_schema_missing": "Missing field {field}",
   "policy_id_duplicate": "Duplicate rule ID",
   "policy_id_syntax": "Rule ID must be 1–64 letters, digits or . _ -",
-  "policy_legacy_title": "Running the v2 source",
-  "policy_legacy_proposal": "The controller proposes a v3 policy",
-  "policy_legacy_no_proposal": "No migration proposal",
-  "policy_legacy_started": "Saving the draft switches to v3",
-  "policy_legacy_adopt": "Adopt proposal",
-  "policy_legacy_template": "Start from the template",
-  "policy_legacy_unconverted": [
-    {
-      "declarations": [
-        "input count",
-        "local countPlural = count: plural"
-      ],
-      "selectors": [
-        "countPlural"
-      ],
-      "match": {
-        "countPlural=one": "{count} item not converted",
-        "countPlural=other": "{count} items not converted"
-      }
-    }
-  ],
-  "policy_flow_title": "Flow preview",
-  "policy_flow_fact": "Compiled from the saved v2 source · planned, not traced",
-  "policy_flow_source": "Source node",
-  "policy_flow_destination": "Destination",
-  "policy_flow_to_node": "Node",
-  "policy_flow_to_ip": "IP",
-  "policy_flow_domain": "Domain (optional)",
-  "policy_flow_pick": "Choose a node",
-  "policy_flow_run": "Preview",
-  "policy_flow_authorization": "Authorization",
-  "policy_flow_routing": "Routing",
-  "policy_flow_allow": "Allowed",
-  "policy_flow_reject": "Rejected",
-  "policy_flow_invalid": "Invalid",
-  "policy_flow_route": "Routed",
-  "policy_flow_forward": "Matched forward",
-  "policy_flow_reverse": "Matched in reverse",
-  "policy_flow_revision": "r{revision}",
-  "policy_flow_executable": "Executable",
-  "policy_flow_not_executable": "Not executable",
   "policy_rule_id_placeholder": "office-to-lab",
   "policy_selector_open_node": "Open the node",
   "policy_rule_remove_named": "Remove {name}"

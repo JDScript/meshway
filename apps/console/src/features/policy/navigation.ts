@@ -24,7 +24,6 @@ export function usePolicyRoute() {
       layer: match.params.layer,
       rule: match.search.rule ?? null,
       section: match.search.section ?? "public",
-      flow: match.search.flow ?? false,
     }),
   })
   const layer: PolicyLayer | null =
@@ -32,7 +31,6 @@ export function usePolicyRoute() {
   const view: PolicyWorkspaceView = {
     rule: match?.rule ?? null,
     section: match?.section ?? "public",
-    flow: match?.flow ?? false,
   }
   return { current, layer, view }
 }
@@ -42,15 +40,14 @@ export function usePolicyNavigation(networkId: string) {
   const history = useSurfaceHistory(networkId)
   const {
     layer: open,
-    view: { rule, section, flow },
+    view: { rule, section },
   } = usePolicyRoute()
   return useMemo(() => {
     const params = { network: networkId }
-    const view: PolicyWorkspaceView = { rule, section, flow }
+    const view: PolicyWorkspaceView = { rule, section }
     const search = (next: PolicyWorkspaceView) => ({
       rule: next.rule ?? undefined,
       section: next.section === "public" ? undefined : next.section,
-      flow: next.flow ? true : undefined,
     })
     const within = (next: Partial<PolicyWorkspaceView>) => {
       if (!open) return
@@ -62,12 +59,12 @@ export function usePolicyNavigation(networkId: string) {
       })
     }
     return {
-      /** A layer's workspace; the flow preview stays as it was. */
+      /** A layer's workspace, at a rule if given. */
       openLayer(layer: PolicyLayer, rule: string | null = null) {
         void navigate({
           to: "/networks/$network/policy/$layer",
           params: { ...params, layer },
-          search: search({ rule, section: "public", flow: view.flow }),
+          search: search({ rule, section: "public" }),
           ...history.open(open !== null),
         })
       },
@@ -83,9 +80,8 @@ export function usePolicyNavigation(networkId: string) {
       },
       setRule: (rule: string | null) => within({ rule }),
       setSection: (section: EgressSection) => within({ section, rule: null }),
-      setFlow: (flow: boolean) => within({ flow }),
     }
-  }, [navigate, history, networkId, open, rule, section, flow])
+  }, [navigate, history, networkId, open, rule, section])
 }
 
 export type PolicyNavigation = ReturnType<typeof usePolicyNavigation>

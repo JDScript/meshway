@@ -13,7 +13,7 @@ import type { SelectorNames } from "./selectors"
 /** What every layer view is given. */
 export type LayerProps = {
   policy: NetworkPolicy
-  /** The sign-in can change the policy and the view shows the draft (not a proposal). */
+  /** The sign-in can change the policy. */
   editable: boolean
   names: SelectorNames
   diagnostics: readonly PlacedDiagnostic[]
