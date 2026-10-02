@@ -36,9 +36,10 @@ mod latency_lifecycle;
 #[cfg(test)]
 mod managed_material_tests;
 pub(crate) use meshway_agent_connections::{Failure, Observation};
-use meshway_agent_connections::{profiles, session, sockets};
+use meshway_agent_connections::{session, sockets};
 #[cfg(unix)]
 mod probe;
+mod profiles;
 #[cfg(unix)]
 pub(crate) use probe::Prober;
 #[cfg(test)]

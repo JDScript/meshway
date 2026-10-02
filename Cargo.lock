@@ -2017,7 +2017,6 @@ dependencies = [
  "meshway-dataplane",
  "meshway-protocol",
  "meshway-transport-vless",
- "rustix",
  "rustls",
  "rustls-pemfile",
  "serde",

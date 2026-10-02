@@ -1,56 +1,31 @@
-//! Private local carrier material. Deliberately no Debug on any profile holder.
-
-use std::{collections::BTreeMap, io::Read, path::Path, sync::Arc};
-
+//! In-memory carrier material and TLS/VLESS construction. No local file input.
+//! Deliberately no Debug on any secret-bearing holder.
+use super::{Failure, Reason};
 use meshway_protocol::{ConnectionTransport, NodeConnections};
 use meshway_transport_vless::{ClientConfig, SecretUuid, ServerConfig, Target};
 use rustls::{
     ClientConfig as TlsClient, RootCertStore, ServerConfig as TlsServer, pki_types::ServerName,
 };
-use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
-use zeroize::{Zeroize, Zeroizing};
+use std::{
+    collections::{BTreeMap, BTreeSet},
+    sync::Arc,
+};
+use zeroize::Zeroizing;
 
-use super::{Failure, Reason};
-
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-struct File {
-    version: u32,
-    profiles: Vec<Profile>,
-}
-
-#[derive(Deserialize, Serialize)]
-#[serde(tag = "role", rename_all = "snake_case", deny_unknown_fields)]
-enum Profile {
+pub enum LocalMaterial {
     Server {
         id: String,
-        uuid: String,
-        certificate: String,
-        private_key: String,
+        uuid: Zeroizing<String>,
+        certificate: Zeroizing<Vec<u8>>,
+        private_key: Zeroizing<Vec<u8>>,
     },
     Client {
         id: String,
-        uuid: String,
-        ca_certificate: String,
+        uuid: Zeroizing<String>,
+        ca_certificate: Zeroizing<Vec<u8>>,
         server_name: String,
     },
-}
-
-impl Profile {
-    fn id(&self) -> &str {
-        match self {
-            Self::Server { id, .. } | Self::Client { id, .. } => id,
-        }
-    }
-}
-
-impl Drop for Profile {
-    fn drop(&mut self) {
-        match self {
-            Self::Server { uuid, .. } | Self::Client { uuid, .. } => uuid.zeroize(),
-        }
-    }
 }
 
 #[derive(Clone)]
@@ -59,7 +34,6 @@ pub struct Server {
     pub vless: ServerConfig,
     pub websocket: Option<meshway_transport_vless::websocket::Parameters>,
 }
-
 #[derive(Clone)]
 pub struct Client {
     pub tls: Arc<TlsClient>,
@@ -67,88 +41,15 @@ pub struct Client {
     pub vless: ClientConfig,
     pub websocket: Option<meshway_transport_vless::websocket::Parameters>,
 }
-
 #[derive(Default)]
 pub struct Profiles {
     pub servers: BTreeMap<String, Server>,
     pub clients: BTreeMap<String, Client>,
     pub fingerprint: [u8; 32],
 }
-
 fn unavailable<T>(_: T) -> Failure {
     Failure(Reason::ProfileUnavailable)
 }
-
-fn private_bytes(path: &Path, limit: usize) -> Result<Zeroizing<Vec<u8>>, Failure> {
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::{MetadataExt, OpenOptionsExt};
-        // Profiles/key PEMs are read-only inputs, including Docker read-only
-        // mounts. Check the opened descriptor, not a pre-open pathname stat.
-        let file = std::fs::OpenOptions::new()
-            .read(true)
-            .custom_flags(
-                (rustix::fs::OFlags::NOFOLLOW | rustix::fs::OFlags::NONBLOCK).bits() as i32,
-            )
-            .open(path)
-            .map_err(unavailable)?;
-        let metadata = file.metadata().map_err(unavailable)?;
-        if !metadata.is_file()
-            || metadata.uid() != rustix::process::geteuid().as_raw()
-            || metadata.nlink() != 1
-            || metadata.mode() & 0o777 != 0o600
-        {
-            return Err(Failure(Reason::ProfileUnavailable));
-        }
-        let mut bytes = Zeroizing::new(Vec::new());
-        file.take(limit as u64 + 1)
-            .read_to_end(&mut bytes)
-            .map_err(unavailable)?;
-        if bytes.len() > limit {
-            return Err(Failure(Reason::ProfileUnavailable));
-        }
-        Ok(bytes)
-    }
-    #[cfg(not(unix))]
-    Err(Failure(Reason::ProfileUnavailable))
-}
-
-fn material(path: &Path, private: bool) -> Result<Zeroizing<Vec<u8>>, Failure> {
-    const LIMIT: usize = 256 * 1024;
-    if private {
-        return private_bytes(path, LIMIT);
-    }
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::{MetadataExt, OpenOptionsExt};
-        let file = std::fs::OpenOptions::new()
-            .read(true)
-            .custom_flags(
-                (rustix::fs::OFlags::NOFOLLOW | rustix::fs::OFlags::NONBLOCK).bits() as i32,
-            )
-            .open(path)
-            .map_err(unavailable)?;
-        let metadata = file.metadata().map_err(unavailable)?;
-        if !metadata.is_file()
-            || metadata.uid() != rustix::process::geteuid().as_raw()
-            || metadata.mode() & 0o022 != 0
-            || metadata.nlink() != 1
-        {
-            return Err(Failure(Reason::ProfileUnavailable));
-        }
-        let mut bytes = Zeroizing::new(Vec::new());
-        file.take(LIMIT as u64 + 1)
-            .read_to_end(&mut bytes)
-            .map_err(unavailable)?;
-        if bytes.len() > LIMIT {
-            return Err(Failure(Reason::ProfileUnavailable));
-        }
-        Ok(bytes)
-    }
-    #[cfg(not(unix))]
-    Err(Failure(Reason::ProfileUnavailable))
-}
-
 fn certificates(bytes: &[u8]) -> Result<Vec<rustls::pki_types::CertificateDer<'static>>, Failure> {
     let certs = rustls_pemfile::certs(&mut std::io::Cursor::new(bytes))
         .collect::<Result<Vec<_>, _>>()
@@ -158,101 +59,54 @@ fn certificates(bytes: &[u8]) -> Result<Vec<rustls::pki_types::CertificateDer<'s
     }
     Ok(certs)
 }
-
 fn hash_part(hash: &mut Sha256, bytes: &[u8]) {
     hash.update((bytes.len() as u64).to_be_bytes());
     hash.update(bytes);
 }
-
-pub fn load(path: Option<&Path>, intent: &NodeConnections) -> Result<Profiles, Failure> {
-    let mut needed = BTreeMap::new();
-    for listener in &intent.listeners {
-        if listener.transport == ConnectionTransport::Vless {
-            let id = listener
-                .credential_ref
-                .as_ref()
-                .ok_or(Failure(Reason::ProfileUnavailable))?;
-            needed.insert(id.clone(), true);
-        }
-    }
-    for candidate in &intent.outgoing {
-        if candidate.transport == ConnectionTransport::Vless {
-            let id = candidate
-                .credential_ref
-                .as_ref()
-                .ok_or(Failure(Reason::ProfileUnavailable))?;
-            if needed.insert(id.clone(), false) == Some(true) {
-                return Err(Failure(Reason::ProfileUnavailable));
-            }
-        }
-    }
-    let Some(path) = path else {
-        return if needed.is_empty() {
-            Ok(Profiles::default())
-        } else {
-            Err(Failure(Reason::ProfileUnavailable))
-        };
-    };
-    let bytes = private_bytes(path, 128 * 1024)?;
-    let file: File = serde_json::from_slice(&bytes).map_err(unavailable)?;
-    if file.version != 1 || file.profiles.len() > 128 {
+fn private_key(bytes: &[u8]) -> Result<rustls::pki_types::PrivateKeyDer<'static>, Failure> {
+    let mut cursor = std::io::Cursor::new(bytes);
+    let key = rustls_pemfile::private_key(&mut cursor)
+        .map_err(unavailable)?
+        .ok_or(Failure(Reason::ProfileUnavailable))?;
+    if rustls_pemfile::private_key(&mut cursor)
+        .map_err(unavailable)?
+        .is_some()
+    {
         return Err(Failure(Reason::ProfileUnavailable));
     }
-    let parent = path.parent().unwrap_or(Path::new("."));
-    let mut indexed = BTreeMap::new();
-    for profile in file.profiles {
-        let id = profile.id();
-        if id.is_empty()
-            || id.len() > 64
-            || !id
-                .bytes()
-                .all(|b| b.is_ascii_alphanumeric() || b"._-".contains(&b))
-            || indexed.contains_key(id)
-        {
-            return Err(Failure(Reason::ProfileUnavailable));
-        }
-        indexed.insert(id.to_owned(), profile);
-    }
+    Ok(key)
+}
+
+/// Compile typed memory inputs. The App owns selection, file checks and its
+/// source fingerprint; no local paths or legacy file schema cross this boundary.
+pub fn compile_local(materials: &[LocalMaterial]) -> Result<Profiles, Failure> {
     let mut result = Profiles::default();
-    let mut hash = Sha256::new();
-    for (id, server) in needed {
-        let profile = indexed
-            .get(&id)
-            .ok_or(Failure(Reason::ProfileUnavailable))?;
-        let encoded = Zeroizing::new(serde_json::to_vec(profile).map_err(unavailable)?);
-        hash_part(&mut hash, &encoded);
+    let mut seen = BTreeSet::new();
+    for material in materials {
         let provider = Arc::new(rustls::crypto::ring::default_provider());
         let marker = Target::ip(std::net::Ipv4Addr::LOCALHOST.into(), 8421).map_err(unavailable)?;
-        match profile {
-            Profile::Server {
+        let id = match material {
+            LocalMaterial::Server { id, .. } | LocalMaterial::Client { id, .. } => id,
+        };
+        if id.is_empty() || !seen.insert(id) {
+            return Err(Failure(Reason::ProfileUnavailable));
+        }
+        match material {
+            LocalMaterial::Server {
+                id,
                 uuid,
                 certificate,
-                private_key,
-                ..
-            } if server => {
-                let uuid: SecretUuid = uuid.parse().map_err(unavailable)?;
-                let cert = material(&parent.join(certificate), false)?;
-                let key = material(&parent.join(private_key), true)?;
-                hash_part(&mut hash, &cert);
-                hash_part(&mut hash, &key);
-                let mut cursor = std::io::Cursor::new(key.as_slice());
-                let private_key = rustls_pemfile::private_key(&mut cursor)
-                    .map_err(unavailable)?
-                    .ok_or(Failure(Reason::ProfileUnavailable))?;
-                if rustls_pemfile::private_key(&mut cursor)
-                    .map_err(unavailable)?
-                    .is_some()
-                {
-                    return Err(Failure(Reason::ProfileUnavailable));
-                }
+                private_key: key,
+            } => {
+                let uuid: SecretUuid = uuid.as_str().parse().map_err(unavailable)?;
                 let tls = TlsServer::builder_with_provider(provider)
                     .with_safe_default_protocol_versions()
                     .map_err(unavailable)?
                     .with_no_client_auth()
-                    .with_single_cert(certificates(&cert)?, private_key)
+                    .with_single_cert(certificates(certificate)?, private_key(key)?)
                     .map_err(unavailable)?;
                 result.servers.insert(
-                    id,
+                    id.clone(),
                     Server {
                         tls: Arc::new(tls),
                         vless: ServerConfig {
@@ -263,17 +117,15 @@ pub fn load(path: Option<&Path>, intent: &NodeConnections) -> Result<Profiles, F
                     },
                 );
             }
-            Profile::Client {
+            LocalMaterial::Client {
+                id,
                 uuid,
                 ca_certificate,
                 server_name,
-                ..
-            } if !server => {
-                let uuid = uuid.parse().map_err(unavailable)?;
-                let ca = material(&parent.join(ca_certificate), false)?;
-                hash_part(&mut hash, &ca);
+            } => {
+                let uuid = uuid.as_str().parse().map_err(unavailable)?;
                 let mut roots = RootCertStore::empty();
-                for cert in certificates(&ca)? {
+                for cert in certificates(ca_certificate)? {
                     roots.add(cert).map_err(unavailable)?;
                 }
                 let name = ServerName::try_from(server_name.clone()).map_err(unavailable)?;
@@ -283,7 +135,7 @@ pub fn load(path: Option<&Path>, intent: &NodeConnections) -> Result<Profiles, F
                     .with_root_certificates(roots)
                     .with_no_client_auth();
                 result.clients.insert(
-                    id,
+                    id.clone(),
                     Client {
                         tls: Arc::new(tls),
                         name,
@@ -295,34 +147,20 @@ pub fn load(path: Option<&Path>, intent: &NodeConnections) -> Result<Profiles, F
                     },
                 );
             }
-            _ => return Err(Failure(Reason::ProfileUnavailable)),
         }
     }
-    result.fingerprint = hash.finalize().into();
     Ok(result)
 }
 
-pub fn load_combined(
-    path: Option<&Path>,
+pub fn with_managed(
+    mut result: Profiles,
     intent: &NodeConnections,
     materials: &[meshway_protocol::ManagedVlessMaterial],
 ) -> Result<Profiles, Failure> {
     use meshway_protocol::VlessStreamTransport;
-    let mut legacy = intent.clone();
-    legacy.listeners.retain(|l| {
-        !l.credential_ref
-            .as_deref()
-            .is_some_and(|r| r.starts_with("managed."))
-    });
-    legacy.outgoing.retain(|c| {
-        !c.credential_ref
-            .as_deref()
-            .is_some_and(|r| r.starts_with("managed."))
-    });
-    let mut result = load(path, &legacy)?;
     let mut hash = Sha256::new();
     hash_part(&mut hash, &result.fingerprint);
-    let mut seen = std::collections::BTreeSet::new();
+    let mut seen = BTreeSet::new();
     for material in materials {
         let id = &material.credential_ref;
         let expected = format!("managed.{}", material.listener_id);
@@ -380,9 +218,6 @@ pub fn load_combined(
         let encoded = Zeroizing::new(serde_json::to_vec(material).map_err(unavailable)?);
         hash_part(&mut hash, &encoded);
         let provider = Arc::new(rustls::crypto::ring::default_provider());
-        // Validate certificate name/time before durable ACK, including owners.
-        // This root is the exact controller-delivered certificate chain; there
-        // is no system-root or insecure verification fallback.
         let mut roots = RootCertStore::empty();
         roots
             .add(
@@ -417,21 +252,11 @@ pub fn load_combined(
                 .private_key_pem
                 .as_ref()
                 .ok_or(Failure(Reason::ProfileUnavailable))?;
-            let mut cursor = std::io::Cursor::new(key.as_bytes());
-            let key = rustls_pemfile::private_key(&mut cursor)
-                .map_err(unavailable)?
-                .ok_or(Failure(Reason::ProfileUnavailable))?;
-            if rustls_pemfile::private_key(&mut cursor)
-                .map_err(unavailable)?
-                .is_some()
-            {
-                return Err(Failure(Reason::ProfileUnavailable));
-            }
             let tls = TlsServer::builder_with_provider(provider.clone())
                 .with_safe_default_protocol_versions()
                 .map_err(unavailable)?
                 .with_no_client_auth()
-                .with_single_cert(certs.clone(), key)
+                .with_single_cert(certs.clone(), private_key(key.as_bytes())?)
                 .map_err(unavailable)?;
             result.servers.insert(
                 id.clone(),
