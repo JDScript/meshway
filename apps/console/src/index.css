@@ -140,7 +140,8 @@
     --brand: var(--signal);
     --success: oklch(0.6 0.14 160);
     --warning: oklch(0.7 0.15 65);
-    --field: oklch(1 0 0 / 0.65);
+    /* A field is recessed into the glass: a touch deeper than a tile (fill-subtle). */
+    --field: color-mix(in oklab, var(--foreground) 6%, transparent);
     --grid-dot: oklch(0.25 0.01 270 / 0.14);
 
     --glass-top: oklch(1 0 0 / 0.86);
