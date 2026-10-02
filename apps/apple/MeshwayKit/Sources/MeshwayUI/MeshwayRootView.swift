@@ -9,6 +9,7 @@ public struct MeshwayRootView: View {
   @State private var selected: MeshDevice?
   @State private var confirmReset = false
   @State private var showNetwork = false
+  @State private var showSavedNetworks = false
   @Environment(\.scenePhase) private var scenePhase
   public init(model: AppModel) { self.model = model }
 
@@ -61,15 +62,31 @@ public struct MeshwayRootView: View {
         case "alias-detail":
           selected = state.peers.first { state.dnsName($0) != state.canonicalDnsName($0) }
         case "network": showNetwork = true
+        case "saved-networks": showSavedNetworks = true
         case "dismiss":
           selected = nil
           showNetwork = false
+          showSavedNetworks = false
         case "search": search = search.isEmpty ? "no matching device" : ""
         default: break
         }
       }
     #endif
     .onOpenURL { url in Task { await model.enrollment.handleIncomingCallback(url) } }
+    .onChange(of: model.enrollment.activeProfileID) {
+      search = ""
+      selected = nil
+      showNetwork = false
+      confirmReset = false
+    }
+    .onChange(of: model.enrollment.switching) {
+      if model.enrollment.switching {
+        selected = nil
+        showNetwork = false
+        search = ""
+        confirmReset = false
+      }
+    }
     .task(id: model.enrollment.snapshot?.phase) {
       if model.enrollment.snapshot?.phase == .enrolled && scenePhase == .active {
         await model.enrollment.foregroundContact()
@@ -89,9 +106,17 @@ public struct MeshwayRootView: View {
         isSelf: device.id == state.ownDevice?.id)
     }
     .sheet(isPresented: $showNetwork) { NetworkDetailView(model: model) }
-    .confirmationDialog("Reset this device?", isPresented: $confirmReset, titleVisibility: .visible)
-    {
-      Button("Reset local identity", role: .destructive) { model.enrollment.reset() }
+    .sheet(isPresented: $showSavedNetworks) { SavedNetworksView(model: model) }
+    .confirmationDialog(
+      "Remove this network from device?", isPresented: $confirmReset, titleVisibility: .visible
+    ) {
+      Button("Remove local enrollment", role: .destructive) {
+        if model.enrollment.activeProfileID != nil {
+          Task { await model.removeNetwork() }
+        } else {
+          model.enrollment.reset()
+        }
+      }
     } message: {
       Text(
         "This removes the local credential and pending sign-in. It does not revoke this node on the server. Revoke it separately in the console."
@@ -108,20 +133,8 @@ public struct MeshwayRootView: View {
     }
   }
   @ViewBuilder private var networkActions: some View {
-    if let server = model.enrollment.snapshot?.server ?? model.controller?.url.absoluteString {
-      Button("Network details", systemImage: "info.circle") { showNetwork = true }
-      Button("Copy server URL", systemImage: "doc.on.doc") { Clipboard.copy(server) }
-    } else {
-      Text("No network selected")
-    }
-    if model.enrollment.hasIdentity {
-      Divider()
-      Button(
-        "Reset this device…", systemImage: "rectangle.portrait.and.arrow.right", role: .destructive
-      ) {
-        confirmReset = true
-      }.disabled(model.enrollment.busy || model.enrollment.refreshing)
-    }
+    NetworkActions(model: model, details: { showNetwork = true }, remove: { confirmReset = true })
+      .disabled(model.enrollment.switching)
   }
   @ViewBuilder private var devices: some View {
     #if os(iOS)
@@ -205,15 +218,11 @@ public struct MeshwayMenuView: View {
         refresh: model.enrollment.snapshot?.phase == .enrolled
           ? { Task { await model.enrollment.refresh() } } : nil
       ) {
-        if let server = model.enrollment.snapshot?.server {
-          Button("Network details") { showNetwork = true }
-          Button("Copy server URL") { Clipboard.copy(server) }
-          Divider()
-          Button("Reset this device…", role: .destructive) { confirmReset = true }
-            .disabled(model.enrollment.refreshing || model.enrollment.busy)
-        } else {
-          Text("No network selected")
-        }
+        NetworkActions(
+          model: model, details: { showNetwork = true }, remove: { confirmReset = true },
+          showSignIn: { openWindow(id: "main") }
+        )
+        .disabled(model.enrollment.switching)
       }
       Divider()
       if model.enrollment.snapshot?.phase == .enrolled {
@@ -231,7 +240,7 @@ public struct MeshwayMenuView: View {
           }
           Text(
             model.enrollment.snapshot?.phase == .revoked
-              ? "Open Meshway to reset this device locally."
+              ? "Choose another saved network or remove this enrollment."
               : "Open Meshway to sign in with your browser."
           )
           .font(.callout).foregroundStyle(.secondary)
@@ -255,6 +264,18 @@ public struct MeshwayMenuView: View {
         isSelf: device.id == model.enrollment.snapshot?.node?.id)
     }
     .sheet(isPresented: $showNetwork) { NetworkDetailView(model: model) }
+    .onChange(of: model.enrollment.activeProfileID) {
+      selected = nil
+      showNetwork = false
+      confirmReset = false
+    }
+    .onChange(of: model.enrollment.switching) {
+      if model.enrollment.switching {
+        selected = nil
+        showNetwork = false
+        confirmReset = false
+      }
+    }
     .task(id: scenePhase) {
       guard scenePhase == .active else { return }
       while !Task.isCancelled {
@@ -262,8 +283,8 @@ public struct MeshwayMenuView: View {
         do { try await Task.sleep(for: .seconds(30)) } catch { return }
       }
     }
-    .confirmationDialog("Reset this device?", isPresented: $confirmReset) {
-      Button("Reset local identity", role: .destructive) { model.enrollment.reset() }
+    .confirmationDialog("Remove this network from device?", isPresented: $confirmReset) {
+      Button("Remove local enrollment", role: .destructive) { Task { await model.removeNetwork() } }
     } message: {
       Text("This only removes the local identity. It does not revoke the server-side node.")
     }

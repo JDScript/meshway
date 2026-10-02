@@ -21,6 +21,22 @@ public struct MeshwayGlyph: View {
 struct OnboardingView: View {
   @Bindable var model: AppModel
   var body: some View {
+    if model.enrollment.snapshot == nil && !model.enrollment.profiles.isEmpty {
+      GeometryReader { geometry in
+        ScrollView {
+          VStack(spacing: 0) {
+            SavedNetworksView(model: model)
+            signInContent.layout(
+              compact: geometry.size.height < LayoutMetrics.compactOnboardingHeight + 180)
+          }.frame(maxWidth: .infinity)
+        }.background(Surface.canvas)
+      }
+    } else {
+      signInContent
+    }
+  }
+
+  private var signInContent: OnboardingContentView {
     OnboardingContentView(
       server: $model.controllerDraft, deviceName: $model.deviceName,
       status: model.status, message: model.enrollment.message ?? model.validationMessage,
@@ -73,7 +89,7 @@ public struct OnboardingContentView: View {
   public var content: some View {
     layout(compact: false)
   }
-  private func layout(compact: Bool) -> some View {
+  fileprivate func layout(compact: Bool) -> some View {
     OnboardingLayout(status: status, message: message, compact: compact) {
       TextField("https://console.example.com", text: $server).autocorrectionDisabled()
         #if os(iOS)
@@ -144,7 +160,7 @@ public struct OnboardingLayout<ServerField: View, NameField: View, Action: View>
       VStack(spacing: 12) {
         Text(
           status == .revoked
-            ? "Choose Reset this device from the ⋯ menu.\nThis only removes its local identity."
+            ? "Choose another saved network from the ⋯ menu.\nRemoving this enrollment only clears its local identity."
             : "Your browser handles sign-in and approval.\nYour device identity stays in Keychain."
         )
         .font(.caption).foregroundStyle(.secondary).multilineTextAlignment(.center)

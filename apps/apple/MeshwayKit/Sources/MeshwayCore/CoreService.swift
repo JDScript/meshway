@@ -64,7 +64,7 @@ public enum EnrollmentError: Error, LocalizedError, Sendable, Equatable {
     case .credentialRejected:
       "The controller rejected this device credential. The saved identity has been preserved."
     case .revoked:
-      "This device has been revoked. Reset this device explicitly to create a new local identity."
+      "This enrollment has been revoked. Choose another saved network or remove it from this device."
     case .credentialConflict:
       "This credential is already bound. The identity has been preserved; do not automatically replace it."
     case .capacity: "The network cannot accept another node. Retry later."

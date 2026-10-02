@@ -38,7 +38,8 @@ public enum PersistenceError: Error, LocalizedError {
     switch self {
     case .keychain:
       "Keychain is unavailable. No plaintext fallback is used. Your identity has not been replaced."
-    case .corrupt: "Saved identity is inconsistent. Reset this device explicitly to remove it."
+    case .corrupt:
+      "Saved enrollment is inconsistent. Remove it from this device explicitly. Its identity has not been replaced."
     case .file: "Cannot persist enrollment state. Your Keychain identity has been preserved."
     }
   }

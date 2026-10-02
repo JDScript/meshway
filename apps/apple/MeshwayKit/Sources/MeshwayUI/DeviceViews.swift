@@ -586,8 +586,12 @@ struct NetworkDetailView: View {
             LabeledContent("IPv6 prefix", value: inventory.ipv6Prefix)
             LabeledContent("Revision", value: String(inventory.revision))
           }
-          Text("This device belongs to one network. Additional networks are not supported yet.")
-            .font(.callout).foregroundStyle(.secondary)
+          Text(
+            model.enrollment.snapshot == nil
+              ? "No saved network is selected."
+              : "Only the selected enrollment is active. Saved networks are available in the ⋯ menu."
+          )
+          .font(.callout).foregroundStyle(.secondary)
         }
         Section("About") {
           LabeledContent("Rust core", value: model.coreInfo.version)
