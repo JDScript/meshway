@@ -6,6 +6,29 @@ use meshway_protocol::{
 };
 
 #[tokio::test]
+async fn runtime_capacity_failure_preserves_error_observation() {
+    let (_, _, mut client, key) = fixture_at_port(ConnectionTransport::NativeTcp, 43100);
+    let candidate = client.outgoing[0].clone();
+    client.outgoing = (0..33)
+        .map(|index| {
+            let mut candidate = candidate.clone();
+            candidate.id = format!("candidate-{index:02}");
+            candidate.endpoint.host = "127.0.0.1".into();
+            candidate.endpoint.port = 43100 + index;
+            candidate
+        })
+        .collect();
+    let mut manager = Manager::new(None, Duration::from_secs(10));
+    manager
+        .reconcile(snapshot(client), key, Instant::now())
+        .await;
+    let observation = manager.observation();
+    assert_eq!(observation.state, Phase::Error);
+    assert_eq!(observation.reason, Reason::InvalidConfiguration);
+    assert!(manager.running.is_none());
+}
+
+#[tokio::test]
 async fn interrupted_withdraw_retains_exact_generation_until_join() {
     let mut manager = Manager::new(None, Duration::from_secs(10));
     let (deadline, mut cancelled) = watch::channel(Some(Instant::now() + Duration::from_secs(10)));

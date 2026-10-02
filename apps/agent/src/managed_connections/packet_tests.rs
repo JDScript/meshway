@@ -16,6 +16,49 @@ struct Mesh {
     keys: Vec<PrivateKey>,
 }
 
+#[tokio::test]
+async fn packet_capacity_rejection_remains_retryable_and_recovers_after_correction() {
+    let (payloads, keys) = fixtures(2);
+    let good = payloads[1].clone();
+    let mut bad = good.clone();
+    let candidate = bad.connections.outgoing[0].clone();
+    bad.connections.outgoing = (0..33)
+        .map(|index| {
+            let mut candidate = candidate.clone();
+            candidate.id = format!("candidate-{index:02}");
+            candidate.transport = ConnectionTransport::NativeTcp;
+            candidate.endpoint.port = 43100 + index;
+            candidate
+        })
+        .collect();
+    let plan = PacketPlan::compile(&bad, 1000).unwrap();
+    let (device, _send, _receive) = MockDevice::new();
+    let mut manager = Manager::new_dataplane(
+        None,
+        Duration::from_secs(30),
+        TunOptions {
+            name: "mock0".into(),
+            mtu: 1000,
+        },
+        "http://127.0.0.1".into(),
+        false,
+    );
+    manager.mock_tun(Tun::mock(device, &plan));
+    manager
+        .reconcile_dataplane(snapshot(bad), keys[1].clone(), Instant::now())
+        .await
+        .unwrap();
+    assert_eq!(manager.observation().state, Phase::Error);
+    assert_eq!(manager.observation().reason, Reason::InvalidConfiguration);
+    assert!(manager.running.is_none());
+    manager
+        .reconcile_dataplane(snapshot(good), keys[1].clone(), Instant::now())
+        .await
+        .unwrap();
+    assert_eq!(manager.observation().state, Phase::Applied);
+    manager.withdraw(Reason::ShuttingDown).await;
+}
+
 impl Mesh {
     async fn start() -> Self {
         let (payloads, keys) = fixtures(3);

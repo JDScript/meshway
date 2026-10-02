@@ -789,21 +789,21 @@ impl Manager {
             self.withdraw(Reason::LeaseExpired).await;
             return Ok(());
         }
-        let mut runtime_config = core_config(&semantic, key, &targets)
-            .map_err(|_| AgentError::Invalid("invalid coherent adjacency runtime configuration"))?;
-        if let Some(plan) = &packet {
-            plan.augment(&mut runtime_config)?;
-        }
-        let result = time::timeout_at(
-            deadline,
+        let result = time::timeout_at(deadline, async {
+            let mut runtime_config = core_config(&semantic, key, &targets)?;
+            if let Some(plan) = &packet {
+                plan.augment(&mut runtime_config)
+                    .map_err(|_| Failure(Reason::InvalidConfiguration))?;
+            }
             session::Session::start_prepared(
                 &semantic,
                 profiles,
                 &targets,
                 runtime_config,
                 self.socket_protection.clone(),
-            ),
-        )
+            )
+            .await
+        })
         .await;
         match result {
             Ok(Ok(mut session)) => {
