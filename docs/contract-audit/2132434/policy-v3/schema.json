@@ -1,0 +1,393 @@
+{
+  "$defs": {
+    "AutomaticRouting": {
+      "additionalProperties": false,
+      "properties": {
+        "fallback": {
+          "type": "string"
+        },
+        "regions": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "propertyNames": {
+            "type": "string"
+          },
+          "type": "object"
+        }
+      },
+      "required": [
+        "regions",
+        "fallback"
+      ],
+      "type": "object"
+    },
+    "ConnectionAction": {
+      "enum": [
+        "allow",
+        "block"
+      ],
+      "type": "string"
+    },
+    "ConnectionRule": {
+      "additionalProperties": false,
+      "properties": {
+        "a": {
+          "type": "string"
+        },
+        "action": {
+          "$ref": "#/$defs/ConnectionAction"
+        },
+        "b": {
+          "type": "string"
+        },
+        "id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "a",
+        "b",
+        "action"
+      ],
+      "type": "object"
+    },
+    "ExitMatch": {
+      "oneOf": [
+        {
+          "additionalProperties": false,
+          "maxProperties": 2,
+          "properties": {
+            "kind": {
+              "enum": [
+                "domain_suffix"
+              ],
+              "type": "string"
+            },
+            "value": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "value",
+            "kind"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "maxProperties": 2,
+          "properties": {
+            "kind": {
+              "enum": [
+                "cidr"
+              ],
+              "type": "string"
+            },
+            "value": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "value",
+            "kind"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "maxProperties": 2,
+          "properties": {
+            "kind": {
+              "enum": [
+                "rule_set"
+              ],
+              "type": "string"
+            },
+            "value": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "value",
+            "kind"
+          ],
+          "type": "object"
+        }
+      ]
+    },
+    "ExitRule": {
+      "additionalProperties": false,
+      "properties": {
+        "candidates": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "destinations": {
+          "items": {
+            "$ref": "#/$defs/ExitMatch"
+          },
+          "type": "array"
+        },
+        "id": {
+          "type": "string"
+        },
+        "src": {
+          "type": "string"
+        },
+        "target": {
+          "$ref": "#/$defs/ExitTarget"
+        },
+        "via": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "id",
+        "destinations",
+        "target",
+        "candidates",
+        "via"
+      ],
+      "type": "object"
+    },
+    "ExitTarget": {
+      "enum": [
+        "nodes",
+        "direct"
+      ],
+      "type": "string"
+    },
+    "Grant": {
+      "additionalProperties": false,
+      "properties": {
+        "bidirectional": {
+          "type": "boolean"
+        },
+        "dst": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "id": {
+          "type": "string"
+        },
+        "src": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "id",
+        "src",
+        "dst",
+        "bidirectional"
+      ],
+      "type": "object"
+    },
+    "MeshRule": {
+      "additionalProperties": false,
+      "properties": {
+        "dst": {
+          "type": "string"
+        },
+        "id": {
+          "type": "string"
+        },
+        "src": {
+          "type": "string"
+        },
+        "via": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "id",
+        "src",
+        "dst",
+        "via"
+      ],
+      "type": "object"
+    },
+    "NetworkPolicy": {
+      "additionalProperties": false,
+      "properties": {
+        "assignments": {
+          "items": {
+            "$ref": "#/$defs/ProfileAssignment"
+          },
+          "type": "array"
+        },
+        "automatic": {
+          "$ref": "#/$defs/AutomaticRouting"
+        },
+        "connections": {
+          "items": {
+            "$ref": "#/$defs/ConnectionRule"
+          },
+          "type": "array"
+        },
+        "grants": {
+          "items": {
+            "$ref": "#/$defs/Grant"
+          },
+          "type": "array"
+        },
+        "mesh": {
+          "items": {
+            "$ref": "#/$defs/MeshRule"
+          },
+          "type": "array"
+        },
+        "profiles": {
+          "items": {
+            "$ref": "#/$defs/RoutingProfile"
+          },
+          "type": "array"
+        },
+        "public_rules": {
+          "items": {
+            "$ref": "#/$defs/ExitRule"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "connections",
+        "grants",
+        "mesh",
+        "public_rules",
+        "profiles",
+        "assignments"
+      ],
+      "type": "object"
+    },
+    "ProfileAssignment": {
+      "additionalProperties": false,
+      "properties": {
+        "allowed": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "default_profile": {
+          "type": "string"
+        },
+        "locked": {
+          "type": "boolean"
+        },
+        "src": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "src",
+        "allowed",
+        "default_profile",
+        "locked"
+      ],
+      "type": "object"
+    },
+    "ProfileFallback": {
+      "oneOf": [
+        {
+          "maxProperties": 1,
+          "properties": {
+            "kind": {
+              "enum": [
+                "none"
+              ],
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind"
+          ],
+          "type": "object"
+        },
+        {
+          "maxProperties": 1,
+          "properties": {
+            "kind": {
+              "enum": [
+                "direct"
+              ],
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind"
+          ],
+          "type": "object"
+        },
+        {
+          "maxProperties": 3,
+          "properties": {
+            "candidates": {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "kind": {
+              "enum": [
+                "nodes"
+              ],
+              "type": "string"
+            },
+            "via": {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            }
+          },
+          "required": [
+            "candidates",
+            "via",
+            "kind"
+          ],
+          "type": "object"
+        }
+      ]
+    },
+    "RoutingProfile": {
+      "additionalProperties": false,
+      "properties": {
+        "fallback": {
+          "$ref": "#/$defs/ProfileFallback"
+        },
+        "id": {
+          "type": "string"
+        },
+        "rules": {
+          "items": {
+            "$ref": "#/$defs/ExitRule"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "id",
+        "rules",
+        "fallback"
+      ],
+      "type": "object"
+    }
+  },
+  "$ref": "#/$defs/NetworkPolicy",
+  "$schema": "https://json-schema.org/draft/2020-12/schema"
+}

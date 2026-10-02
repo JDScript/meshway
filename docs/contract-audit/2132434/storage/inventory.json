@@ -1,0 +1,3023 @@
+{
+  "source_ref": "2132434",
+  "user_version": 11,
+  "tables": [
+    {
+      "name": "account_invitations",
+      "type": "table",
+      "without_rowid": false,
+      "strict": false,
+      "columns": [
+        {
+          "cid": 0,
+          "name": "invitation_id",
+          "type": "TEXT",
+          "notnull": 0,
+          "dflt_value": null,
+          "pk": 1,
+          "hidden": 0
+        },
+        {
+          "cid": 1,
+          "name": "token_hash",
+          "type": "BLOB",
+          "notnull": 1,
+          "dflt_value": null,
+          "pk": 0,
+          "hidden": 0
+        },
+        {
+          "cid": 2,
+          "name": "network_id",
+          "type": "TEXT",
+          "notnull": 1,
+          "dflt_value": null,
+          "pk": 0,
+          "hidden": 0
+        },
+        {
+          "cid": 3,
+          "name": "email",
+          "type": "TEXT",
+          "notnull": 1,
+          "dflt_value": null,
+          "pk": 0,
+          "hidden": 0
+        },
+        {
+          "cid": 4,
+          "name": "role",
+          "type": "TEXT",
+          "notnull": 1,
+          "dflt_value": null,
+          "pk": 0,
+          "hidden": 0
+        },
+        {
+          "cid": 5,
+          "name": "issuer_user_id",
+          "type": "TEXT",
+          "notnull": 0,
+          "dflt_value": null,
+          "pk": 0,
+          "hidden": 0
+        },
+        {
+          "cid": 6,
+          "name": "expires_at",
+          "type": "INTEGER",
+          "notnull": 1,
+          "dflt_value": null,
+          "pk": 0,
+          "hidden": 0
+        },
+        {
+          "cid": 7,
+          "name": "revoked_at",
+          "type": "INTEGER",
+          "notnull": 0,
+          "dflt_value": null,
+          "pk": 0,
+          "hidden": 0
+        },
+        {
+          "cid": 8,
+          "name": "consumed_by",
+          "type": "TEXT",
+          "notnull": 0,
+          "dflt_value": null,
+          "pk": 0,
+          "hidden": 0
+        },
+        {
+          "cid": 9,
+          "name": "consumed_at",
+          "type": "INTEGER",
+          "notnull": 0,
+          "dflt_value": null,
+          "pk": 0,
+          "hidden": 0
+        }
+      ],
+      "foreign_keys": [
+        {
+          "id": 0,
+          "seq": 0,
+          "table": "account_users",
+          "from": "consumed_by",
+          "to": "user_id",
+          "on_update": "NO ACTION",
+          "on_delete": "NO ACTION",
+          "match": "NONE"
+        },
+        {
+          "id": 1,
+          "seq": 0,
+          "table": "account_users",
+          "from": "issuer_user_id",
+          "to": "user_id",
+          "on_update": "NO ACTION",
+          "on_delete": "NO ACTION",
+          "match": "NONE"
+        },
+        {
+          "id": 2,
+          "seq": 0,
+          "table": "networks",
+          "from": "network_id",
+          "to": "network_id",
+          "on_update": "NO ACTION",
+          "on_delete": "NO ACTION",
+          "match": "NONE"
+        }
+      ],
+      "indexes": [
+        {
+          "seq": 0,
+          "name": "sqlite_autoindex_account_invitations_2",
+          "unique": 1,
+          "origin": "u",
+          "partial": 0
+        },
+        {
+          "seq": 1,
+          "name": "sqlite_autoindex_account_invitations_1",
+          "unique": 1,
+          "origin": "pk",
+          "partial": 0
+        }
+      ]
+    },
+    {
+      "name": "account_memberships",
+      "type": "table",
+      "without_rowid": false,
+      "strict": false,
+      "columns": [
+        {
+          "cid": 0,
+          "name": "membership_id",
+          "type": "TEXT",
+          "notnull": 0,
+          "dflt_value": null,
+          "pk": 1,
+          "hidden": 0
+        },
+        {
+          "cid": 1,
+          "name": "network_id",
+          "type": "TEXT",
+          "notnull": 1,
+          "dflt_value": null,
+          "pk": 0,
+          "hidden": 0
+        },
+        {
+          "cid": 2,
+          "name": "user_id",
+          "type": "TEXT",
+          "notnull": 1,
+          "dflt_value": null,
+          "pk": 0,
+          "hidden": 0
+        },
+        {
+          "cid": 3,
+          "name": "role",
+          "type": "TEXT",
+          "notnull": 1,
+          "dflt_value": null,
+          "pk": 0,
+          "hidden": 0
+        },
+        {
+          "cid": 4,
+          "name": "revoked_at",
+          "type": "INTEGER",
+          "notnull": 0,
+          "dflt_value": null,
+          "pk": 0,
+          "hidden": 0
+        }
+      ],
+      "foreign_keys": [
+        {
+          "id": 0,
+          "seq": 0,
+          "table": "account_users",
+          "from": "user_id",
+          "to": "user_id",
+          "on_update": "NO ACTION",
+          "on_delete": "NO ACTION",
+          "match": "NONE"
+        },
+        {
+          "id": 1,
+          "seq": 0,
+          "table": "networks",
+          "from": "network_id",
+          "to": "network_id",
+          "on_update": "NO ACTION",
+          "on_delete": "NO ACTION",
+          "match": "NONE"
+        }
+      ],
+      "indexes": [
+        {
+          "seq": 0,
+          "name": "account_membership_subject",
+          "unique": 1,
+          "origin": "c",
+          "partial": 0
+        },
+        {
+          "seq": 1,
+          "name": "account_active_membership",
+          "unique": 1,
+          "origin": "c",
+          "partial": 1
+        },
+        {
+          "seq": 2,
+          "name": "sqlite_autoindex_account_memberships_2",
+          "unique": 1,
+          "origin": "u",
+          "partial": 0
+        },
+        {
+          "seq": 3,
+          "name": "sqlite_autoindex_account_memberships_1",
+          "unique": 1,
+          "origin": "pk",
+          "partial": 0
+        }
+      ]
+    },
+    {
+      "name": "account_password_resets",
+      "type": "table",
+      "without_rowid": false,
+      "strict": false,
+      "columns": [
+        {
+          "cid": 0,
+          "name": "reset_id",
+          "type": "TEXT",
+          "notnull": 0,
+          "dflt_value": null,
+          "pk": 1,
+          "hidden": 0
+        },
+        {
+          "cid": 1,
+          "name": "token_hash",
+          "type": "BLOB",
+          "notnull": 1,
+          "dflt_value": null,
+          "pk": 0,
+          "hidden": 0
+        },
+        {
+          "cid": 2,
+          "name": "user_id",
+          "type": "TEXT",
+          "notnull": 1,
+          "dflt_value": null,
+          "pk": 0,
+          "hidden": 0
+        },
+        {
+          "cid": 3,
+          "name": "credential_version",
+          "type": "INTEGER",
+          "notnull": 1,
+          "dflt_value": null,
+          "pk": 0,
+          "hidden": 0
+        },
+        {
+          "cid": 4,
+          "name": "expires_at",
+          "type": "INTEGER",
+          "notnull": 1,
+          "dflt_value": null,
+          "pk": 0,
+          "hidden": 0
+        },
+        {
+          "cid": 5,
+          "name": "revoked_at",
+          "type": "INTEGER",
+          "notnull": 0,
+          "dflt_value": null,
+          "pk": 0,
+          "hidden": 0
+        },
+        {
+          "cid": 6,
+          "name": "consumed_at",
+          "type": "INTEGER",
+          "notnull": 0,
+          "dflt_value": null,
+          "pk": 0,
+          "hidden": 0
+        }
+      ],
+      "foreign_keys": [
+        {
+          "id": 0,
+          "seq": 0,
+          "table": "account_users",
+          "from": "user_id",
+          "to": "user_id",
+          "on_update": "NO ACTION",
+          "on_delete": "NO ACTION",
+          "match": "NONE"
+        }
+      ],
+      "indexes": [
+        {
+          "seq": 0,
+          "name": "account_resets_user",
+          "unique": 0,
+          "origin": "c",
+          "partial": 0
+        },
+        {
+          "seq": 1,
+          "name": "sqlite_autoindex_account_password_resets_2",
+          "unique": 1,
+          "origin": "u",
+          "partial": 0
+        },
+        {
+          "seq": 2,
+          "name": "sqlite_autoindex_account_password_resets_1",
+          "unique": 1,
+          "origin": "pk",
+          "partial": 0
+        }
+      ]
+    },
+    {
+      "name": "account_sessions",
+      "type": "table",
+      "without_rowid": false,
+      "strict": false,
+      "columns": [
+        {
+          "cid": 0,
+          "name": "token_hash",
+          "type": "BLOB",
+          "notnull": 0,
+          "dflt_value": null,
+          "pk": 1,
+          "hidden": 0
+        },
+        {
+          "cid": 1,
+          "name": "user_id",
+          "type": "TEXT",
+          "notnull": 1,
+          "dflt_value": null,
+          "pk": 0,
+          "hidden": 0
+        },
+        {
+          "cid": 2,
+          "name": "credential_version",
+          "type": "INTEGER",
+          "notnull": 1,
+          "dflt_value": null,
+          "pk": 0,
+          "hidden": 0
+        },
+        {
+          "cid": 3,
+          "name": "expires_at",
+          "type": "INTEGER",
+          "notnull": 1,
+          "dflt_value": null,
+          "pk": 0,
+          "hidden": 0
+        },
+        {
+          "cid": 4,
+          "name": "revoked_at",
+          "type": "INTEGER",
+          "notnull": 0,
+          "dflt_value": null,
+          "pk": 0,
+          "hidden": 0
+        }
+      ],
+      "foreign_keys": [
+        {
+          "id": 0,
+          "seq": 0,
+          "table": "account_users",
+          "from": "user_id",
+          "to": "user_id",
+          "on_update": "NO ACTION",
+          "on_delete": "NO ACTION",
+          "match": "NONE"
+        }
+      ],
+      "indexes": [
+        {
+          "seq": 0,
+          "name": "account_sessions_user",
+          "unique": 0,
+          "origin": "c",
+          "partial": 0
+        },
+        {
+          "seq": 1,
+          "name": "sqlite_autoindex_account_sessions_1",
+          "unique": 1,
+          "origin": "pk",
+          "partial": 0
+        }
+      ]
+    },
+    {
+      "name": "account_users",
+      "type": "table",
+      "without_rowid": false,
+      "strict": false,
+      "columns": [
+        {
+          "cid": 0,
+          "name": "user_id",
+          "type": "TEXT",
+          "notnull": 0,
+          "dflt_value": null,
+          "pk": 1,
+          "hidden": 0
+        },
+        {
+          "cid": 1,
+          "name": "email",
+          "type": "TEXT",
+          "notnull": 1,
+          "dflt_value": null,
+          "pk": 0,
+          "hidden": 0
+        },
+        {
+          "cid": 2,
+          "name": "email_verified",
+          "type": "INTEGER",
+          "notnull": 1,
+          "dflt_value": "0",
+          "pk": 0,
+          "hidden": 0
+        },
+        {
+          "cid": 3,
+          "name": "password_phc",
+          "type": "TEXT",
+          "notnull": 1,
+          "dflt_value": null,
+          "pk": 0,
+          "hidden": 0
+        },
+        {
+          "cid": 4,
+          "name": "credential_version",
+          "type": "INTEGER",
+          "notnull": 1,
+          "dflt_value": "1",
+          "pk": 0,
+          "hidden": 0
+        },
+        {
+          "cid": 5,
+          "name": "created_at",
+          "type": "INTEGER",
+          "notnull": 1,
+          "dflt_value": null,
+          "pk": 0,
+          "hidden": 0
+        }
+      ],
+      "foreign_keys": [],
+      "indexes": [
+        {
+          "seq": 0,
+          "name": "sqlite_autoindex_account_users_2",
+          "unique": 1,
+          "origin": "u",
+          "partial": 0
+        },
+        {
+          "seq": 1,
+          "name": "sqlite_autoindex_account_users_1",
+          "unique": 1,
+          "origin": "pk",
+          "partial": 0
+        }
+      ]
+    },
+    {
+      "name": "configuration",
+      "type": "table",
+      "without_rowid": false,
+      "strict": false,
+      "columns": [
+        {
+          "cid": 0,
+          "name": "network_id",
+          "type": "TEXT",
+          "notnull": 1,
+          "dflt_value": null,
+          "pk": 1,
+          "hidden": 0
+        },
+        {
+          "cid": 1,
+          "name": "id",
+          "type": "INTEGER",
+          "notnull": 1,
+          "dflt_value": null,
+          "pk": 2,
+          "hidden": 0
+        },
+        {
+          "cid": 2,
+          "name": "revision",
+          "type": "INTEGER",
+          "notnull": 1,
+          "dflt_value": null,
+          "pk": 0,
+          "hidden": 0
+        },
+        {
+          "cid": 3,
+          "name": "ipv4_prefix",
+          "type": "TEXT",
+          "notnull": 1,
+          "dflt_value": null,
+          "pk": 0,
+          "hidden": 0
+        },
+        {
+          "cid": 4,
+          "name": "ipv6_prefix",
+          "type": "TEXT",
+          "notnull": 1,
+          "dflt_value": null,
+          "pk": 0,
+          "hidden": 0
+        },
+        {
+          "cid": 5,
+          "name": "policy",
+          "type": "TEXT",
+          "notnull": 1,
+          "dflt_value": null,
+          "pk": 0,
+          "hidden": 0
+        },
+        {
+          "cid": 6,
+          "name": "source_jsonc",
+          "type": "TEXT",
+          "notnull": 0,
+          "dflt_value": null,
+          "pk": 0,
+          "hidden": 0
+        }
+      ],
+      "foreign_keys": [
+        {
+          "id": 0,
+          "seq": 0,
+          "table": "networks",
+          "from": "network_id",
+          "to": "network_id",
+          "on_update": "NO ACTION",
+          "on_delete": "NO ACTION",
+          "match": "NONE"
+        }
+      ],
+      "indexes": [
+        {
+          "seq": 0,
+          "name": "sqlite_autoindex_configuration_1",
+          "unique": 1,
+          "origin": "pk",
+          "partial": 0
+        }
+      ]
+    },
+    {
+      "name": "connection_identities",
+      "type": "table",
+      "without_rowid": false,
+      "strict": false,
+      "columns": [
+        {
+          "cid": 0,
+          "name": "node_id",
+          "type": "TEXT",
+          "notnull": 0,
+          "dflt_value": null,
+          "pk": 1,
+          "hidden": 0
+        },
+        {
+          "cid": 1,
+          "name": "network_id",
+          "type": "TEXT",
+          "notnull": 1,
+          "dflt_value": null,
+          "pk": 0,
+          "hidden": 0
+        },
+        {
+          "cid": 2,
+          "name": "public_key",
+          "type": "TEXT",
+          "notnull": 1,
+          "dflt_value": null,
+          "pk": 0,
+          "hidden": 0
+        },
+        {
+          "cid": 3,
+          "name": "capabilities",
+          "type": "TEXT",
+          "notnull": 1,
+          "dflt_value": null,
+          "pk": 0,
+          "hidden": 0
+        }
+      ],
+      "foreign_keys": [
+        {
+          "id": 0,
+          "seq": 0,
+          "table": "nodes",
+          "from": "network_id",
+          "to": "network_id",
+          "on_update": "NO ACTION",
+          "on_delete": "NO ACTION",
+          "match": "NONE"
+        },
+        {
+          "id": 0,
+          "seq": 1,
+          "table": "nodes",
+          "from": "node_id",
+          "to": "id",
+          "on_update": "NO ACTION",
+          "on_delete": "NO ACTION",
+          "match": "NONE"
+        },
+        {
+          "id": 1,
+          "seq": 0,
+          "table": "networks",
+          "from": "network_id",
+          "to": "network_id",
+          "on_update": "NO ACTION",
+          "on_delete": "NO ACTION",
+          "match": "NONE"
+        }
+      ],
+      "indexes": [
+        {
+          "seq": 0,
+          "name": "sqlite_autoindex_connection_identities_2",
+          "unique": 1,
+          "origin": "u",
+          "partial": 0
+        },
+        {
+          "seq": 1,
+          "name": "sqlite_autoindex_connection_identities_1",
+          "unique": 1,
+          "origin": "pk",
+          "partial": 0
+        }
+      ]
+    },
+    {
+      "name": "connection_receipts",
+      "type": "table",
+      "without_rowid": false,
+      "strict": false,
+      "columns": [
+        {
+          "cid": 0,
+          "name": "node_id",
+          "type": "TEXT",
+          "notnull": 0,
+          "dflt_value": null,
+          "pk": 1,
+          "hidden": 0
+        },
+        {
+          "cid": 1,
+          "name": "network_id",
+          "type": "TEXT",
+          "notnull": 1,
+          "dflt_value": null,
+          "pk": 0,
+          "hidden": 0
+        },
+        {
+          "cid": 2,
+          "name": "revision",
+          "type": "INTEGER",
+          "notnull": 1,
+          "dflt_value": null,
+          "pk": 0,
+          "hidden": 0
+        },
+        {
+          "cid": 3,
+          "name": "digest",
+          "type": "TEXT",
+          "notnull": 1,
+          "dflt_value": null,
+          "pk": 0,
+          "hidden": 0
+        },
+        {
+          "cid": 4,
+          "name": "saved_at",
+          "type": "TEXT",
+          "notnull": 1,
+          "dflt_value": null,
+          "pk": 0,
+          "hidden": 0
+        }
+      ],
+      "foreign_keys": [
+        {
+          "id": 0,
+          "seq": 0,
+          "table": "nodes",
+          "from": "network_id",
+          "to": "network_id",
+          "on_update": "NO ACTION",
+          "on_delete": "NO ACTION",
+          "match": "NONE"
+        },
+        {
+          "id": 0,
+          "seq": 1,
+          "table": "nodes",
+          "from": "node_id",
+          "to": "id",
+          "on_update": "NO ACTION",
+          "on_delete": "NO ACTION",
+          "match": "NONE"
+        },
+        {
+          "id": 1,
+          "seq": 0,
+          "table": "networks",
+          "from": "network_id",
+          "to": "network_id",
+          "on_update": "NO ACTION",
+          "on_delete": "NO ACTION",
+          "match": "NONE"
+        }
+      ],
+      "indexes": [
+        {
+          "seq": 0,
+          "name": "sqlite_autoindex_connection_receipts_1",
+          "unique": 1,
+          "origin": "pk",
+          "partial": 0
+        }
+      ]
+    },
+    {
+      "name": "connection_runtime_leases",
+      "type": "table",
+      "without_rowid": false,
+      "strict": false,
+      "columns": [
+        {
+          "cid": 0,
+          "name": "node_id",
+          "type": "TEXT",
+          "notnull": 0,
+          "dflt_value": null,
+          "pk": 1,
+          "hidden": 0
+        },
+        {
+          "cid": 1,
+          "name": "network_id",
+          "type": "TEXT",
+          "notnull": 1,
+          "dflt_value": null,
+          "pk": 0,
+          "hidden": 0
+        },
+        {
+          "cid": 2,
+          "name": "instance_id",
+          "type": "TEXT",
+          "notnull": 1,
+          "dflt_value": null,
+          "pk": 0,
+          "hidden": 0
+        },
+        {
+          "cid": 3,
+          "name": "epoch",
+          "type": "INTEGER",
+          "notnull": 1,
+          "dflt_value": null,
+          "pk": 0,
+          "hidden": 0
+        }
+      ],
+      "foreign_keys": [
+        {
+          "id": 0,
+          "seq": 0,
+          "table": "nodes",
+          "from": "network_id",
+          "to": "network_id",
+          "on_update": "NO ACTION",
+          "on_delete": "NO ACTION",
+          "match": "NONE"
+        },
+        {
+          "id": 0,
+          "seq": 1,
+          "table": "nodes",
+          "from": "node_id",
+          "to": "id",
+          "on_update": "NO ACTION",
+          "on_delete": "NO ACTION",
+          "match": "NONE"
+        },
+        {
+          "id": 1,
+          "seq": 0,
+          "table": "networks",
+          "from": "network_id",
+          "to": "network_id",
+          "on_update": "NO ACTION",
+          "on_delete": "NO ACTION",
+          "match": "NONE"
+        }
+      ],
+      "indexes": [
+        {
+          "seq": 0,
+          "name": "sqlite_autoindex_connection_runtime_leases_2",
+          "unique": 1,
+          "origin": "u",
+          "partial": 0
+        },
+        {
+          "seq": 1,
+          "name": "sqlite_autoindex_connection_runtime_leases_1",
+          "unique": 1,
+          "origin": "pk",
+          "partial": 0
+        }
+      ]
+    },
+    {
+      "name": "connection_runtime_reports",
+      "type": "table",
+      "without_rowid": false,
+      "strict": false,
+      "columns": [
+        {
+          "cid": 0,
+          "name": "node_id",
+          "type": "TEXT",
+          "notnull": 0,
+          "dflt_value": null,
+          "pk": 1,
+          "hidden": 0
+        },
+        {
+          "cid": 1,
+          "name": "network_id",
+          "type": "TEXT",
+          "notnull": 1,
+          "dflt_value": null,
+          "pk": 0,
+          "hidden": 0
+        },
+        {
+          "cid": 2,
+          "name": "sequence",
+          "type": "INTEGER",
+          "notnull": 1,
+          "dflt_value": null,
+          "pk": 0,
+          "hidden": 0
+        },
+        {
+          "cid": 3,
+          "name": "body",
+          "type": "BLOB",
+          "notnull": 1,
+          "dflt_value": null,
+          "pk": 0,
+          "hidden": 0
+        },
+        {
+          "cid": 4,
+          "name": "reported_at",
+          "type": "TEXT",
+          "notnull": 1,
+          "dflt_value": null,
+          "pk": 0,
+          "hidden": 0
+        }
+      ],
+      "foreign_keys": [
+        {
+          "id": 0,
+          "seq": 0,
+          "table": "connection_runtime_leases",
+          "from": "network_id",
+          "to": "network_id",
+          "on_update": "NO ACTION",
+          "on_delete": "NO ACTION",
+          "match": "NONE"
+        },
+        {
+          "id": 0,
+          "seq": 1,
+          "table": "connection_runtime_leases",
+          "from": "node_id",
+          "to": "node_id",
+          "on_update": "NO ACTION",
+          "on_delete": "NO ACTION",
+          "match": "NONE"
+        },
+        {
+          "id": 1,
+          "seq": 0,
+          "table": "networks",
+          "from": "network_id",
+          "to": "network_id",
+          "on_update": "NO ACTION",
+          "on_delete": "NO ACTION",
+          "match": "NONE"
+        }
+      ],
+      "indexes": [
+        {
+          "seq": 0,
+          "name": "sqlite_autoindex_connection_runtime_reports_1",
+          "unique": 1,
+          "origin": "pk",
+          "partial": 0
+        }
+      ]
+    },
+    {
+      "name": "connection_source",
+      "type": "table",
+      "without_rowid": false,
+      "strict": false,
+      "columns": [
+        {
+          "cid": 0,
+          "name": "network_id",
+          "type": "TEXT",
+          "notnull": 1,
+          "dflt_value": null,
+          "pk": 1,
+          "hidden": 0
+        },
+        {
+          "cid": 1,
+          "name": "id",
+          "type": "INTEGER",
+          "notnull": 1,
+          "dflt_value": null,
+          "pk": 2,
+          "hidden": 0
+        },
+        {
+          "cid": 2,
+          "name": "configuration",
+          "type": "TEXT",
+          "notnull": 1,
+          "dflt_value": null,
+          "pk": 0,
+          "hidden": 0
+        }
+      ],
+      "foreign_keys": [
+        {
+          "id": 0,
+          "seq": 0,
+          "table": "networks",
+          "from": "network_id",
+          "to": "network_id",
+          "on_update": "NO ACTION",
+          "on_delete": "NO ACTION",
+          "match": "NONE"
+        }
+      ],
+      "indexes": [
+        {
+          "seq": 0,
+          "name": "sqlite_autoindex_connection_source_1",
+          "unique": 1,
+          "origin": "pk",
+          "partial": 0
+        }
+      ]
+    },
+    {
+      "name": "device_account_bindings",
+      "type": "table",
+      "without_rowid": false,
+      "strict": false,
+      "columns": [
+        {
+          "cid": 0,
+          "name": "token_id",
+          "type": "TEXT",
+          "notnull": 0,
+          "dflt_value": null,
+          "pk": 1,
+          "hidden": 0
+        },
+        {
+          "cid": 1,
+          "name": "network_id",
+          "type": "TEXT",
+          "notnull": 1,
+          "dflt_value": null,
+          "pk": 0,
+          "hidden": 0
+        },
+        {
+          "cid": 2,
+          "name": "user_id",
+          "type": "TEXT",
+          "notnull": 1,
+          "dflt_value": null,
+          "pk": 0,
+          "hidden": 0
+        },
+        {
+          "cid": 3,
+          "name": "membership_id",
+          "type": "TEXT",
+          "notnull": 1,
+          "dflt_value": null,
+          "pk": 0,
+          "hidden": 0
+        },
+        {
+          "cid": 4,
+          "name": "session_digest",
+          "type": "BLOB",
+          "notnull": 1,
+          "dflt_value": null,
+          "pk": 0,
+          "hidden": 0
+        },
+        {
+          "cid": 5,
+          "name": "credential_version",
+          "type": "INTEGER",
+          "notnull": 1,
+          "dflt_value": null,
+          "pk": 0,
+          "hidden": 0
+        }
+      ],
+      "foreign_keys": [
+        {
+          "id": 0,
+          "seq": 0,
+          "table": "account_users",
+          "from": "user_id",
+          "to": "user_id",
+          "on_update": "NO ACTION",
+          "on_delete": "NO ACTION",
+          "match": "NONE"
+        },
+        {
+          "id": 1,
+          "seq": 0,
+          "table": "account_memberships",
+          "from": "network_id",
+          "to": "network_id",
+          "on_update": "NO ACTION",
+          "on_delete": "NO ACTION",
+          "match": "NONE"
+        },
+        {
+          "id": 1,
+          "seq": 1,
+          "table": "account_memberships",
+          "from": "membership_id",
+          "to": "membership_id",
+          "on_update": "NO ACTION",
+          "on_delete": "NO ACTION",
+          "match": "NONE"
+        },
+        {
+          "id": 1,
+          "seq": 2,
+          "table": "account_memberships",
+          "from": "user_id",
+          "to": "user_id",
+          "on_update": "NO ACTION",
+          "on_delete": "NO ACTION",
+          "match": "NONE"
+        },
+        {
+          "id": 2,
+          "seq": 0,
+          "table": "enrollment_tokens",
+          "from": "network_id",
+          "to": "network_id",
+          "on_update": "NO ACTION",
+          "on_delete": "NO ACTION",
+          "match": "NONE"
+        },
+        {
+          "id": 2,
+          "seq": 1,
+          "table": "enrollment_tokens",
+          "from": "token_id",
+          "to": "id",
+          "on_update": "NO ACTION",
+          "on_delete": "NO ACTION",
+          "match": "NONE"
+        }
+      ],
+      "indexes": [
+        {
+          "seq": 0,
+          "name": "sqlite_autoindex_device_account_bindings_1",
+          "unique": 1,
+          "origin": "pk",
+          "partial": 0
+        }
+      ]
+    },
+    {
+      "name": "enrollment_tokens",
+      "type": "table",
+      "without_rowid": false,
+      "strict": false,
+      "columns": [
+        {
+          "cid": 0,
+          "name": "id",
+          "type": "TEXT",
+          "notnull": 0,
+          "dflt_value": null,
+          "pk": 1,
+          "hidden": 0
+        },
+        {
+          "cid": 1,
+          "name": "network_id",
+          "type": "TEXT",
+          "notnull": 1,
+          "dflt_value": null,
+          "pk": 0,
+          "hidden": 0
+        },
+        {
+          "cid": 2,
+          "name": "token_hash",
+          "type": "BLOB",
+          "notnull": 1,
+          "dflt_value": null,
+          "pk": 0,
+          "hidden": 0
+        },
+        {
+          "cid": 3,
+          "name": "expires_at",
+          "type": "INTEGER",
+          "notnull": 1,
+          "dflt_value": null,
+          "pk": 0,
+          "hidden": 0
+        },
+        {
+          "cid": 4,
+          "name": "used_node_id",
+          "type": "TEXT",
+          "notnull": 0,
+          "dflt_value": null,
+          "pk": 0,
+          "hidden": 0
+        },
+        {
+          "cid": 5,
+          "name": "binding_hash",
+          "type": "BLOB",
+          "notnull": 0,
+          "dflt_value": null,
+          "pk": 0,
+          "hidden": 0
+        },
+        {
+          "cid": 6,
+          "name": "device_binding",
+          "type": "TEXT",
+          "notnull": 0,
+          "dflt_value": null,
+          "pk": 0,
+          "hidden": 0
+        }
+      ],
+      "foreign_keys": [
+        {
+          "id": 0,
+          "seq": 0,
+          "table": "nodes",
+          "from": "network_id",
+          "to": "network_id",
+          "on_update": "NO ACTION",
+          "on_delete": "NO ACTION",
+          "match": "NONE"
+        },
+        {
+          "id": 0,
+          "seq": 1,
+          "table": "nodes",
+          "from": "used_node_id",
+          "to": "id",
+          "on_update": "NO ACTION",
+          "on_delete": "NO ACTION",
+          "match": "NONE"
+        },
+        {
+          "id": 1,
+          "seq": 0,
+          "table": "networks",
+          "from": "network_id",
+          "to": "network_id",
+          "on_update": "NO ACTION",
+          "on_delete": "NO ACTION",
+          "match": "NONE"
+        }
+      ],
+      "indexes": [
+        {
+          "seq": 0,
+          "name": "account_enrollment_scope",
+          "unique": 1,
+          "origin": "c",
+          "partial": 0
+        },
+        {
+          "seq": 1,
+          "name": "enrollment_tokens_network_id",
+          "unique": 1,
+          "origin": "c",
+          "partial": 0
+        },
+        {
+          "seq": 2,
+          "name": "sqlite_autoindex_enrollment_tokens_2",
+          "unique": 1,
+          "origin": "u",
+          "partial": 0
+        },
+        {
+          "seq": 3,
+          "name": "sqlite_autoindex_enrollment_tokens_1",
+          "unique": 1,
+          "origin": "pk",
+          "partial": 0
+        }
+      ]
+    },
+    {
+      "name": "latency_admissions",
+      "type": "table",
+      "without_rowid": false,
+      "strict": false,
+      "columns": [
+        {
+          "cid": 0,
+          "name": "network_id",
+          "type": "TEXT",
+          "notnull": 1,
+          "dflt_value": null,
+          "pk": 1,
+          "hidden": 0
+        },
+        {
+          "cid": 1,
+          "name": "source_node_id",
+          "type": "TEXT",
+          "notnull": 1,
+          "dflt_value": null,
+          "pk": 2,
+          "hidden": 0
+        },
+        {
+          "cid": 2,
+          "name": "measurement_id",
+          "type": "TEXT",
+          "notnull": 1,
+          "dflt_value": null,
+          "pk": 3,
+          "hidden": 0
+        },
+        {
+          "cid": 3,
+          "name": "body_digest",
+          "type": "BLOB",
+          "notnull": 1,
+          "dflt_value": null,
+          "pk": 0,
+          "hidden": 0
+        },
+        {
+          "cid": 4,
+          "name": "received_ms",
+          "type": "INTEGER",
+          "notnull": 1,
+          "dflt_value": null,
+          "pk": 0,
+          "hidden": 0
+        },
+        {
+          "cid": 5,
+          "name": "expires_ms",
+          "type": "INTEGER",
+          "notnull": 1,
+          "dflt_value": null,
+          "pk": 0,
+          "hidden": 0
+        }
+      ],
+      "foreign_keys": [
+        {
+          "id": 0,
+          "seq": 0,
+          "table": "nodes",
+          "from": "network_id",
+          "to": "network_id",
+          "on_update": "NO ACTION",
+          "on_delete": "NO ACTION",
+          "match": "NONE"
+        },
+        {
+          "id": 0,
+          "seq": 1,
+          "table": "nodes",
+          "from": "source_node_id",
+          "to": "id",
+          "on_update": "NO ACTION",
+          "on_delete": "NO ACTION",
+          "match": "NONE"
+        },
+        {
+          "id": 1,
+          "seq": 0,
+          "table": "networks",
+          "from": "network_id",
+          "to": "network_id",
+          "on_update": "NO ACTION",
+          "on_delete": "NO ACTION",
+          "match": "NONE"
+        }
+      ],
+      "indexes": [
+        {
+          "seq": 0,
+          "name": "latency_admission_expiry",
+          "unique": 0,
+          "origin": "c",
+          "partial": 0
+        },
+        {
+          "seq": 1,
+          "name": "latency_admission_receive",
+          "unique": 0,
+          "origin": "c",
+          "partial": 0
+        },
+        {
+          "seq": 2,
+          "name": "sqlite_autoindex_latency_admissions_1",
+          "unique": 1,
+          "origin": "pk",
+          "partial": 0
+        }
+      ]
+    },
+    {
+      "name": "latency_coverage",
+      "type": "table",
+      "without_rowid": false,
+      "strict": false,
+      "columns": [
+        {
+          "cid": 0,
+          "name": "network_id",
+          "type": "TEXT",
+          "notnull": 1,
+          "dflt_value": null,
+          "pk": 1,
+          "hidden": 0
+        },
+        {
+          "cid": 1,
+          "name": "source_node_id",
+          "type": "TEXT",
+          "notnull": 1,
+          "dflt_value": null,
+          "pk": 2,
+          "hidden": 0
+        },
+        {
+          "cid": 2,
+          "name": "capacity_before_ms",
+          "type": "INTEGER",
+          "notnull": 1,
+          "dflt_value": null,
+          "pk": 0,
+          "hidden": 0
+        }
+      ],
+      "foreign_keys": [
+        {
+          "id": 0,
+          "seq": 0,
+          "table": "nodes",
+          "from": "network_id",
+          "to": "network_id",
+          "on_update": "NO ACTION",
+          "on_delete": "NO ACTION",
+          "match": "NONE"
+        },
+        {
+          "id": 0,
+          "seq": 1,
+          "table": "nodes",
+          "from": "source_node_id",
+          "to": "id",
+          "on_update": "NO ACTION",
+          "on_delete": "NO ACTION",
+          "match": "NONE"
+        },
+        {
+          "id": 1,
+          "seq": 0,
+          "table": "networks",
+          "from": "network_id",
+          "to": "network_id",
+          "on_update": "NO ACTION",
+          "on_delete": "NO ACTION",
+          "match": "NONE"
+        }
+      ],
+      "indexes": [
+        {
+          "seq": 0,
+          "name": "sqlite_autoindex_latency_coverage_1",
+          "unique": 1,
+          "origin": "pk",
+          "partial": 0
+        }
+      ]
+    },
+    {
+      "name": "latency_runtime_epochs",
+      "type": "table",
+      "without_rowid": false,
+      "strict": false,
+      "columns": [
+        {
+          "cid": 0,
+          "name": "node_id",
+          "type": "TEXT",
+          "notnull": 0,
+          "dflt_value": null,
+          "pk": 1,
+          "hidden": 0
+        },
+        {
+          "cid": 1,
+          "name": "network_id",
+          "type": "TEXT",
+          "notnull": 1,
+          "dflt_value": null,
+          "pk": 0,
+          "hidden": 0
+        },
+        {
+          "cid": 2,
+          "name": "epoch",
+          "type": "INTEGER",
+          "notnull": 1,
+          "dflt_value": null,
+          "pk": 0,
+          "hidden": 0
+        },
+        {
+          "cid": 3,
+          "name": "started_ms",
+          "type": "INTEGER",
+          "notnull": 1,
+          "dflt_value": null,
+          "pk": 0,
+          "hidden": 0
+        }
+      ],
+      "foreign_keys": [
+        {
+          "id": 0,
+          "seq": 0,
+          "table": "nodes",
+          "from": "network_id",
+          "to": "network_id",
+          "on_update": "NO ACTION",
+          "on_delete": "NO ACTION",
+          "match": "NONE"
+        },
+        {
+          "id": 0,
+          "seq": 1,
+          "table": "nodes",
+          "from": "node_id",
+          "to": "id",
+          "on_update": "NO ACTION",
+          "on_delete": "NO ACTION",
+          "match": "NONE"
+        },
+        {
+          "id": 1,
+          "seq": 0,
+          "table": "networks",
+          "from": "network_id",
+          "to": "network_id",
+          "on_update": "NO ACTION",
+          "on_delete": "NO ACTION",
+          "match": "NONE"
+        }
+      ],
+      "indexes": [
+        {
+          "seq": 0,
+          "name": "sqlite_autoindex_latency_runtime_epochs_1",
+          "unique": 1,
+          "origin": "pk",
+          "partial": 0
+        }
+      ]
+    },
+    {
+      "name": "latency_samples",
+      "type": "table",
+      "without_rowid": false,
+      "strict": false,
+      "columns": [
+        {
+          "cid": 0,
+          "name": "row_id",
+          "type": "INTEGER",
+          "notnull": 0,
+          "dflt_value": null,
+          "pk": 1,
+          "hidden": 0
+        },
+        {
+          "cid": 1,
+          "name": "network_id",
+          "type": "TEXT",
+          "notnull": 1,
+          "dflt_value": null,
+          "pk": 0,
+          "hidden": 0
+        },
+        {
+          "cid": 2,
+          "name": "source_node_id",
+          "type": "TEXT",
+          "notnull": 1,
+          "dflt_value": null,
+          "pk": 0,
+          "hidden": 0
+        },
+        {
+          "cid": 3,
+          "name": "peer_node_id",
+          "type": "TEXT",
+          "notnull": 1,
+          "dflt_value": null,
+          "pk": 0,
+          "hidden": 0
+        },
+        {
+          "cid": 4,
+          "name": "measurement_id",
+          "type": "TEXT",
+          "notnull": 1,
+          "dflt_value": null,
+          "pk": 0,
+          "hidden": 0
+        },
+        {
+          "cid": 5,
+          "name": "runtime_epoch",
+          "type": "INTEGER",
+          "notnull": 1,
+          "dflt_value": null,
+          "pk": 0,
+          "hidden": 0
+        },
+        {
+          "cid": 6,
+          "name": "measured_ms",
+          "type": "INTEGER",
+          "notnull": 1,
+          "dflt_value": null,
+          "pk": 0,
+          "hidden": 0
+        },
+        {
+          "cid": 7,
+          "name": "received_ms",
+          "type": "INTEGER",
+          "notnull": 1,
+          "dflt_value": null,
+          "pk": 0,
+          "hidden": 0
+        },
+        {
+          "cid": 8,
+          "name": "body",
+          "type": "BLOB",
+          "notnull": 1,
+          "dflt_value": null,
+          "pk": 0,
+          "hidden": 0
+        }
+      ],
+      "foreign_keys": [
+        {
+          "id": 0,
+          "seq": 0,
+          "table": "nodes",
+          "from": "network_id",
+          "to": "network_id",
+          "on_update": "NO ACTION",
+          "on_delete": "NO ACTION",
+          "match": "NONE"
+        },
+        {
+          "id": 0,
+          "seq": 1,
+          "table": "nodes",
+          "from": "peer_node_id",
+          "to": "id",
+          "on_update": "NO ACTION",
+          "on_delete": "NO ACTION",
+          "match": "NONE"
+        },
+        {
+          "id": 1,
+          "seq": 0,
+          "table": "nodes",
+          "from": "network_id",
+          "to": "network_id",
+          "on_update": "NO ACTION",
+          "on_delete": "NO ACTION",
+          "match": "NONE"
+        },
+        {
+          "id": 1,
+          "seq": 1,
+          "table": "nodes",
+          "from": "source_node_id",
+          "to": "id",
+          "on_update": "NO ACTION",
+          "on_delete": "NO ACTION",
+          "match": "NONE"
+        },
+        {
+          "id": 2,
+          "seq": 0,
+          "table": "networks",
+          "from": "network_id",
+          "to": "network_id",
+          "on_update": "NO ACTION",
+          "on_delete": "NO ACTION",
+          "match": "NONE"
+        }
+      ],
+      "indexes": [
+        {
+          "seq": 0,
+          "name": "latency_source_oldest",
+          "unique": 0,
+          "origin": "c",
+          "partial": 0
+        },
+        {
+          "seq": 1,
+          "name": "latency_retention",
+          "unique": 0,
+          "origin": "c",
+          "partial": 0
+        },
+        {
+          "seq": 2,
+          "name": "latency_source_receive",
+          "unique": 0,
+          "origin": "c",
+          "partial": 0
+        },
+        {
+          "seq": 3,
+          "name": "latency_pair_time",
+          "unique": 0,
+          "origin": "c",
+          "partial": 0
+        },
+        {
+          "seq": 4,
+          "name": "sqlite_autoindex_latency_samples_1",
+          "unique": 1,
+          "origin": "u",
+          "partial": 0
+        }
+      ]
+    },
+    {
+      "name": "managed_enrollment_intents",
+      "type": "table",
+      "without_rowid": false,
+      "strict": false,
+      "columns": [
+        {
+          "cid": 0,
+          "name": "network_id",
+          "type": "TEXT",
+          "notnull": 1,
+          "dflt_value": null,
+          "pk": 1,
+          "hidden": 0
+        },
+        {
+          "cid": 1,
+          "name": "token_id",
+          "type": "TEXT",
+          "notnull": 1,
+          "dflt_value": null,
+          "pk": 2,
+          "hidden": 0
+        },
+        {
+          "cid": 2,
+          "name": "settings",
+          "type": "TEXT",
+          "notnull": 1,
+          "dflt_value": null,
+          "pk": 0,
+          "hidden": 0
+        }
+      ],
+      "foreign_keys": [
+        {
+          "id": 0,
+          "seq": 0,
+          "table": "enrollment_tokens",
+          "from": "network_id",
+          "to": "network_id",
+          "on_update": "NO ACTION",
+          "on_delete": "NO ACTION",
+          "match": "NONE"
+        },
+        {
+          "id": 0,
+          "seq": 1,
+          "table": "enrollment_tokens",
+          "from": "token_id",
+          "to": "id",
+          "on_update": "NO ACTION",
+          "on_delete": "NO ACTION",
+          "match": "NONE"
+        }
+      ],
+      "indexes": [
+        {
+          "seq": 0,
+          "name": "sqlite_autoindex_managed_enrollment_intents_1",
+          "unique": 1,
+          "origin": "pk",
+          "partial": 0
+        }
+      ]
+    },
+    {
+      "name": "managed_listeners",
+      "type": "table",
+      "without_rowid": false,
+      "strict": false,
+      "columns": [
+        {
+          "cid": 0,
+          "name": "network_id",
+          "type": "TEXT",
+          "notnull": 1,
+          "dflt_value": null,
+          "pk": 1,
+          "hidden": 0
+        },
+        {
+          "cid": 1,
+          "name": "listener_id",
+          "type": "TEXT",
+          "notnull": 1,
+          "dflt_value": null,
+          "pk": 2,
+          "hidden": 0
+        },
+        {
+          "cid": 2,
+          "name": "node_id",
+          "type": "TEXT",
+          "notnull": 1,
+          "dflt_value": null,
+          "pk": 0,
+          "hidden": 0
+        },
+        {
+          "cid": 3,
+          "name": "settings",
+          "type": "TEXT",
+          "notnull": 1,
+          "dflt_value": null,
+          "pk": 0,
+          "hidden": 0
+        },
+        {
+          "cid": 4,
+          "name": "material_version",
+          "type": "INTEGER",
+          "notnull": 1,
+          "dflt_value": null,
+          "pk": 0,
+          "hidden": 0
+        },
+        {
+          "cid": 5,
+          "name": "certificate_sha256",
+          "type": "TEXT",
+          "notnull": 0,
+          "dflt_value": null,
+          "pk": 0,
+          "hidden": 0
+        },
+        {
+          "cid": 6,
+          "name": "material_nonce",
+          "type": "BLOB",
+          "notnull": 0,
+          "dflt_value": null,
+          "pk": 0,
+          "hidden": 0
+        },
+        {
+          "cid": 7,
+          "name": "material_ciphertext",
+          "type": "BLOB",
+          "notnull": 0,
+          "dflt_value": null,
+          "pk": 0,
+          "hidden": 0
+        }
+      ],
+      "foreign_keys": [
+        {
+          "id": 0,
+          "seq": 0,
+          "table": "nodes",
+          "from": "network_id",
+          "to": "network_id",
+          "on_update": "NO ACTION",
+          "on_delete": "NO ACTION",
+          "match": "NONE"
+        },
+        {
+          "id": 0,
+          "seq": 1,
+          "table": "nodes",
+          "from": "node_id",
+          "to": "id",
+          "on_update": "NO ACTION",
+          "on_delete": "NO ACTION",
+          "match": "NONE"
+        },
+        {
+          "id": 1,
+          "seq": 0,
+          "table": "networks",
+          "from": "network_id",
+          "to": "network_id",
+          "on_update": "NO ACTION",
+          "on_delete": "NO ACTION",
+          "match": "NONE"
+        }
+      ],
+      "indexes": [
+        {
+          "seq": 0,
+          "name": "sqlite_autoindex_managed_listeners_1",
+          "unique": 1,
+          "origin": "pk",
+          "partial": 0
+        }
+      ]
+    },
+    {
+      "name": "managed_transport_capabilities",
+      "type": "table",
+      "without_rowid": false,
+      "strict": false,
+      "columns": [
+        {
+          "cid": 0,
+          "name": "network_id",
+          "type": "TEXT",
+          "notnull": 1,
+          "dflt_value": null,
+          "pk": 1,
+          "hidden": 0
+        },
+        {
+          "cid": 1,
+          "name": "node_id",
+          "type": "TEXT",
+          "notnull": 1,
+          "dflt_value": null,
+          "pk": 2,
+          "hidden": 0
+        },
+        {
+          "cid": 2,
+          "name": "vless_streams",
+          "type": "TEXT",
+          "notnull": 1,
+          "dflt_value": null,
+          "pk": 0,
+          "hidden": 0
+        }
+      ],
+      "foreign_keys": [
+        {
+          "id": 0,
+          "seq": 0,
+          "table": "nodes",
+          "from": "network_id",
+          "to": "network_id",
+          "on_update": "NO ACTION",
+          "on_delete": "NO ACTION",
+          "match": "NONE"
+        },
+        {
+          "id": 0,
+          "seq": 1,
+          "table": "nodes",
+          "from": "node_id",
+          "to": "id",
+          "on_update": "NO ACTION",
+          "on_delete": "NO ACTION",
+          "match": "NONE"
+        }
+      ],
+      "indexes": [
+        {
+          "seq": 0,
+          "name": "sqlite_autoindex_managed_transport_capabilities_1",
+          "unique": 1,
+          "origin": "pk",
+          "partial": 0
+        }
+      ]
+    },
+    {
+      "name": "mesh_access_legacy_v5",
+      "type": "table",
+      "without_rowid": false,
+      "strict": false,
+      "columns": [
+        {
+          "cid": 0,
+          "name": "network_id",
+          "type": "TEXT",
+          "notnull": 1,
+          "dflt_value": null,
+          "pk": 1,
+          "hidden": 0
+        },
+        {
+          "cid": 1,
+          "name": "id",
+          "type": "INTEGER",
+          "notnull": 1,
+          "dflt_value": null,
+          "pk": 2,
+          "hidden": 0
+        },
+        {
+          "cid": 2,
+          "name": "policy",
+          "type": "TEXT",
+          "notnull": 1,
+          "dflt_value": null,
+          "pk": 0,
+          "hidden": 0
+        }
+      ],
+      "foreign_keys": [
+        {
+          "id": 0,
+          "seq": 0,
+          "table": "networks",
+          "from": "network_id",
+          "to": "network_id",
+          "on_update": "NO ACTION",
+          "on_delete": "NO ACTION",
+          "match": "NONE"
+        }
+      ],
+      "indexes": [
+        {
+          "seq": 0,
+          "name": "sqlite_autoindex_mesh_access_legacy_v5_1",
+          "unique": 1,
+          "origin": "pk",
+          "partial": 0
+        }
+      ]
+    },
+    {
+      "name": "mesh_access_source",
+      "type": "table",
+      "without_rowid": false,
+      "strict": false,
+      "columns": [
+        {
+          "cid": 0,
+          "name": "network_id",
+          "type": "TEXT",
+          "notnull": 1,
+          "dflt_value": null,
+          "pk": 1,
+          "hidden": 0
+        },
+        {
+          "cid": 1,
+          "name": "id",
+          "type": "INTEGER",
+          "notnull": 1,
+          "dflt_value": null,
+          "pk": 2,
+          "hidden": 0
+        },
+        {
+          "cid": 2,
+          "name": "policy",
+          "type": "TEXT",
+          "notnull": 1,
+          "dflt_value": null,
+          "pk": 0,
+          "hidden": 0
+        },
+        {
+          "cid": 3,
+          "name": "source_jsonc",
+          "type": "TEXT",
+          "notnull": 0,
+          "dflt_value": null,
+          "pk": 0,
+          "hidden": 0
+        }
+      ],
+      "foreign_keys": [
+        {
+          "id": 0,
+          "seq": 0,
+          "table": "networks",
+          "from": "network_id",
+          "to": "network_id",
+          "on_update": "NO ACTION",
+          "on_delete": "NO ACTION",
+          "match": "NONE"
+        }
+      ],
+      "indexes": [
+        {
+          "seq": 0,
+          "name": "sqlite_autoindex_mesh_access_source_1",
+          "unique": 1,
+          "origin": "pk",
+          "partial": 0
+        }
+      ]
+    },
+    {
+      "name": "network_identity",
+      "type": "table",
+      "without_rowid": false,
+      "strict": false,
+      "columns": [
+        {
+          "cid": 0,
+          "name": "id",
+          "type": "INTEGER",
+          "notnull": 1,
+          "dflt_value": null,
+          "pk": 0,
+          "hidden": 0
+        },
+        {
+          "cid": 1,
+          "name": "network_id",
+          "type": "TEXT",
+          "notnull": 0,
+          "dflt_value": null,
+          "pk": 1,
+          "hidden": 0
+        },
+        {
+          "cid": 2,
+          "name": "name",
+          "type": "TEXT",
+          "notnull": 1,
+          "dflt_value": null,
+          "pk": 0,
+          "hidden": 0
+        },
+        {
+          "cid": 3,
+          "name": "dns",
+          "type": "TEXT",
+          "notnull": 1,
+          "dflt_value": null,
+          "pk": 0,
+          "hidden": 0
+        }
+      ],
+      "foreign_keys": [
+        {
+          "id": 0,
+          "seq": 0,
+          "table": "networks",
+          "from": "network_id",
+          "to": "network_id",
+          "on_update": "NO ACTION",
+          "on_delete": "NO ACTION",
+          "match": "NONE"
+        }
+      ],
+      "indexes": [
+        {
+          "seq": 0,
+          "name": "sqlite_autoindex_network_identity_1",
+          "unique": 1,
+          "origin": "pk",
+          "partial": 0
+        }
+      ]
+    },
+    {
+      "name": "networks",
+      "type": "table",
+      "without_rowid": false,
+      "strict": false,
+      "columns": [
+        {
+          "cid": 0,
+          "name": "network_id",
+          "type": "TEXT",
+          "notnull": 0,
+          "dflt_value": null,
+          "pk": 1,
+          "hidden": 0
+        },
+        {
+          "cid": 1,
+          "name": "created_at",
+          "type": "TEXT",
+          "notnull": 1,
+          "dflt_value": null,
+          "pk": 0,
+          "hidden": 0
+        },
+        {
+          "cid": 2,
+          "name": "initial",
+          "type": "INTEGER",
+          "notnull": 1,
+          "dflt_value": null,
+          "pk": 0,
+          "hidden": 0
+        }
+      ],
+      "foreign_keys": [],
+      "indexes": [
+        {
+          "seq": 0,
+          "name": "initial_network",
+          "unique": 1,
+          "origin": "c",
+          "partial": 1
+        },
+        {
+          "seq": 1,
+          "name": "sqlite_autoindex_networks_1",
+          "unique": 1,
+          "origin": "pk",
+          "partial": 0
+        }
+      ]
+    },
+    {
+      "name": "node_ownership",
+      "type": "table",
+      "without_rowid": false,
+      "strict": false,
+      "columns": [
+        {
+          "cid": 0,
+          "name": "network_id",
+          "type": "TEXT",
+          "notnull": 1,
+          "dflt_value": null,
+          "pk": 1,
+          "hidden": 0
+        },
+        {
+          "cid": 1,
+          "name": "node_id",
+          "type": "TEXT",
+          "notnull": 1,
+          "dflt_value": null,
+          "pk": 2,
+          "hidden": 0
+        },
+        {
+          "cid": 2,
+          "name": "membership_id",
+          "type": "TEXT",
+          "notnull": 0,
+          "dflt_value": null,
+          "pk": 0,
+          "hidden": 0
+        }
+      ],
+      "foreign_keys": [
+        {
+          "id": 0,
+          "seq": 0,
+          "table": "account_memberships",
+          "from": "network_id",
+          "to": "network_id",
+          "on_update": "NO ACTION",
+          "on_delete": "NO ACTION",
+          "match": "NONE"
+        },
+        {
+          "id": 0,
+          "seq": 1,
+          "table": "account_memberships",
+          "from": "membership_id",
+          "to": "membership_id",
+          "on_update": "NO ACTION",
+          "on_delete": "NO ACTION",
+          "match": "NONE"
+        },
+        {
+          "id": 1,
+          "seq": 0,
+          "table": "nodes",
+          "from": "network_id",
+          "to": "network_id",
+          "on_update": "NO ACTION",
+          "on_delete": "NO ACTION",
+          "match": "NONE"
+        },
+        {
+          "id": 1,
+          "seq": 1,
+          "table": "nodes",
+          "from": "node_id",
+          "to": "id",
+          "on_update": "NO ACTION",
+          "on_delete": "NO ACTION",
+          "match": "NONE"
+        }
+      ],
+      "indexes": [
+        {
+          "seq": 0,
+          "name": "sqlite_autoindex_node_ownership_1",
+          "unique": 1,
+          "origin": "pk",
+          "partial": 0
+        }
+      ]
+    },
+    {
+      "name": "node_tags",
+      "type": "table",
+      "without_rowid": false,
+      "strict": false,
+      "columns": [
+        {
+          "cid": 0,
+          "name": "network_id",
+          "type": "TEXT",
+          "notnull": 1,
+          "dflt_value": null,
+          "pk": 1,
+          "hidden": 0
+        },
+        {
+          "cid": 1,
+          "name": "node_id",
+          "type": "TEXT",
+          "notnull": 1,
+          "dflt_value": null,
+          "pk": 2,
+          "hidden": 0
+        },
+        {
+          "cid": 2,
+          "name": "tag",
+          "type": "TEXT",
+          "notnull": 1,
+          "dflt_value": null,
+          "pk": 3,
+          "hidden": 0
+        }
+      ],
+      "foreign_keys": [
+        {
+          "id": 0,
+          "seq": 0,
+          "table": "tag_definitions",
+          "from": "network_id",
+          "to": "network_id",
+          "on_update": "NO ACTION",
+          "on_delete": "NO ACTION",
+          "match": "NONE"
+        },
+        {
+          "id": 0,
+          "seq": 1,
+          "table": "tag_definitions",
+          "from": "tag",
+          "to": "tag",
+          "on_update": "NO ACTION",
+          "on_delete": "NO ACTION",
+          "match": "NONE"
+        },
+        {
+          "id": 1,
+          "seq": 0,
+          "table": "nodes",
+          "from": "network_id",
+          "to": "network_id",
+          "on_update": "NO ACTION",
+          "on_delete": "NO ACTION",
+          "match": "NONE"
+        },
+        {
+          "id": 1,
+          "seq": 1,
+          "table": "nodes",
+          "from": "node_id",
+          "to": "id",
+          "on_update": "NO ACTION",
+          "on_delete": "NO ACTION",
+          "match": "NONE"
+        },
+        {
+          "id": 2,
+          "seq": 0,
+          "table": "networks",
+          "from": "network_id",
+          "to": "network_id",
+          "on_update": "NO ACTION",
+          "on_delete": "NO ACTION",
+          "match": "NONE"
+        }
+      ],
+      "indexes": [
+        {
+          "seq": 0,
+          "name": "sqlite_autoindex_node_tags_1",
+          "unique": 1,
+          "origin": "pk",
+          "partial": 0
+        }
+      ]
+    },
+    {
+      "name": "nodes",
+      "type": "table",
+      "without_rowid": false,
+      "strict": false,
+      "columns": [
+        {
+          "cid": 0,
+          "name": "id",
+          "type": "TEXT",
+          "notnull": 0,
+          "dflt_value": null,
+          "pk": 1,
+          "hidden": 0
+        },
+        {
+          "cid": 1,
+          "name": "network_id",
+          "type": "TEXT",
+          "notnull": 1,
+          "dflt_value": null,
+          "pk": 0,
+          "hidden": 0
+        },
+        {
+          "cid": 2,
+          "name": "credential_hash",
+          "type": "BLOB",
+          "notnull": 1,
+          "dflt_value": null,
+          "pk": 0,
+          "hidden": 0
+        },
+        {
+          "cid": 3,
+          "name": "name",
+          "type": "TEXT",
+          "notnull": 1,
+          "dflt_value": null,
+          "pk": 0,
+          "hidden": 0
+        },
+        {
+          "cid": 4,
+          "name": "agent_version",
+          "type": "TEXT",
+          "notnull": 1,
+          "dflt_value": null,
+          "pk": 0,
+          "hidden": 0
+        },
+        {
+          "cid": 5,
+          "name": "registered_at",
+          "type": "TEXT",
+          "notnull": 1,
+          "dflt_value": null,
+          "pk": 0,
+          "hidden": 0
+        },
+        {
+          "cid": 6,
+          "name": "last_seen",
+          "type": "TEXT",
+          "notnull": 1,
+          "dflt_value": null,
+          "pk": 0,
+          "hidden": 0
+        },
+        {
+          "cid": 7,
+          "name": "revoked_at",
+          "type": "TEXT",
+          "notnull": 0,
+          "dflt_value": null,
+          "pk": 0,
+          "hidden": 0
+        },
+        {
+          "cid": 8,
+          "name": "mesh_ipv4",
+          "type": "TEXT",
+          "notnull": 1,
+          "dflt_value": null,
+          "pk": 0,
+          "hidden": 0
+        },
+        {
+          "cid": 9,
+          "name": "mesh_ipv6",
+          "type": "TEXT",
+          "notnull": 1,
+          "dflt_value": null,
+          "pk": 0,
+          "hidden": 0
+        },
+        {
+          "cid": 10,
+          "name": "country",
+          "type": "TEXT",
+          "notnull": 0,
+          "dflt_value": null,
+          "pk": 0,
+          "hidden": 0
+        },
+        {
+          "cid": 11,
+          "name": "acknowledged_revision",
+          "type": "INTEGER",
+          "notnull": 1,
+          "dflt_value": "0",
+          "pk": 0,
+          "hidden": 0
+        },
+        {
+          "cid": 12,
+          "name": "acknowledged_digest",
+          "type": "TEXT",
+          "notnull": 0,
+          "dflt_value": null,
+          "pk": 0,
+          "hidden": 0
+        }
+      ],
+      "foreign_keys": [
+        {
+          "id": 0,
+          "seq": 0,
+          "table": "networks",
+          "from": "network_id",
+          "to": "network_id",
+          "on_update": "NO ACTION",
+          "on_delete": "NO ACTION",
+          "match": "NONE"
+        }
+      ],
+      "indexes": [
+        {
+          "seq": 0,
+          "name": "sqlite_autoindex_nodes_5",
+          "unique": 1,
+          "origin": "u",
+          "partial": 0
+        },
+        {
+          "seq": 1,
+          "name": "sqlite_autoindex_nodes_4",
+          "unique": 1,
+          "origin": "u",
+          "partial": 0
+        },
+        {
+          "seq": 2,
+          "name": "sqlite_autoindex_nodes_3",
+          "unique": 1,
+          "origin": "u",
+          "partial": 0
+        },
+        {
+          "seq": 3,
+          "name": "sqlite_autoindex_nodes_2",
+          "unique": 1,
+          "origin": "u",
+          "partial": 0
+        },
+        {
+          "seq": 4,
+          "name": "sqlite_autoindex_nodes_1",
+          "unique": 1,
+          "origin": "pk",
+          "partial": 0
+        }
+      ]
+    },
+    {
+      "name": "settings",
+      "type": "table",
+      "without_rowid": false,
+      "strict": false,
+      "columns": [
+        {
+          "cid": 0,
+          "name": "id",
+          "type": "INTEGER",
+          "notnull": 0,
+          "dflt_value": null,
+          "pk": 1,
+          "hidden": 0
+        },
+        {
+          "cid": 1,
+          "name": "admin_hash",
+          "type": "BLOB",
+          "notnull": 1,
+          "dflt_value": null,
+          "pk": 0,
+          "hidden": 0
+        }
+      ],
+      "foreign_keys": [],
+      "indexes": []
+    },
+    {
+      "name": "tag_definitions",
+      "type": "table",
+      "without_rowid": false,
+      "strict": false,
+      "columns": [
+        {
+          "cid": 0,
+          "name": "network_id",
+          "type": "TEXT",
+          "notnull": 1,
+          "dflt_value": null,
+          "pk": 1,
+          "hidden": 0
+        },
+        {
+          "cid": 1,
+          "name": "tag",
+          "type": "TEXT",
+          "notnull": 1,
+          "dflt_value": null,
+          "pk": 2,
+          "hidden": 0
+        },
+        {
+          "cid": 2,
+          "name": "description",
+          "type": "TEXT",
+          "notnull": 1,
+          "dflt_value": null,
+          "pk": 0,
+          "hidden": 0
+        }
+      ],
+      "foreign_keys": [
+        {
+          "id": 0,
+          "seq": 0,
+          "table": "networks",
+          "from": "network_id",
+          "to": "network_id",
+          "on_update": "NO ACTION",
+          "on_delete": "NO ACTION",
+          "match": "NONE"
+        }
+      ],
+      "indexes": [
+        {
+          "seq": 0,
+          "name": "sqlite_autoindex_tag_definitions_1",
+          "unique": 1,
+          "origin": "pk",
+          "partial": 0
+        }
+      ]
+    }
+  ],
+  "objects": [
+    {
+      "type": "index",
+      "name": "account_active_membership",
+      "tbl_name": "account_memberships",
+      "sql": "CREATE UNIQUE INDEX account_active_membership ON account_memberships(network_id,user_id)\nWHERE revoked_at IS NULL"
+    },
+    {
+      "type": "index",
+      "name": "account_enrollment_scope",
+      "tbl_name": "enrollment_tokens",
+      "sql": "CREATE UNIQUE INDEX account_enrollment_scope ON enrollment_tokens(network_id,id)"
+    },
+    {
+      "type": "index",
+      "name": "account_membership_subject",
+      "tbl_name": "account_memberships",
+      "sql": "CREATE UNIQUE INDEX account_membership_subject ON account_memberships(network_id,membership_id,user_id)"
+    },
+    {
+      "type": "index",
+      "name": "account_resets_user",
+      "tbl_name": "account_password_resets",
+      "sql": "CREATE INDEX account_resets_user ON account_password_resets(user_id)"
+    },
+    {
+      "type": "index",
+      "name": "account_sessions_user",
+      "tbl_name": "account_sessions",
+      "sql": "CREATE INDEX account_sessions_user ON account_sessions(user_id)"
+    },
+    {
+      "type": "index",
+      "name": "enrollment_tokens_network_id",
+      "tbl_name": "enrollment_tokens",
+      "sql": "CREATE UNIQUE INDEX enrollment_tokens_network_id ON enrollment_tokens(network_id,id)"
+    },
+    {
+      "type": "index",
+      "name": "initial_network",
+      "tbl_name": "networks",
+      "sql": "CREATE UNIQUE INDEX initial_network ON networks(initial) WHERE initial=1"
+    },
+    {
+      "type": "index",
+      "name": "latency_admission_expiry",
+      "tbl_name": "latency_admissions",
+      "sql": "CREATE INDEX latency_admission_expiry\n    ON latency_admissions(network_id, source_node_id, expires_ms)"
+    },
+    {
+      "type": "index",
+      "name": "latency_admission_receive",
+      "tbl_name": "latency_admissions",
+      "sql": "CREATE INDEX latency_admission_receive\n    ON latency_admissions(network_id, source_node_id, received_ms)"
+    },
+    {
+      "type": "index",
+      "name": "latency_pair_time",
+      "tbl_name": "latency_samples",
+      "sql": "CREATE INDEX latency_pair_time\n    ON latency_samples(network_id, source_node_id, peer_node_id, measured_ms, row_id)"
+    },
+    {
+      "type": "index",
+      "name": "latency_retention",
+      "tbl_name": "latency_samples",
+      "sql": "CREATE INDEX latency_retention ON latency_samples(measured_ms)"
+    },
+    {
+      "type": "index",
+      "name": "latency_source_oldest",
+      "tbl_name": "latency_samples",
+      "sql": "CREATE INDEX latency_source_oldest\n    ON latency_samples(network_id, source_node_id, measured_ms, row_id)"
+    },
+    {
+      "type": "index",
+      "name": "latency_source_receive",
+      "tbl_name": "latency_samples",
+      "sql": "CREATE INDEX latency_source_receive\n    ON latency_samples(network_id, source_node_id, received_ms)"
+    },
+    {
+      "type": "table",
+      "name": "account_invitations",
+      "tbl_name": "account_invitations",
+      "sql": "CREATE TABLE account_invitations (\n    invitation_id TEXT PRIMARY KEY,\n    token_hash BLOB NOT NULL UNIQUE CHECK(length(token_hash)=32),\n    network_id TEXT NOT NULL REFERENCES networks(network_id),\n    email TEXT NOT NULL,\n    role TEXT NOT NULL CHECK(role IN ('owner','admin','member')),\n    issuer_user_id TEXT REFERENCES account_users(user_id),\n    expires_at INTEGER NOT NULL,\n    revoked_at INTEGER,\n    consumed_by TEXT REFERENCES account_users(user_id),\n    consumed_at INTEGER,\n    CHECK((consumed_by IS NULL)=(consumed_at IS NULL))\n)"
+    },
+    {
+      "type": "table",
+      "name": "account_memberships",
+      "tbl_name": "account_memberships",
+      "sql": "CREATE TABLE account_memberships (\n    membership_id TEXT PRIMARY KEY,\n    network_id TEXT NOT NULL REFERENCES networks(network_id),\n    user_id TEXT NOT NULL REFERENCES account_users(user_id),\n    role TEXT NOT NULL CHECK(role IN ('owner','admin','member')),\n    revoked_at INTEGER,\n    UNIQUE(network_id,membership_id)\n)"
+    },
+    {
+      "type": "table",
+      "name": "account_password_resets",
+      "tbl_name": "account_password_resets",
+      "sql": "CREATE TABLE account_password_resets (\n    reset_id TEXT PRIMARY KEY,\n    token_hash BLOB NOT NULL UNIQUE CHECK(length(token_hash)=32),\n    user_id TEXT NOT NULL REFERENCES account_users(user_id),\n    credential_version INTEGER NOT NULL,\n    expires_at INTEGER NOT NULL,\n    revoked_at INTEGER,\n    consumed_at INTEGER\n)"
+    },
+    {
+      "type": "table",
+      "name": "account_sessions",
+      "tbl_name": "account_sessions",
+      "sql": "CREATE TABLE account_sessions (\n    token_hash BLOB PRIMARY KEY CHECK(length(token_hash)=32),\n    user_id TEXT NOT NULL REFERENCES account_users(user_id),\n    credential_version INTEGER NOT NULL,\n    expires_at INTEGER NOT NULL,\n    revoked_at INTEGER\n)"
+    },
+    {
+      "type": "table",
+      "name": "account_users",
+      "tbl_name": "account_users",
+      "sql": "CREATE TABLE account_users (\n    user_id TEXT PRIMARY KEY,\n    email TEXT NOT NULL UNIQUE,\n    email_verified INTEGER NOT NULL DEFAULT 0 CHECK(email_verified IN (0,1)),\n    password_phc TEXT NOT NULL CHECK(password_phc LIKE '$argon2id$%'),\n    credential_version INTEGER NOT NULL DEFAULT 1 CHECK(credential_version>0),\n    created_at INTEGER NOT NULL\n)"
+    },
+    {
+      "type": "table",
+      "name": "configuration",
+      "tbl_name": "configuration",
+      "sql": "CREATE TABLE configuration (\n    network_id TEXT NOT NULL REFERENCES networks(network_id),\n    id INTEGER NOT NULL CHECK(id=1),\n    revision INTEGER NOT NULL CHECK(revision BETWEEN 1 AND 4294967295),\n    ipv4_prefix TEXT NOT NULL, ipv6_prefix TEXT NOT NULL,\n    policy TEXT NOT NULL, source_jsonc TEXT,\n    PRIMARY KEY(network_id,id)\n)"
+    },
+    {
+      "type": "table",
+      "name": "connection_identities",
+      "tbl_name": "connection_identities",
+      "sql": "CREATE TABLE connection_identities (\n    node_id TEXT PRIMARY KEY,\n    network_id TEXT NOT NULL REFERENCES networks(network_id),\n    public_key TEXT NOT NULL UNIQUE, capabilities TEXT NOT NULL,\n    FOREIGN KEY(network_id,node_id) REFERENCES nodes(network_id,id)\n)"
+    },
+    {
+      "type": "table",
+      "name": "connection_receipts",
+      "tbl_name": "connection_receipts",
+      "sql": "CREATE TABLE connection_receipts (\n    node_id TEXT PRIMARY KEY,\n    network_id TEXT NOT NULL REFERENCES networks(network_id),\n    revision INTEGER NOT NULL CHECK(revision BETWEEN 1 AND 4294967295),\n    digest TEXT NOT NULL, saved_at TEXT NOT NULL,\n    FOREIGN KEY(network_id,node_id) REFERENCES nodes(network_id,id)\n)"
+    },
+    {
+      "type": "table",
+      "name": "connection_runtime_leases",
+      "tbl_name": "connection_runtime_leases",
+      "sql": "CREATE TABLE connection_runtime_leases (\n    node_id TEXT PRIMARY KEY,\n    network_id TEXT NOT NULL REFERENCES networks(network_id),\n    instance_id TEXT NOT NULL,\n    epoch INTEGER NOT NULL CHECK(epoch BETWEEN 1 AND 4294967295),\n    UNIQUE(network_id,node_id),\n    FOREIGN KEY(network_id,node_id) REFERENCES nodes(network_id,id)\n)"
+    },
+    {
+      "type": "table",
+      "name": "connection_runtime_reports",
+      "tbl_name": "connection_runtime_reports",
+      "sql": "CREATE TABLE connection_runtime_reports (\n    node_id TEXT PRIMARY KEY,\n    network_id TEXT NOT NULL REFERENCES networks(network_id),\n    sequence INTEGER NOT NULL CHECK(sequence BETWEEN 1 AND 4294967295),\n    body BLOB NOT NULL, reported_at TEXT NOT NULL,\n    FOREIGN KEY(network_id,node_id) REFERENCES connection_runtime_leases(network_id,node_id)\n)"
+    },
+    {
+      "type": "table",
+      "name": "connection_source",
+      "tbl_name": "connection_source",
+      "sql": "CREATE TABLE connection_source (\n    network_id TEXT NOT NULL REFERENCES networks(network_id),\n    id INTEGER NOT NULL CHECK(id=1), configuration TEXT NOT NULL,\n    PRIMARY KEY(network_id,id)\n)"
+    },
+    {
+      "type": "table",
+      "name": "device_account_bindings",
+      "tbl_name": "device_account_bindings",
+      "sql": "CREATE TABLE device_account_bindings (\n token_id TEXT PRIMARY KEY, network_id TEXT NOT NULL, user_id TEXT NOT NULL,\n membership_id TEXT NOT NULL, session_digest BLOB NOT NULL CHECK(length(session_digest)=32),\n credential_version INTEGER NOT NULL CHECK(credential_version>0),\n FOREIGN KEY(network_id,token_id) REFERENCES enrollment_tokens(network_id,id),\n FOREIGN KEY(network_id,membership_id,user_id) REFERENCES account_memberships(network_id,membership_id,user_id),\n FOREIGN KEY(user_id) REFERENCES account_users(user_id)\n)"
+    },
+    {
+      "type": "table",
+      "name": "enrollment_tokens",
+      "tbl_name": "enrollment_tokens",
+      "sql": "CREATE TABLE enrollment_tokens (\n    id TEXT PRIMARY KEY,\n    network_id TEXT NOT NULL REFERENCES networks(network_id),\n    token_hash BLOB NOT NULL UNIQUE, expires_at INTEGER NOT NULL,\n    used_node_id TEXT, binding_hash BLOB, device_binding TEXT,\n    CHECK((used_node_id IS NULL)=(binding_hash IS NULL)),\n    FOREIGN KEY(network_id,used_node_id) REFERENCES nodes(network_id,id)\n)"
+    },
+    {
+      "type": "table",
+      "name": "latency_admissions",
+      "tbl_name": "latency_admissions",
+      "sql": "CREATE TABLE latency_admissions (\n    network_id TEXT NOT NULL REFERENCES networks(network_id),\n    source_node_id TEXT NOT NULL,\n    measurement_id TEXT NOT NULL,\n    body_digest BLOB NOT NULL,\n    received_ms INTEGER NOT NULL,\n    expires_ms INTEGER NOT NULL,\n    PRIMARY KEY(network_id, source_node_id, measurement_id),\n    FOREIGN KEY(network_id,source_node_id) REFERENCES nodes(network_id,id)\n)"
+    },
+    {
+      "type": "table",
+      "name": "latency_coverage",
+      "tbl_name": "latency_coverage",
+      "sql": "CREATE TABLE latency_coverage (\n    network_id TEXT NOT NULL REFERENCES networks(network_id),\n    source_node_id TEXT NOT NULL,\n    capacity_before_ms INTEGER NOT NULL,\n    PRIMARY KEY(network_id, source_node_id),\n    FOREIGN KEY(network_id,source_node_id) REFERENCES nodes(network_id,id)\n)"
+    },
+    {
+      "type": "table",
+      "name": "latency_runtime_epochs",
+      "tbl_name": "latency_runtime_epochs",
+      "sql": "CREATE TABLE latency_runtime_epochs (\n    node_id TEXT PRIMARY KEY,\n    network_id TEXT NOT NULL REFERENCES networks(network_id),\n    epoch INTEGER NOT NULL,\n    started_ms INTEGER NOT NULL,\n    FOREIGN KEY(network_id,node_id) REFERENCES nodes(network_id,id)\n)"
+    },
+    {
+      "type": "table",
+      "name": "latency_samples",
+      "tbl_name": "latency_samples",
+      "sql": "CREATE TABLE latency_samples (\n    row_id INTEGER PRIMARY KEY AUTOINCREMENT,\n    network_id TEXT NOT NULL REFERENCES networks(network_id),\n    source_node_id TEXT NOT NULL,\n    peer_node_id TEXT NOT NULL,\n    measurement_id TEXT NOT NULL,\n    runtime_epoch INTEGER NOT NULL,\n    measured_ms INTEGER NOT NULL,\n    received_ms INTEGER NOT NULL,\n    body BLOB NOT NULL,\n    UNIQUE(network_id, source_node_id, measurement_id),\n    FOREIGN KEY(network_id,source_node_id) REFERENCES nodes(network_id,id),\n    FOREIGN KEY(network_id,peer_node_id) REFERENCES nodes(network_id,id)\n)"
+    },
+    {
+      "type": "table",
+      "name": "managed_enrollment_intents",
+      "tbl_name": "managed_enrollment_intents",
+      "sql": "CREATE TABLE managed_enrollment_intents (\n    network_id TEXT NOT NULL,\n    token_id TEXT NOT NULL,\n    settings TEXT NOT NULL,\n    PRIMARY KEY(network_id,token_id),\n    FOREIGN KEY(network_id,token_id) REFERENCES enrollment_tokens(network_id,id)\n)"
+    },
+    {
+      "type": "table",
+      "name": "managed_listeners",
+      "tbl_name": "managed_listeners",
+      "sql": "CREATE TABLE managed_listeners (\n    network_id TEXT NOT NULL REFERENCES networks(network_id),\n    listener_id TEXT NOT NULL,\n    node_id TEXT NOT NULL,\n    settings TEXT NOT NULL,\n    material_version INTEGER NOT NULL CHECK(material_version BETWEEN 1 AND 4294967295),\n    certificate_sha256 TEXT,\n    material_nonce BLOB,\n    material_ciphertext BLOB,\n    PRIMARY KEY(network_id, listener_id),\n    FOREIGN KEY(network_id,node_id) REFERENCES nodes(network_id,id),\n    CHECK ((material_nonce IS NULL) = (material_ciphertext IS NULL))\n)"
+    },
+    {
+      "type": "table",
+      "name": "managed_transport_capabilities",
+      "tbl_name": "managed_transport_capabilities",
+      "sql": "CREATE TABLE managed_transport_capabilities (\n    network_id TEXT NOT NULL,\n    node_id TEXT NOT NULL,\n    vless_streams TEXT NOT NULL,\n    PRIMARY KEY(network_id,node_id),\n    FOREIGN KEY(network_id,node_id) REFERENCES nodes(network_id,id)\n)"
+    },
+    {
+      "type": "table",
+      "name": "mesh_access_legacy_v5",
+      "tbl_name": "mesh_access_legacy_v5",
+      "sql": "CREATE TABLE mesh_access_legacy_v5 (\n    network_id TEXT NOT NULL REFERENCES networks(network_id),\n    id INTEGER NOT NULL CHECK(id=1), policy TEXT NOT NULL,\n    PRIMARY KEY(network_id,id)\n)"
+    },
+    {
+      "type": "table",
+      "name": "mesh_access_source",
+      "tbl_name": "mesh_access_source",
+      "sql": "CREATE TABLE mesh_access_source (\n    network_id TEXT NOT NULL REFERENCES networks(network_id),\n    id INTEGER NOT NULL CHECK(id=1), policy TEXT NOT NULL, source_jsonc TEXT,\n    PRIMARY KEY(network_id,id)\n)"
+    },
+    {
+      "type": "table",
+      "name": "network_identity",
+      "tbl_name": "network_identity",
+      "sql": "CREATE TABLE network_identity (\n    id INTEGER NOT NULL CHECK(id=1),\n    network_id TEXT PRIMARY KEY REFERENCES networks(network_id) CHECK(length(network_id)=32),\n    name TEXT NOT NULL, dns TEXT NOT NULL\n)"
+    },
+    {
+      "type": "table",
+      "name": "networks",
+      "tbl_name": "networks",
+      "sql": "CREATE TABLE networks (\n    network_id TEXT PRIMARY KEY CHECK(length(network_id)=32 AND network_id NOT GLOB '*[^0-9a-f]*'),\n    created_at TEXT NOT NULL,\n    initial INTEGER NOT NULL CHECK(initial IN (0,1))\n)"
+    },
+    {
+      "type": "table",
+      "name": "node_ownership",
+      "tbl_name": "node_ownership",
+      "sql": "CREATE TABLE node_ownership (\n network_id TEXT NOT NULL, node_id TEXT NOT NULL,\n membership_id TEXT,\n PRIMARY KEY(network_id,node_id),\n FOREIGN KEY(network_id,node_id) REFERENCES nodes(network_id,id),\n FOREIGN KEY(network_id,membership_id) REFERENCES account_memberships(network_id,membership_id)\n)"
+    },
+    {
+      "type": "table",
+      "name": "node_tags",
+      "tbl_name": "node_tags",
+      "sql": "CREATE TABLE node_tags (\n    network_id TEXT NOT NULL REFERENCES networks(network_id),\n    node_id TEXT NOT NULL, tag TEXT NOT NULL,\n    PRIMARY KEY(network_id,node_id,tag),\n    FOREIGN KEY(network_id,node_id) REFERENCES nodes(network_id,id),\n    FOREIGN KEY(network_id,tag) REFERENCES tag_definitions(network_id,tag)\n)"
+    },
+    {
+      "type": "table",
+      "name": "nodes",
+      "tbl_name": "nodes",
+      "sql": "CREATE TABLE nodes (\n    id TEXT PRIMARY KEY,\n    network_id TEXT NOT NULL REFERENCES networks(network_id),\n    credential_hash BLOB NOT NULL UNIQUE,\n    name TEXT NOT NULL, agent_version TEXT NOT NULL,\n    registered_at TEXT NOT NULL, last_seen TEXT NOT NULL, revoked_at TEXT,\n    mesh_ipv4 TEXT NOT NULL, mesh_ipv6 TEXT NOT NULL, country TEXT,\n    acknowledged_revision INTEGER NOT NULL DEFAULT 0,\n    acknowledged_digest TEXT,\n    UNIQUE(network_id,id),\n    UNIQUE(network_id,mesh_ipv4), UNIQUE(network_id,mesh_ipv6)\n)"
+    },
+    {
+      "type": "table",
+      "name": "settings",
+      "tbl_name": "settings",
+      "sql": "CREATE TABLE settings (id INTEGER PRIMARY KEY CHECK (id = 1), admin_hash BLOB NOT NULL)"
+    },
+    {
+      "type": "table",
+      "name": "tag_definitions",
+      "tbl_name": "tag_definitions",
+      "sql": "CREATE TABLE tag_definitions (\n    network_id TEXT NOT NULL REFERENCES networks(network_id),\n    tag TEXT NOT NULL, description TEXT NOT NULL,\n    PRIMARY KEY(network_id,tag)\n)"
+    },
+    {
+      "type": "trigger",
+      "name": "account_invitation_binding",
+      "tbl_name": "account_invitations",
+      "sql": "CREATE TRIGGER account_invitation_binding BEFORE UPDATE ON account_invitations\nWHEN NEW.invitation_id IS NOT OLD.invitation_id\n OR NEW.network_id IS NOT OLD.network_id OR NEW.email IS NOT OLD.email\n OR NEW.role IS NOT OLD.role OR NEW.token_hash IS NOT OLD.token_hash\n OR NEW.issuer_user_id IS NOT OLD.issuer_user_id OR NEW.expires_at IS NOT OLD.expires_at\n OR (OLD.consumed_by IS NOT NULL AND\n     (NEW.consumed_by IS NOT OLD.consumed_by OR NEW.consumed_at IS NOT OLD.consumed_at))\nBEGIN SELECT RAISE(ABORT,'immutable account invitation binding'); END"
+    },
+    {
+      "type": "trigger",
+      "name": "account_membership_identity",
+      "tbl_name": "account_memberships",
+      "sql": "CREATE TRIGGER account_membership_identity BEFORE UPDATE ON account_memberships\nWHEN NEW.membership_id IS NOT OLD.membership_id\n OR NEW.network_id IS NOT OLD.network_id OR NEW.user_id IS NOT OLD.user_id\n OR (OLD.revoked_at IS NOT NULL AND NEW.revoked_at IS NOT OLD.revoked_at)\nBEGIN SELECT RAISE(ABORT,'immutable network membership identity'); END"
+    },
+    {
+      "type": "trigger",
+      "name": "account_reset_binding",
+      "tbl_name": "account_password_resets",
+      "sql": "CREATE TRIGGER account_reset_binding BEFORE UPDATE ON account_password_resets\nWHEN NEW.reset_id IS NOT OLD.reset_id OR NEW.token_hash IS NOT OLD.token_hash\n OR NEW.user_id IS NOT OLD.user_id OR NEW.credential_version IS NOT OLD.credential_version\n OR NEW.expires_at IS NOT OLD.expires_at\n OR (OLD.consumed_at IS NOT NULL AND NEW.consumed_at IS NOT OLD.consumed_at)\nBEGIN SELECT RAISE(ABORT,'immutable password reset binding'); END"
+    },
+    {
+      "type": "trigger",
+      "name": "account_user_identity",
+      "tbl_name": "account_users",
+      "sql": "CREATE TRIGGER account_user_identity BEFORE UPDATE OF user_id ON account_users\nWHEN NEW.user_id IS NOT OLD.user_id\nBEGIN SELECT RAISE(ABORT,'immutable global user identity'); END"
+    },
+    {
+      "type": "trigger",
+      "name": "connection_identity_no_rebind",
+      "tbl_name": "connection_identities",
+      "sql": "CREATE TRIGGER connection_identity_no_rebind\nBEFORE UPDATE OF node_id,network_id,public_key ON connection_identities\nWHEN NEW.node_id IS NOT OLD.node_id OR NEW.network_id IS NOT OLD.network_id\n OR NEW.public_key IS NOT OLD.public_key\nBEGIN SELECT RAISE(ABORT,'connection identity is immutable'); END"
+    },
+    {
+      "type": "trigger",
+      "name": "device_account_binding_immutable",
+      "tbl_name": "device_account_bindings",
+      "sql": "CREATE TRIGGER device_account_binding_immutable BEFORE UPDATE ON device_account_bindings\nBEGIN SELECT RAISE(ABORT,'immutable device account binding'); END"
+    },
+    {
+      "type": "trigger",
+      "name": "device_account_binding_no_delete",
+      "tbl_name": "device_account_bindings",
+      "sql": "CREATE TRIGGER device_account_binding_no_delete BEFORE DELETE ON device_account_bindings\nBEGIN SELECT RAISE(ABORT,'persistent device account binding'); END"
+    },
+    {
+      "type": "trigger",
+      "name": "enrollment_identity_no_rebind",
+      "tbl_name": "enrollment_tokens",
+      "sql": "CREATE TRIGGER enrollment_identity_no_rebind\nBEFORE UPDATE OF id,network_id,token_hash,device_binding,used_node_id,binding_hash ON enrollment_tokens\nWHEN NEW.id IS NOT OLD.id OR NEW.network_id IS NOT OLD.network_id\n OR NEW.token_hash IS NOT OLD.token_hash OR NEW.device_binding IS NOT OLD.device_binding\n OR (OLD.used_node_id IS NOT NULL AND\n     (NEW.used_node_id IS NOT OLD.used_node_id OR NEW.binding_hash IS NOT OLD.binding_hash))\nBEGIN SELECT RAISE(ABORT,'enrollment identity is immutable'); END"
+    },
+    {
+      "type": "trigger",
+      "name": "nodes_no_rebind",
+      "tbl_name": "nodes",
+      "sql": "CREATE TRIGGER nodes_no_rebind\nBEFORE UPDATE OF id,network_id,credential_hash ON nodes\nWHEN NEW.id IS NOT OLD.id OR NEW.network_id IS NOT OLD.network_id\n OR NEW.credential_hash IS NOT OLD.credential_hash\nBEGIN SELECT RAISE(ABORT,'node identity is immutable'); END"
+    },
+    {
+      "type": "trigger",
+      "name": "ownership_immutable",
+      "tbl_name": "node_ownership",
+      "sql": "CREATE TRIGGER ownership_immutable BEFORE UPDATE ON node_ownership\nWHEN NEW.network_id IS NOT OLD.network_id OR NEW.node_id IS NOT OLD.node_id\n OR (OLD.membership_id IS NOT NULL AND NEW.membership_id IS NOT OLD.membership_id)\nBEGIN SELECT RAISE(ABORT,'immutable device owner'); END"
+    },
+    {
+      "type": "trigger",
+      "name": "ownership_new_node",
+      "tbl_name": "nodes",
+      "sql": "CREATE TRIGGER ownership_new_node AFTER INSERT ON nodes\nBEGIN INSERT INTO node_ownership(network_id,node_id) VALUES(NEW.network_id,NEW.id); END"
+    },
+    {
+      "type": "trigger",
+      "name": "ownership_no_delete",
+      "tbl_name": "node_ownership",
+      "sql": "CREATE TRIGGER ownership_no_delete BEFORE DELETE ON node_ownership\nBEGIN SELECT RAISE(ABORT,'persistent device ownership'); END"
+    }
+  ],
+  "ddl_sha256": "c9b24dc05648e38e2088c3039bcd7d9f7fa64bc923fb87c2548e65550736e7d4"
+}
