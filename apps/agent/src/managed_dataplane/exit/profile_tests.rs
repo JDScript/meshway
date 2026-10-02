@@ -33,6 +33,10 @@ fn catalog(default: &str, locked: bool) -> ProfileCatalog {
 }
 
 fn plan(catalog: ProfileCatalog, cached: Option<&str>) -> ExitPlan {
+    try_plan(catalog, cached).unwrap()
+}
+
+fn try_plan(catalog: ProfileCatalog, cached: Option<&str>) -> Result<ExitPlan, AgentError> {
     ExitPlan::new(
         "198.19.90.1".parse().unwrap(),
         "198.19.90.0/24".parse().unwrap(),
@@ -41,7 +45,126 @@ fn plan(catalog: ProfileCatalog, cached: Option<&str>) -> ExitPlan {
         vec![],
     )
     .with_profiles(catalog, cached)
-    .unwrap()
+}
+
+fn catalog_ids(ids: &[&str]) -> ProfileCatalog {
+    ProfileCatalog {
+        profiles: ids
+            .iter()
+            .map(|id| RoutingProfile {
+                id: (*id).into(),
+                routes: vec![],
+                direct_prefixes: vec![],
+                fallback: ProfileFallback::Unmanaged,
+            })
+            .collect(),
+        default_profile: ids[0].into(),
+        locked: false,
+        automatic: None,
+    }
+}
+
+#[test]
+fn global_profile_keeps_full_identity_across_default_selection_and_automatic_resolution() {
+    let identity = "0123456789abcdef".repeat(4);
+    let global = format!("global:{identity}");
+    assert_eq!(global.len(), 71);
+    let mut c = catalog_ids(&[&global, "office.v1"]);
+    c.profiles[0].fallback = ProfileFallback::Exit(ExitRoute {
+        prefix: "0.0.0.0/0".parse().unwrap(),
+        path: vec!["c".into(), identity.clone()],
+        return_path: vec![identity.clone(), "c".into()],
+    });
+    let p = plan(c, None);
+    let assert_global = |p: &ExitPlan, selected: &str| {
+        assert_eq!(p.selected_profile.as_deref(), Some(selected));
+        assert_eq!(p.effective_profile.as_deref(), Some(global.as_str()));
+        assert_eq!(p.profiles.as_ref().unwrap().profiles[0].id, global);
+        assert_eq!(
+            p.route("203.0.113.9".parse().unwrap()).unwrap().path.last(),
+            Some(&identity)
+        );
+    };
+    assert_global(&p, &global);
+    let custom = p.select_profile("office.v1").unwrap();
+    assert_global(&custom.select_profile(&global).unwrap(), &global);
+    assert!(
+        p.select_profile(&format!("global:{}", &identity[..63]))
+            .is_err()
+    );
+
+    let mut c = p.profiles.clone().unwrap();
+    c.default_profile = "auto".into();
+    c.automatic = Some(AutomaticProfile {
+        region_to_profile: BTreeMap::from([("JP".into(), global.clone())]),
+        resolved_profile: Some(global.clone()),
+        fallback_profile: global.clone(),
+    });
+    let automatic = plan(c, None);
+    assert_global(&automatic, "auto");
+    assert_global(&automatic.resolve_automatic(None).unwrap(), "auto");
+    assert_global(&automatic.resolve_automatic(Some(&global)).unwrap(), "auto");
+    assert!(
+        automatic
+            .resolve_automatic(Some(&global.to_ascii_uppercase()))
+            .is_err()
+    );
+}
+
+#[test]
+fn invalid_global_ids_duplicate_ids_and_auto_cannot_enter_concrete_catalog() {
+    for invalid in [
+        format!("global:{}", "a".repeat(63)),
+        format!("global:{}", "a".repeat(65)),
+        format!("global:{}", "A".repeat(64)),
+        format!("global:{}", "g".repeat(64)),
+        "global:*".into(),
+        "auto".into(),
+        "e".into(), // duplicate of the default
+        String::new(),
+        "office space".into(),
+        "office/lan".into(),
+        "office:lan".into(),
+        "日本".into(),
+        "x".repeat(65),
+    ] {
+        // Validate the entire allowed catalog, not only its chosen default.
+        assert!(
+            matches!(
+                try_plan(catalog_ids(&["e", &invalid]), None),
+                Err(AgentError::Invalid("invalid or duplicate routing profile"))
+            ),
+            "{invalid}"
+        );
+    }
+    let global = format!("global:{}", "a".repeat(64));
+    assert!(matches!(
+        try_plan(catalog_ids(&[&global, &global]), None),
+        Err(AgentError::Invalid("invalid or duplicate routing profile"))
+    ));
+}
+
+#[test]
+fn existing_custom_profile_ids_are_preserved_without_remapping() {
+    let max_id = "x".repeat(64);
+    for id in [
+        "e",
+        "f",
+        "mesh",
+        "global",
+        "mesh-only",
+        "Office.v1_lan-2",
+        &max_id,
+    ] {
+        let p = plan(catalog_ids(&[id]), None);
+        assert_eq!(p.selected_profile.as_deref(), Some(id));
+        assert_eq!(p.effective_profile.as_deref(), Some(id));
+        assert_eq!(p.profiles.as_ref().unwrap().profiles[0].id, id);
+        assert_eq!(
+            p.select_profile(id).unwrap().effective_profile.as_deref(),
+            Some(id)
+        );
+    }
 }
 
 fn assert_exit(plan: &ExitPlan, selected: &str, effective: &str) {

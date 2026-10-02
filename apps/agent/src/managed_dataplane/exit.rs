@@ -214,7 +214,9 @@ impl ExitPlan {
         if catalog.profiles.is_empty()
             || catalog.profiles.len() > 16
             || catalog.profiles.iter().any(|p| {
-                p.id.is_empty() || p.id.len() > 64 || p.id == "auto" || !ids.insert(p.id.as_str())
+                !meshway_policy::v3::valid_profile_id(&p.id)
+                    || p.id == "auto"
+                    || !ids.insert(p.id.as_str())
             })
         {
             return Err(AgentError::Invalid("invalid or duplicate routing profile"));

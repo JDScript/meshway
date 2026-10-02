@@ -209,7 +209,9 @@ profiles[0].rules[0].candidates[0]: Referenced node is not enabled as an exit by
 
 保留既有源 ID：自定义 ID 为 1..64 字节 ASCII 字母数字及 `._-`；内置 `mesh-only` / `auto`；具体 global 为 `global:` + **完整小写 64-hex 身份**，长度 71。`v3::valid_profile_id` 是共用的具体 ID 语法检查；自定义定义另外拒绝保留 ID。`global:*` 只允许出现在分配 allowed 中作展开 token，不能进入执行目录；不能截断、哈希改名或把所有自定义 ID 长度泛化到 71。
 
-真实出口消费者为 `apps/agent/src/managed_dataplane/exit.rs` 的 `ExitPlan::with_profiles`（本轮基线第 217 行）：`p.id.is_empty() || p.id.len() > 64` 与 global 不兼容。该文件由协调者处理，最小补丁是把这两个条件替换为 `!meshway_policy::v3::valid_profile_id(&p.id)`，保留 `p.id == "auto"`（auto 不在 concrete profiles 中）与重复 ID 检查；default / automatic / 用户选择继续对完整 ID 做允许目录成员校验。添加 71 字节合法 global 与残缺 / 大写身份的行为测试。现有自定义源 ID、选择请求及目录引用无须重命名。该补丁**尚未实施**，因此本库 global 目前仍不可直接交给原型；目录 16 项限制也是独立的未接线限制。
+真实出口消费者为 `apps/agent/src/managed_dataplane/exit.rs` 的 `ExitPlan::with_profiles`。现已把原 `p.id.is_empty() || p.id.len() > 64` 替换为 `!meshway_policy::v3::valid_profile_id(&p.id)`，保留 `p.id == "auto"`（auto 不在 concrete profiles 中）与重复 ID 检查；default / automatic / 用户选择继续对完整 ID 做允许目录成员校验。`exit/profile_tests.rs` 覆盖 71 字节 global 经默认选择、用户切换和自动解析保留完整身份，以及残缺 / 大写 / 非 hex / 重复身份、`global:*`、concrete `auto` 的拒绝。目录 16 项限制及 Controller 投影仍是独立的未接线限制。
+
+**无损边界**：v3 已接受的自定义源 ID 仍原样保留，不截断、不重命名。只读调查现有出口原型构造点（`exit/fixture.rs`、`exit.rs` 单测、`exit/profile_tests.rs`）和 `experiments/exit-dataplane` 使用 `e` / `f` / `mesh` / `global`，均兼容；测试另覆盖含大小写、`._-` 的自定义 ID 和 64 字节边界。旧原型只检查非空及 64 字节，理论上曾接受空格、斜线、冒号、非 ASCII 等不符合 v3 源语法的 ID；本次会明确拒绝这些值，不能声称任意原型输入均无损。原型目录为内部测试构造，未接 Controller 持久化方案；未发现上述字符用于已知配置。未来迁移遇到不合规外部旧值须报告并保留旧源，不能静默改名。
 
 本 worktree 的检查命令（独立 Cargo target，限制两项构建并发）：
 
@@ -217,6 +219,10 @@ profiles[0].rules[0].candidates[0]: Referenced node is not enabled as an exit by
 CARGO_TARGET_DIR="$PWD/target/policy-v3-publication" CARGO_BUILD_JOBS=2 cargo fmt -p meshway-policy -- --check
 CARGO_TARGET_DIR="$PWD/target/policy-v3-publication" CARGO_BUILD_JOBS=2 cargo test -p meshway-policy --all-features --locked
 CARGO_TARGET_DIR="$PWD/target/policy-v3-publication" CARGO_BUILD_JOBS=2 cargo clippy -p meshway-policy --all-features --all-targets --locked -- -D warnings
+CARGO_TARGET_DIR="$PWD/target/policy-v3-publication" CARGO_BUILD_JOBS=2 cargo fmt -p meshway-agent -- --check
+CARGO_TARGET_DIR="$PWD/target/policy-v3-publication" CARGO_BUILD_JOBS=2 cargo test -p meshway-agent --features managed-connections --lib managed_dataplane::exit --locked
+CARGO_TARGET_DIR="$PWD/target/policy-v3-publication" CARGO_BUILD_JOBS=2 cargo check -p meshway-agent --features managed-connections --all-targets --locked
+CARGO_TARGET_DIR="$PWD/target/policy-v3-publication" CARGO_BUILD_JOBS=2 cargo clippy -p meshway-agent --features managed-connections --all-targets --locked -- -D warnings
 ```
 
 Mesh / 出口有序 first-match、公网 internet 范围、库存相关遮挡提醒、路由方案、公共优先、规则集、direct、STUN 定位、用户切换、管理员开启与锁定均已确认，不再列为待决。方案分配仍使用 node > tag > * 的具体度（不是 Mesh 路由匹配）；其 template / auto 允许集合语义及资源预算沿用既有实现。
