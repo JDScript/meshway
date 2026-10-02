@@ -4,12 +4,11 @@
 
 ## 会话
 
-- 一个浏览器一次只有一种 console 凭据，cookie `meshway_console_session[_<namespace>]`（HttpOnly、SameSite=Strict、`MESHWAY_WEB_COOKIE_SECURE` 的 auto/true/false 语义不变）：
-  `v2.<kind>.<expires_at>.<session_id>.<credential>`，`kind` 为 `user`（仅 `mws_` + 64 hex）或 `bootstrap`（管理员令牌，不得以 `mws_` 开头）。解析时类型与格式不符即视为过期并清除；两种凭据不能互相冒充（`lib/session-cookie.ts`，有单元测试）。
+- 一个浏览器一次只有一个**活动**登录。每次登录的凭据各自存放在以随机 Web sign-in ID 命名的 cookie `meshway_console_credential_<id>[_<namespace>]` = `v3.<kind>.<expires_at>.<id>.<credential>`，另有不含凭据的指针 `meshway_console_active[_<namespace>]` = `<id>`（均 HttpOnly、SameSite=Strict、`MESHWAY_WEB_COOKIE_SECURE` 的 auto/true/false 语义不变）。只有登录写指针；退出与清理只删除自己处理的那个凭据 cookie，从不删除或覆盖指针，因此任何迟到的删除响应都碰不到后来登录的凭据（名字不同）。指针没有对应凭据即视为未登录；指针、cookie 名与 envelope 中的 ID 不一致即无效。登录时删除本 namespace 内其他全部凭据 cookie 与旧版单 cookie（`meshway_console_session` / `meshway_admin_session`），数量有界；名字解析严格区分 namespace，不会删到其他 preview 的 cookie。`kind` 为 `user`（仅 `mws_` + 64 hex）或 `bootstrap`（管理员令牌，不得以 `mws_` 开头）；类型与格式不符即视为过期（`lib/session-cookie.ts`，有单元测试）。
 - 用户会话的 Max-Age 与内部过期时间都取 controller 返回的绝对 `expires_at`，Web 不续期、不滑动；管理员令牌会话保持原 8 小时。旧 `meshway_admin_session` cookie 视为过期，登录 / 退出时清除。
 - `session_id` 是 Web 随机生成的非秘密标识，只用于给客户端状态加键，不是凭据。
 - 账户登录：密码仅 浏览器 → Web server action → `loginAccount`；不进 localStorage、日志或 ActionState（失败时只回显邮箱）。管理员令牌登录改用 bootstrap-only 的 `listAccountPasswordResets` 证明，用户会话贴进令牌框会被拒绝。新登录前会撤销仍存在的旧用户会话（尽力而为）。
-- 退出分两步：`signOutAction`（受登录栅栏约束）只对渲染时的登录调 `logoutAccount`，不改 cookie；随后的独立请求 `discardSignInAction` 仅当浏览器此刻仍是同一登录时清 cookie。controller 不可达时仍清本地 cookie 与草稿，并跳转 `/login?reason=logout-unconfirmed` 明确说明“未确认撤销，原到期前可能仍有效”，不伪称已撤销。401 视为已失效。
+- 退出：`signOutAction`（受登录栅栏约束）对渲染时的登录调 `logoutAccount`，然后只删除该登录自己的凭据 cookie（管理员令牌同样被删除，不留可恢复的标记）。controller 不可达时仍清本地 cookie 与草稿，并跳转 `/login?reason=logout-unconfirmed` 明确说明“未确认撤销，原到期前可能仍有效”，不伪称已撤销。401 视为已失效。
 
 ## 权限与错误
 
@@ -24,7 +23,7 @@ cookie envelope 未签名，浏览器内多个标签页共享同一 cookie。为
 - **登录键**：`<kind>:<marker>`，`marker` = SHA-256（域分隔 `meshway-web-sign-in-fence-v1`，含 kind、Web sign-in ID 与 credential 本身）截取 128 bit（`lib/session-cookie.ts::signInKeyOf`）。不可反推 credential；改 cookie 中的 session ID 或 kind 不能让一个 credential 冒充另一个登录；同一用户重新登录（新 credential）也得到新键。它只是浏览器操作归属栅栏，不是授权凭证：controller 仍对 credential 鉴权并复核绝对期限。
 - **传递**：`(console)` 布局渲染时计算登录键，作为 `DraftVaultProvider` 的 key 与 `useSignIn()` / `useActionScope()` 的值。每个网络 action 第一个参数为 typed `ActionScope { networkId, signIn }`（Access、routing、connections、tags、network、enrollment / managed enrollment、managed listener、节点撤销及全部只读刷新：runtime、node status、endpoint discovery、latency history、reload）；全局 action（切换 / 创建网络、退出）显式带 `signIn`。独立页面（App 批准 / 拒绝、首 Owner 认领、邀请接受与创建）由服务端渲染写入隐藏字段 `sign_in`。
 - **校验**：`requireNetworkActionContext(scope)` / `requireRenderedSignIn(signIn)` 在转发 controller 前比较请求所带 cookie 的登录键；缺失或不符即跳转 `/session-changed`（“登录已变化”，不执行、不提交草稿、不清当前 cookie）。App 批准页不符时返回错误并提供刷新，不批准也不拒绝；页面 GET 仍不批准。网络 scope、CAS 期望版本与 controller 的 Read/Manage 事务复核相互独立、全部保留。登录 / 注册等建立新登录的入口不受栅栏约束。
-- **迟到的 401 / 登出**：action 中的 401 不再发送删除 cookie 的 Set-Cookie，只跳转 `/login?reason=expired`；登录页用独立请求按浏览器当时的 cookie 向 controller 复核，被拒才清除，仍有效则直接回到目标页。本地过期也不在 action 中删除。因此 A 的被挂起请求晚到的 401 或登出结果不会抹掉 B 的 cookie。
+- **迟到的 401 / 登出**：action 中的 401 不发送删除 cookie 的 Set-Cookie，只跳转 `/login?reason=expired`；登录页向 controller 复核请求所带的活动登录，被拒才删除**该登录的凭据 cookie**，仍有效则直接回到目标页。登出同样只删除自身凭据。删除始终按凭据自己的 cookie 名进行，所以即使携带删除的最终响应在 B 登录之后才到达浏览器，也只会删掉 A 已被替换的旧凭据，B 的 cookie 与会话不变。
 - `SessionSync` 的广播 / 焦点刷新仍保留，只是尽早丢弃旧草稿的体验优化，不是安全边界。
 
 ## 首个 Owner、邀请
@@ -48,6 +47,8 @@ cookie envelope 未签名，浏览器内多个标签页共享同一 cookie。为
   - `multi-network.spec.ts` 的浏览器批准改为真实账户（两网 Owner）批准；其余 spec 未改，管理员令牌入口保持原选择器。
 
 - `session-fence.spec.ts`（新增）：同一 cookie jar 内真实 UI 登录 A、渲染并捕获 App 批准与 Access 保存，另一标签真实登录同网 Owner B（A 的标签禁用 BroadcastChannel）；以浏览器当前 B cookie 重放旧载荷不产生 code / ownership / revision，A 标签真实点击保存跳到“登录已变化”，B 会话仍有效；B 自己渲染的批准（节点归 B）与保存成功；把 A cookie 的 session ID 改成 B 的再重放 B 的渲染载荷被拒；A 被挂起请求的迟到 401 与迟到登出均不清 B 的 cookie。修复前同一 spec 两项测试均失败（code 签发、revision 1→2、草稿保存、B cookie 被清）。
+
+- `session-cleanup.spec.ts`（新增）：用 Node fetch（独立、无 cookie jar 的客户端）代理请求，把服务器已生成的、带删除 Set-Cookie 的**最终响应**扣住，等另一标签真实 UI 登录 B 后再交给浏览器。修复前：A 的登出删除与登录页对 A 的拒绝清理都删掉了 B 的 cookie；修复后两者都只删 A 自身凭据，B cookie 与会话有效，凭据 cookie 只剩一个、期限不超过 controller 绝对期限；用户与管理员令牌的正常退出都不留凭据。
 
 ## 未做（明确边界）
 
