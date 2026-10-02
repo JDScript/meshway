@@ -22,6 +22,7 @@ pub(crate) struct SystemDnsSnapshot {
     // All entries are ordered alternatives in ONE trusted system/VPN resolution
     // scope. Never flatten servers from multiple split-DNS scopes into this list.
     servers: Vec<SocketAddr>,
+    hosts: HashMap<String, Vec<IpAddr>>,
 }
 
 impl SystemDnsSnapshot {
@@ -38,7 +39,121 @@ impl SystemDnsSnapshot {
                 "unsupported empty, stub or invalid bootstrap DNS upstream",
             ));
         }
-        Ok(Self { servers })
+        Ok(Self {
+            servers,
+            hosts: HashMap::new(),
+        })
+    }
+
+    /// Preserve files-before-DNS and Docker's actual embedded resolver. Never
+    /// substitute a public server or flatten systemd-resolved per-link scopes.
+    pub(crate) fn from_system() -> io::Result<Self> {
+        if std::path::Path::new("/run/systemd/resolve").exists() {
+            return Err(invalid(
+                "systemd-resolved split/stub DNS requires a protected per-link adapter",
+            ));
+        }
+        let resolver = bounded_system_file("/etc/resolv.conf")?;
+        let nss = bounded_system_file("/etc/nsswitch.conf")?;
+        let hosts = bounded_system_file("/etc/hosts")?;
+        let docker = std::path::Path::new("/.dockerenv").is_file();
+        Self::system_snapshot(&resolver, &nss, &hosts, docker)
+    }
+
+    fn system_snapshot(resolver: &str, nss: &str, hosts: &str, docker: bool) -> io::Result<Self> {
+        let scopes: Vec<_> = nss
+            .lines()
+            .filter_map(|line| {
+                let line = line.split('#').next().unwrap_or_default().trim();
+                line.strip_prefix("hosts:").map(str::trim)
+            })
+            .collect();
+        if scopes != ["files dns"] {
+            return Err(invalid(
+                "unsupported NSS hosts topology; requires files dns without scoped/daemon sources",
+            ));
+        }
+        let mut snapshot = Self {
+            servers: Vec::new(),
+            hosts: HashMap::new(),
+        };
+        for line in resolver.lines() {
+            let mut words = line
+                .split(['#', ';'])
+                .next()
+                .unwrap_or_default()
+                .split_whitespace();
+            match words.next() {
+                Some("nameserver") => {
+                    let ip: IpAddr = words
+                        .next()
+                        .ok_or_else(|| invalid("missing nameserver"))?
+                        .parse()
+                        .map_err(|_| invalid("non-IP/scoped nameserver"))?;
+                    if words.next().is_some()
+                        || ip.is_unspecified()
+                        || ip.is_multicast()
+                        || ip.is_loopback() && !(docker && ip == IpAddr::from([127, 0, 0, 11]))
+                    {
+                        return Err(invalid("unsupported DNS stub or nameserver"));
+                    }
+                    snapshot.servers.push(SocketAddr::new(ip, 53));
+                }
+                Some("options") => {
+                    for option in words {
+                        // Absolute bootstrap names do not apply search/ndots. Do
+                        // not silently override unusual resolver transport choices.
+                        if !option.starts_with("ndots:") && option != "edns0" {
+                            return Err(invalid("unsupported system DNS options"));
+                        }
+                    }
+                }
+                Some("search" | "domain") | None => {}
+                Some(_) => return Err(invalid("unsupported resolver directive")),
+            }
+        }
+        if snapshot.servers.is_empty() || snapshot.servers.len() > 8 {
+            return Err(invalid("unsupported empty/oversized DNS upstream set"));
+        }
+        if snapshot
+            .servers
+            .iter()
+            .any(|server| server.ip().is_loopback())
+            && snapshot.servers != [SocketAddr::from(([127, 0, 0, 11], 53))]
+        {
+            return Err(invalid(
+                "Docker embedded resolver must be the sole scope owner",
+            ));
+        }
+        for line in hosts.lines() {
+            let mut words = line
+                .split('#')
+                .next()
+                .unwrap_or_default()
+                .split_whitespace();
+            let Some(address) = words.next() else {
+                continue;
+            };
+            let address: IpAddr = address
+                .parse()
+                .map_err(|_| invalid("unsupported hosts address"))?;
+            let mut aliases = 0;
+            for alias in words {
+                Name::from_ascii(alias).map_err(|_| invalid("unsupported hosts alias"))?;
+                let entry = snapshot
+                    .hosts
+                    .entry(alias.trim_end_matches('.').to_ascii_lowercase())
+                    .or_default();
+                if !entry.contains(&address) {
+                    entry.push(address);
+                }
+                aliases += 1;
+            }
+            if aliases == 0 {
+                return Err(invalid("hosts entry missing alias"));
+            }
+        }
+        Ok(snapshot)
     }
 
     /// Only a plain resolv.conf topology. Preserve ordered system/VPN servers;
@@ -73,6 +188,18 @@ impl SystemDnsSnapshot {
     }
 }
 
+fn bounded_system_file(path: &str) -> io::Result<String> {
+    use std::io::Read;
+    let mut text = String::new();
+    std::fs::File::open(path)?
+        .take(65_537)
+        .read_to_string(&mut text)?;
+    if text.len() > 65_536 {
+        return Err(invalid("system resolver snapshot exceeds bounds"));
+    }
+    Ok(text)
+}
+
 struct Cached {
     addresses: Vec<IpAddr>,
     expires: Instant,
@@ -104,6 +231,13 @@ impl BootstrapResolver {
         }
         if let Ok(ip) = hostname.parse::<IpAddr>() {
             return Ok(vec![ip]);
+        }
+        if let Some(addresses) = self
+            .upstreams
+            .hosts
+            .get(&hostname.trim_end_matches('.').to_ascii_lowercase())
+        {
+            return Ok(addresses.clone());
         }
         // Absolute names only: no ambient search suffix or business resolver.
         let name = Name::from_ascii(format!("{}.", hostname.trim_end_matches('.')))
@@ -341,5 +475,44 @@ mod tests {
         assert!(SystemDnsSnapshot::plain_servers(vec![]).is_err());
         assert!(SystemDnsSnapshot::plain_servers(vec!["127.0.0.53:53".parse().unwrap()]).is_err());
         assert!(SystemDnsSnapshot::plain_servers(vec!["[::1]:53".parse().unwrap()]).is_err());
+    }
+
+    #[test]
+    fn system_snapshot_preserves_docker_scope_and_hosts_without_flattening() {
+        let text = "nameserver 127.0.0.11\noptions ndots:0\n";
+        let hosts = "192.0.2.7 controller.test alias\n2001:db8::7 controller.test\n";
+        let snapshot =
+            SystemDnsSnapshot::system_snapshot(text, "hosts: files dns\n", hosts, true).unwrap();
+        assert_eq!(snapshot.servers, ["127.0.0.11:53".parse().unwrap()]);
+        assert_eq!(
+            snapshot.hosts["controller.test"],
+            [
+                "192.0.2.7".parse::<IpAddr>().unwrap(),
+                "2001:db8::7".parse().unwrap()
+            ]
+        );
+        assert!(
+            SystemDnsSnapshot::system_snapshot(text, "hosts: files dns\n", hosts, false).is_err()
+        );
+        for nss in [
+            "hosts: resolve files dns",
+            "hosts: files mdns4_minimal [NOTFOUND=return] dns",
+            "hosts: dns files",
+            "hosts: files dns\nhosts: files dns",
+        ] {
+            assert!(SystemDnsSnapshot::system_snapshot(text, nss, hosts, true).is_err());
+        }
+        for resolver in [
+            "nameserver 127.0.0.53",
+            "nameserver fe80::1%eth0",
+            "nameserver 127.0.0.11\nnameserver 192.0.2.53",
+            "nameserver 192.0.2.53\noptions rotate",
+            "nameserver 192.0.2.53\noptions use-vc",
+        ] {
+            assert!(
+                SystemDnsSnapshot::system_snapshot(resolver, "hosts: files dns", hosts, true)
+                    .is_err()
+            );
+        }
     }
 }
