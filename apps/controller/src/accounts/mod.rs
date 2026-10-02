@@ -2,11 +2,13 @@
 
 mod auth;
 mod device;
+mod ingress;
 mod model;
 mod repository;
 
 pub(crate) use auth::*;
 pub(crate) use device::*;
+pub(crate) use ingress::Ingress;
 pub(crate) use model::*;
 pub(crate) use repository::*;
 

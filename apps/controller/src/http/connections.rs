@@ -10,7 +10,8 @@ use meshway_protocol::{
 };
 use utoipa_axum::router::OpenApiRouter;
 
-use crate::{AppState, Error, bearer, json};
+use super::{bearer, json};
+use crate::{AppState, Error};
 
 pub(crate) fn routes() -> OpenApiRouter<AppState> {
     OpenApiRouter::new()

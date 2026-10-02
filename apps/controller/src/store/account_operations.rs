@@ -4,29 +4,6 @@ use meshway_protocol::accounts::*;
 use rusqlite::{Transaction, TransactionBehavior};
 use std::result::Result;
 
-impl From<AccountError> for Error {
-    fn from(value: AccountError) -> Self {
-        use axum::http::StatusCode;
-        match value {
-            AccountError::Invalid => Self::Invalid("invalid account input"),
-            AccountError::Unauthorized => Self::Unauthorized,
-            AccountError::Forbidden => {
-                Self::Body(StatusCode::FORBIDDEN, "account operation not permitted")
-            }
-            AccountError::Conflict => Self::Conflict,
-            AccountError::LastOwner => Self::Body(
-                StatusCode::CONFLICT,
-                "the last network owner cannot be removed",
-            ),
-            AccountError::Busy => Self::Body(
-                StatusCode::TOO_MANY_REQUESTS,
-                "authentication budget exhausted",
-            ),
-            AccountError::Storage | AccountError::Worker => Self::Worker,
-        }
-    }
-}
-
 fn member(m: Membership) -> AccountMembership {
     AccountMembership {
         membership_id: m.id.as_str().into(),

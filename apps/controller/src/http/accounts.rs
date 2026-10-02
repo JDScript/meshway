@@ -1,9 +1,8 @@
-//! Human account API. Web uses these server-to-server and keeps userSession in
-//! Secure/HttpOnly/SameSite cookies; Controller accepts no browser session cookie.
+//! Human account HTTP decoding and authorization wiring.
+use super::{bearer, json};
 use crate::{
     AppState, Error,
-    accounts::{Email, Password, PasswordWorker},
-    bearer, json,
+    accounts::{Email, Password},
 };
 use axum::{
     Json,
@@ -11,62 +10,8 @@ use axum::{
     http::HeaderMap,
 };
 use meshway_protocol::{ErrorResponse, accounts::*};
-use sha2::{Digest, Sha256};
-use std::{
-    collections::HashMap,
-    net::SocketAddr,
-    sync::Mutex,
-    time::{Duration, Instant},
-};
+use std::net::SocketAddr;
 use utoipa_axum::{router::OpenApiRouter, routes};
-
-pub(crate) struct Runtime {
-    worker: PasswordWorker,
-    budget: Mutex<RateBudget>,
-}
-struct RateBudget {
-    start: Instant,
-    total: u32,
-    keys: HashMap<[u8; 32], u32>,
-}
-impl Runtime {
-    pub(crate) fn new() -> Result<Self, Error> {
-        Ok(Self {
-            worker: PasswordWorker::new_blocking(2)?,
-            budget: Mutex::new(RateBudget {
-                start: Instant::now(),
-                total: 0,
-                keys: HashMap::new(),
-            }),
-        })
-    }
-    fn reserve(
-        &self,
-        source: Option<axum::Extension<ConnectInfo<SocketAddr>>>,
-        account: &str,
-    ) -> Result<(), Error> {
-        let mut budget = self.budget.lock().map_err(|_| Error::Worker)?;
-        if budget.start.elapsed() >= Duration::from_secs(60) {
-            budget.start = Instant::now();
-            budget.total = 0;
-            budget.keys.clear();
-        }
-        let source = source.map_or_else(|| "unknown-source".into(), |s| s.0.0.ip().to_string());
-        let source: [u8; 32] = Sha256::digest(format!("source:{source}")).into();
-        let account: [u8; 32] = Sha256::digest(format!("account:{account}")).into();
-        if budget.total >= 120
-            || budget.keys.len() >= 4096
-            || budget.keys.get(&source).copied().unwrap_or(0) >= 30
-            || budget.keys.get(&account).copied().unwrap_or(0) >= 10
-        {
-            return Err(crate::accounts::AccountError::Busy.into());
-        }
-        budget.total += 1;
-        *budget.keys.entry(source).or_default() += 1;
-        *budget.keys.entry(account).or_default() += 1;
-        Ok(())
-    }
-}
 
 pub(crate) fn routes() -> OpenApiRouter<AppState> {
     OpenApiRouter::new()
@@ -108,11 +53,13 @@ async fn login(
 ) -> Result<Json<LoginResponse>, Error> {
     let request = json(body)?;
     let email = Email::parse(&request.email)?;
-    state.accounts.reserve(source, email.as_str())?;
+    state
+        .accounts()
+        .reserve(source.map(|s| s.0.0.ip()), email.as_str())?;
     let snapshot = state.access(move |s| s.account_credential(&email)).await?;
     let proof = state
-        .accounts
-        .worker
+        .accounts()
+        .worker()
         .verify(snapshot, Password::new(request.password)?)
         .await?;
     state
@@ -148,13 +95,15 @@ async fn register(
 ) -> Result<Json<AccountMembership>, Error> {
     let request = json(body)?;
     let email = Email::parse(&request.email)?;
-    state.accounts.reserve(source, email.as_str())?;
+    state
+        .accounts()
+        .reserve(source.map(|s| s.0.0.ip()), email.as_str())?;
     let intent = state
         .access(move |s| s.account_registration(&request.invitation_token, &email))
         .await?;
     let hash = state
-        .accounts
-        .worker
+        .accounts()
+        .worker()
         .hash(Password::new(request.password)?)
         .await?;
     state
@@ -197,8 +146,14 @@ async fn claim_owner(
     ) {
         (ClaimOwnerKind::NewAccount, Some(email), Some(password), None) => {
             let email = Email::parse(&email)?;
-            state.accounts.reserve(source, email.as_str())?;
-            let hash = state.accounts.worker.hash(Password::new(password)?).await?;
+            state
+                .accounts()
+                .reserve(source.map(|s| s.0.0.ip()), email.as_str())?;
+            let hash = state
+                .accounts()
+                .worker()
+                .hash(Password::new(password)?)
+                .await?;
             state
                 .access(move |s| s.account_claim_new(&token, &id, email, hash).map(Json))
                 .await
@@ -325,17 +280,19 @@ async fn change_password(
     let request = json(body)?;
     let t = token.clone();
     let session = state.access(move |s| s.account_session(&t)).await?;
-    state.accounts.reserve(source, &session.user.email)?;
+    state
+        .accounts()
+        .reserve(source.map(|s| s.0.0.ip()), &session.user.email)?;
     let email = Email::parse(&session.user.email)?;
     let snapshot = state.access(move |s| s.account_credential(&email)).await?;
     let proof = state
-        .accounts
-        .worker
+        .accounts()
+        .worker()
         .verify(snapshot, Password::new(request.current_password)?)
         .await?;
     let hash = state
-        .accounts
-        .worker
+        .accounts()
+        .worker()
         .hash(Password::new(request.new_password)?)
         .await?;
     state
@@ -395,14 +352,18 @@ async fn redeem_reset(
     body: Result<Json<RedeemPasswordResetRequest>, JsonRejection>,
 ) -> Result<Json<AccountReceipt>, Error> {
     let request = json(body)?;
-    state.accounts.reserve(source, &request.reset_token)?;
+    state
+        .accounts()
+        .reserve(source.map(|s| s.0.0.ip()), &request.reset_token)?;
     let intent = state
         .access(move |s| s.account_reset_intent(&request.reset_token))
         .await?;
-    state.accounts.reserve(source, intent.account_key())?;
+    state
+        .accounts()
+        .reserve(source.map(|s| s.0.0.ip()), intent.account_key())?;
     let hash = state
-        .accounts
-        .worker
+        .accounts()
+        .worker()
         .hash(Password::new(request.new_password)?)
         .await?;
     state
