@@ -404,17 +404,26 @@ async fn real_authenticated_udp_timeout_and_missing_channel_are_distinct() {
 #[tokio::test]
 async fn lease_expiry_cancels_runner_without_reporting_a_missing_sample() {
     let (server, key, _, _) = fixture(ConnectionTransport::NativeUdp);
-    let mut manager = Manager::new(None, Duration::from_millis(100));
+    let mut manager = Manager::new(None, Duration::from_secs(30));
     manager
         .reconcile(snapshot(server), key, Instant::now())
         .await;
     let task = manager
         .start_latency_history(HttpClient::new().with_base_url("http://127.0.0.1:1"), 1)
         .unwrap();
-    time::timeout(Duration::from_secs(3), task)
+    // Expire an already-published lease, rather than racing a 100 ms startup
+    // budget against other workspace tests and filesystem/crypto scheduling.
+    manager
+        .running
+        .as_ref()
+        .unwrap()
+        .deadline
+        .send_replace(Some(Instant::now()));
+    let summary = time::timeout(Duration::from_secs(3), task)
         .await
         .unwrap()
         .unwrap();
+    assert_eq!(summary.sampled, 0);
     assert!(manager.prober().live_status(true, 0, 1).is_err());
     manager.withdraw(super::super::Reason::ShuttingDown).await;
 }

@@ -86,6 +86,30 @@ DDL 在 `apps/controller/src/store/latency_history/schema.sql`，`upgrade` 是�
 不会从 API 在运行服务建表。协调者应把它并入统一最终 schema version。现有 runtime begin
 仅增加调用 `begin_epoch` 的最小接点，lease 成功与记录 epoch-start 在同一事务。
 
+### 并行交付整合（只读核对 `56da5ad`）
+
+- P2a 的 managed materials 已占用 schema v10；此切片不申请 v10，DDL 留给统一后续迁移。
+- P2a 的 `probe.rs` publication / weak Runtime / deadline / Phase fence，以及
+  `session::describe` / Runtime 原子 probe proof 接口未变。`history_source` 小 hook 可沿用。
+  新的 NodeConnections materials 属于完整快照与 digest；不可拆出来重新拼接旧 intent。
+- `reconcile_dataplane` 从 coherent payload 提取同一份 connections，随后保存 Manager snapshot；
+  采样 context 使用该 snapshot 的 revision/digest，publication 撤回后整体取消。
+- Agent 新增 `transport-runtime`，managed 不再隐式带 lab CLI；采样模块仍只挂在
+  managed-connections，不新增 lab CLI 或本地配置入口，整合时由协调者重生成全部消费者。
+- **启动 hook 的调用方必须在 R1 heartbeat 告知更高 revision 时立即 abort 已持有的 sampler
+  handle**，与旧 dataplane/DNS 撤回一同执行；然后等待新 coherent bundle 与 Applied report。
+  不能等旧 HTTP 请求结束或等下一采样周期。即使邻接 Runtime 暂时仍在，旧 revision/digest
+  的 queued event 也不应再发。Controller 的 current revision/digest 校验是第二道 fence。
+
+与 `feat/sidebar-07:apps/web/docs/console-design.md` §6.6 的交接映射：唯一 ID 为
+`sample.measurement_id`；横轴 `sample.measured_at`，迟到信息 `received_at`；方向由
+`source_node_id → sample.peer_node_id` 与 `sample.direction` 表达；carrier/epoch/revision 对应
+`channel_associations/runtime_epoch/revision/digest/sampler_generation`。
+此 endpoint 的方法由契约固定为 authenticated-neighbor nonce，生产 producer 为定期 runner；
+首版不提供“检测一次”命令或完整路径，不应提前显示操作按钮。缺口原因未持久化，按未知
+未采样/未上报表达，不能伪报历史离线原因。承载变化可由相邻成功 proof 的分段键变化标注，
+单个 failed/timeout 不能推导真实 disconnect/reconnect 生命周期事件。
+
 ## 验证入口
 
 使用独立 target，避免并行 feature 构建替换 Agent CLI：
