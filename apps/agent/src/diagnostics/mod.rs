@@ -33,6 +33,8 @@ struct Current {
     prober: Option<Prober>,
     dns: Option<meshway_agent_dns::Guard>,
 }
+#[cfg(test)]
+mod dns_tests;
 impl meshway_agent_diagnostics::Provider for Current {
     fn live_status(&self, peers: bool, offset: u32, limit: u32) -> Result<LiveStatus, ProbeError> {
         let value = self

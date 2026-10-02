@@ -17,7 +17,6 @@ hickory-proto = { version = "=0.26.3", default-features = false, features = ["st
 [dev-dependencies]
 tempfile.workspace = true
 rustix = { workspace = true, features = ["net"] }
-meshway-agent-dns = { path = "../agent-dns" }
 
 [lints]
 workspace = true
