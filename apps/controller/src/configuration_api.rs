@@ -23,7 +23,7 @@ pub(crate) fn routes() -> OpenApiRouter<AppState> {
         .layer(DefaultBodyLimit::max(512 * 1024))
 }
 
-#[utoipa::path(get, path = "/api/v1/networks/{network_id}/policy", operation_id = "getPolicy", security(("adminBearer" = [])),
+#[utoipa::path(get, path = "/api/v1/networks/{network_id}/policy", operation_id = "getPolicy", security(("managementBearer" = [])),
     params(("network_id" = String, Path, description = "Stable network ID")),
     responses((status = 200, description = "Saved source policy and current diagnostics", body = PolicySnapshot),
     (status = 404, description = "Network not found", body = ErrorResponse),
@@ -36,15 +36,16 @@ async fn get_policy(
 ) -> Result<Json<PolicySnapshot>, Error> {
     let token = bearer(&headers)?;
     state
-        .access(move |store| {
-            store.authorize_admin(&token)?;
-            let network_id = store.network_id(&network_id)?;
-            store.policy(&network_id).map(Json)
-        })
+        .network_access(
+            token,
+            network_id,
+            crate::accounts::NetworkPermission::Read,
+            move |store, network_id| store.policy(network_id).map(Json),
+        )
         .await
 }
 
-#[utoipa::path(post, path = "/api/v1/networks/{network_id}/policy/preview", operation_id = "previewPolicy", security(("adminBearer" = [])), request_body = PreviewPolicyRequest,
+#[utoipa::path(post, path = "/api/v1/networks/{network_id}/policy/preview", operation_id = "previewPolicy", security(("managementBearer" = [])), request_body = PreviewPolicyRequest,
     params(("network_id" = String, Path, description = "Stable network ID")),
     responses((status = 200, description = "Pure preview; no persistence", body = PreviewPolicyResponse),
     (status = 404, description = "Network not found", body = ErrorResponse),
@@ -62,15 +63,16 @@ async fn preview_policy(
     let token = bearer(&headers)?;
     let request = json(body)?;
     state
-        .access(move |store| {
-            store.authorize_admin(&token)?;
-            let network_id = store.network_id(&network_id)?;
-            store.preview(&network_id, &request).map(Json)
-        })
+        .network_access(
+            token,
+            network_id,
+            crate::accounts::NetworkPermission::Read,
+            move |store, network_id| store.preview(network_id, &request).map(Json),
+        )
         .await
 }
 
-#[utoipa::path(post, path = "/api/v1/networks/{network_id}/policy/save", operation_id = "savePolicy", security(("adminBearer" = [])), request_body = SavePolicyRequest,
+#[utoipa::path(post, path = "/api/v1/networks/{network_id}/policy/save", operation_id = "savePolicy", security(("managementBearer" = [])), request_body = SavePolicyRequest,
     params(("network_id" = String, Path, description = "Stable network ID")),
     responses((status = 200, description = "Canonical conditional policy save", body = PolicySnapshot),
     (status = 404, description = "Network not found", body = ErrorResponse),
@@ -90,15 +92,16 @@ async fn save_policy(
     let token = bearer(&headers)?;
     let request = json(body)?;
     state
-        .access(move |store| {
-            store.authorize_admin(&token)?;
-            let network_id = store.network_id(&network_id)?;
-            store.save_policy(&network_id, &request).map(Json)
-        })
+        .network_access(
+            token,
+            network_id,
+            crate::accounts::NetworkPermission::Manage,
+            move |store, network_id| store.save_policy(network_id, &request).map(Json),
+        )
         .await
 }
 
-#[utoipa::path(post, path = "/api/v1/networks/{network_id}/nodes/country", operation_id = "setNodeCountry", security(("adminBearer" = [])), request_body = SetNodeCountryRequest,
+#[utoipa::path(post, path = "/api/v1/networks/{network_id}/nodes/country", operation_id = "setNodeCountry", security(("managementBearer" = [])), request_body = SetNodeCountryRequest,
     params(("network_id" = String, Path, description = "Stable network ID")),
     responses((status = 200, description = "Normalized administrator-managed country metadata", body = RevokeNodeResponse),
     (status = 400, description = "Country must be two ASCII letters or null", body = ErrorResponse),
@@ -118,13 +121,16 @@ async fn set_node_country(
     let token = bearer(&headers)?;
     let request = json(body)?;
     state
-        .access(move |store| {
-            store.authorize_admin(&token)?;
-            let network_id = store.network_id(&network_id)?;
-            Ok(Json(RevokeNodeResponse {
-                node: store.set_country(&network_id, &request)?,
-            }))
-        })
+        .network_access(
+            token,
+            network_id,
+            crate::accounts::NetworkPermission::Manage,
+            move |store, network_id| {
+                Ok(Json(RevokeNodeResponse {
+                    node: store.set_country(network_id, &request)?,
+                }))
+            },
+        )
         .await
 }
 

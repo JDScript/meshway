@@ -2,15 +2,20 @@ use std::{fs::File, path::Path, time::Duration};
 
 use chrono::{DateTime, Utc};
 use meshway_protocol::{
-    AuthorizeDeviceRequest, AuthorizeDeviceResponse, CreateEnrollmentTokenResponse,
-    EnrollAgentRequest, ExchangeDeviceRequest, NodeSummary,
+    AuthorizeDeviceRequest, CreateEnrollmentTokenResponse, EnrollAgentRequest,
+    ExchangeDeviceRequest, NodeSummary,
     local::{self, digest},
 };
 use rusqlite::{Connection, OptionalExtension, Row, TransactionBehavior, params};
 
 use crate::Error;
+#[cfg(test)]
+use meshway_protocol::AuthorizeDeviceResponse;
 
 mod access;
+mod account_authorization;
+mod account_operations;
+mod account_schema;
 mod configuration;
 mod connection_runtime;
 mod connections;
@@ -20,7 +25,8 @@ mod jsonc;
 mod managed_transports;
 mod network;
 mod networks;
-use networks::NetworkId;
+mod ownership;
+pub(crate) use networks::NetworkId;
 mod tags;
 #[cfg(test)]
 mod test_store;
@@ -228,6 +234,7 @@ impl Store {
         self.enroll_bound(&network, token, request, None)
     }
 
+    #[cfg(test)] // Legacy PKCE fixtures; human admission uses user-owned service.
     pub fn authorize_device(
         &self,
         network: &NetworkId,
@@ -271,9 +278,10 @@ impl Store {
         let binding = digest(
             &serde_json::to_string(request).map_err(|_| Error::Invalid("invalid enrollment"))?,
         );
-        let transaction = self
-            .connection
-            .transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let transaction = account_authorization::transaction(
+            &mut self.connection,
+            TransactionBehavior::Immediate,
+        )?;
         let record = transaction.query_row(
             "SELECT expires_at, used_node_id, binding_hash, device_binding FROM enrollment_tokens WHERE token_hash = ?1 AND network_id=?2",
             params![digest(token),network.as_str()],
@@ -284,6 +292,7 @@ impl Store {
             (Some(stored), Some(proposed)) if constant_eq(&digest(stored), &digest(proposed)) => {}
             _ => return Err(Error::Unauthorized),
         }
+        let account_binding = ownership::binding(&transaction, network, token)?;
         if let Some(node_id) = record.1 {
             if !record
                 .2
@@ -296,6 +305,9 @@ impl Store {
             if node.revoked_at.is_some() {
                 return Err(Error::Forbidden);
             }
+            if let Some(binding) = &account_binding {
+                ownership::retry(&transaction, binding, &node_id)?;
+            }
             // Expiry limits the first consumption. A bound retry never creates
             // a node or changes authorization, even after that TTL has elapsed.
             return Ok(node);
@@ -304,6 +316,16 @@ impl Store {
         if record.0 <= now.timestamp_millis() {
             return Err(Error::Unauthorized);
         }
+        let owner = account_binding
+            .as_ref()
+            .map(|binding| {
+                crate::accounts::Accounts::new(&transaction).revalidate_device(
+                    binding,
+                    network,
+                    now.timestamp(),
+                )
+            })
+            .transpose()?;
         let credential_hash = digest(&request.node_credential);
         let duplicate = networks::credential_bound(&transaction, &credential_hash)?;
         if duplicate {
@@ -320,6 +342,9 @@ impl Store {
             params![id, binding, digest(token), network.as_str()],
         )?;
         managed_transports::enroll_initial(&transaction, network, token, &id, &self.material_key)?;
+        if let Some(owner) = owner {
+            ownership::assign(&transaction, network, &id, &owner.owner().id)?;
+        }
         configuration::bump(&transaction, network)?;
         configuration::ensure_publishable(&transaction, network)?;
         connections::ensure_publishable(&transaction, network)?;
@@ -332,9 +357,10 @@ impl Store {
 
     pub fn heartbeat(&mut self, token: &str, version: &str) -> Result<NodeSummary, Error> {
         let network = self.node_network(token)?;
-        let transaction = self
-            .connection
-            .transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let transaction = account_authorization::transaction(
+            &mut self.connection,
+            TransactionBehavior::Immediate,
+        )?;
         let id: String = transaction
             .query_row(
                 "SELECT id FROM nodes WHERE credential_hash = ?1 AND network_id=?2",
@@ -356,9 +382,10 @@ impl Store {
     }
 
     pub fn revoke(&mut self, network: &NetworkId, id: &str) -> Result<NodeSummary, Error> {
-        let transaction = self
-            .connection
-            .transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let transaction = account_authorization::transaction(
+            &mut self.connection,
+            TransactionBehavior::Immediate,
+        )?;
         let current = find_node(&transaction, network, id)?;
         transaction.execute(
             "UPDATE nodes SET revoked_at = ?1 WHERE id = ?2 AND revoked_at IS NULL AND network_id=?3",

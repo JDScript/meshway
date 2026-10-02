@@ -2,7 +2,75 @@
 
 import * as z from "zod";
 
+export const zAcceptInvitationRequest = z.strictObject({
+  "invitation_token": z.string().refine(value => [...value].length >= 68, "minLength 68 Unicode code points").refine(value => [...value].length <= 68, "maxLength 68 Unicode code points").regex(new RegExp("^mwi_[0-9a-f]{64}$", "u"))
+});
+
 export const zAccessAction = z.enum(["allow","reject"]);
+
+export const zAccountRole = z.enum(["owner","admin","member"]);
+
+export const zAccountInvitation = z.strictObject({
+  "consumed_at": z.int().nullable(),
+  "consumed_by": z.string().nullable(),
+  "email": z.string(),
+  "expires_at": z.int(),
+  "invitation_id": z.string(),
+  "issuer_user_id": z.string().nullable(),
+  "network_id": z.string(),
+  "revoked_at": z.int().nullable(),
+  "role": zAccountRole
+});
+
+export const zAccountInvitations = z.strictObject({
+  "invitations": z.array(zAccountInvitation)
+});
+
+export const zAccountMembership = z.strictObject({
+  "membership_id": z.string(),
+  "network_id": z.string(),
+  "role": zAccountRole,
+  "user_id": z.string()
+});
+
+export const zAccountUser = z.strictObject({
+  "email": z.string(),
+  "email_verified": z.boolean(),
+  "user_id": z.string()
+});
+
+export const zAccountMember = z.strictObject({
+  "membership": zAccountMembership,
+  "user": zAccountUser
+});
+
+export const zAccountMembers = z.strictObject({
+  "members": z.array(zAccountMember)
+});
+
+export const zAccountMembershipChange = z.enum(["owner","admin","member","remove"]);
+
+export const zAccountPasswordReset = z.strictObject({
+  "consumed_at": z.int().nullable(),
+  "credential_current": z.boolean(),
+  "expires_at": z.int(),
+  "reset_id": z.string(),
+  "revoked_at": z.int().nullable(),
+  "user_id": z.string()
+});
+
+export const zAccountPasswordResets = z.strictObject({
+  "resets": z.array(zAccountPasswordReset)
+});
+
+export const zAccountReceipt = z.strictObject({
+  "saved": z.boolean()
+});
+
+export const zAccountSession = z.strictObject({
+  "memberships": z.array(zAccountMembership),
+  "user": zAccountUser
+});
 
 export const zAcknowledgeAgentConnectionsRequest = z.strictObject({
   "digest": z.string().refine(value => [...value].length >= 64, "minLength 64 Unicode code points").refine(value => [...value].length <= 64, "maxLength 64 Unicode code points").regex(new RegExp("^[0-9a-f]{64}$", "u")),
@@ -293,6 +361,25 @@ export const zBeginConnectionRuntimeResponse = z.strictObject({
   "epoch": z.int().gte(1).lte(4294967295)
 });
 
+export const zChangePasswordRequest = z.strictObject({
+  "current_password": z.string(),
+  "new_password": z.string()
+});
+
+export const zClaimNodeOwnershipRequest = z.strictObject({
+  "membership_id": z.string(),
+  "node_id": z.string()
+});
+
+export const zClaimOwnerKind = z.enum(["new_account","existing_account"]);
+
+export const zClaimOwnerRequest = z.strictObject({
+  "email": z.string().nullable().optional(),
+  "kind": zClaimOwnerKind,
+  "password": z.string().nullable().optional(),
+  "session_token": z.string().nullable().optional()
+});
+
 export const zConfigurationSnapshot = z.strictObject({
   "digest": z.string().refine(value => [...value].length >= 64, "minLength 64 Unicode code points").refine(value => [...value].length <= 64, "maxLength 64 Unicode code points").regex(new RegExp("^[0-9a-f]{64}$", "u")),
   "payload": zNodeConfiguration
@@ -385,6 +472,17 @@ export const zCreateEnrollmentTokenResponse = z.strictObject({
   "token_id": z.string()
 });
 
+export const zCreateInvitationRequest = z.strictObject({
+  "email": z.string(),
+  "expires_in_seconds": z.int().gte(0),
+  "role": zAccountRole
+});
+
+export const zCreateInvitationResponse = z.strictObject({
+  "invitation": zAccountInvitation,
+  "invitation_token": z.string().refine(value => [...value].length >= 68, "minLength 68 Unicode code points").refine(value => [...value].length <= 68, "maxLength 68 Unicode code points").regex(new RegExp("^mwi_[0-9a-f]{64}$", "u"))
+});
+
 export const zManagedListenerSettings = z.strictObject({
   "advertised_endpoints": z.array(zConnectionEndpoint).max(16),
   "bind_address": z.string(),
@@ -403,6 +501,16 @@ export const zCreateManagedEnrollmentTokenRequest = z.strictObject({
 
 export const zCreateNetworkRequest = z.strictObject({
   "name": z.string().refine(value => [...value].length >= 1, "minLength 1 Unicode code points").refine(value => [...value].length <= 128, "maxLength 128 Unicode code points").regex(new RegExp("[^\\u0009-\\u000D\\u0020\\u0085\\u00A0\\u1680\\u2000-\\u200A\\u2028\\u2029\\u202F\\u205F\\u3000]", "u"))
+});
+
+export const zCreatePasswordResetRequest = z.strictObject({
+  "expires_in_seconds": z.int().gte(0),
+  "user_id": z.string()
+});
+
+export const zCreatePasswordResetResponse = z.strictObject({
+  "reset": zAccountPasswordReset,
+  "reset_token": z.string().refine(value => [...value].length >= 68, "minLength 68 Unicode code points").refine(value => [...value].length <= 68, "maxLength 68 Unicode code points").regex(new RegExp("^mwr_[0-9a-f]{64}$", "u"))
 });
 
 export const zStunDiscoveryOutcome = z.enum(["mapped","timeout","invalid_response","io_error","stun_error"]);
@@ -493,6 +601,16 @@ export const zHeartbeatRequest = z.strictObject({
   "agent_version": z.string().refine(value => [...value].length >= 1, "minLength 1 Unicode code points").refine(value => [...value].length <= 64, "maxLength 64 Unicode code points").regex(new RegExp("[^\\u0009-\\u000D\\u0020\\u0085\\u00A0\\u1680\\u2000-\\u200A\\u2028\\u2029\\u202F\\u205F\\u3000]", "u"))
 });
 
+export const zLoginRequest = z.strictObject({
+  "email": z.string().refine(value => [...value].length >= 3, "minLength 3 Unicode code points").refine(value => [...value].length <= 254, "maxLength 254 Unicode code points"),
+  "password": z.string().refine(value => [...value].length <= 1024, "maxLength 1024 Unicode code points")
+});
+
+export const zLoginResponse = z.strictObject({
+  "expires_at": z.int(),
+  "session_token": z.string().refine(value => [...value].length >= 68, "minLength 68 Unicode code points").refine(value => [...value].length <= 68, "maxLength 68 Unicode code points").regex(new RegExp("^mws_[0-9a-f]{64}$", "u"))
+});
+
 export const zManagedListenerSummary = z.strictObject({
   "certificate_sha256": z.string().nullable(),
   "compiled_capability_available": z.boolean(),
@@ -540,6 +658,16 @@ export const zNetworkList = z.strictObject({
 
 export const zNodeList = z.strictObject({
   "nodes": z.array(zNodeSummary)
+});
+
+export const zNodeOwnership = z.strictObject({
+  "membership_id": z.string().nullable(),
+  "network_id": z.string(),
+  "node_id": z.string()
+});
+
+export const zNodeOwnershipList = z.strictObject({
+  "nodes": z.array(zNodeOwnership)
 });
 
 export const zNodeTagAssignment = z.strictObject({
@@ -619,6 +747,17 @@ export const zPublishManagedTransportCapabilitiesResponse = z.strictObject({
   "revision": z.int().gte(1).lte(4294967295)
 });
 
+export const zRedeemPasswordResetRequest = z.strictObject({
+  "new_password": z.string(),
+  "reset_token": z.string().refine(value => [...value].length >= 68, "minLength 68 Unicode code points").refine(value => [...value].length <= 68, "maxLength 68 Unicode code points").regex(new RegExp("^mwr_[0-9a-f]{64}$", "u"))
+});
+
+export const zRegisterInvitationRequest = z.strictObject({
+  "email": z.string(),
+  "invitation_token": z.string().refine(value => [...value].length >= 68, "minLength 68 Unicode code points").refine(value => [...value].length <= 68, "maxLength 68 Unicode code points").regex(new RegExp("^mwi_[0-9a-f]{64}$", "u")),
+  "password": z.string()
+});
+
 export const zReportConnectionRuntimeRequest = z.strictObject({
   "digest": z.string().refine(value => [...value].length >= 64, "minLength 64 Unicode code points").refine(value => [...value].length <= 64, "maxLength 64 Unicode code points").regex(new RegExp("^[0-9a-f]{64}$", "u")),
   "epoch": z.int().gte(1).lte(4294967295),
@@ -651,12 +790,24 @@ export const zReportEndpointDiscoveryResponse = z.strictObject({
   "sequence": z.int().gte(1).lte(4294967295)
 });
 
+export const zRevokeAccountSessionsRequest = z.strictObject({
+  "user_id": z.string()
+});
+
+export const zRevokeInvitationRequest = z.strictObject({
+  "invitation_id": z.string()
+});
+
 export const zRevokeNodeRequest = z.strictObject({
   "node_id": z.string().refine(value => [...value].length >= 1, "minLength 1 Unicode code points").refine(value => [...value].length <= 128, "maxLength 128 Unicode code points")
 });
 
 export const zRevokeNodeResponse = z.strictObject({
   "node": zNodeSummary
+});
+
+export const zRevokePasswordResetRequest = z.strictObject({
+  "reset_id": z.string()
 });
 
 export const zSaveConnectionsRequest = z.strictObject({
@@ -667,6 +818,11 @@ export const zSaveConnectionsRequest = z.strictObject({
 export const zSaveManagedListenerRequest = z.strictObject({
   "expected_revision": z.int().gte(1).lte(4294967295),
   "settings": zManagedListenerSettings
+});
+
+export const zSaveMembershipRequest = z.strictObject({
+  "role": zAccountMembershipChange,
+  "user_id": z.string()
 });
 
 export const zSaveMeshAccessRequest = z.strictObject({

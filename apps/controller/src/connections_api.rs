@@ -51,7 +51,7 @@ async fn publish_connection_identity(
         .await
 }
 
-#[utoipa::path(get, path = "/api/v1/networks/{network_id}/connections", operation_id = "getConnections", security(("adminBearer" = [])),
+#[utoipa::path(get, path = "/api/v1/networks/{network_id}/connections", operation_id = "getConnections", security(("managementBearer" = [])),
     params(("network_id" = String, Path, description = "Stable network ID")),
     responses((status = 200, description = "Source connection plan, validity and inventory with independent saved-only receipts", body = ConnectionsSnapshot),
     (status = 404, description = "Network not found", body = ErrorResponse),
@@ -64,15 +64,16 @@ async fn get_connections(
 ) -> Result<Json<ConnectionsSnapshot>, Error> {
     let token = bearer(&headers)?;
     state
-        .access(move |store| {
-            store.authorize_admin(&token)?;
-            let network_id = store.network_id(&network_id)?;
-            store.connections(&network_id).map(Json)
-        })
+        .network_access(
+            token,
+            network_id,
+            crate::accounts::NetworkPermission::Read,
+            move |store, network_id| store.connections(network_id).map(Json),
+        )
         .await
 }
 
-#[utoipa::path(post, path = "/api/v1/networks/{network_id}/connections", operation_id = "saveConnections", security(("adminBearer" = [])), request_body = SaveConnectionsRequest,
+#[utoipa::path(post, path = "/api/v1/networks/{network_id}/connections", operation_id = "saveConnections", security(("managementBearer" = [])), request_body = SaveConnectionsRequest,
     params(("network_id" = String, Path, description = "Stable network ID")),
     responses((status = 200, description = "Canonical global-CAS connection intent save; no runtime activation or transit/exit grant", body = ConnectionsSnapshot),
     (status = 404, description = "Network not found", body = ErrorResponse),
@@ -92,11 +93,12 @@ async fn save_connections(
     let token = bearer(&headers)?;
     let request = json(body)?;
     state
-        .access(move |store| {
-            store.authorize_admin(&token)?;
-            let network_id = store.network_id(&network_id)?;
-            store.save_connections(&network_id, &request).map(Json)
-        })
+        .network_access(
+            token,
+            network_id,
+            crate::accounts::NetworkPermission::Manage,
+            move |store, network_id| store.save_connections(network_id, &request).map(Json),
+        )
         .await
 }
 

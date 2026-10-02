@@ -51,17 +51,20 @@ fn hash(password: &Password) -> Result<HashedPassword> {
 
 impl PasswordWorker {
     /// Initialize once at controller startup, outside its database lock.
+    #[cfg(test)]
     pub(crate) async fn new(max_parallel: usize) -> Result<Self> {
+        tokio::task::spawn_blocking(move || Self::new_blocking(max_parallel))
+            .await
+            .map_err(|_| AccountError::Worker)?
+    }
+
+    pub(crate) fn new_blocking(max_parallel: usize) -> Result<Self> {
         if !(1..=8).contains(&max_parallel) {
             return Err(AccountError::Invalid);
         }
-        let dummy = tokio::task::spawn_blocking(|| {
-            hash(&Password::new(
-                meshway_protocol::local::credential().map_err(|_| AccountError::Worker)?,
-            )?)
-        })
-        .await
-        .map_err(|_| AccountError::Worker)??;
+        let dummy = hash(&Password::new(
+            meshway_protocol::local::credential().map_err(|_| AccountError::Worker)?,
+        )?)?;
         Ok(Self {
             budget: Arc::new(Semaphore::new(max_parallel)),
             dummy: Arc::new(dummy.0),

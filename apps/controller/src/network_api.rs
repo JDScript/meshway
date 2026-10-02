@@ -19,7 +19,7 @@ pub(crate) fn routes() -> OpenApiRouter<AppState> {
         .layer(DefaultBodyLimit::max(8192))
 }
 
-#[utoipa::path(get, path = "/api/v1/networks/{network_id}/network", operation_id = "getNetwork", security(("adminBearer" = [])),
+#[utoipa::path(get, path = "/api/v1/networks/{network_id}/network", operation_id = "getNetwork", security(("managementBearer" = [])),
     params(("network_id" = String, Path, description = "Stable network ID")),
     responses((status = 200, description = "Selected network saved identity, immutable pools and authoritative node DNS intent", body = NetworkSnapshot),
     (status = 404, description = "Network not found", body = ErrorResponse),
@@ -32,15 +32,16 @@ async fn get_network(
 ) -> Result<Json<NetworkSnapshot>, Error> {
     let token = bearer(&headers)?;
     state
-        .access(move |store| {
-            store.authorize_admin(&token)?;
-            let network_id = store.network_id(&network_id)?;
-            store.network(&network_id).map(Json)
-        })
+        .network_access(
+            token,
+            network_id,
+            crate::accounts::NetworkPermission::Read,
+            move |store, network_id| store.network(network_id).map(Json),
+        )
         .await
 }
 
-#[utoipa::path(post, path = "/api/v1/networks/{network_id}/network", operation_id = "saveNetwork", security(("adminBearer" = [])), request_body = SaveNetworkRequest,
+#[utoipa::path(post, path = "/api/v1/networks/{network_id}/network", operation_id = "saveNetwork", security(("managementBearer" = [])), request_body = SaveNetworkRequest,
     params(("network_id" = String, Path, description = "Stable network ID")),
     responses((status = 200, description = "Saved network intent; not an Agent DNS application receipt", body = NetworkSnapshot),
     (status = 404, description = "Network not found", body = ErrorResponse),
@@ -60,11 +61,12 @@ async fn save_network(
     let token = bearer(&headers)?;
     let request = json(body)?;
     state
-        .access(move |store| {
-            store.authorize_admin(&token)?;
-            let network_id = store.network_id(&network_id)?;
-            store.save_network(&network_id, &request).map(Json)
-        })
+        .network_access(
+            token,
+            network_id,
+            crate::accounts::NetworkPermission::Manage,
+            move |store, network_id| store.save_network(network_id, &request).map(Json),
+        )
         .await
 }
 
@@ -84,7 +86,7 @@ async fn get_agent_dns(
         .await
 }
 
-#[utoipa::path(get, path = "/api/v1/networks", operation_id = "listNetworks", security(("adminBearer" = [])),
+#[utoipa::path(get, path = "/api/v1/networks", operation_id = "listNetworks", security(("managementBearer" = [])),
     responses((status = 200, description = "Networks in creation order, original network first", body = NetworkList),
     (status = 401, description = "Admin credential required", body = ErrorResponse),
     (status = 500, description = "Storage unavailable", body = ErrorResponse)))]
@@ -94,10 +96,7 @@ async fn list_networks(
 ) -> Result<Json<NetworkList>, Error> {
     let token = bearer(&headers)?;
     state
-        .access(move |store| {
-            store.authorize_admin(&token)?;
-            store.networks().map(Json)
-        })
+        .access(move |store| store.authorized_networks(&token).map(Json))
         .await
 }
 

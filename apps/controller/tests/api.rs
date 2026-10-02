@@ -12,6 +12,8 @@ use tower::ServiceExt;
 
 #[path = "api/access.rs"]
 mod access;
+#[path = "api/accounts.rs"]
+mod accounts;
 #[path = "api/connection_runtime.rs"]
 mod connection_runtime;
 #[path = "api/device_login.rs"]
@@ -62,6 +64,44 @@ impl Fixture {
         .await;
         assert_eq!(status, StatusCode::OK);
         serde_json::from_value(body).unwrap()
+    }
+
+    async fn user_for(&self, id: &str) -> String {
+        let email = format!("{id}@fixture.test");
+        let (status, body) = request(
+            &self.app,
+            "POST",
+            &format!("/api/v1/networks/{id}/owner-claim"),
+            Some(&self.admin),
+            Some(json!({"kind":"new_account","email":email,"password":"fixture password secret"})),
+        )
+        .await;
+        assert!(
+            status == StatusCode::OK || status == StatusCode::CONFLICT,
+            "{body}"
+        );
+        let (status, body) = request(
+            &self.app,
+            "POST",
+            "/api/v1/auth/login",
+            None,
+            Some(json!({"email":email,"password":"fixture password secret"})),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        body["session_token"].as_str().unwrap().into()
+    }
+    async fn original_user(&self) -> String {
+        let (_, networks) = request(
+            &self.app,
+            "GET",
+            "/api/v1/networks",
+            Some(&self.admin),
+            None,
+        )
+        .await;
+        self.user_for(networks["networks"][0]["network_id"].as_str().unwrap())
+            .await
     }
 }
 

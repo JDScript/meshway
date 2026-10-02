@@ -4,7 +4,75 @@ export type ClientOptions = {
     baseUrl: `${string}://${string}` | (string & {});
 };
 
+export type AcceptInvitationRequest = {
+    invitation_token: string;
+};
+
 export type AccessAction = 'allow' | 'reject';
+
+export type AccountInvitation = {
+    consumed_at: number | null;
+    consumed_by: string | null;
+    email: string;
+    expires_at: number;
+    invitation_id: string;
+    issuer_user_id: string | null;
+    network_id: string;
+    revoked_at: number | null;
+    role: AccountRole;
+};
+
+export type AccountInvitations = {
+    invitations: Array<AccountInvitation>;
+};
+
+export type AccountMember = {
+    membership: AccountMembership;
+    user: AccountUser;
+};
+
+export type AccountMembers = {
+    members: Array<AccountMember>;
+};
+
+export type AccountMembership = {
+    membership_id: string;
+    network_id: string;
+    role: AccountRole;
+    user_id: string;
+};
+
+export type AccountMembershipChange = 'owner' | 'admin' | 'member' | 'remove';
+
+export type AccountPasswordReset = {
+    consumed_at: number | null;
+    credential_current: boolean;
+    expires_at: number;
+    reset_id: string;
+    revoked_at: number | null;
+    user_id: string;
+};
+
+export type AccountPasswordResets = {
+    resets: Array<AccountPasswordReset>;
+};
+
+export type AccountReceipt = {
+    saved: boolean;
+};
+
+export type AccountRole = 'owner' | 'admin' | 'member';
+
+export type AccountSession = {
+    memberships: Array<AccountMembership>;
+    user: AccountUser;
+};
+
+export type AccountUser = {
+    email: string;
+    email_verified: boolean;
+    user_id: string;
+};
 
 export type AcknowledgeAgentConnectionsRequest = {
     digest: string;
@@ -85,6 +153,28 @@ export type BeginConnectionRuntimeRequest = {
 
 export type BeginConnectionRuntimeResponse = {
     epoch: number;
+};
+
+export type ChangePasswordRequest = {
+    current_password: string;
+    new_password: string;
+};
+
+export type ClaimNodeOwnershipRequest = {
+    membership_id: string;
+    node_id: string;
+};
+
+export type ClaimOwnerKind = 'new_account' | 'existing_account';
+
+/**
+ * Bootstrap proof comes from adminBearer; existing accounts must prove their own session.
+ */
+export type ClaimOwnerRequest = {
+    email?: string | null;
+    kind: ClaimOwnerKind;
+    password?: string | null;
+    session_token?: string | null;
 };
 
 export type ConfigurationSnapshot = {
@@ -232,6 +322,17 @@ export type CreateEnrollmentTokenResponse = {
     token_id: string;
 };
 
+export type CreateInvitationRequest = {
+    email: string;
+    expires_in_seconds: number;
+    role: AccountRole;
+};
+
+export type CreateInvitationResponse = {
+    invitation: AccountInvitation;
+    invitation_token: string;
+};
+
 export type CreateManagedEnrollmentTokenRequest = {
     expires_in_seconds: number;
     /**
@@ -242,6 +343,16 @@ export type CreateManagedEnrollmentTokenRequest = {
 
 export type CreateNetworkRequest = {
     name: string;
+};
+
+export type CreatePasswordResetRequest = {
+    expires_in_seconds: number;
+    user_id: string;
+};
+
+export type CreatePasswordResetResponse = {
+    reset: AccountPasswordReset;
+    reset_token: string;
 };
 
 export type DefaultRouteAction = 'direct' | 'reject';
@@ -326,6 +437,23 @@ export type IncomingConnectionApproval = {
     listener_id: string;
     peer_node_id: string;
     transport: ConnectionTransport;
+};
+
+export type LoginRequest = {
+    email: string;
+    /**
+     * Controller enforces 12–1024 UTF-8 bytes. JSON Schema string lengths count
+     * Unicode code points, so a byte minimum must not be emitted as minLength.
+     */
+    password: string;
+};
+
+/**
+ * Returned only after durable session commit; the Web server keeps it private.
+ */
+export type LoginResponse = {
+    expires_at: number;
+    session_token: string;
 };
 
 export type ManagedListenerSettings = {
@@ -535,6 +663,19 @@ export type NodeList = {
     nodes: Array<NodeSummary>;
 };
 
+export type NodeOwnership = {
+    /**
+     * Null means legacy-unassigned; tags remain ordinary node attributes.
+     */
+    membership_id: string | null;
+    network_id: string;
+    node_id: string;
+};
+
+export type NodeOwnershipList = {
+    nodes: Array<NodeOwnership>;
+};
+
 /**
  * Durable control-plane identity. Last contact is not tunnel health.
  */
@@ -635,6 +776,17 @@ export type PublishManagedTransportCapabilitiesResponse = {
     revision: number;
 };
 
+export type RedeemPasswordResetRequest = {
+    new_password: string;
+    reset_token: string;
+};
+
+export type RegisterInvitationRequest = {
+    email: string;
+    invitation_token: string;
+    password: string;
+};
+
 export type ReportConnectionRuntimeRequest = {
     digest: string;
     epoch: number;
@@ -673,12 +825,24 @@ export type ReportEndpointDiscoveryResponse = {
     sequence: number;
 };
 
+export type RevokeAccountSessionsRequest = {
+    user_id: string;
+};
+
+export type RevokeInvitationRequest = {
+    invitation_id: string;
+};
+
 export type RevokeNodeRequest = {
     node_id: string;
 };
 
 export type RevokeNodeResponse = {
     node: NodeSummary;
+};
+
+export type RevokePasswordResetRequest = {
+    reset_id: string;
 };
 
 export type RouteAction = {
@@ -720,6 +884,11 @@ export type SaveConnectionsRequest = {
 export type SaveManagedListenerRequest = {
     expected_revision: number;
     settings: ManagedListenerSettings;
+};
+
+export type SaveMembershipRequest = {
+    role: AccountMembershipChange;
+    user_id: string;
 };
 
 export type SaveMeshAccessRequest = {
@@ -1517,6 +1686,295 @@ export type HeartbeatAgentResponses = {
 
 export type HeartbeatAgentResponse = HeartbeatAgentResponses[keyof HeartbeatAgentResponses];
 
+export type AcceptAccountInvitationData = {
+    body: AcceptInvitationRequest;
+    path?: never;
+    query?: never;
+    url: '/api/v1/auth/invitations/accept';
+};
+
+export type AcceptAccountInvitationErrors = {
+    /**
+     * Session or invitation invalid
+     */
+    401: ErrorResponse;
+};
+
+export type AcceptAccountInvitationError = AcceptAccountInvitationErrors[keyof AcceptAccountInvitationErrors];
+
+export type AcceptAccountInvitationResponses = {
+    /**
+     * Membership saved without changing existing password
+     */
+    200: AccountMembership;
+};
+
+export type AcceptAccountInvitationResponse = AcceptAccountInvitationResponses[keyof AcceptAccountInvitationResponses];
+
+export type RegisterInvitedAccountData = {
+    body: RegisterInvitationRequest;
+    path?: never;
+    query?: never;
+    url: '/api/v1/auth/invitations/register';
+};
+
+export type RegisterInvitedAccountErrors = {
+    /**
+     * Invitation invalid
+     */
+    401: ErrorResponse;
+    /**
+     * Authentication budget exhausted
+     */
+    429: ErrorResponse;
+};
+
+export type RegisterInvitedAccountError = RegisterInvitedAccountErrors[keyof RegisterInvitedAccountErrors];
+
+export type RegisterInvitedAccountResponses = {
+    /**
+     * Account and membership saved; login separately
+     */
+    200: AccountMembership;
+};
+
+export type RegisterInvitedAccountResponse = RegisterInvitedAccountResponses[keyof RegisterInvitedAccountResponses];
+
+export type LoginAccountData = {
+    body: LoginRequest;
+    path?: never;
+    query?: never;
+    url: '/api/v1/auth/login';
+};
+
+export type LoginAccountErrors = {
+    /**
+     * Invalid credential
+     */
+    401: ErrorResponse;
+    /**
+     * Authentication budget exhausted
+     */
+    429: ErrorResponse;
+};
+
+export type LoginAccountError = LoginAccountErrors[keyof LoginAccountErrors];
+
+export type LoginAccountResponses = {
+    /**
+     * Private user session, issued after commit
+     */
+    200: LoginResponse;
+};
+
+export type LoginAccountResponse = LoginAccountResponses[keyof LoginAccountResponses];
+
+export type LogoutAccountData = {
+    body?: never;
+    path?: never;
+    query?: never;
+    url: '/api/v1/auth/logout';
+};
+
+export type LogoutAccountErrors = {
+    /**
+     * Session invalid
+     */
+    401: ErrorResponse;
+};
+
+export type LogoutAccountError = LogoutAccountErrors[keyof LogoutAccountErrors];
+
+export type LogoutAccountResponses = {
+    /**
+     * Current session revoked
+     */
+    200: AccountReceipt;
+};
+
+export type LogoutAccountResponse = LogoutAccountResponses[keyof LogoutAccountResponses];
+
+export type ListAccountPasswordResetsData = {
+    body?: never;
+    path?: never;
+    query?: never;
+    url: '/api/v1/auth/password-resets';
+};
+
+export type ListAccountPasswordResetsErrors = {
+    /**
+     * Instance bootstrap required
+     */
+    403: ErrorResponse;
+};
+
+export type ListAccountPasswordResetsError = ListAccountPasswordResetsErrors[keyof ListAccountPasswordResetsErrors];
+
+export type ListAccountPasswordResetsResponses = {
+    /**
+     * Global bootstrap-only reset inventory
+     */
+    200: AccountPasswordResets;
+};
+
+export type ListAccountPasswordResetsResponse = ListAccountPasswordResetsResponses[keyof ListAccountPasswordResetsResponses];
+
+export type CreateAccountPasswordResetData = {
+    body: CreatePasswordResetRequest;
+    path?: never;
+    query?: never;
+    url: '/api/v1/auth/password-resets';
+};
+
+export type CreateAccountPasswordResetErrors = {
+    /**
+     * Instance bootstrap required
+     */
+    403: ErrorResponse;
+};
+
+export type CreateAccountPasswordResetError = CreateAccountPasswordResetErrors[keyof CreateAccountPasswordResetErrors];
+
+export type CreateAccountPasswordResetResponses = {
+    /**
+     * Reset secret returned once after commit
+     */
+    200: CreatePasswordResetResponse;
+};
+
+export type CreateAccountPasswordResetResponse = CreateAccountPasswordResetResponses[keyof CreateAccountPasswordResetResponses];
+
+export type RedeemAccountPasswordResetData = {
+    body: RedeemPasswordResetRequest;
+    path?: never;
+    query?: never;
+    url: '/api/v1/auth/password-resets/redeem';
+};
+
+export type RedeemAccountPasswordResetErrors = {
+    /**
+     * Reset invalid
+     */
+    401: ErrorResponse;
+    /**
+     * Authentication budget exhausted
+     */
+    429: ErrorResponse;
+};
+
+export type RedeemAccountPasswordResetError = RedeemAccountPasswordResetErrors[keyof RedeemAccountPasswordResetErrors];
+
+export type RedeemAccountPasswordResetResponses = {
+    /**
+     * Password replaced; reset consumed and sessions revoked
+     */
+    200: AccountReceipt;
+};
+
+export type RedeemAccountPasswordResetResponse = RedeemAccountPasswordResetResponses[keyof RedeemAccountPasswordResetResponses];
+
+export type RevokeAccountPasswordResetData = {
+    body: RevokePasswordResetRequest;
+    path?: never;
+    query?: never;
+    url: '/api/v1/auth/password-resets/revoke';
+};
+
+export type RevokeAccountPasswordResetErrors = {
+    /**
+     * Instance bootstrap required
+     */
+    403: ErrorResponse;
+};
+
+export type RevokeAccountPasswordResetError = RevokeAccountPasswordResetErrors[keyof RevokeAccountPasswordResetErrors];
+
+export type RevokeAccountPasswordResetResponses = {
+    /**
+     * Reset revoked by public ID
+     */
+    200: AccountReceipt;
+};
+
+export type RevokeAccountPasswordResetResponse = RevokeAccountPasswordResetResponses[keyof RevokeAccountPasswordResetResponses];
+
+export type GetAccountPasswordResetData = {
+    body?: never;
+    path: {
+        reset_id: string;
+    };
+    query?: never;
+    url: '/api/v1/auth/password-resets/{reset_id}';
+};
+
+export type GetAccountPasswordResetErrors = {
+    /**
+     * Instance bootstrap required
+     */
+    403: ErrorResponse;
+};
+
+export type GetAccountPasswordResetError = GetAccountPasswordResetErrors[keyof GetAccountPasswordResetErrors];
+
+export type GetAccountPasswordResetResponses = {
+    /**
+     * Public reset metadata
+     */
+    200: AccountPasswordReset;
+};
+
+export type GetAccountPasswordResetResponse = GetAccountPasswordResetResponses[keyof GetAccountPasswordResetResponses];
+
+export type GetAccountSessionData = {
+    body?: never;
+    path?: never;
+    query?: never;
+    url: '/api/v1/auth/session';
+};
+
+export type GetAccountSessionErrors = {
+    /**
+     * Session invalid
+     */
+    401: ErrorResponse;
+};
+
+export type GetAccountSessionError = GetAccountSessionErrors[keyof GetAccountSessionErrors];
+
+export type GetAccountSessionResponses = {
+    /**
+     * Current user and live network memberships
+     */
+    200: AccountSession;
+};
+
+export type GetAccountSessionResponse = GetAccountSessionResponses[keyof GetAccountSessionResponses];
+
+export type RevokeAccountSessionsData = {
+    body: RevokeAccountSessionsRequest;
+    path?: never;
+    query?: never;
+    url: '/api/v1/auth/sessions/revoke';
+};
+
+export type RevokeAccountSessionsErrors = {
+    /**
+     * Cannot revoke another user
+     */
+    403: ErrorResponse;
+};
+
+export type RevokeAccountSessionsError = RevokeAccountSessionsErrors[keyof RevokeAccountSessionsErrors];
+
+export type RevokeAccountSessionsResponses = {
+    /**
+     * Own or bootstrap-targeted sessions revoked
+     */
+    200: AccountReceipt;
+};
+
+export type RevokeAccountSessionsResponse = RevokeAccountSessionsResponses[keyof RevokeAccountSessionsResponses];
+
 export type ExchangeDeviceData = {
     body: ExchangeDeviceRequest;
     path?: never;
@@ -1569,6 +2027,35 @@ export type ExchangeDeviceResponses = {
 };
 
 export type ExchangeDeviceResponse = ExchangeDeviceResponses[keyof ExchangeDeviceResponses];
+
+export type ChangeAccountPasswordData = {
+    body: ChangePasswordRequest;
+    path?: never;
+    query?: never;
+    url: '/api/v1/me/password';
+};
+
+export type ChangeAccountPasswordErrors = {
+    /**
+     * Session or password invalid
+     */
+    401: ErrorResponse;
+    /**
+     * Authentication budget exhausted
+     */
+    429: ErrorResponse;
+};
+
+export type ChangeAccountPasswordError = ChangeAccountPasswordErrors[keyof ChangeAccountPasswordErrors];
+
+export type ChangeAccountPasswordResponses = {
+    /**
+     * Password replaced and all old sessions revoked
+     */
+    200: AccountReceipt;
+};
+
+export type ChangeAccountPasswordResponse = ChangeAccountPasswordResponses[keyof ChangeAccountPasswordResponses];
 
 export type ListNetworksData = {
     body?: never;
@@ -2050,6 +2537,115 @@ export type PreviewFlowResponses = {
 
 export type PreviewFlowResponse2 = PreviewFlowResponses[keyof PreviewFlowResponses];
 
+export type ListAccountInvitationsData = {
+    body?: never;
+    path: {
+        network_id: string;
+    };
+    query?: never;
+    url: '/api/v1/networks/{network_id}/invitations';
+};
+
+export type ListAccountInvitationsErrors = {
+    /**
+     * Network manager required
+     */
+    403: ErrorResponse;
+};
+
+export type ListAccountInvitationsError = ListAccountInvitationsErrors[keyof ListAccountInvitationsErrors];
+
+export type ListAccountInvitationsResponses = {
+    /**
+     * Public invitation metadata only
+     */
+    200: AccountInvitations;
+};
+
+export type ListAccountInvitationsResponse = ListAccountInvitationsResponses[keyof ListAccountInvitationsResponses];
+
+export type CreateAccountInvitationData = {
+    body: CreateInvitationRequest;
+    path: {
+        network_id: string;
+    };
+    query?: never;
+    url: '/api/v1/networks/{network_id}/invitations';
+};
+
+export type CreateAccountInvitationErrors = {
+    /**
+     * Grant not permitted
+     */
+    403: ErrorResponse;
+};
+
+export type CreateAccountInvitationError = CreateAccountInvitationErrors[keyof CreateAccountInvitationErrors];
+
+export type CreateAccountInvitationResponses = {
+    /**
+     * Secret returned once after commit
+     */
+    200: CreateInvitationResponse;
+};
+
+export type CreateAccountInvitationResponse = CreateAccountInvitationResponses[keyof CreateAccountInvitationResponses];
+
+export type RevokeAccountInvitationData = {
+    body: RevokeInvitationRequest;
+    path: {
+        network_id: string;
+    };
+    query?: never;
+    url: '/api/v1/networks/{network_id}/invitations/revoke';
+};
+
+export type RevokeAccountInvitationErrors = {
+    /**
+     * Resource not permitted
+     */
+    403: ErrorResponse;
+};
+
+export type RevokeAccountInvitationError = RevokeAccountInvitationErrors[keyof RevokeAccountInvitationErrors];
+
+export type RevokeAccountInvitationResponses = {
+    /**
+     * Public resource ID revoked
+     */
+    200: AccountReceipt;
+};
+
+export type RevokeAccountInvitationResponse = RevokeAccountInvitationResponses[keyof RevokeAccountInvitationResponses];
+
+export type GetAccountInvitationData = {
+    body?: never;
+    path: {
+        network_id: string;
+        invitation_id: string;
+    };
+    query?: never;
+    url: '/api/v1/networks/{network_id}/invitations/{invitation_id}';
+};
+
+export type GetAccountInvitationErrors = {
+    /**
+     * Resource not permitted
+     */
+    403: ErrorResponse;
+};
+
+export type GetAccountInvitationError = GetAccountInvitationErrors[keyof GetAccountInvitationErrors];
+
+export type GetAccountInvitationResponses = {
+    /**
+     * Public metadata; secret cannot be retrieved
+     */
+    200: AccountInvitation;
+};
+
+export type GetAccountInvitationResponse = GetAccountInvitationResponses[keyof GetAccountInvitationResponses];
+
 export type CreateManagedEnrollmentTokenData = {
     body: CreateManagedEnrollmentTokenRequest;
     path: {
@@ -2191,6 +2787,91 @@ export type SaveManagedListenerResponses = {
 
 export type SaveManagedListenerResponse = SaveManagedListenerResponses[keyof SaveManagedListenerResponses];
 
+export type ListAccountMembersData = {
+    body?: never;
+    path: {
+        network_id: string;
+    };
+    query?: never;
+    url: '/api/v1/networks/{network_id}/members';
+};
+
+export type ListAccountMembersErrors = {
+    /**
+     * Network membership required
+     */
+    403: ErrorResponse;
+};
+
+export type ListAccountMembersError = ListAccountMembersErrors[keyof ListAccountMembersErrors];
+
+export type ListAccountMembersResponses = {
+    /**
+     * Live memberships in this network
+     */
+    200: AccountMembers;
+};
+
+export type ListAccountMembersResponse = ListAccountMembersResponses[keyof ListAccountMembersResponses];
+
+export type LeaveAccountNetworkData = {
+    body?: never;
+    path: {
+        network_id: string;
+    };
+    query?: never;
+    url: '/api/v1/networks/{network_id}/members/leave';
+};
+
+export type LeaveAccountNetworkErrors = {
+    /**
+     * Last Owner protected
+     */
+    409: ErrorResponse;
+};
+
+export type LeaveAccountNetworkError = LeaveAccountNetworkErrors[keyof LeaveAccountNetworkErrors];
+
+export type LeaveAccountNetworkResponses = {
+    /**
+     * Own membership and devices revoked
+     */
+    200: AccountReceipt;
+};
+
+export type LeaveAccountNetworkResponse = LeaveAccountNetworkResponses[keyof LeaveAccountNetworkResponses];
+
+export type SaveAccountMemberData = {
+    body: SaveMembershipRequest;
+    path: {
+        network_id: string;
+    };
+    query?: never;
+    url: '/api/v1/networks/{network_id}/members/save';
+};
+
+export type SaveAccountMemberErrors = {
+    /**
+     * Role ceiling exceeded
+     */
+    403: ErrorResponse;
+    /**
+     * Last Owner protected
+     */
+    409: ErrorResponse;
+};
+
+export type SaveAccountMemberError = SaveAccountMemberErrors[keyof SaveAccountMemberErrors];
+
+export type SaveAccountMemberResponses = {
+    /**
+     * Role saved or member and devices revoked atomically
+     */
+    200: AccountReceipt;
+};
+
+export type SaveAccountMemberResponse = SaveAccountMemberResponses[keyof SaveAccountMemberResponses];
+
 export type GetNetworkData = {
     body?: never;
     path: {
@@ -2286,6 +2967,64 @@ export type SaveNetworkResponses = {
 };
 
 export type SaveNetworkResponse = SaveNetworkResponses[keyof SaveNetworkResponses];
+
+export type ListNodeOwnershipData = {
+    body?: never;
+    path: {
+        network_id: string;
+    };
+    query?: never;
+    url: '/api/v1/networks/{network_id}/node-ownership';
+};
+
+export type ListNodeOwnershipErrors = {
+    /**
+     * Network membership required
+     */
+    403: ErrorResponse;
+};
+
+export type ListNodeOwnershipError = ListNodeOwnershipErrors[keyof ListNodeOwnershipErrors];
+
+export type ListNodeOwnershipResponses = {
+    /**
+     * Real ownership; null is legacy-unassigned
+     */
+    200: NodeOwnershipList;
+};
+
+export type ListNodeOwnershipResponse = ListNodeOwnershipResponses[keyof ListNodeOwnershipResponses];
+
+export type ClaimNodeOwnershipData = {
+    body: ClaimNodeOwnershipRequest;
+    path: {
+        network_id: string;
+    };
+    query?: never;
+    url: '/api/v1/networks/{network_id}/node-ownership/claim';
+};
+
+export type ClaimNodeOwnershipErrors = {
+    /**
+     * Owner or target membership invalid
+     */
+    403: ErrorResponse;
+    /**
+     * Device already assigned
+     */
+    409: ErrorResponse;
+};
+
+export type ClaimNodeOwnershipError = ClaimNodeOwnershipErrors[keyof ClaimNodeOwnershipErrors];
+
+export type ClaimNodeOwnershipResponses = {
+    /**
+     * Network Owner explicitly assigned legacy device
+     */
+    200: AccountReceipt;
+};
+
+export type ClaimNodeOwnershipResponse = ClaimNodeOwnershipResponses[keyof ClaimNodeOwnershipResponses];
 
 export type ListNodesData = {
     body?: never;
@@ -2520,6 +3259,37 @@ export type GetOverviewResponses = {
 };
 
 export type GetOverviewResponse = GetOverviewResponses[keyof GetOverviewResponses];
+
+export type ClaimFirstOwnerData = {
+    body: ClaimOwnerRequest;
+    path: {
+        network_id: string;
+    };
+    query?: never;
+    url: '/api/v1/networks/{network_id}/owner-claim';
+};
+
+export type ClaimFirstOwnerErrors = {
+    /**
+     * Bootstrap or own session required
+     */
+    401: ErrorResponse;
+    /**
+     * Owner or account already exists
+     */
+    409: ErrorResponse;
+};
+
+export type ClaimFirstOwnerError = ClaimFirstOwnerErrors[keyof ClaimFirstOwnerErrors];
+
+export type ClaimFirstOwnerResponses = {
+    /**
+     * Explicit first Owner claim
+     */
+    200: AccountMembership;
+};
+
+export type ClaimFirstOwnerResponse = ClaimFirstOwnerResponses[keyof ClaimFirstOwnerResponses];
 
 export type GetPolicyData = {
     body?: never;

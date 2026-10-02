@@ -236,9 +236,10 @@ impl Store {
                 ));
             }
         }
-        let transaction = self
-            .connection
-            .transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let transaction = super::account_authorization::transaction(
+            &mut self.connection,
+            TransactionBehavior::Immediate,
+        )?;
         compare_revision(&transaction, network, request.expected_revision)?;
         let report = meshway_policy::compile(
             &request.policy,
@@ -288,9 +289,10 @@ impl Store {
                 Ok(country.to_ascii_uppercase())
             })
             .transpose()?;
-        let transaction = self
-            .connection
-            .transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let transaction = super::account_authorization::transaction(
+            &mut self.connection,
+            TransactionBehavior::Immediate,
+        )?;
         compare_revision(&transaction, network, request.expected_revision)?;
         let node = find_node(&transaction, network, &request.node_id)?;
         if node.country != country {
@@ -322,9 +324,10 @@ impl Store {
         request: &AcknowledgeConfigurationRequest,
     ) -> Result<AcknowledgeConfigurationResponse, Error> {
         let network = self.node_network(token)?;
-        let transaction = self
-            .connection
-            .transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let transaction = super::account_authorization::transaction(
+            &mut self.connection,
+            TransactionBehavior::Immediate,
+        )?;
         let id = node_id(&transaction, &network, token)?;
         let current = snapshot(&transaction, &network, &id)?;
         if current.payload.revision != request.revision || current.digest != request.digest {

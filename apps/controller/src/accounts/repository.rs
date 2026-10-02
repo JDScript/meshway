@@ -11,11 +11,15 @@ const SESSION_MAX: i64 = 7 * 86400;
 const INVITATION_METADATA_COLUMNS: &str = "invitation_id,network_id,email,role,issuer_user_id,expires_at,revoked_at,consumed_by,consumed_at";
 const RESET_METADATA_COLUMNS: &str = "r.reset_id,r.user_id,r.expires_at,r.revoked_at,r.consumed_at,r.credential_version=u.credential_version";
 
-fn invitation_metadata_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<InvitationMetadata> {
+fn invitation_metadata_row(
+    db: &Connection,
+    row: &rusqlite::Row<'_>,
+) -> rusqlite::Result<InvitationMetadata> {
     Ok(InvitationMetadata {
         id: InvitationId::parse(&row.get::<_, String>(0)?)
             .map_err(|_| rusqlite::Error::InvalidQuery)?,
-        network: AccountNetwork(row.get(1)?),
+        network: NetworkId::lookup(db, &row.get::<_, String>(1)?)
+            .map_err(|_| rusqlite::Error::InvalidQuery)?,
         email: Email::parse(&row.get::<_, String>(2)?)
             .map_err(|_| rusqlite::Error::InvalidQuery)?,
         role: Role::stored(row.get(3)?).map_err(|_| rusqlite::Error::InvalidQuery)?,
@@ -63,7 +67,7 @@ pub(crate) struct Accounts<'a> {
 }
 
 struct Invitation {
-    network: AccountNetwork,
+    network: NetworkId,
     email: Email,
     role: Role,
     issuer: Option<UserId>,
@@ -79,6 +83,12 @@ pub(crate) struct ResetIntent {
     digest: Vec<u8>,
     user: UserId,
     version: i64,
+    email: Email,
+}
+impl ResetIntent {
+    pub(crate) fn account_key(&self) -> &str {
+        self.email.as_str()
+    }
 }
 
 impl<'a> Accounts<'a> {
@@ -86,17 +96,11 @@ impl<'a> Accounts<'a> {
         Self { db }
     }
 
-    pub(crate) fn network(&self, id: &str) -> Result<AccountNetwork> {
-        let id = self
-            .db
-            .query_row(
-                "SELECT network_id FROM networks WHERE network_id=?1",
-                [id],
-                |r| r.get::<_, String>(0),
-            )
-            .optional()?
-            .ok_or(AccountError::Forbidden)?;
-        Ok(AccountNetwork(id))
+    pub(crate) fn network(&self, id: &str) -> Result<NetworkId> {
+        NetworkId::lookup(self.db, id).map_err(|error| match error {
+            crate::Error::NotFound => AccountError::Forbidden,
+            _ => AccountError::Storage,
+        })
     }
 
     pub(crate) fn user(&self, id: &UserId) -> Result<User> {
@@ -129,11 +133,11 @@ impl<'a> Accounts<'a> {
             .optional()?)
     }
 
-    pub(super) fn role(&self, network: &AccountNetwork, user: &UserId) -> Result<Option<Role>> {
+    pub(super) fn role(&self, network: &NetworkId, user: &UserId) -> Result<Option<Role>> {
         self.db
             .query_row(
                 "SELECT role FROM account_memberships WHERE network_id=?1 AND user_id=?2 AND revoked_at IS NULL",
-                params![network.0, user.0],
+                params![network.as_str(), user.0],
                 |r| r.get::<_, String>(0),
             )
             .optional()?
@@ -141,21 +145,21 @@ impl<'a> Accounts<'a> {
             .transpose()
     }
 
-    pub(super) fn membership(
+    pub(crate) fn membership(
         &self,
-        network: &AccountNetwork,
+        network: &NetworkId,
         user: &UserId,
     ) -> Result<Option<Membership>> {
         self.db.query_row(
             "SELECT membership_id,role FROM account_memberships WHERE network_id=?1 AND user_id=?2 AND revoked_at IS NULL",
-            params![network.0,user.0],
+            params![network.as_str(),user.0],
             |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)),
         ).optional()?.map(|(id,role)| Ok(Membership {
             id: MembershipId(id), network: network.clone(), user: user.clone(), role: Role::stored(role)?,
         })).transpose()
     }
 
-    pub(super) fn session_user(&self, principal: &Principal, now: i64) -> Result<UserId> {
+    pub(crate) fn session_user(&self, principal: &Principal, now: i64) -> Result<UserId> {
         let PrincipalKind::Session {
             digest,
             user,
@@ -186,7 +190,7 @@ impl<'a> Accounts<'a> {
     fn may_grant(
         &self,
         principal: &Principal,
-        network: &AccountNetwork,
+        network: &NetworkId,
         role: Role,
         now: i64,
     ) -> Result<Option<UserId>> {
@@ -217,7 +221,7 @@ impl<'a> Accounts<'a> {
             let (network, role, id) = r?;
             Ok(Membership {
                 id: MembershipId(id),
-                network: AccountNetwork(network),
+                network: self.network(&network)?,
                 user: user.clone(),
                 role: Role::stored(role)?,
             })
@@ -225,12 +229,53 @@ impl<'a> Accounts<'a> {
         .collect()
     }
 
+    pub(crate) fn members(
+        &self,
+        principal: &Principal,
+        network: &NetworkId,
+        now: i64,
+    ) -> Result<Vec<Membership>> {
+        self.authorize_network(principal, network, NetworkPermission::Read, now)?;
+        let mut statement = self.db.prepare("SELECT user_id,membership_id,role FROM account_memberships WHERE network_id=?1 AND revoked_at IS NULL ORDER BY membership_id")?;
+        statement
+            .query_map([network.as_str()], |r| {
+                Ok((
+                    r.get::<_, String>(0)?,
+                    r.get::<_, String>(1)?,
+                    r.get::<_, String>(2)?,
+                ))
+            })?
+            .map(|row| {
+                let (user, id, role) = row?;
+                Ok(Membership {
+                    network: network.clone(),
+                    user: UserId(user),
+                    id: MembershipId(id),
+                    role: Role::stored(role)?,
+                })
+            })
+            .collect()
+    }
+
+    pub(crate) fn require_owner(
+        &self,
+        principal: &Principal,
+        network: &NetworkId,
+        now: i64,
+    ) -> Result<()> {
+        let user = self.session_user(principal, now)?;
+        if self.role(network, &user)? != Some(Role::Owner) {
+            return Err(AccountError::Forbidden);
+        }
+        Ok(())
+    }
+
     /// Run inside the same read/write transaction as the protected resource
     /// operation. An earlier HTTP check is not a durable authorization grant.
     pub(crate) fn authorize_network(
         &self,
         principal: &Principal,
-        network: &AccountNetwork,
+        network: &NetworkId,
         permission: NetworkPermission,
         now: i64,
     ) -> Result<()> {
@@ -248,7 +293,7 @@ impl<'a> Accounts<'a> {
     fn invitation(&self, digest: &[u8], now: i64) -> Result<Invitation> {
         let (network, email, role, issuer) = self.db.query_row("SELECT network_id,email,role,issuer_user_id FROM account_invitations WHERE token_hash=?1 AND expires_at>?2 AND revoked_at IS NULL AND consumed_at IS NULL", params![digest,now], |r| Ok((r.get::<_, String>(0)?,r.get::<_, String>(1)?,r.get::<_, String>(2)?,r.get::<_, Option<String>>(3)?))).optional()?.ok_or(AccountError::Unauthorized)?;
         let invitation = Invitation {
-            network: AccountNetwork(network),
+            network: self.network(&network)?,
             email: Email::parse(&email).map_err(|_| AccountError::Storage)?,
             role: Role::stored(role)?,
             issuer: issuer.map(UserId),
@@ -283,11 +328,12 @@ impl<'a> Accounts<'a> {
 
     pub(crate) fn prepare_reset(&self, token: &str, now: i64) -> Result<ResetIntent> {
         let digest = Secret::digest(token, SecretKind::Reset)?;
-        let (user, version) = self.db.query_row("SELECT r.user_id,r.credential_version FROM account_password_resets r JOIN account_users u ON u.user_id=r.user_id WHERE r.token_hash=?1 AND r.expires_at>?2 AND r.revoked_at IS NULL AND r.consumed_at IS NULL AND r.credential_version=u.credential_version", params![digest,now], |r| Ok((UserId(r.get(0)?), r.get::<_, i64>(1)?))).optional()?.ok_or(AccountError::Unauthorized)?;
+        let (user, version, email) = self.db.query_row("SELECT r.user_id,r.credential_version,u.email FROM account_password_resets r JOIN account_users u ON u.user_id=r.user_id WHERE r.token_hash=?1 AND r.expires_at>?2 AND r.revoked_at IS NULL AND r.consumed_at IS NULL AND r.credential_version=u.credential_version", params![digest,now], |r| Ok((UserId(r.get(0)?), r.get::<_, i64>(1)?,r.get::<_,String>(2)?))).optional()?.ok_or(AccountError::Unauthorized)?;
         Ok(ResetIntent {
             digest,
             user,
             version,
+            email: Email::parse(&email).map_err(|_| AccountError::Storage)?,
         })
     }
 
@@ -297,7 +343,7 @@ impl<'a> Accounts<'a> {
     pub(crate) fn list_invitations(
         &self,
         principal: &Principal,
-        network: &AccountNetwork,
+        network: &NetworkId,
         now: i64,
     ) -> Result<Vec<InvitationMetadata>> {
         let issuer = self.may_grant(principal, network, Role::Member, now)?;
@@ -308,19 +354,21 @@ impl<'a> Accounts<'a> {
             .flatten()
             == Some(Role::Admin);
         let mut statement = self.db.prepare(&format!("SELECT {INVITATION_METADATA_COLUMNS} FROM account_invitations WHERE network_id=?1 AND (?2=0 OR role='member') ORDER BY invitation_id"))?;
-        let rows = statement.query_map(params![network.0, member_only], invitation_metadata_row)?;
+        let rows = statement.query_map(params![network.as_str(), member_only], |row| {
+            invitation_metadata_row(self.db, row)
+        })?;
         rows.map(|row| row.map_err(AccountError::from)).collect()
     }
 
     pub(crate) fn invitation_metadata(
         &self,
         principal: &Principal,
-        network: &AccountNetwork,
+        network: &NetworkId,
         id: &InvitationId,
         now: i64,
     ) -> Result<InvitationMetadata> {
         self.may_grant(principal, network, Role::Member, now)?;
-        let metadata = self.db.query_row(&format!("SELECT {INVITATION_METADATA_COLUMNS} FROM account_invitations WHERE network_id=?1 AND invitation_id=?2"),params![network.0,id.0],invitation_metadata_row).optional()?.ok_or(AccountError::Forbidden)?;
+        let metadata = self.db.query_row(&format!("SELECT {INVITATION_METADATA_COLUMNS} FROM account_invitations WHERE network_id=?1 AND invitation_id=?2"),params![network.as_str(),id.0],|row| invitation_metadata_row(self.db, row)).optional()?.ok_or(AccountError::Forbidden)?;
         self.may_grant(principal, network, metadata.role, now)?;
         Ok(metadata)
     }
@@ -387,7 +435,7 @@ fn join(
     let id = MembershipId(meshway_protocol::local::credential().map_err(|_| AccountError::Worker)?);
     db.execute(
         "INSERT INTO account_memberships(network_id,user_id,role,membership_id) VALUES (?1,?2,?3,?4)",
-        params![invite.network.0, user.0, invite.role.as_str(),id.0],
+        params![invite.network.as_str(), user.0, invite.role.as_str(),id.0],
     )?;
     let changed = db.execute("UPDATE account_invitations SET consumed_by=?1,consumed_at=?2 WHERE token_hash=?3 AND consumed_at IS NULL AND revoked_at IS NULL AND expires_at>?2", params![user.0,now,digest])?;
     if changed != 1 {
@@ -404,7 +452,7 @@ fn join(
 pub(crate) fn create_invitation(
     tx: &mut Transaction<'_>,
     principal: &Principal,
-    network: &AccountNetwork,
+    network: &NetworkId,
     email: &Email,
     role: Role,
     now: i64,
@@ -417,7 +465,7 @@ pub(crate) fn create_invitation(
         let digest = Secret::digest(secret.expose(), SecretKind::Invitation)?;
         let id =
             InvitationId(meshway_protocol::local::credential().map_err(|_| AccountError::Worker)?);
-        db.execute("INSERT INTO account_invitations(invitation_id,token_hash,network_id,email,role,issuer_user_id,expires_at) VALUES (?1,?2,?3,?4,?5,?6,?7)", params![id.0,digest,network.0,email.as_str(),role.as_str(),issuer.as_ref().map(|u| &u.0),expires_at])?;
+        db.execute("INSERT INTO account_invitations(invitation_id,token_hash,network_id,email,role,issuer_user_id,expires_at) VALUES (?1,?2,?3,?4,?5,?6,?7)", params![id.0,digest,network.as_str(),email.as_str(),role.as_str(),issuer.as_ref().map(|u| &u.0),expires_at])?;
         Ok(IssuedInvitation {
             secret,
             metadata: InvitationMetadata {
@@ -438,13 +486,13 @@ pub(crate) fn create_invitation(
 pub(crate) fn revoke_invitation(
     tx: &mut Transaction<'_>,
     principal: &Principal,
-    network: &AccountNetwork,
+    network: &NetworkId,
     id: &InvitationId,
     now: i64,
 ) -> Result<()> {
     atomic(tx, |db| {
         Accounts::new(db).invitation_metadata(principal, network, id, now)?;
-        db.execute("UPDATE account_invitations SET revoked_at=COALESCE(revoked_at,?1) WHERE network_id=?2 AND invitation_id=?3", params![now,network.0,id.0])?;
+        db.execute("UPDATE account_invitations SET revoked_at=COALESCE(revoked_at,?1) WHERE network_id=?2 AND invitation_id=?3", params![now,network.as_str(),id.0])?;
         Ok(())
     })
 }
@@ -488,7 +536,7 @@ pub(crate) fn accept_invitation(
 pub(crate) fn claim_first_owner(
     tx: &mut Transaction<'_>,
     principal: &Principal,
-    network: &AccountNetwork,
+    network: &NetworkId,
     email: &Email,
     password: HashedPassword,
     now: i64,
@@ -499,7 +547,7 @@ pub(crate) fn claim_first_owner(
         }
         let exists: bool = db.query_row(
             "SELECT EXISTS(SELECT 1 FROM account_memberships WHERE network_id=?1 AND role='owner' AND revoked_at IS NULL)",
-            [&network.0],
+            [network.as_str()],
             |r| r.get(0),
         )?;
         if exists {
@@ -510,7 +558,7 @@ pub(crate) fn claim_first_owner(
             MembershipId(meshway_protocol::local::credential().map_err(|_| AccountError::Worker)?);
         db.execute(
             "INSERT INTO account_memberships(network_id,user_id,role,membership_id) VALUES (?1,?2,'owner',?3)",
-            params![network.0, user.0,id.0],
+            params![network.as_str(), user.0,id.0],
         )?;
         Ok(Membership {
             id,
@@ -527,7 +575,7 @@ pub(crate) fn claim_existing_owner(
     tx: &mut Transaction<'_>,
     bootstrap: &Principal,
     session: &Principal,
-    network: &AccountNetwork,
+    network: &NetworkId,
     now: i64,
 ) -> Result<Membership> {
     atomic(tx, |db| {
@@ -537,14 +585,14 @@ pub(crate) fn claim_existing_owner(
         let user = Accounts::new(db).session_user(session, now)?;
         let exists: bool = db.query_row(
             "SELECT EXISTS(SELECT 1 FROM account_memberships WHERE network_id=?1 AND role='owner' AND revoked_at IS NULL)",
-            [&network.0],
+            [network.as_str()],
             |r| r.get(0),
         )?;
         if exists {
             return Err(AccountError::Conflict);
         }
         let id = meshway_protocol::local::credential().map_err(|_| AccountError::Worker)?;
-        db.execute("INSERT INTO account_memberships(network_id,user_id,role,membership_id) VALUES (?1,?2,'owner',?3) ON CONFLICT(network_id,user_id) WHERE revoked_at IS NULL DO UPDATE SET role='owner'", params![network.0,user.0,id])?;
+        db.execute("INSERT INTO account_memberships(network_id,user_id,role,membership_id) VALUES (?1,?2,'owner',?3) ON CONFLICT(network_id,user_id) WHERE revoked_at IS NULL DO UPDATE SET role='owner'", params![network.as_str(),user.0,id])?;
         Accounts::new(db)
             .membership(network, &user)?
             .ok_or(AccountError::Storage)
@@ -716,14 +764,24 @@ pub(crate) fn revoke_reset(
 pub(crate) fn set_membership(
     tx: &mut Transaction<'_>,
     principal: &Principal,
-    network: &AccountNetwork,
+    network: &NetworkId,
     user: &UserId,
     desired: Option<Role>,
     now: i64,
 ) -> Result<()> {
     atomic(tx, |db| {
         let repo = Accounts::new(db);
-        let old = repo.role(network, user)?.ok_or(AccountError::Forbidden)?;
+        let Some(old) = repo.role(network, user)? else {
+            // Retry may clean assignments left by an older withdrawal. It is
+            // not a membership restore: require prior membership and the same
+            // current grant ceiling (most privileged revoked role wins).
+            if desired.is_some() {
+                return Err(AccountError::Forbidden);
+            }
+            let role:String=db.query_row("SELECT role FROM account_memberships WHERE network_id=?1 AND user_id=?2 AND revoked_at IS NOT NULL ORDER BY role='owner' DESC,role='admin' DESC,revoked_at DESC LIMIT 1",params![network.as_str(),user.0],|r|r.get(0)).optional()?.ok_or(AccountError::Forbidden)?;
+            repo.may_grant(principal, network, Role::stored(role)?, now)?;
+            return Ok(());
+        };
         repo.may_grant(principal, network, old, now)?;
         if let Some(new) = desired {
             repo.may_grant(principal, network, new, now)?;
@@ -731,7 +789,7 @@ pub(crate) fn set_membership(
         if old == Role::Owner && desired != Some(Role::Owner) {
             let owners: i64 = db.query_row(
                 "SELECT COUNT(*) FROM account_memberships WHERE network_id=?1 AND role='owner' AND revoked_at IS NULL",
-                [&network.0],
+                [network.as_str()],
                 |r| r.get(0),
             )?;
             if owners <= 1 {
@@ -741,12 +799,12 @@ pub(crate) fn set_membership(
         if let Some(role) = desired {
             db.execute(
                 "UPDATE account_memberships SET role=?1 WHERE network_id=?2 AND user_id=?3 AND revoked_at IS NULL",
-                params![role.as_str(), network.0, user.0],
+                params![role.as_str(), network.as_str(), user.0],
             )?;
         } else {
             db.execute(
                 "UPDATE account_memberships SET revoked_at=?3 WHERE network_id=?1 AND user_id=?2 AND revoked_at IS NULL",
-                params![network.0, user.0,now],
+                params![network.as_str(), user.0,now],
             )?;
         }
         // Losing delegation authority is permanent for already-issued links.
@@ -759,9 +817,37 @@ pub(crate) fn set_membership(
                  WHERE network_id=?1 AND issuer_user_id=?2
                    AND consumed_at IS NULL AND revoked_at IS NULL
                    AND (?4=0 OR role<>'member')",
-                params![network.0, user.0, now, desired == Some(Role::Admin)],
+                params![network.as_str(), user.0, now, desired == Some(Role::Admin)],
             )?;
         }
         Ok(())
+    })
+}
+
+pub(crate) fn leave_network(
+    tx: &mut Transaction<'_>,
+    principal: &Principal,
+    network: &NetworkId,
+    now: i64,
+) -> Result<UserId> {
+    atomic(tx, |db| {
+        let repo = Accounts::new(db);
+        let user = repo.session_user(principal, now)?;
+        let Some(role) = repo.role(network, &user)? else {
+            let prior:bool=db.query_row("SELECT EXISTS(SELECT 1 FROM account_memberships WHERE network_id=?1 AND user_id=?2 AND revoked_at IS NOT NULL)",params![network.as_str(),user.0],|r|r.get(0))?;
+            if !prior {
+                return Err(AccountError::Forbidden);
+            }
+            return Ok(user);
+        };
+        if role == Role::Owner {
+            let owners: i64 = db.query_row("SELECT COUNT(*) FROM account_memberships WHERE network_id=?1 AND role='owner' AND revoked_at IS NULL", [network.as_str()], |r| r.get(0))?;
+            if owners <= 1 {
+                return Err(AccountError::LastOwner);
+            }
+        }
+        db.execute("UPDATE account_memberships SET revoked_at=?3 WHERE network_id=?1 AND user_id=?2 AND revoked_at IS NULL", params![network.as_str(),user.0,now])?;
+        db.execute("UPDATE account_invitations SET revoked_at=COALESCE(revoked_at,?3) WHERE network_id=?1 AND issuer_user_id=?2 AND consumed_at IS NULL", params![network.as_str(),user.0,now])?;
+        Ok(user)
     })
 }

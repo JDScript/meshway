@@ -611,9 +611,10 @@ impl Store {
         if !(60..=86400).contains(&request.expires_in_seconds) {
             return Err(Error::Invalid("invalid enrollment TTL"));
         }
-        let tx = self
-            .connection
-            .transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let tx = super::account_authorization::transaction(
+            &mut self.connection,
+            TransactionBehavior::Immediate,
+        )?;
         let token = local::credential()?;
         let token_id = local::credential()?;
         let expires_at =
@@ -668,9 +669,10 @@ impl Store {
     ) -> Result<ManagedListenersSnapshot, Error> {
         let normalized = normalize(&request.settings)?;
         let item = &normalized;
-        let tx = self
-            .connection
-            .transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let tx = super::account_authorization::transaction(
+            &mut self.connection,
+            TransactionBehavior::Immediate,
+        )?;
         if configuration::revision(&tx, network)? != request.expected_revision {
             return Err(Error::Conflict);
         }

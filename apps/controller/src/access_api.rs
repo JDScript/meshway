@@ -19,7 +19,7 @@ pub(crate) fn routes() -> OpenApiRouter<AppState> {
         .layer(DefaultBodyLimit::max(512 * 1024))
 }
 
-#[utoipa::path(post, path = "/api/v1/networks/{network_id}/flows/preview", operation_id = "previewFlow", security(("adminBearer" = [])), request_body = PreviewFlowRequest,
+#[utoipa::path(post, path = "/api/v1/networks/{network_id}/flows/preview", operation_id = "previewFlow", security(("managementBearer" = [])), request_body = PreviewFlowRequest,
     params(("network_id" = String, Path, description = "Stable network ID")),
     responses((status = 200, description = "Combined saved endpoint authorization and routing preview", body = PreviewFlowResponse),
     (status = 404, description = "Network not found", body = ErrorResponse),
@@ -36,15 +36,16 @@ async fn preview_flow(
     let token = bearer(&headers)?;
     let request = json(body)?;
     state
-        .access(move |store| {
-            store.authorize_admin(&token)?;
-            let network_id = store.network_id(&network_id)?;
-            store.preview_flow(&network_id, &request).map(Json)
-        })
+        .network_access(
+            token,
+            network_id,
+            crate::accounts::NetworkPermission::Read,
+            move |store, network_id| store.preview_flow(network_id, &request).map(Json),
+        )
         .await
 }
 
-#[utoipa::path(get, path = "/api/v1/networks/{network_id}/access", operation_id = "getMeshAccess", security(("adminBearer" = [])),
+#[utoipa::path(get, path = "/api/v1/networks/{network_id}/access", operation_id = "getMeshAccess", security(("managementBearer" = [])),
     params(("network_id" = String, Path, description = "Stable network ID")),
     responses((status = 200, description = "Saved ordered endpoint authorization source and current diagnostics", body = MeshAccessSnapshot),
     (status = 404, description = "Network not found", body = ErrorResponse),
@@ -57,15 +58,16 @@ async fn get_mesh_access(
 ) -> Result<Json<MeshAccessSnapshot>, Error> {
     let token = bearer(&headers)?;
     state
-        .access(move |store| {
-            store.authorize_admin(&token)?;
-            let network_id = store.network_id(&network_id)?;
-            store.mesh_access(&network_id).map(Json)
-        })
+        .network_access(
+            token,
+            network_id,
+            crate::accounts::NetworkPermission::Read,
+            move |store, network_id| store.mesh_access(network_id).map(Json),
+        )
         .await
 }
 
-#[utoipa::path(post, path = "/api/v1/networks/{network_id}/access", operation_id = "saveMeshAccess", security(("adminBearer" = [])), request_body = SaveMeshAccessRequest,
+#[utoipa::path(post, path = "/api/v1/networks/{network_id}/access", operation_id = "saveMeshAccess", security(("managementBearer" = [])), request_body = SaveMeshAccessRequest,
     params(("network_id" = String, Path, description = "Stable network ID")),
     responses((status = 200, description = "Global-CAS ordered endpoint authorization save; missing keys defer only affected runtime paths", body = MeshAccessSnapshot),
     (status = 404, description = "Network not found", body = ErrorResponse),
@@ -85,11 +87,12 @@ async fn save_mesh_access(
     let token = bearer(&headers)?;
     let request = json(body)?;
     state
-        .access(move |store| {
-            store.authorize_admin(&token)?;
-            let network_id = store.network_id(&network_id)?;
-            store.save_mesh_access(&network_id, &request).map(Json)
-        })
+        .network_access(
+            token,
+            network_id,
+            crate::accounts::NetworkPermission::Manage,
+            move |store, network_id| store.save_mesh_access(network_id, &request).map(Json),
+        )
         .await
 }
 

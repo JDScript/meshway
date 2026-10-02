@@ -397,9 +397,10 @@ impl Store {
                 ));
             }
         }
-        let transaction = self
-            .connection
-            .transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let transaction = super::account_authorization::transaction(
+            &mut self.connection,
+            TransactionBehavior::Immediate,
+        )?;
         if configuration::revision(&transaction, scope)? != request.expected_revision {
             return Err(Error::Conflict);
         }
@@ -531,9 +532,10 @@ impl Store {
 
     pub fn agent_dataplane(&mut self, token: &str) -> Result<AgentDataplaneSnapshot, Error> {
         let scope = self.node_network(token)?;
-        let transaction = self
-            .connection
-            .transaction_with_behavior(TransactionBehavior::Deferred)?;
+        let transaction = super::account_authorization::transaction(
+            &mut self.connection,
+            TransactionBehavior::Deferred,
+        )?;
         let node_id = configuration::node_id(&transaction, &scope, token)?;
         let configuration = configuration::snapshot(&transaction, &scope, &node_id)?.payload;
         let connections = connections::projection(

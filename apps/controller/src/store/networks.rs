@@ -24,7 +24,7 @@ mod tests;
 pub(crate) struct NetworkId(String);
 
 impl NetworkId {
-    pub(super) fn as_str(&self) -> &str {
+    pub(crate) fn as_str(&self) -> &str {
         &self.0
     }
     fn stored(value: String) -> Result<Self, Error> {
@@ -36,6 +36,18 @@ impl NetworkId {
             return Err(Error::Configuration("invalid persisted network identity"));
         }
         Ok(Self(value))
+    }
+    pub(crate) fn lookup(connection: &Connection, id: &str) -> Result<Self, Error> {
+        Self::stored(
+            connection
+                .query_row(
+                    "SELECT network_id FROM networks WHERE network_id=?1",
+                    [id],
+                    |row| row.get(0),
+                )
+                .optional()?
+                .ok_or(Error::NotFound)?,
+        )
     }
     pub(super) fn initial(connection: &Connection) -> Result<Self, Error> {
         Self::stored(connection.query_row(

@@ -47,7 +47,7 @@ impl Fixture {
         }
     }
 
-    fn network(&self, id: &str) -> AccountNetwork {
+    fn network(&self, id: &str) -> NetworkId {
         Accounts::new(&self.db).network(id).unwrap()
     }
 
@@ -66,13 +66,7 @@ impl Fixture {
         result
     }
 
-    fn invite(
-        &mut self,
-        net: &AccountNetwork,
-        email: &Email,
-        role: Role,
-        ttl: i64,
-    ) -> IssuedInvitation {
+    fn invite(&mut self, net: &NetworkId, email: &Email, role: Role, ttl: i64) -> IssuedInvitation {
         self.transaction(|tx| create_invitation(tx, &bootstrap(), net, email, role, NOW, ttl))
             .unwrap()
     }
@@ -80,7 +74,7 @@ impl Fixture {
     async fn register(
         &mut self,
         worker: &PasswordWorker,
-        net: &AccountNetwork,
+        net: &NetworkId,
         email: &Email,
         role: Role,
     ) -> Membership {
@@ -730,6 +724,58 @@ async fn kdf_limit_rejects_without_queueing() {
     assert!(PasswordWorker::new(0).await.is_err());
     assert!(PasswordWorker::new(9).await.is_err());
     worker.hash(password(OLD)).await.unwrap();
+}
+
+#[test]
+fn cancelled_kdf_keeps_budget_until_the_blocking_job_finishes() {
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .worker_threads(2)
+        .max_blocking_threads(1)
+        .enable_all()
+        .build()
+        .unwrap();
+    runtime.block_on(async {
+        let worker = PasswordWorker::new(1).await.unwrap();
+        // Occupy the sole blocking thread so the actual KDF queues behind a
+        // deterministic gate. Dropping release also opens it during unwinding.
+        let (release, gate) = std::sync::mpsc::channel::<()>();
+        let (ready, started) = std::sync::mpsc::channel::<()>();
+        let blocker = tokio::task::spawn_blocking(move || {
+            ready.send(()).unwrap();
+            let _ = gate.recv();
+        });
+        started.recv_timeout(Duration::from_secs(10)).unwrap();
+        let task_worker = worker.clone();
+        let request = tokio::spawn(async move { task_worker.hash(password(OLD)).await });
+        tokio::time::timeout(Duration::from_secs(10), async {
+            while worker.budget.available_permits() != 0 {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .unwrap();
+        request.abort();
+        match request.await {
+            Err(error) => assert!(error.is_cancelled()),
+            Ok(_) => panic!("request was not cancelled"),
+        }
+        assert_eq!(worker.budget.available_permits(), 0);
+        assert!(matches!(
+            worker.hash(password(NEW)).await,
+            Err(AccountError::Busy)
+        ));
+        drop(release);
+        blocker.await.unwrap();
+        let permit = tokio::time::timeout(
+            Duration::from_secs(30),
+            worker.budget.clone().acquire_owned(),
+        )
+        .await
+        .unwrap()
+        .unwrap();
+        drop(permit);
+        worker.hash(password(NEW)).await.unwrap();
+    });
 }
 
 #[tokio::test]

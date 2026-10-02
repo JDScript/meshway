@@ -115,7 +115,10 @@ pub(super) fn ensure_publishable(
 
 impl Store {
     pub fn network(&mut self, network: &NetworkId) -> Result<NetworkSnapshot, Error> {
-        let transaction = self.connection.transaction()?;
+        let transaction = super::account_authorization::transaction(
+            &mut self.connection,
+            TransactionBehavior::Deferred,
+        )?;
         let result = snapshot(&transaction, network)?;
         transaction.commit()?;
         Ok(result)
@@ -128,9 +131,10 @@ impl Store {
     ) -> Result<NetworkSnapshot, Error> {
         request.validate().map_err(Error::Unprocessable)?;
         let dns = request.dns.normalized().map_err(Error::Unprocessable)?;
-        let transaction = self
-            .connection
-            .transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let transaction = super::account_authorization::transaction(
+            &mut self.connection,
+            TransactionBehavior::Immediate,
+        )?;
         let current = snapshot(&transaction, network)?;
         if current.revision != request.expected_revision {
             return Err(Error::Conflict);

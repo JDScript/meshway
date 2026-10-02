@@ -16,10 +16,12 @@
 - 按需图编译、完整主备回切、其他代理协议和公网入口自动映射属于后续切片。
   当前拨号候选仍在高级 `connections` API 配置。
 
-## 管理 API（服务端管理员鉴权）
+## 管理 API（当前网络 membership 鉴权）
 
-前缀 `/api/v1/networks/{network_id}`。当前仍使用 global admin bearer。
-服务端先验证管理员，再解析网络；合法 NetworkId 本身不是权限。
+前缀 `/api/v1/networks/{network_id}`。账户组合候选采用 `managementBearer`：
+用户 session 的当前网络 membership，或既有 global bootstrap 兼容入口。
+GET 允许本网 Member / Admin / Owner；两个 POST 只允许本网 Admin / Owner。
+所有检查与实际保存处于同一根 IMMEDIATE 事务，合法 NetworkId 本身不是权限。
 Web action 固定渲染时网络 ID 和 CAS，不能在 mutation 时改用选择 cookie。
 
 | 方法 / 路径 | 生成 operation ID / SDK 导出 | 成功响应 |
@@ -28,7 +30,7 @@ Web action 固定渲染时网络 ID 和 CAS，不能在 mutation 时改用选择
 | POST `/managed-listeners` | `saveManagedListener` / `saveManagedListener` | `ManagedListenersSnapshot` |
 | POST `/managed-enrollment-tokens` | `createManagedEnrollmentToken` / `createManagedEnrollmentToken` | 既有 `CreateEnrollmentTokenResponse` |
 
-SDK：admin `(baseUrl, adminToken, networkId[, body])`，由生成 Zod 校验响应。
+SDK：`(baseUrl, userSessionOrBootstrapToken, networkId[, body])`，由生成 Zod 校验响应。
 底层生成操作名为同名加 `Operation`，位于
 `packages/control-client/src/generated/operations.gen.ts`。
 

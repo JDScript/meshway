@@ -197,6 +197,7 @@ async fn every_declared_endpoint_is_scoped_under_global_admin_mutations_node_req
     // Exercise each B management write/preview between unrelated global work,
     // A reads and C credential operations. No-op saves intentionally keep the
     // same numeric CAS as C, so a missing scope cannot hide behind a conflict.
+    let b_user = f.user_for(bases[1].rsplit('/').next().unwrap()).await;
     for (suffix, body) in [
         (
             "network",
@@ -255,7 +256,11 @@ async fn every_declared_endpoint_is_scoped_under_global_admin_mutations_node_req
             call!(
                 "POST",
                 format!("{}/{suffix}", bases[1]),
-                Some(&f.admin),
+                Some(if suffix == "device-authorizations" {
+                    &b_user
+                } else {
+                    &f.admin
+                }),
                 Some(body)
             )
             .0,
@@ -557,7 +562,7 @@ async fn every_declared_endpoint_is_scoped_under_global_admin_mutations_node_req
     let (_, b_code) = call!(
         "POST",
         format!("{}/device-authorizations", bases[1]),
-        Some(&f.admin),
+        Some(&b_user),
         Some(
             json!({"redirect_uri":meshway_protocol::DEVICE_CALLBACK_URI,"code_challenge":meshway_protocol::s256(&"w".repeat(43)),"name":"B App","agent_version":"scope"})
         )
@@ -676,6 +681,7 @@ async fn every_declared_endpoint_is_scoped_under_global_admin_mutations_node_req
         .as_object()
         .unwrap()
         .iter()
+        .filter(|(path, _)| !accounts::is_account_path(path))
         .flat_map(|(path, item)| {
             item.as_object()
                 .unwrap()

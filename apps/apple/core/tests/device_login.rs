@@ -9,7 +9,12 @@ use meshway_apple_core::{
 use meshway_controller::{AppState, admin_token, router};
 use meshway_protocol::{
     AuthorizeDeviceRequest, AuthorizeDeviceResponse, DEVICE_CALLBACK_URI, NetworkList,
-    RevokeNodeRequest, s256,
+    RevokeNodeRequest,
+    accounts::{
+        AccountMembership, ClaimOwnerKind, ClaimOwnerRequest, LoginRequest, LoginResponse,
+        NodeOwnershipList,
+    },
+    s256,
 };
 use tower::ServiceExt;
 
@@ -35,6 +40,59 @@ async fn initial_network(app: &axum::Router, admin: &str) -> String {
     networks.networks[0].network_id.clone()
 }
 
+// Simulated browser fixture only. The App continues to receive just its code
+// and node credential; it never receives a password, session or bootstrap token.
+async fn browser_user(
+    app: &axum::Router,
+    admin: &str,
+    network_id: &str,
+) -> (LoginResponse, AccountMembership) {
+    let email = "apple-owner@fixture.example";
+    let password = "private fixture password";
+    let response = app
+        .clone()
+        .oneshot(
+            Request::post(format!("/api/v1/networks/{network_id}/owner-claim"))
+                .header("authorization", format!("Bearer {admin}"))
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    serde_json::to_vec(&ClaimOwnerRequest {
+                        kind: ClaimOwnerKind::NewAccount,
+                        email: Some(email.into()),
+                        password: Some(password.into()),
+                        session_token: None,
+                    })
+                    .unwrap(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 200);
+    let membership =
+        serde_json::from_slice(&to_bytes(response.into_body(), 8192).await.unwrap()).unwrap();
+    let response = app
+        .clone()
+        .oneshot(
+            Request::post("/api/v1/auth/login")
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    serde_json::to_vec(&LoginRequest {
+                        email: email.into(),
+                        password: password.into(),
+                    })
+                    .unwrap(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 200);
+    let session =
+        serde_json::from_slice(&to_bytes(response.into_body(), 8192).await.unwrap()).unwrap();
+    (session, membership)
+}
+
 #[tokio::test]
 async fn real_controller_exchange_recovery_heartbeat_and_revocation() {
     use std::os::unix::fs::PermissionsExt;
@@ -45,6 +103,7 @@ async fn real_controller_exchange_recovery_heartbeat_and_revocation() {
     let app = router(AppState::open(directory.path()).unwrap());
     let admin = admin_token(directory.path()).unwrap();
     let network_id = initial_network(&app, &admin).await;
+    let (browser, owner) = browser_user(&app, &admin, &network_id).await;
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let server_url = format!("http://{}", listener.local_addr().unwrap());
     let server = tokio::spawn(axum::serve(listener, app.clone()).into_future());
@@ -61,7 +120,7 @@ async fn real_controller_exchange_recovery_heartbeat_and_revocation() {
             Request::post(format!(
                 "/api/v1/networks/{network_id}/device-authorizations"
             ))
-            .header("authorization", format!("Bearer {admin}"))
+            .header("authorization", format!("Bearer {}", browser.session_token))
             .header("content-type", "application/json")
             .body(Body::from(serde_json::to_vec(&authorization).unwrap()))
             .unwrap(),
@@ -83,6 +142,24 @@ async fn real_controller_exchange_recovery_heartbeat_and_revocation() {
         )
     };
     let node = exchange().await.unwrap();
+    let ownership = app
+        .clone()
+        .oneshot(
+            Request::get(format!("/api/v1/networks/{network_id}/node-ownership"))
+                .header("authorization", format!("Bearer {}", browser.session_token))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(ownership.status(), 200);
+    let ownership: NodeOwnershipList =
+        serde_json::from_slice(&to_bytes(ownership.into_body(), 8192).await.unwrap()).unwrap();
+    assert_eq!(ownership.nodes[0].node_id, node.id);
+    assert_eq!(
+        ownership.nodes[0].membership_id.as_deref(),
+        Some(owner.membership_id.as_str())
+    );
     let inventory =
         get_device_configuration(server_url.clone(), credential.clone(), node.id.clone())
             .await
@@ -118,7 +195,7 @@ async fn real_controller_exchange_recovery_heartbeat_and_revocation() {
     let revoked = app
         .oneshot(
             Request::post(format!("/api/v1/networks/{network_id}/nodes/revoke"))
-                .header("authorization", format!("Bearer {admin}"))
+                .header("authorization", format!("Bearer {}", browser.session_token))
                 .header("content-type", "application/json")
                 .body(Body::from(
                     serde_json::to_vec(&RevokeNodeRequest {
