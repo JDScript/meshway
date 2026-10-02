@@ -24,7 +24,7 @@ Rust 控制面与 agent、Next.js + shadcn/ui 控制台、VitePress 文档站。
 
 - 用户明确强调代码洁癖：源码组织、命名和职责须干净可解释；关注 `apps/controller/src/store` 中散落的 tests、`policy_v3` 与 `schema_v*`。完整 dump / 审查不等于已完成源码清理，不再混报。生产领域模块优先职责命名，必要 wire / 数据库历史版本集中在兼容与迁移边界；测试支持和历史 fixture 应有清楚归属，避免持续堆叠阶段名、临时修复名和重复实现。收敛时保留已有身份 / 数据的真实迁移路径及有价值的行为回归，不能靠删除必要迁移或测试制造表面整洁。
 - 全仓 Rust 手写代码统一模块与测试组织：单文件模块 `foo.rs`；有子模块使用 `foo/mod.rs`，避免 `foo.rs` 旁再开仅含子测试的 `foo/`。私有实现单元测试作为所属模块的 `#[cfg(test)]` 子模块；公共 API 黑盒测试放 crate 顶层 `tests/`，入口遵守 Cargo 自动发现（`tests/*.rs` 或 `tests/<suite>/main.rs`），共享 helper 放子目录。不得为搬测试扩大生产可见性、复制实现或用临时 path/autotests 配置绕过边界；生成代码与 vendor 按各自权威来源维护。
-- `crates/agent-dns` 已独立：本地权威 DNS 的 TCP/UDP、Zone、TTL/lease/代际发送边界及内部观测归库；Controller 快照校验/持久化、HTTP、CLI/IPC 投影和日志归 Agent，库不能反向依赖 App。用户明确要求同时审视 TUN 等其他边界：TUN 设备创建/配置/包 I/O 可提取 `agent-tun`，不能携带 AgentError、Controller URL、业务 PacketPlan 或 proof 日志；路由 capture/sink/journal 归 underlay，启动撤回顺序归 Agent。生成控制客户端与底层保护同为独立库候选，尚未提取的不得写成已完成。
+- DNS、TUN 设备和生成 Rust 控制客户端已独立为 `agent-dns`、`agent-tun`、`control-client`。库不反向依赖 App；快照校验/私有保存、业务计划、CLI/IPC 投影与日志归 Agent，路由 capture/sink/journal 归 underlay。Apple core 直接消费 control-client，不再为 HTTP 客户端依赖 Agent。其余领域库仍在提取，不能提前记作完成。
 - 用户明确要求 `agent-dataplane`、`agent-connections`、`agent-diagnostics` 同样纳入独立库拆分：分别负责节点执行计划/包流适配、邻接与承载连接运行、本地诊断 IPC。现有 `dataplane` 继续拥有底层加密/转发，不复制算法。Connections 不再持有 TUN 或依赖上层 PacketPlan；Diagnostics 经窄 provider 获取状态/探测，消除与 Prober 的双向依赖；跨组件编排、HTTP与私有身份、CLI输出留 App。按依赖分清晰提交，未提取项不得写成现状。
 - 文档只保留当前用法、架构、契约和真实未完成项；合并重复说明，删除过时交接、逐次修复流水账和已被权威生成物替代的旧 dump。Git 历史与私有原始证据负责追溯，不持续新建清理报告 / changelog；必要的现行安全和兼容边界保留。
 - 前后端按契约推进真实纵向功能；空状态和错误状态必须真实，不伪造节点、流量、健康状态。
@@ -87,7 +87,7 @@ Rust 控制面与 agent、Next.js + shadcn/ui 控制台、VitePress 文档站。
 - Mac 域名已从四地核对可达，生成 GET 确认与本机8420为同一网络；这不等于原生Agent接入验收。原LAX测试身份和数据独立保留。
 - no-host-network / no-privileged 同样覆盖构建器。已披露并移除的两个特权 buildx builder 不再启动；原证据保留。使用既有普通 builder 构造环境 / runtime 层，Rust 在非 root、cap-drop-ALL、CPU/内存有界的普通容器内编译，不开放 insecure / host-network entitlement、不改 daemon。
 - E2E 重启恢复已采用端到端认证的有界 `resync-v1`；快速路径要求参与节点支持扩展，旧节点及丢包 / 竞争保留原 TTL 边界，首个 stale packet 不重放。邻接恢复不证明旧 packet 会话恢复；不缩 TTL、无条件清反向 cache 或降低加密掩盖失败，与状态型 grants 回包分开跟踪。
-- underlay 内部 owner 已审合，正常主循环接线尚在实现、未生产启用。Journal v3 使用 boot + 非零 netns cookie；旧无 cookie / 不明归属 journal 保留并拒绝，不按 inode/形状接管。受审 socket2 单 API 补丁限 vendor 边界，应用 crate 继续 forbid unsafe。
+- Linux managed 构建已接上正常 bootstrap/control/daemon/TUN 的用途受限保护，在隔离 namespace 验证通过，远端未部署。Journal v3 使用 boot + 非零 netns cookie；旧无 cookie / 不明归属 journal 保留并拒绝，不按 inode/形状接管。无绑定时仅 guard-only Controller bootstrap，真实网络绑定私有落盘后才转 bound owner；业务 DNS 每次发布核对该绑定。DNS错误/取消必须 join 原运行代际后撤 TUN route、保留 sink，输出背压不能阻塞清理或退出。受审 socket2 单 API 补丁限 vendor，应用 crate 继续 forbid unsafe。
 - Rust 使用 `cargo fmt`、Clippy 和必要的行为测试；JS 使用严格 TypeScript 与各包检查。修改协议、HTTP 路由或生成客户端时，合并前检查 Rust workspace/all-features（含 Agent 与 Apple core）、生成 drift、SDK、Apple 脚本及 `experiments/*/tsconfig.json` 消费者。旧 `apps/web` 不再作为本线程验收项；新 console 的 UI/构建由独立工作流负责，后端提供兼容的生成契约与变更说明。
 - 用户已明确移除 Meshway 的浏览器自动化检查：不保留或默认重建 Playwright / 浏览器 E2E 套件，不以浏览器全量回归阻塞日常开发或部署。UI 由用户在开发页面手工验证；协议、鉴权、迁移和数据面仍运行各自必要的非浏览器行为测试。
 - 并行任务明确文件所有权；根 workspace 配置、lockfile 和整体验证由协调者维护。

@@ -31,7 +31,7 @@ Controller 维护与编译控制意图，不默认中继业务流量。Agent 执
 
 VLESS TCP/TLS 与 WebSocket/TLS 的 listener/凭据已由平台生成和下发，旧 profiles 保留等价导入；手工候选仍待自动组网替代。IPv4 Mesh v3 已接通同事务 publication、生成执行 DTO与正常 Agent/TUN，旧策略源保留且须显式 CAS 激活新模式。Linux 出口/状态回包原型已验，但完整出口及 Mesh 状态型回包尚未正式接线。不能等价迁移的策略报告诊断，保留身份/数据；可信域名上下文、IPv6 TUN、打洞与逐跳 trace 未完成。
 
-受保护 socket、HTTP/TLS、bootstrap DNS、原生 Runtime owning factory 和 Manager prepared owner 接点已合入；正式主循环激活与 RPDB 生命周期仍待接通，默认仍 unmarked，不能据模块存在就宣称现网已启用全 IP 系统保护。当前优先 Linux 自动组网 / 打洞及跨地域 Docker 验收，进一步前端和 Apple 开发暂缓，见[里程碑](/milestones)。
+Linux 正常接入、控制同步与 TUN 生命周期已接受保护 socket、HTTP/TLS、bootstrap DNS 和 RPDB owner；同地址普通业务不获全局豁免，退出保留 Mesh sink。隔离包流与恢复验证不代表远端已部署或所有宿主/VPN均受支持。当前继续 Agent 领域库收敛、自动组网 / 打洞及跨地域 Docker 验收；旧 Web 由新 console 替代，Apple 新增开发暂停，见[里程碑](/milestones)。
 
 ## 证据与生命周期
 

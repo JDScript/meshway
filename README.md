@@ -8,7 +8,7 @@
 
 **当前基线**：多网络 SQLite、本地用户账户与网络 RBAC、邀请/设备归属、节点令牌注册与 App PKCE、IPAM、revision/CAS/ACK、公钥绑定、平台托管 Native UDP / TCP / VLESS TCP/TLS 与 WebSocket/TLS、Linux Mesh IPv4 TUN、四层策略的 Mesh v3 正常执行、Noise E2E、节点 DNS 和 daemon 诊断。固定 `4c9a5be` 同身份直连及四地有序路径恢复复验 PASS；KR→NYC 底层经 WARP，不是纯公网直连或打洞证明。
 
-**尚未交付**：正式 underlay 主循环激活、按需自动建连/主备、真实打洞、Mesh 状态型回包、完整出口/路由方案/域名分流、平台默认 STUN/GeoIP、CLI 链接登录、IPv6 TUN与逐跳 trace。underlay-main-loop 和 transport-neutral NAT 候选/协调分别在独立实现；旧策略迁移与 profiles 兼容不自动改变身份或授权。
+**尚未交付**：按需自动建连/主备、真实打洞、Mesh 状态型回包、完整出口/路由方案/域名分流、平台默认 STUN/GeoIP、CLI 链接登录、IPv6 TUN 与逐跳 trace。Linux underlay 已接正常生命周期并通过隔离包流/恢复验证，远端未部署；transport-neutral NAT 协调仍在实现。旧策略迁移与 profiles 兼容不自动改变身份或授权。
 
 配置 ACK 是校验并持久保存，心跳是联系记录，路径预览是规划；都不能代替真实隧道 / ICMP / HTTP 验证。Apple App 已有浏览器接入与库存显示，隧道未实现。
 

@@ -11,7 +11,7 @@
 | 承载 | 平台托管 Native UDP/TCP、VLESS TCP/TLS 与 WebSocket/TLS listener/凭据；保留旧 profiles 等价私有导入 |
 | 数据面 | 路径绑定 Noise E2E、反向 dial、节点 DNS、daemon 诊断；认证有界 E2E resync 与运行报告/历史槽位恢复修复 |
 | 观测 | 真实邻接 probe、滚动 latency history 存储/查询、UDP carrier socket STUN 与有期限上报；端到端路径测量未实现 |
-| 系统保护模块 | 用途受限 socket、独立 controller/carrier、Journal v3 与真实 namespace/TUN fixture 通过；**正常主循环尚未启用** |
+| 系统保护 | Linux 正常接入/daemon/TUN 使用用途受限 socket、独立 controller/carrier 与 Journal v3；隔离 namespace 内包流、退出/恢复及资源保留已验，远端未部署 |
 | 远端固定链路 | 固定 `4c9a5be` 同身份直连与四地有序路径恢复复验 PASS；[证据及限制](/linux-field-validation) |
 | 用户入口 | 既有 Web 账户/成员/节点配置可用于联调；Apple 多接入/Keychain/浏览器接入和库存已实现，隧道未实现 |
 
@@ -19,7 +19,7 @@ ACK 只表示校验与持久保存；心跳、配置候选、逻辑路径和邻�
 
 ## 当前工作
 
-1. **underlay-main-loop**：窄 guard-only bootstrap，通过已有 `get_agent_dns` 取得真实网络绑定，接正常 Agent / TUN 的用途受限保护及 sink 生命周期。[集成合同](/underlay-routing)。尚未交付或正式启用。
+1. **Agent 领域库**：DNS、TUN 与生成控制客户端已独立；underlay、连接、节点数据面执行和诊断库继续提取，保持已接通的[正常保护生命周期](/underlay-routing)。
 2. **nat-connectivity**：transport-neutral 候选/协调第一步，后续串入获准候选、认证探测、按需邻接与主备。[承载扩展](/transport-registry)。尚未交付真实自动建连或打洞闭环。
 3. **结构收敛**：Controller 已整理 HTTP、契约、网络作用域、迁移与测试支持，并分开策略源和执行职责；`agent-dns` 已独立。其余 Agent 领域库提取与运行编排归位继续进行，保留原行为与消费者兼容。
 
@@ -27,7 +27,7 @@ ACK 只表示校验与持久保存；心跳、配置候选、逻辑路径和邻�
 
 | 工作 | 必须完成的真实闭环 |
 | --- | --- |
-| 系统保护 | 正常主循环激活、原型 `/32` pin 迁移、endpoint/DNS/网络变化、撤回与 crash/restart；Mesh sink 不落回底层 |
+| 系统保护 | 更多宿主/VPN与 resolver 环境、真实 endpoint/DNS/网络变化；旧资源须有可验证 ownership 才能迁移，Mesh sink 不落回底层 |
 | 自动组网与优先级主备 | 按 grants/路径/可达性按需连接，直连受阻经允许连接中转，手工候选收敛为高级覆盖；不绕过必经节点 |
 | NAT 连接能力 | 两端仅出站、无发布端口/手工对端候选，在可打洞环境证明真实转直连；UDP blocked 中继兜底保持 E2E。UDP/TCP 打洞、反向拨号与中继分别表达 |
 | Mesh 状态型回包 | 单向 grant 的响应可回程，反向主动访问仍拒绝；现阶段往返业务须显式双向 grant |

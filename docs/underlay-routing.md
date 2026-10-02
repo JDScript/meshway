@@ -1,6 +1,6 @@
 # Linux socket 级系统保护通路
 
-**内部模块与 Linux namespace/syscall/TUN 验收已完成；正常 Agent 主循环尚未启用生产 owner，远端尚未部署。** 当前 `underlay-main-loop` 独立实现线正在接正常 Controller / Agent / TUN，不能把模块或 fixture 通过写成正式系统保护已上线。
+**Linux `managed-connections` 构建已将系统保护接入正常接入、控制同步与 TUN 生命周期。** 独立 namespace 中已验证正常 Controller/Agent 二进制、真实 TUN 包流和退出恢复；远端尚未部署，不将隔离验收扩称为所有宿主/VPN环境均受支持。
 
 ## 必须保持的边界
 
@@ -13,7 +13,7 @@
 
 ## 当前实现
 
-`apps/agent/src/underlay` 提供 namespace owner、用途受限 socket factory、HTTP/TLS connector、bootstrap resolver 和代际退休。托管 Native UDP / TCP 与 VLESS 外层共用 owning 注入边界；`Manager::install_prepared_underlay` 是内部接点，默认 `SystemUnderlay` 仍为 unmarked。
+`apps/agent/src/underlay` 提供 namespace owner、用途受限 socket factory、HTTP/TLS connector、bootstrap resolver 和代际退休。正常 Linux daemon 在启动承载前安装 prepared owner，托管 Native UDP / TCP 与 VLESS 外层共用 owning 注入边界；未准备保护不能回落到 `SystemUnderlay` 继续执行。
 
 Linux owner 要求 Linux 5.7+ 的非零 `SO_NETNS_COOKIE`、namespace 内 NET_ADMIN、TUN 和必要 iproute2 / nft / legacy-save 审计工具。应用 crate 保持 `unsafe_code = forbid`；cookie getter 的细边界位于受审依赖。
 
@@ -45,12 +45,16 @@ systemd-resolved、split/per-link scope、其他 loopback daemon、NSS 扩展、
 
 内部入口是 `LinuxUnderlay::prepare`、独立 `controller_channel` / `socket_generation`、`retain_mesh_sink`、`Tun::open_with_underlay`、`withdraw_tun` 与 fresh-binding `activate_tun`。
 
-当前实现线采用窄 **guard-only bootstrap**，通过既有生成 `get_agent_dns` 取得真实网络绑定后准备 owner；首次接入存在 node/network 与 protected channel 的 bootstrap 依赖。此接线仍在开发，不能用手造网络 ID、宽泛业务捕获或 fixture DNS 消除依赖。
+无网络绑定的身份先使用窄 **guard-only bootstrap**，仅允许原 controller 上的生成 enroll、heartbeat、`get_agent_dns` 及必要解析。取得并校验真实 node/network 后，原子保存 `.network-binding.json`；退休并 join 窄 channel，在同一 namespace lease 下精确清理 bootstrap 规则，再准备严格绑定的 owner。不能手造网络 ID 或提前发放业务 capture、carrier、STUN 能力。
 
 1. capture 前准备 owner、系统 DNS 与独立 controller channel，并注入所有 enrollment / heartbeat / material / DNS HTTP 消费者。
 2. 安装独立 carrier generation，再用实际 TUN binding 发布自有 sink/capture。
 3. endpoint / DNS / network 变化先准备新保护，再撤旧观测、fence/join 旧 carrier 并切换；业务 lease 不退休必要 controller 恢复 owner。
 4. packet fence/join 后撤 TUN route，保留 Mesh sink；明确取消接管才精确 relinquish 自有资源。
+
+`control` 统一提供受保护 HTTP，预先创建的 DNS consumer 共享同一替换点；每次业务 DNS 发布都校验持久网络绑定，不能仅依靠已有 DNS cache。`daemon` 负责单一运行循环，DNS 错误也须取消并等待该循环清理，保留原错误。中断 withdraw 的等待不得丢失原代际 join handle。CLI 输出使用有界队列和独立线程，不能因终端背压卡住网络清理或退出。
+
+同进程需要立即关闭并重用身份时，`close_control_plane().await` 收拢 Controller driver；Drop 立即退休 I/O，但不是同步 join，仍持有的 capability/FD 会继续保持 namespace 排他锁。
 
 既有原型 main route 与目标 `/32` pin 尚待迁移。必须证明真实 ownership 才能移除，不能按形状删除，也不能长期共存后声称普通同地址业务已受策略约束。
 
@@ -61,9 +65,12 @@ systemd-resolved、split/per-link scope、其他 loopback daemon、NSS 扩展、
 ```sh
 CARGO_BUILD_JOBS=2 CARGO_TARGET_DIR=target/underlay-host cargo test --locked -p meshway-agent --all-features --lib underlay:: -- --test-threads=1
 python3 -m unittest discover -s apps/agent/tests/underlay_fixture -p 'test_*.py'
-python3 apps/agent/tests/underlay_fixture/run.py
+python3 apps/agent/tests/underlay_fixture/main_loop.py
+# 使用上述结果里的 image ID 复用同一编译产物：
+python3 apps/agent/tests/underlay_fixture/run.py --skip-build --image <image-id>
+python3 apps/agent/tests/underlay_fixture/review.py --skip-build --image <image-id>
 ```
 
 fixture 的当前参数与环境见 `apps/agent/tests/underlay_fixture/README.md`；独立机制实验见 `experiments/underlay-routing/README.md`。Docker 测试使用同一 `scripts/performance_lock.py` 锁，仅独立 namespace、非 host network / 非 privileged，精确清理 owned 资源。
 
-批准 TMP 内保留 `meshway-underlay-artifacts/` 和 `meshway-underlay-integration-4312037.md` / `-logs/`，含源码/镜像摘要、syscall/TUN 证据与旧失败。内部模块审查项已关闭；正常主循环真实 Linux 验收与发布仍需单独完成。
+批准 TMP 内保留 `meshway-underlay-main-loop-runs/` 与 `meshway-underlay-artifacts/` 的源码/镜像摘要、正常包流、syscall/恢复证据和旧失败。镜像必须带完整输入路径/哈希 manifest；旧顶层文件校验不能覆盖迁移后的子模块与独立 crates。
