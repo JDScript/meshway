@@ -35,6 +35,9 @@ pub mod openapi_to_rust_problem {
 /// and headers; their bodies are never read or classified as transport failures.
 #[derive(Error, Debug)]
 pub enum HttpError {
+    /// Failure from an injected internal transport.
+    #[error("Injected transport error: {0}")]
+    Io(#[from] std::io::Error),
     /// Network or connection error (from reqwest)
     #[error("Network error: {0}")]
     Network(#[from] reqwest::Error),
@@ -68,6 +71,7 @@ impl HttpError {
     /// Check if this transport error is retryable
     pub fn is_retryable(&self) -> bool {
         matches!(self, Self::Network(_) | Self::Middleware(_) | Self::Timeout)
+            || matches!(self, Self::Io(error) if !matches!(error.kind(), std::io::ErrorKind::InvalidInput | std::io::ErrorKind::Unsupported | std::io::ErrorKind::PermissionDenied))
     }
 }
 /// An HTTP rejection or a 2xx response that could not become a typed result.
@@ -193,11 +197,23 @@ use std::collections::BTreeMap;
 /// Default upper bound for any response body buffered in memory.
 pub const DEFAULT_MAX_RESPONSE_BODY_BYTES: usize = 8 * 1024 * 1024;
 /// HTTP client for making API requests
+/// Transport injection for internal socket protection. Implementations must
+/// enforce connection, TLS, proxy, timeout and retirement semantics; generated
+/// code never falls back to reqwest after an injected transport fails.
+pub trait HttpTransport: Send + Sync {
+    fn execute(
+        &self,
+        request: reqwest::Request,
+    ) -> std::pin::Pin<
+        Box<dyn std::future::Future<Output = HttpResult<reqwest::Response>> + Send + '_>,
+    >;
+}
 #[derive(Clone)]
 pub struct HttpClient {
     base_url: String,
     api_key: Option<String>,
     http_client: ClientWithMiddleware,
+    transport: Option<std::sync::Arc<dyn HttpTransport>>,
     custom_headers: BTreeMap<String, String>,
     max_response_body_bytes: usize,
 }
@@ -232,9 +248,17 @@ impl HttpClient {
             base_url: "http://127.0.0.1:8420".to_string(),
             api_key: None,
             http_client,
+            transport: None,
             custom_headers: BTreeMap::new(),
             max_response_body_bytes: 2097152usize,
         }
+    }
+    /// Inject a transport. All generated operations still build their own
+    /// authoritative URL, authentication, headers and JSON body, and decode
+    /// responses through the same bounded, status-first implementation.
+    pub fn with_transport(mut self, transport: std::sync::Arc<dyn HttpTransport>) -> Self {
+        self.transport = Some(transport);
+        self
     }
     /// Set the base URL for all requests
     pub fn with_base_url(mut self, base_url: impl Into<String>) -> Self {
@@ -445,7 +469,11 @@ impl HttpClient {
             }
         }
         req = req.header(reqwest::header::ACCEPT, "application/json");
-        let response = req.send().await?;
+        let response = if let Some(transport) = &self.transport {
+            transport.execute(req.build()?).await?
+        } else {
+            req.send().await?
+        };
         let status = response.status();
         let status_code = status.as_u16();
         let headers = response.headers().clone();
@@ -597,7 +625,11 @@ impl HttpClient {
             }
         }
         req = req.header(reqwest::header::ACCEPT, "application/json");
-        let response = req.send().await?;
+        let response = if let Some(transport) = &self.transport {
+            transport.execute(req.build()?).await?
+        } else {
+            req.send().await?
+        };
         let status = response.status();
         let status_code = status.as_u16();
         let headers = response.headers().clone();
@@ -751,7 +783,11 @@ impl HttpClient {
             }
         }
         req = req.header(reqwest::header::ACCEPT, "application/json");
-        let response = req.send().await?;
+        let response = if let Some(transport) = &self.transport {
+            transport.execute(req.build()?).await?
+        } else {
+            req.send().await?
+        };
         let status = response.status();
         let status_code = status.as_u16();
         let headers = response.headers().clone();
@@ -912,7 +948,11 @@ impl HttpClient {
             }
         }
         req = req.header(reqwest::header::ACCEPT, "application/json");
-        let response = req.send().await?;
+        let response = if let Some(transport) = &self.transport {
+            transport.execute(req.build()?).await?
+        } else {
+            req.send().await?
+        };
         let status = response.status();
         let status_code = status.as_u16();
         let headers = response.headers().clone();
@@ -1073,7 +1113,11 @@ impl HttpClient {
             }
         }
         req = req.header(reqwest::header::ACCEPT, "application/json");
-        let response = req.send().await?;
+        let response = if let Some(transport) = &self.transport {
+            transport.execute(req.build()?).await?
+        } else {
+            req.send().await?
+        };
         let status = response.status();
         let status_code = status.as_u16();
         let headers = response.headers().clone();
@@ -1230,7 +1274,11 @@ impl HttpClient {
             }
         }
         req = req.header(reqwest::header::ACCEPT, "application/json");
-        let response = req.send().await?;
+        let response = if let Some(transport) = &self.transport {
+            transport.execute(req.build()?).await?
+        } else {
+            req.send().await?
+        };
         let status = response.status();
         let status_code = status.as_u16();
         let headers = response.headers().clone();
@@ -1337,7 +1385,11 @@ impl HttpClient {
             }
         }
         req = req.header(reqwest::header::ACCEPT, "application/json");
-        let response = req.send().await?;
+        let response = if let Some(transport) = &self.transport {
+            transport.execute(req.build()?).await?
+        } else {
+            req.send().await?
+        };
         let status = response.status();
         let status_code = status.as_u16();
         let headers = response.headers().clone();
@@ -1444,7 +1496,11 @@ impl HttpClient {
             }
         }
         req = req.header(reqwest::header::ACCEPT, "application/json");
-        let response = req.send().await?;
+        let response = if let Some(transport) = &self.transport {
+            transport.execute(req.build()?).await?
+        } else {
+            req.send().await?
+        };
         let status = response.status();
         let status_code = status.as_u16();
         let headers = response.headers().clone();
@@ -1559,7 +1615,11 @@ impl HttpClient {
             }
         }
         req = req.header(reqwest::header::ACCEPT, "application/json");
-        let response = req.send().await?;
+        let response = if let Some(transport) = &self.transport {
+            transport.execute(req.build()?).await?
+        } else {
+            req.send().await?
+        };
         let status = response.status();
         let status_code = status.as_u16();
         let headers = response.headers().clone();
@@ -1677,7 +1737,11 @@ impl HttpClient {
             }
         }
         req = req.header(reqwest::header::ACCEPT, "application/json");
-        let response = req.send().await?;
+        let response = if let Some(transport) = &self.transport {
+            transport.execute(req.build()?).await?
+        } else {
+            req.send().await?
+        };
         let status = response.status();
         let status_code = status.as_u16();
         let headers = response.headers().clone();
@@ -1798,7 +1862,11 @@ impl HttpClient {
             }
         }
         req = req.header(reqwest::header::ACCEPT, "application/json");
-        let response = req.send().await?;
+        let response = if let Some(transport) = &self.transport {
+            transport.execute(req.build()?).await?
+        } else {
+            req.send().await?
+        };
         let status = response.status();
         let status_code = status.as_u16();
         let headers = response.headers().clone();
@@ -1940,7 +2008,11 @@ impl HttpClient {
             }
         }
         req = req.header(reqwest::header::ACCEPT, "application/json");
-        let response = req.send().await?;
+        let response = if let Some(transport) = &self.transport {
+            transport.execute(req.build()?).await?
+        } else {
+            req.send().await?
+        };
         let status = response.status();
         let status_code = status.as_u16();
         let headers = response.headers().clone();
@@ -2101,7 +2173,11 @@ impl HttpClient {
             }
         }
         req = req.header(reqwest::header::ACCEPT, "application/json");
-        let response = req.send().await?;
+        let response = if let Some(transport) = &self.transport {
+            transport.execute(req.build()?).await?
+        } else {
+            req.send().await?
+        };
         let status = response.status();
         let status_code = status.as_u16();
         let headers = response.headers().clone();
@@ -2262,7 +2338,11 @@ impl HttpClient {
             }
         }
         req = req.header(reqwest::header::ACCEPT, "application/json");
-        let response = req.send().await?;
+        let response = if let Some(transport) = &self.transport {
+            transport.execute(req.build()?).await?
+        } else {
+            req.send().await?
+        };
         let status = response.status();
         let status_code = status.as_u16();
         let headers = response.headers().clone();
