@@ -1,10 +1,8 @@
 //! RR1/RR2 regressions adapted from the independent review's preserved probes.
 use super::runtime_report_race_tests::{Transport, client, setup};
 use super::*;
-use crate::{
-    generated::client::{HttpResult, HttpTransport},
-    managed_connections::Observation,
-};
+use crate::managed_connections::Observation;
+use meshway_control_client::client::{HttpResult, HttpTransport};
 use meshway_protocol::ConnectionNeighborState;
 use std::sync::{
     Arc, Mutex,

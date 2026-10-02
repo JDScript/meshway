@@ -17,7 +17,7 @@ use serde::{Serialize, de::DeserializeOwned};
 use super::{
     super::connection_key, Agent, AgentError, cache_path, connections_status, convert, local,
 };
-use crate::generated::client::HttpClient;
+use meshway_control_client::client::HttpClient;
 
 use crate::test_network_scope as network_scope;
 

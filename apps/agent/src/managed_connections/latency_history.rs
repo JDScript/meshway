@@ -1,9 +1,9 @@
 //! Bounded side-channel sampler. It never establishes an adjacency or carries
 //! packets. Dropping this generation cancels both probes and HTTP reporting.
 use super::{Manager, session};
-use crate::generated::{self, HttpClient};
 use chrono::Utc;
 use futures_util::{StreamExt, stream};
+use meshway_control_client::{self as generated, HttpClient};
 use meshway_dataplane::Runtime;
 use meshway_protocol::{
     AgentConnectionsSnapshot, LATENCY_BATCH_LIMIT, LATENCY_SAMPLE_INTERVAL_SECONDS,

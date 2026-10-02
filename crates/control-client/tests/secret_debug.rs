@@ -1,4 +1,4 @@
-use meshway_agent::generated::types::{
+use meshway_control_client::types::{
     AgentManagedConnectionsSnapshot, EnrollAgentRequest, ExchangeDeviceRequest,
     ManagedVlessMaterial,
 };
@@ -75,7 +75,7 @@ async fn real_private_success_errors_discard_secrets_in_display_debug_and_envelo
         let server = tokio::spawn(async move {
             axum::serve(listener, app).await.unwrap();
         });
-        let error = meshway_agent::generated::HttpClient::new()
+        let error = meshway_control_client::HttpClient::new()
             .with_base_url(origin)
             .with_api_key("a".repeat(64))
             .get_agent_managed_connections()

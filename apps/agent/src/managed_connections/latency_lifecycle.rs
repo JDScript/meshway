@@ -4,7 +4,7 @@ use super::{
     Manager, Phase,
     latency_history::{self, Source, Summary},
 };
-use crate::generated::HttpClient;
+use meshway_control_client::HttpClient;
 use tokio::{
     task::JoinHandle,
     time::{Duration, Instant},

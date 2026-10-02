@@ -18,9 +18,9 @@ use super::super::{configuration, connection_key};
 use super::{
     Agent, AgentError, ConnectionSyncReceipt, ControlSyncReceipts, Identity, convert, local,
 };
-use crate::{
-    generated::types::{AcknowledgeAgentConnectionsRequest, AcknowledgeConfigurationRequest},
-    managed_connections::Manager,
+use crate::managed_connections::Manager;
+use meshway_control_client::types::{
+    AcknowledgeAgentConnectionsRequest, AcknowledgeConfigurationRequest,
 };
 
 #[derive(Serialize, Deserialize)]

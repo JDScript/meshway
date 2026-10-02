@@ -1,4 +1,4 @@
-use meshway_agent::generated::{self, ApiOpError, HttpClient};
+use meshway_control_client::{self as generated, ApiOpError, HttpClient};
 use meshway_protocol::{DEVICE_CALLBACK_URI, local, s256};
 use url::Url;
 

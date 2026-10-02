@@ -31,7 +31,7 @@ async fn enroll(
     admin: &str,
     path: &Path,
     name: &str,
-) -> meshway_agent::generated::types::NodeSummary {
+) -> meshway_control_client::types::NodeSummary {
     let response = reqwest::Client::new()
         .post(admin_url(base, admin, "/enrollment-tokens").await)
         .bearer_auth(admin)

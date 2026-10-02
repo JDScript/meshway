@@ -16,7 +16,7 @@ required-features = ["bindgen"]
 bindgen = ["uniffi/cli"]
 
 [dependencies]
-meshway-agent = { path = "../../agent" }
+meshway-control-client = { path = "../../../crates/control-client" }
 meshway-protocol = { path = "../../../crates/protocol" }
 meshway-policy = { path = "../../../crates/policy" }
 uniffi = "=0.32.2"

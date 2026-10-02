@@ -10,7 +10,7 @@ use super::{
     dns::{BootstrapResolver, SystemDnsSnapshot},
     http::ControllerHttp,
 };
-use crate::generated::client::{HttpClient, HttpError, HttpResult, HttpTransport};
+use meshway_control_client::client::{HttpClient, HttpError, HttpResult, HttpTransport};
 
 /// All generated consumer clones observe one replacement point. An empty or
 /// retired slot fails closed, including already-created DNS consumers.

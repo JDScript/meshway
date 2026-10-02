@@ -10,13 +10,13 @@ use meshway_protocol::{
 };
 use tokio::time::{self, Instant};
 
-use crate::generated::client::HttpClient;
 use crate::managed_connections::Manager;
 use crate::state::connections::{
     ConnectionSyncReceipt, ControlSyncReceipts, cache_path, convert, dataplane, materials,
     mesh_execution, validation,
 };
 use crate::state::{Agent, AgentError, connection_key, local};
+use meshway_control_client::client::HttpClient;
 
 mod cli;
 

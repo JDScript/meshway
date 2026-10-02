@@ -1,12 +1,10 @@
 //! Saved configuration pull/ACK; no cached authorization is activated here.
-use crate::{
-    generated::types::AcknowledgeConfigurationRequest,
-    state::{
-        Agent, AgentError,
-        configuration::{self, SyncReceipt, cache_path},
-        local,
-    },
+use crate::state::{
+    Agent, AgentError,
+    configuration::{self, SyncReceipt, cache_path},
+    local,
 };
+use meshway_control_client::types::AcknowledgeConfigurationRequest;
 use meshway_protocol::ConfigurationSnapshot;
 
 impl Agent {

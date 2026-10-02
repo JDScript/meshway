@@ -1,8 +1,5 @@
 //! Agent-side HTTP interface generated from the controller's OpenAPI contract.
 
-#[allow(dead_code, clippy::all)]
-pub mod generated;
-
 // Internal capability: never exported to IPC, Web or business `direct` routing.
 #[cfg(feature = "managed-connections")]
 #[allow(dead_code)] // Independently staged; runtime hooks are a separate handoff.

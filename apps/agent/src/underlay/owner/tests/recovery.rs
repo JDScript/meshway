@@ -43,7 +43,7 @@ pub(super) async fn control(owner: &LinuxUnderlay) {
     let error = channel
         .client()
         .with_api_key("fixture-only")
-        .enroll_agent(crate::generated::types::EnrollAgentRequest {
+        .enroll_agent(meshway_control_client::types::EnrollAgentRequest {
             agent_version: "tun-recovery-fixture".into(),
             name: "isolated".into(),
             node_credential: "a".repeat(64),
@@ -51,7 +51,7 @@ pub(super) async fn control(owner: &LinuxUnderlay) {
         .await
         .unwrap_err();
     match error {
-        crate::generated::client::ApiOpError::Api(error) => assert_eq!(error.status, 401),
+        meshway_control_client::client::ApiOpError::Api(error) => assert_eq!(error.status, 401),
         error => panic!("controller transport did not recover: {error:?}"),
     }
     channel.retire();

@@ -2368,7 +2368,7 @@ mod tests {
             let error = channel
                 .client()
                 .with_api_key("fixture-only")
-                .enroll_agent(crate::generated::types::EnrollAgentRequest {
+                .enroll_agent(meshway_control_client::types::EnrollAgentRequest {
                     agent_version: "namespace-owner-fixture".into(),
                     name: "isolated".into(),
                     node_credential: "a".repeat(64),
@@ -2376,7 +2376,7 @@ mod tests {
                 .await
                 .unwrap_err();
             match error {
-                crate::generated::client::ApiOpError::Api(error) => {
+                meshway_control_client::client::ApiOpError::Api(error) => {
                     assert_eq!(error.status, 401);
                     assert!(error.raw_body.is_empty());
                 }

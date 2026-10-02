@@ -1,13 +1,11 @@
 //! Deterministic generated-transport injection for races and bounded retry.
 //! The sibling recovery test independently exercises real Controller/TCP peers.
 use super::*;
-use crate::{
-    generated::client::{HttpResult, HttpTransport},
-    managed_connections::{
-        Observation,
-        tests::{fixture, report_generation, snapshot},
-    },
+use crate::managed_connections::{
+    Observation,
+    tests::{fixture, report_generation, snapshot},
 };
+use meshway_control_client::client::{HttpResult, HttpTransport};
 use meshway_protocol::{
     ConnectionNeighborObservation, ConnectionNeighborState, ConnectionTransport,
 };

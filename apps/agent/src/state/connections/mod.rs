@@ -9,7 +9,7 @@ use meshway_protocol::{
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
 
 use super::{Agent, AgentError, Identity, SyncReceipt, connection_key::KeyStore, local};
-use crate::generated::types::AcknowledgeAgentConnectionsRequest;
+use meshway_control_client::types::AcknowledgeAgentConnectionsRequest;
 
 #[cfg(feature = "managed-connections")]
 pub(crate) mod dataplane;

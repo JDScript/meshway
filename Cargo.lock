@@ -1981,6 +1981,7 @@ dependencies = [
  "ipnet",
  "meshway-agent-dns",
  "meshway-agent-tun",
+ "meshway-control-client",
  "meshway-controller",
  "meshway-dataplane",
  "meshway-policy",
@@ -1988,7 +1989,6 @@ dependencies = [
  "meshway-transport-vless",
  "rcgen",
  "reqwest",
- "reqwest-middleware",
  "rustix",
  "rustls",
  "rustls-native-certs",
@@ -2030,7 +2030,7 @@ name = "meshway-apple-core"
 version = "0.1.0"
 dependencies = [
  "axum",
- "meshway-agent",
+ "meshway-control-client",
  "meshway-controller",
  "meshway-policy",
  "meshway-protocol",
@@ -2041,6 +2041,21 @@ dependencies = [
  "tower",
  "uniffi",
  "url",
+]
+
+[[package]]
+name = "meshway-control-client"
+version = "0.1.0"
+dependencies = [
+ "axum",
+ "chrono",
+ "futures-util",
+ "reqwest",
+ "reqwest-middleware",
+ "serde",
+ "serde_json",
+ "thiserror",
+ "tokio",
 ]
 
 [[package]]

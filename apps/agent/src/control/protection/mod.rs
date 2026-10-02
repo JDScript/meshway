@@ -3,15 +3,13 @@ use crate::state::{
     Agent, AgentError, Identity, connections, dns, local,
     network_binding::{fingerprint, load_binding, persist_binding, sidecar},
 };
-use crate::{
-    generated::{
-        client::HttpClient,
-        types::{AgentNodeResponse, EnrollAgentRequest, HeartbeatRequest},
-    },
-    underlay::{
-        BootstrapChannel, BootstrapPreparation, BootstrapUnderlay, ControllerChannel,
-        ControllerClients, LinuxUnderlay, Preparation, SystemDnsSnapshot,
-    },
+use crate::underlay::{
+    BootstrapChannel, BootstrapPreparation, BootstrapUnderlay, ControllerChannel,
+    ControllerClients, LinuxUnderlay, Preparation, SystemDnsSnapshot,
+};
+use meshway_control_client::{
+    client::HttpClient,
+    types::{AgentNodeResponse, EnrollAgentRequest, HeartbeatRequest},
 };
 
 pub(crate) struct Control {

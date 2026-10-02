@@ -1,6 +1,6 @@
 //! Guard-only enrollment ownership. No business capability is exposed here.
 use super::*;
-use crate::generated::{
+use meshway_control_client::{
     client::{ApiOpError, EnrollAgentApiError, GetAgentDnsApiError, HeartbeatAgentApiError},
     types,
 };

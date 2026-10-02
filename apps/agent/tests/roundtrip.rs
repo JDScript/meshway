@@ -7,13 +7,10 @@ use std::{
 };
 
 use axum::{Router, routing::post};
-use meshway_agent::{
-    Agent, AgentError,
-    generated::{
-        client::HttpClient,
-        types::{AgentNodeResponse, EnrollAgentRequest, HeartbeatRequest},
-    },
-    status,
+use meshway_agent::{Agent, AgentError, status};
+use meshway_control_client::{
+    client::HttpClient,
+    types::{AgentNodeResponse, EnrollAgentRequest, HeartbeatRequest},
 };
 use meshway_controller::{AppState, admin_token, router};
 use meshway_protocol::{CreateEnrollmentTokenResponse, local};

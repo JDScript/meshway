@@ -13,8 +13,8 @@ use serde::{Deserialize, Serialize};
 use tokio::time::{Instant, sleep};
 
 use super::{Agent, AgentError, Identity, local};
-use crate::generated::client::HttpClient;
 use meshway_agent_dns::{Guard, Server, Zone};
+use meshway_control_client::client::HttpClient;
 
 mod log;
 

@@ -8,7 +8,7 @@ use super::{
     http::ControllerHttp,
     *,
 };
-use crate::generated::{
+use meshway_control_client::{
     client::{ApiOpError, HttpClient, HttpTransport},
     types::EnrollAgentRequest,
 };
@@ -379,7 +379,7 @@ fn transport(
 async fn request(
     client: &ControllerHttp,
     url: &str,
-) -> crate::generated::client::HttpResult<reqwest::Response> {
+) -> meshway_control_client::client::HttpResult<reqwest::Response> {
     client
         .execute(reqwest::Request::new(
             reqwest::Method::GET,

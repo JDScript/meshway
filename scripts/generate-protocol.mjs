@@ -7,7 +7,7 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 export const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 export const artifactPaths = [
   "packages/protocol/openapi.json",
-  "apps/agent/src/generated",
+  "crates/control-client/src/generated",
   "packages/control-client/src/generated",
 ];
 

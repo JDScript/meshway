@@ -1,5 +1,5 @@
 //! Read-only presentation snapshots. No ACK, persistence or dataplane activation.
-use meshway_agent::generated::{self, ApiOpError};
+use meshway_control_client::{self as generated, ApiOpError};
 use meshway_protocol::{self as protocol, local};
 
 use crate::SignInError;

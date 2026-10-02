@@ -24,7 +24,7 @@ use tokio_rustls::TlsConnector;
 use tokio_util::sync::WaitForCancellationFutureOwned;
 
 use super::{Purpose, SocketFactory, closed, dns::BootstrapResolver, invalid};
-use crate::generated::client::{HttpError, HttpResult, HttpTransport};
+use meshway_control_client::client::{HttpError, HttpResult, HttpTransport};
 
 trait Io: AsyncRead + AsyncWrite + Send + Unpin {}
 impl<T: AsyncRead + AsyncWrite + Send + Unpin> Io for T {}

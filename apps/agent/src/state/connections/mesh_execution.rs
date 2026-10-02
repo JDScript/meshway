@@ -700,7 +700,7 @@ mod tests {
 
     #[test]
     fn real_generated_contract_preserves_null_requires_presence_and_rejects_unknowns() {
-        use crate::generated::types;
+        use meshway_control_client::types;
         let legacy = MeshExecutionResponse {
             source_mode: PolicySourceMode::LegacyV2,
             revision: 1,

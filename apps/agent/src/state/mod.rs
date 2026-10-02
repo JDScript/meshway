@@ -9,7 +9,7 @@ pub(crate) use crate::test_local as local;
 pub(crate) use meshway_protocol::local;
 use serde::{Deserialize, Serialize};
 
-use crate::generated::{
+use meshway_control_client::{
     client::{ApiOpError, HttpClient},
     types::{AgentNodeResponse, EnrollAgentRequest, HeartbeatRequest},
 };

@@ -144,14 +144,14 @@ async fn lost_begin_response_pins_startup_cas_and_cannot_steal_new_owner() {
         node_credential: String,
     }
     let credential: Credential = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
-    let client = meshway_agent::generated::client::HttpClient::new()
+    let client = meshway_control_client::client::HttpClient::new()
         .with_base_url(&server.base)
         .with_api_key(&credential.node_credential);
     let expected_epoch = client.get_connection_runtime_epoch().await.unwrap().epoch;
     assert_eq!(expected_epoch, 1);
     let newer = client
         .begin_connection_runtime(
-            meshway_agent::generated::types::BeginConnectionRuntimeRequest {
+            meshway_control_client::types::BeginConnectionRuntimeRequest {
                 instance_id: meshway_protocol::local::credential().unwrap(),
                 expected_epoch,
             },
@@ -252,13 +252,13 @@ async fn superseded_runtime_epoch_is_fatal_and_revocation_closes_listener() {
         node_credential: String,
     }
     let credential: Credential = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
-    let client = meshway_agent::generated::client::HttpClient::new()
+    let client = meshway_control_client::client::HttpClient::new()
         .with_base_url(&server.base)
         .with_api_key(&credential.node_credential);
     let expected_epoch = client.get_connection_runtime_epoch().await.unwrap().epoch;
     client
         .begin_connection_runtime(
-            meshway_agent::generated::types::BeginConnectionRuntimeRequest {
+            meshway_control_client::types::BeginConnectionRuntimeRequest {
                 instance_id: meshway_protocol::local::credential().unwrap(),
                 expected_epoch,
             },
