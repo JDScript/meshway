@@ -29,7 +29,7 @@ import {
   reportUsable,
   socketsByResource,
 } from "./discovery-model"
-import { listenerDraft } from "./drafts"
+import { useListenerDraft } from "./drafts"
 import {
   discoverySourceLabel,
   discoveryStatusLabel,
@@ -275,8 +275,7 @@ function ListenerItem({
 }) {
   const settings = summary.settings
   const key = `${node.id}/${settings.id}`
-  const useDraft = listenerDraft(key)
-  const draft = useDraft(networkId, undefined)
+  const draft = useListenerDraft(networkId, key, undefined)
   const { freshness, entry } = useListenerRuntime(context, node.id, settings.id)
   const candidates =
     connections?.configuration.candidates.filter(
@@ -456,7 +455,6 @@ function ListenerEditor({
   const queryClient = useQueryClient()
   const creating = summary === null
   const key = `${node.id}/${summary?.settings.id ?? NEW_LISTENER}`
-  const useDraft = listenerDraft(key)
   const saved = useMemo(
     () => ({
       revision: snapshot.revision,
@@ -464,7 +462,7 @@ function ListenerEditor({
     }),
     [snapshot.revision, summary]
   )
-  const draft = useDraft(networkId, saved)
+  const draft = useListenerDraft(networkId, key, saved)
   const fields = draft.value ?? saved.value
   const creatingContext = useMemo(
     () => (creating ? { taken } : null),

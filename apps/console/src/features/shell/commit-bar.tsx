@@ -1,10 +1,12 @@
-import { useEffect, useId, useState } from "react"
+import { useEffect, useId, useLayoutEffect, useMemo, useRef } from "react"
 import { create } from "zustand"
 
 import { Button } from "@/components/ui/button"
 import { Spinner } from "@/components/ui/spinner"
+import { useKeptWhile } from "@/lib/use-kept"
 import { m } from "@/paraglide/messages.js"
 
+import { COMMIT_BOTTOM, COMMIT_SHEET_INSET } from "./layout"
 import type { PageId } from "./pages"
 import { Surface } from "./surface"
 
@@ -22,8 +24,6 @@ export type Commit = {
   overwrite: () => void
 }
 
-const SHEET_INSET = 6
-
 const useCommitStore = create<{ owner: string | null; commit: Commit | null }>(
   () => ({ owner: null, commit: null })
 )
@@ -35,11 +35,36 @@ const useCommitStore = create<{ owner: string | null; commit: Commit | null }>(
  */
 export function useCommit(commit: Commit | null) {
   const owner = useId()
+  // The actions close over the editor's latest render; the bar calls
+  // through to them, so the store changes only when what it shows does.
+  const latest = useRef(commit)
+  useLayoutEffect(() => {
+    latest.current = commit
+  })
+  const page = commit?.page ?? null
+  const problem = commit?.problem ?? null
+  const outdated = commit?.outdated ?? false
+  const saving = commit?.saving ?? false
+  const offered: Commit | null = useMemo(
+    () =>
+      page === null
+        ? null
+        : {
+            page,
+            problem,
+            outdated,
+            saving,
+            save: () => latest.current?.save(),
+            discard: () => latest.current?.discard(),
+            overwrite: () => latest.current?.overwrite(),
+          },
+    [page, problem, outdated, saving]
+  )
   useEffect(() => {
-    if (commit) useCommitStore.setState({ owner, commit })
+    if (offered) useCommitStore.setState({ owner, commit: offered })
     else if (useCommitStore.getState().owner === owner)
       useCommitStore.setState({ owner: null, commit: null })
-  })
+  }, [owner, offered])
   useEffect(
     () => () => {
       if (useCommitStore.getState().owner === owner)
@@ -67,9 +92,7 @@ export function CommitBar({
 }) {
   const commit = useCommitStore((store) => store.commit)
   const shown = workspaceShown && commit !== null && commit.page === page
-  const [kept, setKept] = useState(commit)
-  if (shown && commit !== kept) setKept(commit)
-  const current = shown ? commit : kept
+  const current = useKeptWhile(shown, commit)
 
   useEffect(() => {
     if (!shown) return
@@ -90,9 +113,12 @@ export function CommitBar({
       className="pointer-events-none absolute flex justify-center"
       style={
         mobile
-          ? // In the sheet, concentric with its corners: 28 − 6 = 22, the bar's own radius.
-            { left: SHEET_INSET, right: SHEET_INSET, bottom: SHEET_INSET }
-          : { left: 0, right: 0, bottom: 16 }
+          ? {
+              left: COMMIT_SHEET_INSET,
+              right: COMMIT_SHEET_INSET,
+              bottom: COMMIT_SHEET_INSET,
+            }
+          : { left: 0, right: 0, bottom: COMMIT_BOTTOM }
       }
     >
       <Surface

@@ -30,7 +30,7 @@ import { failureOf, toastFailure } from "@/lib/failure"
 import { dateTime } from "@/lib/format"
 import { m } from "@/paraglide/messages.js"
 
-import { nodeTagsDraft } from "./drafts"
+import { useNodeTagsDraft } from "./drafts"
 import { EmptyLine, TabSection } from "./sections"
 import { discoveriesQuery, managedListenersQuery } from "./queries"
 
@@ -88,8 +88,7 @@ function NodeTags({
         : undefined,
     [tags.data, node.id]
   )
-  const useDraft = nodeTagsDraft(node.id)
-  const draft = useDraft(networkId, saved)
+  const draft = useNodeTagsDraft(networkId, node.id, saved)
   const chosen = new Set(draft.value ?? [])
   const tooMany = chosen.size > MAX_NODE_TAGS
 

@@ -1,6 +1,6 @@
 import { z } from "zod"
 
-import { NODE_ID } from "@/features/network/queries"
+import { NODE_ID } from "@/features/network/ids"
 
 // The nodes page in the address; values at their default are left out.
 //
@@ -8,8 +8,6 @@ import { NODE_ID } from "@/features/network/queries"
 //   /networks/<network>/nodes/<node>?…&tab=          one node's workspace, over the list
 //   /networks/<network>/nodes/add                     adding a node
 //   /networks/<network>/nodes/tags/<tag>              one tag's workspace
-
-export { NODE_ID }
 
 export const NODE_STATES = ["live", "contact", "quiet"] as const
 export type NodeStateFilter = (typeof NODE_STATES)[number]

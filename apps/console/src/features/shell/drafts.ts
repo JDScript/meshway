@@ -69,16 +69,30 @@ export type Draft<T> = {
 export function createDraft<T>(
   page: PageId
 ): (networkId: string, saved: Saved<T> | undefined) => Draft<T> {
+  const useKeyed = createKeyedDraft<T>(page)
+  return function useDraft(networkId, saved) {
+    return useKeyed(networkId, "", saved)
+  }
+}
+
+/**
+ * One kind of draft with many instances in a network (one per listener,
+ * one per node's tags), told apart by `key`: one store for the kind, so
+ * nothing is created per instance.
+ */
+export function createKeyedDraft<T>(
+  page: PageId
+): (networkId: string, key: string, saved: Saved<T> | undefined) => Draft<T> {
   const store: UseBoundStore<StoreApi<Record<string, Entry<T>>>> = create<
     Record<string, Entry<T>>
   >(() => ({}))
   resets.push(() => store.setState({}, true))
 
-  const write = (networkId: string, entry: Entry<T> | null) => {
+  const write = (networkId: string, id: string, entry: Entry<T> | null) => {
     store.setState((entries) => {
       const next = { ...entries }
-      if (entry) next[networkId] = entry
-      else delete next[networkId]
+      if (entry) next[id] = entry
+      else delete next[id]
       return next
     }, true)
     useIndex.setState((index) => {
@@ -90,57 +104,58 @@ export function createDraft<T>(
     })
   }
 
-  return function useDraft(networkId, saved) {
-    const entry = store((entries) => entries[networkId])
+  return function useDraft(networkId, key, saved) {
+    // Network IDs are hex: the first "/" ends it, so keys never collide across networks.
+    const id = `${networkId}/${key}`
+    const entry = store((entries) => entries[id])
 
     const edit = useCallback(
       (update: (current: T) => T) => {
-        const current = store.getState()[networkId]
+        const current = store.getState()[id]
         const base = current
           ? { value: current.base, revision: current.baseRevision }
           : saved
         if (!base) return
         const value = update(current ? current.value : base.value)
-        const had = current !== undefined
         if (sameData(value, base.value)) {
-          if (had) write(networkId, null)
-        } else if (had)
+          if (current) write(networkId, id, null)
+        } else if (current)
           store.setState((entries) => ({
             ...entries,
-            [networkId]: { ...current, value },
+            [id]: { ...current, value },
           }))
         else
-          write(networkId, {
+          write(networkId, id, {
             base: base.value,
             baseRevision: base.revision,
             value,
           })
       },
-      [networkId, saved]
+      [networkId, id, saved]
     )
     const discard = useCallback(() => {
-      if (store.getState()[networkId]) write(networkId, null)
-    }, [networkId])
+      if (store.getState()[id]) write(networkId, id, null)
+    }, [networkId, id])
     const rebase = useCallback(() => {
-      const current = store.getState()[networkId]
+      const current = store.getState()[id]
       if (!current || !saved) return
-      if (sameData(current.value, saved.value)) write(networkId, null)
+      if (sameData(current.value, saved.value)) write(networkId, id, null)
       else
         store.setState((entries) => ({
           ...entries,
-          [networkId]: {
+          [id]: {
             base: saved.value,
             baseRevision: saved.revision,
             value: current.value,
           },
         }))
-    }, [networkId, saved])
+    }, [networkId, id, saved])
 
     // A draft that the controller now holds as saved (saved here, or the same edit elsewhere) is done.
     useEffect(() => {
       if (entry && saved && sameData(entry.value, saved.value))
-        write(networkId, null)
-    }, [entry, saved, networkId])
+        write(networkId, id, null)
+    }, [entry, saved, networkId, id])
 
     return useMemo(
       () => ({

@@ -37,6 +37,17 @@ export const MOBILE_SHEET_BOTTOM = MOBILE_BAR_SPACE + MOBILE_EDGE
 export const MOBILE_PAGE_HEIGHT = 0.52
 export const MOBILE_PEEK_HEIGHT = 0.6
 
+/** A bottom sheet leaving through the screen's edge travels this much further, so its shadow goes too. */
+export const SHEET_EXIT_OVERSHOOT = 2
+
+/**
+ * The commit bar floats this far above the bottom of a workspace; in a
+ * phone's sheet it sits closer, concentric with the sheet's corners
+ * (28 − 6 = 22, the bar's own radius).
+ */
+export const COMMIT_BOTTOM = 16
+export const COMMIT_SHEET_INSET = 6
+
 /**
  * Popups opened from a workspace keep clear of the screen's edges and of
  * the commit bar (on phones, the commit bar in its sheet above the bottom
@@ -45,12 +56,12 @@ export const MOBILE_PEEK_HEIGHT = 0.6
 export const POPUP_CLEARANCE = {
   top: EDGE,
   right: EDGE,
-  bottom: MOBILE_SHEET_BOTTOM + 6 + BAR_HEIGHT + GAP,
+  bottom: MOBILE_SHEET_BOTTOM + COMMIT_SHEET_INSET + BAR_HEIGHT + GAP,
   left: EDGE,
 }
 
 /** Room an editor keeps free at the bottom of its workspace for the commit bar floating there. */
-export const COMMIT_SPACE = BAR_HEIGHT + 32
+const COMMIT_SPACE = BAR_HEIGHT + 2 * COMMIT_BOTTOM
 
 /** The geometry above as CSS variables, for surfaces placed with classes; set once on the document. */
 export const LAYOUT_VARIABLES: Record<`--${string}`, string> = {

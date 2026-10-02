@@ -1,15 +1,20 @@
 import { cn } from "@/lib/utils"
-import { useState, type CSSProperties, type ReactNode } from "react"
+import type { CSSProperties, ReactNode } from "react"
 
 import { Drawer, DrawerContent } from "@/components/ui/drawer"
+import { useKeptWhile } from "@/lib/use-kept"
 
-import { MOBILE_EDGE, MOBILE_SHEET_BOTTOM } from "./layout"
+import {
+  MOBILE_EDGE,
+  MOBILE_SHEET_BOTTOM,
+  SHEET_EXIT_OVERSHOOT,
+} from "./layout"
 
 /** A bottom sheet floats above the phone's bottom bar and leaves through the screen's edge. */
 const BOTTOM: CSSProperties = {
   "--drawer-inset": `${MOBILE_EDGE}px`,
   marginBottom: MOBILE_SHEET_BOTTOM,
-  "--closed-transform": `translate3d(0, calc(100% + ${MOBILE_SHEET_BOTTOM + 2}px), 0)`,
+  "--closed-transform": `translate3d(0, calc(100% + ${MOBILE_SHEET_BOTTOM + SHEET_EXIT_OVERSHOOT}px), 0)`,
 }
 
 /** Marks the chrome (network card, toolbar, dock): touching it never dismisses a drawer. */
@@ -47,8 +52,7 @@ export function GlassDrawer({
   style?: CSSProperties
   children: ReactNode
 }) {
-  const [kept, setKept] = useState(children)
-  if (open && children !== kept) setKept(children)
+  const content = useKeptWhile(open, children)
 
   return (
     <Drawer
@@ -86,7 +90,7 @@ export function GlassDrawer({
           ...style,
         }}
       >
-        {open ? children : kept}
+        {content}
       </DrawerContent>
     </Drawer>
   )

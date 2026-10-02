@@ -17,7 +17,7 @@ export type Span = keyof typeof SPAN_MS
 /** One page; the API allows 1–1000. */
 export const PAGE_LIMIT = 1000
 /** Pages per window read: 24 h at 30 s is ~2,900 events. */
-export const PAGE_BUDGET = 6
+const PAGE_BUDGET = 6
 /** A refresh re-reads this far before the last complete window's end (measurements may arrive up to 120 s late). */
 export const OVERLAP_MS = 130_000
 
