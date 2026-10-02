@@ -1,3 +1,284 @@
 {
-  "$schema": "https://inlang.com/schema/inlang-message-format"
+  "$schema": "https://inlang.com/schema/inlang-message-format",
+  "policy_nav": "Policy",
+  "policy_failed": "Could not read the policy",
+  "policy_revision": "r{revision}",
+  "policy_mode_v3": "v3",
+  "policy_mode_v2": "v2 source",
+  "policy_saved_invalid": "Saved policy invalid",
+  "policy_origin_proposal": "Migration proposal",
+  "policy_origin_draft": "Draft · from r{revision}",
+  "policy_read_only": "Read only",
+  "policy_changed": "Unsaved changes",
+  "policy_layer_connections": "Connections",
+  "policy_layer_grants": "Grants",
+  "policy_layer_mesh": "Mesh routes",
+  "policy_layer_egress": "Egress",
+  "policy_layer_source": "Source",
+  "policy_count_rules": [
+    {
+      "declarations": [
+        "input count",
+        "local countPlural = count: plural"
+      ],
+      "selectors": [
+        "countPlural"
+      ],
+      "match": {
+        "countPlural=one": "{count} rule",
+        "countPlural=other": "{count} rules"
+      }
+    }
+  ],
+  "policy_count_blocks": [
+    {
+      "declarations": [
+        "input count",
+        "local countPlural = count: plural"
+      ],
+      "selectors": [
+        "countPlural"
+      ],
+      "match": {
+        "countPlural=one": "{count} block",
+        "countPlural=other": "{count} blocks"
+      }
+    }
+  ],
+  "policy_count_lines": [
+    {
+      "declarations": [
+        "input count",
+        "local countPlural = count: plural"
+      ],
+      "selectors": [
+        "countPlural"
+      ],
+      "match": {
+        "countPlural=one": "{count} line",
+        "countPlural=other": "{count} lines"
+      }
+    }
+  ],
+  "policy_count_problems": [
+    {
+      "declarations": [
+        "input count",
+        "local countPlural = count: plural"
+      ],
+      "selectors": [
+        "countPlural"
+      ],
+      "match": {
+        "countPlural=one": "{count} problem",
+        "countPlural=other": "{count} problems"
+      }
+    }
+  ],
+  "policy_count_lints": [
+    {
+      "declarations": [
+        "input count",
+        "local countPlural = count: plural"
+      ],
+      "selectors": [
+        "countPlural"
+      ],
+      "match": {
+        "countPlural=one": "{count} note",
+        "countPlural=other": "{count} notes"
+      }
+    }
+  ],
+  "policy_fact_block_wins": "Block wins",
+  "policy_fact_unordered": "Order-independent",
+  "policy_fact_additive": "Additive",
+  "policy_fact_unmatched_denied": "Unmatched is denied",
+  "policy_fact_first_match": "Top to bottom · first match",
+  "policy_fact_specific": "Node > tag > *",
+  "policy_rule_id": "Rule ID",
+  "policy_rule_remove": "Remove",
+  "policy_move_up": "Move {name} up",
+  "policy_move_down": "Move {name} down",
+  "policy_connection_allow": "Allow",
+  "policy_connection_block": "Block",
+  "policy_connection_between": "between",
+  "policy_connection_ends": "Ends",
+  "policy_connection_a": "One end",
+  "policy_connection_b": "Other end",
+  "policy_connection_action": "Action",
+  "policy_connection_add": "Add connection rule",
+  "policy_connections_none": "No connection rules · nodes do not connect",
+  "policy_grant_src": "Sources",
+  "policy_grant_dst": "Destinations",
+  "policy_grant_src_add": "Add source",
+  "policy_grant_dst_add": "Add destination",
+  "policy_grant_bidirectional": "Both directions",
+  "policy_grant_both": "both ways",
+  "policy_grant_to": "to",
+  "policy_grant_add": "Add grant",
+  "policy_grants_none": "No grants · all access is denied",
+  "policy_mesh_flow": "Flow",
+  "policy_mesh_src": "Source",
+  "policy_mesh_dst": "Destination",
+  "policy_mesh_hops": "Mandatory hops",
+  "policy_mesh_via": "via",
+  "policy_mesh_no_hops": "No mandatory hops",
+  "policy_mesh_hop_add": "Add hop",
+  "policy_mesh_add": "Add route",
+  "policy_mesh_end": "No match · automatic path",
+  "policy_mesh_failures": [
+    {
+      "declarations": [
+        "input count",
+        "local countPlural = count: plural"
+      ],
+      "selectors": [
+        "countPlural"
+      ],
+      "match": {
+        "countPlural=one": "{count} path unavailable",
+        "countPlural=other": "{count} paths unavailable"
+      }
+    }
+  ],
+  "policy_egress_public": "Public rules",
+  "policy_egress_profiles": "Profiles",
+  "policy_egress_automatic": "Automatic",
+  "policy_egress_assignments": "Assignments",
+  "policy_egress_summary": "Public {public} · profiles {profiles} · assignments {assignments}",
+  "policy_egress_not_saved": "Controller does not accept egress yet",
+  "policy_egress_public_end": "No match · the current profile's rules",
+  "policy_egress_profiles_none": "No custom profiles",
+  "policy_egress_regions_none": "No region mappings",
+  "policy_egress_regions_other": "Other or unknown",
+  "policy_egress_assignments_none": "No assignments · mesh only by default",
+  "policy_egress_direct": "Direct",
+  "policy_egress_none": "Not taken over",
+  "policy_egress_exit": "Exit",
+  "policy_egress_then": "then",
+  "policy_egress_fallback": "Fallback",
+  "policy_egress_rule_set": "Rule set {name}",
+  "policy_egress_locked": "Locked",
+  "policy_egress_default": "Default: {name}",
+  "policy_profile_mesh_only": "Mesh only",
+  "policy_profile_auto": "Automatic",
+  "policy_profile_global_all": "Global · every exit",
+  "policy_profile_global": "Global via {name}",
+  "policy_selector_all": "All nodes",
+  "policy_selector_internet": "Internet",
+  "policy_selector_unknown_node": "Unknown node {id}",
+  "policy_selector_none": "None",
+  "policy_selector_add": "Add",
+  "policy_selector_remove": "Remove {name}",
+  "policy_selector_search": "Search nodes or tags",
+  "policy_selector_empty": "No match",
+  "policy_selector_group_all": "All",
+  "policy_selector_group_tags": "Tags",
+  "policy_selector_group_nodes": "Nodes",
+  "policy_selector_count": [
+    {
+      "declarations": [
+        "input count",
+        "local countPlural = count: plural"
+      ],
+      "selectors": [
+        "countPlural"
+      ],
+      "match": {
+        "countPlural=one": "{count} node",
+        "countPlural=other": "{count} nodes"
+      }
+    }
+  ],
+  "policy_source_valid": "Valid",
+  "policy_source_invalid": "Source is invalid",
+  "policy_source_invalid_short": "Invalid source",
+  "policy_source_open": "Open source",
+  "policy_source_none": "No v3 source",
+  "policy_source_controller": [
+    {
+      "declarations": [
+        "input count",
+        "local countPlural = count: plural"
+      ],
+      "selectors": [
+        "countPlural"
+      ],
+      "match": {
+        "countPlural=one": "{count} controller problem",
+        "countPlural=other": "{count} controller problems"
+      }
+    }
+  ],
+  "policy_source_previous": "Previous problem",
+  "policy_source_next": "Next problem",
+  "policy_problem_at": "Line {line} · {reason}",
+  "policy_syntax_symbol": "Unrecognised symbol",
+  "policy_syntax_number": "Invalid number",
+  "policy_syntax_property": "Quoted property name expected",
+  "policy_syntax_value": "Value expected",
+  "policy_syntax_colon": "Colon expected",
+  "policy_syntax_comma": "Comma expected",
+  "policy_syntax_brace": "Missing }",
+  "policy_syntax_bracket": "Missing ]",
+  "policy_syntax_end": "End of text expected",
+  "policy_syntax_comment": "Invalid comment",
+  "policy_syntax_comment_end": "Unterminated block comment",
+  "policy_syntax_string_end": "Unterminated string",
+  "policy_syntax_unicode": "Invalid Unicode escape",
+  "policy_syntax_escape": "Invalid escape",
+  "policy_syntax_character": "Control character in string",
+  "policy_syntax_duplicate_key": "Duplicate key",
+  "policy_syntax_empty": "Source is empty",
+  "policy_syntax_other": "Syntax error",
+  "policy_schema_type": "Wrong type",
+  "policy_schema_value": "Invalid value",
+  "policy_schema_union": "Not an accepted shape",
+  "policy_schema_other": "Does not match the policy schema",
+  "policy_schema_unknown_key": "Unknown field {key}",
+  "policy_schema_missing": "Missing field {field}",
+  "policy_id_duplicate": "Duplicate rule ID",
+  "policy_id_syntax": "Rule ID must be 1–64 letters, digits or . _ -",
+  "policy_legacy_title": "Running the v2 source",
+  "policy_legacy_proposal": "The controller proposes a v3 policy",
+  "policy_legacy_no_proposal": "No migration proposal",
+  "policy_legacy_started": "Saving the draft switches to v3",
+  "policy_legacy_adopt": "Adopt proposal",
+  "policy_legacy_template": "Start from the template",
+  "policy_legacy_unconverted": [
+    {
+      "declarations": [
+        "input count",
+        "local countPlural = count: plural"
+      ],
+      "selectors": [
+        "countPlural"
+      ],
+      "match": {
+        "countPlural=one": "{count} item not converted",
+        "countPlural=other": "{count} items not converted"
+      }
+    }
+  ],
+  "policy_flow_title": "Flow preview",
+  "policy_flow_fact": "Compiled from the saved v2 source · planned, not traced",
+  "policy_flow_source": "Source node",
+  "policy_flow_destination": "Destination",
+  "policy_flow_to_node": "Node",
+  "policy_flow_to_ip": "IP",
+  "policy_flow_domain": "Domain (optional)",
+  "policy_flow_pick": "Choose a node",
+  "policy_flow_run": "Preview",
+  "policy_flow_authorization": "Authorization",
+  "policy_flow_routing": "Routing",
+  "policy_flow_allow": "Allowed",
+  "policy_flow_reject": "Rejected",
+  "policy_flow_invalid": "Invalid",
+  "policy_flow_route": "Routed",
+  "policy_flow_forward": "Matched forward",
+  "policy_flow_reverse": "Matched in reverse",
+  "policy_flow_revision": "r{revision}",
+  "policy_flow_executable": "Executable",
+  "policy_flow_not_executable": "Not executable"
 }

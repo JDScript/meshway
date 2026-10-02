@@ -5,6 +5,7 @@ import {
   ServerIcon,
   Settings2Icon,
   UsersIcon,
+  ShieldIcon,
   type LucideIcon,
 } from "lucide-react"
 
@@ -17,6 +18,7 @@ export const PAGES = {
   overview: { route: "/networks/$network/overview", panel: false },
   nodes: { route: "/networks/$network/nodes", panel: true },
   members: { route: "/networks/$network/members", panel: true },
+  policy: { route: "/networks/$network/policy", panel: true },
   settings: { route: "/networks/$network/settings", panel: true },
   account: { route: "/networks/$network/account", panel: false },
 } as const satisfies Record<
@@ -35,6 +37,7 @@ export const DOCK: readonly {
   { page: "overview", icon: GlobeIcon, label: () => m.nav_overview() },
   { page: "nodes", icon: ServerIcon, label: () => m.nav_nodes() },
   { page: "members", icon: UsersIcon, label: () => m.members_title() },
+  { page: "policy", icon: ShieldIcon, label: () => m.policy_nav() },
   { page: "settings", icon: Settings2Icon, label: () => m.nav_settings() },
 ]
 

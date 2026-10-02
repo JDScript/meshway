@@ -22,6 +22,7 @@ import {
 import { NetworkChip } from "@/features/overview/network-chip"
 import { OverviewPage } from "@/features/overview/page"
 import { UnplacedButton } from "@/features/overview/unplaced-button"
+import { PolicyPage } from "@/features/policy/page"
 import { SettingsPage } from "@/features/settings/page"
 import { useIsMobile } from "@/hooks/use-mobile"
 import { useReadFailureToast } from "@/lib/use-read-failure-toast"
@@ -111,6 +112,7 @@ export function NetworkShell({ networkId }: { networkId: string }) {
       <OverviewPage networkId={networkId} />
       <NodesPage networkId={networkId} />
       <MembersPage networkId={networkId} />
+      <PolicyPage networkId={networkId} />
       <SettingsPage networkId={networkId} />
       <AccountPage networkId={networkId} />
 
