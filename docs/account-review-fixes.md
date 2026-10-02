@@ -26,3 +26,13 @@
 - Controller全target/allfeatures Clippy `-D warnings`、fmt check通过；SDK **14** tests、Web/SDK/e2e TypeScript检查通过。协议/路由/生成模板未变，本轮没有重跑完整494套件；统一合入消费者验收与Astra复核由协调者继续。
 
 原Astra报告：`$TMP/meshway-account-integration-review-astra.md`。修复副本保留同一场景和TTL/锁等待边界，不把提高TTL或减少等待当作修复。错误/输出不包含fixture密码、token、PHC或材料原值。
+
+## SG1-F1 追加复核修复
+
+固定基线 `39c2e13`，报告 `$TMP/meshway-account-integration-fix-review-astra.md`；AR1/AR2已由Astra关闭。本次新增最小修复仅改变schema manifest对象身份与其回归，不改变API/DTO、WS、codegen、root manifest/lock或用户归属授权。
+
+- 原manifest以name收集会丢掉同名但不同type的schema对象。真实router回归修前复现：startup接受，register=200，实际membership=0。
+- 改以 **(type,name)** 收集，值保留所属表与可空SQL；隐式索引也在manifest内。不改owned scope、不改成预期name白名单；所有拥有表内objects参与完整比较，guards的type一起比较。
+- 新HTTP回归覆盖trigger先/index后与index先/trigger后两种顺序；均要求startup明确拒绝，在任何registration写入前阻止假成功，DDL/user_version/账户数/会员数/邀请未消费保持原状。
+- 新单元正例证明SQLite合法同名index/trigger可同时保留、不同创建顺序所得完整manifest相同、SQL=NULL的隐式索引未丢失；完整现有schema及无关extension同名对象通过，额外owned trigger拒绝。
+- 定向schema **7 passed / 0 failed**，真实startup/register路径 **2 passed / 0 failed**；fmt及Controller全target/allfeatures Clippy `-D warnings`通过。`CARGO_BUILD_JOBS=2`、独立worktree target、feature串行；没有重跑494、没有每请求全库扫描、没有新增WebSSO/CLI功能。最终统一migration仍由协调者调用该完整validator。

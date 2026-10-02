@@ -14,7 +14,10 @@ const TABLES: [&str; 7] = [
     "device_account_bindings",
 ];
 const OBJECTS: &str = "tbl_name IN ('account_users','account_memberships','account_invitations','account_sessions','account_password_resets','node_ownership','device_account_bindings') OR name IN ('ownership_new_node','account_enrollment_scope')";
-type Definitions = BTreeMap<String, (String, String, String)>;
+// SQLite allows a trigger and index to share a name. Preserve object type in
+// its identity, including implicit indexes whose SQL is NULL, so no collected
+// object can silently overwrite a different schema object.
+type Definitions = BTreeMap<(String, String), (String, Option<String>)>;
 
 fn incompatible() -> Error {
     Error::Configuration("incomplete or incompatible account integration schema")
@@ -65,11 +68,16 @@ fn canonical(sql: &str) -> String {
 }
 
 fn definitions(db: &Connection) -> Result<Definitions, Error> {
-    let mut q=db.prepare(&format!("SELECT name,type,tbl_name,sql FROM sqlite_schema WHERE ({OBJECTS}) AND sql IS NOT NULL ORDER BY name"))?;
+    let mut q = db.prepare(&format!(
+        "SELECT type,name,tbl_name,sql FROM sqlite_schema WHERE {OBJECTS} ORDER BY type,name"
+    ))?;
     Ok(q.query_map([], |r| {
         Ok((
-            r.get::<_, String>(0)?,
-            (r.get(1)?, r.get(2)?, canonical(&r.get::<_, String>(3)?)),
+            (r.get::<_, String>(0)?, r.get::<_, String>(1)?),
+            (
+                r.get(2)?,
+                r.get::<_, Option<String>>(3)?.map(|sql| canonical(&sql)),
+            ),
         ))
     })?
     .collect::<rusqlite::Result<_>>()?)
@@ -134,4 +142,46 @@ pub(in crate::store) fn validate(db: &Connection) -> Result<(), Error> {
     }
     if db.prepare("SELECT n.id FROM nodes n LEFT JOIN node_ownership o ON o.node_id=n.id AND o.network_id=n.network_id GROUP BY n.network_id,n.id HAVING COUNT(o.node_id)<>1")?.exists([])? {return Err(incompatible());}
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn manifest_preserves_both_types_and_implicit_indexes_for_legal_same_names() {
+        let db = Connection::open_in_memory().unwrap();
+        db.execute_batch("CREATE TABLE account_users(id TEXT PRIMARY KEY); CREATE INDEX account_twin ON account_users(id); CREATE TRIGGER account_twin BEFORE INSERT ON account_users BEGIN SELECT 1; END;").unwrap();
+        let collected = definitions(&db).unwrap();
+        assert_eq!(collected.len(), 4);
+        assert!(collected.contains_key(&("table".into(), "account_users".into())));
+        assert!(collected.contains_key(&("index".into(), "account_twin".into())));
+        assert!(collected.contains_key(&("trigger".into(), "account_twin".into())));
+        assert_eq!(
+            collected
+                .get(&("index".into(), "sqlite_autoindex_account_users_1".into()))
+                .unwrap()
+                .1,
+            None
+        );
+        let expected = Connection::open_in_memory().unwrap();
+        // A different creation order must preserve the same complete manifest.
+        expected.execute_batch("CREATE TABLE account_users(id TEXT PRIMARY KEY); CREATE TRIGGER account_twin BEFORE INSERT ON account_users BEGIN SELECT 1; END; CREATE INDEX account_twin ON account_users(id);").unwrap();
+        assert_eq!(collected, definitions(&expected).unwrap());
+    }
+
+    #[test]
+    fn complete_schema_with_unrelated_same_name_extension_objects_is_compatible() {
+        let db = Connection::open_in_memory().unwrap();
+        db.pragma_update(None, "foreign_keys", true).unwrap();
+        db.execute_batch(include_str!("../schema_v9.sql")).unwrap();
+        db.execute_batch(accounts::SCHEMA_FRAGMENT).unwrap();
+        db.execute_batch(include_str!("../ownership.sql")).unwrap();
+        validate(&db).unwrap();
+        db.execute_batch("CREATE TABLE unrelated_extension(id TEXT PRIMARY KEY); CREATE TRIGGER unrelated_twin BEFORE INSERT ON unrelated_extension BEGIN SELECT 1; END; CREATE INDEX unrelated_twin ON unrelated_extension(id);").unwrap();
+        validate(&db).unwrap();
+        // Scope is all owned table objects, not a whitelist of expected names.
+        db.execute_batch("CREATE TRIGGER unexpected_owned BEFORE INSERT ON account_sessions BEGIN SELECT RAISE(IGNORE); END;").unwrap();
+        assert!(validate(&db).is_err());
+    }
 }

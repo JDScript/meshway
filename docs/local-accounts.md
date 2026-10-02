@@ -19,6 +19,7 @@
 - **AR2**：移除/退出与这批撤销节点的 `node_tags` 清理处于同根事务，仅清理当前网络、该用户已撤销 membership 所有的已撤销节点；不删除 tag catalog，不清别的活动设备。真实 Owner claim 仍无损保留 tags。重复 remove 需当前角色具备历史撤销角色的管理上限（最严格角色优先）；重复 leave 需本人有效 session 和该网既有撤销 membership。两者只修复旧孤儿、不恢复身份，无变更的重试不推进 revision；仍有活动 assignment 或 Access 引用的 tag 不可删。
 - **SG1**：`account_schema::validate(&Connection)` 是协调者可在迁移事务中调用的完整已安装 gate。它从权威账户/ownership SQL及真实 v9父合同构建已知 schema manifest，比较七张表、命名索引、全部账户/ownership guards 的定义（保留引用/字符串内容，只规范化外部空白），并比较解析后的列/PK、复合 FK、索引列及 partial/unique 标志，执行 FK check，以及每个活动或撤销 node 恰有一条同网 ownership 的覆盖检查。不存在“七个表名就完备”的捷径。
 - `account_schema::install(&Transaction)` 安装无版本片段后立即调用上述 validate，失败整个调用方事务 rollback。当前 branch startup hook 同一 IMMEDIATE 事务中：若任何账户相关对象已经存在，必须完整 validate；全部不存在才 install。未知/partial/弱化 guard/缺 ownership 数据明确拒绝，不通过 `IF NOT EXISTS` 补壳。**正式 user_version 与删除/替换 branch startup hook 仍由协调者统一**，不抢 P2a v10，不宣称生产迁移已部署。
+- **SG1-F1**：manifest以 `(type,name)` 为对象身份，保留所有拥有表内的schema对象，含SQL为NULL的隐式索引；trigger/index可以同名，不能后行覆盖前行。guards的类型也是比较的一部分，不只筛选预期name。额外owned trigger（无论是否与合法index同名）拒绝；无关extension表内合法同名对象不扩大账户gate范围。
 - 本轮只收尾上述 review 修复与验收；Web SSO、CLI request/poll 不在本轮新增范围。
 
 ## 正式生成接口与前端 handoff
