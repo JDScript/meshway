@@ -52,12 +52,14 @@ pub(super) struct Registration {
     pub info: UdpSocketInfo,
     pub tx: mpsc::Sender<Request>,
     pub slot: Arc<Semaphore>,
+    pub punch: Option<(mpsc::Sender<super::connectivity::Request>, Arc<Semaphore>)>,
 }
 
 pub(super) struct LiveSocket {
     pub inner: Arc<Inner>,
     pub id: u32,
     pub rx: mpsc::Receiver<Request>,
+    pub punch_rx: Option<mpsc::Receiver<super::connectivity::Request>>,
 }
 
 impl Drop for LiveSocket {
@@ -188,7 +190,7 @@ impl Runtime {
     }
 }
 
-fn validate_server(server: SocketAddr, local: SocketAddr) -> Result<()> {
+pub(super) fn validate_server(server: SocketAddr, local: SocketAddr) -> Result<()> {
     let ip = server.ip();
     let invalid_v6 = matches!(server, SocketAddr::V6(v6) if v6.scope_id() != 0 || v6.flowinfo() != 0 || v6.ip().to_ipv4_mapped().is_some() || v6.ip().is_unicast_link_local());
     if server.port() == 0

@@ -1,6 +1,6 @@
 use super::{
-    Channel, DropReason, Failure, Incoming, Inner, Outbound, StageResult, StreamContext, discovery,
-    lock,
+    Channel, DropReason, Failure, Incoming, Inner, Outbound, StageResult, StreamContext,
+    connectivity, discovery, lock,
     sockets::NativeUdp,
     wire::{HOP_ACK, HOP_CONFIRM, hop_prologue},
     work_budget::WorkBudget,
@@ -120,6 +120,7 @@ pub(super) async fn run(
     context: StreamContext,
     mut live: discovery::LiveSocket,
     socket_generation: Arc<super::generation::Fence>,
+    coordinated_peer: Option<String>,
 ) {
     let mut shutdown = inner.shutdown.subscribe();
     if *shutdown.borrow() {
@@ -136,9 +137,30 @@ pub(super) async fn run(
     // One extra byte detects truncation of oversized datagrams without allocating from a wire length.
     let mut buffer = vec![0; UDP_LIMIT + 1];
     let mut discovery_pending = None;
+    let mut punch: Option<connectivity::Request> = None;
     loop {
         tokio::select! {
             _ = shutdown.changed() => break,
+            request = connectivity::receive(&mut live.punch_rx), if punch.is_none() => {
+                let Some(request) = request else { break };
+                // The socket capability has one immutable peer. Candidate hints
+                // cannot turn it into a wildcard listener or change its identity.
+                if coordinated_peer.as_deref() != Some(request.peer.as_str()) {
+                    request.finish(Err(Error::UnauthorizedTransport));
+                } else if !request.reply.is_closed() {
+                    punch = Some(request);
+                }
+            }
+            _ = connectivity::deadline(&punch) => {
+                if let Some(request) = punch.take() { request.finish(Err(Error::Timeout)); }
+                pending = None;
+                confirming.clear();
+            }
+            _ = connectivity::cancelled(&punch) => {
+                punch = None;
+                pending = None;
+                confirming.clear();
+            }
             request = live.rx.recv(), if discovery_pending.is_none() => {
                 let Some(request) = request else { break };
                 discovery_pending = Some(request);
@@ -162,7 +184,10 @@ pub(super) async fn run(
                     if now.duration_since(pending.retried) >= CONFIRM_RETRY {
                         pending.retried = now;
                         // Fresh nonce for every retry; exact ciphertext replay remains rejected.
-                        let _ = send_encrypted(socket.as_ref(), pending.address, &mut pending.cipher, Kind::Confirm, HOP_CONFIRM).await;
+                        let send = send_encrypted(socket.as_ref(), pending.address, &mut pending.cipher, Kind::Confirm, HOP_CONFIRM);
+                        if coordinated_peer.is_some() {
+                            if let Some(request) = punch.as_ref() { let _ = request.run(send).await; }
+                        } else { let _ = send.await; }
                     }
                 }
                 for session in sessions.values_mut() {
@@ -170,6 +195,50 @@ pub(super) async fn run(
                         session.pinged = now;
                         if let Err(error) = send_datagram(socket.as_ref(), session, &[0]).await {
                             inner.counters(TransportKind::NativeUdp).drop(error.into());
+                        }
+                    }
+                }
+                if let Some(request) = punch.as_mut() {
+                    if request.reply.is_closed() || tokio::time::Instant::now() >= request.deadline {
+                        let request = punch.take().unwrap();
+                        request.finish(Err(Error::Timeout));
+                        pending = None;
+                        confirming.clear();
+                    } else if let Some((token, session)) = sessions.iter().find(|(token, session)| {
+                        session.peer == request.peer && request.accepts(session.address) && inner.active(&session.peer, token)
+                    }) {
+                        // Capture evidence from this engine's confirmed channel,
+                        // never from a different socket/transport for this peer.
+                        let connection = lock(&inner.peers).get(&session.peer)
+                            .filter(|channel| channel.token == *token).map(|channel| channel.snapshot(&session.peer).connection);
+                        if let Some(connection) = connection {
+                            punch.take().unwrap().finish(Ok(connection));
+                            pending = None;
+                            confirming.clear();
+                        }
+                    } else {
+                        // Both sides send from their eventual data socket to open
+                        // endpoint-dependent filtering. This byte is untrusted,
+                        // never answered and never installs or refreshes a peer.
+                        for address in &request.candidates {
+                            if !request.accepts(*address) { break; }
+                            let _ = socket.try_send_to(&[0], *address);
+                            work.completed_frame().await;
+                        }
+                        // Stable identity tie-break prevents simultaneous IK
+                        // exchanges from racing the selected channel registry.
+                        if inner.config.node_id < request.peer && pending.is_none()
+                            && !confirming.values().any(|waiting| waiting.initiator)
+                            && tokio::time::Instant::now() >= request.next_attempt {
+                            let address = request.candidates[request.next_candidate];
+                            request.next_candidate = (request.next_candidate + 1) % request.candidates.len();
+                            request.next_attempt = tokio::time::Instant::now() + Duration::from_millis(400);
+                            let candidate = OutgoingCandidate { peer: request.peer.clone(), transport: TransportKind::NativeUdp,
+                                endpoint: address.to_string(), priority: request.priority, id: context.candidate_id.clone() };
+                            pending = request.run(initiate(&inner, socket.as_ref(), &candidate)).await.ok();
+                            if let Some(waiting) = pending.as_mut() {
+                                waiting.expires = waiting.expires.min(Instant::now() + Duration::from_millis(400)).min(request.deadline.into_std());
+                            }
                         }
                     }
                 }
@@ -218,9 +287,13 @@ pub(super) async fn run(
             }
             datagram = socket.recv_from(&mut buffer) => {
                 let Ok((size, source)) = datagram else { break };
-                let result = if discovery::receive(&mut discovery_pending, &buffer[..size], source) { Ok(()) }
+                // Outbound opening datagrams are deliberately not a probe:
+                // no response, freshness update, or authorization effect.
+                let ignored_opening = coordinated_peer.is_some() && size == 1 && buffer[0] == 0;
+                let result = if ignored_opening || discovery::receive(&mut discovery_pending, &buffer[..size], source) { Ok(()) }
                     else if size == 0 || size > UDP_LIMIT { Err(Error::Oversize.into()) }
-                    else { receive(&inner, socket.as_ref(), &tx, &mut sessions, &mut pending, &mut confirming, &buffer[..size], source, candidate.is_none(), &context, &socket_generation).await };
+                    else { receive(&inner, socket.as_ref(), &tx, &mut sessions, &mut pending, &mut confirming, &buffer[..size], source,
+                        candidate.is_none() && coordinated_peer.is_none(), &context, &socket_generation, punch.as_ref(), coordinated_peer.is_some()).await };
                 if let Err(failure) = result { inner.counters(TransportKind::NativeUdp).drop(failure.reason); }
                 // All datagrams consume work, including rejected input and hop control.
                 // Authentication/confirmation and any reply finish before yielding.
@@ -280,12 +353,18 @@ async fn receive(
     listener: bool,
     context: &StreamContext,
     socket_generation: &Arc<super::generation::Fence>,
+    punch: Option<&connectivity::Request>,
+    coordinated: bool,
 ) -> StageResult<()> {
     match Kind::try_from(datagram[0])? {
         Kind::Hello => {
             // Outgoing candidate sockets are dial-only, not implicit listeners.
             // Responses and confirmed bidirectional data still use this socket.
-            if !listener {
+            if !listener
+                && !punch.is_some_and(|request| {
+                    request.accepts(source) && inner.config.node_id > request.peer
+                })
+            {
                 return Err(Error::UnauthorizedTransport.into());
             }
             let permit = inner
@@ -303,12 +382,26 @@ async fn receive(
             let peer = inner.identify(state.get_remote_static())?;
             inner.authorize_transport(&peer, TransportKind::NativeUdp)?;
             context.authorize(&peer)?;
+            if coordinated
+                && !punch.is_some_and(|request| {
+                    request.accepts(source)
+                        && request.peer == peer
+                        && setup[1..] == request.priority.to_be_bytes()
+                })
+            {
+                return Err(Error::UnauthorizedTransport.into());
+            }
             let response = write_handshake(&mut state, &setup)?;
             let cipher = Cipher::finish(state)?;
             let priority = u16::from_be_bytes([setup[1], setup[2]]);
             let mut response_datagram = vec![Kind::Response as u8];
             response_datagram.extend_from_slice(&response);
-            send_raw(socket, &response_datagram, source).await?;
+            let send = send_raw(socket, &response_datagram, source);
+            if coordinated {
+                punch.ok_or(Error::Authentication)?.run(send).await?;
+            } else {
+                send.await?;
+            }
             // A replayed IK first flight can allocate only this expiring, permit-bounded
             // pending state. It cannot enter or replace the live registry.
             confirming.insert(
@@ -329,6 +422,12 @@ async fn receive(
         }
         Kind::Response => {
             let waiting = pending.as_mut().ok_or(Error::Authentication)?;
+            if coordinated
+                && !punch
+                    .is_some_and(|request| request.accepts(source) && request.peer == waiting.peer)
+            {
+                return Err(Error::Authentication.into());
+            }
             if waiting.address != source || waiting.expires <= Instant::now() {
                 return Err(Error::Authentication.into());
             }
@@ -340,7 +439,12 @@ async fn receive(
             }
             let waiting = pending.take().ok_or(Error::Protocol)?;
             let mut cipher = Cipher::finish(waiting.state)?;
-            send_encrypted(socket, source, &mut cipher, Kind::Confirm, HOP_CONFIRM).await?;
+            let send = send_encrypted(socket, source, &mut cipher, Kind::Confirm, HOP_CONFIRM);
+            if coordinated {
+                punch.ok_or(Error::Authentication)?.run(send).await?;
+            } else {
+                send.await?;
+            }
             confirming.insert(
                 cipher.id,
                 Confirming {
@@ -365,6 +469,15 @@ async fn receive(
             let token: [u8; 32] = datagram[1..33].try_into().map_err(|_| Error::Protocol)?;
             let is_ack = matches!(kind, Kind::Ack);
             if let Some(waiting) = confirming.get_mut(&token) {
+                if coordinated
+                    && !punch.is_some_and(|request| {
+                        request.accepts(source)
+                            && request.peer == waiting.peer
+                            && request.priority == waiting.priority
+                    })
+                {
+                    return Err(Error::Authentication.into());
+                }
                 if waiting.address != source
                     || waiting.expires <= Instant::now()
                     || waiting.initiator != is_ack

@@ -1,4 +1,6 @@
+mod connectivity;
 mod discovery;
+pub use connectivity::{UdpPunchObservation, UdpPunchSocket};
 pub(crate) mod generation;
 pub use discovery::{UdpDiscoveryObservation, UdpDiscoveryOutcome, UdpSocketInfo};
 mod neighbor;
@@ -239,6 +241,7 @@ struct Inner {
     neighbor_pending: Mutex<BTreeMap<[u8; 16], neighbor::Waiting>>,
     udp_sockets: Mutex<BTreeMap<u32, discovery::Registration>>,
     udp_discovery_slots: Arc<Semaphore>,
+    udp_punch_slots: Arc<Semaphore>,
     endpoints: Mutex<BTreeMap<(String, [u8; 16]), EndpointSession>>,
     // Immutable, configuration-bounded permits (at most 128 exact paths). Setup
     // waits never hold the shared cache/nonce lock or allocate per caller.
@@ -272,6 +275,9 @@ struct Handle {
 struct NativeRunning {
     generation: sockets::SocketGeneration,
     tasks: Vec<JoinHandle<()>>,
+    factory: Arc<dyn sockets::NativeSocketFactory>,
+    next_socket_id: u32,
+    punch_sockets: usize,
 }
 impl NativeRunning {
     async fn stop(&mut self) {
@@ -374,6 +380,9 @@ fn launch_native(
     let mut running = NativeRunning {
         generation,
         tasks: Vec::new(),
+        factory: factory.clone(),
+        next_socket_id: u32::try_from(udp.len()).map_err(|_| Error::Capacity)?,
+        punch_sockets: 0,
     };
     let mut spawn = |future: std::pin::Pin<Box<dyn Future<Output = ()> + Send>>| {
         let fence = running.generation.0.clone();
@@ -405,12 +414,14 @@ fn launch_native(
                 tx,
                 slot: Arc::new(Semaphore::new(1)),
                 generation: running.generation.0.clone(),
+                punch: None,
             },
         );
         let live = discovery::LiveSocket {
             inner: inner.clone(),
             id: socket_id,
             rx,
+            punch_rx: None,
         };
         spawn(Box::pin(udp::run(
             inner.clone(),
@@ -419,6 +430,7 @@ fn launch_native(
             context,
             live,
             running.generation.0.clone(),
+            None,
         )));
     }
     for candidate in inner.config.outgoing.clone() {
@@ -490,6 +502,7 @@ impl Runtime {
             neighbor_pending: Mutex::default(),
             udp_sockets: Mutex::default(),
             udp_discovery_slots: Arc::new(Semaphore::new(16)),
+            udp_punch_slots: Arc::new(Semaphore::new(16)),
             endpoints: Mutex::default(),
             sending: tokio::sync::Mutex::default(),
             packet_generation: Mutex::new(generation::Fence::new()),
