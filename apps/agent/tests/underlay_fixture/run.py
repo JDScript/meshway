@@ -52,6 +52,11 @@ def run(args):
         verify(actual_sources, result['source_manifest'])
         networks.append(owner)
         docker('network', 'create', '--internal', '--ipv6', '--subnet', '172.30.247.0/24', '--subnet', 'fd74:6d77:247::/64', '--label', mechanism.LABEL + '=' + owner, owner)
+        # App fixtures read the real system DNS snapshot, then select each
+        # observer family through resolv.conf. Keep that one input writable in
+        # this disposable client; the root filesystem and host DNS stay isolated.
+        resolver = directory / 'client-resolv.conf'
+        resolver.write_text('nameserver 127.0.0.11\noptions ndots:0\n')
         for role, v4, v6 in [('server', '.20', '::20'), ('client', '.10', '::10')]:
             name = owner + '-' + role
             containers.append(name)
@@ -61,6 +66,7 @@ def run(args):
                    '--cap-drop', 'ALL', '--cap-add', 'NET_ADMIN', '--cap-add', 'SETUID', '--cap-add', 'SETGID',
                    '--device', '/dev/net/tun', '--security-opt', 'no-new-privileges', '--read-only',
                    '--tmpfs', '/run:rw,nosuid,nodev,size=64m', '--pids-limit', '128', '--memory', '256m',
+                   *(['--mount', f'type=bind,source={resolver},target=/etc/resolv.conf'] if role == 'client' else []),
                    '--tmpfs', '/etc/iproute2:rw,nosuid,nodev,size=1m',
                    '--sysctl', 'net.ipv6.conf.all.disable_ipv6=0', '--entrypoint', 'python3', args.image,
                    '-c', 'import signal; signal.pause()')
