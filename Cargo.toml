@@ -12,6 +12,11 @@ members = [
     "apps/apple/core",
 ]
 resolver = "3"
+exclude = ["crates/vendor/socket2"]
+
+[patch.crates-io]
+# Auditable single-API extension; see crates/vendor/README.md.
+socket2 = { path = "crates/vendor/socket2" }
 
 [workspace.package]
 version = "0.1.0"
