@@ -1,3 +1,4 @@
 {
-  "$schema": "https://inlang.com/schema/inlang-message-format"
+  "$schema": "https://inlang.com/schema/inlang-message-format",
+  "entry_password_reset_done": "Password reset. Every session of the account is signed out."
 }

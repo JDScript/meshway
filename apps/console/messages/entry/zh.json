@@ -1,3 +1,4 @@
 {
-  "$schema": "https://inlang.com/schema/inlang-message-format"
+  "$schema": "https://inlang.com/schema/inlang-message-format",
+  "entry_password_reset_done": "密码已重置，该账户的所有会话已退出。"
 }

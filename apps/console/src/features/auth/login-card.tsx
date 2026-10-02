@@ -1,4 +1,4 @@
-import { useNavigate } from "@tanstack/react-router"
+import { useNavigate, useRouter } from "@tanstack/react-router"
 import { useEffect, useRef, useState, type FormEvent } from "react"
 import { toast } from "sonner"
 
@@ -11,7 +11,8 @@ import { m } from "@/paraglide/messages.js"
 
 import { signIn, type SignInOutcome } from "./sign-in"
 
-export type LoginReason = "expired" | "signed_out" | "signed_out_unconfirmed"
+export type LoginReason =
+  "expired" | "signed_out" | "signed_out_unconfirmed" | "password_reset"
 
 const failures: Record<Exclude<SignInOutcome, "signed_in">, () => string> = {
   missing: () => m.login_missing(),
@@ -23,13 +24,17 @@ const failures: Record<Exclude<SignInOutcome, "signed_in">, () => string> = {
 
 const reasons: Record<
   LoginReason,
-  { tone: "info" | "warning"; text: () => string }
+  { tone: "info" | "warning" | "success"; text: () => string }
 > = {
   expired: { tone: "warning", text: () => m.login_expired() },
   signed_out: { tone: "info", text: () => m.login_signed_out() },
   signed_out_unconfirmed: {
     tone: "warning",
     text: () => m.login_signed_out_unconfirmed(),
+  },
+  password_reset: {
+    tone: "success",
+    text: () => m.entry_password_reset_done(),
   },
 }
 
@@ -45,6 +50,7 @@ export function LoginCard({
   returnTo: string | undefined
 }) {
   const navigate = useNavigate()
+  const router = useRouter()
   const [pending, setPending] = useState(false)
   const [leaving, setLeaving] = useState(false)
   const password = useRef<HTMLInputElement>(null)
@@ -74,8 +80,14 @@ export function LoginCard({
     }
     toast.dismiss()
     setLeaving(true)
-    // The card dissolves while the globe swings round to the network.
-    window.setTimeout(() => void navigate({ href: returnTo ?? "/" }), 320)
+    // The card dissolves while the globe swings round to the network. The
+    // way back is pushed verbatim: re-parsing its query would change values
+    // such as a device request's `agent_version=1.0`.
+    window.setTimeout(
+      () =>
+        returnTo ? router.history.push(returnTo) : void navigate({ to: "/" }),
+      320
+    )
   }
 
   return (

@@ -7,10 +7,13 @@ import { LoginCard } from "@/features/auth/login-card"
 import { showWelcomeGlobe } from "@/features/globe/store"
 import { currentSession } from "@/lib/session"
 
-/** Same-origin paths only, never back to the login page itself. */
+/**
+ * Same-origin paths only, never back to the login page itself. Long enough
+ * for the App's largest device request (`/authorize-device?…`).
+ */
 const zReturnTo = z
   .string()
-  .max(2048)
+  .max(8192)
   .refine(
     (path) =>
       path.startsWith("/") &&
@@ -20,7 +23,7 @@ const zReturnTo = z
 
 const zSearch = z.object({
   reason: z
-    .enum(["expired", "signed_out", "signed_out_unconfirmed"])
+    .enum(["expired", "signed_out", "signed_out_unconfirmed", "password_reset"])
     .optional()
     .catch(undefined),
   returnTo: zReturnTo.optional().catch(undefined),
