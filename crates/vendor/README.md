@@ -30,6 +30,8 @@ It does not silently substitute a different identifier on unsupported kernels.
 The caller must define boot binding, unsupported-kernel handling and legacy
 journal migration; adding this method alone does not close the ownership gate.
 
-The source addition and its Linux behavior require independent review before
-integration. Do not remove the patch until an upstream version exposes an
-equivalent safe API and the owner/recovery tests have been rerun.
+The source addition, Linux release behavior and owner scope binding were
+independently reviewed and integrated; see `docs/underlay-routing.md` at the
+repository root. This remains a local patch, not an upstream released API.
+Do not remove the patch until an upstream version exposes an equivalent safe
+API and the owner/recovery tests have been rerun.

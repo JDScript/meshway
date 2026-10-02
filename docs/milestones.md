@@ -21,6 +21,7 @@ P3c 完整出网仍属首版。模型 / API 大清理、GeoIP 与前端不阻塞
 | P2a 承载托管（已合入） | 平台材料生成/下发、VLESS TCP/TLS 与 WebSocket/TLS、v10 迁移和私有 profiles 等价导入已完成隔离验收；WS 退休晚写、错误脱敏与能力投影问题已修复并独立复核。节点 listener 与添加节点的可选配置表单已部署，Demo Agent 已原位更新；旧 profiles 保留，托管导入另行推进 | P1a |
 | P2b 用户与登录（首批管理界面已部署） | Controller API、事务内网络 RBAC、设备归属及 App PKCE 已合入；Web 邮箱登录、首 Owner、成员 / 邀请 / 角色 / 归属管理、我的账户、实例初始化 / 恢复已接通。CLI 链接登录尚待交付；当前没有全局无网络成员关系账户清单与逐会话清单，用户 / 组策略随契约落地 | P1a；共享迁移 / 接口已统一 |
 | P3a 策略上线（IPv4 Mesh 切片已合入） | v12 源存储 / 显式 CAS 激活、epoch 能力协商、同 revision 节点执行 DTO、正常 Agent / TUN 已接通；独立关闭重启和发布问题。正式 underlay 接线、状态型回包及余下策略范围仍待完成 | P1a、P1b |
+| 系统保护（内部 owner 模块已合入） | boot + netns cookie、整组持久资源事务、精确恢复、独立 controller/carrier owner 与正式 TUN 准备入口；F1/F2/R1/R2 独立关闭，Rust 597 与 Linux 组合验收通过。正常主循环与生产激活尚未接通 | P3a 接线另验 |
 | P3b 自动建连 | 按授权流量及路径按需连接 / 自动中转，手工候选收敛为高级覆盖 | P2a、P3a |
 | P3c 路由方案与分流 | 公共规则 + 方案规则 + 兜底；仅 Mesh / 全局经 X / 自动按 STUN 地区；规则集与可信域名上下文 | P1c、P3a |
 | P3d 打洞 | 获准候选分发、认证探测与打洞，失败经允许中转并保持 E2E | P3b |

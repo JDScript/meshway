@@ -2,15 +2,25 @@
 
 ## Namespace owner 接线合同（本轮切片）
 
-**审查后的修复候选**：冻结 `337c334 + 987cbc2` 的 Request changes 报告和旧 artifact
-保留。下述整组 operation、netns singleton 与 scope rollover 是后续修复，须交原
-reviewer 复核；旧 `2186c3ba6d71` 证据不用于声称关闭 F1/F2。
+**已审合的内部模块**：F1/F2/R1/R2 均经原 reviewer 独立关闭，E2E + underlay 组合
+`4312037` 通过完整消费者及 Linux 验收，六个提交已合入主线 `4ffe8a9` 至 `24795fb`。
+原 `337c334 + 987cbc2` 的 Request changes、各代反例和失败 artifact 全部保留；
+不拿旧 `2186c3ba6d71` 结果替代后续修复的独立关闭证据。
 
-**当前候选状态**：原 F1/F2、`91f5963` 的 R1 已由原 reviewer 独立关闭。
-依赖前置 `3d2b7ce` 与本轮 R2 改用 boot + `SO_NETNS_COOKIE` lifetime 身份；
-`{dev,inode}` 仅定位/一致性证据，不再决定 scope rollover。依赖 wrapper 和 R2
-整体仍须原 reviewer 独立审查，不代表生产已启用。本候选继续不接正常生产主循环，
-未触碰任何真实远端或部署。
+namespace lifetime 使用 boot + 非零 `SO_NETNS_COOKIE`，`{dev,inode}` 仅定位 / 一致性证据。
+依赖 wrapper、Journal v3、整组 operation、singleton 与消失 TUN 收敛均已复核。
+**正常生产主循环尚未接入，生产 owner 尚未启用，远端未部署此模块。**
+
+整合实跑为 Rust workspace/all-features **597 passed / 7 ignored**（含 Agent / Apple core），
+workspace Clippy、fmt、drift、生成器 7、SDK 16、field TS 和文档构建通过；
+未变的 Web 184 / TS / lint / build、Apple 脚本等按文件与日志哈希核验沿用。
+本机 Linux 完整 namespace/syscall fixture 通过，实际调用 cookie API，保护审计为
+20 / 137 / 76 / 76 / 6，清理错误 0。构建 / 执行容器均非 privileged、非 host network，
+编译使用普通非 root、cap-drop-ALL、资源受限容器。完整报告在批准 TMP 的
+`meshway-underlay-integration-4312037.md` 及对应 `-logs/`。
+
+该组合未包含运行报告修复 f171/da8；正常 CLI history 测试本次通过，
+但不据此关闭另一组合 f399 的首条历史样本超时。正常 Controller / Agent 主循环接线仍须单独验收。
 
 `underlay::LinuxUnderlay` 是正常 Agent 可调用的内部准备入口；不接受设备提供的
 mark、priority、table 或 nameserver 参数。主循环接线由 P3a owner 完成，本切片
