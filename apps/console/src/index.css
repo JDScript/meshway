@@ -249,6 +249,12 @@
   html {
     @apply font-sans;
     }
+  /* Thin scrollbars that take the glass's ink, wherever something scrolls. */
+  * {
+    scrollbar-width: thin;
+    scrollbar-color: color-mix(in oklab, var(--foreground) 22%, transparent)
+      transparent;
+  }
 }
 @layer components {
   /*

@@ -21,9 +21,7 @@ export function NetworkMenuItems({
   const networks = useQuery(networksQuery())
   return (
     <DropdownMenuGroup>
-      <DropdownMenuLabel className="text-xs text-muted-foreground">
-        {m.networks_label()}
-      </DropdownMenuLabel>
+      <DropdownMenuLabel>{m.networks_label()}</DropdownMenuLabel>
       {(networks.data?.networks ?? []).map((network) => (
         <DropdownMenuItem
           key={network.network_id}
