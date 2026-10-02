@@ -5,6 +5,8 @@ use meshway_protocol::{DEVICE_CALLBACK_URI, s256};
 mod expiry;
 #[path = "accounts_managed.rs"]
 mod managed;
+#[path = "accounts_schema.rs"]
+mod schema;
 #[path = "accounts_withdrawal.rs"]
 mod withdrawal;
 

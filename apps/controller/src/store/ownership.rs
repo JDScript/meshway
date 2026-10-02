@@ -85,24 +85,14 @@ impl Store {
     /// Branch integration hook only: additive fragment, no schema version claim.
     /// Release integration must place install in the coordinated versioned migration.
     pub(crate) fn install_account_integration_schema(&mut self) -> Result<(), Error> {
-        if installed(&self.connection)? {
-            let tables: i64 = self.connection.query_row("SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name IN ('account_users','account_memberships','account_invitations','account_sessions','account_password_resets','node_ownership','device_account_bindings')",[],|r|r.get(0))?;
-            if tables != 7
-                || self
-                    .connection
-                    .prepare("PRAGMA foreign_key_check")?
-                    .exists([])?
-            {
-                return Err(Error::Configuration(
-                    "incomplete account integration schema",
-                ));
-            }
-            return Ok(());
-        }
         let tx = self
             .connection
             .transaction_with_behavior(TransactionBehavior::Immediate)?;
-        super::account_schema::install(&tx)?;
+        if super::account_schema::present(&tx)? {
+            super::account_schema::validate(&tx)?;
+        } else {
+            super::account_schema::install(&tx)?;
+        }
         tx.commit()?;
         Ok(())
     }
