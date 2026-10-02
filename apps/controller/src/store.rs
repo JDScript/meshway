@@ -20,7 +20,7 @@ mod jsonc;
 mod managed_transports;
 mod network;
 mod networks;
-use networks::NetworkId;
+pub(crate) use networks::NetworkId;
 mod tags;
 #[cfg(test)]
 mod test_store;

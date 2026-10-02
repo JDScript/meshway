@@ -1,6 +1,7 @@
 //! Authoritative wire DTOs and shared local credential/file primitives.
 
 pub mod access;
+pub mod accounts;
 pub mod config;
 pub mod connection_runtime;
 pub mod connections;
