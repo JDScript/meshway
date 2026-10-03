@@ -7,7 +7,9 @@ const buttonVariants = cva(
   {
     variants: {
       variant: {
-        default: "bg-primary text-primary-foreground hover:bg-primary/80",
+        // Disabled (and not busy), a solid button steps back to a fill: a dimmed pill still reads as enabled.
+        default:
+          "bg-primary text-primary-foreground hover:bg-primary/80 disabled:not-aria-busy:bg-fill-selected disabled:not-aria-busy:text-muted-foreground disabled:not-aria-busy:opacity-100",
         // On glass: the shared fills, a step for pointing at, another for open.
         outline:
           "border-divider bg-transparent hover:bg-fill-hover hover:text-foreground aria-expanded:bg-fill-selected aria-expanded:text-foreground",
