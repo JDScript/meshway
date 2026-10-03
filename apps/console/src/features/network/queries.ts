@@ -16,6 +16,9 @@ import { authed } from "@/lib/api"
 // Reads keep their own cadence; a failed refresh keeps the last data, which
 // views must label as such (TanStack Query keeps `data` with `error`).
 
+/** Every cached read of one network starts with this: dropping it drops them all (leaving the network). */
+export const networkKey = (networkId: string) => ["network", networkId] as const
+
 export const sessionQuery = () =>
   queryOptions({
     queryKey: ["account", "session"],
@@ -33,21 +36,21 @@ export const networksQuery = () =>
 /** The network's own settings (name, DNS) and immutable pools, with their revision. */
 export const networkQuery = (networkId: string) =>
   queryOptions({
-    queryKey: ["network", networkId, "network"],
+    queryKey: [...networkKey(networkId), "network"],
     queryFn: () => authed((base, token) => getNetwork(base, token, networkId)),
     staleTime: 30_000,
   })
 
 export const nodesQuery = (networkId: string) =>
   queryOptions({
-    queryKey: ["network", networkId, "nodes"],
+    queryKey: [...networkKey(networkId), "nodes"],
     queryFn: () => authed((base, token) => listNodes(base, token, networkId)),
     refetchInterval: 15_000,
   })
 
 export const connectionsQuery = (networkId: string) =>
   queryOptions({
-    queryKey: ["network", networkId, "connections"],
+    queryKey: [...networkKey(networkId), "connections"],
     queryFn: () =>
       authed((base, token) => getConnections(base, token, networkId)),
     refetchInterval: 30_000,
@@ -56,7 +59,7 @@ export const connectionsQuery = (networkId: string) =>
 /** Agent self-reports; read separately so an outage never hides the saved plan. */
 export const runtimesQuery = (networkId: string) =>
   queryOptions({
-    queryKey: ["network", networkId, "runtimes"],
+    queryKey: [...networkKey(networkId), "runtimes"],
     queryFn: () =>
       authed((base, token) => getConnectionRuntimes(base, token, networkId)),
     refetchInterval: 12_000,
@@ -65,7 +68,7 @@ export const runtimesQuery = (networkId: string) =>
 /** The tag catalog and its active assignments, under the network's revision. */
 export const tagsQuery = (networkId: string) =>
   queryOptions({
-    queryKey: ["network", networkId, "tags"],
+    queryKey: [...networkKey(networkId), "tags"],
     queryFn: () => authed((base, token) => getTags(base, token, networkId)),
     staleTime: 30_000,
   })
@@ -73,7 +76,7 @@ export const tagsQuery = (networkId: string) =>
 /** Live memberships; every member may read them. */
 export const membersQuery = (networkId: string) =>
   queryOptions({
-    queryKey: ["network", networkId, "members"],
+    queryKey: [...networkKey(networkId), "members"],
     queryFn: () =>
       authed((base, token) => listAccountMembers(base, token, networkId)),
     staleTime: 30_000,
@@ -82,7 +85,7 @@ export const membersQuery = (networkId: string) =>
 /** Which membership owns each node; null is a node no membership owns yet. */
 export const ownershipQuery = (networkId: string) =>
   queryOptions({
-    queryKey: ["network", networkId, "ownership"],
+    queryKey: [...networkKey(networkId), "ownership"],
     queryFn: () =>
       authed((base, token) => listNodeOwnership(base, token, networkId)),
     staleTime: 30_000,

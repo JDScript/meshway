@@ -4,11 +4,7 @@
   "entry_password": "密码",
   "entry_new_password": "新密码",
   "entry_confirm_password": "确认密码",
-  "entry_password_short": "密码至少 12 个字节。",
-  "entry_password_long": "密码最多 1024 个字节。",
-  "entry_password_mismatch": "两次输入的密码不一致。",
   "entry_password_reset_done": "密码已重置，该账户的所有会话已退出。",
-  "entry_limited": "尝试次数过多，请稍后再试。",
   "entry_unavailable": "无法连接控制面。",
   "device_title": "授权设备",
   "device_invalid": "授权请求无效",
@@ -92,7 +88,6 @@
   "setup_done": "完成",
   "setup_revoke_sessions": "退出所有会话",
   "setup_revoke_sessions_confirm": "全部退出",
-  "setup_revoke_sessions_body": "{email} 在所有浏览器上的会话立即失效。已接入的设备不受影响。",
   "setup_sessions_revoked": "已退出 {email} 的所有会话",
   "setup_no_resets": "没有重置链接",
   "setup_reset_valid": "有效",
@@ -101,7 +96,9 @@
   "setup_reset_expired": "已过期",
   "setup_reset_stale": "密码已变更",
   "setup_reset_revoke": "撤销",
-  "setup_reset_revoke_body": "这个重置链接立即失效。",
   "setup_reset_revoked_done": "已撤销重置链接",
-  "setup_token_placeholder": "admin.token 的内容"
+  "setup_token_placeholder": "admin.token 的内容",
+  "setup_revoke_sessions_effect": "{email} 在所有浏览器上的会话立即失效",
+  "setup_revoke_sessions_devices": "已接入的设备不受影响",
+  "setup_reset_revoke_effect": "这个重置链接立即失效"
 }

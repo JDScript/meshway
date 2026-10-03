@@ -1,6 +1,7 @@
 import { getNetworkPolicy } from "@meshway/control-client"
 import { queryOptions } from "@tanstack/react-query"
 
+import { networkKey } from "@/features/network/queries"
 import { authed } from "@/lib/api"
 
 // The policy is an editing source: read on navigation and after a save,
@@ -8,7 +9,7 @@ import { authed } from "@/lib/api"
 
 export const policyQuery = (networkId: string) =>
   queryOptions({
-    queryKey: ["network", networkId, "policy"],
+    queryKey: [...networkKey(networkId), "policy"],
     queryFn: () =>
       authed((base, token) => getNetworkPolicy(base, token, networkId)),
     staleTime: 30_000,

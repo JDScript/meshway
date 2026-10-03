@@ -1,4 +1,3 @@
-import { ControlApiError } from "@meshway/control-client"
 import {
   useLayoutEffect,
   useRef,
@@ -11,6 +10,7 @@ import { toast } from "sonner"
 import { Brand } from "@/components/chrome/brand"
 import { FieldGroup } from "@/components/ui/field"
 import { SessionRejected } from "@/lib/api"
+import { failureText } from "@/lib/failure"
 import { TextField } from "@/components/chrome/form"
 import { m } from "@/paraglide/messages.js"
 
@@ -71,14 +71,14 @@ export function SetupCard({ onHeld }: { onHeld: (held: boolean) => void }) {
   )
 }
 
-function tokenFailure(error: unknown): string {
-  if (error instanceof SessionRejected) return m.setup_token_rejected()
-  if (error instanceof ControlApiError) {
-    // A user's session reads networks but not the instance's reset inventory.
-    if (error.status === 403) return m.setup_token_not_instance()
-  }
-  return m.entry_unavailable()
-}
+// The instance call turns a refused token into SessionRejected; a user's session reads networks but not the instance's reset inventory (403).
+const tokenFailure = (error: unknown): string =>
+  error instanceof SessionRejected
+    ? m.setup_token_rejected()
+    : (failureText(error, {
+        forbidden: () => m.setup_token_not_instance(),
+        unknown: () => m.entry_unavailable(),
+      }) ?? m.entry_unavailable())
 
 function TokenForm({ onSigned }: { onSigned: (signed: Signed) => void }) {
   const [pending, setPending] = useState(false)

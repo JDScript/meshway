@@ -26,6 +26,7 @@ import { Skeleton } from "@/components/ui/skeleton"
 import { Spinner } from "@/components/ui/spinner"
 import {
   membersQuery,
+  networkKey,
   networksQuery,
   nodesQuery,
   ownershipQuery,
@@ -176,7 +177,7 @@ function Body({
     onSuccess: async () => {
       setConfirming(false)
       toast.success(m.members_left())
-      queryClient.removeQueries({ queryKey: ["network", networkId] })
+      queryClient.removeQueries({ queryKey: networkKey(networkId) })
       await Promise.all([
         queryClient.invalidateQueries({ queryKey: networksQuery().queryKey }),
         queryClient.invalidateQueries({ queryKey: sessionQuery().queryKey }),

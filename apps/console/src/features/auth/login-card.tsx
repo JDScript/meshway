@@ -19,7 +19,7 @@ export type LoginReason =
 const failures: Record<Exclude<SignInOutcome, "signed_in">, () => string> = {
   missing: () => m.login_missing(),
   invalid: () => m.login_invalid(),
-  limited: () => m.login_limited(),
+  limited: () => m.failure_limited(),
   unavailable: () => m.login_unavailable(),
   clock: () => m.login_clock(),
 }

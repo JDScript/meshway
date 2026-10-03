@@ -1,15 +1,8 @@
 import { useCallback, useState } from "react"
 import { toast } from "sonner"
 
-import { m } from "@/paraglide/messages.js"
-
-import { newPasswordProblem, type PasswordProblem } from "@/lib/password"
-
-const problemMessage: Record<PasswordProblem, () => string> = {
-  short: () => m.entry_password_short(),
-  long: () => m.entry_password_long(),
-  mismatch: () => m.entry_password_mismatch(),
-}
+import { newPasswordProblem } from "@/lib/password"
+import { passwordProblemText } from "@/lib/password-text"
 
 /**
  * A new password and its confirmation: checked before sending, the field at
@@ -26,7 +19,7 @@ export function usePasswordFields() {
       return true
     }
     setInvalid(problem === "mismatch" ? "confirmation" : "password")
-    toast.error(problemMessage[problem](), { id: "password" })
+    toast.error(passwordProblemText[problem](), { id: "password" })
     return false
   }, [])
   const clear = useCallback(() => setInvalid(null), [])

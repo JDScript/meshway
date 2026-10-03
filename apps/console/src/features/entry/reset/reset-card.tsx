@@ -1,7 +1,4 @@
-import {
-  ControlApiError,
-  redeemAccountPasswordReset,
-} from "@meshway/control-client"
+import { redeemAccountPasswordReset } from "@meshway/control-client"
 import { useQueryClient } from "@tanstack/react-query"
 import { useNavigate } from "@tanstack/react-router"
 import { useState, type FormEvent } from "react"
@@ -11,7 +8,7 @@ import { FieldGroup } from "@/components/ui/field"
 import { signOut } from "@/features/auth/sign-in"
 import { dropDrafts } from "@/features/shell/drafts"
 import { apiBase } from "@/lib/api"
-import { failureMessage } from "@/lib/failure"
+import { failureText } from "@/lib/failure"
 import { currentSession } from "@/lib/session"
 import { TextField } from "@/components/chrome/form"
 import { m } from "@/paraglide/messages.js"
@@ -21,15 +18,11 @@ import { EntryCard, EntrySubmit } from "../frame"
 import { heldReset } from "../held"
 import { usePasswordFields } from "../password-fields"
 
-function redeemFailure(error: unknown): string {
-  if (error instanceof ControlApiError) {
-    if (error.status === 401) return m.reset_rejected()
-    if (error.status === 429) return m.entry_limited()
-    if (error.status === 400 || error.status === 422)
-      return m.reset_password_rejected()
-  }
-  return failureMessage.unknown()
-}
+const redeemFailure = (error: unknown) =>
+  failureText(error, {
+    unauthorized: () => m.reset_rejected(),
+    invalid: () => m.reset_password_rejected(),
+  })
 
 /**
  * A reset link from the instance administrator sets a new password. The

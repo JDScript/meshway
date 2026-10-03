@@ -13,10 +13,10 @@ import { toast } from "sonner"
 import { FieldGroup } from "@/components/ui/field"
 import { Skeleton } from "@/components/ui/skeleton"
 import { signIn, signOut } from "@/features/auth/sign-in"
-import { sessionQuery } from "@/features/network/queries"
+import { networksQuery, sessionQuery } from "@/features/network/queries"
 import { dropDrafts } from "@/features/shell/drafts"
-import { apiBase, SessionRejected } from "@/lib/api"
-import { failureMessage, failureOf } from "@/lib/failure"
+import { apiBase } from "@/lib/api"
+import { failureText } from "@/lib/failure"
 import { currentSession } from "@/lib/session"
 import { TextField } from "@/components/chrome/form"
 import { m } from "@/paraglide/messages.js"
@@ -29,16 +29,12 @@ import { withSession } from "../session-call"
 
 const RETURN_TO = "/invite"
 
-function registerFailure(error: unknown): string {
-  if (error instanceof ControlApiError) {
-    if (error.status === 401) return m.invite_rejected()
-    if (error.status === 409) return m.invite_email_taken()
-    if (error.status === 429) return m.entry_limited()
-    if (error.status === 400 || error.status === 422)
-      return m.invite_fields_rejected()
-  }
-  return failureMessage.unknown()
-}
+const registerFailure = (error: unknown) =>
+  failureText(error, {
+    unauthorized: () => m.invite_rejected(),
+    conflict: () => m.invite_email_taken(),
+    invalid: () => m.invite_fields_rejected(),
+  })
 
 /**
  * An invitation is the only way to an account. Signed out: a new account
@@ -253,23 +249,21 @@ function AcceptForm({
         try {
           await withSession(getAccountSession, onExpired)
         } catch (check) {
-          if (!(check instanceof SessionRejected))
-            toast.error(failureMessage.unknown(), { id: "invite" })
+          const text = failureText(check)
+          if (text) toast.error(text, { id: "invite" })
           return
         }
         toast.error(m.invite_rejected(), { id: "invite" })
         return
       }
-      if (error instanceof ControlApiError && error.status === 409) {
-        toast.error(m.invite_already_member(), { id: "invite" })
-        return
-      }
-      const failure = failureOf(error)
-      if (failure) toast.error(failureMessage[failure](), { id: "invite" })
+      const text = failureText(error, {
+        conflict: () => m.invite_already_member(),
+      })
+      if (text) toast.error(text, { id: "invite" })
       return
     }
-    await queryClient.invalidateQueries({ queryKey: ["account"] })
-    await queryClient.invalidateQueries({ queryKey: ["networks"] })
+    await queryClient.invalidateQueries({ queryKey: sessionQuery().queryKey })
+    await queryClient.invalidateQueries({ queryKey: networksQuery().queryKey })
     onJoined(membership)
   }
 

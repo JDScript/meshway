@@ -18,7 +18,6 @@
   "login_submit": "Sign in",
   "login_missing": "Enter your email and password.",
   "login_invalid": "Incorrect email or password.",
-  "login_limited": "Too many attempts. Try again later.",
   "login_unavailable": "The control plane is unreachable.",
   "login_clock": "The session is already expired. Check this device's clock.",
   "login_expired": "Your session expired. Sign in again.",
@@ -107,5 +106,6 @@
   "draft_mark": "Unsaved",
   "revision": "r{revision}",
   "revision_draft": "Draft · from r{revision}",
-  "read_only": "Read only"
+  "read_only": "Read only",
+  "failure_unauthorized": "Credential no longer valid"
 }

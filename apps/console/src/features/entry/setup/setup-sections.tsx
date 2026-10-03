@@ -336,9 +336,11 @@ function AccountsSection({
         onConfirm={() => {
           if (signOutFor) void revokeSessions(signOutFor)
         }}
-      >
-        {m.setup_revoke_sessions_body({ email: signOutFor?.email ?? "" })}
-      </ConfirmDialog>
+        effects={[
+          m.setup_revoke_sessions_effect({ email: signOutFor?.email ?? "" }),
+          m.setup_revoke_sessions_devices(),
+        ]}
+      />
     </>
   )
 }
@@ -435,9 +437,8 @@ function ResetsSection({
         onConfirm={() => {
           if (revoking) void revoke(revoking)
         }}
-      >
-        {m.setup_reset_revoke_body()}
-      </ConfirmDialog>
+        effects={[m.setup_reset_revoke_effect()]}
+      />
     </>
   )
 }

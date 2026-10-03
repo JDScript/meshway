@@ -1,6 +1,5 @@
 import {
   authorizeDevice,
-  ControlApiError,
   getAccountSession,
   listNetworks,
 } from "@meshway/control-client"
@@ -17,6 +16,7 @@ import { signOut } from "@/features/auth/sign-in"
 import { networksQuery, sessionQuery } from "@/features/network/queries"
 import { dropDrafts } from "@/features/shell/drafts"
 import { SessionRejected } from "@/lib/api"
+import { failureText } from "@/lib/failure"
 import { useReadFailureToast } from "@/lib/use-read-failure-toast"
 import { m } from "@/paraglide/messages.js"
 
@@ -36,14 +36,17 @@ function handBack(request: DeviceRequest, decision: DeviceDecision) {
   window.location.assign(deviceCallback(request, decision))
 }
 
-function decisionFailure(error: unknown): string | null {
-  if (error instanceof SessionRejected) return null
-  if (error instanceof ControlApiError) {
-    if (error.status === 403) return m.device_forbidden()
-    if ([400, 413, 422].includes(error.status)) return m.device_rejected()
-  }
-  return m.device_unconfirmed()
-}
+// Anything but a refusal leaves the decision unconfirmed: it may have been recorded.
+const decisionFailure = (error: unknown) =>
+  failureText(error, {
+    forbidden: () => m.device_forbidden(),
+    invalid: () => m.device_rejected(),
+    unauthorized: () => m.device_unconfirmed(),
+    conflict: () => m.device_unconfirmed(),
+    missing: () => m.device_unconfirmed(),
+    limited: () => m.device_unconfirmed(),
+    unknown: () => m.device_unconfirmed(),
+  })
 
 /**
  * Approve or deny one App sign-in as the signed-in user, into one of this

@@ -10,12 +10,20 @@ import { m } from "@/paraglide/messages.js"
  * alone; a lost response is not a refusal: the change may have happened.
  */
 export type Failure =
-  "forbidden" | "conflict" | "invalid" | "missing" | "limited" | "unknown"
+  | "unauthorized"
+  | "forbidden"
+  | "conflict"
+  | "invalid"
+  | "missing"
+  | "limited"
+  | "unknown"
 
 /** null when there is nothing to say here: a rejected session hands over to the sign-in. */
 export function failureOf(error: unknown): Failure | null {
   if (error instanceof SessionRejected) return null
   if (!(error instanceof ControlApiError)) return "unknown"
+  // Only calls made without the tab's session (a sign-in, an invitation, a reset) see this: `authed` turns it into SessionRejected.
+  if (error.status === 401) return "unauthorized"
   if (error.status === 403) return "forbidden"
   if (error.status === 409) return "conflict"
   if (error.status === 400 || error.status === 413 || error.status === 422)
@@ -25,7 +33,8 @@ export function failureOf(error: unknown): Failure | null {
   return "unknown"
 }
 
-export const failureMessage: Record<Failure, () => string> = {
+const failureMessage: Record<Failure, () => string> = {
+  unauthorized: () => m.failure_unauthorized(),
   forbidden: () => m.failure_forbidden(),
   conflict: () => m.failure_conflict(),
   invalid: () => m.failure_invalid(),

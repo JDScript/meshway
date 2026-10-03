@@ -18,7 +18,6 @@
   "login_submit": "登录",
   "login_missing": "请输入邮箱和密码。",
   "login_invalid": "邮箱或密码不正确。",
-  "login_limited": "尝试次数过多，请稍后再试。",
   "login_unavailable": "无法连接控制面。",
   "login_clock": "会话已过期，请检查本机时间。",
   "login_expired": "会话已过期，请重新登录。",
@@ -79,5 +78,6 @@
   "draft_mark": "未保存",
   "revision": "r{revision}",
   "revision_draft": "草稿 · 基于 r{revision}",
-  "read_only": "只读"
+  "read_only": "只读",
+  "failure_unauthorized": "凭据已失效"
 }

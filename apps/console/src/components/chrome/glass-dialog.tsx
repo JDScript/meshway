@@ -124,8 +124,7 @@ export function GlassDialog({
 
 /**
  * Asks before something that cannot be undone; `effects` state what it
- * does, one fact each, as a list (`children` is the older free-form body,
- * kept for callers not yet moved). `destructive` (the default) for what
+ * does, one fact each, as a list. `destructive` (the default) for what
  * takes something away; `default` for a change that only cannot be
  * reversed here.
  */
@@ -137,7 +136,6 @@ export function ConfirmDialog({
   pending,
   onConfirm,
   effects,
-  children,
   tone = "destructive",
 }: {
   open: boolean
@@ -146,8 +144,7 @@ export function ConfirmDialog({
   confirmLabel: string
   pending: boolean
   onConfirm: () => void
-  effects?: readonly string[]
-  children?: ReactNode
+  effects: readonly string[]
   tone?: "destructive" | "default"
 }) {
   return (
@@ -179,15 +176,11 @@ export function ConfirmDialog({
         </>
       }
     >
-      {effects ? (
-        <ul className="flex list-disc flex-col gap-1 pl-4 text-row text-muted-foreground">
-          {effects.map((effect) => (
-            <li key={effect}>{effect}</li>
-          ))}
-        </ul>
-      ) : (
-        <div className="text-row text-muted-foreground">{children}</div>
-      )}
+      <ul className="flex list-disc flex-col gap-1 pl-4 text-row text-muted-foreground">
+        {effects.map((effect) => (
+          <li key={effect}>{effect}</li>
+        ))}
+      </ul>
     </GlassDialog>
   )
 }

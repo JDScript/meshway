@@ -19,8 +19,8 @@ import { Button } from "@/components/ui/button"
 import { Spinner } from "@/components/ui/spinner"
 import { signIn } from "@/features/auth/sign-in"
 import { dropDrafts } from "@/features/shell/drafts"
-import { apiBase, SessionRejected } from "@/lib/api"
-import { failureMessage } from "@/lib/failure"
+import { apiBase } from "@/lib/api"
+import { failureText } from "@/lib/failure"
 import { dateTime } from "@/lib/format"
 import { useSecretMutation } from "@/lib/secret"
 import { currentSession, endSession, startSession } from "@/lib/session"
@@ -75,16 +75,11 @@ function DialogButtons({
 
 type Kind = "new_account" | "existing_account"
 
-function claimFailure(error: unknown): string | null {
-  if (error instanceof SessionRejected) return null
-  if (error instanceof ControlApiError) {
-    if (error.status === 409) return m.setup_claim_conflict()
-    if (error.status === 429) return m.entry_limited()
-    if (error.status === 400 || error.status === 422)
-      return m.setup_claim_fields_rejected()
-  }
-  return failureMessage.unknown()
-}
+const claimFailure = (error: unknown) =>
+  failureText(error, {
+    conflict: () => m.setup_claim_conflict(),
+    invalid: () => m.setup_claim_fields_rejected(),
+  })
 
 /** Ends a sign-in made only to prove an existing account; a 401 means it already ended. */
 async function endProof(proof: LoginResponse) {
