@@ -1,0 +1,19 @@
+[package]
+name = "meshway-controller"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+description = "Meshway control plane based on the V2 configuration and state model"
+
+[dependencies]
+axum.workspace = true
+clap = { workspace = true, features = ["env"] }
+rusqlite.workspace = true
+thiserror.workspace = true
+tokio.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
+
+[lints]
+workspace = true

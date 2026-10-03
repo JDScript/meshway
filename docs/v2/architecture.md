@@ -169,3 +169,14 @@ src/
 新 demand 的业务目标／协议端口、方案选择、可信能力和 DNS 地址关联等实际编译输入须进入相应依赖与摘要。Node 的完整目标要保留其他仍有效需求；不能用最后一次 demand 的切片覆盖整个节点，也不能仅凭相同源 revision 判断发布相容。
 
 首个纵向交付使用真实 SQLite、用户会话和网络隔离，贯通配置持久化／CAS 与 SSE；随后以正式 Node 认证接入配置／State，再连接已有 Linux 运行库。编译 fixture、saved／applied 回执与实际 TUN 连通分别验收。
+
+### 基础编码
+
+新实现首先固定以下值类型；它们不会自动改变当前运行 API：
+
+- 持久资源 ID 与请求 ID 使用独立 Rust newtype，JSON 为小写、带连字符的非零 UUID 字符串。model 负责解析／表示，生成和认证绑定由使用方负责；ID 不充当凭据。
+- Revision／记录 Version 使用正整数，Sequence 可为零；JSON number 最大为 `9007199254740991`，构造、解码和递增均检查范围，避免 TypeScript 精度丢失。不把任意 u64 都默认为安全 JSON number，流量大计数在其合同中另定无损编码。
+- SHA-256 摘要使用独立的 32-byte 值类型和 64 位小写十六进制字符串；秘密摘要留在私有存储，不因类型可序列化而对外公开。完整配置摘要还须固定规范编码与用途分隔。
+- 时间统一以 UTC RFC 3339 表达。每个公共值类型的 Serde 解码约束和导出 Schema 必须一致；schema 不替代服务端语义校验。
+
+首批 transport-spec 先固定协议 key、外层 socket／stream 类型与显式能力值。roles 缺省、协议字段／默认参数尚待定版的部分不自动填充，目录中的声明也不代表新 Controller 或 Agent 已经托管该协议。

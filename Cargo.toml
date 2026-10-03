@@ -1,29 +1,13 @@
 [workspace]
 members = [
-    "crates/protocol",
-    "crates/policy",
-    "crates/dataplane",
-    "crates/agent-dns",
-    "crates/agent-tun",
-    "crates/agent-dataplane",
-    "crates/agent-diagnostics",
-    "crates/agent-connections",
-    "crates/agent-underlay",
-    "crates/control-client",
-    "crates/transport-vless",
-    "crates/transport-trojan",
-    "crates/transport-socks5",
-    "crates/transport-shadowsocks",
-    "apps/controller",
-    "apps/agent",
-    "apps/apple/core",
+    "apps/meshway-controller",
+    "crates/model",
+    "crates/transport-spec",
 ]
 resolver = "3"
-exclude = ["crates/vendor/socket2"]
-
-[patch.crates-io]
-# Auditable single-API extension; see crates/vendor/README.md.
-socket2 = { path = "crates/vendor/socket2" }
+# This isolated replacement baseline builds the new control plane only.
+# Existing Agent/runtime consumers join after their contract adaptation.
+exclude = ["apps/controller", "apps/agent", "apps/apple/core", "crates/vendor/socket2"]
 
 [workspace.package]
 version = "0.1.0"
@@ -41,9 +25,11 @@ serde = { version = "1.0.228", features = ["derive"] }
 serde_json = "1.0.149"
 sha2 = "0.10"
 tempfile = "3"
+thiserror = "2"
 tokio = { version = "1.49.0", features = ["macros", "rt-multi-thread", "net", "signal", "sync", "time"] }
 utoipa = { version = "6.0.0", features = ["axum_extras", "chrono"] }
 utoipa-axum = "0.3.0"
+uuid = { version = "1", default-features = false, features = ["std"] }
 
 [workspace.lints.rust]
 unsafe_code = "forbid"
