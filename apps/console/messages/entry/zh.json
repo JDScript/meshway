@@ -12,5 +12,17 @@
   "reset_checking": "正在检查重置链接",
   "reset_expires": "链接有效至 {time}",
   "reset_unusable": "重置链接无效、已使用或已过期。",
-  "reset_submit": "设置新密码"
+  "reset_submit": "设置新密码",
+  "join_title": "加入网络",
+  "join_invalid": "加入链接无效",
+  "join_open_console": "打开控制台",
+  "join_sign_in_first": "登录后可查看并接受这个加入链接。",
+  "join_register_first": "注册后可查看并接受这个加入链接。",
+  "join_network": "网络",
+  "join_role": "角色",
+  "join_expires": "链接到期",
+  "join_account": "账户",
+  "join_accept": "加入",
+  "join_other_account": "使用其他账户",
+  "join_already_member": "你已是这个网络的成员。"
 }

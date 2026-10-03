@@ -12,5 +12,17 @@
   "reset_checking": "Checking the reset link",
   "reset_expires": "The link is valid until {time}",
   "reset_unusable": "The reset link is not valid, has been used or has expired.",
-  "reset_submit": "Set new password"
+  "reset_submit": "Set new password",
+  "join_title": "Join a network",
+  "join_invalid": "Join link not valid",
+  "join_open_console": "Open the console",
+  "join_sign_in_first": "Sign in to see and accept this join link.",
+  "join_register_first": "Register to see and accept this join link.",
+  "join_network": "Network",
+  "join_role": "Role",
+  "join_expires": "Link expires",
+  "join_account": "Account",
+  "join_accept": "Join",
+  "join_other_account": "Use another account",
+  "join_already_member": "You are already a member of this network."
 }
