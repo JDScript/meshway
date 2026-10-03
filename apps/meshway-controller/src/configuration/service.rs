@@ -362,8 +362,8 @@ impl Configurations {
                 (source, input, bindings)
             }
         };
-        // There is no production Node/resource adapter in this work package's
-        // baseline. Never construct an empty inventory for an existing target.
+        // Node inventory is transaction-backed. Remote artifacts still require
+        // the resources owner's binding adapter; never fabricate an empty set.
         check_inputs(tx, current, &input)?;
         let members = members(tx, current.network_id)?;
         let mut recreated_listeners = BTreeSet::new();

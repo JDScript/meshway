@@ -1,6 +1,8 @@
 //! Authenticated node control and durable execution lifecycle.
 pub(crate) mod configuration;
+pub(crate) mod membership;
 pub mod proof;
+mod state;
 use crate::{
     secrets::Sealer,
     store::{Handle, execution as store},

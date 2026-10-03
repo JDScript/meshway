@@ -127,17 +127,23 @@ pub(crate) fn remove_member(
     if role == "owner" {
         protect_owner(&tx, network)?;
     }
-    // Refuse to split membership revocation from B's permanent Node deletion,
-    // address retirement and execution withdrawal participant.
-    if !impact.node_ids.is_empty()
-        || tx.query_row(
-            "SELECT EXISTS(SELECT 1 FROM sqlite_schema WHERE type='table' AND name='nodes')",
-            [],
-            |r| r.get::<_, bool>(0),
-        )?
-    {
-        return Err(NetworkError::Unavailable);
-    }
+    let revision = crate::execution::membership::remove_nodes(
+        &tx,
+        &crate::execution::membership::MembershipRemoval {
+            digest,
+            network,
+            membership: impact.membership_id,
+            version: expected,
+            request,
+        },
+        sealer,
+        cache,
+    )
+    .map_err(|error| match error {
+        crate::configuration::Error::Conflict => NetworkError::VersionConflict,
+        crate::configuration::Error::PermissionDenied => NetworkError::PermissionDenied,
+        _ => NetworkError::Unavailable,
+    })?;
     tx.execute(
         "UPDATE memberships SET revoked_at=?1,version=version+1 WHERE id=?2",
         params![now, impact.membership_id.as_uuid().as_bytes().as_slice()],
@@ -152,7 +158,7 @@ pub(crate) fn remove_member(
         now,
     )?;
     tx.commit()?;
-    Ok(impact.revision)
+    Ok(revision)
 }
 
 pub(crate) fn change_role(

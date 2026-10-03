@@ -52,3 +52,11 @@ NodeConfiguration 中承载已解析计划的容器最终叫 connections 或其�
 Controller 可复用同一源版本的编译事实，只对合法需求产生有界候选／切片。节点数增加不要求预计算所有简单路径，也不要求为每次实际探测重新保存管理员配置。
 
 一次需求可以影响少量参与节点；发布引用和相关依赖必须一致，不把无关节点的状态更新视为全网权限变更。持久顺序、各节点 digest、lease 和切换规则见[同步与分发](/v2/configuration-reference/synchronization#publication)。
+
+## 新 Controller 候选边界
+
+隔离候选已接通持钥接入、当前配置与真实公钥库存、多个需求合并、完整节点目标与差量、实例／执行 lease、saved／applied／failed 回执及永久撤销。测试经正常建网、配置提交和接入产生 Node，HTTP／SQLite 验证不代表 Agent 已安装目标或 TUN 已通。
+
+当前候选仍按网络重编译并替换执行发布；无关节点增量保留尚未完成。域名路由与授权的纯编译接受可信 DNS 地址关联，IP 需求同样匹配关联且许可不超过授权／路由所依赖的有效期；Controller 尚未接通可信 DNS 关联输入与远端规则集绑定，不能将编译器测试视为完整域名分流交付。自动地区选择目前只有缺失观测时的配置兜底。
+
+Node／执行模块提供事务内 State 上报准入、当前实例／publication 可见范围和既有获准路径的观察授权接缝；统一 StateProvider、事件提交、HTTP 装配和新诊断需求合成仍须整合。地址退出记录保留未知退出下界，不因 saved／applied 释放复用限制；完整 Agent 退出证据尚未接入。

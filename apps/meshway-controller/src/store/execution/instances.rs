@@ -213,12 +213,21 @@ pub(crate) fn lease(
     sealer: &Sealer,
     p: &NodePrincipal,
 ) -> Result<InstanceLease, NodeError> {
-    let (instance,generation,expires,execution):(Vec<u8>,i64,i64,Option<i64>)=tx.query_row("SELECT instance_id,generation,instance_expires_at,execution_expires_at FROM node_execution WHERE network_id=?1 AND node_id=?2",params![p.network.as_uuid().as_bytes().as_slice(),p.node.as_uuid().as_bytes().as_slice()],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?,r.get(3)?)))?;
-    let target = target(tx, sealer, p)?.map(|(publication, c)| ConfigurationRef {
-        revision: c.configuration.revision,
-        execution_publication: publication,
-        digest: c.digest,
-    });
+    lease_for_node(tx, sealer, p.network, p.node)
+}
+pub(crate) fn lease_for_node(
+    tx: &Transaction<'_>,
+    sealer: &Sealer,
+    network: NetworkId,
+    node: NodeId,
+) -> Result<InstanceLease, NodeError> {
+    let (instance,generation,expires,execution):(Vec<u8>,i64,i64,Option<i64>)=tx.query_row("SELECT instance_id,generation,instance_expires_at,execution_expires_at FROM node_execution WHERE network_id=?1 AND node_id=?2",params![network.as_uuid().as_bytes().as_slice(),node.as_uuid().as_bytes().as_slice()],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?,r.get(3)?)))?;
+    let target =
+        target_for_node(tx, sealer, network, node)?.map(|(publication, c)| ConfigurationRef {
+            revision: c.configuration.revision,
+            execution_publication: publication,
+            digest: c.digest,
+        });
     Ok(InstanceLease {
         instance_id: id(instance)?,
         generation: Version::new(generation.try_into().map_err(|_| NodeError::Storage)?)

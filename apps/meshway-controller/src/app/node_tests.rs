@@ -188,6 +188,389 @@ fn caps() -> BTreeMap<String, TransportCapability> {
         },
     )])
 }
+async fn enroll_user_node(
+    app: &App,
+    token: &str,
+    network: NetworkId,
+    signer: &SigningKey,
+    dp: [u8; 32],
+) -> meshway_protocol::enrollment::EnrollmentResponse {
+    use meshway_protocol::enrollment::*;
+    use sha2::{Digest as _, Sha256};
+    let verifier = "p".repeat(43);
+    let intent = EnrollmentIntent {
+        id: EnrollmentRequestId::new(random_uuid().unwrap()).unwrap(),
+        existing: None,
+        control_key: NodePublicKey {
+            algorithm: KeyAlgorithm::Ed25519,
+            bytes: signer.verifying_key().to_bytes().into(),
+        },
+        dataplane_key: NodePublicKey {
+            algorithm: KeyAlgorithm::X25519,
+            bytes: dp.into(),
+        },
+        hostname: "member-node".into(),
+        code_challenge: URL_SAFE_NO_PAD.encode(Sha256::digest(verifier.as_bytes())),
+    };
+    let id = intent.id;
+    let digest = proof::request_digest(&intent).unwrap();
+    let signature = |op: &str| {
+        WireSecret::new(
+            URL_SAFE_NO_PAD.encode(
+                signer
+                    .sign(&enrollment_transcript(id, digest, op))
+                    .to_bytes(),
+            ),
+        )
+    };
+    app.enrollment()
+        .create_request(CreateEnrollmentRequest {
+            intent,
+            signature: signature("create"),
+        })
+        .await
+        .unwrap();
+    app.enrollment()
+        .approve(
+            token,
+            id,
+            ApproveEnrollmentRequest {
+                network_id: network,
+            },
+        )
+        .await
+        .unwrap();
+    let device_proof = |op: &str| EnrollmentDeviceProof {
+        verifier: WireSecret::new(verifier.clone()),
+        signature: signature(op),
+    };
+    let code = app
+        .enrollment()
+        .poll(id, device_proof("poll"))
+        .await
+        .unwrap()
+        .code
+        .unwrap();
+    app.enrollment()
+        .redeem(
+            id,
+            RedeemEnrollmentRequest {
+                proof: device_proof("redeem"),
+                code,
+            },
+        )
+        .await
+        .unwrap()
+}
+
+#[tokio::test]
+async fn member_removal_atomically_deletes_user_nodes_and_preserves_tag_nodes() {
+    let _serial = crate::accounts::TEST_KDF_LOCK.lock().await;
+    let (_dir, app, network, tag, _, _, _, _, _) = fixture().await;
+    let owner = app
+        .accounts()
+        .login(
+            "owner@example.com".into(),
+            Secret::new("a sufficiently long password".into()),
+            rid(),
+        )
+        .await
+        .unwrap();
+    let member = app
+        .accounts()
+        .register(
+            "member@example.com".into(),
+            Secret::new("a sufficiently long password".into()),
+            rid(),
+        )
+        .await
+        .unwrap();
+    let link = app
+        .networks()
+        .create_join_link(
+            owner.token.expose(),
+            network,
+            MembershipRole::Member,
+            600,
+            rid(),
+        )
+        .await
+        .unwrap();
+    let (_, membership) = app
+        .networks()
+        .redeem_join_link(member.token.expose(), link.secret.unwrap().expose(), rid())
+        .await
+        .unwrap();
+    let signer = SigningKey::from_bytes(&[41; 32]);
+    let enrolled = enroll_user_node(&app, member.token.expose(), network, &signer, [51; 32]).await;
+    let node_session = session(
+        &app.execution(),
+        network,
+        enrolled.node_id,
+        &enrolled.keys,
+        &signer,
+    )
+    .await;
+    let impact = app
+        .networks()
+        .removal_impact(member.token.expose(), network, None, rid())
+        .await
+        .unwrap();
+    assert_eq!(impact.node_ids, vec![enrolled.node_id]);
+    app.executor.handle().execute(|db| db.execute_batch("CREATE TRIGGER fail_member_removal BEFORE UPDATE OF revoked_at ON memberships BEGIN SELECT RAISE(ABORT,'injected failure'); END;")).await.unwrap().unwrap();
+    assert!(
+        app.networks()
+            .remove_member(
+                member.token.expose(),
+                network,
+                None,
+                impact.version,
+                impact.revision,
+                rid()
+            )
+            .await
+            .is_err()
+    );
+    assert_eq!(
+        app.networks()
+            .get(owner.token.expose(), network)
+            .await
+            .unwrap()
+            .current_revision,
+        impact.revision
+    );
+    app.execution()
+        .authenticate(node_session.token.expose())
+        .await
+        .unwrap();
+    app.executor
+        .handle()
+        .execute(|db| db.execute_batch("DROP TRIGGER fail_member_removal;"))
+        .await
+        .unwrap()
+        .unwrap();
+    let revision = app
+        .networks()
+        .remove_member(
+            member.token.expose(),
+            network,
+            Some(membership),
+            impact.version,
+            impact.revision,
+            rid(),
+        )
+        .await
+        .unwrap();
+    assert!(revision > impact.revision);
+    assert!(matches!(
+        app.execution()
+            .authenticate(node_session.token.expose())
+            .await,
+        Err(NodeError::Unauthorized)
+    ));
+    let inventory = app
+        .execution()
+        .inventory(owner.token.expose(), network)
+        .await
+        .unwrap();
+    assert!(!inventory.items.iter().any(|n| n.id == enrolled.node_id));
+    assert!(inventory.items.iter().any(|n| n.id == tag));
+    assert!(
+        app.networks()
+            .get(member.token.expose(), network)
+            .await
+            .is_err()
+    );
+    let snapshot = app
+        .configurations()
+        .read(owner.token.expose(), network, None)
+        .await
+        .unwrap();
+    assert!(
+        !snapshot
+            .document
+            .configuration
+            .nodes
+            .contains_key(&enrolled.node_id)
+    );
+    app.check_storage().await.unwrap();
+    app.shutdown().await.unwrap();
+}
+
+#[tokio::test]
+async fn state_admission_uses_real_node_instance_and_current_publication_dependencies() {
+    use crate::state::{StateError, service::ReadIdentity};
+    use meshway_model::state::ResourceRef;
+    let _serial = crate::accounts::TEST_KDF_LOCK.lock().await;
+    let (_dir, app, network, a, b, ak, bk, signer_a, signer_b) = fixture().await;
+    let service = app.execution();
+    let a_session = session(&service, network, a, &ak, &signer_a).await;
+    let b_session = session(&service, network, b, &bk, &signer_b).await;
+    let ai = service
+        .acquire(
+            a_session.token.expose(),
+            AcquireInstanceRequest {
+                instance_id: iid(),
+                capabilities: caps(),
+            },
+        )
+        .await
+        .unwrap();
+    service
+        .acquire(
+            b_session.token.expose(),
+            AcquireInstanceRequest {
+                instance_id: iid(),
+                capabilities: caps(),
+            },
+        )
+        .await
+        .unwrap();
+    let instance = InstanceRequest {
+        instance_id: ai.instance_id,
+        generation: ai.generation,
+    };
+    service
+        .demand(
+            a_session.token.expose(),
+            DemandRequest {
+                instance: instance.clone(),
+                request_id: rid(),
+                target: BusinessTarget::Mesh { node: b },
+                protocol: BusinessProtocol::Tcp,
+                port: Some(443.try_into().unwrap()),
+                profile: "mesh".into(),
+                duration_seconds: 60,
+            },
+        )
+        .await
+        .unwrap();
+    let lease = service
+        .renew(a_session.token.expose(), instance.clone())
+        .await
+        .unwrap();
+    let token = a_session.token.expose().to_owned();
+    let s = service.clone();
+    let expected = lease.target.clone();
+    let owner = app
+        .accounts()
+        .login(
+            "owner@example.com".into(),
+            Secret::new("a sufficiently long password".into()),
+            rid(),
+        )
+        .await
+        .unwrap();
+    let owner_digest = crate::accounts::token_digest(owner.token.expose()).unwrap();
+    app.executor
+        .handle()
+        .execute(move |db| {
+            let tx = db.transaction().unwrap();
+            let now = chrono::Utc::now();
+            let report = s.report_admission_in_transaction(&tx, &token, now).unwrap();
+            assert_eq!(report.execution, expected);
+            assert_eq!(report.instance_id, ai.instance_id);
+            assert!(report.peers.contains(&b));
+            assert!(
+                report
+                    .paths
+                    .iter()
+                    .all(|p| p.first() == Some(&a) && p.last() == Some(&b))
+            );
+            assert!(
+                report
+                    .resources
+                    .contains_key(&ResourceRef::Listener { key: "udp".into() })
+            );
+            assert!(
+                report
+                    .resources
+                    .iter()
+                    .any(|(r, v)| matches!(r, ResourceRef::Dial { .. })
+                        && v.configured_endpoints.is_empty())
+            );
+            let scope = s
+                .state_scope_in_transaction(
+                    &tx,
+                    &ReadIdentity::Node {
+                        authorization: token,
+                    },
+                    now,
+                )
+                .unwrap();
+            assert_eq!(scope.visible, [a, b].into_iter().collect());
+            assert_eq!(scope.full, [a].into_iter().collect());
+            assert!(
+                scope.current[&a]
+                    .configurations
+                    .contains(report.execution.as_ref().unwrap())
+            );
+            let identity = ReadIdentity::UserSession {
+                digest: owner_digest,
+                network,
+            };
+            let request = meshway_protocol::observations::CreateObservation {
+                source_node_id: a,
+                target_node_id: b,
+                selection: meshway_protocol::observations::ObservationPath::Explicit {
+                    path: vec![a, b],
+                },
+                metrics: vec![meshway_model::observations::MetricKind::Rtt],
+                interval_ms: 1000,
+            };
+            let admitted = s
+                .observation_admission_in_transaction(&tx, &identity, &request, now)
+                .unwrap();
+            assert_eq!(admitted.report.paths, vec![vec![a, b]]);
+            let invalid = meshway_protocol::observations::CreateObservation {
+                selection: meshway_protocol::observations::ObservationPath::Explicit {
+                    path: vec![a, b, a],
+                },
+                ..request
+            };
+            assert!(matches!(
+                s.observation_admission_in_transaction(&tx, &identity, &invalid, now),
+                Err(StateError::Forbidden)
+            ));
+        })
+        .await
+        .unwrap();
+    service
+        .acquire(
+            a_session.token.expose(),
+            AcquireInstanceRequest {
+                instance_id: iid(),
+                capabilities: caps(),
+            },
+        )
+        .await
+        .unwrap();
+    let token = a_session.token.expose().to_owned();
+    let s = service.clone();
+    let previous = lease.target.unwrap();
+    app.executor
+        .handle()
+        .execute(move |db| {
+            let tx = db.transaction().unwrap();
+            let admission = s
+                .report_admission_in_transaction(&tx, &token, chrono::Utc::now())
+                .unwrap();
+            assert_ne!(admission.instance_id, instance.instance_id);
+            assert!(!admission.configurations.contains(&previous));
+            assert!(admission.peers.is_empty());
+            assert!(matches!(
+                s.report_admission_in_transaction(
+                    &tx,
+                    "mws_not-a-node-session",
+                    chrono::Utc::now()
+                ),
+                Err(StateError::Unauthorized)
+            ));
+        })
+        .await
+        .unwrap();
+    app.shutdown().await.unwrap();
+}
 #[tokio::test]
 async fn enrollment_key_idempotency_tag_relogin_and_permanent_delete() {
     use meshway_protocol::{configuration::ConfigurationRequest as Edit, enrollment::*};

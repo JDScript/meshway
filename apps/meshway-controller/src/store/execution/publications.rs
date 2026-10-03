@@ -68,8 +68,10 @@ pub(crate) fn trusted_inventory(
     let mut rows = stmt.query([network.as_uuid().as_bytes().as_slice()])?;
     while let Some(r) = rows.next()? {
         let node = id(r.get(0)?)?;
-        if identity_eligible(tx, &cfg, &bindings, network, node).is_err() {
-            continue;
+        match identity_eligible(tx, &cfg, &bindings, network, node) {
+            Ok(()) => {}
+            Err(NodeError::Unauthorized) => continue,
+            Err(error) => return Err(error),
         }
         let key = |offset| -> Result<BoundNodeKey, NodeError> {
             Ok(BoundNodeKey {
@@ -207,14 +209,23 @@ pub(crate) fn target(
     sealer: &Sealer,
     p: &NodePrincipal,
 ) -> Result<Option<(PublicationId, CompiledNode)>, NodeError> {
-    let row:Option<(Vec<u8>,Vec<u8>)>=tx.query_row("SELECT x.id,x.payload FROM node_execution e JOIN execution_publications x ON x.network_id=e.network_id AND x.id=e.target_publication_id WHERE e.network_id=?1 AND e.node_id=?2 AND x.withdrawn_at IS NULL",params![p.network.as_uuid().as_bytes().as_slice(),p.node.as_uuid().as_bytes().as_slice()],|r|Ok((r.get(0)?,r.get(1)?))).optional()?;
+    target_for_node(tx, sealer, p.network, p.node)
+}
+/// SQL facts only. The caller must authorize its viewer in this transaction.
+pub(crate) fn target_for_node(
+    tx: &Transaction<'_>,
+    sealer: &Sealer,
+    network: NetworkId,
+    node: NodeId,
+) -> Result<Option<(PublicationId, CompiledNode)>, NodeError> {
+    let row:Option<(Vec<u8>,Vec<u8>)>=tx.query_row("SELECT x.id,x.payload FROM node_execution e JOIN execution_publications x ON x.network_id=e.network_id AND x.id=e.target_publication_id WHERE e.network_id=?1 AND e.node_id=?2 AND x.withdrawn_at IS NULL",params![network.as_uuid().as_bytes().as_slice(),node.as_uuid().as_bytes().as_slice()],|r|Ok((r.get(0)?,r.get(1)?))).optional()?;
     row.map(|(publication, payload)| {
         let publication = id(publication)?;
         let plain = sealer
-            .open_execution(p.network, publication, &payload)
+            .open_execution(network, publication, &payload)
             .map_err(|_| NodeError::Storage)?;
         let mut compiled: CompiledPublication = json(plain.as_bytes())?;
-        let node = compiled.nodes.remove(&p.node).ok_or(NodeError::Storage)?;
+        let node = compiled.nodes.remove(&node).ok_or(NodeError::Storage)?;
         Ok((publication, node))
     })
     .transpose()
