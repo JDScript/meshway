@@ -1,26 +1,29 @@
 import type { NetworkSummary } from "@meshway/control-client"
+import { LogOutIcon } from "lucide-react"
 import { useState } from "react"
 
 import { BusyLabel } from "@/components/chrome/busy-label"
 import { CloseButton } from "@/components/chrome/close-button"
 import { CopyButton } from "@/components/chrome/copy-button"
 import { TextField } from "@/components/chrome/form"
-import { Section } from "@/components/chrome/section"
+import { DangerRow, Section } from "@/components/chrome/section"
 import { SurfaceHeader } from "@/components/chrome/surface-header"
 import { Tile } from "@/components/chrome/tile"
 import { Button } from "@/components/ui/button"
 import { Skeleton } from "@/components/ui/skeleton"
+import { LeaveNetworkDialog } from "@/features/members/removal"
 import { roleLabel } from "@/features/network/roles"
 import { surfaceTitleId } from "@/features/shell/page-frame"
 import { calendarDate } from "@/lib/format"
 import { trimWhiteSpace } from "@/lib/network-name"
 import { m } from "@/paraglide/messages.js"
 
+import { ActivitySection } from "./activity"
 import { sectionLabel } from "./settings-panel"
 import type { SettingsSection } from "./url"
 import { useRename } from "./use-rename"
 
-/** One settings section: the network's name and the facts about it. */
+/** One settings section: the network (its name, the facts about it, leaving it) or its activity. */
 export function SettingsWorkspace({
   section,
   network,
@@ -47,17 +50,21 @@ export function SettingsWorkspace({
         action={<CloseButton onClick={onClose} />}
         meta={
           <div className="flex h-5 items-center text-row text-muted-foreground">
-            {network && !network.actions.rename ? m.read_only() : null}
+            {section === "network" && network && !network.actions.rename
+              ? m.read_only()
+              : null}
           </div>
         }
       />
       <div className="scroll-edge min-h-0 flex-1 overflow-y-auto px-6 pt-1 pb-6">
         <div className="flex max-w-workspace flex-col gap-8">
-          {network ? (
+          {!network ? (
+            <Placeholder />
+          ) : section === "network" ? (
             // Keyed by network: switching networks starts from its own name.
             <NetworkSection key={network.id} network={network} />
           ) : (
-            <Placeholder />
+            <ActivitySection key={network.id} network={network} />
           )}
         </div>
       </div>
@@ -66,6 +73,7 @@ export function SettingsWorkspace({
 }
 
 function NetworkSection({ network }: { network: NetworkSummary }) {
+  const [leaving, setLeaving] = useState(false)
   return (
     <>
       {network.actions.rename ? (
@@ -94,6 +102,27 @@ function NetworkSection({ network }: { network: NetworkSummary }) {
           <Tile label={m.settings_role()}>{roleLabel[network.role]()}</Tile>
         </div>
       </Section>
+      <Section title={m.settings_membership()}>
+        <DangerRow
+          fact={m.members_leave_fact()}
+          action={
+            <Button
+              variant="destructive"
+              className="h-9 rounded-full px-4"
+              onClick={() => setLeaving(true)}
+            >
+              <LogOutIcon />
+              {m.members_leave()}
+            </Button>
+          }
+        />
+      </Section>
+      <LeaveNetworkDialog
+        networkId={network.id}
+        networkName={network.name}
+        open={leaving}
+        onOpenChange={setLeaving}
+      />
     </>
   )
 }

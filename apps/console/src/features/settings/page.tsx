@@ -1,10 +1,13 @@
 import type { NetworkSummary } from "@meshway/control-client"
+import { useNavigate } from "@tanstack/react-router"
+import { useEffect } from "react"
 
 import { PageFrame } from "@/features/shell/page-frame"
 
 import { useSettingsNavigation, useSettingsRoute } from "./navigation"
 import { SettingsPanel } from "./settings-panel"
 import { SettingsWorkspace } from "./settings-workspace"
+import { sectionOffered } from "./url"
 
 /** The settings page: its sections, and one section over them. */
 export function SettingsPage({
@@ -17,6 +20,22 @@ export function SettingsPage({
 }) {
   const route = useSettingsRoute()
   const nav = useSettingsNavigation(networkId)
+  const navigate = useNavigate()
+  const section = route.section
+  const offered =
+    section === null ||
+    network === null ||
+    sectionOffered(section, network.actions)
+
+  // A section this account may not open (any longer): back to the sections.
+  useEffect(() => {
+    if (!offered)
+      void navigate({
+        to: "/networks/$network/settings",
+        params: { network: networkId },
+        replace: true,
+      })
+  }, [offered, navigate, networkId])
 
   return (
     <PageFrame
@@ -31,9 +50,9 @@ export function SettingsPage({
         />
       }
       workspace={
-        route.section ? (
+        section && offered ? (
           <SettingsWorkspace
-            section={route.section}
+            section={section}
             network={network}
             onClose={nav.closeSection}
           />
