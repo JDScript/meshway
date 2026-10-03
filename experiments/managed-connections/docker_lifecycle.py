@@ -21,7 +21,7 @@ class Creation:
                     for sig in (signal.SIGINT, signal.SIGTERM)}
         try:
             result = operation()
-            self.settled = True
+            self.settled = result.returncode == 0
         finally:
             for sig, handler in previous.items():
                 signal.signal(sig, handler)

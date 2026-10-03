@@ -22,8 +22,9 @@ A, B = ("sha256:" + char * 64 for char in ("a", "b"))
 
 
 class Daemon:
-    def __init__(self, interrupt=None, timeout=False, force_image=None):
+    def __init__(self, interrupt=None, timeout=False, force_image=None, create_error=False):
         self.interrupt, self.timeout, self.force_image = interrupt, timeout, force_image
+        self.create_error = create_error
         self.containers, self.networks, self.calls, self.started_images = {}, {}, [], []
 
     def run(self, argv, **kwargs):
@@ -48,6 +49,8 @@ class Daemon:
                 "HostConfig": {"Privileged": False, "NetworkMode": args[args.index("--network") + 1]}}
             result = name + "-id"
             self.after_commit("container", argv)
+            if self.create_error:
+                return subprocess.CompletedProcess(argv, 1, "", "transport EOF after dispatch")
         elif args[:2] == ["network", "create"]:
             name = args[-1]
             labels = dict(args[i + 1].split("=", 1) for i, arg in enumerate(args[:-1]) if arg == "--label")
@@ -133,6 +136,14 @@ class RuntimeLifecycle(unittest.TestCase):
         self.assertEqual(code, 1)
         self.assertEqual(daemon.containers, {})
         self.assertTrue(any("uncertain" in message for message in receipt["cleanup_errors"]))
+
+    def test_nonzero_create_result_preserves_uncertainty_after_side_effect(self):
+        daemon = Daemon(create_error=True)
+        code, receipt = self.run_smoke(daemon)
+        self.assertEqual(code, 1)
+        self.assertEqual(daemon.containers, {})
+        self.assertTrue(any("uncertain" in message for message in receipt["cleanup_errors"]))
+        self.assertFalse(next(item for item in receipt["creation_intents"] if item["kind"] == "container")["settled"])
 
     def test_tag_change_cannot_change_started_image(self):
         daemon = Daemon()
