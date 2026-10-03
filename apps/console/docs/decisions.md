@@ -3,6 +3,30 @@
 The Meshway console: a pure Vite SPA served by the controller. Decisions are
 recorded as they are confirmed with the user.
 
+## V2 controller
+
+The console consumes the V2 controller (`apps/meshway-controller`) through
+its generated client only, and only what the controller delivers:
+
+- Delivered: registration (when the controller publishes it as open), sign-in,
+  session restore and sign-out (`getAuthOptions`, `register`, `login`,
+  `getAuthSession`, `logout`). Pages: `/login`, `/register` and `/`, the
+  signed-in account.
+- Not delivered: networks, nodes, configuration and the event stream. Their
+  pages below are the target design; they return when their operations
+  exist. Until then `/` says that this controller provides no networks, and
+  nothing stands in for them. What the console needs from the V2 API is in
+  `v2-api-needs.md`.
+- `lib/api.ts` holds the one `ControlClient` (same origin). `call` unwraps a
+  result and throws `ApiFailure`; `authed` adds this tab's session and turns a
+  401 into a sign-out. `lib/failure.ts` words a failure by its problem code,
+  else by its kind and status. Reads retry only a lost connection or a 5xx.
+- Development: start a controller on a private data directory with
+  `--listen 127.0.0.1:0`, then run the console with
+  `MESHWAY_CONTROLLER_URL=http://127.0.0.1:<port> pnpm dev`. Without it the
+  development server does not start, so it never proxies to another
+  controller.
+
 ## Foundation
 
 | Topic | Decision |
@@ -10,7 +34,7 @@ recorded as they are confirmed with the user.
 | Scope | Product, flows, visuals and code are rebuilt together. The map direction is kept. |
 | Stack | Vite, TanStack Router (file routes, typed params and search), TanStack Query, shadcn (Base UI, preset `b0` = `base-nova`, pointer; only the pieces in use are kept, the CLI adds others back), Paraglide (zh, en). |
 | BFF | None. The browser calls the controller through the generated `@meshway/control-client` with Zod validation. |
-| Origin | One origin. The controller serves the built `dist/` with an `index.html` fallback; development proxies `/api` to the controller. App paths (`/authorize-device`, `/api/v1/*`) are unchanged. |
+| Origin | One origin. The controller serves the built `dist/` with an `index.html` fallback; development proxies `/api` to the controller named by `MESHWAY_CONTROLLER_URL`. |
 | Copy | Every string lives in `messages/{zh,en}.json` (shared) or `messages/<feature>/{zh,en}.json`; zh is the base locale, and `src/messages.test.ts` keeps both in step. Interface text states facts only: no explanations of what the display means or of how it was drawn. |
 | Routes | Resources are nested and plural: `/networks/<network_id>/<page>`, e.g. `/networks/<id>/overview?node=<node_id>`. `/networks/<id>` redirects to its overview; `/` to the remembered or first network. Selection and filters live in validated search params. |
 | Source layout | `routes/` only validate params and search and mount a feature. `features/<feature>/` holds a feature's page, panel and workspace, its `navigation`, `url`, `queries`, `labels` and pure models, with tests beside them. `components/ui/` are shadcn originals (lightly adjusted), `components/chrome/` our shared components, `hooks/` shared React hooks, `lib/` helpers without React (a hook only beside the store it reads, as in `lib/locale`). |
@@ -27,8 +51,14 @@ recorded as they are confirmed with the user.
   in `docs/local-accounts.md`.
 - Each tab copies the session into memory when it loads and never re-reads
   storage per request. A `storage` event that changes the session locks and
-  reloads that tab; drafts are keyed by session.
-- The instance administrator token is never persisted: memory only.
+  reloads that tab; drafts are keyed by session. The stored shape is
+  versioned (`v: 2`: the controller's session ID, the token, its expiry); a
+  session of another shape is ignored.
+- Email and password go only to the controller. The email is sent as typed
+  (a text field, not `type="email"`, whose browser check is narrower and
+  rewrites international domains); the controller normalises it. A new
+  password is checked against the rules the controller publishes, in Unicode
+  code points and UTF-8 bytes, never `String.length`.
 - Defence against XSS is prevention: strict CSP (`script-src 'self'`, no inline
   or third-party scripts), no raw HTML rendering, no `javascript:` URLs. Node
   names, versions and reasons come from agents and devices and are untrusted.
@@ -75,8 +105,9 @@ stands in for an interface that does not exist yet.
 | Account `/account` (from the account menu) | none | memberships, password, sessions | |
 
 Outside the shell, one card over the globe like the sign-in: `/login`,
-`/invite`, `/reset-password`, `/setup` (instance), `/authorize-device`
-(path unchanged for the App).
+`/register` (offered only while the controller publishes registration as
+open), and later the join-link, password-reset and device-approval pages of
+the V2 API.
 
 - Policy is one page because the policy is one document with one revision:
   one draft, one commit bar. Egress is shown but not editable while the
