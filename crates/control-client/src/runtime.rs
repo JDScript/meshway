@@ -94,6 +94,69 @@ impl Client {
         self
     }
 
+    // Path/query values have already passed generated scalar validation. This
+    // second boundary binds every placeholder and encodes decoded UTF-8 once.
+    pub(crate) fn parameter_url<P>(
+        &self,
+        template: &str,
+        path: &[(&str, String)],
+        query: &[(&str, Option<String>)],
+    ) -> Result<Url, ClientError<P>> {
+        if !template.starts_with('/') {
+            return Err(ClientError::Configuration);
+        }
+        let mut bound = std::collections::BTreeSet::new();
+        let mut encoded = String::new();
+        for part in template.split('/').skip(1) {
+            encoded.push('/');
+            if let Some(name) = part.strip_prefix('{').and_then(|p| p.strip_suffix('}')) {
+                if !parameter_name(name) || !bound.insert(name) {
+                    return Err(ClientError::Configuration);
+                }
+                let mut values = path.iter().filter(|(key, _)| *key == name);
+                let value = &values.next().ok_or(ClientError::Request)?.1;
+                if values.next().is_some()
+                    || value.is_empty()
+                    || matches!(value.as_str(), "." | "..")
+                {
+                    return Err(ClientError::Request);
+                }
+                encoded.push_str(&encode_parameter(value));
+            } else if !part.is_empty()
+                && part
+                    .bytes()
+                    .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'_' | b'-'))
+            {
+                encoded.push_str(part);
+            } else {
+                return Err(ClientError::Configuration);
+            }
+        }
+        if path.iter().any(|(name, _)| !bound.contains(name)) {
+            return Err(ClientError::Request);
+        }
+        let mut query = query.to_vec();
+        query.sort_by(|a, b| a.0.cmp(b.0));
+        if query.windows(2).any(|pair| pair[0].0 == pair[1].0)
+            || query.iter().any(|(name, _)| !parameter_name(name))
+        {
+            return Err(ClientError::Configuration);
+        }
+        let mut separator = '?';
+        for (name, value) in query {
+            if let Some(value) = value {
+                encoded.push(separator);
+                separator = '&';
+                encoded.push_str(&encode_parameter(name));
+                encoded.push('=');
+                encoded.push_str(&encode_parameter(&value));
+            }
+        }
+        self.base
+            .join(&encoded)
+            .map_err(|_| ClientError::Configuration)
+    }
+
     // Kept crate-private: only generated operations provide paths and wire types.
     pub(crate) async fn send<B: Serialize, P>(
         &self,
@@ -113,10 +176,24 @@ impl Client {
         {
             return Err(ClientError::Configuration);
         }
-        let url = self
-            .base
-            .join(path)
-            .map_err(|_| ClientError::Configuration)?;
+        let url = self.parameter_url(path, &[], &[])?;
+        self.send_url(method, url, token, body).await
+    }
+
+    pub(crate) async fn send_url<B: Serialize, P>(
+        &self,
+        method: Method,
+        url: Url,
+        token: Option<&str>,
+        body: Option<&B>,
+    ) -> Result<Response, ClientError<P>> {
+        if url.origin() != self.base.origin()
+            || !url.username().is_empty()
+            || url.password().is_some()
+            || url.fragment().is_some()
+        {
+            return Err(ClientError::Configuration);
+        }
         let mut request = self
             .http
             .request(method, url)
@@ -199,6 +276,26 @@ impl Client {
             json,
         })
     }
+}
+
+fn parameter_name(name: &str) -> bool {
+    name.as_bytes().first().is_some_and(u8::is_ascii_alphabetic)
+        && name.bytes().all(|byte| byte.is_ascii_alphanumeric())
+}
+
+fn encode_parameter(value: &str) -> String {
+    const HEX: &[u8; 16] = b"0123456789ABCDEF";
+    let mut encoded = String::new();
+    for byte in value.bytes() {
+        if byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_' | b'.' | b'~') {
+            encoded.push(char::from(byte));
+        } else {
+            encoded.push('%');
+            encoded.push(char::from(HEX[usize::from(byte >> 4)]));
+            encoded.push(char::from(HEX[usize::from(byte & 15)]));
+        }
+    }
+    encoded
 }
 
 fn limit_error<P>(status: u16) -> ClientError<P> {
@@ -475,6 +572,63 @@ mod tests {
                 .await,
             Err(ClientError::Configuration)
         ));
+    }
+
+    #[test]
+    fn parameter_binding_rejects_ambiguous_paths_and_preserves_origin() {
+        let client = Client::new("http://[::1]:1234", reqwest::Client::builder(), 1024).unwrap();
+        let url = client
+            .parameter_url::<Problem>(
+                "/fixture/{value}",
+                &[("value", "https://evil.test/../?token=x#fragment".into())],
+                &[
+                    ("z", None),
+                    ("cursor", Some("%2e&token=query-secret#x".into())),
+                ],
+            )
+            .unwrap();
+        assert_eq!(
+            url.as_str(),
+            "http://[::1]:1234/fixture/https%3A%2F%2Fevil.test%2F..%2F%3Ftoken%3Dx%23fragment?cursor=%252e%26token%3Dquery-secret%23x"
+        );
+        assert_eq!(url.origin(), client.base.origin());
+        assert!(url.fragment().is_none());
+        for (template, path) in [
+            ("/fixture/{value}", vec![]),
+            (
+                "/fixture/{value}",
+                vec![("value", "x".into()), ("value", "y".into())],
+            ),
+            (
+                "/fixture/{value}",
+                vec![("value", "x".into()), ("extra", "y".into())],
+            ),
+            ("/fixture/{value}/{value}", vec![("value", "x".into())]),
+            ("/fixture/{value}", vec![("value", ".".into())]),
+            ("/fixture/{value}", vec![("value", "..".into())]),
+            ("/fixture/{value}", vec![("value", "".into())]),
+            ("//evil/fixture", vec![]),
+            ("/fixture?token=x", vec![]),
+            ("/fixture#secret", vec![]),
+            ("/fixture/%2e", vec![]),
+            ("/fixture/..", vec![]),
+        ] {
+            assert!(
+                client
+                    .parameter_url::<Problem>(template, &path, &[])
+                    .is_err()
+            );
+        }
+        assert!(
+            client
+                .parameter_url::<Problem>("/fixture", &[], &[("cursor", None), ("cursor", None)])
+                .is_err()
+        );
+        assert!(
+            client
+                .parameter_url::<Problem>("/fixture", &[], &[("cursor&token", Some("x".into()))])
+                .is_err()
+        );
     }
 
     fn marker_middleware<'a>(

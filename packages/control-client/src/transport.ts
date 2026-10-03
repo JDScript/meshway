@@ -24,6 +24,42 @@ export interface Operation<Data, Problem> {
   errors: readonly number[];
   problem: z.ZodType<Problem> | undefined;
   body?: { schema: z.ZodType; value: unknown };
+  pathParameters?: Parameters;
+  queryParameters?: Parameters;
+}
+
+interface Parameters {
+  schema: z.ZodType<Record<string, string | number | boolean | undefined>>;
+  value: unknown;
+}
+
+// RFC 3986 unreserved bytes only. Input is always a decoded scalar: a literal
+// percent is encoded, never interpreted as an already escaped URL component.
+function encode(value: string): string {
+  return encodeURIComponent(value).replace(/[!'()*]/g, character => `%${character.charCodeAt(0).toString(16).toUpperCase()}`);
+}
+
+function parameterUrl(base: URL, template: string, path: Record<string, string | number | boolean | undefined>, query: Record<string, string | number | boolean | undefined>): URL {
+  const bound = new Set<string>();
+  const segments = template.split("/").slice(1).map(segment => {
+    const match = /^\{([A-Za-z][A-Za-z0-9]*)\}$/.exec(segment);
+    if (!match) return segment;
+    const name = match[1];
+    if (!name || bound.has(name) || !Object.hasOwn(path, name) || path[name] === undefined) throw new Error();
+    bound.add(name);
+    const value = String(path[name]);
+    // WHATWG URL normalizes dot segments even when percent-escaped. Reject
+    // them instead of silently addressing a different endpoint.
+    if (!value || value === "." || value === "..") throw new Error();
+    return encode(value);
+  });
+  if (Object.keys(path).some(name => !bound.has(name))) throw new Error();
+  const pairs = Object.keys(query).sort().map(name => {
+    const value = query[name];
+    if (value === undefined) throw new Error();
+    return `${encode(name)}=${encode(String(value))}`;
+  });
+  return new URL(`/${segments.join("/")}${pairs.length ? `?${pairs.join("&")}` : ""}`, base);
 }
 
 const maximumBudget = 16 * 1024 * 1024;
@@ -66,7 +102,13 @@ export class ControlClient {
   request<Problem>(operation: Operation<undefined, Problem> & { success: undefined }, options?: RequestOptions): Promise<ClientResult<undefined, Problem>>;
   async request<Data = undefined, Problem = never>(operation: Operation<Data, Problem>, options: RequestOptions = {}): Promise<ClientResult<Data | undefined, Problem>> {
     if (options.signal?.aborted) return { ok: false, error: { kind: "cancelled" } };
-    if (!/^\/(?:[A-Za-z0-9_-]+\/)*[A-Za-z0-9_-]+$/.test(operation.path)) return { ok: false, error: { kind: "configuration" } };
+    if (!/^\/(?:[A-Za-z0-9_-]+|\{[A-Za-z][A-Za-z0-9]*\})(?:\/(?:[A-Za-z0-9_-]+|\{[A-Za-z][A-Za-z0-9]*\}))*$/.test(operation.path)) return { ok: false, error: { kind: "configuration" } };
+    let url: URL;
+    try {
+      const path = operation.pathParameters?.schema.parse(operation.pathParameters.value) ?? {};
+      const query = operation.queryParameters?.schema.parse(operation.queryParameters.value) ?? {};
+      url = parameterUrl(this.#base, operation.path, path, query);
+    } catch { return { ok: false, error: { kind: "request" } }; }
     const headers = new Headers({ Accept: "application/json" });
     if (operation.authenticated) {
       if (!options.token || !/^[\x21-\x7e]+$/.test(options.token)) return { ok: false, error: { kind: "configuration" } };
@@ -85,7 +127,7 @@ export class ControlClient {
     let status: number | undefined;
     let reader: ReadableStreamDefaultReader<Uint8Array> | undefined;
     try {
-      const response = await cancellable(this.#fetch(new URL(operation.path, this.#base), {
+      const response = await cancellable(this.#fetch(url, {
         method: operation.method, headers, redirect: "error", credentials: "omit", cache: "no-store",
         ...(body === undefined ? {} : { body }), ...(options.signal ? { signal: options.signal } : {}),
       }), options.signal, late => { void late.body?.cancel().catch(() => {}); });

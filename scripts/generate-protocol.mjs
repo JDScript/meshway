@@ -3,6 +3,7 @@ import { mkdir, rm, writeFile } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { operationModel, typescriptOperations, rustOperations } from "./codegen/operations.mjs";
+import { integerBounds, parameterSchemas } from "./codegen/parameters.mjs";
 
 export const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 export const artifactPaths = [
@@ -41,8 +42,9 @@ export async function clearGenerated(outputRoot = root) {
 
 export function generatedFiles(document) {
   const model = operationModel(document);
-  const schema = validators(document);
-  const names = Object.keys(document.components.schemas).sort();
+  const schemas = parameterSchemas(model, document.components.schemas);
+  const schema = validators({ ...document, components: { ...document.components, schemas } });
+  const names = Object.keys(schemas).sort();
   return {
     [`${artifactPaths[1]}/mod.rs`]: rustOperations(model),
     [`${artifactPaths[2]}/zod.gen.ts`]: schema,
@@ -216,16 +218,9 @@ export function validators(document) {
       }
       case "integer": {
         keys(schema, ["type", "format", "minimum", "maximum"]);
-        if (schema.format && !["int32", "int64"].includes(schema.format)) throw new Error(`Unsupported integer format ${schema.format}`);
-        for (const key of ["minimum", "maximum"]) {
-          if (schema[key] !== undefined && !Number.isSafeInteger(schema[key])) throw new Error(`Unsafe integer ${key}`);
-        }
         // z.int() itself imposes the JS-safe range. Prove the source schema is
         // within it first rather than silently narrowing unbounded/int64 data.
-        const minimum = schema.format === "int32" ? Math.max(-2147483648, schema.minimum ?? -2147483648) : schema.minimum;
-        const maximum = schema.format === "int32" ? Math.min(2147483647, schema.maximum ?? 2147483647) : schema.maximum;
-        if (!Number.isSafeInteger(minimum) || !Number.isSafeInteger(maximum)) throw new Error("Integer requires safe minimum and maximum or int32 format");
-        if (minimum > maximum) throw new Error("Empty integer range");
+        const { minimum, maximum } = integerBounds(schema);
         return `z.int().gte(${minimum}).lte(${maximum})`;
       }
       case "boolean":

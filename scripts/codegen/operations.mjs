@@ -1,4 +1,5 @@
 // Both clients consume this deliberately small, fail-closed operation model.
+import { parameters, rustParameterStruct, rustParameterValue } from "./parameters.mjs";
 const identifier = /^[A-Za-z][A-Za-z0-9]*$/;
 const reserved = new Set("as async await break case catch class const continue crate debugger default delete do dyn else enum export extends extern false final finally fn for function if impl import in instanceof let loop match mod move mut new null override package priv protected pub public ref return self Self static struct super switch this throw trait true try type typeof union unsafe unsized use var virtual void volatile where while with yield constructor request clone".split(" "));
 function keys(value, allowed, context) {
@@ -23,13 +24,11 @@ export function operationModel(document) {
     return name;
   }
   for (const [path, item] of Object.entries(document.paths)) {
-    // Parameters need a separate schema-aware encoding extension.
-    if (!/^\/(?:[A-Za-z0-9_-]+\/)*[A-Za-z0-9_-]+$/.test(path)) throw new Error(`Unsupported operation path: ${path}`);
-    keys(item, ["get", "post", "summary", "description"], "path");
+    keys(item, ["get", "post", "summary", "description", "parameters"], "path");
     for (const method of ["get", "post"]) {
       if (!Object.hasOwn(item, method)) continue;
       const op = item[method];
-      keys(op, ["operationId", "summary", "description", "tags", "security", "requestBody", "responses", "deprecated"], "operation");
+      keys(op, ["operationId", "summary", "description", "tags", "security", "requestBody", "responses", "deprecated", "parameters"], "operation");
       const name = op.operationId;
       const rustName = typeof name === "string" ? name.replace(/[A-Z]/g, letter => `_${letter.toLowerCase()}`) : "";
       if (typeof name !== "string" || !/^[a-z][A-Za-z0-9]*$/.test(name) || names.has(name) || rustNames.has(rustName) || reserved.has(name) || reserved.has(rustName)) throw new Error(`Invalid or duplicate operationId: ${name}`);
@@ -65,7 +64,7 @@ export function operationModel(document) {
       if (successes.length !== 1) throw new Error("Exactly one success response is supported");
       const errors = responses.filter(response => response.status >= 400);
       if (new Set(errors.map(response => response.type)).size > 1) throw new Error("Multiple error envelopes require a generator extension");
-      output.push({ name, rustName, method: method.toUpperCase(), path, authenticated, body, success: successes[0], errors, errorType: errors[0]?.type });
+      output.push({ name, rustName, typeName: name[0].toUpperCase() + name.slice(1), ...parameters(path, item, op, document.components.schemas), method: method.toUpperCase(), path, authenticated, body, success: successes[0], errors, errorType: errors[0]?.type });
     }
   }
   if (!output.length) throw new Error("No implemented operations to generate");
@@ -78,7 +77,14 @@ export function typescriptOperations(model) {
   const functions = model.map(op => {
     for (const name of [op.body, op.success.type, op.errorType]) if (name) schemas.add(name);
     const options = op.authenticated ? "AuthenticatedRequestOptions" : "RequestOptions";
-    return `export function ${op.name}(client: ControlClient, ${op.body ? `body: z.output<typeof z${op.body}>, ` : ""}options: ${options}${op.authenticated ? "" : " = {}"}) {\n  return client.request({ method: ${JSON.stringify(op.method)}, path: ${JSON.stringify(op.path)}, authenticated: ${op.authenticated}, successStatus: ${op.success.status}, success: ${op.success.type ? `z${op.success.type}` : "undefined"}, errors: [${op.errors.map(error => error.status).join(", ")}], problem: ${op.errorType ? `z${op.errorType}` : "undefined"}${op.body ? `, body: { schema: z${op.body}, value: body }` : ""} }, options);\n}`;
+    const args = [], values = [];
+    for (const [suffix, list, name] of [["Path", op.pathParameters, "path"], ["Query", op.queryParameters, "query"]]) if (list.length) {
+      const schema = op.typeName + suffix;
+      schemas.add(schema);
+      args.push(`${name}: z.output<typeof z${schema}>, `);
+      values.push(`, ${name}Parameters: { schema: z${schema}, value: ${name} }`);
+    }
+    return `export function ${op.name}(client: ControlClient, ${args.join("")}${op.body ? `body: z.output<typeof z${op.body}>, ` : ""}options: ${options}${op.authenticated ? "" : " = {}"}) {\n  return client.request({ method: ${JSON.stringify(op.method)}, path: ${JSON.stringify(op.path)}, authenticated: ${op.authenticated}, successStatus: ${op.success.status}, success: ${op.success.type ? `z${op.success.type}` : "undefined"}, errors: [${op.errors.map(error => error.status).join(", ")}], problem: ${op.errorType ? `z${op.errorType}` : "undefined"}${values.join("")}${op.body ? `, body: { schema: z${op.body}, value: body }` : ""} }, options);\n}`;
   });
   return `${banner}\nimport type * as z from "zod";\nimport { ControlClient, type AuthenticatedRequestOptions, type RequestOptions } from "../transport.ts";\nimport { ${[...schemas].sort().map(name => `z${name}`).join(", ")} } from "./zod.gen.ts";\n\n${functions.join("\n\n")}\n`;
 }
@@ -87,7 +93,11 @@ export function rustOperations(model) {
   const functions = model.map(op => {
     const success = op.success.type ? `meshway_protocol::${op.success.type}` : "()";
     const error = op.errorType ? `meshway_protocol::${op.errorType}` : "std::convert::Infallible";
-    return `    pub async fn ${op.rustName}(&self${op.body ? `, body: &meshway_protocol::${op.body}` : ""}${op.authenticated ? ", token: &str" : ""}) -> Result<${success}, crate::ClientError<${error}>> {\n        let response = self.send(reqwest::Method::${op.method}, ${JSON.stringify(op.path)}, ${op.authenticated ? "Some(token)" : "None"}, ${op.body ? "Some(body)" : "None::<&()>"}).await?;\n        match response.status {\n            ${op.success.status} => ${op.success.type ? "response.json()" : "response.empty()"},\n            ${op.errors.length ? op.errors.map(error => error.status).join(" | ") + " => Err(response.problem()),\n            " : ""}_ => Err(response.unexpected()),\n        }\n    }`;
+    const hasParameters = op.pathParameters.length || op.queryParameters.length;
+    const args = `${op.pathParameters.length ? `, path: &${op.typeName}Path` : ""}${op.queryParameters.length ? `, query: &${op.typeName}Query` : ""}`;
+    const setup = hasParameters ? `        let path_values = [${op.pathParameters.map(p => `(${JSON.stringify(p.name)}, ${rustParameterValue(p, `&path.r#${p.rustName}`)})`).join(", ")}];\n        let query_values = [${op.queryParameters.map(p => `(${JSON.stringify(p.name)}, query.r#${p.rustName}.as_ref().map(|value| Ok::<_, crate::ClientError<${error}>>(${rustParameterValue(p, "value")})).transpose()?)`).join(", ")}];\n        let url = self.parameter_url(${JSON.stringify(op.path)}, &path_values, &query_values)?;\n` : "";
+    return `    pub async fn ${op.rustName}(&self${args}${op.body ? `, body: &meshway_protocol::${op.body}` : ""}${op.authenticated ? ", token: &str" : ""}) -> Result<${success}, crate::ClientError<${error}>> {\n${setup}        let response = self.${hasParameters ? "send_url" : "send"}(reqwest::Method::${op.method}, ${hasParameters ? "url" : JSON.stringify(op.path)}, ${op.authenticated ? "Some(token)" : "None"}, ${op.body ? "Some(body)" : "None::<&()>"}).await?;\n        match response.status {\n            ${op.success.status} => ${op.success.type ? "response.json()" : "response.empty()"},\n            ${op.errors.length ? op.errors.map(error => error.status).join(" | ") + " => Err(response.problem()),\n            " : ""}_ => Err(response.unexpected()),\n        }\n    }`;
   });
-  return `${banner}\nimpl crate::Client {\n${functions.join("\n\n")}\n}\n`;
+  const structs = model.map(op => rustParameterStruct(op, "Path", op.pathParameters) + rustParameterStruct(op, "Query", op.queryParameters)).filter(Boolean);
+  return `${banner}\n${structs.length ? structs.join("\n") + "\n" : ""}impl crate::Client {\n${functions.join("\n\n")}\n}\n`;
 }
