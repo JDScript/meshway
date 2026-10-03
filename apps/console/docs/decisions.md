@@ -21,6 +21,16 @@ its generated client only, and only what the controller delivers:
   result and throws `ApiFailure`; `authed` adds this tab's session and turns a
   401 into a sign-out. `lib/failure.ts` words a failure by its problem code,
   else by its kind and status. Reads retry only a lost connection or a 5xx.
+- The shared components (`components/chrome`, the `components/ui` pieces
+  they use, `hooks/`) stay for the pages to come, though no page uses most
+  of them yet. Dependencies no page uses are removed; the pages that need
+  them re-add the versions they were tested with: `@codemirror/commands`
+  6.11.1, `lang-json` 6.0.2, `language` 6.12.4, `lint` 6.9.7, `state` 6.7.6,
+  `view` 6.43.13, `@lezer/highlight` 1.2.5, `jsonc-parser` 3.3.1 (the JSONC
+  editor), `cmdk` ^1.1.1 (the palette), `recharts` 3.8.0 (latency history,
+  with the shadcn `chart`).
+- A tab signs out when its session reaches the controller's absolute expiry
+  (`useSessionExpiry`), not only on its next request.
 - Development: start a controller on a private data directory with
   `--listen 127.0.0.1:0`, then run the console with
   `MESHWAY_CONTROLLER_URL=http://127.0.0.1:<port> pnpm dev`. Without it the
