@@ -87,7 +87,7 @@ wire_object! {
         /// Null only when secure request-ID generation itself is unavailable.
         #[serde(deserialize_with = "required_request_id")]
         pub request_id: Option<RequestId> [required = true],
-        pub status: u16,
+        pub status: u16 [minimum = 0, maximum = 65535],
         pub problem: Problem,
     }
 }

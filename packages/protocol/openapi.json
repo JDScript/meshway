@@ -358,6 +358,7 @@
           "status": {
             "type": "integer",
             "format": "int32",
+            "maximum": 65535,
             "minimum": 0
           }
         },
@@ -399,14 +400,20 @@
           },
           "maxCodepoints": {
             "type": "integer",
+            "format": "int32",
+            "maximum": 65535,
             "minimum": 0
           },
           "maxUtf8Bytes": {
             "type": "integer",
+            "format": "int32",
+            "maximum": 65535,
             "minimum": 0
           },
           "minCodepoints": {
             "type": "integer",
+            "format": "int32",
+            "maximum": 65535,
             "minimum": 0
           }
         },

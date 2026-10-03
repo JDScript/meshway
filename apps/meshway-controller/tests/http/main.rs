@@ -548,4 +548,18 @@ fn exported_openapi_is_the_actual_router_contract() {
     {
         assert_eq!(variant["additionalProperties"], false);
     }
+    for (component, fields) in [
+        (
+            "PasswordRules",
+            &["minCodepoints", "maxCodepoints", "maxUtf8Bytes"][..],
+        ),
+        ("ErrorResponse", &["status"][..]),
+    ] {
+        for field in fields {
+            let schema = &spec["components"]["schemas"][component]["properties"][field];
+            assert_eq!(schema["type"], "integer");
+            assert_eq!(schema["minimum"].as_f64(), Some(0.0));
+            assert_eq!(schema["maximum"].as_f64(), Some(65535.0));
+        }
+    }
 }

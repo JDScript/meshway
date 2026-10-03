@@ -26,9 +26,9 @@ impl<'de> Deserialize<'de> for PasswordLengthUnit {
 wire_object! {
     #[derive(Debug, Clone, Copy, PartialEq, Eq)]
     pub struct PasswordRules {
-        pub min_codepoints: usize,
-        pub max_codepoints: usize,
-        pub max_utf8_bytes: usize,
+        pub min_codepoints: u16 [minimum = 0, maximum = 65535],
+        pub max_codepoints: u16 [minimum = 0, maximum = 65535],
+        pub max_utf8_bytes: u16 [minimum = 0, maximum = 65535],
         pub length_unit: PasswordLengthUnit,
     }
 }
