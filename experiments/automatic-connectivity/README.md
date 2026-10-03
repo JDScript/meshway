@@ -13,6 +13,10 @@ evidence and successful HTTP over TUN; saved ACKs alone cannot pass.
 Grant withdrawal must remove generated adjacency and packet paths, deny both
 directions, and recover after normal policy restoration.
 
+The final stage keeps only the A→B grant: generated relay adjacency must still
+carry the real HTTP response on the established reverse path, while a separately
+initiated B→A HTTP connection is denied. Source candidates remain empty.
+
 A bounded transparent UDP gate on the Controller fixture container drops UDP
 in both directions for the failure stage. It forwards opaque carrier datagrams
 to the relay during healthy stages. This exercises carrier loss and priority

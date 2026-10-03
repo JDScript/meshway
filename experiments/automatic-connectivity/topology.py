@@ -107,11 +107,11 @@ def accept(docker, container, name, logs, result, networks):
     probe = ('import http.client,sys; c=http.client.HTTPConnection(sys.argv[1],8088,timeout=2); '
              'c.request("GET","/"); r=c.getresponse(); assert r.status==200; r.read(); print("real-tun-http")')
 
-    def traffic():
+    def traffic(pairs=(('a', 'b'), ('b', 'a'))):
         return all(docker('exec', agents[source], 'python3', '-c', probe, addresses[nodes[target]], check=False, timeout=6).returncode == 0
-                   for source, target in [('a', 'b'), ('b', 'a')])
+                   for source, target in pairs)
 
-    def transport(kind, label):
+    def transport(kind, label, pairs=(('a', 'b'), ('b', 'a'))):
         snapshot = rpc(prefix + '/connections/runtime')
         for role in agents:
             value = next(n for n in snapshot['nodes'] if n['node_id'] == nodes[role])
@@ -122,7 +122,7 @@ def accept(docker, container, name, logs, result, networks):
                       and p['probe_fresh'] and p['probe_rtt_ms'] is not None}
             if not expected.issubset(proven):
                 return False
-        if not traffic():
+        if not traffic(pairs):
             return False
         result[label] = snapshot
         return True
@@ -158,3 +158,17 @@ def accept(docker, container, name, logs, result, networks):
     until('grant restoration republishes coherent automatic paths', coherent)
     until('grant restoration recovers real TUN HTTP', lambda: transport('native_udp', 'grant_restored'))
     result['coverage']['grant_withdrawal_and_restoration'] = True
+    # Combine generated adjacency with stateful replies, rather than granting
+    # both endpoint directions to make the application response work.
+    policy['grants'][0]['bidirectional'] = False
+    save_policy()
+    revision = None
+    expected_paths = [[nodes['a'], nodes['relay'], nodes['b']]]
+    until('one-way grant retains automatic relay adjacency', coherent)
+    until('one-way HTTP receives stateful reply over generated adjacency',
+          lambda: transport('native_udp', 'one_way_stateful_return', (('a', 'b'),)))
+    assert docker('exec', agents['b'], 'python3', '-c', probe, addresses[nodes['a']],
+                  check=False, timeout=6).returncode != 0, 'one-way grant allowed an independent reverse flow'
+    assert rpc(prefix + '/connections')['configuration']['candidates'] == []
+    result['coverage']['one_way_grant_stateful_return'] = True
+    result['coverage']['independent_reverse_flow_denied'] = True

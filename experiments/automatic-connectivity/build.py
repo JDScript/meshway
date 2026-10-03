@@ -15,7 +15,7 @@ def build(docker, args, name, logs, source, work, context, manifest, result, own
         '--mount', f'type=bind,source={source},target=/source,readonly',
         '--mount', f'type=bind,source={work},target=/work', '--workdir', '/source',
         '--env', 'HOME=/work/home', '--env', 'CARGO_HOME=/work/cargo', '--env', 'CARGO_TARGET_DIR=/work/target',
-        '--env', 'CARGO_BUILD_JOBS=2', '--env', 'RUSTUP_TOOLCHAIN=1.98.0', '--entrypoint', 'cargo', args.compiler,
+        '--env', 'CARGO_BUILD_JOBS=2', '--env', 'CARGO_INCREMENTAL=0', '--env', 'RUSTUP_TOOLCHAIN=1.98.0', '--entrypoint', 'cargo', args.compiler,
         'build', '--locked', '-p', 'meshway-agent', '-p', 'meshway-controller', '--all-features').stdout.strip()
     owned.append(cid)
     inspected = json.loads(docker('inspect', cid).stdout)[0]
