@@ -12,6 +12,7 @@ import { Route as rootRouteImport } from './routes/__root'
 import { Route as AuthedRouteImport } from './routes/_authed'
 import { Route as LoginRouteImport } from './routes/login'
 import { Route as RegisterRouteImport } from './routes/register'
+import { Route as ResetPasswordRouteImport } from './routes/reset-password'
 import { Route as AuthedIndexRouteImport } from './routes/_authed/index'
 import { Route as AuthedNetworksNetworkRouteImport } from './routes/_authed/networks/$network'
 import { Route as AuthedNetworksNetworkIndexRouteImport } from './routes/_authed/networks/$network/index'
@@ -34,6 +35,11 @@ const LoginRoute = LoginRouteImport.update({
 const RegisterRoute = RegisterRouteImport.update({
   id: '/register',
   path: '/register',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ResetPasswordRoute = ResetPasswordRouteImport.update({
+  id: '/reset-password',
+  path: '/reset-password',
   getParentRoute: () => rootRouteImport,
 } as any)
 const AuthedIndexRoute = AuthedIndexRouteImport.update({
@@ -93,6 +99,7 @@ export interface FileRoutesByFullPath {
   '/': typeof AuthedIndexRoute
   '/login': typeof LoginRoute
   '/register': typeof RegisterRoute
+  '/reset-password': typeof ResetPasswordRoute
   '/networks/$network': typeof AuthedNetworksNetworkRouteWithChildren
   '/networks/$network/account': typeof AuthedNetworksNetworkAccountRoute
   '/networks/$network/members': typeof AuthedNetworksNetworkMembersRoute
@@ -105,6 +112,7 @@ export interface FileRoutesByFullPath {
 export interface FileRoutesByTo {
   '/login': typeof LoginRoute
   '/register': typeof RegisterRoute
+  '/reset-password': typeof ResetPasswordRoute
   '/': typeof AuthedIndexRoute
   '/networks/$network/account': typeof AuthedNetworksNetworkAccountRoute
   '/networks/$network/members': typeof AuthedNetworksNetworkMembersRoute
@@ -118,6 +126,7 @@ export interface FileRoutesById {
   '/_authed': typeof AuthedRouteWithChildren
   '/login': typeof LoginRoute
   '/register': typeof RegisterRoute
+  '/reset-password': typeof ResetPasswordRoute
   '/_authed/': typeof AuthedIndexRoute
   '/_authed/networks/$network': typeof AuthedNetworksNetworkRouteWithChildren
   '/_authed/networks/$network/account': typeof AuthedNetworksNetworkAccountRoute
@@ -134,6 +143,7 @@ export interface FileRouteTypes {
     | '/'
     | '/login'
     | '/register'
+    | '/reset-password'
     | '/networks/$network'
     | '/networks/$network/account'
     | '/networks/$network/members'
@@ -146,6 +156,7 @@ export interface FileRouteTypes {
   to:
     | '/login'
     | '/register'
+    | '/reset-password'
     | '/'
     | '/networks/$network/account'
     | '/networks/$network/members'
@@ -158,6 +169,7 @@ export interface FileRouteTypes {
     | '/_authed'
     | '/login'
     | '/register'
+    | '/reset-password'
     | '/_authed/'
     | '/_authed/networks/$network'
     | '/_authed/networks/$network/account'
@@ -173,6 +185,7 @@ export interface RootRouteChildren {
   AuthedRoute: typeof AuthedRouteWithChildren
   LoginRoute: typeof LoginRoute
   RegisterRoute: typeof RegisterRoute
+  ResetPasswordRoute: typeof ResetPasswordRoute
 }
 
 declare module '@tanstack/react-router' {
@@ -196,6 +209,13 @@ declare module '@tanstack/react-router' {
       path: '/register'
       fullPath: '/register'
       preLoaderRoute: typeof RegisterRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/reset-password': {
+      id: '/reset-password'
+      path: '/reset-password'
+      fullPath: '/reset-password'
+      preLoaderRoute: typeof ResetPasswordRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/_authed/': {
@@ -321,6 +341,7 @@ const rootRouteChildren: RootRouteChildren = {
   AuthedRoute: AuthedRouteWithChildren,
   LoginRoute: LoginRoute,
   RegisterRoute: RegisterRoute,
+  ResetPasswordRoute: ResetPasswordRoute,
 }
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)

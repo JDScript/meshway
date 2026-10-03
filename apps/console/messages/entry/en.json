@@ -4,7 +4,13 @@
   "entry_password": "Password",
   "entry_confirm_password": "Confirm password",
   "entry_email_invalid": "The email address is not valid.",
+  "entry_new_password": "New password",
   "login_signed_out_all": "All sign-ins have ended.",
   "login_password_changed": "The password has changed and every sign-in has ended. Sign in with the new password.",
-  "login_password_reset": "The password has been reset and every sign-in has ended. Sign in with the new password."
+  "login_password_reset": "The password has been reset and every sign-in has ended. Sign in with the new password.",
+  "reset_title": "Reset password",
+  "reset_checking": "Checking the reset link",
+  "reset_expires": "The link is valid until {time}",
+  "reset_unusable": "The reset link is not valid, has been used or has expired.",
+  "reset_submit": "Set new password"
 }

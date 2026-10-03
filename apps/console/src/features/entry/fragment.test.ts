@@ -36,3 +36,17 @@ test("a held secret is read once and dropped", () => {
   held.take("#nothing")
   assert.equal(held.current(), null)
 })
+
+test("a second fragment is announced, and counted", () => {
+  const held = heldSecret()
+  let heard = 0
+  const stop = held.subscribe(() => (heard += 1))
+  held.take("#token=one")
+  held.take("#token=two")
+  assert.equal(held.taken(), 2)
+  assert.equal(heard, 2)
+  assert.equal(held.current(), "two")
+  stop()
+  held.take("#token=three")
+  assert.equal(heard, 2)
+})
