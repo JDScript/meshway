@@ -73,7 +73,7 @@ async fn transactional_lifecycle_races_activities_and_cancelled_delivery() {
             accounts.logout(token.expose(), request()).await,
             Err(AccountError::InvalidSession)
         ));
-        handle.execute(|c| c.execute_batch("UPDATE users SET disabled_at = NULL, credential_version = 1; UPDATE user_sessions SET created_at = 1, expires_at = 4102444800, revoked_at = NULL").unwrap()).await.unwrap();
+        handle.execute(|c| c.execute_batch("UPDATE users SET disabled_at = NULL, credential_version = 1; UPDATE user_sessions SET created_at = 1, expires_at = 4102444800000, revoked_at = NULL").unwrap()).await.unwrap();
     }
     // The final writer checks the state after the slow verification, including
     // PHC change without a version bump. No extra session or activity is issued.
@@ -225,4 +225,127 @@ async fn transactional_lifecycle_races_activities_and_cancelled_delivery() {
 
 async fn schema_check(handle: &crate::store::Handle) {
     handle.execute(schema::check).await.unwrap().unwrap();
+}
+
+#[tokio::test]
+async fn persisted_account_session_and_activity_times_are_unix_milliseconds() {
+    let _serial = TEST_KDF_LOCK.lock().await;
+    let temp = tempfile::tempdir().unwrap();
+    let executor = Executor::open(
+        temp.path().canonicalize().unwrap().join("db"),
+        Options::default(),
+        (),
+        schema::initialize,
+    )
+    .await
+    .unwrap();
+    let handle = executor.handle();
+    let accounts = Accounts::new(
+        handle.clone(),
+        AccountOptions::new(true, Duration::from_secs(90)).unwrap(),
+    );
+    let before = Utc::now().timestamp_millis();
+    let registered = accounts
+        .register(
+            "time@example.test".into(),
+            Secret::new("valid password".into()),
+            request(),
+        )
+        .await
+        .unwrap();
+    let after = Utc::now().timestamp_millis();
+    let session = registered.session.clone();
+    handle.execute(move |connection| {
+        let (user_created, session_created, expires, activity_at) = connection.query_row(
+            "SELECT u.created_at, s.created_at, s.expires_at, a.at FROM users u JOIN user_sessions s ON s.user_id = u.id JOIN activity_events a ON a.account_user_id = u.id WHERE s.id = ?1 AND a.action = 'account.register'",
+            [session.session_id.as_uuid().as_bytes().as_slice()],
+            |row| Ok((row.get::<_, i64>(0)?, row.get::<_, i64>(1)?, row.get::<_, i64>(2)?, row.get::<_, i64>(3)?)),
+        ).unwrap();
+        assert!((before..=after).contains(&user_created));
+        assert_eq!(user_created, session_created);
+        assert_eq!(activity_at, session_created);
+        assert_eq!(session_created, session.created_at.timestamp_millis());
+        assert_eq!(expires, session.expires_at.timestamp_millis());
+        assert_eq!(expires - session_created, 90_000);
+    }).await.unwrap();
+    assert_eq!(
+        accounts
+            .authenticate(registered.token.expose())
+            .await
+            .unwrap(),
+        registered.session
+    );
+
+    let before = Utc::now().timestamp_millis();
+    let logged_in = accounts
+        .login(
+            "time@example.test".into(),
+            Secret::new("valid password".into()),
+            request(),
+        )
+        .await
+        .unwrap();
+    let after = Utc::now().timestamp_millis();
+    let session = logged_in.session.clone();
+    handle.execute(move |connection| {
+        let (created, expires, activity_at, digest) = connection.query_row(
+            "SELECT s.created_at, s.expires_at, a.at, s.token_hash FROM user_sessions s JOIN activity_events a ON a.target_session_id = s.id WHERE s.id = ?1 AND a.action = 'session.login'",
+            [session.session_id.as_uuid().as_bytes().as_slice()],
+            |row| Ok((row.get::<_, i64>(0)?, row.get::<_, i64>(1)?, row.get::<_, i64>(2)?, row.get::<_, Vec<u8>>(3)?)),
+        ).unwrap();
+        assert!((before..=after).contains(&created));
+        assert_eq!(created, session.created_at.timestamp_millis());
+        assert_eq!(activity_at, created);
+        assert_eq!(expires, session.expires_at.timestamp_millis());
+        assert_eq!(expires - created, 90_000);
+        let digest: [u8; 32] = digest.try_into().unwrap();
+        let transaction = connection.transaction().unwrap();
+        assert_eq!(current_session(&transaction, &digest, expires - 1).unwrap(), session);
+        assert_eq!(current_session(&transaction, &digest, expires), Err(AccountError::InvalidSession));
+    }).await.unwrap();
+
+    let before = Utc::now().timestamp_millis();
+    accounts
+        .logout(logged_in.token.expose(), request())
+        .await
+        .unwrap();
+    let after = Utc::now().timestamp_millis();
+    let session_id = logged_in.session.session_id;
+    handle.execute(move |connection| {
+        let (revoked, activity_at) = connection.query_row(
+            "SELECT s.revoked_at, a.at FROM user_sessions s JOIN activity_events a ON a.target_session_id = s.id WHERE s.id = ?1 AND a.action = 'session.logout'",
+            [session_id.as_uuid().as_bytes().as_slice()],
+            |row| Ok((row.get::<_, i64>(0)?, row.get::<_, i64>(1)?)),
+        ).unwrap();
+        assert!((before..=after).contains(&revoked));
+        assert_eq!(activity_at, revoked);
+    }).await.unwrap();
+
+    // Real authentication must compare its fresh clock in the same unit as a
+    // persisted millisecond expiry, not accidentally treat it as far-future seconds.
+    let session_id = registered.session.session_id;
+    handle
+        .execute(move |connection| {
+            connection
+                .execute(
+                    "UPDATE user_sessions SET created_at = 1, expires_at = ?1 WHERE id = ?2",
+                    params![
+                        Utc::now().timestamp_millis() - 1,
+                        session_id.as_uuid().as_bytes().as_slice()
+                    ],
+                )
+                .unwrap();
+        })
+        .await
+        .unwrap();
+    assert_eq!(
+        accounts.authenticate(registered.token.expose()).await,
+        Err(AccountError::InvalidSession)
+    );
+    assert_eq!(
+        accounts.logout(registered.token.expose(), request()).await,
+        Err(AccountError::InvalidSession)
+    );
+    schema_check(&handle).await;
+    executor.shutdown().await.unwrap();
 }

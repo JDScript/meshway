@@ -122,7 +122,7 @@ fn insert_session(
     let session_id = SessionId::new(random_uuid()?).map_err(|_| AccountError::Unavailable)?;
     let (token, digest) = issue_token()?;
     let expires = now
-        .checked_add(i64::try_from(ttl.as_secs()).map_err(|_| AccountError::Unavailable)?)
+        .checked_add(i64::try_from(ttl.as_millis()).map_err(|_| AccountError::Unavailable)?)
         .ok_or(AccountError::Unavailable)?;
     transaction.execute(
         "INSERT INTO user_sessions (id, token_hash, user_id, credential_version, created_at, expires_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
@@ -195,7 +195,7 @@ fn current_session(
 }
 
 fn now() -> Result<i64, AccountError> {
-    let now = Utc::now().timestamp();
+    let now = Utc::now().timestamp_millis();
     if now < 0 {
         return Err(AccountError::Unavailable);
     }
@@ -203,7 +203,7 @@ fn now() -> Result<i64, AccountError> {
 }
 
 fn timestamp(value: i64) -> Result<DateTime<Utc>, AccountError> {
-    DateTime::from_timestamp(value, 0).ok_or(AccountError::Storage)
+    DateTime::from_timestamp_millis(value).ok_or(AccountError::Storage)
 }
 
 fn uuid(bytes: &[u8]) -> Result<Uuid, AccountError> {

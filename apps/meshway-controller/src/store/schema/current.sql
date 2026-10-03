@@ -1,3 +1,5 @@
+-- All timestamp INTEGER fields in users, user_sessions, and activity_events
+-- store Unix milliseconds (UTC), including nullable lifecycle timestamps.
 CREATE TABLE users (
     id BLOB NOT NULL PRIMARY KEY CHECK (length(id) = 16 AND id != zeroblob(16)),
     email TEXT NOT NULL UNIQUE CHECK (length(email) BETWEEN 3 AND 254 AND email = lower(trim(email))),
