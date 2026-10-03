@@ -73,13 +73,14 @@ export async function authed<T>(
   const settled = await operation(session.token)
   if (settled.ok) return settled.data
   if (rejectsSession(settled.error)) {
-    reject(session)
+    rejectSession(session)
     throw new SessionRejected()
   }
   throw new ApiFailure(settled.error)
 }
 
-function reject(session: Session) {
+/** Ends `session` here and hands over to the router, as a 401 does. */
+export function rejectSession(session: Session) {
   endSession(session)
   onRejected()
 }
