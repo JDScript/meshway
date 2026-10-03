@@ -7,6 +7,7 @@ use rusqlite::{Connection, OptionalExtension, TransactionBehavior, params};
 use super::{NODE_SELECT, NetworkId, Store, configuration, node_row, publication, timestamp};
 use crate::Error;
 
+mod automatic;
 #[cfg(test)]
 mod tests;
 pub(super) mod validation;
@@ -112,12 +113,9 @@ pub(super) fn effective_with_policy(
     network: &NetworkId,
     policy: &meshway_policy::NetworkPolicy,
 ) -> Result<ConnectionsSnapshot, Error> {
-    filter_effective(
-        connection,
-        network,
-        admin_snapshot(connection, network)?,
-        policy,
-    )
+    let mut snapshot = admin_snapshot(connection, network)?;
+    automatic::append(connection, network, &mut snapshot, policy)?;
+    filter_effective(connection, network, snapshot, policy)
 }
 
 fn filter_effective(

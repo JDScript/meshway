@@ -231,7 +231,11 @@ fn candidate_65th_dialer_material_rolls_back_and_multiple_endpoints_count_once()
     let a = node(&mut store, 9, ConnectionTransport::Vless);
     let b = node(&mut store, 10, ConnectionTransport::Vless);
     let dialer = node(&mut store, 11, ConnectionTransport::Vless);
-    save(&mut store, NetworkPolicy::default_template()).unwrap();
+    // Exercise the advanced manual candidate budget independently of automatic
+    // grant-driven adjacency, which correctly rejects the 65th material earlier.
+    let mut policy = NetworkPolicy::default_template();
+    policy.grants.clear();
+    save(&mut store, policy).unwrap();
     for i in 0..65 {
         let mut settings = listener(i, if i < 64 { &a.0.id } else { &b.0.id });
         if i == 0 {

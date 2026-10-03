@@ -89,6 +89,210 @@ fn save(
     })
 }
 
+fn managed_native(
+    store: &mut SingleNetworkFixture,
+    node: &str,
+    id: &str,
+    transport: ConnectionTransport,
+) {
+    let network = store.network_id.clone();
+    let expected_revision = store.revision().unwrap();
+    store
+        .save_managed_listener(
+            &network,
+            &SaveManagedListenerRequest {
+                expected_revision,
+                settings: ManagedListenerSettings {
+                    id: id.into(),
+                    node_id: node.into(),
+                    enabled: true,
+                    transport,
+                    bind_address: "0.0.0.0".into(),
+                    bind_port: 18443,
+                    advertised_endpoints: vec![ConnectionEndpoint {
+                        host: "relay.example.com".into(),
+                        port: 28443,
+                    }],
+                    vless: None,
+                },
+            },
+        )
+        .unwrap();
+}
+
+fn save_policy(store: &mut SingleNetworkFixture, policy: meshway_policy::NetworkPolicy) {
+    let network = store.network_id.clone();
+    let expected_revision = store.revision().unwrap();
+    store
+        .save_network_policy(
+            &network,
+            &crate::contracts::network_policy::SaveNetworkPolicyRequest {
+                expected_revision,
+                policy,
+                source_jsonc: None,
+            },
+        )
+        .unwrap();
+}
+
+#[test]
+fn automatic_outbound_only_nodes_use_managed_relay_without_persisting_candidates() {
+    let dir = directory();
+    let mut store = SingleNetworkFixture::open(dir.path(), &NetworkOptions::default()).unwrap();
+    let (a_id, a) = enrolled(&mut store, "a");
+    let (b_id, b) = enrolled(&mut store, "b");
+    let (relay_id, relay) = enrolled(&mut store, "relay");
+    for (token, seed) in [(&a, 9), (&b, 10), (&relay, 11)] {
+        store
+            .publish_connection_identity(token, &identity(seed))
+            .unwrap();
+    }
+    let mut policy = meshway_policy::NetworkPolicy::default_template();
+    policy.grants = vec![meshway_policy::Grant {
+        id: "a-to-b".into(),
+        src: vec![format!("node:{a_id}")],
+        dst: vec![format!("node:{b_id}")],
+        bidirectional: false,
+    }];
+    save_policy(&mut store, policy.clone());
+    managed_native(
+        &mut store,
+        &relay_id,
+        "relay-udp",
+        ConnectionTransport::NativeUdp,
+    );
+    managed_native(
+        &mut store,
+        &relay_id,
+        "relay-tcp",
+        ConnectionTransport::NativeTcp,
+    );
+    for token in [&a, &b] {
+        let snapshot = store.agent_connections(token).unwrap();
+        assert!(snapshot.payload.listeners.is_empty());
+        assert_eq!(snapshot.payload.outgoing.len(), 2);
+        assert_eq!(snapshot.payload.outgoing[0].priority, 100);
+        assert_eq!(snapshot.payload.outgoing[1].priority, 200);
+        assert!(
+            snapshot
+                .payload
+                .outgoing
+                .iter()
+                .all(|c| c.peer_node_id == relay_id && c.id.starts_with("auto."))
+        );
+        assert_eq!(
+            snapshot.digest,
+            store.agent_connections(token).unwrap().digest
+        );
+    }
+    assert_eq!(
+        store
+            .agent_connections(&relay)
+            .unwrap()
+            .payload
+            .incoming
+            .len(),
+        4
+    );
+    assert!(
+        store
+            .connections()
+            .unwrap()
+            .configuration
+            .candidates
+            .is_empty()
+    );
+    assert!(
+        source(&store.connection, &store.network_id)
+            .unwrap()
+            .candidates
+            .is_empty()
+    );
+    policy.grants.clear();
+    save_policy(&mut store, policy);
+    assert!(
+        store
+            .agent_connections(&a)
+            .unwrap()
+            .payload
+            .outgoing
+            .is_empty()
+    );
+    assert!(
+        store
+            .agent_connections(&b)
+            .unwrap()
+            .payload
+            .outgoing
+            .is_empty()
+    );
+}
+
+#[test]
+fn automatic_edges_follow_connection_blocks_capabilities_and_manual_override() {
+    let dir = directory();
+    let mut store = SingleNetworkFixture::open(dir.path(), &NetworkOptions::default()).unwrap();
+    let (a_id, a) = enrolled(&mut store, "a");
+    let (b_id, b) = enrolled(&mut store, "b");
+    store.publish_connection_identity(&a, &identity(9)).unwrap();
+    store
+        .publish_connection_identity(&b, &identity(10))
+        .unwrap();
+    managed_native(&mut store, &b_id, "in", ConnectionTransport::NativeUdp);
+    assert_eq!(
+        store.agent_connections(&a).unwrap().payload.outgoing.len(),
+        1
+    );
+    let mut policy = meshway_policy::NetworkPolicy::default_template();
+    policy.connections.push(meshway_policy::ConnectionRule {
+        id: "block".into(),
+        a: format!("node:{a_id}"),
+        b: format!("node:{b_id}"),
+        action: meshway_policy::ConnectionAction::Block,
+    });
+    save_policy(&mut store, policy);
+    assert!(
+        store
+            .agent_connections(&a)
+            .unwrap()
+            .payload
+            .outgoing
+            .is_empty()
+    );
+    save_policy(
+        &mut store,
+        meshway_policy::NetworkPolicy::default_template(),
+    );
+    let mut unsupported = identity(9);
+    unsupported
+        .capabilities
+        .retain(|c| c.transport != ConnectionTransport::NativeUdp);
+    store.publish_connection_identity(&a, &unsupported).unwrap();
+    assert!(
+        store
+            .agent_connections(&a)
+            .unwrap()
+            .payload
+            .outgoing
+            .is_empty()
+    );
+    store.publish_connection_identity(&a, &identity(9)).unwrap();
+    let mut plan = store.connections().unwrap().configuration;
+    plan.candidates.push(ConnectionCandidate {
+        id: "manual".into(),
+        dialer_node_id: a_id,
+        listener_id: "in".into(),
+        endpoint: plan.listeners[0].advertised_endpoints[0].clone(),
+        priority: 7,
+        credential_ref: None,
+    });
+    save(&mut store, plan).unwrap();
+    let outgoing = store.agent_connections(&a).unwrap().payload.outgoing;
+    assert_eq!(outgoing.len(), 1);
+    assert_eq!(outgoing[0].id, "manual");
+    assert_eq!(outgoing[0].priority, 7);
+}
+
 #[test]
 fn immutable_unique_binding_capability_updates_and_revision_exhaustion_are_atomic() {
     let dir = directory();

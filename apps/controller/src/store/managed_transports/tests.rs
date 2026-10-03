@@ -253,6 +253,25 @@ fn materials_are_encrypted_scope_minimized_revision_coherent_and_stable_after_re
         "unrelated",
         &format!("0b{}", "00".repeat(31)),
     );
+    // Default member grants now request automatic managed adjacency. Limit this
+    // credential-scope test to its intended two participants explicitly.
+    let mut policy = meshway_policy::NetworkPolicy::default_template();
+    policy.grants = vec![meshway_policy::Grant {
+        id: "participants".into(),
+        src: vec![format!("node:{}", b.id)],
+        dst: vec![format!("node:{}", a.id)],
+        bidirectional: false,
+    }];
+    store
+        .save_network_policy(
+            &network,
+            &crate::contracts::network_policy::SaveNetworkPolicyRequest {
+                expected_revision: store.revision(&network).unwrap(),
+                policy,
+                source_jsonc: None,
+            },
+        )
+        .unwrap();
     let revision = store.revision(&network).unwrap();
     let saved = store
         .save_managed_listener(

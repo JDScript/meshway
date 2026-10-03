@@ -2,7 +2,11 @@
 
 连接配置将“节点身份”“谁监听”“谁主动建连”和“保存回执”分别表达。业务路由仍由独立策略决定；配置一个邻接不自动授予转发、出口或业务访问权限。
 
-**已确认目标**：平台按授权、路径和可达性按需自动建连，默认连接图允许可达直连、阻断优先；Web 保留 listener 与承载优先级 / 逐段覆盖。**P2a后端已提供**平台托管 listener、VLESS TCP / WS（均TLS）、材料生成与节点专属下发，见[承载API对接](/managed-transports-api)。下文手工 candidate 与本地 profile 引用保留为高级覆盖 / 受控兼容；按需图编译和Web便捷表单仍待后续接入。
+**已确认目标**：平台按授权、路径和可达性按需自动建连，默认连接图允许可达直连、阻断优先；Web 保留 listener 与承载优先级 / 逐段覆盖。**后端已提供**平台托管 listener、VLESS TCP / WS（均TLS）、材料生成与节点专属下发，见[承载API对接](/managed-transports-api)。
+
+托管 listener 的 advertised endpoints 现在按当前节点能力、连接许可和 grants / 必经路径需求生成有效 candidate，沿正常连接及 Mesh execution 快照下发；无 listener 的节点可主动拨入获准中继。生成项使用稳定 `auto.*` ID，不写回管理员保存的 connection source。默认承载优先级为 Native UDP 100、Native TCP 200、VLESS 300（数值越小越优先）；同一拨号节点 / listener 的显式 candidates 完整覆盖该段自动 endpoint / 优先级选择。VLESS 必须双方支持相应 TCP / WebSocket 模式，材料仍按有效 owner / dialer 最小化投影。
+
+这一步只使用平台配置的 listener 广告，不把广告当作实际连通证据。自动 STUN 设施、两个仅出站节点的候选协调、真实打洞转直连及故障主备闭环仍在实现。下文手工 candidate 与本地 profile 引用保留为高级入口，Web 便捷表单由控制台工作流接入。
 
 ## 交付边界
 
