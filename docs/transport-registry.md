@@ -13,7 +13,7 @@
 | `crates/dataplane/src/config.rs` | 单独定义 `TransportKind`，也枚举 Native UDP / TCP / VLESS。 |
 | `crates/dataplane/src/runtime/{mod,statistics,wire}.rs` | 统计有固定三槽/三个字段；Noise prologue 中的 transport wire ID 明确为 1/2/3，重构必须保持稳定。 |
 | `apps/agent/src/state/connections.rs` | 编译能力由手写列表构造；P2a 调整了 feature 边界，但仍需统一注册来源。 |
-| `apps/web/lib/connections-model.ts` | 可选协议、名称、提示和是否需要 profile 分别手写。新增托管表单也需要具体协议表单适配。 |
+| 控制台协议表单 | 审查时旧 Web 的可选协议、名称、提示和是否需要 profile 分别手写（旧 Web 已删除）；console 应由 controller 目录驱动，不再另写一份。 |
 | `crates/protocol/src/lib.rs`、`apps/controller/src/store/mod.rs` | `agent_version` 已随注册/心跳存储和展示，不等同于完整的配置 schema / wire 协商。 |
 | `docs/transports.md` 与各 transport crate | Trojan / SOCKS5 / Shadowsocks 有库级实现，尚未形成统一的控制面托管与 Agent 装配。 |
 | `scripts/generate-protocol.mjs` | 当前只处理特定 nullable union 与普通 enum，尚不支持通用判别联合；强类型插件配置升级前必须补生成器支持。 |

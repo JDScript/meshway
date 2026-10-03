@@ -27,8 +27,7 @@
 | `crates/agent-diagnostics` | Provider 驱动的本地诊断 IPC |
 | `crates/control-client` | Rust 生成 HTTP 客户端，供 Agent / Apple core 使用 |
 | `crates/transport-*` | 编译期承载适配 |
-| `apps/web` | Next.js + shadcn/ui 控制台 |
-| `apps/console` | 用户独立工作流维护的新 pure SPA，后端仅维护必要契约兼容 |
+| `apps/console` | 用户独立工作流维护的 pure SPA 控制台，后端仅维护必要契约兼容 |
 | `apps/apple` | SwiftUI + NetworkExtension、UniFFI Rust bridge |
 | `packages/protocol` / `packages/control-client` | 生成 OpenAPI、TypeScript SDK 与运行时校验 |
 | `docs` | VitePress 产品、架构、开发与参考文档 |
@@ -45,22 +44,20 @@ Apple 新增开发暂停，已有接口与消费者检查保留。后续 Linux �
 pnpm install --frozen-lockfile
 pnpm dev
 pnpm dev:status
-pnpm dev:restart web
 pnpm dev:update
 pnpm dev:stop
 ```
 
-统一入口为 `scripts/dev.py`，Controller / Web / 文档默认在 8420 / 3000 / 5173，仅管理当前 checkout 及已初始化 demo。身份和运行数据在忽略的 `.meshway/`。行为与更新边界见 [统一开发入口](docs/dev-services.md)，首次注册与单组件启动见 [本地联调](docs/getting-started.md)。
+统一入口为 `scripts/dev.py`，Controller / 文档默认在 8420 / 5173，仅管理当前 checkout 及已初始化 demo。身份和运行数据在忽略的 `.meshway/`。行为与更新边界见 [统一开发入口](docs/dev-services.md)，首次注册与单组件启动见 [本地联调](docs/getting-started.md)。
 
 ```sh
-pnpm dev:web
 pnpm dev:docs
 pnpm build:docs
 ```
 
 ## 契约与验证
 
-HTTP API 由 Rust DTO 和实际路由生成，Agent / Web 使用生成客户端，Web 对外部响应做生成 schema 校验；禁止手工复制 DTO / endpoint。每个 Web 管理 mutation 均须服务端认证。
+HTTP API 由 Rust DTO 和实际路由生成，Agent / console 使用生成客户端，console 对外部响应做生成 schema 校验；禁止手工复制 DTO / endpoint。console 以 Authorization 携带 `mws_` 会话，Controller 逐请求 / 事务校验身份与网络权限。
 
 ```sh
 pnpm protocol:generate  # 修改 Rust 契约后生成
@@ -68,10 +65,6 @@ pnpm protocol:check     # 生成物 drift check
 pnpm test:protocol
 pnpm test:codegen
 pnpm check:experiments
-pnpm test:web
-pnpm typecheck
-pnpm lint
-pnpm build
 ```
 
-Rust fmt / Clippy / 行为测试与实验入口见 [开发与验收](docs/development.md)。Web 不保留浏览器自动化套件，UI 在开发页面手工验证。文档构建保留死链检查；实验结果必须保留负载、资源与加密条件，不能把原生 L4 与完整 L3 隧道差值当作包装增量成本。
+Rust fmt / Clippy / 行为测试与实验入口见 [开发与验收](docs/development.md)。不保留浏览器自动化套件，console UI 由其工作流手工验证。文档构建保留死链检查；实验结果必须保留负载、资源与加密条件，不能把原生 L4 与完整 L3 隧道差值当作包装增量成本。

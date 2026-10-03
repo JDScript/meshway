@@ -7,7 +7,6 @@
 ```sh
 pnpm dev
 pnpm dev:status
-pnpm dev:restart web
 pnpm dev:update
 pnpm dev:stop
 ```
@@ -17,13 +16,13 @@ pnpm dev:stop
 ```sh
 python3 scripts/dev.py start
 python3 scripts/dev.py status
-python3 scripts/dev.py restart web
+python3 scripts/dev.py restart controller
 python3 scripts/dev.py update
 python3 scripts/dev.py stop
 ```
 
-形式为 `python3 scripts/dev.py <start|status|stop|restart|update> [controller|web|docs|demo|all]`。
-省略服务等同于 `all`：controller、Web、文档站，以及**本 checkout 已初始化**的 Docker demo。
+形式为 `python3 scripts/dev.py <start|status|stop|restart|update> [controller|docs|demo|all]`。
+省略服务等同于 `all`：controller、文档站，以及**本 checkout 已初始化**的 Docker demo。
 脚本从自身位置确定仓库和 `.meshway`，不依赖当前工作目录；独立 worktree 不会访问主 checkout 的运行数据。
 
 ## 本地服务
@@ -38,18 +37,13 @@ python3 scripts/dev.py start
 | 服务 | 地址 | 持久 tmux session |
 | --- | --- | --- |
 | controller | `http://127.0.0.1:8420` | `meshway-controller` |
-| web | `http://localhost:3000/login` | `meshway-web` |
 | docs | `http://localhost:5173` | `meshway-docs` |
 
-Controller 数据位于 `.meshway/controller`。Web 自动连接上述 controller，使用 `MESHWAY_WEB_COOKIE_SECURE=auto`。
-日志位于 `.meshway/services/meshway-{controller,web,docs}.log`，目录 0700、文件 0600。
+Controller 数据位于 `.meshway/controller`。
+日志位于 `.meshway/services/meshway-{controller,docs}.log`，目录 0700、文件 0600。
 服务在 tmux 中持续运行，开发入口退出后仍然可用。
 
-独立控制台预览使用自己的 controller、数据目录和管理员令牌。浏览器的 Cookie
-不按端口隔离：若同时运行 `localhost:3000` 与 `localhost:3100`，预览 Web 在构建和
-启动时设置 `MESHWAY_WEB_COOKIE_NAMESPACE=preview`，分别隔离登录和所选网络 Cookie，
-避免两套页面互相覆盖。命名空间限 1–64 位字母、数字、下划线或短横线；未设置时保留
-现有 Cookie 名称。预览登录使用预览 controller 的令牌，主 controller 的令牌不能通用。
+`apps/console` 的开发服务由其独立工作流管理，不属于本入口。
 
 `start` 幂等；已有 session 必须同时匹配 checkout、启动命令、实际进程和监听端口归属，才能接管。
 同名外部 session 或其他进程占用端口时明确报错。不同 worktree 使用相同默认 session 名和端口，因此不会同时启动两套本地服务。
@@ -64,7 +58,7 @@ cargo build --locked -p meshway-controller -p meshway-agent \
   --features meshway-agent/managed-connections
 ```
 
-`restart` 不编译；`update web/docs` 重启各自开发服务器，继续使用 HMR。
+`restart` 不编译；`update docs` 重启文档开发服务器，继续使用 HMR。
 数据库只接受当前schema；旧开发数据需协调者显式重置。普通更新不会因启动失败自动清库，构建失败不会进入重启步骤。
 
 ## 状态与退出码
@@ -75,7 +69,7 @@ python3 scripts/dev.py status demo --json
 ```
 
 状态区分 session 是否运行、端口是否监听、真实 readiness 和检查错误。
-Controller readiness 是由已核实进程提供的公开 401/Bearer 响应；Web 是 `/login` 的 HTML 200；文档站是首页的 HTML 200。
+Controller readiness 是由已核实进程提供的公开 401/Bearer 响应；文档站是首页的 HTML 200。
 运行 session、保存的配置、二进制部署 receipt 均不能替代 readiness。
 Demo 的 `ready` 要求容器运行、注册有效、当前且未过期的 `applied` 运行报告；TUN 证据另列为 `dataplane`，缺少证明时明确显示 `not-proven`。日志 rotation 可能移除旧启动证明，入口不会据此捏造数据面状态或无故重启 Agent。实际隧道访问仍用单独的流量验证。
 选择的服务未 ready、检查失败或生命周期操作失败时返回非零。

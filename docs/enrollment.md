@@ -67,32 +67,15 @@ Agent 通过 `--state` 指定状态文件，默认 `.meshway/agent.json`；对�
 - `agent run` 启动后立即心跳，再进行配置同步；成功后按 `--interval-seconds` 继续，默认 15 秒。可重试故障按 1、2、4…秒退避，最多 60 秒，成功后重置；HTTP `401` / `403` 和本地文件错误使进程退出，文件恢复后可另行重试。进程运行、心跳或配置 ACK 都不能证明 TUN、节点间传输或隧道已建立。
 - 撤销使该节点控制面凭据被拒绝。普通心跳模式不建立隧道；托管运行层已实现撤回与 lease 到期终止旧代际，见[连接应用](/connection-runtime#应用与撤回)，不能只凭 HTTP 拒绝推断活动流已终止。
 
-## Web 管理员边界
+## 控制台管理边界
 
-既有Next Web日常用用户账户登录，会话仅服务端私有cookie持有；每个受保护读取/管理Server Action重新检查身份，再经生成SDK请求，Controller也在根事务验证membership/role/过期。实例凭据只在setup/恢复兼容入口，不写HTML/Flight或日志，匿名action不能执行。
-
-编辑器显式绑定渲染时network ID与CAS，选择cookie只是界面上下文，另一标签页不能改保存目标。图形/JSONC草稿与注释/错误保留，preview不推进base，手工国家入口已移除。仅明确过期/401清会话；暂时不可达保留会话并报错。
-
-新`apps/console` pure SPA由独立工作流维护，已确认不透明`mws_`/LocalStorage/内存捕获/Authorization，无BFF；实例token仅内存。它不沿用Next cookie实现，仍由Controller逐请求鉴权。见[SPA合同](/spa-api-audit)。Next的HttpOnly/Secure配置见下节。
+`apps/console` pure SPA由独立工作流维护，使用不透明`mws_`用户会话，LocalStorage持久化、标签页捕获到内存后以Authorization发送；实例bootstrap令牌只在初始化/恢复入口且仅放内存，无BFF。Controller只读Authorization，每个读取与管理请求在根事务验证session、membership/role与过期；客户端选网只是界面上下文，不授予权限。编辑器保存绑定所属network ID与CAS基准。见[SPA合同](/spa-api-audit)。
 
 ## 本地与远程部署
 
-回环地址上的 HTTP 用于本地开发。**任何非本地部署都需要 TLS**，覆盖浏览器到 Web、Web 到 controller、Agent 到 controller 等经过网络的凭据传输。
+回环地址上的 HTTP 用于本地开发。**任何非本地部署都需要 TLS**，覆盖浏览器 / App / Agent 到 controller 等经过网络的凭据传输。
 
 当前选择将远程 TLS 终止交给部署层，例如独立反向代理；本切片不实现自定义 TLS 服务。应限制明文上游在本机或受保护的部署边界内，不能因为有 bearer 就允许明文跨不可信网络。控制通道 TLS 保护这些 HTTP 凭据，不等于实现 mesh 业务流量的 E2E。
-
-### Web cookie 的 Secure 配置
-
-`MESHWAY_WEB_COOKIE_SECURE` 由 Next.js 服务端读取：
-
-| 配置值 | 行为 |
-| --- | --- |
-| `true` | 始终设置 `Secure`；远程 HTTPS 部署可显式使用此值 |
-| `false` | 不设置 `Secure`；用于本地明文 HTTP 开发 |
-| 未设置、空值或 `auto` | 优先按请求 `Origin` 是否为 HTTPS 判断；没有 `Origin` 时检查 `X-Forwarded-Proto` 的首个值 |
-| 其他值 | 设置 `Secure`；非法 `Origin` 也按 `Secure` 处理 |
-
-值会去除前后空白并转为小写。使用 `auto` 的 TLS 终止代理需要正确传递外部协议，并控制转发头来源；也可为远程 HTTPS 部署明确设置 `MESHWAY_WEB_COOKIE_SECURE=true`。该变量只设置 cookie 属性，不为 Web 或 controller 启用 TLS。
 
 ## 下一步
 

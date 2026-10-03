@@ -14,7 +14,7 @@
 | 系统保护 | Linux 正常接入/daemon/TUN 使用用途受限 socket、独立 controller/carrier 与 Journal v3；隔离 namespace 内包流、退出/恢复及资源保留已验，远端未部署 |
 | Agent 领域库 | DNS、TUN、underlay、连接、节点执行、诊断与生成控制客户端已独立，统一消费当前 policy 执行合同 |
 | 远端固定链路 | 固定 `4c9a5be` 同身份直连与四地有序路径恢复复验 PASS；[证据及限制](/linux-field-validation) |
-| 用户入口 | 既有 Web 账户/成员/节点配置可用于联调；Apple 多接入/Keychain/浏览器接入和库存已实现，隧道未实现 |
+| 用户入口 | Controller 账户/成员/节点配置接口已实现，控制台由独立工作流的 `apps/console` 接入；Apple 多接入/Keychain/浏览器接入和库存已实现，隧道未实现 |
 
 ACK 只表示校验与持久保存；心跳、配置候选、逻辑路径和邻接探测都不能替代真实业务包流。
 
@@ -42,5 +42,5 @@ NAT 接口不能把 UDP 写成产品必选；VLESS TCP/TLS、WS/TLS 外层为 TC
 - 后续联调优先已核对的 Mac Controller `https://meshway-dev-api.jdscript.dev`；构建优先 Mac Linux ARM64 / NYC AMD64，普通受限容器，不用 privileged/host network。
 - 第二轮四地验证覆盖自动建连、主备及真实打洞，不能重复固定链路 PASS 代替。NYC 在防火墙后，原 KR→NYC FIB 经 WARP，第一轮不是纯公网直连/穿透证明。
 - 远端持久 latency history 查询未验；持续 runtime 新鲜报告不替代历史存储查询。
-- `apps/console` pure SPA 由用户另一工作流维护；本轮后端仅维护契约兼容与消费者检查，进一步 Web/Apple 重整暂停。性能本批已结束，保留产物，不整分支部署 offload/NEON 实验。
+- `apps/console` pure SPA 由用户另一工作流维护；本轮后端仅维护契约兼容与消费者检查，Apple 新增开发暂停。性能本批已结束，保留产物，不整分支部署 offload/NEON 实验。
 - 验收走正常 Controller 下发、Agent 生命周期和真实 TUN 包流；未审定候选不部署。检查入口见[开发与验收](/development)。

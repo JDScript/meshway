@@ -1,6 +1,6 @@
 # 架构与实现边界
 
-Meshway 是 Rust controller / Agent、Web 控制台与终端 App 组成的身份驱动网络。既有 Next.js Web 可用于联调，新 pure SPA console 由用户独立工作流维护。已确认产品模型见[概览与概念](/concepts)：以 Tailscale 为基线，扩展自定义 transport 和有序指定路径。
+Meshway 是 Rust controller / Agent、Web 控制台与终端 App 组成的身份驱动网络。控制台是用户独立工作流维护的 pure SPA `apps/console`。已确认产品模型见[概览与概念](/concepts)：以 Tailscale 为基线，扩展自定义 transport 和有序指定路径。
 
 ## 控制面与数据面
 
@@ -31,7 +31,7 @@ Controller 维护与编译控制意图，不默认中继业务流量。Agent 执
 
 VLESS TCP/TLS与WebSocket/TLS listener/材料由平台管理。四层NetworkPolicy是唯一源，Controller同事务publication投影稳定NodeMeshExecution；手工候选尚待自动组网收敛。完整出口、状态型Mesh回包、域名上下文、IPv6 overlay、打洞与真实trace仍未完成。
 
-Linux 正常接入、控制同步与 TUN 生命周期已接受保护 socket、HTTP/TLS、bootstrap DNS 和 RPDB owner；同地址普通业务不获全局豁免，退出保留 Mesh sink。隔离包流与恢复验证不代表远端已部署或所有宿主/VPN均受支持。Agent 领域库已独立并统一消费当前执行合同，后续推进自动组网 / 打洞及跨地域 Docker 验收；旧 Web 由新 console 替代，Apple 新增开发暂停，见[里程碑](/milestones)。
+Linux 正常接入、控制同步与 TUN 生命周期已接受保护 socket、HTTP/TLS、bootstrap DNS 和 RPDB owner；同地址普通业务不获全局豁免，退出保留 Mesh sink。隔离包流与恢复验证不代表远端已部署或所有宿主/VPN均受支持。Agent 领域库已独立并统一消费当前执行合同，后续推进自动组网 / 打洞及跨地域 Docker 验收；Apple 新增开发暂停，见[里程碑](/milestones)。
 
 ## 证据与生命周期
 
@@ -67,7 +67,7 @@ Linux 正常接入、控制同步与 TUN 生命周期已接受保护 socket、HT
 | `apps/controller` | 实际 API 路由、权限、SQLite、快照与配置编译 |
 | `apps/agent` | 身份、控制同步、领域库运行编排与诊断 |
 | `packages/control-client` | 生成 TS SDK、运行时与编辑器 schema |
-| `apps/web` | 真实 API 驱动的控制台，读取与每个管理 mutation 均做服务端身份检查 |
+| `apps/console` | 独立工作流维护的 pure SPA 控制台，以 Authorization 携带 `mws_` 会话；Controller 逐请求 / 事务检查身份与网络权限 |
 | `apps/apple` | SwiftUI / NetworkExtension、UniFFI Rust bridge，当前接入与库存显示已实现，隧道未实现 |
 
 HTTP 契约由 Rust DTO 与实际路由生成，禁止手写平行 DTO / endpoint。WASM 仅是未来共享策略逻辑的可选方案。生成路径与限制见[协议参考](/protocol)。

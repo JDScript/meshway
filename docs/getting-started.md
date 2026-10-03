@@ -1,6 +1,6 @@
 # 本地联调：当前可运行流程
 
-本页是当前开发联调。多网络、账户/邀请/权限/设备归属已实现；Agent链接登录与自动建连待交付。Web先选网，每次保存由Controller检查真实身份与本网membership。当前数据库只初始化当前schema，不自动转换旧开发数据。
+本页是当前开发联调。多网络、账户/邀请/权限/设备归属已在 Controller 实现；Agent链接登录与自动建连待交付。控制台由独立工作流的 `apps/console` pure SPA 提供，客户端选网不授予权限，每次请求由Controller检查真实身份与本网membership。当前数据库只初始化当前schema，不自动转换旧开发数据。
 
 ## 准备与启动
 
@@ -15,7 +15,6 @@ pnpm dev:status
 | 服务 | 地址 |
 | --- | --- |
 | Controller | `http://127.0.0.1:8420` |
-| Web | `http://localhost:3000` |
 | 文档 | `http://localhost:5173` |
 
 `pnpm dev` 对应 `python3 scripts/dev.py start`，仅操作本 checkout 的服务及已初始化 demo。归属、更新、停止和日志见[统一开发入口](/dev-services)。分开启动时使用：
@@ -23,7 +22,6 @@ pnpm dev:status
 ```sh
 cargo run --locked -p meshway-controller -- serve \
   --data-dir .meshway/controller --bind 127.0.0.1:8420
-pnpm dev:web
 pnpm dev:docs
 ```
 
@@ -31,22 +29,22 @@ pnpm dev:docs
 
 ## 1. 初始化、用户登录与接入令牌
 
-新实例在Web `/setup` 使用实例bootstrap完成首Owner初始化；显式读取该私有token：
+新实例经控制台初始化入口以实例bootstrap调用 `claimFirstOwner` 完成首Owner初始化；显式读取该私有token：
 
 ```sh
 cargo run --locked -p meshway-controller -- admin-token --data-dir .meshway/controller
 ```
 
-随后日常在`/login`邮箱登录。本网Owner/Admin创建邀请/接入令牌，添加节点可选listener，后续节点配置可修改。Agent使用创建时单次返回的注册token，不能拿用户session或实例token运行。App走[用户浏览器批准/PKCE](/device-login)，Member也可批准本人设备；CLI链接登录仍待实现。
+随后日常用邮箱账户登录。本网Owner/Admin创建邀请/接入令牌，添加节点可选listener，后续节点配置可修改。Agent使用创建时单次返回的注册token，不能拿用户session或实例token运行。App走[用户浏览器批准/PKCE](/device-login)，Member也可批准本人设备；CLI链接登录仍待实现。
 
-Web 默认使用 `MESHWAY_CONTROLLER_URL=http://127.0.0.1:8420`；远程凭据通道须有 TLS，cookie 配置见[部署边界](/enrollment#本地与远程部署)。
+console 会话合同见[SPA 消费](/spa-api-audit)；远程凭据通道须有 TLS，见[部署边界](/enrollment#本地与远程部署)。
 
 ## 2. 注册并复用身份
 
 ```sh
 cargo run --locked -p meshway-agent -- enroll \
   --controller http://127.0.0.1:8420 \
-  --token '<Web 创建的注册 token>' \
+  --token '<控制台创建的注册 token>' \
   --name nyc --state .meshway/agent.json
 cargo run --locked -p meshway-agent -- run \
   --state .meshway/agent.json --interval-seconds 15
@@ -69,7 +67,7 @@ cargo run --locked -p meshway-agent -- status --state .meshway/agent.json
 
 ## 4. 管理与撤销
 
-Web使用真实清单、授权/路由、标签和连接配置，保存CAS冲突保留草稿。唯一policy不需激活；新console的编辑体验由独立工作流接入，完整出口尚未接线。见[Access](/access-policy)、[路由方案](/routing)。preview不发trace、不代替授权。
+控制台使用真实清单、授权/路由、标签和连接配置，保存CAS冲突保留草稿。唯一policy不需激活；console 编辑体验由独立工作流接入，完整出口尚未接线。见[Access](/access-policy)、[路由方案](/routing)。preview不发trace、不代替授权。
 
 撤销后节点保留在清单，控制面请求被拒绝；托管运行层撤回旧代际，控制面失联则由 lease 到期终止。`last_seen` 只是联系时间。若只运行基本心跳，不应宣称建立或切断了业务隧道。
 
@@ -78,9 +76,6 @@ Web使用真实清单、授权/路由、标签和连接配置，保存CAS冲突�
 ```sh
 pnpm build:docs
 pnpm --filter @meshway/docs preview
-pnpm --filter @meshway/web check
-pnpm test:web
-pnpm build:web
 ```
 
-文档 preview 与开发服务共用 5173，不应同时运行。Web UI 在开发页面手工验证，不安装浏览器自动化套件。生成契约、检查命令和隔离实验入口集中在[开发与验收](/development)；修改契约须重新生成并通过 drift check。
+文档 preview 与开发服务共用 5173，不应同时运行。不安装浏览器自动化套件；console 的构建与 UI 验证由其工作流负责。生成契约、检查命令和隔离实验入口集中在[开发与验收](/development)；修改契约须重新生成并通过 drift check。

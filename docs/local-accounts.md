@@ -1,6 +1,6 @@
 # 本地账户、网络权限与设备归属
 
-**账户、Controller HTTP、事务内网络 RBAC 与 App PKCE ownership 已实现。** 既有 Web 的邮箱登录、成员/邀请/角色/设备归属、我的账户、初始化/恢复已接通；CLI 链接登录、多接入仍待交付。Apple 新增开发暂停，隧道未实现。
+**账户、Controller HTTP、事务内网络 RBAC 与 App PKCE ownership 已实现。** 对应界面由独立工作流的 `apps/console` 接入；CLI 链接登录仍待交付。Apple 新增开发暂停，隧道未实现。
 
 账户在 controller 全局唯一，membership 按网络隔离；同用户可属多网。Owner/Admin/Member 是网络角色，Owner 不等于实例管理员。权威 DTO 在 `crates/protocol/src/accounts.rs`，路由/OpenAPI/SDK 走[统一生成链](/protocol)。
 
@@ -30,7 +30,7 @@
 | 设备归属 | `listNodeOwnership`、`claimNodeOwnership` |
 | 浏览器接入 | `authorizeDevice`、`exchangeDevice` |
 
-Controller 只读 Authorization，不接受 Cookie 登录；旧 Next 服务端私有持有用户会话，新 pure SPA 的 `mws_`/LocalStorage/标签页内存与同源部署合同见[SPA 消费](/spa-api-audit)。节点/enrollment 凭据不授予人类权限；node-only 材料接口不接受 Owner、用户 session 或 bootstrap。
+Controller 只读 Authorization，不接受 Cookie 登录；pure SPA console 的 `mws_`/LocalStorage/标签页内存与同源部署合同见[SPA 消费](/spa-api-audit)。节点/enrollment 凭据不授予人类权限；node-only 材料接口不接受 Owner、用户 session 或 bootstrap。
 
 ## 密码与竞态
 
@@ -45,7 +45,7 @@ Argon2id v19：`m=65536 KiB,t=3,p=1`，独立128-bit随机 salt、256-bit output
 
 ## 浏览器 SSO 与节点接入
 
-Web/App/未来CLI 共用 controller 用户体系；设备不收集密码或浏览器 session，只拿绑定本次接入的一次性结果。App 系统浏览器登录/选网/批准后 PKCE 兑换；code 消费、node/IP/ownership/revision 同事务。
+控制台/App/未来CLI 共用 controller 用户体系；设备不收集密码或浏览器 session，只拿绑定本次接入的一次性结果。App 系统浏览器登录/选网/批准后 PKCE 兑换；code 消费、node/IP/ownership/revision 同事务。
 
 首次兑换复核原 session/version/membership；已消费精确恢复不重新注册，却仍要求原节点未撤销、原 membership 活动且 ownership 不变。撤销和移除后重加入不能恢复旧批准。[接入合同](/device-login)保留原请求/回调兼容。
 

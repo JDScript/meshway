@@ -1,6 +1,6 @@
 # Console 产品与合同边界
 
-`apps/web` 已deprecated，由独立工作流的 `apps/console` pure SPA替代。当前后端提供实际Rust路由、生成SDK/运行时schema和网络内权限；不将旧Web页面或候选设计当成新console已完成。
+控制台是独立工作流维护的 `apps/console` pure SPA。后端提供实际Rust路由、生成SDK/运行时schema和网络内权限；本文是产品模型与合同边界，不将候选设计当成console已完成。
 
 日常使用controller本地用户账户。Owner/Admin/Member是网络内角色，实例bootstrap仅用于专门初始化/恢复；合法NetworkId不授予权限。会话、浏览器接入与跨标签页缓存边界见[SPA合同](/spa-api-audit)和[本地账户](/local-accounts)。
 

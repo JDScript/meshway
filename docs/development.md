@@ -13,7 +13,7 @@ pnpm dev:status
 pnpm dev:update
 ```
 
-统一入口是 `scripts/dev.py`，管理当前 checkout 的 controller、Web、文档及已初始化 demo；日志和数据在 `.meshway`。服务归属、保留可写容器与更新命令详见[统一开发入口](/dev-services)，首次 Agent 注册见[本地联调](/getting-started)。
+统一入口是 `scripts/dev.py`，管理当前 checkout 的 controller、文档及已初始化 demo；日志和数据在 `.meshway`。服务归属、保留可写容器与更新命令详见[统一开发入口](/dev-services)，首次 Agent 注册见[本地联调](/getting-started)。
 
 ## 开发检查
 
@@ -32,9 +32,9 @@ pnpm typecheck:apple-scripts
 pnpm build:docs
 ```
 
-修改 Rust 契约/HTTP路由/客户端后先 `pnpm protocol:generate`，再做 drift，并检查 workspace all-features（含 Agent/Apple core）、SDK、Apple scripts 和 `pnpm check:experiments`。后者通过 `scripts/check-experiments.mjs` 自动发现全部 `experiments/*/tsconfig.json`，执行严格 `tsc --noEmit` 与存在的 `*.test.ts`，不维护手写项目清单。新 console 由独立工作流维护 UI 与构建，后端同步生成契约和接口变更；旧 `apps/web` 不再是后端默认验收项。仅文档改动运行 `pnpm build:docs` 与 `git diff --check`，保留 VitePress 死链检查。
+修改 Rust 契约/HTTP路由/客户端后先 `pnpm protocol:generate`，再做 drift，并检查 workspace all-features（含 Agent/Apple core）、SDK、Apple scripts 和 `pnpm check:experiments`。后者通过 `scripts/check-experiments.mjs` 自动发现全部 `experiments/*/tsconfig.json`，执行严格 `tsc --noEmit` 与存在的 `*.test.ts`，不维护手写项目清单。`apps/console` 由独立工作流维护 UI 与构建，后端同步生成契约和接口变更。仅文档改动运行 `pnpm build:docs` 与 `git diff --check`，保留 VitePress 死链检查。
 
-按用户要求，浏览器自动化套件、依赖与 CI 入口已移除。Web 日常检查为类型、lint、单测与构建，UI 在开发页面手工验证；不默认重建浏览器测试。Controller/Agent 的协议、鉴权和数据面行为测试继续保留。Apple 原生检查使用不依赖浏览器框架的进程与 HTTP helper，入口见[Apple 文档](/apple-app)。
+按用户要求，浏览器自动化套件、依赖与 CI 入口已移除，不默认重建浏览器测试；console UI 由其工作流手工验证。Controller/Agent 的协议、鉴权和数据面行为测试继续保留。Apple 原生检查使用不依赖浏览器框架的进程与 HTTP helper，入口见[Apple 文档](/apple-app)。
 
 ## 注册与持久化验收矩阵
 
@@ -62,7 +62,6 @@ IPv4 Mesh使用单一当前policy、grants并集与有序first-match。CAS/epoch
 | schema / digest / 绑定校验、旧版本拒绝、缓存与回执恢复 | `apps/agent/tests/roundtrip.rs` |
 | 文件发布前失败与 `CommittedNotDurable`、重试 / 重启仍须 fsync 后 ACK | `crates/protocol/src/local/write.rs`、`apps/agent/src/state/durability_tests.rs`、Agent roundtrip 测试 |
 | suffix 标签边界、CIDR、非法 / 映射地址、池内归属、循环与必经节点约束 | `crates/policy/src/tests.rs`、Controller API 行为测试 |
-| 图形 / JSONC 共用草稿、注释保存、409 保留原基准、会话绑定 | `apps/web/lib/*.test.ts`；页面切换、保存与错误展示手工验证 |
 
 测试文件中的具体用例是证据入口，不维护会随新增测试过期的总数。当前接口与容量以[协议](/protocol)和[配置分发](/configuration)为准。
 
