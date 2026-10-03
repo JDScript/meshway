@@ -139,7 +139,7 @@ export function RuleRow({
       aria-label={label}
       aria-current={current ? "true" : undefined}
       onKeyDown={onKeyDown}
-      className="rule-row group/rule flex flex-col gap-1.5 rounded-surface p-2 outline-none focus-visible:ring-2 focus-visible:ring-ring"
+      className="rule-row group/rule flex scroll-my-4 flex-col gap-1.5 rounded-surface p-2 outline-none focus-visible:ring-2 focus-visible:ring-ring"
     >
       <div className="flex min-h-7 flex-wrap items-center gap-x-3 gap-y-2">
         {/* The rule keeps at least this much of the line; short of it, the end moves to its own line. */}
