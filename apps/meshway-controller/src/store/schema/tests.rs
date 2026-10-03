@@ -11,7 +11,7 @@ fn database() -> Connection {
 
 fn insert_user(connection: &Connection) {
     connection.execute(
-        "INSERT INTO users VALUES (zeroblob(16), 'user@example.test', '$argon2id$v=19$test', 1, 100, NULL)",
+        "INSERT INTO users VALUES (x'00000000000000000000000000000001', 'user@example.test', '$argon2id$v=19$test', 1, 100, NULL)",
         [],
     ).unwrap();
 }
@@ -67,7 +67,8 @@ fn unknown_or_incomplete_schema_is_rejected_without_repair() {
 #[test]
 fn matching_version_and_columns_do_not_hide_missing_constraints() {
     for modified in [
-        SQL.replace(" CHECK (length(id) = 16)", ""),
+        SQL.replace(" CHECK (length(id) = 16 AND id != zeroblob(16))", ""),
+        SQL.replace(" AND id != zeroblob(16)", ""),
         SQL.replace(" REFERENCES users(id) ON DELETE RESTRICT", ""),
         SQL.replace("TEXT NOT NULL UNIQUE", "TEXT NOT NULL"),
         SQL.replace(") STRICT", ")"),
@@ -88,7 +89,7 @@ fn matching_version_and_columns_do_not_hide_missing_constraints() {
 fn account_rows_enforce_identity_ranges_uniqueness_and_session_lifecycle() {
     let mut connection = database();
     insert_user(&connection);
-    let session = "INSERT INTO user_sessions VALUES (zeroblob(16), zeroblob(32), zeroblob(16), 1, 100, NULL, NULL, 200, NULL)";
+    let session = "INSERT INTO user_sessions VALUES (x'00000000000000000000000000000002', zeroblob(32), x'00000000000000000000000000000001', 1, 100, NULL, NULL, 200, NULL)";
     connection.execute(session, []).unwrap();
     for sql in [
         "UPDATE users SET id = zeroblob(15)",
@@ -131,6 +132,38 @@ fn account_rows_enforce_identity_ranges_uniqueness_and_session_lifecycle() {
 }
 
 #[test]
+fn nil_resource_ids_and_references_are_rejected_and_detected_in_existing_rows() {
+    for mutation in [
+        "UPDATE users SET id = zeroblob(16)",
+        "UPDATE user_sessions SET id = zeroblob(16)",
+        "UPDATE user_sessions SET user_id = zeroblob(16)",
+    ] {
+        let mut connection = database();
+        insert_user(&connection);
+        connection.execute("INSERT INTO user_sessions VALUES (x'00000000000000000000000000000002', zeroblob(32), x'00000000000000000000000000000001', 1, 100, NULL, NULL, 200, NULL)", []).unwrap();
+        // Test the ID CHECK independently of FK enforcement, including the
+        // reference column. FK constraints must not mask a missing nil check.
+        connection
+            .pragma_update(None, "foreign_keys", false)
+            .unwrap();
+        assert!(matches!(
+            connection.execute(mutation, []),
+            Err(rusqlite::Error::SqliteFailure(error, _))
+                if error.extended_code == rusqlite::ffi::SQLITE_CONSTRAINT_CHECK
+        ));
+        connection
+            .pragma_update(None, "ignore_check_constraints", true)
+            .unwrap();
+        connection.execute(mutation, []).unwrap();
+        connection
+            .pragma_update(None, "ignore_check_constraints", false)
+            .unwrap();
+        connection.pragma_update(None, "query_only", true).unwrap();
+        assert_eq!(check(&mut connection), Err(SchemaError::Integrity));
+    }
+}
+
+#[test]
 fn full_checks_find_existing_constraint_and_foreign_key_corruption() {
     let mut connection = database();
     insert_user(&connection);
@@ -139,6 +172,6 @@ fn full_checks_find_existing_constraint_and_foreign_key_corruption() {
     connection
         .execute_batch("UPDATE users SET credential_version = 1; PRAGMA foreign_keys = OFF")
         .unwrap();
-    connection.execute("INSERT INTO user_sessions VALUES (zeroblob(16), zeroblob(32), randomblob(16), 1, 100, NULL, NULL, 200, NULL)", []).unwrap();
+    connection.execute("INSERT INTO user_sessions VALUES (x'00000000000000000000000000000002', zeroblob(32), x'00000000000000000000000000000003', 1, 100, NULL, NULL, 200, NULL)", []).unwrap();
     assert_eq!(check(&mut connection), Err(SchemaError::Integrity));
 }

@@ -19,8 +19,9 @@ pub(crate) enum DirectoryError {
 
 pub(crate) struct Directory {
     database_path: PathBuf,
-    // Open descriptors pin the checked resources. The lock descriptor is never
-    // cloned or unlinked; its last close releases the process lock.
+    // Descriptors retain the checked resources, but do not bind SQLite's later
+    // pathname lookup. Ancestor checks below protect that namespace against
+    // other UIDs. The lock is never cloned/unlinked; its last close releases it.
     #[cfg(unix)]
     _directory: std::fs::File,
     #[cfg(unix)]
@@ -84,10 +85,12 @@ mod unix {
         };
         let mut parent =
             File::from(open_directory("/", DIRECTORY_FLAGS, Mode::empty()).map_err(io_error)?);
+        check_ancestor(&parent)?;
         for name in parents {
             parent = File::from(
                 openat(&parent, *name, DIRECTORY_FLAGS, Mode::empty()).map_err(io_error)?,
             );
+            check_ancestor(&parent)?;
         }
         match mkdirat(&parent, *name, Mode::from_raw_mode(0o700)) {
             Ok(()) | Err(Errno::EXIST) => {}
@@ -155,6 +158,23 @@ mod unix {
             || metadata.uid() != rustix::process::geteuid().as_raw()
             || metadata.mode() & 0o7777 != mode
         {
+            return Err(DirectoryError::UnsafeStorage);
+        }
+        Ok(())
+    }
+
+    fn check_ancestor(directory: &File) -> Result<(), DirectoryError> {
+        let metadata = directory.metadata().map_err(|_| DirectoryError::Io)?;
+        let owner = metadata.uid();
+        let trusted_owner = owner == 0 || owner == rustix::process::geteuid().as_raw();
+        let writable_by_others = metadata.mode() & 0o022 != 0;
+        let sticky = metadata.mode() & 0o1000 != 0;
+        // Root/euid-owned sticky temp directories are allowed: other UIDs may
+        // create names but cannot rename our or root's children. Every next
+        // child must pass its own ownership check before we descend or create.
+        // This does not defend against root or an attacker with our own UID,
+        // who already controls the process/private storage trust boundary.
+        if !metadata.is_dir() || !trusted_owner || (writable_by_others && !sticky) {
             return Err(DirectoryError::UnsafeStorage);
         }
         Ok(())

@@ -4,7 +4,7 @@
 use rusqlite::{Connection, TransactionBehavior};
 use thiserror::Error;
 
-const APPLICATION_ID: i64 = 0x4d573246; // MW2F: fresh controller, distinct from prior apps.
+const APPLICATION_ID: i64 = 0x4d534857; // MSHW: stable Meshway application identity.
 const VERSION: i64 = 1;
 const SQL: &str = include_str!("current.sql");
 

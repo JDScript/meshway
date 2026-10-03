@@ -122,6 +122,50 @@ async fn existing_directory_permissions_and_symlinks_are_not_taken_over() {
 }
 
 #[tokio::test]
+async fn writable_nonsticky_ancestors_are_rejected_before_creating_storage() {
+    for mode in [0o770, 0o777] {
+        let (_parent, ancestor) = location();
+        fs::create_dir(&ancestor).unwrap();
+        let owned = ancestor.join("owned");
+        fs::create_dir(&owned).unwrap();
+        fs::set_permissions(&owned, fs::Permissions::from_mode(0o700)).unwrap();
+        fs::set_permissions(&ancestor, fs::Permissions::from_mode(mode)).unwrap();
+        // Check both the immediate parent and an earlier ancestor. A later
+        // private directory cannot make an untrusted namespace safe.
+        for path in [ancestor.join("data"), owned.join("data")] {
+            assert!(matches!(
+                App::open(Settings::new(&path)).await,
+                Err(AppError::UnsafeStorage)
+            ));
+            assert!(!path.exists());
+        }
+        assert_eq!(
+            fs::metadata(&ancestor).unwrap().permissions().mode() & 0o7777,
+            mode
+        );
+        assert_eq!(fs::read_dir(&owned).unwrap().count(), 0);
+    }
+}
+
+#[tokio::test]
+async fn trusted_sticky_ancestor_preserves_private_storage_and_locking() {
+    let (_parent, ancestor) = location();
+    fs::create_dir(&ancestor).unwrap();
+    fs::set_permissions(&ancestor, fs::Permissions::from_mode(0o1777)).unwrap();
+    let path = ancestor.join("data");
+    let app = App::open(Settings::new(&path)).await.unwrap();
+    assert_eq!(
+        fs::metadata(&path).unwrap().permissions().mode() & 0o7777,
+        0o700
+    );
+    assert_locked(&path).await;
+    app.check_storage().await.unwrap();
+    app.shutdown().await.unwrap();
+    let app = App::open(Settings::new(&path)).await.unwrap();
+    app.shutdown().await.unwrap();
+}
+
+#[tokio::test]
 async fn storage_files_reject_symlinks_hardlinks_directories_and_wide_permissions() {
     for name in [
         "controller.lock",
@@ -220,7 +264,7 @@ async fn app_drop_and_cancelled_shutdown_hold_lock_through_accepted_commit() {
         let (release, wait) = mpsc::channel();
         let mut write = Box::pin(handle.execute(move |connection| {
             let transaction = connection.transaction().unwrap();
-            transaction.execute("INSERT INTO users VALUES (zeroblob(16), 'user@example.test', '$argon2id$v=19$test', 1, 100, NULL)", []).unwrap();
+            transaction.execute("INSERT INTO users VALUES (x'00000000000000000000000000000001', 'user@example.test', '$argon2id$v=19$test', 1, 100, NULL)", []).unwrap();
             started.send(()).unwrap();
             wait.recv().unwrap();
             transaction.commit().unwrap();

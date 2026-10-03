@@ -4,7 +4,10 @@ use std::time::Duration;
 /// Explicit application storage location and bounded SQLite work budget.
 ///
 /// The data directory must be private to the current user. Its parent must
-/// already exist. No main-workspace or machine-wide location is inferred.
+/// already exist. Ancestors must belong to root or the current effective user;
+/// group/other-writable ancestors require sticky protection. Root and the
+/// current UID are trusted to preserve this namespace during SQLite access.
+/// No main-workspace or machine-wide location is inferred.
 pub struct Settings {
     pub data_dir: PathBuf,
     pub database_queue_capacity: usize,
