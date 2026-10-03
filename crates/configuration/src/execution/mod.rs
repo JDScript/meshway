@@ -35,7 +35,9 @@ tagged! { pub enum BusinessTarget {
 object! { pub struct Demand {
     pub id: RequestId, pub source: NodeId, pub target: BusinessTarget,
     pub protocol: BusinessProtocol, pub port: Option<Port>,
-    pub profile: String, pub expires_at_ms: u64,
+    pub profile: String,
+    #[serde(rename="expiresAt", with="meshway_model::timestamp")]
+    pub expires_at_ms: u64 [value_type=chrono::DateTime<chrono::Utc>],
 } }
 object! { pub struct TrustedNode {
     pub control_key: BoundNodeKey, pub dataplane_key: BoundNodeKey,
@@ -45,7 +47,9 @@ object! { pub struct TrustedNode {
 object! { pub struct TrustedDnsAssociation {
     pub network_id: NetworkId, pub configuration_revision: Revision,
     pub source: NodeId, pub name: String, pub cname_chain: Vec<String>,
-    pub addresses: Vec<ExecutionAddress>, pub expires_at_ms: u64,
+    pub addresses: Vec<ExecutionAddress>,
+    #[serde(rename="expiresAt", with="meshway_model::timestamp")]
+    pub expires_at_ms: u64 [value_type=chrono::DateTime<chrono::Utc>],
 } }
 object! { pub struct RuleSetContent {
     pub network_id: NetworkId,
@@ -79,7 +83,9 @@ object! { pub struct LogicalPath {
 object! { pub struct PathPermit {
     pub demand_id: RequestId, pub source: NodeId, pub source_addresses: NodeAddresses,
     pub target: BusinessTarget, pub protocol: BusinessProtocol, pub port: Option<Port>,
-    pub profile: String, pub paths: Vec<LogicalPath>, pub expires_at_ms: u64,
+    pub profile: String, pub paths: Vec<LogicalPath>,
+    #[serde(rename="expiresAt", with="meshway_model::timestamp")]
+    pub expires_at_ms: u64 [value_type=chrono::DateTime<chrono::Utc>],
     /// Always reverse the established complete path, never evaluate reverse routing for replies.
     pub replies: ReplyPolicy,
 } }

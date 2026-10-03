@@ -17,8 +17,12 @@ wire_object! { #[derive(Clone,Debug,PartialEq,Eq)] pub struct InstanceRequest {
     pub instance_id: InstanceId, pub generation: Version,
 } }
 wire_object! { #[derive(Clone,Debug,PartialEq,Eq)] pub struct InstanceLease {
-    pub instance_id: InstanceId, pub generation: Version, pub expires_at_ms: u64,
-    pub execution_expires_at_ms: Option<u64>, pub target: Option<ConfigurationRef>,
+    pub instance_id: InstanceId, pub generation: Version,
+    #[serde(rename="expiresAt", with="meshway_model::timestamp")]
+    pub expires_at_ms: u64 [value_type=chrono::DateTime<chrono::Utc>],
+    #[serde(rename="executionExpiresAt", with="meshway_model::timestamp::optional")]
+    pub execution_expires_at_ms: Option<u64> [value_type=Option<chrono::DateTime<chrono::Utc>>,required=true],
+    pub target: Option<ConfigurationRef>,
 } }
 wire_object! { #[derive(Clone,Debug,PartialEq,Eq)] pub struct DemandRequest {
     pub instance: InstanceRequest, pub request_id: RequestId,
@@ -56,7 +60,9 @@ wire_object! { #[derive(Clone,Debug,PartialEq,Eq)] pub struct ReceiptRequest {
     pub attempt: Version,
     /// Increasing result sequence within the attempt; delivery retries reuse it.
     pub sequence: Sequence,
-    pub reported_at_ms: u64, pub failure: Option<ApplyFailure>,
+    #[serde(rename="reportedAt", with="meshway_model::timestamp")]
+    pub reported_at_ms: u64 [value_type=chrono::DateTime<chrono::Utc>],
+    pub failure: Option<ApplyFailure>,
 } }
 wire_object! { #[derive(Clone,Debug,PartialEq,Eq)] pub struct NodeConfigurationRequest {
     pub instance: InstanceRequest, pub base: Option<ConfigurationRef>,
@@ -70,12 +76,16 @@ wire_object! { #[derive(Clone,Debug,PartialEq,Eq)] pub struct NodeConfigurationR
 } }
 wire_object! { #[derive(Clone,Debug,PartialEq,Eq)] pub struct PublicationProgress {
     pub publication: PublicationId, pub revision: Revision, pub sequence: Sequence,
-    pub withdrawn_at_ms: Option<u64>, pub nodes: BTreeMap<NodeId,NodePublicationProgress>,
+    #[serde(rename="withdrawnAt", with="meshway_model::timestamp::optional")]
+    pub withdrawn_at_ms: Option<u64> [value_type=Option<chrono::DateTime<chrono::Utc>>,required=true],
+    pub nodes: BTreeMap<NodeId,NodePublicationProgress>,
 } }
 wire_object! { #[derive(Clone,Debug,PartialEq,Eq)] pub struct NodePublicationProgress {
     pub target: ConfigurationRef, pub current: bool, pub saved: bool,
     pub applied: bool, pub failed: bool,
-    pub freshness: ReceiptFreshness, pub last_received_at_ms: Option<u64>,
+    pub freshness: ReceiptFreshness,
+    #[serde(rename="lastReceivedAt", with="meshway_model::timestamp::optional")]
+    pub last_received_at_ms: Option<u64> [value_type=Option<chrono::DateTime<chrono::Utc>>,required=true],
 } }
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 #[serde(rename_all = "camelCase")]

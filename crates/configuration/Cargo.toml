@@ -6,6 +6,7 @@ rust-version.workspace = true
 description = "Meshway configuration values, normalization, validation, and compilation"
 
 [dependencies]
+chrono.workspace = true
 idna.workspace = true
 ipnet.workspace = true
 jsonc-parser = { version = "=0.33.1", features = ["serde"] }

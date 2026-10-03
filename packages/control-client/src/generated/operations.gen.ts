@@ -2,10 +2,26 @@
 
 import type * as z from "zod";
 import { ControlClient, type AuthenticatedRequestOptions, type RequestOptions } from "../transport.ts";
-import { zAccountResponse, zAccountSessionsResponse, zActivityListResponse, zActivityResponse, zApplyConfigurationPath, zAuthOptionsResponse, zAuthSessionResponse, zChangeEmailRequest, zChangeMemberRolePath, zChangeMemberRoleRequest, zChangePasswordRequest, zCompareConfigurationPath, zCompareConfigurationRequest, zConfigurationAppliedResponse, zConfigurationComparison, zConfigurationPreviewResponse, zConfigurationRequest, zConfigurationResponse, zConfigurationRevisionList, zConfigurationSchemaResponse, zConfigurationSourceResponse, zCreateJoinLinkPath, zCreateJoinLinkRequest, zCreateNetworkRequest, zErrorResponse, zGetConfigurationPath, zGetConfigurationRevisionPath, zGetConfigurationSourcePath, zGetConfigurationSourceQuery, zGetLeaveImpactPath, zGetMemberRemovalImpactPath, zGetNetworkActivityPath, zGetNetworkPath, zJoinLinkCreated, zJoinLinkCredentialRequest, zJoinLinkInspection, zJoinLinkListResponse, zJoinLinkRedeemed, zLeaveNetworkPath, zListAccountActivityQuery, zListAccountSessionsQuery, zListConfigurationRevisionsPath, zListConfigurationRevisionsQuery, zListJoinLinksPath, zListJoinLinksQuery, zListNetworkActivityPath, zListNetworkActivityQuery, zListNetworkMembersPath, zListNetworkMembersQuery, zListNetworksQuery, zLoginRequest, zMemberMutationResponse, zMemberRemovedResponse, zNetworkListResponse, zNetworkMembersResponse, zNetworkResponse, zPasswordResetInspectRequest, zPasswordResetInspection, zPasswordResetRedeemRequest, zRegisterRequest, zRemovalImpactResponse, zRemoveMemberPath, zRemoveMemberRequest, zRenameNetworkPath, zRenameNetworkRequest, zRevokeAccountSessionPath, zRevokeJoinLinkPath, zSessionIssuedResponse, zTransportCatalogResponse, zValidateConfigurationPath } from "./zod.gen.ts";
+import { zAccountResponse, zAccountSessionsResponse, zAcquireInstanceRequest, zActivityListResponse, zActivityResponse, zApplyConfigurationPath, zApproveDeviceAuthorizationPath, zApproveEnrollmentRequest, zAuthOptionsResponse, zAuthSessionResponse, zCancelDemandRequest, zCancelEnrollmentRequestPath, zChangeEmailRequest, zChangeMemberRolePath, zChangeMemberRoleRequest, zChangePasswordRequest, zCompareConfigurationPath, zCompareConfigurationRequest, zConfigurationAppliedResponse, zConfigurationComparison, zConfigurationPreviewResponse, zConfigurationRequest, zConfigurationResponse, zConfigurationRevisionList, zConfigurationSchemaResponse, zConfigurationSourceResponse, zCreateEnrollmentKeyPath, zCreateEnrollmentKeyRequest, zCreateEnrollmentRequest, zCreateJoinLinkPath, zCreateJoinLinkRequest, zCreateNetworkRequest, zDeleteNodePath, zDeleteNodeRequest, zDemandRequest, zDemandResponse, zDenyDeviceAuthorizationPath, zEnrollmentDeviceProof, zEnrollmentKeyResponse, zEnrollmentKeysResponse, zEnrollmentPollResponse, zEnrollmentRequestView, zEnrollmentResponse, zErrorResponse, zGetConfigurationPath, zGetConfigurationRevisionPath, zGetConfigurationSourcePath, zGetConfigurationSourceQuery, zGetDeviceAuthorizationPath, zGetExecutionPublicationPath, zGetLeaveImpactPath, zGetMemberRemovalImpactPath, zGetNetworkActivityPath, zGetNetworkPath, zGetNodePath, zInstanceLease, zInstanceRequest, zJoinLinkCreated, zJoinLinkCredentialRequest, zJoinLinkInspection, zJoinLinkListResponse, zJoinLinkRedeemed, zKeyEnrollmentRequest, zLeaveNetworkPath, zListAccountActivityQuery, zListAccountSessionsQuery, zListConfigurationRevisionsPath, zListConfigurationRevisionsQuery, zListEnrollmentKeysPath, zListJoinLinksPath, zListJoinLinksQuery, zListNetworkActivityPath, zListNetworkActivityQuery, zListNetworkMembersPath, zListNetworkMembersQuery, zListNetworksQuery, zListNodesPath, zLoginRequest, zMemberMutationResponse, zMemberRemovedResponse, zNetworkListResponse, zNetworkMembersResponse, zNetworkResponse, zNodeChallenge, zNodeChallengeRequest, zNodeConfigurationRequest, zNodeConfigurationResponse, zNodeInventoryResponse, zNodeInventoryView, zNodeKeyMetadata, zNodeRotationRequest, zNodeSessionRequest, zNodeSessionResponse, zPasswordResetInspectRequest, zPasswordResetInspection, zPasswordResetRedeemRequest, zPublicationProgress, zQueryEnrollmentRequestPath, zReceiptRequest, zRedeemEnrollmentRequest, zRedeemEnrollmentRequestPath, zRegisterRequest, zRemovalImpactResponse, zRemoveMemberPath, zRemoveMemberRequest, zRenameNetworkPath, zRenameNetworkRequest, zRevokeAccountSessionPath, zRevokeEnrollmentKeyPath, zRevokeJoinLinkPath, zRevokeNodeKeyPath, zRevokeNodeKeyRequest, zRoutingSelectionRequest, zRoutingSelectionResponse, zSessionIssuedResponse, zTransportCatalogResponse, zValidateConfigurationPath } from "./zod.gen.ts";
+
+export function acquireNodeInstance(client: ControlClient, body: z.output<typeof zAcquireInstanceRequest>, options: AuthenticatedRequestOptions) {
+  return client.request({ method: "POST", path: "/agent-api/v1/instances", authenticated: true, successStatus: 200, success: zInstanceLease, errors: [400, 401, 409, 503], problem: zErrorResponse, body: { schema: zAcquireInstanceRequest, value: body } }, options);
+}
 
 export function applyConfiguration(client: ControlClient, path: z.output<typeof zApplyConfigurationPath>, body: z.output<typeof zConfigurationRequest>, options: AuthenticatedRequestOptions) {
   return client.request({ method: "POST", path: "/api/v1/networks/{networkId}/configuration", authenticated: true, successStatus: 200, success: zConfigurationAppliedResponse, errors: [400, 401, 403, 404, 409, 413, 415, 422, 503], problem: zErrorResponse, pathParameters: { schema: zApplyConfigurationPath, value: path }, body: { schema: zConfigurationRequest, value: body } }, options);
+}
+
+export function approveDeviceAuthorization(client: ControlClient, path: z.output<typeof zApproveDeviceAuthorizationPath>, body: z.output<typeof zApproveEnrollmentRequest>, options: AuthenticatedRequestOptions) {
+  return client.request({ method: "POST", path: "/api/v1/device-authorizations/{enrollmentRequestId}/approve", authenticated: true, successStatus: 200, success: zEnrollmentRequestView, errors: [400, 401, 403, 409], problem: zErrorResponse, pathParameters: { schema: zApproveDeviceAuthorizationPath, value: path }, body: { schema: zApproveEnrollmentRequest, value: body } }, options);
+}
+
+export function cancelEnrollmentRequest(client: ControlClient, path: z.output<typeof zCancelEnrollmentRequestPath>, body: z.output<typeof zEnrollmentDeviceProof>, options: RequestOptions = {}) {
+  return client.request({ method: "POST", path: "/agent-api/v1/enrollment-requests/{enrollmentRequestId}/cancel", authenticated: false, successStatus: 204, success: undefined, errors: [400, 401, 409], problem: zErrorResponse, pathParameters: { schema: zCancelEnrollmentRequestPath, value: path }, body: { schema: zEnrollmentDeviceProof, value: body } }, options);
+}
+
+export function cancelNodeDemand(client: ControlClient, body: z.output<typeof zCancelDemandRequest>, options: AuthenticatedRequestOptions) {
+  return client.request({ method: "POST", path: "/agent-api/v1/demands/cancel", authenticated: true, successStatus: 204, success: undefined, errors: [400, 401, 409, 503], problem: zErrorResponse, body: { schema: zCancelDemandRequest, value: body } }, options);
 }
 
 export function changeAccountEmail(client: ControlClient, body: z.output<typeof zChangeEmailRequest>, options: AuthenticatedRequestOptions) {
@@ -24,12 +40,44 @@ export function compareConfiguration(client: ControlClient, path: z.output<typeo
   return client.request({ method: "POST", path: "/api/v1/networks/{networkId}/configuration/compare", authenticated: true, successStatus: 200, success: zConfigurationComparison, errors: [400, 401, 403, 404, 413, 415, 503], problem: zErrorResponse, pathParameters: { schema: zCompareConfigurationPath, value: path }, body: { schema: zCompareConfigurationRequest, value: body } }, options);
 }
 
+export function createEnrollmentKey(client: ControlClient, path: z.output<typeof zCreateEnrollmentKeyPath>, body: z.output<typeof zCreateEnrollmentKeyRequest>, options: AuthenticatedRequestOptions) {
+  return client.request({ method: "POST", path: "/api/v1/networks/{networkId}/enrollment-keys", authenticated: true, successStatus: 200, success: zEnrollmentKeyResponse, errors: [400, 401, 403, 409], problem: zErrorResponse, pathParameters: { schema: zCreateEnrollmentKeyPath, value: path }, body: { schema: zCreateEnrollmentKeyRequest, value: body } }, options);
+}
+
+export function createEnrollmentRequest(client: ControlClient, body: z.output<typeof zCreateEnrollmentRequest>, options: RequestOptions = {}) {
+  return client.request({ method: "POST", path: "/agent-api/v1/enrollment-requests", authenticated: false, successStatus: 200, success: zEnrollmentRequestView, errors: [400, 401, 409, 503], problem: zErrorResponse, body: { schema: zCreateEnrollmentRequest, value: body } }, options);
+}
+
 export function createJoinLink(client: ControlClient, path: z.output<typeof zCreateJoinLinkPath>, body: z.output<typeof zCreateJoinLinkRequest>, options: AuthenticatedRequestOptions) {
   return client.request({ method: "POST", path: "/api/v1/networks/{networkId}/join-links", authenticated: true, successStatus: 201, success: zJoinLinkCreated, errors: [400, 401, 403, 404, 409, 413, 415, 503], problem: zErrorResponse, pathParameters: { schema: zCreateJoinLinkPath, value: path }, body: { schema: zCreateJoinLinkRequest, value: body } }, options);
 }
 
 export function createNetwork(client: ControlClient, body: z.output<typeof zCreateNetworkRequest>, options: AuthenticatedRequestOptions) {
   return client.request({ method: "POST", path: "/api/v1/networks", authenticated: true, successStatus: 201, success: zNetworkResponse, errors: [400, 401, 404, 409, 413, 415, 503], problem: zErrorResponse, body: { schema: zCreateNetworkRequest, value: body } }, options);
+}
+
+export function createNodeChallenge(client: ControlClient, body: z.output<typeof zNodeChallengeRequest>, options: RequestOptions = {}) {
+  return client.request({ method: "POST", path: "/agent-api/v1/auth/challenges", authenticated: false, successStatus: 200, success: zNodeChallenge, errors: [400, 401, 503], problem: zErrorResponse, body: { schema: zNodeChallengeRequest, value: body } }, options);
+}
+
+export function createNodeDemand(client: ControlClient, body: z.output<typeof zDemandRequest>, options: AuthenticatedRequestOptions) {
+  return client.request({ method: "POST", path: "/agent-api/v1/demands", authenticated: true, successStatus: 200, success: zDemandResponse, errors: [400, 401, 409, 503], problem: zErrorResponse, body: { schema: zDemandRequest, value: body } }, options);
+}
+
+export function createNodeSession(client: ControlClient, body: z.output<typeof zNodeSessionRequest>, options: RequestOptions = {}) {
+  return client.request({ method: "POST", path: "/agent-api/v1/auth/session", authenticated: false, successStatus: 200, success: zNodeSessionResponse, errors: [400, 401, 503], problem: zErrorResponse, body: { schema: zNodeSessionRequest, value: body } }, options);
+}
+
+export function deleteNode(client: ControlClient, path: z.output<typeof zDeleteNodePath>, body: z.output<typeof zDeleteNodeRequest>, options: AuthenticatedRequestOptions) {
+  return client.request({ method: "DELETE", path: "/api/v1/networks/{networkId}/nodes/{nodeId}", authenticated: true, successStatus: 200, success: zConfigurationAppliedResponse, errors: [400, 401, 403, 409], problem: zErrorResponse, pathParameters: { schema: zDeleteNodePath, value: path }, body: { schema: zDeleteNodeRequest, value: body } }, options);
+}
+
+export function denyDeviceAuthorization(client: ControlClient, path: z.output<typeof zDenyDeviceAuthorizationPath>, options: AuthenticatedRequestOptions) {
+  return client.request({ method: "POST", path: "/api/v1/device-authorizations/{enrollmentRequestId}/deny", authenticated: true, successStatus: 204, success: undefined, errors: [401, 403, 409], problem: zErrorResponse, pathParameters: { schema: zDenyDeviceAuthorizationPath, value: path } }, options);
+}
+
+export function enrollNodeWithKey(client: ControlClient, body: z.output<typeof zKeyEnrollmentRequest>, options: RequestOptions = {}) {
+  return client.request({ method: "POST", path: "/agent-api/v1/enrollments", authenticated: false, successStatus: 200, success: zEnrollmentResponse, errors: [400, 401, 403, 409, 503], problem: zErrorResponse, body: { schema: zKeyEnrollmentRequest, value: body } }, options);
 }
 
 export function getAccount(client: ControlClient, options: AuthenticatedRequestOptions) {
@@ -60,6 +108,14 @@ export function getConfigurationSource(client: ControlClient, path: z.output<typ
   return client.request({ method: "GET", path: "/api/v1/networks/{networkId}/configuration/source", authenticated: true, successStatus: 200, success: zConfigurationSourceResponse, errors: [400, 401, 403, 404, 503], problem: zErrorResponse, pathParameters: { schema: zGetConfigurationSourcePath, value: path }, queryParameters: { schema: zGetConfigurationSourceQuery, value: query } }, options);
 }
 
+export function getDeviceAuthorization(client: ControlClient, path: z.output<typeof zGetDeviceAuthorizationPath>, options: AuthenticatedRequestOptions) {
+  return client.request({ method: "GET", path: "/api/v1/device-authorizations/{enrollmentRequestId}", authenticated: true, successStatus: 200, success: zEnrollmentRequestView, errors: [401, 404], problem: zErrorResponse, pathParameters: { schema: zGetDeviceAuthorizationPath, value: path } }, options);
+}
+
+export function getExecutionPublication(client: ControlClient, path: z.output<typeof zGetExecutionPublicationPath>, options: AuthenticatedRequestOptions) {
+  return client.request({ method: "GET", path: "/api/v1/networks/{networkId}/publications/{publicationId}", authenticated: true, successStatus: 200, success: zPublicationProgress, errors: [401, 403, 404], problem: zErrorResponse, pathParameters: { schema: zGetExecutionPublicationPath, value: path } }, options);
+}
+
 export function getLeaveImpact(client: ControlClient, path: z.output<typeof zGetLeaveImpactPath>, options: AuthenticatedRequestOptions) {
   return client.request({ method: "GET", path: "/api/v1/networks/{networkId}/leave-impact", authenticated: true, successStatus: 200, success: zRemovalImpactResponse, errors: [400, 401, 404, 503], problem: zErrorResponse, pathParameters: { schema: zGetLeaveImpactPath, value: path } }, options);
 }
@@ -74,6 +130,10 @@ export function getNetwork(client: ControlClient, path: z.output<typeof zGetNetw
 
 export function getNetworkActivity(client: ControlClient, path: z.output<typeof zGetNetworkActivityPath>, options: AuthenticatedRequestOptions) {
   return client.request({ method: "GET", path: "/api/v1/networks/{networkId}/activity/{activityId}", authenticated: true, successStatus: 200, success: zActivityResponse, errors: [400, 401, 403, 404, 503], problem: zErrorResponse, pathParameters: { schema: zGetNetworkActivityPath, value: path } }, options);
+}
+
+export function getNode(client: ControlClient, path: z.output<typeof zGetNodePath>, options: AuthenticatedRequestOptions) {
+  return client.request({ method: "GET", path: "/api/v1/networks/{networkId}/nodes/{nodeId}", authenticated: true, successStatus: 200, success: zNodeInventoryView, errors: [401, 404], problem: zErrorResponse, pathParameters: { schema: zGetNodePath, value: path } }, options);
 }
 
 export function getTransportCatalog(client: ControlClient, options: AuthenticatedRequestOptions) {
@@ -104,6 +164,10 @@ export function listConfigurationRevisions(client: ControlClient, path: z.output
   return client.request({ method: "GET", path: "/api/v1/networks/{networkId}/configuration/revisions", authenticated: true, successStatus: 200, success: zConfigurationRevisionList, errors: [400, 401, 403, 404, 503], problem: zErrorResponse, pathParameters: { schema: zListConfigurationRevisionsPath, value: path }, queryParameters: { schema: zListConfigurationRevisionsQuery, value: query } }, options);
 }
 
+export function listEnrollmentKeys(client: ControlClient, path: z.output<typeof zListEnrollmentKeysPath>, options: AuthenticatedRequestOptions) {
+  return client.request({ method: "GET", path: "/api/v1/networks/{networkId}/enrollment-keys", authenticated: true, successStatus: 200, success: zEnrollmentKeysResponse, errors: [401, 403], problem: zErrorResponse, pathParameters: { schema: zListEnrollmentKeysPath, value: path } }, options);
+}
+
 export function listJoinLinks(client: ControlClient, path: z.output<typeof zListJoinLinksPath>, query: z.output<typeof zListJoinLinksQuery>, options: AuthenticatedRequestOptions) {
   return client.request({ method: "GET", path: "/api/v1/networks/{networkId}/join-links", authenticated: true, successStatus: 200, success: zJoinLinkListResponse, errors: [400, 401, 403, 404, 503], problem: zErrorResponse, pathParameters: { schema: zListJoinLinksPath, value: path }, queryParameters: { schema: zListJoinLinksQuery, value: query } }, options);
 }
@@ -120,12 +184,28 @@ export function listNetworks(client: ControlClient, query: z.output<typeof zList
   return client.request({ method: "GET", path: "/api/v1/networks", authenticated: true, successStatus: 200, success: zNetworkListResponse, errors: [400, 401, 503], problem: zErrorResponse, queryParameters: { schema: zListNetworksQuery, value: query } }, options);
 }
 
+export function listNodes(client: ControlClient, path: z.output<typeof zListNodesPath>, options: AuthenticatedRequestOptions) {
+  return client.request({ method: "GET", path: "/api/v1/networks/{networkId}/nodes", authenticated: true, successStatus: 200, success: zNodeInventoryResponse, errors: [401, 404], problem: zErrorResponse, pathParameters: { schema: zListNodesPath, value: path } }, options);
+}
+
 export function login(client: ControlClient, body: z.output<typeof zLoginRequest>, options: RequestOptions = {}) {
   return client.request({ method: "POST", path: "/api/v1/auth/login", authenticated: false, successStatus: 200, success: zSessionIssuedResponse, errors: [400, 401, 413, 415, 503], problem: zErrorResponse, body: { schema: zLoginRequest, value: body } }, options);
 }
 
 export function logout(client: ControlClient, options: AuthenticatedRequestOptions) {
   return client.request({ method: "POST", path: "/api/v1/auth/logout", authenticated: true, successStatus: 204, success: undefined, errors: [401, 503], problem: zErrorResponse }, options);
+}
+
+export function queryEnrollmentRequest(client: ControlClient, path: z.output<typeof zQueryEnrollmentRequestPath>, body: z.output<typeof zEnrollmentDeviceProof>, options: RequestOptions = {}) {
+  return client.request({ method: "POST", path: "/agent-api/v1/enrollment-requests/{enrollmentRequestId}/query", authenticated: false, successStatus: 200, success: zEnrollmentPollResponse, errors: [400, 401, 404], problem: zErrorResponse, pathParameters: { schema: zQueryEnrollmentRequestPath, value: path }, body: { schema: zEnrollmentDeviceProof, value: body } }, options);
+}
+
+export function queryNodeConfiguration(client: ControlClient, body: z.output<typeof zNodeConfigurationRequest>, options: AuthenticatedRequestOptions) {
+  return client.request({ method: "POST", path: "/agent-api/v1/configuration/query", authenticated: true, successStatus: 200, success: zNodeConfigurationResponse, errors: [400, 401, 409, 503], problem: zErrorResponse, body: { schema: zNodeConfigurationRequest, value: body } }, options);
+}
+
+export function redeemEnrollmentRequest(client: ControlClient, path: z.output<typeof zRedeemEnrollmentRequestPath>, body: z.output<typeof zRedeemEnrollmentRequest>, options: RequestOptions = {}) {
+  return client.request({ method: "POST", path: "/agent-api/v1/enrollment-requests/{enrollmentRequestId}/redeem", authenticated: false, successStatus: 200, success: zEnrollmentResponse, errors: [400, 401, 403, 409, 503], problem: zErrorResponse, pathParameters: { schema: zRedeemEnrollmentRequestPath, value: path }, body: { schema: zRedeemEnrollmentRequest, value: body } }, options);
 }
 
 export function redeemJoinLink(client: ControlClient, body: z.output<typeof zJoinLinkCredentialRequest>, options: AuthenticatedRequestOptions) {
@@ -140,12 +220,20 @@ export function register(client: ControlClient, body: z.output<typeof zRegisterR
   return client.request({ method: "POST", path: "/api/v1/auth/register", authenticated: false, successStatus: 201, success: zSessionIssuedResponse, errors: [400, 403, 409, 413, 415, 422, 503], problem: zErrorResponse, body: { schema: zRegisterRequest, value: body } }, options);
 }
 
+export function releaseNodeInstance(client: ControlClient, body: z.output<typeof zInstanceRequest>, options: AuthenticatedRequestOptions) {
+  return client.request({ method: "POST", path: "/agent-api/v1/instances/release", authenticated: true, successStatus: 204, success: undefined, errors: [400, 401, 409, 503], problem: zErrorResponse, body: { schema: zInstanceRequest, value: body } }, options);
+}
+
 export function removeMember(client: ControlClient, path: z.output<typeof zRemoveMemberPath>, body: z.output<typeof zRemoveMemberRequest>, options: AuthenticatedRequestOptions) {
   return client.request({ method: "POST", path: "/api/v1/networks/{networkId}/members/{membershipId}/remove", authenticated: true, successStatus: 200, success: zMemberRemovedResponse, errors: [400, 401, 403, 404, 409, 413, 415, 503], problem: zErrorResponse, pathParameters: { schema: zRemoveMemberPath, value: path }, body: { schema: zRemoveMemberRequest, value: body } }, options);
 }
 
 export function renameNetwork(client: ControlClient, path: z.output<typeof zRenameNetworkPath>, body: z.output<typeof zRenameNetworkRequest>, options: AuthenticatedRequestOptions) {
   return client.request({ method: "POST", path: "/api/v1/networks/{networkId}/rename", authenticated: true, successStatus: 200, success: zNetworkResponse, errors: [400, 401, 403, 404, 409, 413, 415, 503], problem: zErrorResponse, pathParameters: { schema: zRenameNetworkPath, value: path }, body: { schema: zRenameNetworkRequest, value: body } }, options);
+}
+
+export function renewNodeInstance(client: ControlClient, body: z.output<typeof zInstanceRequest>, options: AuthenticatedRequestOptions) {
+  return client.request({ method: "POST", path: "/agent-api/v1/instances/renew", authenticated: true, successStatus: 200, success: zInstanceLease, errors: [400, 401, 409, 503], problem: zErrorResponse, body: { schema: zInstanceRequest, value: body } }, options);
 }
 
 export function revokeAccountSession(client: ControlClient, path: z.output<typeof zRevokeAccountSessionPath>, options: AuthenticatedRequestOptions) {
@@ -156,12 +244,32 @@ export function revokeAllAccountSessions(client: ControlClient, options: Authent
   return client.request({ method: "POST", path: "/api/v1/account/sessions/revoke-all", authenticated: true, successStatus: 204, success: undefined, errors: [401, 503], problem: zErrorResponse }, options);
 }
 
+export function revokeEnrollmentKey(client: ControlClient, path: z.output<typeof zRevokeEnrollmentKeyPath>, options: AuthenticatedRequestOptions) {
+  return client.request({ method: "DELETE", path: "/api/v1/networks/{networkId}/enrollment-keys/{keyId}", authenticated: true, successStatus: 204, success: undefined, errors: [401, 403, 404], problem: zErrorResponse, pathParameters: { schema: zRevokeEnrollmentKeyPath, value: path } }, options);
+}
+
 export function revokeJoinLink(client: ControlClient, path: z.output<typeof zRevokeJoinLinkPath>, options: AuthenticatedRequestOptions) {
   return client.request({ method: "POST", path: "/api/v1/networks/{networkId}/join-links/{linkId}/revoke", authenticated: true, successStatus: 204, success: undefined, errors: [400, 401, 403, 404, 503], problem: zErrorResponse, pathParameters: { schema: zRevokeJoinLinkPath, value: path } }, options);
 }
 
+export function revokeNodeKey(client: ControlClient, path: z.output<typeof zRevokeNodeKeyPath>, body: z.output<typeof zRevokeNodeKeyRequest>, options: AuthenticatedRequestOptions) {
+  return client.request({ method: "POST", path: "/api/v1/networks/{networkId}/nodes/{nodeId}/keys/revoke", authenticated: true, successStatus: 204, success: undefined, errors: [400, 401, 403, 409], problem: zErrorResponse, pathParameters: { schema: zRevokeNodeKeyPath, value: path }, body: { schema: zRevokeNodeKeyRequest, value: body } }, options);
+}
+
 export function revokeOtherAccountSessions(client: ControlClient, options: AuthenticatedRequestOptions) {
   return client.request({ method: "POST", path: "/api/v1/account/sessions/revoke-others", authenticated: true, successStatus: 204, success: undefined, errors: [401, 503], problem: zErrorResponse }, options);
+}
+
+export function rotateNodeKeys(client: ControlClient, body: z.output<typeof zNodeRotationRequest>, options: RequestOptions = {}) {
+  return client.request({ method: "POST", path: "/agent-api/v1/auth/rotate", authenticated: false, successStatus: 200, success: zNodeKeyMetadata, errors: [400, 401, 409, 503], problem: zErrorResponse, body: { schema: zNodeRotationRequest, value: body } }, options);
+}
+
+export function selectNodeRoutingProfile(client: ControlClient, body: z.output<typeof zRoutingSelectionRequest>, options: AuthenticatedRequestOptions) {
+  return client.request({ method: "POST", path: "/agent-api/v1/routing-selection", authenticated: true, successStatus: 200, success: zRoutingSelectionResponse, errors: [400, 401, 409, 503], problem: zErrorResponse, body: { schema: zRoutingSelectionRequest, value: body } }, options);
+}
+
+export function submitNodeConfigurationReceipt(client: ControlClient, body: z.output<typeof zReceiptRequest>, options: AuthenticatedRequestOptions) {
+  return client.request({ method: "POST", path: "/agent-api/v1/configuration/receipts", authenticated: true, successStatus: 204, success: undefined, errors: [400, 401, 409, 503], problem: zErrorResponse, body: { schema: zReceiptRequest, value: body } }, options);
 }
 
 export function validateConfiguration(client: ControlClient, path: z.output<typeof zValidateConfigurationPath>, body: z.output<typeof zConfigurationRequest>, options: AuthenticatedRequestOptions) {

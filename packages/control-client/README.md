@@ -105,9 +105,10 @@ an unchanged save does not reauthorize a removed/rejoined membership. Retained
 inactive references are reported as unavailable dependencies, and permitted
 binding changes participate in the preview's effective changes.
 
-Node-dependent configuration/member removal and remote rule-set publication
-remain unavailable until execution/resource providers are connected. Address
-reassignment and material rotation are not exported operations yet.
+Node-dependent configuration/member removal now uses the actual execution
+participant and permanent revocation transaction. Remote rule-set publication
+still needs its resource provider. Address reassignment and transport material
+rotation are not exported operations yet.
 
 Management success is not evidence that a Node has installed configuration or
 established a tunnel.
@@ -137,6 +138,25 @@ The SDK sets `Policy::none()` before building the supplied HTTP builder, retaini
 its resolver/socket configuration. Configure timeouts on that builder. Dropping
 an operation future cancels its send/read; the runtime spawns no detached request
 tasks. Error Debug/Display omits decoded problems and all raw transport content.
+
+## Node control operations
+
+Generated operations cover signed device enrollment/PKCE, enrollment keys,
+challenge/session authentication, key rotation, instances/leases, execution
+configuration reads, demands, receipts, inventory and permanent deletion.
+`deleteNode` uses authenticated DELETE with its typed CAS/request-ID JSON body.
+The ordinary account registration/login operations do not substitute for a
+Node's proof of private-key possession.
+
+HTTP time fields use RFC 3339 (`expiresAt`, `registeredAt`, `reportedAt`, etc.).
+Rust execution/crypto structs retain explicit `_ms` fields with a validated
+Serde adapter; fixed signing transcripts still encode exact Unix milliseconds.
+No unbounded integer timestamps are exposed to TypeScript.
+
+The live SDK test uses Node's Ed25519 implementation and generated DTOs to run
+normal browser approval, signed PKCE redemption, a Node session, lease and full
+configuration reads, release and permanent DELETE against the Controller binary.
+It does not install a tunnel or manufacture an applied/data-plane result.
 
 ## Event streams
 
@@ -195,8 +215,8 @@ actions and totals, join/role changes, configuration validation/CAS/restore,
 typed errors and malformed real response envelopes. Generator-only synthetic
 fixtures verify code-generation boundaries separately.
 
-The current generator supports the published account/network JSON operations,
+The current generator supports the published account/network/Node JSON operations,
 validated scalar path/optional query parameters, and explicitly declared JSON-data
-SSE streams. Undeclared streams and unsupported schema/operation shapes fail
+SSE streams. JSON mutations support POST and DELETE. Undeclared streams and unsupported schema/operation shapes fail
 generation explicitly. Integer schemas must prove a JS-safe range through
 explicit bounds or the supported `int32` format; unbounded `int64` is rejected.

@@ -10,11 +10,17 @@ wire_object! { #[derive(Clone,Debug,PartialEq,Eq)] pub struct InitialNodeSetting
 } }
 wire_object! { #[derive(Clone,Debug,PartialEq,Eq)] pub struct CreateEnrollmentKeyRequest {
     pub request_id: RequestId, pub tags: Vec<String>, pub initial_settings: InitialNodeSettings,
-    pub expires_at_ms: u64,
+    #[serde(rename="expiresAt", with="meshway_model::timestamp")]
+    pub expires_at_ms: u64 [value_type=chrono::DateTime<chrono::Utc>],
 } }
 wire_object! { #[derive(Clone,Debug,PartialEq,Eq)] pub struct EnrollmentKeyView {
-    pub id: EnrollmentKeyId, pub tags: Vec<String>, pub created_at_ms: u64,
-    pub expires_at_ms: u64, pub revoked_at_ms: Option<u64>,
+    pub id: EnrollmentKeyId, pub tags: Vec<String>,
+    #[serde(rename="createdAt", with="meshway_model::timestamp")]
+    pub created_at_ms: u64 [value_type=chrono::DateTime<chrono::Utc>],
+    #[serde(rename="expiresAt", with="meshway_model::timestamp")]
+    pub expires_at_ms: u64 [value_type=chrono::DateTime<chrono::Utc>],
+    #[serde(rename="revokedAt", with="meshway_model::timestamp::optional")]
+    pub revoked_at_ms: Option<u64> [value_type=Option<chrono::DateTime<chrono::Utc>>,required=true],
     pub consumed_request_id: Option<EnrollmentRequestId>,
 } }
 wire_object! { pub struct EnrollmentKeyResponse {
@@ -40,7 +46,9 @@ wire_object! { pub struct CreateEnrollmentRequest {
 } }
 wire_object! { #[derive(Clone,Debug,PartialEq,Eq)] pub struct EnrollmentRequestView {
     pub id: EnrollmentRequestId, pub hostname: String, pub control_key: NodePublicKey,
-    pub phase: EnrollmentPhase, pub expires_at_ms: u64,
+    pub phase: EnrollmentPhase,
+    #[serde(rename="expiresAt", with="meshway_model::timestamp")]
+    pub expires_at_ms: u64 [value_type=chrono::DateTime<chrono::Utc>],
 } }
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 #[serde(rename_all = "camelCase")]

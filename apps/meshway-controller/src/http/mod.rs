@@ -10,10 +10,10 @@ mod management;
 mod management_history;
 mod management_networks;
 mod networks;
+mod nodes;
 pub mod observations;
 pub mod resources;
 pub mod state;
-mod nodes;
 
 use axum::{
     Router,

@@ -7,8 +7,8 @@
 
 mod auth;
 pub mod configuration;
-pub mod events;
 pub mod enrollment;
+pub mod events;
 pub mod execution;
 pub mod history;
 pub mod management;
@@ -27,7 +27,18 @@ pub use configuration::{
     ConfigurationPreviewResponse, ConfigurationRequest, ConfigurationResponse,
     ConfigurationSchemaResponse, ConfigurationSourceResponse, TransportCatalogResponse,
 };
+pub use enrollment::{
+    ApproveEnrollmentRequest, CreateEnrollmentKeyRequest, CreateEnrollmentRequest,
+    EnrollmentDeviceProof, EnrollmentIntent, EnrollmentKeyResponse, EnrollmentKeysResponse,
+    EnrollmentPollResponse, EnrollmentRequestView, EnrollmentResponse, KeyEnrollmentRequest,
+    RedeemEnrollmentRequest,
+};
 pub use events::StreamEvent;
+pub use execution::{
+    AcquireInstanceRequest, CancelDemandRequest, DemandRequest, DemandResponse, InstanceLease,
+    InstanceRequest, NodeConfigurationRequest, NodeConfigurationResponse, PublicationProgress,
+    ReceiptRequest, RoutingSelectionRequest, RoutingSelectionResponse,
+};
 pub use history::{ActivityListResponse, ActivityResponse, ConfigurationRevisionList};
 pub use management::{
     AccountResponse, AccountSessionsResponse, ChangeEmailRequest, ChangeMemberRoleRequest,
@@ -37,13 +48,19 @@ pub use management::{
     PasswordResetInspection, PasswordResetRedeemRequest, RemovalImpactResponse,
     RemoveMemberRequest,
 };
+pub use node::{
+    DeleteNodeRequest, NodeChallenge, NodeChallengeRequest, NodeInventoryResponse,
+    NodeInventoryView, NodeKeyMetadata, NodeRotationRequest, NodeSessionRequest,
+    NodeSessionResponse, RevokeNodeKeyRequest,
+};
 
 pub use auth::{
     AuthOptionsResponse, AuthSessionResponse, LoginRequest, PasswordLengthUnit, PasswordRules,
     RegisterRequest, SessionIssuedResponse, SessionMetadata, UserView,
 };
 pub use meshway_model::{
-    ActivityId, JoinLinkId, MembershipId, MembershipRole, NetworkId, Revision, SessionId, Version,
+    ActivityId, EnrollmentKeyId, EnrollmentRequestId, JoinLinkId, MembershipId, MembershipRole,
+    NetworkId, NodeId, PublicationId, Revision, SessionId, Version,
 };
 pub use networks::{
     CreateNetworkRequest, MemberActions, MemberSummary, NetworkActions, NetworkListResponse,

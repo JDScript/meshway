@@ -6,6 +6,16 @@ pub struct ApplyConfigurationPath {
 }
 
 #[derive(Clone)]
+pub struct ApproveDeviceAuthorizationPath {
+    pub r#enrollment_request_id: meshway_protocol::EnrollmentRequestId,
+}
+
+#[derive(Clone)]
+pub struct CancelEnrollmentRequestPath {
+    pub r#enrollment_request_id: meshway_protocol::EnrollmentRequestId,
+}
+
+#[derive(Clone)]
 pub struct ChangeMemberRolePath {
     pub r#network_id: meshway_protocol::NetworkId,
     pub r#membership_id: meshway_protocol::MembershipId,
@@ -17,8 +27,24 @@ pub struct CompareConfigurationPath {
 }
 
 #[derive(Clone)]
+pub struct CreateEnrollmentKeyPath {
+    pub r#network_id: meshway_protocol::NetworkId,
+}
+
+#[derive(Clone)]
 pub struct CreateJoinLinkPath {
     pub r#network_id: meshway_protocol::NetworkId,
+}
+
+#[derive(Clone)]
+pub struct DeleteNodePath {
+    pub r#network_id: meshway_protocol::NetworkId,
+    pub r#node_id: meshway_protocol::NodeId,
+}
+
+#[derive(Clone)]
+pub struct DenyDeviceAuthorizationPath {
+    pub r#enrollment_request_id: meshway_protocol::EnrollmentRequestId,
 }
 
 #[derive(Clone)]
@@ -42,6 +68,17 @@ pub struct GetConfigurationSourceQuery {
 }
 
 #[derive(Clone)]
+pub struct GetDeviceAuthorizationPath {
+    pub r#enrollment_request_id: meshway_protocol::EnrollmentRequestId,
+}
+
+#[derive(Clone)]
+pub struct GetExecutionPublicationPath {
+    pub r#network_id: meshway_protocol::NetworkId,
+    pub r#publication_id: meshway_protocol::PublicationId,
+}
+
+#[derive(Clone)]
 pub struct GetLeaveImpactPath {
     pub r#network_id: meshway_protocol::NetworkId,
 }
@@ -61,6 +98,12 @@ pub struct GetNetworkPath {
 pub struct GetNetworkActivityPath {
     pub r#network_id: meshway_protocol::NetworkId,
     pub r#activity_id: meshway_protocol::ActivityId,
+}
+
+#[derive(Clone)]
+pub struct GetNodePath {
+    pub r#network_id: meshway_protocol::NetworkId,
+    pub r#node_id: meshway_protocol::NodeId,
 }
 
 #[derive(Clone)]
@@ -88,6 +131,11 @@ pub struct ListConfigurationRevisionsPath {
 pub struct ListConfigurationRevisionsQuery {
     pub r#cursor: Option<String>,
     pub r#limit: Option<i32>,
+}
+
+#[derive(Clone)]
+pub struct ListEnrollmentKeysPath {
+    pub r#network_id: meshway_protocol::NetworkId,
 }
 
 #[derive(Clone)]
@@ -127,6 +175,21 @@ pub struct ListNetworksQuery {
 }
 
 #[derive(Clone)]
+pub struct ListNodesPath {
+    pub r#network_id: meshway_protocol::NetworkId,
+}
+
+#[derive(Clone)]
+pub struct QueryEnrollmentRequestPath {
+    pub r#enrollment_request_id: meshway_protocol::EnrollmentRequestId,
+}
+
+#[derive(Clone)]
+pub struct RedeemEnrollmentRequestPath {
+    pub r#enrollment_request_id: meshway_protocol::EnrollmentRequestId,
+}
+
+#[derive(Clone)]
 pub struct RemoveMemberPath {
     pub r#network_id: meshway_protocol::NetworkId,
     pub r#membership_id: meshway_protocol::MembershipId,
@@ -143,9 +206,21 @@ pub struct RevokeAccountSessionPath {
 }
 
 #[derive(Clone)]
+pub struct RevokeEnrollmentKeyPath {
+    pub r#network_id: meshway_protocol::NetworkId,
+    pub r#key_id: meshway_protocol::EnrollmentKeyId,
+}
+
+#[derive(Clone)]
 pub struct RevokeJoinLinkPath {
     pub r#network_id: meshway_protocol::NetworkId,
     pub r#link_id: meshway_protocol::JoinLinkId,
+}
+
+#[derive(Clone)]
+pub struct RevokeNodeKeyPath {
+    pub r#network_id: meshway_protocol::NetworkId,
+    pub r#node_id: meshway_protocol::NodeId,
 }
 
 #[derive(Clone)]
@@ -154,6 +229,27 @@ pub struct ValidateConfigurationPath {
 }
 
 impl crate::Client {
+    pub async fn acquire_node_instance(
+        &self,
+        body: &meshway_protocol::AcquireInstanceRequest,
+        token: &str,
+    ) -> Result<meshway_protocol::InstanceLease, crate::ClientError<meshway_protocol::ErrorResponse>>
+    {
+        let response = self
+            .send(
+                reqwest::Method::POST,
+                "/agent-api/v1/instances",
+                Some(token),
+                Some(body),
+            )
+            .await?;
+        match response.status {
+            200 => response.json(),
+            400 | 401 | 409 | 503 => Err(response.problem()),
+            _ => Err(response.unexpected()),
+        }
+    }
+
     pub async fn apply_configuration(
         &self,
         path: &ApplyConfigurationPath,
@@ -196,6 +292,116 @@ impl crate::Client {
         match response.status {
             200 => response.json(),
             400 | 401 | 403 | 404 | 409 | 413 | 415 | 422 | 503 => Err(response.problem()),
+            _ => Err(response.unexpected()),
+        }
+    }
+
+    pub async fn approve_device_authorization(
+        &self,
+        path: &ApproveDeviceAuthorizationPath,
+        body: &meshway_protocol::ApproveEnrollmentRequest,
+        token: &str,
+    ) -> Result<
+        meshway_protocol::EnrollmentRequestView,
+        crate::ClientError<meshway_protocol::ErrorResponse>,
+    > {
+        let path_values = [("enrollmentRequestId", {
+            let value = serde_json::from_slice::<String>(
+                &serde_json::to_vec(&path.r#enrollment_request_id)
+                    .map_err(|_| crate::ClientError::Request)?,
+            )
+            .map_err(|_| crate::ClientError::Request)?;
+            if !(value.len() == 36
+                && value != "00000000-0000-0000-0000-000000000000"
+                && value.bytes().enumerate().all(|(index, byte)| {
+                    if matches!(index, 8 | 13 | 18 | 23) {
+                        byte == b'-'
+                    } else {
+                        byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte)
+                    }
+                }))
+                || value.chars().count() < 36
+                || value.chars().count() > 36
+            {
+                return Err(crate::ClientError::Request);
+            }
+            value.to_string()
+        })];
+        let query_values = [];
+        let url = self.parameter_url(
+            "/api/v1/device-authorizations/{enrollmentRequestId}/approve",
+            &path_values,
+            &query_values,
+        )?;
+        let response = self
+            .send_url(reqwest::Method::POST, url, Some(token), Some(body))
+            .await?;
+        match response.status {
+            200 => response.json(),
+            400 | 401 | 403 | 409 => Err(response.problem()),
+            _ => Err(response.unexpected()),
+        }
+    }
+
+    pub async fn cancel_enrollment_request(
+        &self,
+        path: &CancelEnrollmentRequestPath,
+        body: &meshway_protocol::EnrollmentDeviceProof,
+    ) -> Result<(), crate::ClientError<meshway_protocol::ErrorResponse>> {
+        let path_values = [("enrollmentRequestId", {
+            let value = serde_json::from_slice::<String>(
+                &serde_json::to_vec(&path.r#enrollment_request_id)
+                    .map_err(|_| crate::ClientError::Request)?,
+            )
+            .map_err(|_| crate::ClientError::Request)?;
+            if !(value.len() == 36
+                && value != "00000000-0000-0000-0000-000000000000"
+                && value.bytes().enumerate().all(|(index, byte)| {
+                    if matches!(index, 8 | 13 | 18 | 23) {
+                        byte == b'-'
+                    } else {
+                        byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte)
+                    }
+                }))
+                || value.chars().count() < 36
+                || value.chars().count() > 36
+            {
+                return Err(crate::ClientError::Request);
+            }
+            value.to_string()
+        })];
+        let query_values = [];
+        let url = self.parameter_url(
+            "/agent-api/v1/enrollment-requests/{enrollmentRequestId}/cancel",
+            &path_values,
+            &query_values,
+        )?;
+        let response = self
+            .send_url(reqwest::Method::POST, url, None, Some(body))
+            .await?;
+        match response.status {
+            204 => response.empty(),
+            400 | 401 | 409 => Err(response.problem()),
+            _ => Err(response.unexpected()),
+        }
+    }
+
+    pub async fn cancel_node_demand(
+        &self,
+        body: &meshway_protocol::CancelDemandRequest,
+        token: &str,
+    ) -> Result<(), crate::ClientError<meshway_protocol::ErrorResponse>> {
+        let response = self
+            .send(
+                reqwest::Method::POST,
+                "/agent-api/v1/demands/cancel",
+                Some(token),
+                Some(body),
+            )
+            .await?;
+        match response.status {
+            204 => response.empty(),
+            400 | 401 | 409 | 503 => Err(response.problem()),
             _ => Err(response.unexpected()),
         }
     }
@@ -360,6 +566,74 @@ impl crate::Client {
         }
     }
 
+    pub async fn create_enrollment_key(
+        &self,
+        path: &CreateEnrollmentKeyPath,
+        body: &meshway_protocol::CreateEnrollmentKeyRequest,
+        token: &str,
+    ) -> Result<
+        meshway_protocol::EnrollmentKeyResponse,
+        crate::ClientError<meshway_protocol::ErrorResponse>,
+    > {
+        let path_values = [("networkId", {
+            let value = serde_json::from_slice::<String>(
+                &serde_json::to_vec(&path.r#network_id).map_err(|_| crate::ClientError::Request)?,
+            )
+            .map_err(|_| crate::ClientError::Request)?;
+            if !(value.len() == 36
+                && value != "00000000-0000-0000-0000-000000000000"
+                && value.bytes().enumerate().all(|(index, byte)| {
+                    if matches!(index, 8 | 13 | 18 | 23) {
+                        byte == b'-'
+                    } else {
+                        byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte)
+                    }
+                }))
+                || value.chars().count() < 36
+                || value.chars().count() > 36
+            {
+                return Err(crate::ClientError::Request);
+            }
+            value.to_string()
+        })];
+        let query_values = [];
+        let url = self.parameter_url(
+            "/api/v1/networks/{networkId}/enrollment-keys",
+            &path_values,
+            &query_values,
+        )?;
+        let response = self
+            .send_url(reqwest::Method::POST, url, Some(token), Some(body))
+            .await?;
+        match response.status {
+            200 => response.json(),
+            400 | 401 | 403 | 409 => Err(response.problem()),
+            _ => Err(response.unexpected()),
+        }
+    }
+
+    pub async fn create_enrollment_request(
+        &self,
+        body: &meshway_protocol::CreateEnrollmentRequest,
+    ) -> Result<
+        meshway_protocol::EnrollmentRequestView,
+        crate::ClientError<meshway_protocol::ErrorResponse>,
+    > {
+        let response = self
+            .send(
+                reqwest::Method::POST,
+                "/agent-api/v1/enrollment-requests",
+                None,
+                Some(body),
+            )
+            .await?;
+        match response.status {
+            200 => response.json(),
+            400 | 401 | 409 | 503 => Err(response.problem()),
+            _ => Err(response.unexpected()),
+        }
+    }
+
     pub async fn create_join_link(
         &self,
         path: &CreateJoinLinkPath,
@@ -425,6 +699,205 @@ impl crate::Client {
         match response.status {
             201 => response.json(),
             400 | 401 | 404 | 409 | 413 | 415 | 503 => Err(response.problem()),
+            _ => Err(response.unexpected()),
+        }
+    }
+
+    pub async fn create_node_challenge(
+        &self,
+        body: &meshway_protocol::NodeChallengeRequest,
+    ) -> Result<meshway_protocol::NodeChallenge, crate::ClientError<meshway_protocol::ErrorResponse>>
+    {
+        let response = self
+            .send(
+                reqwest::Method::POST,
+                "/agent-api/v1/auth/challenges",
+                None,
+                Some(body),
+            )
+            .await?;
+        match response.status {
+            200 => response.json(),
+            400 | 401 | 503 => Err(response.problem()),
+            _ => Err(response.unexpected()),
+        }
+    }
+
+    pub async fn create_node_demand(
+        &self,
+        body: &meshway_protocol::DemandRequest,
+        token: &str,
+    ) -> Result<meshway_protocol::DemandResponse, crate::ClientError<meshway_protocol::ErrorResponse>>
+    {
+        let response = self
+            .send(
+                reqwest::Method::POST,
+                "/agent-api/v1/demands",
+                Some(token),
+                Some(body),
+            )
+            .await?;
+        match response.status {
+            200 => response.json(),
+            400 | 401 | 409 | 503 => Err(response.problem()),
+            _ => Err(response.unexpected()),
+        }
+    }
+
+    pub async fn create_node_session(
+        &self,
+        body: &meshway_protocol::NodeSessionRequest,
+    ) -> Result<
+        meshway_protocol::NodeSessionResponse,
+        crate::ClientError<meshway_protocol::ErrorResponse>,
+    > {
+        let response = self
+            .send(
+                reqwest::Method::POST,
+                "/agent-api/v1/auth/session",
+                None,
+                Some(body),
+            )
+            .await?;
+        match response.status {
+            200 => response.json(),
+            400 | 401 | 503 => Err(response.problem()),
+            _ => Err(response.unexpected()),
+        }
+    }
+
+    pub async fn delete_node(
+        &self,
+        path: &DeleteNodePath,
+        body: &meshway_protocol::DeleteNodeRequest,
+        token: &str,
+    ) -> Result<
+        meshway_protocol::ConfigurationAppliedResponse,
+        crate::ClientError<meshway_protocol::ErrorResponse>,
+    > {
+        let path_values = [
+            ("networkId", {
+                let value = serde_json::from_slice::<String>(
+                    &serde_json::to_vec(&path.r#network_id)
+                        .map_err(|_| crate::ClientError::Request)?,
+                )
+                .map_err(|_| crate::ClientError::Request)?;
+                if !(value.len() == 36
+                    && value != "00000000-0000-0000-0000-000000000000"
+                    && value.bytes().enumerate().all(|(index, byte)| {
+                        if matches!(index, 8 | 13 | 18 | 23) {
+                            byte == b'-'
+                        } else {
+                            byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte)
+                        }
+                    }))
+                    || value.chars().count() < 36
+                    || value.chars().count() > 36
+                {
+                    return Err(crate::ClientError::Request);
+                }
+                value.to_string()
+            }),
+            ("nodeId", {
+                let value = serde_json::from_slice::<String>(
+                    &serde_json::to_vec(&path.r#node_id)
+                        .map_err(|_| crate::ClientError::Request)?,
+                )
+                .map_err(|_| crate::ClientError::Request)?;
+                if !(value.len() == 36
+                    && value != "00000000-0000-0000-0000-000000000000"
+                    && value.bytes().enumerate().all(|(index, byte)| {
+                        if matches!(index, 8 | 13 | 18 | 23) {
+                            byte == b'-'
+                        } else {
+                            byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte)
+                        }
+                    }))
+                    || value.chars().count() < 36
+                    || value.chars().count() > 36
+                {
+                    return Err(crate::ClientError::Request);
+                }
+                value.to_string()
+            }),
+        ];
+        let query_values = [];
+        let url = self.parameter_url(
+            "/api/v1/networks/{networkId}/nodes/{nodeId}",
+            &path_values,
+            &query_values,
+        )?;
+        let response = self
+            .send_url(reqwest::Method::DELETE, url, Some(token), Some(body))
+            .await?;
+        match response.status {
+            200 => response.json(),
+            400 | 401 | 403 | 409 => Err(response.problem()),
+            _ => Err(response.unexpected()),
+        }
+    }
+
+    pub async fn deny_device_authorization(
+        &self,
+        path: &DenyDeviceAuthorizationPath,
+        token: &str,
+    ) -> Result<(), crate::ClientError<meshway_protocol::ErrorResponse>> {
+        let path_values = [("enrollmentRequestId", {
+            let value = serde_json::from_slice::<String>(
+                &serde_json::to_vec(&path.r#enrollment_request_id)
+                    .map_err(|_| crate::ClientError::Request)?,
+            )
+            .map_err(|_| crate::ClientError::Request)?;
+            if !(value.len() == 36
+                && value != "00000000-0000-0000-0000-000000000000"
+                && value.bytes().enumerate().all(|(index, byte)| {
+                    if matches!(index, 8 | 13 | 18 | 23) {
+                        byte == b'-'
+                    } else {
+                        byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte)
+                    }
+                }))
+                || value.chars().count() < 36
+                || value.chars().count() > 36
+            {
+                return Err(crate::ClientError::Request);
+            }
+            value.to_string()
+        })];
+        let query_values = [];
+        let url = self.parameter_url(
+            "/api/v1/device-authorizations/{enrollmentRequestId}/deny",
+            &path_values,
+            &query_values,
+        )?;
+        let response = self
+            .send_url(reqwest::Method::POST, url, Some(token), None::<&()>)
+            .await?;
+        match response.status {
+            204 => response.empty(),
+            401 | 403 | 409 => Err(response.problem()),
+            _ => Err(response.unexpected()),
+        }
+    }
+
+    pub async fn enroll_node_with_key(
+        &self,
+        body: &meshway_protocol::KeyEnrollmentRequest,
+    ) -> Result<
+        meshway_protocol::EnrollmentResponse,
+        crate::ClientError<meshway_protocol::ErrorResponse>,
+    > {
+        let response = self
+            .send(
+                reqwest::Method::POST,
+                "/agent-api/v1/enrollments",
+                None,
+                Some(body),
+            )
+            .await?;
+        match response.status {
+            200 => response.json(),
+            400 | 401 | 403 | 409 | 503 => Err(response.problem()),
             _ => Err(response.unexpected()),
         }
     }
@@ -684,6 +1157,122 @@ impl crate::Client {
         }
     }
 
+    pub async fn get_device_authorization(
+        &self,
+        path: &GetDeviceAuthorizationPath,
+        token: &str,
+    ) -> Result<
+        meshway_protocol::EnrollmentRequestView,
+        crate::ClientError<meshway_protocol::ErrorResponse>,
+    > {
+        let path_values = [("enrollmentRequestId", {
+            let value = serde_json::from_slice::<String>(
+                &serde_json::to_vec(&path.r#enrollment_request_id)
+                    .map_err(|_| crate::ClientError::Request)?,
+            )
+            .map_err(|_| crate::ClientError::Request)?;
+            if !(value.len() == 36
+                && value != "00000000-0000-0000-0000-000000000000"
+                && value.bytes().enumerate().all(|(index, byte)| {
+                    if matches!(index, 8 | 13 | 18 | 23) {
+                        byte == b'-'
+                    } else {
+                        byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte)
+                    }
+                }))
+                || value.chars().count() < 36
+                || value.chars().count() > 36
+            {
+                return Err(crate::ClientError::Request);
+            }
+            value.to_string()
+        })];
+        let query_values = [];
+        let url = self.parameter_url(
+            "/api/v1/device-authorizations/{enrollmentRequestId}",
+            &path_values,
+            &query_values,
+        )?;
+        let response = self
+            .send_url(reqwest::Method::GET, url, Some(token), None::<&()>)
+            .await?;
+        match response.status {
+            200 => response.json(),
+            401 | 404 => Err(response.problem()),
+            _ => Err(response.unexpected()),
+        }
+    }
+
+    pub async fn get_execution_publication(
+        &self,
+        path: &GetExecutionPublicationPath,
+        token: &str,
+    ) -> Result<
+        meshway_protocol::PublicationProgress,
+        crate::ClientError<meshway_protocol::ErrorResponse>,
+    > {
+        let path_values = [
+            ("networkId", {
+                let value = serde_json::from_slice::<String>(
+                    &serde_json::to_vec(&path.r#network_id)
+                        .map_err(|_| crate::ClientError::Request)?,
+                )
+                .map_err(|_| crate::ClientError::Request)?;
+                if !(value.len() == 36
+                    && value != "00000000-0000-0000-0000-000000000000"
+                    && value.bytes().enumerate().all(|(index, byte)| {
+                        if matches!(index, 8 | 13 | 18 | 23) {
+                            byte == b'-'
+                        } else {
+                            byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte)
+                        }
+                    }))
+                    || value.chars().count() < 36
+                    || value.chars().count() > 36
+                {
+                    return Err(crate::ClientError::Request);
+                }
+                value.to_string()
+            }),
+            ("publicationId", {
+                let value = serde_json::from_slice::<String>(
+                    &serde_json::to_vec(&path.r#publication_id)
+                        .map_err(|_| crate::ClientError::Request)?,
+                )
+                .map_err(|_| crate::ClientError::Request)?;
+                if !(value.len() == 36
+                    && value != "00000000-0000-0000-0000-000000000000"
+                    && value.bytes().enumerate().all(|(index, byte)| {
+                        if matches!(index, 8 | 13 | 18 | 23) {
+                            byte == b'-'
+                        } else {
+                            byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte)
+                        }
+                    }))
+                    || value.chars().count() < 36
+                    || value.chars().count() > 36
+                {
+                    return Err(crate::ClientError::Request);
+                }
+                value.to_string()
+            }),
+        ];
+        let query_values = [];
+        let url = self.parameter_url(
+            "/api/v1/networks/{networkId}/publications/{publicationId}",
+            &path_values,
+            &query_values,
+        )?;
+        let response = self
+            .send_url(reqwest::Method::GET, url, Some(token), None::<&()>)
+            .await?;
+        match response.status {
+            200 => response.json(),
+            401 | 403 | 404 => Err(response.problem()),
+            _ => Err(response.unexpected()),
+        }
+    }
+
     pub async fn get_leave_impact(
         &self,
         path: &GetLeaveImpactPath,
@@ -907,6 +1496,76 @@ impl crate::Client {
         match response.status {
             200 => response.json(),
             400 | 401 | 403 | 404 | 503 => Err(response.problem()),
+            _ => Err(response.unexpected()),
+        }
+    }
+
+    pub async fn get_node(
+        &self,
+        path: &GetNodePath,
+        token: &str,
+    ) -> Result<
+        meshway_protocol::NodeInventoryView,
+        crate::ClientError<meshway_protocol::ErrorResponse>,
+    > {
+        let path_values = [
+            ("networkId", {
+                let value = serde_json::from_slice::<String>(
+                    &serde_json::to_vec(&path.r#network_id)
+                        .map_err(|_| crate::ClientError::Request)?,
+                )
+                .map_err(|_| crate::ClientError::Request)?;
+                if !(value.len() == 36
+                    && value != "00000000-0000-0000-0000-000000000000"
+                    && value.bytes().enumerate().all(|(index, byte)| {
+                        if matches!(index, 8 | 13 | 18 | 23) {
+                            byte == b'-'
+                        } else {
+                            byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte)
+                        }
+                    }))
+                    || value.chars().count() < 36
+                    || value.chars().count() > 36
+                {
+                    return Err(crate::ClientError::Request);
+                }
+                value.to_string()
+            }),
+            ("nodeId", {
+                let value = serde_json::from_slice::<String>(
+                    &serde_json::to_vec(&path.r#node_id)
+                        .map_err(|_| crate::ClientError::Request)?,
+                )
+                .map_err(|_| crate::ClientError::Request)?;
+                if !(value.len() == 36
+                    && value != "00000000-0000-0000-0000-000000000000"
+                    && value.bytes().enumerate().all(|(index, byte)| {
+                        if matches!(index, 8 | 13 | 18 | 23) {
+                            byte == b'-'
+                        } else {
+                            byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte)
+                        }
+                    }))
+                    || value.chars().count() < 36
+                    || value.chars().count() > 36
+                {
+                    return Err(crate::ClientError::Request);
+                }
+                value.to_string()
+            }),
+        ];
+        let query_values = [];
+        let url = self.parameter_url(
+            "/api/v1/networks/{networkId}/nodes/{nodeId}",
+            &path_values,
+            &query_values,
+        )?;
+        let response = self
+            .send_url(reqwest::Method::GET, url, Some(token), None::<&()>)
+            .await?;
+        match response.status {
+            200 => response.json(),
+            401 | 404 => Err(response.problem()),
             _ => Err(response.unexpected()),
         }
     }
@@ -1229,6 +1888,51 @@ impl crate::Client {
         }
     }
 
+    pub async fn list_enrollment_keys(
+        &self,
+        path: &ListEnrollmentKeysPath,
+        token: &str,
+    ) -> Result<
+        meshway_protocol::EnrollmentKeysResponse,
+        crate::ClientError<meshway_protocol::ErrorResponse>,
+    > {
+        let path_values = [("networkId", {
+            let value = serde_json::from_slice::<String>(
+                &serde_json::to_vec(&path.r#network_id).map_err(|_| crate::ClientError::Request)?,
+            )
+            .map_err(|_| crate::ClientError::Request)?;
+            if !(value.len() == 36
+                && value != "00000000-0000-0000-0000-000000000000"
+                && value.bytes().enumerate().all(|(index, byte)| {
+                    if matches!(index, 8 | 13 | 18 | 23) {
+                        byte == b'-'
+                    } else {
+                        byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte)
+                    }
+                }))
+                || value.chars().count() < 36
+                || value.chars().count() > 36
+            {
+                return Err(crate::ClientError::Request);
+            }
+            value.to_string()
+        })];
+        let query_values = [];
+        let url = self.parameter_url(
+            "/api/v1/networks/{networkId}/enrollment-keys",
+            &path_values,
+            &query_values,
+        )?;
+        let response = self
+            .send_url(reqwest::Method::GET, url, Some(token), None::<&()>)
+            .await?;
+        match response.status {
+            200 => response.json(),
+            401 | 403 => Err(response.problem()),
+            _ => Err(response.unexpected()),
+        }
+    }
+
     pub async fn list_join_links(
         &self,
         path: &ListJoinLinksPath,
@@ -1544,6 +2248,51 @@ impl crate::Client {
         }
     }
 
+    pub async fn list_nodes(
+        &self,
+        path: &ListNodesPath,
+        token: &str,
+    ) -> Result<
+        meshway_protocol::NodeInventoryResponse,
+        crate::ClientError<meshway_protocol::ErrorResponse>,
+    > {
+        let path_values = [("networkId", {
+            let value = serde_json::from_slice::<String>(
+                &serde_json::to_vec(&path.r#network_id).map_err(|_| crate::ClientError::Request)?,
+            )
+            .map_err(|_| crate::ClientError::Request)?;
+            if !(value.len() == 36
+                && value != "00000000-0000-0000-0000-000000000000"
+                && value.bytes().enumerate().all(|(index, byte)| {
+                    if matches!(index, 8 | 13 | 18 | 23) {
+                        byte == b'-'
+                    } else {
+                        byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte)
+                    }
+                }))
+                || value.chars().count() < 36
+                || value.chars().count() > 36
+            {
+                return Err(crate::ClientError::Request);
+            }
+            value.to_string()
+        })];
+        let query_values = [];
+        let url = self.parameter_url(
+            "/api/v1/networks/{networkId}/nodes",
+            &path_values,
+            &query_values,
+        )?;
+        let response = self
+            .send_url(reqwest::Method::GET, url, Some(token), None::<&()>)
+            .await?;
+        match response.status {
+            200 => response.json(),
+            401 | 404 => Err(response.problem()),
+            _ => Err(response.unexpected()),
+        }
+    }
+
     pub async fn login(
         &self,
         body: &meshway_protocol::LoginRequest,
@@ -1581,6 +2330,121 @@ impl crate::Client {
         match response.status {
             204 => response.empty(),
             401 | 503 => Err(response.problem()),
+            _ => Err(response.unexpected()),
+        }
+    }
+
+    pub async fn query_enrollment_request(
+        &self,
+        path: &QueryEnrollmentRequestPath,
+        body: &meshway_protocol::EnrollmentDeviceProof,
+    ) -> Result<
+        meshway_protocol::EnrollmentPollResponse,
+        crate::ClientError<meshway_protocol::ErrorResponse>,
+    > {
+        let path_values = [("enrollmentRequestId", {
+            let value = serde_json::from_slice::<String>(
+                &serde_json::to_vec(&path.r#enrollment_request_id)
+                    .map_err(|_| crate::ClientError::Request)?,
+            )
+            .map_err(|_| crate::ClientError::Request)?;
+            if !(value.len() == 36
+                && value != "00000000-0000-0000-0000-000000000000"
+                && value.bytes().enumerate().all(|(index, byte)| {
+                    if matches!(index, 8 | 13 | 18 | 23) {
+                        byte == b'-'
+                    } else {
+                        byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte)
+                    }
+                }))
+                || value.chars().count() < 36
+                || value.chars().count() > 36
+            {
+                return Err(crate::ClientError::Request);
+            }
+            value.to_string()
+        })];
+        let query_values = [];
+        let url = self.parameter_url(
+            "/agent-api/v1/enrollment-requests/{enrollmentRequestId}/query",
+            &path_values,
+            &query_values,
+        )?;
+        let response = self
+            .send_url(reqwest::Method::POST, url, None, Some(body))
+            .await?;
+        match response.status {
+            200 => response.json(),
+            400 | 401 | 404 => Err(response.problem()),
+            _ => Err(response.unexpected()),
+        }
+    }
+
+    pub async fn query_node_configuration(
+        &self,
+        body: &meshway_protocol::NodeConfigurationRequest,
+        token: &str,
+    ) -> Result<
+        meshway_protocol::NodeConfigurationResponse,
+        crate::ClientError<meshway_protocol::ErrorResponse>,
+    > {
+        let response = self
+            .send(
+                reqwest::Method::POST,
+                "/agent-api/v1/configuration/query",
+                Some(token),
+                Some(body),
+            )
+            .await?;
+        match response.status {
+            200 => response.json(),
+            400 | 401 | 409 | 503 => Err(response.problem()),
+            _ => Err(response.unexpected()),
+        }
+    }
+
+    pub async fn redeem_enrollment_request(
+        &self,
+        path: &RedeemEnrollmentRequestPath,
+        body: &meshway_protocol::RedeemEnrollmentRequest,
+    ) -> Result<
+        meshway_protocol::EnrollmentResponse,
+        crate::ClientError<meshway_protocol::ErrorResponse>,
+    > {
+        let path_values = [("enrollmentRequestId", {
+            let value = serde_json::from_slice::<String>(
+                &serde_json::to_vec(&path.r#enrollment_request_id)
+                    .map_err(|_| crate::ClientError::Request)?,
+            )
+            .map_err(|_| crate::ClientError::Request)?;
+            if !(value.len() == 36
+                && value != "00000000-0000-0000-0000-000000000000"
+                && value.bytes().enumerate().all(|(index, byte)| {
+                    if matches!(index, 8 | 13 | 18 | 23) {
+                        byte == b'-'
+                    } else {
+                        byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte)
+                    }
+                }))
+                || value.chars().count() < 36
+                || value.chars().count() > 36
+            {
+                return Err(crate::ClientError::Request);
+            }
+            value.to_string()
+        })];
+        let query_values = [];
+        let url = self.parameter_url(
+            "/agent-api/v1/enrollment-requests/{enrollmentRequestId}/redeem",
+            &path_values,
+            &query_values,
+        )?;
+        let response = self
+            .send_url(reqwest::Method::POST, url, None, Some(body))
+            .await?;
+        match response.status {
+            200 => response.json(),
+            400 | 401 | 403 | 409 | 503 => Err(response.problem()),
             _ => Err(response.unexpected()),
         }
     }
@@ -1645,6 +2509,26 @@ impl crate::Client {
         match response.status {
             201 => response.json(),
             400 | 403 | 409 | 413 | 415 | 422 | 503 => Err(response.problem()),
+            _ => Err(response.unexpected()),
+        }
+    }
+
+    pub async fn release_node_instance(
+        &self,
+        body: &meshway_protocol::InstanceRequest,
+        token: &str,
+    ) -> Result<(), crate::ClientError<meshway_protocol::ErrorResponse>> {
+        let response = self
+            .send(
+                reqwest::Method::POST,
+                "/agent-api/v1/instances/release",
+                Some(token),
+                Some(body),
+            )
+            .await?;
+        match response.status {
+            204 => response.empty(),
+            400 | 401 | 409 | 503 => Err(response.problem()),
             _ => Err(response.unexpected()),
         }
     }
@@ -1766,6 +2650,27 @@ impl crate::Client {
         }
     }
 
+    pub async fn renew_node_instance(
+        &self,
+        body: &meshway_protocol::InstanceRequest,
+        token: &str,
+    ) -> Result<meshway_protocol::InstanceLease, crate::ClientError<meshway_protocol::ErrorResponse>>
+    {
+        let response = self
+            .send(
+                reqwest::Method::POST,
+                "/agent-api/v1/instances/renew",
+                Some(token),
+                Some(body),
+            )
+            .await?;
+        match response.status {
+            200 => response.json(),
+            400 | 401 | 409 | 503 => Err(response.problem()),
+            _ => Err(response.unexpected()),
+        }
+    }
+
     pub async fn revoke_account_session(
         &self,
         path: &RevokeAccountSessionPath,
@@ -1823,6 +2728,72 @@ impl crate::Client {
         match response.status {
             204 => response.empty(),
             401 | 503 => Err(response.problem()),
+            _ => Err(response.unexpected()),
+        }
+    }
+
+    pub async fn revoke_enrollment_key(
+        &self,
+        path: &RevokeEnrollmentKeyPath,
+        token: &str,
+    ) -> Result<(), crate::ClientError<meshway_protocol::ErrorResponse>> {
+        let path_values = [
+            ("networkId", {
+                let value = serde_json::from_slice::<String>(
+                    &serde_json::to_vec(&path.r#network_id)
+                        .map_err(|_| crate::ClientError::Request)?,
+                )
+                .map_err(|_| crate::ClientError::Request)?;
+                if !(value.len() == 36
+                    && value != "00000000-0000-0000-0000-000000000000"
+                    && value.bytes().enumerate().all(|(index, byte)| {
+                        if matches!(index, 8 | 13 | 18 | 23) {
+                            byte == b'-'
+                        } else {
+                            byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte)
+                        }
+                    }))
+                    || value.chars().count() < 36
+                    || value.chars().count() > 36
+                {
+                    return Err(crate::ClientError::Request);
+                }
+                value.to_string()
+            }),
+            ("keyId", {
+                let value = serde_json::from_slice::<String>(
+                    &serde_json::to_vec(&path.r#key_id).map_err(|_| crate::ClientError::Request)?,
+                )
+                .map_err(|_| crate::ClientError::Request)?;
+                if !(value.len() == 36
+                    && value != "00000000-0000-0000-0000-000000000000"
+                    && value.bytes().enumerate().all(|(index, byte)| {
+                        if matches!(index, 8 | 13 | 18 | 23) {
+                            byte == b'-'
+                        } else {
+                            byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte)
+                        }
+                    }))
+                    || value.chars().count() < 36
+                    || value.chars().count() > 36
+                {
+                    return Err(crate::ClientError::Request);
+                }
+                value.to_string()
+            }),
+        ];
+        let query_values = [];
+        let url = self.parameter_url(
+            "/api/v1/networks/{networkId}/enrollment-keys/{keyId}",
+            &path_values,
+            &query_values,
+        )?;
+        let response = self
+            .send_url(reqwest::Method::DELETE, url, Some(token), None::<&()>)
+            .await?;
+        match response.status {
+            204 => response.empty(),
+            401 | 403 | 404 => Err(response.problem()),
             _ => Err(response.unexpected()),
         }
     }
@@ -1894,6 +2865,74 @@ impl crate::Client {
         }
     }
 
+    pub async fn revoke_node_key(
+        &self,
+        path: &RevokeNodeKeyPath,
+        body: &meshway_protocol::RevokeNodeKeyRequest,
+        token: &str,
+    ) -> Result<(), crate::ClientError<meshway_protocol::ErrorResponse>> {
+        let path_values = [
+            ("networkId", {
+                let value = serde_json::from_slice::<String>(
+                    &serde_json::to_vec(&path.r#network_id)
+                        .map_err(|_| crate::ClientError::Request)?,
+                )
+                .map_err(|_| crate::ClientError::Request)?;
+                if !(value.len() == 36
+                    && value != "00000000-0000-0000-0000-000000000000"
+                    && value.bytes().enumerate().all(|(index, byte)| {
+                        if matches!(index, 8 | 13 | 18 | 23) {
+                            byte == b'-'
+                        } else {
+                            byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte)
+                        }
+                    }))
+                    || value.chars().count() < 36
+                    || value.chars().count() > 36
+                {
+                    return Err(crate::ClientError::Request);
+                }
+                value.to_string()
+            }),
+            ("nodeId", {
+                let value = serde_json::from_slice::<String>(
+                    &serde_json::to_vec(&path.r#node_id)
+                        .map_err(|_| crate::ClientError::Request)?,
+                )
+                .map_err(|_| crate::ClientError::Request)?;
+                if !(value.len() == 36
+                    && value != "00000000-0000-0000-0000-000000000000"
+                    && value.bytes().enumerate().all(|(index, byte)| {
+                        if matches!(index, 8 | 13 | 18 | 23) {
+                            byte == b'-'
+                        } else {
+                            byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte)
+                        }
+                    }))
+                    || value.chars().count() < 36
+                    || value.chars().count() > 36
+                {
+                    return Err(crate::ClientError::Request);
+                }
+                value.to_string()
+            }),
+        ];
+        let query_values = [];
+        let url = self.parameter_url(
+            "/api/v1/networks/{networkId}/nodes/{nodeId}/keys/revoke",
+            &path_values,
+            &query_values,
+        )?;
+        let response = self
+            .send_url(reqwest::Method::POST, url, Some(token), Some(body))
+            .await?;
+        match response.status {
+            204 => response.empty(),
+            400 | 401 | 403 | 409 => Err(response.problem()),
+            _ => Err(response.unexpected()),
+        }
+    }
+
     pub async fn revoke_other_account_sessions(
         &self,
         token: &str,
@@ -1909,6 +2948,71 @@ impl crate::Client {
         match response.status {
             204 => response.empty(),
             401 | 503 => Err(response.problem()),
+            _ => Err(response.unexpected()),
+        }
+    }
+
+    pub async fn rotate_node_keys(
+        &self,
+        body: &meshway_protocol::NodeRotationRequest,
+    ) -> Result<
+        meshway_protocol::NodeKeyMetadata,
+        crate::ClientError<meshway_protocol::ErrorResponse>,
+    > {
+        let response = self
+            .send(
+                reqwest::Method::POST,
+                "/agent-api/v1/auth/rotate",
+                None,
+                Some(body),
+            )
+            .await?;
+        match response.status {
+            200 => response.json(),
+            400 | 401 | 409 | 503 => Err(response.problem()),
+            _ => Err(response.unexpected()),
+        }
+    }
+
+    pub async fn select_node_routing_profile(
+        &self,
+        body: &meshway_protocol::RoutingSelectionRequest,
+        token: &str,
+    ) -> Result<
+        meshway_protocol::RoutingSelectionResponse,
+        crate::ClientError<meshway_protocol::ErrorResponse>,
+    > {
+        let response = self
+            .send(
+                reqwest::Method::POST,
+                "/agent-api/v1/routing-selection",
+                Some(token),
+                Some(body),
+            )
+            .await?;
+        match response.status {
+            200 => response.json(),
+            400 | 401 | 409 | 503 => Err(response.problem()),
+            _ => Err(response.unexpected()),
+        }
+    }
+
+    pub async fn submit_node_configuration_receipt(
+        &self,
+        body: &meshway_protocol::ReceiptRequest,
+        token: &str,
+    ) -> Result<(), crate::ClientError<meshway_protocol::ErrorResponse>> {
+        let response = self
+            .send(
+                reqwest::Method::POST,
+                "/agent-api/v1/configuration/receipts",
+                Some(token),
+                Some(body),
+            )
+            .await?;
+        match response.status {
+            204 => response.empty(),
+            400 | 401 | 409 | 503 => Err(response.problem()),
             _ => Err(response.unexpected()),
         }
     }

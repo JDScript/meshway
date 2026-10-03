@@ -33,7 +33,7 @@ export interface ClientOptions {
   maxBodyBytes?: number;
 }
 export interface Operation<Data, Problem> {
-  method: "GET" | "POST";
+  method: "GET" | "POST" | "DELETE";
   path: string;
   authenticated: boolean;
   successStatus: number;

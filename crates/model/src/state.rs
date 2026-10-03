@@ -1,17 +1,10 @@
 //! Source facts. These values neither grant authority nor contain transport secrets.
-use crate::{Digest, EventId, NodeId, ObservationId, PublicationId, Revision, Sequence};
+pub use crate::ConfigurationRef;
+use crate::{Digest, EventId, NodeId, ObservationId, PublicationId, Sequence};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::{collections::BTreeMap, net::SocketAddr};
 use utoipa::ToSchema;
-
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub struct ConfigurationRef {
-    pub revision: Revision,
-    pub execution_publication: PublicationId,
-    pub digest: Digest,
-}
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -29,8 +22,9 @@ pub enum TransportRole {
     Listen,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
-#[serde(tag = "kind", rename_all = "camelCase", deny_unknown_fields)]
+meshway_serde::tagged! {
+tag = "kind";
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Capability {
     Transport {
         roles: Vec<TransportRole>,
@@ -39,6 +33,7 @@ pub enum Capability {
     Feature {
         version: u16,
     },
+}
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, ToSchema)]

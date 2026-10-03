@@ -11,7 +11,6 @@ mod editing;
 mod editing_secrets;
 pub mod execution;
 pub use editing_secrets::*;
-pub mod execution;
 mod fields;
 mod object;
 mod source;
@@ -33,7 +32,6 @@ pub use identity::{
 pub use internet::{address_set_covers, internet_ranges};
 pub use meshway_transport_spec as transport;
 pub use meshway_transport_spec::{OuterSocket, TransportProtocol};
-pub use meshway_transport_spec as transport;
 pub use types::*;
 pub use validation::*;
 pub use view::*;

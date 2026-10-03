@@ -16,6 +16,7 @@ pub use networks::{MemberActions, MemberSummary, NetworkActions, NetworkSummary}
 pub mod observations;
 pub mod resources;
 pub mod state;
+pub mod timestamp;
 
 pub use digest::{Digest, InvalidDigest};
 pub use ids::{

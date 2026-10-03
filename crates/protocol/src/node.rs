@@ -18,7 +18,8 @@ wire_object! { #[derive(Clone,Debug,PartialEq,Eq)] pub struct NodeChallenge {
     pub id: ChallengeId, pub controller_id: KeyId, pub network_id: NetworkId,
     pub node_id: NodeId, pub key_id: KeyId, pub key_generation: Version,
     pub nonce: Digest, pub operation: ProofOperation, pub request_digest: Digest,
-    pub expires_at_ms: u64,
+    #[serde(rename="expiresAt", with="meshway_model::timestamp")]
+    pub expires_at_ms: u64 [value_type=chrono::DateTime<chrono::Utc>],
 } }
 wire_object! { pub struct NodeProof {
     pub challenge_id: ChallengeId,
@@ -31,7 +32,9 @@ wire_object! { #[derive(Clone,Debug,PartialEq,Eq)] pub struct NodeSessionIntent 
 wire_object! { pub struct NodeSessionRequest { pub intent: NodeSessionIntent, pub proof: NodeProof } }
 wire_object! { pub struct NodeSessionResponse {
     pub node_id: NodeId, pub network_id: NetworkId, pub key_id: KeyId,
-    pub token: WireSecret, pub expires_at_ms: u64,
+    pub token: WireSecret,
+    #[serde(rename="expiresAt", with="meshway_model::timestamp")]
+    pub expires_at_ms: u64 [value_type=chrono::DateTime<chrono::Utc>],
 } }
 wire_object! { #[derive(Clone,Debug,PartialEq,Eq)] pub struct NodeRotationIntent {
     pub request_id: RequestId, pub control_key: NodePublicKey, pub dataplane_key: NodePublicKey,
@@ -44,11 +47,16 @@ wire_object! { #[derive(Clone,Debug,PartialEq,Eq)] pub struct NodeKeyMetadata {
     pub control: BoundNodeKey, pub dataplane: BoundNodeKey,
 } }
 wire_object! { #[derive(Clone,Debug,PartialEq,Eq)] pub struct NodeInventoryView {
-    pub id: NodeId, pub network_id: NetworkId, pub registered_at_ms: u64,
+    pub id: NodeId, pub network_id: NetworkId,
+    #[serde(rename="registeredAt", with="meshway_model::timestamp")]
+    pub registered_at_ms: u64 [value_type=chrono::DateTime<chrono::Utc>],
     pub hostname: String, pub enabled: bool, pub identity: meshway_configuration::NodeIdentity,
     pub addresses: meshway_configuration::NodeAddresses, pub keys: NodeKeyMetadata,
     /// Revocation of the displayed latest keys; revoked configured nodes remain manageable.
-    pub control_key_revoked_at_ms: Option<u64>, pub dataplane_key_revoked_at_ms: Option<u64>,
+    #[serde(rename="controlKeyRevokedAt", with="meshway_model::timestamp::optional")]
+    pub control_key_revoked_at_ms: Option<u64> [value_type=Option<chrono::DateTime<chrono::Utc>>,required=true],
+    #[serde(rename="dataplaneKeyRevokedAt", with="meshway_model::timestamp::optional")]
+    pub dataplane_key_revoked_at_ms: Option<u64> [value_type=Option<chrono::DateTime<chrono::Utc>>,required=true],
     pub can_delete: bool,
 } }
 wire_object! { #[derive(Clone,Debug,PartialEq,Eq)] pub struct NodeInventoryResponse {

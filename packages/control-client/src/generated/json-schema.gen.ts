@@ -133,6 +133,28 @@ export const schemaDocument = {
         },
         "additionalProperties": false
       },
+      "AcquireInstanceRequest": {
+        "type": "object",
+        "required": [
+          "instanceId",
+          "capabilities"
+        ],
+        "properties": {
+          "capabilities": {
+            "type": "object",
+            "additionalProperties": {
+              "$ref": "#/components/schemas/Capability"
+            },
+            "propertyNames": {
+              "type": "string"
+            }
+          },
+          "instanceId": {
+            "$ref": "#/components/schemas/InstanceId"
+          }
+        },
+        "additionalProperties": false
+      },
       "ActivityAction": {
         "type": "string",
         "enum": [
@@ -462,6 +484,30 @@ export const schemaDocument = {
         },
         "additionalProperties": false
       },
+      "ApplyFailure": {
+        "type": "string",
+        "enum": [
+          "validation",
+          "storage",
+          "listeners",
+          "underlay",
+          "tun",
+          "dns",
+          "dataplane"
+        ]
+      },
+      "ApproveEnrollmentRequest": {
+        "type": "object",
+        "required": [
+          "networkId"
+        ],
+        "properties": {
+          "networkId": {
+            "$ref": "#/components/schemas/NetworkId"
+          }
+        },
+        "additionalProperties": false
+      },
       "AuthOptionsResponse": {
         "type": "object",
         "required": [
@@ -525,6 +571,177 @@ export const schemaDocument = {
         },
         "additionalProperties": false
       },
+      "BoundNodeKey": {
+        "type": "object",
+        "required": [
+          "id",
+          "generation",
+          "publicKey"
+        ],
+        "properties": {
+          "generation": {
+            "$ref": "#/components/schemas/Version"
+          },
+          "id": {
+            "$ref": "#/components/schemas/KeyId"
+          },
+          "publicKey": {
+            "$ref": "#/components/schemas/NodePublicKey"
+          }
+        },
+        "additionalProperties": false
+      },
+      "BusinessProtocol": {
+        "type": "string",
+        "enum": [
+          "tcp",
+          "udp",
+          "icmpEcho"
+        ]
+      },
+      "BusinessTarget": {
+        "oneOf": [
+          {
+            "type": "object",
+            "required": [
+              "node",
+              "type"
+            ],
+            "properties": {
+              "node": {
+                "$ref": "#/components/schemas/NodeId"
+              },
+              "type": {
+                "type": "string",
+                "enum": [
+                  "mesh"
+                ]
+              }
+            },
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "required": [
+              "address",
+              "type"
+            ],
+            "properties": {
+              "address": {
+                "$ref": "#/components/schemas/ExecutionAddress"
+              },
+              "type": {
+                "type": "string",
+                "enum": [
+                  "ip"
+                ]
+              }
+            },
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "required": [
+              "name",
+              "address",
+              "type"
+            ],
+            "properties": {
+              "address": {
+                "$ref": "#/components/schemas/ExecutionAddress"
+              },
+              "name": {
+                "type": "string"
+              },
+              "type": {
+                "type": "string",
+                "enum": [
+                  "domain"
+                ]
+              }
+            },
+            "additionalProperties": false
+          }
+        ]
+      },
+      "CancelDemandRequest": {
+        "type": "object",
+        "required": [
+          "instance",
+          "requestId"
+        ],
+        "properties": {
+          "instance": {
+            "$ref": "#/components/schemas/InstanceRequest"
+          },
+          "requestId": {
+            "$ref": "#/components/schemas/RequestId"
+          }
+        },
+        "additionalProperties": false
+      },
+      "Capability": {
+        "oneOf": [
+          {
+            "type": "object",
+            "required": [
+              "roles",
+              "streams",
+              "kind"
+            ],
+            "properties": {
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "transport"
+                ]
+              },
+              "roles": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/components/schemas/TransportRole"
+                }
+              },
+              "streams": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/components/schemas/StreamKind"
+                }
+              }
+            },
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "required": [
+              "version",
+              "kind"
+            ],
+            "properties": {
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "feature"
+                ]
+              },
+              "version": {
+                "type": "integer",
+                "format": "int32",
+                "minimum": 0
+              }
+            },
+            "additionalProperties": false
+          }
+        ]
+      },
+      "ChallengeId": {
+        "type": "string",
+        "format": "uuid",
+        "description": "One-use proof challenge identifier.\n\n This is an identifier, not a credential. Generation and authorization\n belong to the caller. Parsing rejects aliases rather than normalizing them.",
+        "maxLength": 36,
+        "minLength": 36,
+        "pattern": "^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+      },
       "ChangeEmailRequest": {
         "type": "object",
         "required": [
@@ -581,6 +798,26 @@ export const schemaDocument = {
         },
         "additionalProperties": false
       },
+      "ClientTls": {
+        "type": "object",
+        "required": [
+          "serverName",
+          "certificateChain",
+          "options"
+        ],
+        "properties": {
+          "certificateChain": {
+            "$ref": "#/components/schemas/SecretString"
+          },
+          "options": {
+            "$ref": "#/components/schemas/DialerTls"
+          },
+          "serverName": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": false
+      },
       "CompareConfigurationRequest": {
         "type": "object",
         "required": [
@@ -593,6 +830,22 @@ export const schemaDocument = {
           },
           "toRevision": {
             "$ref": "#/components/schemas/Revision"
+          }
+        },
+        "additionalProperties": false
+      },
+      "CompiledNode": {
+        "type": "object",
+        "required": [
+          "digest",
+          "configuration"
+        ],
+        "properties": {
+          "configuration": {
+            "$ref": "#/components/schemas/NodeConfiguration"
+          },
+          "digest": {
+            "$ref": "#/components/schemas/Digest"
           }
         },
         "additionalProperties": false
@@ -1109,6 +1362,26 @@ export const schemaDocument = {
         },
         "additionalProperties": false
       },
+      "ConfigurationRef": {
+        "type": "object",
+        "required": [
+          "revision",
+          "executionPublication",
+          "digest"
+        ],
+        "properties": {
+          "digest": {
+            "$ref": "#/components/schemas/Digest"
+          },
+          "executionPublication": {
+            "$ref": "#/components/schemas/PublicationId"
+          },
+          "revision": {
+            "$ref": "#/components/schemas/Revision"
+          }
+        },
+        "additionalProperties": false
+      },
       "ConfigurationRequest": {
         "oneOf": [
           {
@@ -1477,6 +1750,50 @@ export const schemaDocument = {
         },
         "additionalProperties": false
       },
+      "CreateEnrollmentKeyRequest": {
+        "type": "object",
+        "required": [
+          "requestId",
+          "tags",
+          "initialSettings",
+          "expiresAt"
+        ],
+        "properties": {
+          "expiresAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "initialSettings": {
+            "$ref": "#/components/schemas/InitialNodeSettings"
+          },
+          "requestId": {
+            "$ref": "#/components/schemas/RequestId"
+          },
+          "tags": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        },
+        "additionalProperties": false
+      },
+      "CreateEnrollmentRequest": {
+        "type": "object",
+        "required": [
+          "intent",
+          "signature"
+        ],
+        "properties": {
+          "intent": {
+            "$ref": "#/components/schemas/EnrollmentIntent"
+          },
+          "signature": {
+            "$ref": "#/components/schemas/WireSecret"
+          }
+        },
+        "additionalProperties": false
+      },
       "CreateJoinLinkRequest": {
         "type": "object",
         "required": [
@@ -1513,6 +1830,36 @@ export const schemaDocument = {
           },
           "requestId": {
             "$ref": "#/components/schemas/RequestId"
+          }
+        },
+        "additionalProperties": false
+      },
+      "DecisionDelta": {
+        "type": "object",
+        "required": [
+          "remove",
+          "upsert"
+        ],
+        "properties": {
+          "remove": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/RequestId"
+            }
+          },
+          "upsert": {
+            "type": "object",
+            "additionalProperties": {
+              "$ref": "#/components/schemas/DemandDecision"
+            },
+            "propertyNames": {
+              "type": "string",
+              "format": "uuid",
+              "description": "Request identifier.\n\n This is an identifier, not a credential. Generation and authorization\n belong to the caller. Parsing rejects aliases rather than normalizing them.",
+              "maxLength": 36,
+              "minLength": 36,
+              "pattern": "^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+            }
           }
         },
         "additionalProperties": false
@@ -1566,6 +1913,326 @@ export const schemaDocument = {
           },
           "topology": {
             "$ref": "#/components/schemas/TopologyDefault"
+          }
+        },
+        "additionalProperties": false
+      },
+      "DeleteNodeRequest": {
+        "type": "object",
+        "required": [
+          "requestId",
+          "expectedRevision"
+        ],
+        "properties": {
+          "expectedRevision": {
+            "$ref": "#/components/schemas/Revision"
+          },
+          "requestId": {
+            "$ref": "#/components/schemas/RequestId"
+          }
+        },
+        "additionalProperties": false
+      },
+      "DemandDecision": {
+        "oneOf": [
+          {
+            "type": "object",
+            "required": [
+              "permit",
+              "type"
+            ],
+            "properties": {
+              "permit": {
+                "$ref": "#/components/schemas/PathPermit"
+              },
+              "type": {
+                "type": "string",
+                "enum": [
+                  "permitted"
+                ]
+              }
+            },
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "required": [
+              "type"
+            ],
+            "properties": {
+              "type": {
+                "type": "string",
+                "enum": [
+                  "direct"
+                ]
+              }
+            },
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "required": [
+              "type"
+            ],
+            "properties": {
+              "type": {
+                "type": "string",
+                "enum": [
+                  "unmanaged"
+                ]
+              }
+            },
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "required": [
+              "reason",
+              "type"
+            ],
+            "properties": {
+              "reason": {
+                "$ref": "#/components/schemas/UnavailableReason"
+              },
+              "type": {
+                "type": "string",
+                "enum": [
+                  "unavailable"
+                ]
+              }
+            },
+            "additionalProperties": false
+          }
+        ]
+      },
+      "DemandRequest": {
+        "type": "object",
+        "required": [
+          "instance",
+          "requestId",
+          "target",
+          "protocol",
+          "profile",
+          "durationSeconds"
+        ],
+        "properties": {
+          "durationSeconds": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          },
+          "instance": {
+            "$ref": "#/components/schemas/InstanceRequest"
+          },
+          "port": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/Port"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "profile": {
+            "type": "string"
+          },
+          "protocol": {
+            "$ref": "#/components/schemas/BusinessProtocol"
+          },
+          "requestId": {
+            "$ref": "#/components/schemas/RequestId"
+          },
+          "target": {
+            "$ref": "#/components/schemas/BusinessTarget"
+          }
+        },
+        "additionalProperties": false
+      },
+      "DemandResponse": {
+        "type": "object",
+        "required": [
+          "publication",
+          "decision"
+        ],
+        "properties": {
+          "decision": {
+            "$ref": "#/components/schemas/DemandDecision"
+          },
+          "publication": {
+            "$ref": "#/components/schemas/PublicationId"
+          }
+        },
+        "additionalProperties": false
+      },
+      "DialCandidate": {
+        "type": "object",
+        "required": [
+          "peer",
+          "listenerKey",
+          "endpoints",
+          "priority",
+          "parameters"
+        ],
+        "properties": {
+          "endpoints": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Endpoint"
+            }
+          },
+          "listenerKey": {
+            "type": "string"
+          },
+          "parameters": {
+            "$ref": "#/components/schemas/DialParameters"
+          },
+          "peer": {
+            "$ref": "#/components/schemas/NodeId"
+          },
+          "priority": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          }
+        },
+        "additionalProperties": false
+      },
+      "DialParameters": {
+        "oneOf": [
+          {
+            "type": "object",
+            "required": [
+              "options",
+              "type"
+            ],
+            "properties": {
+              "options": {
+                "$ref": "#/components/schemas/NativeUdpDialer"
+              },
+              "type": {
+                "type": "string",
+                "enum": [
+                  "nativeUdp"
+                ]
+              }
+            },
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "required": [
+              "options",
+              "type"
+            ],
+            "properties": {
+              "options": {
+                "$ref": "#/components/schemas/NativeTcpDialer"
+              },
+              "type": {
+                "type": "string",
+                "enum": [
+                  "nativeTcp"
+                ]
+              }
+            },
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "required": [
+              "options",
+              "stream",
+              "flow",
+              "uuid",
+              "tls",
+              "type"
+            ],
+            "properties": {
+              "flow": {
+                "type": "string"
+              },
+              "options": {
+                "$ref": "#/components/schemas/VlessDialer"
+              },
+              "stream": {
+                "$ref": "#/components/schemas/VlessStream"
+              },
+              "tls": {
+                "$ref": "#/components/schemas/ClientTls"
+              },
+              "type": {
+                "type": "string",
+                "enum": [
+                  "vless"
+                ]
+              },
+              "uuid": {
+                "$ref": "#/components/schemas/SecretString"
+              },
+              "websocket": {
+                "oneOf": [
+                  {
+                    "$ref": "#/components/schemas/ListenerWebSocket"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              }
+            },
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "required": [
+              "options",
+              "password",
+              "tls",
+              "type"
+            ],
+            "properties": {
+              "options": {
+                "$ref": "#/components/schemas/TrojanDialer"
+              },
+              "password": {
+                "$ref": "#/components/schemas/SecretString"
+              },
+              "tls": {
+                "$ref": "#/components/schemas/ClientTls"
+              },
+              "type": {
+                "type": "string",
+                "enum": [
+                  "trojan"
+                ]
+              }
+            },
+            "additionalProperties": false
+          }
+        ]
+      },
+      "DialerDelta": {
+        "type": "object",
+        "required": [
+          "remove",
+          "upsert"
+        ],
+        "properties": {
+          "remove": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "upsert": {
+            "type": "object",
+            "additionalProperties": {
+              "$ref": "#/components/schemas/DialCandidate"
+            },
+            "propertyNames": {
+              "type": "string"
+            }
           }
         },
         "additionalProperties": false
@@ -1702,6 +2369,13 @@ export const schemaDocument = {
         },
         "additionalProperties": false
       },
+      "Digest": {
+        "type": "string",
+        "description": "A lossless 32-byte digest represented as exactly 64 lowercase hex digits.\n\nThis value does not compute hashes or define their input encoding or purpose.\nIn particular, serializability does not authorize publication of secret hashes.",
+        "maxLength": 64,
+        "minLength": 64,
+        "pattern": "^[0-9a-f]{64}$"
+      },
       "DnsConfiguration": {
         "type": "object",
         "required": [
@@ -1749,6 +2423,40 @@ export const schemaDocument = {
             "propertyNames": {
               "type": "string"
             }
+          }
+        },
+        "additionalProperties": false
+      },
+      "DnsExecution": {
+        "type": "object",
+        "required": [
+          "settings",
+          "meshHosts",
+          "associations",
+          "profile"
+        ],
+        "properties": {
+          "associations": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/TrustedDnsAssociation"
+            }
+          },
+          "meshHosts": {
+            "type": "object",
+            "additionalProperties": {
+              "$ref": "#/components/schemas/NodeAddresses"
+            },
+            "propertyNames": {
+              "type": "string"
+            }
+          },
+          "profile": {
+            "type": "string",
+            "description": "Regular resolution follows this selection; explicit resolver exceptions retain useWithExit."
+          },
+          "settings": {
+            "$ref": "#/components/schemas/DnsConfiguration"
           }
         },
         "additionalProperties": false
@@ -1851,6 +2559,259 @@ export const schemaDocument = {
         },
         "additionalProperties": false
       },
+      "EnrollmentDeviceProof": {
+        "type": "object",
+        "required": [
+          "verifier",
+          "signature"
+        ],
+        "properties": {
+          "signature": {
+            "$ref": "#/components/schemas/WireSecret"
+          },
+          "verifier": {
+            "$ref": "#/components/schemas/WireSecret"
+          }
+        },
+        "additionalProperties": false
+      },
+      "EnrollmentIntent": {
+        "type": "object",
+        "required": [
+          "id",
+          "controlKey",
+          "dataplaneKey",
+          "codeChallenge",
+          "hostname"
+        ],
+        "properties": {
+          "codeChallenge": {
+            "type": "string"
+          },
+          "controlKey": {
+            "$ref": "#/components/schemas/NodePublicKey"
+          },
+          "dataplaneKey": {
+            "$ref": "#/components/schemas/NodePublicKey"
+          },
+          "existing": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/ExistingNodeBinding"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "hostname": {
+            "type": "string"
+          },
+          "id": {
+            "$ref": "#/components/schemas/EnrollmentRequestId"
+          }
+        },
+        "additionalProperties": false
+      },
+      "EnrollmentKeyId": {
+        "type": "string",
+        "format": "uuid",
+        "description": "One-use enrollment key identifier, not the secret.\n\n This is an identifier, not a credential. Generation and authorization\n belong to the caller. Parsing rejects aliases rather than normalizing them.",
+        "maxLength": 36,
+        "minLength": 36,
+        "pattern": "^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+      },
+      "EnrollmentKeyResponse": {
+        "type": "object",
+        "required": [
+          "key",
+          "secretDelivery"
+        ],
+        "properties": {
+          "key": {
+            "$ref": "#/components/schemas/EnrollmentKeyView"
+          },
+          "secret": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/WireSecret"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "secretDelivery": {
+            "$ref": "#/components/schemas/SecretDelivery"
+          }
+        },
+        "additionalProperties": false
+      },
+      "EnrollmentKeyView": {
+        "type": "object",
+        "required": [
+          "id",
+          "tags",
+          "createdAt",
+          "expiresAt",
+          "revokedAt"
+        ],
+        "properties": {
+          "consumedRequestId": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/EnrollmentRequestId"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "createdAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "expiresAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "id": {
+            "$ref": "#/components/schemas/EnrollmentKeyId"
+          },
+          "revokedAt": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "tags": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        },
+        "additionalProperties": false
+      },
+      "EnrollmentKeysResponse": {
+        "type": "object",
+        "required": [
+          "items"
+        ],
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/EnrollmentKeyView"
+            }
+          }
+        },
+        "additionalProperties": false
+      },
+      "EnrollmentPhase": {
+        "type": "string",
+        "enum": [
+          "pending",
+          "approved",
+          "denied",
+          "consumed",
+          "expired"
+        ]
+      },
+      "EnrollmentPollResponse": {
+        "type": "object",
+        "required": [
+          "request"
+        ],
+        "properties": {
+          "code": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/WireSecret"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "nodeId": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/NodeId"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "request": {
+            "$ref": "#/components/schemas/EnrollmentRequestView"
+          }
+        },
+        "additionalProperties": false
+      },
+      "EnrollmentRequestId": {
+        "type": "string",
+        "format": "uuid",
+        "description": "Device authorization request identifier, not a credential.\n\n This is an identifier, not a credential. Generation and authorization\n belong to the caller. Parsing rejects aliases rather than normalizing them.",
+        "maxLength": 36,
+        "minLength": 36,
+        "pattern": "^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+      },
+      "EnrollmentRequestView": {
+        "type": "object",
+        "required": [
+          "id",
+          "hostname",
+          "controlKey",
+          "phase",
+          "expiresAt"
+        ],
+        "properties": {
+          "controlKey": {
+            "$ref": "#/components/schemas/NodePublicKey"
+          },
+          "expiresAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "hostname": {
+            "type": "string"
+          },
+          "id": {
+            "$ref": "#/components/schemas/EnrollmentRequestId"
+          },
+          "phase": {
+            "$ref": "#/components/schemas/EnrollmentPhase"
+          }
+        },
+        "additionalProperties": false
+      },
+      "EnrollmentResponse": {
+        "type": "object",
+        "required": [
+          "controllerId",
+          "networkId",
+          "nodeId",
+          "keys"
+        ],
+        "properties": {
+          "controllerId": {
+            "$ref": "#/components/schemas/KeyId"
+          },
+          "keys": {
+            "$ref": "#/components/schemas/NodeKeyMetadata"
+          },
+          "networkId": {
+            "$ref": "#/components/schemas/NetworkId"
+          },
+          "nodeId": {
+            "$ref": "#/components/schemas/NodeId"
+          }
+        },
+        "additionalProperties": false
+      },
       "ErrorResponse": {
         "type": "object",
         "required": [
@@ -1878,6 +2839,120 @@ export const schemaDocument = {
             "format": "int32",
             "maximum": 65535,
             "minimum": 0
+          }
+        },
+        "additionalProperties": false
+      },
+      "ExecutionAddress": {
+        "type": "string"
+      },
+      "ExistingNodeBinding": {
+        "type": "object",
+        "required": [
+          "networkId",
+          "nodeId",
+          "keyId",
+          "keyGeneration"
+        ],
+        "properties": {
+          "keyGeneration": {
+            "$ref": "#/components/schemas/Version"
+          },
+          "keyId": {
+            "$ref": "#/components/schemas/KeyId"
+          },
+          "networkId": {
+            "$ref": "#/components/schemas/NetworkId"
+          },
+          "nodeId": {
+            "$ref": "#/components/schemas/NodeId"
+          }
+        },
+        "additionalProperties": false
+      },
+      "InitialNodeSettings": {
+        "type": "object",
+        "required": [
+          "listeners"
+        ],
+        "properties": {
+          "hostname": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "listeners": {
+            "type": "object",
+            "additionalProperties": {
+              "$ref": "#/components/schemas/Listener"
+            },
+            "propertyNames": {
+              "type": "string"
+            }
+          }
+        },
+        "additionalProperties": false
+      },
+      "InstanceId": {
+        "type": "string",
+        "format": "uuid",
+        "description": "Runtime instance identifier.\n\n This is an identifier, not a credential. Generation and authorization\n belong to the caller. Parsing rejects aliases rather than normalizing them.",
+        "maxLength": 36,
+        "minLength": 36,
+        "pattern": "^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+      },
+      "InstanceLease": {
+        "type": "object",
+        "required": [
+          "instanceId",
+          "generation",
+          "expiresAt",
+          "executionExpiresAt"
+        ],
+        "properties": {
+          "executionExpiresAt": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "expiresAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "generation": {
+            "$ref": "#/components/schemas/Version"
+          },
+          "instanceId": {
+            "$ref": "#/components/schemas/InstanceId"
+          },
+          "target": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/ConfigurationRef"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "additionalProperties": false
+      },
+      "InstanceRequest": {
+        "type": "object",
+        "required": [
+          "instanceId",
+          "generation"
+        ],
+        "properties": {
+          "generation": {
+            "$ref": "#/components/schemas/Version"
+          },
+          "instanceId": {
+            "$ref": "#/components/schemas/InstanceId"
           }
         },
         "additionalProperties": false
@@ -2084,6 +3159,41 @@ export const schemaDocument = {
         },
         "additionalProperties": false
       },
+      "KeyAlgorithm": {
+        "type": "string",
+        "enum": [
+          "ed25519",
+          "x25519"
+        ]
+      },
+      "KeyEnrollmentRequest": {
+        "type": "object",
+        "required": [
+          "enrollmentKey",
+          "request",
+          "verifier"
+        ],
+        "properties": {
+          "enrollmentKey": {
+            "$ref": "#/components/schemas/WireSecret"
+          },
+          "request": {
+            "$ref": "#/components/schemas/CreateEnrollmentRequest"
+          },
+          "verifier": {
+            "$ref": "#/components/schemas/WireSecret"
+          }
+        },
+        "additionalProperties": false
+      },
+      "KeyId": {
+        "type": "string",
+        "format": "uuid",
+        "description": "Key record identifier; not key material.\n\n This is an identifier, not a credential. Generation and authorization\n belong to the caller. Parsing rejects aliases rather than normalizing them.",
+        "maxLength": 36,
+        "minLength": 36,
+        "pattern": "^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+      },
       "Listener": {
         "oneOf": [
           {
@@ -2282,6 +3392,31 @@ export const schemaDocument = {
             "additionalProperties": false
           }
         ]
+      },
+      "ListenerDelta": {
+        "type": "object",
+        "required": [
+          "remove",
+          "upsert"
+        ],
+        "properties": {
+          "remove": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "upsert": {
+            "type": "object",
+            "additionalProperties": {
+              "$ref": "#/components/schemas/PreparedListener"
+            },
+            "propertyNames": {
+              "type": "string"
+            }
+          }
+        },
+        "additionalProperties": false
       },
       "ListenerTls": {
         "type": "object",
@@ -2496,6 +3631,40 @@ export const schemaDocument = {
             "type": "array",
             "items": {
               "type": "string"
+            }
+          }
+        },
+        "additionalProperties": false
+      },
+      "LogicalPath": {
+        "type": "object",
+        "required": [
+          "nodes",
+          "dialCandidates"
+        ],
+        "properties": {
+          "dialCandidates": {
+            "type": "object",
+            "description": "Candidate keys grouped by the actual dial initiator, independent of business direction.",
+            "additionalProperties": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "propertyNames": {
+              "type": "string",
+              "format": "uuid",
+              "description": "Stable node identifier, independent of its addresses and keys.\n\n This is an identifier, not a credential. Generation and authorization\n belong to the caller. Parsing rejects aliases rather than normalizing them.",
+              "maxLength": 36,
+              "minLength": 36,
+              "pattern": "^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+            }
+          },
+          "nodes": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/NodeId"
             }
           }
         },
@@ -3119,6 +4288,336 @@ export const schemaDocument = {
         },
         "additionalProperties": false
       },
+      "NodeChallenge": {
+        "type": "object",
+        "required": [
+          "id",
+          "controllerId",
+          "networkId",
+          "nodeId",
+          "keyId",
+          "keyGeneration",
+          "nonce",
+          "operation",
+          "requestDigest",
+          "expiresAt"
+        ],
+        "properties": {
+          "controllerId": {
+            "$ref": "#/components/schemas/KeyId"
+          },
+          "expiresAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "id": {
+            "$ref": "#/components/schemas/ChallengeId"
+          },
+          "keyGeneration": {
+            "$ref": "#/components/schemas/Version"
+          },
+          "keyId": {
+            "$ref": "#/components/schemas/KeyId"
+          },
+          "networkId": {
+            "$ref": "#/components/schemas/NetworkId"
+          },
+          "nodeId": {
+            "$ref": "#/components/schemas/NodeId"
+          },
+          "nonce": {
+            "$ref": "#/components/schemas/Digest"
+          },
+          "operation": {
+            "$ref": "#/components/schemas/ProofOperation"
+          },
+          "requestDigest": {
+            "$ref": "#/components/schemas/Digest"
+          }
+        },
+        "additionalProperties": false
+      },
+      "NodeChallengeRequest": {
+        "type": "object",
+        "required": [
+          "networkId",
+          "nodeId",
+          "keyId",
+          "operation",
+          "requestDigest"
+        ],
+        "properties": {
+          "keyId": {
+            "$ref": "#/components/schemas/KeyId"
+          },
+          "networkId": {
+            "$ref": "#/components/schemas/NetworkId"
+          },
+          "nodeId": {
+            "$ref": "#/components/schemas/NodeId"
+          },
+          "operation": {
+            "$ref": "#/components/schemas/ProofOperation"
+          },
+          "requestDigest": {
+            "$ref": "#/components/schemas/Digest"
+          }
+        },
+        "additionalProperties": false
+      },
+      "NodeConfiguration": {
+        "type": "object",
+        "required": [
+          "networkId",
+          "nodeId",
+          "revision",
+          "publication",
+          "dependencyDigest",
+          "enabled",
+          "hostname",
+          "identity",
+          "addresses",
+          "selfKeys",
+          "listeners",
+          "dialers",
+          "peers",
+          "permits",
+          "decisions",
+          "dns",
+          "exitEnabled"
+        ],
+        "properties": {
+          "addresses": {
+            "$ref": "#/components/schemas/NodeAddresses"
+          },
+          "decisions": {
+            "type": "object",
+            "additionalProperties": {
+              "$ref": "#/components/schemas/DemandDecision"
+            },
+            "propertyNames": {
+              "type": "string",
+              "format": "uuid",
+              "description": "Request identifier.\n\n This is an identifier, not a credential. Generation and authorization\n belong to the caller. Parsing rejects aliases rather than normalizing them.",
+              "maxLength": 36,
+              "minLength": 36,
+              "pattern": "^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+            }
+          },
+          "dependencyDigest": {
+            "$ref": "#/components/schemas/Digest"
+          },
+          "dialers": {
+            "type": "object",
+            "additionalProperties": {
+              "$ref": "#/components/schemas/DialCandidate"
+            },
+            "propertyNames": {
+              "type": "string"
+            }
+          },
+          "dns": {
+            "$ref": "#/components/schemas/DnsExecution"
+          },
+          "enabled": {
+            "type": "boolean"
+          },
+          "exitEnabled": {
+            "type": "boolean"
+          },
+          "hostname": {
+            "type": "string"
+          },
+          "identity": {
+            "$ref": "#/components/schemas/NodeIdentity"
+          },
+          "listeners": {
+            "type": "object",
+            "additionalProperties": {
+              "$ref": "#/components/schemas/PreparedListener"
+            },
+            "propertyNames": {
+              "type": "string"
+            }
+          },
+          "networkId": {
+            "$ref": "#/components/schemas/NetworkId"
+          },
+          "nodeId": {
+            "$ref": "#/components/schemas/NodeId"
+          },
+          "peers": {
+            "type": "object",
+            "additionalProperties": {
+              "$ref": "#/components/schemas/PeerConfiguration"
+            },
+            "propertyNames": {
+              "type": "string",
+              "format": "uuid",
+              "description": "Stable node identifier, independent of its addresses and keys.\n\n This is an identifier, not a credential. Generation and authorization\n belong to the caller. Parsing rejects aliases rather than normalizing them.",
+              "maxLength": 36,
+              "minLength": 36,
+              "pattern": "^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+            }
+          },
+          "permits": {
+            "type": "object",
+            "description": "Includes origin, relay and receiver admission. Absence rejects a new flow.",
+            "additionalProperties": {
+              "$ref": "#/components/schemas/PathPermit"
+            },
+            "propertyNames": {
+              "type": "string",
+              "format": "uuid",
+              "description": "Request identifier.\n\n This is an identifier, not a credential. Generation and authorization\n belong to the caller. Parsing rejects aliases rather than normalizing them.",
+              "maxLength": 36,
+              "minLength": 36,
+              "pattern": "^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+            }
+          },
+          "publication": {
+            "$ref": "#/components/schemas/PublicationId"
+          },
+          "revision": {
+            "$ref": "#/components/schemas/Revision"
+          },
+          "selfKeys": {
+            "$ref": "#/components/schemas/TrustedNode"
+          }
+        },
+        "additionalProperties": false
+      },
+      "NodeConfigurationDelta": {
+        "type": "object",
+        "required": [
+          "networkId",
+          "nodeId",
+          "base",
+          "target",
+          "dependencyDigest",
+          "enabled",
+          "hostname",
+          "identity",
+          "addresses",
+          "selfKeys",
+          "exitEnabled",
+          "dns",
+          "listeners",
+          "dialers",
+          "peers",
+          "permits",
+          "decisions"
+        ],
+        "properties": {
+          "addresses": {
+            "$ref": "#/components/schemas/NodeAddresses"
+          },
+          "base": {
+            "$ref": "#/components/schemas/ConfigurationRef"
+          },
+          "decisions": {
+            "$ref": "#/components/schemas/DecisionDelta"
+          },
+          "dependencyDigest": {
+            "$ref": "#/components/schemas/Digest"
+          },
+          "dialers": {
+            "$ref": "#/components/schemas/DialerDelta"
+          },
+          "dns": {
+            "$ref": "#/components/schemas/DnsExecution"
+          },
+          "enabled": {
+            "type": "boolean"
+          },
+          "exitEnabled": {
+            "type": "boolean"
+          },
+          "hostname": {
+            "type": "string"
+          },
+          "identity": {
+            "$ref": "#/components/schemas/NodeIdentity"
+          },
+          "listeners": {
+            "$ref": "#/components/schemas/ListenerDelta"
+          },
+          "networkId": {
+            "$ref": "#/components/schemas/NetworkId"
+          },
+          "nodeId": {
+            "$ref": "#/components/schemas/NodeId"
+          },
+          "peers": {
+            "$ref": "#/components/schemas/PeerDelta"
+          },
+          "permits": {
+            "$ref": "#/components/schemas/PermitDelta"
+          },
+          "selfKeys": {
+            "$ref": "#/components/schemas/TrustedNode"
+          },
+          "target": {
+            "$ref": "#/components/schemas/ConfigurationRef"
+          }
+        },
+        "additionalProperties": false
+      },
+      "NodeConfigurationRequest": {
+        "type": "object",
+        "required": [
+          "instance"
+        ],
+        "properties": {
+          "base": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/ConfigurationRef"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "instance": {
+            "$ref": "#/components/schemas/InstanceRequest"
+          }
+        },
+        "additionalProperties": false
+      },
+      "NodeConfigurationResponse": {
+        "type": "object",
+        "required": [
+          "lease"
+        ],
+        "properties": {
+          "delta": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/NodeConfigurationDelta"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "full": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/CompiledNode",
+                "description": "Full replacement or omitted when the exact acknowledged target matches.\nA stale base always receives a complete value, never an unverified patch."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "lease": {
+            "$ref": "#/components/schemas/InstanceLease"
+          }
+        },
+        "additionalProperties": false
+      },
       "NodeId": {
         "type": "string",
         "format": "uuid",
@@ -3171,6 +4670,270 @@ export const schemaDocument = {
             "additionalProperties": false
           }
         ]
+      },
+      "NodeInventoryResponse": {
+        "type": "object",
+        "required": [
+          "items"
+        ],
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/NodeInventoryView"
+            }
+          }
+        },
+        "additionalProperties": false
+      },
+      "NodeInventoryView": {
+        "type": "object",
+        "required": [
+          "id",
+          "networkId",
+          "registeredAt",
+          "hostname",
+          "enabled",
+          "identity",
+          "addresses",
+          "keys",
+          "controlKeyRevokedAt",
+          "dataplaneKeyRevokedAt",
+          "canDelete"
+        ],
+        "properties": {
+          "addresses": {
+            "$ref": "#/components/schemas/NodeAddresses"
+          },
+          "canDelete": {
+            "type": "boolean"
+          },
+          "controlKeyRevokedAt": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time",
+            "description": "Revocation of the displayed latest keys; revoked configured nodes remain manageable."
+          },
+          "dataplaneKeyRevokedAt": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "enabled": {
+            "type": "boolean"
+          },
+          "hostname": {
+            "type": "string"
+          },
+          "id": {
+            "$ref": "#/components/schemas/NodeId"
+          },
+          "identity": {
+            "$ref": "#/components/schemas/NodeIdentity"
+          },
+          "keys": {
+            "$ref": "#/components/schemas/NodeKeyMetadata"
+          },
+          "networkId": {
+            "$ref": "#/components/schemas/NetworkId"
+          },
+          "registeredAt": {
+            "type": "string",
+            "format": "date-time"
+          }
+        },
+        "additionalProperties": false
+      },
+      "NodeKeyMetadata": {
+        "type": "object",
+        "required": [
+          "control",
+          "dataplane"
+        ],
+        "properties": {
+          "control": {
+            "$ref": "#/components/schemas/BoundNodeKey"
+          },
+          "dataplane": {
+            "$ref": "#/components/schemas/BoundNodeKey"
+          }
+        },
+        "additionalProperties": false
+      },
+      "NodeProof": {
+        "type": "object",
+        "required": [
+          "challengeId",
+          "signature"
+        ],
+        "properties": {
+          "challengeId": {
+            "$ref": "#/components/schemas/ChallengeId"
+          },
+          "signature": {
+            "$ref": "#/components/schemas/WireSecret",
+            "description": "64-byte Ed25519 signature encoded in unpadded base64url."
+          }
+        },
+        "additionalProperties": false
+      },
+      "NodePublicKey": {
+        "type": "object",
+        "description": "Canonical hex key bytes. Algorithms are checked against their purpose at binding.",
+        "required": [
+          "algorithm",
+          "bytes"
+        ],
+        "properties": {
+          "algorithm": {
+            "$ref": "#/components/schemas/KeyAlgorithm"
+          },
+          "bytes": {
+            "$ref": "#/components/schemas/Digest"
+          }
+        },
+        "additionalProperties": false
+      },
+      "NodePublicationProgress": {
+        "type": "object",
+        "required": [
+          "target",
+          "current",
+          "saved",
+          "applied",
+          "failed",
+          "freshness",
+          "lastReceivedAt"
+        ],
+        "properties": {
+          "applied": {
+            "type": "boolean"
+          },
+          "current": {
+            "type": "boolean"
+          },
+          "failed": {
+            "type": "boolean"
+          },
+          "freshness": {
+            "$ref": "#/components/schemas/ReceiptFreshness"
+          },
+          "lastReceivedAt": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "saved": {
+            "type": "boolean"
+          },
+          "target": {
+            "$ref": "#/components/schemas/ConfigurationRef"
+          }
+        },
+        "additionalProperties": false
+      },
+      "NodeRotationIntent": {
+        "type": "object",
+        "required": [
+          "requestId",
+          "controlKey",
+          "dataplaneKey"
+        ],
+        "properties": {
+          "controlKey": {
+            "$ref": "#/components/schemas/NodePublicKey"
+          },
+          "dataplaneKey": {
+            "$ref": "#/components/schemas/NodePublicKey"
+          },
+          "requestId": {
+            "$ref": "#/components/schemas/RequestId"
+          }
+        },
+        "additionalProperties": false
+      },
+      "NodeRotationRequest": {
+        "type": "object",
+        "required": [
+          "intent",
+          "oldProof",
+          "newSignature"
+        ],
+        "properties": {
+          "intent": {
+            "$ref": "#/components/schemas/NodeRotationIntent"
+          },
+          "newSignature": {
+            "$ref": "#/components/schemas/WireSecret"
+          },
+          "oldProof": {
+            "$ref": "#/components/schemas/NodeProof"
+          }
+        },
+        "additionalProperties": false
+      },
+      "NodeSessionIntent": {
+        "type": "object",
+        "required": [
+          "requestId"
+        ],
+        "properties": {
+          "requestId": {
+            "$ref": "#/components/schemas/RequestId"
+          }
+        },
+        "additionalProperties": false
+      },
+      "NodeSessionRequest": {
+        "type": "object",
+        "required": [
+          "intent",
+          "proof"
+        ],
+        "properties": {
+          "intent": {
+            "$ref": "#/components/schemas/NodeSessionIntent"
+          },
+          "proof": {
+            "$ref": "#/components/schemas/NodeProof"
+          }
+        },
+        "additionalProperties": false
+      },
+      "NodeSessionResponse": {
+        "type": "object",
+        "required": [
+          "nodeId",
+          "networkId",
+          "keyId",
+          "token",
+          "expiresAt"
+        ],
+        "properties": {
+          "expiresAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "keyId": {
+            "$ref": "#/components/schemas/KeyId"
+          },
+          "networkId": {
+            "$ref": "#/components/schemas/NetworkId"
+          },
+          "nodeId": {
+            "$ref": "#/components/schemas/NodeId"
+          },
+          "token": {
+            "$ref": "#/components/schemas/WireSecret"
+          }
+        },
+        "additionalProperties": false
       },
       "NodeSettings": {
         "type": "object",
@@ -3374,6 +5137,149 @@ export const schemaDocument = {
             "format": "int32",
             "maximum": 65535,
             "minimum": 0
+          }
+        },
+        "additionalProperties": false
+      },
+      "PathPermit": {
+        "type": "object",
+        "required": [
+          "demandId",
+          "source",
+          "sourceAddresses",
+          "target",
+          "protocol",
+          "profile",
+          "paths",
+          "expiresAt",
+          "replies"
+        ],
+        "properties": {
+          "demandId": {
+            "$ref": "#/components/schemas/RequestId"
+          },
+          "expiresAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "paths": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/LogicalPath"
+            }
+          },
+          "port": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/Port"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "profile": {
+            "type": "string"
+          },
+          "protocol": {
+            "$ref": "#/components/schemas/BusinessProtocol"
+          },
+          "replies": {
+            "$ref": "#/components/schemas/ReplyPolicy",
+            "description": "Always reverse the established complete path, never evaluate reverse routing for replies."
+          },
+          "source": {
+            "$ref": "#/components/schemas/NodeId"
+          },
+          "sourceAddresses": {
+            "$ref": "#/components/schemas/NodeAddresses"
+          },
+          "target": {
+            "$ref": "#/components/schemas/BusinessTarget"
+          }
+        },
+        "additionalProperties": false
+      },
+      "PeerConfiguration": {
+        "type": "object",
+        "required": [
+          "identity",
+          "addresses",
+          "controlKey",
+          "dataplaneKey"
+        ],
+        "properties": {
+          "addresses": {
+            "$ref": "#/components/schemas/NodeAddresses"
+          },
+          "controlKey": {
+            "$ref": "#/components/schemas/BoundNodeKey"
+          },
+          "dataplaneKey": {
+            "$ref": "#/components/schemas/BoundNodeKey"
+          },
+          "identity": {
+            "$ref": "#/components/schemas/NodeIdentity"
+          }
+        },
+        "additionalProperties": false
+      },
+      "PeerDelta": {
+        "type": "object",
+        "required": [
+          "remove",
+          "upsert"
+        ],
+        "properties": {
+          "remove": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/NodeId"
+            }
+          },
+          "upsert": {
+            "type": "object",
+            "additionalProperties": {
+              "$ref": "#/components/schemas/PeerConfiguration"
+            },
+            "propertyNames": {
+              "type": "string",
+              "format": "uuid",
+              "description": "Stable node identifier, independent of its addresses and keys.\n\n This is an identifier, not a credential. Generation and authorization\n belong to the caller. Parsing rejects aliases rather than normalizing them.",
+              "maxLength": 36,
+              "minLength": 36,
+              "pattern": "^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+            }
+          }
+        },
+        "additionalProperties": false
+      },
+      "PermitDelta": {
+        "type": "object",
+        "required": [
+          "remove",
+          "upsert"
+        ],
+        "properties": {
+          "remove": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/RequestId"
+            }
+          },
+          "upsert": {
+            "type": "object",
+            "additionalProperties": {
+              "$ref": "#/components/schemas/PathPermit"
+            },
+            "propertyNames": {
+              "type": "string",
+              "format": "uuid",
+              "description": "Request identifier.\n\n This is an identifier, not a credential. Generation and authorization\n belong to the caller. Parsing rejects aliases rather than normalizing them.",
+              "maxLength": 36,
+              "minLength": 36,
+              "pattern": "^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+            }
           }
         },
         "additionalProperties": false
@@ -4427,6 +6333,13 @@ export const schemaDocument = {
         },
         "additionalProperties": false
       },
+      "ProofOperation": {
+        "type": "string",
+        "enum": [
+          "session",
+          "rotate"
+        ]
+      },
       "PublicationId": {
         "type": "string",
         "format": "uuid",
@@ -4434,6 +6347,127 @@ export const schemaDocument = {
         "maxLength": 36,
         "minLength": 36,
         "pattern": "^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+      },
+      "PublicationProgress": {
+        "type": "object",
+        "required": [
+          "publication",
+          "revision",
+          "sequence",
+          "withdrawnAt",
+          "nodes"
+        ],
+        "properties": {
+          "nodes": {
+            "type": "object",
+            "additionalProperties": {
+              "$ref": "#/components/schemas/NodePublicationProgress"
+            },
+            "propertyNames": {
+              "type": "string",
+              "format": "uuid",
+              "description": "Stable node identifier, independent of its addresses and keys.\n\n This is an identifier, not a credential. Generation and authorization\n belong to the caller. Parsing rejects aliases rather than normalizing them.",
+              "maxLength": 36,
+              "minLength": 36,
+              "pattern": "^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+            }
+          },
+          "publication": {
+            "$ref": "#/components/schemas/PublicationId"
+          },
+          "revision": {
+            "$ref": "#/components/schemas/Revision"
+          },
+          "sequence": {
+            "$ref": "#/components/schemas/Sequence"
+          },
+          "withdrawnAt": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          }
+        },
+        "additionalProperties": false
+      },
+      "ReceiptFreshness": {
+        "type": "string",
+        "enum": [
+          "current",
+          "expired",
+          "awaitingInstance",
+          "superseded"
+        ]
+      },
+      "ReceiptPhase": {
+        "type": "string",
+        "enum": [
+          "saved",
+          "applied",
+          "failed"
+        ]
+      },
+      "ReceiptRequest": {
+        "type": "object",
+        "required": [
+          "instance",
+          "target",
+          "phase",
+          "attempt",
+          "sequence",
+          "reportedAt"
+        ],
+        "properties": {
+          "attempt": {
+            "$ref": "#/components/schemas/Version",
+            "description": "Increasing application attempt within this instance/target."
+          },
+          "failure": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/ApplyFailure"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "instance": {
+            "$ref": "#/components/schemas/InstanceRequest"
+          },
+          "phase": {
+            "$ref": "#/components/schemas/ReceiptPhase"
+          },
+          "reportedAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "sequence": {
+            "$ref": "#/components/schemas/Sequence",
+            "description": "Increasing result sequence within the attempt; delivery retries reuse it."
+          },
+          "target": {
+            "$ref": "#/components/schemas/ConfigurationRef"
+          }
+        },
+        "additionalProperties": false
+      },
+      "RedeemEnrollmentRequest": {
+        "type": "object",
+        "required": [
+          "proof",
+          "code"
+        ],
+        "properties": {
+          "code": {
+            "$ref": "#/components/schemas/WireSecret"
+          },
+          "proof": {
+            "$ref": "#/components/schemas/EnrollmentDeviceProof"
+          }
+        },
+        "additionalProperties": false
       },
       "RegisterRequest": {
         "type": "object",
@@ -4525,6 +6559,12 @@ export const schemaDocument = {
         },
         "additionalProperties": false
       },
+      "ReplyPolicy": {
+        "type": "string",
+        "enum": [
+          "statefulExactReversePath"
+        ]
+      },
       "RequestId": {
         "type": "string",
         "format": "uuid",
@@ -4538,6 +6578,22 @@ export const schemaDocument = {
         "description": "A positive configuration revision.",
         "maximum": 9007199254740991,
         "minimum": 1
+      },
+      "RevokeNodeKeyRequest": {
+        "type": "object",
+        "required": [
+          "keyId",
+          "expectedGeneration"
+        ],
+        "properties": {
+          "expectedGeneration": {
+            "$ref": "#/components/schemas/Version"
+          },
+          "keyId": {
+            "$ref": "#/components/schemas/KeyId"
+          }
+        },
+        "additionalProperties": false
       },
       "RouteAction": {
         "oneOf": [
@@ -4658,6 +6714,52 @@ export const schemaDocument = {
         },
         "additionalProperties": false
       },
+      "RoutingSelectionRequest": {
+        "type": "object",
+        "required": [
+          "instance",
+          "profile"
+        ],
+        "properties": {
+          "expectedVersion": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/Version"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "instance": {
+            "$ref": "#/components/schemas/InstanceRequest"
+          },
+          "profile": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": false
+      },
+      "RoutingSelectionResponse": {
+        "type": "object",
+        "required": [
+          "version",
+          "profile",
+          "publication"
+        ],
+        "properties": {
+          "profile": {
+            "type": "string"
+          },
+          "publication": {
+            "$ref": "#/components/schemas/PublicationId"
+          },
+          "version": {
+            "$ref": "#/components/schemas/Version"
+          }
+        },
+        "additionalProperties": false
+      },
       "RuleSet": {
         "oneOf": [
           {
@@ -4723,9 +6825,22 @@ export const schemaDocument = {
           "mihomo-ipcidr"
         ]
       },
+      "SecretDelivery": {
+        "type": "string",
+        "enum": [
+          "available",
+          "unavailable"
+        ]
+      },
       "SecretString": {
         "type": "string",
         "description": "Serialization is secret-bearing and requires protected storage."
+      },
+      "Sequence": {
+        "type": "integer",
+        "description": "A nonnegative sequence number.",
+        "maximum": 9007199254740991,
+        "minimum": 0
       },
       "SessionId": {
         "type": "string",
@@ -4797,6 +6912,14 @@ export const schemaDocument = {
           }
         },
         "additionalProperties": false
+      },
+      "StreamKind": {
+        "type": "string",
+        "enum": [
+          "tcp",
+          "websocket",
+          "udp"
+        ]
       },
       "TcpKeepAlive": {
         "type": "object",
@@ -4945,6 +7068,13 @@ export const schemaDocument = {
           "trojan"
         ]
       },
+      "TransportRole": {
+        "type": "string",
+        "enum": [
+          "dial",
+          "listen"
+        ]
+      },
       "TrojanDialer": {
         "type": "object",
         "properties": {
@@ -5030,6 +7160,88 @@ export const schemaDocument = {
         "type": "string",
         "enum": [
           "tcp"
+        ]
+      },
+      "TrustedDnsAssociation": {
+        "type": "object",
+        "required": [
+          "networkId",
+          "configurationRevision",
+          "source",
+          "name",
+          "cnameChain",
+          "addresses",
+          "expiresAt"
+        ],
+        "properties": {
+          "addresses": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ExecutionAddress"
+            }
+          },
+          "cnameChain": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "configurationRevision": {
+            "$ref": "#/components/schemas/Revision"
+          },
+          "expiresAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "name": {
+            "type": "string"
+          },
+          "networkId": {
+            "$ref": "#/components/schemas/NetworkId"
+          },
+          "source": {
+            "$ref": "#/components/schemas/NodeId"
+          }
+        },
+        "additionalProperties": false
+      },
+      "TrustedNode": {
+        "type": "object",
+        "required": [
+          "controlKey",
+          "dataplaneKey",
+          "capabilities"
+        ],
+        "properties": {
+          "capabilities": {
+            "type": "object",
+            "description": "Authenticated acquire declaration; reported State never overrides it.",
+            "additionalProperties": {
+              "$ref": "#/components/schemas/Capability"
+            },
+            "propertyNames": {
+              "type": "string"
+            }
+          },
+          "controlKey": {
+            "$ref": "#/components/schemas/BoundNodeKey"
+          },
+          "dataplaneKey": {
+            "$ref": "#/components/schemas/BoundNodeKey"
+          }
+        },
+        "additionalProperties": false
+      },
+      "UnavailableReason": {
+        "type": "string",
+        "enum": [
+          "unauthorized",
+          "noPath",
+          "missingCapability",
+          "missingDependency",
+          "missingDns",
+          "invalidProfile",
+          "inactiveNode"
         ]
       },
       "UserId": {

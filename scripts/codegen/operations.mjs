@@ -26,8 +26,8 @@ export function operationModel(document) {
     return reference(content["application/json"].schema);
   }
   for (const [path, item] of Object.entries(document.paths)) {
-    keys(item, ["get", "post", "summary", "description", "parameters"], "path");
-    for (const method of ["get", "post"]) {
+    keys(item, ["get", "post", "delete", "summary", "description", "parameters"], "path");
+    for (const method of ["get", "post", "delete"]) {
       if (!Object.hasOwn(item, method)) continue;
       const op = item[method];
       keys(op, ["operationId", "summary", "description", "tags", "security", "requestBody", "responses", "deprecated", "parameters", "x-meshway-sse"], "operation");
@@ -57,7 +57,7 @@ export function operationModel(document) {
       }
       if (op.requestBody !== undefined) {
         keys(op.requestBody, ["required", "content", "description"], "request body");
-        if (method !== "post" || op.requestBody.required !== true) throw new Error("Only required POST JSON bodies are supported");
+        if (!["post", "delete"].includes(method) || op.requestBody.required !== true) throw new Error("Only required mutation JSON bodies are supported");
         body = component(op.requestBody.content);
       }
       const responses = Object.entries(op.responses).map(([status, response]) => {

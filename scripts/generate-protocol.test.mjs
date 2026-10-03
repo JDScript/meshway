@@ -42,6 +42,7 @@ function fixture() {
       "/fixture/value": { post: { operationId: "writeFixture", security: [{ FixtureBearer: [] }], requestBody: { required: true, content: content("FixtureInput") }, responses: { "201": { description: "Created", content: content("FixtureOutput") }, "409": { description: "Conflict", content: content("FixtureProblem") } } } },
       "/fixture/clear": { post: { operationId: "clearFixture", responses: { "204": { description: "Empty" } } } },
       "/fixture/read": { get: { operationId: "readFixture", responses: { "200": { description: "OK", content: content("FixtureOutput") } } } },
+      "/fixture/remove": { delete: { operationId: "removeFixture", security: [{ FixtureBearer: [] }], requestBody: { required: true, content: content("FixtureInput") }, responses: { "204": { description: "Removed" } } } },
     },
   };
 }
@@ -128,12 +129,13 @@ test("integer schemas must prove a lossless JS-safe range before emission", () =
 test("strict generated TypeScript and operation success/error result inference", async t => {
   const { packageRoot, files } = await generatedFixture(t);
   await writeFile(join(packageRoot, "consumer.ts"), `import { ControlClient } from "./src/transport.ts";
-import { writeFixture, clearFixture } from "./src/generated/operations.gen.ts";
+import { writeFixture, clearFixture, removeFixture } from "./src/generated/operations.gen.ts";
 declare const client: ControlClient;
 const result = await writeFixture(client, {text: "a"}, {token: "secret"});
 if (result.ok) { const id: string = result.data.id; void id; }
 else if (result.error.kind === "http" && result.error.problem?.code === "conflict") { const revision: number = result.error.problem.params.revision; void revision; }
 const empty = await clearFixture(client);
+await removeFixture(client, {text: "a"}, {token: "secret"});
 if (empty.ok) { const value: undefined = empty.data; void value; }
 // @ts-expect-error authenticated operation requires token
 writeFixture(client, {text: "a"}, {});

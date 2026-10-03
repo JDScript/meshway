@@ -23,7 +23,9 @@
 
 管理／配置候选现已扩展真实 HTTP／SQLite 操作：账户读取、邮箱／密码修改、会话分页及撤销、主机 CLI 密码恢复、角色变更、一次性加入链接、无 Node 依赖的移除／离网、配置普通视图与显式秘密 source、JSONC／强类型编辑校验及 CAS 保存、版本分页／对照／恢复、账户／网络活动、配置 schema 与承载目录。名称规则通过 `getAuthOptions.networkNameRules` 发布；成员 actions 由当前权限推导，网络／成员列表 total 在同一查询事务内按创建上界和当前权限计算。邮箱同步更新可读引用但保留稳定主体绑定；恢复历史版本不会把旧邮箱绑定到同名新账户。
 
-该候选仍未完成联合接线：Node 清单、永久接入撤销、地址退出、执行发布及资源／事件事务依赖尚未接入；含 Node 或远端规则集的配置请求明确返回不可用，不伪造空发布。`reassignAddresses`／`rotateMaterial` 与完整预览计划尚未成为可用 HTTP 操作；已有纯地址分配和 TLS／撤销指纹校验辅助不代表这些流程已交付。Node 接入和 SSE 亦不属于本候选的可用范围。
+Node 控制流程已整合真实 HTTP／SQLite：签名接入、PKCE 批准与兑换、接入密钥、持钥会话与轮换恢复、实例／lease、完整执行目标与增量、demand、saved／applied／failed 回执、永久删除及成员删除联动。需求重试不重复扰动无关节点，回执按尝试／序号处理乱序；节点身份与策略引用使用独立的稳定绑定。当前生成物包含 63 个路径、68 个操作，精确方法、输入与错误以实际路由导出的 OpenAPI 为准。
+
+State／观测／资源的生产 provider 与主 Router、完整配置事件通知、远端规则集及可信 DNS／GeoIP 输入仍待接通。`reassignAddresses`／`rotateMaterial` 与完整预览计划尚未成为可用 HTTP 操作；地址退出安全下界仍需实际 Agent 证据。上述 Node 控制流程及编译／回执测试不等于 Agent 安装、TUN 或真实组网验收，网络 SSE 尚未作为生产操作导出。
 
 错误为 `ErrorResponse { requestId, status, problem: { code, params, message } }`；requestId 仅在其安全生成失败时为 null。请求和响应对象拒绝数组表示、重复字段和未知字段。
 
