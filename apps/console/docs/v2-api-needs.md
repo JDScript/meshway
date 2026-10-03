@@ -437,3 +437,18 @@ console 的确认弹窗需要显示"该成员的 N 台设备将……"，因此�
 | GET 与 SSE 类型 | 复用 entity／settings／state 片段；entity 元数据及 actions 与运行报告分开更新，避免权限更新覆盖更新的 NodeState。 |
 
 `api/events.md` 同步了实体首屏、生命周期／activity 通知、changedPointers／cause、保活间隔和 reset／关闭原因；拼写已修正。实现仍以之后的 Rust 契约／生成 SDK 为准，本次提交是完整设计与跨线程答复，不是已上线 API。
+
+## Console 第三轮复核（2026-10-03）
+
+协调线程的收敛答复逐项核对过，都已写进 `docs/v2`：`cause`、按 revision 汇总的进度、`validate.preview`、表单秘密只写、JSONC 只做整份文档、成员移除的影响、安装命令、hostname 加后缀、recentLinks 走 history/query、两个 inspect 接口、`entities.delta`。剩下两处小的不一致：
+
+- **进度的实时推送。** `configuration.progress` 仍按 publication 推送，按 revision 去重的汇总只能 GET。需要选一种写法：
+  - 事件里带上 `revision` 和同一份去重汇总；或者
+  - 写明 console 收到进度事件后（合并短时间内的多次事件）重新读取 `GET /configuration/revisions/{revision}/progress`。
+- **`api.md` 成员表的两行。**
+  - `members/{membershipId}/remove` 一行仍写"联动 User 身份节点资格"，应改为与第 60 行一致的"永久删除其当前 User 身份设备，Tag 设备保留"。
+  - `leave` 一行也要写明会删除本人的 User 身份设备，console 在确认弹窗里显示本人的 removalImpact。
+
+## 协调线程最终收尾（2026-10-03）
+
+主批答复与 V2 文档已提交 `82a64e7`。第三轮两项已补：configuration.progress 带 revision 与服务端去重 summary，复用按 revision GET 的类型／计算，节点变化仍按片段推送，Console 不额外 GET 或自行汇总；remove／leave 表格已明确永久删除当前 User 身份设备、保留 Tag 设备及 removalImpact。以下提交包含本次收尾，后续按提交内容核对。

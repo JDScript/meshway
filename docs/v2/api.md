@@ -49,8 +49,8 @@ session token／摘要不进入列表、URL 或活动记录。会话列表返回
 | `POST /networks/{networkId}/rename` | 网络管理权限 | 修改网络实体显示名 |
 | `GET /networks/{networkId}/members` | 网络成员视图权限 | 成员列表 |
 | `POST /networks/{networkId}/members/{membershipId}/role` | 角色管理权限 | 调整角色，保护最后 Owner |
-| `POST /networks/{networkId}/members/{membershipId}/remove` | 成员管理权限 | 移除这次 membership，联动 User 身份节点资格 |
-| `POST /networks/{networkId}/leave` | 成员本人 | 离开网络；不复活旧 membership／批准 |
+| `POST /networks/{networkId}/members/{membershipId}/remove` | 成员管理权限 | 撤销 membership 并永久删除其当前 User 身份设备，Tag 设备保留 |
+| `POST /networks/{networkId}/leave` | 成员本人 | 离网并永久删除本人的 User 身份设备；提供本人 removalImpact，保护最后 Owner |
 | `GET /networks/{networkId}/join-links` | 成员管理权限 | 加入链接元数据、固定角色／期限／消费状态 |
 | `POST /networks/{networkId}/join-links` | 成员管理权限 | role、expiresIn、requestId，首次返回一次性原值 |
 | `POST /networks/{networkId}/join-links/{linkId}/revoke` | 成员管理权限 | 撤销未消费链接；不移除已加入成员 |

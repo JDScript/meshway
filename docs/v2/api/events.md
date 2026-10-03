@@ -67,7 +67,7 @@ JSON `data` 使用 Rust 定义的封闭判别联合，以 `type` 区分。可以
 | `sync.ready` | 完整批次结束、cursor、heartbeatIntervalMs／disconnectAfterMs；启用本批视图 |
 | `state.delta` | baseCursor、updated、removed；按节点替换完整可见项，显式删除已移除／不可见项；过期按 freshness 表达 |
 | `configuration.changed` | 已提交的新 revision、时间、允许显示的修改者／请求关联；使旧配置缓存过时 |
-| `configuration.progress` | publication／目标、真实逐节点阶段与新鲜度；统计范围随权限裁剪 |
+| `configuration.progress` | revision、服务端去重 summary、相关 publication／逐节点变化与新鲜度；统计范围随权限裁剪 |
 | `node.registered` / `node.deleted` | 当前有权读取的生命周期通知；实体缓存以 entities.delta 更新 |
 | `members.changed` | 可见成员／角色变化通知；新的成员／actions 随 entities.delta 发送 |
 | `enrollmentKey.consumed` | 有权查看该密钥的订阅者收到安全的消费 Node 引用 |
@@ -129,6 +129,8 @@ baseCursor 对齐上一条已应用的流事件（包含通知事件），不是
 `configuration.changed` 表示期望配置已受理，不能据此显示“全部节点应用成功”。`configuration.progress` 跟踪[普通应用流程](/v2/configuration-reference/deployment)：节点独立拉取、校验、保存、应用并回报，offline／未确认状态如实展示。
 
 按 publication 的固定目标集合与各 Node 最新有效回报计算人数，重复读取／重放不能加一。新目标／重规划使用新 publication 并说明替代关系；后来 demand／refresh 的发布不自动加入原配置应用的分母。
+
+配置应用事件同时携带 revision 和服务端按该次应用去重的 summary，与 `GET /configuration/revisions/{revision}/progress` 使用同一汇总类型／计算来源；包括 targetCount、各阶段计数和 full／partial 范围。逐节点只推变化的同类型片段，Console 替换 summary 并更新节点，不合并多个 publication 自算人数，也不为每条进度事件再发 GET。后续 demand／refresh 的独立事件不改写这个配置应用汇总。
 
 首次 sync／重连读取当前进度，不要求重放全部中间步骤才能恢复页面。关闭页面停止订阅，节点继续同步已受理目标；SSE 只通知真实结果，不承担应用许可或提交确认。
 
