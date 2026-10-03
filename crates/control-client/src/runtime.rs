@@ -1,6 +1,6 @@
 use futures_util::StreamExt;
 use reqwest::{Method, Url, header};
-use reqwest_middleware::ClientWithMiddleware;
+use reqwest_middleware::{ClientBuilder, ClientWithMiddleware, Middleware};
 use serde::{Serialize, de::DeserializeOwned};
 use std::{fmt, io::Write};
 
@@ -47,9 +47,10 @@ impl<P> fmt::Display for ClientError<P> {
 }
 impl<P> std::error::Error for ClientError<P> {}
 
-/// Caller supplies the HTTP client, including protected sockets/middleware.
-/// Configure redirects off and a timeout on that client. Dropping an operation
-/// future cancels its pending send/read; there are no detached request tasks.
+/// Caller supplies the HTTP builder with protected sockets/resolver and timeout.
+/// The SDK disables redirects before building that exact client. Middleware can
+/// be attached with `with_middleware` without replacing the protected client.
+/// Dropping an operation future cancels its pending send/read; no detached tasks.
 #[derive(Clone)]
 pub struct Client {
     base: Url,
@@ -60,7 +61,7 @@ pub struct Client {
 impl Client {
     pub fn new(
         base: &str,
-        http: ClientWithMiddleware,
+        http: reqwest::ClientBuilder,
         max_body_bytes: usize,
     ) -> Result<Self, ClientError<std::convert::Infallible>> {
         let base = Url::parse(base).map_err(|_| ClientError::Configuration)?;
@@ -75,11 +76,22 @@ impl Client {
         {
             return Err(ClientError::Configuration);
         }
+        let http = http
+            .redirect(reqwest::redirect::Policy::none())
+            .build()
+            .map_err(|_| ClientError::Configuration)?;
         Ok(Self {
             base,
-            http,
+            http: ClientBuilder::new(http).build(),
             limit: max_body_bytes,
         })
+    }
+
+    pub fn with_middleware<M: Middleware>(mut self, middleware: M) -> Self {
+        self.http = ClientBuilder::from_client(self.http)
+            .with(middleware)
+            .build();
+        self
     }
 
     // Kept crate-private: only generated operations provide paths and wire types.
@@ -107,7 +119,7 @@ impl Client {
             .map_err(|_| ClientError::Configuration)?;
         let mut request = self
             .http
-            .request(method, url.clone())
+            .request(method, url)
             .header(header::ACCEPT, "application/json");
         if let Some(token) = token {
             if token.is_empty() || !token.bytes().all(|b| (0x21..=0x7e).contains(&b)) {
@@ -133,7 +145,9 @@ impl Client {
             .await
             .map_err(|_| ClientError::Network { status: None })?;
         let status = response.status().as_u16();
-        if response.url() != &url {
+        // Redirects are never followed by the underlying client. Reject their
+        // response immediately too, even if its body never reaches EOF.
+        if response.status().is_redirection() {
             return Err(ClientError::Http {
                 status,
                 problem: None,
@@ -145,6 +159,23 @@ impl Client {
             .and_then(|v| v.to_str().ok())
             .and_then(|v| v.split(';').next())
             .is_some_and(|v| v.trim().eq_ignore_ascii_case("application/json"));
+        if status == 204 {
+            return Ok(Response {
+                status,
+                bytes: Vec::new(),
+                json: false,
+            });
+        }
+        if !json {
+            return Err(if response.status().is_success() {
+                ClientError::Decode { status }
+            } else {
+                ClientError::Http {
+                    status,
+                    problem: None,
+                }
+            });
+        }
         if response
             .content_length()
             .is_some_and(|size| size > self.limit as u64)
@@ -249,13 +280,13 @@ mod tests {
         Router,
         body::Body,
         http::{HeaderMap, Response as HttpResponse},
-        routing::get,
+        routing::{any, get, post},
     };
     use serde::Deserialize;
     use std::{
         convert::Infallible,
         sync::{
-            Arc,
+            Arc, Mutex,
             atomic::{AtomicBool, Ordering},
         },
         time::Duration,
@@ -278,26 +309,18 @@ mod tests {
             self.0.abort();
         }
     }
-    async fn server(router: Router, limit: usize) -> (Client, Server) {
+    async fn start_server(router: Router) -> (String, Server) {
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let base = format!("http://{}", listener.local_addr().unwrap());
         let handle = tokio::spawn(async move {
             axum::serve(listener, router).await.unwrap();
         });
-        let http = reqwest::Client::builder()
-            .redirect(reqwest::redirect::Policy::none())
-            .timeout(Duration::from_secs(2))
-            .build()
-            .unwrap();
-        (
-            Client::new(
-                &base,
-                reqwest_middleware::ClientBuilder::new(http).build(),
-                limit,
-            )
-            .unwrap(),
-            Server(handle),
-        )
+        (base, Server(handle))
+    }
+    async fn server(router: Router, limit: usize) -> (Client, Server) {
+        let (base, server) = start_server(router).await;
+        let http = reqwest::Client::builder().timeout(Duration::from_secs(2));
+        (Client::new(&base, http, limit).unwrap(), server)
     }
     async fn fetch(client: &Client, path: &str) -> Result<Response, ClientError<Problem>> {
         client.send(Method::GET, path, None, None::<&()>).await
@@ -454,6 +477,104 @@ mod tests {
         ));
     }
 
+    fn marker_middleware<'a>(
+        mut request: reqwest::Request,
+        extensions: &'a mut axum::http::Extensions,
+        next: reqwest_middleware::Next<'a>,
+    ) -> futures_util::future::BoxFuture<'a, reqwest_middleware::Result<reqwest::Response>> {
+        request.headers_mut().insert(
+            "x-caller-middleware",
+            header::HeaderValue::from_static("active"),
+        );
+        next.run(request, extensions)
+    }
+
+    #[tokio::test]
+    async fn sdk_blocks_307_and_308_before_forwarding_passwords_and_preserves_caller_stack() {
+        let target_requests = Arc::new(Mutex::new(Vec::new()));
+        let received = target_requests.clone();
+        let (target, _target_server) = start_server(Router::new().route(
+            "/sink",
+            any(move |method: Method, body: String| {
+                let received = received.clone();
+                async move {
+                    received.lock().unwrap().push((method, body));
+                    json(200, r#"{"value":"redirected"}"#)
+                }
+            }),
+        ))
+        .await;
+        let source_requests = Arc::new(Mutex::new(Vec::new()));
+        let source_seen = source_requests.clone();
+        let (source, _source_server) = start_server(Router::new().route(
+            "/redirect/{status}",
+            post(
+                move |axum::extract::Path(status): axum::extract::Path<u16>,
+                      headers: HeaderMap,
+                      body: String| {
+                    let target = target.clone();
+                    let source_seen = source_seen.clone();
+                    async move {
+                        assert_eq!(headers["x-caller-middleware"], "active");
+                        assert_eq!(headers[header::CONTENT_TYPE], "application/json");
+                        source_seen.lock().unwrap().push(body);
+                        HttpResponse::builder()
+                            .status(status)
+                            .header(header::LOCATION, format!("{target}/sink"))
+                            .body(Body::empty())
+                            .unwrap()
+                    }
+                },
+            ),
+        ))
+        .await;
+        let address: std::net::SocketAddr =
+            source.strip_prefix("http://").unwrap().parse().unwrap();
+        // This hostname cannot resolve without the caller's override. Even an
+        // explicitly permissive redirect policy must be replaced by the SDK.
+        let client = Client::new(
+            &format!("http://protected.invalid:{}", address.port()),
+            reqwest::Client::builder()
+                .no_proxy()
+                .resolve("protected.invalid", address)
+                .redirect(reqwest::redirect::Policy::limited(10))
+                .timeout(Duration::from_secs(2)),
+            1024,
+        )
+        .unwrap()
+        .with_middleware(marker_middleware);
+        #[derive(Serialize)]
+        struct Input<'a> {
+            password: &'a str,
+        }
+        for status in [307, 308] {
+            let result = client
+                .send::<_, Problem>(
+                    Method::POST,
+                    &format!("/redirect/{status}"),
+                    None,
+                    Some(&Input {
+                        password: "private-password",
+                    }),
+                )
+                .await;
+            assert!(
+                matches!(result, Err(ClientError::Http { status: actual, problem: None }) if actual == status)
+            );
+        }
+        let sources = source_requests.lock().unwrap();
+        assert_eq!(sources.len(), 2);
+        assert!(
+            sources
+                .iter()
+                .all(|body| body == r#"{"password":"private-password"}"#)
+        );
+        assert!(
+            target_requests.lock().unwrap().is_empty(),
+            "redirect target must receive neither POST nor body"
+        );
+    }
+
     struct PendingBody {
         dropped: Arc<AtomicBool>,
     }
@@ -469,6 +590,52 @@ mod tests {
     impl Drop for PendingBody {
         fn drop(&mut self) {
             self.dropped.store(true, Ordering::SeqCst);
+        }
+    }
+
+    #[tokio::test]
+    async fn wrong_media_rejects_headers_and_releases_never_ending_bodies() {
+        for status in [200, 409] {
+            let dropped = Arc::new(AtomicBool::new(false));
+            let observed = dropped.clone();
+            let router = Router::new().route(
+                "/pending",
+                get(move || {
+                    let dropped = observed.clone();
+                    async move {
+                        HttpResponse::builder()
+                            .status(status)
+                            .header(header::CONTENT_TYPE, "text/event-stream")
+                            .body(Body::from_stream(PendingBody { dropped }))
+                            .unwrap()
+                    }
+                }),
+            );
+            let (client, _server) = server(router, 1024).await;
+            // The caller timeout is two seconds. Headers must reject promptly
+            // rather than waiting for EOF or that timeout.
+            let result =
+                tokio::time::timeout(Duration::from_millis(250), fetch(&client, "/pending"))
+                    .await
+                    .expect("wrong media must reject at headers");
+            match status {
+                200 => assert!(matches!(result, Err(ClientError::Decode { status: 200 }))),
+                409 => assert!(matches!(
+                    result,
+                    Err(ClientError::Http {
+                        status: 409,
+                        problem: None
+                    })
+                )),
+                _ => unreachable!(),
+            }
+            tokio::time::timeout(Duration::from_secs(1), async {
+                while !dropped.load(Ordering::SeqCst) {
+                    tokio::time::sleep(Duration::from_millis(5)).await;
+                }
+            })
+            .await
+            .expect("header rejection must release the response stream");
         }
     }
 

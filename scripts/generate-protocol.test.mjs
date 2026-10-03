@@ -34,6 +34,7 @@ function fixture() {
         ] },
         FixtureMap: { type: "object", additionalProperties: { type: "string" }, propertyNames: { type: "string", pattern: "^[a-z_]+$" }, maxProperties: 2 },
         FixtureAlias: { allOf: [ref("FixtureInput")], description: "One referenced schema" },
+        FixtureInt32: { type: "integer", format: "int32" },
       },
     },
     paths: {
@@ -75,6 +76,13 @@ test("generated schemas execute exact UUID, bounds, null, closed union and map c
   }
   assert.equal(schemas.zFixtureOutput.safeParse({ ...valid, optionalNullable: null }).success, true);
   assert.equal(schemas.zFixtureOutput.safeParse({ ...valid, time: "2016-12-31t23:59:60z" }).success, true);
+  for (const time of ["2024-02-29T12:34:56.123456789+05:30", "2016-12-31T23:59:60Z", "2016-12-31t23:59:60z", "2026-10-03t12:00:00-08:00"]) {
+    assert.equal(schemas.zFixtureOutput.safeParse({ ...valid, time }).success, true, time);
+    for (const suffix of ["\n", "\r\n", "\r", "\u2028", "\u2029"]) assert.equal(schemas.zFixtureOutput.safeParse({ ...valid, time: time + suffix }).success, false, JSON.stringify(time + suffix));
+  }
+  for (const time of ["2026-02-29T00:00:00Z", "2026-04-31T00:00:00Z", "2026-01-01T24:00:00Z", "2026-01-01T00:00:00+24:00"]) assert.equal(schemas.zFixtureOutput.safeParse({ ...valid, time }).success, false, time);
+  for (const value of [-2147483648, 2147483647]) assert.equal(schemas.zFixtureInt32.safeParse(value).success, true);
+  for (const value of [-2147483649, 2147483648, 0.5]) assert.equal(schemas.zFixtureInt32.safeParse(value).success, false);
   assert.equal(schemas.zFixtureInput.safeParse({ text: "😀😀😀" }).success, true);
   assert.equal(schemas.zFixtureInput.safeParse({ text: "😀😀😀😀" }).success, false);
   assert.equal(schemas.zFixtureProblem.safeParse({ code: "conflict", params: { revision: 5 } }).success, true);
@@ -88,6 +96,26 @@ test("generated schemas execute exact UUID, bounds, null, closed union and map c
   assert.equal(schemas.zFixtureMap.safeParse({ a: "a", b: "b", c: "c" }).success, false);
   assert.equal(schemas.zFixtureMap.safeParse({ Upper: "x" }).success, false);
   assert.equal(schemas.zFixtureMap.safeParse(JSON.parse('{"__proto__":123}')).success, false);
+});
+
+test("integer schemas must prove a lossless JS-safe range before emission", () => {
+  for (const integer of [
+    { type: "integer" },
+    { type: "integer", minimum: 0 },
+    { type: "integer", maximum: 100 },
+    { type: "integer", format: "int64" },
+    { type: "integer", format: "int64", minimum: 0 },
+    { type: "integer", format: "int64", maximum: Number.MAX_SAFE_INTEGER },
+    { type: "integer", minimum: 0, maximum: 2 ** 53 },
+    { type: "integer", minimum: -(2 ** 53), maximum: 0 },
+    { type: "integer", minimum: 10, maximum: 1 },
+  ]) assert.throws(() => validators({ $defs: { FixtureInteger: integer } }), /integer|Integer/);
+  for (const integer of [
+    { type: "integer", format: "int32" },
+    { type: "integer", format: "int32", minimum: 0 },
+    { type: "integer", minimum: Number.MIN_SAFE_INTEGER, maximum: Number.MAX_SAFE_INTEGER },
+    { type: "integer", format: "int64", minimum: 0, maximum: Number.MAX_SAFE_INTEGER },
+  ]) assert.doesNotThrow(() => validators({ $defs: { FixtureInteger: integer } }));
 });
 
 test("strict generated TypeScript and operation success/error result inference", async t => {

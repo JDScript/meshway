@@ -217,14 +217,16 @@ export function validators(document) {
       case "integer": {
         keys(schema, ["type", "format", "minimum", "maximum"]);
         if (schema.format && !["int32", "int64"].includes(schema.format)) throw new Error(`Unsupported integer format ${schema.format}`);
-        let code = "z.int()";
-        for (const [key, operation] of [["minimum", "gte"], ["maximum", "lte"]]) {
-          if (schema[key] !== undefined) {
-            if (!Number.isSafeInteger(schema[key])) throw new Error(`Unsafe integer ${key}`);
-            code += `.${operation}(${schema[key]})`;
-          }
+        for (const key of ["minimum", "maximum"]) {
+          if (schema[key] !== undefined && !Number.isSafeInteger(schema[key])) throw new Error(`Unsafe integer ${key}`);
         }
-        return code;
+        // z.int() itself imposes the JS-safe range. Prove the source schema is
+        // within it first rather than silently narrowing unbounded/int64 data.
+        const minimum = schema.format === "int32" ? Math.max(-2147483648, schema.minimum ?? -2147483648) : schema.minimum;
+        const maximum = schema.format === "int32" ? Math.min(2147483647, schema.maximum ?? 2147483647) : schema.maximum;
+        if (!Number.isSafeInteger(minimum) || !Number.isSafeInteger(maximum)) throw new Error("Integer requires safe minimum and maximum or int32 format");
+        if (minimum > maximum) throw new Error("Empty integer range");
+        return `z.int().gte(${minimum}).lte(${maximum})`;
       }
       case "boolean":
         keys(schema, ["type"]);
@@ -269,7 +271,7 @@ export function validators(document) {
 // narrower, and Date.parse normalizes invalid calendar dates in some engines.
 const dateTimeHelper = `function rfc3339(value: string): boolean {
   const parts = /^(\\d{4})-(\\d{2})-(\\d{2})[Tt](\\d{2}):(\\d{2}):(\\d{2})(?:\\.\\d+)?(?:[Zz]|[+-](\\d{2}):(\\d{2}))$/.exec(value);
-  if (!parts) return false;
+  if (!parts || parts[0].length !== value.length) return false;
   const year = Number(parts[1]), month = Number(parts[2]), day = Number(parts[3]);
   const leap = year % 4 === 0 && (year % 100 !== 0 || year % 400 === 0);
   const days = [31, leap ? 29 : 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31][month - 1];
