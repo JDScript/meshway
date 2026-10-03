@@ -477,7 +477,6 @@ function ListenerEditor({
     [creating, taken]
   )
   const problems = canManage ? listenerProblems(fields, creatingContext) : []
-  const invalid = new Set(problems.map((problem) => problem.field))
   const first = problems[0]
 
   // A new listener starts as a draft of the suggested values; once it has
@@ -538,7 +537,7 @@ function ListenerEditor({
         fields={fields}
         presets={presetsFor(summary?.settings ?? null)}
         creating={creatingContext}
-        invalid={invalid}
+        problems={problems}
         disabled={!canManage}
         showEnabled={!creating}
         onChange={(next) => draft.edit(() => next)}

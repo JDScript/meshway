@@ -7,7 +7,7 @@ import { useQuery } from "@tanstack/react-query"
 import { useMemo, useState } from "react"
 
 import { CloseButton } from "@/components/chrome/close-button"
-import { SwitchRow, TextField } from "@/components/chrome/form"
+import { TextField } from "@/components/chrome/form"
 import {
   CopyField,
   GlassDialog,
@@ -29,17 +29,21 @@ import { m } from "@/paraglide/messages.js"
 
 import {
   fieldLabelClass,
-  ListenerForm,
+  ListenerAddress,
   listenerProblemText,
   presetLabel,
 } from "./listener-form"
 import {
   endpointText,
+  initialListener,
   listenerProblems,
   newListener,
   presetOf,
+  PRESETS,
   settingsOf,
+  withPreset,
   type ListenerFields,
+  type Preset,
 } from "./listener-model"
 import { managedListenersQuery } from "./queries"
 
@@ -50,6 +54,8 @@ const expiryLabel: Record<Expiry, () => string> = {
   "3600": () => m.nodes_add_expiry_1h(),
   "86400": () => m.nodes_add_expiry_24h(),
 }
+
+const NONE = "none"
 
 const STATE_PATH = ".meshway/agent.json"
 const MAX_NAME = 128
@@ -130,15 +136,18 @@ export function AddNode({
 
   const [name, setName] = useState("")
   const [expiry, setExpiry] = useState<Expiry>("3600")
-  const [withListener, setWithListener] = useState(false)
-  const [listener, setListener] = useState<ListenerFields | null>(null)
+  const [choice, setChoice] = useState<Preset | typeof NONE>(NONE)
+  // Kept while "no listener" is chosen, so nothing typed is lost.
+  const [fields, setFields] = useState<ListenerFields>(() =>
+    newListener("native_udp", new Set())
+  )
   const [attempted, setAttempted] = useState(false)
   const [sent, setSent] = useState<Request | null>(null)
-  const fields = listener ?? newListener("vless_tcp", taken)
+  const listener = choice === NONE ? null : initialListener(fields, taken)
 
   const trimmed = name.trim()
   const nameValid = trimmed.length > 0 && [...trimmed].length <= MAX_NAME
-  const listenerIssues = withListener ? listenerProblems(fields, { taken }) : []
+  const listenerIssues = listener ? listenerProblems(listener, { taken }) : []
   const problem = !nameValid
     ? m.nodes_add_name_invalid({ max: String(MAX_NAME) })
     : listenerIssues[0]
@@ -167,7 +176,7 @@ export function AddNode({
     const request: Request = {
       expiry,
       name: trimmed,
-      listener: withListener ? settingsOf(fields, "") : null,
+      listener: listener ? settingsOf(listener, "") : null,
     }
     setSent(request)
     secret.create(request)
@@ -225,32 +234,41 @@ export function AddNode({
             </div>
 
             <Section title={m.nodes_add_listener_section()}>
-              <SwitchRow
-                id="add-node-listener"
-                label={m.nodes_add_listener()}
-                checked={withListener}
-                disabled={!canManage}
-                onCheckedChange={setWithListener}
-              />
-              {withListener ? (
-                <div className="swap-in rounded-tile bg-fill-subtle p-3.5">
-                  <ListenerForm
-                    idPrefix="add-listener"
-                    fields={fields}
-                    presets={[
-                      "native_udp",
-                      "native_tcp",
-                      "vless_tcp",
-                      "vless_websocket",
-                    ]}
-                    creating={{ taken }}
-                    invalid={invalid}
-                    disabled={!canManage}
-                    showEnabled={false}
-                    onChange={setListener}
-                  />
-                </div>
-              ) : null}
+              <div className="flex flex-col gap-4">
+                <SegmentedControl<Preset | typeof NONE>
+                  label={m.nodes_add_listener_section()}
+                  value={choice}
+                  options={[
+                    { value: NONE, label: m.nodes_add_listener_none() },
+                    ...PRESETS.map((preset) => ({
+                      value: preset,
+                      label: presetLabel[preset](),
+                    })),
+                  ]}
+                  onChange={(next) => {
+                    if (!canManage) return
+                    setChoice(next)
+                    if (next !== NONE)
+                      setFields((current) => withPreset(current, next, null))
+                  }}
+                  className="h-10 self-start"
+                />
+                {choice !== NONE ? (
+                  <div className="swap-in flex flex-col gap-3">
+                    <ListenerAddress
+                      idPrefix="add-listener"
+                      fields={fields}
+                      invalid={invalid}
+                      disabled={!canManage}
+                      onChange={setFields}
+                    />
+                    <div className="flex flex-col gap-1 text-meta text-muted-foreground">
+                      <p>{m.nodes_add_listener_dial()}</p>
+                      <p>{m.nodes_add_listener_defaults()}</p>
+                    </div>
+                  </div>
+                ) : null}
+              </div>
             </Section>
           </div>
         </div>
@@ -333,6 +351,7 @@ function TokenResult({
       ]
     : [...agent, "--", "run", `--state=${STATE_PATH}`]
   const listener = request.listener
+  const reachable = listener?.advertised_endpoints[0]
   return (
     <>
       <div className="grid grid-cols-2 gap-2">
@@ -343,13 +362,14 @@ function TokenResult({
           <span className="font-mono font-normal">{tokenId}</span>
         </Tile>
         <div className="col-span-2">
-          <Tile label={m.nodes_add_listener()}>
+          <Tile label={m.nodes_add_listener_section()}>
             {listener ? (
               <>
-                <span className="font-mono">{listener.id}</span> ·{" "}
                 {presetLabel[presetOf(listener)]()} ·{" "}
                 <span className="font-mono">
-                  {endpointText(listener.bind_address, listener.bind_port)}
+                  {reachable
+                    ? endpointText(reachable.host, reachable.port)
+                    : endpointText(listener.bind_address, listener.bind_port)}
                 </span>
               </>
             ) : (
