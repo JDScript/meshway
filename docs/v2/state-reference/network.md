@@ -26,6 +26,8 @@ Controller 在网络作用域内维护的最新状态集合。**逻辑上是全�
 
 report／derived 在此省略内部字段；report 的完整内容见 [NodeState](/v2/state-reference/node)。Node 实体已经存在但没有报告时，查询可构造 `awaiting_report`、report=null，不虚构空能力或在线证据。
 
+上例是查询视图。RAM 保存已接受 report 和来源／期限，derived／freshness 按当前输入生成；内部若缓存派生结果，配置、报告、选择或数据集变化须使缓存失效。
+
 ## Fields
 
 | 字段 | 含义 |

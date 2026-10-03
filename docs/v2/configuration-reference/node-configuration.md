@@ -17,7 +17,7 @@ Controller 给某个节点的**完整执行配置**。它包含实际协议参�
 | peer 公钥／地址 | 已认证 Node 身份与分配记录 | 可信身份和授权引用 |
 | access／paths／DNS | 整网配置编译 | 本节点可执行规则 |
 
-管理员修改源配置中的协议参数，Controller 重新生成所有受影响的节点配置。生成值和材料引用与源版本一起持久绑定，只读查询／重发不会重新生成密码。
+管理员修改源配置中的协议参数，Controller 重新生成所有受影响的节点配置。生成值直接保存在完整源版本中，只读查询／重发不会重新生成密码，也不依赖可变的“当前材料”对象。
 
 ## 示例：A 拨 B 的 VLESS listener {#example}
 
@@ -49,7 +49,7 @@ Controller 给某个节点的**完整执行配置**。它包含实际协议参�
 }
 ```
 
-在 topology／access／routing 允许的前提下，A 收到的执行配置包含以下内容。这里只展开出站和材料部分：
+在 topology／access／routing 允许的前提下，A 收到的执行配置包含以下内容。这里只展开出站部分，参数和客户端所需材料直接内联：
 
 ```json
 {
@@ -68,17 +68,13 @@ Controller 给某个节点的**完整执行配置**。它包含实际协议参�
         "endpoints": [{ "host": "edge.example.com", "port": 8443 }],
         "stream": "websocket",
         "flow": "",
-        "credentialsRef": "vless-b-7",
-        "tls": { "serverName": "edge.example.com", "materialRef": "tls-b-client-7" },
+        "uuid": "11111111-1111-4111-8111-111111111111",
+        "tls": {
+          "serverName": "edge.example.com",
+          "certificateChain": ["<certificate PEM>"],
+          "certificateSha256": "<certificate digest>"
+        },
         "websocket": { "path": "/meshway", "host": "edge.example.com" }
-      }
-    },
-    "materials": {
-      "vless-b-7": { "type": "vless", "uuid": "11111111-1111-4111-8111-111111111111" },
-      "tls-b-client-7": {
-        "type": "tls-client",
-        "certificateChain": ["<certificate PEM>"],
-        "certificateSha256": "<certificate digest>"
       }
     }
   }
@@ -87,15 +83,15 @@ Controller 给某个节点的**完整执行配置**。它包含实际协议参�
 
 源配置的 dialers 按协议选择，**生成的 dialers 是具体获准出站实例**，因此有内部 candidate key。它不是管理员还要维护的一张连接表。
 
-B 的配置包含本机 listener、同一 UUID，以及对应服务端证书／私钥材料。A 不拿 B 的服务端私钥。两份切片关联同一次发布和材料版本，各自 digest 不必相同。
+B 的配置包含本机 listener、同一 UUID，以及对应服务端证书／私钥材料。A 不拿 B 的服务端私钥。两份切片从同一完整配置和固定依赖生成，属于同一次执行发布，各自 digest 不必相同。
 
-executionPublication 表示一致的许可／依赖发布，精确字段编码待接口定版。它将源 revision、相关身份／材料／规则集版本及参与节点 digest 关联起来；digest 只比较内容，不能代替发布顺序。
+executionPublication 表示一致的许可／依赖发布，精确字段编码待接口定版。它将完整源 revision、相关身份／规则集依据及参与节点 digest 关联起来；协议材料已包含在配置中。digest 只比较内容，不能代替发布顺序。
 
 ## 完整配置包含什么
 
 除了上例，完整切片还有本节点 hostname／地址、相关 peer 身份、公钥、授权规则、允许路径、出口方案和 DNS。示例省略这些部分不代表可以跳过校验或授权。
 
-materials 是配置的私有部分，可以用引用去重，但 Agent 激活前必须取得并验证完整集合。UUID／password／证书既可以手工配置，也可以自动生成；它们的来源不改变其配置属性。
+UUID／password／证书是完整配置的私有字段，既可以手工配置，也可以自动生成。初版直接随所需 listener／dialer 参数下发；Agent 激活前验证完整材料、用途、可信绑定和吊销／有效期。只有后续实际大小需要时再引入包内去重，不增加独立材料实体。
 
 ## Config 与 State
 

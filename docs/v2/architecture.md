@@ -102,12 +102,14 @@ src/
   execution/                 # 需求、调用共享编译、发布／实例／lease
   state/                     # RAM 报告、派生视图、过期与订阅
   observations/              # 测量任务、历史接纳／查询
-  resources/                 # 材料、规则集与 GeoIP 的获取／版本准备
+  resources/                 # 规则集与 GeoIP 下载／规范化；凭据生成在配置准备内
   store/                     # 私有 SQL rows、事务与 DB 执行入口
     schema/                  # 当前结构与完整性约束
 ```
 
 业务服务协调一次用例，Store 保证事务、约束和最终权限重检；不会在 handler、service、store 各自再编译一遍配置。协议／数据模型见[数据库字段](/v2/storage/database)和[内存字段](/v2/storage/memory)。
+
+嵌套的配置凭据、listener 代际、发布内节点切片、任务内订阅都由所属模块维护。模型类型、缓存条目、后台 Job 不各建一套 repository／service／crate；新增独立库以真实复用和可独立测试的能力为依据。
 
 ## Agent
 

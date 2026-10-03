@@ -24,7 +24,6 @@
   "links": {},
   "paths": {},
   "selection": {
-    "requestedProfile": "mesh",
     "appliedProfile": "mesh"
   },
   "probes": [],
@@ -44,7 +43,7 @@
 | `sockets` | `Record<SocketId, SocketState>` | 实际外层 socket、所属资源及 endpoint 观测 |
 | `links` | `Record<PeerNodeId, LinkState[]>` | 对各 peer 的认证通道；可有主备／更替期记录 |
 | `paths` | 按运行路径标识索引 | 本节点观察到的选路／使用结果，非全网权威路径表 |
-| `selection` | object | 请求使用／已执行的路由方案，必须处于 Config 允许范围 |
+| `selection.appliedProfile` | ProfileKey 或 null | 当前实际方案，必须处于 Config 允许范围 |
 | `probes` | `ProbeObservation[]` | 少量最新真实测量；重复快照引用相同事件，不制造新历史点 |
 | `problems` | 类型化问题列表 | 当前有来源的失败原因，不使用任意服务端异常文本 |
 
@@ -59,6 +58,8 @@
 GeoIP 位置由 Controller 根据合格的底层公网 IP 观测计算，放在 [NetworkState 的派生部分](/v2/state-reference/network#derived)，不直接采用节点自报 country。用户方案选择是受配置约束的使用状态，不等于修改管理员方案。
 
 已确认：用户方案选择跨重启保存；恢复时仍在 allowed 且未被锁定才继续使用，否则采用当前管理员默认。它不进入管理员配置回滚历史，切换不能带走旧出口流／NAT 资格。
+
+请求选择由 Controller 的持久 RoutingSelection 与当前配置确定，读取时投影；Node 只上报实际 appliedProfile。通过 App／CLI 提交选择使用受控操作，不通过普通 State 报告覆盖选择。
 
 ## 标识与时间
 

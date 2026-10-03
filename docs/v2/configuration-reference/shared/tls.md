@@ -33,8 +33,8 @@
 | --- | --- | --- | --- |
 | `mode` | listener | `"managed"` | managed 由平台生成；provided 使用管理员提交的证书／私钥，后者为新增目标能力 |
 | `serverName` | listener | 必填 | 配置的 TLS 名称，决定证书 SAN 及目标拨号验证名 |
-| `certificate` | listener | mode=provided 时必填 | PEM 证书链，叶证书在前 |
-| `privateKey` | listener | mode=provided 时必填 | 与证书匹配的 PEM 私钥 |
+| `certificate` | listener | provided 输入必填；managed 首次省略时生成 | PEM 证书链，叶证书在前；规范化版本保存完整值 |
+| `privateKey` | listener | provided 输入必填；managed 首次省略时生成 | 匹配的 PEM 私钥；规范化版本加密保存完整值 |
 | `trust` | dialer | `"managed"` | 使用 Controller 为目标绑定的材料、信任根与指纹 |
 | `minVersion` / `maxVersion` | 两侧 | `"1.2"` / `"1.3"` | 仅这两个版本，min 不大于 max；配置覆盖为目标能力 |
 | `alpn` | 两侧 | `[]` | 目标字段：有序协议名；WS 只允许兼容 HTTP/1.1 的协商 |
@@ -60,6 +60,8 @@ VLESS WebSocket 外层为 HTTP/1.1 Upgrade；本稿不允许配置 h2 却仍执�
 PEM 是示意占位。证书链、名称、有效期和私钥匹配须校验；输入是平台配置，不是让设备自行读取某个本地文件。当前托管 API 尚未提供这个管理员输入能力。
 
 **材料仍是配置数据。** 数据库中加密存储，并按配置版本绑定；包含敏感输入的原始 JSONC 也需要同样保护。获准管理员的读写入口与普通成员视图区分，日志不回显材料；不以存储保护为理由禁止管理员配置。
+
+managed 的生成结果也保存在完整配置，省略时沿用该 listener 已有值；不另建一套材料版本记录。协议材料永久吊销使用独立的拒绝记录，保存／回滚／发布均检查。
 
 完整 NodeConfiguration 给 listener 所属节点提供所需私钥，给拨号节点提供验证材料，不向拨号节点复制服务端私钥。具体下发结构见 [NodeConfiguration](/v2/configuration-reference/node-configuration#sources)。
 

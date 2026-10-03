@@ -1,6 +1,6 @@
 # 持久数据库字段
 
-**V2 逻辑记录提案。** 字段逐项列出，表名与物理拆分未定。`T?` 为可空；时间为 UTC，ID／Digest／Revision 是独立强类型。网络内关联使用 networkId 和复合约束。
+**V2 精简记录提案。** 只为需要独立持久生命周期的数据建立记录；配置内容随完整版本保存，嵌套值不是独立实体。字段逐项列出，表名与物理拆分未定。`T?` 为可空；时间为 UTC，ID／Digest／Revision 是独立强类型。网络内关联使用 networkId 和复合约束。
 
 ## User
 
@@ -34,13 +34,19 @@
 | --- | --- | --- |
 | `id` | NetworkId | 主键，隔离作用域 |
 | `name` | string | 网络显示名；实体元数据提案 |
+| `ipv4Prefix` | Ipv4Prefix | 本网络 Mesh IPv4 地址池 |
+| `ipv6Prefix` | Ipv6Prefix | 本网络 Mesh IPv6 地址池 |
 | `createdBy` | UserId | 创建者，不替代当前 Owner membership |
 | `createdAt` | Timestamp | 创建时间 |
+| `creationRequestId` | RequestId | 建网幂等请求，与 createdBy 构成唯一键 |
+| `creationRequestDigest` | Digest | 原建网参数绑定，响应丢失重试返回本网络 |
 | `deletedAt` | Timestamp? | 删除标记；删除／保留流程仍待定版 |
 | `currentRevision` | Revision | 当前完整配置版本指针 |
 | `publicationSequence` | u64 | 本网络已分配执行发布的单调上界 |
 
-创建 Network、Owner membership、初始配置同事务。配置指针只由提交事务推进。
+创建 Network、Owner membership、初始配置同事务。配置指针只由提交事务推进。同幂等键不同参数拒绝；网络已删除也不通过旧请求重建，删除保留期须覆盖幂等承诺。
+
+地址字段按当前“一网每族一个池、每节点每族一个固定地址”的简单模型提案，不建立独立地址池实体或持久分配游标。地址池调整／回收流程仍待定版。
 
 ## Membership
 
@@ -61,11 +67,15 @@
 | --- | --- | --- |
 | `id` | NodeId | 主键，持久接入身份 |
 | `networkId` | NetworkId | 不可任意切换的接入网络 |
+| `meshIpv4` | Ipv4Address | 持久分配的 Mesh IPv4 |
+| `meshIpv6` | Ipv6Address | 持久分配的 Mesh IPv6；不表示 IPv6 数据面已实现 |
 | `createdBy` | ActorRef | 原始接入来源，仅追溯 |
 | `registeredAt` | Timestamp | 注册时间 |
 | `credentialsRevokedAt` | Timestamp? | 永久吊销整个接入；所有旧／派生凭据拒绝 |
 
 **没有 owner、subject、tags、enabled、hostname、lastSeen、applied 字段。** 有效身份与启停从 Config 获取；运行观测从 RAM 获取。永久接入吊销不可通过配置、换钥或旧注册重试恢复。
+
+地址在网络内唯一、在接入事务分配。当前提案在保留 Node 期间不换绑／回收它的地址，避免需要另一份分配生命周期；若后续支持在线换址或提前回收，再明确分配代际和审计记录。保留网络内地址唯一约束，候选地址可从现有分配重建。
 
 ## NodeKey
 
@@ -84,41 +94,15 @@
 
 `(nodeId,purpose,generation)` 唯一；公钥网络绑定不可被重新认领。实际允许的轮换窗口由认证／执行合同规定。
 
-## AddressPool
-
-| 字段 | 类型 | 含义 |
-| --- | --- | --- |
-| `networkId` | NetworkId | 所属网络 |
-| `family` | ipv4 \| ipv6 | 地址族，与 networkId 构成键 |
-| `prefix` | IpPrefix | IPAM 管理网段 |
-| `nextCandidate` | IpAddress? | 可重建的分配游标，不能跳过唯一性校验 |
-
-地址池管理范围仍为提案；不会由 Node State 自报改变。
-
-## AddressAllocation
-
-| 字段 | 类型 | 含义 |
-| --- | --- | --- |
-| `id` | AllocationId | 分配记录 ID |
-| `networkId` | NetworkId | 所属网络 |
-| `nodeId` | NodeId | 地址持有者 |
-| `address` | IpAddress | 实际 Mesh 地址，含地址族 |
-| `allocatedAt` | Timestamp | 分配时间 |
-| `releasedAt` | Timestamp? | 释放时间；具体回收条件另定 |
-
-有效地址在网络内唯一。历史配置引用旧 allocation 不得重新授予已释放／转分配地址。
-
 ## ConfigurationVersion
 
 | 字段 | 类型 | 含义 |
 | --- | --- | --- |
 | `networkId` | NetworkId | 与 revision 构成主键 |
 | `revision` | Revision | 递增配置版本 |
-| `parentRevision` | Revision? | 首版本为 null |
 | `sourceJsonc` | Sealed&lt;string&gt; | 编辑原文，含注释／可能的协议秘密 |
 | `configuration` | Sealed&lt;NetworkConfiguration&gt; | 规范化完整配置，类型见配置参考 |
-| `bindings` | ConfigurationBindings | 本版本固定的引用／默认值依据 |
-| `digest` | Digest | 确定内容摘要，不代替权限 |
+| `bindings` | ConfigurationBindings | 本版本固定的用户／listener 代际／数据集绑定 |
 | `createdBy` | ActorRef | 用户或系统修改来源 |
 | `createdAt` | Timestamp | 提交时间 |
 | `requestId` | RequestId? | 幂等／事件关联 |
@@ -126,46 +110,35 @@
 
 NetworkConfiguration 的完整字段见[配置参考](/v2/configuration-reference)；其中 `nodes[id].identity` 与 `enabled` 是 Node 授权身份／业务启停的唯一源。历史原文、规范化值与绑定不可单独覆盖。
 
+规范化配置完整保存已补全的默认参数、UUID／password／证书／私钥；读取旧版本不会再运行当前默认补全。sourceJsonc 保留编辑意图和注释，configuration 保存确定结果，两者用途不同。线性完整历史可查得前序 revision；配置摘要需要时计算／缓存，CAS 使用 revision。
+
 ### ConfigurationBindings
 
 | 字段 | 类型 | 含义 |
 | --- | --- | --- |
-| `defaultsVersion` | string | 保存时固定的默认值集合版本 |
 | `users` | Map&lt;JsonPointer, UserBinding&gt; | 可读引用 → 稳定主体，不按当前邮箱重解析 |
-| `resources` | Map&lt;JsonPointer, ResourceBinding&gt; | 配置资源 → 确切材料／数据集版本 |
+| `listeners` | Map&lt;NodeId, Map&lt;ListenerKey, Revision&gt;&gt; | listener 此次创建所在 revision，更新沿用、删除后重建换新 |
+| `ruleSets` | Map&lt;RuleSetKey, ArtifactId&gt; | 此源版本提交时固定的数据集内容 |
 
-`UserBinding` 字段：`userId: UserId`、`membershipId: MembershipId`。`ResourceBinding` 字段：`resourceId: ResourceId`、`materialIds: MaterialId[]`、`artifactIds: ArtifactId[]`。这些是该配置版本的解析结果，无独立管理写入口。
+`UserBinding` 字段：`userId: UserId`、`membershipId: MembershipId`。listener 以 `(networkId,nodeId,key,createdRevision)` 标识资源代际；运行 socket 仍有自己的 generation。上述绑定嵌入配置版本，无独立资源 CRUD。
+
+材料值已在完整 configuration 内；初次省略时生成、已有 listener 省略时沿用旧值，新建代际生成新自动值。规则集后续自动更新由执行发布绑定确切 artifact，不覆盖这个历史版本。回滚明确选用源版本初始绑定或某次历史发布的绑定，不能猜用最新内容。
 
 历史 identity 回滚涉及 Tag→User／改绑 User 时仍须新的设备登录授权；保存了旧 UserBinding 不等于持有当前转换权限。
 
-## ResourceInstance
+## CredentialRevocation
 
 | 字段 | 类型 | 含义 |
 | --- | --- | --- |
-| `id` | ResourceId | 内部资源代际标识 |
-| `networkId` | NetworkId | 所属网络 |
-| `nodeId` | NodeId? | listener 关联 Node；网络规则集等为 null |
-| `kind` | listener \| ruleSet | 本稿需跟踪生命周期的配置资源 |
-| `key` | string | 配置 map 中的 key |
-| `createdRevision` | Revision | 首次创建版本 |
-| `removedRevision` | Revision? | 已提交删除版本 |
+| `networkId` | NetworkId | 吊销作用域 |
+| `kind` | ProtocolCredentialKind | 已支持协议凭据／证书类型 |
+| `fingerprint` | CredentialFingerprint | 被吊销的确切材料标识，与网络／类型构成键 |
+| `revokedAt` | Timestamp | 永久吊销时间 |
+| `revokedBy` | ActorRef | 操作来源 |
 
-同名重建使用新 id。记录不包含另一份 listener 参数或 tags；资源参数仍只从配置版本读取。
+这里只保存不可逆拒绝依据，材料值随配置历史保存。低熵密码不能用对外公开的普通散列做指纹；秘密指纹采用受保护的确定识别方式，算法随材料保护实现定版。相同凭据换 listener 名称或放入新配置也不能绕过吊销。保存、回滚、发布、执行续租均检查，并撤回受影响旧许可。
 
-## MaterialVersion
-
-| 字段 | 类型 | 含义 |
-| --- | --- | --- |
-| `id` | MaterialId | 不可变材料版本 ID |
-| `networkId` | NetworkId | 权限作用域 |
-| `resourceId` | ResourceId | 所属配置资源代际 |
-| `generation` | u64 | 该资源材料代际 |
-| `value` | Sealed&lt;ProtocolMaterial&gt; | 类型化 UUID／密码／TLS 等材料 |
-| `digest` | Digest | 内容摘要，受材料读取权限保护 |
-| `createdAt` | Timestamp | 创建时间 |
-| `revokedAt` | Timestamp? | 已吊销材料不能通过回滚有效 |
-
-ProtocolMaterial 沿用协议配置的判别类型，不是任意 JSON。管理员显式值与自动生成值同样保护。
+Node 的持久身份／密钥吊销继续由 Node／NodeKey 负责；本记录针对协议层材料。
 
 ## DatasetArtifact
 
@@ -175,14 +148,12 @@ ProtocolMaterial 沿用协议配置的判别类型，不是任意 JSON。管理�
 | `networkId` | NetworkId? | 网络规则集所属网络；实例 GeoIP 可为 null |
 | `kind` | ruleSet \| geoip | 数据类型 |
 | `source` | string | 来源 URI／名称，不含凭据 |
-| `format` | DatasetFormat | 支持的原始格式枚举 |
-| `sourceBytes` | bytes | 原始数据 |
-| `compiledBytes` | bytes | 已校验规范化数据／查询内容 |
-| `compilerVersion` | string | 转换实现版本 |
+| `format` | DatasetFormat | 保存内容的明确格式／版本 |
+| `data` | bytes | 已校验规范化规则集／GeoIP 查询内容 |
 | `digest` | Digest | 规范化内容摘要 |
 | `createdAt` | Timestamp | 接受时间 |
 
-下载错误与进度在 RAM；只有完整校验通过的产物入库。是否保留全部源 bytes 可在存储预算中定版，不用最新 URL 内容冒充历史依赖。
+下载错误与进度在 RAM；只有完整校验通过的内容入库。永久保留的是执行需要的确定内容；原始下载属于有界临时输入，失败条目按转换合同报告。历史引用保留该内容和格式，不能重新下载最新 URL 冒充它。
 
 ## EnrollmentRequest {#enrollmentrequest}
 
@@ -263,20 +234,18 @@ ProtocolMaterial 沿用协议配置的判别类型，不是任意 JSON。管理�
 | `compilerVersion` | string | 编译实现版本 |
 | `createdAt` | Timestamp | 提交时间 |
 | `withdrawnAt` | Timestamp? | 发布撤回时间 |
+| `nodes` | Map&lt;NodeId, PublishedNodeConfiguration&gt; | 实际参与节点的完整切片，嵌入同一发布 |
 
-`PublicationDependencies` 字段：`userBindings: UserBinding[]`、`keyIds: KeyId[]`、`allocationIds: AllocationId[]`、`materialIds: MaterialId[]`、`artifactIds: ArtifactId[]`。实际许可还来自引用的完整配置；持续使用仍检查当前撤销／租约。
+`PublicationDependencies` 字段：`userBindings: UserBinding[]`、`nodeIds: NodeId[]`、`keyIds: KeyId[]`、`ruleSets: Map<RuleSetKey,ArtifactId>`。节点地址在本提案中是该 Node 的固定事实，材料来自所引用完整配置；持续使用仍检查当前吊销／租约。
 
-## NodeConfigurationArtifact
+### PublishedNodeConfiguration
 
 | 字段 | 类型 | 含义 |
 | --- | --- | --- |
-| `networkId` | NetworkId | 网络 |
-| `publicationId` | PublicationId | 所属发布 |
-| `nodeId` | NodeId | 目标 Node，与 publicationId 构成键 |
 | `digest` | Digest | 节点切片摘要 |
 | `configuration` | Sealed&lt;NodeConfiguration&gt; | 完整确定产物和所需材料 |
 
-只保存实际发布／恢复所需切片，不预生成全网节点对；同一发布重发保持同 digest。
+所属 network／publication 由外层给出，NodeId 是 map key。只保存实际发布／恢复所需切片，同一发布重发保持同 digest；按需发布有界参与集合，不预生成全网节点对。独立切片行／内容寻址去重留给实际容量优化。
 
 ## NodeExecution
 
@@ -316,42 +285,28 @@ ProtocolMaterial 沿用协议配置的判别类型，不是任意 JSON。管理�
 | `eventId` | EventId | 源事件唯一 ID |
 | `occurredAt` | Timestamp | 事件发生时间 |
 | `receivedAt` | Timestamp | Controller 接受时间 |
-| `payload` | ObservationPayload | 连接事件或真实测量的封闭联合 |
+| `payload` | ObservationPayload? | 真实事件；保留期结束后可清空，留去重墓碑 |
 | `payloadDigest` | Digest | 重试内容一致性 |
+| `admissionExpiresAt` | Timestamp | 这条事件的重试接纳窗口上界 |
 
 `ObservationSource` 为判别联合：node 分支有 `nodeId: NodeId`、`instanceId: InstanceId`、`publicationId: PublicationId`；controller 分支有 `epoch: StateEpoch`，不伪造 Node 报告。双方都有对应 `type`。
 
 Node 事件按 `(networkId,source.nodeId,eventId)` 唯一；Controller 事件按 `(networkId,source.epoch,eventId)` 唯一。payload 字段沿用[真实事件](/v2/state-reference/observations)与[测量](/v2/state-reference/realtime)，不存任意 metadata 或重复心跳制造的样本。
 
-## HistoryAdmission / HistoryCoverage
-
-| 记录 | 字段 | 类型 | 含义 |
-| --- | --- | --- | --- |
-| Admission | `networkId` | NetworkId | 网络 |
-| Admission | `sourceNodeId` | NodeId | 来源 |
-| Admission | `eventId` | EventId | 去重键 |
-| Admission | `payloadDigest` | Digest | 已接受内容摘要 |
-| Admission | `expiresAt` | Timestamp | 重试接纳窗口结束 |
-| Coverage | `networkId` | NetworkId | 网络 |
-| Coverage | `sourceNodeId` | NodeId | 来源 |
-| Coverage | `before` | Timestamp | 此时刻前可能已裁剪 |
-| Coverage | `reason` | retention \| capacity | 记录覆盖限制 |
-
-事件已裁剪后仍在接纳窗口内的重试不能重新入库增加样本。实际采集缺口仍由事件／丢弃计数报告。
-
-## OperationReceipt
+## HistoryCoverage
 
 | 字段 | 类型 | 含义 |
 | --- | --- | --- |
-| `actor` | ActorRef | 幂等请求主体 |
-| `operation` | OperationKind | 有明确恢复需要的操作枚举 |
-| `requestId` | RequestId | 与 actor／operation 构成键 |
-| `requestDigest` | Digest | 原始请求绑定 |
-| `result` | OperationResult | 已提交结果的类型化资源引用 |
-| `createdAt` | Timestamp | 提交时间 |
-| `expiresAt` | Timestamp? | 可安全结束幂等恢复的期限 |
+| `networkId` | NetworkId | 网络 |
+| `sourceNodeId` | NodeId | 来源 |
+| `before` | Timestamp | 此时刻前可能已裁剪 |
+| `reason` | retention \| capacity | 记录覆盖限制 |
 
-本稿 OperationKind 先包含 network.create；对应 OperationResult 为 `{type:network.created, networkId:NetworkId}`，其他分支按实际用例补齐。秘密重交付使用专门加密载荷，不塞进此通用记录。
+ObservationEvent 同时承担去重：payload 清理后，保留原主键／摘要至接纳窗口结束；墓碑不返回成测量样本，重试不恢复已裁剪 payload。接纳窗口之外的旧上报拒绝，不因墓碑已清理重新计数；窗口不能被重试推进。实际采集缺口仍由事件／丢弃计数报告。
+
+墓碑保留上界必须覆盖原事件时间／实例仍可能被接纳的整个窗口，包括允许的时钟偏差；不能只定一个更短的清理 TTL，留下删除后再次接纳的空档。
+
+只保留正文也不足以说明历史是否完整，因此 Coverage 记录真实裁剪下界，不根据“最早现存样本”推测覆盖。全量历史清理仍保留必要覆盖信息。
 
 ## 共用值类型
 

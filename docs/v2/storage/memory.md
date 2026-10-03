@@ -12,21 +12,12 @@
 | `revision` | Revision | 配置版本 |
 | `configuration` | Arc&lt;NetworkConfiguration&gt; | 解密／校验后的不可变完整值 |
 | `bindings` | Arc&lt;ConfigurationBindings&gt; | 稳定引用／默认值依据 |
-| `digest` | Digest | 内容摘要 |
+| `digest` | Digest | 加载后计算的内容摘要 |
+| `compiled` | Map&lt;CompilationKey, Arc&lt;CompiledConfiguration&gt;&gt; | 本版本有界编译缓存 |
 
-只有缓存，无独立编辑入口；User／Tag 身份从 configuration.nodes[id].identity 读取。
+只有缓存，无独立编辑入口；User／Tag 身份从 configuration.nodes[id].identity 读取。CompilationKey 字段为 `dependencyDigest: Digest`、`compilerVersion: string`；动态依赖变化必须换 key，即使源 revision 没变。编译缓存嵌入版本缓存，容量有界，可随版本回收。
 
-## CompilationCache
-
-| 字段 | 类型 | 含义 |
-| --- | --- | --- |
-| `networkId` | NetworkId | 网络 |
-| `configurationRevision` | Revision | 输入版本 |
-| `dependencyDigest` | Digest | 相关身份／材料／规则集输入摘要 |
-| `compilerVersion` | string | 编译实现版本 |
-| `compiled` | Arc&lt;CompiledConfiguration&gt; | 索引、公共求值事实、按需路径搜索输入 |
-
-compiled 是 `meshway-configuration` 的内部类型，不序列化成给 Node 自授许可的任意图。
+CompiledConfiguration 是 `meshway-configuration` 的内部类型，不序列化成给 Node 自授许可的任意图。
 
 ## NetworkState
 
@@ -50,7 +41,6 @@ compiled 是 `meshway-configuration` 的内部类型，不序列化成给 Node �
 | `reportExpiresAt` | Timestamp? | 当前报告联系期限 |
 | `lastAuthenticatedAt` | Timestamp? | 最近真实认证联系，与报告新鲜度分开 |
 | `report` | NodeState? | 最新已接受报告；未报告不是空对象 |
-| `derived` | DerivedNodeState | Controller 派生结果 |
 
 freshness 按当前时间／配置／实例从以上输入计算：current、awaiting_report、expired、superseded、config_mismatch、revoked。不能靠查询或重复报告延长原观测。
 
@@ -69,7 +59,6 @@ freshness 按当前时间／配置／实例从以上输入计算：current、awa
 | `sockets` | Map&lt;SocketId, SocketState&gt; | 实际 socket 与候选 |
 | `links` | Map&lt;NodeId, LinkState[]&gt; | 自身与 peer 的认证通道 |
 | `paths` | Map&lt;PathId, PathState&gt; | 自身参与路径的观测 |
-| `selection.requestedProfile` | ProfileKey? | 报告的请求选择，不覆盖持久选择源 |
 | `selection.appliedProfile` | ProfileKey? | 当前实际方案 |
 | `probes` | ProbeObservation[] | 少量最新真实测量 |
 | `problems` | Problem[] | 有来源的类型化问题 |
@@ -157,11 +146,14 @@ authenticated 且无依赖可以是 idle。双侧匹配由 Controller 派生，�
 
 精确 ProblemCode 分支由实际功能契约补齐，不保留任意 JSON 逃生字段。
 
-## DerivedNodeState
+## DerivedNodeState（查询投影）
+
+以下字段由当前配置、已接受报告、RoutingSelection 和固定 GeoIP 数据集计算。它们是返回视图，不是另一份必须同步更新的 StoredNodeState 字段；内部性能缓存可重建，失效依据必须覆盖所有输入。
 
 | 字段 | 类型 | 含义 |
 | --- | --- | --- |
 | `location` | GeoObservation? | 合格底层公网 IP 的地区推导 |
+| `requestedProfile` | ProfileKey | 持久使用选择经当前 identity／allowed／locked 校验后的目标，或当前配置默认 |
 | `selectedAutoProfile` | ProfileKey? | 根据当前有效观测选择；无观测用配置 fallback |
 | `linkEvidence` | Map&lt;LinkId, LinkEvidence&gt; | 单侧／双侧／冲突／过期聚合 |
 
@@ -200,7 +192,7 @@ PrincipalRef 为 user／node 判别联合：user 分支保存 userId／sessionHa
 
 按当前权限投影输出，不把有秘密的完整 Config 广播。客户端另存自己的最后成功应用 cursor；断档／范围变化 reset。
 
-## ObservationTask / ObservationSubscriber
+## ObservationTask
 
 | 对象 | 字段 | 类型 | 含义 |
 | --- | --- | --- | --- |
@@ -215,12 +207,11 @@ PrincipalRef 为 user／node 判别联合：user 分支保存 userId／sessionHa
 | Task | `phase` | preparing \| running \| completed \| failed \| expired | 实际阶段 |
 | Task | `expiresAt` | Timestamp | 下发节点的短租约 |
 | Task | `latest` | ObservationSample? | 最新真实样本 |
-| Subscriber | `id` | ObservationSubscriptionId | 独立观察需求 |
-| Subscriber | `observationId` | ObservationId | 复用的任务 |
+| Task | `subscribers` | Map&lt;ObservationSubscriptionId, ObservationSubscriber&gt; | 任务内部的独立使用需求 |
 | Subscriber | `principal` | PrincipalRef | 每个订阅者独立鉴权 |
 | Subscriber | `expiresAt` | Timestamp | 该订阅者续租期限 |
 
-任务不因 SSE 连接存在自动续期；最后需求离开后释放，崩溃后不恢复旧任务为 running。
+ObservationSubscriber 是上述 map 的嵌套值，任务关联由外层给出，不另维护反向关系表。每个订阅者的权限／租约仍独立；取消一项不取消别人的有效需求。任务不因 SSE 连接存在自动续期，最后需求离开后释放，崩溃后不恢复旧任务为 running。
 
 ### ObservationSample
 
@@ -260,7 +251,7 @@ PrincipalRef 为 user／node 判别联合：user 分支保存 userId／sessionHa
 | DnsAssociation | `addresses` | IpAddress[] | 真实解析地址集合 |
 | DnsAssociation | `expiresAt` | Timestamp | TTL 有效期 |
 | ResourceJob | `id` | JobId | 下载／转换任务 |
-| ResourceJob | `resourceId` | ResourceId | 目标资源 |
+| ResourceJob | `target` | DatasetTarget | 要更新的规则集或 GeoIP 来源 |
 | ResourceJob | `phase` | queued \| running \| failed \| ready | 运行阶段 |
 | ResourceJob | `problem` | Problem? | 真实失败 |
 | AuthChallenge（若采用） | `id` | ChallengeId | 唯一挑战 |
@@ -276,6 +267,8 @@ PrincipalRef 为 user／node 判别联合：user 分支保存 userId／sessionHa
 | RateBudget | `scope` | BudgetScope | 账户／来源／节点／任务等封闭用途范围 |
 | RateBudget | `available` | u64 | 当前可用预算 |
 | RateBudget | `updatedAt` | MonotonicInstant | 补充预算依据 |
+
+DatasetTarget 为判别联合：ruleSet 分支携带 networkId／configurationRevision／ruleSetKey，geoip 分支携带部署的 source 标识。Job 完成时核对目标仍有效，不能把旧下载发布到新配置。
 
 这些是内部算法／工作队列对象，不是新的公开 Entity 或自授权 API。AuthChallenge 的实际 nonce／证明编码随认证协议定版；扩展字段须有明确类型与生命周期。
 

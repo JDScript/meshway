@@ -4,7 +4,7 @@
 
 | 位置 | 字段清单 |
 | --- | --- |
-| 持久数据库 | [User、Network、Node、会话、配置版本、材料、执行记录与历史](/v2/storage/database) |
+| 持久数据库 | [User、Network、Node、会话、配置版本、吊销、执行发布与历史](/v2/storage/database) |
 | Controller 内存 | [配置缓存、NodeState、NetworkState、订阅、任务与临时状态](/v2/storage/memory) |
 | 文件／客户端 | [部署参数、私有密钥、Agent 缓存与 Console 草稿](/v2/storage#local) |
 
@@ -53,9 +53,11 @@ enabled=false 的设备仍可认证以同步配置、报告停止进度。enable
 | Network name、Membership role／revokedAt | 数据库 Network／Membership |
 | Node ID／networkId／公钥／永久接入吊销 | 数据库 Node／NodeKey |
 | Node identity／enabled／hostname／listener | NetworkConfiguration |
-| Mesh 地址 | 数据库 AddressAllocation |
+| Mesh 地址 | 数据库 Node；地址池位于 Network（固定地址模型提案） |
 | OS hostname／版本／能力／socket／link／path／applied | 内存 NodeState |
 | 用户请求的 routing profile | 数据库 RoutingSelection；实际 applied 在 State |
 | 真实测量历史 | 数据库 ObservationEvent |
 
 Tag、Group、Listener 是配置内容；Link、Path 是运行记录。SQL 索引和查询投影不产生第二份业务配置源。
+
+协议凭据随完整配置版本保存，永久拒绝依据保存在 CredentialRevocation。listener 创建代际嵌入版本绑定，编译后的节点配置嵌入执行发布；嵌套值不另建立一套业务实体。

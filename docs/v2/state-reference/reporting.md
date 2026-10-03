@@ -18,7 +18,7 @@
     "sockets": {},
     "links": {},
     "paths": {},
-    "selection": { "requestedProfile": "mesh", "appliedProfile": null },
+    "selection": { "appliedProfile": null },
     "probes": [],
     "problems": []
   }
