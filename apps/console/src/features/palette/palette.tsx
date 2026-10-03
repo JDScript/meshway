@@ -34,7 +34,7 @@ import {
 import type { PageId } from "@/features/shell/pages"
 import { useIsMobile } from "@/hooks/use-mobile"
 import { SPRING_LAYOUT } from "@/lib/ease"
-import { useViewportHeight } from "@/lib/use-viewport-height"
+import { useViewportHeight } from "@/hooks/use-viewport-height"
 import { cn } from "@/lib/utils"
 import { m } from "@/paraglide/messages.js"
 

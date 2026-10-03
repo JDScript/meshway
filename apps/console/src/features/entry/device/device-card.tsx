@@ -17,7 +17,7 @@ import { networksQuery, sessionQuery } from "@/features/network/queries"
 import { dropDrafts } from "@/features/shell/drafts"
 import { SessionRejected } from "@/lib/api"
 import { failureText } from "@/lib/failure"
-import { useReadFailureToast } from "@/lib/use-read-failure-toast"
+import { useReadFailureToast } from "@/hooks/use-read-failure-toast"
 import { m } from "@/paraglide/messages.js"
 
 import { EntryCard, EntryFoot, EntryLink, EntrySubmit } from "../frame"

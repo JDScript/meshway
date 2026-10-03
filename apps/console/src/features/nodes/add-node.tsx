@@ -24,7 +24,7 @@ import { useCanManage } from "@/features/network/role"
 import { surfaceTitleId } from "@/features/shell/page-frame"
 import { apiBase, authed } from "@/lib/api"
 import { dateTime } from "@/lib/format"
-import { useSecretMutation } from "@/lib/secret"
+import { useSecretMutation } from "@/hooks/use-secret-mutation"
 import { m } from "@/paraglide/messages.js"
 
 import {

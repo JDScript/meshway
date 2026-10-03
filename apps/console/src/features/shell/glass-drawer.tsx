@@ -2,7 +2,7 @@ import { cn } from "@/lib/utils"
 import type { CSSProperties, ReactNode } from "react"
 
 import { Drawer, DrawerContent } from "@/components/ui/drawer"
-import { useKeptWhile } from "@/lib/use-kept"
+import { useKeptWhile } from "@/hooks/use-kept"
 
 import {
   MOBILE_EDGE,

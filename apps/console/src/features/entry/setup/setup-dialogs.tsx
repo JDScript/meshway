@@ -22,7 +22,7 @@ import { dropDrafts } from "@/features/shell/drafts"
 import { apiBase } from "@/lib/api"
 import { failureText } from "@/lib/failure"
 import { dateTime } from "@/lib/format"
-import { useSecretMutation } from "@/lib/secret"
+import { useSecretMutation } from "@/hooks/use-secret-mutation"
 import { currentSession, endSession, startSession } from "@/lib/session"
 import { m } from "@/paraglide/messages.js"
 

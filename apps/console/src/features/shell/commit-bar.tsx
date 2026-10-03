@@ -3,7 +3,7 @@ import { create } from "zustand"
 
 import { Button } from "@/components/ui/button"
 import { Spinner } from "@/components/ui/spinner"
-import { useKeptWhile } from "@/lib/use-kept"
+import { useKeptWhile } from "@/hooks/use-kept"
 import { cn } from "@/lib/utils"
 import { m } from "@/paraglide/messages.js"
 

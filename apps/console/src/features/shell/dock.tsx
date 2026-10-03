@@ -5,7 +5,7 @@ import { motion, useReducedMotion } from "motion/react"
 import { useId, useState, type ComponentProps, type ReactNode } from "react"
 
 import { DraftMark } from "@/components/chrome/draft-mark"
-import { SharedLayoutBg } from "@/components/motion/shared-layout-bg"
+import { SharedLayoutBg } from "@/components/chrome/shared-layout-bg"
 import {
   Popover,
   PopoverContent,

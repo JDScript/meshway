@@ -1,7 +1,7 @@
 import { cn } from "@/lib/utils"
 import type { ComponentProps, ReactElement } from "react"
 
-import { SharedLayoutBg } from "@/components/motion/shared-layout-bg"
+import { SharedLayoutBg } from "@/components/chrome/shared-layout-bg"
 
 /**
  * A row of icon buttons on glass. The hover pill glides between them, as in

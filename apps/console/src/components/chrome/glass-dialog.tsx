@@ -18,7 +18,7 @@ import {
 } from "@/components/ui/drawer"
 import { Spinner } from "@/components/ui/spinner"
 import { useIsMobile } from "@/hooks/use-mobile"
-import { useKeptWhile } from "@/lib/use-kept"
+import { useKeptWhile } from "@/hooks/use-kept"
 import { m } from "@/paraglide/messages.js"
 
 // Dialogs are for three things only: confirming what cannot be undone,

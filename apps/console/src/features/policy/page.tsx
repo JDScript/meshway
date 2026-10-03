@@ -1,5 +1,5 @@
 import { PageFrame } from "@/features/shell/page-frame"
-import { useReadFailureToast } from "@/lib/use-read-failure-toast"
+import { useReadFailureToast } from "@/hooks/use-read-failure-toast"
 import { m } from "@/paraglide/messages.js"
 
 import { usePolicyNavigation, usePolicyRoute } from "./navigation"

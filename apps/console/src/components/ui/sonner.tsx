@@ -7,7 +7,7 @@ import {
 } from "lucide-react"
 import { Toaster as Sonner, type ToasterProps } from "sonner"
 
-import { useTheme } from "@/components/theme-provider"
+import { useTheme } from "@/components/chrome/theme-provider"
 
 // Adapted from the shadcn registry `sonner` (which assumes next-themes) to the
 // console's own theme provider and the glass surface.

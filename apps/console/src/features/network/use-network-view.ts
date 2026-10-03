@@ -2,7 +2,7 @@ import { useQuery } from "@tanstack/react-query"
 import { createContext, useContext, useMemo } from "react"
 
 import { clockTime } from "@/lib/format"
-import { useNow } from "@/lib/use-now"
+import { useNow } from "@/hooks/use-now"
 
 import type { NodeContext } from "../nodes/node-facts"
 import { linkSummary, overviewScene } from "../overview/model"

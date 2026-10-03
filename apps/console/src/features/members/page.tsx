@@ -8,8 +8,8 @@ import {
 import { useNetworkRole } from "@/features/network/role"
 import { useNodeNavigation } from "@/features/nodes/navigation"
 import { PageFrame } from "@/features/shell/page-frame"
-import { useNow } from "@/lib/use-now"
-import { useReadFailureToast } from "@/lib/use-read-failure-toast"
+import { useNow } from "@/hooks/use-now"
+import { useReadFailureToast } from "@/hooks/use-read-failure-toast"
 import { m } from "@/paraglide/messages.js"
 
 import { MemberList } from "./member-list"
