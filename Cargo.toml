@@ -2,6 +2,7 @@
 members = [
     "apps/meshway-controller",
     "crates/model",
+    "crates/control-client",
     "crates/protocol",
     "crates/transport-spec",
 ]
