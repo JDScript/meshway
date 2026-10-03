@@ -10,14 +10,14 @@ description: Entity、Config、State 的职责与配置参考导航。
 
 | 层 | 职责 | 生命周期 |
 | --- | --- | --- |
-| Node / User | 持久身份、归属、撤销 | 不因配置回滚而复活 |
-| NetworkConfiguration | 管理员期望；groups、tagsOwners、access、topology、routing、nodes、DNS 等 | 相对静态，数据库完整版本，可回滚 |
+| Node / User | 持久接入／账户、公钥、网络绑定与永久凭据吊销 | 凭据吊销不因配置回滚而复活 |
+| NetworkConfiguration | Node 有效 identity／enabled，以及 groups、tagsOwners、access、topology、routing、nodes、DNS 等 | 相对静态，数据库完整版本，可回滚；身份转换仍需授权 |
 | NodeConfiguration | 按节点生成的执行许可／参数 | 从配置与一致实体事实派生，不独立编辑 |
 | State | 实际能力、endpoint、通道、使用选择和观测 | 频繁变化，有实例、序号和有效期 |
 
 **Config 类似 ROM，State 类似 RAM，分别下发。** 身份、必要恢复记录和需要查询的观测历史可以持久化，但不能将其混入管理员配置历史。
 
-持久实体及字段归属见 [Entity 与关系](/v2/entities)，各类数据的数据库／内存／文件访问见[存储与访问](/v2/storage)。技术栈和 shared crates 的提案集中在[代码结构](/v2/architecture)。
+字段直接按[持久数据库](/v2/storage/database)和[Controller 内存](/v2/storage/memory)枚举，权威来源见[数据模型](/v2/entities)。技术栈和 shared crates 的提案集中在[代码结构](/v2/architecture)。
 
 ## 已确认的设计方向 {#network-configuration}
 
@@ -25,6 +25,7 @@ description: Entity、Config、State 的职责与配置参考导航。
 - 配置命名统一为 `access`（访问权限）、`topology`（组网规则）、`routing`（流量路由）；保留 `groups`、`tagsOwners`、`nodes[id]`、`dns` 等基础部分。
 - access 定义业务端点权限；topology 定义允许的图；routing 定义业务在图上的路径约束。实际 links／paths 属于 State。
 - 带 Tag 的节点使用 Tag 授权身份，不再继承原 User／Group 的 access 权限；创建者可保留用于追溯。
+- 有效身份唯一位于 nodes[id].identity，使用 user／tag 判别对象；业务 enabled 也位于配置。Node 接入记录不再存 subject／owner 副本；永久凭据吊销独立保存且不可回滚。
 - 原创建用户离网或停用不自动撤销 Tag 身份节点，节点继续按标签策略运行，管理员可独立撤销。
 - `nodes[id].hostname` 是规范 DNS 名称的权威来源；运行上报的 OS hostname 是另一项事实。
 - 共享 configuration crate，提供类型／Schema、校验、编译／切片及增量处理；HTTP、数据库和运行资源 owner 各自分责。

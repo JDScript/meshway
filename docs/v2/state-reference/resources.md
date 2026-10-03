@@ -2,6 +2,8 @@
 
 下一版 NodeState 的资源结构。**listener 是配置资源，socket 是运行资源，endpoint 是带来源的候选。** configured、interface、STUN 的含义和优先尝试规则见[Endpoint Candidates](/v2/state-reference/endpoints)。
 
+本页解释资源语义和示例，完整逐字段草案集中在[Controller 内存字段](/v2/storage/memory#listenerstate)。
+
 ## ListenerState
 
 ```json

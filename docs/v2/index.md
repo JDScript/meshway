@@ -38,8 +38,10 @@ Node 上报自身运行事实，Controller 聚合 NetworkState；Node 可按需 
 
 - [NodeConfiguration 下发示例](/v2/configuration-reference/node-configuration)
 - [Config／State 同步与回滚](/v2/configuration-reference/synchronization)
-- [Entity、关系与字段归属](/v2/entities)
-- [全部数据的存储与访问](/v2/storage)
+- [数据模型与权威来源](/v2/entities)
+- [持久数据库：逐字段](/v2/storage/database)
+- [Controller 内存：逐字段](/v2/storage/memory)
+- [读写、保留与本地文件](/v2/storage)
 - [存储、查询与外部 API](/v2/configuration-reference/storage-api)
 - [模型与讨论边界](/v2/network-configuration)
 

@@ -70,7 +70,7 @@ const v2Sidebar: DefaultTheme.SidebarItem[] = [
     items: [
       { text: "概览", link: "/v2/" },
       { text: "配置与状态模型", link: "/v2/network-configuration" },
-      { text: "Entity 与关系", link: "/v2/entities" },
+      { text: "数据模型与权威来源", link: "/v2/entities" },
       { text: "操作权限", link: "/v2/permissions" },
       { text: "按需执行许可", link: "/v2/execution" },
     ],
@@ -152,6 +152,8 @@ const v2Sidebar: DefaultTheme.SidebarItem[] = [
   {
     text: "存储与工程",
     items: [
+      { text: "持久数据库字段", link: "/v2/storage/database" },
+      { text: "Controller 内存字段", link: "/v2/storage/memory" },
       { text: "存储与访问", link: "/v2/storage" },
       { text: "配置查询与缓存", link: "/v2/configuration-reference/storage-api" },
       { text: "技术栈与代码结构", link: "/v2/architecture" },

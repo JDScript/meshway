@@ -43,7 +43,8 @@ topology 是允许的图，不是当前连接状况；实际通道和路径分�
     "<node-id>": {
       "hostname": "backend-1",
       "remark": "开发后端",
-      "tags": ["tag:backend"],
+      "identity": { "type": "tag", "tags": ["tag:backend"] },
+      "enabled": true,
       "listeners": {
         "mesh-udp": {
           "type": "native_udp",
