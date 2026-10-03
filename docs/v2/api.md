@@ -4,7 +4,7 @@
 
 ## 当前实现切片
 
-新 `apps/meshway-controller` 的隔离开发基线提供以下账户 JSON 操作：
+新 `apps/meshway-controller` 的隔离开发基线提供以下账户与网络 JSON 操作：
 
 | operationId | 方法与路径 | 成功响应 |
 | --- | --- | --- |
@@ -13,8 +13,15 @@
 | `login` | `POST /api/v1/auth/login` | 200 SessionIssuedResponse |
 | `getAuthSession` | `GET /api/v1/auth/session` | 200 AuthSessionResponse |
 | `logout` | `POST /api/v1/auth/logout` | 204 |
+| `createNetwork` | `POST /api/v1/networks` | 201 NetworkResponse |
+| `listNetworks` | `GET /api/v1/networks` | 200 NetworkListResponse |
+| `getNetwork` | `GET /api/v1/networks/{networkId}` | 200 NetworkResponse |
+| `renameNetwork` | `POST /api/v1/networks/{networkId}/rename` | 200 NetworkResponse |
+| `listNetworkMembers` | `GET /api/v1/networks/{networkId}/members` | 200 NetworkMembersResponse |
 
-这些操作已接真实账户存储和会话；网络操作、Node 接入和 SSE 尚未进入该实现切片。错误为 `ErrorResponse { requestId, status, problem: { code, params, message } }`；requestId 仅在其安全生成失败时为 null。请求和响应对象拒绝数组表示、重复字段和未知字段。
+这些操作已接真实账户、网络和成员关系存储。建网同事务保存 Owner、完整加密初始配置和操作记录；初始 Mesh 地址池／DNS 后缀只保存在配置中。改名使用 expectedName 校验，不改变配置 revision；分页 limit 为 1–200，cursor 绑定用户／范围、创建序号上界和 15 分钟期限，每页重检当前权限。成员管理列表当前仅 Owner／Admin 可读。成员变更、配置编辑／CAS、Node 接入和 SSE 尚未进入此实现切片。
+
+错误为 `ErrorResponse { requestId, status, problem: { code, params, message } }`；requestId 仅在其安全生成失败时为 null。请求和响应对象拒绝数组表示、重复字段和未知字段。
 
 从该开发基线运行独立实例：
 
@@ -30,7 +37,7 @@ dataDir 使用无符号链接的绝对路径，父目录须存在；进程创建
 
 `export-openapi` binary 从同一份真实路由声明导出 `packages/protocol/openapi.json` 的内容，不启动数据库或服务。生成 SDK 的可用操作以这份产物为依据，不从本页目标索引推断尚未交付的接口。
 
-首批五个操作已生成 Rust／TypeScript 客户端，并经过正常 Controller 账户流程、结构化错误、运行时解码和 drift 检查。用法见 `packages/control-client/README.md`；当前生成器对 SSE、path／query 参数等尚未支持的形状明确报错，不把它们当作已交付操作。
+上述十个操作已生成 Rust／TypeScript 客户端，账户和网络流程经过正常 Controller 验证。SDK 支持带 Schema 校验的标量 path／可选 query 参数，用法见 `packages/control-client/README.md`；当前生成器对 SSE 等尚未支持的形状明确报错，不把它们当作已交付操作。
 
 ## 基础规则
 

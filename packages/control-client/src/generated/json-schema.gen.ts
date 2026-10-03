@@ -44,6 +44,22 @@ export const schemaDocument = {
         },
         "additionalProperties": false
       },
+      "CreateNetworkRequest": {
+        "type": "object",
+        "required": [
+          "requestId",
+          "name"
+        ],
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "requestId": {
+            "$ref": "#/components/schemas/RequestId"
+          }
+        },
+        "additionalProperties": false
+      },
       "EmptyParams": {
         "type": "object",
         "additionalProperties": false
@@ -91,6 +107,199 @@ export const schemaDocument = {
           },
           "password": {
             "$ref": "#/components/schemas/WireSecret"
+          }
+        },
+        "additionalProperties": false
+      },
+      "MemberSummary": {
+        "type": "object",
+        "required": [
+          "membershipId",
+          "userId",
+          "email",
+          "role",
+          "version",
+          "joinedAt"
+        ],
+        "properties": {
+          "email": {
+            "type": "string"
+          },
+          "joinedAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "membershipId": {
+            "$ref": "#/components/schemas/MembershipId"
+          },
+          "role": {
+            "$ref": "#/components/schemas/MembershipRole"
+          },
+          "userId": {
+            "$ref": "#/components/schemas/UserId"
+          },
+          "version": {
+            "$ref": "#/components/schemas/Version"
+          }
+        },
+        "additionalProperties": false
+      },
+      "MembershipId": {
+        "type": "string",
+        "format": "uuid",
+        "description": "Network membership identifier.\n\n This is an identifier, not a credential. Generation and authorization\n belong to the caller. Parsing rejects aliases rather than normalizing them.",
+        "maxLength": 36,
+        "minLength": 36,
+        "pattern": "^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+      },
+      "MembershipRole": {
+        "type": "string",
+        "description": "A user's role within one network; this does not grant instance privileges.",
+        "enum": [
+          "owner",
+          "admin",
+          "member"
+        ]
+      },
+      "NetworkActions": {
+        "type": "object",
+        "required": [
+          "rename",
+          "editConfiguration",
+          "manageMembers"
+        ],
+        "properties": {
+          "editConfiguration": {
+            "type": "boolean"
+          },
+          "manageMembers": {
+            "type": "boolean"
+          },
+          "rename": {
+            "type": "boolean"
+          }
+        },
+        "additionalProperties": false
+      },
+      "NetworkId": {
+        "type": "string",
+        "format": "uuid",
+        "description": "Isolated network identifier.\n\n This is an identifier, not a credential. Generation and authorization\n belong to the caller. Parsing rejects aliases rather than normalizing them.",
+        "maxLength": 36,
+        "minLength": 36,
+        "pattern": "^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+      },
+      "NetworkListResponse": {
+        "type": "object",
+        "required": [
+          "requestId",
+          "items",
+          "nextCursor",
+          "asOf"
+        ],
+        "properties": {
+          "asOf": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/NetworkSummary"
+            }
+          },
+          "nextCursor": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "requestId": {
+            "$ref": "#/components/schemas/RequestId"
+          }
+        },
+        "additionalProperties": false
+      },
+      "NetworkMembersResponse": {
+        "type": "object",
+        "required": [
+          "requestId",
+          "items",
+          "nextCursor",
+          "asOf"
+        ],
+        "properties": {
+          "asOf": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/MemberSummary"
+            }
+          },
+          "nextCursor": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "requestId": {
+            "$ref": "#/components/schemas/RequestId"
+          }
+        },
+        "additionalProperties": false
+      },
+      "NetworkResponse": {
+        "type": "object",
+        "required": [
+          "requestId",
+          "network"
+        ],
+        "properties": {
+          "network": {
+            "$ref": "#/components/schemas/NetworkSummary"
+          },
+          "requestId": {
+            "$ref": "#/components/schemas/RequestId"
+          }
+        },
+        "additionalProperties": false
+      },
+      "NetworkSummary": {
+        "type": "object",
+        "required": [
+          "id",
+          "name",
+          "createdAt",
+          "currentRevision",
+          "membershipId",
+          "role",
+          "actions"
+        ],
+        "properties": {
+          "actions": {
+            "$ref": "#/components/schemas/NetworkActions"
+          },
+          "createdAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "currentRevision": {
+            "$ref": "#/components/schemas/Revision"
+          },
+          "id": {
+            "$ref": "#/components/schemas/NetworkId"
+          },
+          "membershipId": {
+            "$ref": "#/components/schemas/MembershipId"
+          },
+          "name": {
+            "type": "string"
+          },
+          "role": {
+            "$ref": "#/components/schemas/MembershipRole"
           }
         },
         "additionalProperties": false
@@ -411,6 +620,98 @@ export const schemaDocument = {
               }
             },
             "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "required": [
+              "code",
+              "params",
+              "message"
+            ],
+            "properties": {
+              "code": {
+                "type": "string",
+                "enum": [
+                  "permission_denied"
+                ]
+              },
+              "message": {
+                "type": "string"
+              },
+              "params": {
+                "$ref": "#/components/schemas/EmptyParams"
+              }
+            },
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "required": [
+              "code",
+              "params",
+              "message"
+            ],
+            "properties": {
+              "code": {
+                "type": "string",
+                "enum": [
+                  "request_id_conflict"
+                ]
+              },
+              "message": {
+                "type": "string"
+              },
+              "params": {
+                "$ref": "#/components/schemas/EmptyParams"
+              }
+            },
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "required": [
+              "code",
+              "params",
+              "message"
+            ],
+            "properties": {
+              "code": {
+                "type": "string",
+                "enum": [
+                  "name_conflict"
+                ]
+              },
+              "message": {
+                "type": "string"
+              },
+              "params": {
+                "$ref": "#/components/schemas/EmptyParams"
+              }
+            },
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "required": [
+              "code",
+              "params",
+              "message"
+            ],
+            "properties": {
+              "code": {
+                "type": "string",
+                "enum": [
+                  "invalid_cursor"
+                ]
+              },
+              "message": {
+                "type": "string"
+              },
+              "params": {
+                "$ref": "#/components/schemas/EmptyParams"
+              }
+            },
+            "additionalProperties": false
           }
         ]
       },
@@ -430,6 +731,26 @@ export const schemaDocument = {
         },
         "additionalProperties": false
       },
+      "RenameNetworkRequest": {
+        "type": "object",
+        "required": [
+          "requestId",
+          "name",
+          "expectedName"
+        ],
+        "properties": {
+          "expectedName": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "requestId": {
+            "$ref": "#/components/schemas/RequestId"
+          }
+        },
+        "additionalProperties": false
+      },
       "RequestId": {
         "type": "string",
         "format": "uuid",
@@ -437,6 +758,12 @@ export const schemaDocument = {
         "maxLength": 36,
         "minLength": 36,
         "pattern": "^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+      },
+      "Revision": {
+        "type": "integer",
+        "description": "A positive configuration revision.",
+        "maximum": 9007199254740991,
+        "minimum": 1
       },
       "SessionId": {
         "type": "string",
@@ -518,6 +845,12 @@ export const schemaDocument = {
           }
         },
         "additionalProperties": false
+      },
+      "Version": {
+        "type": "integer",
+        "description": "A positive record version, distinct from a configuration revision.",
+        "maximum": 9007199254740991,
+        "minimum": 1
       },
       "WireSecret": {
         "type": "string",

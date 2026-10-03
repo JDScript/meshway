@@ -1,11 +1,13 @@
 import assert from "node:assert/strict";
 import { test, type TestContext } from "node:test";
 import { spawn } from "node:child_process";
+import { randomUUID } from "node:crypto";
 import { mkdtemp, mkdir, realpath, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { resolve, join } from "node:path";
 import {
   ControlClient, getAuthOptions, register, login, getAuthSession, logout,
+  createNetwork, listNetworks, getNetwork, renameNetwork, listNetworkMembers,
 } from "../src/index.ts";
 
 async function controller(t: TestContext, registrationEnabled = true) {
@@ -82,6 +84,48 @@ test("generated TS SDK decodes server-enforced registration disablement", async 
   assert.ok(!result.ok && result.error.kind === "http");
   assert.equal(result.error.status, 403);
   assert.equal(result.error.problem?.problem.code, "registration_disabled");
+});
+
+test("generated TS network operations create real networks and preserve pagination and CAS", async t => {
+  const client = await controller(t);
+  const issued = await register(client, { email: "network-owner@example.com", password: "valid network password" });
+  assert.ok(issued.ok);
+  const options = { token: issued.data.token };
+  const firstRequest = { requestId: randomUUID(), name: "First network" };
+  const first = await createNetwork(client, firstRequest, options);
+  assert.ok(first.ok);
+  assert.equal(first.data.network.role, "owner");
+  assert.equal(first.data.network.currentRevision, 1);
+  assert.equal(first.data.network.actions.rename, true);
+  const replay = await createNetwork(client, firstRequest, options);
+  assert.ok(replay.ok);
+  assert.deepEqual(replay.data.network, first.data.network);
+  assert.ok((await createNetwork(client, { requestId: randomUUID(), name: "Second network" }, options)).ok);
+  const page = await listNetworks(client, { limit: 1 }, options);
+  assert.ok(page.ok);
+  assert.equal(page.data.items.length, 1);
+  assert.ok(page.data.nextCursor);
+  assert.ok((await createNetwork(client, { requestId: randomUUID(), name: "After the page boundary" }, options)).ok);
+  const rest = await listNetworks(client, { limit: 200, cursor: page.data.nextCursor }, options);
+  assert.ok(rest.ok);
+  assert.equal(rest.data.items.length, 1);
+  assert.equal(rest.data.items[0]?.name, "Second network");
+  assert.equal(rest.data.nextCursor, null);
+  assert.equal(rest.data.asOf, page.data.asOf);
+  const path = { networkId: first.data.network.id };
+  const detail = await getNetwork(client, path, options);
+  assert.ok(detail.ok);
+  const members = await listNetworkMembers(client, path, {}, options);
+  assert.ok(members.ok);
+  assert.equal(members.data.items[0]?.userId, issued.data.user.id);
+  assert.equal(members.data.items[0]?.membershipId, detail.data.network.membershipId);
+  const renamed = await renameNetwork(client, path, { requestId: randomUUID(), expectedName: "First network", name: "New name" }, options);
+  assert.ok(renamed.ok);
+  assert.equal(renamed.data.network.currentRevision, 1);
+  const conflict = await renameNetwork(client, path, { requestId: randomUUID(), expectedName: "First network", name: "Lost edit" }, options);
+  assert.ok(!conflict.ok && conflict.error.kind === "http");
+  assert.equal(conflict.error.status, 409);
+  assert.equal(conflict.error.problem?.problem.code, "name_conflict");
 });
 
 test("generated TS operations validate malformed real envelopes before returning data", async t => {

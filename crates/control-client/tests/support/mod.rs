@@ -37,6 +37,6 @@ pub async fn controller(registration: bool) -> (App, Client, Server, tempfile::T
     let mut settings = Settings::new(directory.path().join("instance"));
     settings.registration_enabled = registration;
     let app = App::open(settings).await.unwrap();
-    let (client, server) = serve(http::router(app.accounts()), 1024 * 1024).await;
+    let (client, server) = serve(http::router(&app), 1024 * 1024).await;
     (app, client, server, directory)
 }

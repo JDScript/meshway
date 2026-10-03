@@ -6,6 +6,7 @@
 #![forbid(unsafe_code)]
 
 mod auth;
+mod networks;
 mod object;
 mod problem;
 mod secret;
@@ -13,6 +14,12 @@ mod secret;
 pub use auth::{
     AuthOptionsResponse, AuthSessionResponse, LoginRequest, PasswordLengthUnit, PasswordRules,
     RegisterRequest, SessionIssuedResponse, SessionMetadata, UserView,
+};
+pub use meshway_model::{MembershipId, MembershipRole, NetworkId, Revision, Version};
+pub use networks::{
+    CreateNetworkRequest, MemberSummary, NetworkActions, NetworkListResponse,
+    NetworkMembersResponse, NetworkPageQuery, NetworkResponse, NetworkSummary,
+    RenameNetworkRequest,
 };
 pub use problem::{EmptyParams, ErrorResponse, Problem};
 pub use secret::WireSecret;

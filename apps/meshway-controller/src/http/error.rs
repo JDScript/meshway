@@ -8,6 +8,7 @@ use meshway_model::RequestId;
 use meshway_protocol::{EmptyParams, ErrorResponse, Problem};
 
 use crate::accounts::AccountError;
+use crate::networks::NetworkError;
 
 pub(super) struct HttpError(ErrorResponse);
 
@@ -26,7 +27,7 @@ impl HttpError {
             status: 503,
             problem: Problem::ServiceUnavailable {
                 params: EmptyParams {},
-                message: "Account service is unavailable.".into(),
+                message: "Service is unavailable.".into(),
             },
         })
     }
@@ -96,6 +97,65 @@ impl HttpError {
                 message: "Invalid or expired session.".into(),
             },
         )
+    }
+
+    pub(super) fn invalid_request(id: RequestId) -> Self {
+        Self::new(
+            id,
+            StatusCode::BAD_REQUEST,
+            Problem::InvalidRequest {
+                params: EmptyParams {},
+                message: "Invalid request parameters.".into(),
+            },
+        )
+    }
+
+    pub(super) fn network(id: RequestId, error: NetworkError) -> Self {
+        let (status, problem) = match error {
+            NetworkError::InvalidSession => return Self::invalid_session(id),
+            NetworkError::NotFound => (
+                StatusCode::NOT_FOUND,
+                Problem::NotFound {
+                    params: EmptyParams {},
+                    message: "Network not found.".into(),
+                },
+            ),
+            NetworkError::PermissionDenied => (
+                StatusCode::FORBIDDEN,
+                Problem::PermissionDenied {
+                    params: EmptyParams {},
+                    message: "This operation requires network administrator permission.".into(),
+                },
+            ),
+            NetworkError::InvalidName | NetworkError::InvalidLimit => {
+                return Self::invalid_request(id);
+            }
+            NetworkError::RequestConflict => (
+                StatusCode::CONFLICT,
+                Problem::RequestConflict {
+                    params: EmptyParams {},
+                    message: "Request ID was already used with different input.".into(),
+                },
+            ),
+            NetworkError::NameConflict => (
+                StatusCode::CONFLICT,
+                Problem::NameConflict {
+                    params: EmptyParams {},
+                    message: "Network name changed; reload before retrying.".into(),
+                },
+            ),
+            NetworkError::InvalidCursor => (
+                StatusCode::BAD_REQUEST,
+                Problem::InvalidCursor {
+                    params: EmptyParams {},
+                    message: "Pagination cursor is invalid or expired.".into(),
+                },
+            ),
+            NetworkError::Storage | NetworkError::Unavailable => {
+                return Self::unavailable(Some(id));
+            }
+        };
+        Self::new(id, status, problem)
     }
 
     pub(super) fn json(id: RequestId, rejection: JsonRejection) -> Self {

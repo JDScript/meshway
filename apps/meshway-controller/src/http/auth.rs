@@ -48,7 +48,7 @@ fn issued_view(id: RequestId, issued: IssuedSession) -> SessionIssuedResponse {
     }
 }
 
-fn bearer(headers: &HeaderMap, id: RequestId) -> Result<&str, HttpError> {
+pub(super) fn bearer(headers: &HeaderMap, id: RequestId) -> Result<&str, HttpError> {
     let mut values = headers.get_all(header::AUTHORIZATION).iter();
     let value = values
         .next()
@@ -193,7 +193,7 @@ mod tests {
             let error: ErrorResponse = serde_json::from_slice(&body).unwrap();
             assert_eq!(error.request_id, Some(id));
             assert!(
-                matches!(error.problem, Problem::ServiceUnavailable { message, .. } if message == "Account service is unavailable.")
+                matches!(error.problem, Problem::ServiceUnavailable { message, .. } if message == "Service is unavailable.")
             );
         }
     }

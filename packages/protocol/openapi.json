@@ -285,6 +285,459 @@
           }
         ]
       }
+    },
+    "/api/v1/networks": {
+      "get": {
+        "tags": [
+          "networks"
+        ],
+        "operationId": "listNetworks",
+        "parameters": [
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int32",
+              "maximum": 200,
+              "minimum": 1
+            }
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "maxLength": 4096
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NetworkListResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "userSession": []
+          }
+        ]
+      },
+      "post": {
+        "tags": [
+          "networks"
+        ],
+        "operationId": "createNetwork",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateNetworkRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NetworkResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "413": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "415": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "userSession": []
+          }
+        ]
+      }
+    },
+    "/api/v1/networks/{networkId}": {
+      "get": {
+        "tags": [
+          "networks"
+        ],
+        "operationId": "getNetwork",
+        "parameters": [
+          {
+            "name": "networkId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/NetworkId"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NetworkResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "userSession": []
+          }
+        ]
+      }
+    },
+    "/api/v1/networks/{networkId}/members": {
+      "get": {
+        "tags": [
+          "networks"
+        ],
+        "operationId": "listNetworkMembers",
+        "parameters": [
+          {
+            "name": "networkId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/NetworkId"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int32",
+              "maximum": 200,
+              "minimum": 1
+            }
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "maxLength": 4096
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NetworkMembersResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "userSession": []
+          }
+        ]
+      }
+    },
+    "/api/v1/networks/{networkId}/rename": {
+      "post": {
+        "tags": [
+          "networks"
+        ],
+        "operationId": "renameNetwork",
+        "parameters": [
+          {
+            "name": "networkId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/NetworkId"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RenameNetworkRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NetworkResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "413": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "415": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "userSession": []
+          }
+        ]
+      }
     }
   },
   "components": {
@@ -325,6 +778,22 @@
           },
           "user": {
             "$ref": "#/components/schemas/UserView"
+          }
+        },
+        "additionalProperties": false
+      },
+      "CreateNetworkRequest": {
+        "type": "object",
+        "required": [
+          "requestId",
+          "name"
+        ],
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "requestId": {
+            "$ref": "#/components/schemas/RequestId"
           }
         },
         "additionalProperties": false
@@ -376,6 +845,199 @@
           },
           "password": {
             "$ref": "#/components/schemas/WireSecret"
+          }
+        },
+        "additionalProperties": false
+      },
+      "MemberSummary": {
+        "type": "object",
+        "required": [
+          "membershipId",
+          "userId",
+          "email",
+          "role",
+          "version",
+          "joinedAt"
+        ],
+        "properties": {
+          "email": {
+            "type": "string"
+          },
+          "joinedAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "membershipId": {
+            "$ref": "#/components/schemas/MembershipId"
+          },
+          "role": {
+            "$ref": "#/components/schemas/MembershipRole"
+          },
+          "userId": {
+            "$ref": "#/components/schemas/UserId"
+          },
+          "version": {
+            "$ref": "#/components/schemas/Version"
+          }
+        },
+        "additionalProperties": false
+      },
+      "MembershipId": {
+        "type": "string",
+        "format": "uuid",
+        "description": "Network membership identifier.\n\n This is an identifier, not a credential. Generation and authorization\n belong to the caller. Parsing rejects aliases rather than normalizing them.",
+        "maxLength": 36,
+        "minLength": 36,
+        "pattern": "^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+      },
+      "MembershipRole": {
+        "type": "string",
+        "description": "A user's role within one network; this does not grant instance privileges.",
+        "enum": [
+          "owner",
+          "admin",
+          "member"
+        ]
+      },
+      "NetworkActions": {
+        "type": "object",
+        "required": [
+          "rename",
+          "editConfiguration",
+          "manageMembers"
+        ],
+        "properties": {
+          "editConfiguration": {
+            "type": "boolean"
+          },
+          "manageMembers": {
+            "type": "boolean"
+          },
+          "rename": {
+            "type": "boolean"
+          }
+        },
+        "additionalProperties": false
+      },
+      "NetworkId": {
+        "type": "string",
+        "format": "uuid",
+        "description": "Isolated network identifier.\n\n This is an identifier, not a credential. Generation and authorization\n belong to the caller. Parsing rejects aliases rather than normalizing them.",
+        "maxLength": 36,
+        "minLength": 36,
+        "pattern": "^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+      },
+      "NetworkListResponse": {
+        "type": "object",
+        "required": [
+          "requestId",
+          "items",
+          "nextCursor",
+          "asOf"
+        ],
+        "properties": {
+          "asOf": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/NetworkSummary"
+            }
+          },
+          "nextCursor": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "requestId": {
+            "$ref": "#/components/schemas/RequestId"
+          }
+        },
+        "additionalProperties": false
+      },
+      "NetworkMembersResponse": {
+        "type": "object",
+        "required": [
+          "requestId",
+          "items",
+          "nextCursor",
+          "asOf"
+        ],
+        "properties": {
+          "asOf": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/MemberSummary"
+            }
+          },
+          "nextCursor": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "requestId": {
+            "$ref": "#/components/schemas/RequestId"
+          }
+        },
+        "additionalProperties": false
+      },
+      "NetworkResponse": {
+        "type": "object",
+        "required": [
+          "requestId",
+          "network"
+        ],
+        "properties": {
+          "network": {
+            "$ref": "#/components/schemas/NetworkSummary"
+          },
+          "requestId": {
+            "$ref": "#/components/schemas/RequestId"
+          }
+        },
+        "additionalProperties": false
+      },
+      "NetworkSummary": {
+        "type": "object",
+        "required": [
+          "id",
+          "name",
+          "createdAt",
+          "currentRevision",
+          "membershipId",
+          "role",
+          "actions"
+        ],
+        "properties": {
+          "actions": {
+            "$ref": "#/components/schemas/NetworkActions"
+          },
+          "createdAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "currentRevision": {
+            "$ref": "#/components/schemas/Revision"
+          },
+          "id": {
+            "$ref": "#/components/schemas/NetworkId"
+          },
+          "membershipId": {
+            "$ref": "#/components/schemas/MembershipId"
+          },
+          "name": {
+            "type": "string"
+          },
+          "role": {
+            "$ref": "#/components/schemas/MembershipRole"
           }
         },
         "additionalProperties": false
@@ -696,6 +1358,98 @@
               }
             },
             "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "required": [
+              "code",
+              "params",
+              "message"
+            ],
+            "properties": {
+              "code": {
+                "type": "string",
+                "enum": [
+                  "permission_denied"
+                ]
+              },
+              "message": {
+                "type": "string"
+              },
+              "params": {
+                "$ref": "#/components/schemas/EmptyParams"
+              }
+            },
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "required": [
+              "code",
+              "params",
+              "message"
+            ],
+            "properties": {
+              "code": {
+                "type": "string",
+                "enum": [
+                  "request_id_conflict"
+                ]
+              },
+              "message": {
+                "type": "string"
+              },
+              "params": {
+                "$ref": "#/components/schemas/EmptyParams"
+              }
+            },
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "required": [
+              "code",
+              "params",
+              "message"
+            ],
+            "properties": {
+              "code": {
+                "type": "string",
+                "enum": [
+                  "name_conflict"
+                ]
+              },
+              "message": {
+                "type": "string"
+              },
+              "params": {
+                "$ref": "#/components/schemas/EmptyParams"
+              }
+            },
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "required": [
+              "code",
+              "params",
+              "message"
+            ],
+            "properties": {
+              "code": {
+                "type": "string",
+                "enum": [
+                  "invalid_cursor"
+                ]
+              },
+              "message": {
+                "type": "string"
+              },
+              "params": {
+                "$ref": "#/components/schemas/EmptyParams"
+              }
+            },
+            "additionalProperties": false
           }
         ]
       },
@@ -715,6 +1469,26 @@
         },
         "additionalProperties": false
       },
+      "RenameNetworkRequest": {
+        "type": "object",
+        "required": [
+          "requestId",
+          "name",
+          "expectedName"
+        ],
+        "properties": {
+          "expectedName": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "requestId": {
+            "$ref": "#/components/schemas/RequestId"
+          }
+        },
+        "additionalProperties": false
+      },
       "RequestId": {
         "type": "string",
         "format": "uuid",
@@ -722,6 +1496,12 @@
         "maxLength": 36,
         "minLength": 36,
         "pattern": "^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+      },
+      "Revision": {
+        "type": "integer",
+        "description": "A positive configuration revision.",
+        "maximum": 9007199254740991,
+        "minimum": 1
       },
       "SessionId": {
         "type": "string",
@@ -803,6 +1583,12 @@
           }
         },
         "additionalProperties": false
+      },
+      "Version": {
+        "type": "integer",
+        "description": "A positive record version, distinct from a configuration revision.",
+        "maximum": 9007199254740991,
+        "minimum": 1
       },
       "WireSecret": {
         "type": "string",

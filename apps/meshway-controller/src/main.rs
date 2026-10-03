@@ -66,7 +66,7 @@ async fn run(arguments: Arguments) -> Result<(), &'static str> {
             let signal_failed = tokio::signal::ctrl_c().await.is_err();
             let _ = signal_result.send(signal_failed);
         };
-        axum::serve(listener, http::router(app.accounts()))
+        axum::serve(listener, http::router(&app))
             .with_graceful_shutdown(shutdown)
             .await
             .map_err(|_| "Controller serve failed.")?;

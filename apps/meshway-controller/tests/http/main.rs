@@ -24,7 +24,7 @@ impl Server {
         let app = App::open(settings).await.expect("open real SQLite");
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let url = format!("http://{}", listener.local_addr().unwrap());
-        let router = http::router(app.accounts());
+        let router = http::router(&app);
         let (stop, stopped) = oneshot::channel();
         let task = tokio::spawn(async move {
             axum::serve(listener, router)
@@ -342,7 +342,7 @@ async fn real_accounts_http_persistence_and_safe_rejections() {
     .await;
     error(
         client
-            .get(format!("{}/api/v1/networks", server.url))
+            .get(format!("{}/api/v1/not-an-operation", server.url))
             .bearer_auth(alice.token.expose())
             .send()
             .await
@@ -494,7 +494,7 @@ fn exported_openapi_is_the_actual_router_contract() {
     assert_eq!(spec, artifact);
     assert_eq!(spec["openapi"], "3.1.0");
     let paths = spec["paths"].as_object().unwrap();
-    assert_eq!(paths.len(), 5);
+    assert_eq!(paths.len(), 9);
     for (path, method, operation, status, component) in [
         (
             "options",

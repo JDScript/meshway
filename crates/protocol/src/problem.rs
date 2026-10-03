@@ -79,6 +79,10 @@ problems! {
     ServiceUnavailable(EmptyParams) = "service_unavailable",
     NotFound(EmptyParams) = "not_found",
     MethodNotAllowed(EmptyParams) = "method_not_allowed",
+    PermissionDenied(EmptyParams) = "permission_denied",
+    RequestConflict(EmptyParams) = "request_id_conflict",
+    NameConflict(EmptyParams) = "name_conflict",
+    InvalidCursor(EmptyParams) = "invalid_cursor",
 }
 
 wire_object! {

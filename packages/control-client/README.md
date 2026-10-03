@@ -23,8 +23,9 @@ if (result.ok) {
 ```
 
 - The package root exports `ControlClient`, request options/result types, DTO
-  types and the five account operations: `getAuthOptions`, `register`, `login`,
-  `getAuthSession`, `logout`.
+  types and the account operations: `getAuthOptions`, `register`, `login`,
+  `getAuthSession`, `logout`. Network operations are `createNetwork`,
+  `listNetworks`, `getNetwork`, `renameNetwork`, and `listNetworkMembers`.
 - `@meshway/control-client/schemas` exports `z<TypeName>` validators.
   `@meshway/control-client/json-schema` exports editor schemas.
 - All bodies are validated. An invalid success body yields `decode`; an invalid
@@ -37,6 +38,26 @@ if (result.ok) {
 - `fetch` can be injected. Redirects and ambient cookie credentials are disabled.
   `AbortSignal` cancels pending sends/reads. The default body budget is 1 MiB;
   `maxBodyBytes` accepts 1 through 16 MiB.
+
+## Networks
+
+Network methods take generated path/query objects. For example:
+
+```ts
+const created = await createNetwork(client, { requestId, name }, { token, signal });
+const page = await listNetworks(client, { limit: 100 }, { token, signal });
+const network = await getNetwork(client, { networkId }, { token, signal });
+```
+
+Creation is idempotent per user and request ID; it atomically stores the network,
+Owner membership, complete encrypted initial configuration, and activity.
+Rename takes `expectedName` and does not change the configuration revision.
+Pagination uses an opaque, expiring cursor bound to the caller and query scope;
+metadata and permissions are checked again on every page. Only network
+Owner/Admin can read the management member list in this slice.
+
+These operations manage network metadata and initial configuration. They do not
+claim that a Node has enrolled, installed configuration, or established a tunnel.
 
 ## Rust
 
@@ -86,7 +107,7 @@ storage. They test ordinary registration/session/logout, disabled registration,
 typed errors and malformed real response envelopes. Generator-only synthetic
 fixtures verify code-generation boundaries separately.
 
-The current generator supports the published account JSON operations. SSE,
-path/query parameters and other unsupported schema/operation shapes fail
-generation explicitly. Integer schemas must prove a JS-safe range through
+The current generator supports the published account/network JSON operations
+and validated scalar path/optional query parameters. SSE and other unsupported
+schema/operation shapes fail generation explicitly. Integer schemas must prove a JS-safe range through
 explicit bounds or the supported `int32` format; unbounded `int64` is rejected.

@@ -2,10 +2,11 @@
 
 mod auth;
 mod error;
+mod networks;
 
 use axum::{
     Router,
-    extract::{DefaultBodyLimit, Request},
+    extract::{DefaultBodyLimit, FromRef, Request},
     http::{HeaderValue, StatusCode, header},
     middleware::{self, Next},
     response::{IntoResponse, Response},
@@ -19,19 +20,42 @@ use utoipa::openapi::{
 use utoipa_axum::{router::OpenApiRouter, routes};
 
 use crate::accounts::{Accounts, random_uuid};
+use crate::{App, networks::Networks};
 
 use error::HttpError;
 
 /// Includes JSON whitespace and escapes, independently of password limits.
 pub const MAX_JSON_BODY_BYTES: usize = 16 * 1024;
 
-fn routes() -> OpenApiRouter<Accounts> {
+#[derive(Clone)]
+struct HttpState {
+    accounts: Accounts,
+    networks: Networks,
+}
+
+impl FromRef<HttpState> for Accounts {
+    fn from_ref(state: &HttpState) -> Self {
+        state.accounts.clone()
+    }
+}
+
+impl FromRef<HttpState> for Networks {
+    fn from_ref(state: &HttpState) -> Self {
+        state.networks.clone()
+    }
+}
+
+fn routes() -> OpenApiRouter<HttpState> {
     OpenApiRouter::new()
         .routes(routes!(auth::options))
         .routes(routes!(auth::register))
         .routes(routes!(auth::login))
         .routes(routes!(auth::session))
         .routes(routes!(auth::logout))
+        .routes(routes!(networks::list, networks::create))
+        .routes(routes!(networks::get))
+        .routes(routes!(networks::rename))
+        .routes(routes!(networks::members))
 }
 
 pub fn openapi() -> OpenApi {
@@ -47,14 +71,17 @@ pub fn openapi() -> OpenApi {
     spec
 }
 
-pub fn router(accounts: Accounts) -> Router {
+pub fn router(app: &App) -> Router {
     let (router, _) = routes().split_for_parts();
     router
         .fallback(not_found)
         .method_not_allowed_fallback(method_not_allowed)
         .layer(DefaultBodyLimit::max(MAX_JSON_BODY_BYTES))
         .layer(middleware::from_fn(context))
-        .with_state(accounts)
+        .with_state(HttpState {
+            accounts: app.accounts(),
+            networks: app.networks(),
+        })
 }
 
 async fn context(mut request: Request, next: Next) -> Response {

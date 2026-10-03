@@ -79,6 +79,8 @@ fn membership_roles_have_the_same_closed_wire_and_schema_vocabulary() {
         "\"Owner\"",
         "\"administrator\"",
         "\" member\"",
+        "{\"owner\":null}",
+        "[\"member\"]",
         "\"\"",
         "null",
         "1",
