@@ -1,8 +1,8 @@
 import { spawnSync } from "node:child_process";
-import { mkdir, readdir, readFile, rm, writeFile } from "node:fs/promises";
-import { createRequire } from "node:module";
+import { mkdir, rm, writeFile } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
-import { fileURLToPath, pathToFileURL } from "node:url";
+import { fileURLToPath } from "node:url";
+import { operationModel, typescriptOperations, rustOperations } from "./codegen/operations.mjs";
 
 export const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 export const artifactPaths = [
@@ -12,35 +12,45 @@ export const artifactPaths = [
 ];
 
 function run(command, args) {
-  const result = spawnSync(command, args, { cwd: root, stdio: "inherit" });
+  const result = spawnSync(command, args, { cwd: root, encoding: "utf8", stdio: ["ignore", "pipe", "inherit"] });
   if (result.error) throw result.error;
   if (result.status !== 0) throw new Error(`${command} failed (${result.status})`);
+  return result.stdout;
 }
 
 export async function generate(outputRoot = root) {
   const schema = join(outputRoot, artifactPaths[0]);
-  const rust = join(outputRoot, artifactPaths[1]);
-  const typescript = join(outputRoot, artifactPaths[2]);
+  // Always export actual routes; the checked-in artifact is never an input.
+  const document = JSON.parse(run("cargo", ["run", "-p", "meshway-controller", "--bin", "export-openapi", "--locked", "--quiet"]));
+  const outputs = generatedFiles(document);
   await mkdir(dirname(schema), { recursive: true });
-  run("cargo", ["run", "--locked", "--quiet", "-p", "meshway-controller", "--", "export-openapi", "--output", schema]);
-  run("cargo", ["run", "--locked", "--quiet", "-p", "meshway-controller", "--features", "codegen", "--bin", "generate-rust-client", "--", "--input", schema, "--output", rust]);
-  const rustFiles = (await readdir(rust)).filter((file) => file.endsWith(".rs"));
-  run("rustfmt", ["--edition", "2024", ...rustFiles.map((file) => join(rust, file))]);
+  await writeFile(schema, JSON.stringify(document, null, 2) + "\n");
+  await clearGenerated(outputRoot);
+  for (const [path, content] of Object.entries(outputs)) {
+    await mkdir(dirname(join(outputRoot, path)), { recursive: true });
+    await writeFile(join(outputRoot, path), content);
+  }
+  run("rustfmt", ["--edition", "2024", join(outputRoot, artifactPaths[1], "mod.rs")]);
+}
 
-  const require = createRequire(join(root, "packages/control-client/package.json"));
-  const generatorPackage = dirname(require.resolve("@hey-api/openapi-ts/package.json"));
-  const { createClient } = await import(pathToFileURL(join(generatorPackage, "dist/index.mjs")).href);
-  await rm(typescript, { recursive: true, force: true });
-  await createClient({
-    configFile: false,
-    input: schema,
-    output: { path: typescript },
-    plugins: ["@hey-api/typescript"],
-  });
-  const document = JSON.parse(await readFile(schema, "utf8"));
-  await writeFile(join(typescript, "zod.gen.ts"), validators(document));
-  await writeFile(join(typescript, "operations.gen.ts"), operations(document));
-  await writeFile(join(typescript, "json-schema.gen.ts"), editorSchemas(document));
+// Also used to retire the previous generation chain before the first fresh
+// actual-route artifact exists. This does not create a substitute API artifact.
+export async function clearGenerated(outputRoot = root) {
+  for (const directory of artifactPaths.slice(1)) await rm(join(outputRoot, directory), { recursive: true, force: true });
+}
+
+export function generatedFiles(document) {
+  const model = operationModel(document);
+  const schema = validators(document);
+  const names = Object.keys(document.components.schemas).sort();
+  return {
+    [`${artifactPaths[1]}/mod.rs`]: rustOperations(model),
+    [`${artifactPaths[2]}/zod.gen.ts`]: schema,
+    [`${artifactPaths[2]}/types.gen.ts`]: `// Generated from Controller OpenAPI. Do not edit.\nimport type * as z from "zod";\nimport type * as schemas from "./zod.gen.ts";\n${names.map(name => `export type ${name} = z.output<typeof schemas.z${name}>;`).join("\n")}\n`,
+    [`${artifactPaths[2]}/operations.gen.ts`]: typescriptOperations(model),
+    [`${artifactPaths[2]}/json-schema.gen.ts`]: editorSchemas(document),
+    [`${artifactPaths[2]}/index.ts`]: `// Generated from Controller OpenAPI. Do not edit.\nexport * from "./types.gen.ts";\nexport * from "./operations.gen.ts";\n`,
+  };
 }
 
 // Preserve the authoritative annotations and bounds for local JSONC completion.
@@ -54,7 +64,7 @@ function editorSchemas(document) {
   return `// Generated from the controller OpenAPI by scripts/generate-protocol.mjs. Do not edit.\n\nexport const schemaDocument = ${JSON.stringify(schemaDocument, null, 2)} as const;\n\nexport const componentSchemas = schemaDocument.components.schemas;\n\nexport function schemaFor(name: keyof typeof componentSchemas) {\n  return { ...schemaDocument, $ref: \`#/components/schemas/\${name}\` } as const;\n}\n`;
 }
 
-// Hey API emits DTOs. These deliberately narrow schema and operation
+// Types are inferred from the same validators used at runtime. The narrow
 // emitter keeps the transport free of unchecked generic casts. It fails closed
 // when the API grows beyond JSON GET/POST operations with component schemas.
 // JSON Schema lengths count Unicode code points, unlike Zod's native min/max
@@ -64,6 +74,7 @@ export function validators(document) {
   const visiting = new Set();
   const definitions = [];
   let usesTypedMap = false;
+  let usesDateTime = false;
   const schemas = document.components?.schemas ?? document.$defs;
   const referencePrefix = document.components?.schemas ? "#/components/schemas/" : "#/$defs/";
   if (!schemas) throw new Error("Missing schema definitions");
@@ -92,6 +103,11 @@ export function validators(document) {
   }
   function emit(schema) {
     if (!schema || typeof schema !== "object" || Array.isArray(schema)) throw new Error("Expected a typed schema object");
+    if (schema.allOf) {
+      keys(schema, ["allOf"]);
+      if (!Array.isArray(schema.allOf) || schema.allOf.length !== 1) throw new Error("Only single-schema allOf wrappers are supported");
+      return emit(schema.allOf[0]);
+    }
     if (schema.anyOf || schema.oneOf) {
       keys(schema, ["anyOf", "oneOf"]);
       if (schema.anyOf && schema.oneOf) throw new Error("Mixed union keywords are unsupported");
@@ -161,10 +177,8 @@ export function validators(document) {
           if (schema.additionalProperties !== false && !boundedClosed) throw new Error("Only closed objects or typed maps are supported");
           code = `z.strictObject({\n${Object.entries(properties).map(([name, property]) => {
             const value = emit(property);
-            // Existing nullable optional DTOs explicitly include undefined in
-            // Hey API output. Non-null optional JSON properties do not; preserve
-            // omission without broadening them under exactOptionalPropertyTypes.
-            return `  ${JSON.stringify(name)}: ${value}${required.includes(name) ? "" : nullable(property) ? ".optional()" : ".exactOptional()"}`;
+            // JSON omission is not an explicit undefined property.
+             return `  [${JSON.stringify(name)}]: ${value}${required.includes(name) ? "" : ".exactOptional()"}`;
           }).join(",\n")}\n})`;
         }
         for (const [key, operator] of [["minProperties", ">="], ["maxProperties", "<="]]) {
@@ -184,8 +198,10 @@ export function validators(document) {
           if (!Array.isArray(schema.enum) || !schema.enum.length || schema.enum.some(value => typeof value !== "string") || Object.keys(schema).some(key => !["type", "enum", "description", "title", "x-meshway-ref"].includes(key))) throw new Error("Only plain string enums are supported");
           return `z.enum(${JSON.stringify(schema.enum)})`;
         }
-        if (schema.format && !["date-time", "password"].includes(schema.format)) throw new Error(`Unsupported string format ${schema.format}`);
-        let code = schema.format === "date-time" ? "z.iso.datetime({ offset: true })" : "z.string()";
+        if (schema.format && !["date-time", "password", "uuid"].includes(schema.format)) throw new Error(`Unsupported string format ${schema.format}`);
+        if (schema.format === "uuid" && !schema.pattern) throw new Error("UUID format requires the authoritative canonical UUID pattern");
+        if (schema.format === "date-time") usesDateTime = true;
+        let code = schema.format === "date-time" ? 'z.string().refine(rfc3339, "Expected RFC 3339 date-time")' : "z.string()";
         for (const [key, operator] of [["minLength", ">="], ["maxLength", "<="]]) {
           if (schema[key] !== undefined) {
             if (!Number.isSafeInteger(schema[key]) || schema[key] < 0) throw new Error(`Invalid ${key}`);
@@ -213,6 +229,9 @@ export function validators(document) {
       case "boolean":
         keys(schema, ["type"]);
         return "z.boolean()";
+      case "null":
+        keys(schema, ["type"]);
+        return "z.null()";
       case "array": {
         keys(schema, ["type", "items", "minItems", "maxItems"]);
         let code = `z.array(${emit(schema.items)})`;
@@ -233,10 +252,6 @@ export function validators(document) {
     if (!/^[A-Za-z][A-Za-z0-9]*$/.test(name) || !Object.hasOwn(schemas, name)) throw new Error(`Invalid component: ${name}`);
     return name;
   }
-  function nullable(schema) {
-    if (schema.$ref) return nullable(schemas[referenceName(schema.$ref)]);
-    return schema.type === "null" || (Array.isArray(schema.type) && schema.type.includes("null")) || (schema.anyOf ?? schema.oneOf ?? []).some(item => item.type === "null");
-  }
   function excludesNull(schema, seen = new Set()) {
     if (schema.$ref) {
       const name = referenceName(schema.$ref);
@@ -247,8 +262,21 @@ export function validators(document) {
     return typeof schema.type === "string" && schema.type !== "null";
   }
   for (const name of Object.keys(schemas).sort()) component(name);
-  return `// Generated from the controller OpenAPI by scripts/generate-protocol.mjs. Do not edit.\n\nimport * as z from "zod";\n\n${usesTypedMap ? typedMapHelper + "\n\n" : ""}${definitions.join("\n\n")}\n`;
+  return `// Generated from the controller OpenAPI by scripts/generate-protocol.mjs. Do not edit.\n\nimport * as z from "zod";\n\n${usesTypedMap ? typedMapHelper + "\n\n" : ""}${usesDateTime ? dateTimeHelper + "\n\n" : ""}${definitions.join("\n\n")}\n`;
 }
+
+// RFC 3339 permits lowercase t/z and leap seconds. Zod's ISO validator is
+// narrower, and Date.parse normalizes invalid calendar dates in some engines.
+const dateTimeHelper = `function rfc3339(value: string): boolean {
+  const parts = /^(\\d{4})-(\\d{2})-(\\d{2})[Tt](\\d{2}):(\\d{2}):(\\d{2})(?:\\.\\d+)?(?:[Zz]|[+-](\\d{2}):(\\d{2}))$/.exec(value);
+  if (!parts) return false;
+  const year = Number(parts[1]), month = Number(parts[2]), day = Number(parts[3]);
+  const leap = year % 4 === 0 && (year % 100 !== 0 || year % 400 === 0);
+  const days = [31, leap ? 29 : 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31][month - 1];
+  return days !== undefined && day >= 1 && day <= days && Number(parts[4]) <= 23 &&
+    Number(parts[5]) <= 59 && Number(parts[6]) <= 60 &&
+    (parts[7] === undefined || (Number(parts[7]) <= 23 && Number(parts[8]) <= 59));
+}`;
 
 // Zod 4 record skips __proto__ before validation and makes enum keys exhaustive.
 // JSON maps require validation of every present own key, not either behavior.
@@ -293,64 +321,7 @@ const typedMapHelper = `function typedMap<Value extends z.ZodType>(
   });
 }`;
 
-export function operations(document) {
-  if (document.openapi !== "3.1.0") throw new Error("Expected native OpenAPI 3.1.0");
-  const types = new Set();
-  const validators = new Set();
-  const names = new Set();
-  const functions = [];
-  function component(content) {
-    if (Object.keys(content).join() !== "application/json") throw new Error("Only JSON media is supported by the TypeScript operation emitter");
-    const schema = content["application/json"].schema;
-    const match = /^#\/components\/schemas\/([A-Za-z][A-Za-z0-9]*)$/.exec(schema.$ref);
-    if (!match || Object.keys(schema).length !== 1) throw new Error("Operations must reference component schemas");
-    const name = match[1];
-    if (!document.components.schemas[name]) throw new Error(`Missing component ${name}`);
-    types.add(name);
-    validators.add(`z${name}`);
-    return name;
-  }
-  for (const [path, item] of Object.entries(document.paths)) {
-    if (!/^\/[a-zA-Z0-9/{}_\-]+$/.test(path)) throw new Error(`Unsupported operation path: ${path}`);
-    for (const [method, operation] of Object.entries(item)) {
-      if (!["get", "post"].includes(method) || operation.servers || document.servers?.length) {
-        throw new Error(`Unsupported operation shape: ${method} ${path}; extend the emitter first`);
-      }
-      const parameters = operation.parameters ?? [];
-      const placeholders = [...path.matchAll(/\{([a-z_]+)\}/g)].map(match => match[1]);
-      if (parameters.length !== placeholders.length || parameters.some(parameter =>
-        parameter.in !== "path" || parameter.required !== true || parameter.schema?.type !== "string" ||
-        !placeholders.includes(parameter.name) || !/^[a-z_]+$/.test(parameter.name))) {
-        throw new Error(`Only required string path parameters are supported: ${path}`);
-      }
-      const pathExpression = placeholders.length
-        ? "`" + path.replace(/\{([a-z_]+)\}/g, (_, name) => `\${encodeURIComponent(${name})}`) + "`"
-        : JSON.stringify(path);
-      const security = operation.security ?? document.security ?? [];
-      let authenticated = false;
-      if (security.length) {
-        if (security.length !== 1 || Object.keys(security[0]).length !== 1) throw new Error("Only single required bearer authentication is supported");
-        const [name, scopes] = Object.entries(security[0])[0];
-        const scheme = document.components.securitySchemes?.[name];
-        if (!Array.isArray(scopes) || scopes.length || scheme?.type !== "http" || scheme.scheme !== "bearer") throw new Error(`Unsupported security scheme: ${name}`);
-        authenticated = true;
-      }
-      const name = operation.operationId;
-      if (!/^[a-z][A-Za-z0-9]+$/.test(name) || names.has(name)) throw new Error(`Invalid or duplicate operationId: ${name}`);
-      names.add(name);
-      const successes = Object.keys(operation.responses).filter((status) => /^2\d\d$/.test(status));
-      if (successes.length !== 1 || successes[0] !== "200") throw new Error("Exactly one HTTP 200 response is currently supported");
-      const response = component(operation.responses["200"].content);
-      let body;
-      if (operation.requestBody) {
-        if (!operation.requestBody.required || method !== "post") throw new Error("Only required POST request bodies are currently supported");
-        body = component(operation.requestBody.content);
-      }
-      functions.push(`export async function ${name}Operation(baseUrl: string${authenticated ? ", token: string" : ""}${parameters.map(parameter => `, ${parameter.name}: string`).join("")}${body ? `, body: ${body}` : ""}): Promise<${response}> {\n  return request(baseUrl, { method: ${JSON.stringify(method.toUpperCase())}, path: ${pathExpression}${authenticated ? ", token" : ""}${body ? `, body: z${body}.parse(body)` : ""} }, z${response});\n}`);
-    }
-  }
-  return `// Generated from the controller OpenAPI by scripts/generate-protocol.mjs. Do not edit.\n\nimport { request } from "../transport.ts";\nimport type { ${[...types].sort().join(", ")} } from "./types.gen.ts";\nimport { ${[...validators].sort().join(", ")} } from "./zod.gen.ts";\n\n${functions.join("\n\n")}\n`;
-}
+export function operations(document) { return typescriptOperations(operationModel(document)); }
 
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   await generate();

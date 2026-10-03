@@ -1,5 +1,5 @@
-//! Controller-generated HTTP contract and injectable client transport.
-//! Generation is owned by the controller router and scripts/generate-protocol.mjs.
-#[allow(dead_code, clippy::all)]
-mod generated;
-pub use generated::*;
+//! Generated Meshway operations over caller-owned HTTP transport.
+#![forbid(unsafe_code)]
+
+mod runtime;
+pub use runtime::{Client, ClientError};

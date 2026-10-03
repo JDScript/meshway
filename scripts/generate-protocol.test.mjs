@@ -1,221 +1,145 @@
 import assert from "node:assert/strict";
-import { spawnSync } from "node:child_process";
-import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
-import { createRequire, stripTypeScriptTypes } from "node:module";
-import { dirname, join } from "node:path";
-import { pathToFileURL } from "node:url";
 import { test } from "node:test";
+import { mkdtemp, mkdir, writeFile, readFile, rm, symlink, copyFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { operations, root, validators } from "./generate-protocol.mjs";
+import { join, dirname } from "node:path";
+import { createRequire } from "node:module";
+import { pathToFileURL } from "node:url";
+import { spawnSync } from "node:child_process";
+import { generatedFiles, validators, root } from "./generate-protocol.mjs";
+import { operationModel } from "./codegen/operations.mjs";
+import { compareArtifacts } from "./check-protocol.mjs";
 
 const require = createRequire(join(root, "packages/control-client/package.json"));
-const zodUrl = pathToFileURL(require.resolve("zod")).href;
-const temp = await mkdtemp(join(tmpdir(), "meshway-codegen-test-"));
-let sequence = 0;
-async function runtime(document) {
-  const file = join(temp, `schema-${sequence++}.mjs`);
-  await writeFile(file, stripTypeScriptTypes(validators(document).replace('from "zod"', `from ${JSON.stringify(zodUrl)}`)));
-  return import(pathToFileURL(file).href);
-}
 const ref = name => ({ $ref: `#/components/schemas/${name}` });
-const object = properties => ({ type: "object", additionalProperties: false, properties, required: Object.keys(properties) });
-const variant = (kind, extra = {}) => object({ kind: { type: "string", const: kind }, ...extra });
-const document = schemas => ({ openapi: "3.1.0", components: { schemas }, paths: {} });
-
-try {
-  await test("tagged oneOf/anyOf validate unique variants, fields and required nullable values", async () => {
-    for (const keyword of ["oneOf", "anyOf"]) {
-      const doc = document({
-        Native: variant("native", { port: { type: "integer", minimum: 1, maximum: 65535 } }),
-        Vless: variant("vless", { endpoint: { type: "string" } }),
-        Carrier: { [keyword]: [ref("Native"), ref("Vless")] },
-        Snapshot: object({ carrier: { anyOf: [ref("Carrier"), { type: "null" }] } }),
-        Optional: { ...object({ label: { type: "string" }, carrier: { anyOf: [ref("Carrier"), { type: "null" }] } }), required: [] },
-      });
-      const { zCarrier, zSnapshot, zOptional } = await runtime(doc);
-      for (const valid of [{ kind: "native", port: 443 }, { kind: "vless", endpoint: "wss://example.test" }]) {
-        assert.deepEqual(zCarrier.parse(valid), valid);
-        assert.equal(zSnapshot.safeParse({ carrier: valid }).success, true);
-      }
-      for (const invalid of [{ kind: "unknown" }, { kind: "native" }, { kind: "native", port: 0 }, { kind: "native", port: 443, endpoint: "x" }, { kind: "vless", endpoint: 3 }, null]) {
-        assert.equal(zCarrier.safeParse(invalid).success, false);
-      }
-      assert.equal(zSnapshot.safeParse({ carrier: null }).success, true);
-      assert.equal(zSnapshot.safeParse({}).success, false);
-      assert.equal(zOptional.safeParse({}).success, true);
-      assert.equal(zOptional.safeParse({ carrier: null }).success, true);
-      assert.equal(zOptional.safeParse({ label: undefined }).success, false);
-      assert.equal(zOptional.safeParse({ label: null }).success, false);
-      assert.throws(() => validators(document({ Carrier: { [keyword]: [variant("native"), variant("native")] } })), /Conflicting discriminator/);
-      assert.throws(() => validators(document({ Carrier: { [keyword]: [object({ value: { type: "string" } }), variant("native")] } })), /required string discriminator/);
-      assert.throws(() => validators(document({ Carrier: { [keyword]: [{ ...variant("native"), additionalProperties: true }, variant("vless")] } })), /closed objects/);
-    }
-  });
-
-  await test("typed maps check keys, nested values, nullability and property budgets", async () => {
-    const { zMap, zScalar } = await runtime(document({
-      Map: { type: "object", propertyNames: { type: "string", pattern: "^[A-Z]{2}$" }, additionalProperties: object({ target: { type: ["string", "null"] } }), maxProperties: 2 },
-      Scalar: { anyOf: [{ type: "string" }, { type: "null" }] },
-    }));
-    assert.equal(zMap.safeParse({ US: { target: null }, JP: { target: "mesh-only" } }).success, true);
-    for (const value of [{ us: { target: "x" } }, { US: { target: 1 } }, { US: {} }, { US: { target: "x", extra: true } }, { US: { target: "x" }, JP: { target: "x" }, KR: { target: "x" } }]) {
-      assert.equal(zMap.safeParse(value).success, false);
-    }
-    assert.equal(zScalar.safeParse(null).success, true);
-    assert.equal(zScalar.safeParse("x").success, true);
-    assert.equal(zScalar.safeParse(1).success, false);
-    for (const schema of [{ type: "object", additionalProperties: true }, { allOf: [{ type: "string" }] }, { type: "object", maxProperties: 2, properties: { kind: { type: "string" } }, required: [] }]) {
-      assert.throws(() => validators(document({ Unsupported: schema })));
-    }
-  });
-
-  await test("typed maps preserve and validate every own JSON key before applying budgets", async () => {
-    const { zMap, zBounded, zNamed } = await runtime(document({
-      Map: { type: "object", additionalProperties: { type: "string" } },
-      Bounded: { type: "object", additionalProperties: { type: "string" }, maxProperties: 1, minProperties: 1 },
-      Named: { type: "object", additionalProperties: { type: "string" }, propertyNames: { type: "string", pattern: "^[A-Z]{2}$" } },
-    }));
-    const valid = JSON.parse('{"__proto__":"custom","constructor":"mesh-only","toString":"mesh-only"}');
-    const parsed = zMap.parse(valid);
-    assert.deepEqual(parsed, valid);
-    assert.equal(Object.getPrototypeOf(parsed), Object.prototype);
-    assert.equal(Object.hasOwn(parsed, "__proto__"), true);
-    assert.equal(JSON.stringify(parsed), JSON.stringify(valid));
-    assert.equal(zMap.safeParse(JSON.parse('{"__proto__":42}')).success, false);
-    assert.equal(zNamed.safeParse(JSON.parse('{"__proto__":"custom"}')).success, false);
-    assert.equal(zBounded.safeParse(JSON.parse('{"__proto__":"custom","JP":"custom"}')).success, false);
-    assert.deepEqual(zBounded.parse(JSON.parse('{"__proto__":"custom"}')), JSON.parse('{"__proto__":"custom"}'));
-    for (const value of [{}, null, [], "x"]) assert.equal(zBounded.safeParse(value).success, false);
-    const nested = await runtime(document({ Map: { type: "object", additionalProperties: object({ allowed: { type: "boolean" } }) } }));
-    const safeObject = nested.zMap.parse(JSON.parse('{"__proto__":{"allowed":true}}'));
-    assert.equal(Object.getPrototypeOf(safeObject), Object.prototype);
-    assert.equal(Object.hasOwn(safeObject, "allowed"), false);
-    assert.deepEqual(safeObject, JSON.parse('{"__proto__":{"allowed":true}}'));
-  });
-
-  await test("propertyNames enum/const constrain present keys without requiring them; boolean names fail closed", async () => {
-    for (const propertyNames of [{ type: "string", enum: ["JP", "US"] }, { type: "string", const: "JP" }]) {
-      const { zMap } = await runtime(document({ Map: { type: "object", additionalProperties: { type: "string" }, propertyNames, maxProperties: 1 } }));
-      assert.deepEqual(zMap.parse({}), {});
-      assert.deepEqual(zMap.parse({ JP: "custom" }), { JP: "custom" });
-      assert.equal(zMap.safeParse({ KR: "custom" }).success, false);
-      assert.equal(zMap.safeParse({ JP: 42 }).success, false);
-      assert.equal(zMap.safeParse({ JP: "custom", US: "custom" }).success, false);
-    }
-    for (const propertyNames of [false, true, null]) {
-      assert.throws(() => validators(document({ Map: { type: "object", additionalProperties: { type: "string" }, propertyNames } })), /propertyNames must be a string schema/);
-    }
-  });
-
-  await test("nullable oneOf proves null exclusion through refs, while overlapping anyOf remains valid", async () => {
-    for (const nullableValue of [{ type: ["string", "null"] }, { anyOf: [{ type: "string" }, { type: "null" }] }]) {
-      for (const remaining of [nullableValue, ref("Nullable"), ref("Alias")]) {
-        const base = { Nullable: nullableValue, Alias: ref("Nullable") };
-        assert.throws(() => validators(document({ ...base, Union: { oneOf: [remaining, { type: "null" }] } })), /non-null remaining branches/);
-        const { zUnion } = await runtime(document({ ...base, Union: { anyOf: [remaining, { type: "null" }] } }));
-        assert.equal(zUnion.safeParse(null).success, true);
-        assert.equal(zUnion.safeParse("x").success, true);
-        assert.equal(zUnion.safeParse(42).success, false);
-      }
-    }
-    const { zUnion } = await runtime(document({ Text: { type: "string" }, Alias: ref("Text"), Union: { oneOf: [ref("Alias"), { type: "null" }] } }));
-    assert.equal(zUnion.safeParse(null).success, true);
-    assert.equal(zUnion.safeParse("x").success, true);
-    assert.throws(() => validators(document({ Literal: { type: ["string", "null"], const: "x" } })), /Nullable type with const/);
-    const { zLiteral } = await runtime(document({ Literal: { type: "string", const: "x" } }));
-    assert.equal(zLiteral.safeParse("x").success, true);
-    for (const value of [null, "y"]) assert.equal(zLiteral.safeParse(value).success, false);
-  });
-
-  await test("actual complete Rust NetworkPolicy schema validates runtime values and strict operation types", async () => {
-    const result = spawnSync("cargo", ["run", "--locked", "--quiet", "-p", "meshway-policy", "--example", "policy_schema"], {
-      cwd: root, encoding: "utf8", env: { ...process.env, CARGO_BUILD_JOBS: "2", CARGO_TARGET_DIR: process.env.CARGO_TARGET_DIR ?? join(temp, "cargo-target") },
-    });
-    assert.equal(result.status, 0, result.stderr);
-    const schema = JSON.parse(result.stdout);
-    const { zProfileFallback, zAutomaticRouting, zExitMatch, zNetworkPolicy } = await runtime(schema);
-    for (const match of [{ kind: "domain_suffix", value: "example.com" }, { kind: "cidr", value: "10.0.0.0/8" }, { kind: "rule_set", value: "regional" }]) {
-      assert.deepEqual(zExitMatch.parse(match), match);
-      for (const invalid of [{ ...match, unknown: true }, { kind: match.kind }, { value: match.value }, { ...match, value: null }, { ...match, value: 42 }, { ...match, kind: null }, { ...match, kind: "unknown" }]) {
-        assert.equal(zExitMatch.safeParse(invalid).success, false);
-      }
-    }
-    for (const fallback of [{ kind: "none" }, { kind: "direct" }, { kind: "nodes", candidates: ["node:x"], via: [] }]) {
-      assert.deepEqual(zProfileFallback.parse(fallback), fallback);
-      assert.equal(zProfileFallback.safeParse({ ...fallback, unknown: true }).success, false);
-    }
-    assert.equal(zAutomaticRouting.safeParse({ regions: { JP: "mesh-only" }, fallback: "mesh-only" }).success, true);
-    assert.equal(zAutomaticRouting.safeParse({ regions: { JP: 1 }, fallback: "mesh-only" }).success, false);
-
-    const policy = {
-      connections: [{ id: "default", a: "*", b: "*", action: "allow" }],
-      grants: [{ id: "members", src: ["*"], dst: ["*"], bidirectional: false }],
-      mesh: [], public_rules: [], assignments: [],
-      profiles: [{ id: "custom", rules: [{ id: "r", destinations: [{ kind: "cidr", value: "10.0.0.0/8" }], target: "direct", candidates: [], via: [] }], fallback: { kind: "none" } }],
-      automatic: { regions: { JP: "custom" }, fallback: "mesh-only" },
-    };
-    assert.deepEqual(zNetworkPolicy.parse(policy), policy);
-    const mapCases = JSON.parse(await readFile(join(root, "scripts/fixtures/policy-map-cases.json"), "utf8"));
-    for (const { label, automatic, valid } of mapCases) {
-      const automaticResult = zAutomaticRouting.safeParse(automatic);
-      const fullResult = zNetworkPolicy.safeParse({ ...policy, automatic });
-      assert.equal(automaticResult.success, valid, label);
-      assert.equal(fullResult.success, valid, label);
-      if (valid) {
-        assert.deepEqual(automaticResult.data, automatic, label);
-        assert.deepEqual(fullResult.data.automatic, automatic, label);
-      }
-    }
-    for (const mutate of [p => { p.automatic.regions.JP = 42; }, p => { p.profiles[0].fallback.unknown = true; }, p => { p.profiles[0].rules[0].destinations[0].unknown = true; }, p => { p.profiles[0].rules[0].destinations[0].kind = "unknown"; }, p => { delete p.grants; }]) {
-      const invalid = structuredClone(policy);
-      mutate(invalid);
-      assert.equal(zNetworkPolicy.safeParse(invalid).success, false);
-    }
-    // Use the same Hey API plugin as production, then compile generated
-    // operations against both inferred Zod output and generated DTOs.
-    const schemas = JSON.parse(JSON.stringify(schema.$defs).replaceAll("#/$defs/", "#/components/schemas/"));
-    schemas.EnumMap = { type: "object", additionalProperties: { type: "string" }, propertyNames: { type: "string", enum: ["JP", "US"] } };
-    schemas.ConstMap = { type: "object", additionalProperties: { type: "string" }, propertyNames: { type: "string", const: "JP" } };
-    const doc = document(schemas);
-    const content = { "application/json": { schema: ref("NetworkPolicy") } };
-    doc.paths["/fixture/policy"] = { post: {
-      operationId: "saveFixturePolicy", requestBody: { required: true, content },
-      responses: { 200: { description: "Fixture", content } },
-    } };
-    const generated = join(temp, "generated");
-    await mkdir(generated);
-    const input = join(temp, "fixture.json");
-    await writeFile(input, JSON.stringify(doc));
-    const { createClient } = await import(pathToFileURL(join(require.resolve("@hey-api/openapi-ts/package.json"), "../dist/index.mjs")).href);
-    await createClient({ configFile: false, input, output: { path: generated }, plugins: ["@hey-api/typescript"] });
-    await writeFile(join(generated, "zod.gen.ts"), validators(doc));
-    await writeFile(join(generated, "operations.gen.ts"), operations(doc));
-    await writeFile(join(temp, "map-types.ts"), `import * as z from "zod";
-import { zEnumMap, zConstMap } from "./generated/zod.gen.ts";
-const emptyEnum: z.output<typeof zEnumMap> = {};
-const partialEnum: z.output<typeof zEnumMap> = { JP: "custom" };
-const emptyConst: z.output<typeof zConstMap> = {};
-const partialConst: z.output<typeof zConstMap> = { JP: "custom" };
-// @ts-expect-error map values must be validated strings
-const invalid: z.output<typeof zEnumMap> = { JP: 42 };
-void [emptyEnum, partialEnum, emptyConst, partialConst, invalid];
-`);
-    await writeFile(join(temp, "transport.ts"), await readFile(join(root, "packages/control-client/src/transport.ts"), "utf8"));
-    // Dependencies resolve through the actual SDK rather than adding a package.
-    await writeFile(join(temp, "tsconfig.json"), JSON.stringify({ compilerOptions: {
-      strict: true, noUncheckedIndexedAccess: true, exactOptionalPropertyTypes: true, noEmit: true, target: "ES2023", module: "ESNext", moduleResolution: "Bundler", allowImportingTsExtensions: true,
-      paths: { zod: [join(dirname(require.resolve("zod/package.json")), "index.d.ts")] },
-    }, include: ["**/*.ts"] }));
-    const checked = spawnSync(process.execPath, [require.resolve("typescript/bin/tsc"), "-p", join(temp, "tsconfig.json")], { cwd: root, encoding: "utf8" });
-    assert.equal(checked.status, 0, checked.stdout + checked.stderr);
-  });
-
-  await test("existing OpenAPI validators and operations remain byte-compatible", async () => {
-    const doc = JSON.parse(await readFile(join(root, "packages/protocol/openapi.json"), "utf8"));
-    for (const [file, emit] of [["zod.gen.ts", validators], ["operations.gen.ts", operations]]) {
-      assert.equal(emit(doc), await readFile(join(root, "packages/control-client/src/generated", file), "utf8"));
-    }
-  });
-} finally {
-  await rm(temp, { recursive: true, force: true });
+const content = name => ({ "application/json": { schema: ref(name) } });
+const closed = (properties, required = Object.keys(properties)) => ({ type: "object", properties, required, additionalProperties: false });
+function fixture() {
+  return {
+    openapi: "3.1.0", info: { title: "Generator fixture", version: "0" },
+    components: {
+      securitySchemes: { FixtureBearer: { type: "http", scheme: "bearer" } },
+      schemas: {
+        FixtureInput: closed({ text: { type: "string", minLength: 1, maxLength: 3 } }),
+        FixtureOutput: closed({
+          id: { type: "string", format: "uuid", pattern: "^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$" },
+          sequence: { type: "integer", minimum: 1, maximum: 9007199254740991 },
+          time: { type: "string", format: "date-time" },
+          requiredNullable: { type: ["string", "null"] },
+          optionalNullable: { anyOf: [{ type: "string" }, { type: "null" }] },
+        }, ["id", "sequence", "time", "requiredNullable"]),
+        FixtureProblem: { oneOf: [
+          closed({ code: { type: "string", const: "conflict" }, params: closed({ revision: { type: "integer", minimum: 1, maximum: 100 } }) }),
+          closed({ code: { type: "string", enum: ["denied"] }, params: closed({}) }),
+        ] },
+        FixtureMap: { type: "object", additionalProperties: { type: "string" }, propertyNames: { type: "string", pattern: "^[a-z_]+$" }, maxProperties: 2 },
+        FixtureAlias: { allOf: [ref("FixtureInput")], description: "One referenced schema" },
+      },
+    },
+    paths: {
+      "/fixture/value": { post: { operationId: "writeFixture", security: [{ FixtureBearer: [] }], requestBody: { required: true, content: content("FixtureInput") }, responses: { "201": { description: "Created", content: content("FixtureOutput") }, "409": { description: "Conflict", content: content("FixtureProblem") } } } },
+      "/fixture/clear": { post: { operationId: "clearFixture", responses: { "204": { description: "Empty" } } } },
+      "/fixture/read": { get: { operationId: "readFixture", responses: { "200": { description: "OK", content: content("FixtureOutput") } } } },
+    },
+  };
 }
+async function temporary(t) {
+  const parent = join(tmpdir(), "opencode");
+  await mkdir(parent, { recursive: true });
+  const directory = await mkdtemp(join(parent, "meshway-codegen-"));
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  return directory;
+}
+async function generatedFixture(t) {
+  const directory = await temporary(t);
+  const files = generatedFiles(fixture());
+  for (const [path, text] of Object.entries(files)) {
+    await mkdir(dirname(join(directory, path)), { recursive: true });
+    await writeFile(join(directory, path), text);
+  }
+  const packageRoot = join(directory, "packages/control-client");
+  await mkdir(join(packageRoot, "node_modules"), { recursive: true });
+  await symlink(dirname(require.resolve("zod/package.json")), join(packageRoot, "node_modules/zod"));
+  await copyFile(join(root, "packages/control-client/src/transport.ts"), join(packageRoot, "src/transport.ts"));
+  await writeFile(join(packageRoot, "package.json"), '{"type":"module"}');
+  return { directory, packageRoot, files };
+}
+
+test("generated schemas execute exact UUID, bounds, null, closed union and map constraints", async t => {
+  const { packageRoot } = await generatedFixture(t);
+  const schemas = await import(pathToFileURL(join(packageRoot, "src/generated/zod.gen.ts")));
+  const valid = { id: "12345678-1234-0234-0234-123456789abc", sequence: 1, time: "2026-10-03T12:00:00+08:00", requiredNullable: null };
+  assert.equal(schemas.zFixtureOutput.safeParse(valid).success, true); // UUID version/variant unrestricted by Rust pattern.
+  for (const change of [{ id: "00000000-0000-0000-0000-000000000000" }, { id: valid.id.toUpperCase() }, { sequence: 0 }, { sequence: 2 ** 53 }, { sequence: 1.5 }, { time: "2026-02-30T12:00:00Z" }, { time: "2026-10-03" }, { requiredNullable: undefined }, { optionalNullable: undefined }, { extra: true }]) {
+    assert.equal(schemas.zFixtureOutput.safeParse({ ...valid, ...change }).success, false, JSON.stringify(change));
+  }
+  assert.equal(schemas.zFixtureOutput.safeParse({ ...valid, optionalNullable: null }).success, true);
+  assert.equal(schemas.zFixtureOutput.safeParse({ ...valid, time: "2016-12-31t23:59:60z" }).success, true);
+  assert.equal(schemas.zFixtureInput.safeParse({ text: "😀😀😀" }).success, true);
+  assert.equal(schemas.zFixtureInput.safeParse({ text: "😀😀😀😀" }).success, false);
+  assert.equal(schemas.zFixtureProblem.safeParse({ code: "conflict", params: { revision: 5 } }).success, true);
+  for (const problem of [{ code: "denied", params: { revision: 5 } }, { code: "other", params: {} }, { code: "denied", params: {}, extra: true }, { code: "conflict", params: [5] }]) assert.equal(schemas.zFixtureProblem.safeParse(problem).success, false);
+  assert.equal(schemas.zFixtureInput.safeParse(["text"]).success, false);
+  assert.equal(schemas.zFixtureInput.safeParse(JSON.parse('{"text":"a","__proto__":"unexpected"}')).success, false);
+  const map = JSON.parse('{"__proto__":"value"}');
+  const decoded = schemas.zFixtureMap.parse(map);
+  assert.equal(Object.hasOwn(decoded, "__proto__"), true);
+  assert.equal(Object.getPrototypeOf(decoded), Object.prototype);
+  assert.equal(schemas.zFixtureMap.safeParse({ a: "a", b: "b", c: "c" }).success, false);
+  assert.equal(schemas.zFixtureMap.safeParse({ Upper: "x" }).success, false);
+  assert.equal(schemas.zFixtureMap.safeParse(JSON.parse('{"__proto__":123}')).success, false);
+});
+
+test("strict generated TypeScript and operation success/error result inference", async t => {
+  const { packageRoot, files } = await generatedFixture(t);
+  await writeFile(join(packageRoot, "consumer.ts"), `import { ControlClient } from "./src/transport.ts";
+import { writeFixture, clearFixture } from "./src/generated/operations.gen.ts";
+declare const client: ControlClient;
+const result = await writeFixture(client, {text: "a"}, {token: "secret"});
+if (result.ok) { const id: string = result.data.id; void id; }
+else if (result.error.kind === "http" && result.error.problem?.code === "conflict") { const revision: number = result.error.problem.params.revision; void revision; }
+const empty = await clearFixture(client);
+if (empty.ok) { const value: undefined = empty.data; void value; }
+// @ts-expect-error authenticated operation requires token
+writeFixture(client, {text: "a"}, {});
+// @ts-expect-error fields come from generated schema
+writeFixture(client, {text: 42}, {token: "secret"});
+`);
+  const result = spawnSync(process.execPath, [require.resolve("typescript/bin/tsc"), "--noEmit", "--strict", "--exactOptionalPropertyTypes", "--noUncheckedIndexedAccess", "--skipLibCheck", "--target", "ES2022", "--module", "ESNext", "--moduleResolution", "Bundler", "--allowImportingTsExtensions", "consumer.ts"], { cwd: packageRoot, encoding: "utf8" });
+  assert.equal(result.status, 0, result.stdout + result.stderr);
+  assert.match(files["crates/control-client/src/generated/mod.rs"], /meshway_protocol::FixtureInput/);
+  assert.doesNotMatch(files["crates/control-client/src/generated/mod.rs"], /pub struct|pub enum|derive\(Debug/);
+  assert.deepEqual(generatedFiles(fixture()), files);
+});
+
+test("unknown semantics and ambiguous unions fail generation", () => {
+  for (const mutate of [
+    d => { d.paths["/fixture/read"].get.responses["200"].content = { "text/event-stream": { schema: ref("FixtureOutput") } }; },
+    d => { d.paths["/fixture/read"].get.parameters = [{ in: "query", name: "q" }]; },
+    d => { d.paths["/fixture/read"].get.responses["200"].content["application/json"].schema = closed({}); },
+    d => { d.paths["/fixture/read"].get.callbacks = {}; },
+    d => { d.paths["/fixture/read"].get.operationId = "clearFixture"; },
+    d => { d.paths["/fixture/clear"].post.responses["204"].content = content("FixtureOutput"); },
+    d => { d.components.schemas.FixtureInput.properties.text.unknownConstraint = true; },
+    d => { d.components.schemas.FixtureInput.additionalProperties = true; },
+    d => { d.components.schemas.FixtureOutput.properties.id.pattern = "["; },
+    d => { d.components.schemas.FixtureOutput.properties.sequence.maximum = 2 ** 53; },
+    d => { d.components.schemas.FixtureProblem.oneOf[1].properties.code.enum = ["conflict"]; },
+    d => { d.components.schemas.FixtureAlias.allOf.push(ref("FixtureOutput")); },
+  ]) {
+    const document = fixture(); mutate(document); assert.throws(() => generatedFiles(document));
+  }
+  assert.throws(() => operationModel({ ...fixture(), openapi: "3.0.3" }));
+  assert.throws(() => validators({ $defs: { Recursive: ref("Recursive") } }));
+});
+
+test("drift detects edited, missing and obsolete files without modifying actual output", async t => {
+  const dir = await temporary(t);
+  for (const side of ["expected", "actual"]) await mkdir(join(dir, side, "generated"), { recursive: true });
+  await writeFile(join(dir, "expected/generated/one"), "expected");
+  await writeFile(join(dir, "actual/generated/one"), "user edit");
+  await writeFile(join(dir, "expected/generated/missing"), "new");
+  await writeFile(join(dir, "actual/generated/obsolete"), "old");
+  assert.deepEqual(await compareArtifacts(join(dir, "expected"), join(dir, "actual"), ["generated"]), ["generated/missing", "generated/obsolete", "generated/one"]);
+  assert.equal(await readFile(join(dir, "actual/generated/one"), "utf8"), "user edit");
+});

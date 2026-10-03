@@ -1,6 +1,7 @@
-import { mkdtemp, readdir, readFile, rm, stat } from "node:fs/promises";
+import { mkdir, mkdtemp, readdir, readFile, rm, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { artifactPaths, generate, root } from "./generate-protocol.mjs";
 
 async function files(path, prefix = "") {
@@ -11,13 +12,11 @@ async function files(path, prefix = "") {
   return nested.flat();
 }
 
-const temporary = await mkdtemp(join(tmpdir(), "meshway-protocol-"));
-try {
-  await generate(temporary);
+export async function compareArtifacts(expectedDirectory, actualDirectory, artifacts = artifactPaths) {
   const stale = [];
-  for (const artifact of artifactPaths) {
-    const expectedRoot = join(temporary, artifact);
-    const actualRoot = join(root, artifact);
+  for (const artifact of artifacts) {
+    const expectedRoot = join(expectedDirectory, artifact);
+    const actualRoot = join(actualDirectory, artifact);
     const expected = await files(expectedRoot);
     let actual;
     try { actual = await files(actualRoot); } catch { actual = []; }
@@ -31,10 +30,22 @@ try {
       } catch { stale.push(join(artifact, file)); }
     }
   }
-  if (stale.length) {
-    throw new Error(`Protocol artifacts are stale:\n${stale.join("\n")}\nRun pnpm --filter @meshway/control-client generate`);
-  }
-  console.log("OpenAPI, Rust operations, TypeScript operations and validators are current.");
-} finally {
-  await rm(temporary, { recursive: true, force: true });
+  return stale.sort();
 }
+
+export async function check() {
+  const parent = join(tmpdir(), "opencode");
+  await mkdir(parent, { recursive: true });
+  const temporary = await mkdtemp(join(parent, "meshway-protocol-"));
+  try {
+    await generate(temporary);
+    const stale = await compareArtifacts(temporary, root);
+    if (stale.length) {
+    throw new Error(`Protocol artifacts are stale:\n${stale.join("\n")}\nRun pnpm --filter @meshway/control-client generate`);
+    }
+    console.log("OpenAPI, Rust operations, TypeScript operations and validators are current.");
+  } finally {
+    await rm(temporary, { recursive: true, force: true });
+  }
+}
+if (process.argv[1] === fileURLToPath(import.meta.url)) await check();
