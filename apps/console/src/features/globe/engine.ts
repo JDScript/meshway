@@ -1,4 +1,3 @@
-import Globe from "globe.gl"
 import {
   AdditiveBlending,
   BufferAttribute,
@@ -47,10 +46,11 @@ import {
   type Vec3,
   type Vitality,
 } from "./scene"
+import { createStage } from "./stage"
 import { sameInsets, type GlobeState } from "./store"
 
-// globe.gl provides the camera, controls, atmosphere and the DOM node
-// markers. The surface, land dots, links, pulses and the loader's comet are
+// The stage (stage.ts) provides the camera, controls, atmosphere and the DOM
+// node markers. The surface, land dots, links, pulses and the loader's comet are
 // drawn here with small shaders, so motion and light can be soft rather than
 // stepped. Everything shown comes in through update().
 //
@@ -328,41 +328,24 @@ export function createGlobeEngine(
   onSelect: (nodeId: string | null) => void,
   onRevealed: () => void
 ): GlobeEngine {
-  const globe = new Globe(container, {
-    rendererConfig: {
-      antialias: true,
-      alpha: true,
-      powerPreference: "high-performance",
-    },
-    animateIn: false,
-  })
-  const renderer = globe.renderer()
-  renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2))
   const look = DEFAULT_LOOK
-
   const surface = surfaceShader()
   surface.uniforms.uRimStrength = { value: look.rim }
   surface.uniforms.uOpacity = { value: look.surfaceOpacity }
   surface.depthWrite = look.surfaceOpacity >= 1
-  globe
-    .backgroundColor("rgba(0,0,0,0)")
-    .showGraticules(false)
-    .showAtmosphere(look.atmosphere > 0)
-    .atmosphereAltitude(look.atmosphere)
-    .globeMaterial(surface)
-    .htmlElementsData([])
-    .htmlLat("lat")
-    .htmlLng("lng")
-    .htmlAltitude("altitude")
-    .htmlElement("element")
-    .htmlTransitionDuration(0)
-    .htmlElementVisibilityModifier((element, visible) => {
+  const stage = createStage(container, {
+    surface,
+    atmosphere: look.atmosphere,
+    onFrame: (time) => tick(time),
+    onGlobeClick: () => onSelect(null),
+    onMarkerVisibility: (element, visible) => {
       element.dataset.behind = visible ? "false" : "true"
       element.tabIndex = visible ? 0 : -1
-    })
-    .onGlobeClick(() => onSelect(null))
+    },
+  })
+  const { renderer, camera, controls } = stage
 
-  const scene = globe.scene()
+  const scene = stage.scene
   const layer = new Group()
   scene.add(layer)
 
@@ -535,8 +518,6 @@ export function createGlobeEngine(
   }
   allocatePulses(0)
 
-  const controls = globe.controls()
-  controls.enablePan = false
   controls.minDistance = 150
   controls.maxDistance = Infinity
   controls.autoRotate = true
@@ -629,7 +610,7 @@ export function createGlobeEngine(
     requested: number,
     aimView: boolean
   ) => {
-    const pov = globe.pointOfView()
+    const pov = stage.pointOfView()
     // Nothing hurries the reveal along.
     const rate = reveal ? Math.min(requested, REVEAL_RATE) : requested
     const to = (s: Spring, target: number, current?: number) =>
@@ -670,10 +651,9 @@ export function createGlobeEngine(
     }
   }
 
-  let frame = 0
   let previousTime = performance.now()
-  const tick = (time: number) => {
-    frame = requestAnimationFrame(tick)
+  /** One frame, run by the stage after the controls and before drawing. */
+  function tick(time: number) {
     const dt = Math.min(0.05, (time - previousTime) / 1000)
     previousTime = time
     const motion = last?.motion ?? true
@@ -688,7 +668,7 @@ export function createGlobeEngine(
 
     if (loading || holding) {
       // Follow the loader exactly; the springs wait at the same pose.
-      globe.pointOfView({
+      stage.setPointOfView({
         lat: LOADER_LAT,
         lng: loaderLng(motion ? time : 0),
         altitude: loaderAltitude(),
@@ -721,8 +701,8 @@ export function createGlobeEngine(
       } else if (springs.lng.dirty) lng = springs.lng.x
 
       if (springs.scale.dirty || springs.lat.dirty || lng !== null) {
-        const pov = globe.pointOfView()
-        globe.pointOfView({
+        const pov = stage.pointOfView()
+        stage.setPointOfView({
           lat: springs.lat.dirty ? springs.lat.x : pov.lat,
           lng: lng ?? pov.lng,
           altitude: springs.scale.dirty
@@ -731,7 +711,7 @@ export function createGlobeEngine(
         })
       }
       if (springs.x.dirty || springs.y.dirty)
-        globe.globeOffset([springs.x.x, springs.y.x])
+        stage.setOffset(springs.x.x, springs.y.x)
       for (const s of Object.values(springs)) s.dirty = false
       controls.maxDistance = Math.max(
         560,
@@ -750,7 +730,7 @@ export function createGlobeEngine(
           : 0
     comet.visible = cometOpacity > 0.001
     if (comet.visible) {
-      cometPlane.quaternion.copy(globe.camera().quaternion)
+      cometPlane.quaternion.copy(camera.quaternion)
       cometMaterial.uniforms.uOpacity = { value: cometOpacity }
       const head = loaderCometHead(time, motion)
       const radius = LOADER_COMET.radius * GLOBE_RADIUS
@@ -776,7 +756,7 @@ export function createGlobeEngine(
           : 1
     pulseMaterial.uniforms.uOpacity = { value: extras }
     const dark = last?.colors.dark ?? true
-    guides.quaternion.copy(globe.camera().quaternion)
+    guides.quaternion.copy(camera.quaternion)
     guideMaterials.forEach((material, index) => {
       material.opacity =
         ((dark ? [0.14, 0.09, 0.06] : [0.2, 0.13, 0.08])[index] ?? 0) * extras
@@ -839,16 +819,13 @@ export function createGlobeEngine(
     sizeAttribute.needsUpdate = true
     pulseGeometry.setDrawRange(0, count)
   }
-  frame = requestAnimationFrame(tick)
+  stage.resume()
 
   const onVisibility = () => {
-    if (document.visibilityState === "hidden") {
-      cancelAnimationFrame(frame)
-      globe.pauseAnimation()
-    } else {
+    if (document.visibilityState === "hidden") stage.pause()
+    else {
       previousTime = performance.now()
-      frame = requestAnimationFrame(tick)
-      globe.resumeAnimation()
+      stage.resume()
     }
   }
   document.addEventListener("visibilitychange", onVisibility)
@@ -897,7 +874,7 @@ export function createGlobeEngine(
     pulseMaterial.blending = colors.dark ? AdditiveBlending : NormalBlending
     pulseMaterial.needsUpdate = true
     cometMaterial.uniforms.uColor = { value: color(colors.pulse) }
-    globe.atmosphereColor(css(colors.atmosphere))
+    stage.setAtmosphereColor(css(colors.atmosphere))
   }
 
   const disposeLinks = () => {
@@ -1019,9 +996,7 @@ export function createGlobeEngine(
     )
     if (nextMarkersKey !== markersKey) {
       markersKey = nextMarkersKey
-      globe.htmlElementsData(
-        placed.flatMap((node) => markers.get(node.id) ?? [])
-      )
+      stage.setMarkers(placed.flatMap((node) => markers.get(node.id) ?? []))
     }
 
     const nextLinksKey = JSON.stringify([
@@ -1073,7 +1048,7 @@ export function createGlobeEngine(
     resize(nextWidth, nextHeight) {
       width = nextWidth
       height = nextHeight
-      globe.width(nextWidth).height(nextHeight)
+      stage.setSize(nextWidth, nextHeight)
       const pixelRatio = renderer.getPixelRatio()
       for (const material of [landMaterial, pulseMaterial, starMaterial]) {
         material.uniforms.uScale = { value: nextHeight * 0.5 }
@@ -1083,9 +1058,8 @@ export function createGlobeEngine(
       if (last && last.boot !== "loading") retarget(last, LAYOUT_RATE, false)
     },
     destroy() {
-      cancelAnimationFrame(frame)
       document.removeEventListener("visibilitychange", onVisibility)
-      globe.pauseAnimation()
+      stage.pause()
       disposeLinks()
       for (const disposable of [
         landGeometry,
@@ -1104,9 +1078,8 @@ export function createGlobeEngine(
         disposable.dispose()
       for (const ring of guides.children)
         if (ring instanceof Line) ring.geometry.dispose()
-      globe._destructor()
+      stage.dispose()
       markers.clear()
-      container.replaceChildren()
     },
   }
 }

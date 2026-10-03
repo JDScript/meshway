@@ -257,13 +257,15 @@ AgentUI's animated sidebar and segment patterns
 
 ## Globe
 
-- One globe for the whole console, rendered by globe.gl (camera, controls,
-  atmosphere, DOM markers) plus our own shader layers (surface, land dots,
-  links, pulses, the loader's comet). Colours come only from theme tokens.
+- One globe for the whole console, drawn with three.js directly: a small
+  stage (`features/globe/stage.ts`: renderer, camera, orbit controls, the
+  sphere, the atmosphere, DOM markers through `CSS2DRenderer`) under our own
+  shader layers (surface, land dots, links, pulses, the loader's comet).
+  Points of view keep three-globe's conventions (radius 100, altitude in
+  globe radii). Colours come only from theme tokens.
 - The camera and the offset follow critically damped springs, re-aimed
   whenever surfaces change, so motion never stops dead or restarts.
-- The engine chunk is lazy-loaded (~550 kB gzip, mostly three.js and
-  three-globe); trimming it is open work.
+- The engine chunk is lazy-loaded (~145 kB gzip, almost all three.js).
 
 ## First load
 

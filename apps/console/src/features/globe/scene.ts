@@ -49,7 +49,7 @@ export const EMPTY_SCENE: Scene = { nodes: [], links: [] }
 
 export type Anchor = { lat: number; lng: number; altitude: number }
 
-/** Same convention as three-globe, so custom layers line up with its globe. */
+/** Globe radius in world units (three-globe's), shared by the stage and every layer. */
 export const GLOBE_RADIUS = 100
 
 export type Vec3 = [number, number, number]

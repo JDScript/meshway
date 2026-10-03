@@ -44,9 +44,9 @@ export function cometPointAlpha(k: number): number {
   return (1 - k / LOADER_COMET.points) ** 2
 }
 
-/** The globe.gl camera's default vertical field of view. */
-const FOV = 50
-const HALF_FOV_TAN = Math.tan(((FOV / 2) * Math.PI) / 180)
+/** The globe camera's vertical field of view (degrees). */
+export const CAMERA_FOV = 50
+const HALF_FOV_TAN = Math.tan(((CAMERA_FOV / 2) * Math.PI) / 180)
 
 /** Camera altitude (globe radii above the surface) that draws the globe `radius` px tall-half. */
 export function altitudeForRadius(
