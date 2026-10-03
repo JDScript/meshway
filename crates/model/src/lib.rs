@@ -8,7 +8,9 @@
 mod digest;
 mod ids;
 mod membership;
+pub mod networks;
 mod numbers;
+pub use networks::{MemberActions, MemberSummary, NetworkActions, NetworkSummary};
 pub mod observations;
 pub mod resources;
 pub mod state;

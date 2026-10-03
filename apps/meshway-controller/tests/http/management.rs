@@ -13,6 +13,375 @@ fn request() -> RequestId {
     )))
     .unwrap()
 }
+
+async fn source(
+    c: &Client,
+    s: &Server,
+    network: meshway_model::NetworkId,
+    token: &str,
+) -> ConfigurationSourceResponse {
+    c.get(net(s, network, "configuration/source"))
+        .bearer_auth(token)
+        .send()
+        .await
+        .unwrap()
+        .error_for_status()
+        .unwrap()
+        .json()
+        .await
+        .unwrap()
+}
+
+#[tokio::test]
+async fn removed_member_references_survive_email_maintenance_and_never_rebind_on_save() {
+    let _serial = ACCOUNT_FLOW.lock().await;
+    let dir = tempfile::tempdir().unwrap();
+    let s = Server::start(&dir.path().canonicalize().unwrap().join("controller"), true).await;
+    let c = client();
+    let owner = register(&c, &s, "reference-owner@example.test", "valid password").await;
+    let member = register(&c, &s, "departing@example.test", "valid password").await;
+    let n = create(&c, &s, owner.token.expose(), "foreign network")
+        .await
+        .network
+        .id;
+    let old_member = join(
+        &c,
+        &s,
+        n,
+        owner.token.expose(),
+        member.token.expose(),
+        MembershipRole::Member,
+    )
+    .await;
+    let initial = source(&c, &s, n, owner.token.expose()).await;
+    let mut input = meshway_configuration::NetworkConfigurationInput::from(&initial.configuration);
+    input
+        .groups
+        .insert("group:team".into(), vec![member.user.email.clone()]);
+    input
+        .tags_owners
+        .insert("tag:backend".into(), vec![member.user.email.clone()]);
+    let applied: ConfigurationAppliedResponse = c
+        .post(net(&s, n, "configuration"))
+        .bearer_auth(owner.token.expose())
+        .json(&ConfigurationRequest::Document {
+            expected_revision: initial.revision,
+            request_id: request(),
+            source_jsonc: WireSecret::new(serde_json::to_string(&input).unwrap()),
+        })
+        .send()
+        .await
+        .unwrap()
+        .error_for_status()
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    c.post(net(&s, n, &format!("members/{old_member}/remove")))
+        .bearer_auth(owner.token.expose())
+        .json(&RemoveMemberRequest {
+            expected_version: meshway_model::Version::MIN,
+            expected_revision: applied.revision,
+        })
+        .send()
+        .await
+        .unwrap()
+        .error_for_status()
+        .unwrap();
+    let changed: AccountResponse = c
+        .post(format!("{}/api/v1/account/email", s.url))
+        .bearer_auth(member.token.expose())
+        .json(&ChangeEmailRequest {
+            password: WireSecret::new("valid password".into()),
+            email: "departed-new@example.test".into(),
+        })
+        .send()
+        .await
+        .unwrap()
+        .error_for_status()
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(changed.user.id, member.user.id);
+    let new_member = join(
+        &c,
+        &s,
+        n,
+        owner.token.expose(),
+        member.token.expose(),
+        MembershipRole::Member,
+    )
+    .await;
+    assert_ne!(old_member, new_member);
+    let replacement = register(&c, &s, "departing@example.test", "valid password").await;
+    join(
+        &c,
+        &s,
+        n,
+        owner.token.expose(),
+        replacement.token.expose(),
+        MembershipRole::Member,
+    )
+    .await;
+    let current = source(&c, &s, n, owner.token.expose()).await;
+    for edit in [
+        ConfigurationRequest::Document {
+            expected_revision: current.revision,
+            request_id: request(),
+            source_jsonc: WireSecret::new(current.source_jsonc.expose().into()),
+        },
+        ConfigurationRequest::Operations {
+            expected_revision: current.revision,
+            request_id: request(),
+            ops: vec![],
+        },
+    ] {
+        let preview: ConfigurationPreviewResponse = c
+            .post(net(&s, n, "configuration/validate"))
+            .bearer_auth(owner.token.expose())
+            .json(&edit)
+            .send()
+            .await
+            .unwrap()
+            .error_for_status()
+            .unwrap()
+            .json()
+            .await
+            .unwrap();
+        assert_eq!(preview.change_count, 0);
+        assert!(preview.changes.is_empty());
+        assert!(!preview.source_changed);
+        assert!(!preview.unavailable_dependencies.is_empty());
+        let result: ConfigurationAppliedResponse = c
+            .post(net(&s, n, "configuration"))
+            .bearer_auth(owner.token.expose())
+            .json(&edit)
+            .send()
+            .await
+            .unwrap()
+            .error_for_status()
+            .unwrap()
+            .json()
+            .await
+            .unwrap();
+        assert_eq!(result.revision, current.revision);
+    }
+    let restore = c
+        .post(net(&s, n, "configuration"))
+        .bearer_auth(owner.token.expose())
+        .json(&ConfigurationRequest::Restore {
+            expected_revision: current.revision,
+            request_id: request(),
+            restore_from: applied.revision,
+        })
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(restore.status(), StatusCode::SERVICE_UNAVAILABLE);
+    let unknown = ConfigurationRequest::Operations {
+        expected_revision: current.revision,
+        request_id: request(),
+        ops: vec![ConfigurationOperation::ReplaceGroups {
+            groups: [("group:unknown".into(), vec!["unknown@example.test".into()])].into(),
+        }],
+    };
+    assert_eq!(
+        c.post(net(&s, n, "configuration/validate"))
+            .bearer_auth(owner.token.expose())
+            .json(&unknown)
+            .send()
+            .await
+            .unwrap()
+            .status(),
+        StatusCode::UNPROCESSABLE_ENTITY
+    );
+    let activity: ActivityListResponse = c
+        .get(net(&s, n, "activity"))
+        .bearer_auth(owner.token.expose())
+        .send()
+        .await
+        .unwrap()
+        .error_for_status()
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert!(activity.items.iter().any(|event| matches!(event.target, ActivityTarget::Membership { membership_id } if membership_id == old_member)));
+    s.close().await;
+}
+
+#[tokio::test]
+async fn nonsecret_defaults_edit_keeps_and_explicitly_clears_websocket_headers() {
+    let _serial = ACCOUNT_FLOW.lock().await;
+    let dir = tempfile::tempdir().unwrap();
+    let s = Server::start(&dir.path().canonicalize().unwrap().join("controller"), true).await;
+    let c = client();
+    let owner = register(&c, &s, "headers@example.test", "valid password").await;
+    let n = create(&c, &s, owner.token.expose(), "headers")
+        .await
+        .network
+        .id;
+    let initial = source(&c, &s, n, owner.token.expose()).await;
+    let mut input = meshway_configuration::NetworkConfigurationInput::from(&initial.configuration);
+    input.defaults.dialers.vless.as_mut().unwrap().websocket =
+        Some(serde_json::from_str(r#"{"headers":{"Authorization":"private value"}}"#).unwrap());
+    c.post(net(&s, n, "configuration"))
+        .bearer_auth(owner.token.expose())
+        .json(&ConfigurationRequest::Document {
+            expected_revision: initial.revision,
+            request_id: request(),
+            source_jsonc: WireSecret::new(serde_json::to_string(&input).unwrap()),
+        })
+        .send()
+        .await
+        .unwrap()
+        .error_for_status()
+        .unwrap();
+    for (websocket, expected_count) in [(r#"{}"#, 1), (r#"{"headers":{}}"#, 0)] {
+        let current = source(&c, &s, n, owner.token.expose()).await;
+        let op = serde_json::from_str(&format!(r#"{{"type":"replaceDefaults","defaults":{{"dialers":{{"vless":{{"priority":17,"websocket":{websocket}}}}}}}}}"#)).unwrap();
+        let edit = ConfigurationRequest::Operations {
+            expected_revision: current.revision,
+            request_id: request(),
+            ops: vec![op],
+        };
+        let preview = c
+            .post(net(&s, n, "configuration/validate"))
+            .bearer_auth(owner.token.expose())
+            .json(&edit)
+            .send()
+            .await
+            .unwrap()
+            .error_for_status()
+            .unwrap()
+            .text()
+            .await
+            .unwrap();
+        assert!(!preview.contains("private value"));
+        c.post(net(&s, n, "configuration"))
+            .bearer_auth(owner.token.expose())
+            .json(&edit)
+            .send()
+            .await
+            .unwrap()
+            .error_for_status()
+            .unwrap();
+        let saved = source(&c, &s, n, owner.token.expose()).await;
+        let vless = saved.configuration.defaults.dialers.vless.unwrap();
+        assert_eq!(vless.priority, 17);
+        assert_eq!(vless.websocket.unwrap().headers.len(), expected_count);
+    }
+    s.close().await;
+}
+
+#[tokio::test]
+async fn management_activities_identify_transactional_member_and_link_targets() {
+    let _serial = ACCOUNT_FLOW.lock().await;
+    let dir = tempfile::tempdir().unwrap();
+    let s = Server::start(&dir.path().canonicalize().unwrap().join("controller"), true).await;
+    let c = client();
+    let owner = register(&c, &s, "activity-owner@example.test", "valid password").await;
+    let member = register(&c, &s, "activity-member@example.test", "valid password").await;
+    let n = create(&c, &s, owner.token.expose(), "activity")
+        .await
+        .network
+        .id;
+    let member_id = join(
+        &c,
+        &s,
+        n,
+        owner.token.expose(),
+        member.token.expose(),
+        MembershipRole::Member,
+    )
+    .await;
+    let promoted: MemberMutationResponse = c
+        .post(net(&s, n, &format!("members/{member_id}/role")))
+        .bearer_auth(owner.token.expose())
+        .json(&ChangeMemberRoleRequest {
+            expected_version: meshway_model::Version::MIN,
+            role: MembershipRole::Admin,
+        })
+        .send()
+        .await
+        .unwrap()
+        .error_for_status()
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    let link: JoinLinkCreated = c
+        .post(net(&s, n, "join-links"))
+        .bearer_auth(owner.token.expose())
+        .json(&CreateJoinLinkRequest {
+            request_id: request(),
+            role: MembershipRole::Member,
+            expires_in_seconds: 600,
+        })
+        .send()
+        .await
+        .unwrap()
+        .error_for_status()
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    let JoinLinkCreated::Available { link, .. } = link else {
+        panic!("first delivery")
+    };
+    c.post(net(&s, n, &format!("join-links/{}/revoke", link.id)))
+        .bearer_auth(owner.token.expose())
+        .send()
+        .await
+        .unwrap()
+        .error_for_status()
+        .unwrap();
+    c.post(net(&s, n, &format!("members/{member_id}/remove")))
+        .bearer_auth(owner.token.expose())
+        .json(&RemoveMemberRequest {
+            expected_version: promoted.member.version,
+            expected_revision: Revision::MIN,
+        })
+        .send()
+        .await
+        .unwrap()
+        .error_for_status()
+        .unwrap();
+    let events: ActivityListResponse = c
+        .get(net(&s, n, "activity"))
+        .bearer_auth(owner.token.expose())
+        .send()
+        .await
+        .unwrap()
+        .error_for_status()
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    for action in [
+        ActivityAction::MembershipJoin,
+        ActivityAction::MembershipRole,
+        ActivityAction::MembershipRemove,
+    ] {
+        let event = events
+            .items
+            .iter()
+            .find(|event| event.action == action)
+            .unwrap();
+        assert!(
+            matches!(event.target, ActivityTarget::Membership { membership_id } if membership_id == member_id)
+        );
+    }
+    for action in [
+        ActivityAction::JoinLinkCreate,
+        ActivityAction::JoinLinkRevoke,
+    ] {
+        assert!(events.items.iter().any(|event| event.action == action
+            && matches!(event.target, ActivityTarget::JoinLink { link_id } if link_id == link.id)));
+    }
+    s.close().await;
+}
 async fn create(c: &Client, s: &Server, token: &str, name: &str) -> NetworkResponse {
     let response = c
         .post(format!("{}/api/v1/networks", s.url))

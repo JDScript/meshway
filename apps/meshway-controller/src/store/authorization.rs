@@ -4,11 +4,105 @@
 //! Network operations call this before checking membership in the same transaction.
 
 use chrono::{DateTime, Utc};
-use meshway_model::{SessionId, UserId};
+use meshway_model::{MembershipId, MembershipRole, NetworkId, SessionId, UserId};
 use rusqlite::{OptionalExtension, Transaction, params};
 use uuid::Uuid;
 
 use crate::accounts::{AccountError, AuthenticatedSession, User};
+use crate::networks::NetworkError;
+
+pub(crate) fn network_actions(role: MembershipRole) -> meshway_model::NetworkActions {
+    let manage = matches!(role, MembershipRole::Owner | MembershipRole::Admin);
+    meshway_model::NetworkActions {
+        rename: manage,
+        edit_configuration: manage,
+        manage_members: manage,
+    }
+}
+pub(crate) fn can_grant(issuer: MembershipRole, role: MembershipRole) -> bool {
+    issuer == MembershipRole::Owner
+        || (issuer == MembershipRole::Admin && role == MembershipRole::Member)
+}
+pub(crate) fn member_actions(
+    caller: (MembershipId, MembershipRole),
+    target: (MembershipId, MembershipRole),
+    owner_count: i64,
+) -> meshway_model::MemberActions {
+    let last_owner = target.1 == MembershipRole::Owner && owner_count <= 1;
+    let assignable_roles: Vec<_> = [
+        MembershipRole::Owner,
+        MembershipRole::Admin,
+        MembershipRole::Member,
+    ]
+    .into_iter()
+    .filter(|role| {
+        can_grant(caller.1, target.1)
+            && can_grant(caller.1, *role)
+            && (!last_owner || *role == MembershipRole::Owner)
+    })
+    .collect();
+    meshway_model::MemberActions {
+        change_role: assignable_roles.iter().any(|role| *role != target.1),
+        assignable_roles,
+        remove: !last_owner && (caller.0 == target.0 || can_grant(caller.1, target.1)),
+    }
+}
+
+pub(crate) fn membership(
+    tx: &Transaction<'_>,
+    network: NetworkId,
+    user: UserId,
+) -> Result<(MembershipId, MembershipRole), NetworkError> {
+    let (id, role) = tx.query_row(
+        "SELECT m.id,m.role FROM memberships m JOIN networks n ON n.id=m.network_id JOIN users u ON u.id=m.user_id WHERE m.network_id=?1 AND m.user_id=?2 AND m.revoked_at IS NULL AND n.deleted_at IS NULL AND u.disabled_at IS NULL",
+        params![network.as_uuid().as_bytes().as_slice(), user.as_uuid().as_bytes().as_slice()],
+        |row| Ok((row.get::<_, Vec<u8>>(0)?, row.get::<_, String>(1)?)),
+    ).optional()?.ok_or(NetworkError::NotFound)?;
+    Ok((
+        MembershipId::new(Uuid::from_slice(&id).map_err(|_| NetworkError::Storage)?)
+            .map_err(|_| NetworkError::Storage)?,
+        parse_role(&role)?,
+    ))
+}
+
+pub(crate) fn parse_role(role: &str) -> Result<MembershipRole, NetworkError> {
+    match role {
+        "owner" => Ok(MembershipRole::Owner),
+        "admin" => Ok(MembershipRole::Admin),
+        "member" => Ok(MembershipRole::Member),
+        _ => Err(NetworkError::Storage),
+    }
+}
+
+pub(crate) fn authorize_manager(
+    tx: &Transaction<'_>,
+    network: NetworkId,
+    user: UserId,
+) -> Result<(), NetworkError> {
+    require_manager(membership(tx, network, user)?.1)
+}
+
+pub(crate) fn require_manager(role: MembershipRole) -> Result<(), NetworkError> {
+    match role {
+        MembershipRole::Owner | MembershipRole::Admin => Ok(()),
+        MembershipRole::Member => Err(NetworkError::PermissionDenied),
+    }
+}
+
+pub(crate) fn owner_count(tx: &Transaction<'_>, network: NetworkId) -> Result<i64, NetworkError> {
+    Ok(tx.query_row(
+        "SELECT count(*) FROM memberships WHERE network_id=?1 AND revoked_at IS NULL AND role='owner'",
+        [network.as_uuid().as_bytes().as_slice()], |row| row.get::<_, i64>(0),
+    )?)
+}
+
+pub(crate) fn protect_owner(tx: &Transaction<'_>, network: NetworkId) -> Result<(), NetworkError> {
+    if owner_count(tx, network)? <= 1 {
+        Err(NetworkError::LastOwner)
+    } else {
+        Ok(())
+    }
+}
 
 pub(crate) fn current_session(
     transaction: &Transaction<'_>,

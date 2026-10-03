@@ -1,11 +1,77 @@
 use super::{references::*, *};
 use ipnet::IpNet;
 
+#[derive(Clone, Copy)]
+struct PriorRules<'a> {
+    configuration: &'a NetworkConfiguration,
+    rules: &'a [EgressRule],
+}
+fn expanded_match(matcher: &RouteMatch, config: &NetworkConfiguration) -> Option<RouteMatch> {
+    let mut result = matcher.clone();
+    for key in &matcher.rule_sets {
+        let RuleSet::Inline {
+            ip_cidr,
+            domain_suffix,
+        } = config.rule_sets.get(key)?
+        else {
+            return None;
+        };
+        result.ip_cidr.extend(ip_cidr.iter().cloned());
+        result.domain_suffix.extend(domain_suffix.iter().cloned());
+    }
+    result.rule_sets.clear();
+    Some(result)
+}
+fn retained_egress(
+    rule: &EgressRule,
+    config: &NetworkConfiguration,
+    previous: Option<PriorRules<'_>>,
+) -> bool {
+    let Some(previous) = previous else {
+        return false;
+    };
+    previous.rules.iter().any(|old| {
+        if rule.action != old.action {
+            return false;
+        }
+        match (
+            expanded_match(&rule.matcher, config),
+            expanded_match(&old.matcher, previous.configuration),
+        ) {
+            (Some(current), Some(old)) => {
+                let Ok(grants) = old
+                    .ip_cidr
+                    .iter()
+                    .map(|s| s.parse::<IpNet>())
+                    .collect::<Result<Vec<_>, _>>()
+                else {
+                    return false;
+                };
+                current.ip_cidr.iter().all(|s| {
+                    s.parse::<IpNet>()
+                        .is_ok_and(|net| address_set_covers(&grants, &net))
+                }) && current.domain_suffix.iter().all(|domain| {
+                    old.domain_suffix
+                        .iter()
+                        .any(|suffix| domain_suffix_matches(domain, suffix))
+                })
+            }
+            _ => {
+                rule.matcher == old.matcher
+                    && rule.matcher.rule_sets.iter().all(|key| {
+                        config.rule_sets.get(key) == previous.configuration.rule_sets.get(key)
+                    })
+            }
+        }
+    })
+}
+
 fn node_selector(
     value: &str,
     config: &NetworkConfiguration,
     path: &str,
     check: &mut Check,
+    retained: bool,
 ) -> Option<NodeId> {
     match value
         .strip_prefix("node:")
@@ -14,7 +80,14 @@ fn node_selector(
     {
         Some(id) => Some(id),
         None => {
-            check.issue(path, "expected a known concrete Node selector");
+            let valid_id = value
+                .strip_prefix("node:")
+                .is_some_and(|s| s.parse::<NodeId>().is_ok());
+            check.dependency(
+                path,
+                "expected a known concrete Node selector",
+                retained && valid_id,
+            );
             None
         }
     }
@@ -24,10 +97,11 @@ fn via(
     config: &NetworkConfiguration,
     path: &str,
     check: &mut Check,
+    retained: bool,
 ) -> BTreeSet<NodeId> {
     let mut ids = BTreeSet::new();
     for value in values {
-        if let Some(id) = node_selector(value, config, path, check)
+        if let Some(id) = node_selector(value, config, path, check, retained)
             && !ids.insert(id)
         {
             check.issue(path, "repeated required Node");
@@ -35,20 +109,26 @@ fn via(
     }
     ids
 }
-fn action(value: &RouteAction, config: &NetworkConfiguration, path: &str, check: &mut Check) {
+fn action(
+    value: &RouteAction,
+    config: &NetworkConfiguration,
+    path: &str,
+    check: &mut Check,
+    retained: bool,
+) {
     if let RouteAction::Exit { nodes, via: hops } = value {
         if nodes.is_empty() {
             check.issue(path, "exit candidate set must not be empty");
         }
-        let required = via(hops, config, path, check);
+        let required = via(hops, config, path, check, retained);
         let mut seen = BTreeSet::new();
         for value in nodes {
-            if let Some(id) = node_selector(value, config, path, check) {
+            if let Some(id) = node_selector(value, config, path, check, retained) {
                 if !seen.insert(id) || required.contains(&id) {
                     check.issue(path, "repeated exit or exit included in via");
                 }
                 if !config.nodes[&id].exit_enabled {
-                    check.issue(path, "exit Node is not enabled as an exit");
+                    check.dependency(path, "exit Node is not enabled as an exit", retained);
                 }
             }
         }
@@ -77,7 +157,13 @@ fn profile_exists(value: &str, config: &NetworkConfiguration, allow_auto: bool) 
             .and_then(|s| s.parse::<NodeId>().ok())
             .is_some_and(|id| config.nodes.get(&id).is_some_and(|n| n.exit_enabled))
 }
-fn rules(rules: &mut [EgressRule], config: &NetworkConfiguration, path: &str, check: &mut Check) {
+fn rules(
+    rules: &mut [EgressRule],
+    config: &NetworkConfiguration,
+    path: &str,
+    check: &mut Check,
+    previous: Option<PriorRules<'_>>,
+) {
     for (i, rule) in rules.iter_mut().enumerate() {
         let path = format!("{path}/{i}");
         destinations(
@@ -100,7 +186,13 @@ fn rules(rules: &mut [EgressRule], config: &NetworkConfiguration, path: &str, ch
         if rule.action == RouteAction::Unmanaged {
             check.issue(&path, "unmanaged is only valid as a fallback");
         }
-        action(&rule.action, config, &path, check);
+        action(
+            &rule.action,
+            config,
+            &path,
+            check,
+            retained_egress(rule, config, previous),
+        );
     }
 }
 
@@ -210,10 +302,24 @@ pub(super) fn validate(
             &format!("{path}/dst"),
             check,
         );
-        via(&rule.via, config, &format!("{path}/via"), check);
+        let retained = context.previous.is_some_and(|old| {
+            old.routing.mesh.iter().any(|before| {
+                before.src == rule.src && before.dst == rule.dst && before.via == rule.via
+            })
+        });
+        via(&rule.via, config, &format!("{path}/via"), check, retained);
     }
     let mut public = std::mem::take(&mut config.routing.egress.rules);
-    rules(&mut public, config, "/routing/egress/rules", check);
+    rules(
+        &mut public,
+        config,
+        "/routing/egress/rules",
+        check,
+        context.previous.map(|old| PriorRules {
+            configuration: old,
+            rules: &old.routing.egress.rules,
+        }),
+    );
     config.routing.egress.rules = public;
     let mut profiles = std::mem::take(&mut config.routing.egress.profiles);
     for (key, profile) in &mut profiles {
@@ -221,12 +327,27 @@ pub(super) fn validate(
         if key.is_empty() || matches!(key.as_str(), "mesh" | "auto") || key.starts_with("global:") {
             check.issue(&path, "reserved or empty profile name");
         }
-        rules(&mut profile.rules, config, &format!("{path}/rules"), check);
+        let previous = context
+            .previous
+            .and_then(|old| old.routing.egress.profiles.get(key));
+        rules(
+            &mut profile.rules,
+            config,
+            &format!("{path}/rules"),
+            check,
+            context.previous.and_then(|old| {
+                previous.map(|p| PriorRules {
+                    configuration: old,
+                    rules: &p.rules,
+                })
+            }),
+        );
         action(
             &profile.fallback,
             config,
             &format!("{path}/fallback"),
             check,
+            previous.is_some_and(|p| p.fallback == profile.fallback),
         );
     }
     config.routing.egress.profiles = profiles;
@@ -247,7 +368,11 @@ pub(super) fn validate(
             .chain(std::iter::once(&assignment.default))
         {
             if !profile_exists(profile, config, true) {
-                check.issue(&path, "unknown routing profile");
+                let retained = profile.starts_with("global:")
+                    && context
+                        .previous
+                        .is_some_and(|old| old.routing.egress.assignments.contains(assignment));
+                check.dependency(&path, "unknown routing profile", retained);
             }
         }
         for target in &assignment.target {
@@ -295,7 +420,15 @@ pub(super) fn validate(
             .chain(std::iter::once(&auto.fallback))
         {
             if !profile_exists(value, config, false) || value == "auto" {
-                check.issue("/routing/egress/auto", "unknown or recursive auto target");
+                let retained = value.starts_with("global:")
+                    && context
+                        .previous
+                        .is_some_and(|old| old.routing.egress.auto == config.routing.egress.auto);
+                check.dependency(
+                    "/routing/egress/auto",
+                    "unknown or recursive auto target",
+                    retained,
+                );
             }
         }
         for rule in &auto.rules {
@@ -312,7 +445,7 @@ pub(super) fn validate(
             }
         }
     }
-    validate_assignments_access(config, check);
+    validate_assignments_access(config, context, check);
 }
 
 fn https_authority(authority: &str) -> bool {
@@ -350,26 +483,35 @@ fn permitted(
     node: &NodeSettings,
     destination: &str,
 ) -> bool {
-    config
+    let allowed: Vec<_> = config
         .access
         .iter()
         .filter(|r| r.src.iter().any(|s| matches(s, id, node, config)))
-        .any(|r| {
-            r.dst.iter().any(|allowed| {
-                if allowed == destination {
-                    return true;
-                }
-                if let Some(domain) = destination.strip_prefix("domain:") {
-                    return allowed
-                        .strip_prefix("domain:")
-                        .is_some_and(|suffix| domain_suffix_matches(domain, suffix));
-                }
-                match (allowed.parse::<IpNet>(), destination.parse::<IpNet>()) {
-                    (Ok(a), Ok(b)) => a.contains(&b.network()) && a.prefix_len() <= b.prefix_len(),
-                    _ => false,
-                }
-            })
-        })
+        .flat_map(|r| &r.dst)
+        .collect();
+    if let Some(domain) = destination.strip_prefix("domain:") {
+        return allowed.iter().any(|a| {
+            a.strip_prefix("domain:")
+                .is_some_and(|suffix| domain_suffix_matches(domain, suffix))
+        });
+    }
+    let mut ranges = Vec::new();
+    for value in allowed {
+        if value == "autogroup:internet" {
+            ranges.extend_from_slice(internet_ranges());
+        } else if let Ok(net) = value.parse::<IpNet>() {
+            ranges.push(net);
+        }
+    }
+    if destination == "autogroup:internet" {
+        internet_ranges()
+            .iter()
+            .all(|target| address_set_covers(&ranges, target))
+    } else {
+        destination
+            .parse::<IpNet>()
+            .is_ok_and(|target| address_set_covers(&ranges, &target))
+    }
 }
 fn verify_rules(
     config: &NetworkConfiguration,
@@ -378,6 +520,7 @@ fn verify_rules(
     rules: &[EgressRule],
     path: &str,
     check: &mut Check,
+    previous: Option<PriorRules<'_>>,
 ) {
     for rule in rules {
         if !matches!(rule.action, RouteAction::Exit { .. }) {
@@ -407,11 +550,19 @@ fn verify_rules(
             }
         }
         if destinations.iter().any(|d| !permitted(config, id, node, d)) {
-            check.issue(path, "assigned exit destination is outside access grants");
+            check.dependency(
+                path,
+                "assigned exit destination is outside access grants",
+                retained_egress(rule, config, previous),
+            );
         }
     }
 }
-fn validate_assignments_access(config: &NetworkConfiguration, check: &mut Check) {
+fn validate_assignments_access(
+    config: &NetworkConfiguration,
+    context: &ValidationContext<'_>,
+    check: &mut Check,
+) {
     for (id, node) in &config.nodes {
         let allowed: BTreeSet<_> = config
             .routing
@@ -422,6 +573,7 @@ fn validate_assignments_access(config: &NetworkConfiguration, check: &mut Check)
             .flat_map(|a| a.allowed.iter())
             .collect();
         let path = format!("/nodes/{id}");
+        let previous = context.previous.filter(|old| old.nodes.contains_key(id));
         verify_rules(
             config,
             *id,
@@ -429,6 +581,10 @@ fn validate_assignments_access(config: &NetworkConfiguration, check: &mut Check)
             &config.routing.egress.rules,
             &path,
             check,
+            previous.map(|old| PriorRules {
+                configuration: old,
+                rules: &old.routing.egress.rules,
+            }),
         );
         if allowed.contains(&"auto".to_owned())
             && let Input::Value(auto) = &config.routing.egress.auto
@@ -442,15 +598,53 @@ fn validate_assignments_access(config: &NetworkConfiguration, check: &mut Check)
             check.issue(&path, "auto target outside allowed profiles");
         }
         for name in allowed {
+            let retained = previous.is_some_and(|old| {
+                old.routing.egress.assignments.iter().any(|a| {
+                    a.allowed.contains(name)
+                        && a.target
+                            .iter()
+                            .any(|s| matches(s, *id, &old.nodes[id], old))
+                })
+            });
             if name.starts_with("global:") && !permitted(config, *id, node, "autogroup:internet") {
-                check.issue(&path, "global exit requires internet access grant");
+                check.dependency(
+                    &path,
+                    "global exit requires internet access grant",
+                    retained,
+                );
             }
             if let Some(profile) = config.routing.egress.profiles.get(name) {
-                verify_rules(config, *id, node, &profile.rules, &path, check);
+                let old_profile = previous
+                    .filter(|_| retained)
+                    .and_then(|old| old.routing.egress.profiles.get(name));
+                verify_rules(
+                    config,
+                    *id,
+                    node,
+                    &profile.rules,
+                    &path,
+                    check,
+                    previous.and_then(|old| {
+                        old_profile.map(|p| PriorRules {
+                            configuration: old,
+                            rules: &p.rules,
+                        })
+                    }),
+                );
+                if !retained {
+                    for rule in &profile.rules {
+                        action(&rule.action, config, &path, check, false);
+                    }
+                    action(&profile.fallback, config, &path, check, false);
+                }
                 if matches!(profile.fallback, RouteAction::Exit { .. })
                     && !permitted(config, *id, node, "autogroup:internet")
                 {
-                    check.issue(&path, "exit fallback requires internet access grant");
+                    check.dependency(
+                        &path,
+                        "exit fallback requires internet access grant",
+                        old_profile.is_some_and(|p| p.fallback == profile.fallback),
+                    );
                 }
             }
         }

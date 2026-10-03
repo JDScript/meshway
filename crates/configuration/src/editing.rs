@@ -3,7 +3,6 @@ use crate::{
     *,
 };
 use meshway_model::NodeId;
-use meshway_transport_spec::{DialerSet, Listener};
 use std::collections::BTreeMap;
 
 #[derive(
@@ -39,26 +38,28 @@ object! { #[derive(Default)] pub struct NodeSettingsPatch {
     #[serde(default,skip_serializing_if="Input::is_omitted")] pub remark: Input<String> [value_type=String],
     #[serde(default,skip_serializing_if="Input::is_omitted")] pub enabled: Input<bool> [value_type=bool],
     #[serde(default,skip_serializing_if="Input::is_omitted")] pub exit_enabled: Input<bool> [value_type=bool],
-    #[serde(default,skip_serializing_if="Input::is_omitted")] pub dialers: Input<Option<DialerSet>> [value_type=Option<DialerSet>],
+    #[serde(default,skip_serializing_if="Input::is_omitted")] pub dialers: Input<Option<DialerSetUpdate>> [value_type=Option<DialerSetUpdate>],
 } }
 tagged! { pub enum ConfigurationOperation {
     ReplaceAccess { access: Vec<AccessRule> },
     ReplaceTopology { topology: Vec<TopologyRule> },
     ReplaceRouting { routing: RoutingConfiguration },
     ReplaceDns { dns: DnsConfiguration },
-    ReplaceDefaults { defaults: Defaults },
+    ReplaceDefaults { defaults: DefaultsUpdate },
     ReplaceGroups { #[serde(deserialize_with="unique_map")] groups: BTreeMap<String,Vec<String>> },
     ReplaceTagsOwners { #[serde(rename="tagsOwners",deserialize_with="unique_map")] tags_owners: BTreeMap<String,Vec<String>> },
     ReplaceRuleSets { #[serde(rename="ruleSets",deserialize_with="unique_map")] rule_sets: BTreeMap<String,RuleSet> },
     SetNodeSettings { #[serde(rename="nodeId")] node_id: NodeId, fields: NodeSettingsPatch },
-    SetListener { #[serde(rename="nodeId")] node_id: NodeId, key: String, #[serde(deserialize_with="nullable_listener")] listener: Option<Listener> [required=true] },
+    SetListener { #[serde(rename="nodeId")] node_id: NodeId, key: String, #[serde(deserialize_with="nullable_listener")] listener: Option<ListenerUpdate> [required=true] },
     SetIdentityTags { #[serde(rename="nodeId")] node_id: NodeId, tags: Vec<String> },
     SetAddressPools { #[serde(rename="addressPools")] address_pools: AddressPoolsInput },
     SetAddresses { #[serde(rename="nodeId")] node_id: NodeId, addresses: NodeAddressesInput },
     DeleteNode { #[serde(rename="nodeId")] node_id: NodeId },
 } }
 
-fn nullable_listener<'de, D: serde::Deserializer<'de>>(d: D) -> Result<Option<Listener>, D::Error> {
+fn nullable_listener<'de, D: serde::Deserializer<'de>>(
+    d: D,
+) -> Result<Option<ListenerUpdate>, D::Error> {
     serde::Deserialize::deserialize(d)
 }
 
@@ -88,7 +89,7 @@ pub fn apply_operations(
             ConfigurationOperation::ReplaceRouting { routing } => input.routing = routing.clone(),
             ConfigurationOperation::ReplaceDns { dns } => input.dns = dns.clone(),
             ConfigurationOperation::ReplaceDefaults { defaults } => {
-                input.defaults = defaults.clone()
+                input.defaults = defaults.apply(&input.defaults)
             }
             ConfigurationOperation::ReplaceGroups { groups } => input.groups = groups.clone(),
             ConfigurationOperation::ReplaceTagsOwners { tags_owners } => {
@@ -110,6 +111,7 @@ pub fn apply_operations(
                 }
             }
             ConfigurationOperation::SetNodeSettings { node_id, fields } => {
+                let inherited_dialers = input.defaults.dialers.clone();
                 let n = node(input, *node_id)?;
                 if let Input::Value(v) = &fields.hostname {
                     n.hostname = v.clone();
@@ -124,7 +126,16 @@ pub fn apply_operations(
                     n.exit_enabled = v;
                 }
                 if let Input::Value(v) = &fields.dialers {
-                    n.dialers = v.clone().map(Input::Value).unwrap_or(Input::Omitted);
+                    n.dialers = match v {
+                        None => Input::Omitted,
+                        Some(update) => {
+                            let previous = match &n.dialers {
+                                Input::Omitted => &inherited_dialers,
+                                Input::Value(previous) => previous,
+                            };
+                            Input::Value(update.apply(previous))
+                        }
+                    };
                 }
             }
             ConfigurationOperation::SetListener {
@@ -135,7 +146,8 @@ pub fn apply_operations(
                 let n = node(input, *node_id)?;
                 match listener {
                     Some(l) => {
-                        n.listeners.insert(key.clone(), l.clone());
+                        let listener = l.apply(n.listeners.get(key));
+                        n.listeners.insert(key.clone(), listener);
                     }
                     None => {
                         n.listeners.remove(key);

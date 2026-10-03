@@ -22,6 +22,9 @@ fn network_lists_retain_required_nullable_cursor_and_reject_invalid_roles() {
         "asOf": "2026-10-03T12:00:00Z"
     });
     assert!(serde_json::from_value::<NetworkListResponse>(valid.clone()).is_ok());
+    let mut positional = valid.clone();
+    positional["items"][0]["actions"] = json!([true, true, true]);
+    assert!(serde_json::from_value::<NetworkListResponse>(positional).is_err());
     for role in [
         json!({"owner":null}),
         json!("instance_admin"),

@@ -17,7 +17,6 @@ impl HttpError {
         use crate::configuration::Error;
         let (status, problem) = match error {
             Error::InvalidSession => return Self::invalid_session(id),
-            Error::InvalidPage => return Self::invalid_request(id),
             Error::NotFound => (
                 StatusCode::NOT_FOUND,
                 Problem::NotFound {

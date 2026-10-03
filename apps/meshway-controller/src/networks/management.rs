@@ -4,6 +4,7 @@ use crate::{
     store::networks::management as store,
 };
 use meshway_model::JoinLinkId;
+use meshway_model::{MembershipId, MembershipRole, Revision, Version};
 use meshway_protocol::management::JoinLinkView;
 
 pub struct CreatedLink {
@@ -82,7 +83,7 @@ impl Networks {
         expected: Version,
         role: MembershipRole,
         request: RequestId,
-    ) -> Result<MemberView, NetworkError> {
+    ) -> Result<MemberSummary, NetworkError> {
         let digest = token_digest(token)?;
         self.handle
             .execute(move |db| {

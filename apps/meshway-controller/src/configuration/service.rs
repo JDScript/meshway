@@ -136,6 +136,7 @@ impl Configurations {
                 let current = service.current(&tx, network)?;
                 let prepared = service.prepare_request(&tx, &current, &request, false)?;
                 let result = ConfigurationPreviewResponse {
+                    unavailable_dependencies: prepared.unavailable_dependencies,
                     request_id: id,
                     base_revision: current.revision,
                     preview: ConfigurationView::from(&prepared.document.configuration),
@@ -180,7 +181,11 @@ impl Configurations {
         let tx = db.transaction_with_behavior(TransactionBehavior::Immediate)?;
         let user = self.authorize(&tx, &digest, network)?;
         let encoded = Zeroizing::new(serde_json::to_vec(&request).map_err(|_| Error::Storage)?);
-        let prior=tx.query_row("SELECT base_revision,input,result FROM configuration_commits WHERE network_id=?1 AND user_id=?2 AND request_id=?3",params![network.as_uuid().as_bytes().as_slice(),user.as_uuid().as_bytes().as_slice(),request.request_id().as_uuid().as_bytes().as_slice()],|r|Ok((r.get::<_,i64>(0)?,r.get::<_,Vec<u8>>(1)?,r.get::<_,String>(2)?))).optional()?;
+        let prior = tx.query_row(
+            "SELECT base_revision,input,result FROM configuration_commits WHERE network_id=?1 AND user_id=?2 AND request_id=?3",
+            params![network.as_uuid().as_bytes().as_slice(), user.as_uuid().as_bytes().as_slice(), request.request_id().as_uuid().as_bytes().as_slice()],
+            |row| Ok((row.get::<_, i64>(0)?, row.get::<_, Vec<u8>>(1)?, row.get::<_, String>(2)?)),
+        ).optional()?;
         if let Some((base, input, result)) = prior {
             let base = Revision::new(u64::try_from(base).map_err(|_| Error::Storage)?)
                 .map_err(|_| Error::Storage)?;
@@ -232,7 +237,12 @@ impl Configurations {
             .sealer
             .seal(network, current.revision, Purpose::Request, &encoded)
             .map_err(|_| Error::Storage)?;
-        tx.execute("INSERT INTO configuration_commits(network_id,user_id,request_id,base_revision,input,result) VALUES(?1,?2,?3,?4,?5,?6)",params![network.as_uuid().as_bytes().as_slice(),user.as_uuid().as_bytes().as_slice(),request.request_id().as_uuid().as_bytes().as_slice(),current.revision.get() as i64,input.as_bytes(),serde_json::to_string(&result).map_err(|_|Error::Storage)?])?;
+        tx.execute(
+            "INSERT INTO configuration_commits(network_id,user_id,request_id,base_revision,input,result) VALUES(?1,?2,?3,?4,?5,?6)",
+            params![network.as_uuid().as_bytes().as_slice(), user.as_uuid().as_bytes().as_slice(),
+                request.request_id().as_uuid().as_bytes().as_slice(), current.revision.get() as i64,
+                input.as_bytes(), serde_json::to_string(&result).map_err(|_|Error::Storage)?],
+        )?;
         tx.commit()?;
         Ok(result)
     }
@@ -255,14 +265,16 @@ impl Configurations {
                 let b = service
                     .cache
                     .load(&tx, network, request.to_revision, &service.sealer)?;
-                let changes =
+                let mut changes =
                     configuration_changes(&a.document.configuration, &b.document.configuration)?;
+                let configuration_changed = !changes.is_empty();
+                changes.extend(binding_changes(&a.bindings, &b.bindings));
                 let result = ConfigurationComparison {
                     request_id: id,
                     from_revision: a.revision,
                     to_revision: b.revision,
                     source_changed: a.document.source_jsonc != b.document.source_jsonc,
-                    configuration_changed: !changes.is_empty(),
+                    configuration_changed,
                     bindings_changed: a.bindings != b.bindings,
                     changes,
                 };
@@ -303,7 +315,7 @@ impl Configurations {
             ConfigurationRequest::Document { source_jsonc, .. } => (
                 source_jsonc.expose().to_owned(),
                 parse_jsonc(source_jsonc.expose())?,
-                BTreeMap::new(),
+                current.bindings.users.clone(),
             ),
             ConfigurationRequest::Operations { ops, .. } => {
                 let (source, input) = edit_source(current.document.source_jsonc.expose(), ops)?;
@@ -342,6 +354,25 @@ impl Configurations {
         // baseline. Never construct an empty inventory for an existing target.
         UnattachedDependencies::check(tx, current, &input)?;
         let members = members(tx, current.network_id)?;
+        let mut recreated_listeners = BTreeSet::new();
+        if let ConfigurationRequest::Operations { ops, .. } = request {
+            let mut removed = BTreeSet::new();
+            for op in ops {
+                if let meshway_configuration::ConfigurationOperation::SetListener {
+                    node_id,
+                    key,
+                    listener,
+                } = op
+                {
+                    let resource = (*node_id, key.clone());
+                    if listener.is_none() {
+                        removed.insert(resource);
+                    } else if removed.contains(&resource) {
+                        recreated_listeners.insert(resource);
+                    }
+                }
+            }
+        }
         let verified_listeners = materials::prepare_materials(
             tx,
             current.network_id,
@@ -349,6 +380,7 @@ impl Configurations {
             current,
             &self.sealer,
             generate_materials,
+            &recreated_listeners,
         )?;
         let context = TrustedContext {
             validation: ValidationContext {
@@ -357,6 +389,7 @@ impl Configurations {
                 expected_user_bindings: expected,
                 previous_user_bindings: current.bindings.users.clone(),
                 verified_listeners,
+                recreated_listeners,
                 ..Default::default()
             },
             rule_sets: BTreeMap::new(),
@@ -387,7 +420,9 @@ pub(crate) fn members(
     tx: &Transaction<'_>,
     network: NetworkId,
 ) -> Result<BTreeMap<String, UserBinding>, Error> {
-    let mut stmt=tx.prepare("SELECT u.email,u.id,m.id FROM memberships m JOIN users u ON u.id=m.user_id WHERE m.network_id=?1 AND m.revoked_at IS NULL AND u.disabled_at IS NULL")?;
+    let mut stmt = tx.prepare(
+        "SELECT u.email,u.id,m.id FROM memberships m JOIN users u ON u.id=m.user_id WHERE m.network_id=?1 AND m.revoked_at IS NULL AND u.disabled_at IS NULL",
+    )?;
     let rows = stmt
         .query_map([network.as_uuid().as_bytes().as_slice()], |r| {
             Ok((
@@ -473,7 +508,11 @@ impl CommitParticipant for UnattachedDependencies {
                 {
                     return Err(Error::PermissionDenied);
                 }
-                let valid=tx.query_row("SELECT EXISTS(SELECT 1 FROM users WHERE id=?1 AND email=?2 AND disabled_at IS NULL)",params![user.as_uuid().as_bytes().as_slice(),new_email],|r|r.get::<_,bool>(0))?;
+                let valid = tx.query_row(
+                    "SELECT EXISTS(SELECT 1 FROM users WHERE id=?1 AND email=?2 AND disabled_at IS NULL)",
+                    params![user.as_uuid().as_bytes().as_slice(), new_email],
+                    |row| row.get::<_, bool>(0),
+                )?;
                 if !valid {
                     return Err(Error::PermissionDenied);
                 }
@@ -484,6 +523,7 @@ impl CommitParticipant for UnattachedDependencies {
                 let context = ValidationContext {
                     members: members(tx, current.network_id)?,
                     previous: Some(&current.document.configuration),
+                    expected_user_bindings: prepared.bindings.users.clone(),
                     previous_user_bindings: current.bindings.users.clone(),
                     ..Default::default()
                 };

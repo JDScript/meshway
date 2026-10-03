@@ -7,6 +7,8 @@
 
 mod document;
 mod editing;
+mod editing_secrets;
+pub use editing_secrets::*;
 mod fields;
 mod object;
 mod source;
@@ -15,10 +17,12 @@ mod validation;
 mod view;
 pub use source::{edit_source, rewrite_source};
 mod identity;
+mod internet;
 pub use document::*;
 pub use editing::*;
 pub use fields::*;
 pub use identity::{rebind_user_references, rename_user_references};
+pub use internet::{address_set_covers, internet_ranges};
 pub use meshway_transport_spec::{OuterSocket, TransportProtocol};
 pub use types::*;
 pub use validation::*;

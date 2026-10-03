@@ -9,19 +9,13 @@ use std::collections::BTreeMap;
 pub struct ConfigurationDocument {
     pub source_jsonc: SecretString,
     pub configuration: NetworkConfiguration,
-    pub user_bindings: BTreeMap<String, UserBinding>,
 }
 
 impl ConfigurationDocument {
-    pub fn new(
-        source: String,
-        configuration: NetworkConfiguration,
-        user_bindings: BTreeMap<String, UserBinding>,
-    ) -> Self {
+    pub fn new(source: String, configuration: NetworkConfiguration) -> Self {
         Self {
             source_jsonc: SecretString::new(source),
             configuration,
-            user_bindings,
         }
     }
     pub fn set_source(&mut self, source: String) {
@@ -40,11 +34,10 @@ pub fn parse_document(
     context: &ValidationContext<'_>,
 ) -> Result<ConfigurationDocument, ConfigurationError> {
     let input = parse_jsonc(&source)?;
-    let (configuration, user_bindings) = normalize(input, context)?;
+    let (configuration, _) = normalize(input, context)?;
     Ok(ConfigurationDocument {
         source_jsonc: SecretString::new(source),
         configuration,
-        user_bindings,
     })
 }
 /// Stable field order, sorted map keys, retained ordered routing arrays.

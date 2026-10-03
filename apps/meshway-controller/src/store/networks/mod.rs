@@ -7,7 +7,7 @@ use super::authorization::current_session;
 use crate::{
     accounts::random_uuid,
     networks::{
-        MemberPage, NetworkError, NetworkPage, NetworkView, configuration::PreparedNetwork,
+        MemberPage, NetworkError, NetworkPage, NetworkSummary, configuration::PreparedNetwork,
         pagination::Window,
     },
     secrets::{CursorScope, Sealer},
@@ -36,12 +36,16 @@ pub(crate) fn create(
     request: RequestId,
     sealer: &Sealer,
     cache: &crate::configuration::SnapshotCache,
-) -> Result<NetworkView, NetworkError> {
+) -> Result<NetworkSummary, NetworkError> {
     let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
     let now = now()?;
     let session = current_session(&transaction, &digest, now)?;
     let user = session.user.id;
-    let previous = transaction.query_row("SELECT id, creation_request_digest FROM networks WHERE created_by = ?1 AND creation_request_id = ?2", params![user.as_uuid().as_bytes().as_slice(), request.as_uuid().as_bytes().as_slice()], |row| Ok((row.get::<_, Vec<u8>>(0)?, row.get::<_, Vec<u8>>(1)?))).optional()?;
+    let previous = transaction.query_row(
+        "SELECT id, creation_request_digest FROM networks WHERE created_by = ?1 AND creation_request_id = ?2",
+        params![user.as_uuid().as_bytes().as_slice(), request.as_uuid().as_bytes().as_slice()],
+        |row| Ok((row.get::<_, Vec<u8>>(0)?, row.get::<_, Vec<u8>>(1)?)),
+    ).optional()?;
     if let Some((id, original_digest)) = previous {
         let id = rows::network_id(&id)?;
         // A creator is not an enduring authority. Check current membership
@@ -56,15 +60,21 @@ pub(crate) fn create(
     let id = prepared.id.as_uuid().as_bytes().as_slice();
     let user_bytes = user.as_uuid().as_bytes().as_slice();
     let request_bytes = request.as_uuid().as_bytes().as_slice();
-    transaction.execute("INSERT INTO networks (id, name, created_by, created_at, creation_request_id, creation_request_digest, current_revision, publication_sequence) VALUES (?1, ?2, ?3, ?4, ?5, ?6, 1, 0)", params![id, prepared.name, user_bytes, now, request_bytes, prepared.request_digest.as_slice()])?;
+    transaction.execute(
+        "INSERT INTO networks (id, name, created_by, created_at, creation_request_id, creation_request_digest, current_revision, publication_sequence) VALUES (?1, ?2, ?3, ?4, ?5, ?6, 1, 0)",
+        params![id, prepared.name, user_bytes, now, request_bytes, prepared.request_digest.as_slice()],
+    )?;
     transaction.execute("INSERT INTO memberships (id, network_id, user_id, role, version, joined_at) VALUES (?1, ?2, ?3, 'owner', 1, ?4)", params![random_uuid()?.as_bytes().as_slice(), id, user_bytes, now])?;
-    transaction.execute("INSERT INTO configuration_versions (network_id, revision, source_jsonc, configuration, bindings, created_by, created_at, cause, request_id) VALUES (?1, 1, ?2, ?3, ?4, ?5, ?6, 'networkCreated', ?7)", params![id, prepared.source.as_bytes(), prepared.configuration.as_bytes(), prepared.bindings.as_bytes(), user_bytes, now, request_bytes])?;
+    transaction.execute(
+        "INSERT INTO configuration_versions (network_id, revision, source_jsonc, configuration, bindings, created_by, created_at, cause, request_id) VALUES (?1, 1, ?2, ?3, ?4, ?5, ?6, 'networkCreated', ?7)",
+        params![id, prepared.source.as_bytes(), prepared.configuration.as_bytes(), prepared.bindings.as_bytes(), user_bytes, now, request_bytes],
+    )?;
     record(
         &transaction,
         prepared.id,
         user,
         request,
-        "network.create",
+        Activity::NetworkCreated,
         now,
     )?;
     let view = view(&transaction, prepared.id, user, sealer, cache)?;
@@ -78,7 +88,7 @@ pub(crate) fn get(
     id: NetworkId,
     sealer: &Sealer,
     cache: &crate::configuration::SnapshotCache,
-) -> Result<NetworkView, NetworkError> {
+) -> Result<NetworkSummary, NetworkError> {
     let transaction = connection.transaction_with_behavior(TransactionBehavior::Deferred)?;
     let user = current_session(&transaction, &digest, now()?)?.user.id;
     let view = view(&transaction, id, user, sealer, cache)?;
@@ -93,7 +103,7 @@ pub(crate) fn rename(
     change: crate::networks::NameChange,
     sealer: &Sealer,
     cache: &crate::configuration::SnapshotCache,
-) -> Result<NetworkView, NetworkError> {
+) -> Result<NetworkSummary, NetworkError> {
     let crate::networks::NameChange {
         name,
         expected,
@@ -114,7 +124,14 @@ pub(crate) fn rename(
             "UPDATE networks SET name = ?1 WHERE id = ?2",
             params![name, id.as_uuid().as_bytes().as_slice()],
         )?;
-        record(&transaction, id, user, request, "network.rename", now)?;
+        record(
+            &transaction,
+            id,
+            user,
+            request,
+            Activity::NetworkRenamed,
+            now,
+        )?;
         view.name = name;
     }
     transaction.commit()?;
@@ -233,7 +250,7 @@ pub(crate) fn members(
     let more = rows.len() > usize::from(limit);
     rows.truncate(usize::from(limit));
     let mut items = Vec::with_capacity(rows.len());
-    let owner_count = management::owner_count(&transaction, id)?;
+    let owner_count = crate::store::authorization::owner_count(&transaction, id)?;
     for row in rows {
         window.last = row.sequence;
         items.push(row.into_view((caller.membership_id, caller.role), owner_count)?);
@@ -262,7 +279,7 @@ fn view(
     user: UserId,
     sealer: &Sealer,
     cache: &crate::configuration::SnapshotCache,
-) -> Result<NetworkView, NetworkError> {
+) -> Result<NetworkSummary, NetworkError> {
     let sql = format!("{NETWORK_SELECT} AND n.id = ?2");
     let raw = transaction
         .query_row(
@@ -282,7 +299,7 @@ fn view(
 
 fn check_configuration(
     transaction: &Transaction<'_>,
-    view: &NetworkView,
+    view: &NetworkSummary,
     sealer: &Sealer,
     cache: &crate::configuration::SnapshotCache,
 ) -> Result<(), NetworkError> {
@@ -304,15 +321,69 @@ fn ceiling(transaction: &Transaction<'_>, table: &str) -> Result<i64, NetworkErr
         .unwrap_or(0))
 }
 
+enum Activity {
+    NetworkCreated,
+    NetworkRenamed,
+    MemberRemoved(meshway_model::MembershipId),
+    MemberRoleChanged(meshway_model::MembershipId),
+    MemberJoined {
+        member: meshway_model::MembershipId,
+        link: meshway_model::JoinLinkId,
+    },
+    LinkCreated(meshway_model::JoinLinkId),
+    LinkRevoked(meshway_model::JoinLinkId),
+}
+
 fn record(
     transaction: &Transaction<'_>,
     network: NetworkId,
     user: UserId,
     request: RequestId,
-    action: &str,
+    activity: Activity,
     now: i64,
 ) -> Result<(), NetworkError> {
-    transaction.execute("INSERT INTO activity_events (id, scope, network_id, at, actor_user_id, action, request_id) VALUES (?1, 'network', ?2, ?3, ?4, ?5, ?6)", params![random_uuid()?.as_bytes().as_slice(), network.as_uuid().as_bytes().as_slice(), now, user.as_uuid().as_bytes().as_slice(), action, request.as_uuid().as_bytes().as_slice()])?;
+    let (action, member, link) = match activity {
+        Activity::NetworkCreated => ("network.create", None, None),
+        Activity::NetworkRenamed => ("network.rename", None, None),
+        Activity::MemberRemoved(id) => ("membership.remove", Some(id), None),
+        Activity::MemberRoleChanged(id) => ("membership.role", Some(id), None),
+        Activity::MemberJoined { member, link } => ("membership.join", Some(member), Some(link)),
+        Activity::LinkCreated(id) => ("joinLink.create", None, Some(id)),
+        Activity::LinkRevoked(id) => ("joinLink.revoke", None, Some(id)),
+    };
+    if let Some(member) = member {
+        let exists = transaction.query_row(
+            "SELECT EXISTS(SELECT 1 FROM memberships WHERE network_id=?1 AND id=?2)",
+            params![
+                network.as_uuid().as_bytes().as_slice(),
+                member.as_uuid().as_bytes().as_slice()
+            ],
+            |row| row.get::<_, bool>(0),
+        )?;
+        if !exists {
+            return Err(NetworkError::Storage);
+        }
+    }
+    if let Some(link) = link {
+        let exists = transaction.query_row(
+            "SELECT EXISTS(SELECT 1 FROM join_links WHERE network_id=?1 AND id=?2)",
+            params![
+                network.as_uuid().as_bytes().as_slice(),
+                link.as_uuid().as_bytes().as_slice()
+            ],
+            |row| row.get::<_, bool>(0),
+        )?;
+        if !exists {
+            return Err(NetworkError::Storage);
+        }
+    }
+    transaction.execute(
+        "INSERT INTO activity_events (id, scope, network_id, at, actor_user_id, action, request_id, target_membership_id, target_join_link_id) VALUES (?1, 'network', ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+        params![random_uuid()?.as_bytes().as_slice(), network.as_uuid().as_bytes().as_slice(), now,
+            user.as_uuid().as_bytes().as_slice(), action, request.as_uuid().as_bytes().as_slice(),
+            member.map(|id| id.as_uuid().as_bytes().to_vec()),
+            link.map(|id| id.as_uuid().as_bytes().to_vec())],
+    )?;
     Ok(())
 }
 

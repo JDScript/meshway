@@ -9,7 +9,7 @@ use axum::{
     http::{HeaderMap, StatusCode},
 };
 use meshway_model::{JoinLinkId, MembershipId, NetworkId, RequestId};
-use meshway_protocol::{ErrorResponse, MemberSummary, NetworkPageQuery, WireSecret, management::*};
+use meshway_protocol::{ErrorResponse, NetworkPageQuery, WireSecret, management::*};
 
 #[utoipa::path(get,path="/api/v1/networks/{networkId}/members/{membershipId}/removal-impact",operation_id="getMemberRemovalImpact",tag="members",security(("userSession"=[])),params(("networkId"=NetworkId,Path),("membershipId"=MembershipId,Path)),responses((status=200,body=RemovalImpactResponse),(status=400,body=ErrorResponse),(status=401,body=ErrorResponse),(status=403,body=ErrorResponse),(status=404,body=ErrorResponse),(status=503,body=ErrorResponse)))]
 pub(super) async fn removal_impact(
@@ -117,15 +117,7 @@ pub(super) async fn role(
         .map_err(|e| HttpError::network(id, e))?;
     Ok(Json(MemberMutationResponse {
         request_id: id,
-        member: MemberSummary {
-            membership_id: m.id,
-            user_id: m.user_id,
-            email: m.email,
-            role: m.role,
-            version: m.version,
-            joined_at: m.joined_at,
-            actions: super::networks::member_actions(m.actions),
-        },
+        member: m,
     }))
 }
 

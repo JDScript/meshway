@@ -7,26 +7,9 @@ use meshway_model::{JoinLinkId, MembershipId, MembershipRole, Version};
 use meshway_protocol::management::JoinLinkView;
 use sha2::{Digest as _, Sha256};
 
-pub(crate) fn membership(
-    tx: &Transaction<'_>,
-    network: NetworkId,
-    user: UserId,
-) -> Result<(MembershipId, MembershipRole), NetworkError> {
-    let (id,role)=tx.query_row("SELECT m.id,m.role FROM memberships m JOIN networks n ON n.id=m.network_id WHERE m.network_id=?1 AND m.user_id=?2 AND m.revoked_at IS NULL AND n.deleted_at IS NULL",params![network.as_uuid().as_bytes().as_slice(),user.as_uuid().as_bytes().as_slice()],|r|Ok((r.get::<_,Vec<u8>>(0)?,r.get::<_,String>(1)?))).optional()?.ok_or(NetworkError::NotFound)?;
-    Ok((
-        MembershipId::new(uuid::Uuid::from_slice(&id).map_err(|_| NetworkError::Storage)?)
-            .map_err(|_| NetworkError::Storage)?,
-        parse_role(&role)?,
-    ))
-}
-fn parse_role(role: &str) -> Result<MembershipRole, NetworkError> {
-    match role {
-        "owner" => Ok(MembershipRole::Owner),
-        "admin" => Ok(MembershipRole::Admin),
-        "member" => Ok(MembershipRole::Member),
-        _ => Err(NetworkError::Storage),
-    }
-}
+use crate::store::authorization::{
+    membership, owner_count, parse_role, protect_owner, require_manager,
+};
 fn role_name(role: MembershipRole) -> &'static str {
     match role {
         MembershipRole::Owner => "owner",
@@ -35,14 +18,7 @@ fn role_name(role: MembershipRole) -> &'static str {
     }
 }
 fn grant(issuer: MembershipRole, role: MembershipRole) -> bool {
-    crate::networks::MemberActions::can_grant(issuer, role)
-}
-fn manager(role: MembershipRole) -> Result<(), NetworkError> {
-    if role == MembershipRole::Member {
-        Err(NetworkError::PermissionDenied)
-    } else {
-        Ok(())
-    }
+    crate::store::authorization::can_grant(issuer, role)
 }
 
 fn removal(
@@ -56,7 +32,11 @@ fn removal(
 ) -> Result<meshway_protocol::management::RemovalImpactResponse, NetworkError> {
     let (own, role) = membership(tx, network, user)?;
     let target = member.unwrap_or(own);
-    let (target_user,target_role,version)=tx.query_row("SELECT user_id,role,version FROM memberships WHERE network_id=?1 AND id=?2 AND revoked_at IS NULL",params![network.as_uuid().as_bytes().as_slice(),target.as_uuid().as_bytes().as_slice()],|r|Ok((r.get::<_,Vec<u8>>(0)?,r.get::<_,String>(1)?,r.get::<_,i64>(2)?))).optional()?.ok_or(NetworkError::NotFound)?;
+    let (target_user, target_role, version) = tx.query_row(
+        "SELECT user_id,role,version FROM memberships WHERE network_id=?1 AND id=?2 AND revoked_at IS NULL",
+        params![network.as_uuid().as_bytes().as_slice(), target.as_uuid().as_bytes().as_slice()],
+        |row| Ok((row.get::<_, Vec<u8>>(0)?, row.get::<_, String>(1)?, row.get::<_, i64>(2)?)),
+    ).optional()?.ok_or(NetworkError::NotFound)?;
     let target_role = parse_role(&target_role)?;
     if target != own && !grant(role, target_role) {
         return Err(NetworkError::PermissionDenied);
@@ -163,7 +143,14 @@ pub(crate) fn remove_member(
         params![now, impact.membership_id.as_uuid().as_bytes().as_slice()],
     )?;
     tx.execute("UPDATE join_links SET revoked_at=?1 WHERE issuer_membership_id=?2 AND consumed_at IS NULL AND revoked_at IS NULL",params![now,impact.membership_id.as_uuid().as_bytes().as_slice()])?;
-    record(&tx, network, user, request, "membership.remove", now)?;
+    record(
+        &tx,
+        network,
+        user,
+        request,
+        Activity::MemberRemoved(impact.membership_id),
+        now,
+    )?;
     tx.commit()?;
     Ok(impact.revision)
 }
@@ -176,12 +163,16 @@ pub(crate) fn change_role(
     expected: Version,
     role: MembershipRole,
     request: RequestId,
-) -> Result<crate::networks::MemberView, NetworkError> {
+) -> Result<crate::networks::MemberSummary, NetworkError> {
     let tx = db.transaction_with_behavior(TransactionBehavior::Immediate)?;
     let now = now()?;
     let user = current_session(&tx, &digest, now)?.user.id;
     let caller = membership(&tx, network, user)?;
-    let raw=tx.query_row("SELECT m.sequence,m.id,m.user_id,u.email,m.role,m.version,m.joined_at FROM memberships m JOIN users u ON u.id=m.user_id WHERE m.network_id=?1 AND m.id=?2 AND m.revoked_at IS NULL",params![network.as_uuid().as_bytes().as_slice(),id.as_uuid().as_bytes().as_slice()],RawMember::read).optional()?.ok_or(NetworkError::NotFound)?;
+    let raw = tx.query_row(
+        "SELECT m.sequence,m.id,m.user_id,u.email,m.role,m.version,m.joined_at FROM memberships m JOIN users u ON u.id=m.user_id WHERE m.network_id=?1 AND m.id=?2 AND m.revoked_at IS NULL",
+        params![network.as_uuid().as_bytes().as_slice(), id.as_uuid().as_bytes().as_slice()],
+        RawMember::read,
+    ).optional()?.ok_or(NetworkError::NotFound)?;
     let owners = owner_count(&tx, network)?;
     let mut member = raw.into_view(caller, owners)?;
     if !grant(caller.1, member.role) || !grant(caller.1, role) {
@@ -213,29 +204,28 @@ pub(crate) fn change_role(
         )?;
         // Permission loss is irreversible for existing links, including later
         // promotion or leaving/rejoining under a new membership.
-        tx.execute("UPDATE join_links SET revoked_at=?1 WHERE issuer_membership_id=?2 AND consumed_at IS NULL AND revoked_at IS NULL AND (?3='member' OR (?3='admin' AND role!='member'))",params![now,id.as_uuid().as_bytes().as_slice(),role_name(role)])?;
-        record(&tx, network, user, request, "membership.role", now)?;
+        tx.execute(
+            "UPDATE join_links SET revoked_at=?1 WHERE issuer_membership_id=?2 AND consumed_at IS NULL AND revoked_at IS NULL AND (?3='member' OR (?3='admin' AND role!='member'))",
+            params![now, id.as_uuid().as_bytes().as_slice(), role_name(role)],
+        )?;
+        record(
+            &tx,
+            network,
+            user,
+            request,
+            Activity::MemberRoleChanged(id),
+            now,
+        )?;
         member.role = role;
         member.version = version;
     }
-    member.actions = crate::networks::MemberActions::for_context(
+    member.actions = crate::store::authorization::member_actions(
         membership(&tx, network, user)?,
-        (member.id, member.role),
+        (member.membership_id, member.role),
         owner_count(&tx, network)?,
     );
     tx.commit()?;
     Ok(member)
-}
-pub(crate) fn protect_owner(tx: &Transaction<'_>, network: NetworkId) -> Result<(), NetworkError> {
-    let count = owner_count(tx, network)?;
-    if count <= 1 {
-        Err(NetworkError::LastOwner)
-    } else {
-        Ok(())
-    }
-}
-pub(crate) fn owner_count(tx: &Transaction<'_>, network: NetworkId) -> Result<i64, NetworkError> {
-    Ok(tx.query_row("SELECT count(*) FROM memberships WHERE network_id=?1 AND revoked_at IS NULL AND role='owner'",[network.as_uuid().as_bytes().as_slice()],|r|r.get::<_,i64>(0))?)
 }
 
 struct Link {
@@ -321,7 +311,11 @@ pub(crate) fn create_link(
         return Err(NetworkError::PermissionDenied);
     }
     let input_digest = Sha256::digest(format!("join-link/v1\0{}\0{ttl}", role_name(role)));
-    let previous=tx.query_row("SELECT creation_request_digest FROM join_links WHERE network_id=?1 AND created_by=?2 AND creation_request_id=?3",params![network.as_uuid().as_bytes().as_slice(),user.as_uuid().as_bytes().as_slice(),request.as_uuid().as_bytes().as_slice()],|r|r.get::<_,Vec<u8>>(0)).optional()?;
+    let previous = tx.query_row(
+        "SELECT creation_request_digest FROM join_links WHERE network_id=?1 AND created_by=?2 AND creation_request_id=?3",
+        params![network.as_uuid().as_bytes().as_slice(), user.as_uuid().as_bytes().as_slice(), request.as_uuid().as_bytes().as_slice()],
+        |row| row.get::<_, Vec<u8>>(0),
+    ).optional()?;
     if let Some(previous) = previous {
         if previous.as_slice() != input_digest.as_slice() {
             return Err(NetworkError::RequestConflict);
@@ -348,8 +342,13 @@ pub(crate) fn create_link(
     let expires = now
         .checked_add(i64::from(ttl) * 1000)
         .ok_or(NetworkError::Unavailable)?;
-    tx.execute("INSERT INTO join_links(id,network_id,role,token_hash,created_by,issuer_membership_id,created_at,expires_at,creation_request_id,creation_request_digest) VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10)",params![id.as_uuid().as_bytes().as_slice(),network.as_uuid().as_bytes().as_slice(),role_name(role),hash.as_slice(),user.as_uuid().as_bytes().as_slice(),issuer.as_uuid().as_bytes().as_slice(),now,expires,request.as_uuid().as_bytes().as_slice(),input_digest.as_slice()])?;
-    record(&tx, network, user, request, "joinLink.create", now)?;
+    tx.execute(
+        "INSERT INTO join_links(id,network_id,role,token_hash,created_by,issuer_membership_id,created_at,expires_at,creation_request_id,creation_request_digest) VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10)",
+        params![id.as_uuid().as_bytes().as_slice(), network.as_uuid().as_bytes().as_slice(), role_name(role),
+            hash.as_slice(), user.as_uuid().as_bytes().as_slice(), issuer.as_uuid().as_bytes().as_slice(),
+            now, expires, request.as_uuid().as_bytes().as_slice(), input_digest.as_slice()],
+    )?;
+    record(&tx, network, user, request, Activity::LinkCreated(id), now)?;
     let link = tx.query_row(
         &format!("{LINK_SELECT} WHERE id=?1"),
         [id.as_uuid().as_bytes().as_slice()],
@@ -423,14 +422,24 @@ pub(crate) fn redeem_link(
         return Err(NetworkError::AlreadyMember);
     }
     let member = MembershipId::new(random_uuid()?).map_err(|_| NetworkError::Unavailable)?;
-    tx.execute("INSERT INTO memberships(id,network_id,user_id,role,version,joined_at) VALUES(?1,?2,?3,?4,1,?5)",params![member.as_uuid().as_bytes().as_slice(),link.view.network_id.as_uuid().as_bytes().as_slice(),user.as_uuid().as_bytes().as_slice(),role_name(link.view.role),now])?;
-    tx.execute("UPDATE join_links SET consumed_at=?1,consumed_by_user_id=?2,consumed_membership_id=?3 WHERE id=?4",params![now,user.as_uuid().as_bytes().as_slice(),member.as_uuid().as_bytes().as_slice(),link.view.id.as_uuid().as_bytes().as_slice()])?;
+    tx.execute(
+        "INSERT INTO memberships(id,network_id,user_id,role,version,joined_at) VALUES(?1,?2,?3,?4,1,?5)",
+        params![member.as_uuid().as_bytes().as_slice(), link.view.network_id.as_uuid().as_bytes().as_slice(),
+            user.as_uuid().as_bytes().as_slice(), role_name(link.view.role), now],
+    )?;
+    tx.execute(
+        "UPDATE join_links SET consumed_at=?1,consumed_by_user_id=?2,consumed_membership_id=?3 WHERE id=?4",
+        params![now, user.as_uuid().as_bytes().as_slice(), member.as_uuid().as_bytes().as_slice(), link.view.id.as_uuid().as_bytes().as_slice()],
+    )?;
     record(
         &tx,
         link.view.network_id,
         user,
         request,
-        "membership.join",
+        Activity::MemberJoined {
+            member,
+            link: link.view.id,
+        },
         now,
     )?;
     tx.commit()?;
@@ -447,7 +456,7 @@ pub(crate) fn revoke_link(
     let now = now()?;
     let user = current_session(&tx, &digest, now)?.user.id;
     let (_, role) = membership(&tx, network, user)?;
-    manager(role)?;
+    require_manager(role)?;
     let link = tx
         .query_row(
             &format!("{LINK_SELECT} WHERE id=?1 AND network_id=?2"),
@@ -464,7 +473,7 @@ pub(crate) fn revoke_link(
     }
     let count=tx.execute("UPDATE join_links SET revoked_at=?1 WHERE id=?2 AND revoked_at IS NULL AND consumed_at IS NULL",params![now,id.as_uuid().as_bytes().as_slice()])?;
     if count > 0 {
-        record(&tx, network, user, request, "joinLink.revoke", now)?;
+        record(&tx, network, user, request, Activity::LinkRevoked(id), now)?;
     }
     tx.commit()?;
     Ok(())
@@ -480,7 +489,7 @@ pub(crate) fn links(
     let tx = db.transaction_with_behavior(TransactionBehavior::Deferred)?;
     let now = now()?;
     let user = current_session(&tx, &digest, now)?.user.id;
-    manager(membership(&tx, network, user)?.1)?;
+    require_manager(membership(&tx, network, user)?.1)?;
     let scope = CursorScope::JoinLinks { user, network };
     let mut window = match cursor {
         Some(cursor) => Window::decode(sealer, scope, &cursor, now)?,

@@ -10,6 +10,23 @@ fn named(value: &str, prefix: &str) -> bool {
     })
 }
 pub(super) fn user(email: &str, context: &ValidationContext<'_>, path: &str, check: &mut Check) {
+    // A retained reference remains bound to its original membership even after
+    // removal/rejoin or email reuse. This preserves an inert dependency, never
+    // creates a new authorization. Restore callers separately require every
+    // historical membership to still be active.
+    if let Some(expected) = context.expected_user_bindings.get(email)
+        && (context.previous_user_bindings.get(email) == Some(expected)
+            || context
+                .previous_user_bindings
+                .values()
+                .any(|old| old == expected))
+    {
+        if context.members.get(email) != Some(expected) {
+            check.dependency(path, "retained user membership is inactive", true);
+        }
+        check.bindings.insert(email.to_owned(), expected.clone());
+        return;
+    }
     match context.members.get(email) {
         Some(binding)
             if !context
@@ -65,7 +82,14 @@ pub(super) fn identity(
     check: &mut Check,
 ) {
     match identity {
-        NodeIdentity::User { user: email } => user(email, context, path, check),
+        NodeIdentity::User { user: email } => {
+            user(email, context, path, check);
+            if check.bindings.get(email) != context.members.get(email)
+                || !context.members.contains_key(email)
+            {
+                check.issue(path, "Node identity requires an active bound membership");
+            }
+        }
         NodeIdentity::Tag { tags: values } => {
             if values.is_empty() {
                 check.issue(path, "Tag identity must have at least one tag");
@@ -111,7 +135,11 @@ pub(super) fn selector(
             .parse::<NodeId>()
             .is_ok_and(|id| config.nodes.contains_key(&id) && context.nodes.contains(&id))
         {
-            check.issue(path, "unknown Node selector");
+            let retained = id.parse::<NodeId>().is_ok()
+                && context
+                    .previous
+                    .is_some_and(|old| retained_rule(config, old, path));
+            check.dependency(path, "unknown Node selector", retained);
         }
         return;
     }
@@ -133,6 +161,38 @@ pub(super) fn selector(
         }
     }
     user(value, context, path, check);
+}
+fn retained_rule(config: &NetworkConfiguration, old: &NetworkConfiguration, path: &str) -> bool {
+    let parts: Vec<_> = path.trim_start_matches('/').split('/').collect();
+    let at = |index: usize| parts.get(index).and_then(|s| s.parse::<usize>().ok());
+    match parts.as_slice() {
+        ["access", _, ..] => at(1).and_then(|i| config.access.get(i)).is_some_and(|r| {
+            old.access.iter().any(|before| {
+                before.src == r.src
+                    && before.dst == r.dst
+                    && before.ip == r.ip
+                    && before.bidirectional == r.bidirectional
+            })
+        }),
+        ["topology", _, ..] => at(1).and_then(|i| config.topology.get(i)).is_some_and(|r| {
+            old.topology
+                .iter()
+                .any(|before| before.a == r.a && before.b == r.b && before.action == r.action)
+        }),
+        ["routing", "mesh", _, ..] => {
+            at(2)
+                .and_then(|i| config.routing.mesh.get(i))
+                .is_some_and(|r| {
+                    old.routing.mesh.iter().any(|before| {
+                        before.src == r.src && before.dst == r.dst && before.via == r.via
+                    })
+                })
+        }
+        ["routing", "egress", "assignments", _, ..] => at(3)
+            .and_then(|i| config.routing.egress.assignments.get(i))
+            .is_some_and(|r| old.routing.egress.assignments.contains(r)),
+        _ => false,
+    }
 }
 pub(super) fn selectors(
     values: &[String],

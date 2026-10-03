@@ -29,7 +29,11 @@ impl SnapshotCache {
         revision: Revision,
         sealer: &Sealer,
     ) -> Result<Arc<Snapshot>, Error> {
-        let (source,configuration,bindings)=tx.query_row("SELECT source_jsonc,configuration,bindings FROM configuration_versions WHERE network_id=?1 AND revision=?2",params![network.as_uuid().as_bytes().as_slice(),revision.get() as i64],|r|Ok((r.get::<_,Vec<u8>>(0)?,r.get::<_,Vec<u8>>(1)?,r.get::<_,Vec<u8>>(2)?))).optional()?.ok_or(Error::NotFound)?;
+        let (source, configuration, bindings) = tx.query_row(
+            "SELECT source_jsonc,configuration,bindings FROM configuration_versions WHERE network_id=?1 AND revision=?2",
+            params![network.as_uuid().as_bytes().as_slice(), revision.get() as i64],
+            |row| Ok((row.get::<_, Vec<u8>>(0)?, row.get::<_, Vec<u8>>(1)?, row.get::<_, Vec<u8>>(2)?)),
+        ).optional()?.ok_or(Error::NotFound)?;
         let mut hash = Sha256::new();
         for bytes in [&source, &configuration, &bindings] {
             hash.update((bytes.len() as u64).to_be_bytes());
@@ -66,11 +70,7 @@ impl SnapshotCache {
         let snapshot = Arc::new(Snapshot {
             network_id: network,
             revision,
-            document: ConfigurationDocument::new(
-                source.to_owned(),
-                configuration,
-                bindings.users.clone(),
-            ),
+            document: ConfigurationDocument::new(source.to_owned(), configuration),
             bindings,
         });
         let mut entries = self.entries.lock().map_err(|_| Error::Storage)?;

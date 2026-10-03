@@ -1,9 +1,10 @@
 //! Permission-checked, creation-bounded management history queries.
 use crate::{
     accounts::token_digest,
-    configuration::{Error, authorize_manager},
+    networks::NetworkError as Error,
     networks::pagination::Window,
     secrets::{CursorScope, Sealer},
+    store::authorization::authorize_manager,
     store::{Handle, authorization::current_session},
 };
 use meshway_model::{ActivityId, NetworkId, RequestId, Revision, UserId};
@@ -29,7 +30,7 @@ impl History {
         id: RequestId,
     ) -> Result<ActivityListResponse, Error> {
         if !(1..=200).contains(&limit) {
-            return Err(Error::InvalidPage);
+            return Err(Error::InvalidCursor);
         }
         let digest = token_digest(token).map_err(|_| Error::InvalidSession)?;
         let sealer = Arc::clone(&self.sealer);
@@ -55,7 +56,7 @@ impl History {
                 )?;
                 let mut window = match cursor {
                     Some(c) => {
-                        Window::decode(&sealer, scope, &c, now).map_err(|_| Error::InvalidPage)?
+                        Window::decode(&sealer, scope, &c, now).map_err(|_| Error::InvalidCursor)?
                     }
                     None => Window::new(upper, 0, now).map_err(|_| Error::Storage)?,
                 };
@@ -148,27 +149,45 @@ impl History {
         id: RequestId,
     ) -> Result<ConfigurationRevisionList, Error> {
         if !(1..=200).contains(&limit) {
-            return Err(Error::InvalidPage);
+            return Err(Error::InvalidCursor);
         }
         let digest = token_digest(token).map_err(|_| Error::InvalidSession)?;
         let sealer = Arc::clone(&self.sealer);
-        self.handle.execute(move|db|{
-            let tx=db.transaction_with_behavior(TransactionBehavior::Deferred)?;let now=chrono::Utc::now().timestamp_millis();
-            let user=current_session(&tx,&digest,now).map_err(|_|Error::InvalidSession)?.user.id;authorize_manager(&tx,network,user)?;
-            let current_revision=revision(&tx,network)?;
-            let scope=CursorScope::Revisions{user,network};
-            let mut window=match cursor{Some(c)=>Window::decode(&sealer,scope,&c,now).map_err(|_|Error::InvalidPage)?,None=>Window::new(current_revision.get() as i64,0,now).map_err(|_|Error::Storage)?};
-            let mut stmt=tx.prepare("SELECT revision,created_at,created_by,cause,rollback_from FROM configuration_versions WHERE network_id=?1 AND revision<=?2 ORDER BY revision DESC LIMIT ?3")?;
-            let mut rows=stmt.query_map(params![network.as_uuid().as_bytes().as_slice(),window.upper-window.last,i64::from(limit)+1],|r|{
-                let revision=revision_value(r.get::<_,i64>(0)?)?;
-                Ok(ConfigurationRevisionSummary{revision,created_at:chrono::DateTime::from_timestamp_millis(r.get(1)?).ok_or(rusqlite::Error::InvalidQuery)?,created_by:ActivityActor::User{user_id:uuid(r,2,UserId::new)?},cause:ConfigurationChangeCause::try_from(r.get::<_,String>(3)?).map_err(|_|rusqlite::Error::InvalidQuery)?,current:revision==current_revision,rollback_from:r.get::<_,Option<i64>>(4)?.map(revision_value).transpose()?})
-            })?.collect::<Result<Vec<_>,_>>()?;
-            let more=rows.len()>usize::from(limit);rows.truncate(usize::from(limit));
-            if let Some(last)=rows.last(){window.last=window.upper-last.revision.get() as i64+1;}
-            let next_cursor=if more{Some(window.encode(&sealer,scope).map_err(|_|Error::Storage)?)}else{None};
-            let as_of=window.as_of().map_err(|_|Error::Storage)?;drop(stmt);tx.commit()?;
-            Ok(ConfigurationRevisionList{request_id:id,current_revision,items:rows,next_cursor,as_of})
-        }).await.map_err(|_|Error::Storage)?
+        self.handle.execute(move |db| {
+            let tx = db.transaction_with_behavior(TransactionBehavior::Deferred)?;
+            let now = chrono::Utc::now().timestamp_millis();
+            let user = current_session(&tx, &digest, now).map_err(|_| Error::InvalidSession)?.user.id;
+            authorize_manager(&tx, network, user)?;
+            let current_revision = revision(&tx, network)?;
+            let scope = CursorScope::Revisions { user, network };
+            let mut window = match cursor {
+                Some(cursor) => Window::decode(&sealer, scope, &cursor, now).map_err(|_| Error::InvalidCursor)?,
+                None => Window::new(current_revision.get() as i64, 0, now).map_err(|_| Error::Storage)?,
+            };
+            let mut stmt = tx.prepare("SELECT revision,created_at,created_by,cause,rollback_from FROM configuration_versions WHERE network_id=?1 AND revision<=?2 ORDER BY revision DESC LIMIT ?3")?;
+            let mut rows = stmt.query_map(
+                params![network.as_uuid().as_bytes().as_slice(), window.upper-window.last, i64::from(limit)+1],
+                |row| {
+                    let revision = revision_value(row.get::<_, i64>(0)?)?;
+                    Ok(ConfigurationRevisionSummary {
+                        revision,
+                        created_at: chrono::DateTime::from_timestamp_millis(row.get(1)?).ok_or(rusqlite::Error::InvalidQuery)?,
+                        created_by: ActivityActor::User { user_id: uuid(row, 2, UserId::new)? },
+                        cause: ConfigurationChangeCause::try_from(row.get::<_, String>(3)?).map_err(|_| rusqlite::Error::InvalidQuery)?,
+                        current: revision == current_revision,
+                        rollback_from: row.get::<_, Option<i64>>(4)?.map(revision_value).transpose()?,
+                    })
+                },
+            )?.collect::<Result<Vec<_>, _>>()?;
+            let more = rows.len() > usize::from(limit);
+            rows.truncate(usize::from(limit));
+            if let Some(last) = rows.last() { window.last = window.upper - last.revision.get() as i64 + 1; }
+            let next_cursor = if more { Some(window.encode(&sealer, scope).map_err(|_| Error::Storage)?) } else { None };
+            let as_of = window.as_of().map_err(|_| Error::Storage)?;
+            drop(stmt);
+            tx.commit()?;
+            Ok(ConfigurationRevisionList { request_id: id, current_revision, items: rows, next_cursor, as_of })
+        }).await.map_err(|_| Error::Storage)?
     }
 }
 fn revision(tx: &Transaction<'_>, network: NetworkId) -> Result<Revision, Error> {

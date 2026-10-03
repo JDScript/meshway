@@ -5,6 +5,7 @@ use crate::{
     secrets::{CursorScope, Purpose},
 };
 use meshway_configuration::{AddressPools, canonical_json, new_network};
+use meshway_model::{MembershipRole, NetworkActions, Revision, UserId};
 use rusqlite::params;
 use std::{
     future::Future,

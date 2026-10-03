@@ -42,7 +42,7 @@ JSONC 输入使用 `type: "document"`、expectedRevision、requestId、sourceJso
 | `replaceTopology` | TopologyRule[] |
 | `replaceRouting` | RoutingConfiguration |
 | `replaceDns` | DnsConfiguration |
-| `replaceDefaults` | Defaults |
+| `replaceDefaults` | DefaultsUpdate |
 | `replaceGroups` | GroupMap |
 | `replaceTagsOwners` | TagsOwnersMap |
 | `replaceRuleSets` | RuleSetMap |
@@ -58,6 +58,8 @@ JSONC 输入使用 `type: "document"`、expectedRevision、requestId、sourceJso
 没有任意 `replace(pointer, JSON)` 操作。NodeSettingsPatch 仅含 hostname、remark、enabled、exitEnabled、dialers 等明确定义字段；不借通用 fields 改身份、凭据或另一张网络。新增 Node 仍由接入流程创建。
 
 ListenerUpdate 使用明确的协议字段与更新语义：已有秘密省略为保持，显式值为修改，生成通过 rotateMaterial；首次创建按该协议规则补全／要求必要输入。服务端合成完整 Listener 再校验，不能要求表单提交它未读取的旧私钥，也不能把脱敏占位当值。
+
+表单中的 `DefaultsUpdate.dialers` 与 `NodeSettingsPatch.dialers` 使用 `DialerSetUpdate`：协议集合显式 `{}` 表示禁用；保留的 VLESS 项内，`websocket` 省略保持此前 WebSocket 参数，显式 `null` 移除；`websocket.headers` 省略保持旧值，显式 `{}` 清空，显式非空对象替换整个 header 集合。这些是表单更新语义；整份 JSONC 仍提交完整文档值。提供的 TLS 证书／私钥同样允许在原 listener 资源内省略保持；删除再创建不继承旧材料。
 
 每个操作独立检查权限，整批操作原子提交；Tag owner 的 setIdentityTags 不能与越权整网操作混合执行。服务端把操作应用到当前基准的 JSONC，保留未涉及部分的注释。替换整个区段时须明确展示对应文本变化，不能静默丢弃注释。
 
@@ -78,6 +80,8 @@ Console 在最终应用前展示**有效修改数量、前后对照和影响范�
 | `identityChangedNodeIds` | 身份切换目标 |
 | `changedListeners` | 会重建／改变材料的 listener 引用 |
 | `diagnostics` | 带严重级别和字段定位的类型化问题 |
+
+`unavailableDependencies` 列出保留但已撤销／失效的成员与路由依赖。这类依赖不阻止撤权保存，执行侧必须拒绝受影响流量。稳定绑定本身变化也进入 `changes`（`/bindings/users`、`/bindings/listeners`、`/bindings/ruleSets`）并计入 `changeCount`；原样文档保存不会把已失效的成员引用重新绑定到同名的新入网关系。
 
 计数对同一基准下的最终差异去重：改同一字段多次只计最终变化；改回原值不计；新增／删除整个对象时不再重复计算其所有子字段。first-match 数组重排作为该有序区段变化，完整对照显示顺序。changeCount 与返回的完整变化摘要一致；超出预算明确报限制，不隐瞒剩余变化。
 

@@ -4,9 +4,8 @@
 //! Configuration remains a versioned value, never a second set of entity fields.
 
 use chrono::{DateTime, Utc};
-use meshway_model::{
-    MembershipId, MembershipRole, NetworkId, RequestId, Revision, UserId, Version,
-};
+pub use meshway_model::{MemberSummary, NetworkSummary};
+use meshway_model::{NetworkId, RequestId};
 use std::sync::Arc;
 
 pub(crate) mod configuration;
@@ -49,7 +48,7 @@ impl Networks {
         token: &str,
         name: String,
         request_id: RequestId,
-    ) -> Result<NetworkView, NetworkError> {
+    ) -> Result<NetworkSummary, NetworkError> {
         let digest = token_digest(token)?;
         let name = normalize_name(&name)?;
         // Cheap authentication before template preparation; the creating
@@ -88,7 +87,7 @@ impl Networks {
         &self,
         token: &str,
         network_id: NetworkId,
-    ) -> Result<NetworkView, NetworkError> {
+    ) -> Result<NetworkSummary, NetworkError> {
         let digest = token_digest(token)?;
         let sealer = Arc::clone(&self.sealer);
         let cache = Arc::clone(&self.configuration_cache);
@@ -104,7 +103,7 @@ impl Networks {
         name: String,
         expected_name: String,
         request_id: RequestId,
-    ) -> Result<NetworkView, NetworkError> {
+    ) -> Result<NetworkSummary, NetworkError> {
         let digest = token_digest(token)?;
         let name = normalize_name(&name)?;
         // Expected metadata must be the exact previously returned spelling.
@@ -207,88 +206,11 @@ impl From<crate::accounts::AccountError> for NetworkError {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct NetworkView {
-    pub id: NetworkId,
-    pub name: String,
-    pub created_at: DateTime<Utc>,
-    pub current_revision: Revision,
-    pub membership_id: MembershipId,
-    pub role: MembershipRole,
-    pub actions: NetworkActions,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct NetworkActions {
-    pub rename: bool,
-    pub edit_configuration: bool,
-    pub manage_members: bool,
-}
-
-impl NetworkActions {
-    pub(crate) fn for_role(role: MembershipRole) -> Self {
-        let manage = matches!(role, MembershipRole::Owner | MembershipRole::Admin);
-        Self {
-            rename: manage,
-            edit_configuration: manage,
-            manage_members: manage,
-        }
-    }
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct MemberView {
-    pub id: MembershipId,
-    pub user_id: UserId,
-    pub email: String,
-    pub role: MembershipRole,
-    pub version: Version,
-    pub joined_at: DateTime<Utc>,
-    pub actions: MemberActions,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct MemberActions {
-    pub change_role: bool,
-    pub assignable_roles: Vec<MembershipRole>,
-    pub remove: bool,
-}
-impl MemberActions {
-    pub(crate) fn for_context(
-        caller: (MembershipId, MembershipRole),
-        target: (MembershipId, MembershipRole),
-        owner_count: i64,
-    ) -> Self {
-        let last_owner = target.1 == MembershipRole::Owner && owner_count <= 1;
-        let assignable_roles = [
-            MembershipRole::Owner,
-            MembershipRole::Admin,
-            MembershipRole::Member,
-        ]
-        .into_iter()
-        .filter(|role| {
-            Self::can_grant(caller.1, target.1)
-                && Self::can_grant(caller.1, *role)
-                && (!last_owner || *role == MembershipRole::Owner)
-        })
-        .collect::<Vec<_>>();
-        Self {
-            change_role: assignable_roles.iter().any(|role| *role != target.1),
-            assignable_roles,
-            remove: !last_owner && (caller.0 == target.0 || Self::can_grant(caller.1, target.1)),
-        }
-    }
-    pub(crate) fn can_grant(issuer: MembershipRole, role: MembershipRole) -> bool {
-        issuer == MembershipRole::Owner
-            || (issuer == MembershipRole::Admin && role == MembershipRole::Member)
-    }
-}
-
 /// Creation-bounded traversal, with current metadata and permissions on each
 /// page. `as_of` identifies the first page's boundary, not a frozen SQL snapshot.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct NetworkPage {
-    pub items: Vec<NetworkView>,
+    pub items: Vec<NetworkSummary>,
     pub next_cursor: Option<String>,
     pub as_of: DateTime<Utc>,
     pub total: meshway_model::Count,
@@ -296,7 +218,7 @@ pub struct NetworkPage {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct MemberPage {
-    pub items: Vec<MemberView>,
+    pub items: Vec<MemberSummary>,
     pub next_cursor: Option<String>,
     pub as_of: DateTime<Utc>,
     pub total: meshway_model::Count,

@@ -25,6 +25,7 @@ pub(crate) fn prepare_materials(
     current: &Snapshot,
     sealer: &Sealer,
     generate: bool,
+    recreated: &BTreeSet<(NodeId, String)>,
 ) -> Result<BTreeMap<(NodeId, String), Listener>, Error> {
     let mut verified = BTreeMap::new();
     for (node_id, node) in &mut input.nodes {
@@ -36,7 +37,11 @@ pub(crate) fn prepare_materials(
                 .get(node_id)
                 .and_then(|n| n.listeners.get(key))
                 .map(|l| l.declaration());
-            inherit(listener, previous);
+            if !recreated.contains(&(*node_id, key.clone()))
+                && let Some(previous) = previous
+            {
+                meshway_configuration::inherit_materials(listener, previous);
+            }
             match listener {
                 Listener::Vless(v) => {
                     if v.uuid.is_none() && generate {
@@ -101,33 +106,6 @@ pub(crate) fn prepare_materials(
     Ok(verified)
 }
 
-fn inherit(listener: &mut Listener, old: Option<&Listener>) {
-    fn tls(t: &mut ListenerTls, p: &ListenerTls) {
-        if t.mode == TlsMode::Managed {
-            if t.certificate.is_none() {
-                t.certificate = p.certificate.clone();
-            }
-            if t.private_key.is_none() {
-                t.private_key = p.private_key.clone();
-            }
-        }
-    }
-    match (listener, old) {
-        (Listener::Vless(t), Some(Listener::Vless(p))) => {
-            if t.uuid.is_none() {
-                t.uuid = p.uuid.clone();
-            }
-            tls(&mut t.tls, &p.tls);
-        }
-        (Listener::Trojan(t), Some(Listener::Trojan(p))) => {
-            if t.password.is_none() {
-                t.password = p.password.clone();
-            }
-            tls(&mut t.tls, &p.tls);
-        }
-        _ => {}
-    }
-}
 fn prepare_tls(tls: &mut ListenerTls, generate: bool) -> Result<(), Error> {
     match (&tls.certificate, &tls.private_key) {
         (Some(_), Some(_)) => return Ok(()),
@@ -206,7 +184,11 @@ fn check_revocation(
     let fingerprint = sealer
         .fingerprint(network, kind, value)
         .map_err(|_| Error::Storage)?;
-    let revoked=tx.query_row("SELECT EXISTS(SELECT 1 FROM credential_revocations WHERE network_id=?1 AND kind=?2 AND fingerprint=?3)",params![network.as_uuid().as_bytes().as_slice(),kind,fingerprint.as_slice()],|r|r.get::<_,bool>(0))?;
+    let revoked = tx.query_row(
+        "SELECT EXISTS(SELECT 1 FROM credential_revocations WHERE network_id=?1 AND kind=?2 AND fingerprint=?3)",
+        params![network.as_uuid().as_bytes().as_slice(), kind, fingerprint.as_slice()],
+        |row| row.get::<_, bool>(0),
+    )?;
     if revoked { Err(invalid()) } else { Ok(()) }
 }
 
@@ -256,5 +238,29 @@ mod tests {
             rcgen::KeyPair::generate().unwrap().serialize_pem(),
         ));
         assert!(prepare_tls(&mut tls, true).is_err());
+    }
+
+    #[test]
+    fn provided_tls_form_update_retains_only_same_resource_material() {
+        let mut tls = managed();
+        prepare_tls(&mut tls, true).unwrap();
+        tls.mode = TlsMode::Provided;
+        let mut old: Listener = serde_json::from_str(r#"{"type":"vless","listenPort":443,"tls":{"serverName":"node.example.test","mode":"provided"}}"#).unwrap();
+        let Listener::Vless(v) = &mut old else {
+            unreachable!()
+        };
+        v.tls = tls;
+        v.uuid = Some(SecretString::new(random_uuid().unwrap().to_string()));
+        let update: meshway_configuration::ListenerUpdate = serde_json::from_str(r#"{"type":"vless","listenPort":8443,"tls":{"serverName":"node.example.test","mode":"provided"}}"#).unwrap();
+        let Listener::Vless(updated) = update.apply(Some(&old)) else {
+            unreachable!()
+        };
+        assert_eq!(updated.listen_port.get(), 8443);
+        verify_tls(&updated.tls).unwrap();
+        let Listener::Vless(mut created) = update.apply(None) else {
+            unreachable!()
+        };
+        assert!(prepare_tls(&mut created.tls, true).is_err());
+        assert!(created.uuid.is_none());
     }
 }

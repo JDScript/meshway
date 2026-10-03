@@ -8,29 +8,12 @@ use axum::{
 };
 use meshway_model::{NetworkId, RequestId};
 use meshway_protocol::{
-    CreateNetworkRequest, ErrorResponse, MemberSummary, NetworkActions, NetworkListResponse,
-    NetworkMembersResponse, NetworkPageQuery, NetworkResponse, NetworkSummary,
-    RenameNetworkRequest,
+    CreateNetworkRequest, ErrorResponse, NetworkListResponse, NetworkMembersResponse,
+    NetworkPageQuery, NetworkResponse, RenameNetworkRequest,
 };
 
 use super::{auth::bearer, error::HttpError};
-use crate::networks::{NetworkView, Networks};
-
-fn view(network: NetworkView) -> NetworkSummary {
-    NetworkSummary {
-        id: network.id,
-        name: network.name,
-        created_at: network.created_at,
-        current_revision: network.current_revision,
-        membership_id: network.membership_id,
-        role: network.role,
-        actions: NetworkActions {
-            rename: network.actions.rename,
-            edit_configuration: network.actions.edit_configuration,
-            manage_members: network.actions.manage_members,
-        },
-    }
-}
+use crate::networks::Networks;
 
 fn page_query(
     id: RequestId,
@@ -59,7 +42,7 @@ pub(super) async fn list(
         .map_err(|error| HttpError::network(id, error))?;
     Ok(Json(NetworkListResponse {
         request_id: id,
-        items: page.items.into_iter().map(view).collect(),
+        items: page.items,
         next_cursor: page.next_cursor,
         as_of: page.as_of,
         total: page.total,
@@ -88,7 +71,7 @@ pub(super) async fn create(
         StatusCode::CREATED,
         Json(NetworkResponse {
             request_id: id,
-            network: view(network),
+            network,
         }),
     ))
 }
@@ -111,7 +94,7 @@ pub(super) async fn get(
         .map_err(|error| HttpError::network(id, error))?;
     Ok(Json(NetworkResponse {
         request_id: id,
-        network: view(network),
+        network,
     }))
 }
 
@@ -143,7 +126,7 @@ pub(super) async fn rename(
         .map_err(|error| HttpError::network(id, error))?;
     Ok(Json(NetworkResponse {
         request_id: id,
-        network: view(network),
+        network,
     }))
 }
 
@@ -168,30 +151,9 @@ pub(super) async fn members(
         .map_err(|error| HttpError::network(id, error))?;
     Ok(Json(NetworkMembersResponse {
         request_id: id,
-        items: page
-            .items
-            .into_iter()
-            .map(|member| MemberSummary {
-                membership_id: member.id,
-                user_id: member.user_id,
-                email: member.email,
-                role: member.role,
-                version: member.version,
-                joined_at: member.joined_at,
-                actions: member_actions(member.actions),
-            })
-            .collect(),
+        items: page.items,
         next_cursor: page.next_cursor,
         as_of: page.as_of,
         total: page.total,
     }))
-}
-pub(super) fn member_actions(
-    actions: crate::networks::MemberActions,
-) -> meshway_protocol::MemberActions {
-    meshway_protocol::MemberActions {
-        change_role: actions.change_role,
-        assignable_roles: actions.assignable_roles,
-        remove: actions.remove,
-    }
 }

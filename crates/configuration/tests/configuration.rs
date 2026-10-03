@@ -50,6 +50,160 @@ fn with_nodes() -> NetworkConfigurationInput {
         .collect();
     c
 }
+
+fn egress_input(grants: &[&str], destination: &str) -> NetworkConfigurationInput {
+    let mut c = with_nodes();
+    c.nodes.get_mut(&id(2)).unwrap().exit_enabled = true;
+    c.access = grants
+        .iter()
+        .map(|grant| AccessRule {
+            remark: String::new(),
+            src: vec![format!("node:{}", id(1))],
+            dst: vec![(*grant).into()],
+            ip: vec!["*".into()],
+            bidirectional: false,
+        })
+        .collect();
+    c.routing = serde_json::from_value(serde_json::json!({
+        "egress": {"profiles":{"work":{"rules":[{"match":{"ipCIDR":[destination]},
+            "action":{"type":"exit","nodes":[format!("node:{}",id(2))],"via":[]}}],
+            "fallback":{"type":"unmanaged"}}},
+            "assignments":[{"target":[format!("node:{}",id(1))],"allowed":["work"],"default":"work","locked":false}]}
+    })).unwrap();
+    c
+}
+
+#[test]
+fn routing_destination_coverage_uses_internet_and_union_of_grants() {
+    for grants in [
+        vec!["autogroup:internet"],
+        vec!["8.8.8.0/25", "8.8.8.128/25"],
+    ] {
+        normalize(egress_input(&grants, "8.8.8.0/24"), &context()).unwrap();
+    }
+    assert!(normalize(egress_input(&["8.8.8.0/25"], "8.8.8.0/24"), &context()).is_err());
+    for destination in [
+        "10.0.0.0/8",
+        "100.64.0.0/10",
+        "169.254.0.0/16",
+        "fd00::/8",
+        "fe80::/10",
+    ] {
+        assert!(
+            normalize(
+                egress_input(&["autogroup:internet"], destination),
+                &context()
+            )
+            .is_err(),
+            "{destination}"
+        );
+    }
+    normalize(
+        egress_input(&["autogroup:internet"], "2001:4860::/32"),
+        &context(),
+    )
+    .unwrap();
+}
+
+#[test]
+fn retained_routes_allow_narrowing_but_ruleset_expansion_requires_current_grants() {
+    let mut input = egress_input(&["autogroup:internet"], "8.8.8.0/24");
+    input.rule_sets.insert(
+        "destinations".into(),
+        RuleSet::Inline {
+            ip_cidr: vec!["8.8.8.0/24".into()],
+            domain_suffix: vec![],
+        },
+    );
+    let rule = &mut input.routing.egress.profiles.get_mut("work").unwrap().rules[0];
+    rule.matcher.ip_cidr.clear();
+    rule.matcher.rule_sets.push("destinations".into());
+    let (old, _) = normalize(input, &context()).unwrap();
+    let ctx = ValidationContext {
+        previous: Some(&old),
+        ..context()
+    };
+    for (cidr, accepted) in [("8.8.8.0/25", true), ("8.8.0.0/16", false)] {
+        let mut changed = NetworkConfigurationInput::from(&old);
+        changed.access.clear();
+        changed
+            .routing
+            .egress
+            .profiles
+            .get_mut("work")
+            .unwrap()
+            .rules[0]
+            .remark = "metadata edit".into();
+        changed.rule_sets.insert(
+            "destinations".into(),
+            RuleSet::Inline {
+                ip_cidr: vec![cidr.into()],
+                domain_suffix: vec![],
+            },
+        );
+        let result = normalize_with_dependencies(changed, &ctx);
+        assert_eq!(result.is_ok(), accepted);
+        if let Ok(result) = result {
+            assert!(!result.unavailable_dependencies.is_empty());
+        }
+    }
+}
+
+#[test]
+fn retained_routing_cannot_prevent_revocation_or_silently_bypass_deleted_hops() {
+    let (mut old, bindings) = normalize(
+        egress_input(&["autogroup:internet"], "8.8.8.0/24"),
+        &context(),
+    )
+    .unwrap();
+    old.routing.mesh = serde_json::from_value(serde_json::json!([
+        {"src":[format!("node:{}",id(1))], "dst":[format!("node:{}",id(2))], "via":[format!("node:{}",id(3))]}
+    ])).unwrap();
+    let ctx = ValidationContext {
+        previous: Some(&old),
+        expected_user_bindings: bindings.clone(),
+        previous_user_bindings: bindings,
+        ..context()
+    };
+    for kind in 0..3 {
+        let mut input = NetworkConfigurationInput::from(&old);
+        match kind {
+            0 => input.access.clear(),
+            1 => input.nodes.get_mut(&id(2)).unwrap().exit_enabled = false,
+            _ => {
+                input.nodes.remove(&id(2));
+                input.nodes.remove(&id(3));
+            }
+        }
+        let result = normalize_with_dependencies(input, &ctx).unwrap();
+        assert_eq!(result.configuration.routing, old.routing);
+        assert!(!result.unavailable_dependencies.is_empty());
+        let next_context = ValidationContext {
+            previous: Some(&result.configuration),
+            ..context()
+        };
+        let repeated = normalize_with_dependencies(
+            NetworkConfigurationInput::from(&result.configuration),
+            &next_context,
+        )
+        .unwrap();
+        assert!(!repeated.unavailable_dependencies.is_empty());
+        let mut expanded = NetworkConfigurationInput::from(&result.configuration);
+        expanded
+            .routing
+            .egress
+            .profiles
+            .get_mut("work")
+            .unwrap()
+            .rules[0]
+            .matcher
+            .ip_cidr = vec!["1.1.1.0/24".into()];
+        assert!(normalize(expanded, &next_context).is_err());
+    }
+    let mut unknown = NetworkConfigurationInput::from(&old);
+    unknown.routing.mesh[0].via = vec![format!("node:{}", id(99))];
+    assert!(normalize(unknown, &ctx).is_err());
+}
 fn invalid(
     value: Result<(NetworkConfiguration, BTreeMap<String, UserBinding>), ConfigurationError>,
     text: &str,

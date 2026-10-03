@@ -13,7 +13,7 @@ wire_tagged! {pub enum ActivityActor {User{#[serde(rename="userId")]user_id:User
 wire_tagged! {pub enum ActivityTarget {Account{#[serde(rename="userId")]user_id:UserId},Session{#[serde(rename="sessionId")]session_id:SessionId},Network{#[serde(rename="networkId")]network_id:NetworkId},Membership{#[serde(rename="membershipId")]membership_id:MembershipId},JoinLink{#[serde(rename="linkId")]link_id:JoinLinkId},Configuration{revision:Revision}}}
 
 macro_rules! actions {($($variant:ident=$wire:literal),* $(,)?)=>{
-    #[derive(serde::Serialize,serde::Deserialize,utoipa::ToSchema)]
+    #[derive(serde::Serialize,serde::Deserialize,utoipa::ToSchema,PartialEq,Eq)]
     #[serde(try_from="String")]
     pub enum ActivityAction{$(#[serde(rename=$wire)]$variant),*}
     impl TryFrom<String> for ActivityAction {type Error=&'static str;fn try_from(v:String)->Result<Self,Self::Error>{match v.as_str(){$($wire=>Ok(Self::$variant),)*_=>Err("unknown activity action")}}}

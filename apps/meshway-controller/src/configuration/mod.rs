@@ -12,7 +12,7 @@ use crate::{
     accounts::random_uuid,
     networks::configuration::ConfigurationBindings,
     secrets::{Purpose, Sealer},
-    store::authorization::current_session,
+    store::authorization::{authorize_manager, current_session},
 };
 use meshway_configuration::{
     ConfigurationChange, ConfigurationDocument, ConfigurationError, NetworkConfigurationInput,
@@ -39,12 +39,20 @@ pub(crate) enum Error {
     Invalid(#[from] ConfigurationError),
     #[error("configuration storage failed")]
     Storage,
-    #[error("invalid or expired pagination")]
-    InvalidPage,
 }
 impl From<rusqlite::Error> for Error {
     fn from(_: rusqlite::Error) -> Self {
         Self::Storage
+    }
+}
+impl From<crate::networks::NetworkError> for Error {
+    fn from(error: crate::networks::NetworkError) -> Self {
+        match error {
+            crate::networks::NetworkError::NotFound => Self::NotFound,
+            crate::networks::NetworkError::PermissionDenied => Self::PermissionDenied,
+            crate::networks::NetworkError::InvalidSession => Self::InvalidSession,
+            _ => Self::Storage,
+        }
     }
 }
 
@@ -59,6 +67,7 @@ pub(crate) struct PreparedConfiguration {
     pub(crate) document: ConfigurationDocument,
     pub(crate) bindings: ConfigurationBindings,
     pub(crate) changes: Vec<ConfigurationChange>,
+    pub(crate) unavailable_dependencies: Vec<meshway_configuration::ConfigurationIssue>,
     pub(crate) deleted_node_ids: BTreeSet<NodeId>,
     pub(crate) address_changed_node_ids: BTreeSet<NodeId>,
     pub(crate) source_changed: bool,
@@ -124,8 +133,11 @@ pub(crate) fn prepare(
     if context.validation.previous != Some(&current.document.configuration) {
         return Err(Error::DependencyUnavailable);
     }
-    let (configuration, user_bindings) = normalize(input, &context.validation)?;
-    let changes = configuration_changes(&current.document.configuration, &configuration)?;
+    let normalized =
+        meshway_configuration::normalize_with_dependencies(input, &context.validation)?;
+    let configuration = normalized.configuration;
+    let user_bindings = normalized.user_bindings;
+    let mut changes = configuration_changes(&current.document.configuration, &configuration)?;
     let old = &current.document.configuration;
     let deleted_node_ids = old
         .nodes
@@ -160,13 +172,21 @@ pub(crate) fn prepare(
                     .map(|key| {
                         (
                             key.clone(),
-                            current
-                                .bindings
-                                .listeners
-                                .get(id)
-                                .and_then(|m| m.get(key))
-                                .copied()
-                                .unwrap_or(next),
+                            if context
+                                .validation
+                                .recreated_listeners
+                                .contains(&(*id, key.clone()))
+                            {
+                                next
+                            } else {
+                                current
+                                    .bindings
+                                    .listeners
+                                    .get(id)
+                                    .and_then(|m| m.get(key))
+                                    .copied()
+                                    .unwrap_or(next)
+                            },
                         )
                     })
                     .collect(),
@@ -177,23 +197,43 @@ pub(crate) fn prepare(
     let mut document = current.document.clone();
     document.set_source(source);
     document.configuration = configuration;
-    document.user_bindings = user_bindings.clone();
+    let bindings = ConfigurationBindings {
+        users: user_bindings,
+        listeners,
+        rule_sets: context.rule_sets.clone(),
+    };
+    changes.extend(binding_changes(&current.bindings, &bindings));
     Ok(PreparedConfiguration {
         network_id: current.network_id,
         base_revision: current.revision,
         document,
-        bindings: ConfigurationBindings {
-            users: user_bindings,
-            listeners,
-            rule_sets: context.rule_sets.clone(),
-        },
+        bindings,
         changes,
+        unavailable_dependencies: normalized.unavailable_dependencies,
         deleted_node_ids,
         address_changed_node_ids,
         source_changed,
         rollback_from: None,
         email_sync: None,
     })
+}
+
+fn binding_changes(
+    before: &ConfigurationBindings,
+    after: &ConfigurationBindings,
+) -> Vec<ConfigurationChange> {
+    [
+        ("users", before.users != after.users),
+        ("listeners", before.listeners != after.listeners),
+        ("ruleSets", before.rule_sets != after.rule_sets),
+    ]
+    .into_iter()
+    .filter(|(_, changed)| *changed)
+    .map(|(field, _)| ConfigurationChange {
+        path: format!("/bindings/{field}"),
+        kind: meshway_configuration::ChangeKind::Changed,
+    })
+    .collect()
 }
 
 /// Common atomic write path. No cache or external event is published until the
@@ -282,7 +322,13 @@ pub(crate) fn apply_in_transaction(
     let bindings = sealer
         .seal(current.network_id, revision, Purpose::Bindings, &bindings)
         .map_err(|_| Error::Storage)?;
-    tx.execute("INSERT INTO configuration_versions(network_id,revision,source_jsonc,configuration,bindings,created_by,created_at,cause,request_id,rollback_from) VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10)",params![current.network_id.as_uuid().as_bytes().as_slice(),revision.get() as i64,source.as_bytes(),configuration.as_bytes(),bindings.as_bytes(),actor.as_uuid().as_bytes().as_slice(),now,cause.as_str(),request.as_uuid().as_bytes().as_slice(),prepared.rollback_from.map(|r|r.get() as i64)])?;
+    tx.execute(
+        "INSERT INTO configuration_versions(network_id,revision,source_jsonc,configuration,bindings,created_by,created_at,cause,request_id,rollback_from) VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10)",
+        params![current.network_id.as_uuid().as_bytes().as_slice(), revision.get() as i64,
+            source.as_bytes(), configuration.as_bytes(), bindings.as_bytes(),
+            actor.as_uuid().as_bytes().as_slice(), now, cause.as_str(),
+            request.as_uuid().as_bytes().as_slice(), prepared.rollback_from.map(|r|r.get() as i64)],
+    )?;
     tx.execute(
         "UPDATE networks SET current_revision=?1 WHERE id=?2 AND current_revision=?3",
         params![
@@ -292,7 +338,13 @@ pub(crate) fn apply_in_transaction(
         ],
     )?;
     let (publication_ids, target_node_ids) = participant.apply(tx, current, prepared, revision)?;
-    tx.execute("INSERT INTO activity_events(id,scope,network_id,at,actor_user_id,action,request_id,before_revision,after_revision) VALUES(?1,'network',?2,?3,?4,'configuration.apply',?5,?6,?7)",params![random_uuid().map_err(|_|Error::Storage)?.as_bytes().as_slice(),current.network_id.as_uuid().as_bytes().as_slice(),now,actor.as_uuid().as_bytes().as_slice(),request.as_uuid().as_bytes().as_slice(),expected_revision.get() as i64,revision.get() as i64])?;
+    tx.execute(
+        "INSERT INTO activity_events(id,scope,network_id,at,actor_user_id,action,request_id,before_revision,after_revision) VALUES(?1,'network',?2,?3,?4,'configuration.apply',?5,?6,?7)",
+        params![random_uuid().map_err(|_|Error::Storage)?.as_bytes().as_slice(),
+            current.network_id.as_uuid().as_bytes().as_slice(), now,
+            actor.as_uuid().as_bytes().as_slice(), request.as_uuid().as_bytes().as_slice(),
+            expected_revision.get() as i64, revision.get() as i64],
+    )?;
     Ok(CommitEffects {
         network_id: current.network_id,
         revision,
@@ -300,16 +352,4 @@ pub(crate) fn apply_in_transaction(
         target_node_ids,
         deleted_node_ids: prepared.deleted_node_ids.clone(),
     })
-}
-
-pub(crate) fn authorize_manager(
-    tx: &Transaction<'_>,
-    network: NetworkId,
-    user: UserId,
-) -> Result<(), Error> {
-    let role=tx.query_row("SELECT m.role FROM memberships m JOIN networks n ON n.id=m.network_id WHERE m.network_id=?1 AND m.user_id=?2 AND m.revoked_at IS NULL AND n.deleted_at IS NULL",params![network.as_uuid().as_bytes().as_slice(),user.as_uuid().as_bytes().as_slice()],|r|r.get::<_,String>(0)).optional()?.ok_or(Error::NotFound)?;
-    if !matches!(role.as_str(), "owner" | "admin") {
-        return Err(Error::PermissionDenied);
-    }
-    Ok(())
 }

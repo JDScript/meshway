@@ -34,6 +34,8 @@ pub struct ValidationContext<'a> {
     /// Exact normalized TLS declarations verified for certificate/key/name,
     /// validity and irreversible revocation by the Controller.
     pub verified_listeners: BTreeMap<(NodeId, String), Listener>,
+    /// Resources explicitly deleted then recreated in this edit batch.
+    pub recreated_listeners: BTreeSet<(NodeId, String)>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -120,10 +122,22 @@ pub enum ConfigurationError {
 #[derive(Default)]
 struct Check {
     issues: Vec<ConfigurationIssue>,
+    unavailable: Vec<ConfigurationIssue>,
     requirements: Vec<PreparationRequirement>,
     bindings: BTreeMap<String, UserBinding>,
 }
 impl Check {
+    fn dependency(&mut self, path: impl Into<String>, message: impl Into<String>, retained: bool) {
+        let issue = ConfigurationIssue {
+            path: path.into(),
+            message: message.into(),
+        };
+        if retained {
+            self.unavailable.push(issue);
+        } else {
+            self.issues.push(issue);
+        }
+    }
     fn issue(&mut self, path: impl Into<String>, message: impl Into<String>) {
         self.issues.push(ConfigurationIssue {
             path: path.into(),
@@ -157,9 +171,26 @@ fn pointer(key: &str) -> String {
 /// Normalizes pure fields and validates references. Does not compile paths,
 /// authorize a transaction, allocate addresses, generate or verify TLS material.
 pub fn normalize(
-    mut input: NetworkConfigurationInput,
+    input: NetworkConfigurationInput,
     context: &ValidationContext<'_>,
 ) -> Result<(NetworkConfiguration, BTreeMap<String, UserBinding>), ConfigurationError> {
+    let result = normalize_with_dependencies(input, context)?;
+    Ok((result.configuration, result.user_bindings))
+}
+
+/// Retained but withdrawn dependencies are accepted configuration, never
+/// executable permission. Consumers must fail closed for these routes and
+/// still check live identity/inventory/publication dependencies when compiling.
+pub struct NormalizedConfiguration {
+    pub configuration: NetworkConfiguration,
+    pub user_bindings: BTreeMap<String, UserBinding>,
+    pub unavailable_dependencies: Vec<ConfigurationIssue>,
+}
+
+pub fn normalize_with_dependencies(
+    mut input: NetworkConfigurationInput,
+    context: &ValidationContext<'_>,
+) -> Result<NormalizedConfiguration, ConfigurationError> {
     let mut check = Check::default();
     let pools = addresses::pools(
         input.address_pools,
@@ -245,7 +276,9 @@ pub fn normalize(
             if name.is_empty() {
                 check.issue(&lp, "listener key must not be empty");
             }
-            if let Some(previous) = old.and_then(|n| n.listeners.get(&name)) {
+            if !context.recreated_listeners.contains(&(id, name.clone()))
+                && let Some(previous) = old.and_then(|n| n.listeners.get(&name))
+            {
                 inherit_materials(&mut listener, previous.declaration());
             }
             if let Err(e) = listener.normalize() {
@@ -301,7 +334,11 @@ pub fn normalize(
     references::rules(&mut config, context, &mut check);
     routing::validate(&mut config, context, &mut check);
     check.finish()?;
-    Ok((config, check.bindings))
+    Ok(NormalizedConfiguration {
+        configuration: config,
+        user_bindings: check.bindings,
+        unavailable_dependencies: check.unavailable,
+    })
 }
 
 /// Rechecks a persisted complete value against current trusted dependencies.
@@ -358,9 +395,11 @@ impl From<&NetworkConfiguration> for NetworkConfigurationInput {
     }
 }
 
-fn inherit_materials(target: &mut Listener, previous: &Listener) {
+/// Preserve omitted material only within an existing listener resource.
+/// Callers must not pass a deleted/recreated resource as `previous`.
+pub fn inherit_materials(target: &mut Listener, previous: &Listener) {
     fn tls(t: &mut meshway_transport_spec::ListenerTls, p: &meshway_transport_spec::ListenerTls) {
-        if t.mode == meshway_transport_spec::TlsMode::Managed {
+        if t.mode == p.mode {
             if t.certificate.is_none() {
                 t.certificate = p.certificate.clone();
             }

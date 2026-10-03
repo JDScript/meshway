@@ -1,7 +1,6 @@
 use chrono::{DateTime, Utc};
-use meshway_model::{
-    MembershipId, MembershipRole, NetworkId, RequestId, Revision, UserId, Version,
-};
+use meshway_model::RequestId;
+pub use meshway_model::{MemberActions, MemberSummary, NetworkActions, NetworkSummary};
 
 use crate::object::wire_object;
 
@@ -61,28 +60,6 @@ wire_object! {
 }
 
 wire_object! {
-    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-    pub struct NetworkActions {
-        pub rename: bool,
-        pub edit_configuration: bool,
-        pub manage_members: bool,
-    }
-}
-
-wire_object! {
-    #[derive(Debug, Clone, PartialEq, Eq)]
-    pub struct NetworkSummary {
-        pub id: NetworkId,
-        pub name: String,
-        pub created_at: DateTime<Utc>,
-        pub current_revision: Revision,
-        pub membership_id: MembershipId,
-        pub role: MembershipRole,
-        pub actions: NetworkActions,
-    }
-}
-
-wire_object! {
     #[derive(Debug)]
     pub struct NetworkResponse {
         pub request_id: RequestId,
@@ -101,28 +78,6 @@ wire_object! {
         /// Current visible count within the cursor's original creation bounds.
         /// Recomputed on every page; permission loss can reduce this value.
         pub total: meshway_model::Count,
-    }
-}
-
-wire_object! {
-    #[derive(Debug,Clone,PartialEq,Eq)]
-    pub struct MemberActions {
-        pub change_role:bool,
-        pub assignable_roles:Vec<MembershipRole>,
-        pub remove:bool,
-    }
-}
-
-wire_object! {
-    #[derive(Debug, Clone, PartialEq, Eq)]
-    pub struct MemberSummary {
-        pub membership_id: MembershipId,
-        pub user_id: UserId,
-        pub email: String,
-        pub role: MembershipRole,
-        pub version: Version,
-        pub joined_at: DateTime<Utc>,
-        pub actions:MemberActions,
     }
 }
 
