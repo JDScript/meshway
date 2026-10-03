@@ -1,6 +1,6 @@
 # Resources 与 Links
 
-下一版 NodeState 的资源结构。**listener 是配置资源，socket 是运行资源，STUN 是 socket 上的一次观测。** 三者不能合成一个“节点公网 IP”。
+下一版 NodeState 的资源结构。**listener 是配置资源，socket 是运行资源，endpoint 是带来源的候选。** configured、interface、STUN 的含义和优先尝试规则见[Endpoint Candidates](/v2/state-reference/endpoints)。
 
 ## ListenerState
 
@@ -57,11 +57,13 @@
 | `generation` | 资源代际，不能只按相同端口判断同一个 socket |
 | `network` | 实际外层 `udp`／`tcp`，不由内层业务协议推测 |
 | `boundAddress` | 内核实际 bind 地址与端口 |
-| `endpoints` | 此 socket 的候选及观测，分别记录来源、验证程度与期限 |
+| `endpoints` | 此 socket 的 configured／interface／stun 候选；[按来源校验](/v2/state-reference/endpoints)，保留验证程度与期限 |
 
 出站 socket 使用例如 `{ "kind": "dial", "key": "<connection-resource-key>" }`，不冒充 listener。标识绑定到实例＋资源＋generation＋socketId；任一更替都不能借用旧认证／观测。
 
 STUN 的 `observed` 表示得到映射，不等于对端已验证可达。认证探测得到的验证需要关联具体 peer 和通道，不能把某个 peer 的成功推广给所有节点。TCP／VLESS 的可达性不能使用另一个 UDP socket 的映射证明。
+
+上例仅展开 STUN 项；其他来源可出现在同一候选集合。初始尝试顺序建议 configured → interface → stun，实际仍先过滤不适用地址，再依据认证／运行结果选择，不作串行长等待。
 
 ## LinkState {#links}
 

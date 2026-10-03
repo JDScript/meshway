@@ -39,6 +39,8 @@ envelope 不接受任意 source Node／network；Controller 从节点凭据确�
 
 snapshot 是完整清单：同实例中缺少以前的 socket／listener／link，表示它不再出现在本次清单里。不能因为合并 map 时漏做删除而让旧资源永久存活。
 
+endpoint 可以来自配置、接口或 STUN，使用[不同来源字段](/v2/state-reference/endpoints)。配置来源需与 Controller 已存值核对，接口／STUN 保留实际资源和原观测时刻；配置声明不能当作已验证可达。
+
 ## 上报频率
 
 建议资源变化事件触发上报，并做有界合并；周期性报告用于确认当前实例仍可联系，频率由平台策略统一定义。具体周期与预算待定，不增加设备手工 CLI 配置。

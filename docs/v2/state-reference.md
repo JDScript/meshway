@@ -43,6 +43,7 @@ Config 定义期望和许可，State 定义当前事实。上报 State 不会修
 - [NodeState 字段](/v2/state-reference/node)
 - [Capabilities](/v2/state-reference/capabilities)：transport:xxx 等命名空间能力。
 - [Listeners、sockets、STUN 与 links](/v2/state-reference/resources)
+- [Endpoint Candidates](/v2/state-reference/endpoints)：configured／interface／stun 来源与尝试顺序。
 - [按需连接与保活](/v2/state-reference/link-lifecycle)
 - [上报流程与新鲜度](/v2/state-reference/reporting)
 - [Controller 网络聚合](/v2/state-reference/network)

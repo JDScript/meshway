@@ -35,6 +35,7 @@ peer 查询只能在服务器计算的可见范围内进一步缩小。请求中
 
 - nodes 是希望查询的子集；省略时建议返回本次执行所需的相关节点，数量受预算限制。
 - include 使用固定枚举，不开放任意 JSONPath；endpoints 是经字段裁剪的 socket 候选投影，保留实际资源关联。
+- endpoints 可以合并 configured／interface／stun 来源；不要求调用者只使用 STUN，也不把所有接口细节原样转发。[来源和候选选择](/v2/state-reference/endpoints)在所有读取方式中一致。
 - Config 引用用于发现调用方基准是否过旧，不赋予权限；服务端始终按当前身份／配置校验。
 
 返回：

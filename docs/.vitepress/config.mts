@@ -127,6 +127,7 @@ const v2Sidebar: DefaultTheme.SidebarItem[] = [
       { text: "NodeState", link: "/v2/state-reference/node" },
       { text: "Capabilities", link: "/v2/state-reference/capabilities" },
       { text: "Resources / Links", link: "/v2/state-reference/resources" },
+      { text: "Endpoint Candidates", link: "/v2/state-reference/endpoints" },
       { text: "按需连接与保活", link: "/v2/state-reference/link-lifecycle" },
       { text: "上报与新鲜度", link: "/v2/state-reference/reporting" },
       { text: "NetworkState", link: "/v2/state-reference/network" },
