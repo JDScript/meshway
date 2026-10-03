@@ -224,6 +224,10 @@ what knows the shell's geometry):
   `pt-1` inside for focus rings; so its clip line sits 16px clear of the
   header. Every such body carries `scroll-edge`: once scrolled, its top
   edge fades over 16px instead of slicing rows.
+  `scroll-edge` is a scroll-driven animation that never finishes, so it
+  never goes on an element Base UI animates out (a tabs panel, a popup, a
+  collapsible panel): those wait for their own animations before hiding.
+  Scroll inside them instead, as a node's tab `Pane` does.
 - The commit bar states one thing: unsaved (plain), a field that will not
   save (`destructive`), the controller moved past the draft's revision
   (`warning`, offering to overwrite). Its buttons keep minimum widths, so a

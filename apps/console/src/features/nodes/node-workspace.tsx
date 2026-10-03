@@ -1,4 +1,5 @@
 import type { NodeSummary } from "@meshway/control-client"
+import type { ReactNode } from "react"
 import { useQuery } from "@tanstack/react-query"
 
 import { CloseButton } from "@/components/chrome/close-button"
@@ -106,7 +107,20 @@ function Missing({
   )
 }
 
-const PANE = "scroll-edge min-h-0 overflow-y-auto px-6 pt-1 pb-(--commit-space)"
+/**
+ * A tab's scrolling body. It scrolls inside the panel, not as the panel:
+ * the tabs hide an old panel only once its own animations finish, and the
+ * scroll-driven edge fade never does.
+ */
+function Pane({ value, children }: { value: NodeTab; children: ReactNode }) {
+  return (
+    <TabsContent value={value} className="flex min-h-0 flex-col">
+      <div className="scroll-edge min-h-0 flex-1 overflow-y-auto px-6 pt-1 pb-(--commit-space)">
+        {children}
+      </div>
+    </TabsContent>
+  )
+}
 
 function Body({
   networkId,
@@ -193,7 +207,7 @@ function Body({
             ]}
           />
         </div>
-        <TabsContent value="overview" className={PANE}>
+        <Pane value="overview">
           <div className="grid grid-cols-2 gap-2 xl:grid-cols-4">
             <div className="col-span-2">
               <NodeAddresses node={node} />
@@ -220,8 +234,8 @@ function Body({
               </Tile>
             ) : null}
           </div>
-        </TabsContent>
-        <TabsContent value="links" className={PANE}>
+        </Pane>
+        <Pane value="links">
           <NodeLinksTab
             networkId={networkId}
             node={node}
@@ -230,8 +244,8 @@ function Body({
             onDetail={onDetail}
             onOpenNode={onOpenNode}
           />
-        </TabsContent>
-        <TabsContent value="transport" className={PANE}>
+        </Pane>
+        <Pane value="transport">
           <NodeTransport
             networkId={networkId}
             node={node}
@@ -240,10 +254,10 @@ function Body({
             editing={detail.listener}
             onEdit={(listener) => onDetail({ ...detail, listener })}
           />
-        </TabsContent>
-        <TabsContent value="manage" className={PANE}>
+        </Pane>
+        <Pane value="manage">
           <NodeManage networkId={networkId} node={node} canManage={canManage} />
-        </TabsContent>
+        </Pane>
       </Tabs>
     </div>
   )

@@ -722,6 +722,8 @@
    * outside it, so the clip line keeps clear air below the header, and
    * once scrolled its top edge fades instead of slicing rows. Only where
    * the scroll position can drive it; elsewhere the edge stays plain.
+   * The animation never finishes: keep it off elements Base UI animates
+   * out (tabs panels, popups), which wait for their own animations.
    */
   @supports (animation-timeline: scroll()) {
     .scroll-edge {
