@@ -14,8 +14,8 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from "@/components/ui/tooltip"
-import { m } from "@/paraglide/messages.js"
 import { switchLocale, useLocale } from "@/lib/locale"
+import { m } from "@/paraglide/messages.js"
 import { isLocale, locales } from "@/paraglide/runtime.js"
 
 /** Whether the theme shows dark now, and the switch to the other one. */

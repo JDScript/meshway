@@ -22,9 +22,9 @@ import { Spinner } from "@/components/ui/spinner"
 import { connectionsQuery } from "@/features/network/queries"
 import { useCanManage } from "@/features/network/role"
 import { surfaceTitleId } from "@/features/shell/page-frame"
+import { useSecretMutation } from "@/hooks/use-secret-mutation"
 import { apiBase, authed } from "@/lib/api"
 import { dateTime } from "@/lib/format"
-import { useSecretMutation } from "@/hooks/use-secret-mutation"
 import { m } from "@/paraglide/messages.js"
 
 import {

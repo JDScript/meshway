@@ -7,9 +7,9 @@ import {
   locate,
   movePolicy,
   placeDiagnostic,
+  policyText,
   readDocument,
   TEMPLATE_POLICY,
-  policyText,
 } from "./document.ts"
 import { commentRanges, moveJsonc, parseJsonc, patchJsonc } from "./jsonc.ts"
 

@@ -1,6 +1,5 @@
 import assert from "node:assert/strict"
 import { test } from "node:test"
-
 import type { NodeEndpointDiscovery } from "@meshway/control-client"
 
 import {

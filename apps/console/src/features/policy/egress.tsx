@@ -4,7 +4,6 @@ import type {
   ProfileAssignment,
   ProfileFallback,
 } from "@meshway/control-client"
-import { cn } from "@/lib/utils"
 import {
   ArrowRightIcon,
   AtSignIcon,
@@ -16,11 +15,12 @@ import {
 
 import { EmptyLine } from "@/components/chrome/section"
 import { SegmentedControl } from "@/components/chrome/segmented-control"
+import { cn } from "@/lib/utils"
 import { m } from "@/paraglide/messages.js"
 
+import type { PlacedDiagnostic } from "./document"
 import { notesOn, type LayerProps } from "./layer"
 import { HopChain } from "./mesh"
-import type { PlacedDiagnostic } from "./document"
 import {
   Fact,
   LayerFacts,

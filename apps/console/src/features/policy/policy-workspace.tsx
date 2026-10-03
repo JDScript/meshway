@@ -9,9 +9,8 @@ import { Skeleton } from "@/components/ui/skeleton"
 import { useNodeNavigation } from "@/features/nodes/navigation"
 import { surfaceTitleId } from "@/features/shell/page-frame"
 import { PopupBoundary } from "@/features/shell/popup-boundary"
-import { m } from "@/paraglide/messages.js"
-
 import { cn } from "@/lib/utils"
+import { m } from "@/paraglide/messages.js"
 
 import { ConnectionsLayer } from "./connections"
 import { EgressLayer } from "./egress"

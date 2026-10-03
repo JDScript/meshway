@@ -1,4 +1,3 @@
-import { cn } from "@/lib/utils"
 import { ChevronsUpDownIcon } from "lucide-react"
 import type { ReactNode } from "react"
 
@@ -13,13 +12,14 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from "@/components/ui/tooltip"
-import { NetworkMenuItems } from "@/features/network/network-menu"
 import type { LinkLook } from "@/features/globe/scene"
+import { NetworkMenuItems } from "@/features/network/network-menu"
+import { cn } from "@/lib/utils"
 import { m } from "@/paraglide/messages.js"
 
 import { lookColor, lookLabel } from "./labels"
-import { LookDot } from "./status-dots"
 import type { LinkSummary } from "./model"
+import { LookDot } from "./status-dots"
 
 const DASH = "—"
 

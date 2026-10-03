@@ -1,5 +1,6 @@
-import { cn } from "@/lib/utils"
 import type { ReactNode } from "react"
+
+import { cn } from "@/lib/utils"
 
 /** One labelled fact on a surface; `action` sits at its end (a copy button). */
 export function Tile({

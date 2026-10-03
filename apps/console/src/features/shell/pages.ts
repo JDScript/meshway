@@ -1,13 +1,13 @@
 import { useMatches, useNavigate } from "@tanstack/react-router"
-import { useCallback } from "react"
 import {
   GlobeIcon,
   ServerIcon,
   Settings2Icon,
-  UsersIcon,
   ShieldIcon,
+  UsersIcon,
   type LucideIcon,
 } from "lucide-react"
+import { useCallback } from "react"
 
 import { m } from "@/paraglide/messages.js"
 

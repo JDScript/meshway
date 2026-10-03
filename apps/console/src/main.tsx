@@ -5,6 +5,7 @@ import { StrictMode } from "react"
 import { createRoot } from "react-dom/client"
 
 import "./index.css"
+
 import { ThemeProvider } from "@/components/chrome/theme-provider"
 import { Toaster } from "@/components/ui/sonner"
 import { TooltipProvider } from "@/components/ui/tooltip"
@@ -13,6 +14,7 @@ import { LAYOUT_VARIABLES } from "@/features/shell/layout"
 import { handleSessionRejected, SessionRejected } from "@/lib/api"
 import { useLocale } from "@/lib/locale"
 import { getLocale } from "@/paraglide/runtime.js"
+
 import { routeTree } from "./routeTree.gen"
 
 const queryClient = new QueryClient({

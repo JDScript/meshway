@@ -1,5 +1,4 @@
 import { Link, type HistoryState } from "@tanstack/react-router"
-import { cn } from "@/lib/utils"
 import { GlobeIcon } from "lucide-react"
 import { motion, useReducedMotion } from "motion/react"
 import { useId, useState, type ComponentProps, type ReactNode } from "react"
@@ -17,11 +16,12 @@ import {
   TooltipTrigger,
 } from "@/components/ui/tooltip"
 import { SPRING_LAYOUT } from "@/lib/ease"
+import { cn } from "@/lib/utils"
 import { m } from "@/paraglide/messages.js"
 
 import { useDraftPages } from "./drafts"
-import { useSurfaceHistory } from "./history"
 import { CHROME } from "./glass-drawer"
+import { useSurfaceHistory } from "./history"
 import { DOCK_WIDTH } from "./layout"
 import { DOCK, PAGES, type PageId } from "./pages"
 

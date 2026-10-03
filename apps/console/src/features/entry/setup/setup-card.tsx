@@ -8,14 +8,14 @@ import {
 import { toast } from "sonner"
 
 import { Brand } from "@/components/chrome/brand"
+import { TextField } from "@/components/chrome/form"
 import { FieldGroup } from "@/components/ui/field"
 import { SessionRejected } from "@/lib/api"
 import { failureText } from "@/lib/failure"
-import { TextField } from "@/components/chrome/form"
-import { m } from "@/paraglide/messages.js"
-
 import { formText } from "@/lib/form"
 import { cn } from "@/lib/utils"
+import { m } from "@/paraglide/messages.js"
+
 import { ENTRY_CARD, ENTRY_ENTER, EntryLink, EntrySubmit } from "../frame"
 import { instanceCall, readInstance, type Instance } from "./instance"
 import { SetupSections } from "./setup-sections"

@@ -1,4 +1,3 @@
-import { cn } from "@/lib/utils"
 import { ChevronDownIcon, PlusIcon, XIcon } from "lucide-react"
 import { useState } from "react"
 
@@ -16,6 +15,7 @@ import {
   CollapsibleContent,
   CollapsibleTrigger,
 } from "@/components/ui/collapsible"
+import { cn } from "@/lib/utils"
 import { m } from "@/paraglide/messages.js"
 
 import {

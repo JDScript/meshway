@@ -1,8 +1,7 @@
-import { cn } from "@/lib/utils"
-
 import { Brand } from "@/components/chrome/brand"
 import { Button } from "@/components/ui/button"
 import { useSignOut } from "@/features/auth/use-sign-out"
+import { cn } from "@/lib/utils"
 import { m } from "@/paraglide/messages.js"
 
 /** A standalone message over the globe, with a way forward. */

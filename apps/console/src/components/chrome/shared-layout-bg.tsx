@@ -1,24 +1,25 @@
 // From AgentUI (https://www.agentui.pro, registry source `components/motion/shared-layout-bg.tsx`); only formatted to this project's style.
 import {
   AnimatePresence,
-  type HTMLMotionProps,
   motion,
   useReducedMotion,
+  type HTMLMotionProps,
   type Variants,
 } from "motion/react"
 import {
   Children,
   cloneElement,
   forwardRef,
-  type HTMLAttributes,
   isValidElement,
+  useId,
+  useState,
+  type HTMLAttributes,
   type MouseEvent,
   type ReactElement,
   type ReactNode,
   type Ref,
-  useId,
-  useState,
 } from "react"
+
 import { SPRING_LAYOUT } from "@/lib/ease"
 import { cn } from "@/lib/utils"
 

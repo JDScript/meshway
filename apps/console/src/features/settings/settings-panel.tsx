@@ -1,6 +1,5 @@
 import type { NetworkSnapshot } from "@meshway/control-client"
 import { AtSignIcon, NetworkIcon, type LucideIcon } from "lucide-react"
-
 import { useMemo } from "react"
 
 import { DraftMark } from "@/components/chrome/draft-mark"

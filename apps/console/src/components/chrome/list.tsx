@@ -1,4 +1,3 @@
-import { cn } from "@/lib/utils"
 import {
   useRef,
   type ComponentProps,
@@ -7,6 +6,7 @@ import {
 } from "react"
 
 import { Skeleton } from "@/components/ui/skeleton"
+import { cn } from "@/lib/utils"
 
 // The rows of a page panel's list (nodes, tags, members, invitations,
 // settings sections). Every row has the same shape: a 16px lead slot (a

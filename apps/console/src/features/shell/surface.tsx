@@ -1,7 +1,7 @@
-import { cn } from "@/lib/utils"
 import type { ComponentProps, ReactNode } from "react"
 
 import { useKeptWhile, useUnmountAfter } from "@/hooks/use-kept"
+import { cn } from "@/lib/utils"
 
 /** Matches the hidden-state transition in `index.css` (`.surface`). */
 const EXIT_MS = 260

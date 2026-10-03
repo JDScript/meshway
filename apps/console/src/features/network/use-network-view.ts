@@ -1,8 +1,8 @@
 import { useQuery } from "@tanstack/react-query"
 import { createContext, useContext, useMemo } from "react"
 
-import { clockTime } from "@/lib/format"
 import { useNow } from "@/hooks/use-now"
+import { clockTime } from "@/lib/format"
 
 import type { NodeContext } from "../nodes/node-facts"
 import { linkSummary, overviewScene } from "../overview/model"

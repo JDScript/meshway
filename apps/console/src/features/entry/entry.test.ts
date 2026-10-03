@@ -1,8 +1,8 @@
 import assert from "node:assert/strict"
 import { test } from "node:test"
 
-import { fragmentLink, heldSecret, secretFromFragment } from "./fragment.ts"
 import { newPasswordProblem } from "../../lib/password.ts"
+import { fragmentLink, heldSecret, secretFromFragment } from "./fragment.ts"
 
 const invitation = `mwi_${"0".repeat(64)}`
 const reset = `mwr_${"f".repeat(64)}`

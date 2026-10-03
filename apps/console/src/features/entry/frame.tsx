@@ -1,4 +1,3 @@
-import { cn } from "@/lib/utils"
 import { useEffect, type ComponentProps, type ReactNode } from "react"
 
 import { Brand } from "@/components/chrome/brand"
@@ -6,6 +5,7 @@ import { LanguageSwitch, ThemeSwitch } from "@/components/chrome/preferences"
 import { Button } from "@/components/ui/button"
 import { Spinner } from "@/components/ui/spinner"
 import { showWelcomeGlobe } from "@/features/globe/store"
+import { cn } from "@/lib/utils"
 
 /** How long a card takes to dissolve before the page it hands over to is opened. */
 export const HANDOFF_MS = 320

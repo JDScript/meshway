@@ -75,13 +75,8 @@
   "node_listener_advertised_none": "No public address",
   "node_listener_advertised_count": [
     {
-      "declarations": [
-        "input count",
-        "local countPlural = count: plural"
-      ],
-      "selectors": [
-        "countPlural"
-      ],
+      "declarations": ["input count", "local countPlural = count: plural"],
+      "selectors": ["countPlural"],
       "match": {
         "countPlural=one": "{count} public address",
         "countPlural=other": "{count} public addresses"
@@ -191,13 +186,8 @@
   "nodes_tag_members_none": "No nodes",
   "nodes_tag_members_count": [
     {
-      "declarations": [
-        "input count",
-        "local countPlural = count: plural"
-      ],
-      "selectors": [
-        "countPlural"
-      ],
+      "declarations": ["input count", "local countPlural = count: plural"],
+      "selectors": ["countPlural"],
       "match": {
         "countPlural=one": "{count} node",
         "countPlural=other": "{count} nodes"
@@ -211,13 +201,8 @@
   "nodes_tag_removing": "To be deleted",
   "nodes_tag_assigned": [
     {
-      "declarations": [
-        "input count",
-        "local countPlural = count: plural"
-      ],
-      "selectors": [
-        "countPlural"
-      ],
+      "declarations": ["input count", "local countPlural = count: plural"],
+      "selectors": ["countPlural"],
       "match": {
         "countPlural=one": "Assigned to {count} node",
         "countPlural=other": "Assigned to {count} nodes"

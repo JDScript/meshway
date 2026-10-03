@@ -1,9 +1,9 @@
 import { Tabs as TabsPrimitive } from "@base-ui/react/tabs"
-import { cn } from "@/lib/utils"
 import { motion, useReducedMotion } from "motion/react"
 import { useId, type ReactNode } from "react"
 
 import { SPRING_LAYOUT } from "@/lib/ease"
+import { cn } from "@/lib/utils"
 
 // AgentUI's segment pattern: a round track, and a raised pill that glides to
 // the chosen segment on a spring. One look for choices and for tab lists.

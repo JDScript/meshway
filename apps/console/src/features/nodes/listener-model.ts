@@ -1,8 +1,8 @@
 import type {
   ConnectionTransport,
   ManagedListenerSettings,
-  ManagedListenerSummary,
   ManagedListenersSnapshot,
+  ManagedListenerSummary,
   VlessStreamTransport,
 } from "@meshway/control-client"
 import {

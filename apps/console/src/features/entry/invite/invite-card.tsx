@@ -10,6 +10,7 @@ import { useNavigate } from "@tanstack/react-router"
 import { useCallback, useState, type FormEvent } from "react"
 import { toast } from "sonner"
 
+import { TextField } from "@/components/chrome/form"
 import { FieldGroup } from "@/components/ui/field"
 import { Skeleton } from "@/components/ui/skeleton"
 import { signIn, signOut } from "@/features/auth/sign-in"
@@ -17,8 +18,8 @@ import { networksQuery, sessionQuery } from "@/features/network/queries"
 import { dropDrafts } from "@/features/shell/drafts"
 import { apiBase } from "@/lib/api"
 import { failureText } from "@/lib/failure"
+import { formText } from "@/lib/form"
 import { currentSession } from "@/lib/session"
-import { TextField } from "@/components/chrome/form"
 import { m } from "@/paraglide/messages.js"
 
 import {
@@ -29,7 +30,6 @@ import {
   HANDOFF_MS,
 } from "../frame"
 import { heldInvitation } from "../held"
-import { formText } from "@/lib/form"
 import { usePasswordFields } from "../password-fields"
 import { withSession } from "../session-call"
 

@@ -3,8 +3,6 @@ import type {
   NodeSummary,
 } from "@meshway/control-client"
 
-import { cn } from "@/lib/utils"
-
 import { CopyButton } from "@/components/chrome/copy-button"
 import { RefList, RefRow, RefStateHeading } from "@/components/chrome/ref-row"
 import { EmptyLine, Section } from "@/components/chrome/section"
@@ -33,6 +31,7 @@ import {
   type TopologyObservation,
 } from "@/features/topology/topology"
 import { relativeTime } from "@/lib/format"
+import { cn } from "@/lib/utils"
 import { m } from "@/paraglide/messages.js"
 
 import { transportLabel } from "./labels"

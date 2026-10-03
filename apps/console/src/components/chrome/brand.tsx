@@ -1,5 +1,4 @@
 import { cn } from "@/lib/utils"
-
 import { m } from "@/paraglide/messages.js"
 
 export function BrandMark({ className }: { className?: string }) {

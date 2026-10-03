@@ -1,6 +1,6 @@
 import type { NodeSummary } from "@meshway/control-client"
-import type { ReactNode } from "react"
 import { useQuery } from "@tanstack/react-query"
+import type { ReactNode } from "react"
 
 import { CloseButton } from "@/components/chrome/close-button"
 import { CopyButton } from "@/components/chrome/copy-button"

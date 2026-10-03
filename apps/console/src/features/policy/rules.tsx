@@ -1,4 +1,3 @@
-import { cn } from "@/lib/utils"
 import {
   ArrowDownIcon,
   ArrowUpIcon,
@@ -13,6 +12,7 @@ import { useEffect, useRef, type KeyboardEvent, type ReactNode } from "react"
 import { FieldInput } from "@/components/chrome/form"
 import { Button } from "@/components/ui/button"
 import { SPRING_LAYOUT } from "@/lib/ease"
+import { cn } from "@/lib/utils"
 import { m } from "@/paraglide/messages.js"
 
 import type { PlacedDiagnostic } from "./document"

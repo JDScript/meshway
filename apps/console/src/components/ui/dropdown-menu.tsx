@@ -1,7 +1,7 @@
-import * as React from "react"
 import { Menu as MenuPrimitive } from "@base-ui/react/menu"
-import { ChevronRightIcon, CheckIcon } from "lucide-react"
+import { CheckIcon, ChevronRightIcon } from "lucide-react"
 import { motion, useReducedMotion } from "motion/react"
+import * as React from "react"
 
 import { SPRING_LAYOUT } from "@/lib/ease"
 import { cn } from "@/lib/utils"

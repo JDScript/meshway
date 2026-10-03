@@ -10,13 +10,8 @@
   "policy_layer_source": "Source",
   "policy_count_rules": [
     {
-      "declarations": [
-        "input count",
-        "local countPlural = count: plural"
-      ],
-      "selectors": [
-        "countPlural"
-      ],
+      "declarations": ["input count", "local countPlural = count: plural"],
+      "selectors": ["countPlural"],
       "match": {
         "countPlural=one": "{count} rule",
         "countPlural=other": "{count} rules"
@@ -25,13 +20,8 @@
   ],
   "policy_count_blocks": [
     {
-      "declarations": [
-        "input count",
-        "local countPlural = count: plural"
-      ],
-      "selectors": [
-        "countPlural"
-      ],
+      "declarations": ["input count", "local countPlural = count: plural"],
+      "selectors": ["countPlural"],
       "match": {
         "countPlural=one": "{count} block",
         "countPlural=other": "{count} blocks"
@@ -40,13 +30,8 @@
   ],
   "policy_count_lines": [
     {
-      "declarations": [
-        "input count",
-        "local countPlural = count: plural"
-      ],
-      "selectors": [
-        "countPlural"
-      ],
+      "declarations": ["input count", "local countPlural = count: plural"],
+      "selectors": ["countPlural"],
       "match": {
         "countPlural=one": "{count} line",
         "countPlural=other": "{count} lines"
@@ -55,13 +40,8 @@
   ],
   "policy_count_problems": [
     {
-      "declarations": [
-        "input count",
-        "local countPlural = count: plural"
-      ],
-      "selectors": [
-        "countPlural"
-      ],
+      "declarations": ["input count", "local countPlural = count: plural"],
+      "selectors": ["countPlural"],
       "match": {
         "countPlural=one": "{count} problem",
         "countPlural=other": "{count} problems"
@@ -70,13 +50,8 @@
   ],
   "policy_count_lints": [
     {
-      "declarations": [
-        "input count",
-        "local countPlural = count: plural"
-      ],
-      "selectors": [
-        "countPlural"
-      ],
+      "declarations": ["input count", "local countPlural = count: plural"],
+      "selectors": ["countPlural"],
       "match": {
         "countPlural=one": "{count} note",
         "countPlural=other": "{count} notes"
@@ -153,13 +128,8 @@
   "policy_selector_group_nodes": "Nodes",
   "policy_selector_count": [
     {
-      "declarations": [
-        "input count",
-        "local countPlural = count: plural"
-      ],
-      "selectors": [
-        "countPlural"
-      ],
+      "declarations": ["input count", "local countPlural = count: plural"],
+      "selectors": ["countPlural"],
       "match": {
         "countPlural=one": "{count} node",
         "countPlural=other": "{count} nodes"
@@ -173,13 +143,8 @@
   "policy_source_none": "No v3 source",
   "policy_source_controller": [
     {
-      "declarations": [
-        "input count",
-        "local countPlural = count: plural"
-      ],
-      "selectors": [
-        "countPlural"
-      ],
+      "declarations": ["input count", "local countPlural = count: plural"],
+      "selectors": ["countPlural"],
       "match": {
         "countPlural=one": "{count} control-plane problem",
         "countPlural=other": "{count} control-plane problems"

@@ -47,7 +47,7 @@ import { m } from "@/paraglide/messages.js"
 
 import { YouMark } from "./member-list"
 import { invitationsQuery } from "./queries"
-import { canChangeRole, canRemove, ROLES, roleLabel } from "./roles"
+import { canChangeRole, canRemove, roleLabel, ROLES } from "./roles"
 
 type Read<T> = { data: T | null; loading: boolean }
 

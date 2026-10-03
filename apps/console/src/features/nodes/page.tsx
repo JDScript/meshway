@@ -7,9 +7,9 @@ import {
   SegmentCount,
   SegmentedControl,
 } from "@/components/chrome/segmented-control"
+import { tagsQuery } from "@/features/network/queries"
 import { useCanManage } from "@/features/network/role"
 import { useNetwork } from "@/features/network/use-network-view"
-import { tagsQuery } from "@/features/network/queries"
 import { PageFrame } from "@/features/shell/page-frame"
 import { m } from "@/paraglide/messages.js"
 

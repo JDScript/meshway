@@ -1,4 +1,3 @@
-import { cn } from "@/lib/utils"
 import { useCallback, useEffect, useMemo } from "react"
 
 import { GlassToolbar } from "@/components/chrome/glass-toolbar"
@@ -8,12 +7,11 @@ import { AccountMenu } from "@/features/auth/account-menu"
 import { useBootStore } from "@/features/boot/boot-store"
 import { EMPTY_SCENE } from "@/features/globe/scene"
 import { onGlobeSelect, setGlobe } from "@/features/globe/store"
+import { MembersPage } from "@/features/members/page"
 import {
   NetworkViewProvider,
   useNetworkView,
 } from "@/features/network/use-network-view"
-import { MembersPage } from "@/features/members/page"
-import { CommandPalette, PaletteButton } from "@/features/palette/palette"
 import { useNodeNavigation, useNodesRoute } from "@/features/nodes/navigation"
 import { NodesPage } from "@/features/nodes/page"
 import {
@@ -23,11 +21,13 @@ import {
 import { NetworkChip } from "@/features/overview/network-chip"
 import { OverviewPage } from "@/features/overview/page"
 import { UnplacedButton } from "@/features/overview/unplaced-button"
+import { CommandPalette, PaletteButton } from "@/features/palette/palette"
 import { PolicyPage } from "@/features/policy/page"
 import { SettingsPage } from "@/features/settings/page"
 import { useIsMobile } from "@/hooks/use-mobile"
 import { useReadFailureToast } from "@/hooks/use-read-failure-toast"
 import { useViewportHeight } from "@/hooks/use-viewport-height"
+import { cn } from "@/lib/utils"
 import { m } from "@/paraglide/messages.js"
 
 import { Dock, DockLauncher } from "./dock"

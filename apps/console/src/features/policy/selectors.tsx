@@ -1,7 +1,6 @@
 import type { NodeSummary, TagDefinition } from "@meshway/control-client"
 import { useQuery } from "@tanstack/react-query"
 import { Command } from "cmdk"
-import { cn } from "@/lib/utils"
 import {
   ArrowUpRightIcon,
   AsteriskIcon,
@@ -22,11 +21,11 @@ import {
   PopoverContent,
   PopoverTrigger,
 } from "@/components/ui/popover"
+import { tagsQuery } from "@/features/network/queries"
 import { useNetwork } from "@/features/network/use-network-view"
 import { usePopupPlacement } from "@/features/shell/popup-boundary"
+import { cn } from "@/lib/utils"
 import { m } from "@/paraglide/messages.js"
-
-import { tagsQuery } from "@/features/network/queries"
 
 // Selectors as the policy writes them (`*`, `tag:<name>`, `node:<id>`,
 // `autogroup:internet`, `ip:<range>`, `domain:<suffix>`), shown by name

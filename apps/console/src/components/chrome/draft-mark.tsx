@@ -1,7 +1,7 @@
-import { cn } from "@/lib/utils"
 import { Fragment, type ReactNode } from "react"
 
 import { Skeleton } from "@/components/ui/skeleton"
+import { cn } from "@/lib/utils"
 import { m } from "@/paraglide/messages.js"
 
 /**

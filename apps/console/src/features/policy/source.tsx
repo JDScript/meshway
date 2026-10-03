@@ -1,4 +1,3 @@
-import { cn } from "@/lib/utils"
 import {
   ChevronDownIcon,
   ChevronUpIcon,
@@ -9,6 +8,7 @@ import {
 import { lazy, Suspense, useMemo, useRef } from "react"
 
 import { Button } from "@/components/ui/button"
+import { cn } from "@/lib/utils"
 import { m } from "@/paraglide/messages.js"
 
 import type { EditorHandle, EditorMark } from "./code-editor"
