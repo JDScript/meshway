@@ -1,4 +1,3 @@
-import { ControlApiError } from "@meshway/control-client"
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
 import { createRouter, RouterProvider } from "@tanstack/react-router"
 import { StrictMode } from "react"
@@ -11,24 +10,28 @@ import { Toaster } from "@/components/ui/sonner"
 import { TooltipProvider } from "@/components/ui/tooltip"
 import { GlobeStage } from "@/features/globe/globe-stage"
 import { LAYOUT_VARIABLES } from "@/features/shell/layout"
-import { handleSessionRejected, SessionRejected } from "@/lib/api"
+import { ApiFailure, handleSessionRejected } from "@/lib/api"
 import { useLocale } from "@/lib/locale"
 import { getLocale } from "@/paraglide/runtime.js"
 
 import { routeTree } from "./routeTree.gen"
 
+/**
+ * Only a lost connection or a busy, unavailable controller may answer
+ * differently next time; a rejected session (handled centrally), a refusal
+ * or a response this console cannot read will not.
+ */
+function retriable(error: unknown): boolean {
+  if (!(error instanceof ApiFailure)) return false
+  const { failure } = error
+  if (failure.kind === "network") return true
+  return failure.kind === "http" && failure.status >= 500
+}
+
 const queryClient = new QueryClient({
   defaultOptions: {
     queries: {
-      // Client errors (401 is handled centrally, 403/404/422) do not improve on retry.
-      retry: (failures, error) =>
-        !(error instanceof SessionRejected) &&
-        !(
-          error instanceof ControlApiError &&
-          error.status >= 400 &&
-          error.status < 500
-        ) &&
-        failures < 2,
+      retry: (failures, error) => failures < 2 && retriable(error),
     },
   },
 })

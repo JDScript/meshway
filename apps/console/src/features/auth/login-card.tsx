@@ -1,4 +1,5 @@
-import { useNavigate, useRouter } from "@tanstack/react-router"
+import { useQuery } from "@tanstack/react-query"
+import { useNavigate } from "@tanstack/react-router"
 import { useEffect, useRef, useState, type FormEvent } from "react"
 import { toast } from "sonner"
 
@@ -11,26 +12,19 @@ import {
   EntrySubmit,
   HANDOFF_MS,
 } from "@/features/entry/frame"
+import { ApiFailure, problemCode } from "@/lib/api"
+import { failureText } from "@/lib/failure"
 import { formText } from "@/lib/form"
-import { PASSWORD_MAX_BYTES } from "@/lib/password"
 import { m } from "@/paraglide/messages.js"
 
-import { signIn, type SignInOutcome } from "./sign-in"
+import { authOptionsQuery } from "./queries"
+import { signIn } from "./sign-in"
 
-type LoginReason =
-  "expired" | "signed_out" | "signed_out_unconfirmed" | "password_reset"
-
-const failures: Record<Exclude<SignInOutcome, "signed_in">, () => string> = {
-  missing: () => m.login_missing(),
-  invalid: () => m.login_invalid(),
-  limited: () => m.failure_limited(),
-  unavailable: () => m.login_unavailable(),
-  clock: () => m.login_clock(),
-}
+type LoginReason = "expired" | "signed_out" | "signed_out_unconfirmed"
 
 const reasons: Record<
   LoginReason,
-  { tone: "info" | "warning" | "success"; text: () => string }
+  { tone: "info" | "warning"; text: () => string }
 > = {
   expired: { tone: "warning", text: () => m.login_expired() },
   signed_out: { tone: "info", text: () => m.login_signed_out() },
@@ -38,25 +32,14 @@ const reasons: Record<
     tone: "warning",
     text: () => m.login_signed_out_unconfirmed(),
   },
-  password_reset: {
-    tone: "success",
-    text: () => m.entry_password_reset_done(),
-  },
 }
 
 /**
  * A plain form (named fields, autocomplete, Enter submits) handled in the
  * page. Feedback goes to toasts, so the card never changes size.
  */
-export function LoginCard({
-  reason,
-  returnTo,
-}: {
-  reason: LoginReason | undefined
-  returnTo: string | undefined
-}) {
+export function LoginCard({ reason }: { reason: LoginReason | undefined }) {
   const navigate = useNavigate()
-  const router = useRouter()
   const [pending, setPending] = useState(false)
   const [leaving, setLeaving] = useState(false)
   const password = useRef<HTMLInputElement>(null)
@@ -71,27 +54,38 @@ export function LoginCard({
     event.preventDefault()
     if (pending) return
     const form = new FormData(event.currentTarget)
+    const email = formText(form, "email")
+    const secret = formText(form, "password")
+    if (!email.trim() || !secret) {
+      toast.error(m.login_missing(), { id: "login" })
+      return
+    }
     setPending(true)
-    const outcome = await signIn(
-      formText(form, "email"),
-      formText(form, "password")
-    )
-    if (outcome !== "signed_in") {
+    let outcome
+    try {
+      outcome = await signIn(email, secret)
+    } catch (error) {
       setPending(false)
-      toast.error(failures[outcome](), { id: "login" })
-      if (outcome === "invalid") password.current?.select()
+      const text = failureText(error, {
+        invalid_request: () => m.entry_email_invalid(),
+      })
+      if (text) toast.error(text, { id: "login" })
+      if (
+        error instanceof ApiFailure &&
+        problemCode(error.failure) === "invalid_credentials"
+      )
+        password.current?.select()
+      return
+    }
+    if (outcome === "clock") {
+      setPending(false)
+      toast.error(m.login_clock(), { id: "login" })
       return
     }
     toast.dismiss()
     setLeaving(true)
-    // The card dissolves while the globe swings round to the network. The
-    // way back is pushed verbatim: re-parsing its query would change values
-    // such as a device request's `agent_version=1.0`.
-    window.setTimeout(
-      () =>
-        returnTo ? router.history.push(returnTo) : void navigate({ to: "/" }),
-      HANDOFF_MS
-    )
+    // The card dissolves before the signed-in page opens.
+    window.setTimeout(() => void navigate({ to: "/" }), HANDOFF_MS)
   }
 
   return (
@@ -99,6 +93,7 @@ export function LoginCard({
       <form
         method="post"
         action="/login"
+        noValidate
         className="mt-7"
         onSubmit={(event) => void submit(event)}
       >
@@ -106,45 +101,64 @@ export function LoginCard({
           <TextField
             size="lg"
             id="login-email"
-            label={m.login_email()}
+            label={m.entry_email()}
             placeholder={m.placeholder_email()}
             name="email"
-            type="email"
+            type="text"
             inputMode="email"
             autoComplete="username"
             autoCapitalize="none"
             spellCheck={false}
             autoFocus
-            required
-            maxLength={254}
           />
           <TextField
             size="lg"
             ref={password}
             id="login-password"
-            label={m.login_password()}
+            label={m.entry_password()}
             placeholder={m.placeholder_password()}
             name="password"
             type="password"
             autoComplete="current-password"
-            required
-            maxLength={PASSWORD_MAX_BYTES}
           />
           <EntrySubmit pending={pending} className="mt-2">
             {m.login_submit()}
           </EntrySubmit>
         </FieldGroup>
       </form>
-      {/* A new instance has no account yet: its first owner is set up with the instance token. */}
-      <EntryFoot>
-        <span>{m.login_instance()}</span>
-        <EntryLink
-          disabled={pending || leaving}
-          onClick={() => void navigate({ to: "/setup" })}
-        >
-          {m.login_setup()}
-        </EntryLink>
-      </EntryFoot>
+      <RegistrationFoot
+        disabled={pending || leaving}
+        onRegister={() => void navigate({ to: "/register" })}
+      />
     </EntryCard>
+  )
+}
+
+/**
+ * Whether this controller takes registrations, as it publishes. The line
+ * keeps its height while the answer loads, or when it cannot be read.
+ */
+function RegistrationFoot({
+  disabled,
+  onRegister,
+}: {
+  disabled: boolean
+  onRegister: () => void
+}) {
+  const options = useQuery(authOptionsQuery())
+  const enabled = options.data?.registrationEnabled
+  return (
+    <EntryFoot>
+      {enabled === true ? (
+        <>
+          <span>{m.login_no_account()}</span>
+          <EntryLink disabled={disabled} onClick={onRegister}>
+            {m.register_title()}
+          </EntryLink>
+        </>
+      ) : enabled === false ? (
+        <span>{m.register_closed()}</span>
+      ) : null}
+    </EntryFoot>
   )
 }

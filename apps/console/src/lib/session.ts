@@ -1,7 +1,8 @@
 import { z } from "zod"
 
 // The browser credential is the controller's opaque `mws_` user session,
-// kept in localStorage and sent as a bearer header (docs/decisions.md).
+// kept in localStorage and sent as a bearer header (docs/decisions.md). A
+// stored session of another shape (an earlier console's) is ignored.
 //
 // Each tab copies the session into memory once, when it loads, and every
 // request uses that copy. If another tab replaces or removes it, this tab
@@ -10,11 +11,11 @@ import { z } from "zod"
 const STORAGE_KEY = "meshway.session"
 
 const zStoredSession = z.object({
-  v: z.literal(1),
-  /** Random per sign-in; keys tab state such as drafts. Not a credential. */
+  v: z.literal(2),
+  /** The controller's session ID; keys tab state such as caches. Not a credential. */
   id: z.string().min(1).max(64),
   token: z.string().min(1).max(512),
-  /** Unix seconds, the controller's absolute expiry. */
+  /** Unix milliseconds, the controller's absolute expiry. */
   expiresAt: z.number().int().positive(),
 })
 
@@ -46,14 +47,18 @@ window.addEventListener("storage", (event) => {
 
 /** This tab's sign-in, or null when signed out or past its absolute expiry. */
 export function currentSession(): Session | null {
-  if (snapshot && snapshot.expiresAt * 1000 <= Date.now()) return null
+  if (snapshot && snapshot.expiresAt <= Date.now()) return null
   return snapshot
 }
 
+/** A session as the controller issued it; `expiresAt` is RFC 3339. */
+type IssuedSession = { id: string; token: string; expiresAt: string }
+
 /** False when the controller's expiry has already passed (clock skew). */
-export function startSession(token: string, expiresAt: number): boolean {
-  if (expiresAt * 1000 <= Date.now()) return false
-  const next: Session = { v: 1, id: crypto.randomUUID(), token, expiresAt }
+export function startSession(issued: IssuedSession): boolean {
+  const expiresAt = Date.parse(issued.expiresAt)
+  if (!Number.isFinite(expiresAt) || expiresAt <= Date.now()) return false
+  const next: Session = { v: 2, id: issued.id, token: issued.token, expiresAt }
   window.localStorage.setItem(STORAGE_KEY, JSON.stringify(next))
   snapshot = next
   return true

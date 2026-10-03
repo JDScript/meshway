@@ -1,64 +1,51 @@
 import {
-  ControlApiError,
-  loginAccount,
-  logoutAccount,
+  login,
+  logout,
+  register,
+  type SessionIssuedResponse,
 } from "@meshway/control-client"
-import { zLoginRequest } from "@meshway/control-client/schemas"
 
-import { apiBase } from "@/lib/api"
+import { call, client } from "@/lib/api"
 import { currentSession, endSession, startSession } from "@/lib/session"
 
-export type SignInOutcome =
-  "signed_in" | "missing" | "invalid" | "limited" | "unavailable" | "clock"
+// Email and password go from the page to the controller only; neither is
+// kept. The controller normalises the email and applies its own rules.
 
-/**
- * Email and password go from this page to the controller only; neither is
- * kept. A previous session still held by this tab is revoked first.
- */
-export async function signIn(
-  email: string,
-  password: string
-): Promise<SignInOutcome> {
-  const parsed = zLoginRequest.safeParse({
-    email: email.trim().slice(0, 254),
-    password,
-  })
-  if (!parsed.success || !parsed.data.email || !parsed.data.password)
-    return "missing"
-  let response
-  try {
-    response = await loginAccount(apiBase(), parsed.data)
-  } catch (error) {
-    if (error instanceof ControlApiError) {
-      // 400/401/422 all mean "these credentials do not sign in"; which part
-      // was wrong is deliberately not distinguished.
-      if ([400, 401, 422].includes(error.status)) return "invalid"
-      if (error.status === 429) return "limited"
-    }
-    return "unavailable"
-  }
+/** How a sign-in or registration ended; failures are thrown as `ApiFailure`. */
+type Issued = "signed_in" | "clock"
+
+/** Starts the issued session, after revoking one this tab still holds. */
+async function adopt(issued: SessionIssuedResponse): Promise<Issued> {
   const previous = currentSession()
   if (previous) {
-    await logoutAccount(apiBase(), previous.token).catch(() => undefined)
+    await logout(client, { token: previous.token })
     endSession(previous)
   }
-  return startSession(response.session_token, response.expires_at)
+  return startSession({
+    id: issued.session.id,
+    token: issued.token,
+    expiresAt: issued.session.expiresAt,
+  })
     ? "signed_in"
     : "clock"
+}
+
+export async function signIn(email: string, password: string): Promise<Issued> {
+  return adopt(await call(login(client, { email, password })))
+}
+
+export async function signUp(email: string, password: string): Promise<Issued> {
+  return adopt(await call(register(client, { email, password })))
 }
 
 /** Revokes this tab's session on the controller, then forgets it here. */
 export async function signOut(): Promise<"revoked" | "unconfirmed"> {
   const session = currentSession()
   if (!session) return "revoked"
-  let outcome: "revoked" | "unconfirmed" = "revoked"
-  try {
-    await logoutAccount(apiBase(), session.token)
-  } catch (error) {
-    // 401: the controller no longer accepts it, which is the goal.
-    if (!(error instanceof ControlApiError && error.status === 401))
-      outcome = "unconfirmed"
-  }
+  const result = await logout(client, { token: session.token })
   endSession(session)
-  return outcome
+  // A 401 means the controller no longer accepts it, which is the goal.
+  const rejected =
+    !result.ok && result.error.kind === "http" && result.error.status === 401
+  return result.ok || rejected ? "revoked" : "unconfirmed"
 }

@@ -49,7 +49,3 @@ export function dateTime(at: Instant): string | null {
     timeStyle: "short",
   }).format(ms)
 }
-
-/** Unix seconds (the controller's account and invitation times) as a calendar date and time. */
-export const unixDateTime = (seconds: number): string | null =>
-  dateTime(seconds * 1000)

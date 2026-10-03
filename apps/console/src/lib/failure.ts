@@ -1,59 +1,67 @@
-import { ControlApiError } from "@meshway/control-client"
+import type { Problem } from "@meshway/control-client"
 import { toast } from "sonner"
 
-import { SessionRejected } from "@/lib/api"
+import { ApiFailure, SessionRejected, type Failure } from "@/lib/api"
 import { m } from "@/paraglide/messages.js"
 
-/**
- * What a failed call means to the person who made it. The controller's
- * error bodies are not read (the client drops them), so this is the status
- * alone; a lost response is not a refusal: the change may have happened.
- */
-type Failure =
-  | "unauthorized"
-  | "forbidden"
-  | "conflict"
-  | "invalid"
-  | "missing"
-  | "limited"
-  | "unknown"
+// What a failed call means to the person who made it. The controller's
+// problem code says it when the client could decode the body; otherwise the
+// kind of failure and the HTTP status do. A lost response is not a refusal:
+// the change may have happened.
 
-/** null when there is nothing to say here: a rejected session hands over to the sign-in. */
-export function failureOf(error: unknown): Failure | null {
-  if (error instanceof SessionRejected) return null
-  if (!(error instanceof ControlApiError)) return "unknown"
-  // Only calls made without the tab's session (a sign-in, an invitation, a reset) see this: `authed` turns it into SessionRejected.
-  if (error.status === 401) return "unauthorized"
-  if (error.status === 403) return "forbidden"
-  if (error.status === 409) return "conflict"
-  if (error.status === 400 || error.status === 413 || error.status === 422)
-    return "invalid"
-  if (error.status === 404) return "missing"
-  if (error.status === 429) return "limited"
-  return "unknown"
+type ProblemCode = Problem["code"]
+
+const problemMessage: Record<ProblemCode, () => string> = {
+  invalid_credentials: () => m.problem_invalid_credentials(),
+  invalid_session: () => m.problem_invalid_session(),
+  registration_disabled: () => m.problem_registration_disabled(),
+  email_taken: () => m.problem_email_taken(),
+  password_weak: () => m.problem_password_weak(),
+  invalid_request: () => m.problem_invalid_request(),
+  request_too_large: () => m.problem_request_too_large(),
+  unsupported_media_type: () => m.problem_unsupported(),
+  busy: () => m.problem_busy(),
+  service_unavailable: () => m.problem_service_unavailable(),
+  not_found: () => m.problem_unsupported(),
+  method_not_allowed: () => m.problem_unsupported(),
 }
 
-const failureMessage: Record<Failure, () => string> = {
-  unauthorized: () => m.failure_unauthorized(),
-  forbidden: () => m.failure_forbidden(),
-  conflict: () => m.failure_conflict(),
-  invalid: () => m.failure_invalid(),
-  missing: () => m.failure_missing(),
-  limited: () => m.failure_limited(),
-  unknown: () => m.failure_unknown(),
-}
+/** A call's own words for some problem codes (`invalid_request` on a sign-in form). */
+export type FailureText = Partial<Record<ProblemCode, () => string>>
 
-/** What a call's own context says about some failures (a 409 on the last Owner). */
-type FailureText = Partial<Record<Failure, () => string>>
+function failureMessage(failure: Failure, overrides: FailureText): string {
+  switch (failure.kind) {
+    case "http": {
+      const code = failure.problem?.problem.code
+      if (code) return (overrides[code] ?? problemMessage[code])()
+      // A gateway in front of the controller answers for it when it is unreachable.
+      if (failure.status === 502 || failure.status === 504)
+        return m.failure_network()
+      return m.failure_status({ status: String(failure.status) })
+    }
+    case "network":
+      return m.failure_network()
+    case "decode":
+      return m.failure_decode()
+    case "body_limit":
+      return m.failure_body_limit()
+    case "configuration":
+    case "request":
+      return m.failure_request()
+    case "cancelled":
+      return ""
+  }
+}
 
 /** The words for a failure, the caller's own where it has them; null when there is nothing to say. */
 export function failureText(
   error: unknown,
   overrides: FailureText = {}
 ): string | null {
-  const failure = failureOf(error)
-  if (!failure) return null
-  return (overrides[failure] ?? failureMessage[failure])()
+  // A rejected session hands over to the sign-in, which says so itself.
+  if (error instanceof SessionRejected) return null
+  if (!(error instanceof ApiFailure)) return m.failure_unknown()
+  return failureMessage(error.failure, overrides) || null
 }
 
 /** Announces a failed change as a toast. */
@@ -62,7 +70,7 @@ export function toastFailure(error: unknown) {
   if (text) toast.error(text)
 }
 
-/** `toastFailure` with the caller's own words for some failures. */
+/** `toastFailure` with the caller's own words for some problem codes. */
 export const toastFailureWith =
   (overrides: FailureText) => (error: unknown) => {
     const text = failureText(error, overrides)

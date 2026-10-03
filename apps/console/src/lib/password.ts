@@ -1,17 +1,24 @@
-/** The controller's password bounds, in UTF-8 bytes. */
-export const PASSWORD_MIN_BYTES = 12
-export const PASSWORD_MAX_BYTES = 1024
+import type { PasswordRules } from "@meshway/control-client"
 
-export type PasswordProblem = "short" | "long" | "mismatch"
+// The controller publishes its password rules (`getAuthOptions`) and
+// measures them in Unicode code points and UTF-8 bytes; String.length
+// counts UTF-16 units and is not used.
 
-/** What is wrong with a new password and its confirmation, or null. */
+export type PasswordProblem = "short" | "long" | "too_many_bytes" | "mismatch"
+
+export const codepoints = (text: string) => [...text].length
+export const utf8Bytes = (text: string) => new TextEncoder().encode(text).length
+
+/** What is wrong with a new password and its confirmation under `rules`, or null. */
 export function newPasswordProblem(
+  rules: PasswordRules,
   password: string,
   confirmation: string
 ): PasswordProblem | null {
-  const bytes = new TextEncoder().encode(password).length
-  if (bytes < PASSWORD_MIN_BYTES) return "short"
-  if (bytes > PASSWORD_MAX_BYTES) return "long"
+  const length = codepoints(password)
+  if (length < rules.minCodepoints) return "short"
+  if (length > rules.maxCodepoints) return "long"
+  if (utf8Bytes(password) > rules.maxUtf8Bytes) return "too_many_bytes"
   if (password !== confirmation) return "mismatch"
   return null
 }

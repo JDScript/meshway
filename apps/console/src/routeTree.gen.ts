@@ -10,43 +10,12 @@
 
 import { Route as rootRouteImport } from './routes/__root'
 import { Route as AuthedRouteImport } from './routes/_authed'
-import { Route as AuthorizeDeviceRouteImport } from './routes/authorize-device'
-import { Route as InviteRouteImport } from './routes/invite'
 import { Route as LoginRouteImport } from './routes/login'
-import { Route as ResetPasswordRouteImport } from './routes/reset-password'
-import { Route as SetupRouteImport } from './routes/setup'
+import { Route as RegisterRouteImport } from './routes/register'
 import { Route as AuthedIndexRouteImport } from './routes/_authed/index'
-import { Route as AuthedNetworksNetworkRouteImport } from './routes/_authed/networks/$network'
-import { Route as AuthedNetworksNetworkIndexRouteImport } from './routes/_authed/networks/$network/index'
-import { Route as AuthedNetworksNetworkAccountRouteImport } from './routes/_authed/networks/$network/account'
-import { Route as AuthedNetworksNetworkMembersRouteImport } from './routes/_authed/networks/$network/members'
-import { Route as AuthedNetworksNetworkNodesRouteImport } from './routes/_authed/networks/$network/nodes'
-import { Route as AuthedNetworksNetworkOverviewRouteImport } from './routes/_authed/networks/$network/overview'
-import { Route as AuthedNetworksNetworkPolicyRouteImport } from './routes/_authed/networks/$network/policy'
-import { Route as AuthedNetworksNetworkSettingsRouteImport } from './routes/_authed/networks/$network/settings'
-import { Route as AuthedNetworksNetworkMembersIndexRouteImport } from './routes/_authed/networks/$network/members/index'
-import { Route as AuthedNetworksNetworkMembersMemberRouteImport } from './routes/_authed/networks/$network/members/$member'
-import { Route as AuthedNetworksNetworkNodesIndexRouteImport } from './routes/_authed/networks/$network/nodes/index'
-import { Route as AuthedNetworksNetworkNodesNodeRouteImport } from './routes/_authed/networks/$network/nodes/$node'
-import { Route as AuthedNetworksNetworkNodesAddRouteImport } from './routes/_authed/networks/$network/nodes/add'
-import { Route as AuthedNetworksNetworkPolicyIndexRouteImport } from './routes/_authed/networks/$network/policy/index'
-import { Route as AuthedNetworksNetworkPolicyLayerRouteImport } from './routes/_authed/networks/$network/policy/$layer'
-import { Route as AuthedNetworksNetworkSettingsIndexRouteImport } from './routes/_authed/networks/$network/settings/index'
-import { Route as AuthedNetworksNetworkSettingsSectionRouteImport } from './routes/_authed/networks/$network/settings/$section'
-import { Route as AuthedNetworksNetworkNodesTagsTagRouteImport } from './routes/_authed/networks/$network/nodes/tags/$tag'
 
 const AuthedRoute = AuthedRouteImport.update({
   id: '/_authed',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const AuthorizeDeviceRoute = AuthorizeDeviceRouteImport.update({
-  id: '/authorize-device',
-  path: '/authorize-device',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const InviteRoute = InviteRouteImport.update({
-  id: '/invite',
-  path: '/invite',
   getParentRoute: () => rootRouteImport,
 } as any)
 const LoginRoute = LoginRouteImport.update({
@@ -54,14 +23,9 @@ const LoginRoute = LoginRouteImport.update({
   path: '/login',
   getParentRoute: () => rootRouteImport,
 } as any)
-const ResetPasswordRoute = ResetPasswordRouteImport.update({
-  id: '/reset-password',
-  path: '/reset-password',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const SetupRoute = SetupRouteImport.update({
-  id: '/setup',
-  path: '/setup',
+const RegisterRoute = RegisterRouteImport.update({
+  id: '/register',
+  path: '/register',
   getParentRoute: () => rootRouteImport,
 } as any)
 const AuthedIndexRoute = AuthedIndexRouteImport.update({
@@ -69,273 +33,36 @@ const AuthedIndexRoute = AuthedIndexRouteImport.update({
   path: '/',
   getParentRoute: () => AuthedRoute,
 } as any)
-const AuthedNetworksNetworkRoute = AuthedNetworksNetworkRouteImport.update({
-  id: '/networks/$network',
-  path: '/networks/$network',
-  getParentRoute: () => AuthedRoute,
-} as any)
-const AuthedNetworksNetworkIndexRoute =
-  AuthedNetworksNetworkIndexRouteImport.update({
-    id: '/',
-    path: '/',
-    getParentRoute: () => AuthedNetworksNetworkRoute,
-  } as any)
-const AuthedNetworksNetworkAccountRoute =
-  AuthedNetworksNetworkAccountRouteImport.update({
-    id: '/account',
-    path: '/account',
-    getParentRoute: () => AuthedNetworksNetworkRoute,
-  } as any)
-const AuthedNetworksNetworkMembersRoute =
-  AuthedNetworksNetworkMembersRouteImport.update({
-    id: '/members',
-    path: '/members',
-    getParentRoute: () => AuthedNetworksNetworkRoute,
-  } as any)
-const AuthedNetworksNetworkNodesRoute =
-  AuthedNetworksNetworkNodesRouteImport.update({
-    id: '/nodes',
-    path: '/nodes',
-    getParentRoute: () => AuthedNetworksNetworkRoute,
-  } as any)
-const AuthedNetworksNetworkOverviewRoute =
-  AuthedNetworksNetworkOverviewRouteImport.update({
-    id: '/overview',
-    path: '/overview',
-    getParentRoute: () => AuthedNetworksNetworkRoute,
-  } as any)
-const AuthedNetworksNetworkPolicyRoute =
-  AuthedNetworksNetworkPolicyRouteImport.update({
-    id: '/policy',
-    path: '/policy',
-    getParentRoute: () => AuthedNetworksNetworkRoute,
-  } as any)
-const AuthedNetworksNetworkSettingsRoute =
-  AuthedNetworksNetworkSettingsRouteImport.update({
-    id: '/settings',
-    path: '/settings',
-    getParentRoute: () => AuthedNetworksNetworkRoute,
-  } as any)
-const AuthedNetworksNetworkMembersIndexRoute =
-  AuthedNetworksNetworkMembersIndexRouteImport.update({
-    id: '/',
-    path: '/',
-    getParentRoute: () => AuthedNetworksNetworkMembersRoute,
-  } as any)
-const AuthedNetworksNetworkMembersMemberRoute =
-  AuthedNetworksNetworkMembersMemberRouteImport.update({
-    id: '/$member',
-    path: '/$member',
-    getParentRoute: () => AuthedNetworksNetworkMembersRoute,
-  } as any)
-const AuthedNetworksNetworkNodesIndexRoute =
-  AuthedNetworksNetworkNodesIndexRouteImport.update({
-    id: '/',
-    path: '/',
-    getParentRoute: () => AuthedNetworksNetworkNodesRoute,
-  } as any)
-const AuthedNetworksNetworkNodesNodeRoute =
-  AuthedNetworksNetworkNodesNodeRouteImport.update({
-    id: '/$node',
-    path: '/$node',
-    getParentRoute: () => AuthedNetworksNetworkNodesRoute,
-  } as any)
-const AuthedNetworksNetworkNodesAddRoute =
-  AuthedNetworksNetworkNodesAddRouteImport.update({
-    id: '/add',
-    path: '/add',
-    getParentRoute: () => AuthedNetworksNetworkNodesRoute,
-  } as any)
-const AuthedNetworksNetworkPolicyIndexRoute =
-  AuthedNetworksNetworkPolicyIndexRouteImport.update({
-    id: '/',
-    path: '/',
-    getParentRoute: () => AuthedNetworksNetworkPolicyRoute,
-  } as any)
-const AuthedNetworksNetworkPolicyLayerRoute =
-  AuthedNetworksNetworkPolicyLayerRouteImport.update({
-    id: '/$layer',
-    path: '/$layer',
-    getParentRoute: () => AuthedNetworksNetworkPolicyRoute,
-  } as any)
-const AuthedNetworksNetworkSettingsIndexRoute =
-  AuthedNetworksNetworkSettingsIndexRouteImport.update({
-    id: '/',
-    path: '/',
-    getParentRoute: () => AuthedNetworksNetworkSettingsRoute,
-  } as any)
-const AuthedNetworksNetworkSettingsSectionRoute =
-  AuthedNetworksNetworkSettingsSectionRouteImport.update({
-    id: '/$section',
-    path: '/$section',
-    getParentRoute: () => AuthedNetworksNetworkSettingsRoute,
-  } as any)
-const AuthedNetworksNetworkNodesTagsTagRoute =
-  AuthedNetworksNetworkNodesTagsTagRouteImport.update({
-    id: '/tags/$tag',
-    path: '/tags/$tag',
-    getParentRoute: () => AuthedNetworksNetworkNodesRoute,
-  } as any)
 
 export interface FileRoutesByFullPath {
   '/': typeof AuthedIndexRoute
-  '/authorize-device': typeof AuthorizeDeviceRoute
-  '/invite': typeof InviteRoute
   '/login': typeof LoginRoute
-  '/reset-password': typeof ResetPasswordRoute
-  '/setup': typeof SetupRoute
-  '/networks/$network': typeof AuthedNetworksNetworkRouteWithChildren
-  '/networks/$network/account': typeof AuthedNetworksNetworkAccountRoute
-  '/networks/$network/members': typeof AuthedNetworksNetworkMembersRouteWithChildren
-  '/networks/$network/nodes': typeof AuthedNetworksNetworkNodesRouteWithChildren
-  '/networks/$network/overview': typeof AuthedNetworksNetworkOverviewRoute
-  '/networks/$network/policy': typeof AuthedNetworksNetworkPolicyRouteWithChildren
-  '/networks/$network/settings': typeof AuthedNetworksNetworkSettingsRouteWithChildren
-  '/networks/$network/': typeof AuthedNetworksNetworkIndexRoute
-  '/networks/$network/members/$member': typeof AuthedNetworksNetworkMembersMemberRoute
-  '/networks/$network/nodes/$node': typeof AuthedNetworksNetworkNodesNodeRoute
-  '/networks/$network/nodes/add': typeof AuthedNetworksNetworkNodesAddRoute
-  '/networks/$network/policy/$layer': typeof AuthedNetworksNetworkPolicyLayerRoute
-  '/networks/$network/settings/$section': typeof AuthedNetworksNetworkSettingsSectionRoute
-  '/networks/$network/members/': typeof AuthedNetworksNetworkMembersIndexRoute
-  '/networks/$network/nodes/': typeof AuthedNetworksNetworkNodesIndexRoute
-  '/networks/$network/policy/': typeof AuthedNetworksNetworkPolicyIndexRoute
-  '/networks/$network/settings/': typeof AuthedNetworksNetworkSettingsIndexRoute
-  '/networks/$network/nodes/tags/$tag': typeof AuthedNetworksNetworkNodesTagsTagRoute
+  '/register': typeof RegisterRoute
 }
 export interface FileRoutesByTo {
-  '/authorize-device': typeof AuthorizeDeviceRoute
-  '/invite': typeof InviteRoute
   '/login': typeof LoginRoute
-  '/reset-password': typeof ResetPasswordRoute
-  '/setup': typeof SetupRoute
+  '/register': typeof RegisterRoute
   '/': typeof AuthedIndexRoute
-  '/networks/$network/account': typeof AuthedNetworksNetworkAccountRoute
-  '/networks/$network/overview': typeof AuthedNetworksNetworkOverviewRoute
-  '/networks/$network': typeof AuthedNetworksNetworkIndexRoute
-  '/networks/$network/members/$member': typeof AuthedNetworksNetworkMembersMemberRoute
-  '/networks/$network/nodes/$node': typeof AuthedNetworksNetworkNodesNodeRoute
-  '/networks/$network/nodes/add': typeof AuthedNetworksNetworkNodesAddRoute
-  '/networks/$network/policy/$layer': typeof AuthedNetworksNetworkPolicyLayerRoute
-  '/networks/$network/settings/$section': typeof AuthedNetworksNetworkSettingsSectionRoute
-  '/networks/$network/members': typeof AuthedNetworksNetworkMembersIndexRoute
-  '/networks/$network/nodes': typeof AuthedNetworksNetworkNodesIndexRoute
-  '/networks/$network/policy': typeof AuthedNetworksNetworkPolicyIndexRoute
-  '/networks/$network/settings': typeof AuthedNetworksNetworkSettingsIndexRoute
-  '/networks/$network/nodes/tags/$tag': typeof AuthedNetworksNetworkNodesTagsTagRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/_authed': typeof AuthedRouteWithChildren
-  '/authorize-device': typeof AuthorizeDeviceRoute
-  '/invite': typeof InviteRoute
   '/login': typeof LoginRoute
-  '/reset-password': typeof ResetPasswordRoute
-  '/setup': typeof SetupRoute
+  '/register': typeof RegisterRoute
   '/_authed/': typeof AuthedIndexRoute
-  '/_authed/networks/$network': typeof AuthedNetworksNetworkRouteWithChildren
-  '/_authed/networks/$network/account': typeof AuthedNetworksNetworkAccountRoute
-  '/_authed/networks/$network/members': typeof AuthedNetworksNetworkMembersRouteWithChildren
-  '/_authed/networks/$network/nodes': typeof AuthedNetworksNetworkNodesRouteWithChildren
-  '/_authed/networks/$network/overview': typeof AuthedNetworksNetworkOverviewRoute
-  '/_authed/networks/$network/policy': typeof AuthedNetworksNetworkPolicyRouteWithChildren
-  '/_authed/networks/$network/settings': typeof AuthedNetworksNetworkSettingsRouteWithChildren
-  '/_authed/networks/$network/': typeof AuthedNetworksNetworkIndexRoute
-  '/_authed/networks/$network/members/$member': typeof AuthedNetworksNetworkMembersMemberRoute
-  '/_authed/networks/$network/nodes/$node': typeof AuthedNetworksNetworkNodesNodeRoute
-  '/_authed/networks/$network/nodes/add': typeof AuthedNetworksNetworkNodesAddRoute
-  '/_authed/networks/$network/policy/$layer': typeof AuthedNetworksNetworkPolicyLayerRoute
-  '/_authed/networks/$network/settings/$section': typeof AuthedNetworksNetworkSettingsSectionRoute
-  '/_authed/networks/$network/members/': typeof AuthedNetworksNetworkMembersIndexRoute
-  '/_authed/networks/$network/nodes/': typeof AuthedNetworksNetworkNodesIndexRoute
-  '/_authed/networks/$network/policy/': typeof AuthedNetworksNetworkPolicyIndexRoute
-  '/_authed/networks/$network/settings/': typeof AuthedNetworksNetworkSettingsIndexRoute
-  '/_authed/networks/$network/nodes/tags/$tag': typeof AuthedNetworksNetworkNodesTagsTagRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
-  fullPaths:
-    | '/'
-    | '/authorize-device'
-    | '/invite'
-    | '/login'
-    | '/reset-password'
-    | '/setup'
-    | '/networks/$network'
-    | '/networks/$network/account'
-    | '/networks/$network/members'
-    | '/networks/$network/nodes'
-    | '/networks/$network/overview'
-    | '/networks/$network/policy'
-    | '/networks/$network/settings'
-    | '/networks/$network/'
-    | '/networks/$network/members/$member'
-    | '/networks/$network/nodes/$node'
-    | '/networks/$network/nodes/add'
-    | '/networks/$network/policy/$layer'
-    | '/networks/$network/settings/$section'
-    | '/networks/$network/members/'
-    | '/networks/$network/nodes/'
-    | '/networks/$network/policy/'
-    | '/networks/$network/settings/'
-    | '/networks/$network/nodes/tags/$tag'
+  fullPaths: '/' | '/login' | '/register'
   fileRoutesByTo: FileRoutesByTo
-  to:
-    | '/authorize-device'
-    | '/invite'
-    | '/login'
-    | '/reset-password'
-    | '/setup'
-    | '/'
-    | '/networks/$network/account'
-    | '/networks/$network/overview'
-    | '/networks/$network'
-    | '/networks/$network/members/$member'
-    | '/networks/$network/nodes/$node'
-    | '/networks/$network/nodes/add'
-    | '/networks/$network/policy/$layer'
-    | '/networks/$network/settings/$section'
-    | '/networks/$network/members'
-    | '/networks/$network/nodes'
-    | '/networks/$network/policy'
-    | '/networks/$network/settings'
-    | '/networks/$network/nodes/tags/$tag'
-  id:
-    | '__root__'
-    | '/_authed'
-    | '/authorize-device'
-    | '/invite'
-    | '/login'
-    | '/reset-password'
-    | '/setup'
-    | '/_authed/'
-    | '/_authed/networks/$network'
-    | '/_authed/networks/$network/account'
-    | '/_authed/networks/$network/members'
-    | '/_authed/networks/$network/nodes'
-    | '/_authed/networks/$network/overview'
-    | '/_authed/networks/$network/policy'
-    | '/_authed/networks/$network/settings'
-    | '/_authed/networks/$network/'
-    | '/_authed/networks/$network/members/$member'
-    | '/_authed/networks/$network/nodes/$node'
-    | '/_authed/networks/$network/nodes/add'
-    | '/_authed/networks/$network/policy/$layer'
-    | '/_authed/networks/$network/settings/$section'
-    | '/_authed/networks/$network/members/'
-    | '/_authed/networks/$network/nodes/'
-    | '/_authed/networks/$network/policy/'
-    | '/_authed/networks/$network/settings/'
-    | '/_authed/networks/$network/nodes/tags/$tag'
+  to: '/login' | '/register' | '/'
+  id: '__root__' | '/_authed' | '/login' | '/register' | '/_authed/'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
   AuthedRoute: typeof AuthedRouteWithChildren
-  AuthorizeDeviceRoute: typeof AuthorizeDeviceRoute
-  InviteRoute: typeof InviteRoute
   LoginRoute: typeof LoginRoute
-  ResetPasswordRoute: typeof ResetPasswordRoute
-  SetupRoute: typeof SetupRoute
+  RegisterRoute: typeof RegisterRoute
 }
 
 declare module '@tanstack/react-router' {
@@ -347,20 +74,6 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AuthedRouteImport
       parentRoute: typeof rootRouteImport
     }
-    '/authorize-device': {
-      id: '/authorize-device'
-      path: '/authorize-device'
-      fullPath: '/authorize-device'
-      preLoaderRoute: typeof AuthorizeDeviceRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/invite': {
-      id: '/invite'
-      path: '/invite'
-      fullPath: '/invite'
-      preLoaderRoute: typeof InviteRouteImport
-      parentRoute: typeof rootRouteImport
-    }
     '/login': {
       id: '/login'
       path: '/login'
@@ -368,18 +81,11 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof LoginRouteImport
       parentRoute: typeof rootRouteImport
     }
-    '/reset-password': {
-      id: '/reset-password'
-      path: '/reset-password'
-      fullPath: '/reset-password'
-      preLoaderRoute: typeof ResetPasswordRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/setup': {
-      id: '/setup'
-      path: '/setup'
-      fullPath: '/setup'
-      preLoaderRoute: typeof SetupRouteImport
+    '/register': {
+      id: '/register'
+      path: '/register'
+      fullPath: '/register'
+      preLoaderRoute: typeof RegisterRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/_authed/': {
@@ -389,246 +95,15 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AuthedIndexRouteImport
       parentRoute: typeof AuthedRoute
     }
-    '/_authed/networks/$network': {
-      id: '/_authed/networks/$network'
-      path: '/networks/$network'
-      fullPath: '/networks/$network'
-      preLoaderRoute: typeof AuthedNetworksNetworkRouteImport
-      parentRoute: typeof AuthedRoute
-    }
-    '/_authed/networks/$network/': {
-      id: '/_authed/networks/$network/'
-      path: '/'
-      fullPath: '/networks/$network/'
-      preLoaderRoute: typeof AuthedNetworksNetworkIndexRouteImport
-      parentRoute: typeof AuthedNetworksNetworkRoute
-    }
-    '/_authed/networks/$network/account': {
-      id: '/_authed/networks/$network/account'
-      path: '/account'
-      fullPath: '/networks/$network/account'
-      preLoaderRoute: typeof AuthedNetworksNetworkAccountRouteImport
-      parentRoute: typeof AuthedNetworksNetworkRoute
-    }
-    '/_authed/networks/$network/members': {
-      id: '/_authed/networks/$network/members'
-      path: '/members'
-      fullPath: '/networks/$network/members'
-      preLoaderRoute: typeof AuthedNetworksNetworkMembersRouteImport
-      parentRoute: typeof AuthedNetworksNetworkRoute
-    }
-    '/_authed/networks/$network/nodes': {
-      id: '/_authed/networks/$network/nodes'
-      path: '/nodes'
-      fullPath: '/networks/$network/nodes'
-      preLoaderRoute: typeof AuthedNetworksNetworkNodesRouteImport
-      parentRoute: typeof AuthedNetworksNetworkRoute
-    }
-    '/_authed/networks/$network/overview': {
-      id: '/_authed/networks/$network/overview'
-      path: '/overview'
-      fullPath: '/networks/$network/overview'
-      preLoaderRoute: typeof AuthedNetworksNetworkOverviewRouteImport
-      parentRoute: typeof AuthedNetworksNetworkRoute
-    }
-    '/_authed/networks/$network/policy': {
-      id: '/_authed/networks/$network/policy'
-      path: '/policy'
-      fullPath: '/networks/$network/policy'
-      preLoaderRoute: typeof AuthedNetworksNetworkPolicyRouteImport
-      parentRoute: typeof AuthedNetworksNetworkRoute
-    }
-    '/_authed/networks/$network/settings': {
-      id: '/_authed/networks/$network/settings'
-      path: '/settings'
-      fullPath: '/networks/$network/settings'
-      preLoaderRoute: typeof AuthedNetworksNetworkSettingsRouteImport
-      parentRoute: typeof AuthedNetworksNetworkRoute
-    }
-    '/_authed/networks/$network/members/': {
-      id: '/_authed/networks/$network/members/'
-      path: '/'
-      fullPath: '/networks/$network/members/'
-      preLoaderRoute: typeof AuthedNetworksNetworkMembersIndexRouteImport
-      parentRoute: typeof AuthedNetworksNetworkMembersRoute
-    }
-    '/_authed/networks/$network/members/$member': {
-      id: '/_authed/networks/$network/members/$member'
-      path: '/$member'
-      fullPath: '/networks/$network/members/$member'
-      preLoaderRoute: typeof AuthedNetworksNetworkMembersMemberRouteImport
-      parentRoute: typeof AuthedNetworksNetworkMembersRoute
-    }
-    '/_authed/networks/$network/nodes/': {
-      id: '/_authed/networks/$network/nodes/'
-      path: '/'
-      fullPath: '/networks/$network/nodes/'
-      preLoaderRoute: typeof AuthedNetworksNetworkNodesIndexRouteImport
-      parentRoute: typeof AuthedNetworksNetworkNodesRoute
-    }
-    '/_authed/networks/$network/nodes/$node': {
-      id: '/_authed/networks/$network/nodes/$node'
-      path: '/$node'
-      fullPath: '/networks/$network/nodes/$node'
-      preLoaderRoute: typeof AuthedNetworksNetworkNodesNodeRouteImport
-      parentRoute: typeof AuthedNetworksNetworkNodesRoute
-    }
-    '/_authed/networks/$network/nodes/add': {
-      id: '/_authed/networks/$network/nodes/add'
-      path: '/add'
-      fullPath: '/networks/$network/nodes/add'
-      preLoaderRoute: typeof AuthedNetworksNetworkNodesAddRouteImport
-      parentRoute: typeof AuthedNetworksNetworkNodesRoute
-    }
-    '/_authed/networks/$network/policy/': {
-      id: '/_authed/networks/$network/policy/'
-      path: '/'
-      fullPath: '/networks/$network/policy/'
-      preLoaderRoute: typeof AuthedNetworksNetworkPolicyIndexRouteImport
-      parentRoute: typeof AuthedNetworksNetworkPolicyRoute
-    }
-    '/_authed/networks/$network/policy/$layer': {
-      id: '/_authed/networks/$network/policy/$layer'
-      path: '/$layer'
-      fullPath: '/networks/$network/policy/$layer'
-      preLoaderRoute: typeof AuthedNetworksNetworkPolicyLayerRouteImport
-      parentRoute: typeof AuthedNetworksNetworkPolicyRoute
-    }
-    '/_authed/networks/$network/settings/': {
-      id: '/_authed/networks/$network/settings/'
-      path: '/'
-      fullPath: '/networks/$network/settings/'
-      preLoaderRoute: typeof AuthedNetworksNetworkSettingsIndexRouteImport
-      parentRoute: typeof AuthedNetworksNetworkSettingsRoute
-    }
-    '/_authed/networks/$network/settings/$section': {
-      id: '/_authed/networks/$network/settings/$section'
-      path: '/$section'
-      fullPath: '/networks/$network/settings/$section'
-      preLoaderRoute: typeof AuthedNetworksNetworkSettingsSectionRouteImport
-      parentRoute: typeof AuthedNetworksNetworkSettingsRoute
-    }
-    '/_authed/networks/$network/nodes/tags/$tag': {
-      id: '/_authed/networks/$network/nodes/tags/$tag'
-      path: '/tags/$tag'
-      fullPath: '/networks/$network/nodes/tags/$tag'
-      preLoaderRoute: typeof AuthedNetworksNetworkNodesTagsTagRouteImport
-      parentRoute: typeof AuthedNetworksNetworkNodesRoute
-    }
   }
 }
-
-interface AuthedNetworksNetworkMembersRouteChildren {
-  AuthedNetworksNetworkMembersMemberRoute: typeof AuthedNetworksNetworkMembersMemberRoute
-  AuthedNetworksNetworkMembersIndexRoute: typeof AuthedNetworksNetworkMembersIndexRoute
-}
-
-const AuthedNetworksNetworkMembersRouteChildren: AuthedNetworksNetworkMembersRouteChildren =
-  {
-    AuthedNetworksNetworkMembersMemberRoute:
-      AuthedNetworksNetworkMembersMemberRoute,
-    AuthedNetworksNetworkMembersIndexRoute:
-      AuthedNetworksNetworkMembersIndexRoute,
-  }
-
-const AuthedNetworksNetworkMembersRouteWithChildren =
-  AuthedNetworksNetworkMembersRoute._addFileChildren(
-    AuthedNetworksNetworkMembersRouteChildren,
-  )
-
-interface AuthedNetworksNetworkNodesRouteChildren {
-  AuthedNetworksNetworkNodesNodeRoute: typeof AuthedNetworksNetworkNodesNodeRoute
-  AuthedNetworksNetworkNodesAddRoute: typeof AuthedNetworksNetworkNodesAddRoute
-  AuthedNetworksNetworkNodesIndexRoute: typeof AuthedNetworksNetworkNodesIndexRoute
-  AuthedNetworksNetworkNodesTagsTagRoute: typeof AuthedNetworksNetworkNodesTagsTagRoute
-}
-
-const AuthedNetworksNetworkNodesRouteChildren: AuthedNetworksNetworkNodesRouteChildren =
-  {
-    AuthedNetworksNetworkNodesNodeRoute: AuthedNetworksNetworkNodesNodeRoute,
-    AuthedNetworksNetworkNodesAddRoute: AuthedNetworksNetworkNodesAddRoute,
-    AuthedNetworksNetworkNodesIndexRoute: AuthedNetworksNetworkNodesIndexRoute,
-    AuthedNetworksNetworkNodesTagsTagRoute:
-      AuthedNetworksNetworkNodesTagsTagRoute,
-  }
-
-const AuthedNetworksNetworkNodesRouteWithChildren =
-  AuthedNetworksNetworkNodesRoute._addFileChildren(
-    AuthedNetworksNetworkNodesRouteChildren,
-  )
-
-interface AuthedNetworksNetworkPolicyRouteChildren {
-  AuthedNetworksNetworkPolicyLayerRoute: typeof AuthedNetworksNetworkPolicyLayerRoute
-  AuthedNetworksNetworkPolicyIndexRoute: typeof AuthedNetworksNetworkPolicyIndexRoute
-}
-
-const AuthedNetworksNetworkPolicyRouteChildren: AuthedNetworksNetworkPolicyRouteChildren =
-  {
-    AuthedNetworksNetworkPolicyLayerRoute:
-      AuthedNetworksNetworkPolicyLayerRoute,
-    AuthedNetworksNetworkPolicyIndexRoute:
-      AuthedNetworksNetworkPolicyIndexRoute,
-  }
-
-const AuthedNetworksNetworkPolicyRouteWithChildren =
-  AuthedNetworksNetworkPolicyRoute._addFileChildren(
-    AuthedNetworksNetworkPolicyRouteChildren,
-  )
-
-interface AuthedNetworksNetworkSettingsRouteChildren {
-  AuthedNetworksNetworkSettingsSectionRoute: typeof AuthedNetworksNetworkSettingsSectionRoute
-  AuthedNetworksNetworkSettingsIndexRoute: typeof AuthedNetworksNetworkSettingsIndexRoute
-}
-
-const AuthedNetworksNetworkSettingsRouteChildren: AuthedNetworksNetworkSettingsRouteChildren =
-  {
-    AuthedNetworksNetworkSettingsSectionRoute:
-      AuthedNetworksNetworkSettingsSectionRoute,
-    AuthedNetworksNetworkSettingsIndexRoute:
-      AuthedNetworksNetworkSettingsIndexRoute,
-  }
-
-const AuthedNetworksNetworkSettingsRouteWithChildren =
-  AuthedNetworksNetworkSettingsRoute._addFileChildren(
-    AuthedNetworksNetworkSettingsRouteChildren,
-  )
-
-interface AuthedNetworksNetworkRouteChildren {
-  AuthedNetworksNetworkAccountRoute: typeof AuthedNetworksNetworkAccountRoute
-  AuthedNetworksNetworkMembersRoute: typeof AuthedNetworksNetworkMembersRouteWithChildren
-  AuthedNetworksNetworkNodesRoute: typeof AuthedNetworksNetworkNodesRouteWithChildren
-  AuthedNetworksNetworkOverviewRoute: typeof AuthedNetworksNetworkOverviewRoute
-  AuthedNetworksNetworkPolicyRoute: typeof AuthedNetworksNetworkPolicyRouteWithChildren
-  AuthedNetworksNetworkSettingsRoute: typeof AuthedNetworksNetworkSettingsRouteWithChildren
-  AuthedNetworksNetworkIndexRoute: typeof AuthedNetworksNetworkIndexRoute
-}
-
-const AuthedNetworksNetworkRouteChildren: AuthedNetworksNetworkRouteChildren = {
-  AuthedNetworksNetworkAccountRoute: AuthedNetworksNetworkAccountRoute,
-  AuthedNetworksNetworkMembersRoute:
-    AuthedNetworksNetworkMembersRouteWithChildren,
-  AuthedNetworksNetworkNodesRoute: AuthedNetworksNetworkNodesRouteWithChildren,
-  AuthedNetworksNetworkOverviewRoute: AuthedNetworksNetworkOverviewRoute,
-  AuthedNetworksNetworkPolicyRoute:
-    AuthedNetworksNetworkPolicyRouteWithChildren,
-  AuthedNetworksNetworkSettingsRoute:
-    AuthedNetworksNetworkSettingsRouteWithChildren,
-  AuthedNetworksNetworkIndexRoute: AuthedNetworksNetworkIndexRoute,
-}
-
-const AuthedNetworksNetworkRouteWithChildren =
-  AuthedNetworksNetworkRoute._addFileChildren(
-    AuthedNetworksNetworkRouteChildren,
-  )
 
 interface AuthedRouteChildren {
   AuthedIndexRoute: typeof AuthedIndexRoute
-  AuthedNetworksNetworkRoute: typeof AuthedNetworksNetworkRouteWithChildren
 }
 
 const AuthedRouteChildren: AuthedRouteChildren = {
   AuthedIndexRoute: AuthedIndexRoute,
-  AuthedNetworksNetworkRoute: AuthedNetworksNetworkRouteWithChildren,
 }
 
 const AuthedRouteWithChildren =
@@ -636,11 +111,8 @@ const AuthedRouteWithChildren =
 
 const rootRouteChildren: RootRouteChildren = {
   AuthedRoute: AuthedRouteWithChildren,
-  AuthorizeDeviceRoute: AuthorizeDeviceRoute,
-  InviteRoute: InviteRoute,
   LoginRoute: LoginRoute,
-  ResetPasswordRoute: ResetPasswordRoute,
-  SetupRoute: SetupRoute,
+  RegisterRoute: RegisterRoute,
 }
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)

@@ -3,13 +3,15 @@ import { paraglideVitePlugin } from "@inlang/paraglide-js"
 import tailwindcss from "@tailwindcss/vite"
 import { tanstackRouter } from "@tanstack/router-plugin/vite"
 import react from "@vitejs/plugin-react"
-import { defineConfig } from "vite"
+import { defineConfig, type UserConfig } from "vite"
 
 // Same origin in development as in production, where the controller serves
-// this build: the browser only ever talks to `/api` on its own origin.
-const controller = process.env.MESHWAY_CONTROLLER_URL ?? "http://127.0.0.1:8420"
+// this build: the browser only ever talks to `/api` on its own origin. The
+// development server proxies it to the V2 controller named here; there is no
+// default, so it never reaches another controller by accident.
+const controller = process.env.MESHWAY_CONTROLLER_URL
 
-export default defineConfig({
+const config = {
   plugins: [
     tanstackRouter({ target: "react", autoCodeSplitting: true }),
     paraglideVitePlugin({
@@ -29,8 +31,16 @@ export default defineConfig({
     },
   },
   server: {
-    proxy: {
-      "/api": { target: controller, changeOrigin: false },
-    },
+    proxy: controller
+      ? { "/api": { target: controller, changeOrigin: false } }
+      : undefined,
   },
+} satisfies UserConfig
+
+export default defineConfig(({ command }) => {
+  if (command === "serve" && !controller)
+    throw new Error(
+      "Set MESHWAY_CONTROLLER_URL to the V2 controller's origin (http://127.0.0.1:<port>)."
+    )
+  return config
 })
