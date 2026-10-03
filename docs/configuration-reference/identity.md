@@ -45,7 +45,7 @@ Tag 在这里定义，在 `nodes[id].tags` 中分配。没有独立 Tag ID 或�
 
 ## Selectors
 
-以下是 grants、连接和路由可复用的选择器提案；各字段可接受的子集由所属规则定义。
+以下是 access、topology 和 routing 可复用的选择器提案；各字段可接受的子集由所属规则定义。
 
 | 值 | 含义 |
 | --- | --- |

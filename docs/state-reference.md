@@ -23,7 +23,8 @@ description: 与持久配置分开发送的运行状态草案。
     "reportedHostname": "linux-host",
     "capabilities": [],
     "listeners": {},
-    "channels": {},
+    "links": {},
+    "paths": {},
     "selectedProfile": "mesh",
     "problems": []
   }
@@ -42,11 +43,20 @@ description: 与持久配置分开发送的运行状态草案。
 | `reportedHostname` | 操作系统报告 | 不覆盖 Config 中的规范 hostname |
 | `capabilities` | 当前构建 | 实际支持的协议、监听／拨号等能力，不等于管理许可 |
 | `listeners` | 资源 owner | 实际 bind、就绪／错误、所加载材料的公有指纹 |
-| `channels` | 已认证通道 owner | peer、承载、实际 socket／代际、建连方向、证据与期限 |
+| `links` | 已认证通道 owner | peer、承载、实际 socket／代际、建连方向、证据与期限 |
+| `paths` | 业务执行运行时 | 会话选择／使用的有序节点路径、来源与结果，不冒充逐跳 trace |
 | `selectedProfile` | 用户选择／自动地区结果 | 必须在 Config 允许范围内，不能增加出口授权 |
 | `problems` | 明确失败事件 | 类型化原因与上下文，不把缺报告当成具体错误 |
 
 namespace、socket ordinal、候选验证时间等详细字段待执行侧接口统一后定版；不按 listener 推测所有拨号 socket 的归属。
+
+## links
+
+当前已认证承载通道的观测。配置中的 topology 只给出允许的图；允许 A—B 不表示 State 中已经有 A—B。未知、过期或缺少认证证据时不能补成已连接。
+
+## paths
+
+运行时为业务选择／使用的逻辑路径。routing 定义路径约束，State 报告对应执行事实；保留观测来源、配置引用及发送／确认状态，不能拿配置预览充当真实 trace。
 
 ## 分开发送
 
@@ -57,6 +67,8 @@ namespace、socket ordinal、候选验证时间等详细字段待执行侧接口
 这三类载荷不是同一份 JSON 的无条件转发。Config／State 是不同消息与版本语义，可以复用一条传输连接，具体 HTTP／stream 方式待确认。
 
 配置依赖尚未安装时，执行相关 State 不可使用；有界等待或重取配置。旧 epoch、过期状态和无权 peer 不能激活连接。读取、重发和浏览器轮询不刷新原始观测时间。
+
+Agent 自报告不是授权来源：User／Tag 归属、可信公钥绑定和 access 由控制面的身份／配置决定，不接受设备自行声明后直接提升权限。即使发送节点修改自身配置或报告，接收节点仍依据自己的可信配置执行[访问检查](/configuration-reference/access#enforcement)。
 
 ## 测量
 

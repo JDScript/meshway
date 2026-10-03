@@ -62,7 +62,7 @@ Config 已撤回或 lease 到期时停止旧运行代际，不等 State 通道�
 
 大量编译工作可在事务外进行，但提交时必须 CAS 检查配置与相关实体输入仍一致。单节点保存／激活的原子性不等于整网同时切换。
 
-grants／connections 没有 ID：本版增量可整段替换数组，错误／编辑定位使用配置 revision 与 JSON Pointer。remark 允许重复，不承担 patch 主键职责；不为增量重新要求用户分配规则 ID。
+access／topology 规则没有 ID：本版增量可整段替换数组，错误／编辑定位使用配置 revision 与 JSON Pointer。remark 允许重复，不承担 patch 主键职责；不为增量重新要求用户分配规则 ID。
 
 ## Rollback
 

@@ -9,13 +9,21 @@ description: Meshway 网络配置、默认行为和协议字段参考。
 
 Config 相对静态，完整版本保存到数据库；State 随运行变化。[两者分开发送](/configuration-reference/synchronization)。
 
+| 配置 | 回答的问题 |
+| --- | --- |
+| `access` · 访问权限 | 谁可以访问什么？ |
+| `topology` · 组网规则 | 图上允许存在哪些边，如何约束建连？ |
+| `routing` · 流量路由 | 获准的业务在图上经过哪里？ |
+
+topology 是允许的图，不是当前连接状况；实际通道和路径分别由 [State.links / State.paths](/state-reference) 表达。
+
 ## Structure
 
 ```jsonc
 {
   "defaults": {
-    "grants": "deny",
-    "connections": "allow"
+    "access": "deny",
+    "topology": "allow"
   },
   "groups": {
     "group:dev": ["alice@example.com"]
@@ -23,7 +31,7 @@ Config 相对静态，完整版本保存到数据库；State 随运行变化。[
   "tagsOwners": {
     "tag:backend": ["group:dev"]
   },
-  "grants": [
+  "access": [
     {
       "remark": "开发组访问后端 HTTPS",
       "src": ["group:dev"],
@@ -56,7 +64,7 @@ Config 相对静态，完整版本保存到数据库；State 随运行变化。[
     "searchDomains": [],
     "overrideLocal": false
   },
-  "connections": [],
+  "topology": [],
   "routing": {
     "mesh": [],
     "egress": { "rules": [], "profiles": {}, "assignments": [] }
@@ -74,17 +82,17 @@ Config 相对静态，完整版本保存到数据库；State 随运行变化。[
 | `defaults` | `Defaults` | [未命中规则时的行为与默认出站配置](/configuration-reference/defaults) |
 | `groups` | `Record<string, string[]>` | [用户组](/configuration-reference/identity#groups) |
 | `tagsOwners` | `Record<string, string[]>` | [Tag 定义及授予权限](/configuration-reference/identity#tagsowners) |
-| `grants` | `Grant[]` | [业务访问授权](/configuration-reference/grants) |
+| `access` | `AccessRule[]` | [访问权限](/configuration-reference/access) |
 | `nodes` | `Record<NodeId, NodeSettings>` | [节点静态设置](/configuration-reference/nodes) |
 | `dns` | `DnsConfiguration` | [DNS](/configuration-reference/dns) |
-| `connections` | `ConnectionRule[]` | [承载连接许可／阻断](/configuration-reference/connections) |
-| `routing` | `RoutingConfiguration` | [Mesh 与出口选路](/configuration-reference/routing) |
+| `topology` | `TopologyRule[]` | [组网规则](/configuration-reference/topology) |
+| `routing` | `RoutingConfiguration` | [流量路由](/configuration-reference/routing) |
 | `ruleSets` | `Record<string, RuleSet>` | [规则集](/configuration-reference/rule-sets) |
 
 ## Conventions
 
 - `remark` 是描述文本，不是标识；可重复、可为 `""`，不能为 `null`，省略时规范化为 `""`。
-- grants／connections 不包含 `id`。诊断使用本版本的字段路径，例如 `/grants/0`；修改使用配置 revision 保证基准一致。
+- access／topology 规则不包含 `id`。诊断使用本版本的字段路径，例如 `/access/0`；修改使用配置 revision 保证基准一致。
 - listener key 标识节点内入站资源；dialers 的 key 直接是协议名。两者都不是 `tag:backend` 这类授权 Tag。
 - 对象字段的缺省、空数组和 `null` 只按所属字段解释，不自动互换。
 

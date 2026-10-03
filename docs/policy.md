@@ -1,5 +1,7 @@
 # 四层策略引擎
 
+面向用户的下一版配置采用 `access`／`topology`／`routing`，见[配置参考](/configuration-reference)；本页字段名对应当前 Rust 引擎和已发布契约。
+
 本页描述 `meshway_policy` 的纯Rust实现：连接/授权顺序无关，Mesh/出口有序first-match。源为`NetworkPolicy`，入口`compile_network`消费同网络/revision的库存、tag、listener、出口/可达性事实与已解析规则集，不做DNS/拨号/NAT/加密/下载。IPv4 Mesh范围已接正常Controller/Agent/TUN，完整出口尚未接线；纯编译成功不表示生效。[执行合同](/mesh-execution)说明发布边界，底层`Policy/compile`只作选路内核。
 
 ## 四层语义

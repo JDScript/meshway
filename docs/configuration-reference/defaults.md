@@ -6,8 +6,8 @@
 
 ```json
 {
-  "grants": "deny",
-  "connections": "allow",
+  "access": "deny",
+  "topology": "allow",
   "dialers": {
     "native_udp": { "priority": 100 },
     "native_tcp": { "priority": 200 },
@@ -20,24 +20,24 @@
 
 | 字段 | 类型 | 默认 | 说明 |
 | --- | --- | --- | --- |
-| `grants` | `"deny" \| "allow"` | `"deny"` | **Mesh 节点互访**的兜底；外部目的地仍须显式授权 |
-| `connections` | `"deny" \| "allow"` | `"allow"` | 没有匹配连接规则时是否允许尝试建立承载 |
+| `access` | `"deny" \| "allow"` | `"deny"` | **Mesh 节点互访**的兜底；外部目的地仍须显式授权 |
+| `topology` | `"deny" \| "allow"` | `"allow"` | 没有匹配组网规则时是否允许尝试建立承载 |
 | `dialers` | `DialerSet` | 上例 | 以协议名为 key；节点 `dialers: {}` 时采用此集合 |
 
-`grants: "allow"` 的范围限 Mesh，是本轮建议的边界，尚待确认；不将“默认允许”隐式解释成开放所有公网／LAN 目的地。当前发布契约尚没有本节 defaults。
+`access: "allow"` 的范围限 Mesh，是本轮建议的边界，尚待确认；不将“默认允许”隐式解释成开放所有公网／LAN 目的地。当前发布契约尚没有本节 defaults。
 
-## grants
+## access
 
-- `deny`：只有显式 grants 匹配的业务被允许；空 grants 拒绝 Mesh 新会话。
+- `deny`：只有显式 access 匹配的业务被允许；空 access 拒绝 Mesh 新会话。
 - `allow`：等价于额外的一条 Mesh `src: ["*"]`、`dst: ["*"]`、`ip: ["*"]` 允许规则。
-- grants 没有 deny 规则。因此 allow 下增加更窄的 grant 不能收紧权限；需要收紧时改为 deny 并显式列出允许范围。
-- 公网、LAN、域名目的授权仍由显式 grants 表达；出口资格和可执行路径也仍须成立。
+- access 只包含允许规则。因此 allow 下增加更窄的 access 规则不能收紧权限；需要收紧时改为 deny 并显式列出允许范围。
+- 公网、LAN、域名目的授权仍由显式 access 表达；出口资格和可执行路径也仍须成立。
 
-## connections
+## topology
 
-判断顺序固定为：匹配任意 block → 拒绝；否则匹配任意 allow → 允许；否则使用 defaults.connections。规则顺序不参与判断。
+判断顺序固定为：匹配任意 block → 拒绝；否则匹配任意 allow → 允许；否则使用 defaults.topology。规则顺序不参与判断。
 
-`connections: []` 配合 allow 适合自动组网；配合 deny 则必须显式列出允许边。它不授予业务访问，也不会预先建立全网连接。
+`topology: []` 配合 allow 适合自动组网；配合 deny 则必须显式列出允许边。它不授予业务访问，也不会预先建立全网连接。
 
 ## dialers
 

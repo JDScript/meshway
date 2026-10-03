@@ -33,7 +33,7 @@
 
 ## 配置解析
 
-Controller 根据 grants、连接／路径规则和对端 listener，生成具体出站配置。目标地址、UUID／password、SNI、WS path 等**属于配置**，只是默认从目标 listener 解析，不要求在每个发起节点上重复手填。
+Controller 根据 access、topology、routing 和对端 listener，生成具体出站配置。目标地址、UUID／password、SNI、WS path 等**属于配置**，只是默认从目标 listener 解析，不要求在每个发起节点上重复手填。
 
 管理员可在 listener 配置中编辑这些字段；修改后，相应节点的入站／出站配置一起重新生成。完整例子见 [NodeConfiguration](/configuration-reference/node-configuration#example)。
 

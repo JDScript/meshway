@@ -1,10 +1,10 @@
-# 连接与路由
+# Routing · 流量路由
 
-字段结构草案，语义沿用已确认的四层模型：连接与 grants 是许可；Mesh／出口路由决定路径。
+定义获准业务如何在允许的图上选择路径。access 管理业务权限，topology 定义允许的图；routing 分为 Mesh 内部和出口两部分。以下为下一版字段结构。
 
-## connections
+## 与 topology 的关系
 
-连接许可的完整格式见 [Connections](/configuration-reference/connections)。规则不含 id，使用非 null 的 remark；未命中时使用 [defaults.connections](/configuration-reference/defaults#connections)。
+组网规则见 [Topology](/configuration-reference/topology)。routing 只能使用其允许的边，不能因更快或可达而绕过 block／必经节点。运行时已选路径见 [State.paths](/state-reference#paths)。
 
 ## routing.mesh
 
@@ -83,7 +83,7 @@
 | `{ "type": "direct" }` | 匹配流量从源节点本地网络直接发出 |
 | `{ "type": "unmanaged" }` | 不接管；建议只用于方案 fallback |
 
-出口必须启用 `nodes[id].exitEnabled`，目的访问必须获 grants 允许。没有可用获准路径时拒绝，不能回退到后续规则或偷偷 direct。
+出口必须启用 `nodes[id].exitEnabled`，目的访问必须获 access 允许。没有可用获准路径时拒绝，不能回退到后续规则或偷偷 direct。
 
 内置方案为 `mesh`（仅公共规则）、`global:<exit-node-id>`（全局经允许出口）和 `auto`。用户当前选择及 GeoIP 观测属于 State；选择必须在配置允许范围内，切换中断旧出口连接。auto 只使用当前底层公网 IP 推导的地区；无有效观测走 fallback，目标方案不允许递归引用 auto。
 
