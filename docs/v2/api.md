@@ -1,6 +1,36 @@
 # API 设计
 
-**V2 操作索引，尚未实现新接口。** `/api/v1` 面向 Console，`/agent-api/v1` 面向 Node。以下补齐完整操作面，路径、字段与错误最终由 Rust 契约／实际路由生成，不是当前可调用接口清单。
+**V2 操作索引及交付范围。** `/api/v1` 面向 Console，`/agent-api/v1` 面向 Node。下面列出完整目标操作面；已实现的切片见本节，其他条目仍为设计，具体字段和错误以 Rust 契约／实际路由生成物为准。
+
+## 当前实现切片
+
+新 `apps/meshway-controller` 的隔离开发基线提供以下账户 JSON 操作：
+
+| operationId | 方法与路径 | 成功响应 |
+| --- | --- | --- |
+| `getAuthOptions` | `GET /api/v1/auth/options` | 200 AuthOptionsResponse |
+| `register` | `POST /api/v1/auth/register` | 201 SessionIssuedResponse |
+| `login` | `POST /api/v1/auth/login` | 200 SessionIssuedResponse |
+| `getAuthSession` | `GET /api/v1/auth/session` | 200 AuthSessionResponse |
+| `logout` | `POST /api/v1/auth/logout` | 204 |
+
+这些操作已接真实账户存储和会话；网络操作、Node 接入和 SSE 尚未进入该实现切片。错误为 `ErrorResponse { requestId, status, problem: { code, params, message } }`；requestId 仅在其安全生成失败时为 null。请求和响应对象拒绝数组表示、重复字段和未知字段。
+
+从该开发基线运行独立实例：
+
+```sh
+cargo run -p meshway-controller --bin meshway-controller --locked -- \
+  --data-dir /absolute/private/data-dir \
+  --listen 127.0.0.1:0 \
+  --registration-enabled true \
+  --session-ttl-seconds 86400
+```
+
+dataDir 使用无符号链接的绝对路径，父目录须存在；进程创建／核验私有目录和文件并独占锁。端口 0 由系统分配，启动输出实际监听地址。此命令运行新实例，部署切换和旧服务数据另行协调。
+
+`export-openapi` binary 从同一份真实路由声明导出 `packages/protocol/openapi.json` 的内容，不启动数据库或服务。生成 SDK 的可用操作以这份产物为依据，不从本页目标索引推断尚未交付的接口。
+
+首批五个操作已生成 Rust／TypeScript 客户端，并经过正常 Controller 账户流程、结构化错误、运行时解码和 drift 检查。用法见 `packages/control-client/README.md`；当前生成器对 SSE、path／query 参数等尚未支持的形状明确报错，不把它们当作已交付操作。
 
 ## 基础规则
 

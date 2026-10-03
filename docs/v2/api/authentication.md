@@ -1,6 +1,6 @@
 # 注册与认证
 
-**已确认的 V2 方向，尚未实现新接口。** 用户使用不透明会话，Node 使用本地持久密钥身份；账户、网络成员身份和设备接入分别建立。
+**V2 注册与认证合同。** 新 Controller 的隔离开发基线已接通账户 options／register／login／session／logout；其余操作和 Node 持钥流程按下面的设计继续实现。用户使用不透明会话，Node 使用本地持久密钥身份；账户、网络成员身份和设备接入分别建立。
 
 ## Controller 注册设置
 
@@ -49,16 +49,24 @@ MESHWAY_REGISTRATION_ENABLED=false
 }
 ```
 
-注册与登录成功返回相同的会话结构提案：
+注册与登录成功返回相同的 SessionIssuedResponse；以下 ID 和 token 为占位：
 
 ```json
 {
+  "requestId": "<request-id>",
   "user": { "id": "<user-id>", "email": "alice@example.com" },
-  "session": { "token": "<opaque-session-token>", "expiresAt": "2026-10-04T12:00:00Z" }
+  "session": {
+    "id": "<session-id>",
+    "createdAt": "2026-10-03T12:00:00Z",
+    "expiresAt": "2026-10-04T12:00:00Z"
+  },
+  "token": "<opaque-session-token>"
 }
 ```
 
 示例时间不规定会话 TTL。密码只进入 HTTPS 请求与有界哈希流程，使用 Argon2id 等既有安全哈希，不存明文。注册响应丢失后可用本人密码登录，不通过再次注册覆盖既有账户。
+
+注册返回 201，登录返回 200；GET auth/session 返回 requestId、user 和同类型 session 元数据，不再次交付 token。退出成功返回 204。requestId 是服务端生成的请求／活动关联，不作为注册幂等键或秘密恢复凭据。
 
 登录用户可创建多张隔离网络，网络创建者只获得新网络 Owner。初始配置使用 access 默认拒绝＋显式 Mesh 互访模板；没有因创建账户而自动开放已有网络或公网出口。
 
