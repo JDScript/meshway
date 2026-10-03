@@ -16,7 +16,8 @@
       "./messages/account/{locale}.json",
       "./messages/policy/{locale}.json",
       "./messages/settings/{locale}.json",
-      "./messages/entry/{locale}.json"
+      "./messages/entry/{locale}.json",
+      "./messages/palette/{locale}.json"
     ]
   }
 }

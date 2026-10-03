@@ -22,7 +22,7 @@ export const sectionLabel: Record<SettingsSection, () => string> = {
   dns: () => m.settings_section_dns(),
 }
 
-const sectionIcon: Record<SettingsSection, LucideIcon> = {
+export const sectionIcon: Record<SettingsSection, LucideIcon> = {
   network: NetworkIcon,
   dns: AtSignIcon,
 }

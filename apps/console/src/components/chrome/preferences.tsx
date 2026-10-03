@@ -18,12 +18,18 @@ import { m } from "@/paraglide/messages.js"
 import { switchLocale, useLocale } from "@/lib/locale"
 import { isLocale, locales } from "@/paraglide/runtime.js"
 
-export function ThemeSwitch() {
+/** Whether the theme shows dark now, and the switch to the other one. */
+export function useThemeToggle(): { dark: boolean; toggle: () => void } {
   const { theme, setTheme } = useTheme()
   const dark =
     theme === "dark" ||
     (theme === "system" &&
       window.matchMedia("(prefers-color-scheme: dark)").matches)
+  return { dark, toggle: () => setTheme(dark ? "light" : "dark") }
+}
+
+export function ThemeSwitch() {
+  const { dark, toggle } = useThemeToggle()
   return (
     <Tooltip>
       <TooltipTrigger
@@ -33,7 +39,7 @@ export function ThemeSwitch() {
             size="icon"
             className="bar-button"
             aria-label={m.theme_switch()}
-            onClick={() => setTheme(dark ? "light" : "dark")}
+            onClick={toggle}
           >
             {dark ? <SunIcon /> : <MoonIcon />}
           </Button>

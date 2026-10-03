@@ -1,0 +1,17 @@
+{
+  "$schema": "https://inlang.com/schema/inlang-message-format",
+  "palette_open": "Search",
+  "palette_search": "Search pages, nodes, tags, members, rules",
+  "palette_empty": "No matches",
+  "palette_failed": "Could not read",
+  "palette_more": "{count} more",
+  "palette_group_pages": "Pages",
+  "palette_group_nodes": "Nodes",
+  "palette_group_tags": "Tags",
+  "palette_group_members": "Members",
+  "palette_group_rules": "Rules",
+  "palette_group_networks": "Networks",
+  "palette_group_actions": "Actions",
+  "palette_invite": "Invite member",
+  "palette_theme_keywords": "theme dark light"
+}

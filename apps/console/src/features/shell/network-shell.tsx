@@ -13,6 +13,7 @@ import {
   useNetworkView,
 } from "@/features/network/use-network-view"
 import { MembersPage } from "@/features/members/page"
+import { CommandPalette, PaletteButton } from "@/features/palette/palette"
 import { useNodeNavigation, useNodesRoute } from "@/features/nodes/navigation"
 import { NodesPage } from "@/features/nodes/page"
 import {
@@ -158,6 +159,9 @@ export function NetworkShell({ networkId }: { networkId: string }) {
         className="enter absolute top-(--mobile-edge) right-(--mobile-edge) md:top-(--edge) md:right-(--edge)"
         style={{ "--enter-delay": "80ms" }}
       >
+        <span key="search" className="flex">
+          <PaletteButton />
+        </span>
         <span key="language" className="flex">
           <LanguageSwitch />
         </span>
@@ -168,6 +172,13 @@ export function NetworkShell({ networkId }: { networkId: string }) {
           <AccountMenu />
         </span>
       </GlassToolbar>
+
+      <CommandPalette
+        networkId={networkId}
+        page={page}
+        ready={ready}
+        onSwitchNetwork={switchNetwork}
+      />
     </NetworkViewProvider>
   )
 }

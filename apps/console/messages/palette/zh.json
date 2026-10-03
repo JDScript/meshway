@@ -1,0 +1,17 @@
+{
+  "$schema": "https://inlang.com/schema/inlang-message-format",
+  "palette_open": "搜索",
+  "palette_search": "搜索页面、节点、标签、成员、规则",
+  "palette_empty": "没有匹配项",
+  "palette_failed": "读取失败",
+  "palette_more": "另有 {count} 项",
+  "palette_group_pages": "页面",
+  "palette_group_nodes": "节点",
+  "palette_group_tags": "标签",
+  "palette_group_members": "成员",
+  "palette_group_rules": "规则",
+  "palette_group_networks": "网络",
+  "palette_group_actions": "操作",
+  "palette_invite": "邀请成员",
+  "palette_theme_keywords": "主题 深色 浅色"
+}

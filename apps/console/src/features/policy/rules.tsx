@@ -16,6 +16,7 @@ import { SPRING_LAYOUT } from "@/lib/ease"
 import { m } from "@/paraglide/messages.js"
 
 import type { PlacedDiagnostic } from "./document"
+import { takeRuleFocus } from "./navigation"
 import { withNodeNames, type SelectorNames } from "./selectors"
 
 // The pieces every layer is drawn with. A rule is one row that is its own
@@ -124,18 +125,21 @@ export function RuleRow({
   onKeyDown?: (event: KeyboardEvent<HTMLDivElement>) => void
 }) {
   const ref = useRef<HTMLDivElement>(null)
-  // The rule a link points at, or one just added, comes into view.
+  // The rule a link points at, or one just added, comes into view; a jump to it also focuses it, once.
   useEffect(() => {
     if (current || added) ref.current?.scrollIntoView({ block: "nearest" })
-  }, [current, added])
+    if (current && takeRuleFocus(label))
+      ref.current?.focus({ preventScroll: true })
+  }, [current, added, label])
   return (
     <div
       ref={ref}
+      tabIndex={-1}
       role="group"
       aria-label={label}
       aria-current={current ? "true" : undefined}
       onKeyDown={onKeyDown}
-      className="rule-row group/rule flex flex-col gap-1.5 rounded-surface p-2"
+      className="rule-row group/rule flex flex-col gap-1.5 rounded-surface p-2 outline-none focus-visible:ring-2 focus-visible:ring-ring"
     >
       <div className="flex min-h-7 flex-wrap items-center gap-x-3 gap-y-2">
         {/* The rule keeps at least this much of the line; short of it, the end moves to its own line. */}

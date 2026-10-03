@@ -119,7 +119,7 @@ surface kind has one slot, so nothing stacks:
 
 | Surface | Where | What |
 | --- | --- | --- |
-| Chrome | always | network card top left (switcher, counts, link bar), preferences and account top right, the dock; on phones a bottom bar on every page (the launcher, then the card without its link bar) and preferences top right |
+| Chrome | always | network card top left (switcher, counts, link bar), search, preferences and account top right, the dock; on phones a bottom bar on every page (the launcher, then the card without its link bar) and preferences top right |
 | Dock | left, under the network card | icon rail on wide screens; on phones a round launcher at the bottom left, under the thumb, that unfolds the pages upwards |
 | Page panel | left, beside the dock | one page's list (the node list today) |
 | Peek | right | the overview's quick look at one node (shadcn Drawer, not modal) |
@@ -167,6 +167,25 @@ globe; `features/shell/pages.ts` lists the pages and the dock.
 | A draft and its base revision | `createDraft` (`features/shell/drafts.ts`), one per resource |
 | Saving it, conflicts, the bar | `useDraftCommit` → `CommitBar` |
 | Field validity | the generated schemas, before the controller's own checks |
+
+## Command palette
+
+- ⌘K (Ctrl+K off macOS), or the search button first in the top bar, on a
+  network's pages only (not the entry pages). A dialog: a 560px glass panel
+  in the top third on wide screens; full width under the top bar on phones,
+  above the bottom bar or the keyboard (never a bottom sheet). Escape
+  returns focus; a jump hands it to where it lands.
+- Groups: pages (layers and sections once something is typed), nodes, tags,
+  members, rules (connections, grants, Mesh routes by ID), other networks,
+  actions. Only what the role can use; read through the pages' own query
+  options, the ones the shell does not hold while the palette is open; no
+  endpoint of its own. A group being read or unreadable says so in place.
+- Matching is plain substrings over each entry's keywords (name first), as
+  the policy pickers match; fuzzy matching would find nearly anything inside
+  a hex ID. Six results per group, the rest counted.
+- Jumps use `history.jump`: a link on wide screens (a workspace marked
+  `opened`), the launcher's move on phones. A rule opens its layer at
+  `?rule=` and that row takes focus once (`requestRuleFocus`).
 
 ## Adding a page
 

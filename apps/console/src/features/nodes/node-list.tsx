@@ -256,7 +256,7 @@ export function NodeList({
 const NO_TAGS: readonly string[] = []
 
 /** A row's tags after its address: the first few as pills, then how many more (all of them named for assistive tech). */
-function RowTags({ tags }: { tags: readonly string[] }) {
+export function RowTags({ tags }: { tags: readonly string[] }) {
   if (tags.length === 0) return null
   const more = tags.length - SHOWN_TAGS
   return (

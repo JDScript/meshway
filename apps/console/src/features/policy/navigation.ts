@@ -85,3 +85,24 @@ export function usePolicyNavigation(networkId: string) {
 }
 
 export type PolicyNavigation = ReturnType<typeof usePolicyNavigation>
+
+/** How long a jump's request to focus its rule waits for the rule to be shown. */
+const RULE_FOCUS_MS = 5_000
+let ruleFocus: { id: string; at: number } | null = null
+
+/** The rule `id`, the next time its layer shows it as the one the address points at, takes focus once (a jump from the palette). */
+export function requestRuleFocus(id: string) {
+  ruleFocus = { id, at: Date.now() }
+}
+
+/** Whether the rule `id` should take focus now; true at most once per request. */
+export function takeRuleFocus(id: string): boolean {
+  const request = ruleFocus
+  if (!request || Date.now() - request.at > RULE_FOCUS_MS) {
+    ruleFocus = null
+    return false
+  }
+  if (request.id !== id) return false
+  ruleFocus = null
+  return true
+}

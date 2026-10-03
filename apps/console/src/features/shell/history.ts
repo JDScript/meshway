@@ -29,7 +29,9 @@ declare module "@tanstack/react-router" {
  *   level below;
  * - on phones, a page opened from the launcher remembers the overview it
  *   left (`pageBase`): moving to another page replaces, and leaving the
- *   pages goes straight back to that overview.
+ *   pages goes straight back to that overview;
+ * - a jump from the command palette is a link on wide screens and the
+ *   launcher's move on phones.
  *
  * Pages build their own typed moves from these (see `features/nodes/navigation.ts`).
  */
@@ -46,8 +48,12 @@ export function useSurfaceHistory(networkId: string) {
     select: (location) => location.state.__TSR_index,
   })
 
-  return useMemo(
-    () => ({
+  return useMemo(() => {
+    const toPage = (fromOverview: boolean) =>
+      fromOverview
+        ? { replace: false, state: { opened: true as const, pageBase: index } }
+        : { replace: true, state: { opened: true as const, pageBase } }
+    return {
       /** Options for opening something: push from nothing, replace when switching. */
       open: (alreadyOpen: boolean) => ({
         replace: alreadyOpen,
@@ -62,13 +68,24 @@ export function useSurfaceHistory(networkId: string) {
         }),
       },
       /** Options for the launcher's move to another page: from the overview it pushes and remembers it; between pages it replaces. */
-      toPage: (fromOverview: boolean) =>
-        fromOverview
-          ? {
+      toPage,
+      /**
+       * Options for a jump from anywhere (the command palette). Wide
+       * screens: a link that pushes, a workspace marked `opened` so closing
+       * it comes back. Phones: the launcher's move, so leaving the pages
+       * returns to the overview.
+       */
+      jump: (to: {
+        mobile: boolean
+        fromOverview: boolean
+        workspace: boolean
+      }) =>
+        to.mobile
+          ? toPage(to.fromOverview)
+          : {
               replace: false,
-              state: { opened: true as const, pageBase: index },
-            }
-          : { replace: true, state: { opened: true as const, pageBase } },
+              state: to.workspace ? { opened: true as const } : {},
+            },
       /** Closes what is open: back where it was opened from, or else `fallback` (which should replace). */
       close(fallback: () => void) {
         if (opened) router.history.back()
@@ -86,9 +103,8 @@ export function useSurfaceHistory(networkId: string) {
             replace: true,
           })
       },
-    }),
-    [router, navigate, opened, pageBase, index, networkId]
-  )
+    }
+  }, [router, navigate, opened, pageBase, index, networkId])
 }
 
 export type SurfaceHistory = ReturnType<typeof useSurfaceHistory>

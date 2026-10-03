@@ -29,7 +29,7 @@ export const layerLabel: Record<PolicyLayer, () => string> = {
   source: () => m.policy_layer_source(),
 }
 
-const layerIcon: Record<PolicyLayer, LucideIcon> = {
+export const layerIcon: Record<PolicyLayer, LucideIcon> = {
   connections: ArrowLeftRightIcon,
   grants: KeyRoundIcon,
   mesh: WaypointsIcon,
