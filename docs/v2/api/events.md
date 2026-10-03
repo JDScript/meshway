@@ -6,7 +6,7 @@
 
 ```text
 Console 登录、取得网络清单并选择网络
-  → GET /api/v1/user/networks/{networkId}/events
+  → GET /api/v1/networks/{networkId}/events
   → config.snapshot
   → state.snapshot
   → sync.ready
@@ -88,7 +88,7 @@ data: {"type":"configuration.changed","networkId":"<network-id>","revision":43,"
 
 ## Path observation
 
-创建／续租／取消使用 [User API](/v2/api#操作索引)。创建返回 observationId 与实际租约；结果复用网络事件流，通过 ID 区分任务。只有创建者或另行获准的订阅者接收，不广播本网络所有管理员诊断。
+创建／续租／取消使用 [Console API](/v2/api#操作索引)。创建返回 observationId 与实际租约；结果复用网络事件流，通过 ID 区分任务。只有创建者或另行获准的订阅者接收，不广播本网络所有管理员诊断。
 
 创建任务前 Console 已建立网络订阅；任务创建、建立有权订阅关系与记录初始状态有一致的发布顺序。事件可能先于 POST 响应抵达，因此用任务 ID／请求关联去重并有界暂存；重连时同步当前任务状态，遗漏的历史样本不能补造。
 

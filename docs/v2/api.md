@@ -1,6 +1,6 @@
 # API 设计
 
-**V2 设计，尚未实现。** 本轮确定账户注册、用户／节点认证和 Console 的 SSE 同步方式；下列路径与字段是 API 草案。V2 是文档版本，路径暂以 `/api/v1` 展示，不新增 policy 兼容轨。
+**V2 设计，尚未实现。** API 采用 `/api/v1` 与 `/agent-api/v1` 两个入口；资源路径和字段仍为草案。V2 是文档版本，不代表 HTTP 路径必须使用 v2。
 
 ## 已确定的边界
 
@@ -11,20 +11,24 @@
 | 用户认证 | 不透明会话，通过 Authorization 携带；继续由服务端检查当前权限 |
 | Node 认证 | 本机生成并持久保存密钥，注册绑定公钥，后续证明持有私钥 |
 | Console 同步 | SSE 首次发送完整可见 Config／State，再发送后续变化 |
-| API 分工 | 用户操作与节点运行使用独立入口、认证和请求／响应视图 |
+| API 分工 | `/api/v1` 提供 Console API，`/agent-api/v1` 提供节点接入／运行 API |
 
 ## API 分区
 
-建议按**调用身份和职责**分区，使用同一 Controller、数据库与领域服务：
+使用两个清楚的 API 根路径，共用同一 Controller、数据库与领域服务：
 
-| 前缀提案 | 调用方 | 用途 |
+| 前缀 | 调用方 | 用途 |
 | --- | --- | --- |
-| `/api/v1/auth` | 注册／登录中的浏览器 | 公开登录选项、账户注册与登录 |
-| `/api/v1/user` | 用户会话；主要是 Console | 本人账户、网络、成员、配置、观测及设备接入批准 |
-| `/api/v1/node` | 接入中的设备或已认证 Node | 设备接入、运行实例、执行配置、State 上报／读取与获准任务 |
-| `/api/v1/instance` | 实例运维身份 | 显式初始化／恢复；不是网络 Owner 的日常权限 |
+| `/api/v1` | Console；登录后使用用户会话 | 账户、网络、成员、配置、观测及设备接入批准；其中 auth 提供公开注册／登录 |
+| `/agent-api/v1` | 接入中的设备或已认证 Node | 设备接入、运行实例、执行配置、State 上报／读取与获准任务 |
 
-这里使用 `user` 而不是 `web`，因为权限属于用户，未来其他用户客户端也可复用；它仍是独立的 Console API 入口。Linux Agent 与终端 App 接入后使用相同 Node API，不划分节点类别。
+Linux Agent 与终端 App 使用同一 Agent API。路径划分不产生两套 User／Node 模型；Controller 为两个 router 安装各自的认证策略，共享有明确身份上下文的领域操作。
+
+### Controller 启动
+
+空数据目录正常初始化数据库结构与必要材料密钥，启动后即可注册、登录和创建网络。没有独立的实例初始化 API、首用户认领或默认网络创建流程；第一个用户与其他用户相同，创建网络才成为该网络 Owner。
+
+关闭注册由部署配置控制。若空实例已关闭注册，部署者可显式调整配置后使用普通注册流程。账户恢复属于单独的运维能力设计，不因它引入日常实例管理员 HTTP 分区。数据库损坏／未知结构仍报错，不能借“自动初始化”静默清库。
 
 用户操作显式指定 `networkId`，逐请求检查 membership／role。已接入 Node 的网络和自身 ID 从认证绑定推导，不接受请求随意指定另一网络／节点。接入前的临时请求没有 Node 权限。
 
@@ -37,16 +41,16 @@
 | `GET /auth/options` | 匿名 | 公开 registrationEnabled 等登录选项，不含运维秘密 |
 | `POST /auth/register` | 匿名 | 注册账户并建立用户会话；关闭注册时拒绝 |
 | `POST /auth/login` | 匿名 | 校验密码并建立用户会话 |
-| `GET /user/session` | 用户 | 当前有效用户与会话期限 |
-| `POST /user/logout` | 用户 | 撤销当前会话，包括其活动订阅 |
-| `GET /user/networks` | 用户 | 仅自己的有效网络成员关系 |
-| `POST /user/networks` | 用户 | 原子创建网络、Owner 成员关系和初始配置 |
-| `GET /user/networks/{networkId}/configuration` | 用户 | 按权限读取配置视图及 revision；编辑原文／材料使用显式管理读取 |
-| `POST /user/networks/{networkId}/configuration` | 网络管理权限 | 以 expectedRevision 提交完整目标，返回新 revision |
-| `GET /user/networks/{networkId}/events` | 用户 | 首次同步与持续事件流 |
-| `POST /user/networks/{networkId}/observations` | 有权诊断的用户 | 创建有租约的 path observation |
-| `POST /user/networks/{networkId}/observations/{observationId}/renew` | 任务使用者 | 检查当前权限并续租 |
-| `POST /user/networks/{networkId}/observations/{observationId}/cancel` | 任务使用者 | 幂等取消自己的观察订阅／需求 |
+| `GET /auth/session` | 用户 | 当前有效用户与会话期限 |
+| `POST /auth/logout` | 用户 | 撤销当前会话，包括其活动订阅 |
+| `GET /networks` | 用户 | 仅自己的有效网络成员关系 |
+| `POST /networks` | 用户 | 原子创建网络、Owner 成员关系和初始配置 |
+| `GET /networks/{networkId}/configuration` | 用户 | 按权限读取配置视图及 revision；编辑原文／材料使用显式管理读取 |
+| `POST /networks/{networkId}/configuration` | 网络管理权限 | 以 expectedRevision 提交完整目标，返回新 revision |
+| `GET /networks/{networkId}/events` | 用户 | 首次同步与持续事件流 |
+| `POST /networks/{networkId}/observations` | 有权诊断的用户 | 创建有租约的 path observation |
+| `POST /networks/{networkId}/observations/{observationId}/renew` | 任务使用者 | 检查当前权限并续租 |
+| `POST /networks/{networkId}/observations/{observationId}/cancel` | 任务使用者 | 幂等取消自己的观察订阅／需求 |
 
 表中省略公共 `/api/v1` 前缀。成员、配置历史、局部编辑和材料读取等精确操作后续补齐；所有写入复用既有领域权限与配置 CAS。已有账户加入其他网络是成员管理操作，不附带创建账户或替对方设置密码。
 
@@ -54,15 +58,15 @@
 
 | 方法与路径提案 | 主体 | 结果 |
 | --- | --- | --- |
-| `POST /node/enrollment-requests` | 尚未接入的设备 | 创建绑定公钥、PKCE 和返回方式的临时请求 |
-| `POST /user/device-authorizations/{requestId}/approve` | 用户会话 | 选择有效网络，批准该次本人设备接入 |
-| `POST /node/enrollments` | 本次设备证明＋一次性批准或接入密钥 | 原子创建／恢复同一 Node 绑定 |
-| `POST /node/instances` | Node | 获得／恢复当前运行实例，隔离被替代实例 |
-| `GET /node/configuration` | Node | 本节点完整执行配置及发布引用 |
-| `POST /node/configuration/ack` | Node＋当前实例 | 持久保存 ACK；实际 applied 另上报 |
-| `POST /node/state` | Node＋当前实例 | 上报自身 State，携带序号与配置引用 |
-| `POST /node/state/query` | Node | 查询服务端授权裁剪后的执行依赖 |
-| `POST /node/demands` | Node | 请求获准业务目标所需的路径／材料依赖 |
+| `POST /agent-api/v1/enrollment-requests` | 尚未接入的设备 | 创建绑定公钥、PKCE 和返回方式的临时请求 |
+| `POST /api/v1/device-authorizations/{requestId}/approve` | 用户会话 | 选择有效网络，批准该次本人设备接入 |
+| `POST /agent-api/v1/enrollments` | 本次设备证明＋一次性批准或接入密钥 | 原子创建／恢复同一 Node 绑定 |
+| `POST /agent-api/v1/instances` | Node | 获得／恢复当前运行实例，隔离被替代实例 |
+| `GET /agent-api/v1/configuration` | Node | 本节点完整执行配置及发布引用 |
+| `POST /agent-api/v1/configuration/ack` | Node＋当前实例 | 持久保存 ACK；实际 applied 另上报 |
+| `POST /agent-api/v1/state` | Node＋当前实例 | 上报自身 State，携带序号与配置引用 |
+| `POST /agent-api/v1/state/query` | Node | 查询服务端授权裁剪后的执行依赖 |
+| `POST /agent-api/v1/demands` | Node | 请求获准业务目标所需的路径／材料依赖 |
 
 Node 的认证握手、请求结果领取、配置／State watch 与任务下发的精确 HTTP 编码需继续设计。用户 SSE 不直接复用为 Node 执行通道；两者可共享事件帧处理，但不能共享授权视图或把浏览器通知当作执行许可。
 
@@ -76,8 +80,10 @@ Node 的认证握手、请求结果领取、配置／State watch 与任务下发
 
 ## 契约与生成
 
-Rust DTO、真实路由、认证和流式操作声明仍为唯一权威。由同一来源导出 User／Node API 分组与各消费者客户端；不维护两份手写 endpoint／DTO。
+Rust DTO、真实路由、认证和流式操作声明仍为唯一权威。由同一来源导出 Console／Agent API 分组与各消费者客户端；不维护两份手写 endpoint／DTO。
 
 生成器需要覆盖 SSE、所需 query/header 参数和新的 Node 认证方式。当前生成链仍只交付 JSON HTTP 客户端；可行路线与验证边界见 [SSE 与初始同步](/v2/api/events#openapi)。
 
 继续阅读：[注册与认证](/v2/api/authentication)、[SSE 与初始同步](/v2/api/events)、[操作权限](/v2/permissions)。
+
+接口使用的数据来源与代码 owner 见 [Entity](/v2/entities)、[存储与访问](/v2/storage)、[技术栈与 Shared crates](/v2/architecture)。

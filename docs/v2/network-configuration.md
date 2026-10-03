@@ -17,6 +17,8 @@ description: Entity、Config、State 的职责与配置参考导航。
 
 **Config 类似 ROM，State 类似 RAM，分别下发。** 身份、必要恢复记录和需要查询的观测历史可以持久化，但不能将其混入管理员配置历史。
 
+持久实体及字段归属见 [Entity 与关系](/v2/entities)，各类数据的数据库／内存／文件访问见[存储与访问](/v2/storage)。技术栈和 shared crates 的提案集中在[代码结构](/v2/architecture)。
+
 ## 已确认的设计方向 {#network-configuration}
 
 - 主要业务实体 Node／User；Network 保持既有隔离作用域。
@@ -55,6 +57,6 @@ description: Entity、Config、State 的职责与配置参考导航。
 
 普通成员 State／History 只读相关范围，主动诊断仅源于自己的 User 身份设备；Owner／Admin 管理本网络。State snapshot、删除、过期、reset 和真实测量方向继续沿用。初版完整配置按版本加载／缓存，不预先建设多套数据库查询投影。
 
-API 本轮新增决定：默认开放账户注册且可由实例配置关闭，不提供邀请注册；登录用户可创建网络并成为 Owner。用户沿用不透明会话，Node 使用持久密钥身份；Console 首次 SSE 全量同步当前可见 Config／State，再接收增量与配置变更通知。User／Node API 分区，精确路由、Node 持钥证明握手和流式生成方案见 [API 草案](/v2/api)。
+API 本轮新增决定：默认开放账户注册且可由实例配置关闭，不提供邀请注册；登录用户可创建网络并成为 Owner。用户沿用不透明会话，Node 使用持久密钥身份；Console 首次 SSE 全量同步当前可见 Config／State，再接收增量与配置变更通知。API 根路径为 `/api/v1` 与 `/agent-api/v1`，正常启动后使用普通注册，不需要实例初始化 API。精确路由、Node 持钥证明握手和流式生成方案见 [API 草案](/v2/api)。
 
 参考 Tailscale 的 policy／NetworkMap、sing-box 的字段参考组织方式；不照搬它们所有协议、设备侧配置流程或历史兼容字段。现行实现与本轮设计分开，见[当前配置合同](/configuration)和[协议](/protocol)。

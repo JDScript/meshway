@@ -26,17 +26,17 @@ MESHWAY_REGISTRATION_ENABLED=false
 
 - 启动后默认任何人均可注册。关闭时服务端拒绝注册，不只是隐藏 Console 按钮。
 - **不提供邀请注册，也不通过邀请绕过开关。** 关闭注册不影响已有账户登录、创建网络或已授权 Node 运行。
-- 无账户的封闭实例通过显式运维初始化建立首个用户，不自动给第一个公开注册者实例管理员权限。
+- Controller 正常启动即初始化空库所需结构；首个用户走普通注册，不需要实例初始化／认领 API。空实例关闭注册时由部署者显式调整注册配置。
 - 首版继续不依赖发邮件。邮箱作为登录标识，不声称已验证邮箱所有权，不因邮箱后缀自动加入网络；已有账户加入其他网络另由成员管理授权。
 
 ## 账户注册与登录
 
 ```text
 浏览器读取公开登录选项
-  → POST /auth/register：email + password
+  → POST /api/v1/auth/register：email + password
   → Controller 校验开关、输入和唯一性，安全哈希密码
   → 保存 User 和会话，返回用户信息与不透明 token
-  → POST /user/networks：创建自己的网络
+  → POST /api/v1/networks：创建自己的网络
   → 同事务创建 Network + 本人 Owner membership + 初始配置
 ```
 

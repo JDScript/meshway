@@ -38,6 +38,8 @@ Node 上报自身运行事实，Controller 聚合 NetworkState；Node 可按需 
 
 - [NodeConfiguration 下发示例](/v2/configuration-reference/node-configuration)
 - [Config／State 同步与回滚](/v2/configuration-reference/synchronization)
+- [Entity、关系与字段归属](/v2/entities)
+- [全部数据的存储与访问](/v2/storage)
 - [存储、查询与外部 API](/v2/configuration-reference/storage-api)
 - [模型与讨论边界](/v2/network-configuration)
 
@@ -46,3 +48,7 @@ Node 上报自身运行事实，Controller 聚合 NetworkState；Node 可按需 
 - [API 分区与操作索引](/v2/api)
 - [用户注册、网络创建与 Node 密钥认证](/v2/api/authentication)
 - [SSE：首次全量、后续变化与生成客户端](/v2/api/events)
+
+## 工程结构
+
+- [技术栈、Workspace 布局与 Shared crates](/v2/architecture)
