@@ -10,13 +10,33 @@ its generated client only, and only what the controller delivers:
 
 - Delivered: registration (when the controller publishes it as open), sign-in,
   session restore and sign-out (`getAuthOptions`, `register`, `login`,
-  `getAuthSession`, `logout`). Pages: `/login`, `/register` and `/`, the
-  signed-in account.
-- Not delivered: networks, nodes, configuration and the event stream. Their
-  pages below are the target design; they return when their operations
-  exist. Until then `/` says that this controller provides no networks, and
-  nothing stands in for them. What the console needs from the V2 API is in
-  `v2-api-needs.md`.
+  `getAuthSession`, `logout`); networks (`listNetworks`, `createNetwork`,
+  `getNetwork`, `renameNetwork`) and the read-only member list
+  (`listNetworkMembers`).
+- Pages now: `/login`, `/register`; `/` opens the remembered network (kept
+  per account) or the first listed, else offers creating the first; a
+  network's overview (the empty globe and one line saying this controller
+  provides no nodes), members (read only, offered when the network's
+  `actions.manageMembers`), settings `network` (the name, editable when
+  `actions.rename`; the ID, creation date and role) and the account (email,
+  session expiry, sign-out). The network menu switches networks (a page at a
+  time) and creates one.
+- Not delivered: nodes, configuration (access, topology, routing, DNS),
+  member changes, join links, password and session management, and the
+  event stream. Their pages below are the target design; they return when
+  their operations exist, and nothing stands in for them. What the console
+  needs from the V2 API is in `v2-api-needs.md`.
+- What a role may do is the network's `actions`, as the controller computes
+  them; the console never derives it from the role.
+- Changes the controller deduplicates (`createNetwork`, `renameNetwork`)
+  carry a fresh `requestId` per distinct attempt; after an attempt whose
+  outcome is unknown (no 4xx answer), the same input sends the same request
+  again (`lib/attempt.ts`). A rename sends `expectedName`, the name last
+  read; on `name_conflict` the network is read again and the typed name
+  kept. The name rule is the controller's: only an empty name is refused
+  before sending.
+- A network's name is entity metadata, not configuration: it is saved by
+  its own button, with no draft or commit bar.
 - `lib/api.ts` holds the one `ControlClient` (same origin). `call` unwraps a
   result and throws `ApiFailure`; `authed` adds this tab's session and turns a
   401 into a sign-out. `lib/failure.ts` words a failure by its problem code,
@@ -103,20 +123,22 @@ flow and breathing; states stay distinguishable by stroke and text.
 ## Pages
 
 Only what the controller can do has an entry: no switch, field or page
-stands in for an interface that does not exist yet.
+stands in for an interface that does not exist yet. "Now" is what the V2
+controller supports today; the rest of each row is the target design.
 
-| Page | Panel | Workspaces | Dialogs |
-| --- | --- | --- | --- |
-| Overview `/overview?node=` | none: the globe is its index | none; the node peek; with no node or one, what adding nodes takes | |
-| Nodes `/nodes?view=nodes\|tags` | nodes (search, state) or tags | `/nodes/<id>?tab=overview\|links\|transport\|manage`, `/nodes/add`, `/nodes/tags/<tag>` | revoke, enrolment token |
-| Members `/members?view=members\|invitations` | members or invitations | `/members/<id>` (role, devices, removal) | invite (link shown once), removal |
-| Policy `/policy` | the four layers with their diagnostics | `/policy/<layer>`: connections, grants, mesh routes, egress (public rules, profiles, automatic, assignments), source (JSONC) | |
-| Settings `/settings` | sections | `/settings/<section>`: network, DNS | |
-| Account `/account` (from the account menu) | none | memberships, password, sessions | |
+| Page | Now | Panel | Workspaces | Dialogs |
+| --- | --- | --- | --- | --- |
+| Overview `/overview?node=` | the empty globe, one line: no nodes | none: the globe is its index | none; the node peek; with no node or one, what adding nodes takes | |
+| Nodes `/nodes?view=nodes\|tags` | absent | nodes (search, state) or tags | `/nodes/<id>?tab=overview\|links\|transport\|manage`, `/nodes/add`, `/nodes/tags/<tag>` | revoke, enrolment token |
+| Members `/members?view=members\|invitations` | the members, read only, for `manageMembers` | members or invitations | `/members/<id>` (role, devices, removal) | invite (link shown once), removal |
+| Policy `/policy` | absent | the four layers with their diagnostics | `/policy/<layer>`: connections, grants, mesh routes, egress (public rules, profiles, automatic, assignments), source (JSONC) | |
+| Settings `/settings` | `network`: name, ID, created, role | sections | `/settings/<section>`: network, DNS | |
+| Account `/account` (from the account menu) | email, session expiry, sign-out | none | memberships, password, sessions | |
 
 Outside the shell, one card over the globe like the sign-in: `/login`,
 `/register` (offered only while the controller publishes registration as
-open), and later the join-link, password-reset and device-approval pages of
+open), `/` with no network (creating the first), a network not found, and
+later the join-link, password-reset and device-approval pages of
 the V2 API.
 
 - Policy is one page because the policy is one document with one revision:
