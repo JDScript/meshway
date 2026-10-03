@@ -97,6 +97,9 @@ problems! {
     InvalidLink(EmptyParams) = "invalid_join_link",
     RevisionConflict(EmptyParams) = "revision_conflict",
     ConfigurationInvalid(ConfigurationValidationParams) = "configuration_invalid",
+    StateConflict(EmptyParams) = "state_conflict",
+    StateLimit(EmptyParams) = "state_limit",
+    ObservationLimit(EmptyParams) = "observation_limit",
 }
 
 wire_object! {

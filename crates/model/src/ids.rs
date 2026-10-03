@@ -107,6 +107,9 @@ id!(InstanceId, "Runtime instance identifier.");
 id!(KeyId, "Key record identifier; not key material.");
 id!(ActivityId, "Activity identifier.");
 id!(ArtifactId, "Immutable dataset artifact identifier.");
+id!(EventId, "Source observation event identifier.");
+id!(ObservationId, "Leased observation task identifier.");
+id!(StateEpoch, "Volatile controller state epoch.");
 id!(
     JoinLinkId,
     "Network join-link record identifier; not the joining secret."

@@ -7,14 +7,19 @@
 
 mod auth;
 pub mod configuration;
+pub mod events;
 pub mod history;
 pub mod management;
 mod management_rules;
 mod networks;
 mod object;
+pub mod observations;
 mod problem;
+pub mod resources;
 mod secret;
 pub use management_rules::{NetworkNameRules, NetworkNameTrim};
+pub mod state;
+pub use events::StreamEvent;
 
 pub use auth::{
     AuthOptionsResponse, AuthSessionResponse, LoginRequest, PasswordLengthUnit, PasswordRules,

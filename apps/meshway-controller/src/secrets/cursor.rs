@@ -11,6 +11,7 @@ pub(crate) enum CursorScope {
     AccountSessions(UserId),
     NetworkActivity { user: UserId, network: NetworkId },
     Revisions { user: UserId, network: NetworkId },
+    ObservationHistory(meshway_model::Digest),
 }
 
 impl CursorScope {
@@ -20,6 +21,10 @@ impl CursorScope {
             Self::AccountSessions(user) => {
                 bytes.push(7);
                 bytes.extend_from_slice(user.as_uuid().as_bytes());
+            }
+            Self::ObservationHistory(owner) => {
+                bytes.push(8);
+                bytes.extend_from_slice(owner.to_string().as_bytes());
             }
             Self::Networks(user) => {
                 bytes.push(1);

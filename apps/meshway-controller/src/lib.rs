@@ -4,6 +4,9 @@
 //! configuration, model, and wire types are owned by their respective crates.
 
 #![forbid(unsafe_code)]
+pub mod observations;
+pub mod resources;
+pub mod state;
 
 pub mod accounts;
 mod app;

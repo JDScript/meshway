@@ -3,10 +3,14 @@
 mod auth;
 mod configuration;
 mod error;
+pub mod events;
 mod management;
 mod management_history;
 mod management_networks;
 mod networks;
+pub mod observations;
+pub mod resources;
+pub mod state;
 
 use axum::{
     Router,
@@ -27,6 +31,47 @@ use crate::accounts::{Accounts, random_uuid};
 use crate::{App, networks::Networks};
 
 use error::HttpError;
+
+struct TypedPath<T>(T);
+impl<S, T> axum::extract::FromRequestParts<S> for TypedPath<T>
+where
+    S: Send + Sync,
+    T: serde::de::DeserializeOwned + Send,
+{
+    type Rejection = HttpError;
+    async fn from_request_parts(
+        parts: &mut axum::http::request::Parts,
+        state: &S,
+    ) -> Result<Self, Self::Rejection> {
+        let id = parts
+            .extensions
+            .get::<RequestId>()
+            .copied()
+            .ok_or_else(|| HttpError::unavailable(None))?;
+        axum::extract::Path::<T>::from_request_parts(parts, state)
+            .await
+            .map(|axum::extract::Path(value)| Self(value))
+            .map_err(|_| HttpError::invalid_request(id))
+    }
+}
+
+/// Generic provider handlers use the same Utoipa path/method declarations as
+/// their export; no second literal endpoint registry is maintained.
+fn declared_route<D, H, T, S>(router: Router<S>, handler: H) -> Router<S>
+where
+    D: utoipa::Path,
+    H: axum::handler::Handler<T, S>,
+    T: 'static,
+    S: Clone + Send + Sync + 'static,
+{
+    use utoipa_axum::PathItemExt;
+    let methods = D::methods()
+        .iter()
+        .fold(axum::routing::MethodRouter::new(), |router, method| {
+            router.on(method.to_method_filter(), handler.clone())
+        });
+    router.route(&D::path(), methods)
+}
 
 /// Includes JSON whitespace and escapes, independently of password limits.
 pub const MAX_JSON_BODY_BYTES: usize = 16 * 1024;

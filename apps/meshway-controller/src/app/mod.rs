@@ -20,6 +20,23 @@ pub struct App {
     accounts: Accounts,
     sealer: Arc<Sealer>,
     configuration_cache: Arc<crate::configuration::SnapshotCache>,
+    shutdown_hooks: ShutdownHooks,
+}
+
+#[derive(Default)]
+struct ShutdownHooks(std::sync::Mutex<Vec<Box<dyn Fn() + Send + Sync>>>);
+impl ShutdownHooks {
+    fn close(&self) {
+        let hooks = std::mem::take(&mut *self.0.lock().unwrap_or_else(|error| error.into_inner()));
+        for close in hooks {
+            close();
+        }
+    }
+}
+impl Drop for ShutdownHooks {
+    fn drop(&mut self) {
+        self.close();
+    }
 }
 
 /// Safe diagnostic categories: no filesystem paths, SQL, or credentials.
@@ -108,6 +125,7 @@ impl App {
             accounts,
             sealer: Arc::new(sealer),
             configuration_cache: Arc::default(),
+            shutdown_hooks: ShutdownHooks::default(),
         })
     }
 
@@ -136,6 +154,25 @@ impl App {
         crate::history::History::new(self.executor.handle(), self.sealer())
     }
 
+    /// Compose State HTTP/SSE with the transactional management/Node providers.
+    pub fn state_service<P: crate::state::service::StateProvider>(
+        &self,
+        provider: P,
+    ) -> Result<crate::state::service::StateService<P>, crate::state::StateError> {
+        let service = crate::state::service::StateService::new(
+            self.executor.handle(),
+            provider,
+            self.sealer(),
+        )?;
+        let shutdown = service.clone();
+        self.shutdown_hooks
+            .0
+            .lock()
+            .map_err(|_| crate::state::StateError::Unavailable)?
+            .push(Box::new(move || shutdown.close()));
+        Ok(service)
+    }
+
     /// Runs full, read-only schema, SQLite integrity, and foreign-key checks on
     /// the owning thread against one consistent database snapshot.
     pub async fn check_storage(&self) -> Result<(), AppError> {
@@ -158,6 +195,7 @@ impl App {
     /// Stops admission, drains accepted operations, and waits for SQLite close.
     /// Cancelling this future still leaves the process lock with the worker.
     pub async fn shutdown(self) -> Result<(), AppError> {
+        self.shutdown_hooks.close();
         self.executor.shutdown().await?;
         Ok(())
     }
