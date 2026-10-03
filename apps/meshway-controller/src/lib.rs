@@ -4,3 +4,5 @@
 //! configuration, model, and wire types are owned by their respective crates.
 
 #![forbid(unsafe_code)]
+
+mod store;
