@@ -137,6 +137,7 @@ export function ConfirmDialog({
   onConfirm,
   effects,
   tone = "destructive",
+  ready = true,
 }: {
   open: boolean
   onOpenChange: (open: boolean) => void
@@ -146,6 +147,8 @@ export function ConfirmDialog({
   onConfirm: () => void
   effects: readonly string[]
   tone?: "destructive" | "default"
+  /** False while what the effects state is still being read: only cancelling is possible. */
+  ready?: boolean
 }) {
   return (
     <GlassDialog
@@ -166,7 +169,7 @@ export function ConfirmDialog({
           <Button
             variant={tone}
             className="h-9 rounded-full px-4"
-            disabled={pending}
+            disabled={pending || !ready}
             aria-busy={pending}
             onClick={onConfirm}
           >

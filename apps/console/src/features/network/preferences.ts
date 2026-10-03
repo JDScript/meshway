@@ -26,3 +26,13 @@ export function rememberNetwork(userId: string, networkId: string) {
     // A preference only.
   }
 }
+
+/** After leaving `networkId`: `/` no longer tries to open it for `userId`. */
+export function forgetNetwork(userId: string, networkId: string) {
+  if (rememberedNetwork(userId) !== networkId) return
+  try {
+    window.localStorage.removeItem(REMEMBERED_NETWORK)
+  } catch {
+    // A preference only.
+  }
+}

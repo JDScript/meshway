@@ -10,3 +10,10 @@ export const roleLabel: Record<MembershipRole, () => string> = {
   admin: () => m.role_admin(),
   member: () => m.role_member(),
 }
+
+/** The roles, highest first. */
+export const ROLES = [
+  "owner",
+  "admin",
+  "member",
+] as const satisfies readonly MembershipRole[]

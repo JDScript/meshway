@@ -1,10 +1,12 @@
 import { createFileRoute, redirect } from "@tanstack/react-router"
 
+import { zMembersSearch } from "@/features/members/url"
 import { networkQuery } from "@/features/network/queries"
 
 /** The members, for those who may manage them; `features/members/page.tsx` draws them. */
 export const Route = createFileRoute("/_authed/networks/$network/members")({
   staticData: { page: "members" },
+  validateSearch: zMembersSearch,
   loader: async ({ context: { queryClient }, params }) => {
     // The network's own route says when it cannot be read.
     const network = await queryClient
