@@ -60,5 +60,10 @@
   "register_missing_email": "请输入邮箱。",
   "account_signed_in": "已登录",
   "account_session_expires": "会话到期",
-  "account_no_networks": "此控制面尚未提供网络。"
+  "account_no_networks": "此控制面尚未提供网络。",
+  "problem_not_found": "不存在，或你没有访问权限。",
+  "problem_permission_denied": "没有权限。",
+  "problem_request_id_conflict": "请求重复，结果未知，请刷新后再试。",
+  "problem_name_conflict": "名称已被其他人修改，未保存。",
+  "problem_invalid_cursor": "列表已过期，请刷新。"
 }

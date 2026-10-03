@@ -22,8 +22,12 @@ const problemMessage: Record<ProblemCode, () => string> = {
   unsupported_media_type: () => m.problem_unsupported(),
   busy: () => m.problem_busy(),
   service_unavailable: () => m.problem_service_unavailable(),
-  not_found: () => m.problem_unsupported(),
+  not_found: () => m.problem_not_found(),
   method_not_allowed: () => m.problem_unsupported(),
+  permission_denied: () => m.problem_permission_denied(),
+  request_id_conflict: () => m.problem_request_id_conflict(),
+  name_conflict: () => m.problem_name_conflict(),
+  invalid_cursor: () => m.problem_invalid_cursor(),
 }
 
 /** A call's own words for some problem codes (`invalid_request` on a sign-in form). */
