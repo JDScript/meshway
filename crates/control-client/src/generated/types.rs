@@ -105,7 +105,7 @@ pub struct NodeMeshExecution {
     pub required_capability: MeshExecutionCapability,
     ///Constraint: minimum=1, maximum=4294967295
     pub revision: i64,
-    ///Constraint: minimum=1, maximum=1
+    ///Constraint: minimum=2, maximum=2
     pub schema_version: i64,
     pub valid: bool,
 }
@@ -114,6 +114,30 @@ pub struct NodeMeshExecution {
 pub struct MeshExecutionPath {
     ///Constraint: minItems=2, maxItems=8
     pub nodes: Vec<String>,
+    pub return_traffic: MeshReturnTraffic,
+}
+#[derive(Clone, PartialEq, Eq, Deserialize, Serialize, Default)]
+pub enum MeshReturnTraffic {
+    #[default]
+    #[serde(rename = "stateful_ipv4_v1")]
+    StatefulIpv4V1,
+}
+impl MeshReturnTraffic {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::StatefulIpv4V1 => "stateful_ipv4_v1",
+        }
+    }
+}
+impl ::std::fmt::Display for MeshReturnTraffic {
+    fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+impl AsRef<str> for MeshReturnTraffic {
+    fn as_ref(&self) -> &str {
+        self.as_str()
+    }
 }
 #[derive(Clone, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
@@ -930,13 +954,13 @@ pub struct MeshExecutionRequest {
 #[derive(Clone, PartialEq, Eq, Deserialize, Serialize, Default)]
 pub enum MeshExecutionCapability {
     #[default]
-    #[serde(rename = "ipv4_exact_path_v1")]
-    Ipv4ExactPathV1,
+    #[serde(rename = "ipv4_stateful_exact_path_v2")]
+    Ipv4StatefulExactPathV2,
 }
 impl MeshExecutionCapability {
     pub fn as_str(&self) -> &'static str {
         match self {
-            Self::Ipv4ExactPathV1 => "ipv4_exact_path_v1",
+            Self::Ipv4StatefulExactPathV2 => "ipv4_stateful_exact_path_v2",
         }
     }
 }
@@ -1174,6 +1198,12 @@ impl std::fmt::Debug for NodeMeshExecution {
 impl std::fmt::Debug for MeshExecutionPath {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_str("MeshExecutionPath([REDACTED])")
+    }
+}
+
+impl std::fmt::Debug for MeshReturnTraffic {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("MeshReturnTraffic([REDACTED])")
     }
 }
 

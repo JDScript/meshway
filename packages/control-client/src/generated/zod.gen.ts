@@ -134,7 +134,7 @@ export const zAcknowledgeConfigurationResponse = z.strictObject({
   "revision": z.int().gte(1).lte(4294967295)
 });
 
-export const zMeshExecutionCapability = z.enum(["ipv4_exact_path_v1"]);
+export const zMeshExecutionCapability = z.enum(["ipv4_stateful_exact_path_v2"]);
 
 export const zMeshExecutionRequest = z.strictObject({
   "capabilities": z.array(zMeshExecutionCapability).max(1),
@@ -689,8 +689,11 @@ export const zManagedListenersSnapshot = z.strictObject({
   "revision": z.int().gte(1).lte(4294967295)
 });
 
+export const zMeshReturnTraffic = z.enum(["stateful_ipv4_v1"]);
+
 export const zMeshExecutionPath = z.strictObject({
-  "nodes": z.array(z.string()).min(2).max(8)
+  "nodes": z.array(z.string()).min(2).max(8),
+  "return_traffic": zMeshReturnTraffic
 });
 
 export const zNodeMeshExecution = z.strictObject({
@@ -705,7 +708,7 @@ export const zNodeMeshExecution = z.strictObject({
   "peers": z.array(zMeshNode).max(1023),
   "required_capability": zMeshExecutionCapability,
   "revision": z.int().gte(1).lte(4294967295),
-  "schema_version": z.int().gte(1).lte(1),
+  "schema_version": z.int().gte(2).lte(2),
   "valid": z.boolean()
 });
 

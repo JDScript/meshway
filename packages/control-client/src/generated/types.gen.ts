@@ -613,10 +613,15 @@ export type MeshDnsConfiguration = {
     zone: string;
 };
 
-export type MeshExecutionCapability = 'ipv4_exact_path_v1';
+export type MeshExecutionCapability = 'ipv4_stateful_exact_path_v2';
 
 export type MeshExecutionPath = {
     nodes: Array<string>;
+    /**
+     * Replies are permitted only for an active authenticated IPv4 flow created
+     * on this forward path. Every waypoint is retained in the reverse path.
+     */
+    return_traffic: MeshReturnTraffic;
 };
 
 export type MeshExecutionRequest = {
@@ -650,6 +655,8 @@ export type MeshNode = {
     mesh_ipv6: string;
     name: string;
 };
+
+export type MeshReturnTraffic = 'stateful_ipv4_v1';
 
 export type MeshRule = {
     dst: string;

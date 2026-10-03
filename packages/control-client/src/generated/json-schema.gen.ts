@@ -2272,13 +2272,14 @@ export const schemaDocument = {
       "MeshExecutionCapability": {
         "type": "string",
         "enum": [
-          "ipv4_exact_path_v1"
+          "ipv4_stateful_exact_path_v2"
         ]
       },
       "MeshExecutionPath": {
         "type": "object",
         "required": [
-          "nodes"
+          "nodes",
+          "return_traffic"
         ],
         "properties": {
           "nodes": {
@@ -2288,6 +2289,10 @@ export const schemaDocument = {
             },
             "maxItems": 8,
             "minItems": 2
+          },
+          "return_traffic": {
+            "$ref": "#/components/schemas/MeshReturnTraffic",
+            "description": "Replies are permitted only for an active authenticated IPv4 flow created\non this forward path. Every waypoint is retained in the reverse path."
           }
         },
         "additionalProperties": false
@@ -2404,6 +2409,12 @@ export const schemaDocument = {
           }
         },
         "additionalProperties": false
+      },
+      "MeshReturnTraffic": {
+        "type": "string",
+        "enum": [
+          "stateful_ipv4_v1"
+        ]
       },
       "MeshRule": {
         "type": "object",
@@ -2957,8 +2968,8 @@ export const schemaDocument = {
           "schema_version": {
             "type": "integer",
             "format": "int64",
-            "maximum": 1,
-            "minimum": 1
+            "maximum": 2,
+            "minimum": 2
           },
           "valid": {
             "type": "boolean"

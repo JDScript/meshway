@@ -46,7 +46,7 @@ fn node(
     let runtime = MeshExecutionRequest {
         epoch,
         instance_id,
-        capabilities: vec![MeshExecutionCapability::Ipv4ExactPathV1],
+        capabilities: vec![MeshExecutionCapability::Ipv4StatefulExactPathV2],
     };
     store
         .mesh_execution(&request.node_credential, &runtime)

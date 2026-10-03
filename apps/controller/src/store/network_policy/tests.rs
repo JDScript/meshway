@@ -95,7 +95,7 @@ fn policy_default_jsonc_cas_budget_and_saved_receipts_are_current_only() {
     let runtime = MeshExecutionRequest {
         epoch: begin.epoch,
         instance_id,
-        capabilities: vec![MeshExecutionCapability::Ipv4ExactPathV1],
+        capabilities: vec![MeshExecutionCapability::Ipv4StatefulExactPathV2],
     };
     let execution = store
         .mesh_execution(&r.node_credential, &runtime)
@@ -188,7 +188,7 @@ fn mixed_epoch_support_withdraws_whole_mandatory_plan_without_replanning_around_
             MeshExecutionRequest {
                 epoch: begin.epoch,
                 instance_id: instance,
-                capabilities: vec![MeshExecutionCapability::Ipv4ExactPathV1],
+                capabilities: vec![MeshExecutionCapability::Ipv4StatefulExactPathV2],
             },
         ));
     }
@@ -305,6 +305,11 @@ fn mixed_epoch_support_withdraws_whole_mandatory_plan_without_replanning_around_
         .snapshot;
     assert!(allowed.payload.valid);
     assert_eq!(allowed.payload.paths.len(), 1);
+    assert_eq!(allowed.payload.schema_version, 2);
+    assert_eq!(
+        allowed.payload.paths[0].return_traffic,
+        MeshReturnTraffic::StatefulIpv4V1
+    );
     assert_eq!(
         allowed.payload.paths[0].nodes,
         vec![a.clone(), b.clone(), c.clone()]
@@ -319,8 +324,29 @@ fn mixed_epoch_support_withdraws_whole_mandatory_plan_without_replanning_around_
             .paths
             .iter()
             .all(|p| p.nodes.first() != Some(c)),
-        "single-direction grant cannot authorize reverse initiation or return packets"
+        "single-direction grant cannot authorize reverse initiation"
     );
+    assert_eq!(reverse.payload.paths.len(), 1);
+    assert_eq!(
+        reverse.payload.paths[0].nodes,
+        allowed.payload.paths[0].nodes
+    );
+    let withdrawn = MeshExecutionRequest {
+        capabilities: vec![],
+        ..participants[1].2.clone()
+    };
+    assert!(matches!(
+        store.mesh_execution(&participants[1].1, &withdrawn),
+        Err(Error::Unprocessable(_))
+    ));
+    let denied = store
+        .mesh_execution(&participants[0].1, &participants[0].2)
+        .unwrap();
+    assert!(!denied.snapshot.payload.valid);
+    assert!(denied.snapshot.payload.paths.is_empty());
+    store
+        .mesh_execution(&participants[1].1, &participants[1].2)
+        .unwrap();
     let old_b = participants[1].2.clone();
     store
         .begin_connection_runtime(
