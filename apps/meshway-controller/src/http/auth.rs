@@ -91,15 +91,17 @@ pub(super) async fn options(
 pub(super) async fn register(
     State(accounts): State<Accounts>,
     Extension(id): Extension<RequestId>,
+    headers: HeaderMap,
     body: Result<Json<RegisterRequest>, JsonRejection>,
 ) -> Result<(StatusCode, Json<SessionIssuedResponse>), HttpError> {
     let Json(body) = body.map_err(|error| HttpError::json(id, error))?;
     let password_rules = rules(accounts.options().password, id)?;
     let issued = accounts
-        .register(
+        .register_from_client(
             body.email,
             Secret::new(body.password.expose().to_owned()),
             id,
+            client_label(&headers),
         )
         .await
         .map_err(|error| HttpError::account(id, error, password_rules))?;
@@ -111,19 +113,68 @@ pub(super) async fn register(
 pub(super) async fn login(
     State(accounts): State<Accounts>,
     Extension(id): Extension<RequestId>,
+    headers: HeaderMap,
     body: Result<Json<LoginRequest>, JsonRejection>,
 ) -> Result<Json<SessionIssuedResponse>, HttpError> {
     let Json(body) = body.map_err(|error| HttpError::json(id, error))?;
     let password_rules = rules(accounts.options().password, id)?;
     let issued = accounts
-        .login(
+        .login_from_client(
             body.email,
             Secret::new(body.password.expose().to_owned()),
             id,
+            client_label(&headers),
         )
         .await
         .map_err(|error| HttpError::account(id, error, password_rules))?;
     Ok(Json(issued_view(id, issued)))
+}
+
+// A coarse description of the issuer's self-reported client, never an identity
+// or authorization input. Keep neither the raw UA nor unknown custom contents.
+fn client_label(headers: &HeaderMap) -> Option<String> {
+    let mut values = headers.get_all(header::USER_AGENT).iter();
+    let value = values.next()?;
+    if values.next().is_some() || value.as_bytes().len() > 2048 {
+        return None;
+    }
+    let agent = value.to_str().ok()?;
+    let product = [
+        ("Edg/", "Edge"),
+        ("EdgiOS/", "Edge"),
+        ("EdgA/", "Edge"),
+        ("OPR/", "Opera"),
+        ("Firefox/", "Firefox"),
+        ("FxiOS/", "Firefox"),
+        ("Chrome/", "Chrome"),
+        ("CriOS/", "Chrome"),
+        ("Version/", "Safari"),
+        ("Meshway/", "Meshway"),
+        ("meshway/", "Meshway"),
+        ("curl/", "curl"),
+        ("HTTPie/", "HTTPie"),
+        ("PostmanRuntime/", "Postman"),
+    ]
+    .into_iter()
+    .find_map(|(token, label)| agent.contains(token).then_some(label))?;
+    if product == "Safari" && !agent.contains("Safari/") {
+        return None;
+    }
+    let platform = [
+        ("iPad", "iPadOS"),
+        ("iPhone", "iOS"),
+        ("Android", "Android"),
+        ("Windows NT", "Windows"),
+        ("Macintosh", "macOS"),
+        ("Mac OS X", "macOS"),
+        ("Linux", "Linux"),
+    ]
+    .into_iter()
+    .find_map(|(token, label)| agent.contains(token).then_some(label));
+    Some(match platform {
+        Some(platform) => format!("{product} · {platform}"),
+        None => product.into(),
+    })
 }
 
 #[utoipa::path(get, path = "/api/v1/auth/session", operation_id = "getAuthSession", tag = "auth", security(("userSession" = [])),
@@ -162,6 +213,35 @@ mod tests {
     use meshway_protocol::Problem;
 
     use super::*;
+
+    #[test]
+    fn session_client_labels_are_coarse_self_reported_and_never_raw_headers() {
+        for (agent, expected) in [
+            (
+                "Mozilla/5.0 (Macintosh; Intel Mac OS X 15_0) AppleWebKit/605.1.15 Version/18.0 Safari/605.1.15",
+                Some("Safari · macOS"),
+            ),
+            (
+                "Mozilla/5.0 (Windows NT 10.0) Chrome/140.0 Safari/537.36 Edg/140.0",
+                Some("Edge · Windows"),
+            ),
+            (
+                "Mozilla/5.0 (iPhone) CriOS/140.0 Safari/604.1",
+                Some("Chrome · iOS"),
+            ),
+            ("curl/8.1", Some("curl")),
+            ("private-unknown-client-value", None),
+        ] {
+            let mut headers = HeaderMap::new();
+            headers.insert(header::USER_AGENT, agent.parse().unwrap());
+            assert_eq!(client_label(&headers).as_deref(), expected);
+        }
+        let mut headers = HeaderMap::new();
+        assert!(client_label(&headers).is_none());
+        headers.append(header::USER_AGENT, "Chrome/140".parse().unwrap());
+        headers.append(header::USER_AGENT, "Firefox/140".parse().unwrap());
+        assert!(client_label(&headers).is_none());
+    }
 
     #[tokio::test]
     async fn unrepresentable_account_rules_return_safe_unavailable() {

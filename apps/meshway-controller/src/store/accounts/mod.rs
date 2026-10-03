@@ -50,6 +50,7 @@ pub(crate) fn register(
     password_hash: Zeroizing<String>,
     ttl: Duration,
     request: RequestId,
+    client_label: Option<&str>,
 ) -> Result<IssuedSession, AccountError> {
     let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
     if transaction.query_row(
@@ -66,7 +67,7 @@ pub(crate) fn register(
     };
     transaction.execute("INSERT INTO users (id, email, password_hash, credential_version, created_at) VALUES (?1, ?2, ?3, 1, ?4)",
         params![user.id.as_uuid().as_bytes().as_slice(), user.email, password_hash.as_str(), now])?;
-    let issued = insert_session(&transaction, user, 1, now, ttl)?;
+    let issued = insert_session(&transaction, user, 1, now, ttl, client_label)?;
     record(
         &transaction,
         &issued.session,
@@ -83,6 +84,7 @@ pub(crate) fn login(
     verified: LoginCandidate,
     ttl: Duration,
     request: RequestId,
+    client_label: Option<&str>,
 ) -> Result<IssuedSession, AccountError> {
     let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
     // Revalidate every security input read before the KDF, including the PHC
@@ -102,6 +104,7 @@ pub(crate) fn login(
         verified.credential_version,
         now,
         ttl,
+        client_label,
     )?;
     record(
         &transaction,
@@ -120,6 +123,7 @@ fn insert_session(
     version: i64,
     now: i64,
     ttl: Duration,
+    client_label: Option<&str>,
 ) -> Result<IssuedSession, AccountError> {
     let session_id = SessionId::new(random_uuid()?).map_err(|_| AccountError::Unavailable)?;
     let (token, digest) = issue_token()?;
@@ -127,8 +131,8 @@ fn insert_session(
         .checked_add(i64::try_from(ttl.as_millis()).map_err(|_| AccountError::Unavailable)?)
         .ok_or(AccountError::Unavailable)?;
     transaction.execute(
-        "INSERT INTO user_sessions (id, token_hash, user_id, credential_version, created_at, expires_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
-        params![session_id.as_uuid().as_bytes().as_slice(), digest.as_slice(), user.id.as_uuid().as_bytes().as_slice(), version, now, expires],
+        "INSERT INTO user_sessions (id, token_hash, user_id, credential_version, created_at, expires_at, client_label) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+        params![session_id.as_uuid().as_bytes().as_slice(), digest.as_slice(), user.id.as_uuid().as_bytes().as_slice(), version, now, expires, client_label],
     )?;
     Ok(IssuedSession {
         session: AuthenticatedSession {

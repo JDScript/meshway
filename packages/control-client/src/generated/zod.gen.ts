@@ -96,7 +96,7 @@ export const zAccountSessionsResponse = z.strictObject({
   ["requestId"]: zRequestId
 });
 
-export const zActivityAction = z.enum(["AccountRegister","SessionLogin","SessionLogout","SessionRevoke","SessionRevokeOthers","SessionRevokeAll","AccountPassword","AccountPasswordReset","AccountResetIssued","AccountEmail","NetworkCreate","NetworkRename","ConfigurationApply","MembershipRole","MembershipJoin","MembershipRemove","JoinLinkCreate","JoinLinkRevoke"]);
+export const zActivityAction = z.enum(["account.register","session.login","session.logout","session.revoke","session.revokeOthers","session.revokeAll","account.password","account.passwordReset","account.resetIssued","account.email","network.create","network.rename","configuration.apply","membership.role","membership.join","membership.remove","joinLink.create","joinLink.revoke"]);
 
 export const zActivityActor = z.union([z.strictObject({
   ["type"]: z.enum(["user"]),
@@ -443,11 +443,11 @@ export const zDialerStream = z.enum(["auto","tcp","websocket"]);
 
 export const zWebSocketHeaders = typedMap(z.string().regex(new RegExp("^(?!(?:[Hh][Oo][Ss][Tt]|[Cc][Oo][Nn][Nn][Ee][Cc][Tt][Ii][Oo][Nn]|[Uu][Pp][Gg][Rr][Aa][Dd][Ee]|[Cc][Oo][Nn][Tt][Ee][Nn][Tt]-[Ll][Ee][Nn][Gg][Tt][Hh]|[Tt][Rr][Aa][Nn][Ss][Ff][Ee][Rr]-[Ee][Nn][Cc][Oo][Dd][Ii][Nn][Gg])(?![\\s\\S]))(?![Ss][Ee][Cc]-[Ww][Ee][Bb][Ss][Oo][Cc][Kk][Ee][Tt]-)[!#$%&'*+.^_`|~0-9A-Za-z-]+(?![\\s\\S])", "u")), z.string().regex(new RegExp("^[^\\u0000-\\u0008\\u000A-\\u001F\\u007F-\\u009F]*(?![\\s\\S])", "u")), {});
 
-export const zDialerWebSocket = z.strictObject({
+export const zDialerWebSocketUpdate = z.strictObject({
   ["headers"]: zWebSocketHeaders.exactOptional()
 });
 
-export const zVlessDialer = z.strictObject({
+export const zVlessDialerUpdate = z.strictObject({
   ["bindInterface"]: z.string().exactOptional(),
   ["connectTimeout"]: zPositiveDuration.exactOptional(),
   ["enabled"]: z.boolean().exactOptional(),
@@ -458,21 +458,21 @@ export const zVlessDialer = z.strictObject({
   ["stream"]: zDialerStream.exactOptional(),
   ["tcp"]: zTcpOptions.exactOptional(),
   ["tls"]: zDialerTls.exactOptional(),
-  ["websocket"]: zDialerWebSocket.exactOptional()
+  ["websocket"]: zDialerWebSocketUpdate.nullable().exactOptional()
 });
 
-export const zDialerSet = z.strictObject({
+export const zDialerSetUpdate = z.strictObject({
   ["native_tcp"]: zNativeTcpDialer.exactOptional(),
   ["native_udp"]: zNativeUdpDialer.exactOptional(),
   ["trojan"]: zTrojanDialer.exactOptional(),
-  ["vless"]: zVlessDialer.exactOptional()
+  ["vless"]: zVlessDialerUpdate.exactOptional()
 });
 
 export const zTopologyDefault = z.enum(["allow","deny"]);
 
-export const zDefaults = z.strictObject({
+export const zDefaultsUpdate = z.strictObject({
   ["access"]: zAccessDefault.exactOptional(),
-  ["dialers"]: zDialerSet.exactOptional(),
+  ["dialers"]: zDialerSetUpdate,
   ["topology"]: zTopologyDefault.exactOptional()
 });
 
@@ -490,7 +490,7 @@ export const zRuleSet = z.union([z.strictObject({
 })]);
 
 export const zNodeSettingsPatch = z.strictObject({
-  ["dialers"]: zDialerSet.nullable().exactOptional(),
+  ["dialers"]: zDialerSetUpdate.nullable().exactOptional(),
   ["enabled"]: z.boolean().exactOptional(),
   ["exitEnabled"]: z.boolean().exactOptional(),
   ["hostname"]: z.string().exactOptional(),
@@ -578,6 +578,8 @@ export const zListener = z.union([z.strictObject({
   ["type"]: z.enum(["trojan"])
 })]);
 
+export const zListenerUpdate = zListener;
+
 export const zNodeAddressesInput = z.strictObject({
   ["ipv4"]: z.string().nullable().exactOptional(),
   ["ipv6"]: z.string().nullable().exactOptional()
@@ -596,7 +598,7 @@ export const zConfigurationOperation = z.union([z.strictObject({
   ["dns"]: zDnsConfiguration,
   ["type"]: z.enum(["replaceDns"])
 }), z.strictObject({
-  ["defaults"]: zDefaults,
+  ["defaults"]: zDefaultsUpdate,
   ["type"]: z.enum(["replaceDefaults"])
 }), z.strictObject({
   ["groups"]: typedMap(z.string(), z.array(z.string()), {}),
@@ -613,7 +615,7 @@ export const zConfigurationOperation = z.union([z.strictObject({
   ["type"]: z.enum(["setNodeSettings"])
 }), z.strictObject({
   ["key"]: z.string(),
-  ["listener"]: zListener.nullable(),
+  ["listener"]: zListenerUpdate.nullable(),
   ["nodeId"]: zNodeId,
   ["type"]: z.enum(["setListener"])
 }), z.strictObject({
@@ -740,7 +742,8 @@ export const zConfigurationPreviewResponse = z.strictObject({
   ["deletedNodeIds"]: z.array(zNodeId),
   ["preview"]: zConfigurationView,
   ["requestId"]: zRequestId,
-  ["sourceChanged"]: z.boolean()
+  ["sourceChanged"]: z.boolean(),
+  ["unavailableDependencies"]: z.array(zConfigurationIssue)
 });
 
 export const zConfigurationRequest = z.union([z.strictObject({
@@ -787,6 +790,37 @@ export const zConfigurationRevisionList = z.strictObject({
 export const zConfigurationSchemaResponse = z.strictObject({
   ["requestId"]: zRequestId,
   ["schemaJson"]: z.string()
+});
+
+export const zDialerWebSocket = z.strictObject({
+  ["headers"]: zWebSocketHeaders.exactOptional()
+});
+
+export const zVlessDialer = z.strictObject({
+  ["bindInterface"]: z.string().exactOptional(),
+  ["connectTimeout"]: zPositiveDuration.exactOptional(),
+  ["enabled"]: z.boolean().exactOptional(),
+  ["localAddress"]: z.string().exactOptional(),
+  ["priority"]: z.int().gte(0).lte(2147483647).exactOptional(),
+  ["remark"]: z.string().exactOptional(),
+  ["socket"]: zSocketOptions.exactOptional(),
+  ["stream"]: zDialerStream.exactOptional(),
+  ["tcp"]: zTcpOptions.exactOptional(),
+  ["tls"]: zDialerTls.exactOptional(),
+  ["websocket"]: zDialerWebSocket.exactOptional()
+});
+
+export const zDialerSet = z.strictObject({
+  ["native_tcp"]: zNativeTcpDialer.exactOptional(),
+  ["native_udp"]: zNativeUdpDialer.exactOptional(),
+  ["trojan"]: zTrojanDialer.exactOptional(),
+  ["vless"]: zVlessDialer.exactOptional()
+});
+
+export const zDefaults = z.strictObject({
+  ["access"]: zAccessDefault.exactOptional(),
+  ["dialers"]: zDialerSet.exactOptional(),
+  ["topology"]: zTopologyDefault.exactOptional()
 });
 
 export const zPreparedListener = z.union([z.strictObject({
@@ -927,6 +961,26 @@ export const zEmptyParams = z.strictObject({
 
 export const zProblem = z.union([z.strictObject({
   ["code"]: z.enum(["invalid_credentials"]),
+  ["message"]: z.string(),
+  ["params"]: zEmptyParams
+}), z.strictObject({
+  ["code"]: z.enum(["invalid_current_password"]),
+  ["message"]: z.string(),
+  ["params"]: zEmptyParams
+}), z.strictObject({
+  ["code"]: z.enum(["invalid_password_reset"]),
+  ["message"]: z.string(),
+  ["params"]: zEmptyParams
+}), z.strictObject({
+  ["code"]: z.enum(["password_reset_used"]),
+  ["message"]: z.string(),
+  ["params"]: zEmptyParams
+}), z.strictObject({
+  ["code"]: z.enum(["password_reset_expired"]),
+  ["message"]: z.string(),
+  ["params"]: zEmptyParams
+}), z.strictObject({
+  ["code"]: z.enum(["password_reset_replaced"]),
   ["message"]: z.string(),
   ["params"]: zEmptyParams
 }), z.strictObject({

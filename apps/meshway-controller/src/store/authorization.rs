@@ -11,6 +11,8 @@ use uuid::Uuid;
 use crate::accounts::{AccountError, AuthenticatedSession, User};
 use crate::networks::NetworkError;
 
+const SESSION_USE_RESOLUTION_MS: i64 = 30_000;
+
 pub(crate) fn network_actions(role: MembershipRole) -> meshway_model::NetworkActions {
     let manage = matches!(role, MembershipRole::Owner | MembershipRole::Admin);
     meshway_model::NetworkActions {
@@ -117,7 +119,7 @@ pub(crate) fn current_session(
     ).optional()?.ok_or(AccountError::InvalidSession)?;
     let user_id = Uuid::from_slice(&row.0).map_err(|_| AccountError::Storage)?;
     let session_id = Uuid::from_slice(&row.2).map_err(|_| AccountError::Storage)?;
-    Ok(AuthenticatedSession {
+    let session = AuthenticatedSession {
         user: User {
             id: UserId::new(user_id).map_err(|_| AccountError::Storage)?,
             email: row.1,
@@ -125,5 +127,17 @@ pub(crate) fn current_session(
         session_id: SessionId::new(session_id).map_err(|_| AccountError::Storage)?,
         created_at: DateTime::<Utc>::from_timestamp_millis(row.3).ok_or(AccountError::Storage)?,
         expires_at: DateTime::<Utc>::from_timestamp_millis(row.4).ok_or(AccountError::Storage)?,
-    })
+    };
+    // This is observed use, not a sliding auth lease. Coalesce metadata writes
+    // while rechecking the actual session and credential version on every call.
+    transaction.execute(
+        "UPDATE user_sessions SET last_used_at = ?1
+         WHERE id = ?2 AND (last_used_at IS NULL OR last_used_at < ?3)",
+        params![
+            now,
+            session.session_id.as_uuid().as_bytes().as_slice(),
+            now.saturating_sub(SESSION_USE_RESOLUTION_MS)
+        ],
+    )?;
+    Ok(session)
 }

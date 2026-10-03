@@ -769,7 +769,7 @@ async fn account_password_sessions_cli_recovery_and_private_history() {
             .await
             .unwrap(),
         StatusCode::BAD_REQUEST,
-        "invalid_request",
+        "invalid_cursor",
     )
     .await;
     let later: SessionIssuedResponse = c
@@ -840,8 +840,8 @@ async fn account_password_sessions_cli_recovery_and_private_history() {
             .send()
             .await
             .unwrap(),
-        StatusCode::UNAUTHORIZED,
-        "invalid_credentials",
+        StatusCode::BAD_REQUEST,
+        "invalid_current_password",
     )
     .await;
     assert_eq!(
@@ -868,33 +868,55 @@ async fn account_password_sessions_cli_recovery_and_private_history() {
     )
     .await;
     s.close().await;
-    let output = std::process::Command::new(env!("CARGO_BIN_EXE_reset-password"))
-        .args([
-            "--data-dir",
-            path.to_str().unwrap(),
-            "--email",
-            "manager@example.test",
-            "--console-origin",
-            "https://controller.example",
-        ])
-        .output()
-        .unwrap();
-    assert!(
-        output.status.success(),
-        "{}",
-        String::from_utf8_lossy(&output.stderr)
-    );
-    assert!(output.stderr.is_empty());
-    let output = String::from_utf8(output.stdout).unwrap();
-    let token = output
-        .trim()
-        .strip_prefix("https://controller.example/reset-password#token=")
-        .unwrap();
+    let issue_reset = || {
+        let output = std::process::Command::new(env!("CARGO_BIN_EXE_reset-password"))
+            .args([
+                "--data-dir",
+                path.to_str().unwrap(),
+                "--email",
+                "manager@example.test",
+                "--console-origin",
+                "https://controller.example",
+            ])
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert!(output.stderr.is_empty());
+        let output = String::from_utf8(output.stdout).unwrap();
+        output
+            .trim()
+            .strip_prefix("https://controller.example/reset-password#token=")
+            .unwrap()
+            .to_owned()
+    };
+    let replaced_token = issue_reset();
+    let token = issue_reset();
     let s = Server::start(&path, false).await;
+    for (token, code) in [
+        (replaced_token, "password_reset_replaced"),
+        ("invalid-reset-token".into(), "invalid_password_reset"),
+    ] {
+        error(
+            c.post(s.auth("password-reset/inspect"))
+                .json(&PasswordResetInspectRequest {
+                    token: WireSecret::new(token),
+                })
+                .send()
+                .await
+                .unwrap(),
+            StatusCode::BAD_REQUEST,
+            code,
+        )
+        .await;
+    }
     let inspect: PasswordResetInspection = c
         .post(s.auth("password-reset/inspect"))
         .json(&PasswordResetInspectRequest {
-            token: WireSecret::new(token.into()),
+            token: WireSecret::new(token.clone()),
         })
         .send()
         .await
@@ -906,7 +928,7 @@ async fn account_password_sessions_cli_recovery_and_private_history() {
     assert_eq!(
         c.post(s.auth("password-reset/redeem"))
             .json(&PasswordResetRedeemRequest {
-                token: WireSecret::new(token.into()),
+                token: WireSecret::new(token.clone()),
                 password: WireSecret::new("after reset password".into())
             })
             .send()
@@ -918,13 +940,13 @@ async fn account_password_sessions_cli_recovery_and_private_history() {
     error(
         c.post(s.auth("password-reset/inspect"))
             .json(&PasswordResetInspectRequest {
-                token: WireSecret::new(token.into()),
+                token: WireSecret::new(token),
             })
             .send()
             .await
             .unwrap(),
         StatusCode::BAD_REQUEST,
-        "invalid_credentials",
+        "password_reset_used",
     )
     .await;
     let login: SessionIssuedResponse = c

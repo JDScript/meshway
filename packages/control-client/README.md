@@ -36,6 +36,15 @@ if (result.ok) {
   error body yields `http` with its status and no `problem` or raw body.
 - Other failure kinds are `configuration`, `request`, `network`, `body_limit`
   and `cancelled`. A network read failure retains the status when available.
+- Activity actions use dotted wire names such as `session.login` and
+  `membership.role`; the generated enum and runtime validators use those names.
+- Incorrect current passwords return `400 invalid_current_password`, distinct
+  from `401 invalid_session`. Pagination uses `400 invalid_cursor` consistently.
+  Reset errors are `invalid_password_reset`, `password_reset_used`,
+  `password_reset_expired`, or `password_reset_replaced` (all HTTP 400).
+- Session `lastUsedAt` records authenticated use with 30-second write coalescing;
+  it does not extend the session. `clientLabel` is a coarse product/platform
+  summary of the issuing client's User-Agent, or null when unknown.
 - `baseUrl` is an HTTP(S) origin, without path, query, fragment or credentials.
   The caller supplies session tokens per authenticated call and owns storage,
   logout and cache lifetimes. The SDK has no browser persistence or BFF.
@@ -76,18 +85,25 @@ edge trimming and 1–128 code points. U+FEFF is not trimmed. Do not use raw
 
 `getConfiguration` returns the redacted view. `getConfigurationSource` is an
 explicit secret read of the full JSONC and complete protocol values. Use
-`validateConfiguration` for the effective view, change count and affected
-resources, then `applyConfiguration` with the same `expectedRevision` and a
-request ID. Inputs are the generated `ConfigurationRequest` union:
+`validateConfiguration` for the effective view, change count, affected resources
+and explicit `unavailableDependencies`, then `applyConfiguration` with the same
+`expectedRevision` and a request ID. Inputs are the generated `ConfigurationRequest` union:
 
 - `document`: complete `sourceJsonc`.
 - `operations`: typed `ops`; `setListener` requires an explicit `listener`
-  value, with `null` meaning removal.
+  update value, with `null` meaning removal. Updates to the same listener retain
+  omitted protocol/TLS secrets. Dialer WebSocket headers support omission to
+  keep values, an explicit map to replace them, and `{}` to clear them. Protocol
+  sets and non-secret fields still follow their declared replacement/default rules.
 - `restore`: `restoreFrom`, committed as a new revision after revalidation.
 
 Strict CAS rejects stale edits. A request ID can recover an already committed
 identical apply. `compareConfiguration` and `listConfigurationRevisions` read
 actual complete versions; they never return protocol secrets in the diff.
+Document and operations inputs preserve existing stable reference bindings;
+an unchanged save does not reauthorize a removed/rejoined membership. Retained
+inactive references are reported as unavailable dependencies, and permitted
+binding changes participate in the preview's effective changes.
 
 Node-dependent configuration/member removal and remote rule-set publication
 remain unavailable until execution/resource providers are connected. Address

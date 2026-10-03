@@ -39,14 +39,24 @@ pub enum AccountError {
     EmailTaken,
     #[error("invalid credentials")]
     InvalidCredentials,
+    #[error("current password is incorrect")]
+    InvalidCurrentPassword,
     #[error("invalid or expired session")]
     InvalidSession,
     #[error("resource is not available")]
     NotFound,
     #[error("invalid or consumed recovery credential")]
     InvalidReset,
+    #[error("recovery credential has already been used")]
+    ResetUsed,
+    #[error("recovery credential has expired")]
+    ResetExpired,
+    #[error("recovery credential has been superseded")]
+    ResetReplaced,
     #[error("invalid request")]
     InvalidRequest,
+    #[error("pagination cursor is invalid or expired")]
+    InvalidCursor,
     #[error("account computation budget is busy")]
     Busy,
     #[error("account service is unavailable")]
@@ -140,6 +150,17 @@ impl Accounts {
         password: Secret,
         request_id: RequestId,
     ) -> Result<IssuedSession, AccountError> {
+        self.register_from_client(email, password, request_id, None)
+            .await
+    }
+
+    pub(crate) async fn register_from_client(
+        &self,
+        email: String,
+        password: Secret,
+        request_id: RequestId,
+        client_label: Option<String>,
+    ) -> Result<IssuedSession, AccountError> {
         if !self.options.registration_enabled {
             return Err(AccountError::RegistrationDisabled);
         }
@@ -148,7 +169,16 @@ impl Accounts {
         let hash = password::hash(password).await?;
         let ttl = self.options.session_ttl;
         self.handle
-            .execute(move |connection| store::register(connection, email, hash, ttl, request_id))
+            .execute(move |connection| {
+                store::register(
+                    connection,
+                    email,
+                    hash,
+                    ttl,
+                    request_id,
+                    client_label.as_deref(),
+                )
+            })
             .await?
     }
 
@@ -157,6 +187,17 @@ impl Accounts {
         email: String,
         password: Secret,
         request_id: RequestId,
+    ) -> Result<IssuedSession, AccountError> {
+        self.login_from_client(email, password, request_id, None)
+            .await
+    }
+
+    pub(crate) async fn login_from_client(
+        &self,
+        email: String,
+        password: Secret,
+        request_id: RequestId,
+        client_label: Option<String>,
     ) -> Result<IssuedSession, AccountError> {
         // Invalid identifiers and unknown users still take the bounded dummy KDF
         // path; malformed/oversize passwords are rejected before computation.
@@ -169,7 +210,15 @@ impl Accounts {
         let candidate = password::verify(password, candidate).await?;
         let ttl = self.options.session_ttl;
         self.handle
-            .execute(move |connection| store::login(connection, candidate, ttl, request_id))
+            .execute(move |connection| {
+                store::login(
+                    connection,
+                    candidate,
+                    ttl,
+                    request_id,
+                    client_label.as_deref(),
+                )
+            })
             .await?
     }
 

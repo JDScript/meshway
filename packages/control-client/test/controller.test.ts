@@ -11,11 +11,13 @@ import {
   createJoinLink, redeemJoinLink, changeMemberRole, getConfiguration,
   getConfigurationSource, validateConfiguration, applyConfiguration,
   compareConfiguration, listConfigurationRevisions,
+  changeAccountEmail, getMemberRemovalImpact, removeMember,
+  listAccountActivity, listNetworkActivity, listAccountSessions, changeAccountPassword,
   type ConfigurationRequest,
 } from "../src/index.ts";
 import { zListener, zPreparedListener, zPreparationKind, zNodeAddresses, zConfigurationOperation } from "../src/generated/zod.gen.ts";
 
-async function controller(t: TestContext, registrationEnabled = true) {
+async function controller(t: TestContext, registrationEnabled = true, userAgent?: string) {
   const parent = join(tmpdir(), "opencode");
   await mkdir(parent, { recursive: true });
   const directory = await mkdtemp(join(await realpath(parent), "meshway-ts-sdk-"));
@@ -40,7 +42,11 @@ async function controller(t: TestContext, registrationEnabled = true) {
       if (match?.[1]) { clearTimeout(timeout); ready(`http://${match[1]}`); }
     });
   });
-  return new ControlClient({ baseUrl });
+  return new ControlClient({ baseUrl, ...(userAgent === undefined ? {} : { fetch: (input, init) => {
+    const headers = new Headers(init?.headers);
+    headers.set("user-agent", userAgent);
+    return globalThis.fetch(input, { ...init, headers });
+  } }) });
 }
 
 test("generated TS SDK authenticates through the normal Controller binary", async t => {
@@ -90,6 +96,73 @@ test("generated TS SDK decodes server-enforced registration disablement", async 
   assert.ok(!result.ok && result.error.kind === "http");
   assert.equal(result.error.status, 403);
   assert.equal(result.error.problem?.problem.code, "registration_disabled");
+});
+
+test("activity actions decode through the generated SDK with their actual dotted names", async t => {
+  const client = await controller(t);
+  const email = "activity-schema@example.test";
+  const password = "valid activity schema password";
+  assert.ok((await register(client, { email, password })).ok);
+  const session = await login(client, { email, password });
+  assert.ok(session.ok);
+  const options = { token: session.data.token };
+  const created = await createNetwork(client, { requestId: randomUUID(), name: "Activity schema" }, options);
+  assert.ok(created.ok);
+  const account = await listAccountActivity(client, {}, options);
+  assert.ok(account.ok);
+  assert.ok(account.data.items.some(event => event.action === "session.login"));
+  assert.ok(account.data.items.some(event => event.action === "account.register"));
+  const network = await listNetworkActivity(client, { networkId: created.data.network.id }, {}, options);
+  assert.ok(network.ok);
+  assert.ok(network.data.items.some(event => event.action === "network.create" && event.target.type === "network"));
+});
+
+test("session metadata and account errors retain their distinct meanings", async t => {
+  const agent = "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 Chrome/140.0.0.0 Safari/537.36";
+  const client = await controller(t, true, agent);
+  const email = "session-metadata@example.test";
+  const password = "valid metadata test password";
+  const session = await register(client, { email, password });
+  assert.ok(session.ok);
+  const options = { token: session.data.token };
+  const sessions = await listAccountSessions(client, {}, options);
+  assert.ok(sessions.ok);
+  const current = sessions.data.items.find(item => item.current);
+  assert.ok(current?.lastUsedAt);
+  assert.equal(current.clientLabel, "Chrome · Linux");
+  assert.ok(Date.parse(current.lastUsedAt) >= Date.parse(current.createdAt));
+  assert.equal(JSON.stringify(sessions.data).includes(agent), false);
+
+  const created = await createNetwork(client, { requestId: randomUUID(), name: "Cursor errors" }, options);
+  assert.ok(created.ok);
+  const path = { networkId: created.data.network.id };
+  const query = { cursor: "invalid-cursor" };
+  for (const result of [
+    await listNetworks(client, query, options),
+    await listNetworkMembers(client, path, query, options),
+    await listAccountSessions(client, query, options),
+    await listAccountActivity(client, query, options),
+    await listNetworkActivity(client, path, query, options),
+    await listConfigurationRevisions(client, path, query, options),
+  ]) {
+    assert.ok(!result.ok && result.error.kind === "http");
+    assert.equal(result.error.status, 400);
+    assert.equal(result.error.problem?.problem.code, "invalid_cursor");
+  }
+  for (const result of [
+    await changeAccountPassword(client, { currentPassword: "incorrect current password", password: "valid replacement password" }, options),
+    await changeAccountEmail(client, { password: "incorrect current password", email: "unused-metadata@example.test" }, options),
+  ]) {
+    assert.ok(!result.ok && result.error.kind === "http");
+    assert.equal(result.error.status, 400);
+    assert.equal(result.error.problem?.problem.code, "invalid_current_password");
+  }
+  assert.ok((await getAuthSession(client, options)).ok);
+  assert.ok((await logout(client, options)).ok);
+  const revoked = await changeAccountPassword(client, { currentPassword: password, password: "valid replacement password" }, options);
+  assert.ok(!revoked.ok && revoked.error.kind === "http");
+  assert.equal(revoked.error.status, 401);
+  assert.equal(revoked.error.problem?.problem.code, "invalid_session");
 });
 
 test("generated TS network operations create real networks and preserve pagination and CAS", async t => {
@@ -215,6 +288,109 @@ test("published configuration validators preserve closed listener variants and m
   for (const value of ["unknown", { material: "certificateValidation", extra: true }, ["addressV4"]]) assert.equal(zPreparationKind.safeParse(value).success, false);
   for (const value of [{ ipv4: "100.64.0.1", ipv6: "fd00::1" }, { ipv4: null, ipv6: "::ffff:192.0.2.1" }]) assert.equal(zNodeAddresses.safeParse(value).success, true);
   for (const value of [{ ipv4: "100.064.0.1", ipv6: null }, { ipv4: null, ipv6: "fe80::1%en0" }, { ipv4: null }]) assert.equal(zNodeAddresses.safeParse(value).success, false);
+});
+
+test("SDK preserves retired references across email changes and rejoin without a hidden document rebind", async t => {
+  const client = await controller(t);
+  const password = "valid retired reference password";
+  const owner = await register(client, { email: "retired-owner@example.test", password });
+  const member = await register(client, { email: "retired-member@example.test", password });
+  assert.ok(owner.ok && member.ok);
+  const options = { token: owner.data.token };
+  const created = await createNetwork(client, { requestId: randomUUID(), name: "Retired references" }, options);
+  assert.ok(created.ok);
+  const path = { networkId: created.data.network.id };
+  async function join(token: string) {
+    const link = await createJoinLink(client, path, { requestId: randomUUID(), role: "member", expiresInSeconds: 600 }, options);
+    assert.ok(link.ok && link.data.secretDelivery === "available");
+    const result = await redeemJoinLink(client, { token: link.data.secret }, { token });
+    assert.ok(result.ok);
+    return result.data.membershipId;
+  }
+  const membershipId = await join(member.data.token);
+  const edited = await applyConfiguration(client, path, {
+    type: "operations", expectedRevision: created.data.network.currentRevision, requestId: randomUUID(),
+    ops: [{ type: "replaceGroups", groups: { "group:team": [member.data.user.email] } }],
+  }, options);
+  assert.ok(edited.ok);
+  const impact = await getMemberRemovalImpact(client, { ...path, membershipId }, options);
+  assert.ok(impact.ok && impact.data.nodeCount === 0);
+  const removed = await removeMember(client, { ...path, membershipId }, { expectedRevision: impact.data.revision, expectedVersion: impact.data.version }, options);
+  assert.ok(removed.ok);
+  const email = "retired-renamed@example.test";
+  const changed = await changeAccountEmail(client, { password, email }, { token: member.data.token });
+  assert.ok(changed.ok);
+  assert.equal(changed.data.user.id, member.data.user.id);
+  const session = await login(client, { email, password });
+  assert.ok(session.ok);
+  assert.notEqual(await join(session.data.token), membershipId);
+  const source = await getConfigurationSource(client, path, {}, options);
+  assert.ok(source.ok);
+  assert.deepEqual(source.data.configuration.groups?.["group:team"], [email]);
+  const inputs: ConfigurationRequest[] = [
+    { type: "operations", expectedRevision: source.data.revision, requestId: randomUUID(), ops: [] },
+    { type: "document", expectedRevision: source.data.revision, requestId: randomUUID(), sourceJsonc: source.data.sourceJsonc },
+  ];
+  for (const input of inputs) {
+    const preview = await validateConfiguration(client, path, input, options);
+    assert.ok(preview.ok);
+    assert.equal(preview.data.changeCount, 0);
+    assert.equal(preview.data.sourceChanged, false);
+    assert.ok(preview.data.unavailableDependencies.length > 0);
+    const saved = await applyConfiguration(client, path, input, options);
+    assert.ok(saved.ok);
+    assert.equal(saved.data.revision, source.data.revision);
+  }
+});
+
+test("SDK form edits preserve hidden headers and explicit empty headers clear them", async t => {
+  const client = await controller(t);
+  const owner = await register(client, { email: "headers-owner@example.test", password: "valid hidden headers password" });
+  assert.ok(owner.ok);
+  const options = { token: owner.data.token };
+  const created = await createNetwork(client, { requestId: randomUUID(), name: "Hidden headers" }, options);
+  assert.ok(created.ok);
+  const path = { networkId: created.data.network.id };
+  const initial = await getConfigurationSource(client, path, {}, options);
+  assert.ok(initial.ok);
+  const defaults = initial.data.configuration.defaults;
+  assert.ok(defaults?.dialers?.vless);
+  const credential = "test-header-value-not-returned-to-the-form";
+  const seeded = await applyConfiguration(client, path, {
+    type: "operations", expectedRevision: initial.data.revision, requestId: randomUUID(),
+    ops: [{ type: "replaceDefaults", defaults: { ...defaults, dialers: { ...defaults.dialers, vless: { ...defaults.dialers.vless, websocket: { headers: { Authorization: credential } } } } } }],
+  }, options);
+  assert.ok(seeded.ok);
+  const view = await getConfiguration(client, path, options);
+  assert.ok(view.ok && view.data.configuration.defaults.dialers.vless);
+  assert.equal(JSON.stringify(view.data).includes(credential), false);
+  const visible = view.data.configuration.defaults;
+  const { websocketHeaderNames, ...vless } = view.data.configuration.defaults.dialers.vless;
+  assert.deepEqual(websocketHeaderNames, ["Authorization"]);
+  const publicDialers = {
+    ...(visible.dialers.native_udp ? { native_udp: visible.dialers.native_udp } : {}),
+    ...(visible.dialers.native_tcp ? { native_tcp: visible.dialers.native_tcp } : {}),
+    ...(visible.dialers.trojan ? { trojan: visible.dialers.trojan } : {}),
+  };
+  const form = { access: visible.access, topology: visible.topology, dialers: { ...publicDialers, vless: { ...vless, priority: 301, websocket: {} } } };
+  const updated = await applyConfiguration(client, path, {
+    type: "operations", expectedRevision: view.data.revision, requestId: randomUUID(),
+    ops: [{ type: "replaceDefaults", defaults: form }],
+  }, options);
+  assert.ok(updated.ok);
+  // An explicit privileged audit read verifies the form did not need the value.
+  const retained = await getConfigurationSource(client, path, {}, options);
+  assert.ok(retained.ok);
+  assert.equal(retained.data.configuration.defaults?.dialers?.vless?.websocket?.headers?.Authorization, credential);
+  assert.equal(retained.data.configuration.defaults?.dialers?.vless?.priority, 301);
+  const cleared = await applyConfiguration(client, path, {
+    type: "operations", expectedRevision: updated.data.revision, requestId: randomUUID(),
+    ops: [{ type: "replaceDefaults", defaults: { ...form, dialers: { ...form.dialers, vless: { ...form.dialers.vless, websocket: { headers: {} } } } } }],
+  }, options);
+  assert.ok(cleared.ok);
+  const after = await getConfiguration(client, path, options);
+  assert.ok(after.ok);
+  assert.deepEqual(after.data.configuration.defaults.dialers.vless?.websocketHeaderNames, []);
 });
 
 test("generated TS operations validate malformed real envelopes before returning data", async t => {

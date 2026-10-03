@@ -132,6 +132,14 @@ impl HttpError {
             ),
             AccountError::InvalidSession => return Self::invalid_session(id),
             AccountError::InvalidRequest => return Self::invalid_request(id),
+            AccountError::InvalidCursor => Self::cursor_problem(),
+            AccountError::InvalidCurrentPassword => (
+                StatusCode::BAD_REQUEST,
+                Problem::InvalidCurrentPassword {
+                    params: EmptyParams {},
+                    message: "Current password is incorrect.".into(),
+                },
+            ),
             AccountError::NotFound => (
                 StatusCode::NOT_FOUND,
                 Problem::NotFound {
@@ -141,9 +149,30 @@ impl HttpError {
             ),
             AccountError::InvalidReset => (
                 StatusCode::BAD_REQUEST,
-                Problem::InvalidCredentials {
+                Problem::InvalidPasswordReset {
                     params: EmptyParams {},
                     message: "Recovery credential is invalid or no longer usable.".into(),
+                },
+            ),
+            AccountError::ResetUsed => (
+                StatusCode::BAD_REQUEST,
+                Problem::PasswordResetUsed {
+                    params: EmptyParams {},
+                    message: "Recovery credential has already been used.".into(),
+                },
+            ),
+            AccountError::ResetExpired => (
+                StatusCode::BAD_REQUEST,
+                Problem::PasswordResetExpired {
+                    params: EmptyParams {},
+                    message: "Recovery credential has expired.".into(),
+                },
+            ),
+            AccountError::ResetReplaced => (
+                StatusCode::BAD_REQUEST,
+                Problem::PasswordResetReplaced {
+                    params: EmptyParams {},
+                    message: "Recovery credential has been superseded.".into(),
                 },
             ),
             AccountError::Busy => (
@@ -182,6 +211,16 @@ impl HttpError {
         )
     }
 
+    fn cursor_problem() -> (StatusCode, Problem) {
+        (
+            StatusCode::BAD_REQUEST,
+            Problem::InvalidCursor {
+                params: EmptyParams {},
+                message: "Pagination cursor is invalid or expired.".into(),
+            },
+        )
+    }
+
     pub(super) fn network(id: RequestId, error: NetworkError) -> Self {
         let (status, problem) = match error {
             NetworkError::InvalidSession => return Self::invalid_session(id),
@@ -216,13 +255,7 @@ impl HttpError {
                     message: "Network name changed; reload before retrying.".into(),
                 },
             ),
-            NetworkError::InvalidCursor => (
-                StatusCode::BAD_REQUEST,
-                Problem::InvalidCursor {
-                    params: EmptyParams {},
-                    message: "Pagination cursor is invalid or expired.".into(),
-                },
-            ),
+            NetworkError::InvalidCursor => Self::cursor_problem(),
             NetworkError::Storage | NetworkError::Unavailable => {
                 return Self::unavailable(Some(id));
             }

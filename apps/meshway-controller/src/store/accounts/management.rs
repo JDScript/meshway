@@ -14,7 +14,7 @@ pub(crate) fn sessions(
     let scope = crate::secrets::CursorScope::AccountSessions(session.user.id);
     let mut window = match cursor {
         Some(cursor) => crate::networks::pagination::Window::decode(sealer, scope, &cursor, now)
-            .map_err(|_| AccountError::InvalidRequest)?,
+            .map_err(|_| AccountError::InvalidCursor)?,
         None => crate::networks::pagination::Window::new(
             tx.query_row(
                 "SELECT coalesce(max(rowid),0) FROM user_sessions",
@@ -274,8 +274,37 @@ pub(crate) fn issue_reset(
 }
 
 fn reset(tx: &Transaction<'_>, digest: [u8; 32], now: i64) -> Result<(UserId, i64), AccountError> {
-    let (user,expires)=tx.query_row("SELECT p.user_id,p.expires_at FROM password_resets p JOIN users u ON u.id=p.user_id WHERE p.token_hash=?1 AND p.revoked_at IS NULL AND p.consumed_at IS NULL AND p.expires_at>?2 AND p.credential_version=u.credential_version AND u.disabled_at IS NULL",params![digest.as_slice(),now],|r|Ok((r.get::<_,Vec<u8>>(0)?,r.get::<_,i64>(1)?))).optional()?.ok_or(AccountError::InvalidReset)?;
-    Ok((user_id(&user)?, expires))
+    let row = tx
+        .query_row(
+            "SELECT p.user_id, p.expires_at, p.consumed_at, p.revoked_at,
+                p.credential_version = u.credential_version
+         FROM password_resets p JOIN users u ON u.id = p.user_id
+         WHERE p.token_hash = ?1 AND u.disabled_at IS NULL",
+            [digest.as_slice()],
+            |row| {
+                Ok((
+                    row.get::<_, Vec<u8>>(0)?,
+                    row.get::<_, i64>(1)?,
+                    row.get::<_, Option<i64>>(2)?,
+                    row.get::<_, Option<i64>>(3)?,
+                    row.get::<_, bool>(4)?,
+                ))
+            },
+        )
+        .optional()?
+        .ok_or(AccountError::InvalidReset)?;
+    // Only an exact credential hash match can expose a lifecycle reason. Used
+    // takes precedence because consuming a reset also advances credential_version.
+    if row.2.is_some() {
+        return Err(AccountError::ResetUsed);
+    }
+    if row.3.is_some() || !row.4 {
+        return Err(AccountError::ResetReplaced);
+    }
+    if row.1 <= now {
+        return Err(AccountError::ResetExpired);
+    }
+    Ok((user_id(&row.0)?, row.1))
 }
 
 pub(crate) fn inspect_reset(

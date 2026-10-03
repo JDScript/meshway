@@ -136,24 +136,24 @@ export const schemaDocument = {
       "ActivityAction": {
         "type": "string",
         "enum": [
-          "AccountRegister",
-          "SessionLogin",
-          "SessionLogout",
-          "SessionRevoke",
-          "SessionRevokeOthers",
-          "SessionRevokeAll",
-          "AccountPassword",
-          "AccountPasswordReset",
-          "AccountResetIssued",
-          "AccountEmail",
-          "NetworkCreate",
-          "NetworkRename",
-          "ConfigurationApply",
-          "MembershipRole",
-          "MembershipJoin",
-          "MembershipRemove",
-          "JoinLinkCreate",
-          "JoinLinkRevoke"
+          "account.register",
+          "session.login",
+          "session.logout",
+          "session.revoke",
+          "session.revokeOthers",
+          "session.revokeAll",
+          "account.password",
+          "account.passwordReset",
+          "account.resetIssued",
+          "account.email",
+          "network.create",
+          "network.rename",
+          "configuration.apply",
+          "membership.role",
+          "membership.join",
+          "membership.remove",
+          "joinLink.create",
+          "joinLink.revoke"
         ]
       },
       "ActivityActor": {
@@ -813,7 +813,7 @@ export const schemaDocument = {
             ],
             "properties": {
               "defaults": {
-                "$ref": "#/components/schemas/Defaults"
+                "$ref": "#/components/schemas/DefaultsUpdate"
               },
               "type": {
                 "type": "string",
@@ -943,7 +943,7 @@ export const schemaDocument = {
               "listener": {
                 "oneOf": [
                   {
-                    "$ref": "#/components/schemas/Listener"
+                    "$ref": "#/components/schemas/ListenerUpdate"
                   },
                   {
                     "type": "null"
@@ -1054,6 +1054,7 @@ export const schemaDocument = {
       "ConfigurationPreviewResponse": {
         "type": "object",
         "required": [
+          "unavailableDependencies",
           "requestId",
           "baseRevision",
           "preview",
@@ -1098,6 +1099,12 @@ export const schemaDocument = {
           },
           "sourceChanged": {
             "type": "boolean"
+          },
+          "unavailableDependencies": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ConfigurationIssue"
+            }
           }
         },
         "additionalProperties": false
@@ -1525,6 +1532,24 @@ export const schemaDocument = {
         },
         "additionalProperties": false
       },
+      "DefaultsUpdate": {
+        "type": "object",
+        "required": [
+          "dialers"
+        ],
+        "properties": {
+          "access": {
+            "$ref": "#/components/schemas/AccessDefault"
+          },
+          "dialers": {
+            "$ref": "#/components/schemas/DialerSetUpdate"
+          },
+          "topology": {
+            "$ref": "#/components/schemas/TopologyDefault"
+          }
+        },
+        "additionalProperties": false
+      },
       "DefaultsView": {
         "type": "object",
         "required": [
@@ -1559,6 +1584,24 @@ export const schemaDocument = {
           },
           "vless": {
             "$ref": "#/components/schemas/VlessDialer"
+          }
+        },
+        "additionalProperties": false
+      },
+      "DialerSetUpdate": {
+        "type": "object",
+        "properties": {
+          "native_tcp": {
+            "$ref": "#/components/schemas/NativeTcpDialer"
+          },
+          "native_udp": {
+            "$ref": "#/components/schemas/NativeUdpDialer"
+          },
+          "trojan": {
+            "$ref": "#/components/schemas/TrojanDialer"
+          },
+          "vless": {
+            "$ref": "#/components/schemas/VlessDialerUpdate"
           }
         },
         "additionalProperties": false
@@ -1642,6 +1685,15 @@ export const schemaDocument = {
         "additionalProperties": false
       },
       "DialerWebSocket": {
+        "type": "object",
+        "properties": {
+          "headers": {
+            "$ref": "#/components/schemas/WebSocketHeaders"
+          }
+        },
+        "additionalProperties": false
+      },
+      "DialerWebSocketUpdate": {
         "type": "object",
         "properties": {
           "headers": {
@@ -2309,6 +2361,10 @@ export const schemaDocument = {
           }
         },
         "additionalProperties": false
+      },
+      "ListenerUpdate": {
+        "$ref": "#/components/schemas/Listener",
+        "description": "Same protocol fields as a declaration, with secret omission interpreted as\nkeep only while updating the same resource. New resources have no predecessor."
       },
       "ListenerView": {
         "type": "object",
@@ -3163,7 +3219,7 @@ export const schemaDocument = {
           "dialers": {
             "oneOf": [
               {
-                "$ref": "#/components/schemas/DialerSet"
+                "$ref": "#/components/schemas/DialerSetUpdate"
               },
               {
                 "type": "null"
@@ -3662,6 +3718,121 @@ export const schemaDocument = {
                 "type": "string",
                 "enum": [
                   "invalid_credentials"
+                ]
+              },
+              "message": {
+                "type": "string"
+              },
+              "params": {
+                "$ref": "#/components/schemas/EmptyParams"
+              }
+            },
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "required": [
+              "code",
+              "params",
+              "message"
+            ],
+            "properties": {
+              "code": {
+                "type": "string",
+                "enum": [
+                  "invalid_current_password"
+                ]
+              },
+              "message": {
+                "type": "string"
+              },
+              "params": {
+                "$ref": "#/components/schemas/EmptyParams"
+              }
+            },
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "required": [
+              "code",
+              "params",
+              "message"
+            ],
+            "properties": {
+              "code": {
+                "type": "string",
+                "enum": [
+                  "invalid_password_reset"
+                ]
+              },
+              "message": {
+                "type": "string"
+              },
+              "params": {
+                "$ref": "#/components/schemas/EmptyParams"
+              }
+            },
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "required": [
+              "code",
+              "params",
+              "message"
+            ],
+            "properties": {
+              "code": {
+                "type": "string",
+                "enum": [
+                  "password_reset_used"
+                ]
+              },
+              "message": {
+                "type": "string"
+              },
+              "params": {
+                "$ref": "#/components/schemas/EmptyParams"
+              }
+            },
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "required": [
+              "code",
+              "params",
+              "message"
+            ],
+            "properties": {
+              "code": {
+                "type": "string",
+                "enum": [
+                  "password_reset_expired"
+                ]
+              },
+              "message": {
+                "type": "string"
+              },
+              "params": {
+                "$ref": "#/components/schemas/EmptyParams"
+              }
+            },
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "required": [
+              "code",
+              "params",
+              "message"
+            ],
+            "properties": {
+              "code": {
+                "type": "string",
+                "enum": [
+                  "password_reset_replaced"
                 ]
               },
               "message": {
@@ -4930,6 +5101,54 @@ export const schemaDocument = {
           },
           "websocket": {
             "$ref": "#/components/schemas/DialerWebSocket"
+          }
+        },
+        "additionalProperties": false
+      },
+      "VlessDialerUpdate": {
+        "type": "object",
+        "properties": {
+          "bindInterface": {
+            "type": "string"
+          },
+          "connectTimeout": {
+            "$ref": "#/components/schemas/PositiveDuration"
+          },
+          "enabled": {
+            "type": "boolean"
+          },
+          "localAddress": {
+            "type": "string"
+          },
+          "priority": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          },
+          "remark": {
+            "type": "string"
+          },
+          "socket": {
+            "$ref": "#/components/schemas/SocketOptions"
+          },
+          "stream": {
+            "$ref": "#/components/schemas/DialerStream"
+          },
+          "tcp": {
+            "$ref": "#/components/schemas/TcpOptions"
+          },
+          "tls": {
+            "$ref": "#/components/schemas/DialerTls"
+          },
+          "websocket": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/DialerWebSocketUpdate"
+              },
+              {
+                "type": "null"
+              }
+            ]
           }
         },
         "additionalProperties": false

@@ -92,6 +92,10 @@ Controller 正常启动初始化空库所需结构和私有材料，随后走普
 
 session token／摘要不进入列表、URL 或活动记录。会话列表返回非秘密 sessionId、创建／最近使用／到期时间、current 与粗粒度客户端摘要；recent use 没有可信记录时为 null。账户恢复已采用 CLI 签发，停用／注销入口仍待定；网络 Owner 不能重置别人的全局账户。
 
+当前 `lastUsedAt` 在已验证会话的事务内记录，并以 30 秒粒度合并元数据写入；每次请求仍重检真实会话与权限，不延长 expiresAt。`clientLabel` 来自注册／登录请求的 User-Agent 粗粒度产品／平台摘要，不存原始 header，不作为身份依据；缺失或无法识别时为 null。
+
+当前密码错误为 `400 invalid_current_password`，不会撤销仍有效的会话；会话失效继续为 `401 invalid_session`。各分页入口对不可用 cursor 统一返回 `400 invalid_cursor`。重置凭据错误均为 400：无法验证为 `invalid_password_reset`；仅在匹配真实凭据后区分 `password_reset_used`、`password_reset_expired`、`password_reset_replaced`（包含凭据代际已更新）。
+
 ### 网络与成员
 
 | 方法与路径提案 | 主体 | 用途 |

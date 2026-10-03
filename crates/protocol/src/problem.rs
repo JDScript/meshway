@@ -76,6 +76,11 @@ macro_rules! problems {
 
 problems! {
     InvalidCredentials(EmptyParams) = "invalid_credentials",
+    InvalidCurrentPassword(EmptyParams) = "invalid_current_password",
+    InvalidPasswordReset(EmptyParams) = "invalid_password_reset",
+    PasswordResetUsed(EmptyParams) = "password_reset_used",
+    PasswordResetExpired(EmptyParams) = "password_reset_expired",
+    PasswordResetReplaced(EmptyParams) = "password_reset_replaced",
     InvalidSession(EmptyParams) = "invalid_session",
     RegistrationDisabled(EmptyParams) = "registration_disabled",
     EmailTaken(EmptyParams) = "email_taken",

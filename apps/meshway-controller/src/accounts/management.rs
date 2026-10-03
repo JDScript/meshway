@@ -47,12 +47,14 @@ impl Accounts {
     ) -> Result<super::User, AccountError> {
         let digest = secret::token_digest(token)?;
         let email = email::normalize(&email)?;
-        password::validate(&current).map_err(|_| AccountError::InvalidCredentials)?;
         let candidate = self
             .handle
             .execute(move |db| store::candidate(db, digest))
             .await??;
-        let verified = password::verify(current, Some(candidate)).await?;
+        password::validate(&current).map_err(|_| AccountError::InvalidCurrentPassword)?;
+        let verified = password::verify(current, Some(candidate))
+            .await
+            .map_err(current_password_error)?;
         self.handle
             .execute(move |db| {
                 store::change_email(db, digest, verified, email, request, &configurations)
@@ -95,13 +97,15 @@ impl Accounts {
         request: RequestId,
     ) -> Result<(), AccountError> {
         let digest = secret::token_digest(token)?;
-        password::validate(&current).map_err(|_| AccountError::InvalidCredentials)?;
-        password::validate(&replacement)?;
         let candidate = self
             .handle
             .execute(move |db| store::candidate(db, digest))
             .await??;
-        let verified = password::verify(current, Some(candidate)).await?;
+        password::validate(&current).map_err(|_| AccountError::InvalidCurrentPassword)?;
+        password::validate(&replacement)?;
+        let verified = password::verify(current, Some(candidate))
+            .await
+            .map_err(current_password_error)?;
         let hash = password::hash(replacement).await?;
         self.handle
             .execute(move |db| store::change_password(db, digest, verified, hash, request))
@@ -150,5 +154,12 @@ impl Accounts {
         self.handle
             .execute(move |db| store::redeem_reset(db, digest, hash, request))
             .await?
+    }
+}
+
+fn current_password_error(error: AccountError) -> AccountError {
+    match error {
+        AccountError::InvalidCredentials => AccountError::InvalidCurrentPassword,
+        other => other,
     }
 }

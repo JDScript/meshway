@@ -28,6 +28,171 @@ fn verify_candidate(candidate: &LoginCandidate) {
 }
 
 #[tokio::test]
+async fn session_use_and_reset_failures_follow_real_account_lifecycles() {
+    let _serial = TEST_KDF_LOCK.lock().await;
+    let temp = tempfile::tempdir().unwrap();
+    let (executor, ()) = Executor::open(
+        temp.path().canonicalize().unwrap().join("db"),
+        Options::default(),
+        (),
+        |connection, _| schema::tests::initialize_fixture(connection),
+    )
+    .await
+    .unwrap();
+    let handle = executor.handle();
+    let accounts = Accounts::new(
+        handle.clone(),
+        AccountOptions::new(true, Duration::from_secs(86400)).unwrap(),
+    );
+    let email = "metadata-reset@example.test";
+    let issued = accounts
+        .register_from_client(
+            email.into(),
+            Secret::new("valid password".into()),
+            request(),
+            Some("Firefox · Linux".into()),
+        )
+        .await
+        .unwrap();
+    let digest = crate::accounts::token_digest(issued.token.expose()).unwrap();
+    let created = issued.session.created_at.timestamp_millis();
+    let expires = issued.session.expires_at.timestamp_millis();
+    handle
+        .execute(move |db| {
+            let tx = db.transaction().unwrap();
+            let (used, label): (Option<i64>, Option<String>) = tx
+                .query_row(
+                    "SELECT last_used_at,client_label FROM user_sessions WHERE token_hash=?1",
+                    [digest.as_slice()],
+                    |row| Ok((row.get(0)?, row.get(1)?)),
+                )
+                .unwrap();
+            assert_eq!(used, None, "issuing a token does not prove subsequent use");
+            assert_eq!(label.as_deref(), Some("Firefox · Linux"));
+            for (at, expected) in [
+                (created + 1, created + 1),
+                (created + 1000, created + 1),
+                (created + 31_001, created + 31_001),
+            ] {
+                current_session(&tx, &digest, at).unwrap();
+                let used: i64 = tx
+                    .query_row(
+                        "SELECT last_used_at FROM user_sessions WHERE token_hash=?1",
+                        [digest.as_slice()],
+                        |row| row.get(0),
+                    )
+                    .unwrap();
+                assert_eq!(used, expected);
+            }
+            assert!(matches!(
+                current_session(&tx, &digest, expires),
+                Err(AccountError::InvalidSession)
+            ));
+            let after: i64 = tx
+                .query_row(
+                    "SELECT last_used_at FROM user_sessions WHERE token_hash=?1",
+                    [digest.as_slice()],
+                    |row| row.get(0),
+                )
+                .unwrap();
+            assert_eq!(after, created + 31_001);
+            tx.commit().unwrap();
+        })
+        .await
+        .unwrap();
+
+    let first = accounts
+        .issue_password_reset(email.into(), 60, request())
+        .await
+        .unwrap();
+    let second = accounts
+        .issue_password_reset(email.into(), 60, request())
+        .await
+        .unwrap();
+    assert!(matches!(
+        accounts.inspect_password_reset(first.token.expose()).await,
+        Err(AccountError::ResetReplaced)
+    ));
+    let second_hash = crate::accounts::one_time_digest("mwr_", second.token.expose()).unwrap();
+    handle
+        .execute(move |db| {
+            db.execute(
+                "UPDATE password_resets SET expires_at=1 WHERE token_hash=?1",
+                [second_hash.as_slice()],
+            )
+            .unwrap();
+        })
+        .await
+        .unwrap();
+    assert!(matches!(
+        accounts.inspect_password_reset(second.token.expose()).await,
+        Err(AccountError::ResetExpired)
+    ));
+    let (unknown, _) = crate::accounts::issue_one_time("mwr_").unwrap();
+    assert!(matches!(
+        accounts.inspect_password_reset(unknown.expose()).await,
+        Err(AccountError::InvalidReset)
+    ));
+    let third = accounts
+        .issue_password_reset(email.into(), 60, request())
+        .await
+        .unwrap();
+    accounts
+        .redeem_password_reset(
+            third.token.expose(),
+            Secret::new("reset replacement password".into()),
+            request(),
+        )
+        .await
+        .unwrap();
+    assert!(matches!(
+        accounts.inspect_password_reset(third.token.expose()).await,
+        Err(AccountError::ResetUsed)
+    ));
+    assert!(matches!(
+        accounts
+            .redeem_password_reset(
+                third.token.expose(),
+                Secret::new("another replacement password".into()),
+                request()
+            )
+            .await,
+        Err(AccountError::ResetUsed)
+    ));
+    assert!(matches!(
+        accounts.authenticate(issued.token.expose()).await,
+        Err(AccountError::InvalidSession)
+    ));
+
+    let fourth = accounts
+        .issue_password_reset(email.into(), 60, request())
+        .await
+        .unwrap();
+    let session = accounts
+        .login(
+            email.into(),
+            Secret::new("reset replacement password".into()),
+            request(),
+        )
+        .await
+        .unwrap();
+    accounts
+        .change_password(
+            session.token.expose(),
+            Secret::new("reset replacement password".into()),
+            Secret::new("latest replacement password".into()),
+            request(),
+        )
+        .await
+        .unwrap();
+    assert!(matches!(
+        accounts.inspect_password_reset(fourth.token.expose()).await,
+        Err(AccountError::ResetReplaced)
+    ));
+    executor.shutdown().await.unwrap();
+}
+
+#[tokio::test]
 async fn transactional_lifecycle_races_activities_and_cancelled_delivery() {
     let _serial = TEST_KDF_LOCK.lock().await;
     let temp = tempfile::tempdir().unwrap();
@@ -92,7 +257,7 @@ async fn transactional_lifecycle_races_activities_and_cancelled_delivery() {
         let old_hash = candidate.password_hash.clone();
         handle.execute(move |c| {
             c.execute_batch(mutation).unwrap();
-            assert!(matches!(login(c, candidate, Duration::from_secs(86400), request()), Err(AccountError::InvalidCredentials)));
+            assert!(matches!(login(c, candidate, Duration::from_secs(86400), request(), None), Err(AccountError::InvalidCredentials)));
             assert_eq!(c.query_row("SELECT count(*) FROM user_sessions", [], |r| r.get::<_, i64>(0)).unwrap(), 1);
             assert_eq!(c.query_row("SELECT count(*) FROM activity_events", [], |r| r.get::<_, i64>(0)).unwrap(), 1);
             c.execute("UPDATE users SET disabled_at = NULL, credential_version = 1, password_hash = ?1", [old_hash.as_str()]).unwrap();
@@ -186,7 +351,7 @@ async fn transactional_lifecycle_races_activities_and_cancelled_delivery() {
     let mut login_future = Box::pin(handle.execute(move |c| {
         started.send(()).unwrap();
         wait.recv().unwrap();
-        login(c, candidate, Duration::from_secs(86400), request())
+        login(c, candidate, Duration::from_secs(86400), request(), None)
     }));
     assert!(matches!(
         login_future

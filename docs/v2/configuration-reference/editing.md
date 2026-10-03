@@ -80,6 +80,7 @@ Console 在最终应用前展示**有效修改数量、前后对照和影响范�
 | `identityChangedNodeIds` | 身份切换目标 |
 | `changedListeners` | 会重建／改变材料的 listener 引用 |
 | `diagnostics` | 带严重级别和字段定位的类型化问题 |
+| `unavailableDependencies` | 当前实现返回的失效依赖；保留旧引用不等于恢复授权，也不表示运行时链路健康状态 |
 
 `unavailableDependencies` 列出保留但已撤销／失效的成员与路由依赖。这类依赖不阻止撤权保存，执行侧必须拒绝受影响流量。稳定绑定本身变化也进入 `changes`（`/bindings/users`、`/bindings/listeners`、`/bindings/ruleSets`）并计入 `changeCount`；原样文档保存不会把已失效的成员引用重新绑定到同名的新入网关系。
 
