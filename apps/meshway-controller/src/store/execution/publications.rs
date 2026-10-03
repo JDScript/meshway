@@ -42,10 +42,10 @@ pub(crate) fn select_profile(
     let version = Version::new(current.unwrap_or(0) as u64 + 1).map_err(|_| NodeError::Conflict)?;
     tx.execute("INSERT INTO routing_selections(network_id,node_id,identity_digest,profile,version,selected_at) VALUES(?1,?2,?3,?4,?5,?6) ON CONFLICT(network_id,node_id) DO UPDATE SET identity_digest=excluded.identity_digest,profile=excluded.profile,version=excluded.version,selected_at=excluded.selected_at",params![p.network.as_uuid().as_bytes().as_slice(),p.node.as_uuid().as_bytes().as_slice(),digest.as_bytes().as_slice(),request.profile,version.get() as i64,now])?;
     tx.execute(
-        "DELETE FROM execution_demands WHERE network_id=?1 AND node_id=?2",
+        "UPDATE execution_demands SET cancelled_at=?3 WHERE network_id=?1 AND node_id=?2 AND cancelled_at IS NULL",
         params![
             p.network.as_uuid().as_bytes().as_slice(),
-            p.node.as_uuid().as_bytes().as_slice()
+            p.node.as_uuid().as_bytes().as_slice(), now
         ],
     )?;
     let publication = publish(&tx, sealer, p.network, "refresh", now)?.publication;
@@ -57,18 +57,18 @@ pub(crate) fn select_profile(
     })
 }
 
-pub(crate) fn trusted_inventory(
+fn trusted_inventory(
     tx: &Transaction<'_>,
-    sealer: &Sealer,
     network: NetworkId,
+    cfg: &NetworkConfiguration,
+    bindings: &ConfigurationBindings,
 ) -> Result<BTreeMap<NodeId, TrustedNode>, NodeError> {
-    let (_, cfg, bindings) = current_configuration(tx, sealer, network)?;
     let mut out = BTreeMap::new();
     let mut stmt=tx.prepare("SELECT n.id,k.id,k.public_key,k.generation,d.id,d.public_key,d.generation,e.capabilities FROM nodes n JOIN node_keys k ON k.network_id=n.network_id AND k.node_id=n.id AND k.purpose='control' AND k.retired_at IS NULL AND k.revoked_at IS NULL JOIN node_keys d ON d.network_id=n.network_id AND d.node_id=n.id AND d.purpose='dataplane' AND d.retired_at IS NULL AND d.revoked_at IS NULL LEFT JOIN node_execution e ON e.network_id=n.network_id AND e.node_id=n.id WHERE n.network_id=?1 AND n.credentials_revoked_at IS NULL")?;
     let mut rows = stmt.query([network.as_uuid().as_bytes().as_slice()])?;
     while let Some(r) = rows.next()? {
         let node = id(r.get(0)?)?;
-        match identity_eligible(tx, &cfg, &bindings, network, node) {
+        match identity_eligible(tx, cfg, bindings, network, node) {
             Ok(()) => {}
             Err(NodeError::Unauthorized) => continue,
             Err(error) => return Err(error),
@@ -112,6 +112,30 @@ pub(crate) fn trusted_inventory(
     }
     Ok(out)
 }
+/// Transaction-local immutable publication context. A shared old publication
+/// is decrypted once, even when thousands of nodes still target its slices.
+fn active_publications(
+    tx: &Transaction<'_>,
+    sealer: &Sealer,
+    network: NetworkId,
+) -> Result<BTreeMap<PublicationId, CompiledPublication>, NodeError> {
+    let mut statement = tx.prepare(
+        "SELECT id,payload FROM execution_publications x WHERE network_id=?1 AND withdrawn_at IS NULL
+         AND EXISTS(SELECT 1 FROM node_execution e WHERE e.network_id=x.network_id AND e.target_publication_id=x.id)",
+    )?;
+    let mut rows = statement.query([network.as_uuid().as_bytes().as_slice()])?;
+    let mut publications = BTreeMap::new();
+    while let Some(row) = rows.next()? {
+        let publication = id(row.get(0)?)?;
+        let payload: Vec<u8> = row.get(1)?;
+        let plain = sealer
+            .open_execution(network, publication, &payload)
+            .map_err(|_| NodeError::Storage)?;
+        publications.insert(publication, json(plain.as_bytes())?);
+    }
+    Ok(publications)
+}
+
 pub(crate) fn publish(
     tx: &Transaction<'_>,
     sealer: &Sealer,
@@ -138,9 +162,9 @@ pub(crate) fn publish(
     }
     drop(rows);
     drop(statement);
-    let inventory = trusted_inventory(tx, sealer, network)?;
+    let inventory = trusted_inventory(tx, network, &cfg, &bindings)?;
     let mut stmt = tx.prepare(
-        "SELECT payload FROM execution_demands WHERE network_id=?1 AND expires_at>?2 ORDER BY id",
+        "SELECT payload FROM execution_demands WHERE network_id=?1 AND expires_at>?2 AND cancelled_at IS NULL ORDER BY id",
     )?;
     let demands = stmt
         .query_map(params![network.as_uuid().as_bytes().as_slice(), now], |r| {
@@ -153,7 +177,7 @@ pub(crate) fn publish(
         .collect::<Result<BTreeMap<_, _>, NodeError>>()?;
     drop(stmt);
     let publication = PublicationId::new(uuid()?).map_err(|_| NodeError::Storage)?;
-    let compiled = compile::compile(CompilationInput {
+    let mut compiled = compile::compile(CompilationInput {
         network,
         revision,
         publication,
@@ -165,14 +189,52 @@ pub(crate) fn publish(
         selected_profiles: &selected_profiles,
         now_ms: now as u64,
     })?;
-    let mut stmt=tx.prepare("SELECT DISTINCT target_publication_id FROM node_execution WHERE network_id=?1 AND target_publication_id IS NOT NULL")?;
-    let supersedes = stmt
+    let mut stmt = tx.prepare(
+        "SELECT node_id,target_publication_id,execution_expires_at FROM node_execution
+         WHERE network_id=?1 AND target_publication_id IS NOT NULL",
+    )?;
+    let previous = stmt
         .query_map([network.as_uuid().as_bytes().as_slice()], |r| {
-            r.get::<_, Vec<u8>>(0)
+            Ok((
+                r.get::<_, Vec<u8>>(0)?,
+                r.get::<_, Vec<u8>>(1)?,
+                r.get::<_, Option<i64>>(2)?,
+            ))
         })?
-        .map(|v| id::<PublicationId>(v?))
         .collect::<Result<Vec<_>, _>>()?;
     drop(stmt);
+    let mut supersedes = std::collections::BTreeSet::new();
+    let active = active_publications(tx, sealer, network)?;
+    // Compare the actual node slice, not the network-wide input digest. A new
+    // unrelated demand must not invalidate an already-installed publication.
+    for (node, old_publication, expiry) in previous {
+        let node: NodeId = id(node)?;
+        let old_publication: PublicationId = id(old_publication)?;
+        let old = active
+            .get(&old_publication)
+            .and_then(|publication| publication.nodes.get(&node));
+        let unchanged = if let (Some(old), Some(new)) = (old, compiled.nodes.get(&node)) {
+            let mut comparable = new.configuration.clone();
+            comparable.publication = old.configuration.publication;
+            comparable.dependency_digest = old.configuration.dependency_digest;
+            comparable == old.configuration && expiry.is_none_or(|expiry| expiry > now)
+        } else {
+            false
+        };
+        if unchanged {
+            compiled.nodes.remove(&node);
+        } else {
+            supersedes.insert(old_publication);
+            tx.execute(
+                "UPDATE node_execution SET target_publication_id=NULL,execution_expires_at=NULL
+                 WHERE network_id=?1 AND node_id=?2",
+                params![
+                    network.as_uuid().as_bytes().as_slice(),
+                    node.as_uuid().as_bytes().as_slice()
+                ],
+            )?;
+        }
+    }
     tx.execute(
         "UPDATE networks SET publication_sequence=publication_sequence+1 WHERE id=?1",
         [network.as_uuid().as_bytes().as_slice()],
@@ -186,9 +248,13 @@ pub(crate) fn publish(
     let sealed = sealer
         .seal_execution(network, publication, &payload)
         .map_err(|_| NodeError::Storage)?;
-    tx.execute("INSERT INTO execution_publications(id,network_id,sequence,revision,cause,supersedes,dependency_digest,payload,created_at) VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9)",params![publication.as_uuid().as_bytes().as_slice(),network.as_uuid().as_bytes().as_slice(),sequence,revision.get() as i64,cause,bytes(&supersedes)?,compiled.dependency_digest.as_bytes().as_slice(),sealed.as_bytes(),now])?;
-    // All concurrent demands were included; superseding never loses an unrelated grant.
-    tx.execute("UPDATE node_execution SET target_publication_id=NULL,execution_expires_at=NULL,saved=NULL WHERE network_id=?1",[network.as_uuid().as_bytes().as_slice()])?;
+    tx.execute(
+        "INSERT INTO execution_publications(id,network_id,sequence,revision,cause,supersedes,dependency_digest,payload,created_at)
+         VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9)",
+        params![publication.as_uuid().as_bytes().as_slice(),network.as_uuid().as_bytes().as_slice(),
+            sequence,revision.get() as i64,cause,bytes(&supersedes)?,compiled.dependency_digest.as_bytes().as_slice(),sealed.as_bytes(),now],
+    )?;
+    // All demands were compiled together; only changed slices become targets.
     for node in compiled.nodes.keys() {
         tx.execute(
             "UPDATE node_execution SET target_publication_id=?1 WHERE network_id=?2 AND node_id=?3",
@@ -200,7 +266,16 @@ pub(crate) fn publish(
         )?;
     }
     for old in supersedes {
-        tx.execute("UPDATE execution_publications SET withdrawn_at=COALESCE(withdrawn_at,?1) WHERE network_id=?2 AND id=?3",params![now,network.as_uuid().as_bytes().as_slice(),old.as_uuid().as_bytes().as_slice()])?;
+        tx.execute(
+            "UPDATE execution_publications SET withdrawn_at=COALESCE(withdrawn_at,?1)
+             WHERE network_id=?2 AND id=?3 AND NOT EXISTS(
+                 SELECT 1 FROM node_execution WHERE network_id=?2 AND target_publication_id=?3)",
+            params![
+                now,
+                network.as_uuid().as_bytes().as_slice(),
+                old.as_uuid().as_bytes().as_slice()
+            ],
+        )?;
     }
     Ok(compiled)
 }
@@ -237,25 +312,85 @@ pub(super) fn historical_target(
     p: &NodePrincipal,
     reference: &ConfigurationRef,
 ) -> Result<Option<CompiledNode>, NodeError> {
-    let payload:Option<Vec<u8>>=tx.query_row("SELECT payload FROM execution_publications WHERE network_id=?1 AND id=?2 AND revision=?3",params![p.network.as_uuid().as_bytes().as_slice(),reference.execution_publication.as_uuid().as_bytes().as_slice(),reference.revision.get() as i64],|r|r.get(0)).optional()?;
+    historical_target_for_node(tx, sealer, p.network, p.node, reference)
+}
+
+fn historical_target_for_node(
+    tx: &Transaction<'_>,
+    sealer: &Sealer,
+    network: NetworkId,
+    node: NodeId,
+    reference: &ConfigurationRef,
+) -> Result<Option<CompiledNode>, NodeError> {
+    let payload:Option<Vec<u8>>=tx.query_row("SELECT payload FROM execution_publications WHERE network_id=?1 AND id=?2 AND revision=?3",params![network.as_uuid().as_bytes().as_slice(),reference.execution_publication.as_uuid().as_bytes().as_slice(),reference.revision.get() as i64],|r|r.get(0)).optional()?;
     let Some(payload) = payload else {
         return Ok(None);
     };
     let mut compiled: CompiledPublication = json(
         sealer
-            .open_execution(p.network, reference.execution_publication, &payload)
+            .open_execution(network, reference.execution_publication, &payload)
             .map_err(|_| NodeError::Storage)?
             .as_bytes(),
     )?;
     Ok(compiled
         .nodes
-        .remove(&p.node)
+        .remove(&node)
         .filter(|n| n.digest == reference.digest))
+}
+
+/// Only accepted evidence for the current fenced instance enters historical
+/// State contexts. This lookup never confers installation/execution authority.
+pub(crate) fn receipt_history_targets(
+    tx: &Transaction<'_>,
+    sealer: &Sealer,
+    network: NetworkId,
+    node: NodeId,
+    instance: InstanceId,
+    now: i64,
+) -> Result<Vec<CompiledNode>, NodeError> {
+    let mut statement = tx.prepare(
+        "SELECT r.publication_id,x.revision,r.digest FROM execution_receipts r
+         JOIN execution_publications x ON x.network_id=r.network_id AND x.id=r.publication_id
+         WHERE r.network_id=?1 AND r.node_id=?2 AND r.instance_id=?3 AND r.received_at>=?4
+         GROUP BY r.publication_id,x.revision,r.digest ORDER BY max(r.received_at) DESC LIMIT 32",
+    )?;
+    let rows = statement
+        .query_map(
+            params![
+                network.as_uuid().as_bytes().as_slice(),
+                node.as_uuid().as_bytes().as_slice(),
+                instance.as_uuid().as_bytes().as_slice(),
+                now.saturating_sub(300_000)
+            ],
+            |row| {
+                Ok((
+                    row.get::<_, Vec<u8>>(0)?,
+                    row.get::<_, i64>(1)?,
+                    row.get::<_, Vec<u8>>(2)?,
+                ))
+            },
+        )?
+        .collect::<Result<Vec<_>, _>>()?;
+    drop(statement);
+    let mut targets = Vec::new();
+    for (publication, revision, digest) in rows {
+        let reference = ConfigurationRef {
+            revision: Revision::new(revision.try_into().map_err(|_| NodeError::Storage)?)
+                .map_err(|_| NodeError::Storage)?,
+            execution_publication: id(publication)?,
+            digest: Digest::from_bytes(digest.try_into().map_err(|_| NodeError::Storage)?),
+        };
+        if let Some(target) = historical_target_for_node(tx, sealer, network, node, &reference)? {
+            targets.push(target);
+        }
+    }
+    Ok(targets)
 }
 pub(crate) fn check_publication(
     tx: &Transaction<'_>,
     sealer: &Sealer,
     network: NetworkId,
+    node: NodeId,
     publication: PublicationId,
     now: i64,
 ) -> Result<(), NodeError> {
@@ -264,19 +399,26 @@ pub(crate) fn check_publication(
         .open_execution(network, publication, &payload)
         .map_err(|_| NodeError::Storage)?;
     let compiled: CompiledPublication = json(plain.as_bytes())?;
-    let current = trusted_inventory(tx, sealer, network)?;
-    for (id, node) in compiled.nodes {
-        if current.get(&id) != Some(&node.configuration.self_keys) {
+    let (_, cfg, bindings) = current_configuration(tx, sealer, network)?;
+    let current = trusted_inventory(tx, network, &cfg, &bindings)?;
+    let node = compiled.nodes.get(&node).ok_or(NodeError::Conflict)?;
+    if current.get(&node.configuration.node_id) != Some(&node.configuration.self_keys) {
+        return Err(NodeError::Conflict);
+    }
+    for (id, peer) in &node.configuration.peers {
+        if current.get(id).is_none_or(|keys| {
+            keys.control_key != peer.control_key || keys.dataplane_key != peer.dataplane_key
+        }) {
             return Err(NodeError::Conflict);
         }
-        if node
-            .configuration
-            .permits
-            .values()
-            .any(|p| p.expires_at_ms <= now as u64)
-        {
-            return Err(NodeError::Conflict);
-        }
+    }
+    if node
+        .configuration
+        .permits
+        .values()
+        .any(|p| p.expires_at_ms <= now as u64)
+    {
+        return Err(NodeError::Conflict);
     }
     Ok(())
 }
@@ -287,7 +429,7 @@ pub(super) fn refresh_expired_demands(
     now: i64,
 ) -> Result<(), NodeError> {
     if tx.execute(
-        "DELETE FROM execution_demands WHERE network_id=?1 AND expires_at<=?2",
+        "UPDATE execution_demands SET cancelled_at=?2 WHERE network_id=?1 AND expires_at<=?2 AND cancelled_at IS NULL",
         params![network.as_uuid().as_bytes().as_slice(), now],
     )? > 0
     {
@@ -297,19 +439,42 @@ pub(super) fn refresh_expired_demands(
 }
 pub(crate) fn revoke_execution(
     tx: &Transaction<'_>,
+    sealer: &Sealer,
     network: NetworkId,
     node: NodeId,
     now: i64,
 ) -> Result<(), NodeError> {
-    // Withdrawal of the network's current targets is conservative but immediate;
-    // a new complete compilation must precede any further execution lease.
-    tx.execute("UPDATE execution_publications SET withdrawn_at=COALESCE(withdrawn_at,?1) WHERE network_id=?2",params![now,network.as_uuid().as_bytes().as_slice()])?;
-    tx.execute("UPDATE node_execution SET target_publication_id=NULL,execution_expires_at=NULL,saved=NULL WHERE network_id=?1",[network.as_uuid().as_bytes().as_slice()])?;
+    for (publication, compiled) in active_publications(tx, sealer, network)? {
+        for (target_node, target) in compiled.nodes {
+            if target_node != node && !target.configuration.peers.contains_key(&node) {
+                continue;
+            }
+            tx.execute(
+                "UPDATE node_execution SET target_publication_id=NULL,execution_expires_at=NULL
+                 WHERE network_id=?1 AND node_id=?2 AND target_publication_id=?3",
+                params![
+                    network.as_uuid().as_bytes().as_slice(),
+                    target_node.as_uuid().as_bytes().as_slice(),
+                    publication.as_uuid().as_bytes().as_slice()
+                ],
+            )?;
+        }
+        tx.execute(
+            "UPDATE execution_publications SET withdrawn_at=COALESCE(withdrawn_at,?1)
+             WHERE network_id=?2 AND id=?3 AND NOT EXISTS(
+                 SELECT 1 FROM node_execution WHERE network_id=?2 AND target_publication_id=?3)",
+            params![
+                now,
+                network.as_uuid().as_bytes().as_slice(),
+                publication.as_uuid().as_bytes().as_slice()
+            ],
+        )?;
+    }
     tx.execute(
-        "DELETE FROM execution_demands WHERE network_id=?1 AND node_id=?2",
+        "UPDATE execution_demands SET cancelled_at=?3 WHERE network_id=?1 AND node_id=?2 AND cancelled_at IS NULL",
         params![
             network.as_uuid().as_bytes().as_slice(),
-            node.as_uuid().as_bytes().as_slice()
+            node.as_uuid().as_bytes().as_slice(), now
         ],
     )?;
     Ok(())
@@ -342,13 +507,13 @@ pub(crate) fn apply_configuration_effects(
                 ],
             )?;
             tx.execute(
-                "DELETE FROM execution_demands WHERE network_id=?1 AND node_id=?2",
+                "UPDATE execution_demands SET cancelled_at=?3 WHERE network_id=?1 AND node_id=?2 AND cancelled_at IS NULL",
                 params![
                     network.as_uuid().as_bytes().as_slice(),
-                    node.as_uuid().as_bytes().as_slice()
+                    node.as_uuid().as_bytes().as_slice(), now
                 ],
             )?;
-            tx.execute("UPDATE node_execution SET instance_expires_at=?1,execution_expires_at=NULL,saved=NULL WHERE network_id=?2 AND node_id=?3",params![now,network.as_uuid().as_bytes().as_slice(),node.as_uuid().as_bytes().as_slice()])?;
+            tx.execute("UPDATE node_execution SET instance_expires_at=?1,execution_expires_at=NULL WHERE network_id=?2 AND node_id=?3",params![now,network.as_uuid().as_bytes().as_slice(),node.as_uuid().as_bytes().as_slice()])?;
         }
     }
     for (node, old) in &previous.nodes {
@@ -380,7 +545,7 @@ pub(crate) fn apply_configuration_effects(
         .filter(|id| !target.nodes.contains_key(id))
     {
         tx.execute("UPDATE nodes SET credentials_revoked_at=COALESCE(credentials_revoked_at,?1) WHERE network_id=?2 AND id=?3",params![now,network.as_uuid().as_bytes().as_slice(),node.as_uuid().as_bytes().as_slice()])?;
-        revoke_execution(tx, network, *node, now)?;
+        revoke_execution(tx, sealer, network, *node, now)?;
     }
     Ok(publish(tx, sealer, network, "configuration", now)?.publication)
 }
@@ -399,9 +564,30 @@ pub(crate) fn demand(
     let p = authorize_node(&tx, sealer, boot, token, now)?;
     current_instance(&tx, boot, &p, &request.instance, now)?;
     let digest = crate::execution::proof::request_digest(&request)?;
-    let previous:Option<Vec<u8>>=tx.query_row("SELECT request_digest FROM execution_demands WHERE network_id=?1 AND node_id=?2 AND id=?3",params![p.network.as_uuid().as_bytes().as_slice(),p.node.as_uuid().as_bytes().as_slice(),request.request_id.as_uuid().as_bytes().as_slice()],|r|r.get(0)).optional()?;
-    if previous.as_deref().is_some_and(|v| v != digest.as_bytes()) {
+    let previous: Option<(Vec<u8>,i64,Option<i64>)> = tx.query_row(
+        "SELECT request_digest,expires_at,cancelled_at FROM execution_demands WHERE network_id=?1 AND node_id=?2 AND id=?3",
+        params![p.network.as_uuid().as_bytes().as_slice(),p.node.as_uuid().as_bytes().as_slice(),request.request_id.as_uuid().as_bytes().as_slice()],
+        |r| Ok((r.get(0)?,r.get(1)?,r.get(2)?)),
+    ).optional()?;
+    if previous.as_ref().is_some_and(|(v, expires, cancelled)| {
+        v != digest.as_bytes() || *expires <= now || cancelled.is_some()
+    }) {
         return Err(NodeError::Conflict);
+    }
+    if previous.is_some() {
+        let (publication, target) = target(&tx, sealer, &p)?.ok_or(NodeError::Conflict)?;
+        check_publication(&tx, sealer, p.network, p.node, publication, now)?;
+        let decision = target
+            .configuration
+            .decisions
+            .get(&request.request_id)
+            .cloned()
+            .ok_or(NodeError::Conflict)?;
+        tx.commit()?;
+        return Ok(DemandResponse {
+            publication,
+            decision,
+        });
     }
     if previous.is_none() {
         let d = Demand {
@@ -413,7 +599,13 @@ pub(crate) fn demand(
             profile: request.profile,
             expires_at_ms: (now + i64::from(request.duration_seconds) * 1000) as u64,
         };
-        tx.execute("INSERT INTO execution_demands(network_id,node_id,id,instance_id,request_digest,payload,expires_at) VALUES(?1,?2,?3,?4,?5,?6,?7)",params![p.network.as_uuid().as_bytes().as_slice(),p.node.as_uuid().as_bytes().as_slice(),d.id.as_uuid().as_bytes().as_slice(),request.instance.instance_id.as_uuid().as_bytes().as_slice(),digest.as_bytes().as_slice(),bytes(&d)?,d.expires_at_ms as i64])?;
+        tx.execute(
+            "INSERT INTO execution_demands(network_id,node_id,id,instance_id,request_digest,payload,expires_at)
+             VALUES(?1,?2,?3,?4,?5,?6,?7)",
+            params![p.network.as_uuid().as_bytes().as_slice(),p.node.as_uuid().as_bytes().as_slice(),
+                d.id.as_uuid().as_bytes().as_slice(),request.instance.instance_id.as_uuid().as_bytes().as_slice(),
+                digest.as_bytes().as_slice(),bytes(&d)?,d.expires_at_ms as i64],
+        )?;
     }
     let compiled = publish(&tx, sealer, p.network, "demand", now)?;
     let decision = compiled
@@ -441,11 +633,11 @@ pub(crate) fn cancel_demand(
     let p = authorize_node(&tx, sealer, boot, token, now)?;
     current_instance(&tx, boot, &p, &request.instance, now)?;
     if tx.execute(
-        "DELETE FROM execution_demands WHERE network_id=?1 AND node_id=?2 AND id=?3",
+        "UPDATE execution_demands SET cancelled_at=?4 WHERE network_id=?1 AND node_id=?2 AND id=?3 AND cancelled_at IS NULL",
         params![
             p.network.as_uuid().as_bytes().as_slice(),
             p.node.as_uuid().as_bytes().as_slice(),
-            request.request_id.as_uuid().as_bytes().as_slice()
+            request.request_id.as_uuid().as_bytes().as_slice(), now
         ],
     )? > 0
     {

@@ -104,6 +104,7 @@ pub(crate) fn remove_member(
     command: crate::networks::management::MemberRemoval,
     sealer: &Sealer,
     cache: &crate::configuration::SnapshotCache,
+    publisher: &crate::state::service::CommitPublisher,
 ) -> Result<meshway_model::Revision, NetworkError> {
     let crate::networks::management::MemberRemoval {
         network,
@@ -158,6 +159,12 @@ pub(crate) fn remove_member(
         now,
     )?;
     tx.commit()?;
+    for node in impact.node_ids {
+        publisher.publish_committed(crate::state::stream::CommittedChange::NodeRetired {
+            network_id: network,
+            node_id: node,
+        });
+    }
     Ok(revision)
 }
 

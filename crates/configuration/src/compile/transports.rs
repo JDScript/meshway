@@ -1,4 +1,5 @@
 use super::*;
+use meshway_model::state::{Capability, StreamKind, TransportRole};
 use meshway_transport_spec::*;
 
 pub(super) fn candidates(
@@ -23,19 +24,17 @@ pub(super) fn candidates(
         Input::Omitted => &cfg.defaults.dialers,
     };
     let mut out = Vec::new();
-    let capable = |protocol: &str, stream: &str| {
+    let capable = |protocol: &str, stream: StreamKind| {
         let key = format!("transport:{protocol}");
-        ac.capabilities
-            .get(&key)
-            .is_some_and(|c| c.dial && c.streams.iter().any(|s| s == stream))
-            && bc
-                .capabilities
-                .get(&key)
-                .is_some_and(|c| c.listen && c.streams.iter().any(|s| s == stream))
+        let supports = |node: &TrustedNode, role| {
+            matches!(node.capabilities.get(&key),
+            Some(Capability::Transport { roles, streams }) if roles.contains(&role) && streams.contains(&stream))
+        };
+        supports(ac, TransportRole::Dial) && supports(bc, TransportRole::Listen)
     };
     for (key, l) in &target.listeners {
         let (endpoints, priority, parameters) = match l.declaration() {
-            Listener::NativeUdp(l) if l.enabled && capable("native_udp", "udp") => {
+            Listener::NativeUdp(l) if l.enabled && capable("native_udp", StreamKind::Udp) => {
                 let Some(d) = set.native_udp.as_ref().filter(|d| d.enabled) else {
                     continue;
                 };
@@ -45,7 +44,7 @@ pub(super) fn candidates(
                     DialParameters::NativeUdp { options: d.clone() },
                 )
             }
-            Listener::NativeTcp(l) if l.enabled && capable("native_tcp", "tcp") => {
+            Listener::NativeTcp(l) if l.enabled && capable("native_tcp", StreamKind::Tcp) => {
                 let Some(d) = set.native_tcp.as_ref().filter(|d| d.enabled) else {
                     continue;
                 };
@@ -60,9 +59,9 @@ pub(super) fn candidates(
                     && capable(
                         "vless",
                         if l.stream == VlessStream::Tcp {
-                            "tcp"
+                            StreamKind::Tcp
                         } else {
-                            "websocket"
+                            StreamKind::Websocket
                         },
                     ) =>
             {
@@ -77,6 +76,10 @@ pub(super) fn candidates(
                 ) {
                     continue;
                 }
+                let uuid = l.uuid.clone().ok_or(CompileError::Material)?;
+                let Some(tls) = tls(&l.tls, &d.tls)? else {
+                    continue;
+                };
                 (
                     &l.endpoints,
                     d.priority,
@@ -84,14 +87,18 @@ pub(super) fn candidates(
                         options: d.clone(),
                         stream: l.stream,
                         flow: l.flow.clone(),
-                        uuid: l.uuid.clone().ok_or(CompileError::Material)?,
-                        tls: tls(&l.tls, &d.tls)?,
+                        uuid,
+                        tls,
                         websocket: l.websocket.clone(),
                     },
                 )
             }
-            Listener::Trojan(l) if l.enabled && capable("trojan", "tcp") => {
+            Listener::Trojan(l) if l.enabled && capable("trojan", StreamKind::Tcp) => {
                 let Some(d) = set.trojan.as_ref().filter(|d| d.enabled) else {
+                    continue;
+                };
+                let password = l.password.clone().ok_or(CompileError::Material)?;
+                let Some(tls) = tls(&l.tls, &d.tls)? else {
                     continue;
                 };
                 (
@@ -99,8 +106,8 @@ pub(super) fn candidates(
                     d.priority,
                     DialParameters::Trojan {
                         options: d.clone(),
-                        password: l.password.clone().ok_or(CompileError::Material)?,
-                        tls: tls(&l.tls, &d.tls)?,
+                        password,
+                        tls,
                     },
                 )
             }
@@ -122,14 +129,20 @@ pub(super) fn candidates(
     }
     Ok(out)
 }
-fn tls(l: &ListenerTls, d: &DialerTls) -> Result<ClientTls, CompileError> {
-    // Both peers must support a common range; never weaken configured verification.
-    if l.min_version > d.max_version || d.min_version > l.max_version {
+fn tls(l: &ListenerTls, d: &DialerTls) -> Result<Option<ClientTls>, CompileError> {
+    // PreparedListener is the trusted certificate validation boundary. Missing
+    // material is corruption, even if this pair also has disjoint TLS bounds.
+    let certificate_chain = l.certificate.clone().ok_or(CompileError::Material)?;
+    if l.private_key.is_none() {
         return Err(CompileError::Material);
     }
-    Ok(ClientTls {
+    // Both peers must support a common range; never weaken configured verification.
+    if l.min_version > d.max_version || d.min_version > l.max_version {
+        return Ok(None);
+    }
+    Ok(Some(ClientTls {
         server_name: l.server_name.clone(),
-        certificate_chain: l.certificate.clone().ok_or(CompileError::Material)?,
+        certificate_chain,
         options: d.clone(),
-    })
+    }))
 }

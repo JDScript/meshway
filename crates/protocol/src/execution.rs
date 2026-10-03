@@ -11,7 +11,7 @@ wire_object! { #[derive(Clone,Debug,PartialEq,Eq)] pub struct RoutingSelectionRe
     pub version: Version, pub profile: String, pub publication: PublicationId,
 } }
 wire_object! { #[derive(Clone,Debug,PartialEq,Eq)] pub struct AcquireInstanceRequest {
-    pub instance_id: InstanceId, pub capabilities: BTreeMap<String,TransportCapability>,
+    pub instance_id: InstanceId, pub capabilities: BTreeMap<String,meshway_model::state::Capability>,
 } }
 wire_object! { #[derive(Clone,Debug,PartialEq,Eq)] pub struct InstanceRequest {
     pub instance_id: InstanceId, pub generation: Version,
@@ -52,6 +52,10 @@ pub enum ApplyFailure {
 }
 wire_object! { #[derive(Clone,Debug,PartialEq,Eq)] pub struct ReceiptRequest {
     pub instance: InstanceRequest, pub target: ConfigurationRef, pub phase: ReceiptPhase,
+    /// Increasing application attempt within this instance/target.
+    pub attempt: Version,
+    /// Increasing result sequence within the attempt; delivery retries reuse it.
+    pub sequence: Sequence,
     pub reported_at_ms: u64, pub failure: Option<ApplyFailure>,
 } }
 wire_object! { #[derive(Clone,Debug,PartialEq,Eq)] pub struct NodeConfigurationRequest {

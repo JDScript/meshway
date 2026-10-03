@@ -137,6 +137,8 @@ JWT 是可验证的声明格式，不自动解决账户停用、即时退出或�
 
 控制面私钥不进入 NetworkConfiguration，也不交给 Controller／Console；数据面公钥经可信身份绑定发布。协议 UUID、password、TLS listener 材料均不能替代 Node 身份。
 
+新 Controller 的密钥轮换把 requestId／请求摘要、原签名 challenge、生成的公钥元数据及代际写入同一事务。设备在轮换前私有持久保存新私钥和 pending 请求／challenge；成功响应丢失后重投同一轮换请求，以新私钥签名恢复仍有效的同次公钥元数据，无需预先知道新 keyId。恢复不会再次轮换，旧 challenge 的原始操作期限不限制只读结果恢复；当前 Node、成员身份及两枚目标密钥仍须有效。目标密钥已退役／吊销时拒绝恢复；同 requestId 或 challenge 的内容不符报冲突。此恢复只交付公钥元数据，不恢复旧 session 或旧执行许可。
+
 Tailscale 也区分 machine key 与用于网络通信的 node key。本设计采用其“设备持久身份与网络通信密钥分责”的原则，不照搬 WireGuard／Noise wire 协议。尤其不能把现有 X25519 加密私钥直接当签名私钥。
 
 ### 用户设备接入

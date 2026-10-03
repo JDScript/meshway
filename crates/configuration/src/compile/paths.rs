@@ -23,6 +23,7 @@ impl<'a, 'b> Graph<'a, 'b> {
         source: NodeId,
         target: NodeId,
         via: &[NodeId],
+        limit: usize,
     ) -> Result<Vec<LogicalPath>, CompileError> {
         let mut required = via.to_vec();
         required.push(target);
@@ -73,7 +74,7 @@ impl<'a, 'b> Graph<'a, 'b> {
                 let next = next_required + usize::from(b == required[next_required]);
                 if next == required.len() {
                     found.push(self.materialize(extended)?);
-                    if found.len() == MAX_PATHS {
+                    if found.len() == limit {
                         return Ok(found);
                     }
                 } else if queue.len() < 2048 {

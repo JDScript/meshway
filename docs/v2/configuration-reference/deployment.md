@@ -101,4 +101,10 @@ DownloadProgress 字段为 `receivedBytes: u64`、`totalBytes: u64?`，使用同
 
 saved／applied／failed 关键回执绑定目标、当前实例／代际和原结果时间，服务端核对后保存。连续细节进入 NodeState／SSE，两者来自同一应用状态机；异常目标、旧实例或过期许可的自报不推进当前进度。
 
+新 Controller 回执合同使用 `attempt: Version` 与 `sequence: Sequence`：在同一 instance／target 内，新的本机应用尝试递增 attempt（从 1 开始）；每次尝试内的结果递增 sequence（从 0 开始）。传输重发复用同一 attempt／sequence 和完整内容，修改同一位置的内容报冲突。applied 需要同一尝试内更早 sequence 的 saved；同 phase 的后续真实事件可以使用新 sequence。历史保留迟到证据，当前投影按 attempt／sequence 而非到达时间排序；新的尝试不会沿用旧尝试的 applied。
+
+执行需求重试恢复当前仍有效的决策，不重新发布或延长其他节点 lease。新增／取消需求先与全部有效需求联合编译，再只替换实际变化的节点切片；无关节点保留原 publication、lease 和回执。撤销仍使依赖该身份／密钥的目标失效，不恢复已撤回 publication。
+
+实例 acquire 的同一 instanceId 仅用于当前 boot 下仍有效实例的幂等重试，能力声明必须相同。释放、过期或 Controller 重启后重新 acquire 使用新 instanceId；历史 instanceId 不再成为新实例。acquire 使用共享 Capability 值（transport 的 roles／streams、feature 的 version）；它是认证后的执行能力声明，NodeState.capabilities 是观测来源，不能自行覆盖已编译能力或授权。
+
 Console 通过 publication 查询和 `configuration.progress` SSE 获取状态。Agent 拉取目标配置并正常应用，分别报告保存和应用结果；无需第二个激活命令。Owner／Admin 看本网络进度，普通成员看相关范围，统计明确标注范围。

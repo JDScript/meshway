@@ -19,9 +19,9 @@ pub mod state;
 
 pub use digest::{Digest, InvalidDigest};
 pub use ids::{
-    ActivityId, ArtifactId, ChallengeId, EnrollmentKeyId, EnrollmentRequestId, EventId, InstanceId, InvalidId, JoinLinkId, KeyId, MembershipId,
-    NetworkId, NodeId, ObservationId, ObservationSubscriptionId, PublicationId, RequestId,
-    SessionId, StateEpoch, UserId,
+    ActivityId, ArtifactId, ChallengeId, EnrollmentKeyId, EnrollmentRequestId, EventId, InstanceId,
+    InvalidId, JoinLinkId, KeyId, MembershipId, NetworkId, NodeId, ObservationId,
+    ObservationSubscriptionId, PublicationId, RequestId, SessionId, StateEpoch, UserId,
 };
 pub use membership::MembershipRole;
 pub use numbers::{Count, InvalidNumber, MAX_SAFE_INTEGER, Revision, Sequence, Version};

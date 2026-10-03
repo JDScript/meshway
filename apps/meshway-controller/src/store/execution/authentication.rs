@@ -168,14 +168,77 @@ pub(crate) fn rotate(
 ) -> Result<NodeKeyMetadata, NodeError> {
     let tx = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
     let now = now()?;
+    let digest = proof::request_digest(&request.intent)?;
+    // A response can be lost after retirement of the old signing key. Recover
+    // only the recorded result, authenticated with the newly bound private key.
+    let recovery: Option<(Vec<u8>, Vec<u8>, Vec<u8>)> = tx
+        .query_row(
+            "SELECT request_digest,challenge,result FROM node_rotations WHERE challenge_id=?1",
+            [request
+                .old_proof
+                .challenge_id
+                .as_uuid()
+                .as_bytes()
+                .as_slice()],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+        )
+        .optional()?;
+    if let Some((stored_digest, challenge, result)) = recovery {
+        if stored_digest != digest.as_bytes() {
+            return Err(NodeError::Conflict);
+        }
+        let challenge: NodeChallenge = json(&challenge)?;
+        let keys: NodeKeyMetadata = json(&result)?;
+        let current = bound_key(
+            &tx,
+            challenge.network_id,
+            challenge.node_id,
+            keys.control.id,
+        )?;
+        if current != keys.control {
+            return Err(NodeError::Unauthorized);
+        }
+        let dataplane_current: bool = tx.query_row(
+            "SELECT EXISTS(SELECT 1 FROM node_keys WHERE network_id=?1 AND node_id=?2
+             AND id=?3 AND purpose='dataplane' AND generation=?4 AND retired_at IS NULL AND revoked_at IS NULL)",
+            params![challenge.network_id.as_uuid().as_bytes().as_slice(), challenge.node_id.as_uuid().as_bytes().as_slice(), keys.dataplane.id.as_uuid().as_bytes().as_slice(), keys.dataplane.generation.get() as i64],
+            |row| row.get(0),
+        )?;
+        if !dataplane_current {
+            return Err(NodeError::Unauthorized);
+        }
+        let (_, cfg, bindings) = current_configuration(&tx, sealer, challenge.network_id)?;
+        identity_eligible(
+            &tx,
+            &cfg,
+            &bindings,
+            challenge.network_id,
+            challenge.node_id,
+        )?;
+        proof::verify(
+            &current.public_key,
+            &challenge,
+            request.new_signature.expose(),
+        )?;
+        tx.commit()?;
+        return Ok(keys);
+    }
     let c = consume(
         &tx,
         sealer,
         &request.old_proof,
         ProofOperation::Rotate,
-        proof::request_digest(&request.intent)?,
+        digest,
         now,
     )?;
+    let used: bool = tx.query_row(
+        "SELECT EXISTS(SELECT 1 FROM node_rotations WHERE network_id=?1 AND node_id=?2 AND request_id=?3)",
+        params![c.network_id.as_uuid().as_bytes().as_slice(), c.node_id.as_uuid().as_bytes().as_slice(), request.intent.request_id.as_uuid().as_bytes().as_slice()],
+        |row| row.get(0),
+    )?;
+    if used {
+        return Err(NodeError::Conflict);
+    }
     proof::verify(
         &request.intent.control_key,
         &c,
@@ -186,7 +249,15 @@ pub(crate) fn rotate(
     {
         return Err(NodeError::Invalid);
     }
-    tx.execute("UPDATE node_keys SET retired_at=?1 WHERE network_id=?2 AND node_id=?3 AND retired_at IS NULL AND revoked_at IS NULL",params![now,c.network_id.as_uuid().as_bytes().as_slice(),c.node_id.as_uuid().as_bytes().as_slice()])?;
+    tx.execute(
+        "UPDATE node_keys SET retired_at=?1 WHERE network_id=?2 AND node_id=?3
+         AND retired_at IS NULL AND revoked_at IS NULL",
+        params![
+            now,
+            c.network_id.as_uuid().as_bytes().as_slice(),
+            c.node_id.as_uuid().as_bytes().as_slice()
+        ],
+    )?;
     let generation = Version::new(c.key_generation.get() + 1).map_err(|_| NodeError::Conflict)?;
     let keys = insert_keys(
         &tx,
@@ -197,7 +268,24 @@ pub(crate) fn rotate(
         generation,
         now,
     )?;
-    revoke_execution(&tx, c.network_id, c.node_id, now)?;
+    tx.execute(
+        "INSERT INTO node_rotations(network_id,node_id,request_id,request_digest,challenge_id,
+         challenge,control_key_id,dataplane_key_id,generation,result)
+         VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10)",
+        params![
+            c.network_id.as_uuid().as_bytes().as_slice(),
+            c.node_id.as_uuid().as_bytes().as_slice(),
+            request.intent.request_id.as_uuid().as_bytes().as_slice(),
+            digest.as_bytes().as_slice(),
+            c.id.as_uuid().as_bytes().as_slice(),
+            bytes(&c)?,
+            keys.control.id.as_uuid().as_bytes().as_slice(),
+            keys.dataplane.id.as_uuid().as_bytes().as_slice(),
+            generation.get() as i64,
+            bytes(&keys)?
+        ],
+    )?;
+    revoke_execution(&tx, sealer, c.network_id, c.node_id, now)?;
     tx.commit()?;
     Ok(keys)
 }
@@ -215,7 +303,13 @@ pub(crate) fn insert_keys(
                 public_key: NodePublicKey|
      -> Result<BoundNodeKey, NodeError> {
         let id = KeyId::new(uuid()?).map_err(|_| NodeError::Storage)?;
-        tx.execute("INSERT INTO node_keys(id,network_id,node_id,purpose,algorithm,public_key,generation,created_at) VALUES(?1,?2,?3,?4,?5,?6,?7,?8)",params![id.as_uuid().as_bytes().as_slice(),network.as_uuid().as_bytes().as_slice(),node.as_uuid().as_bytes().as_slice(),purpose,algorithm,public_key.bytes.as_bytes().as_slice(),generation.get() as i64,now])?;
+        tx.execute(
+            "INSERT INTO node_keys(id,network_id,node_id,purpose,algorithm,public_key,generation,created_at)
+             VALUES(?1,?2,?3,?4,?5,?6,?7,?8)",
+            params![id.as_uuid().as_bytes().as_slice(),network.as_uuid().as_bytes().as_slice(),
+                node.as_uuid().as_bytes().as_slice(),purpose,algorithm,public_key.bytes.as_bytes().as_slice(),
+                generation.get() as i64,now],
+        )?;
         Ok(BoundNodeKey {
             id,
             generation,

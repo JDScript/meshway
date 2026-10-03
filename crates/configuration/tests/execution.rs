@@ -1,4 +1,5 @@
 use meshway_configuration::{compile::*, execution::*, *};
+use meshway_model::state::{Capability, StreamKind, TransportRole};
 use meshway_model::*;
 use meshway_transport_spec::*;
 use std::collections::BTreeMap;
@@ -65,10 +66,9 @@ fn inventory() -> BTreeMap<NodeId, TrustedNode> {
                     dataplane_key: key(10, KeyAlgorithm::X25519),
                     capabilities: BTreeMap::from([(
                         "transport:native_udp".into(),
-                        TransportCapability {
-                            dial: true,
-                            listen: true,
-                            streams: vec!["udp".into()],
+                        Capability::Transport {
+                            roles: vec![TransportRole::Dial, TransportRole::Listen],
+                            streams: vec![StreamKind::Udp],
                         },
                     )]),
                 },
@@ -355,4 +355,167 @@ fn mesh_ip_demands_never_fall_through_to_unmanaged_egress() {
             reason: UnavailableReason::NoPath
         }
     ));
+}
+
+#[test]
+fn backup_exit_survives_primary_path_budget() {
+    let mut c = configuration();
+    c.nodes.get_mut(&node(2)).unwrap().exit_enabled = true;
+    c.access = vec![AccessRule {
+        remark: String::new(),
+        src: vec!["*".into()],
+        dst: vec!["1.1.1.1/32".into()],
+        ip: vec!["tcp:443".into()],
+        bidirectional: false,
+    }];
+    c.routing.egress.rules = vec![EgressRule {
+        remark: String::new(),
+        matcher: RouteMatch {
+            ip_cidr: vec!["1.1.1.1/32".into()],
+            ..Default::default()
+        },
+        action: RouteAction::Exit {
+            nodes: vec![format!("node:{}", node(4)), format!("node:{}", node(2))],
+            via: vec![],
+        },
+    }];
+    let mut d = demand(1, 1, 4);
+    d.target = BusinessTarget::Ip {
+        address: ExecutionAddress("1.1.1.1".parse().unwrap()),
+    };
+    let result = run(&c, &inventory(), &BTreeMap::from([(d.id, d)]), &[]);
+    let paths = &result.nodes[&node(1)].configuration.permits[&request(1)].paths;
+    assert!(paths.len() <= 2 * MAX_PATHS);
+    assert_eq!(
+        paths
+            .iter()
+            .filter(|p| p.nodes.last() == Some(&node(4)))
+            .count(),
+        MAX_PATHS
+    );
+    assert!(paths.iter().any(|p| p.nodes.last() == Some(&node(2))));
+    // A local failure of every primary path still leaves an authorized backup.
+    assert!(
+        paths
+            .iter()
+            .any(|p| !p.nodes.contains(&node(4)) && p.nodes.last() == Some(&node(2)))
+    );
+}
+
+#[test]
+fn incompatible_tls_pair_does_not_poison_udp() {
+    let mut c = configuration();
+    let l: Listener = serde_json::from_str(r#"{"type":"vless","listenPort":443,"uuid":"00000000-0000-4000-8000-000000000001","tls":{"serverName":"test.example","minVersion":"1.3","maxVersion":"1.3","certificate":"certificate","privateKey":"private-key"}}"#).unwrap();
+    c.nodes
+        .get_mut(&node(2))
+        .unwrap()
+        .listeners
+        .insert("vless".into(), PreparedListener::prepare(l, true).unwrap());
+    c.defaults.dialers.vless.as_mut().unwrap().tls.max_version = TlsVersion::Tls12;
+    let mut inv = inventory();
+    for n in inv.values_mut() {
+        n.capabilities.insert(
+            "transport:vless".into(),
+            Capability::Transport {
+                roles: vec![TransportRole::Dial, TransportRole::Listen],
+                streams: vec![StreamKind::Tcp],
+            },
+        );
+    }
+    let ds = BTreeMap::from([(request(1), demand(1, 1, 2))]);
+    let result = run(&c, &inv, &ds, &[]);
+    assert!(!result.nodes[&node(1)].configuration.permits.is_empty());
+    assert!(
+        result.nodes[&node(1)]
+            .configuration
+            .dialers
+            .values()
+            .all(|candidate| !matches!(candidate.parameters, DialParameters::Vless { .. }))
+    );
+    for n in inv.values_mut() {
+        n.capabilities.remove("transport:native_udp");
+    }
+    let unavailable = run(&c, &inv, &ds, &[]);
+    assert!(matches!(
+        unavailable.nodes[&node(1)].configuration.decisions[&request(1)],
+        DemandDecision::Unavailable {
+            reason: UnavailableReason::NoPath
+        }
+    ));
+}
+
+#[test]
+fn neighbor_probe_projection_is_not_a_business_path_or_grant() {
+    let mut c = configuration();
+    // A-C-B, with no alternative graph edges. Only A may initiate business.
+    c.topology = vec![(1, 3), (3, 2)]
+        .into_iter()
+        .map(|(a, b)| TopologyRule {
+            remark: String::new(),
+            action: TopologyAction::Allow,
+            a: format!("node:{}", node(a)),
+            b: format!("node:{}", node(b)),
+        })
+        .collect();
+    c.defaults.topology = TopologyDefault::Deny;
+    c.routing.mesh = vec![MeshRoute {
+        remark: String::new(),
+        src: vec![format!("node:{}", node(1))],
+        dst: vec![format!("node:{}", node(2))],
+        via: vec![format!("node:{}", node(3))],
+    }];
+    c.access = vec![AccessRule {
+        remark: String::new(),
+        src: vec![format!("node:{}", node(1))],
+        dst: vec![format!("node:{}", node(2))],
+        ip: vec!["tcp:443".into()],
+        bidirectional: false,
+    }];
+    // Only C listens: both receiver-side and initiator-side projections matter.
+    c.nodes.get_mut(&node(1)).unwrap().listeners.clear();
+    c.nodes.get_mut(&node(2)).unwrap().listeners.clear();
+    let ds = BTreeMap::from([(request(1), demand(1, 1, 2)), (request(2), demand(2, 3, 2))]);
+    let r = run(&c, &inventory(), &ds, &[]);
+    let a = &r.nodes[&node(1)].configuration;
+    let b = &r.nodes[&node(2)].configuration;
+    let relay = &r.nodes[&node(3)].configuration;
+    assert_eq!(
+        a.neighbor_transports().keys().copied().collect::<Vec<_>>(),
+        vec![node(3)]
+    );
+    assert_eq!(
+        b.neighbor_transports().keys().copied().collect::<Vec<_>>(),
+        vec![node(3)]
+    );
+    assert_eq!(
+        relay
+            .neighbor_transports()
+            .keys()
+            .copied()
+            .collect::<Vec<_>>(),
+        vec![node(1), node(2)]
+    );
+    assert!(
+        relay
+            .neighbor_transports()
+            .values()
+            .all(|values| values == &std::collections::BTreeSet::from(["native_udp".into()]))
+    );
+    assert_eq!(
+        a.permits[&request(1)].paths[0].nodes,
+        vec![node(1), node(3), node(2)]
+    );
+    assert!(matches!(
+        relay.decisions[&request(2)],
+        DemandDecision::Unavailable {
+            reason: UnavailableReason::Unauthorized
+        }
+    ));
+    let empty = run(&c, &inventory(), &BTreeMap::new(), &[]);
+    assert!(
+        empty
+            .nodes
+            .values()
+            .all(|n| n.configuration.neighbor_transports().is_empty())
+    );
 }

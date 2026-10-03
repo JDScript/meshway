@@ -11,13 +11,20 @@ pub(crate) struct Configurations {
     handle: Handle,
     sealer: Arc<Sealer>,
     cache: Arc<SnapshotCache>,
+    publisher: crate::state::service::CommitPublisher,
 }
 impl Configurations {
-    pub(crate) fn new(handle: Handle, sealer: Arc<Sealer>, cache: Arc<SnapshotCache>) -> Self {
+    pub(crate) fn new(
+        handle: Handle,
+        sealer: Arc<Sealer>,
+        cache: Arc<SnapshotCache>,
+        publisher: crate::state::service::CommitPublisher,
+    ) -> Self {
         Self {
             handle,
             sealer,
             cache,
+            publisher,
         }
     }
     pub(crate) fn synchronize_email(
@@ -256,6 +263,15 @@ impl Configurations {
                 input.as_bytes(), serde_json::to_string(&result).map_err(|_|Error::Storage)?],
         )?;
         tx.commit()?;
+        // Still on the accepted SQLite job: cancelling the HTTP waiter cannot
+        // strand a permanently retired Node's volatile report allocation.
+        for node in &result.deleted_node_ids {
+            self.publisher
+                .publish_committed(crate::state::stream::CommittedChange::NodeRetired {
+                    network_id: network,
+                    node_id: *node,
+                });
+        }
         Ok(result)
     }
     pub(crate) async fn compare(

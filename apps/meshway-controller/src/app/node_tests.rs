@@ -8,6 +8,7 @@ use crate::{
 use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
 use ed25519_dalek::{Signer, SigningKey};
 use meshway_configuration::{execution::*, *};
+use meshway_model::state::{Capability, StreamKind, TransportRole};
 use meshway_model::*;
 use meshway_protocol::{WireSecret, execution::*, node::*};
 use std::collections::BTreeMap;
@@ -178,13 +179,12 @@ async fn session(
         .await
         .unwrap()
 }
-fn caps() -> BTreeMap<String, TransportCapability> {
+fn caps() -> BTreeMap<String, Capability> {
     BTreeMap::from([(
         "transport:native_udp".into(),
-        TransportCapability {
-            dial: true,
-            listen: true,
-            streams: vec!["udp".into()],
+        Capability::Transport {
+            roles: vec![TransportRole::Dial, TransportRole::Listen],
+            streams: vec![StreamKind::Udp],
         },
     )])
 }
@@ -317,6 +317,7 @@ async fn member_removal_atomically_deletes_user_nodes_and_preserves_tag_nodes() 
         .await
         .unwrap();
     assert_eq!(impact.node_ids, vec![enrolled.node_id]);
+    let event_sequence = app.state_runtime.lock().unwrap().hub.events.sequence();
     app.executor.handle().execute(|db| db.execute_batch("CREATE TRIGGER fail_member_removal BEFORE UPDATE OF revoked_at ON memberships BEGIN SELECT RAISE(ABORT,'injected failure'); END;")).await.unwrap().unwrap();
     assert!(
         app.networks()
@@ -338,6 +339,16 @@ async fn member_removal_atomically_deletes_user_nodes_and_preserves_tag_nodes() 
             .unwrap()
             .current_revision,
         impact.revision
+    );
+    assert!(
+        app.state_runtime
+            .lock()
+            .unwrap()
+            .hub
+            .events
+            .after(event_sequence, network)
+            .unwrap()
+            .is_empty()
     );
     app.execution()
         .authenticate(node_session.token.expose())
@@ -362,6 +373,16 @@ async fn member_removal_atomically_deletes_user_nodes_and_preserves_tag_nodes() 
         .await
         .unwrap();
     assert!(revision > impact.revision);
+    let changes = app
+        .state_runtime
+        .lock()
+        .unwrap()
+        .hub
+        .events
+        .after(event_sequence, network)
+        .unwrap();
+    assert_eq!(changes.iter().filter(|entry| matches!(entry.change, crate::state::stream::CommittedChange::NodeRetired { node_id, .. } if node_id == enrolled.node_id)).count(),1);
+    assert!(!changes.iter().any(|entry| matches!(entry.change, crate::state::stream::CommittedChange::NodeRetired { node_id, .. } if node_id == tag)));
     assert!(matches!(
         app.execution()
             .authenticate(node_session.token.expose())
@@ -470,20 +491,26 @@ async fn state_admission_uses_real_node_instance_and_current_publication_depende
             let report = s.report_admission_in_transaction(&tx, &token, now).unwrap();
             assert_eq!(report.execution, expected);
             assert_eq!(report.instance_id, ai.instance_id);
-            assert!(report.peers.contains(&b));
+            assert!(report.current().unwrap().peers.contains(&b));
             assert!(
                 report
+                    .current()
+                    .unwrap()
                     .paths
                     .iter()
                     .all(|p| p.first() == Some(&a) && p.last() == Some(&b))
             );
             assert!(
                 report
+                    .current()
+                    .unwrap()
                     .resources
                     .contains_key(&ResourceRef::Listener { key: "udp".into() })
             );
             assert!(
                 report
+                    .current()
+                    .unwrap()
                     .resources
                     .iter()
                     .any(|(r, v)| matches!(r, ResourceRef::Dial { .. })
@@ -510,6 +537,7 @@ async fn state_admission_uses_real_node_instance_and_current_publication_depende
                 network,
             };
             let request = meshway_protocol::observations::CreateObservation {
+                subscription_id: ObservationSubscriptionId::new(random_uuid().unwrap()).unwrap(),
                 source_node_id: a,
                 target_node_id: b,
                 selection: meshway_protocol::observations::ObservationPath::Explicit {
@@ -521,7 +549,7 @@ async fn state_admission_uses_real_node_instance_and_current_publication_depende
             let admitted = s
                 .observation_admission_in_transaction(&tx, &identity, &request, now)
                 .unwrap();
-            assert_eq!(admitted.report.paths, vec![vec![a, b]]);
+            assert_eq!(admitted.report.current().unwrap().paths, vec![vec![a, b]]);
             let invalid = meshway_protocol::observations::CreateObservation {
                 selection: meshway_protocol::observations::ObservationPath::Explicit {
                     path: vec![a, b, a],
@@ -557,7 +585,7 @@ async fn state_admission_uses_real_node_instance_and_current_publication_depende
                 .unwrap();
             assert_ne!(admission.instance_id, instance.instance_id);
             assert!(!admission.configurations.contains(&previous));
-            assert!(admission.peers.is_empty());
+            assert!(admission.current().unwrap().peers.is_empty());
             assert!(matches!(
                 s.report_admission_in_transaction(
                     &tx,
@@ -790,6 +818,8 @@ async fn enrollment_key_idempotency_tag_relogin_and_permanent_delete() {
     let target = lease.target.unwrap();
     let mut receipt = ReceiptRequest {
         instance: instance.clone(),
+        attempt: Version::MIN,
+        sequence: Sequence::MIN,
         target: target.clone(),
         phase: ReceiptPhase::Saved,
         reported_at_ms: store::execution::now().unwrap() as u64,
@@ -800,6 +830,7 @@ async fn enrollment_key_idempotency_tag_relogin_and_permanent_delete() {
         .await
         .unwrap();
     receipt.phase = ReceiptPhase::Applied;
+    receipt.sequence = Sequence::new(2).unwrap();
     app.execution()
         .receipt(user_session.token.expose(), receipt)
         .await
@@ -850,6 +881,7 @@ async fn enrollment_key_idempotency_tag_relogin_and_permanent_delete() {
         .await
         .unwrap();
     assert_eq!(deleted.deleted_node_ids, vec![enrolled.node_id]);
+    assert!(app.state_runtime.lock().unwrap().hub.events.after(0,network).unwrap().iter().any(|entry| matches!(entry.change, crate::state::stream::CommittedChange::NodeRetired { node_id, .. } if node_id == enrolled.node_id)));
     assert!(matches!(
         app.execution()
             .authenticate(user_session.token.expose())
@@ -1402,19 +1434,32 @@ async fn signed_authentication_replay_rotation_and_controller_restart() {
         Err(NodeError::Unauthorized)
     ));
     let renewed_session = session(&app.execution(), network, a, &rotated, &new).await;
+    assert_eq!(
+        app.execution()
+            .acquire(
+                renewed_session.token.expose(),
+                AcquireInstanceRequest {
+                    instance_id: original_instance.instance_id,
+                    capabilities: caps(),
+                }
+            )
+            .await,
+        Err(NodeError::Conflict)
+    );
     let resumed = app
         .execution()
         .acquire(
             renewed_session.token.expose(),
             AcquireInstanceRequest {
-                instance_id: original_instance.instance_id,
+                instance_id: iid(),
                 capabilities: caps(),
             },
         )
         .await
         .unwrap();
     assert!(resumed.generation > original_instance.generation);
-    assert_ne!(resumed.target, original_instance.target);
+    // An unchanged immutable target may be reused; its old process cannot be.
+    assert_ne!(resumed.instance_id, original_instance.instance_id);
     app.check_storage().await.unwrap();
     app.shutdown().await.unwrap();
 }
@@ -1485,6 +1530,8 @@ async fn multi_demand_saved_applied_fencing_and_revocation() {
         .unwrap();
     let mut receipt = ReceiptRequest {
         instance: ar.clone(),
+        attempt: Version::MIN,
+        sequence: Sequence::MIN,
         target: target.clone(),
         phase: ReceiptPhase::Applied,
         reported_at_ms: store::execution::now().unwrap() as u64,
@@ -1497,6 +1544,7 @@ async fn multi_demand_saved_applied_fencing_and_revocation() {
     receipt.phase = ReceiptPhase::Saved;
     s.receipt(at.token.expose(), receipt.clone()).await.unwrap();
     receipt.phase = ReceiptPhase::Applied;
+    receipt.sequence = Sequence::new(2).unwrap();
     s.receipt(at.token.expose(), receipt.clone()).await.unwrap();
     s.receipt(at.token.expose(), receipt).await.unwrap();
     s.cancel_demand(
@@ -1549,6 +1597,733 @@ async fn multi_demand_saved_applied_fencing_and_revocation() {
     assert!(matches!(
         s.authenticate(at.token.expose()).await,
         Err(NodeError::Unauthorized)
+    ));
+    app.shutdown().await.unwrap();
+}
+
+#[tokio::test]
+async fn review_demand_retry_preserves_peer_target_and_lease() {
+    let _serial = crate::accounts::TEST_KDF_LOCK.lock().await;
+    let (_dir, app, network, a, b, ak, bk, asigner, bsigner) = fixture().await;
+    let s = app.execution();
+    let at = session(&s, network, a, &ak, &asigner).await;
+    let bt = session(&s, network, b, &bk, &bsigner).await;
+    let ai = s
+        .acquire(
+            at.token.expose(),
+            AcquireInstanceRequest {
+                instance_id: iid(),
+                capabilities: caps(),
+            },
+        )
+        .await
+        .unwrap();
+    let bi = s
+        .acquire(
+            bt.token.expose(),
+            AcquireInstanceRequest {
+                instance_id: iid(),
+                capabilities: caps(),
+            },
+        )
+        .await
+        .unwrap();
+    let ar = InstanceRequest {
+        instance_id: ai.instance_id,
+        generation: ai.generation,
+    };
+    let br = InstanceRequest {
+        instance_id: bi.instance_id,
+        generation: bi.generation,
+    };
+    let request = DemandRequest {
+        instance: ar,
+        request_id: rid(),
+        target: BusinessTarget::Mesh { node: b },
+        protocol: BusinessProtocol::Tcp,
+        port: Some(443.try_into().unwrap()),
+        profile: "mesh".into(),
+        duration_seconds: 60,
+    };
+    let first = s.demand(at.token.expose(), request.clone()).await.unwrap();
+    let peer = s.renew(bt.token.expose(), br.clone()).await.unwrap();
+    let retry = s.demand(at.token.expose(), request).await.unwrap();
+    assert_eq!(retry, first);
+    let after = s
+        .configuration(
+            bt.token.expose(),
+            NodeConfigurationRequest {
+                instance: br,
+                base: None,
+            },
+        )
+        .await
+        .unwrap();
+    assert_eq!(after.lease, peer);
+    app.shutdown().await.unwrap();
+}
+
+#[tokio::test]
+async fn review_released_instance_id_cannot_be_reacquired() {
+    let _serial = crate::accounts::TEST_KDF_LOCK.lock().await;
+    let (_dir, app, network, a, _, ak, _, signer, _) = fixture().await;
+    let s = app.execution();
+    let at = session(&s, network, a, &ak, &signer).await;
+    let request = AcquireInstanceRequest {
+        instance_id: iid(),
+        capabilities: caps(),
+    };
+    let ai = s.acquire(at.token.expose(), request.clone()).await.unwrap();
+    assert_eq!(
+        s.acquire(at.token.expose(), request.clone()).await.unwrap(),
+        ai
+    );
+    s.release(
+        at.token.expose(),
+        InstanceRequest {
+            instance_id: ai.instance_id,
+            generation: ai.generation,
+        },
+    )
+    .await
+    .unwrap();
+    assert_eq!(
+        s.acquire(at.token.expose(), request).await,
+        Err(NodeError::Conflict)
+    );
+    app.shutdown().await.unwrap();
+}
+
+#[tokio::test]
+async fn review_rotation_http_response_loss_recovers_same_keys() {
+    let _serial = crate::accounts::TEST_KDF_LOCK.lock().await;
+    let (_dir, app, network, a, _, keys, _, signer, _) = fixture().await;
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    let router = crate::http::router(&app);
+    let server = tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
+    let new = SigningKey::from_bytes(&[29; 32]);
+    let intent = NodeRotationIntent {
+        request_id: rid(),
+        control_key: NodePublicKey {
+            algorithm: KeyAlgorithm::Ed25519,
+            bytes: new.verifying_key().to_bytes().into(),
+        },
+        dataplane_key: NodePublicKey {
+            algorithm: KeyAlgorithm::X25519,
+            bytes: [39; 32].into(),
+        },
+    };
+    let challenge = app
+        .execution()
+        .challenge(NodeChallengeRequest {
+            network_id: network,
+            node_id: a,
+            key_id: keys.control.id,
+            operation: ProofOperation::Rotate,
+            request_digest: proof::request_digest(&intent).unwrap(),
+        })
+        .await
+        .unwrap();
+    let request = NodeRotationRequest {
+        intent,
+        old_proof: NodeProof {
+            challenge_id: challenge.id,
+            signature: WireSecret::new(
+                URL_SAFE_NO_PAD.encode(signer.sign(&proof_transcript(&challenge)).to_bytes()),
+            ),
+        },
+        new_signature: WireSecret::new(
+            URL_SAFE_NO_PAD.encode(new.sign(&proof_transcript(&challenge)).to_bytes()),
+        ),
+    };
+    let client = reqwest::Client::new();
+    let url = format!("http://{address}/agent-api/v1/auth/rotate");
+    // Discard the successful body: the device has no newly issued key IDs.
+    let lost = client.post(&url).json(&request).send().await.unwrap();
+    assert!(lost.status().is_success(), "{}", lost.status());
+    drop(lost);
+    let response = client.post(&url).json(&request).send().await.unwrap();
+    assert!(response.status().is_success(), "{}", response.status());
+    let recovered: NodeKeyMetadata = response.json().await.unwrap();
+    assert_eq!(recovered.control.generation.get(), 2);
+    let again: NodeKeyMetadata = client
+        .post(&url)
+        .json(&request)
+        .send()
+        .await
+        .unwrap()
+        .error_for_status()
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(again, recovered);
+    session(&app.execution(), network, a, &recovered, &new).await;
+    let mut changed: NodeRotationRequest =
+        serde_json::from_slice(&serde_json::to_vec(&request).unwrap()).unwrap();
+    changed.intent.request_id = rid();
+    assert_eq!(
+        client
+            .post(&url)
+            .json(&changed)
+            .send()
+            .await
+            .unwrap()
+            .status(),
+        409
+    );
+    let mut forged: NodeRotationRequest =
+        serde_json::from_slice(&serde_json::to_vec(&request).unwrap()).unwrap();
+    forged.new_signature = WireSecret::new(
+        URL_SAFE_NO_PAD.encode(signer.sign(&proof_transcript(&challenge)).to_bytes()),
+    );
+    assert_eq!(
+        client
+            .post(&url)
+            .json(&forged)
+            .send()
+            .await
+            .unwrap()
+            .status(),
+        401
+    );
+    let owner = app
+        .accounts()
+        .login(
+            "owner@example.com".into(),
+            Secret::new("a sufficiently long password".into()),
+            rid(),
+        )
+        .await
+        .unwrap();
+    app.execution()
+        .revoke_key(
+            owner.token.expose(),
+            network,
+            a,
+            RevokeNodeKeyRequest {
+                key_id: recovered.control.id,
+                expected_generation: recovered.control.generation,
+            },
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        client
+            .post(&url)
+            .json(&request)
+            .send()
+            .await
+            .unwrap()
+            .status(),
+        401
+    );
+    server.abort();
+    let _ = server.await;
+    app.shutdown().await.unwrap();
+}
+
+#[tokio::test]
+async fn review_late_failed_receipt_does_not_override_newer_applied() {
+    let _serial = crate::accounts::TEST_KDF_LOCK.lock().await;
+    let (_dir, app, network, a, _, keys, _, signer, _) = fixture().await;
+    let owner = app
+        .accounts()
+        .login(
+            "owner@example.com".into(),
+            Secret::new("a sufficiently long password".into()),
+            rid(),
+        )
+        .await
+        .unwrap();
+    let s = app.execution();
+    let at = session(&s, network, a, &keys, &signer).await;
+    let lease = s
+        .acquire(
+            at.token.expose(),
+            AcquireInstanceRequest {
+                instance_id: iid(),
+                capabilities: caps(),
+            },
+        )
+        .await
+        .unwrap();
+    let mut receipt = ReceiptRequest {
+        instance: InstanceRequest {
+            instance_id: lease.instance_id,
+            generation: lease.generation,
+        },
+        target: lease.target.unwrap(),
+        phase: ReceiptPhase::Saved,
+        attempt: Version::MIN,
+        sequence: Sequence::MIN,
+        reported_at_ms: store::execution::now().unwrap() as u64,
+        failure: None,
+    };
+    s.receipt(at.token.expose(), receipt.clone()).await.unwrap();
+    let mut late = receipt.clone();
+    late.phase = ReceiptPhase::Failed;
+    late.sequence = Sequence::new(2).unwrap();
+    late.failure = Some(ApplyFailure::Tun);
+    receipt.phase = ReceiptPhase::Applied;
+    receipt.attempt = Version::new(2).unwrap();
+    let mut saved_retry = receipt.clone();
+    saved_retry.phase = ReceiptPhase::Saved;
+    s.receipt(at.token.expose(), saved_retry).await.unwrap();
+    receipt.sequence = Sequence::new(2).unwrap();
+    receipt.reported_at_ms += 1;
+    s.receipt(at.token.expose(), receipt.clone()).await.unwrap();
+    s.receipt(at.token.expose(), late.clone()).await.unwrap();
+    s.receipt(at.token.expose(), late.clone()).await.unwrap();
+    late.failure = Some(ApplyFailure::Dns);
+    assert_eq!(
+        s.receipt(at.token.expose(), late).await,
+        Err(NodeError::Conflict)
+    );
+    let progress = s
+        .progress(
+            owner.token.expose(),
+            network,
+            receipt.target.execution_publication,
+        )
+        .await
+        .unwrap();
+    assert!(progress.nodes[&a].applied);
+    assert!(!progress.nodes[&a].failed);
+    // Multiple saved reports are real ordered evidence, not phase-key collisions.
+    receipt.phase = ReceiptPhase::Saved;
+    receipt.attempt = Version::new(3).unwrap();
+    receipt.sequence = Sequence::MIN;
+    s.receipt(at.token.expose(), receipt.clone()).await.unwrap();
+    receipt.sequence = Sequence::new(1).unwrap();
+    s.receipt(at.token.expose(), receipt.clone()).await.unwrap();
+    let progress = s
+        .progress(
+            owner.token.expose(),
+            network,
+            receipt.target.execution_publication,
+        )
+        .await
+        .unwrap();
+    assert!(!progress.nodes[&a].applied);
+    receipt.phase = ReceiptPhase::Applied;
+    receipt.sequence = Sequence::new(2).unwrap();
+    s.receipt(at.token.expose(), receipt.clone()).await.unwrap();
+    let mut invalid = receipt.clone();
+    invalid.target.digest = [42; 32].into();
+    assert_eq!(
+        s.receipt(at.token.expose(), invalid).await,
+        Err(NodeError::Conflict)
+    );
+    let mut invalid = receipt.clone();
+    invalid.instance.instance_id = iid();
+    assert_eq!(
+        s.receipt(at.token.expose(), invalid).await,
+        Err(NodeError::Conflict)
+    );
+    let mut invalid = receipt.clone();
+    invalid.instance.generation = Version::new(receipt.instance.generation.get() + 1).unwrap();
+    assert_eq!(
+        s.receipt(at.token.expose(), invalid).await,
+        Err(NodeError::Conflict)
+    );
+    let evidence: i64 = app
+        .executor
+        .handle()
+        .execute(move |db| {
+            db.query_row(
+                "SELECT count(*) FROM execution_receipts WHERE node_id=?1",
+                [a.as_uuid().as_bytes().as_slice()],
+                |row| row.get(0),
+            )
+            .unwrap()
+        })
+        .await
+        .unwrap();
+    assert_eq!(evidence, 7);
+    app.shutdown().await.unwrap();
+}
+
+#[tokio::test]
+async fn independent_demands_keep_unrelated_publication_lease_and_progress() {
+    let _serial = crate::accounts::TEST_KDF_LOCK.lock().await;
+    let (_dir, app, network, a, b, ak, bk, asigner, bsigner) = fixture().await;
+    let owner = app
+        .accounts()
+        .login(
+            "owner@example.com".into(),
+            Secret::new("a sufficiently long password".into()),
+            rid(),
+        )
+        .await
+        .unwrap();
+    let csigner = SigningKey::from_bytes(&[61; 32]);
+    let dsigner = SigningKey::from_bytes(&[62; 32]);
+    let c = enroll_tag_node(&app, owner.token.expose(), network, &csigner, "c", [71; 32]).await;
+    let d = enroll_tag_node(&app, owner.token.expose(), network, &dsigner, "d", [72; 32]).await;
+    let current = app
+        .configurations()
+        .read(owner.token.expose(), network, None)
+        .await
+        .unwrap();
+    let mut config = current.document.configuration.clone();
+    config.defaults.topology = TopologyDefault::Deny;
+    config.topology = [(a, b), (c.node_id, d.node_id)]
+        .into_iter()
+        .map(|(a, b)| TopologyRule {
+            remark: String::new(),
+            action: TopologyAction::Allow,
+            a: format!("node:{a}"),
+            b: format!("node:{b}"),
+        })
+        .collect();
+    app.configurations()
+        .apply(
+            owner.token.expose(),
+            network,
+            meshway_protocol::configuration::ConfigurationRequest::Document {
+                expected_revision: current.revision,
+                request_id: rid(),
+                source_jsonc: WireSecret::new(canonical_json(&config).unwrap().expose().into()),
+            },
+            rid(),
+        )
+        .await
+        .unwrap();
+    let s = app.execution();
+    let mut sessions = Vec::new();
+    let mut instances = Vec::new();
+    for (node, keys, signer) in [
+        (a, &ak, &asigner),
+        (b, &bk, &bsigner),
+        (c.node_id, &c.keys, &csigner),
+        (d.node_id, &d.keys, &dsigner),
+    ] {
+        let session = session(&s, network, node, keys, signer).await;
+        let lease = s
+            .acquire(
+                session.token.expose(),
+                AcquireInstanceRequest {
+                    instance_id: iid(),
+                    capabilities: caps(),
+                },
+            )
+            .await
+            .unwrap();
+        instances.push(InstanceRequest {
+            instance_id: lease.instance_id,
+            generation: lease.generation,
+        });
+        sessions.push(session);
+    }
+    let demand = |instance: InstanceRequest, target| DemandRequest {
+        instance,
+        request_id: rid(),
+        target: BusinessTarget::Mesh { node: target },
+        protocol: BusinessProtocol::Tcp,
+        port: Some(443.try_into().unwrap()),
+        profile: "mesh".into(),
+        duration_seconds: 120,
+    };
+    let cd = demand(instances[2].clone(), d.node_id);
+    let first = s
+        .demand(sessions[2].token.expose(), cd.clone())
+        .await
+        .unwrap();
+    let peer = s
+        .renew(sessions[3].token.expose(), instances[3].clone())
+        .await
+        .unwrap();
+    let mut receipt = ReceiptRequest {
+        instance: instances[3].clone(),
+        target: peer.target.clone().unwrap(),
+        phase: ReceiptPhase::Saved,
+        attempt: Version::MIN,
+        sequence: Sequence::MIN,
+        reported_at_ms: store::execution::now().unwrap() as u64,
+        failure: None,
+    };
+    s.receipt(sessions[3].token.expose(), receipt.clone())
+        .await
+        .unwrap();
+    receipt.phase = ReceiptPhase::Applied;
+    receipt.sequence = Sequence::new(1).unwrap();
+    s.receipt(sessions[3].token.expose(), receipt)
+        .await
+        .unwrap();
+    let ab = demand(instances[0].clone(), b);
+    s.demand(sessions[0].token.expose(), ab.clone())
+        .await
+        .unwrap();
+    assert_eq!(
+        s.demand(sessions[2].token.expose(), cd).await.unwrap(),
+        first
+    );
+    s.cancel_demand(
+        sessions[0].token.expose(),
+        CancelDemandRequest {
+            instance: instances[0].clone(),
+            request_id: ab.request_id,
+        },
+    )
+    .await
+    .unwrap();
+    assert_eq!(
+        s.demand(sessions[0].token.expose(), ab).await,
+        Err(NodeError::Conflict)
+    );
+    s.revoke_key(
+        owner.token.expose(),
+        network,
+        b,
+        RevokeNodeKeyRequest {
+            key_id: bk.control.id,
+            expected_generation: bk.control.generation,
+        },
+    )
+    .await
+    .unwrap();
+    let after = s
+        .configuration(
+            sessions[3].token.expose(),
+            NodeConfigurationRequest {
+                instance: instances[3].clone(),
+                base: None,
+            },
+        )
+        .await
+        .unwrap();
+    assert_eq!(after.lease, peer);
+    let progress = s
+        .progress(owner.token.expose(), network, first.publication)
+        .await
+        .unwrap();
+    assert_eq!(progress.withdrawn_at_ms, None);
+    assert!(progress.nodes[&d.node_id].applied);
+    assert!(progress.nodes[&d.node_id].current);
+    app.check_storage().await.unwrap();
+    app.shutdown().await.unwrap();
+}
+
+#[tokio::test]
+async fn real_multihop_admission_separates_neighbors_paths_and_receipt_history() {
+    use meshway_model::state::{ProbeKind, ProbeObservation, ProbeOutcome};
+    let _serial = crate::accounts::TEST_KDF_LOCK.lock().await;
+    let (_dir, app, network, a, b, ak, bk, asigner, bsigner) = fixture().await;
+    let owner = app
+        .accounts()
+        .login(
+            "owner@example.com".into(),
+            Secret::new("a sufficiently long password".into()),
+            rid(),
+        )
+        .await
+        .unwrap();
+    let csigner = SigningKey::from_bytes(&[63; 32]);
+    let c = enroll_tag_node(
+        &app,
+        owner.token.expose(),
+        network,
+        &csigner,
+        "relay",
+        [73; 32],
+    )
+    .await;
+    let current = app
+        .configurations()
+        .read(owner.token.expose(), network, None)
+        .await
+        .unwrap();
+    let mut config = current.document.configuration.clone();
+    config.defaults.topology = TopologyDefault::Deny;
+    config.topology = [(a, c.node_id), (c.node_id, b)]
+        .into_iter()
+        .map(|(a, b)| TopologyRule {
+            remark: String::new(),
+            action: TopologyAction::Allow,
+            a: format!("node:{a}"),
+            b: format!("node:{b}"),
+        })
+        .collect();
+    config.routing.mesh = vec![MeshRoute {
+        remark: String::new(),
+        src: vec![format!("node:{a}")],
+        dst: vec![format!("node:{b}")],
+        via: vec![format!("node:{}", c.node_id)],
+    }];
+    config.access = vec![AccessRule {
+        remark: String::new(),
+        src: vec![format!("node:{a}")],
+        dst: vec![format!("node:{b}")],
+        ip: vec!["tcp:443".into()],
+        bidirectional: false,
+    }];
+    app.configurations()
+        .apply(
+            owner.token.expose(),
+            network,
+            meshway_protocol::configuration::ConfigurationRequest::Document {
+                expected_revision: current.revision,
+                request_id: rid(),
+                source_jsonc: WireSecret::new(canonical_json(&config).unwrap().expose().into()),
+            },
+            rid(),
+        )
+        .await
+        .unwrap();
+    let s = app.execution();
+    let mut sessions = Vec::new();
+    let mut instances = Vec::new();
+    for (node, keys, signer) in [
+        (a, &ak, &asigner),
+        (b, &bk, &bsigner),
+        (c.node_id, &c.keys, &csigner),
+    ] {
+        let session = session(&s, network, node, keys, signer).await;
+        let lease = s
+            .acquire(
+                session.token.expose(),
+                AcquireInstanceRequest {
+                    instance_id: iid(),
+                    capabilities: caps(),
+                },
+            )
+            .await
+            .unwrap();
+        instances.push(InstanceRequest {
+            instance_id: lease.instance_id,
+            generation: lease.generation,
+        });
+        sessions.push(session);
+    }
+    let request = DemandRequest {
+        instance: instances[0].clone(),
+        request_id: rid(),
+        target: BusinessTarget::Mesh { node: b },
+        protocol: BusinessProtocol::Tcp,
+        port: Some(443.try_into().unwrap()),
+        profile: "mesh".into(),
+        duration_seconds: 120,
+    };
+    s.demand(sessions[0].token.expose(), request.clone())
+        .await
+        .unwrap();
+    let mut leases = Vec::new();
+    for (session, instance) in sessions.iter().zip(&instances) {
+        leases.push(
+            s.renew(session.token.expose(), instance.clone())
+                .await
+                .unwrap(),
+        );
+    }
+    let old = leases[0].target.clone().unwrap();
+    s.receipt(
+        sessions[0].token.expose(),
+        ReceiptRequest {
+            instance: instances[0].clone(),
+            target: old.clone(),
+            phase: ReceiptPhase::Saved,
+            attempt: Version::MIN,
+            sequence: Sequence::MIN,
+            reported_at_ms: store::execution::now().unwrap() as u64,
+            failure: None,
+        },
+    )
+    .await
+    .unwrap();
+    let tokens: Vec<_> = sessions
+        .iter()
+        .map(|session| session.token.expose().to_owned())
+        .collect();
+    let executor = s.clone();
+    app.executor
+        .handle()
+        .execute(move |db| {
+            let tx = db.transaction().unwrap();
+            let now = chrono::Utc::now();
+            for (index, node, peer) in [(0, a, c.node_id), (2, c.node_id, b)] {
+                let admission = executor
+                    .report_admission_in_transaction(&tx, &tokens[index], now)
+                    .unwrap();
+                let mut probe = ProbeObservation {
+                    measurement_id: EventId::new(random_uuid().unwrap()).unwrap(),
+                    kind: ProbeKind::Neighbor,
+                    link_id: Some("reported-channel".into()),
+                    transport: Some("native_udp".into()),
+                    path: vec![node, peer],
+                    publication_id: admission.execution.as_ref().unwrap().execution_publication,
+                    started_at: now,
+                    completed_at: Some(now),
+                    outcome: ProbeOutcome::Success,
+                    duration_us: Some(Sequence::new(12).unwrap()),
+                };
+                crate::state::validation::validate_probe(&admission, &probe, now).unwrap();
+                // Reproduce the former B projection: business paths alone cannot
+                // authorize these adjacent transport probes.
+                let mut missing = admission.clone();
+                for context in &mut missing.contexts {
+                    context.neighbor_transports.clear();
+                }
+                assert!(crate::state::validation::validate_probe(&missing, &probe, now).is_err());
+                probe.kind = ProbeKind::Connect;
+                crate::state::validation::validate_probe(&admission, &probe, now).unwrap();
+                probe.transport = Some("vless".into());
+                assert!(crate::state::validation::validate_probe(&admission, &probe, now).is_err());
+                probe.kind = ProbeKind::Path;
+                probe.transport = None;
+                probe.link_id = None;
+                assert!(crate::state::validation::validate_probe(&admission, &probe, now).is_err());
+                if node == a {
+                    probe.path = vec![a, c.node_id, b];
+                    crate::state::validation::validate_probe(&admission, &probe, now).unwrap();
+                }
+            }
+        })
+        .await
+        .unwrap();
+    let mut second = request;
+    second.request_id = rid();
+    s.demand(sessions[0].token.expose(), second).await.unwrap();
+    let token = sessions[0].token.expose().to_owned();
+    let executor = s.clone();
+    app.executor
+        .handle()
+        .execute(move |db| {
+            let tx = db.transaction().unwrap();
+            let admission = executor
+                .report_admission_in_transaction(&tx, &token, chrono::Utc::now())
+                .unwrap();
+            assert_ne!(admission.execution.as_ref(), Some(&old));
+            assert!(admission.current().unwrap().installation_allowed);
+            assert!(!admission.context(&old).unwrap().installation_allowed);
+            assert_eq!(
+                admission.context(&old).unwrap().paths,
+                vec![vec![a, c.node_id, b]]
+            );
+        })
+        .await
+        .unwrap();
+    let rejected = s
+        .demand(
+            sessions[2].token.expose(),
+            DemandRequest {
+                instance: instances[2].clone(),
+                request_id: rid(),
+                target: BusinessTarget::Mesh { node: b },
+                protocol: BusinessProtocol::Tcp,
+                port: Some(443.try_into().unwrap()),
+                profile: "mesh".into(),
+                duration_seconds: 60,
+            },
+        )
+        .await
+        .unwrap();
+    assert!(matches!(
+        rejected.decision,
+        DemandDecision::Unavailable {
+            reason: UnavailableReason::Unauthorized
+        }
     ));
     app.shutdown().await.unwrap();
 }

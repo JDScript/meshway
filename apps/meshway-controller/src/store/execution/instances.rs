@@ -1,4 +1,5 @@
 use super::*;
+use meshway_model::state::Capability;
 use meshway_protocol::execution::*;
 use rusqlite::{Connection, TransactionBehavior};
 
@@ -38,9 +39,24 @@ pub(crate) fn acquire(
     if request.capabilities.len() > 32
         || request.capabilities.iter().any(|(k, v)| {
             k.len() > 64
-                || !k.starts_with("transport:")
-                || v.streams.len() > 8
-                || v.streams.iter().any(|s| s.len() > 32)
+                || match v {
+                    Capability::Transport { roles, streams } => {
+                        !k.starts_with("transport:")
+                            || roles.is_empty()
+                            || roles.len() > 2
+                            || streams.is_empty()
+                            || streams.len() > 3
+                            || roles
+                                .iter()
+                                .enumerate()
+                                .any(|(i, role)| roles[..i].contains(role))
+                            || streams
+                                .iter()
+                                .enumerate()
+                                .any(|(i, stream)| streams[..i].contains(stream))
+                    }
+                    Capability::Feature { version } => !k.starts_with("feature:") || *version == 0,
+                }
         })
     {
         return Err(NodeError::Invalid);
@@ -76,14 +92,10 @@ pub(crate) fn acquire(
     Version::new(generation.try_into().map_err(|_| NodeError::Conflict)?)
         .map_err(|_| NodeError::Conflict)?;
     let claimed:bool=tx.query_row("SELECT EXISTS(SELECT 1 FROM node_instance_claims WHERE network_id=?1 AND node_id=?2 AND instance_id=?3)",params![p.network.as_uuid().as_bytes().as_slice(),p.node.as_uuid().as_bytes().as_slice(),request.instance_id.as_uuid().as_bytes().as_slice()],|r|r.get(0))?;
-    if claimed
-        && previous.as_ref().is_none_or(|old| {
-            old.instance.as_deref() != Some(request.instance_id.as_uuid().as_bytes().as_slice())
-        })
-    {
+    if claimed {
         return Err(NodeError::Conflict);
     }
-    tx.execute("INSERT INTO node_instance_claims(network_id,node_id,instance_id,generation) VALUES(?1,?2,?3,?4) ON CONFLICT(network_id,node_id,instance_id) DO UPDATE SET generation=excluded.generation",params![p.network.as_uuid().as_bytes().as_slice(),p.node.as_uuid().as_bytes().as_slice(),request.instance_id.as_uuid().as_bytes().as_slice(),generation])?;
+    tx.execute("INSERT INTO node_instance_claims(network_id,node_id,instance_id,generation) VALUES(?1,?2,?3,?4)",params![p.network.as_uuid().as_bytes().as_slice(),p.node.as_uuid().as_bytes().as_slice(),request.instance_id.as_uuid().as_bytes().as_slice(),generation])?;
     // Replacing a process fences its demands as well as its ACK/report authority.
     tx.execute(
         "DELETE FROM execution_demands WHERE network_id=?1 AND node_id=?2",
@@ -92,7 +104,7 @@ pub(crate) fn acquire(
             p.node.as_uuid().as_bytes().as_slice()
         ],
     )?;
-    tx.execute("INSERT INTO node_execution(network_id,node_id,instance_id,generation,boot_id,instance_expires_at,capabilities) VALUES(?1,?2,?3,?4,?5,?6,?7) ON CONFLICT(network_id,node_id) DO UPDATE SET instance_id=excluded.instance_id,generation=excluded.generation,boot_id=excluded.boot_id,instance_expires_at=excluded.instance_expires_at,execution_expires_at=NULL,saved=NULL,capabilities=excluded.capabilities",params![p.network.as_uuid().as_bytes().as_slice(),p.node.as_uuid().as_bytes().as_slice(),request.instance_id.as_uuid().as_bytes().as_slice(),generation,boot.as_uuid().as_bytes().as_slice(),now+INSTANCE_TTL,caps])?;
+    tx.execute("INSERT INTO node_execution(network_id,node_id,instance_id,generation,boot_id,instance_expires_at,capabilities) VALUES(?1,?2,?3,?4,?5,?6,?7) ON CONFLICT(network_id,node_id) DO UPDATE SET instance_id=excluded.instance_id,generation=excluded.generation,boot_id=excluded.boot_id,instance_expires_at=excluded.instance_expires_at,execution_expires_at=NULL,capabilities=excluded.capabilities",params![p.network.as_uuid().as_bytes().as_slice(),p.node.as_uuid().as_bytes().as_slice(),request.instance_id.as_uuid().as_bytes().as_slice(),generation,boot.as_uuid().as_bytes().as_slice(),now+INSTANCE_TTL,caps])?;
     publish(&tx, sealer, p.network, "refresh", now)?;
     grant_lease(&tx, sealer, &p, now)?;
     let result = lease(&tx, sealer, &p)?;
@@ -148,12 +160,12 @@ pub(crate) fn release(
     let now = now()?;
     let p = authorize_node(&tx, sealer, boot, token, now)?;
     current_instance(&tx, boot, &p, &request, now)?;
-    tx.execute("UPDATE node_execution SET instance_expires_at=?1,execution_expires_at=NULL,saved=NULL WHERE network_id=?2 AND node_id=?3",params![now,p.network.as_uuid().as_bytes().as_slice(),p.node.as_uuid().as_bytes().as_slice()])?;
+    tx.execute("UPDATE node_execution SET instance_expires_at=?1,execution_expires_at=NULL WHERE network_id=?2 AND node_id=?3",params![now,p.network.as_uuid().as_bytes().as_slice(),p.node.as_uuid().as_bytes().as_slice()])?;
     tx.execute(
-        "DELETE FROM execution_demands WHERE network_id=?1 AND node_id=?2",
+        "UPDATE execution_demands SET cancelled_at=?3 WHERE network_id=?1 AND node_id=?2 AND cancelled_at IS NULL",
         params![
             p.network.as_uuid().as_bytes().as_slice(),
-            p.node.as_uuid().as_bytes().as_slice()
+            p.node.as_uuid().as_bytes().as_slice(), now
         ],
     )?;
     publish(&tx, sealer, p.network, "refresh", now)?;
@@ -192,9 +204,21 @@ pub(super) fn grant_lease(
     {
         // Publication eligibility checks every peer key/current identity, not only this node.
         if let Some((publication, _)) = &target {
-            check_publication(tx, sealer, p.network, *publication, now)?;
+            check_publication(tx, sealer, p.network, p.node, *publication, now)?;
         }
-        Some(now + EXECUTION_TTL)
+        Some(
+            target
+                .as_ref()
+                .map(|(_, node)| {
+                    node.configuration.permits.values().fold(
+                        now + EXECUTION_TTL,
+                        |expiry, permit| {
+                            expiry.min(permit.expires_at_ms.min(i64::MAX as u64) as i64)
+                        },
+                    )
+                })
+                .unwrap_or(now + EXECUTION_TTL),
+        )
     } else {
         None
     };
@@ -303,6 +327,7 @@ pub(crate) fn receipt(
         &tx,
         sealer,
         p.network,
+        p.node,
         request.target.execution_publication,
         now,
     )?;
@@ -312,7 +337,13 @@ pub(crate) fn receipt(
         ReceiptPhase::Failed => "failed",
     };
     if request.phase == ReceiptPhase::Applied {
-        let saved:bool=tx.query_row("SELECT EXISTS(SELECT 1 FROM execution_receipts WHERE network_id=?1 AND publication_id=?2 AND node_id=?3 AND instance_id=?4 AND phase='saved')",params![p.network.as_uuid().as_bytes().as_slice(),request.target.execution_publication.as_uuid().as_bytes().as_slice(),p.node.as_uuid().as_bytes().as_slice(),request.instance.instance_id.as_uuid().as_bytes().as_slice()],|r|r.get(0))?;
+        let saved: bool = tx.query_row(
+            "SELECT EXISTS(SELECT 1 FROM execution_receipts WHERE network_id=?1 AND publication_id=?2
+             AND node_id=?3 AND instance_id=?4 AND attempt=?5 AND sequence<?6 AND phase='saved')",
+            params![p.network.as_uuid().as_bytes().as_slice(), request.target.execution_publication.as_uuid().as_bytes().as_slice(),
+                p.node.as_uuid().as_bytes().as_slice(), request.instance.instance_id.as_uuid().as_bytes().as_slice(),
+                request.attempt.get() as i64, request.sequence.get() as i64], |r| r.get(0),
+        )?;
         if !saved {
             return Err(NodeError::Conflict);
         }
@@ -326,22 +357,33 @@ pub(crate) fn receipt(
         ApplyFailure::Dns => "dns",
         ApplyFailure::Dataplane => "dataplane",
     });
-    let old:Option<(i64,Option<String>)>=tx.query_row("SELECT reported_at,failure FROM execution_receipts WHERE network_id=?1 AND publication_id=?2 AND node_id=?3 AND instance_id=?4 AND phase=?5",params![p.network.as_uuid().as_bytes().as_slice(),request.target.execution_publication.as_uuid().as_bytes().as_slice(),p.node.as_uuid().as_bytes().as_slice(),request.instance.instance_id.as_uuid().as_bytes().as_slice(),phase],|r|Ok((r.get(0)?,r.get(1)?))).optional()?;
+    let old: Option<(String, i64, Option<String>)> = tx.query_row(
+        "SELECT phase,reported_at,failure FROM execution_receipts
+         WHERE network_id=?1 AND publication_id=?2 AND node_id=?3 AND instance_id=?4 AND attempt=?5 AND sequence=?6",
+        params![p.network.as_uuid().as_bytes().as_slice(), request.target.execution_publication.as_uuid().as_bytes().as_slice(),
+            p.node.as_uuid().as_bytes().as_slice(), request.instance.instance_id.as_uuid().as_bytes().as_slice(),
+            request.attempt.get() as i64, request.sequence.get() as i64],
+        |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+    ).optional()?;
     if let Some(old) = old {
-        if old != (request.reported_at_ms as i64, failure.map(str::to_owned)) {
+        if old
+            != (
+                phase.to_owned(),
+                request.reported_at_ms as i64,
+                failure.map(str::to_owned),
+            )
+        {
             return Err(NodeError::Conflict);
         }
     } else {
-        tx.execute("INSERT INTO execution_receipts(network_id,publication_id,node_id,instance_id,generation,digest,phase,reported_at,received_at,failure) VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10)",params![p.network.as_uuid().as_bytes().as_slice(),request.target.execution_publication.as_uuid().as_bytes().as_slice(),p.node.as_uuid().as_bytes().as_slice(),request.instance.instance_id.as_uuid().as_bytes().as_slice(),request.instance.generation.get() as i64,request.target.digest.as_bytes().as_slice(),phase,request.reported_at_ms as i64,now,failure])?;
-    }
-    if request.phase == ReceiptPhase::Saved {
         tx.execute(
-            "UPDATE node_execution SET saved=?1 WHERE network_id=?2 AND node_id=?3",
-            params![
-                bytes(&request)?,
-                p.network.as_uuid().as_bytes().as_slice(),
-                p.node.as_uuid().as_bytes().as_slice()
-            ],
+            "INSERT INTO execution_receipts(network_id,publication_id,node_id,instance_id,generation,
+             digest,phase,reported_at,received_at,failure,attempt,sequence)
+             VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12)",
+            params![p.network.as_uuid().as_bytes().as_slice(), request.target.execution_publication.as_uuid().as_bytes().as_slice(),
+                p.node.as_uuid().as_bytes().as_slice(), request.instance.instance_id.as_uuid().as_bytes().as_slice(),
+                request.instance.generation.get() as i64, request.target.digest.as_bytes().as_slice(), phase,
+                request.reported_at_ms as i64, now, failure, request.attempt.get() as i64, request.sequence.get() as i64],
         )?;
     }
     tx.commit()?;

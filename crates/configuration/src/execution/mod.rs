@@ -6,6 +6,7 @@ use crate::{
 use meshway_model::{BoundNodeKey, Digest, NetworkId, NodeId, PublicationId, RequestId, Revision};
 use meshway_transport_spec::*;
 use std::{collections::BTreeMap, net::IpAddr};
+mod admission;
 mod delta;
 pub use delta::*;
 
@@ -38,10 +39,8 @@ object! { pub struct Demand {
 } }
 object! { pub struct TrustedNode {
     pub control_key: BoundNodeKey, pub dataplane_key: BoundNodeKey,
-    pub capabilities: BTreeMap<String, TransportCapability>,
-} }
-object! { pub struct TransportCapability {
-    pub dial: bool, pub listen: bool, pub streams: Vec<String>,
+    /// Authenticated acquire declaration; reported State never overrides it.
+    pub capabilities: BTreeMap<String, meshway_model::state::Capability>,
 } }
 object! { pub struct TrustedDnsAssociation {
     pub network_id: NetworkId, pub configuration_revision: Revision,

@@ -122,8 +122,9 @@ impl Execution {
         request: RevokeNodeKeyRequest,
     ) -> Result<(), NodeError> {
         let token = crate::accounts::token_digest(token)?;
+        let sealer = self.sealer.clone();
         self.handle
-            .execute(move |c| store::revoke_key(c, token, network, node, request))
+            .execute(move |c| store::revoke_key(c, &sealer, token, network, node, request))
             .await?
     }
     /// Atomic seam for State/observation storage. Every use rechecks the current
@@ -155,6 +156,7 @@ impl Execution {
                 tx,
                 &self.sealer,
                 p.network,
+                p.node,
                 target.execution_publication,
                 now,
             )?;

@@ -4,6 +4,7 @@ use rusqlite::Connection;
 use std::collections::BTreeMap;
 pub(crate) fn revoke_key(
     c: &mut Connection,
+    sealer: &Sealer,
     token: [u8; 32],
     network: NetworkId,
     node: NodeId,
@@ -21,7 +22,7 @@ pub(crate) fn revoke_key(
         return Err(NodeError::Conflict);
     }
     tx.execute("UPDATE node_keys SET revoked_at=COALESCE(revoked_at,?1) WHERE network_id=?2 AND node_id=?3 AND id=?4",params![now,network.as_uuid().as_bytes().as_slice(),node.as_uuid().as_bytes().as_slice(),request.key_id.as_uuid().as_bytes().as_slice()])?;
-    revoke_execution(&tx, network, node, now)?;
+    revoke_execution(&tx, sealer, network, node, now)?;
     tx.commit()?;
     Ok(())
 }
@@ -144,7 +145,23 @@ pub(crate) fn progress(
             ReceiptFreshness::Current
         };
         let last_received_at_ms:Option<i64>=tx.query_row("SELECT max(received_at) FROM execution_receipts WHERE network_id=?1 AND node_id=?2 AND publication_id=?3",params![network.as_uuid().as_bytes().as_slice(),node.as_uuid().as_bytes().as_slice(),publication.as_uuid().as_bytes().as_slice()],|r|r.get(0))?;
-        let result:Option<String>=tx.query_row("SELECT r.phase FROM execution_receipts r JOIN node_execution e ON e.network_id=r.network_id AND e.node_id=r.node_id AND e.instance_id=r.instance_id AND e.generation=r.generation WHERE r.network_id=?1 AND r.node_id=?2 AND r.publication_id=?3 AND r.phase IN ('applied','failed') ORDER BY r.rowid DESC LIMIT 1",params![network.as_uuid().as_bytes().as_slice(),node.as_uuid().as_bytes().as_slice(),publication.as_uuid().as_bytes().as_slice()],|r|r.get(0)).optional()?;
+        // Arrival order is not application order. A new attempt (even only
+        // saved so far) supersedes an older result; late evidence stays stored.
+        let result: Option<String> = tx
+            .query_row(
+                "SELECT r.phase FROM execution_receipts r JOIN node_execution e
+             ON e.network_id=r.network_id AND e.node_id=r.node_id
+             AND e.instance_id=r.instance_id AND e.generation=r.generation
+             WHERE r.network_id=?1 AND r.node_id=?2 AND r.publication_id=?3
+             ORDER BY r.attempt DESC,r.sequence DESC LIMIT 1",
+                params![
+                    network.as_uuid().as_bytes().as_slice(),
+                    node.as_uuid().as_bytes().as_slice(),
+                    publication.as_uuid().as_bytes().as_slice()
+                ],
+                |r| r.get(0),
+            )
+            .optional()?;
         nodes.insert(
             node,
             NodePublicationProgress {

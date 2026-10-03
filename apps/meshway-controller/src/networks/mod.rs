@@ -23,6 +23,7 @@ pub struct Networks {
     handle: Handle,
     sealer: Arc<Sealer>,
     configuration_cache: Arc<crate::configuration::SnapshotCache>,
+    publisher: crate::state::service::CommitPublisher,
 }
 pub(crate) struct NameChange {
     pub(crate) name: String,
@@ -35,11 +36,13 @@ impl Networks {
         handle: Handle,
         sealer: Arc<Sealer>,
         configuration_cache: Arc<crate::configuration::SnapshotCache>,
+        publisher: crate::state::service::CommitPublisher,
     ) -> Self {
         Self {
             handle,
             sealer,
             configuration_cache,
+            publisher,
         }
     }
 

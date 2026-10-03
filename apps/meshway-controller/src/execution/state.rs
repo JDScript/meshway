@@ -3,8 +3,8 @@
 use super::{Execution, NodeError};
 use crate::{
     state::{
-        CurrentNode, ReportAdmission, ResourceAdmission, StateError, VisibilityScope,
-        service::ReadIdentity,
+        ConfigurationAdmission, CurrentNode, ReportAdmission, ResourceAdmission, StateError,
+        VisibilityScope, service::ReadIdentity,
     },
     store::{authorization::current_session, execution as store},
 };
@@ -42,16 +42,22 @@ impl Execution {
             return Err(StateError::Forbidden);
         }
         let mut report = self.node_admission(tx, *network, request.source_node_id, now)?;
-        report.paths.retain(|path| {
+        let execution = report.execution.clone().ok_or(StateError::Unavailable)?;
+        let context = report
+            .contexts
+            .iter_mut()
+            .find(|context| context.configuration == execution)
+            .ok_or(StateError::Unavailable)?;
+        context.paths.retain(|path| {
             path.first() == Some(&request.source_node_id)
                 && path.last() == Some(&request.target_node_id)
         });
-        if report.execution.is_none() || report.paths.is_empty() {
+        if context.paths.is_empty() {
             return Err(StateError::Unavailable);
         }
         if let meshway_protocol::observations::ObservationPath::Explicit { path } =
             &request.selection
-            && !report.paths.contains(path)
+            && !context.paths.contains(path)
         {
             return Err(StateError::Forbidden);
         }
@@ -145,6 +151,7 @@ impl Execution {
                     tx,
                     &self.sealer,
                     network,
+                    *node,
                     publication,
                     now.timestamp_millis(),
                 ) {
@@ -184,6 +191,31 @@ impl Execution {
                 .and_then(|l| l.target.clone())
                 .into_iter()
                 .collect();
+            let execution = match &lease {
+                Some(lease)
+                    if lease
+                        .execution_expires_at_ms
+                        .is_some_and(|expiry| expiry > now.timestamp_millis() as u64) =>
+                {
+                    if let Some(target) = &lease.target {
+                        match store::check_publication(
+                            tx,
+                            &self.sealer,
+                            network,
+                            *node,
+                            target.execution_publication,
+                            now.timestamp_millis(),
+                        ) {
+                            Ok(()) => Some(target.clone()),
+                            Err(NodeError::Conflict) => None,
+                            Err(error) => return Err(state_error(error)),
+                        }
+                    } else {
+                        None
+                    }
+                }
+                _ => None,
+            };
             bindings.insert(
                 *node,
                 (
@@ -197,6 +229,7 @@ impl Execution {
                 *node,
                 CurrentNode {
                     instance_id: lease.as_ref().map(|l| l.instance_id),
+                    execution,
                     configurations,
                     revoked,
                     lease_expires_at: lease.as_ref().map(|l| time(l.expires_at_ms)).transpose()?,
@@ -236,11 +269,6 @@ impl Execution {
             return Err(StateError::Conflict);
         }
         let lease = store::lease_for_node(tx, &self.sealer, network, node).map_err(state_error)?;
-        let live: bool = tx.query_row("SELECT EXISTS(SELECT 1 FROM node_execution WHERE network_id=?1 AND node_id=?2 AND boot_id=?3 AND instance_id=?4 AND generation=?5 AND instance_expires_at>?6)",
-            params![network.as_uuid().as_bytes().as_slice(), node.as_uuid().as_bytes().as_slice(), self.boot.as_uuid().as_bytes().as_slice(), lease.instance_id.as_uuid().as_bytes().as_slice(), lease.generation.get() as i64, now.timestamp_millis()], |r| r.get(0))?;
-        if !live {
-            return Err(StateError::Conflict);
-        }
         let (_, cfg, bindings) =
             store::current_configuration(tx, &self.sealer, network).map_err(state_error)?;
         store::identity_eligible(tx, &cfg, &bindings, network, node).map_err(state_error)?;
@@ -251,42 +279,78 @@ impl Execution {
             lease_expires_at: time(lease.expires_at_ms)?,
             execution: None,
             configurations: lease.target.clone().into_iter().collect(),
-            resources: BTreeMap::new(),
-            peers: BTreeSet::new(),
-            paths: vec![],
-            profiles: BTreeSet::new(),
+            contexts: vec![],
             mesh_addresses: cfg
                 .nodes
                 .values()
                 .flat_map(|n| addresses(&n.addresses))
                 .collect(),
         };
-        if lease
-            .execution_expires_at_ms
-            .is_some_and(|expiry| expiry > now.timestamp_millis() as u64)
-            && let Some((publication, target)) =
-                store::target_for_node(tx, &self.sealer, network, node).map_err(state_error)?
+        if let Some((publication, target)) =
+            store::target_for_node(tx, &self.sealer, network, node).map_err(state_error)?
         {
-            store::check_publication(
+            let eligible = match store::check_publication(
                 tx,
                 &self.sealer,
                 network,
+                node,
                 publication,
                 now.timestamp_millis(),
-            )
-            .map_err(state_error)?;
-            report.execution = lease.target;
-            report.lease_expires_at = report.lease_expires_at.min(time(
-                lease.execution_expires_at_ms.ok_or(StateError::Conflict)?,
-            )?);
-            install_resources(&mut report, &target);
+            ) {
+                Ok(()) => true,
+                Err(NodeError::Conflict) => false,
+                Err(error) => return Err(state_error(error)),
+            };
+            if eligible
+                && let Some(expiry) = lease
+                    .execution_expires_at_ms
+                    .filter(|expiry| *expiry > now.timestamp_millis() as u64)
+            {
+                report.execution = lease.target.clone();
+                report.lease_expires_at = report.lease_expires_at.min(time(expiry)?);
+            }
+            report
+                .contexts
+                .push(configuration_admission(&target, eligible));
+        }
+        for target in store::receipt_history_targets(
+            tx,
+            &self.sealer,
+            network,
+            node,
+            lease.instance_id,
+            now.timestamp_millis(),
+        )
+        .map_err(state_error)?
+        {
+            let context = configuration_admission(&target, false);
+            if !report.configurations.contains(&context.configuration) {
+                report.configurations.push(context.configuration.clone());
+                report.contexts.push(context);
+            }
         }
         Ok(report)
     }
 }
 
-fn install_resources(report: &mut ReportAdmission, target: &CompiledNode) {
+fn configuration_admission(
+    target: &CompiledNode,
+    installation_allowed: bool,
+) -> ConfigurationAdmission {
     let cfg = &target.configuration;
+    let mut report = ConfigurationAdmission {
+        configuration: ConfigurationRef {
+            revision: cfg.revision,
+            execution_publication: cfg.publication,
+            digest: target.digest,
+        },
+        installation_allowed,
+        resources: BTreeMap::new(),
+        peers: BTreeSet::new(),
+        paths: vec![],
+        profiles: BTreeSet::new(),
+        neighbor_transports: cfg.neighbor_transports(),
+    };
     report.peers = cfg.peers.keys().copied().collect();
     report.paths = cfg
         .permits
@@ -343,6 +407,7 @@ fn install_resources(report: &mut ReportAdmission, target: &CompiledNode) {
             },
         );
     }
+    report
 }
 fn endpoint_address(endpoint: &Endpoint) -> String {
     match endpoint.host.parse::<IpAddr>() {
@@ -373,5 +438,47 @@ fn state_error(error: NodeError) -> StateError {
         NodeError::NotFound => StateError::NotFound,
         NodeError::Busy => StateError::Budget,
         NodeError::Storage => StateError::Storage,
+    }
+}
+
+impl crate::observations::service::ObservationProvider for Execution {
+    fn scope(
+        &self,
+        tx: &Transaction<'_>,
+        identity: &ReadIdentity,
+        now: DateTime<Utc>,
+    ) -> Result<VisibilityScope, StateError> {
+        self.state_scope_in_transaction(tx, identity, now)
+    }
+    fn report(
+        &self,
+        tx: &Transaction<'_>,
+        authorization: &str,
+        now: DateTime<Utc>,
+    ) -> Result<ReportAdmission, StateError> {
+        self.report_admission_in_transaction(tx, authorization, now)
+    }
+    fn observation(
+        &self,
+        tx: &Transaction<'_>,
+        identity: &ReadIdentity,
+        request: &meshway_protocol::observations::CreateObservation,
+        now: DateTime<Utc>,
+    ) -> Result<crate::observations::TaskAdmission, StateError> {
+        self.observation_admission_in_transaction(tx, identity, request, now)
+    }
+    fn observation_session(
+        &self,
+        tx: &Transaction<'_>,
+        identity: &ReadIdentity,
+        now: DateTime<Utc>,
+    ) -> Result<SessionId, StateError> {
+        let ReadIdentity::UserSession { digest, .. } = identity else {
+            return Err(StateError::Forbidden);
+        };
+        self.state_scope_in_transaction(tx, identity, now)?;
+        current_session(tx, digest, now.timestamp_millis())
+            .map(|session| session.session_id)
+            .map_err(|_| StateError::Unauthorized)
     }
 }

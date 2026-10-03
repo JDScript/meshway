@@ -13,6 +13,8 @@ use std::collections::BTreeMap;
 pub const COMPILER_VERSION: &str = "meshway-demand-1";
 pub const MAX_DEMANDS: usize = 256;
 pub const MAX_PATHS: usize = 4;
+/// Ordered exit candidates have a separate budget from alternatives per exit.
+pub const MAX_EXIT_CANDIDATES: usize = 16;
 pub const MAX_HOPS: usize = 8;
 
 /// No online flag: lack of contact cannot remove mandatory hops or grant direct access.
@@ -308,22 +310,25 @@ fn evaluate(
         .map(|s| matching::node_selector(s))
         .collect::<Result<Vec<_>, _>>()?;
     let mut candidates = Vec::new();
+    let mut exits = Vec::new();
+    if targets.len() > MAX_EXIT_CANDIDATES {
+        return Err(CompileError::Budget);
+    }
     for target in targets {
         if !cfg.nodes.get(&target).is_some_and(|n| {
             n.enabled && (matches!(demand.target, BusinessTarget::Mesh { .. }) || n.exit_enabled)
         }) {
             continue;
         }
-        let available = graph.paths(demand.source, target, &via)?;
-        for path in available {
-            candidates.push(path);
-            if candidates.len() == MAX_PATHS {
-                break;
-            }
+        // Cover ordered exits first, before exploring additional routes to any
+        // one of them. Each exit owns its alternative-path search allocation.
+        if !graph.paths(demand.source, target, &via, 1)?.is_empty() {
+            exits.push(target);
         }
-        if candidates.len() == MAX_PATHS {
-            break;
-        }
+    }
+    for target in exits {
+        // Keep exit priority in the installed result: X's alternatives precede Y.
+        candidates.extend(graph.paths(demand.source, target, &via, MAX_PATHS)?);
     }
     if candidates.is_empty() {
         return unavailable(UnavailableReason::NoPath);

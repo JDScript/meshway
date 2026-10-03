@@ -66,6 +66,23 @@ CREATE TABLE node_sessions (
     expires_at INTEGER NOT NULL CHECK(expires_at>created_at),
     FOREIGN KEY(network_id,node_id,key_id) REFERENCES node_keys(network_id,node_id,id)
 ) STRICT;
+-- Recovery contains public metadata only. The signed original challenge and
+-- request digest bind both key generations; current keys are rechecked on read.
+CREATE TABLE node_rotations (
+    network_id BLOB NOT NULL,
+    node_id BLOB NOT NULL,
+    request_id BLOB NOT NULL CHECK(length(request_id)=16),
+    request_digest BLOB NOT NULL CHECK(length(request_digest)=32),
+    challenge_id BLOB NOT NULL UNIQUE CHECK(length(challenge_id)=16),
+    challenge BLOB NOT NULL,
+    control_key_id BLOB NOT NULL,
+    dataplane_key_id BLOB NOT NULL,
+    generation INTEGER NOT NULL CHECK(generation BETWEEN 1 AND 9007199254740991),
+    result BLOB NOT NULL,
+    PRIMARY KEY(network_id,node_id,request_id),
+    FOREIGN KEY(network_id,node_id,control_key_id) REFERENCES node_keys(network_id,node_id,id),
+    FOREIGN KEY(network_id,node_id,dataplane_key_id) REFERENCES node_keys(network_id,node_id,id)
+) STRICT;
 CREATE TABLE node_execution (
     network_id BLOB NOT NULL,
     node_id BLOB NOT NULL,
@@ -75,7 +92,6 @@ CREATE TABLE node_execution (
     instance_expires_at INTEGER,
     target_publication_id BLOB,
     execution_expires_at INTEGER,
-    saved BLOB,
     capabilities BLOB NOT NULL,
     PRIMARY KEY(network_id,node_id),
     FOREIGN KEY(network_id,node_id) REFERENCES nodes(network_id,id),
@@ -109,12 +125,14 @@ CREATE TABLE execution_receipts (
     node_id BLOB NOT NULL,
     instance_id BLOB NOT NULL,
     generation INTEGER NOT NULL,
+    attempt INTEGER NOT NULL CHECK(attempt BETWEEN 1 AND 9007199254740991),
+    sequence INTEGER NOT NULL CHECK(sequence BETWEEN 0 AND 9007199254740991),
     digest BLOB NOT NULL CHECK(length(digest)=32),
     phase TEXT NOT NULL CHECK(phase IN ('saved','applied','failed')),
     reported_at INTEGER NOT NULL,
     received_at INTEGER NOT NULL,
     failure TEXT CHECK(failure IN ('validation','storage','listeners','underlay','tun','dns','dataplane')),
-    PRIMARY KEY(network_id,publication_id,node_id,instance_id,phase),
+    PRIMARY KEY(network_id,publication_id,node_id,instance_id,attempt,sequence),
     FOREIGN KEY(network_id,publication_id) REFERENCES execution_publications(network_id,id),
     FOREIGN KEY(network_id,node_id) REFERENCES nodes(network_id,id)
 ) STRICT;
@@ -126,6 +144,7 @@ CREATE TABLE execution_demands (
     request_digest BLOB NOT NULL CHECK(length(request_digest)=32),
     payload BLOB NOT NULL,
     expires_at INTEGER NOT NULL,
+    cancelled_at INTEGER,
     PRIMARY KEY(network_id,node_id,id),
     UNIQUE(network_id,id),
     FOREIGN KEY(network_id,node_id) REFERENCES nodes(network_id,id)

@@ -161,6 +161,7 @@ impl App {
             self.executor.handle(),
             self.sealer(),
             Arc::clone(&self.configuration_cache),
+            self.commit_publisher(),
         )
     }
 
@@ -169,6 +170,7 @@ impl App {
             self.executor.handle(),
             self.sealer(),
             Arc::clone(&self.configuration_cache),
+            self.commit_publisher(),
         )
     }
     pub(crate) fn history(&self) -> crate::history::History {

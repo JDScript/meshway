@@ -57,6 +57,7 @@ impl Networks {
         let digest = token_digest(token)?;
         let sealer = Arc::clone(&self.sealer);
         let cache = Arc::clone(&self.configuration_cache);
+        let publisher = self.publisher.clone();
         self.handle
             .execute(move |db| {
                 store::remove_member(
@@ -71,6 +72,7 @@ impl Networks {
                     },
                     &sealer,
                     &cache,
+                    &publisher,
                 )
             })
             .await?
