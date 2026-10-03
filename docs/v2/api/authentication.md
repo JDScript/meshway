@@ -95,7 +95,7 @@ App / CLI 先私有持久保存本网络接入使用的密钥与 pending 记录
   → 浏览器用用户 session 登录，选择自己有资格的网络并批准
   → Controller 将一次性结果绑定 User、membership、网络与本次请求
   → 设备提交结果、PKCE verifier 和持有私钥的证明
-  → Controller 原子消费批准、绑定 Node／公钥／地址，并在配置写入 identity
+  → Controller 原子消费批准、绑定 Node／公钥，并在配置写入 identity 与分配地址
   → 设备保存 Node ID，随后以密钥身份认证
 ```
 

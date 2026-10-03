@@ -21,6 +21,10 @@ topology 是允许的图，不是当前连接状况；实际通道和路径分�
 
 ```jsonc
 {
+  "addressPools": {
+    "ipv4": ["100.80.0.0/16"],
+    "ipv6": ["fd42:7a65:8800::/48"]
+  },
   "defaults": {
     "access": "deny",
     "topology": "allow"
@@ -45,6 +49,10 @@ topology 是允许的图，不是当前连接状况；实际通道和路径分�
       "remark": "开发后端",
       "identity": { "type": "tag", "tags": ["tag:backend"] },
       "enabled": true,
+      "addresses": {
+        "ipv4": "100.80.0.10",
+        "ipv6": "fd42:7a65:8800::10"
+      },
       "listeners": {
         "mesh-udp": {
           "type": "native_udp",
@@ -79,6 +87,7 @@ topology 是允许的图，不是当前连接状况；实际通道和路径分�
 
 | 字段 | 类型 | 说明 |
 | --- | --- | --- |
+| `addressPools` | `AddressPools` | [可修改的 Mesh 地址段与分配规则](/v2/configuration-reference/addressing) |
 | `defaults` | `Defaults` | [未命中规则时的行为与默认出站配置](/v2/configuration-reference/defaults) |
 | `groups` | `Record<string, string[]>` | [用户组](/v2/configuration-reference/identity#groups) |
 | `tagsOwners` | `Record<string, string[]>` | [Tag 定义及授予权限](/v2/configuration-reference/identity#tagsowners) |
@@ -98,6 +107,7 @@ topology 是允许的图，不是当前连接状况；实际通道和路径分�
 
 ## Reading
 
+- 网络改段、Node 显式改址／重分配：[Addressing](/v2/configuration-reference/addressing)。
 - 配置 listener：[监听器](/v2/configuration-reference/listeners)；配置出站承载：[拨号器](/v2/configuration-reference/dialers)。
 - 通用字段：[Listen](/v2/configuration-reference/shared/listen)、[Dial](/v2/configuration-reference/shared/dial)、[TLS](/v2/configuration-reference/shared/tls)、[WebSocket](/v2/configuration-reference/shared/websocket)。
 - 字段怎样复用、默认值怎样覆盖：[字段复用与默认继承](/v2/configuration-reference/inheritance)。

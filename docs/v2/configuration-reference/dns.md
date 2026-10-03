@@ -1,6 +1,6 @@
 # DNS
 
-网络 DNS 配置草案。节点名称来自 `nodes[id].hostname`。
+网络 DNS 配置草案。节点名称来自 `nodes[id].hostname`，Mesh 记录地址来自同版 `nodes[id].addresses`。
 
 ## Structure
 
@@ -45,6 +45,7 @@
 ## Behavior
 
 - MagicDNS 网络后缀优先交给本地生成的 Node 记录，并自动位于搜索域最前。
+- 改址时 DNS、地址准入与路由按同一发布更新；某地址族为 null 则不生成对应 A／AAAA。旧地址复用仍等待受管 DNS 与执行退出窗口，不能只更新 DNS 就宣布切换完成。
 - `routes` 采用最长 DNS 标签后缀匹配；`corp.example` 不匹配 `evilcorp.example`。
 - 没有使用出口时，`overrideLocal: false` 只强制接管 MagicDNS／split DNS，其他查询保留系统解析。
 - 没有使用出口时，`overrideLocal: true` 使用非空 default；空 default 则拒绝配置。未知解析器引用也拒绝。

@@ -34,8 +34,6 @@
 | --- | --- | --- |
 | `id` | NetworkId | 主键，隔离作用域 |
 | `name` | string | 网络显示名；实体元数据提案 |
-| `ipv4Prefix` | Ipv4Prefix | 本网络 Mesh IPv4 地址池 |
-| `ipv6Prefix` | Ipv6Prefix | 本网络 Mesh IPv6 地址池 |
 | `createdBy` | UserId | 创建者，不替代当前 Owner membership |
 | `createdAt` | Timestamp | 创建时间 |
 | `creationRequestId` | RequestId | 建网幂等请求，与 createdBy 构成唯一键 |
@@ -46,7 +44,7 @@
 
 创建 Network、Owner membership、初始配置同事务。配置指针只由提交事务推进。同幂等键不同参数拒绝；网络已删除也不通过旧请求重建，删除保留期须覆盖幂等承诺。
 
-地址字段按当前“一网每族一个池、每节点每族一个固定地址”的简单模型提案，不建立独立地址池实体或持久分配游标。地址池调整／回收流程仍待定版。
+网络地址段属于当前 ConfigurationVersion.addressPools，可修改；Network 记录不保存另一份地址池。
 
 ## Membership
 
@@ -67,15 +65,27 @@
 | --- | --- | --- |
 | `id` | NodeId | 主键，持久接入身份 |
 | `networkId` | NetworkId | 不可任意切换的接入网络 |
-| `meshIpv4` | Ipv4Address | 持久分配的 Mesh IPv4 |
-| `meshIpv6` | Ipv6Address | 持久分配的 Mesh IPv6；不表示 IPv6 数据面已实现 |
 | `createdBy` | ActorRef | 原始接入来源，仅追溯 |
 | `registeredAt` | Timestamp | 注册时间 |
 | `credentialsRevokedAt` | Timestamp? | 永久吊销整个接入；所有旧／派生凭据拒绝 |
 
 **没有 owner、subject、tags、enabled、hostname、lastSeen、applied 字段。** 有效身份与启停从 Config 获取；运行观测从 RAM 获取。永久接入吊销不可通过配置、换钥或旧注册重试恢复。
 
-地址在网络内唯一、在接入事务分配。当前提案在保留 Node 期间不换绑／回收它的地址，避免需要另一份分配生命周期；若后续支持在线换址或提前回收，再明确分配代际和审计记录。保留网络内地址唯一约束，候选地址可从现有分配重建。
+节点期望地址唯一来自 `ConfigurationVersion.configuration.nodes[id].addresses`，允许显式修改／重分配。Node ID 与密钥不随改址变化。配置提交校验同网地址唯一性；地址索引只作为按 revision 绑定的派生数据，没有独立写入口。
+
+## AddressRetirement
+
+| 字段 | 类型 | 含义 |
+| --- | --- | --- |
+| `networkId` | NetworkId | 地址退出的网络 |
+| `address` | IpAddress | 已从旧绑定撤下的地址 |
+| `previousNodeId` | NodeId | 旧绑定持有者，仅作为退出依据 |
+| `removedRevision` | Revision | 引发退出的配置版本，与 networkId／address 构成记录键 |
+| `releaseAfter` | Timestamp? | 覆盖旧许可／回复／NAT／DNS 窗口的安全复用下界；未知则 null、继续等待 |
+
+这是独立于当前分配的执行退出记录，不是另一份 IPAM 配置。配置改址／删除和退出依据同事务保存；旧发布停止相关续租后，依据所有已授予许可的最坏期限计算下界。不能用保存 ACK 或“现在没有连接报告”证明地址已释放。
+
+自动分配排除仍在退出的地址；显式目标可以等待激活。复用须满足同一地址全部未完成退出记录，回滚／Controller 重启不缩短窗口。记录可在退出完成且无恢复依赖后清理；旧前缀的系统资源回收仍由 Agent underlay journal 拥有。
 
 ## NodeKey
 
@@ -108,7 +118,7 @@
 | `requestId` | RequestId? | 幂等／事件关联 |
 | `rollbackFrom` | Revision? | 回滚来源；本记录仍是新 revision |
 
-NetworkConfiguration 的完整字段见[配置参考](/v2/configuration-reference)；其中 `nodes[id].identity` 与 `enabled` 是 Node 授权身份／业务启停的唯一源。历史原文、规范化值与绑定不可单独覆盖。
+NetworkConfiguration 的完整字段见[配置参考](/v2/configuration-reference)；其中 `nodes[id].identity`／`enabled` 是身份／业务启停的唯一源，addressPools／nodes[id].addresses 是地址期望的唯一源。历史原文、规范化值与绑定不可单独覆盖。
 
 规范化配置完整保存已补全的默认参数、UUID／password／证书／私钥；读取旧版本不会再运行当前默认补全。sourceJsonc 保留编辑意图和注释，configuration 保存确定结果，两者用途不同。线性完整历史可查得前序 revision；配置摘要需要时计算／缓存，CAS 使用 revision。
 
@@ -236,7 +246,7 @@ Node 的持久身份／密钥吊销继续由 Node／NodeKey 负责；本记录�
 | `withdrawnAt` | Timestamp? | 发布撤回时间 |
 | `nodes` | Map&lt;NodeId, PublishedNodeConfiguration&gt; | 实际参与节点的完整切片，嵌入同一发布 |
 
-`PublicationDependencies` 字段：`userBindings: UserBinding[]`、`nodeIds: NodeId[]`、`keyIds: KeyId[]`、`ruleSets: Map<RuleSetKey,ArtifactId>`。节点地址在本提案中是该 Node 的固定事实，材料来自所引用完整配置；持续使用仍检查当前吊销／租约。
+`PublicationDependencies` 字段：`userBindings: UserBinding[]`、`nodeIds: NodeId[]`、`keyIds: KeyId[]`、`ruleSets: Map<RuleSetKey,ArtifactId>`。地址与协议材料来自所引用的完整配置版本，编译进每个参与节点的确定切片；持续使用仍检查当前吊销／租约。改址时不能将旧地址许可拼接到新发布。
 
 ### PublishedNodeConfiguration
 

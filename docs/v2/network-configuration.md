@@ -28,6 +28,7 @@ description: Entity、Config、State 的职责与配置参考导航。
 - 有效身份唯一位于 nodes[id].identity，使用 user／tag 判别对象；业务 enabled 也位于配置。Node 接入记录不再存 subject／owner 副本；永久凭据吊销独立保存且不可回滚。
 - 原创建用户离网或停用不自动撤销 Tag 身份节点，节点继续按标签策略运行，管理员可独立撤销。
 - `nodes[id].hostname` 是规范 DNS 名称的权威来源；运行上报的 OS hostname 是另一项事实。
+- 网络地址段 addressPools 和节点期望 addresses 同样由配置唯一管理，支持改段／显式改址／重新分配；不能为了省表假定地址永久固定。普通保存对越界分配报错，显式重分配与池变更可同版本提交；旧绑定退出依据独立保留。
 - 共享 configuration crate，提供类型／Schema、校验、编译／切片及增量处理；HTTP、数据库和运行资源 owner 各自分责。
 - Config 实际入库并保留完整版本，回滚是历史配置作为新提交，不倒退版本号。
 - Config 与 State 是不同的下发载荷和版本语义；状态不会扩大配置许可。
@@ -36,6 +37,7 @@ description: Entity、Config、State 的职责与配置参考导航。
 ## 阅读顺序 {#next}
 
 1. [整网配置结构](/v2/configuration-reference)
+   与[地址段／节点分配](/v2/configuration-reference/addressing)
 2. [用户组与 Tag](/v2/configuration-reference/identity)、[访问权限](/v2/configuration-reference/access)、[组网规则](/v2/configuration-reference/topology)
 3. [节点](/v2/configuration-reference/nodes)、[Listeners](/v2/configuration-reference/listeners)、[Dialers](/v2/configuration-reference/dialers)
 4. [DNS](/v2/configuration-reference/dns)、[流量路由](/v2/configuration-reference/routing)、[规则集](/v2/configuration-reference/rule-sets)

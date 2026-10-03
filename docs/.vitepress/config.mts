@@ -79,6 +79,7 @@ const v2Sidebar: DefaultTheme.SidebarItem[] = [
     text: "Configuration",
     items: [
       { text: "结构与字段", link: "/v2/configuration-reference" },
+      { text: "Addressing · 地址与分配", link: "/v2/configuration-reference/addressing" },
       { text: "Defaults", link: "/v2/configuration-reference/defaults" },
       { text: "字段复用与默认继承", link: "/v2/configuration-reference/inheritance" },
       { text: "Groups / Tags", link: "/v2/configuration-reference/identity" },

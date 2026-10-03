@@ -12,10 +12,13 @@
 | `revision` | Revision | 配置版本 |
 | `configuration` | Arc&lt;NetworkConfiguration&gt; | 解密／校验后的不可变完整值 |
 | `bindings` | Arc&lt;ConfigurationBindings&gt; | 稳定引用／默认值依据 |
+| `addressIndex` | Map&lt;IpAddress, NodeId&gt; | 从本版本 addresses 构造的网络内占用索引，可重建 |
 | `digest` | Digest | 加载后计算的内容摘要 |
 | `compiled` | Map&lt;CompilationKey, Arc&lt;CompiledConfiguration&gt;&gt; | 本版本有界编译缓存 |
 
 只有缓存，无独立编辑入口；User／Tag 身份从 configuration.nodes[id].identity 读取。CompilationKey 字段为 `dependencyDigest: Digest`、`compilerVersion: string`；动态依赖变化必须换 key，即使源 revision 没变。编译缓存嵌入版本缓存，容量有界，可随版本回收。
+
+addressIndex 只代表该配置版本的期望占用；分配／激活还核对持久 AddressRetirement。不能从 RAM 索引中没有某地址推断旧绑定已安全退出。
 
 CompiledConfiguration 是 `meshway-configuration` 的内部类型，不序列化成给 Node 自授许可的任意图。
 

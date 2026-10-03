@@ -14,7 +14,8 @@ Controller 给某个节点的**完整执行配置**。它包含实际协议参�
 | TLS 证书／私钥 | 管理员提供或平台生成 | 服务端获得私钥，客户端获得验证材料 |
 | SNI、WS path／Host | 目标 listener 设置 | 对应客户端参数 |
 | 拨号优先级／timeout | 本节点 dialers 或 defaults | 本地拨号参数 |
-| peer 公钥／地址 | 已认证 Node 身份与分配记录 | 可信身份和授权引用 |
+| peer 公钥 | 已认证 Node 的公钥绑定 | 可信身份引用 |
+| 本机／peer Mesh 地址 | 同版 addressPools 与 nodes[id].addresses | 固定到本次发布的地址、源校验与 DNS／路由 |
 | access／paths／DNS | 整网配置编译 | 本节点可执行规则 |
 
 管理员修改源配置中的协议参数，Controller 重新生成所有受影响的节点配置。生成值直接保存在完整源版本中，只读查询／重发不会重新生成密码，也不依赖可变的“当前材料”对象。
@@ -98,5 +99,7 @@ UUID／password／证书是完整配置的私有字段，既可以手工配置�
 管理员公告的 endpoint 和协议参数属于 Config。STUN 当前映射、一次协调 attempt、实际选中的通道、RTT 属于 State。
 
 动态 endpoint 更新只改变本配置已经允许的目标如何到达，不能替换 peer 身份、UUID、TLS 信任或业务授权。State 引用确切配置版本／digest，失配时不用于执行。
+
+Mesh 地址变更属于 Config 更新，不能用 endpoint State 改写。接收方继续以对应发布校验源／目的地址绑定；同一 IP 转交其他 Node 不继承旧会话资格，见[改址流程](/v2/configuration-reference/addressing#改址与安全切换)。
 
 下发顺序及 full／delta 处理见[同步与分发](/v2/configuration-reference/synchronization)。

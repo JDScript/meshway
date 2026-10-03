@@ -12,6 +12,10 @@
       "remark": "开发后端",
       "identity": { "type": "tag", "tags": ["tag:backend"] },
       "enabled": true,
+      "addresses": {
+        "ipv4": "100.80.0.10",
+        "ipv6": "fd42:7a65:8800::10"
+      },
       "listeners": {},
       "exitEnabled": false
     }
@@ -27,6 +31,7 @@
 | `remark` | `string` | `""` | 自由备注，不影响身份、DNS 或授权 |
 | `identity` | `NodeIdentity` | 接入时写入 | User／Tag 有效授权身份的唯一配置源 |
 | `enabled` | `boolean` | `true` | 是否启用本节点业务执行；停用可随配置回滚 |
+| `addresses` | `NodeAddresses` | 接入时自动分配并保存 | Mesh IPv4／IPv6 的期望分配；可显式修改或重新分配 |
 | `listeners` | `Record<string, Listener>` | `{}` | [本节点入站配置](/v2/configuration-reference/listeners) |
 | `dialers` | `DialerSet` | 省略则继承 | 显式 `{}` 禁用主动建连；非空集合替换默认 |
 | `exitEnabled` | `boolean` | `false` | 管理员允许此节点承担出口；不是执行就绪状态 |
@@ -42,6 +47,12 @@ FQDN: backend-1.mesh.example
 ```
 
 Node 查询投影此名称，不再有第二个独立可写的显示名。Agent 上报的 OS hostname 留在 State；自动跟随 OS hostname 的行为尚待确认。
+
+## addresses
+
+`ipv4`／`ipv6` 分别为地址或 null，必须属于同版 addressPools，网络内唯一。已有节点省略时沿用，首次省略时自动分配；显式 null 清除该族地址。
+
+改址不改变 Node ID 或密钥身份。普通保存对越界／重复地址报错；显式重分配与池修改可以同一配置事务完成。旧地址退出和复用见 [Addressing](/v2/configuration-reference/addressing)。
 
 ## identity
 

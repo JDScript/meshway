@@ -17,8 +17,9 @@ User ──< Membership >── Network ──< Node
                             └─< ConfigurationVersion
                                   └─ nodes[NodeId]
                                        ├─ identity: User | Tag
-                                       ├─ enabled
-                                       └─ hostname / listeners / ...
+                                        ├─ enabled
+                                        ├─ addresses
+                                        └─ hostname / listeners / ...
 ```
 
 Node 记录保存持久接入与网络绑定；**有效 User／Tag 身份和业务启停唯一来自当前 Configuration**。Node 表不再保存 owner、subject、tags 或 enabled 的可写副本。
@@ -53,7 +54,8 @@ enabled=false 的设备仍可认证以同步配置、报告停止进度。enable
 | Network name、Membership role／revokedAt | 数据库 Network／Membership |
 | Node ID／networkId／公钥／永久接入吊销 | 数据库 Node／NodeKey |
 | Node identity／enabled／hostname／listener | NetworkConfiguration |
-| Mesh 地址 | 数据库 Node；地址池位于 Network（固定地址模型提案） |
+| Mesh 地址段与节点期望地址 | NetworkConfiguration.addressPools／nodes[id].addresses |
+| 旧地址安全复用下界 | 数据库 AddressRetirement；不授予当前归属 |
 | OS hostname／版本／能力／socket／link／path／applied | 内存 NodeState |
 | 用户请求的 routing profile | 数据库 RoutingSelection；实际 applied 在 State |
 | 真实测量历史 | 数据库 ObservationEvent |
@@ -61,3 +63,5 @@ enabled=false 的设备仍可认证以同步配置、报告停止进度。enable
 Tag、Group、Listener 是配置内容；Link、Path 是运行记录。SQL 索引和查询投影不产生第二份业务配置源。
 
 协议凭据随完整配置版本保存，永久拒绝依据保存在 CredentialRevocation。listener 创建代际嵌入版本绑定，编译后的节点配置嵌入执行发布；嵌套值不另建立一套业务实体。
+
+网络改段与节点改址支持同一配置提交，Node ID／密钥保持。旧地址复用须等待执行许可与受管缓存退出，详见[地址与分配](/v2/configuration-reference/addressing)。

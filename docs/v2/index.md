@@ -17,6 +17,7 @@ description: Meshway V2 配置、状态与分发设计参考。
 | [Topology](/v2/configuration-reference/topology) | 图上允许哪些连接和约束 |
 | [Routing](/v2/configuration-reference/routing) | 获准业务在图上怎么走 |
 | [Nodes](/v2/configuration-reference/nodes) | 节点静态设置及 listener／dialer 参数 |
+| [Addressing](/v2/configuration-reference/addressing) | Mesh 地址段、节点地址与安全重分配 |
 
 Config 持久保存完整版本并支持回滚；Controller 编译、解析引用并产生完整的节点配置。
 
