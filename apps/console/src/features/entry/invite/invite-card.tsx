@@ -21,7 +21,13 @@ import { currentSession } from "@/lib/session"
 import { TextField } from "@/components/chrome/form"
 import { m } from "@/paraglide/messages.js"
 
-import { EntryCard, EntryFoot, EntryLink, EntrySubmit } from "../frame"
+import {
+  EntryCard,
+  EntryFoot,
+  EntryLink,
+  EntrySubmit,
+  HANDOFF_MS,
+} from "../frame"
 import { heldInvitation } from "../held"
 import { formText } from "@/lib/form"
 import { usePasswordFields } from "../password-fields"
@@ -67,7 +73,7 @@ export function InviteCard({ secret }: { secret: string }) {
           to: "/networks/$network/overview",
           params: { network: membership.network_id },
         }),
-      320
+      HANDOFF_MS
     )
   }
 

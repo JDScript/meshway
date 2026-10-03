@@ -12,7 +12,7 @@ export const Route = createFileRoute("/setup")({
 function SetupPage() {
   const [held, setHeld] = useState(false)
   return (
-    <EntryPage wide holdsSecret={held}>
+    <EntryPage holdsSecret={held}>
       <SetupCard onHeld={setHeld} />
     </EntryPage>
   )

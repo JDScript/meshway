@@ -14,7 +14,7 @@ import { TextField } from "@/components/chrome/form"
 import { m } from "@/paraglide/messages.js"
 
 import { formText } from "@/lib/form"
-import { EntryCard, EntrySubmit } from "../frame"
+import { EntryCard, EntrySubmit, HANDOFF_MS } from "../frame"
 import { heldReset } from "../held"
 import { usePasswordFields } from "../password-fields"
 
@@ -64,7 +64,7 @@ export function ResetCard({ secret }: { secret: string }) {
     window.setTimeout(
       () =>
         void navigate({ to: "/login", search: { reason: "password_reset" } }),
-      320
+      HANDOFF_MS
     )
   }
 

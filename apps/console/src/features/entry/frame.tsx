@@ -7,20 +7,22 @@ import { Button } from "@/components/ui/button"
 import { Spinner } from "@/components/ui/spinner"
 import { showWelcomeGlobe } from "@/features/globe/store"
 
+/** How long a card takes to dissolve before the page it hands over to is opened. */
+export const HANDOFF_MS = 320
+
 /**
- * A page outside the network shell: the preferences in the corner and one
- * card beside the globe, placed exactly like the sign-in.
+ * A page outside the network shell (the sign-in, an invitation, a reset,
+ * the instance setup, a device's sign-in): the preferences in the corner
+ * (12px in on phones, as the shell's bar) and one card, one width, beside
+ * the globe.
  */
 export function EntryPage({
-  wide = false,
   holdsSecret = false,
   children,
 }: {
-  /** Room for lists (the instance setup). */
-  wide?: boolean
   /**
    * A secret is held in memory only. Changing the language reloads the
-   * page, which would lose it, so the switch is not offered meanwhile.
+   * page, which would lose it, so the switch stays in its place, disabled.
    */
   holdsSecret?: boolean
   children: ReactNode
@@ -30,25 +32,29 @@ export function EntryPage({
   }, [])
   return (
     <main className="pointer-events-none relative flex min-h-svh flex-col">
-      <div className="enter glass pointer-events-auto m-4 flex h-11 items-center gap-0.5 self-end rounded-full px-1.5 md:m-5">
-        {holdsSecret ? null : <LanguageSwitch />}
+      <div className="enter glass pointer-events-auto m-3 flex h-11 items-center gap-0.5 self-end rounded-full px-1.5 md:m-5">
+        <LanguageSwitch disabled={holdsSecret} />
         <ThemeSwitch />
       </div>
       <div className="flex flex-1 items-center px-6 pb-16 md:px-[8vw]">
-        <div
-          className={cn(
-            "pointer-events-auto w-full",
-            wide ? "max-w-110" : "max-w-sm"
-          )}
-        >
-          {children}
-        </div>
+        <div className="pointer-events-auto w-full max-w-95">{children}</div>
       </div>
     </main>
   )
 }
 
-/** The sign-in card's shape: brand, title, then the content. */
+/** The entry card's look, for a card that sizes itself (the setup): glass, the sheet's corners, and how it dissolves. */
+export const ENTRY_CARD =
+  "enter glass w-full rounded-sheet transition-[opacity,transform,filter] duration-500 ease-entrance data-[leaving=true]:-translate-y-3 data-[leaving=true]:scale-[0.98] data-[leaving=true]:opacity-0 data-[leaving=true]:blur-md motion-reduce:transition-none"
+
+/** How an entry card enters. */
+export const ENTRY_ENTER = {
+  "--enter-from": "16px",
+  "--enter-scale": "0.985",
+  "--enter-delay": "60ms",
+} as const
+
+/** The entry card: brand (and an action beside it), title, then the content. */
 export function EntryCard({
   title,
   action,
@@ -67,15 +73,8 @@ export function EntryCard({
   return (
     <div
       data-leaving={leaving}
-      style={{
-        "--enter-from": "16px",
-        "--enter-scale": "0.985",
-        "--enter-delay": "60ms",
-      }}
-      className={cn(
-        "enter glass w-full max-w-95 rounded-sheet p-8 transition-[opacity,transform,filter] duration-500 ease-entrance data-[leaving=true]:-translate-y-3 data-[leaving=true]:scale-[0.98] data-[leaving=true]:opacity-0 data-[leaving=true]:blur-md motion-reduce:transition-none",
-        className
-      )}
+      style={ENTRY_ENTER}
+      className={cn(ENTRY_CARD, "p-8", className)}
     >
       <div className="flex items-center justify-between gap-3">
         <Brand />

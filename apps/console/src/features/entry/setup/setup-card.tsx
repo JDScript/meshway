@@ -15,7 +15,8 @@ import { TextField } from "@/components/chrome/form"
 import { m } from "@/paraglide/messages.js"
 
 import { formText } from "@/lib/form"
-import { EntryLink, EntrySubmit } from "../frame"
+import { cn } from "@/lib/utils"
+import { ENTRY_CARD, ENTRY_ENTER, EntryLink, EntrySubmit } from "../frame"
 import { instanceCall, readInstance, type Instance } from "./instance"
 import { SetupSections } from "./setup-sections"
 
@@ -133,7 +134,7 @@ function TokenForm({ onSigned }: { onSigned: (signed: Signed) => void }) {
             invalid={invalid}
             onInput={() => setInvalid(false)}
           />
-          <code className="truncate font-mono text-meta text-muted-foreground select-all">
+          <code className="font-mono text-meta break-words text-muted-foreground select-all">
             {TOKEN_COMMAND}
           </code>
         </div>
@@ -171,13 +172,11 @@ function SizedCard({
   return (
     <div
       data-leaving={leaving}
-      style={{
-        height,
-        "--enter-from": "16px",
-        "--enter-scale": "0.985",
-        "--enter-delay": "60ms",
-      }}
-      className="enter glass w-full overflow-hidden rounded-sheet transition-[height,opacity,transform,filter] duration-500 ease-entrance data-[leaving=true]:-translate-y-3 data-[leaving=true]:scale-[0.98] data-[leaving=true]:opacity-0 data-[leaving=true]:blur-md motion-reduce:transition-none"
+      style={{ height, ...ENTRY_ENTER }}
+      className={cn(
+        ENTRY_CARD,
+        "overflow-hidden transition-[height,opacity,transform,filter]"
+      )}
     >
       <div ref={content} className="flex flex-col p-8">
         {children}

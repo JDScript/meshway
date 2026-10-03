@@ -28,6 +28,7 @@ import { m } from "@/paraglide/messages.js"
 
 import { formText } from "@/lib/form"
 import { fragmentLink } from "../fragment"
+import { HANDOFF_MS } from "../frame"
 import { usePasswordFields } from "../password-fields"
 import type { InstanceCall, SetupAccount, SetupNetwork } from "./instance"
 
@@ -125,7 +126,7 @@ export function ClaimDialog({
           to: "/networks/$network/members",
           params: { network: networkId },
         }),
-      320
+      HANDOFF_MS
     )
   }
 

@@ -2,13 +2,17 @@ import { useNavigate, useRouter } from "@tanstack/react-router"
 import { useEffect, useRef, useState, type FormEvent } from "react"
 import { toast } from "sonner"
 
-import { Brand } from "@/components/chrome/brand"
-import { EntryFoot, EntryLink } from "@/features/entry/frame"
 import { TextField } from "@/components/chrome/form"
-import { Button } from "@/components/ui/button"
 import { FieldGroup } from "@/components/ui/field"
-import { Spinner } from "@/components/ui/spinner"
+import {
+  EntryCard,
+  EntryFoot,
+  EntryLink,
+  EntrySubmit,
+  HANDOFF_MS,
+} from "@/features/entry/frame"
 import { formText } from "@/lib/form"
+import { PASSWORD_MAX_BYTES } from "@/lib/password"
 import { m } from "@/paraglide/messages.js"
 
 import { signIn, type SignInOutcome } from "./sign-in"
@@ -86,24 +90,12 @@ export function LoginCard({
     window.setTimeout(
       () =>
         returnTo ? router.history.push(returnTo) : void navigate({ to: "/" }),
-      320
+      HANDOFF_MS
     )
   }
 
   return (
-    <div
-      data-leaving={leaving}
-      style={{
-        "--enter-from": "16px",
-        "--enter-scale": "0.985",
-        "--enter-delay": "60ms",
-      }}
-      className="enter glass w-full max-w-95 rounded-sheet p-8 transition-[opacity,transform,filter] duration-500 ease-entrance data-[leaving=true]:-translate-y-3 data-[leaving=true]:scale-[0.98] data-[leaving=true]:opacity-0 data-[leaving=true]:blur-md motion-reduce:transition-none"
-    >
-      <Brand />
-      <h1 className="mt-10 text-display font-semibold tracking-tight">
-        {m.login_title()}
-      </h1>
+    <EntryCard title={m.login_title()} leaving={leaving}>
       <form
         method="post"
         action="/login"
@@ -136,26 +128,11 @@ export function LoginCard({
             type="password"
             autoComplete="current-password"
             required
-            maxLength={1024}
+            maxLength={PASSWORD_MAX_BYTES}
           />
-          <Button
-            type="submit"
-            size="lg"
-            className="mt-2 h-11 w-full rounded-tile"
-            disabled={pending}
-            aria-busy={pending}
-          >
-            <span className="relative inline-flex items-center justify-center">
-              <Spinner
-                className={
-                  pending
-                    ? "absolute -left-6 opacity-100"
-                    : "absolute -left-6 opacity-0"
-                }
-              />
-              {m.login_submit()}
-            </span>
-          </Button>
+          <EntrySubmit pending={pending} className="mt-2">
+            {m.login_submit()}
+          </EntrySubmit>
         </FieldGroup>
       </form>
       {/* A new instance has no account yet: its first owner is set up with the instance token. */}
@@ -168,6 +145,6 @@ export function LoginCard({
           {m.login_setup()}
         </EntryLink>
       </EntryFoot>
-    </div>
+    </EntryCard>
   )
 }

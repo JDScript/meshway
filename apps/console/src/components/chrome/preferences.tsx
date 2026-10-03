@@ -44,17 +44,20 @@ export function ThemeSwitch() {
   )
 }
 
-export function LanguageSwitch() {
+/** `disabled` keeps the control in its place while it cannot be used (a secret is held that a reload would lose). */
+export function LanguageSwitch({ disabled = false }: { disabled?: boolean }) {
   const locale = useLocale()
   return (
     <DropdownMenu>
       <DropdownMenuTrigger
+        disabled={disabled}
         render={
           <Button
             variant="ghost"
             size="icon"
             className="bar-button"
             aria-label={m.language_switch()}
+            disabled={disabled}
           >
             <LanguagesIcon />
           </Button>

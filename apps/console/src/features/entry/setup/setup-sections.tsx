@@ -79,7 +79,7 @@ export function SetupSections({
   }, [call])
 
   return (
-    <div className="mt-6 flex h-[min(28rem,calc(100svh-20rem))] min-h-64 flex-col">
+    <div className="mt-6 flex h-[min(20rem,calc(100svh-20rem))] min-h-56 flex-col">
       <SegmentedControl
         label={m.setup_title()}
         value={section}
