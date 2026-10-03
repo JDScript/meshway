@@ -10,6 +10,7 @@ export default defineConfig({
     logo: "/meshway.svg",
     nav: [
       { text: "产品", link: "/concepts" },
+      { text: "配置", link: "/configuration-reference" },
       { text: "架构", link: "/architecture" },
       { text: "开发", link: "/getting-started" },
       { text: "参考", link: "/cli" },
@@ -19,7 +20,6 @@ export default defineConfig({
         text: "产品",
         items: [
           { text: "概览、概念与使用流程", link: "/concepts" },
-          { text: "Configuration Reference", link: "/configuration-reference" },
           { text: "网络管理", link: "/network-management" },
           { text: "访问授权（Access）", link: "/access-policy" },
           { text: "Mesh 路由与出口方案", link: "/routing" },
@@ -27,6 +27,30 @@ export default defineConfig({
           { text: "Apple App", link: "/apple-app" },
           { text: "产品要求", link: "/product-alignment" },
           { text: "当前状态与剩余工作", link: "/milestones" },
+        ],
+      },
+      {
+        text: "配置参考 · 草案",
+        items: [
+          { text: "结构与字段", link: "/configuration-reference" },
+          { text: "Groups / Tags", link: "/configuration-reference/identity" },
+          { text: "Grants", link: "/configuration-reference/grants" },
+          { text: "Nodes", link: "/configuration-reference/nodes" },
+          { text: "Listeners", link: "/configuration-reference/listeners" },
+          { text: "Dialers", link: "/configuration-reference/dialers" },
+          { text: "DNS", link: "/configuration-reference/dns" },
+          { text: "连接与路由", link: "/configuration-reference/routing" },
+          { text: "Rule Sets", link: "/configuration-reference/rule-sets" },
+        ],
+      },
+      {
+        text: "状态与分发 · 草案",
+        items: [
+          { text: "NodeConfiguration", link: "/configuration-reference/node-configuration" },
+          { text: "State Reference", link: "/state-reference" },
+          { text: "同步与回滚", link: "/configuration-reference/synchronization" },
+          { text: "存储、查询与 API", link: "/configuration-reference/storage-api" },
+          { text: "模型与讨论边界", link: "/network-configuration" },
         ],
       },
       {
