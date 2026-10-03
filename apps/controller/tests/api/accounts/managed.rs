@@ -280,6 +280,8 @@ async fn managed_permissions_initial_enrollment_legacy_claim_and_membership_with
             .iter()
             .any(|n| n["node_id"] == legacy["node"]["id"] && n["membership_id"].is_null())
     );
+    let material_before_claim =
+        node_material(&f, &credential, "/api/v1/agent/managed-connections").await;
     ok(
         &f,
         "POST",
@@ -304,8 +306,26 @@ async fn managed_permissions_initial_enrollment_legacy_claim_and_membership_with
             == key_before
     );
     let after = node_material(&f, &credential, "/api/v1/agent/managed-connections").await;
-    assert!(after["materials"] == material["materials"]);
-    // An unrelated active node receives only the approved dialer material.
+    assert!(after["materials"] == material_before_claim["materials"]);
+    let projected = after["materials"].as_array().unwrap();
+    assert_eq!(projected.len(), 2);
+    assert!(
+        projected
+            .iter()
+            .find(|m| m["listener_id"] == "app-owned")
+            .unwrap()
+            == &material["materials"][0]
+    );
+    assert!(
+        projected
+            .iter()
+            .find(|m| m["listener_id"] == "initial-owned")
+            .unwrap()["private_key_pem"]
+            .is_null()
+    );
+    // A newly eligible listener adds only its authorized dialer material; an
+    // ownership claim does not rotate either owner's existing private material.
+    // An unrelated active node receives only the approved dialer materials.
     // After membership withdrawal that projection must be withdrawn as well,
     // retaining the explicit source instead of changing the logical path.
     let observer_token = ok(
@@ -350,8 +370,16 @@ async fn managed_permissions_initial_enrollment_legacy_claim_and_membership_with
         "/api/v1/agent/managed-connections",
     )
     .await;
-    assert_eq!(observer_before["materials"].as_array().unwrap().len(), 1);
-    assert!(observer_before["materials"][0]["private_key_pem"].is_null());
+    let observer_materials = observer_before["materials"].as_array().unwrap();
+    assert_eq!(observer_materials.len(), 2);
+    assert!(
+        observer_materials
+            .iter()
+            .all(|m| m["private_key_pem"].is_null())
+    );
+    for id in ["app-owned", "initial-owned"] {
+        assert!(observer_materials.iter().any(|m| m["listener_id"] == id));
+    }
     let before_revision=ok(&f,"GET",&format!("{base}/overview"),Some(&owner),None).await["configuration_revision"].as_u64().unwrap();
     db.execute_batch("CREATE TRIGGER managed_account_withdraw_abort BEFORE UPDATE OF revoked_at ON nodes BEGIN SELECT RAISE(ABORT,'fixture withdrawal failure'); END;").unwrap();
     let remove = json!({"user_id":membership["user_id"],"role":"remove"});
