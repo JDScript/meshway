@@ -20,6 +20,9 @@ description: Meshway V2 配置、状态与分发设计参考。
 
 Config 持久保存完整版本并支持回滚；Controller 编译、解析引用并产生完整的节点配置。
 
+- [身份与操作权限](/v2/permissions)
+- [按需执行许可：Controller 与 Edge 的分工](/v2/execution)
+
 ## State
 
 [从 State 数据流开始](/v2/state-reference)。

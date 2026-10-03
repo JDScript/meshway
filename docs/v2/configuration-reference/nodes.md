@@ -12,7 +12,6 @@
       "remark": "开发后端",
       "tags": ["tag:backend"],
       "listeners": {},
-      "dialers": {},
       "exitEnabled": false
     }
   }
@@ -27,7 +26,7 @@
 | `remark` | `string` | `""` | 自由备注，不影响身份、DNS 或授权 |
 | `tags` | `string[]` | `[]` | Tag 分配，引用 `tagsOwners` 中的定义 |
 | `listeners` | `Record<string, Listener>` | `{}` | [本节点入站配置](/v2/configuration-reference/listeners) |
-| `dialers` | `DialerSet` | `{}` | 以协议名为 key，使用[统一继承规则](/v2/configuration-reference/inheritance) |
+| `dialers` | `DialerSet` | 省略则继承 | 显式 `{}` 禁用主动建连；非空集合替换默认 |
 | `exitEnabled` | `boolean` | `false` | 管理员允许此节点承担出口；不是执行就绪状态 |
 
 ## hostname
@@ -45,6 +44,8 @@ Node 查询投影此名称，不再有第二个独立可写的显示名。Agent 
 ## 生命周期
 
 建议注册事务创建默认 `nodes[id]` 配置项并生成配置版本。JSON 中新增一个 key 不会创建节点凭据；删除配置项也不等于撤销身份。未提供有效节点配置时不发布可执行业务配置，删除行为的管理体验需进一步确认。
+
+Tag 身份不继承 User／Group 权限，原创建用户离网后仍保留；最后一个 Tag 不能直接清空，须经设备用户登录完成身份转换。详见[有效身份](/v2/configuration-reference/identity#有效授权身份)。默认初始化不写空 dialers，以采用网络默认出站集合。
 
 回滚恢复历史静态设置，仍校验 Node 是否有效；不会复活已撤销身份。缺失 Node 引用需要显式解决。
 

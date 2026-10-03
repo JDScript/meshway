@@ -48,10 +48,24 @@
 
 ## Behavior
 
-- 默认 `defaults.access: "deny"` 时，`access: []` 不授予业务访问；默认允许 Mesh 的含义由 defaults 明确表达。
+- `defaults.access: "deny"`；新网络的 Mesh 互访许可由显式模板规则表达。`access: []` 不授予经 Mesh 的新业务访问。
 - 单向授权允许已建立会话的状态型回复，不自动允许反向新连接。
 - grant 允许访问，不代表已有路由、listener、认证通道或可用出口。
 - 出口／路由方案必须处于 access 允许范围。路径与候选出口引用的联合校验见[流量路由](/v2/configuration-reference/routing)。
+
+## 保护范围 {#scope}
+
+access 保护 Mesh 目标和 Mesh 出口转发。源端 direct／unmanaged 使用自身本地网络，不额外套用 Mesh access；本规则不声称能阻止设备所有者自行出网。
+
+access 约束业务目的地，不再重复定义一套“允许出口列表”。允许的方案和 routing 决定可用出口，与 exitEnabled、topology 联合生成接收端执行许可。访问出口节点上的服务，不等于允许通过它转发。
+
+## 域名授权 {#domains}
+
+已选择按**可信 DNS 解析所得地址集合**授权。域名许可不是严格的目标服务身份：两个域名共享 IP 时，不能保证只访问其中一个域名；不宣传同 IP 域名隔离。
+
+域名仍可为正常客户端分流提供上下文，以遵守有序规则。需要强制覆盖某实际地址上所有流量的路径约束，应按 IP／CIDR 定义；不能靠源端声明一个域名来证明同 IP 上实际访问的是哪个应用。
+
+执行关联由 Controller 受控解析／受信解析结果校验后发布，绑定网络、配置发布、源范围、名称／CNAME、地址和 TTL。节点报告的 DNS 观察只作线索，不直接增加正常出口的接受权限。具体关联消息随 API 定义，但不能用普通 State 任意注入新授权。
 
 ## Enforcement
 

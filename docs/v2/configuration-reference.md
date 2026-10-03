@@ -51,7 +51,6 @@ topology 是允许的图，不是当前连接状况；实际通道和路径分�
           "listenPort": 8421
         }
       },
-      "dialers": {},
       "exitEnabled": false
     }
   },

@@ -41,6 +41,7 @@ NodeState snapshot 只提供最新状态，历史使用独立批次。相同 pro
       "peerNodeId": "<node-b>",
       "linkId": "<link-id>",
       "configurationRevision": 42,
+      "executionPublication": "<publication-ref>",
       "nodeConfigurationDigest": "<node-config-digest>",
       "startedAt": "2026-10-03T12:00:00Z",
       "completedAt": "2026-10-03T12:00:00.012Z",
@@ -64,6 +65,8 @@ source Node／network 由凭据决定；每个事件是明确的判别联合类�
 - 已撤销的凭据不能继续写入。Controller 可记录自己的撤销／报告过期事件，但不能凭此捏造节点实际关闭时刻。
 - 队列满、上报失败、进程退出可以造成历史缺口；初版不承诺无损审计。采集／上报丢弃计数需可见，但不是网络丢包率。
 - Controller 保存原始事件与 receivedAt；查询按事件时刻展示，分页／重复读取不产生新测量。
+
+历史读取以**当前**用户权限过滤；普通成员只看其获准业务／执行依赖相关范围，不能用事件发生时曾有的权限重新授权当前请求。权限矩阵见[操作权限](/v2/permissions)。
 
 ## 延迟口径
 

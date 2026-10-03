@@ -63,7 +63,9 @@
 | `assignments` | 选择器对应的 allowed 方案、默认方案和 locked 状态 |
 | `auto` | 国家／地区到方案的有序映射及无法判断时的 fallback |
 
-有效规则 = 公共规则 → 当前方案规则 → 方案 fallback。空公共／方案规则不覆盖 fallback。重叠分配若有不同 default 或 locked 值，建议保存时报冲突；不凭对象顺序选一个。
+有效规则 = 公共规则 → 当前方案规则 → 方案 fallback。空公共／方案规则不覆盖 fallback。
+
+**重叠分配已确定：** allowed 取并集；匹配项的 default 或 locked 不一致就拒绝保存，不按数组顺序覆盖。合并后 default 必须在 allowed 内，auto 的所有目标／fallback 也须在主体允许范围内。
 
 ### Rule match
 
@@ -85,6 +87,31 @@
 
 出口必须启用 `nodes[id].exitEnabled`，目的访问必须获 access 允许。没有可用获准路径时拒绝，不能回退到后续规则或偷偷 direct。
 
-内置方案为 `mesh`（仅公共规则）、`global:<exit-node-id>`（全局经允许出口）和 `auto`。用户当前选择及 GeoIP 观测属于 State；选择必须在配置允许范围内，切换中断旧出口连接。auto 只使用当前底层公网 IP 推导的地区；无有效观测走 fallback，目标方案不允许递归引用 auto。
+## 出口联合许可
 
-以上字段名、匹配组合和分配冲突规则均待确认，不代表出口主线已交付完整方案能力。
+```text
+业务目的 access
+  ∩ 管理员允许方案中的 routing 动作
+  ∩ exitEnabled
+  ∩ topology / 完整路径约束
+```
+
+Controller 为最终出口生成绑定 origin、实际目的范围、出口和完整 path 的许可，而不是只给它一条宽泛“源节点可上网”。公共规则抢先指定 E 的范围，不会又从 F 的 fallback 获得准入。
+
+新方案分配含主体未获授权的目标时拒绝保存。后续身份／access／出口撤销必须可以执行，不能被旧方案引用阻止；受影响执行变为拒绝／不可用，不偷偷恢复 direct 或其他更宽路径。
+
+### 内置方案与当前选择
+
+- `mesh`：公共规则，其他外部流量不接管。
+- `global:<exit-node-id>`：为 exitEnabled 节点生成目录项；**目录存在不等于获准使用**，需要 assignment.allowed 明确包含并通过联合校验。
+- `auto`：根据当前底层公网 IP 推导地区，在已允许的方案中选择；无有效观测走配置 fallback，不递归指向 auto。
+
+用户选择属于持久的使用状态。重启后仍在 allowed 且未被锁定时恢复；否则采用当前管理员默认。任何方案切换都结束旧出口存量连接，不能携带旧方案的 NAT／流资格跨过去。
+
+### direct / unmanaged
+
+两者从源节点本地网络发出，不受 Mesh access 的额外过滤。必须是明确的有效配置／使用选择；出口故障、授权撤回、lease 到期不能当成隐式切换为不接管。
+
+域名授权采用地址集合语义；同 IP 服务隔离限制见 [Access](/v2/configuration-reference/access#domains)。域名/IP 规则混合时须保留正常客户端的域名上下文和 first-match，无法确定相容动作时报告冲突／不可执行，不静默选更宽路径。
+
+已确认的行为不代表出口主线已交付完整方案能力；精确输入／执行字段在 API 阶段按以上边界定版。

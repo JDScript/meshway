@@ -70,6 +70,8 @@ const v2Sidebar: DefaultTheme.SidebarItem[] = [
     items: [
       { text: "概览", link: "/v2/" },
       { text: "配置与状态模型", link: "/v2/network-configuration" },
+      { text: "操作权限", link: "/v2/permissions" },
+      { text: "按需执行许可", link: "/v2/execution" },
     ],
   },
   {

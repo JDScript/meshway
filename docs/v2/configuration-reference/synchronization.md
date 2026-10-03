@@ -8,7 +8,7 @@
 | --- | --- | --- |
 | 内容 | 管理期望、编译后的许可和执行参数 | 实际能力、endpoint、通道、观测与使用选择 |
 | 更新原因 | 配置提交；执行切片依赖改变 | 实际事件／观测 |
-| 标识 | 源配置 revision + 节点配置 digest | 当前实例、sequence、时间与配置引用 |
+| 标识 | 源 revision + 一致执行发布引用 + 节点 digest | 当前实例、sequence、时间与执行配置引用 |
 | 持久性 | 整网源完整版本；Agent 私有保存目标切片 | 最新值有期限，必要历史另存 |
 | 回滚 | 历史配置作为新提交 | 不回滚到旧观测／旧通道 |
 
@@ -21,7 +21,7 @@
 ```text
 管理员提交 NetworkConfiguration
   → 解析 defaults + 本节点选项 + 目标 listener 参数，准备缺省材料
-  → 校验并编译授权／路径，生成完整 NodeConfiguration（含所需材料）
+  → 校验并编译公共事实；按获准需求生成候选路径与完整节点配置
   → CAS 事务保存配置、材料绑定及发布版本
   → full 或 node-specific delta
   → Agent 还原、校验并原子保存完整配置，发送保存 ACK
@@ -35,6 +35,7 @@ Config 是完整参数集合，State 是之后独立更新的运行事实。准�
   "networkId": "<network-id>",
   "nodeId": "<node-id>",
   "configurationRevision": 43,
+  "executionPublication": "<consistent-publication-reference>",
   "targetDigest": "<target-node-config-digest>",
   "payload": {
     "type": "delta",
@@ -66,8 +67,27 @@ Config 已撤回或 lease 到期时停止旧运行代际，不等 State 通道�
 
 access／topology 规则没有 ID：本版增量可整段替换数组，错误／编辑定位使用配置 revision 与 JSON Pointer。remark 允许重复，不承担 patch 主键职责；不为增量重新要求用户分配规则 ID。
 
+## 执行发布与恢复 {#publication}
+
+执行发布将源配置 revision、相关 Node／User 身份与公钥依据、材料／规则集摘要以及参与节点的目标 digest 一致绑定，并提供持久的防回退顺序。按需许可见[执行流程](/v2/execution)，具体引用／序号编码在 API 阶段统一。
+
+源配置不变而身份／材料／已解析依赖改变时，可以产生新执行发布，不伪造一次管理员文本编辑。A 使用 B 的 State 时，对照发布中 B 资源的可信绑定，不比较 A/B 的 node digest 相等，也不只比较源 revision 相等。
+
+| 场景 | 执行结果 |
+| --- | --- |
+| 新配置已保存，资源未准备好 | saved 前进，报告 preparing／failed；不能标记 applied |
+| 缺 peer 配置／材料或 State 对不上发布 | 有界等待或重同步，不启动未知权限的业务 |
+| 权限缩减、Node 撤销或 lease 到期 | 先停止旧准入并保留拒绝边界；准备失败不能恢复已失效权限 |
+| 明确的新配置／使用选择取消接管 | 在安全切换后释放对应捕获，才恢复本地网络 |
+| Agent 重启 | 缓存作恢复基准；取得当前实例和 fresh 执行许可后再激活 |
+| Controller 丢失 RAM State | 更换 State epoch／reset；不丢失持久身份撤销和发布恢复下界 |
+
+实例 acquire/resume 必须由节点凭据验证、幂等，并能 fence 被替代实例。执行授权 lease 与 State 联系时效分开；watch 重连或历史回放不能延长旧许可。不要求整网二阶段同时激活，切换期间可以明确不可用。
+
 ## Rollback
 
 选择某个历史 NetworkConfiguration，重新校验当前身份、引用和资源依赖，保存为新 revision。历史默认不因界面分页而删除；实际保留策略另行确认。
 
 回滚不复活撤销身份、不恢复旧连接或 endpoint。所需历史规则集／材料依赖缺失时给出明确错误，不能用最新内容冒充历史版本。
+
+已确认：历史凭据／证书吊销或规则集内容不可用时，**回滚失败并列出依赖**；由管理员提供替代后再作为新配置提交，不自动生成替代材料或换用最新数据继续回滚。历史邮箱仍绑定原 User ID，不能落到后来复用该邮箱的新 User。

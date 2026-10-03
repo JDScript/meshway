@@ -22,6 +22,8 @@ description: Entity、Config、State 的职责与配置参考导航。
 - 主要业务实体 Node／User；Network 保持既有隔离作用域。
 - 配置命名统一为 `access`（访问权限）、`topology`（组网规则）、`routing`（流量路由）；保留 `groups`、`tagsOwners`、`nodes[id]`、`dns` 等基础部分。
 - access 定义业务端点权限；topology 定义允许的图；routing 定义业务在图上的路径约束。实际 links／paths 属于 State。
+- 带 Tag 的节点使用 Tag 授权身份，不再继承原 User／Group 的 access 权限；创建者可保留用于追溯。
+- 原创建用户离网或停用不自动撤销 Tag 身份节点，节点继续按标签策略运行，管理员可独立撤销。
 - `nodes[id].hostname` 是规范 DNS 名称的权威来源；运行上报的 OS hostname 是另一项事实。
 - 共享 configuration crate，提供类型／Schema、校验、编译／切片及增量处理；HTTP、数据库和运行资源 owner 各自分责。
 - Config 实际入库并保留完整版本，回滚是历史配置作为新提交，不倒退版本号。
@@ -39,17 +41,17 @@ description: Entity、Config、State 的职责与配置参考导航。
 
 ## 仍需确认 {#open-items}
 
-模型骨架足以开始 API 草案；下面六类语义会影响写入、授权或下发合同，需要在相应接口定版前确认。
+本轮问答已确认下列产品语义，可以作为 API 草案的输入；新接口尚未实现。引用／字段编码、预算和恢复时序按这些边界继续落实，不把未实现的格式标成已发布。
 
-| 决策 | 需要明确的问题 |
+| 决策 | 已确认结论与规范 |
 | --- | --- |
-| 身份与操作权限 | Tag 是否替代 User 身份；邮箱变更／复用与历史引用；设备拥有者、Tag owner、管理员各自能做什么 |
-| 默认值与材料 | 省略／空对象／关闭的真值表；平台默认如何随版本固定；材料保留、显式修改、重新生成的区别 |
-| Controller 与 Edge 分工 | 下发候选还是约束；新需求如何取得中转依赖；最终路径与反向建连如何由接收端独立验证 |
-| 发布与恢复 | 配置／身份／材料依赖的一致发布引用；实例接管、saved/applied 失配、撤回与 rollback 的转换 |
-| 出口联合授权 | 目的 access、允许方案／出口、exitEnabled、topology/routing 如何共同限制正常出口；direct／unmanaged 的范围 |
-| 域名与 DNS | 可信域名/IP 关联由谁提供；共享 IP 能否区分；first-match 与出口 DNS 的解析、缓存及撤回规则 |
+| 身份与操作权限 | Tag 替代 User，原用户离网不撤 Tag 节点；最后一个 Tag 须重新用户登录后移除；邮箱引用跟随稳定 User ID。[身份](/v2/configuration-reference/identity)、[权限矩阵](/v2/permissions) |
+| 默认值与材料 | 默认拒绝＋显式 Mesh 放行模板；缺省继承、空集合禁用；删除后重建生成新自动材料。[Defaults](/v2/configuration-reference/defaults)、[继承](/v2/configuration-reference/inheritance) |
+| Controller 与 Edge 分工 | 按合法需求计算有界候选／完整路径和依赖，设备结合 State 选择；各接收端独立验证。[执行许可](/v2/execution) |
+| 发布与恢复 | 同步绑定源／身份／材料等依赖；回滚遇缺失／吊销资源失败，要求替代，不静默换新。[同步](/v2/configuration-reference/synchronization#publication) |
+| 出口联合授权 | access 管目的，允许方案与 routing 决定出口；allowed 并集，default/locked 冲突拒绝；记住有效用户选择；本机 direct 不套 Mesh access。[Routing](/v2/configuration-reference/routing) |
+| 域名与 DNS | 域名授权按解析地址集合，接受共享 IP 限制；普通 DNS 随方案出口，明确例外保留，bootstrap 独立。[Access](/v2/configuration-reference/access#domains)、[DNS](/v2/configuration-reference/dns) |
 
-State 的 snapshot、删除、过期、reset 和真实测量方向继续沿用；具体预算、时序及操作权限在 API 草案中落定。初版完整配置按版本加载／缓存，不预先建设多套数据库查询投影。
+普通成员 State／History 只读相关范围，主动诊断仅源于自己的 User 身份设备；Owner／Admin 管理本网络。State snapshot、删除、过期、reset 和真实测量方向继续沿用。初版完整配置按版本加载／缓存，不预先建设多套数据库查询投影。
 
 参考 Tailscale 的 policy／NetworkMap、sing-box 的字段参考组织方式；不照搬它们所有协议、设备侧配置流程或历史兼容字段。现行实现与本轮设计分开，见[当前配置合同](/configuration)和[协议](/protocol)。

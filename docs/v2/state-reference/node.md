@@ -16,8 +16,8 @@
     "transport:native_udp": {}
   },
   "configuration": {
-    "saved": { "revision": 42, "digest": "<node-config-digest>" },
-    "applied": { "revision": 42, "digest": "<node-config-digest>" }
+    "saved": { "revision": 42, "executionPublication": "<publication-ref>", "digest": "<node-config-digest>" },
+    "applied": { "revision": 42, "executionPublication": "<publication-ref>", "digest": "<node-config-digest>" }
   },
   "listeners": {},
   "sockets": {},
@@ -50,11 +50,15 @@
 
 尚未保存或执行配置时使用 null，不填写伪造的 revision=0。不同配置引用允许短暂并存，例如 saved 已更新但 applied 仍在切换；必须如实报告。
 
+执行发布引用固定身份／材料／相关节点切片依赖，和源 revision、当前 Node digest 一起核对；不能仅凭 revision 相同将报告用于另一次执行发布。详见[发布与恢复](/v2/configuration-reference/synchronization#publication)。
+
 ## 字段来源
 
 节点能报告实际 capability 和资源状态，不能自行报告新的 User／Tag 归属、access、出口资格或可信公钥绑定。后者属于 Controller 的实体／Config。
 
 GeoIP 位置由 Controller 根据合格的底层公网 IP 观测计算，放在 [NetworkState 的派生部分](/v2/state-reference/network#derived)，不直接采用节点自报 country。用户方案选择是受配置约束的使用状态，不等于修改管理员方案。
+
+已确认：用户方案选择跨重启保存；恢复时仍在 allowed 且未被锁定才继续使用，否则采用当前管理员默认。它不进入管理员配置回滚历史，切换不能带走旧出口流／NAT 资格。
 
 ## 标识与时间
 

@@ -18,7 +18,7 @@
 { "vless": {} }
 ```
 
-`vless: {}` 使用该协议的字段默认值；整个 `dialers: {}` 则采用网络 defaults.dialers。两者含义不同。
+`vless: {}` 启用 VLESS 并使用其字段默认值；整个 `dialers: {}` 禁用主动建连。**省略 dialers 字段**才采用网络 defaults.dialers。
 
 ## Types
 

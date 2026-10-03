@@ -18,6 +18,8 @@ Node 可以主动从 Controller 查询所需 peer 的最新 State；需要持续
 
 原始报告中的全部内容不应原样转发：节点通常只需要相关资源的可达候选、能力、必要执行状态；不需要 peer 的全部接口、其他业务的 paths、详细 problems 或完整延迟历史。管理员／普通成员／Node 凭据采用各自的字段视图。
 
+已确认：普通成员只看自身获准业务及执行依赖相关的 State／History，不默认读取全网；主动诊断仅以自己的 User 身份设备为 source。Owner／Admin 管理本网络，Tag owner 不自动扩大观测／材料权限。见[操作权限](/v2/permissions)。
+
 peer 查询只能在服务器计算的可见范围内进一步缩小。请求中指定一个 Node ID 不是授权；对不可见／不存在的请求对象统一返回不可用语义，不能借此枚举隐藏节点。
 
 ## Query
@@ -29,6 +31,7 @@ peer 查询只能在服务器计算的可见范围内进一步缩小。请求中
   "nodes": ["<node-b>", "<node-c>"],
   "include": ["listeners", "endpoints", "capabilities"],
   "configurationRevision": 42,
+  "executionPublication": "<requester-publication-ref>",
   "nodeConfigurationDigest": "<requester-config-digest>"
 }
 ```
@@ -38,6 +41,8 @@ peer 查询只能在服务器计算的可见范围内进一步缩小。请求中
 - endpoints 可以合并 configured／interface／stun 来源；不要求调用者只使用 STUN，也不把所有接口细节原样转发。[来源和候选选择](/v2/state-reference/endpoints)在所有读取方式中一致。
 - Config 引用用于发现调用方基准是否过旧，不赋予权限；服务端始终按当前身份／配置校验。
 
+不知道需要哪个中转时，先提交[获准业务需求](/v2/execution)，由 Controller 决定依赖并补齐一致配置；不能靠 query 中自行增加 Node ID 获得许可。
+
 返回：
 
 ```json
@@ -45,6 +50,7 @@ peer 查询只能在服务器计算的可见范围内进一步缩小。请求中
   "type": "snapshot",
   "networkId": "<network-id>",
   "configurationRevision": 42,
+  "executionPublication": "<requester-publication-ref>",
   "stateEpoch": "<state-epoch>",
   "cursor": "<opaque-view-cursor>",
   "asOf": "2026-10-03T12:00:02Z",
@@ -100,6 +106,8 @@ watch State 只订阅已经存在的事实，不请求新探测。用户要实�
 ## 一致性与规模
 
 cursor 绑定网络、调用身份、查询范围和所依据的配置版本。State 可以在 Config 未变化时推进；A 与 B 的报告分别保留其源实例／配置引用，不伪造一个全网同时发生的观测。
+
+cursor 也绑定当前授权上下文；即使源 JSON 未变，成员／身份权限变化也使旧视图需重授权。snapshot 的截点与后续订阅必须连续，缓冲无法补齐时 reset，不能漏掉建立订阅期间的撤回。
 
 节点可以先按需 query；频繁读取相同 peer 的场景再使用 watch，避免每轮下载整个 NetworkState。大管理视图可采用有界分页，但动态页不是冻结全网快照，必须返回读取时刻和相应一致性语义。
 

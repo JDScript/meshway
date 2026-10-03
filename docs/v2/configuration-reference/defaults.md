@@ -1,6 +1,6 @@
 # Defaults
 
-定义未命中规则时的行为，以及节点未覆盖时使用的出站承载集合。以下是下一版格式的默认值提案。
+定义未命中规则时的行为，以及节点未覆盖时使用的出站承载集合。V2 已确定采用 access 默认拒绝、新网络生成显式 Mesh 互访模板。
 
 ## Structure
 
@@ -20,18 +20,25 @@
 
 | 字段 | 类型 | 默认 | 说明 |
 | --- | --- | --- | --- |
-| `access` | `"deny" \| "allow"` | `"deny"` | **Mesh 节点互访**的兜底；外部目的地仍须显式授权 |
+| `access` | `"deny"` | `"deny"` | 未获显式 access 的经 Mesh 业务拒绝；全允许用规则表达 |
 | `topology` | `"deny" \| "allow"` | `"allow"` | 没有匹配组网规则时是否允许尝试建立承载 |
-| `dialers` | `DialerSet` | 上例 | 以协议名为 key；节点 `dialers: {}` 时采用此集合 |
+| `dialers` | `DialerSet` | 上例 | 以协议名为 key；节点未填写出站覆盖时采用此集合 |
 
-`access: "allow"` 的范围限 Mesh，是本轮建议的边界，尚待确认；不将“默认允许”隐式解释成开放所有公网／LAN 目的地。当前发布契约尚没有本节 defaults。
+此前隐式 access=allow 的提案收敛为显式允许规则，避免和窄规则组合后误以为已收紧。当前发布契约尚没有本节 defaults。
 
 ## access
 
-- `deny`：只有显式 access 匹配的业务被允许；空 access 拒绝 Mesh 新会话。
-- `allow`：等价于额外的一条 Mesh `src: ["*"]`、`dst: ["*"]`、`ip: ["*"]` 允许规则。
-- access 只包含允许规则。因此 allow 下增加更窄的 access 规则不能收紧权限；需要收紧时改为 deny 并显式列出允许范围。
-- 公网、LAN、域名目的授权仍由显式 access 表达；出口资格和可执行路径也仍须成立。
+新网络预置以下可编辑规则；删除它后，只保留其他显式规则授予的权限：
+
+```json
+{
+  "access": [
+    { "remark": "默认允许 Mesh 成员互访", "src": ["*"], "dst": ["*"], "ip": ["*"] }
+  ]
+}
+```
+
+`*` 只指本网络节点，模板不开放公网／LAN 转发。access 取并集，仍有此宽规则时增加一个窄规则不会收紧其他访问；需要限制时删除／修改宽规则。空 access 拒绝经 Mesh 的新业务，本机 direct／unmanaged 范围见[访问权限](/v2/configuration-reference/access#scope)。
 
 ## topology
 
@@ -41,6 +48,6 @@
 
 ## dialers
 
-节点非空 `dialers` 替换这份默认集合；省略 defaults.dialers 使用平台基线，显式 `{}` 表示默认没有出站拨号器。具体例子和字段默认值顺序统一见[继承规则](/v2/configuration-reference/inheritance)。
+节点省略 `dialers` 才继承默认集合；显式 `{}` 禁用主动建连，非空集合替换默认集合。省略 defaults.dialers 使用该配置版本固定的平台基线，显式 `{}` 表示网络默认不主动拨号。见[继承规则](/v2/configuration-reference/inheritance)。
 
 listener 不会因 defaults 自动打开监听端口。出口兜底保留在 routing profile 的 `fallback` 中，避免与全网 defaults 出现两处竞争的路径决定。

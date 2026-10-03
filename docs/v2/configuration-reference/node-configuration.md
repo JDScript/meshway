@@ -2,6 +2,8 @@
 
 Controller 给某个节点的**完整执行配置**。它包含实际协议参数和所需材料；“不需要管理员重复手填”不等于“不属于 configuration”。以下为下一版结构提案。
 
+执行分工已确定为[按需许可、设备选择](/v2/execution)：下面生成的出站实例是获准候选，不是要求设备无条件拨号，更不是预生成全网所有节点对。容器名字仍在 API 阶段统一。
+
 ## 参数从哪里来 {#sources}
 
 | 参数 | NetworkConfiguration 中的来源 | 下发结果 |
@@ -54,6 +56,7 @@ Controller 给某个节点的**完整执行配置**。它包含实际协议参�
   "networkId": "<network-id>",
   "nodeId": "<node-a>",
   "configurationRevision": 42,
+  "executionPublication": "<consistent-publication-reference>",
   "digest": "<node-a-config-digest>",
   "configuration": {
     "dialers": {
@@ -85,6 +88,8 @@ Controller 给某个节点的**完整执行配置**。它包含实际协议参�
 源配置的 dialers 按协议选择，**生成的 dialers 是具体获准出站实例**，因此有内部 candidate key。它不是管理员还要维护的一张连接表。
 
 B 的配置包含本机 listener、同一 UUID，以及对应服务端证书／私钥材料。A 不拿 B 的服务端私钥。两份切片关联同一次发布和材料版本，各自 digest 不必相同。
+
+executionPublication 表示一致的许可／依赖发布，精确字段编码待接口定版。它将源 revision、相关身份／材料／规则集版本及参与节点 digest 关联起来；digest 只比较内容，不能代替发布顺序。
 
 ## 完整配置包含什么
 
