@@ -1,11 +1,8 @@
 import { createFileRoute, redirect } from "@tanstack/react-router"
-import { useEffect } from "react"
 
-import { StatusCard } from "@/components/chrome/status-card"
-import { showWelcomeGlobe } from "@/features/globe/store"
-import { networksQuery } from "@/features/network/queries"
+import { NetworksFailed, NoNetwork } from "@/features/network/network-states"
 import { rememberedNetwork } from "@/features/network/preferences"
-import { m } from "@/paraglide/messages.js"
+import { networksQuery } from "@/features/network/queries"
 
 /** `/`: the remembered network, else the first one this account may open. */
 export const Route = createFileRoute("/_authed/")({
@@ -25,27 +22,3 @@ export const Route = createFileRoute("/_authed/")({
   component: NoNetwork,
   errorComponent: NetworksFailed,
 })
-
-function useWelcomeGlobe() {
-  useEffect(() => {
-    showWelcomeGlobe()
-  }, [])
-}
-
-function NoNetwork() {
-  useWelcomeGlobe()
-  return (
-    <StatusCard title={m.networks_none_title()} body={m.networks_none_body()} />
-  )
-}
-
-function NetworksFailed({ reset }: { reset: () => void }) {
-  useWelcomeGlobe()
-  return (
-    <StatusCard
-      title={m.networks_failed()}
-      tone="destructive"
-      onRetry={reset}
-    />
-  )
-}

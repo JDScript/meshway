@@ -79,7 +79,7 @@ type Kind = "new_account" | "existing_account"
 const claimFailure = (error: unknown) =>
   failureText(error, {
     conflict: () => m.setup_claim_conflict(),
-    invalid: () => m.setup_claim_fields_rejected(),
+    invalid: () => m.entry_fields_rejected(),
   })
 
 /** Ends a sign-in made only to prove an existing account; a 401 means it already ended. */
@@ -304,7 +304,7 @@ async function claimWithProof(
       [400, 401, 422].includes(error.status)
     ) {
       markEmail()
-      throw new ClaimRefused(m.setup_claim_sign_in_failed())
+      throw new ClaimRefused(m.login_invalid())
     }
     throw error
   }

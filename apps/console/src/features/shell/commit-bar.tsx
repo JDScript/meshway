@@ -126,7 +126,7 @@ export function CommitBar({
         shown={shown}
         from="bottom"
         role="status"
-        aria-label={m.commit_label()}
+        aria-label={m.commit_unsaved()}
         className="glass pointer-events-auto flex h-(--bar-height) w-full max-w-105 items-center gap-1.5 rounded-full pr-1.5 pl-5"
       >
         {/* Outdated (the controller moved on) is a warning; a field that will not save is an error. */}

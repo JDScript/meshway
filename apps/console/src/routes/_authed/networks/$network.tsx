@@ -1,13 +1,13 @@
 import { createFileRoute, notFound, Outlet } from "@tanstack/react-router"
-import { useEffect } from "react"
 
-import { StatusCard } from "@/components/chrome/status-card"
-import { showWelcomeGlobe } from "@/features/globe/store"
 import { NETWORK_ID } from "@/features/network/ids"
+import {
+  NetworkNotFound,
+  NetworksFailed,
+} from "@/features/network/network-states"
 import { rememberNetwork } from "@/features/network/preferences"
 import { networksQuery } from "@/features/network/queries"
 import { NetworkShell } from "@/features/shell/network-shell"
-import { m } from "@/paraglide/messages.js"
 
 /**
  * Every page under `/networks/<network_id>` is bound to that network. An
@@ -35,25 +35,5 @@ function NetworkLayout() {
       <NetworkShell networkId={network} />
       <Outlet />
     </>
-  )
-}
-
-function useWelcomeGlobe() {
-  useEffect(showWelcomeGlobe, [])
-}
-
-function NetworkNotFound() {
-  useWelcomeGlobe()
-  return <StatusCard title={m.network_not_found()} />
-}
-
-function NetworksFailed({ reset }: { reset: () => void }) {
-  useWelcomeGlobe()
-  return (
-    <StatusCard
-      title={m.networks_failed()}
-      tone="destructive"
-      onRetry={reset}
-    />
   )
 }

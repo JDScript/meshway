@@ -39,7 +39,7 @@ const registerFailure = (error: unknown) =>
   failureText(error, {
     unauthorized: () => m.invite_rejected(),
     conflict: () => m.invite_email_taken(),
-    invalid: () => m.invite_fields_rejected(),
+    invalid: () => m.entry_fields_rejected(),
   })
 
 /**
@@ -303,7 +303,7 @@ function AcceptForm({
       <EntryFoot>
         <span>{m.invite_other_account()}</span>
         <EntryLink disabled={pending} onClick={onSwitch}>
-          {m.invite_sign_out()}
+          {m.sign_out()}
         </EntryLink>
       </EntryFoot>
     </>

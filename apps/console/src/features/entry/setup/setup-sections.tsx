@@ -24,11 +24,12 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
 import { Spinner } from "@/components/ui/spinner"
+import { roleLabel } from "@/features/members/roles"
 import { toastFailure } from "@/lib/failure"
+import { formText } from "@/lib/form"
 import { dateTime } from "@/lib/format"
 import { m } from "@/paraglide/messages.js"
 
-import { formText } from "@/lib/form"
 import {
   hasOwner,
   instanceCall,
@@ -41,7 +42,6 @@ import {
   type SetupNetwork,
 } from "./instance"
 import { ClaimDialog, ResetLinkDialog } from "./setup-dialogs"
-import { roleLabel } from "./labels"
 
 type Section = "networks" | "accounts" | "resets"
 

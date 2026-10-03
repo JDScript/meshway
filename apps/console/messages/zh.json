@@ -50,7 +50,6 @@
   "unplaced_title": "待定位",
   "nav_label": "导航",
   "nav_settings": "设置",
-  "commit_label": "未保存的更改",
   "commit_unsaved": "未保存的更改",
   "commit_outdated": "已被其他人更新",
   "commit_discard": "放弃",
