@@ -2,6 +2,8 @@
 
 **V2 精简记录提案。** 只为需要独立持久生命周期的数据建立记录；配置内容随完整版本保存，嵌套值不是独立实体。字段逐项列出，表名与物理拆分未定。`T?` 为可空；时间为 UTC，ID／Digest／Revision 是独立强类型。网络内关联使用 networkId 和复合约束。
 
+新 Controller 已实现的账户存储切片中，User／UserSession／账户 ActivityEvent 的时间统一以 Unix 毫秒 INTEGER 保存，对外仍为 UTC RFC 3339。资源 ID 以非零的 16-byte UUID 保存，不把零值作为缺失身份；其他记录的物理布局仍随各领域实现确定。
+
 ## User
 
 | 字段 | 类型 | 含义 |

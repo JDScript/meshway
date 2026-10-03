@@ -64,6 +64,13 @@ MESHWAY_REGISTRATION_ENABLED=false
 
 公开 auth/options 同时提供密码规则及其计量方式，前端与服务端使用同一生成约束，不把 UTF-8 bytes 和 Unicode 字符数混用。注册的邮箱占用错误按[Problem 合同](/v2/api/problems)明确表达。
 
+新账户实现采用以下输入边界，HTTP／生成客户端按同一规则接线：
+
+- 邮箱先去除边缘空白；local part 使用未加引号的 ASCII dot-atom 并折叠大小写，域名经 IDNA 转为 ASCII。规范值最多 254 bytes；拒绝控制字符、quoted local 和 SMTPUTF8 local，不要求已验证邮箱所有权。HTTP 输入是待规范化的字符串，不能用更窄的第三方 email 正则提前排除允许输入。
+- 密码为 12–128 个 Unicode codepoints（Unicode scalar values），最多 512 UTF-8 bytes；不 trim 或改写。JavaScript 的 UTF-16 `String.length` 不是这里的计数方式。字段结构解码与 password_weak 语义校验分开，规则来自 auth/options。
+- 当前 Argon2id v19 使用 19456 KiB、2 次迭代、1 lane 与独立随机盐。既有 PHC 先经过有界格式／参数校验，不能让数据库中的参数任意放大验证工作；KDF 预算跟随实际 blocking 任务，调用取消不会提前释放预算。
+- 会话默认 24 小时，部署设置可在 1 分钟至 30 天内按整秒覆盖。到期瞬间即失效；浏览器显示期限不替代服务端对账户、凭据版本和会话的再次检查。
+
 ## 已有账户加入网络
 
 **已确认：使用一次性、有期限、绑定网络与角色的加入链接。** 不提供按邮箱直接添加用户或全局用户搜索。链接持有人须先登录；没有账户时只能走正常注册，注册关闭时链接不提供例外。
