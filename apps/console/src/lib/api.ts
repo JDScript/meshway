@@ -37,9 +37,15 @@ export function problemCode(failure: Failure) {
     : null
 }
 
-/** A 401 means the session is not (or no longer) valid. */
+/**
+ * A 401 means the session is not (or no longer) valid, except when it
+ * refuses a password the call carried (changing the email or password):
+ * the controller checks the session first, so that one still holds.
+ */
 const rejectsSession = (failure: Failure) =>
-  failure.kind === "http" && failure.status === 401
+  failure.kind === "http" &&
+  failure.status === 401 &&
+  problemCode(failure) !== "invalid_credentials"
 
 /** Unwraps a call made without this tab's session; a failure is thrown as `ApiFailure`. */
 export async function call<T>(
