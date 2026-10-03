@@ -58,6 +58,7 @@ freshness 按当前时间／配置／实例从以上输入计算：current、awa
 | `capabilities` | Map&lt;CapabilityKey, Capability&gt; | 当前实际构建能力，value 为已知类型 |
 | `configuration.saved` | ConfigurationRef? | 本实例已持久保存配置 |
 | `configuration.applied` | ConfigurationRef? | 当前实际执行配置 |
+| `configuration.progress` | NodeConfigurationProgress? | 正在处理的目标／阶段／组件进度，完整字段见[配置应用](/v2/configuration-reference/deployment#字段提案) |
 | `listeners` | Map&lt;ListenerKey, ListenerState&gt; | 监听运行状态 |
 | `sockets` | Map&lt;SocketId, SocketState&gt; | 实际 socket 与候选 |
 | `links` | Map&lt;NodeId, LinkState[]&gt; | 自身与 peer 的认证通道 |
@@ -67,6 +68,8 @@ freshness 按当前时间／配置／实例从以上输入计算：current、awa
 | `problems` | Problem[] | 有来源的类型化问题 |
 
 `ConfigurationRef` 字段：`revision: Revision`、`executionPublication: PublicationId`、`digest: Digest`。Capability 的 roles／streams 等协议能力字段见[能力参考](/v2/state-reference/capabilities)。各实例报告只能由该 Node 身份更新。
+
+Controller 将 publication 持久决定／关键回执与这些实时字段组合为组进度视图；按固定目标集合计数，不建立另一份可写部署状态。Node 失联时保留最后阶段并标过期，不能自行生成 failed／applied。
 
 ## ListenerState
 

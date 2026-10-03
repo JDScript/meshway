@@ -38,6 +38,7 @@ Node 上报自身运行事实，Controller 聚合 NetworkState；Node 可按需 
 ## 分发与存储
 
 - [NodeConfiguration 下发示例](/v2/configuration-reference/node-configuration)
+- [配置应用进度与 prepare／activate](/v2/configuration-reference/deployment)
 - [Config／State 同步与回滚](/v2/configuration-reference/synchronization)
 - [数据模型与权威来源](/v2/entities)
 - [持久数据库：逐字段](/v2/storage/database)

@@ -99,7 +99,7 @@ src/
   accounts/                  # 注册、登录、会话与成员权限
   enrollment/                # 设备批准、接入／换钥与幂等恢复
   configuration/             # JSONC 编辑、identity 转换权限、材料准备、CAS
-  execution/                 # 需求、调用共享编译、发布／实例／lease
+  execution/                 # 需求、依赖组 prepare／activate、持久决定／实例／lease
   state/                     # RAM 报告、派生视图、过期与订阅
   observations/              # 测量任务、历史接纳／查询
   resources/                 # 规则集与 GeoIP 下载／规范化；凭据生成在配置准备内
@@ -108,6 +108,8 @@ src/
 ```
 
 业务服务协调一次用例，Store 保证事务、约束和最终权限重检；不会在 handler、service、store 各自再编译一遍配置。协议／数据模型见[数据库字段](/v2/storage/database)和[内存字段](/v2/storage/memory)。
+
+发布状态沿用 ExecutionPublication；节点关键回执持久保存、实时步骤进入 State／SSE。准备、激活与清理由各运行资源 owner 接口配合，不能把 prepare 变成直接执行生产变更，也不能让 UI 负责持续协调。
 
 嵌套的配置凭据、listener 代际、发布内节点切片、任务内订阅都由所属模块维护。模型类型、缓存条目、后台 Job 不各建一套 repository／service／crate；新增独立库以真实复用和可独立测试的能力为依据。
 

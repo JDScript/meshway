@@ -17,7 +17,8 @@
   },
   "configuration": {
     "saved": { "revision": 42, "executionPublication": "<publication-ref>", "digest": "<node-config-digest>" },
-    "applied": { "revision": 42, "executionPublication": "<publication-ref>", "digest": "<node-config-digest>" }
+    "applied": { "revision": 42, "executionPublication": "<publication-ref>", "digest": "<node-config-digest>" },
+    "progress": null
   },
   "listeners": {},
   "sockets": {},
@@ -39,6 +40,7 @@
 | `capabilities` | [命名空间能力集合](/v2/state-reference/capabilities) | transport:xxx 等当前实际构建能力；不同于管理许可或执行成功 |
 | `configuration.saved` | 配置引用或 null | 已校验、持久保存的完整节点配置 |
 | `configuration.applied` | 配置引用或 null | 当前运行代际使用的配置；不等于业务连通 |
+| `configuration.progress` | NodeConfigurationProgress 或 null | 当前目标及 receiving／saved／preparing／prepared／applying／applied／failed 的真实进度 |
 | `listeners` | `Record<ListenerKey, ListenerState>` | 运行中的本机监听资源 |
 | `sockets` | `Record<SocketId, SocketState>` | 实际外层 socket、所属资源及 endpoint 观测 |
 | `links` | `Record<PeerNodeId, LinkState[]>` | 对各 peer 的认证通道；可有主备／更替期记录 |
@@ -48,6 +50,8 @@
 | `problems` | 类型化问题列表 | 当前有来源的失败原因，不使用任意服务端异常文本 |
 
 尚未保存或执行配置时使用 null，不填写伪造的 revision=0。不同配置引用允许短暂并存，例如 saved 已更新但 applied 仍在切换；必须如实报告。
+
+saved 候选可能尚未获准激活；只有 prepared 回执被 Controller 接受、依赖组就绪并收到有效 activate 后才能切换。progress 为 null 表示当前无进度报告，不表示目标已经完成。阶段、组件和字节计量字段见[配置应用与进度](/v2/configuration-reference/deployment)。
 
 执行发布引用固定身份／材料／相关节点切片依赖，和源 revision、当前 Node digest 一起核对；不能仅凭 revision 相同将报告用于另一次执行发布。详见[发布与恢复](/v2/configuration-reference/synchronization#publication)。
 

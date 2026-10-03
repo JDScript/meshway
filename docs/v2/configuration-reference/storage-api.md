@@ -40,6 +40,8 @@ JSON 是配置格式，不限制 API 必须整份读写。
 
 局部写入不是直接修改内存对象：生成新目标，校验引用与语义，CAS 事务提交完整新版本，并保留 JSONC 编辑内容。access／topology 规则没有 ID，操作以本版本数组位置或整段替换定位；remark 不是主键。
 
+current revision 是受理的期望目标。Console 点击一次应用后，Controller 按依赖组准备／激活，结果通过 publication 查询与 SSE 展示；源版本已保存不等于所有节点 applied，详见[配置应用](/v2/configuration-reference/deployment)。
+
 ## JSON 的局部读取
 
 SQLite 支持只返回子对象：

@@ -10,6 +10,7 @@ Node 产生业务目标需求
   → 根据 topology / routing / 允许方案计算有界候选及完整路径
   → 确定相关 peer / 中转 / 出口依赖与协议材料
   → 向参与节点发布相容的执行配置
+  → 依赖组准备就绪后持久 activate，接收方只启用获准目标
   → Node query/watch 已获准依赖的 State
   → 本地选择当前可用候选并认证建连
 ```
@@ -34,6 +35,8 @@ Node 产生业务目标需求
 候选身份、材料、业务范围和允许路径进入受保护的 NodeConfiguration。临时地址、可达性、连接结果走 State，State 不夹带新的访问授权或秘密材料。
 
 取得一个新中转／出口依赖时，先使所需配置完整，再使用其 State。尚未获得相容配置的接收方拒绝／等待，不信发送端附带的自制 plan。
+
+参与节点拉取并 saved 只是第一步；需要协调切换的执行依赖按[prepare／activate](/v2/configuration-reference/deployment)准备并激活。用户配置应用与后续按需发布共用生命周期，进度按各自 publication 跟踪。
 
 NodeConfiguration 中承载已解析计划的容器最终叫 connections 或其他名字，由 API 定义；这不改变“Controller 授权候选、设备最终选择”的职责。
 

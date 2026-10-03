@@ -2,6 +2,8 @@
 
 Controller 给某个节点的**完整执行配置**。它包含实际协议参数和所需材料；“不需要管理员重复手填”不等于“不属于 configuration”。以下为下一版结构提案。
 
+同一内容可以处于 prepare 或已获 activate 的阶段：收到／saved 不会自动授权执行。Controller 按依赖组持久决定激活，Node 核对确切目标、实例和准备句柄后切换，见[配置应用与进度](/v2/configuration-reference/deployment)。
+
 执行分工已确定为[按需许可、设备选择](/v2/execution)：下面生成的出站实例是获准候选，不是要求设备无条件拨号，更不是预生成全网所有节点对。容器名字仍在 API 阶段统一。
 
 ## 参数从哪里来 {#sources}

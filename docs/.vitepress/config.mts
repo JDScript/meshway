@@ -147,6 +147,7 @@ const v2Sidebar: DefaultTheme.SidebarItem[] = [
       { text: "注册与认证", link: "/v2/api/authentication" },
       { text: "SSE 与初始同步", link: "/v2/api/events" },
       { text: "NodeConfiguration", link: "/v2/configuration-reference/node-configuration" },
+      { text: "配置应用与进度", link: "/v2/configuration-reference/deployment" },
       { text: "同步与回滚", link: "/v2/configuration-reference/synchronization" },
     ],
   },

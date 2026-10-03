@@ -11,6 +11,7 @@
 | 用户认证 | 不透明会话，通过 Authorization 携带；继续由服务端检查当前权限 |
 | Node 认证 | 本机生成并持久保存密钥，注册绑定公钥，后续证明持有私钥 |
 | Console 同步 | SSE 首次发送完整可见 Config／State，再发送后续变化 |
+| 配置应用 | Console 一次应用，依赖组 prepare／activate／结果回报；展示真实逐节点进度 |
 | API 分工 | `/api/v1` 提供 Console API，`/agent-api/v1` 提供节点接入／运行 API |
 
 ## API 分区
@@ -46,7 +47,9 @@ Linux Agent 与终端 App 使用同一 Agent API。路径划分不产生两套 U
 | `GET /networks` | 用户 | 仅自己的有效网络成员关系 |
 | `POST /networks` | 用户 | 原子创建网络、Owner 成员关系和初始配置 |
 | `GET /networks/{networkId}/configuration` | 用户 | 按权限读取配置视图及 revision；编辑原文／材料使用显式管理读取 |
-| `POST /networks/{networkId}/configuration` | 网络管理权限 | 以 expectedRevision 提交完整目标，返回新 revision |
+| `POST /networks/{networkId}/configuration` | 网络管理权限 | 以 expectedRevision 提交目标，返回新期望 revision 和本次 publication 引用；后台继续协调 |
+| `GET /networks/{networkId}/publications/{publicationId}` | 用户 | 读取有权查看的目标、决定及逐节点应用进度 |
+| `POST /networks/{networkId}/publications/{publicationId}/cancel` | 网络管理权限 | 取消尚未决定激活的准备；已 activate 不能用取消冒充回滚 |
 | `GET /networks/{networkId}/events` | 用户 | 首次同步与持续事件流 |
 | `POST /networks/{networkId}/observations` | 有权诊断的用户 | 创建有租约的 path observation |
 | `POST /networks/{networkId}/observations/{observationId}/renew` | 任务使用者 | 检查当前权限并续租 |
@@ -62,13 +65,15 @@ Linux Agent 与终端 App 使用同一 Agent API。路径划分不产生两套 U
 | `POST /api/v1/device-authorizations/{requestId}/approve` | 用户会话 | 选择有效网络，批准该次本人设备接入 |
 | `POST /agent-api/v1/enrollments` | 本次设备证明＋一次性批准或接入密钥 | 原子创建／恢复同一 Node 绑定 |
 | `POST /agent-api/v1/instances` | Node | 获得／恢复当前运行实例，隔离被替代实例 |
-| `GET /agent-api/v1/configuration` | Node | 本节点完整执行配置及发布引用 |
-| `POST /agent-api/v1/configuration/ack` | Node＋当前实例 | 持久保存 ACK；实际 applied 另上报 |
+| `GET /agent-api/v1/configuration` | Node | 拉取本节点当前 prepare／activate／abort 指令及其确切目标；载荷按 full／delta 下发 |
+| `POST /agent-api/v1/configuration/receipts` | Node＋当前实例 | 分别提交 saved／prepared／applied／failed 类型化关键回执 |
 | `POST /agent-api/v1/state` | Node＋当前实例 | 上报自身 State，携带序号与配置引用 |
 | `POST /agent-api/v1/state/query` | Node | 查询服务端授权裁剪后的执行依赖 |
 | `POST /agent-api/v1/demands` | Node | 请求获准业务目标所需的路径／材料依赖 |
 
 Node 的认证握手、请求结果领取、配置／State watch 与任务下发的精确 HTTP 编码需继续设计。用户 SSE 不直接复用为 Node 执行通道；两者可共享事件帧处理，但不能共享授权视图或把浏览器通知当作执行许可。
+
+配置阶段回执与 NodeState.progress 消费同一运行状态机，saved 的含义仍只有持久保存。准备句柄有界、依赖组全就绪后持久 activate，再按确切实例／目标激活；客户端取消 HTTP 不取消已受理的发布。见[发布流程](/v2/configuration-reference/deployment)。
 
 ## 一致性与错误
 

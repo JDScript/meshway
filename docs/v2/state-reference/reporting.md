@@ -13,7 +13,7 @@
   "state": {
     "system": { "hostname": "linux-host", "os": "linux", "arch": "arm64", "agentVersion": "<version>" },
     "capabilities": {},
-    "configuration": { "saved": null, "applied": null },
+    "configuration": { "saved": null, "applied": null, "progress": null },
     "listeners": {},
     "sockets": {},
     "links": {},
