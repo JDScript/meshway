@@ -5,6 +5,12 @@ use std::task::{Context, Poll, Waker};
 
 use super::*;
 
+fn temporary_directory() -> tempfile::TempDir {
+    // SQLite NOFOLLOW rejects symlinks anywhere in the path, including the
+    // macOS system temp alias /var -> /private/var.
+    tempfile::tempdir_in(std::env::temp_dir().canonicalize().unwrap()).unwrap()
+}
+
 fn assert_pending<F: Future>(future: Pin<&mut F>) {
     assert!(matches!(
         future.poll(&mut Context::from_waker(Waker::noop())),
@@ -19,6 +25,7 @@ async fn database(path: PathBuf, queue_capacity: usize) -> Executor {
             queue_capacity,
             ..Options::default()
         },
+        (),
         |connection| {
             connection.execute_batch(
                 "CREATE TABLE IF NOT EXISTS entries (id INTEGER PRIMARY KEY, value TEXT NOT NULL)",
@@ -41,19 +48,16 @@ async fn count(handle: &Handle) -> i64 {
 
 #[tokio::test]
 async fn connection_settings_transactions_and_persistent_reopen() {
-    let directory = tempfile::tempdir().unwrap();
+    let directory = temporary_directory();
     let path = directory.path().join("controller.sqlite");
     let caller_thread = thread::current().id();
-    let owner = Executor::open(path.clone(), Options::default(), move |connection| {
+    let owner = Executor::open(path.clone(), Options::default(), (), move |connection| {
         assert_ne!(thread::current().id(), caller_thread);
-        let journal: String =
-            connection.pragma_query_value(None, "journal_mode", |row| row.get(0))?;
         let foreign_keys: bool =
             connection.pragma_query_value(None, "foreign_keys", |row| row.get(0))?;
         let synchronous: i64 =
             connection.pragma_query_value(None, "synchronous", |row| row.get(0))?;
         let timeout: i64 = connection.pragma_query_value(None, "busy_timeout", |row| row.get(0))?;
-        assert_eq!(journal, "wal");
         assert!(foreign_keys);
         assert_eq!(synchronous, 2);
         assert_eq!(timeout, 5000);
@@ -65,6 +69,12 @@ async fn connection_settings_transactions_and_persistent_reopen() {
     .await
     .unwrap();
     let handle = owner.handle();
+    let journal: String = handle
+        .execute(|connection| connection.pragma_query_value(None, "journal_mode", |row| row.get(0)))
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(journal, "wal");
     handle
         .execute(|connection| -> rusqlite::Result<()> {
             let transaction = connection.transaction()?;
@@ -96,7 +106,7 @@ async fn connection_settings_transactions_and_persistent_reopen() {
 #[tokio::test]
 async fn cancelled_accepted_transaction_still_commits() {
     tokio::time::timeout(Duration::from_secs(5), async {
-        let directory = tempfile::tempdir().unwrap();
+        let directory = temporary_directory();
         let owner = database(directory.path().join("controller.sqlite"), 1).await;
         let handle = owner.handle();
         let (started, running) = oneshot::channel();
@@ -122,7 +132,7 @@ async fn cancelled_accepted_transaction_still_commits() {
 #[tokio::test]
 async fn bounded_admission_shutdown_drains_cancelled_queue_and_joins() {
     tokio::time::timeout(Duration::from_secs(5), async {
-        let directory = tempfile::tempdir().unwrap();
+        let directory = temporary_directory();
         let path = directory.path().join("controller.sqlite");
         let owner = database(path.clone(), 1).await;
         let handle = owner.handle();
@@ -172,7 +182,7 @@ async fn bounded_admission_shutdown_drains_cancelled_queue_and_joins() {
 #[tokio::test]
 async fn cancellation_before_admission_never_runs_operation() {
     tokio::time::timeout(Duration::from_secs(5), async {
-        let directory = tempfile::tempdir().unwrap();
+        let directory = temporary_directory();
         let owner = database(directory.path().join("controller.sqlite"), 1).await;
         let handle = owner.handle();
         let (started, running) = oneshot::channel();
@@ -209,7 +219,7 @@ enum SchemaError {
 
 #[tokio::test]
 async fn initialization_rejection_preserves_existing_database() {
-    let directory = tempfile::tempdir().unwrap();
+    let directory = temporary_directory();
     let path = directory.path().join("controller.sqlite");
     let owner = database(path.clone(), 1).await;
     owner
@@ -223,7 +233,7 @@ async fn initialization_rejection_preserves_existing_database() {
         .unwrap();
     owner.shutdown().await.unwrap();
 
-    let result = Executor::open(path.clone(), Options::default(), |connection| {
+    let result = Executor::open(path.clone(), Options::default(), (), |connection| {
         let transaction = connection.transaction().unwrap();
         transaction.execute("DELETE FROM entries", []).unwrap();
         Err(SchemaError::Rejected)
@@ -241,7 +251,7 @@ async fn initialization_rejection_preserves_existing_database() {
 #[tokio::test]
 async fn worker_panic_closes_running_queued_waiting_and_future_calls() {
     tokio::time::timeout(Duration::from_secs(5), async {
-        let directory = tempfile::tempdir().unwrap();
+        let directory = temporary_directory();
         let path = directory.path().join("controller.sqlite");
         let owner = database(path.clone(), 1).await;
         let handle = owner.handle();
@@ -279,10 +289,11 @@ async fn worker_panic_closes_running_queued_waiting_and_future_calls() {
 
 #[tokio::test]
 async fn initialization_panic_joins_and_reports_failure() {
-    let directory = tempfile::tempdir().unwrap();
+    let directory = temporary_directory();
     let result = Executor::open(
         directory.path().join("controller.sqlite"),
         Options::default(),
+        (),
         |_| -> Result<(), SchemaError> { panic!("test initialization failure") },
     )
     .await;
@@ -295,7 +306,7 @@ async fn initialization_panic_joins_and_reports_failure() {
 #[tokio::test]
 async fn owner_drop_does_not_block_runtime_and_still_drains() {
     tokio::time::timeout(Duration::from_secs(5), async {
-        let directory = tempfile::tempdir().unwrap();
+        let directory = temporary_directory();
         let owner = database(directory.path().join("controller.sqlite"), 1).await;
         let handle = owner.handle();
         let (started, running) = oneshot::channel();
@@ -321,7 +332,7 @@ async fn owner_drop_does_not_block_runtime_and_still_drains() {
 
 #[tokio::test]
 async fn invalid_options_and_open_failure_are_explicit_and_redacted() {
-    let directory = tempfile::tempdir().unwrap();
+    let directory = temporary_directory();
     let path = directory.path().join("must-not-be-created.sqlite");
     for queue_capacity in [0, 4097, usize::MAX] {
         let result = Executor::open(
@@ -330,6 +341,7 @@ async fn invalid_options_and_open_failure_are_explicit_and_redacted() {
                 queue_capacity,
                 ..Options::default()
             },
+            (),
             |_| Ok::<_, SchemaError>(()),
         )
         .await;
@@ -345,6 +357,7 @@ async fn invalid_options_and_open_failure_are_explicit_and_redacted() {
                 busy_timeout,
                 ..Options::default()
             },
+            (),
             |_| Ok::<_, SchemaError>(()),
         )
         .await;
@@ -354,7 +367,7 @@ async fn invalid_options_and_open_failure_are_explicit_and_redacted() {
         ));
     }
     assert!(!path.exists());
-    let result = Executor::open(directory.path().to_owned(), Options::default(), |_| {
+    let result = Executor::open(directory.path().to_owned(), Options::default(), (), |_| {
         Ok::<_, SchemaError>(())
     })
     .await;

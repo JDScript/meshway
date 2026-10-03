@@ -5,4 +5,10 @@
 
 #![forbid(unsafe_code)]
 
+mod app;
+mod directory;
+mod settings;
 mod store;
+
+pub use app::{App, AppError};
+pub use settings::Settings;

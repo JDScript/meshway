@@ -21,6 +21,8 @@ use rusqlite::Connection;
 use thiserror::Error;
 use tokio::sync::{OwnedSemaphorePermit, Semaphore, oneshot};
 
+pub(crate) mod schema;
+
 /// Execution infrastructure failures contain no SQL, paths, or SQLite messages.
 #[derive(Debug, Error, PartialEq, Eq)]
 pub(crate) enum ExecutorError {
@@ -88,7 +90,7 @@ impl Default for Options {
 }
 
 impl Options {
-    fn validate(self) -> Result<(), ExecutorError> {
+    pub(crate) fn validate(self) -> Result<(), ExecutorError> {
         if !(1..=4096).contains(&self.queue_capacity) {
             return Err(ExecutorError::InvalidQueueCapacity);
         }
@@ -116,14 +118,16 @@ impl Executor {
     /// Initialization failure closes the connection and joins the thread. It
     /// never deletes, resets, or retries a database; initialization atomicity is
     /// the schema owner's responsibility (normally a SQLite transaction).
-    pub(crate) async fn open<F, E>(
+    pub(crate) async fn open<F, E, G>(
         path: PathBuf,
         options: Options,
+        lifetime_guard: G,
         initialize: F,
     ) -> Result<Self, OpenError<E>>
     where
         F: FnOnce(&mut Connection) -> Result<(), E> + Send + 'static,
         E: Send + 'static,
+        G: Send + 'static,
     {
         options.validate()?;
         let shared = Arc::new(Shared {
@@ -139,6 +143,10 @@ impl Executor {
         let worker = thread::Builder::new()
             .name("meshway-sqlite".into())
             .spawn(move || {
+                // Declared before all worker resources: released only after the
+                // connection and abandoned jobs have been dropped, including
+                // initialization cancellation, shutdown cancellation and panic.
+                let _lifetime_guard = lifetime_guard;
                 // Unwinding is terminal: close admission and drop queued replies.
                 // Do not catch a panic and reuse a possibly inconsistent connection.
                 let _exit = WorkerExit(Arc::clone(&worker_shared));
@@ -152,6 +160,10 @@ impl Executor {
                 };
                 if let Err(error) = initialize(&mut connection) {
                     let _ = initialized.send(Err(OpenError::Initialization(error)));
+                    return;
+                }
+                if let Err(error) = enable_wal(&connection) {
+                    let _ = initialized.send(Err(OpenError::Executor(error)));
                     return;
                 }
                 let _ = initialized.send(Ok(()));
@@ -245,19 +257,30 @@ impl Handle {
 }
 
 fn open_connection(path: PathBuf, options: Options) -> Result<Connection, ExecutorError> {
-    let connection = Connection::open(path)?;
+    let connection = Connection::open_with_flags(
+        path,
+        rusqlite::OpenFlags::default() | rusqlite::OpenFlags::SQLITE_OPEN_NOFOLLOW,
+    )?;
     connection.busy_timeout(options.busy_timeout)?;
     connection.pragma_update(None, "foreign_keys", "ON")?;
-    let journal_mode: String =
-        connection.pragma_update_and_check(None, "journal_mode", "WAL", |row| row.get(0))?;
     connection.pragma_update(None, "synchronous", "FULL")?;
     let foreign_keys: bool =
         connection.pragma_query_value(None, "foreign_keys", |row| row.get(0))?;
     let synchronous: i64 = connection.pragma_query_value(None, "synchronous", |row| row.get(0))?;
-    if !journal_mode.eq_ignore_ascii_case("wal") || !foreign_keys || synchronous != 2 {
+    if !foreign_keys || synchronous != 2 {
         return Err(ExecutorError::ConnectionConfiguration);
     }
     Ok(connection)
+}
+
+// Only change persistent journal mode after the schema owner accepts the file.
+fn enable_wal(connection: &Connection) -> Result<(), ExecutorError> {
+    let journal_mode: String =
+        connection.pragma_update_and_check(None, "journal_mode", "WAL", |row| row.get(0))?;
+    if !journal_mode.eq_ignore_ascii_case("wal") {
+        return Err(ExecutorError::ConnectionConfiguration);
+    }
+    Ok(())
 }
 
 struct Job {
