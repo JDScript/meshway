@@ -6,8 +6,9 @@ neighbor nonce probes. The older static transport-lab fixture is not used.
 
 This adjacency fixture checks transport/probe behavior. Current non-root runtime
 and business-IP lifecycle acceptance is `runtime-smoke.py`, which reuses the
-normal Controller/Agent/TUN checks. Per-run receipts identify the exact binary
-image, source manifest and cleanup; old receipts do not validate a new checkout.
+normal Controller/Agent/TUN checks. Per-run receipts identify the pinned runtime
+image and cleanup; its built-in manifests trace the binary source and packaging
+inputs. Old receipts do not validate a new checkout.
 
 ## Run
 

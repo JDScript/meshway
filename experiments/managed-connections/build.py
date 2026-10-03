@@ -20,6 +20,7 @@ sys.path.insert(0, str(ROOT / "scripts"))
 sys.path.insert(0, str(ROOT / "apps/agent/tests/underlay_fixture"))
 from performance_lock import LOCK_FD_ENV, performance_lock, validate_descriptor
 from source_manifest import inventory, verify
+from docker_lifecycle import Creation
 
 TEMP = Path("/private/var/folders/8n/20x15sl9797cdg9sdqfj803w0000gn/T/opencode")
 
@@ -48,11 +49,13 @@ def build(args):
         directory = Path(temporary)
         os.chmod(directory, 0o700)
 
-        def docker(*command, timeout=120):
+        def docker(*command, timeout=120, creation=None):
             validate_descriptor(descriptor)
-            result = subprocess.run(["docker", *command], cwd=ROOT, text=True,
-                capture_output=True, timeout=timeout, pass_fds=(descriptor,),
-                env={**os.environ, "DOCKER_CONTEXT": "default", LOCK_FD_ENV: str(descriptor)})
+            def invoke():
+                return subprocess.run(["docker", *command], cwd=ROOT, text=True,
+                    capture_output=True, timeout=timeout, pass_fds=(descriptor,),
+                    env={**os.environ, "DOCKER_CONTEXT": "default", LOCK_FD_ENV: str(descriptor)})
+            result = creation.perform(invoke) if creation else invoke()
             if result.returncode:
                 raise RuntimeError(result.stderr[-4000:])
             return result.stdout.strip()
@@ -72,21 +75,24 @@ def build(args):
             tags.setdefault(reference, set()).add(entry["ID"])
         if args.tag in tags:
             raise ValueError("output image tag already exists; choose a unique tag")
-        extraction = docker("create", "--network", "none", "--cap-drop", "ALL",
-            "--label", "io.meshway.runtime-build=" + owner, "--entrypoint", "/bin/true", source_id)
+        extraction = Creation("container", "meshway-runtime-extract-" + owner,
+            "io.meshway.runtime-build", owner, image=source_id, network="none", require_stopped=True)
         try:
+            docker("create", "--name", extraction.name, "--network", "none", "--cap-drop", "ALL",
+                "--label", "io.meshway.runtime-build=" + owner, "--entrypoint", "/bin/true", source_id,
+                creation=extraction)
             manifest = directory / "source-manifest.json"
-            docker("cp", extraction + ":/source-manifest.json", str(manifest))
+            docker("cp", extraction.name + ":/source-manifest.json", str(manifest))
             if not manifest.is_file() or manifest.is_symlink():
                 raise ValueError("source manifest must be a regular file")
             verify(json.loads(manifest.read_text()), expected)
         finally:
-            value = json.loads(docker("inspect", extraction))[0]
-            if (value["Config"]["Labels"].get("io.meshway.runtime-build") != owner
-                    or value["Image"] != source_id or value["State"]["Running"]
-                    or value["HostConfig"]["NetworkMode"] != "none"):
-                raise RuntimeError("extraction ownership changed; cleanup refused")
-            docker("rm", extraction)
+            handlers = {sig: signal.signal(sig, signal.SIG_IGN) for sig in (signal.SIGINT, signal.SIGTERM)}
+            try:
+                extraction.cleanup(docker)
+            finally:
+                for sig, handler in handlers.items():
+                    signal.signal(sig, handler)
         # Retain an immutable, source-ID-derived name. BuildKit resolves a named
         # local image rather than interpreting a bare image ID as a registry tag.
         binary_reference = "meshway-runtime-binary:" + source_id.removeprefix("sha256:")

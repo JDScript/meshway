@@ -201,7 +201,7 @@ async function main() {
       assert(!local.interfaces.some((name) => /^(tun|tap|mw)/.test(name)), "unexpected tunnel interface");
     }
     artifact.topology = { networks, addresses, dns, controller_api_network: controlNetwork };
-    artifact.evidence.push({ name: "underlay-isolation", at: new Date().toISOString(), sockets: underlaySockets, notes: ["Both direct cross-network TCP canary attempts failed; both sides reached LAX. No NET_ADMIN, TUN, or IP forwarding."] });
+    artifact.evidence.push({ name: "underlay-isolation", at: new Date().toISOString(), sockets: underlaySockets, notes: ["Both direct cross-network TCP canary attempts failed; both sides reached LAX. NET_ADMIN protects the underlay; no TUN or IP forwarding."] });
 
     stage("ephemeral verified TLS profiles");
     secretDir = await mkdtemp(join(opts.parent, `${prefix}-secrets-`));

@@ -4,6 +4,7 @@ import argparse
 import json
 import os
 from pathlib import Path
+import re
 import signal
 import subprocess
 import sys
@@ -16,6 +17,7 @@ sys.path.insert(0, str(ROOT / "scripts"))
 sys.path.insert(0, str(ROOT / "apps/agent/tests/underlay_fixture"))
 from performance_lock import LOCK_FD_ENV, performance_lock, validate_descriptor
 from main_loop import normal_acceptance
+from docker_lifecycle import Creation
 
 TEMP = Path("/private/var/folders/8n/20x15sl9797cdg9sdqfj803w0000gn/T/opencode")
 
@@ -28,11 +30,21 @@ def run(image):
     logs = TEMP / "meshway-runtime-checks" / owner
     logs.mkdir(parents=True, mode=0o700)
     result = {"status": "failed", "owner": owner, "commands": [], "cleanup_errors": []}
-    containers, networks, protected = [], [], {}
+    containers, networks, protected, creations = [], [], {}, []
+    resolved_id = None
     with performance_lock() as descriptor:
         def docker(*args, check=True, timeout=120, input=None):
             validate_descriptor(descriptor)
             args = list(map(str, args))
+            creation = None
+            if args[0] == "create":
+                creation = Creation("container", args[args.index("--name") + 1],
+                    "meshway.runtime.owner", owner, image=resolved_id,
+                    network=args[args.index("--network") + 1])
+            elif args[:2] == ["network", "create"]:
+                creation = Creation("network", args[-1], "meshway.underlay.acceptance", owner)
+            if creation:
+                creations.append(creation)
             # Normal acceptance uses root exec in its base fixture. Here every
             # node command instead exercises the shipped non-root bootstrap.
             if args[0] == "exec":
@@ -47,9 +59,11 @@ def run(image):
                 if arg == "--token":
                     safe[i + 1] = "<private>"
             result["commands"].append(safe)
-            completed = subprocess.run(["docker", *args], cwd=ROOT, text=True, input=input,
-                capture_output=True, timeout=timeout, pass_fds=(descriptor,),
-                env={**os.environ, "DOCKER_CONTEXT": "default", LOCK_FD_ENV: str(descriptor)})
+            def invoke():
+                return subprocess.run(["docker", *args], cwd=ROOT, text=True, input=input,
+                    capture_output=True, timeout=timeout, pass_fds=(descriptor,),
+                    env={**os.environ, "DOCKER_CONTEXT": "default", LOCK_FD_ENV: str(descriptor)})
+            completed = creation.perform(invoke) if creation else invoke()
             if check and completed.returncode:
                 raise RuntimeError(completed.stderr[-4000:] + completed.stdout[-4000:])
             return completed
@@ -63,10 +77,11 @@ def run(image):
                 "--security-opt", "no-new-privileges", "--read-only", "--cpus", "1", "--memory", "384m",
                 "--pids-limit", "128", "--tmpfs", f"/run:rw,nosuid,nodev,uid={uid},gid={gid},mode=0700,size=128m",
                 "--tmpfs", "/tmp:rw,nosuid,nodev,size=64m", "--env", "TMPDIR=/run", *extra,
-                "--entrypoint", "sleep", image, "infinity").stdout.strip()
+                "--entrypoint", "sleep", resolved_id, "infinity").stdout.strip()
             containers.append(cid)
             protected[cid] = agent
             inspected = json.loads(docker("inspect", cid).stdout)[0]
+            assert inspected["Image"] == resolved_id
             assert not inspected["HostConfig"]["Privileged"] and inspected["HostConfig"]["NetworkMode"] != "host"
             docker("start", cid)
             code = ("import json,os; s=dict(line.split(':',1) for line in open('/proc/self/status') if ':' in line); "
@@ -78,7 +93,10 @@ def run(image):
 
         try:
             resolved = json.loads(docker("image", "inspect", image).stdout)[0]
-            result["image"] = resolved["Id"]
+            resolved_id = resolved["Id"]
+            if not re.fullmatch(r"sha256:[0-9a-f]{64}", resolved_id) or resolved["Config"].get("Volumes"):
+                raise ValueError("expected an immutable runtime image without declared volumes")
+            result["image"] = resolved_id
             normal_acceptance(docker, container, owner, logs, result, networks)
             result["status"] = "passed"
         except BaseException as error:
@@ -93,16 +111,15 @@ def run(image):
                         log = docker("exec", cid, "cat", "/run/" + label + ".log", check=False)
                         if log.returncode == 0:
                             (logs / (value["Name"].strip("/") + "-" + label + ".log")).write_text(log.stdout)
-                    docker("rm", "-f", cid)
                 except Exception as error:
                     result["cleanup_errors"].append(str(error))
-            for network in reversed(networks):
+            for creation in reversed(creations):
                 try:
-                    value = json.loads(docker("network", "inspect", network).stdout)[0]
-                    assert value["Labels"].get("meshway.underlay.acceptance") == owner
-                    docker("network", "rm", network)
+                    creation.cleanup(lambda *args: docker(*args).stdout.strip())
                 except Exception as error:
                     result["cleanup_errors"].append(str(error))
+            result["creation_intents"] = [{"kind": item.kind, "name": item.name, "settled": item.settled}
+                for item in creations]
             (logs / "result.json").write_text(json.dumps(result, indent=2))
             for sig, handler in handlers.items():
                 signal.signal(sig, handler)
