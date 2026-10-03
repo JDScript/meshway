@@ -21,6 +21,7 @@ use rusqlite::Connection;
 use thiserror::Error;
 use tokio::sync::{OwnedSemaphorePermit, Semaphore, oneshot};
 
+pub(crate) mod accounts;
 pub(crate) mod schema;
 
 /// Execution infrastructure failures contain no SQL, paths, or SQLite messages.

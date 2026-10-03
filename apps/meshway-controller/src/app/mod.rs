@@ -1,5 +1,6 @@
 use tokio::sync::Semaphore;
 
+use crate::accounts::Accounts;
 use crate::directory::{Directory, DirectoryError};
 use crate::settings::Settings;
 use crate::store::{Executor, ExecutorError, OpenError, Options, schema};
@@ -13,6 +14,7 @@ static DIRECTORY_PREPARATIONS: Semaphore =
 /// and the connection has closed. Use [`Self::shutdown`] to await that boundary.
 pub struct App {
     executor: Executor,
+    accounts: Accounts,
 }
 
 /// Safe diagnostic categories: no filesystem paths, SQL, or credentials.
@@ -50,6 +52,9 @@ impl App {
             busy_timeout: settings.database_busy_timeout,
         };
         options.validate().map_err(AppError::from)?;
+        let account_options =
+            crate::accounts::Options::new(settings.registration_enabled, settings.session_ttl)
+                .ok_or(AppError::InvalidSettings)?;
         let permit = DIRECTORY_PREPARATIONS
             .acquire()
             .await
@@ -63,10 +68,14 @@ impl App {
         })
         .await
         .map_err(|_| AppError::Worker)??;
-        Self::open_directory(directory, options).await
+        Self::open_directory(directory, options, account_options).await
     }
 
-    async fn open_directory(directory: Directory, options: Options) -> Result<Self, AppError> {
+    async fn open_directory(
+        directory: Directory,
+        options: Options,
+        account_options: crate::accounts::Options,
+    ) -> Result<Self, AppError> {
         // No yield between taking the prepared directory and transferring it
         // to the SQLite worker. Dropping either future preserves lock ownership.
         let executor = Executor::open(
@@ -80,7 +89,14 @@ impl App {
             OpenError::Executor(error) => AppError::from(error),
             OpenError::Initialization(error) => AppError::from(error),
         })?;
-        Ok(Self { executor })
+        let accounts = Accounts::new(executor.handle(), account_options);
+        Ok(Self { executor, accounts })
+    }
+
+    /// An account service handle, without network or instance privileges.
+    /// Handles stop accepting storage work when this App closes.
+    pub fn accounts(&self) -> Accounts {
+        self.accounts.clone()
     }
 
     /// Runs full, read-only schema, SQLite integrity, and foreign-key checks on

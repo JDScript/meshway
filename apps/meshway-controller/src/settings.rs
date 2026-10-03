@@ -12,6 +12,9 @@ pub struct Settings {
     pub data_dir: PathBuf,
     pub database_queue_capacity: usize,
     pub database_busy_timeout: Duration,
+    pub registration_enabled: bool,
+    /// Whole seconds, from one minute through thirty days.
+    pub session_ttl: Duration,
 }
 
 impl Settings {
@@ -20,6 +23,8 @@ impl Settings {
             data_dir: data_dir.into(),
             database_queue_capacity: 64,
             database_busy_timeout: Duration::from_secs(5),
+            registration_enabled: true,
+            session_ttl: Duration::from_secs(24 * 60 * 60),
         }
     }
 }

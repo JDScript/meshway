@@ -5,6 +5,7 @@
 
 #![forbid(unsafe_code)]
 
+pub mod accounts;
 mod app;
 mod directory;
 mod settings;

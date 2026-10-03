@@ -175,3 +175,33 @@ fn full_checks_find_existing_constraint_and_foreign_key_corruption() {
     connection.execute("INSERT INTO user_sessions VALUES (x'00000000000000000000000000000002', zeroblob(32), x'00000000000000000000000000000003', 1, 100, NULL, NULL, 200, NULL)", []).unwrap();
     assert_eq!(check(&mut connection), Err(SchemaError::Integrity));
 }
+
+#[test]
+fn activities_enforce_account_scope_target_ownership_and_bounded_sequence() {
+    let mut connection = database();
+    insert_user(&connection);
+    connection.execute("INSERT INTO users VALUES (x'00000000000000000000000000000002', 'other@example.test', '$argon2id$v=19$test', 1, 100, NULL)", []).unwrap();
+    connection.execute("INSERT INTO user_sessions VALUES (x'00000000000000000000000000000003', zeroblob(32), x'00000000000000000000000000000002', 1, 100, NULL, NULL, 200, NULL)", []).unwrap();
+    connection.execute("INSERT INTO activity_events (id, scope, account_user_id, at, actor_user_id, action, target_user_id, request_id) VALUES (x'00000000000000000000000000000004', 'account', x'00000000000000000000000000000001', 100, x'00000000000000000000000000000001', 'account.register', x'00000000000000000000000000000001', x'00000000000000000000000000000005')", []).unwrap();
+    for mutation in [
+        "UPDATE activity_events SET scope = 'network'",
+        "UPDATE activity_events SET sequence = 0",
+        "UPDATE activity_events SET sequence = 9007199254740992",
+        "UPDATE activity_events SET id = zeroblob(16)",
+        "UPDATE activity_events SET request_id = zeroblob(16)",
+        "UPDATE activity_events SET at = -1",
+        "UPDATE activity_events SET actor_user_id = x'00000000000000000000000000000002'",
+        "UPDATE activity_events SET target_user_id = x'00000000000000000000000000000002'",
+        "UPDATE activity_events SET target_user_id = NULL",
+        "UPDATE activity_events SET action = 'unknown'",
+        "UPDATE activity_events SET action = 'session.login'",
+        // A real session of another user cannot appear in this account's scope.
+        "UPDATE activity_events SET action = 'session.login', target_user_id = NULL, target_session_id = x'00000000000000000000000000000003'",
+    ] {
+        assert!(
+            connection.execute(mutation, []).is_err(),
+            "accepted activity mutation: {mutation}"
+        );
+    }
+    check(&mut connection).unwrap();
+}

@@ -314,7 +314,11 @@ async fn cancelling_app_open_keeps_lock_while_sqlite_open_is_blocked() {
     // the exact worker-transfer boundary used by App::open, without racing a
     // lock probe against the separate blocking filesystem task.
     let directory = Directory::open(&path).unwrap();
-    let mut opening = Box::pin(App::open_directory(directory, Options::default()));
+    let mut opening = Box::pin(App::open_directory(
+        directory,
+        Options::default(),
+        crate::accounts::Options::new(true, Duration::from_secs(86400)).unwrap(),
+    ));
     assert_pending(opening.as_mut());
     drop(opening);
     assert_locked(&path).await;
