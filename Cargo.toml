@@ -5,6 +5,7 @@ members = [
     "crates/configuration",
     "crates/control-client",
     "crates/protocol",
+    "crates/serde",
     "crates/transport-spec",
 ]
 resolver = "3"

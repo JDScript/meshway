@@ -7,6 +7,7 @@ description = "Pure Meshway transport declarations and configuration validation"
 
 [dependencies]
 idna.workspace = true
+meshway-serde = { path = "../serde" }
 serde.workspace = true
 thiserror.workspace = true
 utoipa.workspace = true

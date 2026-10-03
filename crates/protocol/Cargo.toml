@@ -8,6 +8,7 @@ rust-version.workspace = true
 chrono.workspace = true
 meshway-configuration = { path = "../configuration" }
 meshway-model = { path = "../model" }
+meshway-serde = { path = "../serde" }
 serde.workspace = true
 utoipa.workspace = true
 zeroize = "1.8"

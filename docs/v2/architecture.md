@@ -22,6 +22,7 @@ Controller、共享模型、配置编译与 HTTP／事件合同从本分区重�
 | --- | --- | --- |
 | `meshway-protocol` | `crates/protocol` | HTTP 请求／响应、错误、分页、认证消息和 SSE envelope；引用共享类型 |
 | `meshway-control-client` | `crates/control-client` | 生成 Rust API 操作、严格解码与 HTTP／stream 接线 |
+| `meshway-serde` | `crates/serde` | 对象／判别联合的 Serde＋Schema 声明样板、递归 map-only 与重复键检查，供多个契约库复用 |
 | `meshway-private-storage` | `crates/private-storage` | 提案：私有文件、锁、原子写入和持久性结果 |
 | `meshway-dataplane` | `crates/dataplane` | 认证邻接、端到端加密和转发核心 |
 | `meshway-agent-*` | `crates/agent-*` | 已拆分的 DNS／TUN／underlay／connections／dataplane／diagnostics 运行能力 |
@@ -135,7 +136,7 @@ src/
 | --- | --- |
 | Controller／Agent | Rust、Tokio；Controller 使用 Axum |
 | 存储 | SQLite、rusqlite、显式事务；最新 State 使用内存与有界 channel |
-| 契约 | Serde／Utoipa、OpenAPI、生成 Rust／TS SDK；SSE 生成待扩展 |
+| 契约 | Serde／Utoipa、OpenAPI、生成 Rust／TS SDK；已支持显式 SSE 声明，生产 State 流仍待接线 |
 | 认证 | 用户 Argon2id＋不透明会话；Node 持久密钥身份，握手待定版 |
 | Console | React、TypeScript、Vite、TanStack Query／Router、Base UI／Tailwind |
 | Apple | SwiftUI、NetworkExtension、UniFFI；新增隧道开发仍暂停 |

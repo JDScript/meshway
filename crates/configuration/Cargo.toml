@@ -10,6 +10,7 @@ idna.workspace = true
 ipnet.workspace = true
 jsonc-parser = { version = "=0.33.1", features = ["serde"] }
 meshway-model = { path = "../model" }
+meshway-serde = { path = "../serde" }
 meshway-transport-spec = { path = "../transport-spec" }
 serde.workspace = true
 serde_json.workspace = true

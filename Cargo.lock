@@ -1262,6 +1262,7 @@ dependencies = [
  "ipnet",
  "jsonc-parser",
  "meshway-model",
+ "meshway-serde",
  "meshway-transport-spec",
  "serde",
  "serde_json",
@@ -1348,6 +1349,7 @@ dependencies = [
  "chrono",
  "meshway-configuration",
  "meshway-model",
+ "meshway-serde",
  "serde",
  "serde_json",
  "utoipa",
@@ -1355,10 +1357,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "meshway-serde"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "utoipa",
+]
+
+[[package]]
 name = "meshway-transport-spec"
 version = "0.1.0"
 dependencies = [
  "idna",
+ "meshway-serde",
  "serde",
  "serde_json",
  "thiserror",
