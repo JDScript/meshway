@@ -1,6 +1,6 @@
 //! Configuration owner participant: final identity checks and durable effects.
 use crate::{
-    configuration::{self, CommitParticipant, Error, PreparedConfiguration, Principal, Snapshot},
+    configuration::{CommitParticipant, Error, PreparedConfiguration, Principal, Snapshot},
     enrollment::NodeAdmission,
     secrets::Sealer,
     store::{
@@ -54,7 +54,7 @@ impl CommitParticipant for Participant<'_> {
                     .map_err(|_| Error::InvalidSession)?
                     .user
                     .id;
-                configuration::authorize_manager(tx, current.network_id, user)?;
+                store::authorization::authorize_manager(tx, current.network_id, user)?;
             }
             Principal::Lifecycle(actor) => {
                 if let Some(sync) = &prepared.email_sync {
@@ -78,7 +78,27 @@ impl CommitParticipant for Participant<'_> {
                         &sync.old_email,
                         &sync.new_email,
                     );
-                    if expected != NetworkConfigurationInput::from(&prepared.document.configuration)
+                    // Renaming a readable reference may change canonical set
+                    // order. Reuse configuration normalization with the same
+                    // trusted membership/material context, including retained
+                    // unavailable dependencies; this is not a fresh binding.
+                    let mut context = validation_context(tx, current, &expected, None, false)?;
+                    context.expected_user_bindings = prepared.bindings.users.clone();
+                    context.verified_listeners = current
+                        .document
+                        .configuration
+                        .nodes
+                        .iter()
+                        .flat_map(|(node, settings)| {
+                            settings.listeners.iter().map(move |(key, listener)| {
+                                ((*node, key.clone()), listener.declaration().clone())
+                            })
+                        })
+                        .collect();
+                    let expected =
+                        meshway_configuration::normalize_with_dependencies(expected, &context)?;
+                    if expected.configuration != prepared.document.configuration
+                        || expected.user_bindings != prepared.bindings.users
                     {
                         return Err(Error::PermissionDenied);
                     }

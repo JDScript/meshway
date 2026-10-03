@@ -519,3 +519,48 @@ fn neighbor_probe_projection_is_not_a_business_path_or_grant() {
             .all(|n| n.configuration.neighbor_transports().is_empty())
     );
 }
+
+#[test]
+fn unavailable_rule_content_cannot_fall_through_to_direct() {
+    let mut c = configuration();
+    c.rule_sets.insert(
+        "remote".into(),
+        RuleSet::Remote {
+            url: "https://rules.example.test/remote.json".into(),
+            format: RuleSetFormat::SingBoxSource,
+            update_interval: "24h".parse().unwrap(),
+        },
+    );
+    c.routing.egress.rules = vec![
+        EgressRule {
+            remark: String::new(),
+            matcher: RouteMatch {
+                rule_sets: vec!["remote".into()],
+                ..Default::default()
+            },
+            action: RouteAction::Exit {
+                nodes: vec![format!("node:{}", node(4))],
+                via: vec![],
+            },
+        },
+        EgressRule {
+            remark: String::new(),
+            matcher: RouteMatch {
+                ip_cidr: vec!["1.1.1.1/32".into()],
+                ..Default::default()
+            },
+            action: RouteAction::Direct,
+        },
+    ];
+    let mut d = demand(1, 1, 4);
+    d.target = BusinessTarget::Ip {
+        address: ExecutionAddress("1.1.1.1".parse().unwrap()),
+    };
+    let result = run(&c, &inventory(), &BTreeMap::from([(d.id, d)]), &[]);
+    assert_eq!(
+        result.nodes[&node(1)].configuration.decisions[&request(1)],
+        DemandDecision::Unavailable {
+            reason: UnavailableReason::MissingDependency
+        }
+    );
+}

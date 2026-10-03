@@ -16,7 +16,7 @@ use crate::{
 };
 use meshway_configuration::{
     ConfigurationChange, ConfigurationDocument, ConfigurationError, NetworkConfigurationInput,
-    ValidationContext, canonical_json, configuration_changes, normalize,
+    ValidationContext, canonical_json, configuration_changes,
 };
 use meshway_model::{ArtifactId, NetworkId, NodeId, PublicationId, RequestId, Revision, UserId};
 use rusqlite::{OptionalExtension, Transaction, params};

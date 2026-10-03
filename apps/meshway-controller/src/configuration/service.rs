@@ -76,6 +76,7 @@ impl Configurations {
                 &current,
                 &self.sealer,
                 false,
+                &BTreeSet::new(),
             )?;
             let mut validation = validation_context(tx, &current, &input, None, false)?;
             validation.expected_user_bindings = expected;

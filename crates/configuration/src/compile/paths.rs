@@ -30,6 +30,15 @@ impl<'a, 'b> Graph<'a, 'b> {
         if required.len() >= MAX_HOPS
             || required.contains(&source)
             || required.iter().collect::<BTreeSet<_>>().len() != required.len()
+            || required.iter().any(|id| {
+                !self.input.inventory.contains_key(id)
+                    || self
+                        .input
+                        .configuration
+                        .nodes
+                        .get(id)
+                        .is_none_or(|node| !node.enabled)
+            })
         {
             return Ok(vec![]);
         }

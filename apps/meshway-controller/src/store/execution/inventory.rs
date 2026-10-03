@@ -15,8 +15,13 @@ pub(crate) fn revoke_key(
     let user = super::super::authorization::current_session(&tx, &token, now)?
         .user
         .id;
-    crate::configuration::authorize_manager(&tx, network, user)
-        .map_err(|_| NodeError::Forbidden)?;
+    crate::store::authorization::authorize_manager(&tx, network, user).map_err(
+        |error| match error {
+            crate::networks::NetworkError::PermissionDenied
+            | crate::networks::NetworkError::NotFound => NodeError::Forbidden,
+            _ => NodeError::Storage,
+        },
+    )?;
     let found:bool=tx.query_row("SELECT EXISTS(SELECT 1 FROM node_keys WHERE network_id=?1 AND node_id=?2 AND id=?3 AND generation=?4)",params![network.as_uuid().as_bytes().as_slice(),node.as_uuid().as_bytes().as_slice(),request.key_id.as_uuid().as_bytes().as_slice(),request.expected_generation.get() as i64],|r|r.get(0))?;
     if !found {
         return Err(NodeError::Conflict);

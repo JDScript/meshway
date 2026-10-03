@@ -57,35 +57,17 @@ fn cidr(s: &str, address: IpAddr) -> bool {
     s.parse::<IpNet>().is_ok_and(|n| n.contains(&address))
 }
 
-/// Global-unicast approximation with explicit non-public special-use exclusions.
-/// IPv4-mapped IPv6 uses the IPv4 classification instead of bypassing exclusions.
+/// Use the same address-set definition as configuration validation. IPv4-mapped
+/// IPv6 uses the IPv4 classification instead of bypassing exclusions.
 fn internet(address: IpAddr) -> bool {
-    if let IpAddr::V6(v6) = address {
-        if let Some(v4) = v6.to_ipv4_mapped() {
-            return internet(v4.into());
-        }
-        return cidr("2000::/3", address)
-            && !["2001::/23", "2001:db8::/32", "2002::/16", "3fff::/20"]
-                .iter()
-                .any(|s| cidr(s, address));
+    if let IpAddr::V6(v6) = address
+        && let Some(v4) = v6.to_ipv4_mapped()
+    {
+        return internet(v4.into());
     }
-    ![
-        "0.0.0.0/8",
-        "10.0.0.0/8",
-        "100.64.0.0/10",
-        "127.0.0.0/8",
-        "169.254.0.0/16",
-        "172.16.0.0/12",
-        "192.0.0.0/24",
-        "192.0.2.0/24",
-        "192.168.0.0/16",
-        "198.18.0.0/15",
-        "198.51.100.0/24",
-        "203.0.113.0/24",
-        "224.0.0.0/3",
-    ]
-    .iter()
-    .any(|s| cidr(s, address))
+    crate::internet_ranges()
+        .iter()
+        .any(|range| range.contains(&address))
 }
 fn domain_expiry(input: &CompilationInput<'_>, d: &Demand, suffix: &str) -> Option<u64> {
     let address = match d.target {
@@ -213,10 +195,13 @@ fn matcher(
                 domain_suffix,
             }) => (ip_cidr, domain_suffix),
             Some(RuleSet::Remote { .. }) => {
-                let content = input.rule_sets.get(key).ok_or(CompileError::InvalidInput)?;
+                let content = input
+                    .rule_sets
+                    .get(key)
+                    .ok_or(CompileError::UnavailableDependency)?;
                 (&content.ip_cidr, &content.domain_suffix)
             }
-            None => return Err(CompileError::InvalidInput),
+            None => return Err(CompileError::UnavailableDependency),
         };
         matched = matched
             .max(
@@ -244,7 +229,7 @@ pub(super) fn egress_action(
         // No region input means the configured fallback, with the same allowed check.
         profile = match &e.auto {
             Input::Value(a) => &a.fallback,
-            Input::Omitted => return Err(CompileError::InvalidInput),
+            Input::Omitted => return Err(CompileError::UnavailableDependency),
         };
         if profile == "auto" || !profile_allowed(input.configuration, d.source, profile)? {
             return Err(CompileError::InvalidInput);
@@ -263,7 +248,10 @@ pub(super) fn egress_action(
             d.expires_at_ms,
         ));
     }
-    let p = e.profiles.get(profile).ok_or(CompileError::InvalidInput)?;
+    let p = e
+        .profiles
+        .get(profile)
+        .ok_or(CompileError::UnavailableDependency)?;
     for r in &p.rules {
         if let Some(expires) = matcher(input, d, &r.matcher)? {
             return Ok((r.action.clone(), expires));

@@ -103,6 +103,7 @@ pub enum UnavailableReason {
     Unauthorized,
     NoPath,
     MissingCapability,
+    MissingDependency,
     MissingDns,
     InvalidProfile,
     InactiveNode,

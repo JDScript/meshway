@@ -39,6 +39,8 @@ pub enum CompileError {
     InvalidInput,
     #[error("complete transport material is missing or incompatible")]
     Material,
+    #[error("execution dependency is unavailable")]
+    UnavailableDependency,
     #[error("compilation serialization failed")]
     Serialization,
 }
@@ -290,7 +292,13 @@ fn evaluate(
                 .unwrap_or_default();
             (vec![*node], via, demand.expires_at_ms)
         }
-        _ => match matching::egress_action(input, demand)? {
+        _ => match match matching::egress_action(input, demand) {
+            Ok(action) => action,
+            Err(CompileError::UnavailableDependency) => {
+                return unavailable(UnavailableReason::MissingDependency);
+            }
+            Err(error) => return Err(error),
+        } {
             (RouteAction::Direct, _) => return Ok(DemandDecision::Direct),
             (RouteAction::Unmanaged, _) => return Ok(DemandDecision::Unmanaged),
             (RouteAction::Exit { nodes, via }, expires) => {

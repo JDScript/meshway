@@ -201,24 +201,6 @@ impl Execution {
             })
             .await?
     }
-    /// Config owner invokes this before its SQL commit, after the authoritative
-    /// complete version/current pointer have been written. No second transaction.
-    pub fn apply_configuration_in_transaction(
-        &self,
-        tx: &rusqlite::Transaction<'_>,
-        network: NetworkId,
-        previous: &meshway_configuration::NetworkConfiguration,
-        target: &meshway_configuration::NetworkConfiguration,
-    ) -> Result<PublicationId, NodeError> {
-        store::apply_configuration_effects(
-            tx,
-            &self.sealer,
-            network,
-            previous,
-            target,
-            store::now()?,
-        )
-    }
     /// State/observation owner obtains current identity and instance admission;
     /// callers requiring atomic report writes use the same store functions in
     /// their transaction rather than trusting this past check as a capability.
