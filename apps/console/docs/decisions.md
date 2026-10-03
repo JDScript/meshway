@@ -12,18 +12,23 @@ its generated client only, and only what the controller delivers:
   session restore and sign-out (`getAuthOptions`, `register`, `login`,
   `getAuthSession`, `logout`); networks (`listNetworks`, `createNetwork`,
   `getNetwork`, `renameNetwork`) and the read-only member list
-  (`listNetworkMembers`).
+  (`listNetworkMembers`); the account (`getAccount`, `changeAccountEmail`,
+  `changeAccountPassword`, `listAccountSessions`, `revokeAccountSession`,
+  `revokeOtherAccountSessions`, `revokeAllAccountSessions`,
+  `listAccountActivity`) and password reset links (`inspectPasswordReset`,
+  `redeemPasswordReset`).
 - Pages now: `/login`, `/register`; `/` opens the remembered network (kept
   per account) or the first listed, else offers creating the first; a
   network's overview (the empty globe and one line saying this controller
   provides no nodes), members (read only, offered when the network's
   `actions.manageMembers`), settings `network` (the name, editable when
-  `actions.rename`; the ID, creation date and role) and the account (email,
-  session expiry, sign-out). The network menu switches networks (a page at a
-  time) and creates one.
+  `actions.rename`; the ID, creation date and role) and the account (email
+  and ID, changing the email and the password, the sessions with ending one,
+  the others or all, the account's activity). `/reset-password` takes a
+  reset link the controller's host issued. The network menu switches
+  networks (a page at a time) and creates one.
 - Not delivered: nodes, configuration (access, topology, routing, DNS),
-  member changes, join links, password and session management, and the
-  event stream. Their pages below are the target design; they return when
+  member changes, join links, and the event stream. Their pages below are the target design; they return when
   their operations exist, and nothing stands in for them. What the console
   needs from the V2 API is in `v2-api-needs.md`.
 - What a role may do is the network's `actions`, as the controller computes
@@ -49,6 +54,11 @@ its generated client only, and only what the controller delivers:
   `view` 6.43.13, `@lezer/highlight` 1.2.5, `jsonc-parser` 3.3.1 (the JSONC
   editor), `cmdk` ^1.1.1 (the palette), `recharts` 3.8.0 (latency history,
   with the shadcn `chart`).
+- A change the controller makes to every session (changing the password,
+  ending all sessions, a reset) ends this tab's too: it forgets the session
+  and opens the sign-in with the reason (`/login?reason=`). A 401 that
+  refuses a password the call carried (`invalid_credentials`) does not end
+  the session: the controller checks the session first.
 - A tab signs out when its session reaches the controller's absolute expiry
   (`useSessionExpiry`), not only on its next request.
 - Development: start a controller on a private data directory with
@@ -133,7 +143,7 @@ controller supports today; the rest of each row is the target design.
 | Members `/members?view=members\|invitations` | the members, read only, for `manageMembers` | members or invitations | `/members/<id>` (role, devices, removal) | invite (link shown once), removal |
 | Policy `/policy` | absent | the four layers with their diagnostics | `/policy/<layer>`: connections, grants, mesh routes, egress (public rules, profiles, automatic, assignments), source (JSONC) | |
 | Settings `/settings` | `network`: name, ID, created, role | sections | `/settings/<section>`: network, DNS | |
-| Account `/account` (from the account menu) | email, session expiry, sign-out | none | memberships, password, sessions | |
+| Account `/account` (from the account menu) | email, ID, email and password changes, sessions, activity | none | memberships | end a session, the others, all; change the password |
 
 Outside the shell, one card over the globe like the sign-in: `/login`,
 `/register` (offered only while the controller publishes registration as
