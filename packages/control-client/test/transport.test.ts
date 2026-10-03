@@ -11,6 +11,30 @@ const operation = {
 function client(response: () => Response | Promise<Response>, maxBodyBytes = 1024) {
   return new ControlClient({ baseUrl: "https://controller.example", fetch: async () => response(), maxBodyBytes });
 }
+test("default fetch retains its global receiver and injected fetch is called as a function", async t => {
+  let nativeCalls = 0;
+  t.mock.method(globalThis, "fetch", async function (this: unknown, input: RequestInfo | URL, init?: RequestInit) {
+    // Browser fetch performs this receiver check; Node's native fetch does not.
+    if (this !== globalThis) throw new TypeError("Illegal invocation");
+    nativeCalls++;
+    assert.equal(String(input), "https://controller.example/fixture/value");
+    assert.equal(init?.method, "GET");
+    return Response.json({ value: "native" });
+  });
+  const native = new ControlClient({ baseUrl: "https://controller.example" });
+  assert.deepEqual(await native.request(operation), { ok: true, data: { value: "native" } });
+  assert.equal(nativeCalls, 1);
+
+  let injectedCalls = 0;
+  const injected = new ControlClient({ baseUrl: "https://controller.example", fetch: async function (this: unknown) {
+    if (this !== undefined) throw new TypeError("Unexpected fetch receiver");
+    injectedCalls++;
+    return Response.json({ value: "injected" });
+  } });
+  assert.deepEqual(await injected.request(operation), { ok: true, data: { value: "injected" } });
+  assert.equal(injectedCalls, 1);
+  assert.equal(nativeCalls, 1);
+});
 test("HTTP failures expose only validated typed problems and retain status on decode failure", async () => {
   const valid = await client(() => Response.json({ code: "conflict", revision: 5 }, { status: 409 })).request(operation);
   assert.deepEqual(valid, { ok: false, error: { kind: "http", status: 409, problem: { code: "conflict", revision: 5 } } });

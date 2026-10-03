@@ -55,7 +55,10 @@ export class ControlClient {
     } catch {
       throw new Error("Invalid control client configuration");
     }
-    this.#fetch = options.fetch ?? globalThis.fetch;
+    // Native browser fetch requires its global receiver, while an injected
+    // function must not accidentally receive this ControlClient as `this`.
+    const fetcher = options.fetch ?? globalThis.fetch.bind(globalThis);
+    this.#fetch = (input, init) => fetcher(input, init);
   }
 
   /** Used by generated operations; direct callers receive the same validation. */
