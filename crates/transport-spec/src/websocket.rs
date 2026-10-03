@@ -61,11 +61,13 @@ impl From<WebSocketPath> for String {
 }
 
 /// Case-preserving HTTP token for an additional WebSocket header.
-/// Host, Connection, Upgrade, and every Sec-WebSocket-* name are reserved,
-/// ignoring ASCII case. No Unicode header names are allowed by HTTP token syntax.
+/// Host, Connection, Upgrade, Content-Length, Transfer-Encoding, and every
+/// Sec-WebSocket-* name are reserved, ignoring ASCII case. Handshake and HTTP
+/// message framing fields belong to the upgrade implementation. No Unicode
+/// header names are allowed by HTTP token syntax.
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq, PartialOrd, Ord, Hash, ToSchema)]
 #[serde(try_from = "String", into = "String")]
-#[schema(value_type = String, pattern = r"^(?!(?:[Hh][Oo][Ss][Tt]|[Cc][Oo][Nn][Nn][Ee][Cc][Tt][Ii][Oo][Nn]|[Uu][Pp][Gg][Rr][Aa][Dd][Ee])(?![\s\S]))(?![Ss][Ee][Cc]-[Ww][Ee][Bb][Ss][Oo][Cc][Kk][Ee][Tt]-)[!#$%&'*+.^_`|~0-9A-Za-z-]+(?![\s\S])")]
+#[schema(value_type = String, pattern = r"^(?!(?:[Hh][Oo][Ss][Tt]|[Cc][Oo][Nn][Nn][Ee][Cc][Tt][Ii][Oo][Nn]|[Uu][Pp][Gg][Rr][Aa][Dd][Ee]|[Cc][Oo][Nn][Tt][Ee][Nn][Tt]-[Ll][Ee][Nn][Gg][Tt][Hh]|[Tt][Rr][Aa][Nn][Ss][Ff][Ee][Rr]-[Ee][Nn][Cc][Oo][Dd][Ii][Nn][Gg])(?![\s\S]))(?![Ss][Ee][Cc]-[Ww][Ee][Bb][Ss][Oo][Cc][Kk][Ee][Tt]-)[!#$%&'*+.^_`|~0-9A-Za-z-]+(?![\s\S])")]
 pub struct WebSocketHeaderName(String);
 
 impl WebSocketHeaderName {
@@ -86,8 +88,10 @@ impl TryFrom<String> for WebSocketHeaderName {
             return Err(ValidationError::HeaderName);
         }
         let lowercase = value.to_ascii_lowercase();
-        if matches!(lowercase.as_str(), "host" | "connection" | "upgrade")
-            || lowercase.starts_with("sec-websocket-")
+        if matches!(
+            lowercase.as_str(),
+            "host" | "connection" | "upgrade" | "content-length" | "transfer-encoding"
+        ) || lowercase.starts_with("sec-websocket-")
         {
             return Err(ValidationError::ReservedHeader);
         }
@@ -233,7 +237,7 @@ impl PartialSchema for WebSocketHeaders {
             .schema_type(Type::Object)
             .property_names(Some(WebSocketHeaderName::schema()))
             .additional_properties(Some(WebSocketHeaderValue::schema()))
-            .description(Some("Additional WebSocket headers, preserving casing. HTTP token names cannot override Host, Connection, Upgrade or Sec-WebSocket-*. Names must also be unique ignoring ASCII case (semantic validation)."))
+            .description(Some("Additional WebSocket headers, preserving casing. HTTP token names cannot override Host, Connection, Upgrade, Content-Length, Transfer-Encoding or Sec-WebSocket-*, ignoring ASCII case. Handshake and HTTP message framing fields belong to the upgrade implementation. Names must also be unique ignoring ASCII case (semantic validation)."))
             .into()
     }
 }

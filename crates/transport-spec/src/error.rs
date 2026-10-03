@@ -25,7 +25,7 @@ pub enum ValidationError {
     WebSocketPath,
     #[error("header name must be a nonempty HTTP token")]
     HeaderName,
-    #[error("custom headers cannot override WebSocket handshake fields")]
+    #[error("custom headers cannot override WebSocket handshake or HTTP message framing fields")]
     ReservedHeader,
     #[error("header value cannot contain control characters other than horizontal tab")]
     HeaderValue,

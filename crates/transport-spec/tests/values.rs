@@ -163,6 +163,14 @@ fn websocket_headers_preserve_casing_and_prevent_handshake_overrides() {
         "CONNECTION",
         "Upgrade",
         "uPgRaDe",
+        "Content-Length",
+        "content-length",
+        "CONTENT-LENGTH",
+        "cOnTeNt-LeNgTh",
+        "Transfer-Encoding",
+        "transfer-encoding",
+        "TRANSFER-ENCODING",
+        "tRaNsFeR-eNcOdInG",
         "Sec-WebSocket-Key",
         "sEc-WeBsOcKeT-aCcEpT",
         "Sec-WebSocket-Protocol",
@@ -177,14 +185,27 @@ fn websocket_headers_preserve_casing_and_prevent_handshake_overrides() {
             "{name}"
         );
         assert!(serde_json::from_value::<WebSocketHeaders>(json!({name: "value"})).is_err());
+        assert!(serde_json::from_value::<WebSocketHeaderName>(json!(name)).is_err());
+        assert_eq!(
+            WebSocketHeaders::try_from_iter([(name.into(), "value".into())]),
+            Err(ValidationError::ReservedHeader)
+        );
     }
     for name in [
         "X-Host",
         "Host-Extra",
         "X-Sec-WebSocket-Key",
+        "X-Content-Length",
+        "Content-Length-Extra",
+        "X-Transfer-Encoding",
+        "Transfer-Encoding-Extra",
+        "Authorization",
         "!#$%&'*+-.^_`|~09AZaz",
     ] {
         assert_eq!(name.parse::<WebSocketHeaderName>().unwrap().as_str(), name);
+        let source = json!({name: "value"});
+        let headers: WebSocketHeaders = serde_json::from_value(source.clone()).unwrap();
+        assert_eq!(serde_json::to_value(headers).unwrap(), source);
     }
     for name in [
         "",
