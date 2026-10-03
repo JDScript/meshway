@@ -50,10 +50,29 @@ its generated client only, and only what the controller delivers:
   opens it too. A session the controller rejects there returns to the
   card's sign-in, keeping the link. The language switch stays disabled
   while the link is held.
-- Not delivered: nodes, configuration (access, topology, routing, DNS),
-  and the event stream. Their pages below are the target design; they
-  return when their operations exist, and nothing stands in for them. What
-  the console needs from the V2 API is in `v2-api-needs.md`.
+- Configuration (`/configuration`, every member; the controller reads it
+  to owners and admins only and refuses others, which the page says):
+  `getConfiguration`, `getConfigurationSource`, `getConfigurationSchema`,
+  `validateConfiguration`, `applyConfiguration` (the `document` and
+  `restore` inputs), `listConfigurationRevisions`,
+  `getConfigurationRevision`, `compareConfiguration`. The sections read
+  only, the whole document as JSONC (`actions.editConfiguration`) and the
+  revisions. One draft per sign-in and network (`features/configuration/
+  draft.ts`): the source text as typed, invalid or with comments, and the
+  revision it was read at; kept across the network's pages, in memory only
+  (the source holds secrets: never storage, the URL or the query cache),
+  dropped when the sign-in changes. Applying always validates first and
+  opens a review: the effective change count, permanent node deletions and
+  address changes on their own, every change with its value before and
+  after (non-secret views); only its confirmation applies, against the
+  draft's revision. A newer revision keeps the draft and its base; the bar
+  offers to start over from it or to check the same text against it (a
+  new review). A restore takes the same review. The section forms (typed
+  `operations` into the same draft) come next.
+- Not delivered: nodes, the configuration's section forms, and the event
+  stream. Their pages below are the target design; they return when their
+  operations exist, and nothing stands in for them. What the console needs
+  from the V2 API is in `v2-api-needs.md`.
 - What a role may do is the network's `actions`, as the controller computes
   them; the console never derives it from the role.
 - Changes the controller deduplicates (`createNetwork`, `renameNetwork`)
@@ -74,11 +93,11 @@ its generated client only, and only what the controller delivers:
 - The shared components (`components/chrome`, the `components/ui` pieces
   they use, `hooks/`) stay for the pages to come, though no page uses most
   of them yet. Dependencies no page uses are removed; the pages that need
-  them re-add the versions they were tested with: `@codemirror/commands`
-  6.11.1, `lang-json` 6.0.2, `language` 6.12.4, `lint` 6.9.7, `state` 6.7.6,
-  `view` 6.43.13, `@lezer/highlight` 1.2.5, `jsonc-parser` 3.3.1 (the JSONC
-  editor), `cmdk` ^1.1.1 (the palette), `recharts` 3.8.0 (latency history,
-  with the shadcn `chart`).
+  them re-add the versions they were tested with: `cmdk` ^1.1.1 (the
+  palette), `recharts` 3.8.0 (latency history, with the shadcn `chart`).
+  The JSONC editor's (CodeMirror 6, `jsonc-parser` 3.3.1) are back with the
+  configuration source; the editor chunk loads with the first source
+  opened (~111 kB gzip).
 - A change the controller makes to every session (changing the password,
   ending all sessions, a reset) ends this tab's too: it forgets the session
   and opens the sign-in with the reason (`/login?reason=`). A 401 that
@@ -166,7 +185,7 @@ controller supports today; the rest of each row is the target design.
 | Overview `/overview?node=` | the empty globe, one line: no nodes | none: the globe is its index | none; the node peek; with no node or one, what adding nodes takes | |
 | Nodes `/nodes?view=nodes\|tags` | absent | nodes (search, state) or tags | `/nodes/<id>?tab=overview\|links\|transport\|manage`, `/nodes/add`, `/nodes/tags/<tag>` | revoke, enrolment token |
 | Members `/members?view=members\|links` | for `manageMembers`: members, join links, a member's role and removal | members or join links | `/members/<membership>` (role, devices, removal) | join link (shown once), removal, revoke |
-| Policy `/policy` | absent | the four layers with their diagnostics | `/policy/<layer>`: connections, grants, mesh routes, egress (public rules, profiles, automatic, assignments), source (JSONC) | |
+| Configuration `/configuration` | the sections read only; source (JSONC) and history for owners and admins | the source, the history, the sections with what they hold | `/configuration/<section>` (a form; read only now), `/configuration/source?at=<pointer>`, `/configuration/history?revision=&against=` | the review before applying |
 | Settings `/settings` | `network`: name, ID, created, role, leave; `activity` for `manageMembers` | sections | `/settings/<section>`: network, activity, DNS | leave |
 | Account `/account` (from the account menu) | email, ID, email and password changes, sessions, activity | none | memberships | end a session, the others, all; change the password |
 
@@ -176,13 +195,10 @@ open), `/` with no network (creating the first), a network not found,
 `/join`, and later the password-reset and device-approval pages of the V2
 API.
 
-- Policy is one page because the policy is one document with one revision:
-  one draft, one commit bar. Egress is shown but not editable while the
-  controller refuses it.
-- Tag definitions sit beside the nodes they group; a node's own tags are
-  set in its workspace (`manage`).
-- The old hand-made connections (`ConnectionPlan`) are not in the console;
-  managed listeners and the policy's connection layer replace them.
+- Configuration is one page because it is one document with one revision:
+  one draft, one commit bar, one review.
+- Tag owners (`tagsOwners`) are configuration; a node's own tags are its
+  identity (`nodes[id].identity`), set in its workspace (`manage`).
 
 ## Nesting
 
@@ -264,8 +280,8 @@ globe; `features/shell/pages.ts` lists the pages and the dock.
 
 | Draft state | Owner |
 | --- | --- |
-| A draft and its base revision | `createDraft` (`features/shell/drafts.ts`), one per resource |
-| Saving it, conflicts, the bar | `useDraftCommit` → `CommitBar` |
+| A draft and its base revision | `useConfigurationDraft` (`features/configuration/draft.ts`); the dock's marks and the close warning in `features/shell/drafts.ts` |
+| Checking, the review, applying, conflicts | `useConfigurationApply` → `useCommit` → `CommitBar` |
 | Field validity | the generated schemas, before the controller's own checks |
 
 ## Command palette
@@ -308,8 +324,8 @@ globe; `features/shell/pages.ts` lists the pages and the dock.
    data-dense view; `EmptyLine` for an empty or unread section; `RefRow`
    for anything with a page of its own; `DangerRow` before an
    irreversible action.
-7. Editors: `createDraft` (`createKeyedDraft` for many of one kind) and
-   `useDraftCommit`; the panel marks a row holding a draft with
+7. Editors: the configuration's draft (`useConfigurationDraft`) and
+   `useCommit`; the panel marks a row holding a draft with
    `DraftMark`; members get the same view, read-only (`useCanManage`).
 8. Secrets: `useSecretMutation`, shown in a `GlassDialog` with
    `SecretField` (`CopyField` for a command to copy). Irreversible actions:
@@ -349,8 +365,9 @@ what knows the shell's geometry):
   Scroll inside them instead, as a node's tab `Pane` does.
 - The commit bar states one thing: unsaved (plain), a field that will not
   save (`destructive`), the controller moved past the draft's revision
-  (`warning`, offering to overwrite). Its buttons keep minimum widths, so a
-  state change only changes words.
+  (`warning`, offering to start over from it or to check the draft against
+  it: a new review, never an unreviewed overwrite). Its buttons keep
+  minimum widths, so a state change only changes words.
 - Entry pages (`EntryPage`, `EntryCard`, `EntrySubmit`) share one 380px
   card and one hand-off (`HANDOFF_MS`); while a secret is held the
   language switch stays in place, disabled.
