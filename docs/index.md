@@ -15,6 +15,9 @@ hero:
     - theme: alt
       text: 运行本地联调
       link: /getting-started
+    - theme: alt
+      text: V2 设计文档
+      link: /v2/
 
 features:
   - title: 网络、用户与设备
@@ -41,7 +44,7 @@ IPv6 地址和 AAAA 不代表 IPv6 TUN；Apple App 接入 / 库存不代表 App 
 
 ## 阅读入口
 
-- **正在对齐**：[配置参考](/configuration-reference)按字段分页面，另有[State](/state-reference)、[同步与回滚](/configuration-reference/synchronization)、[存储／查询 API](/configuration-reference/storage-api)；新增格式为设计草案。
+- **V2 设计中**：[V2 概览](/v2/) → [配置参考](/v2/configuration-reference)、[State](/v2/state-reference)、[同步与回滚](/v2/configuration-reference/synchronization)。
 - **产品**：[概念与流程](/concepts) → [网络](/network-management)、[Access](/access-policy)、[路由方案](/routing)；决策依据为[产品对齐](/product-alignment)。
 - **架构**：[总览](/architecture) → [控制面身份](/enrollment)、[配置](/configuration)、[Agent](/connection-runtime)、[数据面](/managed-dataplane)。
 - **开发**：[本地联调](/getting-started) → [统一入口](/dev-services)、[检查与验收](/development)、[实验](/transport-lab)。
