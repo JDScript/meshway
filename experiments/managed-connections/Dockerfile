@@ -1,29 +1,20 @@
 # syntax=docker/dockerfile:1
-# Build from the workspace root; credentials are created only in runtime tmpfs.
-FROM rust:1.98-slim-trixie@sha256:4cd829461bd5c4d511c32e269da9cb8929223b666519d8004e35fc8d1d771ab7 AS builder
-ARG TARGETARCH
-RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
-    build-essential cmake pkg-config libsqlite3-dev \
-    && rm -rf /var/lib/apt/lists/*
-WORKDIR /src
-COPY Cargo.toml Cargo.lock ./
-COPY crates ./crates
-COPY apps/agent ./apps/agent
-COPY apps/controller ./apps/controller
-COPY apps/apple/core ./apps/apple/core
-RUN --mount=type=cache,target=/usr/local/cargo/registry \
-    --mount=type=cache,target=/usr/local/cargo/git \
-    --mount=type=cache,target=/src/target,id=meshway-managed-${TARGETARCH},sharing=locked \
-    cargo build --locked --release -p meshway-controller -p meshway-agent --bin meshway-controller --bin meshway-agent --features meshway-agent/managed-connections \
-    && install -D target/release/meshway-agent /out/meshway-agent \
-    && install -D target/release/meshway-controller /out/meshway-controller
-
+# Runtime-only recipe. build.py verifies the native binary image and source manifest.
+ARG MESHWAY_BINARY_IMAGE
+FROM ${MESHWAY_BINARY_IMAGE} AS binaries
 FROM debian:trixie-slim@sha256:a99cfc517144bc59b1978475ec53b46ecabec7e43635402ee5b77cc54cd1b20a
 RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
-    ca-certificates curl iproute2 iputils-ping python3 util-linux \
-    && rm -rf /var/lib/apt/lists/*
-COPY --from=builder /out/meshway-agent /out/meshway-controller /usr/local/bin/
+    ca-certificates curl iproute2 iptables iputils-ping nftables python3 util-linux \
+    && rm -rf /var/lib/apt/lists/* \
+    && if [ -f /etc/iproute2/rt_tables.d/README ]; then \
+         mv /etc/iproute2/rt_tables.d/README /usr/share/doc/iproute2/rt_tables.d.README; \
+       fi
+COPY --from=binaries /usr/local/bin/meshway-agent /usr/local/bin/meshway-controller /usr/local/bin/
+COPY --from=binaries /source-manifest.json /source-manifest.json
+COPY --chmod=755 runtime-bootstrap /usr/local/bin/setpriv
 RUN ln -s /usr/local/bin/meshway-agent /usr/local/bin/meshway
+RUN --network=none meshway-agent --help >/dev/null && meshway-controller --help >/dev/null
 ENV MESHWAY_STATE=/state/agent.json
-COPY experiments/managed-connections/container.py /opt/meshway-managed/container.py
+COPY container.py /opt/meshway-managed/container.py
+COPY runtime-manifest.json /runtime-manifest.json
 ENTRYPOINT ["sleep", "infinity"]

@@ -15,8 +15,8 @@ to inspect these real node records and runtime observations.
 ## Commands
 
 Requirements: non-root Unix host user, Node **24**, Python 3, host `openssl`, Docker,
-installed workspace pnpm dependencies, and a **prebuilt** native image from
-`experiments/managed-connections/Dockerfile` containing the managed Agent. Supply
+installed workspace pnpm dependencies, and a **prebuilt** native image packaged by
+`experiments/managed-connections/build.py` containing the managed Agent. Supply
 the coordinator's retained image; the demo never builds, pulls or deletes images.
 It adds collision-checked dedicated retention tags for available pins, leaving
 friendly build tags alone. The image ID is pinned on first initialization. Ordinary `start` continues
@@ -104,16 +104,16 @@ Build and scratch-test a unique image before changing the persistent demo:
 
 ```sh
 MESHWAY_PERF_LOCK=/private/var/folders/8n/20x15sl9797cdg9sdqfj803w0000gn/T/opencode/meshway-performance.lock \
-  python3 scripts/performance_lock.py docker build \
-  --file experiments/managed-connections/Dockerfile.dev \
-  --tag meshway-managedtest:ubuntu-dev-20261001-a .
+  python3 experiments/managed-connections/build.py \
+  --binary-image sha256:RETAINED_BINARY_IMAGE --developer \
+  --tag meshway-managedtest:ubuntu-dev-CURRENT
 
 python3 experiments/managed-connections/dev-shell-smoke.py \
-  meshway-managedtest:ubuntu-dev-20261001-a
+  meshway-managedtest:ubuntu-dev-CURRENT
 
 python3 experiments/managed-connections/demo.py enable-dev-shell \
   --data-dir .meshway/docker-demo \
-  --image meshway-managedtest:ubuntu-dev-20261001-a \
+  --image meshway-managedtest:ubuntu-dev-CURRENT \
   --admin-token-file .meshway/controller/admin.token
 ```
 
@@ -122,6 +122,12 @@ read-only/development shell targets are durable before any stop. Retry the exact
 command after interruption; `rollback-image` restores both the recorded old image
 and its read-only shell setting. Ordinary `start`, packet-mode transitions and
 later image upgrades preserve the selected shell mode.
+
+Run `runtime-smoke.py` against the packaged image for the non-root protected
+Controller/Agent/TUN lifecycle. `dev-shell-smoke.py` checks shell/package behavior,
+not connectivity. The runtime packager checks the complete binary source manifest
+and does not run Cargo in the image builder. Writable in-place binary updates also
+require an explicit validated `--image`; they do not silently build another one.
 
 After it succeeds, enter a root developer shell without `--user`:
 

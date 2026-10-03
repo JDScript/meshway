@@ -47,7 +47,7 @@ function options(args: string[]) {
   for (let i = 0; i < args.length; i++) {
     const flag = args[i];
     if (flag === "--help") {
-      console.log("Usage: python3 experiments/managed-connections/run.py [--image meshway-managedtest:TAG] [--artifacts-dir EXISTING_PARENT] [--lease-seconds 10..45]\nDefault: build a unique native image, test an isolated controller, clean owned Docker resources.");
+      console.log("Usage: python3 experiments/managed-connections/run.py --image meshway-managedtest:TAG [--artifacts-dir EXISTING_PARENT] [--lease-seconds 10..45]\nUse build.py to package source-verified native binaries first; this runner retains the supplied image and cleans its owned containers/networks.");
       process.exit(0);
     }
     const value = args[++i];
@@ -61,6 +61,7 @@ function options(args: string[]) {
       assert(Number.isInteger(lease) && lease >= 10 && lease <= 45, "lease must be 10..45 seconds");
     } else throw new Error("unknown option");
   }
+  assert(image, "--image is required; package source-verified native binaries with build.py first");
   return { image, parent, lease };
 }
 
@@ -93,11 +94,10 @@ async function main() {
   const artifactDir = await mkdtemp(join(opts.parent, `${prefix}-artifacts-`));
   await chmod(artifactDir, 0o700);
   const artifact: Artifact = { schema_version: 1, run_id: runId, started_at: new Date().toISOString(), status: "running", phase: "preflight", evidence: [], cleanup_errors: [] };
-  const image = opts.image ?? `meshway-managedtest:${runId}`;
+  const image = opts.image;
   const label = `io.meshway.managed-test.run=${runId}`;
   const ownedContainers: string[] = [];
   const ownedNetworks: string[] = [];
-  let ownedImage = false;
   let secretDir: string | undefined;
   let interrupted = false;
   let cleaning = false;
@@ -139,10 +139,6 @@ async function main() {
     const engineArch = normalizeArchitecture(await docker(["info", "--format", "{{.Architecture}}"]));
     const hostArch = normalizeArchitecture(arch());
     assert.equal(engineArch, hostArch, "Docker must use the host's native architecture");
-    if (opts.image === undefined) {
-      ownedImage = true;
-      await docker(["build", "--label", label, "--tag", image, "--file", join(HERE, "Dockerfile"), "."], 20 * 60_000);
-    }
     const imageArch = normalizeArchitecture(await docker(["image", "inspect", image, "--format", "{{.Architecture}}"]));
     assert.equal(imageArch, engineArch, "emulated images are not accepted");
     const imageId = (await docker(["image", "inspect", image, "--format", "{{.Id}}"])).trim();
@@ -165,7 +161,7 @@ async function main() {
         "--label", label, "--label", `io.meshway.managed-test.role=${role}`,
         "--network", role === "LAX" ? controlNetwork : role === "SHA" ? netB : netA,
         ...(role === "LAX" ? ["--publish", "127.0.0.1::8420"] : []),
-        "--cap-drop", "ALL", "--security-opt", "no-new-privileges", "--read-only",
+        "--cap-drop", "ALL", "--cap-add", "NET_ADMIN", "--security-opt", "no-new-privileges", "--read-only",
         "--tmpfs", "/private:rw,nosuid,nodev,noexec,mode=0700,size=64m",
         "--tmpfs", "/tmp:rw,nosuid,nodev,noexec,mode=0700,size=8m",
         "--sysctl", "net.ipv4.ip_forward=0", "--sysctl", "net.ipv6.conf.all.forwarding=0",
@@ -447,11 +443,6 @@ async function main() {
       const owner = (await docker(["network", "inspect", name, "--format", '{{index .Labels "io.meshway.managed-test.run"}}'])).trim();
       assert.equal(owner, runId);
       await docker(["network", "rm", name]);
-    });
-    if (ownedImage) await cleanup(`image:${image}`, async () => {
-      const owner = (await docker(["image", "inspect", image, "--format", '{{index .Config.Labels "io.meshway.managed-test.run"}}'])).trim();
-      assert.equal(owner, runId);
-      await docker(["image", "rm", image]);
     });
     const remainingSecrets = secretDir;
     if (remainingSecrets !== undefined) await cleanup("private-certificate-directory", () => rm(remainingSecrets, { recursive: true, force: true }));

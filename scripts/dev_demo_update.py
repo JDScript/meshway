@@ -194,17 +194,7 @@ def lifecycle(demo, action):
 
 def deploy(demo, meta, image, docker):
     run_id = uuid.uuid4().hex
-    if image is None:
-        image = "meshway-managedtest:dev-entry-" + run_id[:12]
-        print("demo: building native managed Ubuntu image under shared performance lock…", flush=True)
-        build = docker.execute("build", "--file", str(demo.root / "experiments/managed-connections/Dockerfile.dev"), "--tag", image, str(demo.root), timeout=None, check=False)
-        if build.returncode:
-            # The build context excludes .meshway, so its output holds no demo secrets.
-            log = demo.root / ".meshway/services" / ("demo-image-build-" + run_id[:12] + ".log")
-            private(log.parent, directory=True)
-            private(log, create=True)
-            log.write_text(build.stdout + build.stderr, encoding="utf-8")
-            raise DevError("demo update: image build failed (exit " + str(build.returncode) + "); private build log: " + str(log))
+    require(image is not None, "an explicit --image is required; package source-verified Linux binaries with experiments/managed-connections/build.py first")
     require(image.startswith("meshway-managedtest:") or re.fullmatch(r"sha256:[0-9a-f]{64}", image), "dedicated managed image reference required")
     source = json.loads(docker("image", "inspect", image))[0]
     architecture = docker("info", "--format", "{{.Architecture}}")

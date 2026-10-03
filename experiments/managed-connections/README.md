@@ -4,11 +4,10 @@ This fixture creates a **new isolated controller and three really enrolled Agent
 It exercises generated controller configuration → Agent application → authenticated
 neighbor nonce probes. The older static transport-lab fixture is not used.
 
-**Implementation status:** the complete Docker acceptance passed with run
-`muoz8o7j-613526f5`, using image
-`sha256:82cec63170602b8b75dad7a0a0a4815286e48d9614971be85a78f92ba03af074`.
-`result.json` records every required phase and successful cleanup. This is a
-functional adjacency/probe result, not business-IP routing or a performance result.
+This adjacency fixture checks transport/probe behavior. Current non-root runtime
+and business-IP lifecycle acceptance is `runtime-smoke.py`, which reuses the
+normal Controller/Agent/TUN checks. Per-run receipts identify the exact binary
+image, source manifest and cleanup; old receipts do not validate a new checkout.
 
 ## Run
 
@@ -20,19 +19,24 @@ pnpm exec tsc --noEmit -p experiments/managed-connections/tsconfig.json
 node --test experiments/managed-connections/checks.test.ts
 
 MESHWAY_PERF_LOCK=/private/var/folders/8n/20x15sl9797cdg9sdqfj803w0000gn/T/opencode/meshway-performance.lock \
-  python3 experiments/managed-connections/run.py
+  python3 experiments/managed-connections/run.py --image meshway-managedtest:YOUR_TAG
 ```
 
 The final command is intended for the coordinator's tmux session. It acquires the
 existing shared `performance_lock()` **before any Docker command**, inherits the
-same lock into Node, builds a unique `meshway-managedtest:<run-id>` image, runs the
-functional phases, and removes its own containers/networks/image. No performance
+same lock into Node and Docker children, runs the functional phases, and removes
+its own containers/networks. The supplied image is retained. No performance
 load is generated. Host, engine, and image architecture must match.
 
-The Dockerfile uses the same pinned Rust **1.98** and Debian trixie base digests as
-`apps/agent/Dockerfile.lab`, but installs **both** controller and Agent binaries and
-enables `meshway-agent/managed-connections` (which includes `transport-lab`).
-It also provides standard `iputils-ping`, the `meshway` alias for `meshway-agent`,
+The runtime-only Dockerfiles package **both** controller and Agent from an existing
+native Linux binary image. `build.py` requires its complete `/source-manifest.json`
+to match the selected source tree before building. Rust compilation belongs to a
+separate bounded, non-root, cap-drop-ALL container; there is no in-builder Cargo
+fallback. The normal `apps/agent/tests/underlay_fixture/main_loop.py` entry produces
+such binary images using its configured compiler/runtime environment.
+
+The runtime includes `ip`, `nft`, legacy iptables inspection and standard
+`iputils-ping`, the `meshway` alias for `meshway-agent`,
 and `MESHWAY_STATE=/state/agent.json` for the persistent demo's interactive shell.
 The isolated fixture's explicit `--state /private/...` paths override that default.
 `DEMO.md` distinguishes standard Docker-underlay ICMP from the new authenticated
@@ -40,19 +44,39 @@ direct-neighbor `meshway ping` CLI, and documents both the guarded image-only
 upgrade and explicit writable Ubuntu developer image (`Dockerfile.dev`). The
 isolated acceptance fixture and ordinary persistent mode remain read-only.
 
-To build a reusable image with visible build diagnostics, run separately under the
-same lock, then give the runner its tag. Choose a unique tag:
+To package a reusable image, select a source-matched binary image and a unique
+output tag. The packager acquires the shared lock and uses the ordinary `default`
+Docker builder/context; it never changes daemon configuration:
 
 ```sh
 MESHWAY_PERF_LOCK=/private/var/folders/8n/20x15sl9797cdg9sdqfj803w0000gn/T/opencode/meshway-performance.lock \
-  python3 scripts/performance_lock.py docker build \
-  --file experiments/managed-connections/Dockerfile \
-  --tag meshway-managedtest:integration-20260930-a .
+  python3 experiments/managed-connections/build.py \
+  --binary-image sha256:RETAINED_BINARY_IMAGE \
+  --tag meshway-managedtest:YOUR_TAG
 
 MESHWAY_PERF_LOCK=/private/var/folders/8n/20x15sl9797cdg9sdqfj803w0000gn/T/opencode/meshway-performance.lock \
   python3 experiments/managed-connections/run.py \
-  --image meshway-managedtest:integration-20260930-a
+  --image meshway-managedtest:YOUR_TAG
 ```
+
+Use `--developer` for Ubuntu with the writable-shell tools. `--source-root` is an
+explicit frozen source tree for reproducing an older binary; the default verifies
+this checkout. Unknown/missing manifests, stale source, foreign output tags and
+non-native images are rejected. A source-ID-derived retention tag preserves the
+input image. `/runtime-manifest.json` records the selected source image and runtime
+recipe/input hashes separately from the Rust source manifest.
+
+```sh
+python3 experiments/managed-connections/runtime-smoke.py meshway-managedtest:YOUR_TAG
+```
+
+This isolated three-node check launches the Agent as the host's non-root UID/GID
+with only `NET_ADMIN`, exercises actual TUN HTTP, mandatory relay loss/recovery,
+grant withdrawal and lease/same-identity recovery, and cleans all owned containers
+and networks. The bootstrap makes the namespace's legacy table-name files readable
+before dropping identity/capabilities. Distribution `rt_tables.d/README` documents
+are moved outside the configuration directory at image build time; real `.conf`
+aliases are retained and remain subject to the normal conservative owner audit.
 
 An explicitly supplied image is retained. The runner rejects other image
 repositories. Options:
@@ -83,7 +107,8 @@ does not publish host ports for an internal-only container. NYC and SHA do not
 join that bridge, LAX forwarding stays disabled, and it supplies no endpoint
 bypass. The two data bridges remain internal.
 
-All three containers have `--cap-drop ALL`, no TUN device, read-only image files,
+All three adjacency containers have `--cap-drop ALL` plus `NET_ADMIN` for the
+protected underlay, no TUN device, read-only image files,
 0700 private tmpfs state, and IPv4/IPv6 forwarding disabled. Independent TCP canaries
 prove that NYC and SHA cannot directly reach each other while both reach LAX.
 No explicit subnet reservation, host route edit, NAT traversal, or punching is used.

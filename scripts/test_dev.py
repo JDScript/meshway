@@ -335,17 +335,14 @@ class Workspace(unittest.TestCase):
                 deployment.graceful_stop(docker, demo, meta, "nyc", "id-nyc")
         self.assertEqual([call for call in docker.calls if call[0] == "kill"], [("kill", "--signal", "SIGINT", "id-nyc")])
 
-    def test_image_build_failure_keeps_a_private_log_and_touches_no_container(self):
+    def test_missing_prebuilt_image_is_rejected_before_docker_or_deployment(self):
         demo, meta = self.make_demo()
         docker = FakeDocker(demo, meta)
         with patch.object(deployment, "run", return_value=result("COMMIT\n")), redirect_stdout(io.StringIO()):
-            with self.assertRaisesRegex(dev.DevError, "image build failed .*private build log"):
+            with self.assertRaisesRegex(dev.DevError, "explicit --image is required"):
                 deployment.deploy(demo, meta, None, docker)
-        log = next((self.root / ".meshway/services").glob("demo-image-build-*.log"))
-        self.assertEqual(stat.S_IMODE(log.stat().st_mode), 0o600)
-        self.assertIn("failed to load workspace member", log.read_text())
         self.assertEqual(set(docker.installed.values()), {docker.old})
-        self.assertEqual([call[0] for call in docker.calls], ["build"])
+        self.assertEqual(docker.calls, [])
 
     def test_failed_live_command_with_ok_body_is_not_health(self):
         demo, meta = self.make_demo()

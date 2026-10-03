@@ -96,7 +96,7 @@ python3 scripts/dev.py update demo --image meshway-managedtest:VALIDATED_TAG
 对已有 Ubuntu **development/writable** demo：
 
 - `start/stop/restart` 按 metadata 和完整 ownership labels 找到原容器，保留容器 ID、apt 软件及自定义文件；不会重建容器。
-- `update` 默认从当前 checkout 的 `Dockerfile.dev` 构建唯一标签镜像，或使用 `--image` 指定的本机架构 Linux managed 镜像。
+- Docker demo 的 `update` 要求通过 `--image` 指定已验证的本机架构 Linux managed 镜像。`experiments/managed-connections/build.py` 从带完整源码清单的已构建二进制镜像制作运行层；Rust 编译在独立、非 root、资源有界的普通容器完成，不在镜像构建器内隐式执行 Cargo。
 - 从一个停止、`network=none` 的临时容器提取 Agent ELF 到已批准临时根目录下的独占 0700 子目录（文件 0600），完成后按 inode/ownership 清理；逐个备份旧 binary，再校验新旧 digest、架构和功能。
 - 将新 binary 暂存到原容器，在原路径同文件系统 atomic rename，SIGINT 优雅停止，再启动同一容器。确认 live CLI、相同容器 ID、apt inventory、CLI alias 以及原始 identity/key/profiles 不变。
 - 原始 `demo.json.image_id` 仍是容器 base image pin。源 image、binary SHA、各容器验证结果和旧 binary 保留在 `.meshway/services/binary-update-*/deployment.json` 同目录；二进制更新不冒充 base image 更新。
