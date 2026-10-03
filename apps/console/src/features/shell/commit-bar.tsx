@@ -4,6 +4,7 @@ import { create } from "zustand"
 import { Button } from "@/components/ui/button"
 import { Spinner } from "@/components/ui/spinner"
 import { useKeptWhile } from "@/lib/use-kept"
+import { cn } from "@/lib/utils"
 import { m } from "@/paraglide/messages.js"
 
 import { COMMIT_BOTTOM, COMMIT_SHEET_INSET } from "./layout"
@@ -128,12 +129,16 @@ export function CommitBar({
         aria-label={m.commit_label()}
         className="glass pointer-events-auto flex h-(--bar-height) w-full max-w-105 items-center gap-1.5 rounded-full pr-1.5 pl-5"
       >
+        {/* Outdated (the controller moved on) is a warning; a field that will not save is an error. */}
         <span
-          className={
-            current.problem && !current.outdated
-              ? "min-w-0 flex-1 truncate text-row text-warning"
-              : "min-w-0 flex-1 truncate text-row"
-          }
+          className={cn(
+            "min-w-0 flex-1 truncate text-row",
+            current.outdated
+              ? "text-warning"
+              : current.problem
+                ? "text-destructive"
+                : undefined
+          )}
         >
           {current.outdated
             ? m.commit_outdated()
@@ -142,7 +147,7 @@ export function CommitBar({
         <Button
           variant="ghost"
           size="sm"
-          className="h-8 rounded-full px-3.5"
+          className="h-8 min-w-16 rounded-full px-3.5"
           disabled={busy}
           onClick={current.discard}
         >
@@ -150,7 +155,8 @@ export function CommitBar({
         </Button>
         <Button
           size="sm"
-          className="h-8 rounded-full px-3.5"
+          // Wide enough for its longest label with the spinner: a state change only changes words.
+          className="h-8 min-w-28 rounded-full px-3.5"
           disabled={busy || current.problem !== null}
           aria-busy={busy}
           onClick={current.outdated ? current.overwrite : current.save}
