@@ -79,5 +79,11 @@
   "revision": "r{revision}",
   "revision_draft": "草稿 · 基于 r{revision}",
   "read_only": "只读",
-  "failure_unauthorized": "凭据已失效"
+  "failure_unauthorized": "凭据已失效",
+  "overview_first_title": "这个网络还没有节点",
+  "overview_first_token": "添加节点会生成一次性接入令牌",
+  "overview_first_run": "在设备上运行注册和运行命令",
+  "overview_first_appear": "节点联系控制面后出现在这里",
+  "overview_first_admins": "只有管理员和所有者可以添加节点",
+  "overview_second": "添加第二个节点后，节点之间才能建立连接"
 }

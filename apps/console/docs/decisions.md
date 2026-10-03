@@ -66,7 +66,7 @@ stands in for an interface that does not exist yet.
 
 | Page | Panel | Workspaces | Dialogs |
 | --- | --- | --- | --- |
-| Overview `/overview?node=` | none: the globe is its index | none; the node peek | |
+| Overview `/overview?node=` | none: the globe is its index | none; the node peek; with no node or one, what adding nodes takes | |
 | Nodes `/nodes?view=nodes\|tags` | nodes (search, state) or tags | `/nodes/<id>?tab=overview\|links\|transport\|manage`, `/nodes/add`, `/nodes/tags/<tag>` | revoke, enrolment token |
 | Members `/members?view=members\|invitations` | members or invitations | `/members/<id>` (role, devices, removal) | invite (link shown once), removal |
 | Policy `/policy` | the four layers with their diagnostics | `/policy/<layer>`: connections, grants, mesh routes, egress (public rules, profiles, automatic, assignments), source (JSONC) | |
@@ -125,6 +125,7 @@ surface kind has one slot, so nothing stacks:
 | Peek | right | the overview's quick look at one node (shadcn Drawer, not modal) |
 | Workspace | right of the page panel, covering the globe | one entity in full (a node: tabs, more to come); the globe dims and keeps its place |
 | Unplaced | the network card's far end, every page | a round count ringed by states; opens the list of nodes without a sourced location |
+| First run | the overview only, bottom centre of the room the peek leaves; on phones above the bottom bar | with no node (read, not unread or failed) a card with the three steps and, for owners and admins, Add node; with one, a one-line chip; never dismissed, gone once the condition ends |
 
 - Unplaced nodes are not drawn on the globe (no location source exists yet);
   links to them are listed in the node's surfaces only.

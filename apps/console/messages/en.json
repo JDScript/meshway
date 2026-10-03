@@ -107,5 +107,11 @@
   "revision": "r{revision}",
   "revision_draft": "Draft · from r{revision}",
   "read_only": "Read only",
-  "failure_unauthorized": "Credential no longer valid"
+  "failure_unauthorized": "Credential no longer valid",
+  "overview_first_title": "This network has no nodes yet",
+  "overview_first_token": "Adding a node creates a one-time enrolment token",
+  "overview_first_run": "Run the enrol and run commands on the device",
+  "overview_first_appear": "The node appears here once it contacts the controller",
+  "overview_first_admins": "Only admins and owners can add nodes",
+  "overview_second": "Nodes can connect once there are two"
 }
