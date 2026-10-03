@@ -300,10 +300,7 @@ async fn partial_error_withdraws_active_packets(target: &'static str, status: u1
     );
     device.allow_writes();
     let _ = remote
-        .send_packet(
-            payload.paths[1].nodes.clone(),
-            envelope,
-        )
+        .send_packet(payload.paths[1].nodes.clone(), envelope)
         .await;
     assert!(
         time::timeout(Duration::from_millis(150), delivered.recv())
