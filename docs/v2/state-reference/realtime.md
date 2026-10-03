@@ -4,6 +4,8 @@
 
 它与普通 State 读取不同：query/watch State 订阅既有事实；Realtime Observation 可以明确请求节点产生新的测量。
 
+API 方向已确定为 HTTP 创建／续租／取消任务，结果经 Console 的网络 SSE 发送，按任务和订阅权限过滤。连接 SSE 本身不创建探测任务，见[事件流](/v2/api/events#path-observation)。
+
 ## Start
 
 ```json

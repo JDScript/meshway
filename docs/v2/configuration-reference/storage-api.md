@@ -19,6 +19,8 @@
 
 Config／State 分离使 heartbeat、endpoint、连接和 RTT 不会反复改写配置。控制面可以读取整网配置，但节点分发仍使用必要切片；“能完整读出”不等于向每个节点发送全网数据。
 
+Console 初次进入网络时允许加载当前权限可见的完整 Config／State，已选择由 SSE 先发送 snapshot 再推送变化。整份初始化与按需局部读取可以共存；History 和秘密材料不默认广播，见[SSE 同步](/v2/api/events)。
+
 ## 查询 API
 
 JSON 是配置格式，不限制 API 必须整份读写。

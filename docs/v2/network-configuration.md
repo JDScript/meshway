@@ -38,8 +38,9 @@ description: Entity、Config、State 的职责与配置参考导航。
 4. [DNS](/v2/configuration-reference/dns)、[流量路由](/v2/configuration-reference/routing)、[规则集](/v2/configuration-reference/rule-sets)
 5. [NodeConfiguration](/v2/configuration-reference/node-configuration)、[State](/v2/state-reference)、[同步与回滚](/v2/configuration-reference/synchronization)
 6. [大配置查询与外部 API](/v2/configuration-reference/storage-api)
+7. [API 分区](/v2/api)、[注册与认证](/v2/api/authentication)、[SSE 与初始同步](/v2/api/events)
 
-## 仍需确认 {#open-items}
+## 决策与接口定版 {#open-items}
 
 本轮问答已确认下列产品语义，可以作为 API 草案的输入；新接口尚未实现。引用／字段编码、预算和恢复时序按这些边界继续落实，不把未实现的格式标成已发布。
 
@@ -53,5 +54,7 @@ description: Entity、Config、State 的职责与配置参考导航。
 | 域名与 DNS | 域名授权按解析地址集合，接受共享 IP 限制；普通 DNS 随方案出口，明确例外保留，bootstrap 独立。[Access](/v2/configuration-reference/access#domains)、[DNS](/v2/configuration-reference/dns) |
 
 普通成员 State／History 只读相关范围，主动诊断仅源于自己的 User 身份设备；Owner／Admin 管理本网络。State snapshot、删除、过期、reset 和真实测量方向继续沿用。初版完整配置按版本加载／缓存，不预先建设多套数据库查询投影。
+
+API 本轮新增决定：默认开放账户注册且可由实例配置关闭，不提供邀请注册；登录用户可创建网络并成为 Owner。用户沿用不透明会话，Node 使用持久密钥身份；Console 首次 SSE 全量同步当前可见 Config／State，再接收增量与配置变更通知。User／Node API 分区，精确路由、Node 持钥证明握手和流式生成方案见 [API 草案](/v2/api)。
 
 参考 Tailscale 的 policy／NetworkMap、sing-box 的字段参考组织方式；不照搬它们所有协议、设备侧配置流程或历史兼容字段。现行实现与本轮设计分开，见[当前配置合同](/configuration)和[协议](/protocol)。

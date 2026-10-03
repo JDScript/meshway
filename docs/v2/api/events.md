@@ -1,0 +1,128 @@
+# SSE 与初始同步
+
+**已确认：Console 建立 SSE 后先接收完整可见 Config／State，再接收变化。** 本页定义下一版交互；事件字段与客户端生成仍待实现。
+
+## 连接结构
+
+```text
+Console 登录、取得网络清单并选择网络
+  → GET /api/v1/user/networks/{networkId}/events
+  → config.snapshot
+  → state.snapshot
+  → sync.ready
+  → state.delta / configuration.changed / observation.*
+```
+
+每个标签页的当前网络复用一条主要事件流；发起配置保存、设备批准和观察任务仍用独立 HTTP 请求。SSE 只有服务端到客户端的方向，接收事件不等于已提交操作。
+
+请求携带：
+
+```http
+Accept: text/event-stream
+Authorization: Bearer <opaque-user-session>
+```
+
+浏览器使用 fetch 读取响应流。原生 EventSource 的构造参数不能设置任意 Authorization header；不把 session 塞进 URL，也不为 SSE 更换既有登录机制。
+
+## Full snapshot
+
+“完整”指**所选网络、当前用户、所请求视图的全部当前内容**：
+
+| 内容 | 首次同步 |
+| --- | --- |
+| Config | 当前权限可见的完整配置视图与 revision |
+| State | 当前权限可见的节点／资源及最新观测，保留来源、时间、实例、配置引用和过期状态 |
+| 配置原文与秘密材料 | 不默认广播；管理员编辑时通过显式读取取得可写原文／材料视图 |
+| History | 不随首屏全量加载，按需查询 |
+| Path observation | 不因订阅而创建探测；只接收自己有权订阅的已创建任务 |
+
+Owner／Admin 可以读取本网络管理视图，普通成员只获得相关视图。脱敏视图与可写完整配置使用不同类型，不能把省略字段或脱敏占位作为真实值整份回写。
+
+先全量不要求一个无限大的 SSE frame。初版可以分别发送 Config 和 State snapshot；若超过声明的帧／快照预算，需要类型化分块或明确失败，不能静默截断后宣称完成。客户端暂存完整同步批次，校验完成才切换缓存。
+
+### 同步截点
+
+服务端先建立事件捕获与一致的读取截点，再读取快照，缓冲截点之后的变化。snapshot 发布与追赶事件必须连续；权限在同步过程中变化时重新裁剪／reset，不能继续发送旧权限范围的数据。
+
+- Config 有自己的 revision；State 保留 stateEpoch、每个来源的实例／序号及报告引用。
+- 同步截点只保证这个客户端视图与后续事件连续，不宣称所有 Node 同时采样或执行同一版配置。
+- `sync.ready` 表示完整初始视图已接收，可以展示；不表示节点在线、隧道已建立或配置已 applied。
+- 初始 snapshot 帧不提供可独立恢复的 event ID；到 ready 后才提交这批缓存和 cursor。中途断开则丢弃不完整暂存并重新 full sync。
+
+普通 GET 配置／State 查询仍供按需读取和排错使用。若以后使用 HTTP snapshot 后接 SSE，也必须复用同一截点与 cursor 合同。
+
+## 事件结构
+
+JSON `data` 使用 Rust 定义的封闭判别联合，以 `type` 区分。可以统一使用默认 SSE message 事件，不另维护一份 event 名称到 DTO 的手写映射。
+
+| `type` 提案 | 载荷与客户端行为 |
+| --- | --- |
+| `config.snapshot` | 当前 ConfigurationView、revision、同步批次标识；初始暂存 |
+| `state.snapshot` | 当前 NetworkStateView、epoch、读取截点与同批次标识；初始暂存 |
+| `sync.ready` | 完整批次结束与可续传 cursor；激活本批视图 |
+| `state.delta` | baseCursor、updated、removed；按节点替换完整可见项，显式删除已移除／不可见项；过期按 freshness 表达 |
+| `configuration.changed` | 已提交的新 revision、时间、允许显示的修改者／请求关联；使旧配置缓存过时 |
+| `observation.status` | 任务 preparing／running／completed／failed／expired 等实际状态 |
+| `observation.sample` | observationId、measurementId、实际路径／配置引用与测量结果 |
+| `sync.reset` | 无法继续旧视图；清理服务器缓存视图并重新授权、full sync |
+| `stream.closed` | 可安全公开的结束原因，例如会话过期或失去网络资格 |
+
+配置通知示例：
+
+```text
+id: <opaque-view-cursor>
+data: {"type":"configuration.changed","networkId":"<network-id>","revision":43,"changedAt":"2026-10-03T12:00:00Z","actor":{"type":"user","userId":"<user-id>"}}
+
+```
+
+自动产生的配置版本可以使用 system actor；不能伪称另一个用户保存。State 的来源标识与测量 ID 不由 SSE cursor 代替。
+
+### Config 更新与草稿
+
+`configuration.changed` 在持久事务提交后发送，包括本标签页自己的保存。事件带版本即可，初版不在每次修改时广播整份配置及材料。
+
+- 无本地编辑：按新版本重新读取，合并短时间内的重复失效通知。
+- 有未保存编辑：保留 JSONC、图形草稿和原 CAS 基准，提示服务器已有新版；由用户决定比较／合并／重新加载。
+- 不把旧草稿的 expectedRevision 偷偷推进到新值。保存时仍做 CAS，不能借 SSE 到达绕过冲突。
+- GET 结果与 SSE 并发时按 revision 防止旧响应覆盖新版缓存。reset 丢弃的是服务端缓存视图，不静默抹掉未保存草稿；身份变化按原身份隔离并锁定草稿。
+
+## Path observation
+
+创建／续租／取消使用 [User API](/v2/api#操作索引)。创建返回 observationId 与实际租约；结果复用网络事件流，通过 ID 区分任务。只有创建者或另行获准的订阅者接收，不广播本网络所有管理员诊断。
+
+创建任务前 Console 已建立网络订阅；任务创建、建立有权订阅关系与记录初始状态有一致的发布顺序。事件可能先于 POST 响应抵达，因此用任务 ID／请求关联去重并有界暂存；重连时同步当前任务状态，遗漏的历史样本不能补造。
+
+订阅只消费事实，不自动发探测或续租。观察页在前台明确续租；关闭／切换网络时取消自己的需求，丢失取消也由短租约结束。连接仍打开不等于观察仍获授权。
+
+RTT、业务流量、探测未回应率沿用 [Realtime Observation](/v2/state-reference/realtime) 的口径；重复事件不增加样本数，缺测不填零，SSE 往返耗时不作为 Mesh RTT。
+
+## 重连与权限
+
+- 客户端仅在事件解码、校验并应用成功后记录 `id`；它是当前视图的不透明 cursor，不是授权凭证或全网序号。
+- 同一身份、网络、筛选范围和完整缓存仍存在时，重连使用 `Last-Event-ID`。页面只保存了 cursor 而没有对应缓存时，必须重新 full sync。
+- 后续每个事件推进同一视图 cursor；State delta 的 baseCursor 与上一已应用事件对齐，包括期间的配置／观察事件。重复投递可去重，断档不能跳过后继续假装一致。
+- 服务端只保留有界重放缓冲。cursor 过旧、epoch／可见范围改变或积压过多时 reset；不承诺无限回放或恰好一次投递。
+- 账户／会话到期、退出、成员移除和角色变化适用于已打开的流。权限缩小先停止旧范围输出、丢弃旧队列再裁剪；完全失权时关闭。不能只在握手时鉴权。
+- 服务端定时发送传输保活注释，客户端使用断流超时与有界退避。保活不是 Node 心跳，不刷新 State 或执行 lease。
+- 代理需允许流式 flush，禁用响应缓冲与缓存；HTTP/2 优先，但不靠“一节点一连接”维持 Console 视图。
+
+## OpenAPI 与生成客户端 {#openapi}
+
+**可以生成，但声明 SSE 响应不等于现有生成器已经能处理流。**
+
+| 层 | 支持情况 |
+| --- | --- |
+| OpenAPI 3.1 | 可以声明 `text/event-stream` 响应和组件 DTO；缺少标准的逐事件 itemSchema 字段，需要明确生成器支持的流式扩展约定 |
+| OpenAPI 3.2 | 引入 `itemSchema` 描述流中每项，并规定 SSE 帧与字符串 data 的 schema 表达 |
+| 当前 TypeScript 生成链 | `@hey-api/openapi-ts` 仅生成类型；自有 operations emitter 限 OpenAPI 3.1.0、JSON GET／POST 与单一 bearer，尚不能生成 SSE 操作 |
+| 当前 Rust 生成链 | `enable_sse_client: false`，认证适配也限 bearer；尚未验证新 SSE／密钥认证合同 |
+
+实现路线：
+
+1. Rust 定义 UserEvent／NodeEvent 及各自权限视图，真实路由显式声明 stream、认证与 payload schema。
+2. 优先验证 OpenAPI 3.2 的端到端工具支持；若仍用 3.1，则由同一 Rust 声明导出明确的 SSE 扩展元数据。不能将逐事件对象误写成整个响应就是一个 JSON 对象。
+3. 生成操作 URL、参数、认证要求、事件联合类型和 Zod／Rust 解码器。SDK 提供 async iterator／stream，应用不复制 endpoint 或 DTO。
+4. 共用传输层处理 UTF-8 增量、SSE 分帧／多行 data、取消、大小上限、重连及 cursor；每帧 JSON 经过生成 schema 校验才交付。OAS 3.2 的 contentSchema 注解本身不保证运行时执行校验。
+5. drift check 覆盖事件产物；非浏览器行为测试覆盖分帧、错误媒体类型、过期／撤销、full→delta 连续性、断线恢复与背压。不能把仅生成了 TypeScript 类型当成流式客户端已验收。
+
+参考：[OpenAPI 3.2 Media Type / SSE](https://spec.openapis.org/oas/v3.2.0.html#media-type-object)、[EventSource 构造参数](https://developer.mozilla.org/en-US/docs/Web/API/EventSource/EventSource)。

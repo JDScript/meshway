@@ -141,6 +141,9 @@ const v2Sidebar: DefaultTheme.SidebarItem[] = [
   {
     text: "分发与 API",
     items: [
+      { text: "API 分区与操作", link: "/v2/api" },
+      { text: "注册与认证", link: "/v2/api/authentication" },
+      { text: "SSE 与初始同步", link: "/v2/api/events" },
       { text: "NodeConfiguration", link: "/v2/configuration-reference/node-configuration" },
       { text: "同步与回滚", link: "/v2/configuration-reference/synchronization" },
       { text: "存储、查询与 API", link: "/v2/configuration-reference/storage-api" },

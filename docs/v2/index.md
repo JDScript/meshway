@@ -40,3 +40,9 @@ Node 上报自身运行事实，Controller 聚合 NetworkState；Node 可按需 
 - [Config／State 同步与回滚](/v2/configuration-reference/synchronization)
 - [存储、查询与外部 API](/v2/configuration-reference/storage-api)
 - [模型与讨论边界](/v2/network-configuration)
+
+## API
+
+- [API 分区与操作索引](/v2/api)
+- [用户注册、网络创建与 Node 密钥认证](/v2/api/authentication)
+- [SSE：首次全量、后续变化与生成客户端](/v2/api/events)
