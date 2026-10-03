@@ -75,6 +75,7 @@ JSON `data` 使用 Rust 定义的封闭判别联合，以 `type` 区分。可以
 | `activity.created` | 新操作历史 ID／时间，列表按需补读 |
 | `observation.status` | 任务 preparing／running／completed／failed／expired 等实际状态 |
 | `observation.sample` | observationId、measurementId、实际路径／配置引用与测量结果 |
+| `observation.removed` | subscriptionId 对应的需求已失效或超过终态保留期；移除本地任务视图 |
 | `sync.reset` | cursor_too_old／view_changed 等原因；清理服务端缓存视图并重新授权、full sync |
 | `stream.closed` | session_expired／membership_revoked 等原因，不输出秘密 |
 
@@ -136,7 +137,7 @@ baseCursor 对齐上一条已应用的流事件（包含通知事件），不是
 
 ## Path observation
 
-创建／续租／取消使用 [Console API](/v2/api#console-api)。创建返回 observationId 与实际租约；结果复用网络事件流，通过 ID 区分任务。只有创建者或另行获准的订阅者接收，不广播本网络所有管理员诊断。
+创建／续租／取消使用 [Console API](/v2/api#console-api)。创建请求携带独立 subscriptionId，返回可复用的任务 ID 与实际租约；续租／取消按 subscriptionId 独立操作。结果复用网络事件流，同时包含任务及订阅引用。只有创建者或另行获准的订阅者接收，不广播本网络所有管理员诊断。发送 pending／replay 前重新检查当前订阅，取消／到期会清除旧范围队列并按需 reset，不撤销仍合法的其他需求。
 
 创建任务前 Console 已建立网络订阅；任务创建、建立有权订阅关系与记录初始状态有一致的发布顺序。事件可能先于 POST 响应抵达，因此用任务 ID／请求关联去重并有界暂存；重连时同步当前任务状态，遗漏的历史样本不能补造。
 

@@ -1,17 +1,30 @@
 use super::TaskAdmission;
 use crate::state::{
     StateError,
-    service::{ReadIdentity, StateProvider, StateService},
+    service::{ReadIdentity, Runtime},
     stream::CommittedChange,
 };
 use chrono::{DateTime, Utc};
-use meshway_model::{ObservationId, SessionId};
+use meshway_model::{ObservationId, ObservationSubscriptionId, SessionId};
 use meshway_protocol::observations::*;
 use rusqlite::Transaction;
+use std::sync::{Arc, Mutex};
 
 /// B computes the authorized full path candidates; A checks current session and
 /// source User identity ownership. A network role cannot manufacture a path.
-pub trait ObservationProvider: StateProvider {
+pub trait ObservationProvider: Send + Sync + 'static {
+    fn scope(
+        &self,
+        tx: &Transaction<'_>,
+        identity: &ReadIdentity,
+        now: DateTime<Utc>,
+    ) -> Result<crate::state::VisibilityScope, StateError>;
+    fn report(
+        &self,
+        tx: &Transaction<'_>,
+        authorization: &str,
+        now: DateTime<Utc>,
+    ) -> Result<crate::state::ReportAdmission, StateError>;
     /// May synthesize and persist the diagnostic execution demand within this
     /// transaction. C commits it together with task acceptance before publishing.
     fn prepare_observation(
@@ -38,7 +51,32 @@ pub trait ObservationProvider: StateProvider {
         now: DateTime<Utc>,
     ) -> Result<SessionId, StateError>;
 }
-impl<P: ObservationProvider> StateService<P> {
+pub struct ObservationService<P: ObservationProvider> {
+    handle: crate::store::Handle,
+    provider: Arc<P>,
+    runtime: Arc<Mutex<Runtime>>,
+}
+impl<P: ObservationProvider> Clone for ObservationService<P> {
+    fn clone(&self) -> Self {
+        Self {
+            handle: self.handle.clone(),
+            provider: self.provider.clone(),
+            runtime: self.runtime.clone(),
+        }
+    }
+}
+impl<P: ObservationProvider> ObservationService<P> {
+    pub(crate) fn new(
+        handle: crate::store::Handle,
+        provider: P,
+        runtime: Arc<Mutex<Runtime>>,
+    ) -> Self {
+        Self {
+            handle,
+            provider: Arc::new(provider),
+            runtime,
+        }
+    }
     pub async fn create_observation(
         &self,
         identity: ReadIdentity,
@@ -52,13 +90,41 @@ impl<P: ObservationProvider> StateService<P> {
                 let now = Utc::now();
                 let admission = provider.prepare_observation(&tx, &identity, &request, now)?;
                 let mut runtime = runtime.lock().map_err(|_| StateError::Unavailable)?;
-                let mut staged = runtime.observations.clone();
-                let task = staged.create(&admission, request, now)?;
-                tx.commit()?;
-                runtime.observations = staged;
-                runtime
-                    .observation_identities
-                    .insert(admission.session_id, identity);
+                runtime.observations.expire(now);
+                // Only the matching task can change; unrelated tasks and their
+                // measurement deduplication indexes never enter staging.
+                let previous = runtime
+                    .observations
+                    .tasks
+                    .values()
+                    .find(|stored| {
+                        stored.subscribers.contains_key(&request.subscription_id)
+                            || stored.network == admission.report.network_id
+                                && stored.task.source_node_id == request.source_node_id
+                                && stored.task.target_node_id == request.target_node_id
+                                && stored.task.selection == request.selection
+                                && stored.task.metrics == request.metrics
+                                && stored.task.interval_ms == request.interval_ms
+                                && Some(&stored.task.configuration)
+                                    == admission.report.execution.as_ref()
+                                && stored.task.instance_id == admission.report.instance_id
+                                && stored.task.expires_at > now
+                                && super::active(stored.task.phase)
+                    })
+                    .cloned();
+                let task = runtime
+                    .observations
+                    .create(&admission, identity, request, now)?;
+                if let Err(error) = tx.commit() {
+                    runtime.observations.tasks.remove(&task.id);
+                    if let Some(previous) = previous {
+                        runtime
+                            .observations
+                            .tasks
+                            .insert(previous.task.id, previous);
+                    }
+                    return Err(error.into());
+                }
                 runtime.hub.publish_committed(CommittedChange::Observation {
                     network_id: admission.report.network_id,
                     observation_id: task.id,
@@ -73,7 +139,7 @@ impl<P: ObservationProvider> StateService<P> {
     pub async fn observations(
         &self,
         identity: ReadIdentity,
-        selected: Option<ObservationId>,
+        selected: Option<ObservationSubscriptionId>,
         operation: ObservationOperation,
     ) -> Result<ObservationList, StateError> {
         let provider = self.provider.clone();
@@ -82,7 +148,7 @@ impl<P: ObservationProvider> StateService<P> {
             .execute(move |connection| {
                 let tx = connection.transaction()?;
                 let now = Utc::now();
-                let view = provider.view(&tx, &identity, now)?;
+                let scope = provider.scope(&tx, &identity, now)?;
                 let session = provider.observation_session(&tx, &identity, now)?;
                 let mut runtime = runtime.lock().map_err(|_| StateError::Unavailable)?;
                 runtime.observations.expire(now);
@@ -91,11 +157,25 @@ impl<P: ObservationProvider> StateService<P> {
                     .tasks
                     .values()
                     .filter(|stored| {
-                        stored.network == view.scope.network_id
-                            && stored.subscribers.contains_key(&session)
-                            && selected.is_none_or(|id| id == stored.task.id)
+                        stored.network == scope.network_id
+                            && scope.visible.contains(&stored.task.source_node_id)
+                            && scope.visible.contains(&stored.task.target_node_id)
+                            && stored.task.path.as_ref().is_none_or(|path| {
+                                path.iter().all(|node| scope.visible.contains(node))
+                            })
                     })
-                    .map(|stored| stored.task.clone())
+                    .flat_map(|stored| {
+                        stored
+                            .subscribers
+                            .iter()
+                            .filter(|(id, subscriber)| {
+                                subscriber.session == session
+                                    && subscriber.identity.fingerprint() == identity.fingerprint()
+                                    && subscriber.authorization_digest == scope.authorization_digest
+                                    && selected.is_none_or(|selected| selected == **id)
+                            })
+                            .filter_map(|(id, _)| super::subscriber_view(stored, *id).ok())
+                    })
                     .collect();
                 if selected.is_some()
                     && candidates.is_empty()
@@ -105,7 +185,23 @@ impl<P: ObservationProvider> StateService<P> {
                 }
                 let mut items = vec![];
                 for task in candidates {
+                    let subscription = task.subscription_id.ok_or(StateError::Unavailable)?;
+                    if operation == ObservationOperation::Cancel {
+                        runtime.observations.cancel(
+                            session,
+                            scope.network_id,
+                            task.id,
+                            subscription,
+                            now,
+                        )?;
+                        continue;
+                    }
+                    if !super::active(task.phase) && operation == ObservationOperation::Read {
+                        items.push(task);
+                        continue;
+                    }
                     let request = CreateObservation {
+                        subscription_id: subscription,
                         source_node_id: task.source_node_id,
                         target_node_id: task.target_node_id,
                         selection: task.selection.clone(),
@@ -115,15 +211,23 @@ impl<P: ObservationProvider> StateService<P> {
                     let admission = provider.observation(&tx, &identity, &request, now)?;
                     let task = match operation {
                         ObservationOperation::Read => {
-                            runtime.observations.get(&admission, task.id, now)?
-                        }
-                        ObservationOperation::Renew => {
-                            runtime.observations.renew(&admission, task.id, now)?
-                        }
-                        ObservationOperation::Cancel => {
                             runtime
                                 .observations
-                                .cancel(session, view.scope.network_id, task.id)?;
+                                .get(&admission, task.id, subscription, now)?
+                        }
+                        ObservationOperation::Renew => {
+                            runtime
+                                .observations
+                                .renew(&admission, task.id, subscription, now)?
+                        }
+                        ObservationOperation::Cancel => {
+                            runtime.observations.cancel(
+                                session,
+                                scope.network_id,
+                                task.id,
+                                subscription,
+                                now,
+                            )?;
                             continue;
                         }
                     };
@@ -142,7 +246,7 @@ impl<P: ObservationProvider> StateService<P> {
                 let now = Utc::now();
                 let admission = provider.report(&tx, &authorization, now)?;
                 let mut runtime = runtime.lock().map_err(|_| StateError::Unavailable)?;
-                reauthorize(&*provider, &tx, &mut runtime, now);
+                reauthorize(&*provider, &tx, &mut runtime, &admission, None, now);
                 Ok(ObservationList {
                     items: runtime.observations.node_tasks(&admission, now),
                 })
@@ -163,22 +267,36 @@ impl<P: ObservationProvider> StateService<P> {
                 let now = Utc::now();
                 let admission = provider.report(&tx, &authorization, now)?;
                 let mut runtime = runtime.lock().map_err(|_| StateError::Unavailable)?;
-                reauthorize(&*provider, &tx, &mut runtime, now);
+                reauthorize(&*provider, &tx, &mut runtime, &admission, Some(id), now);
                 let result_digest = crate::resources::content_digest(
                     &serde_json::to_vec(&result).map_err(|_| StateError::Invalid)?,
                 );
+                let is_sample = matches!(&result.result, ObservationUpdate::Sample { .. });
                 let duplicate = runtime
                     .observations
                     .tasks
                     .get(&id)
-                    .and_then(|task| task.seen.get(&result.sample.measurement_id))
+                    .and_then(|task| match &result.result {
+                        ObservationUpdate::Sample { sample, .. } => {
+                            task.seen.get(&sample.measurement_id)
+                        }
+                        ObservationUpdate::Phase { .. } => None,
+                    })
                     .is_some_and(|seen| seen.digest == result_digest);
-                let mut staged = runtime.observations.clone();
+                let original = runtime
+                    .observations
+                    .tasks
+                    .get(&id)
+                    .ok_or(StateError::NotFound)?
+                    .clone();
+                let mut staged = super::Observations {
+                    tasks: std::collections::BTreeMap::from([(id, original)]),
+                };
                 let task = staged.result(&admission, id, result, now)?;
                 if let Some(probe) = task
                     .latest
                     .as_ref()
-                    .filter(|sample| !sample.partial)
+                    .filter(|sample| is_sample && !sample.partial)
                     .and_then(|sample| sample.probe.clone())
                 {
                     let occurred_at = probe.completed_at.ok_or(StateError::Invalid)?;
@@ -201,14 +319,23 @@ impl<P: ObservationProvider> StateService<P> {
                     )?;
                 }
                 tx.commit()?;
-                runtime.observations = staged;
+                runtime
+                    .observations
+                    .tasks
+                    .insert(id, staged.tasks.remove(&id).ok_or(StateError::Unavailable)?);
                 if !duplicate {
-                    runtime
-                        .hub
-                        .publish_committed(CommittedChange::ObservationSample {
+                    let change = if is_sample {
+                        CommittedChange::ObservationSample {
                             network_id: admission.network_id,
                             observation: Box::new(task.clone()),
-                        });
+                        }
+                    } else {
+                        CommittedChange::Observation {
+                            network_id: admission.network_id,
+                            observation_id: id,
+                        }
+                    };
+                    runtime.hub.publish_committed(change);
                 }
                 Ok(task)
             })
@@ -225,36 +352,56 @@ pub enum ObservationOperation {
 fn reauthorize<P: ObservationProvider>(
     provider: &P,
     tx: &Transaction<'_>,
-    runtime: &mut crate::state::service::Runtime<P>,
+    runtime: &mut crate::state::service::Runtime,
+    admission: &crate::state::ReportAdmission,
+    selected: Option<ObservationId>,
     now: DateTime<Utc>,
 ) {
     let checks: Vec<_> = runtime
         .observations
         .tasks
         .values()
+        .filter(|stored| {
+            stored.network == admission.network_id
+                && stored.task.source_node_id == admission.node_id
+                && selected.is_none_or(|id| stored.task.id == id)
+        })
         .flat_map(|stored| {
-            stored.subscribers.keys().map(|session| {
-                (
-                    *session,
-                    CreateObservation {
-                        source_node_id: stored.task.source_node_id,
-                        target_node_id: stored.task.target_node_id,
-                        selection: stored.task.selection.clone(),
-                        metrics: stored.task.metrics.clone(),
-                        interval_ms: stored.task.interval_ms,
-                    },
-                )
-            })
+            stored
+                .subscribers
+                .iter()
+                .filter(|(_, subscriber)| subscriber.terminal.is_none())
+                .map(|(subscription, subscriber)| {
+                    (
+                        stored.task.id,
+                        *subscription,
+                        subscriber.identity.clone(),
+                        subscriber.authorization_digest,
+                        CreateObservation {
+                            subscription_id: *subscription,
+                            source_node_id: stored.task.source_node_id,
+                            target_node_id: stored.task.target_node_id,
+                            selection: stored.task.selection.clone(),
+                            metrics: stored.task.metrics.clone(),
+                            interval_ms: stored.task.interval_ms,
+                        },
+                    )
+                })
         })
         .collect();
-    for (session, request) in checks {
-        let valid = runtime
-            .observation_identities
-            .get(&session)
-            .is_some_and(|identity| provider.observation(tx, identity, &request, now).is_ok());
-        if !valid {
-            runtime.observations.revoke_session(session);
-            runtime.observation_identities.remove(&session);
+    for (task, subscription, identity, authorization, request) in checks {
+        let valid = provider
+            .observation(tx, &identity, &request, now)
+            .is_ok_and(|admission| {
+                admission.authorization_digest == authorization
+                    && runtime.observations.tasks.get(&task).is_some_and(|stored| {
+                        admission.report.instance_id == stored.task.instance_id
+                            && admission.report.execution.as_ref()
+                                == Some(&stored.task.configuration)
+                    })
+            });
+        if !valid && let Some(stored) = runtime.observations.tasks.get_mut(&task) {
+            stored.subscribers.remove(&subscription);
         }
     }
 }

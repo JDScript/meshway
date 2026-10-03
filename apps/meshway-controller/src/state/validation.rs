@@ -90,7 +90,7 @@ pub(super) fn report(
             _ => return Err(StateError::Invalid),
         }
     }
-    if (!state.listeners.is_empty() || !state.sockets.is_empty() || !state.links.is_empty())
+    if (!state.links.is_empty() || !state.paths.is_empty())
         && (admission.execution.is_none()
             || state.configuration.applied.as_ref() != admission.execution.as_ref())
     {
@@ -98,27 +98,50 @@ pub(super) fn report(
     }
     for (key, listener) in &state.listeners {
         let resource = ResourceRef::Listener { key: key.clone() };
-        if !admission.resources.contains_key(&resource) || listener.socket_ids.len() > 32 {
+        let reference = listener
+            .configuration
+            .as_ref()
+            .or(state.configuration.applied.as_ref())
+            .ok_or(StateError::Invalid)?;
+        let context = admission.context(reference)?;
+        if !context.resources.contains_key(&resource) || listener.socket_ids.len() > 32 {
             return Err(StateError::Invalid);
         }
-        if let Some(reference) = &listener.configuration
-            && (listener.phase != ListenerPhase::Preparing
-                || !admission.configurations.contains(reference))
+        if Some(reference) != admission.execution.as_ref()
+            && (!context.installation_allowed
+                || !matches!(
+                    listener.phase,
+                    ListenerPhase::Preparing | ListenerPhase::Failed | ListenerPhase::Stopped
+                )
+                || !installation_reference(state, reference))
         {
             return Err(StateError::Invalid);
         }
         for socket in &listener.socket_ids {
-            if state
-                .sockets
-                .get(socket)
-                .is_none_or(|s| s.resource != resource)
-            {
+            if state.sockets.get(socket).is_none_or(|s| {
+                s.resource != resource
+                    || s.configuration
+                        .as_ref()
+                        .or(state.configuration.applied.as_ref())
+                        != Some(reference)
+            }) {
                 return Err(StateError::Invalid);
             }
         }
     }
     for (socket_id, socket) in &state.sockets {
-        let admitted = admission
+        let reference = socket
+            .configuration
+            .as_ref()
+            .or(state.configuration.applied.as_ref())
+            .ok_or(StateError::Invalid)?;
+        let context = admission.context(reference)?;
+        if Some(reference) != admission.execution.as_ref()
+            && (!context.installation_allowed || !installation_reference(state, reference))
+        {
+            return Err(StateError::Invalid);
+        }
+        let admitted = context
             .resources
             .get(&socket.resource)
             .ok_or(StateError::Invalid)?;
@@ -167,7 +190,8 @@ pub(super) fn report(
     }
     let mut links = BTreeSet::new();
     for (peer, records) in &state.links {
-        if *peer == admission.node_id || !admission.peers.contains(peer) || records.len() > 8 {
+        let context = admission.current()?;
+        if *peer == admission.node_id || !context.peers.contains(peer) || records.len() > 8 {
             return Err(StateError::Invalid);
         }
         for link in records {
@@ -175,7 +199,15 @@ pub(super) fn report(
                 .sockets
                 .get(&link.socket_id)
                 .ok_or(StateError::Invalid)?;
-            let resource = admission
+            if socket
+                .configuration
+                .as_ref()
+                .or(state.configuration.applied.as_ref())
+                != admission.execution.as_ref()
+            {
+                return Err(StateError::Invalid);
+            }
+            let resource = context
                 .resources
                 .get(&socket.resource)
                 .ok_or(StateError::Invalid)?;
@@ -196,7 +228,7 @@ pub(super) fn report(
         }
     }
     for path in state.paths.values() {
-        if !admission.paths.contains(&path.nodes)
+        if !admission.current()?.paths.contains(&path.nodes)
             || !path.nodes.contains(&admission.node_id)
             || admission
                 .execution
@@ -221,12 +253,11 @@ pub(super) fn report(
             _ => return Err(StateError::Invalid),
         }
     }
-    if state
-        .selection
-        .applied_profile
-        .as_ref()
-        .is_some_and(|p| !admission.profiles.contains(p))
-    {
+    if state.selection.applied_profile.as_ref().is_some_and(|p| {
+        admission
+            .current()
+            .map_or(true, |context| !context.profiles.contains(p))
+    }) {
         return Err(StateError::Invalid);
     }
     let mut measurements = BTreeSet::new();
@@ -237,6 +268,14 @@ pub(super) fn report(
         validate_probe(admission, probe, now)?;
     }
     Ok(())
+}
+fn installation_reference(state: &NodeState, reference: &ConfigurationRef) -> bool {
+    state.configuration.saved.as_ref() == Some(reference)
+        || state
+            .configuration
+            .progress
+            .as_ref()
+            .is_some_and(|progress| &progress.target == reference)
 }
 fn check_address(
     address: &str,
@@ -260,9 +299,17 @@ pub(crate) fn validate_probe(
     probe: &ProbeObservation,
     now: DateTime<Utc>,
 ) -> Result<(), StateError> {
+    validate_probe_context(admission.node_id, admission.current()?, probe, now)
+}
+pub(crate) fn validate_probe_context(
+    node_id: NodeId,
+    context: &ConfigurationAdmission,
+    probe: &ProbeObservation,
+    now: DateTime<Utc>,
+) -> Result<(), StateError> {
     if probe.link_id.as_ref().is_some_and(|id| !text(id))
         || probe.transport.as_ref().is_some_and(|transport| {
-            !admission
+            !context
                 .resources
                 .values()
                 .any(|resource| resource.transport == *transport)
@@ -272,14 +319,26 @@ pub(crate) fn validate_probe(
     {
         return Err(StateError::Invalid);
     }
+    let authorized = match probe.kind {
+        ProbeKind::Path => context.paths.contains(&probe.path),
+        ProbeKind::Neighbor | ProbeKind::Connect => {
+            probe.path.len() == 2
+                && probe.transport.as_ref().is_some_and(|transport| {
+                    context
+                        .neighbor_transports
+                        .get(&probe.path[1])
+                        .is_some_and(|allowed| allowed.contains(transport))
+                })
+        }
+        // Controller probes have no Mesh peer/path. No current producer or
+        // authorization contract exists for them yet.
+        ProbeKind::Controller => false,
+    };
     if probe.path.len() < 2
         || probe.path.len() > 16
-        || probe.path.first() != Some(&admission.node_id)
-        || !admission.paths.contains(&probe.path)
-        || admission
-            .execution
-            .as_ref()
-            .is_none_or(|execution| execution.execution_publication != probe.publication_id)
+        || probe.path.first() != Some(&node_id)
+        || !authorized
+        || context.configuration.execution_publication != probe.publication_id
         || probe.started_at > now + Duration::seconds(CLOCK_SKEW_SECONDS)
         || probe.completed_at.is_some_and(|end| {
             end < probe.started_at || end > now + Duration::seconds(CLOCK_SKEW_SECONDS)

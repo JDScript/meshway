@@ -244,7 +244,7 @@ async fn real_history_dedup_pagination_coverage_and_artifact_immutability() {
                         kind: ProbeKind::Path,
                         link_id: None,
                         transport: None,
-                        path: admission.paths[0].clone(),
+                        path: admission.current().unwrap().paths[0].clone(),
                         publication_id: reference.execution_publication,
                         started_at: now - Duration::milliseconds(12),
                         completed_at: Some(now),
@@ -257,6 +257,17 @@ async fn real_history_dedup_pagination_coverage_and_artifact_immutability() {
                 instance_id: admission.instance_id,
                 events: vec![event.clone()],
             };
+            // P1 completed while it was installed. P2 is now executing; only
+            // history may use P1's immutable context during the admission window.
+            let mut next_context = admission.contexts[0].clone();
+            next_context.configuration.execution_publication = meshway_model::PublicationId::new(crate::accounts::random_uuid().unwrap()).unwrap();
+            next_context.configuration.digest = crate::resources::content_digest(b"P2");
+            admission.execution = Some(next_context.configuration.clone());
+            admission.contexts[0].installation_allowed = false;
+            admission.configurations.push(next_context.configuration.clone());
+            admission.contexts.push(next_context);
+            let ObservationPayload::ProbeCompleted { probe } = &event.payload else { panic!() };
+            assert!(super::validation::validate_probe(&admission, probe, now).is_err());
             let tx = connection.transaction().unwrap();
             assert_eq!(
                 crate::observations::history::accept(&tx, &admission, batch.clone(), now)
@@ -296,7 +307,7 @@ async fn real_history_dedup_pagination_coverage_and_artifact_immutability() {
                 configuration: reference,
                 occurred_at: now,
                 payload: ObservationPayload::LinkOpened {
-                    peer_node_id: admission.paths[0][1],
+                    peer_node_id: admission.current().unwrap().paths[0][1],
                     link_id: "actual-channel".into(),
                     transport: "native_udp".into(),
                 },
@@ -340,6 +351,30 @@ async fn real_history_dedup_pagination_coverage_and_artifact_immutability() {
             };
             assert_eq!(items[0].sample_count, 1);
             assert_eq!(items[0].mean_success_duration_us, Some(12_000.0));
+            let gap = ObservationEvent {
+                event_id: EventId::new(crate::accounts::random_uuid().unwrap()).unwrap(),
+                configuration: admission.configurations[0].clone(), occurred_at: now,
+                payload: ObservationPayload::CollectionGap {
+                    from: now - Duration::seconds(30), to: now - Duration::seconds(1), dropped: Sequence::new(7).unwrap(),
+                },
+            };
+            crate::observations::history::accept(&tx, &admission, HistoryReport { instance_id: admission.instance_id, events: vec![gap] }, now).unwrap();
+            for mode in [HistoryMode::Raw, HistoryMode::Buckets, HistoryMode::RecentLinks] {
+                let mut filtered = query.clone();
+                // Gap notification itself is later than the selected window;
+                // its original interval still intersects it.
+                filtered.to = now - Duration::seconds(2);
+                filtered.mode = mode;
+                filtered.bucket_seconds = (mode == HistoryMode::Buckets).then_some(60);
+                filtered.kinds = Some(vec![HistoryKind::ProbeCompleted]);
+                filtered.link_id = Some("not-a-gap-link".into());
+                let (page, _) = crate::observations::history::query(&tx, &scope, &filtered, None, now).unwrap();
+                assert!(matches!(&page.coverage[0], HistoryCoverage::CollectionGap { dropped, .. } if dropped.get() == 7));
+                let mut restricted = scope.clone();
+                restricted.full.clear();
+                let (page, _) = crate::observations::history::query(&tx, &restricted, &filtered, None, now).unwrap();
+                assert!(page.coverage.is_empty());
+            }
             // Model a capacity-retired payload while its retry admission is still
             // valid; retry must keep the tombstone rather than recreate a point.
             tx.execute("UPDATE observation_events SET payload=NULL", [])

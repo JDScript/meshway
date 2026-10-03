@@ -1,6 +1,6 @@
 use crate::state::{
     StateError,
-    service::{ReadIdentity, StateProvider, StateService},
+    service::{ReadIdentity, Runtime},
     stream::CommittedChange,
 };
 use chrono::{DateTime, Utc};
@@ -9,6 +9,7 @@ use meshway_model::{NetworkId, Revision};
 use meshway_protocol::resources::{ArtifactSummary, RuleSetData, RuleSetList, RuleSetView};
 use rusqlite::Transaction;
 use std::collections::BTreeMap;
+use std::sync::{Arc, Mutex};
 
 pub struct RuleSetScope {
     pub network: NetworkId,
@@ -17,7 +18,7 @@ pub struct RuleSetScope {
     pub definitions: BTreeMap<String, RuleSet>,
     pub views: BTreeMap<String, RuleSetView>,
 }
-pub trait ResourceProvider: StateProvider {
+pub trait ResourceProvider: Send + Sync + 'static {
     fn rule_sets(
         &self,
         tx: &Transaction<'_>,
@@ -37,7 +38,32 @@ pub trait ResourceProvider: StateProvider {
     ) -> Result<(), StateError>;
 }
 static DOWNLOADS: tokio::sync::Semaphore = tokio::sync::Semaphore::const_new(4);
-impl<P: ResourceProvider> StateService<P> {
+pub struct ResourceService<P: ResourceProvider> {
+    handle: crate::store::Handle,
+    provider: Arc<P>,
+    runtime: Arc<Mutex<Runtime>>,
+}
+impl<P: ResourceProvider> Clone for ResourceService<P> {
+    fn clone(&self) -> Self {
+        Self {
+            handle: self.handle.clone(),
+            provider: self.provider.clone(),
+            runtime: self.runtime.clone(),
+        }
+    }
+}
+impl<P: ResourceProvider> ResourceService<P> {
+    pub(crate) fn new(
+        handle: crate::store::Handle,
+        provider: P,
+        runtime: Arc<Mutex<Runtime>>,
+    ) -> Self {
+        Self {
+            handle,
+            provider: Arc::new(provider),
+            runtime,
+        }
+    }
     pub async fn rule_sets(
         &self,
         identity: ReadIdentity,

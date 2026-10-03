@@ -76,6 +76,10 @@ Console 使用 `POST /api/v1/networks/{networkId}/history/query`，输入 kinds�
 
 返回事件／桶、nextCursor 和覆盖范围；cursor 绑定窗口、模式、筛选、身份与读取上界。迟到数据由下一轮查询接纳，分页不跨窗口复用。HistoryCoverage 说明裁剪和缺口，不能单靠缺样本判断空闲；recentLinks 从这些真实事件派生。
 
+候选实现的 coverage 区分 `pruned`（retention／capacity）与 `collectionGap`。后者保留来源 Node、instance、event ID、原始 from／to 与 dropped；仅在原始区间与查询窗口相交时展示，不按裁剪后的时间比例虚构丢弃数量。coverage 独立于 raw／buckets／recentLinks 和 kinds 筛选；来源级 gap 没有 peer／link 归因，仅完整获准读取该来源的用户可见，不能当成某条连接的丢包率。无样本的桶不补零。
+
+历史接纳按事件携带的完整 ConfigurationRef 选择已保留的真实资源／路径上下文，再核对当前凭据、实例及接纳时间窗。该上下文不会成为当前 State 的执行准入。neighbor／connect 使用显式获准邻接及承载集合；path 必须匹配获准完整路径，不能从其中切出任意业务子路径。
+
 ## 延迟口径
 
 | 测量 | 含义 |

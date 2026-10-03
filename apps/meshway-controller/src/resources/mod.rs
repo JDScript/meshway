@@ -1,5 +1,6 @@
 //! Bounded dataset conversion/download and immutable content. GeoIP datasets
 //! are supplied by deployment, never by network administrators or Node reports.
+pub mod datasets;
 mod geoip;
 mod rulesets;
 pub mod service;

@@ -39,6 +39,7 @@ pub fn accept(
     let mut accepted = 0;
     let mut duplicates = 0;
     for event in batch.events {
+        let context = admission.context(&event.configuration)?;
         if event.occurred_at > now + Duration::seconds(30)
             || event.occurred_at + Duration::seconds(ADMISSION_SECONDS) <= now
             || !admission.configurations.contains(&event.configuration)
@@ -53,7 +54,12 @@ pub fn accept(
                 {
                     return Err(StateError::Invalid);
                 }
-                crate::state::validation::validate_probe(admission, probe, now)?;
+                crate::state::validation::validate_probe_context(
+                    admission.node_id,
+                    context,
+                    probe,
+                    now,
+                )?;
             }
             ObservationPayload::CollectionGap { dropped, from, to } => {
                 if dropped.get() == 0 || from >= to || *to > event.occurred_at {
@@ -61,7 +67,7 @@ pub fn accept(
                 }
             }
             payload => {
-                if peer(payload).is_none_or(|id| !admission.peers.contains(&id)) {
+                if peer(payload).is_none_or(|id| !context.peers.contains(&id)) {
                     return Err(StateError::Invalid);
                 }
             }
@@ -195,7 +201,9 @@ pub fn query(
             result_count: None,
         },
     };
-    let mut statement = tx.prepare("SELECT source_node_id, instance_id, received_at, payload FROM observation_events WHERE network_id = ?1 AND occurred_at >= ?2 AND occurred_at < ?3 AND row_id <= ?4 AND payload IS NOT NULL ORDER BY occurred_at, row_id LIMIT ?5")?;
+    // Gaps may end after the requested display window. Read the bounded
+    // retention window, then intersect gap intervals separately from samples.
+    let mut statement = tx.prepare("SELECT source_node_id, instance_id, received_at, payload FROM observation_events WHERE network_id = ?1 AND occurred_at >= ?2 AND row_id <= ?4 AND payload IS NOT NULL AND (occurred_at < ?3 OR json_extract(CAST(payload AS TEXT),'$.payload.kind') = 'collection_gap') ORDER BY occurred_at, row_id LIMIT ?5")?;
     let rows = statement.query_map(
         params![
             scope.network_id.as_uuid().as_bytes().as_slice(),
@@ -214,6 +222,7 @@ pub fn query(
         },
     )?;
     let mut events = vec![];
+    let mut coverage = vec![];
     for (count, row) in rows.enumerate() {
         if count >= MAX_QUERY_ROWS {
             return Err(StateError::Budget);
@@ -227,6 +236,24 @@ pub fn query(
         }
         let event: ObservationEvent =
             serde_json::from_slice(&bytes).map_err(|_| StateError::Storage)?;
+        if let ObservationPayload::CollectionGap { from, to, dropped } = &event.payload {
+            // A source-wide drop count has no narrower peer/link attribution.
+            // Only readers of the complete source may see it, regardless of
+            // display mode/kinds; never expose it as a peer-specific statistic.
+            if scope.full.contains(&node) && *from < query.to && *to > query.from {
+                coverage.push(HistoryCoverage::CollectionGap {
+                    source_node_id: node,
+                    instance_id: instance.parse().map_err(|_| StateError::Storage)?,
+                    event_id: event.event_id,
+                    from: *from,
+                    to: *to,
+                    dropped: *dropped,
+                });
+            }
+        }
+        if event.occurred_at >= query.to {
+            continue;
+        }
         let (kind, link) = match &event.payload {
             ObservationPayload::DialStarted { .. } => (HistoryKind::DialStarted, None),
             ObservationPayload::DialFailed { .. } => (HistoryKind::DialFailed, None),
@@ -323,7 +350,6 @@ pub fn query(
         return Err(StateError::Cursor);
     }
     window.result_count = Some(total);
-    let mut coverage = vec![];
     let mut statement = tx.prepare(
         "SELECT source_node_id, before_at, reason FROM history_coverage WHERE network_id = ?1",
     )?;
@@ -340,7 +366,7 @@ pub fn query(
         if !scope.visible.contains(&source) || query.source_node_id.is_some_and(|id| id != source) {
             continue;
         }
-        coverage.push(HistoryCoverage {
+        coverage.push(HistoryCoverage::Pruned {
             source_node_id: source,
             before: DateTime::from_timestamp_millis(before).ok_or(StateError::Storage)?,
             reason: match reason.as_str() {

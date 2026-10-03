@@ -20,6 +20,7 @@ pub struct App {
     accounts: Accounts,
     sealer: Arc<Sealer>,
     configuration_cache: Arc<crate::configuration::SnapshotCache>,
+    state_runtime: Arc<std::sync::Mutex<crate::state::service::Runtime>>,
     shutdown_hooks: ShutdownHooks,
 }
 
@@ -120,12 +121,27 @@ impl App {
             OpenError::Initialization(error) => error,
         })?;
         let accounts = Accounts::new(executor.handle(), account_options);
+        let state_runtime = Arc::new(std::sync::Mutex::new(
+            crate::state::service::Runtime::new().map_err(|_| AppError::Worker)?,
+        ));
+        let shutdown_hooks = ShutdownHooks::default();
+        let shutdown_runtime = Arc::clone(&state_runtime);
+        shutdown_hooks
+            .0
+            .lock()
+            .map_err(|_| AppError::Worker)?
+            .push(Box::new(move || {
+                if let Ok(mut runtime) = shutdown_runtime.lock() {
+                    runtime.close();
+                }
+            }));
         Ok(Self {
             executor,
             accounts,
             sealer: Arc::new(sealer),
             configuration_cache: Arc::default(),
-            shutdown_hooks: ShutdownHooks::default(),
+            state_runtime,
+            shutdown_hooks,
         })
     }
 
@@ -153,6 +169,39 @@ impl App {
     pub(crate) fn history(&self) -> crate::history::History {
         crate::history::History::new(self.executor.handle(), self.sealer())
     }
+    pub fn observation_service<P: crate::observations::service::ObservationProvider>(
+        &self,
+        provider: P,
+    ) -> crate::observations::service::ObservationService<P> {
+        crate::observations::service::ObservationService::new(
+            self.executor.handle(),
+            provider,
+            Arc::clone(&self.state_runtime),
+        )
+    }
+    pub fn resource_service<P: crate::resources::service::ResourceProvider>(
+        &self,
+        provider: P,
+    ) -> crate::resources::service::ResourceService<P> {
+        crate::resources::service::ResourceService::new(
+            self.executor.handle(),
+            provider,
+            Arc::clone(&self.state_runtime),
+        )
+    }
+    pub fn ip_datasets(&self) -> crate::resources::datasets::IpDatasets {
+        crate::resources::datasets::IpDatasets::new(
+            self.executor.handle(),
+            Arc::clone(&self.state_runtime),
+        )
+    }
+    /// Shared core handles are available before constructing any HTTP provider.
+    pub fn state_reader(&self) -> crate::state::service::StateReader {
+        crate::state::service::StateReader::new(Arc::clone(&self.state_runtime))
+    }
+    pub fn commit_publisher(&self) -> crate::state::service::CommitPublisher {
+        crate::state::service::CommitPublisher::new(Arc::clone(&self.state_runtime))
+    }
 
     /// Compose State HTTP/SSE with the transactional management/Node providers.
     pub fn state_service<P: crate::state::service::StateProvider>(
@@ -163,6 +212,7 @@ impl App {
             self.executor.handle(),
             provider,
             self.sealer(),
+            Arc::clone(&self.state_runtime),
         )?;
         let shutdown = service.clone();
         self.shutdown_hooks

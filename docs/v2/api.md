@@ -169,9 +169,9 @@ execution 返回 Controller 实际编译结果的裁剪视图，不拿手工源�
 | `POST /networks/{networkId}/nodes/{nodeId}/routing-selection` | 该设备的使用选择权限 | 选择允许方案，检查身份及选择版本，不修改管理员配置历史 |
 | `GET /networks/{networkId}/observations` | 获准观测范围 | 当前观察需求／任务及实际状态 |
 | `POST /networks/{networkId}/observations` | 获准诊断权限 | auto 按目标选择获准路径／explicit 指定路径；返回租约和续租节奏 |
-| `GET /networks/{networkId}/observations/{observationId}` | 获准观测范围 | 任务参数、lease、状态及最新结果 |
-| `POST /networks/{networkId}/observations/{observationId}/renew` | 任务使用者 | 检查当前权限并续租自己的需求 |
-| `POST /networks/{networkId}/observations/{observationId}/cancel` | 任务使用者 | 幂等取消自己的需求，不影响他人的有效租约 |
+| `GET /networks/{networkId}/observations/{subscriptionId}` | 获准观测范围 | 独立订阅对应的任务参数、lease、状态及最新结果 |
+| `POST /networks/{networkId}/observations/{subscriptionId}/renew` | 订阅使用者 | 检查当前权限并续租本页需求 |
+| `POST /networks/{networkId}/observations/{subscriptionId}/cancel` | 订阅使用者 | 幂等取消本页需求，不影响同会话其他标签页或其他用户 |
 | `POST /networks/{networkId}/history/query` | 相关历史读取权限 | kinds／时间窗口／源与对端／link／原始或分桶查询，返回真实样本与覆盖缺口 |
 | `GET /networks/{networkId}/activity` | Owner／Admin | 控制面管理操作历史 |
 | `GET /networks/{networkId}/activity/{activityId}` | Owner／Admin | 单条操作及安全的目标／revision 关联 |

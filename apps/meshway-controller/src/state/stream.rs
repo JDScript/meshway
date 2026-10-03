@@ -15,6 +15,12 @@ pub const MAX_BATCH_BYTES: usize = 8 * 1024 * 1024;
 
 #[derive(Clone, Debug)]
 pub enum CommittedChange {
+    /// Publish only after permanent credential revocation and configuration
+    /// removal commit. Frees volatile report storage; SQL retains revocation.
+    NodeRetired {
+        network_id: NetworkId,
+        node_id: NodeId,
+    },
     State {
         network_id: NetworkId,
         node_id: NodeId,
@@ -44,6 +50,7 @@ impl CommittedChange {
     pub fn network(&self) -> NetworkId {
         match self {
             Self::State { network_id, .. }
+            | Self::NodeRetired { network_id, .. }
             | Self::Authorization { network_id }
             | Self::Progress { network_id }
             | Self::Observation { network_id, .. }
@@ -190,6 +197,9 @@ pub struct ReplayBuffer {
     bytes: usize,
 }
 impl ReplayBuffer {
+    pub fn is_empty(&self) -> bool {
+        self.frames.is_empty()
+    }
     pub fn push(&mut self, frame: SseFrame) {
         if frame.id.is_some() && self.frames.iter().any(|old| old.id == frame.id) {
             return;

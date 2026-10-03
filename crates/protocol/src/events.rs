@@ -79,6 +79,11 @@ pub enum StreamEvent<C, E, P> {
     ObservationStatus { observation: Box<ObservationTask> },
     #[serde(rename = "observation.sample")]
     ObservationSample { observation: Box<ObservationTask> },
+    #[serde(rename = "observation.removed")]
+    ObservationRemoved {
+        #[serde(rename = "subscriptionId")]
+        subscription_id: meshway_model::ObservationSubscriptionId,
+    },
     #[serde(rename = "sync.reset")]
     Reset { reason: ResetReason },
     #[serde(rename = "stream.closed")]

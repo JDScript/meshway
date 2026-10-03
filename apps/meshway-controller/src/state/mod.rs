@@ -61,15 +61,44 @@ pub struct ReportAdmission {
     pub node_id: NodeId,
     pub instance_id: InstanceId,
     pub lease_expires_at: DateTime<Utc>,
-    /// All resources, peers, paths and profiles below belong to this exact
-    /// publication/digest. Other references may appear only in receipt status.
+    /// Current execution context, distinct from saved/installation/history.
     pub execution: Option<ConfigurationRef>,
     pub configurations: Vec<ConfigurationRef>,
+    /// Exact immutable contexts loaded by the execution owner. Historical
+    /// contexts do not grant current execution or peer endpoint availability.
+    pub contexts: Vec<ConfigurationAdmission>,
+    pub mesh_addresses: BTreeSet<std::net::IpAddr>,
+}
+#[derive(Clone, Debug)]
+pub struct ConfigurationAdmission {
+    pub configuration: ConfigurationRef,
+    /// True only for the execution owner's currently allowed target/saved
+    /// installation. Retained history alone must set this to false.
+    pub installation_allowed: bool,
     pub resources: BTreeMap<ResourceRef, ResourceAdmission>,
     pub peers: BTreeSet<NodeId>,
     pub paths: Vec<Vec<NodeId>>,
+    /// Authorized adjacent peers and allowed outer transports, never arbitrary
+    /// subpaths of a business permit. Also used for connect probes.
+    pub neighbor_transports: BTreeMap<NodeId, BTreeSet<String>>,
     pub profiles: BTreeSet<String>,
-    pub mesh_addresses: BTreeSet<std::net::IpAddr>,
+}
+impl ReportAdmission {
+    pub fn context(
+        &self,
+        reference: &ConfigurationRef,
+    ) -> Result<&ConfigurationAdmission, StateError> {
+        if !self.configurations.contains(reference) {
+            return Err(StateError::Invalid);
+        }
+        self.contexts
+            .iter()
+            .find(|context| &context.configuration == reference)
+            .ok_or(StateError::Invalid)
+    }
+    pub fn current(&self) -> Result<&ConfigurationAdmission, StateError> {
+        self.context(self.execution.as_ref().ok_or(StateError::Invalid)?)
+    }
 }
 #[derive(Clone, Debug)]
 pub struct ResourceAdmission {
@@ -95,6 +124,8 @@ pub struct VisibilityScope {
 #[derive(Clone, Debug)]
 pub struct CurrentNode {
     pub instance_id: Option<InstanceId>,
+    /// The currently usable execution, not the set retained for receipts/history.
+    pub execution: Option<ConfigurationRef>,
     pub configurations: Vec<ConfigurationRef>,
     pub revoked: bool,
     pub lease_expires_at: Option<DateTime<Utc>>,
@@ -118,6 +149,8 @@ pub struct StateHub {
     bytes: usize,
 }
 
+#[cfg(test)]
+mod observation_tests;
 #[cfg(test)]
 mod service_tests;
 #[cfg(test)]
@@ -247,6 +280,17 @@ impl StateHub {
     /// Must run on the SQLite owner immediately after COMMIT, before releasing
     /// its accepted operation. It does not await a consumer or perform fallible IO.
     pub fn publish_committed(&mut self, change: stream::CommittedChange) {
+        if let stream::CommittedChange::NodeRetired {
+            network_id,
+            node_id,
+        } = &change
+        {
+            // Permanent credential revocation is the durable replay barrier.
+            // No old identity may obtain ReportAdmission after this commit.
+            if let Some(stored) = self.reports.remove(&(*network_id, *node_id)) {
+                self.bytes = self.bytes.saturating_sub(stored.bytes);
+            }
+        }
         let network = change.network();
         match self
             .sequences
@@ -356,8 +400,15 @@ impl StateHub {
                 } else {
                     let source = &stored.report.state;
                     let mut endpoints = Vec::new();
-                    if freshness == Freshness::Current {
+                    if freshness == Freshness::Current
+                        && source.configuration.applied.is_some()
+                        && current.and_then(|node| node.execution.as_ref()) == source.configuration.applied.as_ref()
+                    {
                         for (socket_id, socket) in &source.sockets {
+                            if source.configuration.applied.is_none()
+                                || socket.configuration.as_ref().is_some_and(|reference| Some(reference) != source.configuration.applied.as_ref()) {
+                                continue;
+                            }
                             if let ResourceRef::Listener { key } = &socket.resource
                                 && source.listeners.get(key).is_none_or(|listener| {
                                     listener.phase != meshway_model::state::ListenerPhase::Listening

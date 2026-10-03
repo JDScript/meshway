@@ -109,6 +109,10 @@ id!(ActivityId, "Activity identifier.");
 id!(ArtifactId, "Immutable dataset artifact identifier.");
 id!(EventId, "Source observation event identifier.");
 id!(ObservationId, "Leased observation task identifier.");
+id!(
+    ObservationSubscriptionId,
+    "Independent observation demand and idempotency identifier."
+);
 id!(StateEpoch, "Volatile controller state epoch.");
 id!(
     JoinLinkId,

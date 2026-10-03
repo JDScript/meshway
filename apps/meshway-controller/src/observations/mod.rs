@@ -4,13 +4,15 @@ pub mod history;
 pub mod service;
 use crate::state::{ReportAdmission, StateError};
 use chrono::{DateTime, Duration, Utc};
-use meshway_model::{Digest, NetworkId, ObservationId, SessionId};
+use meshway_model::{Digest, NetworkId, ObservationId, ObservationSubscriptionId, SessionId};
 use meshway_protocol::observations::*;
 use std::collections::{BTreeMap, BTreeSet};
 
 pub const OBSERVATION_LEASE_SECONDS: i64 = 30;
 pub const MAX_TASKS_PER_NETWORK: usize = 128;
 pub const MAX_TASKS_PER_SESSION: usize = 8;
+pub const MAX_TASKS: usize = 1024;
+pub const MAX_SUBSCRIPTIONS: usize = 4096;
 
 #[derive(Clone)]
 pub struct TaskAdmission {
@@ -21,16 +23,20 @@ pub struct TaskAdmission {
 }
 #[derive(Clone)]
 struct Subscriber {
+    generation: Digest,
+    session: SessionId,
+    identity: crate::state::service::ReadIdentity,
     authorization_digest: Digest,
     expires_at: DateTime<Utc>,
     renew_after: DateTime<Utc>,
+    terminal: Option<ObservationPhase>,
 }
 #[derive(Clone)]
 struct StoredTask {
     network: NetworkId,
     task: ObservationTask,
     paths: Vec<Vec<meshway_model::NodeId>>,
-    subscribers: BTreeMap<SessionId, Subscriber>,
+    subscribers: BTreeMap<ObservationSubscriptionId, Subscriber>,
     seen: BTreeMap<meshway_model::EventId, SeenWindow>,
 }
 #[derive(Clone)]
@@ -39,48 +45,56 @@ struct SeenWindow {
     version: meshway_model::Version,
     partial: bool,
 }
-#[derive(Default, Clone)]
+#[derive(Default)]
 pub struct Observations {
     tasks: BTreeMap<ObservationId, StoredTask>,
 }
 impl Observations {
+    /// Private lifetime tokens prevent a client reusing an old request UUID
+    /// after terminal retention from reviving that lifetime's queued samples.
+    pub(crate) fn active_subscriptions(
+        &self,
+        tasks: &[ObservationTask],
+    ) -> BTreeMap<ObservationSubscriptionId, Digest> {
+        tasks
+            .iter()
+            .filter(|task| active(task.phase))
+            .filter_map(|task| {
+                let id = task.subscription_id?;
+                let subscriber = self.tasks.get(&task.id)?.subscribers.get(&id)?;
+                Some((id, subscriber.generation))
+            })
+            .collect()
+    }
     pub(crate) fn visible_tasks(
         &self,
         network: NetworkId,
         scope: &crate::state::VisibilityScope,
-        identities: &BTreeMap<SessionId, crate::state::service::ReadIdentity>,
         identity: &crate::state::service::ReadIdentity,
     ) -> Vec<ObservationTask> {
         self.tasks
             .values()
             .filter(|stored| {
                 stored.network == network
-                    && stored.subscribers.iter().any(|(session, subscriber)| {
-                        identities
-                            .get(session)
-                            .is_some_and(|other| other.fingerprint() == identity.fingerprint())
-                            && subscriber.authorization_digest == scope.authorization_digest
-                    })
                     && scope.visible.contains(&stored.task.source_node_id)
                     && scope.visible.contains(&stored.task.target_node_id)
             })
-            .filter_map(|stored| {
+            .flat_map(|stored| {
                 stored
                     .subscribers
                     .iter()
-                    .find(|(session, subscriber)| {
-                        identities
-                            .get(session)
-                            .is_some_and(|other| other.fingerprint() == identity.fingerprint())
+                    .filter(|(_, subscriber)| {
+                        subscriber.identity.fingerprint() == identity.fingerprint()
                             && subscriber.authorization_digest == scope.authorization_digest
                     })
-                    .and_then(|(session, _)| subscriber_view(stored, *session).ok())
+                    .filter_map(|(subscription, _)| subscriber_view(stored, *subscription).ok())
             })
             .collect()
     }
     pub fn create(
         &mut self,
         admission: &TaskAdmission,
+        identity: crate::state::service::ReadIdentity,
         request: CreateObservation,
         now: DateTime<Utc>,
     ) -> Result<ObservationTask, StateError> {
@@ -104,6 +118,7 @@ impl Observations {
         }
         let paths: Vec<_> = admission
             .report
+            .current()?
             .paths
             .iter()
             .filter(|path| {
@@ -131,8 +146,51 @@ impl Observations {
         let session_tasks = self
             .tasks
             .values()
-            .filter(|task| task.subscribers.contains_key(&admission.session_id))
+            .flat_map(|task| task.subscribers.values())
+            .filter(|subscriber| subscriber.session == admission.session_id)
             .count();
+        // The client supplies a distinct UUID per tab demand; retries keep it.
+        // A reused UUID with different input/owner is a conflict, never renewal.
+        for stored in self.tasks.values() {
+            if let Some(subscriber) = stored.subscribers.get(&request.subscription_id) {
+                if stored.network != admission.report.network_id
+                    || subscriber.identity.fingerprint() != identity.fingerprint()
+                    || subscriber.session != admission.session_id
+                    || subscriber.authorization_digest != admission.authorization_digest
+                    || stored.task.source_node_id != request.source_node_id
+                    || stored.task.target_node_id != request.target_node_id
+                    || stored.task.selection != request.selection
+                    || stored.task.metrics != request.metrics
+                    || stored.task.interval_ms != request.interval_ms
+                {
+                    return Err(StateError::Conflict);
+                }
+                return subscriber_view(stored, request.subscription_id);
+            }
+        }
+        if session_tasks >= MAX_TASKS_PER_SESSION
+            || self
+                .tasks
+                .values()
+                .map(|task| task.subscribers.len())
+                .sum::<usize>()
+                >= MAX_SUBSCRIPTIONS
+        {
+            return Err(StateError::ObservationLimit);
+        }
+        let subscriber = Subscriber {
+            generation: crate::resources::content_digest(
+                crate::accounts::random_uuid()
+                    .map_err(|_| StateError::Unavailable)?
+                    .as_bytes(),
+            ),
+            session: admission.session_id,
+            identity,
+            authorization_digest: admission.authorization_digest,
+            expires_at,
+            renew_after: now + Duration::seconds(10),
+            terminal: None,
+        };
         // Reuse only exact source, authorized publication, mode, metrics and
         // interval. Each subscriber retains its own revocation/lease context.
         for stored in self.tasks.values_mut() {
@@ -145,23 +203,16 @@ impl Observations {
                 && stored.task.configuration == configuration
                 && stored.task.instance_id == admission.report.instance_id
                 && stored.task.expires_at > now
+                && active(stored.task.phase)
             {
-                if stored.subscribers.contains_key(&admission.session_id) {
-                    return subscriber_view(stored, admission.session_id);
-                }
                 if stored.subscribers.len() >= 64 || session_tasks >= MAX_TASKS_PER_SESSION {
                     return Err(StateError::ObservationLimit);
                 }
-                stored.subscribers.insert(
-                    admission.session_id,
-                    Subscriber {
-                        authorization_digest: admission.authorization_digest,
-                        expires_at,
-                        renew_after: now + Duration::seconds(10),
-                    },
-                );
+                stored
+                    .subscribers
+                    .insert(request.subscription_id, subscriber);
                 stored.task.expires_at = stored.task.expires_at.max(expires_at);
-                return subscriber_view(stored, admission.session_id);
+                return subscriber_view(stored, request.subscription_id);
             }
         }
         if self
@@ -170,12 +221,7 @@ impl Observations {
             .filter(|task| task.network == admission.report.network_id)
             .count()
             >= MAX_TASKS_PER_NETWORK
-            || self
-                .tasks
-                .values()
-                .filter(|task| task.subscribers.contains_key(&admission.session_id))
-                .count()
-                >= MAX_TASKS_PER_SESSION
+            || self.tasks.len() >= MAX_TASKS
         {
             return Err(StateError::ObservationLimit);
         }
@@ -199,6 +245,7 @@ impl Observations {
             renew_after: now + Duration::seconds(10),
             latest: None,
             subscriber_expires_at: None,
+            subscription_id: None,
         };
         self.tasks.insert(
             id,
@@ -206,88 +253,100 @@ impl Observations {
                 network: admission.report.network_id,
                 task: task.clone(),
                 paths,
-                subscribers: BTreeMap::from([(
-                    admission.session_id,
-                    Subscriber {
-                        authorization_digest: admission.authorization_digest,
-                        expires_at,
-                        renew_after: now + Duration::seconds(10),
-                    },
-                )]),
+                subscribers: BTreeMap::from([(request.subscription_id, subscriber)]),
                 seen: BTreeMap::new(),
             },
         );
         subscriber_view(
             self.tasks.get(&id).ok_or(StateError::Unavailable)?,
-            admission.session_id,
+            request.subscription_id,
         )
     }
     pub fn get(
         &mut self,
         admission: &TaskAdmission,
         id: ObservationId,
+        subscription: ObservationSubscriptionId,
         now: DateTime<Utc>,
     ) -> Result<ObservationTask, StateError> {
         self.expire(now);
         let stored = self.tasks.get_mut(&id).ok_or(StateError::NotFound)?;
-        Self::authorize(stored, admission, now)?;
-        subscriber_view(stored, admission.session_id)
+        Self::authorize(stored, admission, subscription, now)?;
+        subscriber_view(stored, subscription)
     }
     pub fn renew(
         &mut self,
         admission: &TaskAdmission,
         id: ObservationId,
+        subscription: ObservationSubscriptionId,
         now: DateTime<Utc>,
     ) -> Result<ObservationTask, StateError> {
         let stored = self.tasks.get_mut(&id).ok_or(StateError::NotFound)?;
-        Self::authorize(stored, admission, now)?;
+        Self::authorize(stored, admission, subscription, now)?;
         if stored.seen.len() >= 4096
             || stored
                 .subscribers
-                .get(&admission.session_id)
-                .is_none_or(|subscriber| now < subscriber.renew_after)
+                .get(&subscription)
+                .is_none_or(|subscriber| {
+                    now < subscriber.renew_after
+                        || subscriber.terminal.is_some()
+                        || subscriber.expires_at <= now
+                })
+            || !active(stored.task.phase)
         {
             return Err(StateError::ObservationLimit);
         }
         let expires = (now + Duration::seconds(OBSERVATION_LEASE_SECONDS))
             .min(admission.session_expires_at)
             .min(admission.report.lease_expires_at);
-        stored.subscribers.insert(
-            admission.session_id,
-            Subscriber {
-                authorization_digest: admission.authorization_digest,
-                expires_at: expires,
-                renew_after: now + Duration::seconds(10),
-            },
-        );
+        let subscriber = stored
+            .subscribers
+            .get_mut(&subscription)
+            .ok_or(StateError::NotFound)?;
+        subscriber.expires_at = expires;
+        subscriber.renew_after = now + Duration::seconds(10);
         stored.task.expires_at = stored
             .subscribers
             .values()
+            .filter(|s| s.terminal.is_none())
             .map(|s| s.expires_at)
             .max()
             .ok_or(StateError::NotFound)?;
         stored.task.renew_after = now + Duration::seconds(10);
-        subscriber_view(stored, admission.session_id)
+        subscriber_view(stored, subscription)
     }
     pub fn cancel(
         &mut self,
         session: SessionId,
         network: NetworkId,
         id: ObservationId,
+        subscription: ObservationSubscriptionId,
+        now: DateTime<Utc>,
     ) -> Result<(), StateError> {
         let stored = self
             .tasks
             .get_mut(&id)
             .filter(|task| task.network == network)
             .ok_or(StateError::NotFound)?;
-        stored.subscribers.remove(&session);
-        if stored.subscribers.is_empty() {
-            stored.task.phase = ObservationPhase::Cancelled;
-            stored.task.expires_at = Utc::now();
+        let subscriber = stored
+            .subscribers
+            .get_mut(&subscription)
+            .filter(|s| s.session == session)
+            .ok_or(StateError::NotFound)?;
+        if subscriber.terminal.is_none() {
+            subscriber.terminal = Some(ObservationPhase::Cancelled);
+            subscriber.expires_at = now;
+        }
+        if stored.subscribers.values().all(|s| s.terminal.is_some()) {
+            if active(stored.task.phase) {
+                stored.task.phase = ObservationPhase::Cancelled;
+                stored.task.expires_at = now;
+            }
         } else {
             stored.task.expires_at = stored
                 .subscribers
                 .values()
+                .filter(|s| s.terminal.is_none())
                 .map(|subscriber| subscriber.expires_at)
                 .max()
                 .ok_or(StateError::NotFound)?;
@@ -296,7 +355,8 @@ impl Observations {
     }
     pub fn revoke_session(&mut self, session: SessionId) {
         for task in self.tasks.values_mut() {
-            task.subscribers.remove(&session);
+            task.subscribers
+                .retain(|_, subscriber| subscriber.session != session);
         }
         self.expire(Utc::now());
     }
@@ -314,8 +374,9 @@ impl Observations {
                     && task.task.instance_id == admission.instance_id
                     && admission.lease_expires_at > now
                     && task.task.expires_at > now
-                    && !task.subscribers.is_empty()
-                    && admission.configurations.contains(&task.task.configuration)
+                    && active(task.task.phase)
+                    && task.subscribers.values().any(|s| s.terminal.is_none())
+                    && admission.execution.as_ref() == Some(&task.task.configuration)
             })
             .map(|task| task.task.clone())
             .collect()
@@ -334,33 +395,64 @@ impl Observations {
             || stored.task.instance_id != admission.instance_id
             || result.instance_id != admission.instance_id
             || result.configuration != stored.task.configuration
-            || !admission.configurations.contains(&result.configuration)
+            || admission.execution.as_ref() != Some(&result.configuration)
             || admission.lease_expires_at <= now
             || stored.task.expires_at <= now
-            || stored.subscribers.is_empty()
+            || !stored.subscribers.values().any(|s| s.terminal.is_none())
         {
             return Err(StateError::Unauthorized);
         }
-        if !stored.paths.contains(&result.path)
-            || !admission.paths.contains(&result.path)
-            || result.path_segment.get() == 0
+        let digest = crate::resources::content_digest(
+            &serde_json::to_vec(&result).map_err(|_| StateError::Invalid)?,
+        );
+        let (path, path_segment, sample) = match result.result {
+            ObservationUpdate::Phase { phase } => {
+                let phase = match phase {
+                    ReportedObservationPhase::Preparing => ObservationPhase::Preparing,
+                    ReportedObservationPhase::Failed => ObservationPhase::Failed,
+                    ReportedObservationPhase::Completed => ObservationPhase::Completed,
+                    ReportedObservationPhase::Unsupported => ObservationPhase::Unsupported,
+                };
+                if !active(stored.task.phase) && stored.task.phase != phase
+                    || stored.task.phase == ObservationPhase::Running
+                        && phase == ObservationPhase::Preparing
+                {
+                    return Err(StateError::Conflict);
+                }
+                stored.task.phase = phase;
+                if !active(phase) {
+                    stored.task.latest = None;
+                }
+                return Ok(stored.task.clone());
+            }
+            ObservationUpdate::Sample {
+                path,
+                path_segment,
+                sample,
+            } => (path, path_segment, *sample),
+        };
+        if !active(stored.task.phase) {
+            return Err(StateError::Conflict);
+        }
+        if !stored.paths.contains(&path)
+            || !admission.current()?.paths.contains(&path)
+            || path_segment.get() == 0
         {
             return Err(StateError::Invalid);
         }
-        if let ObservationPath::Explicit { path } = &stored.task.selection
-            && *path != result.path
+        if let ObservationPath::Explicit { path: selected } = &stored.task.selection
+            && *selected != path
         {
             return Err(StateError::Invalid);
         }
         if let Some(segment) = stored.task.path_segment
-            && (result.path_segment < segment
-                || result.path_segment == segment
-                    && stored.task.path.as_ref() != Some(&result.path))
+            && (path_segment < segment
+                || path_segment == segment && stored.task.path.as_ref() != Some(&path))
         {
             return Err(StateError::Conflict);
         }
-        let sample = &result.sample;
-        if sample.window_start >= sample.window_end
+        if sample.probe.is_none() && sample.traffic.is_none() && sample.probe_counts.is_none()
+            || sample.window_start >= sample.window_end
             || sample.window_end > now + Duration::seconds(30)
             || sample.window_end > stored.task.expires_at
             || now - sample.window_start > Duration::minutes(2)
@@ -372,7 +464,7 @@ impl Observations {
                 return Err(StateError::Invalid);
             }
             if probe.measurement_id != sample.measurement_id
-                || probe.path != result.path
+                || probe.path != path
                 || probe.publication_id != result.configuration.execution_publication
             {
                 return Err(StateError::Invalid);
@@ -400,9 +492,6 @@ impl Observations {
         {
             return Err(StateError::Invalid);
         }
-        let digest = crate::resources::content_digest(
-            &serde_json::to_vec(&result).map_err(|_| StateError::Invalid)?,
-        );
         if let Some(previous) = stored.seen.get(&sample.measurement_id) {
             if previous.digest == digest {
                 return Ok(stored.task.clone());
@@ -413,7 +502,7 @@ impl Observations {
                 || old.measurement_id != sample.measurement_id
                 || old.window_start != sample.window_start
                 || old.window_end != sample.window_end
-                || stored.task.path_segment != Some(result.path_segment)
+                || stored.task.path_segment != Some(path_segment)
             {
                 return Err(StateError::Conflict);
             }
@@ -442,17 +531,28 @@ impl Observations {
                 partial: sample.partial,
             },
         );
-        stored.task.path = Some(result.path);
-        stored.task.path_segment = Some(result.path_segment);
-        stored.task.latest = Some(result.sample);
+        stored.task.path = Some(path);
+        stored.task.path_segment = Some(path_segment);
+        stored.task.latest = Some(sample);
         stored.task.phase = ObservationPhase::Running;
         Ok(stored.task.clone())
     }
     pub fn expire(&mut self, now: DateTime<Utc>) {
         for task in self.tasks.values_mut() {
-            task.subscribers.retain(|_, s| s.expires_at > now);
-            if task.subscribers.is_empty() && task.task.phase != ObservationPhase::Cancelled {
+            for subscriber in task.subscribers.values_mut() {
+                if subscriber.expires_at <= now && subscriber.terminal.is_none() {
+                    subscriber.terminal = Some(if active(task.task.phase) {
+                        ObservationPhase::Expired
+                    } else {
+                        task.task.phase
+                    });
+                }
+            }
+            task.subscribers
+                .retain(|_, s| s.expires_at + Duration::minutes(1) > now);
+            if task.subscribers.values().all(|s| s.terminal.is_some()) && active(task.task.phase) {
                 task.task.phase = ObservationPhase::Expired;
+                task.task.latest = None;
             }
         }
         self.tasks
@@ -461,14 +561,15 @@ impl Observations {
     fn authorize(
         task: &mut StoredTask,
         admission: &TaskAdmission,
+        subscription: ObservationSubscriptionId,
         now: DateTime<Utc>,
     ) -> Result<(), StateError> {
         let subscriber = task
             .subscribers
-            .get(&admission.session_id)
+            .get(&subscription)
             .ok_or(StateError::NotFound)?;
         if task.network != admission.report.network_id
-            || subscriber.expires_at <= now
+            || subscriber.session != admission.session_id
             || admission.session_expires_at <= now
             || subscriber.authorization_digest != admission.authorization_digest
             || task.task.instance_id != admission.report.instance_id
@@ -477,20 +578,34 @@ impl Observations {
                 .configurations
                 .contains(&task.task.configuration)
         {
-            task.subscribers.remove(&admission.session_id);
+            task.subscribers.remove(&subscription);
             return Err(StateError::Unauthorized);
         }
         Ok(())
     }
 }
 
-fn subscriber_view(stored: &StoredTask, session: SessionId) -> Result<ObservationTask, StateError> {
+fn subscriber_view(
+    stored: &StoredTask,
+    subscription: ObservationSubscriptionId,
+) -> Result<ObservationTask, StateError> {
     let subscriber = stored
         .subscribers
-        .get(&session)
+        .get(&subscription)
         .ok_or(StateError::NotFound)?;
     let mut task = stored.task.clone();
     task.subscriber_expires_at = Some(subscriber.expires_at);
+    task.subscription_id = Some(subscription);
+    if let Some(phase) = subscriber.terminal {
+        task.phase = phase;
+        task.latest = None;
+    }
     task.renew_after = subscriber.renew_after;
     Ok(task)
+}
+pub(crate) fn active(phase: ObservationPhase) -> bool {
+    matches!(
+        phase,
+        ObservationPhase::Preparing | ObservationPhase::Running
+    )
 }

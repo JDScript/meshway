@@ -10,6 +10,7 @@ API 方向已确定为 HTTP 创建／续租／取消任务，结果经 Console �
 
 ```json
 {
+  "subscriptionId": "<new-uuid-for-this-page-demand>",
   "sourceNodeId": "<node-a>",
   "mode": "explicit",
   "target": { "type": "node", "nodeId": "<node-b>" },
@@ -19,10 +20,11 @@ API 方向已确定为 HTTP 创建／续租／取消任务，结果经 Console �
 }
 ```
 
-这是创建观察任务的输入示意，不是现行 API。Controller 返回 observationId、实际 intervalMs、expiresAt、renewAfter，后续查询／SSE 返回真实阶段和选定路径；不把用户会话令牌放进 URL。
+Controller 候选合同使用独立 `ObservationSubscriptionId` 标识本页需求，`ObservationId` 标识可复用的节点测量任务。创建请求的重试沿用 subscriptionId；另开页面创建新 ID。返回任务 ID、subscriptionId、实际 intervalMs、任务及订阅各自的 expiresAt、renewAfter。主 Router／执行 provider 的装配与 Agent 消费验收仍须单独完成。
 
 | 字段 | 含义 |
 | --- | --- |
+| `subscriptionId` | 本次页面需求的独立 UUID，也用于有界创建幂等；不是 SessionId 或凭据 |
 | `sourceNodeId` | 发起测量的节点，用户须有权让它执行诊断 |
 | `mode` | auto／explicit；不使用含义模糊的 current |
 | `target` | 获准目标，必要时包含协议／端口范围；不能借诊断扩权 |
@@ -50,6 +52,10 @@ Controller 负责鉴权、调度和转发，不用浏览器到 Controller 的耗
 已确认：普通成员仅可请求自己的 User 身份设备发起获准诊断，并只读取相关结果；Owner／Admin 可操作本网络。Tag owner 不因授 Tag 权限获得对其他 Tag 节点的诊断权。详见[操作权限](/v2/permissions)。
 
 相同网络／源／路径／指标的观察可合并成一个受控采样任务，多个用户订阅复用结果。底层实际探测器与历史采集共用事件来源，不因多开几张图就重复发包。
+
+同一登录会话的两个标签页也持有不同 subscriptionId。GET／renew／cancel 以订阅 ID 操作，只影响该需求；真正的会话吊销才撤销该会话的全部订阅。各订阅独立保存主体、网络、权限摘要和租约，不按 SessionId 覆盖当前网络。
+
+节点结果采用 `result.type=phase|sample` 联合。phase 可报告 preparing／failed／completed／unsupported，无需编造 path 或空样本；sample 必须包含实际路径分段和非空测量窗口。Controller 的 expired／cancelled 来自真实订阅生命周期。终态在当前权限下短期可读，随后以 `observation.removed` 或明确 reset 清理；取消／到期后的旧样本不能经排队或重放重新送达该订阅。
 
 任务复用还须绑定相容的授权／执行发布、测量模式和周期；每个订阅者独立验证权限。只可观察某服务的用户，不能因复用了管理员任务就读取路径上其他人的流量；结果必须有明确的业务／统计范围。
 

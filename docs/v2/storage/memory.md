@@ -79,7 +79,7 @@ Controller 将 publication 目标／关键回执与这些实时字段组合为�
 | `socketIds` | SocketId[] | 关联实际 sockets |
 | `loadedCertificateSha256` | Digest? | 实际加载证书指纹；非 TLS 为 null |
 | `problem` | Problem? | 失败原因 |
-| `configuration` | ConfigurationRef? | null 表示沿用报告 applied；另版 preparing 须显式填写 |
+| `configuration` | ConfigurationRef? | null 表示沿用报告 applied；首次／另版 preparing、failed、stopped 须显式填写目标，按该精确上下文检查资源 |
 
 key 来自 nodes[id].listeners，不能作为新的配置源。
 
@@ -88,6 +88,7 @@ key 来自 nodes[id].listeners，不能作为新的配置源。
 | 对象 | 字段 | 类型 | 含义 |
 | --- | --- | --- | --- |
 | Socket | `resource` | ResourceRef | listener／dial／协调资源 |
+| Socket | `configuration` | ConfigurationRef? | null 沿用报告 applied；安装中的 socket 显式引用 saved／target，不能作为现行执行的可用 peer 入口 |
 | Socket | `generation` | u64 | 该资源代际 |
 | Socket | `network` | udp \| tcp | 外层 socket 协议 |
 | Socket | `boundAddress` | SocketAddress | 内核实际 bind 地址 |
@@ -224,15 +225,18 @@ PrincipalRef 为 user／node 判别联合：user 分支保存 userId／sessionHa
 | Task | `instanceId` | InstanceId? | 实际执行实例；尚未调度到当前实例为 null |
 | Task | `metrics` | MetricKind[] | rtt／traffic／probeLoss |
 | Task | `intervalMs` | u32 | 实际获准周期 |
-| Task | `phase` | preparing \| running \| completed \| failed \| expired | 实际阶段 |
+| Task | `phase` | preparing \| running \| completed \| failed \| unsupported \| expired \| cancelled | 实际阶段 |
 | Task | `expiresAt` | Timestamp | 下发节点的短租约 |
 | Task | `renewAfter` | Timestamp | 服务端建议的最早续租时刻 |
 | Task | `latest` | ObservationSample? | 最新真实样本 |
 | Task | `subscribers` | Map&lt;ObservationSubscriptionId, ObservationSubscriber&gt; | 任务内部的独立使用需求 |
 | Subscriber | `principal` | PrincipalRef | 每个订阅者独立鉴权 |
+| Subscriber | `authorizationDigest` | Digest | 当前网络／主体／范围的授权上下文，输出前重检 |
 | Subscriber | `expiresAt` | Timestamp | 该订阅者续租期限 |
 
 ObservationSubscriber 是上述 map 的嵌套值，任务关联由外层给出，不另维护反向关系表。每个订阅者的权限／租约仍独立；取消一项不取消别人的有效需求。任务不因 SSE 连接存在自动续期，最后需求离开后释放，崩溃后不恢复旧任务为 running。
+
+候选实现对任务、每任务订阅、每会话需求及全局订阅均设上限；终态仅短期保留，过期清理连同主体信息释放，不保留按 SessionId 无限增长的身份索引。报告退休由永久吊销／删除提交驱动：释放 Node 的大报告，持久认证存储继续阻止旧实例／凭据再入场，不能仅根据一个读者看不到 Node 就删除全局报告。
 
 ### ObservationSample
 

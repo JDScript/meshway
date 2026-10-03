@@ -120,6 +120,9 @@ pub struct EndpointCandidate {
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct SocketState {
     pub resource: ResourceRef,
+    /// None inherits the report's applied configuration; installation sockets
+    /// must name their target even before the first configuration is applied.
+    pub configuration: Option<ConfigurationRef>,
     pub generation: Sequence,
     pub network: SocketNetwork,
     #[schema(value_type = String)]

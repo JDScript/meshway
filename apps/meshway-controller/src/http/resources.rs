@@ -3,14 +3,14 @@ use super::{
     error::HttpError,
     state::{failure, user},
 };
-use crate::{resources::service::ResourceProvider, state::service::StateService};
+use crate::resources::service::{ResourceProvider, ResourceService};
 use axum::{Extension, Json, Router, extract::State, http::HeaderMap, middleware};
 use meshway_model::{NetworkId, RequestId};
 use meshway_protocol::{
     ErrorResponse,
     resources::{RuleSetList, RuleSetView},
 };
-pub fn router<P: ResourceProvider>(service: StateService<P>) -> Router {
+pub fn router<P: ResourceProvider>(service: ResourceService<P>) -> Router {
     use super::declared_route;
     let router = declared_route::<__path_list, _, _, _>(Router::new(), list::<P>);
     let router = declared_route::<__path_detail, _, _, _>(router, detail::<P>);
@@ -20,7 +20,7 @@ pub fn router<P: ResourceProvider>(service: StateService<P>) -> Router {
 }
 #[utoipa::path(get,path="/api/v1/networks/{networkId}/rule-sets",operation_id="listRuleSets",tag="resources",security(("userSession"=[])),params(("networkId"=NetworkId,Path)),responses((status=200,body=RuleSetList),(status=401,body=ErrorResponse)))]
 async fn list<P: ResourceProvider>(
-    State(service): State<StateService<P>>,
+    State(service): State<ResourceService<P>>,
     Extension(id): Extension<RequestId>,
     Path(network): Path<NetworkId>,
     headers: HeaderMap,
@@ -34,7 +34,7 @@ async fn list<P: ResourceProvider>(
 }
 #[utoipa::path(get,path="/api/v1/networks/{networkId}/rule-sets/{ruleSetKey}",operation_id="getRuleSet",tag="resources",security(("userSession"=[])),params(("networkId"=NetworkId,Path),("ruleSetKey"=String,Path)),responses((status=200,body=RuleSetList),(status=401,body=ErrorResponse)))]
 async fn detail<P: ResourceProvider>(
-    State(service): State<StateService<P>>,
+    State(service): State<ResourceService<P>>,
     Extension(id): Extension<RequestId>,
     Path((network, key)): Path<(NetworkId, String)>,
     headers: HeaderMap,
@@ -48,7 +48,7 @@ async fn detail<P: ResourceProvider>(
 }
 #[utoipa::path(post,path="/api/v1/networks/{networkId}/rule-sets/{ruleSetKey}/refresh",operation_id="refreshRuleSet",tag="resources",security(("userSession"=[])),params(("networkId"=NetworkId,Path),("ruleSetKey"=String,Path)),responses((status=200,body=RuleSetView),(status=401,body=ErrorResponse)))]
 async fn refresh<P: ResourceProvider>(
-    State(service): State<StateService<P>>,
+    State(service): State<ResourceService<P>>,
     Extension(id): Extension<RequestId>,
     Path((network, key)): Path<(NetworkId, String)>,
     headers: HeaderMap,

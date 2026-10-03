@@ -90,23 +90,38 @@ struct Subscription<P: StateProvider> {
     replay: ReplayBuffer,
     disconnected_at: Option<DateTime<Utc>>,
     created_at: DateTime<Utc>,
-    observations: BTreeMap<meshway_model::ObservationId, Digest>,
+    observations: BTreeMap<meshway_model::ObservationSubscriptionId, Digest>,
+    active_observations: BTreeMap<meshway_model::ObservationSubscriptionId, Digest>,
     journal_sequence: u64,
 }
-pub struct Runtime<P: StateProvider> {
+pub(crate) struct Runtime {
     closed: bool,
     pub hub: StateHub,
     pub geoip: GeoIp,
     pub observations: Observations,
-    pub(crate) observation_identities: BTreeMap<meshway_model::SessionId, ReadIdentity>,
     pub(crate) resource_results:
         BTreeMap<(NetworkId, String), meshway_protocol::resources::RuleSetView>,
-    subscriptions: BTreeMap<String, Subscription<P>>,
+}
+impl Runtime {
+    pub(crate) fn close(&mut self) {
+        self.closed = true;
+        self.observations = Observations::default();
+    }
+    pub(crate) fn new() -> Result<Self, StateError> {
+        Ok(Self {
+            closed: false,
+            hub: StateHub::new()?,
+            geoip: GeoIp::default(),
+            observations: Observations::default(),
+            resource_results: BTreeMap::new(),
+        })
+    }
 }
 pub struct StateService<P: StateProvider> {
     pub(crate) handle: Handle,
     pub(crate) provider: Arc<P>,
-    pub(crate) runtime: Arc<Mutex<Runtime<P>>>,
+    pub(crate) runtime: Arc<Mutex<Runtime>>,
+    subscriptions: Arc<Mutex<BTreeMap<String, Subscription<P>>>>,
     sealer: Arc<crate::secrets::Sealer>,
 }
 impl<P: StateProvider> Clone for StateService<P> {
@@ -115,99 +130,40 @@ impl<P: StateProvider> Clone for StateService<P> {
             handle: self.handle.clone(),
             provider: Arc::clone(&self.provider),
             runtime: Arc::clone(&self.runtime),
+            subscriptions: Arc::clone(&self.subscriptions),
             sealer: Arc::clone(&self.sealer),
         }
     }
 }
 impl<P: StateProvider> StateService<P> {
-    pub fn reader(&self) -> StateReader<P> {
-        StateReader {
-            runtime: Arc::clone(&self.runtime),
-        }
+    pub fn reader(&self) -> StateReader {
+        StateReader::new(Arc::clone(&self.runtime))
     }
     /// Stop active streams before awaiting HTTP graceful shutdown. App shutdown
     /// and drop also call this; accepted SQLite work still drains independently.
     pub fn close(&self) {
         if let Ok(mut runtime) = self.runtime.lock() {
-            runtime.closed = true;
-            runtime.subscriptions.clear();
-            runtime.observations = Observations::default();
-            runtime.observation_identities.clear();
-        }
-    }
-    /// Reinstalls only immutable datasets. Volatile Node reports, cursors and
-    /// observation tasks are deliberately not restored as current evidence.
-    pub async fn restore_ip_datasets(&self) -> Result<(), StateError> {
-        let runtime = self.runtime.clone();
-        self.handle.execute(move|connection| {
-            use rusqlite::OptionalExtension;
-            let tx=connection.transaction()?;
-            let mut runtime=runtime.lock().map_err(|_|StateError::Unavailable)?;
-            for kind in [IpDatasetKind::GeoIp,IpDatasetKind::Asn] {
-                let row: Option<(String,Vec<u8>,String)> = tx.query_row("SELECT id,data,digest FROM dataset_artifacts WHERE network_id IS NULL AND kind=?1 AND format='mmdb' ORDER BY created_at DESC,id DESC LIMIT 1",[match kind { IpDatasetKind::GeoIp=>"geoip",IpDatasetKind::Asn=>"asn" }],|row|Ok((row.get(0)?,row.get(1)?,row.get(2)?))).optional()?;
-                if let Some((id,bytes,digest))=row {
-                    if crate::resources::content_digest(&bytes).to_string()!=digest{return Err(StateError::Storage);}
-                    let id=id.parse().map_err(|_|StateError::Storage)?;
-                    match kind { IpDatasetKind::GeoIp=>runtime.geoip.install_city(id,bytes)?,IpDatasetKind::Asn=>runtime.geoip.install_asn(id,bytes)? }
-                }
+            runtime.close();
+            if let Ok(mut subscriptions) = self.subscriptions.lock() {
+                subscriptions.clear();
             }
-            Ok(())
-        }).await?
+        }
     }
-    /// Deployment-only integration API; deliberately has no network HTTP route.
-    /// Validate the complete MMDB before atomically saving its immutable bytes.
-    pub async fn install_ip_dataset(
-        &self,
-        kind: IpDatasetKind,
-        source: String,
-        bytes: Vec<u8>,
-    ) -> Result<meshway_model::ArtifactId, StateError> {
-        if source.is_empty() || source.len() > 256 || source.chars().any(char::is_control) {
-            return Err(StateError::Invalid);
-        }
-        let id = meshway_model::ArtifactId::new(
-            crate::accounts::random_uuid().map_err(|_| StateError::Unavailable)?,
-        )
-        .map_err(|_| StateError::Unavailable)?;
-        let mut checked = GeoIp::default();
-        match kind {
-            IpDatasetKind::GeoIp => checked.install_city(id, bytes.clone())?,
-            IpDatasetKind::Asn => checked.install_asn(id, bytes.clone())?,
-        }
-        let digest = crate::resources::content_digest(&bytes);
-        let runtime = self.runtime.clone();
-        self.handle.execute(move|connection| {
-            let tx=connection.transaction()?;let now=Utc::now();
-            tx.execute("INSERT INTO dataset_artifacts(id,network_id,kind,source,format,data,digest,created_at) VALUES (?1,NULL,?2,?3,'mmdb',?4,?5,?6)",rusqlite::params![id.to_string(),match kind{IpDatasetKind::GeoIp=>"geoip",IpDatasetKind::Asn=>"asn"},source,bytes,digest.to_string(),now.timestamp_millis()])?;
-            tx.commit()?;
-            let mut runtime=runtime.lock().map_err(|_|StateError::Unavailable)?;
-            match kind { IpDatasetKind::GeoIp=>runtime.geoip.install_city(id,bytes)?,IpDatasetKind::Asn=>runtime.geoip.install_asn(id,bytes)? }
-            Ok(id)
-        }).await?
-    }
-    pub fn publisher(&self) -> CommitPublisher<P> {
-        CommitPublisher {
-            runtime: Arc::clone(&self.runtime),
-        }
+    pub fn publisher(&self) -> CommitPublisher {
+        CommitPublisher::new(Arc::clone(&self.runtime))
     }
     pub(crate) fn new(
         handle: Handle,
         provider: P,
         sealer: Arc<crate::secrets::Sealer>,
+        runtime: Arc<Mutex<Runtime>>,
     ) -> Result<Self, StateError> {
         Ok(Self {
             handle,
             provider: Arc::new(provider),
             sealer,
-            runtime: Arc::new(Mutex::new(Runtime {
-                closed: false,
-                hub: StateHub::new()?,
-                geoip: GeoIp::default(),
-                observations: Observations::default(),
-                observation_identities: BTreeMap::new(),
-                resource_results: BTreeMap::new(),
-                subscriptions: BTreeMap::new(),
-            })),
+            runtime,
+            subscriptions: Arc::default(),
         })
     }
     pub async fn accept_history(
@@ -318,13 +274,16 @@ impl<P: StateProvider> StateService<P> {
     ) -> Result<String, StateError> {
         let provider = Arc::clone(&self.provider);
         let runtime = Arc::clone(&self.runtime);
+        let subscriptions = Arc::clone(&self.subscriptions);
         self.handle
             .execute(move |connection| {
                 let tx = connection.transaction()?;
                 let now = Utc::now();
                 let view = provider.view(&tx, &identity, now)?;
                 let mut runtime = runtime.lock().map_err(|_| StateError::Unavailable)?;
-                runtime.subscriptions.retain(|_, sub| {
+                let mut subscriptions =
+                    subscriptions.lock().map_err(|_| StateError::Unavailable)?;
+                subscriptions.retain(|_, sub| {
                     sub.created_at + Duration::minutes(15) > now
                         && sub
                             .disconnected_at
@@ -333,39 +292,50 @@ impl<P: StateProvider> StateService<P> {
                 if runtime.closed {
                     return Err(StateError::Unavailable);
                 }
-                if runtime.subscriptions.len() >= 256 {
-                    return Err(StateError::Budget);
-                }
                 let owner = identity.fingerprint();
-                if runtime
-                    .subscriptions
-                    .values()
-                    .filter(|s| s.owner == owner)
-                    .count()
-                    >= 4
-                {
-                    return Err(StateError::Budget);
-                }
                 let id = random_id()?;
                 if let Some(cursor) = &cursor {
-                    let previous = runtime.subscriptions.iter().find_map(|(id, sub)| {
+                    let previous = subscriptions.iter().find_map(|(id, sub)| {
                         (sub.owner == owner
                             && sub.authorization == view.scope.authorization_digest
                             && sub.replay.after(cursor).is_ok())
                         .then(|| id.clone())
                     });
                     if let Some(previous) = previous {
-                        let mut sub = runtime
-                            .subscriptions
-                            .remove(&previous)
-                            .ok_or(StateError::Cursor)?;
+                        let mut sub = subscriptions.remove(&previous).ok_or(StateError::Cursor)?;
                         let mut pending: VecDeque<_> = sub.replay.after(cursor)?.into();
-                        pending.append(&mut sub.pending);
+                        let replayed: std::collections::BTreeSet<_> = pending
+                            .iter()
+                            .filter_map(|frame| frame.id.clone())
+                            .collect();
+                        pending.extend(sub.pending.drain(..).filter(|frame| {
+                            frame.id.as_ref().is_none_or(|id| !replayed.contains(id))
+                        }));
                         sub.pending = pending;
                         sub.disconnected_at = None;
-                        runtime.subscriptions.insert(id.clone(), sub);
-                        return Ok(id);
+                        if sub.pending.len() <= MAX_REPLAY_EVENTS
+                            && sub
+                                .pending
+                                .iter()
+                                .map(|frame| frame.data.len())
+                                .sum::<usize>()
+                                <= MAX_BATCH_BYTES
+                        {
+                            subscriptions.insert(id.clone(), sub);
+                            return Ok(id);
+                        }
+                        // Resume backlog is bounded too. Fall through to a full
+                        // current snapshot rather than dropping a delta silently.
                     }
+                }
+                if subscriptions.len() >= 256
+                    || subscriptions
+                        .values()
+                        .filter(|sub| sub.owner == owner)
+                        .count()
+                        >= 4
+                {
+                    return Err(StateError::Budget);
                 }
                 let Runtime { hub, geoip, .. } = &mut *runtime;
                 let state = hub.query(&view.scope, None, geoip, now)?;
@@ -382,6 +352,7 @@ impl<P: StateProvider> StateService<P> {
                     disconnected_at: None,
                     created_at: now,
                     observations: BTreeMap::new(),
+                    active_observations: Default::default(),
                     journal_sequence: hub.events.sequence(),
                 };
                 if cursor.is_some() {
@@ -393,7 +364,7 @@ impl<P: StateProvider> StateService<P> {
                     )?);
                 }
                 initial::<P>(&mut sub, ready)?;
-                runtime.subscriptions.insert(id.clone(), sub);
+                subscriptions.insert(id.clone(), sub);
                 Ok(id)
             })
             .await?
@@ -401,12 +372,15 @@ impl<P: StateProvider> StateService<P> {
     async fn poll_frame(&self, id: String) -> Result<StreamPoll, StateError> {
         let provider = Arc::clone(&self.provider);
         let runtime = Arc::clone(&self.runtime);
+        let subscriptions = Arc::clone(&self.subscriptions);
         self.handle
             .execute(move |connection| {
                 let tx = connection.transaction()?;
                 let now = Utc::now();
                 let mut runtime = runtime.lock().map_err(|_| StateError::Unavailable)?;
-                let Some(mut sub) = runtime.subscriptions.remove(&id) else {
+                let mut subscriptions =
+                    subscriptions.lock().map_err(|_| StateError::Unavailable)?;
+                let Some(mut sub) = subscriptions.remove(&id) else {
                     return Ok(StreamPoll::Closed);
                 };
                 // Remove-first ensures all failure paths discard pending old-scope
@@ -416,11 +390,21 @@ impl<P: StateProvider> StateService<P> {
                     Err(_) => return Ok(StreamPoll::Closed),
                 };
                 if view.scope.expires_at <= now
+                    || runtime.closed
                     || sub.created_at + Duration::minutes(15) <= now
                     || sub.authorization != view.scope.authorization_digest
                 {
                     return Ok(StreamPoll::Closed);
                 }
+                runtime.observations.expire(now);
+                let tasks = runtime.observations.visible_tasks(
+                    view.scope.network_id,
+                    &view.scope,
+                    &sub.identity,
+                );
+                let active_observations = runtime.observations.active_subscriptions(&tasks);
+                let observation_scope_changed = sub.active_observations != active_observations;
+                sub.active_observations = active_observations;
                 let Runtime { hub, geoip, .. } = &mut *runtime;
                 let state = hub.query(&view.scope, None, geoip, now)?;
                 let journal = hub
@@ -428,6 +412,8 @@ impl<P: StateProvider> StateService<P> {
                     .after(sub.journal_sequence, view.scope.network_id);
                 let journal_sequence = hub.events.sequence();
                 if journal.is_err()
+                    || observation_scope_changed
+                        && (!sub.pending.is_empty() || !sub.replay.is_empty())
                     || (!sub.pending.is_empty()
                         && (view.configuration != sub.last.configuration
                             || view.entities != sub.last.entities
@@ -436,6 +422,7 @@ impl<P: StateProvider> StateService<P> {
                 {
                     sub.pending.clear();
                     sub.replay.clear();
+                    sub.observations.clear();
                     sub.pending.push_back(SseFrame::encode(
                         None,
                         &ProviderEvent::<P>::Reset {
@@ -454,15 +441,11 @@ impl<P: StateProvider> StateService<P> {
                     initial::<P>(&mut sub, ready)?;
                 } else if sub.pending.is_empty() {
                     let mut changed = false;
-                    runtime.observations.expire(now);
-                    let tasks = runtime.observations.visible_tasks(
-                        view.scope.network_id,
-                        &view.scope,
-                        &runtime.observation_identities,
-                        &sub.identity,
-                    );
-                    let visible_tasks: std::collections::BTreeSet<_> =
-                        tasks.iter().map(|task| task.id).collect();
+                    let visible_tasks: std::collections::BTreeSet<_> = tasks
+                        .iter()
+                        .filter(|task| crate::observations::active(task.phase))
+                        .map(|task| task.id)
+                        .collect();
                     let mut revision = sub.last.scope.configuration_revision;
                     for entry in journal? {
                         match entry.change {
@@ -494,10 +477,18 @@ impl<P: StateProvider> StateService<P> {
                                         path.iter().all(|node| view.scope.visible.contains(node))
                                     }) =>
                             {
-                                enqueue::<P>(
-                                    &mut sub,
-                                    ProviderEvent::<P>::ObservationSample { observation },
-                                )?;
+                                for task in tasks.iter().filter(|task| {
+                                    task.id == observation.id
+                                        && crate::observations::active(task.phase)
+                                }) {
+                                    let mut observation = observation.clone();
+                                    observation.subscription_id = task.subscription_id;
+                                    observation.subscriber_expires_at = task.subscriber_expires_at;
+                                    enqueue::<P>(
+                                        &mut sub,
+                                        ProviderEvent::<P>::ObservationSample { observation },
+                                    )?;
+                                }
                                 changed = true;
                             }
                             _ => {}
@@ -519,15 +510,34 @@ impl<P: StateProvider> StateService<P> {
                         sub.cursor = ready.clone();
                         initial::<P>(&mut sub, ready)?;
                         let frame = sub.pending.pop_front().ok_or(StateError::Unavailable)?;
-                        runtime.subscriptions.insert(id, sub);
+                        subscriptions.insert(id, sub);
                         return Ok(StreamPoll::Frame(frame));
                     }
+                    let retained: std::collections::BTreeSet<_> = tasks
+                        .iter()
+                        .filter_map(|task| task.subscription_id)
+                        .collect();
+                    let removed: Vec<_> = sub
+                        .observations
+                        .keys()
+                        .filter(|id| !retained.contains(id))
+                        .copied()
+                        .collect();
+                    for subscription_id in removed {
+                        sub.observations.remove(&subscription_id);
+                        enqueue::<P>(
+                            &mut sub,
+                            ProviderEvent::<P>::ObservationRemoved { subscription_id },
+                        )?;
+                        changed = true;
+                    }
                     for task in tasks {
+                        let subscription = task.subscription_id.ok_or(StateError::Unavailable)?;
                         let digest = crate::resources::content_digest(
                             &serde_json::to_vec(&task).map_err(|_| StateError::Invalid)?,
                         );
-                        if sub.observations.get(&task.id) != Some(&digest) {
-                            sub.observations.insert(task.id, digest);
+                        if sub.observations.get(&subscription) != Some(&digest) {
+                            sub.observations.insert(subscription, digest);
                             enqueue::<P>(
                                 &mut sub,
                                 ProviderEvent::<P>::ObservationStatus {
@@ -606,7 +616,7 @@ impl<P: StateProvider> StateService<P> {
                     sub.last = view;
                     sub.state = state;
                     if !changed {
-                        runtime.subscriptions.insert(id, sub);
+                        subscriptions.insert(id, sub);
                         return Ok(StreamPoll::Pending);
                     }
                 }
@@ -614,35 +624,33 @@ impl<P: StateProvider> StateService<P> {
                 if frame.id.is_some() {
                     sub.replay.push(frame.clone());
                 }
-                runtime.subscriptions.insert(id, sub);
+                subscriptions.insert(id, sub);
                 Ok(StreamPoll::Frame(frame))
             })
             .await?
     }
 }
-#[derive(Clone, Copy)]
-pub enum IpDatasetKind {
-    GeoIp,
-    Asn,
-}
 /// Clone this handle into A/B's accepted SQLite closures. Publish directly
 /// after COMMIT, never in the awaiting HTTP future.
-pub struct CommitPublisher<P: StateProvider> {
-    runtime: Arc<Mutex<Runtime<P>>>,
+pub struct CommitPublisher {
+    runtime: Arc<Mutex<Runtime>>,
 }
 /// Synchronous execution input for B. Call after B has validated the supplied
 /// admission in the same transaction; no HTTP source address participates.
-pub struct StateReader<P: StateProvider> {
-    runtime: Arc<Mutex<Runtime<P>>>,
+pub struct StateReader {
+    runtime: Arc<Mutex<Runtime>>,
 }
-impl<P: StateProvider> Clone for StateReader<P> {
+impl Clone for StateReader {
     fn clone(&self) -> Self {
         Self {
             runtime: Arc::clone(&self.runtime),
         }
     }
 }
-impl<P: StateProvider> StateReader<P> {
+impl StateReader {
+    pub(crate) fn new(runtime: Arc<Mutex<Runtime>>) -> Self {
+        Self { runtime }
+    }
     pub fn location(
         &self,
         admission: &ReportAdmission,
@@ -656,14 +664,17 @@ impl<P: StateProvider> StateReader<P> {
         Ok(hub.location(admission, geoip, now))
     }
 }
-impl<P: StateProvider> Clone for CommitPublisher<P> {
+impl Clone for CommitPublisher {
     fn clone(&self) -> Self {
         Self {
             runtime: Arc::clone(&self.runtime),
         }
     }
 }
-impl<P: StateProvider> CommitPublisher<P> {
+impl CommitPublisher {
+    pub(crate) fn new(runtime: Arc<Mutex<Runtime>>) -> Self {
+        Self { runtime }
+    }
     /// Preferred A/B write boundary: invoke inside the accepted store job.
     /// A failed transaction emits nothing; cancellation of the HTTP waiter
     /// cannot interrupt this synchronous commit-to-journal sequence.
@@ -689,7 +700,6 @@ impl<P: StateProvider> CommitPublisher<P> {
     pub fn revoke_session(&self, session: meshway_model::SessionId) {
         if let Ok(mut runtime) = self.runtime.lock() {
             runtime.observations.revoke_session(session);
-            runtime.observation_identities.remove(&session);
         }
     }
 }
@@ -784,8 +794,8 @@ impl<P: StateProvider> StreamSource for StateService<P> {
         })
     }
     fn cancel(&self, subscription: &str) {
-        if let Ok(mut runtime) = self.runtime.lock()
-            && let Some(sub) = runtime.subscriptions.get_mut(subscription)
+        if let Ok(mut subscriptions) = self.subscriptions.lock()
+            && let Some(sub) = subscriptions.get_mut(subscription)
         {
             sub.disconnected_at = Some(Utc::now());
         }

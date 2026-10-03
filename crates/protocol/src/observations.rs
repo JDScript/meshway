@@ -1,7 +1,7 @@
 use crate::object::wire_object;
 use chrono::{DateTime, Utc};
 use meshway_model::{
-    InstanceId, NodeId, ObservationId, Sequence,
+    InstanceId, NodeId, ObservationId, ObservationSubscriptionId, Sequence,
     observations::{MetricKind, ObservationEvent, ObservationSample},
     state::ConfigurationRef,
 };
@@ -50,9 +50,27 @@ wire_object! { #[derive(Clone, Debug)] pub struct RecentLink {
     pub source_node_id: NodeId, pub peer_node_id: NodeId, pub link_id: String,
     pub transport: String, pub last_event_at: DateTime<Utc>, pub closed: bool,
 } }
-wire_object! { #[derive(Clone, Debug)] pub struct HistoryCoverage {
-    pub source_node_id: NodeId, pub before: DateTime<Utc>, pub reason: CoverageReason,
-} }
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize, utoipa::ToSchema)]
+#[serde(tag = "type", rename_all = "camelCase", deny_unknown_fields)]
+pub enum HistoryCoverage {
+    Pruned {
+        #[serde(rename = "sourceNodeId")]
+        source_node_id: NodeId,
+        before: DateTime<Utc>,
+        reason: CoverageReason,
+    },
+    CollectionGap {
+        #[serde(rename = "sourceNodeId")]
+        source_node_id: NodeId,
+        #[serde(rename = "instanceId")]
+        instance_id: InstanceId,
+        #[serde(rename = "eventId")]
+        event_id: meshway_model::EventId,
+        from: DateTime<Utc>,
+        to: DateTime<Utc>,
+        dropped: Sequence,
+    },
+}
 #[derive(
     Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize, utoipa::ToSchema,
 )]
@@ -79,6 +97,7 @@ pub enum ObservationPath {
     Explicit { path: Vec<NodeId> },
 }
 wire_object! { #[derive(Clone, Debug)] pub struct CreateObservation {
+    pub subscription_id: ObservationSubscriptionId,
     pub source_node_id: NodeId, pub target_node_id: NodeId, pub selection: ObservationPath,
     pub metrics: Vec<MetricKind>, pub interval_ms: u32,
 } }
@@ -93,6 +112,7 @@ pub enum ObservationPhase {
     Failed,
     Expired,
     Cancelled,
+    Unsupported,
 }
 wire_object! { #[derive(Clone, Debug)] pub struct ObservationTask {
     pub id: ObservationId, pub source_node_id: NodeId, pub target_node_id: NodeId,
@@ -101,9 +121,30 @@ wire_object! { #[derive(Clone, Debug)] pub struct ObservationTask {
     pub metrics: Vec<MetricKind>, pub interval_ms: u32, pub phase: ObservationPhase,
     pub expires_at: DateTime<Utc>, pub renew_after: DateTime<Utc>, pub latest: Option<ObservationSample>,
     pub subscriber_expires_at: Option<DateTime<Utc>>,
+    pub subscription_id: Option<ObservationSubscriptionId>,
 } }
 wire_object! { #[derive(Clone, Debug)] pub struct ObservationList { pub items: Vec<ObservationTask> } }
 wire_object! { #[derive(Clone, Debug)] pub struct ObservationResult {
-    pub instance_id: InstanceId, pub configuration: ConfigurationRef, pub path: Vec<NodeId>,
-    pub path_segment: Sequence, pub sample: ObservationSample,
+    pub instance_id: InstanceId, pub configuration: ConfigurationRef, pub result: ObservationUpdate,
 } }
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize, utoipa::ToSchema)]
+#[serde(tag = "type", rename_all = "camelCase", deny_unknown_fields)]
+pub enum ObservationUpdate {
+    Phase {
+        phase: ReportedObservationPhase,
+    },
+    Sample {
+        path: Vec<NodeId>,
+        #[serde(rename = "pathSegment")]
+        path_segment: Sequence,
+        sample: Box<ObservationSample>,
+    },
+}
+#[derive(Clone, Copy, Debug, serde::Serialize, serde::Deserialize, utoipa::ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub enum ReportedObservationPhase {
+    Preparing,
+    Failed,
+    Completed,
+    Unsupported,
+}
