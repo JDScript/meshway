@@ -132,3 +132,82 @@ fn empty_plaintext_roundtrips_and_errors_are_safe_categories() {
         assert!(!text.contains(&sealer.id.to_string()));
     }
 }
+
+#[test]
+fn cursor_scope_is_independent_of_configuration_and_binds_user_and_network() {
+    use meshway_model::UserId;
+    let sealer = sealer();
+    let user = UserId::new(random_key_id().unwrap().into_uuid()).unwrap();
+    let other_user = UserId::new(random_key_id().unwrap().into_uuid()).unwrap();
+    let network = NetworkId::new(random_key_id().unwrap().into_uuid()).unwrap();
+    let other_network = NetworkId::new(random_key_id().unwrap().into_uuid()).unwrap();
+    let list = sealer
+        .seal_cursor(CursorScope::Networks(user), b"cursor payload")
+        .unwrap();
+    assert!(
+        sealer
+            .open_cursor(CursorScope::Networks(user), list.as_bytes())
+            .unwrap()
+            .as_bytes()
+            == b"cursor payload"
+    );
+    assert!(
+        sealer
+            .open_cursor(CursorScope::Networks(other_user), list.as_bytes())
+            .is_err()
+    );
+    assert!(
+        sealer
+            .open_cursor(CursorScope::Members { user, network }, list.as_bytes())
+            .is_err()
+    );
+    let members = sealer
+        .seal_cursor(CursorScope::Members { user, network }, b"members payload")
+        .unwrap();
+    assert!(
+        sealer
+            .open_cursor(
+                CursorScope::Members {
+                    user,
+                    network: other_network
+                },
+                members.as_bytes()
+            )
+            .is_err()
+    );
+    assert!(
+        sealer
+            .open_cursor(
+                CursorScope::Members {
+                    user: other_user,
+                    network
+                },
+                members.as_bytes()
+            )
+            .is_err()
+    );
+    for purpose in [Purpose::Source, Purpose::Configuration, Purpose::Bindings] {
+        assert!(
+            sealer
+                .open(network, Revision::MIN, purpose, members.as_bytes())
+                .is_err()
+        );
+        let config = sealer
+            .seal(network, Revision::MIN, purpose, b"private configuration")
+            .unwrap();
+        assert!(
+            sealer
+                .open_cursor(CursorScope::Networks(user), config.as_bytes())
+                .is_err()
+        );
+    }
+    for i in 0..members.as_bytes().len() {
+        let mut tampered = members.as_bytes().to_vec();
+        tampered[i] ^= 1;
+        assert!(
+            sealer
+                .open_cursor(CursorScope::Members { user, network }, &tampered)
+                .is_err()
+        );
+    }
+}

@@ -3,6 +3,7 @@ use tokio::sync::Semaphore;
 
 use crate::accounts::Accounts;
 use crate::directory::{Directory, DirectoryError};
+use crate::networks::Networks;
 use crate::secrets::{self, KeyError, Sealer};
 use crate::settings::Settings;
 use crate::store::{Executor, ExecutorError, OpenError, Options, schema};
@@ -112,6 +113,10 @@ impl App {
     /// Handles stop accepting storage work when this App closes.
     pub fn accounts(&self) -> Accounts {
         self.accounts.clone()
+    }
+
+    pub fn networks(&self) -> Networks {
+        Networks::new(self.executor.handle(), self.sealer())
     }
 
     /// Runs full, read-only schema, SQLite integrity, and foreign-key checks on

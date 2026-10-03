@@ -15,6 +15,9 @@ use zeroize::Zeroizing;
 
 use crate::directory::{Directory, DirectoryError};
 
+mod cursor;
+pub(crate) use cursor::CursorScope;
+
 const HEADER: &[u8; 5] = b"MWSC\x01";
 const KEY_HEADER: &[u8; 5] = b"MWSK\x01";
 const PREFIX: usize = 45;

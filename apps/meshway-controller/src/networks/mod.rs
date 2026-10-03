@@ -4,7 +4,126 @@
 //! Configuration remains a versioned value, never a second set of entity fields.
 
 use chrono::{DateTime, Utc};
-use meshway_model::{MembershipId, MembershipRole, NetworkId, Revision, UserId, Version};
+use meshway_model::{
+    MembershipId, MembershipRole, NetworkId, RequestId, Revision, UserId, Version,
+};
+use std::sync::Arc;
+
+pub(crate) mod configuration;
+pub(crate) mod pagination;
+
+use crate::{
+    accounts::token_digest,
+    secrets::Sealer,
+    store::{Handle, networks as store},
+};
+
+#[derive(Clone)]
+pub struct Networks {
+    handle: Handle,
+    sealer: Arc<Sealer>,
+}
+
+impl Networks {
+    pub(crate) fn new(handle: Handle, sealer: Arc<Sealer>) -> Self {
+        Self { handle, sealer }
+    }
+
+    pub async fn create(
+        &self,
+        token: &str,
+        name: String,
+        request_id: RequestId,
+    ) -> Result<NetworkView, NetworkError> {
+        let digest = token_digest(token)?;
+        let name = normalize_name(&name)?;
+        // Cheap authentication before template preparation; the creating
+        // transaction still checks the current session again after admission.
+        self.handle
+            .execute(move |connection| store::authenticate(connection, digest))
+            .await??;
+        let prepared = configuration::prepare(name, &self.sealer)?;
+        let sealer = Arc::clone(&self.sealer);
+        self.handle
+            .execute(move |connection| {
+                store::create(connection, digest, prepared, request_id, &sealer)
+            })
+            .await?
+    }
+
+    pub async fn list(
+        &self,
+        token: &str,
+        limit: u16,
+        cursor: Option<String>,
+    ) -> Result<NetworkPage, NetworkError> {
+        pagination::validate_limit(limit)?;
+        let digest = token_digest(token)?;
+        let sealer = Arc::clone(&self.sealer);
+        self.handle
+            .execute(move |connection| store::list(connection, digest, limit, cursor, &sealer))
+            .await?
+    }
+
+    pub async fn get(
+        &self,
+        token: &str,
+        network_id: NetworkId,
+    ) -> Result<NetworkView, NetworkError> {
+        let digest = token_digest(token)?;
+        let sealer = Arc::clone(&self.sealer);
+        self.handle
+            .execute(move |connection| store::get(connection, digest, network_id, &sealer))
+            .await?
+    }
+
+    pub async fn rename(
+        &self,
+        token: &str,
+        network_id: NetworkId,
+        name: String,
+        expected_name: String,
+        request_id: RequestId,
+    ) -> Result<NetworkView, NetworkError> {
+        let digest = token_digest(token)?;
+        let name = normalize_name(&name)?;
+        // Expected metadata must be the exact previously returned spelling.
+        if normalize_name(&expected_name)? != expected_name {
+            return Err(NetworkError::InvalidName);
+        }
+        let sealer = Arc::clone(&self.sealer);
+        self.handle
+            .execute(move |connection| {
+                store::rename(
+                    connection,
+                    digest,
+                    network_id,
+                    name,
+                    expected_name,
+                    request_id,
+                    &sealer,
+                )
+            })
+            .await?
+    }
+
+    pub async fn members(
+        &self,
+        token: &str,
+        network_id: NetworkId,
+        limit: u16,
+        cursor: Option<String>,
+    ) -> Result<MemberPage, NetworkError> {
+        pagination::validate_limit(limit)?;
+        let digest = token_digest(token)?;
+        let sealer = Arc::clone(&self.sealer);
+        self.handle
+            .execute(move |connection| {
+                store::members(connection, digest, network_id, limit, cursor, &sealer)
+            })
+            .await?
+    }
+}
 
 #[derive(Debug, thiserror::Error, PartialEq, Eq)]
 #[non_exhaustive]
@@ -19,6 +138,8 @@ pub enum NetworkError {
     InvalidName,
     #[error("request ID was already used with different input")]
     RequestConflict,
+    #[error("network name changed since it was read")]
+    NameConflict,
     #[error("invalid or expired pagination cursor")]
     InvalidCursor,
     #[error("page limit must be between 1 and 200")]
@@ -90,6 +211,22 @@ pub struct MemberView {
     pub joined_at: DateTime<Utc>,
 }
 
+/// Creation-bounded traversal, with current metadata and permissions on each
+/// page. `as_of` identifies the first page's boundary, not a frozen SQL snapshot.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct NetworkPage {
+    pub items: Vec<NetworkView>,
+    pub next_cursor: Option<String>,
+    pub as_of: DateTime<Utc>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct MemberPage {
+    pub items: Vec<MemberView>,
+    pub next_cursor: Option<String>,
+    pub as_of: DateTime<Utc>,
+}
+
 pub(crate) fn normalize_name(value: &str) -> Result<String, NetworkError> {
     if value.len() > 1024 || value.chars().any(char::is_control) {
         return Err(NetworkError::InvalidName);
@@ -100,3 +237,6 @@ pub(crate) fn normalize_name(value: &str) -> Result<String, NetworkError> {
     }
     Ok(value.to_owned())
 }
+
+#[cfg(test)]
+mod tests;
