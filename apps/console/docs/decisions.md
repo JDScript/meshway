@@ -11,26 +11,49 @@ its generated client only, and only what the controller delivers:
 - Delivered: registration (when the controller publishes it as open), sign-in,
   session restore and sign-out (`getAuthOptions`, `register`, `login`,
   `getAuthSession`, `logout`); networks (`listNetworks`, `createNetwork`,
-  `getNetwork`, `renameNetwork`) and the read-only member list
-  (`listNetworkMembers`); the account (`getAccount`, `changeAccountEmail`,
-  `changeAccountPassword`, `listAccountSessions`, `revokeAccountSession`,
-  `revokeOtherAccountSessions`, `revokeAllAccountSessions`,
-  `listAccountActivity`) and password reset links (`inspectPasswordReset`,
-  `redeemPasswordReset`).
+  `getNetwork`, `renameNetwork`); members and join links
+  (`listNetworkMembers`, `changeMemberRole`, `getMemberRemovalImpact`,
+  `removeMember`, `getLeaveImpact`, `leaveNetwork`, `listJoinLinks`,
+  `createJoinLink`, `revokeJoinLink`, `inspectJoinLink`, `redeemJoinLink`);
+  the network's activity (`listNetworkActivity`); the account (`getAccount`,
+  `changeAccountEmail`, `changeAccountPassword`, `listAccountSessions`,
+  `revokeAccountSession`, `revokeOtherAccountSessions`,
+  `revokeAllAccountSessions`, `listAccountActivity`) and password reset
+  links (`inspectPasswordReset`, `redeemPasswordReset`).
 - Pages now: `/login`, `/register`; `/` opens the remembered network (kept
   per account) or the first listed, else offers creating the first; a
   network's overview (the empty globe and one line saying this controller
-  provides no nodes), members (read only, offered when the network's
-  `actions.manageMembers`), settings `network` (the name, editable when
-  `actions.rename`; the ID, creation date and role) and the account (email
-  and ID, changing the email and the password, the sessions with ending one,
-  the others or all, the account's activity). `/reset-password` takes a
-  reset link the controller's host issued. The network menu switches
-  networks (a page at a time) and creates one.
+  provides no nodes), members (for `actions.manageMembers`: the members and
+  the join links, a member's workspace), settings `network` (the name,
+  editable when `actions.rename`; the ID, creation date and role; leaving)
+  and `activity` (for `manageMembers`), and the account (email and ID,
+  changing the email and the password, the sessions with ending one, the
+  others or all, the account's activity). `/join` accepts a join link;
+  `/reset-password` takes a reset link the controller's host issued. The
+  network menu switches networks (a page at a time) and creates one.
+- Members: each member's `actions` alone decide what is offered (a role
+  among `assignableRoles`, removal; for oneself removal is leaving). Removal
+  and leaving first read their impact (the User-identity devices deleted,
+  Tag devices kept) and send its `version` and `revision`; a
+  `version_conflict` reads the members again. A role change sends the
+  member's `version`.
+- Join links: a role and an expiry (1 hour to 7 days); the link
+  (`/join#token=…`) is shown once in its dialog, which unmounts on close. A
+  repeated request (`secretDelivery: "unavailable"`) says the value cannot
+  be read again and offers revoking it and issuing another. The controller
+  publishes no roles a viewer may issue or links a viewer may revoke, so all
+  roles and every pending link's revoke are offered and a refusal says so.
+- `/join` reads the token from the fragment once and replaces the address.
+  Signed out, the card signs in (or registers, only while registration is
+  open) in place; signed in, it shows the network, role, expiry and account
+  (`inspectJoinLink`), and joining opens the network; `already_member`
+  opens it too. A session the controller rejects there returns to the
+  card's sign-in, keeping the link. The language switch stays disabled
+  while the link is held.
 - Not delivered: nodes, configuration (access, topology, routing, DNS),
-  member changes, join links, and the event stream. Their pages below are the target design; they return when
-  their operations exist, and nothing stands in for them. What the console
-  needs from the V2 API is in `v2-api-needs.md`.
+  and the event stream. Their pages below are the target design; they
+  return when their operations exist, and nothing stands in for them. What
+  the console needs from the V2 API is in `v2-api-needs.md`.
 - What a role may do is the network's `actions`, as the controller computes
   them; the console never derives it from the role.
 - Changes the controller deduplicates (`createNetwork`, `renameNetwork`)
@@ -38,8 +61,10 @@ its generated client only, and only what the controller delivers:
   outcome is unknown (no 4xx answer), the same input sends the same request
   again (`lib/attempt.ts`). A rename sends `expectedName`, the name last
   read; on `name_conflict` the network is read again and the typed name
-  kept. The name rule is the controller's: only an empty name is refused
-  before sending.
+  kept. A name is checked before sending by the rules the controller
+  publishes (`networkNameRules`, `lib/network-name.ts`: raw UTF-8 bytes and
+  Cc characters, then Unicode White_Space trimmed and code points counted);
+  the controller checks again.
 - A network's name is entity metadata, not configuration: it is saved by
   its own button, with no draft or commit bar.
 - `lib/api.ts` holds the one `ControlClient` (same origin). `call` unwraps a
@@ -140,16 +165,16 @@ controller supports today; the rest of each row is the target design.
 | --- | --- | --- | --- | --- |
 | Overview `/overview?node=` | the empty globe, one line: no nodes | none: the globe is its index | none; the node peek; with no node or one, what adding nodes takes | |
 | Nodes `/nodes?view=nodes\|tags` | absent | nodes (search, state) or tags | `/nodes/<id>?tab=overview\|links\|transport\|manage`, `/nodes/add`, `/nodes/tags/<tag>` | revoke, enrolment token |
-| Members `/members?view=members\|invitations` | the members, read only, for `manageMembers` | members or invitations | `/members/<id>` (role, devices, removal) | invite (link shown once), removal |
+| Members `/members?view=members\|links` | for `manageMembers`: members, join links, a member's role and removal | members or join links | `/members/<membership>` (role, devices, removal) | join link (shown once), removal, revoke |
 | Policy `/policy` | absent | the four layers with their diagnostics | `/policy/<layer>`: connections, grants, mesh routes, egress (public rules, profiles, automatic, assignments), source (JSONC) | |
-| Settings `/settings` | `network`: name, ID, created, role | sections | `/settings/<section>`: network, DNS | |
+| Settings `/settings` | `network`: name, ID, created, role, leave; `activity` for `manageMembers` | sections | `/settings/<section>`: network, activity, DNS | leave |
 | Account `/account` (from the account menu) | email, ID, email and password changes, sessions, activity | none | memberships | end a session, the others, all; change the password |
 
 Outside the shell, one card over the globe like the sign-in: `/login`,
 `/register` (offered only while the controller publishes registration as
-open), `/` with no network (creating the first), a network not found, and
-later the join-link, password-reset and device-approval pages of
-the V2 API.
+open), `/` with no network (creating the first), a network not found,
+`/join`, and later the password-reset and device-approval pages of the V2
+API.
 
 - Policy is one page because the policy is one document with one revision:
   one draft, one commit bar. Egress is shown but not editable while the
