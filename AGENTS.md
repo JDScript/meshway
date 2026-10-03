@@ -98,5 +98,6 @@ Rust 控制面与 Agent、React pure SPA 控制台、VitePress 文档站。
 - 当前状态：`4c9a5be` 同身份直连 / 四地有序路径恢复复验 PASS，测试资源已清理，私有身份 / 源配置 / 旧 FAIL 及失败窗口保留。远端持久 latency history 查询未验；KR→NYC 底层 FIB 经 WARP，不能当公网直连或打洞证据。
 - Controller 按 `http/`、`contracts/`、`accounts/`、`store/` 分责；`store/schema/` 拥有当前 schema 原子初始化与结构/数据完整性校验，历史升级链已删除，普通启动不自动重置。共享测试辅助在 `test_support/`；网络存在性类型位于中性 `network_scope`，不代替权限；单一策略源/CAS与执行epoch/ACK分别归 `network_policy`、`mesh_execution`。不为测试读取SQL扩大生产可见性。
 - 当前主线：单一 policy、当前 schema 初始化及 Agent 消费者已通过独立审查与正常 Linux 整合验收，本机开发服务和三个 Docker demo 已切换。后续推进按实际承载能力的自动建连 / 打洞；状态型业务回包、完整出口 / 域名分流、平台默认 STUN、GeoIP 与自动地区方案尚未交付。Apple 新增开发暂停，console 由用户独立工作流维护。未审定候选不部署。
+- 用户最新确认优先继续自动组网、优先级主备和真实打洞（主线1），并行推进状态型回包及完整出口/域名-IP分流（主线2）。连接主线从已有 `nat-connectivity` 候选续接当前 Agent 领域库和唯一 policy；第一份闭环须两端仅出站、无发布端口/手填对端候选，并验证实际直连与获准中继兜底。TCP/VLESS 打洞仍在范围内，不以 UDP 优先实现替代其交付。共享 Node/HTTP 契约、根 manifest/lock 与最终合并由协调者收敛，各并行任务先交可消费的契约 checkpoint，不能复制 DTO 或各自建立兼容轨。
 - 性能本批已结束，不整分支部署 offload / NEON 实验或扩大矩阵；未知归属或仍有进程 / 未提交工作的树须保留。
 - 独立完成的工作形成清晰提交。提交前检查生成产物、文档和实际运行命令一致。
