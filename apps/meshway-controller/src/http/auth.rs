@@ -13,7 +13,10 @@ use crate::accounts::{Accounts, AuthenticatedSession, IssuedSession, Secret};
 
 use super::error::HttpError;
 
-fn rules(rules: crate::accounts::PasswordRules, id: RequestId) -> Result<PasswordRules, HttpError> {
+pub(super) fn rules(
+    rules: crate::accounts::PasswordRules,
+    id: RequestId,
+) -> Result<PasswordRules, HttpError> {
     let convert = |value| u16::try_from(value).map_err(|_| HttpError::unavailable(Some(id)));
     Ok(PasswordRules {
         min_codepoints: convert(rules.min_codepoints)?,
@@ -79,6 +82,7 @@ pub(super) async fn options(
         request_id: id,
         registration_enabled: accounts.options().registration_enabled,
         password_rules: rules(accounts.options().password, id)?,
+        network_name_rules: meshway_protocol::NetworkNameRules::CURRENT,
     }))
 }
 

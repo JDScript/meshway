@@ -57,6 +57,7 @@ pub(crate) enum Purpose {
     Source,
     Configuration,
     Bindings,
+    Request,
 }
 
 pub(crate) struct Sealer {
@@ -82,6 +83,24 @@ impl Plaintext {
 }
 
 impl Sealer {
+    /// Private deterministic identifiers for revocation/idempotency of low
+    /// entropy secrets. These identifiers never appear in public API views.
+    pub(crate) fn fingerprint(
+        &self,
+        network: NetworkId,
+        kind: &str,
+        value: &[u8],
+    ) -> Result<[u8; 32], SealError> {
+        use hmac::{Hmac, Mac};
+        let mut mac = <Hmac<sha2::Sha256> as Mac>::new_from_slice(self.key.as_ref())
+            .map_err(|_| SealError::Encryption)?;
+        mac.update(b"meshway/credential-fingerprint/v1\0");
+        mac.update(network.as_uuid().as_bytes());
+        mac.update(&(kind.len() as u64).to_be_bytes());
+        mac.update(kind.as_bytes());
+        mac.update(value);
+        Ok(mac.finalize().into_bytes().into())
+    }
     pub(crate) fn seal(
         &self,
         network: NetworkId,
@@ -178,6 +197,7 @@ fn context(network: NetworkId, revision: Revision, purpose: Purpose) -> Vec<u8> 
         Purpose::Source => 1,
         Purpose::Configuration => 2,
         Purpose::Bindings => 3,
+        Purpose::Request => 4,
     });
     bytes
 }

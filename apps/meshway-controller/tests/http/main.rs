@@ -1,4 +1,6 @@
 #![cfg(unix)]
+mod management;
+static ACCOUNT_FLOW: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
 
 use std::{path::Path, time::Duration};
 
@@ -141,6 +143,7 @@ async fn session(client: &Client, server: &Server, token: &str) -> AuthSessionRe
 // One sequential account scenario: production Argon2 budget, never a test KDF.
 #[tokio::test]
 async fn real_accounts_http_persistence_and_safe_rejections() {
+    let _serial = ACCOUNT_FLOW.lock().await;
     let temp = tempfile::tempdir().unwrap();
     let path = temp.path().canonicalize().unwrap().join("data");
     let server = Server::start(&path, true).await;
@@ -491,10 +494,13 @@ fn exported_openapi_is_the_actual_router_contract() {
     let spec = serde_json::to_value(http::openapi()).unwrap();
     let artifact: serde_json::Value =
         serde_json::from_str(include_str!("../../../../packages/protocol/openapi.json")).unwrap();
-    assert_eq!(spec, artifact);
+    assert!(
+        spec == artifact,
+        "OpenAPI drift: regenerate using export-openapi"
+    );
     assert_eq!(spec["openapi"], "3.1.0");
     let paths = spec["paths"].as_object().unwrap();
-    assert_eq!(paths.len(), 9);
+    assert_eq!(paths.len(), 38);
     for (path, method, operation, status, component) in [
         (
             "options",
@@ -547,6 +553,19 @@ fn exported_openapi_is_the_actual_router_contract() {
         .unwrap()
     {
         assert_eq!(variant["additionalProperties"], false);
+    }
+    for name in [
+        "ConfigurationRequest",
+        "JoinLinkCreated",
+        "ActivityActor",
+        "ActivityTarget",
+    ] {
+        for variant in spec["components"]["schemas"][name]["oneOf"]
+            .as_array()
+            .unwrap()
+        {
+            assert_eq!(variant["additionalProperties"], false, "{name}");
+        }
     }
     for (component, fields) in [
         (

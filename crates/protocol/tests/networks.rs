@@ -17,6 +17,7 @@ fn network_lists_retain_required_nullable_cursor_and_reject_invalid_roles() {
     let valid = json!({
         "requestId": "34567890-3456-4456-8456-34567890abcd",
         "items": [network],
+        "total": 1,
         "nextCursor": null,
         "asOf": "2026-10-03T12:00:00Z"
     });

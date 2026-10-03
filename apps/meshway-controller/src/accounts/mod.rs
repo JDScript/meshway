@@ -6,8 +6,12 @@
 //! recheck the current session and account in their own transaction.
 
 mod email;
+mod management;
 mod password;
 mod secret;
+pub use management::{
+    AccountSession, AccountSessionPage, IssuedReset, ResetInspection, RevokeSessions,
+};
 
 use std::time::Duration;
 
@@ -19,7 +23,7 @@ use crate::store::{Handle, accounts as store};
 #[cfg(test)]
 pub(crate) use password::TEST_KDF_LOCK;
 pub use secret::Secret;
-pub(crate) use secret::{issue_token, random_uuid, token_digest};
+pub(crate) use secret::{issue_one_time, issue_token, one_time_digest, random_uuid, token_digest};
 
 /// Safe, fixed error categories; never contains a supplied value or SQL error.
 #[derive(Debug, thiserror::Error, PartialEq, Eq)]
@@ -37,6 +41,12 @@ pub enum AccountError {
     InvalidCredentials,
     #[error("invalid or expired session")]
     InvalidSession,
+    #[error("resource is not available")]
+    NotFound,
+    #[error("invalid or consumed recovery credential")]
+    InvalidReset,
+    #[error("invalid request")]
+    InvalidRequest,
     #[error("account computation budget is busy")]
     Busy,
     #[error("account service is unavailable")]

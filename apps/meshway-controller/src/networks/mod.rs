@@ -10,6 +10,7 @@ use meshway_model::{
 use std::sync::Arc;
 
 pub(crate) mod configuration;
+pub(crate) mod management;
 pub(crate) mod pagination;
 
 use crate::{
@@ -22,11 +23,25 @@ use crate::{
 pub struct Networks {
     handle: Handle,
     sealer: Arc<Sealer>,
+    configuration_cache: Arc<crate::configuration::SnapshotCache>,
+}
+pub(crate) struct NameChange {
+    pub(crate) name: String,
+    pub(crate) expected: String,
+    pub(crate) request: RequestId,
 }
 
 impl Networks {
-    pub(crate) fn new(handle: Handle, sealer: Arc<Sealer>) -> Self {
-        Self { handle, sealer }
+    pub(crate) fn new(
+        handle: Handle,
+        sealer: Arc<Sealer>,
+        configuration_cache: Arc<crate::configuration::SnapshotCache>,
+    ) -> Self {
+        Self {
+            handle,
+            sealer,
+            configuration_cache,
+        }
     }
 
     pub async fn create(
@@ -44,9 +59,10 @@ impl Networks {
             .await??;
         let prepared = configuration::prepare(name, &self.sealer)?;
         let sealer = Arc::clone(&self.sealer);
+        let cache = Arc::clone(&self.configuration_cache);
         self.handle
             .execute(move |connection| {
-                store::create(connection, digest, prepared, request_id, &sealer)
+                store::create(connection, digest, prepared, request_id, &sealer, &cache)
             })
             .await?
     }
@@ -60,8 +76,11 @@ impl Networks {
         pagination::validate_limit(limit)?;
         let digest = token_digest(token)?;
         let sealer = Arc::clone(&self.sealer);
+        let cache = Arc::clone(&self.configuration_cache);
         self.handle
-            .execute(move |connection| store::list(connection, digest, limit, cursor, &sealer))
+            .execute(move |connection| {
+                store::list(connection, digest, limit, cursor, &sealer, &cache)
+            })
             .await?
     }
 
@@ -72,8 +91,9 @@ impl Networks {
     ) -> Result<NetworkView, NetworkError> {
         let digest = token_digest(token)?;
         let sealer = Arc::clone(&self.sealer);
+        let cache = Arc::clone(&self.configuration_cache);
         self.handle
-            .execute(move |connection| store::get(connection, digest, network_id, &sealer))
+            .execute(move |connection| store::get(connection, digest, network_id, &sealer, &cache))
             .await?
     }
 
@@ -92,16 +112,20 @@ impl Networks {
             return Err(NetworkError::InvalidName);
         }
         let sealer = Arc::clone(&self.sealer);
+        let cache = Arc::clone(&self.configuration_cache);
         self.handle
             .execute(move |connection| {
                 store::rename(
                     connection,
                     digest,
                     network_id,
-                    name,
-                    expected_name,
-                    request_id,
+                    NameChange {
+                        name,
+                        expected: expected_name,
+                        request: request_id,
+                    },
                     &sealer,
+                    &cache,
                 )
             })
             .await?
@@ -117,9 +141,12 @@ impl Networks {
         pagination::validate_limit(limit)?;
         let digest = token_digest(token)?;
         let sealer = Arc::clone(&self.sealer);
+        let cache = Arc::clone(&self.configuration_cache);
         self.handle
             .execute(move |connection| {
-                store::members(connection, digest, network_id, limit, cursor, &sealer)
+                store::members(
+                    connection, digest, network_id, limit, cursor, &sealer, &cache,
+                )
             })
             .await?
     }
@@ -144,6 +171,14 @@ pub enum NetworkError {
     InvalidCursor,
     #[error("page limit must be between 1 and 200")]
     InvalidLimit,
+    #[error("member changed since it was read")]
+    VersionConflict,
+    #[error("the last Owner cannot be removed or demoted")]
+    LastOwner,
+    #[error("already a network member")]
+    AlreadyMember,
+    #[error("invalid or no longer usable join link")]
+    InvalidLink,
     #[error("network storage operation failed")]
     Storage,
     #[error("network service is unavailable")]
@@ -209,6 +244,44 @@ pub struct MemberView {
     pub role: MembershipRole,
     pub version: Version,
     pub joined_at: DateTime<Utc>,
+    pub actions: MemberActions,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct MemberActions {
+    pub change_role: bool,
+    pub assignable_roles: Vec<MembershipRole>,
+    pub remove: bool,
+}
+impl MemberActions {
+    pub(crate) fn for_context(
+        caller: (MembershipId, MembershipRole),
+        target: (MembershipId, MembershipRole),
+        owner_count: i64,
+    ) -> Self {
+        let last_owner = target.1 == MembershipRole::Owner && owner_count <= 1;
+        let assignable_roles = [
+            MembershipRole::Owner,
+            MembershipRole::Admin,
+            MembershipRole::Member,
+        ]
+        .into_iter()
+        .filter(|role| {
+            Self::can_grant(caller.1, target.1)
+                && Self::can_grant(caller.1, *role)
+                && (!last_owner || *role == MembershipRole::Owner)
+        })
+        .collect::<Vec<_>>();
+        Self {
+            change_role: assignable_roles.iter().any(|role| *role != target.1),
+            assignable_roles,
+            remove: !last_owner && (caller.0 == target.0 || Self::can_grant(caller.1, target.1)),
+        }
+    }
+    pub(crate) fn can_grant(issuer: MembershipRole, role: MembershipRole) -> bool {
+        issuer == MembershipRole::Owner
+            || (issuer == MembershipRole::Admin && role == MembershipRole::Member)
+    }
 }
 
 /// Creation-bounded traversal, with current metadata and permissions on each
@@ -218,6 +291,7 @@ pub struct NetworkPage {
     pub items: Vec<NetworkView>,
     pub next_cursor: Option<String>,
     pub as_of: DateTime<Utc>,
+    pub total: meshway_model::Count,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -225,14 +299,20 @@ pub struct MemberPage {
     pub items: Vec<MemberView>,
     pub next_cursor: Option<String>,
     pub as_of: DateTime<Utc>,
+    pub total: meshway_model::Count,
 }
 
 pub(crate) fn normalize_name(value: &str) -> Result<String, NetworkError> {
-    if value.len() > 1024 || value.chars().any(char::is_control) {
+    let rules = meshway_protocol::NetworkNameRules::CURRENT;
+    if value.len() > usize::from(rules.max_input_utf8_bytes)
+        || (rules.forbid_control_characters && value.chars().any(char::is_control))
+    {
         return Err(NetworkError::InvalidName);
     }
     let value = value.trim();
-    if !(1..=128).contains(&value.chars().count()) {
+    if !(usize::from(rules.min_codepoints)..=usize::from(rules.max_codepoints))
+        .contains(&value.chars().count())
+    {
         return Err(NetworkError::InvalidName);
     }
     Ok(value.to_owned())

@@ -39,6 +39,15 @@ CREATE TABLE user_sessions (
 
 CREATE INDEX user_sessions_user_id ON user_sessions(user_id);
 
+CREATE TABLE password_resets (
+    token_hash BLOB NOT NULL PRIMARY KEY CHECK (length(token_hash) = 32),
+    user_id BLOB NOT NULL REFERENCES users(id) ON DELETE RESTRICT,
+    credential_version INTEGER NOT NULL CHECK (credential_version BETWEEN 1 AND 9007199254740991),
+    expires_at INTEGER NOT NULL CHECK (expires_at > 0),
+    revoked_at INTEGER,
+    consumed_at INTEGER
+) STRICT;
+
 CREATE TABLE networks (
     sequence INTEGER NOT NULL PRIMARY KEY AUTOINCREMENT CHECK (sequence BETWEEN 1 AND 9007199254740991),
     id BLOB NOT NULL UNIQUE CHECK (length(id) = 16 AND id != zeroblob(16)),
@@ -70,6 +79,28 @@ CREATE UNIQUE INDEX memberships_active_user ON memberships(network_id, user_id) 
 CREATE INDEX memberships_user_network ON memberships(user_id, network_id) WHERE revoked_at IS NULL;
 CREATE INDEX memberships_network_sequence ON memberships(network_id, sequence) WHERE revoked_at IS NULL;
 
+CREATE TABLE join_links (
+    sequence INTEGER PRIMARY KEY AUTOINCREMENT CHECK (sequence BETWEEN 1 AND 9007199254740991),
+    id BLOB NOT NULL UNIQUE CHECK(length(id)=16 AND id!=zeroblob(16)),
+    network_id BLOB NOT NULL REFERENCES networks(id),
+    role TEXT NOT NULL CHECK(role IN ('owner','admin','member')),
+    token_hash BLOB NOT NULL UNIQUE CHECK(length(token_hash)=32),
+    created_by BLOB NOT NULL REFERENCES users(id),
+    issuer_membership_id BLOB NOT NULL,
+    created_at INTEGER NOT NULL CHECK(created_at>=0),
+    expires_at INTEGER NOT NULL CHECK(expires_at>created_at),
+    revoked_at INTEGER CHECK(revoked_at>=created_at),
+    consumed_at INTEGER CHECK(consumed_at>=created_at),
+    consumed_by_user_id BLOB REFERENCES users(id),
+    consumed_membership_id BLOB,
+    creation_request_id BLOB NOT NULL CHECK(length(creation_request_id)=16),
+    creation_request_digest BLOB NOT NULL CHECK(length(creation_request_digest)=32),
+    UNIQUE(network_id,created_by,creation_request_id),
+    FOREIGN KEY(network_id,issuer_membership_id,created_by) REFERENCES memberships(network_id,id,user_id),
+    FOREIGN KEY(network_id,consumed_membership_id,consumed_by_user_id) REFERENCES memberships(network_id,id,user_id),
+    CHECK((consumed_at IS NULL AND consumed_by_user_id IS NULL AND consumed_membership_id IS NULL) OR (consumed_at IS NOT NULL AND consumed_by_user_id IS NOT NULL AND consumed_membership_id IS NOT NULL))
+) STRICT;
+
 CREATE TABLE configuration_versions (
     network_id BLOB NOT NULL REFERENCES networks(id) ON DELETE RESTRICT CHECK (length(network_id) = 16 AND network_id != zeroblob(16)),
     revision INTEGER NOT NULL CHECK (revision BETWEEN 1 AND 9007199254740991),
@@ -78,14 +109,39 @@ CREATE TABLE configuration_versions (
     bindings BLOB NOT NULL CHECK (length(bindings) >= 61),
     created_by BLOB NOT NULL REFERENCES users(id) ON DELETE RESTRICT CHECK (length(created_by) = 16 AND created_by != zeroblob(16)),
     created_at INTEGER NOT NULL CHECK (created_at >= 0),
-    cause TEXT NOT NULL CHECK (cause = 'networkCreated'),
+    cause TEXT NOT NULL CHECK (cause IN ('networkCreated','edit','restore','enrollment','nodeDeleted','emailSync','memberRemoved','identityTransition')),
     request_id BLOB NOT NULL CHECK (length(request_id) = 16 AND request_id != zeroblob(16)),
-    PRIMARY KEY (network_id, revision)
+    rollback_from INTEGER,
+    PRIMARY KEY (network_id, revision),
+    FOREIGN KEY(network_id,rollback_from) REFERENCES configuration_versions(network_id,revision)
 ) STRICT;
 CREATE TRIGGER configuration_versions_no_update BEFORE UPDATE ON configuration_versions
 BEGIN SELECT RAISE(ABORT, 'immutable configuration version'); END;
 CREATE TRIGGER configuration_versions_no_delete BEFORE DELETE ON configuration_versions
 BEGIN SELECT RAISE(ABORT, 'immutable configuration version'); END;
+
+CREATE TABLE configuration_commits (
+    network_id BLOB NOT NULL REFERENCES networks(id),
+    user_id BLOB NOT NULL REFERENCES users(id),
+    request_id BLOB NOT NULL CHECK(length(request_id)=16),
+    base_revision INTEGER NOT NULL CHECK(base_revision BETWEEN 1 AND 9007199254740991),
+    input BLOB NOT NULL CHECK(length(input)>=61),
+    result TEXT NOT NULL,
+    PRIMARY KEY(network_id,user_id,request_id)
+) STRICT;
+
+CREATE TABLE credential_revocations (
+    network_id BLOB NOT NULL REFERENCES networks(id),
+    kind TEXT NOT NULL CHECK(kind IN ('vlessUuid','trojanPassword','tlsCertificate')),
+    fingerprint BLOB NOT NULL CHECK(length(fingerprint)=32),
+    revoked_at INTEGER NOT NULL CHECK(revoked_at>=0),
+    revoked_by BLOB NOT NULL REFERENCES users(id),
+    PRIMARY KEY(network_id,kind,fingerprint)
+) STRICT;
+CREATE TRIGGER credential_revocations_no_update BEFORE UPDATE ON credential_revocations
+BEGIN SELECT RAISE(ABORT, 'irreversible credential revocation'); END;
+CREATE TRIGGER credential_revocations_no_delete BEFORE DELETE ON credential_revocations
+BEGIN SELECT RAISE(ABORT, 'irreversible credential revocation'); END;
 
 -- Successful account/network mutations and their activities commit together.
 CREATE TABLE activity_events (
@@ -95,16 +151,25 @@ CREATE TABLE activity_events (
     account_user_id BLOB REFERENCES users(id) ON DELETE RESTRICT CHECK (length(account_user_id) = 16 AND account_user_id != zeroblob(16)),
     network_id BLOB REFERENCES networks(id) ON DELETE RESTRICT CHECK (length(network_id) = 16 AND network_id != zeroblob(16)),
     at INTEGER NOT NULL CHECK (at >= 0),
-    actor_user_id BLOB NOT NULL REFERENCES users(id) ON DELETE RESTRICT CHECK (length(actor_user_id) = 16 AND actor_user_id != zeroblob(16)),
-    action TEXT NOT NULL CHECK (action IN ('account.register', 'session.login', 'session.logout', 'network.create', 'network.rename')),
+    actor_kind TEXT NOT NULL DEFAULT 'user' CHECK(actor_kind IN ('user','system')),
+    actor_user_id BLOB REFERENCES users(id) ON DELETE RESTRICT CHECK (length(actor_user_id) = 16 AND actor_user_id != zeroblob(16)),
+    action TEXT NOT NULL CHECK (action IN ('account.register', 'session.login', 'session.logout', 'session.revoke', 'session.revokeOthers', 'session.revokeAll', 'account.password', 'account.passwordReset', 'account.resetIssued', 'account.email', 'network.create', 'network.rename', 'configuration.apply','membership.role','membership.join','membership.remove','joinLink.create','joinLink.revoke')),
     target_user_id BLOB REFERENCES users(id) ON DELETE RESTRICT,
     target_session_id BLOB CHECK (length(target_session_id) = 16 AND target_session_id != zeroblob(16)),
+    target_membership_id BLOB,
+    target_join_link_id BLOB REFERENCES join_links(id),
+    before_revision INTEGER,
+    after_revision INTEGER,
     request_id BLOB NOT NULL CHECK (length(request_id) = 16 AND request_id != zeroblob(16)),
-    CHECK ((scope = 'account' AND account_user_id IS NOT NULL AND network_id IS NULL AND actor_user_id = account_user_id AND
-        ((action = 'account.register' AND target_user_id IS NOT NULL AND target_user_id = account_user_id AND target_session_id IS NULL)
-        OR (action IN ('session.login', 'session.logout') AND target_user_id IS NULL AND target_session_id IS NOT NULL)))
-        OR (scope = 'network' AND network_id IS NOT NULL AND account_user_id IS NULL AND action IN ('network.create', 'network.rename') AND target_user_id IS NULL AND target_session_id IS NULL)),
-    FOREIGN KEY (target_session_id, account_user_id) REFERENCES user_sessions(id, user_id) ON DELETE RESTRICT
+    CHECK ((actor_kind='user' AND actor_user_id IS NOT NULL) OR (actor_kind='system' AND actor_user_id IS NULL)),
+    CHECK ((scope = 'account' AND account_user_id IS NOT NULL AND network_id IS NULL AND (actor_user_id = account_user_id OR (actor_kind='system' AND action='account.resetIssued')) AND
+        ((action IN ('account.register', 'session.revokeOthers', 'session.revokeAll', 'account.password', 'account.passwordReset', 'account.resetIssued', 'account.email') AND target_user_id IS NOT NULL AND target_user_id = account_user_id AND target_session_id IS NULL)
+        OR (action IN ('session.login', 'session.logout', 'session.revoke') AND target_user_id IS NULL AND target_session_id IS NOT NULL)))
+        OR (scope = 'network' AND network_id IS NOT NULL AND account_user_id IS NULL AND action IN ('network.create', 'network.rename','configuration.apply','membership.role','membership.join','membership.remove','joinLink.create','joinLink.revoke') AND target_user_id IS NULL AND target_session_id IS NULL)),
+    FOREIGN KEY (target_session_id, account_user_id) REFERENCES user_sessions(id, user_id) ON DELETE RESTRICT,
+    FOREIGN KEY (network_id,target_membership_id) REFERENCES memberships(network_id,id),
+    FOREIGN KEY (network_id,before_revision) REFERENCES configuration_versions(network_id,revision),
+    FOREIGN KEY (network_id,after_revision) REFERENCES configuration_versions(network_id,revision)
 ) STRICT;
 
 CREATE INDEX activity_events_account_sequence ON activity_events(account_user_id, sequence);

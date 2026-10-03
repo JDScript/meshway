@@ -7,7 +7,9 @@
 
 pub mod accounts;
 mod app;
+pub(crate) mod configuration;
 mod directory;
+pub(crate) mod history;
 pub mod http;
 pub mod networks;
 mod secrets;

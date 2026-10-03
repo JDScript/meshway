@@ -13,6 +13,64 @@ use crate::networks::NetworkError;
 pub(super) struct HttpError(ErrorResponse);
 
 impl HttpError {
+    pub(super) fn configuration(id: RequestId, error: crate::configuration::Error) -> Self {
+        use crate::configuration::Error;
+        let (status, problem) = match error {
+            Error::InvalidSession => return Self::invalid_session(id),
+            Error::InvalidPage => return Self::invalid_request(id),
+            Error::NotFound => (
+                StatusCode::NOT_FOUND,
+                Problem::NotFound {
+                    params: EmptyParams {},
+                    message: "Configuration not found.".into(),
+                },
+            ),
+            Error::PermissionDenied => (
+                StatusCode::FORBIDDEN,
+                Problem::PermissionDenied {
+                    params: EmptyParams {},
+                    message: "Configuration access requires network administrator permission."
+                        .into(),
+                },
+            ),
+            Error::Conflict => (
+                StatusCode::CONFLICT,
+                Problem::RevisionConflict {
+                    params: EmptyParams {},
+                    message: "Configuration revision or request changed.".into(),
+                },
+            ),
+            Error::Invalid(error) => {
+                use meshway_configuration::ConfigurationError;
+                let (issues, requirements) = match error {
+                    ConfigurationError::Invalid(issues) => (issues, Vec::new()),
+                    ConfigurationError::PreparationRequired(requirements) => {
+                        (Vec::new(), requirements)
+                    }
+                    ConfigurationError::Parse => (
+                        vec![meshway_configuration::ConfigurationIssue {
+                            path: "".into(),
+                            message: "Invalid JSONC document or configuration field shape.".into(),
+                        }],
+                        Vec::new(),
+                    ),
+                    ConfigurationError::Serialization => return Self::unavailable(Some(id)),
+                };
+                (
+                    StatusCode::UNPROCESSABLE_ENTITY,
+                    Problem::ConfigurationInvalid {
+                        params: meshway_protocol::ConfigurationValidationParams {
+                            issues,
+                            requirements,
+                        },
+                        message: "Configuration validation failed.".into(),
+                    },
+                )
+            }
+            Error::Storage | Error::DependencyUnavailable => return Self::unavailable(Some(id)),
+        };
+        Self::new(id, status, problem)
+    }
     pub(super) fn new(id: RequestId, status: StatusCode, problem: Problem) -> Self {
         Self(ErrorResponse {
             request_id: Some(id),
@@ -74,6 +132,21 @@ impl HttpError {
                 },
             ),
             AccountError::InvalidSession => return Self::invalid_session(id),
+            AccountError::InvalidRequest => return Self::invalid_request(id),
+            AccountError::NotFound => (
+                StatusCode::NOT_FOUND,
+                Problem::NotFound {
+                    params: EmptyParams {},
+                    message: "Resource not found.".into(),
+                },
+            ),
+            AccountError::InvalidReset => (
+                StatusCode::BAD_REQUEST,
+                Problem::InvalidCredentials {
+                    params: EmptyParams {},
+                    message: "Recovery credential is invalid or no longer usable.".into(),
+                },
+            ),
             AccountError::Busy => (
                 StatusCode::SERVICE_UNAVAILABLE,
                 Problem::Busy {
@@ -154,6 +227,34 @@ impl HttpError {
             NetworkError::Storage | NetworkError::Unavailable => {
                 return Self::unavailable(Some(id));
             }
+            NetworkError::VersionConflict => (
+                StatusCode::CONFLICT,
+                Problem::VersionConflict {
+                    params: EmptyParams {},
+                    message: "Membership changed; reload before retrying.".into(),
+                },
+            ),
+            NetworkError::LastOwner => (
+                StatusCode::CONFLICT,
+                Problem::LastOwner {
+                    params: EmptyParams {},
+                    message: "The last Owner must remain in the network.".into(),
+                },
+            ),
+            NetworkError::AlreadyMember => (
+                StatusCode::CONFLICT,
+                Problem::AlreadyMember {
+                    params: EmptyParams {},
+                    message: "Already a member of this network.".into(),
+                },
+            ),
+            NetworkError::InvalidLink => (
+                StatusCode::BAD_REQUEST,
+                Problem::InvalidLink {
+                    params: EmptyParams {},
+                    message: "Join link is invalid or no longer usable.".into(),
+                },
+            ),
         };
         Self::new(id, status, problem)
     }

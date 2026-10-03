@@ -12,6 +12,23 @@ pub struct ConfigurationDocument {
     pub user_bindings: BTreeMap<String, UserBinding>,
 }
 
+impl ConfigurationDocument {
+    pub fn new(
+        source: String,
+        configuration: NetworkConfiguration,
+        user_bindings: BTreeMap<String, UserBinding>,
+    ) -> Self {
+        Self {
+            source_jsonc: SecretString::new(source),
+            configuration,
+            user_bindings,
+        }
+    }
+    pub fn set_source(&mut self, source: String) {
+        self.source_jsonc = SecretString::new(source);
+    }
+}
+
 /// JSONC is deserialized directly into typed fields; no intermediate JSON map
 /// can discard duplicate keys. Parser diagnostics never echo secret input.
 pub fn parse_jsonc(source: &str) -> Result<NetworkConfigurationInput, ConfigurationError> {

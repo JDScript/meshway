@@ -47,3 +47,45 @@ macro_rules! wire_object {
 }
 
 pub(crate) use wire_object;
+
+macro_rules! wire_tagged {
+    (pub enum $name:ident { $($variants:tt)* }) => {
+        $crate::object::wire_tagged!(tag="type"; pub enum $name { $($variants)* });
+    };
+    (tag=$tag:literal; pub enum $name:ident { $($variant:ident { $($(#[$attr:meta])* $field:ident: $ty:ty),* $(,)? }),* $(,)? }) => {
+        #[derive(serde::Serialize)]
+        #[serde(tag=$tag,rename_all="camelCase",deny_unknown_fields)]
+        pub enum $name { $($variant { $($(#[$attr])* $field:$ty),* }),* }
+        impl<'de> serde::Deserialize<'de> for $name {
+            fn deserialize<D:serde::Deserializer<'de>>(d:D)->Result<Self,D::Error>{
+                #[derive(serde::Deserialize)]
+                #[serde(tag=$tag,rename_all="camelCase",deny_unknown_fields)]
+                enum Fields { $($variant { $($(#[$attr])* $field:$ty),* }),* }
+                Ok(match Fields::deserialize($crate::object::MapOnly(d))?{$(Fields::$variant{$($field),*}=>Self::$variant{$($field),*}),*})
+            }
+        }
+        impl utoipa::PartialSchema for $name {
+            fn schema()->utoipa::openapi::RefOr<utoipa::openapi::schema::Schema>{
+                use utoipa::openapi::{RefOr,schema::{Schema,ObjectBuilder,OneOfBuilder,Type}};
+                let mut union=OneOfBuilder::new();
+                $(
+                    $crate::object::wire_object!{pub struct $variant {$($(#[$attr])* pub $field:$ty),*}}
+                    let RefOr::T(Schema::Object(mut object))=$variant::schema() else{unreachable!("object macro always emits an object")};
+                    let name=stringify!($variant);let tag=format!("{}{}",name[..1].to_ascii_lowercase(),&name[1..]);
+                    object.properties.insert($tag.into(),ObjectBuilder::new().schema_type(Type::String).enum_values(Some([tag])).into());
+                    object.required.push($tag.into());union=union.item(object);
+                )*
+                union.into()
+            }
+        }
+        impl utoipa::ToSchema for $name {
+            fn schemas(schemas:&mut Vec<(String,utoipa::openapi::RefOr<utoipa::openapi::schema::Schema>)>){
+                $(
+                    $crate::object::wire_object!{pub struct $variant {$($(#[$attr])* pub $field:$ty),*}}
+                    <$variant as utoipa::ToSchema>::schemas(schemas);
+                )*
+            }
+        }
+    }
+}
+pub(crate) use wire_tagged;

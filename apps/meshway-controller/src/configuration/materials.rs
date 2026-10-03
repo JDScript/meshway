@@ -1,0 +1,260 @@
+//! Controller-owned material generation, certificate verification and private
+//! irreversible-revocation checks. Declarations never self-attest validation.
+use super::*;
+use chrono::Datelike;
+use meshway_transport_spec::{Listener, ListenerTls, SecretString, TlsMode};
+use rustls::{
+    client::danger::ServerCertVerifier,
+    pki_types::{ServerName, UnixTime},
+};
+use std::{io::Cursor, sync::Arc};
+
+fn invalid() -> Error {
+    Error::Invalid(ConfigurationError::Invalid(vec![
+        meshway_configuration::ConfigurationIssue {
+            path: "/nodes".into(),
+            message: "listener credentials or TLS certificate/key/name/validity are invalid".into(),
+        },
+    ]))
+}
+
+pub(crate) fn prepare_materials(
+    tx: &Transaction<'_>,
+    network: NetworkId,
+    input: &mut NetworkConfigurationInput,
+    current: &Snapshot,
+    sealer: &Sealer,
+    generate: bool,
+) -> Result<BTreeMap<(NodeId, String), Listener>, Error> {
+    let mut verified = BTreeMap::new();
+    for (node_id, node) in &mut input.nodes {
+        for (key, listener) in &mut node.listeners {
+            let previous = current
+                .document
+                .configuration
+                .nodes
+                .get(node_id)
+                .and_then(|n| n.listeners.get(key))
+                .map(|l| l.declaration());
+            inherit(listener, previous);
+            match listener {
+                Listener::Vless(v) => {
+                    if v.uuid.is_none() && generate {
+                        v.uuid = Some(SecretString::new(
+                            random_uuid().map_err(|_| Error::Storage)?.to_string(),
+                        ));
+                    }
+                    prepare_tls(&mut v.tls, generate)?;
+                }
+                Listener::Trojan(v) => {
+                    if v.password.is_none() && generate {
+                        v.password = Some(SecretString::new(
+                            crate::accounts::issue_one_time("mwp_")
+                                .map_err(|_| Error::Storage)?
+                                .0
+                                .expose()
+                                .to_owned(),
+                        ));
+                    }
+                    prepare_tls(&mut v.tls, generate)?;
+                }
+                _ => {}
+            }
+            listener.normalize().map_err(|_| invalid())?;
+            match listener {
+                Listener::Vless(v) => {
+                    if let Some(value) = &v.uuid {
+                        check_revocation(
+                            tx,
+                            sealer,
+                            network,
+                            "vlessUuid",
+                            value.expose().as_bytes(),
+                        )?;
+                    }
+                    if v.tls.certificate.is_some() && v.tls.private_key.is_some() {
+                        let leaf = verify_tls(&v.tls)?;
+                        check_revocation(tx, sealer, network, "tlsCertificate", &leaf)?;
+                        verified.insert((*node_id, key.clone()), listener.clone());
+                    }
+                }
+                Listener::Trojan(v) => {
+                    if let Some(value) = &v.password {
+                        check_revocation(
+                            tx,
+                            sealer,
+                            network,
+                            "trojanPassword",
+                            value.expose().as_bytes(),
+                        )?;
+                    }
+                    if v.tls.certificate.is_some() && v.tls.private_key.is_some() {
+                        let leaf = verify_tls(&v.tls)?;
+                        check_revocation(tx, sealer, network, "tlsCertificate", &leaf)?;
+                        verified.insert((*node_id, key.clone()), listener.clone());
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+    Ok(verified)
+}
+
+fn inherit(listener: &mut Listener, old: Option<&Listener>) {
+    fn tls(t: &mut ListenerTls, p: &ListenerTls) {
+        if t.mode == TlsMode::Managed {
+            if t.certificate.is_none() {
+                t.certificate = p.certificate.clone();
+            }
+            if t.private_key.is_none() {
+                t.private_key = p.private_key.clone();
+            }
+        }
+    }
+    match (listener, old) {
+        (Listener::Vless(t), Some(Listener::Vless(p))) => {
+            if t.uuid.is_none() {
+                t.uuid = p.uuid.clone();
+            }
+            tls(&mut t.tls, &p.tls);
+        }
+        (Listener::Trojan(t), Some(Listener::Trojan(p))) => {
+            if t.password.is_none() {
+                t.password = p.password.clone();
+            }
+            tls(&mut t.tls, &p.tls);
+        }
+        _ => {}
+    }
+}
+fn prepare_tls(tls: &mut ListenerTls, generate: bool) -> Result<(), Error> {
+    match (&tls.certificate, &tls.private_key) {
+        (Some(_), Some(_)) => return Ok(()),
+        (None, None) if tls.mode == TlsMode::Managed => {}
+        _ => return Err(invalid()),
+    }
+    if !generate {
+        return Ok(());
+    }
+    let mut params =
+        rcgen::CertificateParams::new(vec![tls.server_name.clone()]).map_err(|_| invalid())?;
+    let now = chrono::Utc::now().date_naive();
+    let end = now
+        .checked_add_signed(chrono::Duration::days(90))
+        .ok_or(Error::Storage)?;
+    params.not_before = rcgen::date_time_ymd(
+        now.year(),
+        u8::try_from(now.month()).map_err(|_| Error::Storage)?,
+        u8::try_from(now.day()).map_err(|_| Error::Storage)?,
+    );
+    params.not_after = rcgen::date_time_ymd(
+        end.year(),
+        u8::try_from(end.month()).map_err(|_| Error::Storage)?,
+        u8::try_from(end.day()).map_err(|_| Error::Storage)?,
+    );
+    let key = rcgen::KeyPair::generate().map_err(|_| Error::Storage)?;
+    let certificate = params.self_signed(&key).map_err(|_| Error::Storage)?;
+    tls.certificate = Some(SecretString::new(certificate.pem()));
+    tls.private_key = Some(SecretString::new(key.serialize_pem()));
+    Ok(())
+}
+
+/// Real WebPKI certificate-chain, DNS/IP name, current-time validation plus
+/// supported-provider SPKI/private-key consistency. No insecure verifier.
+pub(crate) fn verify_tls(tls: &ListenerTls) -> Result<Vec<u8>, Error> {
+    let pem = tls.certificate.as_ref().ok_or_else(invalid)?.expose();
+    let key = tls.private_key.as_ref().ok_or_else(invalid)?.expose();
+    if pem.len() > 128 * 1024 || key.len() > 32 * 1024 {
+        return Err(invalid());
+    }
+    let chain = rustls_pemfile::certs(&mut Cursor::new(pem))
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|_| invalid())?;
+    if chain.is_empty() || chain.len() > 8 {
+        return Err(invalid());
+    }
+    let private_key = rustls_pemfile::private_key(&mut Cursor::new(key))
+        .map_err(|_| invalid())?
+        .ok_or_else(invalid)?;
+    let provider = Arc::new(rustls::crypto::ring::default_provider());
+    let certified = rustls::sign::CertifiedKey::from_der(chain.clone(), private_key, &provider)
+        .map_err(|_| invalid())?;
+    certified.keys_match().map_err(|_| invalid())?;
+    let mut roots = rustls::RootCertStore::empty();
+    roots
+        .add(chain.last().ok_or_else(invalid)?.clone())
+        .map_err(|_| invalid())?;
+    let verifier =
+        rustls::client::WebPkiServerVerifier::builder_with_provider(Arc::new(roots), provider)
+            .build()
+            .map_err(|_| invalid())?;
+    let name = ServerName::try_from(tls.server_name.clone()).map_err(|_| invalid())?;
+    verifier
+        .verify_server_cert(&chain[0], &chain[1..], &name, &[], UnixTime::now())
+        .map_err(|_| invalid())?;
+    Ok(chain[0].as_ref().to_vec())
+}
+
+fn check_revocation(
+    tx: &Transaction<'_>,
+    sealer: &Sealer,
+    network: NetworkId,
+    kind: &str,
+    value: &[u8],
+) -> Result<(), Error> {
+    let fingerprint = sealer
+        .fingerprint(network, kind, value)
+        .map_err(|_| Error::Storage)?;
+    let revoked=tx.query_row("SELECT EXISTS(SELECT 1 FROM credential_revocations WHERE network_id=?1 AND kind=?2 AND fingerprint=?3)",params![network.as_uuid().as_bytes().as_slice(),kind,fingerprint.as_slice()],|r|r.get::<_,bool>(0))?;
+    if revoked { Err(invalid()) } else { Ok(()) }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn managed() -> ListenerTls {
+        serde_json::from_str(r#"{"mode":"managed","serverName":"node.example.test"}"#).unwrap()
+    }
+
+    #[test]
+    fn generated_tls_verifies_but_wrong_name_key_and_expiry_fail() {
+        let mut tls = managed();
+        prepare_tls(&mut tls, true).unwrap();
+        assert!(!verify_tls(&tls).unwrap().is_empty());
+        let original = tls.clone();
+        tls.server_name = "other.example.test".into();
+        assert!(verify_tls(&tls).is_err());
+        tls = original.clone();
+        tls.private_key = Some(SecretString::new(
+            rcgen::KeyPair::generate().unwrap().serialize_pem(),
+        ));
+        assert!(verify_tls(&tls).is_err());
+        for (from, to) in [(2000, 2001), (2090, 2091)] {
+            let mut params =
+                rcgen::CertificateParams::new(vec![original.server_name.clone()]).unwrap();
+            params.not_before = rcgen::date_time_ymd(from, 1, 1);
+            params.not_after = rcgen::date_time_ymd(to, 1, 1);
+            let key = rcgen::KeyPair::generate().unwrap();
+            tls = original.clone();
+            tls.certificate = Some(SecretString::new(params.self_signed(&key).unwrap().pem()));
+            tls.private_key = Some(SecretString::new(key.serialize_pem()));
+            assert!(verify_tls(&tls).is_err());
+        }
+        tls = original;
+        tls.certificate = Some(SecretString::new("not a certificate".into()));
+        assert!(verify_tls(&tls).is_err());
+    }
+
+    #[test]
+    fn partial_material_never_silently_generates_a_replacement() {
+        let mut tls = managed();
+        prepare_tls(&mut tls, false).unwrap();
+        assert!(tls.certificate.is_none());
+        tls.private_key = Some(SecretString::new(
+            rcgen::KeyPair::generate().unwrap().serialize_pem(),
+        ));
+        assert!(prepare_tls(&mut tls, true).is_err());
+    }
+}

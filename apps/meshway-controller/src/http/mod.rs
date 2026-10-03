@@ -1,7 +1,11 @@
 //! Actual HTTP routes and their OpenAPI description share the same registration.
 
 mod auth;
+mod configuration;
 mod error;
+mod management;
+mod management_history;
+mod management_networks;
 mod networks;
 
 use axum::{
@@ -26,11 +30,22 @@ use error::HttpError;
 
 /// Includes JSON whitespace and escapes, independently of password limits.
 pub const MAX_JSON_BODY_BYTES: usize = 16 * 1024;
+/// Full configuration documents include JSONC text and embedded protocol material.
+pub const MAX_CONFIGURATION_BODY_BYTES: usize = 8 * 1024 * 1024;
 
 #[derive(Clone)]
 struct HttpState {
+    sealer: std::sync::Arc<crate::secrets::Sealer>,
     accounts: Accounts,
     networks: Networks,
+    configurations: crate::configuration::Configurations,
+    history: crate::history::History,
+}
+
+impl FromRef<HttpState> for std::sync::Arc<crate::secrets::Sealer> {
+    fn from_ref(state: &HttpState) -> Self {
+        state.sealer.clone()
+    }
 }
 
 impl FromRef<HttpState> for Accounts {
@@ -42,6 +57,16 @@ impl FromRef<HttpState> for Accounts {
 impl FromRef<HttpState> for Networks {
     fn from_ref(state: &HttpState) -> Self {
         state.networks.clone()
+    }
+}
+impl FromRef<HttpState> for crate::configuration::Configurations {
+    fn from_ref(state: &HttpState) -> Self {
+        state.configurations.clone()
+    }
+}
+impl FromRef<HttpState> for crate::history::History {
+    fn from_ref(state: &HttpState) -> Self {
+        state.history.clone()
     }
 }
 
@@ -56,6 +81,42 @@ fn routes() -> OpenApiRouter<HttpState> {
         .routes(routes!(networks::get))
         .routes(routes!(networks::rename))
         .routes(routes!(networks::members))
+        .routes(routes!(management::account))
+        .routes(routes!(management::sessions))
+        .routes(routes!(management::revoke_one))
+        .routes(routes!(management::revoke_others))
+        .routes(routes!(management::revoke_all))
+        .routes(routes!(management::password))
+        .routes(routes!(management::email))
+        .routes(routes!(management::reset_inspect))
+        .routes(routes!(management::reset_redeem))
+        .routes(routes!(management_networks::role))
+        .routes(routes!(
+            management_networks::links,
+            management_networks::create_link
+        ))
+        .routes(routes!(management_networks::inspect_link))
+        .routes(routes!(management_networks::redeem_link))
+        .routes(routes!(management_networks::revoke_link))
+        .routes(routes!(management_networks::removal_impact))
+        .routes(routes!(management_networks::leave_impact))
+        .routes(routes!(management_networks::remove))
+        .routes(routes!(management_networks::leave))
+        .merge(
+            OpenApiRouter::new()
+                .routes(routes!(configuration::get, configuration::apply))
+                .routes(routes!(configuration::validate))
+                .layer(DefaultBodyLimit::max(MAX_CONFIGURATION_BODY_BYTES)),
+        )
+        .routes(routes!(configuration::revision))
+        .routes(routes!(configuration::source))
+        .routes(routes!(configuration::compare))
+        .routes(routes!(configuration::schema))
+        .routes(routes!(configuration::catalog))
+        .routes(routes!(management_history::account))
+        .routes(routes!(management_history::network))
+        .routes(routes!(management_history::activity))
+        .routes(routes!(management_history::revisions))
 }
 
 pub fn openapi() -> OpenApi {
@@ -79,8 +140,11 @@ pub fn router(app: &App) -> Router {
         .layer(DefaultBodyLimit::max(MAX_JSON_BODY_BYTES))
         .layer(middleware::from_fn(context))
         .with_state(HttpState {
+            sealer: app.sealer(),
             accounts: app.accounts(),
             networks: app.networks(),
+            configurations: app.configurations(),
+            history: app.history(),
         })
 }
 

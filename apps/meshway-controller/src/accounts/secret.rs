@@ -55,3 +55,25 @@ pub(crate) fn token_digest(token: &str) -> Result<[u8; 32], AccountError> {
     hash.update(token.as_bytes());
     Ok(hash.finalize().into())
 }
+
+/// A separate token namespace for each one-time credential purpose.
+pub(crate) fn issue_one_time(prefix: &str) -> Result<(Secret, [u8; 32]), AccountError> {
+    let (token, _) = issue_token()?;
+    let token = Secret::new(format!("{prefix}{}", &token.expose()[4..]));
+    let digest = one_time_digest(prefix, token.expose())?;
+    Ok((token, digest))
+}
+
+pub(crate) fn one_time_digest(prefix: &str, token: &str) -> Result<[u8; 32], AccountError> {
+    let value = token
+        .strip_prefix(prefix)
+        .ok_or(AccountError::InvalidReset)?;
+    if value.len() != 64
+        || !value
+            .bytes()
+            .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
+    {
+        return Err(AccountError::InvalidReset);
+    }
+    Ok(Sha256::digest(token.as_bytes()).into())
+}

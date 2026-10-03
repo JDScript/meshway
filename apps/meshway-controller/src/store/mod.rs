@@ -22,7 +22,7 @@ use thiserror::Error;
 use tokio::sync::{OwnedSemaphorePermit, Semaphore, oneshot};
 
 pub(crate) mod accounts;
-mod authorization;
+pub(crate) mod authorization;
 pub(crate) mod networks;
 pub(crate) mod schema;
 

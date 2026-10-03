@@ -6,10 +6,15 @@
 #![forbid(unsafe_code)]
 
 mod auth;
+pub mod configuration;
+pub mod history;
+pub mod management;
+mod management_rules;
 mod networks;
 mod object;
 mod problem;
 mod secret;
+pub use management_rules::{NetworkNameRules, NetworkNameTrim};
 
 pub use auth::{
     AuthOptionsResponse, AuthSessionResponse, LoginRequest, PasswordLengthUnit, PasswordRules,
@@ -17,9 +22,9 @@ pub use auth::{
 };
 pub use meshway_model::{MembershipId, MembershipRole, NetworkId, Revision, Version};
 pub use networks::{
-    CreateNetworkRequest, MemberSummary, NetworkActions, NetworkListResponse,
+    CreateNetworkRequest, MemberActions, MemberSummary, NetworkActions, NetworkListResponse,
     NetworkMembersResponse, NetworkPageQuery, NetworkResponse, NetworkSummary,
     RenameNetworkRequest,
 };
-pub use problem::{EmptyParams, ErrorResponse, Problem};
+pub use problem::{ConfigurationValidationParams, EmptyParams, ErrorResponse, Problem};
 pub use secret::WireSecret;

@@ -16,4 +16,4 @@ pub use ids::{
     NodeId, PublicationId, RequestId, SessionId, UserId,
 };
 pub use membership::MembershipRole;
-pub use numbers::{InvalidNumber, MAX_SAFE_INTEGER, Revision, Sequence, Version};
+pub use numbers::{Count, InvalidNumber, MAX_SAFE_INTEGER, Revision, Sequence, Version};

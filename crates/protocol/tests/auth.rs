@@ -144,8 +144,16 @@ fn every_wire_object_rejects_sequence_unknown_and_duplicate_fields() {
         &["requestId", "status", "problem"],
     );
     object_contract::<AuthOptionsResponse>(
-        &format!(r#"{{"requestId":"{ID}","registrationEnabled":true,"passwordRules":{rules}}}"#),
-        &["requestId", "registrationEnabled", "passwordRules"],
+        &format!(
+            r#"{{"requestId":"{ID}","registrationEnabled":true,"passwordRules":{rules},"networkNameRules":{}}}"#,
+            serde_json::to_string(&meshway_protocol::NetworkNameRules::CURRENT).unwrap()
+        ),
+        &[
+            "requestId",
+            "registrationEnabled",
+            "passwordRules",
+            "networkNameRules",
+        ],
     );
     object_contract::<AuthSessionResponse>(
         &format!(r#"{{"requestId":"{ID}","user":{user},"session":{session}}}"#),

@@ -19,7 +19,11 @@
 | `renameNetwork` | `POST /api/v1/networks/{networkId}/rename` | 200 NetworkResponse |
 | `listNetworkMembers` | `GET /api/v1/networks/{networkId}/members` | 200 NetworkMembersResponse |
 
-这些操作已接真实账户、网络和成员关系存储。建网同事务保存 Owner、完整加密初始配置和操作记录；初始 Mesh 地址池／DNS 后缀只保存在配置中。改名使用 expectedName 校验，不改变配置 revision；分页 limit 为 1–200，cursor 绑定用户／范围、创建序号上界和 15 分钟期限，每页重检当前权限。成员管理列表当前仅 Owner／Admin 可读。成员变更、配置编辑／CAS、Node 接入和 SSE 尚未进入此实现切片。
+这些操作已接真实账户、网络和成员关系存储。建网同事务保存 Owner、完整加密初始配置和操作记录；初始 Mesh 地址池／DNS 后缀只保存在配置中。改名使用 expectedName 校验，不改变配置 revision；分页 limit 为 1–200，cursor 绑定用户／范围、创建序号上界和 15 分钟期限，每页重检当前权限。成员管理列表当前仅 Owner／Admin 可读。
+
+管理／配置候选现已扩展真实 HTTP／SQLite 操作：账户读取、邮箱／密码修改、会话分页及撤销、主机 CLI 密码恢复、角色变更、一次性加入链接、无 Node 依赖的移除／离网、配置普通视图与显式秘密 source、JSONC／强类型编辑校验及 CAS 保存、版本分页／对照／恢复、账户／网络活动、配置 schema 与承载目录。名称规则通过 `getAuthOptions.networkNameRules` 发布；成员 actions 由当前权限推导，网络／成员列表 total 在同一查询事务内按创建上界和当前权限计算。邮箱同步更新可读引用但保留稳定主体绑定；恢复历史版本不会把旧邮箱绑定到同名新账户。
+
+该候选仍未完成联合接线：Node 清单、永久接入撤销、地址退出、执行发布及资源／事件事务依赖尚未接入；含 Node 或远端规则集的配置请求明确返回不可用，不伪造空发布。`reassignAddresses`／`rotateMaterial` 与完整预览计划尚未成为可用 HTTP 操作；已有纯地址分配和 TLS／撤销指纹校验辅助不代表这些流程已交付。Node 接入和 SSE 亦不属于本候选的可用范围。
 
 错误为 `ErrorResponse { requestId, status, problem: { code, params, message } }`；requestId 仅在其安全生成失败时为 null。请求和响应对象拒绝数组表示、重复字段和未知字段。
 
@@ -37,7 +41,19 @@ dataDir 使用无符号链接的绝对路径，父目录须存在；进程创建
 
 `export-openapi` binary 从同一份真实路由声明导出 `packages/protocol/openapi.json` 的内容，不启动数据库或服务。生成 SDK 的可用操作以这份产物为依据，不从本页目标索引推断尚未交付的接口。
 
-上述十个操作已生成 Rust／TypeScript 客户端，账户和网络流程经过正常 Controller 验证。SDK 支持带 Schema 校验的标量 path／可选 query 参数，用法见 `packages/control-client/README.md`；当前生成器对 SSE 等尚未支持的形状明确报错，不把它们当作已交付操作。
+上述初始十个操作已生成 Rust／TypeScript 客户端。管理／配置候选的扩展及字段变更已导出实际 OpenAPI，尚待协调者统一重生成客户端和执行 SDK drift 检查；此树现有 SDK 不能直接当作扩展合同的兼容客户端。SDK 用法见 `packages/control-client/README.md`；SSE 等尚未支持的形状仍需单独接通。
+
+主机运维签发密码重置链接（先停止占有同一 dataDir 的 Controller）：
+
+```sh
+cargo run -p meshway-controller --bin reset-password --locked -- \
+  --data-dir /absolute/private/data-dir \
+  --email user@example.com \
+  --console-origin https://console.example.com \
+  --expires-in-seconds 900
+```
+
+命令显式输出一次性链接，普通日志及列表不返回原秘密。inspect／redeem 使用 `/api/v1/auth/password-reset/*`；兑换成功使该账户旧会话失效。Console 兑换页面由消费端实现，命令不证明该页面已部署。
 
 ## 基础规则
 

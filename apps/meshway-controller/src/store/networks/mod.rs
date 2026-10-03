@@ -1,13 +1,13 @@
 //! Network authorization, persistence, and bounded reads on the SQLite owner.
 
+pub(crate) mod management;
 mod rows;
 
 use super::authorization::current_session;
 use crate::{
     accounts::random_uuid,
     networks::{
-        MemberPage, NetworkError, NetworkPage, NetworkView,
-        configuration::{PreparedNetwork, check_persisted},
+        MemberPage, NetworkError, NetworkPage, NetworkView, configuration::PreparedNetwork,
         pagination::Window,
     },
     secrets::{CursorScope, Sealer},
@@ -35,6 +35,7 @@ pub(crate) fn create(
     prepared: PreparedNetwork,
     request: RequestId,
     sealer: &Sealer,
+    cache: &crate::configuration::SnapshotCache,
 ) -> Result<NetworkView, NetworkError> {
     let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
     let now = now()?;
@@ -45,7 +46,7 @@ pub(crate) fn create(
         let id = rows::network_id(&id)?;
         // A creator is not an enduring authority. Check current membership
         // before disclosing either an old result or its parameter conflict.
-        let view = view(&transaction, id, user, sealer)?;
+        let view = view(&transaction, id, user, sealer, cache)?;
         if original_digest != prepared.request_digest {
             return Err(NetworkError::RequestConflict);
         }
@@ -66,7 +67,7 @@ pub(crate) fn create(
         "network.create",
         now,
     )?;
-    let view = view(&transaction, prepared.id, user, sealer)?;
+    let view = view(&transaction, prepared.id, user, sealer, cache)?;
     transaction.commit()?;
     Ok(view)
 }
@@ -76,10 +77,11 @@ pub(crate) fn get(
     digest: [u8; 32],
     id: NetworkId,
     sealer: &Sealer,
+    cache: &crate::configuration::SnapshotCache,
 ) -> Result<NetworkView, NetworkError> {
     let transaction = connection.transaction_with_behavior(TransactionBehavior::Deferred)?;
     let user = current_session(&transaction, &digest, now()?)?.user.id;
-    let view = view(&transaction, id, user, sealer)?;
+    let view = view(&transaction, id, user, sealer, cache)?;
     transaction.commit()?;
     Ok(view)
 }
@@ -88,15 +90,19 @@ pub(crate) fn rename(
     connection: &mut Connection,
     digest: [u8; 32],
     id: NetworkId,
-    name: String,
-    expected: String,
-    request: RequestId,
+    change: crate::networks::NameChange,
     sealer: &Sealer,
+    cache: &crate::configuration::SnapshotCache,
 ) -> Result<NetworkView, NetworkError> {
+    let crate::networks::NameChange {
+        name,
+        expected,
+        request,
+    } = change;
     let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
     let now = now()?;
     let user = current_session(&transaction, &digest, now)?.user.id;
-    let mut view = view(&transaction, id, user, sealer)?;
+    let mut view = view(&transaction, id, user, sealer, cache)?;
     if !view.actions.rename {
         return Err(NetworkError::PermissionDenied);
     }
@@ -121,6 +127,7 @@ pub(crate) fn list(
     limit: u16,
     cursor: Option<String>,
     sealer: &Sealer,
+    cache: &crate::configuration::SnapshotCache,
 ) -> Result<NetworkPage, NetworkError> {
     let transaction = connection.transaction_with_behavior(TransactionBehavior::Deferred)?;
     let now = now()?;
@@ -157,7 +164,7 @@ pub(crate) fn list(
     for row in rows {
         window.last = row.sequence;
         let view = row.into_view()?;
-        check_configuration(&transaction, &view, sealer)?;
+        check_configuration(&transaction, &view, sealer, cache)?;
         items.push(view);
     }
     let next_cursor = if more {
@@ -166,11 +173,23 @@ pub(crate) fn list(
         None
     };
     let as_of = window.as_of()?;
+    let total = transaction.query_row(
+        &format!("SELECT count(*) FROM ({NETWORK_SELECT} AND n.sequence<=?2 AND m.sequence<=?3)"),
+        params![
+            user.as_uuid().as_bytes().as_slice(),
+            window.upper,
+            window.memberships_upper
+        ],
+        |r| r.get::<_, i64>(0),
+    )?;
+    let total = meshway_model::Count::new(u64::try_from(total).map_err(|_| NetworkError::Storage)?)
+        .map_err(|_| NetworkError::Storage)?;
     transaction.commit()?;
     Ok(NetworkPage {
         items,
         next_cursor,
         as_of,
+        total,
     })
 }
 
@@ -181,11 +200,13 @@ pub(crate) fn members(
     limit: u16,
     cursor: Option<String>,
     sealer: &Sealer,
+    cache: &crate::configuration::SnapshotCache,
 ) -> Result<MemberPage, NetworkError> {
     let transaction = connection.transaction_with_behavior(TransactionBehavior::Deferred)?;
     let now = now()?;
     let user = current_session(&transaction, &digest, now)?.user.id;
-    if !view(&transaction, id, user, sealer)?.actions.manage_members {
+    let caller = view(&transaction, id, user, sealer, cache)?;
+    if !caller.actions.manage_members {
         return Err(NetworkError::PermissionDenied);
     }
     let scope = CursorScope::Members { user, network: id };
@@ -212,9 +233,10 @@ pub(crate) fn members(
     let more = rows.len() > usize::from(limit);
     rows.truncate(usize::from(limit));
     let mut items = Vec::with_capacity(rows.len());
+    let owner_count = management::owner_count(&transaction, id)?;
     for row in rows {
         window.last = row.sequence;
-        items.push(row.into_view()?);
+        items.push(row.into_view((caller.membership_id, caller.role), owner_count)?);
     }
     let next_cursor = if more {
         Some(window.encode(sealer, scope)?)
@@ -222,11 +244,15 @@ pub(crate) fn members(
         None
     };
     let as_of = window.as_of()?;
+    let total=transaction.query_row("SELECT count(*) FROM memberships m JOIN users u ON u.id=m.user_id WHERE m.network_id=?1 AND m.revoked_at IS NULL AND m.sequence<=?2",params![id.as_uuid().as_bytes().as_slice(),window.upper],|r|r.get::<_,i64>(0))?;
+    let total = meshway_model::Count::new(u64::try_from(total).map_err(|_| NetworkError::Storage)?)
+        .map_err(|_| NetworkError::Storage)?;
     transaction.commit()?;
     Ok(MemberPage {
         items,
         next_cursor,
         as_of,
+        total,
     })
 }
 
@@ -235,6 +261,7 @@ fn view(
     id: NetworkId,
     user: UserId,
     sealer: &Sealer,
+    cache: &crate::configuration::SnapshotCache,
 ) -> Result<NetworkView, NetworkError> {
     let sql = format!("{NETWORK_SELECT} AND n.id = ?2");
     let raw = transaction
@@ -249,7 +276,7 @@ fn view(
         .optional()?
         .ok_or(NetworkError::NotFound)?;
     let view = raw.into_view()?;
-    check_configuration(transaction, &view, sealer)?;
+    check_configuration(transaction, &view, sealer, cache)?;
     Ok(view)
 }
 
@@ -257,16 +284,12 @@ fn check_configuration(
     transaction: &Transaction<'_>,
     view: &NetworkView,
     sealer: &Sealer,
+    cache: &crate::configuration::SnapshotCache,
 ) -> Result<(), NetworkError> {
-    let (source, config, bindings) = transaction.query_row("SELECT source_jsonc, configuration, bindings FROM configuration_versions WHERE network_id = ?1 AND revision = ?2", params![view.id.as_uuid().as_bytes().as_slice(), view.current_revision.get() as i64], |row| Ok((row.get::<_, Vec<u8>>(0)?, row.get::<_, Vec<u8>>(1)?, row.get::<_, Vec<u8>>(2)?)))?;
-    check_persisted(
-        sealer,
-        view.id,
-        view.current_revision,
-        &source,
-        &config,
-        &bindings,
-    )
+    cache
+        .load(transaction, view.id, view.current_revision, sealer)
+        .map(|_| ())
+        .map_err(|_| NetworkError::Storage)
 }
 
 fn ceiling(transaction: &Transaction<'_>, table: &str) -> Result<i64, NetworkError> {

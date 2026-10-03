@@ -100,6 +100,11 @@ macro_rules! number {
 
 number!(Revision, 1, "A positive configuration revision.");
 number!(
+    Count,
+    0,
+    "A nonnegative item count bounded for lossless JSON arithmetic."
+);
+number!(
     Version,
     1,
     "A positive record version, distinct from a configuration revision."

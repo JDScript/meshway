@@ -1,4 +1,4 @@
-use meshway_model::{InvalidNumber, MAX_SAFE_INTEGER, Revision, Sequence, Version};
+use meshway_model::{Count, InvalidNumber, MAX_SAFE_INTEGER, Revision, Sequence, Version};
 
 macro_rules! check_number {
     ($test:ident, $type:ty, $minimum:expr) => {
@@ -56,9 +56,10 @@ macro_rules! check_number {
 check_number!(revision, Revision, 1);
 check_number!(version, Version, 1);
 check_number!(sequence, Sequence, 0);
+check_number!(count, Count, 0);
 
 #[test]
-fn zero_is_reserved_for_sequences() {
+fn revision_and_version_exclude_zero() {
     assert!(Revision::new(0).is_err());
     assert!(Version::new(0).is_err());
     assert!(serde_json::from_str::<Revision>("0").is_err());

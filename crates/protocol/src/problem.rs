@@ -9,6 +9,14 @@ wire_object! {
     pub struct EmptyParams {}
 }
 
+wire_object! {
+    #[derive(Debug, Clone, PartialEq, Eq)]
+    pub struct ConfigurationValidationParams {
+        pub issues: Vec<meshway_configuration::ConfigurationIssue>,
+        pub requirements: Vec<meshway_configuration::PreparationRequirement>,
+    }
+}
+
 // utoipa's tagged enum derive does not close each variant object for
 // serde(deny_unknown_fields). Keep the wire enum and closed schema in one list.
 macro_rules! problems {
@@ -83,6 +91,12 @@ problems! {
     RequestConflict(EmptyParams) = "request_id_conflict",
     NameConflict(EmptyParams) = "name_conflict",
     InvalidCursor(EmptyParams) = "invalid_cursor",
+    VersionConflict(EmptyParams) = "version_conflict",
+    LastOwner(EmptyParams) = "last_owner",
+    AlreadyMember(EmptyParams) = "already_member",
+    InvalidLink(EmptyParams) = "invalid_join_link",
+    RevisionConflict(EmptyParams) = "revision_conflict",
+    ConfigurationInvalid(ConfigurationValidationParams) = "configuration_invalid",
 }
 
 wire_object! {

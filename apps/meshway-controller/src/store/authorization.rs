@@ -10,7 +10,7 @@ use uuid::Uuid;
 
 use crate::accounts::{AccountError, AuthenticatedSession, User};
 
-pub(super) fn current_session(
+pub(crate) fn current_session(
     transaction: &Transaction<'_>,
     digest: &[u8; 32],
     now: i64,

@@ -6,8 +6,10 @@ use std::collections::{BTreeMap, BTreeSet};
 use utoipa::ToSchema;
 
 mod addresses;
+mod allocation;
 mod references;
 mod routing;
+pub use allocation::allocate_addresses;
 pub use references::{domain_suffix_matches, topology_allows};
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
@@ -25,6 +27,8 @@ pub struct ValidationContext<'a> {
     pub nodes: BTreeSet<NodeId>,
     pub previous: Option<&'a NetworkConfiguration>,
     pub expected_user_bindings: BTreeMap<String, UserBinding>,
+    /// Stable bindings belonging to `previous`, for name-only identity updates.
+    pub previous_user_bindings: BTreeMap<String, UserBinding>,
     /// Transaction-authorized registration/identity transition targets.
     pub approved_identities: BTreeMap<NodeId, NodeIdentity>,
     /// Exact normalized TLS declarations verified for certificate/key/name,
@@ -139,7 +143,17 @@ pub fn normalize(
             &format!("{path}/identity"),
             &mut check,
         );
+        let stable_user_rename = match (old.map(|n| &n.identity), &node.identity) {
+            (Some(NodeIdentity::User { user: before }), NodeIdentity::User { user: after }) => {
+                context
+                    .previous_user_bindings
+                    .get(before)
+                    .is_some_and(|binding| context.members.get(after) == Some(binding))
+            }
+            _ => false,
+        };
         if old.map(|n| &n.identity) != Some(&node.identity)
+            && !stable_user_rename
             && context.approved_identities.get(&id) != Some(&node.identity)
         {
             check.require(format!("{path}/identity"), PreparationKind::IdentityProof);

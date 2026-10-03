@@ -45,6 +45,7 @@ wire_object! {
     #[derive(Debug)]
     pub struct CreateNetworkRequest {
         pub request_id: RequestId,
+        /// Raw input. Apply getAuthOptions.networkNameRules; padding is allowed.
         pub name: String,
     }
 }
@@ -53,6 +54,7 @@ wire_object! {
     #[derive(Debug)]
     pub struct RenameNetworkRequest {
         pub request_id: RequestId,
+        /// Raw input. Apply getAuthOptions.networkNameRules, not String.length.
         pub name: String,
         pub expected_name: String,
     }
@@ -96,6 +98,18 @@ wire_object! {
         #[serde(deserialize_with = "required_nullable")]
         pub next_cursor: Option<String> [required = true],
         pub as_of: DateTime<Utc>,
+        /// Current visible count within the cursor's original creation bounds.
+        /// Recomputed on every page; permission loss can reduce this value.
+        pub total: meshway_model::Count,
+    }
+}
+
+wire_object! {
+    #[derive(Debug,Clone,PartialEq,Eq)]
+    pub struct MemberActions {
+        pub change_role:bool,
+        pub assignable_roles:Vec<MembershipRole>,
+        pub remove:bool,
     }
 }
 
@@ -108,6 +122,7 @@ wire_object! {
         pub role: MembershipRole,
         pub version: Version,
         pub joined_at: DateTime<Utc>,
+        pub actions:MemberActions,
     }
 }
 
@@ -119,6 +134,9 @@ wire_object! {
         #[serde(deserialize_with = "required_nullable")]
         pub next_cursor: Option<String> [required = true],
         pub as_of: DateTime<Utc>,
+        /// Current visible count within the cursor's original creation bound.
+        /// Removed members disappear and reduce total on subsequent pages.
+        pub total:meshway_model::Count,
     }
 }
 

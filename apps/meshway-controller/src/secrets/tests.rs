@@ -31,6 +31,40 @@ fn sealer() -> Sealer {
 }
 
 #[test]
+fn credential_fingerprints_are_keyed_and_domain_separated() {
+    let first = sealer();
+    let second = sealer();
+    let network = NetworkId::new(random_key_id().unwrap().into_uuid()).unwrap();
+    let other = NetworkId::new(random_key_id().unwrap().into_uuid()).unwrap();
+    let value = b"short-password";
+    let fingerprint = first.fingerprint(network, "trojanPassword", value).unwrap();
+    assert_eq!(
+        fingerprint,
+        first.fingerprint(network, "trojanPassword", value).unwrap()
+    );
+    assert_ne!(
+        fingerprint,
+        second
+            .fingerprint(network, "trojanPassword", value)
+            .unwrap()
+    );
+    assert_ne!(
+        fingerprint,
+        first.fingerprint(other, "trojanPassword", value).unwrap()
+    );
+    assert_ne!(
+        fingerprint,
+        first.fingerprint(network, "vlessUuid", value).unwrap()
+    );
+    assert_ne!(
+        fingerprint,
+        first
+            .fingerprint(network, "trojanPassword", b"other")
+            .unwrap()
+    );
+}
+
+#[test]
 fn authenticated_envelopes_reject_every_byte_mutation_and_context_substitution() {
     let sealer = sealer();
     let network = NetworkId::new(random_key_id().unwrap().into_uuid()).unwrap();

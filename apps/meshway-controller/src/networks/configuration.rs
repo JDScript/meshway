@@ -7,7 +7,6 @@ use crate::{
 };
 use meshway_configuration::{
     AddressPools, NetworkConfiguration, UserBinding, canonical_json, new_network,
-    restore_canonical_json,
 };
 use meshway_model::{ArtifactId, NetworkId, NodeId, Revision};
 use serde::{Deserialize, Serialize};
@@ -15,7 +14,7 @@ use sha2::{Digest as _, Sha256};
 use std::collections::BTreeMap;
 use zeroize::Zeroizing;
 
-#[derive(Default, Serialize, Deserialize)]
+#[derive(Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub(crate) struct ConfigurationBindings {
     pub(crate) users: BTreeMap<String, UserBinding>,
@@ -86,34 +85,4 @@ pub(crate) fn prepare(name: String, sealer: &Sealer) -> Result<PreparedNetwork, 
             .seal(id, Revision::MIN, Purpose::Bindings, &bindings)
             .map_err(|_| NetworkError::Unavailable)?,
     })
-}
-
-/// Persisted versions are restored exactly, never re-normalized against today's
-/// defaults. Used before returning an existing network backed by this version.
-pub(crate) fn check_persisted(
-    sealer: &Sealer,
-    id: NetworkId,
-    revision: Revision,
-    source: &[u8],
-    config: &[u8],
-    bindings: &[u8],
-) -> Result<(), NetworkError> {
-    let source = sealer
-        .open(id, revision, Purpose::Source, source)
-        .map_err(|_| NetworkError::Storage)?;
-    let config = sealer
-        .open(id, revision, Purpose::Configuration, config)
-        .map_err(|_| NetworkError::Storage)?;
-    let bindings = sealer
-        .open(id, revision, Purpose::Bindings, bindings)
-        .map_err(|_| NetworkError::Storage)?;
-    let source = std::str::from_utf8(source.as_bytes()).map_err(|_| NetworkError::Storage)?;
-    meshway_configuration::parse_jsonc(source).map_err(|_| NetworkError::Storage)?;
-    restore_canonical_json(
-        std::str::from_utf8(config.as_bytes()).map_err(|_| NetworkError::Storage)?,
-    )
-    .map_err(|_| NetworkError::Storage)?;
-    serde_json::from_slice::<ConfigurationBindings>(bindings.as_bytes())
-        .map_err(|_| NetworkError::Storage)?;
-    Ok(())
 }

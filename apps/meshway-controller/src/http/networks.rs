@@ -62,6 +62,7 @@ pub(super) async fn list(
         items: page.items.into_iter().map(view).collect(),
         next_cursor: page.next_cursor,
         as_of: page.as_of,
+        total: page.total,
     }))
 }
 
@@ -177,9 +178,20 @@ pub(super) async fn members(
                 role: member.role,
                 version: member.version,
                 joined_at: member.joined_at,
+                actions: member_actions(member.actions),
             })
             .collect(),
         next_cursor: page.next_cursor,
         as_of: page.as_of,
+        total: page.total,
     }))
+}
+pub(super) fn member_actions(
+    actions: crate::networks::MemberActions,
+) -> meshway_protocol::MemberActions {
+    meshway_protocol::MemberActions {
+        change_role: actions.change_role,
+        assignable_roles: actions.assignable_roles,
+        remove: actions.remove,
+    }
 }

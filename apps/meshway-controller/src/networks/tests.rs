@@ -924,12 +924,12 @@ async fn schema_enforces_network_revision_foreign_keys_and_immutable_complete_ve
         ] { assert!(c.execute(sql, []).is_err(), "accepted {sql}"); }
         assert!(c.execute("INSERT INTO memberships (id, network_id, user_id, role, version, joined_at) SELECT randomblob(16), network_id, user_id, role, version, joined_at FROM memberships LIMIT 1", []).is_err());
         // A revision existing in another network cannot satisfy this pointer.
-        c.execute("INSERT INTO configuration_versions SELECT network_id, 2, ?2, ?3, ?4, created_by, created_at, cause, request_id FROM configuration_versions WHERE network_id = ?1", params![second.id.as_uuid().as_bytes().as_slice(), source.as_bytes(), config.as_bytes(), bindings.as_bytes()]).unwrap();
+        c.execute("INSERT INTO configuration_versions SELECT network_id, 2, ?2, ?3, ?4, created_by, created_at, cause, request_id, NULL FROM configuration_versions WHERE network_id = ?1", params![second.id.as_uuid().as_bytes().as_slice(), source.as_bytes(), config.as_bytes(), bindings.as_bytes()]).unwrap();
         let tx = c.transaction().unwrap();
         tx.execute("UPDATE networks SET current_revision = 2 WHERE id = ?1", [first.id.as_uuid().as_bytes().as_slice()]).unwrap();
         assert!(tx.commit().is_err());
         assert_eq!(c.query_row("SELECT current_revision FROM networks WHERE id = ?1", [first.id.as_uuid().as_bytes().as_slice()], |r| r.get::<_, i64>(0)).unwrap(), 1);
-        assert!(c.execute("INSERT INTO configuration_versions SELECT network_id, 3, x'01', configuration, bindings, created_by, created_at, cause, request_id FROM configuration_versions LIMIT 1", []).is_err());
+        assert!(c.execute("INSERT INTO configuration_versions SELECT network_id, 3, x'01', configuration, bindings, created_by, created_at, cause, request_id, NULL FROM configuration_versions LIMIT 1", []).is_err());
     }).await.unwrap();
     app.check_storage().await.unwrap();
     app.shutdown().await.unwrap();

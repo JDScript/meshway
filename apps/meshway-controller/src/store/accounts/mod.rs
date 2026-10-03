@@ -2,6 +2,7 @@
 //! worker, in the same transaction as any mutation and its activity record.
 
 mod activity;
+pub(crate) mod management;
 
 use std::time::Duration;
 

@@ -19,6 +19,7 @@ pub struct App {
     executor: Executor,
     accounts: Accounts,
     sealer: Arc<Sealer>,
+    configuration_cache: Arc<crate::configuration::SnapshotCache>,
 }
 
 /// Safe diagnostic categories: no filesystem paths, SQL, or credentials.
@@ -106,6 +107,7 @@ impl App {
             executor,
             accounts,
             sealer: Arc::new(sealer),
+            configuration_cache: Arc::default(),
         })
     }
 
@@ -116,7 +118,22 @@ impl App {
     }
 
     pub fn networks(&self) -> Networks {
-        Networks::new(self.executor.handle(), self.sealer())
+        Networks::new(
+            self.executor.handle(),
+            self.sealer(),
+            Arc::clone(&self.configuration_cache),
+        )
+    }
+
+    pub(crate) fn configurations(&self) -> crate::configuration::Configurations {
+        crate::configuration::Configurations::new(
+            self.executor.handle(),
+            self.sealer(),
+            Arc::clone(&self.configuration_cache),
+        )
+    }
+    pub(crate) fn history(&self) -> crate::history::History {
+        crate::history::History::new(self.executor.handle(), self.sealer())
     }
 
     /// Runs full, read-only schema, SQLite integrity, and foreign-key checks on

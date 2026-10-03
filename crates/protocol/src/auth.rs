@@ -39,6 +39,7 @@ wire_object! {
         pub request_id: RequestId,
         pub registration_enabled: bool,
         pub password_rules: PasswordRules,
+        pub network_name_rules: crate::NetworkNameRules,
     }
 }
 

@@ -68,15 +68,22 @@ impl RawMember {
             joined_at: row.get(6)?,
         })
     }
-    pub(super) fn into_view(self) -> Result<MemberView, NetworkError> {
+    pub(super) fn into_view(
+        self,
+        caller: (MembershipId, MembershipRole),
+        owner_count: i64,
+    ) -> Result<MemberView, NetworkError> {
+        let id = MembershipId::new(uuid(&self.id)?).map_err(|_| NetworkError::Storage)?;
+        let role = role(&self.role)?;
         Ok(MemberView {
-            id: MembershipId::new(uuid(&self.id)?).map_err(|_| NetworkError::Storage)?,
+            id,
             user_id: UserId::new(uuid(&self.user)?).map_err(|_| NetworkError::Storage)?,
             email: self.email,
-            role: role(&self.role)?,
+            role,
             version: Version::new(self.version.try_into().map_err(|_| NetworkError::Storage)?)
                 .map_err(|_| NetworkError::Storage)?,
             joined_at: timestamp(self.joined_at)?,
+            actions: crate::networks::MemberActions::for_context(caller, (id, role), owner_count),
         })
     }
 }
