@@ -12,6 +12,7 @@ import { GlobeStage } from "@/features/globe/globe-stage"
 import { LAYOUT_VARIABLES } from "@/features/shell/layout"
 import { ApiFailure, handleSessionRejected } from "@/lib/api"
 import { useLocale } from "@/lib/locale"
+import { onSessionChange } from "@/lib/session"
 import { getLocale } from "@/paraglide/runtime.js"
 
 import { routeTree } from "./routeTree.gen"
@@ -49,6 +50,11 @@ declare module "@tanstack/react-router" {
     router: typeof router
   }
 }
+
+// Route matches loaded under one sign-in are never shown under another: a
+// reused match would render its page at once, before its loader has run
+// for the new sign-in, and the loader's read would be cancelled under it.
+onSessionChange(() => router.clearCache())
 
 handleSessionRejected(() => {
   queryClient.clear()
