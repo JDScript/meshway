@@ -95,7 +95,7 @@ Rust 控制面与 Agent、React pure SPA 控制台、VitePress 文档站。
 - 并行任务明确文件所有权；根 workspace 配置、lockfile 和整体验证由协调者维护。
 - 不同 feature 组合的 CLI 行为测试与 SDK / 原生联测构建不得并行共用同一 Cargo target 目录；后者可能替换前者正在执行的 `target/debug/meshway-agent`。使用独立 target 或串行执行。
 - 构建缓存须有总量边界：只保留主工作区、当前活跃任务及当前验证所需的 target；相同任务/feature 复用指定缓存，仍保持上述并发 feature 隔离。一次性审查优先 `CARGO_INCREMENTAL=0`，审查或整合完成后及时删除专用 target。追溯保留源码/patch、日志、manifest 与必要运行产物，不把完整 incremental/deps 目录当证据长期留存。启动大型构建前检查磁盘，可用空间不足 50 GiB 时先清理已结束且无进程/挂载引用的缓存，不继续扩张；不对未知归属 Docker volumes 做全量 prune。
-- 用户当前要求先处理磁盘空间，暂不恢复因网络中断的自动连接与状态型回包/出口两个 subagent；保留各自 HEAD/WIP 和验收证据，后续按用户恢复指令续接。
+- 用户已在磁盘清理后明确恢复 demo 和两个开发任务：自动连接主线继续，状态型回包先关闭独立审查缺陷再续接出口。使用 `openai/gpt-6.1-sol` 基于各自既有 HEAD/WIP 续接，继续执行构建空间和缓存回收约束。
 - 所有后续 worktree 统一创建在本仓库 `.worktree/<任务名>`，不再散放上级目录。独立任务完成、提交已整合且无未提交 / 未跟踪工作后及时移除 worktree；保留分支和测量产物。活跃任务须在不影响进程与构建的安全边界迁移，不能直接删改其目录。
 - 当前状态：`4c9a5be` 同身份直连 / 四地有序路径恢复复验 PASS，测试资源已清理，私有身份 / 源配置 / 旧 FAIL 及失败窗口保留。远端持久 latency history 查询未验；KR→NYC 底层 FIB 经 WARP，不能当公网直连或打洞证据。
 - Controller 按 `http/`、`contracts/`、`accounts/`、`store/` 分责；`store/schema/` 拥有当前 schema 原子初始化与结构/数据完整性校验，历史升级链已删除，普通启动不自动重置。共享测试辅助在 `test_support/`；网络存在性类型位于中性 `network_scope`，不代替权限；单一策略源/CAS与执行epoch/ACK分别归 `network_policy`、`mesh_execution`。不为测试读取SQL扩大生产可见性。
