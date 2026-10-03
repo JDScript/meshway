@@ -9,6 +9,7 @@ chrono.workspace = true
 meshway-model = { path = "../model" }
 serde.workspace = true
 utoipa.workspace = true
+zeroize = "1.8"
 
 [dev-dependencies]
 serde_json.workspace = true
