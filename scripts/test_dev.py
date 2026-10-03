@@ -59,12 +59,12 @@ class Workspace(unittest.TestCase):
                     self.local.pane("controller")
 
     def test_shell_suffix_and_foreign_log_are_rejected(self):
-        log = self.local.directory / "meshway-web.log"
-        base = "exec env " + " ".join(key + "=" + value for key, value in dev.WEB_ENV.items()) + " pnpm dev:web >>" + shlex.quote(str(log)) + " 2>&1"
-        self.assertTrue(dev.known_start(base, "web", self.root, log))
-        self.assertFalse(dev.known_start(base + " ; sleep 1", "web", self.root, log))
-        self.assertFalse(dev.known_start(base.replace("NEXT_TELEMETRY_DISABLED=1", "PRIVATE_TOKEN=SECRET"), "web", self.root, log))
-        self.assertFalse(dev.known_start(base.replace(shlex.quote(str(log)), shlex.quote(str(self.root / "foreign.log"))), "web", self.root, log))
+        log = self.local.directory / "meshway-docs.log"
+        base = "exec pnpm dev:docs >>" + shlex.quote(str(log)) + " 2>&1"
+        self.assertTrue(dev.known_start(base, "docs", self.root, log))
+        self.assertFalse(dev.known_start(base + " ; sleep 1", "docs", self.root, log))
+        self.assertFalse(dev.known_start(base.replace("exec pnpm", "exec env PRIVATE_TOKEN=SECRET pnpm"), "docs", self.root, log))
+        self.assertFalse(dev.known_start(base.replace(shlex.quote(str(log)), shlex.quote(str(self.root / "foreign.log"))), "docs", self.root, log))
 
     def test_foreign_port_blocks_start_without_spawn(self):
         with patch.object(self.local, "pane", return_value=None), patch.object(self.local, "listeners", return_value={777}), patch.object(dev, "run") as child:

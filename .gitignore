@@ -1,7 +1,6 @@
 /target/
 /.worktree/
 **/node_modules/
-**/.next/
 **/out/
 **/dist/
 **/.vitepress/cache/

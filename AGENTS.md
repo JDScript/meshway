@@ -1,12 +1,12 @@
 # Meshway
 
-Rust 控制面与 agent、Next.js + shadcn/ui 控制台、VitePress 文档站。
+Rust 控制面与 Agent、React pure SPA 控制台、VitePress 文档站。
 
 ## 项目边界
 
 - `apps/controller`：控制面服务。`apps/agent`：节点进程。
 - `crates/`：按清楚职责拆分的 Rust 库。用户明确支持把 Agent 内可独立构建、测试的能力抽出（如 `agent-dns`），不为压低 crate 数量把实现堆回 App；也不按临时阶段机械拆包。Rust 生成客户端位于 `crates/control-client/src/generated`，由 Agent 与 Apple core 直接消费。
-- `apps/web`：将被新 console 替代的旧 Next.js 控制台，本后端线程不再维护或默认验收。`apps/apple`：iOS / macOS App。`packages/`：生成的前端协议与客户端。
+- `apps/console`：pure SPA 控制台，由用户独立工作流维护。旧 `apps/web` 已按用户要求删除。`apps/apple`：iOS / macOS App。`packages/`：生成的前端协议与客户端。
 - `docs`：VitePress 产品设计、架构和开发文档。
 - `references`：独立的上游参考 checkout；研究版本见其 README，默认不修改。
 - 旧 Meshing 项目已废弃，不将其代码、记忆或合同作为本项目依据。
@@ -69,9 +69,9 @@ Rust 控制面与 agent、Next.js + shadcn/ui 控制台、VitePress 文档站。
 - 配置 ACK 只表示 Agent 已校验并持久保存，不等同于数据面生效；逻辑路径预览不等同于真实 trace 或访问授权。
 - 托管 IPv4 数据面显式启用。Access 采用端点授权模型，与 routing 的路径选择分开。当前模型参照 Tailscale grants：只写允许规则、未匹配即拒绝、规则取并集且与顺序无关，新网络默认模板为成员全部允许；旧有序 allow/reject 不再保留兼容层。selector 支持当前 network 内的 `*`、管理员分配的 tag、node，后续加入用户 / 组；每条规则可显式双向。内部完整路径授权由控制面联合编译，不跳过必经节点；状态型回包另行推进。
 - Access 与 routing 的图形化及带 schema 的 JSONC 编辑器必须共享同一份草稿和 CAS 基准；无效文本、注释和未保存编辑不得被切换视图静默覆盖。
-- 用户指定：前端（`apps/web` 控制台）委派使用 `anthropic/claude-opus-5-5`，其余委派统一使用 `openai/gpt-6.1-sol`。用户已确认控制台可整体推翻重做，按已确认产品模型重整产品逻辑与视觉，但 App 依赖的 Web 端点与服务端鉴权边界必须保持兼容；独立任务按需要使用 worktree，根 manifest、lockfile 和合并验证由协调者维护。前端一致性与信息架构整理应和后端功能主线并行推进。
+- 用户指定：前端（`apps/console` 控制台）委派使用 `anthropic/claude-opus-5-5`，其余委派统一使用 `openai/gpt-6.1-sol`。用户已确认控制台可整体推翻重做，按已确认产品模型重整产品逻辑与视觉，但 App 依赖的公共接入端点与 Controller 鉴权边界必须保持；独立任务按需要使用 worktree，根 manifest、lockfile 和合并验证由协调者维护。前端一致性与信息架构整理应和后端功能主线并行推进。
 - 已交付账户 / Web 首批重整：日常仅用户账户登录，所有者 / 管理员 / 成员是网络内角色；实例凭据收敛到专门初始化 / 恢复入口，不扩大网络 Owner 的跨网权限。成员 / 邀请 / 角色 / 设备归属、我的账户、登录初始化及节点列表 / 详情 / 配置已接通；导航为概览 / 节点 / 成员 / 访问控制 / 路由 / 设置，保留地图方向。
-- 用户最新决定旧 `apps/web` 后续 deprecated，由 `apps/console` 替代；本线程不再承担旧 Web 的维护、兼容修补或默认 typecheck/lint/test/build。集中完成 Rust 后端、生成契约/SDK和真实 Linux 组网，新 console 由用户独立工作流处理。Controller 鉴权、网络作用域及 App/CLI 浏览器接入等公共契约仍须保持。验收必须走正常 Controller 下发、Agent 生命周期和真实 TUN 包流，独立编译器或 fixture 原型通过不算真实组网闭环。
+- 用户最新明确删除旧 `apps/web`、专属依赖与启动/验收入口，不保留旧 Web 兼容层。后端集中完成 Rust、生成契约/SDK和真实 Linux 组网，新 console 由用户独立工作流处理。Controller 鉴权、网络作用域及 App/CLI 浏览器接入等公共契约仍须保持；Apple 现有原生测试直接使用隔离 Controller API，不依赖已删除的 Next 代理。验收必须走正常 Controller 下发、Agent 生命周期和真实 TUN 包流，独立编译器或 fixture 原型通过不算真实组网闭环。
 - `apps/console` 是用户与另一个 agent 进行的新 Web 设计工作，当前后端线程忽略该目录并保护其相关 workspace / lockfile 改动。后端验收可使用独立、固定依赖的快照，不重置或替换另一工作流的依赖，不因它的未完成状态扩展前端任务。
 - 用户已确认新 console 为 pure SPA，并要求完整导出 / 审查 model、字段、schema 与 HTTP API。接口独立于 Next Server Actions，明确会话 / 网络权限、错误、配置 CAS、观测新鲜度、轮询与分页；已发布契约和开发中 v3 候选分开。字段可省略、可 null、未知 / 不适用 / 已失效是不同语义，不为清理而统一删除空值。
 - 已核对用户在 console 线程确认的方案：沿用不透明 `mws_` 用户会话，不改 JWT；LocalStorage 持久化，标签页捕获到内存后以 Authorization 携带，storage 变化时锁定 / 重载并隔离缓存和草稿；实例管理员令牌只放内存。新控制台无 BFF，同源由 Controller 从运行时配置目录提供静态 dist，API / App 路径保持有效，静态导航 fallback 不得吞掉 API / 缺失资源错误；Rust 构建与测试不依赖前端构建。Cookie 会话是未采用的备选审查提案，不再当作此迁移前置要求；Controller 仍逐请求 / 事务检查真实身份与网络权限。
@@ -90,7 +90,7 @@ Rust 控制面与 agent、Next.js + shadcn/ui 控制台、VitePress 文档站。
 - no-host-network / no-privileged 同样覆盖构建器。已披露并移除的两个特权 buildx builder 不再启动；原证据保留。使用既有普通 builder 构造环境 / runtime 层，Rust 在非 root、cap-drop-ALL、CPU/内存有界的普通容器内编译，不开放 insecure / host-network entitlement、不改 daemon。
 - E2E 重启恢复已采用端到端认证的有界 `resync-v1`；快速路径要求参与节点支持扩展，旧节点及丢包 / 竞争保留原 TTL 边界，首个 stale packet 不重放。邻接恢复不证明旧 packet 会话恢复；不缩 TTL、无条件清反向 cache 或降低加密掩盖失败，与状态型 grants 回包分开跟踪。
 - Linux managed 构建已接上正常 bootstrap/control/daemon/TUN 的用途受限保护，在隔离 namespace 验证通过，远端未部署。Journal v3 使用 boot + 非零 netns cookie；旧无 cookie / 不明归属 journal 保留并拒绝，不按 inode/形状接管。无绑定时仅 guard-only Controller bootstrap，真实网络绑定私有落盘后才转 bound owner；业务 DNS 每次发布核对该绑定。DNS错误/取消必须 join 原运行代际后撤 TUN route、保留 sink，输出背压不能阻塞清理或退出。受审 socket2 单 API 补丁限 vendor，应用 crate 继续 forbid unsafe。
-- Rust 使用 `cargo fmt`、Clippy 和必要的行为测试；JS 使用严格 TypeScript 与各包检查。修改协议、HTTP 路由或生成客户端时，合并前检查 Rust workspace/all-features（含 Agent 与 Apple core）、生成 drift、SDK、Apple 脚本及 `experiments/*/tsconfig.json` 消费者。旧 `apps/web` 不再作为本线程验收项；新 console 的 UI/构建由独立工作流负责，后端提供兼容的生成契约与变更说明。
+- Rust 使用 `cargo fmt`、Clippy 和必要的行为测试；JS 使用严格 TypeScript 与各包检查。修改协议、HTTP 路由或生成客户端时，合并前检查 Rust workspace/all-features（含 Agent 与 Apple core）、生成 drift、SDK、Apple 脚本及 `experiments/*/tsconfig.json` 消费者。Console 的 UI/构建由独立工作流负责，后端提供兼容的生成契约与变更说明。
 - 用户已明确移除 Meshway 的浏览器自动化检查：不保留或默认重建 Playwright / 浏览器 E2E 套件，不以浏览器全量回归阻塞日常开发或部署。UI 由用户在开发页面手工验证；协议、鉴权、迁移和数据面仍运行各自必要的非浏览器行为测试。
 - 并行任务明确文件所有权；根 workspace 配置、lockfile 和整体验证由协调者维护。
 - 不同 feature 组合的 CLI 行为测试与 SDK / 原生联测构建不得并行共用同一 Cargo target 目录；后者可能替换前者正在执行的 `target/debug/meshway-agent`。使用独立 target 或串行执行。

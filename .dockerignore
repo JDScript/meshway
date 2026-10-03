@@ -7,15 +7,11 @@ apps/apple/build
 apps/apple/**/.build
 apps/apple/**/.swiftpm
 **/node_modules
-**/.next
-**/.next-review
 **/.vitepress
 **/dist
 **/out
 **/.env
 **/.env.*
-test-results
-playwright-report
 **/*.tsbuildinfo
 **/__pycache__
 .DS_Store

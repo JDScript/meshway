@@ -26,9 +26,9 @@ jobs:
       - run: pnpm typecheck
       - run: pnpm lint
       - run: pnpm test:protocol
-      - run: pnpm test:web
+      - run: pnpm test:console
       - run: pnpm build:docs
-      - run: pnpm build:web
+      - run: pnpm build:console
 
   agent-features:
     name: Agent ${{ matrix.build.name }} / ${{ matrix.os }}

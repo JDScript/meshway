@@ -21,8 +21,7 @@ import uuid
 
 ROOT = Path(__file__).resolve().parents[1]
 from performance_lock import DEFAULT_LOCK as LOCK, LOCK_FD_ENV, performance_environment as lock_environment, validate_descriptor
-SERVICES = {"controller": (8420, "/api/v1/networks"), "web": (3000, "/login"), "docs": (5173, "/")}
-WEB_ENV = {"MESHWAY_CONTROLLER_URL": "http://127.0.0.1:8420", "MESHWAY_WEB_COOKIE_SECURE": "auto", "NEXT_TELEMETRY_DISABLED": "1"}
+SERVICES = {"controller": (8420, "/api/v1/networks"), "docs": (5173, "/")}
 
 
 class DevError(RuntimeError):
@@ -104,13 +103,7 @@ def known_start(raw, service, root, log):
         if tokens[:1] == ["exec"]:
             tokens.pop(0)
         if tokens[:1] == ["env"]:
-            tokens.pop(0)
-            found = {}
-            while tokens and "=" in tokens[0] and not tokens[0].startswith(">"):
-                key, value = tokens.pop(0).split("=", 1)
-                found[key] = value
-            if service != "web" or found != WEB_ENV:
-                return False
+            return False
         # Only the known private log redirection is allowed; no general shell suffix.
         if tokens[-1:] == ["2>&1"]:
             tokens.pop()
@@ -160,7 +153,7 @@ def actual_command(raw, service, root):
         return False
     try:
         args = shlex.split(raw)
-        # pnpm's executable normally becomes `node /absolute/path/pnpm dev:web`.
+        # pnpm's executable normally becomes `node /absolute/path/pnpm dev:docs`.
         if args and Path(args[0]).name in ("node", "nodejs"):
             args.pop(0)
         return len(args) == 2 and Path(args[0]).name in ("pnpm", "pnpm.cjs") and args[1] == "dev:" + service
@@ -291,8 +284,6 @@ class LocalServices:
             log = self.directory / ("meshway-" + service + ".log")
             private(log, create=True)
             args = command(service, self.root)
-            if service == "web":
-                args = ["env", *[key + "=" + value for key, value in WEB_ENV.items()], *args]
             shell = "exec " + shlex.join(args) + " >>" + shlex.quote(str(log)) + " 2>&1"
             run(["tmux", "new-session", "-d", "-s", "meshway-" + service, "-c", str(self.root), shell], cwd=self.root)
         deadline = time.monotonic() + self.wait
@@ -444,7 +435,7 @@ class Demo:
 
 
 def parser():
-    result = argparse.ArgumentParser(description="Repository-local tmux services and existing Docker demo. Default all: controller/web/docs plus an initialized demo.")
+    result = argparse.ArgumentParser(description="Repository-local tmux services and existing Docker demo. Default all: controller/docs plus an initialized demo. Start the independent console with pnpm dev:console.")
     result.add_argument("action", choices=("start", "status", "stop", "restart", "update"))
     result.add_argument("service", nargs="?", default="all", choices=(*SERVICES, "demo", "all"))
     result.add_argument("--json", action="store_true", help="machine-readable status only")

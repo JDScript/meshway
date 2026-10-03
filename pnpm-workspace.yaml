@@ -1,9 +1,7 @@
 packages:
-  - apps/web
   - apps/console
   - docs
   - packages/*
 
 allowBuilds:
   esbuild: true
-  sharp: true

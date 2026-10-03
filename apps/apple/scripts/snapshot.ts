@@ -1,4 +1,4 @@
-// Real unsigned Debug windows, isolated controller/Web/Keychain. No App fixtures.
+// Real unsigned Debug windows, isolated controller/Keychain. No App fixtures.
 import { chmod, copyFile, mkdir, mkdtemp, readFile, readdir, rename, rm, writeFile } from "node:fs/promises";
 import { spawn } from "node:child_process";
 import { createHash, randomBytes, randomUUID } from "node:crypto";
@@ -15,12 +15,11 @@ const capturedFiles = new Set<string>();
 await mkdir(output, { recursive: true });
 const temporary = await mkdtemp(join(output, ".live-"));
 await chmod(temporary, 0o700);
-const controllerPort = await unusedPort(), webPort = await unusedPort();
-const controllerURL = `http://127.0.0.1:${controllerPort}`, consoleURL = `http://127.0.0.1:${webPort}`;
+const controllerPort = await unusedPort();
+const controllerURL = `http://127.0.0.1:${controllerPort}`;
 const data = join(temporary, "controller");
 const startController = () => service(executable("meshway-controller"), ["serve", "--data-dir", data, "--bind", `127.0.0.1:${controllerPort}`]);
 let controller = startController();
-let web: ReturnType<typeof service> | undefined;
 let app: ReturnType<typeof spawn> | undefined;
 let appExit: Promise<void> | undefined;
 let keychainService: string | undefined;
@@ -70,11 +69,7 @@ try {
     throw new Error("Build the Debug app with MESHWAY_BUNDLE_PREFIX=dev.meshway.snapshot before capturing");
   }
   isolatedBundle = true;
-  await controller.ready(`${controllerURL}/api/v1/overview`, 401);
-  web = service(process.execPath, [join(root, "apps/web/node_modules/next/dist/bin/next"), "start", join(root, "apps/web"), "--hostname", "127.0.0.1", "--port", String(webPort)], {
-    ...process.env, MESHWAY_CONTROLLER_URL: controllerURL, NEXT_TELEMETRY_DISABLED: "1",
-  });
-  await web.ready(`${consoleURL}/login`, 200);
+  await controller.ready(`${controllerURL}/api/v1/networks`, 401);
   const admin = (await readFile(join(data, "admin.token"), "utf8")).trim();
   const networkId = (await listNetworks(controllerURL, admin)).networks[0]?.network_id;
   if (!networkId) throw new Error("Isolated controller has no network");
@@ -114,7 +109,7 @@ try {
       // Public cleanup metadata only; never write the credential to a file.
       await writeFile(join(ipc, "namespace"), keychainService, { mode: 0o600 });
       app = spawn(appExecutable, ["-ApplePersistenceIgnoreState", "YES", "-NSQuitAlwaysKeepsWindows", "NO"], { cwd: root, stdio: "ignore", env: { ...process.env,
-        MESHWAY_SNAPSHOT_DIR: ipc, MESHWAY_SNAPSHOT_SERVER: consoleURL,
+        MESHWAY_SNAPSHOT_DIR: ipc, MESHWAY_SNAPSHOT_SERVER: controllerURL,
         MESHWAY_SNAPSHOT_KEYCHAIN: keychainService, MESHWAY_SNAPSHOT_APPEARANCE: appearance,
         MESHWAY_SNAPSHOT_SIZE: size } });
       appExit = new Promise<void>((resolve) => { app?.once("exit", () => resolve()); app?.once("error", () => resolve()); });
@@ -179,7 +174,7 @@ try {
       await command("saved-networks"); await capture("saved-networks"); await command("dismiss");
       await command("switch-first"); await capture("switched-first");
       await controller.stop(); await command("refresh"); await capture("error");
-      controller = startController(); await controller.ready(`${controllerURL}/api/v1/overview`, 401);
+      controller = startController(); await controller.ready(`${controllerURL}/api/v1/networks`, 401);
       const own = (await listNodes(controllerURL, admin, networkId)).nodes.find(node => node.name === "Zeyu’s MacBook Pro" && !node.revoked_at);
       if (!own) throw new Error("App did not enroll a real node");
       await revokeNode(controllerURL, admin, networkId, { node_id: own.id });
@@ -201,7 +196,7 @@ try {
   }
 } finally {
   if (app && app.exitCode === null && app.signalCode === null) { app.kill("SIGTERM"); await appExit; }
-  await web?.stop(); await controller.stop();
+  await controller.stop();
   if (keychainService) {
     // Delete only this invocation's unique item; never access developer credentials.
     await cleanupNamespace(keychainService, keychainDirectory);
