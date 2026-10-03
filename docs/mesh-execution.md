@@ -1,6 +1,6 @@
 # IPv4 Mesh 执行合同
 
-Controller 只保存当前四层 `NetworkPolicy`。Agent 统一消费当前执行快照，已通过正常三节点 Linux TUN 的直连、必经中继、grants 撤回、lease sink 与同身份恢复验收。该固定可达环境的包流验证不代表自动组网或 NAT 打洞已交付。
+Controller 只保存当前四层 `NetworkPolicy`。Agent 统一消费当前执行快照，已通过正常三节点 Linux TUN 的直连、必经中继、状态型回包、grants 撤回、lease sink 与同身份恢复验收。自动邻接与单向 grant 的组合也覆盖真实 HTTP 回包及反向新连接拒绝；该固定可达环境验证不代表首包按需调度或 NAT 打洞已交付。
 
 ## 源与发布
 
@@ -8,7 +8,7 @@ Controller 只保存当前四层 `NetworkPolicy`。Agent 统一消费当前执�
 
 同事务 publication 读取当前网络 revision、活动库存/地址/tag、listener/候选、epoch 能力及不可变公钥，再完整编译、预算和投影。配置候选不是实测可达。连接 block 优先，grants 并集，Mesh 路由从上到下 first-match；当前节点执行只支持一条 IPv4 Mesh 精确主路径。参与者缺能力/密钥时撤回整个本节点执行，不能跳过必经点。
 
-公共出口规则、profile/assignment/自动地区配置和外部目的地 grants 当前保存入口拒绝。完整出口、域名分流、状态型 Mesh 回包、IPv6 overlay、自动邻接/主备、打洞尚未完成。
+公共出口规则、profile/assignment/自动地区配置和外部目的地 grants 当前保存入口拒绝。完整出口、域名分流、IPv6 overlay、首包按需建连及打洞尚未完成。
 
 ## HTTP 与类型
 
@@ -23,11 +23,17 @@ Controller 只保存当前四层 `NetworkPolicy`。Agent 统一消费当前执�
 
 `NodeMeshExecution` 只含稳定执行合同，不下发完整源或 compiler internal。库存 `/agents/configuration` schema 2 仅含 revision、network、self、peers，仍有独立 node-scoped digest/ACK；DNS、兑换与心跳保持各自语义。旧 policy/access/Flow source DTO 与旧 dataplane 下载端点均已删除。
 
+执行快照当前为 schema 3，协商能力为 `Ipv4StatefulExactPathV3`，路径声明 `StatefulIpv4V2` 回包语义。该 wire 版本独立于单一 `policy` 的业务命名；不保留旧执行能力兼容分支。
+
 begin 新 runtime epoch 清除旧能力/回执/报告，迟到请求不得写新 epoch；不从 agent_version 猜能力。能力变化推进同网 revision。精确模型与运行时 schema 由[生成链](/protocol)产出。
 
 ## 执行与寿命
 
 Agent 独立验证 schema/capability、身份/网络/地址、公钥、revision/digest、路径与预算，并检查本机资源。私有 journal 仅提供恢复/rollback floor，不允许无 fresh HTTP 离线激活或续租。更高可信 revision、撤回、ACK 冲突和 lease 独立停止旧代际，不等 HTTP 完成。TUN 停止后 Mesh 地址池保留 sink，不能落回底层默认路由。
+
+TCP、UDP 与 ICMP echo 的回包资格绑定本次流的随机 proof、网络/revision、端点 tuple 和完整路径；单向 grant 不授予对端独立新流权限。回复沿原会话路径反向返回，反向路由规则只用于对端主动的新会话。排队或保存 ACK 不激活资格；成功设备接收先发布本地响应状态，匹配的认证回执或携带 proof 的早到回复可证明原请求已到达对端。活跃流不等待逐包回执。
+
+流表每运行代际最多 1024 项、每 peer 最多 128 项；发送前预留，超限丢弃新包并记录原因，保持其他流和 packet pump。每次激活使用空表。UDP/echo 按 30 秒 idle、TCP 按 120 秒 idle 回收；活跃流无强制 300 秒截断，TCP 半关闭保留仍开放的方向。IPv4 options/fragments、其他协议/ICMP 类型和无握手的 TCP 中途接入明确拒绝。丢包/乱序、流水发送、第三 ACK 携带数据、半关闭及容量边界均有行为回归，未将功能验收等同于吞吐验收。
 
 预算每节点 128 精确路径、每路径最多 8 节点、64 union identities、64 托管材料、完整 2 MiB。事务门槛与下载防御一致，超限整体拒绝，不截断或部分发布。管理 GET 保留 saved intent，effective candidate 过滤不写回源。
 

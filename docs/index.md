@@ -35,7 +35,7 @@ features:
 
 已交付多网络 SQLite、用户账户/邀请/网络 RBAC/设备归属、App PKCE、IPAM/revision/CAS/ACK、平台托管 Native UDP/TCP 与 VLESS TCP/TLS、WebSocket/TLS、Linux Mesh IPv4 正常执行和 Noise E2E、节点 DNS/daemon 诊断与真实邻接历史。固定同身份直连/四地有序路径恢复复验 PASS，边界见[Linux 验收](/linux-field-validation)。
 
-**仍待交付**：完整出口/域名分流、Mesh状态型回包、自动建连/主备、真实打洞、默认STUN/GeoIP与CLI链接登录。当前固定链路证据含既有WARP，不能证明公网穿透；新单一policy合同须完成消费者整合与正常Linux包流复验。
+**仍待交付**：完整出口/域名分流、首包按需建连、真实打洞、默认 STUN/GeoIP 与 CLI 链接登录。单一 policy、状态型 Mesh 回包及自动邻接/主备已有正常 Linux 包流验收；固定底层可达的证据不能证明公网穿透，原跨地域链路还含既有 WARP。
 
 IPv6 地址和 AAAA 不代表 IPv6 TUN；Apple App 接入 / 库存不代表 App 隧道。配置 ACK 是持久保存回执，心跳是联系记录，规划路径不是实测 trace。实现边界见[架构](/architecture)，首版闭环和依赖见[里程碑](/milestones)。
 

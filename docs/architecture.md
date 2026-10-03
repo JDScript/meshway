@@ -29,7 +29,7 @@ Controller 维护与编译控制意图，不默认中继业务流量。Agent 执
 
 当前是多网络、单实例 SQLite，已接本地用户账户、网络成员权限和设备归属；用户 session、实例 bootstrap、注册令牌、节点 bearer 分权。管理查询在根事务内校验身份 / 网络权限并显式携带网络 ID；Agent 由凭据推导网络，SQL 绑定网络列，不使用连接级环境作用域。App 已有用户浏览器批准 / PKCE、隔离多接入和库存显示，暂无隧道。托管 Agent 支持公钥绑定、认证邻接、路径绑定的 Noise E2E、Linux Mesh IPv4 TUN、节点 DNS 与私有 daemon 诊断。
 
-VLESS TCP/TLS与WebSocket/TLS listener/材料由平台管理。四层NetworkPolicy是唯一源，Controller同事务publication投影稳定NodeMeshExecution；手工候选尚待自动组网收敛。完整出口、状态型Mesh回包、域名上下文、IPv6 overlay、打洞与真实trace仍未完成。
+VLESS TCP/TLS 与 WebSocket/TLS listener/材料由平台管理。四层 NetworkPolicy 是唯一源，Controller 同事务 publication 投影稳定 NodeMeshExecution；已支持静态授权路径需求的自动邻接及 TCP/UDP/ICMP echo 状态型回包。完整出口、域名上下文、IPv6 overlay、首包按需建连、打洞与真实 trace 仍未完成。
 
 Linux 正常接入、控制同步与 TUN 生命周期已接受保护 socket、HTTP/TLS、bootstrap DNS 和 RPDB owner；同地址普通业务不获全局豁免，退出保留 Mesh sink。隔离包流与恢复验证不代表远端已部署或所有宿主/VPN均受支持。Agent 领域库已独立并统一消费当前执行合同，后续推进自动组网 / 打洞及跨地域 Docker 验收；Apple 新增开发暂停，见[里程碑](/milestones)。
 

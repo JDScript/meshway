@@ -29,7 +29,7 @@ Agent DNS 已通过真实 loopback UDP/TCP A/AAAA/PTR 和隔离 Docker 验收，
 | --- | --- |
 | `tagOwners` 可引用用户/组/tag；设备 tag identity 替代 user identity，不能同时存在。self-advertise 必须获得赋 tag 的权限，不是自报即生效。[D5] | 当前 tag 是管理员节点属性；目标增加用户归属与预分配 tag 接入密钥，tag identity / 委派细节随契约落实。设备不做本地通告；接入凭据不授予管理权限。 |
 | grants 是 additive union，ACL 网络规则仅 accept；更具体规则不覆盖较宽规则。[D6][D7] | 已确认采用无序 grants 并集；唯一源不保留旧first-match allow/reject兼容层。Mesh 内路径约束独立于 Access；`grants.via` 不能当作有序 hop 序列。[S8] |
-| 新 tailnet 默认模板 allow-all；显式配置则采用 deny-by-default；方向授权不等于对端可发起新连接。[D7] | 已确认新网络默认成员全部允许，未匹配 grant 拒绝。Routing 初始空策略 reject 已废止，无 Mesh 规则自动选路；只有出口方案有序 first-match。未知 selector 报错，不转换为 `*`。 |
+| 新 tailnet 默认模板 allow-all；显式配置则采用 deny-by-default；方向授权不等于对端可发起新连接。[D7] | 新网络默认成员全部允许，未匹配 grant 拒绝。无 Mesh 规则时自动选路；Mesh 路由与出口方案均为有序 first-match，已建立会话的回复保留原路径。未知 selector 报错，不转换为 `*`。 |
 | tagged device 不能在控制台移除最后一个 tag，须重新以用户身份认证；移除用户不删除独立 tagged device。[D5] 客户端 filter 的返回包处理按协议不同：TCP 非 SYN、UDP/SCTP reverse-flow 缓存、ICMP 响应。[S7] | Meshway 移除 tag 是属性撤回，节点 revoke 是身份撤销；须重新编译并终止旧代际。当前显式双向不是 stateful return，不照搬 Tailscale 的 TCP/ICMP shortcut。 |
 | HuJSON 提供注释/尾逗号及 policy tests；schema 的语法容错不改变授权语义。[D6] | 已有共享草稿 / CAS，重整控制台仍须保留无效文本、注释和未保存编辑。未支持字段不可静默忽略。 |
 

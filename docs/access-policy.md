@@ -5,7 +5,7 @@ Access 是唯一 `NetworkPolicy` 中的 `grants` 层，决定谁可以访问什�
 - 只允许、未匹配拒绝；grants 取并集，与顺序和具体度无关。
 - 新网络默认包含成员 `* → *` grant；显式空 grants 为拒绝全部，不自动恢复模板。
 - 当前 selector 为本网 `*`、`node:<完整身份>`、管理员分配的 `tag:<名称>`。
-- `bidirectional` 显式允许反向发起业务；不等于状态型回包。正常 Mesh 状态型回包尚未交付，往返业务目前需要双向授权。
+- `bidirectional` 显式允许反向发起业务。TCP、UDP 与 ICMP echo 的状态型回复只需原方向 grant，沿原会话完整路径反向返回；反向新会话仍须独立授权并匹配其路由规则。
 - 未知或已撤销明确引用会使源失效；保留源与诊断，完整节点执行失败关闭。缺能力或公钥时不能删除必经节点再选路。
 
 源通过 GET `/api/v1/networks/{network_id}/policy` 读取，POST `.../policy/save` 保存。请求使用当前 `expected_revision` 和完整四层模型；`source_jsonc` 可省略/null，提供文本时必须与结构化 policy 相同。支持注释、尾逗号，拒绝重复对象键。只改注释也推进 revision；无变化保存不推进。角色权限与 CAS 在根事务内复核，失败保留草稿。
