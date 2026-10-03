@@ -86,7 +86,7 @@ Rust 控制面与 Agent、React pure SPA 控制台、VitePress 文档站。
 - 用户已确认把第一轮远端联测提前到打洞之前：先用已验证主线，在已登记 Linux 主机的独立 Docker 容器核对部署、固定链路、跨地域 TUN 互访和重启恢复，先两台再四台；自动建连 / 打洞 / 主备完成后另做第二轮。测试保留原 SSH/管理连接，不手工改宿主机路由、DNS、防火墙或 Docker daemon 配置，不用 host network/privileged；Docker 创建的测试网络、端口及数据目录必须隔离且可精确清理，不恢复旧配置快照覆盖用户工作。
 - 用户早已提供本机 Mac Controller `:8420` 映射至 `meshway-dev-api.jdscript.dev` 的计划，部署选址必须先核对该入口，不能遗漏后默认另设控制面。本轮 LAX Controller 是隔离停机 / 恢复验收的临时安排，不是产品部署要求；已运行的同身份复验先收尾，不中途手改 controller URL / 身份。用户最新希望构建集中在本地 / NYC，允许评估跨平台编译，不再把东京 / 首尔目标机原生构建当作硬性前置；优先评估 Mac 的 Linux ARM64 环境与 NYC 的 AMD64 环境或固定交叉工具链，具体新流水线尚未实施。
 - Mac 域名已从四地核对可达，生成 GET 确认与本机8420为同一网络；这不等于原生Agent接入验收。原LAX测试身份和数据独立保留。
-- 本机 Controller `:8420` 已原位更新至已审合主线，数据库 v12、`policy-v3` API 与公网映射已核对可用；现网策略源仍为 `legacy_v2`，原身份/密钥/配置保持，不能把服务升级当作已显式激活新策略。部署须核对实际进程与接口，不以磁盘 binary 重新编译代替重启；最新私有回执位于 `.meshway/services/controller-update-*/deployment.json`。
+- 本机 Controller `:8420` 已按用户指令显式重置为当前 schema 13 和唯一 `/policy`；公网映射已核对同一新网络，旧 `/policy-v3` 返回404。三个 Docker demo Agent 已刷新二进制并重新接入，实际六方向 TUN ping 通过；原容器与可写层工具保留，旧库和节点状态私有归档。部署须核对实际进程与接口，不以磁盘 binary 重新编译代替重启；最新私有回执位于 `.meshway/services/policy-reset-*/{deployment,final-verification}.json`。初始化临时 Owner 密码已被后续更新替代，不覆盖其他工作流的账户变更。
 - no-host-network / no-privileged 同样覆盖构建器。已披露并移除的两个特权 buildx builder 不再启动；原证据保留。使用既有普通 builder 构造环境 / runtime 层，Rust 在非 root、cap-drop-ALL、CPU/内存有界的普通容器内编译，不开放 insecure / host-network entitlement、不改 daemon。
 - E2E 重启恢复已采用端到端认证的有界 `resync-v1`；快速路径要求参与节点支持扩展，旧节点及丢包 / 竞争保留原 TTL 边界，首个 stale packet 不重放。邻接恢复不证明旧 packet 会话恢复；不缩 TTL、无条件清反向 cache 或降低加密掩盖失败，与状态型 grants 回包分开跟踪。
 - Linux managed 构建已接上正常 bootstrap/control/daemon/TUN 的用途受限保护，在隔离 namespace 验证通过，远端未部署。Journal v3 使用 boot + 非零 netns cookie；旧无 cookie / 不明归属 journal 保留并拒绝，不按 inode/形状接管。无绑定时仅 guard-only Controller bootstrap，真实网络绑定私有落盘后才转 bound owner；业务 DNS 每次发布核对该绑定。DNS错误/取消必须 join 原运行代际后撤 TUN route、保留 sink，输出背压不能阻塞清理或退出。受审 socket2 单 API 补丁限 vendor，应用 crate 继续 forbid unsafe。
@@ -97,6 +97,6 @@ Rust 控制面与 Agent、React pure SPA 控制台、VitePress 文档站。
 - 所有后续 worktree 统一创建在本仓库 `.worktree/<任务名>`，不再散放上级目录。独立任务完成、提交已整合且无未提交 / 未跟踪工作后及时移除 worktree；保留分支和测量产物。活跃任务须在不影响进程与构建的安全边界迁移，不能直接删改其目录。
 - 当前状态：`4c9a5be` 同身份直连 / 四地有序路径恢复复验 PASS，测试资源已清理，私有身份 / 源配置 / 旧 FAIL 及失败窗口保留。远端持久 latency history 查询未验；KR→NYC 底层 FIB 经 WARP，不能当公网直连或打洞证据。
 - Controller 按 `http/`、`contracts/`、`accounts/`、`store/` 分责；`store/schema/` 拥有当前 schema 原子初始化与结构/数据完整性校验，历史升级链已删除，普通启动不自动重置。共享测试辅助在 `test_support/`；网络存在性类型位于中性 `network_scope`，不代替权限；单一策略源/CAS与执行epoch/ACK分别归 `network_policy`、`mesh_execution`。不为测试读取SQL扩大生产可见性。
-- 当前主线：单一 policy、当前 schema 初始化及 Agent 消费者已通过独立审查与正常 Linux 整合验收；旧开发服务切换须显式重置和重新接入，部署状态单独核对。后续推进按实际承载能力的自动建连 / 打洞；状态型业务回包、完整出口 / 域名分流、平台默认 STUN、GeoIP 与自动地区方案尚未交付。Apple 新增开发暂停，console 由用户独立工作流维护。未审定候选不部署。
+- 当前主线：单一 policy、当前 schema 初始化及 Agent 消费者已通过独立审查与正常 Linux 整合验收，本机开发服务和三个 Docker demo 已切换。后续推进按实际承载能力的自动建连 / 打洞；状态型业务回包、完整出口 / 域名分流、平台默认 STUN、GeoIP 与自动地区方案尚未交付。Apple 新增开发暂停，console 由用户独立工作流维护。未审定候选不部署。
 - 性能本批已结束，不整分支部署 offload / NEON 实验或扩大矩阵；未知归属或仍有进程 / 未提交工作的树须保留。
 - 独立完成的工作形成清晰提交。提交前检查生成产物、文档和实际运行命令一致。

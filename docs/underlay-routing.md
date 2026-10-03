@@ -15,6 +15,8 @@
 
 `crates/agent-underlay` 提供 namespace owner、用途受限 socket factory、bootstrap resolver 和代际退休；`apps/agent/src/control/transport` 负责 HTTP/TLS 与承载注入适配。正常 Linux daemon 在启动承载前安装 prepared owner，托管 Native UDP / TCP 与 VLESS 外层共用 owning 注入边界；未准备保护不能回落到 `SystemUnderlay` 继续执行。
 
+运行环境须提供 `ip`、`nft`、`iptables-legacy-save` 和 `ip6tables-legacy-save`，并允许运行用户读取当前网络 namespace 的 legacy 表名清单。当前审计仍保守拒绝非空 `rt_tables.d`，包括发行版放入其中的说明文件；部署应保留真实表别名配置，单独处理不参与 `.conf` 解析的文档。开发 Docker 启动准备补齐这些条件后，Agent 仍以原非 root UID 和仅 `NET_ADMIN` 运行；不以关闭 netfilter/RPDB 审计解决启动失败。
+
 Linux owner 要求 Linux 5.7+ 的非零 `SO_NETNS_COOKIE`、namespace 内 NET_ADMIN、TUN 和必要 iproute2 / nft / legacy-save 审计工具。应用 crate 保持 `unsafe_code = forbid`；cookie getter 的细边界位于受审依赖。
 
 ### 路由所有权
