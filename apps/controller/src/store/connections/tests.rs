@@ -294,6 +294,77 @@ fn automatic_edges_follow_connection_blocks_capabilities_and_manual_override() {
 }
 
 #[test]
+fn automatic_candidate_budget_counts_authorized_demand_not_unused_topology() {
+    let dir = directory();
+    let mut store = SingleNetworkFixture::open(dir.path(), &NetworkOptions::default()).unwrap();
+    let mut nodes = Vec::new();
+    for seed in 9..19 {
+        let (id, token) = enrolled(&mut store, &format!("node-{seed}"));
+        store
+            .publish_connection_identity(&token, &identity(seed))
+            .unwrap();
+        nodes.push((id, token));
+    }
+    let mut policy = meshway_policy::NetworkPolicy::default_template();
+    policy.grants = vec![meshway_policy::Grant {
+        id: "only-pair".into(),
+        src: vec![format!("node:{}", nodes[0].0)],
+        dst: vec![format!("node:{}", nodes[1].0)],
+        bidirectional: false,
+    }];
+    save_policy(&mut store, policy);
+    let network = store.network_id.clone();
+    for (id, transport) in [
+        ("udp", ConnectionTransport::NativeUdp),
+        ("tcp", ConnectionTransport::NativeTcp),
+    ] {
+        let expected_revision = store.revision().unwrap();
+        store
+            .save_managed_listener(
+                &network,
+                &SaveManagedListenerRequest {
+                    expected_revision,
+                    settings: ManagedListenerSettings {
+                        id: id.into(),
+                        node_id: nodes[1].0.clone(),
+                        enabled: true,
+                        transport,
+                        bind_address: "0.0.0.0".into(),
+                        bind_port: 18443,
+                        advertised_endpoints: (19000..19016)
+                            .map(|port| ConnectionEndpoint {
+                                host: "relay.example.com".into(),
+                                port,
+                            })
+                            .collect(),
+                        vless: None,
+                    },
+                },
+            )
+            .unwrap();
+    }
+    assert_eq!(
+        store
+            .agent_connections(&nodes[0].1)
+            .unwrap()
+            .payload
+            .outgoing
+            .len(),
+        32
+    );
+    for (_, token) in &nodes[2..] {
+        assert!(
+            store
+                .agent_connections(token)
+                .unwrap()
+                .payload
+                .outgoing
+                .is_empty()
+        );
+    }
+}
+
+#[test]
 fn immutable_unique_binding_capability_updates_and_revision_exhaustion_are_atomic() {
     let dir = directory();
     let mut store = SingleNetworkFixture::open(dir.path(), &NetworkOptions::default()).unwrap();

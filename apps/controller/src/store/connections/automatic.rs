@@ -4,7 +4,7 @@ use super::{NetworkId, validation};
 use crate::Error;
 use meshway_policy::{self as policy, NetworkPolicy};
 use meshway_protocol::*;
-use rusqlite::{Connection, OptionalExtension};
+use rusqlite::Connection;
 use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -34,7 +34,8 @@ pub(super) fn append(
             exit_enabled: false,
         })
         .collect();
-    let mut generated = Vec::new();
+    let streams = streams(db, network)?;
+    let mut eligible = Vec::new();
     for summary in &managed {
         if !summary.settings.enabled || !summary.compiled_capability_available {
             continue;
@@ -64,19 +65,12 @@ pub(super) fn append(
             {
                 continue;
             }
-            if let Some(vless) = &summary.settings.vless {
-                let modes: Option<String> = db.query_row(
-                    "SELECT vless_streams FROM managed_transport_capabilities WHERE network_id=?1 AND node_id=?2",
-                    rusqlite::params![network.as_str(), node.id], |r| r.get(0),
-                ).optional()?;
-                let modes: Vec<VlessStreamTransport> = modes
-                    .map(|v| serde_json::from_str(&v))
-                    .transpose()
-                    .map_err(|_| Error::Configuration("invalid managed stream capabilities"))?
-                    .unwrap_or_default();
-                if !modes.contains(&vless.stream) {
-                    continue;
-                }
+            if let Some(vless) = &summary.settings.vless
+                && streams
+                    .get(&node.id)
+                    .is_none_or(|modes| !modes.contains(&vless.stream))
+            {
+                continue;
             }
             // An explicit dialer/listener entry overrides automatic priority and
             // endpoint selection for that segment, including its backup list.
@@ -88,28 +82,12 @@ pub(super) fn append(
             {
                 continue;
             }
-            for endpoint in &listener.advertised_endpoints {
-                generated.push(ConnectionCandidate {
-                    id: identifier(&node.id, &listener.id, endpoint)?,
-                    dialer_node_id: node.id.clone(),
-                    listener_id: listener.id.clone(),
-                    endpoint: endpoint.clone(),
-                    priority: match listener.transport {
-                        ConnectionTransport::NativeUdp => 100,
-                        ConnectionTransport::NativeTcp => 200,
-                        ConnectionTransport::Vless => 300,
-                    },
-                    credential_ref: listener.credential_ref.clone(),
-                });
-                if generated.len() + snapshot.configuration.candidates.len() > 256 {
-                    return Err(Error::Capacity(
-                        "automatic adjacency exceeds 256 candidates",
-                    ));
-                }
+            if !listener.advertised_endpoints.is_empty() {
+                eligible.push((listener, dialer.node.id.as_str()));
             }
         }
     }
-    if generated.is_empty() {
+    if eligible.is_empty() {
         return Ok(());
     }
     let listener_nodes: BTreeMap<_, _> = snapshot
@@ -122,11 +100,14 @@ pub(super) fn append(
         .configuration
         .candidates
         .iter()
-        .chain(&generated)
         .map(|c| policy::Dial {
             from: c.dialer_node_id.clone(),
             to: listener_nodes[c.listener_id.as_str()].to_owned(),
         })
+        .chain(eligible.iter().map(|(listener, node)| policy::Dial {
+            from: (*node).to_owned(),
+            to: listener.node_id.clone(),
+        }))
         .collect();
     let facts = policy::Snapshot {
         nodes,
@@ -144,24 +125,48 @@ pub(super) fn append(
     let mut needed = BTreeSet::new();
     for path in &compiled.base.paths {
         for pair in path.windows(2) {
-            let a = &compiled.base.nodes[usize::from(pair[0])];
-            let b = &compiled.base.nodes[usize::from(pair[1])];
+            let a = compiled.base.nodes[usize::from(pair[0])].as_str();
+            let b = compiled.base.nodes[usize::from(pair[1])].as_str();
             needed.insert((a.min(b), a.max(b)));
         }
     }
-    let ids: BTreeSet<_> = snapshot
+    let mut ids: BTreeSet<_> = snapshot
         .configuration
         .candidates
         .iter()
-        .map(|c| &c.id)
+        .map(|c| c.id.clone())
         .collect();
-    generated.retain(|c| {
-        let a = &c.dialer_node_id;
-        let b = &listener_nodes[c.listener_id.as_str()].to_owned();
-        needed.contains(&(a.min(b), a.max(b)))
-    });
-    if generated.iter().any(|c| ids.contains(&c.id)) {
-        return Err(Error::Conflict);
+    let mut generated = Vec::new();
+    // Expand endpoints only for compiler-selected adjacency. Inventory is
+    // bounded separately; unrelated nodes do not consume the publication budget.
+    for (listener, node) in eligible {
+        let peer = listener.node_id.as_str();
+        if !needed.contains(&(node.min(peer), node.max(peer))) {
+            continue;
+        }
+        for endpoint in &listener.advertised_endpoints {
+            if generated.len() + snapshot.configuration.candidates.len() >= 256 {
+                return Err(Error::Capacity(
+                    "automatic adjacency exceeds 256 candidates",
+                ));
+            }
+            let id = identifier(node, &listener.id, endpoint)?;
+            if !ids.insert(id.clone()) {
+                return Err(Error::Conflict);
+            }
+            generated.push(ConnectionCandidate {
+                id,
+                dialer_node_id: node.to_owned(),
+                listener_id: listener.id.clone(),
+                endpoint: endpoint.clone(),
+                priority: match listener.transport {
+                    ConnectionTransport::NativeUdp => 100,
+                    ConnectionTransport::NativeTcp => 200,
+                    ConnectionTransport::Vless => 300,
+                },
+                credential_ref: listener.credential_ref.clone(),
+            });
+        }
     }
     snapshot.configuration.candidates.extend(generated);
     let (normalized, diagnostics) = validation::compile(&snapshot.configuration, &snapshot.nodes);
@@ -172,6 +177,26 @@ pub(super) fn append(
     }
     snapshot.configuration = normalized;
     Ok(())
+}
+
+fn streams(
+    db: &Connection,
+    network: &NetworkId,
+) -> Result<BTreeMap<String, Vec<VlessStreamTransport>>, Error> {
+    let mut statement = db.prepare(
+        "SELECT node_id,vless_streams FROM managed_transport_capabilities WHERE network_id=?1",
+    )?;
+    statement
+        .query_map([network.as_str()], |row| {
+            Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+        })?
+        .map(|row| {
+            let (node, json) = row?;
+            let modes = serde_json::from_str(&json)
+                .map_err(|_| Error::Configuration("invalid managed stream capabilities"))?;
+            Ok((node, modes))
+        })
+        .collect()
 }
 
 fn identifier(node: &str, listener: &str, endpoint: &ConnectionEndpoint) -> Result<String, Error> {
