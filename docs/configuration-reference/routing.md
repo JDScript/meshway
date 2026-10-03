@@ -4,20 +4,7 @@
 
 ## connections
 
-```json
-[
-  { "id": "default", "action": "allow", "a": "*", "b": "*" },
-  { "id": "isolate", "action": "block", "a": "tag:dev", "b": "tag:prod" }
-]
-```
-
-| 字段 | 类型 | 说明 |
-| --- | --- | --- |
-| `id` | `string` | 唯一规则 key |
-| `action` | `"allow" \| "block"` | block 优先，规则顺序无关 |
-| `a` / `b` | 节点选择器 | 无方向的逻辑邻接许可；不代表业务授权 |
-
-新网络显式生成默认 allow；`connections: []` 没有连接许可。listener 决定能否固定监听，实际可达性来自运行时。允许的边也只按业务需求建立。
+连接许可的完整格式见 [Connections](/configuration-reference/connections)。规则不含 id，使用非 null 的 remark；未命中时使用 [defaults.connections](/configuration-reference/defaults#connections)。
 
 ## routing.mesh
 

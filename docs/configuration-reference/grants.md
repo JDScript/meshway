@@ -1,6 +1,6 @@
 # Grants
 
-业务访问授权草案。规则取并集、顺序无关，只表达允许。
+业务访问授权。规则取并集、顺序无关，只表达允许；未匹配行为见 [Defaults](/configuration-reference/defaults#grants)。本页为下一版格式。
 
 ## Structure
 
@@ -8,7 +8,7 @@
 {
   "grants": [
     {
-      "id": "dev-web",
+      "remark": "开发组访问后端 Web 服务",
       "src": ["group:dev"],
       "dst": ["tag:backend"],
       "ip": ["tcp:443", "tcp:8443"],
@@ -20,15 +20,15 @@
 
 ## Fields
 
-| 字段 | 类型 | 建议默认 | 说明 |
+| 字段 | 类型 | 默认 | 说明 |
 | --- | --- | --- | --- |
-| `id` | `string` | 必填 | 唯一规则 key，用于诊断、引用和增量 |
+| `remark` | `string` | `""` | 可重复的说明文本；不接受 null |
 | `src` | `string[]` | 必填 | 非空源[选择器](/configuration-reference/identity#selectors)集合 |
 | `dst` | `string[]` | 必填 | 非空目标集合 |
 | `ip` | `string[]` | 必填 | 非空协议／目的端口集合 |
 | `bidirectional` | `boolean` | `false` | 同时允许反向发起新会话；只适用于双方均为 Mesh 节点的规则 |
 
-`id`、`ip` 的确切格式属于本稿提案；现行 grants 不支持本页全部字段组合。
+不使用规则 ID。错误定位到固定 revision 下的数组位置，例如 `/grants/2/ip`；remark 变化不改变授权。现行 API 尚未接受本页的完整新格式。
 
 ### ip
 
@@ -48,7 +48,7 @@
 
 ## Behavior
 
-- `grants: []` 不授予业务访问；新网络的“成员全部允许”通过显式模板规则实现。
+- 默认 `defaults.grants: "deny"` 时，`grants: []` 不授予业务访问；默认允许 Mesh 的含义由 defaults 明确表达。
 - 单向授权允许已建立会话的状态型回复，不自动允许反向新连接。
 - grant 允许访问，不代表已有路由、listener、认证通道或可用出口。
 - 出口／路由方案必须处于 grants 允许范围。路径与候选出口引用的联合校验见[路由](/configuration-reference/routing)。

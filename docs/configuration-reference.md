@@ -1,11 +1,11 @@
 ---
 title: Configuration Reference
-description: Meshway 配置结构、字段及建议默认值。
+description: Meshway 网络配置、默认行为和协议字段参考。
 ---
 
 # Configuration Reference
 
-**设计草案，供逐项确认。** 文档按“结构 → 字段 → 示例”组织；新增字段和默认值均为建议，尚非现行 API／Agent 配置格式。当前实现见[协议](/protocol)。
+本参考描述**开发中的下一版配置格式**，按公开文档维护。尚未发布的字段不会因此成为现行 API；可用范围见[承载与支持状态](/configuration-reference/transports)，现行接口见[协议](/protocol)。
 
 Config 相对静态，完整版本保存到数据库；State 随运行变化。[两者分开发送](/configuration-reference/synchronization)。
 
@@ -13,6 +13,10 @@ Config 相对静态，完整版本保存到数据库；State 随运行变化。[
 
 ```jsonc
 {
+  "defaults": {
+    "grants": "deny",
+    "connections": "allow"
+  },
   "groups": {
     "group:dev": ["alice@example.com"]
   },
@@ -21,7 +25,7 @@ Config 相对静态，完整版本保存到数据库；State 随运行变化。[
   },
   "grants": [
     {
-      "id": "dev-to-backend",
+      "remark": "开发组访问后端 HTTPS",
       "src": ["group:dev"],
       "dst": ["tag:backend"],
       "ip": ["tcp:443"]
@@ -52,9 +56,7 @@ Config 相对静态，完整版本保存到数据库；State 随运行变化。[
     "searchDomains": [],
     "overrideLocal": false
   },
-  "connections": [
-    { "id": "default", "action": "allow", "a": "*", "b": "*" }
-  ],
+  "connections": [],
   "routing": {
     "mesh": [],
     "egress": { "rules": [], "profiles": {}, "assignments": [] }
@@ -69,20 +71,27 @@ Config 相对静态，完整版本保存到数据库；State 随运行变化。[
 
 | 字段 | 类型 | 说明 |
 | --- | --- | --- |
+| `defaults` | `Defaults` | [未命中规则时的行为与默认出站配置](/configuration-reference/defaults) |
 | `groups` | `Record<string, string[]>` | [用户组](/configuration-reference/identity#groups) |
 | `tagsOwners` | `Record<string, string[]>` | [Tag 定义及授予权限](/configuration-reference/identity#tagsowners) |
 | `grants` | `Grant[]` | [业务访问授权](/configuration-reference/grants) |
 | `nodes` | `Record<NodeId, NodeSettings>` | [节点静态设置](/configuration-reference/nodes) |
 | `dns` | `DnsConfiguration` | [DNS](/configuration-reference/dns) |
-| `connections` | `ConnectionRule[]` | [承载连接许可／阻断](/configuration-reference/routing#connections) |
+| `connections` | `ConnectionRule[]` | [承载连接许可／阻断](/configuration-reference/connections) |
 | `routing` | `RoutingConfiguration` | [Mesh 与出口选路](/configuration-reference/routing) |
 | `ruleSets` | `Record<string, RuleSet>` | [规则集](/configuration-reference/rule-sets) |
 
-前六个字段沿用用户给出的基线；后三个是为已有连接／路由需求补充的字段提案。
+## Conventions
+
+- `remark` 是描述文本，不是标识；可重复、可为 `""`，不能为 `null`，省略时规范化为 `""`。
+- grants／connections 不包含 `id`。诊断使用本版本的字段路径，例如 `/grants/0`；修改使用配置 revision 保证基准一致。
+- listener／dialer 的对象 key 标识节点内资源，与 `tag:backend` 这类授权 Tag 不同。
+- 对象字段的缺省、空数组和 `null` 只按所属字段解释，不自动互换。
 
 ## Reading
 
 - 配置 listener：[监听器](/configuration-reference/listeners)；配置出站承载：[拨号器](/configuration-reference/dialers)。
+- 通用字段：[Listen](/configuration-reference/shared/listen)、[Dial](/configuration-reference/shared/dial)、[TLS](/configuration-reference/shared/tls)、[WebSocket](/configuration-reference/shared/websocket)。
 - Agent 收到什么：[NodeConfiguration](/configuration-reference/node-configuration) 与 [State Reference](/state-reference)。
 - 版本、回滚、增量：[同步与分发](/configuration-reference/synchronization)。
 - 配置变大、查询和外部 API：[存储与查询](/configuration-reference/storage-api)。

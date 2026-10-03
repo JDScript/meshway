@@ -1,12 +1,12 @@
 # Dialers
 
-出站承载配置草案。位于 `nodes[id].dialers`；它约束如何建连，不要求手工列出每一个 peer。
+位于 `nodes[id].dialers`。每项由[通用 Dial 字段](/configuration-reference/shared/dial)与协议字段组成，描述如何拨出，不要求配置每对节点的地址。
 
 ## Structure
 
 ```json
 {
-  "udp": { "type": "native_udp", "priority": 100 },
+  "udp": { "type": "native_udp", "remark": "优先使用 UDP", "priority": 100 },
   "tcp": { "type": "native_tcp", "priority": 200 },
   "vless": {
     "type": "vless",
@@ -16,31 +16,21 @@
 }
 ```
 
-## Fields
+## Types
 
-| 字段 | 类型 | 建议默认 | 说明 |
-| --- | --- | --- | --- |
-| `type` | `string` enum | 必填 | `native_udp`、`native_tcp`、`vless` |
-| `enabled` | `boolean` | `true` | 是否允许使用此项 |
-| `priority` | `integer` | 必填 | 0–65535，较小值优先 |
-| `streams` | `string[]` | `["tcp", "websocket"]` | 仅 VLESS，可用流封装；仍取决于目标 listener 和两端实际能力 |
-
-建议每节点每种 type 至多一项；同优先级时按 key 稳定排序。它是主备优先级，不是负载均衡权重。
+| type | 协议参考 | 当前能力 |
+| --- | --- | --- |
+| `native_udp` | [Native UDP](/configuration-reference/dialers/native-udp) | 平台托管 |
+| `native_tcp` | [Native TCP](/configuration-reference/dialers/native-tcp) | 平台托管 |
+| `vless` | [VLESS](/configuration-reference/dialers/vless) | TCP/TLS、WebSocket/TLS 已托管 |
+| `trojan` | [Trojan](/configuration-reference/dialers/trojan) | TCP/TLS 独立库；尚未接入平台托管 |
 
 ## Defaults
 
-建议语义：
+- 节点 `dialers: {}` 使用 [defaults.dialers](/configuration-reference/defaults#dialers)。
+- 非空对象替换默认集合；不和默认 UDP／TCP 隐式合并。
+- 所有项 disabled 表示不主动拨号。dialer 不限制获准 listener 接收后形成的双向通道。
+- 优先级数值较小者优先，同优先级按 key 稳定排序；不是负载均衡权重。
+- 目前目标格式约定每种 type 至多一项；逐段覆盖和重复类型实例的规则还未定版。
 
-- `dialers: {}` 使用平台默认：Native UDP 100、Native TCP 200、VLESS 300。
-- 非空对象替换平台默认允许集合；仅写 VLESS 就不能偷偷使用 Native UDP 业务承载。
-- 所有条目 `enabled: false` 表示禁用主动业务拨号。
-
-这些是待确认默认值。默认集合也必须与 Agent 实际编译能力、目标 listener、网络连接约束取交集。
-
-## 平台提供的内容
-
-目标 Node、可用 listener／endpoint、身份公钥、VLESS 凭据、TLS 信任与协调参数由 Controller 提供。拨号器不持有另一套手填 peer 清单，也不允许关闭身份／证书校验。
-
-STUN／协调用途与业务承载分别控制，不将允许一次发现探测解释为允许 UDP 业务流量。
-
-用户已确认逐段约束覆盖需求；本稿先定义节点级允许集合和优先级，**逐段覆盖的字段与冲突规则需下一轮单独确认**。
+Controller 从配置许可、对端 listener、两端能力和当前协调信息选择目标。server／port／凭据／信任绑定来自该获准目标，不在普通 dialer 里维护另一份手工 peer 清单。

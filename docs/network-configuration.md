@@ -37,6 +37,6 @@ description: Entity、Config、State 的职责与配置参考导航。
 
 ## 仍需确认 {#open-items}
 
-各字段页已填写一版建议供讨论。重点是 Tag 的身份语义、邮箱引用变更、listeners／dialers 的默认与逐段覆盖、路由方案分配冲突、DNS 出口行为、版本依赖和历史保留。
+字段参考按未来公开文档维护，未发布格式和协议能力如实标注。grants／connections 不使用 ID，remark 按非 null 字符串、默认空字符串定义；defaults 的兜底范围、Tag 身份语义、逐段覆盖、DNS 出口行为及历史依赖继续逐项确认。初版完整配置按版本加载／缓存，不预先建设多套数据库查询投影。
 
 参考 Tailscale 的 policy／NetworkMap、sing-box 的字段参考组织方式；不照搬它们所有协议、设备侧配置流程或历史兼容字段。现行实现与本轮设计分开，见[当前配置合同](/configuration)和[协议](/protocol)。
