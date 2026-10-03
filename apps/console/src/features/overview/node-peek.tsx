@@ -71,7 +71,7 @@ export function NodePeek({
             action={<DrawerClose render={<CloseButton />} />}
             meta={<VitalityLine vitality={nodeVitality(node, context)} />}
           />
-          <div className="flex min-h-0 flex-1 flex-col gap-5 overflow-y-auto px-4 pb-4">
+          <div className="scroll-edge flex min-h-0 flex-1 flex-col gap-5 overflow-y-auto px-4 pb-4">
             <div className="flex flex-col gap-2">
               <NodeAddresses node={node} />
               <div className="grid grid-cols-2 gap-2">

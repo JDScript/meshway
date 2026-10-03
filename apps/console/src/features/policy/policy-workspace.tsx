@@ -83,7 +83,7 @@ export function PolicyWorkspace({
             // The source editor ends above the commit bar, like every other layer's content.
             layer === "source"
               ? "pb-(--commit-space)"
-              : "overflow-y-auto pb-(--commit-space)"
+              : "scroll-edge overflow-y-auto pt-1 pb-(--commit-space)"
           )}
         >
           {!data || !document ? (

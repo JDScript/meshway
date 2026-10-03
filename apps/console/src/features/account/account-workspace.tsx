@@ -87,7 +87,7 @@ export function AccountWorkspace({
           </div>
         }
       />
-      <div className="min-h-0 flex-1 overflow-y-auto px-6 pt-1 pb-6">
+      <div className="scroll-edge min-h-0 flex-1 overflow-y-auto px-6 pt-1 pb-6">
         <div className="flex max-w-workspace flex-col gap-8">
           <Memberships
             networkId={networkId}

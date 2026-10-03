@@ -219,6 +219,11 @@ what knows the shell's geometry):
 - Workspaces holding a form (a tag, a member, adding a node, the account,
   settings) are `max-w-workspace` (40rem) wide; data-dense views (a node's
   tabs, the policy layers) take the full width.
+- A scrolling body under a fixed header keeps its spacing from the header
+  outside itself (the header's padding, a margin under tabs), with only
+  `pt-1` inside for focus rings; so its clip line sits 16px clear of the
+  header. Every such body carries `scroll-edge`: once scrolled, its top
+  edge fades over 16px instead of slicing rows.
 - The commit bar states one thing: unsaved (plain), a field that will not
   save (`destructive`), the controller moved past the draft's revision
   (`warning`, offering to overwrite). Its buttons keep minimum widths, so a

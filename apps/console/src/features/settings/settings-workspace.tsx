@@ -101,7 +101,7 @@ export function SettingsWorkspace({
         }
       />
       <form
-        className="min-h-0 flex-1 overflow-y-auto px-6 pt-1 pb-(--commit-space)"
+        className="scroll-edge min-h-0 flex-1 overflow-y-auto px-6 pt-1 pb-(--commit-space)"
         onSubmit={(event) => {
           event.preventDefault()
           commit.submit()
