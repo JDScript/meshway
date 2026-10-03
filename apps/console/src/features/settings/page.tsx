@@ -30,6 +30,7 @@ export function SettingsPage({ networkId }: { networkId: string }) {
       current={route.current}
       panel={
         <SettingsPanel
+          networkId={networkId}
           network={network.data ?? null}
           openSection={route.section}
           onOpen={nav.openSection}

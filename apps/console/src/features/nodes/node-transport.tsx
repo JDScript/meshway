@@ -11,6 +11,7 @@ import { ChevronDownIcon, PlusIcon } from "lucide-react"
 import { cn } from "@/lib/utils"
 import { useEffect, useMemo, useRef } from "react"
 
+import { DraftMark } from "@/components/chrome/draft-mark"
 import { EmptyLine, Section } from "@/components/chrome/section"
 import { StatusDot } from "@/components/chrome/status-dot"
 import { Tile } from "@/components/chrome/tile"
@@ -350,11 +351,7 @@ function ListenerItem({
             <span className="shrink-0 text-meta text-muted-foreground">
               {presetLabel[presetOf(settings)]()}
             </span>
-            {draft.dirty ? (
-              <span className="shrink-0 text-meta text-warning">
-                {m.node_draft_mark()}
-              </span>
-            ) : null}
+            {draft.dirty ? <DraftMark variant="text" /> : null}
           </span>
           <span className="mt-0.5 block truncate font-mono text-meta text-muted-foreground">
             {endpointText(settings.bind_address, settings.bind_port)}

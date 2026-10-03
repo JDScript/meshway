@@ -58,6 +58,7 @@
     ui-monospace, "SF Mono", SFMono-Regular, Menlo, Consolas, monospace;
   --color-success: var(--success);
   --color-warning: var(--warning);
+  --color-draft: var(--draft);
   --color-brand: var(--brand);
   --color-field: var(--field);
   --color-sidebar-ring: var(--sidebar-ring);
@@ -146,6 +147,8 @@
   --brand: var(--signal);
   --success: oklch(0.6 0.14 160);
   --warning: oklch(0.7 0.15 65);
+  /* Unsaved edits, wherever they are marked (a dot, the word, the draft's revision). */
+  --draft: var(--warning);
   /* A field is recessed into the glass: a touch deeper than a tile (fill-subtle). */
   --field: color-mix(in oklab, var(--foreground) 6%, transparent);
 

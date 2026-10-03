@@ -1,11 +1,14 @@
 import { CircleAlertIcon } from "lucide-react"
+import { useState } from "react"
 
 import { CloseButton } from "@/components/chrome/close-button"
+import { RevisionLine } from "@/components/chrome/draft-mark"
 import { SurfaceHeader } from "@/components/chrome/surface-header"
 import { Button } from "@/components/ui/button"
 import { Skeleton } from "@/components/ui/skeleton"
 import { useNodeNavigation } from "@/features/nodes/navigation"
 import { surfaceTitleId } from "@/features/shell/page-frame"
+import { PopupBoundary } from "@/features/shell/popup-boundary"
 import { m } from "@/paraglide/messages.js"
 
 import { cn } from "@/lib/utils"
@@ -45,12 +48,7 @@ export function PolicyWorkspace({
   const names = useSelectorNames(networkId)
   const nodes = useNodeNavigation(networkId)
   const { data, document } = state
-
-  const origin = state.draft.dirty
-    ? m.policy_origin_draft({ revision: state.draft.baseRevision ?? 0 })
-    : data
-      ? m.policy_revision({ revision: data.revision })
-      : null
+  const [body, setBody] = useState<HTMLDivElement | null>(null)
 
   return (
     <div className="swap-in flex min-h-0 flex-1 flex-col" key={layer}>
@@ -63,70 +61,71 @@ export function PolicyWorkspace({
           </h2>
         )}
         meta={
-          <p className="flex h-4 items-center gap-1.5 text-meta text-muted-foreground">
-            {origin ? (
-              <span className="font-mono tabular-nums">{origin}</span>
-            ) : (
-              <Skeleton className="h-2.5 w-24 rounded-full" />
-            )}
-            {data && !state.canManage ? (
-              <>
-                <span aria-hidden="true">·</span>
-                <span>{m.policy_read_only()}</span>
-              </>
-            ) : null}
-          </p>
+          <RevisionLine
+            revision={data?.revision ?? null}
+            draftBase={
+              state.draft.dirty ? (state.draft.baseRevision ?? null) : null
+            }
+            facts={
+              data && !state.canManage
+                ? [<span key="read-only">{m.read_only()}</span>]
+                : []
+            }
+          />
         }
         action={<CloseButton onClick={nav.closeLayer} />}
       />
-      <div
-        className={cn(
-          "@container/workspace flex min-h-0 flex-1 flex-col gap-4 px-6",
-          // The source editor ends above the commit bar, like every other layer's content.
-          layer === "source"
-            ? "pb-(--commit-space)"
-            : "overflow-y-auto pb-(--commit-space)"
-        )}
-      >
-        {!data || !document ? (
-          <Placeholder />
-        ) : layer === "source" ? (
-          <Source state={state} names={names} />
-        ) : !document.policy ? (
-          <InvalidSource
-            text={document.text}
-            problem={document.problems[0] ?? null}
-            onOpenSource={() => nav.openLayer("source")}
-          />
-        ) : (
-          <form
-            className="flex flex-col"
-            onSubmit={(event) => {
-              event.preventDefault()
-              commit.submit()
-            }}
-          >
-            <button type="submit" hidden />
-            <Layer
-              layer={layer}
-              view={view}
-              nav={nav}
-              props={{
-                policy: document.policy,
-                editable: state.editable,
-                names,
-                diagnostics: state.diagnostics,
-                problems: document.problems,
-                rule: view.rule,
-                onRule: nav.setRule,
-                edit: state.edit,
-                move: state.move,
-                onOpenNode: (nodeId) => nodes.openNode(nodeId),
-              }}
+      <PopupBoundary value={body}>
+        <div
+          ref={setBody}
+          className={cn(
+            "@container/workspace flex min-h-0 flex-1 flex-col gap-4 px-6",
+            // The source editor ends above the commit bar, like every other layer's content.
+            layer === "source"
+              ? "pb-(--commit-space)"
+              : "overflow-y-auto pb-(--commit-space)"
+          )}
+        >
+          {!data || !document ? (
+            <Placeholder />
+          ) : layer === "source" ? (
+            <Source state={state} names={names} />
+          ) : !document.policy ? (
+            <InvalidSource
+              text={document.text}
+              problem={document.problems[0] ?? null}
+              onOpenSource={() => nav.openLayer("source")}
             />
-          </form>
-        )}
-      </div>
+          ) : (
+            <form
+              className="flex flex-col"
+              onSubmit={(event) => {
+                event.preventDefault()
+                commit.submit()
+              }}
+            >
+              <button type="submit" hidden />
+              <Layer
+                layer={layer}
+                view={view}
+                nav={nav}
+                props={{
+                  policy: document.policy,
+                  editable: state.editable,
+                  names,
+                  diagnostics: state.diagnostics,
+                  problems: document.problems,
+                  rule: view.rule,
+                  onRule: nav.setRule,
+                  edit: state.edit,
+                  move: state.move,
+                  onOpenNode: (nodeId) => nodes.openNode(nodeId),
+                }}
+              />
+            </form>
+          )}
+        </div>
+      </PopupBoundary>
     </div>
   )
 }

@@ -2,11 +2,7 @@
   "$schema": "https://inlang.com/schema/inlang-message-format",
   "policy_nav": "Policy",
   "policy_failed": "Could not read the policy",
-  "policy_revision": "r{revision}",
   "policy_saved_invalid": "Saved policy invalid",
-  "policy_origin_draft": "Draft · from r{revision}",
-  "policy_read_only": "Read only",
-  "policy_changed": "Unsaved changes",
   "policy_layer_connections": "Connections",
   "policy_layer_grants": "Grants",
   "policy_layer_mesh": "Mesh routes",
@@ -121,21 +117,7 @@
   "policy_mesh_hop_add": "Add hop",
   "policy_mesh_add": "Add route",
   "policy_mesh_end": "No match · automatic path",
-  "policy_mesh_failures": [
-    {
-      "declarations": [
-        "input count",
-        "local countPlural = count: plural"
-      ],
-      "selectors": [
-        "countPlural"
-      ],
-      "match": {
-        "countPlural=one": "{count} path unavailable",
-        "countPlural=other": "{count} paths unavailable"
-      }
-    }
-  ],
+  "policy_mesh_failures": "Unavailable paths",
   "policy_egress_public": "Public rules",
   "policy_egress_profiles": "Profiles",
   "policy_egress_automatic": "Automatic",

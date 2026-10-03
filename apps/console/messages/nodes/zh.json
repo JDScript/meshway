@@ -28,7 +28,6 @@
   "node_tab_transport": "承载",
   "node_tab_manage": "管理",
   "node_unknown": "未知",
-  "node_draft_mark": "未保存",
   "node_revoked": "已撤销",
   "node_legacy_country": "国家（旧标注）",
   "node_open_peer": "打开 {name}",

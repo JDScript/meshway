@@ -3,6 +3,7 @@ import { useQuery, useQueryClient } from "@tanstack/react-query"
 import { useMemo } from "react"
 
 import { CloseButton } from "@/components/chrome/close-button"
+import { RevisionLine } from "@/components/chrome/draft-mark"
 import { CopyButton } from "@/components/chrome/copy-button"
 import { SwitchRow, TextField } from "@/components/chrome/form"
 import { Section } from "@/components/chrome/section"
@@ -87,6 +88,17 @@ export function SettingsWorkspace({
           </h2>
         )}
         action={<CloseButton onClick={onClose} />}
+        meta={
+          <RevisionLine
+            revision={network.data?.revision ?? null}
+            draftBase={draft.dirty ? (draft.baseRevision ?? null) : null}
+            facts={
+              network.data && !canManage
+                ? [<span key="read-only">{m.read_only()}</span>]
+                : []
+            }
+          />
+        }
       />
       <form
         className="min-h-0 flex-1 overflow-y-auto px-6 pt-1 pb-(--commit-space)"

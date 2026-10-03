@@ -14,6 +14,7 @@ import {
   type LucideIcon,
 } from "lucide-react"
 
+import { EmptyLine } from "@/components/chrome/section"
 import { SegmentedControl } from "@/components/chrome/segmented-control"
 import { m } from "@/paraglide/messages.js"
 
@@ -260,7 +261,7 @@ export function EgressLayer({
           />
         ) : section === "profiles" ? (
           policy.profiles.length === 0 ? (
-            <Empty>{m.policy_egress_profiles_none()}</Empty>
+            <EmptyLine>{m.policy_egress_profiles_none()}</EmptyLine>
           ) : (
             policy.profiles.map((profile, index) => (
               <section
@@ -326,14 +327,6 @@ export function EgressLayer({
   )
 }
 
-function Empty({ children }: { children: string }) {
-  return (
-    <p className="flex h-14 items-center rounded-row bg-fill-subtle px-3.5 text-row text-muted-foreground">
-      {children}
-    </p>
-  )
-}
-
 function Automatic({ policy, names, diagnostics }: LayerProps) {
   const automatic = policy.automatic ?? { regions: {}, fallback: "mesh-only" }
   const regions = Object.entries(automatic.regions)
@@ -346,7 +339,7 @@ function Automatic({ policy, names, diagnostics }: LayerProps) {
     <div className="flex flex-col gap-2">
       <RuleNotes notes={notes} names={names} />
       {regions.length === 0 ? (
-        <Empty>{m.policy_egress_regions_none()}</Empty>
+        <EmptyLine>{m.policy_egress_regions_none()}</EmptyLine>
       ) : null}
       <ul className="flex flex-col gap-1">
         {regions.map(([region, profile]) => (
@@ -382,7 +375,7 @@ function Assignments({
   diagnostics,
 }: LayerProps & { assignments: readonly ProfileAssignment[] }) {
   if (assignments.length === 0)
-    return <Empty>{m.policy_egress_assignments_none()}</Empty>
+    return <EmptyLine>{m.policy_egress_assignments_none()}</EmptyLine>
   return (
     <ul className="grid grid-cols-1 gap-2 @2xl/workspace:grid-cols-2">
       {assignments.map((assignment, index) => {

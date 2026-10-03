@@ -1,15 +1,17 @@
 import type { NetworkPolicy } from "@meshway/control-client"
-import { cn } from "@/lib/utils"
 import {
   ArrowLeftRightIcon,
   BracesIcon,
-  ChevronRightIcon,
   KeyRoundIcon,
   LogOutIcon,
   WaypointsIcon,
   type LucideIcon,
 } from "lucide-react"
+import { Fragment } from "react"
 
+import { DraftMark, RevisionLine } from "@/components/chrome/draft-mark"
+import { ListRow, PanelList, useListKeys } from "@/components/chrome/list"
+import { PanelHeader } from "@/components/chrome/panel-header"
 import { Skeleton } from "@/components/ui/skeleton"
 import { surfaceTitleId } from "@/features/shell/page-frame"
 import { m } from "@/paraglide/messages.js"
@@ -93,6 +95,14 @@ export function PolicyPanel({
 }) {
   const { data, document, diagnostics } = state
   const lines = state.text === "" ? 0 : state.text.split("\n").length
+  const { ref, onKeyDown } = useListKeys({
+    ids: POLICY_LAYERS,
+    openId: openLayer,
+    onOpen: (id) => {
+      const layer = POLICY_LAYERS.find((candidate) => candidate === id)
+      if (layer) onOpen(layer)
+    },
+  })
 
   const sourceSummary = () => {
     if (!document) return ""
@@ -104,36 +114,25 @@ export function PolicyPanel({
 
   return (
     <div className="flex h-full min-h-0 flex-col">
-      <header className="flex flex-col gap-1 px-4 pt-4 pb-3">
-        <h2
-          id={surfaceTitleId("policy", "panel")}
-          className="text-base font-semibold tracking-tight"
-        >
-          {m.policy_nav()}
-        </h2>
-        <p className="flex h-4 items-center gap-1.5 text-meta text-muted-foreground">
-          {data ? (
-            <>
-              <span className="font-mono tabular-nums">
-                {m.policy_revision({ revision: data.revision })}
-              </span>
-              {!data.valid ? (
-                <>
-                  <span aria-hidden="true">·</span>
-                  <span className="text-destructive">
+      <PanelHeader page="policy" title={m.policy_nav()}>
+        <RevisionLine
+          revision={data?.revision ?? null}
+          draftBase={null}
+          facts={
+            data && !data.valid
+              ? [
+                  <span key="invalid" className="text-destructive">
                     {m.policy_saved_invalid()}
-                  </span>
-                </>
-              ) : null}
-            </>
-          ) : (
-            <Skeleton className="h-2.5 w-28 rounded-full" />
-          )}
-        </p>
-      </header>
-      <ul
+                  </span>,
+                ]
+              : []
+          }
+        />
+      </PanelHeader>
+      <PanelList
+        ref={ref}
         aria-labelledby={surfaceTitleId("policy", "panel")}
-        className="flex min-h-0 flex-1 flex-col gap-0.5 overflow-y-auto px-2 pb-2"
+        onKeyDown={onKeyDown}
       >
         {POLICY_LAYERS.map((layer) => {
           const Icon = layerIcon[layer]
@@ -148,59 +147,49 @@ export function PolicyPanel({
             layer === "source"
               ? state.draft.dirty
               : CHANGED[layer].some((section) => state.changed.has(section))
-          const text =
-            layer === "source"
-              ? data
-                ? sourceSummary()
-                : null
+          const text = !data
+            ? null
+            : layer === "source"
+              ? sourceSummary()
               : document?.policy
                 ? summary(layer, document.policy)
-                : data
-                  ? document
-                    ? m.policy_source_invalid_short()
-                    : m.policy_source_none()
-                  : null
+                : document
+                  ? m.policy_source_invalid_short()
+                  : m.policy_source_none()
           return (
-            <li
-              key={layer}
-              className={cn(
-                layer === "source" && "mt-1.5 border-t border-divider pt-1.5"
-              )}
-            >
-              <button
-                type="button"
-                aria-current={layer === openLayer ? "true" : undefined}
+            <Fragment key={layer}>
+              {layer === "source" ? (
+                <li aria-hidden="true" className="mx-3 my-1 h-px bg-divider" />
+              ) : null}
+              <ListRow
+                rowId={layer}
+                current={layer === openLayer}
                 onClick={() => onOpen(layer)}
-                className="list-row h-14 gap-3 px-3"
-              >
-                <span className="flex size-8 shrink-0 items-center justify-center rounded-full border border-divider bg-fill-raised/50">
-                  <Icon aria-hidden="true" className="size-3.5" />
-                </span>
-                <span className="min-w-0 flex-1">
-                  <span className="flex items-center gap-1.5 text-row font-medium">
+                lead={
+                  <Icon
+                    aria-hidden="true"
+                    className="size-4 text-muted-foreground"
+                  />
+                }
+                title={
+                  <>
                     <span className="truncate">{layerLabel[layer]()}</span>
-                    {changed ? (
-                      <span
-                        className="size-1.5 shrink-0 rounded-full bg-warning"
-                        aria-label={m.policy_changed()}
-                      />
-                    ) : null}
-                  </span>
-                  {text !== null ? (
-                    <span className="block truncate text-meta text-muted-foreground">
-                      {text}
-                    </span>
+                    {changed ? <DraftMark /> : null}
+                  </>
+                }
+                subtitle={
+                  text !== null ? (
+                    <span className="truncate">{text}</span>
                   ) : (
-                    <Skeleton className="mt-1.5 h-2.5 w-24 rounded-full" />
-                  )}
-                </span>
-                <NoteCounts notes={notes} />
-                <ChevronRightIcon className="size-4 shrink-0 text-muted-foreground" />
-              </button>
-            </li>
+                    <Skeleton className="h-2.5 w-24 rounded-full" />
+                  )
+                }
+                trail={<NoteCounts notes={notes} />}
+              />
+            </Fragment>
           )
         })}
-      </ul>
+      </PanelList>
     </div>
   )
 }

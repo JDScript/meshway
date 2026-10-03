@@ -17,11 +17,17 @@ function PopoverContent({
   side = "bottom",
   sideOffset = 4,
   collisionPadding,
+  collisionBoundary,
   ...props
 }: PopoverPrimitive.Popup.Props &
   Pick<
     PopoverPrimitive.Positioner.Props,
-    "align" | "alignOffset" | "side" | "sideOffset" | "collisionPadding"
+    | "align"
+    | "alignOffset"
+    | "side"
+    | "sideOffset"
+    | "collisionPadding"
+    | "collisionBoundary"
   >) {
   return (
     <PopoverPrimitive.Portal>
@@ -31,6 +37,7 @@ function PopoverContent({
         side={side}
         sideOffset={sideOffset}
         collisionPadding={collisionPadding}
+        collisionBoundary={collisionBoundary}
         className="isolate z-50"
       >
         <PopoverPrimitive.Popup

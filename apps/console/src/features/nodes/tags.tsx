@@ -110,9 +110,9 @@ export function TagList({
             </span>
           }
           subtitle={
-            <span className="truncate">
+            <span className={cn("truncate", state !== "saved" && "text-draft")}>
               {state === "added"
-                ? m.node_draft_mark()
+                ? m.draft_mark()
                 : state === "removed"
                   ? m.nodes_tag_removing()
                   : tag.description || "—"}
@@ -223,9 +223,16 @@ export function TagWorkspace({
         }
         action={<CloseButton onClick={onClose} />}
         meta={
-          <span className="h-4 text-meta text-muted-foreground">
+          <span
+            className={cn(
+              "h-4 text-meta",
+              state === "added" || state === "removed"
+                ? "text-draft"
+                : "text-muted-foreground"
+            )}
+          >
             {state === "added"
-              ? m.node_draft_mark()
+              ? m.draft_mark()
               : state === "removed"
                 ? m.nodes_tag_removing()
                 : state === "saved"

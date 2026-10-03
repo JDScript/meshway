@@ -49,15 +49,15 @@ export const COMMIT_BOTTOM = 16
 export const COMMIT_SHEET_INSET = 6
 
 /**
- * Popups opened from a workspace keep clear of the screen's edges and of
- * the commit bar (on phones, the commit bar in its sheet above the bottom
- * bar, the larger of the two).
+ * Popups opened inside a workspace's body keep this far from its edges
+ * (see `shell/popup-boundary.tsx`); at the bottom, clear of the commit bar
+ * floating there (on phones it sits closer, so this is the larger case).
  */
-export const POPUP_CLEARANCE = {
-  top: EDGE,
-  right: EDGE,
-  bottom: MOBILE_SHEET_BOTTOM + COMMIT_SHEET_INSET + BAR_HEIGHT + GAP,
-  left: EDGE,
+export const WORKSPACE_POPUP_CLEARANCE = {
+  top: GAP,
+  right: GAP,
+  bottom: COMMIT_BOTTOM + BAR_HEIGHT + GAP,
+  left: GAP,
 }
 
 /** Room an editor keeps free at the bottom of its workspace for the commit bar floating there. */

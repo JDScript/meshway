@@ -75,5 +75,9 @@
   "dialog_done": "完成",
   "password_short": "密码至少 {min} 个字节",
   "password_long": "密码最多 {max} 个字节",
-  "password_mismatch": "两次输入的密码不一致"
+  "password_mismatch": "两次输入的密码不一致",
+  "draft_mark": "未保存",
+  "revision": "r{revision}",
+  "revision_draft": "草稿 · 基于 r{revision}",
+  "read_only": "只读"
 }

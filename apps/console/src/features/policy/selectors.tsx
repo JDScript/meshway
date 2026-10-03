@@ -23,7 +23,7 @@ import {
   PopoverTrigger,
 } from "@/components/ui/popover"
 import { useNetwork } from "@/features/network/use-network-view"
-import { POPUP_CLEARANCE } from "@/features/shell/layout"
+import { usePopupPlacement } from "@/features/shell/popup-boundary"
 import { m } from "@/paraglide/messages.js"
 
 import { tagsQuery } from "@/features/network/queries"
@@ -297,6 +297,7 @@ export function SelectorPicker({
   onOpenNode?: (nodeId: string) => void
 }) {
   const [open, setOpen] = useState(autoOpen && !disabled)
+  const placement = usePopupPlacement()
   const { inventory } = useNetwork()
   const all = options(names, kinds, inventory)
   const nodeId = node?.startsWith("node:") ? node.slice(5) : null
@@ -323,7 +324,7 @@ export function SelectorPicker({
       <PopoverContent
         align="start"
         sideOffset={6}
-        collisionPadding={POPUP_CLEARANCE}
+        {...placement}
         className="glass w-72 gap-0 rounded-surface p-2"
       >
         <Command

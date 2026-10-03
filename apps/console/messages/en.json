@@ -103,5 +103,9 @@
   "dialog_done": "Done",
   "password_short": "The password needs at least {min} bytes",
   "password_long": "The password allows at most {max} bytes",
-  "password_mismatch": "The passwords do not match"
+  "password_mismatch": "The passwords do not match",
+  "draft_mark": "Unsaved",
+  "revision": "r{revision}",
+  "revision_draft": "Draft · from r{revision}",
+  "read_only": "Read only"
 }

@@ -1,6 +1,7 @@
 import type { MeshRule } from "@meshway/control-client"
 import { ArrowRightIcon, ChevronRightIcon } from "lucide-react"
 
+import { Section } from "@/components/chrome/section"
 import { m } from "@/paraglide/messages.js"
 
 import { freshId, type PlacedDiagnostic } from "./document"
@@ -90,10 +91,7 @@ export function MeshLayer(props: LayerProps) {
         <Fact>{m.policy_fact_first_match()}</Fact>
       </LayerFacts>
       {failures.length > 0 ? (
-        <section className="flex flex-col gap-2">
-          <h3 className="text-row font-medium text-muted-foreground">
-            {m.policy_mesh_failures({ count: failures.length })}
-          </h3>
+        <Section title={m.policy_mesh_failures()} count={failures.length}>
           <ul className="flex flex-col gap-1">
             {failures.map((failure, index) => (
               <li
@@ -117,7 +115,7 @@ export function MeshLayer(props: LayerProps) {
               </li>
             ))}
           </ul>
-        </section>
+        </Section>
       ) : null}
       <OrderedRules
         label={m.policy_layer_mesh()}

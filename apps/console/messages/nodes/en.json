@@ -28,7 +28,6 @@
   "node_tab_transport": "Transport",
   "node_tab_manage": "Manage",
   "node_unknown": "Unknown",
-  "node_draft_mark": "Unsaved",
   "node_revoked": "Revoked",
   "node_legacy_country": "Country (legacy)",
   "node_open_peer": "Open {name}",
