@@ -10,8 +10,9 @@
     "i18n": "paraglide-js compile --project ./project.inlang --outdir ./src/paraglide --strategy localStorage preferredLanguage baseLocale --emit-ts-declarations --silent",
     "typecheck": "pnpm run i18n && tsr generate && tsc -b",
     "lint": "eslint --max-warnings=0 .",
-    "check": "pnpm run typecheck && pnpm run lint",
-    "format": "prettier --write \"**/*.{ts,tsx}\"",
+    "check": "pnpm run typecheck && pnpm run lint && pnpm run format:check",
+    "format": "prettier --write \"**/*.{ts,tsx,css,json}\"",
+    "format:check": "prettier --check \"**/*.{ts,tsx,css,json}\"",
     "test": "node --test \"src/**/*.test.ts\""
   },
   "dependencies": {
@@ -45,6 +46,7 @@
   },
   "devDependencies": {
     "@eslint/js": "^10",
+    "@ianvs/prettier-plugin-sort-imports": "^4.7.1",
     "@inlang/paraglide-js": "^2.25.4",
     "@inlang/plugin-message-format": "^4.4.4",
     "@tailwindcss/vite": "^4",

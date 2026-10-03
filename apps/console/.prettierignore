@@ -3,9 +3,11 @@ coverage/
 .pnpm-store/
 pnpm-lock.yaml
 package-lock.json
-pnpm-lock.yaml
 yarn.lock
 dist/
 src/paraglide/
 src/routeTree.gen.ts
 src/**/*.gen.ts
+.tanstack/
+project.inlang/*
+!project.inlang/settings.json
