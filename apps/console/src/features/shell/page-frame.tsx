@@ -3,6 +3,7 @@ import { useEffect, type ReactNode } from "react"
 import { useBootStore } from "@/features/boot/boot-store"
 import { useIsMobile } from "@/hooks/use-mobile"
 
+import { CommitBar } from "./commit-bar"
 import { GlassDrawer } from "./glass-drawer"
 import { useSurfaceHistory } from "./history"
 import {
@@ -90,6 +91,7 @@ export function PageFrame({
           }}
         >
           {workspace}
+          <CommitBar page={page} workspaceShown={workspaceShown} mobile />
         </GlassDrawer>
       </>
     )
@@ -126,6 +128,7 @@ export function PageFrame({
         }}
       >
         {workspace}
+        <CommitBar page={page} workspaceShown={workspaceShown} mobile={false} />
       </Surface>
     </>
   )

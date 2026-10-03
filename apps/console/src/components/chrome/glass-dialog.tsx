@@ -19,6 +19,7 @@ import {
 import { Spinner } from "@/components/ui/spinner"
 import { useKeptWhile } from "@/hooks/use-kept"
 import { useIsMobile } from "@/hooks/use-mobile"
+import { cn } from "@/lib/utils"
 import { m } from "@/paraglide/messages.js"
 
 // Dialogs are for three things only: confirming what cannot be undone,
@@ -37,6 +38,7 @@ export function GlassDialog({
   onOpenChange,
   title,
   busy = false,
+  wide = false,
   children,
   footer,
 }: {
@@ -44,6 +46,8 @@ export function GlassDialog({
   onOpenChange: (open: boolean) => void
   title: string
   busy?: boolean
+  /** For a comparison to read (a review before applying): wider, its body scrolling within the screen. */
+  wide?: boolean
   children: ReactNode
   /** The actions, end-aligned. */
   footer?: ReactNode
@@ -102,7 +106,12 @@ export function GlassDialog({
     <Dialog open={open} onOpenChange={change}>
       <DialogContent
         showCloseButton={false}
-        className="glass gap-0 rounded-sheet p-0 text-foreground ring-0 sm:max-w-md"
+        className={cn(
+          "glass gap-0 rounded-sheet p-0 text-foreground ring-0",
+          wide
+            ? "max-h-[calc(100svh-4rem)] grid-rows-[auto_minmax(0,1fr)_auto] sm:max-w-3xl"
+            : "sm:max-w-md"
+        )}
       >
         <SurfaceHeader
           className="px-6 pt-6 pb-4"

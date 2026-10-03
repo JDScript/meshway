@@ -3,6 +3,7 @@ import { GlobeIcon } from "lucide-react"
 import { motion, useReducedMotion } from "motion/react"
 import { useId, useState, type ComponentProps, type ReactNode } from "react"
 
+import { DraftMark } from "@/components/chrome/draft-mark"
 import { SharedLayoutBg } from "@/components/chrome/shared-layout-bg"
 import {
   Popover,
@@ -18,6 +19,7 @@ import { SPRING_LAYOUT } from "@/lib/ease"
 import { cn } from "@/lib/utils"
 import { m } from "@/paraglide/messages.js"
 
+import { useDraftPages } from "./drafts"
 import { CHROME } from "./glass-drawer"
 import { useSurfaceHistory } from "./history"
 import { DOCK_WIDTH } from "./layout"
@@ -74,6 +76,7 @@ export function Dock({
 }) {
   const activeLayout = useId()
   const reduce = useReducedMotion()
+  const drafts = useDraftPages(networkId)
   return (
     <nav
       {...CHROME}
@@ -125,6 +128,11 @@ export function Dock({
                         />
                       ) : null}
                       <item.icon className="relative size-4.5" />
+                      {drafts[item.page] ? (
+                        <span className="absolute top-1.5 right-1.5 flex">
+                          <DraftMark />
+                        </span>
+                      ) : null}
                     </PageLink>
                   }
                 />
@@ -155,6 +163,7 @@ export function DockLauncher({
   items: readonly DockItem[]
 }) {
   const [open, setOpen] = useState(false)
+  const drafts = useDraftPages(networkId)
   const history = useSurfaceHistory(networkId)
   const current = items.find((item) => item.page === page)
   const Icon = current?.icon ?? GlobeIcon
@@ -200,6 +209,7 @@ export function DockLauncher({
           >
             <item.icon className="size-4" />
             {item.label()}
+            {drafts[item.page] ? <DraftMark /> : null}
           </PageLink>
         ))}
       </PopoverContent>

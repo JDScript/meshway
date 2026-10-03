@@ -39,6 +39,21 @@ function read(): Session | null {
 
 let snapshot: Session | null = read()
 
+const listeners = new Set<() => void>()
+
+/**
+ * Calls `listener` whenever this tab's sign-in starts or ends (what is kept
+ * per sign-in, such as drafts, drops then). Returns the unsubscribe.
+ */
+export function onSessionChange(listener: () => void): () => void {
+  listeners.add(listener)
+  return () => listeners.delete(listener)
+}
+
+function changed() {
+  for (const listener of listeners) listener()
+}
+
 window.addEventListener("storage", (event) => {
   if (event.storageArea !== window.localStorage) return
   if (event.key !== STORAGE_KEY && event.key !== null) return
@@ -61,6 +76,7 @@ export function startSession(issued: IssuedSession): boolean {
   const next: Session = { v: 2, id: issued.id, token: issued.token, expiresAt }
   window.localStorage.setItem(STORAGE_KEY, JSON.stringify(next))
   snapshot = next
+  changed()
   return true
 }
 
@@ -70,5 +86,8 @@ export function startSession(issued: IssuedSession): boolean {
  */
 export function endSession(session: Session) {
   if (read()?.id === session.id) window.localStorage.removeItem(STORAGE_KEY)
-  if (snapshot?.id === session.id) snapshot = null
+  if (snapshot?.id === session.id) {
+    snapshot = null
+    changed()
+  }
 }
