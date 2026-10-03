@@ -139,7 +139,7 @@ export function withPreset(
   creating: { taken: ReadonlySet<string> } | null
 ): ListenerFields {
   if (preset === fields.preset) return fields
-  const next = { ...fields, preset }
+  let next = { ...fields, preset }
   if (creating && fields.id === suggestId(fields.preset, creating.taken))
     next.id = suggestId(preset, creating.taken)
   const wasVless = transportOf(fields.preset) === "vless"
@@ -147,7 +147,7 @@ export function withPreset(
   if (wasVless !== isVless) {
     const previous = wasVless ? DEFAULTS.vlessPort : DEFAULTS.nativePort
     if (fields.bindPort.trim() === previous || fields.bindPort.trim() === "")
-      next.bindPort = isVless ? DEFAULTS.vlessPort : DEFAULTS.nativePort
+      next = withPort(next, isVless ? DEFAULTS.vlessPort : DEFAULTS.nativePort)
   }
   if (isVless && next.serverName.trim() === "")
     next.serverName = DEFAULTS.serverName
@@ -155,9 +155,143 @@ export function withPreset(
     if (next.websocketPath.trim() === "")
       next.websocketPath = DEFAULTS.websocketPath
     if (next.websocketHost.trim() === "")
-      next.websocketHost = DEFAULTS.websocketHost
+      next.websocketHost = websocketHostFor(publicHostOf(next))
   }
   return next
+}
+
+// The basics ----------------------------------------------------------------
+//
+// A listener is first its transport, its public address (the first
+// advertised endpoint's host) and its port (the bind port). The first
+// endpoint's port is linked to the bind port while the two are equal, so a
+// port typed once is both what the node opens and what dialers use; a
+// different public port (a NAT mapping) unlinks them.
+
+export const publicHostOf = (fields: ListenerFields) =>
+  fields.endpoints[0]?.host ?? ""
+
+const websocketHostFor = (publicHost: string) =>
+  publicHost.trim() === "" ? DEFAULTS.websocketHost : publicHost.trim()
+
+/** Whether the first endpoint's port still follows the bind port. */
+export const portLinked = (fields: ListenerFields) =>
+  fields.endpoints[0]?.port.trim() === fields.bindPort.trim()
+
+/** The bind port; the first endpoint's port follows while it is linked. */
+export function withPort(fields: ListenerFields, port: string): ListenerFields {
+  const [first, ...rest] = fields.endpoints
+  return {
+    ...fields,
+    bindPort: port,
+    endpoints:
+      first && portLinked(fields)
+        ? [{ ...first, port }, ...rest]
+        : fields.endpoints,
+  }
+}
+
+/**
+ * The public address. Typing one into a listener without endpoints adds
+ * the first, at the bind port; clearing it removes that endpoint only when
+ * it is the only one and still linked, otherwise the host is left empty
+ * (and invalid), so nothing typed is dropped. The WebSocket Host follows
+ * while it is still the old address or the platform default.
+ */
+export function withPublicHost(
+  fields: ListenerFields,
+  host: string
+): ListenerFields {
+  const [first, ...rest] = fields.endpoints
+  let endpoints = fields.endpoints
+  if (!first) {
+    if (host.trim() !== "") endpoints = [{ host, port: fields.bindPort }]
+  } else if (host.trim() === "" && rest.length === 0 && portLinked(fields))
+    endpoints = []
+  else endpoints = [{ ...first, host }, ...rest]
+  const old = publicHostOf(fields).trim()
+  const wsHost = fields.websocketHost.trim()
+  const follows =
+    wsHost !== "" && (wsHost === old || wsHost === DEFAULTS.websocketHost)
+  return {
+    ...fields,
+    endpoints,
+    websocketHost: follows ? websocketHostFor(host) : fields.websocketHost,
+  }
+}
+
+/** The first endpoint's own port; a different value from the bind port unlinks them. */
+export function withPublicPort(
+  fields: ListenerFields,
+  port: string
+): ListenerFields {
+  const [first, ...rest] = fields.endpoints
+  return first
+    ? { ...fields, endpoints: [{ ...first, port }, ...rest] }
+    : fields
+}
+
+/** A node's first listener, from the basics alone: everything else stays at the platform's defaults. */
+export const initialListener = (
+  fields: ListenerFields,
+  taken: ReadonlySet<string>
+): ListenerFields => ({
+  ...fields,
+  id: suggestId(fields.preset, taken),
+  enabled: true,
+})
+
+// The advanced part ---------------------------------------------------------
+
+/** What differs from the platform defaults among the advanced fields, in form order. */
+export type AdvancedFact =
+  | { kind: "bind_address"; value: string }
+  | { kind: "public_port"; value: string }
+  | { kind: "endpoints"; count: number }
+  | { kind: "server_name"; value: string }
+  | { kind: "websocket_path"; value: string }
+  | { kind: "websocket_host"; value: string }
+
+export function advancedFacts(fields: ListenerFields): AdvancedFact[] {
+  const facts: AdvancedFact[] = []
+  const bind = fields.bindAddress.trim()
+  if (bind !== DEFAULTS.bindAddress)
+    facts.push({ kind: "bind_address", value: bind })
+  const first = fields.endpoints[0]
+  if (first && !portLinked(fields))
+    facts.push({ kind: "public_port", value: first.port.trim() })
+  if (fields.endpoints.length > 1)
+    facts.push({ kind: "endpoints", count: fields.endpoints.length })
+  if (transportOf(fields.preset) === "vless") {
+    const name = fields.serverName.trim()
+    if (name !== DEFAULTS.serverName)
+      facts.push({ kind: "server_name", value: name })
+  }
+  if (fields.preset === "vless_websocket") {
+    if (fields.websocketPath !== DEFAULTS.websocketPath)
+      facts.push({ kind: "websocket_path", value: fields.websocketPath })
+    const host = fields.websocketHost.trim()
+    if (host !== websocketHostFor(publicHostOf(fields)))
+      facts.push({ kind: "websocket_host", value: host })
+  }
+  return facts
+}
+
+/**
+ * The problems that sit in the advanced part. A linked public port is the
+ * port field's own problem, so it does not count there.
+ */
+export function advancedProblems(
+  fields: ListenerFields,
+  problems: readonly ListenerProblem[]
+): ListenerProblem[] {
+  const linked = portLinked(fields)
+  return problems.filter(
+    (problem) =>
+      problem.field !== "bind_port" &&
+      problem.field !== "endpoint.0.host" &&
+      !(problem.field === "endpoint.0.port" && linked)
+  )
 }
 
 // Validation ---------------------------------------------------------------
