@@ -530,3 +530,203 @@ fn remote_rule_sources_are_typed_https_declarations() {
         invalid(normalize(c, &context()), "HTTPS");
     }
 }
+
+#[test]
+fn ipam_pools_reject_intersections_with_excluded_ranges_and_invalid_families() {
+    for cidr in [
+        "0.0.0.0/0",
+        "128.0.0.0/1",
+        "126.0.0.0/7",
+        "169.252.0.0/14",
+        "0.0.0.0/32",
+        "0.255.255.255/32",
+        "127.0.0.0/32",
+        "127.255.255.255/32",
+        "169.254.0.0/32",
+        "169.254.255.255/32",
+        "224.0.0.0/32",
+        "239.255.255.255/32",
+        "240.0.0.0/32",
+        "255.255.255.254/32",
+        "255.255.255.255/32",
+        "256.0.0.0/8",
+        "100.64.0.0/33",
+        "fd00::/8",
+    ] {
+        let pools = AddressPools {
+            ipv4: vec![cidr.into()],
+            ipv6: vec![],
+        };
+        assert!(
+            matches!(
+                new_network(pools, "mesh.example".into()),
+                Err(ConfigurationError::Invalid(_))
+            ),
+            "accepted IPv4 pool {cidr}"
+        );
+    }
+    for cidr in [
+        "::/0",
+        "::/127",
+        "fe00::/8",
+        "fe00::/7",
+        "fe80::/9",
+        "::/128",
+        "::1/128",
+        "fe80::/128",
+        "febf:ffff:ffff:ffff:ffff:ffff:ffff:ffff/128",
+        "ff00::/128",
+        "ffff:ffff:ffff:ffff:ffff:ffff:ffff:ffff/128",
+        "fd00::/129",
+        "100.64.0.0/10",
+    ] {
+        let pools = AddressPools {
+            ipv4: vec![],
+            ipv6: vec![cidr.into()],
+        };
+        assert!(
+            matches!(
+                new_network(pools, "mesh.example".into()),
+                Err(ConfigurationError::Invalid(_))
+            ),
+            "accepted IPv6 pool {cidr}"
+        );
+    }
+    for json in [
+        r#"{"ipv4":"256.0.0.1","ipv6":null}"#,
+        r#"{"ipv4":"fd00::1","ipv6":null}"#,
+        r#"{"ipv4":null,"ipv6":"100.64.0.1"}"#,
+    ] {
+        assert!(
+            serde_json::from_str::<NodeAddressesInput>(json).is_err(),
+            "accepted {json}"
+        );
+    }
+}
+
+#[test]
+fn ipam_pools_keep_private_unicast_and_adjacent_allowed_boundaries() {
+    // These are IPAM acceptance cases, not internet grant classifications.
+    for cidr in [
+        "10.0.0.0/8",
+        "172.16.0.0/12",
+        "192.168.0.0/16",
+        "100.64.0.0/10",
+        "1.0.0.0/32",
+        "126.255.255.255/32",
+        "128.0.0.0/32",
+        "169.253.255.255/32",
+        "169.255.0.0/32",
+        "223.255.255.255/32",
+        "100.64.0.0/31",
+        "100.64.0.255/32",
+    ] {
+        let pools = AddressPools {
+            ipv4: vec![cidr.into()],
+            ipv6: vec![],
+        };
+        assert!(
+            new_network(pools, "mesh.example".into()).is_ok(),
+            "rejected IPv4 pool {cidr}"
+        );
+    }
+    for cidr in [
+        "fc00::/7",
+        "fd00::/8",
+        "fd42:7a65:8800::/48",
+        "fd00::1/128",
+        "::2/128",
+        "fe00::/9",
+        "fe7f:ffff:ffff:ffff:ffff:ffff:ffff:ffff/128",
+        "fec0::/128",
+        "feff:ffff:ffff:ffff:ffff:ffff:ffff:ffff/128",
+    ] {
+        let pools = AddressPools {
+            ipv4: vec![],
+            ipv6: vec![cidr.into()],
+        };
+        assert!(
+            new_network(pools, "mesh.example".into()).is_ok(),
+            "rejected IPv6 pool {cidr}"
+        );
+    }
+}
+
+#[test]
+fn ipam_node_validation_independently_rejects_excluded_single_addresses() {
+    for (ip, prefix) in [
+        ("0.0.0.0", 32),
+        ("0.255.255.255", 32),
+        ("127.0.0.0", 32),
+        ("127.255.255.255", 32),
+        ("169.254.0.0", 32),
+        ("169.254.255.255", 32),
+        ("224.0.0.0", 32),
+        ("239.255.255.255", 32),
+        ("240.0.0.0", 32),
+        ("255.255.255.254", 32),
+        ("255.255.255.255", 32),
+        ("::", 128),
+        ("::1", 128),
+        ("fe80::", 128),
+        ("febf:ffff:ffff:ffff:ffff:ffff:ffff:ffff", 128),
+        ("ff00::", 128),
+        ("ffff:ffff:ffff:ffff:ffff:ffff:ffff:ffff", 128),
+    ] {
+        let mut c = input();
+        let mut n = node(1);
+        let family = if prefix == 32 {
+            c.address_pools.ipv4 = Input::Value(vec![format!("{ip}/{prefix}")]);
+            c.address_pools.ipv6 = Input::Value(vec![]);
+            n.addresses.ipv4 = Input::Value(Some(ip.parse().unwrap()));
+            "ipv4"
+        } else {
+            c.address_pools.ipv4 = Input::Value(vec![]);
+            c.address_pools.ipv6 = Input::Value(vec![format!("{ip}/{prefix}")]);
+            n.addresses.ipv4 = Input::Value(None);
+            n.addresses.ipv6 = Input::Value(Some(ip.parse().unwrap()));
+            "ipv6"
+        };
+        c.nodes.insert(id(1), n);
+        let ConfigurationError::Invalid(issues) = normalize(c, &context()).unwrap_err() else {
+            panic!("expected invalid {ip}");
+        };
+        // A rejected pool alone must not hide an allocation-classifier hole.
+        assert!(
+            issues
+                .iter()
+                .any(|i| i.path == format!("/nodes/{}/addresses/{family}", id(1))),
+            "node classifier accepted {ip}: {issues:?}"
+        );
+    }
+}
+
+#[test]
+fn ipam_point_to_point_and_single_address_allocations_keep_their_boundaries() {
+    for (pool, ip, valid) in [
+        ("100.64.0.0/31", "100.64.0.0", true),
+        ("100.64.0.0/31", "100.64.0.1", true),
+        ("100.64.0.255/32", "100.64.0.255", true),
+        ("223.255.255.255/32", "223.255.255.255", true),
+        ("100.64.0.0/30", "100.64.0.0", false),
+        ("100.64.0.0/30", "100.64.0.1", true),
+        ("100.64.0.0/30", "100.64.0.2", true),
+        ("100.64.0.0/30", "100.64.0.3", false),
+    ] {
+        let mut c = input();
+        c.address_pools.ipv4 = Input::Value(vec![pool.into()]);
+        c.address_pools.ipv6 = Input::Value(vec![]);
+        let mut n = node(1);
+        n.addresses.ipv4 = Input::Value(Some(ip.parse().unwrap()));
+        c.nodes.insert(id(1), n);
+        assert_eq!(normalize(c, &context()).is_ok(), valid, "{ip} in {pool}");
+    }
+    let mut c = input();
+    c.address_pools.ipv4 = Input::Value(vec![]);
+    c.address_pools.ipv6 = Input::Value(vec!["fd00::1/128".into()]);
+    let mut n = node(1);
+    n.addresses.ipv4 = Input::Value(None);
+    n.addresses.ipv6 = Input::Value(Some("fd00::1".parse().unwrap()));
+    c.nodes.insert(id(1), n);
+    assert!(normalize(c, &context()).is_ok());
+}

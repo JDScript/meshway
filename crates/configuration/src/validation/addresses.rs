@@ -1,6 +1,41 @@
 use super::*;
 use ipnet::{Ipv4Net, Ipv6Net};
-use std::net::IpAddr;
+use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
+
+// IPAM exclusions, not the autogroup:internet/public-routing classification.
+// RFC1918, CGNAT, ULA and other unicast space remain eligible. A whole pool
+// must avoid every excluded interval; checking only its endpoints is unsound.
+const IPV4_EXCLUDED: [(Ipv4Addr, u32); 5] = [
+    (Ipv4Addr::new(0, 0, 0, 0), 8), // This network, including unspecified.
+    (Ipv4Addr::new(127, 0, 0, 0), 8), // Loopback.
+    (Ipv4Addr::new(169, 254, 0, 0), 16), // Link-local.
+    (Ipv4Addr::new(224, 0, 0, 0), 4), // Multicast.
+    (Ipv4Addr::new(240, 0, 0, 0), 4), // Reserved, including limited broadcast.
+];
+const IPV6_EXCLUDED: [(Ipv6Addr, u32); 4] = [
+    (Ipv6Addr::UNSPECIFIED, 128),
+    (Ipv6Addr::LOCALHOST, 128),
+    (Ipv6Addr::new(0xfe80, 0, 0, 0, 0, 0, 0, 0), 10), // Link-local.
+    (Ipv6Addr::new(0xff00, 0, 0, 0, 0, 0, 0, 0), 8),  // Multicast.
+];
+
+fn ipv4_range_allowed(first: Ipv4Addr, last: Ipv4Addr) -> bool {
+    let (first, last) = (u32::from(first), u32::from(last));
+    !IPV4_EXCLUDED.iter().any(|(network, prefix)| {
+        let start = u32::from(*network);
+        let end = start | u32::MAX.checked_shr(*prefix).unwrap_or(0);
+        first <= end && start <= last
+    })
+}
+
+fn ipv6_range_allowed(first: Ipv6Addr, last: Ipv6Addr) -> bool {
+    let (first, last) = (u128::from(first), u128::from(last));
+    !IPV6_EXCLUDED.iter().any(|(network, prefix)| {
+        let start = u128::from(*network);
+        let end = start | u128::MAX.checked_shr(*prefix).unwrap_or(0);
+        first <= end && start <= last
+    })
+}
 
 pub(super) fn pools(
     input: AddressPoolsInput,
@@ -45,11 +80,7 @@ pub(super) fn pools(
             Ok(net)
                 if net.to_string() == *text
                     && net.addr() == net.network()
-                    && !net.addr().is_unspecified()
-                    && !net.addr().is_multicast()
-                    && !net.addr().is_loopback()
-                    && !net.addr().is_link_local()
-                    && !net.broadcast().is_multicast() =>
+                    && ipv4_range_allowed(net.network(), net.broadcast()) =>
             {
                 if v4
                     .iter()
@@ -69,10 +100,7 @@ pub(super) fn pools(
             Ok(net)
                 if net.to_string() == *text
                     && net.addr() == net.network()
-                    && !net.addr().is_unspecified()
-                    && !net.addr().is_multicast()
-                    && !net.addr().is_loopback()
-                    && !net.addr().is_unicast_link_local() =>
+                    && ipv6_range_allowed(net.network(), net.broadcast()) =>
             {
                 if v6
                     .iter()
@@ -128,10 +156,7 @@ pub(super) fn nodes(config: &NetworkConfiguration, check: &mut Check) {
         }
         if let Some(ip) = node.addresses.ipv4 {
             let path = format!("/nodes/{id}/addresses/ipv4");
-            if ip.is_unspecified()
-                || ip.is_multicast()
-                || ip.is_loopback()
-                || ip.is_link_local()
+            if !ipv4_range_allowed(ip, ip)
                 || !v4.iter().any(|p| {
                     p.contains(&ip)
                         && (p.prefix_len() >= 31 || (ip != p.network() && ip != p.broadcast()))
@@ -145,12 +170,7 @@ pub(super) fn nodes(config: &NetworkConfiguration, check: &mut Check) {
         }
         if let Some(ip) = node.addresses.ipv6 {
             let path = format!("/nodes/{id}/addresses/ipv6");
-            if ip.is_unspecified()
-                || ip.is_multicast()
-                || ip.is_loopback()
-                || ip.is_unicast_link_local()
-                || !v6.iter().any(|p| p.contains(&ip))
-            {
+            if !ipv6_range_allowed(ip, ip) || !v6.iter().any(|p| p.contains(&ip)) {
                 check.issue(&path, "address outside usable pool");
             }
             if !used.insert(ip.into()) {
