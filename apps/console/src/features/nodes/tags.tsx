@@ -389,7 +389,7 @@ export function NewTagDialog({
           >
             {m.nodes_tag_name()}
           </FieldLabel>
-          <InputGroup className="h-10 rounded-tile border-transparent bg-field">
+          <InputGroup className="h-10 rounded-tile border-transparent bg-field dark:bg-field">
             <InputGroupAddon className="pl-3.5 font-mono text-row text-muted-foreground">
               {TAG_PREFIX}
             </InputGroupAddon>

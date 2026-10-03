@@ -23,7 +23,7 @@ export function SurfaceHeader({
   className?: string
 }) {
   return (
-    <header className={cn("flex flex-col gap-1.5", className)}>
+    <header className={cn("flex flex-col gap-1", className)}>
       <div className="flex min-w-0 items-center gap-3">
         {title(
           cn(

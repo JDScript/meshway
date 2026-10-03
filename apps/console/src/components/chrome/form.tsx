@@ -38,7 +38,8 @@ export function FieldInput({
   return (
     <Input
       className={cn(
-        "rounded-tile border-transparent bg-field px-3.5",
+        // The field fill on both themes, enabled or not: shadcn's own dark and disabled fills would replace it.
+        "rounded-tile border-transparent bg-field px-3.5 disabled:bg-field dark:bg-field dark:disabled:bg-field",
         FIELD_SIZE[size].control,
         className
       )}
