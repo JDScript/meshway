@@ -181,10 +181,51 @@ globe; `features/shell/pages.ts` lists the pages and the dock.
 3. List it in `features/shell/pages.ts` (and the dock) and mount it in
    `network-shell.tsx`.
 4. Copy in `messages/<feature>/{zh,en}.json`, keys prefixed by the feature.
-5. Editors: `createDraft` and `useDraftCommit`; members get the same view,
-   read-only (`useCanManage`).
-6. Secrets: `useSecretMutation`, shown in a `GlassDialog` with
-   `SecretField`. Irreversible actions: `ConfirmDialog`.
+5. The panel: `PanelHeader` (title, the count of what it names, one
+   `PanelAction`) over a `PanelList` of `ListRow`s, `useListKeys` for the
+   arrow keys, `ListPlaceholders` / `ListNote` while unread or empty.
+6. The workspace: `SurfaceHeader size="lg"` with a `RevisionLine` under an
+   editor's title; content in `Section`s, `max-w-workspace` unless it is a
+   data-dense view; `EmptyLine` for an empty or unread section; `RefRow`
+   for anything with a page of its own; `DangerRow` before an
+   irreversible action.
+7. Editors: `createDraft` (`createKeyedDraft` for many of one kind) and
+   `useDraftCommit`; the panel marks a row holding a draft with
+   `DraftMark`; members get the same view, read-only (`useCanManage`).
+8. Secrets: `useSecretMutation`, shown in a `GlassDialog` with
+   `SecretField` (`CopyField` for a command to copy). Irreversible actions:
+   `ConfirmDialog` with its `effects`.
+9. Popups inside the workspace body: wrap the body in `PopupBoundary` and
+   pass `usePopupPlacement()` to the popup, so it stays below the header
+   and clear of the commit bar.
+
+## Shared components
+
+One implementation each, in `components/chrome` (and `features/shell` for
+what knows the shell's geometry):
+
+| Piece | What it fixes |
+| --- | --- |
+| `PanelHeader`, `PanelAction` | One 28px title row on `text-lead`; the count counts what the title names (per-view counts sit in the segment, `SegmentCount`); one action, an `IconAction` whose glyph meets the content edge. |
+| `PanelList`, `ListRow`, `StaticRow`, `ListPlaceholders`, `ListNote`, `useListKeys` | Panel rows 56px high, 2px apart (a hovered row never merges with the chosen one), a 16px lead slot (a status dot, a glyph, or a 16px initial avatar, `InitialAvatar`) so every list's text starts at the same x; one trailing column; no chevrons. |
+| `RefRow`, `RefList`, `RefStateHeading` | A row in a workspace naming a node or a network: its fill on the section's edges like a tile, the state in a fixed column under its heading, ↗ (or an `IconAction`) at its end. `NodeRef` is the node's. |
+| `Section`, `EmptyLine`, `DangerRow` | A titled part with its count and action on a 32px line; the fixed-height empty or unread line (short facts: "没有节点"); the tile before an irreversible action, the fact it stands on and the action. |
+| `ConfirmDialog` | `effects`: what it does, one fact each, as a list. `tone`: `destructive` (takes something away) or `default` (cannot be reversed here, takes nothing). |
+| `CopyField`, `SecretField` | A value to copy; a command breaks at spaces and flags, only a secret anywhere. `SecretField` marks it as shown once. |
+| `IconAction` | An action as a round icon named by its tooltip and its label. |
+| `FieldInput`, `FieldSelect` | One fill (`field`, on both themes and when disabled), corners and ring; sizes `default` (workspace, dialog) and `lg` (entry cards). |
+| `DraftMark`, `RevisionLine` | Unsaved edits in the one draft colour: a dot beside a title or the word; the editor's `r42`, or the draft and the revision it started from. |
+
+- Workspaces holding a form (a tag, a member, adding a node, the account,
+  settings) are `max-w-workspace` (40rem) wide; data-dense views (a node's
+  tabs, the policy layers) take the full width.
+- The commit bar states one thing: unsaved (plain), a field that will not
+  save (`destructive`), the controller moved past the draft's revision
+  (`warning`, offering to overwrite). Its buttons keep minimum widths, so a
+  state change only changes words.
+- Entry pages (`EntryPage`, `EntryCard`, `EntrySubmit`) share one 380px
+  card and one hand-off (`HANDOFF_MS`); while a secret is held the
+  language switch stays in place, disabled.
 
 ## Design tokens
 
@@ -193,8 +234,10 @@ inline`): surface radii (`surface` 22, `sheet` 28) and concentric inner radii
 (`row` 14, `tile` 12: inner = outer − inset); type roles (`meta`, `row`,
 `lead`, `display`); motion curves (`settle`, `entrance`, `leave`; springs in
 `lib/ease.ts`); fills on glass (`fill-subtle`, `-hover`, `-selected`,
-`-raised`, `divider`); vitality colours with distinct dot shapes (lit,
-solid, hollow). Components use these instead of literal values.
+`-raised`, `-tint`, `divider`); `draft`, the one colour of unsaved
+edits; the workspace measure (`--container-workspace`, `max-w-workspace`,
+40rem); vitality colours with distinct dot shapes (lit, solid, hollow).
+Components use these instead of literal values.
 
 ## AgentUI
 
