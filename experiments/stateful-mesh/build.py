@@ -33,7 +33,7 @@ def main():
         if not build.is_dir():
             raise ValueError("compiler cache missing")
     files = subprocess.check_output(["git", "ls-files", "-z"], cwd=ROOT).decode().split("\0")
-    files += [str(p.relative_to(ROOT)) for p in (ROOT / "crates/dataplane/src/flow").glob("*.rs")]
+    files += [str(p.relative_to(ROOT)) for p in (ROOT / "crates/dataplane/src/flow").rglob("*.rs")]
     manifest = {}
     for name in sorted(set(files)):
         if not name or not (name in ("Cargo.toml", "Cargo.lock", "rust-toolchain.toml") or name.startswith(("crates/", "apps/agent/", "apps/controller/", "apps/apple/core/", "vendor/"))):
@@ -43,9 +43,9 @@ def main():
             continue
         target = source / name
         target.parent.mkdir(parents=True, exist_ok=True, mode=0o755)
-        shutil.copyfile(path, target)
+        shutil.copy2(path, target)
         target.chmod(0o644)
-        manifest[name] = hashlib.sha256(path.read_bytes()).hexdigest()
+        manifest[name] = hashlib.sha256(target.read_bytes()).hexdigest()
     receipt = {"status": "FAIL", "head": subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=ROOT).decode().strip(), "sources": manifest}
     name = directory.name
     image = f"meshway-managedtest:{name}"
@@ -60,7 +60,7 @@ mkdir -p /build/cargo
 export CARGO_HOME=/build/cargo CARGO_TARGET_DIR=/build/target CARGO_BUILD_JOBS=2
 export RUSTUP_TOOLCHAIN=1.98.0-aarch64-unknown-linux-gnu
 cargo build --locked -p meshway-agent -p meshway-controller --features meshway-agent/managed-connections --bin meshway-agent --bin meshway-controller
-cp /build/target/debug/meshway-agent /build/target/debug/meshway-controller /out/
+cp --sparse=never --reflink=never /build/target/debug/meshway-agent /build/target/debug/meshway-controller /out/
 """
             with (directory / "compiler.log").open("w") as log:
                 run(["docker", "run", "--rm", "--name", name, "--user", "1000:1000", "--cap-drop", "ALL", "--security-opt", "no-new-privileges", "--cpus", "2", "--memory", "6g", "--pids-limit", "256", "--read-only", "--tmpfs", "/tmp:rw,nosuid,nodev,size=512m", "--mount", f"type=bind,src={source},dst=/src,readonly", "--mount", f"type=bind,src={build},dst=/build", "--mount", f"type=bind,src={out},dst=/out", "--workdir", "/src", receipt["compiler"], "sh", "-c", script], stdout=log, stderr=subprocess.STDOUT)

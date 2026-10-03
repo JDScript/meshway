@@ -101,6 +101,16 @@ try {
   await success("one-way direct TCP UDP ICMP returns, reverse initiation denied");
   const through={...policy,mesh:[{id:"mandatory-via",src:"*",dst:"*",via:[`node:${ids.LAX}`]}]};
   await put(through);await success("one-way mandatory via TCP UDP ICMP returns, reverse initiation denied");
+  await helper("SHA","bulk-start",{address:ips.SHA});
+  const losslessBulk=await helper("NYC","bulk-probe",{address:ips.SHA});
+  assert.equal(losslessBulk.delivered,true);evidence.push({name:"lossless pipelined 1 MiB TCP and six-second half-close",...losslessBulk});passed++;
+  for(const role of ["NYC","SHA"] as const){const fault=await helper(role,"netem",{enabled:true});assert.equal(fault.configured,true,JSON.stringify(fault));evidence.push({name:"netem-installed",role,...fault});}
+  const noisyBulk=await helper("NYC","bulk-probe",{address:ips.SHA});
+  assert.equal(noisyBulk.delivered,true);evidence.push({name:"2 percent loss, 25 percent reorder: complete pipelined TCP half-close",...noisyBulk});passed++;
+  const burst=await helper("NYC","udp-burst",{address:ips.SHA});
+  assert(typeof burst.received==="number"&&burst.received>=230&&burst.sent===256,JSON.stringify(burst));
+  evidence.push({name:"same-tuple UDP burst under loss/reorder, actual received count",...burst});passed++;
+  for(const role of ["NYC","SHA"] as const){const fault=await helper(role,"netem",{enabled:false});assert.equal(fault.configured,true,JSON.stringify(fault));evidence.push({name:"netem-removed-with-kernel-counters",role,...fault});}
   for(const role of ["NYC","SHA"] as const){const proof=await helper(role,"execution-proof");assert(JSON.stringify(proof.paths).includes(ids.LAX));}
   await helper("SHA","agent-stop");await helper("SHA","agent-start");await success("same-identity destination restart requires fresh execution and flows");
   await put({...through,grants:[]});await ready();await deny("grant withdrawal denies both directions");

@@ -6,6 +6,8 @@ from pathlib import Path
 import socket
 import sys
 import time
+import hashlib
+import socketserver
 sys.dont_write_bytecode = True
 spec = importlib.util.spec_from_file_location("current_mesh", "/private/current.py")
 current = importlib.util.module_from_spec(spec)
@@ -26,6 +28,53 @@ def udp_server(address):
 
 
 def main(action, data):
+    if action == "netem":
+        before = current.canaries.run(["tc","-s","-j","qdisc","show","dev","eth0"])
+        args = ["tc", "qdisc", "replace", "dev", "eth0", "root", "netem", "delay", "20ms", "10ms", "loss", "2%", "reorder", "25%", "50%"] if data["enabled"] else ["tc", "qdisc", "del", "dev", "eth0", "root"]
+        result = current.canaries.run(args)
+        after = current.canaries.run(["tc","-s","-j","qdisc","show","dev","eth0"])
+        return {"configured": result.returncode == 0, "error": result.stderr[:512],
+                "before": json.loads(before.stdout), "after": json.loads(after.stdout)}
+    if action == "bulk-start":
+        return current.canaries.base.start("bulk-server", ["python3", __file__, "bulk-server", data["address"]])
+    if action == "bulk-probe":
+        body = bytes(range(256)) * 4096
+        with socket.create_connection((data["address"],43002),timeout=40) as sock:
+            sock.sendall(body)
+            sock.shutdown(socket.SHUT_WR)
+            reply = bytearray()
+            while len(reply) < 128:
+                chunk = sock.recv(128-len(reply))
+                if not chunk:
+                    break
+                reply.extend(chunk)
+        return {"sent_bytes": len(body), "delivered": bytes(reply) == hashlib.sha256(body).hexdigest().encode(), "half_close_delay_seconds": 6}
+    if action == "udp-burst":
+        received = set()
+        count = 256
+        with socket.socket(socket.AF_INET,socket.SOCK_DGRAM) as sock:
+            sock.connect((data["address"],43001))
+            sock.setblocking(False)
+            for i in range(count):
+                sock.send(i.to_bytes(4,"big"))
+                time.sleep(.0005)
+                while True:
+                    try:
+                        payload=sock.recv(1200)
+                        if len(payload)==4:
+                            received.add(int.from_bytes(payload,"big"))
+                    except BlockingIOError:
+                        break
+            sock.settimeout(.2)
+            until=time.monotonic()+3
+            while time.monotonic()<until:
+                try:
+                    payload=sock.recv(1200)
+                    if len(payload)==4:
+                        received.add(int.from_bytes(payload,"big"))
+                except socket.timeout:
+                    continue
+        return {"sent":count,"received":len(received.intersection(range(count)))}
     if action == "udp-hold":
         (Path("/private") / "udp-observed").unlink(missing_ok=True)
         (Path("/private") / "udp-hold").write_text("hold")
@@ -70,6 +119,23 @@ if __name__ == "__main__":
                 except OSError:
                     delivered = False
                 Path("/private/udp-result.json").write_text(json.dumps({"done": True, "delivered": delivered}))
+        elif sys.argv[1] == "bulk-server":
+            class Handler(socketserver.BaseRequestHandler):
+                def handle(self):
+                    body=bytearray()
+                    self.request.settimeout(40)
+                    while len(body)<=4*1024*1024:
+                        chunk=self.request.recv(65536)
+                        if not chunk:
+                            time.sleep(6)
+                            self.request.sendall(hashlib.sha256(body).hexdigest().encode())
+                            return
+                        body.extend(chunk)
+            class Server(socketserver.ThreadingTCPServer):
+                allow_reuse_address=True
+                daemon_threads=True
+            with Server((sys.argv[2],43002),Handler) as server:
+                server.serve_forever()
         elif sys.argv[1] == "proxy":
             current.proxy()
         elif sys.argv[1] == "http-server":
