@@ -67,9 +67,14 @@ open apps/apple/build/DerivedData/Build/Products/Debug/Meshway.app
 
 全检查：`bash apps/apple/scripts/check.sh`。首次打开 Xcode 或运行 swift test 前必须先 build-core；脚本锁定 UniFFI 0.32.2，构建 arm64 macOS / iOS / iOS Simulator 静态库，生成 Swift/header/modulemap 并组装 XCFramework。生成绑定与二进制均忽略，不手工编辑。当前不包含 Intel macOS / x86_64 Simulator slice。
 
-真实接入 smoke `apps/apple/scripts/check-signin.ts` 与窗口验收 `apps/apple/scripts/snapshot.ts` 原经旧 Next Web build 与其 App API 代理运行；旧 Web 已删除，两者的当前入口待改为直接经 Controller 同源端点，改造前两者不可运行，本节命令与通过结果仅记录原入口。
+真实接入 smoke（先 `cargo build -p meshway-controller --locked`、`pnpm install --frozen-lockfile`）：
 
-smoke 自行分配回环端口与临时 controller 数据，使用真实 Keychain 的唯一测试 item，完成 Swift → FFI → 生成 Rust client → 同源 App API → controller 的接入、重启读取、心跳、第二个真实节点的配置 / DNS 库存、撤销；退出时删除测试 item / 数据并停止子进程。可在命令末尾传入独立 bundle prefix 构建的 macOS executable 路径，短暂启动 unsigned App（同样由脚本停止）。批准由 test-only 生成客户端 fixture 完成，不注入 App 管理员权限、不将 code 写日志；它不验证 ASWebAuthenticationSession UI。辅助进程/HTTP helper 独立于浏览器框架，控制台登录与批准界面手工验证。
+```sh
+pnpm exec tsc -p apps/apple/scripts/tsconfig.json
+node apps/apple/scripts/check-signin.ts
+```
+
+smoke 自行分配回环端口与临时 controller 数据，使用真实 Keychain 的唯一测试 item，完成 Swift → FFI → 生成 Rust client → 隔离 Controller 同源 App API 的接入、重启读取、心跳、第二个真实节点的配置 / DNS 库存、撤销；退出时删除测试 item / 数据并停止子进程。可在命令末尾传入独立 bundle prefix 构建的 macOS executable 路径，短暂启动 unsigned App（同样由脚本停止）。批准由 test-only 生成客户端 fixture 完成，不注入 App 管理员权限、不将 code 写日志；它不验证 ASWebAuthenticationSession UI。辅助进程/HTTP helper 独立于浏览器框架，控制台登录与批准界面手工验证。
 
 真实 macOS 窗口视觉验收（无需 screen recording）：
 
@@ -78,15 +83,15 @@ xcodebuild -quiet -project apps/apple/Meshway.xcodeproj -scheme Meshway \
   -configuration Debug -destination 'platform=macOS,arch=arm64' \
   -derivedDataPath apps/apple/build/DerivedData CODE_SIGNING_ALLOWED=NO \
   MESHWAY_BUNDLE_PREFIX=dev.meshway.snapshot build
-MESHWAY_WEB_DIST_DIR=.next-apple-check node apps/apple/scripts/snapshot.ts \
+node apps/apple/scripts/snapshot.ts \
   "${TMPDIR%/}/opencode/apple-saved-networks"
 ```
 
-脚本启动隔离端口/临时数据和唯一Keychain/defaults namespace，经真实API创建第二张网络，分别接入并验证保存/切回/移除fallback。Debug-only AppKit hook捕获实际窗口/sheets；无Accessibility时原生菜单用同真实条目的sheet验证。不注入假节点/隧道，结束清理独立构建目录及临时配置改动。当前保留必要兼容检查，Apple新增开发暂停。
+脚本启动隔离端口/临时数据和唯一Keychain/defaults namespace，经真实API创建第二张网络，分别接入并验证保存/切回/移除fallback。Debug-only AppKit hook捕获实际窗口/sheets；无Accessibility时原生菜单用同真实条目的sheet验证。不注入假节点/隧道，结束清理临时配置改动。当前保留必要兼容检查，Apple新增开发暂停。
 
 签名默认无 Team，bundle prefix 为 `dev.example`。需要签名时创建忽略的 `apps/apple/Config/Local.xcconfig`，设置 `DEVELOPMENT_TEAM`、`MESHWAY_BUNDLE_PREFIX`，必要时覆盖 `MESHWAY_APP_GROUP`。`MESHWAY_KEYCHAIN_ACCESS_GROUP` 默认空，unsigned 使用默认 Keychain；需要 extension 共享时设置此变量并为 App / extension 添加匹配的 `keychain-access-groups` entitlement 与有效 provisioning。App Group 不能替代 Keychain access group。会员未续费，不能据编译声称签名权限、真机 NE 或隧道已验证。
 
-本地验收：Rust bridge + 真实 controller ephemeral-port 联测；Swift 覆盖严格 callback、各持久化 phase 恢复、镜像中断修复、原绑定重试、Keychain 错误 / 丢失、取消 / 拒绝、过期重开。多接入专项覆盖旧身份迁移的每个写入 / 删除中断、凭据隔离、Pending 恢复、移除与活动 fallback、heartbeat / configuration / DNS / exchange 迟到结果 fencing。真实 Keychain / FFI / 旧 Web proxy smoke（原入口）、三平台 XCFramework、macOS / iOS Simulator unsigned build 通过；双网络真实窗口截图使用隔离数据与生成客户端。控制台与系统浏览器 UI 由用户手工验证；未安装 Simulator runtime，未验证 native iOS 运行；真机 NE 生命周期待有签名宿主验证。
+本地验收：Rust bridge + 真实 controller ephemeral-port 联测；Swift 覆盖严格 callback、各持久化 phase 恢复、镜像中断修复、原绑定重试、Keychain 错误 / 丢失、取消 / 拒绝、过期重开。多接入专项覆盖旧身份迁移的每个写入 / 删除中断、凭据隔离、Pending 恢复、移除与活动 fallback、heartbeat / configuration / DNS / exchange 迟到结果 fencing。真实 Keychain / FFI smoke、三平台 XCFramework、macOS / iOS Simulator unsigned build 通过；双网络真实窗口截图使用隔离数据与生成客户端。控制台与系统浏览器 UI 由用户手工验证；未安装 Simulator runtime，未验证 native iOS 运行；真机 NE 生命周期待有签名宿主验证。
 
 ## FFI 审计边界
 

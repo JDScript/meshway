@@ -53,6 +53,7 @@ pnpm dev:stop
 ```sh
 pnpm dev:docs
 pnpm build:docs
+pnpm dev:console    # 独立 console 开发服务，不由 scripts/dev.py 管理
 ```
 
 ## 契约与验证

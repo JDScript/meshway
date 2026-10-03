@@ -23,6 +23,7 @@ pnpm dev:status
 cargo run --locked -p meshway-controller -- serve \
   --data-dir .meshway/controller --bind 127.0.0.1:8420
 pnpm dev:docs
+pnpm dev:console   # 独立 console，不由统一入口管理
 ```
 
 每个服务使用独立终端。Controller 首次创建私有 SQLite 与管理员 token，后续复用同目录；不要与统一入口重复启动。同数据目录受独占锁保护。首次地址池默认 IPv4 `100.96.0.0/16` 与持久 ULA `/64`，已有库不因启动参数重新编号，见[地址分发](/configuration#持久双栈地址池)。

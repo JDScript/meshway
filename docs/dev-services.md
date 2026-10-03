@@ -43,7 +43,7 @@ Controller 数据位于 `.meshway/controller`。
 日志位于 `.meshway/services/meshway-{controller,docs}.log`，目录 0700、文件 0600。
 服务在 tmux 中持续运行，开发入口退出后仍然可用。
 
-`apps/console` 的开发服务由其独立工作流管理，不属于本入口。
+`apps/console` 的开发服务由其独立工作流管理，不属于本入口；需要时单独运行 `pnpm dev:console`（`build:console` / `test:console` 同理）。
 
 `start` 幂等；已有 session 必须同时匹配 checkout、启动命令、实际进程和监听端口归属，才能接管。
 同名外部 session 或其他进程占用端口时明确报错。不同 worktree 使用相同默认 session 名和端口，因此不会同时启动两套本地服务。
