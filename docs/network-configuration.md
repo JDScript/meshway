@@ -4,6 +4,8 @@ description: NetworkConfiguration、节点状态与版本分发的逐项对齐�
 
 # 配置与状态模型
 
+直接查看配置格式与字段：[Configuration Reference](/configuration-reference)。
+
 ::: info 讨论稿：以用户给出的结构为基线
 本页用于逐项对齐 Controller 的模型，不是当前已发布的 JSON Schema 或 HTTP 合同。
 **基线**是本轮用户明确给出的方向；**补充建议／待确认**不视为已批准实现。
