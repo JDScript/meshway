@@ -109,7 +109,7 @@ impl<'a> Publication<'a> {
     }
 
     fn capable(&self, id: &str) -> Result<bool, Error> {
-        Ok(self.db.query_row("SELECT EXISTS(SELECT 1 FROM mesh_execution_capabilities c JOIN connection_runtime_leases l ON c.node_id=l.node_id AND c.network_id=l.network_id AND c.epoch=l.epoch AND c.instance_id=l.instance_id WHERE c.network_id=?1 AND c.node_id=?2 AND c.capability=2)",params![self.scope.as_str(),id],|r|r.get(0))?)
+        Ok(self.db.query_row("SELECT EXISTS(SELECT 1 FROM mesh_execution_capabilities c JOIN connection_runtime_leases l ON c.node_id=l.node_id AND c.network_id=l.network_id AND c.epoch=l.epoch AND c.instance_id=l.instance_id WHERE c.network_id=?1 AND c.node_id=?2 AND c.capability=3)",params![self.scope.as_str(),id],|r|r.get(0))?)
     }
 
     fn payload(&self, id: &str, key: Option<&[u8]>) -> Result<NodeMeshExecution, Error> {
@@ -146,7 +146,7 @@ impl<'a> Publication<'a> {
                 }
                 paths.push(MeshExecutionPath {
                     nodes: path.path,
-                    return_traffic: MeshReturnTraffic::StatefulIpv4V1,
+                    return_traffic: MeshReturnTraffic::StatefulIpv4V2,
                 });
             }
         }
@@ -221,7 +221,7 @@ impl<'a> Publication<'a> {
             network_id: self.scope.as_str().to_owned(),
             revision: self.adjacency.revision,
             node_id: id.to_owned(),
-            required_capability: MeshExecutionCapability::Ipv4StatefulExactPathV2,
+            required_capability: MeshExecutionCapability::Ipv4StatefulExactPathV3,
             network: self.network.clone(),
             node,
             peers: nodes,

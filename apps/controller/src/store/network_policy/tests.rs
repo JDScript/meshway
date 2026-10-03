@@ -95,7 +95,7 @@ fn policy_default_jsonc_cas_budget_and_saved_receipts_are_current_only() {
     let runtime = MeshExecutionRequest {
         epoch: begin.epoch,
         instance_id,
-        capabilities: vec![MeshExecutionCapability::Ipv4StatefulExactPathV2],
+        capabilities: vec![MeshExecutionCapability::Ipv4StatefulExactPathV3],
     };
     let execution = store
         .mesh_execution(&r.node_credential, &runtime)
@@ -188,7 +188,7 @@ fn mixed_epoch_support_withdraws_whole_mandatory_plan_without_replanning_around_
             MeshExecutionRequest {
                 epoch: begin.epoch,
                 instance_id: instance,
-                capabilities: vec![MeshExecutionCapability::Ipv4StatefulExactPathV2],
+                capabilities: vec![MeshExecutionCapability::Ipv4StatefulExactPathV3],
             },
         ));
     }
@@ -305,10 +305,10 @@ fn mixed_epoch_support_withdraws_whole_mandatory_plan_without_replanning_around_
         .snapshot;
     assert!(allowed.payload.valid);
     assert_eq!(allowed.payload.paths.len(), 1);
-    assert_eq!(allowed.payload.schema_version, 2);
+    assert_eq!(allowed.payload.schema_version, MESH_EXECUTION_VERSION);
     assert_eq!(
         allowed.payload.paths[0].return_traffic,
-        MeshReturnTraffic::StatefulIpv4V1
+        MeshReturnTraffic::StatefulIpv4V2
     );
     assert_eq!(
         allowed.payload.paths[0].nodes,

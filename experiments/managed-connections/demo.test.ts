@@ -226,7 +226,7 @@ function packetGraph() {
   const snapshot = (role: keyof typeof ids): MeshExecutionSnapshot => {
     const receipt = config.nodes.find((entry) => entry.node.id === ids[role]); assert(receipt);
     const { id, name, country, mesh_ipv4, mesh_ipv6 } = receipt.node;
-    return { digest:"d".repeat(64),payload:{schema_version:2,revision:42,node_id:id,network_id:"a".repeat(32),required_capability:"ipv4_stateful_exact_path_v2",network:{ipv4_prefix:"100.64.0.0/16",ipv6_prefix:"fd00::/64"},node:{id,name,country,mesh_ipv4,mesh_ipv6},peers:[],valid:true,paths:[],identities:[],materials:[],
+    return { digest:"d".repeat(64),payload:{schema_version:3,revision:42,node_id:id,network_id:"a".repeat(32),required_capability:"ipv4_stateful_exact_path_v3",network:{ipv4_prefix:"100.64.0.0/16",ipv6_prefix:"fd00::/64"},node:{id,name,country,mesh_ipv4,mesh_ipv6},peers:[],valid:true,paths:[],identities:[],materials:[],
        connections: { schema_version: 1, revision: 42, node_id: id, public_key: receipt.public_key, capabilities: [], diagnostics: [], valid: true,
         listeners: config.configuration.listeners.filter((entry) => entry.node_id === id), incoming: [], outgoing: [], peers: [] } } };
   };

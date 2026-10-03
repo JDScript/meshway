@@ -613,7 +613,7 @@ export type MeshDnsConfiguration = {
     zone: string;
 };
 
-export type MeshExecutionCapability = 'ipv4_stateful_exact_path_v2';
+export type MeshExecutionCapability = 'ipv4_stateful_exact_path_v3';
 
 export type MeshExecutionPath = {
     nodes: Array<string>;
@@ -656,7 +656,7 @@ export type MeshNode = {
     name: string;
 };
 
-export type MeshReturnTraffic = 'stateful_ipv4_v1';
+export type MeshReturnTraffic = 'stateful_ipv4_v2';
 
 export type MeshRule = {
     dst: string;

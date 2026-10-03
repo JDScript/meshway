@@ -17,11 +17,12 @@ test("inventory schema accepts only current metadata and never a routing source"
 });
 
 test("epoch negotiation requires the current capability and a concrete execution snapshot", () => {
-  const request={epoch:1,instance_id:"a".repeat(64),capabilities:["ipv4_stateful_exact_path_v2"]};
+  const request={epoch:1,instance_id:"a".repeat(64),capabilities:["ipv4_stateful_exact_path_v3"]};
   assert(zMeshExecutionRequest.safeParse(request).success);
   assert(!zMeshExecutionRequest.safeParse({...request,capabilities:["guess-agent-version"]}).success);
   assert(!zMeshExecutionRequest.safeParse({...request,epoch:0}).success);
-  assert(!zMeshExecutionRequest.safeParse({...request,capabilities:["ipv4_stateful_exact_path_v2","ipv4_stateful_exact_path_v2"]}).success);
+  assert(!zMeshExecutionRequest.safeParse({...request,capabilities:["ipv4_stateful_exact_path_v3","ipv4_stateful_exact_path_v3"]}).success);
+  assert(!zMeshExecutionRequest.safeParse({...request,capabilities:["ipv4_stateful_exact_path_v2"]}).success);
   assert(!zMeshExecutionRequest.safeParse({...request,capabilities:["ipv4_exact_path_v1"]}).success);
   const response={source_mode:"legacy_v2",revision:1,snapshot:null};
   assert(!zMeshExecutionResponse.safeParse(response).success);

@@ -6,12 +6,12 @@ fn execution() -> NodeMeshExecution {
     let a = "a".repeat(64);
     let b = "b".repeat(64);
     serde_json::from_value(serde_json::json!({
-        "schema_version":2,"network_id":"0".repeat(32),"revision":7,"node_id":a,
-        "required_capability":"ipv4_stateful_exact_path_v2",
+        "schema_version":3,"network_id":"0".repeat(32),"revision":7,"node_id":a,
+        "required_capability":"ipv4_stateful_exact_path_v3",
         "network":{"ipv4_prefix":"100.64.0.0/24","ipv6_prefix":"fd42::/64"},
         "node":{"id":a,"name":"a","country":null,"mesh_ipv4":"100.64.0.1","mesh_ipv6":"fd42::1"},
         "peers":[{"id":b,"name":"b","country":null,"mesh_ipv4":"100.64.0.2","mesh_ipv6":"fd42::2"}],
-        "valid":true,"paths":[{"nodes":[a,b],"return_traffic":"stateful_ipv4_v1"}],"identities":[],"materials":[],
+        "valid":true,"paths":[{"nodes":[a,b],"return_traffic":"stateful_ipv4_v2"}],"identities":[],"materials":[],
         "connections":{"schema_version":1,"revision":7,"node_id":a,"public_key":null,"capabilities":[],
             "valid":true,"diagnostics":[],"listeners":[],"incoming":[],"outgoing":[],"peers":[]}
     })).unwrap()

@@ -2272,7 +2272,7 @@ export const schemaDocument = {
       "MeshExecutionCapability": {
         "type": "string",
         "enum": [
-          "ipv4_stateful_exact_path_v2"
+          "ipv4_stateful_exact_path_v3"
         ]
       },
       "MeshExecutionPath": {
@@ -2413,7 +2413,7 @@ export const schemaDocument = {
       "MeshReturnTraffic": {
         "type": "string",
         "enum": [
-          "stateful_ipv4_v1"
+          "stateful_ipv4_v2"
         ]
       },
       "MeshRule": {
@@ -2968,8 +2968,8 @@ export const schemaDocument = {
           "schema_version": {
             "type": "integer",
             "format": "int64",
-            "maximum": 2,
-            "minimum": 2
+            "maximum": 3,
+            "minimum": 3
           },
           "valid": {
             "type": "boolean"

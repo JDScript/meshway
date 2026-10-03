@@ -30,6 +30,9 @@ pub struct PacketPlan {
 }
 
 impl PacketPlan {
+    pub fn flow_statistics(&self) -> meshway_dataplane::flow::FlowStatistics {
+        self.admission.statistics()
+    }
     pub(crate) fn fresh(&self) -> Self {
         Self {
             admission: self.admission.fresh(),
@@ -229,6 +232,9 @@ impl meshway_dataplane::packet_io::Admission for PacketPlan {
     fn sent(&self, path: &[String], payload: &[u8]) -> std::io::Result<()> {
         self.admission.sent(path, payload)
     }
+    fn cancelled(&self, path: &[String], payload: &[u8]) {
+        self.admission.cancelled(path, payload)
+    }
     fn plaintext(&self, packet: &ReceivedPacket) -> std::io::Result<Vec<u8>> {
         self.admission.plaintext(packet)
     }
@@ -240,6 +246,12 @@ impl meshway_dataplane::packet_io::Admission for PacketPlan {
     }
     fn receipt(&self, packet: &ReceivedPacket) -> Option<Vec<u8>> {
         self.admission.receipt(packet)
+    }
+    fn next_control(&self) -> Option<(Vec<String>, Vec<u8>)> {
+        self.admission.next_control()
+    }
+    fn control_failed(&self) {
+        self.admission.control_failed()
     }
 }
 

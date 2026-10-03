@@ -1,5 +1,5 @@
 //! Stable node execution contract. Source policy and compiler indexes never cross
-//! this boundary. V2 executes IPv4 Mesh with stateful return traffic on the
+//! this boundary. V3 executes IPv4 Mesh with stateful return traffic on the
 //! reversed, fully authorized forward path. Return eligibility is runtime state,
 //! never a reverse access grant or a saved configuration receipt.
 use crate::{ConnectionPeer, ManagedVlessMaterial, MeshNetwork, MeshNode, NodeConnections};
@@ -7,14 +7,14 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use utoipa::ToSchema;
 
-pub const MESH_EXECUTION_VERSION: u32 = 2;
+pub const MESH_EXECUTION_VERSION: u32 = 3;
 pub const MAX_MESH_EXECUTION_PATHS: usize = 128;
 pub const MAX_MESH_EXECUTION_MATERIALS: usize = 64;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum MeshExecutionCapability {
-    Ipv4StatefulExactPathV2,
+    Ipv4StatefulExactPathV3,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, ToSchema)]
@@ -40,13 +40,13 @@ pub struct MeshExecutionPath {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum MeshReturnTraffic {
-    StatefulIpv4V1,
+    StatefulIpv4V2,
 }
 
 #[derive(Clone, Serialize, Deserialize, ToSchema)]
 #[serde(deny_unknown_fields)]
 pub struct NodeMeshExecution {
-    #[schema(format = Int64, minimum = 2, maximum = 2)]
+    #[schema(format = Int64, minimum = 3, maximum = 3)]
     pub schema_version: u32,
     pub network_id: String,
     #[schema(format = Int64, minimum = 1, maximum = 4294967295_u64)]

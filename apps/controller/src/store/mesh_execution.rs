@@ -32,7 +32,7 @@ impl Store {
             .transaction_with_behavior(TransactionBehavior::Immediate)?;
         let id = super::connection_runtime::bound_node(&tx, &network, token)?;
         check_epoch(&tx, &network, &id, request)?;
-        if request.capabilities != [MeshExecutionCapability::Ipv4StatefulExactPathV2] {
+        if request.capabilities != [MeshExecutionCapability::Ipv4StatefulExactPathV3] {
             if tx.execute(
                 "DELETE FROM mesh_execution_capabilities WHERE network_id=?1 AND node_id=?2",
                 params![network.as_str(), id],
@@ -43,12 +43,12 @@ impl Store {
             }
             tx.commit()?;
             return Err(Error::Unprocessable(
-                "IPv4 stateful exact-path execution v2 capability required",
+                "IPv4 stateful exact-path execution v3 capability required",
             ));
         }
         let changed= !tx.query_row("SELECT EXISTS(SELECT 1 FROM mesh_execution_capabilities WHERE network_id=?1 AND node_id=?2 AND epoch=?3 AND instance_id=?4)",params![network.as_str(),id,request.epoch,request.instance_id],|r|r.get::<_,bool>(0))?;
         if changed {
-            tx.execute("INSERT INTO mesh_execution_capabilities(node_id,network_id,epoch,instance_id,capability) VALUES(?1,?2,?3,?4,2) ON CONFLICT(node_id) DO UPDATE SET epoch=excluded.epoch,instance_id=excluded.instance_id,capability=excluded.capability WHERE network_id=excluded.network_id",params![id,network.as_str(),request.epoch,request.instance_id])?;
+            tx.execute("INSERT INTO mesh_execution_capabilities(node_id,network_id,epoch,instance_id,capability) VALUES(?1,?2,?3,?4,3) ON CONFLICT(node_id) DO UPDATE SET epoch=excluded.epoch,instance_id=excluded.instance_id,capability=excluded.capability WHERE network_id=excluded.network_id",params![id,network.as_str(),request.epoch,request.instance_id])?;
             configuration::bump(&tx, &network)?;
             publication::finish_change(&tx, &network, publication::ChangeKind::Adjacency)?;
         }
@@ -72,7 +72,7 @@ impl Store {
             .transaction_with_behavior(TransactionBehavior::Immediate)?;
         let id = super::connection_runtime::bound_node(&tx, &network, token)?;
         check_epoch(&tx, &network, &id, &request.runtime)?;
-        if request.runtime.capabilities != [MeshExecutionCapability::Ipv4StatefulExactPathV2] {
+        if request.runtime.capabilities != [MeshExecutionCapability::Ipv4StatefulExactPathV3] {
             return Err(Error::Conflict);
         }
         let (policy, _) = network_policy::source(&tx, &network)?;

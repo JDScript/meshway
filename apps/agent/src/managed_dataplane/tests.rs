@@ -30,7 +30,7 @@ pub(crate) fn fixtures(count: usize) -> (Vec<NodeMeshExecution>, Vec<PrivateKey>
         .into_iter()
         .map(|nodes| MeshExecutionPath {
             nodes,
-            return_traffic: meshway_protocol::MeshReturnTraffic::StatefulIpv4V1,
+            return_traffic: meshway_protocol::MeshReturnTraffic::StatefulIpv4V2,
         })
         .collect();
     let ports: Vec<_> = (0..count)
@@ -101,7 +101,7 @@ pub(crate) fn fixtures(count: usize) -> (Vec<NodeMeshExecution>, Vec<PrivateKey>
                 network_id: "0".repeat(32),
                 revision: 7,
                 node_id: node.id.clone(),
-                required_capability: MeshExecutionCapability::Ipv4StatefulExactPathV2,
+                required_capability: MeshExecutionCapability::Ipv4StatefulExactPathV3,
                 network: MeshNetwork {
                     ipv4_prefix: "100.64.0.0/24".into(),
                     ipv6_prefix: "fd42::/64".into(),

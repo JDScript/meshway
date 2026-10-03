@@ -118,6 +118,7 @@ pub trait Admission: Send + Sync {
     fn sent(&self, _path: &[String], _payload: &[u8]) -> io::Result<()> {
         Ok(())
     }
+    fn cancelled(&self, _path: &[String], _payload: &[u8]) {}
     fn plaintext(&self, packet: &ReceivedPacket) -> io::Result<Vec<u8>> {
         Ok(packet.payload.clone())
     }
@@ -133,6 +134,10 @@ pub trait Admission: Send + Sync {
     fn receipt(&self, _packet: &ReceivedPacket) -> Option<Vec<u8>> {
         None
     }
+    fn next_control(&self) -> Option<(Vec<String>, Vec<u8>)> {
+        None
+    }
+    fn control_failed(&self) {}
 }
 
 impl Admission for Ipv4PacketPlan {
@@ -271,15 +276,30 @@ pub async fn run_with_activation<D: Device, A: Admission>(
                     return Ok(());
                 }
                 if let Some(path) = plan.outgoing(&bytes) {
-                    let payload = plan.encapsulate(path, &bytes)?;
+                    let payload = match plan.encapsulate(path, &bytes) {
+                        Ok(payload) => payload,
+                        Err(error)
+                            if matches!(
+                                error.kind(),
+                                io::ErrorKind::WouldBlock | io::ErrorKind::InvalidData
+                            ) =>
+                        {
+                            tokio::task::yield_now().await;
+                            continue;
+                        }
+                        Err(error) => return Err(error),
+                    };
                     match runtime.send_packet(path.clone(), payload.clone()).await {
                         Ok(()) => plan.sent(path, &payload)?,
                         Err(
                             crate::Error::Unavailable
                             | crate::Error::Capacity
                             | crate::Error::Timeout,
-                        ) => {}
-                        Err(_) => return Err(io::Error::other("packet runtime failure")),
+                        ) => plan.cancelled(path, &payload),
+                        Err(_) => {
+                            plan.cancelled(path, &payload);
+                            return Err(io::Error::other("packet runtime failure"));
+                        }
                     }
                 }
                 // Preserve the managed pump's per-packet withdrawal fairness.
@@ -304,24 +324,28 @@ pub async fn run_with_activation<D: Device, A: Admission>(
                 device
                     .send_batch(PacketBatch::new(vec![plan.plaintext(&packet)?])?)
                     .await?;
-                if let Some(receipt) = plan.receipt(&packet) {
-                    let reverse = packet.path.iter().rev().cloned().collect();
-                    match runtime.send_packet(reverse, receipt).await {
-                        Ok(()) => {}
-                        Err(
-                            crate::Error::Unavailable
-                            | crate::Error::Capacity
-                            | crate::Error::Timeout,
-                        ) => {
-                            tokio::task::yield_now().await;
-                            continue;
-                        }
-                        Err(_) => return Err(io::Error::other("packet receipt runtime failure")),
-                    }
-                }
                 plan.delivered(&packet)?;
             }
             tokio::task::yield_now().await;
+        }
+    };
+    let controls = async {
+        let mut interval = tokio::time::interval(std::time::Duration::from_millis(25));
+        interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+        loop {
+            interval.tick().await;
+            if !current(&io_deadline) {
+                return Ok(());
+            }
+            if let Some((path, payload)) = plan.next_control() {
+                match runtime.send_packet(path, payload).await {
+                    Ok(()) => {}
+                    Err(
+                        crate::Error::Unavailable | crate::Error::Capacity | crate::Error::Timeout,
+                    ) => plan.control_failed(),
+                    Err(_) => return Err(io::Error::other("packet control runtime failure")),
+                }
+            }
         }
     };
     let withdrawn = async {
@@ -339,7 +363,7 @@ pub async fn run_with_activation<D: Device, A: Admission>(
     tokio::select! {
         biased;
         _ = withdrawn => Ok(()),
-        result = async { tokio::try_join!(outbound, inbound).map(|_| ()) } => result,
+        result = async { tokio::try_join!(outbound, inbound, controls).map(|_| ()) } => result,
     }
 }
 

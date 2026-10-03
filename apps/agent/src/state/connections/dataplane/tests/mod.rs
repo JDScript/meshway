@@ -28,7 +28,7 @@ static RUNTIME: std::sync::LazyLock<MeshExecutionRequest> =
     std::sync::LazyLock::new(|| MeshExecutionRequest {
         epoch: 1,
         instance_id: "a".repeat(64),
-        capabilities: vec![MeshExecutionCapability::Ipv4StatefulExactPathV2],
+        capabilities: vec![MeshExecutionCapability::Ipv4StatefulExactPathV3],
     });
 
 fn managed(snapshot: MeshExecutionSnapshot) -> MeshExecutionResponse {

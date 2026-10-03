@@ -11,7 +11,7 @@ async fn execution_and_receipts_enforce_network_credentials_runtime_and_revocati
     // receipt for one network's execution to be accepted by another network.
     let instance = local::credential().unwrap();
     let runtime =
-        json!({"epoch":1,"instance_id":instance,"capabilities":["ipv4_stateful_exact_path_v2"]});
+        json!({"epoch":1,"instance_id":instance,"capabilities":["ipv4_stateful_exact_path_v3"]});
     let mut participants = Vec::new();
     for (index, name) in ["first", "second"].iter().enumerate() {
         let (status, network) = request(
@@ -124,7 +124,7 @@ async fn execution_and_receipts_enforce_network_credentials_runtime_and_revocati
             StatusCode::CONFLICT
         );
     }
-    let current = json!({"epoch":2,"instance_id":next_instance,"capabilities":["ipv4_stateful_exact_path_v2"]});
+    let current = json!({"epoch":2,"instance_id":next_instance,"capabilities":["ipv4_stateful_exact_path_v3"]});
     let (status, execution) = request(
         &f.app,
         "POST",

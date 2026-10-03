@@ -1,4 +1,5 @@
 use super::*;
+mod regressions;
 
 fn paths() -> Vec<String> {
     vec!["a".into(), "via".into(), "b".into()]
@@ -77,9 +78,11 @@ fn echo(reply: bool, seq: u16) -> Vec<u8> {
 
 fn prepared(plan: &StatefulIpv4Plan, bytes: &[u8]) -> ReceivedPacket {
     let path = plan.outgoing(bytes).expect("authorized packet").clone();
+    let payload = plan.encapsulate(&path, bytes).unwrap();
+    plan.cancelled(&path, &payload); // helper returns bytes, not an in-flight Runtime future
     ReceivedPacket {
         source: path[0].clone(),
-        payload: plan.encapsulate(&path, bytes).unwrap(),
+        payload,
         path,
     }
 }
@@ -94,12 +97,15 @@ fn deliver(from: &StatefulIpv4Plan, to: &StatefulIpv4Plan, bytes: &[u8]) {
 }
 
 fn confirm(from: &StatefulIpv4Plan, to: &StatefulIpv4Plan, packet: &ReceivedPacket) {
+    let Some(payload) = to.receipt(packet) else {
+        return;
+    };
     let path: Vec<_> = packet.path.iter().rev().cloned().collect();
     assert!(
         from.control(&ReceivedPacket {
             source: path[0].clone(),
             path,
-            payload: to.receipt(packet).unwrap(),
+            payload,
         })
         .unwrap()
     );
@@ -112,10 +118,10 @@ fn udp_return_requires_successful_boundaries_and_exact_tuple_token_and_path() {
     let reply = udp(true, 40000);
     assert!(b.outgoing(&reply).is_none());
     let packet = prepared(&a, &request);
-    assert!(a.table().is_empty());
+    assert!(a.table().flows.values().all(|flow| !flow.active));
     assert!(b.incoming(&packet));
     assert!(
-        b.table().is_empty(),
+        b.table().flows.values().all(|flow| !flow.active),
         "admission/preparation is not a successful delivery"
     );
     assert!(b.outgoing(&reply).is_none());
@@ -128,8 +134,12 @@ fn udp_return_requires_successful_boundaries_and_exact_tuple_token_and_path() {
     );
     a.sent(&packet.path, &packet.payload).unwrap();
     assert!(
-        !a.incoming(&returning),
+        a.table().flows.values().all(|flow| !flow.active),
         "queue acceptance is not delivery evidence"
+    );
+    assert!(
+        a.incoming(&returning),
+        "authenticated matching reply carries delivery proof"
     );
     confirm(&a, &b, &packet);
     assert!(a.incoming(&returning));
@@ -145,7 +155,7 @@ fn udp_return_requires_successful_boundaries_and_exact_tuple_token_and_path() {
         "spoofed local source denied"
     );
     let (fresh, _) = plans();
-    assert!(fresh.table().is_empty());
+    assert!(fresh.table().flows.is_empty());
 }
 
 #[test]
@@ -200,11 +210,11 @@ fn return_uses_established_forward_waypoints_not_reverse_initiation_route() {
 #[tokio::test(start_paused = true)]
 async fn expiry_capacity_restart_and_fragmentation_fail_closed() {
     let (a, b) = plans();
-    for port in 1000..1000 + CAPACITY as u16 {
+    for port in 1000..1000 + PEER_CAPACITY as u16 {
         deliver(&a, &b, &udp(false, port));
     }
     assert!(a.encapsulate(&paths(), &udp(false, 999)).is_err());
-    assert_eq!(a.table().len(), CAPACITY);
+    assert_eq!(a.table().flows.len(), PEER_CAPACITY);
     let packet = prepared(&b, &udp(true, 1000));
     let (fresh, _) = plans();
     assert!(!fresh.incoming(&packet));
@@ -228,7 +238,9 @@ async fn enqueue_forged_or_expired_receipts_and_other_revision_never_create_retu
     let (a, b) = plans();
     let packet = prepared(&a, &udp(false, 40000));
     a.sent(&packet.path, &packet.payload).unwrap();
-    assert!(a.table().is_empty());
+    assert!(a.table().flows.values().all(|flow| !flow.active));
+    assert!(b.incoming(&packet));
+    b.delivered(&packet).unwrap();
     let reverse: Vec<_> = packet.path.iter().rev().cloned().collect();
     let mut receipt = ReceivedPacket {
         source: reverse[0].clone(),
@@ -237,26 +249,23 @@ async fn enqueue_forged_or_expired_receipts_and_other_revision_never_create_retu
     };
     receipt.payload[21] ^= 1;
     assert!(a.control(&receipt).unwrap());
-    assert!(a.table().is_empty());
+    assert!(a.table().flows.values().all(|flow| !flow.active));
     receipt.payload[21] ^= 1;
     receipt.path.remove(1);
     assert!(a.control(&receipt).unwrap());
-    assert!(a.table().is_empty());
+    assert!(a.table().flows.values().all(|flow| !flow.active));
     receipt.path.insert(1, "via".into());
-    tokio::time::advance(Duration::from_secs(6)).await;
+    tokio::time::advance(Duration::from_secs(31)).await;
     assert!(a.control(&receipt).unwrap());
-    assert!(a.table().is_empty());
+    assert!(a.table().flows.is_empty());
     assert!(!b.fresh().scoped([1; 32]).incoming(&packet));
     assert!(a.fresh().scoped([1; 32]).control(&receipt).is_ok());
 }
 
-#[tokio::test]
-async fn encrypted_three_hop_pump_returns_one_way_udp_and_echo_without_reverse_initiation() {
-    use crate::packet_io::{self, PacketBatch};
+async fn encrypted_nodes() -> Vec<Arc<crate::Runtime>> {
     use crate::{
         Identity, LabConfig, Limits, PeerConfig, PrivateKey, Runtime, StreamRole, TransportKind,
     };
-    use tokio::sync::watch;
     let keys: Vec<_> = (0..3).map(|_| Identity::generate().unwrap()).collect();
     let ids = ["a", "via", "b"];
     let path = paths();
@@ -277,7 +286,15 @@ async fn encrypted_three_hop_pump_returns_one_way_udp_and_echo_without_reverse_i
                     transports: vec![TransportKind::NativeTcp],
                 })
                 .collect(),
-            allowed_paths: vec![path.clone(), reverse.clone()],
+            allowed_paths: vec![
+                path.clone(),
+                reverse.clone(),
+                vec!["a".into(), "via".into()],
+                vec!["via".into(), "a".into()],
+            ]
+            .into_iter()
+            .filter(|p| p.iter().any(|n| n.as_str() == *id))
+            .collect(),
             listeners: vec![],
             outgoing: vec![],
             limits: Limits::default(),
@@ -299,8 +316,15 @@ async fn encrypted_three_hop_pump_returns_one_way_udp_and_echo_without_reverse_i
         a.unwrap();
         b.unwrap();
     }
+    runtimes
+}
+
+#[tokio::test]
+async fn encrypted_three_hop_pump_returns_one_way_udp_and_echo_without_reverse_initiation() {
+    use crate::packet_io::{self, PacketBatch};
+    use tokio::sync::watch;
+    let runtimes = encrypted_nodes().await;
     let (a, b) = plans();
-    let observer = a.clone();
     let mut relay = runtimes[1].take_packet_receiver().unwrap();
     let (ad, ac) = packet_io::channel(8).unwrap();
     let (bd, bc) = packet_io::channel(8).unwrap();
@@ -321,14 +345,6 @@ async fn encrypted_three_hop_pump_returns_one_way_udp_and_echo_without_reverse_i
                 .into_packets(),
             vec![request]
         );
-        // Wait for the authenticated delivery receipt, not just the TUN writer.
-        tokio::time::timeout(Duration::from_secs(3), async {
-            while observer.table().is_empty() {
-                tokio::task::yield_now().await;
-            }
-        })
-        .await
-        .unwrap();
         bc.try_feed(PacketBatch::new(vec![response.clone()]).unwrap())
             .unwrap();
         assert_eq!(

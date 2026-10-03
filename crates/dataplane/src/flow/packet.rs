@@ -15,6 +15,8 @@ pub(super) struct Tcp {
     pub ack: u32,
     pub flags: u8,
     pub len: u32,
+    pub window: u16,
+    pub scale: Option<u8>,
 }
 
 impl Packet {
@@ -45,6 +47,8 @@ impl Packet {
                     ack: u32::from_be_bytes(body[8..12].try_into().ok()?),
                     flags: body[13],
                     len: u32::try_from(body.len() - header).ok()?,
+                    window: word(body, 14),
+                    scale: window_scale(&body[20..header], body[13] & 2 != 0)?,
                 };
                 (Some(tcp), tcp.flags == 2 && tcp.len == 0 && tcp.ack == 0)
             }
@@ -76,6 +80,31 @@ impl Packet {
         }
         Some(Self { tuple, tcp, opener })
     }
+}
+
+fn window_scale(mut options: &[u8], syn: bool) -> Option<Option<u8>> {
+    let mut scale = None;
+    while let Some(&kind) = options.first() {
+        if kind == 0 {
+            break;
+        }
+        if kind == 1 {
+            options = &options[1..];
+            continue;
+        }
+        let length = usize::from(*options.get(1)?);
+        if length < 2 || length > options.len() {
+            return None;
+        }
+        if kind == 3 {
+            if !syn || length != 3 || options[2] > 14 || scale.is_some() {
+                return None;
+            }
+            scale = Some(options[2]);
+        }
+        options = &options[length..];
+    }
+    Some(scale)
 }
 
 fn word(bytes: &[u8], offset: usize) -> u16 {

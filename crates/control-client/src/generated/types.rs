@@ -105,7 +105,7 @@ pub struct NodeMeshExecution {
     pub required_capability: MeshExecutionCapability,
     ///Constraint: minimum=1, maximum=4294967295
     pub revision: i64,
-    ///Constraint: minimum=2, maximum=2
+    ///Constraint: minimum=3, maximum=3
     pub schema_version: i64,
     pub valid: bool,
 }
@@ -119,13 +119,13 @@ pub struct MeshExecutionPath {
 #[derive(Clone, PartialEq, Eq, Deserialize, Serialize, Default)]
 pub enum MeshReturnTraffic {
     #[default]
-    #[serde(rename = "stateful_ipv4_v1")]
-    StatefulIpv4V1,
+    #[serde(rename = "stateful_ipv4_v2")]
+    StatefulIpv4V2,
 }
 impl MeshReturnTraffic {
     pub fn as_str(&self) -> &'static str {
         match self {
-            Self::StatefulIpv4V1 => "stateful_ipv4_v1",
+            Self::StatefulIpv4V2 => "stateful_ipv4_v2",
         }
     }
 }
@@ -954,13 +954,13 @@ pub struct MeshExecutionRequest {
 #[derive(Clone, PartialEq, Eq, Deserialize, Serialize, Default)]
 pub enum MeshExecutionCapability {
     #[default]
-    #[serde(rename = "ipv4_stateful_exact_path_v2")]
-    Ipv4StatefulExactPathV2,
+    #[serde(rename = "ipv4_stateful_exact_path_v3")]
+    Ipv4StatefulExactPathV3,
 }
 impl MeshExecutionCapability {
     pub fn as_str(&self) -> &'static str {
         match self {
-            Self::Ipv4StatefulExactPathV2 => "ipv4_stateful_exact_path_v2",
+            Self::Ipv4StatefulExactPathV3 => "ipv4_stateful_exact_path_v3",
         }
     }
 }

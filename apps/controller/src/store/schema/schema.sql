@@ -269,7 +269,7 @@ CREATE TABLE mesh_execution_capabilities (
     network_id TEXT NOT NULL,
     epoch INTEGER NOT NULL CHECK(epoch BETWEEN 1 AND 4294967295),
     instance_id TEXT NOT NULL,
-    capability INTEGER NOT NULL CHECK(capability = 2),
+    capability INTEGER NOT NULL CHECK(capability = 3),
     FOREIGN KEY(network_id,node_id) REFERENCES nodes(network_id,id)
 );
 CREATE TABLE mesh_execution_receipts (
@@ -301,4 +301,4 @@ WHEN NEW.id IS NOT OLD.id OR NEW.network_id IS NOT OLD.network_id
      (NEW.used_node_id IS NOT OLD.used_node_id OR NEW.binding_hash IS NOT OLD.binding_hash))
 BEGIN SELECT RAISE(ABORT,'enrollment identity is immutable'); END;
 
-PRAGMA user_version = 14;
+PRAGMA user_version = 15;

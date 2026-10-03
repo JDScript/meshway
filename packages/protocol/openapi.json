@@ -6826,7 +6826,7 @@
       "MeshExecutionCapability": {
         "type": "string",
         "enum": [
-          "ipv4_stateful_exact_path_v2"
+          "ipv4_stateful_exact_path_v3"
         ]
       },
       "MeshExecutionPath": {
@@ -6967,7 +6967,7 @@
       "MeshReturnTraffic": {
         "type": "string",
         "enum": [
-          "stateful_ipv4_v1"
+          "stateful_ipv4_v2"
         ]
       },
       "MeshRule": {
@@ -7522,8 +7522,8 @@
           "schema_version": {
             "type": "integer",
             "format": "int64",
-            "maximum": 2,
-            "minimum": 2
+            "maximum": 3,
+            "minimum": 3
           },
           "valid": {
             "type": "boolean"

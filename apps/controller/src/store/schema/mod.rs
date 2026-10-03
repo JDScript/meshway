@@ -7,7 +7,7 @@ use rusqlite::{Connection, TransactionBehavior, params};
 use std::{collections::BTreeMap, path::Path};
 use zeroize::Zeroizing;
 
-pub(super) const VERSION: i64 = 14;
+pub(super) const VERSION: i64 = 15;
 const SQL: &str = include_str!("schema.sql");
 
 fn objects(db: &Connection) -> Result<BTreeMap<(String, String, String), String>, Error> {

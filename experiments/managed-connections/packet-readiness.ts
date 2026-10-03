@@ -19,7 +19,7 @@ export function packetSnapshotCurrent(snapshot: MeshExecutionSnapshot, nodeId: s
   const { payload } = snapshot;
   const { config, policy } = control;
   const node = config.nodes.find(entry => entry.node.id === nodeId);
-  return node !== undefined && payload.schema_version === 2 && payload.required_capability === "ipv4_stateful_exact_path_v2"
+  return node !== undefined && payload.schema_version === 3 && payload.required_capability === "ipv4_stateful_exact_path_v3"
     && Number.isSafeInteger(payload.revision) && payload.revision > 0 && DIGEST.test(snapshot.digest)
     && config.valid && policy.valid && payload.valid && payload.connections.valid
     && payload.revision === config.revision && payload.revision === policy.revision
