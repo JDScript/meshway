@@ -113,12 +113,14 @@ def accept(docker, container, name, logs, result, networks):
 
     def transport(kind, label):
         snapshot = rpc(prefix + '/connections/runtime')
-        for role in ('a', 'b'):
+        for role in agents:
             value = next(n for n in snapshot['nodes'] if n['node_id'] == nodes[role])
             if not value['current'] or value['stale'] or value['revision'] != revision:
                 return False
-            if not any(p['peer_node_id'] == nodes['relay'] and p['transport'] == kind and p['state'] == 'authenticated'
-                       and p['probe_fresh'] and p['probe_rtt_ms'] is not None for p in value['peers']):
+            expected = {nodes['a'], nodes['b']} if role == 'relay' else {nodes['relay']}
+            proven = {p['peer_node_id'] for p in value['peers'] if p['transport'] == kind and p['state'] == 'authenticated'
+                      and p['probe_fresh'] and p['probe_rtt_ms'] is not None}
+            if not expected.issubset(proven):
                 return False
         if not traffic():
             return False
