@@ -3,5 +3,8 @@
   "entry_email": "邮箱",
   "entry_password": "密码",
   "entry_confirm_password": "确认密码",
-  "entry_email_invalid": "邮箱地址无效。"
+  "entry_email_invalid": "邮箱地址无效。",
+  "login_signed_out_all": "已退出所有登录。",
+  "login_password_changed": "密码已更改，所有登录已退出。请用新密码登录。",
+  "login_password_reset": "密码已重置，所有登录已退出。请用新密码登录。"
 }

@@ -2,8 +2,10 @@ import type { PasswordRules } from "@meshway/control-client"
 import { useCallback, useState } from "react"
 import { toast } from "sonner"
 
+import { ApiFailure } from "@/lib/api"
 import { newPasswordProblem } from "@/lib/password"
 import { passwordProblemText } from "@/lib/password-text"
+import { m } from "@/paraglide/messages.js"
 
 /**
  * A new password and its confirmation: checked against the controller's
@@ -29,4 +31,18 @@ export function usePasswordFields() {
   )
   const clear = useCallback(() => setInvalid(null), [])
   return { invalid, check, clear }
+}
+
+/** A `password_weak` refusal in the rules the controller sent with it, which may be newer than the page's. */
+export function passwordRefusalText(error: unknown): string {
+  const problem =
+    error instanceof ApiFailure && error.failure.kind === "http"
+      ? error.failure.problem?.problem
+      : undefined
+  if (problem?.code !== "password_weak") return m.problem_password_weak()
+  return m.password_rules_unmet({
+    min: String(problem.params.minCodepoints),
+    max: String(problem.params.maxCodepoints),
+    bytes: String(problem.params.maxUtf8Bytes),
+  })
 }

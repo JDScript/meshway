@@ -1,34 +1,32 @@
 import { useQuery } from "@tanstack/react-query"
-import { LogOutIcon } from "lucide-react"
-import { useState } from "react"
 
 import { CloseButton } from "@/components/chrome/close-button"
-import { Section } from "@/components/chrome/section"
+import { CopyButton } from "@/components/chrome/copy-button"
 import { SurfaceHeader } from "@/components/chrome/surface-header"
 import { Tile } from "@/components/chrome/tile"
-import { Button } from "@/components/ui/button"
 import { Skeleton } from "@/components/ui/skeleton"
-import { sessionQuery } from "@/features/auth/queries"
-import { useSignOut } from "@/features/auth/use-sign-out"
 import { surfaceTitleId } from "@/features/shell/page-frame"
 import { useReadFailureToast } from "@/hooks/use-read-failure-toast"
 import { failureText } from "@/lib/failure"
-import { dateTime } from "@/lib/format"
 import { m } from "@/paraglide/messages.js"
 
+import { ActivityList } from "./activity-list"
+import { EmailForm } from "./email-form"
+import { PasswordForm } from "./password-form"
+import { accountQuery } from "./queries"
+import { SessionList } from "./session-list"
+
 /**
- * This account as the controller reports this tab's session: its email,
- * when this sign-in ends, and signing out. Changing the password and other
- * sessions are not offered by this controller.
+ * This account as the controller reports it: its email and ID, changing
+ * the email and the password, its sessions and what happened to it.
  */
 export function AccountWorkspace({ onClose }: { onClose: () => void }) {
-  const session = useQuery(sessionQuery())
-  const signOut = useSignOut()
-  const [leaving, setLeaving] = useState(false)
+  const account = useQuery(accountQuery())
+  const user = account.data?.user ?? null
   useReadFailureToast(
     "account",
-    session.isError,
-    failureText(session.error) ?? m.account_failed()
+    account.isError,
+    failureText(account.error) ?? m.account_failed()
   )
 
   return (
@@ -45,39 +43,26 @@ export function AccountWorkspace({ onClose }: { onClose: () => void }) {
       />
       <div className="scroll-edge min-h-0 flex-1 overflow-y-auto px-6 pt-1 pb-6">
         <div className="flex max-w-workspace flex-col gap-8">
-          <div className="flex flex-col gap-2">
-            {session.data ? (
-              <Tile label={m.entry_email()}>{session.data.user.email}</Tile>
-            ) : (
-              <Skeleton className="h-16 w-full rounded-tile" />
-            )}
-          </div>
-          <Section title={m.account_sign_in()}>
-            <div className="flex min-h-12 items-center gap-3 rounded-tile bg-fill-subtle py-2 pr-2 pl-3.5">
-              <div className="min-w-0 flex-1">
-                <div className="text-meta text-muted-foreground">
-                  {m.account_session_expires()}
-                </div>
-                <div className="mt-1 truncate text-row font-medium">
-                  {session.data
-                    ? (dateTime(session.data.session.expiresAt) ?? "—")
-                    : "—"}
-                </div>
-              </div>
-              <Button
-                variant="secondary"
-                className="h-9 rounded-full px-4"
-                disabled={leaving}
-                onClick={() => {
-                  setLeaving(true)
-                  void signOut()
-                }}
+          {user ? (
+            <div className="grid gap-2">
+              <Tile label={m.entry_email()}>{user.email}</Tile>
+              <Tile
+                label={m.account_id()}
+                action={<CopyButton value={user.id} label={m.account_id()} />}
               >
-                <LogOutIcon />
-                {m.sign_out()}
-              </Button>
+                <span className="font-mono font-normal">{user.id}</span>
+              </Tile>
             </div>
-          </Section>
+          ) : (
+            <div className="grid gap-2">
+              <Skeleton className="h-16 w-full rounded-tile" />
+              <Skeleton className="h-16 w-full rounded-tile" />
+            </div>
+          )}
+          <EmailForm email={user?.email ?? null} />
+          <PasswordForm email={user?.email ?? null} />
+          <SessionList />
+          <ActivityList />
         </div>
       </div>
     </div>

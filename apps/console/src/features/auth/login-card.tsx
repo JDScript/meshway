@@ -17,10 +17,9 @@ import { failureText } from "@/lib/failure"
 import { formText } from "@/lib/form"
 import { m } from "@/paraglide/messages.js"
 
+import type { LoginReason } from "./login-reasons"
 import { authOptionsQuery } from "./queries"
 import { signIn } from "./sign-in"
-
-type LoginReason = "expired" | "signed_out" | "signed_out_unconfirmed"
 
 const reasons: Record<
   LoginReason,
@@ -32,6 +31,9 @@ const reasons: Record<
     tone: "warning",
     text: () => m.login_signed_out_unconfirmed(),
   },
+  signed_out_all: { tone: "info", text: () => m.login_signed_out_all() },
+  password_changed: { tone: "info", text: () => m.login_password_changed() },
+  password_reset: { tone: "info", text: () => m.login_password_reset() },
 }
 
 /**

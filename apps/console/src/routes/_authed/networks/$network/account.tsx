@@ -1,9 +1,9 @@
 import { createFileRoute } from "@tanstack/react-router"
 
-import { sessionQuery } from "@/features/auth/queries"
+import { accountQuery } from "@/features/account/queries"
 
-/** This account and this sign-in. A workspace with no panel; `features/account/page.tsx` draws it. */
+/** This account and its sessions. A workspace with no panel; `features/account/page.tsx` draws it. */
 export const Route = createFileRoute("/_authed/networks/$network/account")({
   staticData: { page: "account", workspace: true },
-  loader: ({ context }) => context.queryClient.prefetchQuery(sessionQuery()),
+  loader: ({ context }) => context.queryClient.prefetchQuery(accountQuery()),
 })

@@ -3,5 +3,8 @@
   "entry_email": "Email",
   "entry_password": "Password",
   "entry_confirm_password": "Confirm password",
-  "entry_email_invalid": "The email address is not valid."
+  "entry_email_invalid": "The email address is not valid.",
+  "login_signed_out_all": "All sign-ins have ended.",
+  "login_password_changed": "The password has changed and every sign-in has ended. Sign in with the new password.",
+  "login_password_reset": "The password has been reset and every sign-in has ended. Sign in with the new password."
 }

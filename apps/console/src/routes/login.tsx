@@ -2,14 +2,12 @@ import { createFileRoute, redirect } from "@tanstack/react-router"
 import { z } from "zod"
 
 import { LoginCard } from "@/features/auth/login-card"
+import { LOGIN_REASONS } from "@/features/auth/login-reasons"
 import { EntryPage } from "@/features/entry/frame"
 import { currentSession } from "@/lib/session"
 
 const zSearch = z.object({
-  reason: z
-    .enum(["expired", "signed_out", "signed_out_unconfirmed"])
-    .optional()
-    .catch(undefined),
+  reason: z.enum(LOGIN_REASONS).optional().catch(undefined),
 })
 
 export const Route = createFileRoute("/login")({

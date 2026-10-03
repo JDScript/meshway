@@ -14,7 +14,10 @@ import {
   EntrySubmit,
   HANDOFF_MS,
 } from "@/features/entry/frame"
-import { usePasswordFields } from "@/features/entry/password-fields"
+import {
+  passwordRefusalText,
+  usePasswordFields,
+} from "@/features/entry/password-fields"
 import { ApiFailure, problemCode } from "@/lib/api"
 import { failureText } from "@/lib/failure"
 import { formText } from "@/lib/form"
@@ -73,20 +76,6 @@ export function RegisterCard() {
   )
 }
 
-/** The rules the controller sent with its refusal, which may be newer than the page's. */
-function rulesUnmet(error: unknown): string {
-  const problem =
-    error instanceof ApiFailure && error.failure.kind === "http"
-      ? error.failure.problem?.problem
-      : undefined
-  if (problem?.code !== "password_weak") return m.problem_password_weak()
-  return m.password_rules_unmet({
-    min: String(problem.params.minCodepoints),
-    max: String(problem.params.maxCodepoints),
-    bytes: String(problem.params.maxUtf8Bytes),
-  })
-}
-
 function Notice({ text, action }: { text: string; action?: ReactNode }) {
   return (
     <div className="mt-7 flex flex-col gap-5">
@@ -143,7 +132,7 @@ function RegisterForm({
         })
       const text = failureText(error, {
         invalid_request: () => m.entry_email_invalid(),
-        password_weak: () => rulesUnmet(error),
+        password_weak: () => passwordRefusalText(error),
       })
       if (text) toast.error(text, { id: "register" })
       return
