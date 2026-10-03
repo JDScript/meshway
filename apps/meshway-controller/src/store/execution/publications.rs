@@ -486,10 +486,11 @@ pub(crate) fn apply_configuration_effects(
     sealer: &Sealer,
     network: NetworkId,
     previous: &NetworkConfiguration,
+    previous_bindings: &ConfigurationBindings,
     target: &NetworkConfiguration,
     now: i64,
 ) -> Result<PublicationId, NodeError> {
-    let (revision, committed, _) = current_configuration(tx, sealer, network)?;
+    let (revision, committed, bindings) = current_configuration(tx, sealer, network)?;
     if &committed != target {
         return Err(NodeError::Conflict);
     }
@@ -497,7 +498,16 @@ pub(crate) fn apply_configuration_effects(
         if target
             .nodes
             .get(node)
-            .is_some_and(|new| new.identity != old.identity)
+            .is_some_and(|new| match (&old.identity, &new.identity) {
+                (
+                    meshway_configuration::NodeIdentity::User { .. },
+                    meshway_configuration::NodeIdentity::User { .. },
+                ) => {
+                    user_binding(previous, previous_bindings, *node)
+                        != user_binding(target, &bindings, *node)
+                }
+                _ => new.identity != old.identity,
+            })
         {
             tx.execute(
                 "DELETE FROM node_sessions WHERE network_id=?1 AND node_id=?2",

@@ -42,8 +42,15 @@ pub(crate) fn remove_nodes(
     let mut after = before.clone();
     after.nodes.retain(|id, _| input.nodes.contains_key(id));
     let source = rewrite_source(current.document.source_jsonc.expose(), &before, &after)?;
-    let verified =
-        materials::prepare_materials(tx, removal.network, &mut input, &current, sealer, false)?;
+    let verified = materials::prepare_materials(
+        tx,
+        removal.network,
+        &mut input,
+        &current,
+        sealer,
+        false,
+        &BTreeSet::new(),
+    )?;
     let mut validation =
         super::configuration::validation_context(tx, &current, &input, None, false)?;
     validation.verified_listeners = verified;
@@ -109,7 +116,7 @@ impl CommitParticipant for RemovalParticipant<'_> {
         let caller_id =
             crate::store::execution::id(caller_id).map_err(super::configuration::map_error)?;
         let owners: i64 = tx.query_row("SELECT count(*) FROM memberships WHERE network_id=?1 AND role='owner' AND revoked_at IS NULL", [current.network_id.as_uuid().as_bytes().as_slice()], |r|r.get(0))?;
-        if !crate::networks::MemberActions::for_context(
+        if !crate::store::authorization::member_actions(
             (caller_id, role(&caller_role)?),
             (self.removal.membership, role(&target_role)?),
             owners,

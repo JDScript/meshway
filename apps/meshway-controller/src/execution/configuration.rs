@@ -144,6 +144,7 @@ impl CommitParticipant for Participant<'_> {
             self.sealer,
             current.network_id,
             &current.document.configuration,
+            &current.bindings,
             &prepared.document.configuration,
             node_store::now().map_err(map_error)?,
         )

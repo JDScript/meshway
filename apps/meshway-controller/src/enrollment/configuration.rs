@@ -95,6 +95,7 @@ impl EnrollmentCommit for ConfigurationAdmission {
             &current,
             &self.sealer,
             true,
+            &BTreeSet::new(),
         )
         .map_err(map_error)?;
         let mut validation =
