@@ -68,5 +68,7 @@
   "placeholder_email": "name@example.com",
   "placeholder_password": "你的密码",
   "placeholder_new_password": "至少 12 个字符",
-  "placeholder_confirm_password": "再输入一次新密码"
+  "placeholder_confirm_password": "再输入一次新密码",
+  "login_instance": "实例管理员",
+  "login_setup": "初始化与恢复"
 }

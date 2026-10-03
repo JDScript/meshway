@@ -96,5 +96,7 @@
   "placeholder_email": "name@example.com",
   "placeholder_password": "Your password",
   "placeholder_new_password": "At least 12 characters",
-  "placeholder_confirm_password": "The new password again"
+  "placeholder_confirm_password": "The new password again",
+  "login_instance": "Instance administrator",
+  "login_setup": "Setup and recovery"
 }

@@ -3,6 +3,7 @@ import { useEffect, useRef, useState, type FormEvent } from "react"
 import { toast } from "sonner"
 
 import { Brand } from "@/components/chrome/brand"
+import { EntryFoot, EntryLink } from "@/features/entry/frame"
 import { TextField } from "@/components/chrome/form"
 import { Button } from "@/components/ui/button"
 import { FieldGroup } from "@/components/ui/field"
@@ -158,6 +159,16 @@ export function LoginCard({
           </Button>
         </FieldGroup>
       </form>
+      {/* A new instance has no account yet: its first owner is set up with the instance token. */}
+      <EntryFoot>
+        <span>{m.login_instance()}</span>
+        <EntryLink
+          disabled={pending || leaving}
+          onClick={() => void navigate({ to: "/setup" })}
+        >
+          {m.login_setup()}
+        </EntryLink>
+      </EntryFoot>
     </div>
   )
 }
