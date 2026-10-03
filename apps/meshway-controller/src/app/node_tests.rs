@@ -1,10 +1,8 @@
-//! SQL-seeded trusted node inventory isolates authentication/execution behavior
-//! from the independently-owned Config enrollment commit adapter.
+//! Real admission/configuration transactions feed authentication and execution.
 use super::*;
 use crate::{
     accounts::{Secret, random_uuid},
     execution::{NodeError, proof},
-    secrets::Purpose,
     store,
 };
 use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
@@ -60,121 +58,95 @@ async fn fixture() -> (
         )
         .await
         .unwrap();
-    let owner_hash = crate::accounts::token_digest(owner.token.expose()).unwrap();
-    let a = NodeId::new(random_uuid().unwrap()).unwrap();
-    let b = NodeId::new(random_uuid().unwrap()).unwrap();
-    let ak = SigningKey::from_bytes(&[7; 32]);
-    let bk = SigningKey::from_bytes(&[8; 32]);
-    let ap = ak.verifying_key().to_bytes();
-    let bp = bk.verifying_key().to_bytes();
-    let sealer = app.sealer();
-    let (network, keys) = app
-        .executor
-        .handle()
-        .execute(move |c| {
-            let mut prepared =
-                crate::networks::configuration::prepare("node tests".into(), &sealer).unwrap();
-            let network = prepared.id;
-            let mut cfg = crate::networks::configuration::initial(network).unwrap();
-            cfg.tags_owners.insert("tag:test".into(), vec![]);
-            for (n, name, ip) in [(a, "a", "100.64.0.1"), (b, "b", "100.64.0.2")] {
-                cfg.nodes.insert(
-                    n,
-                    NodeSettings {
-                        hostname: name.into(),
-                        remark: String::new(),
-                        identity: NodeIdentity::Tag {
-                            tags: vec!["tag:test".into()],
-                        },
-                        enabled: true,
-                        addresses: NodeAddresses {
-                            ipv4: Some(ip.parse().unwrap()),
-                            ipv6: None,
-                        },
-                        listeners: serde_json::from_str(
-                            r#"{"udp":{"type":"native_udp","listenPort":23456}}"#,
-                        )
-                        .unwrap(),
-                        dialers: Input::Omitted,
-                        exit_enabled: false,
-                    },
-                );
-            }
-            let canonical = canonical_json(&cfg).unwrap();
-            prepared.source = sealer
-                .seal(
-                    network,
-                    Revision::MIN,
-                    Purpose::Source,
-                    canonical.expose().as_bytes(),
-                )
-                .unwrap();
-            prepared.configuration = sealer
-                .seal(
-                    network,
-                    Revision::MIN,
-                    Purpose::Configuration,
-                    canonical.expose().as_bytes(),
-                )
-                .unwrap();
-            store::networks::create(
-                c,
-                owner_hash,
-                prepared,
-                rid(),
-                &sealer,
-                &crate::configuration::SnapshotCache::default(),
-            )
-            .unwrap();
-            let tx = c.transaction().unwrap();
-            let now = store::execution::now().unwrap();
-            let mut keys = vec![];
-            for (node, key, dp) in [(a, ap, [17; 32]), (b, bp, [18; 32])] {
-                tx.execute(
-                    "INSERT INTO nodes(id,network_id,registered_at) VALUES(?1,?2,?3)",
-                    rusqlite::params![
-                        node.as_uuid().as_bytes().as_slice(),
-                        network.as_uuid().as_bytes().as_slice(),
-                        now
-                    ],
-                )
-                .unwrap();
-                keys.push(
-                    store::execution::insert_keys(
-                        &tx,
-                        network,
-                        node,
-                        NodePublicKey {
-                            algorithm: KeyAlgorithm::Ed25519,
-                            bytes: key.into(),
-                        },
-                        NodePublicKey {
-                            algorithm: KeyAlgorithm::X25519,
-                            bytes: dp.into(),
-                        },
-                        Version::MIN,
-                        now,
-                    )
-                    .unwrap(),
-                );
-            }
-            tx.commit().unwrap();
-            (network, keys)
-        })
+    let network = app
+        .networks()
+        .create(owner.token.expose(), "node tests".into(), rid())
         .await
         .unwrap();
-    let mut keys = keys.into_iter();
+    app.configurations()
+        .apply(
+            owner.token.expose(),
+            network.id,
+            meshway_protocol::configuration::ConfigurationRequest::Operations {
+                expected_revision: network.current_revision,
+                request_id: rid(),
+                ops: vec![ConfigurationOperation::ReplaceTagsOwners {
+                    tags_owners: BTreeMap::from([("tag:test".into(), vec![])]),
+                }],
+            },
+            rid(),
+        )
+        .await
+        .unwrap();
+    let ak = SigningKey::from_bytes(&[7; 32]);
+    let bk = SigningKey::from_bytes(&[8; 32]);
+    let a = enroll_tag_node(&app, owner.token.expose(), network.id, &ak, "a", [17; 32]).await;
+    let b = enroll_tag_node(&app, owner.token.expose(), network.id, &bk, "b", [18; 32]).await;
     (
-        dir,
-        app,
-        network,
-        a,
-        b,
-        keys.next().unwrap(),
-        keys.next().unwrap(),
-        ak,
-        bk,
+        dir, app, network.id, a.node_id, b.node_id, a.keys, b.keys, ak, bk,
     )
+}
+async fn enroll_tag_node(
+    app: &App,
+    owner: &str,
+    network: NetworkId,
+    signer: &SigningKey,
+    hostname: &str,
+    dataplane: [u8; 32],
+) -> meshway_protocol::enrollment::EnrollmentResponse {
+    use meshway_protocol::enrollment::*;
+    use sha2::{Digest as _, Sha256};
+    let issued = app
+        .enrollment()
+        .create_key(
+            owner,
+            network,
+            CreateEnrollmentKeyRequest {
+                request_id: rid(),
+                tags: vec!["tag:test".into()],
+                expires_at_ms: store::execution::now().unwrap() as u64 + 600_000,
+                initial_settings: InitialNodeSettings {
+                    hostname: Some(hostname.into()),
+                    listeners: serde_json::from_str(
+                        r#"{"udp":{"type":"native_udp","listenPort":23456}}"#,
+                    )
+                    .unwrap(),
+                },
+            },
+        )
+        .await
+        .unwrap();
+    let verifier = "v".repeat(43);
+    let intent = EnrollmentIntent {
+        id: EnrollmentRequestId::new(random_uuid().unwrap()).unwrap(),
+        existing: None,
+        control_key: NodePublicKey {
+            algorithm: KeyAlgorithm::Ed25519,
+            bytes: signer.verifying_key().to_bytes().into(),
+        },
+        dataplane_key: NodePublicKey {
+            algorithm: KeyAlgorithm::X25519,
+            bytes: dataplane.into(),
+        },
+        code_challenge: URL_SAFE_NO_PAD.encode(Sha256::digest(verifier.as_bytes())),
+        hostname: hostname.into(),
+    };
+    let signature = signer.sign(&enrollment_transcript(
+        intent.id,
+        proof::request_digest(&intent).unwrap(),
+        "create",
+    ));
+    app.enrollment()
+        .redeem_key(KeyEnrollmentRequest {
+            request: CreateEnrollmentRequest {
+                intent,
+                signature: WireSecret::new(URL_SAFE_NO_PAD.encode(signature.to_bytes())),
+            },
+            verifier: WireSecret::new(verifier),
+            enrollment_key: issued.secret.unwrap(),
+        })
+        .await
+        .unwrap()
 }
 async fn session(
     service: &crate::execution::Execution,
@@ -874,6 +846,39 @@ async fn actual_http_signatures_and_pkce_polling() {
         current.document.configuration.nodes[&enrolled.node_id].hostname,
         "new-device"
     );
+    client
+        .post(format!(
+            "{base}/api/v1/networks/{}/nodes/{}/keys/revoke",
+            own.id, enrolled.node_id
+        ))
+        .bearer_auth(user.token.expose())
+        .json(&RevokeNodeKeyRequest {
+            key_id: enrolled.keys.control.id,
+            expected_generation: enrolled.keys.control.generation,
+        })
+        .send()
+        .await
+        .unwrap()
+        .error_for_status()
+        .unwrap();
+    let revoked: NodeInventoryView = client
+        .get(format!(
+            "{base}/api/v1/networks/{}/nodes/{}",
+            own.id, enrolled.node_id
+        ))
+        .bearer_auth(user.token.expose())
+        .send()
+        .await
+        .unwrap()
+        .error_for_status()
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(revoked.keys, enrolled.keys);
+    assert!(revoked.control_key_revoked_at_ms.is_some());
+    assert!(revoked.dataplane_key_revoked_at_ms.is_none());
+    assert!(revoked.can_delete);
     let removed: meshway_protocol::configuration::ConfigurationAppliedResponse = client
         .delete(format!(
             "{base}/api/v1/networks/{}/nodes/{}",

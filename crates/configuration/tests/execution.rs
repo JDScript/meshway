@@ -252,6 +252,35 @@ fn egress_first_match_no_fallback_on_revocation_and_dns_is_trusted() {
         r.nodes[&node(1)].configuration.permits[&request(1)].expires_at_ms,
         2000
     );
+    // TUN packets contain an IP, not the browser's domain string. The same
+    // trusted association must drive routing and bound the grant lifetime.
+    let mut ips = ds.clone();
+    ips.get_mut(&request(1)).unwrap().target = BusinessTarget::Ip {
+        address: ExecutionAddress("1.1.1.1".parse().unwrap()),
+    };
+    let ip_result = run(&c, &inventory(), &ips, &dns);
+    let permit = &ip_result.nodes[&node(1)].configuration.permits[&request(1)];
+    assert_eq!(permit.expires_at_ms, 2000);
+    assert!(permit.paths.iter().all(|p| p.nodes.contains(&node(3))));
+    // Even a non-DNS route must not extend a domain-only access grant.
+    c.routing.egress.rules[0].matcher.ip_cidr = vec!["1.1.1.1/32".into()];
+    assert_eq!(
+        run(&c, &inventory(), &ips, &dns).nodes[&node(1)]
+            .configuration
+            .permits[&request(1)]
+            .expires_at_ms,
+        2000
+    );
+    let mut stale = dns.clone();
+    stale[0].expires_at_ms = 1000;
+    assert!(matches!(
+        run(&c, &inventory(), &ips, &stale).nodes[&node(1)]
+            .configuration
+            .decisions[&request(1)],
+        DemandDecision::Unavailable {
+            reason: UnavailableReason::Unauthorized
+        }
+    ));
     c.nodes.get_mut(&node(4)).unwrap().exit_enabled = false;
     let r = run(&c, &inventory(), &ds, &dns);
     assert!(matches!(

@@ -230,19 +230,24 @@ fn evaluate(
     {
         return unavailable(UnavailableReason::InvalidProfile);
     }
-    if let BusinessTarget::Domain { name, address } = &demand.target
-        && !input.dns.iter().any(|a| {
-            a.source == demand.source
-                && a.name == *name
-                && a.addresses.contains(address)
-                && a.expires_at_ms > input.now_ms
-        })
-    {
-        return unavailable(UnavailableReason::MissingDns);
-    }
-    let requested_domain = match &demand.target {
-        BusinessTarget::Domain { name, .. } => Some(name.clone()),
-        _ => None,
+    let dns_expiry = if let BusinessTarget::Domain { name, address } = &demand.target {
+        let Some(expires) = input
+            .dns
+            .iter()
+            .filter(|a| {
+                a.source == demand.source
+                    && a.name == *name
+                    && a.addresses.contains(address)
+                    && a.expires_at_ms > input.now_ms
+            })
+            .map(|a| a.expires_at_ms)
+            .max()
+        else {
+            return unavailable(UnavailableReason::MissingDns);
+        };
+        demand.expires_at_ms.min(expires)
+    } else {
+        demand.expires_at_ms
     };
     let mut normalized = demand.clone();
     if let BusinessTarget::Ip { address } | BusinessTarget::Domain { address, .. } = &demand.target
@@ -269,7 +274,7 @@ fn evaluate(
         }
     }
     let demand = &normalized;
-    let (targets, via) = match &demand.target {
+    let (targets, via, routing_expiry) = match &demand.target {
         BusinessTarget::Mesh { node } => {
             let via = cfg
                 .routing
@@ -281,23 +286,23 @@ fn evaluate(
                 })
                 .map(|r| r.via.clone())
                 .unwrap_or_default();
-            (vec![*node], via)
+            (vec![*node], via, demand.expires_at_ms)
         }
         _ => match matching::egress_action(input, demand)? {
-            RouteAction::Direct => return Ok(DemandDecision::Direct),
-            RouteAction::Unmanaged => return Ok(DemandDecision::Unmanaged),
-            RouteAction::Exit { nodes, via } => {
+            (RouteAction::Direct, _) => return Ok(DemandDecision::Direct),
+            (RouteAction::Unmanaged, _) => return Ok(DemandDecision::Unmanaged),
+            (RouteAction::Exit { nodes, via }, expires) => {
                 let targets = nodes
                     .iter()
                     .map(|s| matching::node_selector(s))
                     .collect::<Result<Vec<_>, _>>()?;
-                (targets, via)
+                (targets, via, expires)
             }
         },
     };
-    if !matching::access(input, demand) {
+    let Some(access_expiry) = matching::access_expiry(input, demand) else {
         return unavailable(UnavailableReason::Unauthorized);
-    }
+    };
     let via = via
         .iter()
         .map(|s| matching::node_selector(s))
@@ -323,11 +328,7 @@ fn evaluate(
     if candidates.is_empty() {
         return unavailable(UnavailableReason::NoPath);
     }
-    let expires_at_ms = input
-        .dns
-        .iter()
-        .filter(|a| a.source == demand.source && requested_domain.as_ref() == Some(&a.name))
-        .fold(demand.expires_at_ms, |limit, a| limit.min(a.expires_at_ms));
+    let expires_at_ms = dns_expiry.min(access_expiry).min(routing_expiry);
     Ok(DemandDecision::Permitted {
         permit: PathPermit {
             demand_id: demand.id,

@@ -87,37 +87,65 @@ fn internet(address: IpAddr) -> bool {
     .iter()
     .any(|s| cidr(s, address))
 }
-fn external_selector(input: &CompilationInput<'_>, s: &str, d: &Demand) -> bool {
+fn domain_expiry(input: &CompilationInput<'_>, d: &Demand, suffix: &str) -> Option<u64> {
     let address = match d.target {
         BusinessTarget::Ip { address } | BusinessTarget::Domain { address, .. } => address,
-        _ => return false,
+        _ => return None,
     };
-    if s == "autogroup:internet" {
-        return internet(address.0);
-    }
-    if let Some(suffix) = s.strip_prefix("domain:") {
-        return input.dns.iter().any(|a| {
+    input
+        .dns
+        .iter()
+        .filter(|a| {
             a.source == d.source
                 && a.expires_at_ms > input.now_ms
                 && a.addresses.contains(&address)
                 && domain_suffix_matches(&a.name, suffix)
-        });
-    }
-    cidr(s, address.0)
+        })
+        .map(|a| a.expires_at_ms.min(d.expires_at_ms))
+        .max()
 }
-pub(super) fn access(input: &CompilationInput<'_>, d: &Demand) -> bool {
+fn external_selector(input: &CompilationInput<'_>, s: &str, d: &Demand) -> Option<u64> {
+    let address = match d.target {
+        BusinessTarget::Ip { address } | BusinessTarget::Domain { address, .. } => address,
+        _ => return None,
+    };
+    if s == "autogroup:internet" {
+        return internet(address.0).then_some(d.expires_at_ms);
+    }
+    if let Some(suffix) = s.strip_prefix("domain:") {
+        return domain_expiry(input, d, suffix);
+    }
+    cidr(s, address.0).then_some(d.expires_at_ms)
+}
+/// Grants are a union. A DNS-backed grant may only outlive its association when
+/// another independently matching grant authorizes that same traffic longer.
+pub(super) fn access_expiry(input: &CompilationInput<'_>, d: &Demand) -> Option<u64> {
     let cfg = input.configuration;
-    cfg.access.iter().any(|r| {
-        r.ip.iter().any(|s| ports(s, d))
-            && (selectors(cfg, &r.src, d.source)
-                && match d.target {
-                    BusinessTarget::Mesh { node } => selectors(cfg, &r.dst, node),
-                    _ => r.dst.iter().any(|s| external_selector(input, s, d)),
+    cfg.access
+        .iter()
+        .filter(|r| r.ip.iter().any(|s| ports(s, d)))
+        .filter_map(|r| {
+            if r.bidirectional
+                && matches!(d.target, BusinessTarget::Mesh { node }
+            if selectors(cfg,&r.dst,d.source) && selectors(cfg,&r.src,node))
+            {
+                return Some(d.expires_at_ms);
+            }
+            if !selectors(cfg, &r.src, d.source) {
+                return None;
+            }
+            match d.target {
+                BusinessTarget::Mesh { node } => {
+                    selectors(cfg, &r.dst, node).then_some(d.expires_at_ms)
                 }
-                || r.bidirectional
-                    && matches!(d.target, BusinessTarget::Mesh { node }
-            if selectors(cfg,&r.dst,d.source) && selectors(cfg,&r.src,node)))
-    })
+                _ => r
+                    .dst
+                    .iter()
+                    .filter_map(|s| external_selector(input, s, d))
+                    .max(),
+            }
+        })
+        .max()
 }
 fn profile_assignment(
     cfg: &NetworkConfiguration,
@@ -162,14 +190,22 @@ pub fn profile_allowed(
     let (allowed, default, locked) = profile_assignment(cfg, node)?;
     Ok(allowed.iter().any(|p| p == profile) && (!locked || profile == default))
 }
-fn matcher(input: &CompilationInput<'_>, d: &Demand, m: &RouteMatch) -> Result<bool, CompileError> {
+fn matcher(
+    input: &CompilationInput<'_>,
+    d: &Demand,
+    m: &RouteMatch,
+) -> Result<Option<u64>, CompileError> {
     let address = match d.target {
         BusinessTarget::Ip { address } | BusinessTarget::Domain { address, .. } => address,
-        _ => return Ok(false),
+        _ => return Ok(None),
     };
-    let domain = |suffix: &str| matches!(&d.target, BusinessTarget::Domain { name, .. } if domain_suffix_matches(name,suffix));
-    let mut matched =
-        m.ip_cidr.iter().any(|s| cidr(s, address.0)) || m.domain_suffix.iter().any(|s| domain(s));
+    let domain = |suffix: &str| domain_expiry(input, d, suffix);
+    let mut matched = m
+        .ip_cidr
+        .iter()
+        .any(|s| cidr(s, address.0))
+        .then_some(d.expires_at_ms)
+        .max(m.domain_suffix.iter().filter_map(|s| domain(s)).max());
     for key in &m.rule_sets {
         let (ips, domains) = match input.configuration.rule_sets.get(key) {
             Some(RuleSet::Inline {
@@ -182,18 +218,24 @@ fn matcher(input: &CompilationInput<'_>, d: &Demand, m: &RouteMatch) -> Result<b
             }
             None => return Err(CompileError::InvalidInput),
         };
-        matched |= ips.iter().any(|s| cidr(s, address.0)) || domains.iter().any(|s| domain(s));
+        matched = matched
+            .max(
+                ips.iter()
+                    .any(|s| cidr(s, address.0))
+                    .then_some(d.expires_at_ms),
+            )
+            .max(domains.iter().filter_map(|s| domain(s)).max());
     }
     Ok(matched)
 }
 pub(super) fn egress_action(
     input: &CompilationInput<'_>,
     d: &Demand,
-) -> Result<RouteAction, CompileError> {
+) -> Result<(RouteAction, u64), CompileError> {
     let e = &input.configuration.routing.egress;
     for r in &e.rules {
-        if matcher(input, d, &r.matcher)? {
-            return Ok(r.action.clone());
+        if let Some(expires) = matcher(input, d, &r.matcher)? {
+            return Ok((r.action.clone(), expires));
         }
     }
     let mut profile = d.profile.as_str();
@@ -209,20 +251,23 @@ pub(super) fn egress_action(
         }
     }
     if profile == "mesh" {
-        return Ok(RouteAction::Unmanaged);
+        return Ok((RouteAction::Unmanaged, d.expires_at_ms));
     }
     if let Some(id) = profile.strip_prefix("global:") {
         let node: NodeId = id.parse().map_err(|_| CompileError::InvalidInput)?;
-        return Ok(RouteAction::Exit {
-            nodes: vec![format!("node:{node}")],
-            via: vec![],
-        });
+        return Ok((
+            RouteAction::Exit {
+                nodes: vec![format!("node:{node}")],
+                via: vec![],
+            },
+            d.expires_at_ms,
+        ));
     }
     let p = e.profiles.get(profile).ok_or(CompileError::InvalidInput)?;
     for r in &p.rules {
-        if matcher(input, d, &r.matcher)? {
-            return Ok(r.action.clone());
+        if let Some(expires) = matcher(input, d, &r.matcher)? {
+            return Ok((r.action.clone(), expires));
         }
     }
-    Ok(p.fallback.clone())
+    Ok((p.fallback.clone(), d.expires_at_ms))
 }

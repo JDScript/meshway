@@ -47,6 +47,8 @@ wire_object! { #[derive(Clone,Debug,PartialEq,Eq)] pub struct NodeInventoryView 
     pub id: NodeId, pub network_id: NetworkId, pub registered_at_ms: u64,
     pub hostname: String, pub enabled: bool, pub identity: meshway_configuration::NodeIdentity,
     pub addresses: meshway_configuration::NodeAddresses, pub keys: NodeKeyMetadata,
+    /// Revocation of the displayed latest keys; revoked configured nodes remain manageable.
+    pub control_key_revoked_at_ms: Option<u64>, pub dataplane_key_revoked_at_ms: Option<u64>,
     pub can_delete: bool,
 } }
 wire_object! { #[derive(Clone,Debug,PartialEq,Eq)] pub struct NodeInventoryResponse {

@@ -40,14 +40,18 @@ pub(crate) fn inventory(
     let role:String=tx.query_row("SELECT role FROM memberships WHERE network_id=?1 AND user_id=?2 AND revoked_at IS NULL",params![network.as_uuid().as_bytes().as_slice(),user.as_uuid().as_bytes().as_slice()],|r|r.get(0)).optional()?.ok_or(NodeError::NotFound)?;
     let manager = role == "owner" || role == "admin";
     let (_, cfg, bindings) = current_configuration(&tx, sealer, network)?;
-    let trusted = trusted_inventory(&tx, sealer, network)?;
     let mut items = Vec::new();
-    for (node, keys) in trusted {
-        let own = user_binding(&cfg, &bindings, node).is_some_and(|b| b.user_id == user);
+    for (node, settings) in &cfg.nodes {
+        let own = user_binding(&cfg, &bindings, *node).is_some_and(|b| b.user_id == user);
         if !manager && !own {
             continue;
         }
-        let settings = &cfg.nodes[&node];
+        // Management inventory is not the execution-eligible inventory. A
+        // revoked key must stay visible until its Node is explicitly deleted.
+        let (control, control_key_revoked_at_ms) =
+            latest_key(&tx, network, *node, "control", KeyAlgorithm::Ed25519)?;
+        let (dataplane, dataplane_key_revoked_at_ms) =
+            latest_key(&tx, network, *node, "dataplane", KeyAlgorithm::X25519)?;
         let registered: i64 = tx.query_row(
             "SELECT registered_at FROM nodes WHERE network_id=?1 AND id=?2",
             params![
@@ -57,21 +61,47 @@ pub(crate) fn inventory(
             |r| r.get(0),
         )?;
         items.push(NodeInventoryView {
-            id: node,
+            id: *node,
             network_id: network,
             registered_at_ms: registered as u64,
             hostname: settings.hostname.clone(),
             enabled: settings.enabled,
             identity: settings.identity.clone(),
             addresses: settings.addresses.clone(),
-            keys: NodeKeyMetadata {
-                control: keys.control_key,
-                dataplane: keys.dataplane_key,
-            },
+            keys: NodeKeyMetadata { control, dataplane },
+            control_key_revoked_at_ms,
+            dataplane_key_revoked_at_ms,
             can_delete: manager,
         });
     }
     Ok(NodeInventoryResponse { items })
+}
+fn latest_key(
+    tx: &Transaction<'_>,
+    network: NetworkId,
+    node: NodeId,
+    purpose: &str,
+    algorithm: KeyAlgorithm,
+) -> Result<(BoundNodeKey, Option<u64>), NodeError> {
+    let (key, public, generation, revoked): (Vec<u8>, Vec<u8>, i64, Option<i64>) = tx.query_row(
+        "SELECT id,public_key,generation,revoked_at FROM node_keys WHERE network_id=?1 AND node_id=?2 AND purpose=?3 ORDER BY generation DESC LIMIT 1",
+        params![network.as_uuid().as_bytes().as_slice(), node.as_uuid().as_bytes().as_slice(), purpose],
+        |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)))?;
+    Ok((
+        BoundNodeKey {
+            id: id(key)?,
+            generation: Version::new(generation.try_into().map_err(|_| NodeError::Storage)?)
+                .map_err(|_| NodeError::Storage)?,
+            public_key: NodePublicKey {
+                algorithm,
+                bytes: Digest::from_bytes(public.try_into().map_err(|_| NodeError::Storage)?),
+            },
+        },
+        revoked
+            .map(u64::try_from)
+            .transpose()
+            .map_err(|_| NodeError::Storage)?,
+    ))
 }
 pub(crate) fn progress(
     connection: &mut Connection,
