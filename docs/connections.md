@@ -6,11 +6,11 @@
 
 托管 listener 的 advertised endpoints 现在按当前节点能力、连接许可和 grants / 必经路径需求生成有效 candidate，沿正常连接及 Mesh execution 快照下发；无 listener 的节点可主动拨入获准中继。生成项使用稳定 `auto.*` ID，不写回管理员保存的 connection source。默认承载优先级为 Native UDP 100、Native TCP 200、VLESS 300（数值越小越优先）；同一拨号节点 / listener 的显式 candidates 完整覆盖该段自动 endpoint / 优先级选择。VLESS 必须双方支持相应 TCP / WebSocket 模式，材料仍按有效 owner / dialer 最小化投影。
 
-这一步只使用平台配置的 listener 广告，不把广告当作实际连通证据。自动 STUN 设施、两个仅出站节点的候选协调、真实打洞转直连及故障主备闭环仍在实现。下文手工 candidate 与本地 profile 引用保留为高级入口，Web 便捷表单由控制台工作流接入。
+这一步只使用平台配置的 listener 广告，不把广告当作实际连通证据。正常 Linux 自动中继拓扑已覆盖 Native UDP → TCP → UDP 同 revision 主备回切、双向 TUN HTTP、grants 撤回与恢复；验收入口为 `experiments/automatic-connectivity/run.py`。自动 STUN 设施、两个仅出站节点的候选协调和真实打洞转直连仍在实现。下文手工 candidate 与本地 profile 引用保留为高级入口，Web 便捷表单由控制台工作流接入。
 
 ## 交付边界
 
-这一切片交付控制意图链路：Agent 私有生成与保存 X25519 密钥，向 controller 绑定公钥及声明编译能力；管理员维护监听器和拨号候选；Agent 拉取本节点配置、校验保存并回执。
+控制意图链路中，Agent 私有生成与保存 X25519 密钥，向 controller 绑定公钥及声明编译能力；管理员维护监听器及高级拨号覆盖；Agent 拉取本节点配置、校验保存并回执。
 
 这些阶段分别意味着：
 
@@ -31,7 +31,7 @@
 
 输入为规范 X25519 公钥：64 个小写十六进制字符，对应规范 u-coordinate 编码；拒绝低阶点及同一有效公钥的非规范别名。私钥只存在 Agent 的私有 sidecar 中，不进入 controller、Web 或普通日志。原有 Agent 注册身份及注册令牌绑定不因发布公钥而改变。
 
-能力由 Agent 按实际编译功能生成，包含协议、`can_dial`、`can_accept` 和 stream / datagram 语义。当前管理契约的承载为 `native_udp`、`native_tcp` 与 `vless`；已接通显式启用的托管运行层，默认按需建连仍待实现。这里的原生 UDP 是 Noise 承载，不称作 WireGuard。
+能力由 Agent 按实际编译功能生成，包含协议、`can_dial`、`can_accept` 和 stream / datagram 语义。当前管理契约的承载为 `native_udp`、`native_tcp` 与 `vless`；托管运行层消费 Controller 按授权路径需求产生的候选及显式覆盖。这里的原生 UDP 是 Noise 承载，不称作 WireGuard。
 
 ## 监听器与拨号候选
 
@@ -72,7 +72,7 @@ SHA 的候选引用 LAX 的 listener，明确由 SHA 发起连接。当前运行
 
 ## Agent 与控制台操作
 
-控制台入口是 `/connections`。在已有注册身份上发布公钥与当前构建能力：
+控制台的节点配置承载托管 listener 管理；以下为高级 CLI 联调。在已有注册身份上发布公钥与当前构建能力：
 
 ```sh
 cargo run -p meshway-agent --features transport-lab -- connections publish --state .meshway/agent.json
