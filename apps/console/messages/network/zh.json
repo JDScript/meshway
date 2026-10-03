@@ -16,5 +16,8 @@
   "overview_no_nodes": "此控制面尚未提供节点。",
   "role_owner": "所有者",
   "role_admin": "管理员",
-  "role_member": "成员"
+  "role_member": "成员",
+  "network_name_control": "网络名称不能包含控制字符。",
+  "network_name_bytes": "网络名称最多 {max} 字节（UTF-8）。",
+  "network_name_length": "网络名称需为 {min}–{max} 个字符。"
 }

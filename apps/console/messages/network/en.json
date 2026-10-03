@@ -16,5 +16,8 @@
   "overview_no_nodes": "This controller does not provide nodes yet.",
   "role_owner": "Owner",
   "role_admin": "Admin",
-  "role_member": "Member"
+  "role_member": "Member",
+  "network_name_control": "The network name cannot contain control characters.",
+  "network_name_bytes": "The network name can be at most {max} bytes (UTF-8).",
+  "network_name_length": "The network name must be {min}–{max} characters."
 }

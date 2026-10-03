@@ -13,6 +13,7 @@ import { Skeleton } from "@/components/ui/skeleton"
 import { roleLabel } from "@/features/network/roles"
 import { surfaceTitleId } from "@/features/shell/page-frame"
 import { calendarDate } from "@/lib/format"
+import { trimWhiteSpace } from "@/lib/network-name"
 import { m } from "@/paraglide/messages.js"
 
 import { sectionLabel } from "./settings-panel"
@@ -106,7 +107,7 @@ function RenameForm({ network }: { network: NetworkSummary }) {
   const [typed, setTyped] = useState<string | null>(null)
   const value = typed ?? network.name
   // An emptied field counts as a change: saving it says what is missing.
-  const changed = value.trim() !== network.name
+  const changed = trimWhiteSpace(value) !== network.name
 
   return (
     <form

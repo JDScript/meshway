@@ -8,6 +8,7 @@ import { useRef, useState } from "react"
 import { toast } from "sonner"
 
 import { NAME_FAILURE } from "@/features/network/create-network"
+import { useNetworkNameCheck } from "@/features/network/network-name"
 import { networkQuery, networksQuery } from "@/features/network/queries"
 import { ApiFailure, authed, client, problemCode } from "@/lib/api"
 import { attemptFor, outcomeUnknown, type Attempt } from "@/lib/attempt"
@@ -27,17 +28,19 @@ type RenameBody = Omit<RenameNetworkRequest, "requestId">
  */
 export function useRename(network: NetworkSummary) {
   const queryClient = useQueryClient()
+  const checkName = useNetworkNameCheck()
   const unsettled = useRef<Attempt<RenameBody> | null>(null)
   const sending = useRef(false)
   const [pending, setPending] = useState(false)
 
   const rename = async (typed: string): Promise<boolean> => {
     if (sending.current) return false
-    const name = typed.trim()
-    if (!name) {
-      toast.error(m.network_name_missing(), { id: TOAST })
+    const checked = checkName(typed)
+    if ("refused" in checked) {
+      toast.error(checked.refused, { id: TOAST })
       return false
     }
+    const { name } = checked
     const attempt = attemptFor(unsettled.current, name, () => ({
       name,
       expectedName: network.name,

@@ -16,11 +16,12 @@ import { failureText } from "@/lib/failure"
 import { formText } from "@/lib/form"
 import { m } from "@/paraglide/messages.js"
 
+import { useNetworkNameCheck } from "./network-name"
 import { networkQuery, networksQuery } from "./queries"
 
 const TOAST = "network-create"
 
-/** The words for a name the controller refuses; it alone holds the rule. */
+/** The words for a name the controller refuses (its rules may be newer than the page's). */
 export const NAME_FAILURE = { invalid_request: () => m.network_name_invalid() }
 
 /**
@@ -30,6 +31,7 @@ export const NAME_FAILURE = { invalid_request: () => m.network_name_invalid() }
  */
 export function useCreateNetwork(onCreated: (networkId: string) => void) {
   const queryClient = useQueryClient()
+  const checkName = useNetworkNameCheck()
   const unsettled = useRef<Attempt<Pick<CreateNetworkRequest, "name">> | null>(
     null
   )
@@ -39,11 +41,14 @@ export function useCreateNetwork(onCreated: (networkId: string) => void) {
   const submit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault()
     if (sending.current) return
-    const name = formText(new FormData(event.currentTarget), "name").trim()
-    if (!name) {
-      toast.error(m.network_name_missing(), { id: TOAST })
+    const checked = checkName(
+      formText(new FormData(event.currentTarget), "name")
+    )
+    if ("refused" in checked) {
+      toast.error(checked.refused, { id: TOAST })
       return
     }
+    const { name } = checked
     const attempt = attemptFor(unsettled.current, name, () => ({ name }))
     sending.current = true
     setPending(true)
