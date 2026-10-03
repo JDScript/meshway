@@ -1,0 +1,20 @@
+{
+  "$schema": "https://inlang.com/schema/inlang-message-format",
+  "networks_label": "Networks",
+  "networks_switch": "Switch network",
+  "networks_more": "Load more",
+  "networks_failed": "Could not read the networks",
+  "network_failed": "Could not read the network",
+  "network_not_found": "Network not found",
+  "network_create": "New network",
+  "network_create_first": "Create your first network",
+  "network_create_submit": "Create network",
+  "network_name": "Network name",
+  "network_name_placeholder": "Home network",
+  "network_name_missing": "Enter a network name.",
+  "network_name_invalid": "The network name is not valid.",
+  "overview_no_nodes": "This controller does not provide nodes yet.",
+  "role_owner": "Owner",
+  "role_admin": "Admin",
+  "role_member": "Member"
+}

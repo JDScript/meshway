@@ -1,0 +1,20 @@
+{
+  "$schema": "https://inlang.com/schema/inlang-message-format",
+  "networks_label": "网络",
+  "networks_switch": "切换网络",
+  "networks_more": "加载更多",
+  "networks_failed": "无法读取网络列表",
+  "network_failed": "无法读取网络",
+  "network_not_found": "找不到这个网络",
+  "network_create": "新建网络",
+  "network_create_first": "创建第一个网络",
+  "network_create_submit": "创建网络",
+  "network_name": "网络名称",
+  "network_name_placeholder": "家庭网络",
+  "network_name_missing": "请输入网络名称。",
+  "network_name_invalid": "网络名称无效。",
+  "overview_no_nodes": "此控制面尚未提供节点。",
+  "role_owner": "所有者",
+  "role_admin": "管理员",
+  "role_member": "成员"
+}

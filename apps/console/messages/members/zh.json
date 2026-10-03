@@ -1,0 +1,9 @@
+{
+  "$schema": "https://inlang.com/schema/inlang-message-format",
+  "members_title": "成员",
+  "members_failed": "无法读取成员",
+  "members_empty": "没有成员",
+  "members_you": "你",
+  "members_joined": "{role} · {date} 加入",
+  "members_more": "加载更多"
+}

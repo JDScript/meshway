@@ -1,0 +1,10 @@
+{
+  "$schema": "https://inlang.com/schema/inlang-message-format",
+  "settings_section_network": "网络",
+  "settings_facts": "标识",
+  "settings_network_id": "网络 ID",
+  "settings_created": "创建于",
+  "settings_role": "你的角色",
+  "settings_save_name": "保存",
+  "settings_renamed": "名称已保存"
+}

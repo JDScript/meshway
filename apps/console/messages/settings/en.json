@@ -1,0 +1,10 @@
+{
+  "$schema": "https://inlang.com/schema/inlang-message-format",
+  "settings_section_network": "Network",
+  "settings_facts": "Identity",
+  "settings_network_id": "Network ID",
+  "settings_created": "Created",
+  "settings_role": "Your role",
+  "settings_save_name": "Save",
+  "settings_renamed": "Name saved"
+}

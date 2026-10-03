@@ -58,12 +58,15 @@
   "register_closed": "Registration is closed",
   "register_has_account": "Have an account",
   "register_missing_email": "Enter an email.",
-  "account_signed_in": "Signed in",
   "account_session_expires": "Session expires",
-  "account_no_networks": "This controller does not provide networks yet.",
   "problem_not_found": "It does not exist, or you cannot access it.",
   "problem_permission_denied": "You do not have permission.",
   "problem_request_id_conflict": "Duplicate request; the result is unknown. Refresh and try again.",
   "problem_name_conflict": "Someone else changed the name; not saved.",
-  "problem_invalid_cursor": "The list has expired. Refresh it."
+  "problem_invalid_cursor": "The list has expired. Refresh it.",
+  "nav_label": "Navigation",
+  "nav_overview": "Overview",
+  "nav_settings": "Settings",
+  "read_only": "Read only",
+  "account_menu": "Account"
 }

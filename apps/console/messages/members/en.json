@@ -1,0 +1,9 @@
+{
+  "$schema": "https://inlang.com/schema/inlang-message-format",
+  "members_title": "Members",
+  "members_failed": "Could not read the members",
+  "members_empty": "No members",
+  "members_you": "You",
+  "members_joined": "{role} · joined {date}",
+  "members_more": "Load more"
+}

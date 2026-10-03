@@ -1,0 +1,6 @@
+{
+  "$schema": "https://inlang.com/schema/inlang-message-format",
+  "account_title": "账户",
+  "account_failed": "无法读取账户",
+  "account_sign_in": "本次登录"
+}

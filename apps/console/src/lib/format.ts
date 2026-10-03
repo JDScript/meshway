@@ -49,3 +49,12 @@ export function dateTime(at: Instant): string | null {
     timeStyle: "short",
   }).format(ms)
 }
+
+/** A calendar date in the current locale; null for an unparsable time. */
+export function calendarDate(at: Instant): string | null {
+  const ms = toMs(at)
+  if (ms === null) return null
+  return new Intl.DateTimeFormat(getLocale(), { dateStyle: "medium" }).format(
+    ms
+  )
+}

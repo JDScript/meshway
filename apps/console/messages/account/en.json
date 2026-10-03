@@ -1,0 +1,6 @@
+{
+  "$schema": "https://inlang.com/schema/inlang-message-format",
+  "account_title": "Account",
+  "account_failed": "Could not read the account",
+  "account_sign_in": "This sign-in"
+}
