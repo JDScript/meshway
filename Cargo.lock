@@ -1276,6 +1276,7 @@ name = "meshway-control-client"
 version = "0.1.0"
 dependencies = [
  "axum",
+ "bytes",
  "chrono",
  "futures-util",
  "meshway-controller",

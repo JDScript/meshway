@@ -68,7 +68,7 @@ function editorSchemas(document) {
 
 // Types are inferred from the same validators used at runtime. The narrow
 // emitter keeps the transport free of unchecked generic casts. It fails closed
-// when the API grows beyond JSON GET/POST operations with component schemas.
+// when the API grows beyond the supported JSON/SSE operations and component schemas.
 // JSON Schema lengths count Unicode code points, unlike Zod's native min/max
 // string checks (UTF-16 code units). Generate explicit scalar-length refinements.
 export function validators(document) {

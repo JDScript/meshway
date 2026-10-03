@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { mkdtemp, mkdir, writeFile, readFile, rm, symlink, copyFile, statfs } from "node:fs/promises";
+import { mkdtemp, mkdir, writeFile, readFile, rm, symlink, copyFile, cp, statfs } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, dirname } from "node:path";
 import { createRequire } from "node:module";
@@ -208,8 +208,98 @@ function parameterFixture() {
       { in: "query", name: "mode", schema: { type: "string", enum: ["\u0000\b\f\\back", "plain"] } },
     ], responses },
   };
+  document.components.schemas.FixtureEvent = { oneOf: [
+    closed({ type: { type: "string", const: "snapshot" }, text: { type: "string" } }),
+    closed({ type: { type: "string", const: "ready" }, cursor: { type: "string" } }),
+  ] };
+  document.paths["/fixture/networks/{networkId}/events"] = {
+    parameters: [{ in: "path", name: "networkId", required: true, schema: ref("FixtureNetworkId") }],
+    get: { operationId: "watchFixture", security: [{ FixtureBearer: [] }],
+      parameters: [{ in: "header", name: "Last-Event-ID", required: false, schema: { type: "string" } }],
+      "x-meshway-sse": { format: "json-data", eventSchema: ref("FixtureEvent") },
+      responses: { "200": { description: "Events", content: { "text/event-stream": { schema: { type: "string" } } } }, "409": { description: "Conflict", content: content("FixtureProblem") } },
+    },
+  };
+  document.paths["/fixture/events"] = { get: {
+    operationId: "watchPublicFixture",
+    "x-meshway-sse": { format: "json-data", eventSchema: ref("FixtureEvent") },
+    responses: { "200": { description: "Events", content: { "text/event-stream": { schema: { type: "string" } } } } },
+  } };
   return document;
 }
+
+test("SSE declarations require explicit frame schemas and reject ambiguous HTTP semantics", () => {
+  for (const mutate of [
+    op => { delete op["x-meshway-sse"]; },
+    op => { op["x-meshway-sse"].format = "raw"; },
+    op => { op["x-meshway-sse"].eventSchema = ref("Absent"); },
+    op => { op["x-meshway-sse"].eventSchema = closed({}); },
+    op => { op["x-meshway-sse"].unknown = true; },
+    op => { op.responses["200"].content["application/json"] = { schema: ref("FixtureEvent") }; },
+    op => { op.responses["200"].content["text/event-stream"].schema = ref("FixtureEvent"); },
+    op => { op.responses["204"] = op.responses["200"]; delete op.responses["200"]; },
+    op => { op.requestBody = { required: true, content: content("FixtureInput") }; },
+    op => { op.responses["409"].content = { "text/event-stream": { schema: { type: "string" } } }; },
+    op => { op.operationId = "stream"; },
+    op => { op.parameters[0].required = true; },
+    op => { op.parameters[0].schema = { type: ["string", "null"] }; },
+    op => { op.parameters[0].schema.maxLength = 1; },
+    op => { op.parameters[0].name = "Authorization"; },
+    op => { op.parameters.push({ ...op.parameters[0], name: "last-event-id" }); },
+  ]) {
+    const d = parameterFixture(); mutate(d.paths["/fixture/networks/{networkId}/events"].get);
+    assert.throws(() => generatedFiles(d));
+  }
+  const d = parameterFixture();
+  const route = d.paths["/fixture/networks/{networkId}/events"];
+  route.post = route.get; delete route.get;
+  assert.throws(() => generatedFiles(d));
+});
+
+test("generated SSE TS validates live HTTP frames and reconnects from the caller-applied cursor", async t => {
+  const { packageRoot } = await generatedFixture(t, parameterFixture());
+  const { watchFixture } = await import(pathToFileURL(join(packageRoot, "src/generated/operations.gen.ts")));
+  const { ControlClient } = await import(pathToFileURL(join(packageRoot, "src/transport.ts")));
+  const seen = [];
+  const server = createServer((request, response) => {
+    seen.push({ url: request.url, auth: request.headers.authorization, accept: request.headers.accept, cursor: request.headers["last-event-id"] });
+    response.writeHead(200, { "content-type": "text/event-stream" });
+    if (seen.length > 1) return response.end('data: {"type":"snapshot","text":123}\n\n');
+    for (const byte of new TextEncoder().encode('\uFEFF: keepalive\r\ndata: {"type":"snapshot","text":"😀"}\r\n\r\nid: merely-decoded\ndata: {"type":"ready","cursor":"ready-cursor"}\n\n')) response.write(Uint8Array.of(byte));
+    response.end();
+  });
+  await new Promise(resolve => server.listen(0, "127.0.0.1", resolve));
+  t.after(() => new Promise(resolve => server.close(resolve)));
+  const client = new ControlClient({ baseUrl: `http://127.0.0.1:${server.address().port}` });
+  const networkId = "12345678-1234-0234-0234-123456789abc";
+  const output = [];
+  let applied;
+  for await (const result of watchFixture(client, { networkId }, { token: "private-token", maxReconnects: 1, retryDelayMs: 100, resumeCursor: () => applied })) {
+    output.push(result);
+    if (result.ok && result.data.data.type === "ready") applied = result.data.data.cursor;
+  }
+  assert.deepEqual(output, [
+    { ok: true, data: { data: { type: "snapshot", text: "😀" } } },
+    { ok: true, data: { data: { type: "ready", cursor: "ready-cursor" }, id: "merely-decoded" } },
+    { ok: false, error: { kind: "network", status: 200 } },
+    { ok: false, error: { kind: "decode", status: 200 } },
+  ]);
+  assert.deepEqual(seen, [undefined, "ready-cursor"].map(cursor => ({ url: `/fixture/networks/${networkId}/events`, auth: "Bearer private-token", accept: "text/event-stream", cursor })));
+  await writeFile(join(packageRoot, "consumer.ts"), `import { ControlClient } from "./src/transport.ts";
+import { watchFixture } from "./src/generated/operations.gen.ts";
+declare const client: ControlClient;
+for await (const result of watchFixture(client, {networkId: "${networkId}"}, {token: "secret", resumeCursor: () => undefined})) {
+  if (result.ok && result.data.data.type === "ready") { const cursor: string = result.data.data.cursor; void cursor; }
+  else if (!result.ok && result.error.kind === "http" && result.error.problem?.code === "conflict") { const revision: number = result.error.problem.params.revision; void revision; }
+}
+// @ts-expect-error authenticated streams require a token
+watchFixture(client, {networkId: "${networkId}"}, {maxReconnects: 0});
+// @ts-expect-error resume cursor must be a string or undefined
+watchFixture(client, {networkId: "${networkId}"}, {token: "secret", resumeCursor: () => 42});
+`);
+  const result = spawnSync(process.execPath, [require.resolve("typescript/bin/tsc"), "--noEmit", "--strict", "--exactOptionalPropertyTypes", "--noUncheckedIndexedAccess", "--skipLibCheck", "--target", "ES2022", "--module", "ESNext", "--moduleResolution", "Bundler", "--allowImportingTsExtensions", "consumer.ts"], { cwd: packageRoot, encoding: "utf8" });
+  assert.equal(result.status, 0, result.stdout + result.stderr);
+});
 
 test("parameter declarations, scalar semantics and template binding fail closed", () => {
   const route = "/fixture/networks/{networkId}/members";
@@ -324,6 +414,7 @@ test("generated Rust parameter methods compile and execute against HTTP with sha
   const project = join(directory, "rust-fixture");
   await mkdir(join(project, "src"), { recursive: true });
   await copyFile(join(root, "crates/control-client/src/runtime.rs"), join(project, "src/runtime.rs"));
+  await cp(join(root, "crates/control-client/src/sse"), join(project, "src/sse"), { recursive: true });
   await writeFile(join(project, "src/generated.rs"), files["crates/control-client/src/generated/mod.rs"]);
   await writeFile(join(project, "Cargo.toml"), `[workspace]
 [package]
@@ -331,6 +422,7 @@ name = "meshway-codegen-parameter-fixture"
 version = "0.0.0"
 edition = "2024"
 [dependencies]
+bytes = "1"
 meshway-model = { path = ${JSON.stringify(join(root, "crates/model"))} }
 serde = { version = "1.0.228", features = ["derive"] }
 serde_json = "1.0.149"
@@ -344,7 +436,9 @@ tokio = { version = "1.49.0", features = ["macros", "rt-multi-thread", "net", "s
 extern crate self as meshway_protocol;
 mod runtime;
 mod generated;
+mod sse;
 pub use runtime::{Client, ClientError};
+pub use sse::{EventStream, EventDelivery, StreamOptions, StreamResponse};
 pub use generated::*;
 pub use meshway_model::{NetworkId as FixtureNetworkId, Revision as FixtureRevision};
 #[derive(serde::Serialize, serde::Deserialize)]
@@ -353,9 +447,34 @@ pub struct FixtureInput { pub text: String }
 pub struct FixtureOutput { pub id: FixtureNetworkId, pub sequence: u64, pub time: String, pub required_nullable: Option<String> }
 #[derive(serde::Deserialize)]
 pub struct FixtureProblem { pub code: String }
+#[derive(serde::Deserialize)]
+#[serde(tag = "type", rename_all = "lowercase", deny_unknown_fields)]
+pub enum FixtureEvent { Snapshot { text: String }, Ready { cursor: String } }
 #[cfg(test)]
 mod parameter_tests {
     use super::*;
+    #[tokio::test]
+    async fn actual_generated_event_request() {
+        let router = axum::Router::new().route("/fixture/networks/{networkId}/events", axum::routing::get(|headers: axum::http::HeaderMap| async move {
+            assert_eq!(headers["accept"], "text/event-stream");
+            assert_eq!(headers["authorization"], "Bearer private-token");
+            assert_eq!(headers["last-event-id"], "caller-applied");
+            axum::http::Response::builder().header("content-type", "text/event-stream")
+                .body(axum::body::Body::from("data: {\\"type\\":\\"snapshot\\",\\"text\\":\\"😀\\"}\\n\\nid: decoded\\ndata: {\\"type\\":\\"ready\\",\\"cursor\\":\\"ready\\"}\\n\\n")).unwrap()
+        }));
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let client = Client::new(&format!("http://{}", listener.local_addr().unwrap()), reqwest::Client::builder(), 1024).unwrap();
+        let server = tokio::spawn(async move { axum::serve(listener, router).await.unwrap(); });
+        let mut events = client.watch_fixture(&WatchFixturePath { network_id: "12345678-1234-0234-0234-123456789abc".parse().unwrap() }, "private-token", &StreamOptions { applied_cursor: Some("caller-applied"), ..Default::default() }).await.unwrap();
+        let first = events.next().await.unwrap().unwrap();
+        assert!(first.id.is_none());
+        assert!(matches!(first.data, FixtureEvent::Snapshot { text } if text == "😀"));
+        let ready = events.next().await.unwrap().unwrap();
+        assert_eq!(ready.id.as_deref(), Some("decoded"));
+        assert!(matches!(ready.data, FixtureEvent::Ready { cursor } if cursor == "ready"));
+        assert!(events.next().await.is_none());
+        server.abort();
+    }
     #[tokio::test]
     async fn actual_parameter_requests() {
         let seen = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));

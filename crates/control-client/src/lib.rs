@@ -5,3 +5,5 @@ mod generated;
 pub use generated::*;
 mod runtime;
 pub use runtime::{Client, ClientError};
+mod sse;
+pub use sse::{EventDelivery, EventStream, StreamOptions, StreamResponse};

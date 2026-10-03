@@ -187,26 +187,7 @@ impl Client {
         token: Option<&str>,
         body: Option<&B>,
     ) -> Result<Response, ClientError<P>> {
-        if url.origin() != self.base.origin()
-            || !url.username().is_empty()
-            || url.password().is_some()
-            || url.fragment().is_some()
-        {
-            return Err(ClientError::Configuration);
-        }
-        let mut request = self
-            .http
-            .request(method, url)
-            .header(header::ACCEPT, "application/json");
-        if let Some(token) = token {
-            if token.is_empty() || !token.bytes().all(|b| (0x21..=0x7e).contains(&b)) {
-                return Err(ClientError::Configuration);
-            }
-            let mut value = header::HeaderValue::from_str(&format!("Bearer {token}"))
-                .map_err(|_| ClientError::Configuration)?;
-            value.set_sensitive(true);
-            request = request.header(header::AUTHORIZATION, value);
-        }
+        let mut request = self.request_builder(method, url, token, "application/json")?;
         if let Some(body) = body {
             let mut buffer = BoundedBuffer {
                 bytes: Vec::new(),
@@ -221,6 +202,103 @@ impl Client {
             .send()
             .await
             .map_err(|_| ClientError::Network { status: None })?;
+        Response::read(response, self.limit).await
+    }
+
+    fn request_builder<P>(
+        &self,
+        method: Method,
+        url: Url,
+        token: Option<&str>,
+        accept: &'static str,
+    ) -> Result<reqwest_middleware::RequestBuilder, ClientError<P>> {
+        if url.origin() != self.base.origin()
+            || !url.username().is_empty()
+            || url.password().is_some()
+            || url.fragment().is_some()
+        {
+            return Err(ClientError::Configuration);
+        }
+        let mut request = self
+            .http
+            .request(method, url)
+            .header(header::ACCEPT, accept);
+        if let Some(token) = token {
+            if token.is_empty() || !token.bytes().all(|b| (0x21..=0x7e).contains(&b)) {
+                return Err(ClientError::Configuration);
+            }
+            let mut value = header::HeaderValue::from_str(&format!("Bearer {token}"))
+                .map_err(|_| ClientError::Configuration)?;
+            value.set_sensitive(true);
+            request = request.header(header::AUTHORIZATION, value);
+        }
+        Ok(request)
+    }
+
+    /// Transport entry used by generated SSE methods. The caller owns retries
+    /// and supplies only an already-applied cursor on each new connection.
+    pub async fn stream<T: DeserializeOwned, P>(
+        &self,
+        url: Url,
+        token: Option<&str>,
+        options: &crate::StreamOptions<'_>,
+        contract: crate::StreamResponse<'_, P>,
+    ) -> Result<crate::EventStream<T, P>, ClientError<P>> {
+        let limit = options.max_frame_bytes.unwrap_or(self.limit);
+        if !(1..=16 * 1024 * 1024).contains(&limit) || contract.success_status != 200 {
+            return Err(ClientError::Configuration);
+        }
+        let mut request = self.request_builder(Method::GET, url, token, "text/event-stream")?;
+        if let Some(cursor) = options.applied_cursor {
+            if cursor.len() > 4096 || !cursor.bytes().all(|b| (0x21..=0x7e).contains(&b)) {
+                return Err(ClientError::Configuration);
+            }
+            if !cursor.is_empty() {
+                let mut value = header::HeaderValue::from_str(cursor)
+                    .map_err(|_| ClientError::Configuration)?;
+                value.set_sensitive(true);
+                request = request.header("last-event-id", value);
+            }
+        }
+        let response = request
+            .send()
+            .await
+            .map_err(|_| ClientError::Network { status: None })?;
+        let status = response.status().as_u16();
+        if status != contract.success_status {
+            return Err(if contract.error_statuses.contains(&status) {
+                let response = Response::read(response, self.limit).await?;
+                ClientError::Http {
+                    status,
+                    problem: contract.problem.and_then(|decode| {
+                        response.json.then(|| decode(&response.bytes)).flatten()
+                    }),
+                }
+            } else {
+                ClientError::Http {
+                    status,
+                    problem: None,
+                }
+            });
+        }
+        if !media_type(&response, "text/event-stream") {
+            return Err(ClientError::Decode { status });
+        }
+        Ok(crate::EventStream::new(response, limit))
+    }
+}
+
+fn media_type(response: &reqwest::Response, expected: &str) -> bool {
+    response
+        .headers()
+        .get(header::CONTENT_TYPE)
+        .and_then(|v| v.to_str().ok())
+        .and_then(|v| v.split(';').next())
+        .is_some_and(|v| v.trim().eq_ignore_ascii_case(expected))
+}
+
+impl Response {
+    async fn read<P>(response: reqwest::Response, limit: usize) -> Result<Self, ClientError<P>> {
         let status = response.status().as_u16();
         // Redirects are never followed by the underlying client. Reject their
         // response immediately too, even if its body never reaches EOF.
@@ -230,12 +308,7 @@ impl Client {
                 problem: None,
             });
         }
-        let json = response
-            .headers()
-            .get(header::CONTENT_TYPE)
-            .and_then(|v| v.to_str().ok())
-            .and_then(|v| v.split(';').next())
-            .is_some_and(|v| v.trim().eq_ignore_ascii_case("application/json"));
+        let json = media_type(&response, "application/json");
         if status == 204 {
             return Ok(Response {
                 status,
@@ -255,7 +328,7 @@ impl Client {
         }
         if response
             .content_length()
-            .is_some_and(|size| size > self.limit as u64)
+            .is_some_and(|size| size > limit as u64)
         {
             return Err(limit_error(status));
         }
@@ -265,7 +338,7 @@ impl Client {
             let chunk = chunk.map_err(|_| ClientError::Network {
                 status: Some(status),
             })?;
-            if chunk.len() > self.limit.saturating_sub(bytes.len()) {
+            if chunk.len() > limit.saturating_sub(bytes.len()) {
                 return Err(limit_error(status));
             }
             bytes.extend_from_slice(&chunk);

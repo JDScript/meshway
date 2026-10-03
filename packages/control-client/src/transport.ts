@@ -18,6 +18,7 @@ export interface StreamOptions extends RequestOptions {
   retryDelayMs?: number;
   maxFrameBytes?: number;
 }
+export interface AuthenticatedStreamOptions extends StreamOptions { token: string }
 export interface EventDelivery<Data> { data: Data; id?: string }
 export type StreamOperation<Data, Problem> = Omit<Operation<Data, Problem>, "body" | "method" | "success"> & {
   method: "GET";

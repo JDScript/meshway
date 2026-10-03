@@ -85,6 +85,35 @@ its resolver/socket configuration. Configure timeouts on that builder. Dropping
 an operation future cancels its send/read; the runtime spawns no detached request
 tasks. Error Debug/Display omits decoded problems and all raw transport content.
 
+## Event streams
+
+The generator supports GET SSE operations explicitly declared by the actual
+route's `x-meshway-sse` metadata. A successful `text/event-stream` response is
+string bytes; the extension's named event schema describes each JSON `data`
+payload. JSON errors keep their ordinary typed HTTP envelopes.
+
+- TypeScript generated stream methods return an async generator of
+  `ClientResult<EventDelivery<Event>, Problem>`. Every event is checked with its
+  generated Zod schema. `AuthenticatedStreamOptions` requires a token;
+  `signal` cancels pending connection/read/retry work.
+- TypeScript retries connection loss, EOF, 429 and 5xx up to `maxReconnects`
+  (default 5). `resumeCursor()` is called for each connection and must return
+  only a cursor whose complete snapshot/delta has been applied by the caller.
+  Merely decoding an event or seeing an SSE `id` never advances that cursor.
+- Rust generated stream methods take `StreamOptions` and return an
+  `EventStream<Event, Problem>`. `next().await` yields one typed event, a terminal
+  error, or `None` at EOF. Drop the stream to cancel. The caller reconnects with
+  its own lease/retry policy and explicitly supplies `applied_cursor`; the
+  bounded `retry_delay()` hint is available after frames have been read.
+- Both runtimes bound UTF-8 lines and complete event payloads by
+  `maxFrameBytes` / `max_frame_bytes` (1–16 MiB, defaulting to the client body
+  budget). EOF discards incomplete frames. Invalid UTF-8, JSON, event types and
+  oversized frames terminate decoding without exposing raw content in errors.
+
+These are generator/runtime capabilities. The currently exported account/network
+slice has no production SSE operation yet; State service candidates still need
+their real identity, configuration and execution providers wired into the Router.
+
 ## Generation and verification
 
 From the repository root, using this task's isolated Cargo target when working in
@@ -107,7 +136,8 @@ storage. They test ordinary registration/session/logout, disabled registration,
 typed errors and malformed real response envelopes. Generator-only synthetic
 fixtures verify code-generation boundaries separately.
 
-The current generator supports the published account/network JSON operations
-and validated scalar path/optional query parameters. SSE and other unsupported
-schema/operation shapes fail generation explicitly. Integer schemas must prove a JS-safe range through
+The current generator supports the published account/network JSON operations,
+validated scalar path/optional query parameters, and explicitly declared JSON-data
+SSE streams. Undeclared streams and unsupported schema/operation shapes fail
+generation explicitly. Integer schemas must prove a JS-safe range through
 explicit bounds or the supported `int32` format; unbounded `int64` is rejected.

@@ -62,11 +62,23 @@ export function parameters(path, item, op, schemas) {
   const placeholders = parts.filter(part => part.startsWith("{")).map(part => part.slice(1, -1));
   if (new Set(placeholders).size !== placeholders.length) throw new Error("Duplicate path placeholder");
   const output = [];
+  let hasResumeHeader = false;
   for (const list of [item.parameters === undefined ? [] : item.parameters, op.parameters === undefined ? [] : op.parameters]) {
     if (!Array.isArray(list)) throw new Error("Invalid parameters declaration");
     for (const parameter of list) {
       keys(parameter, ["name", "in", "required", "description", "deprecated", "style", "explode", "schema"]);
       const { name, in: location } = parameter;
+      if (location === "header" && typeof name === "string" && name.toLowerCase() === "last-event-id" && op["x-meshway-sse"] !== undefined) {
+        if (hasResumeHeader) throw new Error("Duplicate SSE cursor header");
+        hasResumeHeader = true;
+        keys(parameter, ["name", "in", "required", "description", "deprecated", "schema"]);
+        if (parameter.required !== undefined && parameter.required !== false) throw new Error("SSE cursor header must be optional");
+        keys(parameter.schema, ["type", "description", "title"]);
+        if (parameter.schema.type !== "string") throw new Error("SSE cursor header must be a non-null string");
+        // This header is controlled by StreamOptions, never a second generated
+        // argument that could bypass caller-applied cursor handling on retries.
+        continue;
+      }
       if (typeof name !== "string" || !/^[a-z][A-Za-z0-9]*$/.test(name) || ["constructor", "prototype", "self", "super", "crate"].includes(name)) throw new Error("Invalid parameter name");
       if (!["path", "query"].includes(location)) throw new Error("Only path/query parameters supported");
       if (output.some(value => value.name === name && value.location === location)) throw new Error("Duplicate parameter declaration");
