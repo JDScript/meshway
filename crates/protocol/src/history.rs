@@ -29,7 +29,7 @@ wire_object! {pub struct ActivityEvent {
 wire_object! {pub struct ActivityListResponse {pub request_id:RequestId,pub items:Vec<ActivityEvent>,#[serde(deserialize_with="nullable")]pub next_cursor:Option<String> [required=true],pub as_of:DateTime<Utc>} }
 wire_object! {pub struct ActivityResponse {pub request_id:RequestId,pub activity:ActivityEvent} }
 
-#[derive(Clone, Copy, serde::Serialize, serde::Deserialize, utoipa::ToSchema)]
+#[derive(Clone, Copy, Debug, serde::Serialize, serde::Deserialize, utoipa::ToSchema)]
 #[serde(rename_all = "camelCase", try_from = "String")]
 pub enum ConfigurationChangeCause {
     NetworkCreated,

@@ -8,7 +8,12 @@ import { resolve, join } from "node:path";
 import {
   ControlClient, getAuthOptions, register, login, getAuthSession, logout,
   createNetwork, listNetworks, getNetwork, renameNetwork, listNetworkMembers,
+  createJoinLink, redeemJoinLink, changeMemberRole, getConfiguration,
+  getConfigurationSource, validateConfiguration, applyConfiguration,
+  compareConfiguration, listConfigurationRevisions,
+  type ConfigurationRequest,
 } from "../src/index.ts";
+import { zListener, zPreparedListener, zPreparationKind, zNodeAddresses, zConfigurationOperation } from "../src/generated/zod.gen.ts";
 
 async function controller(t: TestContext, registrationEnabled = true) {
   const parent = join(tmpdir(), "opencode");
@@ -44,6 +49,7 @@ test("generated TS SDK authenticates through the normal Controller binary", asyn
   assert.ok(options.ok);
   assert.equal(options.data.registrationEnabled, true);
   assert.equal(options.data.passwordRules.lengthUnit, "unicodeCodepoints");
+  assert.deepEqual(options.data.networkNameRules, { minCodepoints: 1, maxCodepoints: 128, maxInputUtf8Bytes: 1024, trim: "unicodeWhiteSpace", forbidControlCharacters: true });
   const password = "🔐".repeat(options.data.passwordRules.minCodepoints);
   assert.ok(new TextEncoder().encode(password).length <= options.data.passwordRules.maxUtf8Bytes);
   const issued = await register(client, { email: "  ALICE@BÜCHER.example  ", password });
@@ -104,11 +110,13 @@ test("generated TS network operations create real networks and preserve paginati
   const page = await listNetworks(client, { limit: 1 }, options);
   assert.ok(page.ok);
   assert.equal(page.data.items.length, 1);
+  assert.equal(page.data.total, 2);
   assert.ok(page.data.nextCursor);
   assert.ok((await createNetwork(client, { requestId: randomUUID(), name: "After the page boundary" }, options)).ok);
   const rest = await listNetworks(client, { limit: 200, cursor: page.data.nextCursor }, options);
   assert.ok(rest.ok);
   assert.equal(rest.data.items.length, 1);
+  assert.equal(rest.data.total, 2);
   assert.equal(rest.data.items[0]?.name, "Second network");
   assert.equal(rest.data.nextCursor, null);
   assert.equal(rest.data.asOf, page.data.asOf);
@@ -119,6 +127,8 @@ test("generated TS network operations create real networks and preserve paginati
   assert.ok(members.ok);
   assert.equal(members.data.items[0]?.userId, issued.data.user.id);
   assert.equal(members.data.items[0]?.membershipId, detail.data.network.membershipId);
+  assert.equal(members.data.total, 1);
+  assert.deepEqual(members.data.items[0]?.actions, { changeRole: false, assignableRoles: ["owner"], remove: false });
   const renamed = await renameNetwork(client, path, { requestId: randomUUID(), expectedName: "First network", name: "New name" }, options);
   assert.ok(renamed.ok);
   assert.equal(renamed.data.network.currentRevision, 1);
@@ -126,6 +136,85 @@ test("generated TS network operations create real networks and preserve paginati
   assert.ok(!conflict.ok && conflict.error.kind === "http");
   assert.equal(conflict.error.status, 409);
   assert.equal(conflict.error.problem?.problem.code, "name_conflict");
+});
+
+test("management SDK exposes membership actions and applies versioned configuration through the real Controller", async t => {
+  const client = await controller(t);
+  const owner = await register(client, { email: "manage-owner@example.com", password: "valid management password" });
+  const user = await register(client, { email: "manage-member@example.com", password: "valid management password" });
+  assert.ok(owner.ok && user.ok);
+  const options = { token: owner.data.token };
+  const padded = `\u3000${"😀".repeat(128)}\u00a0`;
+  const created = await createNetwork(client, { requestId: randomUUID(), name: padded }, options);
+  assert.ok(created.ok);
+  assert.equal(created.data.network.name, "😀".repeat(128));
+  const path = { networkId: created.data.network.id };
+  const link = await createJoinLink(client, path, { requestId: randomUUID(), role: "member", expiresInSeconds: 600 }, options);
+  assert.ok(link.ok && link.data.secretDelivery === "available");
+  const joined = await redeemJoinLink(client, { token: link.data.secret }, { token: user.data.token });
+  assert.ok(joined.ok);
+  const members = await listNetworkMembers(client, path, { limit: 1 }, options);
+  assert.ok(members.ok && members.data.nextCursor);
+  assert.equal(members.data.total, 2);
+  const rest = await listNetworkMembers(client, path, { cursor: members.data.nextCursor }, options);
+  assert.ok(rest.ok);
+  assert.equal(rest.data.total, 2);
+  const member = [...members.data.items, ...rest.data.items].find(item => item.userId === user.data.user.id);
+  assert.ok(member);
+  assert.deepEqual(member.actions, { changeRole: true, assignableRoles: ["owner", "admin", "member"], remove: true });
+  const changed = await changeMemberRole(client, { ...path, membershipId: member.membershipId }, { expectedVersion: member.version, role: "admin" }, options);
+  assert.ok(changed.ok);
+  assert.equal(changed.data.member.role, "admin");
+  assert.equal(changed.data.member.version, member.version + 1);
+
+  const source = await getConfigurationSource(client, path, {}, options);
+  assert.ok(source.ok);
+  const initial = source.data.revision;
+  const edit: ConfigurationRequest = { type: "operations", expectedRevision: initial, requestId: randomUUID(), ops: [{ type: "replaceAccess", access: [] }] };
+  const preview = await validateConfiguration(client, path, edit, options);
+  assert.ok(preview.ok);
+  assert.equal(preview.data.changeCount, 1);
+  assert.deepEqual(preview.data.changes, [{ path: "/access", kind: "changed" }]);
+  assert.deepEqual(preview.data.preview.access, []);
+  const applied = await applyConfiguration(client, path, edit, options);
+  assert.ok(applied.ok);
+  assert.equal(applied.data.revision, initial + 1);
+  const replay = await applyConfiguration(client, path, edit, options);
+  assert.ok(replay.ok);
+  assert.equal(replay.data.revision, applied.data.revision);
+  const stale = await applyConfiguration(client, path, { ...edit, requestId: randomUUID() }, options);
+  assert.ok(!stale.ok && stale.error.kind === "http");
+  assert.equal(stale.error.problem?.problem.code, "revision_conflict");
+  const current = await getConfiguration(client, path, options);
+  assert.ok(current.ok);
+  assert.deepEqual(current.data.configuration.access, []);
+  const comparison = await compareConfiguration(client, path, { fromRevision: initial, toRevision: applied.data.revision }, options);
+  assert.ok(comparison.ok);
+  assert.equal(comparison.data.configurationChanged, true);
+  const restored = await applyConfiguration(client, path, { type: "restore", expectedRevision: applied.data.revision, requestId: randomUUID(), restoreFrom: initial }, options);
+  assert.ok(restored.ok);
+  assert.equal(restored.data.revision, initial + 2);
+  const history = await listConfigurationRevisions(client, path, {}, options);
+  assert.ok(history.ok);
+  assert.equal(history.data.items.find(item => item.current)?.cause, "restore");
+});
+
+test("published configuration validators preserve closed listener variants and material requirements", () => {
+  const removal = { type: "setListener", nodeId: "12345678-1234-0234-0234-123456789abc", key: "edge" };
+  assert.equal(zConfigurationOperation.safeParse(removal).success, false);
+  assert.equal(zConfigurationOperation.safeParse({ ...removal, listener: null }).success, true);
+  const native = { type: "native_udp", listenPort: 8421 };
+  assert.equal(zListener.safeParse(native).success, true);
+  assert.equal(zPreparedListener.safeParse(native).success, true);
+  assert.equal(zListener.safeParse({ ...native, tcp: {} }).success, false);
+  const vless = { type: "vless", listenPort: 443, tls: { serverName: "edge.example" } };
+  assert.equal(zListener.safeParse(vless).success, true);
+  assert.equal(zPreparedListener.safeParse(vless).success, false);
+  assert.equal(zPreparedListener.safeParse({ ...vless, uuid: "11111111-1111-4111-8111-111111111111", tls: { ...vless.tls, certificate: "structural certificate", privateKey: "structural key" } }).success, true);
+  for (const value of ["addressV4", { material: "certificateValidation" }]) assert.equal(zPreparationKind.safeParse(value).success, true);
+  for (const value of ["unknown", { material: "certificateValidation", extra: true }, ["addressV4"]]) assert.equal(zPreparationKind.safeParse(value).success, false);
+  for (const value of [{ ipv4: "100.64.0.1", ipv6: "fd00::1" }, { ipv4: null, ipv6: "::ffff:192.0.2.1" }]) assert.equal(zNodeAddresses.safeParse(value).success, true);
+  for (const value of [{ ipv4: "100.064.0.1", ipv6: null }, { ipv4: null, ipv6: "fe80::1%en0" }, { ipv4: null }]) assert.equal(zNodeAddresses.safeParse(value).success, false);
 });
 
 test("generated TS operations validate malformed real envelopes before returning data", async t => {

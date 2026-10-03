@@ -4,14 +4,476 @@ export const schemaDocument = {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "components": {
     "schemas": {
+      "AccessDefault": {
+        "type": "string",
+        "enum": [
+          "deny"
+        ]
+      },
+      "AccessRule": {
+        "type": "object",
+        "required": [
+          "src",
+          "dst",
+          "ip"
+        ],
+        "properties": {
+          "bidirectional": {
+            "type": "boolean"
+          },
+          "dst": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "ip": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "remark": {
+            "type": "string"
+          },
+          "src": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        },
+        "additionalProperties": false
+      },
+      "AccountResponse": {
+        "type": "object",
+        "required": [
+          "requestId",
+          "user"
+        ],
+        "properties": {
+          "requestId": {
+            "$ref": "#/components/schemas/RequestId"
+          },
+          "user": {
+            "$ref": "#/components/schemas/UserView"
+          }
+        },
+        "additionalProperties": false
+      },
+      "AccountSessionView": {
+        "type": "object",
+        "required": [
+          "id",
+          "createdAt",
+          "expiresAt",
+          "lastUsedAt",
+          "clientLabel",
+          "current"
+        ],
+        "properties": {
+          "clientLabel": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "createdAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "current": {
+            "type": "boolean"
+          },
+          "expiresAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "id": {
+            "$ref": "#/components/schemas/SessionId"
+          },
+          "lastUsedAt": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          }
+        },
+        "additionalProperties": false
+      },
+      "AccountSessionsResponse": {
+        "type": "object",
+        "required": [
+          "requestId",
+          "items",
+          "nextCursor",
+          "asOf"
+        ],
+        "properties": {
+          "asOf": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/AccountSessionView"
+            }
+          },
+          "nextCursor": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "requestId": {
+            "$ref": "#/components/schemas/RequestId"
+          }
+        },
+        "additionalProperties": false
+      },
+      "ActivityAction": {
+        "type": "string",
+        "enum": [
+          "AccountRegister",
+          "SessionLogin",
+          "SessionLogout",
+          "SessionRevoke",
+          "SessionRevokeOthers",
+          "SessionRevokeAll",
+          "AccountPassword",
+          "AccountPasswordReset",
+          "AccountResetIssued",
+          "AccountEmail",
+          "NetworkCreate",
+          "NetworkRename",
+          "ConfigurationApply",
+          "MembershipRole",
+          "MembershipJoin",
+          "MembershipRemove",
+          "JoinLinkCreate",
+          "JoinLinkRevoke"
+        ]
+      },
+      "ActivityActor": {
+        "oneOf": [
+          {
+            "type": "object",
+            "required": [
+              "userId",
+              "type"
+            ],
+            "properties": {
+              "type": {
+                "type": "string",
+                "enum": [
+                  "user"
+                ]
+              },
+              "userId": {
+                "$ref": "#/components/schemas/UserId"
+              }
+            },
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "required": [
+              "type"
+            ],
+            "properties": {
+              "type": {
+                "type": "string",
+                "enum": [
+                  "system"
+                ]
+              }
+            },
+            "additionalProperties": false
+          }
+        ]
+      },
+      "ActivityEvent": {
+        "type": "object",
+        "required": [
+          "id",
+          "at",
+          "actor",
+          "action",
+          "target",
+          "beforeRevision",
+          "afterRevision",
+          "requestId"
+        ],
+        "properties": {
+          "action": {
+            "$ref": "#/components/schemas/ActivityAction"
+          },
+          "actor": {
+            "$ref": "#/components/schemas/ActivityActor"
+          },
+          "afterRevision": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/Revision"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "beforeRevision": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/Revision"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "id": {
+            "$ref": "#/components/schemas/ActivityId"
+          },
+          "requestId": {
+            "$ref": "#/components/schemas/RequestId"
+          },
+          "target": {
+            "$ref": "#/components/schemas/ActivityTarget"
+          }
+        },
+        "additionalProperties": false
+      },
+      "ActivityId": {
+        "type": "string",
+        "format": "uuid",
+        "description": "Activity identifier.\n\n This is an identifier, not a credential. Generation and authorization\n belong to the caller. Parsing rejects aliases rather than normalizing them.",
+        "maxLength": 36,
+        "minLength": 36,
+        "pattern": "^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+      },
+      "ActivityListResponse": {
+        "type": "object",
+        "required": [
+          "requestId",
+          "items",
+          "nextCursor",
+          "asOf"
+        ],
+        "properties": {
+          "asOf": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ActivityEvent"
+            }
+          },
+          "nextCursor": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "requestId": {
+            "$ref": "#/components/schemas/RequestId"
+          }
+        },
+        "additionalProperties": false
+      },
+      "ActivityResponse": {
+        "type": "object",
+        "required": [
+          "requestId",
+          "activity"
+        ],
+        "properties": {
+          "activity": {
+            "$ref": "#/components/schemas/ActivityEvent"
+          },
+          "requestId": {
+            "$ref": "#/components/schemas/RequestId"
+          }
+        },
+        "additionalProperties": false
+      },
+      "ActivityTarget": {
+        "oneOf": [
+          {
+            "type": "object",
+            "required": [
+              "userId",
+              "type"
+            ],
+            "properties": {
+              "type": {
+                "type": "string",
+                "enum": [
+                  "account"
+                ]
+              },
+              "userId": {
+                "$ref": "#/components/schemas/UserId"
+              }
+            },
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "required": [
+              "sessionId",
+              "type"
+            ],
+            "properties": {
+              "sessionId": {
+                "$ref": "#/components/schemas/SessionId"
+              },
+              "type": {
+                "type": "string",
+                "enum": [
+                  "session"
+                ]
+              }
+            },
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "required": [
+              "networkId",
+              "type"
+            ],
+            "properties": {
+              "networkId": {
+                "$ref": "#/components/schemas/NetworkId"
+              },
+              "type": {
+                "type": "string",
+                "enum": [
+                  "network"
+                ]
+              }
+            },
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "required": [
+              "membershipId",
+              "type"
+            ],
+            "properties": {
+              "membershipId": {
+                "$ref": "#/components/schemas/MembershipId"
+              },
+              "type": {
+                "type": "string",
+                "enum": [
+                  "membership"
+                ]
+              }
+            },
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "required": [
+              "linkId",
+              "type"
+            ],
+            "properties": {
+              "linkId": {
+                "$ref": "#/components/schemas/JoinLinkId"
+              },
+              "type": {
+                "type": "string",
+                "enum": [
+                  "joinLink"
+                ]
+              }
+            },
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "required": [
+              "revision",
+              "type"
+            ],
+            "properties": {
+              "revision": {
+                "$ref": "#/components/schemas/Revision"
+              },
+              "type": {
+                "type": "string",
+                "enum": [
+                  "configuration"
+                ]
+              }
+            },
+            "additionalProperties": false
+          }
+        ]
+      },
+      "AddressPools": {
+        "type": "object",
+        "required": [
+          "ipv4",
+          "ipv6"
+        ],
+        "properties": {
+          "ipv4": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "ipv6": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        },
+        "additionalProperties": false
+      },
+      "AddressPoolsInput": {
+        "type": "object",
+        "properties": {
+          "ipv4": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "ipv6": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        },
+        "additionalProperties": false
+      },
       "AuthOptionsResponse": {
         "type": "object",
         "required": [
           "requestId",
           "registrationEnabled",
-          "passwordRules"
+          "passwordRules",
+          "networkNameRules"
         ],
         "properties": {
+          "networkNameRules": {
+            "$ref": "#/components/schemas/NetworkNameRules"
+          },
           "passwordRules": {
             "$ref": "#/components/schemas/PasswordRules"
           },
@@ -44,6 +506,993 @@ export const schemaDocument = {
         },
         "additionalProperties": false
       },
+      "AutoProfile": {
+        "type": "object",
+        "required": [
+          "rules",
+          "fallback"
+        ],
+        "properties": {
+          "fallback": {
+            "type": "string"
+          },
+          "rules": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/CountryProfile"
+            }
+          }
+        },
+        "additionalProperties": false
+      },
+      "ChangeEmailRequest": {
+        "type": "object",
+        "required": [
+          "password",
+          "email"
+        ],
+        "properties": {
+          "email": {
+            "type": "string"
+          },
+          "password": {
+            "$ref": "#/components/schemas/WireSecret"
+          }
+        },
+        "additionalProperties": false
+      },
+      "ChangeKind": {
+        "type": "string",
+        "enum": [
+          "added",
+          "removed",
+          "changed"
+        ]
+      },
+      "ChangeMemberRoleRequest": {
+        "type": "object",
+        "required": [
+          "expectedVersion",
+          "role"
+        ],
+        "properties": {
+          "expectedVersion": {
+            "$ref": "#/components/schemas/Version"
+          },
+          "role": {
+            "$ref": "#/components/schemas/MembershipRole"
+          }
+        },
+        "additionalProperties": false
+      },
+      "ChangePasswordRequest": {
+        "type": "object",
+        "required": [
+          "currentPassword",
+          "password"
+        ],
+        "properties": {
+          "currentPassword": {
+            "$ref": "#/components/schemas/WireSecret"
+          },
+          "password": {
+            "$ref": "#/components/schemas/WireSecret"
+          }
+        },
+        "additionalProperties": false
+      },
+      "CompareConfigurationRequest": {
+        "type": "object",
+        "required": [
+          "fromRevision",
+          "toRevision"
+        ],
+        "properties": {
+          "fromRevision": {
+            "$ref": "#/components/schemas/Revision"
+          },
+          "toRevision": {
+            "$ref": "#/components/schemas/Revision"
+          }
+        },
+        "additionalProperties": false
+      },
+      "ConfigurationAppliedResponse": {
+        "type": "object",
+        "required": [
+          "requestId",
+          "networkId",
+          "revision",
+          "publicationIds",
+          "targetCount",
+          "deletedNodeIds"
+        ],
+        "properties": {
+          "deletedNodeIds": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/NodeId"
+            }
+          },
+          "networkId": {
+            "$ref": "#/components/schemas/NetworkId"
+          },
+          "publicationIds": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/PublicationId"
+            }
+          },
+          "requestId": {
+            "$ref": "#/components/schemas/RequestId"
+          },
+          "revision": {
+            "$ref": "#/components/schemas/Revision"
+          },
+          "targetCount": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          }
+        },
+        "additionalProperties": false
+      },
+      "ConfigurationChange": {
+        "type": "object",
+        "required": [
+          "path",
+          "kind"
+        ],
+        "properties": {
+          "kind": {
+            "$ref": "#/components/schemas/ChangeKind"
+          },
+          "path": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": false
+      },
+      "ConfigurationChangeCause": {
+        "type": "string",
+        "enum": [
+          "networkCreated",
+          "edit",
+          "restore",
+          "enrollment",
+          "nodeDeleted",
+          "emailSync",
+          "memberRemoved",
+          "identityTransition"
+        ]
+      },
+      "ConfigurationComparison": {
+        "type": "object",
+        "required": [
+          "requestId",
+          "fromRevision",
+          "toRevision",
+          "sourceChanged",
+          "configurationChanged",
+          "bindingsChanged",
+          "changes"
+        ],
+        "properties": {
+          "bindingsChanged": {
+            "type": "boolean"
+          },
+          "changes": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ConfigurationChange"
+            }
+          },
+          "configurationChanged": {
+            "type": "boolean"
+          },
+          "fromRevision": {
+            "$ref": "#/components/schemas/Revision"
+          },
+          "requestId": {
+            "$ref": "#/components/schemas/RequestId"
+          },
+          "sourceChanged": {
+            "type": "boolean"
+          },
+          "toRevision": {
+            "$ref": "#/components/schemas/Revision"
+          }
+        },
+        "additionalProperties": false
+      },
+      "ConfigurationIssue": {
+        "type": "object",
+        "required": [
+          "path",
+          "message"
+        ],
+        "properties": {
+          "message": {
+            "type": "string"
+          },
+          "path": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": false
+      },
+      "ConfigurationOperation": {
+        "oneOf": [
+          {
+            "type": "object",
+            "required": [
+              "access",
+              "type"
+            ],
+            "properties": {
+              "access": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/components/schemas/AccessRule"
+                }
+              },
+              "type": {
+                "type": "string",
+                "enum": [
+                  "replaceAccess"
+                ]
+              }
+            },
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "required": [
+              "topology",
+              "type"
+            ],
+            "properties": {
+              "topology": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/components/schemas/TopologyRule"
+                }
+              },
+              "type": {
+                "type": "string",
+                "enum": [
+                  "replaceTopology"
+                ]
+              }
+            },
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "required": [
+              "routing",
+              "type"
+            ],
+            "properties": {
+              "routing": {
+                "$ref": "#/components/schemas/RoutingConfiguration"
+              },
+              "type": {
+                "type": "string",
+                "enum": [
+                  "replaceRouting"
+                ]
+              }
+            },
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "required": [
+              "dns",
+              "type"
+            ],
+            "properties": {
+              "dns": {
+                "$ref": "#/components/schemas/DnsConfiguration"
+              },
+              "type": {
+                "type": "string",
+                "enum": [
+                  "replaceDns"
+                ]
+              }
+            },
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "required": [
+              "defaults",
+              "type"
+            ],
+            "properties": {
+              "defaults": {
+                "$ref": "#/components/schemas/Defaults"
+              },
+              "type": {
+                "type": "string",
+                "enum": [
+                  "replaceDefaults"
+                ]
+              }
+            },
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "required": [
+              "groups",
+              "type"
+            ],
+            "properties": {
+              "groups": {
+                "type": "object",
+                "additionalProperties": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                },
+                "propertyNames": {
+                  "type": "string"
+                }
+              },
+              "type": {
+                "type": "string",
+                "enum": [
+                  "replaceGroups"
+                ]
+              }
+            },
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "required": [
+              "tagsOwners",
+              "type"
+            ],
+            "properties": {
+              "tagsOwners": {
+                "type": "object",
+                "additionalProperties": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                },
+                "propertyNames": {
+                  "type": "string"
+                }
+              },
+              "type": {
+                "type": "string",
+                "enum": [
+                  "replaceTagsOwners"
+                ]
+              }
+            },
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "required": [
+              "ruleSets",
+              "type"
+            ],
+            "properties": {
+              "ruleSets": {
+                "type": "object",
+                "additionalProperties": {
+                  "$ref": "#/components/schemas/RuleSet"
+                },
+                "propertyNames": {
+                  "type": "string"
+                }
+              },
+              "type": {
+                "type": "string",
+                "enum": [
+                  "replaceRuleSets"
+                ]
+              }
+            },
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "required": [
+              "nodeId",
+              "fields",
+              "type"
+            ],
+            "properties": {
+              "fields": {
+                "$ref": "#/components/schemas/NodeSettingsPatch"
+              },
+              "nodeId": {
+                "$ref": "#/components/schemas/NodeId"
+              },
+              "type": {
+                "type": "string",
+                "enum": [
+                  "setNodeSettings"
+                ]
+              }
+            },
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "required": [
+              "nodeId",
+              "key",
+              "listener",
+              "type"
+            ],
+            "properties": {
+              "key": {
+                "type": "string"
+              },
+              "listener": {
+                "oneOf": [
+                  {
+                    "$ref": "#/components/schemas/Listener"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "nodeId": {
+                "$ref": "#/components/schemas/NodeId"
+              },
+              "type": {
+                "type": "string",
+                "enum": [
+                  "setListener"
+                ]
+              }
+            },
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "required": [
+              "nodeId",
+              "tags",
+              "type"
+            ],
+            "properties": {
+              "nodeId": {
+                "$ref": "#/components/schemas/NodeId"
+              },
+              "tags": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "type": {
+                "type": "string",
+                "enum": [
+                  "setIdentityTags"
+                ]
+              }
+            },
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "required": [
+              "addressPools",
+              "type"
+            ],
+            "properties": {
+              "addressPools": {
+                "$ref": "#/components/schemas/AddressPoolsInput"
+              },
+              "type": {
+                "type": "string",
+                "enum": [
+                  "setAddressPools"
+                ]
+              }
+            },
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "required": [
+              "nodeId",
+              "addresses",
+              "type"
+            ],
+            "properties": {
+              "addresses": {
+                "$ref": "#/components/schemas/NodeAddressesInput"
+              },
+              "nodeId": {
+                "$ref": "#/components/schemas/NodeId"
+              },
+              "type": {
+                "type": "string",
+                "enum": [
+                  "setAddresses"
+                ]
+              }
+            },
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "required": [
+              "nodeId",
+              "type"
+            ],
+            "properties": {
+              "nodeId": {
+                "$ref": "#/components/schemas/NodeId"
+              },
+              "type": {
+                "type": "string",
+                "enum": [
+                  "deleteNode"
+                ]
+              }
+            },
+            "additionalProperties": false
+          }
+        ]
+      },
+      "ConfigurationPreviewResponse": {
+        "type": "object",
+        "required": [
+          "requestId",
+          "baseRevision",
+          "preview",
+          "changeCount",
+          "changes",
+          "sourceChanged",
+          "deletedNodeIds",
+          "addressChangedNodeIds"
+        ],
+        "properties": {
+          "addressChangedNodeIds": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/NodeId"
+            }
+          },
+          "baseRevision": {
+            "$ref": "#/components/schemas/Revision"
+          },
+          "changeCount": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          },
+          "changes": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ConfigurationChange"
+            }
+          },
+          "deletedNodeIds": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/NodeId"
+            }
+          },
+          "preview": {
+            "$ref": "#/components/schemas/ConfigurationView"
+          },
+          "requestId": {
+            "$ref": "#/components/schemas/RequestId"
+          },
+          "sourceChanged": {
+            "type": "boolean"
+          }
+        },
+        "additionalProperties": false
+      },
+      "ConfigurationRequest": {
+        "oneOf": [
+          {
+            "type": "object",
+            "required": [
+              "expectedRevision",
+              "requestId",
+              "sourceJsonc",
+              "type"
+            ],
+            "properties": {
+              "expectedRevision": {
+                "$ref": "#/components/schemas/Revision"
+              },
+              "requestId": {
+                "$ref": "#/components/schemas/RequestId"
+              },
+              "sourceJsonc": {
+                "$ref": "#/components/schemas/WireSecret"
+              },
+              "type": {
+                "type": "string",
+                "enum": [
+                  "document"
+                ]
+              }
+            },
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "required": [
+              "expectedRevision",
+              "requestId",
+              "ops",
+              "type"
+            ],
+            "properties": {
+              "expectedRevision": {
+                "$ref": "#/components/schemas/Revision"
+              },
+              "ops": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/components/schemas/ConfigurationOperation"
+                }
+              },
+              "requestId": {
+                "$ref": "#/components/schemas/RequestId"
+              },
+              "type": {
+                "type": "string",
+                "enum": [
+                  "operations"
+                ]
+              }
+            },
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "required": [
+              "expectedRevision",
+              "requestId",
+              "restoreFrom",
+              "type"
+            ],
+            "properties": {
+              "expectedRevision": {
+                "$ref": "#/components/schemas/Revision"
+              },
+              "requestId": {
+                "$ref": "#/components/schemas/RequestId"
+              },
+              "restoreFrom": {
+                "$ref": "#/components/schemas/Revision"
+              },
+              "type": {
+                "type": "string",
+                "enum": [
+                  "restore"
+                ]
+              }
+            },
+            "additionalProperties": false
+          }
+        ]
+      },
+      "ConfigurationResponse": {
+        "type": "object",
+        "required": [
+          "requestId",
+          "networkId",
+          "revision",
+          "configuration"
+        ],
+        "properties": {
+          "configuration": {
+            "$ref": "#/components/schemas/ConfigurationView"
+          },
+          "networkId": {
+            "$ref": "#/components/schemas/NetworkId"
+          },
+          "requestId": {
+            "$ref": "#/components/schemas/RequestId"
+          },
+          "revision": {
+            "$ref": "#/components/schemas/Revision"
+          }
+        },
+        "additionalProperties": false
+      },
+      "ConfigurationRevisionList": {
+        "type": "object",
+        "required": [
+          "requestId",
+          "currentRevision",
+          "items",
+          "nextCursor",
+          "asOf"
+        ],
+        "properties": {
+          "asOf": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "currentRevision": {
+            "$ref": "#/components/schemas/Revision"
+          },
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ConfigurationRevisionSummary"
+            }
+          },
+          "nextCursor": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "requestId": {
+            "$ref": "#/components/schemas/RequestId"
+          }
+        },
+        "additionalProperties": false
+      },
+      "ConfigurationRevisionSummary": {
+        "type": "object",
+        "required": [
+          "revision",
+          "createdAt",
+          "createdBy",
+          "cause",
+          "current",
+          "rollbackFrom"
+        ],
+        "properties": {
+          "cause": {
+            "$ref": "#/components/schemas/ConfigurationChangeCause"
+          },
+          "createdAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "createdBy": {
+            "$ref": "#/components/schemas/ActivityActor"
+          },
+          "current": {
+            "type": "boolean"
+          },
+          "revision": {
+            "$ref": "#/components/schemas/Revision"
+          },
+          "rollbackFrom": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/Revision"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "additionalProperties": false
+      },
+      "ConfigurationSchemaResponse": {
+        "type": "object",
+        "required": [
+          "requestId",
+          "schemaJson"
+        ],
+        "properties": {
+          "requestId": {
+            "$ref": "#/components/schemas/RequestId"
+          },
+          "schemaJson": {
+            "type": "string",
+            "description": "A complete JSON Schema 2020-12 document encoded as text for editor use.\nIt contains definitions and constraints, never configuration values."
+          }
+        },
+        "additionalProperties": false
+      },
+      "ConfigurationSourceResponse": {
+        "type": "object",
+        "required": [
+          "requestId",
+          "networkId",
+          "revision",
+          "sourceJsonc",
+          "configuration"
+        ],
+        "properties": {
+          "configuration": {
+            "$ref": "#/components/schemas/NetworkConfiguration"
+          },
+          "networkId": {
+            "$ref": "#/components/schemas/NetworkId"
+          },
+          "requestId": {
+            "$ref": "#/components/schemas/RequestId"
+          },
+          "revision": {
+            "$ref": "#/components/schemas/Revision"
+          },
+          "sourceJsonc": {
+            "$ref": "#/components/schemas/WireSecret"
+          }
+        },
+        "additionalProperties": false
+      },
+      "ConfigurationValidationParams": {
+        "type": "object",
+        "required": [
+          "issues",
+          "requirements"
+        ],
+        "properties": {
+          "issues": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ConfigurationIssue"
+            }
+          },
+          "requirements": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/PreparationRequirement"
+            }
+          }
+        },
+        "additionalProperties": false
+      },
+      "ConfigurationView": {
+        "type": "object",
+        "required": [
+          "addressPools",
+          "defaults",
+          "groups",
+          "tagsOwners",
+          "access",
+          "nodes",
+          "dns",
+          "topology",
+          "routing",
+          "ruleSets"
+        ],
+        "properties": {
+          "access": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/AccessRule"
+            }
+          },
+          "addressPools": {
+            "$ref": "#/components/schemas/AddressPools"
+          },
+          "defaults": {
+            "$ref": "#/components/schemas/DefaultsView"
+          },
+          "dns": {
+            "$ref": "#/components/schemas/DnsConfiguration"
+          },
+          "groups": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "propertyNames": {
+              "type": "string"
+            }
+          },
+          "nodes": {
+            "type": "object",
+            "additionalProperties": {
+              "$ref": "#/components/schemas/NodeSettingsView"
+            },
+            "propertyNames": {
+              "type": "string",
+              "format": "uuid",
+              "description": "Stable node identifier, independent of its addresses and keys.\n\n This is an identifier, not a credential. Generation and authorization\n belong to the caller. Parsing rejects aliases rather than normalizing them.",
+              "maxLength": 36,
+              "minLength": 36,
+              "pattern": "^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+            }
+          },
+          "routing": {
+            "$ref": "#/components/schemas/RoutingConfiguration"
+          },
+          "ruleSets": {
+            "type": "object",
+            "additionalProperties": {
+              "$ref": "#/components/schemas/RuleSet"
+            },
+            "propertyNames": {
+              "type": "string"
+            }
+          },
+          "tagsOwners": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "propertyNames": {
+              "type": "string"
+            }
+          },
+          "topology": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/TopologyRule"
+            }
+          }
+        },
+        "additionalProperties": false
+      },
+      "Count": {
+        "type": "integer",
+        "description": "A nonnegative item count bounded for lossless JSON arithmetic.",
+        "maximum": 9007199254740991,
+        "minimum": 0
+      },
+      "CountryProfile": {
+        "type": "object",
+        "required": [
+          "countries",
+          "profile"
+        ],
+        "properties": {
+          "countries": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "profile": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": false
+      },
+      "CreateJoinLinkRequest": {
+        "type": "object",
+        "required": [
+          "requestId",
+          "role",
+          "expiresInSeconds"
+        ],
+        "properties": {
+          "expiresInSeconds": {
+            "type": "integer",
+            "format": "int32",
+            "maximum": 604800,
+            "minimum": 60
+          },
+          "requestId": {
+            "$ref": "#/components/schemas/RequestId"
+          },
+          "role": {
+            "$ref": "#/components/schemas/MembershipRole"
+          }
+        },
+        "additionalProperties": false
+      },
       "CreateNetworkRequest": {
         "type": "object",
         "required": [
@@ -52,7 +1501,8 @@ export const schemaDocument = {
         ],
         "properties": {
           "name": {
-            "type": "string"
+            "type": "string",
+            "description": "Raw input. Apply getAuthOptions.networkNameRules; padding is allowed."
           },
           "requestId": {
             "$ref": "#/components/schemas/RequestId"
@@ -60,8 +1510,293 @@ export const schemaDocument = {
         },
         "additionalProperties": false
       },
+      "Defaults": {
+        "type": "object",
+        "properties": {
+          "access": {
+            "$ref": "#/components/schemas/AccessDefault"
+          },
+          "dialers": {
+            "$ref": "#/components/schemas/DialerSet"
+          },
+          "topology": {
+            "$ref": "#/components/schemas/TopologyDefault"
+          }
+        },
+        "additionalProperties": false
+      },
+      "DefaultsView": {
+        "type": "object",
+        "required": [
+          "access",
+          "topology",
+          "dialers"
+        ],
+        "properties": {
+          "access": {
+            "$ref": "#/components/schemas/AccessDefault"
+          },
+          "dialers": {
+            "$ref": "#/components/schemas/DialerSetView"
+          },
+          "topology": {
+            "$ref": "#/components/schemas/TopologyDefault"
+          }
+        },
+        "additionalProperties": false
+      },
+      "DialerSet": {
+        "type": "object",
+        "properties": {
+          "native_tcp": {
+            "$ref": "#/components/schemas/NativeTcpDialer"
+          },
+          "native_udp": {
+            "$ref": "#/components/schemas/NativeUdpDialer"
+          },
+          "trojan": {
+            "$ref": "#/components/schemas/TrojanDialer"
+          },
+          "vless": {
+            "$ref": "#/components/schemas/VlessDialer"
+          }
+        },
+        "additionalProperties": false
+      },
+      "DialerSetView": {
+        "type": "object",
+        "properties": {
+          "native_tcp": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/NativeTcpDialer"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "native_udp": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/NativeUdpDialer"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "trojan": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/TrojanDialer"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "vless": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/VlessDialerView"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "additionalProperties": false
+      },
+      "DialerStream": {
+        "type": "string",
+        "enum": [
+          "auto",
+          "tcp",
+          "websocket"
+        ]
+      },
+      "DialerTls": {
+        "type": "object",
+        "properties": {
+          "alpn": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "handshakeTimeout": {
+            "$ref": "#/components/schemas/PositiveDuration"
+          },
+          "maxVersion": {
+            "$ref": "#/components/schemas/TlsVersion"
+          },
+          "minVersion": {
+            "$ref": "#/components/schemas/TlsVersion"
+          },
+          "trust": {
+            "$ref": "#/components/schemas/TlsTrust"
+          }
+        },
+        "additionalProperties": false
+      },
+      "DialerWebSocket": {
+        "type": "object",
+        "properties": {
+          "headers": {
+            "$ref": "#/components/schemas/WebSocketHeaders"
+          }
+        },
+        "additionalProperties": false
+      },
+      "DnsConfiguration": {
+        "type": "object",
+        "required": [
+          "domain"
+        ],
+        "properties": {
+          "default": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "domain": {
+            "type": "string"
+          },
+          "magicDNS": {
+            "type": "boolean"
+          },
+          "overrideLocal": {
+            "type": "boolean"
+          },
+          "routes": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "propertyNames": {
+              "type": "string"
+            }
+          },
+          "searchDomains": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "servers": {
+            "type": "object",
+            "additionalProperties": {
+              "$ref": "#/components/schemas/DnsServer"
+            },
+            "propertyNames": {
+              "type": "string"
+            }
+          }
+        },
+        "additionalProperties": false
+      },
+      "DnsServer": {
+        "type": "object",
+        "required": [
+          "type",
+          "server"
+        ],
+        "properties": {
+          "server": {
+            "type": "string"
+          },
+          "serverPort": {
+            "$ref": "#/components/schemas/Port"
+          },
+          "type": {
+            "$ref": "#/components/schemas/DnsTransport"
+          },
+          "useWithExit": {
+            "type": "boolean"
+          }
+        },
+        "additionalProperties": false
+      },
+      "DnsTransport": {
+        "type": "string",
+        "enum": [
+          "udp",
+          "tcp"
+        ]
+      },
+      "EgressRouting": {
+        "type": "object",
+        "properties": {
+          "assignments": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ProfileAssignment"
+            }
+          },
+          "auto": {
+            "$ref": "#/components/schemas/AutoProfile"
+          },
+          "profiles": {
+            "type": "object",
+            "additionalProperties": {
+              "$ref": "#/components/schemas/RoutingProfile"
+            },
+            "propertyNames": {
+              "type": "string"
+            }
+          },
+          "rules": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/EgressRule"
+            }
+          }
+        },
+        "additionalProperties": false
+      },
+      "EgressRule": {
+        "type": "object",
+        "required": [
+          "match",
+          "action"
+        ],
+        "properties": {
+          "action": {
+            "$ref": "#/components/schemas/RouteAction"
+          },
+          "match": {
+            "$ref": "#/components/schemas/RouteMatch"
+          },
+          "remark": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": false
+      },
       "EmptyParams": {
         "type": "object",
+        "additionalProperties": false
+      },
+      "Endpoint": {
+        "type": "object",
+        "required": [
+          "host",
+          "port"
+        ],
+        "properties": {
+          "host": {
+            "type": "string"
+          },
+          "port": {
+            "$ref": "#/components/schemas/Port"
+          }
+        },
         "additionalProperties": false
       },
       "ErrorResponse": {
@@ -95,6 +1830,621 @@ export const schemaDocument = {
         },
         "additionalProperties": false
       },
+      "JoinLinkCreated": {
+        "oneOf": [
+          {
+            "type": "object",
+            "required": [
+              "requestId",
+              "link",
+              "secret",
+              "secretDelivery"
+            ],
+            "properties": {
+              "link": {
+                "$ref": "#/components/schemas/JoinLinkView"
+              },
+              "requestId": {
+                "$ref": "#/components/schemas/RequestId"
+              },
+              "secret": {
+                "$ref": "#/components/schemas/WireSecret"
+              },
+              "secretDelivery": {
+                "type": "string",
+                "enum": [
+                  "available"
+                ]
+              }
+            },
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "required": [
+              "requestId",
+              "link",
+              "secretDelivery"
+            ],
+            "properties": {
+              "link": {
+                "$ref": "#/components/schemas/JoinLinkView"
+              },
+              "requestId": {
+                "$ref": "#/components/schemas/RequestId"
+              },
+              "secretDelivery": {
+                "type": "string",
+                "enum": [
+                  "unavailable"
+                ]
+              }
+            },
+            "additionalProperties": false
+          }
+        ]
+      },
+      "JoinLinkCredentialRequest": {
+        "type": "object",
+        "required": [
+          "token"
+        ],
+        "properties": {
+          "token": {
+            "$ref": "#/components/schemas/WireSecret"
+          }
+        },
+        "additionalProperties": false
+      },
+      "JoinLinkId": {
+        "type": "string",
+        "format": "uuid",
+        "description": "Network join-link record identifier; not the joining secret.\n\n This is an identifier, not a credential. Generation and authorization\n belong to the caller. Parsing rejects aliases rather than normalizing them.",
+        "maxLength": 36,
+        "minLength": 36,
+        "pattern": "^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+      },
+      "JoinLinkInspection": {
+        "type": "object",
+        "required": [
+          "requestId",
+          "link",
+          "networkName"
+        ],
+        "properties": {
+          "link": {
+            "$ref": "#/components/schemas/JoinLinkView"
+          },
+          "networkName": {
+            "type": "string"
+          },
+          "requestId": {
+            "$ref": "#/components/schemas/RequestId"
+          }
+        },
+        "additionalProperties": false
+      },
+      "JoinLinkListResponse": {
+        "type": "object",
+        "required": [
+          "requestId",
+          "items",
+          "nextCursor",
+          "asOf"
+        ],
+        "properties": {
+          "asOf": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/JoinLinkView"
+            }
+          },
+          "nextCursor": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "requestId": {
+            "$ref": "#/components/schemas/RequestId"
+          }
+        },
+        "additionalProperties": false
+      },
+      "JoinLinkRedeemed": {
+        "type": "object",
+        "required": [
+          "requestId",
+          "networkId",
+          "membershipId"
+        ],
+        "properties": {
+          "membershipId": {
+            "$ref": "#/components/schemas/MembershipId"
+          },
+          "networkId": {
+            "$ref": "#/components/schemas/NetworkId"
+          },
+          "requestId": {
+            "$ref": "#/components/schemas/RequestId"
+          }
+        },
+        "additionalProperties": false
+      },
+      "JoinLinkView": {
+        "type": "object",
+        "required": [
+          "id",
+          "networkId",
+          "role",
+          "createdAt",
+          "expiresAt",
+          "revokedAt",
+          "consumedAt",
+          "consumedByUserId"
+        ],
+        "properties": {
+          "consumedAt": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "consumedByUserId": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/UserId"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "createdAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "expiresAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "id": {
+            "$ref": "#/components/schemas/JoinLinkId"
+          },
+          "networkId": {
+            "$ref": "#/components/schemas/NetworkId"
+          },
+          "revokedAt": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "role": {
+            "$ref": "#/components/schemas/MembershipRole"
+          }
+        },
+        "additionalProperties": false
+      },
+      "Listener": {
+        "oneOf": [
+          {
+            "type": "object",
+            "required": [
+              "listenPort",
+              "type"
+            ],
+            "properties": {
+              "bindInterface": {
+                "type": "string"
+              },
+              "enabled": {
+                "type": "boolean"
+              },
+              "endpoints": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/components/schemas/Endpoint"
+                }
+              },
+              "listen": {
+                "type": "string"
+              },
+              "listenPort": {
+                "$ref": "#/components/schemas/Port"
+              },
+              "remark": {
+                "type": "string"
+              },
+              "socket": {
+                "$ref": "#/components/schemas/SocketOptions"
+              },
+              "type": {
+                "type": "string",
+                "enum": [
+                  "native_udp"
+                ]
+              }
+            },
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "required": [
+              "listenPort",
+              "type"
+            ],
+            "properties": {
+              "bindInterface": {
+                "type": "string"
+              },
+              "enabled": {
+                "type": "boolean"
+              },
+              "endpoints": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/components/schemas/Endpoint"
+                }
+              },
+              "listen": {
+                "type": "string"
+              },
+              "listenPort": {
+                "$ref": "#/components/schemas/Port"
+              },
+              "remark": {
+                "type": "string"
+              },
+              "socket": {
+                "$ref": "#/components/schemas/SocketOptions"
+              },
+              "tcp": {
+                "$ref": "#/components/schemas/TcpOptions"
+              },
+              "type": {
+                "type": "string",
+                "enum": [
+                  "native_tcp"
+                ]
+              }
+            },
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "required": [
+              "listenPort",
+              "tls",
+              "type"
+            ],
+            "properties": {
+              "bindInterface": {
+                "type": "string"
+              },
+              "enabled": {
+                "type": "boolean"
+              },
+              "endpoints": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/components/schemas/Endpoint"
+                }
+              },
+              "flow": {
+                "type": "string"
+              },
+              "listen": {
+                "type": "string"
+              },
+              "listenPort": {
+                "$ref": "#/components/schemas/Port"
+              },
+              "remark": {
+                "type": "string"
+              },
+              "socket": {
+                "$ref": "#/components/schemas/SocketOptions"
+              },
+              "stream": {
+                "$ref": "#/components/schemas/VlessStream"
+              },
+              "tcp": {
+                "$ref": "#/components/schemas/TcpOptions"
+              },
+              "tls": {
+                "$ref": "#/components/schemas/ListenerTls"
+              },
+              "type": {
+                "type": "string",
+                "enum": [
+                  "vless"
+                ]
+              },
+              "uuid": {
+                "$ref": "#/components/schemas/SecretString"
+              },
+              "websocket": {
+                "$ref": "#/components/schemas/ListenerWebSocket"
+              }
+            },
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "required": [
+              "listenPort",
+              "tls",
+              "type"
+            ],
+            "properties": {
+              "bindInterface": {
+                "type": "string"
+              },
+              "enabled": {
+                "type": "boolean"
+              },
+              "endpoints": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/components/schemas/Endpoint"
+                }
+              },
+              "listen": {
+                "type": "string"
+              },
+              "listenPort": {
+                "$ref": "#/components/schemas/Port"
+              },
+              "password": {
+                "$ref": "#/components/schemas/SecretString"
+              },
+              "remark": {
+                "type": "string"
+              },
+              "socket": {
+                "$ref": "#/components/schemas/SocketOptions"
+              },
+              "stream": {
+                "$ref": "#/components/schemas/TrojanStream"
+              },
+              "tcp": {
+                "$ref": "#/components/schemas/TcpOptions"
+              },
+              "tls": {
+                "$ref": "#/components/schemas/ListenerTls"
+              },
+              "type": {
+                "type": "string",
+                "enum": [
+                  "trojan"
+                ]
+              }
+            },
+            "additionalProperties": false
+          }
+        ]
+      },
+      "ListenerTls": {
+        "type": "object",
+        "required": [
+          "serverName"
+        ],
+        "properties": {
+          "alpn": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "certificate": {
+            "$ref": "#/components/schemas/SecretString"
+          },
+          "handshakeTimeout": {
+            "$ref": "#/components/schemas/PositiveDuration"
+          },
+          "maxVersion": {
+            "$ref": "#/components/schemas/TlsVersion"
+          },
+          "minVersion": {
+            "$ref": "#/components/schemas/TlsVersion"
+          },
+          "mode": {
+            "$ref": "#/components/schemas/TlsMode"
+          },
+          "privateKey": {
+            "$ref": "#/components/schemas/SecretString"
+          },
+          "serverName": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": false
+      },
+      "ListenerTlsView": {
+        "type": "object",
+        "required": [
+          "mode",
+          "serverName",
+          "minVersion",
+          "maxVersion",
+          "alpn",
+          "handshakeTimeout",
+          "certificatePresent",
+          "privateKeyPresent"
+        ],
+        "properties": {
+          "alpn": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "certificatePresent": {
+            "type": "boolean"
+          },
+          "handshakeTimeout": {
+            "$ref": "#/components/schemas/PositiveDuration"
+          },
+          "maxVersion": {
+            "$ref": "#/components/schemas/TlsVersion"
+          },
+          "minVersion": {
+            "$ref": "#/components/schemas/TlsVersion"
+          },
+          "mode": {
+            "$ref": "#/components/schemas/TlsMode"
+          },
+          "privateKeyPresent": {
+            "type": "boolean"
+          },
+          "serverName": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": false
+      },
+      "ListenerView": {
+        "type": "object",
+        "required": [
+          "protocol",
+          "enabled",
+          "remark",
+          "listen",
+          "listenPort",
+          "endpoints",
+          "bindInterface",
+          "socket",
+          "credentialPresent"
+        ],
+        "properties": {
+          "bindInterface": {
+            "type": "string"
+          },
+          "credentialPresent": {
+            "type": "boolean"
+          },
+          "enabled": {
+            "type": "boolean"
+          },
+          "endpoints": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Endpoint"
+            }
+          },
+          "flow": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "listen": {
+            "type": "string"
+          },
+          "listenPort": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          },
+          "protocol": {
+            "$ref": "#/components/schemas/TransportProtocol"
+          },
+          "remark": {
+            "type": "string"
+          },
+          "socket": {
+            "$ref": "#/components/schemas/SocketOptions"
+          },
+          "stream": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/VlessStream"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "tcp": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/TcpOptions"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "tls": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/ListenerTlsView"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "websocket": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/ListenerWebSocketView"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "additionalProperties": false
+      },
+      "ListenerWebSocket": {
+        "type": "object",
+        "properties": {
+          "host": {
+            "type": "string"
+          },
+          "path": {
+            "$ref": "#/components/schemas/WebSocketPath"
+          },
+          "responseHeaders": {
+            "$ref": "#/components/schemas/WebSocketHeaders"
+          }
+        },
+        "additionalProperties": false
+      },
+      "ListenerWebSocketView": {
+        "type": "object",
+        "required": [
+          "path",
+          "responseHeaderNames"
+        ],
+        "properties": {
+          "host": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "path": {
+            "$ref": "#/components/schemas/WebSocketPath"
+          },
+          "responseHeaderNames": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        },
+        "additionalProperties": false
+      },
       "LoginRequest": {
         "type": "object",
         "required": [
@@ -111,6 +2461,71 @@ export const schemaDocument = {
         },
         "additionalProperties": false
       },
+      "MaterialRequirement": {
+        "type": "string",
+        "enum": [
+          "uuid",
+          "password",
+          "certificate",
+          "privateKey",
+          "certificateValidation"
+        ]
+      },
+      "MemberActions": {
+        "type": "object",
+        "required": [
+          "changeRole",
+          "assignableRoles",
+          "remove"
+        ],
+        "properties": {
+          "assignableRoles": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/MembershipRole"
+            }
+          },
+          "changeRole": {
+            "type": "boolean"
+          },
+          "remove": {
+            "type": "boolean"
+          }
+        },
+        "additionalProperties": false
+      },
+      "MemberMutationResponse": {
+        "type": "object",
+        "required": [
+          "requestId",
+          "member"
+        ],
+        "properties": {
+          "member": {
+            "$ref": "#/components/schemas/MemberSummary"
+          },
+          "requestId": {
+            "$ref": "#/components/schemas/RequestId"
+          }
+        },
+        "additionalProperties": false
+      },
+      "MemberRemovedResponse": {
+        "type": "object",
+        "required": [
+          "requestId",
+          "revision"
+        ],
+        "properties": {
+          "requestId": {
+            "$ref": "#/components/schemas/RequestId"
+          },
+          "revision": {
+            "$ref": "#/components/schemas/Revision"
+          }
+        },
+        "additionalProperties": false
+      },
       "MemberSummary": {
         "type": "object",
         "required": [
@@ -119,9 +2534,13 @@ export const schemaDocument = {
           "email",
           "role",
           "version",
-          "joinedAt"
+          "joinedAt",
+          "actions"
         ],
         "properties": {
+          "actions": {
+            "$ref": "#/components/schemas/MemberActions"
+          },
           "email": {
             "type": "string"
           },
@@ -161,6 +2580,168 @@ export const schemaDocument = {
           "member"
         ]
       },
+      "MeshRoute": {
+        "type": "object",
+        "required": [
+          "src",
+          "dst",
+          "via"
+        ],
+        "properties": {
+          "dst": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "remark": {
+            "type": "string"
+          },
+          "src": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "via": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        },
+        "additionalProperties": false
+      },
+      "NativeTcpDialer": {
+        "type": "object",
+        "properties": {
+          "bindInterface": {
+            "type": "string"
+          },
+          "connectTimeout": {
+            "$ref": "#/components/schemas/PositiveDuration"
+          },
+          "enabled": {
+            "type": "boolean"
+          },
+          "localAddress": {
+            "type": "string"
+          },
+          "priority": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          },
+          "remark": {
+            "type": "string"
+          },
+          "socket": {
+            "$ref": "#/components/schemas/SocketOptions"
+          },
+          "tcp": {
+            "$ref": "#/components/schemas/TcpOptions"
+          }
+        },
+        "additionalProperties": false
+      },
+      "NativeTcpListener": {
+        "type": "object",
+        "required": [
+          "listenPort"
+        ],
+        "properties": {
+          "bindInterface": {
+            "type": "string"
+          },
+          "enabled": {
+            "type": "boolean"
+          },
+          "endpoints": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Endpoint"
+            }
+          },
+          "listen": {
+            "type": "string"
+          },
+          "listenPort": {
+            "$ref": "#/components/schemas/Port"
+          },
+          "remark": {
+            "type": "string"
+          },
+          "socket": {
+            "$ref": "#/components/schemas/SocketOptions"
+          },
+          "tcp": {
+            "$ref": "#/components/schemas/TcpOptions"
+          }
+        },
+        "additionalProperties": false
+      },
+      "NativeUdpDialer": {
+        "type": "object",
+        "properties": {
+          "bindInterface": {
+            "type": "string"
+          },
+          "connectTimeout": {
+            "$ref": "#/components/schemas/PositiveDuration"
+          },
+          "enabled": {
+            "type": "boolean"
+          },
+          "localAddress": {
+            "type": "string"
+          },
+          "priority": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          },
+          "remark": {
+            "type": "string"
+          },
+          "socket": {
+            "$ref": "#/components/schemas/SocketOptions"
+          }
+        },
+        "additionalProperties": false
+      },
+      "NativeUdpListener": {
+        "type": "object",
+        "required": [
+          "listenPort"
+        ],
+        "properties": {
+          "bindInterface": {
+            "type": "string"
+          },
+          "enabled": {
+            "type": "boolean"
+          },
+          "endpoints": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Endpoint"
+            }
+          },
+          "listen": {
+            "type": "string"
+          },
+          "listenPort": {
+            "$ref": "#/components/schemas/Port"
+          },
+          "remark": {
+            "type": "string"
+          },
+          "socket": {
+            "$ref": "#/components/schemas/SocketOptions"
+          }
+        },
+        "additionalProperties": false
+      },
       "NetworkActions": {
         "type": "object",
         "required": [
@@ -181,6 +2762,87 @@ export const schemaDocument = {
         },
         "additionalProperties": false
       },
+      "NetworkConfiguration": {
+        "type": "object",
+        "required": [
+          "addressPools",
+          "dns"
+        ],
+        "properties": {
+          "access": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/AccessRule"
+            }
+          },
+          "addressPools": {
+            "$ref": "#/components/schemas/AddressPools"
+          },
+          "defaults": {
+            "$ref": "#/components/schemas/Defaults"
+          },
+          "dns": {
+            "$ref": "#/components/schemas/DnsConfiguration"
+          },
+          "groups": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "propertyNames": {
+              "type": "string"
+            }
+          },
+          "nodes": {
+            "type": "object",
+            "additionalProperties": {
+              "$ref": "#/components/schemas/NodeSettings"
+            },
+            "propertyNames": {
+              "type": "string",
+              "format": "uuid",
+              "description": "Stable node identifier, independent of its addresses and keys.\n\n This is an identifier, not a credential. Generation and authorization\n belong to the caller. Parsing rejects aliases rather than normalizing them.",
+              "maxLength": 36,
+              "minLength": 36,
+              "pattern": "^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+            }
+          },
+          "routing": {
+            "$ref": "#/components/schemas/RoutingConfiguration"
+          },
+          "ruleSets": {
+            "type": "object",
+            "additionalProperties": {
+              "$ref": "#/components/schemas/RuleSet"
+            },
+            "propertyNames": {
+              "type": "string"
+            }
+          },
+          "tagsOwners": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "propertyNames": {
+              "type": "string"
+            }
+          },
+          "topology": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/TopologyRule"
+            }
+          }
+        },
+        "additionalProperties": false
+      },
       "NetworkId": {
         "type": "string",
         "format": "uuid",
@@ -195,7 +2857,8 @@ export const schemaDocument = {
           "requestId",
           "items",
           "nextCursor",
-          "asOf"
+          "asOf",
+          "total"
         ],
         "properties": {
           "asOf": {
@@ -216,6 +2879,10 @@ export const schemaDocument = {
           },
           "requestId": {
             "$ref": "#/components/schemas/RequestId"
+          },
+          "total": {
+            "$ref": "#/components/schemas/Count",
+            "description": "Current visible count within the cursor's original creation bounds.\nRecomputed on every page; permission loss can reduce this value."
           }
         },
         "additionalProperties": false
@@ -226,7 +2893,8 @@ export const schemaDocument = {
           "requestId",
           "items",
           "nextCursor",
-          "asOf"
+          "asOf",
+          "total"
         ],
         "properties": {
           "asOf": {
@@ -247,9 +2915,58 @@ export const schemaDocument = {
           },
           "requestId": {
             "$ref": "#/components/schemas/RequestId"
+          },
+          "total": {
+            "$ref": "#/components/schemas/Count",
+            "description": "Current visible count within the cursor's original creation bound.\nRemoved members disappear and reduce total on subsequent pages."
           }
         },
         "additionalProperties": false
+      },
+      "NetworkNameRules": {
+        "type": "object",
+        "required": [
+          "minCodepoints",
+          "maxCodepoints",
+          "maxInputUtf8Bytes",
+          "trim",
+          "forbidControlCharacters"
+        ],
+        "properties": {
+          "forbidControlCharacters": {
+            "type": "boolean",
+            "description": "Reject every Unicode General_Category=Cc character in raw input."
+          },
+          "maxCodepoints": {
+            "type": "integer",
+            "format": "int32",
+            "maximum": 65535,
+            "minimum": 0
+          },
+          "maxInputUtf8Bytes": {
+            "type": "integer",
+            "format": "int32",
+            "maximum": 65535,
+            "minimum": 0
+          },
+          "minCodepoints": {
+            "type": "integer",
+            "format": "int32",
+            "maximum": 65535,
+            "minimum": 0
+          },
+          "trim": {
+            "$ref": "#/components/schemas/NetworkNameTrim",
+            "description": "Unicode White_Space: U+0009..000D, 0020, 0085, 00A0, 1680,\n2000..200A, 2028, 2029, 202F, 205F, 3000. U+FEFF is not trimmed.\nRaw input Cc rejection happens before trimming (including edge controls)."
+          }
+        },
+        "additionalProperties": false
+      },
+      "NetworkNameTrim": {
+        "type": "string",
+        "enum": [
+          "unicodeWhiteSpace"
+        ]
       },
       "NetworkResponse": {
         "type": "object",
@@ -304,11 +3021,273 @@ export const schemaDocument = {
         },
         "additionalProperties": false
       },
+      "NodeAddresses": {
+        "type": "object",
+        "required": [
+          "ipv4",
+          "ipv6"
+        ],
+        "properties": {
+          "ipv4": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "ipv4"
+          },
+          "ipv6": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "ipv6"
+          }
+        },
+        "additionalProperties": false
+      },
+      "NodeAddressesInput": {
+        "type": "object",
+        "properties": {
+          "ipv4": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "ipv6": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "additionalProperties": false
+      },
+      "NodeId": {
+        "type": "string",
+        "format": "uuid",
+        "description": "Stable node identifier, independent of its addresses and keys.\n\n This is an identifier, not a credential. Generation and authorization\n belong to the caller. Parsing rejects aliases rather than normalizing them.",
+        "maxLength": 36,
+        "minLength": 36,
+        "pattern": "^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+      },
+      "NodeIdentity": {
+        "oneOf": [
+          {
+            "type": "object",
+            "required": [
+              "user",
+              "type"
+            ],
+            "properties": {
+              "type": {
+                "type": "string",
+                "enum": [
+                  "user"
+                ]
+              },
+              "user": {
+                "type": "string"
+              }
+            },
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "required": [
+              "tags",
+              "type"
+            ],
+            "properties": {
+              "tags": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "type": {
+                "type": "string",
+                "enum": [
+                  "tag"
+                ]
+              }
+            },
+            "additionalProperties": false
+          }
+        ]
+      },
+      "NodeSettings": {
+        "type": "object",
+        "required": [
+          "hostname",
+          "identity",
+          "addresses"
+        ],
+        "properties": {
+          "addresses": {
+            "$ref": "#/components/schemas/NodeAddresses"
+          },
+          "dialers": {
+            "$ref": "#/components/schemas/DialerSet"
+          },
+          "enabled": {
+            "type": "boolean"
+          },
+          "exitEnabled": {
+            "type": "boolean"
+          },
+          "hostname": {
+            "type": "string"
+          },
+          "identity": {
+            "$ref": "#/components/schemas/NodeIdentity"
+          },
+          "listeners": {
+            "type": "object",
+            "additionalProperties": {
+              "$ref": "#/components/schemas/PreparedListener"
+            },
+            "propertyNames": {
+              "type": "string"
+            }
+          },
+          "remark": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": false
+      },
+      "NodeSettingsPatch": {
+        "type": "object",
+        "properties": {
+          "dialers": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/DialerSet"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "enabled": {
+            "type": "boolean"
+          },
+          "exitEnabled": {
+            "type": "boolean"
+          },
+          "hostname": {
+            "type": "string"
+          },
+          "remark": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": false
+      },
+      "NodeSettingsView": {
+        "type": "object",
+        "required": [
+          "hostname",
+          "remark",
+          "identity",
+          "enabled",
+          "addresses",
+          "listeners",
+          "exitEnabled"
+        ],
+        "properties": {
+          "addresses": {
+            "$ref": "#/components/schemas/NodeAddresses"
+          },
+          "dialers": {
+            "$ref": "#/components/schemas/DialerSetView"
+          },
+          "enabled": {
+            "type": "boolean"
+          },
+          "exitEnabled": {
+            "type": "boolean"
+          },
+          "hostname": {
+            "type": "string"
+          },
+          "identity": {
+            "$ref": "#/components/schemas/NodeIdentity"
+          },
+          "listeners": {
+            "type": "object",
+            "additionalProperties": {
+              "$ref": "#/components/schemas/ListenerView"
+            },
+            "propertyNames": {
+              "type": "string"
+            }
+          },
+          "remark": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": false
+      },
+      "OuterSocket": {
+        "type": "string",
+        "description": "Outer transport socket classification; never a business access decision.",
+        "enum": [
+          "udp",
+          "tcp"
+        ]
+      },
       "PasswordLengthUnit": {
         "type": "string",
         "enum": [
           "unicodeCodepoints"
         ]
+      },
+      "PasswordResetInspectRequest": {
+        "type": "object",
+        "required": [
+          "token"
+        ],
+        "properties": {
+          "token": {
+            "$ref": "#/components/schemas/WireSecret"
+          }
+        },
+        "additionalProperties": false
+      },
+      "PasswordResetInspection": {
+        "type": "object",
+        "required": [
+          "requestId",
+          "expiresAt"
+        ],
+        "properties": {
+          "expiresAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "requestId": {
+            "$ref": "#/components/schemas/RequestId"
+          }
+        },
+        "additionalProperties": false
+      },
+      "PasswordResetRedeemRequest": {
+        "type": "object",
+        "required": [
+          "token",
+          "password"
+        ],
+        "properties": {
+          "password": {
+            "$ref": "#/components/schemas/WireSecret"
+          },
+          "token": {
+            "$ref": "#/components/schemas/WireSecret"
+          }
+        },
+        "additionalProperties": false
       },
       "PasswordRules": {
         "type": "object",
@@ -342,6 +3321,332 @@ export const schemaDocument = {
           }
         },
         "additionalProperties": false
+      },
+      "Port": {
+        "type": "integer",
+        "format": "int32",
+        "description": "A nonzero TCP/UDP port. Successful validation says nothing about availability.",
+        "maximum": 65535,
+        "minimum": 1
+      },
+      "PositiveDuration": {
+        "type": "string",
+        "description": "Positive canonical decimal with ms/s/m/h; total must fit u64 milliseconds. Unit spelling is preserved. Consumers enforce resource and lease limits separately.",
+        "pattern": "^(?:(?:[1-9][0-9]{0,18}|1[0-7][0-9]{18}|18[0-3][0-9]{17}|184[0-3][0-9]{16}|1844[0-5][0-9]{15}|18446[0-6][0-9]{14}|184467[0-3][0-9]{13}|1844674[0-3][0-9]{12}|184467440[0-6][0-9]{10}|1844674407[0-2][0-9]{9}|18446744073[0-6][0-9]{8}|1844674407370[0-8][0-9]{6}|18446744073709[0-4][0-9]{5}|184467440737095[0-4][0-9]{4}|1844674407370955[0-0][0-9]{3}|18446744073709551[0-5][0-9]{2}|184467440737095516[0-0][0-9]{1}|1844674407370955161[0-4][0-9]{0}|18446744073709551615)ms|(?:[1-9][0-9]{0,15}|1[0-7][0-9]{15}|18[0-3][0-9]{14}|184[0-3][0-9]{13}|1844[0-5][0-9]{12}|18446[0-6][0-9]{11}|184467[0-3][0-9]{10}|1844674[0-3][0-9]{9}|184467440[0-6][0-9]{7}|1844674407[0-2][0-9]{6}|18446744073[0-6][0-9]{5}|1844674407370[0-8][0-9]{3}|18446744073709[0-4][0-9]{2}|184467440737095[0-4][0-9]{1}|1844674407370955[0-0][0-9]{0}|18446744073709551)s|(?:[1-9][0-9]{0,13}|[1-2][0-9]{14}|30[0-6][0-9]{12}|307[0-3][0-9]{11}|3074[0-3][0-9]{10}|30744[0-4][0-9]{9}|307445[0-6][0-9]{8}|3074457[0-2][0-9]{7}|30744573[0-3][0-9]{6}|307445734[0-4][0-9]{5}|3074457345[0-5][0-9]{4}|30744573456[0-0][0-9]{3}|307445734561[0-7][0-9]{2}|3074457345618[0-1][0-9]{1}|30744573456182[0-4][0-9]{0}|307445734561825)m|(?:[1-9][0-9]{0,11}|[1-4][0-9]{12}|5[0-0][0-9]{11}|51[0-1][0-9]{10}|512[0-3][0-9]{9}|51240[0-8][0-9]{7}|512409[0-4][0-9]{6}|5124095[0-4][0-9]{5}|51240955[0-6][0-9]{4}|512409557[0-5][0-9]{3}|51240955760[0-2][0-9]{1}|5124095576030)h)(?![\\s\\S])"
+      },
+      "PreparationKind": {
+        "oneOf": [
+          {
+            "type": "string",
+            "enum": [
+              "addressPoolV4",
+              "addressPoolV6",
+              "addressV4",
+              "addressV6",
+              "identityProof",
+              "ruleSetContent"
+            ]
+          },
+          {
+            "type": "object",
+            "required": [
+              "material"
+            ],
+            "properties": {
+              "material": {
+                "$ref": "#/components/schemas/MaterialRequirement"
+              }
+            },
+            "additionalProperties": false
+          }
+        ]
+      },
+      "PreparationRequirement": {
+        "type": "object",
+        "required": [
+          "path",
+          "kind"
+        ],
+        "properties": {
+          "kind": {
+            "$ref": "#/components/schemas/PreparationKind"
+          },
+          "path": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": false
+      },
+      "PreparedListener": {
+        "oneOf": [
+          {
+            "type": "object",
+            "required": [
+              "listenPort",
+              "type"
+            ],
+            "properties": {
+              "bindInterface": {
+                "type": "string"
+              },
+              "enabled": {
+                "type": "boolean"
+              },
+              "endpoints": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/components/schemas/Endpoint"
+                }
+              },
+              "listen": {
+                "type": "string"
+              },
+              "listenPort": {
+                "$ref": "#/components/schemas/Port"
+              },
+              "remark": {
+                "type": "string"
+              },
+              "socket": {
+                "$ref": "#/components/schemas/SocketOptions"
+              },
+              "type": {
+                "type": "string",
+                "enum": [
+                  "native_udp"
+                ]
+              }
+            },
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "required": [
+              "listenPort",
+              "type"
+            ],
+            "properties": {
+              "bindInterface": {
+                "type": "string"
+              },
+              "enabled": {
+                "type": "boolean"
+              },
+              "endpoints": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/components/schemas/Endpoint"
+                }
+              },
+              "listen": {
+                "type": "string"
+              },
+              "listenPort": {
+                "$ref": "#/components/schemas/Port"
+              },
+              "remark": {
+                "type": "string"
+              },
+              "socket": {
+                "$ref": "#/components/schemas/SocketOptions"
+              },
+              "tcp": {
+                "$ref": "#/components/schemas/TcpOptions"
+              },
+              "type": {
+                "type": "string",
+                "enum": [
+                  "native_tcp"
+                ]
+              }
+            },
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "required": [
+              "listenPort",
+              "tls",
+              "type",
+              "uuid"
+            ],
+            "properties": {
+              "bindInterface": {
+                "type": "string"
+              },
+              "enabled": {
+                "type": "boolean"
+              },
+              "endpoints": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/components/schemas/Endpoint"
+                }
+              },
+              "flow": {
+                "type": "string"
+              },
+              "listen": {
+                "type": "string"
+              },
+              "listenPort": {
+                "$ref": "#/components/schemas/Port"
+              },
+              "remark": {
+                "type": "string"
+              },
+              "socket": {
+                "$ref": "#/components/schemas/SocketOptions"
+              },
+              "stream": {
+                "$ref": "#/components/schemas/VlessStream"
+              },
+              "tcp": {
+                "$ref": "#/components/schemas/TcpOptions"
+              },
+              "tls": {
+                "type": "object",
+                "required": [
+                  "serverName",
+                  "certificate",
+                  "privateKey"
+                ],
+                "properties": {
+                  "alpn": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    }
+                  },
+                  "certificate": {
+                    "$ref": "#/components/schemas/SecretString"
+                  },
+                  "handshakeTimeout": {
+                    "$ref": "#/components/schemas/PositiveDuration"
+                  },
+                  "maxVersion": {
+                    "$ref": "#/components/schemas/TlsVersion"
+                  },
+                  "minVersion": {
+                    "$ref": "#/components/schemas/TlsVersion"
+                  },
+                  "mode": {
+                    "$ref": "#/components/schemas/TlsMode"
+                  },
+                  "privateKey": {
+                    "$ref": "#/components/schemas/SecretString"
+                  },
+                  "serverName": {
+                    "type": "string"
+                  }
+                },
+                "additionalProperties": false
+              },
+              "type": {
+                "type": "string",
+                "enum": [
+                  "vless"
+                ]
+              },
+              "uuid": {
+                "$ref": "#/components/schemas/SecretString"
+              },
+              "websocket": {
+                "$ref": "#/components/schemas/ListenerWebSocket"
+              }
+            },
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "required": [
+              "listenPort",
+              "tls",
+              "type",
+              "password"
+            ],
+            "properties": {
+              "bindInterface": {
+                "type": "string"
+              },
+              "enabled": {
+                "type": "boolean"
+              },
+              "endpoints": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/components/schemas/Endpoint"
+                }
+              },
+              "listen": {
+                "type": "string"
+              },
+              "listenPort": {
+                "$ref": "#/components/schemas/Port"
+              },
+              "password": {
+                "$ref": "#/components/schemas/SecretString"
+              },
+              "remark": {
+                "type": "string"
+              },
+              "socket": {
+                "$ref": "#/components/schemas/SocketOptions"
+              },
+              "stream": {
+                "$ref": "#/components/schemas/TrojanStream"
+              },
+              "tcp": {
+                "$ref": "#/components/schemas/TcpOptions"
+              },
+              "tls": {
+                "type": "object",
+                "required": [
+                  "serverName",
+                  "certificate",
+                  "privateKey"
+                ],
+                "properties": {
+                  "alpn": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    }
+                  },
+                  "certificate": {
+                    "$ref": "#/components/schemas/SecretString"
+                  },
+                  "handshakeTimeout": {
+                    "$ref": "#/components/schemas/PositiveDuration"
+                  },
+                  "maxVersion": {
+                    "$ref": "#/components/schemas/TlsVersion"
+                  },
+                  "minVersion": {
+                    "$ref": "#/components/schemas/TlsVersion"
+                  },
+                  "mode": {
+                    "$ref": "#/components/schemas/TlsMode"
+                  },
+                  "privateKey": {
+                    "$ref": "#/components/schemas/SecretString"
+                  },
+                  "serverName": {
+                    "type": "string"
+                  }
+                },
+                "additionalProperties": false
+              },
+              "type": {
+                "type": "string",
+                "enum": [
+                  "trojan"
+                ]
+              }
+            },
+            "additionalProperties": false
+          }
+        ]
       },
       "Problem": {
         "oneOf": [
@@ -712,8 +4017,252 @@ export const schemaDocument = {
               }
             },
             "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "required": [
+              "code",
+              "params",
+              "message"
+            ],
+            "properties": {
+              "code": {
+                "type": "string",
+                "enum": [
+                  "version_conflict"
+                ]
+              },
+              "message": {
+                "type": "string"
+              },
+              "params": {
+                "$ref": "#/components/schemas/EmptyParams"
+              }
+            },
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "required": [
+              "code",
+              "params",
+              "message"
+            ],
+            "properties": {
+              "code": {
+                "type": "string",
+                "enum": [
+                  "last_owner"
+                ]
+              },
+              "message": {
+                "type": "string"
+              },
+              "params": {
+                "$ref": "#/components/schemas/EmptyParams"
+              }
+            },
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "required": [
+              "code",
+              "params",
+              "message"
+            ],
+            "properties": {
+              "code": {
+                "type": "string",
+                "enum": [
+                  "already_member"
+                ]
+              },
+              "message": {
+                "type": "string"
+              },
+              "params": {
+                "$ref": "#/components/schemas/EmptyParams"
+              }
+            },
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "required": [
+              "code",
+              "params",
+              "message"
+            ],
+            "properties": {
+              "code": {
+                "type": "string",
+                "enum": [
+                  "invalid_join_link"
+                ]
+              },
+              "message": {
+                "type": "string"
+              },
+              "params": {
+                "$ref": "#/components/schemas/EmptyParams"
+              }
+            },
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "required": [
+              "code",
+              "params",
+              "message"
+            ],
+            "properties": {
+              "code": {
+                "type": "string",
+                "enum": [
+                  "revision_conflict"
+                ]
+              },
+              "message": {
+                "type": "string"
+              },
+              "params": {
+                "$ref": "#/components/schemas/EmptyParams"
+              }
+            },
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "required": [
+              "code",
+              "params",
+              "message"
+            ],
+            "properties": {
+              "code": {
+                "type": "string",
+                "enum": [
+                  "configuration_invalid"
+                ]
+              },
+              "message": {
+                "type": "string"
+              },
+              "params": {
+                "$ref": "#/components/schemas/ConfigurationValidationParams"
+              }
+            },
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "required": [
+              "code",
+              "params",
+              "message"
+            ],
+            "properties": {
+              "code": {
+                "type": "string",
+                "enum": [
+                  "state_conflict"
+                ]
+              },
+              "message": {
+                "type": "string"
+              },
+              "params": {
+                "$ref": "#/components/schemas/EmptyParams"
+              }
+            },
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "required": [
+              "code",
+              "params",
+              "message"
+            ],
+            "properties": {
+              "code": {
+                "type": "string",
+                "enum": [
+                  "state_limit"
+                ]
+              },
+              "message": {
+                "type": "string"
+              },
+              "params": {
+                "$ref": "#/components/schemas/EmptyParams"
+              }
+            },
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "required": [
+              "code",
+              "params",
+              "message"
+            ],
+            "properties": {
+              "code": {
+                "type": "string",
+                "enum": [
+                  "observation_limit"
+                ]
+              },
+              "message": {
+                "type": "string"
+              },
+              "params": {
+                "$ref": "#/components/schemas/EmptyParams"
+              }
+            },
+            "additionalProperties": false
           }
         ]
+      },
+      "ProfileAssignment": {
+        "type": "object",
+        "required": [
+          "target",
+          "allowed",
+          "default"
+        ],
+        "properties": {
+          "allowed": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "default": {
+            "type": "string"
+          },
+          "locked": {
+            "type": "boolean"
+          },
+          "target": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        },
+        "additionalProperties": false
+      },
+      "PublicationId": {
+        "type": "string",
+        "format": "uuid",
+        "description": "Execution publication identifier.\n\n This is an identifier, not a credential. Generation and authorization\n belong to the caller. Parsing rejects aliases rather than normalizing them.",
+        "maxLength": 36,
+        "minLength": 36,
+        "pattern": "^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
       },
       "RegisterRequest": {
         "type": "object",
@@ -731,6 +4280,59 @@ export const schemaDocument = {
         },
         "additionalProperties": false
       },
+      "RemovalImpactResponse": {
+        "type": "object",
+        "required": [
+          "requestId",
+          "membershipId",
+          "version",
+          "revision",
+          "nodeIds",
+          "nodeCount"
+        ],
+        "properties": {
+          "membershipId": {
+            "$ref": "#/components/schemas/MembershipId"
+          },
+          "nodeCount": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          },
+          "nodeIds": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/NodeId"
+            }
+          },
+          "requestId": {
+            "$ref": "#/components/schemas/RequestId"
+          },
+          "revision": {
+            "$ref": "#/components/schemas/Revision"
+          },
+          "version": {
+            "$ref": "#/components/schemas/Version"
+          }
+        },
+        "additionalProperties": false
+      },
+      "RemoveMemberRequest": {
+        "type": "object",
+        "required": [
+          "expectedVersion",
+          "expectedRevision"
+        ],
+        "properties": {
+          "expectedRevision": {
+            "$ref": "#/components/schemas/Revision"
+          },
+          "expectedVersion": {
+            "$ref": "#/components/schemas/Version"
+          }
+        },
+        "additionalProperties": false
+      },
       "RenameNetworkRequest": {
         "type": "object",
         "required": [
@@ -743,7 +4345,8 @@ export const schemaDocument = {
             "type": "string"
           },
           "name": {
-            "type": "string"
+            "type": "string",
+            "description": "Raw input. Apply getAuthOptions.networkNameRules, not String.length."
           },
           "requestId": {
             "$ref": "#/components/schemas/RequestId"
@@ -764,6 +4367,194 @@ export const schemaDocument = {
         "description": "A positive configuration revision.",
         "maximum": 9007199254740991,
         "minimum": 1
+      },
+      "RouteAction": {
+        "oneOf": [
+          {
+            "type": "object",
+            "required": [
+              "nodes",
+              "type"
+            ],
+            "properties": {
+              "nodes": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "type": {
+                "type": "string",
+                "enum": [
+                  "exit"
+                ]
+              },
+              "via": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              }
+            },
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "required": [
+              "type"
+            ],
+            "properties": {
+              "type": {
+                "type": "string",
+                "enum": [
+                  "direct"
+                ]
+              }
+            },
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "required": [
+              "type"
+            ],
+            "properties": {
+              "type": {
+                "type": "string",
+                "enum": [
+                  "unmanaged"
+                ]
+              }
+            },
+            "additionalProperties": false
+          }
+        ]
+      },
+      "RouteMatch": {
+        "type": "object",
+        "properties": {
+          "domainSuffix": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "ipCIDR": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "ruleSets": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        },
+        "additionalProperties": false
+      },
+      "RoutingConfiguration": {
+        "type": "object",
+        "properties": {
+          "egress": {
+            "$ref": "#/components/schemas/EgressRouting"
+          },
+          "mesh": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/MeshRoute"
+            }
+          }
+        },
+        "additionalProperties": false
+      },
+      "RoutingProfile": {
+        "type": "object",
+        "required": [
+          "fallback"
+        ],
+        "properties": {
+          "fallback": {
+            "$ref": "#/components/schemas/RouteAction"
+          },
+          "rules": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/EgressRule"
+            }
+          }
+        },
+        "additionalProperties": false
+      },
+      "RuleSet": {
+        "oneOf": [
+          {
+            "type": "object",
+            "required": [
+              "type"
+            ],
+            "properties": {
+              "domainSuffix": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "ipCIDR": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "type": {
+                "type": "string",
+                "enum": [
+                  "inline"
+                ]
+              }
+            },
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "required": [
+              "url",
+              "format",
+              "type"
+            ],
+            "properties": {
+              "format": {
+                "$ref": "#/components/schemas/RuleSetFormat"
+              },
+              "type": {
+                "type": "string",
+                "enum": [
+                  "remote"
+                ]
+              },
+              "updateInterval": {
+                "$ref": "#/components/schemas/PositiveDuration"
+              },
+              "url": {
+                "type": "string"
+              }
+            },
+            "additionalProperties": false
+          }
+        ]
+      },
+      "RuleSetFormat": {
+        "type": "string",
+        "enum": [
+          "sing-box-source",
+          "mihomo-domain",
+          "mihomo-ipcidr"
+        ]
+      },
+      "SecretString": {
+        "type": "string",
+        "description": "Serialization is secret-bearing and requires protected storage."
       },
       "SessionId": {
         "type": "string",
@@ -820,6 +4611,256 @@ export const schemaDocument = {
         },
         "additionalProperties": false
       },
+      "SocketOptions": {
+        "type": "object",
+        "properties": {
+          "receiveBuffer": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          },
+          "sendBuffer": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          }
+        },
+        "additionalProperties": false
+      },
+      "TcpKeepAlive": {
+        "type": "object",
+        "properties": {
+          "count": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          },
+          "enabled": {
+            "type": "boolean"
+          },
+          "idle": {
+            "$ref": "#/components/schemas/PositiveDuration"
+          },
+          "interval": {
+            "$ref": "#/components/schemas/PositiveDuration"
+          }
+        },
+        "additionalProperties": false
+      },
+      "TcpOptions": {
+        "type": "object",
+        "properties": {
+          "keepAlive": {
+            "$ref": "#/components/schemas/TcpKeepAlive"
+          },
+          "noDelay": {
+            "type": "boolean"
+          }
+        },
+        "additionalProperties": false
+      },
+      "TlsMode": {
+        "type": "string",
+        "enum": [
+          "managed",
+          "provided"
+        ]
+      },
+      "TlsTrust": {
+        "type": "string",
+        "enum": [
+          "managed"
+        ]
+      },
+      "TlsVersion": {
+        "type": "string",
+        "enum": [
+          "1.2",
+          "1.3"
+        ]
+      },
+      "TopologyAction": {
+        "type": "string",
+        "enum": [
+          "allow",
+          "block"
+        ]
+      },
+      "TopologyDefault": {
+        "type": "string",
+        "enum": [
+          "allow",
+          "deny"
+        ]
+      },
+      "TopologyRule": {
+        "type": "object",
+        "required": [
+          "action",
+          "a",
+          "b"
+        ],
+        "properties": {
+          "a": {
+            "type": "string"
+          },
+          "action": {
+            "$ref": "#/components/schemas/TopologyAction"
+          },
+          "b": {
+            "type": "string"
+          },
+          "remark": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": false
+      },
+      "TransportCatalogEntry": {
+        "type": "object",
+        "required": [
+          "protocol",
+          "outerSocket",
+          "listenerSchema",
+          "dialerSchema",
+          "requiredCapability"
+        ],
+        "properties": {
+          "dialerSchema": {
+            "type": "string"
+          },
+          "listenerSchema": {
+            "type": "string"
+          },
+          "outerSocket": {
+            "$ref": "#/components/schemas/OuterSocket"
+          },
+          "protocol": {
+            "$ref": "#/components/schemas/TransportProtocol"
+          },
+          "requiredCapability": {
+            "type": "string",
+            "description": "Controller configuration support does not attest an Agent build's support."
+          }
+        },
+        "additionalProperties": false
+      },
+      "TransportCatalogResponse": {
+        "type": "object",
+        "required": [
+          "requestId",
+          "items"
+        ],
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/TransportCatalogEntry"
+            }
+          },
+          "requestId": {
+            "$ref": "#/components/schemas/RequestId"
+          }
+        },
+        "additionalProperties": false
+      },
+      "TransportProtocol": {
+        "type": "string",
+        "description": "Protocol keys, not a Controller enabled catalogue or a Node support report.",
+        "enum": [
+          "native_udp",
+          "native_tcp",
+          "vless",
+          "trojan"
+        ]
+      },
+      "TrojanDialer": {
+        "type": "object",
+        "properties": {
+          "bindInterface": {
+            "type": "string"
+          },
+          "connectTimeout": {
+            "$ref": "#/components/schemas/PositiveDuration"
+          },
+          "enabled": {
+            "type": "boolean"
+          },
+          "localAddress": {
+            "type": "string"
+          },
+          "priority": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          },
+          "remark": {
+            "type": "string"
+          },
+          "socket": {
+            "$ref": "#/components/schemas/SocketOptions"
+          },
+          "tcp": {
+            "$ref": "#/components/schemas/TcpOptions"
+          },
+          "tls": {
+            "$ref": "#/components/schemas/DialerTls"
+          }
+        },
+        "additionalProperties": false
+      },
+      "TrojanListener": {
+        "type": "object",
+        "required": [
+          "listenPort",
+          "tls"
+        ],
+        "properties": {
+          "bindInterface": {
+            "type": "string"
+          },
+          "enabled": {
+            "type": "boolean"
+          },
+          "endpoints": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Endpoint"
+            }
+          },
+          "listen": {
+            "type": "string"
+          },
+          "listenPort": {
+            "$ref": "#/components/schemas/Port"
+          },
+          "password": {
+            "$ref": "#/components/schemas/SecretString"
+          },
+          "remark": {
+            "type": "string"
+          },
+          "socket": {
+            "$ref": "#/components/schemas/SocketOptions"
+          },
+          "stream": {
+            "$ref": "#/components/schemas/TrojanStream"
+          },
+          "tcp": {
+            "$ref": "#/components/schemas/TcpOptions"
+          },
+          "tls": {
+            "$ref": "#/components/schemas/ListenerTls"
+          }
+        },
+        "additionalProperties": false
+      },
+      "TrojanStream": {
+        "type": "string",
+        "enum": [
+          "tcp"
+        ]
+      },
       "UserId": {
         "type": "string",
         "format": "uuid",
@@ -851,6 +4892,185 @@ export const schemaDocument = {
         "description": "A positive record version, distinct from a configuration revision.",
         "maximum": 9007199254740991,
         "minimum": 1
+      },
+      "VlessDialer": {
+        "type": "object",
+        "properties": {
+          "bindInterface": {
+            "type": "string"
+          },
+          "connectTimeout": {
+            "$ref": "#/components/schemas/PositiveDuration"
+          },
+          "enabled": {
+            "type": "boolean"
+          },
+          "localAddress": {
+            "type": "string"
+          },
+          "priority": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          },
+          "remark": {
+            "type": "string"
+          },
+          "socket": {
+            "$ref": "#/components/schemas/SocketOptions"
+          },
+          "stream": {
+            "$ref": "#/components/schemas/DialerStream"
+          },
+          "tcp": {
+            "$ref": "#/components/schemas/TcpOptions"
+          },
+          "tls": {
+            "$ref": "#/components/schemas/DialerTls"
+          },
+          "websocket": {
+            "$ref": "#/components/schemas/DialerWebSocket"
+          }
+        },
+        "additionalProperties": false
+      },
+      "VlessDialerView": {
+        "type": "object",
+        "required": [
+          "enabled",
+          "remark",
+          "priority",
+          "connectTimeout",
+          "bindInterface",
+          "localAddress",
+          "socket",
+          "tcp",
+          "stream",
+          "tls"
+        ],
+        "properties": {
+          "bindInterface": {
+            "type": "string"
+          },
+          "connectTimeout": {
+            "$ref": "#/components/schemas/PositiveDuration"
+          },
+          "enabled": {
+            "type": "boolean"
+          },
+          "localAddress": {
+            "type": "string"
+          },
+          "priority": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          },
+          "remark": {
+            "type": "string"
+          },
+          "socket": {
+            "$ref": "#/components/schemas/SocketOptions"
+          },
+          "stream": {
+            "$ref": "#/components/schemas/DialerStream"
+          },
+          "tcp": {
+            "$ref": "#/components/schemas/TcpOptions"
+          },
+          "tls": {
+            "$ref": "#/components/schemas/DialerTls"
+          },
+          "websocketHeaderNames": {
+            "type": [
+              "array",
+              "null"
+            ],
+            "items": {
+              "type": "string"
+            }
+          }
+        },
+        "additionalProperties": false
+      },
+      "VlessListener": {
+        "type": "object",
+        "required": [
+          "listenPort",
+          "tls"
+        ],
+        "properties": {
+          "bindInterface": {
+            "type": "string"
+          },
+          "enabled": {
+            "type": "boolean"
+          },
+          "endpoints": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Endpoint"
+            }
+          },
+          "flow": {
+            "type": "string"
+          },
+          "listen": {
+            "type": "string"
+          },
+          "listenPort": {
+            "$ref": "#/components/schemas/Port"
+          },
+          "remark": {
+            "type": "string"
+          },
+          "socket": {
+            "$ref": "#/components/schemas/SocketOptions"
+          },
+          "stream": {
+            "$ref": "#/components/schemas/VlessStream"
+          },
+          "tcp": {
+            "$ref": "#/components/schemas/TcpOptions"
+          },
+          "tls": {
+            "$ref": "#/components/schemas/ListenerTls"
+          },
+          "uuid": {
+            "$ref": "#/components/schemas/SecretString"
+          },
+          "websocket": {
+            "$ref": "#/components/schemas/ListenerWebSocket"
+          }
+        },
+        "additionalProperties": false
+      },
+      "VlessStream": {
+        "type": "string",
+        "description": "Concrete VLESS stream encapsulation. Dialer selection such as `auto` is not\nan encapsulation, and neither variant means that its runtime is installed.",
+        "enum": [
+          "tcp",
+          "websocket"
+        ]
+      },
+      "WebSocketHeaders": {
+        "type": "object",
+        "description": "Additional WebSocket headers, preserving casing. HTTP token names cannot override Host, Connection, Upgrade, Content-Length, Transfer-Encoding or Sec-WebSocket-*, ignoring ASCII case. Handshake and HTTP message framing fields belong to the upgrade implementation. Names must also be unique ignoring ASCII case (semantic validation).",
+        "additionalProperties": {
+          "type": "string",
+          "description": "Header text preserved verbatim, including empty values and horizontal tabs.\nCR/LF, NUL and other Unicode control characters (except HTAB) are rejected.\nUnicode text is represented as UTF-8; protocol-specific semantic constraints\nand request/header size limits remain the consumer's responsibility.",
+          "pattern": "^[^\\u0000-\\u0008\\u000A-\\u001F\\u007F-\\u009F]*(?![\\s\\S])"
+        },
+        "propertyNames": {
+          "type": "string",
+          "description": "Case-preserving HTTP token for an additional WebSocket header.\nHost, Connection, Upgrade, Content-Length, Transfer-Encoding, and every\nSec-WebSocket-* name are reserved, ignoring ASCII case. Handshake and HTTP\nmessage framing fields belong to the upgrade implementation. No Unicode\nheader names are allowed by HTTP token syntax.",
+          "pattern": "^(?!(?:[Hh][Oo][Ss][Tt]|[Cc][Oo][Nn][Nn][Ee][Cc][Tt][Ii][Oo][Nn]|[Uu][Pp][Gg][Rr][Aa][Dd][Ee]|[Cc][Oo][Nn][Tt][Ee][Nn][Tt]-[Ll][Ee][Nn][Gg][Tt][Hh]|[Tt][Rr][Aa][Nn][Ss][Ff][Ee][Rr]-[Ee][Nn][Cc][Oo][Dd][Ii][Nn][Gg])(?![\\s\\S]))(?![Ss][Ee][Cc]-[Ww][Ee][Bb][Ss][Oo][Cc][Kk][Ee][Tt]-)[!#$%&'*+.^_`|~0-9A-Za-z-]+(?![\\s\\S])"
+        }
+      },
+      "WebSocketPath": {
+        "type": "string",
+        "description": "Exact path, preserved without URL decoding or normalization.\nUnicode is permitted, but whitespace, C0/C1 controls, query and fragment\ndelimiters are not. Percent escapes are not decoded by this value type.",
+        "pattern": "^/[^\\u0000-\\u0020\\u007F-\\u009F\\u00A0\\u1680\\u2000-\\u200A\\u2028\\u2029\\u202F\\u205F\\u3000?#]*(?![\\s\\S])"
       },
       "WireSecret": {
         "type": "string",

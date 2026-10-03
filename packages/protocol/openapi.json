@@ -4054,7 +4054,8 @@
                   "replaceAccess"
                 ]
               }
-            }
+            },
+            "additionalProperties": false
           },
           {
             "type": "object",
@@ -4075,7 +4076,8 @@
                   "replaceTopology"
                 ]
               }
-            }
+            },
+            "additionalProperties": false
           },
           {
             "type": "object",
@@ -4093,7 +4095,8 @@
                   "replaceRouting"
                 ]
               }
-            }
+            },
+            "additionalProperties": false
           },
           {
             "type": "object",
@@ -4111,7 +4114,8 @@
                   "replaceDns"
                 ]
               }
-            }
+            },
+            "additionalProperties": false
           },
           {
             "type": "object",
@@ -4129,7 +4133,8 @@
                   "replaceDefaults"
                 ]
               }
-            }
+            },
+            "additionalProperties": false
           },
           {
             "type": "object",
@@ -4156,7 +4161,8 @@
                   "replaceGroups"
                 ]
               }
-            }
+            },
+            "additionalProperties": false
           },
           {
             "type": "object",
@@ -4183,7 +4189,8 @@
                   "replaceTagsOwners"
                 ]
               }
-            }
+            },
+            "additionalProperties": false
           },
           {
             "type": "object",
@@ -4207,7 +4214,8 @@
                   "replaceRuleSets"
                 ]
               }
-            }
+            },
+            "additionalProperties": false
           },
           {
             "type": "object",
@@ -4229,13 +4237,15 @@
                   "setNodeSettings"
                 ]
               }
-            }
+            },
+            "additionalProperties": false
           },
           {
             "type": "object",
             "required": [
               "nodeId",
               "key",
+              "listener",
               "type"
             ],
             "properties": {
@@ -4261,7 +4271,8 @@
                   "setListener"
                 ]
               }
-            }
+            },
+            "additionalProperties": false
           },
           {
             "type": "object",
@@ -4286,7 +4297,8 @@
                   "setIdentityTags"
                 ]
               }
-            }
+            },
+            "additionalProperties": false
           },
           {
             "type": "object",
@@ -4304,7 +4316,8 @@
                   "setAddressPools"
                 ]
               }
-            }
+            },
+            "additionalProperties": false
           },
           {
             "type": "object",
@@ -4326,7 +4339,8 @@
                   "setAddresses"
                 ]
               }
-            }
+            },
+            "additionalProperties": false
           },
           {
             "type": "object",
@@ -4344,7 +4358,8 @@
                   "deleteNode"
                 ]
               }
-            }
+            },
+            "additionalProperties": false
           }
         ]
       },
@@ -5332,88 +5347,199 @@
       "Listener": {
         "oneOf": [
           {
-            "allOf": [
-              {
-                "$ref": "#/components/schemas/NativeUdpListener"
+            "type": "object",
+            "required": [
+              "listenPort",
+              "type"
+            ],
+            "properties": {
+              "bindInterface": {
+                "type": "string"
               },
-              {
-                "type": "object",
-                "required": [
-                  "type"
-                ],
-                "properties": {
-                  "type": {
-                    "type": "string",
-                    "enum": [
-                      "native_udp"
-                    ]
-                  }
+              "enabled": {
+                "type": "boolean"
+              },
+              "endpoints": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/components/schemas/Endpoint"
                 }
+              },
+              "listen": {
+                "type": "string"
+              },
+              "listenPort": {
+                "$ref": "#/components/schemas/Port"
+              },
+              "remark": {
+                "type": "string"
+              },
+              "socket": {
+                "$ref": "#/components/schemas/SocketOptions"
+              },
+              "type": {
+                "type": "string",
+                "enum": [
+                  "native_udp"
+                ]
               }
-            ]
+            },
+            "additionalProperties": false
           },
           {
-            "allOf": [
-              {
-                "$ref": "#/components/schemas/NativeTcpListener"
+            "type": "object",
+            "required": [
+              "listenPort",
+              "type"
+            ],
+            "properties": {
+              "bindInterface": {
+                "type": "string"
               },
-              {
-                "type": "object",
-                "required": [
-                  "type"
-                ],
-                "properties": {
-                  "type": {
-                    "type": "string",
-                    "enum": [
-                      "native_tcp"
-                    ]
-                  }
+              "enabled": {
+                "type": "boolean"
+              },
+              "endpoints": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/components/schemas/Endpoint"
                 }
+              },
+              "listen": {
+                "type": "string"
+              },
+              "listenPort": {
+                "$ref": "#/components/schemas/Port"
+              },
+              "remark": {
+                "type": "string"
+              },
+              "socket": {
+                "$ref": "#/components/schemas/SocketOptions"
+              },
+              "tcp": {
+                "$ref": "#/components/schemas/TcpOptions"
+              },
+              "type": {
+                "type": "string",
+                "enum": [
+                  "native_tcp"
+                ]
               }
-            ]
+            },
+            "additionalProperties": false
           },
           {
-            "allOf": [
-              {
-                "$ref": "#/components/schemas/VlessListener"
+            "type": "object",
+            "required": [
+              "listenPort",
+              "tls",
+              "type"
+            ],
+            "properties": {
+              "bindInterface": {
+                "type": "string"
               },
-              {
-                "type": "object",
-                "required": [
-                  "type"
-                ],
-                "properties": {
-                  "type": {
-                    "type": "string",
-                    "enum": [
-                      "vless"
-                    ]
-                  }
+              "enabled": {
+                "type": "boolean"
+              },
+              "endpoints": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/components/schemas/Endpoint"
                 }
+              },
+              "flow": {
+                "type": "string"
+              },
+              "listen": {
+                "type": "string"
+              },
+              "listenPort": {
+                "$ref": "#/components/schemas/Port"
+              },
+              "remark": {
+                "type": "string"
+              },
+              "socket": {
+                "$ref": "#/components/schemas/SocketOptions"
+              },
+              "stream": {
+                "$ref": "#/components/schemas/VlessStream"
+              },
+              "tcp": {
+                "$ref": "#/components/schemas/TcpOptions"
+              },
+              "tls": {
+                "$ref": "#/components/schemas/ListenerTls"
+              },
+              "type": {
+                "type": "string",
+                "enum": [
+                  "vless"
+                ]
+              },
+              "uuid": {
+                "$ref": "#/components/schemas/SecretString"
+              },
+              "websocket": {
+                "$ref": "#/components/schemas/ListenerWebSocket"
               }
-            ]
+            },
+            "additionalProperties": false
           },
           {
-            "allOf": [
-              {
-                "$ref": "#/components/schemas/TrojanListener"
+            "type": "object",
+            "required": [
+              "listenPort",
+              "tls",
+              "type"
+            ],
+            "properties": {
+              "bindInterface": {
+                "type": "string"
               },
-              {
-                "type": "object",
-                "required": [
-                  "type"
-                ],
-                "properties": {
-                  "type": {
-                    "type": "string",
-                    "enum": [
-                      "trojan"
-                    ]
-                  }
+              "enabled": {
+                "type": "boolean"
+              },
+              "endpoints": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/components/schemas/Endpoint"
                 }
+              },
+              "listen": {
+                "type": "string"
+              },
+              "listenPort": {
+                "$ref": "#/components/schemas/Port"
+              },
+              "password": {
+                "$ref": "#/components/schemas/SecretString"
+              },
+              "remark": {
+                "type": "string"
+              },
+              "socket": {
+                "$ref": "#/components/schemas/SocketOptions"
+              },
+              "stream": {
+                "$ref": "#/components/schemas/TrojanStream"
+              },
+              "tcp": {
+                "$ref": "#/components/schemas/TcpOptions"
+              },
+              "tls": {
+                "$ref": "#/components/schemas/ListenerTls"
+              },
+              "type": {
+                "type": "string",
+                "enum": [
+                  "trojan"
+                ]
               }
-            ]
+            },
+            "additionalProperties": false
           }
         ]
       },
@@ -6275,7 +6401,8 @@
               "user": {
                 "type": "string"
               }
-            }
+            },
+            "additionalProperties": false
           },
           {
             "type": "object",
@@ -6296,7 +6423,8 @@
                   "tag"
                 ]
               }
-            }
+            },
+            "additionalProperties": false
           }
         ]
       },
@@ -6523,31 +6651,12 @@
           {
             "type": "string",
             "enum": [
-              "addressPoolV4"
-            ]
-          },
-          {
-            "type": "string",
-            "enum": [
-              "addressPoolV6"
-            ]
-          },
-          {
-            "type": "string",
-            "enum": [
-              "addressV4"
-            ]
-          },
-          {
-            "type": "string",
-            "enum": [
-              "addressV6"
-            ]
-          },
-          {
-            "type": "string",
-            "enum": [
-              "identityProof"
+              "addressPoolV4",
+              "addressPoolV6",
+              "addressV4",
+              "addressV6",
+              "identityProof",
+              "ruleSetContent"
             ]
           },
           {
@@ -6559,13 +6668,8 @@
               "material": {
                 "$ref": "#/components/schemas/MaterialRequirement"
               }
-            }
-          },
-          {
-            "type": "string",
-            "enum": [
-              "ruleSetContent"
-            ]
+            },
+            "additionalProperties": false
           }
         ]
       },
@@ -6586,104 +6690,275 @@
         "additionalProperties": false
       },
       "PreparedListener": {
-        "allOf": [
+        "oneOf": [
           {
-            "$ref": "#/components/schemas/Listener"
+            "type": "object",
+            "required": [
+              "listenPort",
+              "type"
+            ],
+            "properties": {
+              "bindInterface": {
+                "type": "string"
+              },
+              "enabled": {
+                "type": "boolean"
+              },
+              "endpoints": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/components/schemas/Endpoint"
+                }
+              },
+              "listen": {
+                "type": "string"
+              },
+              "listenPort": {
+                "$ref": "#/components/schemas/Port"
+              },
+              "remark": {
+                "type": "string"
+              },
+              "socket": {
+                "$ref": "#/components/schemas/SocketOptions"
+              },
+              "type": {
+                "type": "string",
+                "enum": [
+                  "native_udp"
+                ]
+              }
+            },
+            "additionalProperties": false
           },
           {
-            "oneOf": [
-              {
-                "type": "object",
-                "required": [
-                  "type"
-                ],
-                "properties": {
-                  "type": {
-                    "type": "string",
-                    "enum": [
-                      "native_udp",
-                      "native_tcp"
-                    ]
-                  }
+            "type": "object",
+            "required": [
+              "listenPort",
+              "type"
+            ],
+            "properties": {
+              "bindInterface": {
+                "type": "string"
+              },
+              "enabled": {
+                "type": "boolean"
+              },
+              "endpoints": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/components/schemas/Endpoint"
                 }
               },
-              {
+              "listen": {
+                "type": "string"
+              },
+              "listenPort": {
+                "$ref": "#/components/schemas/Port"
+              },
+              "remark": {
+                "type": "string"
+              },
+              "socket": {
+                "$ref": "#/components/schemas/SocketOptions"
+              },
+              "tcp": {
+                "$ref": "#/components/schemas/TcpOptions"
+              },
+              "type": {
+                "type": "string",
+                "enum": [
+                  "native_tcp"
+                ]
+              }
+            },
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "required": [
+              "listenPort",
+              "tls",
+              "type",
+              "uuid"
+            ],
+            "properties": {
+              "bindInterface": {
+                "type": "string"
+              },
+              "enabled": {
+                "type": "boolean"
+              },
+              "endpoints": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/components/schemas/Endpoint"
+                }
+              },
+              "flow": {
+                "type": "string"
+              },
+              "listen": {
+                "type": "string"
+              },
+              "listenPort": {
+                "$ref": "#/components/schemas/Port"
+              },
+              "remark": {
+                "type": "string"
+              },
+              "socket": {
+                "$ref": "#/components/schemas/SocketOptions"
+              },
+              "stream": {
+                "$ref": "#/components/schemas/VlessStream"
+              },
+              "tcp": {
+                "$ref": "#/components/schemas/TcpOptions"
+              },
+              "tls": {
                 "type": "object",
                 "required": [
-                  "type",
-                  "tls",
-                  "uuid"
+                  "serverName",
+                  "certificate",
+                  "privateKey"
                 ],
                 "properties": {
-                  "tls": {
-                    "type": "object",
-                    "required": [
-                      "certificate",
-                      "privateKey"
-                    ],
-                    "properties": {
-                      "certificate": {
-                        "type": "string",
-                        "minLength": 1
-                      },
-                      "privateKey": {
-                        "type": "string",
-                        "minLength": 1
-                      }
+                  "alpn": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
                     }
                   },
-                  "type": {
-                    "type": "string",
-                    "enum": [
-                      "vless"
-                    ]
+                  "certificate": {
+                    "$ref": "#/components/schemas/SecretString"
                   },
-                  "uuid": {
+                  "handshakeTimeout": {
+                    "$ref": "#/components/schemas/PositiveDuration"
+                  },
+                  "maxVersion": {
+                    "$ref": "#/components/schemas/TlsVersion"
+                  },
+                  "minVersion": {
+                    "$ref": "#/components/schemas/TlsVersion"
+                  },
+                  "mode": {
+                    "$ref": "#/components/schemas/TlsMode"
+                  },
+                  "privateKey": {
+                    "$ref": "#/components/schemas/SecretString"
+                  },
+                  "serverName": {
                     "type": "string"
                   }
+                },
+                "additionalProperties": false
+              },
+              "type": {
+                "type": "string",
+                "enum": [
+                  "vless"
+                ]
+              },
+              "uuid": {
+                "$ref": "#/components/schemas/SecretString"
+              },
+              "websocket": {
+                "$ref": "#/components/schemas/ListenerWebSocket"
+              }
+            },
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "required": [
+              "listenPort",
+              "tls",
+              "type",
+              "password"
+            ],
+            "properties": {
+              "bindInterface": {
+                "type": "string"
+              },
+              "enabled": {
+                "type": "boolean"
+              },
+              "endpoints": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/components/schemas/Endpoint"
                 }
               },
-              {
+              "listen": {
+                "type": "string"
+              },
+              "listenPort": {
+                "$ref": "#/components/schemas/Port"
+              },
+              "password": {
+                "$ref": "#/components/schemas/SecretString"
+              },
+              "remark": {
+                "type": "string"
+              },
+              "socket": {
+                "$ref": "#/components/schemas/SocketOptions"
+              },
+              "stream": {
+                "$ref": "#/components/schemas/TrojanStream"
+              },
+              "tcp": {
+                "$ref": "#/components/schemas/TcpOptions"
+              },
+              "tls": {
                 "type": "object",
                 "required": [
-                  "type",
-                  "tls",
-                  "password"
+                  "serverName",
+                  "certificate",
+                  "privateKey"
                 ],
                 "properties": {
-                  "password": {
-                    "type": "string",
-                    "minLength": 1
-                  },
-                  "tls": {
-                    "type": "object",
-                    "required": [
-                      "certificate",
-                      "privateKey"
-                    ],
-                    "properties": {
-                      "certificate": {
-                        "type": "string",
-                        "minLength": 1
-                      },
-                      "privateKey": {
-                        "type": "string",
-                        "minLength": 1
-                      }
+                  "alpn": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
                     }
                   },
-                  "type": {
-                    "type": "string",
-                    "enum": [
-                      "trojan"
-                    ]
+                  "certificate": {
+                    "$ref": "#/components/schemas/SecretString"
+                  },
+                  "handshakeTimeout": {
+                    "$ref": "#/components/schemas/PositiveDuration"
+                  },
+                  "maxVersion": {
+                    "$ref": "#/components/schemas/TlsVersion"
+                  },
+                  "minVersion": {
+                    "$ref": "#/components/schemas/TlsVersion"
+                  },
+                  "mode": {
+                    "$ref": "#/components/schemas/TlsMode"
+                  },
+                  "privateKey": {
+                    "$ref": "#/components/schemas/SecretString"
+                  },
+                  "serverName": {
+                    "type": "string"
                   }
-                }
+                },
+                "additionalProperties": false
+              },
+              "type": {
+                "type": "string",
+                "enum": [
+                  "trojan"
+                ]
               }
-            ]
+            },
+            "additionalProperties": false
           }
-        ],
-        "description": "Complete normalized declaration with material present. Structural deserialization does not attest cryptographic validation, revocation, compiled capability, or runtime readiness."
+        ]
       },
       "Problem": {
         "oneOf": [
@@ -7192,6 +7467,75 @@
               }
             },
             "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "required": [
+              "code",
+              "params",
+              "message"
+            ],
+            "properties": {
+              "code": {
+                "type": "string",
+                "enum": [
+                  "state_conflict"
+                ]
+              },
+              "message": {
+                "type": "string"
+              },
+              "params": {
+                "$ref": "#/components/schemas/EmptyParams"
+              }
+            },
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "required": [
+              "code",
+              "params",
+              "message"
+            ],
+            "properties": {
+              "code": {
+                "type": "string",
+                "enum": [
+                  "state_limit"
+                ]
+              },
+              "message": {
+                "type": "string"
+              },
+              "params": {
+                "$ref": "#/components/schemas/EmptyParams"
+              }
+            },
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "required": [
+              "code",
+              "params",
+              "message"
+            ],
+            "properties": {
+              "code": {
+                "type": "string",
+                "enum": [
+                  "observation_limit"
+                ]
+              },
+              "message": {
+                "type": "string"
+              },
+              "params": {
+                "$ref": "#/components/schemas/EmptyParams"
+              }
+            },
+            "additionalProperties": false
           }
         ]
       },
@@ -7363,7 +7707,8 @@
                   "type": "string"
                 }
               }
-            }
+            },
+            "additionalProperties": false
           },
           {
             "type": "object",
@@ -7377,7 +7722,8 @@
                   "direct"
                 ]
               }
-            }
+            },
+            "additionalProperties": false
           },
           {
             "type": "object",
@@ -7391,7 +7737,8 @@
                   "unmanaged"
                 ]
               }
-            }
+            },
+            "additionalProperties": false
           }
         ]
       },
@@ -7478,7 +7825,8 @@
                   "inline"
                 ]
               }
-            }
+            },
+            "additionalProperties": false
           },
           {
             "type": "object",
@@ -7503,7 +7851,8 @@
               "url": {
                 "type": "string"
               }
-            }
+            },
+            "additionalProperties": false
           }
         ]
       },

@@ -203,13 +203,91 @@ listener!(TrojanListener {
     #[serde(default, deserialize_with = "present", skip_serializing_if = "Option::is_none")] password: Option<SecretString> [value_type = SecretString],
     tls: ListenerTls,
 });
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, ToSchema)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
 #[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
 pub enum Listener {
     NativeUdp(NativeUdpListener),
     NativeTcp(NativeTcpListener),
     Vless(VlessListener),
     Trojan(TrojanListener),
+}
+impl utoipa::PartialSchema for Listener {
+    fn schema() -> utoipa::openapi::RefOr<utoipa::openapi::schema::Schema> {
+        listener_schema(false)
+    }
+}
+impl ToSchema for Listener {
+    fn schemas(
+        schemas: &mut Vec<(
+            String,
+            utoipa::openapi::RefOr<utoipa::openapi::schema::Schema>,
+        )>,
+    ) {
+        use utoipa::PartialSchema;
+        schemas.extend([
+            (
+                NativeUdpListener::name().into_owned(),
+                NativeUdpListener::schema(),
+            ),
+            (
+                NativeTcpListener::name().into_owned(),
+                NativeTcpListener::schema(),
+            ),
+            (VlessListener::name().into_owned(), VlessListener::schema()),
+            (
+                TrojanListener::name().into_owned(),
+                TrojanListener::schema(),
+            ),
+        ]);
+        NativeUdpListener::schemas(schemas);
+        NativeTcpListener::schemas(schemas);
+        VlessListener::schemas(schemas);
+        TrojanListener::schemas(schemas);
+    }
+}
+
+// Serde flattens a tagged newtype variant. allOf cannot add a discriminator to
+// its closed payload object, so build each closed variant from that same payload.
+pub(crate) fn listener_schema(
+    prepared: bool,
+) -> utoipa::openapi::RefOr<utoipa::openapi::schema::Schema> {
+    use utoipa::{
+        PartialSchema,
+        openapi::{
+            RefOr,
+            schema::{ObjectBuilder, OneOfBuilder, Schema, Type},
+        },
+    };
+    let mut union = OneOfBuilder::new();
+    for (tag, schema, credential) in [
+        ("native_udp", NativeUdpListener::schema(), None),
+        ("native_tcp", NativeTcpListener::schema(), None),
+        ("vless", VlessListener::schema(), Some("uuid")),
+        ("trojan", TrojanListener::schema(), Some("password")),
+    ] {
+        let RefOr::T(Schema::Object(mut object)) = schema else {
+            unreachable!("listener payload is an object")
+        };
+        object.properties.insert(
+            "type".into(),
+            ObjectBuilder::new()
+                .schema_type(Type::String)
+                .enum_values(Some([tag]))
+                .into(),
+        );
+        object.required.push("type".into());
+        if let Some(credential) = credential.filter(|_| prepared) {
+            object.required.push(credential.into());
+            let RefOr::T(Schema::Object(mut tls)) = ListenerTls::schema() else {
+                unreachable!("listener TLS is an object")
+            };
+            tls.required
+                .extend(["certificate".into(), "privateKey".into()]);
+            object.properties.insert("tls".into(), tls.into());
+        }
+        union = union.item(object);
+    }
+    union.into()
 }
 impl<'de> Deserialize<'de> for Listener {
     fn deserialize<D: serde::Deserializer<'de>>(d: D) -> Result<Self, D::Error> {

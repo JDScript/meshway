@@ -19,13 +19,29 @@ pub mod resources;
 mod secret;
 pub use management_rules::{NetworkNameRules, NetworkNameTrim};
 pub mod state;
+pub use configuration::{
+    CompareConfigurationRequest, ConfigurationAppliedResponse, ConfigurationComparison,
+    ConfigurationPreviewResponse, ConfigurationRequest, ConfigurationResponse,
+    ConfigurationSchemaResponse, ConfigurationSourceResponse, TransportCatalogResponse,
+};
 pub use events::StreamEvent;
+pub use history::{ActivityListResponse, ActivityResponse, ConfigurationRevisionList};
+pub use management::{
+    AccountResponse, AccountSessionsResponse, ChangeEmailRequest, ChangeMemberRoleRequest,
+    ChangePasswordRequest, CreateJoinLinkRequest, JoinLinkCreated, JoinLinkCredentialRequest,
+    JoinLinkInspection, JoinLinkListResponse, JoinLinkRedeemed, JoinLinkResponse,
+    MemberMutationResponse, MemberRemovedResponse, PasswordResetInspectRequest,
+    PasswordResetInspection, PasswordResetRedeemRequest, RemovalImpactResponse,
+    RemoveMemberRequest,
+};
 
 pub use auth::{
     AuthOptionsResponse, AuthSessionResponse, LoginRequest, PasswordLengthUnit, PasswordRules,
     RegisterRequest, SessionIssuedResponse, SessionMetadata, UserView,
 };
-pub use meshway_model::{MembershipId, MembershipRole, NetworkId, Revision, Version};
+pub use meshway_model::{
+    ActivityId, JoinLinkId, MembershipId, MembershipRole, NetworkId, Revision, SessionId, Version,
+};
 pub use networks::{
     CreateNetworkRequest, MemberActions, MemberSummary, NetworkActions, NetworkListResponse,
     NetworkMembersResponse, NetworkPageQuery, NetworkResponse, NetworkSummary,

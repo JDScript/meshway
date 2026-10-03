@@ -122,22 +122,25 @@ export function validators(document) {
         if (schema.oneOf && !values.every(item => excludesNull(item))) throw new Error("Nullable oneOf requires non-null remaining branches");
         return `${values.length === 1 ? emit(values[0]) : emit({ [schema.oneOf ? "oneOf" : "anyOf"]: values })}.nullable()`;
       }
-      // Require disjoint, required string tags. A plain z.union then has exactly
-      // one possible match, preserving both oneOf and anyOf without stripping
-      // fields or choosing an arbitrary overlapping variant.
+      // Prove every pair disjoint before using z.union. This also covers external
+      // enums (literal strings vs object payloads) and multi-field literal tags.
       const objects = variants.map(item => {
         if (!item.$ref) return item;
         keys(item, ["$ref"]);
         return schemas[referenceName(item.$ref)];
       });
-      const literal = property => property?.type === "string"
-        ? (typeof property.const === "string" ? property.const : property.enum?.length === 1 ? property.enum[0] : undefined)
+      const literals = property => property?.type === "string"
+        ? (typeof property.const === "string" ? [property.const] : property.enum)
         : undefined;
-      const tags = Object.keys(objects[0]?.properties ?? {}).filter(name => objects.every(item =>
-        item?.type === "object" && item.required?.includes(name) && typeof literal(item.properties?.[name]) === "string"));
-      if (!tags.length) throw new Error("Union requires a shared required string discriminator");
-      const tag = tags.find(name => new Set(objects.map(item => literal(item.properties[name]))).size === variants.length);
-      if (!tag) throw new Error("Conflicting discriminator values");
+      const distinct = (a, b) => Array.isArray(a) && Array.isArray(b) && a.length > 0 && b.length > 0 && a.every(value => !b.includes(value));
+      const disjoint = (a, b) => {
+        if (typeof a?.type !== "string" || typeof b?.type !== "string") return false;
+        if (a.type !== b.type) return ![a.type, b.type].every(type => ["integer", "number"].includes(type));
+        if (a.type === "string") return distinct(literals(a), literals(b));
+        if (a.type !== "object") return false;
+        return (a.required ?? []).some(name => b.required?.includes(name) && distinct(literals(a.properties?.[name]), literals(b.properties?.[name])));
+      };
+      if (objects.some((a, i) => objects.slice(i + 1).some(b => !disjoint(a, b)))) throw new Error("Union branches must be provably disjoint");
       return `z.union([${variants.map(emit).join(", ")}])`;
     }
     if (schema.$ref) {
@@ -200,10 +203,10 @@ export function validators(document) {
           if (!Array.isArray(schema.enum) || !schema.enum.length || schema.enum.some(value => typeof value !== "string") || Object.keys(schema).some(key => !["type", "enum", "description", "title", "x-meshway-ref"].includes(key))) throw new Error("Only plain string enums are supported");
           return `z.enum(${JSON.stringify(schema.enum)})`;
         }
-        if (schema.format && !["date-time", "password", "uuid"].includes(schema.format)) throw new Error(`Unsupported string format ${schema.format}`);
+        if (schema.format && !["date-time", "password", "uuid", "ipv4", "ipv6"].includes(schema.format)) throw new Error(`Unsupported string format ${schema.format}`);
         if (schema.format === "uuid" && !schema.pattern) throw new Error("UUID format requires the authoritative canonical UUID pattern");
         if (schema.format === "date-time") usesDateTime = true;
-        let code = schema.format === "date-time" ? 'z.string().refine(rfc3339, "Expected RFC 3339 date-time")' : "z.string()";
+        let code = schema.format === "date-time" ? 'z.string().refine(rfc3339, "Expected RFC 3339 date-time")' : ["ipv4", "ipv6"].includes(schema.format) ? `z.${schema.format}()` : "z.string()";
         for (const [key, operator] of [["minLength", ">="], ["maxLength", "<="]]) {
           if (schema[key] !== undefined) {
             if (!Number.isSafeInteger(schema[key]) || schema[key] < 0) throw new Error(`Invalid ${key}`);

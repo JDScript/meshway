@@ -84,6 +84,13 @@ async fn generated_network_operations_preserve_tenant_boundaries_cas_and_paginat
         .await
         .unwrap();
     assert_eq!(members.items.len(), 1);
+    assert_eq!(members.total.get(), 1);
+    assert!(!members.items[0].actions.change_role);
+    assert_eq!(
+        members.items[0].actions.assignable_roles,
+        [MembershipRole::Owner]
+    );
+    assert!(!members.items[0].actions.remove);
     assert_eq!(members.items[0].user_id, alice.user.id);
     assert_eq!(members.items[0].role, MembershipRole::Owner);
     assert_eq!(members.items[0].membership_id, detail.network.membership_id);
@@ -100,6 +107,7 @@ async fn generated_network_operations_preserve_tenant_boundaries_cas_and_paginat
         .unwrap();
     let cursor = page.next_cursor.unwrap();
     assert_eq!(page.items.len(), 1);
+    assert_eq!(page.total.get(), 3);
     // New creation is outside the existing cursor's fixed creation boundary.
     client
         .create_network(
@@ -122,6 +130,7 @@ async fn generated_network_operations_preserve_tenant_boundaries_cas_and_paginat
         .await
         .unwrap();
     assert_eq!(rest.items.len(), 2);
+    assert_eq!(rest.total.get(), 3);
     assert!(rest.next_cursor.is_none());
     assert_eq!(page.as_of, rest.as_of);
     assert!(rest.items.iter().all(|item| item.name != "Later"));

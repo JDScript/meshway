@@ -26,6 +26,9 @@ if (result.ok) {
   types and the account operations: `getAuthOptions`, `register`, `login`,
   `getAuthSession`, `logout`. Network operations are `createNetwork`,
   `listNetworks`, `getNetwork`, `renameNetwork`, and `listNetworkMembers`.
+  It also exports the implemented account/session management, membership/join-link,
+  configuration/edit/validation/history and activity operations. The complete
+  generated operation index is `src/generated/operations.gen.ts`.
 - `@meshway/control-client/schemas` exports `z<TypeName>` validators.
   `@meshway/control-client/json-schema` exports editor schemas.
 - All bodies are validated. An invalid success body yields `decode`; an invalid
@@ -56,8 +59,41 @@ Pagination uses an opaque, expiring cursor bound to the caller and query scope;
 metadata and permissions are checked again on every page. Only network
 Owner/Admin can read the management member list in this slice.
 
-These operations manage network metadata and initial configuration. They do not
-claim that a Node has enrolled, installed configuration, or established a tunnel.
+Both list responses include `total`: the current visible count within the
+cursor's original creation boundary, recalculated on every page. Newly created
+objects do not enter an older traversal; removed or newly hidden objects can
+reduce its total. Each member includes `actions.changeRole`,
+`actions.assignableRoles`, and `actions.remove`. Mutations recheck permissions,
+last-Owner constraints and `expectedVersion` in the transaction.
+
+`getAuthOptions().networkNameRules` supplies the server's shared name rules:
+raw UTF-8 at most 1024 bytes, no Unicode Cc characters, then Unicode White_Space
+edge trimming and 1–128 code points. U+FEFF is not trimmed. Do not use raw
+`maxLength=128`, UTF-16 `String.length`, or JavaScript's different `trim()` rules.
+
+## Configuration
+
+`getConfiguration` returns the redacted view. `getConfigurationSource` is an
+explicit secret read of the full JSONC and complete protocol values. Use
+`validateConfiguration` for the effective view, change count and affected
+resources, then `applyConfiguration` with the same `expectedRevision` and a
+request ID. Inputs are the generated `ConfigurationRequest` union:
+
+- `document`: complete `sourceJsonc`.
+- `operations`: typed `ops`; `setListener` requires an explicit `listener`
+  value, with `null` meaning removal.
+- `restore`: `restoreFrom`, committed as a new revision after revalidation.
+
+Strict CAS rejects stale edits. A request ID can recover an already committed
+identical apply. `compareConfiguration` and `listConfigurationRevisions` read
+actual complete versions; they never return protocol secrets in the diff.
+
+Node-dependent configuration/member removal and remote rule-set publication
+remain unavailable until execution/resource providers are connected. Address
+reassignment and material rotation are not exported operations yet.
+
+Management success is not evidence that a Node has installed configuration or
+established a tunnel.
 
 ## Rust
 
@@ -106,11 +142,11 @@ payload. JSON errors keep their ordinary typed HTTP envelopes.
   its own lease/retry policy and explicitly supplies `applied_cursor`; the
   bounded `retry_delay()` hint is available after frames have been read.
 - Both runtimes bound UTF-8 lines and complete event payloads by
-  `maxFrameBytes` / `max_frame_bytes` (1–16 MiB, defaulting to the client body
+  `maxFrameBytes` / `max_frame_bytes` (1 byte–16 MiB, defaulting to the client body
   budget). EOF discards incomplete frames. Invalid UTF-8, JSON, event types and
   oversized frames terminate decoding without exposing raw content in errors.
 
-These are generator/runtime capabilities. The currently exported account/network
+These are generator/runtime capabilities. The currently exported management
 slice has no production SSE operation yet; State service candidates still need
 their real identity, configuration and execution providers wired into the Router.
 
@@ -132,7 +168,8 @@ MESHWAY_CONTROLLER_BINARY="$CARGO_TARGET_DIR/debug/meshway-controller" pnpm --fi
 ```
 
 The integration tests start a real Controller on loopback with private temporary
-storage. They test ordinary registration/session/logout, disabled registration,
+storage. They test registration/session/logout, disabled registration, membership
+actions and totals, join/role changes, configuration validation/CAS/restore,
 typed errors and malformed real response envelopes. Generator-only synthetic
 fixtures verify code-generation boundaries separately.
 

@@ -178,50 +178,7 @@ impl Listener {
 pub struct PreparedListener(Listener);
 impl utoipa::PartialSchema for PreparedListener {
     fn schema() -> utoipa::openapi::RefOr<utoipa::openapi::schema::Schema> {
-        use utoipa::openapi::{
-            Ref,
-            schema::{AllOfBuilder, ObjectBuilder, OneOfBuilder, Type},
-        };
-        fn kind(names: &[&str]) -> ObjectBuilder {
-            ObjectBuilder::new()
-                .schema_type(Type::Object)
-                .property(
-                    "type",
-                    ObjectBuilder::new()
-                        .schema_type(Type::String)
-                        .enum_values(Some(names.iter().copied())),
-                )
-                .required("type")
-        }
-        fn material(name: &str) -> ObjectBuilder {
-            kind(&[name])
-                .property(
-                    "tls",
-                    ObjectBuilder::new()
-                        .schema_type(Type::Object)
-                        .property(
-                            "certificate",
-                            ObjectBuilder::new()
-                                .schema_type(Type::String)
-                                .min_length(Some(1)),
-                        )
-                        .property(
-                            "privateKey",
-                            ObjectBuilder::new()
-                                .schema_type(Type::String)
-                                .min_length(Some(1)),
-                        )
-                        .required("certificate")
-                        .required("privateKey"),
-                )
-                .required("tls")
-        }
-        AllOfBuilder::new().item(Ref::from_schema_name("Listener")).item(OneOfBuilder::new()
-            .item(kind(&["native_udp","native_tcp"]))
-            .item(material("vless").property("uuid",ObjectBuilder::new().schema_type(Type::String)).required("uuid"))
-            .item(material("trojan").property("password",ObjectBuilder::new().schema_type(Type::String).min_length(Some(1))).required("password")))
-            .description(Some("Complete normalized declaration with material present. Structural deserialization does not attest cryptographic validation, revocation, compiled capability, or runtime readiness."))
-            .into()
+        crate::settings::listener_schema(true)
     }
 }
 impl ToSchema for PreparedListener {

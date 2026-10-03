@@ -1,6 +1,7 @@
 //! The SSE response is a byte stream of these JSON data objects, not one JSON
 //! response. Management supplies its existing Config/Entity/Progress fragments.
 use crate::{
+    history::ConfigurationChangeCause,
     observations::ObservationTask,
     state::{NodeStateView, StateView},
 };
@@ -61,7 +62,7 @@ pub enum StreamEvent<C, E, P> {
         revision: Revision,
         #[serde(rename = "changedAt")]
         changed_at: DateTime<Utc>,
-        cause: ConfigurationCause,
+        cause: ConfigurationChangeCause,
         actor: EventActor,
         #[serde(rename = "requestId")]
         request_id: Option<RequestId>,
@@ -97,23 +98,12 @@ pub struct ConfigurationNotice {
     pub previous_revision: Revision,
     pub revision: Revision,
     pub changed_at: DateTime<Utc>,
-    pub cause: ConfigurationCause,
+    pub cause: ConfigurationChangeCause,
     pub actor: EventActor,
     pub request_id: Option<RequestId>,
     pub changed_pointers: Vec<String>,
     pub changes_complete: bool,
     pub source_changed: bool,
-}
-#[derive(Clone, Copy, Debug, Serialize, Deserialize, ToSchema)]
-#[serde(rename_all = "camelCase")]
-pub enum ConfigurationCause {
-    Edit,
-    Restore,
-    Enrollment,
-    NodeDeleted,
-    EmailSync,
-    MemberRemoved,
-    IdentityTransition,
 }
 #[derive(Clone, Debug, Serialize, Deserialize, ToSchema)]
 #[serde(tag = "type", rename_all = "camelCase", deny_unknown_fields)]

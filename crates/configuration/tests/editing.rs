@@ -1,6 +1,40 @@
 use meshway_configuration::*;
 
 #[test]
+fn listener_deletion_requires_explicit_null_and_has_a_closed_required_schema() {
+    let id = "12345678-1234-0234-0234-123456789abc";
+    assert!(
+        serde_json::from_str::<ConfigurationOperation>(&format!(
+            r#"{{"type":"setListener","nodeId":"{id}","key":"edge"}}"#
+        ))
+        .is_err()
+    );
+    assert!(matches!(
+        serde_json::from_str::<ConfigurationOperation>(&format!(
+            r#"{{"type":"setListener","nodeId":"{id}","key":"edge","listener":null}}"#
+        ))
+        .unwrap(),
+        ConfigurationOperation::SetListener { listener: None, .. }
+    ));
+    let schema =
+        serde_json::to_value(<ConfigurationOperation as utoipa::PartialSchema>::schema()).unwrap();
+    let variant = schema["oneOf"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|variant| variant["properties"]["type"]["enum"][0] == "setListener")
+        .unwrap();
+    assert_eq!(variant["additionalProperties"], false);
+    assert!(
+        variant["required"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|name| name == "listener")
+    );
+}
+
+#[test]
 fn edits_preserve_unmodified_comments_and_reject_duplicate_fields() {
     let source = "// header\n{\"dns\": {\"domain\": \"example.test\", /* retained */ \"magicDNS\":true},\"groups\": {\"group:old\":[], /* keep */ \"group:keep\":[]}} // tail";
     let before = parse_jsonc(source).unwrap();

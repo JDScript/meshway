@@ -4,7 +4,7 @@
 
 ## 当前实现切片
 
-新 `apps/meshway-controller` 的隔离开发基线提供以下账户与网络 JSON 操作：
+新 `apps/meshway-controller` 的隔离开发基线已提供账户与管理／配置 JSON 操作；基础账户与网络入口如下，完整操作以生成 OpenAPI／SDK 为准：
 
 | operationId | 方法与路径 | 成功响应 |
 | --- | --- | --- |
@@ -41,7 +41,7 @@ dataDir 使用无符号链接的绝对路径，父目录须存在；进程创建
 
 `export-openapi` binary 从同一份真实路由声明导出 `packages/protocol/openapi.json` 的内容，不启动数据库或服务。生成 SDK 的可用操作以这份产物为依据，不从本页目标索引推断尚未交付的接口。
 
-上述初始十个操作已生成 Rust／TypeScript 客户端。管理／配置候选的扩展及字段变更已导出实际 OpenAPI，尚待协调者统一重生成客户端和执行 SDK drift 检查；此树现有 SDK 不能直接当作扩展合同的兼容客户端。SDK 用法见 `packages/control-client/README.md`；SSE 等尚未支持的形状仍需单独接通。
+上述管理／配置 JSON 操作及字段变更已统一生成 Rust／TypeScript 客户端和运行时校验 schema。SDK 用法见 `packages/control-client/README.md`。SSE 生成链已支持显式声明的 JSON-data 事件流，但 State 候选仍待真实 provider／主 Router 接线，尚未导出可用的网络／Node SSE 操作。
 
 主机运维签发密码重置链接（先停止占有同一 dataDir 的 Controller）：
 

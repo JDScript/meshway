@@ -227,7 +227,7 @@ async fn events<P: StateProvider>(
     );
     Ok(response)
 }
-#[utoipa::path(get, path = "/api/v1/networks/{networkId}/events", operation_id = "watchNetwork", tag = "events", security(("userSession"=[])), params(("networkId"=NetworkId, Path), ("Last-Event-ID"=Option<String>, Header)), responses((status=200, content_type="text/event-stream", body=String),(status=401, body=ErrorResponse)))]
+#[utoipa::path(get, path = "/api/v1/networks/{networkId}/events", operation_id = "watchNetwork", tag = "events", security(("userSession"=[])), params(("networkId"=NetworkId, Path), ("Last-Event-ID"=Option<String>, Header, nullable=false)), responses((status=200, content_type="text/event-stream", body=String),(status=401, body=ErrorResponse)))]
 async fn user_events<P: StateProvider>(
     State(service): State<StateService<P>>,
     Extension(id): Extension<RequestId>,
@@ -236,7 +236,7 @@ async fn user_events<P: StateProvider>(
 ) -> Result<Response, HttpError> {
     events(service, user(&headers, network, id)?, headers, id).await
 }
-#[utoipa::path(get, path = "/agent-api/v1/events", operation_id = "watchNode", tag = "events", security(("nodeCredential"=[])), params(("Last-Event-ID"=Option<String>, Header)), responses((status=200, content_type="text/event-stream", body=String),(status=401, body=ErrorResponse)))]
+#[utoipa::path(get, path = "/agent-api/v1/events", operation_id = "watchNode", tag = "events", security(("nodeCredential"=[])), params(("Last-Event-ID"=Option<String>, Header, nullable=false)), responses((status=200, content_type="text/event-stream", body=String),(status=401, body=ErrorResponse)))]
 async fn node_events<P: StateProvider>(
     State(service): State<StateService<P>>,
     Extension(id): Extension<RequestId>,

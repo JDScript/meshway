@@ -3,7 +3,7 @@ use meshway_model::{MembershipId, NodeId, UserId};
 use meshway_transport_spec::{Listener, MaterialRequirement, PreparedListener};
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
-use utoipa::ToSchema;
+use utoipa::{PartialSchema, ToSchema};
 
 mod addresses;
 mod allocation;
@@ -36,7 +36,7 @@ pub struct ValidationContext<'a> {
     pub verified_listeners: BTreeMap<(NodeId, String), Listener>,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub enum PreparationKind {
     AddressPoolV4,
@@ -46,6 +46,52 @@ pub enum PreparationKind {
     IdentityProof,
     Material(MaterialRequirement),
     RuleSetContent,
+}
+impl utoipa::PartialSchema for PreparationKind {
+    fn schema() -> utoipa::openapi::RefOr<utoipa::openapi::schema::Schema> {
+        use utoipa::openapi::{
+            Ref,
+            schema::{AdditionalProperties, ObjectBuilder, OneOfBuilder, Type},
+        };
+        let names = [
+            Self::AddressPoolV4,
+            Self::AddressPoolV6,
+            Self::AddressV4,
+            Self::AddressV6,
+            Self::IdentityProof,
+            Self::RuleSetContent,
+        ];
+        OneOfBuilder::new()
+            .item(
+                ObjectBuilder::new()
+                    .schema_type(Type::String)
+                    .enum_values(Some(names.map(|name| {
+                        serde_json::to_value(name).expect("unit enum serializes")
+                    }))),
+            )
+            .item(
+                ObjectBuilder::new()
+                    .schema_type(Type::Object)
+                    .property("material", Ref::from_schema_name("MaterialRequirement"))
+                    .required("material")
+                    .additional_properties(Some(AdditionalProperties::FreeForm(false))),
+            )
+            .into()
+    }
+}
+impl ToSchema for PreparationKind {
+    fn schemas(
+        schemas: &mut Vec<(
+            String,
+            utoipa::openapi::RefOr<utoipa::openapi::schema::Schema>,
+        )>,
+    ) {
+        schemas.push((
+            MaterialRequirement::name().into_owned(),
+            MaterialRequirement::schema(),
+        ));
+        MaterialRequirement::schemas(schemas);
+    }
 }
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]

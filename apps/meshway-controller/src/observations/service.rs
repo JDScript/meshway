@@ -164,15 +164,23 @@ impl<P: ObservationProvider> StateService<P> {
                 let admission = provider.report(&tx, &authorization, now)?;
                 let mut runtime = runtime.lock().map_err(|_| StateError::Unavailable)?;
                 reauthorize(&*provider, &tx, &mut runtime, now);
-                let result_digest=crate::resources::content_digest(&serde_json::to_vec(&result).map_err(|_|StateError::Invalid)?);
+                let result_digest = crate::resources::content_digest(
+                    &serde_json::to_vec(&result).map_err(|_| StateError::Invalid)?,
+                );
                 let duplicate = runtime
                     .observations
                     .tasks
                     .get(&id)
-                    .and_then(|task| task.seen.get(&result.sample.measurement_id)).is_some_and(|seen|seen.digest==result_digest);
+                    .and_then(|task| task.seen.get(&result.sample.measurement_id))
+                    .is_some_and(|seen| seen.digest == result_digest);
                 let mut staged = runtime.observations.clone();
                 let task = staged.result(&admission, id, result, now)?;
-                if let Some(probe) = task.latest.as_ref().filter(|sample|!sample.partial).and_then(|sample| sample.probe.clone()) {
+                if let Some(probe) = task
+                    .latest
+                    .as_ref()
+                    .filter(|sample| !sample.partial)
+                    .and_then(|sample| sample.probe.clone())
+                {
                     let occurred_at = probe.completed_at.ok_or(StateError::Invalid)?;
                     let event = meshway_model::observations::ObservationEvent {
                         event_id: probe.measurement_id,

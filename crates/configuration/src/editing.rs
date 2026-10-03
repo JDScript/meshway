@@ -51,12 +51,16 @@ tagged! { pub enum ConfigurationOperation {
     ReplaceTagsOwners { #[serde(rename="tagsOwners",deserialize_with="unique_map")] tags_owners: BTreeMap<String,Vec<String>> },
     ReplaceRuleSets { #[serde(rename="ruleSets",deserialize_with="unique_map")] rule_sets: BTreeMap<String,RuleSet> },
     SetNodeSettings { #[serde(rename="nodeId")] node_id: NodeId, fields: NodeSettingsPatch },
-    SetListener { #[serde(rename="nodeId")] node_id: NodeId, key: String, listener: Option<Listener> },
+    SetListener { #[serde(rename="nodeId")] node_id: NodeId, key: String, #[serde(deserialize_with="nullable_listener")] listener: Option<Listener> [required=true] },
     SetIdentityTags { #[serde(rename="nodeId")] node_id: NodeId, tags: Vec<String> },
     SetAddressPools { #[serde(rename="addressPools")] address_pools: AddressPoolsInput },
     SetAddresses { #[serde(rename="nodeId")] node_id: NodeId, addresses: NodeAddressesInput },
     DeleteNode { #[serde(rename="nodeId")] node_id: NodeId },
 } }
+
+fn nullable_listener<'de, D: serde::Deserializer<'de>>(d: D) -> Result<Option<Listener>, D::Error> {
+    serde::Deserialize::deserialize(d)
+}
 
 /// Apply typed edits to values. Authorization, material preparation, source-text
 /// edits and final validation belong to the transaction preparation pipeline.

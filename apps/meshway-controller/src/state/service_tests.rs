@@ -115,6 +115,14 @@ fn sse_export_declares_bytes_and_a_separate_json_event_schema() {
         .as_str()
         .unwrap();
     assert!(json.pointer(reference.trim_start_matches('#')).is_some());
+    let header = json["paths"][path]["get"]["parameters"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|parameter| parameter["name"] == "Last-Event-ID")
+        .unwrap();
+    assert_eq!(header["required"], false);
+    assert_eq!(header["schema"]["type"], "string");
     assert_eq!(
         json["components"]["schemas"]["GeoPosition"]["properties"]["latitude"]["minimum"],
         -90

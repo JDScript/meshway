@@ -46,8 +46,8 @@ macro_rules! object {
 pub(crate) use object;
 
 macro_rules! tagged {
-    (pub enum $name:ident { $($variant:ident $({ $($(#[$attr:meta])* $field:ident: $ty:ty),* $(,)? })?),* $(,)? }) => {
-        #[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, utoipa::ToSchema)]
+    (pub enum $name:ident { $($variant:ident $({ $($(#[$attr:meta])* $field:ident: $ty:ty $([$($schema:tt)*])?),* $(,)? })?),* $(,)? }) => {
+        #[derive(Clone, Debug, PartialEq, Eq, serde::Serialize)]
         #[serde(tag = "type", rename_all = "camelCase", deny_unknown_fields)]
         pub enum $name { $($variant $({ $($(#[$attr])* $field: $ty),* })?),* }
         impl<'de> serde::Deserialize<'de> for $name {
@@ -56,6 +56,30 @@ macro_rules! tagged {
                 #[serde(tag = "type", rename_all = "camelCase", deny_unknown_fields)]
                 enum Fields { $($variant { $($($(#[$attr])* $field: $ty),*)? }),* }
                 Ok(match Fields::deserialize($crate::object::MapOnly(d))? { $(Fields::$variant { $($($field),*)? } => Self::$variant $({ $($field),* })?),* })
+            }
+        }
+        impl utoipa::PartialSchema for $name {
+            fn schema() -> utoipa::openapi::RefOr<utoipa::openapi::schema::Schema> {
+                use utoipa::openapi::{RefOr, schema::{Schema, ObjectBuilder, OneOfBuilder, Type}};
+                let mut union = OneOfBuilder::new();
+                $(
+                    $crate::object::object! { pub struct $variant { $($($(#[$attr])* pub $field: $ty $([$($schema)*])?),*)? } }
+                    let RefOr::T(Schema::Object(mut object)) = <$variant as utoipa::PartialSchema>::schema() else { unreachable!("object macro emits an object") };
+                    let name = stringify!($variant);
+                    let tag = format!("{}{}", name[..1].to_ascii_lowercase(), &name[1..]);
+                    object.properties.insert("type".into(), ObjectBuilder::new().schema_type(Type::String).enum_values(Some([tag])).into());
+                    object.required.push("type".into());
+                    union = union.item(object);
+                )*
+                union.into()
+            }
+        }
+        impl utoipa::ToSchema for $name {
+            fn schemas(schemas: &mut Vec<(String, utoipa::openapi::RefOr<utoipa::openapi::schema::Schema>)>) {
+                $(
+                    $crate::object::object! { pub struct $variant { $($($(#[$attr])* pub $field: $ty $([$($schema)*])?),*)? } }
+                    <$variant as utoipa::ToSchema>::schemas(schemas);
+                )*
             }
         }
     }
