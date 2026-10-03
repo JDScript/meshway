@@ -195,6 +195,17 @@ async fn enroll_user_node(
     signer: &SigningKey,
     dp: [u8; 32],
 ) -> meshway_protocol::enrollment::EnrollmentResponse {
+    try_enroll_user_node(app, token, network, signer, dp)
+        .await
+        .unwrap()
+}
+async fn try_enroll_user_node(
+    app: &App,
+    token: &str,
+    network: NetworkId,
+    signer: &SigningKey,
+    dp: [u8; 32],
+) -> Result<meshway_protocol::enrollment::EnrollmentResponse, NodeError> {
     use meshway_protocol::enrollment::*;
     use sha2::{Digest as _, Sha256};
     let verifier = "p".repeat(43);
@@ -260,7 +271,6 @@ async fn enroll_user_node(
             },
         )
         .await
-        .unwrap()
 }
 
 #[tokio::test]
@@ -2325,5 +2335,506 @@ async fn real_multihop_admission_separates_neighbors_paths_and_receipt_history()
             reason: UnavailableReason::Unauthorized
         }
     ));
+    app.shutdown().await.unwrap();
+}
+
+#[tokio::test]
+async fn rejoined_user_enrollment_preserves_inactive_group_membership() {
+    let _serial = crate::accounts::TEST_KDF_LOCK.lock().await;
+    let (_dir, app, network, target, _, _, _, _, _) = fixture().await;
+    let owner = app
+        .accounts()
+        .login(
+            "owner@example.com".into(),
+            Secret::new("a sufficiently long password".into()),
+            rid(),
+        )
+        .await
+        .unwrap();
+    let user = app
+        .accounts()
+        .register(
+            "rejoining@example.test".into(),
+            Secret::new("a sufficiently long password".into()),
+            rid(),
+        )
+        .await
+        .unwrap();
+    let link = app
+        .networks()
+        .create_join_link(
+            owner.token.expose(),
+            network,
+            MembershipRole::Member,
+            600,
+            rid(),
+        )
+        .await
+        .unwrap();
+    let (_, old_membership) = app
+        .networks()
+        .redeem_join_link(user.token.expose(), link.secret.unwrap().expose(), rid())
+        .await
+        .unwrap();
+    let old_signer = SigningKey::from_bytes(&[81; 32]);
+    let old_node =
+        enroll_user_node(&app, user.token.expose(), network, &old_signer, [82; 32]).await;
+    let snapshot = app
+        .configurations()
+        .read(owner.token.expose(), network, None)
+        .await
+        .unwrap();
+    app.configurations()
+        .apply(
+            owner.token.expose(),
+            network,
+            meshway_protocol::configuration::ConfigurationRequest::Operations {
+                expected_revision: snapshot.revision,
+                request_id: rid(),
+                ops: vec![
+                    ConfigurationOperation::ReplaceGroups {
+                        groups: BTreeMap::from([(
+                            "group:former-members".into(),
+                            vec![user.session.user.email.clone()],
+                        )]),
+                    },
+                    ConfigurationOperation::ReplaceAccess {
+                        access: vec![AccessRule {
+                            remark: String::new(),
+                            src: vec!["group:former-members".into()],
+                            dst: vec![format!("node:{target}")],
+                            ip: vec!["tcp:443".into()],
+                            bidirectional: false,
+                        }],
+                    },
+                ],
+            },
+            rid(),
+        )
+        .await
+        .unwrap();
+    let impact = app
+        .networks()
+        .removal_impact(owner.token.expose(), network, Some(old_membership), rid())
+        .await
+        .unwrap();
+    assert_eq!(impact.node_ids, vec![old_node.node_id]);
+    app.networks()
+        .remove_member(
+            owner.token.expose(),
+            network,
+            Some(old_membership),
+            impact.version,
+            impact.revision,
+            rid(),
+        )
+        .await
+        .unwrap();
+    let link = app
+        .networks()
+        .create_join_link(
+            owner.token.expose(),
+            network,
+            MembershipRole::Member,
+            600,
+            rid(),
+        )
+        .await
+        .unwrap();
+    let (_, new_membership) = app
+        .networks()
+        .redeem_join_link(user.token.expose(), link.secret.unwrap().expose(), rid())
+        .await
+        .unwrap();
+    assert_ne!(old_membership, new_membership);
+    let before = app
+        .configurations()
+        .read(owner.token.expose(), network, None)
+        .await
+        .unwrap();
+    assert_eq!(
+        before.bindings.users[&user.session.user.email].membership_id,
+        old_membership
+    );
+    assert!(
+        !before
+            .document
+            .configuration
+            .nodes
+            .contains_key(&old_node.node_id)
+    );
+    let signer = SigningKey::from_bytes(&[83; 32]);
+    let result = try_enroll_user_node(&app, user.token.expose(), network, &signer, [84; 32]).await;
+    if result.is_err() {
+        let unchanged = app
+            .configurations()
+            .read(owner.token.expose(), network, None)
+            .await
+            .unwrap();
+        assert_eq!(unchanged.revision, before.revision);
+        assert_eq!(unchanged.bindings.users, before.bindings.users);
+        assert_eq!(
+            unchanged.document.configuration,
+            before.document.configuration
+        );
+        app.check_storage().await.unwrap();
+    }
+    // System enrollment must neither reject the current member due to an old
+    // group reference nor reactivate that group's old membership binding.
+    let enrolled =
+        result.expect("current membership must enroll without rebinding the inactive group");
+    let after = app
+        .configurations()
+        .read(owner.token.expose(), network, None)
+        .await
+        .unwrap();
+    assert_eq!(
+        after.document.configuration.groups,
+        before.document.configuration.groups
+    );
+    let service = app.execution();
+    let node_session = session(&service, network, enrolled.node_id, &enrolled.keys, &signer).await;
+    let lease = service
+        .acquire(
+            node_session.token.expose(),
+            AcquireInstanceRequest {
+                instance_id: iid(),
+                capabilities: caps(),
+            },
+        )
+        .await
+        .unwrap();
+    let decision = service
+        .demand(
+            node_session.token.expose(),
+            DemandRequest {
+                instance: InstanceRequest {
+                    instance_id: lease.instance_id,
+                    generation: lease.generation,
+                },
+                request_id: rid(),
+                target: BusinessTarget::Mesh { node: target },
+                protocol: BusinessProtocol::Tcp,
+                port: Some(443.try_into().unwrap()),
+                profile: "mesh".into(),
+                duration_seconds: 60,
+            },
+        )
+        .await
+        .unwrap();
+    assert!(matches!(
+        decision.decision,
+        DemandDecision::Unavailable {
+            reason: UnavailableReason::Unauthorized
+        }
+    ));
+    app.shutdown().await.unwrap();
+}
+
+#[tokio::test]
+async fn withdrawing_execution_dependencies_commits_and_never_falls_through_to_direct() {
+    let _serial = crate::accounts::TEST_KDF_LOCK.lock().await;
+    let (_dir, app, network, a, b, ak, bk, asigner, bsigner) = fixture().await;
+    let owner = app
+        .accounts()
+        .login(
+            "owner@example.com".into(),
+            Secret::new("a sufficiently long password".into()),
+            rid(),
+        )
+        .await
+        .unwrap();
+    let current = app
+        .configurations()
+        .read(owner.token.expose(), network, None)
+        .await
+        .unwrap();
+    let mut config = current.document.configuration.clone();
+    config.nodes.get_mut(&b).unwrap().exit_enabled = true;
+    config.access = vec![AccessRule {
+        remark: String::new(),
+        src: vec!["*".into()],
+        dst: vec!["1.1.1.1/32".into()],
+        ip: vec!["tcp:443".into()],
+        bidirectional: false,
+    }];
+    let rule_sets = BTreeMap::from([(
+        "destinations".into(),
+        RuleSet::Inline {
+            ip_cidr: vec!["1.1.1.1/32".into()],
+            domain_suffix: vec![],
+        },
+    )]);
+    config.rule_sets = rule_sets.clone();
+    config.routing.egress.rules = vec![
+        EgressRule {
+            remark: String::new(),
+            matcher: RouteMatch {
+                rule_sets: vec!["destinations".into()],
+                ..Default::default()
+            },
+            action: RouteAction::Exit {
+                nodes: vec![format!("node:{b}")],
+                via: vec![],
+            },
+        },
+        EgressRule {
+            remark: String::new(),
+            matcher: RouteMatch {
+                ip_cidr: vec!["1.1.1.1/32".into()],
+                ..Default::default()
+            },
+            action: RouteAction::Direct,
+        },
+    ];
+    let applied = app
+        .configurations()
+        .apply(
+            owner.token.expose(),
+            network,
+            meshway_protocol::configuration::ConfigurationRequest::Document {
+                expected_revision: current.revision,
+                request_id: rid(),
+                source_jsonc: WireSecret::new(canonical_json(&config).unwrap().expose().into()),
+            },
+            rid(),
+        )
+        .await
+        .unwrap();
+    let mut revision = applied.revision;
+    let service = app.execution();
+    let at = session(&service, network, a, &ak, &asigner).await;
+    let bt = session(&service, network, b, &bk, &bsigner).await;
+    let ai = service
+        .acquire(
+            at.token.expose(),
+            AcquireInstanceRequest {
+                instance_id: iid(),
+                capabilities: caps(),
+            },
+        )
+        .await
+        .unwrap();
+    service
+        .acquire(
+            bt.token.expose(),
+            AcquireInstanceRequest {
+                instance_id: iid(),
+                capabilities: caps(),
+            },
+        )
+        .await
+        .unwrap();
+    let request = DemandRequest {
+        instance: InstanceRequest {
+            instance_id: ai.instance_id,
+            generation: ai.generation,
+        },
+        request_id: rid(),
+        target: BusinessTarget::Ip {
+            address: ExecutionAddress("1.1.1.1".parse().unwrap()),
+        },
+        protocol: BusinessProtocol::Tcp,
+        port: Some(443.try_into().unwrap()),
+        profile: "mesh".into(),
+        duration_seconds: 120,
+    };
+    assert!(matches!(
+        service
+            .demand(at.token.expose(), request.clone())
+            .await
+            .unwrap()
+            .decision,
+        DemandDecision::Permitted { .. }
+    ));
+    for (ops, reason) in [
+        (
+            vec![ConfigurationOperation::ReplaceAccess { access: vec![] }],
+            Some(UnavailableReason::Unauthorized),
+        ),
+        (
+            vec![ConfigurationOperation::ReplaceAccess {
+                access: config.access.clone(),
+            }],
+            None,
+        ),
+        (
+            vec![ConfigurationOperation::SetNodeSettings {
+                node_id: b,
+                fields: NodeSettingsPatch {
+                    exit_enabled: Input::Value(false),
+                    ..Default::default()
+                },
+            }],
+            Some(UnavailableReason::NoPath),
+        ),
+        (
+            vec![ConfigurationOperation::DeleteNode { node_id: b }],
+            Some(UnavailableReason::NoPath),
+        ),
+    ] {
+        let update = || meshway_protocol::configuration::ConfigurationRequest::Operations {
+            expected_revision: revision,
+            request_id: rid(),
+            ops: ops.clone(),
+        };
+        let preview = app
+            .configurations()
+            .validate(owner.token.expose(), network, update(), rid())
+            .await
+            .unwrap();
+        if reason.is_some() {
+            assert!(!preview.unavailable_dependencies.is_empty());
+        }
+        revision = app
+            .configurations()
+            .apply(owner.token.expose(), network, update(), rid())
+            .await
+            .unwrap()
+            .revision;
+        let decision = service
+            .demand(at.token.expose(), request.clone())
+            .await
+            .unwrap()
+            .decision;
+        match reason {
+            Some(reason) => assert_eq!(decision, DemandDecision::Unavailable { reason }),
+            None => assert!(matches!(decision, DemandDecision::Permitted { .. })),
+        }
+    }
+    assert_eq!(
+        service.authenticate(bt.token.expose()).await.err(),
+        Some(NodeError::Unauthorized)
+    );
+    let after = app
+        .configurations()
+        .read(owner.token.expose(), network, None)
+        .await
+        .unwrap();
+    assert_eq!(after.document.configuration.routing, config.routing);
+    app.check_storage().await.unwrap();
+    app.shutdown().await.unwrap();
+}
+
+#[tokio::test]
+async fn email_maintenance_preserves_live_node_subject_and_session() {
+    let _serial = crate::accounts::TEST_KDF_LOCK.lock().await;
+    let (_dir, app, network, _, _, _, _, _, _) = fixture().await;
+    let owner = app
+        .accounts()
+        .login(
+            "owner@example.com".into(),
+            Secret::new("a sufficiently long password".into()),
+            rid(),
+        )
+        .await
+        .unwrap();
+    let signer = SigningKey::from_bytes(&[85; 32]);
+    let peer = app
+        .accounts()
+        .register(
+            "pupil@example.com".into(),
+            Secret::new("a sufficiently long password".into()),
+            rid(),
+        )
+        .await
+        .unwrap();
+    let link = app
+        .networks()
+        .create_join_link(
+            owner.token.expose(),
+            network,
+            MembershipRole::Member,
+            600,
+            rid(),
+        )
+        .await
+        .unwrap();
+    app.networks()
+        .redeem_join_link(peer.token.expose(), link.secret.unwrap().expose(), rid())
+        .await
+        .unwrap();
+    let node = enroll_user_node(&app, owner.token.expose(), network, &signer, [86; 32]).await;
+    let service = app.execution();
+    let session = session(&service, network, node.node_id, &node.keys, &signer).await;
+    let lease = service
+        .acquire(
+            session.token.expose(),
+            AcquireInstanceRequest {
+                instance_id: iid(),
+                capabilities: caps(),
+            },
+        )
+        .await
+        .unwrap();
+    let before = app
+        .configurations()
+        .read(owner.token.expose(), network, None)
+        .await
+        .unwrap();
+    app.configurations()
+        .apply(
+            owner.token.expose(),
+            network,
+            meshway_protocol::configuration::ConfigurationRequest::Operations {
+                expected_revision: before.revision,
+                request_id: rid(),
+                ops: vec![ConfigurationOperation::ReplaceGroups {
+                    groups: BTreeMap::from([(
+                        "group:team".into(),
+                        vec!["owner@example.com".into(), "pupil@example.com".into()],
+                    )]),
+                }],
+            },
+            rid(),
+        )
+        .await
+        .unwrap();
+    let changed = app
+        .accounts()
+        .change_email(
+            owner.token.expose(),
+            Secret::new("a sufficiently long password".into()),
+            "renamed-owner@example.com".into(),
+            rid(),
+            app.configurations(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(changed.id, owner.session.user.id);
+    assert_eq!(
+        service
+            .authenticate(session.token.expose())
+            .await
+            .unwrap()
+            .node_id(),
+        node.node_id
+    );
+    let next = service
+        .renew(
+            session.token.expose(),
+            InstanceRequest {
+                instance_id: lease.instance_id,
+                generation: lease.generation,
+            },
+        )
+        .await
+        .unwrap();
+    assert_eq!(next.instance_id, lease.instance_id);
+    let after = app
+        .configurations()
+        .read(owner.token.expose(), network, None)
+        .await
+        .unwrap();
+    assert_eq!(
+        before.bindings.users["owner@example.com"],
+        after.bindings.users["renamed-owner@example.com"]
+    );
+    assert_eq!(
+        after.document.configuration.nodes[&node.node_id].identity,
+        NodeIdentity::User {
+            user: "renamed-owner@example.com".into()
+        }
+    );
     app.shutdown().await.unwrap();
 }
