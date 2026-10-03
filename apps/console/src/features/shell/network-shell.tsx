@@ -6,6 +6,7 @@ import { LanguageSwitch, ThemeSwitch } from "@/components/chrome/preferences"
 import { AccountPage } from "@/features/account/page"
 import { AccountMenu } from "@/features/auth/account-menu"
 import { useBootStore } from "@/features/boot/boot-store"
+import { ConfigurationPage } from "@/features/configuration/page"
 import { EMPTY_SCENE } from "@/features/globe/scene"
 import { setGlobe } from "@/features/globe/store"
 import { MembersPage } from "@/features/members/page"
@@ -76,6 +77,7 @@ export function NetworkShell({
     <>
       <OverviewPage />
       <MembersPage networkId={networkId} network={network} />
+      <ConfigurationPage networkId={networkId} network={network} />
       <SettingsPage networkId={networkId} network={network} />
       <AccountPage networkId={networkId} />
 

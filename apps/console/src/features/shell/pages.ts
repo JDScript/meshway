@@ -1,6 +1,7 @@
 import type { NetworkActions } from "@meshway/control-client"
 import { useMatches, useNavigate } from "@tanstack/react-router"
 import {
+  FileSlidersIcon,
   GlobeIcon,
   Settings2Icon,
   UsersIcon,
@@ -17,6 +18,7 @@ import { m } from "@/paraglide/messages.js"
 export const PAGES = {
   overview: { route: "/networks/$network/overview", panel: false },
   members: { route: "/networks/$network/members", panel: true },
+  configuration: { route: "/networks/$network/configuration", panel: true },
   settings: { route: "/networks/$network/settings", panel: true },
   account: { route: "/networks/$network/account", panel: false },
 } as const satisfies Record<
@@ -42,6 +44,11 @@ const DOCK: readonly DockItem[] = [
     icon: UsersIcon,
     label: () => m.members_title(),
     shown: (actions) => actions.manageMembers,
+  },
+  {
+    page: "configuration",
+    icon: FileSlidersIcon,
+    label: () => m.configuration_title(),
   },
   { page: "settings", icon: Settings2Icon, label: () => m.nav_settings() },
 ]

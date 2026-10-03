@@ -10,7 +10,8 @@
       "./messages/network/{locale}.json",
       "./messages/members/{locale}.json",
       "./messages/settings/{locale}.json",
-      "./messages/account/{locale}.json"
+      "./messages/account/{locale}.json",
+      "./messages/configuration/{locale}.json"
     ]
   }
 }
