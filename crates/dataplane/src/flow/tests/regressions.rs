@@ -63,6 +63,152 @@ fn handshake(a: &StatefulIpv4Plan, b: &StatefulIpv4Plan) {
 }
 
 #[test]
+fn data_bearing_third_ack_commits_handshake_and_accepts_peer_cumulative_ack() {
+    let (a, b) = plans();
+    deliver(&a, &b, &tcp(false, 100, 0, 2, 0));
+    deliver(&b, &a, &tcp(true, 700, 101, 0x12, 0));
+    let path = paths();
+    // Raw reserve -> successful enqueue, without the test helper's cancellation.
+    let data = ReceivedPacket {
+        source: "a".into(),
+        payload: a
+            .encapsulate(&path, &tcp(false, 101, 701, 0x18, 10))
+            .unwrap(),
+        path,
+    };
+    a.sent(&data.path, &data.payload).unwrap();
+    assert!(b.incoming(&data));
+    b.delivered(&data).unwrap();
+    let ack = prepared(&b, &tcp(true, 701, 111, 0x10, 0));
+    b.sent(&ack.path, &ack.payload).unwrap();
+    assert!(a.incoming(&ack));
+    a.delivered(&ack).unwrap();
+    assert_eq!(a.statistics().invalid_drops, 0);
+    assert!(a.outgoing(&tcp(false, 111, 701, 0x18, 10)).is_some());
+}
+
+#[test]
+fn cancelled_third_ack_then_data_keeps_handshake_coherent_without_return_proof() {
+    let (a, b) = plans();
+    // Deliberately suppress receipts: the authenticated SYNACK is the proof,
+    // and reserving/cancelling the third ACK must not change that qualification.
+    let syn = prepared(&a, &tcp(false, 100, 0, 2, 0));
+    a.sent(&syn.path, &syn.payload).unwrap();
+    assert!(b.incoming(&syn));
+    b.delivered(&syn).unwrap();
+    let synack = prepared(&b, &tcp(true, 700, 101, 0x12, 0));
+    b.sent(&synack.path, &synack.payload).unwrap();
+    assert!(a.incoming(&synack));
+    a.delivered(&synack).unwrap();
+    let path = paths();
+    let before = a.table().flows.values().next().unwrap().active;
+    let third = a
+        .encapsulate(&path, &tcp(false, 101, 701, 0x10, 0))
+        .unwrap();
+    assert_eq!(a.table().flows.values().next().unwrap().active, before);
+    a.cancelled(&path, &third);
+    assert_eq!(a.table().flows.values().next().unwrap().active, before);
+    let data = ReceivedPacket {
+        source: "a".into(),
+        payload: a
+            .encapsulate(&path, &tcp(false, 101, 701, 0x18, 10))
+            .unwrap(),
+        path,
+    };
+    a.sent(&data.path, &data.payload).unwrap();
+    assert!(b.incoming(&data));
+    b.delivered(&data).unwrap();
+    let ack = prepared(&b, &tcp(true, 701, 111, 0x10, 0));
+    assert!(a.incoming(&ack));
+    a.delivered(&ack).unwrap();
+    assert_eq!(a.statistics().invalid_drops, 0);
+    assert!(a.outgoing(&tcp(false, 101, 701, 0x18, 10)).is_some());
+}
+
+struct NoControls(StatefulIpv4Plan);
+
+impl Admission for NoControls {
+    fn outgoing(&self, bytes: &[u8]) -> Option<&Vec<String>> {
+        self.0.outgoing(bytes)
+    }
+    fn incoming(&self, packet: &ReceivedPacket) -> bool {
+        self.0.incoming(packet)
+    }
+    fn encapsulate(&self, path: &[String], bytes: &[u8]) -> io::Result<Vec<u8>> {
+        self.0.encapsulate(path, bytes)
+    }
+    fn sent(&self, path: &[String], bytes: &[u8]) -> io::Result<()> {
+        self.0.sent(path, bytes)
+    }
+    fn cancelled(&self, path: &[String], bytes: &[u8]) {
+        self.0.cancelled(path, bytes)
+    }
+    fn plaintext(&self, packet: &ReceivedPacket) -> io::Result<Vec<u8>> {
+        self.0.plaintext(packet)
+    }
+    fn delivered(&self, packet: &ReceivedPacket) -> io::Result<()> {
+        self.0.delivered(packet)
+    }
+    fn control(&self, packet: &ReceivedPacket) -> io::Result<bool> {
+        self.0.control(packet)
+    }
+}
+
+#[tokio::test]
+async fn encrypted_third_ack_with_data_accepts_peer_ack_with_all_receipts_suppressed() {
+    use crate::packet_io::{self, PacketBatch};
+    use tokio::sync::watch;
+    let runtimes = encrypted_nodes().await;
+    let (a, b) = plans();
+    let observer = a.clone();
+    let (ad, ac) = packet_io::channel(8).unwrap();
+    let (bd, bc) = packet_io::channel(8).unwrap();
+    let (lease, deadline) = watch::channel(Some(Instant::now() + Duration::from_secs(30)));
+    let ap = tokio::spawn(packet_io::run(
+        ad,
+        runtimes[0].clone(),
+        NoControls(a),
+        deadline.clone(),
+    ));
+    let bp = tokio::spawn(packet_io::run(
+        bd,
+        runtimes[2].clone(),
+        NoControls(b),
+        deadline,
+    ));
+    let result = async {
+        for (from, to, bytes) in [
+            (&ac, &bc, tcp(false, 100, 0, 2, 0)),
+            (&bc, &ac, tcp(true, 700, 101, 0x12, 0)),
+            (&ac, &bc, tcp(false, 101, 701, 0x18, 10)),
+            (&bc, &ac, tcp(true, 701, 111, 0x10, 0)),
+            (&ac, &bc, tcp(false, 111, 701, 0x18, 10)),
+            (&bc, &ac, tcp(true, 701, 121, 0x10, 0)),
+        ] {
+            from.try_feed(PacketBatch::new(vec![bytes.clone()]).unwrap())
+                .unwrap();
+            let received = tokio::time::timeout(Duration::from_secs(2), to.recv_batch()).await?;
+            assert_eq!(received.unwrap().into_packets(), vec![bytes]);
+        }
+        Ok::<(), tokio::time::error::Elapsed>(())
+    }
+    .await;
+    let running = !ap.is_finished() && !bp.is_finished();
+    let statistics = observer.statistics();
+    lease.send_replace(None);
+    let (a_done, b_done) = tokio::join!(ap, bp);
+    for runtime in runtimes {
+        runtime.shutdown().await;
+    }
+    a_done.unwrap().unwrap();
+    b_done.unwrap().unwrap();
+    assert!(running);
+    assert_eq!(statistics.invalid_drops, 0);
+    assert_eq!(statistics.control_attempts, 0);
+    result.expect("data-bearing third ACK and cumulative peer ACK reach both devices");
+}
+
+#[test]
 fn negotiated_window_allows_large_pipeline_reorder_and_retransmission() {
     fn syn(reply: bool, seq: u32, ack: u32, flags: u8) -> Vec<u8> {
         let mut bytes = tcp(reply, seq, ack, flags, 0);

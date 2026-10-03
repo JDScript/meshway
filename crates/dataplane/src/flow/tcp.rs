@@ -17,9 +17,11 @@ pub(super) struct State {
 }
 
 impl State {
-    /// The kernel has already emitted these bytes into the TUN. Reserve only the
-    /// byte cursor before attempting the carrier: a later local queue drop must
-    /// not turn subsequent valid segments into an artificial stop-and-wait gate.
+    /// The kernel has already emitted these bytes into the TUN. Preserve the
+    /// validated handshake transition with the provisional byte cursor: a later
+    /// enqueue commit must not check the third ACK against its own advanced end,
+    /// and a carrier cancellation must still allow its data/retransmission.
+    /// Neither provisional field establishes flow-level return proof.
     /// FIN/ACK terminal state still commits only on successful enqueue/delivery.
     pub fn reserve(&mut self, packet: Tcp, reply: bool) -> bool {
         let mut candidate = *self;
@@ -27,6 +29,7 @@ impl State {
             return false;
         }
         self.end[usize::from(reply)] = candidate.end[usize::from(reply)];
+        self.established = candidate.established;
         true
     }
 
