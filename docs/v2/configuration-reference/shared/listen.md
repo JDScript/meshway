@@ -58,7 +58,7 @@
 | `tcp.keepAlive.interval` | duration | `"75s"` | keepalive 间隔 |
 | `tcp.keepAlive.count` | integer | `3` | 探测次数，须大于 0 |
 
-keepalive 不是 Meshway 已认证邻接探测，也不决定业务授权或 lease。duration 采用正数加 `ms`、`s`、`m`、`h`；平台不支持指定选项时应拒绝或报告不支持，不能静默丢掉。
+keepalive 不是 Meshway 已认证邻接探测，也不决定业务授权或 lease。duration 采用无符号、无前导零的十进制正整数加 `ms`、`s`、`m`、`h`，换算为毫秒后须在 `1..=u64::MAX` 内；保留输入单位，不接受小数或组合单位。这个范围仅保证无损表示，实际参数还受资源预算和 lease 限制。平台不支持指定选项时应拒绝或报告不支持，不能静默丢掉。
 
 ## sing-box 对照
 

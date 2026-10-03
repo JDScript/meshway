@@ -29,7 +29,7 @@ VLESS WebSocket 的目标参数。WS 封装可靠字节流，其外层仍为 TCP
 | `responseHeaders` | listener | `{}` | 目标扩展：服务端额外响应 header |
 | `headers` | dialer | `{}` | 目标扩展：客户端额外请求 header |
 
-dialer 的 path／Host 从所选 listener 下发，不在两端手工维护两份必须同步的配置。headers 不能覆盖 `Host`、`Connection`、`Upgrade`、`Sec-WebSocket-*` 等握手字段，也不能含换行。不要通过普通配置 header 存储秘密。
+dialer 的 path／Host 从所选 listener 下发，不在两端手工维护两份必须同步的配置。headers 不能覆盖 `Host`、`Connection`、`Upgrade`、`Sec-WebSocket-*` 等握手字段，以及 `Content-Length`／`Transfer-Encoding` 消息定界字段；这些名称按 ASCII 大小写不敏感检查。header 名称必须是合法 HTTP token，重复名称（包括不同大小写）拒绝；值允许水平制表符，拒绝其他控制字符和换行。不要通过普通配置 header 存储秘密。
 
 目前平台已托管 path／Host；自定义 header 尚未托管。只有承载目录明确支持时才接受扩展字段。
 
