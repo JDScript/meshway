@@ -550,6 +550,7 @@ dependencies = [
  "axum",
  "clap",
  "rusqlite",
+ "rustix",
  "tempfile",
  "thiserror",
  "tokio",
