@@ -272,6 +272,11 @@ fn pair_boundary_supported_protocols_exact_source_path_and_strict_ipv4() {
     let source = PacketPlan::compile(&payloads[0], 1000).unwrap();
     let target = PacketPlan::compile(&payloads[2], 1000).unwrap();
     let path = &payloads[0].paths[0].nodes;
+    let wrap = |bytes: &[u8]| {
+        let payload = source.encapsulate(path, bytes).unwrap();
+        source.cancelled(path, &payload); // this boundary test does not enqueue a send
+        payload
+    };
     for protocol in 0..=255 {
         let bytes = packet("100.64.0.1", "100.64.0.3", protocol);
         if !matches!(protocol, 1 | 6 | 17) {
@@ -282,15 +287,18 @@ fn pair_boundary_supported_protocols_exact_source_path_and_strict_ipv4() {
         assert!(target.incoming(&ReceivedPacket {
             source: path[0].clone(),
             path: path.clone(),
-            payload: source.encapsulate(path, &bytes).unwrap()
+            payload: wrap(&bytes)
         }));
     }
     let valid = packet("100.64.0.1", "100.64.0.3", 1);
+    let envelope = wrap(&valid);
     let accept = |bytes: Vec<u8>| {
+        let mut payload = envelope[..meshway_dataplane::flow::ENVELOPE_BYTES].to_vec();
+        payload.extend(bytes);
         target.incoming(&ReceivedPacket {
             source: path[0].clone(),
             path: path.clone(),
-            payload: source.encapsulate(path, &bytes).unwrap_or(bytes),
+            payload,
         })
     };
     for flags in [0x8000_u16, 0x2000, 1, 0x3fff] {
@@ -324,12 +332,12 @@ fn pair_boundary_supported_protocols_exact_source_path_and_strict_ipv4() {
     assert!(!target.incoming(&ReceivedPacket {
         source: path[1].clone(),
         path: path.clone(),
-        payload: source.encapsulate(path, &valid).unwrap()
+        payload: envelope.clone()
     }));
     assert!(!target.incoming(&ReceivedPacket {
         source: path[0].clone(),
         path: vec![path[0].clone(), path[2].clone()],
-        payload: source.encapsulate(path, &valid).unwrap()
+        payload: envelope
     }));
 }
 
