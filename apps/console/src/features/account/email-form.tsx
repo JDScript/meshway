@@ -64,9 +64,9 @@ export function EmailForm({ email }: { email: string | null }) {
         error instanceof ApiFailure ? problemCode(error.failure) : null
       const text = failureText(error, {
         invalid_request: () => m.entry_email_invalid(),
-        invalid_credentials: () => m.account_password_wrong(),
+        invalid_current_password: () => m.account_password_wrong(),
       })
-      if (code === "invalid_credentials") fail("password", text ?? "")
+      if (code === "invalid_current_password") fail("password", text ?? "")
       else if (code === "invalid_request" || code === "email_taken")
         fail("email", text ?? "")
       else if (text) toast.error(text, { id: TOAST })

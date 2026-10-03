@@ -77,5 +77,10 @@
   "problem_configuration_invalid": "配置未通过校验。",
   "problem_state_conflict": "状态已变化，请刷新后再试。",
   "problem_state_limit": "已达到上限。",
-  "problem_observation_limit": "观察任务已达到上限。"
+  "problem_observation_limit": "观察任务已达到上限。",
+  "problem_invalid_current_password": "当前密码不正确。",
+  "problem_invalid_password_reset": "重置链接无效。",
+  "problem_password_reset_used": "重置链接已使用。",
+  "problem_password_reset_expired": "重置链接已过期。",
+  "problem_password_reset_replaced": "已签发了更新的重置链接，这条已失效。"
 }

@@ -37,6 +37,11 @@ const problemMessage: Record<ProblemCode, () => string> = {
   state_conflict: () => m.problem_state_conflict(),
   state_limit: () => m.problem_state_limit(),
   observation_limit: () => m.problem_observation_limit(),
+  invalid_current_password: () => m.problem_invalid_current_password(),
+  invalid_password_reset: () => m.problem_invalid_password_reset(),
+  password_reset_used: () => m.problem_password_reset_used(),
+  password_reset_expired: () => m.problem_password_reset_expired(),
+  password_reset_replaced: () => m.problem_password_reset_replaced(),
 }
 
 /** A call's own words for some problem codes (`invalid_request` on a sign-in form). */

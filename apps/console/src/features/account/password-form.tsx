@@ -93,10 +93,10 @@ export function PasswordForm({ email }: { email: string | null }) {
       const code =
         error instanceof ApiFailure ? problemCode(error.failure) : null
       const text = failureText(error, {
-        invalid_credentials: () => m.account_password_wrong(),
+        invalid_current_password: () => m.account_password_wrong(),
         password_weak: () => passwordRefusalText(error),
       })
-      if (code === "invalid_credentials") fail("current", text ?? "")
+      if (code === "invalid_current_password") fail("current", text ?? "")
       else if (code === "password_weak") fail("next", text ?? "")
       else if (text) toast.error(text, { id: TOAST })
       return

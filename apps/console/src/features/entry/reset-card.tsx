@@ -34,23 +34,33 @@ const TOAST = "reset"
 type ResetLink =
   | { state: "checking" }
   | { state: "valid"; expiresAt: string }
-  | { state: "unusable" }
+  | { state: "unusable"; text: string }
   | { state: "unread"; text: string }
 
-/**
- * The controller refuses a link it no longer takes (used, replaced,
- * expired, or never issued) with `invalid_credentials`, and one it cannot
- * read with `invalid_request`.
- */
-const refusesLink = (error: unknown) => {
+/** Why the controller no longer takes the link, or null when it did not refuse it. */
+function refusal(error: unknown): string | null {
   const code = error instanceof ApiFailure ? problemCode(error.failure) : null
-  return code === "invalid_credentials" || code === "invalid_request"
+  switch (code) {
+    case "password_reset_used":
+      return m.problem_password_reset_used()
+    case "password_reset_expired":
+      return m.problem_password_reset_expired()
+    case "password_reset_replaced":
+      return m.problem_password_reset_replaced()
+    case "invalid_password_reset":
+    case "invalid_request":
+      return m.problem_invalid_password_reset()
+    default:
+      return null
+  }
 }
+
+const NO_LINK = { state: "unusable", text: "" } as const
 
 /** Inspects `secret` once; `retry` asks again after a failure that was not a refusal. */
 function useResetLink(secret: string | null) {
   const [link, setLink] = useState<ResetLink>(
-    secret ? { state: "checking" } : { state: "unusable" }
+    secret ? { state: "checking" } : NO_LINK
   )
   const [attempt, setAttempt] = useState(0)
   useEffect(() => {
@@ -63,9 +73,10 @@ function useResetLink(secret: string | null) {
         setLink({ state: "valid", expiresAt: inspection.expiresAt }),
       (error: unknown) => {
         if (abort.signal.aborted) return
+        const refused = refusal(error)
         setLink(
-          refusesLink(error)
-            ? { state: "unusable" }
+          refused !== null
+            ? { state: "unusable", text: refused }
             : {
                 state: "unread",
                 text: failureText(error) ?? m.failure_unknown(),
@@ -79,7 +90,11 @@ function useResetLink(secret: string | null) {
     setLink({ state: "checking" })
     setAttempt((count) => count + 1)
   }
-  return { link, retry, unusable: () => setLink({ state: "unusable" }) }
+  return {
+    link,
+    retry,
+    unusable: (text: string) => setLink({ state: "unusable", text }),
+  }
 }
 
 /**
@@ -108,7 +123,7 @@ export function ResetCard({
     <EntryCard title={m.reset_title()} leaving={leaving}>
       {link.state === "unusable" ? (
         <p className="mt-7 text-row text-muted-foreground">
-          {m.reset_unusable()}
+          {link.text || m.reset_unusable()}
         </p>
       ) : link.state === "unread" ? (
         <div className="mt-7 flex flex-col gap-5">
@@ -159,7 +174,7 @@ function ResetForm({
 }: {
   secret: string
   expiresAt: string | null
-  onRefused: () => void
+  onRefused: (text: string) => void
   onDone: () => void
 }) {
   const queryClient = useQueryClient()
@@ -180,9 +195,10 @@ function ResetForm({
       await call(redeemPasswordReset(client, { token: secret, password }))
     } catch (error) {
       setPending(false)
-      if (refusesLink(error)) {
-        toast.error(m.reset_unusable(), { id: TOAST })
-        onRefused()
+      const refused = refusal(error)
+      if (refused !== null) {
+        toast.error(refused, { id: TOAST })
+        onRefused(refused)
         return
       }
       const text = failureText(error, {
