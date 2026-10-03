@@ -12,8 +12,8 @@ mod numbers;
 
 pub use digest::{Digest, InvalidDigest};
 pub use ids::{
-    ActivityId, InstanceId, InvalidId, JoinLinkId, KeyId, MembershipId, NetworkId, NodeId,
-    PublicationId, RequestId, SessionId, UserId,
+    ActivityId, ArtifactId, InstanceId, InvalidId, JoinLinkId, KeyId, MembershipId, NetworkId,
+    NodeId, PublicationId, RequestId, SessionId, UserId,
 };
 pub use membership::MembershipRole;
 pub use numbers::{InvalidNumber, MAX_SAFE_INTEGER, Revision, Sequence, Version};

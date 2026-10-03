@@ -9,6 +9,7 @@ pub mod accounts;
 mod app;
 mod directory;
 pub mod http;
+pub mod networks;
 mod secrets;
 mod settings;
 mod store;

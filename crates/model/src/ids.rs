@@ -106,6 +106,7 @@ id!(PublicationId, "Execution publication identifier.");
 id!(InstanceId, "Runtime instance identifier.");
 id!(KeyId, "Key record identifier; not key material.");
 id!(ActivityId, "Activity identifier.");
+id!(ArtifactId, "Immutable dataset artifact identifier.");
 id!(
     JoinLinkId,
     "Network join-link record identifier; not the joining secret."

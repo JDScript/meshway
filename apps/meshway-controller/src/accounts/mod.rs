@@ -19,7 +19,7 @@ use crate::store::{Handle, accounts as store};
 #[cfg(test)]
 pub(crate) use password::TEST_KDF_LOCK;
 pub use secret::Secret;
-pub(crate) use secret::{issue_token, random_uuid};
+pub(crate) use secret::{issue_token, random_uuid, token_digest};
 
 /// Safe, fixed error categories; never contains a supplied value or SQL error.
 #[derive(Debug, thiserror::Error, PartialEq, Eq)]
