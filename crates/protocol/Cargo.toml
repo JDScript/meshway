@@ -6,6 +6,7 @@ rust-version.workspace = true
 
 [dependencies]
 chrono.workspace = true
+meshway-configuration = { path = "../configuration" }
 meshway-model = { path = "../model" }
 serde.workspace = true
 utoipa.workspace = true
