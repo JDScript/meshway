@@ -223,6 +223,58 @@ async fn live_udp_reply_stays_on_original_path_after_five_minutes() {
     a.delivered(&reply).unwrap();
 }
 
+#[test]
+fn reverse_grant_cannot_relabel_live_reply_tuple_with_fresh_peer_token() {
+    let (mut a, b) = plans();
+    let other = vec!["b".into(), "other-via".into(), "a".into()];
+    a.incoming.insert(other.clone(), b.local);
+    deliver(&a, &b, &udp(false, 40000));
+    // Model a peer bypassing its honest outgoing classifier and declaring an
+    // independently authorized initiation with the old response's exact tuple.
+    let independent = StatefulIpv4Plan::new(
+        b.local,
+        1200,
+        BTreeMap::from([(a.local, other)]),
+        BTreeMap::new(),
+    );
+    let forged = prepared(&independent, &udp(true, 40000));
+    assert_eq!(forged.payload[4], FORWARD);
+    assert!(!a.incoming(&forged));
+    assert!(a.incoming(&prepared(&b, &udp(true, 40000))));
+    assert!(
+        a.incoming(&prepared(&independent, &udp(true, 40001))),
+        "a genuinely distinct authorized flow remains permitted"
+    );
+}
+
+#[test]
+fn independently_authorized_echo_requests_with_equal_ids_are_not_replies() {
+    fn swap(mut bytes: Vec<u8>) -> Vec<u8> {
+        let source: [u8; 4] = bytes[12..16].try_into().unwrap();
+        let destination: [u8; 4] = bytes[16..20].try_into().unwrap();
+        bytes[12..16].copy_from_slice(&destination);
+        bytes[16..20].copy_from_slice(&source);
+        bytes
+    }
+    let (mut a, mut b) = plans();
+    let other: Vec<String> = vec!["b".into(), "other-via".into(), "a".into()];
+    a.incoming.insert(other.clone(), b.local);
+    a.returns
+        .insert(b.local, other.iter().rev().cloned().collect());
+    b.outgoing.insert(a.local, other.clone());
+    let first = prepared(&a, &echo(false, 42));
+    a.sent(&first.path, &first.payload).unwrap();
+    assert!(b.incoming(&first));
+    b.delivered(&first).unwrap();
+    let independent = prepared(&b, &swap(echo(false, 42)));
+    assert_eq!(independent.path, other);
+    b.sent(&independent.path, &independent.payload).unwrap();
+    assert!(a.incoming(&independent));
+    a.delivered(&independent).unwrap();
+    deliver(&b, &a, &echo(true, 42));
+    deliver(&a, &b, &swap(echo(true, 42)));
+}
+
 #[tokio::test]
 async fn encrypted_three_hop_capacity_drop_precedes_enqueue_and_preserves_other_peer() {
     use crate::packet_io::{self, PacketBatch};

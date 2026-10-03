@@ -329,6 +329,7 @@ impl Admission for StatefulIpv4Plan {
         let table = self.table();
         if let Some(flow) = table.flows.get(&packet.tuple.reverse())
             && !flow.initiator
+            && (packet.tuple.protocol != Protocol::Echo || !packet.opener)
         {
             if flow.active && !flow.retire && flow.clone().advance(packet, true, true) {
                 return self
@@ -507,6 +508,16 @@ impl Admission for StatefulIpv4Plan {
         }
         let tuple = envelope.tuple();
         let mut table = self.table();
+        // A peer with an independent reverse grant still cannot relabel a live
+        // reply tuple as a new forward flow on that grant's different path.
+        // The wire direction flag / freshly chosen peer token is not authority
+        // to replace this endpoint's already-bound attempt.
+        if !envelope.reply()
+            && tuple.protocol != Protocol::Echo
+            && table.flows.contains_key(&tuple.reverse())
+        {
+            return self.invalid();
+        }
         if let Some(mut flow) = table.flows.get(&tuple).cloned() {
             if !self.can_receive(&flow, &packet.path, &envelope) {
                 return false;
