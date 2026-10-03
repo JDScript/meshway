@@ -202,7 +202,7 @@ pub(crate) fn publish(
     }
     Ok(compiled)
 }
-pub(super) fn target(
+pub(crate) fn target(
     tx: &Transaction<'_>,
     sealer: &Sealer,
     p: &NodePrincipal,
@@ -219,6 +219,7 @@ pub(super) fn target(
     })
     .transpose()
 }
+pub(crate) use target as current_target;
 pub(super) fn historical_target(
     tx: &Transaction<'_>,
     sealer: &Sealer,
@@ -315,6 +316,29 @@ pub(crate) fn apply_configuration_effects(
     let (revision, committed, _) = current_configuration(tx, sealer, network)?;
     if &committed != target {
         return Err(NodeError::Conflict);
+    }
+    for (node, old) in &previous.nodes {
+        if target
+            .nodes
+            .get(node)
+            .is_some_and(|new| new.identity != old.identity)
+        {
+            tx.execute(
+                "DELETE FROM node_sessions WHERE network_id=?1 AND node_id=?2",
+                params![
+                    network.as_uuid().as_bytes().as_slice(),
+                    node.as_uuid().as_bytes().as_slice()
+                ],
+            )?;
+            tx.execute(
+                "DELETE FROM execution_demands WHERE network_id=?1 AND node_id=?2",
+                params![
+                    network.as_uuid().as_bytes().as_slice(),
+                    node.as_uuid().as_bytes().as_slice()
+                ],
+            )?;
+            tx.execute("UPDATE node_execution SET instance_expires_at=?1,execution_expires_at=NULL,saved=NULL WHERE network_id=?2 AND node_id=?3",params![now,network.as_uuid().as_bytes().as_slice(),node.as_uuid().as_bytes().as_slice()])?;
+        }
     }
     for (node, old) in &previous.nodes {
         let addresses = [

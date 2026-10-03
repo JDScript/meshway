@@ -76,6 +76,7 @@ pub(crate) fn inventory(
 pub(crate) fn progress(
     connection: &mut Connection,
     sealer: &Sealer,
+    boot: InstanceId,
     token: [u8; 32],
     network: NetworkId,
     publication: PublicationId,
@@ -101,6 +102,19 @@ pub(crate) fn progress(
         let phase = |phase: &str| -> Result<bool, NodeError> {
             Ok(tx.query_row("SELECT EXISTS(SELECT 1 FROM execution_receipts r JOIN node_execution e ON e.network_id=r.network_id AND e.node_id=r.node_id AND e.instance_id=r.instance_id AND e.generation=r.generation WHERE r.network_id=?1 AND r.node_id=?2 AND r.publication_id=?3 AND r.phase=?4)",params![network.as_uuid().as_bytes().as_slice(),node.as_uuid().as_bytes().as_slice(),publication.as_uuid().as_bytes().as_slice(),phase],|r|r.get(0))?)
         };
+        let fresh_boot:bool=tx.query_row("SELECT EXISTS(SELECT 1 FROM node_execution WHERE network_id=?1 AND node_id=?2 AND boot_id=?3)",params![network.as_uuid().as_bytes().as_slice(),node.as_uuid().as_bytes().as_slice(),boot.as_uuid().as_bytes().as_slice()],|r|r.get(0))?;
+        let live:bool=tx.query_row("SELECT EXISTS(SELECT 1 FROM node_execution WHERE network_id=?1 AND node_id=?2 AND instance_expires_at>?3 AND (?4=0 OR execution_expires_at>?3))",params![network.as_uuid().as_bytes().as_slice(),node.as_uuid().as_bytes().as_slice(),now()?,c.configuration.enabled],|r|r.get(0))?;
+        let freshness = if !current || withdrawn.is_some() {
+            ReceiptFreshness::Superseded
+        } else if !fresh_boot {
+            ReceiptFreshness::AwaitingInstance
+        } else if !live {
+            ReceiptFreshness::Expired
+        } else {
+            ReceiptFreshness::Current
+        };
+        let last_received_at_ms:Option<i64>=tx.query_row("SELECT max(received_at) FROM execution_receipts WHERE network_id=?1 AND node_id=?2 AND publication_id=?3",params![network.as_uuid().as_bytes().as_slice(),node.as_uuid().as_bytes().as_slice(),publication.as_uuid().as_bytes().as_slice()],|r|r.get(0))?;
+        let result:Option<String>=tx.query_row("SELECT r.phase FROM execution_receipts r JOIN node_execution e ON e.network_id=r.network_id AND e.node_id=r.node_id AND e.instance_id=r.instance_id AND e.generation=r.generation WHERE r.network_id=?1 AND r.node_id=?2 AND r.publication_id=?3 AND r.phase IN ('applied','failed') ORDER BY r.rowid DESC LIMIT 1",params![network.as_uuid().as_bytes().as_slice(),node.as_uuid().as_bytes().as_slice(),publication.as_uuid().as_bytes().as_slice()],|r|r.get(0)).optional()?;
         nodes.insert(
             node,
             NodePublicationProgress {
@@ -111,8 +125,11 @@ pub(crate) fn progress(
                 },
                 current,
                 saved: phase("saved")?,
-                applied: phase("applied")?,
-                failed: phase("failed")?,
+                applied: freshness == ReceiptFreshness::Current
+                    && result.as_deref() == Some("applied"),
+                failed: result.as_deref() == Some("failed"),
+                freshness,
+                last_received_at_ms: last_received_at_ms.map(|v| v as u64),
             },
         );
     }

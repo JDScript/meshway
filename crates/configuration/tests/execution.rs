@@ -296,3 +296,34 @@ fn node_delta_removes_permissions_and_checks_the_exact_base_and_target() {
     assert!(apply_configuration_delta(&old, bad).is_err());
     assert!(!old.configuration.permits.is_empty());
 }
+#[test]
+fn mesh_ip_demands_never_fall_through_to_unmanaged_egress() {
+    let mut c = configuration();
+    let mut d = demand(1, 1, 2);
+    d.target = BusinessTarget::Ip {
+        address: ExecutionAddress("100.64.0.2".parse().unwrap()),
+    };
+    let mut ds = BTreeMap::from([(d.id, d)]);
+    let result = run(&c, &inventory(), &ds, &[]);
+    assert!(
+        matches!(result.nodes[&node(1)].configuration.permits[&request(1)].target,BusinessTarget::Mesh{node:n} if n==node(2))
+    );
+    c.access.clear();
+    let result = run(&c, &inventory(), &ds, &[]);
+    assert!(matches!(
+        result.nodes[&node(1)].configuration.decisions[&request(1)],
+        DemandDecision::Unavailable {
+            reason: UnavailableReason::Unauthorized
+        }
+    ));
+    ds.get_mut(&request(1)).unwrap().target = BusinessTarget::Ip {
+        address: ExecutionAddress("100.64.0.99".parse().unwrap()),
+    };
+    let result = run(&c, &inventory(), &ds, &[]);
+    assert!(matches!(
+        result.nodes[&node(1)].configuration.decisions[&request(1)],
+        DemandDecision::Unavailable {
+            reason: UnavailableReason::NoPath
+        }
+    ));
+}

@@ -172,5 +172,6 @@ CREATE TABLE enrollment_requests (
     denied_at INTEGER,
     consumed_at INTEGER,
     node_id BLOB REFERENCES nodes(id),
-    binding_digest BLOB CHECK(length(binding_digest)=32)
+    binding_digest BLOB CHECK(length(binding_digest)=32),
+    existing_binding BLOB
 ) STRICT;

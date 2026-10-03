@@ -81,6 +81,37 @@ pub struct Execution {
     boot: InstanceId,
 }
 impl Execution {
+    /// Supplies C's report/view provider with actual current SQL facts. The
+    /// returned configuration is private execution material: providers project
+    /// only resource identities/allowed endpoints and never broadcast it.
+    pub fn current_node_execution(
+        &self,
+        tx: &rusqlite::Transaction<'_>,
+        token: &str,
+    ) -> Result<
+        (
+            NodePrincipal,
+            InstanceLease,
+            Option<meshway_configuration::execution::CompiledNode>,
+        ),
+        NodeError,
+    > {
+        let now = store::now()?;
+        let p = store::authorize_node(tx, &self.sealer, self.boot, proof::token_hash(token)?, now)?;
+        let lease = store::instance_lease(tx, &self.sealer, &p)?;
+        store::current_instance(
+            tx,
+            self.boot,
+            &p,
+            &InstanceRequest {
+                instance_id: lease.instance_id,
+                generation: lease.generation,
+            },
+            now,
+        )?;
+        let target = store::current_target(tx, &self.sealer, &p)?.map(|(_, target)| target);
+        Ok((p, lease, target))
+    }
     pub async fn revoke_key(
         &self,
         token: &str,
@@ -160,7 +191,10 @@ impl Execution {
         let token = crate::accounts::token_digest(token)?;
         let sealer = self.sealer.clone();
         self.handle
-            .execute(move |c| store::progress(c, &sealer, token, network, publication))
+            .execute({
+                let boot = self.boot;
+                move |c| store::progress(c, &sealer, boot, token, network, publication)
+            })
             .await?
     }
     /// Config owner invokes this before its SQL commit, after the authoritative
@@ -278,8 +312,8 @@ impl Execution {
     pub async fn configuration(
         &self,
         token: &str,
-        request: ConfigurationRequest,
-    ) -> Result<ConfigurationResponse, NodeError> {
+        request: NodeConfigurationRequest,
+    ) -> Result<NodeConfigurationResponse, NodeError> {
         let token = proof::token_hash(token)?;
         let sealer = self.sealer.clone();
         let boot = self.boot;

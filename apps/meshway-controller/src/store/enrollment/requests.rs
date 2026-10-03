@@ -22,6 +22,7 @@ pub(super) struct Pending {
     pub denied: Option<i64>,
     pub consumed: Option<i64>,
     pub node: Option<NodeId>,
+    pub existing: Option<ExistingNodeBinding>,
 }
 impl Pending {
     pub(super) fn view(&self, now: i64) -> EnrollmentRequestView {
@@ -63,7 +64,7 @@ pub(super) fn pending(
     tx: &Transaction<'_>,
     request: EnrollmentRequestId,
 ) -> Result<Pending, NodeError> {
-    let raw=tx.query_row("SELECT control_key,dataplane_key,request_digest,code_challenge,hostname,expires_at,approval,result_hash,delivery,denied_at,consumed_at,node_id FROM enrollment_requests WHERE id=?1",[request.as_uuid().as_bytes().as_slice()],|r|Ok((r.get::<_,Vec<u8>>(0)?,r.get::<_,Vec<u8>>(1)?,r.get::<_,Vec<u8>>(2)?,r.get::<_,String>(3)?,r.get::<_,String>(4)?,r.get::<_,i64>(5)?,r.get::<_,Option<Vec<u8>>>(6)?,r.get::<_,Option<Vec<u8>>>(7)?,r.get::<_,Option<Vec<u8>>>(8)?,r.get::<_,Option<i64>>(9)?,r.get::<_,Option<i64>>(10)?,r.get::<_,Option<Vec<u8>>>(11)?))).optional()?.ok_or(NodeError::NotFound)?;
+    let raw=tx.query_row("SELECT control_key,dataplane_key,request_digest,code_challenge,hostname,expires_at,approval,result_hash,delivery,denied_at,consumed_at,node_id,existing_binding FROM enrollment_requests WHERE id=?1",[request.as_uuid().as_bytes().as_slice()],|r|Ok((r.get::<_,Vec<u8>>(0)?,r.get::<_,Vec<u8>>(1)?,r.get::<_,Vec<u8>>(2)?,r.get::<_,String>(3)?,r.get::<_,String>(4)?,r.get::<_,i64>(5)?,r.get::<_,Option<Vec<u8>>>(6)?,r.get::<_,Option<Vec<u8>>>(7)?,r.get::<_,Option<Vec<u8>>>(8)?,r.get::<_,Option<i64>>(9)?,r.get::<_,Option<i64>>(10)?,r.get::<_,Option<Vec<u8>>>(11)?,r.get::<_,Option<Vec<u8>>>(12)?))).optional()?.ok_or(NodeError::NotFound)?;
     Ok(Pending {
         id: request,
         control: raw.0.try_into().map_err(|_| NodeError::Storage)?,
@@ -78,11 +79,12 @@ pub(super) fn pending(
         denied: raw.9,
         consumed: raw.10,
         node: raw.11.map(id).transpose()?,
+        existing: raw.12.map(|b| json(&b)).transpose()?,
     })
 }
 pub(crate) fn create_request(
     c: &mut Connection,
-    _sealer: &Sealer,
+    sealer: &Sealer,
     request: CreateEnrollmentRequest,
 ) -> Result<EnrollmentRequestView, NodeError> {
     let i = request.intent;
@@ -111,6 +113,15 @@ pub(crate) fn create_request(
     )?;
     let tx = c.transaction_with_behavior(TransactionBehavior::Immediate)?;
     let now = now()?;
+    if let Some(existing) = &i.existing {
+        validate_existing(
+            &tx,
+            sealer,
+            existing,
+            i.control_key.bytes.as_bytes(),
+            i.dataplane_key.bytes.as_bytes(),
+        )?;
+    }
     if let Ok(p) = pending(&tx, i.id) {
         if p.digest != digest {
             return Err(NodeError::Conflict);
@@ -121,7 +132,7 @@ pub(crate) fn create_request(
     if count >= 4096 {
         return Err(NodeError::Busy);
     }
-    tx.execute("INSERT INTO enrollment_requests(id,control_key,dataplane_key,request_digest,code_challenge,hostname,created_at,expires_at) VALUES(?1,?2,?3,?4,?5,?6,?7,?8)",params![i.id.as_uuid().as_bytes().as_slice(),i.control_key.bytes.as_bytes().as_slice(),i.dataplane_key.bytes.as_bytes().as_slice(),digest.as_bytes().as_slice(),i.code_challenge,i.hostname,now,now+600_000])?;
+    tx.execute("INSERT INTO enrollment_requests(id,control_key,dataplane_key,request_digest,code_challenge,hostname,created_at,expires_at,existing_binding) VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9)",params![i.id.as_uuid().as_bytes().as_slice(),i.control_key.bytes.as_bytes().as_slice(),i.dataplane_key.bytes.as_bytes().as_slice(),digest.as_bytes().as_slice(),i.code_challenge,i.hostname,now,now+600_000,i.existing.as_ref().map(bytes).transpose()?])?;
     let view = pending(&tx, i.id)?.view(now);
     tx.commit()?;
     Ok(view)
@@ -148,6 +159,12 @@ pub(crate) fn approve(
     let session = current_session(&tx, &token_hash, now)?;
     let membership:Vec<u8>=tx.query_row("SELECT m.id FROM memberships m JOIN networks n ON n.id=m.network_id WHERE m.network_id=?1 AND m.user_id=?2 AND m.revoked_at IS NULL AND n.deleted_at IS NULL",params![request.network_id.as_uuid().as_bytes().as_slice(),session.user.id.as_uuid().as_bytes().as_slice()],|r|r.get(0)).optional()?.ok_or(NodeError::Forbidden)?;
     let p = pending(&tx, id)?;
+    if p.existing
+        .as_ref()
+        .is_some_and(|e| e.network_id != request.network_id)
+    {
+        return Err(NodeError::Forbidden);
+    }
     if p.expires <= now || p.denied.is_some() || p.consumed.is_some() {
         return Err(NodeError::Conflict);
     }

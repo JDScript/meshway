@@ -3,7 +3,7 @@ use crate::enrollment::{EnrollmentCommit, NodeAdmission};
 use meshway_configuration::NodeIdentity;
 use meshway_protocol::node::NodeKeyMetadata;
 
-fn existing_keys(
+pub(super) fn existing_keys(
     tx: &Transaction<'_>,
     network: NetworkId,
     node: NodeId,
@@ -37,6 +37,7 @@ pub(crate) fn redeem_key_in_transaction(
     let p = pending(tx, request)?;
     pkce(&p.challenge, verifier.expose())?;
     if p.denied.is_some()
+        || p.existing.is_some()
         || p.approval.is_some()
         || secret.expose().len() != 48
         || !secret.expose().starts_with("mwek_")
@@ -196,30 +197,42 @@ pub(crate) fn redeem_in_transaction(
     if !eligible {
         return Err(NodeError::Forbidden);
     }
-    let node = NodeId::new(uuid()?).map_err(|_| NodeError::Storage)?;
-    tx.execute(
-        "INSERT INTO nodes(id,network_id,registered_at) VALUES(?1,?2,?3)",
-        params![
-            node.as_uuid().as_bytes().as_slice(),
-            approval.network.as_uuid().as_bytes().as_slice(),
-            now
-        ],
-    )?;
-    let keys = crate::store::execution::insert_keys(
-        tx,
-        approval.network,
-        node,
-        NodePublicKey {
-            algorithm: KeyAlgorithm::Ed25519,
-            bytes: p.control.into(),
-        },
-        NodePublicKey {
-            algorithm: KeyAlgorithm::X25519,
-            bytes: p.dataplane.into(),
-        },
-        Version::MIN,
-        now,
-    )?;
+    let (node, keys) = if let Some(existing) = &p.existing {
+        if existing.network_id != approval.network {
+            return Err(NodeError::Forbidden);
+        }
+        validate_existing(tx, sealer, existing, &p.control, &p.dataplane)?;
+        (
+            existing.node_id,
+            existing_keys(tx, approval.network, existing.node_id)?,
+        )
+    } else {
+        let node = NodeId::new(uuid()?).map_err(|_| NodeError::Storage)?;
+        tx.execute(
+            "INSERT INTO nodes(id,network_id,registered_at) VALUES(?1,?2,?3)",
+            params![
+                node.as_uuid().as_bytes().as_slice(),
+                approval.network.as_uuid().as_bytes().as_slice(),
+                now
+            ],
+        )?;
+        let keys = crate::store::execution::insert_keys(
+            tx,
+            approval.network,
+            node,
+            NodePublicKey {
+                algorithm: KeyAlgorithm::Ed25519,
+                bytes: p.control.into(),
+            },
+            NodePublicKey {
+                algorithm: KeyAlgorithm::X25519,
+                bytes: p.dataplane.into(),
+            },
+            Version::MIN,
+            now,
+        )?;
+        (node, keys)
+    };
     tx.execute(
         "UPDATE enrollment_requests SET node_id=?1 WHERE id=?2 AND node_id IS NULL",
         params![
@@ -304,3 +317,27 @@ pub(crate) fn verify_admission(
     Ok(())
 }
 use crate::store::execution::current_configuration as store_configuration;
+pub(super) fn validate_existing(
+    tx: &Transaction<'_>,
+    sealer: &Sealer,
+    existing: &ExistingNodeBinding,
+    control: &[u8; 32],
+    dataplane: &[u8; 32],
+) -> Result<(), NodeError> {
+    let keys = existing_keys(tx, existing.network_id, existing.node_id)?;
+    if keys.control.id != existing.key_id
+        || keys.control.generation != existing.key_generation
+        || keys.control.public_key.bytes.as_bytes() != control
+        || keys.dataplane.public_key.bytes.as_bytes() != dataplane
+    {
+        return Err(NodeError::Unauthorized);
+    }
+    let (_, cfg, bindings) = store_configuration(tx, sealer, existing.network_id)?;
+    crate::store::execution::identity_eligible(
+        tx,
+        &cfg,
+        &bindings,
+        existing.network_id,
+        existing.node_id,
+    )
+}

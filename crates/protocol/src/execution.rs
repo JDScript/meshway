@@ -54,10 +54,10 @@ wire_object! { #[derive(Clone,Debug,PartialEq,Eq)] pub struct ReceiptRequest {
     pub instance: InstanceRequest, pub target: ConfigurationRef, pub phase: ReceiptPhase,
     pub reported_at_ms: u64, pub failure: Option<ApplyFailure>,
 } }
-wire_object! { #[derive(Clone,Debug,PartialEq,Eq)] pub struct ConfigurationRequest {
+wire_object! { #[derive(Clone,Debug,PartialEq,Eq)] pub struct NodeConfigurationRequest {
     pub instance: InstanceRequest, pub base: Option<ConfigurationRef>,
 } }
-wire_object! { #[derive(Clone,Debug,PartialEq,Eq)] pub struct ConfigurationResponse {
+wire_object! { #[derive(Clone,Debug,PartialEq,Eq)] pub struct NodeConfigurationResponse {
     pub lease: InstanceLease,
     /// Full replacement or omitted when the exact acknowledged target matches.
     /// A stale base always receives a complete value, never an unverified patch.
@@ -71,4 +71,13 @@ wire_object! { #[derive(Clone,Debug,PartialEq,Eq)] pub struct PublicationProgres
 wire_object! { #[derive(Clone,Debug,PartialEq,Eq)] pub struct NodePublicationProgress {
     pub target: ConfigurationRef, pub current: bool, pub saved: bool,
     pub applied: bool, pub failed: bool,
+    pub freshness: ReceiptFreshness, pub last_received_at_ms: Option<u64>,
 } }
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub enum ReceiptFreshness {
+    Current,
+    Expired,
+    AwaitingInstance,
+    Superseded,
+}

@@ -173,7 +173,7 @@ App 使用系统浏览器及受限制回调；CLI 无本地回调时领取同一
 - `POST /agent-api/v1/auth/challenges` 绑定 networkId、nodeId、keyId、operation 和 requestDigest，返回服务端随机 32-byte nonce、challenge ID、当前 key generation、持久 controllerId 与 60 秒绝对期限。
 - 控制密钥固定 Ed25519，数据面密钥固定 X25519，不能相互代用。签名通过 `ed25519-dalek` strict 验证，并拒绝 weak key。
 - 签名输入由 `meshway_protocol::node::proof_transcript` 唯一定义：`meshway/node-proof/ed25519/v1\0`、operation 单字节（session=1、rotate=2）、controller/network/node/key/challenge 的五个 UUID 原始 16 bytes、key generation 大端 u64、nonce 32 bytes、expiresAtMs 大端 u64、requestDigest 32 bytes；不签 JSON 展示文本。
-- requestDigest 是 `SHA-256("meshway/node-intent/v1\0" || typed-intent-JSON)`；字段顺序来自生成合同对应的 Rust 结构，密钥原值采用规范小写 hex。签名为 64 bytes 的无 padding base64url。客户端应复用合同 helper／等价固定编码，不能任意重新排序对象。
+- requestDigest 是 `SHA-256("meshway/node-intent/v1\0" || canonical-intent-JSON)`；对已通过类型校验的 intent 递归按对象 key 排序、保留数组顺序、以无空白 UTF-8 JSON 编码，密钥原值采用规范小写 hex。intent 只使用已定义的字符串、布尔、null 和安全整数，不接受浮点值或任意 JSON 扩展。签名为 64 bytes 的无 padding base64url；生成 SDK 的属性声明顺序不影响证明。
 - `POST /agent-api/v1/auth/session` 验证签名、请求摘要、当前身份与期限，同事务消费 challenge 并只存 session token 摘要；同 challenge 重放拒绝。原值以 `mwns_` 开头，随后 32 随机 bytes 的无 padding base64url。
 - session 逐请求读取永久 Node／key 吊销、当前 key generation、当前 Config identity 与稳定 membership。Tag 身份不依赖创建者资格；enabled=false 可继续控制同步。Controller 重启使用新 boot epoch，旧短期 session 拒绝，必须重新持钥认证。
 - `POST /agent-api/v1/auth/rotate` 的固定 intent 同时绑定新控制／数据面公钥；旧密钥与新 Ed25519 密钥分别签署同一 rotate challenge。原子退休旧代际、保存新代际并撤回旧执行许可。旧 session／旧注册结果不能领取新身份。
@@ -189,6 +189,7 @@ App 使用系统浏览器及受限制回调；CLI 无本地回调时领取同一
 - 多网络接入分别保存密钥／绑定，一次只激活一个网络，不用客户端提交的 networkId 切换已有凭据作用域。
 - 运行实例变化不等于换 Node；被新实例替代后旧实例不能继续上报或领取任务。
 - 重新以用户身份登录可提交已确认的 Tag→User 配置转换，仍须证明是该设备；不从创建者记录自动恢复权限。
+- 新 Controller 候选的 enrollment intent 可带 `existing`（networkId、nodeId、keyId、keyGeneration）。其控制／数据面公钥必须匹配该设备当前有效绑定，整个 intent 仍由控制私钥签名；批准网络不能改绑。PKCE 兑换与完整 Config 提交同事务完成 Tag→User／用户重绑定，保持 Node ID、地址和协议设置，终止旧控制 session／实例执行资格。普通 Config 文档不能替代这份设备登录证明。
 - 永久吊销节点接入或密钥使相应认证及派生凭据失效，并撤回执行许可；重放旧注册、配置回滚均不能复活。普通业务停用使用配置 enabled。
 - 丢失私钥后不能靠公钥重新取得身份；恢复／轮换需要明确的再授权流程，不静默创建替代身份冒充恢复。
 

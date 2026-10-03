@@ -76,10 +76,14 @@ pub(crate) fn acquire(
     Version::new(generation.try_into().map_err(|_| NodeError::Conflict)?)
         .map_err(|_| NodeError::Conflict)?;
     let claimed:bool=tx.query_row("SELECT EXISTS(SELECT 1 FROM node_instance_claims WHERE network_id=?1 AND node_id=?2 AND instance_id=?3)",params![p.network.as_uuid().as_bytes().as_slice(),p.node.as_uuid().as_bytes().as_slice(),request.instance_id.as_uuid().as_bytes().as_slice()],|r|r.get(0))?;
-    if claimed {
+    if claimed
+        && previous.as_ref().is_none_or(|old| {
+            old.instance.as_deref() != Some(request.instance_id.as_uuid().as_bytes().as_slice())
+        })
+    {
         return Err(NodeError::Conflict);
     }
-    tx.execute("INSERT INTO node_instance_claims(network_id,node_id,instance_id,generation) VALUES(?1,?2,?3,?4)",params![p.network.as_uuid().as_bytes().as_slice(),p.node.as_uuid().as_bytes().as_slice(),request.instance_id.as_uuid().as_bytes().as_slice(),generation])?;
+    tx.execute("INSERT INTO node_instance_claims(network_id,node_id,instance_id,generation) VALUES(?1,?2,?3,?4) ON CONFLICT(network_id,node_id,instance_id) DO UPDATE SET generation=excluded.generation",params![p.network.as_uuid().as_bytes().as_slice(),p.node.as_uuid().as_bytes().as_slice(),request.instance_id.as_uuid().as_bytes().as_slice(),generation])?;
     // Replacing a process fences its demands as well as its ACK/report authority.
     tx.execute(
         "DELETE FROM execution_demands WHERE network_id=?1 AND node_id=?2",
@@ -107,6 +111,19 @@ pub(crate) fn renew(
     let p = authorize_node(&tx, sealer, boot, token, now)?;
     current_instance(&tx, boot, &p, &request, now)?;
     refresh_expired_demands(&tx, sealer, p.network, now)?;
+    let old_execution_expiry: Option<i64> = tx.query_row(
+        "SELECT execution_expires_at FROM node_execution WHERE network_id=?1 AND node_id=?2",
+        params![
+            p.network.as_uuid().as_bytes().as_slice(),
+            p.node.as_uuid().as_bytes().as_slice()
+        ],
+        |r| r.get(0),
+    )?;
+    if old_execution_expiry.is_some_and(|expires| expires <= now) {
+        // Expiry fences the old run. A fresh publication prevents an old
+        // applied receipt from becoming current merely because HTTP renewed.
+        publish(&tx, sealer, p.network, "refresh", now)?;
+    }
     tx.execute(
         "UPDATE node_execution SET instance_expires_at=?1 WHERE network_id=?2 AND node_id=?3",
         params![
@@ -219,8 +236,8 @@ pub(crate) fn configuration(
     sealer: &Sealer,
     boot: InstanceId,
     token: [u8; 32],
-    request: ConfigurationRequest,
-) -> Result<ConfigurationResponse, NodeError> {
+    request: NodeConfigurationRequest,
+) -> Result<NodeConfigurationResponse, NodeError> {
     let tx = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
     let now = now()?;
     let p = authorize_node(&tx, sealer, boot, token, now)?;
@@ -243,7 +260,7 @@ pub(crate) fn configuration(
         full = None;
     }
     tx.commit()?;
-    Ok(ConfigurationResponse { lease, full, delta })
+    Ok(NodeConfigurationResponse { lease, full, delta })
 }
 pub(crate) fn receipt(
     connection: &mut Connection,
@@ -264,7 +281,9 @@ pub(crate) fn receipt(
     {
         return Err(NodeError::Conflict);
     }
+    let target_enabled = target(&tx, sealer, &p)?.is_none_or(|(_, n)| n.configuration.enabled);
     if request.phase == ReceiptPhase::Applied
+        && target_enabled
         && lease
             .execution_expires_at_ms
             .is_none_or(|e| e <= now as u64)

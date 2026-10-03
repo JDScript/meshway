@@ -121,7 +121,16 @@ impl EnrollmentCommit for ConfigurationAdmission {
             &current,
             &prepared,
             configuration::CommitMetadata {
-                cause: ChangeCause::Enrollment,
+                cause: if current
+                    .document
+                    .configuration
+                    .nodes
+                    .contains_key(&admission.node)
+                {
+                    ChangeCause::IdentityTransition
+                } else {
+                    ChangeCause::Enrollment
+                },
                 request: RequestId::new(admission.request.into_uuid())
                     .map_err(|_| NodeError::Storage)?,
             },

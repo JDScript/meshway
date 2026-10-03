@@ -30,6 +30,10 @@ wire_object! { pub struct EnrollmentKeysResponse { pub items: Vec<EnrollmentKeyV
 wire_object! { #[derive(Clone,Debug,PartialEq,Eq)] pub struct EnrollmentIntent {
     pub id: EnrollmentRequestId, pub control_key: NodePublicKey, pub dataplane_key: NodePublicKey,
     pub code_challenge: String, pub hostname: String,
+    pub existing: Option<ExistingNodeBinding>,
+} }
+wire_object! { #[derive(Clone,Debug,PartialEq,Eq)] pub struct ExistingNodeBinding {
+    pub network_id:NetworkId,pub node_id:NodeId,pub key_id:KeyId,pub key_generation:Version,
 } }
 wire_object! { pub struct CreateEnrollmentRequest {
     pub intent: EnrollmentIntent, pub signature: WireSecret,

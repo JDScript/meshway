@@ -41,7 +41,11 @@ pub(crate) fn verify_bytes(
         .map_err(|_| NodeError::Unauthorized)
 }
 pub fn request_digest<T: serde::Serialize>(intent: &T) -> Result<Digest, NodeError> {
-    let bytes = serde_json::to_vec(intent).map_err(|_| NodeError::Invalid)?;
+    // Canonicalize only an already typed intent. This is not an untyped wire
+    // decoder. Generated SDK struct/property ordering cannot affect the proof.
+    let mut value = serde_json::to_value(intent).map_err(|_| NodeError::Invalid)?;
+    value.sort_all_objects();
+    let bytes = serde_json::to_vec(&value).map_err(|_| NodeError::Invalid)?;
     let mut hash = Sha256::new();
     hash.update(b"meshway/node-intent/v1\0");
     hash.update(bytes);

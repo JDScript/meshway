@@ -42,8 +42,10 @@ pub enum CompileError {
 }
 
 pub fn digest<T: Serialize>(value: &T) -> Result<Digest, CompileError> {
-    let bytes = serde_json::to_vec(value).map_err(|_| CompileError::Serialization)?;
-    Ok(Digest::from_bytes(Sha256::digest(bytes).into()))
+    let bytes = zeroize::Zeroizing::new(
+        serde_json::to_vec(value).map_err(|_| CompileError::Serialization)?,
+    );
+    Ok(Digest::from_bytes(Sha256::digest(bytes.as_slice()).into()))
 }
 
 pub fn compile(input: CompilationInput<'_>) -> Result<CompiledPublication, CompileError> {
@@ -238,6 +240,35 @@ fn evaluate(
     {
         return unavailable(UnavailableReason::MissingDns);
     }
+    let requested_domain = match &demand.target {
+        BusinessTarget::Domain { name, .. } => Some(name.clone()),
+        _ => None,
+    };
+    let mut normalized = demand.clone();
+    if let BusinessTarget::Ip { address } | BusinessTarget::Domain { address, .. } = &demand.target
+    {
+        let address = address.0;
+        if let Some((node, _)) = cfg.nodes.iter().find(|(_, n)| {
+            n.addresses.ipv4.map(std::net::IpAddr::V4) == Some(address)
+                || n.addresses.ipv6.map(std::net::IpAddr::V6) == Some(address)
+        }) {
+            normalized.target = BusinessTarget::Mesh { node: *node };
+        } else if cfg
+            .address_pools
+            .ipv4
+            .iter()
+            .chain(&cfg.address_pools.ipv6)
+            .any(|p| {
+                p.parse::<ipnet::IpNet>()
+                    .is_ok_and(|p| p.contains(&address))
+            })
+        {
+            // Unassigned Mesh addresses remain captured/rejected. They must
+            // never fall through to a local direct/unmanaged egress fallback.
+            return unavailable(UnavailableReason::NoPath);
+        }
+    }
+    let demand = &normalized;
     let (targets, via) = match &demand.target {
         BusinessTarget::Mesh { node } => {
             let via = cfg
@@ -292,7 +323,10 @@ fn evaluate(
     if candidates.is_empty() {
         return unavailable(UnavailableReason::NoPath);
     }
-    let expires_at_ms = input.dns.iter().filter(|a| matches!(&demand.target, BusinessTarget::Domain { name, .. } if a.source == demand.source && &a.name == name))
+    let expires_at_ms = input
+        .dns
+        .iter()
+        .filter(|a| a.source == demand.source && requested_domain.as_ref() == Some(&a.name))
         .fold(demand.expires_at_ms, |limit, a| limit.min(a.expires_at_ms));
     Ok(DemandDecision::Permitted {
         permit: PathPermit {

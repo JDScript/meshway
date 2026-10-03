@@ -116,8 +116,8 @@ json_route!(
     configuration,
     "/agent-api/v1/configuration/query",
     "queryNodeConfiguration",
-    ConfigurationRequest,
-    ConfigurationResponse
+    NodeConfigurationRequest,
+    NodeConfigurationResponse
 );
 json_route!(
     demand,
