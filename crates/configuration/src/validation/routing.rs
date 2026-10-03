@@ -196,7 +196,12 @@ fn rules(
     }
 }
 
-fn selector_overlap(a: &str, b: &str, config: &NetworkConfiguration) -> bool {
+fn selector_overlap(
+    a: &str,
+    b: &str,
+    config: &NetworkConfiguration,
+    subjects: &SubjectContext,
+) -> bool {
     if a == "*" || b == "*" || a == b {
         return true;
     }
@@ -207,10 +212,10 @@ fn selector_overlap(a: &str, b: &str, config: &NetworkConfiguration) -> bool {
         return config
             .nodes
             .get(&id)
-            .is_some_and(|n| matches(b, id, n, config));
+            .is_some_and(|_| subjects.matches(config, b, id));
     }
     if b.starts_with("node:") {
-        return selector_overlap(b, a, config);
+        return selector_overlap(b, a, config, subjects);
     }
     if a.starts_with("tag:") || b.starts_with("tag:") {
         return a.starts_with("tag:") && b.starts_with("tag:");
@@ -225,7 +230,12 @@ fn selector_overlap(a: &str, b: &str, config: &NetworkConfiguration) -> bool {
     let b = users(b);
     users(a).iter().any(|u| b.contains(u))
 }
-fn selector_covers(a: &str, b: &str, config: &NetworkConfiguration) -> bool {
+fn selector_covers(
+    a: &str,
+    b: &str,
+    config: &NetworkConfiguration,
+    subjects: &SubjectContext,
+) -> bool {
     if a == "*" || a == b {
         return true;
     }
@@ -239,7 +249,7 @@ fn selector_covers(a: &str, b: &str, config: &NetworkConfiguration) -> bool {
         return config
             .nodes
             .get(&id)
-            .is_some_and(|n| matches(a, id, n, config));
+            .is_some_and(|_| subjects.matches(config, a, id));
     }
     match (config.groups.get(a), config.groups.get(b)) {
         (Some(a), Some(b)) => b.iter().all(|u| a.contains(u)),
@@ -362,6 +372,14 @@ pub(super) fn validate(
             &format!("{path}/target"),
             check,
         );
+    }
+    let subjects = SubjectContext {
+        users: check.bindings.clone(),
+        node_users: check.node_bindings.clone(),
+        members: context.members.clone(),
+    };
+    for (i, assignment) in assignments.iter().enumerate() {
+        let path = format!("/routing/egress/assignments/{i}");
         for profile in assignment
             .allowed
             .iter()
@@ -378,7 +396,11 @@ pub(super) fn validate(
         for target in &assignment.target {
             let guaranteed: BTreeSet<_> = assignments
                 .iter()
-                .filter(|a| a.target.iter().any(|s| selector_covers(s, target, config)))
+                .filter(|a| {
+                    a.target
+                        .iter()
+                        .any(|s| selector_covers(s, target, config, &subjects))
+                })
                 .flat_map(|a| a.allowed.iter())
                 .collect();
             if !guaranteed.contains(&assignment.default) {
@@ -401,7 +423,7 @@ pub(super) fn validate(
                 previous
                     .target
                     .iter()
-                    .any(|b| selector_overlap(a, b, config))
+                    .any(|b| selector_overlap(a, b, config, &subjects))
             }) && (assignment.default != previous.default
                 || assignment.locked != previous.locked)
             {
@@ -480,13 +502,13 @@ fn https_authority(authority: &str) -> bool {
 fn permitted(
     config: &NetworkConfiguration,
     id: NodeId,
-    node: &NodeSettings,
+    subjects: &SubjectContext,
     destination: &str,
 ) -> bool {
     let allowed: Vec<_> = config
         .access
         .iter()
-        .filter(|r| r.src.iter().any(|s| matches(s, id, node, config)))
+        .filter(|r| r.src.iter().any(|s| subjects.matches(config, s, id)))
         .flat_map(|r| &r.dst)
         .collect();
     if let Some(domain) = destination.strip_prefix("domain:") {
@@ -516,7 +538,7 @@ fn permitted(
 fn verify_rules(
     config: &NetworkConfiguration,
     id: NodeId,
-    node: &NodeSettings,
+    subjects: &SubjectContext,
     rules: &[EgressRule],
     path: &str,
     check: &mut Check,
@@ -549,7 +571,10 @@ fn verify_rules(
                 None => {}
             }
         }
-        if destinations.iter().any(|d| !permitted(config, id, node, d)) {
+        if destinations
+            .iter()
+            .any(|d| !permitted(config, id, subjects, d))
+        {
             check.dependency(
                 path,
                 "assigned exit destination is outside access grants",
@@ -563,13 +588,23 @@ fn validate_assignments_access(
     context: &ValidationContext<'_>,
     check: &mut Check,
 ) {
-    for (id, node) in &config.nodes {
+    let subjects = SubjectContext {
+        users: check.bindings.clone(),
+        node_users: check.node_bindings.clone(),
+        members: context.members.clone(),
+    };
+    let prior_subjects = SubjectContext {
+        users: context.previous_user_bindings.clone(),
+        node_users: context.previous_node_user_bindings.clone(),
+        members: context.members.clone(),
+    };
+    for id in config.nodes.keys() {
         let allowed: BTreeSet<_> = config
             .routing
             .egress
             .assignments
             .iter()
-            .filter(|a| a.target.iter().any(|s| matches(s, *id, node, config)))
+            .filter(|a| a.target.iter().any(|s| subjects.matches(config, s, *id)))
             .flat_map(|a| a.allowed.iter())
             .collect();
         let path = format!("/nodes/{id}");
@@ -577,7 +612,7 @@ fn validate_assignments_access(
         verify_rules(
             config,
             *id,
-            node,
+            &subjects,
             &config.routing.egress.rules,
             &path,
             check,
@@ -601,12 +636,12 @@ fn validate_assignments_access(
             let retained = previous.is_some_and(|old| {
                 old.routing.egress.assignments.iter().any(|a| {
                     a.allowed.contains(name)
-                        && a.target
-                            .iter()
-                            .any(|s| matches(s, *id, &old.nodes[id], old))
+                        && a.target.iter().any(|s| prior_subjects.matches(old, s, *id))
                 })
             });
-            if name.starts_with("global:") && !permitted(config, *id, node, "autogroup:internet") {
+            if name.starts_with("global:")
+                && !permitted(config, *id, &subjects, "autogroup:internet")
+            {
                 check.dependency(
                     &path,
                     "global exit requires internet access grant",
@@ -620,7 +655,7 @@ fn validate_assignments_access(
                 verify_rules(
                     config,
                     *id,
-                    node,
+                    &subjects,
                     &profile.rules,
                     &path,
                     check,
@@ -638,7 +673,7 @@ fn validate_assignments_access(
                     action(&profile.fallback, config, &path, check, false);
                 }
                 if matches!(profile.fallback, RouteAction::Exit { .. })
-                    && !permitted(config, *id, node, "autogroup:internet")
+                    && !permitted(config, *id, &subjects, "autogroup:internet")
                 {
                     check.dependency(
                         &path,

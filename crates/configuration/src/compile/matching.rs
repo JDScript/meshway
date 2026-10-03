@@ -8,21 +8,13 @@ pub(super) fn node_selector(s: &str) -> Result<NodeId, CompileError> {
         .parse()
         .map_err(|_| CompileError::InvalidInput)
 }
-pub(super) fn selector(cfg: &NetworkConfiguration, s: &str, id: NodeId) -> bool {
-    let Some(n) = cfg.nodes.get(&id) else {
-        return false;
-    };
-    s == "*"
-        || node_selector(s).ok() == Some(id)
-        || match &n.identity {
-            NodeIdentity::User { user } => {
-                s == user || cfg.groups.get(s).is_some_and(|g| g.contains(user))
-            }
-            NodeIdentity::Tag { tags } => tags.iter().any(|t| t == s),
-        }
-}
-pub(super) fn selectors(cfg: &NetworkConfiguration, ss: &[String], id: NodeId) -> bool {
-    ss.iter().any(|s| selector(cfg, s, id))
+pub(super) fn selectors(
+    cfg: &NetworkConfiguration,
+    subjects: &SubjectContext,
+    ss: &[String],
+    id: NodeId,
+) -> bool {
+    ss.iter().any(|s| subjects.matches(cfg, s, id))
 }
 fn ports(s: &str, d: &Demand) -> bool {
     if s == "*" {
@@ -109,16 +101,16 @@ pub(super) fn access_expiry(input: &CompilationInput<'_>, d: &Demand) -> Option<
         .filter_map(|r| {
             if r.bidirectional
                 && matches!(d.target, BusinessTarget::Mesh { node }
-            if selectors(cfg,&r.dst,d.source) && selectors(cfg,&r.src,node))
+            if selectors(cfg,input.subjects,&r.dst,d.source) && selectors(cfg,input.subjects,&r.src,node))
             {
                 return Some(d.expires_at_ms);
             }
-            if !selectors(cfg, &r.src, d.source) {
+            if !selectors(cfg, input.subjects, &r.src, d.source) {
                 return None;
             }
             match d.target {
                 BusinessTarget::Mesh { node } => {
-                    selectors(cfg, &r.dst, node).then_some(d.expires_at_ms)
+                    selectors(cfg, input.subjects, &r.dst, node).then_some(d.expires_at_ms)
                 }
                 _ => r
                     .dst
@@ -131,6 +123,7 @@ pub(super) fn access_expiry(input: &CompilationInput<'_>, d: &Demand) -> Option<
 }
 fn profile_assignment(
     cfg: &NetworkConfiguration,
+    subjects: &SubjectContext,
     node: NodeId,
 ) -> Result<(Vec<String>, String, bool), CompileError> {
     let mut allowed = Vec::new();
@@ -140,7 +133,7 @@ fn profile_assignment(
         .egress
         .assignments
         .iter()
-        .filter(|a| selectors(cfg, &a.target, node))
+        .filter(|a| selectors(cfg, subjects, &a.target, node))
     {
         let pair = (a.default.clone(), a.locked);
         if selected.as_ref().is_some_and(|p| p != &pair) {
@@ -160,16 +153,18 @@ fn profile_assignment(
 }
 pub(super) fn default_profile(
     cfg: &NetworkConfiguration,
+    subjects: &SubjectContext,
     node: NodeId,
 ) -> Result<String, CompileError> {
-    profile_assignment(cfg, node).map(|(_, d, _)| d)
+    profile_assignment(cfg, subjects, node).map(|(_, d, _)| d)
 }
 pub fn profile_allowed(
     cfg: &NetworkConfiguration,
+    subjects: &SubjectContext,
     node: NodeId,
     profile: &str,
 ) -> Result<bool, CompileError> {
-    let (allowed, default, locked) = profile_assignment(cfg, node)?;
+    let (allowed, default, locked) = profile_assignment(cfg, subjects, node)?;
     Ok(allowed.iter().any(|p| p == profile) && (!locked || profile == default))
 }
 fn matcher(
@@ -231,7 +226,9 @@ pub(super) fn egress_action(
             Input::Value(a) => &a.fallback,
             Input::Omitted => return Err(CompileError::UnavailableDependency),
         };
-        if profile == "auto" || !profile_allowed(input.configuration, d.source, profile)? {
+        if profile == "auto"
+            || !profile_allowed(input.configuration, input.subjects, d.source, profile)?
+        {
             return Err(CompileError::InvalidInput);
         }
     }

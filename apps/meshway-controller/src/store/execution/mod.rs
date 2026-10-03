@@ -71,8 +71,11 @@ pub(crate) fn identity_eligible(
                 return Err(NodeError::Unauthorized);
             }
         }
-        NodeIdentity::User { user } => {
-            let binding = bindings.users.get(user).ok_or(NodeError::Unauthorized)?;
+        NodeIdentity::User { .. } => {
+            let binding = bindings
+                .node_users
+                .get(&node)
+                .ok_or(NodeError::Unauthorized)?;
             let valid:bool=tx.query_row("SELECT EXISTS(SELECT 1 FROM memberships m JOIN users u ON u.id=m.user_id WHERE m.network_id=?1 AND m.id=?2 AND m.user_id=?3 AND m.revoked_at IS NULL AND u.disabled_at IS NULL)",params![network.as_uuid().as_bytes().as_slice(),binding.membership_id.as_uuid().as_bytes().as_slice(),binding.user_id.as_uuid().as_bytes().as_slice()],|r|r.get(0))?;
             if !valid {
                 return Err(NodeError::Unauthorized);
@@ -87,8 +90,41 @@ pub(crate) fn user_binding<'a>(
     node: NodeId,
 ) -> Option<&'a meshway_configuration::UserBinding> {
     match &config.nodes.get(&node)?.identity {
-        NodeIdentity::User { user } => bindings.users.get(user),
+        NodeIdentity::User { .. } => bindings.node_users.get(&node),
         NodeIdentity::Tag { .. } => None,
+    }
+}
+pub(crate) fn subjects(
+    tx: &Transaction<'_>,
+    network: NetworkId,
+    bindings: &ConfigurationBindings,
+) -> Result<meshway_configuration::SubjectContext, NodeError> {
+    Ok(meshway_configuration::SubjectContext {
+        users: bindings.users.clone(),
+        node_users: bindings.node_users.clone(),
+        members: crate::execution::configuration::members(tx, network)
+            .map_err(|_| NodeError::Storage)?,
+    })
+}
+pub(crate) fn identity_digest(
+    config: &NetworkConfiguration,
+    bindings: &ConfigurationBindings,
+    node: NodeId,
+) -> Result<Digest, NodeError> {
+    match &config
+        .nodes
+        .get(&node)
+        .ok_or(NodeError::Unauthorized)?
+        .identity
+    {
+        NodeIdentity::User { .. } => Ok(meshway_configuration::compile::digest(&(
+            "user",
+            bindings
+                .node_users
+                .get(&node)
+                .ok_or(NodeError::Unauthorized)?,
+        ))?),
+        NodeIdentity::Tag { tags } => Ok(meshway_configuration::compile::digest(&("tag", tags))?),
     }
 }
 /// The state owner calls this within the same report transaction, not on a

@@ -61,9 +61,9 @@ fn removal(
         .configuration
         .nodes
         .iter()
-        .filter(|(_, n)| match &n.identity {
-            meshway_configuration::NodeIdentity::User { user } => {
-                snapshot.bindings.users.get(user).is_some_and(|binding| {
+        .filter(|(id, n)| match &n.identity {
+            meshway_configuration::NodeIdentity::User { .. } => {
+                snapshot.bindings.node_users.get(id).is_some_and(|binding| {
                     binding.user_id == target_user && binding.membership_id == target
                 })
             }

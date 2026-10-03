@@ -82,7 +82,7 @@ Console 在最终应用前展示**有效修改数量、前后对照和影响范�
 | `diagnostics` | 带严重级别和字段定位的类型化问题 |
 | `unavailableDependencies` | 当前实现返回的失效依赖；保留旧引用不等于恢复授权，也不表示运行时链路健康状态 |
 
-`unavailableDependencies` 列出保留但已撤销／失效的成员与路由依赖。这类依赖不阻止撤权保存，执行侧必须拒绝受影响流量。稳定绑定本身变化也进入 `changes`（`/bindings/users`、`/bindings/listeners`、`/bindings/ruleSets`）并计入 `changeCount`；原样文档保存不会把已失效的成员引用重新绑定到同名的新入网关系。
+`unavailableDependencies` 列出保留但已撤销／失效的成员与路由依赖。这类依赖不阻止撤权保存，执行侧必须拒绝受影响流量。稳定绑定本身变化也进入 `changes`（策略引用 `/bindings/users`、Node 身份解析 `/bindings/nodeUsers`、`/bindings/listeners`、`/bindings/ruleSets`）并计入 `changeCount`；原样文档／ops 保存和新设备接入不会把已失效的策略成员引用重新绑定到同名的新入网关系。两类用户绑定的具体边界见[配置版本存储](/v2/storage/database)。
 
 计数对同一基准下的最终差异去重：改同一字段多次只计最终变化；改回原值不计；新增／删除整个对象时不再重复计算其所有子字段。first-match 数组重排作为该有序区段变化，完整对照显示顺序。changeCount 与返回的完整变化摘要一致；超出预算明确报限制，不隐瞒剩余变化。
 

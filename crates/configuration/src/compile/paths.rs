@@ -69,7 +69,7 @@ impl<'a, 'b> Graph<'a, 'b> {
                 }
                 if path.contains(&b)
                     || required[next_required + 1..].contains(&b)
-                    || !topology_allows(self.input.configuration, a, b)
+                    || !topology_allows(self.input.configuration, self.input.subjects, a, b)
                 {
                     continue;
                 }

@@ -156,11 +156,16 @@ NetworkConfiguration 的完整字段见[配置参考](/v2/configuration-referenc
 
 | 字段 | 类型 | 含义 |
 | --- | --- | --- |
-| `users` | Map&lt;JsonPointer, UserBinding&gt; | 可读引用 → 稳定主体，不按当前邮箱重解析 |
+| `users` | Map&lt;Email, UserBinding&gt; | groups／tagsOwners／access／topology／routing 中的策略引用；原样保存保留其成员生命周期，不按当前邮箱重新绑定 |
+| `nodeUsers` | Map&lt;NodeId, UserBinding&gt; | 各 User 身份 Node 的 `Config.identity` 的稳定解析；只由已验证的设备接入／重新登录建立，Tag 身份没有该项 |
 | `listeners` | Map&lt;NodeId, Map&lt;ListenerKey, Revision&gt;&gt; | listener 此次创建所在 revision，更新沿用、删除后重建换新 |
 | `ruleSets` | Map&lt;RuleSetKey, ArtifactId&gt; | 此源版本提交时固定的数据集内容 |
 
 `UserBinding` 字段：`userId: UserId`、`membershipId: MembershipId`。listener 以 `(networkId,nodeId,key,createdRevision)` 标识资源代际；运行 socket 仍有自己的 generation。上述绑定嵌入配置版本，无独立资源 CRUD。
+
+两类用户绑定按用途独立。用户从 M1 离网后以 M2 重新加入，原策略引用仍绑定已失效的 M1；新设备经正常持钥／PKCE 接入只建立自己的 `nodeUsers[nodeId]=M2`，不重新激活旧 group 或 Tag owner。Node 身份、库存与离网删除读取 nodeUsers；编译 User／group selector 时须同时匹配稳定 User 和有效 Membership，`node`／`*` 仍按当前配置匹配。Node 表不增加 owner／subject 副本，用户可编辑的身份期望仍只在 Configuration.nodes[id].identity。
+
+邮箱维护分别依据两类绑定的 UserId 更新可读引用；仅有 Node.identity 引用的网络也同步。历史恢复分别映射当前名称并核对原 Membership 仍有效，不能借恢复重建永久删除的 Node。当前每个 email 只有一个策略用途绑定，不引入按任意 JSON pointer 编辑授权绑定的接口。
 
 材料值已在完整 configuration 内；初次省略时生成、已有 listener 省略时沿用旧值，新建代际生成新自动值。规则集后续自动更新由执行发布绑定确切 artifact，不覆盖这个历史版本。回滚明确选用源版本初始绑定或某次历史发布的绑定，不能猜用最新内容。
 

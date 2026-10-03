@@ -17,7 +17,10 @@ use zeroize::Zeroizing;
 #[derive(Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub(crate) struct ConfigurationBindings {
+    /// Policy references only; retained inactive memberships stay inert.
     pub(crate) users: BTreeMap<String, UserBinding>,
+    /// Resolution of each User Node's editable Config.identity.
+    pub(crate) node_users: BTreeMap<NodeId, UserBinding>,
     pub(crate) listeners: BTreeMap<NodeId, BTreeMap<String, Revision>>,
     pub(crate) rule_sets: BTreeMap<String, ArtifactId>,
 }

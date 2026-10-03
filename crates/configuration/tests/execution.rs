@@ -93,11 +93,21 @@ fn run(
     demands: &BTreeMap<RequestId, Demand>,
     dns: &[TrustedDnsAssociation],
 ) -> CompiledPublication {
+    run_with_subjects(c, inv, demands, dns, &SubjectContext::default())
+}
+fn run_with_subjects(
+    c: &NetworkConfiguration,
+    inv: &BTreeMap<NodeId, TrustedNode>,
+    demands: &BTreeMap<RequestId, Demand>,
+    dns: &[TrustedDnsAssociation],
+    subjects: &SubjectContext,
+) -> CompiledPublication {
     compile(CompilationInput {
         network: "00000000-0000-4003-8000-000000000001".parse().unwrap(),
         revision: Revision::MIN,
         publication: "00000000-0000-4004-8000-000000000001".parse().unwrap(),
         configuration: c,
+        subjects,
         inventory: inv,
         demands,
         dns,
@@ -563,4 +573,113 @@ fn unavailable_rule_content_cannot_fall_through_to_direct() {
             reason: UnavailableReason::MissingDependency
         }
     );
+}
+
+#[test]
+fn stable_membership_controls_user_groups_topology_and_routing() {
+    let mut c = configuration();
+    let email = "user@example.test".to_owned();
+    c.nodes.get_mut(&node(1)).unwrap().identity = NodeIdentity::User {
+        user: email.clone(),
+    };
+    c.groups.insert("group:team".into(), vec![email.clone()]);
+    let old = UserBinding {
+        user_id: "00000000-0000-4005-8000-000000000001".parse().unwrap(),
+        membership_id: "00000000-0000-4006-8000-000000000001".parse().unwrap(),
+    };
+    let current = UserBinding {
+        membership_id: "00000000-0000-4006-8000-000000000002".parse().unwrap(),
+        ..old.clone()
+    };
+    let subjects = SubjectContext {
+        users: BTreeMap::from([(email.clone(), old)]),
+        node_users: BTreeMap::from([(node(1), current.clone())]),
+        members: BTreeMap::from([(email.clone(), current.clone())]),
+    };
+    let ds = BTreeMap::from([(request(1), demand(1, 1, 2))]);
+    let grant = |src| AccessRule {
+        remark: String::new(),
+        src: vec![src],
+        dst: vec![format!("node:{}", node(2))],
+        ip: vec!["tcp:443".into()],
+        bidirectional: false,
+    };
+    for selector in [email.clone(), "group:team".into()] {
+        c.access = vec![grant(selector)];
+        let result = run_with_subjects(&c, &inventory(), &ds, &[], &subjects);
+        assert_eq!(
+            result.nodes[&node(1)].configuration.decisions[&request(1)],
+            DemandDecision::Unavailable {
+                reason: UnavailableReason::Unauthorized
+            }
+        );
+    }
+    for selector in [format!("node:{}", node(1)), "*".into()] {
+        c.access = vec![grant(selector)];
+        assert!(matches!(
+            run_with_subjects(&c, &inventory(), &ds, &[], &subjects).nodes[&node(1)]
+                .configuration
+                .decisions[&request(1)],
+            DemandDecision::Permitted { .. }
+        ));
+    }
+    c.routing.mesh = vec![
+        MeshRoute {
+            remark: String::new(),
+            src: vec!["group:team".into()],
+            dst: vec!["*".into()],
+            via: vec![format!("node:{}", node(3))],
+        },
+        MeshRoute {
+            remark: String::new(),
+            src: vec!["*".into()],
+            dst: vec!["*".into()],
+            via: vec![format!("node:{}", node(4))],
+        },
+    ];
+    let inert = run_with_subjects(&c, &inventory(), &ds, &[], &subjects);
+    assert_eq!(
+        inert.nodes[&node(1)].configuration.permits[&request(1)].paths[0].nodes,
+        vec![node(1), node(4), node(2)]
+    );
+    let mut active = subjects.clone();
+    active.users.insert(email, current);
+    let live = run_with_subjects(&c, &inventory(), &ds, &[], &active);
+    assert_ne!(inert.dependency_digest, live.dependency_digest);
+    assert_eq!(
+        live.nodes[&node(1)].configuration.permits[&request(1)].paths[0].nodes,
+        vec![node(1), node(3), node(2)]
+    );
+    c.topology.push(TopologyRule {
+        remark: String::new(),
+        action: TopologyAction::Block,
+        a: "group:team".into(),
+        b: "*".into(),
+    });
+    assert!(matches!(
+        run_with_subjects(&c, &inventory(), &ds, &[], &subjects).nodes[&node(1)]
+            .configuration
+            .decisions[&request(1)],
+        DemandDecision::Permitted { .. }
+    ));
+    assert_eq!(
+        run_with_subjects(&c, &inventory(), &ds, &[], &active).nodes[&node(1)]
+            .configuration
+            .decisions[&request(1)],
+        DemandDecision::Unavailable {
+            reason: UnavailableReason::NoPath
+        }
+    );
+    c.topology.clear();
+    c.routing.egress.profiles.insert(
+        "work".into(),
+        serde_json::from_str(r#"{"rules":[],"fallback":{"type":"unmanaged"}}"#).unwrap(),
+    );
+    c.routing.egress.assignments = serde_json::from_str(
+        r#"[{"target":["group:team"],"allowed":["work"],"default":"work","locked":false}]"#,
+    )
+    .unwrap();
+    assert!(!profile_allowed(&c, &subjects, node(1), "work").unwrap());
+    assert!(profile_allowed(&c, &subjects, node(1), "mesh").unwrap());
+    assert!(profile_allowed(&c, &active, node(1), "work").unwrap());
 }

@@ -75,6 +75,7 @@ pub(super) fn definitions(
     }
 }
 pub(super) fn identity(
+    id: NodeId,
     identity: &NodeIdentity,
     tags: &BTreeMap<String, Vec<String>>,
     context: &ValidationContext<'_>,
@@ -83,11 +84,17 @@ pub(super) fn identity(
 ) {
     match identity {
         NodeIdentity::User { user: email } => {
-            user(email, context, path, check);
-            if check.bindings.get(email) != context.members.get(email)
-                || !context.members.contains_key(email)
-            {
+            let current = context.members.get(email);
+            let expected = context.expected_node_user_bindings.get(&id);
+            if current.is_none() || expected.is_some_and(|expected| Some(expected) != current) {
                 check.issue(path, "Node identity requires an active bound membership");
+            } else if let Some(binding) = current {
+                check.node_bindings.insert(id, binding.clone());
+                if context.previous_node_user_bindings.get(&id) != Some(binding)
+                    && context.approved_identities.get(&id) != Some(identity)
+                {
+                    check.require(path, PreparationKind::IdentityProof);
+                }
             }
         }
         NodeIdentity::Tag { tags: values } => {
@@ -353,31 +360,6 @@ pub(super) fn rules(
     }
 }
 
-pub(super) fn matches(
-    selector: &str,
-    id: NodeId,
-    node: &NodeSettings,
-    config: &NetworkConfiguration,
-) -> bool {
-    if selector == "*"
-        || selector
-            .strip_prefix("node:")
-            .is_some_and(|s| s == id.to_string())
-    {
-        return true;
-    }
-    match &node.identity {
-        NodeIdentity::User { user } => {
-            selector == user
-                || config
-                    .groups
-                    .get(selector)
-                    .is_some_and(|g| g.contains(user))
-        }
-        NodeIdentity::Tag { tags } => tags.iter().any(|t| t == selector),
-    }
-}
-
 /// DNS suffix matching respects label boundaries. Inputs are normalized DNS
 /// names; matching is case-insensitive and permits one trailing root dot.
 pub fn domain_suffix_matches(name: &str, suffix: &str) -> bool {
@@ -390,14 +372,19 @@ pub fn domain_suffix_matches(name: &str, suffix: &str) -> bool {
 }
 
 /// Pure topology decision only: block wins regardless of rule order.
-pub fn topology_allows(config: &NetworkConfiguration, a: NodeId, b: NodeId) -> bool {
-    let (Some(an), Some(bn)) = (config.nodes.get(&a), config.nodes.get(&b)) else {
+pub fn topology_allows(
+    config: &NetworkConfiguration,
+    subjects: &SubjectContext,
+    a: NodeId,
+    b: NodeId,
+) -> bool {
+    let (Some(_), Some(_)) = (config.nodes.get(&a), config.nodes.get(&b)) else {
         return false;
     };
     let mut allow = config.defaults.topology == TopologyDefault::Allow;
     for rule in &config.topology {
-        if (matches(&rule.a, a, an, config) && matches(&rule.b, b, bn, config))
-            || (matches(&rule.a, b, bn, config) && matches(&rule.b, a, an, config))
+        if (subjects.matches(config, &rule.a, a) && subjects.matches(config, &rule.b, b))
+            || (subjects.matches(config, &rule.a, b) && subjects.matches(config, &rule.b, a))
         {
             if rule.action == TopologyAction::Block {
                 return false;

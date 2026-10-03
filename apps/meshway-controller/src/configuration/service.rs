@@ -50,23 +50,32 @@ impl Configurations {
                 .users
                 .get(old_email)
                 .is_some_and(|binding| binding.user_id == user)
+                && !current
+                    .bindings
+                    .node_users
+                    .values()
+                    .any(|binding| binding.user_id == user)
             {
                 continue;
             }
             let mut input = NetworkConfigurationInput::from(&current.document.configuration);
-            meshway_configuration::rename_user_references(&mut input, old_email, new_email);
+            rename_bound_user_references(&mut input, &current, user, old_email, new_email);
             check_inputs(tx, &current, &input)?;
             let before =
                 meshway_configuration::parse_jsonc(current.document.source_jsonc.expose())?;
             let mut after = before.clone();
-            meshway_configuration::rename_user_references(&mut after, old_email, new_email);
+            rename_bound_user_references(&mut after, &current, user, old_email, new_email);
             let source = meshway_configuration::rewrite_source(
                 current.document.source_jsonc.expose(),
                 &before,
                 &after,
             )?;
             let mut expected = current.bindings.users.clone();
-            if let Some(binding) = expected.remove(old_email) {
+            if expected
+                .get(old_email)
+                .is_some_and(|binding| binding.user_id == user)
+                && let Some(binding) = expected.remove(old_email)
+            {
                 expected.insert(new_email.into(), binding);
             }
             let verified = materials::prepare_materials(
@@ -340,15 +349,21 @@ impl Configurations {
         if request.expected_revision() != current.revision {
             return Err(Error::Conflict);
         }
-        let (source, mut input, expected) = match request {
+        let (source, mut input, expected, expected_nodes) = match request {
             ConfigurationRequest::Document { source_jsonc, .. } => (
                 source_jsonc.expose().to_owned(),
                 parse_jsonc(source_jsonc.expose())?,
                 current.bindings.users.clone(),
+                current.bindings.node_users.clone(),
             ),
             ConfigurationRequest::Operations { ops, .. } => {
                 let (source, input) = edit_source(current.document.source_jsonc.expose(), ops)?;
-                (source, input, current.bindings.users.clone())
+                (
+                    source,
+                    input,
+                    current.bindings.users.clone(),
+                    current.bindings.node_users.clone(),
+                )
             }
             ConfigurationRequest::Restore { restore_from, .. } => {
                 let snapshot =
@@ -367,16 +382,32 @@ impl Configurations {
                     bindings.insert(current_name.clone(), binding.clone());
                 }
                 let mut input = NetworkConfigurationInput::from(&snapshot.document.configuration);
-                meshway_configuration::rebind_user_references(&mut input, &names);
+                let mut node_names = BTreeMap::new();
+                for (id, binding) in &snapshot.bindings.node_users {
+                    let name = members
+                        .iter()
+                        .find(|(_, candidate)| *candidate == binding)
+                        .map(|(email, _)| email.clone())
+                        .ok_or(Error::DependencyUnavailable)?;
+                    node_names.insert(*id, name);
+                }
+                meshway_configuration::rebind_policy_user_references(&mut input, &names);
+                meshway_configuration::rebind_node_user_references(&mut input, &node_names);
                 let before = parse_jsonc(snapshot.document.source_jsonc.expose())?;
                 let mut after = before.clone();
-                meshway_configuration::rebind_user_references(&mut after, &names);
+                meshway_configuration::rebind_policy_user_references(&mut after, &names);
+                meshway_configuration::rebind_node_user_references(&mut after, &node_names);
                 let source = meshway_configuration::rewrite_source(
                     snapshot.document.source_jsonc.expose(),
                     &before,
                     &after,
                 )?;
-                (source, input, bindings)
+                (
+                    source,
+                    input,
+                    bindings,
+                    snapshot.bindings.node_users.clone(),
+                )
             }
         };
         // Node inventory is transaction-backed. Remote artifacts still require
@@ -414,6 +445,7 @@ impl Configurations {
         let mut validation = validation_context(tx, current, &input, None, true)?;
         validation.members = members;
         validation.expected_user_bindings = expected;
+        validation.expected_node_user_bindings = expected_nodes;
         validation.verified_listeners = verified_listeners;
         validation.recreated_listeners = recreated_listeners;
         let context = TrustedContext {
@@ -441,6 +473,36 @@ pub(crate) fn current_revision(
         .optional()?
         .ok_or(Error::NotFound)?;
     Revision::new(u64::try_from(r).map_err(|_| Error::Storage)?).map_err(|_| Error::Storage)
+}
+
+/// Readable names follow the stable subject for each binding purpose. An email
+/// reused by another account must not rename the old account's policy references.
+pub(crate) fn rename_bound_user_references(
+    input: &mut NetworkConfigurationInput,
+    snapshot: &Snapshot,
+    user: UserId,
+    old: &str,
+    new: &str,
+) {
+    if snapshot
+        .bindings
+        .users
+        .get(old)
+        .is_some_and(|binding| binding.user_id == user)
+    {
+        meshway_configuration::rebind_policy_user_references(
+            input,
+            &BTreeMap::from([(old.to_owned(), new.to_owned())]),
+        );
+    }
+    let names = snapshot
+        .bindings
+        .node_users
+        .iter()
+        .filter(|(_, binding)| binding.user_id == user)
+        .map(|(id, _)| (*id, new.to_owned()))
+        .collect();
+    meshway_configuration::rebind_node_user_references(input, &names);
 }
 pub(crate) fn members(
     tx: &Transaction<'_>,

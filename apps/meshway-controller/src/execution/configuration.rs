@@ -59,11 +59,16 @@ impl CommitParticipant for Participant<'_> {
             Principal::Lifecycle(actor) => {
                 if let Some(sync) = &prepared.email_sync {
                     if sync.user != *actor
-                        || !current
+                        || (!current
                             .bindings
                             .users
                             .get(&sync.old_email)
                             .is_some_and(|b| b.user_id == *actor)
+                            && !current
+                                .bindings
+                                .node_users
+                                .values()
+                                .any(|b| b.user_id == *actor))
                     {
                         return Err(Error::PermissionDenied);
                     }
@@ -73,8 +78,10 @@ impl CommitParticipant for Participant<'_> {
                     }
                     let mut expected =
                         NetworkConfigurationInput::from(&current.document.configuration);
-                    meshway_configuration::rename_user_references(
+                    crate::configuration::rename_bound_user_references(
                         &mut expected,
+                        current,
+                        *actor,
                         &sync.old_email,
                         &sync.new_email,
                     );
@@ -99,6 +106,7 @@ impl CommitParticipant for Participant<'_> {
                         meshway_configuration::normalize_with_dependencies(expected, &context)?;
                     if expected.configuration != prepared.document.configuration
                         || expected.user_bindings != prepared.bindings.users
+                        || expected.node_user_bindings != prepared.bindings.node_users
                     {
                         return Err(Error::PermissionDenied);
                     }
@@ -122,7 +130,9 @@ impl CommitParticipant for Participant<'_> {
             if previous.is_none() && self.admission.is_none_or(|a| a.node != *id) {
                 return Err(Error::PermissionDenied);
             }
-            if previous.map(|n| &n.identity) != Some(&node.identity) {
+            if previous.map(|n| &n.identity) != Some(&node.identity)
+                || current.bindings.node_users.get(id) != prepared.bindings.node_users.get(id)
+            {
                 let admitted = self
                     .admission
                     .is_some_and(|a| a.node == *id && a.identity == node.identity);
@@ -245,13 +255,31 @@ pub(crate) fn validation_context<'a>(
             .get(id)
             .map(|n| &n.identity)
             != Some(&node.identity);
-        if changed
-            && (admission.is_some_and(|a| a.node == *id && a.identity == node.identity)
-                || (manager
-                    && current.document.configuration.nodes.contains_key(id)
-                    && matches!(&node.identity,NodeIdentity::Tag{tags} if !tags.is_empty())))
+        if admission.is_some_and(|a| a.node == *id && a.identity == node.identity)
+            || (changed
+                && manager
+                && current.document.configuration.nodes.contains_key(id)
+                && matches!(&node.identity,NodeIdentity::Tag{tags} if !tags.is_empty()))
         {
             approved.insert(*id, node.identity.clone());
+        }
+    }
+    let mut expected_nodes = current.bindings.node_users.clone();
+    if let Some(admission) = admission {
+        match (&admission.identity, admission.membership) {
+            (NodeIdentity::User { .. }, Some(membership)) => {
+                expected_nodes.insert(
+                    admission.node,
+                    UserBinding {
+                        user_id: admission.actor,
+                        membership_id: membership,
+                    },
+                );
+            }
+            (NodeIdentity::Tag { .. }, None) => {
+                expected_nodes.remove(&admission.node);
+            }
+            _ => return Err(Error::PermissionDenied),
         }
     }
     Ok(ValidationContext {
@@ -260,6 +288,8 @@ pub(crate) fn validation_context<'a>(
         previous: Some(&current.document.configuration),
         expected_user_bindings: current.bindings.users.clone(),
         previous_user_bindings: current.bindings.users.clone(),
+        expected_node_user_bindings: expected_nodes,
+        previous_node_user_bindings: current.bindings.node_users.clone(),
         approved_identities: approved,
         ..Default::default()
     })

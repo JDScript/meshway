@@ -408,9 +408,8 @@ fn inventory_and_stable_user_bindings_cannot_be_invented_by_configuration() {
     let mut ctx = context();
     let mut old = ctx.members["alice@example.com"].clone();
     old.user_id = "00000000-0000-0000-0000-000000000099".parse().unwrap();
-    ctx.expected_user_bindings
-        .insert("alice@example.com".into(), old);
-    invalid(normalize(with_nodes(), &ctx), "rebound user");
+    ctx.expected_node_user_bindings.insert(id(1), old);
+    invalid(normalize(with_nodes(), &ctx), "active bound membership");
     let mut ctx = context();
     ctx.approved_identities.clear();
     assert!(matches!(
@@ -495,9 +494,19 @@ fn route_order_is_retained_and_topology_block_always_wins() {
     let (mut c, _) = normalize(c, &context()).unwrap();
     assert_eq!(c.routing.mesh[0].remark, "first");
     assert_eq!(c.routing.mesh[1].remark, "second");
-    assert!(!topology_allows(&c, id(1), id(2)));
+    assert!(!topology_allows(
+        &c,
+        &SubjectContext::default(),
+        id(1),
+        id(2)
+    ));
     c.topology.reverse();
-    assert!(!topology_allows(&c, id(1), id(2)));
+    assert!(!topology_allows(
+        &c,
+        &SubjectContext::default(),
+        id(1),
+        id(2)
+    ));
 }
 
 #[test]

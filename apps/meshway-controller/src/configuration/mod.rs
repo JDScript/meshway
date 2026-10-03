@@ -5,6 +5,7 @@ pub(crate) mod materials;
 mod service;
 mod snapshot;
 pub(crate) use service::Configurations;
+pub(crate) use service::rename_bound_user_references;
 pub(crate) use service::source_response;
 pub(crate) use snapshot::{Snapshot, SnapshotCache};
 
@@ -199,6 +200,7 @@ pub(crate) fn prepare(
     document.configuration = configuration;
     let bindings = ConfigurationBindings {
         users: user_bindings,
+        node_users: normalized.node_user_bindings,
         listeners,
         rule_sets: context.rule_sets.clone(),
     };
@@ -224,6 +226,7 @@ fn binding_changes(
 ) -> Vec<ConfigurationChange> {
     [
         ("users", before.users != after.users),
+        ("nodeUsers", before.node_users != after.node_users),
         ("listeners", before.listeners != after.listeners),
         ("ruleSets", before.rule_sets != after.rule_sets),
     ]

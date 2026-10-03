@@ -23,6 +23,7 @@ pub struct CompilationInput<'a> {
     pub revision: Revision,
     pub publication: PublicationId,
     pub configuration: &'a NetworkConfiguration,
+    pub subjects: &'a SubjectContext,
     pub inventory: &'a BTreeMap<NodeId, TrustedNode>,
     pub demands: &'a BTreeMap<RequestId, Demand>,
     pub dns: &'a [TrustedDnsAssociation],
@@ -88,6 +89,7 @@ pub fn compile(input: CompilationInput<'_>) -> Result<CompiledPublication, Compi
         input.network,
         input.revision,
         input.configuration,
+        input.subjects,
         input.inventory,
         input.demands,
         input.dns,
@@ -101,6 +103,9 @@ pub fn compile(input: CompilationInput<'_>) -> Result<CompiledPublication, Compi
         let Some(settings) = input.configuration.nodes.get(id) else {
             continue;
         };
+        if !input.subjects.node_is_active(input.configuration, *id) {
+            return Err(CompileError::InvalidInput);
+        }
         if trusted.control_key.public_key.algorithm != meshway_model::KeyAlgorithm::Ed25519
             || trusted.dataplane_key.public_key.algorithm != meshway_model::KeyAlgorithm::X25519
         {
@@ -229,7 +234,7 @@ fn evaluate(
     {
         return unavailable(UnavailableReason::InactiveNode);
     }
-    if !matching::profile_allowed(cfg, demand.source, &demand.profile)?
+    if !matching::profile_allowed(cfg, input.subjects, demand.source, &demand.profile)?
         || demand.profile != selected_profile(input, demand.source)?
     {
         return unavailable(UnavailableReason::InvalidProfile);
@@ -285,8 +290,8 @@ fn evaluate(
                 .mesh
                 .iter()
                 .find(|r| {
-                    matching::selectors(cfg, &r.src, demand.source)
-                        && matching::selectors(cfg, &r.dst, *node)
+                    matching::selectors(cfg, input.subjects, &r.src, demand.source)
+                        && matching::selectors(cfg, input.subjects, &r.dst, *node)
                 })
                 .map(|r| r.via.clone())
                 .unwrap_or_default();
@@ -359,9 +364,11 @@ fn evaluate(
 }
 fn selected_profile(input: &CompilationInput<'_>, node: NodeId) -> Result<String, CompileError> {
     match input.selected_profiles.get(&node) {
-        Some(profile) if matching::profile_allowed(input.configuration, node, profile)? => {
+        Some(profile)
+            if matching::profile_allowed(input.configuration, input.subjects, node, profile)? =>
+        {
             Ok(profile.clone())
         }
-        _ => matching::default_profile(input.configuration, node),
+        _ => matching::default_profile(input.configuration, input.subjects, node),
     }
 }

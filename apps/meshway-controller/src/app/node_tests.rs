@@ -719,6 +719,7 @@ async fn enrollment_key_idempotency_tag_relogin_and_permanent_delete() {
     assert_eq!(node.hostname, "server");
     assert!(node.listeners.is_empty());
     assert!(matches!(node.identity, NodeIdentity::Tag { .. }));
+    assert!(!snapshot.bindings.node_users.contains_key(&enrolled.node_id));
     let tag_session = session(
         &app.execution(),
         network,
@@ -808,6 +809,11 @@ async fn enrollment_key_idempotency_tag_relogin_and_permanent_delete() {
         .await
         .unwrap();
     let restored = &current.document.configuration.nodes[&enrolled.node_id];
+    assert!(current.bindings.users.is_empty());
+    assert_eq!(
+        current.bindings.node_users[&enrolled.node_id].user_id,
+        owner.session.user.id
+    );
     assert_eq!(restored.hostname, "server");
     assert!(matches!(&restored.identity,NodeIdentity::User{user} if user=="lifecycle@example.com"));
     let lease = app
@@ -1164,6 +1170,7 @@ async fn actual_http_signatures_and_pkce_polling() {
         .read(user.token.expose(), own.id, None)
         .await
         .unwrap();
+    assert!(!current.bindings.node_users.contains_key(&enrolled.node_id));
     let addresses = current.document.configuration.nodes[&enrolled.node_id]
         .addresses
         .clone();
@@ -2341,7 +2348,7 @@ async fn real_multihop_admission_separates_neighbors_paths_and_receipt_history()
 #[tokio::test]
 async fn rejoined_user_enrollment_preserves_inactive_group_membership() {
     let _serial = crate::accounts::TEST_KDF_LOCK.lock().await;
-    let (_dir, app, network, target, _, _, _, _, _) = fixture().await;
+    let (_dir, app, network, target, _, target_keys, _, target_signer, _) = fixture().await;
     let owner = app
         .accounts()
         .login(
@@ -2397,6 +2404,15 @@ async fn rejoined_user_enrollment_preserves_inactive_group_membership() {
                             "group:former-members".into(),
                             vec![user.session.user.email.clone()],
                         )]),
+                    },
+                    ConfigurationOperation::ReplaceTagsOwners {
+                        tags_owners: BTreeMap::from([
+                            ("tag:test".into(), vec![]),
+                            (
+                                "tag:former-owned".into(),
+                                vec![user.session.user.email.clone()],
+                            ),
+                        ]),
                     },
                     ConfigurationOperation::ReplaceAccess {
                         access: vec![AccessRule {
@@ -2492,7 +2508,80 @@ async fn rejoined_user_enrollment_preserves_inactive_group_membership() {
         after.document.configuration.groups,
         before.document.configuration.groups
     );
+    assert_eq!(after.bindings.users, before.bindings.users);
+    assert_eq!(
+        after.bindings.node_users[&enrolled.node_id],
+        UserBinding {
+            user_id: user.session.user.id,
+            membership_id: new_membership
+        }
+    );
+    assert!(!after.bindings.node_users.contains_key(&old_node.node_id));
+    assert!(!after.bindings.node_users.contains_key(&target));
+    let comparison = app
+        .configurations()
+        .compare(
+            owner.token.expose(),
+            network,
+            meshway_protocol::configuration::CompareConfigurationRequest {
+                from_revision: before.revision,
+                to_revision: after.revision,
+            },
+            rid(),
+        )
+        .await
+        .unwrap();
+    assert!(
+        comparison
+            .changes
+            .iter()
+            .any(|change| change.path == "/bindings/nodeUsers")
+    );
+    assert!(
+        !comparison
+            .changes
+            .iter()
+            .any(|change| change.path == "/bindings/users")
+    );
+    let history = app
+        .configurations()
+        .read(owner.token.expose(), network, Some(snapshot.revision))
+        .await
+        .unwrap();
+    assert_eq!(
+        history.bindings.node_users[&old_node.node_id].membership_id,
+        old_membership
+    );
+    assert!(
+        app.configurations()
+            .apply(
+                owner.token.expose(),
+                network,
+                meshway_protocol::configuration::ConfigurationRequest::Restore {
+                    expected_revision: after.revision,
+                    request_id: rid(),
+                    restore_from: snapshot.revision
+                },
+                rid()
+            )
+            .await
+            .is_err()
+    );
     let service = app.execution();
+    assert_eq!(
+        service
+            .challenge(NodeChallengeRequest {
+                network_id: network,
+                node_id: old_node.node_id,
+                key_id: old_node.keys.control.id,
+                operation: ProofOperation::Session,
+                request_digest: proof::request_digest(&NodeSessionIntent { request_id: rid() })
+                    .unwrap()
+            })
+            .await
+            .err(),
+        Some(NodeError::Unauthorized)
+    );
     let node_session = session(&service, network, enrolled.node_id, &enrolled.keys, &signer).await;
     let lease = service
         .acquire(
@@ -2528,6 +2617,151 @@ async fn rejoined_user_enrollment_preserves_inactive_group_membership() {
             reason: UnavailableReason::Unauthorized
         }
     ));
+    // An ordinary source save keeps both purposes; it cannot rebind the policy
+    // slot to M2 merely because a new Node now has the same readable email.
+    let saved = app
+        .configurations()
+        .apply(
+            owner.token.expose(),
+            network,
+            meshway_protocol::configuration::ConfigurationRequest::Document {
+                expected_revision: after.revision,
+                request_id: rid(),
+                source_jsonc: WireSecret::new(
+                    canonical_json(&after.document.configuration)
+                        .unwrap()
+                        .expose()
+                        .into(),
+                ),
+            },
+            rid(),
+        )
+        .await
+        .unwrap();
+    let preview = app
+        .configurations()
+        .validate(
+            owner.token.expose(),
+            network,
+            meshway_protocol::configuration::ConfigurationRequest::Operations {
+                expected_revision: saved.revision,
+                request_id: rid(),
+                ops: vec![ConfigurationOperation::SetNodeSettings {
+                    node_id: enrolled.node_id,
+                    fields: NodeSettingsPatch {
+                        remark: Input::Value("new membership device".into()),
+                        ..Default::default()
+                    },
+                }],
+            },
+            rid(),
+        )
+        .await
+        .unwrap();
+    assert!(
+        preview
+            .unavailable_dependencies
+            .iter()
+            .any(|issue| issue.path.starts_with("/tagsOwners/"))
+    );
+    let target_session = session(&service, network, target, &target_keys, &target_signer).await;
+    service
+        .acquire(
+            target_session.token.expose(),
+            AcquireInstanceRequest {
+                instance_id: iid(),
+                capabilities: caps(),
+            },
+        )
+        .await
+        .unwrap();
+    let authorized = app
+        .configurations()
+        .apply(
+            owner.token.expose(),
+            network,
+            meshway_protocol::configuration::ConfigurationRequest::Operations {
+                expected_revision: saved.revision,
+                request_id: rid(),
+                ops: vec![ConfigurationOperation::ReplaceAccess {
+                    access: vec![AccessRule {
+                        remark: String::new(),
+                        src: vec![format!("node:{}", enrolled.node_id)],
+                        dst: vec![format!("node:{target}")],
+                        ip: vec!["tcp:443".into()],
+                        bidirectional: false,
+                    }],
+                }],
+            },
+            rid(),
+        )
+        .await
+        .unwrap();
+    let permitted = service
+        .demand(
+            node_session.token.expose(),
+            DemandRequest {
+                instance: InstanceRequest {
+                    instance_id: lease.instance_id,
+                    generation: lease.generation,
+                },
+                request_id: rid(),
+                target: BusinessTarget::Mesh { node: target },
+                protocol: BusinessProtocol::Tcp,
+                port: Some(443.try_into().unwrap()),
+                profile: "mesh".into(),
+                duration_seconds: 60,
+            },
+        )
+        .await
+        .unwrap();
+    assert!(matches!(
+        permitted.decision,
+        DemandDecision::Permitted { .. }
+    ));
+    let preserved = app
+        .configurations()
+        .read(owner.token.expose(), network, None)
+        .await
+        .unwrap();
+    assert_eq!(preserved.bindings.users, before.bindings.users);
+    assert_eq!(
+        preserved.bindings.node_users[&enrolled.node_id].membership_id,
+        new_membership
+    );
+    let impact = app
+        .networks()
+        .removal_impact(owner.token.expose(), network, Some(new_membership), rid())
+        .await
+        .unwrap();
+    assert_eq!(impact.revision, authorized.revision);
+    assert_eq!(impact.node_ids, vec![enrolled.node_id]);
+    app.networks()
+        .remove_member(
+            owner.token.expose(),
+            network,
+            Some(new_membership),
+            impact.version,
+            impact.revision,
+            rid(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        service
+            .authenticate(node_session.token.expose())
+            .await
+            .err(),
+        Some(NodeError::Unauthorized)
+    );
+    let removed = app
+        .configurations()
+        .read(owner.token.expose(), network, None)
+        .await
+        .unwrap();
+    assert!(!removed.bindings.node_users.contains_key(&enrolled.node_id));
+    assert_eq!(removed.bindings.users, before.bindings.users);
+    app.check_storage().await.unwrap();
     app.shutdown().await.unwrap();
 }
 
@@ -2827,8 +3061,8 @@ async fn email_maintenance_preserves_live_node_subject_and_session() {
         .await
         .unwrap();
     assert_eq!(
-        before.bindings.users["owner@example.com"],
-        after.bindings.users["renamed-owner@example.com"]
+        before.bindings.node_users[&node.node_id],
+        after.bindings.node_users[&node.node_id]
     );
     assert_eq!(
         after.document.configuration.nodes[&node.node_id].identity,
@@ -2836,5 +3070,159 @@ async fn email_maintenance_preserves_live_node_subject_and_session() {
             user: "renamed-owner@example.com".into()
         }
     );
+    app.shutdown().await.unwrap();
+}
+
+#[tokio::test]
+async fn node_only_email_reference_and_profile_selection_survive_history_restore() {
+    let _serial = crate::accounts::TEST_KDF_LOCK.lock().await;
+    let (_dir, app, network, _, _, _, _, _, _) = fixture().await;
+    let owner = app
+        .accounts()
+        .login(
+            "owner@example.com".into(),
+            Secret::new("a sufficiently long password".into()),
+            rid(),
+        )
+        .await
+        .unwrap();
+    let signer = SigningKey::from_bytes(&[87; 32]);
+    let enrolled = enroll_user_node(&app, owner.token.expose(), network, &signer, [88; 32]).await;
+    let base = app
+        .configurations()
+        .read(owner.token.expose(), network, None)
+        .await
+        .unwrap();
+    let routing=serde_json::from_value(serde_json::json!({"mesh":[],"egress":{"rules":[],"profiles":{"work":{"rules":[],"fallback":{"type":"unmanaged"}}},"assignments":[{"target":[format!("node:{}",enrolled.node_id)],"allowed":["mesh","work"],"default":"mesh","locked":false}]}})).unwrap();
+    app.configurations()
+        .apply(
+            owner.token.expose(),
+            network,
+            meshway_protocol::configuration::ConfigurationRequest::Operations {
+                expected_revision: base.revision,
+                request_id: rid(),
+                ops: vec![ConfigurationOperation::ReplaceRouting { routing }],
+            },
+            rid(),
+        )
+        .await
+        .unwrap();
+    let before = app
+        .configurations()
+        .read(owner.token.expose(), network, None)
+        .await
+        .unwrap();
+    assert!(before.bindings.users.is_empty());
+    let service = app.execution();
+    let session = session(&service, network, enrolled.node_id, &enrolled.keys, &signer).await;
+    let lease = service
+        .acquire(
+            session.token.expose(),
+            AcquireInstanceRequest {
+                instance_id: iid(),
+                capabilities: caps(),
+            },
+        )
+        .await
+        .unwrap();
+    let instance = InstanceRequest {
+        instance_id: lease.instance_id,
+        generation: lease.generation,
+    };
+    service
+        .select_profile(
+            session.token.expose(),
+            RoutingSelectionRequest {
+                instance: instance.clone(),
+                expected_version: None,
+                profile: "work".into(),
+            },
+        )
+        .await
+        .unwrap();
+    app.accounts()
+        .change_email(
+            owner.token.expose(),
+            Secret::new("a sufficiently long password".into()),
+            "node-only@example.test".into(),
+            rid(),
+            app.configurations(),
+        )
+        .await
+        .unwrap();
+    let changed = app
+        .configurations()
+        .read(owner.token.expose(), network, None)
+        .await
+        .unwrap();
+    assert!(changed.bindings.users.is_empty());
+    assert_eq!(changed.bindings.node_users, before.bindings.node_users);
+    assert_eq!(
+        changed.document.configuration.nodes[&enrolled.node_id].identity,
+        NodeIdentity::User {
+            user: "node-only@example.test".into()
+        }
+    );
+    let full = service
+        .configuration(
+            session.token.expose(),
+            NodeConfigurationRequest {
+                instance: instance.clone(),
+                base: None,
+            },
+        )
+        .await
+        .unwrap()
+        .full
+        .unwrap();
+    assert_eq!(full.configuration.dns.profile, "work");
+    app.configurations()
+        .apply(
+            owner.token.expose(),
+            network,
+            meshway_protocol::configuration::ConfigurationRequest::Restore {
+                expected_revision: changed.revision,
+                request_id: rid(),
+                restore_from: before.revision,
+            },
+            rid(),
+        )
+        .await
+        .unwrap();
+    let restored = app
+        .configurations()
+        .read(owner.token.expose(), network, None)
+        .await
+        .unwrap();
+    assert_eq!(restored.bindings.node_users, before.bindings.node_users);
+    assert_eq!(
+        restored.document.configuration.nodes[&enrolled.node_id].identity,
+        changed.document.configuration.nodes[&enrolled.node_id].identity
+    );
+    let history = app
+        .configurations()
+        .read(owner.token.expose(), network, Some(before.revision))
+        .await
+        .unwrap();
+    assert_eq!(
+        history.document.configuration.nodes[&enrolled.node_id].identity,
+        NodeIdentity::User {
+            user: "owner@example.com".into()
+        }
+    );
+    let full = service
+        .configuration(
+            session.token.expose(),
+            NodeConfigurationRequest {
+                instance,
+                base: None,
+            },
+        )
+        .await
+        .unwrap()
+        .full
+        .unwrap();
+    assert_eq!(full.configuration.dns.profile, "work");
+    app.check_storage().await.unwrap();
     app.shutdown().await.unwrap();
 }

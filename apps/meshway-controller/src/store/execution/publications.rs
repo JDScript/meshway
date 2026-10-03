@@ -19,13 +19,15 @@ pub(crate) fn select_profile(
     let p = authorize_node(&tx, sealer, boot, token, now)?;
     current_instance(&tx, boot, &p, &request.instance, now)?;
     let (_, cfg, bindings) = current_configuration(&tx, sealer, p.network)?;
-    if !compile::profile_allowed(&cfg, p.node, &request.profile)? {
+    if !compile::profile_allowed(
+        &cfg,
+        &subjects(&tx, p.network, &bindings)?,
+        p.node,
+        &request.profile,
+    )? {
         return Err(NodeError::Forbidden);
     }
-    let digest = compile::digest(&(
-        &cfg.nodes[&p.node].identity,
-        user_binding(&cfg, &bindings, p.node),
-    ))?;
+    let digest = identity_digest(&cfg, &bindings, p.node)?;
     let current: Option<i64> = tx
         .query_row(
             "SELECT version FROM routing_selections WHERE network_id=?1 AND node_id=?2",
@@ -61,17 +63,15 @@ fn trusted_inventory(
     tx: &Transaction<'_>,
     network: NetworkId,
     cfg: &NetworkConfiguration,
-    bindings: &ConfigurationBindings,
+    subjects: &meshway_configuration::SubjectContext,
 ) -> Result<BTreeMap<NodeId, TrustedNode>, NodeError> {
     let mut out = BTreeMap::new();
     let mut stmt=tx.prepare("SELECT n.id,k.id,k.public_key,k.generation,d.id,d.public_key,d.generation,e.capabilities FROM nodes n JOIN node_keys k ON k.network_id=n.network_id AND k.node_id=n.id AND k.purpose='control' AND k.retired_at IS NULL AND k.revoked_at IS NULL JOIN node_keys d ON d.network_id=n.network_id AND d.node_id=n.id AND d.purpose='dataplane' AND d.retired_at IS NULL AND d.revoked_at IS NULL LEFT JOIN node_execution e ON e.network_id=n.network_id AND e.node_id=n.id WHERE n.network_id=?1 AND n.credentials_revoked_at IS NULL")?;
     let mut rows = stmt.query([network.as_uuid().as_bytes().as_slice()])?;
     while let Some(r) = rows.next()? {
         let node = id(r.get(0)?)?;
-        match identity_eligible(tx, cfg, bindings, network, node) {
-            Ok(()) => {}
-            Err(NodeError::Unauthorized) => continue,
-            Err(error) => return Err(error),
+        if !subjects.node_is_active(cfg, node) {
+            continue;
         }
         let key = |offset| -> Result<BoundNodeKey, NodeError> {
             Ok(BoundNodeKey {
@@ -152,9 +152,8 @@ pub(crate) fn publish(
     while let Some(row) = rows.next()? {
         let node: NodeId = id(row.get(0)?)?;
         let stored: Vec<u8> = row.get(1)?;
-        if let Some(settings) = cfg.nodes.get(&node) {
-            let digest =
-                compile::digest(&(&settings.identity, user_binding(&cfg, &bindings, node)))?;
+        if cfg.nodes.contains_key(&node) {
+            let digest = identity_digest(&cfg, &bindings, node)?;
             if stored == digest.as_bytes() {
                 selected_profiles.insert(node, row.get::<_, String>(2)?);
             }
@@ -162,7 +161,8 @@ pub(crate) fn publish(
     }
     drop(rows);
     drop(statement);
-    let inventory = trusted_inventory(tx, network, &cfg, &bindings)?;
+    let subjects = subjects(tx, network, &bindings)?;
+    let inventory = trusted_inventory(tx, network, &cfg, &subjects)?;
     let mut stmt = tx.prepare(
         "SELECT payload FROM execution_demands WHERE network_id=?1 AND expires_at>?2 AND cancelled_at IS NULL ORDER BY id",
     )?;
@@ -182,6 +182,7 @@ pub(crate) fn publish(
         revision,
         publication,
         configuration: &cfg,
+        subjects: &subjects,
         inventory: &inventory,
         demands: &demands,
         dns: &[],
@@ -400,7 +401,7 @@ pub(crate) fn check_publication(
         .map_err(|_| NodeError::Storage)?;
     let compiled: CompiledPublication = json(plain.as_bytes())?;
     let (_, cfg, bindings) = current_configuration(tx, sealer, network)?;
-    let current = trusted_inventory(tx, network, &cfg, &bindings)?;
+    let current = trusted_inventory(tx, network, &cfg, &subjects(tx, network, &bindings)?)?;
     let node = compiled.nodes.get(&node).ok_or(NodeError::Conflict)?;
     if current.get(&node.configuration.node_id) != Some(&node.configuration.self_keys) {
         return Err(NodeError::Conflict);

@@ -1,5 +1,29 @@
 use crate::*;
+use meshway_model::NodeId;
 use std::collections::BTreeMap;
+
+pub fn rebind_policy_user_references(
+    c: &mut NetworkConfigurationInput,
+    names: &BTreeMap<String, String>,
+) {
+    visit_policy(c, &mut |value| {
+        if let Some(name) = names.get(value) {
+            *value = name.clone();
+        }
+    });
+}
+pub fn rebind_node_user_references(
+    c: &mut NetworkConfigurationInput,
+    names: &BTreeMap<NodeId, String>,
+) {
+    for (id, node) in &mut c.nodes {
+        if let NodeIdentity::User { user } = &mut node.identity
+            && let Some(name) = names.get(id)
+        {
+            *user = name.clone();
+        }
+    }
+}
 
 /// Rename only identity/selector references. DNS, remarks, addresses, endpoint
 /// names and protocol fields are never rewritten by string coincidence.
@@ -21,6 +45,14 @@ pub fn rebind_user_references(c: &mut NetworkConfigurationInput, names: &BTreeMa
     });
 }
 fn visit(c: &mut NetworkConfigurationInput, f: &mut impl FnMut(&mut String)) {
+    for node in c.nodes.values_mut() {
+        if let NodeIdentity::User { user } = &mut node.identity {
+            f(user);
+        }
+    }
+    visit_policy(c, f);
+}
+fn visit_policy(c: &mut NetworkConfigurationInput, f: &mut impl FnMut(&mut String)) {
     fn many(values: &mut [String], f: &mut impl FnMut(&mut String)) {
         for s in values {
             f(s);
@@ -34,11 +66,6 @@ fn visit(c: &mut NetworkConfigurationInput, f: &mut impl FnMut(&mut String)) {
     }
     for values in c.groups.values_mut().chain(c.tags_owners.values_mut()) {
         many(values, f);
-    }
-    for node in c.nodes.values_mut() {
-        if let NodeIdentity::User { user } = &mut node.identity {
-            f(user);
-        }
     }
     for rule in &mut c.access {
         many(&mut rule.src, f);

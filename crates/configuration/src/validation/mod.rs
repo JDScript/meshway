@@ -29,6 +29,8 @@ pub struct ValidationContext<'a> {
     pub expected_user_bindings: BTreeMap<String, UserBinding>,
     /// Stable bindings belonging to `previous`, for name-only identity updates.
     pub previous_user_bindings: BTreeMap<String, UserBinding>,
+    pub expected_node_user_bindings: BTreeMap<NodeId, UserBinding>,
+    pub previous_node_user_bindings: BTreeMap<NodeId, UserBinding>,
     /// Transaction-authorized registration/identity transition targets.
     pub approved_identities: BTreeMap<NodeId, NodeIdentity>,
     /// Exact normalized TLS declarations verified for certificate/key/name,
@@ -125,6 +127,7 @@ struct Check {
     unavailable: Vec<ConfigurationIssue>,
     requirements: Vec<PreparationRequirement>,
     bindings: BTreeMap<String, UserBinding>,
+    node_bindings: BTreeMap<NodeId, UserBinding>,
 }
 impl Check {
     fn dependency(&mut self, path: impl Into<String>, message: impl Into<String>, retained: bool) {
@@ -184,6 +187,7 @@ pub fn normalize(
 pub struct NormalizedConfiguration {
     pub configuration: NetworkConfiguration,
     pub user_bindings: BTreeMap<String, UserBinding>,
+    pub node_user_bindings: BTreeMap<NodeId, UserBinding>,
     pub unavailable_dependencies: Vec<ConfigurationIssue>,
 }
 
@@ -214,6 +218,7 @@ pub fn normalize_with_dependencies(
         }
         let old = context.previous.and_then(|p| p.nodes.get(&id));
         references::identity(
+            id,
             &node.identity,
             &input.tags_owners,
             context,
@@ -221,12 +226,10 @@ pub fn normalize_with_dependencies(
             &mut check,
         );
         let stable_user_rename = match (old.map(|n| &n.identity), &node.identity) {
-            (Some(NodeIdentity::User { user: before }), NodeIdentity::User { user: after }) => {
-                context
-                    .previous_user_bindings
-                    .get(before)
-                    .is_some_and(|binding| context.members.get(after) == Some(binding))
-            }
+            (Some(NodeIdentity::User { .. }), NodeIdentity::User { user: after }) => context
+                .previous_node_user_bindings
+                .get(&id)
+                .is_some_and(|binding| context.members.get(after) == Some(binding)),
             _ => false,
         };
         if old.map(|n| &n.identity) != Some(&node.identity)
@@ -337,6 +340,7 @@ pub fn normalize_with_dependencies(
     Ok(NormalizedConfiguration {
         configuration: config,
         user_bindings: check.bindings,
+        node_user_bindings: check.node_bindings,
         unavailable_dependencies: check.unavailable,
     })
 }
