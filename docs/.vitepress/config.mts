@@ -19,6 +19,7 @@ export default defineConfig({
         text: "产品",
         items: [
           { text: "概览、概念与使用流程", link: "/concepts" },
+          { text: "配置与状态模型（讨论稿）", link: "/network-configuration" },
           { text: "网络管理", link: "/network-management" },
           { text: "访问授权（Access）", link: "/access-policy" },
           { text: "Mesh 路由与出口方案", link: "/routing" },

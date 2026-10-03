@@ -1,5 +1,7 @@
 # 配置、库存与 revision
 
+本文描述当前实现。正在逐项对齐的新模型见[配置与状态模型（讨论稿）](/network-configuration)，其结构尚不是现行 API 合同。
+
 每张网络有共享单调 `revision`。policy、IPAM、DNS、标签、承载与不可变节点身份按显式网络作用域读取/保存；策略源、连接、路径、公钥和材料由同 revision publication 投影。
 
 ## 地址与当前数据库
