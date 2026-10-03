@@ -128,6 +128,7 @@ Rust 控制面与 Agent、React pure SPA 控制台、VitePress 文档站。
 - 用户再次明确要求 Controller 持续实现，不能把阶段性 SDK／Console 交接当作暂停点。当前从已通过的账户基线继续网络创建／选择、成员与初始完整配置持久化，再推进配置校验／CAS、State／SSE 与正式 Node 接入；里程碑检查通过后继续下一步，仅真实阻断或未确认产品决策需要用户参与。
 - 用户明确认为 V2 Controller 设计已足够清楚，要求按设计持续实现；进度按真实业务闭环汇报，不能把基础库、测试数量或文档完成度算成主体功能完成。目前已验收账户与网络创建／分页查询／详情／改名／成员管理读取的十个 HTTP／SDK 操作，以及完整初始配置的加密原子持久化；成员变更、完整配置编辑／CAS、State／SSE、Node 接入与执行等仍不能混报为已交付。
 - 用户最新要求纠正过细拆分：按大块端到端职责分派，目标第一轮完整候选、第二轮联合验收和修补，不再把类型／存储／HTTP／生成器逐个切成独立业务里程碑。后续工作包为管理与配置、Node与执行、State与观测／资源；各组承担本领域存储、服务、HTTP及测试，协调者维护共享边界、manifest／lock／生成链和整合。基于现有成果继续，不重置重做；Console由用户交接。
+- 用户反馈网络名校验尚未通过公开契约提供给 Console：需在可生成的 Schema／options 中公布并与服务端共用规则定义。现有语义为 raw UTF-8 输入不超过 1024 bytes、禁止控制字符、去除两端 Unicode White_Space 后 1–128 codepoints；不能给原始输入直接套 maxLength=128 或用 JS UTF-16 String.length／不同语义的 trim 误拒合法值。此项归管理／配置大工作包一并完成，未交付前不宣称 UI 已有统一规则。
 - 用户提出 State endpoints 同时涵盖接口地址和配置声明，并按来源区分，建议初始尝试顺序为 self claim → interface → stun。文档以 configured／interface／stun 表达；configured 须匹配 Controller 配置，来源不是可达性或信任等级，尝试前应用权限／地址／资源约束并有界竞速，已认证健康通道不因来源顺序无条件替换。具体优选算法仍待确认，见 docs/v2/state-reference/endpoints.md，不将 UDP 观测推广为 TCP 可达。
 - 自动邻接首片已完成并独立批准：Controller 从托管 listener、节点能力和已授权策略的编译路径静态推导邻接，不写回 source candidates；同逻辑邻接 UDP→TCP→UDP、双方认证探测、双向 TUN HTTP、撤回/恢复已验。尚不代表基于首包的按需调度、NAT或真实直连，后续继续。状态型回包的重传/乱序、容量、流水发送、半关闭、活跃会话及第三 ACK 携带数据等审查缺口已关闭；整合验收另覆盖自动邻接下的单向 grant 回复和反向新连接拒绝。原失败证据保留，不改写为成功。
 - 性能本批已结束，不整分支部署 offload / NEON 实验或扩大矩阵；未知归属或仍有进程 / 未提交工作的树须保留。

@@ -1,4 +1,5 @@
 import type * as z from "zod";
+import { EventDecoder, EventStreamError } from "./sse.ts";
 
 export type ClientFailure<Problem> =
   | { kind: "configuration" | "request" | "cancelled" }
@@ -10,6 +11,18 @@ export type ClientResult<Data, Problem> =
   | { ok: false; error: ClientFailure<Problem> };
 export interface RequestOptions { token?: string; signal?: AbortSignal }
 export interface AuthenticatedRequestOptions extends RequestOptions { token: string }
+export interface StreamOptions extends RequestOptions {
+  /** Return only the cursor whose decoded event and complete cache were applied. */
+  resumeCursor?: () => string | undefined;
+  maxReconnects?: number;
+  retryDelayMs?: number;
+  maxFrameBytes?: number;
+}
+export interface EventDelivery<Data> { data: Data; id?: string }
+export type StreamOperation<Data, Problem> = Omit<Operation<Data, Problem>, "body" | "method" | "success"> & {
+  method: "GET";
+  success: z.ZodType<Data>;
+};
 export interface ClientOptions {
   baseUrl: string;
   fetch?: typeof globalThis.fetch;
@@ -97,10 +110,7 @@ export class ControlClient {
     this.#fetch = (input, init) => fetcher(input, init);
   }
 
-  /** Used by generated operations; direct callers receive the same validation. */
-  request<Data, Problem>(operation: Operation<Data, Problem> & { success: z.ZodType<Data> }, options?: RequestOptions): Promise<ClientResult<Data, Problem>>;
-  request<Problem>(operation: Operation<undefined, Problem> & { success: undefined }, options?: RequestOptions): Promise<ClientResult<undefined, Problem>>;
-  async request<Data = undefined, Problem = never>(operation: Operation<Data, Problem>, options: RequestOptions = {}): Promise<ClientResult<Data | undefined, Problem>> {
+  #prepare(operation: Pick<Operation<unknown, unknown>, "path" | "authenticated" | "pathParameters" | "queryParameters">, options: RequestOptions, accept: string): ClientResult<{ url: URL; headers: Headers }, never> {
     if (options.signal?.aborted) return { ok: false, error: { kind: "cancelled" } };
     if (!/^\/(?:[A-Za-z0-9_-]+|\{[A-Za-z][A-Za-z0-9]*\})(?:\/(?:[A-Za-z0-9_-]+|\{[A-Za-z][A-Za-z0-9]*\}))*$/.test(operation.path)) return { ok: false, error: { kind: "configuration" } };
     let url: URL;
@@ -109,11 +119,21 @@ export class ControlClient {
       const query = operation.queryParameters?.schema.parse(operation.queryParameters.value) ?? {};
       url = parameterUrl(this.#base, operation.path, path, query);
     } catch { return { ok: false, error: { kind: "request" } }; }
-    const headers = new Headers({ Accept: "application/json" });
+    const headers = new Headers({ Accept: accept });
     if (operation.authenticated) {
       if (!options.token || !/^[\x21-\x7e]+$/.test(options.token)) return { ok: false, error: { kind: "configuration" } };
       headers.set("Authorization", `Bearer ${options.token}`);
     }
+    return { ok: true, data: { url, headers } };
+  }
+
+  /** Used by generated operations; direct callers receive the same validation. */
+  request<Data, Problem>(operation: Operation<Data, Problem> & { success: z.ZodType<Data> }, options?: RequestOptions): Promise<ClientResult<Data, Problem>>;
+  request<Problem>(operation: Operation<undefined, Problem> & { success: undefined }, options?: RequestOptions): Promise<ClientResult<undefined, Problem>>;
+  async request<Data = undefined, Problem = never>(operation: Operation<Data, Problem>, options: RequestOptions = {}): Promise<ClientResult<Data | undefined, Problem>> {
+    const prepared = this.#prepare(operation, options, "application/json");
+    if (!prepared.ok) return prepared;
+    const { url, headers } = prepared.data;
     let body: string | undefined;
     if (operation.body) {
       try {
@@ -181,6 +201,109 @@ export class ControlClient {
     } finally {
       // Do not let a hostile stream's cancellation promise block termination.
       if (reader) { void reader.cancel().catch(() => {}); reader.releaseLock(); }
+    }
+  }
+
+  /** Frames are validated before delivery; only the caller acknowledges cache application. */
+  async *stream<Data, Problem>(operation: StreamOperation<Data, Problem>, options: StreamOptions = {}): AsyncGenerator<ClientResult<EventDelivery<Data>, Problem>> {
+    const retries = options.maxReconnects ?? 5;
+    const delay = options.retryDelayMs ?? 1000;
+    const frameLimit = options.maxFrameBytes ?? this.#limit;
+    if (!Number.isInteger(retries) || retries < 0 || retries > 100 || !Number.isInteger(delay) || delay < 100 || delay > 60_000 || !Number.isSafeInteger(frameLimit) || frameLimit < 1 || frameLimit > maximumBudget) {
+      yield { ok: false, error: { kind: "configuration" } }; return;
+    }
+    for (let attempt = 0; ; attempt++) {
+      const prepared = this.#prepare(operation, options, "text/event-stream");
+      if (!prepared.ok) { yield prepared; return; }
+      const { url, headers } = prepared.data;
+      try {
+        const cursor = options.resumeCursor?.();
+        if (cursor !== undefined) {
+          if (cursor.length > 4096 || !/^[\x21-\x7e]*$/.test(cursor)) { yield { ok: false, error: { kind: "configuration" } }; return; }
+          if (cursor) headers.set("Last-Event-ID", cursor);
+        }
+      } catch { yield { ok: false, error: { kind: "configuration" } }; return; }
+      const connection = new AbortController();
+      const abort = () => connection.abort();
+      options.signal?.addEventListener("abort", abort, { once: true });
+      if (options.signal?.aborted) abort();
+      let reader: ReadableStreamDefaultReader<Uint8Array> | undefined;
+      let status: number | undefined;
+      let reconnect = false;
+      let retryMs = Math.min(60_000, delay * 2 ** Math.min(attempt, 6));
+      try {
+        const response = await cancellable(this.#fetch(url, { method: "GET", headers, signal: connection.signal, redirect: "error", credentials: "omit", cache: "no-store" }), connection.signal, late => { void late.body?.cancel().catch(() => {}); });
+        status = response.status;
+        const media = response.headers.get("content-type")?.split(";")[0]?.trim().toLowerCase();
+        if (response.redirected) { void response.body?.cancel().catch(() => {}); yield { ok: false, error: { kind: "http", status } }; return; }
+        if (status !== operation.successStatus) {
+          let problem: Problem | undefined;
+          if (operation.errors.includes(status) && operation.problem && media === "application/json" && response.body) {
+            reader = response.body.getReader();
+            const chunks: Uint8Array[] = [];
+            let size = 0;
+            while (true) {
+              const chunk = await cancellable(reader.read(), connection.signal);
+              if (chunk.done) break;
+              size += chunk.value.byteLength;
+              if (size > this.#limit) break;
+              chunks.push(chunk.value);
+            }
+            if (size <= this.#limit) {
+              const bytes = new Uint8Array(size);
+              let offset = 0;
+              for (const chunk of chunks) { bytes.set(chunk, offset); offset += chunk.length; }
+              try {
+                const value: unknown = JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(bytes));
+                const parsed = operation.problem.safeParse(value);
+                if (parsed.success) problem = parsed.data;
+              } catch { /* Only status survives an invalid error envelope. */ }
+            }
+          } else { void response.body?.cancel().catch(() => {}); }
+          yield { ok: false, error: { kind: "http", status, ...(problem === undefined ? {} : { problem }) } };
+          reconnect = status === 429 || status >= 500;
+        } else if (media !== "text/event-stream" || !response.body) {
+          void response.body?.cancel().catch(() => {});
+          yield { ok: false, error: { kind: "decode", status } }; return;
+        } else {
+          reader = response.body.getReader();
+          const decoder = new EventDecoder(frameLimit);
+          while (true) {
+            const chunk = await cancellable(reader.read(), connection.signal);
+            if (chunk.done) break;
+            for (const frame of decoder.push(chunk.value)) {
+              if (frame.event !== "message") throw new EventStreamError("decode");
+              let value: unknown;
+              try { value = JSON.parse(frame.data); } catch { throw new EventStreamError("decode"); }
+              const parsed = operation.success.safeParse(value);
+              if (!parsed.success) throw new EventStreamError("decode");
+              yield { ok: true, data: { data: parsed.data, ...(frame.id === undefined ? {} : { id: frame.id }) } };
+            }
+          }
+          decoder.finish();
+          retryMs = decoder.retryMs ?? retryMs;
+          yield { ok: false, error: { kind: "network", status } };
+          reconnect = true;
+        }
+      } catch (error) {
+        if (options.signal?.aborted) { yield { ok: false, error: { kind: "cancelled" } }; return; }
+        if (error instanceof EventStreamError && status !== undefined) { yield { ok: false, error: { kind: error.kind, status } }; return; }
+        yield { ok: false, error: { kind: "network", ...(status === undefined ? {} : { status }) } };
+        reconnect = true;
+      } finally {
+        connection.abort();
+        options.signal?.removeEventListener("abort", abort);
+        if (reader) { void reader.cancel().catch(() => {}); reader.releaseLock(); }
+      }
+      if (!reconnect || attempt >= retries) return;
+      try {
+        await new Promise<void>((resolve, reject) => {
+          const onAbort = () => { clearTimeout(timer); reject(new Error("cancelled")); };
+          const timer = setTimeout(() => { options.signal?.removeEventListener("abort", onAbort); resolve(); }, retryMs);
+          if (options.signal?.aborted) onAbort();
+          else options.signal?.addEventListener("abort", onAbort, { once: true });
+        });
+      } catch { yield { ok: false, error: { kind: "cancelled" } }; return; }
     }
   }
 }
