@@ -61,7 +61,7 @@ export function GlassDialog({
 
   const body = (
     <>
-      <div className="flex min-h-0 flex-col gap-4 overflow-y-auto px-6 pb-6">
+      <div className="scroll-edge flex min-h-0 flex-col gap-4 overflow-y-auto px-6 pb-6">
         {shown.children}
       </div>
       {shown.footer ? (

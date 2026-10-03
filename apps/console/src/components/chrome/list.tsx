@@ -22,7 +22,7 @@ export function PanelList({
   return (
     <ul
       className={cn(
-        "flex min-h-0 flex-1 flex-col gap-0.5 overflow-y-auto px-2 pb-2",
+        "scroll-edge flex min-h-0 flex-1 flex-col gap-0.5 overflow-y-auto px-2 pb-2",
         className
       )}
       {...props}

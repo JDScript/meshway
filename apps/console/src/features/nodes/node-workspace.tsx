@@ -106,7 +106,7 @@ function Missing({
   )
 }
 
-const PANE = "min-h-0 overflow-y-auto px-6 pt-5 pb-(--commit-space)"
+const PANE = "scroll-edge min-h-0 overflow-y-auto px-6 pt-1 pb-(--commit-space)"
 
 function Body({
   networkId,
@@ -169,7 +169,7 @@ function Body({
         }}
         className="min-h-0 flex-1 gap-0"
       >
-        <div className="mx-6 overflow-x-auto">
+        <div className="mx-6 mb-4 overflow-x-auto">
           <SegmentedTabs
             value={tab}
             options={[
