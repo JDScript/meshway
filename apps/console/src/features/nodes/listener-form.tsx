@@ -478,7 +478,7 @@ function Advanced({
           <span className={fieldLabelClass}>{m.node_listener_id()}</span>
           <span
             className={cn(
-              "flex h-10 items-center truncate rounded-tile bg-fill-subtle px-3.5 font-mono text-row",
+              "truncate font-mono text-row",
               invalid.has("id") && "text-warning"
             )}
           >
