@@ -6,7 +6,13 @@ use thiserror::Error;
 
 const APPLICATION_ID: i64 = 0x4d534857; // MSHW: stable Meshway application identity.
 const VERSION: i64 = 1;
-const SQL: &str = include_str!("current.sql");
+const SQL: &str = concat!(
+    include_str!("current.sql"),
+    "\n",
+    include_str!("execution.sql"),
+    "\n",
+    include_str!("state.sql"),
+);
 
 #[derive(Debug, Error, PartialEq, Eq)]
 pub(crate) enum SchemaError {
