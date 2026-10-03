@@ -81,7 +81,19 @@ export default defineConfig({
         text: "状态与分发 · 草案",
         items: [
           { text: "NodeConfiguration", link: "/configuration-reference/node-configuration" },
-          { text: "State Reference", link: "/state-reference" },
+          {
+            text: "State Reference",
+            link: "/state-reference",
+            collapsed: false,
+            items: [
+              { text: "NodeState", link: "/state-reference/node" },
+              { text: "Resources / Links", link: "/state-reference/resources" },
+              { text: "上报与新鲜度", link: "/state-reference/reporting" },
+              { text: "NetworkState", link: "/state-reference/network" },
+              { text: "查询、裁剪与订阅", link: "/state-reference/query" },
+              { text: "观测与延迟", link: "/state-reference/observations" },
+            ],
+          },
           { text: "同步与回滚", link: "/configuration-reference/synchronization" },
           { text: "存储、查询与 API", link: "/configuration-reference/storage-api" },
           { text: "模型与讨论边界", link: "/network-configuration" },

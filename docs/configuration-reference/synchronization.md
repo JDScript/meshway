@@ -52,7 +52,9 @@ Config 是完整参数集合，State 是之后独立更新的运行事实。准�
 
 ## State update
 
-State 更新独立携带当前实例／序号和有效期。与执行相关的消息引用 `configurationRevision` 及确切 NodeConfiguration digest，不能将新 State 拼到不匹配的旧配置。
+Node [上报自身 State](/state-reference/reporting)，Controller 维护一份 [NetworkState](/state-reference/network)。消费节点可[按需查询或订阅](/state-reference/query)，不要求 Controller 预生成每个节点的永久 State 副本；查询和推送都在服务端按身份／配置做字段裁剪。
+
+State 更新独立携带当前实例／序号和有效期。与执行相关的消息引用 `configurationRevision` 及确切 NodeConfiguration digest，不能将新 State 拼到不匹配的旧配置。读取当前报告不能刷新原始候选或测量期限。
 
 Config 已撤回或 lease 到期时停止旧运行代际，不等 State 通道恢复。新的 State 不能续活已失效的旧授权；缺少必要配置时只允许有界缓存／重同步。
 

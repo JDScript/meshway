@@ -26,6 +26,7 @@ description: Entity、Config、State 的职责与配置参考导航。
 - 共享 configuration crate，提供类型／Schema、校验、编译／切片及增量处理；HTTP、数据库和运行资源 owner 各自分责。
 - Config 实际入库并保留完整版本，回滚是历史配置作为新提交，不倒退版本号。
 - Config 与 State 是不同的下发载荷和版本语义；状态不会扩大配置许可。
+- State 有节点上报与节点读取两个方向：Controller 在网络内聚合一次，节点可 query 或 watch。裁剪按当前身份、access 及 topology／routing 的执行依赖进行，中转节点可见性不等于对其业务服务的访问权限。
 
 ## 阅读顺序 {#next}
 
