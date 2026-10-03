@@ -1,6 +1,8 @@
 # 技术栈与 Crates
 
-**V2 结构提案。** Cargo 包名统一 `meshway-*`；磁盘目录沿用短名，Rust import 使用下划线，例如 `meshway-configuration` → `meshway_configuration`。现有 workspace 已采用这种命名方式。
+**已确认的 V2 实现结构。** 新 Controller 位于 `apps/meshway-controller`，Cargo 包名仍为 `meshway-controller`。共享库的 Cargo 包名统一 `meshway-*`，磁盘目录沿用短名，Rust import 使用下划线，例如 `meshway-configuration` → `meshway_configuration`。
+
+Controller、共享模型、配置编译与 HTTP／事件合同从本分区重新实现；客户端从新合同生成。已有 dataplane、transport 与 Agent 运行能力继续复用，随后接入新合同。包边界已确认，精确接口按下面的契约 checkpoint 落实，不把文档示例当作已经完整实现的载荷。
 
 ## 共享库
 
@@ -12,7 +14,7 @@
 | `meshway-model` | `crates/model` | 强类型 ID、公开实体值类型、State／观测类型和基础引用 |
 | `meshway-configuration` | `crates/configuration` | NetworkConfiguration／NodeConfiguration、Schema、规范化、校验、编译、digest／delta |
 
-**编译与配置放在同一 crate，按模块分责。** 下一版把现有 `meshway-policy` 的纯编译能力迁入 meshway-configuration，不保留一套平行配置模型或长期重导出。此项仍是工程提案，当前 policy 源码未迁移。
+**编译与配置放在同一 crate，按模块分责。** V2 的纯编译实现直接属于 meshway-configuration，最终替代现有 meshway-policy 的对应职责。新实现以 V2 语义和独立行为验收为依据，不以搬运旧编译器作为任务；不建立平行配置模型或长期重导出。
 
 其他已有边界按用途保留：
 
@@ -43,7 +45,7 @@ Agent → control-client + configuration（校验／delta）+ agent-* 运行库
 Apple core → control-client + 所需共享类型／平台桥接
 ```
 
-model 中的 State 只保存配置 revision／digest／发布引用，不嵌入完整 Configuration。transport-spec 不引用 NodeId／UserId，避免和 model 形成循环。
+model 中的 State 只保存配置 revision／digest／发布引用，不嵌入完整 Configuration。公共引用、应用阶段和共享问题值不能因为文档页面归属而反向放入 configuration／protocol；HTTP 错误上下文仍归 protocol。transport-spec 不引用 NodeId／UserId，避免和 model 形成循环。
 
 可以将较重的编译模块放入 meshway-configuration 的 `compiler` feature：Controller 启用，Agent 只需完整类型、输入防御校验和 delta。feature 不得删掉 Agent 执行前的权限／材料一致性检查。
 
@@ -69,7 +71,7 @@ src/
 
 ```text
 apps/
-  controller/                # API、权限、存储、编译发布、State 聚合
+  meshway-controller/        # 新 API、权限、存储、编译发布、State 聚合
   agent/                     # 接入、控制同步、CLI／IPC 与运行编排
   console/                   # React pure SPA，独立工作流
   apple/                     # SwiftUI + Rust core 平台桥接
@@ -92,6 +94,7 @@ src/
   main.rs / lib.rs           # 入口与装配
   app.rs                     # 应用依赖与生命周期
   settings.rs                # 部署配置
+  authorization/             # 当前权限与可见范围的共同规则
   http/
     console/                 # /api/v1
     agent/                   # /agent-api/v1
@@ -107,7 +110,7 @@ src/
     schema/                  # 当前结构与完整性约束
 ```
 
-业务服务协调一次用例，Store 保证事务、约束和最终权限重检；不会在 handler、service、store 各自再编译一遍配置。协议／数据模型见[数据库字段](/v2/storage/database)和[内存字段](/v2/storage/memory)。
+业务服务协调一次用例，Store 保证事务、约束和最终权限重检；不会在 handler、service、store 各自再编译一遍配置。authorization 接收明确身份／成员／配置上下文，不回调其他业务服务；事务重检复用相同规则。协议／数据模型见[数据库字段](/v2/storage/database)和[内存字段](/v2/storage/memory)。
 
 发布状态沿用 ExecutionPublication；节点回执持久保存、实时步骤进入 State／SSE。各 Node 同步后正常应用，安装与失败清理由各运行资源 owner 负责，UI 只提交目标并展示结果。
 
@@ -138,4 +141,31 @@ src/
 | Apple | SwiftUI、NetworkExtension、UniFFI；新增隧道开发仍暂停 |
 | 文档 | VitePress |
 
-具体版本由 manifest／lock 固定。新库和迁移尚未实施；现有 Agent 领域实现与回归继续复用。私有实现测试在所属模块，公共 API 黑盒测试按 Cargo 自动发现组织；源码迁移时删除旧实现，独立形成可验证提交。
+具体版本由 manifest／lock 固定。私有实现测试在所属模块，公共 API 黑盒测试按 Cargo 自动发现组织；单文件模块用 foo.rs，有子模块时用 foo/mod.rs，不为测试扩大生产可见性。
+
+## 实现隔离与集成
+
+已确认采用 `.worktree/controller-rewrite` 的替换式开发；并行实现 worktree 同样位于本仓库 `.worktree/` 下。新基线选择新 Controller 和新合同，当前主工作区继续服务现有消费者。
+
+- 旧 apps/controller 已占用 meshway-controller 包名，新开发基线不能同时选择两个同名应用。由协调者维护开发 workspace 的成员和依赖替换，不新增 controller-v2／policy-v2 双轨包。
+- fresh 编码任务只读取 V2 文档、共同契约和新代码；旧实现的消费者核对、已有回归接线由独立整合任务负责。独立验证仍覆盖鉴权、网络隔离、CAS、秘密、撤回、lease 和同会话原路径回复。
+- 根 manifest／lockfile、共享合同、数据库执行器与 schema 总入口、路由装配和生成链由协调者维护。领域任务只修改分配的模块及私有存储子模块。
+- 模型／声明可最先并行；共同契约确定后，配置库、账户／接入、配置提交／执行、State／观测可按目录分派。紧密相关的配置提交／执行先由同一工作包负责。
+- 每个活跃任务使用指定、有总量边界的 Cargo target。不同 feature 验收不并发共用目录，结束任务回收专用缓存。
+
+开发基线的检查范围明确列出，不将仅新 Controller 的构建称为已有 Agent／Apple 消费者兼容通过。整合前完成必要消费者适配、生成 drift 和真实 Linux 包流验收；现有服务切换是独立部署操作。
+
+## 公共契约 checkpoint
+
+开始实现不必等待全部功能参数定版，但各任务不能独立发明以下接口：
+
+| Checkpoint | 必须统一的内容 |
+| --- | --- |
+| 基础类型与生成 | ID／时间／计数编码，类型所有权，完整配置／非秘密视图／预览计划，Schema／SSE 生成声明 |
+| 配置提交 | 确定性编辑与待准备事项、真实材料／地址准备、固定输入及事务重检、提交结果与取消后的完成责任 |
+| Node 认证与执行 | 持钥证明、密钥代际与撤销、完整编译输入、并发需求合成、完整节点目标及替代／lease 边界 |
+| 事件与读取 | DB 提交与 RAM 变化的有序入口、snapshot 截点、权限收缩、统一 cursor／reset 与 GET／SSE 片段 |
+
+新 demand 的业务目标／协议端口、方案选择、可信能力和 DNS 地址关联等实际编译输入须进入相应依赖与摘要。Node 的完整目标要保留其他仍有效需求；不能用最后一次 demand 的切片覆盖整个节点，也不能仅凭相同源 revision 判断发布相容。
+
+首个纵向交付使用真实 SQLite、用户会话和网络隔离，贯通配置持久化／CAS 与 SSE；随后以正式 Node 认证接入配置／State，再连接已有 Linux 运行库。编译 fixture、saved／applied 回执与实际 TUN 连通分别验收。
