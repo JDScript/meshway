@@ -2,6 +2,7 @@
 members = [
     "apps/meshway-controller",
     "crates/model",
+    "crates/protocol",
     "crates/transport-spec",
 ]
 resolver = "3"

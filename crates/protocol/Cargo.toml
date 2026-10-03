@@ -5,17 +5,13 @@ edition.workspace = true
 rust-version.workspace = true
 
 [dependencies]
-zeroize = "1.8"
 chrono.workspace = true
-getrandom.workspace = true
-idna = "1.1"
-rustix.workspace = true
+meshway-model = { path = "../model" }
 serde.workspace = true
-serde_json.workspace = true
-sha2.workspace = true
-tempfile.workspace = true
 utoipa.workspace = true
-x25519-dalek = { version = "2", features = ["static_secrets"] }
+
+[dev-dependencies]
+serde_json.workspace = true
 
 [lints]
 workspace = true

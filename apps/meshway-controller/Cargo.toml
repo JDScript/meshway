@@ -13,15 +13,21 @@ clap = { workspace = true, features = ["env"] }
 getrandom.workspace = true
 idna = "1.1"
 meshway-model = { path = "../../crates/model" }
+meshway-protocol = { path = "../../crates/protocol" }
 rusqlite.workspace = true
 rustix.workspace = true
+serde.workspace = true
+serde_json.workspace = true
 sha2.workspace = true
 thiserror.workspace = true
 tokio.workspace = true
+utoipa.workspace = true
+utoipa-axum.workspace = true
 uuid.workspace = true
 zeroize = "1.8"
 
 [dev-dependencies]
+reqwest = { version = "0.13", default-features = false, features = ["rustls", "json", "stream"] }
 tempfile.workspace = true
 
 [lints]
