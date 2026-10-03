@@ -8,11 +8,13 @@ description = "Meshway control plane based on the V2 configuration and state mod
 [dependencies]
 argon2 = "0.5.3"
 axum.workspace = true
+chacha20poly1305 = "0.10"
 chrono.workspace = true
 clap = { workspace = true, features = ["env"] }
 getrandom.workspace = true
 idna = "1.1"
 meshway-model = { path = "../../crates/model" }
+meshway-configuration = { path = "../../crates/configuration" }
 meshway-protocol = { path = "../../crates/protocol" }
 rusqlite.workspace = true
 rustix.workspace = true
@@ -25,6 +27,7 @@ utoipa.workspace = true
 utoipa-axum.workspace = true
 uuid.workspace = true
 zeroize = "1.8"
+base64 = "0.23"
 
 [dev-dependencies]
 reqwest = { version = "0.13", default-features = false, features = ["rustls", "json", "stream"] }

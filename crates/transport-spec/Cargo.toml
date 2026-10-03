@@ -6,9 +6,11 @@ rust-version.workspace = true
 description = "Pure Meshway transport declarations and configuration validation"
 
 [dependencies]
+idna.workspace = true
 serde.workspace = true
 thiserror.workspace = true
 utoipa.workspace = true
+zeroize = "1.8"
 
 [dev-dependencies]
 serde_json.workspace = true
