@@ -28,7 +28,10 @@ pub(crate) fn fixtures(count: usize) -> (Vec<NodeMeshExecution>, Vec<PrivateKey>
     reverse.reverse();
     let paths: Vec<_> = [path, reverse]
         .into_iter()
-        .map(|nodes| MeshExecutionPath { nodes })
+        .map(|nodes| MeshExecutionPath {
+            nodes,
+            return_traffic: meshway_protocol::MeshReturnTraffic::StatefulIpv4V1,
+        })
         .collect();
     let ports: Vec<_> = (0..count)
         .map(|_| crate::managed_connections::tests::listener_port(ConnectionTransport::NativeUdp))
@@ -98,7 +101,7 @@ pub(crate) fn fixtures(count: usize) -> (Vec<NodeMeshExecution>, Vec<PrivateKey>
                 network_id: "0".repeat(32),
                 revision: 7,
                 node_id: node.id.clone(),
-                required_capability: MeshExecutionCapability::Ipv4ExactPathV1,
+                required_capability: MeshExecutionCapability::Ipv4StatefulExactPathV2,
                 network: MeshNetwork {
                     ipv4_prefix: "100.64.0.0/24".into(),
                     ipv6_prefix: "fd42::/64".into(),
@@ -129,14 +132,45 @@ pub(crate) fn fixtures(count: usize) -> (Vec<NodeMeshExecution>, Vec<PrivateKey>
 }
 
 pub(crate) fn packet(source: &str, destination: &str, protocol: u8) -> Vec<u8> {
-    let mut bytes = vec![0; 28];
+    let length = if protocol == 6 { 40 } else { 28 };
+    let mut bytes = vec![0; length];
     bytes[0] = 0x45;
-    bytes[2..4].copy_from_slice(&28_u16.to_be_bytes());
+    bytes[2..4].copy_from_slice(&(length as u16).to_be_bytes());
     bytes[6] = 0x40;
     bytes[8] = 64;
     bytes[9] = protocol;
     bytes[12..16].copy_from_slice(&source.parse::<Ipv4Addr>().unwrap().octets());
     bytes[16..20].copy_from_slice(&destination.parse::<Ipv4Addr>().unwrap().octets());
+    match protocol {
+        1 => {
+            bytes[20] = 8;
+            bytes[22..24].copy_from_slice(&0xf7ff_u16.to_be_bytes());
+        }
+        17 => {
+            bytes[20..22].copy_from_slice(&40000_u16.to_be_bytes());
+            bytes[22..24].copy_from_slice(&53_u16.to_be_bytes());
+            bytes[24..26].copy_from_slice(&8_u16.to_be_bytes());
+        }
+        6 => {
+            bytes[20..22].copy_from_slice(&40000_u16.to_be_bytes());
+            bytes[22..24].copy_from_slice(&443_u16.to_be_bytes());
+            bytes[32] = 0x50;
+            bytes[33] = 2;
+            let mut sum: u32 = bytes[12..20]
+                .as_chunks::<2>()
+                .0
+                .iter()
+                .chain(bytes[20..].as_chunks::<2>().0.iter())
+                .map(|w| u32::from(u16::from_be_bytes(*w)))
+                .sum::<u32>()
+                + 26;
+            while sum > 0xffff {
+                sum = (sum & 0xffff) + (sum >> 16);
+            }
+            bytes[36..38].copy_from_slice(&(!(sum as u16)).to_be_bytes());
+        }
+        _ => {}
+    }
     checksum(&mut bytes);
     bytes
 }
@@ -233,18 +267,22 @@ impl MockDevice {
 }
 
 #[test]
-fn pair_boundary_all_protocols_exact_source_path_and_strict_ipv4() {
+fn pair_boundary_supported_protocols_exact_source_path_and_strict_ipv4() {
     let (payloads, _) = fixtures(3);
     let source = PacketPlan::compile(&payloads[0], 1000).unwrap();
     let target = PacketPlan::compile(&payloads[2], 1000).unwrap();
     let path = &payloads[0].paths[0].nodes;
     for protocol in 0..=255 {
         let bytes = packet("100.64.0.1", "100.64.0.3", protocol);
+        if !matches!(protocol, 1 | 6 | 17) {
+            assert!(source.outgoing(&bytes).is_none());
+            continue;
+        }
         assert_eq!(source.outgoing(&bytes), Some(path));
         assert!(target.incoming(&ReceivedPacket {
             source: path[0].clone(),
             path: path.clone(),
-            payload: bytes
+            payload: source.encapsulate(path, &bytes).unwrap()
         }));
     }
     let valid = packet("100.64.0.1", "100.64.0.3", 1);
@@ -252,7 +290,7 @@ fn pair_boundary_all_protocols_exact_source_path_and_strict_ipv4() {
         target.incoming(&ReceivedPacket {
             source: path[0].clone(),
             path: path.clone(),
-            payload: bytes,
+            payload: source.encapsulate(path, &bytes).unwrap_or(bytes),
         })
     };
     for flags in [0x8000_u16, 0x2000, 1, 0x3fff] {
@@ -286,12 +324,12 @@ fn pair_boundary_all_protocols_exact_source_path_and_strict_ipv4() {
     assert!(!target.incoming(&ReceivedPacket {
         source: path[1].clone(),
         path: path.clone(),
-        payload: valid.clone()
+        payload: source.encapsulate(path, &valid).unwrap()
     }));
     assert!(!target.incoming(&ReceivedPacket {
         source: path[0].clone(),
         path: vec![path[0].clone(), path[2].clone()],
-        payload: valid
+        payload: source.encapsulate(path, &valid).unwrap()
     }));
 }
 

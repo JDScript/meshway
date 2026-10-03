@@ -110,6 +110,29 @@ impl Ipv4PacketPlan {
 pub trait Admission: Send + Sync {
     fn outgoing(&self, bytes: &[u8]) -> Option<&Vec<String>>;
     fn incoming(&self, packet: &ReceivedPacket) -> bool;
+    /// Endpoint-only envelope; Runtime authenticates and encrypts these bytes.
+    fn encapsulate(&self, _path: &[String], bytes: &[u8]) -> io::Result<Vec<u8>> {
+        Ok(bytes.to_vec())
+    }
+    /// Called only after Runtime accepted the send, never on failure/cancellation.
+    fn sent(&self, _path: &[String], _payload: &[u8]) -> io::Result<()> {
+        Ok(())
+    }
+    fn plaintext(&self, packet: &ReceivedPacket) -> io::Result<Vec<u8>> {
+        Ok(packet.payload.clone())
+    }
+    /// Called only after the device accepted the complete authenticated packet.
+    fn delivered(&self, _packet: &ReceivedPacket) -> io::Result<()> {
+        Ok(())
+    }
+    /// Authenticated endpoint control, consumed without injecting into the device.
+    fn control(&self, _packet: &ReceivedPacket) -> io::Result<bool> {
+        Ok(false)
+    }
+    /// Receipt generated only after complete device acceptance. Carries no IP data.
+    fn receipt(&self, _packet: &ReceivedPacket) -> Option<Vec<u8>> {
+        None
+    }
 }
 
 impl Admission for Ipv4PacketPlan {
@@ -248,9 +271,10 @@ pub async fn run_with_activation<D: Device, A: Admission>(
                     return Ok(());
                 }
                 if let Some(path) = plan.outgoing(&bytes) {
-                    match runtime.send_packet(path.clone(), bytes).await {
-                        Ok(())
-                        | Err(
+                    let payload = plan.encapsulate(path, &bytes)?;
+                    match runtime.send_packet(path.clone(), payload.clone()).await {
+                        Ok(()) => plan.sent(path, &payload)?,
+                        Err(
                             crate::Error::Unavailable
                             | crate::Error::Capacity
                             | crate::Error::Timeout,
@@ -272,10 +296,30 @@ pub async fn run_with_activation<D: Device, A: Admission>(
             if !current(&io_deadline) {
                 return Ok(());
             }
+            if plan.control(&packet)? {
+                tokio::task::yield_now().await;
+                continue;
+            }
             if plan.incoming(&packet) {
                 device
-                    .send_batch(PacketBatch::new(vec![packet.payload])?)
+                    .send_batch(PacketBatch::new(vec![plan.plaintext(&packet)?])?)
                     .await?;
+                if let Some(receipt) = plan.receipt(&packet) {
+                    let reverse = packet.path.iter().rev().cloned().collect();
+                    match runtime.send_packet(reverse, receipt).await {
+                        Ok(()) => {}
+                        Err(
+                            crate::Error::Unavailable
+                            | crate::Error::Capacity
+                            | crate::Error::Timeout,
+                        ) => {
+                            tokio::task::yield_now().await;
+                            continue;
+                        }
+                        Err(_) => return Err(io::Error::other("packet receipt runtime failure")),
+                    }
+                }
+                plan.delivered(&packet)?;
             }
             tokio::task::yield_now().await;
         }

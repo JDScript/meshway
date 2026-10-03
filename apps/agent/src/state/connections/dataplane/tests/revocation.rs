@@ -261,7 +261,7 @@ async fn partial_error_withdraws_active_packets(target: &'static str, status: u1
         .reconcile_dataplane(synced.snapshot, key, fresh_at)
         .await
         .unwrap();
-    let remote =
+    let (remote, envelope) =
         super::stale::blocked_peer(&payload, remote_identity, &device, &mut delivered).await;
     assert_eq!(manager.observation().state, ConnectionRuntimeState::Applied);
     server.armed.store(true, Ordering::SeqCst);
@@ -302,7 +302,7 @@ async fn partial_error_withdraws_active_packets(target: &'static str, status: u1
     let _ = remote
         .send_packet(
             payload.paths[1].nodes.clone(),
-            crate::managed_dataplane::tests::packet("100.64.0.2", "100.64.0.1", 1),
+            envelope,
         )
         .await;
     assert!(

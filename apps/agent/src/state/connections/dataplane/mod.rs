@@ -195,7 +195,7 @@ fn validate(
 fn validate_snapshot(agent: &Agent, snapshot: &MeshExecutionSnapshot) -> Result<(), AgentError> {
     let p = &snapshot.payload;
     if p.schema_version != MESH_EXECUTION_VERSION
-        || p.required_capability != MeshExecutionCapability::Ipv4ExactPathV1
+        || p.required_capability != MeshExecutionCapability::Ipv4StatefulExactPathV2
         || p.revision == 0
         || p.network_id.len() != 32
         || !p
@@ -657,7 +657,7 @@ mod execution_tests {
             network_id: "0".repeat(32),
             revision: old.revision,
             node_id: old.node_id.clone(),
-            required_capability: MeshExecutionCapability::Ipv4ExactPathV1,
+            required_capability: MeshExecutionCapability::Ipv4StatefulExactPathV2,
             network: old.network.clone(),
             node: old.node.clone(),
             peers: old.peers.clone(),
@@ -747,7 +747,7 @@ mod execution_tests {
         for mode in 0..10 {
             let mut bad = snapshot.clone();
             match mode {
-                0 => bad.payload.schema_version = 2,
+                0 => bad.payload.schema_version = MESH_EXECUTION_VERSION + 1,
                 1 => bad.payload.revision += 1,
                 2 => bad.payload.node_id = "f".repeat(64),
                 3 => {

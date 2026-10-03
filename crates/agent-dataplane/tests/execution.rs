@@ -6,12 +6,12 @@ fn execution() -> NodeMeshExecution {
     let a = "a".repeat(64);
     let b = "b".repeat(64);
     serde_json::from_value(serde_json::json!({
-        "schema_version":1,"network_id":"0".repeat(32),"revision":7,"node_id":a,
-        "required_capability":"ipv4_exact_path_v1",
+        "schema_version":2,"network_id":"0".repeat(32),"revision":7,"node_id":a,
+        "required_capability":"ipv4_stateful_exact_path_v2",
         "network":{"ipv4_prefix":"100.64.0.0/24","ipv6_prefix":"fd42::/64"},
         "node":{"id":a,"name":"a","country":null,"mesh_ipv4":"100.64.0.1","mesh_ipv6":"fd42::1"},
         "peers":[{"id":b,"name":"b","country":null,"mesh_ipv4":"100.64.0.2","mesh_ipv6":"fd42::2"}],
-        "valid":true,"paths":[{"nodes":[a,b]}],"identities":[],"materials":[],
+        "valid":true,"paths":[{"nodes":[a,b],"return_traffic":"stateful_ipv4_v1"}],"identities":[],"materials":[],
         "connections":{"schema_version":1,"revision":7,"node_id":a,"public_key":null,"capabilities":[],
             "valid":true,"diagnostics":[],"listeners":[],"incoming":[],"outgoing":[],"peers":[]}
     })).unwrap()
@@ -25,6 +25,8 @@ fn packet(source: [u8; 4], destination: [u8; 4]) -> Vec<u8> {
     bytes[9] = 1;
     bytes[12..16].copy_from_slice(&source);
     bytes[16..20].copy_from_slice(&destination);
+    bytes[20] = 8;
+    bytes[22..24].copy_from_slice(&0xf7ff_u16.to_be_bytes());
     let mut sum: u32 = bytes[..20]
         .as_chunks::<2>()
         .0

@@ -106,7 +106,7 @@ async fn normal_mesh_tick_restarts_after_offline_revision_change_and_same_config
                 convert(MeshExecutionRequest {
                     epoch: u32::try_from(begun.epoch).unwrap(),
                     instance_id: runtime.instance_id,
-                    capabilities: vec![MeshExecutionCapability::Ipv4ExactPathV1],
+                    capabilities: vec![MeshExecutionCapability::Ipv4StatefulExactPathV2],
                 })
                 .unwrap(),
             )

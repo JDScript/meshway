@@ -2,6 +2,7 @@
 
 mod config;
 mod crypto;
+pub mod flow;
 mod framing;
 pub mod packet_io;
 pub use runtime::sockets;

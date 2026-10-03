@@ -731,7 +731,9 @@ impl Agent {
                     .epoch
                     .ok_or(AgentError::Invalid("execution requires runtime epoch"))?,
                 instance_id: lease.instance_id.clone(),
-                capabilities: vec![meshway_protocol::MeshExecutionCapability::Ipv4ExactPathV1],
+                capabilities: vec![
+                    meshway_protocol::MeshExecutionCapability::Ipv4StatefulExactPathV2,
+                ],
             };
             let synced = dataplane.sync(self, manager, &runtime).await?;
             Ok((

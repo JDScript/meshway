@@ -9,7 +9,8 @@ use std::{
 
 use ipnet::Ipv4Net;
 use meshway_dataplane::ReceivedPacket;
-use meshway_dataplane::packet_io::{Ipv4PacketPlan, RoutePolicy};
+use meshway_dataplane::flow::{ENVELOPE_BYTES, StatefulIpv4Plan};
+use meshway_dataplane::packet_io::RoutePolicy;
 use meshway_dataplane::{LabConfig, PeerConfig, native_udp_datagram_len};
 use meshway_protocol::{ConnectionPeer, NodeMeshExecution};
 
@@ -25,10 +26,16 @@ pub struct PacketPlan {
     pub mtu: u16,
     pub paths: Vec<Vec<String>>,
     identities: Vec<ConnectionPeer>,
-    admission: Ipv4PacketPlan,
+    admission: StatefulIpv4Plan,
 }
 
 impl PacketPlan {
+    pub(crate) fn fresh(&self) -> Self {
+        Self {
+            admission: self.admission.fresh(),
+            ..self.clone()
+        }
+    }
     /// A drop sink needs only the validated address binding, never access grants.
     pub fn sink(payload: &NodeMeshExecution, mtu: u16) -> Result<Self, PlanError> {
         Self::address_sink(
@@ -80,7 +87,7 @@ impl PacketPlan {
             mtu,
             paths: vec![],
             identities: vec![],
-            admission: Ipv4PacketPlan::new(local, mtu, BTreeMap::new(), BTreeMap::new()),
+            admission: StatefulIpv4Plan::new(local, mtu, BTreeMap::new(), BTreeMap::new()),
         })
     }
 
@@ -113,7 +120,7 @@ impl PacketPlan {
             {
                 return Err(PlanError::Invalid("invalid exact Mesh path"));
             }
-            if !native_udp_datagram_len(path, usize::from(mtu))
+            if !native_udp_datagram_len(path, usize::from(mtu) + ENVELOPE_BYTES)
                 .is_ok_and(|bytes| bytes + 48 <= 1500)
             {
                 return Err(PlanError::Invalid("Mesh path exceeds outer MTU budget"));
@@ -134,9 +141,20 @@ impl PacketPlan {
                 incoming.insert(path.clone(), ips[path[0].as_str()]);
             }
         }
-        plan.paths = payload.paths.iter().map(|p| p.nodes.clone()).collect();
+        let mut paths = std::collections::BTreeSet::new();
+        for path in &payload.paths {
+            paths.insert(path.nodes.clone());
+            paths.insert(path.nodes.iter().rev().cloned().collect());
+        }
+        plan.paths = paths.into_iter().collect();
         plan.identities = payload.identities.clone();
-        plan.admission = Ipv4PacketPlan::new(plan.local, mtu, outgoing, incoming);
+        let context = meshway_protocol::local::digest(&format!(
+            "{}:{}",
+            payload.network_id, payload.revision
+        ))
+        .try_into()
+        .map_err(|_| PlanError::Invalid("invalid execution context digest"))?;
+        plan.admission = StatefulIpv4Plan::new(plan.local, mtu, outgoing, incoming).scoped(context);
         Ok(plan)
     }
 
@@ -204,6 +222,24 @@ impl meshway_dataplane::packet_io::Admission for PacketPlan {
     }
     fn incoming(&self, packet: &ReceivedPacket) -> bool {
         self.admission.incoming(packet)
+    }
+    fn encapsulate(&self, path: &[String], bytes: &[u8]) -> std::io::Result<Vec<u8>> {
+        self.admission.encapsulate(path, bytes)
+    }
+    fn sent(&self, path: &[String], payload: &[u8]) -> std::io::Result<()> {
+        self.admission.sent(path, payload)
+    }
+    fn plaintext(&self, packet: &ReceivedPacket) -> std::io::Result<Vec<u8>> {
+        self.admission.plaintext(packet)
+    }
+    fn delivered(&self, packet: &ReceivedPacket) -> std::io::Result<()> {
+        self.admission.delivered(packet)
+    }
+    fn control(&self, packet: &ReceivedPacket) -> std::io::Result<bool> {
+        self.admission.control(packet)
+    }
+    fn receipt(&self, packet: &ReceivedPacket) -> Option<Vec<u8>> {
+        self.admission.receipt(packet)
     }
 }
 

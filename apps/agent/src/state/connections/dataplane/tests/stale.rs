@@ -143,7 +143,7 @@ pub(super) async fn blocked_peer(
     remote_identity: meshway_dataplane::Identity,
     device: &MockDevice,
     delivered: &mut tokio::sync::mpsc::Receiver<Vec<u8>>,
-) -> Runtime {
+) -> (Runtime, Vec<u8>) {
     let remote = Runtime::start(LabConfig {
         node_id: payload.peers[0].id.clone(),
         private_key: PrivateKey::from_hex(&remote_identity.private_key_hex()).unwrap(),
@@ -176,9 +176,17 @@ pub(super) async fn blocked_peer(
         .unwrap();
     let reverse = payload.paths[1].nodes.clone();
     let bytes = crate::managed_dataplane::tests::packet("100.64.0.2", "100.64.0.1", 1);
+    let mut remote_payload = payload.clone();
+    let node = remote_payload.peers.remove(0);
+    remote_payload.peers.push(remote_payload.node.clone());
+    remote_payload.node = node;
+    remote_payload.node_id = remote_payload.node.id.clone();
+    let plan = crate::managed_dataplane::PacketPlan::compile(&remote_payload, 1000).unwrap();
+    use meshway_dataplane::packet_io::Admission;
+    let envelope = plan.encapsulate(&reverse, &bytes).unwrap();
     device.allow_writes();
     remote
-        .send_packet(reverse.clone(), bytes.clone())
+        .send_packet(reverse.clone(), envelope.clone())
         .await
         .unwrap();
     assert_eq!(
@@ -192,11 +200,11 @@ pub(super) async fn blocked_peer(
     time::timeout(Duration::from_secs(1), device.attempted.notified())
         .await
         .unwrap();
-    remote.send_packet(reverse, bytes).await.unwrap();
+    remote.send_packet(reverse, envelope.clone()).await.unwrap();
     time::timeout(Duration::from_secs(2), device.attempted.notified())
         .await
         .unwrap();
-    remote
+    (remote, envelope)
 }
 
 async fn known_stale_evidence_cancels_delivery(evidence: Evidence, saved_ahead: bool) {
@@ -296,9 +304,8 @@ async fn known_stale_evidence_cancels_delivery(evidence: Evidence, saved_ahead: 
 
     // The peer actively dials this Agent's approved listener, then sends the
     // explicitly granted reverse business path through the real Noise/UDP core.
-    let remote = blocked_peer(&payload, remote_identity, &device, &mut delivered).await;
+    let (remote, envelope) = blocked_peer(&payload, remote_identity, &device, &mut delivered).await;
     let reverse = payload.paths[1].nodes.clone();
-    let bytes = crate::managed_dataplane::tests::packet("100.64.0.2", "100.64.0.1", 1);
     assert_eq!(manager.observation().state, ConnectionRuntimeState::Applied);
 
     if saved_ahead {
@@ -336,7 +343,7 @@ async fn known_stale_evidence_cancels_delivery(evidence: Evidence, saved_ahead: 
         // The GET is deliberately still pending. Opening the mock write gate
         // must not release the plaintext already queued in the old generation.
         device.allow_writes();
-        let _ = remote.send_packet(reverse, bytes).await;
+        let _ = remote.send_packet(reverse, envelope).await;
         assert!(
             time::timeout(Duration::from_millis(150), delivered.recv())
                 .await

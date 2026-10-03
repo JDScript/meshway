@@ -31,7 +31,7 @@ impl PacketPlan {
         meshway_dataplane::packet_io::run_with_activation(
             device,
             runtime,
-            self.clone(),
+            self.fresh(),
             deadline,
             activated,
         )

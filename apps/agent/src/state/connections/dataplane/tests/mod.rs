@@ -28,7 +28,7 @@ static RUNTIME: std::sync::LazyLock<MeshExecutionRequest> =
     std::sync::LazyLock::new(|| MeshExecutionRequest {
         epoch: 1,
         instance_id: "a".repeat(64),
-        capabilities: vec![MeshExecutionCapability::Ipv4ExactPathV1],
+        capabilities: vec![MeshExecutionCapability::Ipv4StatefulExactPathV2],
     });
 
 fn managed(snapshot: MeshExecutionSnapshot) -> MeshExecutionResponse {
@@ -84,7 +84,7 @@ fn coherent_validation_rejects_digest_binding_revision_and_identity_scope_mismat
     for mode in 0..11 {
         let mut value = original.clone();
         match mode {
-            0 => value.payload.schema_version = 2,
+            0 => value.payload.schema_version = MESH_EXECUTION_VERSION + 1,
             1 => value.payload.revision += 1,
             2 => value.payload.node_id = "f".repeat(64),
             3 => value.payload.identities.pop().map(|_| ()).unwrap(),

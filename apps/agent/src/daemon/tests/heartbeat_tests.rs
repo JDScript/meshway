@@ -167,9 +167,17 @@ async fn heartbeat_new_revision_fences_real_packets_before_stalled_publication()
         .unwrap();
     let reverse = payload.paths[1].nodes.clone();
     let bytes = packet("100.64.0.2", "100.64.0.1", 1);
+    let mut remote_payload = payload.clone();
+    let node = remote_payload.peers.remove(0);
+    remote_payload.peers.push(remote_payload.node.clone());
+    remote_payload.node = node;
+    remote_payload.node_id = remote_payload.node.id.clone();
+    let plan = PacketPlan::compile(&remote_payload, 1000).unwrap();
+    use meshway_dataplane::packet_io::Admission;
+    let envelope = plan.encapsulate(&reverse, &bytes).unwrap();
     device.allow_writes();
     remote
-        .send_packet(reverse.clone(), bytes.clone())
+        .send_packet(reverse.clone(), envelope.clone())
         .await
         .unwrap();
     assert_eq!(
@@ -183,7 +191,7 @@ async fn heartbeat_new_revision_fences_real_packets_before_stalled_publication()
         .await
         .unwrap();
     remote
-        .send_packet(reverse.clone(), bytes.clone())
+        .send_packet(reverse.clone(), envelope.clone())
         .await
         .unwrap();
     time::timeout(Duration::from_secs(2), device.attempted.notified())
@@ -197,7 +205,7 @@ async fn heartbeat_new_revision_fences_real_packets_before_stalled_publication()
         tokio::pin!(tick);
         tokio::select! {result=&mut tick=>panic!("tick completed: {}",result.is_ok()),result=time::timeout(Duration::from_secs(2),stalled.notified())=>result.unwrap()};
         device.allow_writes();
-        let _ = remote.send_packet(reverse, bytes).await;
+        let _ = remote.send_packet(reverse, envelope).await;
         assert!(
             time::timeout(Duration::from_millis(150), delivered.recv())
                 .await
