@@ -110,10 +110,10 @@ export function UnplacedButton({
         className="glass w-64 gap-0 rounded-surface p-2"
       >
         <header className="flex items-baseline justify-between px-2 pt-1.5 pb-1.5">
-          <h2 className="text-xs text-muted-foreground">
+          <h2 className="text-meta text-muted-foreground">
             {m.unplaced_title()}
           </h2>
-          <span className="text-xs text-muted-foreground tabular-nums">
+          <span className="text-meta text-muted-foreground tabular-nums">
             {nodes.length}
           </span>
         </header>

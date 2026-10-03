@@ -192,7 +192,7 @@ export function DockLauncher({
               }
             }}
             className={cn(
-              "launcher-item glass flex h-(--bar-height) items-center gap-3 self-start rounded-full pr-5 pl-3.5 text-sm font-medium outline-none focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring",
+              "launcher-item glass flex h-(--bar-height) items-center gap-3 self-start rounded-full pr-5 pl-3.5 text-row font-medium outline-none focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring",
               item.page === page ? "text-foreground" : "text-muted-foreground"
             )}
             style={{ "--launcher-index": DOCK.length - 1 - index }}

@@ -31,7 +31,7 @@ export function StatusCard({
           {title}
         </h1>
         {body ? (
-          <p className="mt-2 text-sm text-muted-foreground">{body}</p>
+          <p className="mt-2 text-row text-muted-foreground">{body}</p>
         ) : null}
         <div className="mt-6 flex gap-2">
           {onRetry ? <Button onClick={onRetry}>{m.retry()}</Button> : null}

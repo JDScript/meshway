@@ -82,7 +82,7 @@ export function NetworkChip({
         >
           {/* Narrow screens give the name the room. */}
           <BrandMark className="hidden size-5 shrink-0 md:block" />
-          <span className="max-w-60 min-w-0 truncate text-sm font-medium">
+          <span className="max-w-60 min-w-0 truncate text-row font-medium">
             {name ?? "\u00a0"}
           </span>
           <ChevronsUpDownIcon className="size-3.5 shrink-0 text-muted-foreground" />
@@ -174,7 +174,7 @@ function Stat({ value, label }: { value: string; label: string }) {
   return (
     <span className="flex shrink-0 items-baseline gap-1">
       <span className="text-lead font-semibold tabular-nums">{value}</span>
-      <span className="text-xs text-muted-foreground">{label}</span>
+      <span className="text-meta text-muted-foreground">{label}</span>
     </span>
   )
 }
