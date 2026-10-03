@@ -6,12 +6,20 @@ rust-version.workspace = true
 description = "Meshway control plane based on the V2 configuration and state model"
 
 [dependencies]
+argon2 = "0.5.3"
 axum.workspace = true
+chrono.workspace = true
 clap = { workspace = true, features = ["env"] }
+getrandom.workspace = true
+idna = "1.1"
+meshway-model = { path = "../../crates/model" }
 rusqlite.workspace = true
 rustix.workspace = true
+sha2.workspace = true
 thiserror.workspace = true
 tokio.workspace = true
+uuid.workspace = true
+zeroize = "1.8"
 
 [dev-dependencies]
 tempfile.workspace = true
