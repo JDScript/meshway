@@ -141,10 +141,12 @@ async fn managed_tcp_and_websocket_tls_noise_deliver_real_ipv4_both_directions_a
             assert_eq!(managers[i].observation().state, Phase::Applied);
         }
         for (source, target) in [(0, 1), (1, 0)] {
+            // Distinguish replacement traffic from the initial ICMP echo using
+            // UDP, which is part of the current stateful IPv4 capability.
             let bytes = packet(
                 &payloads[source].node.mesh_ipv4,
                 &payloads[target].node.mesh_ipv4,
-                2,
+                17,
             );
             time::timeout(Duration::from_secs(4),async{loop{sends[source].send(bytes.clone()).await.unwrap();tokio::select!{value=receives[target].recv()=>{assert_eq!(value,Some(bytes.clone()));break;},_=time::sleep(Duration::from_millis(50))=>{}}}}).await.expect("replacement TLS generation must rebind and deliver");
         }
