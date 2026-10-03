@@ -68,5 +68,14 @@
   "nav_overview": "Overview",
   "nav_settings": "Settings",
   "read_only": "Read only",
-  "account_menu": "Account"
+  "account_menu": "Account",
+  "problem_version_conflict": "Someone else changed it; not saved.",
+  "problem_last_owner": "A network needs at least one owner.",
+  "problem_already_member": "You are already a member of this network.",
+  "problem_invalid_join_link": "The join link is invalid, used, revoked or expired.",
+  "problem_revision_conflict": "The configuration has a newer revision; not saved.",
+  "problem_configuration_invalid": "The configuration did not pass validation.",
+  "problem_state_conflict": "The state has changed. Refresh and try again.",
+  "problem_state_limit": "The limit has been reached.",
+  "problem_observation_limit": "The observation limit has been reached."
 }

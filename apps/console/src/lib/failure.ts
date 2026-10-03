@@ -28,6 +28,15 @@ const problemMessage: Record<ProblemCode, () => string> = {
   request_id_conflict: () => m.problem_request_id_conflict(),
   name_conflict: () => m.problem_name_conflict(),
   invalid_cursor: () => m.problem_invalid_cursor(),
+  version_conflict: () => m.problem_version_conflict(),
+  last_owner: () => m.problem_last_owner(),
+  already_member: () => m.problem_already_member(),
+  invalid_join_link: () => m.problem_invalid_join_link(),
+  revision_conflict: () => m.problem_revision_conflict(),
+  configuration_invalid: () => m.problem_configuration_invalid(),
+  state_conflict: () => m.problem_state_conflict(),
+  state_limit: () => m.problem_state_limit(),
+  observation_limit: () => m.problem_observation_limit(),
 }
 
 /** A call's own words for some problem codes (`invalid_request` on a sign-in form). */

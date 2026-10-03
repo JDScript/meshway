@@ -68,5 +68,14 @@
   "nav_overview": "概览",
   "nav_settings": "设置",
   "read_only": "只读",
-  "account_menu": "账户"
+  "account_menu": "账户",
+  "problem_version_conflict": "已被其他人修改，未保存。",
+  "problem_last_owner": "网络至少需要一位所有者。",
+  "problem_already_member": "你已是这个网络的成员。",
+  "problem_invalid_join_link": "加入链接无效、已使用、已撤销或已过期。",
+  "problem_revision_conflict": "配置已有新版本，未保存。",
+  "problem_configuration_invalid": "配置未通过校验。",
+  "problem_state_conflict": "状态已变化，请刷新后再试。",
+  "problem_state_limit": "已达到上限。",
+  "problem_observation_limit": "观察任务已达到上限。"
 }
