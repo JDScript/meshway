@@ -8,6 +8,7 @@
 pub mod accounts;
 mod app;
 mod directory;
+pub mod http;
 mod settings;
 mod store;
 
