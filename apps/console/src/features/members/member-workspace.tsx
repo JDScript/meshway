@@ -5,19 +5,20 @@ import {
   type AccountMember,
   type AccountMembershipChange,
   type AccountRole,
-  type ConnectionRuntimesSnapshot,
   type NodeOwnershipList,
   type NodeSummary,
 } from "@meshway/control-client"
 import { useMutation, useQueryClient } from "@tanstack/react-query"
 import { useNavigate } from "@tanstack/react-router"
-import { ChevronRightIcon, LogOutIcon, UserMinusIcon } from "lucide-react"
-import { useMemo, useState, type FormEvent, type ReactNode } from "react"
+import { LogOutIcon, UserMinusIcon, UserRoundPlusIcon } from "lucide-react"
+import { useMemo, useState, type FormEvent } from "react"
 import { toast } from "sonner"
 
 import { CloseButton } from "@/components/chrome/close-button"
-import { FormSection } from "@/components/chrome/form"
-import { ConfirmDialog, GlassDialog } from "@/components/chrome/glass-dialog"
+import { ConfirmDialog } from "@/components/chrome/glass-dialog"
+import { IconAction } from "@/components/chrome/icon-action"
+import { RefList, RefRow } from "@/components/chrome/ref-row"
+import { DangerRow, EmptyLine, Section } from "@/components/chrome/section"
 import { SegmentedControl } from "@/components/chrome/segmented-control"
 import { SurfaceHeader } from "@/components/chrome/surface-header"
 import { Button } from "@/components/ui/button"
@@ -31,8 +32,12 @@ import {
   sessionQuery,
 } from "@/features/network/queries"
 import { useNetwork } from "@/features/network/use-network-view"
+import {
+  NodeRef,
+  nodeVitality,
+  type NodeContext,
+} from "@/features/nodes/node-facts"
 import { vitalityLabel } from "@/features/overview/labels"
-import { vitalityOf } from "@/features/overview/model"
 import { VitalityDot } from "@/features/overview/status-dots"
 import { surfaceTitleId } from "@/features/shell/page-frame"
 import { authed } from "@/lib/api"
@@ -44,7 +49,6 @@ import { invitationsQuery } from "./queries"
 import { canChangeRole, canRemove, ROLES, roleLabel } from "./roles"
 
 type Read<T> = { data: T | null; loading: boolean }
-type Runtimes = ConnectionRuntimesSnapshot | null
 
 /** A refused change on the last Owner says so; anything else as usual. */
 const toastMembershipFailure = toastFailureWith({
@@ -219,7 +223,7 @@ function Body({
         }
       />
       <div className="min-h-0 flex-1 overflow-y-auto px-6 pt-1 pb-6">
-        <div className="flex max-w-xl flex-col gap-8">
+        <div className="flex max-w-workspace flex-col gap-8">
           {canChangeRole(viewer) ? (
             <RoleForm
               role={membership.role}
@@ -229,29 +233,34 @@ function Body({
             />
           ) : null}
 
-          <FormSection
-            title={
-              devicesRead
-                ? m.members_devices_count({ count: devices.owned.length })
-                : m.members_devices()
-            }
+          <Section
+            title={m.members_devices()}
+            count={devicesRead ? devices.owned.length : null}
           >
-            <NodeRows
-              nodes={devicesRead ? devices.owned : null}
-              empty={m.members_devices_empty()}
-              runtimes={view.context.runtimes}
-              now={view.now}
-              onOpen={onOpenNode}
-            />
-          </FormSection>
+            {!devicesRead ? (
+              <Skeleton className="h-12 w-full rounded-tile" />
+            ) : devices.owned.length === 0 ? (
+              <EmptyLine>{m.members_devices_empty()}</EmptyLine>
+            ) : (
+              <RefList>
+                {devices.owned.map((node) => (
+                  <NodeRef
+                    key={node.id}
+                    nodeId={node.id}
+                    context={view.context}
+                    onOpen={onOpenNode}
+                  />
+                ))}
+              </RefList>
+            )}
+          </Section>
 
           {viewer === "owner" && devices.unassigned.length > 0 ? (
             <Unassigned
               networkId={networkId}
               member={member}
               nodes={devices.unassigned}
-              runtimes={view.context.runtimes}
-              now={view.now}
+              context={view.context}
               onClaimed={() =>
                 void queryClient.invalidateQueries({
                   queryKey: ownershipQuery(networkId).queryKey,
@@ -261,17 +270,24 @@ function Body({
           ) : null}
 
           {self || removable ? (
-            <div>
-              <Button
-                variant="destructive"
-                className="h-9 rounded-full px-4"
-                disabled={pending}
-                onClick={() => setConfirming(true)}
-              >
-                {self ? <LogOutIcon /> : <UserMinusIcon />}
-                {self ? m.members_leave() : m.members_remove()}
-              </Button>
-            </div>
+            <Section title={self ? m.members_leaving() : m.members_removal()}>
+              <DangerRow
+                fact={m.members_devices_fact({
+                  count: devicesRead ? String(devices.owned.length) : "—",
+                })}
+                action={
+                  <Button
+                    variant="destructive"
+                    className="h-9 rounded-full px-4"
+                    disabled={pending}
+                    onClick={() => setConfirming(true)}
+                  >
+                    {self ? <LogOutIcon /> : <UserMinusIcon />}
+                    {self ? m.members_leave() : m.members_remove()}
+                  </Button>
+                }
+              />
+            </Section>
           ) : null}
         </div>
       </div>
@@ -283,20 +299,15 @@ function Body({
         confirmLabel={self ? m.members_leave() : m.members_remove()}
         pending={pending}
         onConfirm={() => (self ? leave.mutate() : save.mutate("remove"))}
-      >
-        <ul className="flex list-disc flex-col gap-1 pl-4">
-          <li>
-            {self
-              ? m.members_leave_devices()
-              : m.members_remove_devices({ email: user.email })}
-          </li>
-          <li>
-            {self
-              ? m.members_leave_invitations()
-              : m.members_remove_invitations()}
-          </li>
-        </ul>
-      </ConfirmDialog>
+        effects={
+          self
+            ? [m.members_leave_devices(), m.members_leave_invitations()]
+            : [
+                m.members_remove_devices({ email: user.email }),
+                m.members_remove_invitations(),
+              ]
+        }
+      />
     </div>
   )
 }
@@ -318,7 +329,7 @@ function RoleForm({
     if (chosen !== role && !disabled) onSave(chosen)
   }
   return (
-    <FormSection title={m.members_role()}>
+    <Section title={m.members_role()}>
       <form className="flex items-center gap-3" onSubmit={submit}>
         <SegmentedControl<AccountRole>
           label={m.members_role()}
@@ -336,82 +347,7 @@ function RoleForm({
           {m.members_role_save()}
         </Button>
       </form>
-    </FormSection>
-  )
-}
-
-function NodeRows({
-  nodes,
-  empty,
-  runtimes,
-  now,
-  onOpen,
-  action,
-}: {
-  /** null while unread. */
-  nodes: readonly NodeSummary[] | null
-  empty: string
-  runtimes: Runtimes
-  now: number
-  /** Rows open the node's workspace… */
-  onOpen?: (nodeId: string) => void
-  /** …or carry an action at their end instead. */
-  action?: (node: NodeSummary) => ReactNode
-}) {
-  if (nodes === null)
-    return (
-      <div className="flex h-12 items-center gap-3 px-1">
-        <Skeleton className="size-2 rounded-full" />
-        <Skeleton className="h-3 w-32 rounded-full" />
-      </div>
-    )
-  if (nodes.length === 0)
-    return (
-      <p className="flex h-12 items-center rounded-tile bg-fill-subtle px-3.5 text-row text-muted-foreground">
-        {empty}
-      </p>
-    )
-  return (
-    <ul className="-mx-2">
-      {nodes.map((node) => {
-        const vitality = vitalityOf(node, runtimes, now)
-        const facts = (
-          <>
-            <VitalityDot vitality={vitality} />
-            <span className="min-w-0 flex-1 truncate text-row font-medium">
-              {node.name}
-            </span>
-            <span className="shrink-0 font-mono text-meta text-muted-foreground">
-              {node.mesh_ipv4}
-            </span>
-          </>
-        )
-        return (
-          <li key={node.id}>
-            {action ? (
-              <div className="flex h-12 items-center gap-3 px-2">
-                {facts}
-                <span className="flex w-20 shrink-0 justify-end">
-                  {action(node)}
-                </span>
-              </div>
-            ) : (
-              <button
-                type="button"
-                onClick={() => onOpen?.(node.id)}
-                className="list-row h-12 gap-3 px-2"
-              >
-                {facts}
-                <span className="flex w-20 shrink-0 items-center justify-end gap-1 text-meta text-muted-foreground">
-                  {vitalityLabel[vitality]()}
-                  <ChevronRightIcon className="size-4" />
-                </span>
-              </button>
-            )}
-          </li>
-        )
-      })}
-    </ul>
+    </Section>
   )
 }
 
@@ -420,15 +356,13 @@ function Unassigned({
   networkId,
   member,
   nodes,
-  runtimes,
-  now,
+  context,
   onClaimed,
 }: {
   networkId: string
   member: AccountMember
   nodes: readonly NodeSummary[]
-  runtimes: Runtimes
-  now: number
+  context: NodeContext
   onClaimed: () => void
 }) {
   const [target, setTarget] = useState<NodeSummary | null>(null)
@@ -450,63 +384,49 @@ function Unassigned({
   })
 
   return (
-    <FormSection title={m.members_unassigned_count({ count: nodes.length })}>
-      <NodeRows
-        nodes={nodes}
-        empty=""
-        runtimes={runtimes}
-        now={now}
-        action={(node) => (
-          <Button
-            variant="secondary"
-            size="sm"
-            className="h-8 rounded-full px-3.5"
-            disabled={claim.isPending}
-            onClick={() => {
-              setTarget(node)
-              setOpen(true)
-            }}
-          >
-            {m.members_claim()}
-          </Button>
-        )}
-      />
-      <GlassDialog
+    <Section title={m.members_unassigned()} count={nodes.length}>
+      <RefList>
+        {nodes.map((node) => {
+          const vitality = nodeVitality(node, context)
+          return (
+            <RefRow
+              key={node.id}
+              lead={<VitalityDot vitality={vitality} />}
+              title={node.name}
+              detail={node.mesh_ipv4}
+              state={vitalityLabel[vitality]()}
+              action={
+                <IconAction
+                  label={m.members_claim_node({ node: node.name })}
+                  icon={UserRoundPlusIcon}
+                  disabled={claim.isPending}
+                  onClick={() => {
+                    setTarget(node)
+                    setOpen(true)
+                  }}
+                />
+              }
+            />
+          )
+        })}
+      </RefList>
+      <ConfirmDialog
         open={open}
         onOpenChange={setOpen}
         title={m.members_claim_title()}
-        busy={claim.isPending}
-        footer={
-          <>
-            <Button
-              variant="ghost"
-              className="h-9 rounded-full px-4"
-              disabled={claim.isPending}
-              onClick={() => setOpen(false)}
-            >
-              {m.dialog_cancel()}
-            </Button>
-            <Button
-              className="h-9 rounded-full px-4"
-              disabled={claim.isPending}
-              aria-busy={claim.isPending}
-              onClick={() => {
-                if (target) claim.mutate(target.id)
-              }}
-            >
-              {claim.isPending ? <Spinner /> : null}
-              {m.members_claim()}
-            </Button>
-          </>
-        }
-      >
-        <p className="text-row text-muted-foreground">
-          {m.members_claim_body({
+        confirmLabel={m.members_claim()}
+        tone="default"
+        pending={claim.isPending}
+        onConfirm={() => {
+          if (target) claim.mutate(target.id)
+        }}
+        effects={[
+          m.members_claim_body({
             node: target?.name ?? "",
             email: member.user.email,
-          })}
-        </p>
-      </GlassDialog>
-    </FormSection>
+          }),
+        ]}
+      />
+    </Section>
   )
 }

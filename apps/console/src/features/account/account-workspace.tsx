@@ -4,15 +4,16 @@ import type {
 } from "@meshway/control-client"
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import { useNavigate } from "@tanstack/react-router"
-import { ChevronRightIcon, LogOutIcon } from "lucide-react"
+import { LogOutIcon, NetworkIcon } from "lucide-react"
 import { useMemo, useRef, useState, type FormEvent } from "react"
 import { toast } from "sonner"
 
 import { CloseButton } from "@/components/chrome/close-button"
-import { FormSection, TextField } from "@/components/chrome/form"
+import { TextField } from "@/components/chrome/form"
 import { ConfirmDialog } from "@/components/chrome/glass-dialog"
+import { RefList, RefRow } from "@/components/chrome/ref-row"
+import { DangerRow, Section } from "@/components/chrome/section"
 import { SurfaceHeader } from "@/components/chrome/surface-header"
-import { Tile } from "@/components/chrome/tile"
 import { Button } from "@/components/ui/button"
 import { Skeleton } from "@/components/ui/skeleton"
 import { Spinner } from "@/components/ui/spinner"
@@ -22,6 +23,7 @@ import { roleLabel } from "@/features/members/roles"
 import { networksQuery, sessionQuery } from "@/features/network/queries"
 import { surfaceTitleId } from "@/features/shell/page-frame"
 import { dropDrafts } from "@/features/shell/drafts"
+import { useSwitchNetwork } from "@/features/shell/pages"
 import { failureOf, toastFailure } from "@/lib/failure"
 import { formText } from "@/lib/form"
 import { unixDateTime } from "@/lib/format"
@@ -86,16 +88,14 @@ export function AccountWorkspace({
         }
       />
       <div className="min-h-0 flex-1 overflow-y-auto px-6 pt-1 pb-6">
-        <div className="grid max-w-4xl items-start gap-x-10 gap-y-8 xl:grid-cols-2">
-          <div className="flex min-w-0 flex-col gap-8">
-            <Memberships
-              networkId={networkId}
-              memberships={session.data?.memberships ?? null}
-              networks={networks.data?.networks ?? null}
-            />
-            <SignIns userId={user?.user_id ?? null} />
-          </div>
+        <div className="flex max-w-workspace flex-col gap-8">
+          <Memberships
+            networkId={networkId}
+            memberships={session.data?.memberships ?? null}
+            networks={networks.data?.networks ?? null}
+          />
           <PasswordForm email={user?.email ?? null} />
+          <SignIns userId={user?.user_id ?? null} />
         </div>
       </div>
     </div>
@@ -111,7 +111,7 @@ function Memberships({
   memberships: readonly AccountMembership[] | null
   networks: readonly NetworkSnapshot[] | null
 }) {
-  const navigate = useNavigate()
+  const switchNetwork = useSwitchNetwork(networkId, "account")
   const rows = useMemo(() => {
     const name = (id: string) =>
       networks?.find((network) => network.network_id === id)?.name ?? null
@@ -125,53 +125,30 @@ function Memberships({
   }, [memberships, networks])
 
   return (
-    <FormSection
-      title={
-        memberships
-          ? m.account_networks_count({ count: memberships.length })
-          : m.account_networks()
-      }
-    >
+    <Section title={m.account_networks()} count={memberships?.length ?? null}>
       {memberships === null ? (
-        <div className="flex h-12 items-center px-1">
-          <Skeleton className="h-3 w-40 rounded-full" />
-        </div>
+        <Skeleton className="h-12 w-full rounded-tile" />
       ) : (
-        <ul className="-mx-2">
+        <RefList>
           {rows.map(({ membership, name }) => (
-            <li key={membership.membership_id}>
-              <button
-                type="button"
-                aria-current={
-                  membership.network_id === networkId ? "true" : undefined
-                }
-                onClick={() =>
-                  void navigate({
-                    to: "/networks/$network/overview",
-                    params: { network: membership.network_id },
-                  })
-                }
-                className="list-row h-12 gap-3 px-2"
-              >
-                <span
-                  className={
-                    name
-                      ? "min-w-0 flex-1 truncate text-row font-medium"
-                      : "min-w-0 flex-1 truncate font-mono text-row"
-                  }
-                >
-                  {name ?? membership.network_id}
-                </span>
-                <span className="shrink-0 text-meta text-muted-foreground">
-                  {roleLabel[membership.role]()}
-                </span>
-                <ChevronRightIcon className="size-4 shrink-0 text-muted-foreground" />
-              </button>
-            </li>
+            <RefRow
+              key={membership.membership_id}
+              lead={<NetworkIcon className="size-4 text-muted-foreground" />}
+              title={
+                name ?? (
+                  <span className="font-mono font-normal">
+                    {membership.network_id}
+                  </span>
+                )
+              }
+              state={roleLabel[membership.role]()}
+              current={membership.network_id === networkId}
+              onSelect={() => switchNetwork(membership.network_id)}
+            />
           ))}
-        </ul>
+        </RefList>
       )}
-    </FormSection>
+    </Section>
   )
 }
 
@@ -190,11 +167,16 @@ function SignIns({ userId }: { userId: string | null }) {
   })
 
   return (
-    <FormSection title={m.account_sign_ins()}>
-      <Tile label={m.account_session_expires()}>
-        {expiresAt ? (unixDateTime(expiresAt) ?? "—") : "—"}
-      </Tile>
-      <div className="flex flex-wrap gap-2">
+    <Section title={m.account_sign_ins()}>
+      <div className="flex min-h-12 items-center gap-3 rounded-tile bg-fill-subtle py-2 pr-2 pl-3.5">
+        <div className="min-w-0 flex-1">
+          <div className="text-meta text-muted-foreground">
+            {m.account_session_expires()}
+          </div>
+          <div className="mt-1 truncate text-row font-medium">
+            {expiresAt ? (unixDateTime(expiresAt) ?? "—") : "—"}
+          </div>
+        </div>
         <Button
           variant="secondary"
           className="h-9 rounded-full px-4"
@@ -207,15 +189,21 @@ function SignIns({ userId }: { userId: string | null }) {
           <LogOutIcon />
           {m.sign_out()}
         </Button>
-        <Button
-          variant="destructive"
-          className="h-9 rounded-full px-4"
-          disabled={userId === null || leaving}
-          onClick={() => setConfirming(true)}
-        >
-          {m.account_revoke_all()}
-        </Button>
       </div>
+      <DangerRow
+        fact={m.account_sessions_fact()}
+        action={
+          <Button
+            variant="destructive"
+            className="h-9 rounded-full px-4"
+            disabled={userId === null || leaving}
+            onClick={() => setConfirming(true)}
+          >
+            <LogOutIcon />
+            {m.account_revoke_all()}
+          </Button>
+        }
+      />
       <ConfirmDialog
         open={confirming}
         onOpenChange={setConfirming}
@@ -225,10 +213,9 @@ function SignIns({ userId }: { userId: string | null }) {
         onConfirm={() => {
           if (userId) revoke.mutate(userId)
         }}
-      >
-        {m.account_revoke_all_body()}
-      </ConfirmDialog>
-    </FormSection>
+        effects={[m.account_revoke_all_effect()]}
+      />
+    </Section>
   )
 }
 
@@ -306,7 +293,7 @@ function PasswordForm({ email }: { email: string | null }) {
   }
 
   return (
-    <FormSection title={m.account_password()}>
+    <Section title={m.account_password()}>
       <form
         ref={form}
         method="post"
@@ -373,6 +360,6 @@ function PasswordForm({ email }: { email: string | null }) {
           </Button>
         </div>
       </form>
-    </FormSection>
+    </Section>
   )
 }

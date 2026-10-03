@@ -2,6 +2,7 @@ import { useQuery } from "@tanstack/react-query"
 import { useParams } from "@tanstack/react-router"
 import { LogOutIcon, UserRoundIcon } from "lucide-react"
 
+import { InitialAvatar } from "@/components/chrome/avatar"
 import { Button } from "@/components/ui/button"
 import {
   DropdownMenu,
@@ -36,9 +37,7 @@ export function AccountMenu() {
             aria-label={m.account_menu()}
             className="bar-button"
           >
-            <span className="flex size-8 items-center justify-center rounded-full bg-foreground text-xs font-semibold text-background uppercase">
-              {email?.[0] ?? "·"}
-            </span>
+            <InitialAvatar email={email} size="md" tone="inverse" />
           </Button>
         }
       />

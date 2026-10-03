@@ -3,21 +3,22 @@ import type {
   NodeSummary,
 } from "@meshway/control-client"
 import { SearchIcon } from "lucide-react"
-import {
-  useEffect,
-  useMemo,
-  useRef,
-  type KeyboardEvent,
-  type ReactNode,
-} from "react"
+import { useEffect, useMemo, useRef, type ReactNode } from "react"
 
+import {
+  ListNote,
+  ListPlaceholders,
+  ListRow,
+  PanelList,
+  useListKeys,
+} from "@/components/chrome/list"
+import { PanelHeader } from "@/components/chrome/panel-header"
 import { SegmentedControl } from "@/components/chrome/segmented-control"
 import {
   InputGroup,
   InputGroupAddon,
   InputGroupInput,
 } from "@/components/ui/input-group"
-import { Skeleton } from "@/components/ui/skeleton"
 import { highlightOnGlobe } from "@/features/globe/store"
 import { vitalityLabel } from "@/features/overview/labels"
 import { vitalityOf } from "@/features/overview/model"
@@ -27,7 +28,6 @@ import { m } from "@/paraglide/messages.js"
 
 import { NODE_STATES, type NodeListView, type NodeStateFilter } from "./url"
 
-const PLACEHOLDER_ROWS = 5
 const ALL = "all"
 type Filter = NodeStateFilter | typeof ALL
 /** Typing settles this long before it is written to the address. */
@@ -152,8 +152,6 @@ export function NodeList({
   /** Adding a node, for those who can. */
   action: ReactNode
 }) {
-  const list = useRef<HTMLUListElement>(null)
-
   const rows = useMemo(
     () =>
       nodes
@@ -175,51 +173,35 @@ export function NodeList({
       matches(row.node, row.tags, needle)
   )
 
+  const { ref: list, onKeyDown } = useListKeys({
+    ids: shown.map((row) => row.node.id),
+    openId,
+    onOpen,
+  })
+
   // Keep the open row in view, wherever it was opened from.
   useEffect(() => {
     if (!openId) return
     list.current
-      ?.querySelector(`[data-node-id="${openId}"]`)
+      ?.querySelector(`[data-row-id="${openId}"]`)
       ?.scrollIntoView({ block: "nearest" })
-  }, [openId])
-
-  const onKeyDown = (event: KeyboardEvent<HTMLUListElement>) => {
-    if (event.key !== "ArrowDown" && event.key !== "ArrowUp") return
-    event.preventDefault()
-    const focused =
-      document.activeElement instanceof HTMLElement
-        ? document.activeElement.dataset.nodeId
-        : undefined
-    const index = shown.findIndex((row) => row.node.id === (focused ?? openId))
-    const next =
-      shown[
-        index === -1
-          ? 0
-          : Math.min(
-              shown.length - 1,
-              Math.max(0, index + (event.key === "ArrowDown" ? 1 : -1))
-            )
-      ]
-    if (!next) return
-    list.current
-      ?.querySelector<HTMLButtonElement>(`[data-node-id="${next.node.id}"]`)
-      ?.focus()
-    if (openId) onOpen(next.node.id)
-  }
+  }, [list, openId])
 
   return (
     <div className="flex h-full min-h-0 flex-col">
       <PanelHeader
+        page="nodes"
+        title={m.nav_nodes()}
         count={
           loading
-            ? "—"
+            ? null
             : shown.length === rows.length
-              ? String(rows.length)
+              ? rows.length
               : `${shown.length} / ${rows.length}`
         }
-        switcher={switcher}
         action={action}
       >
+        {switcher}
         <SearchField value={view.q} onSettle={(q) => onView({ ...view, q })} />
         <SegmentedControl<Filter>
           label={m.nodes_filter()}
@@ -232,57 +214,41 @@ export function NodeList({
         />
       </PanelHeader>
 
-      <ul
+      <PanelList
         ref={list}
         aria-labelledby={surfaceTitleId("nodes", "panel")}
         onKeyDown={onKeyDown}
         onPointerLeave={() => highlightOnGlobe(null)}
-        className="min-h-0 flex-1 overflow-y-auto px-2 pb-2"
       >
-        {loading
-          ? Array.from({ length: PLACEHOLDER_ROWS }, (_, index) => (
-              <li key={index} className="flex h-14 items-center gap-3 px-2">
-                <Skeleton className="size-2 rounded-full" />
-                <Skeleton className="h-3 w-32 rounded-full" />
-              </li>
-            ))
-          : null}
+        {loading ? <ListPlaceholders rows={5} /> : null}
         {!loading && shown.length === 0 ? (
-          <li className="flex h-14 items-center px-2 text-row text-muted-foreground">
+          <ListNote>
             {failed
               ? m.overview_nodes_failed()
               : rows.length === 0
                 ? m.nodes_empty()
                 : m.nodes_no_match()}
-          </li>
+          </ListNote>
         ) : null}
         {shown.map(({ node, vitality, tags: nodeTags }) => (
-          <li key={node.id}>
-            <button
-              type="button"
-              data-node-id={node.id}
-              aria-current={node.id === openId ? "true" : undefined}
-              onClick={() => onOpen(node.id)}
-              onPointerEnter={() => highlightOnGlobe(node.id)}
-              className="list-row h-14 gap-3 px-2"
-            >
-              <VitalityDot vitality={vitality} />
-              <span className="min-w-0 flex-1">
-                <span className="block truncate text-row font-medium">
-                  {node.name}
-                </span>
-                <span className="flex h-4 min-w-0 items-center gap-1.5 text-meta text-muted-foreground">
-                  <span className="shrink-0 font-mono">{node.mesh_ipv4}</span>
-                  <RowTags tags={nodeTags} />
-                </span>
-              </span>
-              <span className="shrink-0 text-meta text-muted-foreground">
-                {vitalityLabel[vitality]()}
-              </span>
-            </button>
-          </li>
+          <ListRow
+            key={node.id}
+            rowId={node.id}
+            current={node.id === openId}
+            onClick={() => onOpen(node.id)}
+            onPointerEnter={() => highlightOnGlobe(node.id)}
+            lead={<VitalityDot vitality={vitality} />}
+            title={<span className="truncate">{node.name}</span>}
+            subtitle={
+              <>
+                <span className="shrink-0 font-mono">{node.mesh_ipv4}</span>
+                <RowTags tags={nodeTags} />
+              </>
+            }
+            trail={vitalityLabel[vitality]()}
+          />
         ))}
-      </ul>
+      </PanelList>
     </div>
   )
 }
@@ -302,7 +268,7 @@ function RowTags({ tags }: { tags: readonly string[] }) {
         <span
           key={tag}
           aria-hidden="true"
-          className="h-4 min-w-0 truncate rounded-full bg-fill-selected px-1.5 leading-4"
+          className="h-4 min-w-0 truncate rounded-full bg-fill-selected px-1.5 leading-4 group-aria-[current=true]/row:bg-fill-raised"
         >
           {tag}
         </span>
@@ -313,38 +279,5 @@ function RowTags({ tags }: { tags: readonly string[] }) {
         </span>
       ) : null}
     </span>
-  )
-}
-
-/** The head of the nodes page's panel, for either view: the title, a count, the view switch and its add control. */
-export function PanelHeader({
-  count,
-  switcher,
-  action,
-  children,
-}: {
-  count: string
-  switcher: ReactNode
-  action: ReactNode
-  children?: ReactNode
-}) {
-  return (
-    <header className="flex flex-col gap-3 px-4 pt-4 pb-3">
-      <div className="flex h-7 items-center gap-2">
-        <h2
-          id={surfaceTitleId("nodes", "panel")}
-          className="text-base font-semibold tracking-tight"
-        >
-          {m.nav_nodes()}
-        </h2>
-        <span className="text-xs text-muted-foreground tabular-nums">
-          {count}
-        </span>
-        <span className="flex-1" />
-        {action}
-      </div>
-      {switcher}
-      {children}
-    </header>
   )
 }

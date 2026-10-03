@@ -4,7 +4,8 @@ import { useMemo } from "react"
 
 import { CloseButton } from "@/components/chrome/close-button"
 import { CopyButton } from "@/components/chrome/copy-button"
-import { FormSection, SwitchRow, TextField } from "@/components/chrome/form"
+import { SwitchRow, TextField } from "@/components/chrome/form"
+import { Section } from "@/components/chrome/section"
 import { SurfaceHeader } from "@/components/chrome/surface-header"
 import { Tile } from "@/components/chrome/tile"
 import { Skeleton } from "@/components/ui/skeleton"
@@ -96,7 +97,7 @@ export function SettingsWorkspace({
       >
         {/* Enter in a field submits; the commit bar is the visible control. */}
         <button type="submit" hidden />
-        <div className="flex max-w-xl flex-col gap-8">
+        <div className="flex max-w-workspace flex-col gap-8">
           {draft.value && network.data ? (
             section === "network" ? (
               <NetworkSection
@@ -154,7 +155,7 @@ function NetworkSection({
         disabled={disabled}
         onChange={(event) => onChange("name", event.target.value)}
       />
-      <FormSection title={m.settings_identity()}>
+      <Section title={m.settings_identity()}>
         <div className="grid gap-2 sm:grid-cols-2">
           <div className="sm:col-span-2">
             <Tile
@@ -182,7 +183,7 @@ function NetworkSection({
             </span>
           </Tile>
         </div>
-      </FormSection>
+      </Section>
     </>
   )
 }

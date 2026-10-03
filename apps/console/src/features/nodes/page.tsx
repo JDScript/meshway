@@ -2,8 +2,11 @@ import { useQuery } from "@tanstack/react-query"
 import { PlusIcon } from "lucide-react"
 import { useMemo, useState } from "react"
 
-import { SegmentedControl } from "@/components/chrome/segmented-control"
-import { Button } from "@/components/ui/button"
+import { PanelAction, PanelHeader } from "@/components/chrome/panel-header"
+import {
+  SegmentCount,
+  SegmentedControl,
+} from "@/components/chrome/segmented-control"
 import { useCanManage } from "@/features/network/role"
 import { useNetwork } from "@/features/network/use-network-view"
 import { tagsQuery } from "@/features/network/queries"
@@ -12,7 +15,7 @@ import { m } from "@/paraglide/messages.js"
 
 import { AddNode } from "./add-node"
 import { useNodeNavigation, useNodesRoute } from "./navigation"
-import { NodeList, PanelHeader } from "./node-list"
+import { NodeList } from "./node-list"
 import { NodeWorkspace } from "./node-workspace"
 import { NewTagDialog, TagList, TagWorkspace } from "./tags"
 import type { PanelView } from "./url"
@@ -40,22 +43,28 @@ export function NodesPage({ networkId }: { networkId: string }) {
   const [naming, setNaming] = useState(false)
   const inventoryRead = view.nodes.data !== undefined
   const tagView = route.view === "tags"
+  const nodeCount = inventoryRead
+    ? view.inventory.filter((node) => node.revoked_at === null).length
+    : null
 
   const switcher = (
     <SegmentedControl<PanelView>
       label={m.nodes_view()}
       value={route.view}
       options={[
-        { value: "nodes", label: m.nodes_view_nodes() },
+        {
+          value: "nodes",
+          label: (
+            <SegmentCount label={m.nodes_view_nodes()} count={nodeCount} />
+          ),
+        },
         {
           value: "tags",
           label: (
-            <>
-              {m.nodes_view_tags()}
-              <span className="text-muted-foreground tabular-nums">
-                {tags.data ? tags.data.tags.length : ""}
-              </span>
-            </>
+            <SegmentCount
+              label={m.nodes_view_tags()}
+              count={tags.data ? tags.data.tags.length : null}
+            />
           ),
         },
       ]}
@@ -65,15 +74,7 @@ export function NodesPage({ networkId }: { networkId: string }) {
   )
   const add = (label: string, onClick: () => void) =>
     canManage ? (
-      <Button
-        variant="ghost"
-        size="icon-sm"
-        className="rounded-full"
-        aria-label={label}
-        onClick={onClick}
-      >
-        <PlusIcon />
-      </Button>
+      <PanelAction label={label} icon={PlusIcon} onClick={onClick} />
     ) : null
 
   return (
@@ -86,10 +87,13 @@ export function NodesPage({ networkId }: { networkId: string }) {
           tagView ? (
             <div className="flex h-full min-h-0 flex-col">
               <PanelHeader
-                count=""
-                switcher={switcher}
+                page="nodes"
+                title={m.nav_nodes()}
+                count={nodeCount}
                 action={add(m.nodes_tag_new(), () => setNaming(true))}
-              />
+              >
+                {switcher}
+              </PanelHeader>
               <TagList
                 networkId={networkId}
                 openTag={route.tag}

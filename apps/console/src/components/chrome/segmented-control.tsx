@@ -12,7 +12,7 @@ const TRACK =
   "inline-flex items-center rounded-full border border-border bg-fill-subtle p-1"
 /** Concentric with the track: full round, 4px in. */
 const SEGMENT =
-  "relative isolate flex min-h-7 items-center gap-1.5 rounded-full px-3 text-xs font-medium whitespace-nowrap outline-none transition-colors focus-visible:ring-2 focus-visible:ring-ring"
+  "relative isolate flex min-h-7 items-center gap-1.5 rounded-full px-3 text-meta font-medium whitespace-nowrap outline-none transition-colors focus-visible:ring-2 focus-visible:ring-ring"
 /** Compact, the height of a chip (28px) for a line of controls: 2px in, no edge. */
 const SMALL = { track: "border-0 p-0.5", segment: "min-h-6 px-2.5" }
 const segmentTone = (chosen: boolean) =>
@@ -98,5 +98,21 @@ export function SegmentedTabs<T extends string>({
         )
       })}
     </TabsPrimitive.List>
+  )
+}
+
+/** A segment's label with how many it holds (blank until read). */
+export function SegmentCount({
+  label,
+  count,
+}: {
+  label: string
+  count: number | null
+}) {
+  return (
+    <>
+      {label}
+      <span className="text-muted-foreground tabular-nums">{count ?? ""}</span>
+    </>
   )
 }

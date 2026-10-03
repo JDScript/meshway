@@ -3,7 +3,10 @@ import { useQuery } from "@tanstack/react-query"
 
 import { CloseButton } from "@/components/chrome/close-button"
 import { CopyButton } from "@/components/chrome/copy-button"
-import { SegmentedTabs } from "@/components/chrome/segmented-control"
+import {
+  SegmentCount,
+  SegmentedTabs,
+} from "@/components/chrome/segmented-control"
 import { SurfaceHeader } from "@/components/chrome/surface-header"
 import { Tile } from "@/components/chrome/tile"
 import { Skeleton } from "@/components/ui/skeleton"
@@ -134,9 +137,6 @@ function Body({
   const listenerCount = listeners.data
     ? listenersOf(listeners.data, node.id).length
     : null
-  const count = (value: number | null) => (
-    <span className="text-muted-foreground tabular-nums">{value ?? ""}</span>
-  )
 
   return (
     <div className="swap-in flex min-h-0 flex-1 flex-col">
@@ -151,12 +151,11 @@ function Body({
         action={<CloseButton onClick={onClose} />}
         meta={
           <div className="flex items-center gap-3">
-            {node.revoked_at === null ? (
-              <VitalityLine vitality={nodeVitality(node, context)} />
-            ) : (
-              <span className="text-xs text-warning">{m.node_revoked()}</span>
-            )}
-            <span className="font-mono text-xs text-muted-foreground">
+            <VitalityLine
+              vitality={nodeVitality(node, context)}
+              revoked={node.revoked_at !== null}
+            />
+            <span className="font-mono text-meta text-muted-foreground">
               {node.mesh_ipv4}
             </span>
           </div>
@@ -178,19 +177,16 @@ function Body({
               {
                 value: "links",
                 label: (
-                  <>
-                    {m.node_tab_links()}
-                    {count(links)}
-                  </>
+                  <SegmentCount label={m.node_tab_links()} count={links} />
                 ),
               },
               {
                 value: "transport",
                 label: (
-                  <>
-                    {m.node_tab_transport()}
-                    {count(listenerCount)}
-                  </>
+                  <SegmentCount
+                    label={m.node_tab_transport()}
+                    count={listenerCount}
+                  />
                 ),
               },
               { value: "manage", label: m.node_tab_manage() },
@@ -202,13 +198,15 @@ function Body({
             <div className="col-span-2">
               <NodeAddresses node={node} />
             </div>
-            <Tile label={m.node_registered()}>
-              {dateTime(node.registered_at) ?? "—"}
-              <span className="font-normal text-muted-foreground">
-                {" "}
-                · {relativeTime(node.registered_at, context.now)}
-              </span>
-            </Tile>
+            <div className="col-span-2 xl:col-span-1">
+              <Tile label={m.node_registered()}>
+                {dateTime(node.registered_at) ?? "—"}
+                <span className="font-normal text-muted-foreground">
+                  {" "}
+                  · {relativeTime(node.registered_at, context.now)}
+                </span>
+              </Tile>
+            </div>
             <Tile
               label={m.node_id()}
               action={<CopyButton value={node.id} label={m.node_id()} />}

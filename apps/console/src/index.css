@@ -21,6 +21,9 @@
   /* Tiles and buttons 16px inside a 28px sheet (28 − 16). */
   --radius-tile: 12px;
 
+  /* The measure of a form-like workspace (a tag, a member, adding a node, the account); data-dense views (a node's tabs) take the full width. */
+  --container-workspace: 40rem;
+
   /* Type roles Tailwind's scale lacks. */
   --text-meta: 11px;
   --text-meta--line-height: 16px;

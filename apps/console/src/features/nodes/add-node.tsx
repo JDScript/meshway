@@ -7,11 +7,16 @@ import { useQuery } from "@tanstack/react-query"
 import { useMemo, useState } from "react"
 
 import { CloseButton } from "@/components/chrome/close-button"
-import { CopyButton } from "@/components/chrome/copy-button"
-import { FormSection, SwitchRow, TextField } from "@/components/chrome/form"
-import { GlassDialog, SecretField } from "@/components/chrome/glass-dialog"
+import { SwitchRow, TextField } from "@/components/chrome/form"
+import {
+  CopyField,
+  GlassDialog,
+  SecretField,
+} from "@/components/chrome/glass-dialog"
+import { Section } from "@/components/chrome/section"
 import { SegmentedControl } from "@/components/chrome/segmented-control"
 import { SurfaceHeader } from "@/components/chrome/surface-header"
+import { Tile } from "@/components/chrome/tile"
 import { Button } from "@/components/ui/button"
 import { Spinner } from "@/components/ui/spinner"
 import { connectionsQuery } from "@/features/network/queries"
@@ -51,7 +56,44 @@ const MAX_NAME = 128
 const SAFE = /^[A-Za-z0-9_\-.,:/=@%+]+$/
 const quote = (arg: string) =>
   SAFE.test(arg) ? arg : `'${arg.replaceAll("'", `'\\''`)}'`
-const command = (args: string[]) => args.map(quote).join(" ")
+const command = (args: readonly string[]) => args.map(quote).join(" ")
+
+/**
+ * A command as it is shown: it breaks at its spaces and after a flag's
+ * `=`, never inside a word, except within the secret, which may break
+ * anywhere (it is one long word).
+ */
+function CommandText({
+  args,
+  secret,
+}: {
+  args: readonly string[]
+  secret?: string
+}) {
+  return args.map((arg, index) => {
+    const shown = quote(arg)
+    const at = shown.indexOf("=")
+    const [head, tail] =
+      at === -1 ? ["", shown] : [shown.slice(0, at + 1), shown.slice(at + 1)]
+    const cut = secret ? tail.indexOf(secret) : -1
+    return (
+      <span key={index}>
+        {index > 0 ? " " : null}
+        {head}
+        {head ? <wbr /> : null}
+        {cut === -1 || !secret ? (
+          tail
+        ) : (
+          <>
+            {tail.slice(0, cut)}
+            <span className="break-all">{secret}</span>
+            {tail.slice(cut + secret.length)}
+          </>
+        )}
+      </span>
+    )
+  })
+}
 
 type Request = {
   expiry: Expiry
@@ -151,7 +193,7 @@ export function AddNode({
         }}
       >
         <div className="min-h-0 flex-1 overflow-y-auto px-6 pt-1 pb-6">
-          <div className="flex max-w-2xl flex-col gap-8">
+          <div className="flex max-w-workspace flex-col gap-8">
             <div className="grid gap-4 sm:grid-cols-[1fr_auto]">
               <TextField
                 id="add-node-name"
@@ -182,7 +224,7 @@ export function AddNode({
               </div>
             </div>
 
-            <FormSection title={m.nodes_add_listener_section()}>
+            <Section title={m.nodes_add_listener_section()}>
               <SwitchRow
                 id="add-node-listener"
                 label={m.nodes_add_listener()}
@@ -191,7 +233,7 @@ export function AddNode({
                 onCheckedChange={setWithListener}
               />
               {withListener ? (
-                <div className="swap-in rounded-surface bg-fill-subtle p-4">
+                <div className="swap-in rounded-tile bg-fill-subtle p-3.5">
                   <ListenerForm
                     idPrefix="add-listener"
                     fields={fields}
@@ -209,7 +251,7 @@ export function AddNode({
                   />
                 </div>
               ) : null}
-            </FormSection>
+            </Section>
           </div>
         </div>
         {canManage ? (
@@ -236,6 +278,14 @@ export function AddNode({
           if (!open) secret.clear()
         }}
         title={m.nodes_add_token_title()}
+        footer={
+          <Button
+            className="h-9 rounded-full px-4"
+            onClick={() => secret.clear()}
+          >
+            {m.dialog_done()}
+          </Button>
+        }
       >
         {secret.result && sent ? (
           <TokenResult
@@ -262,7 +312,7 @@ function TokenResult({
   request: Request
 }) {
   const agent = ["cargo", "run", "--locked", "-p", "meshway-agent"]
-  const enroll = command([
+  const enroll = [
     ...agent,
     "--",
     "enroll",
@@ -270,9 +320,9 @@ function TokenResult({
     `--token=${token}`,
     `--name=${request.name}`,
     `--state=${STATE_PATH}`,
-  ])
+  ]
   const run = request.listener
-    ? command([
+    ? [
         ...agent,
         "--features",
         "managed-connections",
@@ -280,44 +330,45 @@ function TokenResult({
         "run",
         `--state=${STATE_PATH}`,
         "--apply-connections",
-      ])
-    : command([...agent, "--", "run", `--state=${STATE_PATH}`])
+      ]
+    : [...agent, "--", "run", `--state=${STATE_PATH}`]
   const listener = request.listener
   return (
     <>
-      <SecretField label={m.nodes_add_token()} value={token} />
-      <dl className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-1 text-meta">
-        <dt className="text-muted-foreground">{m.nodes_add_expires()}</dt>
-        <dd>{dateTime(expiresAt) ?? expiresAt}</dd>
-        <dt className="text-muted-foreground">{m.nodes_add_token_id()}</dt>
-        <dd className="truncate font-mono">{tokenId}</dd>
-        <dt className="text-muted-foreground">{m.nodes_add_listener()}</dt>
-        <dd className="truncate">
-          {listener ? (
-            <>
-              <span className="font-mono">{listener.id}</span> ·{" "}
-              {presetLabel[presetOf(listener)]()} ·{" "}
-              <span className="font-mono">
-                {endpointText(listener.bind_address, listener.bind_port)}
-              </span>
-            </>
-          ) : (
-            m.nodes_add_listener_none()
-          )}
-        </dd>
-      </dl>
-      <SecretField label={m.nodes_add_enroll_command()} value={enroll} />
-      <div className="flex flex-col gap-1.5">
-        <span className="text-meta text-muted-foreground">
-          {m.nodes_add_run_command()}
-        </span>
-        <div className="flex min-w-0 items-center gap-1 rounded-tile bg-fill-subtle py-2 pr-2 pl-3.5">
-          <code className="min-w-0 flex-1 font-mono text-row break-all select-all">
-            {run}
-          </code>
-          <CopyButton value={run} label={m.nodes_add_run_command()} />
+      <div className="grid grid-cols-2 gap-2">
+        <Tile label={m.nodes_add_expires()}>
+          {dateTime(expiresAt) ?? expiresAt}
+        </Tile>
+        <Tile label={m.nodes_add_token_id()}>
+          <span className="font-mono font-normal">{tokenId}</span>
+        </Tile>
+        <div className="col-span-2">
+          <Tile label={m.nodes_add_listener()}>
+            {listener ? (
+              <>
+                <span className="font-mono">{listener.id}</span> ·{" "}
+                {presetLabel[presetOf(listener)]()} ·{" "}
+                <span className="font-mono">
+                  {endpointText(listener.bind_address, listener.bind_port)}
+                </span>
+              </>
+            ) : (
+              m.nodes_add_listener_none()
+            )}
+          </Tile>
         </div>
       </div>
+      <SecretField label={m.nodes_add_token()} value={token} />
+      <CopyField
+        label={m.nodes_add_enroll_command()}
+        value={command(enroll)}
+        once
+      >
+        <CommandText args={enroll} secret={token} />
+      </CopyField>
+      <CopyField label={m.nodes_add_run_command()} value={command(run)}>
+        <CommandText args={run} />
+      </CopyField>
     </>
   )
 }

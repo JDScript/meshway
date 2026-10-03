@@ -3,7 +3,12 @@ import type {
   NodeSummary,
 } from "@meshway/control-client"
 
+import { cn } from "@/lib/utils"
+
 import { CopyButton } from "@/components/chrome/copy-button"
+import { RefList, RefRow, RefStateHeading } from "@/components/chrome/ref-row"
+import { EmptyLine, Section } from "@/components/chrome/section"
+import { StatusDot } from "@/components/chrome/status-dot"
 import { Tile } from "@/components/chrome/tile"
 import {
   Tooltip,
@@ -24,6 +29,7 @@ import {
   claimRttMs,
   nodeAdjacencies,
   otherEnd,
+  type Channel,
   type TopologyObservation,
 } from "@/features/topology/topology"
 import { relativeTime } from "@/lib/format"
@@ -41,11 +47,27 @@ export type NodeContext = {
   now: number
 }
 
-export function VitalityLine({ vitality }: { vitality: Vitality }) {
+/** A node's state on one line: its vitality, or that it is revoked (the dot's slot kept). */
+export function VitalityLine({
+  vitality,
+  revoked = false,
+}: {
+  vitality: Vitality
+  revoked?: boolean
+}) {
   return (
-    <span className="flex items-center gap-2 text-xs text-muted-foreground">
-      <VitalityDot vitality={vitality} />
-      {vitalityLabel[vitality]()}
+    <span
+      className={cn(
+        "flex h-4 items-center gap-2 text-meta",
+        revoked ? "text-warning" : "text-muted-foreground"
+      )}
+    >
+      {revoked ? (
+        <StatusDot color="var(--warning)" shape="hollow" />
+      ) : (
+        <VitalityDot vitality={vitality} />
+      )}
+      {revoked ? m.node_revoked() : vitalityLabel[vitality]()}
     </span>
   )
 }
@@ -115,7 +137,70 @@ export function NodeStatusTiles({
   )
 }
 
-/** The node's configured channels with their evidence; a row opens the other end. */
+/** A node's name, or the head of its ID for one the inventory does not hold. */
+export const nodeName = (context: NodeContext, nodeId: string) =>
+  context.nodes.get(nodeId)?.name ?? nodeId.slice(0, 12)
+
+/** A channel's RTT as each end measured it, seen from `nodeId`; null when neither has. */
+export function channelRtt(
+  channel: Channel | undefined,
+  nodeId: string
+): { own: string | null; theirs: string | null } | null {
+  if (!channel) return null
+  const mine = channel.dialerNodeId === nodeId
+  const own = rttText(claimRttMs(mine ? channel.dialer : channel.acceptor))
+  const theirs = rttText(claimRttMs(mine ? channel.acceptor : channel.dialer))
+  return own || theirs ? { own, theirs } : null
+}
+
+/** "12 ms · 14 ms": this end's measurement, then the other's. */
+export function RttPair({
+  rtt,
+}: {
+  rtt: { own: string | null; theirs: string | null } | null
+}) {
+  if (!rtt) return null
+  return (
+    <Tooltip>
+      <TooltipTrigger
+        render={
+          <span className="font-mono tabular-nums">
+            {m.node_rtt_pair({
+              own: rtt.own ?? "—",
+              theirs: rtt.theirs ?? "—",
+            })}
+          </span>
+        }
+      />
+      <TooltipContent>{m.node_rtt_hint()}</TooltipContent>
+    </Tooltip>
+  )
+}
+
+/** A node named from another's workspace (a tag's nodes, a member's devices); the row opens it. */
+export function NodeRef({
+  nodeId,
+  context,
+  onOpen,
+}: {
+  nodeId: string
+  context: NodeContext
+  onOpen: (nodeId: string) => void
+}) {
+  const node = context.nodes.get(nodeId)
+  const vitality = node ? nodeVitality(node, context) : null
+  return (
+    <RefRow
+      lead={vitality ? <VitalityDot vitality={vitality} /> : null}
+      title={nodeName(context, nodeId)}
+      detail={node?.mesh_ipv4 ?? ""}
+      state={vitality ? vitalityLabel[vitality]() : null}
+      onOpen={() => onOpen(nodeId)}
+    />
+  )
+}
+
+/** The node's configured channels with their evidence; a row peeks at the other end. */
 export function NodeLinks({
   node,
   context,
@@ -129,81 +214,42 @@ export function NodeLinks({
     ? nodeAdjacencies(context.observation, node.id)
     : []
   return (
-    <section className="-mx-2.5">
-      <div className="flex items-baseline justify-between px-2.5">
-        <h3 className="text-xs text-muted-foreground">{m.node_links()}</h3>
-        <span className="text-meta text-muted-foreground tabular-nums">
-          {adjacencies.length > 0 ? m.node_rtt_heading() : null}
-        </span>
-      </div>
+    <Section
+      title={m.node_links()}
+      count={adjacencies.length}
+      action={
+        adjacencies.length > 0 ? (
+          <RefStateHeading withEnd={false}>
+            {m.node_rtt_heading()}
+          </RefStateHeading>
+        ) : null
+      }
+    >
       {adjacencies.length === 0 ? (
-        <p className="px-2.5 pt-2 text-row text-muted-foreground">
-          {m.node_links_none()}
-        </p>
+        <EmptyLine>{m.node_links_none()}</EmptyLine>
       ) : (
-        <ul className="mt-1 flex flex-col">
+        <RefList>
           {adjacencies.map((adjacency) => {
             const peerId = otherEnd(adjacency, node.id)
             const look = lookOf(adjacency.status)
             const channel = adjacency.channels[0]
-            const own = channel
-              ? rttText(
-                  claimRttMs(
-                    channel.dialerNodeId === node.id
-                      ? channel.dialer
-                      : channel.acceptor
-                  )
-                )
-              : null
-            const theirs = channel
-              ? rttText(
-                  claimRttMs(
-                    channel.dialerNodeId === node.id
-                      ? channel.acceptor
-                      : channel.dialer
-                  )
-                )
-              : null
             return (
-              <li key={adjacency.key}>
-                <button
-                  type="button"
-                  onClick={() => onOpenPeer(peerId)}
-                  className="list-row gap-3 px-2.5 py-2.5"
-                >
-                  <LookDot look={look} />
-                  <span className="min-w-0 flex-1">
-                    <span className="block truncate text-row">
-                      {context.nodes.get(peerId)?.name ?? peerId.slice(0, 12)}
-                    </span>
-                    <span className="block text-meta text-muted-foreground">
-                      {channel
-                        ? `${transportLabel[channel.transport]()} · `
-                        : null}
-                      {lookLabel[look]()}
-                    </span>
-                  </span>
-                  {own || theirs ? (
-                    <Tooltip>
-                      <TooltipTrigger
-                        render={
-                          <span className="shrink-0 font-mono text-xs text-muted-foreground tabular-nums">
-                            {m.node_rtt_pair({
-                              own: own ?? "—",
-                              theirs: theirs ?? "—",
-                            })}
-                          </span>
-                        }
-                      />
-                      <TooltipContent>{m.node_rtt_hint()}</TooltipContent>
-                    </Tooltip>
-                  ) : null}
-                </button>
-              </li>
+              <RefRow
+                key={adjacency.key}
+                lead={<LookDot look={look} />}
+                title={nodeName(context, peerId)}
+                subtitle={
+                  channel
+                    ? `${transportLabel[channel.transport]()} · ${lookLabel[look]()}`
+                    : lookLabel[look]()
+                }
+                state={<RttPair rtt={channelRtt(channel, node.id)} />}
+                onSelect={() => onOpenPeer(peerId)}
+              />
             )
           })}
-        </ul>
+        </RefList>
       )}
-    </section>
+    </Section>
   )
 }

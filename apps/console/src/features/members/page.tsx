@@ -34,7 +34,7 @@ export function MembersPage({ networkId }: { networkId: string }) {
   })
   const invitations = useQuery({
     ...invitationsQuery(networkId),
-    enabled: route.current && manages && route.view === "invitations",
+    enabled: route.current && manages,
   })
   const ownership = useQuery({
     ...ownershipQuery(networkId),

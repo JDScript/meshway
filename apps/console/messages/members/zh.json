@@ -35,10 +35,8 @@
   "members_last_owner": "网络的最后一位所有者不能降级或移除",
   "members_not_found": "成员不存在",
   "members_devices": "设备",
-  "members_devices_count": "设备 {count}",
   "members_devices_empty": "没有设备",
   "members_devices_failed": "无法读取设备归属",
-  "members_unassigned_count": "未归属设备 {count}",
   "members_claim": "分配",
   "members_claim_title": "分配设备",
   "members_claim_body": "{node} 将归属 {email}",
@@ -52,5 +50,10 @@
   "members_leave_devices": "你在本网络的设备将被撤销",
   "members_leave_invitations": "你发出的未使用邀请将失效",
   "members_left": "已退出网络",
-  "members_invite_title": "邀请成员"
+  "members_invite_title": "邀请成员",
+  "members_unassigned": "未归属设备",
+  "members_removal": "移除",
+  "members_leaving": "退出",
+  "members_devices_fact": "本网络中的设备 {count}",
+  "members_claim_node": "将 {node} 分配给此成员"
 }

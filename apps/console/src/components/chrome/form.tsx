@@ -1,5 +1,5 @@
 import { cn } from "@/lib/utils"
-import type { ComponentProps, ReactNode } from "react"
+import type { ComponentProps } from "react"
 
 import { Field, FieldLabel } from "@/components/ui/field"
 import { Input } from "@/components/ui/input"
@@ -10,25 +10,7 @@ import { Switch } from "@/components/ui/switch"
 // ring), never by text that would push the layout: the commit bar or a
 // toast says what is wrong.
 
-/** A titled group of fields in a workspace. */
-export function FormSection({
-  title,
-  children,
-  className,
-}: {
-  title: string
-  children: ReactNode
-  className?: string
-}) {
-  return (
-    <section className={cn("flex flex-col gap-3", className)}>
-      <h3 className="text-row font-medium text-muted-foreground">{title}</h3>
-      {children}
-    </section>
-  )
-}
-
-const SIZE = {
+export const FIELD_SIZE = {
   /** In a workspace or a dialog. */
   default: {
     control: "h-10 md:text-row",
@@ -37,6 +19,8 @@ const SIZE = {
   /** On an entry card (sign-in, invitation, setup). */
   lg: { control: "h-11", label: "" },
 } as const
+
+export type FieldSize = keyof typeof FIELD_SIZE
 
 /**
  * The text control on glass: the same fill and corners everywhere. Every
@@ -47,7 +31,7 @@ export function FieldInput({
   className,
   size = "default",
   ...props
-}: { placeholder: string; size?: keyof typeof SIZE } & Omit<
+}: { placeholder: string; size?: FieldSize } & Omit<
   ComponentProps<typeof Input>,
   "placeholder" | "size"
 >) {
@@ -55,7 +39,7 @@ export function FieldInput({
     <Input
       className={cn(
         "rounded-tile border-transparent bg-field px-3.5",
-        SIZE[size].control,
+        FIELD_SIZE[size].control,
         className
       )}
       {...props}
@@ -75,11 +59,11 @@ export function TextField({
   label: string
   invalid?: boolean
   placeholder: string
-  size?: keyof typeof SIZE
+  size?: FieldSize
 } & Omit<ComponentProps<typeof Input>, "id" | "placeholder" | "size">) {
   return (
     <Field data-invalid={invalid || undefined}>
-      <FieldLabel htmlFor={id} className={SIZE[size].label}>
+      <FieldLabel htmlFor={id} className={FIELD_SIZE[size].label}>
         {label}
       </FieldLabel>
       <FieldInput
@@ -114,6 +98,7 @@ export function SwitchRow({
       {label}
       <Switch
         id={id}
+        className="data-unchecked:bg-foreground/20"
         checked={checked}
         disabled={disabled}
         onCheckedChange={(next) => onCheckedChange(next)}

@@ -1,5 +1,4 @@
 import type { NodeSummary } from "@meshway/control-client"
-import { ArrowUpRightIcon } from "lucide-react"
 import { useMemo } from "react"
 import {
   CartesianGrid,
@@ -10,23 +9,20 @@ import {
   YAxis,
 } from "recharts"
 
+import { RefList, RefRow, RefStateHeading } from "@/components/chrome/ref-row"
+import { EmptyLine, Section } from "@/components/chrome/section"
 import { SegmentedControl } from "@/components/chrome/segmented-control"
 import { Tile } from "@/components/chrome/tile"
-import { Button } from "@/components/ui/button"
 import {
   ChartContainer,
   ChartTooltip,
   type ChartConfig,
 } from "@/components/ui/chart"
 import { Skeleton } from "@/components/ui/skeleton"
-import { lookLabel, rttText } from "@/features/overview/labels"
+import { lookLabel } from "@/features/overview/labels"
 import { lookOf } from "@/features/overview/model"
 import { LookDot } from "@/features/overview/status-dots"
-import {
-  claimRttMs,
-  nodeAdjacencies,
-  otherEnd,
-} from "@/features/topology/topology"
+import { nodeAdjacencies, otherEnd } from "@/features/topology/topology"
 import { clockTime, dateTime } from "@/lib/format"
 import { m } from "@/paraglide/messages.js"
 
@@ -38,8 +34,7 @@ import {
   type ChartPoint,
   type History,
 } from "./latency-model"
-import type { NodeContext } from "./node-facts"
-import { EmptyLine, TabSection } from "./sections"
+import { channelRtt, nodeName, RttPair, type NodeContext } from "./node-facts"
 import {
   LATENCY_SPANS,
   type LatencySpan,
@@ -47,9 +42,6 @@ import {
   type NodeDetail,
 } from "./url"
 import { useLatencyHistory } from "./use-latency-history"
-
-const shortName = (context: NodeContext, nodeId: string) =>
-  context.nodes.get(nodeId)?.name ?? nodeId.slice(0, 12)
 
 /**
  * The node's channels with their current evidence; one of them (the one in
@@ -81,91 +73,48 @@ export function NodeLinksTab({
 
   return (
     <div className="flex flex-col gap-8">
-      <TabSection
+      <Section
         title={m.node_links()}
-        count={adjacencies ? String(adjacencies.length) : null}
+        count={adjacencies ? adjacencies.length : null}
         action={
           adjacencies && adjacencies.length > 0 ? (
-            <span className="text-meta text-muted-foreground">
-              {m.node_rtt_heading()}
-            </span>
+            <RefStateHeading>{m.node_rtt_heading()}</RefStateHeading>
           ) : null
         }
       >
         {adjacencies === null ? (
-          <Skeleton className="h-14 w-full rounded-tile" />
+          <Skeleton className="h-12 w-full rounded-tile" />
         ) : adjacencies.length === 0 ? (
           <EmptyLine>{m.node_links_none()}</EmptyLine>
         ) : (
-          <ul className="flex flex-col">
+          <RefList>
             {adjacencies.map((adjacency) => {
               const peerId = otherEnd(adjacency, node.id)
               const look = lookOf(adjacency.status)
               const channel = adjacency.channels[0]
-              const own = channel
-                ? rttText(
-                    claimRttMs(
-                      channel.dialerNodeId === node.id
-                        ? channel.dialer
-                        : channel.acceptor
-                    )
-                  )
-                : null
-              const theirs = channel
-                ? rttText(
-                    claimRttMs(
-                      channel.dialerNodeId === node.id
-                        ? channel.acceptor
-                        : channel.dialer
-                    )
-                  )
-                : null
               return (
-                <li key={adjacency.key} className="flex items-center gap-1">
-                  <button
-                    type="button"
-                    aria-current={peerId === selected ? "true" : undefined}
-                    onClick={() => onDetail({ ...detail, link: peerId })}
-                    className="list-row min-w-0 flex-1 gap-3 px-3 py-2.5"
-                  >
-                    <LookDot look={look} />
-                    <span className="min-w-0 flex-1">
-                      <span className="block truncate text-row">
-                        {shortName(context, peerId)}
-                      </span>
-                      <span className="block text-meta text-muted-foreground">
-                        {channel
-                          ? `${transportLabel[channel.transport]()} · `
-                          : null}
-                        {lookLabel[look]()}
-                      </span>
-                    </span>
-                    <span className="shrink-0 font-mono text-xs text-muted-foreground tabular-nums">
-                      {own || theirs
-                        ? m.node_rtt_pair({
-                            own: own ?? "—",
-                            theirs: theirs ?? "—",
-                          })
-                        : null}
-                    </span>
-                  </button>
-                  <Button
-                    variant="ghost"
-                    size="icon-sm"
-                    className="rounded-full"
-                    aria-label={m.node_open_peer({
-                      name: shortName(context, peerId),
-                    })}
-                    onClick={() => onOpenNode(peerId)}
-                  >
-                    <ArrowUpRightIcon />
-                  </Button>
-                </li>
+                <RefRow
+                  key={adjacency.key}
+                  lead={<LookDot look={look} />}
+                  title={nodeName(context, peerId)}
+                  subtitle={
+                    channel
+                      ? `${transportLabel[channel.transport]()} · ${lookLabel[look]()}`
+                      : lookLabel[look]()
+                  }
+                  state={<RttPair rtt={channelRtt(channel, node.id)} />}
+                  current={peerId === selected}
+                  onSelect={() => onDetail({ ...detail, link: peerId })}
+                  onOpen={() => onOpenNode(peerId)}
+                  openLabel={m.node_open_peer({
+                    name: nodeName(context, peerId),
+                  })}
+                />
               )
             })}
-          </ul>
+          </RefList>
         )}
-      </TabSection>
+      </Section>
 
       {selected ? (
         <LinkHistory
@@ -233,7 +182,7 @@ function LinkHistory({
     state.coverage.trimmedBefore > state.range.from
 
   return (
-    <TabSection
+    <Section
       title={m.node_latency_history()}
       action={
         <SegmentedControl<LatencySpan>
@@ -255,18 +204,18 @@ function LinkHistory({
             options={[
               {
                 value: "out",
-                label: `${shortName(context, node.id)} → ${shortName(context, peer)}`,
+                label: `${nodeName(context, node.id)} → ${nodeName(context, peer)}`,
               },
               {
                 value: "in",
-                label: `${shortName(context, peer)} → ${shortName(context, node.id)}`,
+                label: `${nodeName(context, peer)} → ${nodeName(context, node.id)}`,
               },
             ]}
             onChange={onDir}
           />
           <span className="flex-1" />
           <span className="text-meta text-muted-foreground">
-            {m.node_latency_source({ node: shortName(context, source) })}
+            {m.node_latency_source({ node: nodeName(context, source) })}
           </span>
         </div>
 
@@ -345,7 +294,7 @@ function LinkHistory({
           ) : null}
         </div>
       </div>
-    </TabSection>
+    </Section>
   )
 }
 
@@ -496,7 +445,7 @@ function PointTip({
           {transportLabel[point.carrier.transport]()} ·{" "}
           <span className="font-mono">{point.carrier.listenerId}</span> ·{" "}
           {m.node_latency_initiator({
-            node: shortName(context, point.carrier.initiatorNodeId),
+            node: nodeName(context, point.carrier.initiatorNodeId),
           })}
         </div>
       ) : null}

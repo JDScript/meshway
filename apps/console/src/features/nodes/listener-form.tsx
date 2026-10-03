@@ -2,11 +2,12 @@ import { cn } from "@/lib/utils"
 import { PlusIcon, XIcon } from "lucide-react"
 
 import {
+  FIELD_SIZE,
   FieldInput,
-  FormSection,
   SwitchRow,
   TextField,
 } from "@/components/chrome/form"
+import { EmptyLine, Section } from "@/components/chrome/section"
 import { SegmentedControl } from "@/components/chrome/segmented-control"
 import { Button } from "@/components/ui/button"
 import { m } from "@/paraglide/messages.js"
@@ -21,14 +22,18 @@ import {
   type Preset,
 } from "./listener-model"
 
-/**
- * A label for a control that is not a text field, merged the way the form's
- * own field labels are, so both always look alike.
- */
+/** A label for a control that is not a text field, looking as the form's own field labels do. */
 export const fieldLabelClass = cn(
-  "text-sm leading-snug font-medium",
-  "text-meta text-muted-foreground"
+  "leading-snug font-medium",
+  FIELD_SIZE.default.label
 )
+
+/**
+ * The columns a listener's facts and fields share, so tiles above the form
+ * and every field line up: two on narrow screens, four on wide ones (a
+ * field takes two, a port one).
+ */
+export const LISTENER_GRID = "grid grid-cols-2 gap-x-2 xl:grid-cols-4"
 
 export const presetLabel: Record<Preset, () => string> = {
   native_udp: () => m.node_preset_native_udp(),
@@ -90,32 +95,34 @@ export function ListenerForm({
 
   return (
     <div className="flex flex-col gap-6">
-      <div className="grid gap-4 sm:grid-cols-[minmax(0,14rem)_1fr]">
+      <div className={cn(LISTENER_GRID, "gap-y-4")}>
         {creating === null ? (
-          <div className="flex min-w-0 flex-col gap-2">
+          <div className="col-span-2 flex min-w-0 flex-col gap-2">
             <span className={fieldLabelClass}>{m.node_listener_id()}</span>
-            <span className="flex h-10 items-center truncate rounded-tile bg-fill-subtle px-3.5 font-mono text-sm">
+            <span className="flex h-10 items-center truncate rounded-tile bg-fill-subtle px-3.5 font-mono text-row">
               {fields.id}
             </span>
           </div>
         ) : (
-          <TextField
-            id={field("id")}
-            placeholder={m.node_listener_id_placeholder()}
-            name="listener-id"
-            label={m.node_listener_id()}
-            autoComplete="off"
-            autoCapitalize="none"
-            spellCheck={false}
-            maxLength={MAX_ID}
-            className="font-mono"
-            value={fields.id}
-            invalid={invalid.has("id")}
-            disabled={disabled}
-            onChange={(event) => set("id", event.target.value)}
-          />
+          <div className="col-span-2">
+            <TextField
+              id={field("id")}
+              placeholder={m.node_listener_id_placeholder()}
+              name="listener-id"
+              label={m.node_listener_id()}
+              autoComplete="off"
+              autoCapitalize="none"
+              spellCheck={false}
+              maxLength={MAX_ID}
+              className="font-mono"
+              value={fields.id}
+              invalid={invalid.has("id")}
+              disabled={disabled}
+              onChange={(event) => set("id", event.target.value)}
+            />
+          </div>
         )}
-        <div className="flex min-w-0 flex-col gap-2">
+        <div className="col-span-2 flex min-w-0 flex-col gap-2">
           <span className={fieldLabelClass}>{m.node_listener_transport()}</span>
           {presets.length > 1 && !disabled ? (
             <SegmentedControl<Preset>
@@ -148,22 +155,24 @@ export function ListenerForm({
         />
       ) : null}
 
-      <FormSection title={m.node_listener_bind()}>
-        <div className="grid grid-cols-[1fr_7rem] gap-3">
-          <TextField
-            id={field("bind-address")}
-            placeholder={m.node_listener_bind_address_placeholder()}
-            name="bind-address"
-            label={m.node_listener_bind_address()}
-            autoComplete="off"
-            autoCapitalize="none"
-            spellCheck={false}
-            className="font-mono"
-            value={fields.bindAddress}
-            invalid={invalid.has("bind_address")}
-            disabled={disabled}
-            onChange={(event) => set("bindAddress", event.target.value)}
-          />
+      <Section title={m.node_listener_bind()}>
+        <div className={LISTENER_GRID}>
+          <div className="col-span-2">
+            <TextField
+              id={field("bind-address")}
+              placeholder={m.node_listener_bind_address_placeholder()}
+              name="bind-address"
+              label={m.node_listener_bind_address()}
+              autoComplete="off"
+              autoCapitalize="none"
+              spellCheck={false}
+              className="font-mono"
+              value={fields.bindAddress}
+              invalid={invalid.has("bind_address")}
+              disabled={disabled}
+              onChange={(event) => set("bindAddress", event.target.value)}
+            />
+          </div>
           <TextField
             id={field("bind-port")}
             placeholder={m.node_listener_port_placeholder()}
@@ -179,21 +188,19 @@ export function ListenerForm({
             onChange={(event) => set("bindPort", event.target.value.trim())}
           />
         </div>
-      </FormSection>
+      </Section>
 
-      <FormSection title={m.node_listener_advertised()}>
+      <Section title={m.node_listener_advertised()}>
         <div className="flex flex-col gap-2">
           {fields.endpoints.length === 0 ? (
-            <div className="flex h-10 items-center rounded-tile bg-fill-subtle px-3.5 text-row text-muted-foreground">
+            <EmptyLine size="sm" dashed>
               {m.node_listener_advertised_none()}
-            </div>
+            </EmptyLine>
           ) : (
             fields.endpoints.map((endpoint, index) => (
-              <div
-                key={index}
-                className="grid grid-cols-[1fr_7rem_auto] items-center gap-3"
-              >
+              <div key={index} className={cn(LISTENER_GRID, "items-center")}>
                 <FieldInput
+                  className="col-span-2 font-mono"
                   name={`endpoint-host-${index}`}
                   aria-label={m.node_listener_endpoint_host({
                     n: String(index + 1),
@@ -203,7 +210,6 @@ export function ListenerForm({
                   spellCheck={false}
                   maxLength={253}
                   placeholder={m.node_listener_endpoint_host_placeholder()}
-                  className="font-mono"
                   value={endpoint.host}
                   aria-invalid={
                     invalid.has(`endpoint.${index}.host`) || undefined
@@ -246,9 +252,7 @@ export function ListenerForm({
                     )
                   }
                 />
-                {disabled ? (
-                  <span className="size-8" />
-                ) : (
+                {disabled ? null : (
                   <Button
                     type="button"
                     variant="ghost"
@@ -286,13 +290,11 @@ export function ListenerForm({
             </Button>
           )}
         </div>
-      </FormSection>
+      </Section>
 
       {vless ? (
-        <FormSection
-          title={ws ? m.node_listener_tls_ws() : m.node_listener_tls()}
-        >
-          <div className="grid gap-4 sm:grid-cols-2">
+        <Section title={ws ? m.node_listener_tls_ws() : m.node_listener_tls()}>
+          <div className={cn(LISTENER_GRID, "gap-y-4 [&>*]:col-span-2")}>
             <TextField
               id={field("server-name")}
               placeholder={m.node_listener_server_name_placeholder()}
@@ -343,7 +345,7 @@ export function ListenerForm({
               </>
             ) : null}
           </div>
-        </FormSection>
+        </Section>
       ) : null}
     </div>
   )

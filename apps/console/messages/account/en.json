@@ -5,11 +5,9 @@
   "account_email_verified": "Email verified",
   "account_email_unverified": "Email not verified",
   "account_networks": "Networks",
-  "account_networks_count": "Networks {count}",
   "account_sign_ins": "Sign-ins",
   "account_session_expires": "This sign-in expires",
   "account_revoke_all": "Sign out everywhere",
-  "account_revoke_all_body": "Every browser sign-in of this account ends, this one included",
   "account_password": "Change password",
   "account_password_current": "Current password",
   "account_password_new": "New password",
@@ -18,5 +16,7 @@
   "account_password_missing": "Current password required",
   "account_password_wrong": "Current password is incorrect",
   "account_password_changed": "Password changed; other sign-ins ended",
-  "account_password_changed_sign_in": "Password changed; every sign-in ended"
+  "account_password_changed_sign_in": "Password changed; every sign-in ended",
+  "account_sessions_fact": "Sign-ins in every browser",
+  "account_revoke_all_effect": "Every browser sign-in of this account ends, this one included"
 }

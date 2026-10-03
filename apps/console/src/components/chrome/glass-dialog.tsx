@@ -122,7 +122,13 @@ export function GlassDialog({
   )
 }
 
-/** Asks before something that cannot be undone; `children` states what it does. */
+/**
+ * Asks before something that cannot be undone; `effects` state what it
+ * does, one fact each, as a list (`children` is the older free-form body,
+ * kept for callers not yet moved). `destructive` (the default) for what
+ * takes something away; `default` for a change that only cannot be
+ * reversed here.
+ */
 export function ConfirmDialog({
   open,
   onOpenChange,
@@ -130,7 +136,9 @@ export function ConfirmDialog({
   confirmLabel,
   pending,
   onConfirm,
+  effects,
   children,
+  tone = "destructive",
 }: {
   open: boolean
   onOpenChange: (open: boolean) => void
@@ -138,7 +146,9 @@ export function ConfirmDialog({
   confirmLabel: string
   pending: boolean
   onConfirm: () => void
-  children: ReactNode
+  effects?: readonly string[]
+  children?: ReactNode
+  tone?: "destructive" | "default"
 }) {
   return (
     <GlassDialog
@@ -157,7 +167,7 @@ export function ConfirmDialog({
             {m.dialog_cancel()}
           </Button>
           <Button
-            variant="destructive"
+            variant={tone}
             className="h-9 rounded-full px-4"
             disabled={pending}
             aria-busy={pending}
@@ -169,8 +179,55 @@ export function ConfirmDialog({
         </>
       }
     >
-      <div className="text-row text-muted-foreground">{children}</div>
+      {effects ? (
+        <ul className="flex list-disc flex-col gap-1 pl-4 text-row text-muted-foreground">
+          {effects.map((effect) => (
+            <li key={effect}>{effect}</li>
+          ))}
+        </ul>
+      ) : (
+        <div className="text-row text-muted-foreground">{children}</div>
+      )}
     </GlassDialog>
+  )
+}
+
+/**
+ * A value to copy (a command): selectable, with its copy button. `children`
+ * draws it when it should break other than anywhere (a command breaks at
+ * its spaces and flags).
+ */
+export function CopyField({
+  label,
+  value,
+  once = false,
+  children,
+}: {
+  label: string
+  value: string
+  /** Shown once: says so beside the label. */
+  once?: boolean
+  children?: ReactNode
+}) {
+  return (
+    <div className="flex flex-col gap-1.5">
+      <div className="flex items-baseline justify-between gap-3 text-meta text-muted-foreground">
+        <span>{label}</span>
+        {once ? <span>{m.secret_once()}</span> : null}
+      </div>
+      <div className="flex min-w-0 items-center gap-1 rounded-tile bg-fill-subtle py-2 pr-2 pl-3.5">
+        <code
+          className={
+            children === undefined
+              ? "min-w-0 flex-1 font-mono text-row break-all select-all"
+              : "min-w-0 flex-1 font-mono text-row break-words select-all"
+          }
+        >
+          {children ?? value}
+        </code>
+        <CopyButton value={value} label={label} />
+      </div>
+    </div>
   )
 }
 
@@ -185,18 +242,5 @@ export function SecretField({
   label: string
   value: string
 }) {
-  return (
-    <div className="flex flex-col gap-1.5">
-      <div className="flex items-baseline justify-between gap-3 text-meta text-muted-foreground">
-        <span>{label}</span>
-        <span>{m.secret_once()}</span>
-      </div>
-      <div className="flex min-w-0 items-center gap-1 rounded-tile bg-fill-subtle py-2 pr-2 pl-3.5">
-        <code className="min-w-0 flex-1 font-mono text-row break-all select-all">
-          {value}
-        </code>
-        <CopyButton value={value} label={label} />
-      </div>
-    </div>
-  )
+  return <CopyField label={label} value={value} once />
 }

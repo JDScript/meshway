@@ -1,7 +1,7 @@
 import { cn } from "@/lib/utils"
 import type { ReactNode } from "react"
 
-const TITLE = { md: "text-xl", lg: "text-2xl" } as const
+const TITLE = { md: "text-xl", lg: "text-display" } as const
 
 /**
  * The head of a peek or a workspace: the title and the close control share

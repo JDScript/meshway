@@ -1,6 +1,8 @@
 import type { NetworkSnapshot } from "@meshway/control-client"
-import { ChevronRightIcon } from "lucide-react"
+import { AtSignIcon, NetworkIcon, type LucideIcon } from "lucide-react"
 
+import { ListRow, PanelList } from "@/components/chrome/list"
+import { PanelHeader } from "@/components/chrome/panel-header"
 import { Skeleton } from "@/components/ui/skeleton"
 import { surfaceTitleId } from "@/features/shell/page-frame"
 import { m } from "@/paraglide/messages.js"
@@ -10,6 +12,11 @@ import { SETTINGS_SECTIONS, type SettingsSection } from "./url"
 export const sectionLabel: Record<SettingsSection, () => string> = {
   network: () => m.settings_section_network(),
   dns: () => m.settings_section_dns(),
+}
+
+const sectionIcon: Record<SettingsSection, LucideIcon> = {
+  network: NetworkIcon,
+  dns: AtSignIcon,
 }
 
 function summary(section: SettingsSection, network: NetworkSnapshot): string {
@@ -32,43 +39,31 @@ export function SettingsPanel({
 }) {
   return (
     <div className="flex h-full min-h-0 flex-col">
-      <header className="px-4 pt-4 pb-3">
-        <h2
-          id={surfaceTitleId("settings", "panel")}
-          className="text-base font-semibold tracking-tight"
-        >
-          {m.nav_settings()}
-        </h2>
-      </header>
-      <ul
-        aria-labelledby={surfaceTitleId("settings", "panel")}
-        className="min-h-0 flex-1 overflow-y-auto px-2 pb-2"
-      >
-        {SETTINGS_SECTIONS.map((section) => (
-          <li key={section}>
-            <button
-              type="button"
-              aria-current={section === openSection ? "true" : undefined}
+      <PanelHeader page="settings" title={m.nav_settings()} />
+      <PanelList aria-labelledby={surfaceTitleId("settings", "panel")}>
+        {SETTINGS_SECTIONS.map((section) => {
+          const Icon = sectionIcon[section]
+          return (
+            <ListRow
+              key={section}
+              rowId={section}
+              current={section === openSection}
               onClick={() => onOpen(section)}
-              className="list-row h-14 gap-3 px-3"
-            >
-              <span className="min-w-0 flex-1">
-                <span className="block truncate text-row font-medium">
-                  {sectionLabel[section]()}
-                </span>
-                {network ? (
-                  <span className="block truncate text-meta text-muted-foreground">
-                    {summary(section, network)}
-                  </span>
+              lead={<Icon className="size-4 text-muted-foreground" />}
+              title={
+                <span className="truncate">{sectionLabel[section]()}</span>
+              }
+              subtitle={
+                network ? (
+                  <span className="truncate">{summary(section, network)}</span>
                 ) : (
-                  <Skeleton className="mt-1.5 h-2.5 w-24 rounded-full" />
-                )}
-              </span>
-              <ChevronRightIcon className="size-4 shrink-0 text-muted-foreground" />
-            </button>
-          </li>
-        ))}
-      </ul>
+                  <Skeleton className="h-2.5 w-24 rounded-full" />
+                )
+              }
+            />
+          )
+        })}
+      </PanelList>
     </div>
   )
 }

@@ -8,8 +8,10 @@ import {
 } from "@meshway/control-client"
 import { useQuery, useQueryClient } from "@tanstack/react-query"
 import { ChevronDownIcon, PlusIcon } from "lucide-react"
+import { cn } from "@/lib/utils"
 import { useEffect, useMemo, useRef } from "react"
 
+import { EmptyLine, Section } from "@/components/chrome/section"
 import { StatusDot } from "@/components/chrome/status-dot"
 import { Tile } from "@/components/chrome/tile"
 import { Button } from "@/components/ui/button"
@@ -40,7 +42,12 @@ import {
   stunOutcomeLabel,
   transportLabel,
 } from "./labels"
-import { ListenerForm, listenerProblemText, presetLabel } from "./listener-form"
+import {
+  LISTENER_GRID,
+  ListenerForm,
+  listenerProblemText,
+  presetLabel,
+} from "./listener-form"
 import {
   certificateText,
   endpointText,
@@ -55,7 +62,6 @@ import {
 } from "./listener-model"
 import type { NodeContext } from "./node-facts"
 import { discoveriesQuery, managedListenersQuery } from "./queries"
-import { EmptyLine, TabSection } from "./sections"
 import { NEW_LISTENER } from "./url"
 
 /**
@@ -145,9 +151,9 @@ export function NodeTransport({
         </Tile>
       </div>
 
-      <TabSection
+      <Section
         title={m.node_listeners()}
-        count={listeners.data ? String(mine.length) : null}
+        count={listeners.data ? mine.length : null}
         action={
           manage && listeners.data ? (
             <Button
@@ -164,7 +170,7 @@ export function NodeTransport({
         }
       >
         {editing === NEW_LISTENER && listeners.data && manage ? (
-          <div className="rounded-surface bg-fill-subtle p-2">
+          <div className="rounded-tile bg-fill-subtle p-3.5">
             <ListenerEditor
               key={`${node.id}/${NEW_LISTENER}`}
               networkId={networkId}
@@ -182,7 +188,7 @@ export function NodeTransport({
           listeners.isError ? (
             <EmptyLine>{m.node_listeners_failed()}</EmptyLine>
           ) : (
-            <Skeleton className="h-16 w-full rounded-surface" />
+            <Skeleton className="h-16 w-full rounded-tile" />
           )
         ) : mine.length === 0 && editing !== NEW_LISTENER ? (
           <EmptyLine>{m.node_listeners_none()}</EmptyLine>
@@ -209,13 +215,13 @@ export function NodeTransport({
             ))}
           </ul>
         )}
-      </TabSection>
+      </Section>
 
-      <TabSection
+      <Section
         title={m.node_sockets()}
         count={
           discovery && reportUsable(discoveryStatus(discovery))
-            ? String(discovery.sockets.length)
+            ? discovery.sockets.length
             : undefined
         }
       >
@@ -228,7 +234,7 @@ export function NodeTransport({
           nodeId={node.id}
           discovery={discovery}
         />
-      </TabSection>
+      </Section>
     </div>
   )
 }
@@ -326,14 +332,16 @@ function ListenerItem({
 
   const endpoints = settings.advertised_endpoints
   return (
-    <li className="rounded-surface bg-fill-subtle p-2">
+    <li className="rounded-tile bg-fill-subtle">
       <button
         type="button"
         aria-expanded={open}
         onClick={onToggle}
-        className="list-row gap-3 px-3 py-2.5"
+        className="list-row gap-3 rounded-tile px-3.5 py-2.5"
       >
-        <StatusDot color={state.color} shape={state.lit ? "live" : "solid"} />
+        <span className="flex size-4 shrink-0 items-center justify-center">
+          <StatusDot color={state.color} shape={state.lit ? "live" : "solid"} />
+        </span>
         <span className="min-w-0 flex-1">
           <span className="flex items-baseline gap-2">
             <span className="truncate font-mono text-row font-medium">
@@ -369,8 +377,8 @@ function ListenerItem({
         />
       </button>
       {open ? (
-        <div className="swap-in flex flex-col gap-6 px-3 pt-3 pb-3">
-          <div className="grid grid-cols-2 gap-2 xl:grid-cols-4">
+        <div className="swap-in flex flex-col gap-6 px-3.5 pt-2 pb-3.5">
+          <div className={cn(LISTENER_GRID, "gap-y-2")}>
             <Tile label={m.node_listener_material()}>
               <span className="font-mono">
                 v{String(summary.material_version)}
@@ -519,7 +527,6 @@ function ListenerEditor({
 
   return (
     <form
-      className={creating ? "px-3 pt-3 pb-3" : undefined}
       onSubmit={(event) => {
         event.preventDefault()
         commit.submit()
@@ -561,7 +568,7 @@ function Sockets({
     return discoveryFailed ? (
       <EmptyLine>{m.node_discovery_failed()}</EmptyLine>
     ) : (
-      <Skeleton className="h-16 w-full rounded-surface" />
+      <Skeleton className="h-16 w-full rounded-tile" />
     )
   const status = discoveryStatus(discovery)
   const usable = reportUsable(status)
@@ -645,8 +652,8 @@ function SocketItem({
 }) {
   const dial = socket.resource_kind === "outgoing_candidate"
   return (
-    <li className="rounded-surface bg-fill-subtle p-2">
-      <div className="flex items-baseline gap-2 px-3 pt-2.5 pb-1">
+    <li className="flex flex-col gap-1 rounded-tile bg-fill-subtle px-3.5 py-2.5">
+      <div className="flex items-baseline gap-2">
         <span className="text-meta text-muted-foreground">
           {dial ? m.node_socket_dial() : m.node_socket_listener()}
         </span>
@@ -663,7 +670,7 @@ function SocketItem({
           {discoverySourceLabel[socket.source]()}
         </span>
       </div>
-      <div className="flex flex-wrap gap-x-4 px-3 pb-2 font-mono text-meta text-muted-foreground">
+      <div className="flex flex-wrap gap-x-4 font-mono text-meta text-muted-foreground">
         <span>
           {m.node_socket_bound()} {socket.bound_address}
         </span>
@@ -675,17 +682,20 @@ function SocketItem({
         </span>
       </div>
       {socket.observations.length === 0 ? (
-        <div className="flex h-10 items-center rounded-tile px-3 text-row text-muted-foreground">
-          {m.node_observations_none()}
+        <div className="pt-1.5">
+          <EmptyLine size="sm" dashed>
+            {m.node_observations_none()}
+          </EmptyLine>
         </div>
       ) : (
-        <ul className="flex flex-col">
+        // One grid for every observation (each row a subgrid), so the columns line up.
+        <ul className="mt-1 grid grid-cols-[minmax(0,1fr)_auto] gap-x-3 border-t border-divider sm:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_auto]">
           {socket.observations.map((observation) => {
             const state = observationState(observation, usable, now)
             return (
               <li
                 key={observation.observer}
-                className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-x-3 gap-y-0.5 rounded-tile px-3 py-2 sm:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_auto]"
+                className="col-span-full grid grid-cols-subgrid items-center gap-y-0.5 py-2"
               >
                 <span className="truncate font-mono text-row">
                   {state === "mapped" || state === "expired"

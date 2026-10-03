@@ -7,11 +7,13 @@ import {
   type TagSnapshot,
 } from "@meshway/control-client"
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
-import { CheckIcon, ChevronDownIcon } from "lucide-react"
+import { BanIcon, CheckIcon } from "lucide-react"
 import { useMemo, useState } from "react"
 import { toast } from "sonner"
 
+import { FieldOption, FieldSelect } from "@/components/chrome/field-select"
 import { ConfirmDialog } from "@/components/chrome/glass-dialog"
+import { DangerRow, EmptyLine, Section } from "@/components/chrome/section"
 import { Tile } from "@/components/chrome/tile"
 import { Button } from "@/components/ui/button"
 import { Skeleton } from "@/components/ui/skeleton"
@@ -31,7 +33,6 @@ import { dateTime } from "@/lib/format"
 import { m } from "@/paraglide/messages.js"
 
 import { useNodeTagsDraft } from "./drafts"
-import { EmptyLine, TabSection } from "./sections"
 import { discoveriesQuery, managedListenersQuery } from "./queries"
 
 const MAX_NODE_TAGS = 32
@@ -124,10 +125,7 @@ function NodeTags({
     )
 
   return (
-    <TabSection
-      title={m.node_tags()}
-      count={draft.value ? String(chosen.size) : null}
-    >
+    <Section title={m.node_tags()} count={draft.value ? chosen.size : null}>
       <form
         onSubmit={(event) => {
           event.preventDefault()
@@ -156,7 +154,7 @@ function NodeTags({
                   disabled={!canManage}
                   title={definition.description || undefined}
                   onClick={() => toggle(definition.tag)}
-                  className="inline-flex h-8 items-center gap-1.5 rounded-full border border-border px-3 font-mono text-xs transition-colors outline-none hover:bg-fill-hover focus-visible:ring-2 focus-visible:ring-ring disabled:pointer-events-none aria-pressed:border-transparent aria-pressed:bg-fill-selected aria-pressed:text-foreground aria-pressed:hover:bg-fill-selected [&:disabled:not([aria-pressed=true])]:opacity-60 [&:not([aria-pressed=true])]:text-muted-foreground"
+                  className="inline-flex h-8 items-center gap-1.5 rounded-full border border-border px-3 font-mono text-meta transition-colors outline-none hover:bg-fill-hover focus-visible:ring-2 focus-visible:ring-ring disabled:pointer-events-none aria-pressed:border-transparent aria-pressed:bg-fill-selected aria-pressed:text-foreground aria-pressed:hover:bg-fill-selected [&:disabled:not([aria-pressed=true])]:opacity-60 [&:not([aria-pressed=true])]:text-muted-foreground"
                 >
                   {on ? <CheckIcon className="-ml-0.5 size-3.5" /> : null}
                   {definition.tag}
@@ -166,7 +164,7 @@ function NodeTags({
           </fieldset>
         )}
       </form>
-    </TabSection>
+    </Section>
   )
 }
 
@@ -229,7 +227,7 @@ function Ownership({
     owner && active && entry !== undefined && entry.membership_id === null
 
   return (
-    <TabSection title={m.node_owner()}>
+    <Section title={m.node_owner()}>
       <div className="flex flex-col gap-2 sm:flex-row sm:items-stretch">
         <div className="min-w-0 flex-1">
           <Tile label={m.node_owner_user()}>
@@ -238,7 +236,7 @@ function Ownership({
         </div>
         {assignable ? (
           <form
-            className="flex items-center gap-2 rounded-tile bg-fill-subtle py-2 pr-2 pl-2"
+            className="flex items-center gap-2"
             onSubmit={(event) => {
               event.preventDefault()
               if (target) setConfirming(true)
@@ -247,26 +245,24 @@ function Ownership({
             <label className="sr-only" htmlFor={`owner-${node.id}`}>
               {m.node_owner_choose()}
             </label>
-            <span className="relative">
-              <select
+            <div className="w-56">
+              <FieldSelect
                 id={`owner-${node.id}`}
                 name="owner"
                 value={choice}
                 onChange={(event) => setChoice(event.target.value)}
-                className="h-9 w-56 appearance-none truncate rounded-[calc(var(--radius-tile)-4px)] bg-field pr-8 pl-3 text-row outline-none focus-visible:ring-2 focus-visible:ring-ring"
               >
-                <option value="">{m.node_owner_choose()}</option>
+                <FieldOption value="">{m.node_owner_choose()}</FieldOption>
                 {members.data?.members.map((item) => (
-                  <option
+                  <FieldOption
                     key={item.membership.membership_id}
                     value={item.membership.membership_id}
                   >
                     {item.user.email}
-                  </option>
+                  </FieldOption>
                 ))}
-              </select>
-              <ChevronDownIcon className="pointer-events-none absolute top-1/2 right-2.5 size-4 -translate-y-1/2 text-muted-foreground" />
-            </span>
+              </FieldSelect>
+            </div>
             <Button
               type="submit"
               className="h-9 rounded-full px-4"
@@ -284,17 +280,20 @@ function Ownership({
         }}
         title={m.node_owner_assign_title()}
         confirmLabel={m.node_owner_assign()}
+        tone="default"
         pending={claim.isPending}
         onConfirm={() =>
           target && claim.mutate(target.membership.membership_id)
         }
-      >
-        {m.node_owner_assign_effect({
-          node: node.name,
-          user: target?.user.email ?? "",
-        })}
-      </ConfirmDialog>
-    </TabSection>
+        effects={[
+          m.node_owner_assign_effect({
+            node: node.name,
+            user: target?.user.email ?? "",
+          }),
+          m.node_owner_assign_final(),
+        ]}
+      />
+    </Section>
   )
 }
 
@@ -349,25 +348,28 @@ function Revocation({
 
   if (node.revoked_at !== null)
     return (
-      <TabSection title={m.node_revocation()}>
+      <Section title={m.node_revocation()}>
         <Tile label={m.node_revoked_at()} tone="warning">
           {dateTime(node.revoked_at) ?? node.revoked_at}
         </Tile>
-      </TabSection>
+      </Section>
     )
   if (!canManage) return null
   return (
-    <TabSection title={m.node_revocation()}>
-      <div className="flex min-h-12 items-center gap-3 rounded-tile bg-fill-subtle py-2 pr-2 pl-3.5">
-        <span className="min-w-0 flex-1 text-row">{m.node_revoke_fact()}</span>
-        <Button
-          variant="destructive"
-          className="h-9 rounded-full px-4"
-          onClick={() => setConfirming(true)}
-        >
-          {m.node_revoke()}
-        </Button>
-      </div>
+    <Section title={m.node_revocation()}>
+      <DangerRow
+        fact={m.node_revoke_fact()}
+        action={
+          <Button
+            variant="destructive"
+            className="h-9 rounded-full px-4"
+            onClick={() => setConfirming(true)}
+          >
+            <BanIcon />
+            {m.node_revoke()}
+          </Button>
+        }
+      />
       <ConfirmDialog
         open={confirming}
         onOpenChange={(open) => {
@@ -377,9 +379,13 @@ function Revocation({
         confirmLabel={m.node_revoke()}
         pending={revoke.isPending}
         onConfirm={() => revoke.mutate()}
-      >
-        {m.node_revoke_effect()}
-      </ConfirmDialog>
-    </TabSection>
+        effects={[
+          m.node_revoke_effect_requests(),
+          m.node_revoke_effect_runtime(),
+          m.node_revoke_effect_inventory(),
+          m.node_revoke_effect_final(),
+        ]}
+      />
+    </Section>
   )
 }

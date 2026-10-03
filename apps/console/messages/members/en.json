@@ -35,10 +35,8 @@
   "members_last_owner": "The network's last owner cannot be demoted or removed",
   "members_not_found": "Member not found",
   "members_devices": "Devices",
-  "members_devices_count": "Devices {count}",
   "members_devices_empty": "No devices",
   "members_devices_failed": "Device ownership could not be read",
-  "members_unassigned_count": "Unassigned devices {count}",
   "members_claim": "Assign",
   "members_claim_title": "Assign device",
   "members_claim_body": "{node} will belong to {email}",
@@ -52,5 +50,10 @@
   "members_leave_devices": "Your devices in this network are revoked",
   "members_leave_invitations": "Unused invitations you issued stop working",
   "members_left": "Left the network",
-  "members_invite_title": "Invite a member"
+  "members_invite_title": "Invite a member",
+  "members_unassigned": "Unassigned devices",
+  "members_removal": "Removal",
+  "members_leaving": "Leaving",
+  "members_devices_fact": "Devices in this network: {count}",
+  "members_claim_node": "Assign {node} to this member"
 }

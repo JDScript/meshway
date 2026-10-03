@@ -1,11 +1,19 @@
 import { saveTags, type TagDefinition } from "@meshway/control-client"
 import { useQuery, useQueryClient } from "@tanstack/react-query"
-import { ArrowUpRightIcon, RotateCcwIcon, Trash2Icon } from "lucide-react"
+import { RotateCcwIcon, TagIcon, Trash2Icon } from "lucide-react"
 import { useMemo, useState } from "react"
 
 import { CloseButton } from "@/components/chrome/close-button"
 import { TextField } from "@/components/chrome/form"
 import { GlassDialog } from "@/components/chrome/glass-dialog"
+import {
+  ListNote,
+  ListPlaceholders,
+  ListRow,
+  PanelList,
+} from "@/components/chrome/list"
+import { RefList } from "@/components/chrome/ref-row"
+import { DangerRow, EmptyLine, Section } from "@/components/chrome/section"
 import { SurfaceHeader } from "@/components/chrome/surface-header"
 import { Button } from "@/components/ui/button"
 import { Field, FieldLabel } from "@/components/ui/field"
@@ -21,11 +29,11 @@ import { useDraftCommit } from "@/features/shell/draft-commit"
 import type { Saved } from "@/features/shell/drafts"
 import { surfaceTitleId } from "@/features/shell/page-frame"
 import { authed } from "@/lib/api"
+import { cn } from "@/lib/utils"
 import { m } from "@/paraglide/messages.js"
 
 import { useTagCatalogDraft } from "./drafts"
-import type { NodeContext } from "./node-facts"
-import { EmptyLine, TabSection } from "./sections"
+import { NodeRef, type NodeContext } from "./node-facts"
 import {
   isTagName,
   MAX_TAGS,
@@ -35,8 +43,6 @@ import {
   tagProblems,
   type TagProblem,
 } from "./tag-model"
-
-const PLACEHOLDER_ROWS = 4
 
 /** The catalog as saved and as drafted, shared by the panel and the workspace. */
 function useCatalog(networkId: string) {
@@ -77,62 +83,45 @@ export function TagList({
   ].sort((a, b) => a.tag.tag.localeCompare(b.tag.tag))
 
   return (
-    <ul
-      aria-labelledby={surfaceTitleId("nodes", "panel")}
-      className="min-h-0 flex-1 overflow-y-auto px-2 pb-2"
-    >
-      {!tags.data && !tags.isError
-        ? Array.from({ length: PLACEHOLDER_ROWS }, (_, index) => (
-            <li key={index} className="flex h-14 items-center gap-3 px-3">
-              <Skeleton className="h-3 w-28 rounded-full" />
-            </li>
-          ))
-        : null}
+    <PanelList aria-labelledby={surfaceTitleId("nodes", "panel")}>
+      {!tags.data && !tags.isError ? <ListPlaceholders /> : null}
       {!tags.data && tags.isError ? (
-        <li className="flex h-14 items-center px-3 text-row text-muted-foreground">
-          {m.nodes_tags_failed()}
-        </li>
+        <ListNote>{m.nodes_tags_failed()}</ListNote>
       ) : null}
       {tags.data && rows.length === 0 ? (
-        <li className="flex h-14 items-center px-3 text-row text-muted-foreground">
-          {m.nodes_tags_none()}
-        </li>
+        <ListNote>{m.nodes_tags_none()}</ListNote>
       ) : null}
       {rows.map(({ tag, state }) => (
-        <li key={tag.tag}>
-          <button
-            type="button"
-            aria-current={tag.tag === openTag ? "true" : undefined}
-            onClick={() => onOpen(tag.tag)}
-            className="list-row h-14 gap-3 px-3"
-          >
-            <span className="min-w-0 flex-1">
-              <span
-                className={
-                  state === "removed"
-                    ? "block truncate font-mono text-row font-medium text-muted-foreground line-through"
-                    : "block truncate font-mono text-row font-medium"
-                }
-              >
-                {tag.tag}
-              </span>
-              <span className="block truncate text-meta text-muted-foreground">
-                {state === "added"
-                  ? m.node_draft_mark()
-                  : state === "removed"
-                    ? m.nodes_tag_removing()
-                    : tag.description || "—"}
-              </span>
+        <ListRow
+          key={tag.tag}
+          rowId={tag.tag}
+          current={tag.tag === openTag}
+          onClick={() => onOpen(tag.tag)}
+          lead={<TagIcon className="size-4 text-muted-foreground" />}
+          title={
+            <span
+              className={
+                state === "removed"
+                  ? "truncate font-mono text-muted-foreground line-through"
+                  : "truncate font-mono"
+              }
+            >
+              {tag.tag}
             </span>
-            <span className="shrink-0 text-meta text-muted-foreground tabular-nums">
+          }
+          subtitle={
+            <span className="truncate">
               {state === "added"
-                ? ""
-                : String(members.get(tag.tag)?.length ?? 0)}
+                ? m.node_draft_mark()
+                : state === "removed"
+                  ? m.nodes_tag_removing()
+                  : tag.description || "—"}
             </span>
-          </button>
-        </li>
+          }
+          trail={state === "added" ? "" : (members.get(tag.tag)?.length ?? 0)}
+        />
       ))}
-    </ul>
+    </PanelList>
   )
 }
 
@@ -224,14 +213,17 @@ export function TagWorkspace({
           loading && !tags.isError ? (
             <Skeleton className="h-6 w-40 flex-1 rounded-full" />
           ) : (
-            <h2 id={surfaceTitleId("nodes", "workspace")} className={className}>
+            <h2
+              id={surfaceTitleId("nodes", "workspace")}
+              className={cn(className, state !== "missing" && "font-mono")}
+            >
               {state === "missing" ? m.nodes_tag_not_found() : tag}
             </h2>
           )
         }
         action={<CloseButton onClick={onClose} />}
         meta={
-          <span className="h-4 text-xs text-muted-foreground">
+          <span className="h-4 text-meta text-muted-foreground">
             {state === "added"
               ? m.node_draft_mark()
               : state === "removed"
@@ -250,7 +242,7 @@ export function TagWorkspace({
         }}
       >
         <button type="submit" hidden />
-        <div className="flex max-w-xl flex-col gap-8">
+        <div className="flex max-w-workspace flex-col gap-8">
           {loading ? (
             tags.isError ? (
               <EmptyLine>{m.nodes_tags_failed()}</EmptyLine>
@@ -274,73 +266,60 @@ export function TagWorkspace({
                 disabled={!canManage || state === "removed"}
                 onChange={(event) => setDescription(event.target.value)}
               />
-              <TabSection
-                title={m.nodes_tag_members()}
-                count={String(nodeIds.length)}
-              >
+              <Section title={m.nodes_tag_members()} count={nodeIds.length}>
                 {nodeIds.length === 0 ? (
                   <EmptyLine>{m.nodes_tag_members_none()}</EmptyLine>
                 ) : (
-                  <ul className="flex flex-col">
-                    {nodeIds.map((nodeId) => {
-                      const node = context.nodes.get(nodeId)
-                      return (
-                        <li key={nodeId}>
-                          <button
-                            type="button"
-                            onClick={() => onOpenNode(nodeId)}
-                            className="list-row h-12 gap-3 px-3"
-                          >
-                            <span className="min-w-0 flex-1 truncate text-row">
-                              {node?.name ?? nodeId.slice(0, 12)}
-                            </span>
-                            <span className="shrink-0 font-mono text-meta text-muted-foreground">
-                              {node?.mesh_ipv4 ?? ""}
-                            </span>
-                            <ArrowUpRightIcon className="size-4 shrink-0 text-muted-foreground" />
-                          </button>
-                        </li>
-                      )
-                    })}
-                  </ul>
+                  <RefList>
+                    {nodeIds.map((nodeId) => (
+                      <NodeRef
+                        key={nodeId}
+                        nodeId={nodeId}
+                        context={context}
+                        onOpen={onOpenNode}
+                      />
+                    ))}
+                  </RefList>
                 )}
-              </TabSection>
+              </Section>
               {canManage ? (
-                <TabSection title={m.nodes_tag_removal()}>
-                  <div className="flex min-h-12 items-center gap-3 rounded-tile bg-fill-subtle py-2 pr-2 pl-3.5">
-                    <span className="min-w-0 flex-1 text-row">
-                      {state === "removed"
+                <Section title={m.nodes_tag_removal()}>
+                  <DangerRow
+                    fact={
+                      state === "removed"
                         ? m.nodes_tag_removing()
                         : nodeIds.length > 0
                           ? m.nodes_tag_assigned({
                               count: String(nodeIds.length),
                             })
-                          : m.nodes_tag_unassigned()}
-                    </span>
-                    {state === "removed" ? (
-                      <Button
-                        type="button"
-                        variant="ghost"
-                        className="h-9 rounded-full px-4"
-                        onClick={restore}
-                      >
-                        <RotateCcwIcon />
-                        {m.nodes_tag_restore()}
-                      </Button>
-                    ) : (
-                      <Button
-                        type="button"
-                        variant="destructive"
-                        className="h-9 rounded-full px-4"
-                        disabled={nodeIds.length > 0}
-                        onClick={remove}
-                      >
-                        <Trash2Icon />
-                        {m.nodes_tag_remove()}
-                      </Button>
-                    )}
-                  </div>
-                </TabSection>
+                          : m.nodes_tag_unassigned()
+                    }
+                    action={
+                      state === "removed" ? (
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          className="h-9 rounded-full px-4"
+                          onClick={restore}
+                        >
+                          <RotateCcwIcon />
+                          {m.nodes_tag_restore()}
+                        </Button>
+                      ) : (
+                        <Button
+                          type="button"
+                          variant="destructive"
+                          className="h-9 rounded-full px-4"
+                          disabled={nodeIds.length > 0}
+                          onClick={remove}
+                        >
+                          <Trash2Icon />
+                          {m.nodes_tag_remove()}
+                        </Button>
+                      )
+                    }
+                  />
+                </Section>
               ) : null}
             </>
           )}
