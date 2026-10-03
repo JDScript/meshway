@@ -31,7 +31,8 @@ if (result.ok) {
   generated operation index is `src/generated/operations.gen.ts`.
 - `@meshway/control-client/schemas` exports `z<TypeName>` validators.
   `@meshway/control-client/json-schema` exports editor schemas.
-- All bodies are validated. An invalid success body yields `decode`; an invalid
+- All bodies are validated, including duplicate decoded JSON keys in nested
+  objects. An invalid success body yields `decode`; an invalid
   error body yields `http` with its status and no `problem` or raw body.
 - Other failure kinds are `configuration`, `request`, `network`, `body_limit`
   and `cancelled`. A network read failure retains the status when available.
@@ -136,6 +137,11 @@ payload. JSON errors keep their ordinary typed HTTP envelopes.
   (default 5). `resumeCursor()` is called for each connection and must return
   only a cursor whose complete snapshot/delta has been applied by the caller.
   Merely decoding an event or seeing an SSE `id` never advances that cursor.
+- `idleTimeoutMs` bounds pending network I/O (default 30 seconds, configurable
+  from 1 ms through 5 minutes). A timeout closes the connection and reports a
+  `network` failure before the usual bounded retry. Actual bytes, including
+  keepalive comments, refresh the deadline; empty chunks do not. Time spent by
+  the caller applying a delivered event does not consume this I/O deadline.
 - Rust generated stream methods take `StreamOptions` and return an
   `EventStream<Event, Problem>`. `next().await` yields one typed event, a terminal
   error, or `None` at EOF. Drop the stream to cancel. The caller reconnects with

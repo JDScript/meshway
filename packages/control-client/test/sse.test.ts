@@ -98,3 +98,97 @@ test("aborting a pending event stream closes its reader", async () => {
   await stream.return(undefined);
   assert.equal(cancelled, true);
 });
+
+test("SSE rejects duplicate keys in data and HTTP problems", async () => {
+  for (const response of [
+    new Response('data: {"type":"sample","value":"first","\\u0076alue":"second"}\n\n', { headers: { "content-type": "text/event-stream" } }),
+    new Response('{"code":"first","code":"second"}', { status: 401, headers: { "content-type": "application/json" } }),
+  ]) {
+    const client = new ControlClient({ baseUrl: "https://controller.example", fetch: async () => response });
+    const stream = client.stream(operation, { token: "private", maxReconnects: 0 });
+    assert.deepEqual((await stream.next()).value, { ok: false, error: { kind: response.status === 200 ? "decode" : "http", status: response.status } });
+    assert.equal((await stream.next()).done, true);
+  }
+});
+
+test("idle SSE cancels the connection and resumes only from the caller-applied cursor", async t => {
+  t.mock.timers.enable({ apis: ["setTimeout"] });
+  let cancelled = false;
+  let applied: string | undefined;
+  const cursors: Array<string | null> = [];
+  const client = new ControlClient({ baseUrl: "https://controller.example", fetch: async (_url, init) => {
+    cursors.push(new Headers(init?.headers).get("last-event-id"));
+    if (cursors.length === 2) return Response.json({ code: "expired" }, { status: 401 });
+    return new Response(new ReadableStream<Uint8Array>({
+      start(controller) { controller.enqueue(new TextEncoder().encode('id: merely-decoded\ndata: {"type":"sample","value":"first"}\n\n')); },
+      cancel() { cancelled = true; },
+    }), { headers: { "content-type": "text/event-stream" } });
+  } });
+  const stream = client.stream(operation, { token: "private", idleTimeoutMs: 1000, retryDelayMs: 100, maxReconnects: 1, resumeCursor: () => applied });
+  const first = await stream.next();
+  assert.ok(!first.done && first.value.ok);
+  // Consumer processing time is not network inactivity: no pending I/O yet.
+  t.mock.timers.tick(10_000);
+  assert.equal(cancelled, false);
+  applied = "complete-applied-snapshot";
+  const pending = stream.next();
+  await new Promise(resolve => setImmediate(resolve));
+  t.mock.timers.tick(1000);
+  assert.deepEqual((await pending).value, { ok: false, error: { kind: "network", status: 200 } });
+  assert.equal(cancelled, true);
+  const next = stream.next();
+  await new Promise(resolve => setImmediate(resolve));
+  t.mock.timers.tick(100);
+  const rejected = await next;
+  assert.ok(!rejected.done && !rejected.value.ok && rejected.value.error.kind === "http");
+  assert.equal(rejected.value.error.status, 401);
+  assert.deepEqual(cursors, [null, applied]);
+  assert.equal((await stream.next()).done, true);
+});
+
+test("real keepalive bytes refresh idle deadlines, empty chunks do not", async t => {
+  t.mock.timers.enable({ apis: ["setTimeout"] });
+  let source: ReadableStreamDefaultController<Uint8Array> | undefined;
+  let cancelled = false;
+  const client = new ControlClient({ baseUrl: "https://controller.example", fetch: async () => new Response(new ReadableStream<Uint8Array>({
+    start(controller) { source = controller; }, cancel() { cancelled = true; },
+  }), { headers: { "content-type": "text/event-stream" } }) });
+  const stream = client.stream(operation, { token: "private", idleTimeoutMs: 1000, maxReconnects: 0 });
+  const pending = stream.next();
+  await new Promise(resolve => setImmediate(resolve));
+  assert.ok(source);
+  t.mock.timers.tick(900);
+  source.enqueue(new TextEncoder().encode(": keepalive\n\n"));
+  await new Promise(resolve => setImmediate(resolve));
+  t.mock.timers.tick(900);
+  assert.equal(cancelled, false);
+  source.enqueue(new Uint8Array());
+  await new Promise(resolve => setImmediate(resolve));
+  t.mock.timers.tick(100);
+  assert.deepEqual((await pending).value, { ok: false, error: { kind: "network", status: 200 } });
+  assert.equal(cancelled, true);
+  assert.equal((await stream.next()).done, true);
+});
+
+test("stream idle timeout also bounds headers and error body reads", async t => {
+  t.mock.timers.enable({ apis: ["setTimeout"] });
+  for (const status of [undefined, 503]) {
+    let deliver: ((response: Response) => void) | undefined;
+    let cancelled = false;
+    const client = new ControlClient({ baseUrl: "https://controller.example", fetch: async () => status === undefined
+      ? new Promise<Response>(resolve => { deliver = resolve; })
+      : new Response(new ReadableStream({ cancel() { cancelled = true; } }), { status, headers: { "content-type": "application/json" } }) });
+    const stream = client.stream(operation, { token: "private", maxReconnects: 0 });
+    const pending = stream.next();
+    await new Promise(resolve => setImmediate(resolve));
+    t.mock.timers.tick(30_000);
+    assert.deepEqual((await pending).value, { ok: false, error: { kind: "network", ...(status === undefined ? {} : { status }) } });
+    if (status === undefined) {
+      assert.ok(deliver);
+      deliver(new Response(new ReadableStream({ cancel() { cancelled = true; } })));
+      await new Promise(resolve => setImmediate(resolve));
+    }
+    assert.equal(cancelled, true);
+    assert.equal((await stream.next()).done, true);
+  }
+});

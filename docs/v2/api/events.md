@@ -162,13 +162,15 @@ RTT、业务流量、探测未回应率沿用 [Realtime Observation](/v2/state-r
 | --- | --- |
 | OpenAPI 3.1 | 可以声明 `text/event-stream` 响应和组件 DTO；缺少标准的逐事件 itemSchema 字段，需要明确生成器支持的流式扩展约定 |
 | OpenAPI 3.2 | 引入 `itemSchema` 描述流中每项，并规定 SSE 帧与字符串 data 的 schema 表达 |
-| 当前 TypeScript 生成链 | `@hey-api/openapi-ts` 仅生成类型；自有 operations emitter 限 OpenAPI 3.1.0、JSON GET／POST 与单一 bearer，尚不能生成 SSE 操作 |
-| 当前 Rust 生成链 | `enable_sse_client: false`，认证适配也限 bearer；尚未验证新 SSE／密钥认证合同 |
+| 当前 TypeScript 生成链 | 自有 emitter 从实际路由生成 JSON GET／POST 和显式声明的 SSE 操作；逐帧严格 JSON／Zod 校验、调用者已应用 cursor 恢复、读空闲超时和有界退避 |
+| 当前 Rust 生成链 | 自有 emitter 复用公开 protocol 类型生成 JSON／SSE 方法；有界增量解码，调用者显式提供已应用 cursor 并管理重连／超时 |
 
-实现路线：
+当前使用 OpenAPI 3.1 的 operation 扩展 `x-meshway-sse: { format: "json-data", eventSchema: { $ref: "#/components/schemas/..." } }`。成功响应本身声明 `text/event-stream` 字符串字节，扩展声明每帧 JSON 数据的真实根类型；可省略的 `Last-Event-ID` 是字符串，不是 nullable JSON 字段。
+
+以上是生成器／传输层能力，具体 UserEvent／NodeEvent 与生产 State provider、主 Router 接线仍待完成。完整交付要求：
 
 1. Rust 定义 UserEvent／NodeEvent 及各自权限视图，真实路由显式声明 stream、认证与 payload schema。
-2. 优先验证 OpenAPI 3.2 的端到端工具支持；若仍用 3.1，则由同一 Rust 声明导出明确的 SSE 扩展元数据。不能将逐事件对象误写成整个响应就是一个 JSON 对象。
+2. 同一 Rust 路由声明导出上述 SSE 扩展元数据。不能将逐事件对象误写成整个响应就是一个 JSON 对象。
 3. 生成操作 URL、参数、认证要求、事件联合类型和 Zod／Rust 解码器。SDK 提供 async iterator／stream，应用不复制 endpoint 或 DTO。
 4. 共用传输层处理 UTF-8 增量、SSE 分帧／多行 data、取消、大小上限、重连及 cursor；每帧 JSON 经过生成 schema 校验才交付。OAS 3.2 的 contentSchema 注解本身不保证运行时执行校验。
 5. drift check 覆盖事件产物；非浏览器行为测试覆盖分帧、错误媒体类型、过期／撤销、full→delta 连续性、断线恢复与背压。不能把仅生成了 TypeScript 类型当成流式客户端已验收。

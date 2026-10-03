@@ -1,5 +1,6 @@
 import type * as z from "zod";
 import { EventDecoder, EventStreamError } from "./sse.ts";
+import { parseJson } from "./json.ts";
 
 export type ClientFailure<Problem> =
   | { kind: "configuration" | "request" | "cancelled" }
@@ -17,6 +18,8 @@ export interface StreamOptions extends RequestOptions {
   maxReconnects?: number;
   retryDelayMs?: number;
   maxFrameBytes?: number;
+  /** Maximum pending network I/O without bytes; excludes caller processing time. */
+  idleTimeoutMs?: number;
 }
 export interface AuthenticatedStreamOptions extends StreamOptions { token: string }
 export interface EventDelivery<Data> { data: Data; id?: string }
@@ -88,6 +91,19 @@ function cancellable<T>(promise: Promise<T>, signal?: AbortSignal, discard?: (va
     promise.then(value => { if (cancelled) discard?.(value); else resolve(value); }, reject)
       .finally(() => signal.removeEventListener("abort", abort));
   });
+}
+
+async function streamIo<T>(operation: () => Promise<T>, connection: AbortController, timeoutMs: number, discard?: (value: T) => void): Promise<T> {
+  const timer = setTimeout(() => connection.abort(), timeoutMs);
+  try { return await cancellable(operation(), connection.signal, discard); }
+  finally { clearTimeout(timer); }
+}
+
+async function readProgress(reader: ReadableStreamDefaultReader<Uint8Array>): Promise<ReadableStreamReadResult<Uint8Array>> {
+  while (true) {
+    const chunk = await reader.read();
+    if (chunk.done || chunk.value.byteLength > 0) return chunk;
+  }
 }
 
 /** Stateless HTTP transport. Identity storage and its lifetime belong to the caller. */
@@ -185,7 +201,7 @@ export class ControlClient {
       let offset = 0;
       for (const chunk of chunks) { bytes.set(chunk, offset); offset += chunk.byteLength; }
       let value: unknown;
-      try { value = JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(bytes)); }
+      try { value = parseJson(new TextDecoder("utf-8", { fatal: true }).decode(bytes)); }
       catch { return invalid(); }
       // Separate branches retain the generated success/problem type relationship.
       if (success && operation.success) {
@@ -210,7 +226,8 @@ export class ControlClient {
     const retries = options.maxReconnects ?? 5;
     const delay = options.retryDelayMs ?? 1000;
     const frameLimit = options.maxFrameBytes ?? this.#limit;
-    if (!Number.isInteger(retries) || retries < 0 || retries > 100 || !Number.isInteger(delay) || delay < 100 || delay > 60_000 || !Number.isSafeInteger(frameLimit) || frameLimit < 1 || frameLimit > maximumBudget) {
+    const idleTimeout = options.idleTimeoutMs ?? 30_000;
+    if (!Number.isInteger(retries) || retries < 0 || retries > 100 || !Number.isInteger(delay) || delay < 100 || delay > 60_000 || !Number.isSafeInteger(frameLimit) || frameLimit < 1 || frameLimit > maximumBudget || !Number.isInteger(idleTimeout) || idleTimeout < 1 || idleTimeout > 300_000) {
       yield { ok: false, error: { kind: "configuration" } }; return;
     }
     for (let attempt = 0; ; attempt++) {
@@ -229,22 +246,28 @@ export class ControlClient {
       options.signal?.addEventListener("abort", abort, { once: true });
       if (options.signal?.aborted) abort();
       let reader: ReadableStreamDefaultReader<Uint8Array> | undefined;
+      const close = () => {
+        connection.abort();
+        options.signal?.removeEventListener("abort", abort);
+        if (reader) { void reader.cancel().catch(() => {}); reader.releaseLock(); reader = undefined; }
+      };
       let status: number | undefined;
       let reconnect = false;
       let retryMs = Math.min(60_000, delay * 2 ** Math.min(attempt, 6));
       try {
-        const response = await cancellable(this.#fetch(url, { method: "GET", headers, signal: connection.signal, redirect: "error", credentials: "omit", cache: "no-store" }), connection.signal, late => { void late.body?.cancel().catch(() => {}); });
+        const response = await streamIo(() => this.#fetch(url, { method: "GET", headers, signal: connection.signal, redirect: "error", credentials: "omit", cache: "no-store" }), connection, idleTimeout, late => { void late.body?.cancel().catch(() => {}); });
         status = response.status;
         const media = response.headers.get("content-type")?.split(";")[0]?.trim().toLowerCase();
-        if (response.redirected) { void response.body?.cancel().catch(() => {}); yield { ok: false, error: { kind: "http", status } }; return; }
+        if (response.redirected) { void response.body?.cancel().catch(() => {}); close(); yield { ok: false, error: { kind: "http", status } }; return; }
         if (status !== operation.successStatus) {
           let problem: Problem | undefined;
           if (operation.errors.includes(status) && operation.problem && media === "application/json" && response.body) {
-            reader = response.body.getReader();
+            const bodyReader = response.body.getReader();
+            reader = bodyReader;
             const chunks: Uint8Array[] = [];
             let size = 0;
             while (true) {
-              const chunk = await cancellable(reader.read(), connection.signal);
+              const chunk = await streamIo(() => readProgress(bodyReader), connection, idleTimeout);
               if (chunk.done) break;
               size += chunk.value.byteLength;
               if (size > this.#limit) break;
@@ -255,27 +278,30 @@ export class ControlClient {
               let offset = 0;
               for (const chunk of chunks) { bytes.set(chunk, offset); offset += chunk.length; }
               try {
-                const value: unknown = JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(bytes));
+                const value = parseJson(new TextDecoder("utf-8", { fatal: true }).decode(bytes));
                 const parsed = operation.problem.safeParse(value);
                 if (parsed.success) problem = parsed.data;
               } catch { /* Only status survives an invalid error envelope. */ }
             }
           } else { void response.body?.cancel().catch(() => {}); }
+          close();
           yield { ok: false, error: { kind: "http", status, ...(problem === undefined ? {} : { problem }) } };
           reconnect = status === 429 || status >= 500;
         } else if (media !== "text/event-stream" || !response.body) {
           void response.body?.cancel().catch(() => {});
+          close();
           yield { ok: false, error: { kind: "decode", status } }; return;
         } else {
-          reader = response.body.getReader();
+          const bodyReader = response.body.getReader();
+          reader = bodyReader;
           const decoder = new EventDecoder(frameLimit);
           while (true) {
-            const chunk = await cancellable(reader.read(), connection.signal);
+            const chunk = await streamIo(() => readProgress(bodyReader), connection, idleTimeout);
             if (chunk.done) break;
             for (const frame of decoder.push(chunk.value)) {
               if (frame.event !== "message") throw new EventStreamError("decode");
               let value: unknown;
-              try { value = JSON.parse(frame.data); } catch { throw new EventStreamError("decode"); }
+              try { value = parseJson(frame.data); } catch { throw new EventStreamError("decode"); }
               const parsed = operation.success.safeParse(value);
               if (!parsed.success) throw new EventStreamError("decode");
               yield { ok: true, data: { data: parsed.data, ...(frame.id === undefined ? {} : { id: frame.id }) } };
@@ -283,18 +309,18 @@ export class ControlClient {
           }
           decoder.finish();
           retryMs = decoder.retryMs ?? retryMs;
+          close();
           yield { ok: false, error: { kind: "network", status } };
           reconnect = true;
         }
       } catch (error) {
+        close();
         if (options.signal?.aborted) { yield { ok: false, error: { kind: "cancelled" } }; return; }
         if (error instanceof EventStreamError && status !== undefined) { yield { ok: false, error: { kind: error.kind, status } }; return; }
         yield { ok: false, error: { kind: "network", ...(status === undefined ? {} : { status }) } };
         reconnect = true;
       } finally {
-        connection.abort();
-        options.signal?.removeEventListener("abort", abort);
-        if (reader) { void reader.cancel().catch(() => {}); reader.releaseLock(); }
+        close();
       }
       if (!reconnect || attempt >= retries) return;
       try {

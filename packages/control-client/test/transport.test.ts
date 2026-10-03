@@ -56,6 +56,12 @@ test("successful bodies, malformed UTF8, content type and status are checked", a
   assert.deepEqual(await client(() => Response.json({ value: "ok" }, { status: 201 })).request(operation), { ok: false, error: { kind: "http", status: 201 } });
   assert.deepEqual(await client(() => new Response(null, { status: 204 })).request({ ...operation, successStatus: 204, success: undefined }), { ok: true, data: undefined });
 });
+test("duplicate response keys never reach success or typed HTTP problem delivery", async () => {
+  const success = client(() => new Response('{"value":"first","\\u0076alue":"second"}', { headers: { "content-type": "application/json" } }));
+  assert.deepEqual(await success.request(operation), { ok: false, error: { kind: "decode", status: 200 } });
+  const failure = client(() => new Response('{"code":"conflict","revision":1,"revision":2}', { status: 409, headers: { "content-type": "application/json" } }));
+  assert.deepEqual(await failure.request(operation), { ok: false, error: { kind: "http", status: 409 } });
+});
 test("bounded streamed/declared bodies cancel reads and discard error content", async () => {
   let cancelled = false;
   const streamed = () => new Response(new ReadableStream<Uint8Array>({

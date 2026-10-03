@@ -64,6 +64,7 @@ async function generatedFixture(t, document = fixture()) {
   await symlink(dirname(require.resolve("zod/package.json")), join(packageRoot, "node_modules/zod"));
   await copyFile(join(root, "packages/control-client/src/transport.ts"), join(packageRoot, "src/transport.ts"));
   await copyFile(join(root, "packages/control-client/src/sse.ts"), join(packageRoot, "src/sse.ts"));
+  await copyFile(join(root, "packages/control-client/src/json.ts"), join(packageRoot, "src/json.ts"));
   await writeFile(join(packageRoot, "package.json"), '{"type":"module"}');
   return { directory, packageRoot, files };
 }
