@@ -12,7 +12,7 @@ import type { PageId } from "./pages"
 import { Surface } from "./surface"
 
 /** What the editor on screen offers to save: one draft, against the revision it was loaded at. */
-export type Commit = {
+type Commit = {
   page: PageId
   /** What stops saving (the first invalid field); null when it can be saved. */
   problem: string | null

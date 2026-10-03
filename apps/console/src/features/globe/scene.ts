@@ -131,7 +131,7 @@ export function linkCurve(a: Anchor, b: Anchor, samples = 72): Vec3[] {
   return points
 }
 
-export type LineStyle = {
+type LineStyle = {
   dashed: boolean
   dash: number
   gap: number

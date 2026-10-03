@@ -27,16 +27,16 @@ import { cartesian, GLOBE_RADIUS } from "./scene"
 // lat/lng in degrees, altitude in globe radii above the surface), which
 // `scene.ts` and `loader-view.ts` are written against.
 
-export type PointOfView = { lat: number; lng: number; altitude: number }
+type PointOfView = { lat: number; lng: number; altitude: number }
 
-export type Marker = {
+type Marker = {
   element: HTMLElement
   lat: number
   lng: number
   altitude: number
 }
 
-export type Stage = {
+type Stage = {
   scene: Scene
   camera: PerspectiveCamera
   controls: OrbitControls
@@ -54,7 +54,7 @@ export type Stage = {
   dispose(): void
 }
 
-export type StageOptions = {
+type StageOptions = {
   surface: Material
   /** Atmosphere height in globe radii; 0 draws none. */
   atmosphere: number

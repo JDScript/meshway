@@ -24,13 +24,13 @@ export type JsonPath = readonly (string | number)[]
 export type JsoncErrorCode =
   ReturnType<typeof printParseErrorCode> | "DuplicateKey" | "Empty"
 
-export type JsoncError = {
+type JsoncError = {
   code: JsoncErrorCode
   offset: number
   length: number
 }
 
-export type JsoncParse =
+type JsoncParse =
   | { ok: true; tree: JsoncNode; value: unknown }
   | { ok: false; errors: JsoncError[] }
 

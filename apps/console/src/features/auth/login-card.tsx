@@ -17,7 +17,7 @@ import { m } from "@/paraglide/messages.js"
 
 import { signIn, type SignInOutcome } from "./sign-in"
 
-export type LoginReason =
+type LoginReason =
   "expired" | "signed_out" | "signed_out_unconfirmed" | "password_reset"
 
 const failures: Record<Exclude<SignInOutcome, "signed_in">, () => string> = {

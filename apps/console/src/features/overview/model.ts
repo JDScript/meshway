@@ -31,7 +31,7 @@ export function vitalityOf(
 export const lookOf = (status: ChannelStatus): LinkLook =>
   status === "unobserved" ? "configured" : status
 
-export type OverviewInput = {
+type OverviewInput = {
   nodes: NodeSummary[]
   connections: ConnectionsSnapshot | null
   runtimes: ConnectionRuntimesSnapshot | null

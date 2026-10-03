@@ -56,7 +56,7 @@ const time = (iso: string | null) => {
   return Number.isNaN(at) ? null : at
 }
 
-export type WindowRead = {
+type WindowRead = {
   records: LatencyHistoryRecord[]
   /** Every page of the window was read. */
   complete: boolean

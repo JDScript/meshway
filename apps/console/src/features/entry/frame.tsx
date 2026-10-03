@@ -91,7 +91,7 @@ export function EntryCard({
   )
 }
 
-export const ENTRY_BUTTON = "h-11 w-full rounded-tile"
+const ENTRY_BUTTON = "h-11 w-full rounded-tile"
 
 /** A submit button with the sign-in's spinner, which never moves its label. */
 export function EntrySubmit({

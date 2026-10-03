@@ -9,7 +9,7 @@ import {
 // memory and replaces the address without it; it then travels only in the
 // body of the request that uses it.
 
-export type FragmentKind = "invitation" | "reset"
+type FragmentKind = "invitation" | "reset"
 
 const schemas = {
   invitation: zAcceptInvitationRequest.shape.invitation_token,

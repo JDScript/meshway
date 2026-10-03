@@ -6,7 +6,7 @@ import { useKeptWhile, useUnmountAfter } from "@/lib/use-kept"
 /** Matches the hidden-state transition in `index.css` (`.surface`). */
 const EXIT_MS = 260
 
-export type SurfaceFrom = "left" | "right" | "bottom" | "rise"
+type SurfaceFrom = "left" | "right" | "bottom" | "rise"
 
 /**
  * One floating surface that comes and goes with the URL. It appears in

@@ -106,5 +106,3 @@ export function useSurfaceHistory(networkId: string) {
     }
   }, [router, navigate, opened, pageBase, index, networkId])
 }
-
-export type SurfaceHistory = ReturnType<typeof useSurfaceHistory>

@@ -22,7 +22,7 @@ import {
 import { SPRING_LAYOUT } from "@/lib/ease"
 import { cn } from "@/lib/utils"
 
-export interface SharedLayoutBgProps extends Omit<
+interface SharedLayoutBgProps extends Omit<
   HTMLAttributes<HTMLElement>,
   "children"
 > {

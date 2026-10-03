@@ -37,7 +37,7 @@ import { EGRESS_SECTIONS, type EgressSection } from "./url"
 // with any of them is refused), so they are shown as the source holds them
 // and changed only in the source.
 
-export const egressLabel: Record<EgressSection, () => string> = {
+const egressLabel: Record<EgressSection, () => string> = {
   public: () => m.policy_egress_public(),
   profiles: () => m.policy_egress_profiles(),
   automatic: () => m.policy_egress_automatic(),
@@ -189,7 +189,7 @@ function ExitCard({
   )
 }
 
-export function profileName(id: string, names: SelectorNames): string {
+function profileName(id: string, names: SelectorNames): string {
   if (id === "mesh-only") return m.policy_profile_mesh_only()
   if (id === "auto") return m.policy_profile_auto()
   if (id === "global:*") return m.policy_profile_global_all()

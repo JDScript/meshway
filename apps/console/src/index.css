@@ -34,7 +34,7 @@
   --text-display: 26px;
   --text-display--line-height: 32px;
 
-  /* Motion: panels settle softly; first entrances are longer (AgentUI's EASE_OUT, lib/ease.ts); leaving is quick. Springs live in lib/ease.ts. */
+  /* Motion: panels settle softly; first entrances are longer (AgentUI's EASE_OUT); leaving is quick. The one spring lives in lib/ease.ts. */
   --ease-settle: cubic-bezier(0.22, 1, 0.36, 1);
   --ease-entrance: cubic-bezier(0.16, 1, 0.3, 1);
   --ease-leave: cubic-bezier(0.4, 0, 1, 1);

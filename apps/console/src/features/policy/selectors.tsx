@@ -57,7 +57,7 @@ export function useSelectorNames(networkId: string): SelectorNames {
 
 type Shown = { icon: LucideIcon; label: string; mono: boolean; known: boolean }
 
-export function selectorShown(selector: string, names: SelectorNames): Shown {
+function selectorShown(selector: string, names: SelectorNames): Shown {
   if (selector === "*")
     return {
       icon: AsteriskIcon,
@@ -180,34 +180,7 @@ export function SelectorChip({
   )
 }
 
-/** Several selectors (a grant's sources), any of which matches. */
-export function SelectorGroup({
-  selectors,
-  names,
-}: {
-  selectors: readonly string[]
-  names: SelectorNames
-}) {
-  return (
-    <span className="inline-flex min-w-0 flex-wrap items-center gap-1">
-      {selectors.length === 0 ? (
-        <span className="text-row text-muted-foreground">
-          {m.policy_selector_none()}
-        </span>
-      ) : (
-        selectors.map((selector, index) => (
-          <SelectorChip
-            key={`${selector}-${index}`}
-            selector={selector}
-            names={names}
-          />
-        ))
-      )}
-    </span>
-  )
-}
-
-export type SelectorKind = "all" | "tag" | "node"
+type SelectorKind = "all" | "tag" | "node"
 
 type Option = {
   selector: string
@@ -263,7 +236,7 @@ const GROUP_LABEL: Record<SelectorKind, () => string> = {
  * clear of the screen's edges and the commit bar, and its list shrinks to
  * the room there is. While it shows a node, it also leads to the node.
  */
-export function SelectorPicker({
+function SelectorPicker({
   names,
   kinds,
   chosen,

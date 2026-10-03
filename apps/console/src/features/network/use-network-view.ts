@@ -73,7 +73,7 @@ export function useNetworkView(networkId: string) {
   }
 }
 
-export type NetworkView = ReturnType<typeof useNetworkView>
+type NetworkView = ReturnType<typeof useNetworkView>
 
 const NetworkViewContext = createContext<NetworkView | null>(null)
 

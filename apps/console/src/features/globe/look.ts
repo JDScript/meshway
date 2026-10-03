@@ -2,7 +2,7 @@
  * How the globe is drawn, independent of what it shows. Colours always come
  * from theme tokens; this only selects layers and their weights.
  */
-export type GlobeLook = {
+type GlobeLook = {
   /** Land as round dots, or not at all. */
   land: "dots" | "none"
   /** Dot size in globe units. */

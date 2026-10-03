@@ -60,7 +60,7 @@ export function observationState(
   return "mapped"
 }
 
-export type SocketGroups = {
+type SocketGroups = {
   listeners: Map<string, UdpSocketDiscovery[]>
   dialers: Map<string, UdpSocketDiscovery[]>
 }

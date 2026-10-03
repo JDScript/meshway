@@ -9,7 +9,7 @@ import { m } from "@/paraglide/messages.js"
  * error bodies are not read (the client drops them), so this is the status
  * alone; a lost response is not a refusal: the change may have happened.
  */
-export type Failure =
+type Failure =
   | "unauthorized"
   | "forbidden"
   | "conflict"
@@ -44,7 +44,7 @@ const failureMessage: Record<Failure, () => string> = {
 }
 
 /** What a call's own context says about some failures (a 409 on the last Owner). */
-export type FailureText = Partial<Record<Failure, () => string>>
+type FailureText = Partial<Record<Failure, () => string>>
 
 /** The words for a failure, the caller's own where it has them; null when there is nothing to say. */
 export function failureText(

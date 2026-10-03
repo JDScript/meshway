@@ -26,7 +26,7 @@ export const PRESETS = [
 ] as const
 export type Preset = (typeof PRESETS)[number]
 
-export const DEFAULTS = {
+const DEFAULTS = {
   bindAddress: "0.0.0.0",
   nativePort: "8421",
   vlessPort: "443",
@@ -36,7 +36,6 @@ export const DEFAULTS = {
 } as const
 
 export const MAX_ENDPOINTS = 16
-export const MAX_ID = 48
 
 export type EndpointFields = { host: string; port: string }
 
@@ -55,7 +54,7 @@ export type ListenerFields = {
 export const transportOf = (preset: Preset): ConnectionTransport =>
   preset === "native_udp" || preset === "native_tcp" ? preset : "vless"
 
-export const streamOf = (preset: Preset): VlessStreamTransport | null =>
+const streamOf = (preset: Preset): VlessStreamTransport | null =>
   preset === "vless_tcp"
     ? "tcp"
     : preset === "vless_websocket"
@@ -175,7 +174,7 @@ const websocketHostFor = (publicHost: string) =>
   publicHost.trim() === "" ? DEFAULTS.websocketHost : publicHost.trim()
 
 /** Whether the first endpoint's port still follows the bind port. */
-export const portLinked = (fields: ListenerFields) =>
+const portLinked = (fields: ListenerFields) =>
   fields.endpoints[0]?.port.trim() === fields.bindPort.trim()
 
 /** The bind port; the first endpoint's port follows while it is linked. */
@@ -327,7 +326,7 @@ function isIpv6(value: string): boolean {
   }
 }
 
-export const isIpLiteral = (value: string) => IPV4.test(value) || isIpv6(value)
+const isIpLiteral = (value: string) => IPV4.test(value) || isIpv6(value)
 
 function portOf(raw: string): number | null {
   const text = raw.trim()

@@ -22,7 +22,7 @@ import {
 // edge is ever derived that the saved plan does not describe.
 
 /** Why a node's report cannot back a live adjacency right now. */
-export type ReportUnusable =
+type ReportUnusable =
   | Exclude<RuntimeFreshness, "fresh">
   /** Fresh, but for another configuration revision than the plan shown. */
   | "revision"
@@ -355,7 +355,7 @@ export function liveBetween(
   )
 }
 
-export type NodeAdjacencySummary = {
+type NodeAdjacencySummary = {
   configured: number
   confirmed: number
   oneSided: number

@@ -195,5 +195,3 @@ export function useNodeNavigation(networkId: string) {
     }
   }, [navigate, history, networkId, q, state, view, open, openId, add, tag])
 }
-
-export type NodeNavigation = ReturnType<typeof useNodeNavigation>

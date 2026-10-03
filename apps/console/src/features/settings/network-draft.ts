@@ -34,7 +34,7 @@ export function savedNetwork(snapshot: NetworkSnapshot): Saved<NetworkFields> {
 
 const TTL = /^[0-9]{1,3}$/
 
-export type NetworkField = "name" | "zone" | "ttl"
+type NetworkField = "name" | "zone" | "ttl"
 
 /** The fields the generated schema rejects, in form order; the controller still checks the rest. */
 export function invalidNetworkFields(fields: NetworkFields): NetworkField[] {

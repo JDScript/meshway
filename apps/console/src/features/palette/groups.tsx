@@ -56,7 +56,7 @@ export type Entry = {
   run: () => void
 }
 
-export type Group = {
+type Group = {
   key: string
   heading: string
   /** Unread or unreadable: shown as such, in place of entries. */

@@ -11,7 +11,7 @@ import { currentSession } from "@/lib/session"
 // The account's own changes. Reads (the session, the networks) are shared
 // with the shell in `features/network/queries.ts`.
 
-export type PasswordChange =
+type PasswordChange =
   | "changed"
   | "wrong"
   /** This tab's session is gone; the router has taken over. */

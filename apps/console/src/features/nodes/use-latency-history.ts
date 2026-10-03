@@ -20,7 +20,7 @@ import {
 /** A visible chart re-reads this often; a hidden tab does not read. */
 const REFRESH_MS = 45_000
 
-export type LatencyState = {
+type LatencyState = {
   records: ReadonlyMap<string, LatencyHistoryRecord>
   /** The span on screen, ending at the last read. */
   range: Window | null
