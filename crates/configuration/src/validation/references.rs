@@ -1,0 +1,349 @@
+use super::*;
+use ipnet::IpNet;
+use meshway_transport_spec::normalize_host;
+
+fn named(value: &str, prefix: &str) -> bool {
+    value.strip_prefix(prefix).is_some_and(|s| {
+        !s.is_empty()
+            && s.bytes()
+                .all(|b| b.is_ascii_alphanumeric() || b"-_.".contains(&b))
+    })
+}
+pub(super) fn user(email: &str, context: &ValidationContext<'_>, path: &str, check: &mut Check) {
+    match context.members.get(email) {
+        Some(binding)
+            if !context
+                .expected_user_bindings
+                .get(email)
+                .is_some_and(|expected| expected != binding) =>
+        {
+            check.bindings.insert(email.to_owned(), binding.clone());
+        }
+        _ => check.issue(path, "unknown, inactive, or rebound user reference"),
+    }
+}
+pub(super) fn definitions(
+    groups: &mut BTreeMap<String, Vec<String>>,
+    tags: &mut BTreeMap<String, Vec<String>>,
+    context: &ValidationContext<'_>,
+    check: &mut Check,
+) {
+    for (key, values) in groups.iter_mut() {
+        let path = format!("/groups/{}", pointer(key));
+        if !named(key, "group:") {
+            check.issue(&path, "invalid group name");
+        }
+        for email in values.iter() {
+            user(email, context, &path, check);
+        }
+        values.sort();
+        values.dedup();
+    }
+    for (key, owners) in tags {
+        let path = format!("/tagsOwners/{}", pointer(key));
+        if !named(key, "tag:") {
+            check.issue(&path, "invalid tag name");
+        }
+        for owner in owners.iter() {
+            if owner.starts_with("group:") {
+                if !groups.contains_key(owner) {
+                    check.issue(&path, "unknown group");
+                }
+            } else {
+                user(owner, context, &path, check);
+            }
+        }
+        owners.sort();
+        owners.dedup();
+    }
+}
+pub(super) fn identity(
+    identity: &NodeIdentity,
+    tags: &BTreeMap<String, Vec<String>>,
+    context: &ValidationContext<'_>,
+    path: &str,
+    check: &mut Check,
+) {
+    match identity {
+        NodeIdentity::User { user: email } => user(email, context, path, check),
+        NodeIdentity::Tag { tags: values } => {
+            if values.is_empty() {
+                check.issue(path, "Tag identity must have at least one tag");
+            }
+            let mut seen = BTreeSet::new();
+            for tag in values {
+                if !tags.contains_key(tag) {
+                    check.issue(path, "unknown tag");
+                }
+                if !seen.insert(tag) {
+                    check.issue(path, "duplicate identity tag");
+                }
+            }
+        }
+    }
+}
+
+pub(super) fn selector(
+    value: &str,
+    external: bool,
+    config: &NetworkConfiguration,
+    context: &ValidationContext<'_>,
+    path: &str,
+    check: &mut Check,
+) {
+    if value == "*" {
+        return;
+    }
+    if value.starts_with("group:") {
+        if !config.groups.contains_key(value) {
+            check.issue(path, "unknown group");
+        }
+        return;
+    }
+    if value.starts_with("tag:") {
+        if !config.tags_owners.contains_key(value) {
+            check.issue(path, "unknown tag");
+        }
+        return;
+    }
+    if let Some(id) = value.strip_prefix("node:") {
+        if !id
+            .parse::<NodeId>()
+            .is_ok_and(|id| config.nodes.contains_key(&id) && context.nodes.contains(&id))
+        {
+            check.issue(path, "unknown Node selector");
+        }
+        return;
+    }
+    if external {
+        if value == "autogroup:internet" {
+            return;
+        }
+        if let Some(domain) = value.strip_prefix("domain:") {
+            if domain_name(domain).is_err() {
+                check.issue(path, "invalid domain suffix");
+            }
+            return;
+        }
+        if let Ok(net) = value.parse::<IpNet>() {
+            if net.addr() != net.network() {
+                check.issue(path, "noncanonical CIDR");
+            }
+            return;
+        }
+    }
+    user(value, context, path, check);
+}
+pub(super) fn selectors(
+    values: &[String],
+    external: bool,
+    config: &NetworkConfiguration,
+    context: &ValidationContext<'_>,
+    path: &str,
+    check: &mut Check,
+) {
+    if values.is_empty() {
+        check.issue(path, "selector set must not be empty");
+    }
+    for value in values {
+        selector(value, external, config, context, path, check);
+    }
+}
+pub(super) fn is_external(value: &str) -> bool {
+    value == "autogroup:internet" || value.starts_with("domain:") || value.parse::<IpNet>().is_ok()
+}
+pub(super) fn domain_name(value: &str) -> Result<String, ()> {
+    if value.parse::<std::net::IpAddr>().is_ok() {
+        return Err(());
+    }
+    normalize_host(value).map_err(|_| ())
+}
+pub(super) fn protocol(value: &str) -> bool {
+    if value == "*" {
+        return true;
+    }
+    let Some((protocol, ports)) = value.split_once(':') else {
+        return false;
+    };
+    if !matches!(protocol, "tcp" | "udp" | "icmp") {
+        return false;
+    }
+    if ports == "*" {
+        return true;
+    }
+    if protocol == "icmp" {
+        return false;
+    }
+    fn port(s: &str) -> Option<u16> {
+        s.parse::<u16>()
+            .ok()
+            .filter(|n| *n > 0 && n.to_string() == s)
+    }
+    if let Some((a, b)) = ports.split_once('-') {
+        matches!((port(a),port(b)),(Some(a),Some(b)) if a <= b)
+    } else {
+        port(ports).is_some()
+    }
+}
+
+pub(super) fn rules(
+    config: &mut NetworkConfiguration,
+    context: &ValidationContext<'_>,
+    check: &mut Check,
+) {
+    for rule in &mut config.access {
+        for dst in &mut rule.dst {
+            if let Some(domain) = dst.strip_prefix("domain:") {
+                if let Ok(value) = domain_name(domain) {
+                    *dst = format!("domain:{value}");
+                }
+            } else if let Ok(net) = dst.parse::<IpNet>() {
+                *dst = net.to_string();
+            }
+        }
+        rule.src.sort();
+        rule.src.dedup();
+        rule.dst.sort();
+        rule.dst.dedup();
+        rule.ip.sort();
+        rule.ip.dedup();
+    }
+    for (i, rule) in config.access.iter().enumerate() {
+        let path = format!("/access/{i}");
+        selectors(
+            &rule.src,
+            false,
+            config,
+            context,
+            &format!("{path}/src"),
+            check,
+        );
+        selectors(
+            &rule.dst,
+            true,
+            config,
+            context,
+            &format!("{path}/dst"),
+            check,
+        );
+        if rule.bidirectional && rule.dst.iter().any(|v| is_external(v)) {
+            check.issue(&path, "bidirectional access requires Mesh endpoints");
+        }
+        if rule.ip.is_empty() || !rule.ip.iter().all(|s| protocol(s)) {
+            check.issue(format!("{path}/ip"), "invalid protocol/port set");
+        }
+    }
+    for (i, rule) in config.topology.iter().enumerate() {
+        selector(
+            &rule.a,
+            false,
+            config,
+            context,
+            &format!("/topology/{i}/a"),
+            check,
+        );
+        selector(
+            &rule.b,
+            false,
+            config,
+            context,
+            &format!("/topology/{i}/b"),
+            check,
+        );
+    }
+    let dns = &mut config.dns;
+    match domain_name(&dns.domain) {
+        Ok(domain) => dns.domain = domain,
+        Err(()) => check.issue("/dns/domain", "invalid DNS domain"),
+    }
+    if dns.override_local && dns.default.is_empty() {
+        check.issue("/dns/default", "overrideLocal requires default resolvers");
+    }
+    for key in &dns.default {
+        if !dns.servers.contains_key(key) {
+            check.issue("/dns/default", "unknown resolver");
+        }
+    }
+    for (key, server) in &dns.servers {
+        if key.is_empty() || server.server.is_unspecified() || server.server.is_multicast() {
+            check.issue(format!("/dns/servers/{}", pointer(key)), "invalid resolver");
+        }
+    }
+    let mut routes = BTreeMap::new();
+    for (suffix, resolvers) in std::mem::take(&mut dns.routes) {
+        let path = format!("/dns/routes/{}", pointer(&suffix));
+        if resolvers.is_empty() || resolvers.iter().any(|key| !dns.servers.contains_key(key)) {
+            check.issue(&path, "missing or unknown resolver");
+        }
+        match domain_name(&suffix) {
+            Ok(suffix) => {
+                if routes.insert(suffix, resolvers).is_some() {
+                    check.issue(path, "duplicate normalized DNS suffix");
+                }
+            }
+            Err(()) => check.issue(path, "invalid DNS suffix"),
+        }
+    }
+    dns.routes = routes;
+    for suffix in &mut dns.search_domains {
+        match domain_name(suffix) {
+            Ok(value) => *suffix = value,
+            Err(()) => check.issue("/dns/searchDomains", "invalid DNS suffix"),
+        }
+    }
+}
+
+pub(super) fn matches(
+    selector: &str,
+    id: NodeId,
+    node: &NodeSettings,
+    config: &NetworkConfiguration,
+) -> bool {
+    if selector == "*"
+        || selector
+            .strip_prefix("node:")
+            .is_some_and(|s| s == id.to_string())
+    {
+        return true;
+    }
+    match &node.identity {
+        NodeIdentity::User { user } => {
+            selector == user
+                || config
+                    .groups
+                    .get(selector)
+                    .is_some_and(|g| g.contains(user))
+        }
+        NodeIdentity::Tag { tags } => tags.iter().any(|t| t == selector),
+    }
+}
+
+/// DNS suffix matching respects label boundaries. Inputs are normalized DNS
+/// names; matching is case-insensitive and permits one trailing root dot.
+pub fn domain_suffix_matches(name: &str, suffix: &str) -> bool {
+    match (domain_name(name), domain_name(suffix)) {
+        (Ok(name), Ok(suffix)) => {
+            name == suffix || name.strip_suffix(&suffix).is_some_and(|p| p.ends_with('.'))
+        }
+        _ => false,
+    }
+}
+
+/// Pure topology decision only: block wins regardless of rule order.
+pub fn topology_allows(config: &NetworkConfiguration, a: NodeId, b: NodeId) -> bool {
+    let (Some(an), Some(bn)) = (config.nodes.get(&a), config.nodes.get(&b)) else {
+        return false;
+    };
+    let mut allow = config.defaults.topology == TopologyDefault::Allow;
+    for rule in &config.topology {
+        if (matches(&rule.a, a, an, config) && matches(&rule.b, b, bn, config))
+            || (matches(&rule.a, b, bn, config) && matches(&rule.b, a, an, config))
+        {
+            if rule.action == TopologyAction::Block {
+                return false;
+            }
+            allow = true;
+        }
+    }
+    allow
+}
