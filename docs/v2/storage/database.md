@@ -245,16 +245,14 @@ Node 的持久身份／密钥吊销继续由 Node／NodeKey 负责；本记录�
 | `dependencyDigest` | Digest | 编译输入摘要 |
 | `compilerVersion` | string | 编译实现版本 |
 | `createdAt` | Timestamp | 提交时间 |
-| `decision` | activate \| abort \| null | null 为准备中尚未决定；activate／abort 一经持久决定不可互改 |
-| `decidedAt` | Timestamp? | 激活／取消准备的持久决定时间 |
 | `withdrawnAt` | Timestamp? | 发布撤回时间 |
 | `nodes` | Map&lt;NodeId, PublishedNodeConfiguration&gt; | 实际参与节点的完整切片，嵌入同一发布 |
 
 `PublicationDependencies` 字段：`userBindings: UserBinding[]`、`nodeIds: NodeId[]`、`keyIds: KeyId[]`、`ruleSets: Map<RuleSetKey,ArtifactId>`。地址与协议材料来自所引用的完整配置版本，编译进每个参与节点的确定切片；持续使用仍检查当前吊销／租约。改址时不能将旧地址许可拼接到新发布。
 
-每份发布是一个固定执行依赖组；目标内容不可变，决定和回执按生命周期推进。需要替换目标／重试已 abort 的尝试时创建新发布，通过 supersedes 关联，不改原 digest 或让旧 prepared 投票生效。cause=configuration 的进度与后续 demand／refresh 分开展示。
+每份发布固定一致依赖和目标内容，各节点收到后独立应用。替换目标时创建新发布，通过 supersedes 关联，不在原 ID 下改 digest；同一有效目标的重试可复用内容。cause=configuration 的进度与后续 demand／refresh 分开展示。
 
-先持久 activate 决定再发指令；已决定激活后的失败记录结果，不能改成 abort。撤回可以让已决定激活的目标不再有效。整场等待的超时策略尚未决定，准备资源仍有独立有限租约。流程见[配置应用](/v2/configuration-reference/deployment)。
+发布持久提交后即可下发，当前实例／目标／执行 lease 和地址退出条件仍需检查。应用结果不改变已提交配置的含义；撤回独立使相关执行失效。流程见[配置应用](/v2/configuration-reference/deployment)。
 
 ### PublishedNodeConfiguration
 
@@ -262,31 +260,23 @@ Node 的持久身份／密钥吊销继续由 Node／NodeKey 负责；本记录�
 | --- | --- | --- |
 | `digest` | Digest | 节点切片摘要 |
 | `configuration` | Sealed&lt;NodeConfiguration&gt; | 完整确定产物和所需材料 |
-| `preparation` | PreparationReceipt? | 最后接受的确切实例／准备资格；不是永久有效票据 |
 | `application` | ApplicationReceipt? | 最后接受的应用成功／失败回执，保留来源与时间 |
 
 所属 network／publication 由外层给出，NodeId 是 map key。只保存实际发布／恢复所需切片，同一发布重发保持同 digest；按需发布有界参与集合，不预生成全网节点对。独立切片行／内容寻址去重留给实际容量优化。
 
-### PreparationReceipt / ApplicationReceipt
+### ApplicationReceipt
 
-| 回执 | 字段 | 类型 | 含义 |
-| --- | --- | --- | --- |
-| Preparation | `instanceId` | InstanceId | 报告的节点实例 |
-| Preparation | `generation` | u64 | 当前实例隔离代际 |
-| Preparation | `preparationId` | PreparationId | Node 本机准备句柄，重启／重新准备后失效 |
-| Preparation | `preparedAt` | Timestamp | 原准备完成时间 |
-| Preparation | `preparedUntil` | Timestamp | 准备资源／资格有效期，受平台上界限制 |
-| Preparation | `remainingSteps` | ApplyComponent[] | 仍须在激活时执行的资源步骤 |
-| Preparation | `receivedAt` | Timestamp | Controller 接受时间 |
-| Application | `instanceId` | InstanceId | 应用结果所属实例 |
-| Application | `generation` | u64 | 应用时实例代际 |
-| Application | `result` | applied \| failed | 本节点真实结果 |
-| Application | `failedStage` | ConfigurationApplyPhase? | failed 时记录失败前所处阶段；applied 时为 null |
-| Application | `reportedAt` | Timestamp | 原结果时间 |
-| Application | `receivedAt` | Timestamp | Controller 接受时间 |
-| Application | `problem` | Problem? | failed 时的类型化错误 |
+| 字段 | 类型 | 含义 |
+| --- | --- | --- |
+| `instanceId` | InstanceId | 应用结果所属实例 |
+| `generation` | u64 | 应用时实例代际 |
+| `result` | applied \| failed | 本节点真实结果 |
+| `failedStage` | ConfigurationApplyPhase? | failed 时记录失败前所处阶段；applied 时为 null |
+| `reportedAt` | Timestamp | 原结果时间 |
+| `receivedAt` | Timestamp | Controller 接受时间 |
+| `problem` | Problem? | failed 时的类型化错误 |
 
-外层 publication／node／digest 与回执请求逐项核对；applied 还要求已有对应有效激活决定／指令，不能把未获激活的自报计作成功。failedStage 必须是合法的前序阶段。持久回执是最后接受的证据，当前新鲜度另算；Controller 重启、实例变化或准备过期后不能只凭数据库行直接激活。连续下载／步骤进度存 RAM，不逐字节写数据库。
+回执核对确切 publication／node／digest、当前实例和实际下发的有效目标；异常自报不能推进当前进度。failedStage 必须是合法的前序阶段。持久回执是最后接受的证据，当前新鲜度另算；Controller 重启或实例变化后不能只凭历史行断言当前 applied。连续下载／步骤进度存 RAM，不逐字节写数据库。
 
 ## NodeExecution
 
@@ -302,7 +292,7 @@ Node 的持久身份／密钥吊销继续由 Node／NodeKey 负责；本记录�
 
 `SavedReceipt` 字段：`instanceId: InstanceId`、`publicationId: PublicationId`、`digest: Digest`、`savedAt: Timestamp`。applied／lastSeen 不在本记录；Controller 重启后须 fresh 认证和当前实例确认才能续租／接受运行报告，不能用旧 ACK 恢复业务。
 
-targetPublicationId 可以指向正在 prepare 的目标，配置已保存不使它自动成为执行许可。activate 必须已持久决定，并绑定 Node 当前实例、有效 preparationId 和 fresh 执行 lease；应用回执按 publication 保存，当前运行事实仍从 NodeState 读取。
+targetPublicationId 是节点当前应同步／应用的目标；Node 校验并持久保存后，在当前实例和有效执行 lease 下直接安装。saved 不等于已执行，应用回执按 publication 保存，当前运行事实仍从 NodeState 读取。
 
 ## RoutingSelection
 

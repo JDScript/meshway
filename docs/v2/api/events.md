@@ -32,7 +32,7 @@ Authorization: Bearer <opaque-user-session>
 | --- | --- |
 | Config | 当前权限可见的完整配置视图与 revision |
 | State | 当前权限可见的节点／资源及最新观测，保留来源、时间、实例、配置引用和过期状态 |
-| 配置应用进度 | 当前相关 publication 的决定、最后接受的回执及实时阶段；失联／过期明确标注 |
+| 配置应用进度 | 当前相关 publication 的目标、最后接受的回执及实时阶段；失联／过期明确标注 |
 | 配置原文与秘密材料 | 不默认广播；管理员编辑时通过显式读取取得可写原文／材料视图 |
 | History | 不随首屏全量加载，按需查询 |
 | Path observation | 不因订阅而创建探测；只接收自己有权订阅的已创建任务 |
@@ -63,7 +63,7 @@ JSON `data` 使用 Rust 定义的封闭判别联合，以 `type` 区分。可以
 | `sync.ready` | 完整批次结束与可续传 cursor；激活本批视图 |
 | `state.delta` | baseCursor、updated、removed；按节点替换完整可见项，显式删除已移除／不可见项；过期按 freshness 表达 |
 | `configuration.changed` | 已提交的新 revision、时间、允许显示的修改者／请求关联；使旧配置缓存过时 |
-| `configuration.progress` | publication／目标、组决定、真实逐节点阶段与新鲜度；统计范围随权限裁剪 |
+| `configuration.progress` | publication／目标、真实逐节点阶段与新鲜度；统计范围随权限裁剪 |
 | `observation.status` | 任务 preparing／running／completed／failed／expired 等实际状态 |
 | `observation.sample` | observationId、measurementId、实际路径／配置引用与测量结果 |
 | `sync.reset` | 无法继续旧视图；清理服务器缓存视图并重新授权、full sync |
@@ -90,11 +90,11 @@ data: {"type":"configuration.changed","networkId":"<network-id>","revision":43,"
 
 ### 配置应用进度
 
-`configuration.changed` 表示期望配置已受理，不能据此显示“全部节点应用成功”。`configuration.progress` 跟踪[依赖组 prepare／activate](/v2/configuration-reference/deployment)：saved、prepared、applied 分开，offline／等待条件由 Controller 如实派生。
+`configuration.changed` 表示期望配置已受理，不能据此显示“全部节点应用成功”。`configuration.progress` 跟踪[普通应用流程](/v2/configuration-reference/deployment)：节点独立拉取、校验、保存、应用并回报，offline／未确认状态如实展示。
 
 按 publication 的固定目标集合与各 Node 最新有效回报计算人数，重复读取／重放不能加一。新目标／重规划使用新 publication 并说明替代关系；后来 demand／refresh 的发布不自动加入原配置应用的分母。
 
-首次 sync／重连读取当前进度，不要求重放全部中间步骤才能恢复页面。关闭页面停止订阅，Controller 已受理的配置应用继续；准备、激活和回滚由 API／协调流程控制，SSE 不承担提交确认。
+首次 sync／重连读取当前进度，不要求重放全部中间步骤才能恢复页面。关闭页面停止订阅，节点继续同步已受理目标；SSE 只通知真实结果，不承担应用许可或提交确认。
 
 ## Path observation
 

@@ -2,7 +2,7 @@
 
 **设计草案。已确认方向：Config／State 分离并分别下发；Config 保存完整历史版本并支持回滚。**
 
-配置应用采用[按依赖组 prepare／activate／结果回报](/v2/configuration-reference/deployment)。Console 一次应用自动协调；整场等待的超时策略尚未确定。
+配置采用[普通应用流程](/v2/configuration-reference/deployment)：Console 提交，Node 拉取后独立校验、保存、应用并回报进度。
 
 ## 两种更新
 
@@ -25,14 +25,13 @@
   → 解析 defaults + 本节点选项 + 目标 listener 参数，准备缺省材料
   → 校验并编译公共事实；按获准需求生成候选路径与完整节点配置
   → CAS 事务保存完整配置、稳定引用和含节点切片的发布版本
-  → prepare：full 或 node-specific delta
+  → full 或 node-specific delta
   → Agent 还原、校验并原子保存完整配置，发送 saved 回执
-  → 本机资源准备，回报有限期 prepared
-  → 依赖组就绪且执行条件满足，Controller 持久记录 activate 决定
-  → Agent 验证指令，切换代际并回报 applied／failed
+  → Agent 检查本机资源与有效执行许可，直接安装／切换代际
+  → 回报 applied／failed，独立更新实际 State
 ```
 
-Config 是完整参数集合，State 是独立更新的运行事实。Controller 的解析／材料准备／编译校验失败不提交新源版本；Node 端 prepare 或 apply 失败发生在期望版本受理后，如实报告，不偷偷回退 currentRevision。完整协议参数例子见 [NodeConfiguration](/v2/configuration-reference/node-configuration#example)。
+Config 是完整参数集合，State 是独立更新的运行事实。Controller 的解析／材料准备／编译校验失败不提交新源版本；Node 端保存或应用失败发生在期望版本受理后，如实报告，不偷偷回退 currentRevision。完整协议参数例子见 [NodeConfiguration](/v2/configuration-reference/node-configuration#example)。
 
 ```jsonc
 {
@@ -41,7 +40,6 @@ Config 是完整参数集合，State 是独立更新的运行事实。Controller
   "configurationRevision": 43,
   "executionPublication": "<consistent-publication-reference>",
   "targetDigest": "<target-node-config-digest>",
-  "stage": "prepare",
   "payload": {
     "type": "delta",
     "baseDigest": "<installed-node-config-digest>",
@@ -50,7 +48,7 @@ Config 是完整参数集合，State 是独立更新的运行事实。Controller
 }
 ```
 
-草案同时支持 `full` 载荷携带完整节点配置。stage=prepare 的内容只能暂存／准备，不能作为 activate 许可。激活指令另绑定 publication、digest、当前实例和 preparationId。changes 的操作类型待定，优先采用有明确增删／替换语义的强类型更新，不暴露任意对象 mutation。
+草案同时支持 `full` 载荷携带完整节点配置。Node 还原、校验、持久保存后，按有效执行许可和本机资源条件直接应用。changes 的操作类型待定，优先采用有明确增删／替换语义的强类型更新，不暴露任意对象 mutation。
 
 先生成目标节点完整配置，再计算前后切片差异。Agent 检查网络、节点与基础 digest，在临时副本还原；随后校验完整 Schema、授权／材料一致性与摘要。初版所需材料随完整参数内联，不能保存缺少秘密材料的空壳后宣称可执行。
 
@@ -66,7 +64,7 @@ Config 已撤回或 lease 到期时停止旧运行代际，不等 State 通道�
 
 ## 原子发布
 
-完整配置版本、期望 current 指针及必要的持久发布记录同事务提交，成功后替换当前不可变内存快照。若以后增加持久查询索引，也纳入同一提交边界。事务成功后才能发 prepare；组内就绪后另行持久决定 activate。中断后可重建／重发相同目标，不能把事务外提前发出的配置当已提交。
+完整配置版本、期望 current 指针及必要的持久发布记录同事务提交，成功后替换当前不可变内存快照。若以后增加持久查询索引，也纳入同一提交边界。事务成功后才能下发；各节点独立处理。中断后可重建／重发相同目标，不能把事务外提前发出的配置当已提交。
 
 大量编译工作可在事务外进行，但提交时必须 CAS 检查配置与相关实体输入仍一致。单节点保存／激活的原子性不等于整网同时切换。
 
@@ -80,7 +78,7 @@ access／topology 规则没有 ID：本版增量可整段替换数组，错误�
 
 | 场景 | 执行结果 |
 | --- | --- |
-| 新配置已保存，资源未准备好 | saved 前进，报告 preparing／failed；不能标记 applied |
+| 新配置已保存，资源未安装完成 | saved 前进，报告 applying 及实际步骤／等待原因，失败则 failed；不能标记 applied |
 | 缺 peer 配置／材料或 State 对不上发布 | 有界等待或重同步，不启动未知权限的业务 |
 | 权限缩减、Node 撤销或 lease 到期 | 先停止旧准入并保留拒绝边界；准备失败不能恢复已失效权限 |
 | 节点 enabled=false | 撤回业务执行，保留获准的控制同步；回滚启用须重新取得有效执行许可 |
@@ -89,7 +87,7 @@ access／topology 规则没有 ID：本版增量可整段替换数组，错误�
 | Agent 重启 | 缓存作恢复基准；取得当前实例和 fresh 执行许可后再激活 |
 | Controller 丢失 RAM State | 更换 State epoch／reset；不丢失持久身份撤销和发布恢复下界 |
 
-实例 acquire/resume 必须由节点凭据验证、幂等，并能 fence 被替代实例。执行授权 lease、prepare 租约与 State 联系时效分开；watch 重连或历史回放不能延长旧许可。采用依赖组内准备屏障，不等待所有无关节点，也不承诺多机同时切换；切换期间可以明确不可用。
+实例 acquire/resume 必须由节点凭据验证、幂等，并能 fence 被替代实例。执行授权 lease 与 State 联系时效分开；watch 重连或历史回放不能延长旧许可。各节点独立安装，业务接收方仍检查相容的完整配置与许可；切换期间对应业务可以明确不可用。
 
 地址期望保存在配置，旧地址的执行退出依据独立持久保存；网络改段／节点改址的步骤见 [Addressing](/v2/configuration-reference/addressing#改址与安全切换)。
 
@@ -97,7 +95,7 @@ access／topology 规则没有 ID：本版增量可整段替换数组，错误�
 
 选择某个历史 NetworkConfiguration，重新校验当前身份、引用和资源依赖，保存为新 revision。历史默认不因界面分页而删除；实际保留策略另行确认。
 
-默认发布失败后由管理员修复／重试或显式回滚，新版本继续走相同 prepare／activate 流程。准备资源可自动清理；跨节点自动回滚不是当前默认，不能把已 activate 的决定改写成 abort。
+默认发布失败后由管理员修复／重试或显式回滚，新版本继续走相同普通应用流程。临时资源可自动清理，旧运行仅在仍有效的资源／许可范围内维持；不会因某个节点失败自动倒退整网配置。
 
 listener 代际绑定按当前配置到目标的转换重新产生，不直接复制历史内部代际；已删除资源恢复时是新运行资源。历史凭据值作为明确恢复输入，仍须通过当前吊销／有效期校验，不能把普通同名新建暗中变成恢复旧值。
 

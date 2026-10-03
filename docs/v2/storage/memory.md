@@ -69,7 +69,7 @@ freshness 按当前时间／配置／实例从以上输入计算：current、awa
 
 `ConfigurationRef` 字段：`revision: Revision`、`executionPublication: PublicationId`、`digest: Digest`。Capability 的 roles／streams 等协议能力字段见[能力参考](/v2/state-reference/capabilities)。各实例报告只能由该 Node 身份更新。
 
-Controller 将 publication 持久决定／关键回执与这些实时字段组合为组进度视图；按固定目标集合计数，不建立另一份可写部署状态。Node 失联时保留最后阶段并标过期，不能自行生成 failed／applied。
+Controller 将 publication 目标／关键回执与这些实时字段组合为应用进度视图；按固定目标集合计数，不建立另一份可写部署状态。Node 失联时保留最后阶段并标过期，不能自行生成 failed／applied。
 
 ## ListenerState
 

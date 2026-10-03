@@ -14,7 +14,7 @@
 | 协议参数、自动凭据与证书／私钥 | 完整 ConfigurationVersion，不再单独保存材料版本 |
 | listener 创建代际 | 配置版本内的 bindings.listeners |
 | 节点执行切片 | ExecutionPublication.nodes，发布与产物一次保存 |
-| 激活决定／关键回执 | ExecutionPublication 及其 nodes 内，先持久决定再发 activate |
+| 应用回执 | ExecutionPublication.nodes 内，保存实际结果与来源 |
 | 建网幂等结果 | Network 的原请求绑定，记录本身就是结果 |
 | 历史去重 | ObservationEvent 主键／摘要；正文清理后有界保留墓碑 |
 | 地址池与节点期望分配 | 完整 ConfigurationVersion；修改／重分配同样走 CAS |
@@ -50,11 +50,11 @@
 1. 使用当前配置和固定身份／资源输入准备新目标。
 2. 事务内重新校验身份、权限、expectedRevision 和输入仍有效。
 3. 原子保存完整版本、引用绑定、必要持久记录及 current 指针。
-4. 提交后按顺序切换期望缓存／发布 prepare，避免拼接新旧输入；依赖组就绪后另行持久 activate 决定。崩溃恢复从已提交指针和决定重建。
+4. 提交后按顺序切换期望缓存／发布完整目标，节点各自同步并应用；避免拼接新旧输入。崩溃恢复从已提交指针、快照和回执重建。
 
 普通成员、节点 query 和 SSE 使用当前权限裁剪。身份变化使旧订阅范围和队列失效，不能让缓存长期代替真实权限。
 
-Node 连续步骤／下载进度留 RAM，saved／prepared／applied／failed 关键回执经校验保存。旧回执在实例／租约失效后只作最后已知证据；不能因 Controller 重启后数据库存在 prepared 行就直接激活。
+Node 连续步骤／下载进度留 RAM，saved／applied／failed 回执经校验保存。旧回执在实例／租约失效后只作最后已知证据；重启后仍需确认当前执行许可和实际报告。
 
 改址提交同时核对地址唯一性、退出限制和所有相关执行依赖，记录旧绑定退出下界。普通保存不擅自替换越界的显式地址，Web 重分配操作可以一次生成并提交合法完整目标；算法／缓存不是新的地址权威。
 

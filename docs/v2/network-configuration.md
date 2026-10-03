@@ -32,7 +32,7 @@ description: Entity、Config、State 的职责与配置参考导航。
 - 共享 configuration crate，提供类型／Schema、校验、编译／切片及增量处理；HTTP、数据库和运行资源 owner 各自分责。
 - Config 实际入库并保留完整版本，回滚是历史配置作为新提交，不倒退版本号。
 - Config 与 State 是不同的下发载荷和版本语义；状态不会扩大配置许可。
-- Console 一次应用自动协调依赖组 prepare／activate／结果回报；保存、准备、实际应用分开显示，期望 revision 不等于全网 applied。失败默认报告并修复／显式回滚；整次等待超时策略仍未决定。
+- Console 一次提交，Node 独立拉取、校验、保存并正常应用，通过 State／SSE 展示逐节点进度。期望 revision 不等于全网 applied，离线节点不阻塞其他节点；失败默认报告并修复／显式回滚。
 - State 有节点上报与节点读取两个方向：Controller 在网络内聚合一次，节点可 query 或 watch。裁剪按当前身份、access 及 topology／routing 的执行依赖进行，中转节点可见性不等于对其业务服务的访问权限。
 
 ## 阅读顺序 {#next}
@@ -42,7 +42,7 @@ description: Entity、Config、State 的职责与配置参考导航。
 2. [用户组与 Tag](/v2/configuration-reference/identity)、[访问权限](/v2/configuration-reference/access)、[组网规则](/v2/configuration-reference/topology)
 3. [节点](/v2/configuration-reference/nodes)、[Listeners](/v2/configuration-reference/listeners)、[Dialers](/v2/configuration-reference/dialers)
 4. [DNS](/v2/configuration-reference/dns)、[流量路由](/v2/configuration-reference/routing)、[规则集](/v2/configuration-reference/rule-sets)
-5. [NodeConfiguration](/v2/configuration-reference/node-configuration)、[应用进度与 prepare／activate](/v2/configuration-reference/deployment)、[State](/v2/state-reference)、[同步与回滚](/v2/configuration-reference/synchronization)
+5. [NodeConfiguration](/v2/configuration-reference/node-configuration)、[配置应用与进度](/v2/configuration-reference/deployment)、[State](/v2/state-reference)、[同步与回滚](/v2/configuration-reference/synchronization)
 6. [大配置查询与外部 API](/v2/configuration-reference/storage-api)
 7. [API 分区](/v2/api)、[注册与认证](/v2/api/authentication)、[SSE 与初始同步](/v2/api/events)
 
