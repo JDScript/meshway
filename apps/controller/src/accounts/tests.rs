@@ -146,7 +146,7 @@ fn explicit_schema_rollback_and_current_fk() {
     let version: i64 = db
         .pragma_query_value(None, "user_version", |r| r.get(0))
         .unwrap();
-    assert_eq!(version, 13);
+    assert_eq!(version, 15);
     assert!(Accounts::new(&db).network("missing").is_err());
 }
 
