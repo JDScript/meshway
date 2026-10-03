@@ -1,6 +1,12 @@
+use tokio::sync::Semaphore;
+
 use crate::directory::{Directory, DirectoryError};
 use crate::settings::Settings;
 use crate::store::{Executor, ExecutorError, OpenError, Options, schema};
+
+const MAX_DIRECTORY_PREPARATIONS: u32 = 4;
+static DIRECTORY_PREPARATIONS: Semaphore =
+    Semaphore::const_new(MAX_DIRECTORY_PREPARATIONS as usize);
 
 /// Application lifecycle owner. Dropping closes work admission immediately;
 /// the SQLite worker retains its process lock until accepted work has drained
@@ -29,7 +35,7 @@ pub enum AppError {
     StorageIntegrity,
     #[error("database operation failed")]
     Database,
-    #[error("database worker failed or stopped")]
+    #[error("application worker failed or stopped")]
     Worker,
     #[error("private storage is unsupported on this platform")]
     UnsupportedPlatform,
@@ -44,9 +50,25 @@ impl App {
             busy_timeout: settings.database_busy_timeout,
         };
         options.validate().map_err(AppError::from)?;
-        // No await between acquiring the lock and transferring it to the
-        // executor's worker. Cancellation therefore cannot orphan its owner.
-        let directory = Directory::open(&settings.data_dir)?;
+        let permit = DIRECTORY_PREPARATIONS
+            .acquire()
+            .await
+            .map_err(|_| AppError::Worker)?;
+        let directory = tokio::task::spawn_blocking(move || {
+            // The task retains its budget through completion even if its caller
+            // cancels. An unclaimed result drops the directory and its lock;
+            // SQLite has not been opened at this stage.
+            let _permit = permit;
+            Directory::open(&settings.data_dir)
+        })
+        .await
+        .map_err(|_| AppError::Worker)??;
+        Self::open_directory(directory, options).await
+    }
+
+    async fn open_directory(directory: Directory, options: Options) -> Result<Self, AppError> {
+        // No yield between taking the prepared directory and transferring it
+        // to the SQLite worker. Dropping either future preserves lock ownership.
         let executor = Executor::open(
             directory.database_path(),
             options,

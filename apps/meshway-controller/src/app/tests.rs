@@ -310,7 +310,11 @@ async fn cancelling_app_open_keeps_lock_while_sqlite_open_is_blocked() {
     blocker
         .execute_batch("PRAGMA journal_mode = DELETE; BEGIN EXCLUSIVE")
         .unwrap();
-    let mut opening = Box::pin(App::open(Settings::new(&path)));
+    // The directory preparation stage has completed. Exercise cancellation at
+    // the exact worker-transfer boundary used by App::open, without racing a
+    // lock probe against the separate blocking filesystem task.
+    let directory = Directory::open(&path).unwrap();
+    let mut opening = Box::pin(App::open_directory(directory, Options::default()));
     assert_pending(opening.as_mut());
     drop(opening);
     assert_locked(&path).await;
@@ -343,6 +347,24 @@ async fn cancelled_initialization_keeps_worker_owned_lock_until_connection_close
     assert_locked(&path).await;
     release.send(()).unwrap();
     let app = reopen(&path).await;
+    app.check_storage().await.unwrap();
+    app.shutdown().await.unwrap();
+}
+
+#[tokio::test]
+async fn cancelled_startup_waiting_for_filesystem_budget_creates_nothing() {
+    let (_parent, path) = location();
+    let permits = DIRECTORY_PREPARATIONS
+        .acquire_many(MAX_DIRECTORY_PREPARATIONS)
+        .await
+        .unwrap();
+    let mut opening = Box::pin(App::open(Settings::new(&path)));
+    assert_pending(opening.as_mut());
+    drop(opening);
+    assert!(!path.exists());
+    drop(permits);
+
+    let app = App::open(Settings::new(&path)).await.unwrap();
     app.check_storage().await.unwrap();
     app.shutdown().await.unwrap();
 }
