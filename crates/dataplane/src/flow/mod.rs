@@ -96,6 +96,15 @@ struct Flow {
     receipt_attempts: u8,
 }
 impl Flow {
+    fn reserve(&mut self, packet: Packet, reply: bool) -> bool {
+        match packet.tcp {
+            Some(packet) => self
+                .tcp
+                .as_mut()
+                .is_some_and(|state| state.reserve(packet, reply)),
+            None => self.advance(packet, reply, true),
+        }
+    }
     fn advance(&mut self, packet: Packet, reply: bool, sending: bool) -> bool {
         match packet.tcp {
             Some(tcp) => self
@@ -405,7 +414,7 @@ impl Admission for StatefulIpv4Plan {
         if flow.prepared {
             return Err(self.capacity());
         }
-        if !flow.clone().advance(packet, reply, true) {
+        if !flow.reserve(packet, reply) {
             return Err(invalid());
         }
         let kind = if reply {

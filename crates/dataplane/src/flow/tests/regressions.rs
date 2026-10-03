@@ -145,6 +145,27 @@ fn tcp_pipeline_and_cumulative_ack_do_not_wait_for_per_packet_receipts() {
 }
 
 #[test]
+fn cancelled_carrier_send_preserves_provisional_pipeline_without_terminal_commit() {
+    let (a, b) = plans();
+    handshake(&a, &b);
+    let path = paths();
+    let first = a
+        .encapsulate(&path, &tcp(false, 101, 701, 0x18, 10))
+        .unwrap();
+    a.cancelled(&path, &first);
+    let next = prepared(&a, &tcp(false, 111, 701, 0x18, 10));
+    a.sent(&next.path, &next.payload).unwrap();
+    assert!(b.incoming(&next));
+    b.delivered(&next).unwrap();
+    assert!(a.outgoing(&tcp(false, 101, 701, 0x18, 10)).is_some());
+    let fin = a
+        .encapsulate(&path, &tcp(false, 121, 701, 0x11, 0))
+        .unwrap();
+    a.cancelled(&path, &fin);
+    assert!(a.table().flows.values().all(|f| !f.tcp.unwrap().terminal()));
+}
+
+#[test]
 fn more_than_1024_unconfirmed_packets_on_one_flow_consume_one_slot() {
     let (a, b) = plans();
     deliver(&a, &b, &udp(false, 40000));

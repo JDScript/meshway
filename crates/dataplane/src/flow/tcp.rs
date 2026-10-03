@@ -1,6 +1,6 @@
-//! TCP progress is updated on successful local enqueue/device delivery. Proof of
-//! reverse eligibility is a separate flow state; TCP data is never stop-and-wait
-//! on a Meshway receipt. Reordering is bounded, not treated as a new connection.
+//! Provisional byte progress follows admitted TUN packets; protocol termination
+//! commits on enqueue/device delivery. Reverse eligibility is separate proof
+//! state: TCP is never stop-and-wait on a Meshway receipt. Reordering is bounded.
 use super::packet::Tcp;
 
 #[derive(Clone, Copy)]
@@ -17,6 +17,19 @@ pub(super) struct State {
 }
 
 impl State {
+    /// The kernel has already emitted these bytes into the TUN. Reserve only the
+    /// byte cursor before attempting the carrier: a later local queue drop must
+    /// not turn subsequent valid segments into an artificial stop-and-wait gate.
+    /// FIN/ACK terminal state still commits only on successful enqueue/delivery.
+    pub fn reserve(&mut self, packet: Tcp, reply: bool) -> bool {
+        let mut candidate = *self;
+        if !candidate.advance(packet, reply, true) {
+            return false;
+        }
+        self.end[usize::from(reply)] = candidate.end[usize::from(reply)];
+        true
+    }
+
     pub fn new(packet: Tcp) -> Self {
         let syn = packet.seq;
         Self {
