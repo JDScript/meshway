@@ -4,6 +4,7 @@ import { GlobeIcon } from "lucide-react"
 import { motion, useReducedMotion } from "motion/react"
 import { useId, useState, type ComponentProps, type ReactNode } from "react"
 
+import { DraftMark } from "@/components/chrome/draft-mark"
 import { SharedLayoutBg } from "@/components/motion/shared-layout-bg"
 import {
   Popover,
@@ -83,14 +84,19 @@ export function Dock({ networkId, page }: { networkId: string; page: PageId }) {
       <SharedLayoutBg
         as="ul"
         inset={0}
-        pillClassName="rounded-full bg-fill-hover"
+        // Pointing at the current page adds nothing: its own pill already marks it.
+        pillClassName="rounded-full bg-fill-hover group-data-[current=true]/dock-item:invisible"
         pillContainerClassName="inset-y-auto top-0 h-9"
         className="gap-1"
       >
         {DOCK.map((item) => {
           const active = item.page === page
           return (
-            <li key={item.page}>
+            <li
+              key={item.page}
+              data-current={active}
+              className="group/dock-item"
+            >
               <Tooltip>
                 <TooltipTrigger
                   render={
@@ -114,7 +120,11 @@ export function Dock({ networkId, page }: { networkId: string; page: PageId }) {
                         />
                       ) : null}
                       <item.icon className="relative size-4.5" />
-                      {drafts[item.page] ? <DraftMark /> : null}
+                      {drafts[item.page] ? (
+                        <span className="absolute top-1.5 right-1.5 flex">
+                          <DraftMark />
+                        </span>
+                      ) : null}
                     </PageLink>
                   }
                 />
@@ -127,16 +137,6 @@ export function Dock({ networkId, page }: { networkId: string; page: PageId }) {
         })}
       </SharedLayoutBg>
     </nav>
-  )
-}
-
-/** A page holding an unsaved draft. */
-function DraftMark() {
-  return (
-    <span
-      aria-label={m.commit_unsaved()}
-      className="absolute top-1.5 right-1.5 size-1.5 rounded-full bg-warning"
-    />
   )
 }
 
@@ -199,12 +199,7 @@ export function DockLauncher({
           >
             <item.icon className="size-4" />
             {item.label()}
-            {drafts[item.page] ? (
-              <span
-                aria-label={m.commit_unsaved()}
-                className="size-1.5 rounded-full bg-warning"
-              />
-            ) : null}
+            {drafts[item.page] ? <DraftMark /> : null}
           </PageLink>
         ))}
       </PopoverContent>
