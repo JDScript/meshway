@@ -46,11 +46,41 @@ impl Directory {
     pub(crate) fn database_path(&self) -> PathBuf {
         self.database_path.clone()
     }
+
+    pub(crate) fn read_key(
+        &self,
+        pending: bool,
+    ) -> Result<Option<zeroize::Zeroizing<Vec<u8>>>, DirectoryError> {
+        #[cfg(unix)]
+        {
+            unix::read_key(&self._directory, pending)
+        }
+        #[cfg(not(unix))]
+        {
+            let _ = pending;
+            Err(DirectoryError::UnsupportedPlatform)
+        }
+    }
+
+    /// `None` publishes a checked, complete staging file from interrupted first
+    /// initialization. Neither existing final nor staging files are overwritten.
+    pub(crate) fn publish_key(&self, bytes: Option<&[u8]>) -> Result<(), DirectoryError> {
+        #[cfg(unix)]
+        {
+            unix::publish_key(&self._directory, bytes)
+        }
+        #[cfg(not(unix))]
+        {
+            let _ = bytes;
+            Err(DirectoryError::UnsupportedPlatform)
+        }
+    }
 }
 
 #[cfg(unix)]
 mod unix {
     use std::fs::{File, TryLockError};
+    use std::io::{Read, Write};
     use std::os::unix::fs::MetadataExt;
     use std::path::{Component, Path};
 
@@ -67,6 +97,66 @@ mod unix {
         .union(OFlags::NOFOLLOW)
         .union(OFlags::CLOEXEC)
         .union(OFlags::NONBLOCK);
+
+    const KEY: &str = "master-key";
+    const PENDING_KEY: &str = "master-key.pending";
+
+    pub(super) fn read_key(
+        directory: &File,
+        pending: bool,
+    ) -> Result<Option<zeroize::Zeroizing<Vec<u8>>>, DirectoryError> {
+        let name = if pending { PENDING_KEY } else { KEY };
+        let fd = match openat(directory, name, FILE_FLAGS, Mode::empty()) {
+            Ok(fd) => fd,
+            Err(Errno::NOENT) => return Ok(None),
+            Err(error) => return Err(io_error(error)),
+        };
+        let file = File::from(fd);
+        check(&file, false)?;
+        // A previous first boot may have stopped after rename but before the
+        // directory sync. A retry must establish durability before SQL binding.
+        if !pending {
+            file.sync_all().map_err(|_| DirectoryError::Io)?;
+            directory.sync_all().map_err(|_| DirectoryError::Io)?;
+        }
+        // Fixed key format is 53 bytes. Bound reads even for hostile large files.
+        // Preallocate the entire bound: growing a Vec could leave key bytes in
+        // a deallocated allocation before the final buffer gets zeroized.
+        let mut bytes = zeroize::Zeroizing::new(Vec::with_capacity(54));
+        file.take(54)
+            .read_to_end(&mut bytes)
+            .map_err(|_| DirectoryError::Io)?;
+        Ok(Some(bytes))
+    }
+
+    pub(super) fn publish_key(
+        directory: &File,
+        bytes: Option<&[u8]>,
+    ) -> Result<(), DirectoryError> {
+        let flags = if bytes.is_some() {
+            FILE_FLAGS | OFlags::CREATE | OFlags::EXCL
+        } else {
+            FILE_FLAGS
+        };
+        let mut file = File::from(
+            openat(directory, PENDING_KEY, flags, Mode::from_raw_mode(0o600)).map_err(io_error)?,
+        );
+        check(&file, false)?;
+        if let Some(bytes) = bytes {
+            file.write_all(bytes).map_err(|_| DirectoryError::Io)?;
+        }
+        file.sync_all().map_err(|_| DirectoryError::Io)?;
+        rustix::fs::renameat_with(
+            directory,
+            PENDING_KEY,
+            directory,
+            KEY,
+            rustix::fs::RenameFlags::NOREPLACE,
+        )
+        .map_err(io_error)?;
+        directory.sync_all().map_err(|_| DirectoryError::Io)?;
+        Ok(())
+    }
 
     pub(super) fn open(path: &Path) -> Result<Directory, DirectoryError> {
         if !path.is_absolute() {
@@ -93,7 +183,8 @@ mod unix {
             check_ancestor(&parent)?;
         }
         match mkdirat(&parent, *name, Mode::from_raw_mode(0o700)) {
-            Ok(()) | Err(Errno::EXIST) => {}
+            Ok(()) => parent.sync_all().map_err(|_| DirectoryError::Io)?,
+            Err(Errno::EXIST) => {}
             Err(error) => return Err(io_error(error)),
         }
         let directory =

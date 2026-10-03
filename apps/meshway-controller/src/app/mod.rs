@@ -1,7 +1,9 @@
+use std::sync::Arc;
 use tokio::sync::Semaphore;
 
 use crate::accounts::Accounts;
 use crate::directory::{Directory, DirectoryError};
+use crate::secrets::{self, KeyError, Sealer};
 use crate::settings::Settings;
 use crate::store::{Executor, ExecutorError, OpenError, Options, schema};
 
@@ -15,6 +17,7 @@ static DIRECTORY_PREPARATIONS: Semaphore =
 pub struct App {
     executor: Executor,
     accounts: Accounts,
+    sealer: Arc<Sealer>,
 }
 
 /// Safe diagnostic categories: no filesystem paths, SQL, or credentials.
@@ -41,6 +44,10 @@ pub enum AppError {
     Worker,
     #[error("private storage is unsupported on this platform")]
     UnsupportedPlatform,
+    #[error("private master key is missing, invalid, or does not match storage")]
+    MasterKey,
+    #[error("private storage cryptography failed")]
+    Cryptography,
 }
 
 impl App {
@@ -78,19 +85,27 @@ impl App {
     ) -> Result<Self, AppError> {
         // No yield between taking the prepared directory and transferring it
         // to the SQLite worker. Dropping either future preserves lock ownership.
-        let executor = Executor::open(
+        let (executor, sealer) = Executor::open(
             directory.database_path(),
             options,
             directory,
-            schema::initialize,
+            |connection, directory| {
+                schema::initialize(connection, |connection, fresh| {
+                    secrets::initialize(connection, directory, fresh).map_err(AppError::from)
+                })
+            },
         )
         .await
         .map_err(|error| match error {
             OpenError::Executor(error) => AppError::from(error),
-            OpenError::Initialization(error) => AppError::from(error),
+            OpenError::Initialization(error) => error,
         })?;
         let accounts = Accounts::new(executor.handle(), account_options);
-        Ok(Self { executor, accounts })
+        Ok(Self {
+            executor,
+            accounts,
+            sealer: Arc::new(sealer),
+        })
     }
 
     /// An account service handle, without network or instance privileges.
@@ -102,8 +117,20 @@ impl App {
     /// Runs full, read-only schema, SQLite integrity, and foreign-key checks on
     /// the owning thread against one consistent database snapshot.
     pub async fn check_storage(&self) -> Result<(), AppError> {
-        self.executor.handle().execute(schema::check).await??;
+        let sealer = self.sealer();
+        self.executor
+            .handle()
+            .execute(move |connection| {
+                schema::check_with(connection, |connection| {
+                    sealer.check_binding(connection).map_err(AppError::from)
+                })
+            })
+            .await??;
         Ok(())
+    }
+
+    pub(crate) fn sealer(&self) -> Arc<Sealer> {
+        Arc::clone(&self.sealer)
     }
 
     /// Stops admission, drains accepted operations, and waits for SQLite close.
@@ -111,6 +138,17 @@ impl App {
     pub async fn shutdown(self) -> Result<(), AppError> {
         self.executor.shutdown().await?;
         Ok(())
+    }
+}
+
+impl From<KeyError> for AppError {
+    fn from(error: KeyError) -> Self {
+        match error {
+            KeyError::Missing | KeyError::Invalid | KeyError::Mismatch => Self::MasterKey,
+            KeyError::Database => Self::Database,
+            KeyError::Directory(error) => error.into(),
+            KeyError::Sealing(_) => Self::Cryptography,
+        }
     }
 }
 

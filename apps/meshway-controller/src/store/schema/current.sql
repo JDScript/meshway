@@ -1,3 +1,16 @@
+-- Committed databases always contain this one immutable binding. The private
+-- key file is durably published before this row and the schema commit together.
+CREATE TABLE master_key_binding (
+    singleton INTEGER NOT NULL PRIMARY KEY CHECK (singleton = 1),
+    key_id BLOB NOT NULL UNIQUE CHECK (length(key_id) = 16 AND key_id != zeroblob(16)),
+    key_check BLOB NOT NULL CHECK (length(key_check) = 61)
+) STRICT;
+
+CREATE TRIGGER master_key_binding_no_update BEFORE UPDATE ON master_key_binding
+BEGIN SELECT RAISE(ABORT, 'immutable master key binding'); END;
+CREATE TRIGGER master_key_binding_no_delete BEFORE DELETE ON master_key_binding
+BEGIN SELECT RAISE(ABORT, 'immutable master key binding'); END;
+
 -- All timestamp INTEGER fields in users, user_sessions, and activity_events
 -- store Unix milliseconds (UTC), including nullable lifecycle timestamps.
 CREATE TABLE users (

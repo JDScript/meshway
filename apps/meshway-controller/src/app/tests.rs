@@ -59,6 +59,7 @@ async fn empty_directory_private_files_exclusion_shutdown_and_reopen() {
     );
     for name in [
         "controller.lock",
+        "master-key",
         "controller.sqlite",
         "controller.sqlite-wal",
         "controller.sqlite-shm",
@@ -168,6 +169,8 @@ async fn trusted_sticky_ancestor_preserves_private_storage_and_locking() {
 #[tokio::test]
 async fn storage_files_reject_symlinks_hardlinks_directories_and_wide_permissions() {
     for name in [
+        "master-key",
+        "master-key.pending",
         "controller.lock",
         "controller.sqlite",
         "controller.sqlite-wal",
@@ -208,6 +211,160 @@ async fn storage_files_reject_symlinks_hardlinks_directories_and_wide_permission
 }
 
 #[tokio::test]
+async fn key_reopen_missing_invalid_and_mismatched_never_reset_storage() {
+    use crate::secrets::Purpose;
+    use meshway_model::{NetworkId, Revision};
+    let (_parent, path) = location();
+    let app = App::open(Settings::new(&path)).await.unwrap();
+    let network = NetworkId::new(uuid::Uuid::from_bytes([1; 16])).unwrap();
+    let ciphertext = app
+        .sealer()
+        .seal(network, Revision::MIN, Purpose::Source, b"private source")
+        .unwrap();
+    app.shutdown().await.unwrap();
+    let key_path = path.join("master-key");
+    let key = zeroize::Zeroizing::new(fs::read(&key_path).unwrap());
+    let app = App::open(Settings::new(&path)).await.unwrap();
+    assert!(
+        app.sealer()
+            .open(
+                network,
+                Revision::MIN,
+                Purpose::Source,
+                ciphertext.as_bytes()
+            )
+            .unwrap()
+            .as_bytes()
+            == b"private source"
+    );
+    app.shutdown().await.unwrap();
+    let db_path = path.join("controller.sqlite");
+    let before = fs::read(&db_path).unwrap();
+    for kind in ["missing", "truncated", "secret", "id", "version"] {
+        let mut bad = zeroize::Zeroizing::new(key.to_vec());
+        match kind {
+            "missing" => {
+                fs::remove_file(&key_path).unwrap();
+            }
+            "truncated" => {
+                bad.truncate(20);
+                fs::write(&key_path, &*bad).unwrap();
+            }
+            "secret" => {
+                bad[21] ^= 1;
+                fs::write(&key_path, &*bad).unwrap();
+            }
+            "id" => {
+                bad[5] ^= 1;
+                fs::write(&key_path, &*bad).unwrap();
+            }
+            "version" => {
+                bad[4] = 2;
+                fs::write(&key_path, &*bad).unwrap();
+            }
+            _ => unreachable!(),
+        }
+        assert!(matches!(
+            App::open(Settings::new(&path)).await,
+            Err(AppError::MasterKey)
+        ));
+        assert!(fs::read(&db_path).unwrap() == before);
+        if kind == "missing" {
+            assert!(!key_path.exists());
+        } else {
+            assert!(fs::read(&key_path).unwrap() == *bad);
+        }
+        fs::write(&key_path, &*key).unwrap();
+        fs::set_permissions(&key_path, fs::Permissions::from_mode(0o600)).unwrap();
+    }
+    let app = App::open(Settings::new(&path)).await.unwrap();
+    app.check_storage().await.unwrap();
+    app.shutdown().await.unwrap();
+}
+
+#[tokio::test]
+async fn failed_first_initialization_and_pending_publication_reuse_same_key() {
+    for pending in [false, true] {
+        let (_parent, path) = location();
+        let directory = Directory::open(&path).unwrap();
+        let result = Executor::open(
+            directory.database_path(),
+            Options::default(),
+            directory,
+            |connection, directory| -> Result<(), AppError> {
+                schema::initialize(connection, |connection, fresh| {
+                    let _sealer = secrets::initialize(connection, directory, fresh)?;
+                    // Schema and key binding must roll back; the durably written
+                    // key remains recoverable, never replaced by a retry.
+                    Err(AppError::Database)
+                })
+            },
+        )
+        .await;
+        assert!(matches!(
+            result,
+            Err(OpenError::Initialization(AppError::Database))
+        ));
+        let key = zeroize::Zeroizing::new(fs::read(path.join("master-key")).unwrap());
+        if pending {
+            fs::rename(path.join("master-key"), path.join("master-key.pending")).unwrap();
+        }
+        let app = App::open(Settings::new(&path)).await.unwrap();
+        assert!(fs::read(path.join("master-key")).unwrap() == *key);
+        assert!(!path.join("master-key.pending").exists());
+        app.check_storage().await.unwrap();
+        app.shutdown().await.unwrap();
+    }
+}
+
+#[tokio::test]
+async fn incomplete_staged_key_is_preserved_and_publication_never_overwrites() {
+    let (_parent, path) = location();
+    let directory = Directory::open(&path).unwrap();
+    // An interrupted partial write is diagnosed, not silently replaced.
+    let pending = path.join("master-key.pending");
+    fs::write(&pending, b"incomplete private key").unwrap();
+    fs::set_permissions(&pending, fs::Permissions::from_mode(0o600)).unwrap();
+    drop(directory);
+    assert!(matches!(
+        App::open(Settings::new(&path)).await,
+        Err(AppError::MasterKey)
+    ));
+    assert_eq!(fs::read(&pending).unwrap(), b"incomplete private key");
+    assert!(!path.join("master-key").exists());
+    // Explicit test cleanup models operator resolution, not startup repair.
+    fs::remove_file(&pending).unwrap();
+    let app = App::open(Settings::new(&path)).await.unwrap();
+    app.shutdown().await.unwrap();
+    let key = zeroize::Zeroizing::new(fs::read(path.join("master-key")).unwrap());
+    let directory = Directory::open(&path).unwrap();
+    assert!(directory.publish_key(Some(b"must not replace")).is_err());
+    assert!(fs::read(path.join("master-key")).unwrap() == *key);
+    assert_eq!(fs::read(&pending).unwrap(), b"must not replace");
+}
+
+#[tokio::test]
+async fn binding_damage_is_rejected_even_without_any_configuration_rows() {
+    for mutation in [
+        "DROP TRIGGER master_key_binding_no_delete; DELETE FROM master_key_binding; CREATE TRIGGER master_key_binding_no_delete BEFORE DELETE ON master_key_binding BEGIN SELECT RAISE(ABORT, 'immutable master key binding'); END;",
+        "DROP TRIGGER master_key_binding_no_update; UPDATE master_key_binding SET key_check = zeroblob(61); CREATE TRIGGER master_key_binding_no_update BEFORE UPDATE ON master_key_binding BEGIN SELECT RAISE(ABORT, 'immutable master key binding'); END;",
+    ] {
+        let (_parent, path) = location();
+        let app = App::open(Settings::new(&path)).await.unwrap();
+        let key = zeroize::Zeroizing::new(fs::read(path.join("master-key")).unwrap());
+        app.executor
+            .handle()
+            .execute(move |connection| connection.execute_batch(mutation).unwrap())
+            .await
+            .unwrap();
+        assert!(app.check_storage().await.is_err());
+        app.shutdown().await.unwrap();
+        assert!(App::open(Settings::new(&path)).await.is_err());
+        assert!(fs::read(path.join("master-key")).unwrap() == *key);
+    }
+}
+
+#[tokio::test]
 async fn rejected_database_is_not_replaced_or_reset() {
     for corrupt in [false, true] {
         let (_parent, path) = location();
@@ -227,6 +384,7 @@ async fn rejected_database_is_not_replaced_or_reset() {
         let before = fs::read(&database_path).unwrap();
         assert!(App::open(Settings::new(&path)).await.is_err());
         assert_eq!(fs::read(&database_path).unwrap(), before);
+        assert!(!path.join("master-key").exists());
         // Rejection did not leave a lock owner alive.
         drop(Directory::open(&path).unwrap());
     }
@@ -339,10 +497,12 @@ async fn cancelled_initialization_keeps_worker_owned_lock_until_connection_close
         directory.database_path(),
         Options::default(),
         directory,
-        move |connection| {
+        move |connection, directory| {
             started.send(()).unwrap();
             wait.recv().unwrap();
-            schema::initialize(connection)
+            schema::initialize(connection, |connection, fresh| {
+                secrets::initialize(connection, directory, fresh).map_err(AppError::from)
+            })
         },
     ));
     assert_pending(opening.as_mut());
@@ -369,6 +529,40 @@ async fn cancelled_startup_waiting_for_filesystem_budget_creates_nothing() {
     drop(permits);
 
     let app = App::open(Settings::new(&path)).await.unwrap();
+    app.check_storage().await.unwrap();
+    app.shutdown().await.unwrap();
+}
+
+#[tokio::test]
+async fn cancelled_first_binding_retains_key_and_lock_until_worker_commit() {
+    let (_parent, path) = location();
+    let directory = Directory::open(&path).unwrap();
+    let (started, running) = oneshot::channel();
+    let (release, wait) = mpsc::channel();
+    let mut opening = Box::pin(Executor::open(
+        directory.database_path(),
+        Options::default(),
+        directory,
+        move |connection, directory| {
+            schema::initialize(
+                connection,
+                |connection, fresh| -> Result<Sealer, AppError> {
+                    let sealer = secrets::initialize(connection, directory, fresh)?;
+                    started.send(()).unwrap();
+                    wait.recv().unwrap();
+                    Ok(sealer)
+                },
+            )
+        },
+    ));
+    assert_pending(opening.as_mut());
+    running.await.unwrap();
+    let key = zeroize::Zeroizing::new(fs::read(path.join("master-key")).unwrap());
+    drop(opening);
+    assert_locked(&path).await;
+    release.send(()).unwrap();
+    let app = reopen(&path).await;
+    assert!(fs::read(path.join("master-key")).unwrap() == *key);
     app.check_storage().await.unwrap();
     app.shutdown().await.unwrap();
 }

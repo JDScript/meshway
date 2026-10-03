@@ -26,7 +26,7 @@ async fn database(path: PathBuf, queue_capacity: usize) -> Executor {
             ..Options::default()
         },
         (),
-        |connection| {
+        |connection, _| {
             connection.execute_batch(
                 "CREATE TABLE IF NOT EXISTS entries (id INTEGER PRIMARY KEY, value TEXT NOT NULL)",
             )
@@ -34,6 +34,7 @@ async fn database(path: PathBuf, queue_capacity: usize) -> Executor {
     )
     .await
     .unwrap()
+    .0
 }
 
 async fn count(handle: &Handle) -> i64 {
@@ -51,21 +52,27 @@ async fn connection_settings_transactions_and_persistent_reopen() {
     let directory = temporary_directory();
     let path = directory.path().join("controller.sqlite");
     let caller_thread = thread::current().id();
-    let owner = Executor::open(path.clone(), Options::default(), (), move |connection| {
-        assert_ne!(thread::current().id(), caller_thread);
-        let foreign_keys: bool =
-            connection.pragma_query_value(None, "foreign_keys", |row| row.get(0))?;
-        let synchronous: i64 =
-            connection.pragma_query_value(None, "synchronous", |row| row.get(0))?;
-        let timeout: i64 = connection.pragma_query_value(None, "busy_timeout", |row| row.get(0))?;
-        assert!(foreign_keys);
-        assert_eq!(synchronous, 2);
-        assert_eq!(timeout, 5000);
-        connection.execute_batch(
-            "CREATE TABLE entries (id INTEGER PRIMARY KEY, value TEXT NOT NULL);
+    let (owner, ()) = Executor::open(
+        path.clone(),
+        Options::default(),
+        (),
+        move |connection, _| {
+            assert_ne!(thread::current().id(), caller_thread);
+            let foreign_keys: bool =
+                connection.pragma_query_value(None, "foreign_keys", |row| row.get(0))?;
+            let synchronous: i64 =
+                connection.pragma_query_value(None, "synchronous", |row| row.get(0))?;
+            let timeout: i64 =
+                connection.pragma_query_value(None, "busy_timeout", |row| row.get(0))?;
+            assert!(foreign_keys);
+            assert_eq!(synchronous, 2);
+            assert_eq!(timeout, 5000);
+            connection.execute_batch(
+                "CREATE TABLE entries (id INTEGER PRIMARY KEY, value TEXT NOT NULL);
              CREATE TABLE children (parent INTEGER REFERENCES entries(id));",
-        )
-    })
+            )
+        },
+    )
     .await
     .unwrap();
     let handle = owner.handle();
@@ -233,10 +240,10 @@ async fn initialization_rejection_preserves_existing_database() {
         .unwrap();
     owner.shutdown().await.unwrap();
 
-    let result = Executor::open(path.clone(), Options::default(), (), |connection| {
+    let result = Executor::open(path.clone(), Options::default(), (), |connection, _| {
         let transaction = connection.transaction().unwrap();
         transaction.execute("DELETE FROM entries", []).unwrap();
-        Err(SchemaError::Rejected)
+        Err::<(), _>(SchemaError::Rejected)
     })
     .await;
     assert!(matches!(
@@ -294,7 +301,7 @@ async fn initialization_panic_joins_and_reports_failure() {
         directory.path().join("controller.sqlite"),
         Options::default(),
         (),
-        |_| -> Result<(), SchemaError> { panic!("test initialization failure") },
+        |_, _| -> Result<(), SchemaError> { panic!("test initialization failure") },
     )
     .await;
     assert!(matches!(
@@ -342,7 +349,7 @@ async fn invalid_options_and_open_failure_are_explicit_and_redacted() {
                 ..Options::default()
             },
             (),
-            |_| Ok::<_, SchemaError>(()),
+            |_, _| Ok::<_, SchemaError>(()),
         )
         .await;
         assert!(matches!(
@@ -358,7 +365,7 @@ async fn invalid_options_and_open_failure_are_explicit_and_redacted() {
                 ..Options::default()
             },
             (),
-            |_| Ok::<_, SchemaError>(()),
+            |_, _| Ok::<_, SchemaError>(()),
         )
         .await;
         assert!(matches!(
@@ -367,9 +374,12 @@ async fn invalid_options_and_open_failure_are_explicit_and_redacted() {
         ));
     }
     assert!(!path.exists());
-    let result = Executor::open(directory.path().to_owned(), Options::default(), (), |_| {
-        Ok::<_, SchemaError>(())
-    })
+    let result = Executor::open(
+        directory.path().to_owned(),
+        Options::default(),
+        (),
+        |_, _| Ok::<_, SchemaError>(()),
+    )
     .await;
     assert!(matches!(
         result,

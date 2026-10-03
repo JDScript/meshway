@@ -1,5 +1,46 @@
 use super::*;
 
+// Schema/account tests use a synthetic binding; filesystem and cryptographic
+// binding behavior is exercised through the real App/secrets initializer.
+pub(crate) fn initialize_fixture(connection: &mut Connection) -> Result<(), SchemaError> {
+    super::initialize(connection, |connection, fresh| {
+        if fresh {
+            connection.execute("INSERT INTO master_key_binding VALUES (1, x'00000000000000000000000000000001', zeroblob(61))", [])?;
+        }
+        Ok(())
+    })
+}
+
+use initialize_fixture as initialize;
+
+#[test]
+fn master_key_binding_is_singleton_immutable_and_required() {
+    let mut connection = database();
+    for mutation in [
+        "INSERT INTO master_key_binding VALUES (2, randomblob(16), zeroblob(61))",
+        "INSERT INTO master_key_binding VALUES (1, randomblob(16), zeroblob(61))",
+        "UPDATE master_key_binding SET key_id = randomblob(16)",
+        "UPDATE master_key_binding SET key_check = zeroblob(61)",
+        "DELETE FROM master_key_binding",
+    ] {
+        assert!(connection.execute(mutation, []).is_err());
+    }
+    check(&mut connection).unwrap();
+    connection
+        .execute_batch("DROP TRIGGER master_key_binding_no_delete; DELETE FROM master_key_binding")
+        .unwrap();
+    connection.execute_batch("CREATE TRIGGER master_key_binding_no_delete BEFORE DELETE ON master_key_binding\nBEGIN SELECT RAISE(ABORT, 'immutable master key binding'); END").unwrap();
+    assert_eq!(check(&mut connection), Err(SchemaError::Integrity));
+    assert_eq!(initialize(&mut connection), Err(SchemaError::Integrity));
+    assert_eq!(
+        connection
+            .query_row("SELECT count(*) FROM master_key_binding", [], |row| row
+                .get::<_, i64>(0))
+            .unwrap(),
+        0
+    );
+}
+
 fn database() -> Connection {
     let mut connection = Connection::open_in_memory().unwrap();
     connection

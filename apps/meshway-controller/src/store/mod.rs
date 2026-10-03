@@ -119,16 +119,20 @@ impl Executor {
     /// Initialization failure closes the connection and joins the thread. It
     /// never deletes, resets, or retries a database; initialization atomicity is
     /// the schema owner's responsibility (normally a SQLite transaction).
-    pub(crate) async fn open<F, E, G>(
+    /// The initializer borrows the worker-owned lifetime guard and returns its
+    /// startup value through the same bounded one-shot as startup success. An
+    /// abandoned reply drops that value; the guard remains until worker exit.
+    pub(crate) async fn open<F, E, G, T>(
         path: PathBuf,
         options: Options,
         lifetime_guard: G,
         initialize: F,
-    ) -> Result<Self, OpenError<E>>
+    ) -> Result<(Self, T), OpenError<E>>
     where
-        F: FnOnce(&mut Connection) -> Result<(), E> + Send + 'static,
+        F: FnOnce(&mut Connection, &G) -> Result<T, E> + Send + 'static,
         E: Send + 'static,
         G: Send + 'static,
+        T: Send + 'static,
     {
         options.validate()?;
         let shared = Arc::new(Shared {
@@ -159,15 +163,18 @@ impl Executor {
                         return;
                     }
                 };
-                if let Err(error) = initialize(&mut connection) {
-                    let _ = initialized.send(Err(OpenError::Initialization(error)));
-                    return;
-                }
+                let value = match initialize(&mut connection, &_lifetime_guard) {
+                    Ok(value) => value,
+                    Err(error) => {
+                        let _ = initialized.send(Err(OpenError::Initialization(error)));
+                        return;
+                    }
+                };
                 if let Err(error) = enable_wal(&connection) {
                     let _ = initialized.send(Err(OpenError::Executor(error)));
                     return;
                 }
-                let _ = initialized.send(Ok(()));
+                let _ = initialized.send(Ok(value));
                 while let Some(job) = worker_shared.next() {
                     // Free the waiting slot before executing; no queue lock is
                     // held while running SQL or delivering the one-shot reply.
@@ -181,7 +188,7 @@ impl Executor {
             worker: Some(worker),
         };
         match initialization.await {
-            Ok(Ok(())) => Ok(owner),
+            Ok(Ok(value)) => Ok((owner, value)),
             result => {
                 // Also join on startup failure; cancellation drops the owner and
                 // closes admission without blocking an async runtime thread.
@@ -189,7 +196,7 @@ impl Executor {
                 Err(match result {
                     Ok(Err(error)) => error,
                     Err(_) => OpenError::Executor(ExecutorError::Closed),
-                    Ok(Ok(())) => unreachable!(),
+                    Ok(Ok(_)) => unreachable!(),
                 })
             }
         }

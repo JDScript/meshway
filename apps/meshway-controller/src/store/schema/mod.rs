@@ -26,37 +26,59 @@ impl From<rusqlite::Error> for SchemaError {
     }
 }
 
-pub(crate) fn initialize(connection: &mut Connection) -> Result<(), SchemaError> {
+pub(crate) fn initialize<T, E: From<SchemaError>>(
+    connection: &mut Connection,
+    initialize_key: impl FnOnce(&Connection, bool) -> Result<T, E>,
+) -> Result<T, E> {
     // Existing databases are diagnosed without taking a write transaction.
     if identity(connection)? == (APPLICATION_ID, VERSION) {
-        return check(connection);
+        check(connection)?;
+        return initialize_key(connection, false);
     }
     // Acquire the writer before testing emptiness; metadata and DDL commit as
     // one unit. A dropped/previously initialized schema is not a fresh database.
-    let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
-    let schema_version: i64 =
-        transaction.pragma_query_value(None, "schema_version", |r| r.get(0))?;
+    let transaction = connection
+        .transaction_with_behavior(TransactionBehavior::Immediate)
+        .map_err(SchemaError::from)?;
+    let schema_version: i64 = transaction
+        .pragma_query_value(None, "schema_version", |r| r.get(0))
+        .map_err(SchemaError::from)?;
     if identity(&transaction)? != (0, 0)
         || schema_version != 0
         || !objects(&transaction)?.is_empty()
     {
-        return Err(SchemaError::Unsupported);
+        return Err(SchemaError::Unsupported.into());
     }
-    transaction.execute_batch(SQL)?;
-    transaction.pragma_update(None, "application_id", APPLICATION_ID)?;
-    transaction.pragma_update(None, "user_version", VERSION)?;
+    transaction.execute_batch(SQL).map_err(SchemaError::from)?;
+    transaction
+        .pragma_update(None, "application_id", APPLICATION_ID)
+        .map_err(SchemaError::from)?;
+    transaction
+        .pragma_update(None, "user_version", VERSION)
+        .map_err(SchemaError::from)?;
+    let value = initialize_key(&transaction, true)?;
     validate(&transaction)?;
-    transaction.commit()?;
-    Ok(())
+    transaction.commit().map_err(SchemaError::from)?;
+    Ok(value)
 }
 
 /// A read transaction gives all diagnostics one consistent database snapshot.
 /// No repair, schema initialization, checkpoint, or write is performed here.
 pub(crate) fn check(connection: &mut Connection) -> Result<(), SchemaError> {
-    let transaction = connection.transaction_with_behavior(TransactionBehavior::Deferred)?;
+    check_with(connection, |_| Ok(()))
+}
+
+pub(crate) fn check_with<T, E: From<SchemaError>>(
+    connection: &mut Connection,
+    check_key: impl FnOnce(&Connection) -> Result<T, E>,
+) -> Result<T, E> {
+    let transaction = connection
+        .transaction_with_behavior(TransactionBehavior::Deferred)
+        .map_err(SchemaError::from)?;
     validate(&transaction)?;
-    transaction.rollback()?;
-    Ok(())
+    let result = check_key(&transaction)?;
+    transaction.rollback().map_err(SchemaError::from)?;
+    Ok(result)
 }
 
 fn validate(connection: &Connection) -> Result<(), SchemaError> {
@@ -87,6 +109,13 @@ fn validate(connection: &Connection) -> Result<(), SchemaError> {
             .next()?
             .is_some()
     {
+        return Err(SchemaError::Integrity);
+    }
+    let bindings: i64 =
+        connection.query_row("SELECT count(*) FROM master_key_binding", [], |row| {
+            row.get(0)
+        })?;
+    if bindings != 1 {
         return Err(SchemaError::Integrity);
     }
     Ok(())
@@ -123,4 +152,4 @@ fn objects(connection: &Connection) -> Result<Vec<SchemaObject>, SchemaError> {
 }
 
 #[cfg(test)]
-mod tests;
+pub(crate) mod tests;

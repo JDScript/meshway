@@ -31,11 +31,11 @@ fn verify_candidate(candidate: &LoginCandidate) {
 async fn transactional_lifecycle_races_activities_and_cancelled_delivery() {
     let _serial = TEST_KDF_LOCK.lock().await;
     let temp = tempfile::tempdir().unwrap();
-    let executor = Executor::open(
+    let (executor, ()) = Executor::open(
         temp.path().canonicalize().unwrap().join("db"),
         Options::default(),
         (),
-        schema::initialize,
+        |connection, _| schema::tests::initialize_fixture(connection),
     )
     .await
     .unwrap();
@@ -231,11 +231,11 @@ async fn schema_check(handle: &crate::store::Handle) {
 async fn persisted_account_session_and_activity_times_are_unix_milliseconds() {
     let _serial = TEST_KDF_LOCK.lock().await;
     let temp = tempfile::tempdir().unwrap();
-    let executor = Executor::open(
+    let (executor, ()) = Executor::open(
         temp.path().canonicalize().unwrap().join("db"),
         Options::default(),
         (),
-        schema::initialize,
+        |connection, _| schema::tests::initialize_fixture(connection),
     )
     .await
     .unwrap();
