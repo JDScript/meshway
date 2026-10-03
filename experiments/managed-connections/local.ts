@@ -1,4 +1,5 @@
 import { spawn } from "node:child_process";
+import { fstatSync, lstatSync } from "node:fs";
 
 /** Never let subprocess errors serialize argv, input, stdout, or stderr. */
 export async function command(
@@ -7,26 +8,48 @@ export async function command(
   options: { timeout?: number; input?: string; cwd?: string } = {},
 ): Promise<string> {
   return new Promise((resolve, reject) => {
-    const child = spawn(executable, args, { cwd: options.cwd, stdio: ["pipe", "pipe", "pipe"] });
+    const stdio: Array<"pipe" | "ignore" | number> = ["pipe", "pipe", "pipe"];
+    const inherited = process.env.MESHWAY_PERF_LOCK_FD;
+    if (inherited !== undefined) {
+      const descriptor = Number(inherited);
+      const path = process.env.MESHWAY_PERF_LOCK;
+      if (!Number.isSafeInteger(descriptor) || descriptor < 3 || descriptor > 1024 || !path) {
+        throw new Error("invalid inherited performance lock descriptor");
+      }
+      const held = fstatSync(descriptor), disk = lstatSync(path);
+      if (!held.isFile() || !disk.isFile() || held.dev !== disk.dev || held.ino !== disk.ino
+        || held.uid !== process.getuid?.() || (held.mode & 0o077) !== 0) {
+        throw new Error("inherited performance lock ownership differs");
+      }
+      while (stdio.length <= descriptor) stdio.push("ignore");
+      stdio[descriptor] = descriptor;
+    }
+    const child = spawn(executable, args, { cwd: options.cwd, stdio });
+    const { stdin, stdout, stderr } = child;
+    if (!stdin || !stdout || !stderr) {
+      child.kill("SIGKILL");
+      reject(new Error("subprocess pipes unavailable"));
+      return;
+    }
     const chunks: Buffer[] = [];
     let bytes = 0;
     let exceeded = false;
     let timedOut = false;
     const timer = setTimeout(() => { timedOut = true; child.kill("SIGKILL"); }, options.timeout ?? 30_000);
-    child.stdout.on("data", (chunk: Buffer) => {
+    stdout.on("data", (chunk: Buffer) => {
       bytes += chunk.length;
       if (bytes <= 4 * 1024 * 1024) chunks.push(chunk);
       else { exceeded = true; child.kill("SIGKILL"); }
     });
-    child.stderr.resume();
-    child.stdin.on("error", () => {});
+    stderr.resume();
+    stdin.on("error", () => {});
     child.once("error", () => { clearTimeout(timer); reject(new Error("subprocess could not start; private details suppressed")); });
     child.once("close", (code) => {
       clearTimeout(timer);
       if (code !== 0 || timedOut || exceeded) reject(new Error(`subprocess failed (exit ${code ?? "signal"}, timeout ${timedOut}, output_limit ${exceeded}); private details suppressed`));
       else resolve(Buffer.concat(chunks).toString("utf8"));
     });
-    child.stdin.end(options.input ?? "");
+    stdin.end(options.input ?? "");
   });
 }
 
