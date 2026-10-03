@@ -16,6 +16,20 @@
 
 ## Config update
 
+一条完整链路是：
+
+```text
+管理员提交 NetworkConfiguration
+  → 解析 defaults + 本节点选项 + 目标 listener 参数，准备缺省材料
+  → 校验并编译授权／路径，生成完整 NodeConfiguration（含所需材料）
+  → CAS 事务保存配置、材料绑定及发布版本
+  → full 或 node-specific delta
+  → Agent 还原、校验并原子保存完整配置，发送保存 ACK
+  → 资源准备与代际切换，独立上报实际 State
+```
+
+Config 是完整参数集合，State 是之后独立更新的运行事实。准备／编译失败不提交新版本；提交时还须核对所用输入未变。完整协议参数例子见 [NodeConfiguration](/configuration-reference/node-configuration#example)。
+
 ```jsonc
 {
   "networkId": "<network-id>",
@@ -32,10 +46,7 @@
 
 草案同时支持 `full` 载荷携带完整节点配置。changes 的操作类型待定，优先采用有明确增删／替换语义的强类型更新，不暴露任意对象 mutation。
 
-1. Controller 编译新目标，先做 node-specific slice，再计算前后切片差异。
-2. Agent 检查网络、节点、基础 digest，在临时副本还原。
-3. 对完整目标做 Schema、跨字段、授权／材料一致性和摘要校验。
-4. 原子保存后发保存 ACK；通过资源准备与代际切换后另报执行状态。
+先生成目标节点完整配置，再计算前后切片差异。Agent 检查网络、节点与基础 digest，在临时副本还原；随后校验完整 Schema、授权／材料一致性与摘要。材料引用必须可解析，不能保存一个未取得秘密材料的空壳后宣称可执行。
 
 基准丢失／不匹配时重取 full。数组顺序、清空和删除必须有不同的明确表示，不把部分补丁直接施加到正在运行的路由表。
 

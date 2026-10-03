@@ -34,6 +34,7 @@ export default defineConfig({
         items: [
           { text: "结构与字段", link: "/configuration-reference" },
           { text: "Defaults", link: "/configuration-reference/defaults" },
+          { text: "字段复用与默认继承", link: "/configuration-reference/inheritance" },
           { text: "Groups / Tags", link: "/configuration-reference/identity" },
           { text: "Grants", link: "/configuration-reference/grants" },
           { text: "Connections", link: "/configuration-reference/connections" },

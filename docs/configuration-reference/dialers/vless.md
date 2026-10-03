@@ -1,17 +1,23 @@
 # VLESS Dialer
 
-**当前能力：TCP/TLS、WebSocket/TLS 已托管。** 以下为下一版字段格式。
+位于 `nodes[id].dialers.vless`。**当前承载支持 TCP/TLS、WebSocket/TLS；下述新字段布局尚未发布。**
 
 ## Structure
 
+通常只需：
+
+```json
+{ "priority": 300 }
+```
+
+需要限制封装或调整客户端参数时：
+
 ```json
 {
-  "type": "vless",
-  "remark": "允许 VLESS TCP 和 WS",
+  "remark": "仅使用 WS 入口",
   "priority": 300,
+  "stream": "websocket",
   "connectTimeout": "5s",
-  "streams": ["tcp", "websocket"],
-  "flow": "",
   "tls": { "trust": "managed" },
   "websocket": { "headers": {} }
 }
@@ -19,33 +25,23 @@
 
 ## Fields
 
-继承 [Dial Fields](/configuration-reference/shared/dial) 的 TCP 子集。
+复用 [Dial Fields](/configuration-reference/shared/dial) 的 TCP 子集，仅补充：
 
 | 字段 | 类型 | 默认 | 说明 |
 | --- | --- | --- | --- |
-| `type` | literal | 必填 | `vless` |
-| `priority` | integer | `300` | 承载优先级 |
-| `streams` | enum 数组 | `["tcp", "websocket"]` | 允许的目标 listener 封装；每次按已选 listener 确定，不做明文降级 |
-| `flow` | string | `""` | 当前仅空 flow |
-| `tls` | [TLS dialer](/configuration-reference/shared/tls#dialer-structure) | 托管信任 | 目标材料固定 SNI、证书链和指纹 |
-| `websocket` | [WS dialer](/configuration-reference/shared/websocket#dialer-structure) | `{}` | WS 模式额外选项；headers 为待接线扩展 |
+| `priority` | integer | `300` | 协议默认优先级 |
+| `stream` | `"auto" \| "tcp" \| "websocket"` | `"auto"` | auto 使用目标 listener 的封装；显式值筛选兼容入口 |
+| `tls` | [TLS dialer](/configuration-reference/shared/tls#dialer-structure) | 托管信任 | 客户端验证选项 |
+| `websocket` | [WS dialer](/configuration-reference/shared/websocket#dialer-structure) | `{}` | WS 客户端选项；自定义 headers 尚未托管 |
 
-streams 不可为空或重复；不包含 websocket 时不能指定 websocket 配置。streams 的集合不是实际建连顺序；端点选择与优先级由当前获准候选决定。
+省略 stream 不需要再列一份 `streams` 数组。指定 tcp 时不允许 websocket 配置；没有兼容入口时等待／报告不可用，不降低 TLS 或启用不允许的业务承载。
 
-## Controller-provided fields
+## 节点实际收到的字段
 
-| 上游字段 | 下发来源 |
-| --- | --- |
-| `server` / `server_port` | 选中的 listener endpoint 或获准协调目标 |
-| `uuid` | 目标 listener 的私有材料 |
-| TLS `server_name` / CA / pin | 同版本目标材料 |
-| transport path / Host | listener 的 WS 参数 |
-| CONNECT target | Meshway 固定内部目标，不是应用访问目的地 |
+完整出站配置仍包含 endpoint、UUID、flow、TLS SNI／信任材料及 WS path／Host。它们来自管理员配置的目标 listener 或已持久化的生成值，**不是不属于 configuration**。
 
-这些字段不在普通 dialer 中重复手填。外层为 TCP CONNECT，但里面可以承载获准的 TCP／UDP／ICMP Mesh 包；不能将上游 `network: udp` 或 `packet_encoding: xudp` 当作本模式。
+为避免双端重复填写，管理员在 listener 上修改 UUID／WS 等参数，Controller 重新生成关联的拨号配置。数据来源和完整例子只在 [NodeConfiguration](/configuration-reference/node-configuration#example) 定义。
 
-## 未实现扩展
-
-Vision、原生 UDP command、packetaddr／XUDP、multiplex、REALITY、gRPC／HTTPUpgrade／QUIC 均未接入当前执行。只允许 VLESS 时，不得切到被排除的 Native UDP 业务承载。
+协议能力及未实现扩展统一见 [VLESS Listener](/configuration-reference/listeners/vless#extensions)。
 
 [sing-box VLESS outbound](https://sing-box.sagernet.org/configuration/outbound/vless/)

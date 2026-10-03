@@ -1,55 +1,101 @@
 # NodeConfiguration
 
-**下发格式草案。** Controller 从网络配置生成本节点需要的执行内容，不是管理员独立编辑的第二份配置。
+Controller 给某个节点的**完整执行配置**。它包含实际协议参数和所需材料；“不需要管理员重复手填”不等于“不属于 configuration”。以下为下一版结构提案。
 
-## Structure
+## 参数从哪里来 {#sources}
 
-```jsonc
+| 参数 | NetworkConfiguration 中的来源 | 下发结果 |
+| --- | --- | --- |
+| 本机 bind／监听端口 | 本节点 listener | listener 的实际设置 |
+| 目标 host／port | 目标 listener 的公告 endpoints | 获准的出站候选 |
+| VLESS UUID／Trojan password | listener 显式值；省略时生成并保存 | 监听端与获准拨号端使用同一值 |
+| TLS 证书／私钥 | 管理员提供或平台生成 | 服务端获得私钥，客户端获得验证材料 |
+| SNI、WS path／Host | 目标 listener 设置 | 对应客户端参数 |
+| 拨号优先级／timeout | 本节点 dialers 或 defaults | 本地拨号参数 |
+| peer 公钥／地址 | 已认证 Node 身份与分配记录 | 可信身份和授权引用 |
+| access／paths／DNS | 整网配置编译 | 本节点可执行规则 |
+
+管理员修改源配置中的协议参数，Controller 重新生成所有受影响的节点配置。生成值和材料引用与源版本一起持久绑定，只读查询／重发不会重新生成密码。
+
+## 示例：A 拨 B 的 VLESS listener {#example}
+
+管理员配置节选：
+
+```json
 {
-  "networkId": "<network-id>",
-  "nodeId": "<node-id>",
-  "configurationRevision": 42,
-  "digest": "<node-config-digest>",
-  "configuration": {
-    "hostname": "backend-1",
-    "addresses": ["100.96.0.2/32"],
-    "listeners": {},
-    "dialers": {},
-    "peers": {},
-    "access": [],
-    "meshPaths": [],
-    "egress": {},
-    "dns": {},
-    "materialRefs": []
+  "nodes": {
+    "<node-a>": {
+      "hostname": "a",
+      "dialers": { "vless": {} }
+    },
+    "<node-b>": {
+      "hostname": "b",
+      "listeners": {
+        "public-ws": {
+          "type": "vless",
+          "listen": "0.0.0.0",
+          "listenPort": 443,
+          "endpoints": [{ "host": "edge.example.com", "port": 8443 }],
+          "uuid": "11111111-1111-4111-8111-111111111111",
+          "stream": "websocket",
+          "tls": { "serverName": "edge.example.com" },
+          "websocket": { "path": "/meshway", "host": "edge.example.com" }
+        }
+      }
+    }
   }
 }
 ```
 
-示例数组／对象用于说明字段位置；完整编译结构需要结合当前执行合同定版，不能据此直接激活业务。
+在连接／grants／路径规则允许的前提下，A 收到的执行配置包含以下内容。这里只展开出站和材料部分：
 
-## Fields
+```json
+{
+  "networkId": "<network-id>",
+  "nodeId": "<node-a>",
+  "configurationRevision": 42,
+  "digest": "<node-a-config-digest>",
+  "configuration": {
+    "dialers": {
+      "<compiled-candidate-key>": {
+        "type": "vless",
+        "peerNodeId": "<node-b>",
+        "listenerKey": "public-ws",
+        "priority": 300,
+        "endpoints": [{ "host": "edge.example.com", "port": 8443 }],
+        "stream": "websocket",
+        "flow": "",
+        "credentialsRef": "vless-b-7",
+        "tls": { "serverName": "edge.example.com", "materialRef": "tls-b-client-7" },
+        "websocket": { "path": "/meshway", "host": "edge.example.com" }
+      }
+    },
+    "materials": {
+      "vless-b-7": { "type": "vless", "uuid": "11111111-1111-4111-8111-111111111111" },
+      "tls-b-client-7": {
+        "type": "tls-client",
+        "certificateChain": ["<certificate PEM>"],
+        "certificateSha256": "<certificate digest>"
+      }
+    }
+  }
+}
+```
 
-| 字段 | 内容 |
-| --- | --- |
-| `hostname` / `addresses` | 配置规范名称与 Controller 分配的 Mesh 地址 |
-| `listeners` / `dialers` | 合并默认值和节点设置后的本机执行参数 |
-| `peers` | 本节点被允许使用的 peer 身份及可信公钥等必要信息 |
-| `access` | 已编译授权；不是要求 Agent 再展开用户／组／Tag |
-| `meshPaths` | 已授权完整路径及备选优先级、状态型回复约束 |
-| `egress` | 本节点可执行的方案／规则、出口资格及目的授权 |
-| `dns` | 本节点需要的解析规则和名称记录 |
-| `materialRefs` | 当前发布绑定的材料；材料按节点权限通过私有载荷提供 |
+源配置的 dialers 按协议选择，**生成的 dialers 是具体获准出站实例**，因此有内部 candidate key。它不是管理员还要维护的一张连接表。
 
-配置和材料在激活前必须作为一致目标校验，不能将不匹配版本的材料与新配置拼装。digest 核对内容，不替代控制面认证。
+B 的配置包含本机 listener、同一 UUID，以及对应服务端证书／私钥材料。A 不拿 B 的服务端私钥。两份切片关联同一次发布和材料版本，各自 digest 不必相同。
 
-## Config / State
+## 完整配置包含什么
 
-本对象包含**执行许可与参数**。动态 endpoint、连接状态、当前方案选择、探测结果走 [State](/state-reference) 消息。
+除了上例，完整切片还有本节点 hostname／地址、相关 peer 身份、公钥、授权规则、允许路径、出口方案和 DNS。示例省略这些部分不代表可以跳过校验或授权。
 
-State 不能添加这里没有授权的 peer、扩大 access、改变可信公钥或绕过必经路径。相同源配置 revision 的节点切片也可能因身份／能力输入变化而有不同 digest；执行相关 State 必须绑定确切切片与运行实例。
+materials 是配置的私有部分，可以用引用去重，但 Agent 激活前必须取得并验证完整集合。UUID／password／证书既可以手工配置，也可以自动生成；它们的来源不改变其配置属性。
 
-## Validation
+## Config 与 State
 
-Agent 校验目标身份、完整 Schema、引用、材料绑定和本机构建支持，再检查端口／TUN 等实际资源。保存 ACK 与执行报告分开。
+管理员公告的 endpoint 和协议参数属于 Config。STUN 当前映射、一次协调 attempt、实际选中的通道、RTT 属于 State。
 
-基础不匹配的增量获取全量；配置或授权撤回仍按 lease／代际规则停止旧执行，不因正在等待 State 而无限维持旧许可。详见[同步](/configuration-reference/synchronization)。
+动态 endpoint 更新只改变本配置已经允许的目标如何到达，不能替换 peer 身份、UUID、TLS 信任或业务授权。State 引用确切配置版本／digest，失配时不用于执行。
+
+下发顺序及 full／delta 处理见[同步与分发](/configuration-reference/synchronization)。

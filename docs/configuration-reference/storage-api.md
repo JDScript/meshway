@@ -49,6 +49,8 @@ WHERE network_id = :network_id AND revision = :revision;
 
 数据库内部仍可能解析／遍历大 JSON；SQLite JSONB 可减少解析开销，但多数操作仍为 O(N)。对已经加载到内存的当前版本，没有必要每次再走一次 JSON SQL 查询。
 
+上述 SQL 适用于未加密的 JSON 内容；加密的配置／协议材料先在有权限的应用路径中解密，再按版本缓存与查询，不能直接对密文使用 JSON 函数。管理员提供的秘密和含有秘密的 JSONC 同样需要存储保护，普通成员 API 不因此获得完整材料。
+
 ## 何时增加索引
 
 只有实际查询成本需要时，再加 Node ID、hostname、Tag 成员等**可重建、按版本绑定的索引**。它们是查询加速结构，没有独立写入口，不是新的 Tag／Link Entity。

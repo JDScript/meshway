@@ -85,13 +85,14 @@ Config 相对静态，完整版本保存到数据库；State 随运行变化。[
 
 - `remark` 是描述文本，不是标识；可重复、可为 `""`，不能为 `null`，省略时规范化为 `""`。
 - grants／connections 不包含 `id`。诊断使用本版本的字段路径，例如 `/grants/0`；修改使用配置 revision 保证基准一致。
-- listener／dialer 的对象 key 标识节点内资源，与 `tag:backend` 这类授权 Tag 不同。
+- listener key 标识节点内入站资源；dialers 的 key 直接是协议名。两者都不是 `tag:backend` 这类授权 Tag。
 - 对象字段的缺省、空数组和 `null` 只按所属字段解释，不自动互换。
 
 ## Reading
 
 - 配置 listener：[监听器](/configuration-reference/listeners)；配置出站承载：[拨号器](/configuration-reference/dialers)。
 - 通用字段：[Listen](/configuration-reference/shared/listen)、[Dial](/configuration-reference/shared/dial)、[TLS](/configuration-reference/shared/tls)、[WebSocket](/configuration-reference/shared/websocket)。
+- 字段怎样复用、默认值怎样覆盖：[字段复用与默认继承](/configuration-reference/inheritance)。
 - Agent 收到什么：[NodeConfiguration](/configuration-reference/node-configuration) 与 [State Reference](/state-reference)。
 - 版本、回滚、增量：[同步与分发](/configuration-reference/synchronization)。
 - 配置变大、查询和外部 API：[存储与查询](/configuration-reference/storage-api)。

@@ -1,36 +1,44 @@
 # Dialers
 
-位于 `nodes[id].dialers`。每项由[通用 Dial 字段](/configuration-reference/shared/dial)与协议字段组成，描述如何拨出，不要求配置每对节点的地址。
+定义节点允许使用哪些出站承载及其优先级。**简化后的下一版提案：key 就是协议名，不再另起名称、重复填写 type。**
 
 ## Structure
 
 ```json
 {
-  "udp": { "type": "native_udp", "remark": "优先使用 UDP", "priority": 100 },
-  "tcp": { "type": "native_tcp", "priority": 200 },
-  "vless": {
-    "type": "vless",
-    "priority": 300,
-    "streams": ["tcp", "websocket"]
-  }
+  "native_udp": { "priority": 100 },
+  "native_tcp": { "priority": 200 },
+  "vless": { "priority": 300 }
 }
 ```
 
+只允许 VLESS 可以写：
+
+```json
+{ "vless": {} }
+```
+
+`vless: {}` 使用该协议的字段默认值；整个 `dialers: {}` 则采用网络 defaults.dialers。两者含义不同。
+
 ## Types
 
-| type | 协议参考 | 当前能力 |
+| key | 默认 priority | 专用字段 |
 | --- | --- | --- |
-| `native_udp` | [Native UDP](/configuration-reference/dialers/native-udp) | 平台托管 |
-| `native_tcp` | [Native TCP](/configuration-reference/dialers/native-tcp) | 平台托管 |
-| `vless` | [VLESS](/configuration-reference/dialers/vless) | TCP/TLS、WebSocket/TLS 已托管 |
-| `trojan` | [Trojan](/configuration-reference/dialers/trojan) | TCP/TLS 独立库；尚未接入平台托管 |
+| `native_udp` | 100 | [Native UDP](/configuration-reference/dialers/native-udp) |
+| `native_tcp` | 200 | [Native TCP](/configuration-reference/dialers/native-tcp) |
+| `vless` | 300 | [VLESS](/configuration-reference/dialers/vless) |
+| `trojan` | 400 | [Trojan](/configuration-reference/dialers/trojan)，当前只有库级实现 |
+
+普通使用只需要协议与 priority。timeout、socket、TLS 等进阶选项见[通用 Dial 字段](/configuration-reference/shared/dial)。
+
+## 配置解析
+
+Controller 根据 grants、连接／路径规则和对端 listener，生成具体出站配置。目标地址、UUID／password、SNI、WS path 等**属于配置**，只是默认从目标 listener 解析，不要求在每个发起节点上重复手填。
+
+管理员可在 listener 配置中编辑这些字段；修改后，相应节点的入站／出站配置一起重新生成。完整例子见 [NodeConfiguration](/configuration-reference/node-configuration#example)。
 
 ## Defaults
 
-- 节点 `dialers: {}` 使用 [defaults.dialers](/configuration-reference/defaults#dialers)。
-- 非空对象替换默认集合；不和默认 UDP／TCP 隐式合并。
-- 所有项 disabled 表示不主动拨号。dialer 不限制获准 listener 接收后形成的双向通道。
-- 优先级数值较小者优先，同优先级按 key 稳定排序；不是负载均衡权重。
-- 目前目标格式约定每种 type 至多一项；逐段覆盖和重复类型实例的规则还未定版。
+继承／覆盖只定义一套规则，见[字段复用与默认继承](/configuration-reference/inheritance)。优先级越小越优先；同优先级按协议 key 稳定排序，不做权重负载均衡。
 
-Controller 从配置许可、对端 listener、两端能力和当前协调信息选择目标。server／port／凭据／信任绑定来自该获准目标，不在普通 dialer 里维护另一份手工 peer 清单。
+出站参数与实际通道状态分开。允许某种协议不表示已拨通，也不产生反向新流授权。

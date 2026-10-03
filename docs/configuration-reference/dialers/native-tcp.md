@@ -1,12 +1,11 @@
 # Native TCP Dialer
 
-**当前能力：平台托管。** 以下为下一版字段格式。
+**当前能力：平台托管。** 以下选项放在 `nodes[id].dialers.native_tcp`，为下一版字段格式。
 
 ## Structure
 
 ```json
 {
-  "type": "native_tcp",
   "remark": "TCP 备用",
   "priority": 200,
   "connectTimeout": "5s"

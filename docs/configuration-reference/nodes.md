@@ -27,7 +27,7 @@
 | `remark` | `string` | `""` | 自由备注，不影响身份、DNS 或授权 |
 | `tags` | `string[]` | `[]` | Tag 分配，引用 `tagsOwners` 中的定义 |
 | `listeners` | `Record<string, Listener>` | `{}` | [本节点入站配置](/configuration-reference/listeners) |
-| `dialers` | `Record<string, Dialer>` | `{}` | 空值使用 [defaults.dialers](/configuration-reference/defaults#dialers)；非空替换默认集合 |
+| `dialers` | `DialerSet` | `{}` | 以协议名为 key，使用[统一继承规则](/configuration-reference/inheritance) |
 | `exitEnabled` | `boolean` | `false` | 管理员允许此节点承担出口；不是执行就绪状态 |
 
 ## hostname

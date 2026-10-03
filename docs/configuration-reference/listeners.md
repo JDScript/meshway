@@ -35,5 +35,5 @@
 - 空对象不创建固定 listener；不禁止获准的出站／协调 socket。
 - `enabled: false` 保留静态配置但不执行该 listener。
 - listen 是本机 bind；endpoints 是明确公告的外部地址，实际可达性来自 State。
-- 平台负责生成必要凭据及私钥，并只发给获准节点。配置文件不包含代理账户清单。
+- 管理员可填写协议凭据／TLS 参数，省略的可生成字段由平台补全并保存；不创建独立代理账户清单。完整配置与分发见 [NodeConfiguration](/configuration-reference/node-configuration)。
 - listener key 与授权 Tag 不同；改变 type 或替换资源须按新运行代际处理，不借用旧 socket。

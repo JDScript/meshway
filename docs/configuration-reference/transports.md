@@ -44,12 +44,14 @@
 
 | 上游字段／能力 | Meshway 处理 |
 | --- | --- |
-| `tag` | listener／dialer 对象 key；不是 `tag:` 授权标签 |
-| `users`、客户端 UUID/password | 平台生成和下发材料，没有普通代理账户管理 |
-| `server` / `server_port` | Controller 选择的授权 endpoint；不复制成独立手工 peer 数据源 |
+| `tag` | listener 资源 key；dialers 按协议 key 选择，不是授权 Tag |
+| `users`、客户端 UUID/password | 协议凭据可在 listener 配置，默认生成并保存；拨号配置引用目标值，不创建代理账户实体 |
+| `server` / `server_port` | 从可编辑的目标 listener endpoints 解析到出站配置，避免双端重复填写 |
 | `routing_mark` / `netns` | underlay owner 的受限保护机制，不开放任意覆盖 |
 | `detour` | 不可绕过 Meshway 逻辑路径；使用连接／路由配置 |
 | sniff／旧 domain_strategy | 不将上游已废弃字段搬进新配置 |
 | REALITY、Vision、uTLS、ECH、mux、gRPC、HTTPUpgrade、QUIC 封装 | 在专页说明对应关系，但当前未纳入执行合同 |
 
 需要扩展时按协议逐项增加强类型字段和能力协商，不通过任意 JSON 透传到运行时。
+
+共用字段和配置继承集中见[字段复用与默认继承](/configuration-reference/inheritance)，完整协议值如何下发见 [NodeConfiguration](/configuration-reference/node-configuration)。

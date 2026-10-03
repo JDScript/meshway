@@ -9,9 +9,9 @@
   "grants": "deny",
   "connections": "allow",
   "dialers": {
-    "udp": { "type": "native_udp", "priority": 100 },
-    "tcp": { "type": "native_tcp", "priority": 200 },
-    "vless": { "type": "vless", "priority": 300, "streams": ["tcp", "websocket"] }
+    "native_udp": { "priority": 100 },
+    "native_tcp": { "priority": 200 },
+    "vless": { "priority": 300 }
   }
 }
 ```
@@ -22,7 +22,7 @@
 | --- | --- | --- | --- |
 | `grants` | `"deny" \| "allow"` | `"deny"` | **Mesh 节点互访**的兜底；外部目的地仍须显式授权 |
 | `connections` | `"deny" \| "allow"` | `"allow"` | 没有匹配连接规则时是否允许尝试建立承载 |
-| `dialers` | `Record<string, Dialer>` | 上例 | 节点 `dialers: {}` 时采用的完整默认集合 |
+| `dialers` | `DialerSet` | 上例 | 以协议名为 key；节点 `dialers: {}` 时采用此集合 |
 
 `grants: "allow"` 的范围限 Mesh，是本轮建议的边界，尚待确认；不将“默认允许”隐式解释成开放所有公网／LAN 目的地。当前发布契约尚没有本节 defaults。
 
@@ -41,6 +41,6 @@
 
 ## dialers
 
-节点非空 `dialers` 替换这份默认集合，不和它隐式取并集；只配置 VLESS 不会保留默认 UDP 业务拨号。省略 defaults.dialers 使用平台基线；显式设为 `{}` 表示默认没有出站拨号器。
+节点非空 `dialers` 替换这份默认集合；省略 defaults.dialers 使用平台基线，显式 `{}` 表示默认没有出站拨号器。具体例子和字段默认值顺序统一见[继承规则](/configuration-reference/inheritance)。
 
 listener 不会因 defaults 自动打开监听端口。出口兜底保留在 routing profile 的 `fallback` 中，避免与全网 defaults 出现两处竞争的路径决定。
