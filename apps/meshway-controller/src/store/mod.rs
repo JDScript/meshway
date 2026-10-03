@@ -23,6 +23,8 @@ use tokio::sync::{OwnedSemaphorePermit, Semaphore, oneshot};
 
 pub(crate) mod accounts;
 pub(crate) mod authorization;
+pub(crate) mod enrollment;
+pub(crate) mod execution;
 pub(crate) mod networks;
 pub(crate) mod schema;
 

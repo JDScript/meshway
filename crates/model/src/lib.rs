@@ -8,6 +8,8 @@
 mod digest;
 mod ids;
 mod membership;
+mod node;
+pub use node::*;
 pub mod networks;
 mod numbers;
 pub use networks::{MemberActions, MemberSummary, NetworkActions, NetworkSummary};
@@ -17,7 +19,7 @@ pub mod state;
 
 pub use digest::{Digest, InvalidDigest};
 pub use ids::{
-    ActivityId, ArtifactId, EventId, InstanceId, InvalidId, JoinLinkId, KeyId, MembershipId,
+    ActivityId, ArtifactId, ChallengeId, EnrollmentKeyId, EnrollmentRequestId, EventId, InstanceId, InvalidId, JoinLinkId, KeyId, MembershipId,
     NetworkId, NodeId, ObservationId, ObservationSubscriptionId, PublicationId, RequestId,
     SessionId, StateEpoch, UserId,
 };

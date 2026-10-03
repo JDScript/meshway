@@ -8,10 +8,13 @@
 mod auth;
 pub mod configuration;
 pub mod events;
+pub mod enrollment;
+pub mod execution;
 pub mod history;
 pub mod management;
 mod management_rules;
 mod networks;
+pub mod node;
 mod object;
 pub mod observations;
 mod problem;

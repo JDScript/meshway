@@ -20,6 +20,7 @@ pub struct App {
     accounts: Accounts,
     sealer: Arc<Sealer>,
     configuration_cache: Arc<crate::configuration::SnapshotCache>,
+    boot: meshway_model::InstanceId,
     state_runtime: Arc<std::sync::Mutex<crate::state::service::Runtime>>,
     shutdown_hooks: ShutdownHooks,
 }
@@ -142,6 +143,10 @@ impl App {
             configuration_cache: Arc::default(),
             state_runtime,
             shutdown_hooks,
+            boot: meshway_model::InstanceId::new(
+                crate::accounts::random_uuid().map_err(|_| AppError::Cryptography)?,
+            )
+            .map_err(|_| AppError::Cryptography)?,
         })
     }
 
@@ -222,6 +227,19 @@ impl App {
             .push(Box::new(move || shutdown.close()));
         Ok(service)
     }
+    pub fn execution(&self) -> crate::execution::Execution {
+        crate::execution::Execution::new(self.executor.handle(), self.sealer(), self.boot)
+    }
+    pub fn enrollment(&self) -> crate::enrollment::Enrollment {
+        crate::enrollment::Enrollment::new(
+            self.executor.handle(),
+            self.sealer(),
+            Arc::new(crate::enrollment::configuration::ConfigurationAdmission {
+                sealer: self.sealer(),
+                cache: Arc::clone(&self.configuration_cache),
+            }),
+        )
+    }
 
     /// Runs full, read-only schema, SQLite integrity, and foreign-key checks on
     /// the owning thread against one consistent database snapshot.
@@ -301,5 +319,7 @@ impl From<schema::SchemaError> for AppError {
     }
 }
 
+#[cfg(all(test, unix))]
+mod node_tests;
 #[cfg(all(test, unix))]
 mod tests;

@@ -166,9 +166,20 @@ App 使用系统浏览器及受限制回调；CLI 无本地回调时领取同一
 
 确定的身份语义是：**持有已绑定公钥的私钥，且该 Node 当前仍有效。** 单独提交 Node ID、公钥或自签声明不能通过认证。
 
-HTTP 实现还需选择成熟的持钥证明／认证通道方案。可以在密钥认证后派生短期控制面凭据，但它不是另一份长期身份；若采用 bearer，泄漏者在其有效期内仍能冒用，不能宣称每个请求都证明了私钥持有。是否采用请求／通道绑定必须在认证合同中明确。
+新 Controller 的 Node／执行候选使用 **Ed25519 持钥证明后签发 5 分钟不透明 Node session**。它不是另一份长期身份；后续 HTTP 使用 bearer，泄漏者在有效期内仍能冒用，不声称每个请求重新证明了私钥持有。完整接入的 Config 提交参与者与 Agent 消费仍须联合接线验收。
 
-握手需覆盖 Controller 身份与 TLS、挑战唯一性／期限、请求上下文、防重放及密钥轮换；算法、签名输入和凭据编码尚未定版，不凭本页直接实现自制握手。经反向代理部署时，也不能默认已有客户端证书直通能力。
+候选握手合同：
+
+- `POST /agent-api/v1/auth/challenges` 绑定 networkId、nodeId、keyId、operation 和 requestDigest，返回服务端随机 32-byte nonce、challenge ID、当前 key generation、持久 controllerId 与 60 秒绝对期限。
+- 控制密钥固定 Ed25519，数据面密钥固定 X25519，不能相互代用。签名通过 `ed25519-dalek` strict 验证，并拒绝 weak key。
+- 签名输入由 `meshway_protocol::node::proof_transcript` 唯一定义：`meshway/node-proof/ed25519/v1\0`、operation 单字节（session=1、rotate=2）、controller/network/node/key/challenge 的五个 UUID 原始 16 bytes、key generation 大端 u64、nonce 32 bytes、expiresAtMs 大端 u64、requestDigest 32 bytes；不签 JSON 展示文本。
+- requestDigest 是 `SHA-256("meshway/node-intent/v1\0" || typed-intent-JSON)`；字段顺序来自生成合同对应的 Rust 结构，密钥原值采用规范小写 hex。签名为 64 bytes 的无 padding base64url。客户端应复用合同 helper／等价固定编码，不能任意重新排序对象。
+- `POST /agent-api/v1/auth/session` 验证签名、请求摘要、当前身份与期限，同事务消费 challenge 并只存 session token 摘要；同 challenge 重放拒绝。原值以 `mwns_` 开头，随后 32 随机 bytes 的无 padding base64url。
+- session 逐请求读取永久 Node／key 吊销、当前 key generation、当前 Config identity 与稳定 membership。Tag 身份不依赖创建者资格；enabled=false 可继续控制同步。Controller 重启使用新 boot epoch，旧短期 session 拒绝，必须重新持钥认证。
+- `POST /agent-api/v1/auth/rotate` 的固定 intent 同时绑定新控制／数据面公钥；旧密钥与新 Ed25519 密钥分别签署同一 rotate challenge。原子退休旧代际、保存新代际并撤回旧执行许可。旧 session／旧注册结果不能领取新身份。
+- HTTPS 负责远端 Controller 身份和通道机密性，客户端将 enrollment 返回的 controllerId 与配置的 HTTPS origin 一并持久绑定；请求前核对 challenge 绑定，不能只见有效 Ed25519 签名就接受任意 origin。反向代理不需要转发客户端证书。
+
+上述是隔离候选的实际 Node 认证合同，不表示现有 Agent 已切换。注册批准、持钥认证、运行实例与执行 lease 是独立边界；SSE／联系保活不续期旧执行许可。
 
 认证后的 Node API 从绑定中推导网络／节点，并检查永久凭据吊销、密钥代际及当前实例。User／Tag 授权身份从当前 Configuration 解析；enabled=false 仍允许同步／停用状态上报，不允许业务执行。认证成功只证明设备身份，访问许可、执行发布和 lease 继续独立检查。
 

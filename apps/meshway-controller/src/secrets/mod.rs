@@ -101,6 +101,60 @@ impl Sealer {
         mac.update(value);
         Ok(mac.finalize().into_bytes().into())
     }
+    pub(crate) fn seal_enrollment(
+        &self,
+        id: uuid::Uuid,
+        plaintext: &[u8],
+    ) -> Result<ProtectedBytes, SealError> {
+        let mut context = b"enrollment/v1\0".to_vec();
+        context.extend_from_slice(id.as_bytes());
+        self.encrypt(&context, plaintext)
+    }
+    pub(crate) fn open_enrollment(
+        &self,
+        id: uuid::Uuid,
+        protected: &[u8],
+    ) -> Result<Plaintext, SealError> {
+        let mut context = b"enrollment/v1\0".to_vec();
+        context.extend_from_slice(id.as_bytes());
+        self.decrypt(&context, protected)
+    }
+    pub(crate) fn private_digest(&self, domain: &[u8], bytes: &[u8]) -> [u8; 32] {
+        // HMAC-SHA256, key separation via a framed domain. The master key never
+        // becomes a public plain digest, even for low-entropy protocol passwords.
+        use hmac::{Hmac, Mac};
+        let mut mac = <Hmac<sha2::Sha256> as Mac>::new_from_slice(self.key.as_ref())
+            .expect("HMAC accepts a 32-byte key");
+        mac.update(&(domain.len() as u64).to_be_bytes());
+        mac.update(domain);
+        mac.update(bytes);
+        mac.finalize().into_bytes().into()
+    }
+    pub(crate) fn installation_id(&self) -> KeyId {
+        self.id
+    }
+    pub(crate) fn seal_execution(
+        &self,
+        network: NetworkId,
+        publication: meshway_model::PublicationId,
+        plaintext: &[u8],
+    ) -> Result<ProtectedBytes, SealError> {
+        let mut context = b"execution-publication/v1\0".to_vec();
+        context.extend_from_slice(network.as_uuid().as_bytes());
+        context.extend_from_slice(publication.as_uuid().as_bytes());
+        self.encrypt(&context, plaintext)
+    }
+    pub(crate) fn open_execution(
+        &self,
+        network: NetworkId,
+        publication: meshway_model::PublicationId,
+        protected: &[u8],
+    ) -> Result<Plaintext, SealError> {
+        let mut context = b"execution-publication/v1\0".to_vec();
+        context.extend_from_slice(network.as_uuid().as_bytes());
+        context.extend_from_slice(publication.as_uuid().as_bytes());
+        self.decrypt(&context, protected)
+    }
     pub(crate) fn seal(
         &self,
         network: NetworkId,

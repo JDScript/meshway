@@ -5,10 +5,12 @@
 
 #![forbid(unsafe_code)]
 
+pub mod compile;
 mod document;
 mod editing;
 mod editing_secrets;
 pub use editing_secrets::*;
+pub mod execution;
 mod fields;
 mod object;
 mod source;
@@ -24,6 +26,7 @@ pub use fields::*;
 pub use identity::{rebind_user_references, rename_user_references};
 pub use internet::{address_set_covers, internet_ranges};
 pub use meshway_transport_spec::{OuterSocket, TransportProtocol};
+pub use meshway_transport_spec as transport;
 pub use types::*;
 pub use validation::*;
 pub use view::*;

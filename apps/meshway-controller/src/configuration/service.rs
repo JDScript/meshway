@@ -1,6 +1,7 @@
 use super::*;
+use crate::execution::configuration::{Participant, check_inputs, validation_context};
 use crate::{accounts::token_digest, store::Handle};
-use meshway_configuration::{ConfigurationView, RuleSet, UserBinding, edit_source, parse_jsonc};
+use meshway_configuration::{ConfigurationView, UserBinding, edit_source, parse_jsonc};
 use meshway_protocol::{WireSecret, configuration::*};
 use rusqlite::{Connection, TransactionBehavior};
 use std::sync::Arc;
@@ -47,7 +48,7 @@ impl Configurations {
             }
             let mut input = NetworkConfigurationInput::from(&current.document.configuration);
             meshway_configuration::rename_user_references(&mut input, old_email, new_email);
-            UnattachedDependencies::check(tx, &current, &input)?;
+            check_inputs(tx, &current, &input)?;
             let before =
                 meshway_configuration::parse_jsonc(current.document.source_jsonc.expose())?;
             let mut after = before.clone();
@@ -61,14 +62,19 @@ impl Configurations {
             if let Some(binding) = expected.remove(old_email) {
                 expected.insert(new_email.into(), binding);
             }
+            let verified = materials::prepare_materials(
+                tx,
+                network,
+                &mut input,
+                &current,
+                &self.sealer,
+                false,
+            )?;
+            let mut validation = validation_context(tx, &current, &input, None, false)?;
+            validation.expected_user_bindings = expected;
+            validation.verified_listeners = verified;
             let context = TrustedContext {
-                validation: ValidationContext {
-                    members: members(tx, network)?,
-                    previous: Some(&current.document.configuration),
-                    expected_user_bindings: expected,
-                    previous_user_bindings: current.bindings.users.clone(),
-                    ..Default::default()
-                },
+                validation,
                 rule_sets: current.bindings.rule_sets.clone(),
             };
             let mut prepared = prepare(input, source, &current, &context)?;
@@ -89,7 +95,10 @@ impl Configurations {
                 },
                 CommitRuntime {
                     sealer: &self.sealer,
-                    participant: &UnattachedDependencies,
+                    participant: &Participant {
+                        sealer: &self.sealer,
+                        admission: None,
+                    },
                 },
             )?;
         }
@@ -221,7 +230,10 @@ impl Configurations {
             },
             CommitRuntime {
                 sealer: &self.sealer,
-                participant: &UnattachedDependencies,
+                participant: &Participant {
+                    sealer: &self.sealer,
+                    admission: None,
+                },
             },
         )?;
         let result = ConfigurationAppliedResponse {
@@ -352,7 +364,7 @@ impl Configurations {
         };
         // There is no production Node/resource adapter in this work package's
         // baseline. Never construct an empty inventory for an existing target.
-        UnattachedDependencies::check(tx, current, &input)?;
+        check_inputs(tx, current, &input)?;
         let members = members(tx, current.network_id)?;
         let mut recreated_listeners = BTreeSet::new();
         if let ConfigurationRequest::Operations { ops, .. } = request {
@@ -382,17 +394,14 @@ impl Configurations {
             generate_materials,
             &recreated_listeners,
         )?;
+        let mut validation = validation_context(tx, current, &input, None, true)?;
+        validation.members = members;
+        validation.expected_user_bindings = expected;
+        validation.verified_listeners = verified_listeners;
+        validation.recreated_listeners = recreated_listeners;
         let context = TrustedContext {
-            validation: ValidationContext {
-                members,
-                previous: Some(&current.document.configuration),
-                expected_user_bindings: expected,
-                previous_user_bindings: current.bindings.users.clone(),
-                verified_listeners,
-                recreated_listeners,
-                ..Default::default()
-            },
-            rule_sets: BTreeMap::new(),
+            validation,
+            rule_sets: current.bindings.rule_sets.clone(),
         };
         let mut prepared = prepare(input, source, current, &context)?;
         if let ConfigurationRequest::Restore { restore_from, .. } = request {
@@ -447,109 +456,6 @@ pub(crate) fn members(
             ))
         })
         .collect()
-}
-
-struct UnattachedDependencies;
-impl UnattachedDependencies {
-    fn check(
-        tx: &Transaction<'_>,
-        current: &Snapshot,
-        input: &NetworkConfigurationInput,
-    ) -> Result<(), Error> {
-        if !current.document.configuration.nodes.is_empty()
-            || !input.nodes.is_empty()
-            || input
-                .rule_sets
-                .values()
-                .any(|s| matches!(s, RuleSet::Remote { .. }))
-        {
-            return Err(Error::DependencyUnavailable);
-        }
-        // Once B installs its inventory schema the explicit integration is
-        // required even for apparently empty snapshots; do not guess its state.
-        let installed = tx.query_row(
-            "SELECT EXISTS(SELECT 1 FROM sqlite_schema WHERE type='table' AND name='nodes')",
-            [],
-            |r| r.get::<_, bool>(0),
-        )?;
-        if installed {
-            return Err(Error::DependencyUnavailable);
-        }
-        Ok(())
-    }
-}
-impl CommitParticipant for UnattachedDependencies {
-    fn revalidate(
-        &self,
-        tx: &Transaction<'_>,
-        principal: &Principal,
-        current: &Snapshot,
-        prepared: &PreparedConfiguration,
-    ) -> Result<(), Error> {
-        match principal {
-            Principal::Session(_) => {}
-            Principal::Lifecycle(user) => {
-                let EmailSync {
-                    user: proof_user,
-                    old_email,
-                    new_email,
-                } = prepared
-                    .email_sync
-                    .as_ref()
-                    .ok_or(Error::DependencyUnavailable)?;
-                if proof_user != user {
-                    return Err(Error::PermissionDenied);
-                }
-                if !current
-                    .bindings
-                    .users
-                    .get(old_email)
-                    .is_some_and(|b| b.user_id == *user)
-                {
-                    return Err(Error::PermissionDenied);
-                }
-                let valid = tx.query_row(
-                    "SELECT EXISTS(SELECT 1 FROM users WHERE id=?1 AND email=?2 AND disabled_at IS NULL)",
-                    params![user.as_uuid().as_bytes().as_slice(), new_email],
-                    |row| row.get::<_, bool>(0),
-                )?;
-                if !valid {
-                    return Err(Error::PermissionDenied);
-                }
-                let mut expected = NetworkConfigurationInput::from(&current.document.configuration);
-                meshway_configuration::rename_user_references(&mut expected, old_email, new_email);
-                // Re-normalization may sort reference sets, but no independent
-                // business edit is authorized by this system principal.
-                let context = ValidationContext {
-                    members: members(tx, current.network_id)?,
-                    previous: Some(&current.document.configuration),
-                    expected_user_bindings: prepared.bindings.users.clone(),
-                    previous_user_bindings: current.bindings.users.clone(),
-                    ..Default::default()
-                };
-                if normalize(expected, &context)?.0 != prepared.document.configuration {
-                    return Err(Error::PermissionDenied);
-                }
-            }
-        }
-        Self::check(
-            tx,
-            current,
-            &NetworkConfigurationInput::from(&prepared.document.configuration),
-        )
-    }
-    fn apply(
-        &self,
-        _: &Transaction<'_>,
-        _: &Snapshot,
-        prepared: &PreparedConfiguration,
-        _: Revision,
-    ) -> Result<(Vec<PublicationId>, BTreeSet<NodeId>), Error> {
-        if !prepared.document.configuration.nodes.is_empty() {
-            return Err(Error::DependencyUnavailable);
-        }
-        Ok((Vec::new(), BTreeSet::new()))
-    }
 }
 
 pub(crate) fn source_response(snapshot: &Snapshot, id: RequestId) -> ConfigurationSourceResponse {

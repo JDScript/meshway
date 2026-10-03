@@ -1,7 +1,9 @@
 //! Actual HTTP routes and their OpenAPI description share the same registration.
 
+mod agent;
 mod auth;
 mod configuration;
+mod enrollment;
 mod error;
 pub mod events;
 mod management;
@@ -11,6 +13,7 @@ mod networks;
 pub mod observations;
 pub mod resources;
 pub mod state;
+mod nodes;
 
 use axum::{
     Router,
@@ -85,6 +88,18 @@ struct HttpState {
     networks: Networks,
     configurations: crate::configuration::Configurations,
     history: crate::history::History,
+    execution: crate::execution::Execution,
+    enrollment: crate::enrollment::Enrollment,
+}
+impl FromRef<HttpState> for crate::execution::Execution {
+    fn from_ref(state: &HttpState) -> Self {
+        state.execution.clone()
+    }
+}
+impl FromRef<HttpState> for crate::enrollment::Enrollment {
+    fn from_ref(state: &HttpState) -> Self {
+        state.enrollment.clone()
+    }
 }
 
 impl FromRef<HttpState> for std::sync::Arc<crate::secrets::Sealer> {
@@ -162,11 +177,42 @@ fn routes() -> OpenApiRouter<HttpState> {
         .routes(routes!(management_history::network))
         .routes(routes!(management_history::activity))
         .routes(routes!(management_history::revisions))
+        .routes(routes!(agent::challenge))
+        .routes(routes!(agent::session))
+        .routes(routes!(agent::rotate))
+        .routes(routes!(agent::acquire))
+        .routes(routes!(agent::renew))
+        .routes(routes!(agent::release))
+        .routes(routes!(agent::configuration))
+        .routes(routes!(agent::receipt))
+        .routes(routes!(agent::demand))
+        .routes(routes!(agent::select_profile))
+        .routes(routes!(agent::cancel_demand))
+        .routes(routes!(enrollment::create))
+        .routes(routes!(enrollment::inspect))
+        .routes(routes!(enrollment::approve))
+        .routes(routes!(enrollment::deny))
+        .routes(routes!(enrollment::poll))
+        .routes(routes!(enrollment::cancel))
+        .routes(routes!(enrollment::redeem))
+        .routes(routes!(enrollment::redeem_key))
+        .routes(routes!(enrollment::create_key, enrollment::list_keys))
+        .routes(routes!(enrollment::revoke_key))
+        .routes(routes!(nodes::list))
+        .routes(routes!(nodes::get, nodes::delete))
+        .routes(routes!(nodes::revoke_key))
+        .routes(routes!(nodes::progress))
 }
 
 pub fn openapi() -> OpenApi {
     let (_, mut spec) = routes().split_for_parts();
     spec.info.title = "Meshway Controller".into();
+    spec.components
+        .get_or_insert_with(Default::default)
+        .add_security_scheme(
+            "nodeSession",
+            SecurityScheme::Http(Http::new(HttpAuthScheme::Bearer)),
+        );
     spec.info.version = env!("CARGO_PKG_VERSION").into();
     spec.components
         .get_or_insert_with(Default::default)
@@ -190,6 +236,8 @@ pub fn router(app: &App) -> Router {
             networks: app.networks(),
             configurations: app.configurations(),
             history: app.history(),
+            execution: app.execution(),
+            enrollment: app.enrollment(),
         })
 }
 

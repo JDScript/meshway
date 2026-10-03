@@ -115,6 +115,15 @@ id!(
 );
 id!(StateEpoch, "Volatile controller state epoch.");
 id!(
+    EnrollmentRequestId,
+    "Device authorization request identifier, not a credential."
+);
+id!(
+    EnrollmentKeyId,
+    "One-use enrollment key identifier, not the secret."
+);
+id!(ChallengeId, "One-use proof challenge identifier.");
+id!(
     JoinLinkId,
     "Network join-link record identifier; not the joining secret."
 );

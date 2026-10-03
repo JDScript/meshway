@@ -1,0 +1,229 @@
+use super::*;
+use crate::execution::proof;
+use meshway_protocol::node::*;
+use rusqlite::{Connection, TransactionBehavior};
+
+const CHALLENGE_TTL: i64 = 60_000;
+const SESSION_TTL: i64 = 300_000;
+
+pub(crate) fn authorize_node(
+    tx: &Transaction<'_>,
+    sealer: &Sealer,
+    boot: InstanceId,
+    token: [u8; 32],
+    now: i64,
+) -> Result<NodePrincipal, NodeError> {
+    let row=tx.query_row("SELECT s.network_id,s.node_id,s.key_id,s.expires_at FROM node_sessions s JOIN nodes n ON n.network_id=s.network_id AND n.id=s.node_id JOIN node_keys k ON k.id=s.key_id AND k.network_id=s.network_id AND k.node_id=s.node_id WHERE s.token_hash=?1 AND s.boot_id=?2 AND s.created_at<=?3 AND s.expires_at>?3 AND n.credentials_revoked_at IS NULL AND k.revoked_at IS NULL AND k.retired_at IS NULL AND k.purpose='control'",params![token.as_slice(),boot.as_uuid().as_bytes().as_slice(),now],|r|Ok((r.get::<_,Vec<u8>>(0)?,r.get::<_,Vec<u8>>(1)?,r.get::<_,Vec<u8>>(2)?,r.get::<_,i64>(3)?))).optional()?.ok_or(NodeError::Unauthorized)?;
+    let p = NodePrincipal {
+        network: id(row.0)?,
+        node: id(row.1)?,
+        key: id(row.2)?,
+        token_hash: token,
+        expires_at_ms: row.3.try_into().map_err(|_| NodeError::Storage)?,
+    };
+    let (_, cfg, bindings) = current_configuration(tx, sealer, p.network)?;
+    identity_eligible(tx, &cfg, &bindings, p.network, p.node)?;
+    Ok(p)
+}
+fn bound_key(
+    tx: &Transaction<'_>,
+    network: NetworkId,
+    node: NodeId,
+    key: KeyId,
+) -> Result<BoundNodeKey, NodeError> {
+    let (generation,key_bytes):(i64,Vec<u8>)=tx.query_row("SELECT k.generation,k.public_key FROM node_keys k JOIN nodes n ON n.network_id=k.network_id AND n.id=k.node_id WHERE k.network_id=?1 AND k.node_id=?2 AND k.id=?3 AND k.purpose='control' AND k.retired_at IS NULL AND k.revoked_at IS NULL AND n.credentials_revoked_at IS NULL",params![network.as_uuid().as_bytes().as_slice(),node.as_uuid().as_bytes().as_slice(),key.as_uuid().as_bytes().as_slice()],|r|Ok((r.get(0)?,r.get(1)?))).optional()?.ok_or(NodeError::Unauthorized)?;
+    Ok(BoundNodeKey {
+        id: key,
+        generation: Version::new(generation.try_into().map_err(|_| NodeError::Storage)?)
+            .map_err(|_| NodeError::Storage)?,
+        public_key: NodePublicKey {
+            algorithm: KeyAlgorithm::Ed25519,
+            bytes: Digest::from_bytes(key_bytes.try_into().map_err(|_| NodeError::Storage)?),
+        },
+    })
+}
+pub(crate) fn challenge(
+    connection: &mut Connection,
+    sealer: &Sealer,
+    request: NodeChallengeRequest,
+) -> Result<NodeChallenge, NodeError> {
+    let tx = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
+    let now = now()?;
+    let key = bound_key(&tx, request.network_id, request.node_id, request.key_id)?;
+    let (_, cfg, bindings) = current_configuration(&tx, sealer, request.network_id)?;
+    identity_eligible(&tx, &cfg, &bindings, request.network_id, request.node_id)?;
+    tx.execute("DELETE FROM node_challenges WHERE expires_at<=?1", [now])?;
+    let count: i64 = tx.query_row("SELECT count(*) FROM node_challenges", [], |r| r.get(0))?;
+    let own: i64 = tx.query_row(
+        "SELECT count(*) FROM node_challenges WHERE node_id=?1",
+        [request.node_id.as_uuid().as_bytes().as_slice()],
+        |r| r.get(0),
+    )?;
+    if count >= 4096 || own >= 8 {
+        return Err(NodeError::Busy);
+    }
+    let mut nonce = [0; 32];
+    getrandom::fill(&mut nonce).map_err(|_| NodeError::Storage)?;
+    let c = NodeChallenge {
+        id: ChallengeId::new(uuid()?).map_err(|_| NodeError::Storage)?,
+        controller_id: sealer.installation_id(),
+        network_id: request.network_id,
+        node_id: request.node_id,
+        key_id: request.key_id,
+        key_generation: key.generation,
+        nonce: nonce.into(),
+        operation: request.operation,
+        request_digest: request.request_digest,
+        expires_at_ms: (now + CHALLENGE_TTL) as u64,
+    };
+    tx.execute("INSERT INTO node_challenges(id,controller_id,network_id,node_id,key_id,nonce,request_digest,operation,created_at,expires_at) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10)",params![c.id.as_uuid().as_bytes().as_slice(),c.controller_id.as_uuid().as_bytes().as_slice(),c.network_id.as_uuid().as_bytes().as_slice(),c.node_id.as_uuid().as_bytes().as_slice(),c.key_id.as_uuid().as_bytes().as_slice(),nonce.as_slice(),c.request_digest.as_bytes().as_slice(),operation(c.operation),now,now+CHALLENGE_TTL])?;
+    tx.commit()?;
+    Ok(c)
+}
+fn operation(op: ProofOperation) -> &'static str {
+    match op {
+        ProofOperation::Session => "session",
+        ProofOperation::Rotate => "rotate",
+    }
+}
+fn consume(
+    tx: &Transaction<'_>,
+    sealer: &Sealer,
+    p: &NodeProof,
+    op: ProofOperation,
+    digest: Digest,
+    now: i64,
+) -> Result<NodeChallenge, NodeError> {
+    let row=tx.query_row("SELECT network_id,node_id,key_id,nonce,request_digest,expires_at FROM node_challenges WHERE id=?1 AND controller_id=?2 AND operation=?3 AND consumed_at IS NULL AND expires_at>?4 AND created_at<=?4",params![p.challenge_id.as_uuid().as_bytes().as_slice(),sealer.installation_id().as_uuid().as_bytes().as_slice(),operation(op),now],|r|Ok((r.get::<_,Vec<u8>>(0)?,r.get::<_,Vec<u8>>(1)?,r.get::<_,Vec<u8>>(2)?,r.get::<_,Vec<u8>>(3)?,r.get::<_,Vec<u8>>(4)?,r.get::<_,i64>(5)?))).optional()?.ok_or(NodeError::Unauthorized)?;
+    if row.4 != digest.as_bytes() {
+        return Err(NodeError::Unauthorized);
+    }
+    let (network, node, key) = (id(row.0)?, id(row.1)?, id(row.2)?);
+    let key = bound_key(tx, network, node, key)?;
+    let c = NodeChallenge {
+        id: p.challenge_id,
+        controller_id: sealer.installation_id(),
+        network_id: network,
+        node_id: node,
+        key_id: key.id,
+        key_generation: key.generation,
+        nonce: Digest::from_bytes(row.3.try_into().map_err(|_| NodeError::Storage)?),
+        operation: op,
+        request_digest: digest,
+        expires_at_ms: row.5.try_into().map_err(|_| NodeError::Storage)?,
+    };
+    proof::verify(&key.public_key, &c, p.signature.expose())?;
+    let (_, cfg, bindings) = current_configuration(tx, sealer, network)?;
+    identity_eligible(tx, &cfg, &bindings, network, node)?;
+    tx.execute(
+        "UPDATE node_challenges SET consumed_at=?1 WHERE id=?2 AND consumed_at IS NULL",
+        params![now, c.id.as_uuid().as_bytes().as_slice()],
+    )?;
+    Ok(c)
+}
+pub(crate) fn session(
+    connection: &mut Connection,
+    sealer: &Sealer,
+    boot: InstanceId,
+    request: NodeSessionRequest,
+) -> Result<NodeSessionResponse, NodeError> {
+    let tx = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
+    let now = now()?;
+    let c = consume(
+        &tx,
+        sealer,
+        &request.proof,
+        ProofOperation::Session,
+        proof::request_digest(&request.intent)?,
+        now,
+    )?;
+    tx.execute(
+        "DELETE FROM node_sessions WHERE expires_at<=?1 OR boot_id!=?2",
+        params![now, boot.as_uuid().as_bytes().as_slice()],
+    )?;
+    let count: i64 = tx.query_row(
+        "SELECT count(*) FROM node_sessions WHERE node_id=?1",
+        [c.node_id.as_uuid().as_bytes().as_slice()],
+        |r| r.get(0),
+    )?;
+    if count >= 8 {
+        return Err(NodeError::Busy);
+    }
+    let (token, hash) = proof::issue_token()?;
+    let expires = now + SESSION_TTL;
+    tx.execute("INSERT INTO node_sessions(token_hash,network_id,node_id,key_id,boot_id,created_at,expires_at) VALUES(?1,?2,?3,?4,?5,?6,?7)",params![hash.as_slice(),c.network_id.as_uuid().as_bytes().as_slice(),c.node_id.as_uuid().as_bytes().as_slice(),c.key_id.as_uuid().as_bytes().as_slice(),boot.as_uuid().as_bytes().as_slice(),now,expires])?;
+    tx.commit()?;
+    Ok(NodeSessionResponse {
+        node_id: c.node_id,
+        network_id: c.network_id,
+        key_id: c.key_id,
+        token,
+        expires_at_ms: expires as u64,
+    })
+}
+pub(crate) fn rotate(
+    connection: &mut Connection,
+    sealer: &Sealer,
+    request: NodeRotationRequest,
+) -> Result<NodeKeyMetadata, NodeError> {
+    let tx = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
+    let now = now()?;
+    let c = consume(
+        &tx,
+        sealer,
+        &request.old_proof,
+        ProofOperation::Rotate,
+        proof::request_digest(&request.intent)?,
+        now,
+    )?;
+    proof::verify(
+        &request.intent.control_key,
+        &c,
+        request.new_signature.expose(),
+    )?;
+    if request.intent.dataplane_key.algorithm != KeyAlgorithm::X25519
+        || request.intent.dataplane_key.bytes.as_bytes() == &[0; 32]
+    {
+        return Err(NodeError::Invalid);
+    }
+    tx.execute("UPDATE node_keys SET retired_at=?1 WHERE network_id=?2 AND node_id=?3 AND retired_at IS NULL AND revoked_at IS NULL",params![now,c.network_id.as_uuid().as_bytes().as_slice(),c.node_id.as_uuid().as_bytes().as_slice()])?;
+    let generation = Version::new(c.key_generation.get() + 1).map_err(|_| NodeError::Conflict)?;
+    let keys = insert_keys(
+        &tx,
+        c.network_id,
+        c.node_id,
+        request.intent.control_key,
+        request.intent.dataplane_key,
+        generation,
+        now,
+    )?;
+    revoke_execution(&tx, c.network_id, c.node_id, now)?;
+    tx.commit()?;
+    Ok(keys)
+}
+pub(crate) fn insert_keys(
+    tx: &Transaction<'_>,
+    network: NetworkId,
+    node: NodeId,
+    control: NodePublicKey,
+    dataplane: NodePublicKey,
+    generation: Version,
+    now: i64,
+) -> Result<NodeKeyMetadata, NodeError> {
+    let make = |purpose: &str,
+                algorithm: &str,
+                public_key: NodePublicKey|
+     -> Result<BoundNodeKey, NodeError> {
+        let id = KeyId::new(uuid()?).map_err(|_| NodeError::Storage)?;
+        tx.execute("INSERT INTO node_keys(id,network_id,node_id,purpose,algorithm,public_key,generation,created_at) VALUES(?1,?2,?3,?4,?5,?6,?7,?8)",params![id.as_uuid().as_bytes().as_slice(),network.as_uuid().as_bytes().as_slice(),node.as_uuid().as_bytes().as_slice(),purpose,algorithm,public_key.bytes.as_bytes().as_slice(),generation.get() as i64,now])?;
+        Ok(BoundNodeKey {
+            id,
+            generation,
+            public_key,
+        })
+    };
+    Ok(NodeKeyMetadata {
+        control: make("control", "ed25519", control)?,
+        dataplane: make("dataplane", "x25519", dataplane)?,
+    })
+}

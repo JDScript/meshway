@@ -360,8 +360,8 @@ async fn real_accounts_http_persistence_and_safe_rejections() {
             .send()
             .await
             .unwrap(),
-        StatusCode::NOT_FOUND,
-        "not_found",
+        StatusCode::METHOD_NOT_ALLOWED,
+        "method_not_allowed",
     )
     .await;
     error(
