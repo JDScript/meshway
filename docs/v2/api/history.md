@@ -1,0 +1,111 @@
+# 配置版本与操作历史
+
+**V2 接口补全提案，尚未实现。** 配置历史记录“保存过哪些完整配置”，操作历史记录“谁完成了什么管理动作”，观测历史记录“节点实际报告过什么”。三者使用关联 ID，但不互相冒充。
+
+## 配置版本接口
+
+下面路径相对 `/api/v1/networks/{networkId}`，建议需要 Owner／Admin 管理读取权限。
+
+| 方法与路径 | 输入 | 返回 |
+| --- | --- | --- |
+| `GET /configuration/revisions` | cursor、limit | 固定上界的版本摘要列表 |
+| `GET /configuration/revisions/{revision}` | revision | 当时完整配置的非秘密管理视图、固定绑定摘要和元数据 |
+| `GET /configuration/source` | 可选 revision，省略为当前 | 获准管理员读取原始 JSONC／完整规范化值及必要材料，no-store |
+| `POST /configuration/compare` | fromRevision、toRevision | 字段路径级变化摘要，区分语义／原文／绑定变化 |
+| `POST /configuration` | expectedRevision＋新草稿，或 restoreFrom 历史引用 | 按普通 apply 保存新版本，返回 revision／publication 引用 |
+
+沿用一个配置提交入口完成回滚，不增加预发布或二阶段。`restoreFrom` 至少包含 revision；可选 publicationId 指定该源版本后续某次数据集绑定，必须同网且对应这个源版本。省略 publicationId 时使用该历史源版本提交时固定的绑定，不能默认换成最新规则集。
+
+回滚输入由生成契约明确区分普通编辑和历史恢复。历史载入草稿后仍需保留恢复来源，稳定 UserId／MembershipId 和材料／数据集依据在服务端解析；不能仅复制旧邮箱字符串后按当前账户重新匹配。需要替代失效依赖或身份转换时按既有规则报出并处理，精确编辑编码随 DTO 定版。
+
+Node 删除不可恢复；恢复目标含已删除 Node 时拒绝。最终差异移除当前 Node 则按永久删除执行，应用对照明确展示，不能把历史恢复当作不经过预览的特殊通道。见[整网草稿](/v2/configuration-reference/editing)。
+
+### ConfigurationRevisionSummary
+
+| 字段 | 类型 | 含义 |
+| --- | --- | --- |
+| `revision` | Revision | 历史版本 |
+| `createdAt` | Timestamp | 持久提交时间 |
+| `createdBy` | ActorRef | 真实提交主体 |
+| `cause` | ConfigurationChangeCause | edit／restore／enrollment／nodeDeleted／emailSync／memberRemoved／identityTransition 等明确来源 |
+| `rollbackFrom` | Revision? | 回滚来源；不是倒退后的版本号 |
+| `current` | boolean | 是否等于本次读取截点的期望版本 |
+| `changedSections` | ConfigurationSection[] | 与前序版本不同的顶层区段，不含秘密值 |
+
+列表不携带整份 JSONC 或秘密。节点是否应用从 publication／NodeState 查询，不能在 revision 列表写一个缺少范围与来源的全网 applied=true。
+
+cause 表示主触发来源，混合编辑的具体影响仍由 changedSections／diff 表达。只要系统动作实际改变配置内容或固定绑定就形成版本，不能为避免 CAS 冲突在同一 revision 下改 Node／邮箱引用；纯观测不推进版本。
+
+### Compare
+
+比较默认返回路径／变化类型摘要，不返回任意 JSON before／after 值：
+
+| 字段 | 类型 | 含义 |
+| --- | --- | --- |
+| `fromRevision` / `toRevision` | Revision | 被比较的确切版本 |
+| `sourceChanged` | boolean | 原始 JSONC 文本或注释是否改变 |
+| `configurationChanged` | boolean | 规范化配置是否改变 |
+| `bindingsChanged` | boolean | 固定用户／资源／数据集绑定是否改变 |
+| `changes` | ConfigurationChange[] | 合法字段路径的变化摘要 |
+
+ConfigurationChange 字段为 `path: JsonPointer`、`kind: added | removed | changed`。有序数组重排按数组变化说明，不凭 remark 当主键；秘密字段只报告“已变更”，不把密码或私钥写进差异摘要。完整文本 diff 由获准管理员显式读取两个 source 后查看，脱敏视图不能整份回写。
+
+## 操作历史接口
+
+| 路径 | 范围与权限 |
+| --- | --- |
+| `GET /api/v1/networks/{networkId}/activity` | 本网络管理操作；建议 Owner／Admin |
+| `GET /api/v1/networks/{networkId}/activity/{activityId}` | 同网单条记录；仍按当前权限检查 |
+| `GET /api/v1/account/activity` | 当前用户的全局账户操作，不列出别人的账户历史 |
+
+网络列表支持 action、actor、target、revision 和时间窗口过滤。历史 ID、游标或当时拥有的权限，都不能绕过当前网络授权。
+
+### ActivityEvent
+
+| 字段 | 类型 | 含义 |
+| --- | --- | --- |
+| `id` | ActivityId | 不透明记录 ID |
+| `at` | Timestamp | Controller 完成该动作的时间 |
+| `actor` | ActorRef | 用户、节点、接入密钥或系统 |
+| `action` | ActivityAction | 已知管理动作枚举 |
+| `target` | ActivityTarget | 类型化目标引用，不是任意 metadata |
+| `beforeRevision` | Revision? | 配置变更前版本；不涉及配置则 null |
+| `afterRevision` | Revision? | 配置变更后版本；不涉及配置则 null |
+| `requestId` | RequestId | 同一次逻辑操作的关联，不是授权凭证 |
+
+scope 由所属记录及路径确定。返回时可以按权限投影主体／目标的可读名称，稳定 ID 始终保留；删除或改名不把记录改指向另一个对象。
+
+首批 ActivityAction 覆盖账户登录／密码／邮箱／会话撤销、网络创建／改名、成员加入／角色／离开、接入密钥创建／撤销、设备批准／注册／永久吊销、配置提交／回滚、凭据轮换／吊销、路由方案使用选择。
+
+加入链接的创建／撤销／消费和永久 Node 删除同样记录；失败请求不伪称成功活动。
+
+ActivityTarget 使用对应分支：account(userId)、session(sessionId)、network(networkId)、membership(membershipId)、node(nodeId)、joinLink(linkId)、enrollmentKey(keyId)、enrollmentRequest(requestId)、configuration(revision)、listener(nodeId、key、createdRevision)。历史 listener 引用不单靠名字识别重建后的新资源。
+
+### 记录语义
+
+- 首版记录**已完成的控制面管理动作**。改变持久管理状态的动作与记录同事务提交；失败的验证／未提交请求不写成成功动作。
+- 身份、actor、时间和 target 来自已验证的服务端上下文，不接受客户端自行声明“管理员已操作”。幂等恢复不重复生成动作记录。
+- 配置提交记录只表示期望已保存。稍后某个 Node apply 失败在 publication 回执／进度中展示，不改写这条动作成“配置没有提交”。
+- Node 心跳、每次 State query、SSE 重放和连续探测样本不写成管理操作历史。失败请求的运维诊断另受日志预算约束，不宣称操作历史覆盖所有失败尝试。
+- ActivityEvent 不包含 token／密码／证书私钥、token 摘要、原始请求响应 body 或完整配置 diff；通过 revision／target 关联授权读取。
+- 事件为历史事实，无普通编辑／删除 API；保留策略由部署管理。它不承担恢复当前配置或重放权限的职责。
+
+## 分页与保留
+
+| 数据 | 固定读取上界 |
+| --- | --- |
+| Revision 列表 | 首次查询时的最大 revision，倒序 keyset 分页 |
+| Activity 列表 | 首次查询时的内部提交序列上界，倒序 keyset 分页 |
+| ObservationHistory | 固定测量时间窗口及接收记录上界，按既定迟到／去重规则查询 |
+
+页面 envelope 建议包含 `items`、`nextCursor`、`asOf`、`currentRevision`（版本列表适用）。cursor 不透明，绑定身份／网络／筛选／排序和读取上界；每页重新鉴权，变更窗口或身份不能沿用旧 cursor。并发新增不会让当前翻页重复／漏项，新记录通过新一轮查询获取。
+
+完整配置版本按已确认的历史规则保留；操作／观测历史各有容量与保留预算。清理后返回明确覆盖下界／截断原因，不能用空列表暗示从未有过记录。retention 时长仍待部署参数定版。
+
+## SSE 通知
+
+- `configuration.changed` 附新 revision，使版本列表失效；按需重新读取摘要。
+- `activity.created` 只通知有权订阅者的新 activityId／作用域与时间，列表按当前权限补读。
+- `configuration.progress` 继续表示 Node 应用结果，不当作管理动作提交确认。
+
+SSE 是有界实时通知，持久历史通过 GET 读取；断流不丢失已提交的配置版本／动作记录，重放也不制造新记录。

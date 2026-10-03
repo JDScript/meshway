@@ -61,6 +61,8 @@ Node 校验并保存后按有效许可直接安装，不等待其他节点完成
 
 GeoIP 位置由 Controller 根据合格的底层公网 IP 观测计算，放在 [NetworkState 的派生部分](/v2/state-reference/network#derived)，不直接采用节点自报 country。用户方案选择是受配置约束的使用状态，不等于修改管理员方案。
 
+GeoIP／ASN 作为 Controller 的 ipInfo 派生信息返回；节点位置的近似坐标、精度、来源及缺失原因见[IP 信息](/v2/state-reference/ip-info)。Node 的 State 上报不会自行成为可信地理或 ASN 数据源。
+
 已确认：用户方案选择跨重启保存；恢复时仍在 allowed 且未被锁定才继续使用，否则采用当前管理员默认。它不进入管理员配置回滚历史，切换不能带走旧出口流／NAT 资格。
 
 请求选择由 Controller 的持久 RoutingSelection 与当前配置确定，读取时投影；Node 只上报实际 appliedProfile。通过 App／CLI 提交选择使用受控操作，不通过普通 State 报告覆盖选择。

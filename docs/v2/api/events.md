@@ -8,9 +8,10 @@
 Console 登录、取得网络清单并选择网络
   → GET /api/v1/networks/{networkId}/events
   → config.snapshot
+  → entities.snapshot
   → state.snapshot
   → sync.ready
-  → state.delta / configuration.changed / configuration.progress / observation.*
+  → entities.delta / state.delta / configuration.changed / configuration.progress / observation.*
 ```
 
 每个标签页的当前网络复用一条主要事件流；发起配置保存、设备批准和观察任务仍用独立 HTTP 请求。SSE 只有服务端到客户端的方向，接收事件不等于已提交操作。
@@ -31,6 +32,7 @@ Authorization: Bearer <opaque-user-session>
 | 内容 | 首次同步 |
 | --- | --- |
 | Config | 当前权限可见的完整配置视图与 revision |
+| Entities | 当前可见 Node 元数据、成员及服务端 actions；不含账户／节点秘密 |
 | State | 当前权限可见的节点／资源及最新观测，保留来源、时间、实例、配置引用和过期状态 |
 | 配置应用进度 | 当前相关 publication 的目标、最后接受的回执及实时阶段；失联／过期明确标注 |
 | 配置原文与秘密材料 | 不默认广播；管理员编辑时通过显式读取取得可写原文／材料视图 |
@@ -59,25 +61,58 @@ JSON `data` 使用 Rust 定义的封闭判别联合，以 `type` 区分。可以
 | `type` 提案 | 载荷与客户端行为 |
 | --- | --- |
 | `config.snapshot` | 当前 ConfigurationView、revision、同步批次标识；初始暂存 |
+| `entities.snapshot` | 同一批次的可见 Node／成员／actions，供实体与配置／报告组合 |
+| `entities.delta` | baseCursor／cursor、按实体类型的 updated／removed；完整替换受影响实体及 actions |
 | `state.snapshot` | 当前 NetworkStateView、epoch、读取截点与同批次标识；初始暂存 |
-| `sync.ready` | 完整批次结束与可续传 cursor；激活本批视图 |
+| `sync.ready` | 完整批次结束、cursor、heartbeatIntervalMs／disconnectAfterMs；启用本批视图 |
 | `state.delta` | baseCursor、updated、removed；按节点替换完整可见项，显式删除已移除／不可见项；过期按 freshness 表达 |
 | `configuration.changed` | 已提交的新 revision、时间、允许显示的修改者／请求关联；使旧配置缓存过时 |
 | `configuration.progress` | publication／目标、真实逐节点阶段与新鲜度；统计范围随权限裁剪 |
+| `node.registered` / `node.deleted` | 当前有权读取的生命周期通知；实体缓存以 entities.delta 更新 |
+| `members.changed` | 可见成员／角色变化通知；新的成员／actions 随 entities.delta 发送 |
+| `enrollmentKey.consumed` | 有权查看该密钥的订阅者收到安全的消费 Node 引用 |
+| `joinLink.redeemed` | 有权查看该链接／成员关系的订阅者收到安全引用 |
+| `activity.created` | 新操作历史 ID／时间，列表按需补读 |
 | `observation.status` | 任务 preparing／running／completed／failed／expired 等实际状态 |
 | `observation.sample` | observationId、measurementId、实际路径／配置引用与测量结果 |
-| `sync.reset` | 无法继续旧视图；清理服务器缓存视图并重新授权、full sync |
-| `stream.closed` | 可安全公开的结束原因，例如会话过期或失去网络资格 |
+| `sync.reset` | cursor_too_old／view_changed 等原因；清理服务端缓存视图并重新授权、full sync |
+| `stream.closed` | session_expired／membership_revoked 等原因，不输出秘密 |
 
 配置通知示例：
 
 ```text
 id: <opaque-view-cursor>
-data: {"type":"configuration.changed","networkId":"<network-id>","revision":43,"changedAt":"2026-10-03T12:00:00Z","actor":{"type":"user","userId":"<user-id>"}}
+data: {"type":"configuration.changed","networkId":"<network-id>","previousRevision":42,"revision":43,"cause":"edit","changedPointers":["/access"],"changesComplete":true,"sourceChanged":true,"changedAt":"2026-10-03T12:00:00Z","actor":{"type":"user","userId":"<user-id>"}}
 
 ```
 
 自动产生的配置版本可以使用 system actor；不能伪称另一个用户保存。State 的来源标识与测量 ID 不由 SSE cursor 代替。
+
+changedPointers 是允许展示的变更提示，changesComplete 说明列表是否完整；它不覆盖间接依赖，不是自动 rebase 或免除 CAS 的依据。仅注释变化仍推进 revision／sourceChanged。敏感值、链接 token、tokenHash 和完整材料不进入事件。
+
+entities／config／state 的首次读取和后续事件使用同一授权截点；成员加入／离开及 Node 删除不能落在快照与订阅之间而丢失。成员事件不是授权检查的替代品，服务端在失权时直接裁剪／reset／关闭。
+
+### Entities delta
+
+```json
+{
+  "type": "entities.delta",
+  "stateEpoch": "<epoch>",
+  "baseCursor": "<previous-stream-cursor>",
+  "cursor": "<next-stream-cursor>",
+  "configurationRevision": 43,
+  "updated": { "nodes": {}, "members": {} },
+  "removed": { "nodes": [], "members": [] }
+}
+```
+
+updated.nodes 使用 `Map<NodeId,NodeEntityView>`，updated.members 使用 `Map<MembershipId,MemberView>`；可选 updated.network 为完整 NetworkEntityView。每个值包含服务端计算的 actions，按项整体替换，不使用任意 JSON patch。同种实体的 updated／removed 不能重叠。
+
+配置（如加 Tag／修改允许方案）、成员角色、账户资格、节点注册／删除变化都触发相关实体和 actions 重算。仍可见的条目发送 updated，失去可见性的条目发送 removed；不能只在 members.changed 时更新权限。无需为了补 actions 混入单独 GET 或另一套 cursor。
+
+GET 的 entity／settings／state 片段分别复用 entities、ConfigurationView 和 NodeStateView 的类型；entities 只承载元数据和 actions，避免覆盖更新的运行报告。实体、配置和运行状态的更新使用同一流顺序及各自版本，不混淆所有权或新鲜度。
+
+baseCursor 对齐上一条已应用的流事件（包含通知事件），不是单独的 entity 序号。缺基准／权限上下文变化走 reset/full sync；客户端原子应用一帧再推进 cursor，removed 同时清理对应可见实体缓存，未保存草稿继续按原身份隔离保留。
 
 ### Config 更新与草稿
 
@@ -85,6 +120,7 @@ data: {"type":"configuration.changed","networkId":"<network-id>","revision":43,"
 
 - 无本地编辑：按新版本重新读取，合并短时间内的重复失效通知。
 - 有未保存编辑：保留 JSONC、图形草稿和原 CAS 基准，提示服务器已有新版；由用户决定比较／合并／重新加载。
+- 最终应用前展示有效修改数量与对照；辅助重放必须重新验证并由用户应用，不能因 changedPointers 没碰到编辑路径就自动提交。
 - 不把旧草稿的 expectedRevision 偷偷推进到新值。保存时仍做 CAS，不能借 SSE 到达绕过冲突。
 - GET 结果与 SSE 并发时按 revision 防止旧响应覆盖新版缓存。reset 丢弃的是服务端缓存视图，不静默抹掉未保存草稿；身份变化按原身份隔离并锁定草稿。
 
@@ -98,7 +134,7 @@ data: {"type":"configuration.changed","networkId":"<network-id>","revision":43,"
 
 ## Path observation
 
-创建／续租／取消使用 [Console API](/v2/api#操作索引)。创建返回 observationId 与实际租约；结果复用网络事件流，通过 ID 区分任务。只有创建者或另行获准的订阅者接收，不广播本网络所有管理员诊断。
+创建／续租／取消使用 [Console API](/v2/api#console-api)。创建返回 observationId 与实际租约；结果复用网络事件流，通过 ID 区分任务。只有创建者或另行获准的订阅者接收，不广播本网络所有管理员诊断。
 
 创建任务前 Console 已建立网络订阅；任务创建、建立有权订阅关系与记录初始状态有一致的发布顺序。事件可能先于 POST 响应抵达，因此用任务 ID／请求关联去重并有界暂存；重连时同步当前任务状态，遗漏的历史样本不能补造。
 

@@ -89,3 +89,9 @@ configured → interface → stun
 同地址可能同时由 configured／interface／STUN 产生。拨号按 peer、资源、协议、代际和规范地址去重，保留各来源证据；不重复发起相同连接，也不把一个来源的较长期限借给另一个已经过期的观测。
 
 peer 验证记录属于实际发起方及对应 link，绑定使用的候选、时间和通道。B 自报自己有一个 STUN endpoint，不能直接把它标成“对所有节点 verified”；对 A 的成功也不能当作对 C 的可达证明。
+
+## GeoIP／ASN
+
+Controller 从这些可见 IP 派生 [ipInfo](/v2/state-reference/ip-info)，包含独立的 GeoIP／ASN 结果、版本和查询时间。原始 Node 报告不接收可信地理／ASN 自声明。
+
+公网 configured 地址可展示其入口网络信息，但不自动作为设备位置；节点 location／自动地区方案仅用合格本机观测。私网、Mesh 地址、缺数据和过期观测分别表达，不填 AS0 或虚构坐标。

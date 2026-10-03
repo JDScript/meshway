@@ -12,6 +12,8 @@
 | 内容 | 放在哪里 |
 | --- | --- |
 | 协议参数、自动凭据与证书／私钥 | 完整 ConfigurationVersion，不再单独保存材料版本 |
+| 一次性加入链接／接入密钥 | 私有摘要、角色／Tag／模板绑定及消费结果；原值不进入列表 |
+| 管理操作历史 | ActivityEvent，与成功 mutation 同事务；与 Node 观测历史分开 |
 | listener 创建代际 | 配置版本内的 bindings.listeners |
 | 节点执行切片 | ExecutionPublication.nodes，发布与产物一次保存 |
 | 应用回执 | ExecutionPublication.nodes 内，保存实际结果与来源 |
@@ -33,7 +35,7 @@
 | History | 有界批量、事件 ID／摘要去重写入 | 时间窗口／源／对端过滤，稳定 cursor 分页 |
 | SSE | 持久操作提交或内存事实变化之后发布 | full → ready → delta，断档 reset |
 
-配置 identity 与地址期望由唯一配置版本解释。批准注册在同一事务创建 Node、消费批准，并写入 `nodes[id].identity`／`addresses`；身份切换与改址提交新的配置及必要依据，不更新第二份 Node.subject 或地址副本。
+配置 identity 与地址期望由唯一配置版本解释。批准注册在同一事务创建 Node、消费批准，并写入 `nodes[id].identity`／`addresses`；身份切换与改址提交新的配置及必要依据，不更新第二份 Node.subject 或地址副本。删除 Node 同事务吊销凭据、移除配置、记录地址退出／执行撤回，保留最小拒绝依据。
 
 停用使用配置 enabled；永久凭据吊销是独立认证事务，并撤回业务许可。两条路径都不能因安装失败或 HTTP 请求结束而恢复旧准入。
 

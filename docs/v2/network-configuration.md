@@ -32,6 +32,8 @@ description: Entity、Config、State 的职责与配置参考导航。
 - 共享 configuration crate，提供类型／Schema、校验、编译／切片及增量处理；HTTP、数据库和运行资源 owner 各自分责。
 - Config 实际入库并保留完整版本，回滚是历史配置作为新提交，不倒退版本号。
 - Config 与 State 是不同的下发载荷和版本语义；状态不会扩大配置许可。
+- 已确认：已有账户通过一次性加入链接入网，主机 CLI 签发密码重置链接；Node 删除永久生效且无恢复，配置最终移除已有 Node 同样按删除处理。
+- 每用户编辑上下文／每网络一份跨页面草稿，最终应用展示有效修改数量和前后对照；表单强类型 ops 与 JSONC 共用草稿，严格 CAS，不按 pointer 未变自动提交 rebase。
 - Console 一次提交，Node 独立拉取、校验、保存并正常应用，通过 State／SSE 展示逐节点进度。期望 revision 不等于全网 applied，离线节点不阻塞其他节点；失败默认报告并修复／显式回滚。
 - State 有节点上报与节点读取两个方向：Controller 在网络内聚合一次，节点可 query 或 watch。裁剪按当前身份、access 及 topology／routing 的执行依赖进行，中转节点可见性不等于对其业务服务的访问权限。
 
@@ -62,5 +64,7 @@ description: Entity、Config、State 的职责与配置参考导航。
 普通成员 State／History 只读相关范围，主动诊断仅源于自己的 User 身份设备；Owner／Admin 管理本网络。State snapshot、删除、过期、reset 和真实测量方向继续沿用。初版完整配置按版本加载／缓存，不预先建设多套数据库查询投影。
 
 API 本轮新增决定：默认开放账户注册且可由实例配置关闭，不提供邀请注册；登录用户可创建网络并成为 Owner。用户沿用不透明会话，Node 使用持久密钥身份；Console 首次 SSE 全量同步当前可见 Config／State，再接收增量与配置变更通知。API 根路径为 `/api/v1` 与 `/agent-api/v1`，正常启动后使用普通注册，不需要实例初始化 API。精确路由、Node 持钥证明握手和流式生成方案见 [API 草案](/v2/api)。
+
+Console 需求已吸收至[编辑对照](/v2/configuration-reference/editing)、[历史与活动](/v2/api/history)、[权限／错误](/v2/api/problems)与[GeoIP／ASN](/v2/state-reference/ip-info)。近期历史连线为可选有界图层；实时观察使用 auto／explicit，数据缺口不能推成空闲。
 
 参考 Tailscale 的 policy／NetworkMap、sing-box 的字段参考组织方式；不照搬它们所有协议、设备侧配置流程或历史兼容字段。现行实现与本轮设计分开，见[当前配置合同](/configuration)和[协议](/protocol)。

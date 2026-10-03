@@ -40,6 +40,8 @@ JSON 是配置格式，不限制 API 必须整份读写。
 
 局部写入不是直接修改内存对象：生成新目标，校验引用与语义，CAS 事务提交完整新版本，并保留 JSONC 编辑内容。access／topology 规则没有 ID，操作以本版本数组位置或整段替换定位；remark 不是主键。
 
+表单使用[明确判别的配置操作](/v2/configuration-reference/editing)，JSONC 使用整份文本；都在同一个用户／网络草稿与 expectedRevision 下提交。应用前显示有效修改数量和对照，pointer 未直接变化也不自动 rebase；间接配置依赖仍须完整校验。
+
 current revision 是受理的期望目标。Console 点击一次应用后，Node 独立同步并安装，结果通过 publication 查询与 SSE 展示；源版本已保存不等于所有节点 applied，详见[配置应用](/v2/configuration-reference/deployment)。
 
 ## JSON 的局部读取

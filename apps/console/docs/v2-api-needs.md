@@ -249,3 +249,191 @@
 - **重定义** `sync.ready` 给出服务端保活间隔，客户端据此设置断流超时。
 - **重定义** `stream.closed` 和 `sync.reset` 带原因码，例如 `session_expired`、`membership_revoked`、`cursor_too_old`；console 分别跳转登录页、离开网络或重新同步。
 - **生成要求**：TS 客户端要能生成事件联合的 Zod schema 和流式读取。分帧、重连和游标这一层放在 SDK 运行时，console 不手写 DTO。
+
+## 协调线程答复：用户确认后的 V2 方向（2026-10-03）
+
+本节按用户最新答复追加，前文保留为原始需求。以下是设计确认与修订，**不表示接口已经交付**；具体契约由 Rust routes／DTO 生成。规范入口：[API 索引](../../../docs/v2/api.md)、[编辑与应用对照](../../../docs/v2/configuration-reference/editing.md)。
+
+### D1–D5
+
+| 项目 | 结论 |
+| --- | --- |
+| D1 | 同意：一次性、有期限、绑定网络／角色的加入链接，由已登录用户接受；不提供按邮箱直接添加。不恢复邀请注册，也不绕过 registrationEnabled。链接不绑定特定收件人，持有人可以消费，签发／消费均检查角色和当前权限。 |
+| D2 | 同意：Controller 主机运维 CLI 生成重置链接，Console 提供 `/reset-password` 兑换页。网络 Owner 不能重置他人的全局账户密码，即使对方只加入本网。 |
+| D3 | 同意：当前真实 links 与有明确时间范围的历史淡线分开，历史层可切换。只有真实历史事件才画线，不展开 N² 允许图、不为画线额外探测。 |
+| D4 | 用户要求直接删除、不做节点恢复：提交时永久吊销凭据并移除 nodes[id]，同事务处理旧地址退出／执行撤回。没有回收站或“仅移除配置”入口；最终 JSONC／ops 删去已有 Node 也具有相同删除语义。最小吊销／历史引用记录仍保留以拒绝旧身份，重新接入是新 Node／密钥。 |
+| D5 | 同意：每个用户编辑上下文、每张网络一份草稿，跨页面保留，一个应用入口。**最终应用前必须展示有效修改数量、前后对照、受影响节点，并单列永久删除／改址／身份和材料变化。** 无效 JSONC 和注释必须保留，不能只用 ops 重建文本。 |
+
+这里“不考虑回滚”指 Node 删除不可恢复；配置版本历史仍保留。历史目标含已删除 Node 时不能复活；若历史恢复的最终差异会移除当前 Node，也按删除语义列在应用对照中。
+
+### 对通用建议的修订
+
+1. **actions 接受**，但按资源类型定义固定 schema，服务端 mutation 继续实时检查权限。
+2. **Problem 共享核心接受**，HTTP 保留 requestId，配置诊断保留 severity／pointer，State 保留资源／实例／观测时间；不把三类上下文压成相同含义。错误 body 经生成 schema 校验后交给调用方。
+3. **强类型 ops 接受**，`replace(pointer,value)` 改成 replaceAccess／replaceTopology／replaceRouting／replaceDns 等明确分支，禁止任意 JSON。Tag owner 权限限定到具体操作。
+4. **严格 CAS 保留，不采用按 pointer 未变就自动提交的 rebase。** access／groups／defaults 等间接读取依赖也可能改变结果。可以辅助重放为新草稿，但要重新验证、展示对照并由用户应用；SSE changedPointers 只是提示。
+5. 创建请求带 requestId。接入密钥／加入链接原值只在首次创建响应交付；若响应丢失，重试返回同一资源的元数据和“原值不可重取”，不生成第二个资源。需要新原值时撤销旧项再签发，不能声称仅有摘要也能恢复秘密。
+6. 字段统一 camelCase。access、topology、Mesh 路由及出口规则统一用 remark，定位用 revision＋JSON Pointer；命名 profile／ruleSet／listener 的 map key 保留。
+
+### 接口与 State 补齐
+
+- 补齐账户／会话、网络／成员、加入链接、Node 读取／删除、接入密钥、设备批准详情／拒绝、完整管理读取、validate／evaluate、版本列表／diff／恢复、publication 列表、历史查询、路由方案选择和下载目录。以 [API 索引](../../../docs/v2/api.md) 为路径收敛处，不并行维护别名。
+- validate 既返回诊断，也返回修改数量／对照摘要和影响范围；不生成材料、不预留地址，最终提交仍重验。操作只是普通 apply 的应用前预览，不恢复两阶段。
+- GeoIP／ASN 由 Controller 对合格 endpoint IP 派生，节点位置保留来源、时间、精度／缺失原因；声明入口的地理信息不自动成为设备位置。见 [IP 信息](../../../docs/v2/state-reference/ip-info.md)。
+- 联系状态、versionStatus、links／paths 聚合由服务端生成。聚合保留 linkId／实例／承载／发起方／完整路径／每个报告者证据，不能按节点对压掉主备或并存路径；未知 since／RTT 不补值。
+- recentLinks 只来自真实有界历史，标为历史而非 active。HistoryCoverage 只说明保留／采集缺口；空闲须真实事件支持，不能由“无样本”推出。
+- 实时观察使用 **auto／explicit**：auto 按目标计算获准候选并由执行端选择／建立，explicit 固定路径。auto 首次选定后按该路径采样，重选须新分段；跟随某条已有业务流不是 current 的模糊默认。
+- publication 的计数带 full／partial 范围，superseded 明确显示。无部署目标用 targetCount=0／空 publication 引用表示，不把缺少即时计划或离线节点误标为“无需部署”。
+- snapshot 补齐当前可见节点实体、成员、actions 和相关 publication；加入链接／密钥事件仅发给当前有权订阅者。SSE 给出保活／reset／关闭原因，历史列表仍通过有界 cursor 查询。
+
+仍需工程定版的是 Node 持钥协议、预算／保留周期和精确字段编码；网络删除／账户注销另有产品生命周期，不能从 D4 的节点删除自动扩展。Console 源码／现行 SDK 本次不改。
+
+## Console 第二轮复核（2026-10-03）
+
+对照更新后的 `docs/v2/api.md`、`api/authentication.md`、`api/history.md`、`api/problems.md`、`configuration-reference/editing.md` 和 `state-reference/ip-info.md`，第一轮的 D1–D5 以及 §1–§10 基本都已覆盖。剩下的问题如下，按影响从大到小排列。
+
+**状态（按 docs/v2 后续修改更新）**
+
+后续修改涉及 `state-reference/network.md` 的"Console 组合视图"、`storage/database.md`（会话、成员 version、JoinLink、接入密钥的 initialSettings、ActivityEvent）、`changedSections`、rule remark 和观察任务的 mode 字段。逐项状态：
+
+| # | 状态 |
+| --- | --- |
+| 1 SSE 文档 | 已处理：新增 `entities.snapshot`、节点／成员／密钥／链接／活动事件、保活间隔、reset 与 close 原因，`configuration.changed` 带 changedPointers、changesComplete、sourceChanged |
+| 2 系统 revision 冲突 | 部分处理：版本摘要有了 `changedSections`，ActorRef 能区分出接入密钥。仍缺 `cause`，因为 system actor 分不清改邮箱、移除成员和身份转换；冲突频率的问题也还没有决定 |
+| 3 多个 publicationIds | 未处理 |
+| 4 validate 返回规范化视图 | 未处理：`editing.md` 仍写"前后值来自类型化读取与草稿" |
+| 5 加入链接预览 | 已处理：`POST /join-links/inspect` |
+| 6 GET 与 SSE 同一类型 | 已处理：`network.md` 的组合视图写明 SSE 和 GET 共用 |
+| 7 秘密只写不读 | 未回复：`editing.md` 仍保留"轻量 ops 编辑可按需读取对应 Node 或区段" |
+| 8 JSONC 只做整份文档 | 已处理：`synchronization.md` 写明"JSONC 使用整份文本" |
+| 9 移除成员的影响 | 部分处理：Membership 有了 `version`；`members/{id}/remove` 仍只写"联动 User 身份节点资格" |
+| 10 安装命令、hostname 冲突 | 未处理 |
+| 错字（见下文"新发现"） | 已修正 |
+
+本节末尾"新发现"一共三点。
+
+### 1. SSE 文档还没同步（`api/events.md`）
+
+答复里已经同意的内容，事件文档还没有反映：
+
+- Full snapshot 表缺少四项：节点实体、成员、actions、相关 publication。
+- 事件表缺少：
+  - `node.registered`、`node.deleted`；
+  - `members.changed`；
+  - `enrollmentKey.consumed`、`joinLink.redeemed`；
+  - `activity.created`（目前只写在 `history.md` 里）。
+- `configuration.changed` 还没有 `changedPointers`。
+- `sync.ready` 还没有给出保活间隔。
+- `stream.closed` 和 `sync.reset` 的原因码没有对应到 `problems.md`。
+
+### 2. 系统产生的 revision 会让草稿频繁冲突（需要决定）
+
+严格 CAS 下，任何新 revision 都会让所有打开的草稿冲突。按目前的设计，下面这些动作也会推进配置 revision：
+
+- 新节点接入（写入 `nodes[id]`）；
+- 改邮箱（同步可读引用）；
+- 删除节点；
+- 移除成员，如果它会联动修改 User 身份节点。
+
+也就是说，管理员正在改策略时，只要有一台设备接入，草稿就作废。
+
+建议：
+
+- `ConfigurationRevisionSummary` 和 `configuration.changed` 都带上 `cause`，取值为 `edit | restore | enrollment | nodeDeleted | emailSync | memberRemoved | identityTransition`。console 据此说明冲突原因，例如"期间接入了节点 X"。
+- console 的处理：草稿基于旧 revision 时，用同一批 ops 在新 revision 上重新调用 validate，展示新的对照，再由用户点"应用"。这仍然是严格 CAS，只是在冲突来自系统动作时让用户少做几步。
+- 需要确认的是：接入、改邮箱这类系统写入是否一定要占用一个配置 revision。如果是，就接受上面的做法。
+
+### 3. 一次提交返回多个 `publicationIds`
+
+console 的"应用进度"是按一次提交来展示的。需要后端二选一：
+
+- 保证 `cause=configuration` 的提交只产生一个 publication；或者
+- 提供按 revision 聚合的进度：`GET /configuration/revisions/{revision}/progress`，或者 publication 列表支持 `revision=` 过滤并返回去重后的节点集合与计数。
+
+否则 console 要自己合并多个 publication 并对节点去重，计数容易出错。
+
+### 4. validate 要返回规范化之后的结果
+
+JSONC 草稿提交后，默认值补全、继承规则、hostname 加后缀、地址"将分配"这些规范化都在 Rust 配置库里完成。console 不应该再实现一遍。
+
+建议 validate 额外返回 `preview: ConfigurationView`：这是草稿规范化后的**脱敏视图**，类型和普通视图相同，不是任意 JSON。console 用"基准视图 + preview"渲染前后对照。秘密字段仍只显示"保持、修改、将生成"。
+
+### 5. 加入链接缺少兑换前的预览
+
+`authentication.md` 要求"前端明确显示将加入的网络和角色"，但目前只有会直接消费链接的 `POST /join-links/redeem`。
+
+需要一个不消费的预览接口：`POST /join-links/inspect {token}`。token 放在请求体里，返回网络名称、角色、`expiresAt` 和状态（有效、已过期、已使用、已撤销、已是成员）。重置链接可以照样提供 `POST /auth/password-reset/inspect`，让用户在输入新密码之前就知道链接已经失效；这一项优先级较低。
+
+### 6. GET 视图和 SSE snapshot 要用同一组类型
+
+`GET /nodes` 被描述为"组合实体、配置摘要与 State"，而 SSE 分别推送 config 和 state。两种形状意味着 console 的缓存要写两套代码。
+
+建议：GET 返回的就是 snapshot 的同类片段，即 entity、settings 视图、state 三元组，以及相同的 actions，并带 `asOf`、`revision` 和 `stateEpoch`。console 以 SSE 为主，GET 只在打开流之前或单次读取时使用，比如设备批准页。
+
+### 7. 表单里的秘密字段只写不读（提议）
+
+`inheritance.md` 规定：对已有资源再次保存时，省略自动材料就表示沿用原值。所以表单可以做到秘密字段只写不读：
+
+- 默认显示"保持"；
+- 管理员可以填入新值；
+- 或者用 `rotateMaterial` 重新生成。
+
+这样编辑 listener 不需要读取任何秘密，也就不需要"按节点读取可编辑区段"的接口。读取秘密只通过整份 `configuration/source`，也就是 JSONC 编辑。需要确认这条规则。
+
+### 8. JSONC 编辑只做整份文档（建议）
+
+`replaceAccess` 这类操作会丢掉该区段里的注释，所以按区段编辑 JSONC 不成立。建议首版的 JSONC 编辑只针对整份文档：
+
+- 只有一个编辑器，从某一层进入时定位到对应的 pointer，例如 `/access`，并折叠其他区段。
+- 大网络主要靠表单（ops）编辑。
+
+这与 AGENTS"万级节点先保持简单"的方向一致。如果以后需要按区段编辑 JSONC，再加一个按封闭区段枚举的 `replaceSectionSource`，不开放任意 pointer。
+
+### 9. 移除成员的影响
+
+`members/{id}/remove` 写着"联动 User 身份节点资格"，但没有说明会发生什么：这些节点是被停用、删除，还是保留但不可用？会不会生成配置 revision？
+
+console 的确认弹窗需要显示"该成员的 N 台设备将……"，因此需要：
+
+- 成员视图带 `nodeCount`，或者 actions 附带影响说明；
+- 修改角色需要的 `version` 字段出现在成员列表里。
+
+### 10. 接入相关的细节
+
+- **安装命令的格式。** `sudo MESHWAY_AUTH_KEY=… sh` 会让密钥出现在 sudo 的进程参数和 shell 历史里，和"不放进进程参数"的要求相冲突。需要发布流水线定一个标准命令，console 照着展示，不自己拼写。例如一行命令只负责安装，密钥在提示符下输入，或者从标准输入读入。
+- **`initialSettings.hostname` 冲突。** 消费接入密钥时如果 hostname 已被占用，是自动加后缀还是接入失败，需要明确。
+
+### 已确认、console 侧采纳
+
+- 严格 CAS。console 的辅助重放就是"同一批 ops + 新的 validate + 用户再次应用"。
+- 删除节点：如果当前没有草稿，直接调用删除接口；如果已有草稿，把 `deleteNode` 加进草稿，避免自己的草稿和自己的删除操作冲突。
+- 地球：当前的 links 画实线；历史层可以切换，并标明时间范围。没有坐标时，按地区聚合显示或标为"待定位"，不生成假的坐标。
+
+### 新发现
+
+- **recentLinks 的窗口。** `network.md` 写的是"有界窗口并可切换"，但没说明窗口由谁选、怎么返回。需要明确两点：
+  - 视图里带上 `window: {from, to}`；
+  - 打开历史图层时，是在 SSE 订阅的 `include` 里加 recentLinks，还是单独查询。
+
+  console 的做法是：默认关闭历史层；打开时按所选时间范围（例如 24 小时）请求，并在图例里标出这个范围。
+- **错字。** `api/history.md` 第 21 行"最终差异移除当前 Node 則按永久删除执行"里的"則"应为"则"。（已修正）
+- **entities 只有 snapshot，没有增量。** 节点和成员上的 actions 也会因为配置变化而改变，例如节点加上 Tag 之后，能执行的操作随之变化，但目前只有 `members.changed` 写了"重新读取 actions"。建议增加 `entities.delta`，形状和 `state.delta` 一样，按项整体替换，并显式列出删除项。配置变更、角色变化、节点注册或删除之后，由服务端推送受影响的实体和 actions，不要让 console 混用 GET 和 SSE 的游标去补读。
+
+## 协调线程收敛答复：第二轮与实体增量（2026-10-03）
+
+以下以包含本节的已提交版本为复核基准；前面的状态表保留为当时的复核记录，不覆盖 console 原文。
+
+| 复核项 | 收敛结果与位置 |
+| --- | --- |
+| 系统 revision／cause | 实际修改配置的接入、邮箱同步、删除、身份转换等仍产生版本。ConfigurationVersion／RevisionSummary／configuration.changed 增加 cause。严格 CAS，旧基准不能直接提交；草稿保留，可用原 ops 在新基准 validate，展示新对照后由用户应用。见 `editing.md`、`api/history.md`。 |
+| 多 publication 汇总 | 增加 `GET /configuration/revisions/{revision}/progress`，服务端按 NodeId 去重，返回精确目标／实际引用、替代关系与 full／partial 计数；不由 console 拼计数，不把后续 demand／refresh 混进原分母。 |
+| 规范化预览 | validate 返回 `preview: ConfigurationView`，由共享 Rust 库规范化并脱敏；待生成值明确为计划，不持久化或预留。见 `editing.md`。 |
+| 秘密与 JSONC | 表单只保持／覆盖／轮换，不读取旧秘密。节点配置 GET 为非秘密视图；完整秘密读取仅整份 configuration/source。JSONC 只有一个整份编辑器，进入具体项时定位 pointer。 |
+| 成员移除 | 永久删除当前属于该 membership 的 User 身份设备，Tag 身份设备保留；同事务处理 membership、配置和退出。成员列表返回 version，有权执行者取得 removalImpact／nodeCount；只有实际配置变化才产生 revision。 |
+| 安装与 hostname | 标准模板 `curl -fsSL https://controller.example/install.sh \| sudo sh` 仅含公开安装信息；接入另用浏览器或 `/dev/tty` 隐藏输入，不能混读脚本 stdin、放 argv／history。首次 initialSettings.hostname 作为建议，冲突加唯一后缀；已有节点改名冲突仍报错。 |
+| recentLinks 窗口 | 历史层默认关闭；用户选 from／to，经 history/query 的 recentLinks 模式取得 window／coverage／cursor／摘要，不放默认实时 SSE。 |
+| 加入／重置预览 | 加入链接有 POST /join-links/inspect；重置链接有 POST /auth/password-reset/inspect。两者不消费，最终兑换重验。 |
+| SSE 实体增量 | 新增 entities.delta：同一 stream cursor，按类型 updated／removed 整项替换。配置、角色、注册／删除及账户资格变化均重算 actions；失去可见性发送 removed／reset。见 `api/events.md`。 |
+| GET 与 SSE 类型 | 复用 entity／settings／state 片段；entity 元数据及 actions 与运行报告分开更新，避免权限更新覆盖更新的 NodeState。 |
+
+`api/events.md` 同步了实体首屏、生命周期／activity 通知、changedPointers／cause、保活间隔和 reset／关闭原因；拼写已修正。实现仍以之后的 Rust 契约／生成 SDK 为准，本次提交是完整设计与跨线程答复，不是已上线 API。

@@ -159,6 +159,9 @@ authenticated 且无依赖可以是 idle。双侧匹配由 Controller 派生，�
 | 字段 | 类型 | 含义 |
 | --- | --- | --- |
 | `location` | GeoObservation? | 合格底层公网 IP 的地区推导 |
+| `locationAbsent` | LocationAbsentReason? | 无位置的明确原因，见[IP 信息](/v2/state-reference/ip-info) |
+| `ipInfo` | Map&lt;IpAddress, IpInfo&gt; | 可见 endpoint IP 的 GeoIP／ASN，Controller 查询派生 |
+| `versionStatus` | current \| outdated \| unsupported \| unknown | 真实版本／能力报告与兼容规则的结果 |
 | `requestedProfile` | ProfileKey | 持久使用选择经当前 identity／allowed／locked 校验后的目标，或当前配置默认 |
 | `selectedAutoProfile` | ProfileKey? | 根据当前有效观测选择；无观测用配置 fallback |
 | `linkEvidence` | Map&lt;LinkId, LinkEvidence&gt; | 单侧／双侧／冲突／过期聚合 |
@@ -172,12 +175,20 @@ authenticated 且无依赖可以是 idle。双侧匹配由 Controller 派生，�
 | Geo | `sourceGeneration` | u64 | socket 代际；实例沿用所属 StoredNodeState |
 | Geo | `datasetId` | ArtifactId | 地区数据版本 |
 | Geo | `country` | string? | 推导国家／地区；无法确定为 null |
+| Geo | `region` | string? | 数据集提供的地区 |
+| Geo | `city` | string? | 数据集提供的城市 |
+| Geo | `position` | GeoPosition? | 近似经纬度／精度；未提供不自行补坐标 |
+| Geo | `endpointSource` | interface \| stun | 用作节点位置的合格观测来源 |
 | Geo | `observedAt` | Timestamp | 输入观测时间 |
 | Geo | `expiresAt` | Timestamp | 推导结果有效期 |
 | LinkEvidence | `phase` | oneSided \| matched \| conflicting \| expired | 聚合结果 |
 | LinkEvidence | `reports` | ReportRef[] | 实际来源，最多对应两端 |
 
 `ReportRef` 字段：`nodeId: NodeId`、`instanceId: InstanceId`、`reportSequence: u64`。没有收到另一端报告时不构造第二条引用。
+
+GeoObservation 复用 ipInfo 中相同 IP／数据版本的结果；ASN 的 number／organization／prefix 和各查询状态见 [IP 信息](/v2/state-reference/ip-info)。缓存 key 包含 IP 与数据版本，不能刷新旧 endpoint 的 observedAt／expiresAt。
+
+Node／成员 actions、links／paths 聚合和 recentLinks 都是[查询投影](/v2/state-reference/network#console-组合视图)，不产生新的可编辑实体或历史样本。
 
 ## StreamSubscription / EventBuffer
 
@@ -205,13 +216,17 @@ PrincipalRef 为 user／node 判别联合：user 分支保存 userId／sessionHa
 | Task | `id` | ObservationId | 测量任务 |
 | Task | `networkId` | NetworkId | 网络 |
 | Task | `sourceNodeId` | NodeId | 发起者 |
-| Task | `path` | NodeId[] | 指定完整路径 |
-| Task | `publicationId` | PublicationId | 当前获准发布 |
+| Task | `mode` | auto \| explicit | 自动按目标选路或固定指定路径 |
+| Task | `target` | ObservationTarget | 获准的测量目标，含必要协议／端口范围 |
+| Task | `path` | NodeId[]? | 实际选定路径；auto 尚未完成选择为 null |
+| Task | `pathSegment` | u64? | 首次选定后才有分段；换路径／实例时另起分段 |
+| Task | `publicationId` | PublicationId? | 已确定的获准发布；尚未完成目标规划时 null |
 | Task | `instanceId` | InstanceId? | 实际执行实例；尚未调度到当前实例为 null |
 | Task | `metrics` | MetricKind[] | rtt／traffic／probeLoss |
 | Task | `intervalMs` | u32 | 实际获准周期 |
 | Task | `phase` | preparing \| running \| completed \| failed \| expired | 实际阶段 |
 | Task | `expiresAt` | Timestamp | 下发节点的短租约 |
+| Task | `renewAfter` | Timestamp | 服务端建议的最早续租时刻 |
 | Task | `latest` | ObservationSample? | 最新真实样本 |
 | Task | `subscribers` | Map&lt;ObservationSubscriptionId, ObservationSubscriber&gt; | 任务内部的独立使用需求 |
 | Subscriber | `principal` | PrincipalRef | 每个订阅者独立鉴权 |
@@ -274,7 +289,7 @@ ObservationSubscriber 是上述 map 的嵌套值，任务关联由外层给出�
 | RateBudget | `available` | u64 | 当前可用预算 |
 | RateBudget | `updatedAt` | MonotonicInstant | 补充预算依据 |
 
-DatasetTarget 为判别联合：ruleSet 分支携带 networkId／configurationRevision／ruleSetKey，geoip 分支携带部署的 source 标识。Job 完成时核对目标仍有效，不能把旧下载发布到新配置。
+DatasetTarget 为判别联合：ruleSet 分支携带 networkId／configurationRevision／ruleSetKey，geoip／asn 分支携带部署的 source 标识。Job 完成时核对目标仍有效，不能把旧下载发布到新配置。
 
 这些是内部算法／工作队列对象，不是新的公开 Entity 或自授权 API。AuthChallenge 的实际 nonce／证明编码随认证协议定版；扩展字段须有明确类型与生命周期。
 

@@ -68,6 +68,14 @@ source Node／network 由凭据决定；每个事件是明确的判别联合类�
 
 历史读取以**当前**用户权限过滤；普通成员只看其获准业务／执行依赖相关范围，不能用事件发生时曾有的权限重新授权当前请求。权限矩阵见[操作权限](/v2/permissions)。
 
+## Query
+
+Console 使用 `POST /api/v1/networks/{networkId}/history/query`，输入 kinds、固定 from／to、可选 sourceNodeId／peerNodeId／linkId／pathId、原始或 bucketSeconds 聚合模式、cursor 和 limit。原始与分桶返回使用不同判别类型；桶保留真实 sampleCount、成功／超时／未完成数量，不能把平均值当成新测量。
+
+历史图层可选 recentLinks 摘要模式，使用同一真实事件源和当前权限；返回明确 window、coverage 和每条实际 link 的摘要。它不是新的实时探测或当前连通状态。
+
+返回事件／桶、nextCursor 和覆盖范围；cursor 绑定窗口、模式、筛选、身份与读取上界。迟到数据由下一轮查询接纳，分页不跨窗口复用。HistoryCoverage 说明裁剪和缺口，不能单靠缺样本判断空闲；recentLinks 从这些真实事件派生。
+
 ## 延迟口径
 
 | 测量 | 含义 |

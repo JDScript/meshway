@@ -16,6 +16,8 @@ Console：baseRevision + 本地草稿／patch
 
 Console 的 patch 是编辑方式，服务端还原并校验完整 NetworkConfiguration。Node 的 full／delta 基于各自已保存 digest 生成；两者不是同一份补丁。
 
+每用户每网络一份跨页面草稿。最终提交前展示有效修改数量、前后对照及删除／改址／身份／材料影响，规则见[编辑与应用对照](/v2/configuration-reference/editing)；预览不生成材料或预留资源，仍是普通 apply。
+
 配置事务提交后返回 revision 和 publication 引用，各节点各自应用。Node 离线不阻塞其他节点；重新接入时同步当前目标，不依次执行所有历史版本。关闭 Console 或取消 HTTP 不撤销已受理配置。
 
 `Network.currentRevision` 表示已受理的期望配置。每个节点的 saved／applied 引用可能不同，Console 如实显示；失败不会偷偷退回旧的 currentRevision。
@@ -68,6 +70,10 @@ ExecutionPublication 是一致快照和进度关联，不要求所有参与节�
 每个节点展示目标、当前阶段、实际 applied 引用、最后回报时间／新鲜度、等待或错误原因。离线与未报告是联系状态，不伪造成 Node 自报 failed。
 
 整体显示“2/5 已应用”“1 节点失败”“2 节点未确认”等真实计数；没有目标节点时显示“无需节点部署”。人数按本次 publication 的固定目标集合计算，重复读取／重放不会加一，后续 demand／refresh 发布不混入原分母。
+
+一次提交可涉及多个 publication。`GET /configuration/revisions/{revision}/progress` 由服务端汇总该次配置应用目标，按 NodeId 去重并保留每个节点的精确目标／实际 applied 引用和替代关系；Console 不自行合并计数。重复／重试不增加分母，后续 demand／refresh 不凭相同源 revision 混入；无法证明旧目标已满足时标 superseded，不能仅凭 revision 相同算成功。
+
+汇总带 `scope: full | partial`；已被后续目标替代的发布显示 superseded 和可见替代引用，不永久挂为未确认。联系状态由服务端按真实时间计算，不让 Console 自定在线阈值。
 
 配置变化通知保持草稿和 CAS 基准；`configuration.changed` 表示期望已提交，`configuration.progress` 才展示各节点处理结果。首次同步和重连查询能恢复当前进度，不依赖回放全部中间事件。
 

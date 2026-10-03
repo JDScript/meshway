@@ -11,22 +11,28 @@ API 方向已确定为 HTTP 创建／续租／取消任务，结果经 Console �
 ```json
 {
   "sourceNodeId": "<node-a>",
+  "mode": "explicit",
+  "target": { "type": "node", "nodeId": "<node-b>" },
   "path": ["<node-a>", "<node-c>", "<node-b>"],
   "metrics": ["rtt", "traffic", "probeLoss"],
   "intervalMs": 1000
 }
 ```
 
-这是创建观察任务的输入示意，不是现行 API。Controller 返回不透明 watch ID、实际采样周期及到期时间；不把用户会话令牌放进 URL。
+这是创建观察任务的输入示意，不是现行 API。Controller 返回 observationId、实际 intervalMs、expiresAt、renewAfter，后续查询／SSE 返回真实阶段和选定路径；不把用户会话令牌放进 URL。
 
 | 字段 | 含义 |
 | --- | --- |
 | `sourceNodeId` | 发起测量的节点，用户须有权让它执行诊断 |
-| `path` | 明确的有序节点路径，首项必须为 source；不能绕过当前路由约束 |
+| `mode` | auto／explicit；不使用含义模糊的 current |
+| `target` | 获准目标，必要时包含协议／端口范围；不能借诊断扩权 |
+| `path` | explicit 必填的完整有序路径；auto 输入省略，执行选择后返回 |
 | `metrics` | 请求的已支持指标；不可测的项明确 unavailable |
 | `intervalMs` | 期望周期，示例为 1 秒；实际周期受节点／网络预算约束 |
 
-选择的是“这条明确路径”，不是每个样本自动换一条最快路径。需要跟随业务当前路径时可另定义 follow 模式，路径变化必须开启新分段；本稿不混用两种语义。
+auto 可用于空闲网络：Controller 根据目标计算获准候选，执行端结合 State 选择／建立实际路径，未完成时为 preparing、path=null。首次选定后按该路径采样，发生重选时开启新分段，不能每个样本换路还画成同一序列。
+
+explicit 固定指定路径，不因故障绕过必经点。跟随某条已有业务流是另一个模式，当前不隐式加入；同源／目的可能有多条并存路径。
 
 ## 数据流
 
@@ -103,6 +109,7 @@ deadline 之后收到的回复仍记为迟到，本口径保留“未在期限�
 ## 租约与取消
 
 - Controller 为任务设置短期到期时间，前台订阅按权限续租；具体时间和最大频率待定。
+- 返回适用于当前用户／网络的并发与频率预算，超出上限用 observation_limit 等结构化错误；renewAfter 给出续租节奏，页面后台不续租。
 - 用户关闭／切换网络／退出登录、权限撤回或配置失效时停止订阅，并取消／停止续租节点任务。
 - 断开控制通道或丢失取消消息时，Node 仍按本地租约停止；结果不反过来续活任务。
 - 最后一个订阅者离开后释放诊断依赖，是否保留 link 回到普通业务／空闲回收策略。

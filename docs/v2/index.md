@@ -33,12 +33,14 @@ Node 上报自身运行事实，Controller 聚合 NetworkState；Node 可按需 
 - [Capabilities](/v2/state-reference/capabilities)
 - [按需连接与保活](/v2/state-reference/link-lifecycle)
 - [查询、裁剪与订阅](/v2/state-reference/query)
+- [GeoIP／ASN 与节点位置](/v2/state-reference/ip-info)
 - [Realtime Observation](/v2/state-reference/realtime)
 
 ## 分发与存储
 
 - [NodeConfiguration 下发示例](/v2/configuration-reference/node-configuration)
 - [配置应用与逐节点进度](/v2/configuration-reference/deployment)
+- [整网草稿与应用前对照](/v2/configuration-reference/editing)
 - [Config／State 同步与回滚](/v2/configuration-reference/synchronization)
 - [数据模型与权威来源](/v2/entities)
 - [持久数据库：逐字段](/v2/storage/database)
@@ -52,6 +54,8 @@ Node 上报自身运行事实，Controller 聚合 NetworkState；Node 可按需 
 - [API 分区与操作索引](/v2/api)
 - [用户注册、网络创建与 Node 密钥认证](/v2/api/authentication)
 - [SSE：首次全量、后续变化与生成客户端](/v2/api/events)
+- [配置版本与操作历史](/v2/api/history)
+- [Actions 与 Problem](/v2/api/problems)
 
 ## 工程结构
 

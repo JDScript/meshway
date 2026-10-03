@@ -19,10 +19,13 @@
 
 | 字段 | 类型 | 含义 |
 | --- | --- | --- |
-| `tokenHash` | Digest | 主键，随机 session 原值的摘要 |
+| `id` | SessionId | 非秘密资源 ID，用于会话管理 |
+| `tokenHash` | Digest | 唯一认证摘要，不作为对外 ID |
 | `userId` | UserId | 关联 User |
 | `credentialVersion` | u64 | 签发时版本，认证时与 User 核对 |
 | `createdAt` | Timestamp | 签发时间 |
+| `lastUsedAt` | Timestamp? | 最近实际会话使用；未记录为 null，不等于用户交互时间 |
+| `clientLabel` | string? | 粗粒度、脱敏的客户端摘要；仅展示，不参与认证 |
 | `expiresAt` | Timestamp | 绝对到期时间 |
 | `revokedAt` | Timestamp? | 单会话撤销 |
 
@@ -54,10 +57,32 @@
 | `networkId` | NetworkId | 所属网络 |
 | `userId` | UserId | 用户 |
 | `role` | owner \| admin \| member | 网络内角色 |
+| `version` | u64 | 成员修改的并发基准 |
 | `joinedAt` | Timestamp | 加入时间 |
 | `revokedAt` | Timestamp? | 离网／移除时间 |
 
 `(networkId,userId)` 至多一条有效记录；重新加入产生新 id。最后 Owner 保护在事务中执行。
+
+## JoinLink
+
+| 字段 | 类型 | 含义 |
+| --- | --- | --- |
+| `id` | JoinLinkId | 非秘密链接记录 ID |
+| `networkId` | NetworkId | 固定加入网络 |
+| `role` | owner \| admin \| member | 固定授予角色，须在签发者权限内 |
+| `tokenHash` | Digest | 唯一 token 摘要 |
+| `createdBy` | UserId | 签发者 |
+| `issuerMembershipId` | MembershipId | 当次签发权限关系，离网再加入不复活旧链接 |
+| `createdAt` | Timestamp | 创建时间 |
+| `expiresAt` | Timestamp | 首次消费期限 |
+| `revokedAt` | Timestamp? | 未消费链接的撤销时间 |
+| `consumedByUserId` | UserId? | 成功领取者 |
+| `consumedMembershipId` | MembershipId? | 唯一加入结果 |
+| `consumedAt` | Timestamp? | 消费时间 |
+| `creationRequestId` | RequestId | 签发幂等键 |
+| `creationRequestDigest` | Digest | 原创建请求绑定，私有字段 |
+
+消费字段同事务填写，与有效 membership 创建／活动记录一致。状态从消费、撤销、期限派生；已消费结果重试不恢复已撤销 membership。创建重试仅返回原资源元数据，原值交付规则见[认证](/v2/api/authentication#创建请求的幂等与秘密交付)。
 
 ## Node
 
@@ -70,6 +95,8 @@
 | `credentialsRevokedAt` | Timestamp? | 永久吊销整个接入；所有旧／派生凭据拒绝 |
 
 **没有 owner、subject、tags、enabled、hostname、lastSeen、applied 字段。** 有效身份与启停从 Config 获取；运行观测从 RAM 获取。永久接入吊销不可通过配置、换钥或旧注册重试恢复。
+
+用户确认的删除操作在同一事务设置 credentialsRevokedAt、移除当前 nodes[id] 并记录旧地址退出／执行撤回；没有节点恢复入口。本行及公钥／历史关联可作为最小墓碑保留，阻止旧凭据和历史配置复活。
 
 节点期望地址唯一来自 `ConfigurationVersion.configuration.nodes[id].addresses`，允许显式修改／重分配。Node ID 与密钥不随改址变化。配置提交校验同网地址唯一性；地址索引只作为按 revision 绑定的派生数据，没有独立写入口。
 
@@ -115,6 +142,7 @@
 | `bindings` | ConfigurationBindings | 本版本固定的用户／listener 代际／数据集绑定 |
 | `createdBy` | ActorRef | 用户或系统修改来源 |
 | `createdAt` | Timestamp | 提交时间 |
+| `cause` | ConfigurationChangeCause | 配置版本的主触发来源，独立于 actor |
 | `requestId` | RequestId? | 幂等／事件关联 |
 | `rollbackFrom` | Revision? | 回滚来源；本记录仍是新 revision |
 
@@ -156,10 +184,10 @@ Node 的持久身份／密钥吊销继续由 Node／NodeKey 负责；本记录�
 | --- | --- | --- |
 | `id` | ArtifactId | 不可变数据版本 |
 | `networkId` | NetworkId? | 网络规则集所属网络；实例 GeoIP 可为 null |
-| `kind` | ruleSet \| geoip | 数据类型 |
+| `kind` | ruleSet \| geoip \| asn | 数据类型 |
 | `source` | string | 来源 URI／名称，不含凭据 |
 | `format` | DatasetFormat | 保存内容的明确格式／版本 |
-| `data` | bytes | 已校验规范化规则集／GeoIP 查询内容 |
+| `data` | bytes | 已校验规范化规则集／GeoIP／ASN 查询内容 |
 | `digest` | Digest | 规范化内容摘要 |
 | `createdAt` | Timestamp | 接受时间 |
 
@@ -209,15 +237,20 @@ Node 的持久身份／密钥吊销继续由 Node／NodeKey 负责；本记录�
 | `networkId` | NetworkId | 不可改绑的网络 |
 | `tokenHash` | Digest | 唯一 token 摘要 |
 | `tags` | string[] | 该次接入获准写入配置的非空 Tag 集合 |
+| `initialSettings` | Sealed&lt;InitialNodeSettings&gt;? | 可选 hostname／listener 模板，可能包含管理员显式材料 |
 | `createdBy` | UserId | 签发者 |
 | `createdAt` | Timestamp | 创建时间 |
 | `expiresAt` | Timestamp | 首次使用期限 |
 | `revokedAt` | Timestamp? | 密钥撤销 |
 | `consumedRequestId` | EnrollmentRequestId? | 一次性消费绑定 |
+| `creationRequestId` | RequestId | 签发幂等键 |
+| `creationRequestDigest` | Digest | 原请求绑定，含秘密时采用受保护摘要 |
 
 消费时复核当前 Tag 授予资格。tags 是接入授权输入，设备注册后以 Configuration.identity 为唯一当前值。
 
-## PasswordReset（如保留一次性恢复）
+InitialNodeSettings 字段为 `hostname: string?`、`listeners: Map<ListenerKey,Listener>`；未提供使用平台接入默认。模板在注册事务落入真实节点配置，自动材料在对应配置准备流程生成并保存，原始 token 不入库。列表只返回安全摘要与消费 Node／时间。
+
+## PasswordReset
 
 | 字段 | 类型 | 含义 |
 | --- | --- | --- |
@@ -229,7 +262,7 @@ Node 的持久身份／密钥吊销继续由 Node／NodeKey 负责；本记录�
 | `revokedAt` | Timestamp? | 撤销时间 |
 | `consumedAt` | Timestamp? | 消费时间 |
 
-恢复入口待定，此记录不要求实例初始化 API。
+由主机运维 CLI 签发，公开兑换接口验证本次凭据；网络 Owner 无他人账户重置权。消费推进 User.credentialVersion 并撤销旧会话，响应丢失后用新密码正常登录。
 
 ## ExecutionPublication
 
@@ -307,6 +340,33 @@ targetPublicationId 是节点当前应同步／应用的目标；Node 校验并�
 | `selectedAt` | Timestamp | 选择时间 |
 
 当前身份仍从 Config 读取，identityDigest 不赋权；恢复需检查当前 identity、allowed／locked。实际使用方案由 State 报告。
+
+## ActivityEvent
+
+| 字段 | 类型 | 含义 |
+| --- | --- | --- |
+| `id` | ActivityId | 对外不透明 ID |
+| `sequence` | u64 | 内部提交顺序／固定分页上界，不直接暴露为 cursor |
+| `scope` | ActivityScope | network(networkId) 或 account(userId) 的封闭分支 |
+| `at` | Timestamp | 控制面动作完成时间 |
+| `actor` | ActorRef | 服务端确定的操作主体 |
+| `action` | ActivityAction | 固定操作枚举 |
+| `target` | ActivityTarget | 节点／成员／配置版本／链接等类型化引用 |
+| `beforeRevision` | Revision? | 涉及配置时的原版本 |
+| `afterRevision` | Revision? | 涉及配置时的新版本 |
+| `requestId` | RequestId | 同一次逻辑操作关联 |
+
+成功管理 mutation 与记录同事务提交，幂等恢复不重复插入；scope 和 actor 不由请求者自报。原配置通过 revision 关联，不复制秘密、完整 diff、token 摘要或请求 body。Node apply 结果在 ApplicationReceipt，不能用它改写“配置已提交”的活动事实。
+
+### ActivityCoverage
+
+| 字段 | 类型 | 含义 |
+| --- | --- | --- |
+| `scope` | ActivityScope | 保留范围 |
+| `before` | Timestamp | 此时刻前记录可能已裁剪 |
+| `reason` | retention \| capacity | 裁剪原因 |
+
+按当前权限查询；账户 scope 仅本人，网络 scope 为管理读取。保留窗口之外明确缺口，不用空列表表示从未操作。字段与接口见[操作历史](/v2/api/history)。
 
 ## ObservationEvent
 

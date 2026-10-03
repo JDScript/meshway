@@ -11,7 +11,7 @@
 ```json
 [
   {
-    "id": "backend-via-core",
+    "remark": "后端访问必经 core",
     "src": ["group:dev"],
     "dst": ["tag:backend"],
     "via": ["node:<relay-id>"]
@@ -21,11 +21,13 @@
 
 | 字段 | 类型 | 说明 |
 | --- | --- | --- |
-| `id` | `string` | 唯一规则 key |
+| `remark` | `string` | 自由备注，省略补空字符串，可重复 |
 | `src` / `dst` | `string[]` | 源与目的节点选择器 |
 | `via` | `string[]` | 必须按顺序经过的节点；本稿先用具体 Node 选择器 |
 
 从上到下 first-match；无匹配时自动选路。所有备选路径都必须保留必经点。已建立会话及回复固定原完整路径，切换承载不等于改逻辑路径。
+
+与 access／topology 一致，路由规则不要求用户维护 id，定位使用 revision＋JSON Pointer。profile、ruleSet 的命名 key 仍用于引用，不属于规则行 ID。
 
 ## routing.egress
 
@@ -36,7 +38,7 @@
     "work": {
       "rules": [
         {
-          "id": "office",
+          "remark": "办公网",
           "match": { "ipCIDR": ["10.20.0.0/16"] },
           "action": { "type": "exit", "nodes": ["node:<exit-id>"], "via": [] }
         }
