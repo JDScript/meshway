@@ -139,8 +139,11 @@ impl Observations {
         now: DateTime<Utc>,
     ) -> Result<ObservationTask, StateError> {
         self.expire(now);
-        if admission.session_expires_at <= now || admission.node_expires_at <= now {
+        if admission.session_expires_at <= now {
             return Err(StateError::Unauthorized);
+        }
+        if admission.node_expires_at <= now {
+            return Err(StateError::Conflict);
         }
         if request.source_node_id != admission.report.node_id
             || request.metrics.is_empty()
@@ -703,22 +706,31 @@ impl Observations {
             .subscribers
             .get(&subscription)
             .ok_or(StateError::NotFound)?;
-        if task.network != admission.report.network_id
+        let error = if admission.session_expires_at <= now {
+            Some(StateError::Unauthorized)
+        } else if task.network != admission.report.network_id
             || subscriber.session != admission.session_id
-            || admission.session_expires_at <= now
             || subscriber.authorization_digest != admission.authorization_digest
-            || task.task.instance_id != admission.report.instance_id
+        {
+            Some(StateError::Forbidden)
+        } else if task.task.instance_id != admission.report.instance_id
             || task.task.configuration != admission.configuration
+            || admission.node_expires_at <= now
             || !admission
                 .report
                 .configurations
                 .contains(&task.task.configuration)
         {
+            Some(StateError::Conflict)
+        } else {
+            None
+        };
+        if let Some(error) = error {
             self.task_mut(id)
                 .ok_or(StateError::NotFound)?
                 .subscribers
                 .remove(&subscription);
-            return Err(StateError::Unauthorized);
+            return Err(error);
         }
         Ok(())
     }

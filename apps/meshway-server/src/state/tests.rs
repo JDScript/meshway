@@ -312,6 +312,84 @@ fn observations_bind_instance_path_and_independent_subscriber_leases() {
 }
 
 #[test]
+fn observation_authorization_distinguishes_user_session_from_execution_and_scope_loss() {
+    let (report, _, scope, now) = setup();
+    let admission = TaskAdmission {
+        configuration: report.execution.clone().unwrap(),
+        paths: report.current().unwrap().paths.clone(),
+        node_expires_at: report.lease_expires_at,
+        observation_id: None,
+        unsupported_metrics: vec![],
+        report: report.clone(),
+        session_id: id(10),
+        authorization_digest: scope.authorization_digest,
+        session_expires_at: now + Duration::minutes(10),
+    };
+    let request = CreateObservation {
+        service: meshway_configuration::execution::ObservationServiceScope::IcmpEcho,
+        subscription_id: id(100),
+        source_node_id: report.node_id,
+        target_node_id: id(2),
+        selection: ObservationPath::Auto,
+        metrics: vec![meshway_model::observations::MetricKind::Rtt],
+        interval_ms: 1000,
+    };
+    for case in 0..5 {
+        let mut tasks = Observations::default();
+        let task = tasks
+            .create(
+                &admission,
+                identity(report.network_id),
+                request.clone(),
+                now,
+            )
+            .unwrap();
+        let mut changed = admission.clone();
+        let expected = match case {
+            0 => {
+                changed.node_expires_at = now;
+                StateError::Conflict
+            }
+            1 => {
+                changed.report.instance_id = id(99);
+                StateError::Conflict
+            }
+            2 => {
+                changed.configuration.execution_publication = id(99);
+                StateError::Conflict
+            }
+            3 => {
+                changed.authorization_digest = Digest::from_bytes([99; 32]);
+                StateError::Forbidden
+            }
+            _ => {
+                changed.session_expires_at = now;
+                StateError::Unauthorized
+            }
+        };
+        assert_eq!(
+            tasks
+                .renew(
+                    &changed,
+                    task.id,
+                    request.subscription_id,
+                    now + Duration::seconds(10)
+                )
+                .unwrap_err(),
+            expected
+        );
+    }
+    let mut expired_node = admission;
+    expired_node.node_expires_at = now;
+    assert_eq!(
+        Observations::default()
+            .create(&expired_node, identity(report.network_id), request, now)
+            .unwrap_err(),
+        StateError::Conflict
+    );
+}
+
+#[test]
 fn shared_task_subscribers_renew_independently_and_create_retry_does_not_renew() {
     let (report, _, scope, now) = setup();
     let mut admission = TaskAdmission {

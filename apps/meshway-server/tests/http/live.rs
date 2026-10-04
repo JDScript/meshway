@@ -307,7 +307,7 @@ async fn member_inventory_excludes_execution_peers_and_settings_refresh_in_strea
         .await
         .network
         .id;
-    join(
+    let membership = join(
         &c,
         &s,
         network,
@@ -451,6 +451,246 @@ async fn member_inventory_excludes_execution_peers_and_settings_refresh_in_strea
         panic!("reconnected settings")
     };
     assert_eq!(nodes[&a.node_id].hostname, "updated-member-host");
+    reconnected.ready().await;
+    c.post(format!("{}/agent-api/v1/instances/release", s.url))
+        .bearer_auth(&at)
+        .json(&InstanceRequest {
+            instance_id: ai.instance_id,
+            generation: ai.generation,
+        })
+        .send()
+        .await
+        .unwrap()
+        .error_for_status()
+        .unwrap();
+    reconnected.ready().await;
+    // An offline node has no changing live execution reference. Its settings
+    // must refresh even when the restricted disclosure digest stays identical.
+    let current = source(&c, &s, network, owner.token.expose()).await;
+    let _: ConfigurationAppliedResponse = json(
+        c.post(net(&s, network, "configuration"))
+            .bearer_auth(owner.token.expose())
+            .json(&ConfigurationRequest::Operations {
+                expected_revision: current.revision,
+                request_id: request(),
+                ops: vec![
+                    meshway_configuration::ConfigurationOperation::SetNodeSettings {
+                        node_id: a.node_id,
+                        fields: meshway_configuration::NodeSettingsPatch {
+                            remark: meshway_configuration::Input::Value(
+                                "offline settings changed".into(),
+                            ),
+                            ..Default::default()
+                        },
+                    },
+                ],
+            }),
+    )
+    .await;
+    let mut refreshed = false;
+    loop {
+        match reconnected.user().await.1.0 {
+            StreamEvent::ConfigSnapshot {
+                configuration: UserConfigurationView::Member { nodes, .. },
+                ..
+            } => {
+                assert_eq!(nodes[&a.node_id].remark, "offline settings changed");
+                refreshed = true;
+            }
+            StreamEvent::Ready { .. } => {
+                assert!(refreshed);
+                break;
+            }
+            _ => {}
+        }
+    }
+    let current = source(&c, &s, network, owner.token.expose()).await;
+    c.post(net(&s, network, &format!("members/{membership}/remove")))
+        .bearer_auth(owner.token.expose())
+        .json(&meshway_protocol::RemoveMemberRequest {
+            expected_version: Version::MIN,
+            expected_revision: current.revision,
+        })
+        .send()
+        .await
+        .unwrap()
+        .error_for_status()
+        .unwrap();
+    loop {
+        match reconnected.user().await.1.0 {
+            StreamEvent::Closed {
+                reason: meshway_protocol::events::ClosedReason::MembershipRevoked,
+            } => break,
+            StreamEvent::EntitiesDelta { .. }
+            | StreamEvent::StateDelta { .. }
+            | StreamEvent::ConfigurationProgress { .. } => {}
+            _ => panic!("membership loss must discard queued private settings"),
+        }
+    }
+    assert!(
+        reconnected
+            .frame::<meshway_protocol::UserEvent>()
+            .await
+            .is_none()
+    );
+    assert_eq!(
+        c.get(net(&s, network, "events"))
+            .bearer_auth(member.token.expose())
+            .send()
+            .await
+            .unwrap()
+            .status(),
+        StatusCode::NOT_FOUND
+    );
+    s.close().await;
+}
+
+#[tokio::test]
+async fn reacquired_instance_preserves_exact_target_but_requires_its_own_saved_and_applied() {
+    let _serial = ACCOUNT_FLOW.lock().await;
+    let dir = tempfile::tempdir().unwrap();
+    let s = Server::start(&dir.path().canonicalize().unwrap().join("reacquire"), true).await;
+    let c = client();
+    let owner = register(&c, &s, "reacquire@example.test", "valid password").await;
+    let network = create(&c, &s, owner.token.expose(), "reacquire")
+        .await
+        .network
+        .id;
+    let (node, token, first) = enroll(&c, &s, network, owner.token.expose(), 41).await;
+    let current = source(&c, &s, network, owner.token.expose()).await;
+    let applied: ConfigurationAppliedResponse = json(
+        c.post(net(&s, network, "configuration"))
+            .bearer_auth(owner.token.expose())
+            .json(&ConfigurationRequest::Operations {
+                expected_revision: current.revision,
+                request_id: request(),
+                ops: vec![
+                    meshway_configuration::ConfigurationOperation::SetNodeSettings {
+                        node_id: node.node_id,
+                        fields: meshway_configuration::NodeSettingsPatch {
+                            remark: meshway_configuration::Input::Value("fixed target".into()),
+                            ..Default::default()
+                        },
+                    },
+                ],
+            }),
+    )
+    .await;
+    let url = net(
+        &s,
+        network,
+        &format!("configuration/revisions/{}/progress", applied.revision),
+    );
+    let initial: ConfigurationApplyProgress =
+        json(c.get(&url).bearer_auth(owner.token.expose())).await;
+    let target = initial.nodes[&node.node_id].target.clone();
+    let _: InstanceLease = json(
+        c.post(format!("{}/agent-api/v1/instances/renew", s.url))
+            .bearer_auth(&token)
+            .json(&InstanceRequest {
+                instance_id: first.instance_id,
+                generation: first.generation,
+            }),
+    )
+    .await;
+    let receipt = |lease: &InstanceLease, phase, sequence| ReceiptRequest {
+        instance: InstanceRequest {
+            instance_id: lease.instance_id,
+            generation: lease.generation,
+        },
+        target: target.clone(),
+        phase,
+        attempt: Version::MIN,
+        sequence: Sequence::new(sequence).unwrap(),
+        reported_at_ms: chrono::Utc::now().timestamp_millis() as u64,
+        failure: None,
+    };
+    for (phase, sequence) in [(ReceiptPhase::Saved, 0), (ReceiptPhase::Applied, 1)] {
+        c.post(format!("{}/agent-api/v1/configuration/receipts", s.url))
+            .bearer_auth(&token)
+            .json(&receipt(&first, phase, sequence))
+            .send()
+            .await
+            .unwrap()
+            .error_for_status()
+            .unwrap();
+    }
+    let replacement: InstanceLease = json(
+        c.post(format!("{}/agent-api/v1/instances", s.url))
+            .bearer_auth(&token)
+            .json(&AcquireInstanceRequest {
+                instance_id: InstanceId::new(*request().as_uuid()).unwrap(),
+                capabilities: BTreeMap::from([(
+                    "transport:native_udp".into(),
+                    Capability::Transport {
+                        roles: vec![TransportRole::Dial, TransportRole::Listen],
+                        streams: vec![StreamKind::Udp],
+                    },
+                )]),
+            }),
+    )
+    .await;
+    assert_eq!(replacement.target.as_ref(), Some(&target));
+    let waiting: ConfigurationApplyProgress =
+        json(c.get(&url).bearer_auth(owner.token.expose())).await;
+    assert_eq!(
+        waiting.nodes[&node.node_id].phase,
+        ApplicationPhase::Applied
+    );
+    assert_eq!(
+        waiting.nodes[&node.node_id].instance_id,
+        Some(first.instance_id)
+    );
+    assert_eq!(
+        waiting.nodes[&node.node_id].freshness,
+        ReceiptFreshness::AwaitingInstance
+    );
+    let endpoint = format!("{}/agent-api/v1/configuration/receipts", s.url);
+    assert_eq!(
+        c.post(&endpoint)
+            .bearer_auth(&token)
+            .json(&receipt(&replacement, ReceiptPhase::Applied, 1))
+            .send()
+            .await
+            .unwrap()
+            .status(),
+        StatusCode::CONFLICT
+    );
+    assert_eq!(
+        c.post(&endpoint)
+            .bearer_auth(&token)
+            .json(&receipt(&first, ReceiptPhase::Applied, 1))
+            .send()
+            .await
+            .unwrap()
+            .status(),
+        StatusCode::CONFLICT
+    );
+    for (phase, sequence, expected) in [
+        (ReceiptPhase::Saved, 0, ApplicationPhase::Saved),
+        (ReceiptPhase::Applied, 1, ApplicationPhase::Applied),
+    ] {
+        c.post(&endpoint)
+            .bearer_auth(&token)
+            .json(&receipt(&replacement, phase, sequence))
+            .send()
+            .await
+            .unwrap()
+            .error_for_status()
+            .unwrap();
+        let current: ConfigurationApplyProgress =
+            json(c.get(&url).bearer_auth(owner.token.expose())).await;
+        assert_eq!(current.nodes[&node.node_id].target, target);
+        assert_eq!(
+            current.nodes[&node.node_id].instance_id,
+            Some(replacement.instance_id)
+        );
+        assert_eq!(current.nodes[&node.node_id].phase, expected);
+        assert_eq!(
+            current.nodes[&node.node_id].freshness,
+            ReceiptFreshness::Current
+        );
+    }
     s.close().await;
 }
 
