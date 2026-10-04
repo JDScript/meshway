@@ -149,15 +149,13 @@ Node 已有 `meshwayd` 的控制流程（接入、认证、续租、保存配置
 
 ### 后端排期中
 
-- **配置诊断与 Listener**：随提交流水线合并一并定义。
-  - `unmanaged` 在普通规则里 schema 允许、校验拒绝；egress 类型要拆成"规则可用"和"fallback 可用"两种，随这次重生成收紧。
-  - `ConfigurationIssue` 只有英文 message，没有 code 和 params，无法本地化。
-  - 路径只到集合一级，解析错误时 path 为空；节点级的出口授权问题挂在 `/nodes/<id>` 上，指不到具体的规则或方案。
-  - 没有 warning 通道，无法提示被前面规则完全遮挡的规则；数组变化只按整体报告。
-  - 预览缺 `affectedNodeIds`、`identityChangedNodeIds` 和 `changedListeners`。
-  - 新增 VLESS listener 时，`requirements` 同时列出 `willGenerate` 里的 UUID、证书和私钥；console 只把 `willGenerate` 之外的项显示为待完成。
-  - `ListenerView` 只给出 WebSocket 响应头的名字，而 `ListenerUpdate` 整体替换，表单没法在保留这些响应头的前提下修改监听。
-  - 托管证书模式下修改 `serverName` 时，`inherit_materials` 可能沿用旧证书（读代码推断，未验证）。
+- **配置诊断与 Listener**（后端回复，`server/configuration-pipeline`）。已在 main、SDK 已重生成，console 测试 fixture 只做了类型补全：
+  - `ConfigurationIssue { path, code, params, message }`：`code` 是封闭枚举 `IssueCode`（snake_case，约 60 个），`params` 始终存在，`message` 只是英文渲染。参数约定、`invalid_transport.reason`、`invalid_jsonc`／`invalid_shape` 的 `line`／`column`、`rule_set_unavailable.reason` 见 [problems.md](../../../docs/v2/api/problems.md#configuration-issue)。
+  - 路径精确到元素：`/access/1/src/0`、`.../match/ipCIDR/2`、`/dns/default/1`；下标按作者书写顺序（排序在定位之后）。节点级出口授权问题挂在规则／分配项／fallback 上，节点在 `params.node`。
+  - `warnings`（预览响应与 `NormalizedConfiguration`）：首个 warning 是 `shadowed_rule { by }`。数组按下标逐元素比较，变化定位到最深成员；中间插入会让其后每条下标都出现变化。
+  - 预览新增 `identityChangedNodeIds`、`changedListeners [{nodeId,key,kind}]`、`affectedNodeIds`（除非所有变化都限于 `hostname`／`remark`，否则是全部节点——定义见 editing.md）。`requirements` 与 `willGenerate` 不相交。
+  - 托管证书改 `serverName` 时不再继承旧证书（会重新生成）；provided 材料继续按省略继承。你们的推断是对的——原来会继承旧名字的证书再被 `verify_tls` 拒掉。
+  - **两项 breaking 的放在分支 `server/configuration-contract-break`（一个提交），等 console 适配后一起合**：① `EgressRule.action` 变为 `RuleAction { exit | direct }`，`RouteAction`（含 `unmanaged`）只剩 profile fallback；② `ListenerUpdate` 成为独立 tagged 类型，VLESS 变体的 `websocket` 和 `responseHeaders` 省略＝保持（同一资源），显式 `{}` 清空、`null` 删块。受影响的 console 文件：`lib/configuration/routing.ts`、`-sections/routing-egress.tsx`、`nodes/$node/-transport/listeners.tsx` 及两个测试。这两项不能只靠 fixture 补全过 check，所以没有随 main 合入。
 - **规则集**：随 resources 的 SQL 下沉处理。
   - 准备失败只返回一条英文 issue，消息里是 Debug 枚举名（如 `InvalidSource`、`DownloadFailed`），没有 `ResourceProblem` code。
   - 超出上限的处理不一致：超过 32 个、超过 8 MiB 或准备并发已满时返回 503，30 秒超时却作为 `/ruleSets` 上的 issue 返回。
