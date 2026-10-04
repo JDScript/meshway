@@ -117,7 +117,10 @@ pub(crate) fn remove_member(
     let now = now()?;
     let user = current_session(&tx, &digest, now)?.user.id;
     let impact = removal(&tx, user, network, member, request, sealer, cache)?;
-    if impact.version != expected || impact.revision != revision {
+    if impact.revision != revision {
+        return Err(NetworkError::RevisionConflict);
+    }
+    if impact.version != expected {
         return Err(NetworkError::VersionConflict);
     }
     let role = tx.query_row(
@@ -141,7 +144,7 @@ pub(crate) fn remove_member(
         cache,
     )
     .map_err(|error| match error {
-        crate::configuration::Error::Conflict => NetworkError::VersionConflict,
+        crate::configuration::Error::Conflict => NetworkError::RevisionConflict,
         crate::configuration::Error::PermissionDenied => NetworkError::PermissionDenied,
         _ => NetworkError::Unavailable,
     })?;
@@ -295,6 +298,7 @@ fn read_link(r: &rusqlite::Row<'_>) -> rusqlite::Result<Link> {
             revoked_at: opttime(r, 6)?,
             consumed_at: opttime(r, 7)?,
             consumed_by_user_id: optional_id(r, 8, UserId::new)?,
+            actions: meshway_protocol::management::JoinLinkActions { revoke: false },
         },
         issuer: id(r, 9, MembershipId::new)?,
         created_by: id(r, 10, UserId::new)?,
@@ -302,15 +306,27 @@ fn read_link(r: &rusqlite::Row<'_>) -> rusqlite::Result<Link> {
     })
 }
 fn valid(tx: &Transaction<'_>, link: &Link, now: i64) -> Result<(), NetworkError> {
-    if link.view.revoked_at.is_some() || link.view.expires_at.timestamp_millis() <= now {
-        return Err(NetworkError::InvalidLink);
-    }
-    let (id, role) = membership(tx, link.view.network_id, link.created_by)
-        .map_err(|_| NetworkError::InvalidLink)?;
+    let (id, role) =
+        membership(tx, link.view.network_id, link.created_by).map_err(|error| match error {
+            NetworkError::NotFound => NetworkError::LinkIssuerUnavailable,
+            other => other,
+        })?;
     if id != link.issuer || !grant(role, link.view.role) {
-        return Err(NetworkError::InvalidLink);
+        return Err(NetworkError::LinkIssuerUnavailable);
+    }
+    if link.view.revoked_at.is_some() {
+        return Err(NetworkError::LinkRevoked);
+    }
+    if link.view.expires_at.timestamp_millis() <= now {
+        return Err(NetworkError::LinkExpired);
     }
     Ok(())
+}
+fn link_actions(link: &mut Link, role: Option<MembershipRole>, now: i64) {
+    link.view.actions.revoke = role.is_some_and(|role| grant(role, link.view.role))
+        && link.view.revoked_at.is_none()
+        && link.view.consumed_at.is_none()
+        && link.view.expires_at.timestamp_millis() > now;
 }
 pub(crate) fn create_link(
     db: &mut Connection,
@@ -337,7 +353,7 @@ pub(crate) fn create_link(
         if previous.as_slice() != input_digest.as_slice() {
             return Err(NetworkError::RequestConflict);
         }
-        let link = tx.query_row(
+        let mut link = tx.query_row(
             &format!(
                 "{LINK_SELECT} WHERE network_id=?1 AND created_by=?2 AND creation_request_id=?3"
             ),
@@ -348,6 +364,7 @@ pub(crate) fn create_link(
             ],
             read_link,
         )?;
+        link_actions(&mut link, Some(issuer_role), now);
         tx.commit()?;
         return Ok(CreatedLink {
             link: link.view,
@@ -366,11 +383,12 @@ pub(crate) fn create_link(
             now, expires, request.as_uuid().as_bytes().as_slice(), input_digest.as_slice()],
     )?;
     record(&tx, network, user, request, Activity::LinkCreated(id), now)?;
-    let link = tx.query_row(
+    let mut link = tx.query_row(
         &format!("{LINK_SELECT} WHERE id=?1"),
         [id.as_uuid().as_bytes().as_slice()],
         read_link,
     )?;
+    link_actions(&mut link, Some(issuer_role), now);
     tx.commit()?;
     Ok(CreatedLink {
         link: link.view,
@@ -384,8 +402,8 @@ pub(crate) fn inspect_link(
 ) -> Result<LinkInspection, NetworkError> {
     let tx = db.transaction_with_behavior(TransactionBehavior::Deferred)?;
     let now = now()?;
-    current_session(&tx, &digest, now)?;
-    let link = tx
+    let user = current_session(&tx, &digest, now)?.user.id;
+    let mut link = tx
         .query_row(
             &format!("{LINK_SELECT} WHERE token_hash=?1"),
             [hash.as_slice()],
@@ -393,10 +411,12 @@ pub(crate) fn inspect_link(
         )
         .optional()?
         .ok_or(NetworkError::InvalidLink)?;
-    valid(&tx, &link, now)?;
     if link.view.consumed_at.is_some() {
-        return Err(NetworkError::InvalidLink);
+        return Err(NetworkError::LinkUsed);
     }
+    valid(&tx, &link, now)?;
+    let member = membership(&tx, link.view.network_id, user).ok();
+    link_actions(&mut link, member.map(|(_, role)| role), now);
     let name = tx.query_row(
         "SELECT name FROM networks WHERE id=?1",
         [link.view.network_id.as_uuid().as_bytes().as_slice()],
@@ -406,6 +426,7 @@ pub(crate) fn inspect_link(
     Ok(LinkInspection {
         link: link.view,
         network_name: name,
+        already_member: member.is_some(),
     })
 }
 pub(crate) fn redeem_link(
@@ -427,9 +448,12 @@ pub(crate) fn redeem_link(
         .ok_or(NetworkError::InvalidLink)?;
     if let Some(member) = link.consumed_member {
         if link.view.consumed_by_user_id != Some(user)
-            || membership(&tx, link.view.network_id, user)?.0 != member
+            || membership(&tx, link.view.network_id, user)
+                .ok()
+                .map(|m| m.0)
+                != Some(member)
         {
-            return Err(NetworkError::InvalidLink);
+            return Err(NetworkError::LinkUsed);
         }
         tx.commit()?;
         return Ok(((link.view.network_id, member), false));
@@ -488,7 +512,7 @@ pub(crate) fn revoke_link(
     if !grant(role, link.view.role) {
         return Err(NetworkError::PermissionDenied);
     }
-    let count=tx.execute("UPDATE join_links SET revoked_at=?1 WHERE id=?2 AND revoked_at IS NULL AND consumed_at IS NULL",params![now,id.as_uuid().as_bytes().as_slice()])?;
+    let count=tx.execute("UPDATE join_links SET revoked_at=?1 WHERE id=?2 AND revoked_at IS NULL AND consumed_at IS NULL AND expires_at>?1",params![now,id.as_uuid().as_bytes().as_slice()])?;
     if count > 0 {
         record(&tx, network, user, request, Activity::LinkRevoked(id), now)?;
     }
@@ -506,18 +530,24 @@ pub(crate) fn links(
     let tx = db.transaction_with_behavior(TransactionBehavior::Deferred)?;
     let now = now()?;
     let user = current_session(&tx, &digest, now)?.user.id;
-    require_manager(membership(&tx, network, user)?.1)?;
+    let role = membership(&tx, network, user)?.1;
+    require_manager(role)?;
     let scope = CursorScope::JoinLinks { user, network };
     let mut window = match cursor {
         Some(cursor) => Window::decode(sealer, scope, &cursor, now)?,
         None => Window::new(ceiling(&tx, "join_links")?, 0, now)?,
     };
-    let mut stmt=tx.prepare(&format!("{LINK_SELECT} WHERE network_id=?1 AND sequence>?2 AND sequence<=?3 ORDER BY sequence LIMIT ?4"))?;
+    let total: i64 = tx.query_row(
+        "SELECT count(*) FROM join_links WHERE network_id=?1 AND sequence<=?2",
+        params![network.as_uuid().as_bytes().as_slice(), window.upper],
+        |row| row.get(0),
+    )?;
+    let mut stmt=tx.prepare(&format!("{LINK_SELECT} WHERE network_id=?1 AND sequence<=?2 AND sequence<=?3 ORDER BY sequence DESC LIMIT ?4"))?;
     let mut links = stmt
         .query_map(
             params![
                 network.as_uuid().as_bytes().as_slice(),
-                window.last,
+                window.upper - window.last,
                 window.upper,
                 i64::from(limit) + 1
             ],
@@ -528,8 +558,9 @@ pub(crate) fn links(
     links.truncate(usize::from(limit));
     let items = links
         .into_iter()
-        .map(|link| {
-            window.last = link.sequence;
+        .map(|mut link| {
+            window.last = window.upper - link.sequence + 1;
+            link_actions(&mut link, Some(role), now);
             link.view
         })
         .collect();
@@ -542,6 +573,7 @@ pub(crate) fn links(
     drop(stmt);
     tx.commit()?;
     Ok(LinkPage {
+        total: total.try_into().map_err(|_| NetworkError::Storage)?,
         items,
         next_cursor,
         as_of,

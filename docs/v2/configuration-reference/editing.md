@@ -61,6 +61,8 @@ ListenerUpdate 使用明确的协议字段与更新语义：已有秘密省略�
 
 表单中的 `DefaultsUpdate.dialers` 与 `NodeSettingsPatch.dialers` 使用 `DialerSetUpdate`：协议集合显式 `{}` 表示禁用；保留的 VLESS 项内，`websocket` 省略保持此前 WebSocket 参数，显式 `null` 移除；`websocket.headers` 省略保持旧值，显式 `{}` 清空，显式非空对象替换整个 header 集合。这些是表单更新语义；整份 JSONC 仍提交完整文档值。提供的 TLS 证书／私钥同样允许在原 listener 资源内省略保持；删除再创建不继承旧材料。
 
+`replaceDefaults` 的 `DefaultsUpdate` 按明确字段修改：`access`、`topology`、`dialers` 均可省略，省略保持基准值，显式非 null 值覆盖。只改 topology 的操作不携带旧 dialers；用户选择新 revision 重检同一操作时，只重放明确修改的字段。服务端仍严格 CAS，不自动重基准提交，也不把新 Config 覆盖用户草稿。
+
 每个操作独立检查权限，整批操作原子提交；Tag owner 的 setIdentityTags 不能与越权整网操作混合执行。服务端把操作应用到当前基准的 JSONC，保留未涉及部分的注释。替换整个区段时须明确展示对应文本变化，不能静默丢弃注释。
 
 ## 应用前必须看到什么
@@ -95,6 +97,8 @@ Console 在最终应用前展示**有效修改数量、前后对照和影响范�
 ## 冲突
 
 **保持严格 CAS。** expectedRevision 过旧返回 409 和安全的当前版本／差异定位，不因为操作写入的 pointer 没变就自动提交。
+
+同一 `requestId` 使用不同请求体返回 `request_id_conflict`；基准过旧返回 `revision_conflict`，两者含义独立。没有节点目标的普通 apply 返回 `targetCount: 0`、`publicationIds: []`；资源绑定仍可在内部保存对应的完整快照。
 
 例如给 Node 换 Tag 时，别人的 access／groups 修改可能改变结果；仅检查 `/nodes/.../identity` 无法证明无冲突。defaults、地址池和路由顺序也存在读取依赖。
 

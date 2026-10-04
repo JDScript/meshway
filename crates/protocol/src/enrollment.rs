@@ -15,6 +15,12 @@ wire_object! { #[derive(Clone,Debug,PartialEq,Eq)] pub struct CreateEnrollmentKe
 } }
 wire_object! { #[derive(Clone,Debug,PartialEq,Eq)] pub struct EnrollmentKeyView {
     pub id: EnrollmentKeyId, pub tags: Vec<String>,
+    pub created_by: UserId,
+    pub initial_settings: InitialNodeSettingsView,
+    pub actions: EnrollmentKeyActions,
+    pub node_id: Option<NodeId> [required=true],
+    #[serde(rename="consumedAt", with="meshway_model::timestamp::optional")]
+    pub consumed_at_ms: Option<u64> [value_type=Option<chrono::DateTime<chrono::Utc>>,required=true],
     #[serde(rename="createdAt", with="meshway_model::timestamp")]
     pub created_at_ms: u64 [value_type=chrono::DateTime<chrono::Utc>],
     #[serde(rename="expiresAt", with="meshway_model::timestamp")]
@@ -23,6 +29,11 @@ wire_object! { #[derive(Clone,Debug,PartialEq,Eq)] pub struct EnrollmentKeyView 
     pub revoked_at_ms: Option<u64> [value_type=Option<chrono::DateTime<chrono::Utc>>,required=true],
     pub consumed_request_id: Option<EnrollmentRequestId>,
 } }
+wire_object! { #[derive(Clone,Debug,PartialEq,Eq)] pub struct InitialNodeSettingsView {
+    pub hostname: Option<String> [required=true],
+    pub listeners: BTreeMap<String,meshway_configuration::ListenerView>,
+} }
+wire_object! { #[derive(Clone,Debug,PartialEq,Eq)] pub struct EnrollmentKeyActions { pub revoke: bool } }
 wire_object! { pub struct EnrollmentKeyResponse {
     pub key: EnrollmentKeyView, pub secret_delivery: SecretDelivery, pub secret: Option<WireSecret>,
 } }
@@ -32,7 +43,10 @@ pub enum SecretDelivery {
     Available,
     Unavailable,
 }
-wire_object! { pub struct EnrollmentKeysResponse { pub items: Vec<EnrollmentKeyView> } }
+wire_object! { pub struct EnrollmentKeysResponse {
+    pub items: Vec<EnrollmentKeyView>, pub total: u64,
+    pub next_cursor: Option<String> [required=true], pub as_of: chrono::DateTime<chrono::Utc>,
+} }
 wire_object! { #[derive(Clone,Debug,PartialEq,Eq)] pub struct EnrollmentIntent {
     pub id: EnrollmentRequestId, pub control_key: NodePublicKey, pub dataplane_key: NodePublicKey,
     pub code_challenge: String, pub hostname: String,
@@ -53,16 +67,33 @@ wire_object! { pub struct CreateEnrollmentRequest {
 } }
 wire_object! { #[derive(Clone,Debug,PartialEq,Eq)] pub struct EnrollmentRequestView {
     pub id: EnrollmentRequestId, pub hostname: String, pub control_key: NodePublicKey,
+    #[serde(deserialize_with="nullable_existing")]
+    pub existing: Option<ExistingNodeBinding> [required=true],
+    pub return_method: EnrollmentReturnMethod,
     pub phase: EnrollmentPhase,
     #[serde(rename="expiresAt", with="meshway_model::timestamp")]
     pub expires_at_ms: u64 [value_type=chrono::DateTime<chrono::Utc>],
 } }
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
+pub enum EnrollmentReturnMethod {
+    Poll,
+}
+wire_object! { #[derive(Clone,Debug,PartialEq,Eq)] pub struct DeviceAuthorizationView {
+    pub request: EnrollmentRequestView,
+    /// Only the approving user or a current manager of the approved network sees this fragment.
+    pub approval: Option<EnrollmentApprovalView> [required=true],
+} }
+wire_object! { #[derive(Clone,Debug,PartialEq,Eq)] pub struct EnrollmentApprovalView {
+    pub user_id: UserId, pub network_id: NetworkId,
+} }
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
 pub enum EnrollmentPhase {
     Pending,
     Approved,
-    Denied,
+    Withdrawn,
+    Cancelled,
     Consumed,
     Expired,
 }
@@ -71,6 +102,8 @@ wire_object! { pub struct EnrollmentDeviceProof {
 } }
 wire_object! { pub struct EnrollmentPollResponse {
     pub request: EnrollmentRequestView, pub code: Option<WireSecret>, pub node_id: Option<NodeId>,
+    /// Available only after the device proves possession of this request.
+    pub approval: Option<EnrollmentApprovalView> [required=true],
 } }
 wire_object! { #[derive(Clone,Debug,PartialEq,Eq)] pub struct ApproveEnrollmentRequest {
     pub network_id: NetworkId,

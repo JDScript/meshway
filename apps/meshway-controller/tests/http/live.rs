@@ -127,7 +127,7 @@ async fn enroll(
             }),
     )
     .await;
-    let _: EnrollmentRequestView = json(
+    let _: DeviceAuthorizationView = json(
         c.post(format!(
             "{}/api/v1/device-authorizations/{id}/approve",
             s.url
@@ -955,6 +955,12 @@ async fn production_demand_receipts_peer_expansion_and_node_termination() {
     }
     let target = target.unwrap();
     assert_eq!(target.execution_publication, demand.publication);
+    let inventory: NodeInventoryView = json(
+        c.get(net(&s, network, &format!("nodes/{}", a.node_id)))
+            .bearer_auth(owner.token.expose()),
+    )
+    .await;
+    assert_eq!(inventory.desired_execution.as_ref(), Some(&target));
     let peer: StateView = json(
         c.post(format!("{}/agent-api/v1/state/query", s.url))
             .bearer_auth(&at)

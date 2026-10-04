@@ -87,16 +87,28 @@ impl DialerSetUpdate {
     }
 }
 object! { pub struct DefaultsUpdate {
-    #[serde(default)] pub access: AccessDefault,
-    #[serde(default)] pub topology: TopologyDefault,
-    pub dialers: DialerSetUpdate,
+    #[serde(default, skip_serializing_if="Input::is_omitted")]
+    pub access: Input<AccessDefault> [value_type=AccessDefault],
+    #[serde(default, skip_serializing_if="Input::is_omitted")]
+    pub topology: Input<TopologyDefault> [value_type=TopologyDefault],
+    #[serde(default, skip_serializing_if="Input::is_omitted")]
+    pub dialers: Input<DialerSetUpdate> [value_type=DialerSetUpdate],
 } }
 impl DefaultsUpdate {
     pub fn apply(&self, previous: &Defaults) -> Defaults {
         Defaults {
-            access: self.access,
-            topology: self.topology,
-            dialers: self.dialers.apply(&previous.dialers),
+            access: match self.access {
+                Input::Omitted => previous.access,
+                Input::Value(v) => v,
+            },
+            topology: match self.topology {
+                Input::Omitted => previous.topology,
+                Input::Value(v) => v,
+            },
+            dialers: match &self.dialers {
+                Input::Omitted => previous.dialers.clone(),
+                Input::Value(v) => v.apply(&previous.dialers),
+            },
         }
     }
 }

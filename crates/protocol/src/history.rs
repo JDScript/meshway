@@ -9,7 +9,11 @@ fn nullable<'de, D: serde::Deserializer<'de>, T: serde::Deserialize<'de>>(
     serde::Deserialize::deserialize(d)
 }
 
-wire_tagged! {pub enum ActivityActor {User{#[serde(rename="userId")]user_id:UserId},System{}}}
+wire_tagged! {pub enum ActivityActor {User{
+    #[serde(rename="userId")]user_id:UserId,
+    /// Email at the time of the event; null means no historical snapshot exists.
+    #[serde(deserialize_with="nullable")]email:Option<String> [required=true],
+},System{}}}
 wire_tagged! {pub enum ActivityTarget {Account{#[serde(rename="userId")]user_id:UserId},Session{#[serde(rename="sessionId")]session_id:SessionId},Network{#[serde(rename="networkId")]network_id:NetworkId},Membership{#[serde(rename="membershipId")]membership_id:MembershipId},JoinLink{#[serde(rename="linkId")]link_id:JoinLinkId},Configuration{revision:Revision}}}
 
 macro_rules! actions {

@@ -20,6 +20,7 @@ pub(super) struct Pending {
     pub result_hash: Option<Vec<u8>>,
     pub delivery: Option<Vec<u8>>,
     pub denied: Option<i64>,
+    pub cancelled: Option<i64>,
     pub consumed: Option<i64>,
     pub node: Option<NodeId>,
     pub existing: Option<ExistingNodeBinding>,
@@ -29,14 +30,18 @@ impl Pending {
         EnrollmentRequestView {
             id: self.id,
             hostname: self.hostname.clone(),
+            existing: self.existing.clone(),
+            return_method: EnrollmentReturnMethod::Poll,
             control_key: NodePublicKey {
                 algorithm: KeyAlgorithm::Ed25519,
                 bytes: self.control.into(),
             },
             phase: if self.consumed.is_some() {
                 EnrollmentPhase::Consumed
+            } else if self.cancelled.is_some() {
+                EnrollmentPhase::Cancelled
             } else if self.denied.is_some() {
-                EnrollmentPhase::Denied
+                EnrollmentPhase::Withdrawn
             } else if self.expires <= now {
                 EnrollmentPhase::Expired
             } else if self.approval.is_some() {
@@ -77,6 +82,11 @@ pub(super) fn pending(
         result_hash: raw.7,
         delivery: raw.8,
         denied: raw.9,
+        cancelled: tx.query_row(
+            "SELECT cancelled_at FROM enrollment_requests WHERE id=?1",
+            [request.as_uuid().as_bytes().as_slice()],
+            |r| r.get(0),
+        )?,
         consumed: raw.10,
         node: raw.11.map(id).transpose()?,
         existing: raw.12.map(|b| json(&b)).transpose()?,
@@ -128,7 +138,7 @@ pub(crate) fn create_request(
         }
         return Ok(p.view(now));
     }
-    let count:i64=tx.query_row("SELECT count(*) FROM enrollment_requests WHERE expires_at>?1 AND consumed_at IS NULL AND denied_at IS NULL",[now],|r|r.get(0))?;
+    let count:i64=tx.query_row("SELECT count(*) FROM enrollment_requests WHERE expires_at>?1 AND consumed_at IS NULL AND denied_at IS NULL AND cancelled_at IS NULL",[now],|r|r.get(0))?;
     if count >= 4096 {
         return Err(NodeError::Busy);
     }
@@ -141,11 +151,34 @@ pub(crate) fn inspect(
     c: &mut Connection,
     token: [u8; 32],
     id: EnrollmentRequestId,
-) -> Result<EnrollmentRequestView, NodeError> {
+) -> Result<DeviceAuthorizationView, NodeError> {
     let tx = c.transaction()?;
     let now = now()?;
-    current_session(&tx, &token, now)?;
-    Ok(pending(&tx, id)?.view(now))
+    let user = current_session(&tx, &token, now)?.user.id;
+    let p = pending(&tx, id)?;
+    user_view(&tx, &p, user, now)
+}
+fn user_view(
+    tx: &Transaction<'_>,
+    p: &Pending,
+    user: UserId,
+    now: i64,
+) -> Result<DeviceAuthorizationView, NodeError> {
+    let approval = p
+        .approval
+        .as_ref()
+        .filter(|a| {
+            a.user == user
+                || crate::store::authorization::authorize_manager(tx, a.network, user).is_ok()
+        })
+        .map(|a| EnrollmentApprovalView {
+            user_id: a.user,
+            network_id: a.network,
+        });
+    Ok(DeviceAuthorizationView {
+        request: p.view(now),
+        approval,
+    })
 }
 pub(crate) fn approve(
     c: &mut Connection,
@@ -153,7 +186,7 @@ pub(crate) fn approve(
     token_hash: [u8; 32],
     id: EnrollmentRequestId,
     request: ApproveEnrollmentRequest,
-) -> Result<EnrollmentRequestView, NodeError> {
+) -> Result<DeviceAuthorizationView, NodeError> {
     let tx = c.transaction_with_behavior(TransactionBehavior::Immediate)?;
     let now = now()?;
     let session = current_session(&tx, &token_hash, now)?;
@@ -165,14 +198,14 @@ pub(crate) fn approve(
     {
         return Err(NodeError::Forbidden);
     }
-    if p.expires <= now || p.denied.is_some() || p.consumed.is_some() {
-        return Err(NodeError::Conflict);
+    if p.expires <= now || p.denied.is_some() || p.cancelled.is_some() || p.consumed.is_some() {
+        return Err(NodeError::StateConflict);
     }
-    if let Some(a) = p.approval {
+    if let Some(a) = &p.approval {
         if a.network != request.network_id || a.user != session.user.id {
-            return Err(NodeError::Conflict);
+            return Err(NodeError::StateConflict);
         }
-        return Ok(pending(&tx, id)?.view(now));
+        return user_view(&tx, &p, session.user.id, now);
     }
     let approval = Approval {
         network: request.network_id,
@@ -193,7 +226,7 @@ pub(crate) fn approve(
             id.as_uuid().as_bytes().as_slice()
         ],
     )?;
-    let view = pending(&tx, id)?.view(now);
+    let view = user_view(&tx, &pending(&tx, id)?, session.user.id, now)?;
     tx.commit()?;
     Ok(view)
 }
@@ -212,8 +245,8 @@ pub(crate) fn deny(
     if approval.user != session.user.id {
         return Err(NodeError::Forbidden);
     }
-    if p.consumed.is_some() || p.expires <= now {
-        return Err(NodeError::Conflict);
+    if p.consumed.is_some() || p.cancelled.is_some() || p.expires <= now {
+        return Err(NodeError::StateConflict);
     }
     tx.execute(
         "UPDATE enrollment_requests SET denied_at=COALESCE(denied_at,?1),delivery=NULL WHERE id=?2",
@@ -232,24 +265,29 @@ pub(crate) fn poll(
     let now = now()?;
     let p = pending(&tx, id)?;
     p.device(&proof, "poll")?;
-    let code = if p.expires > now && p.denied.is_none() && p.consumed.is_none() {
-        p.delivery
-            .as_ref()
-            .map(|d| {
-                let plaintext = sealer
-                    .open_enrollment(id.into_uuid(), d)
-                    .map_err(|_| NodeError::Storage)?;
-                Ok::<_, NodeError>(WireSecret::new(
-                    std::str::from_utf8(plaintext.as_bytes())
-                        .map_err(|_| NodeError::Storage)?
-                        .to_owned(),
-                ))
-            })
-            .transpose()?
-    } else {
-        None
-    };
+    let code =
+        if p.expires > now && p.denied.is_none() && p.cancelled.is_none() && p.consumed.is_none() {
+            p.delivery
+                .as_ref()
+                .map(|d| {
+                    let plaintext = sealer
+                        .open_enrollment(id.into_uuid(), d)
+                        .map_err(|_| NodeError::Storage)?;
+                    Ok::<_, NodeError>(WireSecret::new(
+                        std::str::from_utf8(plaintext.as_bytes())
+                            .map_err(|_| NodeError::Storage)?
+                            .to_owned(),
+                    ))
+                })
+                .transpose()?
+        } else {
+            None
+        };
     Ok(EnrollmentPollResponse {
+        approval: p.approval.as_ref().map(|a| EnrollmentApprovalView {
+            user_id: a.user,
+            network_id: a.network,
+        }),
         request: p.view(now),
         code,
         node_id: p.node,
@@ -263,12 +301,13 @@ pub(crate) fn cancel(
     let tx = c.transaction_with_behavior(TransactionBehavior::Immediate)?;
     let p = pending(&tx, id)?;
     p.device(&proof, "cancel")?;
-    if p.consumed.is_some() {
-        return Err(NodeError::Conflict);
+    let now = now()?;
+    if p.consumed.is_some() || p.denied.is_some() || p.expires <= now {
+        return Err(NodeError::StateConflict);
     }
     tx.execute(
-        "UPDATE enrollment_requests SET denied_at=COALESCE(denied_at,?1),delivery=NULL WHERE id=?2",
-        params![now()?, id.as_uuid().as_bytes().as_slice()],
+        "UPDATE enrollment_requests SET cancelled_at=COALESCE(cancelled_at,?1),delivery=NULL WHERE id=?2",
+        params![now, id.as_uuid().as_bytes().as_slice()],
     )?;
     tx.commit()?;
     Ok(())

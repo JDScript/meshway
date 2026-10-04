@@ -14,8 +14,10 @@ pub struct CreatedLink {
 pub struct LinkInspection {
     pub link: JoinLinkView,
     pub network_name: String,
+    pub already_member: bool,
 }
 pub struct LinkPage {
+    pub total: u64,
     pub items: Vec<JoinLinkView>,
     pub next_cursor: Option<String>,
     pub as_of: DateTime<Utc>,

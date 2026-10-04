@@ -57,50 +57,7 @@ pub(crate) fn read(
                 Some(DateTime::from_timestamp_millis(at).ok_or(StateError::Storage)?),
             ),
         };
-        let context = tx.query_row(
-            "SELECT e.target_publication_id,e.boot_id,e.instance_id,e.instance_expires_at,e.execution_expires_at,p.withdrawn_at,n.credentials_revoked_at FROM node_execution e JOIN nodes n ON n.network_id=e.network_id AND n.id=e.node_id JOIN execution_publications p ON p.network_id=e.network_id AND p.id=?3 WHERE e.network_id=?1 AND e.node_id=?2",
-            params![network.as_uuid().as_bytes().as_slice(), node.as_uuid().as_bytes().as_slice(), target.execution_publication.as_uuid().as_bytes().as_slice()],
-            |row| Ok((row.get::<_, Option<Vec<u8>>>(0)?, row.get::<_, Vec<u8>>(1)?, row.get::<_, Vec<u8>>(2)?, row.get::<_, i64>(3)?, row.get::<_, Option<i64>>(4)?, row.get::<_, Option<i64>>(5)?, row.get::<_, Option<i64>>(6)?)),
-        ).optional()?;
-        let retired: bool = tx.query_row(
-            "SELECT p.withdrawn_at IS NOT NULL OR n.credentials_revoked_at IS NOT NULL OR NOT EXISTS(SELECT 1 FROM node_keys k WHERE k.network_id=n.network_id AND k.node_id=n.id AND k.purpose='control' AND k.retired_at IS NULL AND k.revoked_at IS NULL) OR NOT EXISTS(SELECT 1 FROM node_keys k WHERE k.network_id=n.network_id AND k.node_id=n.id AND k.purpose='dataplane' AND k.retired_at IS NULL AND k.revoked_at IS NULL) FROM execution_publications p JOIN nodes n ON n.network_id=p.network_id AND n.id=?2 WHERE p.network_id=?1 AND p.id=?3",
-            params![network.as_uuid().as_bytes().as_slice(), node.as_uuid().as_bytes().as_slice(), target.execution_publication.as_uuid().as_bytes().as_slice()], |row| row.get(0),
-        )?;
-        let freshness = if retired {
-            ReceiptFreshness::Superseded
-        } else {
-            match context {
-                None => ReceiptFreshness::AwaitingInstance,
-                Some((
-                    publication,
-                    current_boot,
-                    instance,
-                    expires,
-                    execution_expires,
-                    withdrawn,
-                    revoked,
-                )) => {
-                    if publication.as_deref()
-                        != Some(target.execution_publication.as_uuid().as_bytes().as_slice())
-                        || withdrawn.is_some()
-                        || revoked.is_some()
-                    {
-                        ReceiptFreshness::Superseded
-                    } else if current_boot != boot.as_uuid().as_bytes()
-                        || instance_id
-                            .is_some_and(|id: InstanceId| instance != id.as_uuid().as_bytes())
-                    {
-                        ReceiptFreshness::AwaitingInstance
-                    } else if expires <= now.timestamp_millis()
-                        || execution_expires.is_some_and(|at| at <= now.timestamp_millis())
-                    {
-                        ReceiptFreshness::Expired
-                    } else {
-                        ReceiptFreshness::Current
-                    }
-                }
-            }
-        };
+        let freshness = freshness(tx, network, node, &target, instance_id, boot, now)?;
         summary.target_count += 1;
         match phase {
             ApplicationPhase::Pending => summary.pending += 1,
@@ -132,6 +89,61 @@ pub(crate) fn read(
         summary,
         nodes,
     })
+}
+
+pub(crate) fn freshness(
+    tx: &Transaction<'_>,
+    network: NetworkId,
+    node: NodeId,
+    target: &ConfigurationRef,
+    instance_id: Option<InstanceId>,
+    boot: InstanceId,
+    now: DateTime<Utc>,
+) -> Result<ReceiptFreshness, StateError> {
+    let context = tx.query_row(
+            "SELECT e.target_publication_id,e.boot_id,e.instance_id,e.instance_expires_at,e.execution_expires_at,p.withdrawn_at,n.credentials_revoked_at FROM node_execution e JOIN nodes n ON n.network_id=e.network_id AND n.id=e.node_id JOIN execution_publications p ON p.network_id=e.network_id AND p.id=?3 WHERE e.network_id=?1 AND e.node_id=?2",
+            params![network.as_uuid().as_bytes().as_slice(), node.as_uuid().as_bytes().as_slice(), target.execution_publication.as_uuid().as_bytes().as_slice()],
+            |row| Ok((row.get::<_, Option<Vec<u8>>>(0)?, row.get::<_, Vec<u8>>(1)?, row.get::<_, Vec<u8>>(2)?, row.get::<_, i64>(3)?, row.get::<_, Option<i64>>(4)?, row.get::<_, Option<i64>>(5)?, row.get::<_, Option<i64>>(6)?)),
+        ).optional()?;
+    let retired: bool = tx.query_row(
+            "SELECT p.withdrawn_at IS NOT NULL OR n.credentials_revoked_at IS NOT NULL OR NOT EXISTS(SELECT 1 FROM node_keys k WHERE k.network_id=n.network_id AND k.node_id=n.id AND k.purpose='control' AND k.retired_at IS NULL AND k.revoked_at IS NULL) OR NOT EXISTS(SELECT 1 FROM node_keys k WHERE k.network_id=n.network_id AND k.node_id=n.id AND k.purpose='dataplane' AND k.retired_at IS NULL AND k.revoked_at IS NULL) FROM execution_publications p JOIN nodes n ON n.network_id=p.network_id AND n.id=?2 WHERE p.network_id=?1 AND p.id=?3",
+            params![network.as_uuid().as_bytes().as_slice(), node.as_uuid().as_bytes().as_slice(), target.execution_publication.as_uuid().as_bytes().as_slice()], |row| row.get(0),
+        )?;
+    let freshness = if retired {
+        ReceiptFreshness::Superseded
+    } else {
+        match context {
+            None => ReceiptFreshness::AwaitingInstance,
+            Some((
+                publication,
+                current_boot,
+                instance,
+                expires,
+                execution_expires,
+                withdrawn,
+                revoked,
+            )) => {
+                if publication.as_deref()
+                    != Some(target.execution_publication.as_uuid().as_bytes().as_slice())
+                    || withdrawn.is_some()
+                    || revoked.is_some()
+                {
+                    ReceiptFreshness::Superseded
+                } else if current_boot != boot.as_uuid().as_bytes()
+                    || instance_id.is_some_and(|id: InstanceId| instance != id.as_uuid().as_bytes())
+                {
+                    ReceiptFreshness::AwaitingInstance
+                } else if expires <= now.timestamp_millis()
+                    || execution_expires.is_some_and(|at| at <= now.timestamp_millis())
+                {
+                    ReceiptFreshness::Expired
+                } else {
+                    ReceiptFreshness::Current
+                }
+            }
+        }
+    };
+    Ok(freshness)
 }
 fn number(value: i64) -> Result<u64, StateError> {
     value.try_into().map_err(|_| StateError::Storage)

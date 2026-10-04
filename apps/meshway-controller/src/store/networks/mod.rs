@@ -66,7 +66,7 @@ pub(crate) fn create(
     )?;
     transaction.execute("INSERT INTO memberships (id, network_id, user_id, role, version, joined_at) VALUES (?1, ?2, ?3, 'owner', 1, ?4)", params![random_uuid()?.as_bytes().as_slice(), id, user_bytes, now])?;
     transaction.execute(
-        "INSERT INTO configuration_versions (network_id, revision, source_jsonc, configuration, bindings, created_by, created_at, cause, request_id) VALUES (?1, 1, ?2, ?3, ?4, ?5, ?6, 'networkCreated', ?7)",
+        "INSERT INTO configuration_versions (network_id, revision, source_jsonc, configuration, bindings, created_by, created_at, cause, request_id, created_by_email) VALUES (?1, 1, ?2, ?3, ?4, ?5, ?6, 'networkCreated', ?7, (SELECT email FROM users WHERE id=?5))",
         params![id, prepared.source.as_bytes(), prepared.configuration.as_bytes(), prepared.bindings.as_bytes(), user_bytes, now, request_bytes],
     )?;
     record(
@@ -404,7 +404,7 @@ fn record(
         }
     }
     transaction.execute(
-        "INSERT INTO activity_events (id, scope, network_id, at, actor_user_id, action, request_id, target_membership_id, target_join_link_id) VALUES (?1, 'network', ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+        "INSERT INTO activity_events (id, scope, network_id, at, actor_user_id, action, request_id, target_membership_id, target_join_link_id, actor_email) VALUES (?1, 'network', ?2, ?3, ?4, ?5, ?6, ?7, ?8, (SELECT email FROM users WHERE id=?4))",
         params![random_uuid()?.as_bytes().as_slice(), network.as_uuid().as_bytes().as_slice(), now,
             user.as_uuid().as_bytes().as_slice(), action, request.as_uuid().as_bytes().as_slice(),
             member.map(|id| id.as_uuid().as_bytes().to_vec()),

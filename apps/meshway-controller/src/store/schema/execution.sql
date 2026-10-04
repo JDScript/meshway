@@ -161,7 +161,8 @@ CREATE TABLE routing_selections (
     FOREIGN KEY(network_id,node_id) REFERENCES nodes(network_id,id)
 ) STRICT;
 CREATE TABLE enrollment_keys (
-    id BLOB NOT NULL PRIMARY KEY CHECK(length(id)=16),
+    sequence INTEGER PRIMARY KEY AUTOINCREMENT CHECK(sequence BETWEEN 1 AND 9007199254740991),
+    id BLOB NOT NULL UNIQUE CHECK(length(id)=16),
     network_id BLOB NOT NULL REFERENCES networks(id),
     token_hash BLOB NOT NULL UNIQUE CHECK(length(token_hash)=32),
     tags BLOB NOT NULL,
@@ -177,6 +178,7 @@ CREATE TABLE enrollment_keys (
     UNIQUE(network_id,created_by,creation_request_id),
     FOREIGN KEY(network_id,membership_id,created_by) REFERENCES memberships(network_id,id,user_id)
 ) STRICT;
+CREATE INDEX enrollment_keys_network_sequence ON enrollment_keys(network_id,sequence);
 CREATE TABLE enrollment_requests (
     id BLOB NOT NULL PRIMARY KEY CHECK(length(id)=16),
     control_key BLOB NOT NULL CHECK(length(control_key)=32),
@@ -190,8 +192,10 @@ CREATE TABLE enrollment_requests (
     result_hash BLOB CHECK(length(result_hash)=32),
     delivery BLOB,
     denied_at INTEGER,
+    cancelled_at INTEGER CHECK(cancelled_at>=created_at),
     consumed_at INTEGER,
     node_id BLOB REFERENCES nodes(id),
     binding_digest BLOB CHECK(length(binding_digest)=32),
-    existing_binding BLOB
+    existing_binding BLOB,
+    CHECK(denied_at IS NULL OR cancelled_at IS NULL)
 ) STRICT;

@@ -141,7 +141,7 @@ pub(crate) fn record_management(
     target: Option<SessionId>,
     now: i64,
 ) -> Result<(), AccountError> {
-    tx.execute("INSERT INTO activity_events (id,scope,account_user_id,at,actor_user_id,action,target_user_id,target_session_id,request_id,actor_kind) VALUES (?1,'account',?2,?3,CASE WHEN ?4='account.resetIssued' THEN NULL ELSE ?2 END,?4,?5,?6,?7,CASE WHEN ?4='account.resetIssued' THEN 'system' ELSE 'user' END)",params![random_uuid()?.as_bytes().as_slice(),user.as_uuid().as_bytes().as_slice(),now,action, target.is_none().then_some(user.as_uuid().as_bytes().as_slice()),target.map(|s|s.as_uuid().as_bytes().to_vec()),request.as_uuid().as_bytes().as_slice()])?;
+    tx.execute("INSERT INTO activity_events (id,scope,account_user_id,at,actor_user_id,action,target_user_id,target_session_id,request_id,actor_kind,actor_email) VALUES (?1,'account',?2,?3,CASE WHEN ?4='account.resetIssued' THEN NULL ELSE ?2 END,?4,?5,?6,?7,CASE WHEN ?4='account.resetIssued' THEN 'system' ELSE 'user' END,CASE WHEN ?4='account.resetIssued' THEN NULL ELSE (SELECT email FROM users WHERE id=?2) END)",params![random_uuid()?.as_bytes().as_slice(),user.as_uuid().as_bytes().as_slice(),now,action, target.is_none().then_some(user.as_uuid().as_bytes().as_slice()),target.map(|s|s.as_uuid().as_bytes().to_vec()),request.as_uuid().as_bytes().as_slice()])?;
     Ok(())
 }
 

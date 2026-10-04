@@ -7,12 +7,13 @@ use serde::{
 };
 use utoipa::ToSchema;
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 #[serde(remote = "Self", rename_all = "camelCase", deny_unknown_fields)]
 pub struct NetworkActions {
     pub rename: bool,
     pub edit_configuration: bool,
     pub manage_members: bool,
+    pub join_link_roles: Vec<MembershipRole>,
 }
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 #[serde(remote = "Self", rename_all = "camelCase", deny_unknown_fields)]

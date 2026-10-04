@@ -164,7 +164,7 @@ impl History {
                 Some(cursor) => Window::decode(&sealer, scope, &cursor, now).map_err(|_| Error::InvalidCursor)?,
                 None => Window::new(current_revision.get() as i64, 0, now).map_err(|_| Error::Storage)?,
             };
-            let mut stmt = tx.prepare("SELECT revision,created_at,created_by,cause,rollback_from FROM configuration_versions WHERE network_id=?1 AND revision<=?2 ORDER BY revision DESC LIMIT ?3")?;
+            let mut stmt = tx.prepare("SELECT revision,created_at,created_by,cause,rollback_from,created_by_email FROM configuration_versions WHERE network_id=?1 AND revision<=?2 ORDER BY revision DESC LIMIT ?3")?;
             let mut rows = stmt.query_map(
                 params![network.as_uuid().as_bytes().as_slice(), window.upper-window.last, i64::from(limit)+1],
                 |row| {
@@ -172,7 +172,7 @@ impl History {
                     Ok(ConfigurationRevisionSummary {
                         revision,
                         created_at: chrono::DateTime::from_timestamp_millis(row.get(1)?).ok_or(rusqlite::Error::InvalidQuery)?,
-                        created_by: ActivityActor::User { user_id: uuid(row, 2, UserId::new)? },
+                        created_by: ActivityActor::User { user_id: uuid(row, 2, UserId::new)?, email: row.get(5)? },
                         cause: ConfigurationChangeCause::try_from(row.get::<_, String>(3)?).map_err(|_| rusqlite::Error::InvalidQuery)?,
                         current: revision == current_revision,
                         rollback_from: row.get::<_, Option<i64>>(4)?.map(revision_value).transpose()?,
@@ -211,11 +211,12 @@ fn revision_value(value: i64) -> rusqlite::Result<Revision> {
     Revision::new(u64::try_from(value).map_err(|_| rusqlite::Error::InvalidQuery)?)
         .map_err(|_| rusqlite::Error::InvalidQuery)
 }
-const SELECT: &str = "SELECT sequence,id,at,actor_kind,actor_user_id,action,target_user_id,target_session_id,network_id,target_membership_id,target_join_link_id,before_revision,after_revision,request_id FROM activity_events";
+const SELECT: &str = "SELECT sequence,id,at,actor_kind,actor_user_id,action,target_user_id,target_session_id,network_id,target_membership_id,target_join_link_id,before_revision,after_revision,request_id,actor_email FROM activity_events";
 fn read(r: &rusqlite::Row<'_>) -> rusqlite::Result<(i64, ActivityEvent)> {
     let actor = match r.get::<_, String>(3)?.as_str() {
         "user" => ActivityActor::User {
             user_id: uuid(r, 4, UserId::new)?,
+            email: r.get(14)?,
         },
         "system" => ActivityActor::System {},
         _ => return Err(rusqlite::Error::InvalidQuery),

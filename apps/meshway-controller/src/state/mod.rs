@@ -606,5 +606,5 @@ fn aggregate(
     }
     (links.into_values().collect(), paths)
 }
-mod progress;
+pub(crate) mod progress;
 pub mod provider;

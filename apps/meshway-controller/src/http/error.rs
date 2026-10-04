@@ -36,7 +36,14 @@ impl HttpError {
                 StatusCode::CONFLICT,
                 Problem::RevisionConflict {
                     params: EmptyParams {},
-                    message: "Configuration revision or request changed.".into(),
+                    message: "Configuration revision changed.".into(),
+                },
+            ),
+            Error::RequestConflict => (
+                StatusCode::CONFLICT,
+                Problem::RequestConflict {
+                    params: EmptyParams {},
+                    message: "Request ID was already used with different input.".into(),
                 },
             ),
             Error::Invalid(error) => {
@@ -266,6 +273,13 @@ impl HttpError {
                     message: "Membership changed; reload before retrying.".into(),
                 },
             ),
+            NetworkError::RevisionConflict => (
+                StatusCode::CONFLICT,
+                Problem::RevisionConflict {
+                    params: EmptyParams {},
+                    message: "Configuration revision changed.".into(),
+                },
+            ),
             NetworkError::LastOwner => (
                 StatusCode::CONFLICT,
                 Problem::LastOwner {
@@ -278,6 +292,34 @@ impl HttpError {
                 Problem::AlreadyMember {
                     params: EmptyParams {},
                     message: "Already a member of this network.".into(),
+                },
+            ),
+            NetworkError::LinkExpired => (
+                StatusCode::BAD_REQUEST,
+                Problem::LinkExpired {
+                    params: EmptyParams {},
+                    message: error.to_string(),
+                },
+            ),
+            NetworkError::LinkUsed => (
+                StatusCode::BAD_REQUEST,
+                Problem::LinkUsed {
+                    params: EmptyParams {},
+                    message: error.to_string(),
+                },
+            ),
+            NetworkError::LinkRevoked => (
+                StatusCode::BAD_REQUEST,
+                Problem::LinkRevoked {
+                    params: EmptyParams {},
+                    message: error.to_string(),
+                },
+            ),
+            NetworkError::LinkIssuerUnavailable => (
+                StatusCode::BAD_REQUEST,
+                Problem::LinkIssuerUnavailable {
+                    params: EmptyParams {},
+                    message: error.to_string(),
                 },
             ),
             NetworkError::InvalidLink => (

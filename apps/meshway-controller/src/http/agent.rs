@@ -40,6 +40,27 @@ pub(super) fn error(id: RequestId, e: NodeError) -> HttpError {
                 message: e.to_string(),
             },
         ),
+        NodeError::VersionConflict => (
+            StatusCode::CONFLICT,
+            Problem::VersionConflict {
+                params: EmptyParams {},
+                message: e.to_string(),
+            },
+        ),
+        NodeError::StateConflict => (
+            StatusCode::CONFLICT,
+            Problem::StateConflict {
+                params: EmptyParams {},
+                message: e.to_string(),
+            },
+        ),
+        NodeError::InvalidCursor => (
+            StatusCode::BAD_REQUEST,
+            Problem::InvalidCursor {
+                params: EmptyParams {},
+                message: e.to_string(),
+            },
+        ),
         NodeError::NotFound => (
             StatusCode::NOT_FOUND,
             Problem::NotFound {

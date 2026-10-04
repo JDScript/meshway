@@ -7,6 +7,7 @@ pub(crate) enum CursorScope {
     Networks(UserId),
     Members { user: UserId, network: NetworkId },
     JoinLinks { user: UserId, network: NetworkId },
+    EnrollmentKeys { user: UserId, network: NetworkId },
     AccountActivity(UserId),
     AccountSessions(UserId),
     NetworkActivity { user: UserId, network: NetworkId },
@@ -18,6 +19,11 @@ impl CursorScope {
     fn context(self) -> Vec<u8> {
         let mut bytes = b"pagination-cursor/v1\0".to_vec();
         match self {
+            Self::EnrollmentKeys { user, network } => {
+                bytes.push(9);
+                bytes.extend_from_slice(user.as_uuid().as_bytes());
+                bytes.extend_from_slice(network.as_uuid().as_bytes());
+            }
             Self::AccountSessions(user) => {
                 bytes.push(7);
                 bytes.extend_from_slice(user.as_uuid().as_bytes());

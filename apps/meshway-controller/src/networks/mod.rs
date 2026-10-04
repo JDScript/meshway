@@ -183,12 +183,22 @@ pub enum NetworkError {
     InvalidLimit,
     #[error("member changed since it was read")]
     VersionConflict,
+    #[error("configuration revision changed")]
+    RevisionConflict,
     #[error("the last Owner cannot be removed or demoted")]
     LastOwner,
     #[error("already a network member")]
     AlreadyMember,
     #[error("invalid or no longer usable join link")]
     InvalidLink,
+    #[error("join link has expired")]
+    LinkExpired,
+    #[error("join link has been used")]
+    LinkUsed,
+    #[error("join link was revoked")]
+    LinkRevoked,
+    #[error("join link issuer is no longer authorized")]
+    LinkIssuerUnavailable,
     #[error("network storage operation failed")]
     Storage,
     #[error("network service is unavailable")]

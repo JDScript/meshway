@@ -9,7 +9,7 @@ use crate::{
 };
 use meshway_configuration::NetworkConfiguration;
 use meshway_model::{MembershipId, MembershipRole};
-use meshway_protocol::{NetworkActions, NetworkSummary, events::StreamEvent};
+use meshway_protocol::{NetworkSummary, events::StreamEvent};
 use rusqlite::{OptionalExtension, Transaction, params};
 use std::{sync::Arc, time::Duration as StdDuration};
 use tokio::sync::oneshot;
@@ -75,11 +75,7 @@ impl StateProvider for SqlProvider {
                 current_revision: revision,
                 membership_id,
                 role,
-                actions: NetworkActions {
-                    rename: role != MembershipRole::Member,
-                    edit_configuration: role != MembershipRole::Member,
-                    manage_members: role != MembershipRole::Member,
-                },
+                actions: crate::store::authorization::network_actions(role),
             },
             progress: None,
             member_ids: std::collections::BTreeSet::from([membership_id]),

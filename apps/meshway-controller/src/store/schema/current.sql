@@ -101,6 +101,7 @@ CREATE TABLE join_links (
     CHECK((consumed_at IS NULL AND consumed_by_user_id IS NULL AND consumed_membership_id IS NULL) OR (consumed_at IS NOT NULL AND consumed_by_user_id IS NOT NULL AND consumed_membership_id IS NOT NULL))
 ) STRICT;
 
+CREATE INDEX join_links_network_sequence ON join_links(network_id,sequence);
 CREATE TABLE configuration_versions (
     network_id BLOB NOT NULL REFERENCES networks(id) ON DELETE RESTRICT CHECK (length(network_id) = 16 AND network_id != zeroblob(16)),
     revision INTEGER NOT NULL CHECK (revision BETWEEN 1 AND 9007199254740991),
@@ -113,10 +114,11 @@ CREATE TABLE configuration_versions (
     request_id BLOB NOT NULL CHECK (length(request_id) = 16 AND request_id != zeroblob(16)),
     rollback_from INTEGER,
     execution_targets TEXT NOT NULL DEFAULT '{}' CHECK(json_valid(execution_targets) AND json_type(execution_targets)='object'),
+    created_by_email TEXT,
     PRIMARY KEY (network_id, revision),
     FOREIGN KEY(network_id,rollback_from) REFERENCES configuration_versions(network_id,revision)
 ) STRICT;
-CREATE TRIGGER configuration_versions_no_update BEFORE UPDATE OF network_id,revision,source_jsonc,configuration,bindings,created_by,created_at,cause,request_id,rollback_from ON configuration_versions
+CREATE TRIGGER configuration_versions_no_update BEFORE UPDATE OF network_id,revision,source_jsonc,configuration,bindings,created_by,created_by_email,created_at,cause,request_id,rollback_from ON configuration_versions
 BEGIN SELECT RAISE(ABORT, 'immutable configuration version'); END;
 -- The apply transaction fills targets after compiling against its new source,
 -- then seals the version with its activity row before committing.
@@ -161,6 +163,7 @@ CREATE TABLE activity_events (
     at INTEGER NOT NULL CHECK (at >= 0),
     actor_kind TEXT NOT NULL DEFAULT 'user' CHECK(actor_kind IN ('user','system')),
     actor_user_id BLOB REFERENCES users(id) ON DELETE RESTRICT CHECK (length(actor_user_id) = 16 AND actor_user_id != zeroblob(16)),
+    actor_email TEXT,
     action TEXT NOT NULL CHECK (action IN ('account.register', 'session.login', 'session.logout', 'session.revoke', 'session.revokeOthers', 'session.revokeAll', 'account.password', 'account.passwordReset', 'account.resetIssued', 'account.email', 'network.create', 'network.rename', 'configuration.apply','membership.role','membership.join','membership.remove','joinLink.create','joinLink.revoke')),
     target_user_id BLOB REFERENCES users(id) ON DELETE RESTRICT,
     target_session_id BLOB CHECK (length(target_session_id) = 16 AND target_session_id != zeroblob(16)),

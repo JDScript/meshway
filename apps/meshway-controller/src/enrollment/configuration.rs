@@ -168,7 +168,9 @@ fn map_error(e: configuration::Error) -> NodeError {
     match e {
         configuration::Error::InvalidSession => NodeError::Unauthorized,
         configuration::Error::PermissionDenied => NodeError::Forbidden,
-        configuration::Error::Conflict => NodeError::Conflict,
+        configuration::Error::Conflict | configuration::Error::RequestConflict => {
+            NodeError::Conflict
+        }
         configuration::Error::NotFound => NodeError::NotFound,
         configuration::Error::Storage => NodeError::Storage,
         _ => NodeError::Invalid,

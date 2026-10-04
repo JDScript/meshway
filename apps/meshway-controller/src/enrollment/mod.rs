@@ -112,7 +112,7 @@ impl Enrollment {
         &self,
         token: &str,
         id: EnrollmentRequestId,
-    ) -> Result<EnrollmentRequestView, NodeError> {
+    ) -> Result<DeviceAuthorizationView, NodeError> {
         let token = crate::accounts::token_digest(token)?;
         self.handle
             .execute(move |c| store::inspect(c, token, id))
@@ -123,7 +123,7 @@ impl Enrollment {
         token: &str,
         id: EnrollmentRequestId,
         request: ApproveEnrollmentRequest,
-    ) -> Result<EnrollmentRequestView, NodeError> {
+    ) -> Result<DeviceAuthorizationView, NodeError> {
         let token = crate::accounts::token_digest(token)?;
         let sealer = self.sealer.clone();
         self.handle
@@ -171,10 +171,16 @@ impl Enrollment {
         &self,
         token: &str,
         network: NetworkId,
+        limit: u16,
+        cursor: Option<String>,
     ) -> Result<EnrollmentKeysResponse, NodeError> {
+        if !(1..=200).contains(&limit) {
+            return Err(NodeError::Invalid);
+        }
         let token = crate::accounts::token_digest(token)?;
+        let sealer = self.sealer.clone();
         self.handle
-            .execute(move |c| store::list_keys(c, token, network))
+            .execute(move |c| store::list_keys(c, token, network, limit, cursor, &sealer))
             .await?
     }
     pub async fn revoke_key(

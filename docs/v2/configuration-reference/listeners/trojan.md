@@ -1,6 +1,6 @@
 # Trojan Listener
 
-**当前能力：独立库实现 TCP CONNECT over TLS；尚未接入 Controller 托管目录／正常 Agent 装配。** 本页给出待实现的托管目标格式。
+**当前能力：新 Controller 已接入 Trojan 的声明目录、配置校验与执行编译。** TCP CONNECT over TLS 的实际 Agent 承载装配及部署验证独立跟踪；执行按 Controller 允许协议与节点上报 capability 的交集选择，目录声明不表示隧道可用。
 
 ## Structure
 

@@ -135,7 +135,7 @@ impl Server {
             200,
         )
         .await;
-        let _: EnrollmentRequestView = json(
+        let _: DeviceAuthorizationView = json(
             self.post(
                 &format!("/api/v1/device-authorizations/{request}/approve"),
                 user.token.expose(),

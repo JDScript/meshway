@@ -24,6 +24,12 @@ pub enum NodeError {
     InvalidSettings(Vec<meshway_configuration::ConfigurationIssue>),
     #[error("node request conflicts with current generation or binding")]
     Conflict,
+    #[error("node key version changed")]
+    VersionConflict,
+    #[error("enrollment lifecycle does not allow this operation")]
+    StateConflict,
+    #[error("invalid pagination cursor")]
+    InvalidCursor,
     #[error("node resource not found")]
     NotFound,
     #[error("node operation budget exhausted")]
@@ -187,6 +193,18 @@ impl Execution {
         let publisher = self.publisher.clone();
         self.handle
             .execute(move |c| store::select_profile(c, &sealer, boot, token, request, &publisher))
+            .await?
+    }
+    pub async fn settings(
+        &self,
+        token: &str,
+        network: NetworkId,
+        node: NodeId,
+    ) -> Result<meshway_configuration::NodeSettingsView, NodeError> {
+        let token = crate::accounts::token_digest(token)?;
+        let sealer = self.sealer.clone();
+        self.handle
+            .execute(move |db| store::settings(db, &sealer, token, network, node))
             .await?
     }
     pub async fn inventory(

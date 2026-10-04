@@ -34,11 +34,13 @@
 | Native UDP | 已托管 | 已托管 | [Listen](/v2/configuration-reference/shared/listen)／[Dial](/v2/configuration-reference/shared/dial) 的 UDP 子集 |
 | Native TCP | 已托管 | 已托管 | TCP 子集 |
 | VLESS | TCP/TLS、WS/TLS 已托管 | TCP/TLS、WS/TLS 已托管 | 空 flow、TCP CONNECT、平台凭据、TLS、WS |
-| Trojan | 库级 TCP/TLS | 库级 TCP/TLS | TCP CONNECT、平台凭据目标、TLS；托管待实现 |
+| Trojan | Controller 声明／校验／编译 | Controller 声明／校验／编译 | 实际 Agent TCP/TLS 承载装配与部署验证独立跟踪，按 capability 交集执行 |
 
 通用 socket、TLS 版本／ALPN、WS 自定义 headers 等高级设置是目标字段，不因底层库可配置就宣称当前控制面已支持。
 
 本轮参考 sing-box 固定 checkout `927770c29f3e3698c711fc150e1066a4a78793a2` 的 listen／dial／TLS、VLESS、Trojan 字段。采用其通用／专用字段分层；字段命名保持本参考的 camelCase。
+
+`getTransportCatalog` 中的 `listenerSchema`／`dialerSchema` 是 `getConfigurationSchema.schemaJson` 文档 `$defs` 内的定义名称，例如 `VlessListener`；通过 `#/$defs/VlessListener` 引用，不是内嵌 schema 文本。目录表示 Controller 能声明与校验的协议，不保证具体 Agent 构建支持，也不代表隧道已经建立。
 
 ## 不直接照搬的字段
 

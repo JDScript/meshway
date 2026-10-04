@@ -35,6 +35,8 @@ pub(crate) enum Error {
     PermissionDenied,
     #[error("configuration revision changed")]
     Conflict,
+    #[error("request ID was already used with different input")]
+    RequestConflict,
     #[error("configuration dependencies are unavailable")]
     DependencyUnavailable,
     #[error("configuration input is invalid")]
@@ -356,7 +358,7 @@ pub(crate) fn apply_in_transaction(
         .seal(current.network_id, revision, Purpose::Bindings, &bindings)
         .map_err(|_| Error::Storage)?;
     tx.execute(
-        "INSERT INTO configuration_versions(network_id,revision,source_jsonc,configuration,bindings,created_by,created_at,cause,request_id,rollback_from) VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10)",
+        "INSERT INTO configuration_versions(network_id,revision,source_jsonc,configuration,bindings,created_by,created_at,cause,request_id,rollback_from,created_by_email) VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,(SELECT email FROM users WHERE id=?6))",
         params![current.network_id.as_uuid().as_bytes().as_slice(), revision.get() as i64,
             source.as_bytes(), configuration.as_bytes(), bindings.as_bytes(),
             actor.as_uuid().as_bytes().as_slice(), now, cause.as_str(),
@@ -395,7 +397,7 @@ pub(crate) fn apply_in_transaction(
             serde_json::to_string(&execution_targets).map_err(|_| Error::Storage)?],
     )?;
     tx.execute(
-        "INSERT INTO activity_events(id,scope,network_id,at,actor_user_id,action,request_id,before_revision,after_revision) VALUES(?1,'network',?2,?3,?4,'configuration.apply',?5,?6,?7)",
+        "INSERT INTO activity_events(id,scope,network_id,at,actor_user_id,action,request_id,before_revision,after_revision,actor_email) VALUES(?1,'network',?2,?3,?4,'configuration.apply',?5,?6,?7,(SELECT email FROM users WHERE id=?4))",
         params![random_uuid().map_err(|_|Error::Storage)?.as_bytes().as_slice(),
             current.network_id.as_uuid().as_bytes().as_slice(), now,
             actor.as_uuid().as_bytes().as_slice(), request.as_uuid().as_bytes().as_slice(),

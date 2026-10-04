@@ -175,6 +175,7 @@ pub(super) async fn links(
         .await
         .map_err(|e| HttpError::network(id, e))?;
     Ok(Json(JoinLinkListResponse {
+        total: page.total,
         request_id: id,
         items: page.items,
         next_cursor: page.next_cursor,
@@ -198,6 +199,7 @@ pub(super) async fn inspect_link(
         request_id: id,
         link: result.link,
         network_name: result.network_name,
+        already_member: result.already_member,
     }))
 }
 

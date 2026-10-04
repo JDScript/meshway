@@ -49,13 +49,13 @@ pub(super) async fn create(
         .map(Json)
         .map_err(|e| error(id, e))
 }
-#[utoipa::path(get,path="/api/v1/device-authorizations/{enrollmentRequestId}",operation_id="getDeviceAuthorization",tag="enrollment",security(("userSession"=[])),params(("enrollmentRequestId"=EnrollmentRequestId,Path)),responses((status=200,body=EnrollmentRequestView),(status=401,body=ErrorResponse),(status=404,body=ErrorResponse)))]
+#[utoipa::path(get,path="/api/v1/device-authorizations/{enrollmentRequestId}",operation_id="getDeviceAuthorization",tag="enrollment",security(("userSession"=[])),params(("enrollmentRequestId"=EnrollmentRequestId,Path)),responses((status=200,body=DeviceAuthorizationView),(status=401,body=ErrorResponse),(status=404,body=ErrorResponse)))]
 pub(super) async fn inspect(
     State(service): State<Enrollment>,
     Extension(id): Extension<RequestId>,
     headers: HeaderMap,
     path: Result<Path<EnrollmentRequestId>, axum::extract::rejection::PathRejection>,
-) -> Result<Json<EnrollmentRequestView>, HttpError> {
+) -> Result<Json<DeviceAuthorizationView>, HttpError> {
     let token = bearer(&headers, id)?;
     let Path(request) = path.map_err(|_| HttpError::invalid_request(id))?;
     service
@@ -64,14 +64,14 @@ pub(super) async fn inspect(
         .map(Json)
         .map_err(|e| error(id, e))
 }
-#[utoipa::path(post,path="/api/v1/device-authorizations/{enrollmentRequestId}/approve",operation_id="approveDeviceAuthorization",tag="enrollment",security(("userSession"=[])),params(("enrollmentRequestId"=EnrollmentRequestId,Path)),request_body=ApproveEnrollmentRequest,responses((status=200,body=EnrollmentRequestView),(status=400,body=ErrorResponse),(status=401,body=ErrorResponse),(status=403,body=ErrorResponse),(status=409,body=ErrorResponse)))]
+#[utoipa::path(post,path="/api/v1/device-authorizations/{enrollmentRequestId}/approve",operation_id="approveDeviceAuthorization",tag="enrollment",security(("userSession"=[])),params(("enrollmentRequestId"=EnrollmentRequestId,Path)),request_body=ApproveEnrollmentRequest,responses((status=200,body=DeviceAuthorizationView),(status=400,body=ErrorResponse),(status=401,body=ErrorResponse),(status=403,body=ErrorResponse),(status=409,body=ErrorResponse)))]
 pub(super) async fn approve(
     State(service): State<Enrollment>,
     Extension(id): Extension<RequestId>,
     headers: HeaderMap,
     path: Result<Path<EnrollmentRequestId>, axum::extract::rejection::PathRejection>,
     body: Result<Json<ApproveEnrollmentRequest>, JsonRejection>,
-) -> Result<Json<EnrollmentRequestView>, HttpError> {
+) -> Result<Json<DeviceAuthorizationView>, HttpError> {
     let token = bearer(&headers, id)?;
     let Path(request) = path.map_err(|_| HttpError::invalid_request(id))?;
     let Json(body) = body.map_err(|e| HttpError::json(id, e))?;
@@ -143,17 +143,22 @@ pub(super) async fn create_key(
         .map(Json)
         .map_err(|e| error(id, e))
 }
-#[utoipa::path(get,path="/api/v1/networks/{networkId}/enrollment-keys",operation_id="listEnrollmentKeys",tag="enrollment",security(("userSession"=[])),params(("networkId"=NetworkId,Path)),responses((status=200,body=EnrollmentKeysResponse),(status=401,body=ErrorResponse),(status=403,body=ErrorResponse)))]
+#[utoipa::path(get,path="/api/v1/networks/{networkId}/enrollment-keys",operation_id="listEnrollmentKeys",tag="enrollment",security(("userSession"=[])),params(("networkId"=NetworkId,Path),meshway_protocol::NetworkPageQuery),responses((status=200,body=EnrollmentKeysResponse),(status=400,body=ErrorResponse),(status=401,body=ErrorResponse),(status=403,body=ErrorResponse)))]
 pub(super) async fn list_keys(
     State(service): State<Enrollment>,
     Extension(id): Extension<RequestId>,
     headers: HeaderMap,
     path: Result<Path<NetworkId>, axum::extract::rejection::PathRejection>,
+    query: Result<
+        axum::extract::Query<meshway_protocol::NetworkPageQuery>,
+        axum::extract::rejection::QueryRejection,
+    >,
 ) -> Result<Json<EnrollmentKeysResponse>, HttpError> {
     let token = bearer(&headers, id)?;
     let Path(network) = path.map_err(|_| HttpError::invalid_request(id))?;
+    let axum::extract::Query(query) = query.map_err(|_| HttpError::invalid_request(id))?;
     service
-        .list_keys(token, network)
+        .list_keys(token, network, query.limit.unwrap_or(50), query.cursor)
         .await
         .map(Json)
         .map_err(|e| error(id, e))

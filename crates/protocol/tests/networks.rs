@@ -12,7 +12,7 @@ fn network_lists_retain_required_nullable_cursor_and_reject_invalid_roles() {
         "currentRevision": 1,
         "membershipId": "23456789-2345-4345-8345-23456789abcd",
         "role": "owner",
-        "actions": {"rename": true, "editConfiguration": true, "manageMembers": true}
+        "actions": {"rename": true, "editConfiguration": true, "manageMembers": true, "joinLinkRoles": ["owner", "admin", "member"]}
     });
     let valid = json!({
         "requestId": "34567890-3456-4456-8456-34567890abcd",

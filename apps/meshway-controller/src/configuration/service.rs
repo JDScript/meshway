@@ -290,7 +290,7 @@ impl Configurations {
                 .open(network, base, Purpose::Request, &input)
                 .map_err(|_| Error::Storage)?;
             if original.as_bytes() != encoded.as_slice() {
-                return Err(Error::Conflict);
+                return Err(Error::RequestConflict);
             }
             let mut result: ConfigurationAppliedResponse =
                 serde_json::from_str(&result).map_err(|_| Error::Storage)?;
@@ -331,7 +331,11 @@ impl Configurations {
             request_id: id,
             network_id: effects.network_id,
             revision: effects.revision,
-            publication_ids: effects.publication_ids,
+            publication_ids: if effects.target_node_ids.is_empty() {
+                Vec::new()
+            } else {
+                effects.publication_ids
+            },
             target_count: u32::try_from(effects.target_node_ids.len())
                 .map_err(|_| Error::Storage)?,
             deleted_node_ids: effects.deleted_node_ids.into_iter().collect(),

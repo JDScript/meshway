@@ -44,13 +44,16 @@ wire_object! { #[derive(Debug,Clone)] pub struct JoinLinkView {
     #[serde(deserialize_with="nullable")] pub revoked_at: Option<DateTime<Utc>> [required=true],
     #[serde(deserialize_with="nullable")] pub consumed_at: Option<DateTime<Utc>> [required=true],
     #[serde(deserialize_with="nullable")] pub consumed_by_user_id: Option<UserId> [required=true],
+    pub actions: JoinLinkActions,
 } }
+wire_object! { #[derive(Debug,Clone)] pub struct JoinLinkActions { pub revoke: bool } }
 wire_object! { pub struct JoinLinkResponse { pub request_id: RequestId, pub link: JoinLinkView } }
-wire_object! { pub struct JoinLinkInspection { pub request_id: RequestId, pub link: JoinLinkView, pub network_name: String } }
+wire_object! { pub struct JoinLinkInspection { pub request_id: RequestId, pub link: JoinLinkView, pub network_name: String, pub already_member: bool } }
 wire_object! { pub struct JoinLinkListResponse {
     pub request_id:RequestId,pub items:Vec<JoinLinkView>,
     #[serde(deserialize_with="nullable")] pub next_cursor:Option<String> [required=true],
     pub as_of:DateTime<Utc>,
+    pub total:u64,
 } }
 wire_object! { pub struct JoinLinkRedeemed { pub request_id:RequestId,pub network_id:NetworkId,pub membership_id:MembershipId } }
 

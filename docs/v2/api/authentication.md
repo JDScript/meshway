@@ -160,6 +160,10 @@ App 使用系统浏览器及受限制回调；CLI 无本地回调时领取同一
 
 尚未批准的请求没有绑定用户。网页选择“不批准／返回”只结束当前网页流程，不调用全局取消；请求由设备凭持钥证明取消，或等待到期。`denyDeviceAuthorization` 仅允许已批准请求的批准者在兑换前撤回，其他登录用户及未批准请求均被拒绝。撤回后旧一次性结果不能兑换；已接入 Node 的删除仍是独立操作。
 
+设备侧 `EnrollmentRequestView` 包含签名请求里的 `hostname`、公钥、`existing` 绑定、phase、到期时间与 `returnMethod: "poll"`。当前接入请求没有系统／Agent 版本或 callback 注册字段，不从后续 State 倒填设备自报信息。网页 GET／approve 使用 `DeviceAuthorizationView`：`request` 复用设备视图，`approval` 仅向批准者或批准网络当前管理员返回 `{ userId, networkId }`，其他主体为 `null`；设备凭本请求的签名和 PKCE 证明进行 query 时也可读取该 approval。读取不认领请求。phase 中 `cancelled` 表示设备签名取消，`withdrawn` 表示批准者撤回，两者独立持久化；非法生命周期操作返回 `state_conflict`，证明无效仍为 401。
+
+接入密钥列表采用 1–200 条 keyset 分页，默认 50 条、按创建顺序从新到旧；`total` 与首次分页创建上界和当前授权网络一致，每页重检管理权限。普通 view 包含 `createdBy`、`consumedAt`、`nodeId`、`initialSettings` 非秘密摘要与 `actions.revoke`。摘要复用 `ListenerView`，不包含密码、私钥或 header 值。创建时一次性返回的 secret 与该只读 view 分开。
+
 ### 无交互接入
 
 管理员在 Web 为指定网络签发带预分配 Tag 的接入密钥，设备同时提交自己的公钥和持有证明。服务端将密钥消费和 Node 绑定放在同一事务内；本轮以一次性接入为基线。
@@ -198,6 +202,8 @@ App 使用系统浏览器及受限制回调；CLI 无本地回调时领取同一
 - enrollment intent 必须包含 `existing`：首次接入为显式 `null`；重新登录为 networkId、nodeId、keyId、keyGeneration 对象。签名摘要也包含该字段，遗漏会在结构校验时拒绝。重新登录的控制／数据面公钥必须匹配该设备当前有效绑定，整个 intent 仍由控制私钥签名；批准网络不能改绑。PKCE 兑换与完整 Config 提交同事务完成 Tag→User／用户重绑定，保持 Node ID、地址和协议设置，终止旧控制 session／实例执行资格。普通 Config 文档不能替代这份设备登录证明。
 - 永久吊销节点接入或密钥使相应认证及派生凭据失效，并撤回执行许可；重放旧注册、配置回滚均不能复活。普通业务停用使用配置 enabled。
 - 最新密钥被吊销但尚未删除的 Node 仍出现在管理库存，分别显示控制／数据面密钥吊销时间；业务 enabled 不冒充凭据有效性。成员移除与其当前 User 身份 Node 删除、地址退出和执行撤回在同一事务提交，Tag 身份 Node 保留。其他配置对被删 Node 的显式引用若无法通过校验，整个操作失败，不提交半套结果。
+
+Node 管理库存分别返回 `controlKeyCreatedAt`／`dataplaneKeyCreatedAt` 和 `canRevokeControlKey`／`canRevokeDataplaneKey`，与 `canDelete` 独立。`desiredExecution` 是当前期望执行引用，可能来自后续 refresh，不代表 saved／applied，也不把它的 receipt 纳入旧 apply 的目标计数。`GET /api/v1/networks/{networkId}/nodes/{nodeId}/settings` 返回相同的非秘密 `NodeSettingsView`：管理员读本网节点，普通成员只读当前自己的 User 身份设备；转为 Tag 后原创建者失去 own-only 权限。完整配置原文及管理历史权限保持独立。
 - 丢失私钥后不能靠公钥重新取得身份；恢复／轮换需要明确的再授权流程，不静默创建替代身份冒充恢复。
 
 ## 实现边界与参考

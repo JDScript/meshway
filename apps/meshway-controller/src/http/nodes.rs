@@ -8,6 +8,21 @@ use axum::{
 };
 use meshway_model::{NetworkId, NodeId, PublicationId, RequestId};
 use meshway_protocol::{ErrorResponse, execution::PublicationProgress, node::*};
+#[utoipa::path(get,path="/api/v1/networks/{networkId}/nodes/{nodeId}/settings",operation_id="getNodeSettings",tag="nodes",security(("userSession"=[])),params(("networkId"=NetworkId,Path),("nodeId"=NodeId,Path)),responses((status=200,body=meshway_configuration::NodeSettingsView),(status=401,body=ErrorResponse),(status=404,body=ErrorResponse)))]
+pub(super) async fn settings(
+    State(service): State<Execution>,
+    Extension(id): Extension<RequestId>,
+    headers: HeaderMap,
+    path: Result<Path<(NetworkId, NodeId)>, PathRejection>,
+) -> Result<Json<meshway_configuration::NodeSettingsView>, HttpError> {
+    let token = bearer(&headers, id)?;
+    let Path((network, node)) = path.map_err(|_| HttpError::invalid_request(id))?;
+    service
+        .settings(token, network, node)
+        .await
+        .map(Json)
+        .map_err(|e| error(id, e))
+}
 #[utoipa::path(delete,path="/api/v1/networks/{networkId}/nodes/{nodeId}",operation_id="deleteNode",tag="nodes",security(("userSession"=[])),params(("networkId"=NetworkId,Path),("nodeId"=NodeId,Path)),request_body=DeleteNodeRequest,responses((status=200,body=meshway_protocol::configuration::ConfigurationAppliedResponse),(status=400,body=ErrorResponse),(status=401,body=ErrorResponse),(status=403,body=ErrorResponse),(status=409,body=ErrorResponse)))]
 pub(super) async fn delete(
     State(service): State<crate::configuration::Configurations>,

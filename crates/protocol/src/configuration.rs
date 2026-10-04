@@ -68,7 +68,10 @@ wire_object! {pub struct ConfigurationSchemaResponse {
 wire_object! {pub struct TransportCatalogEntry {
     pub protocol:meshway_configuration::TransportProtocol,
     pub outer_socket:meshway_configuration::OuterSocket,
-    pub listener_schema:String,pub dialer_schema:String,
+    /// Definition name in getConfigurationSchema.schemaJson.$defs (not schema text).
+    pub listener_schema:String,
+    /// Definition name in getConfigurationSchema.schemaJson.$defs (not schema text).
+    pub dialer_schema:String,
     /// Controller configuration support does not attest an Agent build's support.
     pub required_capability:String,
 } }

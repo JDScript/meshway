@@ -199,6 +199,7 @@ fn routes() -> OpenApiRouter<HttpState> {
         .routes(routes!(enrollment::create_key, enrollment::list_keys))
         .routes(routes!(enrollment::revoke_key))
         .routes(routes!(nodes::list))
+        .routes(routes!(nodes::settings))
         .routes(routes!(nodes::get, nodes::delete))
         .routes(routes!(nodes::revoke_key))
         .routes(routes!(nodes::progress))

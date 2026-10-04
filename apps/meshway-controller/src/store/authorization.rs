@@ -19,6 +19,14 @@ pub(crate) fn network_actions(role: MembershipRole) -> meshway_model::NetworkAct
         rename: manage,
         edit_configuration: manage,
         manage_members: manage,
+        join_link_roles: [
+            MembershipRole::Owner,
+            MembershipRole::Admin,
+            MembershipRole::Member,
+        ]
+        .into_iter()
+        .filter(|target| can_grant(role, *target))
+        .collect(),
     }
 }
 pub(crate) fn can_grant(issuer: MembershipRole, role: MembershipRole) -> bool {

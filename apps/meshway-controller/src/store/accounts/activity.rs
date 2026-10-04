@@ -27,7 +27,7 @@ pub(super) fn record(
         AccountActivity::Logout => ("session.logout", None, Some(session_id)),
     };
     transaction.execute(
-        "INSERT INTO activity_events (id, scope, account_user_id, at, actor_user_id, action, target_user_id, target_session_id, request_id) VALUES (?1, 'account', ?2, ?3, ?2, ?4, ?5, ?6, ?7)",
+        "INSERT INTO activity_events (id, scope, account_user_id, at, actor_user_id, action, target_user_id, target_session_id, request_id, actor_email) VALUES (?1, 'account', ?2, ?3, ?2, ?4, ?5, ?6, ?7, (SELECT email FROM users WHERE id=?2))",
         params![id.as_uuid().as_bytes().as_slice(), user_id, at, action, target_user, target_session, request.as_uuid().as_bytes().as_slice()],
     )?;
     Ok(())

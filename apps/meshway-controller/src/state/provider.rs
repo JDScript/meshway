@@ -92,6 +92,7 @@ impl StateProvider for UserProvider {
         };
         let nodes = crate::store::execution::inventory_in_transaction(
             tx,
+            &self.0.sealer,
             network.id,
             cfg,
             &scope.visible,
@@ -260,6 +261,7 @@ impl StateProvider for NodeProvider {
         };
         let nodes = crate::store::execution::inventory_in_transaction(
             tx,
+            &self.0.sealer,
             scope.network_id,
             cfg,
             &scope.visible,

@@ -445,7 +445,10 @@ fn state_error(error: NodeError) -> StateError {
         NodeError::Unauthorized => StateError::Unauthorized,
         NodeError::Forbidden => StateError::Forbidden,
         NodeError::Invalid | NodeError::InvalidSettings(_) => StateError::Invalid,
-        NodeError::Conflict => StateError::Conflict,
+        NodeError::Conflict | NodeError::VersionConflict | NodeError::StateConflict => {
+            StateError::Conflict
+        }
+        NodeError::InvalidCursor => StateError::Invalid,
         NodeError::NotFound => StateError::NotFound,
         NodeError::Busy => StateError::Budget,
         NodeError::Storage => StateError::Storage,

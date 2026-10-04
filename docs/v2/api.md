@@ -122,6 +122,8 @@ session token／摘要不进入列表、URL 或活动记录。会话列表返回
 | `POST /join-links/inspect` | 已登录用户＋链接凭据 | 接受前读取链接授予的网络／角色／期限，不消费 |
 | `POST /join-links/redeem` | 已登录用户＋链接凭据 | 消费链接并建立当前用户的 membership |
 
+`NetworkActions.joinLinkRoles` 由服务端与签发 mutation 共用授予规则计算。`JoinLinkView.actions.revoke` 同时考虑当前角色与链接生命周期。列表默认新到旧，返回与分页创建上界和授权范围一致的 `total`。inspect 只有匹配真实 token hash 后才区分 `join_link_used`／`join_link_revoked`／`join_link_expired`／`join_link_issuer_unavailable`；有效链接返回 `alreadyMember`。无效 token 不披露网络，redeem 事务最终重检；同一次成功加入重试只恢复仍有效的原 membership，不复活离网关系。
+
 成员修改使用 expectedVersion 防止覆盖并发操作；列表返回 membershipId、userId、email、role、joinedAt、version 与 actions。有权移除者取得当前 User 身份设备的 removalImpact／nodeCount。移除／离开同事务撤销 membership 并永久删除其当前 User 身份节点，Tag 节点保留；只有实际配置改变才推进 revision。全局 User 不删除，重新加入不恢复旧关系／Node。网络删除另有生命周期。
 
 ### 节点与接入

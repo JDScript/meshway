@@ -1,6 +1,6 @@
 # Trojan Dialer
 
-位于 `nodes[id].dialers.trojan`。**当前只有 TCP/TLS 独立库，平台托管尚未完成。**
+位于 `nodes[id].dialers.trojan`。**新 Controller 已支持声明、校验与编译；实际 Agent TCP/TLS 承载装配及部署验证独立跟踪。** 执行仅使用 Controller 配置与节点 capability 的交集，目录存在不代表隧道已验证。
 
 ## Structure
 

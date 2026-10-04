@@ -58,6 +58,14 @@ wire_object! { #[derive(Clone,Debug,PartialEq,Eq)] pub struct NodeInventoryView 
     #[serde(rename="dataplaneKeyRevokedAt", with="meshway_model::timestamp::optional")]
     pub dataplane_key_revoked_at_ms: Option<u64> [value_type=Option<chrono::DateTime<chrono::Utc>>,required=true],
     pub can_delete: bool,
+    /// Current execution target, not a saved/applied receipt. May be a later refresh than the source apply.
+    pub desired_execution: Option<ConfigurationRef> [required=true],
+    pub can_revoke_control_key: bool,
+    pub can_revoke_dataplane_key: bool,
+    #[serde(rename="controlKeyCreatedAt", with="meshway_model::timestamp")]
+    pub control_key_created_at_ms: u64 [value_type=chrono::DateTime<chrono::Utc>],
+    #[serde(rename="dataplaneKeyCreatedAt", with="meshway_model::timestamp")]
+    pub dataplane_key_created_at_ms: u64 [value_type=chrono::DateTime<chrono::Utc>],
 } }
 wire_object! { #[derive(Clone,Debug,PartialEq,Eq)] pub struct NodeInventoryResponse {
     pub items: Vec<NodeInventoryView>,

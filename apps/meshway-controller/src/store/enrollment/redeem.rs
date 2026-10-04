@@ -43,6 +43,7 @@ pub(crate) fn redeem_key_in_transaction(
     let p = pending(tx, request)?;
     pkce(&p.challenge, verifier.expose())?;
     if p.denied.is_some()
+        || p.cancelled.is_some()
         || p.existing.is_some()
         || p.approval.is_some()
         || secret.expose().len() != 48
@@ -180,6 +181,7 @@ pub(crate) fn redeem_in_transaction(
     let p = pending(tx, id)?;
     p.device(&request.proof, "redeem")?;
     if p.denied.is_some()
+        || p.cancelled.is_some()
         || p.result_hash.as_deref() != Some(hash(request.code.expose()).as_slice())
     {
         return Err(NodeError::Unauthorized);
@@ -302,6 +304,7 @@ pub(crate) fn verify_admission(
     if p.node != Some(admission.node)
         || p.consumed.is_some()
         || p.denied.is_some()
+        || p.cancelled.is_some()
         || p.expires <= now
     {
         return Err(NodeError::Forbidden);
