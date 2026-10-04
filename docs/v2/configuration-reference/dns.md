@@ -46,6 +46,7 @@
 ## Behavior
 
 - MagicDNS 网络后缀优先交给本地生成的 Node 记录，并自动位于搜索域最前。
+- MagicDNS 预需求发现按请求源 Node 的 Access 权限裁剪：当前配置允许至少一种业务协议／端口访问的节点，其名称／地址可见；不要求目标在线、已有连接或已有 demand。预需求发现接口与完整记录发布尚待接线，当前执行发布只包含部分路径 peer，不能因名称缺席就给出权威 NXDOMAIN。
 - 改址时 DNS、地址准入与路由按同一发布更新；某地址族为 null 则不生成对应 A／AAAA。旧地址复用仍等待受管 DNS 与执行退出窗口，不能只更新 DNS 就宣布切换完成。
 - `routes` 采用最长 DNS 标签后缀匹配；`corp.example` 不匹配 `evilcorp.example`。
 - 没有使用出口时，`overrideLocal: false` 只强制接管 MagicDNS／split DNS，其他查询保留系统解析。
