@@ -566,6 +566,7 @@
   "configuration_issue_bidirectional_requires_mesh": "Both ways needs Mesh nodes at both ends",
   "configuration_issue_invalid_port_set": "The protocols and ports are not valid",
   "configuration_issue_invalid_domain_suffix": "{value} is not a valid domain suffix",
+  "configuration_issue_invalid_domain": "{value} is not a valid domain name",
   "configuration_issue_noncanonical_cidr": "{value} is not written as its network: the host bits must be 0",
   "configuration_issue_invalid_dns_domain": "The network's DNS domain is not valid",
   "configuration_issue_invalid_node_dns_name": "The hostname with the network's DNS domain is not a valid DNS name: at most 253 bytes, and not an IP",

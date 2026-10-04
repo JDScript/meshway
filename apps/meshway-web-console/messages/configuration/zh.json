@@ -486,6 +486,7 @@
   "configuration_issue_bidirectional_requires_mesh": "只有两端都是 Mesh 节点时才能双向",
   "configuration_issue_invalid_port_set": "协议和端口的写法无效",
   "configuration_issue_invalid_domain_suffix": "{value} 不是有效的域名后缀",
+  "configuration_issue_invalid_domain": "{value} 不是有效的域名",
   "configuration_issue_noncanonical_cidr": "{value} 不是网段的规范写法：主机位要为 0",
   "configuration_issue_invalid_dns_domain": "网络的 DNS 后缀无效",
   "configuration_issue_invalid_node_dns_name": "主机名加上网络的 DNS 后缀不是有效的 DNS 名称：最长 253 字节，且不能是 IP",

@@ -117,6 +117,8 @@ const TEXT: Record<IssueCode, (p: Params, node: NodeNamer) => string> = {
   invalid_port_set: () => m.configuration_issue_invalid_port_set(),
   invalid_domain_suffix: (p) =>
     m.configuration_issue_invalid_domain_suffix({ value: p.value ?? "?" }),
+  invalid_domain: (p) =>
+    m.configuration_issue_invalid_domain({ value: p.value ?? "?" }),
   noncanonical_cidr: (p) =>
     m.configuration_issue_noncanonical_cidr({ value: p.value ?? "?" }),
   invalid_dns_domain: () => m.configuration_issue_invalid_dns_domain(),
