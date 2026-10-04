@@ -60,8 +60,9 @@ its generated client only, and only what the controller delivers:
   `restore` inputs), `listConfigurationRevisions`,
   `getConfigurationRevision`, `compareConfiguration`. The whole document as
   JSONC (`actions.editConfiguration`), the revisions, and forms for access,
-  topology (with `defaults.topology`), groups, tag owners, DNS and address
-  pools; routing, nodes, rule sets and the other defaults read only. One
+  topology (with `defaults.topology`), traffic routing, rule sets, groups,
+  tag owners, DNS and address pools; nodes and the other defaults read
+  only. One
   draft per sign-in and network (`features/configuration/draft.ts`), kept
   across the network's pages, in memory only (the source holds secrets:
   never storage, the URL or the query cache), dropped when the sign-in
@@ -148,10 +149,27 @@ its generated client only, and only what the controller delivers:
   target node's phase, freshness and last report time; `partial` scope says
   only visible nodes count. A historical "applied" is not current health.
   Another revision than the current one is read again every 3 s while shown.
-- Not delivered: node runtime state, the forms for routing, rule sets and
-  node settings. Their pages below are the target design; they return when their
-  operations exist, and nothing stands in for them. What the console needs
-  from the V2 API is in `v2-api-needs.md`.
+- Traffic routing (`replaceRouting`) and rule sets (`replaceRuleSets`) are
+  forms like the others. Ordered lists (Mesh routes, public and profile
+  egress rules, the automatic profile's regions) are numbered on a rail
+  ending in what happens when none matched, and move with their arrows or
+  Alt+↑/↓; via nodes and exits are concrete nodes in priority order, an
+  exit not `exitEnabled` is marked; profiles name the built-ins (Mesh
+  only, `global:<exit>` per exit node, automatic when configured) and the
+  configuration's own. A match is one chip set: domain suffixes, prefixes
+  and rule sets (`set:<key>`). The controller reports no shadowed rules,
+  so none are shown. Rule sets: inline content, or a remote HTTPS source
+  with its format and interval; the status (`listRuleSets`, Owner / Admin,
+  key `[network, "rule-sets"]`) is for the current revision's definition,
+  and each set says its next step: a new remote set is applied
+  unreferenced, refreshed (`refreshRuleSet`), then referenced; a
+  `ruleSetContent` requirement says exactly that. A set without content is
+  never treated as empty. Renaming a set or a profile renames its
+  references.
+- Not delivered: node runtime state and the node settings form. Their
+  pages below are the target design; they return when their operations
+  exist, and nothing stands in for them. What the console needs from the
+  V2 API is in `v2-api-needs.md`.
 - What a role may do is the network's `actions`, as the controller computes
   them; the console never derives it from the role.
 - Changes the controller deduplicates (`createNetwork`, `renameNetwork`)
@@ -264,7 +282,7 @@ controller supports today; the rest of each row is the target design.
 | Overview `/overview?node=` | the empty globe, one line: no node locations or state | none: the globe is its index | none; the node peek; with no node or one, what adding nodes takes | |
 | Nodes `/nodes?view=nodes\|tags` | `?q=`; a node's facts, configured listeners, keys and deletion; adding one with an enrolment key | nodes (search, state) or tags | `/nodes/<id>?tab=overview\|links\|transport\|manage`, `/nodes/add`, `/nodes/tags/<tag>` | revoke, enrolment token |
 | Members `/members?view=members\|links` | for `manageMembers`: members, join links, a member's role and removal | members or join links | `/members/<membership>` (role, devices, removal) | join link (shown once), removal, revoke |
-| Configuration `/configuration` | for owners and admins: the source (JSONC), history, and forms for access, topology, groups, tag owners, DNS and pools (the other sections read only) | the source, the history, the sections with what they hold | `/configuration/<section>` (a form, or the section read only), `/configuration/source?at=<pointer>`, `/configuration/history?revision=&against=` | the review before applying |
+| Configuration `/configuration` | for owners and admins: the source (JSONC), history, and forms for access, topology, routing, rule sets, groups, tag owners, DNS and pools (the other sections read only) | the source, the history, the sections with what they hold | `/configuration/<section>` (a form, or the section read only), `/configuration/source?at=<pointer>`, `/configuration/history?revision=&against=` | the review before applying |
 | Settings `/settings` | `network`: name, ID, created, role, leave; `activity` for `manageMembers` | sections | `/settings/<section>`: network, activity, DNS | leave |
 | Account `/account` (from the account menu) | email, ID, email and password changes, sessions, activity | none | memberships | end a session, the others, all; change the password |
 
