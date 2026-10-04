@@ -20,6 +20,12 @@ export interface StreamOptions extends RequestOptions {
   maxFrameBytes?: number;
   /** Maximum pending network I/O without bytes; excludes caller processing time. */
   idleTimeoutMs?: number;
+  /**
+   * Called once per accepted connection (its event stream begins), before
+   * any of its events. A resumed stream sends no new snapshot: this is how
+   * the caller learns the server took its cursor.
+   */
+  onOpen?: () => void;
 }
 export interface AuthenticatedStreamOptions extends StreamOptions { token: string }
 export interface EventDelivery<Data> { data: Data; id?: string }
@@ -294,6 +300,7 @@ export class ControlClient {
         } else {
           const bodyReader = response.body.getReader();
           reader = bodyReader;
+          options.onOpen?.();
           const decoder = new EventDecoder(frameLimit);
           while (true) {
             const chunk = await streamIo(() => readProgress(bodyReader), connection, idleTimeout);

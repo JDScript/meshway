@@ -222,6 +222,10 @@ payload. JSON errors keep their ordinary typed HTTP envelopes.
   (default 5). `resumeCursor()` is called for each connection and must return
   only a cursor whose complete snapshot/delta has been applied by the caller.
   Merely decoding an event or seeing an SSE `id` never advances that cursor.
+- `onOpen()` is called once per accepted connection (a successful
+  `text/event-stream` response), before any of its events. A resumed stream
+  sends no new snapshot, so this is how the caller learns that the server took
+  its cursor; a refused connection never calls it.
 - `idleTimeoutMs` bounds pending network I/O (default 30 seconds, configurable
   from 1 ms through 5 minutes). A timeout closes the connection and reports a
   `network` failure before the usual bounded retry. Actual bytes, including

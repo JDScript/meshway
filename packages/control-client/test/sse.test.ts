@@ -77,6 +77,25 @@ test("event delivery validates data and reconnects only from the caller's applie
   assert.equal((await stream.next()).done, true);
 });
 
+test("each accepted connection is announced before its events, a refused one never", async () => {
+  const order: string[] = [];
+  let requests = 0;
+  const client = new ControlClient({ baseUrl: "https://controller.example", fetch: async () => {
+    requests++;
+    if (requests === 1) return Response.json({ code: "busy" }, { status: 503 });
+    return new Response('data: {"type":"sample","value":"resumed"}\n\n', { headers: { "content-type": "text/event-stream" } });
+  } });
+  const stream = client.stream(operation, { token: "private", retryDelayMs: 100, maxReconnects: 1, onOpen: () => order.push("open") });
+  const refused = await stream.next();
+  assert.ok(!refused.done && !refused.value.ok && refused.value.error.kind === "http");
+  order.push("refused");
+  const event = await stream.next();
+  assert.ok(!event.done && event.value.ok);
+  order.push("event");
+  assert.deepEqual(order, ["refused", "open", "event"]);
+  await stream.return(undefined);
+});
+
 test("invalid event payloads terminate without advancing a cursor", async () => {
   for (const text of ['data: {"type":"sample","value":1}\n\n', 'event: other\ndata: {"type":"sample","value":"x"}\n\n', 'data: not-json\n\n']) {
     const client = new ControlClient({ baseUrl: "https://controller.example", fetch: async () => new Response(text, { headers: { "content-type": "text/event-stream" } }) });
