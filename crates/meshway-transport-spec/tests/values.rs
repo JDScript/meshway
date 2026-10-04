@@ -1,10 +1,9 @@
 use meshway_transport_spec::{
-    OuterSocket, Port, PositiveDuration, TlsVersion, TlsVersionRange, TransportProtocol,
-    ValidationError, VlessStream, WebSocketHeaderName, WebSocketHeaderValue, WebSocketHeaders,
-    WebSocketPath, validate_websocket_alpn,
+    OuterSocket, Port, PositiveDuration, TlsVersion, TransportProtocol, ValidationError,
+    VlessStream, WebSocketHeaderName, WebSocketHeaderValue, WebSocketHeaders, WebSocketPath,
+    validate_websocket_alpn,
 };
-use serde::{Deserialize, Serialize};
-use serde_json::{Value, json};
+use serde_json::json;
 
 #[test]
 fn protocol_keys_and_socket_layers_are_distinct() {
@@ -267,51 +266,6 @@ fn duplicate_and_non_string_headers_are_not_silently_overwritten_or_coerced() {
 }
 
 #[test]
-fn tls_range_is_validated_on_construction_and_strict_deserialization() {
-    for (min, max) in [
-        (TlsVersion::Tls12, TlsVersion::Tls12),
-        (TlsVersion::Tls12, TlsVersion::Tls13),
-        (TlsVersion::Tls13, TlsVersion::Tls13),
-    ] {
-        let value = TlsVersionRange::new(min, max).unwrap();
-        let source = json!({"minVersion": min.as_str(), "maxVersion": max.as_str()});
-        assert_eq!(value.min_version(), min);
-        assert_eq!(value.max_version(), max);
-        assert_eq!(serde_json::to_value(value).unwrap(), source);
-        assert_eq!(
-            serde_json::from_value::<TlsVersionRange>(source).unwrap(),
-            value
-        );
-    }
-    assert_eq!(
-        TlsVersionRange::new(TlsVersion::Tls13, TlsVersion::Tls12),
-        Err(ValidationError::TlsVersionOrder)
-    );
-    for source in [
-        json!({"minVersion": "1.3", "maxVersion": "1.2"}),
-        json!({"minVersion": "1.1", "maxVersion": "1.3"}),
-        json!({"minVersion": "1.2", "maxVersion": "1.4"}),
-        json!({"minVersion": 1.2, "maxVersion": 1.3}),
-        json!({"minVersion": "1.2"}),
-        json!({"minVersion": "1.2", "maxVersion": "1.3", "insecure": true}),
-        json!({"min_version": "1.2", "max_version": "1.3"}),
-        json!({}),
-        json!(["1.2", "1.3"]),
-    ] {
-        assert!(
-            serde_json::from_value::<TlsVersionRange>(source.clone()).is_err(),
-            "{source}"
-        );
-    }
-    assert!(
-        serde_json::from_str::<TlsVersionRange>(
-            r#"{"minVersion":"1.2","minVersion":"1.3","maxVersion":"1.3"}"#
-        )
-        .is_err()
-    );
-}
-
-#[test]
 fn websocket_alpn_does_not_allow_an_incompatible_advertised_alternative() {
     for alpn in [vec![], vec!["http/1.1"], vec!["http/1.1", "http/1.1"]] {
         assert!(
@@ -330,43 +284,6 @@ fn websocket_alpn_does_not_allow_an_incompatible_advertised_alternative() {
         assert_eq!(
             validate_websocket_alpn(&alpn.into_iter().map(String::from).collect::<Vec<_>>()),
             Err(ValidationError::WebSocketAlpn)
-        );
-    }
-}
-
-#[test]
-fn values_compose_without_weakening_nested_validation() {
-    #[derive(Debug, Deserialize, Serialize)]
-    #[serde(rename_all = "camelCase", deny_unknown_fields)]
-    struct Parameters {
-        listen_port: Port,
-        connect_timeout: PositiveDuration,
-        path: WebSocketPath,
-        response_headers: WebSocketHeaders,
-        versions: TlsVersionRange,
-    }
-    let source = json!({
-        "listenPort": 443,
-        "connectTimeout": "5s",
-        "path": "/meshway",
-        "responseHeaders": {"X-Trace": "ok"},
-        "versions": {"minVersion": "1.2", "maxVersion": "1.3"}
-    });
-    let value: Parameters = serde_json::from_value(source.clone()).unwrap();
-    assert_eq!(serde_json::to_value(value).unwrap(), source);
-    for (field, invalid) in [
-        ("listenPort", json!(0)),
-        ("connectTimeout", json!("0s")),
-        ("path", json!("/\r\n")),
-        ("responseHeaders", json!({"Host": "evil"})),
-        ("versions", Value::Null),
-        ("earlyData", json!(true)),
-    ] {
-        let mut candidate = source.clone();
-        candidate[field] = invalid;
-        assert!(
-            serde_json::from_value::<Parameters>(candidate).is_err(),
-            "{field}"
         );
     }
 }

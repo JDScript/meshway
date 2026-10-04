@@ -48,9 +48,8 @@ fn tcp(options: &TcpOptions) -> Result<(), DeclarationError> {
     Ok(())
 }
 fn tls(min: TlsVersion, max: TlsVersion, alpn: &[String]) -> Result<(), DeclarationError> {
-    if min > max {
-        return Err(DeclarationError("TLS version order"));
-    }
+    crate::tls::validate_tls_versions(min, max)
+        .map_err(|_| DeclarationError("TLS version order"))?;
     if alpn
         .iter()
         .any(|s| s.is_empty() || s.len() > 255 || s.chars().any(char::is_control))
@@ -171,8 +170,9 @@ impl Listener {
     }
 }
 
-/// A complete, structurally normalized listener. TLS verification attestation
-/// must come from the Controller for this exact value, not from untrusted JSON.
+/// A structurally complete, normalized listener, without a TLS verification claim.
+/// The Server must verify certificate/key/name/expiry/revocation for this exact
+/// declaration before accepting it into an executable configuration.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
 #[serde(transparent)]
 pub struct PreparedListener(Listener);
@@ -194,20 +194,16 @@ impl ToSchema for PreparedListener {
 }
 impl<'de> Deserialize<'de> for PreparedListener {
     fn deserialize<D: serde::Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
-        // Structural restoration only; no cryptographic verification claim.
-        Self::prepare(Listener::deserialize(d)?, true).map_err(serde::de::Error::custom)
+        Self::prepare(Listener::deserialize(d)?).map_err(serde::de::Error::custom)
     }
 }
 impl PreparedListener {
-    pub fn prepare(
-        mut listener: Listener,
-        certificate_verified: bool,
-    ) -> Result<Self, DeclarationError> {
+    pub fn prepare(mut listener: Listener) -> Result<Self, DeclarationError> {
         listener.normalize()?;
         if listener
             .material_requirements()
             .iter()
-            .any(|r| *r != MaterialRequirement::CertificateValidation || !certificate_verified)
+            .any(|r| *r != MaterialRequirement::CertificateValidation)
         {
             return Err(DeclarationError("listener material preparation required"));
         }

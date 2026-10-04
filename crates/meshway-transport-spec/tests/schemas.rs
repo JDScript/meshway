@@ -1,6 +1,6 @@
 use meshway_transport_spec::{
-    OuterSocket, Port, PositiveDuration, TlsVersion, TlsVersionRange, TransportProtocol,
-    VlessStream, WebSocketHeaderName, WebSocketHeaderValue, WebSocketHeaders, WebSocketPath,
+    OuterSocket, Port, PositiveDuration, TlsVersion, TransportProtocol, VlessStream,
+    WebSocketHeaderName, WebSocketHeaderValue, WebSocketHeaders, WebSocketPath,
 };
 use serde_json::{Value, json};
 use utoipa::{OpenApi, PartialSchema, ToSchema};
@@ -64,24 +64,6 @@ fn headers_schema_constrains_keys_and_values_instead_of_an_untyped_object() {
 }
 
 #[test]
-fn tls_schema_expresses_order_and_required_fields_with_exact_legal_pairs() {
-    let schema = schema::<TlsVersionRange>();
-    let branches = schema["oneOf"].as_array().unwrap();
-    assert_eq!(branches.len(), 3);
-    for (branch, (min, max)) in
-        branches
-            .iter()
-            .zip([("1.2", "1.2"), ("1.2", "1.3"), ("1.3", "1.3")])
-    {
-        assert_eq!(branch["type"], "object");
-        assert_eq!(branch["additionalProperties"], false);
-        assert_eq!(branch["required"], json!(["minVersion", "maxVersion"]));
-        assert_eq!(branch["properties"]["minVersion"]["enum"], json!([min]));
-        assert_eq!(branch["properties"]["maxVersion"]["enum"], json!([max]));
-    }
-}
-
-#[test]
 fn public_types_register_in_openapi_without_private_wire_helpers() {
     #[derive(OpenApi)]
     #[openapi(components(schemas(
@@ -91,7 +73,6 @@ fn public_types_register_in_openapi_without_private_wire_helpers() {
         OuterSocket,
         VlessStream,
         TlsVersion,
-        TlsVersionRange,
         WebSocketPath,
         WebSocketHeaderName,
         WebSocketHeaderValue,
@@ -101,9 +82,8 @@ fn public_types_register_in_openapi_without_private_wire_helpers() {
 
     let document = serde_json::to_value(Document::openapi()).unwrap();
     let components = document["components"]["schemas"].as_object().unwrap();
-    assert_eq!(components.len(), 11);
+    assert_eq!(components.len(), 10);
     assert_eq!(components["PositiveDuration"], schema::<PositiveDuration>());
-    assert_eq!(components["TlsVersionRange"], schema::<TlsVersionRange>());
     assert_eq!(components["WebSocketHeaders"], schema::<WebSocketHeaders>());
 }
 

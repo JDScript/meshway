@@ -5,6 +5,7 @@ use crate::{
 };
 use meshway_model::{BoundNodeKey, Digest, NetworkId, NodeId, PublicationId, RequestId, Revision};
 use meshway_transport_spec::*;
+pub use meshway_transport_spec::{ClientTls, DialParameters};
 use std::{collections::BTreeMap, net::IpAddr};
 mod admission;
 mod delta;
@@ -61,17 +62,6 @@ object! { pub struct RuleSetContent {
 object! { pub struct PeerConfiguration {
     pub identity: NodeIdentity, pub addresses: NodeAddresses,
     pub control_key: BoundNodeKey, pub dataplane_key: BoundNodeKey,
-} }
-object! { pub struct ClientTls {
-    pub server_name: String, pub certificate_chain: SecretString,
-    pub options: DialerTls,
-} }
-tagged! { pub enum DialParameters {
-    NativeUdp { options: NativeUdpDialer },
-    NativeTcp { options: NativeTcpDialer },
-    Vless { options: VlessDialer, stream: VlessStream, flow: String, uuid: SecretString,
-        tls: ClientTls, websocket: Option<ListenerWebSocket> },
-    Trojan { options: TrojanDialer, password: SecretString, tls: ClientTls },
 } }
 object! { pub struct DialCandidate {
     pub peer: NodeId, pub listener_key: String, pub endpoints: Vec<Endpoint>,

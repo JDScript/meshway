@@ -1,17 +1,6 @@
 use super::*;
 use std::collections::BTreeSet;
 
-impl DialParameters {
-    pub fn transport(&self) -> TransportProtocol {
-        match self {
-            Self::NativeUdp { .. } => TransportProtocol::NativeUdp,
-            Self::NativeTcp { .. } => TransportProtocol::NativeTcp,
-            Self::Vless { .. } => TransportProtocol::Vless,
-            Self::Trojan { .. } => TransportProtocol::Trojan,
-        }
-    }
-}
-
 impl NodeConfiguration {
     /// Probe-only projection of this immutable target. Never use these edges as
     /// business grants or end-to-end observation paths. Includes reverse dial
