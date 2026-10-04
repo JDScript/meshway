@@ -81,7 +81,11 @@ function invalidParams(
   return problem?.code === "configuration_invalid" ? problem.params : null
 }
 
-/** A restore the controller cannot check says which revision it was. */
+/**
+ * A call's own words: a restore the controller cannot check says which
+ * revision it was; a draft that cannot be checked or applied now may be
+ * preparing remote rule sets over the controller's limits.
+ */
 const wordsFor = (proposal: Proposal): FailureText =>
   proposal.type === "restore"
     ? {
@@ -90,7 +94,18 @@ const wordsFor = (proposal: Proposal): FailureText =>
             revision: proposal.restoreFrom,
           }),
       }
-    : {}
+    : { service_unavailable: () => m.configuration_draft_unavailable() }
+
+/**
+ * An apply's words. An attempt reuses its request ID only for the same
+ * proposal (`attemptFor`), so the same ID with other input is not expected;
+ * if the controller says so, nothing was applied and checking again starts
+ * a new attempt. Distinct from a newer revision (`revision_conflict`).
+ */
+const applyWordsFor = (proposal: Proposal): FailureText => ({
+  ...wordsFor(proposal),
+  request_id_conflict: () => m.configuration_apply_request_conflict(),
+})
 
 /** The words for an apply's result, from what the controller returned. */
 export function appliedText(result: ConfigurationAppliedResponse): string {
@@ -252,7 +267,8 @@ export function useConfigurationApply(
         setReview(null)
         refused(proposal, params)
       } else {
-        const text = failureText(error, wordsFor(proposal))
+        if (code === "request_id_conflict") setReview(null)
+        const text = failureText(error, applyWordsFor(proposal))
         if (text) toast.error(text, { id: TOAST })
       }
     } finally {

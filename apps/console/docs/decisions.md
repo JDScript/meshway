@@ -87,9 +87,10 @@ its generated client only, and only what the controller delivers:
   reference states before applying (the bar says how many fields will not
   save); the controller's refusals sit under the rules and fields at their
   pointers. One `replaceDefaults` holds the topology default and the
-  dialer defaults; `DefaultsUpdate.dialers` is required, so changing the
-  topology default alone restates the view's dialers (WebSocket headers
-  omitted: kept). The commit bar and review serve the configuration page
+  dialer defaults, with only the fields that differ from the base (the
+  controller keeps what is omitted), so changing the topology default
+  alone sends only it, and checking against a newer revision replays only
+  it. The commit bar and review serve the configuration page
   and the nodes page alike (`useConfigurationCommit`).
   Applying always validates first and opens a review: the effective change
   count, permanent node deletions and address changes on their own, every
@@ -97,7 +98,11 @@ its generated client only, and only what the controller delivers:
   confirmation applies, against the draft's revision. A newer revision
   keeps the draft and its base; the bar offers to start over from it or to
   check the same text or operations against it (a new review). A restore
-  takes the same review.
+  takes the same review. An apply's request ID is reused only to repeat
+  the same proposal after an unknown outcome; `request_id_conflict` (that
+  ID with other input) and `revision_conflict` are worded apart. An apply
+  with no target nodes (`targetCount: 0`, `publicationIds: []`) says no
+  deployment is needed.
 - Nodes (`/nodes?q=`, every member: the controller lists owners and admins
   every node, a member their own User-identity devices). The list searches
   by hostname and shows each node's identity (its user's email or its

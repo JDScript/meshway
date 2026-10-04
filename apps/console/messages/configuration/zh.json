@@ -440,6 +440,8 @@
   "configuration_review_rule_sets_tentative": "检查时 Controller 已下载并转换这些来源。结果是暂定的，没有保存；应用时会重新准备，内容可能不同。",
   "configuration_review_rule_set_entries": "{entries} 条",
   "configuration_review_rule_set_digest": "摘要 {digest}",
+  "configuration_draft_unavailable": "控制面暂时无法处理这份草稿：可能正忙，或要准备的远程规则集超出上限（最多 32 个，合计 8 MiB）。请稍后重试",
+  "configuration_apply_request_conflict": "控制面认为这次应用与此前同一请求的内容不同，没有应用。请重新检查后再应用",
   "configuration_section_bindings": "Controller 绑定",
   "configuration_binding_users": "策略中的邮箱所绑定的用户变化",
   "configuration_binding_nodeUsers": "节点身份所绑定的用户变化",
