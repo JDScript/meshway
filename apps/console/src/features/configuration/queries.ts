@@ -5,8 +5,13 @@ import {
   getConfigurationSchema,
   getConfigurationSource,
   listConfigurationRevisions,
+  type UserConfigurationView,
 } from "@meshway/control-client"
-import { infiniteQueryOptions, queryOptions } from "@tanstack/react-query"
+import {
+  infiniteQueryOptions,
+  queryOptions,
+  skipToken,
+} from "@tanstack/react-query"
 
 import { networkKey } from "@/features/network/queries"
 import { ApiFailure, authed, client, problemCode } from "@/lib/api"
@@ -33,6 +38,24 @@ export const configurationQuery = (networkId: string) =>
     staleTime: 10_000,
     // A role the controller refuses stays refused until the role changes.
     refetchInterval: (query) => (isDenied(query.state.error) ? false : 30_000),
+  })
+
+/** The configuration a member sees: the settings of their own nodes. */
+export type MemberConfiguration = Extract<
+  UserConfigurationView,
+  { type: "member" }
+>
+
+/**
+ * A member's own nodes' settings. The controller has no read for them: they
+ * come only in the event stream's configuration snapshot, which writes them
+ * here. Owners and admins read the whole view (`configurationQuery`).
+ */
+export const memberConfigurationQuery = (networkId: string) =>
+  queryOptions<MemberConfiguration>({
+    queryKey: [...configurationKey(networkId), "member"],
+    queryFn: skipToken,
+    staleTime: Infinity,
   })
 
 /** One revision's configuration, non-secret. Revisions never change. */
