@@ -16,6 +16,9 @@ members = [
     "crates/meshway-transport",
     "crates/meshway-transport-udp",
     "crates/meshway-transport-tcp",
+    "crates/meshway-tls",
+    "crates/meshway-transport-vless",
+    "crates/meshway-transport-trojan",
     "tools/meshway-transport-perf",
 ]
 resolver = "3"
@@ -36,6 +39,8 @@ idna = "1.1"
 ipnet = { version = "2.11", features = ["serde"] }
 rusqlite = { version = "0.38", features = ["bundled"] }
 rustix = { version = "1", features = ["fs", "process"] }
+rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12"] }
+rustls-pemfile = "2"
 serde = { version = "1.0.228", features = ["derive"] }
 serde_json = "1.0.149"
 sha2 = "0.10"
@@ -44,6 +49,7 @@ tempfile = "3"
 thiserror = "2"
 tokio = { version = "1.49.0", features = ["macros", "rt-multi-thread", "net", "signal", "sync", "time"] }
 tokio-util = { version = "0.7", features = ["codec", "rt"] }
+tokio-rustls = { version = "0.26", default-features = false, features = ["ring", "tls12"] }
 tracing = "0.1"
 utoipa = { version = "6.0.0", features = ["axum_extras", "chrono"] }
 utoipa-axum = "0.3.0"

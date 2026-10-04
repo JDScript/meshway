@@ -11,10 +11,13 @@ use std::{io::Write, process::ExitCode, time::Duration};
 type Error = Box<dyn std::error::Error + Send + Sync>;
 
 #[derive(Clone, Copy, Debug, Serialize, ValueEnum)]
-#[serde(rename_all = "lowercase")]
+#[serde(rename_all = "kebab-case")]
 enum Protocol {
     Tcp,
     Udp,
+    VlessTcp,
+    VlessWs,
+    Trojan,
 }
 
 #[derive(Clone, Copy, Debug, Serialize, ValueEnum)]

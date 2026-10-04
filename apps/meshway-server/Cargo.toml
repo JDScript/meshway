@@ -22,12 +22,11 @@ meshway-private-storage = { path = "../../crates/meshway-private-storage" }
 meshway-configuration = { path = "../../crates/meshway-configuration" }
 meshway-protocol = { path = "../../crates/meshway-protocol" }
 meshway-transport-spec = { path = "../../crates/meshway-transport-spec" }
+meshway-tls = { path = "../../crates/meshway-tls" }
 maxminddb = "0.26"
 rcgen = { version = "0.14", default-features = false, features = ["pem", "ring"] }
 reqwest = { version = "0.13", default-features = false, features = ["rustls", "json", "stream"] }
 rusqlite.workspace = true
-rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12"] }
-rustls-pemfile = "2"
 rustix.workspace = true
 serde.workspace = true
 serde_json.workspace = true
@@ -44,6 +43,7 @@ zeroize = "1.8"
 base64 = "0.23"
 
 [dev-dependencies]
+rustls.workspace = true
 tempfile.workspace = true
 
 [lints]

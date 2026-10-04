@@ -15,10 +15,18 @@ pub(super) struct RawTcp<S> {
     peer: Option<JoinHandle<Result<(), Error>>>,
     stop: CancellationToken,
     payload_bytes: usize,
+    write_buffer: Vec<u8>,
+    write_capacity: usize,
 }
 
 impl<S: AsyncRead + AsyncWrite + Unpin + Send + 'static> RawTcp<S> {
-    pub(super) fn new(client: S, mut server: S, args: &Arguments, read_capacity: usize) -> Self {
+    pub(super) fn new(
+        client: S,
+        mut server: S,
+        args: &Arguments,
+        read_capacity: usize,
+        write_capacity: usize,
+    ) -> Self {
         let (read, write) = tokio::io::split(client);
         let read = BufReader::with_capacity(read_capacity, read);
         let stop = CancellationToken::new();
@@ -51,6 +59,8 @@ impl<S: AsyncRead + AsyncWrite + Unpin + Send + 'static> RawTcp<S> {
             peer: Some(peer),
             stop,
             payload_bytes,
+            write_buffer: Vec::new(),
+            write_capacity,
         }
     }
 
@@ -62,7 +72,28 @@ impl<S: AsyncRead + AsyncWrite + Unpin + Send + 'static> RawTcp<S> {
         let write = &mut self.write;
         let read = &mut self.read;
         let payload_bytes = self.payload_bytes;
+        let buffer = &mut self.write_buffer;
+        let capacity = self.write_capacity;
         let sent = async {
+            if !write.is_write_vectored() {
+                // Preserve the same logical batch even for byte-stream
+                // protocols without vectored I/O (not one WS message per IP
+                // payload). Working storage has the same framing buffer cap.
+                buffer.clear();
+                if buffer.capacity() < capacity {
+                    buffer.reserve_exact(capacity);
+                }
+                for packet in &packets {
+                    if buffer.len() + packet.len() > capacity {
+                        write.write_all(buffer).await?;
+                        buffer.clear();
+                    }
+                    buffer.extend_from_slice(packet);
+                }
+                write.write_all(buffer).await?;
+                buffer.clear();
+                return write.flush().await;
+            }
             let mut slices: Vec<_> = packets.iter().map(|bytes| IoSlice::new(bytes)).collect();
             let mut remaining = slices.as_mut_slice();
             while !remaining.is_empty() {

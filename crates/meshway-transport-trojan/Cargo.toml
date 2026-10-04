@@ -1,0 +1,23 @@
+[package]
+name = "meshway-transport-trojan"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+description = "Trojan TCP CONNECT over exact-trust TLS on injected byte streams"
+
+[dependencies]
+meshway-transport = { path = "../meshway-transport" }
+meshway-transport-spec = { path = "../meshway-transport-spec" }
+meshway-tls = { path = "../meshway-tls" }
+sha2.workspace = true
+tokio = { workspace = true, features = ["io-util"] }
+thiserror.workspace = true
+subtle = "2"
+hex = "0.4"
+zeroize = "1.8"
+
+[dev-dependencies]
+rcgen = { version = "0.14", default-features = false, features = ["pem", "ring"] }
+
+[lints]
+workspace = true

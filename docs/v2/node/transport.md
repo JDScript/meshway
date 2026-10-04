@@ -1,6 +1,6 @@
 # 承载会话与发送边界
 
-当前 Rust 运行库提供原生 UDP／TCP socket 适配、公共 datagram framing、有界发送与完成回收，可独立运行正确性验证和性能脚本。它们尚未接入 `meshwayd` 的执行安装，Mesh 包头、端到端加密、TUN、动态 ABI 和连接池仍待实现。业务入口见 [L3 网络模式](/v2/node/runtime)，插件装载见[插件与能力](/v2/node/plugins)。
+当前 Rust 运行库提供 UDP／TCP／VLESS／Trojan 承载、公共 datagram framing、有界发送与完成回收，可独立运行正确性验证和性能脚本。它们尚未接入 `meshwayd` 的执行安装，Mesh 包头、端到端加密、TUN、动态 ABI 和连接池仍待实现。业务入口见 [L3 网络模式](/v2/node/runtime)，插件装载见[插件与能力](/v2/node/plugins)。
 
 ## 分层
 
@@ -22,6 +22,9 @@ VLESS／Trojan 的协议实现参考 mihomo／sing-box 的握手、编解码、T
 | `meshway-transport-spec` | 纯声明、材料结构和已选定拨号参数；`PreparedListener` 只保证结构完整，证书验证由 Server 对精确值执行 |
 | `meshway-transport-tcp::TcpTransport::adopt` | 接收已连接的 Tokio TCP socket，应用 socket／TCP 参数；复用 `AsyncRead`／`AsyncWrite` |
 | `meshway-transport-udp::UdpTransport::adopt` | 接收已绑定、未 connect 的 Tokio UDP socket，保留源／目的地址与真实截断信息；当前支持 Linux／macOS |
+| `meshway-transport-vless::{Connector,Acceptor}` | 既有流上的 VLESS v0、空 flow、TCP CONNECT，支持 TLS 与 WS/TLS |
+| `meshway-transport-trojan::{Connector,Acceptor}` | 既有流上的 Trojan TCP CONNECT／TLS |
+| `meshway-tls::{Client,Server}` | 复用 Server 同一材料验证，执行精确叶证书 pin 与完整 WebPKI 验证的 TLS 握手 |
 | `meshway-transport::Session` | 将 stream 或 datagram I/O 适配为完整帧收发，提供 sender／receiver 和显式 shutdown／join |
 
 socket 的打开、捕获豁免和候选授权归宿主 underlay／connectivity。适配器使用调用者交付的 socket；字段应用失败会报错。TCP keepalive 在当前平台按整秒校验，不能静默截断亚秒配置。
@@ -39,7 +42,13 @@ socket 的打开、捕获豁免和候选授权归宿主 underlay／connectivity�
 | Datagram | 保留消息边界，接收结果说明实际长度与截断；允许丢失、重复和乱序 |
 | Stream | 有序字节流，允许部分读写；本身不保证 Mesh 帧边界 |
 
-公共适配层向数据面交付完整 Mesh 帧，并保留承载的可靠性、顺序、尺寸限制和关闭信息。TCP／VLESS 字节流使用同一套长度 framing；WebSocket 消息与 Mesh 帧的映射另行明确。截断报文、非法长度和不完整帧不能作为成功接收交给业务。
+公共适配层交付完整、不解释内容的 transport frame，并保留承载的可靠性、顺序、尺寸限制和关闭信息。TCP／VLESS／Trojan 字节流使用同一套长度 framing；WebSocket binary 消息先适配为连续字节流，Mesh datagram 边界由公共 framing 恢复。截断报文、非法长度和不完整帧不能作为成功接收交给业务。
+
+VLESS／Trojan 的 `Connector::connect` 与 `Acceptor::accept` 接收宿主已打开的流；CONNECT 目的地作为类型化 `Endpoint` 元数据交付，宿主决定是否为自己的 Mesh 服务，不据此自动拨号。协议凭据验证和外层 TLS 均不代替 Mesh Node 认证。
+
+VLESS 客户端先交付 CONNECT 请求，再延迟读取首个响应头，允许上游等到业务请求后才响应。原始连接截止覆盖响应头确认前的读、写与 flush；确认后成为普通字节流。WS 使用 tungstenite 的 binary message 协议，并适配为同一连续字节流：消息可切分／合并，控制帧不成为 payload，关闭应答必须完成底层 flush。
+
+当前 WS 运行边界为 16 KiB 输出分块、32 KiB 写缓冲、1 MiB frame/message、16 KiB Upgrade 输入、每方向 64 个／8 KiB 额外 header 和 2,048-byte path。路径中的 UTF-8 与既有 percent escape 原样匹配；额外 header 值受当前握手库限制，非 ASCII 值在构造时拒绝。未经请求的扩展／子协议会在发送 VLESS 凭据前拒绝。当前日志入口不桥接依赖的 `log` facade；嵌入宿主须避免开启 tungstenite 会输出完整握手／frame 的 payload trace。
 
 当前 stream framing 为大端 u32 长度前缀，使用 Tokio `LengthDelimitedCodec`；拒绝空帧和超过配置上限的长度。UDP 每个报文承载一个完整 payload，保留原有报文边界。Linux 截断结果可提供原长度，macOS 无法可靠获取时返回未知。UDP 当前仍逐报文执行系统调用，发送 batch 不等于已实现 `sendmmsg`／`recvmmsg`。
 
@@ -115,7 +124,7 @@ mise run perf:transport --protocol all --payload 64 1200 --batch 1 32 \
 
 脚本显式构建 release 测量程序，使用独立 `target/transport-perf` 缓存，交替执行 raw／datagram 次序。同仓库测量互斥，每次运行保存独立二进制快照，避免后续构建改变正在比较的程序。结果位于仓库公共目录 `.meshway/perf/transport/<run>/`，包括二进制、`results.json`、`summary.md` 及各次 stdout／stderr；记录源码／二进制 digest、工具链、平台、参数和有效成对结果，失败样本保留而不填零。表格为各模式中位数，比值为有效配对重复的比值中位数。
 
-当前支持 TCP／UDP 的本机固定 payload 批量 echo。吞吐按发起端实际收回的 payload 计，消息速率是逻辑消息交付计数；RTT 从批次提交到各条 echo 交付，CPU 时间来自完整子进程（含 warmup／初始化）。吞吐区间排除连接建立和 warmup；分配、复制及峰值内存尚无计数器时明确为 null。两种模式使用相同 socket 参数和 stream 接收缓冲上限。此入口测量公共 transport datagram 适配成本，Mesh 认证、加密、路由、动态 ABI 与 TUN 在报告中明确标为未启用。VLESS／Trojan 的 provider 与相应测量仍待实现。
+当前支持 `tcp`、`udp`、`vless-tcp`、`vless-ws`、`trojan` 的本机固定 payload 批量 echo。代理协议的两种模式均保留真实 TLS／协议握手和相同字节流实现。吞吐按发起端实际收回的 payload 计，消息速率是逻辑消息交付计数；RTT 从批次提交到各条 echo 交付，CPU 时间来自完整子进程（含 warmup／初始化）。吞吐区间排除连接建立和 warmup；分配、复制及峰值内存尚无计数器时明确为 null。两种模式使用相同 socket 参数和 stream 缓冲上限；raw 在底层不支持 vectored I/O 时采用同样有界的批量字节缓冲，避免把一批输入误变为逐消息发送。此入口测量公共 transport datagram 适配成本，Mesh 认证、端到端加密、路由、动态 ABI 与 TUN 在报告中明确标为未启用。
 
 每种正式协议及封装都必须提供成对的性能结果，使用同一 transport 实现、连接条件、业务 payload、批量策略与资源预算：
 

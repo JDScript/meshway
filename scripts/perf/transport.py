@@ -18,7 +18,8 @@ import uuid
 
 ROOT = Path(__file__).resolve().parents[2]
 SOURCE_DIRS = ("crates/meshway-transport", "crates/meshway-transport-tcp",
-               "crates/meshway-transport-udp", "crates/meshway-transport-spec",
+                "crates/meshway-transport-udp", "crates/meshway-transport-spec",
+               "crates/meshway-transport-vless", "crates/meshway-transport-trojan", "crates/meshway-tls",
                "crates/meshway-serde", "tools/meshway-transport-perf", "scripts/perf")
 
 
@@ -47,7 +48,7 @@ def save(path, value):
 
 def summary(results):
     rows = ["# Transport performance", "",
-            "Same native provider; fixed-payload batched echo over loopback.",
+            "Same protocol provider (including required TLS/WS); fixed-payload batched echo over loopback.",
             "Datagram mode adds the common framing/ownership layer. Mesh identity authentication,",
             "E2E encryption, routing, dynamic ABI and TUN are not measured by this run.",
             "Table values are mode-wise medians; ratios below are medians of matched repetitions.", "",
@@ -78,7 +79,7 @@ def summary(results):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--protocol", choices=["tcp", "udp", "all"], default="all")
+    parser.add_argument("--protocol", choices=["tcp", "udp", "vless-tcp", "vless-ws", "trojan", "all"], default="all")
     parser.add_argument("--payload", type=int, nargs="+", default=[64, 1200])
     parser.add_argument("--batch", type=int, nargs="+", default=[1, 32])
     parser.add_argument("--messages", type=int, default=200000)
@@ -116,7 +117,7 @@ def measure(args, output_root):
                 "rustc": command("rustc", "-Vv"), "platform": platform.platform(),
                 "architecture": platform.machine(), "logicalCpus": os.cpu_count(),
                 "runtimeWorkerThreads": 2,
-                "scope": "loopback native transport raw versus common datagram adapter",
+                "scope": "loopback protocol raw versus common datagram adapter",
                 "options": vars(args), "results": []}
     # Every sample executes one immutable snapshot, even if another workflow
     # rebuilds the workspace target while this report is running.
@@ -125,7 +126,7 @@ def measure(args, output_root):
     metadata["binaryFile"] = binary.name
     with binary.open("rb") as stream:
         metadata["binarySha256"] = hashlib.file_digest(stream, "sha256").hexdigest()
-    protocols = ["tcp", "udp"] if args.protocol == "all" else [args.protocol]
+    protocols = ["tcp", "udp", "vless-tcp", "vless-ws", "trojan"] if args.protocol == "all" else [args.protocol]
     failed = False
     for protocol in protocols:
         for payload in args.payload:

@@ -9,12 +9,7 @@ use meshway_configuration::{ConfigurationError, NetworkConfigurationInput};
 use meshway_model::{NetworkId, NodeId};
 use meshway_transport_spec::{Listener, ListenerTls, SecretString, TlsMode};
 use rusqlite::{Transaction, params};
-use rustls::{
-    client::danger::ServerCertVerifier,
-    pki_types::{ServerName, UnixTime},
-};
 use std::collections::{BTreeMap, BTreeSet};
-use std::{io::Cursor, sync::Arc};
 
 fn invalid() -> Error {
     Error::InvalidConfiguration(ConfigurationError::Invalid(vec![
@@ -154,37 +149,7 @@ fn prepare_tls(tls: &mut ListenerTls, generate: bool) -> Result<(), Error> {
 /// Real WebPKI certificate-chain, DNS/IP name, current-time validation plus
 /// supported-provider SPKI/private-key consistency. No insecure verifier.
 pub(crate) fn verify_tls(tls: &ListenerTls) -> Result<Vec<u8>, Error> {
-    let pem = tls.certificate.as_ref().ok_or_else(invalid)?.expose();
-    let key = tls.private_key.as_ref().ok_or_else(invalid)?.expose();
-    if pem.len() > 128 * 1024 || key.len() > 32 * 1024 {
-        return Err(invalid());
-    }
-    let chain = rustls_pemfile::certs(&mut Cursor::new(pem))
-        .collect::<Result<Vec<_>, _>>()
-        .map_err(|_| invalid())?;
-    if chain.is_empty() || chain.len() > 8 {
-        return Err(invalid());
-    }
-    let private_key = rustls_pemfile::private_key(&mut Cursor::new(key))
-        .map_err(|_| invalid())?
-        .ok_or_else(invalid)?;
-    let provider = Arc::new(rustls::crypto::ring::default_provider());
-    let certified = rustls::sign::CertifiedKey::from_der(chain.clone(), private_key, &provider)
-        .map_err(|_| invalid())?;
-    certified.keys_match().map_err(|_| invalid())?;
-    let mut roots = rustls::RootCertStore::empty();
-    roots
-        .add(chain.last().ok_or_else(invalid)?.clone())
-        .map_err(|_| invalid())?;
-    let verifier =
-        rustls::client::WebPkiServerVerifier::builder_with_provider(Arc::new(roots), provider)
-            .build()
-            .map_err(|_| invalid())?;
-    let name = ServerName::try_from(tls.server_name.clone()).map_err(|_| invalid())?;
-    verifier
-        .verify_server_cert(&chain[0], &chain[1..], &name, &[], UnixTime::now())
-        .map_err(|_| invalid())?;
-    Ok(chain[0].as_ref().to_vec())
+    meshway_tls::verify_listener(tls).map_err(|_| invalid())
 }
 
 fn check_revocation(

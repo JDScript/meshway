@@ -1,0 +1,20 @@
+[package]
+name = "meshway-tls"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+description = "Shared listener material verification and exact-trust TLS over caller-owned streams"
+
+[dependencies]
+meshway-transport-spec = { path = "../meshway-transport-spec" }
+rustls.workspace = true
+rustls-pemfile.workspace = true
+tokio = { workspace = true, features = ["io-util"] }
+tokio-rustls.workspace = true
+thiserror.workspace = true
+
+[dev-dependencies]
+rcgen = { version = "0.14", default-features = false, features = ["pem", "ring"] }
+
+[lints]
+workspace = true
