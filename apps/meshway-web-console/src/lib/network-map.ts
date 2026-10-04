@@ -10,7 +10,6 @@ import type {
 } from "@meshway/control-client"
 
 import type { LinkLook, Scene, SceneLink, SceneNode } from "@/globe/scene"
-import { shortId } from "@/lib/format"
 import { nodeStatus, type NodeStatus } from "@/lib/nodes/status"
 
 // The overview's reading of the network's State: which nodes the
@@ -52,9 +51,9 @@ export const EVIDENCE_ORDER: readonly LinkEvidence[] = [
 ]
 
 /**
- * Every node in the State, named by the inventory; a node the account
- * cannot list (a peer of its own device) keeps its short ID, and its
- * status is its report's alone.
+ * Every node in the State, named by its configured hostname; a node the
+ * account cannot list (a peer of its own device) takes its status from its
+ * report alone.
  */
 export function mapNodes(
   state: StateView,
@@ -67,7 +66,7 @@ export function mapNodes(
       const listed = inventory.get(id) ?? null
       return {
         id,
-        name: listed?.hostname ?? shortId(id),
+        name: listed?.hostname ?? view.hostname,
         status: nodeStatus(listed, view),
         location,
         unlocated: placed

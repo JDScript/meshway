@@ -21,11 +21,10 @@ export function endsThisTab(revocation: Revocation, thisSession: string) {
   }
 }
 
-/** The start of an ID, enough to tell sessions apart in a list. */
-
 /** What an activity event acted on, as the account page names it. */
 export type ActivityTargetView =
-  | { kind: "account" }
+  /** The account itself; for an email change, the address before it. */
+  | { kind: "account"; previousEmail: string | null }
   | { kind: "this_session" }
   | { kind: "session"; short: string }
   | { kind: "network"; short: string }
@@ -39,7 +38,7 @@ export function activityTarget(
 ): ActivityTargetView {
   switch (target.type) {
     case "account":
-      return { kind: "account" }
+      return { kind: "account", previousEmail: target.previousEmail }
     case "session":
       return target.sessionId === thisSession
         ? { kind: "this_session" }

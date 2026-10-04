@@ -31,7 +31,14 @@ test("a session target is this sign-in or another one by its short ID", () => {
       { type: "account", userId: mine, previousEmail: null },
       mine
     ),
-    { kind: "account" }
+    { kind: "account", previousEmail: null }
+  )
+  assert.deepEqual(
+    activityTarget(
+      { type: "account", userId: mine, previousEmail: "old@example.com" },
+      mine
+    ),
+    { kind: "account", previousEmail: "old@example.com" }
   )
   assert.deepEqual(
     activityTarget({ type: "configuration", revision: 7 }, mine),

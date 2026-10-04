@@ -29,7 +29,9 @@ import { currentSession } from "@/state/session"
 function targetLabel(target: ActivityTargetView): string | null {
   switch (target.kind) {
     case "account":
-      return null
+      return target.previousEmail
+        ? m.account_target_previous_email({ email: target.previousEmail })
+        : null
     case "this_session":
       return m.account_session_this()
     case "session":

@@ -29,6 +29,8 @@ export type View = {
 
 type Staged = {
   batch: string
+  /** The request carrying the stream, as a GET's answer names its own. */
+  requestId: string
   configuration: UserConfigurationView
   progress: ConfigurationApplyProgress | null
   entities?: UserEntitiesView
@@ -53,6 +55,8 @@ export type Effect =
       /** The previous view, when this sync replaced one. */
       previous: View | null
       progress: ConfigurationApplyProgress | null
+      /** The sync's request ID: a manager's configuration is then the GET's answer. */
+      requestId: string
       disconnectAfterMs: number
     }
   | { type: "entities"; previous: UserEntitiesView; next: UserEntitiesView }
@@ -146,6 +150,7 @@ export function step(model: Model, event: UserEvent, id?: string): Step {
     case "config.snapshot": {
       const staged: Staged = {
         batch: event.batch,
+        requestId: event.requestId,
         configuration: event.configuration,
         progress: event.progress ?? null,
       }
@@ -203,6 +208,7 @@ export function step(model: Model, event: UserEvent, id?: string): Step {
             view,
             previous: model.view,
             progress: staged.progress,
+            requestId: staged.requestId,
             disconnectAfterMs: event.disconnectAfterMs,
           },
         ],

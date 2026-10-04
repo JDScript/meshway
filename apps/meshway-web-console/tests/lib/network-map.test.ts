@@ -138,7 +138,8 @@ test("only a node with the controller's coordinates is located; the others keep 
   assert.equal(byId.get(A)?.name, "tokyo")
   assert.equal(byId.get(A)?.status, "current")
   assert.equal(byId.get(B)?.unlocated, "datasetUnavailable")
-  assert.equal(byId.get(B)?.name, "bbbbbbbb")
+  // A peer the inventory does not list is named by the State.
+  assert.equal(byId.get(B)?.name, "b")
   // A peer the inventory does not list: its report alone says its status.
   assert.equal(byId.get(B)?.status, "awaiting_report")
   // Turned off in the inventory, whatever its report says.

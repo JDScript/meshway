@@ -92,6 +92,7 @@ export function NodeTransport({
     return (
       configured ??
       nodes?.items.find((node) => node.id === id)?.hostname ??
+      stateOf(state.data, id)?.hostname ??
       id.slice(0, 8)
     )
   }

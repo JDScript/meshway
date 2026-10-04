@@ -27,11 +27,12 @@ import { requirementText } from "@/lib/configuration/preparation"
 import { useConfigurationDraft } from "@/state/configuration-draft"
 
 /**
- * A node's settings as its workspace reads and edits them. Owners and
- * admins read the whole configuration and edit through the one draft (over
- * its base while it holds operations); a member has only their own nodes'
- * settings, read only: from the event stream once it has sent them, else
- * the controller's read of the node's settings.
+ * A node's settings as its workspace reads and edits them. An account
+ * that may read the whole configuration (`readConfiguration`: owners and
+ * admins) reads it and edits through the one draft (over its base while it
+ * holds operations); a member has only their own nodes' settings, read
+ * only: from the event stream once it has sent them, else the controller's
+ * read of the node's settings.
  */
 export type NodeConfiguration =
   | { kind: "loading" }
@@ -59,8 +60,13 @@ export function useNodeConfiguration(
   nodeId: string,
   network: NetworkSummary | null
 ) {
-  const configuration = useQuery(configurationQuery(networkId))
-  const denied = isDenied(configuration.error)
+  const readable = network?.actions.readConfiguration ?? null
+  const configuration = useQuery({
+    ...configurationQuery(networkId),
+    enabled: readable === true,
+  })
+  // The controller refusing the read anyway (a role changed since) says the same.
+  const denied = readable === false || isDenied(configuration.error)
   const member = useQuery({
     ...memberConfigurationQuery(networkId),
     enabled: denied,
@@ -90,7 +96,7 @@ export function useNodeConfiguration(
     }
     const view = configuration.data
     if (!view)
-      return configuration.isError
+      return readable !== null && configuration.isError
         ? { kind: "failed", error: configuration.error }
         : { kind: "loading" }
     const base =
@@ -124,6 +130,7 @@ export function useNodeConfiguration(
       notes,
     }
   }, [
+    readable,
     denied,
     fromStream,
     read.data,

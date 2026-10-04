@@ -301,7 +301,11 @@ function Links({
           <ListNote>{m.members_links_empty()}</ListNote>
         ) : null}
         {rows.map(({ link, state, at }) => {
-          const user = state === "used" ? link.consumedBy?.email : undefined
+          // A used link says who joined with it; any other, who issued it.
+          const who =
+            state === "used" && link.consumedBy
+              ? m.members_link_used_by({ email: link.consumedBy.email })
+              : m.members_link_issued_by({ email: link.issuedBy.email })
           return (
             <StaticRow
               key={link.id}
@@ -327,8 +331,7 @@ function Links({
               }
               subtitle={
                 <span className="truncate">
-                  {stateLabel[state](dateTime(at) ?? "—")}
-                  {user ? ` · ${user}` : ""}
+                  {stateLabel[state](dateTime(at) ?? "—")} · {who}
                 </span>
               }
               trail={

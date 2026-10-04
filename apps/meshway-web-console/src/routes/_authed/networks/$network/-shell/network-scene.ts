@@ -13,6 +13,7 @@ import {
   mergeRecentLinks,
   overviewScene,
 } from "@/lib/network-map"
+import { stateOf } from "@/lib/nodes/state-model"
 import { onGlobeSelect, setGlobe } from "@/state/globe"
 import { useHistoryLayer } from "@/state/history-layer"
 
@@ -40,8 +41,11 @@ export function useNetworkScene(networkId: string) {
     [inventory.data]
   )
   const nameOf = useMemo(
-    () => (id: string) => listed.get(id)?.hostname ?? shortId(id),
-    [listed]
+    () => (id: string) =>
+      listed.get(id)?.hostname ??
+      stateOf(state.data, id)?.hostname ??
+      shortId(id),
+    [listed, state.data]
   )
   const nodes = useMemo(
     () => (state.data ? mapNodes(state.data, listed) : []),

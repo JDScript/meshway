@@ -39,6 +39,7 @@
   "account_activity_failed": "Could not read the account activity",
   "account_activity_empty": "No activity",
   "account_activity_more": "More activity",
+  "account_target_previous_email": "Was {email}",
   "account_target_session": "Sign-in {id}",
   "account_target_network": "Network {id}",
   "account_target_membership": "Member {id}",

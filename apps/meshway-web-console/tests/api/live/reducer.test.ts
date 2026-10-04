@@ -175,6 +175,11 @@ test("the snapshot is installed only at sync.ready, all at once", () => {
   const { model, effects } = run(snapshot("b1"))
   assert.equal(effects.length, 1)
   assert.equal(effects[0]?.type, "install")
+  // The snapshot's request ID: a manager's configuration is a GET's answer.
+  assert.equal(
+    effects[0]?.type === "install" ? effects[0].requestId : null,
+    REQUEST
+  )
   assert.equal(model.cursor, "b1")
   assert.equal(model.view?.revision, 3)
 })
