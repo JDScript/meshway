@@ -61,7 +61,7 @@ pub trait ObservationProvider: Send + Sync + 'static {
         now: DateTime<Utc>,
     ) -> Result<crate::state::ReportAdmission, Error>;
     /// May synthesize and persist the diagnostic execution demand within this
-    /// transaction. C commits it together with task acceptance before publishing.
+    /// transaction. The observation service commits it together with task acceptance before publishing.
     fn prepare_observation(
         &self,
         tx: &Transaction<'_>,

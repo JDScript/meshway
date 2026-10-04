@@ -45,7 +45,7 @@ pub struct Execution {
     publisher: crate::state::service::CommitPublisher,
 }
 impl Execution {
-    /// Supplies C's report/view provider with actual current SQL facts. The
+    /// Supplies the State report/view provider with actual current SQL facts. The
     /// returned configuration is private execution material: providers project
     /// only resource identities/allowed endpoints and never broadcast it.
     pub fn current_node_execution(

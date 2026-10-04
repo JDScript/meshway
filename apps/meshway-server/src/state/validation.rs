@@ -341,7 +341,7 @@ pub(crate) fn validate_probe_context(
                         .is_some_and(|allowed| allowed.contains(transport))
                 })
         }
-        // Controller probes have no Mesh peer/path. No current producer or
+        // Server-originated probes have no Mesh peer/path. No current producer or
         // authorization contract exists for them yet.
         ProbeKind::Controller => false,
     };

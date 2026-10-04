@@ -103,7 +103,7 @@ impl CommitEffects {
     }
 }
 
-/// B/C integration is mandatory for any Node/resource dependency. Both methods
+/// Execution and resource effects of a configuration commit. Both methods
 /// execute within the caller's one SQL transaction; errors roll everything back.
 pub(crate) trait CommitParticipant: Send + Sync {
     fn revalidate(

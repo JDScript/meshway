@@ -1,5 +1,5 @@
-//! Production B→C authorization projection. The root StateProvider composes
-//! these transaction-checked facts with A's configuration/entity projections.
+//! Execution-side authorization projection for State. The root StateProvider
+//! composes these transaction-checked facts with configuration/entity projections.
 use super::Execution;
 use crate::error::Error;
 use crate::{

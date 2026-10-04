@@ -16,7 +16,7 @@ use std::{
     sync::{Arc, Mutex},
 };
 
-/// The Node credential encoding/verification is owned by B. This enum is never
+/// Node credential encoding/verification lives in `execution`. This enum is never
 /// serialized or logged and is checked again in each provider transaction.
 #[derive(Clone)]
 pub enum ReadIdentity {
@@ -737,12 +737,12 @@ impl<P: StateProvider> StateService<P> {
             .await?
     }
 }
-/// Clone this handle into A/B's accepted SQLite closures. Publish directly
+/// Clone this handle into accepted SQLite closures. Publish directly
 /// after COMMIT, never in the awaiting HTTP future.
 pub struct CommitPublisher {
     runtime: Arc<Mutex<Runtime>>,
 }
-/// Synchronous execution input for B. Call after B has validated the supplied
+/// Synchronous State input for `execution`. Call after it has validated the supplied
 /// admission in the same transaction; no HTTP source address participates.
 pub struct StateReader {
     runtime: Arc<Mutex<Runtime>>,
@@ -782,7 +782,7 @@ impl CommitPublisher {
     pub(crate) fn new(runtime: Arc<Mutex<Runtime>>) -> Self {
         Self { runtime }
     }
-    /// Preferred A/B write boundary: invoke inside the accepted store job.
+    /// Preferred write boundary: invoke inside the accepted store job.
     /// A failed transaction emits nothing; cancellation of the HTTP waiter
     /// cannot interrupt this synchronous commit-to-journal sequence.
     pub fn commit(

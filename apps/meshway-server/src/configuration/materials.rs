@@ -1,4 +1,4 @@
-//! Controller-owned material generation, certificate verification and private
+//! Server-owned material generation, certificate verification and private
 //! irreversible-revocation checks. Declarations never self-attest validation.
 use super::*;
 use chrono::Datelike;
