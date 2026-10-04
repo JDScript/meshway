@@ -48,6 +48,7 @@ import {
 } from "./listener-edit"
 import { ListenerEditor } from "./listener-editor"
 import {
+  endpointText,
   LISTENER_KEY,
   newListener,
   presetsIn,
@@ -78,10 +79,6 @@ import {
   stateOf,
   unconfiguredListeners,
 } from "./state-model"
-
-/** `host:port`, with IPv6 in brackets. */
-export const endpointText = (host: string, port: number) =>
-  host.includes(":") ? `[${host}]:${port}` : `${host}:${port}`
 
 /** A time as when, with how long ago or until; "expired" once past. */
 function TimeFact({

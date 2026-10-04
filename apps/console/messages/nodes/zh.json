@@ -118,7 +118,6 @@
   "nodes_enrollment_expired": "已过期",
   "nodes_enrollment_expires": "{at} 到期",
   "nodes_enrollment_revoked_at": "{at} 撤销",
-  "nodes_enrollment_created": "{at} 创建",
   "nodes_enrollment_revoke": "撤销接入密钥",
   "nodes_enrollment_revoke_effect": "标签为 {tags} 的密钥不能再接入设备",
   "nodes_enrollment_revoke_effect_final": "撤销无法恢复",
@@ -309,5 +308,13 @@
   "nodes_time_past": "已过",
   "nodes_tls_managed": "平台生成",
   "nodes_tls_provided": "自行提供",
-  "nodes_tls_provided_missing": "自行提供（缺证书）"
+  "nodes_tls_provided_missing": "自行提供（缺证书）",
+  "nodes_enrollment_created_by": "{at} 由 {user} 创建",
+  "nodes_enrollment_consumed_at": "{at} 使用",
+  "nodes_enrollment_hostname_device": "主机名取设备自报",
+  "nodes_enrollment_listeners_none": "无监听",
+  "nodes_enrollment_node": "接入为 {name}",
+  "nodes_enrollment_node_gone": "接入为节点 {id}（已删除，或不在这个账户可见的节点中）",
+  "nodes_enrollment_more": "加载更多",
+  "nodes_enrollment_revoke_moot": "这个密钥已使用或已过期，没有撤销。"
 }

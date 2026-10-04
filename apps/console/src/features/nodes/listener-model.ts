@@ -36,6 +36,10 @@ export const LISTENER_KEY: Record<Preset, string> = {
 }
 
 /** The port a preset suggests: 443 where TLS is spoken, else Meshway's own. */
+/** `host:port`, with IPv6 in brackets. */
+export const endpointText = (host: string, port: number) =>
+  host.includes(":") ? `[${host}]:${port}` : `${host}:${port}`
+
 export const suggestedPort = (preset: Preset) =>
   protocolOf(preset) === "vless" ? "443" : "8421"
 

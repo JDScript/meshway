@@ -130,7 +130,13 @@ export function NodesPage({
               onDeleted={nav.toList}
             />
           ) : route.add && canAdd ? (
-            <AddNode networkId={networkId} onClose={nav.closeWorkspace} />
+            <AddNode
+              networkId={networkId}
+              network={network}
+              nodes={nodes.data}
+              onClose={nav.closeWorkspace}
+              onOpenNode={(nodeId) => nav.openNode(nodeId)}
+            />
           ) : null
         }
         onCloseWorkspace={nav.closeWorkspace}

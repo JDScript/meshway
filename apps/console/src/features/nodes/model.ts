@@ -34,43 +34,28 @@ export const keyRevoked = (node: NodeInventoryView) =>
 
 export type EnrollmentKeyState = "pending" | "consumed" | "revoked" | "expired"
 
-type KeyTimes = Pick<
+type KeyFacts = Pick<
   EnrollmentKeyView,
-  "consumedRequestId" | "revokedAt" | "expiresAt"
+  "consumedAt" | "consumedRequestId" | "revokedAt" | "expiresAt"
 >
 
 /**
- * A key's state at `now` (milliseconds), and the time it is about (none
- * for a used key: the controller does not report when). Used keys stay
- * used even if revoked later; until then a key expires at `expiresAt`.
+ * A key's state at `now` (milliseconds), and the time it is about. A used
+ * key stays used whatever came after (the controller refuses revoking it);
+ * the controller records the use with its request and time together, so
+ * either one says the key was used. Until then a revoked key is revoked,
+ * and one past `expiresAt` expired.
  */
 export function enrollmentKeyState(
-  key: KeyTimes,
+  key: KeyFacts,
   now: number
 ): { state: EnrollmentKeyState; at: string | null } {
-  if (key.consumedRequestId != null) return { state: "consumed", at: null }
+  if (key.consumedAt !== null || key.consumedRequestId != null)
+    return { state: "consumed", at: key.consumedAt }
   if (key.revokedAt !== null) return { state: "revoked", at: key.revokedAt }
   if (Date.parse(key.expiresAt) <= now)
     return { state: "expired", at: key.expiresAt }
   return { state: "pending", at: key.expiresAt }
-}
-
-/** Pending keys first, the soonest to expire on top; then the rest, newest first. */
-export function byEnrollmentKeyState(
-  a: {
-    state: EnrollmentKeyState
-    key: Pick<EnrollmentKeyView, "createdAt" | "expiresAt">
-  },
-  b: {
-    state: EnrollmentKeyState
-    key: Pick<EnrollmentKeyView, "createdAt" | "expiresAt">
-  }
-): number {
-  const pendingA = a.state === "pending"
-  const pendingB = b.state === "pending"
-  if (pendingA !== pendingB) return pendingA ? -1 : 1
-  if (pendingA) return Date.parse(a.key.expiresAt) - Date.parse(b.key.expiresAt)
-  return Date.parse(b.key.createdAt) - Date.parse(a.key.createdAt)
 }
 
 /** How long a new key may be used for, in seconds; the controller takes up to 30 days. */

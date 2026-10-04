@@ -3,7 +3,7 @@ import {
   listEnrollmentKeys,
   listNodes,
 } from "@meshway/control-client"
-import { queryOptions } from "@tanstack/react-query"
+import { infiniteQueryOptions, queryOptions } from "@tanstack/react-query"
 
 import { isDenied } from "@/features/configuration/queries"
 import { pollUnlessLive } from "@/features/live/status"
@@ -25,14 +25,30 @@ export const nodesQuery = (networkId: string) =>
     refetchInterval: pollUnlessLive(networkId, 30_000),
   })
 
-/** The network's enrolment keys, metadata only (a key's secret is never readable again). Owners and admins. */
+/** Enrolment keys per page; the controller takes 1 to 200. */
+const KEY_PAGE = 50
+
+/**
+ * The network's enrolment keys, newest first, a page at a time, with the
+ * controller's total; metadata only (a key's secret is never readable
+ * again). Owners and admins.
+ */
 export const enrollmentKeysQuery = (networkId: string) =>
-  queryOptions({
+  infiniteQueryOptions({
     queryKey: [...networkKey(networkId), "enrollment-keys"],
-    queryFn: ({ signal }) =>
+    queryFn: ({ pageParam, signal }) =>
       authed((token) =>
-        listEnrollmentKeys(client, { networkId }, {}, { token, signal })
+        listEnrollmentKeys(
+          client,
+          { networkId },
+          pageParam === null
+            ? { limit: KEY_PAGE }
+            : { limit: KEY_PAGE, cursor: pageParam },
+          { token, signal }
+        )
       ),
+    initialPageParam: null as string | null,
+    getNextPageParam: (last) => last.nextCursor,
     staleTime: 10_000,
     refetchInterval: (query) => (isDenied(query.state.error) ? false : 30_000),
   })

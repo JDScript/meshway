@@ -20,7 +20,7 @@ its generated client only, and only what the controller delivers:
   `revokeAccountSession`, `revokeOtherAccountSessions`,
   `revokeAllAccountSessions`, `listAccountActivity`) and password reset
   links (`inspectPasswordReset`, `redeemPasswordReset`); nodes
-  (`listNodes`, `deleteNode`, `revokeNodeKey`), enrolment keys
+  (`listNodes`, `getNodeSettings`, `deleteNode`, `revokeNodeKey`), enrolment keys
   (`listEnrollmentKeys`, `createEnrollmentKey`, `revokeEnrollmentKey`) and
   the transport catalog (`getTransportCatalog`); the network's State
   (`getNetworkState`).
@@ -149,8 +149,14 @@ its generated client only, and only what the controller delivers:
   checks the generated `Listener` schema and the host rules first. The
   key is shown once in a dialog dropped when it closes; this controller
   provides no Agent install, and the page says so instead of a command.
-  Below, the keys: unused, used, revoked or expired; unused ones can be
-  revoked.
+  Below, the keys (`listEnrollmentKeys`, newest first, a page at a time
+  with the controller's total): each key's tags, the initial hostname
+  (else the device's) and listeners (the non-secret view), who created it
+  (by email while the members are readable, else the user ID), and its
+  state from its fields: used (with when, and the node it became, opened
+  from there while listed), else revoked, else expired, else unused.
+  Revoking is offered where `actions.revoke`; the controller answers a key
+  used or expired first alike, so the list read again says which.
 - `/authorize-device/<enrollmentRequestId>` approves a device's enrolment
   request (`getDeviceAuthorization`, `approveDeviceAuthorization`,
   `denyDeviceAuthorization`). The path is the console's: neither the

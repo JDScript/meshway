@@ -118,7 +118,6 @@
   "nodes_enrollment_expired": "Expired",
   "nodes_enrollment_expires": "Expires {at}",
   "nodes_enrollment_revoked_at": "Revoked {at}",
-  "nodes_enrollment_created": "Created {at}",
   "nodes_enrollment_revoke": "Revoke enrolment key",
   "nodes_enrollment_revoke_effect": "The key for {tags} can no longer enrol a device",
   "nodes_enrollment_revoke_effect_final": "Revoking cannot be undone",
@@ -309,5 +308,13 @@
   "nodes_time_past": "past",
   "nodes_tls_managed": "Managed",
   "nodes_tls_provided": "Provided",
-  "nodes_tls_provided_missing": "Provided (missing)"
+  "nodes_tls_provided_missing": "Provided (missing)",
+  "nodes_enrollment_created_by": "Created {at} by {user}",
+  "nodes_enrollment_consumed_at": "Used {at}",
+  "nodes_enrollment_hostname_device": "Hostname from the device",
+  "nodes_enrollment_listeners_none": "No listener",
+  "nodes_enrollment_node": "Enrolled as {name}",
+  "nodes_enrollment_node_gone": "Enrolled as node {id} (deleted, or not among the nodes this account sees)",
+  "nodes_enrollment_more": "Load more",
+  "nodes_enrollment_revoke_moot": "This key was used or expired first; it was not revoked."
 }
