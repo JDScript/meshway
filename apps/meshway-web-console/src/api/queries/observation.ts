@@ -38,13 +38,24 @@ export const observationListQuery = (networkId: string) =>
     refetchInterval: pollUnlessLive(networkId, 10_000),
   })
 
-const isGone = (error: unknown) =>
-  error instanceof ApiFailure && problemCode(error.failure) === "not_found"
+/**
+ * The controller no longer holds this subscription for this sign-in: not
+ * found, or refused because the session lost its authority over it (403)
+ * or the source's execution moved on (409); it drops the subscriber then.
+ */
+export const endsSubscription = (error: unknown) => {
+  const code = error instanceof ApiFailure ? problemCode(error.failure) : null
+  return (
+    code === "not_found" ||
+    code === "permission_denied" ||
+    code === "state_conflict"
+  )
+}
 
 /**
  * One subscription this tab follows, with the samples it has seen
  * (`record.ts`). A read folds the controller's current task into what is
- * kept; a subscription the controller no longer finds is removed.
+ * kept; a subscription the controller no longer holds is removed.
  */
 export const subscriptionQuery = (
   queryClient: QueryClient,
@@ -71,13 +82,13 @@ export const subscriptionQuery = (
         const task = taskFor(list.items, subscriptionId)
         return task ? foldTask(kept, task) : removeRecord(kept)
       } catch (error) {
-        if (isGone(error)) return removeRecord(kept)
+        if (endsSubscription(error)) return removeRecord(kept)
         throw error
       }
     },
     staleTime: Infinity,
     refetchInterval: pollUnlessLive(networkId, 2_000),
-    retry: (count, error) => !isGone(error) && count < 2,
+    retry: (count, error) => !endsSubscription(error) && count < 2,
   })
   return options
 }

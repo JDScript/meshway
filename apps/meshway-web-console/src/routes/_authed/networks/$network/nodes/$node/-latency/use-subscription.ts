@@ -4,6 +4,7 @@ import { useEffect, useState } from "react"
 
 import { ApiFailure, authed, client, problemCode } from "@/api/client"
 import {
+  endsSubscription,
   subscriptionQuery,
   writeRemoved,
   writeTask,
@@ -70,7 +71,7 @@ export function useSubscription(networkId: string, subscriptionId: string) {
           const code =
             error instanceof ApiFailure ? problemCode(error.failure) : null
           if (code === "observation_limit") setEarly((n) => n + 1)
-          else if (code === "not_found")
+          else if (endsSubscription(error))
             writeRemoved(queryClient, networkId, subscriptionId)
         }
       )
