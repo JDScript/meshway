@@ -4,6 +4,7 @@ use meshway_model::{NetworkId, RequestId};
 use meshway_protocol::{CreateNetworkRequest, RegisterRequest, WireSecret};
 use meshway_server::{App, Settings};
 use std::{
+    io::{BufRead, Read},
     path::{Path, PathBuf},
     process::{Child, Command, Stdio},
     time::Duration,
@@ -18,12 +19,67 @@ pub fn request_id() -> RequestId {
 pub struct Server {
     pub origin: String,
     pub client: Client,
-    app: App,
-    stop: oneshot::Sender<()>,
-    task: JoinHandle<()>,
+    backend: Backend,
+}
+enum Backend {
+    Embedded {
+        app: Box<App>,
+        stop: oneshot::Sender<()>,
+        task: JoinHandle<()>,
+    },
+    External(External),
+}
+struct External {
+    child: Child,
+    output: Option<std::thread::JoinHandle<()>>,
+}
+impl Drop for External {
+    fn drop(&mut self) {
+        let _ = self.child.kill();
+        let _ = self.child.wait();
+        if let Some(output) = self.output.take() {
+            let _ = output.join();
+        }
+    }
 }
 impl Server {
     pub async fn start(path: PathBuf) -> Self {
+        if let Some(binary) = std::env::var_os("MESHWAY_TEST_SERVER_BINARY") {
+            let child = Command::new(binary)
+                .arg("--data-dir")
+                .arg(path)
+                .args(["--listen", "127.0.0.1:0", "--registration-enabled", "true"])
+                .stdin(Stdio::null())
+                .stdout(Stdio::piped())
+                .stderr(Stdio::null())
+                .spawn()
+                .unwrap();
+            let mut external = External {
+                child,
+                output: None,
+            };
+            let stdout = external.child.stdout.take().unwrap();
+            let (ready, address) = oneshot::channel();
+            external.output = Some(std::thread::spawn(move || {
+                let mut reader = std::io::BufReader::new(stdout);
+                let mut line = String::new();
+                reader.by_ref().take(512).read_line(&mut line).unwrap();
+                let _ = ready.send(line);
+                let _ = std::io::copy(&mut reader, &mut std::io::sink());
+            }));
+            let line = tokio::time::timeout(Duration::from_secs(10), address)
+                .await
+                .unwrap()
+                .unwrap();
+            let address: std::net::SocketAddr = line
+                .trim()
+                .strip_prefix("Listening on ")
+                .expect("Server readiness line")
+                .parse()
+                .unwrap();
+            assert!(address.ip().is_loopback());
+            return Self::client(format!("http://{address}"), Backend::External(external));
+        }
         let app = App::open(Settings::new(path)).await.unwrap();
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let origin = format!("http://{}", listener.local_addr().unwrap());
@@ -37,6 +93,16 @@ impl Server {
                 .await
                 .unwrap();
         });
+        Self::client(
+            origin,
+            Backend::Embedded {
+                app: Box::new(app),
+                stop,
+                task,
+            },
+        )
+    }
+    fn client(origin: String, backend: Backend) -> Self {
         let client = Client::new(
             &origin,
             reqwest::Client::builder()
@@ -48,9 +114,7 @@ impl Server {
         Self {
             origin,
             client,
-            app,
-            stop,
-            task,
+            backend,
         }
     }
     pub async fn owner(&self) -> (WireSecret, NetworkId) {
@@ -76,10 +140,32 @@ impl Server {
         (session.token, network.network.id)
     }
     pub async fn close(self) {
-        self.app.stream_shutdown()();
-        self.stop.send(()).unwrap();
-        self.task.await.unwrap();
-        self.app.shutdown().await.unwrap();
+        match self.backend {
+            Backend::Embedded { app, stop, task } => {
+                app.stream_shutdown()();
+                stop.send(()).unwrap();
+                task.await.unwrap();
+                app.shutdown().await.unwrap();
+            }
+            Backend::External(mut external) => {
+                assert!(
+                    Command::new("kill")
+                        .args(["-TERM", &external.child.id().to_string()])
+                        .status()
+                        .unwrap()
+                        .success()
+                );
+                let deadline = Instant::now() + Duration::from_secs(10);
+                loop {
+                    if let Some(status) = external.child.try_wait().unwrap() {
+                        assert!(status.success());
+                        break;
+                    }
+                    assert!(Instant::now() < deadline, "Server shutdown deadline");
+                    tokio::time::sleep(Duration::from_millis(25)).await;
+                }
+            }
+        }
     }
 }
 pub struct Process {
