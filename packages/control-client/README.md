@@ -245,9 +245,37 @@ or source URLs. Publication/receipt evidence does not attest to actual traffic.
 An `applyConfiguration` restore request may supply `resourcePublication` to use
 that same source revision's historical resource bindings; omit it for the source
 version's original bindings. Cross-network or mismatched source publications
-are rejected. Current remote preparation uses an unreferenced declaration,
-explicit refresh, then configuration references. Single-apply preparation and
-periodic `updateInterval` updates are still being implemented.
+are rejected. A single configuration apply can prepare a newly referenced remote
+source or replace an existing one. Validation returns tentative digest/entry
+counts in `preparedRuleSets`, without storing artifacts or allocating fake IDs.
+The Controller starts periodic `updateInterval` checks with bounded retry;
+unchanged canonical contents do not create a new execution publication.
+
+## Active path observations
+
+`createObservation` takes `sourceNodeId`, `targetNodeId`, a distinct per-page
+`subscriptionId`, `service` (`{ type: "tcp" | "udp", port }` or
+`{ type: "icmpEcho" }`), `selection` (`{ mode: "auto" }` or an explicit path),
+`metrics` and `intervalMs`. The exact service and full path must be authorized.
+Idle networks can prepare independent diagnostic permits without opening any
+ordinary business flow. Source capability `feature:path-observation` version 1
+is required; inspect `unsupportedMetrics`, including current `traffic` support.
+
+`listObservations`/`getObservation` use subscriber views; `renewObservation` and
+`cancelObservation` act on the subscription ID, not the reusable task ID. Renew
+only after the returned `renewAfter`. Each tab has its own lease; closing one
+subscription does not stop another. The last dependency expires or cancels
+independently of Node heartbeats.
+
+`getNodeTasks` returns actual tasks for the authenticated Node/instance, while
+`reportTaskResult` uses the task ID plus its exact instance/configuration.
+Result `phase` can report failure or unsupported without a made-up path/sample;
+`sample` requires real measurement evidence. Task changes may produce a new
+execution target: the Node follows its normal lease/configuration loop before
+executing/reporting against that target. Results are forwarded through
+`observation.status`/`observation.sample`; terminal subscriptions are removed
+without replaying cancelled samples. These APIs do not prove an Agent has
+installed or measured a tunnel.
 
 The SDK's TypeScript check covers both browser libraries and a Node-only
 `ES2022`/`@types/node` configuration; Node consumers do not need DOM types.

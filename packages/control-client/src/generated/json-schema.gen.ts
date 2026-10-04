@@ -1563,6 +1563,7 @@ export const schemaDocument = {
       "ConfigurationPreviewResponse": {
         "type": "object",
         "required": [
+          "preparedRuleSets",
           "unavailableDependencies",
           "requestId",
           "baseRevision",
@@ -1598,6 +1599,16 @@ export const schemaDocument = {
             "type": "array",
             "items": {
               "$ref": "#/components/schemas/NodeId"
+            }
+          },
+          "preparedRuleSets": {
+            "type": "object",
+            "description": "Transient canonical content checked by validate; no artifact/version reservation.",
+            "additionalProperties": {
+              "$ref": "#/components/schemas/PreparedRuleSet"
+            },
+            "propertyNames": {
+              "type": "string"
             }
           },
           "preview": {
@@ -2214,6 +2225,48 @@ export const schemaDocument = {
         },
         "additionalProperties": false
       },
+      "CreateObservation": {
+        "type": "object",
+        "required": [
+          "subscriptionId",
+          "sourceNodeId",
+          "targetNodeId",
+          "selection",
+          "service",
+          "metrics",
+          "intervalMs"
+        ],
+        "properties": {
+          "intervalMs": {
+            "type": "integer",
+            "format": "int32",
+            "maximum": 30000,
+            "minimum": 1000
+          },
+          "metrics": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/MetricKind"
+            }
+          },
+          "selection": {
+            "$ref": "#/components/schemas/ObservationPath"
+          },
+          "service": {
+            "$ref": "#/components/schemas/ObservationServiceScope"
+          },
+          "sourceNodeId": {
+            "$ref": "#/components/schemas/NodeId"
+          },
+          "subscriptionId": {
+            "$ref": "#/components/schemas/ObservationSubscriptionId"
+          },
+          "targetNodeId": {
+            "$ref": "#/components/schemas/NodeId"
+          }
+        },
+        "additionalProperties": false
+      },
       "DecisionDelta": {
         "type": "object",
         "required": [
@@ -2482,6 +2535,87 @@ export const schemaDocument = {
           }
         },
         "additionalProperties": false
+      },
+      "DiagnosticDelta": {
+        "type": "object",
+        "required": [
+          "remove",
+          "upsert"
+        ],
+        "properties": {
+          "remove": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ObservationId"
+            }
+          },
+          "upsert": {
+            "type": "object",
+            "additionalProperties": {
+              "$ref": "#/components/schemas/DiagnosticPermit"
+            },
+            "propertyNames": {
+              "type": "string",
+              "format": "uuid",
+              "description": "Leased observation task identifier.\n\n This is an identifier, not a credential. Generation and authorization\n belong to the caller. Parsing rejects aliases rather than normalizing them.",
+              "maxLength": 36,
+              "minLength": 36,
+              "pattern": "^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+            }
+          }
+        },
+        "additionalProperties": false
+      },
+      "DiagnosticPermit": {
+        "type": "object",
+        "required": [
+          "observationId",
+          "source",
+          "instanceId",
+          "target",
+          "service",
+          "paths",
+          "replies",
+          "expiresAt"
+        ],
+        "properties": {
+          "expiresAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "instanceId": {
+            "$ref": "#/components/schemas/InstanceId"
+          },
+          "observationId": {
+            "$ref": "#/components/schemas/ObservationId"
+          },
+          "paths": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/LogicalPath"
+            }
+          },
+          "replies": {
+            "$ref": "#/components/schemas/DiagnosticReplyPolicy"
+          },
+          "service": {
+            "$ref": "#/components/schemas/ObservationServiceScope",
+            "description": "Exact authorized traffic counting scope; diagnostic frames are separate\nfrom TCP/UDP/ICMP business packets and create no business flow authority."
+          },
+          "source": {
+            "$ref": "#/components/schemas/NodeId"
+          },
+          "target": {
+            "$ref": "#/components/schemas/NodeId"
+          }
+        },
+        "additionalProperties": false
+      },
+      "DiagnosticReplyPolicy": {
+        "type": "string",
+        "enum": [
+          "authenticatedExactReversePath"
+        ]
       },
       "DialCandidate": {
         "type": "object",
@@ -5954,6 +6088,7 @@ export const schemaDocument = {
           "dialers",
           "peers",
           "permits",
+          "diagnostics",
           "decisions",
           "dns",
           "exitEnabled"
@@ -5978,6 +6113,21 @@ export const schemaDocument = {
           },
           "dependencyDigest": {
             "$ref": "#/components/schemas/Digest"
+          },
+          "diagnostics": {
+            "type": "object",
+            "description": "Authenticated measurement only. Never accepted by business packet admission.",
+            "additionalProperties": {
+              "$ref": "#/components/schemas/DiagnosticPermit"
+            },
+            "propertyNames": {
+              "type": "string",
+              "format": "uuid",
+              "description": "Leased observation task identifier.\n\n This is an identifier, not a credential. Generation and authorization\n belong to the caller. Parsing rejects aliases rather than normalizing them.",
+              "maxLength": 36,
+              "minLength": 36,
+              "pattern": "^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+            }
           },
           "dialers": {
             "type": "object",
@@ -6078,7 +6228,8 @@ export const schemaDocument = {
           "dialers",
           "peers",
           "permits",
-          "decisions"
+          "decisions",
+          "diagnostics"
         ],
         "properties": {
           "addresses": {
@@ -6092,6 +6243,9 @@ export const schemaDocument = {
           },
           "dependencyDigest": {
             "$ref": "#/components/schemas/Digest"
+          },
+          "diagnostics": {
+            "$ref": "#/components/schemas/DiagnosticDelta"
           },
           "dialers": {
             "$ref": "#/components/schemas/DialerDelta"
@@ -7301,6 +7455,21 @@ export const schemaDocument = {
         "minLength": 36,
         "pattern": "^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
       },
+      "ObservationList": {
+        "type": "object",
+        "required": [
+          "items"
+        ],
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ObservationTask"
+            }
+          }
+        },
+        "additionalProperties": false
+      },
       "ObservationPath": {
         "oneOf": [
           {
@@ -7532,6 +7701,26 @@ export const schemaDocument = {
           "unsupported"
         ]
       },
+      "ObservationResult": {
+        "type": "object",
+        "required": [
+          "instanceId",
+          "configuration",
+          "result"
+        ],
+        "properties": {
+          "configuration": {
+            "$ref": "#/components/schemas/ConfigurationRef"
+          },
+          "instanceId": {
+            "$ref": "#/components/schemas/InstanceId"
+          },
+          "result": {
+            "$ref": "#/components/schemas/ObservationUpdate"
+          }
+        },
+        "additionalProperties": false
+      },
       "ObservationSample": {
         "type": "object",
         "required": [
@@ -7593,6 +7782,63 @@ export const schemaDocument = {
         },
         "additionalProperties": false
       },
+      "ObservationServiceScope": {
+        "oneOf": [
+          {
+            "type": "object",
+            "required": [
+              "port",
+              "type"
+            ],
+            "properties": {
+              "port": {
+                "$ref": "#/components/schemas/Port"
+              },
+              "type": {
+                "type": "string",
+                "enum": [
+                  "tcp"
+                ]
+              }
+            },
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "required": [
+              "port",
+              "type"
+            ],
+            "properties": {
+              "port": {
+                "$ref": "#/components/schemas/Port"
+              },
+              "type": {
+                "type": "string",
+                "enum": [
+                  "udp"
+                ]
+              }
+            },
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "required": [
+              "type"
+            ],
+            "properties": {
+              "type": {
+                "type": "string",
+                "enum": [
+                  "icmpEcho"
+                ]
+              }
+            },
+            "additionalProperties": false
+          }
+        ]
+      },
       "ObservationSubscriptionId": {
         "type": "string",
         "format": "uuid",
@@ -7607,12 +7853,14 @@ export const schemaDocument = {
           "id",
           "sourceNodeId",
           "targetNodeId",
+          "service",
           "selection",
           "configuration",
           "instanceId",
           "metrics",
           "intervalMs",
           "phase",
+          "unsupportedMetrics",
           "expiresAt",
           "renewAfter"
         ],
@@ -7680,6 +7928,9 @@ export const schemaDocument = {
           "selection": {
             "$ref": "#/components/schemas/ObservationPath"
           },
+          "service": {
+            "$ref": "#/components/schemas/ObservationServiceScope"
+          },
           "sourceNodeId": {
             "$ref": "#/components/schemas/NodeId"
           },
@@ -7702,9 +7953,68 @@ export const schemaDocument = {
           },
           "targetNodeId": {
             "$ref": "#/components/schemas/NodeId"
+          },
+          "unsupportedMetrics": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/MetricKind"
+            }
           }
         },
         "additionalProperties": false
+      },
+      "ObservationUpdate": {
+        "oneOf": [
+          {
+            "type": "object",
+            "required": [
+              "phase",
+              "type"
+            ],
+            "properties": {
+              "phase": {
+                "$ref": "#/components/schemas/ReportedObservationPhase"
+              },
+              "type": {
+                "type": "string",
+                "enum": [
+                  "phase"
+                ]
+              }
+            },
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "required": [
+              "path",
+              "pathSegment",
+              "sample",
+              "type"
+            ],
+            "properties": {
+              "path": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/components/schemas/NodeId"
+                }
+              },
+              "pathSegment": {
+                "$ref": "#/components/schemas/Sequence"
+              },
+              "sample": {
+                "$ref": "#/components/schemas/ObservationSample"
+              },
+              "type": {
+                "type": "string",
+                "enum": [
+                  "sample"
+                ]
+              }
+            },
+            "additionalProperties": false
+          }
+        ]
       },
       "OuterSocket": {
         "type": "string",
@@ -8395,6 +8705,24 @@ export const schemaDocument = {
             "additionalProperties": false
           }
         ]
+      },
+      "PreparedRuleSet": {
+        "type": "object",
+        "required": [
+          "digest",
+          "entries"
+        ],
+        "properties": {
+          "digest": {
+            "$ref": "#/components/schemas/Digest"
+          },
+          "entries": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          }
+        },
+        "additionalProperties": false
       },
       "ProbeKind": {
         "type": "string",
@@ -9525,6 +9853,15 @@ export const schemaDocument = {
           }
         },
         "additionalProperties": false
+      },
+      "ReportedObservationPhase": {
+        "type": "string",
+        "enum": [
+          "preparing",
+          "failed",
+          "completed",
+          "unsupported"
+        ]
       },
       "ReporterRole": {
         "type": "string",

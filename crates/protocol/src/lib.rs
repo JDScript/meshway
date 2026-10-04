@@ -62,7 +62,6 @@ pub use observations::{
     CreateObservation, HistoryAccepted, HistoryPage, HistoryQuery, HistoryReport, ObservationList,
     ObservationResult, ObservationTask,
 };
-pub use resources::{RuleSetList, RuleSetView};
 pub use state::{StateAccepted, StateQuery, StateReport, StateView};
 
 pub use auth::{
@@ -71,7 +70,8 @@ pub use auth::{
 };
 pub use meshway_model::{
     ActivityId, EnrollmentKeyId, EnrollmentRequestId, JoinLinkId, MembershipId, MembershipRole,
-    NetworkId, NodeId, PublicationId, Revision, SessionId, Version,
+    NetworkId, NodeId, ObservationId, ObservationSubscriptionId, PublicationId, Revision,
+    SessionId, Version,
 };
 pub use networks::{
     CreateNetworkRequest, MemberActions, MemberSummary, NetworkActions, NetworkListResponse,

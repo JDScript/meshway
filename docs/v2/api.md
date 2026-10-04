@@ -23,13 +23,15 @@
 
 管理／配置候选现已扩展真实 HTTP／SQLite 操作：账户读取、邮箱／密码修改、会话分页及撤销、主机 CLI 密码恢复、角色变更、一次性加入链接、无 Node 依赖的移除／离网、配置普通视图与显式秘密 source、JSONC／强类型编辑校验及 CAS 保存、版本分页／对照／恢复、账户／网络活动、配置 schema 与承载目录。名称规则通过 `getAuthOptions.networkNameRules` 发布；成员 actions 由当前权限推导，网络／成员列表 total 在同一查询事务内按创建上界和当前权限计算。邮箱同步更新可读引用但保留稳定主体绑定；恢复历史版本不会把旧邮箱绑定到同名新账户。
 
-Node 控制流程已整合真实 HTTP／SQLite：签名接入、PKCE 批准与兑换、接入密钥、持钥会话与轮换恢复、实例／lease、完整执行目标与增量、demand、saved／applied／failed 回执、永久删除及成员删除联动。需求重试不重复扰动无关节点，回执按尝试／序号处理乱序；节点身份与策略引用使用独立的稳定绑定。当前生成物包含 75 个路径、80 个操作，精确方法、输入与错误以实际路由导出的 OpenAPI 为准。
+Node 控制流程已整合真实 HTTP／SQLite：签名接入、PKCE 批准与兑换、接入密钥、持钥会话与轮换恢复、实例／lease、完整执行目标与增量、demand、saved／applied／failed 回执、永久删除及成员删除联动。需求重试不重复扰动无关节点，回执按尝试／序号处理乱序；节点身份与策略引用使用独立的稳定绑定。当前生成物包含 81 个路径、87 个操作，精确方法、输入与错误以实际路由导出的 OpenAPI 为准。
 
 State 查询／Node 上报、历史接纳／查询、按 revision 的配置进度，以及用户／Node SSE 已接入正常 Router 和真实权限 provider。固定 apply 目标随配置版本保存；配置、权限与进度变化在已接纳 SQLite job 的提交后进入统一 journal。用户首次完整同步及后续增量经过权限裁剪，正常配置变化保持通知连续，失权、期限和重放断档分别处理。
 
-规则集已提供 `listRuleSets`／`getRuleSet`／`refreshRuleSet`：经过 HTTPS 下载、完整转换和最终授权重验，将不可变内容绑定到真实执行发布；刷新保留源 revision，`resources.changed` 通知管理客户端重读资源视图。恢复可指定同源版本的历史 `resourcePublication`。当前新增远端来源须先保存未引用声明并刷新，再应用引用；单次 apply 自动准备及 `updateInterval` 周期调度正在实现，见[规则集](/v2/configuration-reference/rule-sets)。
+规则集已提供 `listRuleSets`／`getRuleSet`／`refreshRuleSet`：经过 HTTPS 下载、完整转换和最终授权重验，将不可变内容绑定到真实执行发布；刷新保留源 revision，`resources.changed` 通知管理客户端重读资源视图。恢复可指定同源版本的历史 `resourcePublication`。单次 apply 可以准备新来源或替换已引用来源；validate 的 `preparedRuleSets` 仅返回暂定摘要／条目数，不保存 artifact。普通 App 启动运行 `updateInterval` 周期调度，内容不变只更新检查新鲜度，失败按有界退避重试，见[规则集](/v2/configuration-reference/rule-sets)。
 
-主动诊断需求合成及其 HTTP 操作、可信 DNS／GeoIP 数据输入与自动方案仍待接通。`reassignAddresses`／`rotateMaterial` 与完整预览计划尚未成为可用 HTTP 操作；地址退出安全下界仍需实际 Agent 证据。Controller HTTP／SSE 与持钥测试 Node 的验收不等于 Agent 安装、TUN 或真实组网验收。
+主动观察已提供创建／读取／续租／取消、Node 任务领取／结果上报及 SSE。空闲网络可以按明确 service 编译独立短期诊断许可，仍受 access／topology／routing 约束；不会生成普通业务访问许可。Node 的 `feature:path-observation` version 1 表达执行能力，当前 traffic 明确返回不支持；Controller 不伪造 path、RTT 或样本，见[实时观察](/v2/state-reference/realtime)。
+
+可信 DNS／GeoIP 数据输入与自动方案仍待接通。`reassignAddresses`／`rotateMaterial` 与完整预览计划尚未成为可用 HTTP 操作；地址退出安全下界仍需实际 Agent 证据。Controller HTTP／SSE 与持钥测试 Node 的验收不等于 Agent 安装、TUN 或真实组网验收。
 
 错误为 `ErrorResponse { requestId, status, problem: { code, params, message } }`；requestId 仅在其安全生成失败时为 null。请求和响应对象拒绝数组表示、重复字段和未知字段。
 
