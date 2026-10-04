@@ -39,6 +39,7 @@ Server 决定许可和有界候选；Node 在获准集合内结合实时状态�
 ## 已确定的运行方向
 
 - CLI 主要提供 up／down／ping／status 与网络切换；业务配置在云端管理。
+- 业务数据面统一采用 L3，具体入口与边界见[网络模式](/v2/node/runtime)。
 - 支持无 TUN userspace networking 与系统 TUN 模式，Meshway 加密／承载仍在用户态。
 - Userspace 首版通过本机 SOCKS5 接入应用流量；命令范围、认证和 DNS 行为见[网络模式](/v2/node/runtime)。
 - 首版动态插件边界是 transport providers；control、dataplane、connectivity、TUN/netstack 等作为独立 Rust 库由 daemon 链接。插件启动时加载，并随发行包一起安装、校验、升级。
@@ -52,4 +53,4 @@ Server 决定许可和有界候选；Node 在获准集合内结合实时状态�
 
 此闭环尚未实现；它不代替 userspace、完整有序多跳、其他承载和 NAT 穿透的独立验收。默认运行模式与首个测试环境分别确定。
 
-实现首先接通 Server 控制生命周期。流／报文接口、L2／L3 包边界、承载封装和 ABI 数据通路尚待定；选型需要对应的性能验证，控制组件不预设其包格式。
+实现首先接通 Server 控制生命周期。L3 业务入口已确定；流／报文接口、Mesh 封装、MTU／分片和 ABI 数据通路尚待定，选型需要对应的性能验证。

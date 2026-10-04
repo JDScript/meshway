@@ -6,7 +6,7 @@
 - `crates/meshway-*`：当前共享模型、配置／编译、协议、生成客户端与严格序列化。
 - `packages/`：生成 OpenAPI／TypeScript SDK；`docs/v2/`：当前唯一开发者规范与使用入口。
 - Rust 包根目录和 Cargo 包名统一 `meshway-xxx`。现行 HTTP 根仍是 `/api/v1`／`/agent-api/v1`，目录整理不自行改 wire。
-- Node 已有 `meshway-control` 的持钥接入／认证／实例／保存组件，daemon、CLI、插件和包流尚未实现。目标为 `meshwayd`＋`meshway` 本机 CLI，up/down/ping/status 与网络选择，业务配置在 Server 管理；支持本机 SOCKS5 userspace 与系统 TUN。先接 Server；流／报文、L2／L3 和 ABI 数据通路经设计及性能验证后实施。
+- Node 已有 `meshway-control` 的持钥接入／认证／实例／保存组件，daemon、CLI、插件和包流尚未实现。目标为 `meshwayd`＋`meshway` 本机 CLI，up/down/ping/status 与网络选择，业务配置在 Server 管理；系统 TUN 与本机 SOCKS5 userspace 共用 L3 数据面。先接 Server；流／报文、Mesh 封装、MTU／分片和 ABI 数据通路经设计及性能验证后实施。
 - 旧 Node、Apple、运行库与实验退出活跃树，保存在冻结 Git 分支及必要证据中。新实现只按明确白名单复用，不恢复长期 legacy 目录或旧 HTTP 兼容轨。Meshing 项目不是本项目依据。
 - 冻结参考：`archive/pre-consolidation-main-007e9deb`、`archive/node-runtime-8da83a7f`、`archive/apple-007e9deb`。未完成配置补全与旧 review WIP 保存在 `archive/wip-*-20261003` 分支，归档提交不代表通过验收；私有证据保存在 `.meshway/worktree-archives/20261003/`。
 
