@@ -1,7 +1,5 @@
 //! Authenticated node control and durable execution lifecycle.
-pub(crate) mod configuration;
 pub(crate) mod diagnostics;
-pub(crate) mod membership;
 pub mod proof;
 mod state;
 use crate::error::Error;

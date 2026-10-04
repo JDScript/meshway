@@ -45,7 +45,7 @@ impl Accounts {
         current: Secret,
         email: String,
         request: RequestId,
-        configurations: crate::configuration::Configurations,
+        committer: crate::configuration::Committer,
     ) -> Result<super::User, Error> {
         let digest = secret::token_digest(token)?;
         let email = email::normalize(&email)?;
@@ -59,7 +59,7 @@ impl Accounts {
             .map_err(current_password_error)?;
         self.handle
             .transact(TransactionBehavior::Immediate, move |tx| {
-                store::change_email(tx, digest, verified, email, request, &configurations)
+                store::change_email(tx, digest, verified, email, request, &committer)
             })
             .await
     }

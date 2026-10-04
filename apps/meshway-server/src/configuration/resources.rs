@@ -11,7 +11,7 @@ use meshway_protocol::resources::PreparedRuleSet;
 use rusqlite::{OptionalExtension, Transaction, params};
 use std::collections::BTreeMap;
 
-pub(super) struct Preparation {
+pub(crate) struct Preparation {
     base: Bindings,
     definitions: BTreeMap<String, RuleSet>,
     pub contents: Contents,

@@ -141,7 +141,7 @@ async fn accepted_configuration_waiter_cancellation_noop_and_rollback_preserve_j
             current.document.source_jsonc.expose()
         )),
     };
-    app.executor.handle().execute(|db| db.execute_batch("CREATE TRIGGER fail_notice BEFORE INSERT ON configuration_commits BEGIN SELECT RAISE(ABORT,'failure after participant'); END;")).await.unwrap().unwrap();
+    app.executor.handle().execute(|db| db.execute_batch("CREATE TRIGGER fail_notice BEFORE INSERT ON configuration_commits BEGIN SELECT RAISE(ABORT,'failure after version'); END;")).await.unwrap().unwrap();
     assert!(
         service
             .apply(owner.token.expose(), network, edit(), request())
@@ -295,7 +295,7 @@ async fn email_sync_commits_all_network_notices_or_none_and_keeps_fixed_targets(
                 Secret::new("valid password".into()),
                 "after@example.test".into(),
                 request(),
-                app.configurations()
+                app.configurations().committer()
             )
             .await
             .is_err()
@@ -323,7 +323,7 @@ async fn email_sync_commits_all_network_notices_or_none_and_keeps_fixed_targets(
             Secret::new("valid password".into()),
             "after@example.test".into(),
             change_id,
-            app.configurations(),
+            app.configurations().committer(),
         )
         .await
         .unwrap();
@@ -365,7 +365,7 @@ async fn email_sync_commits_all_network_notices_or_none_and_keeps_fixed_targets(
             Secret::new("valid password".into()),
             "after@example.test".into(),
             request(),
-            app.configurations(),
+            app.configurations().committer(),
         )
         .await
         .unwrap();

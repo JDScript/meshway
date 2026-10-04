@@ -26,7 +26,7 @@ pub(super) async fn email(
             Secret::new(body.password.expose().to_owned()),
             body.email,
             id,
-            configurations,
+            configurations.committer(),
         )
         .await
         .map_err(|e| HttpError::domain(id, e))?;

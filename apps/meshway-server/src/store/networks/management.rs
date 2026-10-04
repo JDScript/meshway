@@ -111,9 +111,9 @@ pub(crate) fn remove_member(
     tx: &Transaction<'_>,
     digest: [u8; 32],
     command: crate::networks::management::MemberRemoval,
-    sealer: &Sealer,
-    cache: &crate::configuration::SnapshotCache,
+    committer: &crate::configuration::Committer,
 ) -> Result<(meshway_model::Revision, Vec<Effect>), Error> {
+    let (sealer, cache) = (committer.sealer.as_ref(), committer.cache.as_ref());
     let crate::networks::management::MemberRemoval {
         network,
         member,
@@ -138,17 +138,15 @@ pub(crate) fn remove_member(
     if role == "owner" {
         protect_owner(tx, network)?;
     }
-    let effects = crate::execution::membership::remove_nodes(
+    let effects = committer.commit(
         tx,
-        &crate::execution::membership::MembershipRemoval {
-            digest,
-            network,
+        network,
+        crate::configuration::Intent::MemberRemoval {
+            session: digest,
             membership: impact.membership_id,
             version: expected,
-            request,
         },
-        sealer,
-        cache,
+        request,
     )?;
     tx.execute(
         "UPDATE memberships SET revoked_at=?1,version=version+1 WHERE id=?2",

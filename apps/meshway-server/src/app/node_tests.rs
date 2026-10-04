@@ -1466,18 +1466,18 @@ async fn actual_http_signatures_and_pkce_polling() {
     assert_eq!(poll.request.phase, EnrollmentPhase::Approved);
     assert!(poll.code.is_some());
     assert!(poll.node_id.is_none());
-    struct Reject;
-    impl crate::enrollment::EnrollmentCommit for Reject {
-        fn insert_node(
-            &self,
-            _tx: &rusqlite::Transaction<'_>,
-            _admission: &crate::enrollment::NodeAdmission,
-        ) -> Result<crate::configuration::CommitEffects, Error> {
-            Err(Error::InvalidRequest)
-        }
-    }
+    // A failing configuration version rolls the whole redemption back: the
+    // request stays approved and redeemable.
+    app.executor
+        .handle()
+        .execute(|db| {
+            db.execute_batch("CREATE TRIGGER reject_version BEFORE INSERT ON configuration_versions BEGIN SELECT RAISE(ABORT, 'injected failure'); END;")
+        })
+        .await
+        .unwrap()
+        .unwrap();
     assert!(matches!(
-        crate::enrollment::Enrollment::new(app.executor.handle(), app.sealer(), Arc::new(Reject),)
+        app.enrollment()
             .redeem(
                 id,
                 RedeemEnrollmentRequest {
@@ -1486,8 +1486,14 @@ async fn actual_http_signatures_and_pkce_polling() {
                 }
             )
             .await,
-        Err(Error::InvalidRequest)
+        Err(Error::Storage(_))
     ));
+    app.executor
+        .handle()
+        .execute(|db| db.execute_batch("DROP TRIGGER reject_version;"))
+        .await
+        .unwrap()
+        .unwrap();
     let after = app.enrollment().poll(id, proof("poll")).await.unwrap();
     assert_eq!(after.request.phase, EnrollmentPhase::Approved);
     assert!(after.node_id.is_none());
@@ -3551,7 +3557,7 @@ async fn email_maintenance_preserves_live_node_subject_and_session() {
             Secret::new("a sufficiently long password".into()),
             "renamed-owner@example.com".into(),
             rid(),
-            app.configurations(),
+            app.configurations().committer(),
         )
         .await
         .unwrap();
@@ -3666,7 +3672,7 @@ async fn node_only_email_reference_and_profile_selection_survive_history_restore
             Secret::new("a sufficiently long password".into()),
             "node-only@example.test".into(),
             rid(),
-            app.configurations(),
+            app.configurations().committer(),
         )
         .await
         .unwrap();

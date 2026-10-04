@@ -247,7 +247,7 @@ pub(crate) fn change_email(
     verified: LoginCandidate,
     email: String,
     request: RequestId,
-    configurations: &crate::configuration::Configurations,
+    committer: &crate::configuration::Committer,
 ) -> Result<(User, Vec<Effect>), Error> {
     let now = now()?;
     let user = verified_user(tx, &digest, &verified, now)?;
@@ -269,7 +269,7 @@ pub(crate) fn change_email(
             "UPDATE users SET email=?1 WHERE id=?2",
             params![email, user.as_uuid().as_bytes().as_slice()],
         )?;
-        let effects = configurations.synchronize_email(tx, user, &old, &email, request)?;
+        let effects = committer.synchronize_email(tx, user, &old, &email, request)?;
         changes.extend(effects.iter().flat_map(|effect| effect.changes()));
         changes.extend(authorization_changes(tx, user)?);
         record_management(tx, user, request, "account.email", None, Some(&old), now)?;

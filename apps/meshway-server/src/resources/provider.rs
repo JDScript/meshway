@@ -165,20 +165,11 @@ impl ResourceProvider for Provider {
             bindings::at_revision(tx, network, revision, &current.bindings.rule_sets)?;
         let unchanged = selected.get(key) == Some(&artifact.id);
         selected.insert(key.into(), artifact.id);
-        let mut context =
-            crate::execution::configuration::validation_context(tx, &current, &input, None, true)?;
-        context.rule_sets = bindings::contents(tx, network, &selected)?;
-        context.verified_listeners = current
-            .document
-            .configuration
-            .nodes
-            .iter()
-            .flat_map(|(node, config)| {
-                config.listeners.iter().map(move |(key, listener)| {
-                    ((*node, key.clone()), listener.declaration().clone())
-                })
-            })
-            .collect();
+        let context = crate::configuration::context::for_current(
+            tx,
+            &current,
+            bindings::contents(tx, network, &selected)?,
+        )?;
         meshway_configuration::normalize_with_dependencies(input, &context)?;
         if unchanged {
             return Ok(());

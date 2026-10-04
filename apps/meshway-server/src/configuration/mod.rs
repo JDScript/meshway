@@ -1,33 +1,26 @@
-//! One complete version/CAS boundary for all administrative and lifecycle edits.
-//! Preparation is in-memory work, not a two-phase publication protocol.
+//! Complete network configuration: versions, bindings, materials, editing and
+//! the one commit boundary every lifecycle change goes through (`commit`).
 pub(crate) mod catalog;
+pub(crate) mod commit;
+pub(crate) mod context;
 pub(crate) mod materials;
 mod preview;
 mod resources;
 mod service;
 mod snapshot;
+pub(crate) use commit::{Committer, Intent};
 pub(crate) use service::Configurations;
-pub(crate) use service::rename_bound_user_references;
-pub(crate) use service::source_response;
+pub(crate) use service::{current_revision, source_response};
 pub(crate) use snapshot::{Snapshot, SnapshotCache};
 
 use crate::error::Error;
-use crate::{
-    accounts::random_uuid,
-    secrets::{Purpose, Sealer},
-    store::authorization::{authorize_manager, current_session},
-};
 use meshway_configuration::{
     ConfigurationChange, ConfigurationDocument, NetworkConfigurationInput, UserBinding,
-    ValidationContext, canonical_json, configuration_changes,
+    ValidationContext, configuration_changes,
 };
-use meshway_model::{
-    ArtifactId, MembershipId, NetworkId, NodeId, PublicationId, RequestId, Revision, UserId,
-};
-use rusqlite::{OptionalExtension, Transaction, params};
+use meshway_model::{ArtifactId, NetworkId, NodeId, PublicationId, Revision};
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
-use zeroize::Zeroizing;
 
 /// The stable subjects behind a configuration version's readable references.
 /// Persisted encrypted next to the version; never edited independently.
@@ -42,11 +35,6 @@ pub(crate) struct ConfigurationBindings {
     pub(crate) rule_sets: BTreeMap<String, ArtifactId>,
 }
 
-pub(crate) struct TrustedContext<'a> {
-    pub(crate) validation: ValidationContext<'a>,
-    pub(crate) rule_sets: BTreeMap<String, ArtifactId>,
-}
-
 pub(crate) struct PreparedConfiguration {
     pub(crate) network_id: NetworkId,
     pub(crate) base_revision: Revision,
@@ -56,33 +44,10 @@ pub(crate) struct PreparedConfiguration {
     pub(crate) deleted_node_ids: BTreeSet<NodeId>,
     pub(crate) source_changed: bool,
     pub(crate) rollback_from: Option<Revision>,
-    pub(crate) email_sync: Option<EmailSync>,
-}
-/// Readable-name maintenance for one active membership. Bindings of revoked
-/// memberships keep their old name and are never told the new address.
-pub(crate) struct EmailSync {
-    pub(crate) user: UserId,
-    pub(crate) membership: MembershipId,
-    pub(crate) old_email: String,
-    pub(crate) new_email: String,
-}
-
-/// Actor proof is rechecked by the final transaction. System callers supply an
-/// independently authorized lifecycle operation through CommitParticipant.
-pub(crate) enum Principal {
-    Session([u8; 32]),
-    Lifecycle(UserId),
+    pub(crate) cause: ChangeCause,
 }
 
 pub(crate) use meshway_protocol::history::ConfigurationChangeCause as ChangeCause;
-pub(crate) struct CommitMetadata {
-    pub(crate) cause: ChangeCause,
-    pub(crate) request: RequestId,
-}
-pub(crate) struct CommitRuntime<'a> {
-    pub(crate) sealer: &'a Sealer,
-    pub(crate) participant: &'a dyn CommitParticipant,
-}
 
 pub(crate) struct CommitEffects {
     pub(crate) notice: Option<meshway_protocol::events::ConfigurationNotice>,
@@ -94,7 +59,7 @@ pub(crate) struct CommitEffects {
 }
 
 impl CommitEffects {
-    /// Consumed by the owner of the outer transaction, never by a participant.
+    /// Consumed by the owner of the outer transaction.
     pub(crate) fn changes(&self) -> Vec<crate::effect::Effect> {
         use crate::effect::Effect;
         let mut changes = Vec::new();
@@ -121,36 +86,19 @@ impl CommitEffects {
     }
 }
 
-/// Execution and resource effects of a configuration commit. Both methods
-/// execute within the caller's one SQL transaction; errors roll everything back.
-pub(crate) trait CommitParticipant: Send + Sync {
-    fn revalidate(
-        &self,
-        tx: &Transaction<'_>,
-        principal: &Principal,
-        current: &Snapshot,
-        prepared: &PreparedConfiguration,
-    ) -> Result<(), Error>;
-    fn apply(
-        &self,
-        tx: &Transaction<'_>,
-        current: &Snapshot,
-        prepared: &PreparedConfiguration,
-        revision: Revision,
-    ) -> Result<(Vec<PublicationId>, BTreeSet<NodeId>), Error>;
-}
-
+/// Normalizes a draft against its trusted context into the next version's
+/// document, bindings and change list. In-memory only.
 pub(crate) fn prepare(
     input: NetworkConfigurationInput,
     source: String,
     current: &Snapshot,
-    context: &TrustedContext<'_>,
+    context: &ValidationContext<'_>,
+    rule_sets: BTreeMap<String, ArtifactId>,
 ) -> Result<PreparedConfiguration, Error> {
-    if context.validation.previous != Some(&current.document.configuration) {
+    if context.previous != Some(&current.document.configuration) {
         return Err(Error::DependencyUnavailable);
     }
-    let normalized =
-        meshway_configuration::normalize_with_dependencies(input, &context.validation)?;
+    let normalized = meshway_configuration::normalize_with_dependencies(input, context)?;
     let configuration = normalized.configuration;
     let user_bindings = normalized.user_bindings;
     let mut changes = configuration_changes(&current.document.configuration, &configuration)?;
@@ -167,7 +115,7 @@ pub(crate) fn prepare(
             .nodes
             .iter()
             .map(|(id, node)| (*id, node.listeners.keys().cloned().collect())),
-        &context.validation.recreated_listeners,
+        &context.recreated_listeners,
     )?;
     let source_changed = current.document.source_jsonc.expose() != source;
     let mut document = current.document.clone();
@@ -177,7 +125,7 @@ pub(crate) fn prepare(
         users: user_bindings,
         node_users: normalized.node_user_bindings,
         listeners,
-        rule_sets: context.rule_sets.clone(),
+        rule_sets,
     };
     changes.extend(binding_changes(&current.bindings, &bindings));
     Ok(PreparedConfiguration {
@@ -189,7 +137,7 @@ pub(crate) fn prepare(
         deleted_node_ids,
         source_changed,
         rollback_from: None,
-        email_sync: None,
+        cause: ChangeCause::Edit,
     })
 }
 
@@ -249,157 +197,4 @@ fn binding_changes(
         kind: meshway_configuration::ChangeKind::Changed,
     })
     .collect()
-}
-
-/// Common atomic write path. No cache or external event is published until the
-/// caller commits. It must deliver CommitEffects through the committed outbox.
-pub(crate) fn apply_in_transaction(
-    tx: &Transaction<'_>,
-    principal: &Principal,
-    expected_revision: Revision,
-    current: &Snapshot,
-    prepared: &PreparedConfiguration,
-    metadata: CommitMetadata,
-    runtime: CommitRuntime<'_>,
-) -> Result<CommitEffects, Error> {
-    let CommitMetadata { cause, request } = metadata;
-    let CommitRuntime {
-        sealer,
-        participant,
-    } = runtime;
-    let now = chrono::Utc::now().timestamp_millis();
-    let actor = match principal {
-        Principal::Session(digest) => {
-            let user = current_session(tx, digest, now)?.user.id;
-            authorize_manager(tx, current.network_id, user)?;
-            user
-        }
-        Principal::Lifecycle(user) => *user,
-    };
-    let actual = tx
-        .query_row(
-            "SELECT current_revision FROM networks WHERE id=?1 AND deleted_at IS NULL",
-            [current.network_id.as_uuid().as_bytes().as_slice()],
-            |r| r.get::<_, i64>(0),
-        )
-        .optional()?
-        .ok_or(Error::NotFound)?;
-    if actual != expected_revision.get() as i64
-        || current.revision != expected_revision
-        || prepared.base_revision != expected_revision
-        || prepared.network_id != current.network_id
-    {
-        return Err(Error::RevisionConflict);
-    }
-    participant.revalidate(tx, principal, current, prepared)?;
-    let changed = !prepared.changes.is_empty()
-        || prepared.source_changed
-        || prepared.bindings != current.bindings;
-    if !changed {
-        return Ok(CommitEffects {
-            notice: None,
-            network_id: current.network_id,
-            revision: current.revision,
-            publication_ids: Vec::new(),
-            target_node_ids: BTreeSet::new(),
-            deleted_node_ids: BTreeSet::new(),
-        });
-    }
-    let revision = Revision::new(
-        expected_revision
-            .get()
-            .checked_add(1)
-            .ok_or(Error::Internal("configuration revision overflow"))?,
-    )
-    .map_err(|_| Error::Internal("configuration revision overflow"))?;
-    let canonical = canonical_json(&prepared.document.configuration)?;
-    let bindings = Zeroizing::new(
-        serde_json::to_vec(&prepared.bindings)
-            .map_err(|_| Error::encode("configuration bindings"))?,
-    );
-    let source = sealer.seal(
-        current.network_id,
-        revision,
-        Purpose::Source,
-        prepared.document.source_jsonc.expose().as_bytes(),
-    )?;
-    let configuration = sealer.seal(
-        current.network_id,
-        revision,
-        Purpose::Configuration,
-        canonical.expose().as_bytes(),
-    )?;
-    let bindings = sealer.seal(current.network_id, revision, Purpose::Bindings, &bindings)?;
-    tx.execute(
-        "INSERT INTO configuration_versions(network_id,revision,source_jsonc,configuration,bindings,created_by,created_at,cause,request_id,rollback_from,created_by_email) VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,(SELECT email FROM users WHERE id=?6))",
-        params![current.network_id.as_uuid().as_bytes().as_slice(), revision.get() as i64,
-            source.as_bytes(), configuration.as_bytes(), bindings.as_bytes(),
-            actor.as_uuid().as_bytes().as_slice(), now, cause.as_str(),
-            request.as_uuid().as_bytes().as_slice(), prepared.rollback_from.map(|r|r.get() as i64)],
-    )?;
-    tx.execute(
-        "UPDATE networks SET current_revision=?1 WHERE id=?2 AND current_revision=?3",
-        params![
-            revision.get() as i64,
-            current.network_id.as_uuid().as_bytes().as_slice(),
-            expected_revision.get() as i64
-        ],
-    )?;
-    let (publication_ids, target_node_ids) = participant.apply(tx, current, prepared, revision)?;
-    let execution_targets = crate::store::execution::configuration_targets(
-        tx,
-        sealer,
-        current.network_id,
-        revision,
-        &publication_ids,
-    )
-    .map_err(|_| Error::DependencyUnavailable)?;
-    if execution_targets.keys().copied().collect::<BTreeSet<_>>() != target_node_ids {
-        return Err(Error::DependencyUnavailable);
-    }
-    for node in &target_node_ids {
-        if !prepared.document.configuration.nodes.contains_key(node)
-            || prepared.deleted_node_ids.contains(node)
-        {
-            return Err(Error::DependencyUnavailable);
-        }
-    }
-    tx.execute(
-        "UPDATE configuration_versions SET execution_targets=?3 WHERE network_id=?1 AND revision=?2",
-        params![current.network_id.as_uuid().as_bytes().as_slice(), revision.get() as i64,
-            serde_json::to_string(&execution_targets).map_err(|_| Error::encode("configuration execution targets"))?],
-    )?;
-    tx.execute(
-        "INSERT INTO activity_events(id,scope,network_id,at,actor_user_id,action,request_id,before_revision,after_revision,actor_email) VALUES(?1,'network',?2,?3,?4,'configuration.apply',?5,?6,?7,(SELECT email FROM users WHERE id=?4))",
-        params![random_uuid()?.as_bytes().as_slice(),
-            current.network_id.as_uuid().as_bytes().as_slice(), now,
-            actor.as_uuid().as_bytes().as_slice(), request.as_uuid().as_bytes().as_slice(),
-            expected_revision.get() as i64, revision.get() as i64],
-    )?;
-    Ok(CommitEffects {
-        notice: Some(meshway_protocol::events::ConfigurationNotice {
-            network_id: current.network_id,
-            previous_revision: expected_revision,
-            revision,
-            changed_at: chrono::DateTime::from_timestamp_millis(now)
-                .ok_or(Error::Internal("commit timestamp"))?,
-            cause,
-            actor: meshway_protocol::events::EventActor::User { user_id: actor },
-            request_id: Some(request),
-            changed_pointers: prepared
-                .changes
-                .iter()
-                .map(|change| change.path.clone())
-                .collect::<BTreeSet<_>>()
-                .into_iter()
-                .collect(),
-            changes_complete: true,
-            source_changed: prepared.source_changed,
-        }),
-        network_id: current.network_id,
-        revision,
-        publication_ids,
-        target_node_ids,
-        deleted_node_ids: prepared.deleted_node_ids.clone(),
-    })
 }

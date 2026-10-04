@@ -1,21 +1,15 @@
-use super::{
-    CommitEffects, CommitMetadata, CommitRuntime, EmailSync, Principal, TrustedContext,
-    apply_in_transaction, binding_changes, materials, prepare, preview, resources,
-};
-use crate::configuration::{ChangeCause, Snapshot, SnapshotCache};
+use super::{Committer, Intent, binding_changes, context, resources};
+use crate::configuration::{Snapshot, SnapshotCache};
 use crate::effect::Effect;
 use crate::error::Error;
-use crate::execution::configuration::{Participant, check_inputs, validation_context};
 use crate::secrets::{Purpose, Sealer};
 use crate::store::authorization::{authorize_manager, current_session};
 use crate::{accounts::token_digest, store::Handle};
-use meshway_configuration::{NetworkConfigurationInput, configuration_changes};
-use meshway_configuration::{UserBinding, edit_source, parse_jsonc};
-use meshway_model::{MembershipId, NetworkId, RequestId, Revision, UserId};
+use meshway_configuration::{configuration_changes, edit_source, parse_jsonc};
+use meshway_model::{NetworkId, RequestId, Revision, UserId};
 use meshway_protocol::{WireSecret, configuration::*};
 use rusqlite::TransactionBehavior;
 use rusqlite::{OptionalExtension, Transaction, params};
-use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 use zeroize::Zeroizing;
 
@@ -31,129 +25,34 @@ enum ApplyStage {
     },
 }
 
+/// Management use cases over the configuration owner: read, validate, apply
+/// (idempotent per request), compare.
 #[derive(Clone)]
 pub(crate) struct Configurations {
     handle: Handle,
-    sealer: Arc<Sealer>,
-    cache: Arc<SnapshotCache>,
+    committer: Committer,
     downloads: Arc<crate::resources::downloads::Downloads>,
 }
 impl Configurations {
     pub(crate) fn new(
         handle: Handle,
-        sealer: Arc<Sealer>,
-        cache: Arc<SnapshotCache>,
+        committer: Committer,
         downloads: Arc<crate::resources::downloads::Downloads>,
     ) -> Self {
         Self {
             handle,
-            sealer,
-            cache,
+            committer,
             downloads,
         }
     }
-    /// Renames the user's readable references in every network where they hold
-    /// an active membership. Only bindings of that membership are renamed.
-    pub(crate) fn synchronize_email(
-        &self,
-        tx: &Transaction<'_>,
-        user: UserId,
-        old_email: &str,
-        new_email: &str,
-        request: RequestId,
-    ) -> Result<Vec<CommitEffects>, Error> {
-        let mut effects = Vec::new();
-        let memberships = {
-            let mut stmt = tx.prepare(
-                "SELECT m.network_id, m.id FROM memberships m JOIN networks n ON n.id=m.network_id
-                 WHERE m.user_id=?1 AND m.revoked_at IS NULL AND n.deleted_at IS NULL",
-            )?;
-            stmt.query_map([user.as_uuid().as_bytes().as_slice()], |r| {
-                Ok((r.get::<_, Vec<u8>>(0)?, r.get::<_, Vec<u8>>(1)?))
-            })?
-            .collect::<Result<Vec<_>, _>>()?
-        };
-        for (network, membership) in memberships {
-            let network = NetworkId::new(
-                uuid::Uuid::from_slice(&network)
-                    .map_err(|_| Error::decode("memberships.network_id"))?,
-            )
-            .map_err(|_| Error::decode("memberships.network_id"))?;
-            let membership = MembershipId::new(
-                uuid::Uuid::from_slice(&membership).map_err(|_| Error::decode("memberships.id"))?,
-            )
-            .map_err(|_| Error::decode("memberships.id"))?;
-            let binding = UserBinding {
-                user_id: user,
-                membership_id: membership,
-            };
-            let current = self.current(tx, network)?;
-            if current.bindings.users.get(old_email) != Some(&binding)
-                && !current.bindings.node_users.values().any(|b| *b == binding)
-            {
-                continue;
-            }
-            let mut input = NetworkConfigurationInput::from(&current.document.configuration);
-            rename_bound_user_references(&mut input, &current, &binding, old_email, new_email);
-            check_inputs(tx, &current, &input)?;
-            let before =
-                meshway_configuration::parse_jsonc(current.document.source_jsonc.expose())?;
-            let mut after = before.clone();
-            rename_bound_user_references(&mut after, &current, &binding, old_email, new_email);
-            let source = meshway_configuration::rewrite_source(
-                current.document.source_jsonc.expose(),
-                &before,
-                &after,
-            )?;
-            let mut expected = current.bindings.users.clone();
-            if expected.get(old_email) == Some(&binding)
-                && let Some(binding) = expected.remove(old_email)
-            {
-                expected.insert(new_email.into(), binding);
-            }
-            let verified = materials::prepare_materials(
-                tx,
-                network,
-                &mut input,
-                &current,
-                &self.sealer,
-                false,
-                &BTreeSet::new(),
-            )?;
-            let mut validation = validation_context(tx, &current, &input, None, false)?;
-            validation.expected_user_bindings = expected;
-            validation.verified_listeners = verified;
-            let context = TrustedContext {
-                validation,
-                rule_sets: crate::resources::bindings::for_input(tx, &current, &input)?.0,
-            };
-            let mut prepared = prepare(input, source, &current, &context)?;
-            prepared.email_sync = Some(EmailSync {
-                user,
-                membership,
-                old_email: old_email.into(),
-                new_email: new_email.into(),
-            });
-            effects.push(apply_in_transaction(
-                tx,
-                &Principal::Lifecycle(user),
-                current.revision,
-                &current,
-                &prepared,
-                CommitMetadata {
-                    cause: ChangeCause::EmailSync,
-                    request,
-                },
-                CommitRuntime {
-                    sealer: &self.sealer,
-                    participant: &Participant {
-                        sealer: &self.sealer,
-                        admission: None,
-                    },
-                },
-            )?);
-        }
-        Ok(effects)
+    pub(crate) fn committer(&self) -> Committer {
+        self.committer.clone()
+    }
+    fn sealer(&self) -> &Sealer {
+        &self.committer.sealer
+    }
+    fn cache(&self) -> &SnapshotCache {
+        &self.committer.cache
     }
     pub(crate) async fn read(
         &self,
@@ -170,7 +69,9 @@ impl Configurations {
                     Some(r) => r,
                     None => current_revision(tx, network)?,
                 };
-                let snapshot = service.cache.load(tx, network, revision, &service.sealer)?;
+                let snapshot = service
+                    .cache()
+                    .load(tx, network, revision, service.sealer())?;
                 Ok(snapshot)
             })
             .await
@@ -193,12 +94,16 @@ impl Configurations {
         self.handle
             .read(move |tx| {
                 let _permit = permit;
-                service.authorize(tx, &digest, network)?;
-                let current = service.current(tx, network)?;
-                let input =
-                    service.prepare_request(tx, &current, &request, false, resources.as_ref())?;
-                let result = preview::build(&current, input, resources.as_ref(), id)?;
-                Ok(result)
+                service.committer.preview(
+                    tx,
+                    network,
+                    Intent::Edit {
+                        session: digest,
+                        request: &request,
+                        resources: resources.as_ref(),
+                    },
+                    id,
+                )
             })
             .await
     }
@@ -278,7 +183,9 @@ impl Configurations {
                     .map_err(|_| Error::decode("configuration_commits.base_revision"))?,
             )
             .map_err(|_| Error::decode("configuration_commits.base_revision"))?;
-            let original = self.sealer.open(network, base, Purpose::Request, &input)?;
+            let original = self
+                .sealer()
+                .open(network, base, Purpose::Request, &input)?;
             if original.as_bytes() != encoded.as_slice() {
                 return Err(Error::RequestConflict);
             }
@@ -287,34 +194,16 @@ impl Configurations {
             result.request_id = id;
             return Ok((result, Vec::new()));
         }
-        let current = self.current(tx, network)?;
-        let input = self.prepare_request(tx, &current, &request, true, resources)?;
-        let mut prepared = prepare(input.input, input.source, &current, &input.context)?;
-        if let ConfigurationRequest::Restore { restore_from, .. } = &request {
-            prepared.rollback_from = Some(*restore_from);
-        }
-        let cause = if matches!(request, ConfigurationRequest::Restore { .. }) {
-            ChangeCause::Restore
-        } else {
-            ChangeCause::Edit
-        };
-        let effects = apply_in_transaction(
+        let base = request.expected_revision();
+        let effects = self.committer.commit(
             tx,
-            &Principal::Session(digest),
-            request.expected_revision(),
-            &current,
-            &prepared,
-            CommitMetadata {
-                cause,
-                request: request.request_id(),
+            network,
+            Intent::Edit {
+                session: digest,
+                request: &request,
+                resources,
             },
-            CommitRuntime {
-                sealer: &self.sealer,
-                participant: &Participant {
-                    sealer: &self.sealer,
-                    admission: None,
-                },
-            },
+            request.request_id(),
         )?;
         if let Some(resources) = resources {
             resources.record(tx, network, effects.revision)?;
@@ -334,12 +223,12 @@ impl Configurations {
             deleted_node_ids: effects.deleted_node_ids.into_iter().collect(),
         };
         let input = self
-            .sealer
-            .seal(network, current.revision, Purpose::Request, &encoded)?;
+            .sealer()
+            .seal(network, base, Purpose::Request, &encoded)?;
         tx.execute(
             "INSERT INTO configuration_commits(network_id,user_id,request_id,base_revision,input,result) VALUES(?1,?2,?3,?4,?5,?6)",
             params![network.as_uuid().as_bytes().as_slice(), user.as_uuid().as_bytes().as_slice(),
-                request.request_id().as_uuid().as_bytes().as_slice(), current.revision.get() as i64,
+                request.request_id().as_uuid().as_bytes().as_slice(), base.get() as i64,
                 input.as_bytes(), serde_json::to_string(&result).map_err(|_|Error::encode("configuration commit result"))?],
         )?;
         // One valid bulk deletion may exceed the replay window. The bounded
@@ -358,12 +247,13 @@ impl Configurations {
         self.handle
             .read(move |tx| {
                 service.authorize(tx, &digest, network)?;
-                let a = service
-                    .cache
-                    .load(tx, network, request.from_revision, &service.sealer)?;
+                let a =
+                    service
+                        .cache()
+                        .load(tx, network, request.from_revision, service.sealer())?;
                 let b = service
-                    .cache
-                    .load(tx, network, request.to_revision, &service.sealer)?;
+                    .cache()
+                    .load(tx, network, request.to_revision, service.sealer())?;
                 let mut changes =
                     configuration_changes(&a.document.configuration, &b.document.configuration)?;
                 let configuration_changed = !changes.is_empty();
@@ -392,168 +282,6 @@ impl Configurations {
             .id;
         authorize_manager(tx, network, user)?;
         Ok(user)
-    }
-    fn current(&self, tx: &Transaction<'_>, network: NetworkId) -> Result<Arc<Snapshot>, Error> {
-        self.cache
-            .load(tx, network, current_revision(tx, network)?, &self.sealer)
-    }
-    fn prepare_request<'a>(
-        &self,
-        tx: &Transaction<'_>,
-        current: &'a Snapshot,
-        request: &ConfigurationRequest,
-        generate_materials: bool,
-        resources: Option<&resources::Preparation>,
-    ) -> Result<preview::RequestInput<'a>, Error> {
-        if request.expected_revision() != current.revision {
-            return Err(Error::RevisionConflict);
-        }
-        let (source, mut input, expected, expected_nodes) = match request {
-            ConfigurationRequest::Document { source_jsonc, .. } => (
-                source_jsonc.expose().to_owned(),
-                parse_jsonc(source_jsonc.expose())?,
-                current.bindings.users.clone(),
-                current.bindings.node_users.clone(),
-            ),
-            ConfigurationRequest::Operations { ops, .. } => {
-                let (source, input) = edit_source(current.document.source_jsonc.expose(), ops)?;
-                (
-                    source,
-                    input,
-                    current.bindings.users.clone(),
-                    current.bindings.node_users.clone(),
-                )
-            }
-            ConfigurationRequest::Restore { restore_from, .. } => {
-                let snapshot =
-                    self.cache
-                        .load(tx, current.network_id, *restore_from, &self.sealer)?;
-                let members = members(tx, current.network_id)?;
-                let mut names = BTreeMap::new();
-                let mut bindings = BTreeMap::new();
-                for (name, binding) in &snapshot.bindings.users {
-                    let current_name = members
-                        .iter()
-                        .find(|(_, candidate)| *candidate == binding)
-                        .map(|(email, _)| email)
-                        .ok_or(Error::DependencyUnavailable)?;
-                    names.insert(name.clone(), current_name.clone());
-                    bindings.insert(current_name.clone(), binding.clone());
-                }
-                let mut input = NetworkConfigurationInput::from(&snapshot.document.configuration);
-                let mut node_names = BTreeMap::new();
-                for (id, binding) in &snapshot.bindings.node_users {
-                    let name = members
-                        .iter()
-                        .find(|(_, candidate)| *candidate == binding)
-                        .map(|(email, _)| email.clone())
-                        .ok_or(Error::DependencyUnavailable)?;
-                    node_names.insert(*id, name);
-                }
-                meshway_configuration::rebind_policy_user_references(&mut input, &names);
-                meshway_configuration::rebind_node_user_references(&mut input, &node_names);
-                let before = parse_jsonc(snapshot.document.source_jsonc.expose())?;
-                let mut after = before.clone();
-                meshway_configuration::rebind_policy_user_references(&mut after, &names);
-                meshway_configuration::rebind_node_user_references(&mut after, &node_names);
-                let source = meshway_configuration::rewrite_source(
-                    snapshot.document.source_jsonc.expose(),
-                    &before,
-                    &after,
-                )?;
-                (
-                    source,
-                    input,
-                    bindings,
-                    snapshot.bindings.node_users.clone(),
-                )
-            }
-        };
-        // Node inventory is transaction-backed. Remote artifacts still require
-        // exact prepared content and the final binding adapter, never empty sets.
-        check_inputs(tx, current, &input)?;
-        if let Some(resources) = resources {
-            resources.revalidate(tx, current, &input)?;
-        }
-        let members = members(tx, current.network_id)?;
-        let mut recreated_listeners = BTreeSet::new();
-        if let ConfigurationRequest::Operations { ops, .. } = request {
-            let mut removed = BTreeSet::new();
-            for op in ops {
-                if let meshway_configuration::ConfigurationOperation::SetListener {
-                    node_id,
-                    key,
-                    listener,
-                } = op
-                {
-                    let resource = (*node_id, key.clone());
-                    if listener.is_none() {
-                        removed.insert(resource);
-                    } else if removed.contains(&resource) {
-                        recreated_listeners.insert(resource);
-                    }
-                }
-            }
-        }
-        let verified_listeners = materials::prepare_materials(
-            tx,
-            current.network_id,
-            &mut input,
-            current,
-            &self.sealer,
-            generate_materials,
-            &recreated_listeners,
-        )?;
-        let mut validation = validation_context(tx, current, &input, None, true)?;
-        validation.members = members;
-        validation.expected_user_bindings = expected;
-        validation.expected_node_user_bindings = expected_nodes;
-        validation.verified_listeners = verified_listeners;
-        validation.recreated_listeners = recreated_listeners;
-        let mut rule_sets = if let ConfigurationRequest::Restore {
-            restore_from,
-            resource_publication,
-            ..
-        } = request
-        {
-            let snapshot = self
-                .cache
-                .load(tx, current.network_id, *restore_from, &self.sealer)?;
-            let bindings = match resource_publication {
-                Some(publication) => crate::resources::bindings::at_publication(
-                    tx,
-                    current.network_id,
-                    *restore_from,
-                    *publication,
-                )?,
-                None => snapshot.bindings.rule_sets.clone(),
-            };
-            validation.rule_sets =
-                crate::resources::bindings::contents(tx, current.network_id, &bindings)?;
-            bindings
-        } else {
-            crate::resources::bindings::for_input(tx, current, &input)?.0
-        };
-        let mut new_content = false;
-        if let Some(resources) = resources {
-            validation.rule_sets.extend(resources.contents.clone());
-            crate::resources::bindings::check_budget(&validation.rule_sets)?;
-            if generate_materials {
-                resources.bind(tx, current, &mut rule_sets)?;
-            } else {
-                new_content = resources.preview_bindings(tx, current, &mut rule_sets)?;
-            }
-        }
-        let context = TrustedContext {
-            validation,
-            rule_sets,
-        };
-        Ok(preview::RequestInput {
-            input,
-            source,
-            context,
-            new_content,
-        })
     }
     async fn prepare_resources(
         &self,
@@ -589,7 +317,7 @@ impl Configurations {
                 params![network.as_uuid().as_bytes().as_slice(),user.as_uuid().as_bytes().as_slice(),request.request_id().as_uuid().as_bytes().as_slice()],
                 |row| row.get::<_,bool>(0),
             )? { return Ok(None); }
-        let current = self.current(tx, network)?;
+        let current = self.committer.current(tx, network)?;
         if current.revision != request.expected_revision() {
             return Err(Error::RevisionConflict);
         }
@@ -602,7 +330,7 @@ impl Configurations {
             }
             ConfigurationRequest::Restore { .. } => return Ok(None),
         };
-        check_inputs(tx, &current, &input)?;
+        context::check_inputs(tx, &current, &input)?;
         resources::Preparation::stage(tx, &current, &input).map(Some)
     }
 }
@@ -621,68 +349,6 @@ pub(crate) fn current_revision(
         .ok_or(Error::NotFound)?;
     Revision::new(u64::try_from(r).map_err(|_| Error::decode("networks.current_revision"))?)
         .map_err(|_| Error::decode("networks.current_revision"))
-}
-
-/// Readable names follow the stable subject for each binding purpose. An email
-/// reused by another account must not rename the old account's policy references.
-/// Readable names follow the stable subject of each binding. Only bindings of
-/// this exact user and membership are renamed: an email reused by another
-/// account, or a revoked membership of the same user, keeps its old name.
-pub(crate) fn rename_bound_user_references(
-    input: &mut NetworkConfigurationInput,
-    snapshot: &Snapshot,
-    binding: &UserBinding,
-    old: &str,
-    new: &str,
-) {
-    if snapshot.bindings.users.get(old) == Some(binding) {
-        meshway_configuration::rebind_policy_user_references(
-            input,
-            &BTreeMap::from([(old.to_owned(), new.to_owned())]),
-        );
-    }
-    let names = snapshot
-        .bindings
-        .node_users
-        .iter()
-        .filter(|(_, bound)| *bound == binding)
-        .map(|(id, _)| (*id, new.to_owned()))
-        .collect();
-    meshway_configuration::rebind_node_user_references(input, &names);
-}
-pub(crate) fn members(
-    tx: &Transaction<'_>,
-    network: NetworkId,
-) -> Result<BTreeMap<String, UserBinding>, Error> {
-    let mut stmt = tx.prepare(
-        "SELECT u.email,u.id,m.id FROM memberships m JOIN users u ON u.id=m.user_id WHERE m.network_id=?1 AND m.revoked_at IS NULL AND u.disabled_at IS NULL",
-    )?;
-    let rows = stmt
-        .query_map([network.as_uuid().as_bytes().as_slice()], |r| {
-            Ok((
-                r.get::<_, String>(0)?,
-                r.get::<_, Vec<u8>>(1)?,
-                r.get::<_, Vec<u8>>(2)?,
-            ))
-        })?
-        .collect::<Result<Vec<_>, _>>()?;
-    rows.into_iter()
-        .map(|(email, u, m)| {
-            Ok((
-                email,
-                UserBinding {
-                    user_id: UserId::new(
-                        uuid::Uuid::from_slice(&u).map_err(|_| Error::decode("users.id"))?,
-                    )
-                    .map_err(|_| Error::decode("users.id"))?,
-                    membership_id: meshway_model::MembershipId::new(
-                        uuid::Uuid::from_slice(&m).map_err(|_| Error::decode("memberships.id"))?,
-                    )
-                    .map_err(|_| Error::decode("memberships.id"))?,
-                },
-            ))
-        })
-        .collect()
 }
 
 pub(crate) fn source_response(snapshot: &Snapshot, id: RequestId) -> ConfigurationSourceResponse {

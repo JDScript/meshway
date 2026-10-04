@@ -110,7 +110,7 @@ pub(crate) fn subjects(
     Ok(meshway_configuration::SubjectContext {
         users: bindings.users.clone(),
         node_users: bindings.node_users.clone(),
-        members: crate::execution::configuration::members(tx, network)?,
+        members: crate::configuration::context::members(tx, network)?,
     })
 }
 pub(crate) fn identity_digest(

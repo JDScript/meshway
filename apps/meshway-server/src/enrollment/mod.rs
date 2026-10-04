@@ -1,7 +1,7 @@
-//! One-use admission requests and keys. Config commit is supplied by its owner
-//! and executes inside the enrollment transaction, never as a second commit.
+//! One-use admission requests and keys. The configuration commit runs inside
+//! the enrollment transaction through the configuration owner, never as a
+//! second commit.
 use crate::error::Error;
-pub(crate) mod configuration;
 pub(crate) mod settings;
 use crate::{
     secrets::Sealer,
@@ -11,15 +11,6 @@ use meshway_model::*;
 use meshway_protocol::enrollment::*;
 use rusqlite::TransactionBehavior;
 use std::sync::Arc;
-/// Transaction participant supplied by the configuration owner. It normalizes
-/// and persists the complete source target, its stable bindings and publication.
-pub(crate) trait EnrollmentCommit: Send + Sync {
-    fn insert_node(
-        &self,
-        tx: &rusqlite::Transaction<'_>,
-        admission: &NodeAdmission,
-    ) -> Result<crate::configuration::CommitEffects, Error>;
-}
 pub struct NodeAdmission {
     pub(crate) proof: crate::store::enrollment::VerifiedEnrollmentProof,
     pub network: NetworkId,
@@ -34,7 +25,7 @@ pub struct NodeAdmission {
 pub struct Enrollment {
     handle: Handle,
     sealer: Arc<Sealer>,
-    commit: Arc<dyn EnrollmentCommit>,
+    commit: crate::configuration::Committer,
 }
 impl Enrollment {
     pub async fn redeem_key(
@@ -53,7 +44,7 @@ impl Enrollment {
                     id,
                     request.enrollment_key,
                     request.verifier,
-                    commit.as_ref(),
+                    &commit,
                 )?;
                 Ok((result, effects.map(|e| e.changes()).unwrap_or_default()))
             })
@@ -69,7 +60,7 @@ impl Enrollment {
         self.handle
             .transact(TransactionBehavior::Immediate, move |tx| {
                 let (result, effects) =
-                    store::redeem_in_transaction(tx, &sealer, id, request, commit.as_ref())?;
+                    store::redeem_in_transaction(tx, &sealer, id, request, &commit)?;
                 Ok((result, effects.map(|e| e.changes()).unwrap_or_default()))
             })
             .await
@@ -77,7 +68,7 @@ impl Enrollment {
     pub(crate) fn new(
         handle: Handle,
         sealer: Arc<Sealer>,
-        commit: Arc<dyn EnrollmentCommit>,
+        commit: crate::configuration::Committer,
     ) -> Self {
         Self {
             handle,

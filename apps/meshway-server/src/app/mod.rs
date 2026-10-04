@@ -188,11 +188,13 @@ impl App {
         )
     }
 
+    pub(crate) fn committer(&self) -> crate::configuration::Committer {
+        crate::configuration::Committer::new(self.sealer(), Arc::clone(&self.configuration_cache))
+    }
     pub(crate) fn configurations(&self) -> crate::configuration::Configurations {
         crate::configuration::Configurations::new(
             self.executor.handle(),
-            self.sealer(),
-            Arc::clone(&self.configuration_cache),
+            self.committer(),
             self.downloads.clone(),
         )
     }
@@ -318,14 +320,7 @@ impl App {
         crate::execution::Execution::new(self.executor.handle(), self.sealer(), self.boot)
     }
     pub fn enrollment(&self) -> crate::enrollment::Enrollment {
-        crate::enrollment::Enrollment::new(
-            self.executor.handle(),
-            self.sealer(),
-            Arc::new(crate::enrollment::configuration::ConfigurationAdmission {
-                sealer: self.sealer(),
-                cache: Arc::clone(&self.configuration_cache),
-            }),
-        )
+        crate::enrollment::Enrollment::new(self.executor.handle(), self.sealer(), self.committer())
     }
 
     /// Runs full, read-only schema, SQLite integrity, and foreign-key checks on
