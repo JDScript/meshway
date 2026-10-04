@@ -45,7 +45,7 @@ const preferencesStore = createStore<Preferences>(() => ({
 const isDark = ({ theme, systemDark }: Preferences) =>
   theme === "dark" || (theme === "system" && systemDark)
 
-export function setTheme(theme: Theme) {
+function setTheme(theme: Theme) {
   try {
     window.localStorage.setItem(THEME_KEY, theme)
   } catch {

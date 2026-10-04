@@ -6,7 +6,7 @@ import { useSurfaceHistory } from "@/components/surface/history"
 const PAGE = "/_authed/networks/$network/account" as const
 
 /** Whether the URL is on the account page. */
-export function useAccountRoute() {
+function useAccountRoute() {
   const current =
     useMatch({ from: PAGE, shouldThrow: false, select: () => true }) ?? false
   return { current }

@@ -91,7 +91,7 @@ export function mapNodes(
     .sort((a, b) => a.name.localeCompare(b.name) || a.id.localeCompare(b.id))
 }
 
-export function sceneNode(node: MapNode): SceneNode {
+function sceneNode(node: MapNode): SceneNode {
   const position = node.location?.data.position
   return {
     id: node.id,
@@ -127,16 +127,10 @@ export const linkKey = (link: { a: string; b: string; linkId: string }) =>
   `${link.a}|${link.b}|${link.linkId}`
 
 /** Links with both ends located are drawn; the others are only counted and listed. */
-export function partitionLinks<T extends { a: string; b: string }>(
+const drawnBetween = <T extends { a: string; b: string }>(
   links: readonly T[],
   located: ReadonlySet<string>
-): { drawn: T[]; undrawn: T[] } {
-  const drawn: T[] = []
-  const undrawn: T[] = []
-  for (const link of links)
-    (located.has(link.a) && located.has(link.b) ? drawn : undrawn).push(link)
-  return { drawn, undrawn }
-}
+): T[] => links.filter((link) => located.has(link.a) && located.has(link.b))
 
 /** How many of each value, in `order`, leaving out those with none. */
 export function countBy<T extends string>(
@@ -215,13 +209,13 @@ export function overviewScene(
   const located = new Set(
     scene.filter((node) => node.placement).map((node) => node.id)
   )
-  const current = partitionLinks(links, located).drawn
+  const current = drawnBetween(links, located)
   const currentKeys = new Set(links.map(linkKey))
   const past = history
-    ? partitionLinks(
+    ? drawnBetween(
         history.filter((link) => !currentKeys.has(linkKey(link))),
         located
-      ).drawn
+      )
     : []
   const lanes = new Map<string, number>()
   const lane = (a: string, b: string) => {

@@ -14,7 +14,7 @@ import { isIp, parsePort } from "@/lib/ip"
 // docs/v2/configuration-reference/shared/listen.md and the controller
 // still decides, when the node enrols.
 
-export const PRESETS = [
+const PRESETS = [
   "native_udp",
   "native_tcp",
   "vless_tcp",
@@ -109,7 +109,7 @@ const portOf = (raw: string) => parsePort(raw.trim())
  * digits and inner hyphens per label (an international name in its ASCII
  * form), at most 253 characters, one trailing dot allowed.
  */
-export function isHost(raw: string): boolean {
+function isHost(raw: string): boolean {
   const value = raw.trim()
   if (value === "") return false
   if (isIp(value)) return true

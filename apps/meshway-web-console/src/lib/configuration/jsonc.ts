@@ -147,7 +147,7 @@ function child(node: JsoncNode, segment: string | number) {
 }
 
 /** The deepest node that exists along `path`; `exact` when it is the whole path. */
-export function findNearest(
+function findNearest(
   root: JsoncNode,
   path: JsonPath
 ): { node: JsoncNode; depth: number; exact: boolean } {

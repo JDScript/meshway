@@ -1,22 +1,39 @@
 import assert from "node:assert/strict"
-import { test } from "vitest"
+import { beforeEach, test, vi } from "vitest"
 
 import {
+  forgetNetwork,
   landing,
-  rememberedFor,
-  rememberedValue,
+  rememberedNetwork,
+  rememberNetwork,
 } from "@/lib/remembered-network"
 
+const stored = new Map<string, string>()
+vi.stubGlobal("window", {
+  localStorage: {
+    getItem: (key: string) => stored.get(key) ?? null,
+    setItem: (key: string, value: string) => void stored.set(key, value),
+    removeItem: (key: string) => void stored.delete(key),
+  },
+})
+beforeEach(() => stored.clear())
+
 test("a remembered network belongs to the account that opened it", () => {
-  const stored = rememberedValue("user-a", "net-1")
-  assert.equal(rememberedFor(stored, "user-a"), "net-1")
-  assert.equal(rememberedFor(stored, "user-b"), null)
+  rememberNetwork("user-a", "net-1")
+  assert.equal(rememberedNetwork("user-a"), "net-1")
+  assert.equal(rememberedNetwork("user-b"), null)
+  forgetNetwork("user-b", "net-1")
+  assert.equal(rememberedNetwork("user-a"), "net-1")
+  forgetNetwork("user-a", "net-1")
+  assert.equal(rememberedNetwork("user-a"), null)
 })
 
 test("anything else stored is no preference", () => {
-  assert.equal(rememberedFor(null, "user-a"), null)
-  assert.equal(rememberedFor("net-1", "user-a"), null)
-  assert.equal(rememberedFor('{"v":2,"user":"user-a"}', "user-a"), null)
+  assert.equal(rememberedNetwork("user-a"), null)
+  for (const value of ["net-1", '{"v":2,"user":"user-a"}', "{"]) {
+    stored.set("meshway.network", value)
+    assert.equal(rememberedNetwork("user-a"), null)
+  }
 })
 
 test("`/` opens the remembered network when it is listed", () => {

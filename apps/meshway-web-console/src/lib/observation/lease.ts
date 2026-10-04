@@ -9,9 +9,9 @@ import { isActive } from "./record"
 // this browser's clock.
 
 /** Past `renewAfter`, so a clock a little ahead of the controller's is not refused. */
-export const RENEW_MARGIN_MS = 250
+const RENEW_MARGIN_MS = 250
 /** After a renewal refused as early: try again this much later, while the lease lasts. */
-export const RENEW_RETRY_MS = 1_000
+const RENEW_RETRY_MS = 1_000
 
 export type LeaseTimes = Pick<
   ObservationTask,
@@ -26,7 +26,7 @@ export type LeasePlan =
   /** Nothing to renew: the task has ended. */
   | { type: "none" }
 
-export const leaseExpiry = (task: LeaseTimes) =>
+const leaseExpiry = (task: LeaseTimes) =>
   Date.parse(task.subscriberExpiresAt ?? task.expiresAt)
 
 export function leasePlan(task: LeaseTimes, now: number): LeasePlan {

@@ -169,7 +169,7 @@ export function withChecked(entry: DraftEntry, checked: Checked): DraftEntry {
 }
 
 /** Two inputs ask the controller the same thing. */
-export function sameInput(a: DraftInput, b: DraftInput): boolean {
+function sameInput(a: DraftInput, b: DraftInput): boolean {
   if (a.kind === "document") return b.kind === "document" && a.text === b.text
   if (b.kind === "document") return false
   return JSON.stringify(a.ops) === JSON.stringify(b.ops)

@@ -49,7 +49,7 @@ export const addressFamily = (value: string): Family | null =>
   isIpv4(value) ? "ipv4" : isIpv6(value) ? "ipv6" : null
 
 /** `address` is inside `prefix` (a CIDR of the same family). */
-export function inPrefix(address: string, prefix: string): boolean {
+function inPrefix(address: string, prefix: string): boolean {
   const slash = prefix.indexOf("/")
   if (slash < 0) return false
   const network = prefix.slice(0, slash)

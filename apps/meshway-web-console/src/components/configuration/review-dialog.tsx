@@ -91,7 +91,7 @@ function PreparedRuleSets({
  * and after (non-secret views).
  * Nothing is applied until it is confirmed here.
  */
-export function ReviewDialog({
+function ReviewDialog({
   networkId,
   review,
   applying,
@@ -228,7 +228,7 @@ export function ReviewDialog({
 }
 
 /** A restore the controller refused: what it said, by path. */
-export function RefusalDialog({
+function RefusalDialog({
   refusal,
   onClose,
 }: {

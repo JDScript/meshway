@@ -22,7 +22,7 @@ import { valueOf } from "./operations"
 // controller checks every node again.
 
 /** One DNS label, lowercase (nodes.md#hostname). */
-export const HOSTNAME = /^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$/
+const HOSTNAME = /^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$/
 
 export function nodeProblems(
   ops: readonly ConfigurationOperation[],

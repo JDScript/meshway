@@ -145,7 +145,7 @@ export function settingsOf(
 }
 
 /** The fields of `value` that differ from `base`. */
-export function settingsPatch(
+function settingsPatch(
   base: NodeSettingsValue,
   value: NodeSettingsValue
 ): NodeSettingsPatch {

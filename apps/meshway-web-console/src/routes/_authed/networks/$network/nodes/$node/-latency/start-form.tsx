@@ -33,7 +33,7 @@ const METRICS: CreateObservation["metrics"] = ["rtt", "probeLoss"]
 const starts = attempts<Omit<CreateObservation, "subscriptionId">>()
 
 /** What the controller's refusals of a new observation mean here. */
-export const createFailureText: FailureText = {
+const createFailureText: FailureText = {
   permission_denied: () => m.observation_denied(),
   state_conflict: () => m.observation_conflict(),
   observation_limit: () => m.observation_limit(),

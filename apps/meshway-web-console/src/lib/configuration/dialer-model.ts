@@ -154,9 +154,3 @@ export function withDialerMode(
     ? current
     : { ...defaults }
 }
-
-/** The set a node dials with: its own, or the defaults it inherits. */
-export const effectiveDialers = (
-  dialers: DialerSetUpdate | null,
-  defaults: DialerSetUpdate
-): DialerSetUpdate => dialers ?? defaults

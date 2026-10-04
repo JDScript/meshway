@@ -2,12 +2,7 @@ import assert from "node:assert/strict"
 import type { ConfigurationView } from "@meshway/control-client"
 import { test } from "vitest"
 
-import {
-  defaultsUpdate,
-  edits,
-  valueOf,
-  withValue,
-} from "@/lib/configuration/operations"
+import { edits, valueOf, withValue } from "@/lib/configuration/operations"
 
 const VLESS = {
   enabled: true,
@@ -115,10 +110,11 @@ test("one operation per part, in a fixed order whatever the editing order", () =
 
 test("a topology default change sends the topology alone", () => {
   const base = valueOf([], VIEW, "defaults")
-  const update = defaultsUpdate(VIEW, { ...base, topology: "deny" })
-  // Omitted fields are kept: no access, no dialers restated.
-  assert.deepEqual(update, { topology: "deny" })
   const ops = withValue([], VIEW, "defaults", { ...base, topology: "deny" })
+  // Omitted fields are kept: no access, no dialers restated.
+  assert.deepEqual(ops, [
+    { type: "replaceDefaults", defaults: { topology: "deny" } },
+  ])
   assert.equal(valueOf(ops, VIEW, "defaults").topology, "deny")
   assert.deepEqual(valueOf(ops, VIEW, "defaults").dialers, base.dialers)
   assert.deepEqual(withValue(ops, VIEW, "defaults", base), [])

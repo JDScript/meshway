@@ -5,7 +5,6 @@ import {
   dialerMode,
   dialerProblems,
   dialerRows,
-  effectiveDialers,
   priorityOf,
   withDialerMode,
   withEntryField,
@@ -72,6 +71,4 @@ test("a node inherits (null), dials nothing ({}) or has its own set", () => {
   })
   assert.deepEqual(withDialerMode({ vless: {} }, "none", defaults), {})
   assert.equal(withDialerMode({ vless: {} }, "inherit", defaults), null)
-  assert.equal(effectiveDialers(null, defaults), defaults)
-  assert.deepEqual(effectiveDialers({}, defaults), {})
 })

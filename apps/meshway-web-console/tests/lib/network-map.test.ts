@@ -14,7 +14,6 @@ import {
   mapNodes,
   mergeRecentLinks,
   overviewScene,
-  partitionLinks,
 } from "@/lib/network-map"
 
 const A = "aaaaaaaa-0000-4000-8000-000000000001"
@@ -100,15 +99,18 @@ test("only a node with the controller's coordinates is located; the others keep 
 })
 
 test("a link is drawn only between two located nodes", () => {
-  const links = [link(A, B, "1"), link(A, C, "2")]
-  const { drawn, undrawn } = partitionLinks(links, new Set([A, B]))
-  assert.deepEqual(
-    drawn.map((l) => l.linkId),
-    ["1"]
+  const nodes = mapNodes(
+    state({
+      [A]: located(35.7, 139.7),
+      [B]: located(37.5, 127),
+      [C]: { freshness: "current", derived: { ipInfo: {} } },
+    }),
+    new Map()
   )
+  const scene = overviewScene(nodes, [link(A, B, "1"), link(A, C, "2")], null)
   assert.deepEqual(
-    undrawn.map((l) => l.linkId),
-    ["2"]
+    scene.links.map((l) => l.nodeIds),
+    [[A, B]]
   )
 })
 

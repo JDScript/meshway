@@ -186,7 +186,7 @@ export function profileKind(name: string): ProfileKind {
 }
 
 /** A profile name the configuration may define: not a built-in's, not empty, no white space. */
-export const isProfileName = (name: string) =>
+const isProfileName = (name: string) =>
   name !== "" &&
   !/\s/.test(name) &&
   name !== "mesh" &&

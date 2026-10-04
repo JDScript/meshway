@@ -57,10 +57,7 @@ type Change = (
 ) => void
 
 /** An address of the pool's family to show as the field's format. */
-export function addressExample(
-  pool: string | undefined,
-  family: "ipv4" | "ipv6"
-) {
+function addressExample(pool: string | undefined, family: "ipv4" | "ipv6") {
   const network = pool?.split("/")[0]
   if (family === "ipv4") {
     const parts = network?.split(".")

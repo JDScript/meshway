@@ -33,7 +33,7 @@ export const emptyRecord: ObservationRecord = {
 }
 
 /** The samples kept per subscription (a few minutes at one a second). */
-export const SAMPLE_LIMIT = 600
+const SAMPLE_LIMIT = 600
 
 export const isActive = (phase: ObservationPhase) =>
   phase === "preparing" || phase === "running"

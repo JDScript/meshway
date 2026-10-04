@@ -1,7 +1,7 @@
 import assert from "node:assert/strict"
 import { test } from "vitest"
 
-import { codepoints, newPasswordProblem, utf8Bytes } from "@/lib/password"
+import { newPasswordProblem } from "@/lib/password"
 
 const rules = {
   lengthUnit: "unicodeCodepoints" as const,
@@ -9,14 +9,6 @@ const rules = {
   maxCodepoints: 16,
   maxUtf8Bytes: 40,
 }
-
-test("lengths are Unicode code points and UTF-8 bytes, not UTF-16 units", () => {
-  const astral = "😀".repeat(3)
-  assert.equal(astral.length, 6)
-  assert.equal(codepoints(astral), 3)
-  assert.equal(utf8Bytes(astral), 12)
-  assert.equal(utf8Bytes("é"), 2)
-})
 
 test("a new password is held to the published rules, then to its confirmation", () => {
   const ok = "correct horse"

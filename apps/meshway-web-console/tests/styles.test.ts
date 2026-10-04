@@ -2,7 +2,7 @@ import assert from "node:assert/strict"
 import { readFileSync } from "node:fs"
 import { test } from "vitest"
 
-import { THEME_SCALES } from "@/lib/utils"
+import { cn } from "@/lib/utils"
 
 const css = readFileSync(new URL("../src/index.css", import.meta.url), "utf8")
 
@@ -45,9 +45,16 @@ test("class merging knows every custom type size and radius of the theme", () =>
     "3xl",
     "4xl",
   ])
-  assert.deepEqual(new Set(named("text")), new Set(THEME_SCALES.text))
-  assert.deepEqual(
-    new Set(named("radius").filter((name) => !tailwindRadii.has(name ?? ""))),
-    new Set(THEME_SCALES.radius)
-  )
+  // A size it did not know would count as a colour and drop the colour.
+  for (const name of named("text")) {
+    assert.equal(
+      cn("text-muted-foreground", `text-${name}`),
+      `text-muted-foreground text-${name}`
+    )
+    assert.equal(cn("text-sm", `text-${name}`), `text-${name}`)
+  }
+  for (const name of named("radius").filter(
+    (name) => !tailwindRadii.has(name ?? "")
+  ))
+    assert.equal(cn("rounded-lg", `rounded-${name}`), `rounded-${name}`)
 })

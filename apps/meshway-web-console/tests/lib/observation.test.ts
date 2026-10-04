@@ -12,7 +12,6 @@ import {
   emptyRecord,
   foldTask,
   removeRecord,
-  SAMPLE_LIMIT,
   standing,
   type ObservationRecord,
 } from "@/lib/observation/record"
@@ -169,12 +168,15 @@ test("another subscription's view and views after removal change nothing", () =>
   assert.equal(standing(removed, T0).type, "ended")
 })
 
-test("the series is bounded", () => {
+test("the series is bounded, keeping the latest", () => {
+  const total = 5_000
   let record = emptyRecord
-  for (let n = 0; n < SAMPLE_LIMIT + 5; n++)
+  for (let n = 0; n < total; n++)
     record = foldTask(record, running(sample(n, "success")))
-  assert.equal(record.samples.length, SAMPLE_LIMIT)
-  assert.equal(record.samples[0]!.sample.measurementId, mid(5))
+  const kept = record.samples.length
+  assert.ok(kept > 0 && kept < total, `${kept} kept`)
+  assert.equal(record.samples[0]!.sample.measurementId, mid(total - kept))
+  assert.equal(record.samples.at(-1)!.sample.measurementId, mid(total - 1))
 })
 
 test("a lease that ran out is lapsed before the controller says so", () => {

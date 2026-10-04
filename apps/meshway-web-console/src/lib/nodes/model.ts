@@ -1,15 +1,10 @@
 import type {
   EnrollmentKeyView,
-  NodeIdentity,
   NodeInventoryView,
 } from "@meshway/control-client"
 
 // Pure facts about nodes and enrolment keys, from what the controller
 // reports: nothing here is runtime state (this controller reports none).
-
-/** The tags or the user a node acts as, for searching and showing. */
-export const identityWords = (identity: NodeIdentity): string[] =>
-  identity.type === "tag" ? identity.tags : [identity.user]
 
 /** Nodes by hostname, then ID; those matching `q` (a substring of the hostname). */
 export function shownNodes(

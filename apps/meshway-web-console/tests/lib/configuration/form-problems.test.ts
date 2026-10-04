@@ -1,11 +1,7 @@
 import assert from "node:assert/strict"
 import { test } from "vitest"
 
-import {
-  issuesWithin,
-  partProblems,
-  within,
-} from "@/lib/configuration/form-problems"
+import { partProblems, within } from "@/lib/configuration/form-problems"
 
 test("access: empty and malformed sets, at the controller's pointers", () => {
   const problems = partProblems("access", [
@@ -65,14 +61,4 @@ test("pointers within a prefix, segment by segment", () => {
   assert.equal(within("/access/1", "/access/1"), true)
   assert.equal(within("/access/10", "/access/1"), false)
   assert.equal(within("/groups/group:a~1b", "/groups/group:a~1b"), true)
-  assert.deepEqual(
-    issuesWithin(
-      [
-        { path: "/access/0/src", message: "a" },
-        { path: "/topology/0/a", message: "b" },
-      ],
-      "/access"
-    ).map((issue) => issue.message),
-    ["a"]
-  )
 })

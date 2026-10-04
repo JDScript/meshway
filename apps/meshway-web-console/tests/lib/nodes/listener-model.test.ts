@@ -3,7 +3,6 @@ import { test } from "vitest"
 
 import {
   advancedSet,
-  isHost,
   listenerOf,
   listenerProblems,
   newListener,
@@ -30,6 +29,9 @@ test("only the catalog's protocols are offered", () => {
   ])
 })
 
+const hostRefused = (host: string) =>
+  listenerProblems({ ...newListener("native_tcp"), host }).includes("host")
+
 test("hosts are IPs or DNS names", () => {
   for (const host of [
     "1.2.3.4",
@@ -38,16 +40,15 @@ test("hosts are IPs or DNS names", () => {
     "edge.example.com.",
     "例子.测试",
   ])
-    assert.ok(isHost(host), host)
+    assert.ok(!hostRefused(host), host)
   for (const host of [
-    "",
     "a_b.example",
     "-a.example",
     "https://x",
     "a..b",
     "x:443",
   ])
-    assert.ok(!isHost(host), host)
+    assert.ok(hostRefused(host), host)
 })
 
 test("a UDP listener sends only what was typed", () => {

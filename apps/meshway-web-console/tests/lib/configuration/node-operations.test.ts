@@ -6,7 +6,7 @@ import type {
 } from "@meshway/control-client"
 import { test } from "vitest"
 
-import { inPrefix, sameAddress } from "@/lib/configuration/addresses"
+import { inPools, sameAddress } from "@/lib/configuration/addresses"
 import { listenerFromView } from "@/lib/configuration/listener-update"
 import {
   addressesOf,
@@ -271,11 +271,11 @@ test("node problems: hostnames, tags and addresses at the controller's pointers"
 })
 
 test("addresses inside prefixes, both families", () => {
-  assert.equal(inPrefix("100.64.0.9", "100.64.0.0/10"), true)
-  assert.equal(inPrefix("100.128.0.1", "100.64.0.0/10"), false)
-  assert.equal(inPrefix("fd42::1", "fd42::/48"), true)
-  assert.equal(inPrefix("fd42:0:1::1", "fd42::/48"), false)
-  assert.equal(inPrefix("::ffff:100.64.0.1", "::ffff:0:0/96"), true)
-  assert.equal(inPrefix("fd42::1", "100.64.0.0/10"), false)
+  assert.equal(inPools("100.64.0.9", ["100.64.0.0/10"]), true)
+  assert.equal(inPools("100.128.0.1", ["100.64.0.0/10"]), false)
+  assert.equal(inPools("fd42::1", ["fd42::/48"]), true)
+  assert.equal(inPools("fd42:0:1::1", ["fd42::/48"]), false)
+  assert.equal(inPools("::ffff:100.64.0.1", ["::ffff:0:0/96"]), true)
+  assert.equal(inPools("fd42::1", ["100.64.0.0/10"]), false)
   assert.equal(sameAddress("fd42::1", "fd42:0:0:0:0:0:0:1"), true)
 })

@@ -35,7 +35,7 @@ const unitMs = (unit: string): number | null =>
           : null
 
 /** A positive duration as the controller takes it (`500ms`, `30s`, `15m`, `24h`), in milliseconds; null when it is none. */
-export function durationMs(value: string): number | null {
+function durationMs(value: string): number | null {
   const found = /^([1-9][0-9]*)(ms|s|m|h)$/.exec(value)
   const factor = found?.[2] === undefined ? null : unitMs(found[2])
   if (!found?.[1] || factor === null) return null
@@ -44,7 +44,7 @@ export function durationMs(value: string): number | null {
 }
 
 /** An HTTPS source as the controller takes it: a host, no credentials, no fragment, no spaces. */
-export function isSourceUrl(value: string): boolean {
+function isSourceUrl(value: string): boolean {
   if (!value.startsWith("https://") || value.length > 2048) return false
   if (/[\s#]/.test(value) || [...value].some((c) => c < " ")) return false
   const authority = value.slice(8).split(/[/?]/)[0] ?? ""
@@ -74,7 +74,7 @@ function comparable(set: RuleSet) {
       }
 }
 
-export const sameRuleSet = (a: RuleSet, b: RuleSet) =>
+const sameRuleSet = (a: RuleSet, b: RuleSet) =>
   JSON.stringify(comparable(a)) === JSON.stringify(comparable(b))
 
 export function sameRuleSets(a: RuleSetMap, b: RuleSetMap): boolean {
@@ -116,7 +116,7 @@ export function writtenRuleSet(set: RuleSet): RuleSet {
 }
 
 /** A key a set may have: a name, no white space (a set is named in a match as `set:<key>`). */
-export const isSetKey = (key: string) => key !== "" && !/\s/.test(key)
+const isSetKey = (key: string) => key !== "" && !/\s/.test(key)
 
 export type RuleSetCode = "empty" | "destination" | "url" | "duration" | "key"
 
@@ -150,7 +150,7 @@ export function ruleSetProblems(sets: RuleSetMap): RuleSetProblem[] {
 }
 
 /** Whether two sets download the same content: the same remote URL and format (the interval aside), or the same inline set. */
-export function sameSource(a: RuleSet, b: RuleSet): boolean {
+function sameSource(a: RuleSet, b: RuleSet): boolean {
   if (a.type === "remote" && b.type === "remote")
     return a.url === b.url && a.format === b.format
   return sameRuleSet(a, b)

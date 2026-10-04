@@ -49,7 +49,7 @@ const sectionIcon: Record<SectionKey, LucideIcon> = {
   defaults: SlidersHorizontalIcon,
 }
 
-export function SectionGlyph({ section }: { section: SectionKey }) {
+function SectionGlyph({ section }: { section: SectionKey }) {
   const Icon = sectionIcon[section]
   return <Icon className="size-4 text-muted-foreground" />
 }

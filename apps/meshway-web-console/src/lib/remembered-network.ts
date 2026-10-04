@@ -5,7 +5,7 @@
 
 import { z } from "zod"
 
-export const REMEMBERED_NETWORK = "meshway.network"
+const REMEMBERED_NETWORK = "meshway.network"
 
 const zRemembered = z.object({
   v: z.literal(1),
@@ -14,10 +14,7 @@ const zRemembered = z.object({
 })
 
 /** The remembered network for `userId` in a stored value, or null. */
-export function rememberedFor(
-  stored: string | null,
-  userId: string
-): string | null {
+function rememberedFor(stored: string | null, userId: string): string | null {
   if (stored === null) return null
   let value: unknown
   try {
@@ -32,7 +29,7 @@ export function rememberedFor(
 }
 
 /** The value to store for `userId` opening `networkId`. */
-export function rememberedValue(userId: string, networkId: string): string {
+function rememberedValue(userId: string, networkId: string): string {
   return JSON.stringify({
     v: 1,
     user: userId,

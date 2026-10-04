@@ -44,11 +44,11 @@ export function EntryPage({
 }
 
 /** The entry card's look, for a card that sizes itself (the setup): glass, the sheet's corners, and how it dissolves. */
-export const ENTRY_CARD =
+const ENTRY_CARD =
   "enter glass w-full rounded-sheet transition-[opacity,transform,filter] duration-500 ease-entrance data-[leaving=true]:-translate-y-3 data-[leaving=true]:scale-[0.98] data-[leaving=true]:opacity-0 data-[leaving=true]:blur-md motion-reduce:transition-none"
 
 /** How an entry card enters. */
-export const ENTRY_ENTER = {
+const ENTRY_ENTER = {
   "--enter-from": "16px",
   "--enter-scale": "0.985",
   "--enter-delay": "60ms",

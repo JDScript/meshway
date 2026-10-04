@@ -88,7 +88,7 @@ function replaceEntries<Value>(
 }
 
 /** `state.delta`: each updated node replaced whole, removed ones dropped, links and paths replaced. */
-export function applyStateDelta(
+function applyStateDelta(
   state: StateView,
   delta: Extract<UserEvent, { type: "state.delta" }>
 ): StateView {
@@ -102,7 +102,7 @@ export function applyStateDelta(
 }
 
 /** `entities.delta`: each updated node and member replaced whole, removed ones dropped. */
-export function applyEntitiesDelta(
+function applyEntitiesDelta(
   entities: UserEntitiesView,
   delta: Extract<UserEvent, { type: "entities.delta" }>
 ): UserEntitiesView {

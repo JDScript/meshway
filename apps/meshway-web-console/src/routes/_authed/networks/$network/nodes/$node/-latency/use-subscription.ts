@@ -21,7 +21,7 @@ function subscribeVisibility(listener: () => void) {
 }
 
 /** Whether this tab is in front: a page in the background does not renew. */
-export const useDocumentVisible = () =>
+const useDocumentVisible = () =>
   useSyncExternalStore(
     subscribeVisibility,
     () => document.visibilityState === "visible"

@@ -3,7 +3,6 @@ import { test } from "vitest"
 
 import {
   globeLayout,
-  MOBILE_BAR_SPACE,
   MOBILE_PAGE_HEIGHT,
   MOBILE_SHEET_BOTTOM,
   PAGE_WIDTH,
@@ -43,7 +42,8 @@ test("on small screens the globe sits above the bottom bar, and above the sheets
   assert.deepEqual(globeLayout(phone).insets, {
     top: 0,
     right: 0,
-    bottom: MOBILE_BAR_SPACE,
+    // The bottom bar: 44 high, 12 from the edge.
+    bottom: 56,
     left: 0,
   })
   const page = globeLayout({ ...phone, page: true }).insets.bottom

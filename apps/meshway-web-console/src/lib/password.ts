@@ -8,8 +8,8 @@ import { m } from "@/paraglide/messages.js"
 
 export type PasswordProblem = "short" | "long" | "too_many_bytes" | "mismatch"
 
-export const codepoints = (text: string) => [...text].length
-export const utf8Bytes = (text: string) => new TextEncoder().encode(text).length
+const codepoints = (text: string) => [...text].length
+const utf8Bytes = (text: string) => new TextEncoder().encode(text).length
 
 /** What is wrong with a new password and its confirmation under `rules`, or null. */
 export function newPasswordProblem(

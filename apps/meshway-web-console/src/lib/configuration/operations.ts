@@ -86,7 +86,7 @@ function sameMap(
 }
 
 /** A rule as the form writes it: the remark and direction only when not their defaults. */
-export function accessRule(rule: AccessRule): AccessRule {
+function accessRule(rule: AccessRule): AccessRule {
   const out: AccessRule = { src: rule.src, dst: rule.dst, ip: rule.ip }
   if (rule.remark) out.remark = rule.remark
   if (rule.bidirectional) out.bidirectional = true
@@ -100,7 +100,7 @@ const sameAccessRule = (a: AccessRule, b: AccessRule) =>
   sameSet(a.dst, b.dst) &&
   sameSet(a.ip, b.ip)
 
-export function topologyRule(rule: TopologyRule): TopologyRule {
+function topologyRule(rule: TopologyRule): TopologyRule {
   const out: TopologyRule = { action: rule.action, a: rule.a, b: rule.b }
   if (rule.remark) out.remark = rule.remark
   return out
@@ -127,7 +127,7 @@ const sameRules =
  * dialers, and checking it again against a newer revision changes nothing
  * else.
  */
-export function defaultsUpdate(
+function defaultsUpdate(
   view: ConfigurationView,
   value: DefaultsValue
 ): DefaultsUpdate {
@@ -358,17 +358,4 @@ export function withValue<P extends FormPart>(
     return at === null ? FORM_PARTS.length : FORM_PARTS.indexOf(at)
   }
   return next.sort((a, b) => rank(a) - rank(b))
-}
-
-/** The configuration section a part is in, where its diagnostics point. */
-export const sectionOfPart: Record<FormPart, string> = {
-  access: "access",
-  topology: "topology",
-  defaults: "defaults",
-  groups: "groups",
-  tagsOwners: "tagsOwners",
-  dns: "dns",
-  addressPools: "addressPools",
-  routing: "routing",
-  ruleSets: "ruleSets",
 }

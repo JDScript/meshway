@@ -17,7 +17,7 @@ import {
 import { cn } from "@/lib/utils"
 import { m } from "@/paraglide/messages.js"
 
-export const dialerProtocolLabel: Record<DialerProtocol, () => string> = {
+const dialerProtocolLabel: Record<DialerProtocol, () => string> = {
   native_udp: () => m.configuration_dialer_native_udp(),
   native_tcp: () => m.configuration_dialer_native_tcp(),
   vless: () => m.configuration_dialer_vless(),

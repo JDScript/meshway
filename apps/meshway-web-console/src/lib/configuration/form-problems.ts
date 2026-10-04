@@ -1,5 +1,4 @@
 import type {
-  ConfigurationIssue,
   ConfigurationOperation,
   ConfigurationView,
 } from "@meshway/control-client"
@@ -183,9 +182,3 @@ export function within(pointer: string, prefix: string): boolean {
     return false
   return outer.every((segment, index) => inner[index] === segment)
 }
-
-/** The controller's issues at `prefix` or inside it. */
-export const issuesWithin = (
-  issues: readonly ConfigurationIssue[],
-  prefix: string
-): ConfigurationIssue[] => issues.filter((issue) => within(issue.path, prefix))

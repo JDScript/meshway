@@ -31,7 +31,7 @@ export function sectionOf(pointer: string): string {
 }
 
 /** What the controller binds beside the configuration (editing.md): changes under `/bindings`, which no configuration view holds. */
-export const BINDINGS = ["users", "nodeUsers", "listeners", "ruleSets"] as const
+const BINDINGS = ["users", "nodeUsers", "listeners", "ruleSets"] as const
 
 export type BindingKey = (typeof BINDINGS)[number]
 

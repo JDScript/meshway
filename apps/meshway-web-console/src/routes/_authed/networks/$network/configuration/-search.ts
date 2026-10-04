@@ -12,7 +12,7 @@ import { SECTIONS, type SectionKey } from "@/lib/configuration/changes"
 //
 // `at` is a JSON Pointer the source opens at.
 
-export const CONFIGURATION_VIEWS = [...SECTIONS, "source", "history"] as const
+const CONFIGURATION_VIEWS = [...SECTIONS, "source", "history"] as const
 export type ConfigurationViewId = SectionKey | "source" | "history"
 
 export const isConfigurationView = (
@@ -33,5 +33,3 @@ export const zConfigurationSearch = z.object({
   revision: zRevisionParam,
   against: zRevisionParam,
 })
-
-export type ConfigurationSearch = z.infer<typeof zConfigurationSearch>

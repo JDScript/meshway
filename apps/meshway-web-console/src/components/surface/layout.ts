@@ -31,11 +31,11 @@ export const MOBILE_PANEL_TOP = MOBILE_EDGE + BAR_HEIGHT + GAP
  * card) stays on every page; sheets float above it, this far from the
  * bottom of the screen.
  */
-export const MOBILE_BAR_SPACE = MOBILE_EDGE + BAR_HEIGHT
+const MOBILE_BAR_SPACE = MOBILE_EDGE + BAR_HEIGHT
 export const MOBILE_SHEET_BOTTOM = MOBILE_BAR_SPACE + MOBILE_EDGE
 /** Share of the viewport height the bottom sheets take on small screens. */
 export const MOBILE_PAGE_HEIGHT = 0.52
-export const MOBILE_PEEK_HEIGHT = 0.6
+const MOBILE_PEEK_HEIGHT = 0.6
 
 /** A bottom sheet leaving through the screen's edge travels this much further, so its shadow goes too. */
 export const SHEET_EXIT_OVERSHOOT = 2

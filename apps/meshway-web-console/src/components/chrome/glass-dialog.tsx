@@ -202,7 +202,7 @@ export function ConfirmDialog({
  * draws it when it should break other than anywhere (a command breaks at
  * its spaces and flags).
  */
-export function CopyField({
+function CopyField({
   label,
   value,
   once = false,

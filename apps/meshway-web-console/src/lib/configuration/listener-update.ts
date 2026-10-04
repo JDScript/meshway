@@ -1,8 +1,4 @@
-import type {
-  ListenerUpdate,
-  ListenerView,
-  NodeSettingsView,
-} from "@meshway/control-client"
+import type { ListenerUpdate, ListenerView } from "@meshway/control-client"
 
 // A listener's update (`setListener`) restates the whole listener: the
 // controller replaces it, keeping only the secret material an update
@@ -74,15 +70,6 @@ export function listenerFromView(view: ListenerView): ListenerUpdate | null {
       }
   }
 }
-
-/** The listener a node's settings hold under `key`, if any. */
-export const listenerViewOf = (
-  settings: NodeSettingsView | undefined,
-  key: string
-): ListenerView | undefined =>
-  settings && Object.hasOwn(settings.listeners, key)
-    ? settings.listeners[key]
-    : undefined
 
 /** An update carries secret material of its own (it overwrites the kept one). */
 export function writesSecrets(update: ListenerUpdate): boolean {

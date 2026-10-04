@@ -3,14 +3,11 @@ import type { RuleSet, RuleSetView } from "@meshway/control-client"
 import { test } from "vitest"
 
 import {
-  durationMs,
   inlineOf,
-  isSourceUrl,
   preparationOf,
   refreshable,
   ruleSetProblems,
   sameRuleSets,
-  sameSource,
   writtenRuleSet,
 } from "@/lib/configuration/rule-sets"
 
@@ -33,23 +30,32 @@ const ARTIFACT = {
   createdAt: "2026-10-03T10:00:00Z",
 }
 
-test("durations take ms, s, m and h", () => {
-  assert.equal(durationMs("24h"), 86_400_000)
-  assert.equal(durationMs("1440m"), 86_400_000)
-  assert.equal(durationMs("500ms"), 500)
-  assert.equal(durationMs("0h"), null)
-  assert.equal(durationMs("1d"), null)
-  assert.equal(durationMs("24 h"), null)
+const codesOf = (set: RuleSet) =>
+  ruleSetProblems({ cn: set }).map((problem) => problem.code)
+
+test("intervals take ms, s, m and h", () => {
+  for (const interval of ["24h", "1440m", "90s", "500ms"])
+    assert.deepEqual(codesOf({ ...remote, updateInterval: interval }), [])
+  for (const interval of ["0h", "1d", "24 h"])
+    assert.deepEqual(codesOf({ ...remote, updateInterval: interval }), [
+      "duration",
+    ])
 })
 
 test("sources are HTTPS without credentials or a fragment", () => {
-  assert.equal(isSourceUrl("https://example.com/a.json"), true)
-  assert.equal(isSourceUrl("https://example.com:8443/a.json?x=1"), true)
-  assert.equal(isSourceUrl("http://example.com/a.json"), false)
-  assert.equal(isSourceUrl("https://user:pw@example.com/a.json"), false)
-  assert.equal(isSourceUrl("https://example.com/a.json#x"), false)
-  assert.equal(isSourceUrl("https://exa mple.com/"), false)
-  assert.equal(isSourceUrl(""), false)
+  for (const url of [
+    "https://example.com/a.json",
+    "https://example.com:8443/a.json?x=1",
+  ])
+    assert.deepEqual(codesOf({ ...remote, url }), [])
+  for (const url of [
+    "http://example.com/a.json",
+    "https://user:pw@example.com/a.json",
+    "https://example.com/a.json#x",
+    "https://exa mple.com/",
+    "",
+  ])
+    assert.deepEqual(codesOf({ ...remote, url }), ["url"])
 })
 
 test("the default interval and the order of inline values make no change", () => {
@@ -145,13 +151,4 @@ test("preparation: a new or replaced source is prepared with the draft", () => {
   assert.equal(refreshable("replaced"), false)
   assert.equal(refreshable("missing"), true)
   assert.equal(refreshable("failing"), true)
-})
-
-test("same source: URL and format, not the interval", () => {
-  assert.equal(sameSource(remote, { ...remote, updateInterval: "1h" }), true)
-  assert.equal(
-    sameSource(remote, { ...remote, url: "https://example.com/b" }),
-    false
-  )
-  assert.equal(sameSource({ type: "inline" }, { type: "inline" }), true)
 })

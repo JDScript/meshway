@@ -94,8 +94,6 @@ export function draftActions(networkId: string) {
   }
 }
 
-export type DraftActions = ReturnType<typeof draftActions>
-
 /** The network's draft and its changes. */
 export function useConfigurationDraft(networkId: string) {
   const entry = useStore(draftStore, (drafts) => drafts[networkId] ?? null)

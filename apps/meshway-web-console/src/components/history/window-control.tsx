@@ -13,7 +13,7 @@ import {
 } from "@/lib/history/window"
 import { m } from "@/paraglide/messages.js"
 
-export const windowLabel: Record<WindowChoice, () => string> = {
+const windowLabel: Record<WindowChoice, () => string> = {
   "1h": () => m.history_window_1h(),
   "6h": () => m.history_window_6h(),
   "24h": () => m.history_window_24h(),
