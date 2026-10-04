@@ -6,6 +6,7 @@
 #![forbid(unsafe_code)]
 
 mod clock;
+mod dns;
 mod enrollment;
 mod execution;
 mod identity;
@@ -49,6 +50,8 @@ pub enum Error {
     Cryptography,
     #[error("Server response does not match the requested binding or contract")]
     Contract,
+    #[error("invalid DNS query name")]
+    InvalidDnsName,
     #[error("the current session or instance has expired")]
     Expired,
     #[error("Server operation failed: {0}")]

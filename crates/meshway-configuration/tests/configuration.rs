@@ -52,6 +52,92 @@ fn with_nodes() -> NetworkConfigurationInput {
 }
 
 #[test]
+fn dns_name_normalization_and_combined_limit_are_shared_with_configuration() {
+    assert_eq!(
+        normalize_dns_name("NODE.BÜCHER.Example.").unwrap(),
+        "node.xn--bcher-kva.example"
+    );
+    for invalid in [
+        "",
+        ".",
+        "*.example",
+        "a..example",
+        "a.example..",
+        "127.0.0.1",
+        "127.0.0.1.",
+        "１２７。０。０。１",
+        "::1",
+        "https://example.test",
+        "a.example:53",
+    ] {
+        assert!(normalize_dns_name(invalid).is_err(), "{invalid}");
+    }
+    assert!(normalize_dns_name(&"é".repeat(MAX_DNS_NAME_INPUT_BYTES)).is_err());
+    assert!(node_dns_name("127", "0.0.1").is_err());
+    let mut numeric = with_nodes();
+    numeric.dns.domain = "0.0.1".into();
+    numeric.nodes.get_mut(&id(1)).unwrap().hostname = "127".into();
+    assert!(
+        matches!(normalize(numeric, &context()), Err(ConfigurationError::Invalid(issues))
+        if issues.iter().any(|issue| issue.path == format!("/nodes/{}/hostname", id(1))))
+    );
+    let domain = [
+        "a".repeat(63),
+        "b".repeat(63),
+        "c".repeat(63),
+        "d".repeat(54),
+    ]
+    .join(".");
+    let mut c = with_nodes();
+    c.dns.domain = domain.clone();
+    assert_eq!(node_dns_name("node-1", &domain).unwrap().len(), 253);
+    normalize(c.clone(), &context()).unwrap();
+    c.dns.domain.push('d');
+    assert!(normalize_dns_name(&c.dns.domain).is_ok());
+    assert!(node_dns_name("node-1", &c.dns.domain).is_err());
+    let ConfigurationError::Invalid(issues) = normalize(c, &context()).unwrap_err() else {
+        panic!("expected combined-name validation failure");
+    };
+    assert!(
+        issues
+            .iter()
+            .any(|issue| issue.path == format!("/nodes/{}/hostname", id(1)))
+    );
+}
+
+#[test]
+fn access_traffic_grammar_rejects_empty_and_unsupported_sets() {
+    for token in [
+        "tcp:0",
+        "tcp:01",
+        "tcp:65536",
+        "tcp:9-8",
+        "udp:",
+        "icmp:8",
+        "sctp:*",
+        "TCP:80",
+        "tcp:1-",
+        "tcp:+1",
+    ] {
+        let mut c = with_nodes();
+        c.access[0].ip = vec![token.into()];
+        assert!(normalize(c, &context()).is_err(), "{token}");
+    }
+    for token in [
+        "*",
+        "tcp:65432",
+        "tcp:1-65535",
+        "udp:41000-41007",
+        "udp:*",
+        "icmp:*",
+    ] {
+        let mut c = with_nodes();
+        c.access[0].ip = vec![token.into()];
+        normalize(c, &context()).unwrap();
+    }
+}
+
+#[test]
 fn declaration_preview_defers_material_only_and_cannot_normalize_as_execution_input() {
     let mut input = with_nodes();
     input.nodes.get_mut(&id(1)).unwrap().listeners.insert(

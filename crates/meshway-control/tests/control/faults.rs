@@ -17,6 +17,11 @@ pub enum Fault {
     Hold,
     WrongController,
     WrongInstance,
+    WrongDnsNetwork,
+    WrongDnsSource,
+    WrongDnsName,
+    MissingDnsRecord,
+    ShortSession,
 }
 #[derive(Clone)]
 struct Forward {
@@ -133,13 +138,24 @@ async fn forward(State(state): State<Forward>, request: Request) -> Response<Bod
                 state.release.notified().await;
                 bytes.to_vec()
             }
-            Some(Fault::WrongController | Fault::WrongInstance) => {
+            Some(fault) => {
                 let mut value: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
                 let id = serde_json::to_value(super::support::request()).unwrap();
-                if matches!(fault, Some(Fault::WrongController)) {
-                    value["controllerId"] = id;
-                } else {
-                    value["lease"]["instanceId"] = id;
+                match fault {
+                    Fault::WrongController => value["controllerId"] = id,
+                    Fault::WrongInstance => value["lease"]["instanceId"] = id,
+                    Fault::WrongDnsNetwork => value["networkId"] = id,
+                    Fault::WrongDnsSource => value["sourceNodeId"] = id,
+                    Fault::WrongDnsName => value["record"]["name"] = "other.mesh.example".into(),
+                    Fault::MissingDnsRecord => {
+                        value.as_object_mut().unwrap().remove("record");
+                    }
+                    Fault::ShortSession => {
+                        value["expiresAt"] = (chrono::Utc::now() + chrono::Duration::seconds(2))
+                            .to_rfc3339_opts(chrono::SecondsFormat::Millis, true)
+                            .into()
+                    }
+                    Fault::Lost | Fault::Hold => unreachable!("delivery fault handled above"),
                 }
                 serde_json::to_vec(&value).unwrap()
             }

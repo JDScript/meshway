@@ -195,6 +195,7 @@ fn routes() -> OpenApiRouter<HttpState> {
         .routes(routes!(agent::renew))
         .routes(routes!(agent::release))
         .routes(routes!(agent::configuration))
+        .routes(routes!(agent::query_dns))
         .routes(routes!(agent::receipt))
         .routes(routes!(agent::demand))
         .routes(routes!(agent::select_profile))

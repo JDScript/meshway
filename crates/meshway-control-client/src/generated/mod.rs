@@ -3117,6 +3117,29 @@ impl crate::Client {
         }
     }
 
+    pub async fn query_node_dns(
+        &self,
+        body: &meshway_protocol::NodeDnsQueryRequest,
+        token: &str,
+    ) -> Result<
+        meshway_protocol::NodeDnsQueryResponse,
+        crate::ClientError<meshway_protocol::ErrorResponse>,
+    > {
+        let response = self
+            .send(
+                reqwest::Method::POST,
+                "/agent-api/v1/dns/query",
+                Some(token),
+                Some(body),
+            )
+            .await?;
+        match response.status {
+            200 => response.json(),
+            400 | 401 | 503 => Err(response.problem()),
+            _ => Err(response.unexpected()),
+        }
+    }
+
     pub async fn query_observation_history(
         &self,
         path: &QueryObservationHistoryPath,

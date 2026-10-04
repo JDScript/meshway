@@ -75,6 +75,21 @@ wire_object! { #[derive(Clone,Debug,PartialEq,Eq)] pub struct NodeSettingsRespon
     pub request_id: RequestId, pub network_id: NetworkId, pub node_id: NodeId,
     pub revision: Revision, pub settings: meshway_configuration::NodeSettingsView,
 } }
+wire_object! { #[derive(Clone,Debug,PartialEq,Eq)] pub struct NodeDnsQueryRequest {
+    /// Exact FQDN; raw UTF-8 is bounded before strict DNS/IDNA normalization.
+    pub name: String [max_length=1024],
+} }
+wire_object! { #[derive(Clone,Debug,PartialEq,Eq)] pub struct NodeDnsRecord {
+    pub node_id: NodeId, pub name: String, pub addresses: meshway_configuration::NodeAddresses,
+} }
+wire_object! { #[derive(Clone,Debug,PartialEq,Eq)] pub struct NodeDnsQueryResponse {
+    pub request_id: RequestId, pub network_id: NetworkId, pub source_node_id: NodeId,
+    pub configuration_revision: Revision, pub as_of: chrono::DateTime<chrono::Utc>,
+    /// Unknown and non-visible names have the same null result. This snapshot
+    /// carries no execution grant, TTL, or authoritative DNS negative answer.
+    #[serde(deserialize_with="crate::object::required_nullable")]
+    pub record: Option<NodeDnsRecord> [required=true],
+} }
 wire_object! { #[derive(Clone,Debug,PartialEq,Eq)] pub struct DeleteNodeRequest {
     pub request_id: RequestId, pub expected_revision: Revision,
 } }

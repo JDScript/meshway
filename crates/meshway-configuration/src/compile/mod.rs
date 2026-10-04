@@ -181,7 +181,8 @@ pub fn compile_with_diagnostics(
                             },
                         );
                         node.dns.mesh_hosts.insert(
-                            format!("{}.{}", s.hostname, input.configuration.dns.domain),
+                            node_dns_name(&s.hostname, &input.configuration.dns.domain)
+                                .map_err(|_| CompileError::InvalidInput)?,
                             s.addresses.clone(),
                         );
                     }

@@ -1,5 +1,6 @@
 use crate::error::Error;
 mod authentication;
+mod discovery;
 mod instances;
 mod inventory;
 mod publications;
@@ -9,6 +10,7 @@ use crate::{
     secrets::{Purpose, Sealer},
 };
 pub(crate) use authentication::{authorize_node, challenge, insert_keys, rotate, session};
+pub(crate) use discovery::query_dns;
 pub(crate) use instances::{
     acquire, configuration, current_instance, instance_lease, lease_for_node, receipt, release,
     renew,

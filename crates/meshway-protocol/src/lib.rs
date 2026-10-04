@@ -54,9 +54,10 @@ pub use management::{
     RemoveMemberRequest,
 };
 pub use node::{
-    DeleteNodeRequest, NodeChallenge, NodeChallengeRequest, NodeInventoryResponse,
-    NodeInventoryView, NodeKeyMetadata, NodeRotationRequest, NodeSessionRequest,
-    NodeSessionResponse, NodeSettingsResponse, RevokeNodeKeyRequest,
+    DeleteNodeRequest, NodeChallenge, NodeChallengeRequest, NodeDnsQueryRequest,
+    NodeDnsQueryResponse, NodeDnsRecord, NodeInventoryResponse, NodeInventoryView, NodeKeyMetadata,
+    NodeRotationRequest, NodeSessionRequest, NodeSessionResponse, NodeSettingsResponse,
+    RevokeNodeKeyRequest,
 };
 pub use observations::{
     CreateObservation, HistoryAccepted, HistoryPage, HistoryQuery, HistoryReport, ObservationList,

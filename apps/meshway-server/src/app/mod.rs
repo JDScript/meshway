@@ -420,6 +420,8 @@ impl From<schema::SchemaError> for AppError {
 #[cfg(all(test, unix))]
 mod commit_tests;
 #[cfg(all(test, unix))]
+mod discovery_tests;
+#[cfg(all(test, unix))]
 mod node_tests;
 #[cfg(all(test, unix))]
 mod resource_tests;

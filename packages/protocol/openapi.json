@@ -455,6 +455,67 @@
         ]
       }
     },
+    "/agent-api/v1/dns/query": {
+      "post": {
+        "tags": [
+          "node"
+        ],
+        "operationId": "queryNodeDns",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/NodeDnsQueryRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NodeDnsQueryResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "nodeSession": []
+          }
+        ]
+      }
+    },
     "/agent-api/v1/enrollment-requests": {
       "post": {
         "tags": [
@@ -13884,6 +13945,81 @@
                 "type": "null"
               }
             ]
+          }
+        },
+        "additionalProperties": false
+      },
+      "NodeDnsQueryRequest": {
+        "type": "object",
+        "required": [
+          "name"
+        ],
+        "properties": {
+          "name": {
+            "type": "string",
+            "description": "Exact FQDN; raw UTF-8 is bounded before strict DNS/IDNA normalization.",
+            "maxLength": 1024
+          }
+        },
+        "additionalProperties": false
+      },
+      "NodeDnsQueryResponse": {
+        "type": "object",
+        "required": [
+          "requestId",
+          "networkId",
+          "sourceNodeId",
+          "configurationRevision",
+          "asOf",
+          "record"
+        ],
+        "properties": {
+          "asOf": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "configurationRevision": {
+            "$ref": "#/components/schemas/Revision"
+          },
+          "networkId": {
+            "$ref": "#/components/schemas/NetworkId"
+          },
+          "record": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/NodeDnsRecord",
+                "description": "Unknown and non-visible names have the same null result. This snapshot\ncarries no execution grant, TTL, or authoritative DNS negative answer."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "requestId": {
+            "$ref": "#/components/schemas/RequestId"
+          },
+          "sourceNodeId": {
+            "$ref": "#/components/schemas/NodeId"
+          }
+        },
+        "additionalProperties": false
+      },
+      "NodeDnsRecord": {
+        "type": "object",
+        "required": [
+          "nodeId",
+          "name",
+          "addresses"
+        ],
+        "properties": {
+          "addresses": {
+            "$ref": "#/components/schemas/NodeAddresses"
+          },
+          "name": {
+            "type": "string"
+          },
+          "nodeId": {
+            "$ref": "#/components/schemas/NodeId"
           }
         },
         "additionalProperties": false

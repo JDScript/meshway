@@ -2378,6 +2378,25 @@ export const zNodeConfigurationView = z.strictObject({
   ["target"]: zConfigurationRef.nullable().exactOptional()
 });
 
+export const zNodeDnsQueryRequest = z.strictObject({
+  ["name"]: z.string().refine(value => [...value].length <= 1024, "maxLength 1024 Unicode code points")
+});
+
+export const zNodeDnsRecord = z.strictObject({
+  ["addresses"]: zNodeAddresses,
+  ["name"]: z.string(),
+  ["nodeId"]: zNodeId
+});
+
+export const zNodeDnsQueryResponse = z.strictObject({
+  ["asOf"]: z.string().refine(rfc3339, "Expected RFC 3339 date-time"),
+  ["configurationRevision"]: zRevision,
+  ["networkId"]: zNetworkId,
+  ["record"]: zNodeDnsRecord.nullable(),
+  ["requestId"]: zRequestId,
+  ["sourceNodeId"]: zNodeId
+});
+
 export const zNodeInventoryView = z.strictObject({
   ["addresses"]: zNodeAddresses,
   ["canDelete"]: z.boolean(),

@@ -9,7 +9,7 @@ import {
   queryEnrollmentRequest, redeemEnrollmentRequest, createNodeChallenge, createNodeSession,
   acquireNodeInstance, queryNodeConfiguration, releaseNodeInstance, deleteNode, getNode,
   reportNodeState, queryPeerState, getNodeState, getNetworkState, watchNetwork,
-  getConfigurationProgress, getNodeSettings,
+  getConfigurationProgress, getNodeSettings, getConfigurationSource, queryNodeDns,
   type EnrollmentIntent, type NodeSessionIntent,
 } from "../src/index.ts";
 
@@ -48,6 +48,22 @@ test("generated Node SDK completes signed PKCE admission, state reporting and pe
     proof: { challengeId: challenge.data.id, signature: sessionProof(challenge.data, control.privateKey) } });
   assert.ok(authenticated.ok);
   const node = { token: authenticated.data.token };
+  const source = await getConfigurationSource(client, { networkId: enrolled.data.networkId }, {}, user);
+  assert.ok(source.ok);
+  const ownName = `${intent.hostname}.${source.data.configuration.dns.domain}`;
+  const discovered = await queryNodeDns(client, { name: `${ownName.toUpperCase()}.` }, node);
+  assert.ok(discovered.ok);
+  assert.equal(discovered.data.networkId, enrolled.data.networkId);
+  assert.equal(discovered.data.sourceNodeId, enrolled.data.nodeId);
+  assert.equal(discovered.data.configurationRevision, source.data.revision);
+  assert.equal(discovered.data.record?.nodeId, enrolled.data.nodeId);
+  assert.equal(discovered.data.record?.name, ownName);
+  assert.match(discovered.data.asOf, /T.*Z$/);
+  const unknownName = await queryNodeDns(client, { name: `absent.${source.data.configuration.dns.domain}` }, node);
+  assert.ok(unknownName.ok);
+  assert.equal(unknownName.data.record, null);
+  const wrongCredential = await queryNodeDns(client, { name: ownName }, user);
+  assert.ok(!wrongCredential.ok && wrongCredential.error.kind === "http" && wrongCredential.error.status === 401);
   const beforeInstance = await getNetworkState(client, { networkId: enrolled.data.networkId }, user);
   assert.ok(beforeInstance.ok, "a registered node awaiting its first instance must have a readable state");
   assert.equal(beforeInstance.data.nodes[enrolled.data.nodeId]?.freshness, "awaiting_report");
@@ -141,4 +157,6 @@ test("generated Node SDK completes signed PKCE admission, state reporting and pe
   await events.return(undefined);
   const denied = await acquireNodeInstance(client, { instanceId: randomUUID(), capabilities: {} }, node);
   assert.ok(!denied.ok && denied.error.kind === "http" && denied.error.status === 401);
+  const deniedDiscovery = await queryNodeDns(client, { name: ownName }, node);
+  assert.ok(!deniedDiscovery.ok && deniedDiscovery.error.kind === "http" && deniedDiscovery.error.status === 401);
 });
