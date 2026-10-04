@@ -12,12 +12,6 @@ use crate::{
     store::{Executor, Options, schema},
 };
 
-fn publisher() -> crate::state::service::CommitPublisher {
-    crate::state::service::CommitPublisher::new(std::sync::Arc::new(std::sync::Mutex::new(
-        crate::state::service::Runtime::new().unwrap(),
-    )))
-}
-
 fn request() -> RequestId {
     RequestId::new(random_uuid().unwrap()).unwrap()
 }
@@ -49,7 +43,6 @@ async fn session_use_and_reset_failures_follow_real_account_lifecycles() {
     let accounts = Accounts::new(
         handle.clone(),
         AccountOptions::new(true, Duration::from_secs(86400)).unwrap(),
-        publisher(),
     );
     let email = "metadata-reset@example.test";
     let issued = accounts
@@ -215,7 +208,6 @@ async fn transactional_lifecycle_races_activities_and_cancelled_delivery() {
     let accounts = Accounts::new(
         handle.clone(),
         AccountOptions::new(true, Duration::from_secs(86400)).unwrap(),
-        publisher(),
     );
     let issued = accounts
         .register(
@@ -265,7 +257,9 @@ async fn transactional_lifecycle_races_activities_and_cancelled_delivery() {
         let old_hash = candidate.password_hash.clone();
         handle.execute(move |c| {
             c.execute_batch(mutation).unwrap();
-            assert!(matches!(login(c, candidate, Duration::from_secs(86400), request(), None), Err(Error::InvalidCredentials)));
+            let tx = c.transaction().unwrap();
+            assert!(matches!(login(&tx, candidate, Duration::from_secs(86400), request(), None), Err(Error::InvalidCredentials)));
+            drop(tx);
             assert_eq!(c.query_row("SELECT count(*) FROM user_sessions", [], |r| r.get::<_, i64>(0)).unwrap(), 1);
             assert_eq!(c.query_row("SELECT count(*) FROM activity_events", [], |r| r.get::<_, i64>(0)).unwrap(), 1);
             c.execute("UPDATE users SET disabled_at = NULL, credential_version = 1, password_hash = ?1", [old_hash.as_str()]).unwrap();
@@ -359,7 +353,10 @@ async fn transactional_lifecycle_races_activities_and_cancelled_delivery() {
     let mut login_future = Box::pin(handle.execute(move |c| {
         started.send(()).unwrap();
         wait.recv().unwrap();
-        login(c, candidate, Duration::from_secs(86400), request(), None)
+        let tx = c.transaction().unwrap();
+        let issued = login(&tx, candidate, Duration::from_secs(86400), request(), None);
+        tx.commit().unwrap();
+        issued
     }));
     assert!(matches!(
         login_future
@@ -416,7 +413,6 @@ async fn persisted_account_session_and_activity_times_are_unix_milliseconds() {
     let accounts = Accounts::new(
         handle.clone(),
         AccountOptions::new(true, Duration::from_secs(90)).unwrap(),
-        publisher(),
     );
     let before = Utc::now().timestamp_millis();
     let registered = accounts

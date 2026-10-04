@@ -1,15 +1,13 @@
+use crate::effect::Effect;
 use crate::error::Error;
-use crate::state::{
-    service::{ReadIdentity, Runtime},
-    stream::CommittedChange,
-};
+use crate::state::service::ReadIdentity;
 use chrono::{DateTime, Utc};
 use meshway_configuration::RuleSet;
 use meshway_model::{NetworkId, Revision};
 use meshway_protocol::resources::{ArtifactSummary, ResourceProblem, RuleSetList, RuleSetView};
-use rusqlite::{Transaction, params};
+use rusqlite::{Transaction, TransactionBehavior, params};
 use std::collections::BTreeMap;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 
 pub struct RuleSetScope {
     pub network: NetworkId,
@@ -80,7 +78,6 @@ impl Authority {
 pub struct ResourceService<P: ResourceProvider> {
     handle: crate::store::Handle,
     provider: Arc<P>,
-    runtime: Arc<Mutex<Runtime>>,
     downloads: Arc<super::downloads::Downloads>,
 }
 impl<P: ResourceProvider> Clone for ResourceService<P> {
@@ -88,7 +85,6 @@ impl<P: ResourceProvider> Clone for ResourceService<P> {
         Self {
             handle: self.handle.clone(),
             provider: self.provider.clone(),
-            runtime: self.runtime.clone(),
             downloads: self.downloads.clone(),
         }
     }
@@ -97,13 +93,11 @@ impl<P: ResourceProvider> ResourceService<P> {
     pub(crate) fn new(
         handle: crate::store::Handle,
         provider: P,
-        runtime: Arc<Mutex<Runtime>>,
         downloads: Arc<super::downloads::Downloads>,
     ) -> Self {
         Self {
             handle,
             provider: Arc::new(provider),
-            runtime,
             downloads,
         }
     }
@@ -119,9 +113,8 @@ impl<P: ResourceProvider> ResourceService<P> {
     ) -> Result<RuleSetList, Error> {
         let provider = self.provider.clone();
         self.handle
-            .execute(move |connection| {
-                let tx = connection.transaction()?;
-                let scope = provider.rule_sets(&tx, &identity, Utc::now())?;
+            .read(move |tx| {
+                let scope = provider.rule_sets(tx, &identity, Utc::now())?;
                 if selected
                     .as_ref()
                     .is_some_and(|key| !scope.definitions.contains_key(key))
@@ -156,7 +149,7 @@ impl<P: ResourceProvider> ResourceService<P> {
                         .collect(),
                 })
             })
-            .await?
+            .await
     }
     pub async fn refresh_rule_set(
         &self,
@@ -185,9 +178,8 @@ impl<P: ResourceProvider> ResourceService<P> {
         let check_key = key.clone();
         let (network, revision, definition, previous_artifact, previous_check_version) = self
             .handle
-            .execute(move |connection| {
-                let tx = connection.transaction()?;
-                let scope = check_identity.scope(provider.as_ref(), &tx, Utc::now())?;
+            .read(move |tx| {
+                let scope = check_identity.scope(provider.as_ref(), tx, Utc::now())?;
                 if !scope.can_refresh {
                     return Err(Error::PermissionDenied);
                 }
@@ -218,20 +210,18 @@ impl<P: ResourceProvider> ResourceService<P> {
                     check_version,
                 ))
             })
-            .await??;
+            .await?;
         let converted = match self.downloads.fetch(&definition).await {
             Ok(data) => Ok(data),
             Err(super::downloads::FetchError::Resource(problem)) => Err(problem),
             Err(super::downloads::FetchError::Cancelled) => return Err(Error::CLOSED),
         };
         let provider = self.provider.clone();
-        let runtime = self.runtime.clone();
         self.handle
-            .execute(move |connection| {
+            .transact(TransactionBehavior::Deferred, move |tx| {
                 let _permit = permit;
-                let tx = connection.transaction()?;
                 let now = Utc::now();
-                let scope = identity.scope(provider.as_ref(), &tx, now)?;
+                let scope = identity.scope(provider.as_ref(), tx, now)?;
                 if !scope.can_refresh {
                     return Err(Error::PermissionDenied);
                 }
@@ -251,8 +241,8 @@ impl<P: ResourceProvider> ResourceService<P> {
                     Err(problem) => Some(problem),
                     Ok(data) => {
                         tx.execute_batch("SAVEPOINT resource_binding")?;
-                        let candidate = super::store_artifact(&tx, network, "rule-set", &data, now)?;
-                        match provider.bind_rule_set(&tx, network, revision, &key, &candidate, now) {
+                        let candidate = super::store_artifact(tx, network, "rule-set", &data, now)?;
+                        match provider.bind_rule_set(tx, network, revision, &key, &candidate, now) {
                             Ok(()) => {
                                 tx.execute_batch("RELEASE resource_binding")?;
                                 artifact = Some(candidate);
@@ -287,22 +277,21 @@ impl<P: ResourceProvider> ResourceService<P> {
                         i64::from(problem.is_some()),
                     ],
                 )?;
-                let result = identity.scope(provider.as_ref(), &tx, now)?
+                let result = identity.scope(provider.as_ref(), tx, now)?
                     .views.remove(&key).ok_or(Error::Internal("bound rule set view missing"))?;
                 if result.artifact != artifact || result.problem != problem {
                     return Err(Error::Internal("bound rule set view mismatch"));
                 }
-                // Once admitted, this store closure owns COMMIT and publication
+                // Once admitted, the executor owns COMMIT and publication
                 // even if the HTTP waiter is cancelled during the download tail.
-                crate::state::service::CommitPublisher::new(runtime).commit(
-                    tx,
+                Ok((
+                    result,
                     vec![
-                        CommittedChange::Resource { network_id: network },
-                        CommittedChange::Progress { network_id: network },
+                        Effect::Resource { network_id: network },
+                        Effect::Progress { network_id: network },
                     ],
-                )?;
-                Ok(result)
+                ))
             })
-            .await?
+            .await
     }
 }

@@ -12,6 +12,7 @@ pub mod accounts;
 mod app;
 pub(crate) mod configuration;
 mod directory;
+pub mod effect;
 pub mod enrollment;
 pub mod error;
 pub mod execution;

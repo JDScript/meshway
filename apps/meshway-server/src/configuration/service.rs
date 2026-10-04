@@ -3,6 +3,7 @@ use super::{
     apply_in_transaction, binding_changes, materials, prepare, preview, resources,
 };
 use crate::configuration::{ChangeCause, Snapshot, SnapshotCache};
+use crate::effect::Effect;
 use crate::error::Error;
 use crate::execution::configuration::{Participant, check_inputs, validation_context};
 use crate::secrets::{Purpose, Sealer};
@@ -12,7 +13,7 @@ use meshway_configuration::{NetworkConfigurationInput, configuration_changes};
 use meshway_configuration::{UserBinding, edit_source, parse_jsonc};
 use meshway_model::{MembershipId, NetworkId, RequestId, Revision, UserId};
 use meshway_protocol::{WireSecret, configuration::*};
-use rusqlite::{Connection, TransactionBehavior};
+use rusqlite::TransactionBehavior;
 use rusqlite::{OptionalExtension, Transaction, params};
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
@@ -35,7 +36,6 @@ pub(crate) struct Configurations {
     handle: Handle,
     sealer: Arc<Sealer>,
     cache: Arc<SnapshotCache>,
-    publisher: crate::state::service::CommitPublisher,
     downloads: Arc<crate::resources::downloads::Downloads>,
 }
 impl Configurations {
@@ -43,14 +43,12 @@ impl Configurations {
         handle: Handle,
         sealer: Arc<Sealer>,
         cache: Arc<SnapshotCache>,
-        publisher: crate::state::service::CommitPublisher,
         downloads: Arc<crate::resources::downloads::Downloads>,
     ) -> Self {
         Self {
             handle,
             sealer,
             cache,
-            publisher,
             downloads,
         }
     }
@@ -166,20 +164,16 @@ impl Configurations {
         let digest = token_digest(token)?;
         let service = self.clone();
         self.handle
-            .execute(move |db| {
-                let tx = db.transaction_with_behavior(TransactionBehavior::Deferred)?;
-                service.authorize(&tx, &digest, network)?;
+            .read(move |tx| {
+                service.authorize(tx, &digest, network)?;
                 let revision = match revision {
                     Some(r) => r,
-                    None => current_revision(&tx, network)?,
+                    None => current_revision(tx, network)?,
                 };
-                let snapshot = service
-                    .cache
-                    .load(&tx, network, revision, &service.sealer)?;
-                tx.commit()?;
+                let snapshot = service.cache.load(tx, network, revision, &service.sealer)?;
                 Ok(snapshot)
             })
-            .await?
+            .await
     }
     pub(crate) async fn validate(
         &self,
@@ -197,18 +191,16 @@ impl Configurations {
             .await?;
         let service = self.clone();
         self.handle
-            .execute(move |db| {
+            .read(move |tx| {
                 let _permit = permit;
-                let tx = db.transaction_with_behavior(TransactionBehavior::Deferred)?;
-                service.authorize(&tx, &digest, network)?;
-                let current = service.current(&tx, network)?;
+                service.authorize(tx, &digest, network)?;
+                let current = service.current(tx, network)?;
                 let input =
-                    service.prepare_request(&tx, &current, &request, false, resources.as_ref())?;
+                    service.prepare_request(tx, &current, &request, false, resources.as_ref())?;
                 let result = preview::build(&current, input, resources.as_ref(), id)?;
-                tx.commit()?;
                 Ok(result)
             })
-            .await?
+            .await
     }
     pub(crate) async fn apply(
         &self,
@@ -224,27 +216,27 @@ impl Configurations {
         let service = self.clone();
         let stage = self
             .handle
-            .execute(move |db| {
-                let resources = {
-                    let tx = db.transaction()?;
-                    service.stage_resources(&tx, digest, network, &request, true)?
-                };
+            .transact(TransactionBehavior::Immediate, move |tx| {
+                let resources = service.stage_resources(tx, digest, network, &request, true)?;
                 if let Some(resources) = resources.filter(|r| r.needs_download()) {
-                    Ok(ApplyStage::Download {
-                        request,
-                        resources,
-                        permit,
-                    })
+                    Ok((
+                        ApplyStage::Download {
+                            request,
+                            resources,
+                            permit,
+                        },
+                        Vec::new(),
+                    ))
                 } else {
                     // No network preparation: retain the original single accepted
                     // write-job cancellation semantics for ordinary configuration.
                     let _permit = permit;
                     service
-                        .apply_request(db, digest, network, request, id, None)
-                        .map(ApplyStage::Complete)
+                        .apply_request(tx, digest, network, request, id, None)
+                        .map(|(result, effects)| (ApplyStage::Complete(result), effects))
                 }
             })
-            .await??;
+            .await?;
         let (request, mut resources, permit) = match stage {
             ApplyStage::Complete(result) => return Ok(result),
             ApplyStage::Download {
@@ -256,23 +248,22 @@ impl Configurations {
         resources.download(&self.downloads).await?;
         let service = self.clone();
         self.handle
-            .execute(move |db| {
+            .transact(TransactionBehavior::Immediate, move |tx| {
                 let _permit = permit;
-                service.apply_request(db, digest, network, request, id, Some(&resources))
+                service.apply_request(tx, digest, network, request, id, Some(&resources))
             })
-            .await?
+            .await
     }
     fn apply_request(
         &self,
-        db: &mut Connection,
+        tx: &Transaction<'_>,
         digest: [u8; 32],
         network: NetworkId,
         request: ConfigurationRequest,
         id: RequestId,
         resources: Option<&resources::Preparation>,
-    ) -> Result<ConfigurationAppliedResponse, Error> {
-        let tx = db.transaction_with_behavior(TransactionBehavior::Immediate)?;
-        let user = self.authorize(&tx, &digest, network)?;
+    ) -> Result<(ConfigurationAppliedResponse, Vec<Effect>), Error> {
+        let user = self.authorize(tx, &digest, network)?;
         let encoded = Zeroizing::new(
             serde_json::to_vec(&request).map_err(|_| Error::encode("configuration request"))?,
         );
@@ -294,11 +285,10 @@ impl Configurations {
             let mut result: ConfigurationAppliedResponse = serde_json::from_str(&result)
                 .map_err(|_| Error::decode("configuration_commits.result"))?;
             result.request_id = id;
-            tx.commit()?;
-            return Ok(result);
+            return Ok((result, Vec::new()));
         }
-        let current = self.current(&tx, network)?;
-        let input = self.prepare_request(&tx, &current, &request, true, resources)?;
+        let current = self.current(tx, network)?;
+        let input = self.prepare_request(tx, &current, &request, true, resources)?;
         let mut prepared = prepare(input.input, input.source, &current, &input.context)?;
         if let ConfigurationRequest::Restore { restore_from, .. } = &request {
             prepared.rollback_from = Some(*restore_from);
@@ -309,7 +299,7 @@ impl Configurations {
             ChangeCause::Edit
         };
         let effects = apply_in_transaction(
-            &tx,
+            tx,
             &Principal::Session(digest),
             request.expected_revision(),
             &current,
@@ -327,7 +317,7 @@ impl Configurations {
             },
         )?;
         if let Some(resources) = resources {
-            resources.record(&tx, network, effects.revision)?;
+            resources.record(tx, network, effects.revision)?;
         }
         let changes = effects.changes();
         let result = ConfigurationAppliedResponse {
@@ -354,11 +344,7 @@ impl Configurations {
         )?;
         // One valid bulk deletion may exceed the replay window. The bounded
         // journal evicts old entries; it must not cap the configuration commit.
-        tx.commit()?;
-        for change in changes {
-            self.publisher.publish_committed(change);
-        }
-        Ok(result)
+        Ok((result, changes))
     }
     pub(crate) async fn compare(
         &self,
@@ -370,15 +356,14 @@ impl Configurations {
         let digest = token_digest(token)?;
         let service = self.clone();
         self.handle
-            .execute(move |db| {
-                let tx = db.transaction_with_behavior(TransactionBehavior::Deferred)?;
-                service.authorize(&tx, &digest, network)?;
+            .read(move |tx| {
+                service.authorize(tx, &digest, network)?;
                 let a = service
                     .cache
-                    .load(&tx, network, request.from_revision, &service.sealer)?;
+                    .load(tx, network, request.from_revision, &service.sealer)?;
                 let b = service
                     .cache
-                    .load(&tx, network, request.to_revision, &service.sealer)?;
+                    .load(tx, network, request.to_revision, &service.sealer)?;
                 let mut changes =
                     configuration_changes(&a.document.configuration, &b.document.configuration)?;
                 let configuration_changed = !changes.is_empty();
@@ -392,10 +377,9 @@ impl Configurations {
                     bindings_changed: a.bindings != b.bindings,
                     changes,
                 };
-                tx.commit()?;
                 Ok(result)
             })
-            .await?
+            .await
     }
     fn authorize(
         &self,
@@ -581,12 +565,11 @@ impl Configurations {
         let service = self.clone();
         let (request, mut resources) = self
             .handle
-            .execute(move |db| {
-                let tx = db.transaction()?;
-                let preparation = service.stage_resources(&tx, digest, network, &request, retry)?;
+            .read(move |tx| {
+                let preparation = service.stage_resources(tx, digest, network, &request, retry)?;
                 Ok::<_, Error>((request, preparation))
             })
-            .await??;
+            .await?;
         if let Some(resources) = &mut resources {
             resources.download(&self.downloads).await?;
         }

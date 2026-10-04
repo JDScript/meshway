@@ -1,6 +1,7 @@
 //! Private account persistence. All final decisions are made on the SQLite
 //! worker, in the same transaction as any mutation and its activity record.
 
+use crate::effect::Effect;
 use crate::error::Error;
 mod activity;
 pub(crate) mod management;
@@ -9,7 +10,7 @@ use std::time::Duration;
 
 use chrono::{DateTime, Utc};
 use meshway_model::{RequestId, SessionId, UserId};
-use rusqlite::{Connection, OptionalExtension, Transaction, TransactionBehavior, params};
+use rusqlite::{Connection, OptionalExtension, Transaction, params};
 use uuid::Uuid;
 use zeroize::Zeroizing;
 
@@ -44,14 +45,13 @@ pub(crate) fn login_candidate(
 }
 
 pub(crate) fn register(
-    connection: &mut Connection,
+    transaction: &Transaction<'_>,
     email: String,
     password_hash: Zeroizing<String>,
     ttl: Duration,
     request: RequestId,
     client_label: Option<&str>,
 ) -> Result<IssuedSession, Error> {
-    let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
     if transaction.query_row(
         "SELECT EXISTS(SELECT 1 FROM users WHERE email = ?1)",
         [&email],
@@ -66,26 +66,24 @@ pub(crate) fn register(
     };
     transaction.execute("INSERT INTO users (id, email, password_hash, credential_version, created_at) VALUES (?1, ?2, ?3, 1, ?4)",
         params![user.id.as_uuid().as_bytes().as_slice(), user.email, password_hash.as_str(), now])?;
-    let issued = insert_session(&transaction, user, 1, now, ttl, client_label)?;
+    let issued = insert_session(transaction, user, 1, now, ttl, client_label)?;
     record(
-        &transaction,
+        transaction,
         &issued.session,
         now,
         request,
         AccountActivity::Register,
     )?;
-    transaction.commit()?;
     Ok(issued)
 }
 
 pub(crate) fn login(
-    connection: &mut Connection,
+    transaction: &Transaction<'_>,
     verified: LoginCandidate,
     ttl: Duration,
     request: RequestId,
     client_label: Option<&str>,
 ) -> Result<IssuedSession, Error> {
-    let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
     // Revalidate every security input read before the KDF, including the PHC
     // itself. A credential-version increment is not the sole race protection.
     let email = transaction.query_row(
@@ -95,7 +93,7 @@ pub(crate) fn login(
     ).optional()?.ok_or(Error::InvalidCredentials)?;
     let now = now()?;
     let issued = insert_session(
-        &transaction,
+        transaction,
         User {
             id: verified.user_id,
             email,
@@ -106,13 +104,12 @@ pub(crate) fn login(
         client_label,
     )?;
     record(
-        &transaction,
+        transaction,
         &issued.session,
         now,
         request,
         AccountActivity::Login,
     )?;
-    transaction.commit()?;
     Ok(issued)
 }
 
@@ -148,42 +145,29 @@ fn insert_session(
 }
 
 pub(crate) fn authenticate(
-    connection: &mut Connection,
+    transaction: &Transaction<'_>,
     digest: [u8; 32],
 ) -> Result<AuthenticatedSession, Error> {
-    let transaction = connection.transaction_with_behavior(TransactionBehavior::Deferred)?;
-    let session = current_session(&transaction, &digest, now()?)?;
-    transaction.commit()?;
-    Ok(session)
+    current_session(transaction, &digest, now()?)
 }
 
 pub(crate) fn logout(
-    connection: &mut Connection,
+    transaction: &Transaction<'_>,
     digest: [u8; 32],
     request: RequestId,
-    publisher: &crate::state::service::CommitPublisher,
-) -> Result<(), Error> {
-    let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
+) -> Result<((), Vec<Effect>), Error> {
     let now = now()?;
-    let session = current_session(&transaction, &digest, now)?;
+    let session = current_session(transaction, &digest, now)?;
     transaction.execute(
         "UPDATE user_sessions SET revoked_at = ?1 WHERE id = ?2",
         params![now, session.session_id.as_uuid().as_bytes().as_slice()],
     )?;
-    record(
-        &transaction,
-        &session,
-        now,
-        request,
-        AccountActivity::Logout,
-    )?;
-    let changes = management::authorization_changes(&transaction, session.user.id)?;
-    transaction.commit()?;
-    for change in changes {
-        publisher.publish_committed(change);
-    }
-    publisher.revoke_session(session.session_id);
-    Ok(())
+    record(transaction, &session, now, request, AccountActivity::Logout)?;
+    let mut effects = management::authorization_changes(transaction, session.user.id)?;
+    effects.push(Effect::SessionRevoked {
+        session_id: session.session_id,
+    });
+    Ok(((), effects))
 }
 
 fn now() -> Result<i64, Error> {

@@ -1,14 +1,14 @@
 use super::{
     authentication::authorize_node,
-    bytes, commit_progress, current_configuration, id, identity_digest,
+    bytes, current_configuration, id, identity_digest,
     instances::{current_instance, grant_lease},
     json, now, subjects, user_binding, uuid,
 };
+use crate::effect::Effect;
 use crate::error::Error;
 use crate::execution::NodePrincipal;
 use crate::networks::configuration::ConfigurationBindings;
 use crate::secrets::Sealer;
-use crate::state::service::CommitPublisher;
 use meshway_configuration::NetworkConfiguration;
 use meshway_configuration::{
     compile::{self, CompilationInput},
@@ -19,26 +19,23 @@ use meshway_model::{
     NodePublicKey, PublicationId, Revision, Version,
 };
 use meshway_protocol::execution::*;
-use rusqlite::{Connection, TransactionBehavior};
 use rusqlite::{OptionalExtension, Transaction, params};
 use std::collections::BTreeMap;
 
 pub(crate) fn select_profile(
-    connection: &mut Connection,
+    tx: &Transaction<'_>,
     sealer: &Sealer,
     boot: InstanceId,
     token: [u8; 32],
     request: RoutingSelectionRequest,
-    publisher: &CommitPublisher,
-) -> Result<RoutingSelectionResponse, Error> {
-    let tx = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
+) -> Result<(RoutingSelectionResponse, Vec<Effect>), Error> {
     let now = now()?;
-    let p = authorize_node(&tx, sealer, boot, token, now)?;
-    current_instance(&tx, boot, &p, &request.instance, now)?;
-    let (_, cfg, bindings) = current_configuration(&tx, sealer, p.network)?;
+    let p = authorize_node(tx, sealer, boot, token, now)?;
+    current_instance(tx, boot, &p, &request.instance, now)?;
+    let (_, cfg, bindings) = current_configuration(tx, sealer, p.network)?;
     if !compile::profile_allowed(
         &cfg,
-        &subjects(&tx, p.network, &bindings)?,
+        &subjects(tx, p.network, &bindings)?,
         p.node,
         &request.profile,
     )? {
@@ -68,13 +65,17 @@ pub(crate) fn select_profile(
             p.node.as_uuid().as_bytes().as_slice(), now
         ],
     )?;
-    let publication = publish(&tx, sealer, p.network, "refresh", now)?.publication;
-    commit_progress(tx, publisher, p.network, true)?;
-    Ok(RoutingSelectionResponse {
-        version,
-        profile: request.profile,
-        publication,
-    })
+    let publication = publish(tx, sealer, p.network, "refresh", now)?.publication;
+    Ok((
+        RoutingSelectionResponse {
+            version,
+            profile: request.profile,
+            publication,
+        },
+        vec![Effect::Progress {
+            network_id: p.network,
+        }],
+    ))
 }
 
 fn trusted_inventory(
@@ -669,20 +670,18 @@ pub(crate) fn configuration_targets(
     Ok(targets)
 }
 pub(crate) fn demand(
-    connection: &mut Connection,
+    tx: &Transaction<'_>,
     sealer: &Sealer,
     boot: InstanceId,
     token: [u8; 32],
     request: DemandRequest,
-    publisher: &CommitPublisher,
-) -> Result<DemandResponse, Error> {
+) -> Result<(DemandResponse, Vec<Effect>), Error> {
     if !(1..=300).contains(&request.duration_seconds) {
         return Err(Error::InvalidRequest);
     }
-    let tx = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
     let now = now()?;
-    let p = authorize_node(&tx, sealer, boot, token, now)?;
-    current_instance(&tx, boot, &p, &request.instance, now)?;
+    let p = authorize_node(tx, sealer, boot, token, now)?;
+    current_instance(tx, boot, &p, &request.instance, now)?;
     let digest = crate::execution::proof::request_digest(&request)?;
     let previous: Option<(Vec<u8>,i64,Option<i64>)> = tx.query_row(
         "SELECT request_digest,expires_at,cancelled_at FROM execution_demands WHERE network_id=?1 AND node_id=?2 AND id=?3",
@@ -695,19 +694,21 @@ pub(crate) fn demand(
         return Err(Error::BindingConflict);
     }
     if previous.is_some() {
-        let (publication, target) = target(&tx, sealer, &p)?.ok_or(Error::BindingConflict)?;
-        check_publication(&tx, sealer, p.network, p.node, publication, now)?;
+        let (publication, target) = target(tx, sealer, &p)?.ok_or(Error::BindingConflict)?;
+        check_publication(tx, sealer, p.network, p.node, publication, now)?;
         let decision = target
             .configuration
             .decisions
             .get(&request.request_id)
             .cloned()
             .ok_or(Error::BindingConflict)?;
-        tx.commit()?;
-        return Ok(DemandResponse {
-            publication,
-            decision,
-        });
+        return Ok((
+            DemandResponse {
+                publication,
+                decision,
+            },
+            Vec::new(),
+        ));
     }
     if previous.is_none() {
         let d = Demand {
@@ -727,32 +728,34 @@ pub(crate) fn demand(
                 digest.as_bytes().as_slice(),bytes(&d)?,d.expires_at_ms as i64],
         )?;
     }
-    let compiled = publish(&tx, sealer, p.network, "demand", now)?;
+    let compiled = publish(tx, sealer, p.network, "demand", now)?;
     let decision = compiled
         .nodes
         .get(&p.node)
         .and_then(|n| n.configuration.decisions.get(&request.request_id))
         .cloned()
         .ok_or(Error::BindingConflict)?;
-    grant_lease(&tx, sealer, &p, now)?;
-    commit_progress(tx, publisher, p.network, true)?;
-    Ok(DemandResponse {
-        publication: compiled.publication,
-        decision,
-    })
+    grant_lease(tx, sealer, &p, now)?;
+    Ok((
+        DemandResponse {
+            publication: compiled.publication,
+            decision,
+        },
+        vec![Effect::Progress {
+            network_id: p.network,
+        }],
+    ))
 }
 pub(crate) fn cancel_demand(
-    connection: &mut Connection,
+    tx: &Transaction<'_>,
     sealer: &Sealer,
     boot: InstanceId,
     token: [u8; 32],
     request: CancelDemandRequest,
-    publisher: &CommitPublisher,
-) -> Result<(), Error> {
-    let tx = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
+) -> Result<((), Vec<Effect>), Error> {
     let now = now()?;
-    let p = authorize_node(&tx, sealer, boot, token, now)?;
-    current_instance(&tx, boot, &p, &request.instance, now)?;
+    let p = authorize_node(tx, sealer, boot, token, now)?;
+    current_instance(tx, boot, &p, &request.instance, now)?;
     let changed = tx.execute(
         "UPDATE execution_demands SET cancelled_at=?4 WHERE network_id=?1 AND node_id=?2 AND id=?3 AND cancelled_at IS NULL",
         params![
@@ -762,8 +765,14 @@ pub(crate) fn cancel_demand(
         ],
     )? > 0;
     if changed {
-        publish(&tx, sealer, p.network, "demand", now)?;
+        publish(tx, sealer, p.network, "demand", now)?;
     }
-    commit_progress(tx, publisher, p.network, changed)?;
-    Ok(())
+    let effects = if changed {
+        vec![Effect::Progress {
+            network_id: p.network,
+        }]
+    } else {
+        Vec::new()
+    };
+    Ok(((), effects))
 }

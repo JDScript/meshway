@@ -4,7 +4,6 @@ mod instances;
 mod inventory;
 mod publications;
 use crate::networks::configuration::ConfigurationBindings;
-use crate::state::{service::CommitPublisher, stream::CommittedChange};
 use crate::{
     execution::NodePrincipal,
     secrets::{Purpose, Sealer},
@@ -23,20 +22,6 @@ pub(crate) use publications::{
     retire_node_sessions, select_profile, target_for_node,
 };
 use rusqlite::{OptionalExtension, Transaction, params};
-
-fn commit_progress(
-    tx: Transaction<'_>,
-    publisher: &CommitPublisher,
-    network_id: NetworkId,
-    changed: bool,
-) -> Result<(), Error> {
-    let changes = if changed {
-        vec![CommittedChange::Progress { network_id }]
-    } else {
-        Vec::new()
-    };
-    publisher.commit(tx, changes)
-}
 
 pub(crate) fn now() -> Result<i64, Error> {
     let now = chrono::Utc::now().timestamp_millis();

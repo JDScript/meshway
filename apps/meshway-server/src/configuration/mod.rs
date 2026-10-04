@@ -82,24 +82,24 @@ pub(crate) struct CommitEffects {
 
 impl CommitEffects {
     /// Consumed by the owner of the outer transaction, never by a participant.
-    pub(crate) fn changes(&self) -> Vec<crate::state::stream::CommittedChange> {
-        use crate::state::stream::CommittedChange;
+    pub(crate) fn changes(&self) -> Vec<crate::effect::Effect> {
+        use crate::effect::Effect;
         let mut changes = Vec::new();
         if let Some(notice) = &self.notice {
-            changes.push(CommittedChange::Configuration {
+            changes.push(Effect::Configuration {
                 notice: notice.clone(),
             });
-            changes.push(CommittedChange::Authorization {
+            changes.push(Effect::Authorization {
                 network_id: self.network_id,
             });
-            changes.push(CommittedChange::Progress {
+            changes.push(Effect::Progress {
                 network_id: self.network_id,
             });
         }
         changes.extend(
             self.deleted_node_ids
                 .iter()
-                .map(|node_id| CommittedChange::NodeRetired {
+                .map(|node_id| Effect::NodeRetired {
                     network_id: self.network_id,
                     node_id: *node_id,
                 }),

@@ -31,8 +31,7 @@ impl IpDatasets {
     /// Reinstalls immutable data, never volatile reports or observations.
     pub async fn restore(&self) -> Result<(), Error> {
         let runtime = self.runtime.clone();
-        self.handle.execute(move |connection| {
-            let tx = connection.transaction()?;
+        self.handle.read(move |tx| {
             let mut runtime = runtime.lock().map_err(|_| Error::RUNTIME)?;
             for kind in [IpDatasetKind::GeoIp, IpDatasetKind::Asn] {
                 let row: Option<(String, Vec<u8>, String)> = tx.query_row(
@@ -46,7 +45,7 @@ impl IpDatasets {
             }
             runtime.hub.dataset_changed();
             Ok(())
-        }).await?
+        }).await
     }
     /// Deployment-only operation. Accepted SQL work owns commit and publication
     /// even when the caller stops awaiting the result.
@@ -64,6 +63,8 @@ impl IpDatasets {
         install(&mut super::GeoIp::default(), kind, id, bytes.clone())?;
         let digest = super::content_digest(&bytes);
         let runtime = self.runtime.clone();
+        // Installation must follow successful SQL COMMIT on this same worker,
+        // with the runtime guard still held even if the HTTP waiter is gone.
         self.handle.execute(move |connection| {
             let tx = connection.transaction()?;
             let mut runtime = runtime.lock().map_err(|_| Error::RUNTIME)?;

@@ -3,10 +3,12 @@
 //! Membership is checked with the caller's current session for every operation.
 //! Configuration remains a versioned value, never a second set of entity fields.
 
+use crate::effect::Effect;
 use crate::error::Error;
 use chrono::{DateTime, Utc};
 pub use meshway_model::{MemberSummary, NetworkSummary};
 use meshway_model::{NetworkId, RequestId};
+use rusqlite::TransactionBehavior;
 use std::sync::Arc;
 
 pub(crate) mod configuration;
@@ -24,7 +26,6 @@ pub struct Networks {
     handle: Handle,
     sealer: Arc<Sealer>,
     configuration_cache: Arc<crate::configuration::SnapshotCache>,
-    publisher: crate::state::service::CommitPublisher,
 }
 pub(crate) struct NameChange {
     pub(crate) name: String,
@@ -37,13 +38,11 @@ impl Networks {
         handle: Handle,
         sealer: Arc<Sealer>,
         configuration_cache: Arc<crate::configuration::SnapshotCache>,
-        publisher: crate::state::service::CommitPublisher,
     ) -> Self {
         Self {
             handle,
             sealer,
             configuration_cache,
-            publisher,
         }
     }
 
@@ -58,16 +57,14 @@ impl Networks {
         // Cheap authentication before template preparation; the creating
         // transaction still checks the current session again after admission.
         self.handle
-            .execute(move |connection| store::authenticate(connection, digest))
-            .await??;
+            .read(move |tx| store::authenticate(tx, digest))
+            .await?;
         let prepared = configuration::prepare(name, &self.sealer)?;
         let sealer = Arc::clone(&self.sealer);
         let cache = Arc::clone(&self.configuration_cache);
         self.handle
-            .execute(move |connection| {
-                store::create(connection, digest, prepared, request_id, &sealer, &cache)
-            })
-            .await?
+            .write(move |tx| store::create(tx, digest, prepared, request_id, &sealer, &cache))
+            .await
     }
 
     pub async fn list(
@@ -81,10 +78,8 @@ impl Networks {
         let sealer = Arc::clone(&self.sealer);
         let cache = Arc::clone(&self.configuration_cache);
         self.handle
-            .execute(move |connection| {
-                store::list(connection, digest, limit, cursor, &sealer, &cache)
-            })
-            .await?
+            .read(move |tx| store::list(tx, digest, limit, cursor, &sealer, &cache))
+            .await
     }
 
     pub async fn get(&self, token: &str, network_id: NetworkId) -> Result<NetworkSummary, Error> {
@@ -92,8 +87,8 @@ impl Networks {
         let sealer = Arc::clone(&self.sealer);
         let cache = Arc::clone(&self.configuration_cache);
         self.handle
-            .execute(move |connection| store::get(connection, digest, network_id, &sealer, &cache))
-            .await?
+            .read(move |tx| store::get(tx, digest, network_id, &sealer, &cache))
+            .await
     }
 
     pub async fn rename(
@@ -112,12 +107,11 @@ impl Networks {
         }
         let sealer = Arc::clone(&self.sealer);
         let cache = Arc::clone(&self.configuration_cache);
-        let publisher = self.publisher.clone();
         let changed = name != expected_name;
         self.handle
-            .execute(move |connection| {
+            .transact(TransactionBehavior::Immediate, move |tx| {
                 let result = store::rename(
-                    connection,
+                    tx,
                     digest,
                     network_id,
                     NameChange {
@@ -128,14 +122,14 @@ impl Networks {
                     &sealer,
                     &cache,
                 )?;
-                if changed {
-                    publisher.publish_committed(
-                        crate::state::stream::CommittedChange::Authorization { network_id },
-                    );
-                }
-                Ok(result)
+                let effects = if changed {
+                    vec![Effect::Authorization { network_id }]
+                } else {
+                    Vec::new()
+                };
+                Ok((result, effects))
             })
-            .await?
+            .await
     }
 
     pub async fn members(
@@ -150,12 +144,8 @@ impl Networks {
         let sealer = Arc::clone(&self.sealer);
         let cache = Arc::clone(&self.configuration_cache);
         self.handle
-            .execute(move |connection| {
-                store::members(
-                    connection, digest, network_id, limit, cursor, &sealer, &cache,
-                )
-            })
-            .await?
+            .read(move |tx| store::members(tx, digest, network_id, limit, cursor, &sealer, &cache))
+            .await
     }
 }
 

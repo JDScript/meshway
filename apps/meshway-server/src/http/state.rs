@@ -2,7 +2,6 @@
 //! Execution authenticates Node sessions, instances and publication lifetimes.
 use super::TypedPath as Path;
 use super::{auth::bearer, error::HttpError};
-use crate::error::Error;
 use crate::state::service::{ReadIdentity, StateProvider, StateService};
 use axum::{
     Extension, Json, Router,
@@ -237,12 +236,8 @@ async fn progress(
     let provider = Arc::clone(&service.provider);
     let result = service
         .handle
-        .execute(move |connection| {
-            let tx = connection.transaction()?;
-            provider.progress(&tx, &identity, revision, chrono::Utc::now())
-        })
+        .read(move |tx| provider.progress(tx, &identity, revision, chrono::Utc::now()))
         .await
-        .map_err(|error| HttpError::domain(id, Error::from(error)))?
         .map_err(|error| HttpError::domain(id, error))?;
     Ok(Json(result))
 }

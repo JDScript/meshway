@@ -1534,10 +1534,7 @@ async fn download_races_recheck_source_role_and_scope_and_do_not_hold_sqlite() {
             .after(sequence, network)
             .unwrap()
             .iter()
-            .any(|entry| matches!(
-                entry.change,
-                crate::state::stream::CommittedChange::Resource { .. }
-            ))
+            .any(|entry| matches!(entry.change, crate::effect::Effect::Resource { .. }))
     );
     remote.set(503, "unavailable");
     assert_eq!(

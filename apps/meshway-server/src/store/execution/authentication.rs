@@ -2,17 +2,16 @@ use super::{
     bytes, current_configuration, id, identity_eligible, json, now, publications::revoke_execution,
     uuid,
 };
+use crate::effect::Effect;
 use crate::error::Error;
 use crate::execution::NodePrincipal;
 use crate::execution::proof;
 use crate::secrets::Sealer;
-use crate::state::{service::CommitPublisher, stream::CommittedChange};
 use meshway_model::{
     BoundNodeKey, ChallengeId, Digest, InstanceId, KeyAlgorithm, KeyId, NetworkId, NodeId,
     NodePublicKey, Version,
 };
 use meshway_protocol::node::*;
-use rusqlite::{Connection, TransactionBehavior};
 use rusqlite::{OptionalExtension, Transaction, params};
 
 const CHALLENGE_TTL: i64 = 60_000;
@@ -66,15 +65,14 @@ fn bound_key(
     })
 }
 pub(crate) fn challenge(
-    connection: &mut Connection,
+    tx: &Transaction<'_>,
     sealer: &Sealer,
     request: NodeChallengeRequest,
 ) -> Result<NodeChallenge, Error> {
-    let tx = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
     let now = now()?;
-    let key = bound_key(&tx, request.network_id, request.node_id, request.key_id)?;
-    let (_, cfg, bindings) = current_configuration(&tx, sealer, request.network_id)?;
-    identity_eligible(&tx, &cfg, &bindings, request.network_id, request.node_id)?;
+    let key = bound_key(tx, request.network_id, request.node_id, request.key_id)?;
+    let (_, cfg, bindings) = current_configuration(tx, sealer, request.network_id)?;
+    identity_eligible(tx, &cfg, &bindings, request.network_id, request.node_id)?;
     tx.execute("DELETE FROM node_challenges WHERE expires_at<=?1", [now])?;
     let count: i64 = tx.query_row("SELECT count(*) FROM node_challenges", [], |r| r.get(0))?;
     let own: i64 = tx.query_row(
@@ -100,7 +98,6 @@ pub(crate) fn challenge(
         expires_at_ms: (now + CHALLENGE_TTL) as u64,
     };
     tx.execute("INSERT INTO node_challenges(id,controller_id,network_id,node_id,key_id,nonce,request_digest,operation,created_at,expires_at) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10)",params![c.id.as_uuid().as_bytes().as_slice(),c.controller_id.as_uuid().as_bytes().as_slice(),c.network_id.as_uuid().as_bytes().as_slice(),c.node_id.as_uuid().as_bytes().as_slice(),c.key_id.as_uuid().as_bytes().as_slice(),nonce.as_slice(),c.request_digest.as_bytes().as_slice(),operation(c.operation),now,now+CHALLENGE_TTL])?;
-    tx.commit()?;
     Ok(c)
 }
 fn operation(op: ProofOperation) -> &'static str {
@@ -152,15 +149,14 @@ fn consume(
     Ok(c)
 }
 pub(crate) fn session(
-    connection: &mut Connection,
+    tx: &Transaction<'_>,
     sealer: &Sealer,
     boot: InstanceId,
     request: NodeSessionRequest,
 ) -> Result<NodeSessionResponse, Error> {
-    let tx = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
     let now = now()?;
     let c = consume(
-        &tx,
+        tx,
         sealer,
         &request.proof,
         ProofOperation::Session,
@@ -182,7 +178,6 @@ pub(crate) fn session(
     let (token, hash) = proof::issue_token()?;
     let expires = now + SESSION_TTL;
     tx.execute("INSERT INTO node_sessions(token_hash,network_id,node_id,key_id,boot_id,created_at,expires_at) VALUES(?1,?2,?3,?4,?5,?6,?7)",params![hash.as_slice(),c.network_id.as_uuid().as_bytes().as_slice(),c.node_id.as_uuid().as_bytes().as_slice(),c.key_id.as_uuid().as_bytes().as_slice(),boot.as_uuid().as_bytes().as_slice(),now,expires])?;
-    tx.commit()?;
     Ok(NodeSessionResponse {
         node_id: c.node_id,
         network_id: c.network_id,
@@ -192,12 +187,10 @@ pub(crate) fn session(
     })
 }
 pub(crate) fn rotate(
-    connection: &mut Connection,
+    tx: &Transaction<'_>,
     sealer: &Sealer,
     request: NodeRotationRequest,
-    publisher: &CommitPublisher,
-) -> Result<NodeKeyMetadata, Error> {
-    let tx = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
+) -> Result<(NodeKeyMetadata, Vec<Effect>), Error> {
     let now = now()?;
     let digest = proof::request_digest(&request.intent)?;
     // A response can be lost after retirement of the old signing key. Recover
@@ -220,12 +213,7 @@ pub(crate) fn rotate(
         }
         let challenge: NodeChallenge = json(&challenge)?;
         let keys: NodeKeyMetadata = json(&result)?;
-        let current = bound_key(
-            &tx,
-            challenge.network_id,
-            challenge.node_id,
-            keys.control.id,
-        )?;
+        let current = bound_key(tx, challenge.network_id, challenge.node_id, keys.control.id)?;
         if current != keys.control {
             return Err(Error::InvalidCredentials);
         }
@@ -238,24 +226,17 @@ pub(crate) fn rotate(
         if !dataplane_current {
             return Err(Error::InvalidCredentials);
         }
-        let (_, cfg, bindings) = current_configuration(&tx, sealer, challenge.network_id)?;
-        identity_eligible(
-            &tx,
-            &cfg,
-            &bindings,
-            challenge.network_id,
-            challenge.node_id,
-        )?;
+        let (_, cfg, bindings) = current_configuration(tx, sealer, challenge.network_id)?;
+        identity_eligible(tx, &cfg, &bindings, challenge.network_id, challenge.node_id)?;
         proof::verify(
             &current.public_key,
             &challenge,
             request.new_signature.expose(),
         )?;
-        tx.commit()?;
-        return Ok(keys);
+        return Ok((keys, Vec::new()));
     }
     let c = consume(
-        &tx,
+        tx,
         sealer,
         &request.old_proof,
         ProofOperation::Rotate,
@@ -292,7 +273,7 @@ pub(crate) fn rotate(
     let generation =
         Version::new(c.key_generation.get() + 1).map_err(|_| Error::BindingConflict)?;
     let keys = insert_keys(
-        &tx,
+        tx,
         c.network_id,
         c.node_id,
         request.intent.control_key,
@@ -317,19 +298,18 @@ pub(crate) fn rotate(
             bytes(&keys)?
         ],
     )?;
-    revoke_execution(&tx, sealer, c.network_id, c.node_id, now)?;
-    publisher.commit(
-        tx,
+    revoke_execution(tx, sealer, c.network_id, c.node_id, now)?;
+    Ok((
+        keys,
         vec![
-            CommittedChange::Authorization {
+            Effect::Authorization {
                 network_id: c.network_id,
             },
-            CommittedChange::Progress {
+            Effect::Progress {
                 network_id: c.network_id,
             },
         ],
-    )?;
-    Ok(keys)
+    ))
 }
 pub(crate) fn insert_keys(
     tx: &Transaction<'_>,

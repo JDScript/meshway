@@ -616,8 +616,8 @@ async fn member_removal_atomically_deletes_user_nodes_and_preserves_tag_nodes() 
         .events
         .after(event_sequence, network)
         .unwrap();
-    assert_eq!(changes.iter().filter(|entry| matches!(entry.change, crate::state::stream::CommittedChange::NodeRetired { node_id, .. } if node_id == enrolled.node_id)).count(),1);
-    assert!(!changes.iter().any(|entry| matches!(entry.change, crate::state::stream::CommittedChange::NodeRetired { node_id, .. } if node_id == tag)));
+    assert_eq!(changes.iter().filter(|entry| matches!(entry.change, crate::effect::Effect::NodeRetired { node_id, .. } if node_id == enrolled.node_id)).count(),1);
+    assert!(!changes.iter().any(|entry| matches!(entry.change, crate::effect::Effect::NodeRetired { node_id, .. } if node_id == tag)));
     assert!(matches!(
         app.execution()
             .authenticate(node_session.token.expose())
@@ -1227,7 +1227,7 @@ async fn enrollment_key_idempotency_tag_relogin_and_permanent_delete() {
         .await
         .unwrap();
     assert_eq!(deleted.deleted_node_ids, vec![enrolled.node_id]);
-    assert!(app.state_runtime.lock().unwrap().hub.events.after(0,network).unwrap().iter().any(|entry| matches!(entry.change, crate::state::stream::CommittedChange::NodeRetired { node_id, .. } if node_id == enrolled.node_id)));
+    assert!(app.state_runtime.lock().unwrap().hub.events.after(0,network).unwrap().iter().any(|entry| matches!(entry.change, crate::effect::Effect::NodeRetired { node_id, .. } if node_id == enrolled.node_id)));
     assert!(matches!(
         app.execution()
             .authenticate(user_session.token.expose())
@@ -1411,20 +1411,15 @@ async fn actual_http_signatures_and_pkce_polling() {
         }
     }
     assert!(matches!(
-        crate::enrollment::Enrollment::new(
-            app.executor.handle(),
-            app.sealer(),
-            Arc::new(Reject),
-            app.commit_publisher()
-        )
-        .redeem(
-            id,
-            RedeemEnrollmentRequest {
-                proof: proof("redeem"),
-                code: poll.code.unwrap()
-            }
-        )
-        .await,
+        crate::enrollment::Enrollment::new(app.executor.handle(), app.sealer(), Arc::new(Reject),)
+            .redeem(
+                id,
+                RedeemEnrollmentRequest {
+                    proof: proof("redeem"),
+                    code: poll.code.unwrap()
+                }
+            )
+            .await,
         Err(Error::InvalidRequest)
     ));
     let after = app.enrollment().poll(id, proof("poll")).await.unwrap();

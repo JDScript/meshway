@@ -475,7 +475,7 @@ fn bounded_journal_replay_detects_gap_without_making_new_samples() {
     let mut hub = StateHub::new().unwrap();
     let network = id(1);
     for _ in 0..600 {
-        hub.publish_committed(stream::CommittedChange::Progress {
+        hub.publish_committed(crate::effect::Effect::Progress {
             network_id: network,
         });
     }
@@ -509,7 +509,7 @@ fn permanent_retirement_releases_report_count_and_byte_budget() {
             .unwrap_err(),
         Error::StateLimit
     );
-    hub.publish_committed(stream::CommittedChange::NodeRetired {
+    hub.publish_committed(crate::effect::Effect::NodeRetired {
         network_id: admission.network_id,
         node_id: id(1),
     });

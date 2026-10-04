@@ -1,9 +1,7 @@
 use super::TaskAdmission;
+use crate::effect::Effect;
 use crate::error::Error;
-use crate::state::{
-    service::{ReadIdentity, Runtime},
-    stream::CommittedChange,
-};
+use crate::state::service::{ReadIdentity, Runtime};
 use chrono::{DateTime, Utc};
 use meshway_model::{ObservationId, ObservationSubscriptionId, SessionId};
 use meshway_protocol::observations::*;
@@ -93,6 +91,9 @@ pub struct SubscriptionLease {
 }
 
 /// SQLite rollback restores only observations actually changed by this call.
+/// Keep this guard alive through SQL COMMIT: dropping it at the end of a
+/// `Handle::transact` operation would roll RAM back before the executor commits,
+/// while calling `committed` there would discard undo before COMMIT can fail.
 struct RuntimeTransaction<'a> {
     runtime: std::sync::MutexGuard<'a, Runtime>,
 }
@@ -106,7 +107,7 @@ impl<'a> RuntimeTransaction<'a> {
         for network_id in changed {
             self.runtime
                 .hub
-                .publish_committed(CommittedChange::Progress { network_id });
+                .publish_committed(Effect::Progress { network_id });
         }
     }
 }
@@ -256,11 +257,11 @@ impl<P: ObservationProvider> ObservationService<P> {
                 provider.synchronize(&tx, &runtime.observations.leases(), now)?;
                 tx.commit()?;
                 runtime.committed();
-                runtime.hub.publish_committed(CommittedChange::Observation {
+                runtime.hub.publish_committed(Effect::Observation {
                     network_id: admission.report.network_id,
                     observation_id: task.id,
                 });
-                runtime.hub.publish_committed(CommittedChange::Progress {
+                runtime.hub.publish_committed(Effect::Progress {
                     network_id: admission.report.network_id,
                 });
                 Ok(task)
@@ -477,12 +478,12 @@ impl<P: ObservationProvider> ObservationService<P> {
                 runtime.committed();
                 if !duplicate {
                     let change = if is_sample {
-                        CommittedChange::ObservationSample {
+                        Effect::ObservationSample {
                             network_id: admission.network_id,
                             observation: Box::new(task.clone()),
                         }
                     } else {
-                        CommittedChange::Observation {
+                        Effect::Observation {
                             network_id: admission.network_id,
                             observation_id: id,
                         }

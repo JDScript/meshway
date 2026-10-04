@@ -1,4 +1,5 @@
 use super::{current_configuration, id, json, now, publications::revoke_execution, user_binding};
+use crate::effect::Effect;
 use crate::error::Error;
 use crate::secrets::Sealer;
 use meshway_model::{
@@ -6,26 +7,24 @@ use meshway_model::{
     NodeId, NodePublicKey, PublicationId, Revision, Sequence, Version,
 };
 use meshway_protocol::{execution::*, node::*};
-use rusqlite::Connection;
 use rusqlite::{OptionalExtension, Transaction, params};
 use std::collections::BTreeMap;
 /// Marks one key generation as permanently revoked. Returns whether this call
 /// revoked a key that was still current; only then does the Node lose its
 /// execution. Revoking an already retired or revoked key records nothing new.
 pub(crate) fn revoke_key(
-    c: &mut Connection,
+    tx: &Transaction<'_>,
     sealer: &Sealer,
     token: [u8; 32],
     network: NetworkId,
     node: NodeId,
     request: RevokeNodeKeyRequest,
-) -> Result<bool, Error> {
-    let tx = c.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
+) -> Result<(bool, Vec<Effect>), Error> {
     let now = now()?;
-    let user = super::super::authorization::current_session(&tx, &token, now)?
+    let user = super::super::authorization::current_session(tx, &token, now)?
         .user
         .id;
-    crate::store::authorization::authorize_manager(&tx, network, user).map_err(
+    crate::store::authorization::authorize_manager(tx, network, user).map_err(
         |error| match error {
             Error::PermissionDenied | Error::NotFound => Error::PermissionDenied,
             other => other,
@@ -47,8 +46,7 @@ pub(crate) fn revoke_key(
         return Err(Error::VersionConflict);
     };
     if !unrevoked {
-        tx.commit()?;
-        return Ok(false);
+        return Ok((false, Vec::new()));
     }
     tx.execute(
         "UPDATE node_keys SET revoked_at=?1 WHERE network_id=?2 AND node_id=?3 AND id=?4 AND revoked_at IS NULL",
@@ -60,26 +58,36 @@ pub(crate) fn revoke_key(
         ],
     )?;
     if current {
-        revoke_execution(&tx, sealer, network, node, now)?;
+        revoke_execution(tx, sealer, network, node, now)?;
     }
-    tx.commit()?;
-    Ok(current)
+    let effects = if current {
+        vec![
+            Effect::Authorization {
+                network_id: network,
+            },
+            Effect::Progress {
+                network_id: network,
+            },
+        ]
+    } else {
+        Vec::new()
+    };
+    Ok((current, effects))
 }
 
 pub(crate) fn inventory(
-    connection: &mut Connection,
+    tx: &Transaction<'_>,
     sealer: &Sealer,
     token: [u8; 32],
     network: NetworkId,
 ) -> Result<NodeInventoryResponse, Error> {
-    let tx = connection.transaction()?;
     let now = now()?;
-    let user = super::super::authorization::current_session(&tx, &token, now)?
+    let user = super::super::authorization::current_session(tx, &token, now)?
         .user
         .id;
     let role:String=tx.query_row("SELECT role FROM memberships WHERE network_id=?1 AND user_id=?2 AND revoked_at IS NULL",params![network.as_uuid().as_bytes().as_slice(),user.as_uuid().as_bytes().as_slice()],|r|r.get(0)).optional()?.ok_or(Error::NotFound)?;
     let manager = role == "owner" || role == "admin";
-    let (_, cfg, bindings) = current_configuration(&tx, sealer, network)?;
+    let (_, cfg, bindings) = current_configuration(tx, sealer, network)?;
     let visible = cfg
         .nodes
         .keys()
@@ -88,22 +96,21 @@ pub(crate) fn inventory(
         })
         .copied()
         .collect();
-    inventory_in_transaction(&tx, sealer, network, &cfg, &visible, manager)
+    inventory_in_transaction(tx, sealer, network, &cfg, &visible, manager)
 }
 
 pub(crate) fn settings(
-    connection: &mut Connection,
+    tx: &Transaction<'_>,
     sealer: &Sealer,
     token: [u8; 32],
     network: NetworkId,
     node: NodeId,
 ) -> Result<(Revision, meshway_configuration::NodeSettingsView), Error> {
-    let tx = connection.transaction()?;
-    let user = crate::store::authorization::current_session(&tx, &token, now()?)?
+    let user = crate::store::authorization::current_session(tx, &token, now()?)?
         .user
         .id;
-    let (member, role) = crate::store::authorization::membership(&tx, network, user)?;
-    let (revision, cfg, bindings) = current_configuration(&tx, sealer, network)?;
+    let (member, role) = crate::store::authorization::membership(tx, network, user)?;
+    let (revision, cfg, bindings) = current_configuration(tx, sealer, network)?;
     let manager = matches!(role, MembershipRole::Owner | MembershipRole::Admin);
     if !manager
         && !user_binding(&cfg, &bindings, node)
@@ -261,15 +268,14 @@ fn latest_key(
     ))
 }
 pub(crate) fn progress(
-    connection: &mut Connection,
+    tx: &Transaction<'_>,
     sealer: &Sealer,
     boot: InstanceId,
     token: [u8; 32],
     network: NetworkId,
     publication: PublicationId,
 ) -> Result<PublicationProgress, Error> {
-    let tx = connection.transaction()?;
-    let user = super::super::authorization::current_session(&tx, &token, now()?)?
+    let user = super::super::authorization::current_session(tx, &token, now()?)?
         .user
         .id;
     let manager:bool=tx.query_row("SELECT EXISTS(SELECT 1 FROM memberships WHERE network_id=?1 AND user_id=?2 AND role IN ('owner','admin') AND revoked_at IS NULL)",params![network.as_uuid().as_bytes().as_slice(),user.as_uuid().as_bytes().as_slice()],|r|r.get(0))?;
@@ -289,7 +295,7 @@ pub(crate) fn progress(
             Ok(tx.query_row("SELECT EXISTS(SELECT 1 FROM execution_receipts r JOIN node_execution e ON e.network_id=r.network_id AND e.node_id=r.node_id AND e.instance_id=r.instance_id AND e.generation=r.generation WHERE r.network_id=?1 AND r.node_id=?2 AND r.publication_id=?3 AND r.phase=?4)",params![network.as_uuid().as_bytes().as_slice(),node.as_uuid().as_bytes().as_slice(),publication.as_uuid().as_bytes().as_slice(),phase],|r|r.get(0))?)
         };
         let freshness = crate::state::progress::freshness(
-            &tx,
+            tx,
             network,
             node,
             &ConfigurationRef {

@@ -10,7 +10,7 @@ use meshway_protocol::{
         EnrollmentKeysResponse, InitialNodeSettings, InitialNodeSettingsView, SecretDelivery,
     },
 };
-use rusqlite::{Connection, OptionalExtension, Transaction, TransactionBehavior, params};
+use rusqlite::{OptionalExtension, Transaction, params};
 fn key_view(
     tx: &Transaction<'_>,
     network: NetworkId,
@@ -70,15 +70,14 @@ fn key_view(
     })
 }
 pub(crate) fn create_key(
-    c: &mut Connection,
+    tx: &Transaction<'_>,
     sealer: &Sealer,
     token_hash: [u8; 32],
     network: NetworkId,
     request: CreateEnrollmentKeyRequest,
 ) -> Result<EnrollmentKeyResponse, Error> {
-    let tx = c.transaction_with_behavior(TransactionBehavior::Immediate)?;
     let now = now()?;
-    let (user, member) = manager(&tx, token_hash, network, now)?;
+    let (user, member) = manager(tx, token_hash, network, now)?;
     if request.expires_at_ms <= now as u64
         || request.expires_at_ms > now as u64 + 30 * 86_400_000
         || request.tags.is_empty()
@@ -87,7 +86,7 @@ pub(crate) fn create_key(
     {
         return Err(Error::InvalidRequest);
     }
-    let (_, cfg, _) = crate::store::execution::current_configuration(&tx, sealer, network)?;
+    let (_, cfg, _) = crate::store::execution::current_configuration(tx, sealer, network)?;
     if request
         .tags
         .iter()
@@ -102,20 +101,19 @@ pub(crate) fn create_key(
             return Err(Error::BindingConflict);
         }
         return Ok(EnrollmentKeyResponse {
-            key: key_view(&tx, network, id(key)?, sealer, now)?,
+            key: key_view(tx, network, id(key)?, sealer, now)?,
             secret_delivery: SecretDelivery::Unavailable,
             secret: None,
         });
     }
     let mut initial_settings = request.initial_settings;
-    crate::enrollment::settings::normalize(&tx, network, &mut initial_settings, sealer)?;
+    crate::enrollment::settings::normalize(tx, network, &mut initial_settings, sealer)?;
     let key = EnrollmentKeyId::new(uuid()?)
         .map_err(|_| Error::Internal("generated enrollment key ID"))?;
     let secret = format!("mwek_{}", token()?);
     let settings = sealer.seal_enrollment(key.into_uuid(), &bytes(&initial_settings)?)?;
     tx.execute("INSERT INTO enrollment_keys(id,network_id,token_hash,tags,initial_settings,created_by,membership_id,created_at,expires_at,creation_request_id,creation_request_digest) VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11)",params![key.as_uuid().as_bytes().as_slice(),network.as_uuid().as_bytes().as_slice(),hash(&secret).as_slice(),bytes(&request.tags)?,settings.as_bytes(),user.as_uuid().as_bytes().as_slice(),member.as_uuid().as_bytes().as_slice(),now,request.expires_at_ms as i64,request.request_id.as_uuid().as_bytes().as_slice(),digest.as_slice()])?;
-    let view = key_view(&tx, network, key, sealer, now)?;
-    tx.commit()?;
+    let view = key_view(tx, network, key, sealer, now)?;
     Ok(EnrollmentKeyResponse {
         key: view,
         secret_delivery: SecretDelivery::Available,
@@ -123,7 +121,7 @@ pub(crate) fn create_key(
     })
 }
 pub(crate) fn list_keys(
-    c: &mut Connection,
+    tx: &Transaction<'_>,
     token: [u8; 32],
     network: NetworkId,
     limit: u16,
@@ -131,9 +129,8 @@ pub(crate) fn list_keys(
     sealer: &Sealer,
 ) -> Result<EnrollmentKeysResponse, Error> {
     use crate::{networks::pagination::Window, secrets::CursorScope};
-    let tx = c.transaction()?;
     let now = now()?;
-    let (user, _) = manager(&tx, token, network, now)?;
+    let (user, _) = manager(tx, token, network, now)?;
     let scope = CursorScope::EnrollmentKeys { user, network };
     let upper = tx.query_row(
         "SELECT coalesce(max(sequence),0) FROM enrollment_keys",
@@ -182,22 +179,20 @@ pub(crate) fn list_keys(
         },
         items: ids
             .into_iter()
-            .map(|(_, key)| key_view(&tx, network, id(key)?, sealer, now))
+            .map(|(_, key)| key_view(tx, network, id(key)?, sealer, now))
             .collect::<Result<_, _>>()?,
     };
     drop(stmt);
-    tx.commit()?;
     Ok(result)
 }
 pub(crate) fn revoke_key(
-    c: &mut Connection,
+    tx: &Transaction<'_>,
     token: [u8; 32],
     network: NetworkId,
     key: EnrollmentKeyId,
 ) -> Result<(), Error> {
-    let tx = c.transaction_with_behavior(TransactionBehavior::Immediate)?;
     let now = now()?;
-    manager(&tx, token, network, now)?;
+    manager(tx, token, network, now)?;
     let exists: bool = tx.query_row(
         "SELECT EXISTS(SELECT 1 FROM enrollment_keys WHERE network_id=?1 AND id=?2)",
         params![
@@ -210,6 +205,5 @@ pub(crate) fn revoke_key(
         return Err(Error::NotFound);
     }
     tx.execute("UPDATE enrollment_keys SET revoked_at=COALESCE(revoked_at,?1) WHERE network_id=?2 AND id=?3 AND consumed_request_id IS NULL AND expires_at>?1",params![now,network.as_uuid().as_bytes().as_slice(),key.as_uuid().as_bytes().as_slice()])?;
-    tx.commit()?;
     Ok(())
 }

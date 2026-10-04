@@ -3,6 +3,7 @@
 use super::service::*;
 use super::stream::{StreamPoll, StreamSource};
 use super::*;
+use crate::effect::{Effect, EffectSink};
 use crate::{
     App, Settings,
     observations::{
@@ -247,7 +248,9 @@ async fn shared_core_independent_tabs_cancel_pending_and_replay_without_stopping
         .unwrap();
     let replayed = drain(&state, &resumed).await;
     assert!(!replayed.iter().any(|(_, event)| matches!(event, Event::ObservationSample { observation } if observation.subscription_id == Some(subscription(100)))));
-    state.publisher().revoke_session(session());
+    state.runtime.apply(Effect::SessionRevoked {
+        session_id: session(),
+    });
     assert!(
         observations
             .node_tasks("fixture-node".into())
@@ -450,7 +453,9 @@ async fn same_session_networks_keep_separate_identity_and_only_session_revocatio
             .len(),
         1
     );
-    state.publisher().revoke_session(session());
+    state.runtime.apply(Effect::SessionRevoked {
+        session_id: session(),
+    });
     assert!(
         b.node_tasks("fixture-node".into())
             .await

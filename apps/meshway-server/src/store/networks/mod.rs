@@ -15,28 +15,25 @@ use crate::{
 use chrono::Utc;
 use meshway_model::{NetworkId, RequestId, UserId};
 use rows::{RawMember, RawNetwork};
-use rusqlite::{Connection, OptionalExtension, Transaction, TransactionBehavior, params};
+use rusqlite::{OptionalExtension, Transaction, params};
 
 const NETWORK_SELECT: &str = "SELECT n.sequence, n.id, n.name, n.created_at, n.current_revision, m.id, m.role FROM networks n JOIN memberships m ON m.network_id = n.id WHERE m.user_id = ?1 AND m.revoked_at IS NULL AND n.deleted_at IS NULL";
 
-pub(crate) fn authenticate(connection: &mut Connection, digest: [u8; 32]) -> Result<(), Error> {
-    let transaction = connection.transaction_with_behavior(TransactionBehavior::Deferred)?;
-    current_session(&transaction, &digest, now()?)?;
-    transaction.commit()?;
+pub(crate) fn authenticate(transaction: &Transaction<'_>, digest: [u8; 32]) -> Result<(), Error> {
+    current_session(transaction, &digest, now()?)?;
     Ok(())
 }
 
 pub(crate) fn create(
-    connection: &mut Connection,
+    transaction: &Transaction<'_>,
     digest: [u8; 32],
     prepared: PreparedNetwork,
     request: RequestId,
     sealer: &Sealer,
     cache: &crate::configuration::SnapshotCache,
 ) -> Result<NetworkSummary, Error> {
-    let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
     let now = now()?;
-    let session = current_session(&transaction, &digest, now)?;
+    let session = current_session(transaction, &digest, now)?;
     let user = session.user.id;
     let previous = transaction.query_row(
         "SELECT id, creation_request_digest FROM networks WHERE created_by = ?1 AND creation_request_id = ?2",
@@ -47,11 +44,10 @@ pub(crate) fn create(
         let id = rows::network_id(&id)?;
         // A creator is not an enduring authority. Check current membership
         // before disclosing either an old result or its parameter conflict.
-        let view = view(&transaction, id, user, sealer, cache)?;
+        let view = view(transaction, id, user, sealer, cache)?;
         if original_digest != prepared.request_digest {
             return Err(Error::RequestConflict);
         }
-        transaction.commit()?;
         return Ok(view);
     }
     let id = prepared.id.as_uuid().as_bytes().as_slice();
@@ -67,34 +63,31 @@ pub(crate) fn create(
         params![id, prepared.source.as_bytes(), prepared.configuration.as_bytes(), prepared.bindings.as_bytes(), user_bytes, now, request_bytes],
     )?;
     record(
-        &transaction,
+        transaction,
         prepared.id,
         user,
         request,
         Activity::NetworkCreated,
         now,
     )?;
-    let view = view(&transaction, prepared.id, user, sealer, cache)?;
-    transaction.commit()?;
+    let view = view(transaction, prepared.id, user, sealer, cache)?;
     Ok(view)
 }
 
 pub(crate) fn get(
-    connection: &mut Connection,
+    transaction: &Transaction<'_>,
     digest: [u8; 32],
     id: NetworkId,
     sealer: &Sealer,
     cache: &crate::configuration::SnapshotCache,
 ) -> Result<NetworkSummary, Error> {
-    let transaction = connection.transaction_with_behavior(TransactionBehavior::Deferred)?;
-    let user = current_session(&transaction, &digest, now()?)?.user.id;
-    let view = view(&transaction, id, user, sealer, cache)?;
-    transaction.commit()?;
+    let user = current_session(transaction, &digest, now()?)?.user.id;
+    let view = view(transaction, id, user, sealer, cache)?;
     Ok(view)
 }
 
 pub(crate) fn rename(
-    connection: &mut Connection,
+    transaction: &Transaction<'_>,
     digest: [u8; 32],
     id: NetworkId,
     change: crate::networks::NameChange,
@@ -106,10 +99,9 @@ pub(crate) fn rename(
         expected,
         request,
     } = change;
-    let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
     let now = now()?;
-    let user = current_session(&transaction, &digest, now)?.user.id;
-    let mut view = view(&transaction, id, user, sealer, cache)?;
+    let user = current_session(transaction, &digest, now)?.user.id;
+    let mut view = view(transaction, id, user, sealer, cache)?;
     if !view.actions.rename {
         return Err(Error::PermissionDenied);
     }
@@ -122,7 +114,7 @@ pub(crate) fn rename(
             params![name, id.as_uuid().as_bytes().as_slice()],
         )?;
         record(
-            &transaction,
+            transaction,
             id,
             user,
             request,
@@ -131,27 +123,25 @@ pub(crate) fn rename(
         )?;
         view.name = name;
     }
-    transaction.commit()?;
     Ok(view)
 }
 
 pub(crate) fn list(
-    connection: &mut Connection,
+    transaction: &Transaction<'_>,
     digest: [u8; 32],
     limit: u16,
     cursor: Option<String>,
     sealer: &Sealer,
     cache: &crate::configuration::SnapshotCache,
 ) -> Result<NetworkPage, Error> {
-    let transaction = connection.transaction_with_behavior(TransactionBehavior::Deferred)?;
     let now = now()?;
-    let user = current_session(&transaction, &digest, now)?.user.id;
+    let user = current_session(transaction, &digest, now)?.user.id;
     let scope = CursorScope::Networks(user);
     let mut window = match cursor {
         Some(cursor) => Window::decode(sealer, scope, &cursor, now)?,
         None => Window::new(
-            ceiling(&transaction, "networks")?,
-            ceiling(&transaction, "memberships")?,
+            ceiling(transaction, "networks")?,
+            ceiling(transaction, "memberships")?,
             now,
         )?,
     };
@@ -178,7 +168,7 @@ pub(crate) fn list(
     for row in rows {
         window.last = row.sequence;
         let view = row.into_view()?;
-        check_configuration(&transaction, &view, sealer, cache)?;
+        check_configuration(transaction, &view, sealer, cache)?;
         items.push(view);
     }
     let next_cursor = if more {
@@ -200,7 +190,6 @@ pub(crate) fn list(
         u64::try_from(total).map_err(|_| Error::decode("networks count"))?,
     )
     .map_err(|_| Error::decode("networks count"))?;
-    transaction.commit()?;
     Ok(NetworkPage {
         items,
         next_cursor,
@@ -210,7 +199,7 @@ pub(crate) fn list(
 }
 
 pub(crate) fn members(
-    connection: &mut Connection,
+    transaction: &Transaction<'_>,
     digest: [u8; 32],
     id: NetworkId,
     limit: u16,
@@ -218,10 +207,9 @@ pub(crate) fn members(
     sealer: &Sealer,
     cache: &crate::configuration::SnapshotCache,
 ) -> Result<MemberPage, Error> {
-    let transaction = connection.transaction_with_behavior(TransactionBehavior::Deferred)?;
     let now = now()?;
-    let user = current_session(&transaction, &digest, now)?.user.id;
-    let caller = view(&transaction, id, user, sealer, cache)?;
+    let user = current_session(transaction, &digest, now)?.user.id;
+    let caller = view(transaction, id, user, sealer, cache)?;
     if !caller.actions.manage_members {
         return Err(Error::PermissionDenied);
     }
@@ -229,7 +217,7 @@ pub(crate) fn members(
     let mut window = match cursor {
         Some(cursor) => Window::decode(sealer, scope, &cursor, now)?,
         None => {
-            let upper = ceiling(&transaction, "memberships")?;
+            let upper = ceiling(transaction, "memberships")?;
             Window::new(upper, upper, now)?
         }
     };
@@ -249,7 +237,7 @@ pub(crate) fn members(
     let more = rows.len() > usize::from(limit);
     rows.truncate(usize::from(limit));
     let mut items = Vec::with_capacity(rows.len());
-    let owner_count = crate::store::authorization::owner_count(&transaction, id)?;
+    let owner_count = crate::store::authorization::owner_count(transaction, id)?;
     for row in rows {
         window.last = row.sequence;
         items.push(row.into_view((caller.membership_id, caller.role), owner_count)?);
@@ -265,7 +253,6 @@ pub(crate) fn members(
         u64::try_from(total).map_err(|_| Error::decode("memberships count"))?,
     )
     .map_err(|_| Error::decode("memberships count"))?;
-    transaction.commit()?;
     Ok(MemberPage {
         items,
         next_cursor,

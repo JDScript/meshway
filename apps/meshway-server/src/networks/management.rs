@@ -1,5 +1,6 @@
 use super::{Networks, pagination};
 use crate::accounts::token_digest;
+use crate::effect::Effect;
 use crate::error::Error;
 use crate::{
     accounts::{Secret, one_time_digest},
@@ -10,6 +11,7 @@ use meshway_model::JoinLinkId;
 use meshway_model::{MemberSummary, NetworkId, RequestId};
 use meshway_model::{MembershipId, MembershipRole, Revision, Version};
 use meshway_protocol::management::JoinLinkView;
+use rusqlite::TransactionBehavior;
 use std::sync::Arc;
 
 pub struct CreatedLink {
@@ -47,10 +49,10 @@ impl Networks {
         let sealer = Arc::clone(&self.sealer);
         let cache = Arc::clone(&self.configuration_cache);
         self.handle
-            .execute(move |db| {
-                store::removal_impact(db, digest, network, member, request, &sealer, &cache)
+            .read(move |tx| {
+                store::removal_impact(tx, digest, network, member, request, &sealer, &cache)
             })
-            .await?
+            .await
     }
     pub async fn remove_member(
         &self,
@@ -64,11 +66,10 @@ impl Networks {
         let digest = token_digest(token)?;
         let sealer = Arc::clone(&self.sealer);
         let cache = Arc::clone(&self.configuration_cache);
-        let publisher = self.publisher.clone();
         self.handle
-            .execute(move |db| {
+            .transact(TransactionBehavior::Immediate, move |tx| {
                 store::remove_member(
-                    db,
+                    tx,
                     digest,
                     MemberRemoval {
                         network,
@@ -79,10 +80,9 @@ impl Networks {
                     },
                     &sealer,
                     &cache,
-                    &publisher,
                 )
             })
-            .await?
+            .await
     }
     pub async fn change_role(
         &self,
@@ -94,21 +94,20 @@ impl Networks {
         request: RequestId,
     ) -> Result<MemberSummary, Error> {
         let digest = token_digest(token)?;
-        let publisher = self.publisher.clone();
         self.handle
-            .execute(move |db| {
+            .transact(TransactionBehavior::Immediate, move |tx| {
                 let (member, changed) =
-                    store::change_role(db, digest, network, member, expected, role, request)?;
-                if changed {
-                    publisher.publish_committed(
-                        crate::state::stream::CommittedChange::Authorization {
-                            network_id: network,
-                        },
-                    );
-                }
-                Ok(member)
+                    store::change_role(tx, digest, network, member, expected, role, request)?;
+                let effects = if changed {
+                    vec![Effect::Authorization {
+                        network_id: network,
+                    }]
+                } else {
+                    Vec::new()
+                };
+                Ok((member, effects))
             })
-            .await?
+            .await
     }
     pub async fn create_join_link(
         &self,
@@ -123,8 +122,8 @@ impl Networks {
         }
         let digest = token_digest(token)?;
         self.handle
-            .execute(move |db| store::create_link(db, digest, network, role, ttl, request))
-            .await?
+            .write(move |tx| store::create_link(tx, digest, network, role, ttl, request))
+            .await
     }
     pub async fn inspect_join_link(
         &self,
@@ -134,8 +133,8 @@ impl Networks {
         let digest = token_digest(token)?;
         let link = one_time_digest("mwj_", link).map_err(|_| Error::InvalidLink)?;
         self.handle
-            .execute(move |db| store::inspect_link(db, digest, link))
-            .await?
+            .read(move |tx| store::inspect_link(tx, digest, link))
+            .await
     }
     pub async fn redeem_join_link(
         &self,
@@ -145,20 +144,19 @@ impl Networks {
     ) -> Result<(NetworkId, MembershipId), Error> {
         let digest = token_digest(token)?;
         let link = one_time_digest("mwj_", link).map_err(|_| Error::InvalidLink)?;
-        let publisher = self.publisher.clone();
         self.handle
-            .execute(move |db| {
-                let (result, changed) = store::redeem_link(db, digest, link, request)?;
-                if changed {
-                    publisher.publish_committed(
-                        crate::state::stream::CommittedChange::Authorization {
-                            network_id: result.0,
-                        },
-                    );
-                }
-                Ok(result)
+            .transact(TransactionBehavior::Immediate, move |tx| {
+                let (result, changed) = store::redeem_link(tx, digest, link, request)?;
+                let effects = if changed {
+                    vec![Effect::Authorization {
+                        network_id: result.0,
+                    }]
+                } else {
+                    Vec::new()
+                };
+                Ok((result, effects))
             })
-            .await?
+            .await
     }
     pub async fn revoke_join_link(
         &self,
@@ -169,8 +167,8 @@ impl Networks {
     ) -> Result<(), Error> {
         let digest = token_digest(token)?;
         self.handle
-            .execute(move |db| store::revoke_link(db, digest, network, id, request))
-            .await?
+            .write(move |tx| store::revoke_link(tx, digest, network, id, request))
+            .await
     }
     pub async fn join_links(
         &self,
@@ -183,7 +181,7 @@ impl Networks {
         let digest = token_digest(token)?;
         let sealer = Arc::clone(&self.sealer);
         self.handle
-            .execute(move |db| store::links(db, digest, network, limit, cursor, &sealer))
-            .await?
+            .read(move |tx| store::links(tx, digest, network, limit, cursor, &sealer))
+            .await
     }
 }

@@ -231,7 +231,7 @@ impl StateHub {
             },
         );
         self.bytes = total_bytes;
-        self.publish_committed(stream::CommittedChange::State {
+        self.publish_committed(crate::effect::Effect::State {
             network_id: admission.network_id,
             node_id: admission.node_id,
         });
@@ -244,8 +244,8 @@ impl StateHub {
 
     /// Must run on the SQLite owner immediately after COMMIT, before releasing
     /// its accepted operation. It does not await a consumer or perform fallible IO.
-    pub fn publish_committed(&mut self, change: stream::CommittedChange) {
-        if let stream::CommittedChange::NodeRetired {
+    pub fn publish_committed(&mut self, change: crate::effect::Effect) {
+        if let crate::effect::Effect::NodeRetired {
             network_id,
             node_id,
         } = &change
@@ -256,7 +256,9 @@ impl StateHub {
                 self.bytes = self.bytes.saturating_sub(stored.bytes);
             }
         }
-        let network = change.network();
+        let Some(network) = change.network() else {
+            return;
+        };
         match self
             .sequences
             .get(&network)
@@ -277,7 +279,7 @@ impl StateHub {
     pub fn dataset_changed(&mut self) {
         let networks: BTreeSet<_> = self.reports.keys().map(|(network, _)| *network).collect();
         for network_id in networks {
-            self.publish_committed(stream::CommittedChange::Resource { network_id });
+            self.publish_committed(crate::effect::Effect::Resource { network_id });
         }
     }
 
@@ -302,7 +304,7 @@ impl StateHub {
             }
         }
         for node_id in expired {
-            self.publish_committed(stream::CommittedChange::State {
+            self.publish_committed(crate::effect::Effect::State {
                 network_id: scope.network_id,
                 node_id,
             });

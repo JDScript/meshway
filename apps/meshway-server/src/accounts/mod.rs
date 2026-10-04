@@ -20,6 +20,7 @@ use chrono::{DateTime, Utc};
 use meshway_model::{RequestId, SessionId, UserId};
 
 use crate::store::{Handle, accounts as store};
+use rusqlite::TransactionBehavior;
 
 #[cfg(test)]
 pub(crate) use password::TEST_KDF_LOCK;
@@ -82,20 +83,11 @@ pub struct IssuedSession {
 pub struct Accounts {
     handle: Handle,
     options: Options,
-    publisher: crate::state::service::CommitPublisher,
 }
 
 impl Accounts {
-    pub(crate) fn new(
-        handle: Handle,
-        options: Options,
-        publisher: crate::state::service::CommitPublisher,
-    ) -> Self {
-        Self {
-            handle,
-            options,
-            publisher,
-        }
+    pub(crate) fn new(handle: Handle, options: Options) -> Self {
+        Self { handle, options }
     }
 
     pub fn options(&self) -> Options {
@@ -127,17 +119,10 @@ impl Accounts {
         let hash = password::hash(password).await?;
         let ttl = self.options.session_ttl;
         self.handle
-            .execute(move |connection| {
-                store::register(
-                    connection,
-                    email,
-                    hash,
-                    ttl,
-                    request_id,
-                    client_label.as_deref(),
-                )
+            .write(move |tx| {
+                store::register(tx, email, hash, ttl, request_id, client_label.as_deref())
             })
-            .await?
+            .await
     }
 
     pub async fn login(
@@ -163,37 +148,30 @@ impl Accounts {
         let email = email::normalize(&email).ok();
         let candidate = self
             .handle
-            .execute(move |connection| store::login_candidate(connection, email.as_deref()))
-            .await??;
+            .read(move |tx| store::login_candidate(tx, email.as_deref()))
+            .await?;
         let candidate = password::verify(password, candidate).await?;
         let ttl = self.options.session_ttl;
         self.handle
-            .execute(move |connection| {
-                store::login(
-                    connection,
-                    candidate,
-                    ttl,
-                    request_id,
-                    client_label.as_deref(),
-                )
-            })
-            .await?
+            .write(move |tx| store::login(tx, candidate, ttl, request_id, client_label.as_deref()))
+            .await
     }
 
     pub async fn authenticate(&self, token: &str) -> Result<AuthenticatedSession, Error> {
         let digest = secret::token_digest(token)?;
         self.handle
-            .execute(move |connection| store::authenticate(connection, digest))
-            .await?
+            .read(move |tx| store::authenticate(tx, digest))
+            .await
     }
 
     /// Invalid/expired/already revoked sessions return InvalidSession. Only the
     /// successfully authenticated current session is revoked.
     pub async fn logout(&self, token: &str, request_id: RequestId) -> Result<(), Error> {
         let digest = secret::token_digest(token)?;
-        let publisher = self.publisher.clone();
         self.handle
-            .execute(move |connection| store::logout(connection, digest, request_id, &publisher))
-            .await?
+            .transact(TransactionBehavior::Immediate, move |tx| {
+                store::logout(tx, digest, request_id)
+            })
+            .await
     }
 }

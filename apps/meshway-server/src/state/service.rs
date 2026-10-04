@@ -1,6 +1,7 @@
 //! Integration seam for management and Node identity owners. Providers execute
 //! on the real SQLite transaction, never from a cached HTTP authorization result.
 use super::{ReportAdmission, StateHub, VisibilityScope, stream::*};
+use crate::effect::Effect;
 use crate::error::Error;
 use crate::{observations::Observations, resources::GeoIp, store::Handle};
 use chrono::{DateTime, Duration, Utc};
@@ -9,7 +10,7 @@ use meshway_protocol::{
     events::{ClosedReason, ResetReason, StreamEvent},
     state::{StateAccepted, StateReport, StateView},
 };
-use rusqlite::Transaction;
+use rusqlite::{Transaction, TransactionBehavior};
 use serde::Serialize;
 use std::{
     collections::{BTreeMap, VecDeque},
@@ -139,6 +140,20 @@ pub(crate) struct Runtime {
     pub geoip: GeoIp,
     pub observations: Observations,
 }
+/// The executor applies committed effects here, on its own thread, after COMMIT.
+impl crate::effect::EffectSink for Mutex<Runtime> {
+    fn apply(&self, effect: crate::effect::Effect) {
+        let Ok(mut runtime) = self.lock() else {
+            return;
+        };
+        match effect {
+            crate::effect::Effect::SessionRevoked { session_id } => {
+                runtime.observations.revoke_session(session_id);
+            }
+            journaled => runtime.hub.publish_committed(journaled),
+        }
+    }
+}
 impl Runtime {
     pub(crate) fn close(&mut self) {
         self.closed = true;
@@ -182,9 +197,6 @@ impl<P: StateProvider> StateService<P> {
             runtime.close();
         }
     }
-    pub fn publisher(&self) -> CommitPublisher {
-        CommitPublisher::new(Arc::clone(&self.runtime))
-    }
     pub(crate) fn new(
         handle: Handle,
         provider: P,
@@ -206,15 +218,13 @@ impl<P: StateProvider> StateService<P> {
     ) -> Result<meshway_protocol::observations::HistoryAccepted, Error> {
         let provider = Arc::clone(&self.provider);
         self.handle
-            .execute(move |connection| {
-                let tx = connection.transaction()?;
+            .transact(TransactionBehavior::Deferred, move |tx| {
                 let now = Utc::now();
-                let admission = provider.report(&tx, &authorization, now)?;
-                let result = crate::observations::history::accept(&tx, &admission, report, now)?;
-                tx.commit()?;
-                Ok(result)
+                let admission = provider.report(tx, &authorization, now)?;
+                let result = crate::observations::history::accept(tx, &admission, report, now)?;
+                Ok((result, Vec::new()))
             })
-            .await?
+            .await
     }
     pub async fn history(
         &self,
@@ -225,10 +235,9 @@ impl<P: StateProvider> StateService<P> {
         let provider = Arc::clone(&self.provider);
         let sealer = Arc::clone(&self.sealer);
         self.handle
-            .execute(move |connection| {
-                let tx = connection.transaction()?;
+            .read(move |tx| {
                 let now = Utc::now();
-                let view = provider.view(&tx, &identity, now)?;
+                let view = provider.view(tx, &identity, now)?;
                 let scope = crate::secrets::CursorScope::ObservationHistory(identity.fingerprint());
                 let previous = match &query.cursor {
                     None => None,
@@ -249,7 +258,7 @@ impl<P: StateProvider> StateService<P> {
                     }
                 };
                 let (mut page, next) =
-                    crate::observations::history::query(&tx, &view.scope, &query, previous, now)?;
+                    crate::observations::history::query(tx, &view.scope, &query, previous, now)?;
                 if let Some(next) = next {
                     let bytes = serde_json::to_vec(&next)
                         .map_err(|_| Error::encode("observation history cursor"))?;
@@ -258,7 +267,7 @@ impl<P: StateProvider> StateService<P> {
                 }
                 Ok(page)
             })
-            .await?
+            .await
     }
     pub async fn query(
         &self,
@@ -268,15 +277,14 @@ impl<P: StateProvider> StateService<P> {
         let provider = Arc::clone(&self.provider);
         let runtime = Arc::clone(&self.runtime);
         self.handle
-            .execute(move |connection| {
-                let tx = connection.transaction()?;
+            .read(move |tx| {
                 let now = Utc::now();
-                let view = provider.view(&tx, &identity, now)?;
+                let view = provider.view(tx, &identity, now)?;
                 let mut runtime = runtime.lock().map_err(|_| Error::RUNTIME)?;
                 let Runtime { hub, geoip, .. } = &mut *runtime;
                 hub.query(&view.scope, nodes.as_deref(), geoip, now)
             })
-            .await?
+            .await
     }
     pub async fn accept_report(
         &self,
@@ -286,14 +294,13 @@ impl<P: StateProvider> StateService<P> {
         let provider = Arc::clone(&self.provider);
         let runtime = Arc::clone(&self.runtime);
         self.handle
-            .execute(move |connection| {
-                let tx = connection.transaction()?;
+            .read(move |tx| {
                 let now = Utc::now();
-                let admission = provider.report(&tx, &authorization, now)?;
+                let admission = provider.report(tx, &authorization, now)?;
                 let mut runtime = runtime.lock().map_err(|_| Error::RUNTIME)?;
                 runtime.hub.accept_report(&admission, report, now)
             })
-            .await?
+            .await
     }
     pub async fn open_stream(
         &self,
@@ -304,10 +311,9 @@ impl<P: StateProvider> StateService<P> {
         let runtime = Arc::clone(&self.runtime);
         let subscriptions = Arc::clone(&self.subscriptions);
         self.handle
-            .execute(move |connection| {
-                let tx = connection.transaction()?;
+            .read(move |tx| {
                 let now = Utc::now();
-                let view = provider.view(&tx, &identity, now)?;
+                let view = provider.view(tx, &identity, now)?;
                 let mut runtime = runtime.lock().map_err(|_| Error::RUNTIME)?;
                 let mut subscriptions = subscriptions.lock().map_err(|_| Error::RUNTIME)?;
                 let authorization = provider.replay_scope(&view)?;
@@ -418,15 +424,14 @@ impl<P: StateProvider> StateService<P> {
                 subscriptions.insert(id.clone(), sub);
                 Ok(id)
             })
-            .await?
+            .await
     }
     async fn poll_frame(&self, id: String) -> Result<StreamPoll, Error> {
         let provider = Arc::clone(&self.provider);
         let runtime = Arc::clone(&self.runtime);
         let subscriptions = Arc::clone(&self.subscriptions);
         self.handle
-            .execute(move |connection| {
-                let tx = connection.transaction()?;
+            .read(move |tx| {
                 let now = Utc::now();
                 let mut runtime = runtime.lock().map_err(|_| Error::RUNTIME)?;
                 let mut subscriptions = subscriptions.lock().map_err(|_| Error::RUNTIME)?;
@@ -438,7 +443,7 @@ impl<P: StateProvider> StateService<P> {
                 if runtime.closed {
                     return closed::<P>(ClosedReason::ServerShutdown);
                 }
-                let view = match provider.view(&tx, &sub.identity, now) {
+                let view = match provider.view(tx, &sub.identity, now) {
                     Ok(view) => view,
                     Err(Error::InvalidSession | Error::InvalidCredentials) => {
                         return closed::<P>(ClosedReason::SessionExpired);
@@ -525,7 +530,7 @@ impl<P: StateProvider> StateService<P> {
                     let mut revision = sub.last.scope.configuration_revision;
                     for entry in journal? {
                         match entry.change {
-                            CommittedChange::Resource { network_id }
+                            Effect::Resource { network_id }
                                 if provider.can_drain_configuration_changes(&view) =>
                             {
                                 enqueue::<P>(
@@ -537,7 +542,7 @@ impl<P: StateProvider> StateService<P> {
                                 )?;
                                 changed = true;
                             }
-                            CommittedChange::Configuration { notice }
+                            Effect::Configuration { notice }
                                 if notice.revision > revision
                                     && notice.previous_revision == revision =>
                             {
@@ -560,7 +565,7 @@ impl<P: StateProvider> StateService<P> {
                                 )?;
                                 changed = true;
                             }
-                            CommittedChange::ObservationSample { observation, .. }
+                            Effect::ObservationSample { observation, .. }
                                 if visible_tasks.contains(&observation.id)
                                     && observation.path.as_ref().is_none_or(|path| {
                                         path.iter().all(|node| view.scope.visible.contains(node))
@@ -734,16 +739,9 @@ impl<P: StateProvider> StateService<P> {
                 subscriptions.insert(id, sub);
                 Ok(StreamPoll::Frame(frame))
             })
-            .await?
+            .await
     }
 }
-/// Clone this handle into accepted SQLite closures. Publish directly
-/// after COMMIT, never in the awaiting HTTP future.
-pub struct CommitPublisher {
-    runtime: Arc<Mutex<Runtime>>,
-}
-/// Synchronous State input for `execution`. Call after it has validated the supplied
-/// admission in the same transaction; no HTTP source address participates.
 pub struct StateReader {
     runtime: Arc<Mutex<Runtime>>,
 }
@@ -769,45 +767,6 @@ impl StateReader {
         }
         let Runtime { hub, geoip, .. } = &mut *runtime;
         Ok(hub.location(admission, geoip, now))
-    }
-}
-impl Clone for CommitPublisher {
-    fn clone(&self) -> Self {
-        Self {
-            runtime: Arc::clone(&self.runtime),
-        }
-    }
-}
-impl CommitPublisher {
-    pub(crate) fn new(runtime: Arc<Mutex<Runtime>>) -> Self {
-        Self { runtime }
-    }
-    /// Preferred write boundary: invoke inside the accepted store job.
-    /// A failed transaction emits nothing; cancellation of the HTTP waiter
-    /// cannot interrupt this synchronous commit-to-journal sequence.
-    pub fn commit(
-        &self,
-        transaction: Transaction<'_>,
-        changes: Vec<CommittedChange>,
-    ) -> Result<(), Error> {
-        if changes.len() > MAX_REPLAY_EVENTS {
-            return Err(Error::StateLimit);
-        }
-        transaction.commit()?;
-        for change in changes {
-            self.publish_committed(change);
-        }
-        Ok(())
-    }
-    pub fn publish_committed(&self, change: CommittedChange) {
-        if let Ok(mut runtime) = self.runtime.lock() {
-            runtime.hub.publish_committed(change);
-        }
-    }
-    pub fn revoke_session(&self, session: meshway_model::SessionId) {
-        if let Ok(mut runtime) = self.runtime.lock() {
-            runtime.observations.revoke_session(session);
-        }
     }
 }
 fn random_id() -> Result<String, Error> {

@@ -114,12 +114,16 @@ impl App {
         account_options: crate::accounts::Options,
         downloads: Arc<crate::resources::downloads::Downloads>,
     ) -> Result<Self, AppError> {
+        let state_runtime = Arc::new(std::sync::Mutex::new(
+            crate::state::service::Runtime::new().map_err(|_| AppError::Worker)?,
+        ));
         // No yield between taking the prepared directory and transferring it
         // to the SQLite worker. Dropping either future preserves lock ownership.
-        let (executor, sealer) = Executor::open(
+        let (executor, sealer) = Executor::open_with_effects(
             directory.database_path(),
             options,
             directory,
+            Arc::downgrade(&state_runtime) as std::sync::Weak<dyn crate::effect::EffectSink>,
             |connection, directory| {
                 schema::initialize(connection, |connection, fresh| {
                     secrets::initialize(connection, directory, fresh).map_err(AppError::from)
@@ -131,14 +135,7 @@ impl App {
             OpenError::Executor(error) => AppError::from(error),
             OpenError::Initialization(error) => error,
         })?;
-        let state_runtime = Arc::new(std::sync::Mutex::new(
-            crate::state::service::Runtime::new().map_err(|_| AppError::Worker)?,
-        ));
-        let accounts = Accounts::new(
-            executor.handle(),
-            account_options,
-            crate::state::service::CommitPublisher::new(Arc::clone(&state_runtime)),
-        );
+        let accounts = Accounts::new(executor.handle(), account_options);
         let shutdown_hooks = ShutdownHooks::default();
         let shutdown_runtime = Arc::clone(&state_runtime);
         shutdown_hooks
@@ -158,7 +155,6 @@ impl App {
                 sealer: Arc::clone(&sealer),
                 cache: Arc::clone(&configuration_cache),
             },
-            Arc::clone(&state_runtime),
             downloads.clone(),
         );
         Ok(Self {
@@ -189,7 +185,6 @@ impl App {
             self.executor.handle(),
             self.sealer(),
             Arc::clone(&self.configuration_cache),
-            self.commit_publisher(),
         )
     }
 
@@ -198,7 +193,6 @@ impl App {
             self.executor.handle(),
             self.sealer(),
             Arc::clone(&self.configuration_cache),
-            self.commit_publisher(),
             self.downloads.clone(),
         )
     }
@@ -235,7 +229,6 @@ impl App {
         crate::resources::service::ResourceService::new(
             self.executor.handle(),
             provider,
-            Arc::clone(&self.state_runtime),
             self.downloads.clone(),
         )
     }
@@ -256,9 +249,6 @@ impl App {
     /// Shared core handles are available before constructing any HTTP provider.
     pub fn state_reader(&self) -> crate::state::service::StateReader {
         crate::state::service::StateReader::new(Arc::clone(&self.state_runtime))
-    }
-    pub fn commit_publisher(&self) -> crate::state::service::CommitPublisher {
-        crate::state::service::CommitPublisher::new(Arc::clone(&self.state_runtime))
     }
 
     /// An owned action for a server's 'static graceful-shutdown future. Close
@@ -325,12 +315,7 @@ impl App {
         Ok(service)
     }
     pub fn execution(&self) -> crate::execution::Execution {
-        crate::execution::Execution::new(
-            self.executor.handle(),
-            self.sealer(),
-            self.boot,
-            self.commit_publisher(),
-        )
+        crate::execution::Execution::new(self.executor.handle(), self.sealer(), self.boot)
     }
     pub fn enrollment(&self) -> crate::enrollment::Enrollment {
         crate::enrollment::Enrollment::new(
@@ -340,7 +325,6 @@ impl App {
                 sealer: self.sealer(),
                 cache: Arc::clone(&self.configuration_cache),
             }),
-            self.commit_publisher(),
         )
     }
 

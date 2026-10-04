@@ -1,9 +1,10 @@
 //! A bounded commit journal and SSE transport. The provider performs each poll
 //! on the same serial owner as commits, reauthorizing before returning frames.
+use crate::effect::Effect;
 use crate::error::Error;
 use axum::response::sse::{Event, KeepAlive, Sse};
 use futures_util::{Stream, stream};
-use meshway_model::{NetworkId, NodeId, ObservationId, StateEpoch};
+use meshway_model::{NetworkId, StateEpoch};
 use serde::Serialize;
 use std::{
     collections::VecDeque, convert::Infallible, future::Future, pin::Pin, sync::Arc, time::Duration,
@@ -13,57 +14,10 @@ pub const MAX_REPLAY_EVENTS: usize = 512;
 pub const MAX_FRAME_BYTES: usize = 2 * 1024 * 1024;
 pub const MAX_BATCH_BYTES: usize = 8 * 1024 * 1024;
 
-#[derive(Clone, Debug)]
-pub enum CommittedChange {
-    /// Publish only after permanent credential revocation and configuration
-    /// removal commit. Frees volatile report storage; SQL retains revocation.
-    NodeRetired {
-        network_id: NetworkId,
-        node_id: NodeId,
-    },
-    State {
-        network_id: NetworkId,
-        node_id: NodeId,
-    },
-    Configuration {
-        notice: meshway_protocol::events::ConfigurationNotice,
-    },
-    Authorization {
-        network_id: NetworkId,
-    },
-    Progress {
-        network_id: NetworkId,
-    },
-    Observation {
-        network_id: NetworkId,
-        observation_id: ObservationId,
-    },
-    ObservationSample {
-        network_id: NetworkId,
-        observation: Box<meshway_protocol::observations::ObservationTask>,
-    },
-    Resource {
-        network_id: NetworkId,
-    },
-}
-impl CommittedChange {
-    pub fn network(&self) -> NetworkId {
-        match self {
-            Self::State { network_id, .. }
-            | Self::NodeRetired { network_id, .. }
-            | Self::Authorization { network_id }
-            | Self::Progress { network_id }
-            | Self::Observation { network_id, .. }
-            | Self::ObservationSample { network_id, .. }
-            | Self::Resource { network_id } => *network_id,
-            Self::Configuration { notice } => notice.network_id,
-        }
-    }
-}
 #[derive(Clone)]
 pub struct JournalEntry {
     pub sequence: u64,
-    pub change: CommittedChange,
+    pub change: Effect,
 }
 pub struct EventLog {
     pub epoch: StateEpoch,
@@ -78,7 +32,7 @@ impl EventLog {
             entries: VecDeque::new(),
         }
     }
-    pub fn append(&mut self, change: CommittedChange) {
+    pub fn append(&mut self, change: Effect) {
         // Sequence exhaustion ends replay in this epoch instead of wrapping IDs.
         let Some(sequence) = self.sequence.checked_add(1) else {
             self.entries.clear();
@@ -105,7 +59,7 @@ impl EventLog {
         Ok(self
             .entries
             .iter()
-            .filter(|entry| entry.sequence > sequence && entry.change.network() == network)
+            .filter(|entry| entry.sequence > sequence && entry.change.network() == Some(network))
             .cloned()
             .collect())
     }

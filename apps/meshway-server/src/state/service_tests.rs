@@ -1,8 +1,8 @@
 //! Real SQLite/account authorization and HTTP SSE transport tests. The narrow
 //! provider is intentionally test-only; no production fallback authorizes Nodes.
 use super::service::*;
-use super::stream::CommittedChange;
 use super::*;
+use crate::effect::{Effect, EffectSink};
 use crate::{
     App, Settings, http,
     secrets::{Purpose, Sealer},
@@ -551,7 +551,7 @@ async fn http_snapshot_cursor_replay_commit_cancellation_and_logout() {
     let (ready, event) = stream.next().await.unwrap();
     assert!(matches!(event, TestEvent::Ready { .. }));
     let ready = ready.unwrap();
-    let publisher = service.publisher();
+    let runtime = Arc::clone(&service.runtime);
     let handle = service.handle.clone();
     let network_id = network.id;
     let (committed, committed_rx) = oneshot::channel();
@@ -565,7 +565,7 @@ async fn http_snapshot_cursor_replay_commit_cancellation_and_logout() {
                 )
                 .unwrap();
                 tx.commit().unwrap();
-                publisher.publish_committed(CommittedChange::Authorization { network_id });
+                runtime.apply(Effect::Authorization { network_id });
                 let _ = committed.send(());
             })
             .await

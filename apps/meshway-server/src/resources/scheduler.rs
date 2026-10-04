@@ -6,16 +6,12 @@ use super::{
     service::{ResourceProvider, ResourceService, SystemTask},
 };
 use crate::error::Error;
-use crate::{state::service::Runtime, store::Handle};
+use crate::store::Handle;
 use chrono::Utc;
 use meshway_configuration::RuleSet;
 use meshway_model::NetworkId;
-use rusqlite::{Connection, OptionalExtension, params};
-use std::{
-    collections::BTreeMap,
-    sync::{Arc, Mutex},
-    time::Duration,
-};
+use rusqlite::{OptionalExtension, Transaction, params};
+use std::{collections::BTreeMap, sync::Arc, time::Duration};
 
 pub(crate) const MIN_INTERVAL_MS: u64 = 1_000;
 const SCAN_PERIOD: Duration = Duration::from_millis(100);
@@ -37,14 +33,8 @@ pub(crate) struct Scheduler {
     task: Option<tokio::task::JoinHandle<()>>,
 }
 impl Scheduler {
-    pub(crate) fn start(
-        handle: Handle,
-        provider: Provider,
-        runtime: Arc<Mutex<Runtime>>,
-        downloads: Arc<Downloads>,
-    ) -> Self {
-        let service =
-            ResourceService::new(handle.clone(), provider.clone(), runtime, downloads.clone());
+    pub(crate) fn start(handle: Handle, provider: Provider, downloads: Arc<Downloads>) -> Self {
+        let service = ResourceService::new(handle.clone(), provider.clone(), downloads.clone());
         let cancellation = downloads.clone();
         let task = tokio::spawn(async move {
             let mut after = None;
@@ -54,9 +44,9 @@ impl Scheduler {
                 let scan = tokio::select! {
                     biased;
                     _ = cancellation.cancelled() => break,
-                    scan = handle.execute(move |db| scan_network(db, &provider, after)) => scan,
+                    scan = handle.read(move |tx| scan_network(tx, &provider, after)) => scan,
                 };
-                if let Ok(Ok((network, task))) = scan {
+                if let Ok((network, task)) = scan {
                     after = network;
                     if let Some(task) = task {
                         tokio::select! { biased; _ = cancellation.cancelled() => break, _ = service.refresh_system(task) => {} }
@@ -78,11 +68,10 @@ impl Scheduler {
 }
 
 fn scan_network(
-    db: &mut Connection,
+    tx: &Transaction<'_>,
     provider: &Provider,
     after: Option<NetworkId>,
 ) -> Result<(Option<NetworkId>, Option<SystemTask>), Error> {
-    let tx = db.transaction()?;
     let next = |after: Option<NetworkId>| -> Result<Option<NetworkId>, Error> {
         let bytes: Option<Vec<u8>> = tx.query_row(
             "SELECT id FROM networks WHERE deleted_at IS NULL AND (?1 IS NULL OR id>?1) ORDER BY id LIMIT 1",
@@ -101,7 +90,7 @@ fn scan_network(
     let now = Utc::now();
     // A network with unavailable immutable dependencies must not starve other
     // networks. Its ordinary resource GET continues to report that error.
-    let scope = match provider.system_rule_sets(&tx, network, now) {
+    let scope = match provider.system_rule_sets(tx, network, now) {
         Ok(scope) => scope,
         Err(_) => return Ok((Some(network), None)),
     };
