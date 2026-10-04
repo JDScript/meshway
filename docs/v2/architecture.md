@@ -1,8 +1,8 @@
 # 技术栈与 Crates
 
-**已确认的 V2 实现结构。** 新 Controller 位于 `apps/meshway-controller`，Cargo 包名仍为 `meshway-controller`。共享库的 Cargo 包名统一 `meshway-*`，磁盘目录沿用短名，Rust import 使用下划线，例如 `meshway-configuration` → `meshway_configuration`。
+**V2 实现与结构设计。** 新 Controller 位于 `apps/meshway-controller`，Cargo 包名仍为 `meshway-controller`。共享库的 Cargo 包名统一 `meshway-*`，磁盘目录沿用短名，Rust import 使用下划线，例如 `meshway-configuration` → `meshway_configuration`。Controller／核心共享库已实现，新 Agent 的插件和目录结构见下文提案。
 
-Controller、共享模型、配置编译与 HTTP／事件合同从本分区重新实现；客户端从新合同生成。已有 dataplane、transport 与 Agent 运行能力继续复用，随后接入新合同。包边界已确认，精确接口按下面的契约 checkpoint 落实，不把文档示例当作已经完整实现的载荷。
+Controller、共享模型、配置编译与 HTTP／事件合同从本分区重新实现；客户端从新合同生成。新 Agent 按 [daemon／CLI 与插件设计](/v2/agent) 重新确定边界，已有 dataplane、transport、NAT 和出口实现逐模块评估复用，不预先要求保留旧 Agent 结构。精确接口按契约边界落实，不把文档示例当作已经完整实现的载荷。
 
 ## 共享库
 
@@ -25,7 +25,7 @@ Controller、共享模型、配置编译与 HTTP／事件合同从本分区重�
 | `meshway-serde` | `crates/serde` | 对象／判别联合的 Serde＋Schema 声明样板、递归 map-only 与重复键检查，供多个契约库复用 |
 | `meshway-private-storage` | `crates/private-storage` | 提案：私有文件、锁、原子写入和持久性结果 |
 | `meshway-dataplane` | `crates/dataplane` | 认证邻接、端到端加密和转发核心 |
-| `meshway-agent-*` | `crates/agent-*` | 已拆分的 DNS／TUN／underlay／connections／dataplane／diagnostics 运行能力 |
+| `meshway-agent-*` | `crates/agent-*` | 现有 DNS／TUN／underlay／connections／dataplane／diagnostics 能力；新 Agent 的复用评估对象 |
 | `meshway-transport-*` | `crates/transport-*` | 各协议运行实现，与纯 transport-spec 分开 |
 
 SQL row、密码哈希和 Controller 内存容器留在 Controller 内部。meshway-model 共享的是类型，不包含数据库访问或可变全局状态。Node.identity／enabled 类型定义在 meshway-configuration，Node 数据库记录不会成为第二份授权源。
@@ -42,7 +42,8 @@ meshway-protocol → meshway-model + meshway-configuration
 meshway-control-client → 生成操作／公开契约类型 + HTTP transport
 
 Controller → protocol + configuration（编译）+ model + 自有 store
-Agent → control-client + configuration（校验／delta）+ agent-* 运行库
+新 Agent control provider → control-client + configuration（校验／delta）+ model
+新 Agent host／其余 providers → plugin／领域接口 + 所需共享类型
 Apple core → control-client + 所需共享类型／平台桥接
 ```
 
@@ -73,7 +74,9 @@ src/
 ```text
 apps/
   meshway-controller/        # 新 API、权限、存储、编译发布、State 聚合
-  agent/                     # 接入、控制同步、CLI／IPC 与运行编排
+  agent/                     # 现有 Agent，保留为复用与回归评估对象
+  meshwayd/                  # 新 Agent 提案：daemon／plugin host
+  meshway/                   # 新 Agent 提案：本机 CLI
   console/                   # React pure SPA，独立工作流
   apple/                     # SwiftUI + Rust core 平台桥接
 crates/                      # 上述 meshway-* Rust 包
@@ -119,16 +122,11 @@ src/
 
 ## Agent
 
-| 位置 | 职责 |
-| --- | --- |
-| App | 接入、私有身份、控制同步、CLI／IPC 投影、组件编排 |
-| agent-connections | 获准候选／承载执行、认证邻接、连接生命周期 |
-| agent-dataplane | 安装执行配置、准入与包流调度，适配 dataplane |
-| agent-underlay | 保护 socket、底层解析、capture／sink、NAT／路由恢复 owner |
-| agent-tun／agent-dns | TUN 设备 I/O／DNS 服务生命周期 |
-| agent-diagnostics | 窄 provider 上的真实状态／获准诊断 |
+已确认采用 `meshwayd`＋`meshway` CLI、本机 socket 控制、userspace／系统 TUN 两种模式，以及启动时动态插件。首版随完整发行包一次安装所有正式插件，逐插件更新后续再定。
 
-底层加密／转发由 dataplane 唯一实现。Connections 不拥有 TUN／上层 PacketPlan；HTTP、Keychain／文件格式留在应用。Node 持钥认证方案定版后，确有跨端密码学复用再抽 `meshway-node-identity`，不提前发明通用 auth 大包。
+daemon 负责持久运行宿主、IPC、装载和生命周期协调；control、dataplane、connectivity、underlay、transport、TUN／netstack、DNS 和 diagnostics 按领域提供能力。节点侧 `meshway-control` 使用生成客户端，服务端 `meshway-controller` 保持独立。
+
+底层加密／转发保留唯一实现，连接组件不拥有上层业务授权或 TUN。CLI 主要是 up/down/ping/status 和网络选择，业务配置仍由 Controller 管理。详细职责、ABI 和目录提案分别见[新 Agent](/v2/agent)、[插件](/v2/agent/plugins)与[代码结构](/v2/agent/structure)。这些方向尚未改动当前 Agent 或 workspace。
 
 ## 技术栈
 
@@ -137,7 +135,7 @@ src/
 | Controller／Agent | Rust、Tokio；Controller 使用 Axum |
 | 存储 | SQLite、rusqlite、显式事务；最新 State 使用内存与有界 channel |
 | 契约 | Serde／Utoipa、OpenAPI、生成 Rust／TS SDK；正常 Router 已提供权限裁剪的 State／SSE |
-| 认证 | 用户 Argon2id＋不透明会话；Node 持久密钥身份，握手待定版 |
+| 认证 | 用户 Argon2id＋不透明会话；新 Controller 的 Node 接入为持久 Ed25519 持钥证明与 PKCE，独立 X25519 数据面密钥 |
 | Console | React、TypeScript、Vite、TanStack Query／Router、Base UI／Tailwind |
 | Apple | SwiftUI、NetworkExtension、UniFFI；新增隧道开发仍暂停 |
 | 文档 | VitePress |
@@ -181,7 +179,7 @@ src/
 
 新 demand 的业务目标／协议端口、方案选择、可信能力和 DNS 地址关联等实际编译输入须进入相应依赖与摘要。Node 的完整目标要保留其他仍有效需求；不能用最后一次 demand 的切片覆盖整个节点，也不能仅凭相同源 revision 判断发布相容。
 
-首个纵向交付使用真实 SQLite、用户会话和网络隔离，贯通配置持久化／CAS 与 SSE；随后以正式 Node 认证接入配置／State，再连接已有 Linux 运行库。编译 fixture、saved／applied 回执与实际 TUN 连通分别验收。
+控制面纵向交付使用真实 SQLite、用户会话和网络隔离，贯通配置持久化／CAS、正式 Node 认证及 State／SSE。新 Agent 后续按新边界接入 Linux 运行能力；编译 fixture、saved／applied 回执与实际 TUN／userspace 连通分别验收。
 
 ### 基础编码
 

@@ -1,6 +1,6 @@
 # Capabilities
 
-节点实际构建支持的能力集合。key 使用命名空间，便于 transport 之外的能力继续扩展；以下是下一版 State 格式。
+节点实例实际支持的能力集合。key 使用命名空间，便于 transport 之外的能力继续扩展；下面是设计示例，现行编码以生成 OpenAPI 为准。新 Agent 将结合启动时实际加载的兼容插件形成声明，见[插件与能力](/v2/agent/plugins)。
 
 ## Structure
 
@@ -56,3 +56,11 @@ key 存在表示节点声明支持这项能力；省略表示未声明支持。�
 - 每项定义自己的参数、取值和协商规则；只使用已识别且相容的能力参与执行选择。
 - 能力绑定当前 Node 实例；实例更替／报告过期时不能沿用为当前可用证明。
 - 前缀只用于 capability key。配置中的 `type: 'vless'`、dialers 协议 key 和 LinkState.transport 不随之加前缀。
+
+## 新 Agent 插件对应关系
+
+首版正式插件随完整发行包安装，在 daemon 启动时装载。安装清单、加载结果、capabilities、配置许可及资源 State 分别表达：磁盘上存在动态库不证明可加载，加载实现不证明 listener 已绑定或网络模式已安装。
+
+UDP/TCP provider 在标准发行中必带，其业务使用仍受允许协议和路径规则限制。新增未知协议的插件也需要 Controller 目录／配置 schema／编译支持，不能把 capability key 当成任意配置或执行代码的入口。
+
+插件集合在重启时改变，新的运行实例重新声明并协商；旧实例能力不沿用为当前证明。userspace／TUN 的能力键、plugin 版本与装载状态字段仍待具体合同设计，本次文档不直接扩展当前 NodeState。

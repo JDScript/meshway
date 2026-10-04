@@ -23,6 +23,8 @@ Rust 控制面与 Agent、React pure SPA 控制台、VitePress 文档站。
 
 ## 实现与验证
 
+- 用户最新在规划下一步主线整合，当前仅盘点 Console／新 Controller 与 NAT／出口分支，不立即 merge main。新 Agent 可按新产品模型重新设计，旧实现与失败反例逐模块评估复用，不预先要求沿用旧 App／crate 结构；尚未批准按草案搬代码或实现新 ABI。
+- 新 Agent 已确认：`meshwayd` 长期运行，`meshway` 经本机 socket 提供主要的 up/down/ping/status 与网络切换；日常业务配置仍由云端管理。支持无 TUN userspace networking 和系统 TUN 模式，Meshway 加密／承载不因此进入内核。采用启动时动态加载插件，首版所有正式插件随发行包一起安装／升级，独立插件更新后续再定。UDP/TCP 标准实现必带不放宽业务允许协议。设计入口为 docs/v2/agent.md，运行／插件／结构分册在 docs/v2/agent/；具体 crate 布局、native ABI、userspace 应用入口与默认模式仍是提案，当前代码与部署不随文档自动切换。
 - 用户明确强调代码洁癖：源码组织、命名和职责须干净可解释；关注 `apps/controller/src/store` 中散落的 tests、`policy_v3` 与 `schema_v*`。完整 dump / 审查不等于已完成源码清理，不再混报。生产领域模块按职责命名，避免阶段名、临时修复名和重复实现。当前权限、数据完整性、所有权与生命周期回归须保留；历史迁移与旧模式 fixture 可随最新明确废弃的兼容层一并删除。
 - 全仓 Rust 手写代码统一模块与测试组织：单文件模块 `foo.rs`；有子模块使用 `foo/mod.rs`，避免 `foo.rs` 旁再开仅含子测试的 `foo/`。私有实现单元测试作为所属模块的 `#[cfg(test)]` 子模块；公共 API 黑盒测试放 crate 顶层 `tests/`，入口遵守 Cargo 自动发现（`tests/*.rs` 或 `tests/<suite>/main.rs`），共享 helper 放子目录。不得为搬测试扩大生产可见性、复制实现或用临时 path/autotests 配置绕过边界；生成代码与 vendor 按各自权威来源维护。
 - DNS、TUN、underlay、连接运行、节点执行、诊断与生成控制客户端分别位于 `agent-dns`、`agent-tun`、`agent-underlay`、`agent-connections`、`agent-dataplane`、`agent-diagnostics`、`control-client`。库不反向依赖 App，底层加密/转发仍由 `dataplane` 唯一实现。Apple core 直接消费 control-client，不再为 HTTP 客户端依赖 Agent。

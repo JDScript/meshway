@@ -156,6 +156,15 @@ const v2Sidebar: DefaultTheme.SidebarItem[] = [
     ],
   },
   {
+    text: "Agent · 新设计",
+    items: [
+      { text: "Daemon、CLI 与组件", link: "/v2/agent" },
+      { text: "运行模式与本机 IPC", link: "/v2/agent/runtime" },
+      { text: "插件、装载与能力", link: "/v2/agent/plugins" },
+      { text: "Crates 与目录", link: "/v2/agent/structure" },
+    ],
+  },
+  {
     text: "存储与工程",
     items: [
       { text: "持久数据库字段", link: "/v2/storage/database" },

@@ -60,3 +60,10 @@ Node 上报自身运行事实，Controller 聚合 NetworkState；Node 可按需 
 ## 工程结构
 
 - [技术栈、Workspace 布局与 Shared crates](/v2/architecture)
+
+## 新 Agent
+
+- [Daemon、CLI 与组件职责](/v2/agent)
+- [Userspace／系统 TUN、运行生命周期与本机 IPC](/v2/agent/runtime)
+- [启动时动态插件、整体交付与 capabilities](/v2/agent/plugins)
+- [Crates 与目录提案](/v2/agent/structure)
