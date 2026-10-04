@@ -1,9 +1,10 @@
 import assert from "node:assert/strict"
-import { readFileSync } from "node:fs"
+import { readdirSync, readFileSync } from "node:fs"
 import { test } from "vitest"
 
-// The copy is split per feature (`messages/<feature>/<locale>.json`, listed
-// in `project.inlang/settings.json`) so features can grow it independently.
+// The copy is split by area (`messages/<area>/<locale>.json`, listed in
+// `project.inlang/settings.json`); words several areas use are shared
+// (`messages/<locale>.json`).
 
 const project = new URL("../project.inlang/settings.json", import.meta.url)
 const settings = JSON.parse(readFileSync(project, "utf8")) as {
@@ -44,4 +45,18 @@ test("no message is defined in two files", () => {
       seen.set(key, pattern)
     }
   }
+})
+
+test("every message is used", () => {
+  const root = new URL("../src/", import.meta.url)
+  const source = readdirSync(root, { recursive: true, encoding: "utf8" })
+    .filter((file) => /\.tsx?$/.test(file) && !file.startsWith("paraglide"))
+    .map((file) => readFileSync(new URL(file, root), "utf8"))
+    .join("\n")
+  for (const pattern of patterns)
+    for (const key of keysOf(pattern, settings.locales[0] ?? "zh"))
+      assert.ok(
+        new RegExp(`\\bm\\.${key}\\b`).test(source),
+        `${key} is never used`
+      )
 })

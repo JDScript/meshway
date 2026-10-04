@@ -5,7 +5,7 @@ import type {
   RuleSetView,
 } from "@meshway/control-client"
 import { CircleAlertIcon, CircleCheckIcon, RefreshCwIcon } from "lucide-react"
-import { useEffect, useState, type ReactNode } from "react"
+import type { ReactNode } from "react"
 
 import { toastFailureWith } from "@/api/failure"
 import { useRefreshRuleSet } from "@/api/queries/rule-sets"
@@ -24,6 +24,7 @@ import {
   type Note,
 } from "@/components/configuration/form-kit"
 import { Button } from "@/components/ui/button"
+import { useNow } from "@/hooks/use-now"
 import { pointerOf } from "@/lib/configuration/jsonc"
 import { withEntry, without } from "@/lib/configuration/keyed"
 import {
@@ -72,16 +73,6 @@ export type RuleSetStatus =
   | { kind: "loading" }
   | { kind: "failed" }
 
-/** Every 30 s: enough for "checked 3 minutes ago". */
-function useNow() {
-  const [now, setNow] = useState(() => Date.now())
-  useEffect(() => {
-    const timer = window.setInterval(() => setNow(Date.now()), 30_000)
-    return () => window.clearInterval(timer)
-  }, [])
-  return now
-}
-
 /** Rule sets: inline content, or a remote source the controller downloads with the draft, on its interval and when refreshed. */
 export function RuleSetsForm({
   networkId,
@@ -108,7 +99,7 @@ export function RuleSetsForm({
   onRename: (from: string, to: string) => void
 }) {
   const entries = Object.entries(sets)
-  const now = useNow()
+  const now = useNow(30_000)
   return (
     <div className="flex flex-col gap-4">
       <p className="text-meta text-muted-foreground">

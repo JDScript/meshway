@@ -52,7 +52,7 @@ import {
   type DevicePhase,
 } from "@/lib/device-request"
 import { dateTime } from "@/lib/format"
-import { rememberedNetwork } from "@/lib/remembered-network-storage"
+import { rememberedNetwork } from "@/lib/remembered-network"
 import { roleLabel } from "@/lib/roles"
 import { m } from "@/paraglide/messages.js"
 import { currentSession } from "@/state/session"

@@ -5,8 +5,7 @@ import { sessionQuery } from "@/api/queries/auth"
 import { networkQuery, networksQuery } from "@/api/queries/network"
 import { EntryPage } from "@/components/entry/frame"
 import { FirstNetwork, NetworkFailed } from "@/components/entry/network-states"
-import { landing } from "@/lib/remembered-network"
-import { rememberedNetwork } from "@/lib/remembered-network-storage"
+import { landing, rememberedNetwork } from "@/lib/remembered-network"
 import { m } from "@/paraglide/messages.js"
 
 /** `/`: the remembered network, else the first one this account may open, else creating one. */

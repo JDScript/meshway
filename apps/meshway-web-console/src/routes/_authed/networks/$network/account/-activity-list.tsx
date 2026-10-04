@@ -1,4 +1,4 @@
-import type { ActivityAction, ActivityEvent } from "@meshway/control-client"
+import type { ActivityEvent } from "@meshway/control-client"
 import { useInfiniteQuery } from "@tanstack/react-query"
 import { HistoryIcon } from "lucide-react"
 
@@ -15,31 +15,16 @@ import {
   pagedCount,
   type ActivityTargetView,
 } from "@/lib/account"
-import { actorId, actorText, type ActorWords } from "@/lib/actor"
+import {
+  activityActionLabel,
+  ACTOR_WORDS,
+  actorId,
+  actorText,
+  type ActorWords,
+} from "@/lib/activity"
 import { dateTime } from "@/lib/format"
 import { m } from "@/paraglide/messages.js"
 import { currentSession } from "@/state/session"
-
-const actionLabel: Record<ActivityAction, () => string> = {
-  "account.register": () => m.account_action_register(),
-  "session.login": () => m.account_action_login(),
-  "session.logout": () => m.account_action_logout(),
-  "session.revoke": () => m.account_action_revoke(),
-  "session.revokeOthers": () => m.account_action_revoke_others(),
-  "session.revokeAll": () => m.account_action_revoke_all(),
-  "account.password": () => m.account_action_password(),
-  "account.passwordReset": () => m.account_action_password_reset(),
-  "account.resetIssued": () => m.account_action_reset_issued(),
-  "account.email": () => m.account_action_email(),
-  "network.create": () => m.account_action_network_create(),
-  "network.rename": () => m.account_action_network_rename(),
-  "configuration.apply": () => m.account_action_configuration_apply(),
-  "membership.role": () => m.account_action_membership_role(),
-  "membership.join": () => m.account_action_membership_join(),
-  "membership.remove": () => m.account_action_membership_remove(),
-  "joinLink.create": () => m.account_action_join_link_create(),
-  "joinLink.revoke": () => m.account_action_join_link_revoke(),
-}
 
 function targetLabel(target: ActivityTargetView): string | null {
   switch (target.kind) {
@@ -62,11 +47,8 @@ function targetLabel(target: ActivityTargetView): string | null {
 
 // Every event here is the account's own, so the actor is not marked as this
 // account; its email is the one recorded then, which may not be today's.
-const actorWords: ActorWords = {
-  system: () => m.account_actor_system(),
-  user: (id) => m.account_actor_user({ id }),
-  self: (name) => name,
-}
+/** Every event in this list is this account's: its own name needs no mark. */
+const actorWords: ActorWords = { ...ACTOR_WORDS, self: (name) => name }
 
 /** What happened to the account, newest first, as the controller recorded it. */
 export function ActivityList() {
@@ -133,7 +115,7 @@ function ActivityRow({
   return (
     <RefRow
       lead={<HistoryIcon className="size-4 text-muted-foreground" />}
-      title={actionLabel[event.action]()}
+      title={activityActionLabel[event.action]()}
       subtitle={
         <span title={actorId(event.actor)}>
           {m.account_activity_by({

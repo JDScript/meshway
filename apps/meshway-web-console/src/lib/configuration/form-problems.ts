@@ -4,6 +4,8 @@ import type {
   ConfigurationView,
 } from "@meshway/control-client"
 
+import { isIpv4, isIpv6 } from "@/lib/ip"
+
 import { dialerProblems } from "./dialer-model"
 import { pointerOf, pointerSegments, type JsonPath } from "./jsonc"
 import { nodeProblems } from "./node-problems"
@@ -20,8 +22,6 @@ import {
   cidrFamily,
   isDomain,
   isEmail,
-  isIpv4,
-  isIpv6,
   isNamed,
   isProtocol,
   selectorKind,

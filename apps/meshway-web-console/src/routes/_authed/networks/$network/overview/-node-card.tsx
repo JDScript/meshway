@@ -1,14 +1,10 @@
 import { StatusDot } from "@/components/chrome/status-dot"
 import { dateTime } from "@/lib/format"
 import type { MapNode } from "@/lib/network-map"
+import { freshnessLabel } from "@/lib/state-labels"
 import { m } from "@/paraglide/messages.js"
 
-import {
-  freshnessColor,
-  freshnessLabel,
-  locationSourceLabel,
-  placeText,
-} from "./-labels"
+import { freshnessColor, locationSourceLabel, placeText } from "./-labels"
 
 /**
  * A located node pointed at on the globe: where the controller's GeoIP

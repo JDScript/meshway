@@ -11,7 +11,7 @@ import { ApiFailure, authed, client, problemCode } from "@/api/client"
 import { failureText } from "@/api/failure"
 import { networkQuery, networksQuery } from "@/api/queries/network"
 import { NAME_FAILURE } from "@/components/network/create-network"
-import { useNetworkNameCheck } from "@/components/network/network-name"
+import { useNetworkNameCheck } from "@/hooks/use-network-name-check"
 import { m } from "@/paraglide/messages.js"
 import { attempts } from "@/state/attempts"
 

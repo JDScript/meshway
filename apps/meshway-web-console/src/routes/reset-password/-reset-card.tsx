@@ -27,7 +27,7 @@ import {
 } from "@/hooks/use-password-fields"
 import { formText } from "@/lib/form"
 import { dateTime } from "@/lib/format"
-import { passwordRulesText } from "@/lib/password-text"
+import { passwordRulesText } from "@/lib/password"
 import { m } from "@/paraglide/messages.js"
 
 const TOAST = "reset"

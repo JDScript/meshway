@@ -16,20 +16,18 @@ import {
   PHASE_ORDER,
   type MapNode,
 } from "@/lib/network-map"
+import {
+  evidenceLabel,
+  freshnessLabel,
+  linkPhaseLabel,
+} from "@/lib/state-labels"
 import { cn } from "@/lib/utils"
 import { m } from "@/paraglide/messages.js"
 import { highlightOnGlobe } from "@/state/globe"
 
 import { Group } from "./-group"
 import { HistoryLayer, type HistoryLayerProps } from "./-history-layer"
-import {
-  evidenceLabel,
-  freshnessColor,
-  freshnessLabel,
-  lookColor,
-  phaseLabel,
-  unlocatedReason,
-} from "./-labels"
+import { freshnessColor, lookColor, unlocatedReason } from "./-labels"
 
 /**
  * The overview's corner: the State's time and how it is kept current, the
@@ -161,7 +159,7 @@ export function StatusCard({
                   items={countBy(
                     links.map((link) => link.phase),
                     PHASE_ORDER
-                  ).map(({ value, count }) => [phaseLabel[value](), count])}
+                  ).map(({ value, count }) => [linkPhaseLabel[value](), count])}
                 />
               </span>
               <span className="flex flex-wrap gap-x-3 gap-y-1">
@@ -291,7 +289,7 @@ function LinkRow({
         <span className="block truncate text-meta text-muted-foreground">
           {[
             link.transport,
-            phaseLabel[link.phase](),
+            linkPhaseLabel[link.phase](),
             evidenceLabel[link.evidence](),
           ].join(" · ")}
         </span>

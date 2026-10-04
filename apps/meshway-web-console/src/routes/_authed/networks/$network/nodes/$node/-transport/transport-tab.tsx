@@ -25,10 +25,6 @@ import {
   stateOf,
   unconfiguredListeners,
 } from "@/lib/nodes/state-model"
-import { cn } from "@/lib/utils"
-import { m } from "@/paraglide/messages.js"
-
-import { useNodeConfiguration } from "../-draft"
 import {
   evidenceLabel,
   freshnessLabel,
@@ -36,7 +32,11 @@ import {
   pathEvidenceLabel,
   reporterRoleLabel,
   resourceText,
-} from "../../-state-labels"
+} from "@/lib/state-labels"
+import { cn } from "@/lib/utils"
+import { m } from "@/paraglide/messages.js"
+
+import { useNodeConfiguration } from "../-draft"
 import { ConfiguredListeners } from "./listeners"
 import { Runtime, SocketBlock } from "./runtime"
 

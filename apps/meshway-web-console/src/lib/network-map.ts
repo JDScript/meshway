@@ -10,6 +10,7 @@ import type {
 } from "@meshway/control-client"
 
 import type { LinkLook, Scene, SceneLink, SceneNode } from "@/globe/scene"
+import { shortId } from "@/lib/format"
 
 // The overview's reading of the network's State: which nodes the
 // controller located, which it did not and why, and which links can be
@@ -60,7 +61,6 @@ export const EVIDENCE_ORDER: readonly LinkEvidence[] = [
 ]
 
 /** The first 8 characters of an ID, for a node the inventory does not name to this account. */
-export const shortId = (id: string) => id.slice(0, 8)
 
 /**
  * Every node in the State, named by the inventory (`names`); a node the

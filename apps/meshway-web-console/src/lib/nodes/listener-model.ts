@@ -1,6 +1,8 @@
 import type { Listener, TransportProtocol } from "@meshway/control-client"
 import { zListener } from "@meshway/control-client/schemas"
 
+import { isIp, parsePort } from "@/lib/ip"
+
 // A new node's one listener as it is typed, turned into the generated
 // `Listener` when the enrolment key is created. Only what makes a listener
 // reachable is asked: the transport, the port, an optional public address
@@ -98,28 +100,9 @@ export const problemField: Record<ListenerProblem, ListenerField> = {
   server_name_missing: "serverName",
 }
 
-const PORT = /^[0-9]{1,5}$/
-const IPV4 =
-  /^(25[0-5]|2[0-4][0-9]|1[0-9]{2}|[1-9]?[0-9])(\.(25[0-5]|2[0-4][0-9]|1[0-9]{2}|[1-9]?[0-9])){3}$/
 const LABEL = /^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$/
 
-function portOf(raw: string): number | null {
-  const text = raw.trim()
-  if (!PORT.test(text)) return null
-  const port = Number(text)
-  return port >= 1 && port <= 65535 ? port : null
-}
-
-function isIpv6(value: string): boolean {
-  if (!value.includes(":") || !/^[0-9A-Fa-f:.]+$/.test(value)) return false
-  try {
-    return new URL(`http://[${value}]/`).hostname !== ""
-  } catch {
-    return false
-  }
-}
-
-export const isIp = (value: string) => IPV4.test(value) || isIpv6(value)
+const portOf = (raw: string) => parsePort(raw.trim())
 
 /**
  * A host as the controller reads one: an IP, or a DNS name of letters,

@@ -9,7 +9,12 @@ import {
 } from "@/api/queries/configuration"
 import { configurationProgressQuery } from "@/api/queries/configuration-progress"
 import { joinLinksQuery, membersQuery } from "@/api/queries/members"
-import { networkKey, networkQuery, networksQuery } from "@/api/queries/network"
+import {
+  networkActivityQuery,
+  networkKey,
+  networkQuery,
+  networksQuery,
+} from "@/api/queries/network"
 import { nodesQuery } from "@/api/queries/nodes"
 import {
   observationListQuery,
@@ -18,6 +23,7 @@ import {
   writeRemoved,
   writeTask,
 } from "@/api/queries/observation"
+import { ruleSetsKey } from "@/api/queries/rule-sets"
 import { networkStateQuery } from "@/api/queries/state"
 import { sameData } from "@/lib/same-data"
 import { connectionOf, isLive, setConnection } from "@/state/live"
@@ -59,11 +65,6 @@ function leaveLive(
     void queryClient.invalidateQueries({ queryKey: networkKey(networkId) })
 }
 
-const ruleSetsKey = (networkId: string) =>
-  [...networkKey(networkId), "rule-sets"] as const
-const activityKey = (networkId: string) =>
-  [...networkKey(networkId), "activity"] as const
-
 /** The paged reads a membership change can alter. */
 function membersChanged(queryClient: QueryClient, networkId: string) {
   void queryClient.invalidateQueries({
@@ -72,7 +73,9 @@ function membersChanged(queryClient: QueryClient, networkId: string) {
   void queryClient.invalidateQueries({
     queryKey: joinLinksQuery(networkId).queryKey,
   })
-  void queryClient.invalidateQueries({ queryKey: activityKey(networkId) })
+  void queryClient.invalidateQueries({
+    queryKey: networkActivityQuery(networkId).queryKey,
+  })
 }
 
 /**
@@ -164,7 +167,9 @@ async function apply(
       void queryClient.invalidateQueries({
         queryKey: configurationReads(networkId),
       })
-      void queryClient.invalidateQueries({ queryKey: activityKey(networkId) })
+      void queryClient.invalidateQueries({
+        queryKey: networkActivityQuery(networkId).queryKey,
+      })
       return
     case "progress": {
       const key = configurationProgressQuery(

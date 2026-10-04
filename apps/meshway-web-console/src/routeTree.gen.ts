@@ -11,8 +11,8 @@
 import { Route as rootRouteImport } from './routes/__root'
 import { Route as AuthedRouteRouteImport } from './routes/_authed/route'
 import { Route as JoinRouteRouteImport } from './routes/join/route'
-import { Route as LoginRouteRouteImport } from './routes/login/route'
-import { Route as RegisterRouteRouteImport } from './routes/register/route'
+import { Route as LoginRouteImport } from './routes/login'
+import { Route as RegisterRouteImport } from './routes/register'
 import { Route as ResetPasswordRouteRouteImport } from './routes/reset-password/route'
 import { Route as AuthedIndexRouteImport } from './routes/_authed/index'
 import { Route as AuthorizeDeviceRequestRouteImport } from './routes/authorize-device/$request'
@@ -43,12 +43,12 @@ const JoinRouteRoute = JoinRouteRouteImport.update({
   path: '/join',
   getParentRoute: () => rootRouteImport,
 } as any)
-const LoginRouteRoute = LoginRouteRouteImport.update({
+const LoginRoute = LoginRouteImport.update({
   id: '/login',
   path: '/login',
   getParentRoute: () => rootRouteImport,
 } as any)
-const RegisterRouteRoute = RegisterRouteRouteImport.update({
+const RegisterRoute = RegisterRouteImport.update({
   id: '/register',
   path: '/register',
   getParentRoute: () => rootRouteImport,
@@ -174,9 +174,9 @@ const AuthedNetworksNetworkSettingsSectionRouteRoute =
 export interface FileRoutesByFullPath {
   '/': typeof AuthedIndexRoute
   '/join': typeof JoinRouteRoute
-  '/login': typeof LoginRouteRoute
-  '/register': typeof RegisterRouteRoute
   '/reset-password': typeof ResetPasswordRouteRoute
+  '/login': typeof LoginRoute
+  '/register': typeof RegisterRoute
   '/authorize-device/$request': typeof AuthorizeDeviceRequestRoute
   '/networks/$network': typeof AuthedNetworksNetworkRouteRouteWithChildren
   '/networks/$network/account': typeof AuthedNetworksNetworkAccountRouteRoute
@@ -198,9 +198,9 @@ export interface FileRoutesByFullPath {
 }
 export interface FileRoutesByTo {
   '/join': typeof JoinRouteRoute
-  '/login': typeof LoginRouteRoute
-  '/register': typeof RegisterRouteRoute
   '/reset-password': typeof ResetPasswordRouteRoute
+  '/login': typeof LoginRoute
+  '/register': typeof RegisterRoute
   '/authorize-device/$request': typeof AuthorizeDeviceRequestRoute
   '/': typeof AuthedIndexRoute
   '/networks/$network/account': typeof AuthedNetworksNetworkAccountRouteRoute
@@ -220,9 +220,9 @@ export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/_authed': typeof AuthedRouteRouteWithChildren
   '/join': typeof JoinRouteRoute
-  '/login': typeof LoginRouteRoute
-  '/register': typeof RegisterRouteRoute
   '/reset-password': typeof ResetPasswordRouteRoute
+  '/login': typeof LoginRoute
+  '/register': typeof RegisterRoute
   '/authorize-device/$request': typeof AuthorizeDeviceRequestRoute
   '/_authed/': typeof AuthedIndexRoute
   '/_authed/networks/$network': typeof AuthedNetworksNetworkRouteRouteWithChildren
@@ -248,9 +248,9 @@ export interface FileRouteTypes {
   fullPaths:
     | '/'
     | '/join'
+    | '/reset-password'
     | '/login'
     | '/register'
-    | '/reset-password'
     | '/authorize-device/$request'
     | '/networks/$network'
     | '/networks/$network/account'
@@ -272,9 +272,9 @@ export interface FileRouteTypes {
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/join'
+    | '/reset-password'
     | '/login'
     | '/register'
-    | '/reset-password'
     | '/authorize-device/$request'
     | '/'
     | '/networks/$network/account'
@@ -293,9 +293,9 @@ export interface FileRouteTypes {
     | '__root__'
     | '/_authed'
     | '/join'
+    | '/reset-password'
     | '/login'
     | '/register'
-    | '/reset-password'
     | '/authorize-device/$request'
     | '/_authed/'
     | '/_authed/networks/$network'
@@ -320,9 +320,9 @@ export interface FileRouteTypes {
 export interface RootRouteChildren {
   AuthedRouteRoute: typeof AuthedRouteRouteWithChildren
   JoinRouteRoute: typeof JoinRouteRoute
-  LoginRouteRoute: typeof LoginRouteRoute
-  RegisterRouteRoute: typeof RegisterRouteRoute
   ResetPasswordRouteRoute: typeof ResetPasswordRouteRoute
+  LoginRoute: typeof LoginRoute
+  RegisterRoute: typeof RegisterRoute
   AuthorizeDeviceRequestRoute: typeof AuthorizeDeviceRequestRoute
 }
 
@@ -346,14 +346,14 @@ declare module '@tanstack/react-router' {
       id: '/login'
       path: '/login'
       fullPath: '/login'
-      preLoaderRoute: typeof LoginRouteRouteImport
+      preLoaderRoute: typeof LoginRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/register': {
       id: '/register'
       path: '/register'
       fullPath: '/register'
-      preLoaderRoute: typeof RegisterRouteRouteImport
+      preLoaderRoute: typeof RegisterRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/reset-password': {
@@ -622,9 +622,9 @@ const AuthedRouteRouteWithChildren = AuthedRouteRoute._addFileChildren(
 const rootRouteChildren: RootRouteChildren = {
   AuthedRouteRoute: AuthedRouteRouteWithChildren,
   JoinRouteRoute: JoinRouteRoute,
-  LoginRouteRoute: LoginRouteRoute,
-  RegisterRouteRoute: RegisterRouteRoute,
   ResetPasswordRouteRoute: ResetPasswordRouteRoute,
+  LoginRoute: LoginRoute,
+  RegisterRoute: RegisterRoute,
   AuthorizeDeviceRequestRoute: AuthorizeDeviceRequestRoute,
 }
 export const routeTree = rootRouteImport

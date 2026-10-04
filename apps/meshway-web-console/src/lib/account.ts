@@ -1,5 +1,7 @@
 import type { ActivityEvent } from "@meshway/control-client"
 
+import { shortId } from "@/lib/format"
+
 // What the account page reads out of the controller's answers, kept free of
 // React and the messages so it can be tested on its own.
 
@@ -20,7 +22,6 @@ export function endsThisTab(revocation: Revocation, thisSession: string) {
 }
 
 /** The start of an ID, enough to tell sessions apart in a list. */
-export const shortId = (id: string) => id.slice(0, 8)
 
 /** What an activity event acted on, as the account page names it. */
 export type ActivityTargetView =

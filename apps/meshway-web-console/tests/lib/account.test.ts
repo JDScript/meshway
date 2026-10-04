@@ -1,7 +1,8 @@
 import assert from "node:assert/strict"
 import { test } from "vitest"
 
-import { activityTarget, endsThisTab, pagedCount, shortId } from "@/lib/account"
+import { activityTarget, endsThisTab, pagedCount } from "@/lib/account"
+import { shortId } from "@/lib/format"
 
 const mine = "11111111-2222-4333-8444-555555555555"
 const other = "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee"

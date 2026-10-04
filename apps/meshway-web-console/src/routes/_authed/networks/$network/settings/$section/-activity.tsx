@@ -1,72 +1,24 @@
-import {
-  listNetworkActivity,
-  type ActivityAction,
-  type ActivityEvent,
-  type NetworkSummary,
-} from "@meshway/control-client"
-import {
-  infiniteQueryOptions,
-  useInfiniteQuery,
-  useQuery,
-} from "@tanstack/react-query"
+import type { ActivityEvent, NetworkSummary } from "@meshway/control-client"
+import { useInfiniteQuery, useQuery } from "@tanstack/react-query"
 
-import { ApiFailure, authed, client, problemCode } from "@/api/client"
+import { ApiFailure, problemCode } from "@/api/client"
 import { failureText, toastFailure } from "@/api/failure"
 import { sessionQuery } from "@/api/queries/auth"
 import { membersQuery } from "@/api/queries/members"
-import { networkKey } from "@/api/queries/network"
+import { networkActivityQuery } from "@/api/queries/network"
 import { EmptyLine } from "@/components/chrome/section"
 import { Button } from "@/components/ui/button"
 import { Skeleton } from "@/components/ui/skeleton"
 import { Spinner } from "@/components/ui/spinner"
 import { useReadFailureToast } from "@/hooks/use-read-failure-toast"
-import { actorId, actorText, type ActorWords } from "@/lib/actor"
+import {
+  activityActionLabel,
+  ACTOR_WORDS,
+  actorId,
+  actorText,
+} from "@/lib/activity"
 import { dateTime } from "@/lib/format"
 import { m } from "@/paraglide/messages.js"
-
-/** Events per page; the controller takes 1 to 200. */
-const ACTIVITY_PAGE = 50
-
-/** What happened in the network, latest first; only those who manage members may read it. */
-export const activityQuery = (networkId: string) =>
-  infiniteQueryOptions({
-    queryKey: [...networkKey(networkId), "activity"],
-    queryFn: ({ pageParam, signal }) =>
-      authed((token) =>
-        listNetworkActivity(
-          client,
-          { networkId },
-          pageParam === null
-            ? { limit: ACTIVITY_PAGE }
-            : { limit: ACTIVITY_PAGE, cursor: pageParam },
-          { token, signal }
-        )
-      ),
-    initialPageParam: null as string | null,
-    getNextPageParam: (last) => last.nextCursor,
-    staleTime: 30_000,
-  })
-
-const actionLabel: Record<ActivityAction, () => string> = {
-  "account.register": () => m.activity_account_register(),
-  "session.login": () => m.activity_session_login(),
-  "session.logout": () => m.activity_session_logout(),
-  "session.revoke": () => m.activity_session_revoke(),
-  "session.revokeOthers": () => m.activity_session_revoke_others(),
-  "session.revokeAll": () => m.activity_session_revoke_all(),
-  "account.password": () => m.activity_account_password(),
-  "account.passwordReset": () => m.activity_account_password_reset(),
-  "account.resetIssued": () => m.activity_account_reset_issued(),
-  "account.email": () => m.activity_account_email(),
-  "network.create": () => m.activity_network_create(),
-  "network.rename": () => m.activity_network_rename(),
-  "configuration.apply": () => m.activity_configuration_apply(),
-  "membership.role": () => m.activity_membership_role(),
-  "membership.join": () => m.activity_membership_join(),
-  "membership.remove": () => m.activity_membership_remove(),
-  "joinLink.create": () => m.activity_join_link_create(),
-  "joinLink.revoke": () => m.activity_join_link_revoke(),
-}
 
 type Names = {
   byUser: ReadonlyMap<string, string>
@@ -75,12 +27,6 @@ type Names = {
 }
 
 /** Who did it, by the email they had then (else their ID), or the system. */
-const actorWords: ActorWords = {
-  system: () => m.activity_actor_system(),
-  user: (id) => m.activity_actor_user({ id }),
-  self: (name) => m.activity_actor_self({ name }),
-}
-
 /** What it was done to, when that is more than the network itself. */
 function targetName(event: ActivityEvent, names: Names): string | null {
   const { target } = event
@@ -113,7 +59,7 @@ function revisions(event: ActivityEvent): string | null {
 
 /** The network's activity: what was done, by whom and when, a page at a time. */
 export function ActivitySection({ network }: { network: NetworkSummary }) {
-  const activity = useInfiniteQuery(activityQuery(network.id))
+  const activity = useInfiniteQuery(networkActivityQuery(network.id))
   const members = useInfiniteQuery(membersQuery(network.id))
   const session = useQuery(sessionQuery())
 
@@ -170,7 +116,7 @@ export function ActivitySection({ network }: { network: NetworkSummary }) {
               >
                 <div className="min-w-0 flex-1">
                   <div className="truncate text-row font-medium">
-                    {actionLabel[event.action]()}
+                    {activityActionLabel[event.action]()}
                     {target ? (
                       <span className="font-normal text-muted-foreground">
                         {" · "}
@@ -182,7 +128,7 @@ export function ActivitySection({ network }: { network: NetworkSummary }) {
                     className="truncate text-meta text-muted-foreground"
                     title={actorId(event.actor)}
                   >
-                    {actorText(event.actor, names.viewerId, actorWords)}
+                    {actorText(event.actor, names.viewerId, ACTOR_WORDS)}
                     {moved ? ` · ${moved}` : ""}
                   </div>
                 </div>

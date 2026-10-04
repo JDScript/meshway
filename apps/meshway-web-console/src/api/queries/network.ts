@@ -1,5 +1,6 @@
 import {
   getNetwork,
+  listNetworkActivity,
   listNetworks,
   type NetworkSummary,
 } from "@meshway/control-client"
@@ -60,3 +61,26 @@ export const isNotFound = (error: unknown) =>
 /** The network as last read (its name, revision and this account's actions); null until read. */
 export const useNetworkSummary = (networkId: string): NetworkSummary | null =>
   useQuery(networkQuery(networkId)).data?.network ?? null
+
+/** Events per page; the controller takes 1 to 200. */
+const ACTIVITY_PAGE = 50
+
+/** What happened in the network, latest first; only those who manage members may read it. */
+export const networkActivityQuery = (networkId: string) =>
+  infiniteQueryOptions({
+    queryKey: [...networkKey(networkId), "activity"],
+    queryFn: ({ pageParam, signal }) =>
+      authed((token) =>
+        listNetworkActivity(
+          client,
+          { networkId },
+          pageParam === null
+            ? { limit: ACTIVITY_PAGE }
+            : { limit: ACTIVITY_PAGE, cursor: pageParam },
+          { token, signal }
+        )
+      ),
+    initialPageParam: null as string | null,
+    getNextPageParam: (last) => last.nextCursor,
+    staleTime: 30_000,
+  })

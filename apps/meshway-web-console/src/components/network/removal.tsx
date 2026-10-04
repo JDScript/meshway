@@ -24,7 +24,7 @@ import {
 } from "@/api/queries/members"
 import { networkKey, networksQuery } from "@/api/queries/network"
 import { ConfirmDialog } from "@/components/chrome/glass-dialog"
-import { forgetNetwork } from "@/lib/remembered-network-storage"
+import { forgetNetwork } from "@/lib/remembered-network"
 import { m } from "@/paraglide/messages.js"
 
 // Removing a member and leaving a network do the same to a membership: it

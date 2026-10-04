@@ -6,12 +6,12 @@ import { nodesQuery } from "@/api/queries/nodes"
 import { networkStateQuery } from "@/api/queries/state"
 import { recentLinksOf, useHistory } from "@/api/queries/use-history"
 import { EMPTY_SCENE } from "@/globe/scene"
+import { shortId } from "@/lib/format"
 import {
   linkKey,
   mapNodes,
   mergeRecentLinks,
   overviewScene,
-  shortId,
 } from "@/lib/network-map"
 import { onGlobeSelect, setGlobe } from "@/state/globe"
 import { useHistoryLayer } from "@/state/history-layer"

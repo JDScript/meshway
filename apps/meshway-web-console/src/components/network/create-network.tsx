@@ -13,11 +13,10 @@ import { BusyLabel } from "@/components/chrome/busy-label"
 import { TextField, type FieldSize } from "@/components/chrome/form"
 import { GlassDialog } from "@/components/chrome/glass-dialog"
 import { Button } from "@/components/ui/button"
+import { useNetworkNameCheck } from "@/hooks/use-network-name-check"
 import { formText } from "@/lib/form"
 import { m } from "@/paraglide/messages.js"
 import { attempts } from "@/state/attempts"
-
-import { useNetworkNameCheck } from "./network-name"
 
 const TOAST = "network-create"
 

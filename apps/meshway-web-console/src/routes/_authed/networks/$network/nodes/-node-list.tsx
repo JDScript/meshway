@@ -30,12 +30,12 @@ import {
   stateOf,
   vitalityOf,
 } from "@/lib/nodes/state-model"
+import { freshnessLabel } from "@/lib/state-labels"
 import { cn } from "@/lib/utils"
 import { m } from "@/paraglide/messages.js"
 import { useConfigurationDraft } from "@/state/configuration-draft"
 
 import { identityText } from "./-labels"
-import { freshnessLabel } from "./-state-labels"
 
 /** Typing settles this long before it is written to the address. */
 const SEARCH_SETTLE_MS = 150

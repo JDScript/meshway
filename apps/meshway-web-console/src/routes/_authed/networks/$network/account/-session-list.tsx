@@ -26,13 +26,8 @@ import { useLoadMore } from "@/hooks/use-load-more"
 import { useNow } from "@/hooks/use-now"
 import { useReadFailureToast } from "@/hooks/use-read-failure-toast"
 import { useSignOut } from "@/hooks/use-sign-out"
-import {
-  endsThisTab,
-  pagedCount,
-  shortId,
-  type Revocation,
-} from "@/lib/account"
-import { dateTime, relativeTime } from "@/lib/format"
+import { endsThisTab, pagedCount, type Revocation } from "@/lib/account"
+import { dateTime, relativeTime, shortId } from "@/lib/format"
 import { m } from "@/paraglide/messages.js"
 import { currentSession } from "@/state/session"
 

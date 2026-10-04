@@ -14,6 +14,7 @@ import { FieldOption, FieldSelect } from "@/components/chrome/field-select"
 import { FieldInput } from "@/components/chrome/form"
 import { SegmentedControl } from "@/components/chrome/segmented-control"
 import { Button } from "@/components/ui/button"
+import { parsePort } from "@/lib/ip"
 import { m } from "@/paraglide/messages.js"
 import { attempts } from "@/state/attempts"
 
@@ -37,11 +38,6 @@ export const createFailureText: FailureText = {
   state_conflict: () => m.observation_conflict(),
   observation_limit: () => m.observation_limit(),
   not_found: () => m.observation_not_found(),
-}
-
-const portOf = (text: string) => {
-  const value = Number(text)
-  return Number.isInteger(value) && value >= 1 && value <= 65535 ? value : null
 }
 
 /**
@@ -79,7 +75,7 @@ export function StartForm({
   const [interval, setPeriod] = useState<(typeof INTERVALS)[number]>(1)
   const [busy, setBusy] = useState(false)
 
-  const portValue = service === "icmpEcho" ? null : portOf(port)
+  const portValue = service === "icmpEcho" ? null : parsePort(port.trim())
   const scope: ObservationServiceScope | null =
     service === "icmpEcho"
       ? { type: "icmpEcho" }

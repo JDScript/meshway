@@ -9,7 +9,7 @@ import {
   NetworkFailed,
   NetworkNotFound,
 } from "@/components/entry/network-states"
-import { rememberNetwork } from "@/lib/remembered-network-storage"
+import { rememberNetwork } from "@/lib/remembered-network"
 import { m } from "@/paraglide/messages.js"
 
 import { NetworkShell } from "./-shell/network-shell"

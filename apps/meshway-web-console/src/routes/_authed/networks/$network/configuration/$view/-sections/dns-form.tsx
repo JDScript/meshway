@@ -23,7 +23,7 @@ import {
 import { Switch } from "@/components/ui/switch"
 import { pointerOf } from "@/lib/configuration/jsonc"
 import { renamed, withEntry, without } from "@/lib/configuration/keyed"
-import { parsePort } from "@/lib/configuration/selectors"
+import { parsePort } from "@/lib/ip"
 import { cn } from "@/lib/utils"
 import { m } from "@/paraglide/messages.js"
 

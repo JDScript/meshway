@@ -1,3 +1,5 @@
+import { isIpv4, isIpv6, parsePort } from "@/lib/ip"
+
 // The values the section forms write, read the way the configuration
 // reference states them (identity.md#selectors, access.md, dns.md,
 // addressing.md). Only their form is checked here; whether a user, group,
@@ -15,21 +17,6 @@ export const isEmail = (value: string) => /^[^\s@]+@[^\s@]+$/.test(value)
 /** `group:<name>` or `tag:<name>` with a name. */
 export const isNamed = (value: string, prefix: "group:" | "tag:") =>
   value.startsWith(prefix) && value.length > prefix.length && !/\s/.test(value)
-
-const IPV4 =
-  /^(25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)(\.(25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)){3}$/
-
-export const isIpv4 = (value: string) => IPV4.test(value)
-
-/** An IPv6 address: the URL parser accepts exactly the address forms. */
-export function isIpv6(value: string): boolean {
-  if (!value.includes(":") || /[[\]/%\s]/.test(value)) return false
-  try {
-    return new URL(`http://[${value}]/`).hostname.length > 2
-  } catch {
-    return false
-  }
-}
 
 export type Family = "ipv4" | "ipv6"
 
@@ -81,9 +68,6 @@ export function selectorKind(
   return isEmail(value) ? "user" : null
 }
 
-const port = (value: string): number | null =>
-  /^[1-9]\d{0,4}$/.test(value) && Number(value) <= 65535 ? Number(value) : null
-
 /**
  * An access protocol entry: `*`, or `tcp:` / `udp:` with `*`, a port or a
  * range, or `icmp:*`.
@@ -99,11 +83,8 @@ export function isProtocol(value: string): boolean {
   if (ports === "*") return true
   if (protocol === "icmp") return false
   const dash = ports.indexOf("-")
-  if (dash < 0) return port(ports) !== null
-  const from = port(ports.slice(0, dash))
-  const to = port(ports.slice(dash + 1))
+  if (dash < 0) return parsePort(ports) !== null
+  const from = parsePort(ports.slice(0, dash))
+  const to = parsePort(ports.slice(dash + 1))
   return from !== null && to !== null && from <= to
 }
-
-/** A port number as typed: 1 to 65535. */
-export const parsePort = port

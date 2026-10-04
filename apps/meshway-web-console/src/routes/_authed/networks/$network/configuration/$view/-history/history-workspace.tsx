@@ -32,7 +32,7 @@ import { Button } from "@/components/ui/button"
 import { Skeleton } from "@/components/ui/skeleton"
 import { Spinner } from "@/components/ui/spinner"
 import { useIsMobile } from "@/hooks/use-mobile"
-import { actorText, type ActorWords } from "@/lib/actor"
+import { ACTOR_WORDS, actorText } from "@/lib/activity"
 import { dateTime } from "@/lib/format"
 import { cn } from "@/lib/utils"
 import { m } from "@/paraglide/messages.js"
@@ -41,12 +41,6 @@ import type { HistorySelection } from "../../-navigation"
 import { ApplyProgress } from "./progress-section"
 
 /** A revision's author by the email recorded with it (else their ID), or the system. */
-const actorWords: ActorWords = {
-  system: () => m.configuration_actor_system(),
-  user: (id) => m.configuration_actor_user({ id }),
-  self: (name) => m.configuration_actor_self({ name }),
-}
-
 /**
  * The configuration's revisions (Owner, Admin): who made each and why, one
  * of them compared with any other as the controller computes it, its
@@ -89,7 +83,7 @@ export function HistoryWorkspace({
     null
   const selected = selection.revision ?? (mobile ? null : current)
   const actor = (summary: ConfigurationRevisionSummary) =>
-    actorText(summary.createdBy, session.data?.user.id ?? null, actorWords)
+    actorText(summary.createdBy, session.data?.user.id ?? null, ACTOR_WORDS)
 
   const list = (
     <PanelList

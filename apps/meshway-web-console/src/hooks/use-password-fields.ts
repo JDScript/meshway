@@ -3,8 +3,7 @@ import { useCallback, useState } from "react"
 import { toast } from "sonner"
 
 import { ApiFailure } from "@/api/client"
-import { newPasswordProblem } from "@/lib/password"
-import { passwordProblemText } from "@/lib/password-text"
+import { newPasswordProblem, passwordProblemText } from "@/lib/password"
 import { m } from "@/paraglide/messages.js"
 
 /**

@@ -58,3 +58,6 @@ export function calendarDate(at: Instant): string | null {
     ms
   )
 }
+
+/** An ID's first eight characters, where nothing names what it identifies. */
+export const shortId = (id: string) => id.slice(0, 8)

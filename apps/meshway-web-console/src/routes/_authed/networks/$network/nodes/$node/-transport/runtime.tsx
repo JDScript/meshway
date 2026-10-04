@@ -2,14 +2,13 @@ import type { EndpointCandidate, SocketState } from "@meshway/control-client"
 
 import { relativeTime } from "@/lib/format"
 import { candidateExpired, listenerRuntime } from "@/lib/nodes/state-model"
-import { cn } from "@/lib/utils"
-import { m } from "@/paraglide/messages.js"
-
 import {
   endpointSourceText,
   listenerPhaseLabel,
   problemText,
-} from "../../-state-labels"
+} from "@/lib/state-labels"
+import { cn } from "@/lib/utils"
+import { m } from "@/paraglide/messages.js"
 
 export function Runtime({
   runtime,

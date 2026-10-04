@@ -1,7 +1,7 @@
 import assert from "node:assert/strict"
 import { test } from "vitest"
 
-import { actorId, actorText, type ActorWords } from "@/lib/actor"
+import { actorId, actorText, type ActorWords } from "@/lib/activity"
 
 const me = "11111111-2222-4333-8444-555555555555"
 const other = "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee"

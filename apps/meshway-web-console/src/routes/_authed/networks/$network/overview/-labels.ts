@@ -1,22 +1,8 @@
-import type {
-  Freshness,
-  LinkEvidence,
-  LinkPhase,
-  LocationSource,
-} from "@meshway/control-client"
+import type { Freshness, LocationSource } from "@meshway/control-client"
 
 import type { LinkLook } from "@/globe/scene"
 import type { MapNode, Unlocated } from "@/lib/network-map"
 import { m } from "@/paraglide/messages.js"
-
-export const freshnessLabel: Record<Freshness, () => string> = {
-  current: () => m.overview_freshness_current(),
-  awaiting_report: () => m.overview_freshness_awaiting_report(),
-  expired: () => m.overview_freshness_expired(),
-  config_mismatch: () => m.overview_freshness_config_mismatch(),
-  superseded: () => m.overview_freshness_superseded(),
-  revoked: () => m.overview_freshness_revoked(),
-}
 
 /** A freshness's dot colour: only a current report is lit. */
 export const freshnessColor = (freshness: Freshness) =>
@@ -25,20 +11,6 @@ export const freshnessColor = (freshness: Freshness) =>
     : freshness === "revoked" || freshness === "config_mismatch"
       ? "var(--destructive)"
       : "var(--vitality-quiet)"
-
-export const phaseLabel: Record<LinkPhase, () => string> = {
-  authenticated: () => m.overview_phase_authenticated(),
-  preparing: () => m.overview_phase_preparing(),
-  failed: () => m.overview_phase_failed(),
-  closed: () => m.overview_phase_closed(),
-}
-
-export const evidenceLabel: Record<LinkEvidence, () => string> = {
-  matched: () => m.overview_evidence_matched(),
-  oneSided: () => m.overview_evidence_oneSided(),
-  conflicting: () => m.overview_evidence_conflicting(),
-  expired: () => m.overview_evidence_expired(),
-}
 
 export const locationSourceLabel: Record<LocationSource, () => string> = {
   stun: () => m.overview_location_source_stun(),

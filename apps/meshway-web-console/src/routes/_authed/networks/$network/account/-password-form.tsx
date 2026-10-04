@@ -13,8 +13,11 @@ import { Button } from "@/components/ui/button"
 import { useHandOver } from "@/hooks/use-hand-over"
 import { passwordRefusalText } from "@/hooks/use-password-fields"
 import { formText } from "@/lib/form"
-import { newPasswordProblem } from "@/lib/password"
-import { passwordProblemText, passwordRulesText } from "@/lib/password-text"
+import {
+  newPasswordProblem,
+  passwordProblemText,
+  passwordRulesText,
+} from "@/lib/password"
 import { m } from "@/paraglide/messages.js"
 
 const TOAST = "account-password"

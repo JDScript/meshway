@@ -22,14 +22,13 @@ import {
   stateOf,
   type DesiredMatch,
 } from "@/lib/nodes/state-model"
-import { m } from "@/paraglide/messages.js"
-
 import {
   applyPhaseLabel,
   freshnessLabel,
   locationAbsentLabel,
   problemText,
-} from "../-state-labels"
+} from "@/lib/state-labels"
+import { m } from "@/paraglide/messages.js"
 
 function When({
   at,

@@ -5,7 +5,6 @@ import {
   cidrFamily,
   isDomain,
   isProtocol,
-  parsePort,
   selectorKind,
 } from "@/lib/configuration/selectors"
 
@@ -66,7 +65,4 @@ test("domains and ports", () => {
   assert.equal(isDomain("-bad.example"), false)
   assert.equal(isDomain("1.2.3.4"), false)
   assert.equal(isDomain(""), false)
-  assert.equal(parsePort("53"), 53)
-  assert.equal(parsePort("0"), null)
-  assert.equal(parsePort("65536"), null)
 })
