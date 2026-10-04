@@ -47,14 +47,14 @@
 - **加入链接与重置链接**：兑换前可以用 `inspect` 预览，不会消费；最终兑换时重新校验。
 - **实时观察**：`auto` 模式由 Controller 计算候选、执行端选择路径；`explicit` 模式固定路径。console 只在页面可见时续租。
 
-## 接入状态（后端 `5eaaf943`）
+## 接入状态（后端 `8823cbec`，含配置契约变更 `e988b669`）
 
 console 已接入 `/api/v1` 下全部 66 个 Console 操作：
 
 - 账户、会话和账户活动（邮箱修改显示原邮箱）；
 - 网络、成员、加入链接（签发人、使用者）和网络活动；
-- 配置：JSONC 和全部区段表单、validate（含规则集准备与监听器材料计划）、apply、历史、对照和恢复；按 `NetworkActions.readConfiguration` 决定读完整配置还是成员视图；
-- 节点、节点运行 State（对端以 State 的 hostname 命名）、节点设置（成员通过 `getNodeSettings` 读取）和节点密钥；
+- 配置：JSONC 和全部区段表单（出口规则的动作只有出口和直连，"不接管"只用于方案兜底）、validate（含规则集准备与监听器材料计划）、apply、历史、对照和恢复；按 `NetworkActions.readConfiguration` 决定读完整配置还是成员视图；
+- 节点、节点运行 State（对端以 State 的 hostname 命名）、节点设置（成员通过 `getNodeSettings` 读取）、监听（`ListenerUpdate` 省略 WebSocket 响应头即保留，界面按名字显示）和节点密钥；
 - 接入密钥和设备授权；
 - 按 revision 的部署进度；
 - 网络 SSE，含观察事件、`stream.closed` 和增量里的 State 元数据；管理者的配置快照按 GET 响应写入缓存；续传不重发初始批次，console 以 SDK 的 `onOpen`（连接被接受）确认服务端接受了 cursor；
@@ -63,6 +63,13 @@ console 已接入 `/api/v1` 下全部 66 个 Console 操作：
 - 主动路径观察。
 
 撤销已失效的加入链接、接入密钥，以及重复吊销节点密钥时的 409 `state_conflict`，console 提示"这次没有撤销"并重读列表。
+
+契约已提供、console 尚未接入（下一步）：
+
+- `ConfigurationIssue` 的 `code`／`params`：console 仍显示英文 `message`，规则集的 `rule_set_unavailable`、`rule_set_budget`、`rule_set_timeout` 也一样。
+- `warnings`（`shadowed_rule { by }`）：尚未显示。
+- 预览的 `identityChangedNodeIds`、`changedListeners`、`affectedNodeIds`：应用确认里尚未使用；`requirements` 与 `willGenerate` 已不相交，console 那边的去重可以去掉。
+- 精确到元素的 pointer：字段标红已包括其元素上的问题（`/access/1/src/0` 标红 `/access/1/src`），还没有标到单个值上。
 
 ## 尚未提供的接口
 
@@ -92,7 +99,7 @@ console 已接入 `/api/v1` 下全部 66 个 Console 操作：
 
 ## 待处理的问题
 
-以下按 main 上的 `5eaaf943` 核对：契约按 `packages/protocol/openapi.json`；行为用同一版本构建的隔离 Server 和脚本节点验证（脚本节点只接入、持有实例和上报 State，不应用配置、不执行任务）。
+以下按 `8823cbec` 加契约变更 `e988b669` 核对：契约按 `packages/protocol/openapi.json`；行为用同一份源码构建的隔离 Server 和真实 `meshwayd`（只有控制流程：接入、续租、保存配置、上报状态）验证。
 
 **已修复并已验证**（不再跟踪）：
 
@@ -114,6 +121,10 @@ console 已接入 `/api/v1` 下全部 66 个 Console 操作：
 - `docs/v2/api/events.md` 不再给 `entities.delta` 写 `configurationRevision`。
 - console 提出的契约增补：`NetworkActions.readConfiguration`（成员不再被拒一次）、`NodeStateView.hostname`、`JoinLinkView.issuedBy`／`consumedBy`、`config.snapshot.requestId`、`ActivityTarget.account.previousEmail`，console 均已消费。
 - 降级 admin 后，它签发的链接在列表中是已撤销，inspect 也返回 `join_link_revoked`。
+- 没有活实例的节点判为 `expired`：`meshway down` 后读到 `expired`，`up` 后回到 `current`。判定顺序见 `network.md`。
+- 节点报告刚被替换的已保存配置时按事实接受：1 秒内连续 3 次 apply，节点保持 `controlReady`，保存到最新 revision。
+- schema 不符时，启动错误指出对象：用旧库副本启动得到 `table activity_events is defined differently from the current schema`。仍然没有迁移，开发环境 schema 变更后要重新初始化数据目录。
+- 出口规则动作改为 `RuleAction`，`ListenerUpdate` 省略即继承 WebSocket 块和响应头：在界面上修改带响应头的 VLESS 监听后响应头保留，改成 TCP 后 WebSocket 块删除。
 
 **按设计，不再跟踪**：
 
@@ -124,26 +135,12 @@ console 已接入 `/api/v1` 下全部 66 个 Console 操作：
 
 - `revokeNodeKey` 重复吊销返回 409 `state_conflict`，已退休代际仍可吊销（204，不撤当前执行），generation 不匹配是 409 `version_conflict`。
 - 绑定大规则集（8483 条）后 validate 很慢的问题，在 `70f5e95f` 改为线性覆盖计算。
+- 托管证书改 `serverName` 时重新生成证书；provided 材料仍按省略继承。
+- 规则集检查记录：来源与绑定内容都不变就跨版本延续，包括还没有成功内容的集合。console 报过的 `not_ready`／`checkedAt: null` 后端没有复现，再遇到时补充步骤。
 
 ### 需要修正
 
-后端回复（`server/configuration-pipeline`）：三条都已改，见下文各条末尾。
-
-
-- 没有活实例的节点被判为 `superseded`，而不是 `expired`，console 里一直显示"刚重启"。
-  - 原因：节点没有活实例（`node_execution` 过期或已释放）时，`CurrentNode.instance_id` 为 `None`（`execution/state.rs` 的 `live` 判定）；报告只在永久吊销时删除。freshness 判定（`state/mod.rs`）里 `None != Some(上报的实例)` 先命中 superseded，后面"没有租约判 expired"的分支在存有报告时走不到。
-  - 进程退出或断网，不释放实例：最后一次报告后 60 秒（`REPORT_TTL_SECONDS`）变 `expired`，最后一次续租后 120 秒（`INSTANCE_TTL`）变 `superseded`，之后不再变化。已用脚本节点复现。
-  - `meshway down`，释放实例：释放时把 `instance_expires_at` 设为当前时间（`store/execution/instances.rs` 的 `release`），节点立刻是 `superseded`，从不出现 `expired`。已用真实 `meshwayd` 复现。
-  - 应改为：没有活实例时判 `expired`；只有存在另一个活实例、且与报告的实例不同时才判 `superseded`。"没有活实例"要排在 `config_mismatch` 之前：没有租约时 `configurations` 为空，报告带 `applied` 的节点会被判成 `config_mismatch`（现在 Node 不报 `applied`，暂时看不到）。
-  - **后端**：按此顺序改了（revoked → awaiting_report → 报告过期或无活实例 = expired → 另一活实例 = superseded → config_mismatch → current），`network.md` 写明顺序；单测 `freshness_distinguishes_an_absent_instance_from_a_replaced_one`。
-- 配置连续提交时，节点会停在 `blocked`（`problem: contract`），不再重试，直到手动 `meshway up`。
-  - 现象：约 2 秒内连续 apply 3 个 revision（17、18、19），9 个真实 `meshwayd` 里有 4 个停止上报，服务端 freshness 一直是 `superseded`；查看的两个都是已保存 r17、状态 `blocked`。`meshway up` 后 4 个都恢复到 r19。
-  - Server：报告里的 saved／applied／progress 引用不在当前准入的 configurations 里时返回 400 `invalid_request`（`state/validation.rs`）。节点刚保存 r17、r18 已发布时，它如实报告 r17 就会被拒。此前脚本节点在 revision 变化后报告旧引用也得到同一个 400。
-  - Node：daemon 把 401／403／404／409、429／5xx、网络和时钟以外的错误都归为 `Contract` 且不重试（`apps/meshway-daemon/src/runtime/control/cycle.rs`），所以一次 400 就让节点停住。
-  - 应改为：刚被替换的 saved 引用要么按事实接受，要么返回可重试、能让节点重新同步的明确错误；daemon 不把这类服务端拒绝当成永久的契约错误。
-  - **后端**：按事实接受。报告可引用的配置现在是：当前 lease 目标 + 本实例近 5 分钟有回执的目标 + **本网络近 15 分钟内（最多 8 次）发布里该节点的目标**，后者跨实例（保存在磁盘上的配置在重启后仍是事实）。这些历史引用只能出现在 `saved`／`applied`／`progress`，listener／socket／link／path 仍必须关联当前执行目标。超过 15 分钟仍报告旧引用的节点还会收到 400——那已经不是"连续提交"而是节点没有同步，Node 侧对 400 的处理仍建议改为重新同步而非永久 blocked（`cycle.rs` 的 `Contract` 分类），这部分请 Node 会话处理。回归 `a_node_may_report_the_configuration_it_saved_just_before_the_next_revisions`。
-- schema 改动后，旧数据库无法启动（`Server storage startup failed.`，没有更具体的原因）。`activity_events.previous_email` 这次让开发环境只能重置数据库、重新接入节点；至少启动错误应说明是哪张表或哪一列与当前 schema 不符。
-  - **后端**：启动错误现在带原因：`Server storage startup failed: database structure does not match the current schema: table activity_events is defined differently from the current schema.`（或 `missing index …`／`unexpected table …`），只含对象名不含数据。仍然没有迁移链——这是 `storage.md` 既定的边界，开发环境 schema 变更后要重新初始化数据目录。
+- Node：daemon 把 400 等未分类的服务端拒绝归为 `Contract` 且不再重试（`apps/meshway-daemon/src/runtime/control/cycle.rs`），节点停在 `blocked`，直到手动 `meshway up`。服务端现在接受 15 分钟内（最多 8 次发布）该节点的旧引用，超出后仍是 400；这时应重新同步而不是永久停住。后端已转给 Node。
 
 ### 需要真实 Node 复核
 
@@ -155,18 +152,7 @@ Node 已有 `meshwayd` 的控制流程（接入、认证、续租、保存配置
 
 ### 后端排期中
 
-- **配置诊断与 Listener**（后端回复，`server/configuration-pipeline`）。已在 main、SDK 已重生成，console 测试 fixture 只做了类型补全：
-  - `ConfigurationIssue { path, code, params, message }`：`code` 是封闭枚举 `IssueCode`（snake_case，约 60 个），`params` 始终存在，`message` 只是英文渲染。参数约定、`invalid_transport.reason`、`invalid_jsonc`／`invalid_shape` 的 `line`／`column`、`rule_set_unavailable.reason` 见 [problems.md](../../../docs/v2/api/problems.md#configuration-issue)。
-  - 路径精确到元素：`/access/1/src/0`、`.../match/ipCIDR/2`、`/dns/default/1`；下标按作者书写顺序（排序在定位之后）。节点级出口授权问题挂在规则／分配项／fallback 上，节点在 `params.node`。
-  - `warnings`（预览响应与 `NormalizedConfiguration`）：首个 warning 是 `shadowed_rule { by }`。数组按下标逐元素比较，变化定位到最深成员；中间插入会让其后每条下标都出现变化。
-  - 预览新增 `identityChangedNodeIds`、`changedListeners [{nodeId,key,kind}]`、`affectedNodeIds`（除非所有变化都限于 `hostname`／`remark`，否则是全部节点——定义见 editing.md）。`requirements` 与 `willGenerate` 不相交。
-  - 托管证书改 `serverName` 时不再继承旧证书（会重新生成）；provided 材料继续按省略继承。你们的推断是对的——原来会继承旧名字的证书再被 `verify_tls` 拒掉。
-  - **两项 breaking 的放在分支 `server/configuration-contract-break`（一个提交），等 console 适配后一起合**：① `EgressRule.action` 变为 `RuleAction { exit | direct }`，`RouteAction`（含 `unmanaged`）只剩 profile fallback；② `ListenerUpdate` 成为独立 tagged 类型，VLESS 变体的 `websocket` 和 `responseHeaders` 省略＝保持（同一资源），显式 `{}` 清空、`null` 删块。受影响的 console 文件：`lib/configuration/routing.ts`、`-sections/routing-egress.tsx`、`nodes/$node/-transport/listeners.tsx` 及两个测试。这两项不能只靠 fixture 补全过 check，所以没有随 main 合入。
-- **规则集**（后端回复，`server/store-relayout`）：
-  - 准备失败：`rule_set_unavailable { reason: <ResourceProblem> }`，已随诊断契约合入。
-  - 超限统一：超过 32 个、规范化内容超过 8 MiB、超过网络执行预算都是 422 `rule_set_budget`（`params.maxSets`／`maxBytes`／`maxEntries`），30 秒超时是 `rule_set_timeout`；只有进程内 4 个准备名额用满仍是 503——那是服务端容量不是配置问题。见 rule-sets.md。
-  - 检查记录跨版本：`inherit_checks` 改为"来源与绑定内容都不变就延续记录"，包括还没有任何成功内容的集合。但我用"绑定成功 → 刷新失败 → 无关编辑出新版本"没有复现你们的 `not_ready`／`checkedAt: null`（原逻辑在这条路径上也延续）；如果还能复现，请给出能到 `not_ready` 的具体步骤（哪个版本首次声明该集合、中间有没有 restore／改 URL）。
-  - `refreshRuleSet` 的 `requestId`：要加请求体，是 breaking，和 `RuleAction`／`ListenerUpdate` 一样放到 `server/configuration-contract-break` 一起等 console 适配；还没做。
+- **规则集**：`refreshRuleSet` 加请求体和 `requestId`，重试不再重新下载。这是 breaking，尚未做。
 - **主动观察与历史**：observations 模块冻结，待 Node 实现后按真实消费者重做。
   - 响应没有服务器时间（续租时机按浏览器时钟计算），没有观察权限的 `actions`（console 按"角色 + 身份"重述规则），也没有允许的目标和路径候选清单。
   - 429 `observation_limit` 同时表示续租过早、预算用满、已到终态和 4096 窗口满。

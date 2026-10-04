@@ -17,6 +17,7 @@ import {
   Notes,
   notesWithin,
   refusedAt,
+  refusedName,
   RemoveButton,
   RuleRow,
   selectorChips,
@@ -121,7 +122,7 @@ export function Profiles({
                   rule={profileKey()}
                   label={m.configuration_routing_profile_name()}
                   editable={editable}
-                  invalid={refusedAt(notes, pointerOf(path))}
+                  invalid={refusedName(notes, pointerOf(path))}
                   onRename={(next) =>
                     onChange(renameProfile(routing, key, next))
                   }

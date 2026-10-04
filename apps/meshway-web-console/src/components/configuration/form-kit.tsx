@@ -429,8 +429,12 @@ export function notesFrom(
 export const notesWithin = (notes: readonly Note[], pointer: string) =>
   notes.filter((note) => within(note.path, pointer))
 
-/** A field is refused when a current note is exactly on it. */
+/** A field is refused when a current note is on it or on one of its values (`/access/1/src/0` refuses `/access/1/src`). */
 export const refusedAt = (notes: readonly Note[], pointer: string) =>
+  notes.some((note) => note.origin !== "stale" && within(note.path, pointer))
+
+/** A name is refused by a note on it, not by one on what it names (a profile's rules). */
+export const refusedName = (notes: readonly Note[], pointer: string) =>
   notes.some((note) => note.origin !== "stale" && note.path === pointer)
 
 /** The notes on one rule or field, as lines under it. */
