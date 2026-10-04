@@ -13,6 +13,7 @@ import { SurfaceHeader } from "@/components/chrome/surface-header"
 import { Tile } from "@/components/chrome/tile"
 import { Skeleton } from "@/components/ui/skeleton"
 import { Tabs, TabsContent } from "@/components/ui/tabs"
+import { LatencyTab } from "@/features/history/latency-tab"
 import { surfaceTitleId } from "@/features/shell/page-frame"
 import { useNow } from "@/hooks/use-now"
 import { dateTime, relativeTime } from "@/lib/format"
@@ -145,6 +146,7 @@ function Body({
             options={[
               { value: "overview", label: m.nodes_tab_overview() },
               { value: "transport", label: m.nodes_tab_transport() },
+              { value: "latency", label: m.history_tab() },
               { value: "manage", label: m.nodes_tab_manage() },
             ]}
           />
@@ -154,6 +156,9 @@ function Body({
         </Pane>
         <Pane value="transport">
           <NodeListeners networkId={networkId} nodeId={node.id} />
+        </Pane>
+        <Pane value="latency">
+          <LatencyTab networkId={networkId} nodeId={node.id} />
         </Pane>
         <Pane value="manage">
           <NodeManage networkId={networkId} node={node} onDeleted={onDeleted} />
