@@ -135,7 +135,7 @@ console 已接入 `/api/v1` 下全部 Console 操作：
 
 ### 需要修正
 
-- `ip-datasets --data-dir` 给相对路径时 `App::open` 失败，报的却是 `Cannot obtain private Server storage ownership. Stop the Server first.`（`src/bin/ip-datasets.rs` 把 `App::open` 的所有错误都映射成这一句）。绝对路径正常。应接受相对路径，或报出真实原因。
+- ~~`ip-datasets --data-dir` 给相对路径时报"Stop the Server first"~~：已修。`ip-datasets` 和 `reset-password` 只在存储确实被占用时说这句，其他原因与 Server 启动一致报 `Server storage startup failed: <cause>.`；相对路径的原因是 `data directory must be an absolute path without parent traversal`。数据目录仍要求绝对路径（与 Server 相同）。
 - Node：daemon 把 400 等未分类的服务端拒绝归为 `Contract` 且不再重试（`apps/meshway-daemon/src/runtime/control/cycle.rs`），节点停在 `blocked`，直到手动 `meshway up`。服务端现在接受 15 分钟内（最多 8 次发布）该节点的旧引用，超出后仍是 400；这时应重新同步而不是永久停住。后端已转给 Node。
 
 ### 需要真实 Node 复核

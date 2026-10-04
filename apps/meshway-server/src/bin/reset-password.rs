@@ -2,7 +2,7 @@
 //! the running Server must release ownership before this can open storage.
 #![forbid(unsafe_code)]
 use clap::Parser;
-use meshway_server::{App, Settings};
+use meshway_server::{App, AppError, Settings};
 use std::{io::Write, path::PathBuf, process::ExitCode};
 
 #[derive(Parser)]
@@ -30,14 +30,14 @@ async fn main() -> ExitCode {
     match run(arguments).await {
         Ok(()) => ExitCode::SUCCESS,
         Err(message) => {
-            tracing::error!(error = message, "Password reset command failed");
+            tracing::error!(error = %message, "Password reset command failed");
             ExitCode::FAILURE
         }
     }
 }
-async fn run(args: Arguments) -> Result<(), &'static str> {
-    let origin =
-        reqwest::Url::parse(&args.console_origin).map_err(|_| "Invalid Console origin.")?;
+async fn run(args: Arguments) -> Result<(), String> {
+    let origin = reqwest::Url::parse(&args.console_origin)
+        .map_err(|_| "Invalid Console origin.".to_owned())?;
     if !(origin.scheme() == "https"
         || (origin.scheme() == "http"
             && matches!(origin.host_str(), Some("localhost" | "127.0.0.1" | "[::1]"))))
@@ -47,11 +47,11 @@ async fn run(args: Arguments) -> Result<(), &'static str> {
         || origin.fragment().is_some()
         || origin.path() != "/"
     {
-        return Err("Expected a secure Console origin.");
+        return Err("Expected a secure Console origin.".to_owned());
     }
     let app = App::open(Settings::new(args.data_dir))
         .await
-        .map_err(|_| "Cannot obtain private Server storage ownership. Stop the Server first.")?;
+        .map_err(open_failure)?;
     let result = async {
         let mut bytes = [0; 16];
         getrandom::fill(&mut bytes).map_err(|_| "Random source unavailable.")?;
@@ -77,6 +77,16 @@ async fn run(args: Arguments) -> Result<(), &'static str> {
     let shutdown = app
         .shutdown()
         .await
-        .map_err(|_| "Server storage shutdown failed.");
-    result.and(shutdown)
+        .map_err(|_| "Server storage shutdown failed.".to_owned());
+    result.map_err(str::to_owned).and(shutdown)
+}
+
+/// AppError is a safe category with, at most, schema object names.
+fn open_failure(error: AppError) -> String {
+    match error {
+        AppError::AlreadyRunning => {
+            "Cannot obtain private Server storage ownership. Stop the Server first.".to_owned()
+        }
+        error => format!("Server storage startup failed: {error}."),
+    }
 }

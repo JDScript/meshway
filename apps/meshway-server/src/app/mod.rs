@@ -48,8 +48,10 @@ impl Drop for ShutdownHooks {
 #[derive(Debug, thiserror::Error, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum AppError {
-    #[error("invalid database budget or data directory setting")]
+    #[error("invalid database budget or session setting")]
     InvalidSettings,
+    #[error("data directory must be an absolute path without parent traversal")]
+    InvalidDataDirectory,
     #[error("storage ownership, type, or private permissions are invalid")]
     UnsafeStorage,
     #[error("data directory is already in use")]
@@ -388,7 +390,7 @@ impl From<KeyError> for AppError {
 impl From<DirectoryError> for AppError {
     fn from(error: DirectoryError) -> Self {
         match error {
-            DirectoryError::InvalidPath => Self::InvalidSettings,
+            DirectoryError::InvalidPath => Self::InvalidDataDirectory,
             DirectoryError::UnsafeStorage => Self::UnsafeStorage,
             DirectoryError::InUse => Self::AlreadyRunning,
             DirectoryError::Io => Self::Filesystem,

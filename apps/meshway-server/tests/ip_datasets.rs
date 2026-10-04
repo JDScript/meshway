@@ -52,6 +52,18 @@ async fn imported_datasets_survive_restart_and_answer_lookups() {
     )
     .unwrap();
 
+    // Settings problems are reported as such, not as another instance.
+    let output = run(Path::new("relative/data"), &["status"]);
+    assert!(!output.status.success());
+    let stderr = String::from_utf8(output.stderr).unwrap();
+    assert!(
+        stderr.contains(
+            "Server storage startup failed: data directory must be an absolute path without parent traversal."
+        ),
+        "{stderr}"
+    );
+    assert!(!stderr.contains("Stop the Server first"));
+
     // Nothing installed: status says so and lookups are honest about it.
     let output = run(&data, &["status"]);
     assert!(output.status.success(), "{output:?}");

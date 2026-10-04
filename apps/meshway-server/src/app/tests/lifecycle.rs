@@ -96,7 +96,7 @@ async fn bad_settings_do_not_create_storage() {
     assert!(!path.exists());
     assert!(matches!(
         App::open(Settings::new("relative/data")).await,
-        Err(AppError::InvalidSettings)
+        Err(AppError::InvalidDataDirectory)
     ));
 }
 
