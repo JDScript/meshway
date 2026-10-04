@@ -612,6 +612,33 @@ export const schemaDocument = {
         "minLength": 36,
         "pattern": "^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
       },
+      "ArtifactSummary": {
+        "type": "object",
+        "required": [
+          "id",
+          "digest",
+          "createdAt",
+          "entries"
+        ],
+        "properties": {
+          "createdAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "digest": {
+            "$ref": "#/components/schemas/Digest"
+          },
+          "entries": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          },
+          "id": {
+            "$ref": "#/components/schemas/ArtifactId"
+          }
+        },
+        "additionalProperties": false
+      },
       "AuthOptionsResponse": {
         "type": "object",
         "required": [
@@ -1754,6 +1781,17 @@ export const schemaDocument = {
               },
               "requestId": {
                 "$ref": "#/components/schemas/RequestId"
+              },
+              "resourcePublication": {
+                "oneOf": [
+                  {
+                    "$ref": "#/components/schemas/PublicationId",
+                    "description": "Omitted: the source version's initial resource bindings. Otherwise\nselect this exact historical publication from the same source version."
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
               },
               "restoreFrom": {
                 "$ref": "#/components/schemas/Revision"
@@ -6505,6 +6543,30 @@ export const schemaDocument = {
           },
           {
             "type": "object",
+            "description": "A manager must re-read the normal resource GET view in this network.\nThis notice carries no source URL, material or unscoped artifact data.",
+            "required": [
+              "networkId",
+              "revision",
+              "type"
+            ],
+            "properties": {
+              "networkId": {
+                "$ref": "#/components/schemas/NetworkId"
+              },
+              "revision": {
+                "$ref": "#/components/schemas/Revision"
+              },
+              "type": {
+                "type": "string",
+                "enum": [
+                  "resources.changed"
+                ]
+              }
+            },
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
             "required": [
               "observation",
               "type"
@@ -9488,6 +9550,19 @@ export const schemaDocument = {
           "epoch_changed"
         ]
       },
+      "ResourceProblem": {
+        "type": "string",
+        "enum": [
+          "download_failed",
+          "invalid_source",
+          "too_large",
+          "conversion_failed",
+          "configuration_changed",
+          "budget_exceeded",
+          "not_ready",
+          "validation_failed"
+        ]
+      },
       "ResourceRef": {
         "oneOf": [
           {
@@ -9800,6 +9875,93 @@ export const schemaDocument = {
           "mihomo-domain",
           "mihomo-ipcidr"
         ]
+      },
+      "RuleSetList": {
+        "type": "object",
+        "required": [
+          "items"
+        ],
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/RuleSetView"
+            }
+          }
+        },
+        "additionalProperties": false
+      },
+      "RuleSetView": {
+        "type": "object",
+        "required": [
+          "key",
+          "configurationRevision"
+        ],
+        "properties": {
+          "artifact": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/ArtifactSummary"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "checkedAt": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "configurationRevision": {
+            "$ref": "#/components/schemas/Revision"
+          },
+          "definition": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/RuleSet"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "key": {
+            "type": "string"
+          },
+          "lastSuccessAt": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time",
+            "description": "Last successful download/conversion/publication check, not artifact creation."
+          },
+          "problem": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/ResourceProblem"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "publication": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/PublicationId",
+                "description": "Exact execution publication whose immutable bindings select this artifact."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "additionalProperties": false
       },
       "SecretDelivery": {
         "type": "string",
@@ -10923,6 +11085,30 @@ export const schemaDocument = {
                 "type": "string",
                 "enum": [
                   "configuration.progress"
+                ]
+              }
+            },
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "description": "A manager must re-read the normal resource GET view in this network.\nThis notice carries no source URL, material or unscoped artifact data.",
+            "required": [
+              "networkId",
+              "revision",
+              "type"
+            ],
+            "properties": {
+              "networkId": {
+                "$ref": "#/components/schemas/NetworkId"
+              },
+              "revision": {
+                "$ref": "#/components/schemas/Revision"
+              },
+              "type": {
+                "type": "string",
+                "enum": [
+                  "resources.changed"
                 ]
               }
             },

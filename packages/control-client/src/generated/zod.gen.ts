@@ -258,6 +258,15 @@ export const zApproveEnrollmentRequest = z.strictObject({
 
 export const zArtifactId = z.string().refine(value => [...value].length >= 36, "minLength 36 Unicode code points").refine(value => [...value].length <= 36, "maxLength 36 Unicode code points").regex(new RegExp("^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$", "u"));
 
+export const zDigest = z.string().refine(value => [...value].length >= 64, "minLength 64 Unicode code points").refine(value => [...value].length <= 64, "maxLength 64 Unicode code points").regex(new RegExp("^[0-9a-f]{64}$", "u"));
+
+export const zArtifactSummary = z.strictObject({
+  ["createdAt"]: z.string().refine(rfc3339, "Expected RFC 3339 date-time"),
+  ["digest"]: zDigest,
+  ["entries"]: z.int().gte(0).lte(2147483647),
+  ["id"]: zArtifactId
+});
+
 export const zNetworkNameTrim = z.enum(["unicodeWhiteSpace"]);
 
 export const zNetworkNameRules = z.strictObject({
@@ -311,8 +320,6 @@ export const zVersion = z.int().gte(1).lte(9007199254740991);
 export const zKeyId = z.string().refine(value => [...value].length >= 36, "minLength 36 Unicode code points").refine(value => [...value].length <= 36, "maxLength 36 Unicode code points").regex(new RegExp("^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$", "u"));
 
 export const zKeyAlgorithm = z.enum(["ed25519","x25519"]);
-
-export const zDigest = z.string().refine(value => [...value].length >= 64, "minLength 64 Unicode code points").refine(value => [...value].length <= 64, "maxLength 64 Unicode code points").regex(new RegExp("^[0-9a-f]{64}$", "u"));
 
 export const zNodePublicKey = z.strictObject({
   ["algorithm"]: zKeyAlgorithm,
@@ -1175,6 +1182,7 @@ export const zConfigurationRequest = z.union([z.strictObject({
 }), z.strictObject({
   ["expectedRevision"]: zRevision,
   ["requestId"]: zRequestId,
+  ["resourcePublication"]: zPublicationId.nullable().exactOptional(),
   ["restoreFrom"]: zRevision,
   ["type"]: z.enum(["restore"])
 })]);
@@ -1742,6 +1750,11 @@ export const zGetNodeStatePath = z.strictObject({
   ["nodeId"]: zNodeId
 });
 
+export const zGetRuleSetPath = z.strictObject({
+  ["networkId"]: zNetworkId,
+  ["ruleSetKey"]: z.string()
+});
+
 export const zProbeKind = z.enum(["neighbor","path","connect","controller"]);
 
 export const zProbeOutcome = z.enum(["pending","success","timeout","failed"]);
@@ -2028,6 +2041,10 @@ export const zListNetworksQuery = z.strictObject({
 });
 
 export const zListNodesPath = z.strictObject({
+  ["networkId"]: zNetworkId
+});
+
+export const zListRuleSetsPath = z.strictObject({
   ["networkId"]: zNetworkId
 });
 
@@ -2422,6 +2439,10 @@ export const zNodeEvent = z.union([z.strictObject({
   ["progress"]: zConfigurationApplyProgress,
   ["type"]: z.enum(["configuration.progress"])
 }), z.strictObject({
+  ["networkId"]: zNetworkId,
+  ["revision"]: zRevision,
+  ["type"]: z.enum(["resources.changed"])
+}), z.strictObject({
   ["observation"]: zObservationTask,
   ["type"]: z.enum(["observation.status"])
 }), z.strictObject({
@@ -2539,6 +2560,11 @@ export const zRedeemEnrollmentRequestPath = z.strictObject({
   ["enrollmentRequestId"]: zEnrollmentRequestId
 });
 
+export const zRefreshRuleSetPath = z.strictObject({
+  ["networkId"]: zNetworkId,
+  ["ruleSetKey"]: z.string()
+});
+
 export const zRegisterRequest = z.strictObject({
   ["email"]: z.string(),
   ["password"]: zWireSecret
@@ -2572,6 +2598,8 @@ export const zRenameNetworkRequest = z.strictObject({
   ["name"]: z.string(),
   ["requestId"]: zRequestId
 });
+
+export const zResourceProblem = z.enum(["download_failed","invalid_source","too_large","conversion_failed","configuration_changed","budget_exceeded","not_ready","validation_failed"]);
 
 export const zRevokeAccountSessionPath = z.strictObject({
   ["sessionId"]: zSessionId
@@ -2607,6 +2635,21 @@ export const zRoutingSelectionResponse = z.strictObject({
   ["profile"]: z.string(),
   ["publication"]: zPublicationId,
   ["version"]: zVersion
+});
+
+export const zRuleSetView = z.strictObject({
+  ["artifact"]: zArtifactSummary.nullable().exactOptional(),
+  ["checkedAt"]: z.string().refine(rfc3339, "Expected RFC 3339 date-time").nullable().exactOptional(),
+  ["configurationRevision"]: zRevision,
+  ["definition"]: zRuleSet.nullable().exactOptional(),
+  ["key"]: z.string(),
+  ["lastSuccessAt"]: z.string().refine(rfc3339, "Expected RFC 3339 date-time").nullable().exactOptional(),
+  ["problem"]: zResourceProblem.nullable().exactOptional(),
+  ["publication"]: zPublicationId.nullable().exactOptional()
+});
+
+export const zRuleSetList = z.strictObject({
+  ["items"]: z.array(zRuleSetView)
 });
 
 export const zSessionIssuedResponse = z.strictObject({
@@ -2727,6 +2770,10 @@ export const zUserEvent = z.union([z.strictObject({
 }), z.strictObject({
   ["progress"]: zConfigurationApplyProgress,
   ["type"]: z.enum(["configuration.progress"])
+}), z.strictObject({
+  ["networkId"]: zNetworkId,
+  ["revision"]: zRevision,
+  ["type"]: z.enum(["resources.changed"])
 }), z.strictObject({
   ["observation"]: zObservationTask,
   ["type"]: z.enum(["observation.status"])

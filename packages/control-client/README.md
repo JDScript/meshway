@@ -216,6 +216,27 @@ targets' accepted receipts; per-node `freshness` separately identifies expired,
 superseded or awaiting-instance evidence. Historical `applied` is not current
 health. Full/partial scope and counts follow the requesting identity.
 
+## Managed rule sets
+
+Owner/Admin use `listRuleSets(client, { networkId }, { token })` and
+`getRuleSet(client, { networkId, ruleSetKey }, { token })` to read a `RuleSetList`.
+`refreshRuleSet` takes the same key path and returns a `RuleSetView`. Ordinary
+members cannot read source definitions or refresh them.
+
+A view separates the immutable `artifact` from `checkedAt`, `lastSuccessAt` and
+`problem`. `publication` identifies the exact execution publication that selects
+the content. Refreshing does not change the source configuration revision;
+failed checks retain the last successful artifact. `resources.changed` on the
+management SSE stream invalidates this read view without broadcasting contents
+or source URLs. Publication/receipt evidence does not attest to actual traffic.
+
+An `applyConfiguration` restore request may supply `resourcePublication` to use
+that same source revision's historical resource bindings; omit it for the source
+version's original bindings. Cross-network or mismatched source publications
+are rejected. Current remote preparation uses an unreferenced declaration,
+explicit refresh, then configuration references. Single-apply preparation and
+periodic `updateInterval` updates are still being implemented.
+
 ## Generation and verification
 
 From the repository root, using this task's isolated Cargo target when working in
@@ -236,6 +257,7 @@ MESHWAY_CONTROLLER_BINARY="$CARGO_TARGET_DIR/debug/meshway-controller" pnpm --fi
 The integration tests start a real Controller on loopback with private temporary
 storage. They test registration/session/logout, disabled registration, membership
 actions and totals, join/role changes, configuration validation/CAS/restore,
+State reporting, SSE synchronization/replay, resource refresh/restore and scope,
 typed errors and malformed real response envelopes. Generator-only synthetic
 fixtures verify code-generation boundaries separately.
 
