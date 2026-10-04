@@ -25,9 +25,13 @@ use crate::effect::{Effect, EffectSink};
 
 pub(crate) mod accounts;
 pub(crate) mod authorization;
+pub(crate) mod configuration;
 pub(crate) mod enrollment;
 pub(crate) mod execution;
+pub(crate) mod history;
+pub(crate) mod keys;
 pub(crate) mod networks;
+pub(crate) mod resources;
 pub(crate) mod schema;
 
 /// Execution infrastructure failures contain no SQL, paths, or SQLite messages.
