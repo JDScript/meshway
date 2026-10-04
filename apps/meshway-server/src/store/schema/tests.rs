@@ -122,7 +122,10 @@ fn matching_version_and_columns_do_not_hide_missing_constraints() {
         connection
             .pragma_update(None, "user_version", VERSION)
             .unwrap();
-        assert_eq!(initialize(&mut connection), Err(SchemaError::Structure));
+        assert!(matches!(
+            initialize(&mut connection),
+            Err(SchemaError::Structure(_))
+        ));
     }
 }
 

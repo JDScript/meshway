@@ -20,8 +20,10 @@ const SQL: &str = concat!(
 pub(crate) enum SchemaError {
     #[error("database application or schema version is unsupported")]
     Unsupported,
-    #[error("database structure does not match the current schema")]
-    Structure,
+    /// Names the first object that differs; object names and kinds only,
+    /// never row data.
+    #[error("database structure does not match the current schema: {0}")]
+    Structure(String),
     #[error("database integrity check failed")]
     Integrity,
     #[error("database schema operation failed")]
@@ -98,8 +100,8 @@ fn validate(connection: &Connection) -> Result<(), SchemaError> {
     // names and version numbers alone cannot attest those constraints.
     let expected = Connection::open_in_memory()?;
     expected.execute_batch(SQL)?;
-    if objects(connection)? != objects(&expected)? {
-        return Err(SchemaError::Structure);
+    if let Some(difference) = structure_difference(&objects(connection)?, &objects(&expected)?) {
+        return Err(SchemaError::Structure(difference));
     }
     let mut integrity = connection.prepare("PRAGMA integrity_check")?;
     let mut rows = integrity.query([])?;
@@ -134,6 +136,32 @@ fn identity(connection: &Connection) -> Result<(i64, i64), SchemaError> {
         connection.pragma_query_value(None, "application_id", |r| r.get(0))?,
         connection.pragma_query_value(None, "user_version", |r| r.get(0))?,
     ))
+}
+
+/// The first object that is missing, unexpected or defined differently.
+/// Objects are compared by (kind, name); the definition is the canonical SQL.
+fn structure_difference(actual: &[SchemaObject], expected: &[SchemaObject]) -> Option<String> {
+    let key = |o: &SchemaObject| (o.kind.clone(), o.name.clone());
+    let actual_keys: std::collections::BTreeSet<_> = actual.iter().map(key).collect();
+    let expected_keys: std::collections::BTreeSet<_> = expected.iter().map(key).collect();
+    if let Some((kind, name)) = expected_keys.difference(&actual_keys).next() {
+        return Some(format!("missing {kind} {name}"));
+    }
+    if let Some((kind, name)) = actual_keys.difference(&expected_keys).next() {
+        return Some(format!("unexpected {kind} {name}"));
+    }
+    for object in expected {
+        let found = actual
+            .iter()
+            .find(|candidate| key(candidate) == key(object))?;
+        if found.sql != object.sql || found.table != object.table {
+            return Some(format!(
+                "{} {} is defined differently from the current schema",
+                object.kind, object.name
+            ));
+        }
+    }
+    None
 }
 
 #[derive(PartialEq, Eq)]

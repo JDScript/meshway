@@ -33,35 +33,36 @@ async fn main() -> ExitCode {
     match run(arguments).await {
         Ok(()) => ExitCode::SUCCESS,
         Err(message) => {
-            tracing::error!(error = message, "Server stopped with an error");
+            tracing::error!(error = %message, "Server stopped with an error");
             ExitCode::FAILURE
         }
     }
 }
 
-async fn run(arguments: Arguments) -> Result<(), &'static str> {
+async fn run(arguments: Arguments) -> Result<(), String> {
     // Install fallible signal handlers before acquiring storage ownership.
     #[cfg(unix)]
     let mut terminate = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
-        .map_err(|_| "Signal setup failed.")?;
+        .map_err(|_| "Signal setup failed.".to_owned())?;
     #[cfg(unix)]
     let mut interrupt = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::interrupt())
-        .map_err(|_| "Signal setup failed.")?;
+        .map_err(|_| "Signal setup failed.".to_owned())?;
     let mut settings = Settings::new(arguments.data_dir);
     settings.registration_enabled = arguments.registration_enabled;
     settings.session_ttl = Duration::from_secs(arguments.session_ttl_seconds);
+    // AppError is a safe category with, at most, schema object names.
     let app = App::open(settings)
         .await
-        .map_err(|_| "Server storage startup failed.")?;
+        .map_err(|error| format!("Server storage startup failed: {error}."))?;
     let result = async {
         let listener = TcpListener::bind(arguments.listen)
             .await
-            .map_err(|_| "Server listen failed.")?;
+            .map_err(|_| "Server listen failed.".to_owned())?;
         let address = listener
             .local_addr()
-            .map_err(|_| "Server listen address unavailable.")?;
+            .map_err(|_| "Server listen address unavailable.".to_owned())?;
         writeln!(std::io::stdout().lock(), "Listening on {address}")
-            .map_err(|_| "Server status output failed.")?;
+            .map_err(|_| "Server status output failed.".to_owned())?;
         tracing::info!(%address, version = env!("CARGO_PKG_VERSION"), "Server ready");
         let (signal_result, received_signal) = tokio::sync::oneshot::channel();
         let stop_streams = app.stream_shutdown();
@@ -80,9 +81,9 @@ async fn run(arguments: Arguments) -> Result<(), &'static str> {
         axum::serve(listener, http::router(&app))
             .with_graceful_shutdown(shutdown)
             .await
-            .map_err(|_| "Server serve failed.")?;
+            .map_err(|_| "Server serve failed.".to_owned())?;
         if received_signal.await.unwrap_or(true) {
-            return Err("Server signal handling failed.");
+            return Err("Server signal handling failed.".to_owned());
         }
         Ok(())
     }
@@ -90,10 +91,10 @@ async fn run(arguments: Arguments) -> Result<(), &'static str> {
     let shutdown = app
         .shutdown()
         .await
-        .map_err(|_| "Server storage shutdown failed.");
+        .map_err(|_| "Server storage shutdown failed.".to_owned());
     result.and(shutdown)?;
     tracing::info!("Server stopped");
     writeln!(std::io::stdout().lock(), "Server stopped.")
-        .map_err(|_| "Server status output failed.")?;
+        .map_err(|_| "Server status output failed.".to_owned())?;
     Ok(())
 }

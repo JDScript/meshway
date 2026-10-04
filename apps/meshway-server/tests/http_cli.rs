@@ -332,8 +332,12 @@ async fn bind_failure_and_invalid_storage_exit_without_taking_over_another_insta
         .unwrap();
     assert!(!output.status.success());
     let errors = log_events(&String::from_utf8(output.stderr).unwrap());
-    assert!(errors.iter().any(|event| event["level"] == "ERROR"
-        && event["fields"]["error"] == "Server storage startup failed."));
+    assert!(errors.iter().any(|event| {
+        event["level"] == "ERROR"
+            && event["fields"]["error"]
+                .as_str()
+                .is_some_and(|e| e.starts_with("Server storage startup failed: "))
+    }));
 }
 
 fn log_events(logs: &str) -> Vec<serde_json::Value> {

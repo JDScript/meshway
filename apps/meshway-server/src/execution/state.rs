@@ -295,14 +295,23 @@ impl Execution {
                 .contexts
                 .push(configuration_admission(&target, eligible));
         }
-        for target in store::receipt_history_targets(
+        let history = store::receipt_history_targets(
             tx,
             &self.sealer,
             network,
             node,
             lease.instance_id,
             now.timestamp_millis(),
-        )? {
+        )?
+        .into_iter()
+        .chain(store::recent_targets_for_node(
+            tx,
+            &self.sealer,
+            network,
+            node,
+            now.timestamp_millis(),
+        )?);
+        for target in history {
             let context = configuration_admission(&target, false);
             if !report.configurations.contains(&context.configuration) {
                 report.configurations.push(context.configuration.clone());

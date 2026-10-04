@@ -323,9 +323,21 @@ impl StateHub {
         for node_id in selected {
             let stored = self.reports.get(&(scope.network_id, node_id));
             let current = scope.current.get(&node_id);
+            // Order matters: a report past its TTL or a node without a live
+            // instance is expired, whatever that report said. Only a different
+            // live instance makes the report superseded, and only a live
+            // instance's applied reference can mismatch the configuration.
             let freshness = match (stored, current) {
                 (_, Some(current)) if current.revoked => Freshness::Revoked,
                 (None, _) => Freshness::AwaitingReport,
+                (Some(stored), _) if stored.expires_at <= now => Freshness::Expired,
+                (Some(_), Some(current))
+                    if current
+                        .instance_id
+                        .is_none_or(|_| current.lease_expires_at.is_none_or(|e| e <= now)) =>
+                {
+                    Freshness::Expired
+                }
                 (Some(stored), Some(current))
                     if current.instance_id != Some(stored.report.instance_id) =>
                 {
@@ -341,14 +353,6 @@ impl StateHub {
                         .is_some_and(|reference| !current.configurations.contains(reference)) =>
                 {
                     Freshness::ConfigMismatch
-                }
-                (Some(stored), _) if stored.expires_at <= now => Freshness::Expired,
-                (_, Some(current))
-                    if current
-                        .lease_expires_at
-                        .is_none_or(|expires| expires <= now) =>
-                {
-                    Freshness::Expired
                 }
                 (Some(_), None) => Freshness::ConfigMismatch,
                 _ => Freshness::Current,

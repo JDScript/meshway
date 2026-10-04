@@ -720,6 +720,103 @@ async fn demand_retry_is_not_blocked_by_an_expired_sibling_demand() {
 }
 
 #[tokio::test]
+async fn a_node_may_report_the_configuration_it_saved_just_before_the_next_revisions() {
+    let _serial = crate::accounts::TEST_KDF_LOCK.lock().await;
+    let (_dir, app, network, a, _, ak, _, signer_a, _) = fixture().await;
+    let owner = app
+        .accounts()
+        .login(
+            "owner@example.com".into(),
+            Secret::new("a sufficiently long password".into()),
+            rid(),
+        )
+        .await
+        .unwrap();
+    let service = app.execution();
+    let a_session = session(&service, network, a, &ak, &signer_a).await;
+    let ai = service
+        .acquire(
+            a_session.token.expose(),
+            AcquireInstanceRequest {
+                instance_id: iid(),
+                capabilities: caps(),
+            },
+        )
+        .await
+        .unwrap();
+    let saved = ai.target.clone().unwrap();
+    // Two more revisions land before the node reports what it saved.
+    for remark in ["first", "second"] {
+        let revision = app
+            .configurations()
+            .read(owner.token.expose(), network, None)
+            .await
+            .unwrap()
+            .revision;
+        app.configurations()
+            .apply(
+                owner.token.expose(),
+                network,
+                meshway_protocol::configuration::ConfigurationRequest::Operations {
+                    expected_revision: revision,
+                    request_id: rid(),
+                    ops: vec![ConfigurationOperation::SetNodeSettings {
+                        node_id: a,
+                        fields: meshway_configuration::NodeSettingsPatch {
+                            remark: meshway_configuration::Input::Value(remark.into()),
+                            ..Default::default()
+                        },
+                    }],
+                },
+                rid(),
+            )
+            .await
+            .unwrap();
+    }
+    let current = service
+        .renew(
+            a_session.token.expose(),
+            InstanceRequest {
+                instance_id: ai.instance_id,
+                generation: ai.generation,
+            },
+        )
+        .await
+        .unwrap()
+        .target
+        .unwrap();
+    assert_ne!(current, saved);
+    let token = a_session.token.expose().to_owned();
+    let s = service.clone();
+    app.executor
+        .handle()
+        .execute(move |db| {
+            let tx = db.transaction().unwrap();
+            let report = s
+                .report_admission_in_transaction(&tx, &token, chrono::Utc::now())
+                .unwrap();
+            // The saved reference is admitted as history: readable, never an
+            // installation or execution authority.
+            assert!(report.configurations.contains(&saved));
+            assert!(!report.context(&saved).unwrap().installation_allowed);
+            assert_eq!(report.execution.as_ref(), Some(&current));
+            assert!(report.context(&current).unwrap().installation_allowed);
+            // A reference the node never held is still not admitted.
+            let invented = ConfigurationRef {
+                digest: [9; 32].into(),
+                ..saved.clone()
+            };
+            assert!(matches!(
+                report.context(&invented),
+                Err(Error::InvalidRequest)
+            ));
+        })
+        .await
+        .unwrap();
+    app.shutdown().await.unwrap();
+}
+
+#[tokio::test]
 async fn state_admission_uses_real_node_instance_and_current_publication_dependencies() {
     use crate::error::Error;
     use crate::state::service::ReadIdentity;
@@ -890,7 +987,12 @@ async fn state_admission_uses_real_node_instance_and_current_publication_depende
                 .report_admission_in_transaction(&tx, &token, chrono::Utc::now())
                 .unwrap();
             assert_ne!(admission.instance_id, instance.instance_id);
-            assert!(!admission.configurations.contains(&previous));
+            // The target the previous instance held is recent history the new
+            // instance may still report as saved (it survives on disk), never
+            // an installation or execution context.
+            assert!(admission.configurations.contains(&previous));
+            assert!(!admission.context(&previous).unwrap().installation_allowed);
+            assert_ne!(admission.execution.as_ref(), Some(&previous));
             assert!(admission.current().unwrap().peers.is_empty());
             assert!(matches!(
                 s.report_admission_in_transaction(
