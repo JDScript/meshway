@@ -1,6 +1,6 @@
 # 承载会话与发送边界
 
-本页是 Node 承载接口的设计草案，尚未实现。逻辑操作名不代表已经发布的 Rust／C ABI；具体签名、数值上限和包格式在验证后定版。业务入口见 [L3 网络模式](/v2/node/runtime)，插件装载见[插件与能力](/v2/node/plugins)。
+当前 Rust 运行库提供原生 UDP／TCP socket 适配、公共 datagram framing、有界发送与完成回收，可独立运行正确性验证和性能脚本。它们尚未接入 `meshwayd` 的执行安装，Mesh 包头、端到端加密、TUN、动态 ABI 和连接池仍待实现。业务入口见 [L3 网络模式](/v2/node/runtime)，插件装载见[插件与能力](/v2/node/plugins)。
 
 ## 分层
 
@@ -15,6 +15,23 @@ UDP／TCP／VLESS 的实现复用公共帧适配；provider 不解析业务 IP�
 
 VLESS／Trojan 的协议实现参考 mihomo／sing-box 的握手、编解码、TLS／WebSocket 组合及错误处理；参考代码使用 `references/README.md` 记录的固定提交。Meshway 的支持范围按[传输配置](/v2/configuration-reference/transports)实施，共同运行接口仍按本页的所有权与生命周期约定定义。
 
+## 当前 Rust 入口
+
+| 包／入口 | 行为 |
+| --- | --- |
+| `meshway-transport-spec` | 纯声明、材料结构和已选定拨号参数；`PreparedListener` 只保证结构完整，证书验证由 Server 对精确值执行 |
+| `meshway-transport-tcp::TcpTransport::adopt` | 接收已连接的 Tokio TCP socket，应用 socket／TCP 参数；复用 `AsyncRead`／`AsyncWrite` |
+| `meshway-transport-udp::UdpTransport::adopt` | 接收已绑定、未 connect 的 Tokio UDP socket，保留源／目的地址与真实截断信息；当前支持 Linux／macOS |
+| `meshway-transport::Session` | 将 stream 或 datagram I/O 适配为完整帧收发，提供 sender／receiver 和显式 shutdown／join |
+
+socket 的打开、捕获豁免和候选授权归宿主 underlay／connectivity。适配器使用调用者交付的 socket；字段应用失败会报错。TCP keepalive 在当前平台按整秒校验，不能静默截断亚秒配置。
+
+`Frame` 持有原始 payload `Vec` 和可选 peer。Stream 的 peer 为固定会话端点；UDP 必须明确目的地，接收帧携带真实来源。payload 是不解释的字节，不代表已经通过 Mesh 身份、IP 或路径检查。帧及完成结果的 Debug 只显示长度／容量等元数据。
+
+`Limits::new` 明确指定帧长、帧数、payload 容量、操作数和 batch 帧数。工程上限为 16 MiB／帧、1 GiB 已接纳容量、65,536 帧／操作；全部为正，至少能容纳一个最大帧，操作数及 batch 帧数不超过帧预算。这些是运行库边界，实际 MTU 和宿主预算另行选择。
+
+发送预算按原始 Vec 的 **capacity** 计费，覆盖排队及在途操作。发送完成后原始 buffer 交回结果持有者；接收帧和已完成结果的保留由调用者计入自己的预算。Stream 编码组上限为 `max(maxFrameBytes + 4, min(maxBytes + 4 × maxBatchFrames, 256 KiB))`，接收预读最多为该值与 64 KiB 的较小值，解码单个大帧可增长至配置帧长。
+
 ## 两类 I/O
 
 | 接口 | 语义 |
@@ -23,6 +40,8 @@ VLESS／Trojan 的协议实现参考 mihomo／sing-box 的握手、编解码、T
 | Stream | 有序字节流，允许部分读写；本身不保证 Mesh 帧边界 |
 
 公共适配层向数据面交付完整 Mesh 帧，并保留承载的可靠性、顺序、尺寸限制和关闭信息。TCP／VLESS 字节流使用同一套长度 framing；WebSocket 消息与 Mesh 帧的映射另行明确。截断报文、非法长度和不完整帧不能作为成功接收交给业务。
+
+当前 stream framing 为大端 u32 长度前缀，使用 Tokio `LengthDelimitedCodec`；拒绝空帧和超过配置上限的长度。UDP 每个报文承载一个完整 payload，保留原有报文边界。Linux 截断结果可提供原长度，macOS 无法可靠获取时返回未知。UDP 当前仍逐报文执行系统调用，发送 batch 不等于已实现 `sendmmsg`／`recvmmsg`。
 
 Mesh 数据帧不统一叠加自动重传／排序层。内层 TCP 和外层 TCP 各自具有其协议语义；握手及控制消息的重试单独定义。重放检查与乱序容忍的作用域还须随加密会话合同定版。
 
@@ -37,6 +56,10 @@ Mesh 数据帧不统一叠加自动重传／排序层。内层 TCP 和外层 TCP
 本机接纳和本机写入都不代表对端处理。TCP 写入成功也不是对端应用确认。
 
 成功完成须提交完整帧，并处理协议内部必要的 flush；部分写入或仅进入内部队列不能记为完整帧写入成功。若使用内核延迟回收的发送方式，buffer 还须等到实际释放通知后才能归还调用者。
+
+当前 sender 为单一接纳 owner，提交入口和每会话一个后台 worker 共用同一 poll 状态机。`try_send` 返回接纳数量、停止原因和批次完成句柄；被接纳前缀从调用者队列移出，未接纳后缀原样保留。写入 owner 空闲时，提交入口可直接推进一次有界就绪 I/O；未完成操作连同游标与 buffer 交给 worker，不重复编码或发送。接纳前先预留队列容量，完成通知后才释放独占写入权。
+
+一次直接推进最多处理 128 帧、256 KiB 工作量（或一个更大的合法帧），并尝试一次编码组 flush；该次 flush 最多调用 64 次底层 write／flush poll，每次调用前重检取消／截止。Stream 在同一操作／`SendContext` 内组成有界编码组，每组执行完整 flush 后才报告完成。完成结果逐帧区分 `LocalComplete`、`NotStarted`、`Indeterminate`，并交回原始 Vec 分配。
 
 批量提交采用明确的接纳前缀：返回接纳数量，前缀内的帧转移所有权，其余帧仍归调用者。容量不足、尺寸超限、上下文失效或会话关闭时返回对应原因；未接纳部分不能被异步保留。
 
@@ -55,6 +78,8 @@ Mesh 数据帧不统一叠加自动重传／排序层。内层 TCP 和外层 TCP
 软取消等待与 down、撤回、代际失效、硬截止分别处理。后者停止新接纳并终止不再允许的 I/O；插件不能为了排空队列而继续使用过期许可。
 
 关闭时先停止接纳，再取消／完成在途工作，最后归还 buffer、句柄和代码引用。完成通知是内存可回收的边界，必须保证之后不再访问对应 buffer。整个顺序由会话 owner 协调，不由 CLI、provider 和数据面分别启动一套关闭流程。
+
+`SendContext` 只携带宿主提供的取消信号与单调截止时间，不是授权凭据。编码组开始 I/O 前失效可清空 staging 并复用 stream；flush 已尝试后的失败／取消将整组标为不确定并关闭 stream，后续尚未处理的组／操作标为未开始。接收采用 pull API；取消一次接收等待保留已读半帧。丢弃任一会话半部会关闭承载并停止 owner，显式 shutdown 还会完成已接纳操作的收尾并 join。捕获的 provider panic 关闭承载并以不含原始 panic 内容的 `ProviderPanicked` 表达；owner 意外丢失通过 `CompletionLost` 表达。
 
 ## 连接复用与切换
 
@@ -79,7 +104,18 @@ publication 是执行目标引用，不直接充当所有连接、业务流或�
 
 ## 验证与性能对照
 
-性能测量通过专门脚本显式启动并输出机器可读结果及汇总报告，不进入常规单元／集成测试，也不由 `mise run check` 或 `cargo test --all-targets` 启动测量。常规测试验证编解码、截断、顺序、取消、权限和资源回收等正确性，不设置吞吐或耗时性能门槛。性能脚本及运行入口尚待实现。
+性能测量通过专门脚本显式启动并输出机器可读结果及汇总报告，不进入常规单元／集成测试，也不由 `mise run check` 或 `cargo test --all-targets` 启动测量。常规测试验证编解码、截断、顺序、取消、权限和资源回收等正确性，不设置吞吐或耗时性能门槛。
+
+当前入口为 `scripts/perf/transport.py` 和 `tools/meshway-transport-perf`，共用上述正式 provider／session 实现：
+
+```sh
+mise run perf:transport --protocol all --payload 64 1200 --batch 1 32 \
+  --messages 200000 --warmup 1000 --repeats 3
+```
+
+脚本显式构建 release 测量程序，使用独立 `target/transport-perf` 缓存，交替执行 raw／datagram 次序。同仓库测量互斥，每次运行保存独立二进制快照，避免后续构建改变正在比较的程序。结果位于仓库公共目录 `.meshway/perf/transport/<run>/`，包括二进制、`results.json`、`summary.md` 及各次 stdout／stderr；记录源码／二进制 digest、工具链、平台、参数和有效成对结果，失败样本保留而不填零。表格为各模式中位数，比值为有效配对重复的比值中位数。
+
+当前支持 TCP／UDP 的本机固定 payload 批量 echo。吞吐按发起端实际收回的 payload 计，消息速率是逻辑消息交付计数；RTT 从批次提交到各条 echo 交付，CPU 时间来自完整子进程（含 warmup／初始化）。吞吐区间排除连接建立和 warmup；分配、复制及峰值内存尚无计数器时明确为 null。两种模式使用相同 socket 参数和 stream 接收缓冲上限。此入口测量公共 transport datagram 适配成本，Mesh 认证、加密、路由、动态 ABI 与 TUN 在报告中明确标为未启用。VLESS／Trojan 的 provider 与相应测量仍待实现。
 
 每种正式协议及封装都必须提供成对的性能结果，使用同一 transport 实现、连接条件、业务 payload、批量策略与资源预算：
 
@@ -108,4 +144,4 @@ raw 保留该协议自身的正常握手、TLS／WS 和协议封装；统计对�
 
 微基准、真实 socket 收发与完整 TUN／SOCKS5 路径分别提供证据。性能对照共用领域实现，仅替换被比较的适配／调度方式；不另写一套省略认证、权限或加密的业务数据面冒充正式结果。
 
-MTU／分片、Mesh 帧布局、加密与重放作用域、异步 ABI 和具体预算仍待定；目前没有本页方案的性能结果。
+MTU／分片、Mesh 帧布局、加密与重放作用域、异步 ABI、连接池和宿主默认预算仍待验证定版。运行脚本的局部 socket 结果不代表这些完整路径已经验收。

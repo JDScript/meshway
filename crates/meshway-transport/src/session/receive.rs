@@ -1,0 +1,84 @@
+use std::{future::poll_fn, io, pin::Pin, sync::Arc};
+
+use thiserror::Error;
+use tokio_util::sync::WaitForCancellationFutureOwned;
+
+use super::io::Shared;
+use crate::{CancelReason, Frame, SendContext, raw::DatagramRead};
+
+#[derive(Debug, Error)]
+pub enum ReceiveError {
+    #[error("carrier closed")]
+    Closed,
+    #[error("empty frames are forbidden")]
+    Empty,
+    #[error("stream frame length exceeds the configured maximum")]
+    Oversized,
+    #[error("datagram was truncated: {0:?}")]
+    Truncated(DatagramRead),
+    #[error("provider returned inconsistent datagram lengths")]
+    InvalidMetadata,
+    #[error("receive scope invalidated: {0:?}")]
+    Cancelled(CancelReason),
+    #[error(transparent)]
+    Io(#[from] io::Error),
+}
+
+/// Pull-based receive half: no background receive task or queued payloads.
+/// Dropping a `recv` future preserves the stream codec's partial-read state.
+pub struct Receiver {
+    io: Arc<Shared>,
+    stopped: Pin<Box<WaitForCancellationFutureOwned>>,
+    closed: bool,
+}
+
+impl Receiver {
+    pub(super) fn new(io: Arc<Shared>) -> Self {
+        Self {
+            stopped: Box::pin(io.stop.clone().cancelled_owned()),
+            io,
+            closed: false,
+        }
+    }
+
+    pub async fn recv(&mut self) -> Result<Frame, ReceiveError> {
+        if self.closed {
+            return Err(ReceiveError::Closed);
+        }
+        let result = tokio::select! {
+            biased;
+            _ = &mut self.stopped => Err(ReceiveError::Closed),
+            result = poll_fn(|cx| self.io.poll_recv(cx)) => result,
+        };
+        if matches!(result, Err(ReceiveError::Closed)) {
+            self.closed = true;
+        }
+        if result.is_err() && self.io.is_stream() {
+            self.closed = true;
+            self.io.close();
+        }
+        result
+    }
+
+    /// Receive cancellation does not discard a partial stream frame. It only
+    /// stops this read wait; use session/sender shutdown to close the carrier.
+    pub async fn recv_with_context(
+        &mut self,
+        context: &SendContext,
+    ) -> Result<Frame, ReceiveError> {
+        if let Some(reason) = context.invalid_reason() {
+            return Err(ReceiveError::Cancelled(reason));
+        }
+        tokio::select! {
+            biased;
+            reason = context.invalidated() => Err(ReceiveError::Cancelled(reason)),
+            result = self.recv() => result,
+        }
+    }
+}
+
+impl Drop for Receiver {
+    fn drop(&mut self) {
+        self.io.close();
+    }
+}

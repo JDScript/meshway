@@ -13,6 +13,10 @@ members = [
     "crates/meshway-control",
     "crates/meshway-ipc",
     "crates/meshway-logging",
+    "crates/meshway-transport",
+    "crates/meshway-transport-udp",
+    "crates/meshway-transport-tcp",
+    "tools/meshway-transport-perf",
 ]
 resolver = "3"
 
@@ -23,9 +27,11 @@ rust-version = "1.98"
 
 [workspace.dependencies]
 axum = "0.8.9"
+bytes = "1"
 chrono = { version = "0.4.42", features = ["serde"] }
 clap = { version = "4.5.54", features = ["derive"] }
 getrandom = "0.3"
+futures-util = { version = "0.3", features = ["sink"] }
 idna = "1.1"
 ipnet = { version = "2.11", features = ["serde"] }
 rusqlite = { version = "0.38", features = ["bundled"] }
@@ -33,9 +39,11 @@ rustix = { version = "1", features = ["fs", "process"] }
 serde = { version = "1.0.228", features = ["derive"] }
 serde_json = "1.0.149"
 sha2 = "0.10"
+socket2 = { version = "0.6", features = ["all"] }
 tempfile = "3"
 thiserror = "2"
 tokio = { version = "1.49.0", features = ["macros", "rt-multi-thread", "net", "signal", "sync", "time"] }
+tokio-util = { version = "0.7", features = ["codec", "rt"] }
 tracing = "0.1"
 utoipa = { version = "6.0.0", features = ["axum_extras", "chrono"] }
 utoipa-axum = "0.3.0"

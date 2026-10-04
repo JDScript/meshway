@@ -1,0 +1,18 @@
+[package]
+name = "meshway-transport"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+description = "Bounded framed transport I/O and completion ownership for Node providers"
+
+[dependencies]
+bytes.workspace = true
+futures-util.workspace = true
+meshway-transport-spec = { path = "../meshway-transport-spec" }
+socket2.workspace = true
+thiserror.workspace = true
+tokio = { workspace = true, features = ["io-util"] }
+tokio-util.workspace = true
+
+[lints]
+workspace = true

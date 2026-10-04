@@ -63,6 +63,10 @@ run = "python3 scripts/node_lab.py build"
 description = "Persistent Docker Nodes: deploy|versions|status|stop (never compiles)"
 run = "python3 scripts/node_lab.py"
 
+[tasks."perf:transport"]
+description = "Explicit release raw/datagram transport measurements and JSON/Markdown reports"
+run = "python3 scripts/perf/transport.py"
+
 [tasks."generate:protocol"]
 description = "Generate OpenAPI and Rust/TypeScript clients from actual routes"
 run = "pnpm --filter @meshway/control-client generate"

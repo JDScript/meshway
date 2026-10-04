@@ -23,6 +23,10 @@ crates/
   meshway-control/
   meshway-ipc/
   meshway-logging/
+  meshway-transport/
+  meshway-transport-tcp/
+  meshway-transport-udp/
+tools/meshway-transport-perf/ # 独立运行的性能测量程序
 packages/control-client/    # 生成 TypeScript SDK 与运行时校验
 packages/protocol/          # 生成 OpenAPI
 docs/                       # 当前架构与字段参考
@@ -63,7 +67,7 @@ daemon 的 `runtime/` 负责唯一运行协调器、持久意图和状态投影�
 
 ## Node 内部共享的基础接口
 
-以下接口服务 Node 的实际消费者；其中 IPC 已实现，其余插件／承载接口仍为设计：
+以下接口服务 Node 的实际消费者；IPC 与原生 UDP／TCP 的 Rust 承载运行库已实现，插件装载／ABI 仍为设计：
 
 | 包名＝目标目录名 | 消费者 | 职责 |
 | --- | --- | --- |
@@ -78,7 +82,7 @@ Server 不因需要验证 VLESS 配置而链接 Node 的 transport 实现；它�
 
 `meshway-control`、`meshway-dataplane`、`meshway-connectivity`、`meshway-underlay`、`meshway-transport-{udp,tcp,vless,trojan}`、`meshway-tun`、`meshway-netstack`、`meshway-dns`、`meshway-diagnostics` 按[节点职责](/v2/node)实现。这些是节点运行能力，不是必须供 Server 使用的 shared crates。
 
-其中 `meshway-control` 已提供[由宿主驱动的 Server 接入生命周期](/v2/node/control)，其余运行组件尚未实现。
+其中 `meshway-control` 已提供[由宿主驱动的 Server 接入生命周期](/v2/node/control)，原生 UDP／TCP 库已提供[既有 socket 的承载适配和独立验证入口](/v2/node/transport)，尚未接入 daemon 执行安装。其余运行组件尚未实现。
 
 组件可独立测试，并可被其他宿主复用。native 导出入口只适配共同 ABI，不复制业务、配置或状态模型。私有文件操作确有多个实际消费者时才抽窄存储原语，不为每张表、每个任务、每种状态各建库。
 
