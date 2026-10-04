@@ -6628,6 +6628,81 @@ export const schemaDocument = {
         },
         "additionalProperties": false
       },
+      "NodeDnsQueryRequest": {
+        "type": "object",
+        "required": [
+          "name"
+        ],
+        "properties": {
+          "name": {
+            "type": "string",
+            "description": "Exact FQDN; raw UTF-8 is bounded before strict DNS/IDNA normalization.",
+            "maxLength": 1024
+          }
+        },
+        "additionalProperties": false
+      },
+      "NodeDnsQueryResponse": {
+        "type": "object",
+        "required": [
+          "requestId",
+          "networkId",
+          "sourceNodeId",
+          "configurationRevision",
+          "asOf",
+          "record"
+        ],
+        "properties": {
+          "asOf": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "configurationRevision": {
+            "$ref": "#/components/schemas/Revision"
+          },
+          "networkId": {
+            "$ref": "#/components/schemas/NetworkId"
+          },
+          "record": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/NodeDnsRecord",
+                "description": "Unknown and non-visible names have the same null result. This snapshot\ncarries no execution grant, TTL, or authoritative DNS negative answer."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "requestId": {
+            "$ref": "#/components/schemas/RequestId"
+          },
+          "sourceNodeId": {
+            "$ref": "#/components/schemas/NodeId"
+          }
+        },
+        "additionalProperties": false
+      },
+      "NodeDnsRecord": {
+        "type": "object",
+        "required": [
+          "nodeId",
+          "name",
+          "addresses"
+        ],
+        "properties": {
+          "addresses": {
+            "$ref": "#/components/schemas/NodeAddresses"
+          },
+          "name": {
+            "type": "string"
+          },
+          "nodeId": {
+            "$ref": "#/components/schemas/NodeId"
+          }
+        },
+        "additionalProperties": false
+      },
       "NodeEntitiesView": {
         "type": "object",
         "required": [

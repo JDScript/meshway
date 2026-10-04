@@ -46,12 +46,35 @@
 ## Behavior
 
 - MagicDNS 网络后缀优先交给本地生成的 Node 记录，并自动位于搜索域最前。
-- MagicDNS 预需求发现按请求源 Node 的 Access 权限裁剪：当前配置允许至少一种业务协议／端口访问的节点，其名称／地址可见；不要求目标在线、已有连接或已有 demand。预需求发现接口与完整记录发布尚待接线，当前执行发布只包含部分路径 peer，不能因名称缺席就给出权威 NXDOMAIN。
+- MagicDNS 预需求发现按请求源 Node 的 Access 权限裁剪：当前配置允许至少一种业务协议／端口访问的节点，其名称／地址可见；不要求目标在线、已有连接或已有 demand。精确名称查询见下节；当前执行发布仍只包含部分路径 peer，不能因名称缺席就给出权威 NXDOMAIN。
+- 停用或暂缺执行密钥不影响身份级名称可见性；永久删除／吊销 Node、失效的成员身份不再可见。通过有效 Node 认证的节点可查询自己的当前名称／地址，无需额外自访问规则。名称可见不授予业务访问或执行资格。
 - 改址时 DNS、地址准入与路由按同一发布更新；某地址族为 null 则不生成对应 A／AAAA。旧地址复用仍等待受管 DNS 与执行退出窗口，不能只更新 DNS 就宣布切换完成。
 - `routes` 采用最长 DNS 标签后缀匹配；`corp.example` 不匹配 `evilcorp.example`。
 - 没有使用出口时，`overrideLocal: false` 只强制接管 MagicDNS／split DNS，其他查询保留系统解析。
 - 没有使用出口时，`overrideLocal: true` 使用非空 default；空 default 则拒绝配置。未知解析器引用也拒绝。
 - private nameserver 的可达路径和访问授权仍需存在，DNS 配置不会自动开放业务访问。
+
+## Node 精确名称查询
+
+`POST /agent-api/v1/dns/query`（生成操作 `queryNodeDns`）使用 Node bearer。请求的 network／source 从已认证身份取得；用户管理 token 不能替代 Node 凭据。
+
+<!-- schema: NodeDnsQueryRequest -->
+```json
+{"name":"node.mesh.example"}
+```
+
+名称必须是精确 FQDN，支持大小写／IDNA 规范化及一个末尾根点；原始 UTF-8 上限 1024 bytes，规范化名称上限 253 ASCII bytes。Node hostname 与网络 domain 拼接后的完整名称也须满足此上限。没有通配、搜索或批量枚举。
+
+| 响应字段 | 含义 |
+| --- | --- |
+| `requestId` | Server 请求关联 ID |
+| `networkId`／`sourceNodeId` | 本次认证所得网络与源节点 |
+| `configurationRevision`／`asOf` | 最终读取事务中的配置版本与查询时点 |
+| `record` | 必填可空；可见时包含 `nodeId`、规范化 `name`、`addresses` |
+
+未知名称和无权访问的名称都返回 HTTP 200、`record: null`；`magicDNS: false` 同样不返回记录。可见记录某个地址族为 null 时保留该 null，不与不可见记录混同。
+
+读取在同一事务中检查当前 Node 凭据、永久吊销、成员／身份、配置绑定和 Access。它不要求取得 instance，不依赖 State 或现有路径。响应是配置快照，不包含 TTL、租约、安装证明或外部域名的可信 DNS 关联；配置 revision 不代替当前主体资格检查。
 
 ## 使用出口时
 

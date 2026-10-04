@@ -2117,6 +2117,7 @@ async fn review_released_instance_id_cannot_be_reacquired() {
 async fn review_rotation_http_response_loss_recovers_same_keys() {
     let _serial = crate::accounts::TEST_KDF_LOCK.lock().await;
     let (_dir, app, network, a, _, keys, _, signer, _) = fixture().await;
+    let old_session = session(&app.execution(), network, a, &keys, &signer).await;
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let address = listener.local_addr().unwrap();
     let router = crate::http::router(&app);
@@ -2178,7 +2179,22 @@ async fn review_rotation_http_response_loss_recovers_same_keys() {
         .await
         .unwrap();
     assert_eq!(again, recovered);
-    session(&app.execution(), network, a, &recovered, &new).await;
+    let new_session = session(&app.execution(), network, a, &recovered, &new).await;
+    let discovery = || NodeDnsQueryRequest {
+        name: "unknown.mesh.example".into(),
+    };
+    assert!(matches!(
+        app.execution()
+            .query_dns(old_session.token.expose(), discovery(), rid())
+            .await,
+        Err(Error::InvalidCredentials)
+    ));
+    assert!(
+        app.execution()
+            .query_dns(new_session.token.expose(), discovery(), rid())
+            .await
+            .is_ok()
+    );
     let mut changed: NodeRotationRequest =
         serde_json::from_slice(&serde_json::to_vec(&request).unwrap()).unwrap();
     changed.intent.request_id = rid();
@@ -2911,6 +2927,14 @@ async fn rejoined_user_enrollment_preserves_inactive_group_membership() {
     let old_signer = SigningKey::from_bytes(&[81; 32]);
     let old_node =
         enroll_user_node(&app, user.token.expose(), network, &old_signer, [82; 32]).await;
+    let old_session = session(
+        &app.execution(),
+        network,
+        old_node.node_id,
+        &old_node.keys,
+        &old_signer,
+    )
+    .await;
     let snapshot = app
         .configurations()
         .read(owner.token.expose(), network, None)
@@ -3109,6 +3133,38 @@ async fn rejoined_user_enrollment_preserves_inactive_group_membership() {
         Some(Error::InvalidCredentials)
     );
     let node_session = session(&service, network, enrolled.node_id, &enrolled.keys, &signer).await;
+    let target_name = node_dns_name(
+        &after.document.configuration.nodes[&target].hostname,
+        &after.document.configuration.dns.domain,
+    )
+    .unwrap();
+    assert!(matches!(
+        service
+            .query_dns(
+                old_session.token.expose(),
+                NodeDnsQueryRequest {
+                    name: target_name.clone()
+                },
+                rid()
+            )
+            .await,
+        Err(Error::InvalidCredentials)
+    ));
+    // Rejoining does not reactivate the former membership's group grant.
+    assert!(
+        service
+            .query_dns(
+                node_session.token.expose(),
+                NodeDnsQueryRequest {
+                    name: target_name.clone()
+                },
+                rid()
+            )
+            .await
+            .unwrap()
+            .record
+            .is_none()
+    );
     let lease = service
         .acquire(
             node_session.token.expose(),
@@ -3262,6 +3318,22 @@ async fn rejoined_user_enrollment_preserves_inactive_group_membership() {
         .unwrap();
     assert_eq!(impact.revision, authorized.revision);
     assert_eq!(impact.node_ids, vec![enrolled.node_id]);
+    assert_eq!(
+        service
+            .query_dns(
+                node_session.token.expose(),
+                NodeDnsQueryRequest {
+                    name: target_name.clone()
+                },
+                rid()
+            )
+            .await
+            .unwrap()
+            .record
+            .unwrap()
+            .node_id,
+        target
+    );
     app.networks()
         .remove_member(
             owner.token.expose(),
@@ -3287,6 +3359,16 @@ async fn rejoined_user_enrollment_preserves_inactive_group_membership() {
         .unwrap();
     assert!(!removed.bindings.node_users.contains_key(&enrolled.node_id));
     assert_eq!(removed.bindings.users, before.bindings.users);
+    assert!(matches!(
+        service
+            .query_dns(
+                node_session.token.expose(),
+                NodeDnsQueryRequest { name: target_name },
+                rid()
+            )
+            .await,
+        Err(Error::InvalidCredentials)
+    ));
     app.check_storage().await.unwrap();
     app.shutdown().await.unwrap();
 }

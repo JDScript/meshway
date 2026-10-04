@@ -5,7 +5,11 @@
 
 #![forbid(unsafe_code)]
 
+mod access;
 pub mod compile;
+mod dns_name;
+pub use access::mesh_access_allows_any;
+pub use dns_name::{DnsNameError, MAX_DNS_NAME_INPUT_BYTES, node_dns_name, normalize_dns_name};
 mod document;
 mod editing;
 mod editing_secrets;

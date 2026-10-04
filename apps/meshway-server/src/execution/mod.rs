@@ -43,6 +43,20 @@ pub struct Execution {
     boot: InstanceId,
 }
 impl Execution {
+    /// Current identity-scoped names, read and authorized in one transaction.
+    pub async fn query_dns(
+        &self,
+        token: &str,
+        request: NodeDnsQueryRequest,
+        request_id: RequestId,
+    ) -> Result<NodeDnsQueryResponse, Error> {
+        let token = proof::token_hash(token)?;
+        let sealer = self.sealer.clone();
+        let boot = self.boot;
+        self.handle
+            .read(move |tx| store::query_dns(tx, &sealer, boot, token, request, request_id))
+            .await
+    }
     /// Supplies the State report/view provider with actual current SQL facts. The
     /// returned configuration is private execution material: providers project
     /// only resource identities/allowed endpoints and never broadcast it.

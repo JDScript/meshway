@@ -1,6 +1,5 @@
 use super::*;
 use ipnet::IpNet;
-use meshway_transport_spec::normalize_host;
 
 fn named(value: &str, prefix: &str) -> bool {
     value.strip_prefix(prefix).is_some_and(|s| {
@@ -220,37 +219,10 @@ pub(super) fn is_external(value: &str) -> bool {
     value == "autogroup:internet" || value.starts_with("domain:") || value.parse::<IpNet>().is_ok()
 }
 pub(super) fn domain_name(value: &str) -> Result<String, ()> {
-    if value.parse::<std::net::IpAddr>().is_ok() {
-        return Err(());
-    }
-    normalize_host(value).map_err(|_| ())
+    normalize_dns_name(value).map_err(|_| ())
 }
 pub(super) fn protocol(value: &str) -> bool {
-    if value == "*" {
-        return true;
-    }
-    let Some((protocol, ports)) = value.split_once(':') else {
-        return false;
-    };
-    if !matches!(protocol, "tcp" | "udp" | "icmp") {
-        return false;
-    }
-    if ports == "*" {
-        return true;
-    }
-    if protocol == "icmp" {
-        return false;
-    }
-    fn port(s: &str) -> Option<u16> {
-        s.parse::<u16>()
-            .ok()
-            .filter(|n| *n > 0 && n.to_string() == s)
-    }
-    if let Some((a, b)) = ports.split_once('-') {
-        matches!((port(a),port(b)),(Some(a),Some(b)) if a <= b)
-    } else {
-        port(ports).is_some()
-    }
+    crate::access::TrafficGrant::parse(value).is_some()
 }
 
 pub(super) fn rules(
@@ -320,7 +292,19 @@ pub(super) fn rules(
     }
     let dns = &mut config.dns;
     match domain_name(&dns.domain) {
-        Ok(domain) => dns.domain = domain,
+        Ok(domain) => {
+            dns.domain = domain;
+            for (id, node) in &config.nodes {
+                if valid_node_hostname(&node.hostname)
+                    && node_dns_name(&node.hostname, &dns.domain).is_err()
+                {
+                    check.issue(
+                        format!("/nodes/{id}/hostname"),
+                        "hostname and DNS domain must form a DNS name of at most 253 bytes",
+                    );
+                }
+            }
+        }
         Err(()) => check.issue("/dns/domain", "invalid DNS domain"),
     }
     if dns.override_local && dns.default.is_empty() {

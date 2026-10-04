@@ -16,35 +16,6 @@ pub(super) fn selectors(
 ) -> bool {
     ss.iter().any(|s| subjects.matches(cfg, s, id))
 }
-fn ports(s: &str, d: &Demand) -> bool {
-    if s == "*" {
-        return true;
-    }
-    let Some((protocol, port)) = s.split_once(':') else {
-        return false;
-    };
-    if !matches!(
-        (protocol, d.protocol),
-        ("tcp", BusinessProtocol::Tcp)
-            | ("udp", BusinessProtocol::Udp)
-            | ("icmp", BusinessProtocol::IcmpEcho)
-    ) {
-        return false;
-    }
-    if port == "*" {
-        return true;
-    }
-    let Some(p) = d.port else { return false };
-    let p = p.get();
-    match port.split_once('-') {
-        Some((a, b)) => a
-            .parse::<u16>()
-            .ok()
-            .zip(b.parse::<u16>().ok())
-            .is_some_and(|(a, b)| a <= p && p <= b),
-        None => port.parse::<u16>() == Ok(p),
-    }
-}
 fn cidr(s: &str, address: IpAddr) -> bool {
     s.parse::<IpNet>().is_ok_and(|n| n.contains(&address))
 }
@@ -95,29 +66,25 @@ fn external_selector(input: &CompilationInput<'_>, s: &str, d: &Demand) -> Optio
 /// another independently matching grant authorizes that same traffic longer.
 pub(super) fn access_expiry(input: &CompilationInput<'_>, d: &Demand) -> Option<u64> {
     let cfg = input.configuration;
+    let traffic = crate::access::TrafficQuery::Exact {
+        protocol: d.protocol,
+        port: d.port,
+    };
+    if let BusinessTarget::Mesh { node } = d.target {
+        return crate::access::allows_mesh(cfg, input.subjects, d.source, node, traffic)
+            .then_some(d.expires_at_ms);
+    }
     cfg.access
         .iter()
-        .filter(|r| r.ip.iter().any(|s| ports(s, d)))
+        .filter(|r| traffic.matches(&r.ip))
         .filter_map(|r| {
-            if r.bidirectional
-                && matches!(d.target, BusinessTarget::Mesh { node }
-            if selectors(cfg,input.subjects,&r.dst,d.source) && selectors(cfg,input.subjects,&r.src,node))
-            {
-                return Some(d.expires_at_ms);
-            }
             if !selectors(cfg, input.subjects, &r.src, d.source) {
                 return None;
             }
-            match d.target {
-                BusinessTarget::Mesh { node } => {
-                    selectors(cfg, input.subjects, &r.dst, node).then_some(d.expires_at_ms)
-                }
-                _ => r
-                    .dst
-                    .iter()
-                    .filter_map(|s| external_selector(input, s, d))
-                    .max(),
-            }
+            r.dst
+                .iter()
+                .filter_map(|s| external_selector(input, s, d))
+                .max()
         })
         .max()
 }
