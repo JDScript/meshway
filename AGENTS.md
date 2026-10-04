@@ -41,6 +41,7 @@
 
 - 工具链版本和 workspace 任务统一在 `mise.toml`，下载锁定在 `mise.lock`；使用 `mise run`／`mise exec`，本地与 CI 共用 `mise run check`。包内脚本由所属包维护；根目录不另维护一套 pnpm 任务别名。
 - Rust：fmt、严格 Clippy、必要行为测试；协议改动还检查 workspace/all-features、drift、Rust／TS SDK 消费者。当前 workspace 含 Server、共享库和 Node control；控制流程不代替 Node 包流／Apple 接通验收。
+- 性能测量由独立脚本显式运行并出报告，不进入常规测试或 `mise run check`；共用正式实现，基线与分层口径见 `docs/v2/node/transport.md`。
 - Console：严格 TypeScript、格式／lint、领域测试和构建；UI 人工验证，不维护浏览器自动化套件。
 - 文档：`mise run check:docs` 检查构建、链接／锚点、公开 OpenAPI 一致性及标注完整示例；外部链接按需额外核对。
 - 运行服务、身份数据与源码合并分开处理。先核对实际进程／接口；不把重新编译当作部署，不覆盖另一工作流账户／配置。
