@@ -165,8 +165,9 @@ its generated client only, and only what the controller delivers:
     with source edits it is refused; with no draft it is sent at once,
     against the revision read when it is asked (a `revision_conflict`
     reads it again and keeps the confirmation open).
-  Without `actions.editConfiguration` the settings read only; a member's
-  come from the event stream (`memberConfigurationQuery`) once it has sent
+  Without `actions.editConfiguration` the settings read only. Without
+  `actions.readConfiguration` (a member) the whole configuration is never
+  asked for: a member's settings come from the event stream (`memberConfigurationQuery`) once it has sent
   them, else from `getNodeSettings` (`nodeSettingsQuery`, key
   `[network, "nodes", id, "settings"]`, polled while the stream is not
   live).
@@ -217,10 +218,11 @@ its generated client only, and only what the controller delivers:
   dropped and synced afresh. It writes only the reads it carries exactly:
   State (`state.snapshot` / `state.delta`), nodes (entities, ordered by ID
   as `listNodes`), the network summary (inside the read `getNetwork`
-  response), the current revision's progress and a member's own node
-  settings (`memberConfigurationQuery`). Members, join links, activity,
-  configuration reads and rule sets are invalidated instead (paged, or a
-  GET adds what the event lacks); `configuration.changed` never touches a
+  response), the current revision's progress, a manager's configuration
+  (the snapshot with its request ID is the GET's answer) and a member's
+  own node settings (`memberConfigurationQuery`). Members, join links,
+  activity, the other configuration reads and rule sets are invalidated
+  instead (paged, or a GET adds what the event lacks); `configuration.changed` never touches a
   draft, which sees the new revision through those reads. A member's own
   settings, when they change, come in a new batch after the controller's
   `sync.reset`. A `state.delta` replaces the State's `asOf`, `sequence` and

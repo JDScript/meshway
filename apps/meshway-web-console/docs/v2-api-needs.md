@@ -46,17 +46,17 @@
 - **加入链接与重置链接**：兑换前可以用 `inspect` 预览，不会消费；最终兑换时重新校验。
 - **实时观察**：`auto` 模式由 Controller 计算候选、执行端选择路径；`explicit` 模式固定路径。console 只在页面可见时续租。
 
-## 接入状态（后端 `4b6cdd6a`）
+## 接入状态（后端 `5eaaf943`）
 
 console 已接入 `/api/v1` 下全部 66 个 Console 操作：
 
-- 账户、会话和账户活动；
-- 网络、成员、加入链接和网络活动；
-- 配置：JSONC 和全部区段表单、validate（含规则集准备与监听器材料计划）、apply、历史、对照和恢复；
-- 节点、节点运行 State、节点设置（成员通过 `getNodeSettings` 读取）和节点密钥；
+- 账户、会话和账户活动（邮箱修改显示原邮箱）；
+- 网络、成员、加入链接（签发人、使用者）和网络活动；
+- 配置：JSONC 和全部区段表单、validate（含规则集准备与监听器材料计划）、apply、历史、对照和恢复；按 `NetworkActions.readConfiguration` 决定读完整配置还是成员视图；
+- 节点、节点运行 State（对端以 State 的 hostname 命名）、节点设置（成员通过 `getNodeSettings` 读取）和节点密钥；
 - 接入密钥和设备授权；
 - 按 revision 的部署进度；
-- 网络 SSE，含观察事件、`stream.closed` 和增量里的 State 元数据；续传不重发初始批次，console 以 SDK 的 `onOpen`（连接被接受）确认服务端接受了 cursor；
+- 网络 SSE，含观察事件、`stream.closed` 和增量里的 State 元数据；管理者的配置快照按 GET 响应写入缓存；续传不重发初始批次，console 以 SDK 的 `onOpen`（连接被接受）确认服务端接受了 cursor；
 - 规则集；
 - 观测历史；
 - 主动路径观察。
@@ -75,7 +75,7 @@ console 已接入 `/api/v1` 下全部 66 个 Console 操作：
 
 ## 待处理的问题
 
-以下按 main 上的 `4b6cdd6a` 核对：契约按 `packages/protocol/openapi.json`；行为用隔离 Server（`0c3ec192` 构建，之后的服务端提交只改 link 证据和规则集校验性能）和脚本节点验证（脚本节点只接入、持有实例和上报 State，不应用配置、不执行任务）。
+以下按 main 上的 `5eaaf943` 核对：契约按 `packages/protocol/openapi.json`；行为用同一版本构建的隔离 Server 和脚本节点验证（脚本节点只接入、持有实例和上报 State，不应用配置、不执行任务）。
 
 **已修复并已验证**（不再跟踪）：
 
@@ -95,11 +95,12 @@ console 已接入 `/api/v1` 下全部 66 个 Console 操作：
 - 删除节点的预览不再把该节点列进 `addressChangedNodeIds`。
 - 撤销已使用、过期或撤销的加入链接和接入密钥返回 409 `state_conflict`；这些撤销操作和 `getNodeSettings` 的 OpenAPI 声明了实际的错误状态。
 - `docs/v2/api/events.md` 不再给 `entities.delta` 写 `configurationRevision`。
+- console 提出的契约增补：`NetworkActions.readConfiguration`（成员不再被拒一次）、`NodeStateView.hostname`、`JoinLinkView.issuedBy`／`consumedBy`、`config.snapshot.requestId`、`ActivityTarget.account.previousEmail`，console 均已消费。
+- 降级 admin 后，它签发的链接在列表中是已撤销，inspect 也返回 `join_link_revoked`。
 
 **按设计，不再跟踪**：
 
 - 响应里的 `requestId` 是服务端为这次 HTTP 请求生成的关联 ID（与 `x-request-id` 一致），不回显请求体里的 `requestId`。
-- `account.email` 活动的 actor 是提交时刻的身份，所以是新邮箱。要显示"从 A 改为 B"需要给活动加字段，列在下面的契约增补里。
 - 设备请求不带系统和 Agent 版本（不在签名的 intent 里），console 不显示。
 
 **后端已说明、console 未实测**：
@@ -110,47 +111,20 @@ console 已接入 `/api/v1` 下全部 66 个 Console 操作：
 ### 需要修正
 
 - 节点停止上报、租约记录清掉以后，它的 `freshness` 从 `expired` 变成 `superseded`：`CurrentNode.instance_id` 为 `None` 时，`None != Some(上报的实例)` 先命中 superseded。结果一个已经停掉的节点在 console 里一直显示"刚重启"。应该只在有另一个当前实例时判 superseded，否则继续往下按租约判 expired（`apps/meshway-server/src/state/mod.rs` 的 freshness 判定）。用脚本节点复现：报一次后不再续租，约 1 分钟内是 `expired`，之后变成 `superseded`。
+- schema 改动后，旧数据库无法启动（`Server storage startup failed.`，没有更具体的原因）。`activity_events.previous_email` 这次让开发环境只能重置数据库、重新接入节点；至少启动错误应说明是哪张表或哪一列与当前 schema 不符。
 
 ### 需要真实 Node 复核
 
-Node 已有 `meshwayd` 的控制流程（接入、认证、续租、保存配置、上报状态），下面几项可以用它复核，这一轮没有做：
+Node 已有 `meshwayd` 的控制流程（接入、认证、续租、保存配置、上报状态），三节点 Docker 环境已接入 main 的 Server。下面几项可以用它复核，这一轮没有做：
 
 1. 节点应用配置后重新 acquire instance，原版本中是否仍被标为 `superseded`。
 2. 节点发起 demand 是否重新发布整网配置，使其他节点变成 `config_mismatch`、links 变成 `expired`，直到重新上报。
 3. 主动观察的创建、续租、取消是否重新生成整网执行发布；有观察时 Agent 请求（tasks、renew、receipts）的耗时。
 
-### 契约增补（console 建议的优先级）
-
-后端希望一次性加入并重生成 SDK。console 按影响排序：
-
-1. `NetworkActions` 加"读取完整配置"的动作。现在 console 只能先请求 `GET /configuration`，用 403 判断自己是成员，再改读成员视图，成员每次打开节点页都多一次被拒绝的请求。
-2. 主动观察：响应带服务器时间（续租时机现在按浏览器时钟计算）、观察权限的 `actions`（console 现在按"角色 + 身份"重述规则）、允许的目标和路径候选清单。
-3. 成员视角的 StateView 给对端节点的主机名。
-4. `JoinLinkView` 带签发人。使用者的邮箱现在只能从当前成员列表里查，使用者离开网络后就无法显示。
-5. SSE 的配置快照带 `requestId`，管理员同步后就不必重读配置。
-6. `unmanaged` 在普通规则里的 schema 收紧，与校验一致（现在 schema 允许、校验拒绝）。
-7. `account.email` 活动保留修改前的邮箱。
-
-### 后端回复（契约增补，`server/configuration-pipeline`）
-
-已加入并重生成 OpenAPI／SDK；console 的一处消费（`-member-list.tsx` 的 `consumedByUserId`）和受类型影响的测试 fixture 已随同一提交最小改动，保证 `mise run check` 通过，页面展示请按需调整。
-
-| # | 增补 | 契约 |
-| --- | --- | --- |
-| 1 | `NetworkActions.readConfiguration` | owner／admin 为 true；为 false 直接读成员视图，不必用 403 探测 |
-| 3 | 成员视角对端主机名 | `NodeStateView.hostname`：配置里的规范 hostname（显示名），所有可见节点都有，manager 视图也带；不是报告里的 OS hostname，PeerState 其他裁剪不变 |
-| 4 | `JoinLinkView` 签发人 | `issuedBy: {userId, email}`；`consumedByUserId` 改为 `consumedBy: {userId, email} \| null`。email 是账户当前地址，读取时联接 users，领取者离网后仍可读 |
-| 5 | SSE 配置快照 `requestId` | `config.snapshot.requestId`：承载本连接的 HTTP 请求关联 ID（同 `x-request-id`）；重连续传后重发的快照用新连接的 ID |
-| 7 | `account.email` 旧邮箱 | `ActivityTarget.account.previousEmail`：只在 `account.email` 上非空，其他账户活动为 null |
-| 其他 | 降级 admin 后 inspect 与列表不一致 | 链接自身状态先于签发者状态报告：已撤销的链接 inspect 返回 `join_link_revoked`，`join_link_issuer_unavailable` 只剩"仍有效却找不到签发时权限关系"这一种情况 |
-
-- **2 · 主动观察**（服务器时间、observation `actions`、候选清单）：observations 冻结，等 Node 后重做时一并加。
-- **6 · `unmanaged` schema 收紧**：要把 egress 类型拆成"规则可用"和"fallback 可用"两个，Node 也消费该 crate；并入配置提交流水线那次重生成。
-- 角色变更的影响预览（哪些链接会被撤销）没有做：目前没有角色变更预览接口，是否要加属于产品决定。
-
 ### 后端排期中
 
 - **配置诊断与 Listener**：随提交流水线合并一并定义。
+  - `unmanaged` 在普通规则里 schema 允许、校验拒绝；egress 类型要拆成"规则可用"和"fallback 可用"两种，随这次重生成收紧。
   - `ConfigurationIssue` 只有英文 message，没有 code 和 params，无法本地化。
   - 路径只到集合一级，解析错误时 path 为空；节点级的出口授权问题挂在 `/nodes/<id>` 上，指不到具体的规则或方案。
   - 没有 warning 通道，无法提示被前面规则完全遮挡的规则；数组变化只按整体报告。
@@ -164,6 +138,7 @@ Node 已有 `meshwayd` 的控制流程（接入、认证、续租、保存配置
   - 检查失败的记录不跨版本保留，换到新版本后变成 `not_ready`、`checkedAt: null`；成功的绑定则会延续。
   - `refreshRuleSet` 没有请求体，也就没有 `requestId`，重试会重新下载。
 - **主动观察与历史**：observations 模块冻结，待 Node 实现后按真实消费者重做。
+  - 响应没有服务器时间（续租时机按浏览器时钟计算），没有观察权限的 `actions`（console 按"角色 + 身份"重述规则），也没有允许的目标和路径候选清单。
   - 429 `observation_limit` 同时表示续租过早、预算用满、已到终态和 4096 窗口满。
   - 创建时目标没有可用路径（例如目标没有 listener）返回不带参数的 403 `permission_denied`，与"未授权"无法区分，`DemandDecision` 的原因（`noPath`、`missingCapability` 等）没有带出。
   - 订阅因源节点重新 acquire 而结束时只是被移除（404），不说明原因；样本只给 `latest`，重载或接管后看不到之前的序列。
@@ -176,9 +151,9 @@ Node 已有 `meshwayd` 的控制流程（接入、认证、续租、保存配置
 - GeoIP／ASN 数据集的部署入口（CLI 还是管理 API）。`IpDatasets::install` 现在没有调用方，所以所有节点都没有位置。
 - 设备授权的浏览器链接格式。console 暂用 `/authorize-device/<enrollmentRequestId>`，需要和 Agent、App 一起定下来。
 - 两端都报告自己是发起方时 link 的判定：现在判为 `conflicting`，`inUse` 变成 null。
-- `--listen` 的默认端口：仍是 `127.0.0.1:8420`，与现在运行的旧服务冲突。
+- `--listen` 的默认端口：仍是 `127.0.0.1:8420`。
+- 角色变更的影响预览（降级 admin 时哪些链接会被撤销）：现在没有角色变更预览接口。
 
-### 其他仍存在
+### 其他
 
-- 降级 admin 时，它签发的未用链接会被写上 `revokedAt`，但 inspect 对这些链接返回 `join_link_issuer_unavailable`，与列表里的"已撤销"说法不一致；角色变更也没有影响预览，不会告诉操作者哪些链接会被撤销。
 - 给 Agent 实现方的提醒：每个节点最多 8 个会话、8 个 challenge。
