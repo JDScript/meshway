@@ -2,6 +2,8 @@ use clap::Parser;
 #[derive(Parser)]
 #[command(name = "meshwayd", version, about = "Meshway Node daemon")]
 pub struct Arguments {
+    #[command(flatten)]
+    pub logging: meshway_logging::Options,
     /// Private machine state directory; its parent must already exist.
     #[arg(long, default_value = "/var/lib/meshway")]
     data_dir: std::path::PathBuf,

@@ -37,6 +37,8 @@ install -d -m 700 .meshway
 
 默认目录适用于 Linux 系统服务；本地开发或其他 Unix 环境可像示例一样显式指定私有目录。安装参数不构成本机业务配置覆盖源。
 
+daemon／CLI 共用[运行日志参数](/v2/logging)，日志位于 stderr；CLI 的 `--json` 状态结果位于 stdout。
+
 ## 两种网络模式
 
 | | 系统 TUN | Userspace networking |

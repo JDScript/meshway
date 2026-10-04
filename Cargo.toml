@@ -12,6 +12,7 @@ members = [
     "crates/meshway-private-storage",
     "crates/meshway-control",
     "crates/meshway-ipc",
+    "crates/meshway-logging",
 ]
 resolver = "3"
 
@@ -35,6 +36,7 @@ sha2 = "0.10"
 tempfile = "3"
 thiserror = "2"
 tokio = { version = "1.49.0", features = ["macros", "rt-multi-thread", "net", "signal", "sync", "time"] }
+tracing = "0.1"
 utoipa = { version = "6.0.0", features = ["axum_extras", "chrono"] }
 utoipa-axum = "0.3.0"
 uuid = { version = "1", default-features = false, features = ["std"] }

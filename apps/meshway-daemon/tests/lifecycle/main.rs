@@ -145,6 +145,43 @@ async fn executable_enrolls_saves_reports_renews_and_restores_up_or_down_intent(
     // Process shutdown preserves the user's up intent, but never the instance.
     daemon.exit("-TERM").await;
     assert!(!daemon.socket.exists());
+    let mut logs = String::new();
+    use std::io::Read;
+    daemon
+        .child
+        .stderr
+        .take()
+        .unwrap()
+        .read_to_string(&mut logs)
+        .unwrap();
+    let events: Vec<serde_json::Value> = logs
+        .lines()
+        .map(|line| serde_json::from_str(line).unwrap())
+        .collect();
+    assert!(
+        events
+            .iter()
+            .any(|event| event["fields"]["message"] == "Node intent committed")
+    );
+    assert!(
+        events
+            .iter()
+            .any(|event| event["fields"]["phase"] == "ControlReady")
+    );
+    assert!(
+        events
+            .iter()
+            .any(|event| event["fields"]["message"] == "Node stopped")
+    );
+    for private in [
+        "mwns_",
+        "daemon test password",
+        "authorize-device/",
+        "privateKey",
+        "sourceJsonc",
+    ] {
+        assert!(!logs.contains(private));
+    }
     drop(daemon);
     let mut daemon = Process::start(&directory, &server.origin);
     let restored = wait(&daemon.socket, Phase::ControlReady).await;
@@ -281,4 +318,28 @@ async fn status_and_down_remain_responsive_while_server_http_is_stalled() {
     release.send_replace(true);
     stop.send(()).unwrap();
     server.await.unwrap();
+}
+
+#[test]
+fn invalid_logging_configuration_fails_before_creating_node_state() {
+    let temp = tempfile::tempdir().unwrap();
+    let path = temp.path().join("node");
+    let output = std::process::Command::new(env!("CARGO_BIN_EXE_meshwayd"))
+        .args([
+            "--server",
+            "http://127.0.0.1:9",
+            "--log-filter",
+            "meshway_daemon=not-a-level",
+            "--data-dir",
+        ])
+        .arg(&path)
+        .output()
+        .unwrap();
+    assert!(!output.status.success() && output.stdout.is_empty());
+    assert!(
+        String::from_utf8(output.stderr)
+            .unwrap()
+            .contains("Invalid log filter")
+    );
+    assert!(!path.exists());
 }

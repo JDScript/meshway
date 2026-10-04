@@ -18,6 +18,7 @@ async fn cli(socket: &Path, command: &str, json: bool) -> Output {
     let command = command.to_owned();
     tokio::task::spawn_blocking(move || {
         let mut process = std::process::Command::new(env!("CARGO_BIN_EXE_meshway"));
+        process.args(["--log-format", "json", "--log-filter", "debug"]);
         process.arg("--socket").arg(socket).arg(command);
         if json {
             process.arg("--json");
@@ -111,6 +112,13 @@ async fn actual_cli_controls_daemon_through_private_ipc_and_real_server() {
         String::from_utf8_lossy(&output.stderr)
     );
     let pending: Status = serde_json::from_slice(&output.stdout).unwrap();
+    let logs: Vec<serde_json::Value> = String::from_utf8(output.stderr)
+        .unwrap()
+        .lines()
+        .map(|line| serde_json::from_str(line).unwrap())
+        .collect();
+    assert!(!logs.is_empty());
+    assert!(logs.iter().any(|event| event["fields"]["command"] == "up"));
     assert_eq!(pending.phase, Phase::AwaitingApproval);
     let enrollment = pending.enrollment_request_id.unwrap();
     assert_eq!(
@@ -147,4 +155,46 @@ async fn actual_cli_controls_daemon_through_private_ipc_and_real_server() {
     server_stop.send(()).unwrap();
     server_task.await.unwrap();
     server.shutdown().await.unwrap();
+}
+
+#[test]
+fn logging_options_preserve_json_stdout_and_filter_stderr() {
+    let temp = tempfile::tempdir().unwrap();
+    let run = |filter: Option<&str>| {
+        let mut process = std::process::Command::new(env!("CARGO_BIN_EXE_meshway"));
+        process
+            .env("RUST_LOG", "error")
+            .env("MESHWAY_LOG_FORMAT", "text")
+            .args(["status", "--json", "--log-format", "json", "--socket"])
+            .arg(temp.path().join("absent.sock"));
+        if let Some(filter) = filter {
+            process.args(["--log-filter", filter]);
+        }
+        process.output().unwrap()
+    };
+    let filtered = run(None);
+    assert!(!filtered.status.success() && filtered.stdout.is_empty());
+    let logs: Vec<serde_json::Value> = String::from_utf8(filtered.stderr)
+        .unwrap()
+        .lines()
+        .map(|line| serde_json::from_str(line).unwrap())
+        .collect();
+    assert_eq!(logs.len(), 1);
+    assert_eq!(logs[0]["level"], "ERROR");
+    let debug = run(Some("debug"));
+    assert!(!debug.status.success() && debug.stdout.is_empty());
+    let logs: Vec<serde_json::Value> = String::from_utf8(debug.stderr)
+        .unwrap()
+        .lines()
+        .map(|line| serde_json::from_str(line).unwrap())
+        .collect();
+    assert!(logs.iter().any(|event| event["level"] == "DEBUG"));
+    assert!(logs.iter().any(|event| event["level"] == "ERROR"));
+    let invalid = run(Some("meshway_cli=not-a-level"));
+    assert!(!invalid.status.success() && invalid.stdout.is_empty());
+    assert!(
+        String::from_utf8(invalid.stderr)
+            .unwrap()
+            .contains("Invalid log filter")
+    );
 }

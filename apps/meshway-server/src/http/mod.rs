@@ -18,13 +18,15 @@ pub mod state;
 
 use axum::{
     Router,
-    extract::{DefaultBodyLimit, FromRef, Request},
+    extract::{DefaultBodyLimit, FromRef, MatchedPath, Request},
     http::{HeaderValue, StatusCode, header},
     middleware::{self, Next},
     response::{IntoResponse, Response},
 };
 use meshway_model::RequestId;
 use meshway_protocol::{EmptyParams, Problem};
+use tower_http::trace::{DefaultOnFailure, DefaultOnResponse, TraceLayer};
+use tracing::{Level, field};
 use utoipa::openapi::{
     OpenApi,
     security::{Http, HttpAuthScheme, SecurityScheme},
@@ -277,6 +279,19 @@ pub fn router(app: &App) -> Router {
         ))
         .merge(resources::router(app.resources()))
         .merge(observations::router(app.observations()))
+        .layer(
+            TraceLayer::new_for_http()
+                .make_span_with(|request: &Request| {
+                    // Only the declared route template is safe here: raw URIs,
+                    // queries, headers and bodies may contain private inputs.
+                    let route = request.extensions().get::<MatchedPath>()
+                        .map_or("<unmatched>", MatchedPath::as_str);
+                    tracing::info_span!("http_request", method = %request.method(), route, request_id = field::Empty)
+                })
+                .on_request(())
+                .on_response(DefaultOnResponse::new().level(Level::DEBUG))
+                .on_failure(DefaultOnFailure::new().level(Level::WARN)),
+        )
 }
 
 async fn context(mut request: Request, next: Next) -> Response {
@@ -284,6 +299,7 @@ async fn context(mut request: Request, next: Next) -> Response {
     // nil IDs as a fallback when the operating system RNG fails.
     let request_id = random_uuid().ok().and_then(|id| RequestId::new(id).ok());
     let mut response = if let Some(id) = request_id {
+        tracing::Span::current().record("request_id", field::display(id));
         request.extensions_mut().insert(id);
         next.run(request).await
     } else {

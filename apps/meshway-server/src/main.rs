@@ -9,6 +9,8 @@ use tokio::net::TcpListener;
 #[derive(Parser)]
 #[command(version, about = "Meshway Server")]
 struct Arguments {
+    #[command(flatten)]
+    logging: meshway_logging::Options,
     /// Absolute path to this instance's private data directory.
     #[arg(long, env = "MESHWAY_DATA_DIR")]
     data_dir: PathBuf,
@@ -23,10 +25,15 @@ struct Arguments {
 
 #[tokio::main]
 async fn main() -> ExitCode {
-    match run(Arguments::parse()).await {
+    let arguments = Arguments::parse();
+    if let Err(error) = arguments.logging.init() {
+        eprintln!("{error}");
+        return ExitCode::FAILURE;
+    }
+    match run(arguments).await {
         Ok(()) => ExitCode::SUCCESS,
         Err(message) => {
-            eprintln!("{message}");
+            tracing::error!(error = message, "Server stopped with an error");
             ExitCode::FAILURE
         }
     }
@@ -55,6 +62,7 @@ async fn run(arguments: Arguments) -> Result<(), &'static str> {
             .map_err(|_| "Server listen address unavailable.")?;
         writeln!(std::io::stdout().lock(), "Listening on {address}")
             .map_err(|_| "Server status output failed.")?;
+        tracing::info!(%address, version = env!("CARGO_PKG_VERSION"), "Server ready");
         let (signal_result, received_signal) = tokio::sync::oneshot::channel();
         let stop_streams = app.stream_shutdown();
         let shutdown = async move {
@@ -65,6 +73,7 @@ async fn run(arguments: Arguments) -> Result<(), &'static str> {
             };
             #[cfg(not(unix))]
             let signal_failed = tokio::signal::ctrl_c().await.is_err();
+            tracing::info!(signal_failed, "Server shutdown requested");
             stop_streams();
             let _ = signal_result.send(signal_failed);
         };
@@ -83,6 +92,7 @@ async fn run(arguments: Arguments) -> Result<(), &'static str> {
         .await
         .map_err(|_| "Server storage shutdown failed.");
     result.and(shutdown)?;
+    tracing::info!("Server stopped");
     writeln!(std::io::stdout().lock(), "Server stopped.")
         .map_err(|_| "Server status output failed.")?;
     Ok(())

@@ -1,3 +1,5 @@
+//! Project the coordinator's intent and the control owner's expiring snapshot.
+use super::intent::Desired;
 use chrono::{DateTime, Utc};
 use meshway_control::StatusSnapshot;
 use meshway_ipc::{DataPlane, Phase, Problem, Status};
@@ -5,14 +7,7 @@ use meshway_model::Version;
 use tokio::sync::watch;
 
 #[derive(Clone)]
-pub struct Desired {
-    pub revision: Version,
-    pub up: bool,
-    pub shutdown: bool,
-    pub retry_enrollment: bool,
-}
-#[derive(Clone)]
-pub struct Report {
+pub(super) struct Report {
     pub revision: Version,
     pub phase: Phase,
     pub control: Option<StatusSnapshot>,
@@ -35,10 +30,10 @@ impl Report {
     }
 }
 #[derive(Clone)]
-pub struct View {
-    pub desired: watch::Receiver<Desired>,
-    pub report: watch::Receiver<Report>,
-    pub server: String,
+pub(crate) struct View {
+    pub(super) desired: watch::Receiver<Desired>,
+    pub(super) report: watch::Receiver<Report>,
+    pub(super) server: String,
 }
 impl View {
     pub fn status(&self) -> Status {

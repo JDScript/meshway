@@ -1,12 +1,30 @@
+//! Persist operator intent and idempotency receipts before publishing a new plan.
+use crate::ipc::SocketIdentity;
 use meshway_ipc::ErrorCode;
 use meshway_model::{RequestId, Version};
 use meshway_private_storage::Directory;
 use serde::{Deserialize, Serialize};
 use std::{io::Read, sync::Arc};
+use tokio::sync::oneshot;
+
+#[derive(Clone)]
+pub(super) struct Desired {
+    pub revision: Version,
+    pub up: bool,
+    pub shutdown: bool,
+    pub retry_enrollment: bool,
+}
+
+pub(crate) struct Mutation {
+    pub action: Action,
+    pub id: RequestId,
+    pub expected: Version,
+    pub reply: oneshot::Sender<Result<(), ErrorCode>>,
+}
 
 #[derive(Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub enum Action {
+pub(crate) enum Action {
     Up,
     Down,
 }
@@ -17,15 +35,9 @@ struct Receipt {
     action: Action,
     expected_revision: Version,
 }
-#[derive(Clone, Copy, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct SocketIdentity {
-    pub device: u64,
-    pub inode: u64,
-}
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub struct Record {
+pub(super) struct Record {
     version: u8,
     pub revision: Version,
     pub desired_up: bool,
@@ -35,7 +47,7 @@ pub struct Record {
     pub socket: Option<SocketIdentity>,
 }
 
-pub struct Store {
+pub(super) struct Store {
     pub directory: Arc<Directory>,
     pub record: Record,
 }

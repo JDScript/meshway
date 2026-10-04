@@ -1,0 +1,14 @@
+[package]
+name = "meshway-logging"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+description = "Shared tracing setup for Meshway executables"
+
+[dependencies]
+clap = { workspace = true, features = ["env"] }
+thiserror.workspace = true
+tracing-subscriber = { version = "0.3", default-features = false, features = ["ansi", "env-filter", "fmt", "json"] }
+
+[lints]
+workspace = true

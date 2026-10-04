@@ -176,6 +176,10 @@ impl Process {
     pub fn start(path: &Path, origin: &str) -> Self {
         let child = Command::new(env!("CARGO_BIN_EXE_meshwayd"))
             .args([
+                "--log-format",
+                "json",
+                "--log-filter",
+                "info",
                 "--server",
                 origin,
                 "--hostname",

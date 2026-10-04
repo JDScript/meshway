@@ -7,6 +7,8 @@ use std::{io::Write, path::PathBuf, process::ExitCode};
 
 #[derive(Parser)]
 struct Arguments {
+    #[command(flatten)]
+    logging: meshway_logging::Options,
     #[arg(long)]
     data_dir: PathBuf,
     #[arg(long)]
@@ -20,10 +22,15 @@ struct Arguments {
 
 #[tokio::main]
 async fn main() -> ExitCode {
-    match run(Arguments::parse()).await {
+    let arguments = Arguments::parse();
+    if let Err(error) = arguments.logging.init() {
+        eprintln!("{error}");
+        return ExitCode::FAILURE;
+    }
+    match run(arguments).await {
         Ok(()) => ExitCode::SUCCESS,
         Err(message) => {
-            eprintln!("{message}");
+            tracing::error!(error = message, "Password reset command failed");
             ExitCode::FAILURE
         }
     }

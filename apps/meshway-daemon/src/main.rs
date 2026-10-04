@@ -6,14 +6,19 @@ mod arguments;
 #[tokio::main]
 async fn main() -> std::process::ExitCode {
     use clap::Parser;
-    let result = match arguments::Arguments::parse().validate() {
+    let arguments = arguments::Arguments::parse();
+    if let Err(error) = arguments.logging.init() {
+        eprintln!("{error}");
+        return std::process::ExitCode::FAILURE;
+    }
+    let result = match arguments.validate() {
         Ok(settings) => run(settings).await,
         Err(error) => Err(error),
     };
     match result {
         Ok(()) => std::process::ExitCode::SUCCESS,
         Err(error) => {
-            eprintln!("{error}");
+            tracing::error!(error, "Node stopped with an error");
             std::process::ExitCode::FAILURE
         }
     }
@@ -25,7 +30,11 @@ async fn run(settings: meshway_daemon::Settings) -> Result<(), &'static str> {
     let mut terminate = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
         .map_err(|_| "Cannot install signal handler.")?;
     meshway_daemon::run(settings, async {
-        tokio::select! { _ = interrupt.recv() => {}, _ = terminate.recv() => {} }
+        let signal = tokio::select! {
+            _ = interrupt.recv() => "SIGINT",
+            _ = terminate.recv() => "SIGTERM",
+        };
+        tracing::info!(signal, "Node shutdown requested");
     })
     .await
 }

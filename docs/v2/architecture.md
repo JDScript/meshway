@@ -22,6 +22,7 @@ crates/
   meshway-private-storage/
   meshway-control/
   meshway-ipc/
+  meshway-logging/
 packages/control-client/    # 生成 TypeScript SDK 与运行时校验
 packages/protocol/          # 生成 OpenAPI
 docs/                       # 当前架构与字段参考
@@ -41,6 +42,8 @@ Rust import 按语言规则使用下划线，如 `meshway_model`。可执行名�
 
 Node 的应用目录为 `apps/meshway-daemon`／`apps/meshway-cli`，当前已进入 workspace 并提供控制接入。后续接口库和 provider 目录按同名规则建立。
 
+daemon 的 `runtime/` 负责唯一运行协调器、持久意图和状态投影；`runtime/control/` 负责调度与单次 Server 控制流程；`ipc/` 负责本机服务和 socket 归属。CLI 的 `arguments`、`commands`、`output` 分别负责参数、等待／退出语义和结果展示，通信使用 `meshway-ipc::Client`。
+
 ## 跨端共享库 {#跨端共享的契约库}
 
 这些库是 Server 和 Node 的共同基础：
@@ -54,6 +57,7 @@ Node 的应用目录为 `apps/meshway-daemon`／`apps/meshway-cli`，当前已�
 | `meshway-control-client` | Node control、其他 Rust API 消费者 | 生成操作、严格解码和 HTTP／stream 接线 |
 | `meshway-serde` | 各 Rust 契约库 | 共同对象／判别联合声明、map-only 和重复键检查 |
 | `meshway-private-storage` | Server、Node control | 私有目录／文件、锁与原子发布原语；记录格式归调用者 |
+| `meshway-logging` | Server、daemon、CLI 程序入口 | 统一 tracing subscriber、日志参数与 stderr 格式；见[运行日志](/v2/logging) |
 
 `configuration` 中较重的编译模块可用 feature 限定消费者；Node 仍需要执行输入校验。SQL、账户密码哈希、全局可变容器和平台 I/O 不放进 model。HTTP handler 不成为 DTO 的依赖。
 

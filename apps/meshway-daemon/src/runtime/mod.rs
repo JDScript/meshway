@@ -1,9 +1,16 @@
+//! Own durable intent and coordinate the IPC service and Server control task.
+mod control;
+mod intent;
+mod status;
+
+pub(crate) use intent::{Action, Mutation};
+use intent::{Desired, Store};
+use status::Report;
+pub(crate) use status::View;
+
 use crate::{
-    ipc::{self, Mutation, Socket},
+    ipc::{self, Socket},
     settings::Settings,
-    status::{Desired, Report, View},
-    store::{Action, Store},
-    worker,
 };
 use meshway_ipc::{ErrorCode, Phase};
 use std::{io::Write, sync::Arc};
@@ -13,12 +20,18 @@ pub async fn run(
     settings: Settings,
     shutdown: impl std::future::Future<Output = ()>,
 ) -> Result<(), &'static str> {
+    tracing::info!(
+        process_id = std::process::id(),
+        version = env!("CARGO_PKG_VERSION"),
+        "Node starting"
+    );
     tokio::pin!(shutdown);
     let path = settings.data_dir.clone();
     let mut store = tokio::task::spawn_blocking(move || Store::open(&path))
         .await
         .map_err(|_| "Node startup worker failed.")??;
-    let socket = Socket::bind(&mut store).await?;
+    let socket = Socket::bind(Arc::clone(&store.directory), store.record.socket).await?;
+    store.socket(socket.identity())?;
     let settings = Arc::new(settings);
     let initial = Desired {
         revision: store.record.revision,
@@ -35,11 +48,12 @@ pub async fn run(
     };
     let (commands, mut received) = mpsc::channel::<Mutation>(16);
     let (stop_ipc, stop_rx) = watch::channel(false);
-    let mut control = tokio::spawn(worker::run(settings.clone(), desired_rx, reported));
+    let mut control = tokio::spawn(control::run(settings.clone(), desired_rx, reported));
     let mut listener = tokio::spawn(ipc::serve(socket, commands, view.clone(), stop_rx));
     let mut listener_done = false;
     let mut control_done = false;
     let mut failure = None;
+    tracing::info!(socket = %settings.data_dir.join("control.sock").display(), "Local IPC ready");
     if writeln!(
         std::io::stdout().lock(),
         "Local IPC ready: {}",
@@ -52,11 +66,19 @@ pub async fn run(
     while failure.is_none() {
         tokio::select! { biased;
             _ = &mut shutdown => break,
-            result = &mut listener => { listener_done = true; failure = Some(result.ok().and_then(Result::err).unwrap_or("IPC service stopped unexpectedly.")); },
-            _ = &mut control => { control_done = true; failure = Some("Control worker stopped unexpectedly."); },
+            result = &mut listener => {
+                listener_done = true;
+                failure = Some(result.ok().and_then(Result::err).unwrap_or("IPC service stopped unexpectedly."));
+            },
+            _ = &mut control => {
+                control_done = true;
+                failure = Some("Control worker stopped unexpectedly.");
+            },
             command = received.recv() => {
                 let Some(command) = command else { break; };
-                if apply(&mut store,&desired,&view,command).await.is_err() { failure = Some("Node intent persistence failed."); }
+                if apply(&mut store, &desired, &view, command).await.is_err() {
+                    failure = Some("Node intent persistence failed.");
+                }
             },
         }
     }
@@ -84,6 +106,7 @@ pub async fn run(
         failure.get_or_insert("Control shutdown failed.");
     }
     drop(store);
+    tracing::info!(failed = failure.is_some(), "Node stopped");
     writeln!(std::io::stdout().lock(), "Node stopped.")
         .map_err(|_| "Cannot write Node shutdown.")?;
     failure.map_or(Ok(()), Err)
@@ -111,9 +134,18 @@ async fn apply(
                 shutdown: false,
                 retry_enrollment: command.action == Action::Up,
             });
+            tracing::info!(
+                request_id = %command.id,
+                revision = store.record.revision.get(),
+                desired_up = store.record.desired_up,
+                "Node intent committed"
+            );
             Ok(())
         }
     };
+    if let Err(code) = result {
+        tracing::warn!(request_id = %command.id, error = ?code, "Node intent rejected");
+    }
     let _ = command.reply.send(result);
     Ok(())
 }

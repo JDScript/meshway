@@ -1,7 +1,11 @@
 //! Local control messages. These carry public status, never Node credentials.
 #![forbid(unsafe_code)]
+#[cfg(unix)]
+mod client;
 mod codec;
 use chrono::{DateTime, Utc};
+#[cfg(unix)]
+pub use client::{Client, ClientError};
 pub use codec::{CodecError, read, write};
 use meshway_model::{ConfigurationRef, EnrollmentRequestId, RequestId, Version};
 use meshway_protocol::{EnrollmentResponse, InstanceLease};
@@ -45,14 +49,20 @@ pub enum ResultBody {
     Status { status: Box<Status> },
     Error { code: ErrorCode },
 }
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, thiserror::Error)]
 #[serde(rename_all = "camelCase")]
 pub enum ErrorCode {
+    #[error("Daemon protocol version differs.")]
     Version,
+    #[error("Node intent changed; inspect status and retry the command.")]
     Conflict,
+    #[error("Node intent changed; inspect status and retry the command.")]
     RequestConflict,
+    #[error("Daemon command queue is busy.")]
     Busy,
+    #[error("Daemon is stopping.")]
     Stopping,
+    #[error("Daemon could not commit its private state.")]
     Storage,
 }
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]

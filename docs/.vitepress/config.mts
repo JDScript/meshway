@@ -7,6 +7,7 @@ const v2Sidebar: DefaultTheme.SidebarItem[] = [
     items: [
       { text: "概览", link: "/v2/" },
       { text: "项目结构与 Shared Crates", link: "/v2/architecture" },
+      { text: "运行日志", link: "/v2/logging" },
       { text: "数据模型与权威来源", link: "/v2/entities" },
       { text: "操作权限", link: "/v2/permissions" },
       { text: "按需执行许可", link: "/v2/execution" },

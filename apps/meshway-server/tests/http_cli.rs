@@ -29,6 +29,12 @@ fn command(path: &Path) -> Command {
         .env_remove("MESHWAY_LISTEN")
         .env_remove("MESHWAY_REGISTRATION_ENABLED")
         .env_remove("MESHWAY_SESSION_TTL_SECONDS")
+        .args([
+            "--log-format",
+            "json",
+            "--log-filter",
+            "info,meshway_server=trace,tower_http=trace",
+        ])
         .arg("--data-dir")
         .arg(path)
         .arg("--listen")
@@ -68,15 +74,27 @@ async fn executable_serves_and_gracefully_releases_storage_on_both_signals() {
         });
         let line = receive.recv_timeout(Duration::from_secs(10)).unwrap();
         let address = line.trim().strip_prefix("Listening on ").unwrap();
-        let options: AuthOptionsResponse = client
-            .get(format!("http://{address}/api/v1/auth/options"))
+        let response = client
+            .get(format!(
+                "http://{address}/api/v1/auth/options?token=LOG_QUERY_SECRET"
+            ))
+            .bearer_auth("LOG_HEADER_SECRET")
+            .header("x-request-id", "LOG_CLIENT_CORRELATION")
             .send()
             .await
+            .unwrap();
+        let request_id = response.headers()["x-request-id"]
+            .to_str()
             .unwrap()
-            .json()
+            .to_owned();
+        let options: AuthOptionsResponse = response.json().await.unwrap();
+        assert!(!options.registration_enabled);
+        let response = client
+            .get(format!("http://{address}/api/v1/networks/LOG_PATH_SECRET"))
+            .send()
             .await
             .unwrap();
-        assert!(!options.registration_enabled);
+        assert!(response.status().is_client_error());
         assert!(
             Command::new("kill")
                 .args([signal, &process.0.id().to_string()])
@@ -104,7 +122,37 @@ async fn executable_serves_and_gracefully_releases_storage_on_both_signals() {
             .unwrap()
             .read_to_string(&mut errors)
             .unwrap();
-        assert!(errors.is_empty());
+        let events = log_events(&errors);
+        assert!(
+            events
+                .iter()
+                .any(|event| event["fields"]["message"] == "Server ready")
+        );
+        assert!(
+            events
+                .iter()
+                .any(|event| event["fields"]["message"] == "Server stopped")
+        );
+        assert!(
+            events
+                .iter()
+                .any(|event| event["span"]["request_id"] == request_id
+                    && event["span"]["route"] == "/api/v1/auth/options"
+                    && event["fields"]["status"] == 200)
+        );
+        assert!(
+            events
+                .iter()
+                .any(|event| event["span"]["route"] == "/api/v1/networks/{networkId}")
+        );
+        for secret in [
+            "LOG_QUERY_SECRET",
+            "LOG_HEADER_SECRET",
+            "LOG_CLIENT_CORRELATION",
+            "LOG_PATH_SECRET",
+        ] {
+            assert!(!errors.contains(secret));
+        }
         App::open(Settings::new(&path))
             .await
             .unwrap()
@@ -232,7 +280,15 @@ async fn open_event_streams_do_not_block_signal_shutdown_or_storage_release() {
             .unwrap()
             .read_to_string(&mut errors)
             .unwrap();
-        assert!(errors.is_empty());
+        let events = log_events(&errors);
+        assert!(
+            events
+                .iter()
+                .any(|event| event["fields"]["message"] == "Server stopped")
+        );
+        assert!(!errors.contains(session.token.expose()));
+        assert!(!errors.contains("valid shutdown test password"));
+        assert!(!errors.contains("shutdown@example.test"));
         drop(events);
         App::open(Settings::new(&path))
             .await
@@ -250,6 +306,7 @@ async fn bind_failure_and_invalid_storage_exit_without_taking_over_another_insta
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
     let output = Command::new(env!("CARGO_BIN_EXE_meshway-server"))
         .env_remove("MESHWAY_SESSION_TTL_SECONDS")
+        .args(["--log-format", "json", "--log-filter", "info"])
         .arg("--data-dir")
         .arg(&path)
         .arg("--listen")
@@ -257,9 +314,10 @@ async fn bind_failure_and_invalid_storage_exit_without_taking_over_another_insta
         .output()
         .unwrap();
     assert!(!output.status.success());
-    assert_eq!(
-        String::from_utf8(output.stderr).unwrap(),
-        "Server listen failed.\n"
+    let errors = log_events(&String::from_utf8(output.stderr).unwrap());
+    assert!(
+        errors.iter().any(|event| event["level"] == "ERROR"
+            && event["fields"]["error"] == "Server listen failed.")
     );
     assert!(output.stdout.is_empty());
     App::open(Settings::new(&path))
@@ -273,10 +331,16 @@ async fn bind_failure_and_invalid_storage_exit_without_taking_over_another_insta
         .output()
         .unwrap();
     assert!(!output.status.success());
-    assert_eq!(
-        String::from_utf8(output.stderr).unwrap(),
-        "Server storage startup failed.\n"
-    );
+    let errors = log_events(&String::from_utf8(output.stderr).unwrap());
+    assert!(errors.iter().any(|event| event["level"] == "ERROR"
+        && event["fields"]["error"] == "Server storage startup failed."));
+}
+
+fn log_events(logs: &str) -> Vec<serde_json::Value> {
+    assert!(!logs.contains('\u{1b}'));
+    logs.lines()
+        .map(|line| serde_json::from_str(line).unwrap())
+        .collect()
 }
 
 #[test]

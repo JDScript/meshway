@@ -11,14 +11,17 @@ path = "src/main.rs"
 
 [dependencies]
 clap.workspace = true
-getrandom.workspace = true
 meshway-ipc = { path = "../../crates/meshway-ipc" }
-meshway-model = { path = "../../crates/meshway-model" }
+meshway-logging = { path = "../../crates/meshway-logging" }
 serde_json.workspace = true
-tokio = { workspace = true, features = ["io-util"] }
-uuid.workspace = true
+thiserror.workspace = true
+tokio.workspace = true
+tracing.workspace = true
 
 [dev-dependencies]
+getrandom.workspace = true
+meshway-model = { path = "../../crates/meshway-model" }
+uuid.workspace = true
 axum.workspace = true
 meshway-daemon = { path = "../meshway-daemon" }
 meshway-server = { path = "../meshway-server" }

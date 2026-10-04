@@ -34,6 +34,7 @@
 - 单文件模块 `foo.rs`；有子模块用 `foo/mod.rs`。私有单测为所属模块的 cfg(test) 子模块；黑盒测试遵守 Cargo `tests/*.rs` 或 `tests/<suite>/main.rs`，共享 helper 放子目录。
 - 不为测试扩大生产可见性、复制实现或用临时 path/autotests 配置绕过边界。生成／vendor 由其权威来源维护。
 - Rust 业务代码 forbid unsafe；确需 native/FFI 的桥接隔离审计，不静默放开应用 lint 或 TLS 默认 features。
+- Rust 程序入口复用 `meshway-logging`，库只发 `tracing` 事件、不安装全局 subscriber；字段与 stdout／stderr 边界见 `docs/v2/logging.md`。
 - 取消后的已接纳事务仍由数据库 owner 完成；异步生产者有明确停止／join，缓冲和任务有界。
 
 ## 验证与环境

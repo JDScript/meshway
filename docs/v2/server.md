@@ -45,6 +45,8 @@ mise exec -- cargo run -p meshway-server --bin meshway-server --locked -- \
 
 运行目录使用私有、无符号链接的绝对路径并独占锁。端口 0 分配临时监听端口；注册默认开放，可由实例配置关闭。空库初始化属于正常启动，不提供首用户认领／实例初始化 API，首个公开账户不取得全局管理权限。
 
+Server 使用共同的[运行日志](/v2/logging)配置，支持 `RUST_LOG` 和 `--log-format json`；HTTP 日志只记录路由模板与请求关联信息。
+
 运维密码恢复使用 `reset-password` binary，须先停止占有同一 dataDir 的服务：
 
 ```sh

@@ -16,5 +16,12 @@ thiserror.workspace = true
 utoipa.workspace = true
 tokio = { workspace = true, features = ["io-util"] }
 
+[target.'cfg(unix)'.dependencies]
+getrandom.workspace = true
+uuid.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
+
 [lints]
 workspace = true

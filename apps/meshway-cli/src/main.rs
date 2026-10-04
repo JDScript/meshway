@@ -1,46 +1,32 @@
 #![forbid(unsafe_code)]
 #[cfg(unix)]
-mod client;
-use clap::{Parser, Subcommand};
-
-#[derive(Parser)]
-#[command(name = "meshway", version, about = "Meshway local Node control")]
-struct Arguments {
-    #[arg(long, global = true, default_value = meshway_ipc::DEFAULT_SOCKET)]
-    socket: std::path::PathBuf,
-    #[arg(long, global = true)]
-    json: bool,
-    #[command(subcommand)]
-    command: Command,
-}
-#[derive(Subcommand)]
-enum Command {
-    /// Request online control; prints the browser URL when approval is needed.
-    Up,
-    /// Persist offline intent and stop the active Node instance.
-    Down,
-    /// Read actual daemon, identity, lease and saved configuration state.
-    Status {
-        #[arg(long)]
-        watch: bool,
-    },
-}
+mod arguments;
+#[cfg(unix)]
+mod commands;
+#[cfg(unix)]
+mod output;
 
 #[cfg(unix)]
 #[tokio::main]
 async fn main() -> std::process::ExitCode {
+    use arguments::Arguments;
+    use clap::Parser;
     let arguments = Arguments::parse();
+    if let Err(error) = arguments.logging.init() {
+        eprintln!("{error}");
+        return std::process::ExitCode::FAILURE;
+    }
     let result = tokio::select! { biased;
         _ = tokio::signal::ctrl_c() => {
-            eprintln!("Stopped waiting. Use status to inspect the daemon.");
+            tracing::info!("Stopped waiting. Use status to inspect the daemon.");
             return std::process::ExitCode::from(130);
         },
-        result = client::run(arguments) => result,
+        result = commands::run(arguments) => result,
     };
     match result {
         Ok(()) => std::process::ExitCode::SUCCESS,
         Err(error) => {
-            eprintln!("{error}");
+            tracing::error!(error = %error, "Local command failed");
             std::process::ExitCode::FAILURE
         }
     }
