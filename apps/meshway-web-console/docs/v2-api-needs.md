@@ -164,8 +164,8 @@ Node 已有 `meshwayd` 的控制流程（接入、认证、续租、保存配置
 - 两端都报告自己是发起方时 link 的判定：现在判为 `conflicting`，`inUse` 变成 null。
 - `--listen` 的默认端口：仍是 `127.0.0.1:8420`。
 - 角色变更的影响预览（降级 admin 时哪些链接会被撤销）：现在没有角色变更预览接口。
-- 域名规则集经出口：远程规则集里的每个域名都要在 access 里有 `domain:` 授权（服务端按准备好的内容校验），而 access 不能引用规则集，`autogroup:internet` 也不覆盖域名。把 MetaCubeX 的 `geosite:telegram`、`geosite:twitter` 交给出口，需要在 access 里逐条列出这 45 个域名，规则集更新新增域名后也不会自动获得授权。
-- 规则集转换只接受 `+.` 后缀：MetaCubeX 的 geosite 列表大多含精确域名（google、github、openai、apple、microsoft 等），整份转换失败；`geosite:cn` 约 11 万条，超过 10 万的上限。现在可用的只有 geoip 各列表和 cloudflare、telegram、twitter 等少数 geosite。
+- ~~域名规则集经出口~~：已定并实现。`autogroup:internet` 在声明期覆盖域名目的地（路由规则和规则集里的名称），与执行期"按解析地址判定"一致；access 仍不引用规则集。只有 CIDR 授权的源仍需 `domain:`。见 access.md「域名授权」、routing.md「Action」。
+- ~~规则集转换只接受 `+.` 后缀；10 万条上限~~：已定并实现。新增精确域名：`RouteMatch.domain`、inline 规则集 `domain`（都是 `string[]`，默认 `[]`），mihomo 裸条目和 sing-box `domain` 字段转成它；`*.`／`.` 开头的条目仍使整份失败。上限提到 250000 条（8 MiB 不变）。新 IssueCode `invalid_domain`（`params.value`，pointer 到 `…/domain/<i>`）。**console 需要**：路由规则和 inline 规则集表单显示／编辑 `domain`，JSONC 诊断本地化 `invalid_domain`。
 
 ### 其他
 

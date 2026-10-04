@@ -32,7 +32,13 @@ fn internet(address: IpAddr) -> bool {
         .iter()
         .any(|range| range.contains(&address))
 }
-fn domain_expiry(input: &CompilationInput<'_>, d: &Demand, suffix: &str) -> Option<u64> {
+/// A domain selector matches through the source's live DNS associations whose
+/// name satisfies `matches` and whose addresses include the demand target.
+fn domain_expiry(
+    input: &CompilationInput<'_>,
+    d: &Demand,
+    matches: impl Fn(&str) -> bool,
+) -> Option<u64> {
     let address = match d.target {
         BusinessTarget::Ip { address } | BusinessTarget::Domain { address, .. } => address,
         _ => return None,
@@ -44,10 +50,16 @@ fn domain_expiry(input: &CompilationInput<'_>, d: &Demand, suffix: &str) -> Opti
             a.source == d.source
                 && a.expires_at_ms > input.now_ms
                 && a.addresses.contains(&address)
-                && domain_suffix_matches(&a.name, suffix)
+                && matches(&a.name)
         })
         .map(|a| a.expires_at_ms.min(d.expires_at_ms))
         .max()
+}
+fn suffix_expiry(input: &CompilationInput<'_>, d: &Demand, suffix: &str) -> Option<u64> {
+    domain_expiry(input, d, |name| domain_suffix_matches(name, suffix))
+}
+fn exact_expiry(input: &CompilationInput<'_>, d: &Demand, domain: &str) -> Option<u64> {
+    domain_expiry(input, d, |name| domain_name_matches(name, domain))
 }
 fn external_selector(input: &CompilationInput<'_>, s: &str, d: &Demand) -> Option<u64> {
     let address = match d.target {
@@ -58,7 +70,7 @@ fn external_selector(input: &CompilationInput<'_>, s: &str, d: &Demand) -> Optio
         return internet(address.0).then_some(d.expires_at_ms);
     }
     if let Some(suffix) = s.strip_prefix("domain:") {
-        return domain_expiry(input, d, suffix);
+        return suffix_expiry(input, d, suffix);
     }
     cidr(s, address.0).then_some(d.expires_at_ms)
 }
@@ -143,35 +155,36 @@ fn matcher(
         BusinessTarget::Ip { address } | BusinessTarget::Domain { address, .. } => address,
         _ => return Ok(None),
     };
-    let domain = |suffix: &str| domain_expiry(input, d, suffix);
-    let mut matched = m
-        .ip_cidr
-        .iter()
-        .any(|s| cidr(s, address.0))
-        .then_some(d.expires_at_ms)
-        .max(m.domain_suffix.iter().filter_map(|s| domain(s)).max());
+    let destinations = |ips: &[String], suffixes: &[String], exact: &[String]| {
+        ips.iter()
+            .any(|s| cidr(s, address.0))
+            .then_some(d.expires_at_ms)
+            .max(
+                suffixes
+                    .iter()
+                    .filter_map(|s| suffix_expiry(input, d, s))
+                    .max(),
+            )
+            .max(exact.iter().filter_map(|s| exact_expiry(input, d, s)).max())
+    };
+    let mut matched = destinations(&m.ip_cidr, &m.domain_suffix, &m.domain);
     for key in &m.rule_sets {
-        let (ips, domains) = match input.configuration.rule_sets.get(key) {
+        let (ips, suffixes, exact) = match input.configuration.rule_sets.get(key) {
             Some(RuleSet::Inline {
                 ip_cidr,
                 domain_suffix,
-            }) => (ip_cidr, domain_suffix),
+                domain,
+            }) => (ip_cidr, domain_suffix, domain),
             Some(RuleSet::Remote { .. }) => {
                 let content = input
                     .rule_sets
                     .get(key)
                     .ok_or(CompileError::UnavailableDependency)?;
-                (&content.ip_cidr, &content.domain_suffix)
+                (&content.ip_cidr, &content.domain_suffix, &content.domain)
             }
             None => return Err(CompileError::UnavailableDependency),
         };
-        matched = matched
-            .max(
-                ips.iter()
-                    .any(|s| cidr(s, address.0))
-                    .then_some(d.expires_at_ms),
-            )
-            .max(domains.iter().filter_map(|s| domain(s)).max());
+        matched = matched.max(destinations(ips, suffixes, exact));
     }
     Ok(matched)
 }

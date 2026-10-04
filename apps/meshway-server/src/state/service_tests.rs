@@ -556,6 +556,7 @@ async fn real_history_dedup_pagination_coverage_and_artifact_immutability() {
             let data = meshway_protocol::resources::RuleSetData {
                 ip_cidr: vec!["10.0.0.0/8".into()],
                 domain_suffix: vec![],
+                domain: vec![],
             };
             let artifact =
                 crate::resources::store_artifact(&tx, network.id, "inline", &data, now).unwrap();

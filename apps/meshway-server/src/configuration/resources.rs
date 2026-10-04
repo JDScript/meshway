@@ -201,7 +201,7 @@ impl Preparation {
                             &serde_json::to_vec(data)
                                 .map_err(|_| Error::encode("rule set data"))?,
                         ),
-                        entries: (data.ip_cidr.len() + data.domain_suffix.len()) as u32,
+                        entries: crate::resources::entries(data) as u32,
                     },
                 ))
             })

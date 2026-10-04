@@ -57,7 +57,7 @@ object! { pub struct TrustedDnsAssociation {
 object! { pub struct RuleSetContent {
     pub network_id: NetworkId,
     pub artifact: meshway_model::ArtifactId,
-    #[serde(rename = "ipCIDR")] pub ip_cidr: Vec<String>, pub domain_suffix: Vec<String>,
+    #[serde(rename = "ipCIDR")] pub ip_cidr: Vec<String>, pub domain_suffix: Vec<String>, pub domain: Vec<String>,
 } }
 object! { pub struct PeerConfiguration {
     pub identity: NodeIdentity, pub addresses: NodeAddresses,

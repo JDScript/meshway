@@ -467,6 +467,70 @@ fn egress_first_match_no_fallback_on_revocation_and_dns_is_trusted() {
     ));
 }
 #[test]
+fn exact_domain_rules_match_one_name_through_trusted_dns() {
+    let mut c = configuration();
+    c.access = vec![AccessRule {
+        remark: String::new(),
+        src: vec!["*".into()],
+        dst: vec!["autogroup:internet".into()],
+        ip: vec!["tcp:443".into()],
+        bidirectional: false,
+    }];
+    c.rule_sets.insert(
+        "names".into(),
+        RuleSet::Inline {
+            ip_cidr: vec![],
+            domain_suffix: vec![],
+            domain: vec!["example.com".into()],
+        },
+    );
+    c.routing.egress.rules = vec![EgressRule {
+        remark: String::new(),
+        matcher: RouteMatch {
+            rule_sets: vec!["names".into()],
+            ..Default::default()
+        },
+        action: RuleAction::Exit {
+            nodes: vec![format!("node:{}", node(4))],
+            via: vec![],
+        },
+    }];
+    let association = |name: &str| TrustedDnsAssociation {
+        network_id: "00000000-0000-4003-8000-000000000001".parse().unwrap(),
+        configuration_revision: Revision::MIN,
+        source: node(1),
+        name: name.into(),
+        cname_chain: vec![],
+        addresses: vec![ExecutionAddress("1.1.1.1".parse().unwrap())],
+        expires_at_ms: 2000,
+    };
+    let mut d = demand(1, 1, 4);
+    d.target = BusinessTarget::Domain {
+        name: "api.example.com".into(),
+        address: ExecutionAddress("1.1.1.1".parse().unwrap()),
+    };
+    let ds = BTreeMap::from([(d.id, d)]);
+    // A child name is not the exact name: no rule fires, the fallback applies.
+    let r = run(&c, &inventory(), &ds, &[association("api.example.com")]);
+    assert!(matches!(
+        r.nodes[&node(1)].configuration.decisions[&request(1)],
+        DemandDecision::Unmanaged
+    ));
+    let mut exact = ds.clone();
+    exact.get_mut(&request(1)).unwrap().target = BusinessTarget::Domain {
+        name: "Example.com.".into(),
+        address: ExecutionAddress("1.1.1.1".parse().unwrap()),
+    };
+    let r = run(
+        &c,
+        &inventory(),
+        &exact,
+        &[association("Example.com."), association("api.example.com")],
+    );
+    let permit = &r.nodes[&node(1)].configuration.permits[&request(1)];
+    assert_eq!(permit.expires_at_ms, 2000);
+}
+#[test]
 fn digest_includes_capabilities_destinations_ports_and_dns() {
     let c = configuration();
     let inv = inventory();

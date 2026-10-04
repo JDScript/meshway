@@ -5,7 +5,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 mod references;
 mod routing;
-pub use references::{domain_suffix_matches, topology_allows};
+pub use references::{domain_name_matches, domain_suffix_matches, topology_allows};
 type Check = ValidationReport;
 
 fn pointer(key: &str) -> String {

@@ -11,7 +11,8 @@ Server 管理和更新的 IP／域名规则集。节点接收编译结果，不�
   "office": {
     "type": "inline",
     "ipCIDR": ["10.20.0.0/16"],
-    "domainSuffix": ["corp.example"]
+    "domainSuffix": ["corp.example"],
+    "domain": ["login.partner.example"]
   },
   "regional": {
     "type": "remote",
@@ -28,7 +29,8 @@ Server 管理和更新的 IP／域名规则集。节点接收编译结果，不�
 | --- | --- | --- |
 | `type` | 所有 | `inline` 或 `remote` |
 | `ipCIDR` | inline | 网段列表，默认 `[]` |
-| `domainSuffix` | inline | DNS 标签后缀，默认 `[]`；两项不能都为空 |
+| `domainSuffix` | inline | DNS 标签后缀（名称及其子名称），默认 `[]` |
+| `domain` | inline | 精确 DNS 名称，默认 `[]`；三项不能都为空 |
 | `url` | remote | HTTPS 数据来源，不含明文认证信息 |
 | `format` | remote | 支持 `sing-box-source`、`mihomo-domain`、`mihomo-ipcidr` 的可转换子集，范围见下文 |
 | `updateInterval` | remote | 默认 `24h`，保存正 duration 原值；实际调度下界、预算与失败退避见下文 |
@@ -44,13 +46,13 @@ inline 不接受 remote 字段，反之亦然。未知 key 引用、循环依赖
 - 更新失败保留最后一份已校验结果并明确错误，不发布半份内容。首次没有可用结果时相关发布不可执行。
 - 回滚使用历史发布绑定的资源版本，不能只保存 URL。历史内容不可用时明确失败并要求替代；不自动使用最新数据冒充复原。保留期限在接口／运维规则中给出。
 
-转换范围限 IP 段和域名后缀，不支持 sing-box／mihomo 的所有规则。
+转换范围限 IP 段、域名后缀和精确域名，不支持 sing-box／mihomo 的所有规则。
 
 ## 配置与刷新
 
 Owner／Admin 可在一次配置 apply 中新增 remote 声明及引用它的路由规则，也可直接替换正在引用的来源。Server 先验证用户／网络与输入，在 SQLite 事务外进行有界下载和完整转换，最后同事务重验身份、源 revision、原 artifact 及完整配置权限，固定 artifact／源版本初始绑定并发布。失败保留原配置与已验证内容，不把缺失集合当成空集合或跳到后续 direct 规则。
 
-validate 走相同下载／转换与授权校验，但不保存 artifact、不预留配置版本。`ConfigurationPreviewResponse.preparedRuleSets` 按 key 返回暂定规范化内容的 `digest`／`entries`，不使用假 ArtifactId；缺失 listener 材料等仍返回类型化准备需求。最终 apply 独立重新准备／重验，不能将一次 preview 当作免 CAS 的承诺。单次配置最多准备 32 项远端集合、规范化内容合计不超过 8 MiB，下载准备总期限 30 秒；超出这些限制和下载／转换失败一样是配置诊断：422 `configuration_invalid`，issue 挂在 `/ruleSets`（或具体 key），code 分别为 `rule_set_budget`（`params.maxSets`／`maxBytes`／`maxEntries`）、`rule_set_timeout`（`params.seconds`）、`rule_set_unavailable`（`params.reason` 为 `ResourceProblem`）。进程内最多 4 项配置准备，包括等待最终事务的输入；名额用满返回 503，这是服务端容量而不是配置问题。每张网络实际绑定的规则集执行内容合计最多 8 MiB／100000 条目，按 key 计入，不能通过多次提交绕过执行内存预算。
+validate 走相同下载／转换与授权校验，但不保存 artifact、不预留配置版本。`ConfigurationPreviewResponse.preparedRuleSets` 按 key 返回暂定规范化内容的 `digest`／`entries`，不使用假 ArtifactId；缺失 listener 材料等仍返回类型化准备需求。最终 apply 独立重新准备／重验，不能将一次 preview 当作免 CAS 的承诺。单次配置最多准备 32 项远端集合、规范化内容合计不超过 8 MiB，下载准备总期限 30 秒；超出这些限制和下载／转换失败一样是配置诊断：422 `configuration_invalid`，issue 挂在 `/ruleSets`（或具体 key），code 分别为 `rule_set_budget`（`params.maxSets`／`maxBytes`／`maxEntries`）、`rule_set_timeout`（`params.seconds`）、`rule_set_unavailable`（`params.reason` 为 `ResourceProblem`）。进程内最多 4 项配置准备，包括等待最终事务的输入；名额用满返回 503，这是服务端容量而不是配置问题。每张网络实际绑定的规则集执行内容合计最多 8 MiB／250000 条目（网段、后缀与精确名称都计入），按 key 计入，不能通过多次提交绕过执行内存预算。
 
 接口相对 `/api/v1/networks/{networkId}`：
 
@@ -64,7 +66,7 @@ validate 走相同下载／转换与授权校验，但不保存 artifact、不�
 
 `RuleSetView` 包括 `configurationRevision`、`definition`、`artifact`（不可变 ID／摘要／创建时间／条目数）、`publication`（选中该 artifact 的确切发布）、`problem`、`checkedAt`、`lastSuccessAt`。检查时间与 artifact 创建时间不同；失败更新检查时间和错误，保留最后成功 artifact 与成功检查时间。没有对应检查记录的时间为 null，不伪造新鲜度。来源与绑定内容都不变时，检查记录（含失败的 problem、`checkedAt` 和退避次数）随普通配置版本延续；还没有任何成功内容的集合也一样，不会在新版本上回到 `not_ready`、`checkedAt: null`。
 
-转换支持 sing-box source v1–v3 的单类别 `ip_cidr`／`domain_suffix` 规则，以及 mihomo 的 IP CIDR payload／`+.domain` 后缀 payload。未知字段、逻辑组合、精确域名或无法保留语义的混合条件会使整次转换失败。错误为 `download_failed`、`invalid_source`、`too_large`、`conversion_failed` 或 `validation_failed`；首次没有内容为 `not_ready`。
+转换支持 sing-box source v1–v3 的 `ip_cidr` 规则和 `domain`／`domain_suffix` 名称规则（同一条规则内名称类字段取并集，名称与 IP 混合则拒绝），以及 mihomo 的 IP CIDR payload 和 domain payload：`+.example.com` 转为后缀，裸 `example.com` 转为精确名称；`*.example.com`（单层通配、不含本身）、`.example.com` 及其他通配形式没有等价表达。规范化后名称小写、ASCII（IDNA）、去结尾点并去重；未知字段、逻辑组合或无法保留语义的条目会使整次转换失败，不会悄悄放宽或丢弃。错误为 `download_failed`、`invalid_source`、`too_large`、`conversion_failed` 或 `validation_failed`；首次没有内容为 `not_ready`。
 
 刷新在同一配置 revision 下创建 `cause=refresh` 的执行发布，合并所有有效需求，保留未变化 Node 的目标／lease／回执；不覆盖 JSONC、历史源绑定或 artifact。变更通过 `resources.changed` 通知有权管理该网络的 SSE 客户端，客户端重新读取资源 GET。初始同步或 stream reset 后也重新读取 GET。
 

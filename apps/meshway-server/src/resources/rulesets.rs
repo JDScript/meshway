@@ -14,6 +14,8 @@ struct SingBoxSource {
 #[serde(deny_unknown_fields)]
 struct SingBoxRule {
     #[serde(default)]
+    domain: Vec<String>,
+    #[serde(default)]
     domain_suffix: Vec<String>,
     #[serde(default)]
     ip_cidr: Vec<String>,
@@ -38,16 +40,25 @@ pub fn convert(bytes: &[u8], format: &RuleSetFormat) -> Result<RuleSetData, Reso
             let mut data = RuleSetData {
                 ip_cidr: vec![],
                 domain_suffix: vec![],
+                domain: vec![],
             };
             for rule in input.rules {
                 // sing-box combines different match categories with AND. Our
                 // union-only set cannot preserve a mixed rule, so reject it.
-                if !rule.domain_suffix.is_empty() && !rule.ip_cidr.is_empty() {
+                // Exact and suffix names are both name categories: a rule
+                // listing both matches a name that is either, a union.
+                if (!rule.domain_suffix.is_empty() || !rule.domain.is_empty())
+                    && !rule.ip_cidr.is_empty()
+                {
                     return Err(ResourceProblem::ConversionFailed);
                 }
-                if rule.domain_suffix.is_empty() && rule.ip_cidr.is_empty() {
+                if rule.domain_suffix.is_empty()
+                    && rule.domain.is_empty()
+                    && rule.ip_cidr.is_empty()
+                {
                     return Err(ResourceProblem::ConversionFailed);
                 }
+                data.domain.extend(rule.domain);
                 data.domain_suffix.extend(rule.domain_suffix);
                 data.ip_cidr.extend(rule.ip_cidr);
             }
@@ -57,17 +68,23 @@ pub fn convert(bytes: &[u8], format: &RuleSetFormat) -> Result<RuleSetData, Reso
             let input: MihomoSource =
                 serde_yaml_ng::from_slice(bytes).map_err(|_| ResourceProblem::ConversionFailed)?;
             let mut suffixes = vec![];
+            let mut exact = vec![];
             for entry in input.payload {
-                // Only +. includes both apex and children. Bare exact domains
-                // and *. exclusions cannot be widened into suffix matches.
-                let suffix = entry
-                    .strip_prefix("+.")
-                    .ok_or(ResourceProblem::ConversionFailed)?;
-                suffixes.push(suffix.to_owned());
+                // +. is the name and its children; a bare name is exact. The
+                // *. form (one wildcard label, apex excluded) and any other
+                // wildcard have no equivalent and fail the conversion.
+                if let Some(suffix) = entry.strip_prefix("+.") {
+                    suffixes.push(suffix.to_owned());
+                } else if entry.contains(['*', '+']) || entry.starts_with('.') {
+                    return Err(ResourceProblem::ConversionFailed);
+                } else {
+                    exact.push(entry);
+                }
             }
             RuleSetData {
                 ip_cidr: vec![],
                 domain_suffix: suffixes,
+                domain: exact,
             }
         }
         RuleSetFormat::MihomoIpcidr => {
@@ -76,15 +93,17 @@ pub fn convert(bytes: &[u8], format: &RuleSetFormat) -> Result<RuleSetData, Reso
             RuleSetData {
                 ip_cidr: input.payload,
                 domain_suffix: vec![],
+                domain: vec![],
             }
         }
     };
     normalize(data)
 }
+pub fn entries(data: &RuleSetData) -> usize {
+    data.ip_cidr.len() + data.domain_suffix.len() + data.domain.len()
+}
 pub fn normalize(data: RuleSetData) -> Result<RuleSetData, ResourceProblem> {
-    if data.ip_cidr.len() + data.domain_suffix.len() > MAX_RULE_ENTRIES
-        || data.ip_cidr.is_empty() && data.domain_suffix.is_empty()
-    {
+    if entries(&data) > MAX_RULE_ENTRIES || entries(&data) == 0 {
         return Err(ResourceProblem::ConversionFailed);
     }
     let mut prefixes = BTreeSet::new();
@@ -119,31 +138,38 @@ pub fn normalize(data: RuleSetData) -> Result<RuleSetData, ResourceProblem> {
         };
         prefixes.insert(canonical);
     }
-    let mut suffixes = BTreeSet::new();
-    for suffix in data.domain_suffix {
-        let suffix = idna::domain_to_ascii(suffix.trim_end_matches('.'))
-            .map_err(|_| ResourceProblem::ConversionFailed)?
-            .to_ascii_lowercase();
-        if suffix.is_empty()
-            || suffix.len() > 253
-            || suffix.split('.').any(|label| {
-                label.is_empty()
-                    || label.len() > 63
-                    || label.starts_with('-')
-                    || label.ends_with('-')
-                    || !label
-                        .bytes()
-                        .all(|b| b.is_ascii_alphanumeric() || b == b'-')
-            })
-        {
-            return Err(ResourceProblem::ConversionFailed);
-        }
-        suffixes.insert(suffix);
-    }
+    let names = |names: Vec<String>| -> Result<Vec<String>, ResourceProblem> {
+        names
+            .into_iter()
+            .map(|name| canonical_domain(&name))
+            .collect::<Result<BTreeSet<_>, _>>()
+            .map(|set| set.into_iter().collect())
+    };
     Ok(RuleSetData {
         ip_cidr: prefixes.into_iter().collect(),
-        domain_suffix: suffixes.into_iter().collect(),
+        domain_suffix: names(data.domain_suffix)?,
+        domain: names(data.domain)?,
     })
+}
+fn canonical_domain(name: &str) -> Result<String, ResourceProblem> {
+    let name = idna::domain_to_ascii(name.trim_end_matches('.'))
+        .map_err(|_| ResourceProblem::ConversionFailed)?
+        .to_ascii_lowercase();
+    if name.is_empty()
+        || name.len() > 253
+        || name.split('.').any(|label| {
+            label.is_empty()
+                || label.len() > 63
+                || label.starts_with('-')
+                || label.ends_with('-')
+                || !label
+                    .bytes()
+                    .all(|b| b.is_ascii_alphanumeric() || b == b'-')
+        })
+    {
+        return Err(ResourceProblem::ConversionFailed);
+    }
+    Ok(name)
 }
 
 #[cfg(test)]
@@ -153,7 +179,7 @@ mod tests {
     fn rejects_semantic_widening_and_unknown_fields() {
         assert!(
             convert(
-                br#"{"version":1,"rules":[{"domain":["example.com"]}]}"#,
+                br#"{"version":1,"rules":[{"domain_keyword":["example"]}]}"#,
                 &RuleSetFormat::SingBoxSource
             )
             .is_err()
@@ -166,12 +192,46 @@ mod tests {
             )
             .is_err()
         );
+        assert!(
+            convert(
+                b"payload:\n  - '.example.com'",
+                &RuleSetFormat::MihomoDomain
+            )
+            .is_err()
+        );
         let parsed = convert(
             b"payload:\n  - '+.Example.com'",
             &RuleSetFormat::MihomoDomain,
         )
         .unwrap();
         assert_eq!(parsed.domain_suffix, vec!["example.com"]);
+        assert!(parsed.domain.is_empty());
+    }
+    #[test]
+    fn exact_names_stay_exact() {
+        // MetaCubeX geosite lists mix `+.` suffixes with bare exact names.
+        let parsed = convert(
+            b"payload:\n  - 'google.com'\n  - '+.google.com'\n  - 'Github.com.'\n  - 'github.com'",
+            &RuleSetFormat::MihomoDomain,
+        )
+        .unwrap();
+        assert_eq!(parsed.domain_suffix, vec!["google.com"]);
+        assert_eq!(parsed.domain, vec!["github.com", "google.com"]);
+        let parsed = convert(
+            br#"{"version":2,"rules":[{"domain":["a.example.com"],"domain_suffix":["b.example.com"]},{"ip_cidr":["10.0.0.0/8"]}]}"#,
+            &RuleSetFormat::SingBoxSource,
+        )
+        .unwrap();
+        assert_eq!(parsed.domain, vec!["a.example.com"]);
+        assert_eq!(parsed.domain_suffix, vec!["b.example.com"]);
+        assert_eq!(parsed.ip_cidr, vec!["10.0.0.0/8"]);
+        assert!(
+            convert(
+                br#"{"version":2,"rules":[{"domain":["a.example.com"],"ip_cidr":["10.0.0.0/8"]}]}"#,
+                &RuleSetFormat::SingBoxSource,
+            )
+            .is_err()
+        );
     }
     #[test]
     fn canonical_prefixes_and_duplicate_entries() {
