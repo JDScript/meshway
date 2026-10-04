@@ -441,6 +441,48 @@ pub(crate) fn receipt_history_targets(
     }
     Ok(targets)
 }
+/// Targets this node held in the network's recent publications. A node that
+/// saved a publication just before the next one was issued reports that saved
+/// reference truthfully; it is admitted as history (never as installation
+/// authority) so successive revisions do not turn honest reports into
+/// contract errors.
+pub(crate) fn recent_targets_for_node(
+    tx: &Transaction<'_>,
+    sealer: &Sealer,
+    network: NetworkId,
+    node: NodeId,
+    now: i64,
+) -> Result<Vec<CompiledNode>, Error> {
+    let mut statement = tx.prepare(
+        "SELECT id,payload FROM execution_publications WHERE network_id=?1 AND created_at>=?2
+         ORDER BY sequence DESC LIMIT 8",
+    )?;
+    let rows = statement
+        .query_map(
+            params![
+                network.as_uuid().as_bytes().as_slice(),
+                now.saturating_sub(RECENT_PUBLICATION_WINDOW_MS)
+            ],
+            |row| Ok((row.get::<_, Vec<u8>>(0)?, row.get::<_, Vec<u8>>(1)?)),
+        )?
+        .collect::<Result<Vec<_>, _>>()?;
+    drop(statement);
+    let mut targets = Vec::new();
+    for (publication, payload) in rows {
+        let publication: PublicationId = id(publication)?;
+        let mut compiled: CompiledPublication = json(
+            sealer
+                .open_execution(network, publication, &payload)?
+                .as_bytes(),
+        )?;
+        if let Some(target) = compiled.nodes.remove(&node) {
+            targets.push(target);
+        }
+    }
+    Ok(targets)
+}
+/// How long a replaced publication stays an admissible report reference.
+const RECENT_PUBLICATION_WINDOW_MS: i64 = 15 * 60 * 1000;
 pub(crate) fn check_publication(
     tx: &Transaction<'_>,
     sealer: &Sealer,

@@ -58,8 +58,8 @@ pub enum AppError {
     Filesystem,
     #[error("database application or schema version is unsupported")]
     UnsupportedSchema,
-    #[error("database structure does not match the current schema")]
-    SchemaStructure,
+    #[error("database structure does not match the current schema: {0}")]
+    SchemaStructure(String),
     #[error("database integrity check failed")]
     StorageIntegrity,
     #[error("database operation failed")]
@@ -410,7 +410,7 @@ impl From<schema::SchemaError> for AppError {
     fn from(error: schema::SchemaError) -> Self {
         match error {
             schema::SchemaError::Unsupported => Self::UnsupportedSchema,
-            schema::SchemaError::Structure => Self::SchemaStructure,
+            schema::SchemaError::Structure(detail) => Self::SchemaStructure(detail),
             schema::SchemaError::Integrity => Self::StorageIntegrity,
             schema::SchemaError::Sqlite => Self::Database,
         }

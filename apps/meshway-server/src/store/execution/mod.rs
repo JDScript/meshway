@@ -21,7 +21,7 @@ use meshway_model::*;
 pub(crate) use publications::{
     apply_configuration_effects, cancel_demand, check_publication, configuration_targets,
     current_target, demand, publish, publish_with_rule_sets, receipt_history_targets,
-    retire_node_sessions, select_profile, target_for_node,
+    recent_targets_for_node, retire_node_sessions, select_profile, target_for_node,
 };
 use rusqlite::{OptionalExtension, Transaction, params};
 

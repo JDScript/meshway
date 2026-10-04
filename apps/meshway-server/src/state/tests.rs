@@ -130,6 +130,40 @@ pub(super) fn setup() -> (ReportAdmission, StateReport, VisibilityScope, DateTim
 }
 
 #[test]
+fn freshness_distinguishes_an_absent_instance_from_a_replaced_one() {
+    let (admission, report, mut scope, now) = setup();
+    let node = admission.node_id;
+    let mut hub = StateHub::new().unwrap();
+    hub.accept_report(&admission, report.clone(), now).unwrap();
+    let freshness = |hub: &mut StateHub, scope: &VisibilityScope, at| {
+        hub.query(scope, None, &mut GeoIp::default(), at)
+            .unwrap()
+            .nodes[&node]
+            .freshness
+    };
+    assert_eq!(freshness(&mut hub, &scope, now), Freshness::Current);
+    // The instance was released or its lease ran out: the node is gone, not
+    // replaced, even though its report is still within its TTL.
+    scope.current.get_mut(&node).unwrap().instance_id = None;
+    scope.current.get_mut(&node).unwrap().lease_expires_at = None;
+    assert_eq!(freshness(&mut hub, &scope, now), Freshness::Expired);
+    assert_eq!(
+        freshness(&mut hub, &scope, now + Duration::seconds(61)),
+        Freshness::Expired
+    );
+    // A different live instance makes the old report superseded.
+    let replacement = InstanceId::new(uuid::Uuid::from_u128(0x77)).unwrap();
+    scope.current.get_mut(&node).unwrap().instance_id = Some(replacement);
+    scope.current.get_mut(&node).unwrap().lease_expires_at = Some(now + Duration::minutes(2));
+    assert_eq!(freshness(&mut hub, &scope, now), Freshness::Superseded);
+    // Without any lease the applied reference is not judged against the
+    // configuration: no instance, no mismatch.
+    scope.current.get_mut(&node).unwrap().instance_id = None;
+    scope.current.get_mut(&node).unwrap().configurations.clear();
+    assert_eq!(freshness(&mut hub, &scope, now), Freshness::Expired);
+}
+
+#[test]
 fn retry_is_idempotent_without_refreshing_report_or_endpoint() {
     let (admission, report, scope, now) = setup();
     let mut hub = StateHub::new().unwrap();

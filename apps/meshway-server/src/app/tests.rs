@@ -403,11 +403,16 @@ async fn storage_diagnostic_reports_schema_damage_without_repair() {
         })
         .await
         .unwrap();
-    assert_eq!(app.check_storage().await, Err(AppError::SchemaStructure));
+    assert_eq!(
+        app.check_storage().await,
+        Err(AppError::SchemaStructure(
+            "missing index user_sessions_user_id".into()
+        ))
+    );
     app.shutdown().await.unwrap();
     assert!(matches!(
         App::open(Settings::new(&path)).await,
-        Err(AppError::SchemaStructure)
+        Err(AppError::SchemaStructure(detail)) if detail == "missing index user_sessions_user_id"
     ));
     drop(Directory::open(&path).unwrap());
 }
