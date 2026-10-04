@@ -14,7 +14,7 @@
 | `POST /configuration/compare` | fromRevision、toRevision | 字段路径级变化摘要，区分语义／原文／绑定变化 |
 | `POST /configuration` | expectedRevision＋新草稿，或 restoreFrom 历史引用 | 按普通 apply 保存新版本，返回 revision／publication 引用 |
 
-沿用一个配置提交入口完成回滚，不增加预发布或二阶段。`restoreFrom` 至少包含 revision；可选 publicationId 指定该源版本后续某次数据集绑定，必须同网且对应这个源版本。省略 publicationId 时使用该历史源版本提交时固定的绑定，不能默认换成最新规则集。
+沿用一个配置提交入口完成回滚，不增加预发布或二阶段。新 Controller 候选的 `type: "restore"` 请求使用 `restoreFrom: Revision`；可选 `resourcePublication: PublicationId` 指定该源版本后续某次数据集绑定，必须同网且对应这个源版本。省略或为 null 时使用该历史源版本提交时固定的绑定，不能默认换成最新规则集。资源 GET 的 `publication` 可作为这个精确引用；恢复仍在当前身份、材料／地址与授权上下文下重验并生成新版本。
 
 回滚输入由生成契约明确区分普通编辑和历史恢复。历史载入草稿后仍需保留恢复来源，稳定 UserId／MembershipId 和材料／数据集依据在服务端解析；不能仅复制旧邮箱字符串后按当前账户重新匹配。需要替代失效依赖或身份转换时按既有规则报出并处理，精确编辑编码随 DTO 定版。
 

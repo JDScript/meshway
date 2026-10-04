@@ -2788,6 +2788,7 @@ async fn rejoined_user_enrollment_preserves_inactive_group_membership() {
                 network,
                 meshway_protocol::configuration::ConfigurationRequest::Restore {
                     expected_revision: after.revision,
+                    resource_publication: None,
                     request_id: rid(),
                     restore_from: snapshot.revision
                 },
@@ -3411,6 +3412,7 @@ async fn node_only_email_reference_and_profile_selection_survive_history_restore
             network,
             meshway_protocol::configuration::ConfigurationRequest::Restore {
                 expected_revision: changed.revision,
+                resource_publication: None,
                 request_id: rid(),
                 restore_from: before.revision,
             },

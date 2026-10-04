@@ -128,8 +128,6 @@ pub(crate) struct Runtime {
     pub hub: StateHub,
     pub geoip: GeoIp,
     pub observations: Observations,
-    pub(crate) resource_results:
-        BTreeMap<(NetworkId, String), meshway_protocol::resources::RuleSetView>,
 }
 impl Runtime {
     pub(crate) fn close(&mut self) {
@@ -142,7 +140,6 @@ impl Runtime {
             hub: StateHub::new()?,
             geoip: GeoIp::default(),
             observations: Observations::default(),
-            resource_results: BTreeMap::new(),
         })
     }
 }
@@ -485,6 +482,18 @@ impl<P: StateProvider> StateService<P> {
                     let mut revision = sub.last.scope.configuration_revision;
                     for entry in journal? {
                         match entry.change {
+                            CommittedChange::Resource { network_id }
+                                if provider.can_drain_configuration_changes(&view) =>
+                            {
+                                enqueue::<P>(
+                                    &mut sub,
+                                    ProviderEvent::<P>::ResourcesChanged {
+                                        network_id,
+                                        revision: view.scope.configuration_revision,
+                                    },
+                                )?;
+                                changed = true;
+                            }
                             CommittedChange::Configuration { notice }
                                 if notice.revision > revision
                                     && notice.previous_revision == revision =>

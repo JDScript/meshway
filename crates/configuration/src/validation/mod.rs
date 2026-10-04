@@ -21,7 +21,7 @@ pub struct UserBinding {
 
 /// All inventory is scoped and authenticated by the Controller. The library
 /// never reads a database or creates an identity from a JSON key.
-#[derive(Default)]
+#[derive(Clone, Default)]
 pub struct ValidationContext<'a> {
     pub members: BTreeMap<String, UserBinding>,
     pub nodes: BTreeSet<NodeId>,
@@ -38,6 +38,9 @@ pub struct ValidationContext<'a> {
     pub verified_listeners: BTreeMap<(NodeId, String), Listener>,
     /// Resources explicitly deleted then recreated in this edit batch.
     pub recreated_listeners: BTreeSet<(NodeId, String)>,
+    /// Immutable contents selected by the Controller in this transaction.
+    pub rule_sets: BTreeMap<String, meshway_model::resources::RuleSetData>,
+    pub previous_rule_sets: BTreeMap<String, meshway_model::resources::RuleSetData>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]

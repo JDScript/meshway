@@ -68,6 +68,7 @@ JSON `data` 使用 Rust 定义的封闭判别联合，以 `type` 区分。可以
 | `state.delta` | baseCursor、updated、removed；按节点替换完整可见项，显式删除已移除／不可见项；过期按 freshness 表达 |
 | `configuration.changed` | 已提交的新 revision、时间、允许显示的修改者／请求关联；使旧配置缓存过时 |
 | `configuration.progress` | revision、服务端去重 summary、相关 publication／逐节点变化与新鲜度；统计范围随权限裁剪 |
+| `resources.changed` | networkId／revision；Owner／Admin 重读规则集 GET，包含失败检查的新错误／时间；不含下载 URL，不修改配置草稿 |
 | `node.registered` / `node.deleted` | 当前有权读取的生命周期通知；实体缓存以 entities.delta 更新 |
 | `members.changed` | 可见成员／角色变化通知；新的成员／actions 随 entities.delta 发送 |
 | `enrollmentKey.consumed` | 有权查看该密钥的订阅者收到安全的消费 Node 引用 |

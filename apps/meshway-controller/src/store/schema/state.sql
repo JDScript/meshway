@@ -15,6 +15,19 @@ BEGIN SELECT RAISE(ABORT, 'dataset artifacts are immutable'); END;
 CREATE TRIGGER dataset_artifacts_immutable_delete BEFORE DELETE ON dataset_artifacts
 BEGIN SELECT RAISE(ABORT, 'dataset artifacts are retained by version'); END;
 
+-- Current check outcome is separate from immutable configuration and publication
+-- bindings. A failed refresh retains the last successfully published artifact.
+CREATE TABLE rule_set_checks (
+    network_id BLOB NOT NULL,
+    revision INTEGER NOT NULL,
+    rule_set_key TEXT NOT NULL,
+    problem TEXT,
+    checked_at INTEGER NOT NULL,
+    last_success_at INTEGER,
+    PRIMARY KEY(network_id, revision, rule_set_key),
+    FOREIGN KEY(network_id, revision) REFERENCES configuration_versions(network_id, revision)
+) STRICT;
+
 CREATE TABLE observation_events (
     row_id INTEGER PRIMARY KEY AUTOINCREMENT,
     network_id BLOB NOT NULL REFERENCES networks(id),

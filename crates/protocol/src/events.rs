@@ -76,6 +76,14 @@ pub enum StreamEvent<C, E, P> {
     },
     #[serde(rename = "configuration.progress")]
     ConfigurationProgress { progress: P },
+    /// A manager must re-read the normal resource GET view in this network.
+    /// This notice carries no source URL, material or unscoped artifact data.
+    #[serde(rename = "resources.changed")]
+    ResourcesChanged {
+        #[serde(rename = "networkId")]
+        network_id: NetworkId,
+        revision: Revision,
+    },
     #[serde(rename = "observation.status")]
     ObservationStatus { observation: Box<ObservationTask> },
     #[serde(rename = "observation.sample")]

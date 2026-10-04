@@ -1,11 +1,19 @@
 //! Bounded dataset conversion/download and immutable content. GeoIP datasets
 //! are supplied by deployment, never by network administrators or Node reports.
+pub(crate) mod bindings;
 pub mod datasets;
+pub(crate) mod download;
 mod geoip;
+pub mod provider;
 mod rulesets;
 pub mod service;
 pub use geoip::GeoIp;
-pub use rulesets::{convert, download, normalize};
+pub use rulesets::{convert, normalize};
+pub async fn download(
+    source: &str,
+) -> Result<Vec<u8>, meshway_protocol::resources::ResourceProblem> {
+    download::download(source, &download::Https).await
+}
 
 use crate::state::StateError;
 use chrono::{DateTime, Utc};
@@ -48,7 +56,8 @@ pub fn store_artifact(
     Ok(ArtifactSummary {
         id,
         digest,
-        created_at: now,
+        created_at: DateTime::from_timestamp_millis(now.timestamp_millis())
+            .ok_or(StateError::Storage)?,
         entries: (data.ip_cidr.len() + data.domain_suffix.len()) as u32,
     })
 }
@@ -61,5 +70,10 @@ pub fn load_artifact(
     if content_digest(&bytes).to_string() != digest {
         return Err(StateError::Storage);
     }
-    serde_json::from_slice(&bytes).map_err(|_| StateError::Storage)
+    let data: RuleSetData = serde_json::from_slice(&bytes).map_err(|_| StateError::Storage)?;
+    let normalized = normalize(data.clone()).map_err(|_| StateError::Storage)?;
+    if data != normalized || serde_json::to_vec(&data).map_err(|_| StateError::Storage)? != bytes {
+        return Err(StateError::Storage);
+    }
+    Ok(data)
 }

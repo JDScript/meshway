@@ -18,7 +18,7 @@ pub fn router<P: ResourceProvider>(service: ResourceService<P>) -> Router {
         .layer(middleware::from_fn(super::context))
         .with_state(service)
 }
-#[utoipa::path(get,path="/api/v1/networks/{networkId}/rule-sets",operation_id="listRuleSets",tag="resources",security(("userSession"=[])),params(("networkId"=NetworkId,Path)),responses((status=200,body=RuleSetList),(status=401,body=ErrorResponse)))]
+#[utoipa::path(get,path="/api/v1/networks/{networkId}/rule-sets",operation_id="listRuleSets",tag="resources",security(("userSession"=[])),params(("networkId"=NetworkId,Path)),responses((status=200,body=RuleSetList),(status=400,body=ErrorResponse),(status=401,body=ErrorResponse),(status=403,body=ErrorResponse),(status=404,body=ErrorResponse),(status=503,body=ErrorResponse)))]
 async fn list<P: ResourceProvider>(
     State(service): State<ResourceService<P>>,
     Extension(id): Extension<RequestId>,
@@ -32,7 +32,7 @@ async fn list<P: ResourceProvider>(
             .map_err(|e| failure(id, e))?,
     ))
 }
-#[utoipa::path(get,path="/api/v1/networks/{networkId}/rule-sets/{ruleSetKey}",operation_id="getRuleSet",tag="resources",security(("userSession"=[])),params(("networkId"=NetworkId,Path),("ruleSetKey"=String,Path)),responses((status=200,body=RuleSetList),(status=401,body=ErrorResponse)))]
+#[utoipa::path(get,path="/api/v1/networks/{networkId}/rule-sets/{ruleSetKey}",operation_id="getRuleSet",tag="resources",security(("userSession"=[])),params(("networkId"=NetworkId,Path),("ruleSetKey"=String,Path)),responses((status=200,body=RuleSetList),(status=400,body=ErrorResponse),(status=401,body=ErrorResponse),(status=403,body=ErrorResponse),(status=404,body=ErrorResponse),(status=503,body=ErrorResponse)))]
 async fn detail<P: ResourceProvider>(
     State(service): State<ResourceService<P>>,
     Extension(id): Extension<RequestId>,
@@ -46,7 +46,7 @@ async fn detail<P: ResourceProvider>(
             .map_err(|e| failure(id, e))?,
     ))
 }
-#[utoipa::path(post,path="/api/v1/networks/{networkId}/rule-sets/{ruleSetKey}/refresh",operation_id="refreshRuleSet",tag="resources",security(("userSession"=[])),params(("networkId"=NetworkId,Path),("ruleSetKey"=String,Path)),responses((status=200,body=RuleSetView),(status=401,body=ErrorResponse)))]
+#[utoipa::path(post,path="/api/v1/networks/{networkId}/rule-sets/{ruleSetKey}/refresh",operation_id="refreshRuleSet",tag="resources",security(("userSession"=[])),params(("networkId"=NetworkId,Path),("ruleSetKey"=String,Path)),responses((status=200,body=RuleSetView),(status=400,body=ErrorResponse),(status=401,body=ErrorResponse),(status=403,body=ErrorResponse),(status=404,body=ErrorResponse),(status=409,body=ErrorResponse),(status=429,body=ErrorResponse),(status=503,body=ErrorResponse)))]
 async fn refresh<P: ResourceProvider>(
     State(service): State<ResourceService<P>>,
     Extension(id): Extension<RequestId>,

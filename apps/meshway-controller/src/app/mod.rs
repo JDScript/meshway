@@ -23,6 +23,8 @@ pub struct App {
     boot: meshway_model::InstanceId,
     state_runtime: Arc<std::sync::Mutex<crate::state::service::Runtime>>,
     shutdown_hooks: ShutdownHooks,
+    #[cfg(test)]
+    resource_connector: Option<Arc<dyn crate::resources::download::Connector>>,
 }
 
 #[derive(Default)]
@@ -147,6 +149,8 @@ impl App {
             configuration_cache: Arc::default(),
             state_runtime,
             shutdown_hooks,
+            #[cfg(test)]
+            resource_connector: None,
             boot: meshway_model::InstanceId::new(
                 crate::accounts::random_uuid().map_err(|_| AppError::Cryptography)?,
             )
@@ -205,6 +209,19 @@ impl App {
             self.executor.handle(),
             Arc::clone(&self.state_runtime),
         )
+    }
+    pub fn resources(
+        &self,
+    ) -> crate::resources::service::ResourceService<crate::resources::provider::Provider> {
+        let service = self.resource_service(crate::resources::provider::Provider {
+            sealer: self.sealer(),
+            cache: Arc::clone(&self.configuration_cache),
+        });
+        #[cfg(test)]
+        if let Some(connector) = &self.resource_connector {
+            return service.with_connector(connector.clone());
+        }
+        service
     }
     /// Shared core handles are available before constructing any HTTP provider.
     pub fn state_reader(&self) -> crate::state::service::StateReader {
@@ -377,5 +394,7 @@ impl From<schema::SchemaError> for AppError {
 mod commit_tests;
 #[cfg(all(test, unix))]
 mod node_tests;
+#[cfg(all(test, unix))]
+mod resource_tests;
 #[cfg(all(test, unix))]
 mod tests;

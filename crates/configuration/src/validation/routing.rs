@@ -181,6 +181,11 @@ fn rules(
         for key in &rule.matcher.rule_sets {
             if !config.rule_sets.contains_key(key) {
                 check.issue(&path, "unknown rule set");
+            } else if matches!(config.rule_sets.get(key), Some(RuleSet::Remote { .. })) {
+                check.require(
+                    format!("/ruleSets/{}", pointer(key)),
+                    PreparationKind::RuleSetContent,
+                );
             }
         }
         if rule.action == RouteAction::Unmanaged {
@@ -263,6 +268,66 @@ pub(super) fn validate(
     context: &ValidationContext<'_>,
     check: &mut Check,
 ) {
+    // Validate declared sources separately; trusted content must not hide an
+    // invalid URL. Resolved copies make retained-rule coverage compare content,
+    // rather than treating an unchanged reference as unchanged authorization.
+    let remote: BTreeMap<_, _> = config
+        .rule_sets
+        .iter()
+        .filter(|(_, value)| matches!(value, RuleSet::Remote { .. }))
+        .map(|(key, value)| (key.clone(), value.clone()))
+        .collect();
+    for (key, set) in &remote {
+        if let RuleSet::Remote { url, .. } = set {
+            let authority = url
+                .strip_prefix("https://")
+                .and_then(|s| s.split(['/', '?', '#']).next());
+            if authority.is_none_or(|a| !https_authority(a))
+                || url.len() > 2048
+                || url.chars().any(|c| c.is_control() || c.is_whitespace())
+                || url.contains('#')
+            {
+                check.issue(
+                    format!("/ruleSets/{}", pointer(key)),
+                    "rule source must be HTTPS without credentials or fragment",
+                );
+            }
+        }
+    }
+    fn resolve(
+        config: &mut NetworkConfiguration,
+        contents: &BTreeMap<String, meshway_model::resources::RuleSetData>,
+    ) {
+        for (key, data) in contents {
+            if matches!(config.rule_sets.get(key), Some(RuleSet::Remote { .. })) {
+                config.rule_sets.insert(
+                    key.clone(),
+                    RuleSet::Inline {
+                        ip_cidr: data.ip_cidr.clone(),
+                        domain_suffix: data.domain_suffix.clone(),
+                    },
+                );
+            }
+        }
+    }
+    resolve(config, &context.rule_sets);
+    let mut previous = context.previous.cloned();
+    if let Some(previous) = &mut previous {
+        resolve(previous, &context.previous_rule_sets);
+    }
+    let context = ValidationContext {
+        previous: previous.as_ref(),
+        ..context.clone()
+    };
+    validate_resolved(config, &context, check);
+    config.rule_sets.extend(remote);
+}
+
+fn validate_resolved(
+    config: &mut NetworkConfiguration,
+    context: &ValidationContext<'_>,
+    check: &mut Check,
+) {
     for (key, set) in &mut config.rule_sets {
         let path = format!("/ruleSets/{}", pointer(key));
         if key.is_empty() {
@@ -278,20 +343,8 @@ pub(super) fn validate(
                 }
                 destinations(ip_cidr, domain_suffix, &path, check);
             }
-            RuleSet::Remote { url, .. } => {
-                let authority = url
-                    .strip_prefix("https://")
-                    .and_then(|s| s.split(['/', '?', '#']).next());
-                if authority.is_none_or(|a| !https_authority(a))
-                    || url.chars().any(|c| c.is_control() || c.is_whitespace())
-                    || url.contains('#')
-                {
-                    check.issue(
-                        &path,
-                        "rule source must be HTTPS without credentials or fragment",
-                    );
-                }
-            }
+            // Sources were checked before resolving immutable contents.
+            RuleSet::Remote { .. } => {}
         }
     }
     for (i, rule) in config.routing.mesh.iter().enumerate() {
@@ -564,11 +617,8 @@ fn verify_rules(
                     destinations.extend(ip_cidr.clone());
                     destinations.extend(domain_suffix.iter().map(|s| format!("domain:{s}")));
                 }
-                Some(RuleSet::Remote { .. }) => check.require(
-                    format!("/ruleSets/{}", pointer(key)),
-                    PreparationKind::RuleSetContent,
-                ),
-                None => {}
+                // Every rule reference already requires unresolved content.
+                Some(RuleSet::Remote { .. }) | None => {}
             }
         }
         if destinations

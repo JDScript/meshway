@@ -28,15 +28,6 @@ pub(crate) fn check_inputs(
     if input.nodes.keys().any(|id| !nodes.contains(id)) {
         return Err(Error::DependencyUnavailable);
     }
-    // Remote artifacts are supplied by the resources owner, not reconstructed
-    // from URL declarations or represented as a fabricated empty dataset.
-    if input
-        .rule_sets
-        .values()
-        .any(|r| matches!(r, meshway_configuration::RuleSet::Remote { .. }))
-    {
-        return Err(Error::DependencyUnavailable);
-    }
     Ok(())
 }
 impl CommitParticipant for Participant<'_> {
@@ -167,8 +158,9 @@ impl CommitParticipant for Participant<'_> {
         tx: &Transaction<'_>,
         current: &Snapshot,
         prepared: &PreparedConfiguration,
-        _revision: Revision,
+        revision: Revision,
     ) -> Result<(Vec<PublicationId>, BTreeSet<NodeId>), Error> {
+        crate::resources::bindings::inherit_checks(tx, current, prepared, revision)?;
         let publication = node_store::apply_configuration_effects(
             tx,
             self.sealer,
@@ -285,6 +277,8 @@ pub(crate) fn validation_context<'a>(
         expected_node_user_bindings: expected_nodes,
         previous_node_user_bindings: current.bindings.node_users.clone(),
         approved_identities: approved,
+        rule_sets: crate::resources::bindings::for_input(tx, current, input)?.1,
+        previous_rule_sets: crate::resources::bindings::current_contents(tx, current)?,
         ..Default::default()
     })
 }

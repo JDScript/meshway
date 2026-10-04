@@ -10,7 +10,10 @@ use meshway_model::{NetworkId, NodeId, PublicationId, RequestId, Revision};
 wire_tagged! {pub enum ConfigurationRequest {
     Document {#[serde(rename="expectedRevision")]expected_revision:Revision,#[serde(rename="requestId")]request_id:RequestId,#[serde(rename="sourceJsonc")]source_jsonc:WireSecret},
     Operations {#[serde(rename="expectedRevision")]expected_revision:Revision,#[serde(rename="requestId")]request_id:RequestId,ops:Vec<ConfigurationOperation>},
-    Restore {#[serde(rename="expectedRevision")]expected_revision:Revision,#[serde(rename="requestId")]request_id:RequestId,#[serde(rename="restoreFrom")]restore_from:Revision},
+    Restore {#[serde(rename="expectedRevision")]expected_revision:Revision,#[serde(rename="requestId")]request_id:RequestId,#[serde(rename="restoreFrom")]restore_from:Revision,
+        /// Omitted: the source version's initial resource bindings. Otherwise
+        /// select this exact historical publication from the same source version.
+        #[serde(default, rename="resourcePublication")]resource_publication:Option<PublicationId>},
 } }
 impl ConfigurationRequest {
     pub fn expected_revision(&self) -> Revision {

@@ -1,6 +1,6 @@
 use crate::object::wire_object;
 use chrono::{DateTime, Utc};
-use meshway_model::{ArtifactId, Digest, Revision};
+use meshway_model::{ArtifactId, Digest, PublicationId, Revision};
 
 pub use meshway_model::resources::RuleSetData;
 wire_object! { #[derive(Clone, Debug, PartialEq, Eq)] pub struct ArtifactSummary {
@@ -17,11 +17,17 @@ pub enum ResourceProblem {
     ConversionFailed,
     ConfigurationChanged,
     BudgetExceeded,
+    NotReady,
+    ValidationFailed,
 }
 wire_object! { #[derive(Clone, Debug)] pub struct RuleSetView {
     pub key: String, pub configuration_revision: Revision,
     pub definition: Option<meshway_configuration::RuleSet>,
     pub artifact: Option<ArtifactSummary>, pub problem: Option<ResourceProblem>,
+    /// Exact execution publication whose immutable bindings select this artifact.
+    pub publication: Option<PublicationId>,
     pub checked_at: Option<DateTime<Utc>>,
+    /// Last successful download/conversion/publication check, not artifact creation.
+    pub last_success_at: Option<DateTime<Utc>>,
 } }
 wire_object! { #[derive(Clone, Debug)] pub struct RuleSetList { pub items: Vec<RuleSetView> } }

@@ -2,7 +2,7 @@ use super::{MAX_DATASET_BYTES, MAX_RULE_ENTRIES};
 use meshway_configuration::RuleSetFormat;
 use meshway_protocol::resources::{ResourceProblem, RuleSetData};
 use serde::Deserialize;
-use std::{collections::BTreeSet, net::IpAddr, time::Duration};
+use std::{collections::BTreeSet, net::IpAddr};
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -144,73 +144,6 @@ pub fn normalize(data: RuleSetData) -> Result<RuleSetData, ResourceProblem> {
         ip_cidr: prefixes.into_iter().collect(),
         domain_suffix: suffixes.into_iter().collect(),
     })
-}
-
-/// Per-download client has no ambient proxy, cookies, redirects or credentials.
-/// Only resolved public addresses are pinned to avoid DNS rebinding into LAN.
-pub async fn download(source: &str) -> Result<Vec<u8>, ResourceProblem> {
-    let url = reqwest::Url::parse(source).map_err(|_| ResourceProblem::InvalidSource)?;
-    if url.scheme() != "https"
-        || !url.username().is_empty()
-        || url.password().is_some()
-        || url.fragment().is_some()
-        || source.len() > 2048
-    {
-        return Err(ResourceProblem::InvalidSource);
-    }
-    let host = url.host_str().ok_or(ResourceProblem::InvalidSource)?;
-    let port = url
-        .port_or_known_default()
-        .ok_or(ResourceProblem::InvalidSource)?;
-    tokio::time::timeout(Duration::from_secs(30), async {
-        let addresses: Vec<_> = tokio::net::lookup_host((host, port))
-            .await
-            .map_err(|_| ResourceProblem::DownloadFailed)?
-            .collect();
-        if addresses.is_empty()
-            || addresses.len() > 16
-            || addresses.iter().any(|a| !super::geoip::is_public(a.ip()))
-        {
-            return Err(ResourceProblem::InvalidSource);
-        }
-        let client = reqwest::Client::builder()
-            .https_only(true)
-            .no_proxy()
-            .redirect(reqwest::redirect::Policy::none())
-            .connect_timeout(Duration::from_secs(5))
-            .timeout(Duration::from_secs(25))
-            .resolve_to_addrs(host, &addresses)
-            .build()
-            .map_err(|_| ResourceProblem::DownloadFailed)?;
-        let mut response = client
-            .get(url.clone())
-            .send()
-            .await
-            .map_err(|_| ResourceProblem::DownloadFailed)?;
-        if !response.status().is_success() {
-            return Err(ResourceProblem::DownloadFailed);
-        }
-        if response
-            .content_length()
-            .is_some_and(|size| size > MAX_DATASET_BYTES as u64)
-        {
-            return Err(ResourceProblem::TooLarge);
-        }
-        let mut bytes = Vec::new();
-        while let Some(chunk) = response
-            .chunk()
-            .await
-            .map_err(|_| ResourceProblem::DownloadFailed)?
-        {
-            if bytes.len() + chunk.len() > MAX_DATASET_BYTES {
-                return Err(ResourceProblem::TooLarge);
-            }
-            bytes.extend_from_slice(&chunk);
-        }
-        Ok(bytes)
-    })
-    .await
-    .map_err(|_| ResourceProblem::DownloadFailed)?
 }
 
 #[cfg(test)]

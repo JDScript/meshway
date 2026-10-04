@@ -144,7 +144,24 @@ pub(crate) fn publish(
     cause: &str,
     now: i64,
 ) -> Result<CompiledPublication, NodeError> {
+    let (revision, _, bindings) = current_configuration(tx, sealer, network)?;
+    let rule_sets =
+        crate::resources::bindings::at_revision(tx, network, revision, &bindings.rule_sets)
+            .map_err(|_| NodeError::Storage)?;
+    publish_with_rule_sets(tx, sealer, network, cause, now, &rule_sets)
+}
+
+pub(crate) fn publish_with_rule_sets(
+    tx: &Transaction<'_>,
+    sealer: &Sealer,
+    network: NetworkId,
+    cause: &str,
+    now: i64,
+    rule_set_bindings: &crate::resources::bindings::Bindings,
+) -> Result<CompiledPublication, NodeError> {
     let (revision, cfg, bindings) = current_configuration(tx, sealer, network)?;
+    let rule_sets =
+        crate::resources::bindings::compilation_contents(tx, network, rule_set_bindings)?;
     let mut selected_profiles = BTreeMap::new();
     let mut statement = tx.prepare(
         "SELECT node_id,identity_digest,profile FROM routing_selections WHERE network_id=?1",
@@ -187,7 +204,7 @@ pub(crate) fn publish(
         inventory: &inventory,
         demands: &demands,
         dns: &[],
-        rule_sets: &BTreeMap::new(),
+        rule_sets: &rule_sets,
         selected_profiles: &selected_profiles,
         now_ms: now as u64,
     })?;
@@ -251,10 +268,20 @@ pub(crate) fn publish(
         .seal_execution(network, publication, &payload)
         .map_err(|_| NodeError::Storage)?;
     tx.execute(
-        "INSERT INTO execution_publications(id,network_id,sequence,revision,cause,supersedes,dependency_digest,payload,created_at)
-         VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9)",
-        params![publication.as_uuid().as_bytes().as_slice(),network.as_uuid().as_bytes().as_slice(),
-            sequence,revision.get() as i64,cause,bytes(&supersedes)?,compiled.dependency_digest.as_bytes().as_slice(),sealed.as_bytes(),now],
+        "INSERT INTO execution_publications(id,network_id,sequence,revision,cause,supersedes,dependency_digest,payload,created_at,rule_set_bindings)
+         VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10)",
+        params![
+            publication.as_uuid().as_bytes().as_slice(),
+            network.as_uuid().as_bytes().as_slice(),
+            sequence,
+            revision.get() as i64,
+            cause,
+            bytes(&supersedes)?,
+            compiled.dependency_digest.as_bytes().as_slice(),
+            sealed.as_bytes(),
+            now,
+            bytes(rule_set_bindings)?,
+        ],
     )?;
     // All demands were compiled together; only changed slices become targets.
     for node in compiled.nodes.keys() {

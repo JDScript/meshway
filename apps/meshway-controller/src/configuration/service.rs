@@ -93,7 +93,7 @@ impl Configurations {
             validation.verified_listeners = verified;
             let context = TrustedContext {
                 validation,
-                rule_sets: current.bindings.rule_sets.clone(),
+                rule_sets: crate::resources::bindings::for_input(tx, &current, &input)?.0,
             };
             let mut prepared = prepare(input, source, &current, &context)?;
             prepared.email_sync = Some(EmailSync {
@@ -446,9 +446,33 @@ impl Configurations {
         validation.expected_node_user_bindings = expected_nodes;
         validation.verified_listeners = verified_listeners;
         validation.recreated_listeners = recreated_listeners;
+        let rule_sets = if let ConfigurationRequest::Restore {
+            restore_from,
+            resource_publication,
+            ..
+        } = request
+        {
+            let snapshot = self
+                .cache
+                .load(tx, current.network_id, *restore_from, &self.sealer)?;
+            let bindings = match resource_publication {
+                Some(publication) => crate::resources::bindings::at_publication(
+                    tx,
+                    current.network_id,
+                    *restore_from,
+                    *publication,
+                )?,
+                None => snapshot.bindings.rule_sets.clone(),
+            };
+            validation.rule_sets =
+                crate::resources::bindings::contents(tx, current.network_id, &bindings)?;
+            bindings
+        } else {
+            crate::resources::bindings::for_input(tx, current, &input)?.0
+        };
         let context = TrustedContext {
             validation,
-            rule_sets: current.bindings.rule_sets.clone(),
+            rule_sets,
         };
         let mut prepared = prepare(input, source, current, &context)?;
         if let ConfigurationRequest::Restore { restore_from, .. } = request {

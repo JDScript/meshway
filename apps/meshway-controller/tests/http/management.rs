@@ -172,6 +172,7 @@ async fn removed_member_references_survive_email_maintenance_and_never_rebind_on
         .bearer_auth(owner.token.expose())
         .json(&ConfigurationRequest::Restore {
             expected_revision: current.revision,
+            resource_publication: None,
             request_id: request(),
             restore_from: applied.revision,
         })
@@ -1236,6 +1237,7 @@ async fn join_roles_configuration_cas_comment_preservation_and_revocation() {
         .bearer_auth(owner.token.expose())
         .json(&ConfigurationRequest::Restore {
             expected_revision: applied.revision,
+            resource_publication: None,
             request_id: request(),
             restore_from: Revision::MIN,
         })
@@ -1462,6 +1464,7 @@ async fn email_sync_preserves_subject_history_comments_and_restore_binding() {
         .bearer_auth(owner.token.expose())
         .json(&ConfigurationRequest::Restore {
             expected_revision: source.revision,
+            resource_publication: None,
             request_id: request(),
             restore_from: applied.revision,
         })

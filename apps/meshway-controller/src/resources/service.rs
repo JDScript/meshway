@@ -6,8 +6,10 @@ use crate::state::{
 use chrono::{DateTime, Utc};
 use meshway_configuration::RuleSet;
 use meshway_model::{NetworkId, Revision};
-use meshway_protocol::resources::{ArtifactSummary, RuleSetData, RuleSetList, RuleSetView};
-use rusqlite::Transaction;
+use meshway_protocol::resources::{
+    ArtifactSummary, ResourceProblem, RuleSetData, RuleSetList, RuleSetView,
+};
+use rusqlite::{Transaction, params};
 use std::collections::BTreeMap;
 use std::sync::{Arc, Mutex};
 
@@ -42,6 +44,7 @@ pub struct ResourceService<P: ResourceProvider> {
     handle: crate::store::Handle,
     provider: Arc<P>,
     runtime: Arc<Mutex<Runtime>>,
+    connector: Arc<dyn super::download::Connector>,
 }
 impl<P: ResourceProvider> Clone for ResourceService<P> {
     fn clone(&self) -> Self {
@@ -49,6 +52,7 @@ impl<P: ResourceProvider> Clone for ResourceService<P> {
             handle: self.handle.clone(),
             provider: self.provider.clone(),
             runtime: self.runtime.clone(),
+            connector: self.connector.clone(),
         }
     }
 }
@@ -62,7 +66,13 @@ impl<P: ResourceProvider> ResourceService<P> {
             handle,
             provider: Arc::new(provider),
             runtime,
+            connector: Arc::new(super::download::Https),
         }
+    }
+    #[cfg(test)]
+    pub(crate) fn with_connector(mut self, connector: Arc<dyn super::download::Connector>) -> Self {
+        self.connector = connector;
+        self
     }
     pub async fn rule_sets(
         &self,
@@ -70,7 +80,6 @@ impl<P: ResourceProvider> ResourceService<P> {
         selected: Option<String>,
     ) -> Result<RuleSetList, StateError> {
         let provider = self.provider.clone();
-        let runtime = self.runtime.clone();
         self.handle
             .execute(move |connection| {
                 let tx = connection.transaction()?;
@@ -81,27 +90,27 @@ impl<P: ResourceProvider> ResourceService<P> {
                 {
                     return Err(StateError::NotFound);
                 }
-                let runtime = runtime.lock().map_err(|_| StateError::Unavailable)?;
                 Ok(RuleSetList {
                     items: scope
                         .definitions
                         .keys()
                         .filter(|key| selected.as_ref().is_none_or(|selected| selected == *key))
                         .map(|key| {
-                            let mut view = runtime
-                                .resource_results
-                                .get(&(scope.network, key.clone()))
-                                .filter(|result| result.configuration_revision == scope.revision)
-                                .or_else(|| scope.views.get(key))
-                                .cloned()
-                                .unwrap_or_else(|| RuleSetView {
-                                    key: key.clone(),
-                                    configuration_revision: scope.revision,
-                                    definition: None,
-                                    artifact: None,
-                                    problem: None,
-                                    checked_at: None,
-                                });
+                            let mut view =
+                                scope
+                                    .views
+                                    .get(key)
+                                    .cloned()
+                                    .unwrap_or_else(|| RuleSetView {
+                                        key: key.clone(),
+                                        configuration_revision: scope.revision,
+                                        definition: None,
+                                        artifact: None,
+                                        publication: None,
+                                        problem: None,
+                                        checked_at: None,
+                                        last_success_at: None,
+                                    });
                             view.definition =
                                 scope.can_refresh.then(|| scope.definitions[key].clone());
                             view
@@ -120,7 +129,7 @@ impl<P: ResourceProvider> ResourceService<P> {
         let provider = self.provider.clone();
         let check_identity = identity.clone();
         let check_key = key.clone();
-        let (network, revision, definition) = self
+        let (network, revision, definition, previous_artifact) = self
             .handle
             .execute(move |connection| {
                 let tx = connection.transaction()?;
@@ -133,7 +142,12 @@ impl<P: ResourceProvider> ResourceService<P> {
                     .get(&check_key)
                     .cloned()
                     .ok_or(StateError::NotFound)?;
-                Ok::<_, StateError>((scope.network, scope.revision, definition))
+                let artifact = scope
+                    .views
+                    .get(&check_key)
+                    .and_then(|view| view.artifact.as_ref())
+                    .map(|artifact| artifact.id);
+                Ok::<_, StateError>((scope.network, scope.revision, definition, artifact))
             })
             .await??;
         let converted = match &definition {
@@ -144,10 +158,12 @@ impl<P: ResourceProvider> ResourceService<P> {
                 ip_cidr: ip_cidr.clone(),
                 domain_suffix: domain_suffix.clone(),
             }),
-            RuleSet::Remote { url, format, .. } => match super::download(url).await {
-                Ok(bytes) => super::convert(&bytes, format),
-                Err(problem) => Err(problem),
-            },
+            RuleSet::Remote { url, format, .. } => {
+                match super::download::download(url, self.connector.as_ref()).await {
+                    Ok(bytes) => super::convert(&bytes, format),
+                    Err(problem) => Err(problem),
+                }
+            }
         };
         drop(permit);
         let provider = self.provider.clone();
@@ -160,58 +176,68 @@ impl<P: ResourceProvider> ResourceService<P> {
                 if !scope.can_refresh {
                     return Err(StateError::Forbidden);
                 }
+                let current_artifact = scope.views.get(&key)
+                    .and_then(|view| view.artifact.as_ref())
+                    .map(|artifact| artifact.id);
                 if scope.network != network
                     || scope.revision != revision
                     || scope.definitions.get(&key) != Some(&definition)
+                    || current_artifact != previous_artifact
                 {
                     return Err(StateError::Conflict);
                 }
-                let data = match converted {
-                    Ok(data) => data,
-                    Err(problem) => {
-                        let result = RuleSetView {
-                            key: key.clone(),
-                            configuration_revision: revision,
-                            definition: Some(definition.clone()),
-                            artifact: scope.views.get(&key).and_then(|view| view.artifact.clone()),
-                            problem: Some(problem),
-                            checked_at: Some(now),
-                        };
-                        let mut runtime = runtime.lock().map_err(|_| StateError::Unavailable)?;
-                        if runtime.resource_results.len() >= 4096 {
-                            runtime.resource_results.clear();
+                let mut artifact = scope.views.get(&key).and_then(|view| view.artifact.clone());
+                let problem = match converted {
+                    Err(problem) => Some(problem),
+                    Ok(data) => {
+                        tx.execute_batch("SAVEPOINT resource_binding")?;
+                        let candidate = super::store_artifact(&tx, network, "rule-set", &data, now)?;
+                        match provider.bind_rule_set(&tx, network, revision, &key, &candidate, now) {
+                            Ok(()) => {
+                                tx.execute_batch("RELEASE resource_binding")?;
+                                artifact = Some(candidate);
+                                None
+                            }
+                            Err(StateError::Invalid) => {
+                                tx.execute_batch("ROLLBACK TO resource_binding; RELEASE resource_binding")?;
+                                Some(ResourceProblem::ValidationFailed)
+                            }
+                            Err(error) => return Err(error),
                         }
-                        runtime
-                            .resource_results
-                            .insert((network, key), result.clone());
-                        return Ok(result);
                     }
                 };
-                let source = match &definition {
-                    RuleSet::Inline { .. } => "inline",
-                    RuleSet::Remote { url, .. } => url,
-                };
-                let artifact = super::store_artifact(&tx, network, source, &data, now)?;
-                provider.bind_rule_set(&tx, network, revision, &key, &artifact, now)?;
-                tx.commit()?;
-                let mut runtime = runtime.lock().map_err(|_| StateError::Unavailable)?;
-                runtime.hub.publish_committed(CommittedChange::Resource {
-                    network_id: network,
-                });
-                let result = RuleSetView {
-                    key: key.clone(),
-                    configuration_revision: revision,
-                    definition: Some(definition),
-                    artifact: Some(artifact),
-                    problem: None,
-                    checked_at: Some(now),
-                };
-                if runtime.resource_results.len() >= 4096 {
-                    runtime.resource_results.clear();
+                let stored_problem = problem
+                    .map(|value| serde_json::to_string(&value))
+                    .transpose()
+                    .map_err(|_| StateError::Storage)?;
+                tx.execute(
+                    "INSERT INTO rule_set_checks(network_id,revision,rule_set_key,problem,checked_at,last_success_at)
+                     VALUES(?1,?2,?3,?4,?5,?6) ON CONFLICT(network_id,revision,rule_set_key)
+                     DO UPDATE SET problem=excluded.problem,checked_at=excluded.checked_at,
+                        last_success_at=COALESCE(excluded.last_success_at,rule_set_checks.last_success_at)",
+                    params![
+                        network.as_uuid().as_bytes().as_slice(),
+                        revision.get() as i64,
+                        key,
+                        stored_problem,
+                        now.timestamp_millis(),
+                        problem.is_none().then_some(now.timestamp_millis()),
+                    ],
+                )?;
+                let result = provider.rule_sets(&tx, &identity, now)?
+                    .views.remove(&key).ok_or(StateError::Storage)?;
+                if result.artifact != artifact || result.problem != problem {
+                    return Err(StateError::Storage);
                 }
-                runtime
-                    .resource_results
-                    .insert((network, key), result.clone());
+                // Once admitted, this store closure owns COMMIT and publication
+                // even if the HTTP waiter is cancelled during the download tail.
+                crate::state::service::CommitPublisher::new(runtime).commit(
+                    tx,
+                    vec![
+                        CommittedChange::Resource { network_id: network },
+                        CommittedChange::Progress { network_id: network },
+                    ],
+                )?;
                 Ok(result)
             })
             .await?

@@ -54,13 +54,14 @@ pub(crate) fn remove_nodes(
     let mut validation =
         super::configuration::validation_context(tx, &current, &input, None, false)?;
     validation.verified_listeners = verified;
+    let rule_sets = crate::resources::bindings::for_input(tx, &current, &input)?.0;
     let prepared = prepare(
         input,
         source,
         &current,
         &TrustedContext {
             validation,
-            rule_sets: current.bindings.rule_sets.clone(),
+            rule_sets,
         },
     )?;
     let actor = current_session(tx, &removal.digest, chrono::Utc::now().timestamp_millis())

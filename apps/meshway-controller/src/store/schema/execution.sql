@@ -112,6 +112,7 @@ CREATE TABLE execution_publications (
     revision INTEGER NOT NULL,
     cause TEXT NOT NULL CHECK(cause IN ('configuration','demand','refresh')),
     supersedes BLOB NOT NULL,
+    rule_set_bindings BLOB NOT NULL,
     dependency_digest BLOB NOT NULL CHECK(length(dependency_digest)=32),
     payload BLOB NOT NULL CHECK(length(payload)>=61),
     created_at INTEGER NOT NULL,
