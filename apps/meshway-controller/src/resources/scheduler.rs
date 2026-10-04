@@ -53,9 +53,11 @@ impl Scheduler {
             loop {
                 tokio::select! { biased; _ = cancellation.cancelled() => break, _ = tokio::time::sleep(SCAN_PERIOD) => {} }
                 let provider = provider.clone();
-                let scan = handle
-                    .execute(move |db| scan_network(db, &provider, after))
-                    .await;
+                let scan = tokio::select! {
+                    biased;
+                    _ = cancellation.cancelled() => break,
+                    scan = handle.execute(move |db| scan_network(db, &provider, after)) => scan,
+                };
                 if let Ok(Ok((network, task))) = scan {
                     after = network;
                     if let Some(task) = task {

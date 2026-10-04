@@ -25,6 +25,58 @@ fn rid() -> RequestId {
     RequestId::new(crate::accounts::random_uuid().unwrap()).unwrap()
 }
 
+#[tokio::test]
+async fn resource_scan_shutdown_releases_its_waiter_before_accepted_sql_drains() {
+    let temp = tempfile::tempdir().unwrap();
+    let path = temp.path().canonicalize().unwrap().join("data");
+    let app = App::open(Settings::new(path.clone())).await.unwrap();
+    let cache_owners = Arc::strong_count(&app.configuration_cache);
+    let handle = app.executor.handle();
+    let (entered, started) = tokio::sync::oneshot::channel();
+    let (release, blocked) = std::sync::mpsc::channel();
+    let committed = Arc::new(AtomicBool::new(false));
+    let completed = committed.clone();
+    let blocker = tokio::spawn(async move {
+        handle.execute(move |db| {
+            let tx = db.transaction().unwrap();
+            tx.execute_batch("CREATE TEMP TABLE accepted_resource_work(value INTEGER); INSERT INTO accepted_resource_work VALUES(1)").unwrap();
+            entered.send(()).unwrap();
+            blocked.recv_timeout(Duration::from_secs(10)).unwrap();
+            tx.commit().unwrap();
+            completed.store(true, Ordering::Release);
+        }).await.unwrap();
+    });
+    started.await.unwrap();
+    // The scanner clones its provider before awaiting the serial owner. The
+    // extra cache reference proves it has entered a scan behind the blocked job.
+    tokio::time::timeout(Duration::from_secs(3), async {
+        while Arc::strong_count(&app.configuration_cache) == cache_owners {
+            tokio::time::sleep(Duration::from_millis(1)).await;
+        }
+    })
+    .await
+    .unwrap();
+    tokio::time::timeout(Duration::from_secs(1), app.resource_scheduler.shutdown())
+        .await
+        .unwrap();
+    assert!(!committed.load(Ordering::Acquire));
+    assert!(matches!(
+        App::open(Settings::new(path.clone())).await,
+        Err(AppError::AlreadyRunning)
+    ));
+    release.send(()).unwrap();
+    blocker.await.unwrap();
+    assert!(committed.load(Ordering::Acquire));
+    app.shutdown_hooks.close();
+    app.executor.shutdown().await.unwrap();
+    App::open(Settings::new(path))
+        .await
+        .unwrap()
+        .shutdown()
+        .await
+        .unwrap();
+}
+
 struct HttpsSource {
     requests: Arc<AtomicUsize>,
     hold_body: Arc<AtomicBool>,
