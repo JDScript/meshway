@@ -29,6 +29,7 @@ pub(super) fn setup() -> (ReportAdmission, StateReport, VisibilityScope, DateTim
         execution: Some(reference.clone()),
         configurations: vec![reference.clone()],
         contexts: vec![ConfigurationAdmission {
+            path_deadlines: BTreeMap::from([(vec![node, peer], now + Duration::minutes(5))]),
             configuration: reference.clone(),
             installation_allowed: true,
             resources: BTreeMap::from([(
@@ -107,6 +108,7 @@ pub(super) fn setup() -> (ReportAdmission, StateReport, VisibilityScope, DateTim
         network_id: admission.network_id,
         configuration_revision: Revision::MIN,
         authorization_digest: content_digest(b"authorization"),
+        observation_authorization_digest: content_digest(b"authorization"),
         visible: BTreeSet::from([node, peer]),
         full: BTreeSet::from([node]),
         observation_paths: BTreeSet::from([vec![node, peer]]),
@@ -250,12 +252,18 @@ fn peer_projection_expires_candidates_and_does_not_leak_interfaces() {
 fn observations_bind_instance_path_and_independent_subscriber_leases() {
     let (report, _, scope, now) = setup();
     let mut admission = TaskAdmission {
+        configuration: report.execution.clone().unwrap(),
+        paths: report.current().unwrap().paths.clone(),
+        node_expires_at: report.lease_expires_at,
+        observation_id: None,
+        unsupported_metrics: vec![],
         report: report.clone(),
         session_id: id(10),
         authorization_digest: scope.authorization_digest,
         session_expires_at: now + Duration::minutes(10),
     };
     let request = CreateObservation {
+        service: meshway_configuration::execution::ObservationServiceScope::IcmpEcho,
         subscription_id: id(100),
         source_node_id: report.node_id,
         target_node_id: id(2),
@@ -307,12 +315,18 @@ fn observations_bind_instance_path_and_independent_subscriber_leases() {
 fn shared_task_subscribers_renew_independently_and_create_retry_does_not_renew() {
     let (report, _, scope, now) = setup();
     let mut admission = TaskAdmission {
+        configuration: report.execution.clone().unwrap(),
+        paths: report.current().unwrap().paths.clone(),
+        node_expires_at: report.lease_expires_at,
+        observation_id: None,
+        unsupported_metrics: vec![],
         report: report.clone(),
         session_id: id(10),
         authorization_digest: scope.authorization_digest,
         session_expires_at: now + Duration::minutes(5),
     };
     let request = CreateObservation {
+        service: meshway_configuration::execution::ObservationServiceScope::IcmpEcho,
         subscription_id: id(100),
         source_node_id: report.node_id,
         target_node_id: id(2),
@@ -485,6 +499,10 @@ fn neighbor_probe_uses_explicit_transport_adjacency_not_business_subpath() {
     let relay = id(90);
     let target = id(2);
     admission.contexts[0].paths = vec![vec![admission.node_id, relay, target]];
+    admission.contexts[0].path_deadlines.insert(
+        vec![admission.node_id, relay, target],
+        now + Duration::minutes(5),
+    );
     admission.contexts[0].neighbor_transports =
         BTreeMap::from([(relay, BTreeSet::from(["native_udp".into()]))]);
     let mut probe = ProbeObservation {

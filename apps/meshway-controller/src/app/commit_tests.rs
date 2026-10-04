@@ -504,7 +504,7 @@ async fn account_revocations_remove_real_observation_subscriptions_at_commit() {
         .demand(
             at.token.expose(),
             DemandRequest {
-                instance: ai.unwrap(),
+                instance: ai.clone().unwrap(),
                 request_id: request(),
                 target: BusinessTarget::Mesh { node: b },
                 protocol: BusinessProtocol::Tcp,
@@ -535,6 +535,9 @@ async fn account_revocations_remove_real_observation_subscriptions_at_commit() {
             .create_observation(
                 identity,
                 CreateObservation {
+                    service: meshway_configuration::execution::ObservationServiceScope::Tcp {
+                        port: meshway_transport_spec::Port::new(443).unwrap(),
+                    },
                     subscription_id: ObservationSubscriptionId::new(random_uuid().unwrap())
                         .unwrap(),
                     source_node_id: a,
@@ -547,6 +550,20 @@ async fn account_revocations_remove_real_observation_subscriptions_at_commit() {
             .await
             .unwrap();
         let provider = execution.clone();
+        execution
+            .renew(at.token.expose(), ai.clone().unwrap())
+            .await
+            .unwrap();
+        execution
+            .configuration(
+                at.token.expose(),
+                NodeConfigurationRequest {
+                    instance: ai.clone().unwrap(),
+                    base: None,
+                },
+            )
+            .await
+            .unwrap();
         let node_token = at.token.expose().to_owned();
         let admission = app
             .executor

@@ -212,6 +212,7 @@ pub fn openapi() -> OpenApi {
     spec.merge(state_spec);
     spec.merge(state::ProgressApi::openapi());
     spec.merge(resources::ResourceApi::openapi());
+    spec.merge(observations::ObservationApi::openapi());
     events::declare_sse::<meshway_protocol::UserEvent>(
         &mut spec,
         &<state::__path_user_events as utoipa::Path>::path(),
@@ -265,6 +266,7 @@ pub fn router(app: &App) -> Router {
             app.user_state_service().expect("App state runtime"),
         ))
         .merge(resources::router(app.resources()))
+        .merge(observations::router(app.observations()))
 }
 
 async fn context(mut request: Request, next: Next) -> Response {

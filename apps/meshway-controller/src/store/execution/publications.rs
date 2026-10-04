@@ -195,19 +195,23 @@ pub(crate) fn publish_with_rule_sets(
         .collect::<Result<BTreeMap<_, _>, NodeError>>()?;
     drop(stmt);
     let publication = PublicationId::new(uuid()?).map_err(|_| NodeError::Storage)?;
-    let mut compiled = compile::compile(CompilationInput {
-        network,
-        revision,
-        publication,
-        configuration: &cfg,
-        subjects: &subjects,
-        inventory: &inventory,
-        demands: &demands,
-        dns: &[],
-        rule_sets: &rule_sets,
-        selected_profiles: &selected_profiles,
-        now_ms: now as u64,
-    })?;
+    let diagnostics = crate::execution::diagnostics::collect(tx, network, now)?;
+    let mut compiled = compile::compile_with_diagnostics(
+        CompilationInput {
+            network,
+            revision,
+            publication,
+            configuration: &cfg,
+            subjects: &subjects,
+            inventory: &inventory,
+            demands: &demands,
+            dns: &[],
+            rule_sets: &rule_sets,
+            selected_profiles: &selected_profiles,
+            now_ms: now as u64,
+        },
+        &diagnostics,
+    )?;
     let mut stmt = tx.prepare(
         "SELECT node_id,target_publication_id,execution_expires_at FROM node_execution
          WHERE network_id=?1 AND target_publication_id IS NOT NULL",

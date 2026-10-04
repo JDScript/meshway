@@ -83,6 +83,11 @@ impl ObservationProvider for Fixture {
     ) -> Result<TaskAdmission, StateError> {
         self.view(tx, identity, now)?;
         Ok(TaskAdmission {
+            configuration: self.admission.execution.clone().unwrap(),
+            paths: self.admission.current().unwrap().paths.clone(),
+            node_expires_at: self.admission.lease_expires_at,
+            observation_id: None,
+            unsupported_metrics: vec![],
             report: self.admission.clone(),
             session_id: session(),
             authorization_digest: self.scope.authorization_digest,
@@ -107,6 +112,7 @@ fn subscription(n: u128) -> ObservationSubscriptionId {
 }
 fn request(fixture: &Fixture, n: u128) -> CreateObservation {
     CreateObservation {
+        service: meshway_configuration::execution::ObservationServiceScope::IcmpEcho,
         subscription_id: subscription(n),
         source_node_id: fixture.admission.node_id,
         target_node_id: fixture.admission.current().unwrap().paths[0][1],
@@ -126,8 +132,8 @@ fn result(fixture: &Fixture, n: u128) -> ObservationResult {
             sample: Box::new(ObservationSample {
                 measurement_id: uuid::Uuid::from_u128(n).to_string().parse().unwrap(),
                 version: meshway_model::Version::MIN,
-                window_start: now - Duration::seconds(2),
-                window_end: now - Duration::seconds(1),
+                window_start: now,
+                window_end: now + Duration::nanoseconds(1),
                 partial: false,
                 probe: None,
                 probe_counts: None,

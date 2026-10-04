@@ -25,6 +25,7 @@ pub struct App {
     boot: meshway_model::InstanceId,
     state_runtime: Arc<std::sync::Mutex<crate::state::service::Runtime>>,
     shutdown_hooks: ShutdownHooks,
+    observations_started: std::sync::atomic::AtomicBool,
 }
 
 #[derive(Default)]
@@ -169,6 +170,7 @@ impl App {
             configuration_cache,
             state_runtime,
             shutdown_hooks,
+            observations_started: std::sync::atomic::AtomicBool::new(false),
             boot: meshway_model::InstanceId::new(
                 crate::accounts::random_uuid().map_err(|_| AppError::Cryptography)?,
             )
@@ -212,6 +214,25 @@ impl App {
             provider,
             Arc::clone(&self.state_runtime),
         )
+    }
+    pub fn observations(
+        &self,
+    ) -> crate::observations::service::ObservationService<crate::execution::Execution> {
+        let service = self.observation_service(self.execution());
+        if !self
+            .observations_started
+            .swap(true, std::sync::atomic::Ordering::AcqRel)
+        {
+            let stop = service.start();
+            self.shutdown_hooks
+                .0
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .push(Box::new(move || {
+                    let _ = stop.send(true);
+                }));
+        }
+        service
     }
     pub fn resource_service<P: crate::resources::service::ResourceProvider>(
         &self,

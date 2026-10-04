@@ -58,7 +58,10 @@ pub use node::{
     NodeInventoryView, NodeKeyMetadata, NodeRotationRequest, NodeSessionRequest,
     NodeSessionResponse, RevokeNodeKeyRequest,
 };
-pub use observations::{HistoryAccepted, HistoryPage, HistoryQuery, HistoryReport};
+pub use observations::{
+    CreateObservation, HistoryAccepted, HistoryPage, HistoryQuery, HistoryReport, ObservationList,
+    ObservationResult, ObservationTask,
+};
 pub use resources::{RuleSetList, RuleSetView};
 pub use state::{StateAccepted, StateQuery, StateReport, StateView};
 

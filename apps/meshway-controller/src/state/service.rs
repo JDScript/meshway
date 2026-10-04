@@ -525,6 +525,7 @@ impl<P: StateProvider> StateService<P> {
                             {
                                 for task in tasks.iter().filter(|task| {
                                     task.id == observation.id
+                                        && task.configuration == observation.configuration
                                         && crate::observations::active(task.phase)
                                 }) {
                                     let mut observation = observation.clone();

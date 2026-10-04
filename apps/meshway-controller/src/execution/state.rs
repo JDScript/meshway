@@ -23,8 +23,8 @@ use std::{
 };
 
 impl Execution {
-    /// Reauthorize an observation of an already-published path. This does not
-    /// synthesize a new diagnostic demand; absent candidates remain unavailable.
+    /// Reauthorize an accepted diagnostic subscription against its current
+    /// exact service permit. Only prepare_observation may create a lifetime.
     pub fn observation_admission_in_transaction(
         &self,
         tx: &Transaction<'_>,
@@ -32,41 +32,7 @@ impl Execution {
         request: &meshway_protocol::observations::CreateObservation,
         now: DateTime<Utc>,
     ) -> Result<crate::observations::TaskAdmission, StateError> {
-        let ReadIdentity::UserSession { digest, network } = identity else {
-            return Err(StateError::Forbidden);
-        };
-        let user = current_session(tx, digest, now.timestamp_millis())
-            .map_err(|_| StateError::Unauthorized)?;
-        let scope = self.state_scope_in_transaction(tx, identity, now)?;
-        if !scope.full.contains(&request.source_node_id) {
-            return Err(StateError::Forbidden);
-        }
-        let mut report = self.node_admission(tx, *network, request.source_node_id, now)?;
-        let execution = report.execution.clone().ok_or(StateError::Unavailable)?;
-        let context = report
-            .contexts
-            .iter_mut()
-            .find(|context| context.configuration == execution)
-            .ok_or(StateError::Unavailable)?;
-        context.paths.retain(|path| {
-            path.first() == Some(&request.source_node_id)
-                && path.last() == Some(&request.target_node_id)
-        });
-        if context.paths.is_empty() {
-            return Err(StateError::Unavailable);
-        }
-        if let meshway_protocol::observations::ObservationPath::Explicit { path } =
-            &request.selection
-            && !context.paths.contains(path)
-        {
-            return Err(StateError::Forbidden);
-        }
-        Ok(crate::observations::TaskAdmission {
-            report,
-            session_id: user.session_id,
-            authorization_digest: scope.authorization_digest,
-            session_expires_at: user.expires_at,
-        })
+        self.diagnostic_admission(tx, identity, request, now)
     }
     /// Authenticate the real Node session and current instance in the same SQL
     /// transaction C uses to accept a report. No synthetic principal or bearer.
@@ -167,6 +133,17 @@ impl Execution {
                         observation_paths.insert(path.nodes.clone());
                     }
                 }
+                for permit in target
+                    .configuration
+                    .diagnostics
+                    .values()
+                    .filter(|p| p.expires_at_ms > now.timestamp_millis() as u64)
+                {
+                    for path in &permit.paths {
+                        visible.extend(path.nodes.iter().copied());
+                        observation_paths.insert(path.nodes.clone());
+                    }
+                }
             }
         }
         visible.retain(|node| cfg.nodes.contains_key(node));
@@ -247,6 +224,10 @@ impl Execution {
             network_id: network,
             configuration_revision: revision,
             authorization_digest,
+            observation_authorization_digest: super::proof::request_digest(&(
+                network, revision, actor, &full,
+            ))
+            .map_err(state_error)?,
             visible,
             full,
             observation_paths,
@@ -260,7 +241,7 @@ impl Execution {
         })
     }
 
-    fn node_admission(
+    pub(super) fn node_admission(
         &self,
         tx: &Transaction<'_>,
         network: NetworkId,
@@ -343,6 +324,7 @@ fn configuration_admission(
 ) -> ConfigurationAdmission {
     let cfg = &target.configuration;
     let mut report = ConfigurationAdmission {
+        path_deadlines: BTreeMap::new(),
         configuration: ConfigurationRef {
             revision: cfg.revision,
             execution_publication: cfg.publication,
@@ -360,10 +342,35 @@ fn configuration_admission(
         .permits
         .values()
         .flat_map(|p| p.paths.iter().map(|p| p.nodes.clone()))
+        .chain(
+            cfg.diagnostics
+                .values()
+                .flat_map(|p| p.paths.iter().map(|p| p.nodes.clone())),
+        )
         .collect::<BTreeSet<_>>()
         .into_iter()
         .collect();
     report.profiles.insert(cfg.dns.profile.clone());
+    for (paths, expires) in cfg
+        .permits
+        .values()
+        .map(|p| (&p.paths, p.expires_at_ms))
+        .chain(
+            cfg.diagnostics
+                .values()
+                .map(|p| (&p.paths, p.expires_at_ms)),
+        )
+    {
+        if let Ok(expiry) = time(expires) {
+            for path in paths {
+                report
+                    .path_deadlines
+                    .entry(path.nodes.clone())
+                    .and_modify(|old| *old = (*old).max(expiry))
+                    .or_insert(expiry);
+            }
+        }
+    }
     for (key, listener) in &cfg.listeners {
         let (enabled, network, transport, endpoints) = match listener.declaration() {
             Listener::NativeUdp(l) => (l.enabled, SocketNetwork::Udp, "native_udp", &l.endpoints),
@@ -446,6 +453,23 @@ fn state_error(error: NodeError) -> StateError {
 }
 
 impl crate::observations::service::ObservationProvider for Execution {
+    fn prepare_observation(
+        &self,
+        tx: &Transaction<'_>,
+        identity: &ReadIdentity,
+        request: &meshway_protocol::observations::CreateObservation,
+        now: DateTime<Utc>,
+    ) -> Result<crate::observations::TaskAdmission, StateError> {
+        self.prepare_diagnostic(tx, identity, request, now)
+    }
+    fn synchronize(
+        &self,
+        tx: &Transaction<'_>,
+        subscriptions: &[crate::observations::service::SubscriptionLease],
+        now: DateTime<Utc>,
+    ) -> Result<(), StateError> {
+        self.synchronize_diagnostics(tx, subscriptions, now)
+    }
     fn scope(
         &self,
         tx: &Transaction<'_>,

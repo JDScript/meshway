@@ -75,7 +75,7 @@ JSON `data` 使用 Rust 定义的封闭判别联合，以 `type` 区分。可以
 | `joinLink.redeemed` | 有权查看该链接／成员关系的订阅者收到安全引用 |
 | `activity.created` | 新操作历史 ID／时间，列表按需补读 |
 | `observation.status` | 任务 preparing／running／completed／failed／expired 等实际状态 |
-| `observation.sample` | observationId、measurementId、实际路径／配置引用与测量结果 |
+| `observation.sample` | 与 status／HTTP 相同的 `ObservationTask`：任务 id、subscriptionId、精确 service、实际路径／配置引用及 latest 样本 |
 | `observation.removed` | subscriptionId 对应的需求已失效或超过终态保留期；移除本地任务视图 |
 | `sync.reset` | cursor_too_old／view_changed 等原因；清理服务端缓存视图并重新授权、full sync |
 | `stream.closed` | session_expired／membership_revoked 等原因，不输出秘密 |
@@ -143,6 +143,8 @@ baseCursor 对齐上一条已应用的流事件（包含通知事件），不是
 创建任务前 Console 已建立网络订阅；任务创建、建立有权订阅关系与记录初始状态有一致的发布顺序。事件可能先于 POST 响应抵达，因此用任务 ID／请求关联去重并有界暂存；重连时同步当前任务状态，遗漏的历史样本不能补造。
 
 订阅只消费事实，不自动发探测或续租。观察页在前台明确续租；关闭／切换网络时取消自己的需求，丢失取消也由短租约结束。连接仍打开不等于观察仍获授权。
+
+创建请求须提供 `sourceNodeId`、`targetNodeId`、精确 `service`（tcp／udp 单端口或 icmpEcho）、`selection`（auto 或含完整 path 的 explicit）、`metrics` 和 `intervalMs`。`path=null` 的 preparing 与 Node 实际选定路径的样本分开。同 revision 的诊断发布可更新有关任务的 configuration，保留合法订阅；排队／重放只投递当前任务执行上下文的样本。`unsupportedMetrics` 包含未实现的指标，当前 traffic 不提供计数，不能补零。
 
 RTT、业务流量、探测未回应率沿用 [Realtime Observation](/v2/state-reference/realtime) 的口径；重复事件不增加样本数，缺测不填零，SSE 往返耗时不作为 Mesh RTT。
 

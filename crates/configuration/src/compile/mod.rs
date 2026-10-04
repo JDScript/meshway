@@ -1,5 +1,6 @@
 //! Pure bounded demand compilation from one trusted input snapshot.
 //! The caller authenticates inventory and DNS/artifact inputs and commits with CAS.
+mod diagnostics;
 mod matching;
 mod paths;
 mod transports;
@@ -54,6 +55,13 @@ pub fn digest<T: Serialize>(value: &T) -> Result<Digest, CompileError> {
 }
 
 pub fn compile(input: CompilationInput<'_>) -> Result<CompiledPublication, CompileError> {
+    compile_with_diagnostics(input, &BTreeMap::new())
+}
+
+pub fn compile_with_diagnostics(
+    input: CompilationInput<'_>,
+    diagnostics: &BTreeMap<meshway_model::ObservationId, DiagnosticDemand>,
+) -> Result<CompiledPublication, CompileError> {
     if input.demands.len() > MAX_DEMANDS
         || input.configuration.nodes.len() > 10_000
         || input.dns.len() > 4096
@@ -95,6 +103,7 @@ pub fn compile(input: CompilationInput<'_>) -> Result<CompiledPublication, Compi
         input.dns,
         input.rule_sets,
         input.selected_profiles,
+        diagnostics,
     ))?;
     let mut nodes = BTreeMap::new();
     // Every trusted configured node gets a full target, including empty/disabled
@@ -132,6 +141,7 @@ pub fn compile(input: CompilationInput<'_>) -> Result<CompiledPublication, Compi
                 dialers: BTreeMap::new(),
                 peers: BTreeMap::new(),
                 permits: BTreeMap::new(),
+                diagnostics: BTreeMap::new(),
                 decisions: BTreeMap::new(),
                 dns: DnsExecution {
                     settings: input.configuration.dns.clone(),
@@ -201,6 +211,7 @@ pub fn compile(input: CompilationInput<'_>) -> Result<CompiledPublication, Compi
             }
         }
     }
+    diagnostics::install(&input, &graph, diagnostics, &mut nodes)?;
     Ok(CompiledPublication {
         network_id: input.network,
         revision: input.revision,

@@ -74,7 +74,7 @@ fn unknown_or_incomplete_schema_is_rejected_without_repair() {
     for mutation in [
         "PRAGMA application_id = 17",
         "PRAGMA user_version = 2",
-        "ALTER TABLE users DROP COLUMN disabled_at",
+        "DROP TRIGGER diagnostic_user_revoked; ALTER TABLE users DROP COLUMN disabled_at",
         "DROP INDEX user_sessions_user_id",
         "CREATE TRIGGER unexpected AFTER UPDATE ON users BEGIN SELECT 1; END",
         "ALTER TABLE users ADD COLUMN owner TEXT",

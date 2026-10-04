@@ -16,7 +16,13 @@ pub const MAX_SUBSCRIPTIONS: usize = 4096;
 
 #[derive(Clone)]
 pub struct TaskAdmission {
+    pub observation_id: Option<ObservationId>,
+    pub unsupported_metrics: Vec<meshway_model::observations::MetricKind>,
     pub report: ReportAdmission,
+    /// Prepared compiler target; distinct from the Node's actual execution lease.
+    pub configuration: meshway_model::ConfigurationRef,
+    pub paths: Vec<Vec<meshway_model::NodeId>>,
+    pub node_expires_at: DateTime<Utc>,
     pub session_id: SessionId,
     pub authorization_digest: Digest,
     pub session_expires_at: DateTime<Utc>,
@@ -33,11 +39,12 @@ struct Subscriber {
 }
 #[derive(Clone)]
 struct StoredTask {
+    accepted_at: DateTime<Utc>,
     network: NetworkId,
     task: ObservationTask,
     paths: Vec<Vec<meshway_model::NodeId>>,
     subscribers: BTreeMap<ObservationSubscriptionId, Subscriber>,
-    seen: BTreeMap<meshway_model::EventId, SeenWindow>,
+    seen: std::sync::Arc<BTreeMap<meshway_model::EventId, SeenWindow>>,
 }
 #[derive(Clone)]
 struct SeenWindow {
@@ -45,11 +52,23 @@ struct SeenWindow {
     version: meshway_model::Version,
     partial: bool,
 }
-#[derive(Default)]
+#[derive(Default, Clone)]
 pub struct Observations {
     tasks: BTreeMap<ObservationId, StoredTask>,
 }
 impl Observations {
+    pub(crate) fn leases(&self) -> Vec<service::SubscriptionLease> {
+        self.tasks
+            .values()
+            .filter(|s| active(s.task.phase))
+            .flat_map(|s| s.subscribers.iter())
+            .filter(|(_, s)| s.terminal.is_none())
+            .map(|(id, s)| service::SubscriptionLease {
+                id: *id,
+                expires_at: s.expires_at,
+            })
+            .collect()
+    }
     /// Private lifetime tokens prevent a client reusing an old request UUID
     /// after terminal retention from reviving that lifetime's queued samples.
     pub(crate) fn active_subscriptions(
@@ -62,7 +81,9 @@ impl Observations {
             .filter_map(|task| {
                 let id = task.subscription_id?;
                 let subscriber = self.tasks.get(&task.id)?.subscribers.get(&id)?;
-                Some((id, subscriber.generation))
+                let mut bytes = subscriber.generation.as_bytes().to_vec();
+                bytes.extend_from_slice(task.configuration.digest.as_bytes());
+                Some((id, crate::resources::content_digest(&bytes)))
             })
             .collect()
     }
@@ -78,6 +99,11 @@ impl Observations {
                 stored.network == network
                     && scope.visible.contains(&stored.task.source_node_id)
                     && scope.visible.contains(&stored.task.target_node_id)
+                    && stored
+                        .task
+                        .path
+                        .as_ref()
+                        .is_none_or(|path| path.iter().all(|node| scope.visible.contains(node)))
             })
             .flat_map(|stored| {
                 stored
@@ -85,7 +111,19 @@ impl Observations {
                     .iter()
                     .filter(|(_, subscriber)| {
                         subscriber.identity.fingerprint() == identity.fingerprint()
-                            && subscriber.authorization_digest == scope.authorization_digest
+                            && subscriber.authorization_digest
+                                == scope.observation_authorization_digest
+                            && scope.full.contains(&stored.task.source_node_id)
+                            && scope
+                                .current
+                                .get(&stored.task.source_node_id)
+                                .is_some_and(|node| {
+                                    node.instance_id == Some(stored.task.instance_id)
+                                        && !node.revoked
+                                        && (!active(stored.task.phase)
+                                            || node.configurations.first()
+                                                == Some(&stored.task.configuration))
+                                })
                     })
                     .filter_map(|(subscription, _)| subscriber_view(stored, *subscription).ok())
             })
@@ -99,7 +137,7 @@ impl Observations {
         now: DateTime<Utc>,
     ) -> Result<ObservationTask, StateError> {
         self.expire(now);
-        if admission.session_expires_at <= now || admission.report.lease_expires_at <= now {
+        if admission.session_expires_at <= now || admission.node_expires_at <= now {
             return Err(StateError::Unauthorized);
         }
         if request.source_node_id != admission.report.node_id
@@ -117,8 +155,6 @@ impl Observations {
             return Err(StateError::Invalid);
         }
         let paths: Vec<_> = admission
-            .report
-            .current()?
             .paths
             .iter()
             .filter(|path| {
@@ -135,14 +171,10 @@ impl Observations {
         {
             return Err(StateError::Forbidden);
         }
-        let configuration = admission
-            .report
-            .execution
-            .clone()
-            .ok_or(StateError::Unavailable)?;
+        let configuration = admission.configuration.clone();
         let expires_at = (now + Duration::seconds(OBSERVATION_LEASE_SECONDS))
             .min(admission.session_expires_at)
-            .min(admission.report.lease_expires_at);
+            .min(admission.node_expires_at);
         let session_tasks = self
             .tasks
             .values()
@@ -159,6 +191,7 @@ impl Observations {
                     || subscriber.authorization_digest != admission.authorization_digest
                     || stored.task.source_node_id != request.source_node_id
                     || stored.task.target_node_id != request.target_node_id
+                    || stored.task.service != request.service
                     || stored.task.selection != request.selection
                     || stored.task.metrics != request.metrics
                     || stored.task.interval_ms != request.interval_ms
@@ -197,6 +230,7 @@ impl Observations {
             if stored.network == admission.report.network_id
                 && stored.task.source_node_id == request.source_node_id
                 && stored.task.target_node_id == request.target_node_id
+                && stored.task.service == request.service
                 && stored.task.selection == request.selection
                 && stored.task.metrics == request.metrics
                 && stored.task.interval_ms == request.interval_ms
@@ -225,22 +259,34 @@ impl Observations {
         {
             return Err(StateError::ObservationLimit);
         }
-        let id = ObservationId::new(
-            crate::accounts::random_uuid().map_err(|_| StateError::Unavailable)?,
-        )
-        .map_err(|_| StateError::Unavailable)?;
+        let id = admission.observation_id.unwrap_or(
+            ObservationId::new(
+                crate::accounts::random_uuid().map_err(|_| StateError::Unavailable)?,
+            )
+            .map_err(|_| StateError::Unavailable)?,
+        );
         let task = ObservationTask {
             id,
             source_node_id: request.source_node_id,
             target_node_id: request.target_node_id,
+            service: request.service,
             selection: request.selection,
             path: None,
             path_segment: None,
             configuration,
             instance_id: admission.report.instance_id,
-            metrics: request.metrics,
+            metrics: request.metrics.clone(),
             interval_ms: request.interval_ms,
-            phase: ObservationPhase::Preparing,
+            phase: if request
+                .metrics
+                .iter()
+                .all(|metric| admission.unsupported_metrics.contains(metric))
+            {
+                ObservationPhase::Unsupported
+            } else {
+                ObservationPhase::Preparing
+            },
+            unsupported_metrics: admission.unsupported_metrics.clone(),
             expires_at,
             renew_after: now + Duration::seconds(10),
             latest: None,
@@ -250,11 +296,12 @@ impl Observations {
         self.tasks.insert(
             id,
             StoredTask {
+                accepted_at: now,
                 network: admission.report.network_id,
                 task: task.clone(),
                 paths,
                 subscribers: BTreeMap::from([(request.subscription_id, subscriber)]),
-                seen: BTreeMap::new(),
+                seen: std::sync::Arc::default(),
             },
         );
         subscriber_view(
@@ -298,7 +345,7 @@ impl Observations {
         }
         let expires = (now + Duration::seconds(OBSERVATION_LEASE_SECONDS))
             .min(admission.session_expires_at)
-            .min(admission.report.lease_expires_at);
+            .min(admission.node_expires_at);
         let subscriber = stored
             .subscribers
             .get_mut(&subscription)
@@ -453,13 +500,37 @@ impl Observations {
         }
         if sample.probe.is_none() && sample.traffic.is_none() && sample.probe_counts.is_none()
             || sample.window_start >= sample.window_end
+            || sample.window_start < stored.accepted_at
             || sample.window_end > now + Duration::seconds(30)
             || sample.window_end > stored.task.expires_at
             || now - sample.window_start > Duration::minutes(2)
         {
             return Err(StateError::Invalid);
         }
+        if sample.traffic.is_some()
+            && stored
+                .task
+                .unsupported_metrics
+                .contains(&meshway_model::observations::MetricKind::Traffic)
+        {
+            // Scoped business counters have no production capability yet. A
+            // missing counter is unknown, never fabricated zero traffic.
+            return Err(StateError::Invalid);
+        }
         if let Some(probe) = &sample.probe {
+            if probe.kind != meshway_model::state::ProbeKind::Path
+                || probe.started_at < sample.window_start
+                || probe.completed_at.is_some_and(|at| at > sample.window_end)
+                || !stored.task.metrics.iter().any(|metric| {
+                    matches!(
+                        metric,
+                        meshway_model::observations::MetricKind::Rtt
+                            | meshway_model::observations::MetricKind::ProbeLoss
+                    )
+                })
+            {
+                return Err(StateError::Invalid);
+            }
             if probe.outcome == meshway_model::state::ProbeOutcome::Pending && !sample.partial {
                 return Err(StateError::Invalid);
             }
@@ -523,7 +594,7 @@ impl Observations {
         }) {
             return Err(StateError::Conflict);
         }
-        stored.seen.insert(
+        std::sync::Arc::make_mut(&mut stored.seen).insert(
             sample.measurement_id,
             SeenWindow {
                 digest,
@@ -553,6 +624,15 @@ impl Observations {
             if task.subscribers.values().all(|s| s.terminal.is_some()) && active(task.task.phase) {
                 task.task.phase = ObservationPhase::Expired;
                 task.task.latest = None;
+            } else if active(task.task.phase)
+                && let Some(expiry) = task
+                    .subscribers
+                    .values()
+                    .filter(|s| s.terminal.is_none())
+                    .map(|s| s.expires_at)
+                    .max()
+            {
+                task.task.expires_at = expiry;
             }
         }
         self.tasks
@@ -573,6 +653,7 @@ impl Observations {
             || admission.session_expires_at <= now
             || subscriber.authorization_digest != admission.authorization_digest
             || task.task.instance_id != admission.report.instance_id
+            || task.task.configuration != admission.configuration
             || !admission
                 .report
                 .configurations

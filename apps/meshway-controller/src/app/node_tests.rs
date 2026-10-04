@@ -180,13 +180,19 @@ pub(super) async fn session(
         .unwrap()
 }
 pub(super) fn caps() -> BTreeMap<String, Capability> {
-    BTreeMap::from([(
-        "transport:native_udp".into(),
-        Capability::Transport {
-            roles: vec![TransportRole::Dial, TransportRole::Listen],
-            streams: vec![StreamKind::Udp],
-        },
-    )])
+    BTreeMap::from([
+        (
+            "feature:path-observation".into(),
+            Capability::Feature { version: 1 },
+        ),
+        (
+            "transport:native_udp".into(),
+            Capability::Transport {
+                roles: vec![TransportRole::Dial, TransportRole::Listen],
+                streams: vec![StreamKind::Udp],
+            },
+        ),
+    ])
 }
 
 #[tokio::test]
@@ -765,6 +771,9 @@ async fn state_admission_uses_real_node_instance_and_current_publication_depende
                 network,
             };
             let request = meshway_protocol::observations::CreateObservation {
+                service: meshway_configuration::execution::ObservationServiceScope::Tcp {
+                    port: meshway_transport_spec::Port::new(443).unwrap(),
+                },
                 subscription_id: ObservationSubscriptionId::new(random_uuid().unwrap()).unwrap(),
                 source_node_id: a,
                 target_node_id: b,
@@ -774,10 +783,11 @@ async fn state_admission_uses_real_node_instance_and_current_publication_depende
                 metrics: vec![meshway_model::observations::MetricKind::Rtt],
                 interval_ms: 1000,
             };
-            let admitted = s
-                .observation_admission_in_transaction(&tx, &identity, &request, now)
-                .unwrap();
-            assert_eq!(admitted.report.current().unwrap().paths, vec![vec![a, b]]);
+            let admitted = crate::observations::service::ObservationProvider::prepare_observation(
+                &s, &tx, &identity, &request, now,
+            )
+            .unwrap();
+            assert_eq!(admitted.paths, vec![vec![a, b]]);
             let invalid = meshway_protocol::observations::CreateObservation {
                 selection: meshway_protocol::observations::ObservationPath::Explicit {
                     path: vec![a, b, a],

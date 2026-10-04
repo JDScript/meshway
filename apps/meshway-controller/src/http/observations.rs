@@ -117,7 +117,7 @@ async fn cancel<P: ObservationProvider>(
         .map_err(|e| failure(id, e))?;
     Ok(StatusCode::NO_CONTENT)
 }
-#[utoipa::path(get,path="/agent-api/v1/tasks",operation_id="getNodeTasks",tag="observations",security(("nodeCredential"=[])),responses((status=200,body=ObservationList),(status=401,body=ErrorResponse)))]
+#[utoipa::path(get,path="/agent-api/v1/tasks",operation_id="getNodeTasks",tag="observations",security(("nodeSession"=[])),responses((status=200,body=ObservationList),(status=401,body=ErrorResponse)))]
 async fn tasks<P: ObservationProvider>(
     State(service): State<ObservationService<P>>,
     Extension(id): Extension<RequestId>,
@@ -130,7 +130,7 @@ async fn tasks<P: ObservationProvider>(
             .map_err(|e| failure(id, e))?,
     ))
 }
-#[utoipa::path(post,path="/agent-api/v1/tasks/{taskId}/results",operation_id="reportTaskResult",tag="observations",security(("nodeCredential"=[])),params(("taskId"=ObservationId,Path)),request_body=ObservationResult,responses((status=200,body=ObservationTask),(status=401,body=ErrorResponse)))]
+#[utoipa::path(post,path="/agent-api/v1/tasks/{taskId}/results",operation_id="reportTaskResult",tag="observations",security(("nodeSession"=[])),params(("taskId"=ObservationId,Path)),request_body=ObservationResult,responses((status=200,body=ObservationTask),(status=401,body=ErrorResponse)))]
 async fn result<P: ObservationProvider>(
     State(service): State<ObservationService<P>>,
     Extension(id): Extension<RequestId>,
@@ -148,5 +148,42 @@ async fn result<P: ObservationProvider>(
     ))
 }
 #[derive(utoipa::OpenApi)]
-#[openapi(paths(create, list, detail, renew, cancel, tasks, result))]
+#[openapi(paths(create, list, detail, renew, cancel, tasks, result), modifiers(&ObservationErrors))]
 pub struct ObservationApi;
+
+/// Every observation handler uses the same typed State error mapping.
+struct ObservationErrors;
+impl utoipa::Modify for ObservationErrors {
+    fn modify(&self, spec: &mut utoipa::openapi::OpenApi) {
+        use utoipa::openapi::{Ref, RefOr};
+        for path in spec.paths.paths.values_mut() {
+            for operation in [&mut path.get, &mut path.post].into_iter().flatten() {
+                for status in ["400", "403", "404", "409", "429", "503"]
+                    .into_iter()
+                    .chain(
+                        operation
+                            .request_body
+                            .is_some()
+                            .then_some(["413", "415", "422"])
+                            .into_iter()
+                            .flatten(),
+                    )
+                {
+                    let response = utoipa::openapi::response::ResponseBuilder::new()
+                        .description("Typed observation error")
+                        .content(
+                            "application/json",
+                            utoipa::openapi::Content::new(Some(Ref::from_schema_name(
+                                "ErrorResponse",
+                            ))),
+                        )
+                        .build();
+                    operation
+                        .responses
+                        .responses
+                        .insert(status.into(), RefOr::T(response));
+                }
+            }
+        }
+    }
+}

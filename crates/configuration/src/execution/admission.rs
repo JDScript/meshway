@@ -18,7 +18,12 @@ impl NodeConfiguration {
     /// candidates: either end may probe an authenticated bidirectional channel.
     pub fn neighbor_transports(&self) -> BTreeMap<NodeId, BTreeSet<String>> {
         let mut neighbors: BTreeMap<NodeId, BTreeSet<String>> = BTreeMap::new();
-        for path in self.permits.values().flat_map(|permit| &permit.paths) {
+        for path in self
+            .permits
+            .values()
+            .flat_map(|permit| &permit.paths)
+            .chain(self.diagnostics.values().flat_map(|permit| &permit.paths))
+        {
             for pair in path.nodes.windows(2) {
                 let peer = if pair[0] == self.node_id {
                     pair[1]

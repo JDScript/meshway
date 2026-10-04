@@ -93,7 +93,8 @@ crate::object::wire_tagged! { tag="mode"; #[derive(Clone, Debug, PartialEq, Eq)]
 wire_object! { #[derive(Clone, Debug)] pub struct CreateObservation {
     pub subscription_id: ObservationSubscriptionId,
     pub source_node_id: NodeId, pub target_node_id: NodeId, pub selection: ObservationPath,
-    pub metrics: Vec<MetricKind>, pub interval_ms: u32,
+    pub service: meshway_configuration::execution::ObservationServiceScope,
+    pub metrics: Vec<MetricKind>, pub interval_ms: u32 [minimum=1000,maximum=30000],
 } }
 #[derive(
     Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize, utoipa::ToSchema,
@@ -110,9 +111,11 @@ pub enum ObservationPhase {
 }
 wire_object! { #[derive(Clone, Debug)] pub struct ObservationTask {
     pub id: ObservationId, pub source_node_id: NodeId, pub target_node_id: NodeId,
+    pub service: meshway_configuration::execution::ObservationServiceScope,
     pub selection: ObservationPath, pub path: Option<Vec<NodeId>>, pub path_segment: Option<Sequence>,
     pub configuration: ConfigurationRef, pub instance_id: InstanceId,
     pub metrics: Vec<MetricKind>, pub interval_ms: u32, pub phase: ObservationPhase,
+    pub unsupported_metrics: Vec<MetricKind>,
     pub expires_at: DateTime<Utc>, pub renew_after: DateTime<Utc>, pub latest: Option<ObservationSample>,
     pub subscriber_expires_at: Option<DateTime<Utc>>,
     pub subscription_id: Option<ObservationSubscriptionId>,

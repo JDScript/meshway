@@ -71,6 +71,7 @@ pub struct ReportAdmission {
 }
 #[derive(Clone, Debug)]
 pub struct ConfigurationAdmission {
+    pub path_deadlines: BTreeMap<Vec<NodeId>, DateTime<Utc>>,
     pub configuration: ConfigurationRef,
     /// True only for the execution owner's currently allowed target/saved
     /// installation. Retained history alone must set this to false.
@@ -114,6 +115,7 @@ pub struct VisibilityScope {
     pub network_id: NetworkId,
     pub configuration_revision: Revision,
     pub authorization_digest: Digest,
+    pub observation_authorization_digest: Digest,
     pub visible: BTreeSet<NodeId>,
     pub full: BTreeSet<NodeId>,
     pub observation_paths: BTreeSet<Vec<NodeId>>,

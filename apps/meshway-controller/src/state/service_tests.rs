@@ -57,6 +57,7 @@ impl StateProvider for SqlProvider {
             network_id: *network,
             configuration_revision: revision,
             authorization_digest: crate::resources::content_digest(&authorization),
+            observation_authorization_digest: crate::resources::content_digest(&authorization),
             visible: configuration.nodes.keys().copied().collect(),
             full: configuration.nodes.keys().copied().collect(),
             observation_paths: Default::default(),

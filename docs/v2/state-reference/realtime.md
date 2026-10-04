@@ -1,6 +1,6 @@
 # Realtime Observation
 
-**功能提案，尚未实现。** Console 可以主动 watch 一条获准路径，观察端到端探测、端点业务流量和探测未回应率；关闭后按租约释放诊断任务。
+新 Controller 提供主动路径观察的 HTTP 调度、短租约诊断许可、Node 结果接纳、历史与网络 SSE。Agent 的实际探测与包计数消费尚未接入；Controller 接纳的 Node 报告不能单独证明已经完成真实包级测量。
 
 它与普通 State 读取不同：query/watch State 订阅既有事实；Realtime Observation 可以明确请求节点产生新的测量。
 
@@ -12,27 +12,33 @@ API 方向已确定为 HTTP 创建／续租／取消任务，结果经 Console �
 {
   "subscriptionId": "<new-uuid-for-this-page-demand>",
   "sourceNodeId": "<node-a>",
-  "mode": "explicit",
-  "target": { "type": "node", "nodeId": "<node-b>" },
-  "path": ["<node-a>", "<node-c>", "<node-b>"],
+  "targetNodeId": "<node-b>",
+  "service": { "type": "tcp", "port": 443 },
+  "selection": {
+    "mode": "explicit",
+    "path": ["<node-a>", "<node-c>", "<node-b>"]
+  },
   "metrics": ["rtt", "traffic", "probeLoss"],
   "intervalMs": 1000
 }
 ```
 
-Controller 候选合同使用独立 `ObservationSubscriptionId` 标识本页需求，`ObservationId` 标识可复用的节点测量任务。创建请求的重试沿用 subscriptionId；另开页面创建新 ID。返回任务 ID、subscriptionId、实际 intervalMs、任务及订阅各自的 expiresAt、renewAfter。主 Router／执行 provider 的装配与 Agent 消费验收仍须单独完成。
+`ObservationSubscriptionId` 标识本页需求，`ObservationId` 标识可复用的节点测量任务。创建请求的重试沿用 subscriptionId；另开页面创建新 ID。返回任务 ID、subscriptionId、实际 intervalMs、任务及订阅各自的 expiresAt、renewAfter。正常 Controller Router 使用真实用户会话与 Node 持钥接入后的凭据。
 
 | 字段 | 含义 |
 | --- | --- |
 | `subscriptionId` | 本次页面需求的独立 UUID，也用于有界创建幂等；不是 SessionId 或凭据 |
 | `sourceNodeId` | 发起测量的节点，用户须有权让它执行诊断 |
-| `mode` | auto／explicit；不使用含义模糊的 current |
-| `target` | 获准目标，必要时包含协议／端口范围；不能借诊断扩权 |
-| `path` | explicit 必填的完整有序路径；auto 输入省略，执行选择后返回 |
-| `metrics` | 请求的已支持指标；不可测的项明确 unavailable |
+| `targetNodeId` | 当前网络中的业务目标节点 |
+| `service` | 必填精确授权范围：`{type:tcp,port}`、`{type:udp,port}` 或 `{type:icmpEcho}`；不把 Node 可见性当作所有端口可访问 |
+| `selection.mode` | auto／explicit；不使用含义模糊的 current |
+| `selection.path` | explicit 必填的完整有序路径；auto 输入省略，实际选择在结果的 `path` 中返回 |
+| `metrics` | 请求 RTT、traffic、probeLoss；`unsupportedMetrics` 明确列出无法提供的项 |
 | `intervalMs` | 期望周期，示例为 1 秒；实际周期受节点／网络预算约束 |
 
 auto 可用于空闲网络：Controller 根据目标计算获准候选，执行端结合 State 选择／建立实际路径，未完成时为 preparing、path=null。首次选定后按该路径采样，发生重选时开启新分段，不能每个样本换路还画成同一序列。
+
+Controller 用相同的 access／topology／routing 与稳定 SubjectBindings 编译精确服务范围，然后只发布 `NodeConfiguration.diagnostics` 中的独立许可。该许可包含观察 ID、源实例、完整候选、服务范围、到期时间与认证原路回复语义；不会插入普通 `permits`、业务 `decisions` 或伪造 Node demand。source／中转／终点通过正常 Node configuration 拉取一致材料。源任务准备并不表示这些节点已安装，Node 结果仍须匹配真实实例、当前 publication 和执行 lease。
 
 explicit 固定指定路径，不因故障绕过必经点。跟随某条已有业务流是另一个模式，当前不隐式加入；同源／目的可能有多条并存路径。
 
@@ -58,6 +64,8 @@ Controller 负责鉴权、调度和转发，不用浏览器到 Controller 的耗
 节点结果采用 `result.type=phase|sample` 联合。phase 可报告 preparing／failed／completed／unsupported，无需编造 path 或空样本；sample 必须包含实际路径分段和非空测量窗口。Controller 的 expired／cancelled 来自真实订阅生命周期。终态在当前权限下短期可读，随后以 `observation.removed` 或明确 reset 清理；取消／到期后的旧样本不能经排队或重放重新送达该订阅。
 
 任务复用还须绑定相容的授权／执行发布、测量模式和周期；每个订阅者独立验证权限。只可观察某服务的用户，不能因复用了管理员任务就读取路径上其他人的流量；结果必须有明确的业务／统计范围。
+
+同 revision 新增或续租观察会改变有关节点的执行发布，现有合法订阅可换绑到新的完整目标并回到 preparing；旧分段与旧 publication 的排队样本不继续投递。订阅权限摘要与 publication 分开，新建观察不会自行吊销同会话其他标签页。配置 revision、成员角色、身份或会话失效会停止相应订阅。
 
 ## 连接状态
 
@@ -94,6 +102,8 @@ tx 提交不等于目标已收到；若还需要目标交付字节，必须由�
 
 握手、保活和诊断探测不计入业务字节。外层加密后的 wire bytes、transport 重传或各段负载可作为另一个指标，不能混入同一个“业务流量”数字。计数器重置／路径变更须重建基线；没有窗口数据时是未知，不补零速率。
 
+当前生产适配器没有已交付的精确服务范围业务计数能力，traffic 返回在 `unsupportedMetrics` 中，样本的 `traffic` 为 null；拒绝把未计数值上报成零。RTT／probeLoss 的源节点须在正常 acquire 声明 `feature:path-observation` version 1，否则任务为 unsupported。能力声明只表明构建支持，不是测量成功证据。
+
 ## Probe loss
 
 建议界面名称为 **探测未回应率**，按已经有最终结果的实际发送探测计算：
@@ -114,15 +124,16 @@ deadline 之后收到的回复仍记为迟到，本口径保留“未在期限�
 
 ## 租约与取消
 
-- Controller 为任务设置短期到期时间，前台订阅按权限续租；具体时间和最大频率待定。
+- Controller 为每个订阅授予最多 30 秒，且不超过用户会话与源实例期限；10 秒后可按当前权限续租。重试创建不续租。周期为 1000–30000 ms。
 - 返回适用于当前用户／网络的并发与频率预算，超出上限用 observation_limit 等结构化错误；renewAfter 给出续租节奏，页面后台不续租。
 - 用户关闭／切换网络／退出登录、权限撤回或配置失效时停止订阅，并取消／停止续租节点任务。
 - 断开控制通道或丢失取消消息时，Node 仍按本地租约停止；结果不反过来续活任务。
 - 最后一个订阅者离开后释放诊断依赖，是否保留 link 回到普通业务／空闲回收策略。
+- 诊断订阅有独立持久资格与当前 schema 生命周期；账号／成员撤销事务同步取消该资格。App 的观察维护器不依赖 HTTP／SSE 轮询，定期撤回到期或失权的诊断发布。Node 普通 renew 不能续活观察，已安装许可还须按自己的短期限硬停止。
 - 探测超时只产生观察结果，不能由观察器直接拆掉业务 link；健康处理由连接 owner 的统一策略决定。
 
 ## State、Realtime、History
 
 State 给出最新事实；Realtime 是当前观察任务的结果流；History 保存选定的真实事件／窗口。三者使用相同来源标识，不互相制造样本。是否保存 watch 全部原始点、抽样或聚合，由保留预算决定。
 
-当前没有可用的 Controller realtime watch API，也没有本页定义的完整 path 流量／业务丢包指标；现有邻接历史不能冒充本功能。
+Controller 操作为 `createObservation`／`listObservations`／`getObservation`／`renewObservation`／`cancelObservation`、`getNodeTasks`／`reportTaskResult`。用户操作均以 subscriptionId 区分需求，Node 结果使用共享 taskId。状态、样本和移除分别经 `observation.status`／`observation.sample`／`observation.removed` 发送。实际 Agent 探测消费、精确业务流量计数和业务包丢包测量仍待后续实现；普通 State／History 读取不创建观察。

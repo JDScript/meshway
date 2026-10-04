@@ -10,6 +10,11 @@ map_delta!(ListenerDelta, String, PreparedListener);
 map_delta!(DialerDelta, String, DialCandidate);
 map_delta!(PeerDelta, NodeId, PeerConfiguration);
 map_delta!(PermitDelta, RequestId, PathPermit);
+map_delta!(
+    DiagnosticDelta,
+    meshway_model::ObservationId,
+    DiagnosticPermit
+);
 map_delta!(DecisionDelta, RequestId, DemandDecision);
 object! { pub struct NodeConfigurationDelta {
     pub network_id:NetworkId,pub node_id:NodeId,pub base:ConfigurationRef,pub target:ConfigurationRef,
@@ -18,6 +23,7 @@ object! { pub struct NodeConfigurationDelta {
     pub self_keys:TrustedNode,pub exit_enabled:bool,pub dns:DnsExecution,
     pub listeners:ListenerDelta,pub dialers:DialerDelta,pub peers:PeerDelta,
     pub permits:PermitDelta,pub decisions:DecisionDelta,
+    pub diagnostics:DiagnosticDelta,
 } }
 fn difference<K: Clone + Ord, V: Clone + PartialEq>(
     old: &BTreeMap<K, V>,
@@ -52,6 +58,7 @@ pub fn configuration_delta(
     let (pr, pu) = difference(&b.peers, &t.peers);
     let (ar, au) = difference(&b.permits, &t.permits);
     let (rr, ru) = difference(&b.decisions, &t.decisions);
+    let (xr, xu) = difference(&b.diagnostics, &t.diagnostics);
     Ok(NodeConfigurationDelta {
         network_id: t.network_id,
         node_id: t.node_id,
@@ -92,6 +99,10 @@ pub fn configuration_delta(
         decisions: DecisionDelta {
             remove: rr,
             upsert: ru,
+        },
+        diagnostics: DiagnosticDelta {
+            remove: xr,
+            upsert: xu,
         },
     })
 }
@@ -143,6 +154,11 @@ pub fn apply_configuration_delta(
     apply(&mut t.dialers, delta.dialers.remove, delta.dialers.upsert)?;
     apply(&mut t.peers, delta.peers.remove, delta.peers.upsert)?;
     apply(&mut t.permits, delta.permits.remove, delta.permits.upsert)?;
+    apply(
+        &mut t.diagnostics,
+        delta.diagnostics.remove,
+        delta.diagnostics.upsert,
+    )?;
     apply(
         &mut t.decisions,
         delta.decisions.remove,

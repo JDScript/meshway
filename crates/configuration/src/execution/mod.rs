@@ -8,7 +8,9 @@ use meshway_transport_spec::*;
 use std::{collections::BTreeMap, net::IpAddr};
 mod admission;
 mod delta;
+mod diagnostics;
 pub use delta::*;
+pub use diagnostics::*;
 
 #[derive(
     Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize, utoipa::ToSchema,
@@ -130,6 +132,8 @@ object! { pub struct NodeConfiguration {
     pub peers: BTreeMap<NodeId, PeerConfiguration>,
     /// Includes origin, relay and receiver admission. Absence rejects a new flow.
     pub permits: BTreeMap<RequestId, PathPermit>,
+    /// Authenticated measurement only. Never accepted by business packet admission.
+    pub diagnostics: BTreeMap<meshway_model::ObservationId, DiagnosticPermit>,
     pub decisions: BTreeMap<RequestId, DemandDecision>, pub dns: DnsExecution,
     pub exit_enabled: bool,
 } }

@@ -320,7 +320,16 @@ pub(crate) fn validate_probe_context(
         return Err(StateError::Invalid);
     }
     let authorized = match probe.kind {
-        ProbeKind::Path => context.paths.contains(&probe.path),
+        ProbeKind::Path => {
+            context.paths.contains(&probe.path)
+                && context
+                    .path_deadlines
+                    .get(&probe.path)
+                    .is_some_and(|expiry| {
+                        probe.started_at < *expiry
+                            && probe.completed_at.is_none_or(|end| end <= *expiry)
+                    })
+        }
         ProbeKind::Neighbor | ProbeKind::Connect => {
             probe.path.len() == 2
                 && probe.transport.as_ref().is_some_and(|transport| {
