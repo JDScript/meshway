@@ -366,7 +366,7 @@ fn normalize_inner(
                 pending.insert((id, name), listener);
                 continue;
             }
-            match PreparedListener::prepare(listener, verified) {
+            match PreparedListener::prepare(listener) {
                 Ok(value) => {
                     listeners.insert(name, value);
                 }

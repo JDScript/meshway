@@ -117,10 +117,17 @@ impl From<WebSocketHeaderName> for String {
 /// CR/LF, NUL and other Unicode control characters (except HTAB) are rejected.
 /// Unicode text is represented as UTF-8; protocol-specific semantic constraints
 /// and request/header size limits remain the consumer's responsibility.
-#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq, PartialOrd, Ord, Hash, ToSchema)]
+// Debug output is redacted; serialization and explicit access preserve secrets.
+#[derive(Clone, Deserialize, Serialize, PartialEq, Eq, PartialOrd, Ord, Hash, ToSchema)]
 #[serde(try_from = "String", into = "String")]
 #[schema(value_type = String, pattern = r"^[^\u0000-\u0008\u000A-\u001F\u007F-\u009F]*(?![\s\S])")]
 pub struct WebSocketHeaderValue(String);
+
+impl fmt::Debug for WebSocketHeaderValue {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str("[REDACTED]")
+    }
+}
 
 impl WebSocketHeaderValue {
     pub fn as_str(&self) -> &str {

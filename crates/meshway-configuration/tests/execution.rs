@@ -35,10 +35,7 @@ fn configuration() -> NetworkConfiguration {
                     ipv4: Some(format!("100.64.0.{i}").parse().unwrap()),
                     ipv6: None,
                 },
-                listeners: BTreeMap::from([(
-                    "udp".into(),
-                    PreparedListener::prepare(l, false).unwrap(),
-                )]),
+                listeners: BTreeMap::from([("udp".into(), PreparedListener::prepare(l).unwrap())]),
                 dialers: Input::Omitted,
                 exit_enabled: i == 4,
             },
@@ -420,7 +417,42 @@ fn incompatible_tls_pair_does_not_poison_udp() {
         .get_mut(&node(2))
         .unwrap()
         .listeners
-        .insert("vless".into(), PreparedListener::prepare(l, true).unwrap());
+        .insert("vless".into(), PreparedListener::prepare(l).unwrap());
+    // Structural preparation and restoration cannot substitute for the Server's
+    // verification gate before this configuration reaches compilation.
+    let restored: NetworkConfiguration =
+        serde_json::from_value(serde_json::to_value(&c).unwrap()).unwrap();
+    let declaration = restored.nodes[&node(2)].listeners["vless"].declaration();
+    let mut context = ValidationContext {
+        nodes: restored.nodes.keys().copied().collect(),
+        previous: Some(&restored),
+        ..Default::default()
+    };
+    let assert_unverified = |context: &ValidationContext<'_>| {
+        assert_eq!(
+            validate_configuration(&restored, context),
+            Err(ConfigurationError::PreparationRequired(vec![
+                PreparationRequirement {
+                    path: format!("/nodes/{}/listeners/vless", node(2)),
+                    kind: PreparationKind::Material(MaterialRequirement::CertificateValidation),
+                }
+            ]))
+        );
+    };
+    assert_unverified(&context);
+    let mut different_material = declaration.clone();
+    let Listener::Vless(listener) = &mut different_material else {
+        panic!()
+    };
+    listener.tls.certificate = Some(SecretString::new("different certificate".into()));
+    context
+        .verified_listeners
+        .insert((node(2), "vless".into()), different_material);
+    assert_unverified(&context);
+    context
+        .verified_listeners
+        .insert((node(2), "vless".into()), declaration.clone());
+    validate_configuration(&restored, &context).unwrap();
     c.defaults.dialers.vless.as_mut().unwrap().tls.max_version = TlsVersion::Tls12;
     let mut inv = inventory();
     for n in inv.values_mut() {
