@@ -654,6 +654,72 @@ async fn member_removal_atomically_deletes_user_nodes_and_preserves_tag_nodes() 
 }
 
 #[tokio::test]
+async fn demand_retry_is_not_blocked_by_an_expired_sibling_demand() {
+    let _serial = crate::accounts::TEST_KDF_LOCK.lock().await;
+    let (_dir, app, network, a, b, ak, _, signer_a, _) = fixture().await;
+    let service = app.execution();
+    let a_session = session(&service, network, a, &ak, &signer_a).await;
+    let ai = service
+        .acquire(
+            a_session.token.expose(),
+            AcquireInstanceRequest {
+                instance_id: iid(),
+                capabilities: caps(),
+            },
+        )
+        .await
+        .unwrap();
+    let instance = InstanceRequest {
+        instance_id: ai.instance_id,
+        generation: ai.generation,
+    };
+    let demand = |request_id, port: u16, duration_seconds| DemandRequest {
+        instance: instance.clone(),
+        request_id,
+        target: BusinessTarget::Mesh { node: b },
+        protocol: BusinessProtocol::Tcp,
+        port: Some(port.try_into().unwrap()),
+        profile: "mesh".into(),
+        duration_seconds,
+    };
+    let short = demand(rid(), 443, 1);
+    let long = demand(rid(), 8443, 300);
+    service
+        .demand(a_session.token.expose(), short.clone())
+        .await
+        .unwrap();
+    let first = service
+        .demand(a_session.token.expose(), long.clone())
+        .await
+        .unwrap();
+    // The short demand expires without any renew or configuration read in
+    // between; the long one is still valid and its retry must recover.
+    let short_id = short.request_id;
+    app.executor
+        .handle()
+        .execute(move |db| {
+            db.execute(
+                "UPDATE execution_demands SET expires_at=0 WHERE id=?1",
+                [short_id.as_uuid().as_bytes().as_slice()],
+            )
+            .unwrap()
+        })
+        .await
+        .unwrap();
+    let retried = service
+        .demand(a_session.token.expose(), long)
+        .await
+        .unwrap();
+    assert_eq!(retried.decision, first.decision);
+    assert_ne!(retried.publication, first.publication);
+    assert_eq!(
+        service.demand(a_session.token.expose(), short).await,
+        Err(Error::BindingConflict)
+    );
+    app.shutdown().await.unwrap();
+}
+
+#[tokio::test]
 async fn state_admission_uses_real_node_instance_and_current_publication_dependencies() {
     use crate::error::Error;
     use crate::state::service::ReadIdentity;
@@ -2228,7 +2294,7 @@ async fn review_rotation_http_response_loss_recovers_same_keys() {
 #[tokio::test]
 async fn review_late_failed_receipt_does_not_override_newer_applied() {
     let _serial = crate::accounts::TEST_KDF_LOCK.lock().await;
-    let (_dir, app, network, a, _, keys, _, signer, _) = fixture().await;
+    let (_dir, app, network, a, b, keys, _, signer, _) = fixture().await;
     let owner = app
         .accounts()
         .login(
@@ -2349,6 +2415,69 @@ async fn review_late_failed_receipt_does_not_override_newer_applied() {
         .await
         .unwrap();
     assert_eq!(evidence, 7);
+    // A demand replaces this node's target. Evidence for the previous target
+    // still enters history, while a target the node never held does not.
+    let moved = s
+        .demand(
+            at.token.expose(),
+            DemandRequest {
+                instance: receipt.instance.clone(),
+                request_id: rid(),
+                target: BusinessTarget::Mesh { node: b },
+                protocol: BusinessProtocol::Tcp,
+                port: Some(443.try_into().unwrap()),
+                profile: "mesh".into(),
+                duration_seconds: 60,
+            },
+        )
+        .await
+        .unwrap();
+    assert_ne!(moved.publication, receipt.target.execution_publication);
+    let mut late = receipt.clone();
+    late.phase = ReceiptPhase::Saved;
+    late.attempt = Version::new(4).unwrap();
+    late.sequence = Sequence::MIN;
+    s.receipt(at.token.expose(), late.clone()).await.unwrap();
+    late.phase = ReceiptPhase::Applied;
+    late.sequence = Sequence::new(2).unwrap();
+    s.receipt(at.token.expose(), late.clone()).await.unwrap();
+    // History keeps the evidence (saved and the late applied) while the
+    // superseded publication no longer counts as a current application.
+    let progress = s
+        .progress(
+            owner.token.expose(),
+            network,
+            late.target.execution_publication,
+        )
+        .await
+        .unwrap();
+    assert!(!progress.nodes[&a].current);
+    assert!(progress.nodes[&a].saved);
+    assert!(!progress.nodes[&a].applied);
+    assert_eq!(
+        progress.nodes[&a].freshness,
+        meshway_protocol::execution::ReceiptFreshness::Superseded
+    );
+    let late_rows: i64 = app
+        .executor
+        .handle()
+        .execute(move |db| {
+            db.query_row(
+                "SELECT count(*) FROM execution_receipts WHERE node_id=?1 AND attempt=4",
+                [a.as_uuid().as_bytes().as_slice()],
+                |row| row.get(0),
+            )
+            .unwrap()
+        })
+        .await
+        .unwrap();
+    assert_eq!(late_rows, 2);
+    let mut never_held = late.clone();
+    never_held.target.digest = [43; 32].into();
+    assert_eq!(
+        s.receipt(at.token.expose(), never_held).await,
+        Err(Error::BindingConflict)
+    );
     app.shutdown().await.unwrap();
 }
 

@@ -204,14 +204,18 @@ pub fn query(
     };
     // Gaps may end after the requested display window. Read the bounded
     // retention window, then intersect gap intervals separately from samples.
-    let mut statement = tx.prepare("SELECT source_node_id, instance_id, received_at, payload FROM observation_events WHERE network_id = ?1 AND occurred_at >= ?2 AND row_id <= ?4 AND payload IS NOT NULL AND (occurred_at < ?3 OR json_extract(CAST(payload AS TEXT),'$.payload.kind') = 'collection_gap') ORDER BY occurred_at, row_id LIMIT ?5")?;
+    // A query for one source must not spend the row budget on other sources'
+    // traffic, so the source filter is part of the read, not of the scan below.
+    let source = query.source_node_id.map(|node| node.to_string());
+    let mut statement = tx.prepare("SELECT source_node_id, instance_id, received_at, payload FROM observation_events WHERE network_id = ?1 AND occurred_at >= ?2 AND row_id <= ?4 AND payload IS NOT NULL AND (?6 IS NULL OR source_node_id = ?6) AND (occurred_at < ?3 OR json_extract(CAST(payload AS TEXT),'$.payload.kind') = 'collection_gap') ORDER BY occurred_at, row_id LIMIT ?5")?;
     let rows = statement.query_map(
         params![
             scope.network_id.as_uuid().as_bytes().as_slice(),
             query.from.timestamp_millis(),
             query.to.timestamp_millis(),
             window.ceiling,
-            (MAX_QUERY_ROWS + 1) as i64
+            (MAX_QUERY_ROWS + 1) as i64,
+            source
         ],
         |row| {
             Ok((

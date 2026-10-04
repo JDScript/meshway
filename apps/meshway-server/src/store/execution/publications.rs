@@ -694,6 +694,10 @@ pub(crate) fn demand(
         return Err(Error::BindingConflict);
     }
     if previous.is_some() {
+        // Recovering a still-valid demand must not depend on whether some
+        // other, expired demand in the same slice was already refreshed by a
+        // renew or configuration read: retire it here first.
+        let refreshed = refresh_expired_demands(tx, sealer, p.network, now)?;
         let (publication, target) = target(tx, sealer, &p)?.ok_or(Error::BindingConflict)?;
         check_publication(tx, sealer, p.network, p.node, publication, now)?;
         let decision = target
@@ -702,12 +706,19 @@ pub(crate) fn demand(
             .get(&request.request_id)
             .cloned()
             .ok_or(Error::BindingConflict)?;
+        let effects = if refreshed {
+            vec![Effect::Progress {
+                network_id: p.network,
+            }]
+        } else {
+            Vec::new()
+        };
         return Ok((
             DemandResponse {
                 publication,
                 decision,
             },
-            Vec::new(),
+            effects,
         ));
     }
     if previous.is_none() {

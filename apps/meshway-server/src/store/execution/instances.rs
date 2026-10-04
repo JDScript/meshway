@@ -339,31 +339,38 @@ pub(crate) fn receipt(
     let now = now()?;
     let p = authorize_node(tx, sealer, boot, token, now)?;
     current_instance(tx, boot, &p, &request.instance, now)?;
-    let lease = lease(tx, sealer, &p)?;
-    if lease.target.as_ref() != Some(&request.target)
-        || request.reported_at_ms > now as u64 + 5000
+    if request.reported_at_ms > now as u64 + 5000
         || request.reported_at_ms.saturating_add(300_000) < now as u64
         || (request.phase == ReceiptPhase::Failed) != request.failure.is_some()
     {
         return Err(Error::BindingConflict);
     }
-    let target_enabled = target(tx, sealer, &p)?.is_none_or(|(_, n)| n.configuration.enabled);
-    if request.phase == ReceiptPhase::Applied
-        && target_enabled
-        && lease
-            .execution_expires_at_ms
-            .is_none_or(|e| e <= now as u64)
-    {
+    let lease = lease(tx, sealer, &p)?;
+    if lease.target.as_ref() == Some(&request.target) {
+        // The current target: applied also needs a usable execution lease and a
+        // publication that is still valid for this node.
+        let target_enabled = target(tx, sealer, &p)?.is_none_or(|(_, n)| n.configuration.enabled);
+        if request.phase == ReceiptPhase::Applied
+            && target_enabled
+            && lease
+                .execution_expires_at_ms
+                .is_none_or(|e| e <= now as u64)
+        {
+            return Err(Error::BindingConflict);
+        }
+        check_publication(
+            tx,
+            sealer,
+            p.network,
+            p.node,
+            request.target.execution_publication,
+            now,
+        )?;
+    } else if historical_target(tx, sealer, &p, &request.target)?.is_none() {
+        // Late evidence for a target this node once held is still history. A
+        // target it never held is not.
         return Err(Error::BindingConflict);
     }
-    check_publication(
-        tx,
-        sealer,
-        p.network,
-        p.node,
-        request.target.execution_publication,
-        now,
-    )?;
     let phase = match request.phase {
         ReceiptPhase::Saved => "saved",
         ReceiptPhase::Applied => "applied",
