@@ -1,0 +1,90 @@
+name: meshway-node-lab
+
+x-node: &node
+  image: alpine:3.23@sha256:85fe1e81d6758c208f3e1eed4338a1997e19d4be002d4dd32d3100c9a8c010a0
+  platform: ${MESHWAY_NODE_PLATFORM:?Run mise run node:lab deploy}
+  restart: unless-stopped
+  labels:
+    io.meshway.node-lab: "1"
+  environment:
+    PATH: /opt/meshway:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+    MESHWAY_SERVER_URL: https://meshway-dev-api.jdscript.dev
+    RUST_LOG: info
+    MESHWAY_LOG_FORMAT: json
+  entrypoint:
+    - /bin/sh
+    - -ec
+    - |
+      chmod 700 /var/lib/meshway
+      exec /opt/meshway/meshwayd "$@"
+    - meshwayd
+  command: ["--data-dir", "/var/lib/meshway", "--console-origin", "http://127.0.0.1:3001"]
+  read_only: true
+  cap_drop: [ALL]
+  security_opt: [no-new-privileges:true]
+  cpus: 0.5
+  mem_limit: 256m
+  pids_limit: 64
+  stop_grace_period: 15s
+  healthcheck:
+    test: ["CMD", "/opt/meshway/meshway", "status", "--json", "--log-filter", "error"]
+    interval: 10s
+    timeout: 3s
+    retries: 3
+    start_period: 5s
+  logging:
+    driver: local
+    options:
+      max-size: 10m
+      max-file: "3"
+
+services:
+  lax:
+    <<: *node
+    container_name: meshway-lax
+    hostname: meshway-lax
+    volumes:
+      - type: bind
+        source: ${MESHWAY_NODE_RELEASE:?Run mise run build:node:linux}
+        target: /opt/meshway
+        read_only: true
+        bind: {create_host_path: false}
+      - lax-state:/var/lib/meshway
+  sha:
+    <<: *node
+    container_name: meshway-sha
+    hostname: meshway-sha
+    volumes:
+      - type: bind
+        source: ${MESHWAY_NODE_RELEASE:?Run mise run build:node:linux}
+        target: /opt/meshway
+        read_only: true
+        bind: {create_host_path: false}
+      - sha-state:/var/lib/meshway
+  nyc:
+    <<: *node
+    container_name: meshway-nyc
+    hostname: meshway-nyc
+    volumes:
+      - type: bind
+        source: ${MESHWAY_NODE_RELEASE:?Run mise run build:node:linux}
+        target: /opt/meshway
+        read_only: true
+        bind: {create_host_path: false}
+      - nyc-state:/var/lib/meshway
+
+volumes:
+  lax-state:
+    name: meshway-lax-state
+    labels: {io.meshway.node-lab: "1"}
+  sha-state:
+    name: meshway-sha-state
+    labels: {io.meshway.node-lab: "1"}
+  nyc-state:
+    name: meshway-nyc-state
+    labels: {io.meshway.node-lab: "1"}
+
+networks:
+  default:
+    name: meshway-node-lab
+    labels: {io.meshway.node-lab: "1"}

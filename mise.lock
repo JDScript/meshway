@@ -2,6 +2,21 @@
 
 lockfile_version = 1
 
+[[tools."github:rust-cross/cargo-zigbuild"]]
+version = "0.23.4"
+backend = "github:rust-cross/cargo-zigbuild"
+specifiers = ["0.23.4"]
+
+[tools."github:rust-cross/cargo-zigbuild"."platforms.linux-x64"]
+checksum = "sha256:6b69963040818ca1ef573d8135a95aa902e17cf7f873c32c6426642dadfe7f59"
+url = "https://github.com/rust-cross/cargo-zigbuild/releases/download/v0.23.4/cargo-zigbuild-x86_64-unknown-linux-gnu.tar.xz"
+url_api = "https://api.github.com/repos/rust-cross/cargo-zigbuild/releases/assets/541272889"
+
+[tools."github:rust-cross/cargo-zigbuild"."platforms.macos-arm64"]
+checksum = "sha256:ca2369ae1a9995542206a6c18dd372acff94dddeb9d7c07e09bfb7594197cea3"
+url = "https://github.com/rust-cross/cargo-zigbuild/releases/download/v0.23.4/cargo-zigbuild-aarch64-apple-darwin.tar.xz"
+url_api = "https://api.github.com/repos/rust-cross/cargo-zigbuild/releases/assets/541272865"
+
 [[tools.node]]
 version = "24.19.0"
 backend = "core:node"
@@ -55,3 +70,16 @@ specifiers = ["1.98.0"]
 [tools.rust.options]
 components = "clippy,rustfmt"
 profile = "minimal"
+
+[[tools.zig]]
+version = "0.17.0"
+backend = "core:zig"
+specifiers = ["0.17.0"]
+
+[tools.zig."platforms.linux-x64"]
+checksum = "sha256:1cbe9df9f27e6b78d14ccbca43b6703a404ef79ef1c463de901d7f088d4e2026"
+url = "https://ziglang.org/download/0.17.0/zig-x86_64-linux-0.17.0.tar.xz"
+
+[tools.zig."platforms.macos-arm64"]
+checksum = "sha256:b607e9b9234790a008116ae5bdb71c6243b84b9fb42a53a9e70fde41c06c536a"
+url = "https://ziglang.org/download/0.17.0/zig-aarch64-macos-0.17.0.tar.xz"

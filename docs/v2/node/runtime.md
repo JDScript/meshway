@@ -39,6 +39,8 @@ install -d -m 700 .meshway
 
 daemon／CLI 共用[运行日志参数](/v2/logging)，日志位于 stderr；CLI 的 `--json` 状态结果位于 stdout。
 
+本机多节点开发使用[三节点 Docker 环境](/v2/node/docker-lab)，统一投放预编译程序，并为每个 Node 保留独立状态卷。
+
 ## 两种网络模式
 
 | | 系统 TUN | Userspace networking |
