@@ -1,11 +1,11 @@
-use super::AccountError;
+use crate::error::Error;
 
 /// Deliberately supports unquoted ASCII dot-atom local parts only. We fold their
 /// case as an account-identifier policy, not an assertion about SMTP delivery.
 /// Domains use UTS #46/IDNA ASCII conversion and DNS hostname label constraints.
 /// Unicode whitespace is trimmed only at the edges; controls are always invalid.
-pub(super) fn normalize(input: &str) -> Result<String, AccountError> {
-    let invalid = || AccountError::InvalidEmail;
+pub(super) fn normalize(input: &str) -> Result<String, Error> {
+    let invalid = || Error::InvalidEmail;
     if input.len() > 1024 || input.chars().any(char::is_control) {
         return Err(invalid());
     }

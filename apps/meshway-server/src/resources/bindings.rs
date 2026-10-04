@@ -1,5 +1,6 @@
 //! Exact immutable contents selected for a source version and each publication.
-use crate::configuration::{Error, Snapshot};
+use crate::configuration::Snapshot;
+use crate::error::Error;
 use meshway_configuration::{NetworkConfigurationInput, RuleSet};
 use meshway_model::resources::RuleSetData;
 use meshway_model::{ArtifactId, NetworkId, Revision};
@@ -15,15 +16,17 @@ struct ContentBudget {
 }
 impl ContentBudget {
     fn include(&mut self, data: &RuleSetData) -> Result<(), Error> {
-        self.bytes = self
-            .bytes
-            .saturating_add(serde_json::to_vec(data).map_err(|_| Error::Storage)?.len());
+        self.bytes = self.bytes.saturating_add(
+            serde_json::to_vec(data)
+                .map_err(|_| Error::encode("rule set data"))?
+                .len(),
+        );
         self.entries = self
             .entries
             .saturating_add(data.ip_cidr.len())
             .saturating_add(data.domain_suffix.len());
         if self.bytes > super::MAX_DATASET_BYTES || self.entries > super::MAX_RULE_ENTRIES {
-            return Err(Error::Invalid(meshway_configuration::ConfigurationError::Invalid(vec![meshway_configuration::ConfigurationIssue {
+            return Err(Error::InvalidConfiguration(meshway_configuration::ConfigurationError::Invalid(vec![meshway_configuration::ConfigurationIssue {
                 path:"/ruleSets".into(),message:"execution rule set content exceeds the network budget (8 MiB / 100000 entries)".into(),
             }])));
         }
@@ -99,8 +102,7 @@ pub(crate) fn latest_publication(
         params![network.as_uuid().as_bytes().as_slice(), revision.get() as i64],
         |row| row.get(0),
     ).optional()?;
-    id.map(|id| crate::store::execution::id(id).map_err(|_| Error::Storage))
-        .transpose()
+    id.map(crate::store::execution::id).transpose()
 }
 
 pub(crate) fn at_publication(
@@ -118,7 +120,8 @@ pub(crate) fn at_publication(
         ],
         |row| row.get(0),
     ).optional()?.ok_or(Error::DependencyUnavailable)?;
-    serde_json::from_slice(&bytes).map_err(|_| Error::Storage)
+    serde_json::from_slice(&bytes)
+        .map_err(|_| Error::decode("execution_publications.rule_set_bindings"))
 }
 
 /// The latest publication for this exact source revision owns the current
@@ -144,8 +147,7 @@ pub(crate) fn contents(
     bindings
         .iter()
         .map(|(key, id)| {
-            let data =
-                super::load_artifact(tx, network, *id).map_err(|_| Error::DependencyUnavailable)?;
+            let data = super::load_artifact(tx, network, *id)?;
             budget.include(&data)?;
             Ok((key.clone(), data))
         })
@@ -192,12 +194,9 @@ pub(crate) fn compilation_contents(
     tx: &Transaction<'_>,
     network: NetworkId,
     bindings: &Bindings,
-) -> Result<
-    BTreeMap<String, meshway_configuration::execution::RuleSetContent>,
-    crate::execution::NodeError,
-> {
-    contents(tx, network, bindings)
-        .map_err(|_| crate::execution::NodeError::Storage)?
+) -> Result<BTreeMap<String, meshway_configuration::execution::RuleSetContent>, crate::error::Error>
+{
+    contents(tx, network, bindings)?
         .into_iter()
         .map(|(key, data)| {
             let artifact = bindings[&key];

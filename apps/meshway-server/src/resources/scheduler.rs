@@ -5,10 +5,8 @@ use super::{
     provider::Provider,
     service::{ResourceProvider, ResourceService, SystemTask},
 };
-use crate::{
-    state::{StateError, service::Runtime},
-    store::Handle,
-};
+use crate::error::Error;
+use crate::{state::service::Runtime, store::Handle};
 use chrono::Utc;
 use meshway_configuration::RuleSet;
 use meshway_model::NetworkId;
@@ -83,17 +81,15 @@ fn scan_network(
     db: &mut Connection,
     provider: &Provider,
     after: Option<NetworkId>,
-) -> Result<(Option<NetworkId>, Option<SystemTask>), StateError> {
+) -> Result<(Option<NetworkId>, Option<SystemTask>), Error> {
     let tx = db.transaction()?;
-    let next = |after: Option<NetworkId>| -> Result<Option<NetworkId>, StateError> {
+    let next = |after: Option<NetworkId>| -> Result<Option<NetworkId>, Error> {
         let bytes: Option<Vec<u8>> = tx.query_row(
             "SELECT id FROM networks WHERE deleted_at IS NULL AND (?1 IS NULL OR id>?1) ORDER BY id LIMIT 1",
             [after.map(|id| id.as_uuid().as_bytes().to_vec())],
             |row| row.get(0),
         ).optional()?;
-        bytes
-            .map(|id| crate::store::execution::id(id).map_err(|_| StateError::Storage))
-            .transpose()
+        bytes.map(crate::store::execution::id).transpose()
     };
     let network = match next(after)? {
         Some(id) => Some(id),
@@ -117,7 +113,8 @@ fn scan_network(
         ],
         |row| row.get(0),
     )?;
-    let created = u64::try_from(created).map_err(|_| StateError::Storage)?;
+    let created =
+        u64::try_from(created).map_err(|_| Error::decode("dataset_artifacts.created_at"))?;
     let mut statement = tx.prepare(
         "SELECT rule_set_key,failures FROM rule_set_checks WHERE network_id=?1 AND revision=?2",
     )?;

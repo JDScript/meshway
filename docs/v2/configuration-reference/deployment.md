@@ -20,7 +20,7 @@ Console 一次提交，Server 保存完整目标和一致执行快照，各 Node
   → Server 校验、准备材料／资源，最终事务重检
   → CAS 保存完整源、绑定、current 指针与执行发布
   → 提交后通知；Node 获取 full／delta
-  → 校验、私有保存（saved）→ 本机安装／代际切换
+  → 校验、私有保存（saved）→ renew 取得执行 lease → 本机安装／代际切换
   → applied／failed 与独立 State／SSE
 ```
 
@@ -39,6 +39,12 @@ Console 一次提交，Server 保存完整目标和一致执行快照，各 Node
 publication 固定源 revision、相关身份／公钥、材料、规则集／解析依据以及参与节点的目标 digest。源不变的需求或资源变化可以形成新发布，参数／凭据值编辑则形成新源版本；不能仅凭 revision 相同拼接输入，也不要求不同 Node 的 digest 相等。
 
 需求先合并后联合编译，只替换实际改变的节点切片。无关节点保留仍有效的目标／lease／回执；有效重试不重复扰动它们。每条备用完整路径也满足授权和必经点，见[按需执行许可](/v2/execution)。
+
+### 生命周期
+
+- 一个网络同时可以存在多份有效 publication，每个节点只引用其中一份作为当前目标。新发布只改变受影响节点的引用；一份 publication 直到没有任何节点引用时才撤回。`supersedes` 记录来源，不表示旧发布整体立即失效。
+- 节点取得新目标时，其执行 lease 被清空。`getNodeConfiguration` 只返回目标，不授予 lease；目标 enabled 时，节点须先 `renew` 取得有效执行期限，才能上报 `applied`。
+- `renew` 与 `getNodeConfiguration` 在同一事务内处理本网络已到期的需求，并可能为受影响节点生成刷新发布。因此一次普通配置读取也可能带来新的 publication 与进度通知。
 
 接收方独立检查相容身份、地址、完整路径与许可；依赖未就绪时对应业务等待／拒绝。节点本机按 owner 顺序准备保护和资源，不以部分安装成功宣称整份应用成功。
 

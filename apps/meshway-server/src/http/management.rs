@@ -1,7 +1,4 @@
-use super::{
-    auth::{bearer, rules},
-    error::HttpError,
-};
+use super::{auth::bearer, error::HttpError};
 use crate::accounts::{Accounts, RevokeSessions, Secret};
 use axum::{
     Extension, Json,
@@ -23,7 +20,6 @@ pub(super) async fn email(
     body: Result<Json<ChangeEmailRequest>, JsonRejection>,
 ) -> Result<Json<AccountResponse>, HttpError> {
     let Json(body) = body.map_err(|e| HttpError::json(id, e))?;
-    let r = rules(accounts.options().password, id)?;
     let user = accounts
         .change_email(
             bearer(&headers, id)?,
@@ -33,7 +29,7 @@ pub(super) async fn email(
             configurations,
         )
         .await
-        .map_err(|e| HttpError::account(id, e, r))?;
+        .map_err(|e| HttpError::domain(id, e))?;
     Ok(Json(AccountResponse {
         request_id: id,
         user: UserView {
@@ -49,11 +45,10 @@ pub(super) async fn account(
     Extension(id): Extension<RequestId>,
     headers: HeaderMap,
 ) -> Result<Json<AccountResponse>, HttpError> {
-    let r = rules(accounts.options().password, id)?;
     let user = accounts
         .authenticate(bearer(&headers, id)?)
         .await
-        .map_err(|e| HttpError::account(id, e, r))?
+        .map_err(|e| HttpError::domain(id, e))?
         .user;
     Ok(Json(AccountResponse {
         request_id: id,
@@ -72,7 +67,6 @@ pub(super) async fn sessions(
     headers: HeaderMap,
     query: Result<Query<NetworkPageQuery>, QueryRejection>,
 ) -> Result<Json<AccountSessionsResponse>, HttpError> {
-    let r = rules(accounts.options().password, id)?;
     let Query(query) = query.map_err(|_| HttpError::invalid_request(id))?;
     let page = accounts
         .sessions(
@@ -82,7 +76,7 @@ pub(super) async fn sessions(
             sealer,
         )
         .await
-        .map_err(|e| HttpError::account(id, e, r))?;
+        .map_err(|e| HttpError::domain(id, e))?;
     Ok(Json(AccountSessionsResponse {
         request_id: id,
         next_cursor: page.next_cursor,
@@ -108,11 +102,10 @@ async fn revoke(
     headers: HeaderMap,
     target: RevokeSessions,
 ) -> Result<StatusCode, HttpError> {
-    let r = rules(accounts.options().password, id)?;
     accounts
         .revoke_sessions(bearer(&headers, id)?, target, id)
         .await
-        .map_err(|e| HttpError::account(id, e, r))?;
+        .map_err(|e| HttpError::domain(id, e))?;
     Ok(StatusCode::NO_CONTENT)
 }
 
@@ -151,7 +144,6 @@ pub(super) async fn password(
     body: Result<Json<ChangePasswordRequest>, JsonRejection>,
 ) -> Result<StatusCode, HttpError> {
     let Json(body) = body.map_err(|e| HttpError::json(id, e))?;
-    let r = rules(accounts.options().password, id)?;
     accounts
         .change_password(
             bearer(&headers, id)?,
@@ -160,7 +152,7 @@ pub(super) async fn password(
             id,
         )
         .await
-        .map_err(|e| HttpError::account(id, e, r))?;
+        .map_err(|e| HttpError::domain(id, e))?;
     Ok(StatusCode::NO_CONTENT)
 }
 
@@ -171,11 +163,10 @@ pub(super) async fn reset_inspect(
     body: Result<Json<PasswordResetInspectRequest>, JsonRejection>,
 ) -> Result<Json<PasswordResetInspection>, HttpError> {
     let Json(body) = body.map_err(|e| HttpError::json(id, e))?;
-    let r = rules(accounts.options().password, id)?;
     let reset = accounts
         .inspect_password_reset(body.token.expose())
         .await
-        .map_err(|e| HttpError::account(id, e, r))?;
+        .map_err(|e| HttpError::domain(id, e))?;
     Ok(Json(PasswordResetInspection {
         request_id: id,
         expires_at: reset.expires_at,
@@ -188,7 +179,6 @@ pub(super) async fn reset_redeem(
     body: Result<Json<PasswordResetRedeemRequest>, JsonRejection>,
 ) -> Result<StatusCode, HttpError> {
     let Json(body) = body.map_err(|e| HttpError::json(id, e))?;
-    let r = rules(accounts.options().password, id)?;
     accounts
         .redeem_password_reset(
             body.token.expose(),
@@ -196,6 +186,6 @@ pub(super) async fn reset_redeem(
             id,
         )
         .await
-        .map_err(|e| HttpError::account(id, e, r))?;
+        .map_err(|e| HttpError::domain(id, e))?;
     Ok(StatusCode::NO_CONTENT)
 }

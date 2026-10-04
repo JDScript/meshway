@@ -1,9 +1,9 @@
 //! One-use admission requests and keys. Config commit is supplied by its owner
 //! and executes inside the enrollment transaction, never as a second commit.
+use crate::error::Error;
 pub(crate) mod configuration;
 pub(crate) mod settings;
 use crate::{
-    execution::NodeError,
     secrets::Sealer,
     store::{Handle, enrollment as store},
 };
@@ -17,7 +17,7 @@ pub(crate) trait EnrollmentCommit: Send + Sync {
         &self,
         tx: &rusqlite::Transaction<'_>,
         admission: &NodeAdmission,
-    ) -> Result<crate::configuration::CommitEffects, NodeError>;
+    ) -> Result<crate::configuration::CommitEffects, Error>;
 }
 pub struct NodeAdmission {
     pub(crate) proof: crate::store::enrollment::VerifiedEnrollmentProof,
@@ -40,7 +40,7 @@ impl Enrollment {
     pub async fn redeem_key(
         &self,
         request: KeyEnrollmentRequest,
-    ) -> Result<EnrollmentResponse, NodeError> {
+    ) -> Result<EnrollmentResponse, Error> {
         let commit = self.commit.clone();
         let publisher = self.publisher.clone();
         let id = request.request.intent.id;
@@ -69,7 +69,7 @@ impl Enrollment {
         &self,
         id: EnrollmentRequestId,
         request: RedeemEnrollmentRequest,
-    ) -> Result<EnrollmentResponse, NodeError> {
+    ) -> Result<EnrollmentResponse, Error> {
         let commit = self.commit.clone();
         let publisher = self.publisher.clone();
         let sealer = self.sealer.clone();
@@ -102,7 +102,7 @@ impl Enrollment {
     pub async fn create_request(
         &self,
         request: CreateEnrollmentRequest,
-    ) -> Result<EnrollmentRequestView, NodeError> {
+    ) -> Result<EnrollmentRequestView, Error> {
         let sealer = self.sealer.clone();
         self.handle
             .execute(move |c| store::create_request(c, &sealer, request))
@@ -112,7 +112,7 @@ impl Enrollment {
         &self,
         token: &str,
         id: EnrollmentRequestId,
-    ) -> Result<DeviceAuthorizationView, NodeError> {
+    ) -> Result<DeviceAuthorizationView, Error> {
         let token = crate::accounts::token_digest(token)?;
         self.handle
             .execute(move |c| store::inspect(c, token, id))
@@ -123,14 +123,14 @@ impl Enrollment {
         token: &str,
         id: EnrollmentRequestId,
         request: ApproveEnrollmentRequest,
-    ) -> Result<DeviceAuthorizationView, NodeError> {
+    ) -> Result<DeviceAuthorizationView, Error> {
         let token = crate::accounts::token_digest(token)?;
         let sealer = self.sealer.clone();
         self.handle
             .execute(move |c| store::approve(c, &sealer, token, id, request))
             .await?
     }
-    pub async fn deny(&self, token: &str, id: EnrollmentRequestId) -> Result<(), NodeError> {
+    pub async fn deny(&self, token: &str, id: EnrollmentRequestId) -> Result<(), Error> {
         let token = crate::accounts::token_digest(token)?;
         self.handle
             .execute(move |c| store::deny(c, token, id))
@@ -140,7 +140,7 @@ impl Enrollment {
         &self,
         id: EnrollmentRequestId,
         proof: EnrollmentDeviceProof,
-    ) -> Result<EnrollmentPollResponse, NodeError> {
+    ) -> Result<EnrollmentPollResponse, Error> {
         let sealer = self.sealer.clone();
         self.handle
             .execute(move |c| store::poll(c, &sealer, id, proof))
@@ -150,7 +150,7 @@ impl Enrollment {
         &self,
         id: EnrollmentRequestId,
         proof: EnrollmentDeviceProof,
-    ) -> Result<(), NodeError> {
+    ) -> Result<(), Error> {
         self.handle
             .execute(move |c| store::cancel(c, id, proof))
             .await?
@@ -160,7 +160,7 @@ impl Enrollment {
         token: &str,
         network: NetworkId,
         request: CreateEnrollmentKeyRequest,
-    ) -> Result<EnrollmentKeyResponse, NodeError> {
+    ) -> Result<EnrollmentKeyResponse, Error> {
         let token = crate::accounts::token_digest(token)?;
         let sealer = self.sealer.clone();
         self.handle
@@ -173,9 +173,9 @@ impl Enrollment {
         network: NetworkId,
         limit: u16,
         cursor: Option<String>,
-    ) -> Result<EnrollmentKeysResponse, NodeError> {
+    ) -> Result<EnrollmentKeysResponse, Error> {
         if !(1..=200).contains(&limit) {
-            return Err(NodeError::Invalid);
+            return Err(Error::InvalidRequest);
         }
         let token = crate::accounts::token_digest(token)?;
         let sealer = self.sealer.clone();
@@ -188,7 +188,7 @@ impl Enrollment {
         token: &str,
         network: NetworkId,
         key: EnrollmentKeyId,
-    ) -> Result<(), NodeError> {
+    ) -> Result<(), Error> {
         let token = crate::accounts::token_digest(token)?;
         self.handle
             .execute(move |c| store::revoke_key(c, token, network, key))

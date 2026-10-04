@@ -3,10 +3,7 @@
 use std::time::Duration;
 
 use meshway_model::RequestId;
-use meshway_server::{
-    App, AppError, Settings,
-    accounts::{AccountError, Secret},
-};
+use meshway_server::{App, AppError, Settings, accounts::Secret, error::Error};
 use uuid::Uuid;
 
 fn request() -> RequestId {
@@ -56,7 +53,7 @@ async fn public_account_lifecycle_and_input_contract() {
             request(),
         )
         .await;
-    assert!(matches!(duplicate, Err(AccountError::EmailTaken)));
+    assert!(matches!(duplicate, Err(Error::EmailTaken)));
     for email in [
         "missing@example.test",
         "bad@@example.test",
@@ -66,7 +63,7 @@ async fn public_account_lifecycle_and_input_contract() {
             accounts
                 .login(email.into(), secret("wrong password"), request())
                 .await,
-            Err(AccountError::InvalidCredentials)
+            Err(Error::InvalidCredentials)
         ));
     }
     // Moving spaces changes the password even at the same valid length.
@@ -78,7 +75,7 @@ async fn public_account_lifecycle_and_input_contract() {
                 request()
             )
             .await,
-        Err(AccountError::InvalidCredentials)
+        Err(Error::InvalidCredentials)
     ));
     let again = accounts
         .login("alice@bücher.example".into(), secret(password), request())
@@ -102,7 +99,7 @@ async fn public_account_lifecycle_and_input_contract() {
             accounts
                 .register("invalid@example.test".into(), Secret::new(value), request())
                 .await,
-            Err(AccountError::InvalidPassword)
+            Err(Error::InvalidPassword(_))
         ));
     }
     for email in [
@@ -117,7 +114,7 @@ async fn public_account_lifecycle_and_input_contract() {
             accounts
                 .register(email.into(), secret(password), request())
                 .await,
-            Err(AccountError::InvalidEmail)
+            Err(Error::InvalidEmail)
         ));
     }
     accounts
@@ -126,11 +123,11 @@ async fn public_account_lifecycle_and_input_contract() {
         .unwrap();
     assert!(matches!(
         accounts.authenticate(alice.token.expose()).await,
-        Err(AccountError::InvalidSession)
+        Err(Error::InvalidSession)
     ));
     assert!(matches!(
         accounts.logout(alice.token.expose(), request()).await,
-        Err(AccountError::InvalidSession)
+        Err(Error::InvalidSession)
     ));
     accounts.authenticate(again.token.expose()).await.unwrap();
     accounts.authenticate(bob.token.expose()).await.unwrap();
@@ -138,7 +135,7 @@ async fn public_account_lifecycle_and_input_contract() {
     app.shutdown().await.unwrap();
     assert!(matches!(
         accounts.authenticate(bob.token.expose()).await,
-        Err(AccountError::Unavailable)
+        Err(Error::Unavailable(_))
     ));
 
     // Inspect actual persisted bytes after SQLite closes (including any files
@@ -168,7 +165,7 @@ async fn public_account_lifecycle_and_input_contract() {
         accounts
             .register("new@example.test".into(), secret(password), request())
             .await,
-        Err(AccountError::RegistrationDisabled)
+        Err(Error::RegistrationDisabled)
     ));
     assert_eq!(
         accounts.authenticate(again.token.expose()).await.unwrap(),
@@ -176,7 +173,7 @@ async fn public_account_lifecycle_and_input_contract() {
     );
     assert!(matches!(
         accounts.authenticate(alice.token.expose()).await,
-        Err(AccountError::InvalidSession)
+        Err(Error::InvalidSession)
     ));
     accounts
         .login("alice@bücher.example".into(), secret(password), request())

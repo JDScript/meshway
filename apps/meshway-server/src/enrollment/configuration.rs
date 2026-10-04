@@ -1,10 +1,8 @@
 use super::{EnrollmentCommit, NodeAdmission};
+use crate::error::Error;
 use crate::{
     configuration::{self, ChangeCause, Principal, SnapshotCache, TrustedContext},
-    execution::{
-        NodeError,
-        configuration::{Participant, validation_context},
-    },
+    execution::configuration::{Participant, validation_context},
     secrets::Sealer,
     store::execution as store,
 };
@@ -24,20 +22,23 @@ impl EnrollmentCommit for ConfigurationAdmission {
         &self,
         tx: &Transaction<'_>,
         admission: &NodeAdmission,
-    ) -> Result<configuration::CommitEffects, NodeError> {
+    ) -> Result<configuration::CommitEffects, Error> {
         let revision: i64 = tx.query_row(
             "SELECT current_revision FROM networks WHERE id=?1 AND deleted_at IS NULL",
             [admission.network.as_uuid().as_bytes().as_slice()],
             |r| r.get(0),
         )?;
-        let revision = Revision::new(revision.try_into().map_err(|_| NodeError::Storage)?)
-            .map_err(|_| NodeError::Storage)?;
+        let revision = Revision::new(
+            revision
+                .try_into()
+                .map_err(|_| Error::decode("networks.current_revision"))?,
+        )
+        .map_err(|_| Error::decode("networks.current_revision"))?;
         let current = self
             .cache
-            .load(tx, admission.network, revision, &self.sealer)
-            .map_err(map_error)?;
+            .load(tx, admission.network, revision, &self.sealer)?;
         let before = meshway_configuration::parse_jsonc(current.document.source_jsonc.expose())
-            .map_err(|_| NodeError::Invalid)?;
+            .map_err(|_| Error::decode("configuration_versions.source_jsonc"))?;
         let mut input = NetworkConfigurationInput::from(&current.document.configuration);
         if let Some(node) = input.nodes.get_mut(&admission.node) {
             node.identity = admission.identity.clone();
@@ -51,7 +52,10 @@ impl EnrollmentCommit for ConfigurationAdmission {
                     ],
                     |r| r.get::<_, String>(0),
                 )?
-                .map(|r| r?.parse::<IpAddr>().map_err(|_| NodeError::Storage))
+                .map(|r| {
+                    r?.parse::<IpAddr>()
+                        .map_err(|_| Error::decode("address_retirements.address"))
+                })
                 .collect::<Result<BTreeSet<_>, _>>()?;
             let hostname = unique_hostname(
                 admission.initial.hostname.as_deref().unwrap_or("node"),
@@ -75,8 +79,7 @@ impl EnrollmentCommit for ConfigurationAdmission {
                 &current.document.configuration,
                 &retired,
                 &BTreeSet::new(),
-            )
-            .map_err(|_| NodeError::Invalid)?;
+            )?;
         }
         let mut source_target = before.clone();
         source_target
@@ -87,7 +90,7 @@ impl EnrollmentCommit for ConfigurationAdmission {
             &before,
             &source_target,
         )
-        .map_err(|_| NodeError::Invalid)?;
+        .map_err(|_| Error::encode("configuration source"))?;
         let verified = configuration::materials::prepare_materials(
             tx,
             admission.network,
@@ -96,14 +99,10 @@ impl EnrollmentCommit for ConfigurationAdmission {
             &self.sealer,
             true,
             &BTreeSet::new(),
-        )
-        .map_err(map_error)?;
-        let mut validation =
-            validation_context(tx, &current, &input, Some(admission), false).map_err(map_error)?;
+        )?;
+        let mut validation = validation_context(tx, &current, &input, Some(admission), false)?;
         validation.verified_listeners = verified;
-        let rule_sets = crate::resources::bindings::for_input(tx, &current, &input)
-            .map_err(map_error)?
-            .0;
+        let rule_sets = crate::resources::bindings::for_input(tx, &current, &input)?.0;
         let prepared = configuration::prepare(
             input,
             source,
@@ -112,8 +111,7 @@ impl EnrollmentCommit for ConfigurationAdmission {
                 validation,
                 rule_sets,
             },
-        )
-        .map_err(map_error)?;
+        )?;
         let participant = Participant {
             sealer: &self.sealer,
             admission: Some(admission),
@@ -136,20 +134,19 @@ impl EnrollmentCommit for ConfigurationAdmission {
                     ChangeCause::Enrollment
                 },
                 request: RequestId::new(admission.request.into_uuid())
-                    .map_err(|_| NodeError::Storage)?,
+                    .map_err(|_| Error::Internal("admission request ID"))?,
             },
             configuration::CommitRuntime {
                 sealer: &self.sealer,
                 participant: &participant,
             },
         )
-        .map_err(map_error)
     }
 }
 fn unique_hostname<'a>(
     base: &str,
     existing: impl Iterator<Item = &'a str>,
-) -> Result<String, NodeError> {
+) -> Result<String, Error> {
     let existing: BTreeSet<_> = existing.collect();
     if !existing.contains(base) {
         return Ok(base.to_owned());
@@ -162,17 +159,5 @@ fn unique_hostname<'a>(
             return Ok(candidate);
         }
     }
-    Err(NodeError::Busy)
-}
-fn map_error(e: configuration::Error) -> NodeError {
-    match e {
-        configuration::Error::InvalidSession => NodeError::Unauthorized,
-        configuration::Error::PermissionDenied => NodeError::Forbidden,
-        configuration::Error::Conflict | configuration::Error::RequestConflict => {
-            NodeError::Conflict
-        }
-        configuration::Error::NotFound => NodeError::NotFound,
-        configuration::Error::Storage => NodeError::Storage,
-        _ => NodeError::Invalid,
-    }
+    Err(Error::Busy)
 }

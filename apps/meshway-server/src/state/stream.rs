@@ -1,6 +1,6 @@
 //! A bounded commit journal and SSE transport. The provider performs each poll
 //! on the same serial owner as commits, reauthorizing before returning frames.
-use super::StateError;
+use crate::error::Error;
 use axum::response::sse::{Event, KeepAlive, Sse};
 use futures_util::{Stream, stream};
 use meshway_model::{NetworkId, NodeId, ObservationId, StateEpoch};
@@ -93,18 +93,14 @@ impl EventLog {
     pub fn sequence(&self) -> u64 {
         self.sequence
     }
-    pub fn after(
-        &self,
-        sequence: u64,
-        network: NetworkId,
-    ) -> Result<Vec<JournalEntry>, StateError> {
+    pub fn after(&self, sequence: u64, network: NetworkId) -> Result<Vec<JournalEntry>, Error> {
         if sequence > self.sequence
             || self
                 .entries
                 .front()
                 .is_some_and(|first| sequence.saturating_add(1) < first.sequence)
         {
-            return Err(StateError::Cursor);
+            return Err(Error::InvalidCursor);
         }
         Ok(self
             .entries
@@ -121,14 +117,14 @@ pub struct SseFrame {
     pub data: String,
 }
 impl SseFrame {
-    pub fn encode<T: Serialize>(id: Option<String>, value: &T) -> Result<Self, StateError> {
-        let data = serde_json::to_string(value).map_err(|_| StateError::Invalid)?;
+    pub fn encode<T: Serialize>(id: Option<String>, value: &T) -> Result<Self, Error> {
+        let data = serde_json::to_string(value).map_err(|_| Error::encode("sse frame"))?;
         if data.len() > MAX_FRAME_BYTES
             || id
                 .as_ref()
                 .is_some_and(|id| id.len() > 4096 || id.contains(['\n', '\r', '\0']))
         {
-            return Err(StateError::Budget);
+            return Err(Error::StateLimit);
         }
         Ok(Self { id, data })
     }
@@ -138,7 +134,7 @@ pub enum StreamPoll {
     Pending,
     Closed,
 }
-pub type PollFuture<'a> = Pin<Box<dyn Future<Output = Result<StreamPoll, StateError>> + Send + 'a>>;
+pub type PollFuture<'a> = Pin<Box<dyn Future<Output = Result<StreamPoll, Error>> + Send + 'a>>;
 
 /// One call produces at most one frame and must recheck current authorization,
 /// even when draining an initial snapshot or replay buffer. Pending must not
@@ -212,12 +208,12 @@ impl ReplayBuffer {
             }
         }
     }
-    pub fn after(&self, cursor: &str) -> Result<Vec<SseFrame>, StateError> {
+    pub fn after(&self, cursor: &str) -> Result<Vec<SseFrame>, Error> {
         let index = self
             .frames
             .iter()
             .position(|frame| frame.id.as_deref() == Some(cursor))
-            .ok_or(StateError::Cursor)?;
+            .ok_or(Error::InvalidCursor)?;
         Ok(self.frames.iter().skip(index + 1).cloned().collect())
     }
     pub fn clear(&mut self) {

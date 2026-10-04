@@ -39,7 +39,7 @@ pub(super) async fn list(
     let page = networks
         .list(token, query.limit.unwrap_or(100), query.cursor)
         .await
-        .map_err(|error| HttpError::network(id, error))?;
+        .map_err(|error| HttpError::domain(id, error))?;
     Ok(Json(NetworkListResponse {
         request_id: id,
         items: page.items,
@@ -66,7 +66,7 @@ pub(super) async fn create(
     let network = networks
         .create(token, body.name, body.request_id)
         .await
-        .map_err(|error| HttpError::network(id, error))?;
+        .map_err(|error| HttpError::domain(id, error))?;
     Ok((
         StatusCode::CREATED,
         Json(NetworkResponse {
@@ -91,7 +91,7 @@ pub(super) async fn get(
     let network = networks
         .get(token, network_id)
         .await
-        .map_err(|error| HttpError::network(id, error))?;
+        .map_err(|error| HttpError::domain(id, error))?;
     Ok(Json(NetworkResponse {
         request_id: id,
         network,
@@ -123,7 +123,7 @@ pub(super) async fn rename(
             body.request_id,
         )
         .await
-        .map_err(|error| HttpError::network(id, error))?;
+        .map_err(|error| HttpError::domain(id, error))?;
     Ok(Json(NetworkResponse {
         request_id: id,
         network,
@@ -148,7 +148,7 @@ pub(super) async fn members(
     let page = networks
         .members(token, network_id, query.limit.unwrap_or(100), query.cursor)
         .await
-        .map_err(|error| HttpError::network(id, error))?;
+        .map_err(|error| HttpError::domain(id, error))?;
     Ok(Json(NetworkMembersResponse {
         request_id: id,
         items: page.items,

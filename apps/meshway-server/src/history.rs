@@ -1,7 +1,7 @@
 //! Permission-checked, creation-bounded management history queries.
+use crate::error::Error;
 use crate::{
     accounts::token_digest,
-    networks::NetworkError as Error,
     networks::pagination::Window,
     secrets::{CursorScope, Sealer},
     store::authorization::authorize_manager,
@@ -32,16 +32,13 @@ impl History {
         if !(1..=200).contains(&limit) {
             return Err(Error::InvalidCursor);
         }
-        let digest = token_digest(token).map_err(|_| Error::InvalidSession)?;
+        let digest = token_digest(token)?;
         let sealer = Arc::clone(&self.sealer);
         self.handle
             .execute(move |db| {
                 let tx = db.transaction_with_behavior(TransactionBehavior::Deferred)?;
                 let now = chrono::Utc::now().timestamp_millis();
-                let user = current_session(&tx, &digest, now)
-                    .map_err(|_| Error::InvalidSession)?
-                    .user
-                    .id;
+                let user = current_session(&tx, &digest, now)?.user.id;
                 if let Some(network) = network {
                     authorize_manager(&tx, network, user)?;
                 }
@@ -55,10 +52,8 @@ impl History {
                     |r| r.get::<_, i64>(0),
                 )?;
                 let mut window = match cursor {
-                    Some(c) => {
-                        Window::decode(&sealer, scope, &c, now).map_err(|_| Error::InvalidCursor)?
-                    }
-                    None => Window::new(upper, 0, now).map_err(|_| Error::Storage)?,
+                    Some(c) => Window::decode(&sealer, scope, &c, now)?,
+                    None => Window::new(upper, 0, now)?,
                 };
                 let field = if network.is_some() {
                     "network_id"
@@ -87,11 +82,11 @@ impl History {
                     })
                     .collect();
                 let next_cursor = if more {
-                    Some(window.encode(&sealer, scope).map_err(|_| Error::Storage)?)
+                    Some(window.encode(&sealer, scope)?)
                 } else {
                     None
                 };
-                let as_of = window.as_of().map_err(|_| Error::Storage)?;
+                let as_of = window.as_of()?;
                 drop(stmt);
                 tx.commit()?;
                 Ok(ActivityListResponse {
@@ -101,8 +96,7 @@ impl History {
                     as_of,
                 })
             })
-            .await
-            .map_err(|_| Error::Storage)?
+            .await?
     }
     pub(crate) async fn activity(
         &self,
@@ -111,12 +105,11 @@ impl History {
         activity: ActivityId,
         id: RequestId,
     ) -> Result<ActivityResponse, Error> {
-        let digest = token_digest(token).map_err(|_| Error::InvalidSession)?;
+        let digest = token_digest(token)?;
         self.handle
             .execute(move |db| {
                 let tx = db.transaction_with_behavior(TransactionBehavior::Deferred)?;
-                let user = current_session(&tx, &digest, chrono::Utc::now().timestamp_millis())
-                    .map_err(|_| Error::InvalidSession)?
+                let user = current_session(&tx, &digest, chrono::Utc::now().timestamp_millis())?
                     .user
                     .id;
                 authorize_manager(&tx, network, user)?;
@@ -137,8 +130,7 @@ impl History {
                     activity,
                 })
             })
-            .await
-            .map_err(|_| Error::Storage)?
+            .await?
     }
     pub(crate) async fn revisions(
         &self,
@@ -151,18 +143,18 @@ impl History {
         if !(1..=200).contains(&limit) {
             return Err(Error::InvalidCursor);
         }
-        let digest = token_digest(token).map_err(|_| Error::InvalidSession)?;
+        let digest = token_digest(token)?;
         let sealer = Arc::clone(&self.sealer);
         self.handle.execute(move |db| {
             let tx = db.transaction_with_behavior(TransactionBehavior::Deferred)?;
             let now = chrono::Utc::now().timestamp_millis();
-            let user = current_session(&tx, &digest, now).map_err(|_| Error::InvalidSession)?.user.id;
+            let user = current_session(&tx, &digest, now)?.user.id;
             authorize_manager(&tx, network, user)?;
             let current_revision = revision(&tx, network)?;
             let scope = CursorScope::Revisions { user, network };
             let mut window = match cursor {
-                Some(cursor) => Window::decode(&sealer, scope, &cursor, now).map_err(|_| Error::InvalidCursor)?,
-                None => Window::new(current_revision.get() as i64, 0, now).map_err(|_| Error::Storage)?,
+                Some(cursor) => Window::decode(&sealer, scope, &cursor, now)?,
+                None => Window::new(current_revision.get() as i64, 0, now)?,
             };
             let mut stmt = tx.prepare("SELECT revision,created_at,created_by,cause,rollback_from,created_by_email FROM configuration_versions WHERE network_id=?1 AND revision<=?2 ORDER BY revision DESC LIMIT ?3")?;
             let mut rows = stmt.query_map(
@@ -182,12 +174,12 @@ impl History {
             let more = rows.len() > usize::from(limit);
             rows.truncate(usize::from(limit));
             if let Some(last) = rows.last() { window.last = window.upper - last.revision.get() as i64 + 1; }
-            let next_cursor = if more { Some(window.encode(&sealer, scope).map_err(|_| Error::Storage)?) } else { None };
-            let as_of = window.as_of().map_err(|_| Error::Storage)?;
+            let next_cursor = if more { Some(window.encode(&sealer, scope)?) } else { None };
+            let as_of = window.as_of()?;
             drop(stmt);
             tx.commit()?;
             Ok(ConfigurationRevisionList { request_id: id, current_revision, items: rows, next_cursor, as_of })
-        }).await.map_err(|_| Error::Storage)?
+        }).await?
     }
 }
 fn revision(tx: &Transaction<'_>, network: NetworkId) -> Result<Revision, Error> {
@@ -196,7 +188,7 @@ fn revision(tx: &Transaction<'_>, network: NetworkId) -> Result<Revision, Error>
         [network.as_uuid().as_bytes().as_slice()],
         |r| r.get::<_, i64>(0),
     )?)
-    .map_err(|_| Error::Storage)
+    .map_err(|_| Error::decode("networks.current_revision"))
 }
 fn uuid<T>(
     r: &rusqlite::Row<'_>,

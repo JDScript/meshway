@@ -14,7 +14,7 @@ pub(crate) fn select_profile(
     token: [u8; 32],
     request: RoutingSelectionRequest,
     publisher: &CommitPublisher,
-) -> Result<RoutingSelectionResponse, NodeError> {
+) -> Result<RoutingSelectionResponse, Error> {
     let tx = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
     let now = now()?;
     let p = authorize_node(&tx, sealer, boot, token, now)?;
@@ -26,7 +26,7 @@ pub(crate) fn select_profile(
         p.node,
         &request.profile,
     )? {
-        return Err(NodeError::Forbidden);
+        return Err(Error::PermissionDenied);
     }
     let digest = identity_digest(&cfg, &bindings, p.node)?;
     let current: Option<i64> = tx
@@ -40,9 +40,10 @@ pub(crate) fn select_profile(
         )
         .optional()?;
     if current != request.expected_version.map(|v| v.get() as i64) {
-        return Err(NodeError::Conflict);
+        return Err(Error::BindingConflict);
     }
-    let version = Version::new(current.unwrap_or(0) as u64 + 1).map_err(|_| NodeError::Conflict)?;
+    let version =
+        Version::new(current.unwrap_or(0) as u64 + 1).map_err(|_| Error::BindingConflict)?;
     tx.execute("INSERT INTO routing_selections(network_id,node_id,identity_digest,profile,version,selected_at) VALUES(?1,?2,?3,?4,?5,?6) ON CONFLICT(network_id,node_id) DO UPDATE SET identity_digest=excluded.identity_digest,profile=excluded.profile,version=excluded.version,selected_at=excluded.selected_at",params![p.network.as_uuid().as_bytes().as_slice(),p.node.as_uuid().as_bytes().as_slice(),digest.as_bytes().as_slice(),request.profile,version.get() as i64,now])?;
     tx.execute(
         "UPDATE execution_demands SET cancelled_at=?3 WHERE network_id=?1 AND node_id=?2 AND cancelled_at IS NULL",
@@ -65,7 +66,7 @@ fn trusted_inventory(
     network: NetworkId,
     cfg: &NetworkConfiguration,
     subjects: &meshway_configuration::SubjectContext,
-) -> Result<BTreeMap<NodeId, TrustedNode>, NodeError> {
+) -> Result<BTreeMap<NodeId, TrustedNode>, Error> {
     let mut out = BTreeMap::new();
     let mut stmt=tx.prepare("SELECT n.id,k.id,k.public_key,k.generation,d.id,d.public_key,d.generation,e.capabilities FROM nodes n JOIN node_keys k ON k.network_id=n.network_id AND k.node_id=n.id AND k.purpose='control' AND k.retired_at IS NULL AND k.revoked_at IS NULL JOIN node_keys d ON d.network_id=n.network_id AND d.node_id=n.id AND d.purpose='dataplane' AND d.retired_at IS NULL AND d.revoked_at IS NULL LEFT JOIN node_execution e ON e.network_id=n.network_id AND e.node_id=n.id WHERE n.network_id=?1 AND n.credentials_revoked_at IS NULL")?;
     let mut rows = stmt.query([network.as_uuid().as_bytes().as_slice()])?;
@@ -74,15 +75,15 @@ fn trusted_inventory(
         if !subjects.node_is_active(cfg, node) {
             continue;
         }
-        let key = |offset| -> Result<BoundNodeKey, NodeError> {
+        let key = |offset| -> Result<BoundNodeKey, Error> {
             Ok(BoundNodeKey {
                 id: id(r.get(offset)?)?,
                 generation: Version::new(
                     r.get::<_, i64>(offset + 2)?
                         .try_into()
-                        .map_err(|_| NodeError::Storage)?,
+                        .map_err(|_| Error::decode("node_keys.generation"))?,
                 )
-                .map_err(|_| NodeError::Storage)?,
+                .map_err(|_| Error::decode("node_keys.generation"))?,
                 public_key: NodePublicKey {
                     algorithm: if offset == 1 {
                         KeyAlgorithm::Ed25519
@@ -92,7 +93,7 @@ fn trusted_inventory(
                     bytes: Digest::from_bytes(
                         r.get::<_, Vec<u8>>(offset + 1)?
                             .try_into()
-                            .map_err(|_| NodeError::Storage)?,
+                            .map_err(|_| Error::decode("node_keys.public_key"))?,
                     ),
                 },
             })
@@ -119,7 +120,7 @@ fn active_publications(
     tx: &Transaction<'_>,
     sealer: &Sealer,
     network: NetworkId,
-) -> Result<BTreeMap<PublicationId, CompiledPublication>, NodeError> {
+) -> Result<BTreeMap<PublicationId, CompiledPublication>, Error> {
     let mut statement = tx.prepare(
         "SELECT id,payload FROM execution_publications x WHERE network_id=?1 AND withdrawn_at IS NULL
          AND EXISTS(SELECT 1 FROM node_execution e WHERE e.network_id=x.network_id AND e.target_publication_id=x.id)",
@@ -129,9 +130,7 @@ fn active_publications(
     while let Some(row) = rows.next()? {
         let publication = id(row.get(0)?)?;
         let payload: Vec<u8> = row.get(1)?;
-        let plain = sealer
-            .open_execution(network, publication, &payload)
-            .map_err(|_| NodeError::Storage)?;
+        let plain = sealer.open_execution(network, publication, &payload)?;
         publications.insert(publication, json(plain.as_bytes())?);
     }
     Ok(publications)
@@ -143,11 +142,10 @@ pub(crate) fn publish(
     network: NetworkId,
     cause: &str,
     now: i64,
-) -> Result<CompiledPublication, NodeError> {
+) -> Result<CompiledPublication, Error> {
     let (revision, _, bindings) = current_configuration(tx, sealer, network)?;
     let rule_sets =
-        crate::resources::bindings::at_revision(tx, network, revision, &bindings.rule_sets)
-            .map_err(|_| NodeError::Storage)?;
+        crate::resources::bindings::at_revision(tx, network, revision, &bindings.rule_sets)?;
     publish_with_rule_sets(tx, sealer, network, cause, now, &rule_sets)
 }
 
@@ -158,7 +156,7 @@ pub(crate) fn publish_with_rule_sets(
     cause: &str,
     now: i64,
     rule_set_bindings: &crate::resources::bindings::Bindings,
-) -> Result<CompiledPublication, NodeError> {
+) -> Result<CompiledPublication, Error> {
     let (revision, cfg, bindings) = current_configuration(tx, sealer, network)?;
     let rule_sets =
         crate::resources::bindings::compilation_contents(tx, network, rule_set_bindings)?;
@@ -192,9 +190,10 @@ pub(crate) fn publish_with_rule_sets(
             let d: Demand = json(&v?)?;
             Ok((d.id, d))
         })
-        .collect::<Result<BTreeMap<_, _>, NodeError>>()?;
+        .collect::<Result<BTreeMap<_, _>, Error>>()?;
     drop(stmt);
-    let publication = PublicationId::new(uuid()?).map_err(|_| NodeError::Storage)?;
+    let publication =
+        PublicationId::new(uuid()?).map_err(|_| Error::Internal("generated publication ID"))?;
     let diagnostics = crate::execution::diagnostics::collect(tx, network, now)?;
     let mut compiled = compile::compile_with_diagnostics(
         CompilationInput {
@@ -268,9 +267,7 @@ pub(crate) fn publish_with_rule_sets(
         |r| r.get(0),
     )?;
     let payload = zeroize::Zeroizing::new(bytes(&compiled)?);
-    let sealed = sealer
-        .seal_execution(network, publication, &payload)
-        .map_err(|_| NodeError::Storage)?;
+    let sealed = sealer.seal_execution(network, publication, &payload)?;
     tx.execute(
         "INSERT INTO execution_publications(id,network_id,sequence,revision,cause,supersedes,dependency_digest,payload,created_at,rule_set_bindings)
          VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10)",
@@ -316,7 +313,7 @@ pub(crate) fn target(
     tx: &Transaction<'_>,
     sealer: &Sealer,
     p: &NodePrincipal,
-) -> Result<Option<(PublicationId, CompiledNode)>, NodeError> {
+) -> Result<Option<(PublicationId, CompiledNode)>, Error> {
     target_for_node(tx, sealer, p.network, p.node)
 }
 /// SQL facts only. The caller must authorize its viewer in this transaction.
@@ -325,15 +322,16 @@ pub(crate) fn target_for_node(
     sealer: &Sealer,
     network: NetworkId,
     node: NodeId,
-) -> Result<Option<(PublicationId, CompiledNode)>, NodeError> {
+) -> Result<Option<(PublicationId, CompiledNode)>, Error> {
     let row:Option<(Vec<u8>,Vec<u8>)>=tx.query_row("SELECT x.id,x.payload FROM node_execution e JOIN execution_publications x ON x.network_id=e.network_id AND x.id=e.target_publication_id WHERE e.network_id=?1 AND e.node_id=?2 AND x.withdrawn_at IS NULL",params![network.as_uuid().as_bytes().as_slice(),node.as_uuid().as_bytes().as_slice()],|r|Ok((r.get(0)?,r.get(1)?))).optional()?;
     row.map(|(publication, payload)| {
         let publication = id(publication)?;
-        let plain = sealer
-            .open_execution(network, publication, &payload)
-            .map_err(|_| NodeError::Storage)?;
+        let plain = sealer.open_execution(network, publication, &payload)?;
         let mut compiled: CompiledPublication = json(plain.as_bytes())?;
-        let node = compiled.nodes.remove(&node).ok_or(NodeError::Storage)?;
+        let node = compiled
+            .nodes
+            .remove(&node)
+            .ok_or(Error::decode("execution_publications.payload"))?;
         Ok((publication, node))
     })
     .transpose()
@@ -344,7 +342,7 @@ pub(super) fn historical_target(
     sealer: &Sealer,
     p: &NodePrincipal,
     reference: &ConfigurationRef,
-) -> Result<Option<CompiledNode>, NodeError> {
+) -> Result<Option<CompiledNode>, Error> {
     historical_target_for_node(tx, sealer, p.network, p.node, reference)
 }
 
@@ -354,15 +352,14 @@ fn historical_target_for_node(
     network: NetworkId,
     node: NodeId,
     reference: &ConfigurationRef,
-) -> Result<Option<CompiledNode>, NodeError> {
+) -> Result<Option<CompiledNode>, Error> {
     let payload:Option<Vec<u8>>=tx.query_row("SELECT payload FROM execution_publications WHERE network_id=?1 AND id=?2 AND revision=?3",params![network.as_uuid().as_bytes().as_slice(),reference.execution_publication.as_uuid().as_bytes().as_slice(),reference.revision.get() as i64],|r|r.get(0)).optional()?;
     let Some(payload) = payload else {
         return Ok(None);
     };
     let mut compiled: CompiledPublication = json(
         sealer
-            .open_execution(network, reference.execution_publication, &payload)
-            .map_err(|_| NodeError::Storage)?
+            .open_execution(network, reference.execution_publication, &payload)?
             .as_bytes(),
     )?;
     Ok(compiled
@@ -380,7 +377,7 @@ pub(crate) fn receipt_history_targets(
     node: NodeId,
     instance: InstanceId,
     now: i64,
-) -> Result<Vec<CompiledNode>, NodeError> {
+) -> Result<Vec<CompiledNode>, Error> {
     let mut statement = tx.prepare(
         "SELECT r.publication_id,x.revision,r.digest FROM execution_receipts r
          JOIN execution_publications x ON x.network_id=r.network_id AND x.id=r.publication_id
@@ -408,10 +405,18 @@ pub(crate) fn receipt_history_targets(
     let mut targets = Vec::new();
     for (publication, revision, digest) in rows {
         let reference = ConfigurationRef {
-            revision: Revision::new(revision.try_into().map_err(|_| NodeError::Storage)?)
-                .map_err(|_| NodeError::Storage)?,
+            revision: Revision::new(
+                revision
+                    .try_into()
+                    .map_err(|_| Error::decode("execution_publications.revision"))?,
+            )
+            .map_err(|_| Error::decode("execution_publications.revision"))?,
             execution_publication: id(publication)?,
-            digest: Digest::from_bytes(digest.try_into().map_err(|_| NodeError::Storage)?),
+            digest: Digest::from_bytes(
+                digest
+                    .try_into()
+                    .map_err(|_| Error::decode("execution_receipts.digest"))?,
+            ),
         };
         if let Some(target) = historical_target_for_node(tx, sealer, network, node, &reference)? {
             targets.push(target);
@@ -426,23 +431,21 @@ pub(crate) fn check_publication(
     node: NodeId,
     publication: PublicationId,
     now: i64,
-) -> Result<(), NodeError> {
-    let payload:Vec<u8>=tx.query_row("SELECT x.payload FROM execution_publications x JOIN networks n ON n.id=x.network_id AND n.current_revision=x.revision WHERE x.network_id=?1 AND x.id=?2 AND x.withdrawn_at IS NULL",params![network.as_uuid().as_bytes().as_slice(),publication.as_uuid().as_bytes().as_slice()],|r|r.get(0)).optional()?.ok_or(NodeError::Conflict)?;
-    let plain = sealer
-        .open_execution(network, publication, &payload)
-        .map_err(|_| NodeError::Storage)?;
+) -> Result<(), Error> {
+    let payload:Vec<u8>=tx.query_row("SELECT x.payload FROM execution_publications x JOIN networks n ON n.id=x.network_id AND n.current_revision=x.revision WHERE x.network_id=?1 AND x.id=?2 AND x.withdrawn_at IS NULL",params![network.as_uuid().as_bytes().as_slice(),publication.as_uuid().as_bytes().as_slice()],|r|r.get(0)).optional()?.ok_or(Error::BindingConflict)?;
+    let plain = sealer.open_execution(network, publication, &payload)?;
     let compiled: CompiledPublication = json(plain.as_bytes())?;
     let (_, cfg, bindings) = current_configuration(tx, sealer, network)?;
     let current = trusted_inventory(tx, network, &cfg, &subjects(tx, network, &bindings)?)?;
-    let node = compiled.nodes.get(&node).ok_or(NodeError::Conflict)?;
+    let node = compiled.nodes.get(&node).ok_or(Error::BindingConflict)?;
     if current.get(&node.configuration.node_id) != Some(&node.configuration.self_keys) {
-        return Err(NodeError::Conflict);
+        return Err(Error::BindingConflict);
     }
     for (id, peer) in &node.configuration.peers {
         if current.get(id).is_none_or(|keys| {
             keys.control_key != peer.control_key || keys.dataplane_key != peer.dataplane_key
         }) {
-            return Err(NodeError::Conflict);
+            return Err(Error::BindingConflict);
         }
     }
     if node
@@ -451,7 +454,7 @@ pub(crate) fn check_publication(
         .values()
         .any(|p| p.expires_at_ms <= now as u64)
     {
-        return Err(NodeError::Conflict);
+        return Err(Error::BindingConflict);
     }
     Ok(())
 }
@@ -460,7 +463,7 @@ pub(super) fn refresh_expired_demands(
     sealer: &Sealer,
     network: NetworkId,
     now: i64,
-) -> Result<bool, NodeError> {
+) -> Result<bool, Error> {
     if tx.execute(
         "UPDATE execution_demands SET cancelled_at=?2 WHERE network_id=?1 AND expires_at<=?2 AND cancelled_at IS NULL",
         params![network.as_uuid().as_bytes().as_slice(), now],
@@ -477,7 +480,7 @@ pub(crate) fn revoke_execution(
     network: NetworkId,
     node: NodeId,
     now: i64,
-) -> Result<(), NodeError> {
+) -> Result<(), Error> {
     for (publication, compiled) in active_publications(tx, sealer, network)? {
         for (target_node, target) in compiled.nodes {
             if target_node != node && !target.configuration.peers.contains_key(&node) {
@@ -523,10 +526,12 @@ pub(crate) fn apply_configuration_effects(
     previous_bindings: &ConfigurationBindings,
     target: &NetworkConfiguration,
     now: i64,
-) -> Result<CompiledPublication, NodeError> {
+) -> Result<CompiledPublication, Error> {
     let (revision, committed, bindings) = current_configuration(tx, sealer, network)?;
     if &committed != target {
-        return Err(NodeError::Conflict);
+        return Err(Error::Internal(
+            "committed configuration differs from the prepared target",
+        ));
     }
     for (node, old) in &previous.nodes {
         if target
@@ -602,7 +607,7 @@ pub(crate) fn configuration_targets(
     network: NetworkId,
     revision: Revision,
     publications: &[PublicationId],
-) -> Result<BTreeMap<NodeId, ConfigurationRef>, NodeError> {
+) -> Result<BTreeMap<NodeId, ConfigurationRef>, Error> {
     let mut targets = BTreeMap::new();
     for publication in publications {
         let payload: Vec<u8> = tx.query_row(
@@ -612,8 +617,7 @@ pub(crate) fn configuration_targets(
         )?;
         let compiled: CompiledPublication = json(
             sealer
-                .open_execution(network, *publication, &payload)
-                .map_err(|_| NodeError::Storage)?
+                .open_execution(network, *publication, &payload)?
                 .as_bytes(),
         )?;
         for (node, slice) in compiled.nodes {
@@ -622,7 +626,7 @@ pub(crate) fn configuration_targets(
                 || !tx.query_row("SELECT EXISTS(SELECT 1 FROM nodes WHERE network_id=?1 AND id=?2 AND credentials_revoked_at IS NULL)", params![network.as_uuid().as_bytes().as_slice(), node.as_uuid().as_bytes().as_slice()], |row| row.get::<_,bool>(0))?
                 || targets.insert(node, ConfigurationRef { revision, execution_publication: *publication, digest: slice.digest }).is_some()
             {
-                return Err(NodeError::Conflict);
+                return Err(Error::BindingConflict);
             }
         }
     }
@@ -635,9 +639,9 @@ pub(crate) fn demand(
     token: [u8; 32],
     request: DemandRequest,
     publisher: &CommitPublisher,
-) -> Result<DemandResponse, NodeError> {
+) -> Result<DemandResponse, Error> {
     if !(1..=300).contains(&request.duration_seconds) {
-        return Err(NodeError::Invalid);
+        return Err(Error::InvalidRequest);
     }
     let tx = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
     let now = now()?;
@@ -652,17 +656,17 @@ pub(crate) fn demand(
     if previous.as_ref().is_some_and(|(v, expires, cancelled)| {
         v != digest.as_bytes() || *expires <= now || cancelled.is_some()
     }) {
-        return Err(NodeError::Conflict);
+        return Err(Error::BindingConflict);
     }
     if previous.is_some() {
-        let (publication, target) = target(&tx, sealer, &p)?.ok_or(NodeError::Conflict)?;
+        let (publication, target) = target(&tx, sealer, &p)?.ok_or(Error::BindingConflict)?;
         check_publication(&tx, sealer, p.network, p.node, publication, now)?;
         let decision = target
             .configuration
             .decisions
             .get(&request.request_id)
             .cloned()
-            .ok_or(NodeError::Conflict)?;
+            .ok_or(Error::BindingConflict)?;
         tx.commit()?;
         return Ok(DemandResponse {
             publication,
@@ -693,7 +697,7 @@ pub(crate) fn demand(
         .get(&p.node)
         .and_then(|n| n.configuration.decisions.get(&request.request_id))
         .cloned()
-        .ok_or(NodeError::Conflict)?;
+        .ok_or(Error::BindingConflict)?;
     grant_lease(&tx, sealer, &p, now)?;
     commit_progress(tx, publisher, p.network, true)?;
     Ok(DemandResponse {
@@ -708,7 +712,7 @@ pub(crate) fn cancel_demand(
     token: [u8; 32],
     request: CancelDemandRequest,
     publisher: &CommitPublisher,
-) -> Result<(), NodeError> {
+) -> Result<(), Error> {
     let tx = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
     let now = now()?;
     let p = authorize_node(&tx, sealer, boot, token, now)?;

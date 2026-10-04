@@ -1,4 +1,5 @@
-use crate::networks::{MemberSummary, NetworkError, NetworkSummary};
+use crate::error::Error;
+use crate::networks::{MemberSummary, NetworkSummary};
 use crate::store::authorization::parse_role;
 use chrono::{DateTime, Utc};
 use meshway_model::{MembershipId, MembershipRole, NetworkId, Revision, UserId, Version};
@@ -27,7 +28,7 @@ impl RawNetwork {
             role: row.get(6)?,
         })
     }
-    pub(super) fn into_view(self) -> Result<NetworkSummary, NetworkError> {
+    pub(super) fn into_view(self) -> Result<NetworkSummary, Error> {
         let role = parse_role(&self.role)?;
         Ok(NetworkSummary {
             id: network_id(&self.id)?,
@@ -36,11 +37,11 @@ impl RawNetwork {
             current_revision: Revision::new(
                 self.revision
                     .try_into()
-                    .map_err(|_| NetworkError::Storage)?,
+                    .map_err(|_| Error::decode("networks.current_revision"))?,
             )
-            .map_err(|_| NetworkError::Storage)?,
+            .map_err(|_| Error::decode("networks.current_revision"))?,
             membership_id: MembershipId::new(uuid(&self.membership)?)
-                .map_err(|_| NetworkError::Storage)?,
+                .map_err(|_| Error::decode("memberships.id"))?,
             role,
             actions: crate::store::authorization::network_actions(role),
         })
@@ -73,28 +74,33 @@ impl RawMember {
         self,
         caller: (MembershipId, MembershipRole),
         owner_count: i64,
-    ) -> Result<MemberSummary, NetworkError> {
-        let id = MembershipId::new(uuid(&self.id)?).map_err(|_| NetworkError::Storage)?;
+    ) -> Result<MemberSummary, Error> {
+        let id = MembershipId::new(uuid(&self.id)?).map_err(|_| Error::decode("memberships.id"))?;
         let role = parse_role(&self.role)?;
         Ok(MemberSummary {
             membership_id: id,
-            user_id: UserId::new(uuid(&self.user)?).map_err(|_| NetworkError::Storage)?,
+            user_id: UserId::new(uuid(&self.user)?)
+                .map_err(|_| Error::decode("memberships.user_id"))?,
             email: self.email,
             role,
-            version: Version::new(self.version.try_into().map_err(|_| NetworkError::Storage)?)
-                .map_err(|_| NetworkError::Storage)?,
+            version: Version::new(
+                self.version
+                    .try_into()
+                    .map_err(|_| Error::decode("memberships.version"))?,
+            )
+            .map_err(|_| Error::decode("memberships.version"))?,
             joined_at: timestamp(self.joined_at)?,
             actions: crate::store::authorization::member_actions(caller, (id, role), owner_count),
         })
     }
 }
 
-fn uuid(bytes: &[u8]) -> Result<Uuid, NetworkError> {
-    Uuid::from_slice(bytes).map_err(|_| NetworkError::Storage)
+fn uuid(bytes: &[u8]) -> Result<Uuid, Error> {
+    Uuid::from_slice(bytes).map_err(|_| Error::decode("network row UUID"))
 }
-pub(super) fn network_id(bytes: &[u8]) -> Result<NetworkId, NetworkError> {
-    NetworkId::new(uuid(bytes)?).map_err(|_| NetworkError::Storage)
+pub(super) fn network_id(bytes: &[u8]) -> Result<NetworkId, Error> {
+    NetworkId::new(uuid(bytes)?).map_err(|_| Error::decode("networks.id"))
 }
-fn timestamp(value: i64) -> Result<DateTime<Utc>, NetworkError> {
-    DateTime::from_timestamp_millis(value).ok_or(NetworkError::Storage)
+fn timestamp(value: i64) -> Result<DateTime<Utc>, Error> {
+    DateTime::from_timestamp_millis(value).ok_or(Error::decode("network row timestamp"))
 }

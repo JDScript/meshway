@@ -1,6 +1,6 @@
 use super::TaskAdmission;
+use crate::error::Error;
 use crate::state::{
-    StateError,
     service::{ReadIdentity, Runtime},
     stream::CommittedChange,
 };
@@ -45,7 +45,7 @@ pub trait ObservationProvider: Send + Sync + 'static {
         _: &Transaction<'_>,
         _: &[SubscriptionLease],
         _: DateTime<Utc>,
-    ) -> Result<(), StateError> {
+    ) -> Result<(), Error> {
         Ok(())
     }
     fn scope(
@@ -53,13 +53,13 @@ pub trait ObservationProvider: Send + Sync + 'static {
         tx: &Transaction<'_>,
         identity: &ReadIdentity,
         now: DateTime<Utc>,
-    ) -> Result<crate::state::VisibilityScope, StateError>;
+    ) -> Result<crate::state::VisibilityScope, Error>;
     fn report(
         &self,
         tx: &Transaction<'_>,
         authorization: &str,
         now: DateTime<Utc>,
-    ) -> Result<crate::state::ReportAdmission, StateError>;
+    ) -> Result<crate::state::ReportAdmission, Error>;
     /// May synthesize and persist the diagnostic execution demand within this
     /// transaction. C commits it together with task acceptance before publishing.
     fn prepare_observation(
@@ -68,7 +68,7 @@ pub trait ObservationProvider: Send + Sync + 'static {
         identity: &ReadIdentity,
         request: &CreateObservation,
         now: DateTime<Utc>,
-    ) -> Result<TaskAdmission, StateError> {
+    ) -> Result<TaskAdmission, Error> {
         self.observation(tx, identity, request, now)
     }
     /// Read-only reauthorization for already accepted tasks and subscribers.
@@ -78,13 +78,13 @@ pub trait ObservationProvider: Send + Sync + 'static {
         identity: &ReadIdentity,
         request: &CreateObservation,
         now: DateTime<Utc>,
-    ) -> Result<TaskAdmission, StateError>;
+    ) -> Result<TaskAdmission, Error>;
     fn observation_session(
         &self,
         tx: &Transaction<'_>,
         identity: &ReadIdentity,
         now: DateTime<Utc>,
-    ) -> Result<SessionId, StateError>;
+    ) -> Result<SessionId, Error>;
 }
 #[derive(PartialEq, Eq)]
 pub struct SubscriptionLease {
@@ -164,7 +164,7 @@ impl<P: ObservationProvider> ObservationService<P> {
         ObservationMaintenance { stop, worker }
     }
 
-    async fn maintain(&self) -> Result<(), StateError> {
+    async fn maintain(&self) -> Result<(), Error> {
         let provider = self.provider.clone();
         let runtime = self.runtime.clone();
         self.handle
@@ -172,7 +172,7 @@ impl<P: ObservationProvider> ObservationService<P> {
                 let tx = connection.transaction()?;
                 let now = Utc::now();
                 let mut runtime =
-                    RuntimeTransaction::new(runtime.lock().map_err(|_| StateError::Unavailable)?);
+                    RuntimeTransaction::new(runtime.lock().map_err(|_| Error::RUNTIME)?);
                 runtime.observations.expire(now);
                 reauthorize_all(&*provider, &tx, &mut runtime, now, None);
                 provider.synchronize(&tx, &runtime.observations.leases(), now)?;
@@ -198,7 +198,7 @@ impl<P: ObservationProvider> ObservationService<P> {
         &self,
         identity: ReadIdentity,
         request: CreateObservation,
-    ) -> Result<ObservationTask, StateError> {
+    ) -> Result<ObservationTask, Error> {
         let provider = self.provider.clone();
         let runtime = self.runtime.clone();
         self.handle
@@ -206,7 +206,7 @@ impl<P: ObservationProvider> ObservationService<P> {
                 let tx = connection.transaction()?;
                 let now = Utc::now();
                 let mut runtime =
-                    RuntimeTransaction::new(runtime.lock().map_err(|_| StateError::Unavailable)?);
+                    RuntimeTransaction::new(runtime.lock().map_err(|_| Error::RUNTIME)?);
                 runtime.observations.expire(now);
                 if let Some(stored) = runtime
                     .observations
@@ -227,20 +227,16 @@ impl<P: ObservationProvider> ObservationService<P> {
                         || stored.task.metrics != request.metrics
                         || stored.task.interval_ms != request.interval_ms
                     {
-                        return Err(StateError::Conflict);
+                        return Err(Error::StateConflict);
                     }
                     if subscriber.authorization_digest != scope.observation_authorization_digest
                         || !scope.full.contains(&request.source_node_id)
                     {
-                        return Err(StateError::Forbidden);
+                        return Err(Error::PermissionDenied);
                     }
                     let id = stored.task.id;
                     reauthorize_all(&*provider, &tx, &mut runtime, now, Some(scope.network_id));
-                    let stored = runtime
-                        .observations
-                        .tasks
-                        .get(&id)
-                        .ok_or(StateError::NotFound)?;
+                    let stored = runtime.observations.tasks.get(&id).ok_or(Error::NotFound)?;
                     let task = super::subscriber_view(stored, request.subscription_id)?;
                     tx.commit()?;
                     runtime.committed();
@@ -276,7 +272,7 @@ impl<P: ObservationProvider> ObservationService<P> {
         identity: ReadIdentity,
         selected: Option<ObservationSubscriptionId>,
         operation: ObservationOperation,
-    ) -> Result<ObservationList, StateError> {
+    ) -> Result<ObservationList, Error> {
         let provider = self.provider.clone();
         let runtime = self.runtime.clone();
         self.handle
@@ -286,7 +282,7 @@ impl<P: ObservationProvider> ObservationService<P> {
                 let scope = provider.scope(&tx, &identity, now)?;
                 let session = provider.observation_session(&tx, &identity, now)?;
                 let mut runtime =
-                    RuntimeTransaction::new(runtime.lock().map_err(|_| StateError::Unavailable)?);
+                    RuntimeTransaction::new(runtime.lock().map_err(|_| Error::RUNTIME)?);
                 runtime.observations.expire(now);
                 reauthorize_all(&*provider, &tx, &mut runtime, now, Some(scope.network_id));
                 let candidates: Vec<_> = runtime
@@ -319,11 +315,13 @@ impl<P: ObservationProvider> ObservationService<P> {
                     && candidates.is_empty()
                     && operation != ObservationOperation::Cancel
                 {
-                    return Err(StateError::NotFound);
+                    return Err(Error::NotFound);
                 }
                 let mut items = vec![];
                 for task in candidates {
-                    let subscription = task.subscription_id.ok_or(StateError::Unavailable)?;
+                    let subscription = task
+                        .subscription_id
+                        .ok_or(Error::Internal("observation subscription missing"))?;
                     if operation == ObservationOperation::Cancel {
                         runtime.observations.cancel(
                             session,
@@ -395,7 +393,7 @@ impl<P: ObservationProvider> ObservationService<P> {
             })
             .await?
     }
-    pub async fn node_tasks(&self, authorization: String) -> Result<ObservationList, StateError> {
+    pub async fn node_tasks(&self, authorization: String) -> Result<ObservationList, Error> {
         let provider = self.provider.clone();
         let runtime = self.runtime.clone();
         self.handle
@@ -404,7 +402,7 @@ impl<P: ObservationProvider> ObservationService<P> {
                 let now = Utc::now();
                 let admission = provider.report(&tx, &authorization, now)?;
                 let mut runtime =
-                    RuntimeTransaction::new(runtime.lock().map_err(|_| StateError::Unavailable)?);
+                    RuntimeTransaction::new(runtime.lock().map_err(|_| Error::RUNTIME)?);
                 reauthorize(&*provider, &tx, &mut runtime, &admission, None, now);
                 provider.synchronize(&tx, &runtime.observations.leases(), now)?;
                 tx.commit()?;
@@ -420,7 +418,7 @@ impl<P: ObservationProvider> ObservationService<P> {
         authorization: String,
         id: ObservationId,
         result: ObservationResult,
-    ) -> Result<ObservationTask, StateError> {
+    ) -> Result<ObservationTask, Error> {
         let provider = self.provider.clone();
         let runtime = self.runtime.clone();
         self.handle
@@ -429,10 +427,11 @@ impl<P: ObservationProvider> ObservationService<P> {
                 let now = Utc::now();
                 let admission = provider.report(&tx, &authorization, now)?;
                 let mut runtime =
-                    RuntimeTransaction::new(runtime.lock().map_err(|_| StateError::Unavailable)?);
+                    RuntimeTransaction::new(runtime.lock().map_err(|_| Error::RUNTIME)?);
                 reauthorize(&*provider, &tx, &mut runtime, &admission, Some(id), now);
                 let result_digest = crate::resources::content_digest(
-                    &serde_json::to_vec(&result).map_err(|_| StateError::Invalid)?,
+                    &serde_json::to_vec(&result)
+                        .map_err(|_| Error::encode("observation result"))?,
                 );
                 let is_sample = matches!(&result.result, ObservationUpdate::Sample { .. });
                 let duplicate = runtime
@@ -453,7 +452,7 @@ impl<P: ObservationProvider> ObservationService<P> {
                     .filter(|sample| is_sample && !sample.partial)
                     .and_then(|sample| sample.probe.clone())
                 {
-                    let occurred_at = probe.completed_at.ok_or(StateError::Invalid)?;
+                    let occurred_at = probe.completed_at.ok_or(Error::InvalidRequest)?;
                     let event = meshway_model::observations::ObservationEvent {
                         event_id: probe.measurement_id,
                         configuration: task.configuration.clone(),
@@ -673,7 +672,7 @@ mod tests {
         let unrelated_index = Arc::as_ptr(&runtime.lock().unwrap().observations.tasks[&id(2)].seen);
         let mut db = rusqlite::Connection::open_in_memory().unwrap();
         db.execute_batch("PRAGMA foreign_keys=ON; CREATE TABLE parent(id INTEGER PRIMARY KEY); CREATE TABLE pending(parent INTEGER REFERENCES parent(id) DEFERRABLE INITIALLY DEFERRED);").unwrap();
-        let failure = (|| -> Result<(), StateError> {
+        let failure = (|| -> Result<(), Error> {
             let tx = db.transaction()?;
             let mut staged = RuntimeTransaction::new(runtime.lock().unwrap());
             // Includes repeated whole-network expiry sweeps with no due change.

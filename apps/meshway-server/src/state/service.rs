@@ -1,6 +1,7 @@
 //! Integration seam for management and Node identity owners. Providers execute
 //! on the real SQLite transaction, never from a cached HTTP authorization result.
-use super::{ReportAdmission, StateError, StateHub, VisibilityScope, stream::*};
+use super::{ReportAdmission, StateHub, VisibilityScope, stream::*};
+use crate::error::Error;
 use crate::{observations::Observations, resources::GeoIp, store::Handle};
 use chrono::{DateTime, Duration, Utc};
 use meshway_model::{Digest, NetworkId, NodeId};
@@ -30,8 +31,8 @@ pub enum ReadIdentity {
 impl ReadIdentity {
     /// Parse a session credential without granting authorization. Providers
     /// still recheck the actual session and membership on every transaction.
-    pub fn user_session(token: &str, network: NetworkId) -> Result<Self, StateError> {
-        let digest = crate::accounts::token_digest(token).map_err(|_| StateError::Unauthorized)?;
+    pub fn user_session(token: &str, network: NetworkId) -> Result<Self, Error> {
+        let digest = crate::accounts::token_digest(token)?;
         Ok(Self::UserSession { digest, network })
     }
     pub(crate) fn fingerprint(&self) -> Digest {
@@ -64,7 +65,7 @@ pub trait StateProvider: Send + Sync + 'static {
     type Progress: Clone + PartialEq + Serialize + Send + Sync + 'static;
     /// Scope of data that may remain in replay, separate from the evolving
     /// execution/observation authorization digest used inside the State core.
-    fn replay_scope(&self, view: &ProviderView<Self>) -> Result<Digest, StateError> {
+    fn replay_scope(&self, view: &ProviderView<Self>) -> Result<Digest, Error> {
         Ok(view.scope.authorization_digest)
     }
     /// Managers may replay prior non-secret network views in order before the
@@ -98,13 +99,13 @@ pub trait StateProvider: Send + Sync + 'static {
         tx: &Transaction<'_>,
         identity: &ReadIdentity,
         now: DateTime<Utc>,
-    ) -> Result<ProviderView<Self>, StateError>;
+    ) -> Result<ProviderView<Self>, Error>;
     fn report(
         &self,
         tx: &Transaction<'_>,
         authorization: &str,
         now: DateTime<Utc>,
-    ) -> Result<ReportAdmission, StateError>;
+    ) -> Result<ReportAdmission, Error>;
 }
 pub type ProviderView<P> = ViewContext<
     <P as StateProvider>::Configuration,
@@ -143,7 +144,7 @@ impl Runtime {
         self.closed = true;
         self.observations = Observations::default();
     }
-    pub(crate) fn new() -> Result<Self, StateError> {
+    pub(crate) fn new() -> Result<Self, Error> {
         Ok(Self {
             closed: false,
             hub: StateHub::new()?,
@@ -189,7 +190,7 @@ impl<P: StateProvider> StateService<P> {
         provider: P,
         sealer: Arc<crate::secrets::Sealer>,
         runtime: Arc<Mutex<Runtime>>,
-    ) -> Result<Self, StateError> {
+    ) -> Result<Self, Error> {
         Ok(Self {
             handle,
             provider: Arc::new(provider),
@@ -202,7 +203,7 @@ impl<P: StateProvider> StateService<P> {
         &self,
         authorization: String,
         report: meshway_protocol::observations::HistoryReport,
-    ) -> Result<meshway_protocol::observations::HistoryAccepted, StateError> {
+    ) -> Result<meshway_protocol::observations::HistoryAccepted, Error> {
         let provider = Arc::clone(&self.provider);
         self.handle
             .execute(move |connection| {
@@ -219,7 +220,7 @@ impl<P: StateProvider> StateService<P> {
         &self,
         identity: ReadIdentity,
         query: meshway_protocol::observations::HistoryQuery,
-    ) -> Result<meshway_protocol::observations::HistoryPage, StateError> {
+    ) -> Result<meshway_protocol::observations::HistoryPage, Error> {
         use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
         let provider = Arc::clone(&self.provider);
         let sealer = Arc::clone(&self.sealer);
@@ -233,32 +234,27 @@ impl<P: StateProvider> StateService<P> {
                     None => None,
                     Some(cursor) => {
                         if cursor.len() > 4096 {
-                            return Err(StateError::Cursor);
+                            return Err(Error::InvalidCursor);
                         }
                         let bytes = URL_SAFE_NO_PAD
                             .decode(cursor)
-                            .map_err(|_| StateError::Cursor)?;
+                            .map_err(|_| Error::InvalidCursor)?;
                         let plain = sealer
                             .open_cursor(scope, &bytes)
-                            .map_err(|_| StateError::Cursor)?;
+                            .map_err(|_| Error::InvalidCursor)?;
                         Some(
                             serde_json::from_slice(plain.as_bytes())
-                                .map_err(|_| StateError::Cursor)?,
+                                .map_err(|_| Error::InvalidCursor)?,
                         )
                     }
                 };
                 let (mut page, next) =
                     crate::observations::history::query(&tx, &view.scope, &query, previous, now)?;
                 if let Some(next) = next {
-                    let bytes = serde_json::to_vec(&next).map_err(|_| StateError::Unavailable)?;
-                    page.next_cursor = Some(
-                        URL_SAFE_NO_PAD.encode(
-                            sealer
-                                .seal_cursor(scope, &bytes)
-                                .map_err(|_| StateError::Unavailable)?
-                                .as_bytes(),
-                        ),
-                    );
+                    let bytes = serde_json::to_vec(&next)
+                        .map_err(|_| Error::encode("observation history cursor"))?;
+                    page.next_cursor =
+                        Some(URL_SAFE_NO_PAD.encode(sealer.seal_cursor(scope, &bytes)?.as_bytes()));
                 }
                 Ok(page)
             })
@@ -268,7 +264,7 @@ impl<P: StateProvider> StateService<P> {
         &self,
         identity: ReadIdentity,
         nodes: Option<Vec<NodeId>>,
-    ) -> Result<StateView, StateError> {
+    ) -> Result<StateView, Error> {
         let provider = Arc::clone(&self.provider);
         let runtime = Arc::clone(&self.runtime);
         self.handle
@@ -276,7 +272,7 @@ impl<P: StateProvider> StateService<P> {
                 let tx = connection.transaction()?;
                 let now = Utc::now();
                 let view = provider.view(&tx, &identity, now)?;
-                let mut runtime = runtime.lock().map_err(|_| StateError::Unavailable)?;
+                let mut runtime = runtime.lock().map_err(|_| Error::RUNTIME)?;
                 let Runtime { hub, geoip, .. } = &mut *runtime;
                 hub.query(&view.scope, nodes.as_deref(), geoip, now)
             })
@@ -286,7 +282,7 @@ impl<P: StateProvider> StateService<P> {
         &self,
         authorization: String,
         report: StateReport,
-    ) -> Result<StateAccepted, StateError> {
+    ) -> Result<StateAccepted, Error> {
         let provider = Arc::clone(&self.provider);
         let runtime = Arc::clone(&self.runtime);
         self.handle
@@ -294,7 +290,7 @@ impl<P: StateProvider> StateService<P> {
                 let tx = connection.transaction()?;
                 let now = Utc::now();
                 let admission = provider.report(&tx, &authorization, now)?;
-                let mut runtime = runtime.lock().map_err(|_| StateError::Unavailable)?;
+                let mut runtime = runtime.lock().map_err(|_| Error::RUNTIME)?;
                 runtime.hub.accept_report(&admission, report, now)
             })
             .await?
@@ -303,7 +299,7 @@ impl<P: StateProvider> StateService<P> {
         &self,
         identity: ReadIdentity,
         cursor: Option<String>,
-    ) -> Result<String, StateError> {
+    ) -> Result<String, Error> {
         let provider = Arc::clone(&self.provider);
         let runtime = Arc::clone(&self.runtime);
         let subscriptions = Arc::clone(&self.subscriptions);
@@ -312,9 +308,8 @@ impl<P: StateProvider> StateService<P> {
                 let tx = connection.transaction()?;
                 let now = Utc::now();
                 let view = provider.view(&tx, &identity, now)?;
-                let mut runtime = runtime.lock().map_err(|_| StateError::Unavailable)?;
-                let mut subscriptions =
-                    subscriptions.lock().map_err(|_| StateError::Unavailable)?;
+                let mut runtime = runtime.lock().map_err(|_| Error::RUNTIME)?;
+                let mut subscriptions = subscriptions.lock().map_err(|_| Error::RUNTIME)?;
                 let authorization = provider.replay_scope(&view)?;
                 subscriptions.retain(|_, sub| {
                     sub.created_at + Duration::minutes(15) > now
@@ -323,7 +318,7 @@ impl<P: StateProvider> StateService<P> {
                             .is_none_or(|at| at + Duration::minutes(1) > now)
                 });
                 if runtime.closed {
-                    return Err(StateError::Unavailable);
+                    return Err(Error::CLOSED);
                 }
                 let owner = identity.fingerprint();
                 let id = random_id()?;
@@ -342,9 +337,11 @@ impl<P: StateProvider> StateService<P> {
                             >= 4
                             && subscriptions[&previous].disconnected_at.is_some()
                         {
-                            return Err(StateError::Budget);
+                            return Err(Error::StateLimit);
                         }
-                        let mut sub = subscriptions.remove(&previous).ok_or(StateError::Cursor)?;
+                        let mut sub = subscriptions
+                            .remove(&previous)
+                            .ok_or(Error::InvalidCursor)?;
                         let mut pending: VecDeque<_> = sub.replay.after(cursor)?.into();
                         let replayed: std::collections::BTreeSet<_> = pending
                             .iter()
@@ -388,7 +385,7 @@ impl<P: StateProvider> StateService<P> {
                         .count()
                         >= 4
                 {
-                    return Err(StateError::Budget);
+                    return Err(Error::StateLimit);
                 }
                 let Runtime { hub, geoip, .. } = &mut *runtime;
                 let state = hub.query(&view.scope, None, geoip, now)?;
@@ -423,7 +420,7 @@ impl<P: StateProvider> StateService<P> {
             })
             .await?
     }
-    async fn poll_frame(&self, id: String) -> Result<StreamPoll, StateError> {
+    async fn poll_frame(&self, id: String) -> Result<StreamPoll, Error> {
         let provider = Arc::clone(&self.provider);
         let runtime = Arc::clone(&self.runtime);
         let subscriptions = Arc::clone(&self.subscriptions);
@@ -431,9 +428,8 @@ impl<P: StateProvider> StateService<P> {
             .execute(move |connection| {
                 let tx = connection.transaction()?;
                 let now = Utc::now();
-                let mut runtime = runtime.lock().map_err(|_| StateError::Unavailable)?;
-                let mut subscriptions =
-                    subscriptions.lock().map_err(|_| StateError::Unavailable)?;
+                let mut runtime = runtime.lock().map_err(|_| Error::RUNTIME)?;
+                let mut subscriptions = subscriptions.lock().map_err(|_| Error::RUNTIME)?;
                 let Some(mut sub) = subscriptions.remove(&id) else {
                     return Ok(StreamPoll::Closed);
                 };
@@ -444,15 +440,15 @@ impl<P: StateProvider> StateService<P> {
                 }
                 let view = match provider.view(&tx, &sub.identity, now) {
                     Ok(view) => view,
-                    Err(StateError::Unauthorized) => {
+                    Err(Error::InvalidSession | Error::InvalidCredentials) => {
                         return closed::<P>(ClosedReason::SessionExpired);
                     }
-                    Err(StateError::NotFound | StateError::Forbidden)
+                    Err(Error::NotFound | Error::PermissionDenied)
                         if matches!(sub.identity, ReadIdentity::UserSession { .. }) =>
                     {
                         return closed::<P>(ClosedReason::MembershipRevoked);
                     }
-                    Err(StateError::Conflict)
+                    Err(Error::StateConflict | Error::BindingConflict)
                         if matches!(sub.identity, ReadIdentity::Node { .. }) =>
                     {
                         return closed::<P>(ClosedReason::NodeLeaseExpired);
@@ -603,7 +599,10 @@ impl<P: StateProvider> StateService<P> {
                         let ready = random_id()?;
                         sub.cursor = ready.clone();
                         initial::<P>(&mut sub, ready)?;
-                        let frame = sub.pending.pop_front().ok_or(StateError::Unavailable)?;
+                        let frame = sub
+                            .pending
+                            .pop_front()
+                            .ok_or(Error::Internal("pending sse frame missing"))?;
                         subscriptions.insert(id, sub);
                         return Ok(StreamPoll::Frame(frame));
                     }
@@ -626,9 +625,12 @@ impl<P: StateProvider> StateService<P> {
                         changed = true;
                     }
                     for task in tasks {
-                        let subscription = task.subscription_id.ok_or(StateError::Unavailable)?;
+                        let subscription = task
+                            .subscription_id
+                            .ok_or(Error::Internal("observation subscription missing"))?;
                         let digest = crate::resources::content_digest(
-                            &serde_json::to_vec(&task).map_err(|_| StateError::Invalid)?,
+                            &serde_json::to_vec(&task)
+                                .map_err(|_| Error::encode("observation task"))?,
                         );
                         if sub.observations.get(&subscription) != Some(&digest) {
                             sub.observations.insert(subscription, digest);
@@ -719,7 +721,10 @@ impl<P: StateProvider> StateService<P> {
                         return Ok(StreamPoll::Pending);
                     }
                 }
-                let frame = sub.pending.pop_front().ok_or(StateError::Unavailable)?;
+                let frame = sub
+                    .pending
+                    .pop_front()
+                    .ok_or(Error::Internal("pending sse frame missing"))?;
                 if frame.id.is_some() && frame.id == sub.initial_batch {
                     sub.initial_batch = None;
                 }
@@ -757,10 +762,10 @@ impl StateReader {
         &self,
         admission: &ReportAdmission,
         now: DateTime<Utc>,
-    ) -> Result<meshway_protocol::state::DerivedNodeState, StateError> {
-        let mut runtime = self.runtime.lock().map_err(|_| StateError::Unavailable)?;
+    ) -> Result<meshway_protocol::state::DerivedNodeState, Error> {
+        let mut runtime = self.runtime.lock().map_err(|_| Error::RUNTIME)?;
         if runtime.closed {
-            return Err(StateError::Unavailable);
+            return Err(Error::CLOSED);
         }
         let Runtime { hub, geoip, .. } = &mut *runtime;
         Ok(hub.location(admission, geoip, now))
@@ -784,9 +789,9 @@ impl CommitPublisher {
         &self,
         transaction: Transaction<'_>,
         changes: Vec<CommittedChange>,
-    ) -> Result<(), StateError> {
+    ) -> Result<(), Error> {
         if changes.len() > MAX_REPLAY_EVENTS {
-            return Err(StateError::Budget);
+            return Err(Error::StateLimit);
         }
         transaction.commit()?;
         for change in changes {
@@ -805,18 +810,16 @@ impl CommitPublisher {
         }
     }
 }
-fn random_id() -> Result<String, StateError> {
-    Ok(crate::accounts::random_uuid()
-        .map_err(|_| StateError::Unavailable)?
-        .to_string())
+fn random_id() -> Result<String, Error> {
+    Ok(crate::accounts::random_uuid()?.to_string())
 }
-fn closed<P: StateProvider>(reason: ClosedReason) -> Result<StreamPoll, StateError> {
+fn closed<P: StateProvider>(reason: ClosedReason) -> Result<StreamPoll, Error> {
     Ok(StreamPoll::Frame(SseFrame::encode(
         None,
         &ProviderEvent::<P>::Closed { reason },
     )?))
 }
-fn initial<P: StateProvider>(sub: &mut Subscription<P>, batch: String) -> Result<(), StateError> {
+fn initial<P: StateProvider>(sub: &mut Subscription<P>, batch: String) -> Result<(), Error> {
     sub.initial_batch = Some(batch.clone());
     sub.pending.push_back(SseFrame::encode(
         None,
@@ -856,14 +859,14 @@ fn initial<P: StateProvider>(sub: &mut Subscription<P>, batch: String) -> Result
         .sum::<usize>()
         > MAX_BATCH_BYTES
     {
-        return Err(StateError::Budget);
+        return Err(Error::StateLimit);
     }
     Ok(())
 }
 fn enqueue<P: StateProvider>(
     sub: &mut Subscription<P>,
     event: ProviderEvent<P>,
-) -> Result<(), StateError> {
+) -> Result<(), Error> {
     let next = random_id()?;
     enqueue_at::<P>(sub, event, next)
 }
@@ -871,7 +874,7 @@ fn enqueue_at<P: StateProvider>(
     sub: &mut Subscription<P>,
     event: ProviderEvent<P>,
     next: String,
-) -> Result<(), StateError> {
+) -> Result<(), Error> {
     let frame = SseFrame::encode(Some(next.clone()), &event)?;
     if sub.pending.len() >= MAX_REPLAY_EVENTS
         || sub
@@ -882,7 +885,7 @@ fn enqueue_at<P: StateProvider>(
             + frame.data.len()
             > MAX_BATCH_BYTES
     {
-        return Err(StateError::Budget);
+        return Err(Error::StateLimit);
     }
     sub.pending.push_back(frame);
     sub.cursor = next;
@@ -892,7 +895,7 @@ impl<P: StateProvider> StreamSource for StateService<P> {
     fn poll<'a>(&'a self, subscription: &'a str) -> PollFuture<'a> {
         Box::pin(async move {
             match self.poll_frame(subscription.to_owned()).await {
-                Err(StateError::Budget) => Ok(StreamPoll::Frame(SseFrame::encode(
+                Err(Error::StateLimit) => Ok(StreamPoll::Frame(SseFrame::encode(
                     None,
                     &ProviderEvent::<P>::Reset {
                         reason: ResetReason::Backpressure,

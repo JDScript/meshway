@@ -1,4 +1,4 @@
-use super::NetworkError;
+use crate::error::Error;
 use crate::secrets::{CursorScope, Sealer};
 use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
 use chrono::{DateTime, Utc};
@@ -17,35 +17,37 @@ pub(crate) struct Window {
 }
 
 impl Window {
-    pub(crate) fn new(upper: i64, memberships_upper: i64, now: i64) -> Result<Self, NetworkError> {
+    pub(crate) fn new(upper: i64, memberships_upper: i64, now: i64) -> Result<Self, Error> {
         Ok(Self {
             upper,
             memberships_upper,
             last: 0,
             as_of: now,
-            expires: now.checked_add(TTL_MS).ok_or(NetworkError::Unavailable)?,
+            expires: now
+                .checked_add(TTL_MS)
+                .ok_or(Error::Internal("cursor expiry overflow"))?,
         })
     }
-    pub(crate) fn as_of(&self) -> Result<DateTime<Utc>, NetworkError> {
-        DateTime::from_timestamp_millis(self.as_of).ok_or(NetworkError::InvalidCursor)
+    pub(crate) fn as_of(&self) -> Result<DateTime<Utc>, Error> {
+        DateTime::from_timestamp_millis(self.as_of).ok_or(Error::InvalidCursor)
     }
     pub(crate) fn decode(
         sealer: &Sealer,
         scope: CursorScope,
         cursor: &str,
         now: i64,
-    ) -> Result<Self, NetworkError> {
+    ) -> Result<Self, Error> {
         if cursor.len() > 2048 {
-            return Err(NetworkError::InvalidCursor);
+            return Err(Error::InvalidCursor);
         }
         let bytes = URL_SAFE_NO_PAD
             .decode(cursor)
-            .map_err(|_| NetworkError::InvalidCursor)?;
+            .map_err(|_| Error::InvalidCursor)?;
         let plain = sealer
             .open_cursor(scope, &bytes)
-            .map_err(|_| NetworkError::InvalidCursor)?;
+            .map_err(|_| Error::InvalidCursor)?;
         let value: Self =
-            serde_json::from_slice(plain.as_bytes()).map_err(|_| NetworkError::InvalidCursor)?;
+            serde_json::from_slice(plain.as_bytes()).map_err(|_| Error::InvalidCursor)?;
         if value.as_of < 0
             || value.as_of > now
             || value.expires <= now
@@ -56,27 +58,21 @@ impl Window {
             || value.memberships_upper < 0
             || value.memberships_upper > meshway_model::MAX_SAFE_INTEGER as i64
         {
-            return Err(NetworkError::InvalidCursor);
+            return Err(Error::InvalidCursor);
         }
         Ok(value)
     }
-    pub(crate) fn encode(
-        &self,
-        sealer: &Sealer,
-        scope: CursorScope,
-    ) -> Result<String, NetworkError> {
-        let bytes = serde_json::to_vec(self).map_err(|_| NetworkError::Unavailable)?;
-        let sealed = sealer
-            .seal_cursor(scope, &bytes)
-            .map_err(|_| NetworkError::Unavailable)?;
+    pub(crate) fn encode(&self, sealer: &Sealer, scope: CursorScope) -> Result<String, Error> {
+        let bytes = serde_json::to_vec(self).map_err(|_| Error::encode("pagination cursor"))?;
+        let sealed = sealer.seal_cursor(scope, &bytes)?;
         Ok(URL_SAFE_NO_PAD.encode(sealed.as_bytes()))
     }
 }
 
-pub(crate) fn validate_limit(limit: u16) -> Result<(), NetworkError> {
+pub(crate) fn validate_limit(limit: u16) -> Result<(), Error> {
     if (1..=200).contains(&limit) {
         Ok(())
     } else {
-        Err(NetworkError::InvalidLimit)
+        Err(Error::InvalidLimit)
     }
 }

@@ -21,12 +21,12 @@ pub(crate) fn current_instance(
     p: &NodePrincipal,
     request: &InstanceRequest,
     now: i64,
-) -> Result<(), NodeError> {
+) -> Result<(), Error> {
     let valid:bool=tx.query_row("SELECT EXISTS(SELECT 1 FROM node_execution WHERE network_id=?1 AND node_id=?2 AND instance_id=?3 AND generation=?4 AND boot_id=?5 AND instance_expires_at>?6)",params![p.network.as_uuid().as_bytes().as_slice(),p.node.as_uuid().as_bytes().as_slice(),request.instance_id.as_uuid().as_bytes().as_slice(),request.generation.get() as i64,boot.as_uuid().as_bytes().as_slice(),now],|r|r.get(0))?;
     if valid {
         Ok(())
     } else {
-        Err(NodeError::Conflict)
+        Err(Error::BindingConflict)
     }
 }
 pub(crate) fn acquire(
@@ -36,7 +36,7 @@ pub(crate) fn acquire(
     token: [u8; 32],
     request: AcquireInstanceRequest,
     publisher: &CommitPublisher,
-) -> Result<InstanceLease, NodeError> {
+) -> Result<InstanceLease, Error> {
     if request.capabilities.len() > 32
         || request.capabilities.iter().any(|(k, v)| {
             k.len() > 64
@@ -60,7 +60,7 @@ pub(crate) fn acquire(
                 }
         })
     {
-        return Err(NodeError::Invalid);
+        return Err(Error::InvalidRequest);
     }
     let tx = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
     let now = now()?;
@@ -80,7 +80,7 @@ pub(crate) fn acquire(
             && expires.is_some_and(|t| t > now)
         {
             if old_caps != &caps {
-                return Err(NodeError::Conflict);
+                return Err(Error::BindingConflict);
             }
             let lease = lease(&tx, sealer, &p)?;
             tx.commit()?;
@@ -90,11 +90,11 @@ pub(crate) fn acquire(
     } else {
         1
     };
-    Version::new(generation.try_into().map_err(|_| NodeError::Conflict)?)
-        .map_err(|_| NodeError::Conflict)?;
+    Version::new(generation.try_into().map_err(|_| Error::BindingConflict)?)
+        .map_err(|_| Error::BindingConflict)?;
     let claimed:bool=tx.query_row("SELECT EXISTS(SELECT 1 FROM node_instance_claims WHERE network_id=?1 AND node_id=?2 AND instance_id=?3)",params![p.network.as_uuid().as_bytes().as_slice(),p.node.as_uuid().as_bytes().as_slice(),request.instance_id.as_uuid().as_bytes().as_slice()],|r|r.get(0))?;
     if claimed {
-        return Err(NodeError::Conflict);
+        return Err(Error::BindingConflict);
     }
     tx.execute("INSERT INTO node_instance_claims(network_id,node_id,instance_id,generation) VALUES(?1,?2,?3,?4)",params![p.network.as_uuid().as_bytes().as_slice(),p.node.as_uuid().as_bytes().as_slice(),request.instance_id.as_uuid().as_bytes().as_slice(),generation])?;
     // Replacing a process fences its demands as well as its ACK/report authority.
@@ -119,7 +119,7 @@ pub(crate) fn renew(
     token: [u8; 32],
     request: InstanceRequest,
     publisher: &CommitPublisher,
-) -> Result<InstanceLease, NodeError> {
+) -> Result<InstanceLease, Error> {
     let tx = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
     let now = now()?;
     let p = authorize_node(&tx, sealer, boot, token, now)?;
@@ -159,7 +159,7 @@ pub(crate) fn release(
     token: [u8; 32],
     request: InstanceRequest,
     publisher: &CommitPublisher,
-) -> Result<(), NodeError> {
+) -> Result<(), Error> {
     let tx = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
     let now = now()?;
     let p = authorize_node(&tx, sealer, boot, token, now)?;
@@ -181,7 +181,7 @@ pub(super) fn grant_lease(
     sealer: &Sealer,
     p: &NodePrincipal,
     now: i64,
-) -> Result<(), NodeError> {
+) -> Result<(), Error> {
     let (revision, cfg, _) = current_configuration(tx, sealer, p.network)?;
     let target = target(tx, sealer, p)?;
     let mut address_blocked = false;
@@ -240,7 +240,7 @@ pub(crate) fn lease(
     tx: &Transaction<'_>,
     sealer: &Sealer,
     p: &NodePrincipal,
-) -> Result<InstanceLease, NodeError> {
+) -> Result<InstanceLease, Error> {
     lease_for_node(tx, sealer, p.network, p.node)
 }
 pub(crate) fn lease_for_node(
@@ -248,7 +248,7 @@ pub(crate) fn lease_for_node(
     sealer: &Sealer,
     network: NetworkId,
     node: NodeId,
-) -> Result<InstanceLease, NodeError> {
+) -> Result<InstanceLease, Error> {
     let (instance,generation,expires,execution):(Vec<u8>,i64,i64,Option<i64>)=tx.query_row("SELECT instance_id,generation,instance_expires_at,execution_expires_at FROM node_execution WHERE network_id=?1 AND node_id=?2",params![network.as_uuid().as_bytes().as_slice(),node.as_uuid().as_bytes().as_slice()],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?,r.get(3)?)))?;
     let target =
         target_for_node(tx, sealer, network, node)?.map(|(publication, c)| ConfigurationRef {
@@ -258,13 +258,19 @@ pub(crate) fn lease_for_node(
         });
     Ok(InstanceLease {
         instance_id: id(instance)?,
-        generation: Version::new(generation.try_into().map_err(|_| NodeError::Storage)?)
-            .map_err(|_| NodeError::Storage)?,
-        expires_at_ms: expires.try_into().map_err(|_| NodeError::Storage)?,
+        generation: Version::new(
+            generation
+                .try_into()
+                .map_err(|_| Error::decode("node_execution.generation"))?,
+        )
+        .map_err(|_| Error::decode("node_execution.generation"))?,
+        expires_at_ms: expires
+            .try_into()
+            .map_err(|_| Error::decode("node_execution.instance_expires_at"))?,
         execution_expires_at_ms: execution
             .map(u64::try_from)
             .transpose()
-            .map_err(|_| NodeError::Storage)?,
+            .map_err(|_| Error::decode("node_execution.execution_expires_at"))?,
         target,
     })
 }
@@ -275,7 +281,7 @@ pub(crate) fn configuration(
     token: [u8; 32],
     request: NodeConfigurationRequest,
     publisher: &CommitPublisher,
-) -> Result<NodeConfigurationResponse, NodeError> {
+) -> Result<NodeConfigurationResponse, Error> {
     let tx = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
     let now = now()?;
     let p = authorize_node(&tx, sealer, boot, token, now)?;
@@ -307,7 +313,7 @@ pub(crate) fn receipt(
     token: [u8; 32],
     request: ReceiptRequest,
     publisher: &CommitPublisher,
-) -> Result<(), NodeError> {
+) -> Result<(), Error> {
     let tx = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
     let now = now()?;
     let p = authorize_node(&tx, sealer, boot, token, now)?;
@@ -318,7 +324,7 @@ pub(crate) fn receipt(
         || request.reported_at_ms.saturating_add(300_000) < now as u64
         || (request.phase == ReceiptPhase::Failed) != request.failure.is_some()
     {
-        return Err(NodeError::Conflict);
+        return Err(Error::BindingConflict);
     }
     let target_enabled = target(&tx, sealer, &p)?.is_none_or(|(_, n)| n.configuration.enabled);
     if request.phase == ReceiptPhase::Applied
@@ -327,7 +333,7 @@ pub(crate) fn receipt(
             .execution_expires_at_ms
             .is_none_or(|e| e <= now as u64)
     {
-        return Err(NodeError::Conflict);
+        return Err(Error::BindingConflict);
     }
     check_publication(
         &tx,
@@ -351,7 +357,7 @@ pub(crate) fn receipt(
                 request.attempt.get() as i64, request.sequence.get() as i64], |r| r.get(0),
         )?;
         if !saved {
-            return Err(NodeError::Conflict);
+            return Err(Error::BindingConflict);
         }
     }
     let failure = request.failure.map(|f| match f {
@@ -380,7 +386,7 @@ pub(crate) fn receipt(
                 failure.map(str::to_owned),
             )
         {
-            return Err(NodeError::Conflict);
+            return Err(Error::BindingConflict);
         }
     } else {
         // History accepts late evidence; only a new greatest attempt/sequence

@@ -88,7 +88,7 @@ async fn account_revocation_cannot_be_blocked_by_the_replay_window_size() {
         .unwrap();
     assert!(matches!(
         app.accounts().authenticate(owner.token.expose()).await,
-        Err(crate::accounts::AccountError::InvalidSession)
+        Err(crate::error::Error::InvalidSession)
     ));
     {
         let runtime = app.state_runtime.lock().unwrap();

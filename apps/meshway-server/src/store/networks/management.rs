@@ -29,33 +29,32 @@ fn removal(
     request: RequestId,
     sealer: &Sealer,
     cache: &crate::configuration::SnapshotCache,
-) -> Result<meshway_protocol::management::RemovalImpactResponse, NetworkError> {
+) -> Result<meshway_protocol::management::RemovalImpactResponse, Error> {
     let (own, role) = membership(tx, network, user)?;
     let target = member.unwrap_or(own);
     let (target_user, target_role, version) = tx.query_row(
         "SELECT user_id,role,version FROM memberships WHERE network_id=?1 AND id=?2 AND revoked_at IS NULL",
         params![network.as_uuid().as_bytes().as_slice(), target.as_uuid().as_bytes().as_slice()],
         |row| Ok((row.get::<_, Vec<u8>>(0)?, row.get::<_, String>(1)?, row.get::<_, i64>(2)?)),
-    ).optional()?.ok_or(NetworkError::NotFound)?;
+    ).optional()?.ok_or(Error::NotFound)?;
     let target_role = parse_role(&target_role)?;
     if target != own && !grant(role, target_role) {
-        return Err(NetworkError::PermissionDenied);
+        return Err(Error::PermissionDenied);
     }
-    let target_user =
-        UserId::new(uuid::Uuid::from_slice(&target_user).map_err(|_| NetworkError::Storage)?)
-            .map_err(|_| NetworkError::Storage)?;
+    let target_user = UserId::new(
+        uuid::Uuid::from_slice(&target_user).map_err(|_| Error::decode("memberships.user_id"))?,
+    )
+    .map_err(|_| Error::decode("memberships.user_id"))?;
     let revision = meshway_model::Revision::new(
         u64::try_from(tx.query_row(
             "SELECT current_revision FROM networks WHERE id=?1",
             [network.as_uuid().as_bytes().as_slice()],
             |r| r.get::<_, i64>(0),
         )?)
-        .map_err(|_| NetworkError::Storage)?,
+        .map_err(|_| Error::decode("networks.current_revision"))?,
     )
-    .map_err(|_| NetworkError::Storage)?;
-    let snapshot = cache
-        .load(tx, network, revision, sealer)
-        .map_err(|_| NetworkError::Storage)?;
+    .map_err(|_| Error::decode("networks.current_revision"))?;
+    let snapshot = cache.load(tx, network, revision, sealer)?;
     let node_ids: Vec<_> = snapshot
         .document
         .configuration
@@ -74,10 +73,13 @@ fn removal(
     Ok(meshway_protocol::management::RemovalImpactResponse {
         request_id: request,
         membership_id: target,
-        version: Version::new(u64::try_from(version).map_err(|_| NetworkError::Storage)?)
-            .map_err(|_| NetworkError::Storage)?,
+        version: Version::new(
+            u64::try_from(version).map_err(|_| Error::decode("memberships.version"))?,
+        )
+        .map_err(|_| Error::decode("memberships.version"))?,
         revision,
-        node_count: u32::try_from(node_ids.len()).map_err(|_| NetworkError::Storage)?,
+        node_count: u32::try_from(node_ids.len())
+            .map_err(|_| Error::Internal("removal node count overflow"))?,
         node_ids,
     })
 }
@@ -90,7 +92,7 @@ pub(crate) fn removal_impact(
     request: RequestId,
     sealer: &Sealer,
     cache: &crate::configuration::SnapshotCache,
-) -> Result<meshway_protocol::management::RemovalImpactResponse, NetworkError> {
+) -> Result<meshway_protocol::management::RemovalImpactResponse, Error> {
     let tx = db.transaction_with_behavior(TransactionBehavior::Deferred)?;
     let user = current_session(&tx, &digest, now()?)?.user.id;
     let result = removal(&tx, user, network, member, request, sealer, cache)?;
@@ -105,7 +107,7 @@ pub(crate) fn remove_member(
     sealer: &Sealer,
     cache: &crate::configuration::SnapshotCache,
     publisher: &crate::state::service::CommitPublisher,
-) -> Result<meshway_model::Revision, NetworkError> {
+) -> Result<meshway_model::Revision, Error> {
     let crate::networks::management::MemberRemoval {
         network,
         member,
@@ -118,10 +120,10 @@ pub(crate) fn remove_member(
     let user = current_session(&tx, &digest, now)?.user.id;
     let impact = removal(&tx, user, network, member, request, sealer, cache)?;
     if impact.revision != revision {
-        return Err(NetworkError::RevisionConflict);
+        return Err(Error::RevisionConflict);
     }
     if impact.version != expected {
-        return Err(NetworkError::VersionConflict);
+        return Err(Error::VersionConflict);
     }
     let role = tx.query_row(
         "SELECT role FROM memberships WHERE id=?1",
@@ -142,12 +144,7 @@ pub(crate) fn remove_member(
         },
         sealer,
         cache,
-    )
-    .map_err(|error| match error {
-        crate::configuration::Error::Conflict => NetworkError::RevisionConflict,
-        crate::configuration::Error::PermissionDenied => NetworkError::PermissionDenied,
-        _ => NetworkError::Unavailable,
-    })?;
+    )?;
     tx.execute(
         "UPDATE memberships SET revoked_at=?1,version=version+1 WHERE id=?2",
         params![now, impact.membership_id.as_uuid().as_bytes().as_slice()],
@@ -182,7 +179,7 @@ pub(crate) fn change_role(
     expected: Version,
     role: MembershipRole,
     request: RequestId,
-) -> Result<(crate::networks::MemberSummary, bool), NetworkError> {
+) -> Result<(crate::networks::MemberSummary, bool), Error> {
     let tx = db.transaction_with_behavior(TransactionBehavior::Immediate)?;
     let now = now()?;
     let user = current_session(&tx, &digest, now)?.user.id;
@@ -191,20 +188,20 @@ pub(crate) fn change_role(
         "SELECT m.sequence,m.id,m.user_id,u.email,m.role,m.version,m.joined_at FROM memberships m JOIN users u ON u.id=m.user_id WHERE m.network_id=?1 AND m.id=?2 AND m.revoked_at IS NULL",
         params![network.as_uuid().as_bytes().as_slice(), id.as_uuid().as_bytes().as_slice()],
         RawMember::read,
-    ).optional()?.ok_or(NetworkError::NotFound)?;
+    ).optional()?.ok_or(Error::NotFound)?;
     let owners = owner_count(&tx, network)?;
     let mut member = raw.into_view(caller, owners)?;
     if !grant(caller.1, member.role) || !grant(caller.1, role) {
-        return Err(NetworkError::PermissionDenied);
+        return Err(Error::PermissionDenied);
     }
     if member.version != expected {
-        return Err(NetworkError::VersionConflict);
+        return Err(Error::VersionConflict);
     }
     if !member.actions.assignable_roles.contains(&role) {
         return Err(if member.role == MembershipRole::Owner && owners <= 1 {
-            NetworkError::LastOwner
+            Error::LastOwner
         } else {
-            NetworkError::PermissionDenied
+            Error::PermissionDenied
         });
     }
     let changed = member.role != role;
@@ -212,7 +209,9 @@ pub(crate) fn change_role(
         if member.role == MembershipRole::Owner {
             protect_owner(&tx, network)?;
         }
-        let version = expected.checked_next().map_err(|_| NetworkError::Storage)?;
+        let version = expected
+            .checked_next()
+            .map_err(|_| Error::Internal("membership version overflow"))?;
         tx.execute(
             "UPDATE memberships SET role=?1,version=?2 WHERE network_id=?3 AND id=?4",
             params![
@@ -305,20 +304,20 @@ fn read_link(r: &rusqlite::Row<'_>) -> rusqlite::Result<Link> {
         consumed_member: optional_id(r, 11, MembershipId::new)?,
     })
 }
-fn valid(tx: &Transaction<'_>, link: &Link, now: i64) -> Result<(), NetworkError> {
+fn valid(tx: &Transaction<'_>, link: &Link, now: i64) -> Result<(), Error> {
     let (id, role) =
         membership(tx, link.view.network_id, link.created_by).map_err(|error| match error {
-            NetworkError::NotFound => NetworkError::LinkIssuerUnavailable,
+            Error::NotFound => Error::LinkIssuerUnavailable,
             other => other,
         })?;
     if id != link.issuer || !grant(role, link.view.role) {
-        return Err(NetworkError::LinkIssuerUnavailable);
+        return Err(Error::LinkIssuerUnavailable);
     }
     if link.view.revoked_at.is_some() {
-        return Err(NetworkError::LinkRevoked);
+        return Err(Error::LinkRevoked);
     }
     if link.view.expires_at.timestamp_millis() <= now {
-        return Err(NetworkError::LinkExpired);
+        return Err(Error::LinkExpired);
     }
     Ok(())
 }
@@ -335,13 +334,13 @@ pub(crate) fn create_link(
     role: MembershipRole,
     ttl: u32,
     request: RequestId,
-) -> Result<CreatedLink, NetworkError> {
+) -> Result<CreatedLink, Error> {
     let tx = db.transaction_with_behavior(TransactionBehavior::Immediate)?;
     let now = now()?;
     let user = current_session(&tx, &digest, now)?.user.id;
     let (issuer, issuer_role) = membership(&tx, network, user)?;
     if !grant(issuer_role, role) {
-        return Err(NetworkError::PermissionDenied);
+        return Err(Error::PermissionDenied);
     }
     let input_digest = Sha256::digest(format!("join-link/v1\0{}\0{ttl}", role_name(role)));
     let previous = tx.query_row(
@@ -351,7 +350,7 @@ pub(crate) fn create_link(
     ).optional()?;
     if let Some(previous) = previous {
         if previous.as_slice() != input_digest.as_slice() {
-            return Err(NetworkError::RequestConflict);
+            return Err(Error::RequestConflict);
         }
         let mut link = tx.query_row(
             &format!(
@@ -371,11 +370,12 @@ pub(crate) fn create_link(
             secret: None,
         });
     }
-    let id = JoinLinkId::new(random_uuid()?).map_err(|_| NetworkError::Unavailable)?;
+    let id =
+        JoinLinkId::new(random_uuid()?).map_err(|_| Error::Internal("generated join link ID"))?;
     let (secret, hash) = issue_one_time("mwj_")?;
     let expires = now
         .checked_add(i64::from(ttl) * 1000)
-        .ok_or(NetworkError::Unavailable)?;
+        .ok_or(Error::Internal("join link expiry overflow"))?;
     tx.execute(
         "INSERT INTO join_links(id,network_id,role,token_hash,created_by,issuer_membership_id,created_at,expires_at,creation_request_id,creation_request_digest) VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10)",
         params![id.as_uuid().as_bytes().as_slice(), network.as_uuid().as_bytes().as_slice(), role_name(role),
@@ -399,7 +399,7 @@ pub(crate) fn inspect_link(
     db: &mut Connection,
     digest: [u8; 32],
     hash: [u8; 32],
-) -> Result<LinkInspection, NetworkError> {
+) -> Result<LinkInspection, Error> {
     let tx = db.transaction_with_behavior(TransactionBehavior::Deferred)?;
     let now = now()?;
     let user = current_session(&tx, &digest, now)?.user.id;
@@ -410,9 +410,9 @@ pub(crate) fn inspect_link(
             read_link,
         )
         .optional()?
-        .ok_or(NetworkError::InvalidLink)?;
+        .ok_or(Error::InvalidLink)?;
     if link.view.consumed_at.is_some() {
-        return Err(NetworkError::LinkUsed);
+        return Err(Error::LinkUsed);
     }
     valid(&tx, &link, now)?;
     let member = membership(&tx, link.view.network_id, user).ok();
@@ -434,7 +434,7 @@ pub(crate) fn redeem_link(
     digest: [u8; 32],
     hash: [u8; 32],
     request: RequestId,
-) -> Result<((NetworkId, MembershipId), bool), NetworkError> {
+) -> Result<((NetworkId, MembershipId), bool), Error> {
     let tx = db.transaction_with_behavior(TransactionBehavior::Immediate)?;
     let now = now()?;
     let user = current_session(&tx, &digest, now)?.user.id;
@@ -445,7 +445,7 @@ pub(crate) fn redeem_link(
             read_link,
         )
         .optional()?
-        .ok_or(NetworkError::InvalidLink)?;
+        .ok_or(Error::InvalidLink)?;
     if let Some(member) = link.consumed_member {
         if link.view.consumed_by_user_id != Some(user)
             || membership(&tx, link.view.network_id, user)
@@ -453,16 +453,17 @@ pub(crate) fn redeem_link(
                 .map(|m| m.0)
                 != Some(member)
         {
-            return Err(NetworkError::LinkUsed);
+            return Err(Error::LinkUsed);
         }
         tx.commit()?;
         return Ok(((link.view.network_id, member), false));
     }
     valid(&tx, &link, now)?;
     if membership(&tx, link.view.network_id, user).is_ok() {
-        return Err(NetworkError::AlreadyMember);
+        return Err(Error::AlreadyMember);
     }
-    let member = MembershipId::new(random_uuid()?).map_err(|_| NetworkError::Unavailable)?;
+    let member = MembershipId::new(random_uuid()?)
+        .map_err(|_| Error::Internal("generated membership ID"))?;
     tx.execute(
         "INSERT INTO memberships(id,network_id,user_id,role,version,joined_at) VALUES(?1,?2,?3,?4,1,?5)",
         params![member.as_uuid().as_bytes().as_slice(), link.view.network_id.as_uuid().as_bytes().as_slice(),
@@ -492,7 +493,7 @@ pub(crate) fn revoke_link(
     network: NetworkId,
     id: JoinLinkId,
     request: RequestId,
-) -> Result<(), NetworkError> {
+) -> Result<(), Error> {
     let tx = db.transaction_with_behavior(TransactionBehavior::Immediate)?;
     let now = now()?;
     let user = current_session(&tx, &digest, now)?.user.id;
@@ -508,9 +509,9 @@ pub(crate) fn revoke_link(
             read_link,
         )
         .optional()?
-        .ok_or(NetworkError::NotFound)?;
+        .ok_or(Error::NotFound)?;
     if !grant(role, link.view.role) {
-        return Err(NetworkError::PermissionDenied);
+        return Err(Error::PermissionDenied);
     }
     let count=tx.execute("UPDATE join_links SET revoked_at=?1 WHERE id=?2 AND revoked_at IS NULL AND consumed_at IS NULL AND expires_at>?1",params![now,id.as_uuid().as_bytes().as_slice()])?;
     if count > 0 {
@@ -526,7 +527,7 @@ pub(crate) fn links(
     limit: u16,
     cursor: Option<String>,
     sealer: &Sealer,
-) -> Result<LinkPage, NetworkError> {
+) -> Result<LinkPage, Error> {
     let tx = db.transaction_with_behavior(TransactionBehavior::Deferred)?;
     let now = now()?;
     let user = current_session(&tx, &digest, now)?.user.id;
@@ -573,8 +574,12 @@ pub(crate) fn links(
     drop(stmt);
     tx.commit()?;
     Ok(LinkPage {
-        total: meshway_model::Count::new(total.try_into().map_err(|_| NetworkError::Storage)?)
-            .map_err(|_| NetworkError::Storage)?,
+        total: meshway_model::Count::new(
+            total
+                .try_into()
+                .map_err(|_| Error::decode("join_links count"))?,
+        )
+        .map_err(|_| Error::decode("join_links count"))?,
         items,
         next_cursor,
         as_of,

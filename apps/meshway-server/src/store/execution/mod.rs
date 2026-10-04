@@ -1,3 +1,4 @@
+use crate::error::Error;
 mod authentication;
 mod instances;
 mod inventory;
@@ -5,7 +6,7 @@ mod publications;
 use crate::networks::configuration::ConfigurationBindings;
 use crate::state::{service::CommitPublisher, stream::CommittedChange};
 use crate::{
-    execution::{NodeError, NodePrincipal},
+    execution::NodePrincipal,
     secrets::{Purpose, Sealer},
 };
 pub(crate) use authentication::*;
@@ -21,53 +22,51 @@ fn commit_progress(
     publisher: &CommitPublisher,
     network_id: NetworkId,
     changed: bool,
-) -> Result<(), NodeError> {
+) -> Result<(), Error> {
     let changes = if changed {
         vec![CommittedChange::Progress { network_id }]
     } else {
         Vec::new()
     };
-    publisher
-        .commit(tx, changes)
-        .map_err(|_| NodeError::Storage)
+    publisher.commit(tx, changes)
 }
 
-pub(crate) fn now() -> Result<i64, NodeError> {
+pub(crate) fn now() -> Result<i64, Error> {
     let now = chrono::Utc::now().timestamp_millis();
     if now < 0 {
-        Err(NodeError::Storage)
+        Err(Error::Internal("system clock before epoch"))
     } else {
         Ok(now)
     }
 }
-pub(crate) fn uuid() -> Result<uuid::Uuid, NodeError> {
-    crate::accounts::random_uuid().map_err(|_| NodeError::Storage)
+pub(crate) fn uuid() -> Result<uuid::Uuid, Error> {
+    crate::accounts::random_uuid()
 }
-pub(crate) fn id<T: TryFrom<uuid::Uuid>>(v: Vec<u8>) -> Result<T, NodeError> {
-    T::try_from(uuid::Uuid::from_slice(&v).map_err(|_| NodeError::Storage)?)
-        .map_err(|_| NodeError::Storage)
+pub(crate) fn id<T: TryFrom<uuid::Uuid>>(v: Vec<u8>) -> Result<T, Error> {
+    T::try_from(uuid::Uuid::from_slice(&v).map_err(|_| Error::decode("execution ID"))?)
+        .map_err(|_| Error::decode("execution ID"))
 }
-pub(crate) fn json<T: serde::de::DeserializeOwned>(v: &[u8]) -> Result<T, NodeError> {
-    serde_json::from_slice(v).map_err(|_| NodeError::Storage)
+pub(crate) fn json<T: serde::de::DeserializeOwned>(v: &[u8]) -> Result<T, Error> {
+    serde_json::from_slice(v).map_err(|_| Error::decode("execution payload"))
 }
-pub(crate) fn bytes<T: serde::Serialize>(v: &T) -> Result<Vec<u8>, NodeError> {
-    serde_json::to_vec(v).map_err(|_| NodeError::Storage)
+pub(crate) fn bytes<T: serde::Serialize>(v: &T) -> Result<Vec<u8>, Error> {
+    serde_json::to_vec(v).map_err(|_| Error::encode("execution payload"))
 }
 
 pub(crate) fn current_configuration(
     tx: &Transaction<'_>,
     sealer: &Sealer,
     network: NetworkId,
-) -> Result<(Revision, NetworkConfiguration, ConfigurationBindings), NodeError> {
-    let (revision,config,bindings):(i64,Vec<u8>,Vec<u8>)=tx.query_row("SELECT n.current_revision,c.configuration,c.bindings FROM networks n JOIN configuration_versions c ON c.network_id=n.id AND c.revision=n.current_revision WHERE n.id=?1 AND n.deleted_at IS NULL",[network.as_uuid().as_bytes().as_slice()],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?))).optional()?.ok_or(NodeError::Unauthorized)?;
-    let revision = Revision::new(revision.try_into().map_err(|_| NodeError::Storage)?)
-        .map_err(|_| NodeError::Storage)?;
-    let config = sealer
-        .open(network, revision, Purpose::Configuration, &config)
-        .map_err(|_| NodeError::Storage)?;
-    let bindings = sealer
-        .open(network, revision, Purpose::Bindings, &bindings)
-        .map_err(|_| NodeError::Storage)?;
+) -> Result<(Revision, NetworkConfiguration, ConfigurationBindings), Error> {
+    let (revision,config,bindings):(i64,Vec<u8>,Vec<u8>)=tx.query_row("SELECT n.current_revision,c.configuration,c.bindings FROM networks n JOIN configuration_versions c ON c.network_id=n.id AND c.revision=n.current_revision WHERE n.id=?1 AND n.deleted_at IS NULL",[network.as_uuid().as_bytes().as_slice()],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?))).optional()?.ok_or(Error::InvalidCredentials)?;
+    let revision = Revision::new(
+        revision
+            .try_into()
+            .map_err(|_| Error::decode("networks.current_revision"))?,
+    )
+    .map_err(|_| Error::decode("networks.current_revision"))?;
+    let config = sealer.open(network, revision, Purpose::Configuration, &config)?;
+    let bindings = sealer.open(network, revision, Purpose::Bindings, &bindings)?;
     Ok((
         revision,
         json(config.as_bytes())?,
@@ -80,22 +79,22 @@ pub(crate) fn identity_eligible(
     bindings: &ConfigurationBindings,
     network: NetworkId,
     node: NodeId,
-) -> Result<(), NodeError> {
-    let settings = config.nodes.get(&node).ok_or(NodeError::Unauthorized)?;
+) -> Result<(), Error> {
+    let settings = config.nodes.get(&node).ok_or(Error::InvalidCredentials)?;
     match &settings.identity {
         NodeIdentity::Tag { tags } => {
             if tags.is_empty() || tags.iter().any(|t| !config.tags_owners.contains_key(t)) {
-                return Err(NodeError::Unauthorized);
+                return Err(Error::InvalidCredentials);
             }
         }
         NodeIdentity::User { .. } => {
             let binding = bindings
                 .node_users
                 .get(&node)
-                .ok_or(NodeError::Unauthorized)?;
+                .ok_or(Error::InvalidCredentials)?;
             let valid:bool=tx.query_row("SELECT EXISTS(SELECT 1 FROM memberships m JOIN users u ON u.id=m.user_id WHERE m.network_id=?1 AND m.id=?2 AND m.user_id=?3 AND m.revoked_at IS NULL AND u.disabled_at IS NULL)",params![network.as_uuid().as_bytes().as_slice(),binding.membership_id.as_uuid().as_bytes().as_slice(),binding.user_id.as_uuid().as_bytes().as_slice()],|r|r.get(0))?;
             if !valid {
-                return Err(NodeError::Unauthorized);
+                return Err(Error::InvalidCredentials);
             }
         }
     }
@@ -115,23 +114,22 @@ pub(crate) fn subjects(
     tx: &Transaction<'_>,
     network: NetworkId,
     bindings: &ConfigurationBindings,
-) -> Result<meshway_configuration::SubjectContext, NodeError> {
+) -> Result<meshway_configuration::SubjectContext, Error> {
     Ok(meshway_configuration::SubjectContext {
         users: bindings.users.clone(),
         node_users: bindings.node_users.clone(),
-        members: crate::execution::configuration::members(tx, network)
-            .map_err(|_| NodeError::Storage)?,
+        members: crate::execution::configuration::members(tx, network)?,
     })
 }
 pub(crate) fn identity_digest(
     config: &NetworkConfiguration,
     bindings: &ConfigurationBindings,
     node: NodeId,
-) -> Result<Digest, NodeError> {
+) -> Result<Digest, Error> {
     match &config
         .nodes
         .get(&node)
-        .ok_or(NodeError::Unauthorized)?
+        .ok_or(Error::InvalidCredentials)?
         .identity
     {
         NodeIdentity::User { .. } => Ok(meshway_configuration::compile::digest(&(
@@ -139,7 +137,7 @@ pub(crate) fn identity_digest(
             bindings
                 .node_users
                 .get(&node)
-                .ok_or(NodeError::Unauthorized)?,
+                .ok_or(Error::InvalidCredentials)?,
         ))?),
         NodeIdentity::Tag { tags } => Ok(meshway_configuration::compile::digest(&("tag", tags))?),
     }
@@ -152,6 +150,6 @@ pub(crate) fn reauthorize(
     boot: InstanceId,
     p: &NodePrincipal,
     now: i64,
-) -> Result<NodePrincipal, NodeError> {
+) -> Result<NodePrincipal, Error> {
     authorize_node(tx, sealer, boot, p.token_hash, now)
 }

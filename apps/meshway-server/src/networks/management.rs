@@ -37,7 +37,7 @@ impl Networks {
         network: NetworkId,
         member: Option<MembershipId>,
         request: RequestId,
-    ) -> Result<meshway_protocol::management::RemovalImpactResponse, NetworkError> {
+    ) -> Result<meshway_protocol::management::RemovalImpactResponse, Error> {
         let digest = token_digest(token)?;
         let sealer = Arc::clone(&self.sealer);
         let cache = Arc::clone(&self.configuration_cache);
@@ -55,7 +55,7 @@ impl Networks {
         expected: Version,
         revision: Revision,
         request: RequestId,
-    ) -> Result<Revision, NetworkError> {
+    ) -> Result<Revision, Error> {
         let digest = token_digest(token)?;
         let sealer = Arc::clone(&self.sealer);
         let cache = Arc::clone(&self.configuration_cache);
@@ -87,7 +87,7 @@ impl Networks {
         expected: Version,
         role: MembershipRole,
         request: RequestId,
-    ) -> Result<MemberSummary, NetworkError> {
+    ) -> Result<MemberSummary, Error> {
         let digest = token_digest(token)?;
         let publisher = self.publisher.clone();
         self.handle
@@ -112,9 +112,9 @@ impl Networks {
         role: MembershipRole,
         ttl: u32,
         request: RequestId,
-    ) -> Result<CreatedLink, NetworkError> {
+    ) -> Result<CreatedLink, Error> {
         if !(60..=604800).contains(&ttl) {
-            return Err(NetworkError::InvalidLimit);
+            return Err(Error::InvalidLimit);
         }
         let digest = token_digest(token)?;
         self.handle
@@ -125,9 +125,9 @@ impl Networks {
         &self,
         token: &str,
         link: &str,
-    ) -> Result<LinkInspection, NetworkError> {
+    ) -> Result<LinkInspection, Error> {
         let digest = token_digest(token)?;
-        let link = one_time_digest("mwj_", link).map_err(|_| NetworkError::InvalidLink)?;
+        let link = one_time_digest("mwj_", link).map_err(|_| Error::InvalidLink)?;
         self.handle
             .execute(move |db| store::inspect_link(db, digest, link))
             .await?
@@ -137,9 +137,9 @@ impl Networks {
         token: &str,
         link: &str,
         request: RequestId,
-    ) -> Result<(NetworkId, MembershipId), NetworkError> {
+    ) -> Result<(NetworkId, MembershipId), Error> {
         let digest = token_digest(token)?;
-        let link = one_time_digest("mwj_", link).map_err(|_| NetworkError::InvalidLink)?;
+        let link = one_time_digest("mwj_", link).map_err(|_| Error::InvalidLink)?;
         let publisher = self.publisher.clone();
         self.handle
             .execute(move |db| {
@@ -161,7 +161,7 @@ impl Networks {
         network: NetworkId,
         id: JoinLinkId,
         request: RequestId,
-    ) -> Result<(), NetworkError> {
+    ) -> Result<(), Error> {
         let digest = token_digest(token)?;
         self.handle
             .execute(move |db| store::revoke_link(db, digest, network, id, request))
@@ -173,7 +173,7 @@ impl Networks {
         network: NetworkId,
         limit: u16,
         cursor: Option<String>,
-    ) -> Result<LinkPage, NetworkError> {
+    ) -> Result<LinkPage, Error> {
         pagination::validate_limit(limit)?;
         let digest = token_digest(token)?;
         let sealer = Arc::clone(&self.sealer);

@@ -26,31 +26,34 @@ impl StateProvider for SqlProvider {
         tx: &Transaction<'_>,
         identity: &ReadIdentity,
         now: DateTime<Utc>,
-    ) -> Result<ViewContext<Self::Configuration, Self::Entities, Self::Progress>, StateError> {
+    ) -> Result<ViewContext<Self::Configuration, Self::Entities, Self::Progress>, Error> {
         let ReadIdentity::UserSession { digest, network } = identity else {
-            return Err(StateError::Unauthorized);
+            return Err(Error::InvalidSession);
         };
         let session:Option<(Vec<u8>,i64)>=tx.query_row("SELECT u.id,s.expires_at FROM user_sessions s JOIN users u ON u.id=s.user_id WHERE s.token_hash=?1 AND s.revoked_at IS NULL AND s.expires_at>?2 AND s.credential_version=u.credential_version AND u.disabled_at IS NULL",params![digest.as_slice(),now.timestamp_millis()],|row|Ok((row.get(0)?,row.get(1)?))).optional()?;
-        let (user, expires) = session.ok_or(StateError::Unauthorized)?;
-        let (name,created,revision,membership,role,config):(String,i64,i64,Vec<u8>,String,Vec<u8>)=tx.query_row("SELECT n.name,n.created_at,n.current_revision,m.id,m.role,c.configuration FROM networks n JOIN memberships m ON m.network_id=n.id JOIN configuration_versions c ON c.network_id=n.id AND c.revision=n.current_revision WHERE n.id=?1 AND m.user_id=?2 AND m.revoked_at IS NULL",params![network.as_uuid().as_bytes().as_slice(),user],|row|Ok((row.get(0)?,row.get(1)?,row.get(2)?,row.get(3)?,row.get(4)?,row.get(5)?))).optional()?.ok_or(StateError::NotFound)?;
-        let revision = Revision::new(revision.try_into().map_err(|_| StateError::Storage)?)
-            .map_err(|_| StateError::Storage)?;
+        let (user, expires) = session.ok_or(Error::InvalidSession)?;
+        let (name,created,revision,membership,role,config):(String,i64,i64,Vec<u8>,String,Vec<u8>)=tx.query_row("SELECT n.name,n.created_at,n.current_revision,m.id,m.role,c.configuration FROM networks n JOIN memberships m ON m.network_id=n.id JOIN configuration_versions c ON c.network_id=n.id AND c.revision=n.current_revision WHERE n.id=?1 AND m.user_id=?2 AND m.revoked_at IS NULL",params![network.as_uuid().as_bytes().as_slice(),user],|row|Ok((row.get(0)?,row.get(1)?,row.get(2)?,row.get(3)?,row.get(4)?,row.get(5)?))).optional()?.ok_or(Error::NotFound)?;
+        let revision = Revision::new(
+            revision
+                .try_into()
+                .map_err(|_| Error::decode("networks.current_revision"))?,
+        )
+        .map_err(|_| Error::decode("networks.current_revision"))?;
         let role = match role.as_str() {
             "owner" => MembershipRole::Owner,
             "admin" => MembershipRole::Admin,
             "member" => MembershipRole::Member,
-            _ => return Err(StateError::Storage),
+            _ => return Err(Error::decode("memberships.role")),
         };
         let membership_id =
             MembershipId::new(uuid::Uuid::from_slice(&membership).unwrap()).unwrap();
         let plaintext = self
             .sealer
-            .open(*network, revision, Purpose::Configuration, &config)
-            .map_err(|_| StateError::Storage)?;
+            .open(*network, revision, Purpose::Configuration, &config)?;
         let configuration = meshway_configuration::restore_canonical_json(
             std::str::from_utf8(plaintext.as_bytes()).unwrap(),
         )
-        .map_err(|_| StateError::Storage)?;
+        .map_err(|_| Error::decode("configuration_versions.configuration"))?;
         let mut authorization = membership;
         authorization.extend_from_slice(format!("{role:?}").as_bytes());
         let scope = VisibilityScope {
@@ -86,8 +89,8 @@ impl StateProvider for SqlProvider {
         _: &Transaction<'_>,
         _: &str,
         _: DateTime<Utc>,
-    ) -> Result<ReportAdmission, StateError> {
-        Err(StateError::Unauthorized)
+    ) -> Result<ReportAdmission, Error> {
+        Err(Error::InvalidSession)
     }
 }
 type TestEvent = StreamEvent<NetworkConfiguration, NetworkSummary, Sequence>;

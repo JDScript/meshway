@@ -1,82 +1,21 @@
+//! The only place a domain [`Error`] becomes a wire Problem. Messages are fixed
+//! and never carry stored values; infrastructure causes stay server-side.
+
 use axum::{
     Json,
     extract::rejection::JsonRejection,
     http::{StatusCode, header},
     response::{IntoResponse, Response},
 };
+use meshway_configuration::ConfigurationError;
 use meshway_model::RequestId;
 use meshway_protocol::{EmptyParams, ErrorResponse, Problem};
 
-use crate::accounts::AccountError;
-use crate::networks::NetworkError;
+use crate::error::Error;
 
 pub(super) struct HttpError(ErrorResponse);
 
 impl HttpError {
-    pub(super) fn configuration(id: RequestId, error: crate::configuration::Error) -> Self {
-        use crate::configuration::Error;
-        let (status, problem) = match error {
-            Error::InvalidSession => return Self::invalid_session(id),
-            Error::NotFound => (
-                StatusCode::NOT_FOUND,
-                Problem::NotFound {
-                    params: EmptyParams {},
-                    message: "Configuration not found.".into(),
-                },
-            ),
-            Error::PermissionDenied => (
-                StatusCode::FORBIDDEN,
-                Problem::PermissionDenied {
-                    params: EmptyParams {},
-                    message: "Configuration access requires network administrator permission."
-                        .into(),
-                },
-            ),
-            Error::Conflict => (
-                StatusCode::CONFLICT,
-                Problem::RevisionConflict {
-                    params: EmptyParams {},
-                    message: "Configuration revision changed.".into(),
-                },
-            ),
-            Error::RequestConflict => (
-                StatusCode::CONFLICT,
-                Problem::RequestConflict {
-                    params: EmptyParams {},
-                    message: "Request ID was already used with different input.".into(),
-                },
-            ),
-            Error::Invalid(error) => {
-                use meshway_configuration::ConfigurationError;
-                let (issues, requirements) = match error {
-                    ConfigurationError::Invalid(issues) => (issues, Vec::new()),
-                    ConfigurationError::PreparationRequired(requirements) => {
-                        (Vec::new(), requirements)
-                    }
-                    ConfigurationError::Parse => (
-                        vec![meshway_configuration::ConfigurationIssue {
-                            path: "".into(),
-                            message: "Invalid JSONC document or configuration field shape.".into(),
-                        }],
-                        Vec::new(),
-                    ),
-                    ConfigurationError::Serialization => return Self::unavailable(Some(id)),
-                };
-                (
-                    StatusCode::UNPROCESSABLE_ENTITY,
-                    Problem::ConfigurationInvalid {
-                        params: meshway_protocol::ConfigurationValidationParams {
-                            issues,
-                            requirements,
-                        },
-                        message: "Configuration validation failed.".into(),
-                    },
-                )
-            }
-            Error::Storage | Error::DependencyUnavailable => return Self::unavailable(Some(id)),
-        };
-        Self::new(id, status, problem)
-    }
     pub(super) fn new(id: RequestId, status: StatusCode, problem: Problem) -> Self {
         Self(ErrorResponse {
             request_id: Some(id),
@@ -94,106 +33,6 @@ impl HttpError {
                 message: "Service is unavailable.".into(),
             },
         })
-    }
-
-    pub(super) fn account(
-        id: RequestId,
-        error: AccountError,
-        rules: meshway_protocol::PasswordRules,
-    ) -> Self {
-        let (status, problem) = match error {
-            AccountError::RegistrationDisabled => (
-                StatusCode::FORBIDDEN,
-                Problem::RegistrationDisabled {
-                    params: EmptyParams {},
-                    message: "Registration is disabled.".into(),
-                },
-            ),
-            AccountError::InvalidEmail => (
-                StatusCode::BAD_REQUEST,
-                Problem::InvalidRequest {
-                    params: EmptyParams {},
-                    message: "A valid email address is required.".into(),
-                },
-            ),
-            AccountError::InvalidPassword => (
-                StatusCode::UNPROCESSABLE_ENTITY,
-                Problem::PasswordWeak {
-                    params: rules,
-                    message: "Password does not meet the published rules.".into(),
-                },
-            ),
-            AccountError::EmailTaken => (
-                StatusCode::CONFLICT,
-                Problem::EmailTaken {
-                    params: EmptyParams {},
-                    message: "Email is already registered.".into(),
-                },
-            ),
-            AccountError::InvalidCredentials => (
-                StatusCode::UNAUTHORIZED,
-                Problem::InvalidCredentials {
-                    params: EmptyParams {},
-                    message: "Invalid credentials.".into(),
-                },
-            ),
-            AccountError::InvalidSession => return Self::invalid_session(id),
-            AccountError::InvalidRequest => return Self::invalid_request(id),
-            AccountError::InvalidCursor => Self::cursor_problem(),
-            AccountError::InvalidCurrentPassword => (
-                StatusCode::BAD_REQUEST,
-                Problem::InvalidCurrentPassword {
-                    params: EmptyParams {},
-                    message: "Current password is incorrect.".into(),
-                },
-            ),
-            AccountError::NotFound => (
-                StatusCode::NOT_FOUND,
-                Problem::NotFound {
-                    params: EmptyParams {},
-                    message: "Resource not found.".into(),
-                },
-            ),
-            AccountError::InvalidReset => (
-                StatusCode::BAD_REQUEST,
-                Problem::InvalidPasswordReset {
-                    params: EmptyParams {},
-                    message: "Recovery credential is invalid or no longer usable.".into(),
-                },
-            ),
-            AccountError::ResetUsed => (
-                StatusCode::BAD_REQUEST,
-                Problem::PasswordResetUsed {
-                    params: EmptyParams {},
-                    message: "Recovery credential has already been used.".into(),
-                },
-            ),
-            AccountError::ResetExpired => (
-                StatusCode::BAD_REQUEST,
-                Problem::PasswordResetExpired {
-                    params: EmptyParams {},
-                    message: "Recovery credential has expired.".into(),
-                },
-            ),
-            AccountError::ResetReplaced => (
-                StatusCode::BAD_REQUEST,
-                Problem::PasswordResetReplaced {
-                    params: EmptyParams {},
-                    message: "Recovery credential has been superseded.".into(),
-                },
-            ),
-            AccountError::Busy => (
-                StatusCode::SERVICE_UNAVAILABLE,
-                Problem::Busy {
-                    params: EmptyParams {},
-                    message: "Account service is busy; retry later.".into(),
-                },
-            ),
-            AccountError::Unavailable | AccountError::Storage => {
-                return Self::unavailable(Some(id));
-            }
-        };
-        Self::new(id, status, problem)
     }
 
     pub(super) fn invalid_session(id: RequestId) -> Self {
@@ -216,121 +55,6 @@ impl HttpError {
                 message: "Invalid request parameters.".into(),
             },
         )
-    }
-
-    fn cursor_problem() -> (StatusCode, Problem) {
-        (
-            StatusCode::BAD_REQUEST,
-            Problem::InvalidCursor {
-                params: EmptyParams {},
-                message: "Pagination cursor is invalid or expired.".into(),
-            },
-        )
-    }
-
-    pub(super) fn network(id: RequestId, error: NetworkError) -> Self {
-        let (status, problem) = match error {
-            NetworkError::InvalidSession => return Self::invalid_session(id),
-            NetworkError::NotFound => (
-                StatusCode::NOT_FOUND,
-                Problem::NotFound {
-                    params: EmptyParams {},
-                    message: "Network not found.".into(),
-                },
-            ),
-            NetworkError::PermissionDenied => (
-                StatusCode::FORBIDDEN,
-                Problem::PermissionDenied {
-                    params: EmptyParams {},
-                    message: "This operation requires network administrator permission.".into(),
-                },
-            ),
-            NetworkError::InvalidName | NetworkError::InvalidLimit => {
-                return Self::invalid_request(id);
-            }
-            NetworkError::RequestConflict => (
-                StatusCode::CONFLICT,
-                Problem::RequestConflict {
-                    params: EmptyParams {},
-                    message: "Request ID was already used with different input.".into(),
-                },
-            ),
-            NetworkError::NameConflict => (
-                StatusCode::CONFLICT,
-                Problem::NameConflict {
-                    params: EmptyParams {},
-                    message: "Network name changed; reload before retrying.".into(),
-                },
-            ),
-            NetworkError::InvalidCursor => Self::cursor_problem(),
-            NetworkError::Storage | NetworkError::Unavailable => {
-                return Self::unavailable(Some(id));
-            }
-            NetworkError::VersionConflict => (
-                StatusCode::CONFLICT,
-                Problem::VersionConflict {
-                    params: EmptyParams {},
-                    message: "Membership changed; reload before retrying.".into(),
-                },
-            ),
-            NetworkError::RevisionConflict => (
-                StatusCode::CONFLICT,
-                Problem::RevisionConflict {
-                    params: EmptyParams {},
-                    message: "Configuration revision changed.".into(),
-                },
-            ),
-            NetworkError::LastOwner => (
-                StatusCode::CONFLICT,
-                Problem::LastOwner {
-                    params: EmptyParams {},
-                    message: "The last Owner must remain in the network.".into(),
-                },
-            ),
-            NetworkError::AlreadyMember => (
-                StatusCode::CONFLICT,
-                Problem::AlreadyMember {
-                    params: EmptyParams {},
-                    message: "Already a member of this network.".into(),
-                },
-            ),
-            NetworkError::LinkExpired => (
-                StatusCode::BAD_REQUEST,
-                Problem::LinkExpired {
-                    params: EmptyParams {},
-                    message: error.to_string(),
-                },
-            ),
-            NetworkError::LinkUsed => (
-                StatusCode::BAD_REQUEST,
-                Problem::LinkUsed {
-                    params: EmptyParams {},
-                    message: error.to_string(),
-                },
-            ),
-            NetworkError::LinkRevoked => (
-                StatusCode::BAD_REQUEST,
-                Problem::LinkRevoked {
-                    params: EmptyParams {},
-                    message: error.to_string(),
-                },
-            ),
-            NetworkError::LinkIssuerUnavailable => (
-                StatusCode::BAD_REQUEST,
-                Problem::LinkIssuerUnavailable {
-                    params: EmptyParams {},
-                    message: error.to_string(),
-                },
-            ),
-            NetworkError::InvalidLink => (
-                StatusCode::BAD_REQUEST,
-                Problem::InvalidLink {
-                    params: EmptyParams {},
-                    message: "Join link is invalid or no longer usable.".into(),
-                },
-            ),
-        };
-        Self::new(id, status, problem)
     }
 
     pub(super) fn json(id: RequestId, rejection: JsonRejection) -> Self {
@@ -358,6 +82,257 @@ impl HttpError {
             ),
         };
         Self::new(id, status, problem)
+    }
+
+    /// Maps a use-case outcome to its Problem. Node credential failures use
+    /// `invalid_credentials`; user session failures use `invalid_session`.
+    pub(super) fn domain(id: RequestId, error: Error) -> Self {
+        use StatusCode as S;
+        let empty = EmptyParams {};
+        let simple = |status: StatusCode, problem: Problem| Self::new(id, status, problem);
+        match error {
+            Error::InvalidSession => Self::invalid_session(id),
+            Error::InvalidCredentials => simple(
+                S::UNAUTHORIZED,
+                Problem::InvalidCredentials {
+                    params: empty,
+                    message: "Invalid credentials.".into(),
+                },
+            ),
+            Error::PermissionDenied => simple(
+                S::FORBIDDEN,
+                Problem::PermissionDenied {
+                    params: empty,
+                    message: "This operation is not permitted for the current principal.".into(),
+                },
+            ),
+            Error::RegistrationDisabled => simple(
+                S::FORBIDDEN,
+                Problem::RegistrationDisabled {
+                    params: empty,
+                    message: "Registration is disabled.".into(),
+                },
+            ),
+            Error::NotFound => simple(
+                S::NOT_FOUND,
+                Problem::NotFound {
+                    params: empty,
+                    message: "Resource not found.".into(),
+                },
+            ),
+            Error::RevisionConflict => simple(
+                S::CONFLICT,
+                Problem::RevisionConflict {
+                    params: empty,
+                    message: "Configuration revision changed.".into(),
+                },
+            ),
+            Error::RequestConflict => simple(
+                S::CONFLICT,
+                Problem::RequestConflict {
+                    params: empty,
+                    message: "Request ID was already used with different input.".into(),
+                },
+            ),
+            Error::BindingConflict => simple(
+                S::CONFLICT,
+                Problem::RequestConflict {
+                    params: empty,
+                    message: "Request conflicts with the current generation or binding.".into(),
+                },
+            ),
+            Error::NameConflict => simple(
+                S::CONFLICT,
+                Problem::NameConflict {
+                    params: empty,
+                    message: "Name changed; reload before retrying.".into(),
+                },
+            ),
+            Error::VersionConflict => simple(
+                S::CONFLICT,
+                Problem::VersionConflict {
+                    params: empty,
+                    message: "Resource changed; reload before retrying.".into(),
+                },
+            ),
+            Error::StateConflict => simple(
+                S::CONFLICT,
+                Problem::StateConflict {
+                    params: empty,
+                    message: "Lifecycle state or sequence conflicts.".into(),
+                },
+            ),
+            Error::LastOwner => simple(
+                S::CONFLICT,
+                Problem::LastOwner {
+                    params: empty,
+                    message: "The last Owner must remain in the network.".into(),
+                },
+            ),
+            Error::AlreadyMember => simple(
+                S::CONFLICT,
+                Problem::AlreadyMember {
+                    params: empty,
+                    message: "Already a member of this network.".into(),
+                },
+            ),
+            Error::InvalidRequest | Error::InvalidName | Error::InvalidLimit => {
+                Self::invalid_request(id)
+            }
+            Error::InvalidEmail => simple(
+                S::BAD_REQUEST,
+                Problem::InvalidRequest {
+                    params: empty,
+                    message: "A valid email address is required.".into(),
+                },
+            ),
+            Error::InvalidPassword(rules) => match super::auth::rules(rules, id) {
+                Ok(rules) => simple(
+                    S::UNPROCESSABLE_ENTITY,
+                    Problem::PasswordWeak {
+                        params: rules,
+                        message: "Password does not meet the published rules.".into(),
+                    },
+                ),
+                Err(error) => error,
+            },
+            Error::InvalidCurrentPassword => simple(
+                S::BAD_REQUEST,
+                Problem::InvalidCurrentPassword {
+                    params: empty,
+                    message: "Current password is incorrect.".into(),
+                },
+            ),
+            Error::EmailTaken => simple(
+                S::CONFLICT,
+                Problem::EmailTaken {
+                    params: empty,
+                    message: "Email is already registered.".into(),
+                },
+            ),
+            Error::InvalidCursor => simple(
+                S::BAD_REQUEST,
+                Problem::InvalidCursor {
+                    params: empty,
+                    message: "Pagination cursor is invalid or expired.".into(),
+                },
+            ),
+            Error::InvalidConfiguration(error) => Self::configuration(id, error),
+            Error::InvalidReset => simple(
+                S::BAD_REQUEST,
+                Problem::InvalidPasswordReset {
+                    params: empty,
+                    message: "Recovery credential is invalid or no longer usable.".into(),
+                },
+            ),
+            Error::ResetUsed => simple(
+                S::BAD_REQUEST,
+                Problem::PasswordResetUsed {
+                    params: empty,
+                    message: "Recovery credential has already been used.".into(),
+                },
+            ),
+            Error::ResetExpired => simple(
+                S::BAD_REQUEST,
+                Problem::PasswordResetExpired {
+                    params: empty,
+                    message: "Recovery credential has expired.".into(),
+                },
+            ),
+            Error::ResetReplaced => simple(
+                S::BAD_REQUEST,
+                Problem::PasswordResetReplaced {
+                    params: empty,
+                    message: "Recovery credential has been superseded.".into(),
+                },
+            ),
+            Error::InvalidLink => simple(
+                S::BAD_REQUEST,
+                Problem::InvalidLink {
+                    params: empty,
+                    message: "Join link is invalid or no longer usable.".into(),
+                },
+            ),
+            Error::LinkExpired => simple(
+                S::BAD_REQUEST,
+                Problem::LinkExpired {
+                    params: empty,
+                    message: "Join link has expired.".into(),
+                },
+            ),
+            Error::LinkUsed => simple(
+                S::BAD_REQUEST,
+                Problem::LinkUsed {
+                    params: empty,
+                    message: "Join link has been used.".into(),
+                },
+            ),
+            Error::LinkRevoked => simple(
+                S::BAD_REQUEST,
+                Problem::LinkRevoked {
+                    params: empty,
+                    message: "Join link was revoked.".into(),
+                },
+            ),
+            Error::LinkIssuerUnavailable => simple(
+                S::BAD_REQUEST,
+                Problem::LinkIssuerUnavailable {
+                    params: empty,
+                    message: "Join link issuer is no longer authorized.".into(),
+                },
+            ),
+            Error::Busy => simple(
+                S::SERVICE_UNAVAILABLE,
+                Problem::Busy {
+                    params: empty,
+                    message: "Service is busy; retry later.".into(),
+                },
+            ),
+            Error::StateLimit => simple(
+                S::TOO_MANY_REQUESTS,
+                Problem::StateLimit {
+                    params: empty,
+                    message: "State resource budget exceeded.".into(),
+                },
+            ),
+            Error::ObservationLimit => simple(
+                S::TOO_MANY_REQUESTS,
+                Problem::ObservationLimit {
+                    params: empty,
+                    message: "Observation budget exceeded.".into(),
+                },
+            ),
+            Error::DependencyUnavailable
+            | Error::Unavailable(_)
+            | Error::Storage(_)
+            | Error::Internal(_) => Self::unavailable(Some(id)),
+        }
+    }
+
+    fn configuration(id: RequestId, error: ConfigurationError) -> Self {
+        let (issues, requirements) = match error {
+            ConfigurationError::Invalid(issues) => (issues, Vec::new()),
+            ConfigurationError::PreparationRequired(requirements) => (Vec::new(), requirements),
+            ConfigurationError::Parse => (
+                vec![meshway_configuration::ConfigurationIssue {
+                    path: "".into(),
+                    message: "Invalid JSONC document or configuration field shape.".into(),
+                }],
+                Vec::new(),
+            ),
+            ConfigurationError::Serialization => return Self::unavailable(Some(id)),
+        };
+        Self::new(
+            id,
+            StatusCode::UNPROCESSABLE_ENTITY,
+            Problem::ConfigurationInvalid {
+                params: meshway_protocol::ConfigurationValidationParams {
+                    issues,
+                    requirements,
+                },
+                message: "Configuration validation failed.".into(),
+            },
+        )
     }
 }
 

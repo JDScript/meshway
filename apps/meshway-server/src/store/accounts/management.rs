@@ -5,7 +5,7 @@ use crate::state::{service::CommitPublisher, stream::CommittedChange};
 pub(super) fn authorization_changes(
     tx: &Transaction<'_>,
     user: UserId,
-) -> Result<Vec<CommittedChange>, AccountError> {
+) -> Result<Vec<CommittedChange>, Error> {
     let mut statement =
         tx.prepare("SELECT network_id FROM memberships WHERE user_id=?1 AND revoked_at IS NULL")?;
     statement
@@ -15,23 +15,19 @@ pub(super) fn authorization_changes(
         .map(|row| {
             Ok(CommittedChange::Authorization {
                 network_id: meshway_model::NetworkId::new(uuid(&row?)?)
-                    .map_err(|_| AccountError::Storage)?,
+                    .map_err(|_| Error::decode("memberships.network_id"))?,
             })
         })
         .collect()
 }
 
-fn active_sessions(
-    tx: &Transaction<'_>,
-    user: UserId,
-    now: i64,
-) -> Result<Vec<SessionId>, AccountError> {
+fn active_sessions(tx: &Transaction<'_>, user: UserId, now: i64) -> Result<Vec<SessionId>, Error> {
     let mut statement = tx.prepare("SELECT id FROM user_sessions WHERE user_id=?1 AND revoked_at IS NULL AND expires_at>?2 AND credential_version=(SELECT credential_version FROM users WHERE id=?1)")?;
     statement
         .query_map(params![user.as_uuid().as_bytes().as_slice(), now], |r| {
             r.get::<_, Vec<u8>>(0)
         })?
-        .map(|row| SessionId::new(uuid(&row?)?).map_err(|_| AccountError::Storage))
+        .map(|row| SessionId::new(uuid(&row?)?).map_err(|_| Error::decode("user_sessions.id")))
         .collect()
 }
 
@@ -40,7 +36,7 @@ fn commit_revocation(
     publisher: &CommitPublisher,
     changes: Vec<CommittedChange>,
     sessions: Vec<SessionId>,
-) -> Result<(), AccountError> {
+) -> Result<(), Error> {
     tx.commit()?;
     for change in changes {
         publisher.publish_committed(change);
@@ -57,14 +53,13 @@ pub(crate) fn sessions(
     limit: u16,
     cursor: Option<String>,
     sealer: &crate::secrets::Sealer,
-) -> Result<crate::accounts::AccountSessionPage, AccountError> {
+) -> Result<crate::accounts::AccountSessionPage, Error> {
     let tx = db.transaction_with_behavior(TransactionBehavior::Deferred)?;
     let now = now()?;
     let session = current_session(&tx, &digest, now)?;
     let scope = crate::secrets::CursorScope::AccountSessions(session.user.id);
     let mut window = match cursor {
-        Some(cursor) => crate::networks::pagination::Window::decode(sealer, scope, &cursor, now)
-            .map_err(|_| AccountError::InvalidCursor)?,
+        Some(cursor) => crate::networks::pagination::Window::decode(sealer, scope, &cursor, now)?,
         None => crate::networks::pagination::Window::new(
             tx.query_row(
                 "SELECT coalesce(max(rowid),0) FROM user_sessions",
@@ -73,8 +68,7 @@ pub(crate) fn sessions(
             )?,
             0,
             now,
-        )
-        .map_err(|_| AccountError::Storage)?,
+        )?,
     };
     let mut stmt = tx.prepare("SELECT id, created_at, expires_at, last_used_at, client_label, rowid FROM user_sessions WHERE user_id=?1 AND revoked_at IS NULL AND expires_at>?2 AND credential_version=(SELECT credential_version FROM users WHERE id=?1) AND rowid<=?3 ORDER BY rowid DESC LIMIT ?4")?;
     let mut rows = stmt
@@ -103,7 +97,7 @@ pub(crate) fn sessions(
         .into_iter()
         .map(|(id, created, expires, used, label, sequence)| {
             window.last = window.upper - sequence + 1;
-            let id = SessionId::new(uuid(&id)?).map_err(|_| AccountError::Storage)?;
+            let id = SessionId::new(uuid(&id)?).map_err(|_| Error::decode("user_sessions.id"))?;
             Ok(AccountSession {
                 id,
                 created_at: timestamp(created)?,
@@ -113,17 +107,13 @@ pub(crate) fn sessions(
                 current: id == session.session_id,
             })
         })
-        .collect::<Result<Vec<_>, AccountError>>()?;
+        .collect::<Result<Vec<_>, Error>>()?;
     let next_cursor = if more {
-        Some(
-            window
-                .encode(sealer, scope)
-                .map_err(|_| AccountError::Storage)?,
-        )
+        Some(window.encode(sealer, scope)?)
     } else {
         None
     };
-    let as_of = window.as_of().map_err(|_| AccountError::Storage)?;
+    let as_of = window.as_of()?;
     drop(stmt);
     tx.commit()?;
     Ok(crate::accounts::AccountSessionPage {
@@ -140,7 +130,7 @@ pub(crate) fn record_management(
     action: &str,
     target: Option<SessionId>,
     now: i64,
-) -> Result<(), AccountError> {
+) -> Result<(), Error> {
     tx.execute("INSERT INTO activity_events (id,scope,account_user_id,at,actor_user_id,action,target_user_id,target_session_id,request_id,actor_kind,actor_email) VALUES (?1,'account',?2,?3,CASE WHEN ?4='account.resetIssued' THEN NULL ELSE ?2 END,?4,?5,?6,?7,CASE WHEN ?4='account.resetIssued' THEN 'system' ELSE 'user' END,CASE WHEN ?4='account.resetIssued' THEN NULL ELSE (SELECT email FROM users WHERE id=?2) END)",params![random_uuid()?.as_bytes().as_slice(),user.as_uuid().as_bytes().as_slice(),now,action, target.is_none().then_some(user.as_uuid().as_bytes().as_slice()),target.map(|s|s.as_uuid().as_bytes().to_vec()),request.as_uuid().as_bytes().as_slice()])?;
     Ok(())
 }
@@ -151,7 +141,7 @@ pub(crate) fn revoke(
     target: RevokeSessions,
     request: RequestId,
     publisher: &CommitPublisher,
-) -> Result<(), AccountError> {
+) -> Result<(), Error> {
     let tx = db.transaction_with_behavior(TransactionBehavior::Immediate)?;
     let now = now()?;
     let session = current_session(&tx, &digest, now)?;
@@ -177,7 +167,7 @@ pub(crate) fn revoke(
                 |r| r.get::<_, bool>(0),
             )?;
             if !exists {
-                return Err(AccountError::NotFound);
+                return Err(Error::NotFound);
             }
             let changed=tx.execute("UPDATE user_sessions SET revoked_at=?1 WHERE id=?2 AND user_id=?3 AND revoked_at IS NULL",params![now,id.as_uuid().as_bytes().as_slice(),user])?;
             if changed == 0 {
@@ -207,14 +197,11 @@ pub(crate) fn revoke(
     Ok(())
 }
 
-pub(crate) fn candidate(
-    db: &mut Connection,
-    digest: [u8; 32],
-) -> Result<LoginCandidate, AccountError> {
+pub(crate) fn candidate(db: &mut Connection, digest: [u8; 32]) -> Result<LoginCandidate, Error> {
     let tx = db.transaction_with_behavior(TransactionBehavior::Deferred)?;
     let session = current_session(&tx, &digest, now()?)?;
     let candidate =
-        login_candidate(&tx, Some(&session.user.email))?.ok_or(AccountError::InvalidCredentials)?;
+        login_candidate(&tx, Some(&session.user.email))?.ok_or(Error::InvalidCredentials)?;
     tx.commit()?;
     Ok(candidate)
 }
@@ -224,24 +211,19 @@ pub(crate) fn verified_user(
     digest: &[u8; 32],
     verified: &LoginCandidate,
     now: i64,
-) -> Result<UserId, AccountError> {
+) -> Result<UserId, Error> {
     let session = current_session(tx, digest, now)?;
     if session.user.id != verified.user_id {
-        return Err(AccountError::InvalidCredentials);
+        return Err(Error::InvalidCredentials);
     }
     let valid=tx.query_row("SELECT EXISTS(SELECT 1 FROM users WHERE id=?1 AND password_hash=?2 AND credential_version=?3 AND disabled_at IS NULL)",params![verified.user_id.as_uuid().as_bytes().as_slice(),verified.password_hash.as_str(),verified.credential_version],|r|r.get::<_,bool>(0))?;
     if !valid {
-        return Err(AccountError::InvalidCredentials);
+        return Err(Error::InvalidCredentials);
     }
     Ok(session.user.id)
 }
 
-fn replace_password(
-    tx: &Transaction<'_>,
-    user: UserId,
-    hash: &str,
-    now: i64,
-) -> Result<(), AccountError> {
+fn replace_password(tx: &Transaction<'_>, user: UserId, hash: &str, now: i64) -> Result<(), Error> {
     tx.execute(
         "UPDATE users SET password_hash=?1, credential_version=credential_version+1 WHERE id=?2",
         params![hash, user.as_uuid().as_bytes().as_slice()],
@@ -260,7 +242,7 @@ pub(crate) fn change_password(
     hash: Zeroizing<String>,
     request: RequestId,
     publisher: &CommitPublisher,
-) -> Result<(), AccountError> {
+) -> Result<(), Error> {
     let tx = db.transaction_with_behavior(TransactionBehavior::Immediate)?;
     let now = now()?;
     let user = verified_user(&tx, &digest, &verified, now)?;
@@ -280,7 +262,7 @@ pub(crate) fn change_email(
     request: RequestId,
     configurations: &crate::configuration::Configurations,
     publisher: &CommitPublisher,
-) -> Result<User, AccountError> {
+) -> Result<User, Error> {
     let tx = db.transaction_with_behavior(TransactionBehavior::Immediate)?;
     let now = now()?;
     let user = verified_user(&tx, &digest, &verified, now)?;
@@ -296,15 +278,13 @@ pub(crate) fn change_email(
             [&email],
             |r| r.get::<_, bool>(0),
         )? {
-            return Err(AccountError::EmailTaken);
+            return Err(Error::EmailTaken);
         }
         tx.execute(
             "UPDATE users SET email=?1 WHERE id=?2",
             params![email, user.as_uuid().as_bytes().as_slice()],
         )?;
-        let effects = configurations
-            .synchronize_email(&tx, user, &old, &email, request)
-            .map_err(|_| AccountError::Unavailable)?;
+        let effects = configurations.synchronize_email(&tx, user, &old, &email, request)?;
         changes.extend(effects.iter().flat_map(|effect| effect.changes()));
         changes.extend(authorization_changes(&tx, user)?);
         record_management(&tx, user, request, "account.email", None, now)?;
@@ -321,7 +301,7 @@ pub(crate) fn issue_reset(
     email: String,
     ttl: u32,
     request: RequestId,
-) -> Result<IssuedReset, AccountError> {
+) -> Result<IssuedReset, Error> {
     let tx = db.transaction_with_behavior(TransactionBehavior::Immediate)?;
     let now = now()?;
     let (user, version) = tx
@@ -331,11 +311,11 @@ pub(crate) fn issue_reset(
             |r| Ok((r.get::<_, Vec<u8>>(0)?, r.get::<_, i64>(1)?)),
         )
         .optional()?
-        .ok_or(AccountError::NotFound)?;
+        .ok_or(Error::NotFound)?;
     let user = user_id(&user)?;
     let expires = now
         .checked_add(i64::from(ttl) * 1000)
-        .ok_or(AccountError::Unavailable)?;
+        .ok_or(Error::Internal("password reset expiry overflow"))?;
     let (token, digest) = crate::accounts::issue_one_time("mwr_")?;
     tx.execute("UPDATE password_resets SET revoked_at=?1 WHERE user_id=?2 AND consumed_at IS NULL AND revoked_at IS NULL",params![now,user.as_uuid().as_bytes().as_slice()])?;
     tx.execute("INSERT INTO password_resets(token_hash,user_id,credential_version,expires_at) VALUES(?1,?2,?3,?4)",params![digest.as_slice(),user.as_uuid().as_bytes().as_slice(),version,expires])?;
@@ -347,7 +327,7 @@ pub(crate) fn issue_reset(
     })
 }
 
-fn reset(tx: &Transaction<'_>, digest: [u8; 32], now: i64) -> Result<(UserId, i64), AccountError> {
+fn reset(tx: &Transaction<'_>, digest: [u8; 32], now: i64) -> Result<(UserId, i64), Error> {
     let row = tx
         .query_row(
             "SELECT p.user_id, p.expires_at, p.consumed_at, p.revoked_at,
@@ -366,17 +346,17 @@ fn reset(tx: &Transaction<'_>, digest: [u8; 32], now: i64) -> Result<(UserId, i6
             },
         )
         .optional()?
-        .ok_or(AccountError::InvalidReset)?;
+        .ok_or(Error::InvalidReset)?;
     // Only an exact credential hash match can expose a lifecycle reason. Used
     // takes precedence because consuming a reset also advances credential_version.
     if row.2.is_some() {
-        return Err(AccountError::ResetUsed);
+        return Err(Error::ResetUsed);
     }
     if row.3.is_some() || !row.4 {
-        return Err(AccountError::ResetReplaced);
+        return Err(Error::ResetReplaced);
     }
     if row.1 <= now {
-        return Err(AccountError::ResetExpired);
+        return Err(Error::ResetExpired);
     }
     Ok((user_id(&row.0)?, row.1))
 }
@@ -384,7 +364,7 @@ fn reset(tx: &Transaction<'_>, digest: [u8; 32], now: i64) -> Result<(UserId, i6
 pub(crate) fn inspect_reset(
     db: &mut Connection,
     digest: [u8; 32],
-) -> Result<ResetInspection, AccountError> {
+) -> Result<ResetInspection, Error> {
     let tx = db.transaction_with_behavior(TransactionBehavior::Deferred)?;
     let (_, expires) = reset(&tx, digest, now()?)?;
     tx.commit()?;
@@ -399,7 +379,7 @@ pub(crate) fn redeem_reset(
     hash: Zeroizing<String>,
     request: RequestId,
     publisher: &CommitPublisher,
-) -> Result<(), AccountError> {
+) -> Result<(), Error> {
     let tx = db.transaction_with_behavior(TransactionBehavior::Immediate)?;
     let now = now()?;
     let (user, _) = reset(&tx, digest, now)?;

@@ -1,6 +1,7 @@
 //! Download preparation contains canonical values, never invented artifact IDs.
 //! Only the final configuration owner transaction persists content and bindings.
-use super::{Error, Snapshot};
+use super::Snapshot;
+use crate::error::Error;
 use crate::resources::{
     bindings::{self, Bindings, Contents},
     downloads::Downloads,
@@ -61,7 +62,7 @@ impl Preparation {
         )
         .await
         .map_err(|_| {
-            Error::Invalid(meshway_configuration::ConfigurationError::Invalid(vec![
+            Error::InvalidConfiguration(meshway_configuration::ConfigurationError::Invalid(vec![
                 meshway_configuration::ConfigurationIssue {
                     path: "/ruleSets".into(),
                     message: "remote rule set preparation deadline exceeded (30s)".into(),
@@ -83,24 +84,27 @@ impl Preparation {
                     let problem = match problem {
                         crate::resources::downloads::FetchError::Resource(problem) => problem,
                         crate::resources::downloads::FetchError::Cancelled => {
-                            return Error::DependencyUnavailable;
+                            return Error::CLOSED;
                         }
                     };
-                    Error::Invalid(meshway_configuration::ConfigurationError::Invalid(vec![
-                        meshway_configuration::ConfigurationIssue {
+                    Error::InvalidConfiguration(meshway_configuration::ConfigurationError::Invalid(
+                        vec![meshway_configuration::ConfigurationIssue {
                             path: format!(
                                 "/ruleSets/{}",
                                 key.replace('~', "~0").replace('/', "~1")
                             ),
                             message: format!("remote rule set preparation failed: {problem:?}"),
-                        },
-                    ]))
+                        }],
+                    ))
                 })?;
                 sources.push((definition, data.clone()));
                 data
             };
-            bytes =
-                bytes.saturating_add(serde_json::to_vec(&data).map_err(|_| Error::Storage)?.len());
+            bytes = bytes.saturating_add(
+                serde_json::to_vec(&data)
+                    .map_err(|_| Error::encode("rule set data"))?
+                    .len(),
+            );
             if bytes > crate::resources::MAX_DATASET_BYTES {
                 return Err(Error::DependencyUnavailable);
             }
@@ -126,7 +130,7 @@ impl Preparation {
                 .any(|(key, definition)| input.rule_sets.get(key) != Some(definition))
             || self.contents.len() != self.definitions.len()
         {
-            return Err(Error::Conflict);
+            return Err(Error::RevisionConflict);
         }
         Ok(())
     }
@@ -143,8 +147,7 @@ impl Preparation {
                 "rule-set",
                 data,
                 chrono::Utc::now(),
-            )
-            .map_err(|_| Error::Storage)?;
+            )?;
             bindings.insert(key.clone(), artifact.id);
         }
         Ok(())
@@ -158,19 +161,18 @@ impl Preparation {
         let mut new_content = false;
         for (key, data) in &self.contents {
             let digest = crate::resources::content_digest(
-                &serde_json::to_vec(data).map_err(|_| Error::Storage)?,
+                &serde_json::to_vec(data).map_err(|_| Error::encode("rule set data"))?,
             );
             let id: Option<String> = tx.query_row(
                 "SELECT id FROM dataset_artifacts WHERE network_id=?1 AND kind='ruleSet' AND digest=?2",
                 params![current.network_id.as_uuid().as_bytes().as_slice(),digest.to_string()], |row| row.get(0),
             ).optional()?;
             if let Some(id) = id {
-                let id = id.parse().map_err(|_| Error::Storage)?;
-                if crate::resources::load_artifact(tx, current.network_id, id)
-                    .map_err(|_| Error::Storage)?
-                    != *data
-                {
-                    return Err(Error::Storage);
+                let id = id
+                    .parse()
+                    .map_err(|_| Error::decode("dataset_artifacts.id"))?;
+                if crate::resources::load_artifact(tx, current.network_id, id)? != *data {
+                    return Err(Error::decode("dataset_artifacts.data"));
                 }
                 bindings.insert(key.clone(), id);
             } else {
@@ -187,7 +189,8 @@ impl Preparation {
                     key.clone(),
                     PreparedRuleSet {
                         digest: crate::resources::content_digest(
-                            &serde_json::to_vec(data).map_err(|_| Error::Storage)?,
+                            &serde_json::to_vec(data)
+                                .map_err(|_| Error::encode("rule set data"))?,
                         ),
                         entries: (data.ip_cidr.len() + data.domain_suffix.len()) as u32,
                     },

@@ -1,5 +1,6 @@
 //! Network authorization, persistence, and bounded reads on the SQLite owner.
 
+use crate::error::Error;
 pub(crate) mod management;
 mod rows;
 
@@ -7,8 +8,7 @@ use super::authorization::current_session;
 use crate::{
     accounts::random_uuid,
     networks::{
-        MemberPage, NetworkError, NetworkPage, NetworkSummary, configuration::PreparedNetwork,
-        pagination::Window,
+        MemberPage, NetworkPage, NetworkSummary, configuration::PreparedNetwork, pagination::Window,
     },
     secrets::{CursorScope, Sealer},
 };
@@ -19,10 +19,7 @@ use rusqlite::{Connection, OptionalExtension, Transaction, TransactionBehavior, 
 
 const NETWORK_SELECT: &str = "SELECT n.sequence, n.id, n.name, n.created_at, n.current_revision, m.id, m.role FROM networks n JOIN memberships m ON m.network_id = n.id WHERE m.user_id = ?1 AND m.revoked_at IS NULL AND n.deleted_at IS NULL";
 
-pub(crate) fn authenticate(
-    connection: &mut Connection,
-    digest: [u8; 32],
-) -> Result<(), NetworkError> {
+pub(crate) fn authenticate(connection: &mut Connection, digest: [u8; 32]) -> Result<(), Error> {
     let transaction = connection.transaction_with_behavior(TransactionBehavior::Deferred)?;
     current_session(&transaction, &digest, now()?)?;
     transaction.commit()?;
@@ -36,7 +33,7 @@ pub(crate) fn create(
     request: RequestId,
     sealer: &Sealer,
     cache: &crate::configuration::SnapshotCache,
-) -> Result<NetworkSummary, NetworkError> {
+) -> Result<NetworkSummary, Error> {
     let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
     let now = now()?;
     let session = current_session(&transaction, &digest, now)?;
@@ -52,7 +49,7 @@ pub(crate) fn create(
         // before disclosing either an old result or its parameter conflict.
         let view = view(&transaction, id, user, sealer, cache)?;
         if original_digest != prepared.request_digest {
-            return Err(NetworkError::RequestConflict);
+            return Err(Error::RequestConflict);
         }
         transaction.commit()?;
         return Ok(view);
@@ -88,7 +85,7 @@ pub(crate) fn get(
     id: NetworkId,
     sealer: &Sealer,
     cache: &crate::configuration::SnapshotCache,
-) -> Result<NetworkSummary, NetworkError> {
+) -> Result<NetworkSummary, Error> {
     let transaction = connection.transaction_with_behavior(TransactionBehavior::Deferred)?;
     let user = current_session(&transaction, &digest, now()?)?.user.id;
     let view = view(&transaction, id, user, sealer, cache)?;
@@ -103,7 +100,7 @@ pub(crate) fn rename(
     change: crate::networks::NameChange,
     sealer: &Sealer,
     cache: &crate::configuration::SnapshotCache,
-) -> Result<NetworkSummary, NetworkError> {
+) -> Result<NetworkSummary, Error> {
     let crate::networks::NameChange {
         name,
         expected,
@@ -114,10 +111,10 @@ pub(crate) fn rename(
     let user = current_session(&transaction, &digest, now)?.user.id;
     let mut view = view(&transaction, id, user, sealer, cache)?;
     if !view.actions.rename {
-        return Err(NetworkError::PermissionDenied);
+        return Err(Error::PermissionDenied);
     }
     if view.name != expected {
-        return Err(NetworkError::NameConflict);
+        return Err(Error::NameConflict);
     }
     if view.name != name {
         transaction.execute(
@@ -145,7 +142,7 @@ pub(crate) fn list(
     cursor: Option<String>,
     sealer: &Sealer,
     cache: &crate::configuration::SnapshotCache,
-) -> Result<NetworkPage, NetworkError> {
+) -> Result<NetworkPage, Error> {
     let transaction = connection.transaction_with_behavior(TransactionBehavior::Deferred)?;
     let now = now()?;
     let user = current_session(&transaction, &digest, now)?.user.id;
@@ -199,8 +196,10 @@ pub(crate) fn list(
         ],
         |r| r.get::<_, i64>(0),
     )?;
-    let total = meshway_model::Count::new(u64::try_from(total).map_err(|_| NetworkError::Storage)?)
-        .map_err(|_| NetworkError::Storage)?;
+    let total = meshway_model::Count::new(
+        u64::try_from(total).map_err(|_| Error::decode("networks count"))?,
+    )
+    .map_err(|_| Error::decode("networks count"))?;
     transaction.commit()?;
     Ok(NetworkPage {
         items,
@@ -218,13 +217,13 @@ pub(crate) fn members(
     cursor: Option<String>,
     sealer: &Sealer,
     cache: &crate::configuration::SnapshotCache,
-) -> Result<MemberPage, NetworkError> {
+) -> Result<MemberPage, Error> {
     let transaction = connection.transaction_with_behavior(TransactionBehavior::Deferred)?;
     let now = now()?;
     let user = current_session(&transaction, &digest, now)?.user.id;
     let caller = view(&transaction, id, user, sealer, cache)?;
     if !caller.actions.manage_members {
-        return Err(NetworkError::PermissionDenied);
+        return Err(Error::PermissionDenied);
     }
     let scope = CursorScope::Members { user, network: id };
     let mut window = match cursor {
@@ -262,8 +261,10 @@ pub(crate) fn members(
     };
     let as_of = window.as_of()?;
     let total=transaction.query_row("SELECT count(*) FROM memberships m JOIN users u ON u.id=m.user_id WHERE m.network_id=?1 AND m.revoked_at IS NULL AND m.sequence<=?2",params![id.as_uuid().as_bytes().as_slice(),window.upper],|r|r.get::<_,i64>(0))?;
-    let total = meshway_model::Count::new(u64::try_from(total).map_err(|_| NetworkError::Storage)?)
-        .map_err(|_| NetworkError::Storage)?;
+    let total = meshway_model::Count::new(
+        u64::try_from(total).map_err(|_| Error::decode("memberships count"))?,
+    )
+    .map_err(|_| Error::decode("memberships count"))?;
     transaction.commit()?;
     Ok(MemberPage {
         items,
@@ -279,7 +280,7 @@ pub(crate) fn view(
     user: UserId,
     sealer: &Sealer,
     cache: &crate::configuration::SnapshotCache,
-) -> Result<NetworkSummary, NetworkError> {
+) -> Result<NetworkSummary, Error> {
     let sql = format!("{NETWORK_SELECT} AND n.id = ?2");
     let raw = transaction
         .query_row(
@@ -291,7 +292,7 @@ pub(crate) fn view(
             RawNetwork::read,
         )
         .optional()?
-        .ok_or(NetworkError::NotFound)?;
+        .ok_or(Error::NotFound)?;
     let view = raw.into_view()?;
     check_configuration(transaction, &view, sealer, cache)?;
     Ok(view)
@@ -304,7 +305,7 @@ pub(crate) fn member_snapshot(
     tx: &Transaction<'_>,
     caller: &NetworkSummary,
     limit: usize,
-) -> Result<Vec<meshway_model::MemberSummary>, NetworkError> {
+) -> Result<Vec<meshway_model::MemberSummary>, Error> {
     let mut statement = tx.prepare("SELECT m.sequence,m.id,m.user_id,u.email,m.role,m.version,m.joined_at FROM memberships m JOIN users u ON u.id=m.user_id WHERE m.network_id=?1 AND m.revoked_at IS NULL AND (?2 OR m.id=?3) ORDER BY m.sequence LIMIT ?4")?;
     let rows = statement
         .query_map(
@@ -328,14 +329,13 @@ fn check_configuration(
     view: &NetworkSummary,
     sealer: &Sealer,
     cache: &crate::configuration::SnapshotCache,
-) -> Result<(), NetworkError> {
+) -> Result<(), Error> {
     cache
         .load(transaction, view.id, view.current_revision, sealer)
         .map(|_| ())
-        .map_err(|_| NetworkError::Storage)
 }
 
-fn ceiling(transaction: &Transaction<'_>, table: &str) -> Result<i64, NetworkError> {
+fn ceiling(transaction: &Transaction<'_>, table: &str) -> Result<i64, Error> {
     // sqlite_sequence retains the allocation high-water mark after deletion.
     Ok(transaction
         .query_row(
@@ -367,7 +367,7 @@ fn record(
     request: RequestId,
     activity: Activity,
     now: i64,
-) -> Result<(), NetworkError> {
+) -> Result<(), Error> {
     let (action, member, link) = match activity {
         Activity::NetworkCreated => ("network.create", None, None),
         Activity::NetworkRenamed => ("network.rename", None, None),
@@ -387,7 +387,7 @@ fn record(
             |row| row.get::<_, bool>(0),
         )?;
         if !exists {
-            return Err(NetworkError::Storage);
+            return Err(Error::Internal("activity membership missing"));
         }
     }
     if let Some(link) = link {
@@ -400,7 +400,7 @@ fn record(
             |row| row.get::<_, bool>(0),
         )?;
         if !exists {
-            return Err(NetworkError::Storage);
+            return Err(Error::Internal("activity join link missing"));
         }
     }
     transaction.execute(
@@ -413,10 +413,10 @@ fn record(
     Ok(())
 }
 
-fn now() -> Result<i64, NetworkError> {
+fn now() -> Result<i64, Error> {
     let now = Utc::now().timestamp_millis();
     if now < 0 {
-        Err(NetworkError::Unavailable)
+        Err(Error::Internal("system clock before epoch"))
     } else {
         Ok(now)
     }

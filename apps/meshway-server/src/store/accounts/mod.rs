@@ -1,6 +1,7 @@
 //! Private account persistence. All final decisions are made on the SQLite
 //! worker, in the same transaction as any mutation and its activity record.
 
+use crate::error::Error;
 mod activity;
 pub(crate) mod management;
 
@@ -13,9 +14,7 @@ use uuid::Uuid;
 use zeroize::Zeroizing;
 
 use super::authorization::current_session;
-use crate::accounts::{
-    AccountError, AuthenticatedSession, IssuedSession, User, issue_token, random_uuid,
-};
+use crate::accounts::{AuthenticatedSession, IssuedSession, User, issue_token, random_uuid};
 use activity::{AccountActivity, record};
 
 // No Debug: contains a password verifier. Read only by the KDF and compared in
@@ -29,7 +28,7 @@ pub(crate) struct LoginCandidate {
 pub(crate) fn login_candidate(
     connection: &Connection,
     email: Option<&str>,
-) -> Result<Option<LoginCandidate>, AccountError> {
+) -> Result<Option<LoginCandidate>, Error> {
     let Some(email) = email else {
         return Ok(None);
     };
@@ -51,18 +50,18 @@ pub(crate) fn register(
     ttl: Duration,
     request: RequestId,
     client_label: Option<&str>,
-) -> Result<IssuedSession, AccountError> {
+) -> Result<IssuedSession, Error> {
     let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
     if transaction.query_row(
         "SELECT EXISTS(SELECT 1 FROM users WHERE email = ?1)",
         [&email],
         |row| row.get::<_, bool>(0),
     )? {
-        return Err(AccountError::EmailTaken);
+        return Err(Error::EmailTaken);
     }
     let now = now()?;
     let user = User {
-        id: UserId::new(random_uuid()?).map_err(|_| AccountError::Unavailable)?,
+        id: UserId::new(random_uuid()?).map_err(|_| Error::Internal("generated user ID"))?,
         email,
     };
     transaction.execute("INSERT INTO users (id, email, password_hash, credential_version, created_at) VALUES (?1, ?2, ?3, 1, ?4)",
@@ -85,7 +84,7 @@ pub(crate) fn login(
     ttl: Duration,
     request: RequestId,
     client_label: Option<&str>,
-) -> Result<IssuedSession, AccountError> {
+) -> Result<IssuedSession, Error> {
     let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
     // Revalidate every security input read before the KDF, including the PHC
     // itself. A credential-version increment is not the sole race protection.
@@ -93,7 +92,7 @@ pub(crate) fn login(
         "SELECT email FROM users WHERE id = ?1 AND password_hash = ?2 AND credential_version = ?3 AND disabled_at IS NULL",
         params![verified.user_id.as_uuid().as_bytes().as_slice(), verified.password_hash.as_str(), verified.credential_version],
         |row| row.get::<_, String>(0),
-    ).optional()?.ok_or(AccountError::InvalidCredentials)?;
+    ).optional()?.ok_or(Error::InvalidCredentials)?;
     let now = now()?;
     let issued = insert_session(
         &transaction,
@@ -124,12 +123,15 @@ fn insert_session(
     now: i64,
     ttl: Duration,
     client_label: Option<&str>,
-) -> Result<IssuedSession, AccountError> {
-    let session_id = SessionId::new(random_uuid()?).map_err(|_| AccountError::Unavailable)?;
+) -> Result<IssuedSession, Error> {
+    let session_id =
+        SessionId::new(random_uuid()?).map_err(|_| Error::Internal("generated session ID"))?;
     let (token, digest) = issue_token()?;
     let expires = now
-        .checked_add(i64::try_from(ttl.as_millis()).map_err(|_| AccountError::Unavailable)?)
-        .ok_or(AccountError::Unavailable)?;
+        .checked_add(
+            i64::try_from(ttl.as_millis()).map_err(|_| Error::Internal("session TTL overflow"))?,
+        )
+        .ok_or(Error::Internal("session expiry overflow"))?;
     transaction.execute(
         "INSERT INTO user_sessions (id, token_hash, user_id, credential_version, created_at, expires_at, client_label) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
         params![session_id.as_uuid().as_bytes().as_slice(), digest.as_slice(), user.id.as_uuid().as_bytes().as_slice(), version, now, expires, client_label],
@@ -148,7 +150,7 @@ fn insert_session(
 pub(crate) fn authenticate(
     connection: &mut Connection,
     digest: [u8; 32],
-) -> Result<AuthenticatedSession, AccountError> {
+) -> Result<AuthenticatedSession, Error> {
     let transaction = connection.transaction_with_behavior(TransactionBehavior::Deferred)?;
     let session = current_session(&transaction, &digest, now()?)?;
     transaction.commit()?;
@@ -160,7 +162,7 @@ pub(crate) fn logout(
     digest: [u8; 32],
     request: RequestId,
     publisher: &crate::state::service::CommitPublisher,
-) -> Result<(), AccountError> {
+) -> Result<(), Error> {
     let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
     let now = now()?;
     let session = current_session(&transaction, &digest, now)?;
@@ -184,23 +186,23 @@ pub(crate) fn logout(
     Ok(())
 }
 
-fn now() -> Result<i64, AccountError> {
+fn now() -> Result<i64, Error> {
     let now = Utc::now().timestamp_millis();
     if now < 0 {
-        return Err(AccountError::Unavailable);
+        return Err(Error::Internal("system clock before epoch"));
     }
     Ok(now)
 }
 
-fn timestamp(value: i64) -> Result<DateTime<Utc>, AccountError> {
-    DateTime::from_timestamp_millis(value).ok_or(AccountError::Storage)
+fn timestamp(value: i64) -> Result<DateTime<Utc>, Error> {
+    DateTime::from_timestamp_millis(value).ok_or(Error::decode("account timestamp"))
 }
 
-fn uuid(bytes: &[u8]) -> Result<Uuid, AccountError> {
-    Uuid::from_slice(bytes).map_err(|_| AccountError::Storage)
+fn uuid(bytes: &[u8]) -> Result<Uuid, Error> {
+    Uuid::from_slice(bytes).map_err(|_| Error::decode("account UUID"))
 }
-fn user_id(bytes: &[u8]) -> Result<UserId, AccountError> {
-    UserId::new(uuid(bytes)?).map_err(|_| AccountError::Storage)
+fn user_id(bytes: &[u8]) -> Result<UserId, Error> {
+    UserId::new(uuid(bytes)?).map_err(|_| Error::decode("users.id"))
 }
 
 #[cfg(test)]

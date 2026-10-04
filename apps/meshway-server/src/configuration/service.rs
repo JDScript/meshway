@@ -57,9 +57,10 @@ impl Configurations {
                 .collect::<Result<Vec<_>, _>>()?
         };
         for network in networks {
-            let network =
-                NetworkId::new(uuid::Uuid::from_slice(&network).map_err(|_| Error::Storage)?)
-                    .map_err(|_| Error::Storage)?;
+            let network = NetworkId::new(
+                uuid::Uuid::from_slice(&network).map_err(|_| Error::decode("networks.id"))?,
+            )
+            .map_err(|_| Error::decode("networks.id"))?;
             let current = self.current(tx, network)?;
             if !current
                 .bindings
@@ -143,7 +144,7 @@ impl Configurations {
         network: NetworkId,
         revision: Option<Revision>,
     ) -> Result<Arc<Snapshot>, Error> {
-        let digest = token_digest(token).map_err(|_| Error::InvalidSession)?;
+        let digest = token_digest(token)?;
         let service = self.clone();
         self.handle
             .execute(move |db| {
@@ -159,8 +160,7 @@ impl Configurations {
                 tx.commit()?;
                 Ok(snapshot)
             })
-            .await
-            .map_err(|_| Error::Storage)?
+            .await?
     }
     pub(crate) async fn validate(
         &self,
@@ -172,7 +172,7 @@ impl Configurations {
         let permit = PREPARATIONS
             .try_acquire()
             .map_err(|_| Error::DependencyUnavailable)?;
-        let digest = token_digest(token).map_err(|_| Error::InvalidSession)?;
+        let digest = token_digest(token)?;
         let (request, resources) = self
             .prepare_resources(digest, network, request, false)
             .await?;
@@ -189,8 +189,7 @@ impl Configurations {
                 tx.commit()?;
                 Ok(result)
             })
-            .await
-            .map_err(|_| Error::Storage)?
+            .await?
     }
     pub(crate) async fn apply(
         &self,
@@ -202,7 +201,7 @@ impl Configurations {
         let permit = PREPARATIONS
             .try_acquire()
             .map_err(|_| Error::DependencyUnavailable)?;
-        let digest = token_digest(token).map_err(|_| Error::InvalidSession)?;
+        let digest = token_digest(token)?;
         let service = self.clone();
         let stage = self
             .handle
@@ -226,8 +225,7 @@ impl Configurations {
                         .map(ApplyStage::Complete)
                 }
             })
-            .await
-            .map_err(|_| Error::Storage)??;
+            .await??;
         let (request, mut resources, permit) = match stage {
             ApplyStage::Complete(result) => return Ok(result),
             ApplyStage::Download {
@@ -243,8 +241,7 @@ impl Configurations {
                 let _permit = permit;
                 service.apply_request(db, digest, network, request, id, Some(&resources))
             })
-            .await
-            .map_err(|_| Error::Storage)?
+            .await?
     }
     fn apply_request(
         &self,
@@ -257,24 +254,26 @@ impl Configurations {
     ) -> Result<ConfigurationAppliedResponse, Error> {
         let tx = db.transaction_with_behavior(TransactionBehavior::Immediate)?;
         let user = self.authorize(&tx, &digest, network)?;
-        let encoded = Zeroizing::new(serde_json::to_vec(&request).map_err(|_| Error::Storage)?);
+        let encoded = Zeroizing::new(
+            serde_json::to_vec(&request).map_err(|_| Error::encode("configuration request"))?,
+        );
         let prior = tx.query_row(
             "SELECT base_revision,input,result FROM configuration_commits WHERE network_id=?1 AND user_id=?2 AND request_id=?3",
             params![network.as_uuid().as_bytes().as_slice(), user.as_uuid().as_bytes().as_slice(), request.request_id().as_uuid().as_bytes().as_slice()],
             |row| Ok((row.get::<_, i64>(0)?, row.get::<_, Vec<u8>>(1)?, row.get::<_, String>(2)?)),
         ).optional()?;
         if let Some((base, input, result)) = prior {
-            let base = Revision::new(u64::try_from(base).map_err(|_| Error::Storage)?)
-                .map_err(|_| Error::Storage)?;
-            let original = self
-                .sealer
-                .open(network, base, Purpose::Request, &input)
-                .map_err(|_| Error::Storage)?;
+            let base = Revision::new(
+                u64::try_from(base)
+                    .map_err(|_| Error::decode("configuration_commits.base_revision"))?,
+            )
+            .map_err(|_| Error::decode("configuration_commits.base_revision"))?;
+            let original = self.sealer.open(network, base, Purpose::Request, &input)?;
             if original.as_bytes() != encoded.as_slice() {
                 return Err(Error::RequestConflict);
             }
-            let mut result: ConfigurationAppliedResponse =
-                serde_json::from_str(&result).map_err(|_| Error::Storage)?;
+            let mut result: ConfigurationAppliedResponse = serde_json::from_str(&result)
+                .map_err(|_| Error::decode("configuration_commits.result"))?;
             result.request_id = id;
             tx.commit()?;
             return Ok(result);
@@ -322,18 +321,17 @@ impl Configurations {
                 effects.publication_ids
             },
             target_count: u32::try_from(effects.target_node_ids.len())
-                .map_err(|_| Error::Storage)?,
+                .map_err(|_| Error::Internal("configuration target count overflow"))?,
             deleted_node_ids: effects.deleted_node_ids.into_iter().collect(),
         };
         let input = self
             .sealer
-            .seal(network, current.revision, Purpose::Request, &encoded)
-            .map_err(|_| Error::Storage)?;
+            .seal(network, current.revision, Purpose::Request, &encoded)?;
         tx.execute(
             "INSERT INTO configuration_commits(network_id,user_id,request_id,base_revision,input,result) VALUES(?1,?2,?3,?4,?5,?6)",
             params![network.as_uuid().as_bytes().as_slice(), user.as_uuid().as_bytes().as_slice(),
                 request.request_id().as_uuid().as_bytes().as_slice(), current.revision.get() as i64,
-                input.as_bytes(), serde_json::to_string(&result).map_err(|_|Error::Storage)?],
+                input.as_bytes(), serde_json::to_string(&result).map_err(|_|Error::encode("configuration commit result"))?],
         )?;
         // One valid bulk deletion may exceed the replay window. The bounded
         // journal evicts old entries; it must not cap the configuration commit.
@@ -350,7 +348,7 @@ impl Configurations {
         request: CompareConfigurationRequest,
         id: RequestId,
     ) -> Result<ConfigurationComparison, Error> {
-        let digest = token_digest(token).map_err(|_| Error::InvalidSession)?;
+        let digest = token_digest(token)?;
         let service = self.clone();
         self.handle
             .execute(move |db| {
@@ -378,8 +376,7 @@ impl Configurations {
                 tx.commit()?;
                 Ok(result)
             })
-            .await
-            .map_err(|_| Error::Storage)?
+            .await?
     }
     fn authorize(
         &self,
@@ -387,8 +384,7 @@ impl Configurations {
         digest: &[u8; 32],
         network: NetworkId,
     ) -> Result<UserId, Error> {
-        let user = current_session(tx, digest, chrono::Utc::now().timestamp_millis())
-            .map_err(|_| Error::InvalidSession)?
+        let user = current_session(tx, digest, chrono::Utc::now().timestamp_millis())?
             .user
             .id;
         authorize_manager(tx, network, user)?;
@@ -407,7 +403,7 @@ impl Configurations {
         resources: Option<&resources::Preparation>,
     ) -> Result<preview::RequestInput<'a>, Error> {
         if request.expected_revision() != current.revision {
-            return Err(Error::Conflict);
+            return Err(Error::RevisionConflict);
         }
         let (source, mut input, expected, expected_nodes) = match request {
             ConfigurationRequest::Document { source_jsonc, .. } => (
@@ -571,8 +567,7 @@ impl Configurations {
                 let preparation = service.stage_resources(&tx, digest, network, &request, retry)?;
                 Ok::<_, Error>((request, preparation))
             })
-            .await
-            .map_err(|_| Error::Storage)??;
+            .await??;
         if let Some(resources) = &mut resources {
             resources.download(&self.downloads).await?;
         }
@@ -594,7 +589,7 @@ impl Configurations {
             )? { return Ok(None); }
         let current = self.current(tx, network)?;
         if current.revision != request.expected_revision() {
-            return Err(Error::Conflict);
+            return Err(Error::RevisionConflict);
         }
         let input = match &request {
             ConfigurationRequest::Document { source_jsonc, .. } => {
@@ -622,7 +617,8 @@ pub(crate) fn current_revision(
         )
         .optional()?
         .ok_or(Error::NotFound)?;
-    Revision::new(u64::try_from(r).map_err(|_| Error::Storage)?).map_err(|_| Error::Storage)
+    Revision::new(u64::try_from(r).map_err(|_| Error::decode("networks.current_revision"))?)
+        .map_err(|_| Error::decode("networks.current_revision"))
 }
 
 /// Readable names follow the stable subject for each binding purpose. An email
@@ -675,12 +671,14 @@ pub(crate) fn members(
             Ok((
                 email,
                 UserBinding {
-                    user_id: UserId::new(uuid::Uuid::from_slice(&u).map_err(|_| Error::Storage)?)
-                        .map_err(|_| Error::Storage)?,
-                    membership_id: meshway_model::MembershipId::new(
-                        uuid::Uuid::from_slice(&m).map_err(|_| Error::Storage)?,
+                    user_id: UserId::new(
+                        uuid::Uuid::from_slice(&u).map_err(|_| Error::decode("users.id"))?,
                     )
-                    .map_err(|_| Error::Storage)?,
+                    .map_err(|_| Error::decode("users.id"))?,
+                    membership_id: meshway_model::MembershipId::new(
+                        uuid::Uuid::from_slice(&m).map_err(|_| Error::decode("memberships.id"))?,
+                    )
+                    .map_err(|_| Error::decode("memberships.id"))?,
                 },
             ))
         })
@@ -752,7 +750,7 @@ mod tests {
             service
                 .apply(user.token.expose(), network, edit(), request())
                 .await,
-            Err(Error::Storage)
+            Err(Error::Storage(_))
         ));
         let after = service
             .read(user.token.expose(), network, None)

@@ -1,6 +1,7 @@
 //! Production adapters share the App's unique core, configuration cache and
 //! SQLite executor. Each adapter accepts exactly one authentication family.
-use super::{ReportAdmission, StateError, service::*};
+use super::{ReportAdmission, service::*};
+use crate::error::Error;
 use crate::{configuration::SnapshotCache, execution::Execution, secrets::Sealer};
 use chrono::{DateTime, Utc};
 use meshway_model::{InstanceId, MembershipRole, Revision};
@@ -22,15 +23,13 @@ impl Projection {
         &self,
         tx: &Transaction<'_>,
         scope: &super::VisibilityScope,
-    ) -> Result<Arc<crate::configuration::Snapshot>, StateError> {
-        self.cache
-            .load(
-                tx,
-                scope.network_id,
-                scope.configuration_revision,
-                &self.sealer,
-            )
-            .map_err(|_| StateError::Storage)
+    ) -> Result<Arc<crate::configuration::Snapshot>, Error> {
+        self.cache.load(
+            tx,
+            scope.network_id,
+            scope.configuration_revision,
+            &self.sealer,
+        )
     }
 }
 impl StateProvider for UserProvider {
@@ -51,7 +50,7 @@ impl StateProvider for UserProvider {
     fn can_drain_configuration_changes(&self, view: &ProviderView<Self>) -> bool {
         matches!(view.configuration, UserConfigurationView::Manager { .. })
     }
-    fn replay_scope(&self, view: &ProviderView<Self>) -> Result<meshway_model::Digest, StateError> {
+    fn replay_scope(&self, view: &ProviderView<Self>) -> Result<meshway_model::Digest, Error> {
         if matches!(view.configuration, UserConfigurationView::Manager { .. }) {
             // A manager may read the whole network; a new execution target,
             // receipt or path is a data change, not loss of this disclosure
@@ -78,7 +77,7 @@ impl StateProvider for UserProvider {
         tx: &Transaction<'_>,
         identity: &ReadIdentity,
         now: DateTime<Utc>,
-    ) -> Result<ProviderView<Self>, StateError> {
+    ) -> Result<ProviderView<Self>, Error> {
         let (scope, network) = self.authority(tx, identity, now)?;
         let manager = matches!(network.role, MembershipRole::Owner | MembershipRole::Admin);
         let snapshot = self.0.snapshot(tx, &scope)?;
@@ -108,16 +107,14 @@ impl StateProvider for UserProvider {
             cfg,
             &scope.full,
             manager,
-        )
-        .map_err(node_error)?
+        )?
         .items
         .into_iter()
         .map(|node| (node.id, node))
         .collect();
-        let members =
-            crate::store::networks::member_snapshot(tx, &network, 10_000).map_err(network_error)?;
+        let members = crate::store::networks::member_snapshot(tx, &network, 10_000)?;
         if members.len() > 10_000 {
-            return Err(StateError::Budget);
+            return Err(Error::StateLimit);
         }
         let members = members
             .into_iter()
@@ -150,8 +147,8 @@ impl StateProvider for UserProvider {
         _: &Transaction<'_>,
         _: &str,
         _: DateTime<Utc>,
-    ) -> Result<ReportAdmission, StateError> {
-        Err(StateError::Forbidden)
+    ) -> Result<ReportAdmission, Error> {
+        Err(Error::PermissionDenied)
     }
     fn filter_notice(
         &self,
@@ -170,13 +167,12 @@ impl UserProvider {
         tx: &Transaction<'_>,
         identity: &ReadIdentity,
         now: DateTime<Utc>,
-    ) -> Result<(super::VisibilityScope, meshway_model::NetworkSummary), StateError> {
+    ) -> Result<(super::VisibilityScope, meshway_model::NetworkSummary), Error> {
         let ReadIdentity::UserSession { digest, network } = identity else {
-            return Err(StateError::Forbidden);
+            return Err(Error::PermissionDenied);
         };
         let session =
-            crate::store::authorization::current_session(tx, digest, now.timestamp_millis())
-                .map_err(|_| StateError::Unauthorized)?;
+            crate::store::authorization::current_session(tx, digest, now.timestamp_millis())?;
         let scope = self
             .0
             .execution
@@ -187,8 +183,7 @@ impl UserProvider {
             session.user.id,
             &self.0.sealer,
             &self.0.cache,
-        )
-        .map_err(network_error)?;
+        )?;
         Ok((scope, network))
     }
     pub(crate) fn progress(
@@ -197,11 +192,11 @@ impl UserProvider {
         identity: &ReadIdentity,
         revision: Revision,
         now: DateTime<Utc>,
-    ) -> Result<ConfigurationApplyProgress, StateError> {
+    ) -> Result<ConfigurationApplyProgress, Error> {
         let (scope, network) = self.authority(tx, identity, now)?;
         let manager = matches!(network.role, MembershipRole::Owner | MembershipRole::Admin);
         if !manager && revision != scope.configuration_revision {
-            return Err(StateError::Forbidden);
+            return Err(Error::PermissionDenied);
         }
         super::progress::read(
             tx,
@@ -218,7 +213,7 @@ impl StateProvider for NodeProvider {
     type Configuration = NodeConfigurationView;
     type Entities = NodeEntitiesView;
     type Progress = ConfigurationApplyProgress;
-    fn replay_scope(&self, view: &ProviderView<Self>) -> Result<meshway_model::Digest, StateError> {
+    fn replay_scope(&self, view: &ProviderView<Self>) -> Result<meshway_model::Digest, Error> {
         disclosure_digest(&view.scope)
     }
     fn same_authority(&self, previous: &ProviderView<Self>, current: &ProviderView<Self>) -> bool {
@@ -240,9 +235,9 @@ impl StateProvider for NodeProvider {
         tx: &Transaction<'_>,
         identity: &ReadIdentity,
         now: DateTime<Utc>,
-    ) -> Result<ProviderView<Self>, StateError> {
+    ) -> Result<ProviderView<Self>, Error> {
         let ReadIdentity::Node { authorization } = identity else {
-            return Err(StateError::Forbidden);
+            return Err(Error::PermissionDenied);
         };
         let report = self
             .0
@@ -266,7 +261,7 @@ impl StateProvider for NodeProvider {
             settings: cfg
                 .nodes
                 .get(&report.node_id)
-                .ok_or(StateError::Unauthorized)?
+                .ok_or(Error::InvalidSession)?
                 .into(),
             target,
         };
@@ -277,8 +272,7 @@ impl StateProvider for NodeProvider {
             cfg,
             &scope.visible,
             false,
-        )
-        .map_err(node_error)?
+        )?
         .items
         .into_iter()
         .map(|node| (node.id, node))
@@ -305,7 +299,7 @@ impl StateProvider for NodeProvider {
         tx: &Transaction<'_>,
         authorization: &str,
         now: DateTime<Utc>,
-    ) -> Result<ReportAdmission, StateError> {
+    ) -> Result<ReportAdmission, Error> {
         self.0
             .execution
             .report_admission_in_transaction(tx, authorization, now)
@@ -329,7 +323,7 @@ fn redact_notice(notice: &mut meshway_protocol::events::ConfigurationNotice) {
 /// intact for history cursors and active observation tasks. Stream disclosure
 /// can survive an unrelated source revision, but target changes, revocation,
 /// address classifications or peer dependencies invalidate restricted replay.
-fn disclosure_digest(scope: &super::VisibilityScope) -> Result<meshway_model::Digest, StateError> {
+fn disclosure_digest(scope: &super::VisibilityScope) -> Result<meshway_model::Digest, Error> {
     let current: Vec<_> = scope
         .current
         .iter()
@@ -351,25 +345,6 @@ fn disclosure_digest(scope: &super::VisibilityScope) -> Result<meshway_model::Di
         &scope.mesh_addresses,
         current,
     ))
-    .map_err(|_| StateError::Storage)?;
+    .map_err(|_| Error::encode("state disclosure scope"))?;
     Ok(crate::resources::content_digest(&bytes))
-}
-fn network_error(error: crate::networks::NetworkError) -> StateError {
-    use crate::networks::NetworkError;
-    match error {
-        NetworkError::NotFound => StateError::NotFound,
-        NetworkError::PermissionDenied => StateError::Forbidden,
-        NetworkError::InvalidSession => StateError::Unauthorized,
-        _ => StateError::Storage,
-    }
-}
-fn node_error(error: crate::execution::NodeError) -> StateError {
-    use crate::execution::NodeError;
-    match error {
-        NodeError::Unauthorized => StateError::Unauthorized,
-        NodeError::Forbidden => StateError::Forbidden,
-        NodeError::Conflict => StateError::Conflict,
-        NodeError::NotFound => StateError::NotFound,
-        _ => StateError::Storage,
-    }
 }

@@ -5,7 +5,9 @@ use argon2::{
 use tokio::sync::Semaphore;
 use zeroize::Zeroizing;
 
-use super::{AccountError, PasswordRules, Secret};
+use super::{PasswordRules, Secret};
+
+use crate::error::Error;
 use crate::store::accounts::LoginCandidate;
 
 pub(super) const RULES: PasswordRules = PasswordRules {
@@ -26,29 +28,29 @@ const LANES: u32 = 1;
 // its result is never used to grant a session.
 const DUMMY: &str = "$argon2id$v=19$m=19456,t=2,p=1$AAAAAAAAAAAAAAAAAAAAAA$AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA";
 
-pub(super) fn validate(password: &Secret) -> Result<(), AccountError> {
+pub(super) fn validate(password: &Secret) -> Result<(), Error> {
     let value = password.expose();
     if value.len() > RULES.max_utf8_bytes
         || !(RULES.min_codepoints..=RULES.max_codepoints).contains(&value.chars().count())
     {
-        return Err(AccountError::InvalidPassword);
+        return Err(Error::InvalidPassword(RULES));
     }
     Ok(())
 }
 
-fn algorithm() -> Result<Argon2<'static>, AccountError> {
+fn algorithm() -> Result<Argon2<'static>, Error> {
     let params = Params::new(MEMORY_KIB, ITERATIONS, LANES, Some(32))
-        .map_err(|_| AccountError::Unavailable)?;
+        .map_err(|_| Error::Internal("argon2 parameters"))?;
     Ok(Argon2::new(Algorithm::Argon2id, Version::V0x13, params))
 }
 
 /// This first storage format accepts exactly the production KDF profile. No PHC
 /// supplied memory/iteration values can increase the per-task work bound.
-fn bounded_phc(value: &str) -> Result<PasswordHash<'_>, AccountError> {
+fn bounded_phc(value: &str) -> Result<PasswordHash<'_>, Error> {
     if value.len() > 256 {
-        return Err(AccountError::InvalidCredentials);
+        return Err(Error::InvalidCredentials);
     }
-    let hash = PasswordHash::new(value).map_err(|_| AccountError::InvalidCredentials)?;
+    let hash = PasswordHash::new(value).map_err(|_| Error::InvalidCredentials)?;
     if hash.algorithm.as_str() != "argon2id"
         || hash.version != Some(19)
         || hash.params.iter().count() != 3
@@ -57,42 +59,43 @@ fn bounded_phc(value: &str) -> Result<PasswordHash<'_>, AccountError> {
         || hash.params.get_decimal("p") != Some(LANES)
         || hash.hash.as_ref().map(|value| value.len()) != Some(32)
     {
-        return Err(AccountError::InvalidCredentials);
+        return Err(Error::InvalidCredentials);
     }
     let mut salt = [0u8; 64];
     let salt = hash
         .salt
-        .ok_or(AccountError::InvalidCredentials)?
+        .ok_or(Error::InvalidCredentials)?
         .decode_b64(&mut salt)
-        .map_err(|_| AccountError::InvalidCredentials)?;
+        .map_err(|_| Error::InvalidCredentials)?;
     if salt.len() != 16 {
-        return Err(AccountError::InvalidCredentials);
+        return Err(Error::InvalidCredentials);
     }
     Ok(hash)
 }
 
 async fn blocking<T: Send + 'static>(
-    work: impl FnOnce() -> Result<T, AccountError> + Send + 'static,
-) -> Result<T, AccountError> {
-    let permit = KDFS.try_acquire().map_err(|_| AccountError::Busy)?;
+    work: impl FnOnce() -> Result<T, Error> + Send + 'static,
+) -> Result<T, Error> {
+    let permit = KDFS.try_acquire().map_err(|_| Error::Busy)?;
     tokio::task::spawn_blocking(move || {
         // Cancellation of the caller never releases the actual KDF budget.
         let _permit = permit;
         work()
     })
     .await
-    .map_err(|_| AccountError::Unavailable)?
+    .map_err(|_| Error::RUNTIME)?
 }
 
-pub(super) async fn hash(password: Secret) -> Result<Zeroizing<String>, AccountError> {
+pub(super) async fn hash(password: Secret) -> Result<Zeroizing<String>, Error> {
     blocking(move || {
         let mut salt = Zeroizing::new([0u8; 16]);
-        getrandom::fill(salt.as_mut()).map_err(|_| AccountError::Unavailable)?;
-        let salt = SaltString::encode_b64(salt.as_ref()).map_err(|_| AccountError::Unavailable)?;
+        getrandom::fill(salt.as_mut()).map_err(|_| Error::ENTROPY)?;
+        let salt = SaltString::encode_b64(salt.as_ref())
+            .map_err(|_| Error::Internal("argon2 salt encoding"))?;
         Ok(Zeroizing::new(
             algorithm()?
                 .hash_password(password.expose().as_bytes(), &salt)
-                .map_err(|_| AccountError::Unavailable)?
+                .map_err(|_| Error::Internal("argon2 password hashing"))?
                 .to_string(),
         ))
     })
@@ -102,7 +105,7 @@ pub(super) async fn hash(password: Secret) -> Result<Zeroizing<String>, AccountE
 pub(super) async fn verify(
     password: Secret,
     candidate: Option<LoginCandidate>,
-) -> Result<LoginCandidate, AccountError> {
+) -> Result<LoginCandidate, Error> {
     blocking(move || {
         let parsed = candidate
             .as_ref()
@@ -113,9 +116,9 @@ pub(super) async fn verify(
             .verify_password(password.expose().as_bytes(), &parsed)
             .is_ok();
         if valid_hash && valid_password {
-            candidate.ok_or(AccountError::InvalidCredentials)
+            candidate.ok_or(Error::InvalidCredentials)
         } else {
-            Err(AccountError::InvalidCredentials)
+            Err(Error::InvalidCredentials)
         }
     })
     .await

@@ -13,6 +13,7 @@ pub use management::{
     AccountSession, AccountSessionPage, IssuedReset, ResetInspection, RevokeSessions,
 };
 
+use crate::error::Error;
 use std::time::Duration;
 
 use chrono::{DateTime, Utc};
@@ -24,58 +25,6 @@ use crate::store::{Handle, accounts as store};
 pub(crate) use password::TEST_KDF_LOCK;
 pub use secret::Secret;
 pub(crate) use secret::{issue_one_time, issue_token, one_time_digest, random_uuid, token_digest};
-
-/// Safe, fixed error categories; never contains a supplied value or SQL error.
-#[derive(Debug, thiserror::Error, PartialEq, Eq)]
-#[non_exhaustive]
-pub enum AccountError {
-    #[error("registration is disabled")]
-    RegistrationDisabled,
-    #[error("invalid email")]
-    InvalidEmail,
-    #[error("password does not meet the published rules")]
-    InvalidPassword,
-    #[error("email is already registered")]
-    EmailTaken,
-    #[error("invalid credentials")]
-    InvalidCredentials,
-    #[error("current password is incorrect")]
-    InvalidCurrentPassword,
-    #[error("invalid or expired session")]
-    InvalidSession,
-    #[error("resource is not available")]
-    NotFound,
-    #[error("invalid or consumed recovery credential")]
-    InvalidReset,
-    #[error("recovery credential has already been used")]
-    ResetUsed,
-    #[error("recovery credential has expired")]
-    ResetExpired,
-    #[error("recovery credential has been superseded")]
-    ResetReplaced,
-    #[error("invalid request")]
-    InvalidRequest,
-    #[error("pagination cursor is invalid or expired")]
-    InvalidCursor,
-    #[error("account computation budget is busy")]
-    Busy,
-    #[error("account service is unavailable")]
-    Unavailable,
-    #[error("account storage operation failed")]
-    Storage,
-}
-
-impl From<rusqlite::Error> for AccountError {
-    fn from(_: rusqlite::Error) -> Self {
-        Self::Storage
-    }
-}
-
-impl From<crate::store::ExecutorError> for AccountError {
-    fn from(_: crate::store::ExecutorError) -> Self {
-        Self::Unavailable
-    }
-}
 
 /// Unicode scalar values (Rust `char`), not graphemes or UTF-8 bytes.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -158,7 +107,7 @@ impl Accounts {
         email: String,
         password: Secret,
         request_id: RequestId,
-    ) -> Result<IssuedSession, AccountError> {
+    ) -> Result<IssuedSession, Error> {
         self.register_from_client(email, password, request_id, None)
             .await
     }
@@ -169,9 +118,9 @@ impl Accounts {
         password: Secret,
         request_id: RequestId,
         client_label: Option<String>,
-    ) -> Result<IssuedSession, AccountError> {
+    ) -> Result<IssuedSession, Error> {
         if !self.options.registration_enabled {
-            return Err(AccountError::RegistrationDisabled);
+            return Err(Error::RegistrationDisabled);
         }
         let email = email::normalize(&email)?;
         password::validate(&password)?;
@@ -196,7 +145,7 @@ impl Accounts {
         email: String,
         password: Secret,
         request_id: RequestId,
-    ) -> Result<IssuedSession, AccountError> {
+    ) -> Result<IssuedSession, Error> {
         self.login_from_client(email, password, request_id, None)
             .await
     }
@@ -207,10 +156,10 @@ impl Accounts {
         password: Secret,
         request_id: RequestId,
         client_label: Option<String>,
-    ) -> Result<IssuedSession, AccountError> {
+    ) -> Result<IssuedSession, Error> {
         // Invalid identifiers and unknown users still take the bounded dummy KDF
         // path; malformed/oversize passwords are rejected before computation.
-        password::validate(&password).map_err(|_| AccountError::InvalidCredentials)?;
+        password::validate(&password).map_err(|_| Error::InvalidCredentials)?;
         let email = email::normalize(&email).ok();
         let candidate = self
             .handle
@@ -231,7 +180,7 @@ impl Accounts {
             .await?
     }
 
-    pub async fn authenticate(&self, token: &str) -> Result<AuthenticatedSession, AccountError> {
+    pub async fn authenticate(&self, token: &str) -> Result<AuthenticatedSession, Error> {
         let digest = secret::token_digest(token)?;
         self.handle
             .execute(move |connection| store::authenticate(connection, digest))
@@ -240,7 +189,7 @@ impl Accounts {
 
     /// Invalid/expired/already revoked sessions return InvalidSession. Only the
     /// successfully authenticated current session is revoked.
-    pub async fn logout(&self, token: &str, request_id: RequestId) -> Result<(), AccountError> {
+    pub async fn logout(&self, token: &str, request_id: RequestId) -> Result<(), Error> {
         let digest = secret::token_digest(token)?;
         let publisher = self.publisher.clone();
         self.handle

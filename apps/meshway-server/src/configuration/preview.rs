@@ -100,7 +100,8 @@ pub(super) fn build(
             .transpose()?
             .unwrap_or_default(),
         unavailable_dependencies: plan.unavailable_dependencies,
-        change_count: u32::try_from(changes.len()).map_err(|_| Error::Storage)?,
+        change_count: u32::try_from(changes.len())
+            .map_err(|_| Error::Internal("change count overflow"))?,
         changes,
         source_changed: current.document.source_jsonc.expose() != input.source,
         deleted_node_ids,

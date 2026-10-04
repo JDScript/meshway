@@ -23,7 +23,7 @@ pub(super) async fn removal_impact(
         networks
             .removal_impact(bearer(&headers, id)?, network, Some(member), id)
             .await
-            .map_err(|e| HttpError::network(id, e))?,
+            .map_err(|e| HttpError::domain(id, e))?,
     ))
 }
 #[utoipa::path(get,path="/api/v1/networks/{networkId}/leave-impact",operation_id="getLeaveImpact",tag="members",security(("userSession"=[])),params(("networkId"=NetworkId,Path)),responses((status=200,body=RemovalImpactResponse),(status=400,body=ErrorResponse),(status=401,body=ErrorResponse),(status=404,body=ErrorResponse),(status=503,body=ErrorResponse)))]
@@ -38,7 +38,7 @@ pub(super) async fn leave_impact(
         networks
             .removal_impact(bearer(&headers, id)?, network, None, id)
             .await
-            .map_err(|e| HttpError::network(id, e))?,
+            .map_err(|e| HttpError::domain(id, e))?,
     ))
 }
 #[utoipa::path(post,path="/api/v1/networks/{networkId}/members/{membershipId}/remove",operation_id="removeMember",tag="members",security(("userSession"=[])),params(("networkId"=NetworkId,Path),("membershipId"=MembershipId,Path)),request_body=RemoveMemberRequest,responses((status=200,body=MemberRemovedResponse),(status=400,body=ErrorResponse),(status=401,body=ErrorResponse),(status=403,body=ErrorResponse),(status=404,body=ErrorResponse),(status=409,body=ErrorResponse),(status=413,body=ErrorResponse),(status=415,body=ErrorResponse),(status=503,body=ErrorResponse)))]
@@ -61,7 +61,7 @@ pub(super) async fn remove(
             id,
         )
         .await
-        .map_err(|e| HttpError::network(id, e))?;
+        .map_err(|e| HttpError::domain(id, e))?;
     Ok(Json(MemberRemovedResponse {
         request_id: id,
         revision,
@@ -87,7 +87,7 @@ pub(super) async fn leave(
             id,
         )
         .await
-        .map_err(|e| HttpError::network(id, e))?;
+        .map_err(|e| HttpError::domain(id, e))?;
     Ok(Json(MemberRemovedResponse {
         request_id: id,
         revision,
@@ -114,7 +114,7 @@ pub(super) async fn role(
             id,
         )
         .await
-        .map_err(|e| HttpError::network(id, e))?;
+        .map_err(|e| HttpError::domain(id, e))?;
     Ok(Json(MemberMutationResponse {
         request_id: id,
         member: m,
@@ -140,7 +140,7 @@ pub(super) async fn create_link(
             body.request_id,
         )
         .await
-        .map_err(|e| HttpError::network(id, e))?;
+        .map_err(|e| HttpError::domain(id, e))?;
     let result = match created.secret {
         Some(secret) => JoinLinkCreated::Available {
             request_id: id,
@@ -173,7 +173,7 @@ pub(super) async fn links(
             query.cursor,
         )
         .await
-        .map_err(|e| HttpError::network(id, e))?;
+        .map_err(|e| HttpError::domain(id, e))?;
     Ok(Json(JoinLinkListResponse {
         total: page.total,
         request_id: id,
@@ -194,7 +194,7 @@ pub(super) async fn inspect_link(
     let result = networks
         .inspect_join_link(bearer(&headers, id)?, body.token.expose())
         .await
-        .map_err(|e| HttpError::network(id, e))?;
+        .map_err(|e| HttpError::domain(id, e))?;
     Ok(Json(JoinLinkInspection {
         request_id: id,
         link: result.link,
@@ -214,7 +214,7 @@ pub(super) async fn redeem_link(
     let (network_id, membership_id) = networks
         .redeem_join_link(bearer(&headers, id)?, body.token.expose(), id)
         .await
-        .map_err(|e| HttpError::network(id, e))?;
+        .map_err(|e| HttpError::domain(id, e))?;
     Ok(Json(JoinLinkRedeemed {
         request_id: id,
         network_id,
@@ -233,6 +233,6 @@ pub(super) async fn revoke_link(
     networks
         .revoke_join_link(bearer(&headers, id)?, network, link, id)
         .await
-        .map_err(|e| HttpError::network(id, e))?;
+        .map_err(|e| HttpError::domain(id, e))?;
     Ok(StatusCode::NO_CONTENT)
 }

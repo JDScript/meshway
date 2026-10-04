@@ -11,6 +11,7 @@ pub(crate) use service::rename_bound_user_references;
 pub(crate) use service::source_response;
 pub(crate) use snapshot::{Snapshot, SnapshotCache};
 
+use crate::error::Error;
 use crate::{
     accounts::random_uuid,
     networks::configuration::ConfigurationBindings,
@@ -25,41 +26,6 @@ use meshway_model::{ArtifactId, NetworkId, NodeId, PublicationId, RequestId, Rev
 use rusqlite::{OptionalExtension, Transaction, params};
 use std::collections::{BTreeMap, BTreeSet};
 use zeroize::Zeroizing;
-
-#[derive(Debug, thiserror::Error)]
-pub(crate) enum Error {
-    #[error("invalid or expired session")]
-    InvalidSession,
-    #[error("resource not found")]
-    NotFound,
-    #[error("permission denied")]
-    PermissionDenied,
-    #[error("configuration revision changed")]
-    Conflict,
-    #[error("request ID was already used with different input")]
-    RequestConflict,
-    #[error("configuration dependencies are unavailable")]
-    DependencyUnavailable,
-    #[error("configuration input is invalid")]
-    Invalid(#[from] ConfigurationError),
-    #[error("configuration storage failed")]
-    Storage,
-}
-impl From<rusqlite::Error> for Error {
-    fn from(_: rusqlite::Error) -> Self {
-        Self::Storage
-    }
-}
-impl From<crate::networks::NetworkError> for Error {
-    fn from(error: crate::networks::NetworkError) -> Self {
-        match error {
-            crate::networks::NetworkError::NotFound => Self::NotFound,
-            crate::networks::NetworkError::PermissionDenied => Self::PermissionDenied,
-            crate::networks::NetworkError::InvalidSession => Self::InvalidSession,
-            _ => Self::Storage,
-        }
-    }
-}
 
 pub(crate) struct TrustedContext<'a> {
     pub(crate) validation: ValidationContext<'a>,
@@ -219,9 +185,9 @@ fn listener_bindings(
             .revision
             .get()
             .checked_add(1)
-            .ok_or(Error::Storage)?,
+            .ok_or(Error::Internal("configuration revision overflow"))?,
     )
-    .map_err(|_| Error::Storage)?;
+    .map_err(|_| Error::Internal("configuration revision overflow"))?;
     Ok(nodes
         .into_iter()
         .map(|(id, keys)| {
@@ -286,10 +252,7 @@ pub(crate) fn apply_in_transaction(
     let now = chrono::Utc::now().timestamp_millis();
     let actor = match principal {
         Principal::Session(digest) => {
-            let user = current_session(tx, digest, now)
-                .map_err(|_| Error::InvalidSession)?
-                .user
-                .id;
+            let user = current_session(tx, digest, now)?.user.id;
             authorize_manager(tx, current.network_id, user)?;
             user
         }
@@ -308,7 +271,7 @@ pub(crate) fn apply_in_transaction(
         || prepared.base_revision != expected_revision
         || prepared.network_id != current.network_id
     {
-        return Err(Error::Conflict);
+        return Err(Error::RevisionConflict);
     }
     participant.revalidate(tx, principal, current, prepared)?;
     let changed = !prepared.changes.is_empty()
@@ -328,31 +291,27 @@ pub(crate) fn apply_in_transaction(
         expected_revision
             .get()
             .checked_add(1)
-            .ok_or(Error::Storage)?,
+            .ok_or(Error::Internal("configuration revision overflow"))?,
     )
-    .map_err(|_| Error::Storage)?;
+    .map_err(|_| Error::Internal("configuration revision overflow"))?;
     let canonical = canonical_json(&prepared.document.configuration)?;
-    let bindings =
-        Zeroizing::new(serde_json::to_vec(&prepared.bindings).map_err(|_| Error::Storage)?);
-    let source = sealer
-        .seal(
-            current.network_id,
-            revision,
-            Purpose::Source,
-            prepared.document.source_jsonc.expose().as_bytes(),
-        )
-        .map_err(|_| Error::Storage)?;
-    let configuration = sealer
-        .seal(
-            current.network_id,
-            revision,
-            Purpose::Configuration,
-            canonical.expose().as_bytes(),
-        )
-        .map_err(|_| Error::Storage)?;
-    let bindings = sealer
-        .seal(current.network_id, revision, Purpose::Bindings, &bindings)
-        .map_err(|_| Error::Storage)?;
+    let bindings = Zeroizing::new(
+        serde_json::to_vec(&prepared.bindings)
+            .map_err(|_| Error::encode("configuration bindings"))?,
+    );
+    let source = sealer.seal(
+        current.network_id,
+        revision,
+        Purpose::Source,
+        prepared.document.source_jsonc.expose().as_bytes(),
+    )?;
+    let configuration = sealer.seal(
+        current.network_id,
+        revision,
+        Purpose::Configuration,
+        canonical.expose().as_bytes(),
+    )?;
+    let bindings = sealer.seal(current.network_id, revision, Purpose::Bindings, &bindings)?;
     tx.execute(
         "INSERT INTO configuration_versions(network_id,revision,source_jsonc,configuration,bindings,created_by,created_at,cause,request_id,rollback_from,created_by_email) VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,(SELECT email FROM users WHERE id=?6))",
         params![current.network_id.as_uuid().as_bytes().as_slice(), revision.get() as i64,
@@ -390,11 +349,11 @@ pub(crate) fn apply_in_transaction(
     tx.execute(
         "UPDATE configuration_versions SET execution_targets=?3 WHERE network_id=?1 AND revision=?2",
         params![current.network_id.as_uuid().as_bytes().as_slice(), revision.get() as i64,
-            serde_json::to_string(&execution_targets).map_err(|_| Error::Storage)?],
+            serde_json::to_string(&execution_targets).map_err(|_| Error::encode("configuration execution targets"))?],
     )?;
     tx.execute(
         "INSERT INTO activity_events(id,scope,network_id,at,actor_user_id,action,request_id,before_revision,after_revision,actor_email) VALUES(?1,'network',?2,?3,?4,'configuration.apply',?5,?6,?7,(SELECT email FROM users WHERE id=?4))",
-        params![random_uuid().map_err(|_|Error::Storage)?.as_bytes().as_slice(),
+        params![random_uuid()?.as_bytes().as_slice(),
             current.network_id.as_uuid().as_bytes().as_slice(), now,
             actor.as_uuid().as_bytes().as_slice(), request.as_uuid().as_bytes().as_slice(),
             expected_revision.get() as i64, revision.get() as i64],
@@ -404,7 +363,8 @@ pub(crate) fn apply_in_transaction(
             network_id: current.network_id,
             previous_revision: expected_revision,
             revision,
-            changed_at: chrono::DateTime::from_timestamp_millis(now).ok_or(Error::Storage)?,
+            changed_at: chrono::DateTime::from_timestamp_millis(now)
+                .ok_or(Error::Internal("commit timestamp"))?,
             cause,
             actor: meshway_protocol::events::EventActor::User { user_id: actor },
             request_id: Some(request),

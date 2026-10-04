@@ -1,10 +1,11 @@
 //! Production B→C authorization projection. The root StateProvider composes
 //! these transaction-checked facts with A's configuration/entity projections.
-use super::{Execution, NodeError};
+use super::Execution;
+use crate::error::Error;
 use crate::{
     state::{
-        ConfigurationAdmission, CurrentNode, ReportAdmission, ResourceAdmission, StateError,
-        VisibilityScope, service::ReadIdentity,
+        ConfigurationAdmission, CurrentNode, ReportAdmission, ResourceAdmission, VisibilityScope,
+        service::ReadIdentity,
     },
     store::{authorization::current_session, execution as store},
 };
@@ -31,7 +32,7 @@ impl Execution {
         identity: &ReadIdentity,
         request: &meshway_protocol::observations::CreateObservation,
         now: DateTime<Utc>,
-    ) -> Result<crate::observations::TaskAdmission, StateError> {
+    ) -> Result<crate::observations::TaskAdmission, Error> {
         self.diagnostic_admission(tx, identity, request, now)
     }
     /// Authenticate the real Node session and current instance in the same SQL
@@ -41,15 +42,14 @@ impl Execution {
         tx: &Transaction<'_>,
         token: &str,
         now: DateTime<Utc>,
-    ) -> Result<ReportAdmission, StateError> {
+    ) -> Result<ReportAdmission, Error> {
         let principal = store::authorize_node(
             tx,
             &self.sealer,
             self.boot,
-            super::proof::token_hash(token).map_err(state_error)?,
+            super::proof::token_hash(token)?,
             now.timestamp_millis(),
-        )
-        .map_err(state_error)?;
+        )?;
         let mut report = self.node_admission(tx, principal.network, principal.node, now)?;
         report.lease_expires_at = report.lease_expires_at.min(time(principal.expires_at_ms)?);
         Ok(report)
@@ -62,7 +62,7 @@ impl Execution {
         tx: &Transaction<'_>,
         identity: &ReadIdentity,
         now: DateTime<Utc>,
-    ) -> Result<VisibilityScope, StateError> {
+    ) -> Result<VisibilityScope, Error> {
         let (network, full, expires_at, actor) = match identity {
             ReadIdentity::Node { authorization } => {
                 let report = self.report_admission_in_transaction(tx, authorization, now)?;
@@ -70,18 +70,16 @@ impl Execution {
                     report.network_id,
                     BTreeSet::from([report.node_id]),
                     report.lease_expires_at,
-                    super::proof::request_digest(&("node", report.node_id)).map_err(state_error)?,
+                    super::proof::request_digest(&("node", report.node_id))?,
                 )
             }
             ReadIdentity::UserSession { digest, network } => {
-                let session = current_session(tx, digest, now.timestamp_millis())
-                    .map_err(|_| StateError::Unauthorized)?;
+                let session = current_session(tx, digest, now.timestamp_millis())?;
                 let (membership, role): (Vec<u8>, String) = tx.query_row(
                     "SELECT m.id,m.role FROM memberships m JOIN networks n ON n.id=m.network_id WHERE m.network_id=?1 AND m.user_id=?2 AND m.revoked_at IS NULL AND n.deleted_at IS NULL",
                     params![network.as_uuid().as_bytes().as_slice(), session.user.id.as_uuid().as_bytes().as_slice()],
-                    |r| Ok((r.get(0)?, r.get(1)?))).optional()?.ok_or(StateError::NotFound)?;
-                let (_, cfg, bindings) = store::current_configuration(tx, &self.sealer, *network)
-                    .map_err(state_error)?;
+                    |r| Ok((r.get(0)?, r.get(1)?))).optional()?.ok_or(Error::NotFound)?;
+                let (_, cfg, bindings) = store::current_configuration(tx, &self.sealer, *network)?;
                 let manager = matches!(role.as_str(), "owner" | "admin");
                 let full = cfg
                     .nodes
@@ -97,18 +95,16 @@ impl Execution {
                     *network,
                     full,
                     session.expires_at,
-                    super::proof::request_digest(&("user", session.user.id, membership, role))
-                        .map_err(state_error)?,
+                    super::proof::request_digest(&("user", session.user.id, membership, role))?,
                 )
             }
         };
-        let (revision, cfg, _) =
-            store::current_configuration(tx, &self.sealer, network).map_err(state_error)?;
+        let (revision, cfg, _) = store::current_configuration(tx, &self.sealer, network)?;
         let mut visible = full.clone();
         let mut observation_paths = BTreeSet::new();
         for node in &full {
             if let Some((publication, target)) =
-                store::target_for_node(tx, &self.sealer, network, *node).map_err(state_error)?
+                store::target_for_node(tx, &self.sealer, network, *node)?
             {
                 match store::check_publication(
                     tx,
@@ -119,8 +115,8 @@ impl Execution {
                     now.timestamp_millis(),
                 ) {
                     Ok(()) => {}
-                    Err(NodeError::Conflict) => continue,
-                    Err(error) => return Err(state_error(error)),
+                    Err(Error::BindingConflict) => continue,
+                    Err(error) => return Err(error),
                 }
                 for permit in target
                     .configuration
@@ -156,7 +152,7 @@ impl Execution {
             let live: bool = tx.query_row("SELECT EXISTS(SELECT 1 FROM node_execution WHERE network_id=?1 AND node_id=?2 AND boot_id=?3 AND instance_expires_at>?4)",
                 params![network.as_uuid().as_bytes().as_slice(), node.as_uuid().as_bytes().as_slice(), self.boot.as_uuid().as_bytes().as_slice(), now.timestamp_millis()], |r| r.get(0))?;
             let lease = if live && !revoked {
-                Some(store::lease_for_node(tx, &self.sealer, network, *node).map_err(state_error)?)
+                Some(store::lease_for_node(tx, &self.sealer, network, *node)?)
             } else {
                 None
             };
@@ -181,8 +177,8 @@ impl Execution {
                             now.timestamp_millis(),
                         ) {
                             Ok(()) => Some(target.clone()),
-                            Err(NodeError::Conflict) => None,
-                            Err(error) => return Err(state_error(error)),
+                            Err(Error::BindingConflict) => None,
+                            Err(error) => return Err(error),
                         }
                     } else {
                         None
@@ -218,16 +214,14 @@ impl Execution {
             &full,
             &bindings,
             &observation_paths,
-        ))
-        .map_err(state_error)?;
+        ))?;
         Ok(VisibilityScope {
             network_id: network,
             configuration_revision: revision,
             authorization_digest,
             observation_authorization_digest: super::proof::request_digest(&(
                 network, revision, actor, &full,
-            ))
-            .map_err(state_error)?,
+            ))?,
             visible,
             full,
             observation_paths,
@@ -247,16 +241,15 @@ impl Execution {
         network: NetworkId,
         node: NodeId,
         now: DateTime<Utc>,
-    ) -> Result<ReportAdmission, StateError> {
+    ) -> Result<ReportAdmission, Error> {
         let has_instance: bool = tx.query_row("SELECT EXISTS(SELECT 1 FROM node_execution WHERE network_id=?1 AND node_id=?2 AND boot_id=?3 AND instance_expires_at>?4)",
             params![network.as_uuid().as_bytes().as_slice(), node.as_uuid().as_bytes().as_slice(), self.boot.as_uuid().as_bytes().as_slice(), now.timestamp_millis()], |r| r.get(0))?;
         if !has_instance {
-            return Err(StateError::Conflict);
+            return Err(Error::StateConflict);
         }
-        let lease = store::lease_for_node(tx, &self.sealer, network, node).map_err(state_error)?;
-        let (_, cfg, bindings) =
-            store::current_configuration(tx, &self.sealer, network).map_err(state_error)?;
-        store::identity_eligible(tx, &cfg, &bindings, network, node).map_err(state_error)?;
+        let lease = store::lease_for_node(tx, &self.sealer, network, node)?;
+        let (_, cfg, bindings) = store::current_configuration(tx, &self.sealer, network)?;
+        store::identity_eligible(tx, &cfg, &bindings, network, node)?;
         let mut report = ReportAdmission {
             network_id: network,
             node_id: node,
@@ -272,7 +265,7 @@ impl Execution {
                 .collect(),
         };
         if let Some((publication, target)) =
-            store::target_for_node(tx, &self.sealer, network, node).map_err(state_error)?
+            store::target_for_node(tx, &self.sealer, network, node)?
         {
             let eligible = match store::check_publication(
                 tx,
@@ -283,8 +276,8 @@ impl Execution {
                 now.timestamp_millis(),
             ) {
                 Ok(()) => true,
-                Err(NodeError::Conflict) => false,
-                Err(error) => return Err(state_error(error)),
+                Err(Error::BindingConflict) => false,
+                Err(error) => return Err(error),
             };
             if eligible
                 && let Some(expiry) = lease
@@ -305,9 +298,7 @@ impl Execution {
             node,
             lease.instance_id,
             now.timestamp_millis(),
-        )
-        .map_err(state_error)?
-        {
+        )? {
             let context = configuration_admission(&target, false);
             if !report.configurations.contains(&context.configuration) {
                 report.configurations.push(context.configuration.clone());
@@ -434,25 +425,11 @@ fn addresses(addresses: &NodeAddresses) -> impl Iterator<Item = IpAddr> {
     .into_iter()
     .flatten()
 }
-fn time(ms: u64) -> Result<DateTime<Utc>, StateError> {
+fn time(ms: u64) -> Result<DateTime<Utc>, Error> {
     i64::try_from(ms)
         .ok()
         .and_then(DateTime::from_timestamp_millis)
-        .ok_or(StateError::Storage)
-}
-fn state_error(error: NodeError) -> StateError {
-    match error {
-        NodeError::Unauthorized => StateError::Unauthorized,
-        NodeError::Forbidden => StateError::Forbidden,
-        NodeError::Invalid | NodeError::InvalidSettings(_) => StateError::Invalid,
-        NodeError::Conflict | NodeError::VersionConflict | NodeError::StateConflict => {
-            StateError::Conflict
-        }
-        NodeError::InvalidCursor => StateError::Invalid,
-        NodeError::NotFound => StateError::NotFound,
-        NodeError::Busy => StateError::Budget,
-        NodeError::Storage => StateError::Storage,
-    }
+        .ok_or(Error::decode("execution expiry"))
 }
 
 impl crate::observations::service::ObservationProvider for Execution {
@@ -462,7 +439,7 @@ impl crate::observations::service::ObservationProvider for Execution {
         identity: &ReadIdentity,
         request: &meshway_protocol::observations::CreateObservation,
         now: DateTime<Utc>,
-    ) -> Result<crate::observations::TaskAdmission, StateError> {
+    ) -> Result<crate::observations::TaskAdmission, Error> {
         self.prepare_diagnostic(tx, identity, request, now)
     }
     fn synchronize(
@@ -470,7 +447,7 @@ impl crate::observations::service::ObservationProvider for Execution {
         tx: &Transaction<'_>,
         subscriptions: &[crate::observations::service::SubscriptionLease],
         now: DateTime<Utc>,
-    ) -> Result<(), StateError> {
+    ) -> Result<(), Error> {
         self.synchronize_diagnostics(tx, subscriptions, now)
     }
     fn scope(
@@ -478,7 +455,7 @@ impl crate::observations::service::ObservationProvider for Execution {
         tx: &Transaction<'_>,
         identity: &ReadIdentity,
         now: DateTime<Utc>,
-    ) -> Result<VisibilityScope, StateError> {
+    ) -> Result<VisibilityScope, Error> {
         self.state_scope_in_transaction(tx, identity, now)
     }
     fn report(
@@ -486,7 +463,7 @@ impl crate::observations::service::ObservationProvider for Execution {
         tx: &Transaction<'_>,
         authorization: &str,
         now: DateTime<Utc>,
-    ) -> Result<ReportAdmission, StateError> {
+    ) -> Result<ReportAdmission, Error> {
         self.report_admission_in_transaction(tx, authorization, now)
     }
     fn observation(
@@ -495,7 +472,7 @@ impl crate::observations::service::ObservationProvider for Execution {
         identity: &ReadIdentity,
         request: &meshway_protocol::observations::CreateObservation,
         now: DateTime<Utc>,
-    ) -> Result<crate::observations::TaskAdmission, StateError> {
+    ) -> Result<crate::observations::TaskAdmission, Error> {
         self.observation_admission_in_transaction(tx, identity, request, now)
     }
     fn observation_session(
@@ -503,13 +480,11 @@ impl crate::observations::service::ObservationProvider for Execution {
         tx: &Transaction<'_>,
         identity: &ReadIdentity,
         now: DateTime<Utc>,
-    ) -> Result<SessionId, StateError> {
+    ) -> Result<SessionId, Error> {
         let ReadIdentity::UserSession { digest, .. } = identity else {
-            return Err(StateError::Forbidden);
+            return Err(Error::PermissionDenied);
         };
         self.state_scope_in_transaction(tx, identity, now)?;
-        current_session(tx, digest, now.timestamp_millis())
-            .map(|session| session.session_id)
-            .map_err(|_| StateError::Unauthorized)
+        current_session(tx, digest, now.timestamp_millis()).map(|session| session.session_id)
     }
 }

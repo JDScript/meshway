@@ -1003,7 +1003,7 @@ impl crate::resources::service::ResourceProvider for CommitGate {
         tx: &rusqlite::Transaction<'_>,
         identity: &crate::state::service::ReadIdentity,
         now: chrono::DateTime<chrono::Utc>,
-    ) -> Result<crate::resources::service::RuleSetScope, crate::state::StateError> {
+    ) -> Result<crate::resources::service::RuleSetScope, crate::error::Error> {
         self.provider.rule_sets(tx, identity, now)
     }
     fn bind_rule_set(
@@ -1014,7 +1014,7 @@ impl crate::resources::service::ResourceProvider for CommitGate {
         key: &str,
         artifact: &ArtifactSummary,
         now: chrono::DateTime<chrono::Utc>,
-    ) -> Result<(), crate::state::StateError> {
+    ) -> Result<(), crate::error::Error> {
         self.provider
             .bind_rule_set(tx, network, revision, key, artifact, now)?;
         self.entered
@@ -1412,7 +1412,7 @@ async fn download_races_recheck_source_role_and_scope_and_do_not_hold_sqlite() {
         .send()
         .await
         .unwrap();
-    assert_eq!(cross.status(), StatusCode::FORBIDDEN);
+    assert_eq!(cross.status(), StatusCode::NOT_FOUND);
     remote.pause();
     let refresh = tokio::spawn(
         s.client

@@ -288,7 +288,7 @@ impl App {
         &self,
     ) -> Result<
         crate::state::service::StateService<crate::state::provider::UserProvider>,
-        crate::state::StateError,
+        crate::error::Error,
     > {
         self.state_service(crate::state::provider::UserProvider(
             self.state_projection(),
@@ -298,7 +298,7 @@ impl App {
         &self,
     ) -> Result<
         crate::state::service::StateService<crate::state::provider::NodeProvider>,
-        crate::state::StateError,
+        crate::error::Error,
     > {
         self.state_service(crate::state::provider::NodeProvider(
             self.state_projection(),
@@ -309,7 +309,7 @@ impl App {
     pub fn state_service<P: crate::state::service::StateProvider>(
         &self,
         provider: P,
-    ) -> Result<crate::state::service::StateService<P>, crate::state::StateError> {
+    ) -> Result<crate::state::service::StateService<P>, crate::error::Error> {
         let service = crate::state::service::StateService::new(
             self.executor.handle(),
             provider,
@@ -320,7 +320,7 @@ impl App {
         self.shutdown_hooks
             .0
             .lock()
-            .map_err(|_| crate::state::StateError::Unavailable)?
+            .map_err(|_| crate::error::Error::RUNTIME)?
             .push(Box::new(move || shutdown.close()));
         Ok(service)
     }

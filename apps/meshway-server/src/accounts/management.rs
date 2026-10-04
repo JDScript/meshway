@@ -1,4 +1,5 @@
-use super::{AccountError, Accounts, Secret, email, password, secret};
+use super::{Accounts, Secret, email, password, secret};
+use crate::error::Error;
 use crate::store::accounts::management as store;
 use chrono::{DateTime, Utc};
 use meshway_model::{RequestId, SessionId};
@@ -44,14 +45,14 @@ impl Accounts {
         email: String,
         request: RequestId,
         configurations: crate::configuration::Configurations,
-    ) -> Result<super::User, AccountError> {
+    ) -> Result<super::User, Error> {
         let digest = secret::token_digest(token)?;
         let email = email::normalize(&email)?;
         let candidate = self
             .handle
             .execute(move |db| store::candidate(db, digest))
             .await??;
-        password::validate(&current).map_err(|_| AccountError::InvalidCurrentPassword)?;
+        password::validate(&current).map_err(|_| Error::InvalidCurrentPassword)?;
         let verified = password::verify(current, Some(candidate))
             .await
             .map_err(current_password_error)?;
@@ -76,9 +77,9 @@ impl Accounts {
         limit: u16,
         cursor: Option<String>,
         sealer: std::sync::Arc<crate::secrets::Sealer>,
-    ) -> Result<AccountSessionPage, AccountError> {
+    ) -> Result<AccountSessionPage, Error> {
         if !(1..=200).contains(&limit) {
-            return Err(AccountError::InvalidRequest);
+            return Err(Error::InvalidRequest);
         }
         let digest = secret::token_digest(token)?;
         self.handle
@@ -91,7 +92,7 @@ impl Accounts {
         token: &str,
         target: RevokeSessions,
         request: RequestId,
-    ) -> Result<(), AccountError> {
+    ) -> Result<(), Error> {
         let digest = secret::token_digest(token)?;
         let publisher = self.publisher.clone();
         self.handle
@@ -105,13 +106,13 @@ impl Accounts {
         current: Secret,
         replacement: Secret,
         request: RequestId,
-    ) -> Result<(), AccountError> {
+    ) -> Result<(), Error> {
         let digest = secret::token_digest(token)?;
         let candidate = self
             .handle
             .execute(move |db| store::candidate(db, digest))
             .await??;
-        password::validate(&current).map_err(|_| AccountError::InvalidCurrentPassword)?;
+        password::validate(&current).map_err(|_| Error::InvalidCurrentPassword)?;
         password::validate(&replacement)?;
         let verified = password::verify(current, Some(candidate))
             .await
@@ -132,9 +133,9 @@ impl Accounts {
         email: String,
         expires_in_seconds: u32,
         request: RequestId,
-    ) -> Result<IssuedReset, AccountError> {
+    ) -> Result<IssuedReset, Error> {
         if !(60..=86400).contains(&expires_in_seconds) {
-            return Err(AccountError::InvalidRequest);
+            return Err(Error::InvalidRequest);
         }
         let email = email::normalize(&email)?;
         self.handle
@@ -142,10 +143,7 @@ impl Accounts {
             .await?
     }
 
-    pub async fn inspect_password_reset(
-        &self,
-        token: &str,
-    ) -> Result<ResetInspection, AccountError> {
+    pub async fn inspect_password_reset(&self, token: &str) -> Result<ResetInspection, Error> {
         let digest = secret::one_time_digest("mwr_", token)?;
         self.handle
             .execute(move |db| store::inspect_reset(db, digest))
@@ -157,7 +155,7 @@ impl Accounts {
         token: &str,
         password: Secret,
         request: RequestId,
-    ) -> Result<(), AccountError> {
+    ) -> Result<(), Error> {
         let digest = secret::one_time_digest("mwr_", token)?;
         password::validate(&password)?;
         self.handle
@@ -171,9 +169,11 @@ impl Accounts {
     }
 }
 
-fn current_password_error(error: AccountError) -> AccountError {
+/// A failed verification of the caller's own current password is a distinct
+/// outcome from a failed login.
+fn current_password_error(error: Error) -> Error {
     match error {
-        AccountError::InvalidCredentials => AccountError::InvalidCurrentPassword,
+        Error::InvalidCredentials => Error::InvalidCurrentPassword,
         other => other,
     }
 }
