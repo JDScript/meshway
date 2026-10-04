@@ -452,3 +452,63 @@ console 的确认弹窗需要显示"该成员的 N 台设备将……"，因此�
 ## 协调线程最终收尾（2026-10-03）
 
 主批答复与 V2 文档已提交 `82a64e7`。第三轮两项已补：configuration.progress 带 revision 与服务端去重 summary，复用按 revision GET 的类型／计算，节点变化仍按片段推送，Console 不额外 GET 或自行汇总；remove／leave 表格已明确永久删除当前 User 身份设备、保留 Tag 设备及 removalImpact。以下提交包含本次收尾，后续按提交内容核对。
+
+## Console 消费反馈：后端 `ce785928`（2026-10-03）
+
+console 已经接入 `ce785928` 交付的 Console 操作，涵盖账户、网络、成员、加入链接、配置（JSONC 与区段表单、预览、应用、历史）、节点、接入密钥、设备授权和部署进度。本节只列后端需要处理的问题。
+
+**已修复（不再跟踪）**：活动 action 的 wire 名；`invalid_current_password`（现返回 400）；重置链接按已使用、已过期、已被替换区分；预览增加 `unavailableDependencies`；成员移除联动节点；会话的 `clientLabel`。
+
+### A. 影响功能或安全
+
+1. **普通成员读不到配置。** `getConfiguration`、版本列表和对照都只放行 Owner/Admin，成员也就看不到自己设备的 listener。这与"成员只读相关视图"的设计不一致，需要确认。
+2. **应用进度不完整。**
+   - 约定的 `GET /configuration/revisions/{revision}/progress` 和网络 SSE 都没有交付，版本列表和版本详情也不返回 publication ID。因此进度只能来自应用当时的响应，页面刷新或在别处应用后就无从查看。
+   - 执行 lease 续约会产生新的 `refresh` 发布，原发布里的节点随之变成 `superseded`，console 找不到新的那次发布。
+   - 从未连接过的节点被标成 `superseded`，不是 `awaitingInstance` 一类的状态。
+   - `targetCount` 为 0 时仍返回 1 个空发布，与"无目标时没有发布"的约定不符。
+3. **设备授权**
+   - 设备该打开的浏览器链接没有定义。console 暂用 `/authorize-device/<enrollmentRequestId>`，需要 Agent/App 一起定版。
+   - 任何已登录账户只要知道请求 ID，就能拒绝别人待批准的请求。
+4. **接入密钥不校验 `initialSettings`。** `createEnrollmentKey` 签发时不检查 hostname 和 listeners，要等设备接入时才报笼统的 `invalid_request`。问题因此只在设备上暴露，console 只能提前自行校验。
+5. **`DefaultsUpdate.dialers` 是必填。** 只改 `defaults.topology` 也要把 dialers 原样写回；在新版本上重新检查时，可能覆盖别人刚改的 dialers。建议改为可省略，省略即保持原值。
+
+### B. 契约和字段
+
+6. **配置诊断**
+   - `ConfigurationIssue` 只有英文 message，没有 code 和 params，无法本地化。
+   - 路径只到集合一级（如 `/access/0/src`），解析错误时 path 为空。
+   - 数组只报整体变化，没有逐条规则的变化。
+   - 预览缺少文档列出的 `affectedNodeIds`、`identityChangedNodeIds`、`changedListeners` 和严重级别。
+7. **配置操作**：op union 里没有 `reassignAddresses` 和 `rotateMaterial`。
+8. **权限 actions 缺失**
+   - `NetworkActions` 没有"可签发哪些角色的加入链接"。
+   - `JoinLinkView` 没有撤销权限。
+   - 节点只有 `canDelete`，吊销密钥没有单独的权限。
+   - 接入密钥没有 actions。console 暂按 `editConfiguration` 判断，controller 实际按 owner/admin 检查。
+9. **错误码不准**
+
+   | 场景 | 现在返回 | 应返回 |
+   | --- | --- | --- |
+   | 同一 requestId 带不同请求体提交配置 | `revision_conflict` | `request_id_conflict` |
+   | `revokeNodeKey` 代数不匹配 | `request_id_conflict` | 版本冲突类 |
+   | 设备批准/拒绝时请求已不是待批准状态 | `request_id_conflict` | 状态冲突类 |
+   | `removeMember` 的 version 或 revision 不匹配 | 一律 `version_conflict` | 分别返回，revision 不匹配时用 `revision_conflict` |
+   | 账户会话、活动的游标失效 | `invalid_request` | `invalid_cursor`（与网络列表一致） |
+
+   另外，`inspectJoinLink` 不区分已使用、已撤销、已过期、签发者已失权；"已是成员"要到 redeem 时才返回。
+
+10. **字段缺失**
+    - `EnrollmentRequestView`：缺 `existing` 绑定（无法预知哪个网络会被拒绝）、批准者和批准的网络、系统、Agent 版本、返回方式。设备取消和用户拒绝都写 `denied_at`，无法区分。
+    - `EnrollmentKeyView`：缺使用时间、创建人、接入后的节点 ID，以及 hostname 和 listener 摘要。
+    - `BoundNodeKey`：缺创建时间。
+    - 网络活动：需要核对 target 是否已写到具体成员或链接；actor 只有 userId，已离开的成员无法显示成邮箱。
+    - 列表：加入链接列表没有 total，而且按创建时间正序；接入密钥列表没有分页，超过 1000 条返回 503 `busy`。
+11. **承载目录**：`listenerSchema` 只是一个名称（如 `VlessListener`），不是 schema 文本；目录里有 trojan，但文档写的是尚未托管。
+12. **给 Agent 实现方的提醒**：接入签名的 intent digest 必须包含 `existing: null`，否则返回 401；而生成的 zod 把这个字段标为可省略。
+13. **SDK**：`transport.ts` 使用了 DOM 类型 `ReadableStreamReadResult`，只带 Node 类型的 TS 项目编译不过。console 的测试配置加了 DOM 库来绕过。
+14. **部署**：`--listen` 的默认值仍是 `127.0.0.1:8420`，与现在运行的旧服务冲突。
+
+### C. 尚未交付（console 已按"未提供"如实显示）
+
+节点运行状态（在线情况、links、endpoint、GeoIP 及地图落点）、网络 SSE、安装脚本和 Agent 发布。
