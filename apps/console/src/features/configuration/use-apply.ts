@@ -22,7 +22,9 @@ import { attemptFor, outcomeUnknown, type Attempt } from "@/lib/attempt"
 import { failureText, type FailureText } from "@/lib/failure"
 import { m } from "@/paraglide/messages.js"
 
+import { recordApplied } from "./applied"
 import { useConfigurationDraft } from "./draft"
+import { deploymentOf } from "./progress"
 import { configurationQuery, configurationReads } from "./queries"
 
 // Applying is always: validate, review what the controller says would
@@ -82,9 +84,10 @@ const wordsFor = (proposal: Proposal): FailureText =>
 
 /** The words for an apply's result, from what the controller returned. */
 export function appliedText(result: ConfigurationAppliedResponse): string {
-  if (result.targetCount === 0 && result.publicationIds.length === 0)
+  const deployment = deploymentOf(result)
+  if (deployment === "none")
     return m.configuration_applied_no_targets({ revision: result.revision })
-  if (result.publicationIds.length === 0)
+  if (deployment === "unpublished")
     return m.configuration_applied_targets_unpublished({
       revision: result.revision,
       targets: result.targetCount,
@@ -98,7 +101,14 @@ export function appliedText(result: ConfigurationAppliedResponse): string {
 
 export function useConfigurationApply(
   networkId: string,
-  { onInvalidDocument }: { onInvalidDocument: () => void }
+  {
+    onInvalidDocument,
+    onShowProgress,
+  }: {
+    onInvalidDocument: () => void
+    /** Opens the deployment of a revision this tab applied. */
+    onShowProgress: (revision: number) => void
+  }
 ) {
   const queryClient = useQueryClient()
   const draft = useConfigurationDraft(networkId)
@@ -211,7 +221,14 @@ export function useConfigurationApply(
       unsettled.current = null
       if (proposal.type === "document") draft.applied(proposal.sourceJsonc)
       setReview(null)
-      toast.success(appliedText(result), { id: TOAST })
+      recordApplied(result)
+      toast.success(appliedText(result), {
+        id: TOAST,
+        action: {
+          label: m.configuration_progress_open(),
+          onClick: () => onShowProgress(result.revision),
+        },
+      })
       await refresh()
     } catch (error) {
       const failure = failureOf(error)
@@ -236,7 +253,7 @@ export function useConfigurationApply(
       busy.current = false
       setApplying(false)
     }
-  }, [review, networkId, draft, refresh, conflicted, refused])
+  }, [review, networkId, draft, refresh, conflicted, refused, onShowProgress])
 
   const closeReview = useCallback(() => {
     if (!busy.current) setReview(null)

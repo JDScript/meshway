@@ -32,6 +32,7 @@ import { m } from "@/paraglide/messages.js"
 import { ChangeList, JsonBlock } from "./change-list"
 import { actorName, causeLabel } from "./labels"
 import type { HistorySelection } from "./navigation"
+import { ApplyProgress } from "./progress-section"
 import {
   comparisonQuery,
   isDenied,
@@ -341,6 +342,12 @@ function RevisionDetail({
           {m.configuration_history_restore()}
         </Button>
       </div>
+
+      <ApplyProgress
+        networkId={networkId}
+        revision={revision}
+        current={isCurrent}
+      />
 
       {showConfiguration ? (
         view.data ? (

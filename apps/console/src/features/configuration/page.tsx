@@ -49,7 +49,15 @@ export function ConfigurationPage({
   const onInvalidDocument = useCallback(() => {
     if (view !== "source") openView("source")
   }, [view, openView])
-  const apply = useConfigurationApply(networkId, { onInvalidDocument })
+  const { openRevision } = nav
+  const onShowProgress = useCallback(
+    (revision: number) => openRevision({ revision, against: null }),
+    [openRevision]
+  )
+  const apply = useConfigurationApply(networkId, {
+    onInvalidDocument,
+    onShowProgress,
+  })
 
   const entry = draft.entry
   const outdated = isOutdated(entry, current)
