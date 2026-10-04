@@ -46,21 +46,13 @@ export function RoutingForm({
   const setEgress = (next: EgressRouting) =>
     onChange({ ...routing, egress: next })
   const common = { editable, names, notes, exits, ruleSets }
-  // A node as a whole (its assigned egress against its access) or a rule set's content.
+  // A rule set's content, checked with the rules that name it.
   const outside = notes
     .filter(
       (note) => !note.path.startsWith("/routing/") && note.path !== "/routing"
     )
     .map((note) => {
       const [section, key] = pointerSegments(note.path) ?? []
-      if (section === "nodes" && key !== undefined)
-        return {
-          ...note,
-          message: m.configuration_routing_node_note({
-            node: names.nodes.get(key) ?? key.slice(0, 8),
-            message: note.message,
-          }),
-        }
       if (section === "ruleSets" && key !== undefined)
         return {
           ...note,

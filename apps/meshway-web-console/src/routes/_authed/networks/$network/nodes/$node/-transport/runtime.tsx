@@ -1,6 +1,11 @@
-import type { EndpointCandidate, SocketState } from "@meshway/control-client"
+import type {
+  EndpointCandidate,
+  IpInfo,
+  SocketState,
+} from "@meshway/control-client"
 
 import { agoTime, relativeTime } from "@/lib/format"
+import { asnText, geoText, hostOf, shortGeoText } from "@/lib/geo"
 import { candidateExpired, listenerRuntime } from "@/lib/nodes/state-model"
 import {
   endpointSourceText,
@@ -10,11 +15,16 @@ import {
 import { cn } from "@/lib/utils"
 import { m } from "@/paraglide/messages.js"
 
+/** The State's GeoIP and ASN results for the node's addresses, by IP. */
+export type IpInfoOf = Readonly<Record<string, IpInfo>>
+
 export function Runtime({
   runtime,
+  ipInfo,
   now,
 }: {
   runtime: NonNullable<ReturnType<typeof listenerRuntime>>
+  ipInfo: IpInfoOf
   now: number
 }) {
   const { state } = runtime
@@ -60,7 +70,13 @@ export function Runtime({
       ) : (
         runtime.sockets.map(({ id, socket }) =>
           socket ? (
-            <SocketBlock key={id} id={id} socket={socket} now={now} />
+            <SocketBlock
+              key={id}
+              id={id}
+              socket={socket}
+              ipInfo={ipInfo}
+              now={now}
+            />
           ) : (
             <p key={id} className="px-1.5 text-meta text-muted-foreground">
               {m.nodes_socket_missing({ id })}
@@ -75,10 +91,12 @@ export function Runtime({
 export function SocketBlock({
   id,
   socket,
+  ipInfo,
   now,
 }: {
   id: string
   socket: SocketState
+  ipInfo: IpInfoOf
   now: number
 }) {
   return (
@@ -108,6 +126,7 @@ export function SocketBlock({
             <CandidateRow
               key={`${candidate.address}-${index}`}
               candidate={candidate}
+              ipInfo={ipInfo}
               now={now}
             />
           ))}
@@ -119,23 +138,31 @@ export function SocketBlock({
 
 function CandidateRow({
   candidate,
+  ipInfo,
   now,
 }: {
   candidate: EndpointCandidate
+  ipInfo: IpInfoOf
   now: number
 }) {
   const expired = candidateExpired(candidate, now)
   return (
     <li
       className={cn(
-        "grid grid-cols-[minmax(0,1fr)_auto] items-baseline gap-x-3 rounded-[10px] px-1.5 py-1 sm:grid-cols-[minmax(0,14rem)_minmax(0,1fr)_auto]",
+        "grid grid-cols-[minmax(0,1fr)_auto] items-baseline gap-x-3 rounded-[10px] px-1.5 py-1 sm:grid-cols-[minmax(0,22rem)_minmax(0,1fr)_auto]",
         expired && "text-muted-foreground"
       )}
     >
-      <span
-        className={cn("truncate font-mono text-row", expired && "line-through")}
-      >
-        {candidate.address}
+      <span className="flex min-w-0 items-baseline gap-2">
+        <span
+          className={cn(
+            "truncate font-mono text-row",
+            expired && "line-through"
+          )}
+        >
+          {candidate.address}
+        </span>
+        <EndpointGeo address={candidate.address} ipInfo={ipInfo} />
       </span>
       <span className="truncate text-meta text-muted-foreground max-sm:col-start-1">
         {endpointSourceText(candidate.origin)}
@@ -156,5 +183,27 @@ function CandidateRow({
         )}
       </span>
     </li>
+  )
+}
+
+/** An endpoint's country and AS number, the place and network in full on hover; nothing when neither is known. */
+export function EndpointGeo({
+  address,
+  ipInfo,
+}: {
+  address: string
+  ipInfo: IpInfoOf
+}) {
+  const host = hostOf(address)
+  const info = Object.hasOwn(ipInfo, host) ? ipInfo[host] : undefined
+  const geo = info ? shortGeoText(info) : null
+  if (!info || geo === null) return null
+  return (
+    <span
+      className="truncate text-meta text-muted-foreground"
+      title={`${geoText(info)} · ${asnText(info)}`}
+    >
+      {geo}
+    </span>
   )
 }

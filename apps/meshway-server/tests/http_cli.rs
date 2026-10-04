@@ -335,8 +335,8 @@ async fn bind_failure_and_invalid_storage_exit_without_taking_over_another_insta
     assert!(errors.iter().any(|event| {
         event["level"] == "ERROR"
             && event["fields"]["error"]
-                .as_str()
-                .is_some_and(|e| e.starts_with("Server storage startup failed: "))
+                == "Server storage startup failed: data directory must be an absolute path \
+                    without parent traversal."
     }));
 }
 

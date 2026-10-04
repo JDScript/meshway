@@ -1,7 +1,6 @@
-import type { ConfigurationIssue } from "@meshway/control-client"
-
 import { m } from "@/paraglide/messages.js"
 
+import { saidOf, type NodeNamer } from "./diagnostics"
 import type { Checked } from "./draft-state"
 import {
   findKey,
@@ -12,16 +11,16 @@ import {
   type JsoncNode,
   type Span,
 } from "./jsonc"
-import { requirementText } from "./preparation"
 import { checkSchema, type SchemaIssue } from "./schema-check"
 
 // What is wrong with the draft's text, placed on it: JSONC syntax (found
 // here, and it stops applying), hints from the controller's schema (found
 // here; the controller decides), and the controller's own diagnostics from
-// its last check, by JSON Pointer.
+// its last check, by JSON Pointer: why it refused the text, or what it
+// accepted but warned of.
 
 export type SourceProblem = Span & {
-  origin: "syntax" | "schema" | "controller"
+  origin: "syntax" | "schema" | "controller" | "warning"
   /** The JSON Pointer it is about, when it has one. */
   path: string | null
   message: string
@@ -86,6 +85,7 @@ export type SourceReading = {
   syntax: SourceProblem[]
   schema: SourceProblem[]
   controller: SourceProblem[]
+  warnings: SourceProblem[]
   /** The controller's diagnostics are about an earlier text. */
   stale: boolean
 }
@@ -93,7 +93,8 @@ export type SourceReading = {
 export function readSource(
   text: string,
   schema: Readonly<Record<string, unknown>> | null,
-  checked: Checked | null
+  checked: Checked | null,
+  node: NodeNamer
 ): SourceReading {
   const parsed = parseJsonc(text)
   const tree = parsed.ok ? parsed.tree : null
@@ -134,28 +135,24 @@ export function readSource(
   const document = checked?.input.kind === "document" ? checked : null
   const checkedText =
     document?.input.kind === "document" ? document.input.text : null
-  const controller: SourceProblem[] = document
-    ? [
-        ...document.issues.map((issue: ConfigurationIssue) => ({
-          origin: "controller" as const,
-          path: issue.path,
-          ...placeAt(tree, text, issue.path),
-          message: issue.message,
-        })),
-        ...document.requirements.map((requirement) => ({
-          origin: "controller" as const,
-          path: requirement.path,
-          ...placeAt(tree, text, requirement.path),
-          message: requirementText(requirement),
-        })),
-      ]
-    : []
+  const said = saidOf(document, node).map((entry) => ({
+    origin:
+      entry.severity === "warning"
+        ? ("warning" as const)
+        : ("controller" as const),
+    path: entry.path,
+    ...placeAt(tree, text, entry.path),
+    message: entry.message,
+  }))
+  const controller = said.filter((problem) => problem.origin === "controller")
+  const warnings = said.filter((problem) => problem.origin === "warning")
   const byPlace = (a: SourceProblem, b: SourceProblem) => a.from - b.from
   return {
     valid: parsed.ok,
     syntax: syntax.sort(byPlace),
     schema: hints.sort(byPlace),
     controller: controller.sort(byPlace),
+    warnings: warnings.sort(byPlace),
     stale: checkedText !== null && checkedText !== text,
   }
 }

@@ -10,7 +10,7 @@ mod rulesets;
 pub(crate) mod scheduler;
 pub mod service;
 pub use geoip::GeoIp;
-pub use rulesets::{convert, normalize};
+pub use rulesets::{convert, entries, normalize};
 pub async fn download(
     source: &str,
 ) -> Result<Vec<u8>, meshway_protocol::resources::ResourceProblem> {
@@ -26,7 +26,7 @@ use rusqlite::Transaction;
 use sha2::{Digest as _, Sha256};
 
 pub const MAX_DATASET_BYTES: usize = 8 * 1024 * 1024;
-pub const MAX_RULE_ENTRIES: usize = 100_000;
+pub const MAX_RULE_ENTRIES: usize = 250_000;
 /// Remote rule sets one configuration may need to download in a single edit.
 pub const MAX_REMOTE_RULE_SETS: usize = 32;
 
@@ -57,7 +57,7 @@ pub fn store_artifact(
             id,
             digest,
             created_at,
-            entries: (data.ip_cidr.len() + data.domain_suffix.len()) as u32,
+            entries: rulesets::entries(&data) as u32,
         });
     }
     let id = ArtifactId::new(crate::accounts::random_uuid()?)
@@ -76,7 +76,7 @@ pub fn store_artifact(
         digest,
         created_at: DateTime::from_timestamp_millis(now.timestamp_millis())
             .ok_or(Error::Internal("artifact creation timestamp"))?,
-        entries: (data.ip_cidr.len() + data.domain_suffix.len()) as u32,
+        entries: rulesets::entries(&data) as u32,
     })
 }
 pub fn load_artifact(

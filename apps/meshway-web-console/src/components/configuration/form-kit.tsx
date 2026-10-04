@@ -19,6 +19,7 @@ import { useMemo, type ReactNode } from "react"
 import { membersQuery } from "@/api/queries/members"
 import { FieldInput } from "@/components/chrome/form"
 import { Button } from "@/components/ui/button"
+import type { Said, Severity } from "@/lib/configuration/diagnostics"
 import {
   within,
   type LocalCode,
@@ -38,7 +39,7 @@ import {
 import { cn } from "@/lib/utils"
 import { m } from "@/paraglide/messages.js"
 
-import type { ChipKind, ChipOption, Shown } from "./chips"
+import type { ChipKind, ChipOption, SetRefusal, Shown } from "./chips"
 
 // The pieces the section forms share: what the network has to pick from,
 // the problems placed by JSON Pointer, and a rule's row. A rule is one row
@@ -369,31 +370,32 @@ export type Note = {
   message: string
   /** Found here, or said by the controller about the draft as it is (or, stale, as it was). */
   origin: "local" | "controller" | "stale"
+  /** A warning is about a value accepted as written: it refuses nothing. */
+  severity: Severity
 }
 
-/** The field a pointer ends in, by the name its form gives it; null for a rule or entry as a whole. */
+/** The field a pointer is on or in (`/access/1/src/0`), by the name its form gives it; null for a rule or entry as a whole. */
 function fieldOf(path: string): string | null {
-  const segments = pointerSegments(path) ?? []
-  const last = segments[segments.length - 1]
-  const section = segments[0]
-  if (section === "access" && segments.length === 3)
-    return last === "src"
+  // A rule's field is its third segment (`access/1/src`), a pool its second.
+  const [section, entry, rulePart] = pointerSegments(path) ?? []
+  if (section === "access")
+    return rulePart === "src"
       ? m.configuration_access_src()
-      : last === "dst"
+      : rulePart === "dst"
         ? m.configuration_access_dst()
-        : last === "ip"
+        : rulePart === "ip"
           ? m.configuration_access_ip()
           : null
-  if (section === "topology" && segments.length === 3)
-    return last === "a"
+  if (section === "topology")
+    return rulePart === "a"
       ? m.configuration_topology_a()
-      : last === "b"
+      : rulePart === "b"
         ? m.configuration_topology_b()
         : null
-  if (section === "addressPools" && segments.length === 2)
-    return last === "ipv4"
+  if (section === "addressPools")
+    return entry === "ipv4"
       ? m.configuration_pool_ipv4()
-      : last === "ipv6"
+      : entry === "ipv6"
         ? m.configuration_pool_ipv6()
         : null
   return null
@@ -406,9 +408,10 @@ const worded = (path: string, message: string) => {
     : m.configuration_note_field({ field, message })
 }
 
+/** The problems found here, then what the controller said (`said`), as notes. */
 export function notesFrom(
   local: readonly LocalProblem[],
-  controller: readonly { path: string; message: string }[],
+  said: readonly Said[],
   stale: boolean
 ): Note[] {
   return [
@@ -416,11 +419,13 @@ export function notesFrom(
       path: problem.path,
       message: worded(problem.path, LOCAL[problem.code]()),
       origin: "local" as const,
+      severity: "error" as const,
     })),
-    ...controller.map((issue) => ({
-      path: issue.path,
-      message: worded(issue.path, issue.message),
+    ...said.map((entry) => ({
+      path: entry.path,
+      message: worded(entry.path, entry.message),
       origin: stale ? ("stale" as const) : ("controller" as const),
+      severity: entry.severity,
     })),
   ]
 }
@@ -431,11 +436,51 @@ export const notesWithin = (notes: readonly Note[], pointer: string) =>
 
 /** A field is refused when a current note is on it or on one of its values (`/access/1/src/0` refuses `/access/1/src`). */
 export const refusedAt = (notes: readonly Note[], pointer: string) =>
-  notes.some((note) => note.origin !== "stale" && within(note.path, pointer))
+  notes.some((note) => refuses(note) && within(note.path, pointer))
 
 /** A name is refused by a note on it, not by one on what it names (a profile's rules). */
 export const refusedName = (notes: readonly Note[], pointer: string) =>
-  notes.some((note) => note.origin !== "stale" && note.path === pointer)
+  notes.some((note) => refuses(note) && note.path === pointer)
+
+/** A current error, not a warning or one said before the latest edits. */
+const refuses = (note: Note) =>
+  note.origin !== "stale" && note.severity === "error"
+
+const NUMBER = /^(0|[1-9][0-9]*)$/
+
+/**
+ * How the set of values at `pointer` is refused (`/access/1/src/2` refuses
+ * value 2). `parts`: the arrays its chips join, in order, with their
+ * lengths (a route's match: domain suffixes, prefixes, rule sets).
+ */
+export function setRefusal(
+  notes: readonly Note[],
+  pointer: string,
+  parts?: readonly (readonly [string, number])[]
+): SetRefusal {
+  const outer = pointerSegments(pointer)?.length ?? 0
+  const values = new Set<number>()
+  for (const note of notes) {
+    if (!refuses(note) || !within(note.path, pointer)) continue
+    const rest = (pointerSegments(note.path) ?? []).slice(outer)
+    if (parts === undefined) {
+      if (rest[0] !== undefined && NUMBER.test(rest[0]))
+        values.add(Number(rest[0]))
+      continue
+    }
+    let offset = 0
+    for (const [name, count] of parts) {
+      if (rest[0] === name) {
+        const index =
+          rest[1] !== undefined && NUMBER.test(rest[1]) ? Number(rest[1]) : null
+        if (index !== null && index < count) values.add(offset + index)
+        break
+      }
+      offset += count
+    }
+  }
+  return { set: refusedAt(notes, pointer), values }
+}
 
 /** The notes on one rule or field, as lines under it. */
 export function Notes({
@@ -459,7 +504,9 @@ export function Notes({
               "mt-0.5 size-3 shrink-0",
               note.origin === "stale"
                 ? "text-muted-foreground"
-                : "text-destructive"
+                : note.severity === "warning"
+                  ? "text-warning"
+                  : "text-destructive"
             )}
           />
           <span className="min-w-0 break-words text-muted-foreground">

@@ -27,6 +27,7 @@ import {
   sectionOf,
   type SectionKey,
 } from "@/lib/configuration/changes"
+import { nodeNamer, saidOf } from "@/lib/configuration/diagnostics"
 import {
   checkedNow,
   holdsDocument,
@@ -50,7 +51,6 @@ import {
   type FormPart,
   type FormValues,
 } from "@/lib/configuration/operations"
-import { requirementText } from "@/lib/configuration/preparation"
 import {
   referencedSets,
   renameSetReferences,
@@ -239,28 +239,19 @@ function notesFor(
   const checked =
     current ??
     (entry?.checked?.input.kind === "operations" ? entry.checked : null)
-  const controller = [
-    ...(checked?.issues ?? []),
-    ...(checked?.requirements ?? []).map((requirement) => ({
-      path: requirement.path,
-      message: requirementText(requirement),
-    })),
-  ].filter(
-    (issue) =>
-      formViewOf(issue.path) === form ||
-      // Routing names rule sets and is checked against each node's access.
-      (form === "routing" && routingConcerns(issue.path))
+  const said = saidOf(checked, nodeNamer(base.nodes)).filter(
+    (entry) =>
+      formViewOf(entry.path) === form ||
+      // Routing names rule sets: their content is checked with it.
+      (form === "routing" && namesRuleSet(entry.path))
   )
-  return notesFrom(local, controller, current === null)
+  return notesFrom(local, said, current === null)
 }
 
-/** A rule set's content, or a node as a whole (the egress a node is assigned against its access). */
-function routingConcerns(path: string): boolean {
+/** A rule set's content (`/ruleSets/<key>`). */
+function namesRuleSet(path: string): boolean {
   const segments = pointerSegments(path) ?? []
-  return (
-    (segments[0] === "ruleSets" && segments.length === 2) ||
-    (segments[0] === "nodes" && segments.length === 2)
-  )
+  return segments[0] === "ruleSets" && segments.length === 2
 }
 
 /** The node problems found here, and what the controller said about the nodes. */
@@ -275,8 +266,8 @@ function nodeNotes(
     (entry?.checked?.input.kind === "operations" ? entry.checked : null)
   return notesFrom(
     nodeProblems(ops, base),
-    (checked?.issues ?? []).filter(
-      (issue) => sectionOf(issue.path) === "nodes"
+    saidOf(checked, nodeNamer(base.nodes)).filter(
+      (entry) => sectionOf(entry.path) === "nodes"
     ),
     current === null
   )

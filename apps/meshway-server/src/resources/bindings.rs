@@ -22,10 +22,7 @@ impl ContentBudget {
                 .map_err(|_| Error::encode("rule set data"))?
                 .len(),
         );
-        self.entries = self
-            .entries
-            .saturating_add(data.ip_cidr.len())
-            .saturating_add(data.domain_suffix.len());
+        self.entries = self.entries.saturating_add(super::entries(data));
         if self.bytes > super::MAX_DATASET_BYTES || self.entries > super::MAX_RULE_ENTRIES {
             return Err(Error::InvalidConfiguration(
                 meshway_configuration::ConfigurationError::Invalid(vec![
@@ -197,6 +194,7 @@ pub(crate) fn compilation_contents(
                     artifact,
                     ip_cidr: data.ip_cidr,
                     domain_suffix: data.domain_suffix,
+                    domain: data.domain,
                 },
             ))
         })

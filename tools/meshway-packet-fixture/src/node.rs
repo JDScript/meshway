@@ -36,10 +36,9 @@ pub async fn run(cli: &Cli, role: Role) -> Result<()> {
 
 async fn sync(control: &mut Control) -> Result<ExecutionSnapshot> {
     control
-        .sync_configuration()
+        .refresh_configuration()
         .await?
         .ok_or("missing node configuration")?;
-    control.renew_instance().await?;
     Ok(control.execution_snapshot()?)
 }
 

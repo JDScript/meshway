@@ -48,7 +48,7 @@ import { m } from "@/paraglide/messages.js"
 import { useNodeConfiguration } from "../-draft"
 import { presetLabel, protocolLabel } from "../../-labels"
 import { ListenerEditor } from "./listener-editor"
-import { Runtime } from "./runtime"
+import { Runtime, type IpInfoOf } from "./runtime"
 
 type Facts = {
   kind: string
@@ -157,11 +157,13 @@ export function ConfiguredListeners({
   nodeId,
   configuration,
   report,
+  ipInfo,
   now,
 }: {
   nodeId: string
   configuration: ReturnType<typeof useNodeConfiguration>
   report: NodeState | null
+  ipInfo: IpInfoOf
   now: number
 }) {
   const { state, change } = configuration
@@ -210,6 +212,7 @@ export function ConfiguredListeners({
                 facts={factsOfView(view)}
                 mark={null}
                 report={report}
+                ipInfo={ipInfo}
                 now={now}
                 actions={null}
                 notes={null}
@@ -328,6 +331,7 @@ export function ConfiguredListeners({
               mark={mark}
               removed={edit?.kind === "remove"}
               report={report}
+              ipInfo={ipInfo}
               now={now}
               notes={notesWithin(
                 state.notes,
@@ -433,6 +437,7 @@ function ListenerBlock({
   mark,
   removed = false,
   report,
+  ipInfo,
   now,
   actions,
   notes,
@@ -442,6 +447,7 @@ function ListenerBlock({
   mark: string | null
   removed?: boolean
   report: NodeState | null
+  ipInfo: IpInfoOf
   now: number
   actions: ReactNode
   notes: ReturnType<typeof notesWithin> | null
@@ -525,7 +531,7 @@ function ListenerBlock({
       {notes ? <Notes notes={notes} /> : null}
       {report ? (
         runtime ? (
-          <Runtime runtime={runtime} now={now} />
+          <Runtime runtime={runtime} ipInfo={ipInfo} now={now} />
         ) : (
           <EmptyLine size="sm">{m.nodes_listener_unreported()}</EmptyLine>
         )

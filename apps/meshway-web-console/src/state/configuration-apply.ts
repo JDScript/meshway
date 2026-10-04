@@ -206,6 +206,7 @@ function refused(
     input: proposal.input,
     issues: params.issues,
     requirements: params.requirements,
+    warnings: [],
   })
   toast.error(m.configuration_invalid_toast({ count }), { id: TOAST })
   invalidHandlers.get(networkId)?.(proposal.input, params)
@@ -235,6 +236,7 @@ export async function checkConfiguration(
         input: proposal.input,
         issues: [],
         requirements: [],
+        warnings: preview.warnings,
       })
     patch(networkId, {
       refusal: null,

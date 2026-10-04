@@ -1,11 +1,16 @@
 use crate::ArtifactId;
 
 /// Canonical immutable rule-set content, shared with configuration compilation.
+/// `domain` entries match one exact DNS name; `domain_suffix` entries match the
+/// name and every child label. Artifacts stored before `domain` existed have
+/// none.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct RuleSetData {
     pub ip_cidr: Vec<String>,
     pub domain_suffix: Vec<String>,
+    #[serde(default)]
+    pub domain: Vec<String>,
 }
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};

@@ -243,6 +243,7 @@ fn retained_routes_allow_narrowing_but_ruleset_expansion_requires_current_grants
         RuleSet::Inline {
             ip_cidr: vec!["8.8.8.0/24".into()],
             domain_suffix: vec![],
+            domain: vec![],
         },
     );
     let rule = &mut input.routing.egress.profiles.get_mut("work").unwrap().rules[0];
@@ -269,6 +270,7 @@ fn retained_routes_allow_narrowing_but_ruleset_expansion_requires_current_grants
             RuleSet::Inline {
                 ip_cidr: vec![cidr.into()],
                 domain_suffix: vec![],
+                domain: vec![],
             },
         );
         let result = normalize_with_dependencies(changed, &ctx);
@@ -1047,6 +1049,7 @@ fn large_rule_set_validation_stays_linear() {
         RuleSet::Inline {
             ip_cidr: cidrs,
             domain_suffix: domains,
+            domain: vec![],
         },
     );
     let rule = &mut input.routing.egress.profiles.get_mut("work").unwrap().rules[0];
@@ -1186,6 +1189,126 @@ fn a_rule_fully_covered_by_earlier_rules_is_a_warning_not_an_error() {
     assert_eq!(warning.code, IssueCode::ShadowedRule);
     assert_eq!(warning.path, "/routing/egress/rules/2");
     assert_eq!(warning.params["by"], "1");
+}
+
+fn domain_rules(access: &[&str], rules: serde_json::Value) -> NetworkConfigurationInput {
+    let mut c = with_nodes();
+    c.nodes.get_mut(&id(2)).unwrap().exit_enabled = true;
+    c.access = vec![AccessRule {
+        remark: String::new(),
+        src: vec!["*".into()],
+        dst: access.iter().map(|d| (*d).into()).collect(),
+        ip: vec!["*".into()],
+        bidirectional: false,
+    }];
+    c.rule_sets.insert(
+        "names".into(),
+        RuleSet::Inline {
+            ip_cidr: vec![],
+            domain_suffix: vec![],
+            domain: vec!["Telegram.org.".into()],
+        },
+    );
+    c.routing =
+        serde_json::from_value(serde_json::json!({ "egress": { "rules": rules } })).unwrap();
+    c
+}
+
+#[test]
+fn domain_destinations_are_covered_by_suffix_grants_or_an_internet_grant() {
+    let exit = serde_json::json!({"type":"exit","nodes":[format!("node:{}",id(2))],"via":[]});
+    let rules = serde_json::json!([
+        {"match":{"domain":["api.example.org"],"ruleSets":["names"]},"action":exit}
+    ]);
+    // Address-set semantics: public resolutions are inside autogroup:internet.
+    let (normalized, _) = normalize(
+        domain_rules(&["autogroup:internet"], rules.clone()),
+        &context(),
+    )
+    .unwrap();
+    assert_eq!(
+        normalized.rule_sets["names"],
+        RuleSet::Inline {
+            ip_cidr: vec![],
+            domain_suffix: vec![],
+            domain: vec!["telegram.org".into()],
+        }
+    );
+    normalize(
+        domain_rules(
+            &["domain:example.org", "domain:telegram.org"],
+            rules.clone(),
+        ),
+        &context(),
+    )
+    .unwrap();
+    // A partial address grant or a sibling suffix does not cover a name.
+    for grants in [
+        vec!["8.8.8.0/24", "domain:example.org"],
+        vec!["domain:example.org", "domain:web.telegram.org"],
+    ] {
+        let error = normalize(domain_rules(&grants, rules.clone()), &context()).unwrap_err();
+        let ConfigurationError::Invalid(issues) = error else {
+            panic!("{error:?}")
+        };
+        // One issue per node the rule applies to (`src: *`), none for example.org.
+        assert_eq!(issues.len(), 3, "{issues:?}");
+        for issue in &issues {
+            assert_eq!(issue.code, IssueCode::ExitOutsideAccess);
+            assert_eq!(issue.path, "/routing/egress/rules/0");
+            assert_eq!(issue.params["destination"], "domain:telegram.org");
+        }
+    }
+    let error = normalize(
+        domain_rules(
+            &["autogroup:internet"],
+            serde_json::json!([{"match":{"domain":["bad_name", "ok.example"]},"action":exit}]),
+        ),
+        &context(),
+    )
+    .unwrap_err();
+    let ConfigurationError::Invalid(issues) = error else {
+        panic!("{error:?}")
+    };
+    assert_eq!(issues[0].code, IssueCode::InvalidDomain);
+    assert_eq!(issues[0].path, "/routing/egress/rules/0/match/domain/0");
+    assert_eq!(issues[0].params["value"], "bad_name");
+}
+
+#[test]
+fn exact_names_are_shadowed_by_suffixes_but_never_shadow_them() {
+    let exit = serde_json::json!({"type":"exit","nodes":[format!("node:{}",id(2))],"via":[]});
+    let warnings = |rules: serde_json::Value| {
+        normalize_with_dependencies(domain_rules(&["autogroup:internet"], rules), &context())
+            .unwrap()
+            .warnings
+    };
+    let shadowed = warnings(serde_json::json!([
+        {"match":{"domainSuffix":["example.org"]},"action":{"type":"direct"}},
+        {"match":{"domain":["a.example.org"]},"action":exit},
+        {"match":{"domain":["example.org"]},"action":exit}
+    ]));
+    assert_eq!(shadowed.len(), 2, "{shadowed:?}");
+    assert!(shadowed.iter().all(|w| w.code == IssueCode::ShadowedRule));
+    // An exact name covers the same name (normalized), not its children or
+    // the suffix of that name; the suffix then covers a later child.
+    let same_name = warnings(serde_json::json!([
+        {"match":{"domain":["example.org"]},"action":{"type":"direct"}},
+        {"match":{"domain":["EXAMPLE.org."]},"action":exit},
+        {"match":{"domain":["a.example.org"]},"action":exit},
+        {"match":{"domainSuffix":["example.org"]},"action":exit},
+        {"match":{"domain":["b.example.org"]},"action":exit}
+    ]));
+    assert_eq!(
+        same_name
+            .iter()
+            .map(|w| (w.path.as_str(), w.params["by"].as_str()))
+            .collect::<Vec<_>>(),
+        [
+            ("/routing/egress/rules/1", "0"),
+            ("/routing/egress/rules/4", "3")
+        ]
+    );
 }
 
 #[test]

@@ -22,8 +22,6 @@
   "overview_link_initiator": "Dialled by {node}",
   "overview_link_unlocated_end": "Not drawn",
   "overview_location_approximate": "Approximate GeoIP location",
-  "overview_location_source_stun": "STUN observation",
-  "overview_location_source_interface": "Interface address",
   "overview_location_address": "From address",
   "overview_location_dataset": "Dataset",
   "overview_location_observed": "Observed",

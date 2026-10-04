@@ -21,10 +21,12 @@ import {
   RemoveButton,
   RuleRow,
   selectorChips,
+  setRefusal,
   type Names,
   type Note,
 } from "@/components/configuration/form-kit"
 import { Button } from "@/components/ui/button"
+import { within } from "@/lib/configuration/form-problems"
 import { pointerOf } from "@/lib/configuration/jsonc"
 import { without } from "@/lib/configuration/keyed"
 import {
@@ -210,10 +212,10 @@ export function Auto({
   const profiles = profileChips(choices, names)
   const countries = countryChips()
   const path = ["routing", "egress", "auto"]
-  const own = notes.filter(
-    (note) =>
-      note.path === pointerOf(path) ||
-      note.path === pointerOf([...path, "rules"])
+  const ruleAt = (index: number) => pointerOf([...path, "rules", index])
+  // The section's own notes; a rule's are under it.
+  const own = notesWithin(notes, pointerOf(path)).filter(
+    (note) => !auto?.rules.some((_, index) => within(note.path, ruleAt(index)))
   )
 
   return (
@@ -242,7 +244,7 @@ export function Auto({
                   kind={profiles}
                   label={m.configuration_routing_auto_fallback()}
                   editable={editable}
-                  invalid={refusedAt(notes, pointerOf(path))}
+                  invalid={refusedAt(notes, pointerOf([...path, "fallback"]))}
                   onChange={(fallback) => onChange({ ...auto, fallback })}
                 />
               </>
@@ -267,7 +269,7 @@ export function Auto({
                   >
                     <RuleRow
                       label={label}
-                      notes={[]}
+                      notes={notesWithin(notes, ruleAt(index))}
                       end={
                         editable ? (
                           <>
@@ -301,6 +303,10 @@ export function Auto({
                         label={m.configuration_routing_countries()}
                         addLabel={m.configuration_routing_countries_add()}
                         editable={editable}
+                        invalid={setRefusal(
+                          notes,
+                          `${ruleAt(index)}/countries`
+                        )}
                         onChange={(next) =>
                           update({ ...rule, countries: next })
                         }
@@ -315,6 +321,7 @@ export function Auto({
                         kind={profiles}
                         label={m.configuration_routing_profile()}
                         editable={editable}
+                        invalid={refusedAt(notes, `${ruleAt(index)}/profile`)}
                         onChange={(profile) => update({ ...rule, profile })}
                       />
                     </RuleRow>
@@ -440,7 +447,7 @@ export function Assignments({
                   label={m.configuration_routing_target()}
                   addLabel={m.configuration_routing_target_add()}
                   editable={editable}
-                  invalid={refusedAt(notes, `${path}/target`)}
+                  invalid={setRefusal(notes, `${path}/target`)}
                   onChange={(target) =>
                     update(index, { ...assignment, target })
                   }
@@ -454,6 +461,7 @@ export function Assignments({
                   label={m.configuration_routing_allowed_label()}
                   addLabel={m.configuration_routing_allowed_add()}
                   editable={editable}
+                  invalid={setRefusal(notes, `${path}/allowed`)}
                   onChange={(allowed) =>
                     update(index, { ...assignment, allowed })
                   }

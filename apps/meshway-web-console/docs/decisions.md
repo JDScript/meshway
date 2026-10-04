@@ -96,12 +96,21 @@ its generated client only, and only what the controller delivers:
   one flow per network, shown by the network's shell, so they outlive the
   page that started them.
   Applying always validates first and opens a review: the effective change
-  count, permanent node deletions and address changes on their own, the
-  material the controller generates on apply for new listeners
-  (`willGenerate`) and what it still has to complete (`requirements`, less
-  what generating covers), by listener, every change with its value before
-  and after (non-secret views); only its
-  confirmation applies, against the draft's revision. A newer revision
+  count, the nodes it may affect (`affectedNodeIds`: all, none or how
+  many), the warnings (accepted, probably unintended: a shadowed rule),
+  permanent node deletions, address and identity changes on their own, the
+  listeners added, removed or changed (`changedListeners`) with the
+  material the controller generates for them on apply (`willGenerate`) and
+  what it still has to complete (`requirements`), every change with its
+  value before and after (non-secret views); only its confirmation
+  applies, against the draft's revision.
+  What the controller says is worded by its issue code and parameters
+  (`lib/configuration/diagnostics.ts`: nodes by hostname, built-in profiles
+  by their labels, rules numbered from 1, a transport's or rule set's
+  reason when known), never its English `message`. Each note sits under
+  the rule or field its pointer is in; a set's chips mark the value a note
+  is on; a warning (amber) refuses nothing. Warnings come with an accepted
+  check only, so they are kept with it. A newer revision
   keeps the draft and its base; the bar offers to start over from it or to
   check the same text or operations against it (a new review). A restore
   takes the same review. An apply's request ID is reused only to repeat
@@ -132,8 +141,9 @@ its generated client only, and only what the controller delivers:
     transport tab, the problems it reports, listed in red); the node (owner
     or tags, OS and architecture, Agent version, ID, reported hostname,
     routing profile, joined); its addresses (IPv4, IPv6, the controller's
-    location or why it has none, and each observed IP with its GeoIP and
-    ASN).
+    location or why it has none, the provider: the AS of the address the
+    location rests on, or of the one address observed; with more than one
+    address, each with its place and AS).
   - diagnostics, what the status rests on: the report's times (received,
     recorded by the node, valid until, last sign-in), instance and report
     number; the inventory's `desiredExecution` (the configuration the
@@ -254,8 +264,8 @@ its generated client only, and only what the controller delivers:
   exit not `exitEnabled` is marked; profiles name the built-ins (Mesh
   only, `global:<exit>` per exit node, automatic when configured) and the
   configuration's own. A match is one chip set: domain suffixes, prefixes
-  and rule sets (`set:<key>`). The controller reports no shadowed rules,
-  so none are shown. Rule sets: inline content, or a remote HTTPS source
+  and rule sets (`set:<key>`); a rule every destination of which earlier
+  rules already match is a warning under it. Rule sets: inline content, or a remote HTTPS source
   with its format and interval. A remote set that is new or has a new
   source (URL or format; the interval alone is not) is downloaded and
   converted by the controller when the draft is checked and again when it
@@ -343,8 +353,15 @@ its generated client only, and only what the controller delivers:
   Refusals are worded by code for the call (403, 409, 429, 404). Nothing is
   measured by the console, and nothing is shown that the controller did not
   send.
-- Not delivered by the controller: GeoIP data (no node has a location
-  yet), the install script and Agent releases; nothing stands in for them.
+- Places and networks (`lib/geo.ts`, one wording on every page): a GeoIP
+  result most specific first, the country by its name in the reader's
+  language ("Shibuya City, Tokyo, 日本"); an AS as `AS63949` and its
+  organization; an endpoint in the transport tab with its country and AS
+  number, the rest on hover. The datasets are imported on the Server's
+  host (`ip-datasets`); a node has a location only once it reports a
+  public endpoint.
+- Not delivered by the controller: the install script and Agent releases;
+  nothing stands in for them.
   What the console needs from the V2 API is in `v2-api-needs.md`.
 - What a role may do is the network's `actions`, as the controller computes
   them; the console never derives it from the role.

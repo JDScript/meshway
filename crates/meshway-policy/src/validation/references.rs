@@ -222,6 +222,14 @@ pub fn domain_suffix_matches(name: &str, suffix: &str) -> bool {
     }
 }
 
+/// Exact DNS name equality after the same normalization as suffix matching.
+pub fn domain_name_matches(name: &str, domain: &str) -> bool {
+    match (domain_name(name), domain_name(domain)) {
+        (Ok(name), Ok(domain)) => name == domain,
+        _ => false,
+    }
+}
+
 /// Normalized domain suffixes with label-wise lookup: matching a name costs one
 /// normalization plus one set probe per label, independent of the set size.
 #[derive(Clone, Debug, Default)]
@@ -253,6 +261,46 @@ impl SuffixSet {
                 None => return false,
             }
         }
+    }
+}
+
+/// The domain destinations one or more matchers declare: exact names and
+/// label-boundary suffixes. Answers whether another matcher's destinations
+/// are all already matched here.
+#[derive(Clone, Debug, Default)]
+pub(super) struct DomainSet {
+    suffixes: SuffixSet,
+    exact: BTreeSet<String>,
+}
+
+impl DomainSet {
+    pub(super) fn new<'a>(
+        suffixes: impl IntoIterator<Item = &'a str>,
+        exact: impl IntoIterator<Item = &'a str>,
+    ) -> Self {
+        Self {
+            suffixes: SuffixSet::new(suffixes),
+            exact: exact
+                .into_iter()
+                .filter_map(|name| domain_name(name).ok())
+                .collect(),
+        }
+    }
+
+    /// An exact name is matched by the same exact entry or any parent suffix.
+    pub(super) fn covers_exact(&self, name: &str) -> bool {
+        self.suffixes.matches(name)
+            || domain_name(name).is_ok_and(|name| self.exact.contains(&name))
+    }
+
+    /// A suffix (the name and all children) is only covered by a suffix.
+    pub(super) fn covers_suffix(&self, suffix: &str) -> bool {
+        self.suffixes.matches(suffix)
+    }
+
+    pub(super) fn covers_all(&self, suffixes: &[String], exact: &[String]) -> bool {
+        suffixes.iter().all(|suffix| self.covers_suffix(suffix))
+            && exact.iter().all(|name| self.covers_exact(name))
     }
 }
 

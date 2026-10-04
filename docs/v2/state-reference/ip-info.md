@@ -92,3 +92,20 @@ LocationAbsentReason 为 noObservation、observationExpired、datasetUnavailable
 endpoint 到期后，其 GeoIP／ASN 仍可能是正确的数据库映射，但不能继续作为当前节点位置／自动地区方案的有效依据。数据集更新重新查询仍有效的候选并推进派生 State，既不改管理员 Config revision，也不重写 Node 原报告。
 
 数据集属于 Server 实例资源，网络 Owner 不因管理网络获得实例数据集写权限。部署范围见 [Server](/v2/server)。无数据集或有效观测时返回对应缺失原因，不伪造位置；数值遵守 Schema 的有限值与范围约束。
+
+## 数据集部署 {#datasets}
+
+数据集由 Server 主机的运维通过本机维护命令导入，没有管理 API，也不由 Server 自行下载：
+
+```sh
+meshway-server 停止后
+ip-datasets --data-dir <data> import --kind geoip --file GeoLite2-City.mmdb
+ip-datasets --data-dir <data> import --kind asn   --file GeoLite2-ASN.mmdb
+ip-datasets --data-dir <data> status
+ip-datasets --data-dir <data> lookup 93.184.216.34
+```
+
+- 文件是 MaxMind DB 格式（GeoLite2／GeoIP2）。`geoip` 接受 `database_type` 含 City 或 Country 的库，`asn` 接受含 ASN 的库；类型不符、无法解析或超过 128 MiB 的文件拒绝导入，不替换现有数据集。GeoLite2 需要 MaxMind 账号和许可才能下载，由运维取得文件，Server 不持有 MaxMind 凭据。
+- 导入写入一个不可变 artifact 并成为该类数据集的当前版本；每类各保留一个当前版本，再次导入即替换，此后的查询引用新的 `datasetId`。
+- 命令与 Server 共用同一数据目录要求（绝对路径、私有权限）、锁和密钥检查：必须先停止 Server，否则报告存储被占用；其他打开失败按 Server 启动的同一原因报告。Server 下次启动时在接受任何报告之前加载当前数据集。
+- `status` 显示两类数据集的 artifact ID；`lookup` 对任意地址做一次诊断查询，输出与 State 派生相同的结果（含 `not applicable` 的非公网地址），不产生观测。

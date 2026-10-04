@@ -6,9 +6,9 @@ import { ChipSetField } from "@/components/configuration/chips"
 import {
   AddButton,
   notesWithin,
-  refusedAt,
   RuleRow,
   selectorChips,
+  setRefusal,
   type Names,
   type Note,
 } from "@/components/configuration/form-kit"
@@ -89,7 +89,7 @@ export function MeshRoutes({
                     label={m.configuration_routing_src()}
                     addLabel={m.configuration_routing_src_add()}
                     editable={editable}
-                    invalid={refusedAt(notes, at("src"))}
+                    invalid={setRefusal(notes, at("src"))}
                     onChange={(src) => update(index, { ...rule, src })}
                   />
                   <ArrowRightIcon
@@ -103,7 +103,7 @@ export function MeshRoutes({
                     label={m.configuration_routing_dst()}
                     addLabel={m.configuration_routing_dst_add()}
                     editable={editable}
-                    invalid={refusedAt(notes, at("dst"))}
+                    invalid={setRefusal(notes, at("dst"))}
                     onChange={(dst) => update(index, { ...rule, dst })}
                   />
                   <span className="pl-1 text-meta text-muted-foreground">
@@ -115,7 +115,7 @@ export function MeshRoutes({
                     label={m.configuration_routing_via_label()}
                     addLabel={m.configuration_routing_via_add()}
                     editable={editable}
-                    invalid={refusedAt(notes, at("via"))}
+                    invalid={setRefusal(notes, at("via"))}
                     onChange={(via) => update(index, { ...rule, via })}
                   />
                 </RuleRow>

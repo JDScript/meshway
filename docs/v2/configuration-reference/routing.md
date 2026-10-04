@@ -78,11 +78,12 @@
 
 | 字段 | 类型 | 含义 |
 | --- | --- | --- |
-| `domainSuffix` | `string[]` | DNS 标签边界后缀 |
+| `domain` | `string[]` | 精确 DNS 名称，只匹配该名称本身 |
+| `domainSuffix` | `string[]` | DNS 标签边界后缀，匹配该名称及其所有子名称 |
 | `ipCIDR` | `string[]` | 目的网段 |
 | `ruleSets` | `string[]` | [规则集](/v2/configuration-reference/rule-sets) key |
 
-目的条件取并集，至少一项非空；规则从上到下 first-match。域名匹配需要可信域名上下文，不能从普通 IP 包直接推断。
+目的条件取并集，至少一项非空；规则从上到下 first-match。域名匹配需要可信域名上下文，不能从普通 IP 包直接推断。名称按 DNS 规范化比较（小写、ASCII／IDNA、忽略结尾点）；`domain: ["example.org"]` 不匹配 `a.example.org`，`domainSuffix: ["example.org"]` 两者都匹配。前面规则已完全覆盖的规则（含被后缀覆盖的精确名称）报告 `shadowed_rule` 警告。
 
 ### Action
 
@@ -92,7 +93,7 @@
 | `{ "type": "direct" }` | 匹配流量从源节点本地网络直接发出 |
 | `{ "type": "unmanaged" }` | 不接管 |
 
-出口必须启用 `nodes[id].exitEnabled`，目的访问必须获 access 允许。没有可用获准路径时拒绝，不能回退到后续规则或偷偷 direct。
+出口必须启用 `nodes[id].exitEnabled`，目的访问必须获 access 允许：IP 目的地须在源节点的 CIDR／`autogroup:internet` 授权内；域名目的地（`domain`、`domainSuffix` 与规则集内容）须被 `domain:` 后缀授权或 `autogroup:internet` 覆盖，不满足时报告 `exit_outside_access`（`params.node`、`params.destination`）。域名授权按解析地址集合执行，见 [Access](/v2/configuration-reference/access#domains)。没有可用获准路径时拒绝，不能回退到后续规则或偷偷 direct。
 
 ## 出口联合许可
 

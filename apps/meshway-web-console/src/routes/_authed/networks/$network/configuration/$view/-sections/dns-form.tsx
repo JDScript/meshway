@@ -18,6 +18,7 @@ import {
   RemoveButton,
   resolverChips,
   RuleRow,
+  setRefusal,
   type Note,
 } from "@/components/configuration/form-kit"
 import { Switch } from "@/components/ui/switch"
@@ -164,7 +165,7 @@ export function DnsForm({
           label={m.configuration_dns_default()}
           addLabel={m.configuration_dns_default_add()}
           editable={editable}
-          invalid={refusedAt(notes, "/dns/default")}
+          invalid={setRefusal(notes, "/dns/default")}
           onChange={(next) => set("default", next)}
         />
         <Notes notes={notesWithin(notes, "/dns/default")} />
@@ -215,7 +216,7 @@ export function DnsForm({
                       label={m.configuration_dns_route_resolvers()}
                       addLabel={m.configuration_dns_default_add()}
                       editable={editable}
-                      invalid={refusedAt(notes, at)}
+                      invalid={setRefusal(notes, at)}
                       onChange={(next) =>
                         set("routes", withEntry(routes, suffix, next))
                       }
@@ -246,7 +247,7 @@ export function DnsForm({
           label={m.configuration_dns_search()}
           addLabel={m.configuration_dns_search_add()}
           editable={editable}
-          invalid={refusedAt(notes, "/dns/searchDomains")}
+          invalid={setRefusal(notes, "/dns/searchDomains")}
           onChange={(next) => set("searchDomains", next)}
         />
         <Notes notes={notesWithin(notes, "/dns/searchDomains")} />

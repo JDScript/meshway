@@ -4,7 +4,7 @@ mod diagnostics;
 mod matching;
 mod paths;
 mod transports;
-use crate::{SubjectContext, domain_suffix_matches, topology_allows};
+use crate::{SubjectContext, domain_name_matches, domain_suffix_matches, topology_allows};
 pub use matching::profile_allowed;
 use meshway_configuration::{execution::*, *};
 use meshway_model::{NetworkId, NodeId, PublicationId, RequestId, Revision};

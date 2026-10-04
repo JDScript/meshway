@@ -63,10 +63,12 @@ impl Downloads {
             RuleSet::Inline {
                 ip_cidr,
                 domain_suffix,
+                domain,
             } => {
                 return super::normalize(RuleSetData {
                     ip_cidr: ip_cidr.clone(),
                     domain_suffix: domain_suffix.clone(),
+                    domain: domain.clone(),
                 })
                 .map_err(Into::into);
             }

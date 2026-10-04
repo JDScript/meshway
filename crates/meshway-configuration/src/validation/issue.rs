@@ -45,6 +45,8 @@ pub enum IssueCode {
     /// params `value`
     InvalidDomainSuffix,
     /// params `value`
+    InvalidDomain,
+    /// params `value`
     NoncanonicalCidr,
     // DNS.
     InvalidDnsDomain,
@@ -153,6 +155,7 @@ impl IssueCode {
             BidirectionalRequiresMesh => "bidirectional access requires Mesh endpoints",
             InvalidPortSet => "invalid protocol/port set",
             InvalidDomainSuffix => "invalid domain suffix",
+            InvalidDomain => "invalid domain name",
             NoncanonicalCidr => "noncanonical CIDR",
             InvalidDnsDomain => "invalid DNS domain",
             InvalidNodeDnsName => {

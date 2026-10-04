@@ -47,13 +47,15 @@
 - **加入链接与重置链接**：兑换前可以用 `inspect` 预览，不会消费；最终兑换时重新校验。
 - **实时观察**：`auto` 模式由 Controller 计算候选、执行端选择路径；`explicit` 模式固定路径。console 只在页面可见时续租。
 
-## 接入状态（后端 `8823cbec`，含配置契约变更 `e988b669`）
+## 接入状态（后端 `1f4efbbd`）
 
-console 已接入 `/api/v1` 下全部 66 个 Console 操作：
+console 已接入 `/api/v1` 下全部 Console 操作：
 
 - 账户、会话和账户活动（邮箱修改显示原邮箱）；
 - 网络、成员、加入链接（签发人、使用者）和网络活动；
 - 配置：JSONC 和全部区段表单（出口规则的动作只有出口和直连，"不接管"只用于方案兜底）、validate（含规则集准备与监听器材料计划）、apply、历史、对照和恢复；按 `NetworkActions.readConfiguration` 决定读完整配置还是成员视图；
+- 配置诊断：按 `IssueCode` 和 `params` 本地化（节点按主机名，传输和规则集的 `reason` 按已知取值），问题挂在 pointer 所在的规则或字段下，并标到具体的值；`warnings` 显示在应用确认、对应规则下和源文件里；应用确认使用 `affectedNodeIds`、`identityChangedNodeIds`、`changedListeners`；
+- GeoIP／ASN：数据集由服务端主机的 `ip-datasets` 导入；console 显示 `derived.location`（地球与节点概况）和 `derived.ipInfo`（运营商、各地址、传输页 endpoint 的国家与 AS 号）。现在的 Node 还不上报 endpoint，所以真实节点仍没有位置；脚本节点上报 STUN endpoint 已验证整条链路（DB-IP Lite 数据集）。
 - 节点、节点运行 State（对端以 State 的 hostname 命名）、节点设置（成员通过 `getNodeSettings` 读取）、监听（`ListenerUpdate` 省略 WebSocket 响应头即保留，界面按名字显示）和节点密钥；
 - 接入密钥和设备授权；
 - 按 revision 的部署进度；
@@ -63,13 +65,6 @@ console 已接入 `/api/v1` 下全部 66 个 Console 操作：
 - 主动路径观察。
 
 撤销已失效的加入链接、接入密钥，以及重复吊销节点密钥时的 409 `state_conflict`，console 提示"这次没有撤销"并重读列表。
-
-契约已提供、console 尚未接入（下一步）：
-
-- `ConfigurationIssue` 的 `code`／`params`：console 仍显示英文 `message`，规则集的 `rule_set_unavailable`、`rule_set_budget`、`rule_set_timeout` 也一样。
-- `warnings`（`shadowed_rule { by }`）：尚未显示。
-- 预览的 `identityChangedNodeIds`、`changedListeners`、`affectedNodeIds`：应用确认里尚未使用；`requirements` 与 `willGenerate` 已不相交，console 那边的去重可以去掉。
-- 精确到元素的 pointer：字段标红已包括其元素上的问题（`/access/1/src/0` 标红 `/access/1/src`），还没有标到单个值上。
 
 ## 尚未提供的接口
 
@@ -95,11 +90,11 @@ console 已接入 `/api/v1` 下全部 66 个 Console 操作：
 - 节点的版本兼容状态 `versionStatus`（current、outdated、unsupported），由服务端按兼容门槛判定。
 - `reassignAddresses`、`rotateMaterial`（editing.md 已不再列出，需要时重新定义）。
 - 安装脚本和 Agent 发布。
-- 可信 DNS 与 GeoIP 的数据输入，以及基于它们的自动方案。
+- 可信 DNS 的数据输入，以及基于它和 GeoIP 的自动方案。
 
 ## 待处理的问题
 
-以下按 `8823cbec` 加契约变更 `e988b669` 核对：契约按 `packages/protocol/openapi.json`；行为用同一份源码构建的隔离 Server 和真实 `meshwayd`（只有控制流程：接入、续租、保存配置、上报状态）验证。
+以下按 `1f4efbbd` 核对：契约按 `packages/protocol/openapi.json`；行为用同一份源码构建的隔离 Server 和真实 `meshwayd`（只有控制流程：接入、续租、保存配置、上报状态）验证。
 
 **已修复并已验证**（不再跟踪）：
 
@@ -140,6 +135,7 @@ console 已接入 `/api/v1` 下全部 66 个 Console 操作：
 
 ### 需要修正
 
+- ~~`ip-datasets --data-dir` 给相对路径时报"Stop the Server first"~~：已修。`ip-datasets` 和 `reset-password` 只在存储确实被占用时说这句，其他原因与 Server 启动一致报 `Server storage startup failed: <cause>.`；相对路径的原因是 `data directory must be an absolute path without parent traversal`。数据目录仍要求绝对路径（与 Server 相同）。
 - Node：daemon 把 400 等未分类的服务端拒绝归为 `Contract` 且不再重试（`apps/meshway-daemon/src/runtime/control/cycle.rs`），节点停在 `blocked`，直到手动 `meshway up`。服务端现在接受 15 分钟内（最多 8 次发布）该节点的旧引用，超出后仍是 400；这时应重新同步而不是永久停住。后端已转给 Node。
 
 ### 需要真实 Node 复核
@@ -164,13 +160,12 @@ Node 已有 `meshwayd` 的控制流程（接入、认证、续租、保存配置
 
 ### 需要产品决定
 
-- GeoIP／ASN 数据集的部署入口（CLI 还是管理 API）。`IpDatasets::install` 现在没有调用方，所以所有节点都没有位置。
 - 设备授权的浏览器链接格式。console 暂用 `/authorize-device/<enrollmentRequestId>`，需要和 Agent、App 一起定下来。
 - 两端都报告自己是发起方时 link 的判定：现在判为 `conflicting`，`inUse` 变成 null。
 - `--listen` 的默认端口：仍是 `127.0.0.1:8420`。
 - 角色变更的影响预览（降级 admin 时哪些链接会被撤销）：现在没有角色变更预览接口。
-- 域名规则集经出口：远程规则集里的每个域名都要在 access 里有 `domain:` 授权（服务端按准备好的内容校验），而 access 不能引用规则集，`autogroup:internet` 也不覆盖域名。把 MetaCubeX 的 `geosite:telegram`、`geosite:twitter` 交给出口，需要在 access 里逐条列出这 45 个域名，规则集更新新增域名后也不会自动获得授权。
-- 规则集转换只接受 `+.` 后缀：MetaCubeX 的 geosite 列表大多含精确域名（google、github、openai、apple、microsoft 等），整份转换失败；`geosite:cn` 约 11 万条，超过 10 万的上限。现在可用的只有 geoip 各列表和 cloudflare、telegram、twitter 等少数 geosite。
+- ~~域名规则集经出口~~：已定并实现。`autogroup:internet` 在声明期覆盖域名目的地（路由规则和规则集里的名称），与执行期"按解析地址判定"一致；access 仍不引用规则集。只有 CIDR 授权的源仍需 `domain:`。见 access.md「域名授权」、routing.md「Action」。
+- ~~规则集转换只接受 `+.` 后缀；10 万条上限~~：已定并实现。新增精确域名：`RouteMatch.domain`、inline 规则集 `domain`（都是 `string[]`，默认 `[]`），mihomo 裸条目和 sing-box `domain` 字段转成它；`*.`／`.` 开头的条目仍使整份失败。上限提到 250000 条（8 MiB 不变）。新 IssueCode `invalid_domain`（`params.value`，pointer 到 `…/domain/<i>`）。**console 需要**：路由规则和 inline 规则集表单显示／编辑 `domain`，JSONC 诊断本地化 `invalid_domain`。
 
 ### 其他
 

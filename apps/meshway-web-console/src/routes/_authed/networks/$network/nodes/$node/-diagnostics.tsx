@@ -14,6 +14,7 @@ import { Tile } from "@/components/chrome/tile"
 import { Skeleton } from "@/components/ui/skeleton"
 import { useNow } from "@/hooks/use-now"
 import { agoTime, dateTime, relativeTime } from "@/lib/format"
+import { LOCATION_SOURCE } from "@/lib/geo"
 import {
   configurationFacts,
   desiredAgainst,
@@ -314,9 +315,7 @@ function Location({
             <span className="font-mono font-normal">{location.address}</span>
           </Tile>
           <Tile label={m.nodes_location_source()}>
-            {location.endpointSource === "stun"
-              ? m.nodes_location_source_stun()
-              : m.nodes_location_source_interface()}
+            {LOCATION_SOURCE[location.endpointSource]()}
           </Tile>
           <Tile label={m.nodes_location_observed()}>
             <When at={location.observedAt} now={now} />

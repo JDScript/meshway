@@ -13,12 +13,14 @@ fn expanded_match(matcher: &RouteMatch, config: &NetworkConfiguration) -> Option
         let RuleSet::Inline {
             ip_cidr,
             domain_suffix,
+            domain,
         } = config.rule_sets.get(key)?
         else {
             return None;
         };
         result.ip_cidr.extend(ip_cidr.iter().cloned());
         result.domain_suffix.extend(domain_suffix.iter().cloned());
+        result.domain.extend(domain.iter().cloned());
     }
     result.rule_sets.clear();
     Some(result)
@@ -60,15 +62,15 @@ fn retained_egress(
                     return false;
                 };
                 let grants = AddressSet::new(grants);
-                let suffixes = SuffixSet::new(old.domain_suffix.iter().map(String::as_str));
+                let domains = DomainSet::new(
+                    old.domain_suffix.iter().map(String::as_str),
+                    old.domain.iter().map(String::as_str),
+                );
                 current
                     .ip_cidr
                     .iter()
                     .all(|s| s.parse::<IpNet>().is_ok_and(|net| grants.covers(&net)))
-                    && current
-                        .domain_suffix
-                        .iter()
-                        .all(|domain| suffixes.matches(domain))
+                    && domains.covers_all(&current.domain_suffix, &current.domain)
             }
             _ => false,
         }
@@ -154,8 +156,14 @@ fn action(
         }
     }
 }
-/// `path` is the object holding `ipCIDR` and `domainSuffix`.
-fn destinations(cidr: &mut [String], domains: &mut [String], path: &str, check: &mut Check) {
+/// `path` is the object holding `ipCIDR`, `domainSuffix` and `domain`.
+fn destinations(
+    cidr: &mut [String],
+    suffixes: &mut [String],
+    exact: &mut [String],
+    path: &str,
+    check: &mut Check,
+) {
     for (index, text) in cidr.iter_mut().enumerate() {
         match text.parse::<IpNet>() {
             Ok(net) if net.addr() == net.network() => *text = net.to_string(),
@@ -168,16 +176,18 @@ fn destinations(cidr: &mut [String], domains: &mut [String], path: &str, check: 
             ),
         }
     }
-    for (index, text) in domains.iter_mut().enumerate() {
-        match domain_name(text) {
-            Ok(domain) => *text = domain,
-            Err(()) => check.issue(
-                ConfigurationIssue::new(
-                    format!("{path}/domainSuffix/{index}"),
-                    IssueCode::InvalidDomainSuffix,
-                )
-                .with("value", &*text),
-            ),
+    for (field, code, names) in [
+        ("domainSuffix", IssueCode::InvalidDomainSuffix, suffixes),
+        ("domain", IssueCode::InvalidDomain, exact),
+    ] {
+        for (index, text) in names.iter_mut().enumerate() {
+            match domain_name(text) {
+                Ok(domain) => *text = domain,
+                Err(()) => check.issue(
+                    ConfigurationIssue::new(format!("{path}/{field}/{index}"), code)
+                        .with("value", &*text),
+                ),
+            }
         }
     }
 }
@@ -202,11 +212,13 @@ fn rules(
         destinations(
             &mut rule.matcher.ip_cidr,
             &mut rule.matcher.domain_suffix,
+            &mut rule.matcher.domain,
             &format!("{path}/match"),
             check,
         );
         if rule.matcher.ip_cidr.is_empty()
             && rule.matcher.domain_suffix.is_empty()
+            && rule.matcher.domain.is_empty()
             && rule.matcher.rule_sets.is_empty()
         {
             check.issue(ConfigurationIssue::new(
@@ -246,7 +258,19 @@ fn rules(
 fn shadowed(rules: &[EgressRule], config: &NetworkConfiguration, path: &str, check: &mut Check) {
     let mut ranges = Vec::new();
     let mut suffixes = Vec::new();
+    let mut exact = Vec::new();
     let mut complete = true;
+    let covered = |ranges: &[IpNet], suffixes: &[String], exact: &[String], m: &RouteMatch| {
+        let r = AddressSet::new(ranges.iter().copied());
+        let d = DomainSet::new(
+            suffixes.iter().map(String::as_str),
+            exact.iter().map(String::as_str),
+        );
+        m.ip_cidr
+            .iter()
+            .all(|s| s.parse::<IpNet>().is_ok_and(|net| r.covers(&net)))
+            && d.covers_all(&m.domain_suffix, &m.domain)
+    };
     for (index, rule) in rules.iter().enumerate() {
         let Some(matcher) = expanded_match(&rule.matcher, config) else {
             complete = false;
@@ -260,39 +284,36 @@ fn shadowed(rules: &[EgressRule], config: &NetworkConfiguration, path: &str, che
         else {
             continue;
         };
-        if complete && index > 0 && (!nets.is_empty() || !matcher.domain_suffix.is_empty()) {
-            let covered_ranges = AddressSet::new(ranges.iter().copied());
-            let covered_suffixes = SuffixSet::new(suffixes.iter().map(String::as_str));
-            if nets.iter().all(|net| covered_ranges.covers(net))
-                && matcher
-                    .domain_suffix
-                    .iter()
-                    .all(|domain| covered_suffixes.matches(domain))
-            {
-                // The earlier rule after which the cover became complete.
-                let mut partial_ranges = Vec::new();
-                let mut partial_suffixes = Vec::new();
-                let by = (0..index)
-                    .find(|i| {
-                        if let Some(m) = expanded_match(&rules[*i].matcher, config) {
-                            partial_ranges
-                                .extend(m.ip_cidr.iter().filter_map(|s| s.parse::<IpNet>().ok()));
-                            partial_suffixes.extend(m.domain_suffix);
-                        }
-                        let r = AddressSet::new(partial_ranges.iter().copied());
-                        let d = SuffixSet::new(partial_suffixes.iter().map(String::as_str));
-                        nets.iter().all(|net| r.covers(net))
-                            && matcher.domain_suffix.iter().all(|domain| d.matches(domain))
-                    })
-                    .unwrap_or(index - 1);
-                check.warn(
-                    ConfigurationIssue::new(format!("{path}/{index}"), IssueCode::ShadowedRule)
-                        .with("by", by),
-                );
-            }
+        let has_destinations =
+            !nets.is_empty() || !matcher.domain_suffix.is_empty() || !matcher.domain.is_empty();
+        if complete
+            && index > 0
+            && has_destinations
+            && covered(&ranges, &suffixes, &exact, &matcher)
+        {
+            // The earlier rule after which the cover became complete.
+            let mut partial_ranges = Vec::new();
+            let mut partial_suffixes = Vec::new();
+            let mut partial_exact = Vec::new();
+            let by = (0..index)
+                .find(|i| {
+                    if let Some(m) = expanded_match(&rules[*i].matcher, config) {
+                        partial_ranges
+                            .extend(m.ip_cidr.iter().filter_map(|s| s.parse::<IpNet>().ok()));
+                        partial_suffixes.extend(m.domain_suffix);
+                        partial_exact.extend(m.domain);
+                    }
+                    covered(&partial_ranges, &partial_suffixes, &partial_exact, &matcher)
+                })
+                .unwrap_or(index - 1);
+            check.warn(
+                ConfigurationIssue::new(format!("{path}/{index}"), IssueCode::ShadowedRule)
+                    .with("by", by),
+            );
         }
         ranges.extend(nets);
         suffixes.extend(matcher.domain_suffix);
+        exact.extend(matcher.domain);
     }
 }
 
@@ -400,6 +421,7 @@ pub(super) fn validate(
                     RuleSet::Inline {
                         ip_cidr: data.ip_cidr.clone(),
                         domain_suffix: data.domain_suffix.clone(),
+                        domain: data.domain.clone(),
                     },
                 );
             }
@@ -432,14 +454,15 @@ fn validate_resolved(
             RuleSet::Inline {
                 ip_cidr,
                 domain_suffix,
+                domain,
             } => {
-                if ip_cidr.is_empty() && domain_suffix.is_empty() {
+                if ip_cidr.is_empty() && domain_suffix.is_empty() && domain.is_empty() {
                     check.issue(ConfigurationIssue::new(
                         &path,
                         IssueCode::EmptyInlineRuleSet,
                     ));
                 }
-                destinations(ip_cidr, domain_suffix, &path, check);
+                destinations(ip_cidr, domain_suffix, domain, &path, check);
             }
             // Sources were checked before resolving immutable contents.
             RuleSet::Remote { .. } => {}
@@ -681,9 +704,15 @@ fn https_authority(authority: &str) -> bool {
 /// grant whose source matches it. Pure declaration, not path compilation or a
 /// grant to any runtime; remote resources need resolved content before
 /// publication. Built once per Node and queried per destination.
+///
+/// Domain grants have address-set semantics: a name is authorized through the
+/// addresses it resolves to, which `autogroup:internet` covers for any public
+/// resolution. Declaration therefore accepts a domain destination under an
+/// Internet grant; compilation still checks each resolved address.
 struct Permits {
     domains: SuffixSet,
     ranges: AddressSet,
+    internet: bool,
 }
 
 impl Permits {
@@ -700,9 +729,11 @@ impl Permits {
                 .filter_map(|value| value.strip_prefix("domain:")),
         );
         let mut ranges = Vec::new();
+        let mut internet = false;
         for value in &allowed {
             if *value == "autogroup:internet" {
                 ranges.extend_from_slice(internet_ranges());
+                internet = true;
             } else if let Ok(net) = value.parse::<IpNet>() {
                 ranges.push(net);
             }
@@ -710,12 +741,13 @@ impl Permits {
         Self {
             domains,
             ranges: AddressSet::new(ranges),
+            internet,
         }
     }
 
     fn covers(&self, destination: &str) -> bool {
         if let Some(domain) = destination.strip_prefix("domain:") {
-            return self.domains.matches(domain);
+            return self.internet || self.domains.matches(domain);
         }
         if destination == "autogroup:internet" {
             return internet_ranges()
@@ -742,11 +774,13 @@ fn verify_rules(
         if !matches!(rule.action, RuleAction::Exit { .. }) {
             continue;
         }
+        // An exact name needs the same coverage as the suffix equal to it.
         let mut destinations: Vec<_> = rule.matcher.ip_cidr.clone();
         destinations.extend(
             rule.matcher
                 .domain_suffix
                 .iter()
+                .chain(&rule.matcher.domain)
                 .map(|s| format!("domain:{s}")),
         );
         for key in &rule.matcher.rule_sets {
@@ -754,9 +788,15 @@ fn verify_rules(
                 Some(RuleSet::Inline {
                     ip_cidr,
                     domain_suffix,
+                    domain,
                 }) => {
                     destinations.extend(ip_cidr.clone());
-                    destinations.extend(domain_suffix.iter().map(|s| format!("domain:{s}")));
+                    destinations.extend(
+                        domain_suffix
+                            .iter()
+                            .chain(domain)
+                            .map(|s| format!("domain:{s}")),
+                    );
                 }
                 // Every rule reference already requires unresolved content.
                 Some(RuleSet::Remote { .. }) | None => {}

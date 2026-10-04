@@ -15,6 +15,7 @@ import {
 } from "@/api/queries/configuration"
 import { nodeSettingsQuery } from "@/api/queries/nodes"
 import { notesFrom, type Note } from "@/components/configuration/form-kit"
+import { nodeNamer, saidOf } from "@/lib/configuration/diagnostics"
 import {
   checkedNow,
   holdsDocument,
@@ -23,7 +24,6 @@ import {
 import { within } from "@/lib/configuration/form-problems"
 import { pointerOf } from "@/lib/configuration/jsonc"
 import { nodeProblems } from "@/lib/configuration/node-problems"
-import { requirementText } from "@/lib/configuration/preparation"
 import { useConfigurationDraft } from "@/state/configuration-draft"
 
 /**
@@ -111,13 +111,9 @@ export function useNodeConfiguration(
       (entry?.checked?.input.kind === "operations" ? entry.checked : null)
     const notes = notesFrom(
       nodeProblems(ops, base).filter((problem) => within(problem.path, prefix)),
-      [
-        ...(checked?.issues ?? []),
-        ...(checked?.requirements ?? []).map((requirement) => ({
-          path: requirement.path,
-          message: requirementText(requirement),
-        })),
-      ].filter((issue) => within(issue.path, prefix)),
+      saidOf(checked, nodeNamer(base.nodes)).filter((entry) =>
+        within(entry.path, prefix)
+      ),
       current === null
     )
     return {

@@ -1,10 +1,9 @@
 import { NodeStatusDot } from "@/components/chrome/node-status"
 import { dateTime } from "@/lib/format"
+import { LOCATION_SOURCE, placeText } from "@/lib/geo"
 import type { MapNode } from "@/lib/network-map"
 import { statusLabel } from "@/lib/state-labels"
 import { m } from "@/paraglide/messages.js"
-
-import { locationSourceLabel, placeText } from "./-labels"
 
 /**
  * A located node pointed at on the globe: where the controller's GeoIP
@@ -31,7 +30,7 @@ export function NodeCard({ node }: { node: MapNode }) {
             {m.overview_location_approximate()}
           </dt>
           <dd className="min-w-0 truncate">
-            {placeText(node) ?? "—"}
+            {(location && placeText(location.data)) ?? "—"}
             {position?.accuracyRadiusKm != null ? (
               <span className="text-muted-foreground">
                 {" "}
@@ -49,7 +48,7 @@ export function NodeCard({ node }: { node: MapNode }) {
             {location.address}
             <span className="font-sans text-muted-foreground">
               {" "}
-              · {locationSourceLabel[location.endpointSource]()}
+              · {LOCATION_SOURCE[location.endpointSource]()}
             </span>
           </dd>
           <dt className="text-muted-foreground">

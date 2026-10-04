@@ -18,9 +18,9 @@ import {
   type Shown,
 } from "@/components/configuration/chips"
 import {
-  refusedAt,
   RemarkInput,
   RemoveButton,
+  setRefusal,
   type Names,
   type Note,
 } from "@/components/configuration/form-kit"
@@ -314,7 +314,7 @@ function ActionChoice<T extends ActionType>({
             label={m.configuration_routing_exits()}
             addLabel={m.configuration_routing_exits_add()}
             editable={editable}
-            invalid={refusedAt(notes, pointerOf([...path, "nodes"]))}
+            invalid={setRefusal(notes, pointerOf([...path, "nodes"]))}
             onChange={(nodes) => onExit({ ...exit, nodes })}
           />
           {editable || (exit.via ?? []).length > 0 ? (
@@ -328,7 +328,7 @@ function ActionChoice<T extends ActionType>({
                 label={m.configuration_routing_exit_via_label()}
                 addLabel={m.configuration_routing_via_add()}
                 editable={editable}
-                invalid={refusedAt(notes, pointerOf([...path, "via"]))}
+                invalid={setRefusal(notes, pointerOf([...path, "via"]))}
                 onChange={(via) => onExit({ ...exit, via })}
               />
             </>

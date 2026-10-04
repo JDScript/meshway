@@ -159,6 +159,6 @@ fn summary(
         id,
         digest,
         created_at,
-        entries: (data.ip_cidr.len() + data.domain_suffix.len()) as u32,
+        entries: super::entries(&data) as u32,
     })
 }

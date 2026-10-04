@@ -4566,6 +4566,7 @@ export const schemaDocument = {
           "bidirectional_requires_mesh",
           "invalid_port_set",
           "invalid_domain_suffix",
+          "invalid_domain",
           "noncanonical_cidr",
           "invalid_dns_domain",
           "invalid_node_dns_name",
@@ -11122,6 +11123,12 @@ export const schemaDocument = {
       "RouteMatch": {
         "type": "object",
         "properties": {
+          "domain": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
           "domainSuffix": {
             "type": "array",
             "items": {
@@ -11277,6 +11284,12 @@ export const schemaDocument = {
               "type"
             ],
             "properties": {
+              "domain": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
               "domainSuffix": {
                 "type": "array",
                 "items": {

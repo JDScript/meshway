@@ -3547,6 +3547,7 @@ async fn withdrawing_execution_dependencies_commits_and_never_falls_through_to_d
         RuleSet::Inline {
             ip_cidr: vec!["1.1.1.1/32".into()],
             domain_suffix: vec![],
+            domain: vec![],
         },
     )]);
     config.rule_sets = rule_sets.clone();

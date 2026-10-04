@@ -48,8 +48,10 @@ impl Drop for ShutdownHooks {
 #[derive(Debug, thiserror::Error, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum AppError {
-    #[error("invalid database budget or data directory setting")]
+    #[error("invalid database budget or session setting")]
     InvalidSettings,
+    #[error("data directory must be an absolute path without parent traversal")]
+    InvalidDataDirectory,
     #[error("storage ownership, type, or private permissions are invalid")]
     UnsafeStorage,
     #[error("data directory is already in use")]
@@ -165,7 +167,7 @@ impl App {
             },
             downloads.clone(),
         );
-        Ok(Self {
+        let app = Self {
             resource_scheduler,
             downloads,
             executor,
@@ -179,7 +181,17 @@ impl App {
                 crate::accounts::random_uuid().map_err(|_| AppError::Cryptography)?,
             )
             .map_err(|_| AppError::Cryptography)?,
-        })
+        };
+        // Deployment-owned IP datasets live in storage; derived State needs them
+        // from the first report on, so loading is part of opening, not a task.
+        app.ip_datasets()
+            .restore()
+            .await
+            .map_err(|error| match error {
+                crate::error::Error::Storage(_) => AppError::Database,
+                _ => AppError::StorageIntegrity,
+            })?;
+        Ok(app)
     }
 
     /// An account service handle, without network or instance privileges.
@@ -385,7 +397,7 @@ impl From<KeyError> for AppError {
 impl From<DirectoryError> for AppError {
     fn from(error: DirectoryError) -> Self {
         match error {
-            DirectoryError::InvalidPath => Self::InvalidSettings,
+            DirectoryError::InvalidPath => Self::InvalidDataDirectory,
             DirectoryError::UnsafeStorage => Self::UnsafeStorage,
             DirectoryError::InUse => Self::AlreadyRunning,
             DirectoryError::Io => Self::Filesystem,

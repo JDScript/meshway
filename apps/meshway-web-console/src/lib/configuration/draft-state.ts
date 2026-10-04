@@ -32,8 +32,11 @@ export type DraftInput =
 /** What the controller said about an input when it last checked it. */
 export type Checked = {
   input: DraftInput
+  /** Why it refused the input; none when it accepted it. */
   issues: readonly ConfigurationIssue[]
   requirements: readonly PreparationRequirement[]
+  /** What it accepted but may not be meant (a shadowed rule); only on acceptance. */
+  warnings: readonly ConfigurationIssue[]
 }
 
 export type DraftEntry = {
