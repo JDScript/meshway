@@ -49,6 +49,61 @@ async fn targets(
 }
 
 #[tokio::test]
+async fn account_revocation_cannot_be_blocked_by_the_replay_window_size() {
+    let _serial = crate::accounts::TEST_KDF_LOCK.lock().await;
+    let dir = tempfile::tempdir().unwrap();
+    let app = App::open(Settings::new(
+        dir.path().canonicalize().unwrap().join("data"),
+    ))
+    .await
+    .unwrap();
+    let owner = app
+        .accounts()
+        .register(
+            "many-networks@example.test".into(),
+            Secret::new("valid many networks password".into()),
+            request(),
+        )
+        .await
+        .unwrap();
+    let count = crate::state::stream::MAX_REPLAY_EVENTS + 1;
+    let mut last = None;
+    for index in 0..count {
+        last = Some(
+            app.networks()
+                .create(owner.token.expose(), format!("revoke-{index}"), request())
+                .await
+                .unwrap()
+                .id,
+        );
+    }
+    let before = sequence(&app);
+    app.accounts()
+        .revoke_sessions(
+            owner.token.expose(),
+            crate::accounts::RevokeSessions::All,
+            request(),
+        )
+        .await
+        .unwrap();
+    assert!(matches!(
+        app.accounts().authenticate(owner.token.expose()).await,
+        Err(crate::accounts::AccountError::InvalidSession)
+    ));
+    {
+        let runtime = app.state_runtime.lock().unwrap();
+        let events = &runtime.hub.events;
+        assert_eq!(events.sequence(), before + count as u64);
+        assert!(
+            events.after(before, last.unwrap()).is_err(),
+            "old cursors reset when the bounded replay window is exceeded"
+        );
+    }
+    app.check_storage().await.unwrap();
+    app.shutdown().await.unwrap();
+}
+
+#[tokio::test]
 async fn accepted_configuration_waiter_cancellation_noop_and_rollback_preserve_journal() {
     let _serial = crate::accounts::TEST_KDF_LOCK.lock().await;
     let (_dir, app, network, a, b, _, _, _, _) = super::node_tests::fixture().await;
