@@ -141,8 +141,9 @@ its generated client only, and only what the controller delivers:
     transport tab, the problems it reports, listed in red); the node (owner
     or tags, OS and architecture, Agent version, ID, reported hostname,
     routing profile, joined); its addresses (IPv4, IPv6, the controller's
-    location or why it has none, and each observed IP with its GeoIP and
-    ASN).
+    location or why it has none, the provider: the AS of the address the
+    location rests on, or of the one address observed; with more than one
+    address, each with its place and AS).
   - diagnostics, what the status rests on: the report's times (received,
     recorded by the node, valid until, last sign-in), instance and report
     number; the inventory's `desiredExecution` (the configuration the
@@ -352,8 +353,15 @@ its generated client only, and only what the controller delivers:
   Refusals are worded by code for the call (403, 409, 429, 404). Nothing is
   measured by the console, and nothing is shown that the controller did not
   send.
-- Not delivered by the controller: GeoIP data (no node has a location
-  yet), the install script and Agent releases; nothing stands in for them.
+- Places and networks (`lib/geo.ts`, one wording on every page): a GeoIP
+  result most specific first, the country by its name in the reader's
+  language ("Shibuya City, Tokyo, 日本"); an AS as `AS63949` and its
+  organization; an endpoint in the transport tab with its country and AS
+  number, the rest on hover. The datasets are imported on the Server's
+  host (`ip-datasets`); a node has a location only once it reports a
+  public endpoint.
+- Not delivered by the controller: the install script and Agent releases;
+  nothing stands in for them.
   What the console needs from the V2 API is in `v2-api-needs.md`.
 - What a role may do is the network's `actions`, as the controller computes
   them; the console never derives it from the role.

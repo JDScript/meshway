@@ -39,7 +39,7 @@ import { m } from "@/paraglide/messages.js"
 import { useNodeConfiguration } from "../-draft"
 import { statusText } from "../../-labels"
 import { ConfiguredListeners } from "./listeners"
-import { Runtime, SocketBlock } from "./runtime"
+import { EndpointGeo, Runtime, SocketBlock, type IpInfoOf } from "./runtime"
 
 /** A time as when, with how long ago or until; "expired" once past. */
 function TimeFact({
@@ -83,6 +83,7 @@ export function NodeTransport({
   const now = useNow(1_000)
   const configuration = useNodeConfiguration(networkId, nodeId, network)
   const view = stateOf(state.data, nodeId)
+  const ipInfo = view?.derived.ipInfo ?? {}
   const report = reportOf(view)
   const names = (id: string) => {
     const configured =
@@ -119,11 +120,13 @@ export function NodeTransport({
         nodeId={nodeId}
         configuration={configuration}
         report={full}
+        ipInfo={ipInfo}
         now={now}
       />
       {full ? (
         <ReportedOnly
           report={full}
+          ipInfo={ipInfo}
           configured={
             configuration.state.kind === "manager"
               ? Object.keys(
@@ -151,8 +154,14 @@ export function NodeTransport({
                   key={`${endpoint.socketId}-${endpoint.candidate.address}`}
                   className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-x-3 rounded-tile bg-fill-subtle px-3.5 py-2 text-row"
                 >
-                  <span className="truncate font-mono">
-                    {endpoint.candidate.address}
+                  <span className="flex min-w-0 items-baseline gap-2">
+                    <span className="truncate font-mono">
+                      {endpoint.candidate.address}
+                    </span>
+                    <EndpointGeo
+                      address={endpoint.candidate.address}
+                      ipInfo={ipInfo}
+                    />
                   </span>
                   <span className="text-meta text-muted-foreground">
                     {endpoint.network.toUpperCase()} ·{" "}
@@ -222,10 +231,12 @@ function ReportLine({
 /** What the report has that no configured listener names: dial and coordination sockets, listeners not configured. */
 function ReportedOnly({
   report,
+  ipInfo,
   configured,
   now,
 }: {
   report: NodeState
+  ipInfo: IpInfoOf
   /** The listener keys the current configuration holds; null when not readable. */
   configured: readonly string[] | null
   now: number
@@ -243,7 +254,7 @@ function ReportedOnly({
               return runtime ? (
                 <div key={key} className="flex flex-col gap-1">
                   <span className="px-1 font-mono text-row">{key}</span>
-                  <Runtime runtime={runtime} now={now} />
+                  <Runtime runtime={runtime} ipInfo={ipInfo} now={now} />
                 </div>
               ) : null
             })}
@@ -260,7 +271,12 @@ function ReportedOnly({
                 <span className="px-1 text-meta text-muted-foreground">
                   {resourceText(socket.resource)}
                 </span>
-                <SocketBlock id={id} socket={socket} now={now} />
+                <SocketBlock
+                  id={id}
+                  socket={socket}
+                  ipInfo={ipInfo}
+                  now={now}
+                />
               </div>
             ))}
           </div>

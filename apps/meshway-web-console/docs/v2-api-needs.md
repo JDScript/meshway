@@ -47,7 +47,7 @@
 - **加入链接与重置链接**：兑换前可以用 `inspect` 预览，不会消费；最终兑换时重新校验。
 - **实时观察**：`auto` 模式由 Controller 计算候选、执行端选择路径；`explicit` 模式固定路径。console 只在页面可见时续租。
 
-## 接入状态（后端 `8823cbec`，含配置契约变更 `e988b669`）
+## 接入状态（后端 `1f4efbbd`）
 
 console 已接入 `/api/v1` 下全部 Console 操作：
 
@@ -55,6 +55,7 @@ console 已接入 `/api/v1` 下全部 Console 操作：
 - 网络、成员、加入链接（签发人、使用者）和网络活动；
 - 配置：JSONC 和全部区段表单（出口规则的动作只有出口和直连，"不接管"只用于方案兜底）、validate（含规则集准备与监听器材料计划）、apply、历史、对照和恢复；按 `NetworkActions.readConfiguration` 决定读完整配置还是成员视图；
 - 配置诊断：按 `IssueCode` 和 `params` 本地化（节点按主机名，传输和规则集的 `reason` 按已知取值），问题挂在 pointer 所在的规则或字段下，并标到具体的值；`warnings` 显示在应用确认、对应规则下和源文件里；应用确认使用 `affectedNodeIds`、`identityChangedNodeIds`、`changedListeners`；
+- GeoIP／ASN：数据集由服务端主机的 `ip-datasets` 导入；console 显示 `derived.location`（地球与节点概况）和 `derived.ipInfo`（运营商、各地址、传输页 endpoint 的国家与 AS 号）。现在的 Node 还不上报 endpoint，所以真实节点仍没有位置；脚本节点上报 STUN endpoint 已验证整条链路（DB-IP Lite 数据集）。
 - 节点、节点运行 State（对端以 State 的 hostname 命名）、节点设置（成员通过 `getNodeSettings` 读取）、监听（`ListenerUpdate` 省略 WebSocket 响应头即保留，界面按名字显示）和节点密钥；
 - 接入密钥和设备授权；
 - 按 revision 的部署进度；
@@ -89,11 +90,11 @@ console 已接入 `/api/v1` 下全部 Console 操作：
 - 节点的版本兼容状态 `versionStatus`（current、outdated、unsupported），由服务端按兼容门槛判定。
 - `reassignAddresses`、`rotateMaterial`（editing.md 已不再列出，需要时重新定义）。
 - 安装脚本和 Agent 发布。
-- 可信 DNS 与 GeoIP 的数据输入，以及基于它们的自动方案。
+- 可信 DNS 的数据输入，以及基于它和 GeoIP 的自动方案。
 
 ## 待处理的问题
 
-以下按 `8823cbec` 加契约变更 `e988b669` 核对：契约按 `packages/protocol/openapi.json`；行为用同一份源码构建的隔离 Server 和真实 `meshwayd`（只有控制流程：接入、续租、保存配置、上报状态）验证。
+以下按 `1f4efbbd` 核对：契约按 `packages/protocol/openapi.json`；行为用同一份源码构建的隔离 Server 和真实 `meshwayd`（只有控制流程：接入、续租、保存配置、上报状态）验证。
 
 **已修复并已验证**（不再跟踪）：
 
@@ -158,7 +159,6 @@ Node 已有 `meshwayd` 的控制流程（接入、认证、续租、保存配置
 
 ### 需要产品决定
 
-- ~~GeoIP／ASN 数据集的部署入口~~：已定为 CLI。`ip-datasets --data-dir <data> import --kind geoip|asn --file <mmdb>`（另有 `status`／`lookup`），Server 启动时加载；见 ip-info.md「数据集部署」。没有管理 API，console 无需改动——导入后节点的 `derived.ipInfo`／`location` 自然出现。
 - 设备授权的浏览器链接格式。console 暂用 `/authorize-device/<enrollmentRequestId>`，需要和 Agent、App 一起定下来。
 - 两端都报告自己是发起方时 link 的判定：现在判为 `conflicting`，`inUse` 变成 null。
 - `--listen` 的默认端口：仍是 `127.0.0.1:8420`。

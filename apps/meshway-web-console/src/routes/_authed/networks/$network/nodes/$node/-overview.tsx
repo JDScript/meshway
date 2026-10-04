@@ -1,6 +1,5 @@
 import type {
   DerivedNodeState,
-  IpInfo,
   NodeInventoryView,
   StateView,
 } from "@meshway/control-client"
@@ -14,6 +13,7 @@ import { Tile } from "@/components/chrome/tile"
 import { Button } from "@/components/ui/button"
 import { useNow } from "@/hooks/use-now"
 import { agoTime, dateTime } from "@/lib/format"
+import { asnText, geoText, placeText } from "@/lib/geo"
 import {
   configurationSync,
   nodeLinks,
@@ -66,36 +66,6 @@ const syncTone = (sync: ConfigurationSync) =>
     : sync.kind === "applying" || sync.kind === "behind" || sync.kind === "none"
       ? "warning"
       : undefined
-
-/** A place a GeoIP result names, most specific first ("Seoul · KR"). */
-const placeOf = (data: {
-  city?: string | null
-  region?: string | null
-  country?: string | null
-}) =>
-  [...new Set([data.city, data.region, data.country].filter(Boolean))].join(
-    " · "
-  ) || m.nodes_geo_empty()
-
-function ipInfoText(ip: string, info: IpInfo): string {
-  const geo =
-    info.geoip.status === "available"
-      ? placeOf(info.geoip.data)
-      : info.geoip.status === "notFound"
-        ? m.nodes_geo_not_found()
-        : info.geoip.status === "unavailable"
-          ? locationAbsentLabel[info.geoip.reason]()
-          : m.nodes_geo_not_applicable()
-  const asn =
-    info.asn.status === "available"
-      ? `AS${info.asn.data.number}${info.asn.data.organization ? ` ${info.asn.data.organization}` : ""}`
-      : info.asn.status === "notFound"
-        ? m.nodes_asn_not_found()
-        : info.asn.status === "unavailable"
-          ? m.nodes_asn_unavailable()
-          : m.nodes_asn_not_applicable()
-  return `${ip} · ${geo} · ${asn}`
-}
 
 /**
  * What matters about a node first: how it is (its status, whether it runs
@@ -271,17 +241,27 @@ export function NodeOverview({
               {view ? <Place derived={view.derived} /> : muted("—")}
             </Tile>
           </div>
+          <div className={WIDE}>
+            <Tile label={m.nodes_location_asn()}>
+              {view ? <Provider derived={view.derived} /> : muted("—")}
+            </Tile>
+          </div>
         </div>
-        {view && Object.keys(view.derived.ipInfo).length > 0 ? (
+        {view && Object.keys(view.derived.ipInfo).length > 1 ? (
+          // More than one address: each with where it is and its network.
           <ul className="flex flex-col gap-1">
             {Object.entries(view.derived.ipInfo)
               .sort(([a], [b]) => (a < b ? -1 : 1))
               .map(([ip, info]) => (
                 <li
                   key={ip}
-                  className="truncate rounded-tile bg-fill-subtle px-3.5 py-2 font-mono text-meta"
+                  className="grid grid-cols-[minmax(0,12rem)_minmax(0,1fr)_minmax(0,1fr)] items-baseline gap-x-3 rounded-tile bg-fill-subtle px-3.5 py-2 text-meta"
                 >
-                  {ipInfoText(ip, info)}
+                  <span className="truncate font-mono">{ip}</span>
+                  <span className="truncate">{geoText(info)}</span>
+                  <span className="truncate text-muted-foreground">
+                    {asnText(info)}
+                  </span>
                 </li>
               ))}
           </ul>
@@ -292,12 +272,27 @@ export function NodeOverview({
 }
 
 function Place({ derived }: { derived: DerivedNodeState }) {
-  if (derived.location) return placeOf(derived.location.data)
+  if (derived.location)
+    return placeText(derived.location.data) ?? m.nodes_geo_empty()
   return muted(
     derived.locationAbsent
       ? locationAbsentLabel[derived.locationAbsent]()
       : m.nodes_location_none()
   )
+}
+
+/** The network of the address the location rests on, or of the one address observed. */
+function Provider({ derived }: { derived: DerivedNodeState }) {
+  const addresses = Object.keys(derived.ipInfo)
+  const address =
+    derived.location?.address ??
+    (addresses.length === 1 ? addresses[0] : undefined)
+  const info =
+    address !== undefined && Object.hasOwn(derived.ipInfo, address)
+      ? derived.ipInfo[address]
+      : undefined
+  if (!info) return muted("—")
+  return info.asn.status === "available" ? asnText(info) : muted(asnText(info))
 }
 
 function Address({ label, value }: { label: string; value: string | null }) {

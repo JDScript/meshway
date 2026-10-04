@@ -153,5 +153,7 @@
   "state_role_exit": "出口",
   "state_role_origin": "起点",
   "state_role_relay": "中继",
-  "state_role_target": "终点"
+  "state_role_target": "终点",
+  "location_source_stun": "STUN 观测",
+  "location_source_interface": "网卡地址"
 }

@@ -153,5 +153,7 @@
   "state_role_exit": "Exit",
   "state_role_origin": "Origin",
   "state_role_relay": "Relay",
-  "state_role_target": "Target"
+  "state_role_target": "Target",
+  "location_source_stun": "STUN observation",
+  "location_source_interface": "Interface address"
 }

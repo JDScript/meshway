@@ -22,8 +22,6 @@
   "overview_link_initiator": "{node} 发起",
   "overview_link_unlocated_end": "未画出",
   "overview_location_approximate": "GeoIP 近似位置",
-  "overview_location_source_stun": "STUN 观测",
-  "overview_location_source_interface": "本机接口地址",
   "overview_location_address": "依据地址",
   "overview_location_dataset": "数据集",
   "overview_location_observed": "观测",
