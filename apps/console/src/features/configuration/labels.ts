@@ -1,5 +1,4 @@
 import type {
-  ActivityActor,
   ChangeKind,
   ConfigurationChangeCause,
 } from "@meshway/control-client"
@@ -55,21 +54,4 @@ export const changeKindLabel: Record<ChangeKind, () => string> = {
   added: () => m.configuration_change_added(),
   removed: () => m.configuration_change_removed(),
   changed: () => m.configuration_change_changed(),
-}
-
-/**
- * Who made a revision: this account, a member by email when the member
- * list is readable here, else the user's ID; or the controller itself.
- */
-export function actorName(
-  actor: ActivityActor,
-  selfId: string | null,
-  emails: ReadonlyMap<string, string>
-): string {
-  if (actor.type === "system") return m.configuration_actor_system()
-  if (actor.userId === selfId) return m.configuration_actor_you()
-  return (
-    emails.get(actor.userId) ??
-    m.configuration_actor_user({ id: actor.userId.slice(0, 8) })
-  )
 }

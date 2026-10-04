@@ -14,13 +14,8 @@
   "configuration_section_document": "Whole document",
   "configuration_entries": [
     {
-      "declarations": [
-        "input count",
-        "local countPlural = count: plural"
-      ],
-      "selectors": [
-        "countPlural"
-      ],
+      "declarations": ["input count", "local countPlural = count: plural"],
+      "selectors": ["countPlural"],
       "match": {
         "countPlural=one": "{count} entry",
         "countPlural=other": "{count} entries"
@@ -42,13 +37,8 @@
   "configuration_source_valid": "JSONC syntax is valid",
   "configuration_source_syntax": [
     {
-      "declarations": [
-        "input count",
-        "local countPlural = count: plural"
-      ],
-      "selectors": [
-        "countPlural"
-      ],
+      "declarations": ["input count", "local countPlural = count: plural"],
+      "selectors": ["countPlural"],
       "match": {
         "countPlural=one": "{count} syntax error",
         "countPlural=other": "{count} syntax errors"
@@ -105,13 +95,8 @@
   "configuration_checking": "Checking",
   "configuration_invalid_toast": [
     {
-      "declarations": [
-        "input count",
-        "local countPlural = count: plural"
-      ],
-      "selectors": [
-        "countPlural"
-      ],
+      "declarations": ["input count", "local countPlural = count: plural"],
+      "selectors": ["countPlural"],
       "match": {
         "countPlural=one": "Refused by the controller: {count} problem",
         "countPlural=other": "Refused by the controller: {count} problems"
@@ -146,13 +131,8 @@
   "configuration_applied_targets": "Applied r{revision}: {targets} target nodes",
   "configuration_history_count": [
     {
-      "declarations": [
-        "input count",
-        "local countPlural = count: plural"
-      ],
-      "selectors": [
-        "countPlural"
-      ],
+      "declarations": ["input count", "local countPlural = count: plural"],
+      "selectors": ["countPlural"],
       "match": {
         "countPlural=one": "{count} revision",
         "countPlural=other": "{count} revisions"
@@ -176,7 +156,6 @@
   "configuration_history_hide": "Hide configuration",
   "configuration_history_restore": "Restore this revision",
   "configuration_history_no_changes": "No configuration changes",
-  "configuration_actor_you": "You",
   "configuration_actor_user": "User {id}",
   "configuration_actor_system": "System",
   "configuration_cause_networkCreated": "Network created",
@@ -214,13 +193,8 @@
   "configuration_progress_open": "View deployment",
   "configuration_commit_fields": [
     {
-      "declarations": [
-        "input count",
-        "local countPlural = count: plural"
-      ],
-      "selectors": [
-        "countPlural"
-      ],
+      "declarations": ["input count", "local countPlural = count: plural"],
+      "selectors": ["countPlural"],
       "match": {
         "countPlural=one": "{count} field will not save",
         "countPlural=other": "{count} fields will not save"
@@ -231,13 +205,8 @@
   "configuration_notice_open_source": "Open the source",
   "configuration_notice_operations": [
     {
-      "declarations": [
-        "input count",
-        "local countPlural = count: plural"
-      ],
-      "selectors": [
-        "countPlural"
-      ],
+      "declarations": ["input count", "local countPlural = count: plural"],
+      "selectors": ["countPlural"],
       "match": {
         "countPlural=one": "The draft holds {count} form edit. Apply or discard it to edit the source.",
         "countPlural=other": "The draft holds {count} form edits. Apply or discard them to edit the source."
@@ -483,9 +452,7 @@
         "input created",
         "local entriesPlural = entries: plural"
       ],
-      "selectors": [
-        "entriesPlural"
-      ],
+      "selectors": ["entriesPlural"],
       "match": {
         "entriesPlural=one": "{entries} entry · digest {digest} · made {created}",
         "entriesPlural=other": "{entries} entries · digest {digest} · made {created}"

@@ -120,7 +120,6 @@
   "configuration_history_hide": "收起配置",
   "configuration_history_restore": "恢复此版本",
   "configuration_history_no_changes": "没有配置内容变化",
-  "configuration_actor_you": "你",
   "configuration_actor_user": "用户 {id}",
   "configuration_actor_system": "系统",
   "configuration_cause_networkCreated": "创建网络",
