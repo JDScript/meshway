@@ -5,7 +5,7 @@ import type {
   PreparationRequirement,
 } from "@meshway/control-client"
 
-import { withValue, type FormPart, type FormValues } from "./operations.ts"
+import { withValue, type FormPart, type FormValues } from "./operations"
 
 // One configuration draft: what this sign-in is editing in one network,
 // against the revision it was loaded at. These are its transitions, kept

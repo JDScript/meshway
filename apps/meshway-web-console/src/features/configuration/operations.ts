@@ -12,8 +12,8 @@ import type {
   TopologyRule,
 } from "@meshway/control-client"
 
-import { sameRouting, writtenRouting } from "./routing.ts"
-import { sameRuleSets, writtenRuleSet, type RuleSetMap } from "./rule-sets.ts"
+import { sameRouting, writtenRouting } from "./routing"
+import { sameRuleSets, writtenRuleSet, type RuleSetMap } from "./rule-sets"
 
 // What the section forms put in the draft: one typed operation per edited
 // part, holding that part's final value (`replaceAccess` with every rule,

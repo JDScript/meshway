@@ -9,7 +9,7 @@ import type {
   StateView,
 } from "@meshway/control-client"
 
-import type { LinkLook, Scene, SceneLink, SceneNode } from "../globe/scene.ts"
+import type { LinkLook, Scene, SceneLink, SceneNode } from "../globe/scene"
 
 // The overview's reading of the network's State: which nodes the
 // controller located, which it did not and why, and which links can be

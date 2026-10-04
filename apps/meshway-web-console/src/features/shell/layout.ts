@@ -1,4 +1,4 @@
-import type { Insets } from "../globe/store.ts"
+import type { Insets } from "../globe/store"
 
 // Where the floating surfaces sit, in CSS pixels. The surfaces and the
 // globe both read these numbers: the globe centres itself (and shrinks if it

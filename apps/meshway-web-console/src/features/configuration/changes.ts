@@ -1,6 +1,6 @@
 import type { ConfigurationChange } from "@meshway/control-client"
 
-import { pointerSegments } from "./jsonc.ts"
+import { pointerSegments } from "./jsonc"
 
 // The controller's change list (JSON Pointer and kind, one per effective
 // change), grouped by the configuration's top-level sections for reading,

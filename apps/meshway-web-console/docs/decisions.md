@@ -357,9 +357,9 @@ its generated client only, and only what the controller delivers:
 | Stack | Vite, TanStack Router (file routes, typed params and search), TanStack Query, shadcn (Base UI, preset `b0` = `base-nova`, pointer; only the pieces in use are kept, the CLI adds others back), Paraglide (zh, en). |
 | BFF | None. The browser calls the controller through the generated `@meshway/control-client` with Zod validation. |
 | Origin | One origin. The controller serves the built `dist/` with an `index.html` fallback; development proxies `/api` to the controller named by `MESHWAY_CONTROLLER_URL`. |
-| Copy | Every string lives in `messages/{zh,en}.json` (shared) or `messages/<feature>/{zh,en}.json`; zh is the base locale, and `src/messages.test.ts` keeps both in step. Interface text states facts only: no explanations of what the display means or of how it was drawn. |
+| Copy | Every string lives in `messages/{zh,en}.json` (shared) or `messages/<feature>/{zh,en}.json`; zh is the base locale, and `tests/messages.test.ts` keeps both in step. Interface text states facts only: no explanations of what the display means or of how it was drawn. |
 | Routes | Resources are nested and plural: `/networks/<network_id>/<page>`, e.g. `/networks/<id>/overview?node=<node_id>`. `/networks/<id>` redirects to its overview; `/` to the remembered or first network. Selection and filters live in validated search params. |
-| Source layout | `routes/` only validate params and search and mount a feature. `features/<feature>/` holds a feature's page, panel and workspace, its `navigation`, `url`, `queries`, `labels` and pure models, with tests beside them. `components/ui/` are shadcn originals (lightly adjusted), `components/chrome/` our shared components, `hooks/` shared React hooks, `lib/` helpers without React (a hook only beside the store it reads, as in `lib/locale`). |
+| Source layout | `routes/` only validate params and search and mount a feature. `features/<feature>/` holds a feature's page, panel and workspace, its `navigation`, `url`, `queries`, `labels` and pure models. Tests run with Vitest in Node from `tests/`, which mirrors `src/`. `components/ui/` are shadcn originals (lightly adjusted), `components/chrome/` our shared components, `hooks/` shared React hooks, `lib/` helpers without React (a hook only beside the store it reads, as in `lib/locale`). |
 
 ## Sessions
 

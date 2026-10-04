@@ -3,18 +3,18 @@ import type {
   ConfigurationView,
 } from "@meshway/control-client"
 
-import { addressFamily, inPools, sameAddress } from "./addresses.ts"
-import { dialerProblems } from "./dialer-model.ts"
-import type { LocalProblem } from "./form-problems.ts"
-import { pointerOf } from "./jsonc.ts"
+import { addressFamily, inPools, sameAddress } from "./addresses"
+import { dialerProblems } from "./dialer-model"
+import type { LocalProblem } from "./form-problems"
+import { pointerOf } from "./jsonc"
 import {
   addressesOf,
   isDeleted,
   nodeOps,
   settingsOf,
   tagsOf,
-} from "./node-operations.ts"
-import { valueOf } from "./operations.ts"
+} from "./node-operations"
+import { valueOf } from "./operations"
 
 // What a node's edits cannot be saved with, found before asking the
 // controller (nodes.md, identity.md, addressing.md), at the pointers the

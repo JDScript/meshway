@@ -13,7 +13,7 @@
     "check": "pnpm run typecheck && pnpm run lint && pnpm run format:check",
     "format": "prettier --write \"**/*.{ts,tsx,css,json}\"",
     "format:check": "prettier --check \"**/*.{ts,tsx,css,json}\"",
-    "test": "node --test \"src/**/*.test.ts\""
+    "test": "pnpm run i18n && vitest run"
   },
   "dependencies": {
     "@base-ui/react": "^1.8.0",
@@ -64,6 +64,7 @@
     "tailwindcss": "^4",
     "typescript": "~6.0.2",
     "typescript-eslint": "^8",
-    "vite": "^8"
+    "vite": "^8",
+    "vitest": "^5.0.3"
   }
 }

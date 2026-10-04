@@ -5,7 +5,7 @@ import type {
   ProbeKind,
 } from "@meshway/control-client"
 
-import type { HistoryWindow } from "./window.ts"
+import type { HistoryWindow } from "./window"
 
 // Probe buckets from the controller, as series a chart can draw: one per
 // source, probe kind, path, link and transport. The controller also splits

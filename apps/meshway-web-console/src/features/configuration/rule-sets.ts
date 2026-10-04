@@ -4,8 +4,8 @@ import type {
   RuleSetView,
 } from "@meshway/control-client"
 
-import { pointerOf } from "./jsonc.ts"
-import { badDestination, matchKind } from "./routing.ts"
+import { pointerOf } from "./jsonc"
+import { badDestination, matchKind } from "./routing"
 
 // Rule sets as the form edits them (rule-sets.md): inline prefixes and
 // domain suffixes, or a remote HTTPS source the controller downloads and

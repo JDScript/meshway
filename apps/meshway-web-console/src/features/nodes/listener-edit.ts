@@ -6,14 +6,14 @@ import type {
 } from "@meshway/control-client"
 import { zListener } from "@meshway/control-client/schemas"
 
-import { listenerFromView } from "../configuration/listener-update.ts"
+import { listenerFromView } from "../configuration/listener-update"
 import {
   listenerProblems,
   protocolOf,
   type ListenerFields,
   type ListenerProblem,
   type Preset,
-} from "./listener-model.ts"
+} from "./listener-model"
 
 // A configured listener edited in a node's workspace, or one added to it:
 // the add-node inputs (transport, port, public address, bind address, TLS

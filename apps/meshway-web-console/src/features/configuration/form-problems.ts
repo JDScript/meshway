@@ -4,18 +4,18 @@ import type {
   ConfigurationView,
 } from "@meshway/control-client"
 
-import { dialerProblems } from "./dialer-model.ts"
-import { pointerOf, pointerSegments, type JsonPath } from "./jsonc.ts"
-import { nodeProblems } from "./node-problems.ts"
+import { dialerProblems } from "./dialer-model"
+import { pointerOf, pointerSegments, type JsonPath } from "./jsonc"
+import { nodeProblems } from "./node-problems"
 import {
   edits,
   FORM_PARTS,
   valueOf,
   type FormPart,
   type FormValues,
-} from "./operations.ts"
-import { routingProblems, type RoutingCode } from "./routing.ts"
-import { ruleSetProblems, type RuleSetCode } from "./rule-sets.ts"
+} from "./operations"
+import { routingProblems, type RoutingCode } from "./routing"
+import { ruleSetProblems, type RuleSetCode } from "./rule-sets"
 import {
   cidrFamily,
   isDomain,
@@ -25,7 +25,7 @@ import {
   isNamed,
   isProtocol,
   selectorKind,
-} from "./selectors.ts"
+} from "./selectors"
 
 // What a form's value cannot be saved with, found before asking the
 // controller: empty sets the reference requires, values not in the form it

@@ -7,8 +7,8 @@ import type {
   RoutingProfile,
 } from "@meshway/control-client"
 
-import { pointerOf, type JsonPath } from "./jsonc.ts"
-import { cidrFamily, isDomain, isIpv4, selectorKind } from "./selectors.ts"
+import { pointerOf, type JsonPath } from "./jsonc"
+import { cidrFamily, isDomain, isIpv4, selectorKind } from "./selectors"
 
 // The routing section as the form edits it (routing.md): Mesh routes and
 // egress rules are ordered first-match lists; profiles are a named map;

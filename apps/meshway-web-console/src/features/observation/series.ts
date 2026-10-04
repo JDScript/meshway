@@ -1,4 +1,4 @@
-import type { SegmentSample } from "./record.ts"
+import type { SegmentSample } from "./record"
 
 // The samples an observation delivered, as a chart and counts. A reply with
 // its timing is a point; a timeout, a failed send or a window still open is

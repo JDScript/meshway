@@ -1,6 +1,6 @@
 import type { ObservationTask } from "@meshway/control-client"
 
-import { isActive } from "./record.ts"
+import { isActive } from "./record"
 
 // When to renew a subscription: at the controller's `renewAfter` (a renewal
 // before it is refused), and only before its lease (`subscriberExpiresAt`)

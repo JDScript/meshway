@@ -7,8 +7,8 @@ import type {
   NodeSettingsView,
 } from "@meshway/control-client"
 
-import { listenerFromView, writesSecrets } from "./listener-update.ts"
-import { canonical, dialerUpdate, sameDialers } from "./operations.ts"
+import { listenerFromView, writesSecrets } from "./listener-update"
+import { canonical, dialerUpdate, sameDialers } from "./operations"
 
 // What a node's workspace puts in the draft: per node, at most one
 // operation per target holding its final value. Settings

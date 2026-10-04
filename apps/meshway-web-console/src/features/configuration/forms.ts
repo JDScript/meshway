@@ -1,6 +1,6 @@
-import { sectionOf, type SectionKey } from "./changes.ts"
-import { pointerSegments } from "./jsonc.ts"
-import type { FormPart } from "./operations.ts"
+import { sectionOf, type SectionKey } from "./changes"
+import { pointerSegments } from "./jsonc"
+import type { FormPart } from "./operations"
 
 // Which sections have a form, which parts of the configuration each edits,
 // and which form a controller diagnostic belongs to.

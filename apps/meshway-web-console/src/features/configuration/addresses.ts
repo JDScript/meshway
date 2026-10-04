@@ -1,4 +1,4 @@
-import { isIpv4, isIpv6, type Family } from "./selectors.ts"
+import { isIpv4, isIpv6, type Family } from "./selectors"
 
 // Mesh addresses against the address pools (addressing.md): an address is
 // assignable when it is an address of its family inside one of that

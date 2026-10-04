@@ -1,6 +1,6 @@
 import type { ActivityActor } from "@meshway/control-client"
 
-import { shortId } from "./model.ts"
+import { shortId } from "./model"
 
 // Who did something, as the controller recorded it then: a user by the
 // email they had at the time (`email`, null when the controller has no
