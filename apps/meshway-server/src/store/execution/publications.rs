@@ -1,6 +1,8 @@
 use super::{
     authentication::authorize_node,
-    bytes, current_configuration, id, identity_digest,
+    bytes,
+    cache::{self, HistoricalTarget},
+    current_configuration, id, identity_digest,
     instances::{current_instance, grant_lease},
     json, now, subjects, user_binding, uuid,
 };
@@ -19,6 +21,8 @@ use meshway_policy::compile::{self, CompilationInput};
 use meshway_protocol::execution::*;
 use rusqlite::{OptionalExtension, Transaction, params};
 use std::collections::BTreeMap;
+
+const MAX_DEMAND_TTL_SECONDS: u16 = 300;
 
 pub(crate) fn select_profile(
     tx: &Transaction<'_>,
@@ -145,8 +149,12 @@ fn active_publications(
     while let Some(row) = rows.next()? {
         let publication = id(row.get(0)?)?;
         let payload: Vec<u8> = row.get(1)?;
-        let plain = sealer.open_execution(network, publication, &payload)?;
-        publications.insert(publication, json(plain.as_bytes())?);
+        match cache::read(tx, sealer, network, publication, &payload)? {
+            cache::Stored::Current(compiled) => {
+                publications.insert(publication, compiled);
+            }
+            cache::Stored::Obsolete { .. } => cache::retire(tx, network, publication, now()?)?,
+        }
     }
     Ok(publications)
 }
@@ -339,17 +347,20 @@ pub(crate) fn target_for_node(
     node: NodeId,
 ) -> Result<Option<(PublicationId, CompiledNode)>, Error> {
     let row:Option<(Vec<u8>,Vec<u8>)>=tx.query_row("SELECT x.id,x.payload FROM node_execution e JOIN execution_publications x ON x.network_id=e.network_id AND x.id=e.target_publication_id WHERE e.network_id=?1 AND e.node_id=?2 AND x.withdrawn_at IS NULL",params![network.as_uuid().as_bytes().as_slice(),node.as_uuid().as_bytes().as_slice()],|r|Ok((r.get(0)?,r.get(1)?))).optional()?;
-    row.map(|(publication, payload)| {
-        let publication = id(publication)?;
-        let plain = sealer.open_execution(network, publication, &payload)?;
-        let mut compiled: CompiledPublication = json(plain.as_bytes())?;
-        let node = compiled
-            .nodes
-            .remove(&node)
-            .ok_or(Error::decode("execution_publications.payload"))?;
-        Ok((publication, node))
-    })
-    .transpose()
+    let Some((publication, payload)) = row else {
+        return Ok(None);
+    };
+    let publication = id(publication)?;
+    let Some(mut compiled) = cache::read(tx, sealer, network, publication, &payload)?.current()
+    else {
+        cache::retire(tx, network, publication, now()?)?;
+        return Ok(None);
+    };
+    let node = compiled
+        .nodes
+        .remove(&node)
+        .ok_or(Error::decode("execution_publications.payload"))?;
+    Ok(Some((publication, node)))
 }
 pub(crate) use target as current_target;
 pub(super) fn historical_target(
@@ -358,7 +369,19 @@ pub(super) fn historical_target(
     p: &NodePrincipal,
     reference: &ConfigurationRef,
 ) -> Result<Option<CompiledNode>, Error> {
-    historical_target_for_node(tx, sealer, p.network, p.node, reference)
+    Ok(
+        historical_target_for_node(tx, sealer, p.network, p.node, reference)?
+            .and_then(|target| target.current),
+    )
+}
+
+pub(super) fn historical_reference(
+    tx: &Transaction<'_>,
+    sealer: &Sealer,
+    p: &NodePrincipal,
+    reference: &ConfigurationRef,
+) -> Result<bool, Error> {
+    Ok(historical_target_for_node(tx, sealer, p.network, p.node, reference)?.is_some())
 }
 
 fn historical_target_for_node(
@@ -367,20 +390,20 @@ fn historical_target_for_node(
     network: NetworkId,
     node: NodeId,
     reference: &ConfigurationRef,
-) -> Result<Option<CompiledNode>, Error> {
+) -> Result<Option<HistoricalTarget>, Error> {
     let payload:Option<Vec<u8>>=tx.query_row("SELECT payload FROM execution_publications WHERE network_id=?1 AND id=?2 AND revision=?3",params![network.as_uuid().as_bytes().as_slice(),reference.execution_publication.as_uuid().as_bytes().as_slice(),reference.revision.get() as i64],|r|r.get(0)).optional()?;
     let Some(payload) = payload else {
         return Ok(None);
     };
-    let mut compiled: CompiledPublication = json(
-        sealer
-            .open_execution(network, reference.execution_publication, &payload)?
-            .as_bytes(),
-    )?;
-    Ok(compiled
-        .nodes
-        .remove(&node)
-        .filter(|n| n.digest == reference.digest))
+    Ok(cache::read(
+        tx,
+        sealer,
+        network,
+        reference.execution_publication,
+        &payload,
+    )?
+    .historical(node)
+    .filter(|target| &target.reference == reference))
 }
 
 /// Only accepted evidence for the current fenced instance enters historical
@@ -392,7 +415,7 @@ pub(crate) fn receipt_history_targets(
     node: NodeId,
     instance: InstanceId,
     now: i64,
-) -> Result<Vec<CompiledNode>, Error> {
+) -> Result<Vec<HistoricalTarget>, Error> {
     let mut statement = tx.prepare(
         "SELECT r.publication_id,x.revision,r.digest FROM execution_receipts r
          JOIN execution_publications x ON x.network_id=r.network_id AND x.id=r.publication_id
@@ -450,7 +473,7 @@ pub(crate) fn recent_targets_for_node(
     network: NetworkId,
     node: NodeId,
     now: i64,
-) -> Result<Vec<CompiledNode>, Error> {
+) -> Result<Vec<HistoricalTarget>, Error> {
     let mut statement = tx.prepare(
         "SELECT id,payload FROM execution_publications WHERE network_id=?1 AND created_at>=?2
          ORDER BY sequence DESC LIMIT 8",
@@ -468,12 +491,9 @@ pub(crate) fn recent_targets_for_node(
     let mut targets = Vec::new();
     for (publication, payload) in rows {
         let publication: PublicationId = id(publication)?;
-        let mut compiled: CompiledPublication = json(
-            sealer
-                .open_execution(network, publication, &payload)?
-                .as_bytes(),
-        )?;
-        if let Some(target) = compiled.nodes.remove(&node) {
+        if let Some(target) =
+            cache::read(tx, sealer, network, publication, &payload)?.historical(node)
+        {
             targets.push(target);
         }
     }
@@ -490,8 +510,9 @@ pub(crate) fn check_publication(
     now: i64,
 ) -> Result<(), Error> {
     let payload:Vec<u8>=tx.query_row("SELECT x.payload FROM execution_publications x JOIN networks n ON n.id=x.network_id AND n.current_revision=x.revision WHERE x.network_id=?1 AND x.id=?2 AND x.withdrawn_at IS NULL",params![network.as_uuid().as_bytes().as_slice(),publication.as_uuid().as_bytes().as_slice()],|r|r.get(0)).optional()?.ok_or(Error::BindingConflict)?;
-    let plain = sealer.open_execution(network, publication, &payload)?;
-    let compiled: CompiledPublication = json(plain.as_bytes())?;
+    let compiled = cache::read(tx, sealer, network, publication, &payload)?
+        .current()
+        .ok_or(Error::BindingConflict)?;
     let (_, cfg, bindings) = current_configuration(tx, sealer, network)?;
     let current = trusted_inventory(tx, network, &cfg, &subjects(tx, network, &bindings)?)?;
     let node = compiled.nodes.get(&node).ok_or(Error::BindingConflict)?;
@@ -521,15 +542,21 @@ pub(super) fn refresh_expired_demands(
     network: NetworkId,
     now: i64,
 ) -> Result<bool, Error> {
-    if tx.execute(
-        "UPDATE execution_demands SET cancelled_at=?2 WHERE network_id=?1 AND expires_at<=?2 AND cancelled_at IS NULL",
-        params![network.as_uuid().as_bytes().as_slice(), now],
-    )? > 0
-    {
+    if retire_expired_demands(tx, network, now)? {
         publish(tx, sealer, network, "refresh", now)?;
         return Ok(true);
     }
     Ok(false)
+}
+fn retire_expired_demands(
+    tx: &Transaction<'_>,
+    network: NetworkId,
+    now: i64,
+) -> Result<bool, Error> {
+    Ok(tx.execute(
+        "UPDATE execution_demands SET cancelled_at=?2 WHERE network_id=?1 AND expires_at<=?2 AND cancelled_at IS NULL",
+        params![network.as_uuid().as_bytes().as_slice(), now],
+    )? > 0)
 }
 pub(crate) fn revoke_execution(
     tx: &Transaction<'_>,
@@ -692,11 +719,9 @@ pub(crate) fn configuration_targets(
             params![network.as_uuid().as_bytes().as_slice(), publication.as_uuid().as_bytes().as_slice(), revision.get() as i64],
             |row| row.get(0),
         )?;
-        let compiled: CompiledPublication = json(
-            sealer
-                .open_execution(network, *publication, &payload)?
-                .as_bytes(),
-        )?;
+        let compiled = cache::read(tx, sealer, network, *publication, &payload)?
+            .current()
+            .ok_or(Error::BindingConflict)?;
         for (node, slice) in compiled.nodes {
             if slice.configuration.network_id != network || slice.configuration.node_id != node
                 || slice.configuration.revision != revision || slice.configuration.publication != *publication
@@ -716,7 +741,7 @@ pub(crate) fn demand(
     token: [u8; 32],
     request: DemandRequest,
 ) -> Result<(DemandResponse, Vec<Effect>), Error> {
-    if !(1..=300).contains(&request.duration_seconds) {
+    if !(1..=MAX_DEMAND_TTL_SECONDS).contains(&request.duration_seconds) {
         return Err(Error::InvalidRequest);
     }
     let now = now()?;
@@ -797,6 +822,100 @@ pub(crate) fn demand(
         }],
     ))
 }
+pub(crate) fn renew_demand(
+    tx: &Transaction<'_>,
+    sealer: &Sealer,
+    boot: InstanceId,
+    token: [u8; 32],
+    request: RenewDemandRequest,
+) -> Result<(DemandResponse, Vec<Effect>), Error> {
+    let now = now()?;
+    let p = authorize_node(tx, sealer, boot, token, now)?;
+    current_instance(tx, boot, &p, &request.instance, now)?;
+    // Scope and liveness are checked before considering an idempotent replay.
+    // Neither a late retry nor a replacement process can resurrect this intent.
+    let previous: Option<(Vec<u8>, i64)> = tx
+        .query_row(
+            "SELECT payload,expires_at FROM execution_demands
+         WHERE network_id=?1 AND node_id=?2 AND id=?3 AND instance_id=?4
+         AND expires_at>?5 AND cancelled_at IS NULL",
+            params![
+                p.network.as_uuid().as_bytes().as_slice(),
+                p.node.as_uuid().as_bytes().as_slice(),
+                request.request_id.as_uuid().as_bytes().as_slice(),
+                request.instance.instance_id.as_uuid().as_bytes().as_slice(),
+                now
+            ],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .optional()?;
+    let (payload, expires) = previous.ok_or(Error::BindingConflict)?;
+    let mut demand: Demand = json(&payload)?;
+    if demand.id != request.request_id
+        || demand.source != p.node
+        || demand.expires_at_ms != expires as u64
+    {
+        return Err(Error::decode("execution_demands.payload"));
+    }
+    let extended = request.expires_at_ms > demand.expires_at_ms;
+    let changed = if extended {
+        let requested = i64::try_from(request.expires_at_ms).map_err(|_| Error::InvalidRequest)?;
+        let instance_expires: i64 = tx.query_row(
+            "SELECT instance_expires_at FROM node_execution WHERE network_id=?1 AND node_id=?2",
+            params![
+                p.network.as_uuid().as_bytes().as_slice(),
+                p.node.as_uuid().as_bytes().as_slice()
+            ],
+            |row| row.get(0),
+        )?;
+        if requested <= now
+            || requested > instance_expires
+            || requested > now + i64::from(MAX_DEMAND_TTL_SECONDS) * 1000
+        {
+            return Err(Error::InvalidRequest);
+        }
+        demand.expires_at_ms = request.expires_at_ms;
+        // Keep the original create digest: retrying create never extends expiry.
+        tx.execute(
+            "UPDATE execution_demands SET payload=?4,expires_at=?5 WHERE network_id=?1 AND node_id=?2 AND id=?3",
+            params![p.network.as_uuid().as_bytes().as_slice(), p.node.as_uuid().as_bytes().as_slice(),
+                request.request_id.as_uuid().as_bytes().as_slice(), bytes(&demand)?, requested],
+        )?;
+        // Retire expired rows in the same transaction as the complete snapshot.
+        retire_expired_demands(tx, p.network, now)?;
+        publish(tx, sealer, p.network, "demand", now)?;
+        grant_lease(tx, sealer, &p, now)?;
+        true
+    } else {
+        // Cleanup may withdraw other expired permits, but replay itself neither
+        // publishes nor grants an execution lease.
+        refresh_expired_demands(tx, sealer, p.network, now)?
+    };
+    // An unavailable decision can be identical after renewal, so publication
+    // deduplication may retain the source's previous immutable target.
+    let (publication, target) = target(tx, sealer, &p)?.ok_or(Error::BindingConflict)?;
+    check_publication(tx, sealer, p.network, p.node, publication, now)?;
+    let decision = target
+        .configuration
+        .decisions
+        .get(&request.request_id)
+        .cloned()
+        .ok_or(Error::BindingConflict)?;
+    Ok((
+        DemandResponse {
+            publication,
+            decision,
+        },
+        if changed {
+            vec![Effect::Progress {
+                network_id: p.network,
+            }]
+        } else {
+            Vec::new()
+        },
+    ))
+}
+
 pub(crate) fn cancel_demand(
     tx: &Transaction<'_>,
     sealer: &Sealer,

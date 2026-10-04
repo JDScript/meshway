@@ -1,6 +1,6 @@
 //! Complete, immutable node execution targets. No runtime state grants authority.
 use crate::{
-    DnsConfiguration, NodeAddresses, NodeIdentity,
+    AddressPools, DnsConfiguration, NodeAddresses, NodeIdentity,
     object::{object, tagged},
 };
 use meshway_model::{BoundNodeKey, Digest, NetworkId, NodeId, PublicationId, RequestId, Revision};
@@ -97,6 +97,21 @@ tagged! { pub enum DemandDecision {
     Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize, utoipa::ToSchema,
 )]
 #[serde(rename_all = "camelCase")]
+pub enum LocalEgressAction {
+    Direct,
+    Unmanaged,
+}
+object! { pub struct LocalEgressPermit {
+    pub demand_id: RequestId, pub source: NodeId, pub target: BusinessTarget,
+    pub protocol: BusinessProtocol, pub port: Option<Port>, pub profile: String,
+    pub action: LocalEgressAction,
+    #[serde(rename="expiresAt", with="meshway_model::timestamp")]
+    pub expires_at_ms: u64 [value_type=chrono::DateTime<chrono::Utc>],
+} }
+#[derive(
+    Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize, utoipa::ToSchema,
+)]
+#[serde(rename_all = "camelCase")]
 pub enum UnavailableReason {
     Unauthorized,
     NoPath,
@@ -106,22 +121,39 @@ pub enum UnavailableReason {
     InvalidProfile,
     InactiveNode,
 }
+tagged! { pub enum DnsEgress {
+    NoExit,
+    Unavailable { reason: DnsEgressUnavailable },
+} }
+#[derive(
+    Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize, utoipa::ToSchema,
+)]
+#[serde(rename_all = "camelCase")]
+pub enum DnsEgressUnavailable {
+    ExitPlanRequired,
+}
 object! { pub struct DnsExecution {
     pub settings: DnsConfiguration,
     pub mesh_hosts: BTreeMap<String, NodeAddresses>,
     pub associations: Vec<TrustedDnsAssociation>,
     /// Regular resolution follows this selection; explicit resolver exceptions retain useWithExit.
     pub profile: String,
+    /// Proved absence of exit selection only; never permission to open a socket.
+    pub egress: DnsEgress,
 } }
 object! { pub struct NodeConfiguration {
     pub network_id: NetworkId, pub node_id: NodeId, pub revision: Revision,
     pub publication: PublicationId, pub dependency_digest: Digest,
     pub enabled: bool, pub hostname: String, pub identity: NodeIdentity,
     pub addresses: NodeAddresses, pub self_keys: TrustedNode,
+    /// Complete managed capture ranges, never peer inventory or business authority.
+    pub mesh_address_pools: AddressPools,
     pub listeners: BTreeMap<String, PreparedListener>, pub dialers: BTreeMap<String, DialCandidate>,
     pub peers: BTreeMap<NodeId, PeerConfiguration>,
     /// Includes origin, relay and receiver admission. Absence rejects a new flow.
     pub permits: BTreeMap<RequestId, PathPermit>,
+    /// Source-only, exact local execution bindings. Never Mesh/path admission.
+    pub local_egress: BTreeMap<RequestId, LocalEgressPermit>,
     /// Authenticated measurement only. Never accepted by business packet admission.
     pub diagnostics: BTreeMap<meshway_model::ObservationId, DiagnosticPermit>,
     pub decisions: BTreeMap<RequestId, DemandDecision>, pub dns: DnsExecution,

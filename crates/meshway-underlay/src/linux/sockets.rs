@@ -1,0 +1,558 @@
+use meshway_configuration::execution::DialCandidate;
+use meshway_control::ExecutionSnapshot;
+use meshway_model::NodeId;
+use meshway_transport_spec::{
+    DialParameters, Endpoint, Listener, PreparedListener, SocketOptions, TcpOptions,
+    TransportProtocol,
+};
+use socket2::SockRef;
+use std::{
+    fmt, io,
+    net::{IpAddr, SocketAddr},
+    pin::Pin,
+    sync::{Arc, Mutex},
+    task::{Context, Poll},
+    time::Duration,
+};
+use tokio::{
+    io::{AsyncRead, AsyncWrite, ReadBuf},
+    net::{TcpListener, TcpSocket, TcpStream},
+    sync::OwnedSemaphorePermit,
+};
+use tokio_util::sync::CancellationToken;
+
+use super::{
+    dns::Resolver,
+    protection::{Scope, Shared, io_error},
+};
+use crate::{Error, Result};
+
+#[derive(Clone)]
+pub struct SocketFactory {
+    pub(super) shared: Arc<Shared>,
+    pub(super) resolver: Resolver,
+    pub(super) timeout: Duration,
+}
+
+#[derive(Clone)]
+pub struct CandidateHandle {
+    scope: Scope,
+    local: NodeId,
+    candidate: DialCandidate,
+    endpoint: Endpoint,
+}
+
+impl CandidateHandle {
+    pub fn local(&self) -> NodeId {
+        self.local
+    }
+    pub fn peer(&self) -> NodeId {
+        self.candidate.peer
+    }
+    pub fn listener_key(&self) -> &str {
+        &self.candidate.listener_key
+    }
+    pub fn protocol(&self) -> TransportProtocol {
+        self.candidate.parameters.transport()
+    }
+    pub fn parameters(&self) -> &DialParameters {
+        &self.candidate.parameters
+    }
+    pub fn endpoint(&self) -> &Endpoint {
+        &self.endpoint
+    }
+}
+
+impl fmt::Debug for CandidateHandle {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("CandidateHandle")
+            .field("protocol", &self.protocol())
+            .finish_non_exhaustive()
+    }
+}
+
+#[derive(Clone)]
+pub struct ListenerHandle {
+    scope: Scope,
+    local: NodeId,
+    key: String,
+    declaration: PreparedListener,
+}
+
+impl ListenerHandle {
+    pub fn local(&self) -> NodeId {
+        self.local
+    }
+    pub fn key(&self) -> &str {
+        &self.key
+    }
+    pub fn declaration(&self) -> &PreparedListener {
+        &self.declaration
+    }
+}
+
+impl fmt::Debug for ListenerHandle {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("ListenerHandle").finish_non_exhaustive()
+    }
+}
+
+impl SocketFactory {
+    pub fn candidate(
+        &self,
+        snapshot: &ExecutionSnapshot,
+        key: &str,
+        endpoint_index: usize,
+    ) -> Result<CandidateHandle> {
+        let scope = self.shared.data(snapshot)?;
+        let cfg = snapshot.configuration().map_err(|_| Error::Expired)?;
+        let candidate = cfg.dialers.get(key).ok_or(Error::Target)?.clone();
+        dial_options(&candidate.parameters)?;
+        if candidate.peer == cfg.node_id || !cfg.peers.contains_key(&candidate.peer) {
+            return Err(Error::Target);
+        }
+        let endpoint = candidate
+            .endpoints
+            .get(endpoint_index)
+            .ok_or(Error::Target)?
+            .clone();
+        Ok(CandidateHandle {
+            scope,
+            local: cfg.node_id,
+            candidate,
+            endpoint,
+        })
+    }
+
+    pub fn listener(&self, snapshot: &ExecutionSnapshot, key: &str) -> Result<ListenerHandle> {
+        let scope = self.shared.data(snapshot)?;
+        let cfg = snapshot.configuration().map_err(|_| Error::Expired)?;
+        let declaration = cfg.listeners.get(key).ok_or(Error::Target)?.clone();
+        listener_options(declaration.declaration())?;
+        Ok(ListenerHandle {
+            scope,
+            local: cfg.node_id,
+            key: key.to_owned(),
+            declaration,
+        })
+    }
+
+    pub async fn connect(&self, candidate: &CandidateHandle) -> Result<ProtectedTcp> {
+        let _attempt = self
+            .shared
+            .attempts
+            .clone()
+            .try_acquire_owned()
+            .map_err(|_| Error::Capacity)?;
+        if !Arc::ptr_eq(&self.shared, &candidate.scope.shared) {
+            return Err(Error::Target);
+        }
+        candidate.scope.check()?;
+        let resolver = self.resolver.scoped(candidate.scope.clone())?;
+        let (socket, tcp, local, timeout) = dial_options(&candidate.candidate.parameters)?;
+        let addresses = tokio::select! { biased;
+            _ = candidate.scope.invalidated() => return Err(Error::Expired),
+            result = resolver.resolve(&candidate.endpoint.host, candidate.endpoint.port.get()) => result?,
+        };
+        let timeout = timeout.min(self.timeout);
+        let operation = async {
+            let mut last = None;
+            for address in addresses {
+                if local.is_some_and(|ip| ip.is_ipv4() != address.is_ipv4()) {
+                    continue;
+                }
+                match connect_tcp(
+                    candidate.scope.clone(),
+                    address,
+                    local.map(|ip| SocketAddr::new(ip, 0)),
+                    socket,
+                    tcp,
+                    timeout,
+                )
+                .await
+                {
+                    Ok(stream) => return Ok(stream),
+                    Err(error) => {
+                        candidate.scope.check()?;
+                        // Protection/capacity failures are terminal, never a retry without protection.
+                        if !matches!(error, Error::Io(_)) {
+                            return Err(error);
+                        }
+                        last = Some(error);
+                    }
+                }
+            }
+            Err(last.unwrap_or(Error::Resolver))
+        };
+        tokio::time::timeout(timeout, operation)
+            .await
+            .map_err(|_| Error::Io(io::ErrorKind::TimedOut.into()))?
+    }
+
+    pub async fn listen(&self, handle: &ListenerHandle) -> Result<ProtectedListener> {
+        if !Arc::ptr_eq(&self.shared, &handle.scope.shared) {
+            return Err(Error::Target);
+        }
+        let (address, options, tcp) = listener_options(handle.declaration.declaration())?;
+        let capacity = handle.scope.capacity()?;
+        let socket = tcp_socket(address)?;
+        handle.scope.prepare_checked(&SockRef::from(&socket))?;
+        // Replacing our publication closes established channels, which may leave
+        // TIME_WAIT tuples on this listening port. REUSEADDR permits that restart;
+        // REUSEPORT stays off, so a live foreign listener still prevents binding.
+        socket.set_reuseaddr(true)?;
+        meshway_transport::raw::apply_socket_options(&SockRef::from(&socket), options)?;
+        socket.bind(address)?;
+        handle.scope.prepare_checked(&SockRef::from(&socket))?;
+        let listener = socket.listen(128)?;
+        handle.scope.prepare_checked(&SockRef::from(&listener))?;
+        let owned = Owned::new(listener, handle.scope.clone(), capacity)?;
+        Ok(ProtectedListener {
+            owned,
+            options: options.clone(),
+            tcp: tcp.clone(),
+        })
+    }
+}
+
+pub(super) fn dial_options(
+    parameters: &DialParameters,
+) -> Result<(&SocketOptions, &TcpOptions, Option<IpAddr>, Duration)> {
+    let (enabled, interface, local, socket, tcp, timeout) = match parameters {
+        DialParameters::NativeTcp { options: v } => (
+            v.enabled,
+            &v.bind_interface,
+            &v.local_address,
+            &v.socket,
+            &v.tcp,
+            v.connect_timeout.as_std(),
+        ),
+        DialParameters::Vless { options: v, .. } => (
+            v.enabled,
+            &v.bind_interface,
+            &v.local_address,
+            &v.socket,
+            &v.tcp,
+            v.connect_timeout.as_std(),
+        ),
+        DialParameters::Trojan { options: v, .. } => (
+            v.enabled,
+            &v.bind_interface,
+            &v.local_address,
+            &v.socket,
+            &v.tcp,
+            v.connect_timeout.as_std(),
+        ),
+        DialParameters::NativeUdp { .. } => return Err(Error::Target),
+    };
+    if !enabled || !interface.is_empty() {
+        return Err(Error::Target);
+    }
+    let local = if local.is_empty() {
+        None
+    } else {
+        Some(local.parse().map_err(|_| Error::Target)?)
+    };
+    Ok((socket, tcp, local, timeout))
+}
+
+pub(super) fn listener_options(
+    listener: &Listener,
+) -> Result<(SocketAddr, &SocketOptions, &TcpOptions)> {
+    let (enabled, interface, ip, port, socket, tcp) = match listener {
+        Listener::NativeTcp(v) => (
+            v.enabled,
+            &v.bind_interface,
+            v.listen,
+            v.listen_port,
+            &v.socket,
+            &v.tcp,
+        ),
+        Listener::Vless(v) => (
+            v.enabled,
+            &v.bind_interface,
+            v.listen,
+            v.listen_port,
+            &v.socket,
+            &v.tcp,
+        ),
+        Listener::Trojan(v) => (
+            v.enabled,
+            &v.bind_interface,
+            v.listen,
+            v.listen_port,
+            &v.socket,
+            &v.tcp,
+        ),
+        Listener::NativeUdp(_) => return Err(Error::Target),
+    };
+    if !enabled || !interface.is_empty() {
+        return Err(Error::Target);
+    }
+    Ok((SocketAddr::new(ip, port.get()), socket, tcp))
+}
+
+pub(super) fn listener_enabled(listener: &Listener) -> bool {
+    match listener {
+        Listener::NativeUdp(value) => value.enabled,
+        Listener::NativeTcp(value) => value.enabled,
+        Listener::Vless(value) => value.enabled,
+        Listener::Trojan(value) => value.enabled,
+    }
+}
+
+fn tcp_socket(address: SocketAddr) -> io::Result<TcpSocket> {
+    if address.is_ipv4() {
+        TcpSocket::new_v4()
+    } else {
+        TcpSocket::new_v6()
+    }
+}
+
+pub(super) async fn connect_tcp(
+    scope: Scope,
+    address: SocketAddr,
+    bind: Option<SocketAddr>,
+    options: &SocketOptions,
+    tcp: &TcpOptions,
+    timeout: Duration,
+) -> Result<ProtectedTcp> {
+    let capacity = scope.capacity()?;
+    let socket = tcp_socket(address)?;
+    scope.prepare_checked(&SockRef::from(&socket))?;
+    meshway_transport::raw::apply_socket_options(&SockRef::from(&socket), options)?;
+    if let Some(bind) = bind {
+        scope.prepare_checked(&SockRef::from(&socket))?;
+        socket.bind(bind)?;
+    }
+    scope.prepare_checked(&SockRef::from(&socket))?;
+    let stream = tokio::select! { biased;
+        _ = scope.invalidated() => return Err(Error::Expired),
+        result = tokio::time::timeout(timeout, socket.connect(address)) => result.map_err(|_| Error::Io(io::ErrorKind::TimedOut.into()))??,
+    };
+    adopt(stream, scope, capacity, options, tcp)
+}
+
+fn adopt(
+    stream: TcpStream,
+    scope: Scope,
+    capacity: OwnedSemaphorePermit,
+    options: &SocketOptions,
+    tcp: &TcpOptions,
+) -> Result<ProtectedTcp> {
+    scope.prepare_checked(&SockRef::from(&stream))?;
+    let stream = meshway_transport_tcp::TcpTransport::adopt(stream, options, tcp)?.into_inner();
+    let local = stream.local_addr()?;
+    let peer = stream.peer_addr()?;
+    Ok(ProtectedTcp {
+        owned: Owned::new(stream, scope, capacity)?,
+        local,
+        peer,
+    })
+}
+
+pub(super) struct Wakers {
+    pub read: futures_util::task::AtomicWaker,
+    pub write: futures_util::task::AtomicWaker,
+}
+
+impl Wakers {
+    fn wake(&self) {
+        self.read.wake();
+        self.write.wake();
+    }
+}
+
+struct Clear<T> {
+    socket: Arc<Mutex<Option<T>>>,
+    wakers: Arc<Wakers>,
+    capacity: Arc<Mutex<Option<OwnedSemaphorePermit>>>,
+}
+impl<T> Drop for Clear<T> {
+    fn drop(&mut self) {
+        if let Ok(mut socket) = self.socket.lock() {
+            socket.take();
+        }
+        if let Ok(mut capacity) = self.capacity.lock() {
+            capacity.take();
+        }
+        self.wakers.wake();
+    }
+}
+
+pub(super) struct Owned<T> {
+    pub(super) socket: Arc<Mutex<Option<T>>>,
+    pub(super) scope: Scope,
+    pub(super) wakers: Arc<Wakers>,
+    closed: CancellationToken,
+    capacity: Arc<Mutex<Option<OwnedSemaphorePermit>>>,
+}
+
+impl<T: Send + 'static> Owned<T> {
+    pub(super) fn new(socket: T, scope: Scope, capacity: OwnedSemaphorePermit) -> Result<Self> {
+        let socket = Arc::new(Mutex::new(Some(socket)));
+        let capacity = Arc::new(Mutex::new(Some(capacity)));
+        let wakers = Arc::new(Wakers {
+            read: futures_util::task::AtomicWaker::new(),
+            write: futures_util::task::AtomicWaker::new(),
+        });
+        let clear = Clear {
+            socket: socket.clone(),
+            wakers: wakers.clone(),
+            capacity: capacity.clone(),
+        };
+        let closed = CancellationToken::new();
+        let done = closed.clone();
+        let lifetime = scope.clone();
+        scope.shared.tasks.spawn(async move {
+            let _clear = clear;
+            tokio::select! { biased;
+                _ = lifetime.invalidated() => {},
+                _ = done.cancelled() => {},
+            }
+        })?;
+        Ok(Self {
+            socket,
+            scope,
+            wakers,
+            closed,
+            capacity,
+        })
+    }
+}
+
+impl<T> Drop for Owned<T> {
+    fn drop(&mut self) {
+        self.closed.cancel();
+        if let Ok(mut socket) = self.socket.lock() {
+            socket.take();
+        }
+        if let Ok(mut capacity) = self.capacity.lock() {
+            capacity.take();
+        }
+        self.wakers.wake();
+    }
+}
+
+pub struct ProtectedTcp {
+    owned: Owned<TcpStream>,
+    local: SocketAddr,
+    peer: SocketAddr,
+}
+
+impl fmt::Debug for ProtectedTcp {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("ProtectedTcp").finish_non_exhaustive()
+    }
+}
+
+impl ProtectedTcp {
+    pub fn local_addr(&self) -> io::Result<SocketAddr> {
+        self.owned.scope.check().map_err(io_error)?;
+        Ok(self.local)
+    }
+    pub fn peer_addr(&self) -> io::Result<SocketAddr> {
+        self.owned.scope.check().map_err(io_error)?;
+        Ok(self.peer)
+    }
+
+    fn with<T>(
+        &self,
+        call: impl FnOnce(&mut TcpStream) -> Poll<io::Result<T>>,
+    ) -> Poll<io::Result<T>> {
+        let mut socket = match self.owned.socket.lock() {
+            Ok(socket) => socket,
+            Err(_) => return Poll::Ready(Err(io_error(Error::Worker))),
+        };
+        let Some(socket) = socket.as_mut() else {
+            return Poll::Ready(Err(io_error(Error::Expired)));
+        };
+        if let Err(error) = self.owned.scope.prepare(&SockRef::from(&*socket)) {
+            return Poll::Ready(Err(error));
+        }
+        call(socket)
+    }
+}
+
+impl AsyncRead for ProtectedTcp {
+    fn poll_read(
+        self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+        buffer: &mut ReadBuf<'_>,
+    ) -> Poll<io::Result<()>> {
+        self.owned.wakers.read.register(cx.waker());
+        self.with(|stream| Pin::new(stream).poll_read(cx, buffer))
+    }
+}
+
+impl AsyncWrite for ProtectedTcp {
+    fn poll_write(
+        self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+        buffer: &[u8],
+    ) -> Poll<io::Result<usize>> {
+        self.owned.wakers.write.register(cx.waker());
+        self.with(|stream| Pin::new(stream).poll_write(cx, buffer))
+    }
+    fn poll_flush(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
+        self.owned.wakers.write.register(cx.waker());
+        self.with(|stream| Pin::new(stream).poll_flush(cx))
+    }
+    fn poll_shutdown(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
+        self.owned.wakers.write.register(cx.waker());
+        self.with(|stream| Pin::new(stream).poll_shutdown(cx))
+    }
+}
+
+pub struct ProtectedListener {
+    owned: Owned<TcpListener>,
+    options: SocketOptions,
+    tcp: TcpOptions,
+}
+
+impl ProtectedListener {
+    pub fn local_addr(&self) -> io::Result<SocketAddr> {
+        self.owned.scope.check().map_err(io_error)?;
+        self.owned
+            .socket
+            .lock()
+            .map_err(|_| io_error(Error::Worker))?
+            .as_ref()
+            .ok_or_else(|| io_error(Error::Expired))?
+            .local_addr()
+    }
+
+    pub async fn accept(&self) -> Result<(ProtectedTcp, SocketAddr)> {
+        let accepted = std::future::poll_fn(|cx| {
+            self.owned.wakers.read.register(cx.waker());
+            let socket = self
+                .owned
+                .socket
+                .lock()
+                .map_err(|_| io_error(Error::Worker))?;
+            let listener = socket.as_ref().ok_or_else(|| io_error(Error::Expired))?;
+            self.owned.scope.prepare(&SockRef::from(listener))?;
+            listener.poll_accept(cx)
+        });
+        let (stream, peer) = tokio::select! { biased;
+            _ = self.owned.scope.invalidated() => return Err(Error::Expired),
+            result = accepted => result?,
+        };
+        let mark = SockRef::from(&stream).mark()?;
+        let owned = self.owned.scope.shared.mark;
+        if mark & owned.mask != owned.value {
+            return Err(Error::Conflict);
+        }
+        let capacity = self.owned.scope.capacity()?;
+        Ok((
+            adopt(
+                stream,
+                self.owned.scope.clone(),
+                capacity,
+                &self.options,
+                &self.tcp,
+            )?,
+            peer,
+        ))
+    }
+}

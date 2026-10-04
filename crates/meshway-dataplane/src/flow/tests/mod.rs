@@ -1,4 +1,7 @@
 mod configuration;
+mod continuity;
+mod local;
+mod tcp_recovery;
 
 #[test]
 fn renewed_guard_cannot_revive_a_flow_expired_by_the_old_guard_wall_clock() {

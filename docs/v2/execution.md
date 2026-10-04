@@ -19,6 +19,30 @@ Node 产生业务目标需求
 
 例如 A 获准访问 B，但两者需经 C：Server 决定 C 属于执行依赖，补齐 A/C/B 所需身份、材料和许可。A 不必先猜出 C 的 ID，更不能通过 State query 自授读取或使用 C 的权限。
 
+## 需求续租
+
+`POST /agent-api/v1/demands/renew`（生成操作 `renewNodeDemand`，请求 `RenewDemandRequest`）使用当前 Node bearer，对同一活动实例的已有需求续租。
+
+| 字段 | 行为 |
+| --- | --- |
+| `instance` | 必填 InstanceRequest，含 instanceId／generation；须匹配当前有效实例 |
+| `requestId` | 已有需求的 ID，不创建新 intent，不改变原目标／协议／端口／profile |
+| `expiresAt` | UTC RFC 3339 绝对期限；实际延长不得超过现有 instance 期限或 Server 当前时刻后 300 秒 |
+
+Server 在同一事务重新检查当前主体、网络、instance 和需求存活状态。缺失、已取消、过期或另一实例的需求不能续活；不会为了满足请求自动延长 instance。延长保留原 create digest，创建请求的重放也不延长期限。
+
+重复或更早的 expiresAt 不延长、不为本次重放写入新 publication／执行 lease／历史；同一事务仍可清理其他到期需求并因此更新发布。真正延长后按网络内**全部有效需求**重新合成完整目标，不是 last-demand-wins。响应仍为 publication 和 decision；调用方须重新同步保存目标、取得匹配执行快照后才可使用许可，HTTP 反馈本身不授予 socket 或包流执行权。
+
+Node 的本机取消与连续性门槛见 [Control](/v2/node/control#执行快照)，活流／circuit 续租规则见[数据面](/v2/node/dataplane#包与流边界)。
+
+## 原子执行刷新
+
+`POST /agent-api/v1/configuration/refresh`（`refreshNodeConfiguration`）使用 Node session 和既有 `NodeConfigurationRequest { instance, base }`，返回 `NodeConfigurationResponse { lease, full, delta }`。Server 在同一个 SQLite owner 事务和时点重新鉴权、清理到期需求、续租、检查执行资格，再读取该精确目标的完整内容或 delta。响应中的 lease 与目标引用不能来自不同发布。
+
+这是显式续租操作。`queryNodeConfiguration` 仍只读取／同步目标，不因读取而延长 lease。Node 必须验证响应、应用 delta 并原子保存后再取得执行快照；响应不表示已经安装。
+
+Node execution lease 最长为 Server 当前时点后 60 秒，并受当前 instance 截止约束。每条业务／DNS／诊断许可另保留自己的截止，数据面、邻接与排队输出分别检查；Node lease 有效不能续活过期 permit。一条需求到期只结束相应许可，其他活流和空闲 TUN 安装仍受各自期限约束。停用、身份／密钥失效、不可用发布与地址退出窗口仍阻止 execution grant。
+
 ## 各方负责什么
 
 | 参与方 | 职责 |
@@ -38,7 +62,7 @@ Node 产生业务目标需求
 
 参与节点按[普通应用流程](/v2/configuration-reference/deployment)独立处理。若必要对端尚未应用相容配置，对应业务等待／拒绝；其他节点仍可完成自己的安装。用户配置应用与后续按需发布按各自 publication 跟踪进度。
 
-NodeConfiguration 使用 dialers 保存具体获准候选，permits 保存业务许可，diagnostics 保存独立测量许可，decisions 保存需求结果；字段见[节点配置](/v2/configuration-reference/node-configuration)。
+NodeConfiguration 使用 dialers 保存具体获准候选，permits 保存路径业务许可，localEgress 保存源节点的精确本机执行绑定，diagnostics 保存独立测量许可，decisions 保存需求结果；capture 与 DNS 证明等字段见[节点配置](/v2/configuration-reference/node-configuration)。
 
 ## 路径与会话
 
@@ -54,5 +78,7 @@ Server 可复用同一源版本的编译事实，只对合法需求产生有界�
 一次需求可以影响少量参与节点；发布引用和相关依赖必须一致，不把无关节点的状态更新视为全网权限变更。持久顺序、各节点 digest、lease 和切换规则见[配置应用](/v2/configuration-reference/deployment#publication)。
 
 ## 编译边界
+
+当前 policy compilerVersion 为 `meshway-demand-3`。识别出的旧派生缓存失效与历史保留见[执行缓存版本](/v2/storage#执行缓存版本)。
 
 编译按网络合并有效需求，出口／每出口路径分别有界；TLS 不相容只排除对应候选，材料缺失不降级。可信 DNS 地址关联及 TTL 参与域名与 IP 需求求值；当前 Server 尚未接入可信 DNS 输入，域名需求因此以缺失依赖结束，见 [Server 当前能力](/v2/server#当前能力)。独立诊断许可不产生普通业务 permit。发布并不表示 Node 已安装或业务连通，运行范围见 [Server](/v2/server) 与 [Node](/v2/node)。

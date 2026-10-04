@@ -38,12 +38,26 @@ pub enum WireError {
 
 /// A validated ordinary DNS query. The original question's label case is kept.
 /// Construction is through [`decode_query`], including for TCP-framed payloads.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Query {
     message: Message,
 }
 
 impl Query {
+    /// Encode this validated query for a bounded upstream exchange. TCP framing
+    /// belongs to the exchange adapter. The adapter may remap IDs only if it
+    /// verifies its own transaction and restores this ID before returning bytes.
+    pub fn encode_upstream(&self, udp_payload_limit: u16) -> Result<Bytes, WireError> {
+        if udp_payload_limit < 512 {
+            return Err(WireError::PayloadLimit);
+        }
+        let mut message = self.message.clone();
+        if let Some(edns) = message.edns.as_mut() {
+            edns.set_max_payload(edns.max_payload().max(512).min(udp_payload_limit));
+        }
+        Ok(Bytes::from(message.to_vec()?))
+    }
+
     pub fn id(&self) -> u16 {
         self.message.metadata.id
     }
@@ -119,6 +133,13 @@ pub fn decode_query(bytes: &[u8]) -> Result<Query, WireError> {
     {
         return Err(WireError::EdnsVersion(edns.version()));
     }
+    if message
+        .edns
+        .as_ref()
+        .is_some_and(|edns| edns.flags().z != 0)
+    {
+        return Err(WireError::QueryShape);
+    }
     Ok(Query { message })
 }
 
@@ -128,7 +149,109 @@ pub enum ResponseTransport {
     Tcp,
 }
 
-/// Encode a locally constructed response, without a TCP length prefix.
+/// Validated upstream data, not a trusted domain association or an I/O grant.
+/// Source endpoint validation is the exchange adapter's responsibility.
+#[derive(Debug)]
+pub struct TrustedUpstreamResponse {
+    pub(crate) message: Message,
+    pub(crate) query: Query,
+}
+
+impl TrustedUpstreamResponse {
+    /// Pure serialization. A live service must retain the owner's Answer guard
+    /// through actual I/O, even after successful encoding.
+    pub fn encode(
+        &self,
+        query: &Query,
+        transport: ResponseTransport,
+        udp_payload_limit: u16,
+    ) -> Result<Bytes, WireError> {
+        if query != &self.query {
+            return Err(WireError::ResponseShape);
+        }
+        encode_response(query, &self.message, transport, udp_payload_limit)
+    }
+
+    pub fn decode(
+        query: &Query,
+        bytes: &[u8],
+        transport: ResponseTransport,
+        udp_payload_limit: u16,
+    ) -> Result<Self, WireError> {
+        if udp_payload_limit < 512 {
+            return Err(WireError::PayloadLimit);
+        }
+        let limit = match transport {
+            ResponseTransport::Tcp => MAX_MESSAGE_SIZE,
+            ResponseTransport::Udp => usize::from(
+                query
+                    .edns()
+                    .map_or(512, |e| e.max_payload().max(512))
+                    .min(udp_payload_limit),
+            ),
+        };
+        if !(MIN_MESSAGE_SIZE..=limit).contains(&bytes.len()) {
+            return Err(WireError::MessageLength);
+        }
+        let header = Header::read(&mut BinDecoder::new(bytes))?;
+        let records = usize::from(header.counts.answers)
+            + usize::from(header.counts.authorities)
+            + usize::from(header.counts.additionals);
+        if header.metadata.message_type != MessageType::Response
+            || header.metadata.op_code != OpCode::Query
+            || header.metadata.id != query.id()
+            || header.counts.queries != 1
+            || bytes[3] & 0x40 != 0
+            || records > 4096
+            || records > bytes.len()
+        {
+            return Err(WireError::ResponseShape);
+        }
+        let mut decoder = BinDecoder::new(bytes);
+        let mut message = Message::read(&mut decoder)?;
+        if !decoder.is_empty() {
+            return Err(WireError::TrailingBytes);
+        }
+        if message.queries.as_slice() != std::slice::from_ref(query.question())
+            || message.signature.is_some()
+            || message
+                .answers
+                .iter()
+                .chain(&message.authorities)
+                .chain(&message.additionals)
+                .any(|r| {
+                    matches!(
+                        r.record_type(),
+                        RecordType::OPT
+                            | RecordType::TSIG
+                            | RecordType::AXFR
+                            | RecordType::IXFR
+                            | RecordType::ZERO
+                    )
+                })
+        {
+            return Err(WireError::ResponseShape);
+        }
+        if let Some(edns) = &message.edns {
+            if query.edns().is_none() || edns.version() != 0 || edns.flags().z != 0 {
+                return Err(WireError::ResponseShape);
+            }
+        } else if message.metadata.response_code.high() != 0 {
+            return Err(WireError::ResponseShape);
+        }
+        // Rebuild the downstream EDNS envelope through the one canonical encoder.
+        // We do not claim DNSSEC validation, nor reflect upstream EDNS options.
+        message.edns = None;
+        message.metadata.authentic_data = false;
+        Ok(Self {
+            message,
+            query: query.clone(),
+        })
+    }
+}
+
+/// Encode a canonical response, without a TCP length prefix. Upstream data must
+/// first pass through `TrustedUpstreamResponse::decode` to normalize its envelope.
 ///
 /// `udp_payload_limit` is the caller's UDP size ceiling (512..=65535), also used
 /// as the advertised OPT payload size for TCP responses. UDP output is limited

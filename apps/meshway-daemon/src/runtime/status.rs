@@ -2,7 +2,7 @@
 use super::intent::Desired;
 use chrono::{DateTime, Utc};
 use meshway_control::StatusSnapshot;
-use meshway_ipc::{DataPlane, Phase, Problem, Status};
+use meshway_ipc::{DataPlane, NetworkMode, Phase, Problem, Status};
 use meshway_model::Version;
 use tokio::sync::watch;
 
@@ -34,6 +34,8 @@ pub(crate) struct View {
     pub(super) desired: watch::Receiver<Desired>,
     pub(super) report: watch::Receiver<Report>,
     pub(super) server: String,
+    pub(super) network_mode: NetworkMode,
+    pub(super) network: watch::Receiver<super::network::Report>,
 }
 impl View {
     pub fn status(&self) -> Status {
@@ -42,7 +44,46 @@ impl View {
         let report = self.report.borrow().clone();
         let control = report.control.as_ref().map(StatusSnapshot::status);
         let current = report.revision == desired.revision;
-        let phase = if desired.shutdown {
+        let network = self.network.borrow().clone();
+        let network_bound = control
+            .as_ref()
+            .is_some_and(|control| network.bound_to(control));
+        let network_current = current
+            && desired.up
+            && !desired.shutdown
+            && control
+                .as_ref()
+                .is_some_and(|control| network.current(control));
+        let data_plane = if self.network_mode == NetworkMode::ControlOnly {
+            DataPlane::ControlOnly
+        } else if !current || desired.shutdown {
+            DataPlane::Preparing
+        } else if !desired.up {
+            if report.phase == Phase::Blocked {
+                DataPlane::Failed
+            } else if report.phase == Phase::Down {
+                DataPlane::Stopped
+            } else {
+                DataPlane::Preparing
+            }
+        } else if network_current {
+            network.plane
+        } else if report.phase == Phase::Blocked
+            || (network_bound && network.plane == DataPlane::Failed)
+        {
+            DataPlane::Failed
+        } else if !network_bound
+            && control
+                .as_ref()
+                .is_some_and(|control| control.instance.is_some())
+        {
+            DataPlane::Preparing
+        } else if network.plane == DataPlane::Ready {
+            DataPlane::Suspended
+        } else {
+            network.plane
+        };
+        let mut phase = if desired.shutdown {
             Phase::Stopping
         } else if !current {
             if desired.up {
@@ -56,7 +97,7 @@ impl View {
             } else {
                 Phase::Down
             }
-        } else if report.phase == Phase::ControlReady
+        } else if matches!(report.phase, Phase::ControlReady | Phase::Running)
             && control
                 .as_ref()
                 .is_none_or(|c| !c.authenticated || c.instance.is_none())
@@ -65,13 +106,32 @@ impl View {
         } else {
             report.phase
         };
+        if current && desired.up && !desired.shutdown && self.network_mode == NetworkMode::Tun {
+            if network_current && data_plane == DataPlane::Ready && phase == Phase::ControlReady {
+                phase = Phase::Running;
+            } else if data_plane == DataPlane::Failed
+                && matches!(phase, Phase::ControlReady | Phase::Running)
+            {
+                phase = Phase::Blocked;
+            } else if phase == Phase::ControlReady
+                && !(network_current
+                    && data_plane == DataPlane::Stopped
+                    && network.applied().is_some())
+            {
+                phase = Phase::Synchronizing;
+            }
+        }
         Status {
             process_id: std::process::id(),
             revision: desired.revision,
             desired_up: desired.up,
             phase,
             server: self.server.clone(),
-            observed_at: report.observed_at,
+            observed_at: if network_current {
+                report.observed_at.max(network.observed_at)
+            } else {
+                report.observed_at
+            },
             enrollment_request_id: control.as_ref().and_then(|c| c.enrollment_request_id),
             enrollment_url: if current && desired.up {
                 report.enrollment_url
@@ -89,9 +149,18 @@ impl View {
                 None
             },
             saved: control.and_then(|c| c.cached),
-            applied: None,
-            data_plane: DataPlane::NotImplemented,
-            last_error: report.problem,
+            applied: if network_current {
+                network.applied()
+            } else {
+                None
+            },
+            data_plane,
+            network_mode: self.network_mode,
+            last_error: report.problem.or(if current && network_bound {
+                network.problem
+            } else {
+                None
+            }),
             retry_at: if current && desired.up {
                 report.retry_at
             } else {

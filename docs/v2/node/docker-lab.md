@@ -12,6 +12,8 @@
 
 卷挂载在 `/var/lib/meshway`，保留 Node 密钥、接入请求、Server 绑定、缓存配置和 up/down 意图。容器停止、重启或替换程序均复用原卷。运行镜像为按 digest 固定的 Alpine，程序目录只读挂载；每个容器限制为 0.5 CPU、256 MiB 内存、64 个进程，使用独立 bridge 网络。
 
+当前 Compose 源码显式使用 `--network-mode control-only`：容器 `cap_drop: ALL`，没有 TUN 安装权限。源码修改不代表常驻容器已经部署新程序／参数；须用下方 versions／status 核对实际运行实例。
+
 接入地址为 `https://meshway-dev-api.jdscript.dev/`，转发到本机 Server；批准链接使用 `http://127.0.0.1:3001` 的 Console。身份绑定仍按[Node 控制组件](/v2/node/control)检查。
 
 ## 首次启动
@@ -65,4 +67,4 @@ mise run node:lab stop
 
 `down` 保存业务下线意图；`stop` 停止三个容器并保留各自意图与卷。容器日志使用 JSON 和 Docker local driver，每个容器轮转保留最多三个 10 MiB 日志文件；字段规则见[运行日志](/v2/logging)。管理脚本核对精确资源名和所有权标签，遇到同名外部资源会停止操作。
 
-当前健康检查表示 daemon 的本机 IPC 可响应；`controlReady` 表示已完成 Server 控制接入。TUN、SOCKS5、业务包流和真实地理部署尚未实现，三个地区名称仅作为开发节点标识。
+当前健康检查表示 daemon 的本机 IPC 可响应；`controlReady` 表示已完成 Server 控制接入。本环境不安装 TUN 或验证业务包流；daemon TUN 的独立候选范围见[网络模式](/v2/node/runtime)。SOCKS5 尚未实现，三个地区名称仅作为开发节点标识，不证明真实地理部署。

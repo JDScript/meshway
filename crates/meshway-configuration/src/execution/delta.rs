@@ -18,6 +18,7 @@ map_delta!(ListenerDelta, String, PreparedListener);
 map_delta!(DialerDelta, String, DialCandidate);
 map_delta!(PeerDelta, NodeId, PeerConfiguration);
 map_delta!(PermitDelta, RequestId, PathPermit);
+map_delta!(LocalEgressDelta, RequestId, LocalEgressPermit);
 map_delta!(
     DiagnosticDelta,
     meshway_model::ObservationId,
@@ -29,8 +30,10 @@ object! { pub struct NodeConfigurationDelta {
     pub dependency_digest:Digest,
     pub enabled:bool,pub hostname:String,pub identity:NodeIdentity,pub addresses:NodeAddresses,
     pub self_keys:TrustedNode,pub exit_enabled:bool,pub dns:DnsExecution,
+    pub mesh_address_pools:AddressPools,
     pub listeners:ListenerDelta,pub dialers:DialerDelta,pub peers:PeerDelta,
     pub permits:PermitDelta,pub decisions:DecisionDelta,
+    pub local_egress:LocalEgressDelta,
     pub diagnostics:DiagnosticDelta,
 } }
 fn difference<K: Clone + Ord, V: Clone + PartialEq>(
@@ -65,6 +68,7 @@ pub fn configuration_delta(
     let (dr, du) = difference(&b.dialers, &t.dialers);
     let (pr, pu) = difference(&b.peers, &t.peers);
     let (ar, au) = difference(&b.permits, &t.permits);
+    let (er, eu) = difference(&b.local_egress, &t.local_egress);
     let (rr, ru) = difference(&b.decisions, &t.decisions);
     let (xr, xu) = difference(&b.diagnostics, &t.diagnostics);
     Ok(NodeConfigurationDelta {
@@ -85,6 +89,7 @@ pub fn configuration_delta(
         hostname: t.hostname.clone(),
         identity: t.identity.clone(),
         addresses: t.addresses.clone(),
+        mesh_address_pools: t.mesh_address_pools.clone(),
         self_keys: t.self_keys.clone(),
         exit_enabled: t.exit_enabled,
         dns: t.dns.clone(),
@@ -103,6 +108,10 @@ pub fn configuration_delta(
         permits: PermitDelta {
             remove: ar,
             upsert: au,
+        },
+        local_egress: LocalEgressDelta {
+            remove: er,
+            upsert: eu,
         },
         decisions: DecisionDelta {
             remove: rr,
@@ -151,6 +160,7 @@ pub fn apply_configuration_delta(
     t.hostname = delta.hostname;
     t.identity = delta.identity;
     t.addresses = delta.addresses;
+    t.mesh_address_pools = delta.mesh_address_pools;
     t.self_keys = delta.self_keys;
     t.exit_enabled = delta.exit_enabled;
     t.dns = delta.dns;
@@ -162,6 +172,11 @@ pub fn apply_configuration_delta(
     apply(&mut t.dialers, delta.dialers.remove, delta.dialers.upsert)?;
     apply(&mut t.peers, delta.peers.remove, delta.peers.upsert)?;
     apply(&mut t.permits, delta.permits.remove, delta.permits.upsert)?;
+    apply(
+        &mut t.local_egress,
+        delta.local_egress.remove,
+        delta.local_egress.upsert,
+    )?;
     apply(
         &mut t.diagnostics,
         delta.diagnostics.remove,

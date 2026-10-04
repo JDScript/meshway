@@ -175,6 +175,88 @@ fn matcher(
     }
     Ok(matched)
 }
+enum EgressProfile<'a> {
+    Mesh,
+    Global(NodeId),
+    Auto(&'a AutoProfile),
+    Custom(&'a RoutingProfile),
+}
+
+fn resolve_profile<'a>(
+    config: &'a NetworkConfiguration,
+    profile: &str,
+) -> Result<EgressProfile<'a>, CompileError> {
+    match profile {
+        "mesh" => Ok(EgressProfile::Mesh),
+        "auto" => match &config.routing.egress.auto {
+            Input::Value(auto) => Ok(EgressProfile::Auto(auto)),
+            Input::Omitted => Err(CompileError::UnavailableDependency),
+        },
+        _ => {
+            if let Some(id) = profile.strip_prefix("global:") {
+                return id
+                    .parse()
+                    .map(EgressProfile::Global)
+                    .map_err(|_| CompileError::InvalidInput);
+            }
+            config
+                .routing
+                .egress
+                .profiles
+                .get(profile)
+                .map(EgressProfile::Custom)
+                .ok_or(CompileError::UnavailableDependency)
+        }
+    }
+}
+
+fn rules_may_exit(rules: &[EgressRule]) -> bool {
+    rules.iter().any(|rule| match &rule.action {
+        RuleAction::Exit { .. } => true,
+        RuleAction::Direct => false,
+    })
+}
+
+fn non_auto_may_exit(profile: EgressProfile<'_>) -> bool {
+    match profile {
+        EgressProfile::Mesh => false,
+        EgressProfile::Global(_) => true,
+        EgressProfile::Custom(profile) => {
+            rules_may_exit(&profile.rules)
+                || match &profile.fallback {
+                    RouteAction::Exit { .. } => true,
+                    RouteAction::Direct | RouteAction::Unmanaged => false,
+                }
+        }
+        // Validation rejects auto -> auto. Never claim a proof for a cycle.
+        EgressProfile::Auto(_) => true,
+    }
+}
+
+/// Conservative classification over the complete source-effective routing
+/// configuration, independent of demands, DNS samples and runtime inventory.
+/// Shadowed exits still require a plan. Unknown dependencies are not a proof.
+pub(super) fn dns_egress(config: &NetworkConfiguration, profile: &str) -> DnsEgress {
+    let requires_plan = rules_may_exit(&config.routing.egress.rules)
+        || match resolve_profile(config, profile) {
+            Ok(EgressProfile::Auto(auto)) => auto
+                .rules
+                .iter()
+                .map(|rule| &rule.profile)
+                .chain(std::iter::once(&auto.fallback))
+                .any(|choice| resolve_profile(config, choice).map_or(true, non_auto_may_exit)),
+            Ok(profile) => non_auto_may_exit(profile),
+            Err(_) => true,
+        };
+    if requires_plan {
+        DnsEgress::Unavailable {
+            reason: DnsEgressUnavailable::ExitPlanRequired,
+        }
+    } else {
+        DnsEgress::NoExit
+    }
+}
+
 pub(super) fn egress_action(
     input: &CompilationInput<'_>,
     d: &Demand,
@@ -185,37 +267,36 @@ pub(super) fn egress_action(
             return Ok((r.action.clone().into(), expires));
         }
     }
-    let mut profile = d.profile.as_str();
-    if profile == "auto" {
+    let mut profile = resolve_profile(input.configuration, &d.profile)?;
+    if let EgressProfile::Auto(auto) = profile {
         // Region is a trusted external input, never guessed from controller IP.
         // No region input means the configured fallback, with the same allowed check.
-        profile = match &e.auto {
-            Input::Value(a) => &a.fallback,
-            Input::Omitted => return Err(CompileError::UnavailableDependency),
-        };
-        if profile == "auto"
-            || !profile_allowed(input.configuration, input.subjects, d.source, profile)?
+        if auto.fallback == "auto"
+            || !profile_allowed(
+                input.configuration,
+                input.subjects,
+                d.source,
+                &auto.fallback,
+            )?
         {
             return Err(CompileError::InvalidInput);
         }
+        profile = resolve_profile(input.configuration, &auto.fallback)?;
     }
-    if profile == "mesh" {
-        return Ok((RouteAction::Unmanaged, d.expires_at_ms));
-    }
-    if let Some(id) = profile.strip_prefix("global:") {
-        let node: NodeId = id.parse().map_err(|_| CompileError::InvalidInput)?;
-        return Ok((
-            RouteAction::Exit {
-                nodes: vec![format!("node:{node}")],
-                via: vec![],
-            },
-            d.expires_at_ms,
-        ));
-    }
-    let p = e
-        .profiles
-        .get(profile)
-        .ok_or(CompileError::UnavailableDependency)?;
+    let p = match profile {
+        EgressProfile::Mesh => return Ok((RouteAction::Unmanaged, d.expires_at_ms)),
+        EgressProfile::Global(node) => {
+            return Ok((
+                RouteAction::Exit {
+                    nodes: vec![format!("node:{node}")],
+                    via: vec![],
+                },
+                d.expires_at_ms,
+            ));
+        }
+        EgressProfile::Custom(profile) => profile,
+        EgressProfile::Auto(_) => return Err(CompileError::InvalidInput),
+    };
     for r in &p.rules {
         if let Some(expires) = matcher(input, d, &r.matcher)? {
             return Ok((r.action.clone().into(), expires));

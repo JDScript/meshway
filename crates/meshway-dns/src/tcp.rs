@@ -19,11 +19,26 @@ pub enum TcpError {
 /// payload from [`crate::encode_response`], without a prefix.
 #[derive(Debug)]
 pub struct TcpCodec {
+    framing: PayloadCodec,
+}
+
+impl TcpCodec {
+    pub fn new(max_message_size: u16) -> Result<Self, WireError> {
+        Ok(Self {
+            framing: PayloadCodec::new(max_message_size)?,
+        })
+    }
+}
+
+/// The shared DNS-over-TCP framing codec for server queries and upstream
+/// responses. Decoded payloads still need `decode_query` or response validation.
+#[derive(Debug)]
+pub struct PayloadCodec {
     framing: LengthDelimitedCodec,
     incomplete: bool,
 }
 
-impl TcpCodec {
+impl PayloadCodec {
     pub fn new(max_message_size: u16) -> Result<Self, WireError> {
         if usize::from(max_message_size) < MIN_MESSAGE_SIZE {
             return Err(WireError::MessageLength);
@@ -44,15 +59,38 @@ impl Decoder for TcpCodec {
     type Error = TcpError;
 
     fn decode(&mut self, src: &mut BytesMut) -> Result<Option<Query>, TcpError> {
-        let had_bytes = !src.is_empty();
-        let frame = self.framing.decode(src)?;
-        self.incomplete = frame.is_none() && (self.incomplete || had_bytes);
-        frame
+        self.framing
+            .decode(src)?
             .map(|frame| decode_query(&frame).map_err(TcpError::from))
             .transpose()
     }
 
     fn decode_eof(&mut self, src: &mut BytesMut) -> Result<Option<Query>, TcpError> {
+        self.framing
+            .decode_eof(src)?
+            .map(|frame| decode_query(&frame).map_err(TcpError::from))
+            .transpose()
+    }
+}
+
+impl Decoder for PayloadCodec {
+    type Item = BytesMut;
+    type Error = TcpError;
+
+    fn decode(&mut self, src: &mut BytesMut) -> Result<Option<BytesMut>, TcpError> {
+        let had_bytes = !src.is_empty();
+        let frame = self.framing.decode(src)?;
+        self.incomplete = frame.is_none() && (self.incomplete || had_bytes);
+        if frame
+            .as_ref()
+            .is_some_and(|bytes| bytes.len() < MIN_MESSAGE_SIZE)
+        {
+            return Err(WireError::MessageLength.into());
+        }
+        Ok(frame)
+    }
+
+    fn decode_eof(&mut self, src: &mut BytesMut) -> Result<Option<BytesMut>, TcpError> {
         let frame = self.decode(src)?;
         // LengthDelimitedCodec can consume the prefix while awaiting the body.
         // An empty buffer at EOF therefore need not mean a complete stream.
@@ -66,6 +104,14 @@ impl Decoder for TcpCodec {
 }
 
 impl Encoder<Bytes> for TcpCodec {
+    type Error = TcpError;
+
+    fn encode(&mut self, payload: Bytes, dst: &mut BytesMut) -> Result<(), TcpError> {
+        self.framing.encode(payload, dst)
+    }
+}
+
+impl Encoder<Bytes> for PayloadCodec {
     type Error = TcpError;
 
     fn encode(&mut self, payload: Bytes, dst: &mut BytesMut) -> Result<(), TcpError> {

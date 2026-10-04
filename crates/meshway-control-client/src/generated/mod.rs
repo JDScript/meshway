@@ -3293,6 +3293,29 @@ impl crate::Client {
         }
     }
 
+    pub async fn refresh_node_configuration(
+        &self,
+        body: &meshway_protocol::NodeConfigurationRequest,
+        token: &str,
+    ) -> Result<
+        meshway_protocol::NodeConfigurationResponse,
+        crate::ClientError<meshway_protocol::ErrorResponse>,
+    > {
+        let response = self
+            .send(
+                reqwest::Method::POST,
+                "/agent-api/v1/configuration/refresh",
+                Some(token),
+                Some(body),
+            )
+            .await?;
+        match response.status {
+            200 => response.json(),
+            400 | 401 | 409 | 503 => Err(response.problem()),
+            _ => Err(response.unexpected()),
+        }
+    }
+
     pub async fn refresh_rule_set(
         &self,
         path: &RefreshRuleSetPath,
@@ -3501,6 +3524,27 @@ impl crate::Client {
         match response.status {
             200 => response.json(),
             400 | 401 | 403 | 404 | 409 | 413 | 415 | 503 => Err(response.problem()),
+            _ => Err(response.unexpected()),
+        }
+    }
+
+    pub async fn renew_node_demand(
+        &self,
+        body: &meshway_protocol::RenewDemandRequest,
+        token: &str,
+    ) -> Result<meshway_protocol::DemandResponse, crate::ClientError<meshway_protocol::ErrorResponse>>
+    {
+        let response = self
+            .send(
+                reqwest::Method::POST,
+                "/agent-api/v1/demands/renew",
+                Some(token),
+                Some(body),
+            )
+            .await?;
+        match response.status {
+            200 => response.json(),
+            400 | 401 | 409 | 503 => Err(response.problem()),
             _ => Err(response.unexpected()),
         }
     }

@@ -30,7 +30,7 @@ Server 是账户、网络配置和执行许可的权威。它聚合 Node 报告�
 | 已接通 | State／历史、用户与 Node SSE、固定 revision 应用进度、限时观察任务 |
 | 已接通 | 规则集 HTTPS 下载、精确 artifact 绑定、单次 apply 准备和周期更新 |
 | 未完成 | 完整类型化配置诊断／影响预览、地址重分配／材料轮换操作、非管理员 Tag owner 的局部入口 |
-| 未完成 | 可信 DNS／GeoIP 输入与自动方案闭环、规划 evaluate／部分管理执行视图、版本兼容展示和 Node 发布安装链 |
+| 未完成 | 可信 DNS／GeoIP 输入与自动方案闭环、规划 evaluate／部分管理执行视图、版本兼容展示；Node 安装范围见 [Node](/v2/node) |
 | 未完成 | 诊断续租跨执行发布的连续测量交接、相关 Node 控制请求的专项性能验收 |
 
 Server HTTP／SDK 和持钥测试 Node 的验证止于相应控制流程；新 Node 程序、真实网络安装与包流另行验收。网络删除／账户注销的生命周期仍待确定。具体可用操作见[生成契约](/v2/contracts/openapi.json)。

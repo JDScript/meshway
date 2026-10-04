@@ -134,6 +134,14 @@ pub struct Route {
     pub direction: Direction,
 }
 
+/// Original local-flow routing metadata, not a grant or a circuit selection.
+/// A sender must still perform normal current admission on the selected circuit.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct LocalFlow {
+    pub demand: RequestId,
+    pub path: Vec<NodeId>,
+}
+
 #[derive(Debug)]
 pub enum Action {
     Forward {
@@ -336,8 +344,8 @@ impl PendingRoute {
     }
 }
 
-/// Unique state owner for one immutable control target. Construct a new Engine
-/// for a replacement snapshot; no flows migrate across publications or targets.
+/// Unique flow state owner. Only Control-authenticated direct successors may
+/// carry compatible live state into a new immutable target.
 pub struct Engine {
     snapshot: ExecutionSnapshot,
     flows: FlowTable,
@@ -360,32 +368,68 @@ impl Engine {
         })
     }
 
-    /// Explicit same-target authentication/lease renewal handoff. Both guards
-    /// must still be current and share Control's exact execution scope. A new
-    /// target, instance, generation or invalidation epoch requires a new Engine.
-    /// Rejection leaves this Engine's guard and retained state unchanged.
-    ///
-    /// Existing flow deadlines are retained conservatively; only a subsequently
-    /// admitted packet can refresh a live flow against the new guard. Expired
-    /// flows are removed, never revived. Already-issued PendingActions retain
-    /// their original snapshots and deadlines.
+    /// Same-target renewal, using the shared reconciliation implementation.
     pub fn refresh(&mut self, snapshot: ExecutionSnapshot) -> Result<(), Error> {
-        snapshot.ensure_current()?;
-        self.snapshot.ensure_current()?;
         if !self.snapshot.same_execution(&snapshot) {
             return Err(Error::ExecutionScope);
         }
-        let now_ms = snapshot.now_ms()?;
-        // Reading the shared clock may itself fence an older deadline.
-        self.snapshot.ensure_current()?;
-        snapshot.ensure_current()?;
-        self.flows.expire(Instant::now(), now_ms);
+        self.reconcile(snapshot)
+    }
+
+    /// Reconcile a Control-issued successor transactionally. Old queued actions
+    /// keep their original cancelled guard. Retained flow deadlines/idle time
+    /// are unchanged; only a subsequently admitted packet can refresh them.
+    pub fn reconcile(&mut self, snapshot: ExecutionSnapshot) -> Result<(), Error> {
+        let flows = self.reconciled_flows(&snapshot)?;
+        snapshot.continuation_from(&self.snapshot)?;
+        self.flows = flows;
         self.snapshot = snapshot;
         Ok(())
     }
 
+    fn reconciled_flows(&self, snapshot: &ExecutionSnapshot) -> Result<FlowTable, Error> {
+        let old = snapshot.continuation_from(&self.snapshot)?;
+        let now_ms = snapshot.now_ms()?;
+        self.flows.reconciled(
+            old,
+            snapshot.configuration()?,
+            FlowTime {
+                instant: Instant::now(),
+                now_ms,
+                guard_expires_at: snapshot.expires_at(),
+                guard_expires_at_ms: snapshot.expires_at_ms(),
+            },
+        )
+    }
+
     pub fn process(&mut self, ingress: Ingress, packet: Packet) -> Result<PendingAction, Error> {
         self.admit_facts(ingress, packet.facts())?.attach(packet)
+    }
+
+    /// Read the unique flow owner without advancing protocol state or deadlines.
+    /// `None` means only that the packet could initiate a new protocol flow;
+    /// it does not authorize its source, destination or a new demand.
+    pub fn local_flow(&self, packet: &Packet) -> Result<Option<LocalFlow>, Error> {
+        let config = self.snapshot.configuration()?;
+        let found = self.flows.local_flow(
+            config,
+            &packet.facts(),
+            FlowTime {
+                instant: Instant::now(),
+                now_ms: self.snapshot.now_ms()?,
+                guard_expires_at: self.snapshot.expires_at(),
+                guard_expires_at_ms: self.snapshot.expires_at_ms(),
+            },
+        )?;
+        let now_ms = self.snapshot.now_ms()?;
+        self.snapshot.ensure_current()?;
+        match found {
+            Some(found) if Instant::now() >= found.expires_at || now_ms >= found.expires_at_ms => {
+                Err(Error::Expired)
+            }
+            Some(found) => Ok(Some(found.route)),
+            None => Ok(None),
+        }
     }
 
     /// The secure adapter must authenticate the complete facts/path/producer

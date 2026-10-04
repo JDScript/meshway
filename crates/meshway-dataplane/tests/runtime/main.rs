@@ -4,9 +4,11 @@
 //! end-to-end encryption, installed UDP transport, daemon execution or TUN I/O.
 #![cfg(unix)]
 
+mod continuity;
 mod secure;
 mod send_lifetime;
 mod support;
+mod tcp_recovery;
 
 use meshway_dataplane::{
     Action, AuthenticatedPeer, Direction, Engine, Hop, Ingress, Limits, Packet, PendingAction,
@@ -23,10 +25,25 @@ fn engine(node: &Node) -> Engine {
     .unwrap()
 }
 
+fn refused(result: meshway_dns::Begin) {
+    let answer = dns::answer(result);
+    answer.ensure_current().unwrap();
+    let bytes = answer
+        .encode(meshway_dns::ResponseTransport::Udp, 1232)
+        .unwrap();
+    let message = hickory_proto::op::Message::from_vec(&bytes).unwrap();
+    assert_eq!(
+        message.metadata.response_code,
+        hickory_proto::op::ResponseCode::Refused
+    );
+    assert!(!message.metadata.authoritative);
+    assert!(message.answers.is_empty() && message.authorities.is_empty());
+}
+
 #[tokio::test]
 async fn published_mesh_dns_never_turns_relay_or_reply_rights_into_name_visibility() {
     use hickory_proto::rr::RecordType;
-    use meshway_dns::{Begin, ExitSelection, Owner, Unavailable};
+    use meshway_dns::{Begin, ExitSelection, Owner};
     let mut mesh = Mesh::start().await;
     let name = |node: &Node| {
         let guard = node.control.execution_snapshot().unwrap();
@@ -46,18 +63,12 @@ async fn published_mesh_dns_never_turns_relay_or_reply_rights_into_name_visibili
     let lookup = dns::discover(&mut a_dns, &r_name, RecordType::A);
     let response = mesh.a.control.query_dns(&lookup.name).await.unwrap();
     assert!(response.record.is_none());
-    assert!(matches!(
-        a_dns.complete_discovery(&lookup.ticket, response),
-        Begin::Unavailable(Unavailable::NotVisible)
-    ));
+    refused(a_dns.complete_discovery(&lookup.ticket, response));
     let mut b_dns = Owner::new(mesh.b.control.execution_snapshot().unwrap(), limits).unwrap();
     let lookup = dns::discover(&mut b_dns, &a_name, RecordType::A);
     let response = mesh.b.control.query_dns(&lookup.name).await.unwrap();
     assert!(response.record.is_none());
-    assert!(matches!(
-        b_dns.complete_discovery(&lookup.ticket, response),
-        Begin::Unavailable(Unavailable::NotVisible)
-    ));
+    refused(b_dns.complete_discovery(&lookup.ticket, response));
     mesh.close().await;
 }
 
@@ -495,10 +506,7 @@ async fn real_control_dns_discovery_binds_wire_answers_and_preserves_typed_not_v
     let missing = dns::discover(&mut owner, &absent, RecordType::A);
     let response = node.control.query_dns(&missing.name).await.unwrap();
     assert!(response.record.is_none());
-    assert!(matches!(
-        owner.complete_discovery(&missing.ticket, response),
-        Begin::Unavailable(Unavailable::NotVisible)
-    ));
+    refused(owner.complete_discovery(&missing.ticket, response));
 
     let wrong = dns::discover(&mut owner, &name, RecordType::A);
     let mut response = node.control.query_dns(&wrong.name).await.unwrap();

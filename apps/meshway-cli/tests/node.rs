@@ -99,7 +99,8 @@ async fn actual_cli_controls_daemon_through_private_ipc_and_real_server() {
         Some("http://127.0.0.1:3001"),
         Some("cli-node"),
     )
-    .unwrap();
+    .unwrap()
+    .with_network_mode(meshway_ipc::NetworkMode::ControlOnly);
     let (stop, stopped) = oneshot::channel();
     let daemon = tokio::spawn(meshway_daemon::run(settings, async {
         let _ = stopped.await;
@@ -140,7 +141,11 @@ async fn actual_cli_controls_daemon_through_private_ipc_and_real_server() {
     assert!(ready.authenticated && ready.saved.is_some() && ready.applied.is_none());
     let human = cli(&socket, "status", false).await;
     assert!(human.status.success());
-    assert!(String::from_utf8_lossy(&human.stdout).contains("configuration is not applied"));
+    assert!(
+        String::from_utf8_lossy(&human.stdout)
+            .contains("Network mode: ControlOnly  Data plane: ControlOnly")
+    );
+    assert!(!String::from_utf8_lossy(&human.stdout).contains("Applied configuration:"));
     assert!(!String::from_utf8_lossy(&human.stdout).contains("mwns_"));
     let down = cli(&socket, "down", true).await;
     assert!(down.status.success());

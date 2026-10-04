@@ -1,0 +1,30 @@
+[package]
+name = "meshway-runtime-fixture"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+description = "Isolated real daemon and CLI networking conformance actors"
+
+[dependencies]
+meshway-packet-fixture = { path = "../meshway-packet-fixture" }
+meshway-configuration = { path = "../../crates/meshway-configuration" }
+meshway-control-client = { path = "../../crates/meshway-control-client" }
+meshway-ipc = { path = "../../crates/meshway-ipc" }
+meshway-model = { path = "../../crates/meshway-model" }
+meshway-protocol = { path = "../../crates/meshway-protocol" }
+meshway-server = { path = "../../apps/meshway-server" }
+meshway-transport-spec = { path = "../../crates/meshway-transport-spec" }
+meshway-logging = { path = "../../crates/meshway-logging" }
+clap.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+getrandom.workspace = true
+uuid.workspace = true
+tracing.workspace = true
+tokio-util.workspace = true
+tokio = { workspace = true, features = ["fs", "io-util", "process"] }
+hyper = { version = "1", default-features = false, features = ["server", "http1"] }
+hyper-util = { version = "0.1", default-features = false, features = ["tokio", "service"] }
+
+[lints]
+workspace = true

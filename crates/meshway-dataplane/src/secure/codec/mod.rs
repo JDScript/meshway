@@ -9,7 +9,7 @@ use std::{
     str::FromStr,
 };
 
-pub(super) const MAGIC: &[u8; 8] = b"MWCIR\0\0\x01";
+pub(super) const MAGIC: &[u8; 8] = b"MWCIR\0\0\x02";
 pub(super) const MAX_PATH: usize = 8;
 
 #[derive(Clone, Copy, PartialEq, Eq)]

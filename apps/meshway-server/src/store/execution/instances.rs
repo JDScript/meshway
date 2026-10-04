@@ -135,7 +135,17 @@ pub(crate) fn renew(
     let now = now()?;
     let p = authorize_node(tx, sealer, boot, token, now)?;
     current_instance(tx, boot, &p, &request, now)?;
-    let before = lease(tx, sealer, &p)?;
+    renew_authorized(tx, sealer, &p, now, false)
+}
+
+fn renew_authorized(
+    tx: &Transaction<'_>,
+    sealer: &Sealer,
+    p: &NodePrincipal,
+    now: i64,
+    rebuild_missing_target: bool,
+) -> Result<(InstanceLease, Vec<Effect>), Error> {
+    let before = lease(tx, sealer, p)?;
     let refreshed = refresh_expired_demands(tx, sealer, p.network, now)?;
     let old_execution_expiry: Option<i64> = tx.query_row(
         "SELECT execution_expires_at FROM node_execution WHERE network_id=?1 AND node_id=?2",
@@ -145,7 +155,9 @@ pub(crate) fn renew(
         ],
         |r| r.get(0),
     )?;
-    if old_execution_expiry.is_some_and(|expires| expires <= now) {
+    if (rebuild_missing_target && before.target.is_none() && !refreshed)
+        || old_execution_expiry.is_some_and(|expires| expires <= now)
+    {
         // Expiry fences the old run. A fresh publication prevents an old
         // applied receipt from becoming current merely because HTTP renewed.
         publish(tx, sealer, p.network, "refresh", now)?;
@@ -158,8 +170,8 @@ pub(crate) fn renew(
             p.node.as_uuid().as_bytes().as_slice()
         ],
     )?;
-    grant_lease(tx, sealer, &p, now)?;
-    let result = lease(tx, sealer, &p)?;
+    grant_lease(tx, sealer, p, now)?;
+    let result = lease(tx, sealer, p)?;
     let effects = if refreshed || before != result {
         vec![Effect::Progress {
             network_id: p.network,
@@ -229,19 +241,20 @@ pub(super) fn grant_lease(
         if let Some((publication, _)) = &target {
             check_publication(tx, sealer, p.network, p.node, *publication, now)?;
         }
-        Some(
-            target
-                .as_ref()
-                .map(|(_, node)| {
-                    node.configuration.permits.values().fold(
-                        now + EXECUTION_TTL,
-                        |expiry, permit| {
-                            expiry.min(permit.expires_at_ms.min(i64::MAX as u64) as i64)
-                        },
-                    )
-                })
-                .unwrap_or(now + EXECUTION_TTL),
-        )
+        // The node execution window is independent of individual business,
+        // diagnostic and DNS deadlines. Every operation still enforces its
+        // exact permit; an idle demand must not expire unrelated live flows.
+        let instance_expires: Option<i64> = tx.query_row(
+            "SELECT instance_expires_at FROM node_execution WHERE network_id=?1 AND node_id=?2",
+            params![
+                p.network.as_uuid().as_bytes().as_slice(),
+                p.node.as_uuid().as_bytes().as_slice()
+            ],
+            |row| row.get(0),
+        )?;
+        instance_expires
+            .filter(|expires| *expires > now)
+            .map(|expires| expires.min(now + EXECUTION_TTL))
     } else {
         None
     };
@@ -268,13 +281,15 @@ pub(crate) fn lease_for_node(
     network: NetworkId,
     node: NodeId,
 ) -> Result<InstanceLease, Error> {
-    let (instance,generation,expires,execution):(Vec<u8>,i64,i64,Option<i64>)=tx.query_row("SELECT instance_id,generation,instance_expires_at,execution_expires_at FROM node_execution WHERE network_id=?1 AND node_id=?2",params![network.as_uuid().as_bytes().as_slice(),node.as_uuid().as_bytes().as_slice()],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?,r.get(3)?)))?;
     let target =
         target_for_node(tx, sealer, network, node)?.map(|(publication, c)| ConfigurationRef {
             revision: c.configuration.revision,
             execution_publication: publication,
             digest: c.digest,
         });
+    // Reading a recognized obsolete target may retire its cached deadline in
+    // this transaction. Read the lease facts after that version boundary.
+    let (instance,generation,expires,execution):(Vec<u8>,i64,i64,Option<i64>)=tx.query_row("SELECT instance_id,generation,instance_expires_at,execution_expires_at FROM node_execution WHERE network_id=?1 AND node_id=?2",params![network.as_uuid().as_bytes().as_slice(),node.as_uuid().as_bytes().as_slice()],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?,r.get(3)?)))?;
     Ok(InstanceLease {
         instance_id: id(instance)?,
         generation: Version::new(
@@ -305,21 +320,7 @@ pub(crate) fn configuration(
     current_instance(tx, boot, &p, &request.instance, now)?;
     let refreshed = refresh_expired_demands(tx, sealer, p.network, now)?;
     let lease = lease(tx, sealer, &p)?;
-    let full = if request.base == lease.target {
-        None
-    } else {
-        target(tx, sealer, &p)?.map(|(_, c)| c)
-    };
-    let mut delta = None;
-    let mut full = full;
-    if let (Some(base_ref), Some(target)) = (&request.base, &full)
-        && let Some(base) = historical_target(tx, sealer, &p, base_ref)?
-    {
-        delta = Some(meshway_configuration::execution::configuration_delta(
-            &base, target,
-        )?);
-        full = None;
-    }
+    let response = configuration_response(tx, sealer, &p, request.base, lease)?;
     let effects = if refreshed {
         vec![Effect::Progress {
             network_id: p.network,
@@ -327,7 +328,58 @@ pub(crate) fn configuration(
     } else {
         Vec::new()
     };
-    Ok((NodeConfigurationResponse { lease, full, delta }, effects))
+    Ok((response, effects))
+}
+
+/// Explicit lease renewal and target handoff from one authorized owner job and
+/// one captured time. No cleanup/publication runs after the execution grant.
+pub(crate) fn refresh_configuration(
+    tx: &Transaction<'_>,
+    sealer: &Sealer,
+    boot: InstanceId,
+    token: [u8; 32],
+    request: NodeConfigurationRequest,
+) -> Result<(NodeConfigurationResponse, Vec<Effect>), Error> {
+    let now = now()?;
+    let p = authorize_node(tx, sealer, boot, token, now)?;
+    current_instance(tx, boot, &p, &request.instance, now)?;
+    let (lease, effects) = renew_authorized(tx, sealer, &p, now, true)?;
+    let response = configuration_response(tx, sealer, &p, request.base, lease)?;
+    Ok((response, effects))
+}
+
+fn configuration_response(
+    tx: &Transaction<'_>,
+    sealer: &Sealer,
+    p: &NodePrincipal,
+    base: Option<ConfigurationRef>,
+    lease: InstanceLease,
+) -> Result<NodeConfigurationResponse, Error> {
+    let full = if base == lease.target {
+        None
+    } else {
+        let target = target(tx, sealer, p)?.map(|(_, c)| c);
+        let reference = target.as_ref().map(|node| ConfigurationRef {
+            revision: node.configuration.revision,
+            execution_publication: node.configuration.publication,
+            digest: node.digest,
+        });
+        if reference != lease.target {
+            return Err(Error::BindingConflict);
+        }
+        target
+    };
+    let mut delta = None;
+    let mut full = full;
+    if let (Some(base_ref), Some(target)) = (&base, &full)
+        && let Some(base) = historical_target(tx, sealer, p, base_ref)?
+    {
+        delta = Some(meshway_configuration::execution::configuration_delta(
+            &base, target,
+        )?);
+        full = None;
+    }
+    Ok(NodeConfigurationResponse { lease, full, delta })
 }
 pub(crate) fn receipt(
     tx: &Transaction<'_>,
@@ -366,7 +418,7 @@ pub(crate) fn receipt(
             request.target.execution_publication,
             now,
         )?;
-    } else if historical_target(tx, sealer, &p, &request.target)?.is_none() {
+    } else if !super::publications::historical_reference(tx, sealer, &p, &request.target)? {
         // Late evidence for a target this node once held is still history. A
         // target it never held is not.
         return Err(Error::BindingConflict);

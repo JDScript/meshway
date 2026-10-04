@@ -1,8 +1,13 @@
 #![cfg(unix)]
+mod application;
 mod authority;
+mod cache;
 mod dns;
 mod faults;
 mod recovery;
+mod refresh;
+mod session;
+mod state_scope;
 mod support;
 
 use meshway_control::Control;

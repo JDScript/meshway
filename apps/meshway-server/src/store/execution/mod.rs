@@ -1,6 +1,8 @@
 use crate::error::Error;
 pub(crate) mod admission;
 mod authentication;
+mod cache;
+pub(crate) use cache::retire_obsolete;
 pub(crate) mod diagnostics;
 mod discovery;
 mod instances;
@@ -15,8 +17,8 @@ use crate::{
 pub(crate) use authentication::{authorize_node, challenge, insert_keys, rotate, session};
 pub(crate) use discovery::query_dns;
 pub(crate) use instances::{
-    acquire, configuration, current_instance, instance_lease, lease_for_node, receipt, release,
-    renew,
+    acquire, configuration, current_instance, instance_lease, lease_for_node, receipt,
+    refresh_configuration, release, renew,
 };
 pub(crate) use inventory::{inventory, inventory_in_transaction, progress, revoke_key, settings};
 use meshway_configuration::{NetworkConfiguration, NodeIdentity};
@@ -24,7 +26,7 @@ use meshway_model::*;
 pub(crate) use publications::{
     apply_configuration_effects, cancel_demand, check_publication, configuration_targets,
     current_target, demand, publish, publish_with_rule_sets, receipt_history_targets,
-    recent_targets_for_node, retire_node_sessions, select_profile, target_for_node,
+    recent_targets_for_node, renew_demand, retire_node_sessions, select_profile, target_for_node,
 };
 use rusqlite::{OptionalExtension, Transaction, params};
 

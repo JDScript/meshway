@@ -3,7 +3,7 @@
 use crate::error::Error;
 use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
 use ed25519_dalek::{Signature, VerifyingKey};
-use meshway_model::{Digest, KeyAlgorithm, NodePublicKey};
+use meshway_model::{Digest, InstanceId, KeyAlgorithm, NodePublicKey};
 use meshway_protocol::{
     WireSecret,
     node::{NodeChallenge, proof_transcript},
@@ -51,9 +51,17 @@ pub(crate) fn token_hash(token: &str) -> Result<[u8; 32], Error> {
     }
     Ok(Sha256::digest(token.as_bytes()).into())
 }
-pub(crate) fn issue_token() -> Result<(WireSecret, [u8; 32]), Error> {
-    let mut bytes = [0; 32];
-    getrandom::fill(&mut bytes).map_err(|_| Error::ENTROPY)?;
+/// Recoverable only with the private installation key and original, unique
+/// consumed challenge. The caller must authorize a fresh proof and require the
+/// matching live session row before returning a previously issued token.
+pub(crate) fn session_token(
+    sealer: &crate::secrets::Sealer,
+    boot: InstanceId,
+    anchor: &NodeChallenge,
+) -> Result<(WireSecret, [u8; 32]), Error> {
+    let mut context = boot.as_uuid().as_bytes().to_vec();
+    context.extend_from_slice(&proof_transcript(anchor));
+    let bytes = sealer.private_digest(b"meshway/node-session/recovery/v1\0", &context);
     let token = format!("mwns_{}", URL_SAFE_NO_PAD.encode(bytes));
     let digest = token_hash(&token)?;
     Ok((WireSecret::new(token), digest))

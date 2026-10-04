@@ -5,6 +5,8 @@ use crate::{
 use meshway_configuration::execution::CompiledNode;
 use meshway_protocol::{EnrollmentIntent, EnrollmentResponse, WireSecret};
 use serde::{Deserialize, Serialize};
+use serde_json::value::RawValue;
+use sha2::{Digest as _, Sha256};
 use std::{
     io::{Read, Write},
     sync::Arc,
@@ -14,6 +16,7 @@ use zeroize::Zeroizing;
 pub(super) const LIMIT: usize = 16 * 1024 * 1024;
 const RECORD: &str = "control.json";
 const MARKER: &[u8] = b"meshway-control/1\n";
+const VERSION: u8 = 2;
 
 fn marker(directory: &meshway_private_storage::Directory) -> Result<bool, Error> {
     let file = directory
@@ -47,7 +50,8 @@ fn ensure_marker(directory: &meshway_private_storage::Directory) -> Result<(), E
 
 #[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub(super) struct Record {
+#[serde(bound(deserialize = "T: Deserialize<'de>"))]
+pub(super) struct Record<T = CompiledNode> {
     version: u8,
     origin: String,
     #[serde(deserialize_with = "Option::deserialize")]
@@ -57,7 +61,7 @@ pub(super) struct Record {
     #[serde(deserialize_with = "Option::deserialize")]
     pub binding: Option<EnrollmentResponse>,
     #[serde(deserialize_with = "Option::deserialize")]
-    pub saved: Option<CompiledNode>,
+    pub saved: Option<T>,
 }
 #[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -94,7 +98,7 @@ impl Record {
                 }
             }
             return Ok(Self {
-                version: 1,
+                version: VERSION,
                 origin: origin.into(),
                 keys: None,
                 enrollment: None,
@@ -112,13 +116,47 @@ impl Record {
         if bytes.len() > LIMIT {
             return Err(Error::Record);
         }
-        let mut decoder = serde_json::Deserializer::from_slice(&bytes);
-        let record =
-            Self::deserialize(meshway_serde::MapOnly(&mut decoder)).map_err(|_| Error::Record)?;
-        decoder.end().map_err(|_| Error::Record)?;
-        if record.version != 1 || record.origin != origin {
+        let envelope: Record<&RawValue> = decode(&bytes)?;
+        if envelope.origin != origin {
             return Err(Error::Record);
         }
+        let upgrading = match envelope.version {
+            1 => true,
+            VERSION => false,
+            _ => return Err(Error::Record),
+        };
+        let record = if upgrading {
+            // The old cache is inspected only for integrity and binding. It is
+            // never deserialized as, or defaulted into, current authority.
+            if let Some(saved) = envelope.saved {
+                validate_obsolete(saved, envelope.binding.as_ref().ok_or(Error::Record)?)?;
+            }
+            Self {
+                version: VERSION,
+                origin: envelope.origin,
+                keys: envelope.keys,
+                enrollment: envelope.enrollment,
+                binding: envelope.binding,
+                saved: None,
+            }
+        } else {
+            decode(&bytes)?
+        };
+        record.validate()?;
+        if upgrading {
+            archive(directory, &bytes)?;
+            let mut buffer = Buffer(Zeroizing::new(Vec::with_capacity(LIMIT)));
+            serde_json::to_writer(&mut buffer, &record).map_err(|_| Error::Record)?;
+            // The lock remains held and both writes are synchronous and durable.
+            // A failed archive never replaces the original identity record.
+            directory.replace(RECORD, &buffer.0)?;
+        }
+        ensure_marker(directory)?;
+        Ok(record)
+    }
+
+    fn validate(&self) -> Result<(), Error> {
+        let record = self;
         match (&record.keys, &record.enrollment, &record.binding) {
             (None, None, None) if record.saved.is_none() => {}
             (Some(keys), Some(pending), None) if record.saved.is_none() => {
@@ -133,14 +171,156 @@ impl Record {
             }
             (Some(keys), None, Some(binding)) if keys.matches(binding)? => {
                 if let Some(saved) = &record.saved {
-                    super::execution::validate_target(saved, binding)?;
+                    super::execution::validate_target(saved, binding).map_err(|_| Error::Record)?;
                 }
             }
             _ => return Err(Error::Record),
         }
-        ensure_marker(directory)?;
-        Ok(record)
+        Ok(())
     }
+}
+
+fn decode<'de, T: Deserialize<'de>>(bytes: &'de [u8]) -> Result<T, Error> {
+    let mut decoder = serde_json::Deserializer::from_slice(bytes);
+    let value = T::deserialize(meshway_serde::MapOnly(&mut decoder)).map_err(|_| Error::Record)?;
+    decoder.end().map_err(|_| Error::Record)?;
+    Ok(value)
+}
+
+/// Only record v1 may contain this opaque derived body. MapOnly recursively
+/// rejects duplicate keys, including inside fields that are not execution inputs
+/// anymore. Header values retain their original strong types.
+fn validate_obsolete(raw: &RawValue, binding: &EnrollmentResponse) -> Result<(), Error> {
+    #[derive(Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct Slice<'a> {
+        digest: meshway_model::Digest,
+        #[serde(borrow)]
+        configuration: &'a RawValue,
+    }
+    let slice: Slice<'_> = decode(raw.get().as_bytes())?;
+    let _: serde::de::IgnoredAny = decode(slice.configuration.get().as_bytes())?;
+    let fields: std::collections::BTreeMap<String, &RawValue> =
+        decode(slice.configuration.get().as_bytes())?;
+    const FIELDS: &[&str] = &[
+        "networkId",
+        "nodeId",
+        "revision",
+        "publication",
+        "dependencyDigest",
+        "enabled",
+        "hostname",
+        "identity",
+        "addresses",
+        "selfKeys",
+        "listeners",
+        "dialers",
+        "peers",
+        "permits",
+        "diagnostics",
+        "decisions",
+        "dns",
+        "exitEnabled",
+    ];
+    if FIELDS.iter().any(|key| !fields.contains_key(*key))
+        || fields.keys().any(|key| !FIELDS.contains(&key.as_str()))
+    {
+        return Err(Error::Record);
+    }
+    validate_old_fields(&fields)?;
+    #[derive(Deserialize)]
+    #[serde(rename_all = "camelCase")]
+    struct Header {
+        network_id: meshway_model::NetworkId,
+        node_id: meshway_model::NodeId,
+        revision: meshway_model::Revision,
+        publication: meshway_model::PublicationId,
+        dependency_digest: meshway_model::Digest,
+        self_keys: meshway_configuration::execution::TrustedNode,
+    }
+    let header: Header = decode(slice.configuration.get().as_bytes())?;
+    let _ = (
+        header.revision,
+        header.publication,
+        header.dependency_digest,
+    );
+    if header.network_id != binding.network_id
+        || header.node_id != binding.node_id
+        || header.self_keys.control_key != binding.keys.control
+        || header.self_keys.dataplane_key != binding.keys.dataplane
+        || slice.digest.as_bytes()
+            != Sha256::digest(slice.configuration.get().as_bytes()).as_slice()
+    {
+        return Err(Error::Record);
+    }
+    Ok(())
+}
+
+fn validate_old_fields(
+    fields: &std::collections::BTreeMap<String, &RawValue>,
+) -> Result<(), Error> {
+    use meshway_configuration::execution::*;
+    use meshway_configuration::{
+        DnsConfiguration, NodeAddresses, NodeIdentity, transport::PreparedListener,
+    };
+    use meshway_model::{NodeId, ObservationId, RequestId};
+    use std::collections::BTreeMap;
+    fn field<T: serde::de::DeserializeOwned>(
+        fields: &BTreeMap<String, &RawValue>,
+        key: &str,
+    ) -> Result<(), Error> {
+        serde_json::from_str::<T>(fields.get(key).ok_or(Error::Record)?.get())
+            .map(|_| ())
+            .map_err(|_| Error::Record)
+    }
+    fn map<K: serde::de::DeserializeOwned + Ord, V: serde::de::DeserializeOwned>(
+        fields: &BTreeMap<String, &RawValue>,
+        key: &str,
+    ) -> Result<(), Error> {
+        let mut decoder =
+            serde_json::Deserializer::from_str(fields.get(key).ok_or(Error::Record)?.get());
+        let _: BTreeMap<K, V> =
+            meshway_serde::unique_map(&mut decoder).map_err(|_| Error::Record)?;
+        decoder.end().map_err(|_| Error::Record)
+    }
+    field::<bool>(fields, "enabled")?;
+    field::<String>(fields, "hostname")?;
+    field::<NodeIdentity>(fields, "identity")?;
+    field::<NodeAddresses>(fields, "addresses")?;
+    map::<String, PreparedListener>(fields, "listeners")?;
+    map::<String, DialCandidate>(fields, "dialers")?;
+    map::<NodeId, PeerConfiguration>(fields, "peers")?;
+    map::<RequestId, PathPermit>(fields, "permits")?;
+    map::<ObservationId, DiagnosticPermit>(fields, "diagnostics")?;
+    map::<RequestId, DemandDecision>(fields, "decisions")?;
+    field::<bool>(fields, "exitEnabled")?;
+    let dns: BTreeMap<String, &RawValue> =
+        decode(fields.get("dns").ok_or(Error::Record)?.get().as_bytes())?;
+    if dns.len() != 4 {
+        return Err(Error::Record);
+    }
+    field::<DnsConfiguration>(&dns, "settings")?;
+    map::<String, NodeAddresses>(&dns, "meshHosts")?;
+    field::<Vec<TrustedDnsAssociation>>(&dns, "associations")?;
+    field::<String>(&dns, "profile")
+}
+
+fn archive(directory: &meshway_private_storage::Directory, bytes: &[u8]) -> Result<(), Error> {
+    let digest = meshway_model::Digest::from_bytes(Sha256::digest(bytes).into());
+    let name = format!("control-v1-{digest}.json");
+    if let Some(file) = directory.file(&name, false)? {
+        let mut existing = Zeroizing::new(Vec::new());
+        file.take((LIMIT + 1) as u64)
+            .read_to_end(&mut existing)
+            .map_err(|_| meshway_private_storage::Error::Io)?;
+        if existing.as_slice() != bytes {
+            return Err(Error::Record);
+        }
+    } else {
+        directory.replace(&name, bytes)?;
+    }
+    directory.sync()?;
+    Ok(())
 }
 
 struct Buffer(Zeroizing<Vec<u8>>);
@@ -159,11 +339,24 @@ impl Write for Buffer {
 
 impl Control {
     pub(super) async fn persist(&mut self) -> Result<(), Error> {
+        self.persist_record(false).await
+    }
+
+    /// Only the validated configuration-query transaction may preserve lineage.
+    pub(super) async fn persist_target(&mut self) -> Result<(), Error> {
+        self.persist_record(true).await
+    }
+
+    async fn persist_record(&mut self, target: bool) -> Result<(), Error> {
         self.ready()?;
         // Mutations happen under the single driver. Until fsync is acknowledged,
         // neither this driver nor a cancelled caller may use the new identity.
         self.dirty = true;
-        self.invalidate_snapshots();
+        if target {
+            self.invalidate_guards();
+        } else {
+            self.invalidate_snapshots();
+        }
         let mut buffer = Buffer(Zeroizing::new(Vec::with_capacity(LIMIT)));
         serde_json::to_writer(&mut buffer, &self.record).map_err(|_| Error::Record)?;
         let directory = Arc::clone(&self.directory);

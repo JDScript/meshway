@@ -22,6 +22,9 @@ pub enum Fault {
     WrongDnsName,
     MissingDnsRecord,
     ShortSession,
+    UntypedConflict,
+    WrongStateScopeStatus,
+    StateScopeChanged,
 }
 #[derive(Clone)]
 struct Forward {
@@ -125,6 +128,33 @@ async fn forward(State(state): State<Forward>, request: Request) -> Response<Bod
     let status = response.status();
     let mut headers = response.headers().clone();
     let bytes = response.bytes().await.unwrap();
+    if let Some(
+        fault @ (Fault::UntypedConflict | Fault::WrongStateScopeStatus | Fault::StateScopeChanged),
+    ) = fault
+    {
+        let body = if matches!(fault, Fault::UntypedConflict) {
+            b"{}".to_vec()
+        } else {
+            serde_json::to_vec(&meshway_protocol::ErrorResponse {
+                request_id: Some(super::support::request()),
+                status: if matches!(fault, Fault::WrongStateScopeStatus) {
+                    400
+                } else {
+                    409
+                },
+                problem: meshway_protocol::Problem::StateScopeChanged {
+                    params: meshway_protocol::EmptyParams {},
+                    message: "State scope changed.".into(),
+                },
+            })
+            .unwrap()
+        };
+        return Response::builder()
+            .status(StatusCode::CONFLICT)
+            .header(header::CONTENT_TYPE, "application/json")
+            .body(Body::from(body))
+            .unwrap();
+    }
     let bytes = if status.is_success() {
         match fault {
             Some(Fault::Lost) => {
@@ -156,6 +186,9 @@ async fn forward(State(state): State<Forward>, request: Request) -> Response<Bod
                             .into()
                     }
                     Fault::Lost | Fault::Hold => unreachable!("delivery fault handled above"),
+                    Fault::UntypedConflict
+                    | Fault::WrongStateScopeStatus
+                    | Fault::StateScopeChanged => unreachable!("conflict fault handled above"),
                 }
                 serde_json::to_vec(&value).unwrap()
             }

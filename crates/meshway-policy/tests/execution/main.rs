@@ -5,6 +5,9 @@ use meshway_policy::{SubjectContext, compile::*, mesh_access_allows_any, validat
 use meshway_transport_spec::*;
 use std::collections::BTreeMap;
 mod admission;
+mod capture;
+mod dns_egress;
+mod local_egress;
 fn node(i: u8) -> NodeId {
     format!("00000000-0000-4000-8000-{i:012}").parse().unwrap()
 }
@@ -427,6 +430,32 @@ fn egress_first_match_no_fallback_on_revocation_and_dns_is_trusted() {
     assert_eq!(
         r.nodes[&node(1)].configuration.permits[&request(1)].expires_at_ms,
         2000
+    );
+    // Renewing the intent cannot extend the trusted DNS association itself.
+    let mut renewed = ds.clone();
+    renewed.get_mut(&request(1)).unwrap().expires_at_ms = 200_000;
+    let renewal = run(&c, &inventory(), &renewed, &dns);
+    assert_eq!(
+        renewal.nodes[&node(1)].configuration.permits[&request(1)],
+        r.nodes[&node(1)].configuration.permits[&request(1)]
+    );
+    renewed.get_mut(&request(1)).unwrap().expires_at_ms = 1500;
+    assert_eq!(
+        run(&c, &inventory(), &renewed, &dns).nodes[&node(1)]
+            .configuration
+            .permits[&request(1)]
+            .expires_at_ms,
+        1500
+    );
+    let mut expired_dns = dns.clone();
+    expired_dns[0].expires_at_ms = 1000;
+    assert_eq!(
+        run(&c, &inventory(), &renewed, &expired_dns).nodes[&node(1)]
+            .configuration
+            .decisions[&request(1)],
+        DemandDecision::Unavailable {
+            reason: UnavailableReason::MissingDns,
+        }
     );
     // TUN packets contain an IP, not the browser's domain string. The same
     // trusted association must drive routing and bound the grant lifetime.

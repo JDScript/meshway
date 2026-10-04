@@ -69,6 +69,8 @@ pub enum Error {
     Limits,
     #[error("packet or authenticated packet facts rejected")]
     Packet,
+    #[error("packet has no valid unambiguous local flow role")]
+    Flow,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -185,6 +187,51 @@ pub enum Received {
         response: Option<PendingFrame>,
     },
     Packet(PendingAction),
+}
+
+/// Unauthenticated scheduling hints decoded by the bounded candidate codec.
+/// These fields grant no identity, path, carrier or execution authority. The
+/// selected owner must still call `receive` with the actual incoming carrier.
+#[derive(Clone, Debug)]
+pub struct UntrustedIncomingHint {
+    pub demand: RequestId,
+    pub path: Vec<NodeId>,
+    pub last_carrier: Carrier,
+}
+
+pub fn incoming_hint(bytes: &[u8]) -> Result<UntrustedIncomingHint, Error> {
+    let frame = Frame::decode(bytes)?;
+    Ok(UntrustedIncomingHint {
+        demand: frame.context.demand,
+        path: frame.context.path,
+        last_carrier: frame.proofs.last().ok_or(Error::Wire)?.carrier.clone(),
+    })
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum CircuitRole {
+    Origin,
+    Relay,
+    Terminal,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum CircuitState {
+    Handshaking,
+    Established,
+    Closed,
+}
+
+/// Read-only health metadata; no key, cipher state, packet or grant is exposed.
+#[derive(Clone, Debug)]
+pub struct CircuitInfo {
+    pub id: [u8; 32],
+    pub demand: RequestId,
+    pub path: Vec<NodeId>,
+    pub role: CircuitRole,
+    pub state: CircuitState,
+    pub expires_at: Instant,
+    pub expires_at_ms: u64,
 }
 
 enum State {
@@ -305,8 +352,9 @@ impl Circuit {
 }
 
 /// One execution identity, one shared flow table, and a bounded circuit table.
-/// Failed/closed circuits retain tombstones until their permit expires. These
-/// count towards capacity; cleanup cannot turn an old handshake into a new one.
+/// Failed/closed circuits retain bounded tombstones for this owner's lifetime.
+/// These count towards capacity; future permit extensions cannot make an old
+/// handshake new again. Replacing the owner establishes a new replay domain.
 pub struct SecureNode {
     identity: DataPlaneIdentity,
     engine: Engine,
@@ -328,6 +376,25 @@ impl fmt::Debug for SecureNode {
     }
 }
 impl SecureNode {
+    /// Replace host-observed authenticated carrier availability without changing
+    /// circuit IDs, replay windows, flows or their complete logical paths.
+    /// Every later output still checks this carrier against its specific permit.
+    pub fn set_carriers(&mut self, carriers: BTreeMap<NodeId, Carrier>) -> Result<(), Error> {
+        let snapshot = self.identity.snapshot();
+        let cfg = snapshot.configuration().map_err(|_| Error::Authority)?;
+        let now = snapshot.now_ms().map_err(|_| Error::Authority)?;
+        for (peer, carrier) in &carriers {
+            if carrier.listener_key.is_empty() || carrier.listener_key.len() > 255 {
+                return Err(Error::Unsupported);
+            }
+            meshway_policy::admission::admit_adjacency(cfg, *peer, carrier, now)
+                .map_err(|_| Error::Policy)?;
+        }
+        snapshot.ensure_current().map_err(|_| Error::Authority)?;
+        self.carriers = carriers;
+        Ok(())
+    }
+
     pub fn new(
         identity: DataPlaneIdentity,
         limits: Limits,
@@ -391,8 +458,10 @@ impl SecureNode {
         if self.circuits.contains_key(&circuit_id) {
             return Err(Error::State);
         }
-        let permit = meshway_configuration::digest(cfg.permits.get(&demand).ok_or(Error::Context)?)
-            .map_err(|_| Error::Context)?;
+        let permit = meshway_policy::permit_authorization_digest(
+            cfg.permits.get(&demand).ok_or(Error::Context)?,
+        )
+        .map_err(|_| Error::Context)?;
         let context = Context {
             network: cfg.network_id,
             demand,
@@ -455,7 +524,7 @@ impl SecureNode {
         self.capacity()?;
         let snapshot = self.identity.snapshot();
         let cfg = snapshot.configuration().map_err(|_| Error::Authority)?;
-        let permit = meshway_configuration::digest(
+        let permit = meshway_policy::permit_authorization_digest(
             cfg.permits
                 .get(&frame.context.demand)
                 .ok_or(Error::Context)?,
@@ -791,53 +860,93 @@ impl SecureNode {
         }
     }
 
-    /// Same-execution refresh preserves live nonces, replay windows and original
-    /// circuit caps. It cannot revive an expired handshake, circuit or output.
+    /// Same-target renewal, using the shared reconciliation implementation.
     pub fn refresh(&mut self, identity: DataPlaneIdentity) -> Result<(), Error> {
-        identity
-            .snapshot()
-            .ensure_current()
-            .map_err(|_| Error::Authority)?;
-        self.identity
-            .snapshot()
-            .ensure_current()
-            .map_err(|_| Error::Authority)?;
         if !self.identity.snapshot().same_execution(identity.snapshot()) {
             return Err(Error::Context);
         }
-        self.maintain()?;
-        self.engine
-            .refresh(identity.snapshot().clone())
+        self.reconcile(identity)
+    }
+
+    /// Carry live compatible circuits through an owner-authenticated direct
+    /// publication replacement. Noise state, nonce/replay windows and the one
+    /// flow table are retained. Old issued outputs never receive the new guard.
+    /// Expired/closed states remain closed, including when a permit is extended.
+    pub fn reconcile(&mut self, identity: DataPlaneIdentity) -> Result<(), Error> {
+        let snapshot = identity.snapshot();
+        let old = snapshot
+            .continuation_from(self.identity.snapshot())
             .map_err(|_| Error::Authority)?;
+        let new = snapshot.configuration().map_err(|_| Error::Authority)?;
+        let now_ms = snapshot.now_ms().map_err(|_| Error::Authority)?;
+        let now = Instant::now();
+        let flows = self
+            .engine
+            .reconciled_flows(snapshot)
+            .map_err(|_| Error::Authority)?;
+        let mut plan = Vec::with_capacity(self.circuits.len());
+        for (id, circuit) in &self.circuits {
+            let compatible = crate::flow::authorization_unchanged(
+                old,
+                new,
+                circuit.context.demand,
+                &circuit.context.path,
+                now_ms,
+            )
+            .map_err(|_| Error::Context)?;
+            let live = compatible
+                && !matches!(circuit.state, State::Closed)
+                && !circuit.cancellation.is_cancelled()
+                && now < circuit.expires_at
+                && now_ms < circuit.expires_at_ms
+                && (circuit.state.established()
+                    || (now < circuit.handshake_at && now_ms < circuit.handshake_at_ms));
+            let expiry = new
+                .permits
+                .get(&circuit.context.demand)
+                .map(|permit| permit.expires_at_ms);
+            plan.push((*id, live, expiry));
+        }
+        let final_now_ms = snapshot.now_ms().map_err(|_| Error::Authority)?;
+        snapshot
+            .continuation_from(self.identity.snapshot())
+            .map_err(|_| Error::Authority)?;
+        for (id, live, expiry) in plan {
+            let circuit = self.circuits.get_mut(&id).expect("planned circuit");
+            if let Some(expiry) = expiry {
+                circuit.permit_expires_at_ms = circuit.permit_expires_at_ms.max(expiry);
+            }
+            if live && Instant::now() < circuit.expires_at && final_now_ms < circuit.expires_at_ms {
+                circuit.expires_at = snapshot.expires_at();
+                circuit.expires_at_ms = snapshot.expires_at_ms().min(expiry.expect("live permit"));
+            } else {
+                circuit.retire();
+            }
+        }
+        self.engine.flows = flows;
+        self.engine.snapshot = snapshot.clone();
         self.identity = identity;
         Ok(())
     }
 
-    /// Host-driven cleanup; expired states become replay tombstones. Permit
-    /// expiry is the only time a tombstone can safely leave this owner's table.
+    /// Host-driven cleanup; expired states become bounded replay tombstones.
     pub fn maintain(&mut self) -> Result<(), Error> {
         if self.identity.snapshot().ensure_current().is_err() {
-            self.circuits.clear();
-            let _ = self.engine.maintain();
             return Err(Error::Authority);
         }
-        let now_ms = match self.identity.snapshot().now_ms() {
-            Ok(now_ms) => now_ms,
-            Err(_) => {
-                self.circuits.clear();
-                let _ = self.engine.maintain();
-                return Err(Error::Authority);
-            }
-        };
+        self.identity
+            .snapshot()
+            .now_ms()
+            .map_err(|_| Error::Authority)?;
         for circuit in self.circuits.values_mut() {
             if circuit.ensure_current(self.identity.snapshot()).is_err() {
                 circuit.retire();
             }
         }
-        self.circuits
-            .retain(|_, circuit| now_ms < circuit.permit_expires_at_ms);
+        // Keep bounded replay tombstones for this owner. A later authenticated
+        // extension/regrant of the same authorization must not accept an old IK
+        // initiation after its original absolute expiry. Capacity fails closed.
         if self.engine.maintain().is_err() {
-            self.circuits.clear();
             return Err(Error::Authority);
         }
         Ok(())
@@ -850,16 +959,83 @@ impl SecureNode {
             circuit.retire();
         }
     }
+
+    /// Reading metadata never refreshes a deadline or manufactures a sample.
+    pub fn circuit_info(&self, id: [u8; 32]) -> Result<Option<CircuitInfo>, Error> {
+        let snapshot = self.identity.snapshot();
+        let cfg = snapshot.configuration().map_err(|_| Error::Authority)?;
+        let Some(circuit) = self.circuits.get(&id) else {
+            return Ok(None);
+        };
+        let live = circuit.ensure_current(snapshot).is_ok();
+        snapshot.ensure_current().map_err(|_| Error::Authority)?;
+        let guard = circuit.guard(snapshot, !circuit.state.established());
+        Ok(Some(CircuitInfo {
+            id,
+            demand: circuit.context.demand,
+            path: circuit.context.path.clone(),
+            role: if circuit.context.path.first() == Some(&cfg.node_id) {
+                CircuitRole::Origin
+            } else if circuit.context.path.last() == Some(&cfg.node_id) {
+                CircuitRole::Terminal
+            } else {
+                CircuitRole::Relay
+            },
+            state: if !live {
+                CircuitState::Closed
+            } else if circuit.state.established() {
+                CircuitState::Established
+            } else {
+                CircuitState::Handshaking
+            },
+            expires_at: guard.expires_at,
+            expires_at_ms: guard.expires_at_ms,
+        }))
+    }
+
+    pub fn ready_circuits(&self) -> Result<Vec<CircuitInfo>, Error> {
+        self.identity
+            .snapshot()
+            .ensure_current()
+            .map_err(|_| Error::Authority)?;
+        let mut ready = Vec::new();
+        for id in self.circuits.keys() {
+            if let Some(info) = self.circuit_info(*id)?
+                && info.state == CircuitState::Established
+            {
+                ready.push(info);
+            }
+        }
+        Ok(ready)
+    }
     pub fn retained_circuits(&self) -> usize {
         self.circuits.len()
     }
     pub fn retained_flows(&self) -> usize {
         self.engine.retained_flows()
     }
+
+    /// Read original demand/path metadata from the one Engine flow table. This
+    /// neither selects nor opens a circuit and never grants packet authority.
+    /// An existing route remains existing even if its carrier/circuit is down.
+    pub fn local_flow(&self, packet: &Packet) -> Result<Option<crate::LocalFlow>, Error> {
+        self.identity
+            .snapshot()
+            .ensure_current()
+            .map_err(|_| Error::Authority)?;
+        self.engine.local_flow(packet).map_err(|error| match error {
+            crate::Error::Control(_) => Error::Authority,
+            crate::Error::Flow => Error::Flow,
+            crate::Error::Expired => Error::Expired,
+            _ => Error::Packet,
+        })
+    }
     pub async fn invalidated(&mut self) {
         self.identity.snapshot().invalidated().await;
-        self.circuits.clear();
-        let _ = self.engine.maintain();
+        for circuit in self.circuits.values_mut() {
+            circuit.retire();
+        }
+        self.engine.flows.clear();
     }
 }
 

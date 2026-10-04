@@ -1,5 +1,7 @@
 # 插件与能力
 
+本文的动态装载／ABI 是已确定的设计方向，尚未实现。当前 daemon 直接链接 Rust 组件与正式 stream providers；实际 crate 和运行边界见[总体结构](/v2/architecture#node-组件库)。规划中的 netstack、diagnostics 和 plugin host 不构成已安装能力。
+
 ## 交付与装载
 
 首版动态装载 transport providers。control、dataplane、connectivity、underlay、TUN/netstack、DNS 和 diagnostics 保持独立职责的 Rust 库，由 daemon 链接；crate 边界不自动成为动态库边界。
@@ -38,7 +40,9 @@ loader／导出薄入口是受审 FFI 边界，业务实现保持安全约束。
 
 host services 提供有上下文的 socket、存储、任务、时钟、观测和必要材料接口。底层豁免不能由任意字符串指定用途；control 的 bootstrap 不依赖业务 DNS 已启动，TUN 捕获前先完成保护。
 
-dataplane 保持共同身份／端到端保护；transport 执行协议封装，connectivity 管理实际邻接与 socket 尝试。普通拨号、反向拨号、UDP 打洞和 TCP simultaneous-open 分别表达；支持 TCP 业务或 VLESS 不代表 TCP 外层打洞已实现。
+dataplane 保持共同身份／端到端保护；transport 执行协议封装，connectivity 管理实际邻接与 socket 尝试。当前穿透目标限外层 UDP；Native TCP、VLESS TCP/TLS／WS/TLS 和 Trojan TCP/TLS 要求已拨号建立的 TCP stream，不实现 TCP simultaneous-open。接受远端拨入和本机主动拨出都可得到该 stream，建连方向独立于业务方向。
+
+连接获取与协议封装分别表达：显式 listener／dialer 取得的会话，与绑定 UDP socket、发现／交换候选、协调穿透取得的会话，最终复用同一 peer 会话、权限、流表、加密与失效 owner。UDP 同样有接收 socket 和认证握手；两类会话均可双向承载，不能据此推导双向业务授权。QUIC／HTTP/3 的 UDP 外层可复用穿透基础设施，但其连接／HTTP 角色仍须独立处理。MASQUE provider 与新的需求声明字段尚未实现。
 
 ## Config／State 对齐
 

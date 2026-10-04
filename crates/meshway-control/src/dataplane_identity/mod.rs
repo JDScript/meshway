@@ -86,7 +86,7 @@ pub fn packet_proof_message(
     digest: Digest,
 ) -> Vec<u8> {
     let mut message = Vec::with_capacity(128);
-    message.extend_from_slice(b"meshway/packet-proof/v1\0");
+    message.extend_from_slice(b"meshway/packet-proof/v2\0");
     message.extend_from_slice(network.as_uuid().as_bytes());
     message.extend_from_slice(node.as_uuid().as_bytes());
     message.extend_from_slice(key.id.as_uuid().as_bytes());

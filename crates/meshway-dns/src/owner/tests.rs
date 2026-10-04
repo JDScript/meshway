@@ -38,6 +38,7 @@ fn state() -> State {
         mesh_hosts: BTreeMap::from([("known.mesh.example".into(), addresses())]),
         associations: vec![],
         profile: "not-route-authority".into(),
+        egress: meshway_configuration::execution::DnsEgress::NoExit,
     };
     State {
         binding: Binding {
@@ -150,7 +151,7 @@ fn parsed_questions_discover_exact_names_without_caching_or_request_id_aliasing(
 }
 
 #[test]
-fn null_family_is_nodata_and_null_record_stays_typed_not_visible() {
+fn null_family_is_nodata_and_authenticated_null_is_uncached_refused() {
     let mut state = state();
     let now = Instant::now();
     let request = begin(&mut state, "v4.mesh.example", RecordType::AAAA, now);
@@ -164,10 +165,10 @@ fn null_family_is_nodata_and_null_record_stays_typed_not_visible() {
     let request = begin(&mut state, "missing.mesh.example", RecordType::A, now);
     let mut response = dns_response(&state, &request);
     response.record = None;
-    unavailable(
-        state.complete(&request.ticket, response, now),
-        Unavailable::NotVisible,
-    );
+    let ready = answer(state.complete(&request.ticket, response, now));
+    assert_eq!(ready.message.metadata.response_code, ResponseCode::Refused);
+    assert!(!ready.message.metadata.authoritative);
+    assert!(ready.message.answers.is_empty() && ready.message.authorities.is_empty());
     // Neither the positive record nor the null creates a cache entry.
     begin(&mut state, "v4.mesh.example", RecordType::AAAA, now);
     begin(&mut state, "missing.mesh.example", RecordType::A, now);
@@ -207,6 +208,26 @@ fn discovery_rejects_wrong_binding_revision_and_noncanonical_names() {
             Unavailable::InvalidTicket,
         );
         assert!(state.pending.is_empty());
+    }
+}
+
+#[test]
+fn unauthenticated_binding_or_wrong_revision_null_never_becomes_refused() {
+    for wrong_revision in [false, true] {
+        let mut state = state();
+        let now = Instant::now();
+        let request = begin(&mut state, "hidden.mesh.example", RecordType::A, now);
+        let mut response = dns_response(&state, &request);
+        response.record = None;
+        let expected = if wrong_revision {
+            response.configuration_revision = Revision::new(8).unwrap();
+            Unavailable::ReloadRequired
+        } else {
+            response.source_node_id = "00000000-0000-0000-0000-000000000009".parse().unwrap();
+            Unavailable::BindingMismatch
+        };
+        unavailable(state.complete(&request.ticket, response, now), expected);
+        assert_eq!(state.pending.len(), 0);
     }
 }
 

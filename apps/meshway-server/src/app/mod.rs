@@ -125,9 +125,16 @@ impl App {
             directory,
             Arc::downgrade(&state_runtime) as std::sync::Weak<dyn crate::effect::EffectSink>,
             |connection, directory| {
-                schema::initialize(connection, |connection, fresh| {
+                let sealer = schema::initialize(connection, |connection, fresh| {
                     secrets::initialize(connection, directory, fresh).map_err(AppError::from)
-                })
+                })?;
+                let transaction = connection
+                    .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)
+                    .map_err(|_| AppError::Database)?;
+                crate::store::execution::retire_obsolete(&transaction, &sealer)
+                    .map_err(|_| AppError::StorageIntegrity)?;
+                transaction.commit().map_err(|_| AppError::Database)?;
+                Ok(sealer)
             },
         )
         .await

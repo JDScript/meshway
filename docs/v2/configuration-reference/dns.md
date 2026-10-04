@@ -78,13 +78,15 @@
 
 ## 使用出口时
 
-普通 DNS 须随有效方案的出口解析，只有明确配置的例外解析器保留。MagicDNS 仍按节点记录处理；useWithExit=true 的解析器保留其明确的 split/default 用途。
+普通 DNS 须交给选中出口的系统 resolver 解析，只有明确配置的例外解析器保留。MagicDNS 仍按节点记录处理；useWithExit=true 的解析器保留其明确的 split/default 用途。出口 resolver 的生产接线尚未实现。
 
 例外不是目的地址的全局放行；解析器流量仍须走明确、获准的网络路径。没有有效出口／解析依赖时报告不可用，不静默落回另一路公共解析器。
 
-多出口方案必须在解析业务域名之前确定无循环的 DNS 路径。需要 DNS 结果才能确定的 IP 规则，不能反过来成为它自身唯一的解析器选择依据；缺少可信解析依赖时，相关需求不可执行。
+存在歧义的多出口方案必须在解析业务域名之前提供**显式、无循环的 DNS plan**。需要 DNS 结果才能确定的 IP 规则，不能反过来成为它自身唯一的解析器选择依据；缺少可信解析依赖时，相关需求不可执行。该 plan 的配置字段尚未实现，不能通过虚构配置宣称可用。当前编译产物仅提供保守的 [DnsExecution.egress](/v2/configuration-reference/node-configuration#dns-执行内容) 无出口证明或 `exitPlanRequired`，不下发可执行出口 DNS 路线。
 
 Server 通信／transport／协调的 bootstrap DNS 必须使用受保护系统通路，和业务 DNS 分开。运行实现范围见 [Node](/v2/node)。
+
+Node 的 TTL 0 MagicDNS、REFUSED／NODATA、loopback Service、路由证据及宿主 DNS 安装限制统一见 [DNS 查询 owner](/v2/node/dataplane#dns-查询-owner)。
 
 ## 域名执行关联
 

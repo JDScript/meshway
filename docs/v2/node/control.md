@@ -1,8 +1,8 @@
 # Server 接入组件
 
-`meshway-control` 提供由宿主驱动的 Node 控制生命周期，HTTP 操作全部使用生成的 `meshway-control-client`。当前包含浏览器批准的持钥接入、认证、实例／lease、目标保存、saved 回执和控制状态上报。
+`meshway-control` 提供由宿主驱动的 Node 控制生命周期，HTTP 操作全部使用生成的 `meshway-control-client`。当前包含浏览器批准的持钥接入、认证、实例／lease、需求与续租、目标保存、安装回执和运行状态上报。
 
-daemon／CLI 通过本组件完成[控制生命周期](/v2/node/runtime#启动与接入)。自动调度由 daemon 唯一协调；SSE 消费、接入密钥方式、换钥和实际网络安装尚未接线。组件不声明 transport 能力或 applied 结果。
+daemon／CLI 通过本组件完成[控制生命周期](/v2/node/runtime#启动与接入)。自动调度和 Linux 网络安装由 daemon 协调；SSE 消费、接入密钥方式和换钥尚未接线。组件校验并传递宿主实际能力与安装结果，不自行证明 applied。
 
 ## 接口与顺序
 
@@ -14,16 +14,21 @@ daemon／CLI 通过本组件完成[控制生命周期](/v2/node/runtime#启动�
 | `redeem_enrollment` | 验证返回网络与公钥绑定，保存身份；丢失响应后可恢复同一兑换结果 |
 | `cancel_enrollment` | 持钥取消待完成请求，或清理已确认的取消／撤回／过期请求；已兑换身份不会被当作临时请求删除 |
 | `authenticate` | 校验固定 Server／Node／key／generation 的 challenge 后签名，取得短期 Node 会话 |
+| `refresh_authentication` | 在原会话截止前持钥取得新会话，保留同一有效实例；不会延长旧快照或 execution lease |
 | `acquire_instance` | 使用宿主真实能力取得实例；同一次不确定请求保持原 instance ID |
 | `renew_instance` | 更新当前实例的期限，验证返回实例与代际 |
 | `sync_configuration` | 读取完整目标或用共享库应用 delta，检查 digest／身份／实例绑定，原子保存目标 |
+| `refresh_configuration` | 显式续租并从同一 Server 事务取得精确匹配的 lease 与 full／delta；复用相同校验和持久化入口 |
 | `execution_snapshot` | 从当前有效实例、lease 和匹配的已保存目标取得不可变执行快照；不证明 installed／applied |
 | `dataplane_identity` | 验证同执行快照与已登记密钥后，取得受期限约束的 Noise 初始化及包平面签名句柄 |
 | `create_demand` | 使用当前 Node 会话提交匹配当前 instance 的类型化需求；调用方保持重试 request ID，随后同步执行目标 |
-| `cancel_demand` | 取消当前实例的需求；成功确认后立即使本机旧执行快照失效，重新同步后取得新快照 |
+| `renew_demand` | 以现有 demand ID 和绝对 expiresAt 请求续租；反馈不更新本机许可，须同步保存并取得新执行快照 |
+| `cancel_demand` | 在 HTTP 发送前使旧快照及连续性失效并清空本机 execution deadline；不确定响应也不复活旧许可 |
 | `query_dns` | 按当前 Node 身份[精确查询名称](/v2/configuration-reference/dns#node-精确名称查询)，无需 instance，不延长任何 lease |
 | `acknowledge_saved` | 对已持久保存且仍属当前执行目标的配置发送 saved 回执；重试保持 attempt／sequence／时间 |
+| `begin_application`／`finish_application` | 使用同一 ApplicationTicket 先确认 saved，再提交真实 applied／failed 结果 |
 | `report_control_state` | 上报宿主提供的系统信息、当前能力和已保存配置；applied、通道、包流和测量保持空值 |
+| `report_runtime_state` | 校验宿主真实 NodeState 的能力／saved／applied 绑定，复用同一 instance sequence 和重试 owner |
 | `retry_state_report` | 重发同一不确定报告，保持 sequence 和观测时间，不制造新样本 |
 | `stop` | 先停用本机控制上下文，再请求释放已知实例；请求失败不会恢复本机实例 |
 | `shutdown` | 停止并等待已接纳的私有写入完成 |
@@ -53,20 +58,33 @@ daemon／CLI 通过本组件完成[控制生命周期](/v2/node/runtime#启动�
 
 `ExecutionSnapshot` 只能由当前 `Control::execution_snapshot()` 取得。它绑定网络／节点、instance／generation、精确目标引用和本机失效代际，并保留原始 session、instance 与 execution 三个截止。缓存恢复、读取或 Clone 都不能延长期限。
 
-配置／需求改变后，Server 可能先撤回旧 execution lease。`sync_configuration` 只取得并保存新目标，不自动续租；宿主显式 `renew_instance` 获得匹配新目标的执行期限后，才能取得可用执行快照。已保存目标与当前可运行资格分别检查。
+配置／需求改变后，Server 可能先撤回旧 execution lease。`sync_configuration` 只取得并保存新目标，不自动续租。持续运行使用 `refresh_configuration`，通过[原子刷新](/v2/execution#原子执行刷新)同时取得完整目标／delta 和该目标的 lease，避免分开的续租／查询夹入其他发布。已保存目标与当前可运行资格仍分别检查。
+
+`authenticate` 在会话的 UTC 或单调剩余期限进入 60 秒窗口时主动更新认证。新会话必须在旧会话截止前成功验证，才能保留同一实例与连续性；过期、绑定不匹配或凭据拒绝仍停止旧上下文。认证更新不修改业务许可，也不延长已经取得的旧输出 deadline。
 
 - `configuration()`／`ensure_current()`：检查当前有效性；目标内容包含私有配置，只交给受信运行组件。
 - `now_ms()`／`expires_at()`：复用控制 owner 的 UTC 高水位和单调期限。
 - `invalidated()`／`invalidated_at(permit_deadline_ms)`：供宿主取消阻塞 I/O；没有额外后台任务，permit 截止只能进一步缩短快照寿命。
 - `same_execution()`：判断显式续租交接是否仍是相同 instance、目标和失效代际；调用组件仍须检查新旧快照有效性。
+- `continuation_from(old)`：仅接纳同一 Control owner 发出的同目标续租或直接前驱 publication；校验 instance／generation、网络／节点、identity、地址与 selfKeys 不变，且旧 UTC／单调截止仍有效。返回旧配置只用于比较，不恢复其输出权限。
 
-输出排队时保留快照，在最终 I/O 边界再次检查，并在阻塞期间选择失效通知。换代、down、driver 销毁和不确定持久化会使旧快照失效；挂起的 HTTP 不阻止通知。已经失效的快照不会因重新上线或新 lease 恢复。各组件的安装、包流和 applied 仍由各自实际行为验收。
+输出排队时保留快照，在最终 I/O 边界再次检查，并在阻塞期间选择失效通知。替换 publication 会取消旧输出 guard，但允许直接后继按不透明 lineage 比较仍未过期的旧授权。stop、取消需求、失效 barrier、跨 instance 或跳过已观察的 publication 都中断连续性；调用者不能只比较 digest 重新构造交接。旧排队输出永不取得新期限。数据面如何保留流／circuit 见[连续性](/v2/node/dataplane#包与流边界)。
+
+## 安装回执与运行报告
+
+`begin_application()` 为当前已保存、instance 目标一致的配置确认 saved 后返回 `ApplicationTicket`。Ticket 绑定 Control owner、instance、target 与 attempt；Clone 不产生新尝试。同一未完成尝试重用原 saved 请求、sequence 和时间；已完成后的重装使用下一 attempt。
+
+`finish_application(ticket, result, observed_at)` 接收宿主真实 `Ok(())` 或 `ApplyFailure`，固定首次结果、sequence 和观测时间；不确定交付重试不能改结果。仍属同一 instance 的旧目标完成可进入 Server 历史，由 Server 排序避免覆盖当前目标；当前启用目标的 applied 还须具有有效执行快照。
+
+`report_runtime_state` 与 `report_control_state` 共用报告 sequence／重试 owner。待确认报告存在时，新事实等待，重发原观测不制造样本。保存、安装、认证通道和业务包流分别表达；报告不会授予或延长执行资格。
 
 ## 私有存储与传输
 
 每个控制身份使用独立的绝对私有目录。`control.json` 保存 origin、必要密钥、待完成接入及配置缓存；它包含秘密。目录为 owner-only，文件为 `0600`；读取有大小上限，写入使用临时文件、原子替换与同步。
 
 文件保护原语由 `meshway-private-storage` 提供，Server 与 Node 共用目录、祖先路径、文件类型／权限、锁和原子发布实现；文件名、记录格式和业务恢复仍归各自领域所有。
+
+当前私有记录格式为 2。仅对可识别且完整性／身份绑定有效的格式 1 执行升级：先持久备份原记录，再保留 origin、密钥、接入 intent 和身份绑定，清空派生 saved 缓存并原子写入格式 2。旧缓存不补默认字段变成新许可；重启重新同步。未知版本、当前格式损坏或备份失败均报错并保留原数据，不生成替代身份。
 
 远端连接要求 HTTPS；明文 HTTP 仅允许数字 loopback 地址。HTTP builder 由宿主提供并保留其底层 socket／解析保护；生成客户端关闭重定向。原始密钥、兑换码、token、HTTP 响应体和底层错误不会进入组件的普通 Debug／Display 输出。
 

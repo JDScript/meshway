@@ -15,9 +15,9 @@ pub(crate) enum Error {
     Output(#[from] std::io::Error),
     #[error("Another operator changed Node intent.")]
     IntentChanged,
-    #[error("Intent is saved; control convergence is still pending. Use status --watch.")]
+    #[error("Intent is saved; Node convergence is still pending. Use status --watch.")]
     Pending,
-    #[error("Intent is saved; inspect the reported control problem.")]
+    #[error("Intent is saved; inspect the reported Node problem.")]
     ControlProblem,
 }
 

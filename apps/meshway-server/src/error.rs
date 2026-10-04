@@ -46,6 +46,8 @@ pub enum Error {
     BindingConflict,
     #[error("lifecycle state does not allow this operation")]
     StateConflict,
+    #[error("state report execution scope changed")]
+    StateScopeChanged,
     #[error("the last Owner cannot be removed or demoted")]
     LastOwner,
     #[error("already a network member")]

@@ -8,6 +8,8 @@ members = [
     "crates/meshway-policy",
     "crates/meshway-dataplane",
     "crates/meshway-tun",
+    "crates/meshway-underlay",
+    "crates/meshway-connectivity",
     "crates/meshway-dns",
     "crates/meshway-control-client",
     "crates/meshway-protocol",
@@ -25,6 +27,7 @@ members = [
     "crates/meshway-transport-trojan",
     "tools/meshway-transport-perf",
     "tools/meshway-packet-fixture",
+    "tools/meshway-runtime-fixture",
 ]
 resolver = "3"
 

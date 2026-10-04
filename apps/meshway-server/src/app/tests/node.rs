@@ -88,7 +88,7 @@ pub(super) async fn fixture() -> (
         dir, app, network.id, a.node_id, b.node_id, a.keys, b.keys, ak, bk,
     )
 }
-async fn enroll_tag_node(
+pub(super) async fn enroll_tag_node(
     app: &App,
     owner: &str,
     network: NetworkId,
@@ -546,6 +546,33 @@ async fn member_removal_atomically_deletes_user_nodes_and_preserves_tag_nodes() 
         &signer,
     )
     .await;
+    let lease = app
+        .execution()
+        .acquire(
+            node_session.token.expose(),
+            AcquireInstanceRequest {
+                instance_id: iid(),
+                capabilities: caps(),
+            },
+        )
+        .await
+        .unwrap();
+    let demand = DemandRequest {
+        instance: InstanceRequest {
+            instance_id: lease.instance_id,
+            generation: lease.generation,
+        },
+        request_id: rid(),
+        target: BusinessTarget::Mesh { node: tag },
+        protocol: BusinessProtocol::Tcp,
+        port: Some(443.try_into().unwrap()),
+        profile: "mesh".into(),
+        duration_seconds: 30,
+    };
+    app.execution()
+        .demand(node_session.token.expose(), demand.clone())
+        .await
+        .unwrap();
     let impact = app
         .networks()
         .removal_impact(member.token.expose(), network, None, rid())
@@ -624,6 +651,19 @@ async fn member_removal_atomically_deletes_user_nodes_and_preserves_tag_nodes() 
             .await,
         Err(Error::InvalidCredentials)
     ));
+    assert_eq!(
+        app.execution()
+            .renew_demand(
+                node_session.token.expose(),
+                RenewDemandRequest {
+                    instance: demand.instance,
+                    request_id: demand.request_id,
+                    expires_at_ms: lease.expires_at_ms,
+                }
+            )
+            .await,
+        Err(Error::InvalidCredentials)
+    );
     let inventory = app
         .execution()
         .inventory(owner.token.expose(), network)

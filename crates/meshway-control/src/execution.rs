@@ -6,7 +6,7 @@ use meshway_model::{
 };
 use meshway_protocol::{
     AcquireInstanceRequest, EnrollmentResponse, InstanceLease, NodeConfigurationRequest,
-    ReceiptRequest, StateAccepted, StateReport, execution::ReceiptPhase,
+    NodeConfigurationResponse, ReceiptRequest, StateAccepted, execution::ReceiptPhase,
 };
 use std::collections::BTreeMap;
 
@@ -104,6 +104,30 @@ impl Control {
             .query_node_configuration(&request, self.token()?)
             .await;
         let response = self.registered(response)?;
+        self.receive_configuration(response, started).await
+    }
+
+    /// Explicitly renew and save the exact granted execution target from one
+    /// Server transaction, without observing an intermediate lease-only target.
+    pub async fn refresh_configuration(&mut self) -> Result<Option<ConfigurationRef>, Error> {
+        let request = NodeConfigurationRequest {
+            instance: self.current_instance()?,
+            base: self.record.saved.as_ref().map(reference),
+        };
+        let started = Started::now(&self.clock)?;
+        let response = self
+            .client
+            .refresh_node_configuration(&request, self.token()?)
+            .await;
+        let response = self.registered(response)?;
+        self.receive_configuration(response, started).await
+    }
+
+    async fn receive_configuration(
+        &mut self,
+        response: NodeConfigurationResponse,
+        started: Started,
+    ) -> Result<Option<ConfigurationRef>, Error> {
         let target = match (response.full, response.delta) {
             (Some(full), None) => Some(full),
             (None, Some(delta)) => {
@@ -152,8 +176,9 @@ impl Control {
         {
             self.record.saved = Some(target);
             self.receipt = None;
-            self.report = None;
-            self.persist().await?;
+            // A possibly accepted State report keeps its sequence/sample until
+            // its exact retry is acknowledged or this instance is fenced.
+            self.persist_target().await?;
         }
         let desired = self.instance.as_ref().and_then(|i| i.lease.target.clone());
         if let Some(target) = &desired {
@@ -188,10 +213,10 @@ impl Control {
         let receipt = &saved.request;
         if receipt.instance != current
             || self.record.saved.as_ref().map(reference).as_ref() != Some(&receipt.target)
-            || self.instance.as_ref().is_none_or(|i| {
-                i.lease.target.as_ref() != Some(&receipt.target)
-                    || !i.execution_deadline.as_ref().is_some_and(|d| d.valid())
-            })
+            || self
+                .instance
+                .as_ref()
+                .is_none_or(|i| i.lease.target.as_ref() != Some(&receipt.target))
         {
             return Err(Error::Expired);
         }
@@ -214,7 +239,7 @@ impl Control {
         &mut self,
         system: SystemState,
     ) -> Result<StateAccepted, Error> {
-        let instance = self.current_instance()?;
+        self.current_instance()?;
         let active = self.instance.as_ref().ok_or(Error::Lifecycle)?;
         let saved = self
             .record
@@ -238,23 +263,7 @@ impl Control {
             probes: Vec::new(),
             problems: Vec::new(),
         };
-        if let Some(pending) = &self.report {
-            if pending.state != state {
-                return Err(Error::Pending);
-            }
-        } else {
-            self.report_sequence = self
-                .report_sequence
-                .checked_add(1)
-                .ok_or(Error::Lifecycle)?;
-            self.report = Some(StateReport {
-                instance_id: instance.instance_id,
-                sequence: Sequence::new(self.report_sequence).map_err(|_| Error::Lifecycle)?,
-                observed_at: chrono::Utc::now(),
-                state,
-            });
-        }
-        self.retry_state_report().await
+        self.report_runtime_state(state, chrono::Utc::now()).await
     }
 
     pub async fn retry_state_report(&mut self) -> Result<StateAccepted, Error> {
@@ -265,6 +274,24 @@ impl Control {
         }
         let sequence = report.sequence;
         let response = self.client.report_node_state(report, self.token()?).await;
+        // Only this validated reporting-domain rejection is non-fencing. The
+        // sample is not rewritten/reused with its sequence; a fresh observation
+        // advances report_sequence after normal configuration synchronization.
+        if matches!(
+            &response,
+            Err(meshway_control_client::ClientError::Http {
+                status: 409,
+                problem: Some(meshway_protocol::ErrorResponse {
+                    status: 409,
+                    problem: meshway_protocol::Problem::StateScopeChanged { .. },
+                    ..
+                }),
+                ..
+            })
+        ) {
+            self.report = None;
+            return Err(Error::StateScopeChanged);
+        }
         let accepted = self.registered(response)?;
         if accepted.sequence != sequence {
             self.fence();
@@ -288,14 +315,37 @@ impl Control {
             .clone();
         match instance(lease, started, capabilities) {
             Ok(instance) => {
-                if self.instance.as_ref().is_some_and(|old| {
-                    old.lease.target != instance.lease.target
-                        || instance.lease.expires_at_ms < old.lease.expires_at_ms
-                        || instance.lease.execution_expires_at_ms
-                            < old.lease.execution_expires_at_ms
-                }) {
+                let old = self.instance.as_ref().ok_or(Error::Lifecycle)?;
+                let replaced = old.lease.target != instance.lease.target;
+                let predecessor = old.lease.target.clone();
+                // A replacement target is published before its execution lease
+                // is explicitly renewed. Preserve only this direct handoff gap;
+                // a same-target withdrawal is a hard continuity barrier.
+                let pending = self.publication_pending_grant && old.execution_deadline.is_none();
+                let barrier = !old.deadline.valid()
+                    || (!old.execution_deadline.as_ref().is_some_and(Deadline::valid) && !pending)
+                    || old.lease.target.is_none()
+                    || instance.lease.target.is_none()
+                    || instance.lease.expires_at_ms < old.lease.expires_at_ms
+                    || (!replaced
+                        && !pending
+                        && instance.lease.execution_expires_at_ms
+                            < old.lease.execution_expires_at_ms);
+                if barrier {
                     self.invalidate_snapshots();
+                } else if replaced {
+                    self.invalidate_guards();
                 }
+                if replaced {
+                    self.predecessor = if barrier {
+                        None
+                    } else {
+                        predecessor.map(|reference| (self.publication.clone(), reference))
+                    };
+                    self.publication = std::sync::Arc::new(());
+                }
+                self.publication_pending_grant =
+                    !barrier && instance.execution_deadline.is_none() && (replaced || pending);
                 self.instance = Some(instance);
                 Ok(())
             }

@@ -33,6 +33,12 @@ wire_object! { #[derive(Clone,Debug,PartialEq,Eq)] pub struct DemandRequest {
 wire_object! { #[derive(Clone,Debug,PartialEq,Eq)] pub struct CancelDemandRequest {
     pub instance: InstanceRequest, pub request_id: RequestId,
 } }
+wire_object! { #[derive(Clone,Debug,PartialEq,Eq)] pub struct RenewDemandRequest {
+    pub instance: InstanceRequest, pub request_id: RequestId,
+    /// Absolute desired deadline of the existing demand; replay never adds duration.
+    #[serde(rename="expiresAt", with="meshway_model::timestamp")]
+    pub expires_at_ms: u64 [value_type=chrono::DateTime<chrono::Utc>],
+} }
 wire_object! { #[derive(Clone,Debug,PartialEq,Eq)] pub struct DemandResponse {
     pub publication: PublicationId, pub decision: DemandDecision,
 } }

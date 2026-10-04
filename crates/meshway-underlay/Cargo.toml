@@ -1,0 +1,38 @@
+[package]
+name = "meshway-underlay"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+description = "Owned Linux capture routing and protected Node bootstrap/data sockets"
+
+[dependencies]
+meshway-configuration = { path = "../meshway-configuration" }
+meshway-control = { path = "../meshway-control" }
+meshway-model = { path = "../meshway-model" }
+meshway-private-storage = { path = "../meshway-private-storage" }
+meshway-transport = { path = "../meshway-transport" }
+meshway-transport-spec = { path = "../meshway-transport-spec" }
+meshway-transport-tcp = { path = "../meshway-transport-tcp" }
+meshway-tun = { path = "../meshway-tun" }
+socket2.workspace = true
+tokio = { workspace = true, features = ["fs", "io-util"] }
+tokio-util.workspace = true
+futures-util = { workspace = true, features = ["io"] }
+serde.workspace = true
+serde_json.workspace = true
+ipnet.workspace = true
+thiserror.workspace = true
+getrandom.workspace = true
+reqwest = { version = "0.13", default-features = false, features = ["rustls"] }
+hickory-proto = { version = "0.26.3", default-features = false, features = ["std"] }
+hickory-resolver = { version = "0.26.3", default-features = false, features = ["system-config", "tokio"] }
+hickory-net = { version = "0.26.3", default-features = false, features = ["tokio"] }
+
+[target.'cfg(target_os = "linux")'.dependencies]
+rtnetlink = { version = "=0.23.0", default-features = false, features = ["tokio_socket"] }
+
+[dev-dependencies]
+tempfile.workspace = true
+
+[lints]
+workspace = true

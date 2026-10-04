@@ -321,6 +321,34 @@ pub fn path_carrier(path: &LogicalPath, carrier: &Carrier) -> bool {
             })
 }
 
+/// Admit an authenticated adjacency bootstrap, without granting packet or flow
+/// authority. At least one live business path must contain this exact edge.
+/// Returns the latest matching business deadline, for bounded idle I/O waits.
+pub fn admit_adjacency(
+    configuration: &NodeConfiguration,
+    peer: NodeId,
+    carrier: &Carrier,
+    now_ms: u64,
+) -> Result<u64, AdmissionError> {
+    if peer == configuration.node_id {
+        return Err(AdmissionError::Peer);
+    }
+    let mut expires_at: Option<u64> = None;
+    for (id, permit) in &configuration.permits {
+        if permit.expires_at_ms <= now_ms {
+            continue;
+        }
+        for path in &permit.paths {
+            if admitted_path(configuration, *id, &path.nodes, permit.source, now_ms).is_ok()
+                && admit_carrier(configuration, *id, &path.nodes, peer, carrier).is_ok()
+            {
+                expires_at = Some(expires_at.unwrap_or(0).max(permit.expires_at_ms));
+            }
+        }
+    }
+    expires_at.ok_or(AdmissionError::Peer)
+}
+
 /// Check the actual local socket pair and its transport against a business
 /// path. Compose with current handshake/packet admission for identity, expiry
 /// and flow checks; diagnostics and neighbor connectivity grant nothing here.

@@ -1,8 +1,10 @@
 # Node：节点端
 
-Node 由长期运行的 **`meshwayd`** 和本机 CLI **`meshway`** 组成，Linux 首版采用单机系统服务。当前可[启动并接入 Server](/v2/node/runtime#启动与接入)，自动认证、续租、保存配置与报告状态。独立库已有[共同准入核心、候选加密 circuit、Linux TUN I/O 与 DNS 查询 owner](/v2/node/dataplane)，并提供隔离的受保护包流 conformance；daemon 的网络安装、持续连接管理、SOCKS5 和插件仍待实现。旧节点源码已退出活跃树，复用通过[白名单与回归审查](/v2/architecture#旧实现退出与复用)进行。
+Node 由长期运行的 **`meshwayd`** 和本机 CLI **`meshway`** 组成，Linux 首版采用单机系统服务。当前源码包含[Server 接入与 Linux Mesh-only TUN 装配](/v2/node/runtime#启动与接入)：自动认证、续租、配置保存、用途受限 underlay、认证 stream 邻接、受保护 IP 包流和安装结果上报。实际 daemon 已验证 Native TCP 承载上的双栈 UDP／TCP 多跳包流、持续续租与失效清理，精确场景见[conformance](/v2/node/dataplane#daemon-与内核资源-conformance)。DNS 系统安装、出口／NAT、SOCKS5、打洞和插件等限制见[数据面组件](/v2/node/dataplane)。旧节点源码已退出活跃树，复用通过[白名单与回归审查](/v2/architecture#旧实现退出与复用)进行。
 
-## 运行形状
+## 组件方向
+
+下图包含规划中的 netstack、插件和 diagnostics；实际 crate 清单及实现范围见[总体结构](/v2/architecture#node-组件库)。
 
 ```text
 meshway CLI ── 本机 IPC ──► meshwayd
@@ -19,7 +21,7 @@ meshway CLI ── 本机 IPC ──► meshwayd
                             └─ diagnostics      状态与获准测量
 ```
 
-`meshway-control` 是节点侧控制连接组件，消费生成客户端；服务端应用保持独立。`meshway-plugin` 是共同契约／SDK，plugin host 才是装载者。crate 与目录的唯一清单见[总体结构](/v2/architecture)。
+`meshway-control` 是节点侧控制连接组件，消费生成客户端；服务端应用保持独立。规划中的 `meshway-plugin` 提供共同契约／SDK，plugin host 承担装载。crate 与目录的唯一清单见[总体结构](/v2/architecture)。
 
 ## 功能边界
 
@@ -40,17 +42,15 @@ Server 决定许可和有界候选；Node 在获准集合内结合实时状态�
 
 - CLI 主要提供 up／down／ping／status 与网络切换；业务配置在云端管理。
 - 业务数据面统一采用 L3，具体入口与边界见[网络模式](/v2/node/runtime)。
-- 支持无 TUN userspace networking 与系统 TUN 模式，Meshway 加密／承载仍在用户态。
+- Linux 当前默认系统 TUN，可显式选择仅控制接入；userspace networking 尚未实现。Meshway 加密／承载在用户态。
 - Userspace 首版通过本机 SOCKS5 接入应用流量；命令范围、认证和 DNS 行为见[网络模式](/v2/node/runtime)。
 - 首版动态插件边界是 transport providers；control、dataplane、connectivity、TUN/netstack 等作为独立 Rust 库由 daemon 链接。插件启动时加载，并随发行包一起安装、校验、升级。
 - UDP／TCP 实现必带不授予业务使用权限，VLESS-only 配置继续有效。
 
-运行与现有命令见[模式与 IPC](/v2/node/runtime)，装载与能力见[插件](/v2/node/plugins)，数据 I/O 草案见[承载会话](/v2/node/transport)。网络模式默认值、扩展的本机操作员授权和 native ABI 精确接口尚待对齐。
+运行与现有命令见[模式与 IPC](/v2/node/runtime)，装载与能力见[插件](/v2/node/plugins)，数据 I/O 见[承载会话](/v2/node/transport)。扩展的本机操作员授权和 native ABI 精确接口尚待对齐。
 
 ## 首个实现闭环
 
 首个验收目标使用 Linux 系统 TUN：CLI 接入、Server 批准、取得实例／lease、校验保存并安装执行目标、两节点之间产生真实业务包流、上报实际状态，以及 down／撤回后停止受管流量并清理所属资源。
 
-此闭环尚未实现；它不代替 userspace、完整有序多跳、其他承载和 NAT 穿透的独立验收。默认运行模式与首个测试环境分别确定。
-
-实现首先接通 Server 控制生命周期。L3 业务入口已确定；流／报文接口、Mesh 封装、MTU／分片和 ABI 数据通路尚待定，选型需要对应的性能验证。
+当前 Linux Mesh IP 验收在 Server 显式完全关闭 DNS，具体安装门槛见[网络模式](/v2/node/runtime#安装范围与状态)。userspace、其他承载、NAT 穿透和性能各自验收；MTU／分片、动态 ABI 与 TCP 性能优化仍待完善。

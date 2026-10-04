@@ -1,4 +1,4 @@
-use super::{current_configuration, id, json, now, publications::revoke_execution, user_binding};
+use super::{current_configuration, id, now, publications::revoke_execution, user_binding};
 use crate::effect::Effect;
 use crate::error::Error;
 use crate::secrets::Sealer;
@@ -202,11 +202,12 @@ fn desired_execution(
             ],
             |row| row.get(0),
         )?;
-        let compiled: meshway_configuration::execution::CompiledPublication = json(
-            sealer
-                .open_execution(network, publication, &payload)?
-                .as_bytes(),
-        )?;
+        let Some(compiled) =
+            super::cache::read(tx, sealer, network, publication, &payload)?.current()
+        else {
+            super::cache::retire(tx, network, publication, now()?)?;
+            return Ok(None);
+        };
         entry.insert(
             compiled
                 .nodes
@@ -283,14 +284,16 @@ pub(crate) fn progress(
     if !manager {
         return Err(Error::PermissionDenied);
     }
-    let (payload,sequence,withdrawn):(Vec<u8>,i64,Option<i64>)=tx.query_row("SELECT payload,sequence,withdrawn_at FROM execution_publications WHERE network_id=?1 AND id=?2",params![network.as_uuid().as_bytes().as_slice(),publication.as_uuid().as_bytes().as_slice()],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?))).optional()?.ok_or(Error::NotFound)?;
-    let compiled: meshway_configuration::execution::CompiledPublication = json(
-        sealer
-            .open_execution(network, publication, &payload)?
-            .as_bytes(),
-    )?;
+    let (payload,sequence,mut withdrawn):(Vec<u8>,i64,Option<i64>)=tx.query_row("SELECT payload,sequence,withdrawn_at FROM execution_publications WHERE network_id=?1 AND id=?2",params![network.as_uuid().as_bytes().as_slice(),publication.as_uuid().as_bytes().as_slice()],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?))).optional()?.ok_or(Error::NotFound)?;
+    let stored = super::cache::read(tx, sealer, network, publication, &payload)?;
+    if matches!(&stored, super::cache::Stored::Obsolete { .. }) {
+        let now = now()?;
+        super::cache::retire(tx, network, publication, now)?;
+        withdrawn = withdrawn.or(Some(now));
+    }
+    let (revision, references) = stored.references();
     let mut nodes = BTreeMap::new();
-    for (node, c) in compiled.nodes {
+    for (node, reference) in references {
         let current:bool=tx.query_row("SELECT EXISTS(SELECT 1 FROM node_execution WHERE network_id=?1 AND node_id=?2 AND target_publication_id=?3)",params![network.as_uuid().as_bytes().as_slice(),node.as_uuid().as_bytes().as_slice(),publication.as_uuid().as_bytes().as_slice()],|r|r.get(0))?;
         let phase = |phase: &str| -> Result<bool, Error> {
             Ok(tx.query_row("SELECT EXISTS(SELECT 1 FROM execution_receipts r JOIN node_execution e ON e.network_id=r.network_id AND e.node_id=r.node_id AND e.instance_id=r.instance_id AND e.generation=r.generation WHERE r.network_id=?1 AND r.node_id=?2 AND r.publication_id=?3 AND r.phase=?4)",params![network.as_uuid().as_bytes().as_slice(),node.as_uuid().as_bytes().as_slice(),publication.as_uuid().as_bytes().as_slice(),phase],|r|r.get(0))?)
@@ -299,11 +302,7 @@ pub(crate) fn progress(
             tx,
             network,
             node,
-            &ConfigurationRef {
-                revision: compiled.revision,
-                execution_publication: publication,
-                digest: c.digest,
-            },
+            &reference,
             None,
             boot,
             chrono::Utc::now(),
@@ -329,11 +328,7 @@ pub(crate) fn progress(
         nodes.insert(
             node,
             NodePublicationProgress {
-                target: ConfigurationRef {
-                    revision: compiled.revision,
-                    execution_publication: publication,
-                    digest: c.digest,
-                },
+                target: reference,
                 current,
                 saved: phase("saved")?,
                 applied: freshness == ReceiptFreshness::Current
@@ -346,7 +341,7 @@ pub(crate) fn progress(
     }
     Ok(PublicationProgress {
         publication,
-        revision: compiled.revision,
+        revision,
         sequence: Sequence::new(
             sequence
                 .try_into()

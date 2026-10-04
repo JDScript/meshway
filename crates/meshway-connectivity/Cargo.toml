@@ -1,0 +1,31 @@
+[package]
+name = "meshway-connectivity"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+description = "Bounded authorized Node stream connections and authenticated adjacency"
+
+[dependencies]
+meshway-configuration = { path = "../meshway-configuration" }
+meshway-control = { path = "../meshway-control" }
+meshway-model = { path = "../meshway-model" }
+meshway-policy = { path = "../meshway-policy" }
+meshway-dataplane = { path = "../meshway-dataplane" }
+meshway-underlay = { path = "../meshway-underlay" }
+meshway-transport = { path = "../meshway-transport" }
+meshway-transport-spec = { path = "../meshway-transport-spec" }
+meshway-transport-vless = { path = "../meshway-transport-vless" }
+meshway-transport-trojan = { path = "../meshway-transport-trojan" }
+tokio = { workspace = true, features = ["io-util"] }
+tokio-util.workspace = true
+futures-util.workspace = true
+sha2.workspace = true
+getrandom.workspace = true
+thiserror.workspace = true
+ed25519-dalek = { version = "2.2", default-features = false, features = ["std", "zeroize"] }
+
+[dev-dependencies]
+tempfile.workspace = true
+
+[lints]
+workspace = true

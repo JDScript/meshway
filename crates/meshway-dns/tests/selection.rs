@@ -70,6 +70,7 @@ fn execution() -> DnsExecution {
         ]),
         associations: vec![],
         profile: "not-a-selection-fact".into(),
+        egress: meshway_configuration::execution::DnsEgress::NoExit,
     }
 }
 

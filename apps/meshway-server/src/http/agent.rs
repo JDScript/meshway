@@ -94,10 +94,24 @@ json_route!(
     NodeConfigurationResponse
 );
 json_route!(
+    refresh_configuration,
+    "/agent-api/v1/configuration/refresh",
+    "refreshNodeConfiguration",
+    NodeConfigurationRequest,
+    NodeConfigurationResponse
+);
+json_route!(
     demand,
     "/agent-api/v1/demands",
     "createNodeDemand",
     DemandRequest,
+    DemandResponse
+);
+json_route!(
+    renew_demand,
+    "/agent-api/v1/demands/renew",
+    "renewNodeDemand",
+    RenewDemandRequest,
     DemandResponse
 );
 macro_rules! empty_route {

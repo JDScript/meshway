@@ -18,6 +18,7 @@
 | 注册、会话、加入网络、设备批准、换钥 | [认证与接入](/v2/api/authentication) |
 | JSONC、typed ops、只读预览、严格 CAS | [编辑与应用对照](/v2/configuration-reference/editing) |
 | 执行目标、full／delta、实例、lease、回执 | [配置应用](/v2/configuration-reference/deployment) |
+| 按需许可、需求续租与完整合成 | [按需执行许可](/v2/execution) |
 | 配置版本、恢复、活动、分页 | [版本与操作历史](/v2/api/history) |
 | State report／query、可见范围、新鲜度 | [State Reference](/v2/state-reference) |
 | 首次同步、实体增量、cursor／reset | [SSE](/v2/api/events) |

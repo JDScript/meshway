@@ -14,16 +14,37 @@ Node 收到完整目标后独立校验、私有保存并安装。saved 不代表
 | `revision`／`publication`／`dependencyDigest` | 完整源版本、执行发布和编译依赖摘要 |
 | `enabled`／`hostname`／`identity`／`addresses` | 本节点的确定配置值 |
 | `selfKeys` | 本节点可信公钥绑定，不包含身份私钥 |
+| `meshAddressPools` | 当前网络完整地址池的精确 capture 元数据，不是 Access 或 peer 可见性授权 |
 | `listeners` | key → PreparedListener，本节点所需的完整监听参数 |
 | `dialers` | 候选 key → DialCandidate，已解析的获准出站参数 |
 | `peers` | NodeId → PeerConfiguration，必要对端的可信身份与配置 |
 | `permits` | 需求 ID → PathPermit，绑定业务范围与完整路径的执行许可 |
+| `localEgress` | 需求 ID → LocalEgressPermit，仅源节点的精确 Direct／Unmanaged 本机执行绑定 |
 | `diagnostics` | 观察 ID → DiagnosticPermit，独立的短期测量许可 |
 | `decisions` | 需求 ID → DemandDecision，获准、等待或不可用结果 |
 | `dns` | 编译后的 DNS 执行内容 |
 | `exitEnabled` | 本节点的配置出口资格，不表示转发已经就绪 |
 
 diagnostics 不进入普通业务 permits。没有对应许可时不能发起或接收新的业务流。所有候选完整路径都须满足 access、topology 和 routing，见[按需执行许可](/v2/execution)。
+
+## Capture 与本机 egress
+
+`meshAddressPools` 精确保留同版 NetworkConfiguration 的完整网络地址池；它使 Node 能捕获尚未产生需求或尚未分配的 Mesh 地址，不等于下发全网 peer 库存，也不授予 Access。编译器把已分配 Mesh IP 绑定到 Node；池内未分配 IP 返回 `unavailable/noPath`，不落入 unmanaged。IPv4-mapped IPv6 使用对应 IPv4 的 Mesh 池分类，不能绕过该边界。
+
+`LocalEgressPermit` 包含 `demandId`、`source`、`target`、`protocol`、`port`、`profile`、`action`（`direct`／`unmanaged`）和 `expiresAt`，仅发布到 source。它是实际本机路由的精确证据，不是 Mesh PathPermit，也不授予中转／出口资格。消费方仍检查 publication、当前执行快照和完整业务绑定；DNS 的密封路由消费见 [resolver 路由](/v2/node/dataplane#service-与-resolver-路由)。
+
+`decisions` 中单独的 `direct`／`unmanaged` 或需求 HTTP 回应仅为反馈，永不直接变成 SocketPermission。当前 daemon 尚不执行 localEgress，非空时按[安装门槛](/v2/node/runtime#安装范围与状态)拒绝。
+
+## DNS 执行内容
+
+`DnsExecution` 包含 `settings`、按源 Access 裁剪的 `meshHosts`、可信 `associations`、当前 `profile` 和 `egress`。`egress` 的现行判别联合只有：
+
+| 值 | 含义 |
+| --- | --- |
+| `{"type":"noExit"}` | 编译器证明当前 DNS 选择不存在出口可能；不授予上游 socket |
+| `{"type":"unavailable","reason":"exitPlanRequired"}` | 存在出口可能，缺少可执行 DNS plan |
+
+出口可能性保守检查公共规则、profile 与 auto 候选中的全部出口选择，包括业务 first-match 中被遮蔽的分支；不靠一次匹配结果推定无出口。多出口的显式无循环计划尚未有配置字段，产品规则见 [DNS](/v2/configuration-reference/dns#使用出口时)。
 
 ## 参数来源 {#sources}
 

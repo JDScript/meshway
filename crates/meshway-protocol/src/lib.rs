@@ -38,7 +38,7 @@ pub use events::{NodeEvent, StreamEvent, UserEvent};
 pub use execution::{
     AcquireInstanceRequest, CancelDemandRequest, DemandRequest, DemandResponse, InstanceLease,
     InstanceRequest, NodeConfigurationRequest, NodeConfigurationResponse, PublicationProgress,
-    ReceiptRequest, RoutingSelectionRequest, RoutingSelectionResponse,
+    ReceiptRequest, RenewDemandRequest, RoutingSelectionRequest, RoutingSelectionResponse,
 };
 pub use history::{ActivityListResponse, ActivityResponse, ConfigurationRevisionList};
 pub use live::{

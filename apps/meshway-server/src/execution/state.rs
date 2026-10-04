@@ -323,10 +323,13 @@ impl Execution {
             now.timestamp_millis(),
         )?);
         for target in history {
-            let context = configuration_admission(&target, false);
-            if !report.configurations.contains(&context.configuration) {
-                report.configurations.push(context.configuration.clone());
-                report.contexts.push(context);
+            if !report.configurations.contains(&target.reference) {
+                report.configurations.push(target.reference);
+                if let Some(current) = target.current {
+                    report
+                        .contexts
+                        .push(configuration_admission(&current, false));
+                }
             }
         }
         Ok(report)

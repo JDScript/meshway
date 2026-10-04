@@ -174,8 +174,13 @@ pub struct Process {
 }
 impl Process {
     pub fn start(path: &Path, origin: &str) -> Self {
+        Self::start_with_mode(path, origin, "control-only")
+    }
+    pub fn start_with_mode(path: &Path, origin: &str, mode: &str) -> Self {
         let child = Command::new(env!("CARGO_BIN_EXE_meshwayd"))
             .args([
+                "--network-mode",
+                mode,
                 "--log-format",
                 "json",
                 "--log-filter",

@@ -12,8 +12,8 @@ use sha2::{Digest as _, Sha256};
 use zeroize::Zeroizing;
 
 const NOISE: &str = "Noise_IK_25519_ChaChaPoly_SHA256";
-const PROLOGUE: &[u8] = b"meshway/circuit/noise-prologue/candidate-v1\0";
-const PROOF: &[u8] = b"meshway/circuit/hop-proof/candidate-v1\0";
+const PROLOGUE: &[u8] = b"meshway/circuit/noise-prologue/candidate-v2\0";
+const PROOF: &[u8] = b"meshway/circuit/hop-proof/candidate-v2\0";
 
 pub(super) fn keys(
     cfg: &NodeConfiguration,
@@ -60,7 +60,7 @@ pub(super) fn key_digest(cfg: &NodeConfiguration, path: &[NodeId]) -> Result<Dig
     if !(2..=codec::MAX_PATH).contains(&path.len()) {
         return Err(Error::Context);
     }
-    let mut bytes = b"meshway/circuit/key-set/candidate-v1\0".to_vec();
+    let mut bytes = b"meshway/circuit/key-set/candidate-v2\0".to_vec();
     encode_keys(cfg, path, &mut bytes)?;
     Ok(Digest::from_bytes(Sha256::digest(bytes).into()))
 }

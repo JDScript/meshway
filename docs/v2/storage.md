@@ -40,6 +40,14 @@ JSON 格式不要求整份 API 读写。typed ops 修改草稿后仍提交完整
 
 地址索引和编译缓存可按版本重建；分配还需核对持久退出记录。只有实测需要时增加持久派生索引，并与配置指针原子切换，不建立第二份 Tag／Node 配置源。原始 JSON 文件大小不是节点容量或运行时内存承诺。
 
+## 执行缓存版本
+
+执行 publication 的密封 envelope 以 compilerVersion 区分派生格式，当前版本见[编译边界](/v2/execution#编译边界)。读取先验证密封上下文、network／publication／revision／dependencyDigest、节点切片绑定与 digest；当前格式按严格类型解码，失败不降级为旧格式。
+
+Server 仅识别 `meshway-demand-1`／`meshway-demand-2` 为过时派生缓存。启动事务及 publication 消费入口检查其原始完整性与绑定，撤回旧目标并清除相应 execution lease，保留原密封 payload 和历史引用；重新编译从当前源配置与可信依赖产生。账户、配置版本、身份／密钥和需求不会因缓存升级被清除，旧正文也不补新字段充当可执行目标。
+
+未知版本、损坏正文、错误绑定或 seal／digest 失败返回错误；启动事务回滚本次失效处理，普通启动不清库。此边界处理派生执行缓存，不构成旧数据库 schema 或旧 HTTP 兼容轨。Node 私有 control 记录的版本升级见[Node 私有存储](/v2/node/control#私有存储与传输)。
+
 ## 恢复与保留
 
 完整历史恢复为新 revision，并重新核对身份、材料、规则集和地址退出条件。缺失／吊销依赖明确失败，不换用最新值冒充历史。Node 重启不能把缓存变成新 lease 或旧会话恢复。

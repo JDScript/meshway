@@ -95,11 +95,17 @@ pub(super) fn report(
             _ => return Err(Error::InvalidRequest),
         }
     }
-    if (!state.links.is_empty() || !state.paths.is_empty())
-        && (admission.execution.is_none()
-            || state.configuration.applied.as_ref() != admission.execution.as_ref())
-    {
-        return Err(Error::InvalidRequest);
+    // Validate all facts against their known immutable context first. Scope
+    // rejection is deferred so malformed facts never become a benign retry.
+    let mut scope_changed = false;
+    if !state.links.is_empty() || !state.paths.is_empty() {
+        let reference = state
+            .configuration
+            .applied
+            .as_ref()
+            .ok_or(Error::InvalidRequest)?;
+        admission.context(reference)?;
+        scope_changed |= Some(reference) != admission.execution.as_ref();
     }
     for (key, listener) in &state.listeners {
         let resource = ResourceRef::Listener { key: key.clone() };
@@ -120,7 +126,7 @@ pub(super) fn report(
                 )
                 || !installation_reference(state, reference))
         {
-            return Err(Error::InvalidRequest);
+            scope_changed = true;
         }
         for socket in &listener.socket_ids {
             if state.sockets.get(socket).is_none_or(|s| {
@@ -144,7 +150,7 @@ pub(super) fn report(
         if Some(reference) != admission.execution.as_ref()
             && (!context.installation_allowed || !installation_reference(state, reference))
         {
-            return Err(Error::InvalidRequest);
+            scope_changed = true;
         }
         let admitted = context
             .resources
@@ -197,7 +203,12 @@ pub(super) fn report(
     }
     let mut links = BTreeSet::new();
     for (peer, records) in &state.links {
-        let context = admission.current()?;
+        let reference = state
+            .configuration
+            .applied
+            .as_ref()
+            .ok_or(Error::InvalidRequest)?;
+        let context = admission.context(reference)?;
         if *peer == admission.node_id || !context.peers.contains(peer) || records.len() > 8 {
             return Err(Error::InvalidRequest);
         }
@@ -210,7 +221,7 @@ pub(super) fn report(
                 .configuration
                 .as_ref()
                 .or(state.configuration.applied.as_ref())
-                != admission.execution.as_ref()
+                != Some(reference)
             {
                 return Err(Error::InvalidRequest);
             }
@@ -235,12 +246,14 @@ pub(super) fn report(
         }
     }
     for path in state.paths.values() {
-        if !admission.current()?.paths.contains(&path.nodes)
+        let reference = state
+            .configuration
+            .applied
+            .as_ref()
+            .ok_or(Error::InvalidRequest)?;
+        if !admission.context(reference)?.paths.contains(&path.nodes)
             || !path.nodes.contains(&admission.node_id)
-            || admission
-                .execution
-                .as_ref()
-                .is_none_or(|execution| execution.execution_publication != path.publication_id)
+            || reference.execution_publication != path.publication_id
             || !time(path.observed_at, path.expires_at, now)
         {
             return Err(Error::InvalidRequest);
@@ -260,21 +273,37 @@ pub(super) fn report(
             _ => return Err(Error::InvalidRequest),
         }
     }
-    if state.selection.applied_profile.as_ref().is_some_and(|p| {
-        admission
-            .current()
-            .map_or(true, |context| !context.profiles.contains(p))
-    }) {
-        return Err(Error::InvalidRequest);
+    if let Some(profile) = &state.selection.applied_profile {
+        let reference = state
+            .configuration
+            .applied
+            .as_ref()
+            .or(admission.execution.as_ref())
+            .ok_or(Error::InvalidRequest)?;
+        if !admission.context(reference)?.profiles.contains(profile) {
+            return Err(Error::InvalidRequest);
+        }
+        scope_changed |= Some(reference) != admission.execution.as_ref();
     }
     let mut measurements = BTreeSet::new();
     for probe in &state.probes {
         if !measurements.insert(probe.measurement_id) {
             return Err(Error::InvalidRequest);
         }
-        validate_probe(admission, probe, now)?;
+        let reference = state
+            .configuration
+            .applied
+            .as_ref()
+            .or(admission.execution.as_ref())
+            .ok_or(Error::InvalidRequest)?;
+        validate_probe_context(admission.node_id, admission.context(reference)?, probe, now)?;
+        scope_changed |= Some(reference) != admission.execution.as_ref();
     }
-    Ok(())
+    if scope_changed {
+        Err(Error::StateScopeChanged)
+    } else {
+        Ok(())
+    }
 }
 fn installation_reference(state: &NodeState, reference: &ConfigurationRef) -> bool {
     state.configuration.saved.as_ref() == Some(reference)

@@ -2,13 +2,14 @@
 
 ## 启动与接入
 
-当前 `meshwayd`／`meshway` 可完成 Server 控制接入。以下示例假定已有当前版本 Server 位于 `127.0.0.1:8430`，Console 位于 `127.0.0.1:3001` 并连接该 Server：
+`meshwayd`／`meshway` 提供 Server 控制接入与 Linux TUN 运行装配。以下本地示例显式选择 `control-only`，假定已有当前版本 Server 位于 `127.0.0.1:8430`，Console 位于 `127.0.0.1:3001` 并连接该 Server：
 
 ```sh
 mise run build:node
 install -d -m 700 .meshway
 ./target/debug/meshwayd \
   --data-dir "$PWD/.meshway/node" \
+  --network-mode control-only \
   --server http://127.0.0.1:8430 \
   --console-origin http://127.0.0.1:3001
 ```
@@ -22,7 +23,7 @@ install -d -m 700 .meshway
 ./target/debug/meshway --socket "$PWD/.meshway/node/control.sock" down
 ```
 
-首次 `up` 输出公开的浏览器批准链接；在 Console 登录并选择网络批准后，daemon 自动兑换身份、认证、取得实例、保存配置和发送 saved 回执。`up` 返回批准链接时只表示正在等待批准。`controlReady` 表示控制流程就绪，`dataPlane=notImplemented`、`applied=null` 明确表示尚无 TUN／SOCKS5 或实际包流。
+首次 `up` 输出公开的浏览器批准链接；在 Console 登录并选择网络批准后，daemon 自动兑换身份、认证、取得实例、保存配置和发送 saved 回执。`up` 返回批准链接时只表示正在等待批准。此示例的 `controlReady`／`dataPlane=controlOnly` 表示控制流程就绪，`applied=null`；它不安装网络。Linux TUN 使用 `--network-mode tun`（默认值），还须满足下节安装范围与设备／路由权限。
 
 `meshwayd` 前台运行，SIGINT／SIGTERM 执行关闭与 join。进程退出保留期望状态：退出前为 up，重启后自动重新取得运行资格；显式 down 后重启继续保持下线。CLI 的 Ctrl-C 仅停止等待，不撤回已由 daemon 接纳的持久操作。
 
@@ -32,6 +33,9 @@ install -d -m 700 .meshway
 | daemon `--server`／`MESHWAY_SERVER_URL` | 必须明确指定 Server；远端要求 HTTPS，数字 loopback 可使用 HTTP |
 | daemon `--console-origin` | Console 独立部署时指定；省略时使用 Server origin |
 | daemon `--hostname` | 首次接入建议名；省略取系统 hostname 的首个 DNS label，既有业务名称仍由 Server 管理 |
+| daemon `--network-mode`／`MESHWAY_NETWORK_MODE` | 本机启动参数 `tun`（默认）或 `control-only`；不是云端业务字段，失败不自动回退 |
+| daemon `--bootstrap-host NAME=IP` | 可重复，为 Server 或配置中 carrier 名称提供固定 bootstrap 映射 |
+| daemon `--bootstrap-nameserver IP:PORT` | 可重复，指定受保护 bootstrap DNS 的真实上游；IPv6 使用 `[IP]:PORT` |
 | CLI `--socket` | 默认 `/var/lib/meshway/control.sock`，可显式选择本机 daemon |
 | CLI `--json` | 输出类型化公开状态；不包含 Node 私钥、兑换码或会话 token |
 
@@ -41,7 +45,34 @@ daemon／CLI 共用[运行日志参数](/v2/logging)，日志位于 stderr；CLI
 
 本机多节点开发使用[三节点 Docker 环境](/v2/node/docker-lab)，统一投放预编译程序，并为每个 Node 保留独立状态卷。
 
-## 两种网络模式
+## 安装范围与状态
+
+当前 TUN 候选由 daemon 装配 `meshway-underlay::Host`、`meshway-connectivity::Manager` 和 `meshway-dataplane::secure::SecureNode`。TUN 源包按目标 IP、协议／端口和当前 profile 提交需求，续租复用原 demand ID；Server 将已分配 Mesh IP 规范化为 Mesh Node 目标。原路径回复查询 SecureNode 的唯一流表，不另建 daemon 反向流表。
+
+| 范围 | 当前行为 |
+| --- | --- |
+| Linux Mesh-only | 已验证 TUN capture、Native TCP 认证邻接、双栈 UDP／TCP 多跳包流、持续续租和失效清理；精确范围见[conformance](/v2/node/dataplane#daemon-与内核资源-conformance) |
+| DNS | 宿主 DNS 安装尚未实现；有任何 DNS 安装需求即整体失败，不能报告部分 applied |
+| Exit／本机 egress | `exitEnabled`、非空 `localEgress` 或非 Mesh permit 均被数据面安装门槛拒绝；出口／NAT 尚未接线 |
+| 诊断 | 非空 diagnostics 拒绝安装；ping 和测量运行器尚未实现 |
+| 承载 | 当前 Manager 的 stream 支持范围见[邻接管理](/v2/node/transport#邻接管理)；Native UDP daemon listener／打洞不支持 |
+| 其他平台／入口 | 非 Linux 的 tun 返回 unsupported；userspace、netstack、SOCKS5、动态插件和切网尚未实现 |
+
+用于当前 Mesh IP 场景的 Server DNS 配置必须明确关闭全部功能：`magicDNS=false`、`overrideLocal=false`，且 `servers`、`default`、`routes`、`searchDomains` 均为空。仅关闭 MagicDNS 而留下其他 DNS 配置仍会阻断 applied；这不是本机绕过云端 DNS 的选项。
+
+IPC v2 的公开运行状态：
+
+| 字段 | 含义 |
+| --- | --- |
+| `networkMode` | `tun`／`controlOnly`，本机选择 |
+| `dataPlane` | `controlOnly`、`stopped`、`preparing`、`ready`、`suspended`、`failed` |
+| `saved`／`applied` | 独立的必填可空目标引用；saved 来自持久保存，applied 来自对应实例／目标的实际成功安装结果 |
+| `phase` | 包含 `controlReady` 与 `running`；结合 dataPlane、当前资格和错误读取 |
+| `lastError`／`retryAt` | 类型化故障与重试时点；安装问题可为 unsupportedMode、underlay、tun、dns、transport、apply |
+
+ready／applied 只表示该目标的本机安装结果，不表示 peer 已建立认证通道或应用已收回业务包。Node State 中的 listener／link 来自组件观测；路径、RTT、丢包缺测保持空。安装与报告顺序见 [Control ApplicationTicket](/v2/node/control#安装回执与运行报告)。
+
+## TUN 与规划中的 userspace
 
 | | 系统 TUN | Userspace networking |
 | --- | --- | --- |
@@ -64,11 +95,11 @@ OS 应用／网络栈 ⇄ TUN ───────┐
 
 SOCKS5 的命令范围、监听地址／端口、本机访问认证、域名解析和 UDP 关联生命周期仍待定；这里只确定入口形状，不声明代理已经可用。本机 SOCKS5 使用当前网络的业务权限、DNS 和路由，不能作为绕过准入的直拨通路。
 
-模式的默认选择与云端字段尚待定。本机权限或 TUN 安装失败不能静默切模式后报告原目标 applied；两种模式的出口能力分别验证。实现差异不产生服务器／终端节点类别，同一设备一次只启用一张网络。
+本机权限或 TUN 安装失败不能静默切模式后报告原目标 applied；userspace 不在当前启动参数的可选值中，两种入口的出口能力须分别验证。实现差异不产生服务器／终端节点类别，同一设备一次只启用一张网络。
 
 ## CLI 与 IPC
 
-Linux 首版每台机器运行一个系统级 `meshwayd`，同一时间只启用一张网络。CLI 连接该服务；不为每个本机用户创建独立 daemon 或自动复制 Node 身份。当前控制阶段使用 owner-only 目录与 `0600` socket，在解析请求前后核验内核提供的 peer UID，只允许 root 或 daemon 同 UID。更细的操作员授权、TUN 权限和安装服务策略留待网络运行接线。
+Linux 首版每台机器运行一个系统级 `meshwayd`，同一时间只启用一张网络。CLI 连接该服务；不为每个本机用户创建独立 daemon 或自动复制 Node 身份。当前使用 owner-only 目录与 `0600` socket，在解析请求前后核验内核提供的 peer UID，只允许 root 或 daemon 同 UID。更细的操作员授权与系统服务安装策略仍待实现。
 
 | 命令／操作 | 行为／状态 |
 | --- | --- |
@@ -78,7 +109,7 @@ Linux 首版每台机器运行一个系统级 `meshwayd`，同一时间只启用
 | `meshway status` | 区分进程、控制联系、saved／applied 和实际通道状态 |
 | 切网 | 尚未实现；先停止旧网络、完成隔离清理，再运行新网络 |
 
-CLI 通过 Unix domain socket 发命令、读结果；状态由 daemon／组件的唯一 owner 持有。`meshway-ipc` 是唯一的请求／响应定义，使用版本化 JSON 与长度前缀，单条消息上限 64 KiB。每个连接处理一个请求，连接数、请求等待和命令队列均有上限。
+CLI 通过 Unix domain socket 发命令、读结果；状态由 daemon／组件的唯一 owner 持有。`meshway-ipc` 是唯一的请求／响应定义，当前版本为 2，使用 JSON 与长度前缀，单条消息上限 64 KiB。每个连接处理一个请求，连接数、请求等待和命令队列均有上限。
 
 up/down 按本机期望状态 revision 执行 CAS，并保留最后一次变更的请求身份以恢复不确定结果。本机 revision 与 Server 配置 revision 分开。已接纳命令的持久化由协调器完成，CLI 断开不会撤回它；读取 status 不写入状态或生成测量。
 
@@ -111,6 +142,6 @@ ping 的默认服务范围和 Node 凭据诊断合同仍需补齐。不能冒用
 
 宿主协调一个活动网络及有效执行上下文，组件拥有其任务、buffer、socket 和系统资源。具体运行库不重复编译网络策略；saved／applied／业务连通的含义见[配置应用](/v2/configuration-reference/deployment)。
 
-撤回、期限、down、切网独立于挂起的 HTTP 生效。停止准入后取消并等待任务退出，再释放自己的资源；保留必要 capture／sink 边界，普通业务不能因目的地址与 Server 相同而获得底层豁免。
+撤回、期限和 down 独立于挂起的 HTTP 生效。停止准入后取消并等待任务退出；显式 down 清理可证明所属的内核资源与 TUN，期望 up 时的过期／断连／退出保留负向 capture 边界。资源生命周期及 bootstrap 同 IP 隔离见 [Linux underlay](/v2/node/dataplane#linux-underlay)。
 
 崩溃恢复只处理有可验证归属的 journal，不恢复旧流。未知格式或不明归属不能作为删除宿主规则的依据。

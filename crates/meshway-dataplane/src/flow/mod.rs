@@ -2,7 +2,7 @@
 //! expired-entry collection; commit happens only after final guard validation.
 mod tcp;
 
-use crate::{Direction, Error, Ingress, Limits, PacketFacts, Route, Transport};
+use crate::{Direction, Error, Ingress, Limits, LocalFlow, PacketFacts, Route, Transport};
 use meshway_configuration::execution::{BusinessProtocol, NodeConfiguration};
 use meshway_model::{NetworkId, NodeId, PublicationId, RequestId};
 use meshway_policy::admission::{Hop, Traffic, admit_forward, admit_reply};
@@ -82,6 +82,18 @@ enum ProtocolState {
     Tcp(TcpState),
 }
 
+impl ProtocolState {
+    /// The single initial-flow validator, shared by routing lookup and admission.
+    fn new(transport: Transport) -> Result<Self, Error> {
+        match transport {
+            Transport::Udp => Ok(Self::Udp),
+            Transport::Echo { reply: false, .. } => Ok(Self::Echo),
+            Transport::Tcp(segment) => Ok(Self::Tcp(TcpState::new(segment)?)),
+            _ => Err(Error::Flow),
+        }
+    }
+}
+
 #[derive(Clone)]
 struct Flow {
     forward: Traffic,
@@ -89,6 +101,20 @@ struct Flow {
     expires_at: Instant,
     permit_expires_at_ms: u64,
     guard_expires_at_ms: u64,
+}
+
+impl Flow {
+    fn live_at(&self, now: Instant, now_ms: u64) -> bool {
+        now < self.expires_at
+            && now_ms < self.permit_expires_at_ms
+            && now_ms < self.guard_expires_at_ms
+    }
+}
+
+pub(super) struct LocalMatch {
+    pub route: LocalFlow,
+    pub expires_at: Instant,
+    pub expires_at_ms: u64,
 }
 
 pub(super) struct FlowTime {
@@ -133,11 +159,108 @@ impl FlowTable {
         self.entries.clear();
     }
     pub fn expire(&mut self, now: Instant, now_ms: u64) {
-        self.entries.retain(|_, flow| {
-            now < flow.expires_at
-                && now_ms < flow.permit_expires_at_ms
-                && now_ms < flow.guard_expires_at_ms
-        });
+        self.entries.retain(|_, flow| flow.live_at(now, now_ms));
+    }
+
+    /// Exact tuple lookup in the established table; never refresh or advance it.
+    /// Relay traffic and the remote direction of endpoint traffic cannot be
+    /// borrowed to originate a local packet. Ambiguous metadata fails closed.
+    pub fn local_flow(
+        &self,
+        config: &NodeConfiguration,
+        facts: &PacketFacts,
+        time: FlowTime,
+    ) -> Result<Option<LocalMatch>, Error> {
+        facts.validate()?;
+        let tuple = Tuple::facts(facts);
+        let reverse = tuple.reversed();
+        if tuple == reverse {
+            return Err(Error::Flow);
+        }
+        let mut found = None;
+        for (key, flow) in &self.entries {
+            if key.network != config.network_id
+                || key.node != config.node_id
+                || key.publication != config.publication
+                || (key.tuple != tuple && key.tuple != reverse)
+                || !flow.live_at(time.instant, time.now_ms)
+            {
+                continue;
+            }
+            let Some(permit) = config.permits.get(&key.demand) else {
+                continue;
+            };
+            if time.now_ms >= permit.expires_at_ms {
+                continue;
+            }
+            let local = match key.role {
+                Role::Origin => key.tuple == tuple && key.path.first() == Some(&config.node_id),
+                Role::Terminal => key.tuple == reverse && key.path.last() == Some(&config.node_id),
+                Role::Relay => false,
+            };
+            if !local || found.is_some() {
+                return Err(Error::Flow);
+            }
+            found = Some(LocalMatch {
+                route: LocalFlow {
+                    demand: key.demand,
+                    path: key.path.clone(),
+                },
+                expires_at: flow.expires_at.min(time.guard_expires_at),
+                expires_at_ms: flow
+                    .permit_expires_at_ms
+                    .min(flow.guard_expires_at_ms)
+                    .min(permit.expires_at_ms)
+                    .min(time.guard_expires_at_ms),
+            });
+        }
+        if found.is_none() {
+            ProtocolState::new(facts.transport)?;
+        }
+        Ok(found)
+    }
+
+    /// Prepare a bounded replacement index without mutating protocol/idle state.
+    /// All old keys belong to one publication, so relabeling is injective; reject
+    /// defensively if that invariant is ever broken.
+    pub fn reconciled(
+        &self,
+        old: &NodeConfiguration,
+        new: &NodeConfiguration,
+        time: FlowTime,
+    ) -> Result<Self, Error> {
+        let mut entries = BTreeMap::new();
+        for (key, flow) in &self.entries {
+            if time.instant >= flow.expires_at
+                || time.now_ms >= flow.permit_expires_at_ms
+                || time.now_ms >= flow.guard_expires_at_ms
+                || key.publication != old.publication
+                || !authorization_unchanged(old, new, key.demand, &key.path, time.now_ms)?
+            {
+                continue;
+            }
+            let mut key = key.clone();
+            key.publication = new.publication;
+            let mut flow = flow.clone();
+            flow.permit_expires_at_ms = flow
+                .permit_expires_at_ms
+                .min(new.permits[&key.demand].expires_at_ms);
+            flow.guard_expires_at_ms = flow.guard_expires_at_ms.min(time.guard_expires_at_ms);
+            flow.expires_at = flow.expires_at.min(time.guard_expires_at).min(
+                time.instant
+                    .checked_add(Duration::from_millis(
+                        flow.permit_expires_at_ms.saturating_sub(time.now_ms),
+                    ))
+                    .ok_or(Error::Limits)?,
+            );
+            if entries.insert(key, flow).is_some() {
+                return Err(Error::ExecutionScope);
+            }
+        }
+        Ok(Self {
+            limits: self.limits,
+            entries,
+        })
     }
 
     pub fn prepare(
@@ -182,14 +305,15 @@ impl FlowTable {
             tuple: key.tuple.reversed(),
             ..key.clone()
         };
-        // A second permitted candidate is not permission to move a live
-        // session. Preserve the original path even when both paths are valid.
+        // A second permit or candidate is not permission to move a live session
+        // or duplicate its protocol state. Bind both demand and original path
+        // across the node's entire live tuple/role scope.
         if self.entries.keys().any(|other| {
             other.network == key.network
                 && other.publication == key.publication
-                && other.demand == key.demand
                 && other.node == key.node
-                && other.path != key.path
+                && other.role == key.role
+                && (other.demand != key.demand || other.path != key.path)
                 && (other.tuple == key.tuple || other.tuple == reverse_key.tuple)
         }) {
             return Err(Error::Flow);
@@ -243,12 +367,7 @@ impl FlowTable {
                 if self.entries.len() == self.limits.max_flows {
                     return Err(Error::Capacity);
                 }
-                match facts.transport {
-                    Transport::Udp => ProtocolState::Udp,
-                    Transport::Echo { reply: false, .. } => ProtocolState::Echo,
-                    Transport::Tcp(segment) => ProtocolState::Tcp(TcpState::new(segment)?),
-                    _ => return Err(Error::Flow),
-                }
+                ProtocolState::new(facts.transport)?
             }
         };
         let remove = if existing.is_some() {
@@ -309,6 +428,55 @@ impl FlowTable {
             route,
         }
     }
+}
+
+/// Shared retention predicate, not packet admission. Policy still checks each
+/// current packet/handshake. Compare complete permit authorization and every
+/// selected-path identity, address, key and locally published carrier binding.
+pub(super) fn authorization_unchanged(
+    old: &NodeConfiguration,
+    new: &NodeConfiguration,
+    demand: RequestId,
+    path: &[NodeId],
+    now_ms: u64,
+) -> Result<bool, Error> {
+    let (Some(before), Some(after)) = (old.permits.get(&demand), new.permits.get(&demand)) else {
+        return Ok(false);
+    };
+    if now_ms >= before.expires_at_ms
+        || now_ms >= after.expires_at_ms
+        || meshway_policy::permit_authorization_digest(before).map_err(|_| Error::ExecutionScope)?
+            != meshway_policy::permit_authorization_digest(after)
+                .map_err(|_| Error::ExecutionScope)?
+        || path.iter().any(|node| {
+            *node != old.node_id
+                && (!old.peers.contains_key(node) || old.peers.get(node) != new.peers.get(node))
+        })
+        || (path.last() == Some(&old.node_id) && old.exit_enabled != new.exit_enabled)
+    {
+        return Ok(false);
+    }
+    let Some(selected) = before
+        .paths
+        .iter()
+        .find(|candidate| candidate.nodes == path)
+    else {
+        return Ok(false);
+    };
+    let prefix = format!("{}/", old.node_id);
+    for (dialer, keys) in &selected.dial_candidates {
+        for key in keys {
+            if *dialer == old.node_id && old.dialers.get(key) != new.dialers.get(key) {
+                return Ok(false);
+            }
+            if let Some(listener) = key.strip_prefix(&prefix)
+                && old.listeners.get(listener) != new.listeners.get(listener)
+            {
+                return Ok(false);
+            }
+        }
+    }
+    Ok(true)
 }
 
 #[cfg(test)]

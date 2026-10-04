@@ -11,9 +11,13 @@ path = "src/main.rs"
 
 [dependencies]
 chrono.workspace = true
+getrandom.workspace = true
 clap = { workspace = true, features = ["env"] }
 meshway-configuration = { path = "../../crates/meshway-configuration" }
 meshway-control = { path = "../../crates/meshway-control" }
+meshway-underlay = { path = "../../crates/meshway-underlay" }
+meshway-connectivity = { path = "../../crates/meshway-connectivity" }
+meshway-dataplane = { path = "../../crates/meshway-dataplane" }
 meshway-ipc = { path = "../../crates/meshway-ipc" }
 meshway-logging = { path = "../../crates/meshway-logging" }
 meshway-model = { path = "../../crates/meshway-model" }
@@ -30,7 +34,6 @@ tracing.workspace = true
 
 [dev-dependencies]
 axum.workspace = true
-getrandom.workspace = true
 meshway-server = { path = "../meshway-server" }
 tempfile.workspace = true
 uuid.workspace = true

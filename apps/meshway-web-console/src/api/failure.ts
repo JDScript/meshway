@@ -36,6 +36,7 @@ const problemMessage: Record<ProblemCode, () => string> = {
   revision_conflict: () => m.problem_revision_conflict(),
   configuration_invalid: () => m.problem_configuration_invalid(),
   state_conflict: () => m.problem_state_conflict(),
+  state_scope_changed: () => m.problem_state_conflict(),
   state_limit: () => m.problem_state_limit(),
   observation_limit: () => m.problem_observation_limit(),
   invalid_current_password: () => m.problem_invalid_current_password(),

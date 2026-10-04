@@ -1,6 +1,6 @@
 # 承载会话与发送边界
 
-当前 Rust 运行库提供 UDP／TCP／VLESS／Trojan 承载、公共 datagram framing、有界发送与完成回收，可独立运行正确性验证和性能脚本。候选 Mesh circuit、端到端加密和 TUN 接线见[数据面组件](/v2/node/dataplane)；它们尚未接入 `meshwayd` 的执行安装，动态 ABI 和连接池仍待实现。业务入口见 [L3 网络模式](/v2/node/runtime)，插件装载见[插件与能力](/v2/node/plugins)。
+当前 Rust 运行库提供 UDP／TCP／VLESS／Trojan 承载、公共 datagram framing、有界发送与完成回收。`meshway-connectivity::Manager` 已装配到 daemon 的 stream 运行路径；Linux Native TCP 承载上的双栈 UDP／TCP 包流已验收。候选 Mesh circuit、端到端加密和 TUN 接线见[数据面组件](/v2/node/dataplane)，动态 ABI 和连接池仍待实现。业务入口见 [L3 网络模式](/v2/node/runtime)，插件装载见[插件与能力](/v2/node/plugins)。
 
 ## 分层
 
@@ -29,6 +29,26 @@ VLESS／Trojan 的协议实现参考 mihomo／sing-box 的握手、编解码、T
 
 socket 的打开、捕获豁免和候选授权归宿主 underlay／connectivity。适配器使用调用者交付的 socket；字段应用失败会报错。TCP keepalive 在当前平台按整秒校验，不能静默截断亚秒配置。
 
+## 邻接管理
+
+`meshway-connectivity::Manager` 持有有界 listener、拨号／重连任务、认证通道和事实快照，通过 `SocketFactory` 使用 underlay 的用途受限 socket。它复用正式 Native TCP、VLESS TCP/TLS／WebSocket/TLS、Trojan TCP/TLS provider；VLESS／Trojan 使用固定专用 Mesh CONNECT 目标，收到任意其他代理目标时拒绝，不提供通用代理。
+
+每条物理 stream 先完成三消息 `MWADJv1\0` 握手，再交给 Mesh 帧处理：
+
+| 消息 | 绑定与证明 |
+| --- | --- |
+| INIT | 新 client nonce、network、实际 dialer／listener、精确 Carrier、双方控制／数据面 key ID／generation／公钥摘要；发起方签名 |
+| Challenge | 同一 context 与 client nonce、新 server nonce；监听方签名 |
+| Ack | 同一 context 和双方 nonce；发起方签名确认 |
+
+签名验证使用当前执行发布登记的控制公钥。Carrier 包含实际拨号方、监听方、listener key 和协议；连接方向独立于业务方向。邻接握手只证明当前获准连接，不替代 [Noise 端到端保护与逐跳包证明](/v2/node/dataplane#候选受保护-circuit)。
+
+默认预算为 64 连接、16 listener、128 候选和 64 事件；握手期限 5 秒，重试退避 1 秒。事件与 snapshot 来自真实 listener／link 生命周期，不制造 RTT／丢包数据。停止取消并 join 任务，guard 在阻塞 I/O 中持续检查。
+
+当前 publication／续租更新会重建 Manager 的物理 stream；符合连续性条件的 SecureNode 逻辑流／circuit 可保留。TCP 建连与重连不是打洞证明；Native UDP daemon 邻接、NAT punching、主备优化和连接池尚未实现。
+
+## 帧与资源
+
 `Frame` 持有原始 payload `Vec` 和可选 peer。Stream 的 peer 为固定会话端点；UDP 必须明确目的地，接收帧携带真实来源。payload 是不解释的字节，不代表已经通过 Mesh 身份、IP 或路径检查。帧及完成结果的 Debug 只显示长度／容量等元数据。
 
 `Limits::new` 明确指定帧长、帧数、payload 容量、操作数和 batch 帧数。工程上限为 16 MiB／帧、1 GiB 已接纳容量、65,536 帧／操作；全部为正，至少能容纳一个最大帧，操作数及 batch 帧数不超过帧预算。这些是运行库边界，实际 MTU 和宿主预算另行选择。
@@ -52,7 +72,7 @@ VLESS 客户端先交付 CONNECT 请求，再延迟读取首个响应头，允�
 
 当前 stream framing 为大端 u32 长度前缀，使用 Tokio `LengthDelimitedCodec`；拒绝空帧和超过配置上限的长度。UDP 每个报文承载一个完整 payload，保留原有报文边界。Linux 截断结果可提供原长度，macOS 无法可靠获取时返回未知。UDP 当前仍逐报文执行系统调用，发送 batch 不等于已实现 `sendmmsg`／`recvmmsg`。
 
-Mesh 数据帧不统一叠加自动重传／排序层。内层 TCP 和外层 TCP 各自具有其协议语义；握手及控制消息的重试单独定义。重放检查与乱序容忍的作用域还须随加密会话合同定版。
+Mesh 数据帧不统一叠加自动重传／排序层。内层 TCP 和外层 TCP 各自具有其协议语义；握手及控制消息的重试单独定义。当前重放窗口见[受保护 circuit](/v2/node/dataplane#候选受保护-circuit)，性能与更大乱序范围仍须验证。
 
 ## 本机接纳与完成
 
@@ -104,14 +124,14 @@ publication 是执行目标引用，不直接充当所有连接、业务流或�
 
 ### 流映射与乱序隔离
 
-连接池的映射由 connectivity 持有。数据面提供本机调度所需的稳定流标识；该标识如何与线上加密上下文关联，留给 Mesh 会话合同定义。
+以下是尚未实现的连接池约束；映射由 connectivity 持有，数据面提供本机调度所需的稳定流标识。当前 Manager 与逻辑 circuit 的关系见[邻接管理](#邻接管理)。
 
 - 新流选择承载通道后保存映射；增加通道只影响新分配，不能按新的连接数量重新散列全部存量流。
 - 通道失效时只重新分配受影响的流，目标仍是原获准邻接。其余流保持映射，避免一次故障引起全池扰动。
 - 连接切换不重置加密计数器或重放记录。需要创建新加密上下文时必须完成相应验证，不能把旧帧重新标记为新上下文的数据。
 - 不同通道可能具有不同队列和网络延迟。排序、nonce 唯一性和重放检查的作用域分别定义，不能仅凭一个全局递增序号假定所有通道同时推进。
 
-共享重放窗口的容量需要结合峰值包率和允许的乱序时间验证；只扩大窗口会增加内存与状态维护成本。按流或逻辑子通道划分窗口也需要有界上下文创建、正确的认证绑定和 nonce 空间隔离。具体方案尚未选定，物理 socket 不能直接成为端到端安全上下文的唯一身份。
+当前每 circuit／方向的重放窗口容量仍须结合峰值包率和允许的乱序时间验证；只扩大窗口会增加内存与状态维护成本。未来按流或逻辑子通道细分也需要有界上下文创建、正确的认证绑定和 nonce 空间隔离。物理 socket 不能直接成为端到端安全上下文的唯一身份。
 
 ## 验证与性能对照
 

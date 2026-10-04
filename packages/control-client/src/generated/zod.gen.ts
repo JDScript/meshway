@@ -628,6 +628,15 @@ export const zTrustedDnsAssociation = z.strictObject({
   ["source"]: zNodeId
 });
 
+export const zDnsEgressUnavailable = z.enum(["exitPlanRequired"]);
+
+export const zDnsEgress = z.union([z.strictObject({
+  ["type"]: z.enum(["noExit"])
+}), z.strictObject({
+  ["reason"]: zDnsEgressUnavailable,
+  ["type"]: z.enum(["unavailable"])
+})]);
+
 export const zDnsTransport = z.enum(["udp","tcp"]);
 
 export const zDnsServer = z.strictObject({
@@ -649,6 +658,7 @@ export const zDnsConfiguration = z.strictObject({
 
 export const zDnsExecution = z.strictObject({
   ["associations"]: z.array(zTrustedDnsAssociation),
+  ["egress"]: zDnsEgress,
   ["meshHosts"]: typedMap(z.string(), zNodeAddresses, {}),
   ["profile"]: z.string(),
   ["settings"]: zDnsConfiguration
@@ -733,6 +743,19 @@ export const zPreparedListener = z.union([z.strictObject({
   ["type"]: z.enum(["trojan"])
 })]);
 
+export const zLocalEgressAction = z.enum(["direct","unmanaged"]);
+
+export const zLocalEgressPermit = z.strictObject({
+  ["action"]: zLocalEgressAction,
+  ["demandId"]: zRequestId,
+  ["expiresAt"]: z.string().refine(rfc3339, "Expected RFC 3339 date-time"),
+  ["port"]: zPort.nullable().exactOptional(),
+  ["profile"]: z.string(),
+  ["protocol"]: zBusinessProtocol,
+  ["source"]: zNodeId,
+  ["target"]: zBusinessTarget
+});
+
 export const zPeerConfiguration = z.strictObject({
   ["addresses"]: zNodeAddresses,
   ["controlKey"]: zBoundNodeKey,
@@ -758,6 +781,8 @@ export const zNodeConfiguration = z.strictObject({
   ["hostname"]: z.string(),
   ["identity"]: zNodeIdentity,
   ["listeners"]: typedMap(z.string(), zPreparedListener, {}),
+  ["localEgress"]: typedMap(z.string().refine(value => [...value].length >= 36, "minLength 36 Unicode code points").refine(value => [...value].length <= 36, "maxLength 36 Unicode code points").regex(new RegExp("^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$", "u")), zLocalEgressPermit, {}),
+  ["meshAddressPools"]: zAddressPools,
   ["networkId"]: zNetworkId,
   ["nodeId"]: zNodeId,
   ["peers"]: typedMap(z.string().refine(value => [...value].length >= 36, "minLength 36 Unicode code points").refine(value => [...value].length <= 36, "maxLength 36 Unicode code points").regex(new RegExp("^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$", "u")), zPeerConfiguration, {}),
@@ -1854,6 +1879,10 @@ export const zProblem = z.union([z.strictObject({
   ["message"]: z.string(),
   ["params"]: zEmptyParams
 }), z.strictObject({
+  ["code"]: z.enum(["state_scope_changed"]),
+  ["message"]: z.string(),
+  ["params"]: zEmptyParams
+}), z.strictObject({
   ["code"]: z.enum(["state_limit"]),
   ["message"]: z.string(),
   ["params"]: zEmptyParams
@@ -2289,6 +2318,11 @@ export const zListenerState = z.strictObject({
   ["socketIds"]: z.array(z.string())
 });
 
+export const zLocalEgressDelta = z.strictObject({
+  ["remove"]: z.array(zRequestId),
+  ["upsert"]: typedMap(z.string().refine(value => [...value].length >= 36, "minLength 36 Unicode code points").refine(value => [...value].length <= 36, "maxLength 36 Unicode code points").regex(new RegExp("^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$", "u")), zLocalEgressPermit, {})
+});
+
 export const zLoginRequest = z.strictObject({
   ["email"]: z.string(),
   ["password"]: zWireSecret
@@ -2426,6 +2460,8 @@ export const zNodeConfigurationDelta = z.strictObject({
   ["hostname"]: z.string(),
   ["identity"]: zNodeIdentity,
   ["listeners"]: zListenerDelta,
+  ["localEgress"]: zLocalEgressDelta,
+  ["meshAddressPools"]: zAddressPools,
   ["networkId"]: zNetworkId,
   ["nodeId"]: zNodeId,
   ["peers"]: zPeerDelta,
@@ -2875,6 +2911,12 @@ export const zRenameNetworkPath = z.strictObject({
 export const zRenameNetworkRequest = z.strictObject({
   ["expectedName"]: z.string(),
   ["name"]: z.string(),
+  ["requestId"]: zRequestId
+});
+
+export const zRenewDemandRequest = z.strictObject({
+  ["expiresAt"]: z.string().refine(rfc3339, "Expected RFC 3339 date-time"),
+  ["instance"]: zInstanceRequest,
   ["requestId"]: zRequestId
 });
 

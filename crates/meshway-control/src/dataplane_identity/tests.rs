@@ -17,11 +17,14 @@ fn packet_proofs_bind_domain_network_node_key_generation_and_digest() {
     };
     let digest: Digest = [9; 32].into();
     let message = packet_proof_message(network, node, &key, digest);
-    assert!(message.starts_with(b"meshway/packet-proof/v1\0"));
+    assert!(message.starts_with(b"meshway/packet-proof/v2\0"));
     assert_eq!(message.len(), 112);
     let signature: Signature = secret.sign(&message);
     let verifier: VerifyingKey = secret.verifying_key();
     verifier.verify_strict(&message, &signature).unwrap();
+    let mut v1 = message.clone();
+    v1[b"meshway/packet-proof/v".len()] = b'1';
+    assert!(verifier.verify_strict(&v1, &signature).is_err());
     let mut changed_key = key.clone();
     changed_key.generation = Version::new(2).unwrap();
     for altered in [

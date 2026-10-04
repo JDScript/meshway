@@ -16,6 +16,20 @@ use rusqlite::{OptionalExtension, Transaction, params};
 
 const CHALLENGE_TTL: i64 = 60_000;
 const SESSION_TTL: i64 = 300_000;
+const SESSION_ANCHORS: i64 = 4096;
+const NODE_SESSION_ANCHORS: i64 = 8;
+
+fn cleanup_challenges(tx: &Transaction<'_>, now: i64) -> Result<(), Error> {
+    // A consumed session challenge is a recovery anchor, never a usable proof.
+    // Rotation and unconsumed challenges retain their original proof lifetime.
+    tx.execute(
+        "DELETE FROM node_challenges WHERE
+         ((consumed_at IS NULL OR operation!='session') AND expires_at<=?1)
+         OR (operation='session' AND consumed_at IS NOT NULL AND consumed_at<=?2)",
+        params![now, now.saturating_sub(SESSION_TTL)],
+    )?;
+    Ok(())
+}
 
 pub(crate) fn authorize_node(
     tx: &Transaction<'_>,
@@ -73,11 +87,15 @@ pub(crate) fn challenge(
     let key = bound_key(tx, request.network_id, request.node_id, request.key_id)?;
     let (_, cfg, bindings) = current_configuration(tx, sealer, request.network_id)?;
     identity_eligible(tx, &cfg, &bindings, request.network_id, request.node_id)?;
-    tx.execute("DELETE FROM node_challenges WHERE expires_at<=?1", [now])?;
-    let count: i64 = tx.query_row("SELECT count(*) FROM node_challenges", [], |r| r.get(0))?;
+    cleanup_challenges(tx, now)?;
+    let count: i64 = tx.query_row(
+        "SELECT count(*) FROM node_challenges WHERE consumed_at IS NULL AND expires_at>?1",
+        [now],
+        |r| r.get(0),
+    )?;
     let own: i64 = tx.query_row(
-        "SELECT count(*) FROM node_challenges WHERE node_id=?1",
-        [request.node_id.as_uuid().as_bytes().as_slice()],
+        "SELECT count(*) FROM node_challenges WHERE node_id=?1 AND consumed_at IS NULL AND expires_at>?2",
+        params![request.node_id.as_uuid().as_bytes().as_slice(), now],
         |r| r.get(0),
     )?;
     if count >= 4096 || own >= 8 {
@@ -99,6 +117,123 @@ pub(crate) fn challenge(
     };
     tx.execute("INSERT INTO node_challenges(id,controller_id,network_id,node_id,key_id,nonce,request_digest,operation,created_at,expires_at) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10)",params![c.id.as_uuid().as_bytes().as_slice(),c.controller_id.as_uuid().as_bytes().as_slice(),c.network_id.as_uuid().as_bytes().as_slice(),c.node_id.as_uuid().as_bytes().as_slice(),c.key_id.as_uuid().as_bytes().as_slice(),nonce.as_slice(),c.request_digest.as_bytes().as_slice(),operation(c.operation),now,now+CHALLENGE_TTL])?;
     Ok(c)
+}
+
+fn recover_session(
+    tx: &Transaction<'_>,
+    sealer: &Sealer,
+    boot: InstanceId,
+    fresh: &NodeChallenge,
+    now: i64,
+) -> Result<Option<NodeSessionResponse>, Error> {
+    // Bounded by the separate per-node anchor budget. Include other intents and
+    // keys so deleted/expired sessions and retired generations release their
+    // orphaned anchor slots before checking capacity for a new issuance.
+    let mut stmt = tx.prepare(
+        "SELECT c.id,c.controller_id,c.key_id,k.generation,c.nonce,c.request_digest,
+                c.expires_at,c.consumed_at
+         FROM node_challenges c JOIN node_keys k
+           ON k.network_id=c.network_id AND k.node_id=c.node_id AND k.id=c.key_id
+         WHERE c.network_id=?1 AND c.node_id=?2 AND c.operation='session'
+           AND c.consumed_at IS NOT NULL AND c.id!=?3
+         ORDER BY c.consumed_at,c.id LIMIT ?4",
+    )?;
+    let mut rows = stmt.query(params![
+        fresh.network_id.as_uuid().as_bytes().as_slice(),
+        fresh.node_id.as_uuid().as_bytes().as_slice(),
+        fresh.id.as_uuid().as_bytes().as_slice(),
+        NODE_SESSION_ANCHORS
+    ])?;
+    let mut anchors = Vec::new();
+    while let Some(row) = rows.next()? {
+        let nonce: Vec<u8> = row.get(4)?;
+        let digest: Vec<u8> = row.get(5)?;
+        let generation: i64 = row.get(3)?;
+        let expires: i64 = row.get(6)?;
+        anchors.push((
+            NodeChallenge {
+                id: id(row.get(0)?)?,
+                controller_id: id(row.get(1)?)?,
+                key_id: id(row.get(2)?)?,
+                key_generation: Version::new(
+                    generation
+                        .try_into()
+                        .map_err(|_| Error::decode("node_keys.generation"))?,
+                )
+                .map_err(|_| Error::decode("node_keys.generation"))?,
+                nonce: Digest::from_bytes(
+                    nonce
+                        .try_into()
+                        .map_err(|_| Error::decode("node_challenges.nonce"))?,
+                ),
+                request_digest: Digest::from_bytes(
+                    digest
+                        .try_into()
+                        .map_err(|_| Error::decode("node_challenges.request_digest"))?,
+                ),
+                expires_at_ms: expires
+                    .try_into()
+                    .map_err(|_| Error::decode("node_challenges.expires_at"))?,
+                ..fresh.clone()
+            },
+            row.get::<_, i64>(7)?,
+        ));
+    }
+    drop(rows);
+    drop(stmt);
+    for (anchor, consumed_at) in anchors {
+        let (token, hash) = proof::session_token(sealer, boot, &anchor)?;
+        let expires: Option<i64> = tx
+            .query_row(
+                "SELECT s.expires_at FROM node_sessions s JOIN node_keys k
+               ON k.network_id=s.network_id AND k.node_id=s.node_id AND k.id=s.key_id
+             WHERE s.token_hash=?1 AND s.boot_id=?2 AND s.network_id=?3 AND s.node_id=?4
+               AND s.key_id=?5 AND s.created_at=?6 AND s.created_at<=?7 AND s.expires_at>?7
+               AND k.revoked_at IS NULL AND k.retired_at IS NULL",
+                params![
+                    hash.as_slice(),
+                    boot.as_uuid().as_bytes().as_slice(),
+                    anchor.network_id.as_uuid().as_bytes().as_slice(),
+                    anchor.node_id.as_uuid().as_bytes().as_slice(),
+                    anchor.key_id.as_uuid().as_bytes().as_slice(),
+                    consumed_at,
+                    now
+                ],
+                |row| row.get(0),
+            )
+            .optional()?;
+        if let Some(expires) = expires {
+            if anchor.controller_id == fresh.controller_id
+                && anchor.key_id == fresh.key_id
+                && anchor.key_generation == fresh.key_generation
+                && anchor.request_digest == fresh.request_digest
+            {
+                // The duplicate fresh proof was consumed and verified above.
+                // Deletion makes replay invalid without accumulating anchors.
+                tx.execute(
+                    "DELETE FROM node_challenges WHERE id=?1",
+                    [fresh.id.as_uuid().as_bytes().as_slice()],
+                )?;
+                return Ok(Some(NodeSessionResponse {
+                    node_id: fresh.node_id,
+                    network_id: fresh.network_id,
+                    key_id: fresh.key_id,
+                    token,
+                    expires_at_ms: expires
+                        .try_into()
+                        .map_err(|_| Error::decode("node_sessions.expires_at"))?,
+                }));
+            }
+        } else {
+            // A missing row cannot be recreated from an old anchor: doing so
+            // would reactivate a captured expired token. New issuance uses fresh.
+            tx.execute(
+                "DELETE FROM node_challenges WHERE id=?1",
+                [anchor.id.as_uuid().as_bytes().as_slice()],
+            )?;
+        }
+    }
+    Ok(None)
 }
 fn operation(op: ProofOperation) -> &'static str {
     match op {
@@ -167,15 +302,28 @@ pub(crate) fn session(
         "DELETE FROM node_sessions WHERE expires_at<=?1 OR boot_id!=?2",
         params![now, boot.as_uuid().as_bytes().as_slice()],
     )?;
+    cleanup_challenges(tx, now)?;
+    if let Some(response) = recover_session(tx, sealer, boot, &c, now)? {
+        return Ok(response);
+    }
     let count: i64 = tx.query_row(
         "SELECT count(*) FROM node_sessions WHERE node_id=?1",
         [c.node_id.as_uuid().as_bytes().as_slice()],
         |r| r.get(0),
     )?;
-    if count >= 8 {
+    let (anchors, own): (i64, i64) = tx.query_row(
+        "SELECT count(*),coalesce(sum(node_id=?1),0) FROM node_challenges
+         WHERE operation='session' AND consumed_at IS NOT NULL AND id!=?2",
+        params![
+            c.node_id.as_uuid().as_bytes().as_slice(),
+            c.id.as_uuid().as_bytes().as_slice()
+        ],
+        |row| Ok((row.get(0)?, row.get(1)?)),
+    )?;
+    if count >= 8 || anchors >= SESSION_ANCHORS || own >= NODE_SESSION_ANCHORS {
         return Err(Error::Busy);
     }
-    let (token, hash) = proof::issue_token()?;
+    let (token, hash) = proof::session_token(sealer, boot, &c)?;
     let expires = now + SESSION_TTL;
     tx.execute("INSERT INTO node_sessions(token_hash,network_id,node_id,key_id,boot_id,created_at,expires_at) VALUES(?1,?2,?3,?4,?5,?6,?7)",params![hash.as_slice(),c.network_id.as_uuid().as_bytes().as_slice(),c.node_id.as_uuid().as_bytes().as_slice(),c.key_id.as_uuid().as_bytes().as_slice(),boot.as_uuid().as_bytes().as_slice(),now,expires])?;
     Ok(NodeSessionResponse {

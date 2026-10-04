@@ -176,6 +176,19 @@ impl Tun {
         &self.name
     }
 
+    /// Index of this live owned device. This is an installation reference, not
+    /// an ownership token for adopting or deleting an interface after a crash.
+    pub fn if_index(&self) -> Result<u32, Error> {
+        #[cfg(target_os = "linux")]
+        {
+            Ok(self.device.if_index()?)
+        }
+        #[cfg(not(target_os = "linux"))]
+        {
+            Err(Error::Unsupported)
+        }
+    }
+
     /// Configured packet MTU in bytes.
     pub fn mtu(&self) -> usize {
         self.mtu

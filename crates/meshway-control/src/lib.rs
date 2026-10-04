@@ -7,6 +7,8 @@
 
 mod authority;
 mod clock;
+mod runtime;
+pub use runtime::ApplicationTicket;
 mod dataplane_identity;
 pub use authority::ExecutionSnapshot;
 pub use dataplane_identity::{DataPlaneIdentity, packet_proof_message};
@@ -51,6 +53,8 @@ pub enum Error {
     Lifecycle,
     #[error("a different operation is pending; retry or finish it first")]
     Pending,
+    #[error("state report execution scope changed; refresh and observe again")]
+    StateScopeChanged,
     #[error("secure random generation or signing failed")]
     Cryptography,
     #[error("Server response does not match the requested binding or contract")]
@@ -82,6 +86,12 @@ pub struct Control {
     clock: Arc<Clock>,
     validity: Arc<AtomicBool>,
     invalidated: tokio_util::sync::CancellationToken,
+    // Private owner/barrier and publication identity, independent of guard
+    // invalidations during the lease -> durable-target transaction.
+    lineage: Arc<()>,
+    publication: Arc<()>,
+    predecessor: Option<(Arc<()>, ConfigurationRef)>,
+    publication_pending_grant: bool,
     directory: Arc<meshway_private_storage::Directory>,
     record: Record,
     write: Option<tokio::task::JoinHandle<Result<(), meshway_private_storage::Error>>>,
@@ -93,6 +103,8 @@ pub struct Control {
     receipt: Option<SavedReceipt>,
     report: Option<StateReport>,
     report_sequence: u64,
+    application_owner: Arc<()>,
+    application: Option<ApplicationTicket>,
 }
 
 struct Session {
@@ -134,6 +146,10 @@ impl Control {
             clock: Arc::new(Clock::new()?),
             validity: Arc::new(AtomicBool::new(true)),
             invalidated: tokio_util::sync::CancellationToken::new(),
+            lineage: Arc::new(()),
+            publication: Arc::new(()),
+            predecessor: None,
+            publication_pending_grant: false,
             directory,
             record,
             write: None,
@@ -145,6 +161,8 @@ impl Control {
             receipt: None,
             report: None,
             report_sequence: 0,
+            application_owner: Arc::new(()),
+            application: None,
         })
     }
 
@@ -212,6 +230,13 @@ impl Control {
     }
 
     fn invalidate_snapshots(&mut self) {
+        self.lineage = Arc::new(());
+        self.predecessor = None;
+        self.publication_pending_grant = false;
+        self.invalidate_guards();
+    }
+
+    fn invalidate_guards(&mut self) {
         self.validity.store(false, Ordering::Release);
         self.invalidated.cancel();
         self.validity = Arc::new(AtomicBool::new(true));
@@ -265,6 +290,7 @@ impl Control {
         self.receipt = None;
         self.report = None;
         self.report_sequence = 0;
+        self.application = None;
     }
 
     fn registered<T>(
@@ -276,6 +302,8 @@ impl Control {
             Err(ClientError::Http {
                 status: 401 | 403 | 404 | 409,
                 ..
+            } | ClientError::Network {
+                status: Some(401 | 403 | 404 | 409)
             } | ClientError::Decode { .. }
                 | ClientError::BodyLimit { .. })
         ) {

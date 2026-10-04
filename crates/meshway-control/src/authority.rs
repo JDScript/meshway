@@ -26,6 +26,9 @@ pub struct ExecutionSnapshot {
     invalidated: CancellationToken,
     clock: Arc<Clock>,
     deadlines: [Deadline; 3],
+    lineage: Arc<()>,
+    publication: Arc<()>,
+    predecessor: Option<(Arc<()>, ConfigurationRef)>,
 }
 
 impl Control {
@@ -33,7 +36,9 @@ impl Control {
         let instance = self.current_instance()?;
         let current = self.instance.as_ref().ok_or(Error::Lifecycle)?;
         let target = self.cached_target().ok_or(Error::Lifecycle)?;
-        if current.lease.target.as_ref() != Some(&reference(target)) {
+        if !target.configuration.enabled
+            || current.lease.target.as_ref() != Some(&reference(target))
+        {
             return Err(Error::Lifecycle);
         }
         validate_target(
@@ -47,6 +52,9 @@ impl Control {
             validity: Arc::clone(&self.validity),
             invalidated: self.invalidated.clone(),
             clock: Arc::clone(&self.clock),
+            lineage: self.lineage.clone(),
+            publication: self.publication.clone(),
+            predecessor: self.predecessor.clone(),
             deadlines: [
                 self.session
                     .as_ref()
@@ -91,6 +99,40 @@ impl ExecutionSnapshot {
             && self.reference() == other.reference()
             && self.target.configuration.network_id == other.target.configuration.network_id
             && self.target.configuration.node_id == other.target.configuration.node_id
+    }
+
+    /// Validate an owner-issued direct successor (or live same-target renewal).
+    /// The returned predecessor is comparison data, never execution authority.
+    /// A publication skipped by the consumer cannot carry state across a hidden
+    /// withdrawal. Old absolute UTC and monotonic deadlines must still be live,
+    /// even though replacement already cancelled its output guard.
+    pub fn continuation_from<'a>(&self, old: &'a Self) -> Result<&'a NodeConfiguration, Error> {
+        self.ensure_current()?;
+        let previous = &old.target.configuration;
+        let current = &self.target.configuration;
+        let direct = self.predecessor.as_ref().is_some_and(|(epoch, reference)| {
+            Arc::ptr_eq(epoch, &old.publication) && *reference == old.reference()
+        });
+        let same = Arc::ptr_eq(&self.publication, &old.publication)
+            && self.same_execution(old)
+            && old.ensure_current().is_ok();
+        if !Arc::ptr_eq(&self.lineage, &old.lineage)
+            || !(same || direct)
+            || self.instance != old.instance
+            || self.generation != old.generation
+            || !old.deadlines.iter().all(Deadline::valid)
+            || !previous.enabled
+            || !current.enabled
+            || previous.network_id != current.network_id
+            || previous.node_id != current.node_id
+            || previous.identity != current.identity
+            || previous.addresses != current.addresses
+            || previous.self_keys != current.self_keys
+        {
+            return Err(Error::Expired);
+        }
+        self.ensure_current()?;
+        Ok(previous)
     }
 
     pub fn now_ms(&self) -> Result<u64, Error> {

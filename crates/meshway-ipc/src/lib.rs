@@ -11,7 +11,7 @@ use meshway_model::{ConfigurationRef, EnrollmentRequestId, RequestId, Version};
 use meshway_protocol::{EnrollmentResponse, InstanceLease};
 use serde::{Deserialize, Serialize};
 
-pub const VERSION: u16 = 1;
+pub const VERSION: u16 = 2;
 pub const MAX_MESSAGE_BYTES: usize = 64 * 1024;
 pub const DEFAULT_SOCKET: &str = "/var/lib/meshway/control.sock";
 
@@ -73,6 +73,7 @@ pub enum Phase {
     AwaitingApproval,
     Synchronizing,
     ControlReady,
+    Running,
     Retrying,
     Blocked,
     Stopping,
@@ -91,11 +92,42 @@ pub enum Problem {
     Configuration,
     Clock,
     Worker,
+    UnsupportedMode,
+    Underlay,
+    Tun,
+    Dns,
+    Transport,
+    Apply,
 }
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub enum DataPlane {
-    NotImplemented,
+    ControlOnly,
+    Stopped,
+    Preparing,
+    Ready,
+    Suspended,
+    Failed,
+}
+
+/// Local device attachment choice, independent of cloud business policy.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum NetworkMode {
+    #[default]
+    Tun,
+    ControlOnly,
+}
+
+impl std::str::FromStr for NetworkMode {
+    type Err = &'static str;
+    fn from_str(value: &str) -> Result<Self, Self::Err> {
+        match value {
+            "tun" => Ok(Self::Tun),
+            "control-only" => Ok(Self::ControlOnly),
+            _ => Err("Expected tun or control-only; userspace networking is not implemented."),
+        }
+    }
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -121,6 +153,7 @@ pub struct Status {
     #[serde(deserialize_with = "Option::deserialize")]
     pub applied: Option<ConfigurationRef>,
     pub data_plane: DataPlane,
+    pub network_mode: NetworkMode,
     #[serde(deserialize_with = "Option::deserialize")]
     pub last_error: Option<Problem>,
     #[serde(deserialize_with = "Option::deserialize")]

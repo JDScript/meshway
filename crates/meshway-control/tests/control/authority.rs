@@ -83,6 +83,7 @@ async fn execution_handoff_requires_current_saved_target_and_never_renews_old_sn
     control.renew_instance().await.unwrap();
     let renewed = control.execution_snapshot().unwrap();
     assert!(first.same_execution(&renewed));
+    renewed.continuation_from(&first).unwrap();
     assert_eq!(first.expires_at(), original_deadline);
     assert!(renewed.expires_at() >= original_deadline);
     control.stop().await.unwrap();
@@ -95,6 +96,7 @@ async fn execution_handoff_requires_current_saved_target_and_never_renews_old_sn
     control.sync_configuration().await.unwrap();
     let fresh = control.execution_snapshot().unwrap();
     assert!(!first.same_execution(&fresh));
+    assert!(fresh.continuation_from(&first).is_err());
     assert!(first.ensure_current().is_err());
     drop(control);
     tokio::time::timeout(Duration::from_secs(1), fresh.invalidated())

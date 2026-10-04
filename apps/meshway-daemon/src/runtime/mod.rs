@@ -1,6 +1,7 @@
 //! Own durable intent and coordinate the IPC service and Server control task.
 mod control;
 mod intent;
+mod network;
 mod status;
 
 pub(crate) use intent::{Action, Mutation};
@@ -41,14 +42,23 @@ pub async fn run(
     };
     let (desired, desired_rx) = watch::channel(initial);
     let (reported, report_rx) = watch::channel(Report::initial(store.record.revision));
+    let (network_reported, network_report) = watch::channel(network::Report::stopped());
     let view = View {
         desired: desired_rx.clone(),
         report: report_rx,
         server: settings.server.clone(),
+        network_mode: settings.network_mode,
+        network: network_report,
     };
     let (commands, mut received) = mpsc::channel::<Mutation>(16);
     let (stop_ipc, stop_rx) = watch::channel(false);
-    let mut control = tokio::spawn(control::run(settings.clone(), desired_rx, reported));
+    let mut control = tokio::spawn(control::run(
+        settings.clone(),
+        desired_rx,
+        reported,
+        store.directory.clone(),
+        network_reported,
+    ));
     let mut listener = tokio::spawn(ipc::serve(socket, commands, view.clone(), stop_rx));
     let mut listener_done = false;
     let mut control_done = false;
@@ -102,8 +112,16 @@ pub async fn run(
             }
         }
     }
-    if !control_done && control.await.is_err() {
-        failure.get_or_insert("Control shutdown failed.");
+    if !control_done {
+        match control.await {
+            Ok(Ok(())) => {}
+            Ok(Err(error)) => {
+                failure.get_or_insert(error);
+            }
+            Err(_) => {
+                failure.get_or_insert("Control shutdown failed.");
+            }
+        }
     }
     drop(store);
     tracing::info!(failed = failure.is_some(), "Node stopped");

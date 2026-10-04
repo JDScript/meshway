@@ -8,6 +8,7 @@ description = "DNS wire handling and published configuration selection for Node 
 [dependencies]
 hickory-proto = { version = "0.26.3", default-features = false, features = ["std"] }
 meshway-configuration = { path = "../meshway-configuration" }
+meshway-policy = { path = "../meshway-policy" }
 meshway-control = { path = "../meshway-control" }
 meshway-model = { path = "../meshway-model" }
 meshway-protocol = { path = "../meshway-protocol" }

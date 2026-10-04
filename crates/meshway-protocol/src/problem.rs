@@ -107,6 +107,7 @@ problems! {
     RevisionConflict(EmptyParams) = "revision_conflict",
     ConfigurationInvalid(ConfigurationValidationParams) = "configuration_invalid",
     StateConflict(EmptyParams) = "state_conflict",
+    StateScopeChanged(EmptyParams) = "state_scope_changed",
     StateLimit(EmptyParams) = "state_limit",
     ObservationLimit(EmptyParams) = "observation_limit",
 }

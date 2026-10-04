@@ -8,6 +8,8 @@ pub struct Settings {
     pub(crate) console_origin: String,
     pub(crate) hostname: String,
     pub(crate) system: SystemState,
+    pub(crate) network_mode: meshway_ipc::NetworkMode,
+    pub(crate) underlay: meshway_underlay::Options,
 }
 impl Settings {
     pub fn new(
@@ -37,6 +39,8 @@ impl Settings {
             server,
             console_origin,
             hostname,
+            network_mode: meshway_ipc::NetworkMode::Tun,
+            underlay: meshway_underlay::Options::default(),
             system: SystemState {
                 hostname: machine_hostname,
                 os: std::env::consts::OS.into(),
@@ -44,5 +48,24 @@ impl Settings {
                 agent_version: env!("CARGO_PKG_VERSION").into(),
             },
         })
+    }
+
+    /// Select the local packet attachment mode. This does not override any
+    /// Server-owned listener, Access, routing or DNS setting.
+    pub fn with_network_mode(mut self, mode: meshway_ipc::NetworkMode) -> Self {
+        self.network_mode = mode;
+        self
+    }
+
+    /// Machine bootstrap inputs for the protected Server/candidate resolver.
+    /// These never replace the network's business DNS settings.
+    pub fn with_bootstrap(
+        mut self,
+        hosts: std::collections::BTreeMap<String, Vec<std::net::IpAddr>>,
+        nameservers: Option<Vec<std::net::SocketAddr>>,
+    ) -> Self {
+        self.underlay.bootstrap_hosts = hosts;
+        self.underlay.bootstrap_nameservers = nameservers;
+        self
     }
 }

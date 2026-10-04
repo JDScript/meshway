@@ -162,6 +162,14 @@ impl HttpError {
                     message: "Lifecycle state or sequence conflicts.".into(),
                 },
             ),
+            Error::StateScopeChanged => simple(
+                S::CONFLICT,
+                Problem::StateScopeChanged {
+                    params: empty,
+                    message: "State report execution scope changed; refresh and observe again."
+                        .into(),
+                },
+            ),
             Error::LastOwner => simple(
                 S::CONFLICT,
                 Problem::LastOwner {

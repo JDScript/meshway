@@ -130,8 +130,12 @@ token 为随机不透明凭据，Server 只存摘要；HTTP 使用 `Authorizatio
 Ed25519 持钥证明签发 5 分钟不透明 Node session。后续请求使用 bearer，因此 token 持有人在有效期内可冒用；不能把它描述为逐请求私钥签名。
 
 1. `POST /agent-api/v1/auth/challenges` 绑定 networkId、nodeId、keyId、operation、requestDigest，返回 32-byte nonce、challenge ID、key generation、持久 controllerId 和 60 秒期限。
-2. `POST /agent-api/v1/auth/session` 严格验证 Ed25519 签名、摘要、当前身份和期限，同事务消费 challenge；重放拒绝。token 为 `mwns_` 加 32 随机 bytes 的无 padding base64url，仅存摘要。
+2. `POST /agent-api/v1/auth/session` 严格验证 Ed25519 签名、摘要、当前身份和期限，同事务消费 challenge；同一 proof 重放拒绝。token 为 `mwns_` 加 32-byte 不透明值的无 padding base64url，仅存摘要。
 3. 每个请求检查 Node／key 吊销、密钥代际、当前配置身份与稳定 membership。Tag 不依赖创建者资格，enabled=false 仍可控制同步。Server 重启更换 boot epoch，旧 Node session 必须重新认证。
+
+响应丢失时，Node 保留原 session intent，取得**新的 challenge 并重新持钥证明**。同身份、key 和 intent 的会话仍有效时，Server 返回相同 token 与原截止；不重新计入会话额度或延长 lease。已消费的 proof 不能直接取回 token。
+
+结果恢复使用有界的原始 challenge 记录；token 由私有 HMAC 域、Server boot 和该原始 transcript 派生。会话到期、记录不存在或 Server 重启后，新的持钥认证使用新 challenge 签发不同 token，旧 bearer 不复活。待证明 challenge 和会话恢复记录分别限制为全局 4,096、每 Node 八条；同一有效结果的恢复先于新会话额度判定。
 
 签名字节由 `meshway_protocol::node::proof_transcript` 定义：
 

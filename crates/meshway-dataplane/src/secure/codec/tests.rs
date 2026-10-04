@@ -40,6 +40,15 @@ fn every_truncated_prefix_trailing_bytes_and_version_rejected() {
         assert!(Frame::decode(&bytes[..n]).is_err(), "prefix {n}");
     }
     assert_eq!(Frame::decode(&bytes).unwrap().encode().unwrap(), bytes);
+    assert_eq!(bytes[7], 2);
+    let mut v1 = bytes.clone();
+    v1[7] = 1;
+    assert!(Frame::decode(&v1).is_err());
+    assert!(super::super::incoming_hint(&v1).is_err());
+    let hint = super::super::incoming_hint(&bytes).unwrap();
+    assert_eq!(hint.demand, frame().context.demand);
+    assert_eq!(hint.path, frame().context.path);
+    assert_eq!(hint.last_carrier, frame().proofs[0].carrier);
     let mut extra = bytes.clone();
     extra.push(0);
     assert!(Frame::decode(&extra).is_err());
@@ -56,6 +65,7 @@ fn every_truncated_prefix_trailing_bytes_and_version_rejected() {
     nil_network[9..45].copy_from_slice(b"00000000-0000-0000-0000-000000000000");
     assert!(Frame::decode(&nil_network).is_err());
     assert!(Frame::decode(&vec![0; MAX_FRAME + 1]).is_err());
+    assert!(super::super::incoming_hint(&vec![0; MAX_FRAME + 1]).is_err());
 }
 
 #[test]

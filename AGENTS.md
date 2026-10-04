@@ -6,7 +6,7 @@
 - `crates/meshway-*`：当前共享模型、配置／编译、协议、生成客户端与严格序列化。
 - `packages/`：生成 OpenAPI／TypeScript SDK；`docs/v2/`：当前唯一开发者规范与使用入口。
 - Rust 包根目录和 Cargo 包名统一 `meshway-xxx`。现行 HTTP 根仍是 `/api/v1`／`/agent-api/v1`，目录整理不自行改 wire。
-- Node 已有 `meshwayd`／`meshway`、类型化本机 IPC 和 `meshway-control`：up/down/status、持钥接入、认证、自动续租、配置保存与控制状态上报。当前 owner-only Unix socket 仅允许 root／daemon 同 UID；业务配置仍在 Server 管理。共享策略由 `meshway-policy` 拥有；独立库已有共同 IP 准入／流状态、候选 Noise／逐跳证明 circuit、Linux TUN I/O 与 DNS 查询 owner，执行快照复用 control 的唯一 lease／失效代际。受保护 IPv4／IPv6 UDP 多跳包流由隔离 conformance 验证；daemon 网络安装、持续连接、ping、切网、SOCKS5、插件及其他包流范围仍待实现，具体边界见 `docs/v2/node/dataplane.md`。
+- Node 已有 `meshwayd`／`meshway`、IPC v2 和唯一 `meshway-control` owner。Linux 默认本机 `--network-mode tun`，可显式选择 `control-only`，失败不回退。Mesh-only TUN capture、`meshway-underlay` 资源／socket 保护、`meshway-connectivity` 认证 stream 邻接、`SecureNode` 包流、原子执行刷新、需求／认证续租和安装回执已接线。隔离 Linux daemon 验证覆盖关闭 DNS 的 A→R→B、内层双栈 UDP／TCP、外层 Native TCP、125 秒持续／仅接收流、撤销／恢复、lease 失效及离线 down 清理；其他承载和业务范围分别验收。owner-only socket 仅允许 root／daemon 同 UID，业务配置仍归 Server；策略归 policy，流表／Noise／逐跳证明归 dataplane，执行快照和直接发布连续性归 Control。DNS 库已有有界 loopback UDP／TCP Service 与 OwnerDispatcher，宿主 DNS／出口 resolver 尚未安装，DNS 安装需求阻断整体 applied；Exit/NAT、SOCKS5/netstack、Native UDP daemon 邻接／打洞、ping、切网和插件仍不支持。精确范围见 `docs/v2/node/dataplane.md`、`docs/v2/node/runtime.md`。
 - 旧 Node、Apple、运行库与实验退出活跃树，保存在冻结 Git 分支及必要证据中。新实现只按明确白名单复用，不恢复长期 legacy 目录或旧 HTTP 兼容轨。Meshing 项目不是本项目依据。
 - 冻结参考：`archive/pre-consolidation-main-007e9deb`、`archive/node-runtime-8da83a7f`、`archive/apple-007e9deb`。未完成配置补全与旧 review WIP 保存在 `archive/wip-*-20261003` 分支，归档提交不代表通过验收；私有证据保存在 `.meshway/worktree-archives/20261003/`。
 
@@ -25,7 +25,7 @@
 - 配置、身份／材料绑定和执行发布保持一致；CAS、永久吊销、成员生命周期、lease、取消与回执排序不可削弱。普通启动不因数据库错误清库。
 - 配置原文／规范值和必要秘密私有保存，公开视图脱敏；密码安全哈希，私有文件原子持久化，凭据不进普通日志。
 - State、saved、applied、认证通道和真实包流分别验收。缺测不填零，重放／读取不制造历史样本；状态不会自授权限或延长 lease。
-- 新 Node 保留端到端保护与原完整路径回复，承载切换不绕必经点；打洞、反向拨号、中继与真正直连分别证明。TCP/VLESS 打洞不因优先 UDP 而被排除。
+- 新 Node 保留端到端保护与原完整路径回复，承载切换不绕必经点；打洞、反向拨号、中继与真正直连分别证明。当前穿透实现目标限 UDP；Native TCP／VLESS／Trojan 要求拨号取得 TCP stream，不实现 TCP simultaneous-open。连接获取方式与协议封装分层，双向承载不等于双向业务授权。
 
 ## 源码组织
 

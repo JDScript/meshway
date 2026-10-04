@@ -1,4 +1,6 @@
 #![cfg(unix)]
+#[cfg(not(target_os = "linux"))]
+mod network;
 mod support;
 use meshway_control_client::{
     ApplyConfigurationPath, ApproveDeviceAuthorizationPath, GetNetworkPath, GetNodeStatePath,

@@ -29,10 +29,18 @@ pub(crate) fn display(status: &Status, json: bool) -> io::Result<()> {
         }
         writeln!(
             output,
-            "Data plane: not implemented; configuration is not applied."
+            "Network mode: {:?}  Data plane: {:?}",
+            status.network_mode, status.data_plane
         )?;
+        if let Some(applied) = &status.applied {
+            writeln!(
+                output,
+                "Applied configuration: revision {}",
+                applied.revision
+            )?;
+        }
         if let Some(error) = status.last_error {
-            writeln!(output, "Last control problem: {error:?}")?;
+            writeln!(output, "Last problem: {error:?}")?;
         }
     }
     Ok(())

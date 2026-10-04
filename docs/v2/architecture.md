@@ -22,6 +22,8 @@ crates/
   meshway-serde/
   meshway-private-storage/
   meshway-control/
+  meshway-connectivity/
+  meshway-underlay/
   meshway-dataplane/
   meshway-tun/
   meshway-dns/
@@ -35,6 +37,7 @@ crates/
   meshway-transport-trojan/
 tools/meshway-transport-perf/ # 独立运行的性能测量程序
 tools/meshway-packet-fixture/ # 独立运行的隔离 Linux 包流 conformance
+tools/meshway-runtime-fixture/ # 实际 daemon／CLI 与 OS socket conformance
 packages/control-client/    # 生成 TypeScript SDK 与运行时校验
 packages/protocol/          # 生成 OpenAPI
 docs/                       # 当前架构与字段参考
@@ -52,9 +55,9 @@ Rust import 按语言规则使用下划线，如 `meshway_model`。可执行名�
 
 同一包名在 workspace 中唯一。native 薄入口若是独立 Cargo 包，也使用相同目录／包名，例如 `plugins/meshway-plugin-transport-vless`；它不与实现库 `crates/meshway-transport-vless` 共用一个 Cargo 名称。
 
-Node 的应用目录为 `apps/meshway-daemon`／`apps/meshway-cli`，当前已进入 workspace 并提供控制接入。后续接口库和 provider 目录按同名规则建立。
+Node 的应用目录为 `apps/meshway-daemon`／`apps/meshway-cli`，提供控制接入与 Linux Mesh-only TUN 运行装配。候选实现和验收范围见 [Node](/v2/node)。
 
-daemon 的 `runtime/` 负责唯一运行协调器、持久意图和状态投影；`runtime/control/` 负责调度与单次 Server 控制流程；`ipc/` 负责本机服务和 socket 归属。CLI 的 `arguments`、`commands`、`output` 分别负责参数、等待／退出语义和结果展示，通信使用 `meshway-ipc::Client`。
+daemon 的 `runtime/` 负责唯一运行协调器、持久意图和状态投影；`runtime/control/` 负责调度与单次 Server 控制流程；`runtime/network/` 装配 underlay、Manager、SecureNode、自动需求和安装结果，不另持流表或控制凭据；`ipc/` 负责本机服务和 socket 归属。CLI 的 `arguments`、`commands`、`output` 分别负责参数、等待／退出语义和结果展示，通信使用 `meshway-ipc::Client`。
 
 ## 跨端共享库 {#跨端共享的契约库}
 
@@ -69,7 +72,7 @@ daemon 的 `runtime/` 负责唯一运行协调器、持久意图和状态投影�
 | `meshway-protocol` | Server、生成客户端 | HTTP／SSE 请求响应、认证消息、错误与分页；引用上面的类型 |
 | `meshway-control-client` | Node control、其他 Rust API 消费者 | 生成操作、严格解码和 HTTP／stream 接线 |
 | `meshway-serde` | 各 Rust 契约库 | 共同对象／判别联合声明、map-only 和重复键检查 |
-| `meshway-private-storage` | Server、Node control | 私有目录／文件、锁与原子发布原语；记录格式归调用者 |
+| `meshway-private-storage` | Server、Node control／daemon／underlay | 私有目录／文件、锁与原子发布原语；记录格式归调用者 |
 | `meshway-logging` | Server、daemon、CLI 程序入口 | 统一 tracing subscriber、日志参数与 stderr 格式；见[运行日志](/v2/logging) |
 | `meshway-tls` | Server 材料验证、Node TLS providers | 同一证书／密钥验证、精确叶证书信任、既有流上的 TLS 握手 |
 
@@ -77,22 +80,32 @@ Server 使用 `policy` 的完整规范化／语义校验入口及编译器；Nod
 
 ## Node 内部共享的基础接口
 
-以下接口服务 Node 的实际消费者；IPC、UDP／TCP／VLESS／Trojan 的 Rust 承载运行库已实现，插件装载／ABI 仍为设计：
+以下接口服务 Node 的实际消费者：
 
 | 包名＝目标目录名 | 消费者 | 职责 |
 | --- | --- | --- |
 | `meshway-ipc` | daemon、CLI | 本机命令、查询、事件与客户端 |
-| `meshway-plugin` | 宿主、provider | 插件 SDK、描述与生命周期合同 |
-| `meshway-plugin-host` | daemon | 装载、ABI／依赖检查及受审 native loader |
 | `meshway-transport` | connectivity、dataplane、transport providers | 承载会话、batch／buffer 与背压接口 |
 
 Server 不因需要验证 VLESS 配置而链接 Node 的 transport 实现；它使用 `transport-spec`。本机 IPC 也不与远端 HTTP 共用一套 endpoint。
 
+`meshway-plugin`／`meshway-plugin-host` 是规划中的插件 SDK／装载边界，当前没有对应实现 crate 或可用动态 ABI。
+
 ## Node 组件库
 
-`meshway-control`、`meshway-dataplane`、`meshway-connectivity`、`meshway-underlay`、`meshway-transport-{udp,tcp,vless,trojan}`、`meshway-tun`、`meshway-netstack`、`meshway-dns`、`meshway-diagnostics` 按[节点职责](/v2/node)实现。这些是节点运行能力，不是必须供 Server 使用的 shared crates。
+这些是 Node 运行组件，不要求 Server 链接其实现：
 
-其中 `meshway-control` 已提供[Server 接入与执行快照](/v2/node/control)，UDP／TCP／VLESS／Trojan 库提供[承载适配](/v2/node/transport)。`meshway-dataplane` 提供共同 IP 准入／流状态、候选身份加密 circuit 与受期限保护的 I/O 适配，`meshway-tun` 提供 Linux 设备 I/O，`meshway-dns` 提供 wire／选择与有界查询 owner；接口及限制见[数据面组件](/v2/node/dataplane)。这些运行组件尚未接入 daemon 执行安装；持续连接管理、出口转发和 netstack 仍待实现。
+| 实际 crate | 实现归属与边界 |
+| --- | --- |
+| `meshway-control` | [接入、执行快照、连续性、回执和报告顺序](/v2/node/control)的唯一 owner |
+| `meshway-dataplane` | [共同 IP 准入、唯一流表、Noise circuit 与逐跳证明](/v2/node/dataplane) |
+| `meshway-connectivity` | [Manager、有界 stream 建连／重连、签名邻接握手、真实 link 事实](/v2/node/transport#邻接管理) |
+| `meshway-underlay` | [Linux Host、私有 route／rule journal、capture／sink 与用途受限 socket](/v2/node/dataplane#linux-underlay) |
+| `meshway-transport-{udp,tcp,vless,trojan}` | 正式承载 provider；UDP 库可用不表示 daemon 已接通 UDP 邻接 |
+| `meshway-tun` | Linux TUN 设备 I/O |
+| `meshway-dns` | DNS wire／选择、查询 owner、有界 loopback Service 与 dispatcher；系统安装尚未接线 |
+
+daemon 已装配 Mesh-only stream 数据面；当前候选 Linux 验收范围见[运行模式](/v2/node/runtime)。出口转发、`meshway-netstack` 与 `meshway-diagnostics` 运行库仍待实现。
 
 组件可独立测试，并可被其他宿主复用。native 导出入口只适配共同 ABI，不复制业务、配置或状态模型。私有文件操作确有多个实际消费者时才抽窄存储原语，不为每张表、每个任务、每种状态各建库。
 
@@ -106,12 +119,13 @@ Node 的每项业务规则和可变状态都有唯一实现归属。多个入口
 | 规则语义、路径编译与执行许可纯判定 | `meshway-policy` | Server 校验／编译／DNS 可见性、Node 包准入 |
 | 活动执行快照、lease 时钟与失效代际 | `meshway-control` | 数据面、DNS 及宿主 I/O 等待／交付检查 |
 | 业务准入、端到端保护、路径执行与原路径回复 | `meshway-dataplane` | TUN 和 userspace IP 包入口 |
-| 下一跳选择范围内的拨号竞速、重试、主备与打洞协调 | `meshway-connectivity` | 所有承载 provider |
+| 获准 stream 邻接、握手、重连与真实通道状态 | `meshway-connectivity` | Native TCP／VLESS／Trojan providers；打洞与连接池待实现 |
+| 内核 capture／sink、资源归属与用途受限 socket | `meshway-underlay` | Server bootstrap、获准候选、daemon TUN 安装 |
 | 单个承载协议的握手、封装与会话实现 | 对应 `meshway-transport-*` | Rust 调用／协议测试与动态插件导出层 |
-| 业务域名解析与缓存 | `meshway-dns` | 系统侧 DNS 入口与本机 SOCKS5 的域名请求 |
+| 业务域名选择、查询与回答生命周期 | `meshway-dns` | loopback UDP／TCP 共用 OwnerDispatcher；系统 DNS／SOCKS5 接线与缓存待实现 |
 | 实际资源、通道、包流和测量事实 | 所属运行组件 | CLI 状态、Node 报告与诊断视图 |
 
-bootstrap 解析与业务 DNS 具有不同启动条件和权限，按 [Node 底层接口](/v2/node/plugins#数据面与-host-services)区分。Server 事务鉴权、Node 执行准入和 IPC 本机授权分别检查自己的信任边界；共享类型与验证器的复用不取消这些检查。
+bootstrap 解析与业务 DNS 具有不同启动条件和权限，当前实现见 [Linux underlay](/v2/node/dataplane#linux-underlay)，规划中的插件接口见 [host services](/v2/node/plugins#数据面与-host-services)。Server 事务鉴权、Node 执行准入和 IPC 本机授权分别检查自己的信任边界；共享类型与验证器的复用不取消这些检查。
 
 协议实现位于领域 crate；`apps/` 装配用例，`plugins/` 提供 ABI 薄适配，测试使用生产入口。新增抽象须有明确职责或实际消费者，状态 owner 不因增加一层适配而复制。临时接线在正式入口完成时移除。
 
@@ -130,8 +144,11 @@ control-client ──► protocol
 Server ──► protocol + configuration + policy + private-storage + 自有领域／存储模块
 Node control ──► control-client + 共享配置／模型 + private-storage
 Node dataplane ──► policy + control（执行快照）
-Node DNS ──► configuration + control（执行快照）+ protocol（发现响应）
-Node providers ──► plugin + 领域接口 + 所需共享类型
+Node connectivity ──► dataplane（受保护帧 I/O）+ control + policy + transport providers
+Node underlay ──► control + configuration + private-storage + tun + transport/tcp + transport-spec
+Node DNS ──► policy + configuration + control（执行快照）+ protocol（发现响应）
+Node providers ──► transport + transport-spec + tls（按协议需要）
+meshwayd ──► control + connectivity + underlay + dataplane + ipc
 meshway CLI ──► ipc
 ```
 

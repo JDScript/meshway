@@ -298,6 +298,20 @@ impl Execution {
             })
             .await
     }
+    pub async fn refresh_configuration(
+        &self,
+        token: &str,
+        request: NodeConfigurationRequest,
+    ) -> Result<NodeConfigurationResponse, Error> {
+        let token = proof::token_hash(token)?;
+        let sealer = self.sealer.clone();
+        let boot = self.boot;
+        self.handle
+            .transact(TransactionBehavior::Immediate, move |tx| {
+                store::refresh_configuration(tx, &sealer, boot, token, request)
+            })
+            .await
+    }
     pub async fn receipt(&self, token: &str, request: ReceiptRequest) -> Result<(), Error> {
         let token = proof::token_hash(token)?;
         let sealer = self.sealer.clone();
@@ -319,6 +333,20 @@ impl Execution {
         self.handle
             .transact(TransactionBehavior::Immediate, move |tx| {
                 store::demand(tx, &sealer, boot, token, request)
+            })
+            .await
+    }
+    pub async fn renew_demand(
+        &self,
+        token: &str,
+        request: RenewDemandRequest,
+    ) -> Result<DemandResponse, Error> {
+        let token = proof::token_hash(token)?;
+        let sealer = self.sealer.clone();
+        let boot = self.boot;
+        self.handle
+            .transact(TransactionBehavior::Immediate, move |tx| {
+                store::renew_demand(tx, &sealer, boot, token, request)
             })
             .await
     }

@@ -10,7 +10,7 @@ use meshway_configuration::{execution::*, *};
 use meshway_model::{NetworkId, NodeId, PublicationId, RequestId, Revision};
 use std::collections::BTreeMap;
 
-pub const COMPILER_VERSION: &str = "meshway-demand-2";
+pub const COMPILER_VERSION: &str = "meshway-demand-3";
 pub const MAX_DEMANDS: usize = 256;
 pub const MAX_PATHS: usize = 4;
 /// Ordered exit candidates have a separate budget from alternatives per exit.
@@ -118,6 +118,8 @@ pub fn compile_with_diagnostics(
         {
             return Err(CompileError::InvalidInput);
         }
+        let profile = selected_profile(&input, *id)?;
+        let dns_egress = matching::dns_egress(input.configuration, &profile);
         nodes.insert(
             *id,
             NodeConfiguration {
@@ -130,6 +132,7 @@ pub fn compile_with_diagnostics(
                 hostname: settings.hostname.clone(),
                 identity: settings.identity.clone(),
                 addresses: settings.addresses.clone(),
+                mesh_address_pools: input.configuration.address_pools.clone(),
                 self_keys: trusted.clone(),
                 listeners: if settings.enabled {
                     settings.listeners.clone()
@@ -139,13 +142,15 @@ pub fn compile_with_diagnostics(
                 dialers: BTreeMap::new(),
                 peers: BTreeMap::new(),
                 permits: BTreeMap::new(),
+                local_egress: BTreeMap::new(),
                 diagnostics: BTreeMap::new(),
                 decisions: BTreeMap::new(),
                 dns: DnsExecution {
                     settings: input.configuration.dns.clone(),
                     mesh_hosts: BTreeMap::new(),
                     associations: Vec::new(),
-                    profile: selected_profile(&input, *id)?,
+                    profile,
+                    egress: dns_egress,
                 },
                 exit_enabled: settings.enabled && settings.exit_enabled,
             },
@@ -157,7 +162,7 @@ pub fn compile_with_diagnostics(
         .values()
         .filter(|d| d.expires_at_ms > input.now_ms)
     {
-        let decision = evaluate(&input, &graph, demand)?;
+        let (decision, local_egress) = evaluate_with_local(&input, &graph, demand)?;
         if let DemandDecision::Permitted { permit } = &decision {
             for path in &permit.paths {
                 for id in &path.nodes {
@@ -206,6 +211,9 @@ pub fn compile_with_diagnostics(
         }
         if let Some(node) = nodes.get_mut(&demand.source) {
             node.decisions.insert(demand.id, decision);
+            if let Some(permit) = local_egress {
+                node.local_egress.insert(demand.id, permit);
+            }
             if let BusinessTarget::Domain { name, .. } = &demand.target {
                 node.dns.associations.extend(
                     input
@@ -248,7 +256,15 @@ fn evaluate(
     graph: &paths::Graph,
     demand: &Demand,
 ) -> Result<DemandDecision, CompileError> {
-    let unavailable = |reason| Ok(DemandDecision::Unavailable { reason });
+    evaluate_with_local(input, graph, demand).map(|(decision, _)| decision)
+}
+
+fn evaluate_with_local(
+    input: &CompilationInput<'_>,
+    graph: &paths::Graph,
+    demand: &Demand,
+) -> Result<(DemandDecision, Option<LocalEgressPermit>), CompileError> {
+    let unavailable = |reason| Ok((DemandDecision::Unavailable { reason }, None));
     let cfg = input.configuration;
     if !cfg.nodes.get(&demand.source).is_some_and(|n| n.enabled)
         || !input.inventory.contains_key(&demand.source)
@@ -282,7 +298,10 @@ fn evaluate(
     let mut normalized = demand.clone();
     if let BusinessTarget::Ip { address } | BusinessTarget::Domain { address, .. } = &demand.target
     {
-        let address = address.0;
+        // IPv4-mapped IPv6 must not escape managed IPv4 capture/authorization.
+        // Only classification is canonicalized; external local bindings retain
+        // the exact requested target for endpoint verification.
+        let address = address.0.to_canonical();
         if let Some((node, _)) = cfg.nodes.iter().find(|(_, n)| {
             n.addresses.ipv4.map(std::net::IpAddr::V4) == Some(address)
                 || n.addresses.ipv6.map(std::net::IpAddr::V6) == Some(address)
@@ -304,6 +323,24 @@ fn evaluate(
         }
     }
     let demand = &normalized;
+    let local = |action, routing_expiry| {
+        Ok((
+            match action {
+                LocalEgressAction::Direct => DemandDecision::Direct,
+                LocalEgressAction::Unmanaged => DemandDecision::Unmanaged,
+            },
+            Some(LocalEgressPermit {
+                demand_id: demand.id,
+                source: demand.source,
+                target: demand.target.clone(),
+                protocol: demand.protocol,
+                port: demand.port,
+                profile: demand.profile.clone(),
+                action,
+                expires_at_ms: demand.expires_at_ms.min(dns_expiry).min(routing_expiry),
+            }),
+        ))
+    };
     let (targets, via, routing_expiry) = match &demand.target {
         BusinessTarget::Mesh { node } => {
             let via = cfg
@@ -325,8 +362,10 @@ fn evaluate(
             }
             Err(error) => return Err(error),
         } {
-            (RouteAction::Direct, _) => return Ok(DemandDecision::Direct),
-            (RouteAction::Unmanaged, _) => return Ok(DemandDecision::Unmanaged),
+            (RouteAction::Direct, expires) => return local(LocalEgressAction::Direct, expires),
+            (RouteAction::Unmanaged, expires) => {
+                return local(LocalEgressAction::Unmanaged, expires);
+            }
             (RouteAction::Exit { nodes, via }, expires) => {
                 let targets = nodes
                     .iter()
@@ -368,20 +407,23 @@ fn evaluate(
         return unavailable(UnavailableReason::NoPath);
     }
     let expires_at_ms = dns_expiry.min(access_expiry).min(routing_expiry);
-    Ok(DemandDecision::Permitted {
-        permit: PathPermit {
-            demand_id: demand.id,
-            source: demand.source,
-            source_addresses: cfg.nodes[&demand.source].addresses.clone(),
-            target: demand.target.clone(),
-            protocol: demand.protocol,
-            port: demand.port,
-            profile: demand.profile.clone(),
-            paths: candidates,
-            expires_at_ms,
-            replies: ReplyPolicy::StatefulExactReversePath,
+    Ok((
+        DemandDecision::Permitted {
+            permit: PathPermit {
+                demand_id: demand.id,
+                source: demand.source,
+                source_addresses: cfg.nodes[&demand.source].addresses.clone(),
+                target: demand.target.clone(),
+                protocol: demand.protocol,
+                port: demand.port,
+                profile: demand.profile.clone(),
+                paths: candidates,
+                expires_at_ms,
+                replies: ReplyPolicy::StatefulExactReversePath,
+            },
         },
-    })
+        None,
+    ))
 }
 fn selected_profile(input: &CompilationInput<'_>, node: NodeId) -> Result<String, CompileError> {
     match input.selected_profiles.get(&node) {

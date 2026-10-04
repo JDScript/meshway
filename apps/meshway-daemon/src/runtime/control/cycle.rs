@@ -1,4 +1,5 @@
 //! One enrollment/authentication/configuration/report cycle through meshway-control.
+use crate::runtime::network;
 use crate::settings::Settings;
 use meshway_control::{Control, Error};
 use meshway_control_client::ClientError;
@@ -18,10 +19,15 @@ pub(super) struct Cycle {
 pub(super) struct Failure {
     pub problem: Problem,
     pub retry: bool,
+    /// Reporting scope races require prompt refresh, independent of transport backoff.
+    pub retry_after: Option<Duration>,
 }
 
 pub(super) fn failure(error: Error, authenticating: bool) -> Failure {
+    tracing::debug!(%error, authenticating, "Node control cycle operation failed");
+    let retry_after = matches!(&error, Error::StateScopeChanged).then_some(Duration::from_secs(1));
     let (problem, retry) = match error {
+        Error::StateScopeChanged => (Problem::Apply, true),
         Error::Server(ClientError::Network { .. }) => (Problem::Network, true),
         Error::Server(ClientError::Http {
             status: 429 | 503 | 502 | 504,
@@ -36,7 +42,11 @@ pub(super) fn failure(error: Error, authenticating: bool) -> Failure {
         Error::Endpoint => (Problem::Configuration, false),
         _ => (Problem::Contract, false),
     };
-    Failure { problem, retry }
+    Failure {
+        problem,
+        retry,
+        retry_after,
+    }
 }
 
 pub(super) async fn cycle(
@@ -45,6 +55,7 @@ pub(super) async fn cycle(
     renew: bool,
     report: bool,
     reset: &mut bool,
+    mut network: Option<&mut network::Handle>,
 ) -> Result<Cycle, Failure> {
     if control.status().binding.is_none() {
         if !control.can_redeem_enrollment() {
@@ -99,6 +110,7 @@ pub(super) async fn cycle(
                     return Err(Failure {
                         problem,
                         retry: false,
+                        retry_after: None,
                     });
                 }
                 EnrollmentPhase::Approved | EnrollmentPhase::Consumed => {}
@@ -118,6 +130,7 @@ pub(super) async fn cycle(
                     return Err(Failure {
                         problem,
                         retry: false,
+                        retry_after: None,
                     });
                 }
             }
@@ -128,11 +141,15 @@ pub(super) async fn cycle(
     let mut renewed = false;
     if control.status().instance.is_none() {
         control
-            .acquire_instance(Default::default())
+            .acquire_instance(if network.is_some() {
+                meshway_connectivity::capabilities()
+            } else {
+                Default::default()
+            })
             .await
             .map_err(|e| failure(e, false))?;
         renewed = true;
-    } else if renew {
+    } else if renew && network.is_none() {
         control
             .renew_instance()
             .await
@@ -140,24 +157,82 @@ pub(super) async fn cycle(
         renewed = true;
     }
     let before = control.status().cached;
-    control
-        .sync_configuration()
-        .await
-        .map_err(|e| failure(e, false))?;
+    if network.is_some() {
+        control
+            .refresh_configuration()
+            .await
+            .map_err(|e| failure(e, false))?;
+        // Refresh grants every TUN poll; reporting/renewal scheduling still
+        // records the normal renewal cadence rather than manufacturing samples.
+        renewed |= renew;
+    } else {
+        control
+            .sync_configuration()
+            .await
+            .map_err(|e| failure(e, false))?;
+    }
     if control
         .status()
         .instance
         .as_ref()
-        .is_some_and(|i| i.target.is_some() && i.execution_expires_at_ms.is_some())
+        .is_some_and(|i| i.target.is_some())
     {
         control
             .acknowledge_saved()
             .await
             .map_err(|e| failure(e, false))?;
     }
+    if let Some(network) = &mut network {
+        // The atomic refresh already delivered the granted target. A remaining
+        // unavailable grant is a real installation barrier, not a reason to
+        // observe more publications in a lease/query retry dance.
+        if control
+            .status()
+            .instance
+            .as_ref()
+            .is_none_or(|instance| instance.target.is_none())
+            || (enabled_current_target(control) && control.execution_snapshot().is_err())
+        {
+            return Err(Failure {
+                problem: Problem::Apply,
+                retry: true,
+                retry_after: None,
+            });
+        }
+        // A retained historical completion may wait for HTTP retry, but cannot
+        // prevent offering a newly granted, fsynced target to the network owner.
+        network
+            .publish(control)
+            .await
+            .map_err(|error| failure(error, false))?;
+        network
+            .finish(control)
+            .await
+            .map_err(|error| failure(error, false))?;
+        network
+            .publish(control)
+            .await
+            .map_err(|error| failure(error, false))?;
+    }
     let reported = report || renewed || before != control.status().cached;
     if reported {
-        match control.report_control_state(settings.system.clone()).await {
+        let result = match &network {
+            Some(network) => {
+                // Busy packet I/O must not hold the Control owner past renewal.
+                // Missing measurement yields no runtime facts, not stale ones
+                // restamped as a new observation.
+                let facts = network
+                    .sample()
+                    .await
+                    .unwrap_or_else(|_| network::Report::stopped());
+                let state = facts.state(control, settings);
+                control
+                    .report_runtime_state(state, chrono::Utc::now())
+                    .await
+            }
+            None => control.report_control_state(settings.system.clone()).await,
+        };
+        match result {
             Ok(_) => {}
             Err(Error::Pending) => {
                 control
@@ -175,4 +250,35 @@ pub(super) async fn cycle(
         renewed,
         reported,
     })
+}
+
+fn enabled_current_target(control: &Control) -> bool {
+    let status = control.status();
+    control
+        .cached_target()
+        .is_some_and(|target| target.configuration.enabled)
+        && status.cached.is_some()
+        && status
+            .instance
+            .as_ref()
+            .is_some_and(|instance| instance.target == status.cached)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn state_scope_rejection_requests_prompt_refresh_without_credential_failure() {
+        for authenticating in [false, true] {
+            let retry = failure(Error::StateScopeChanged, authenticating);
+            assert_eq!(retry.problem, Problem::Apply);
+            assert!(retry.retry);
+            assert_eq!(retry.retry_after, Some(Duration::from_secs(1)));
+        }
+        let invalid = failure(Error::Contract, false);
+        assert_eq!(invalid.problem, Problem::Contract);
+        assert!(!invalid.retry);
+        assert_eq!(invalid.retry_after, None);
+    }
 }

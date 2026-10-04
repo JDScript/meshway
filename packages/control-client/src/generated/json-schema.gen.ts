@@ -3079,13 +3079,58 @@ export const schemaDocument = {
         },
         "additionalProperties": false
       },
+      "DnsEgress": {
+        "oneOf": [
+          {
+            "type": "object",
+            "required": [
+              "type"
+            ],
+            "properties": {
+              "type": {
+                "type": "string",
+                "enum": [
+                  "noExit"
+                ]
+              }
+            },
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "required": [
+              "reason",
+              "type"
+            ],
+            "properties": {
+              "reason": {
+                "$ref": "#/components/schemas/DnsEgressUnavailable"
+              },
+              "type": {
+                "type": "string",
+                "enum": [
+                  "unavailable"
+                ]
+              }
+            },
+            "additionalProperties": false
+          }
+        ]
+      },
+      "DnsEgressUnavailable": {
+        "type": "string",
+        "enum": [
+          "exitPlanRequired"
+        ]
+      },
       "DnsExecution": {
         "type": "object",
         "required": [
           "settings",
           "meshHosts",
           "associations",
-          "profile"
+          "profile",
+          "egress"
         ],
         "properties": {
           "associations": {
@@ -3093,6 +3138,10 @@ export const schemaDocument = {
             "items": {
               "$ref": "#/components/schemas/TrustedDnsAssociation"
             }
+          },
+          "egress": {
+            "$ref": "#/components/schemas/DnsEgress",
+            "description": "Proved absence of exit selection only; never permission to open a socket."
           },
           "meshHosts": {
             "type": "object",
@@ -5657,6 +5706,90 @@ export const schemaDocument = {
         },
         "additionalProperties": false
       },
+      "LocalEgressAction": {
+        "type": "string",
+        "enum": [
+          "direct",
+          "unmanaged"
+        ]
+      },
+      "LocalEgressDelta": {
+        "type": "object",
+        "required": [
+          "remove",
+          "upsert"
+        ],
+        "properties": {
+          "remove": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/RequestId"
+            }
+          },
+          "upsert": {
+            "type": "object",
+            "additionalProperties": {
+              "$ref": "#/components/schemas/LocalEgressPermit"
+            },
+            "propertyNames": {
+              "type": "string",
+              "format": "uuid",
+              "description": "Request identifier.\n\n This is an identifier, not a credential. Generation and authorization\n belong to the caller. Parsing rejects aliases rather than normalizing them.",
+              "maxLength": 36,
+              "minLength": 36,
+              "pattern": "^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+            }
+          }
+        },
+        "additionalProperties": false
+      },
+      "LocalEgressPermit": {
+        "type": "object",
+        "required": [
+          "demandId",
+          "source",
+          "target",
+          "protocol",
+          "profile",
+          "action",
+          "expiresAt"
+        ],
+        "properties": {
+          "action": {
+            "$ref": "#/components/schemas/LocalEgressAction"
+          },
+          "demandId": {
+            "$ref": "#/components/schemas/RequestId"
+          },
+          "expiresAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "port": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/Port"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "profile": {
+            "type": "string"
+          },
+          "protocol": {
+            "$ref": "#/components/schemas/BusinessProtocol"
+          },
+          "source": {
+            "$ref": "#/components/schemas/NodeId"
+          },
+          "target": {
+            "$ref": "#/components/schemas/BusinessTarget"
+          }
+        },
+        "additionalProperties": false
+      },
       "LocationAbsentReason": {
         "type": "string",
         "enum": [
@@ -6686,10 +6819,12 @@ export const schemaDocument = {
           "identity",
           "addresses",
           "selfKeys",
+          "meshAddressPools",
           "listeners",
           "dialers",
           "peers",
           "permits",
+          "localEgress",
           "diagnostics",
           "decisions",
           "dns",
@@ -6764,6 +6899,25 @@ export const schemaDocument = {
               "type": "string"
             }
           },
+          "localEgress": {
+            "type": "object",
+            "description": "Source-only, exact local execution bindings. Never Mesh/path admission.",
+            "additionalProperties": {
+              "$ref": "#/components/schemas/LocalEgressPermit"
+            },
+            "propertyNames": {
+              "type": "string",
+              "format": "uuid",
+              "description": "Request identifier.\n\n This is an identifier, not a credential. Generation and authorization\n belong to the caller. Parsing rejects aliases rather than normalizing them.",
+              "maxLength": 36,
+              "minLength": 36,
+              "pattern": "^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+            }
+          },
+          "meshAddressPools": {
+            "$ref": "#/components/schemas/AddressPools",
+            "description": "Complete managed capture ranges, never peer inventory or business authority."
+          },
           "networkId": {
             "$ref": "#/components/schemas/NetworkId"
           },
@@ -6826,11 +6980,13 @@ export const schemaDocument = {
           "selfKeys",
           "exitEnabled",
           "dns",
+          "meshAddressPools",
           "listeners",
           "dialers",
           "peers",
           "permits",
           "decisions",
+          "localEgress",
           "diagnostics"
         ],
         "properties": {
@@ -6869,6 +7025,12 @@ export const schemaDocument = {
           },
           "listeners": {
             "$ref": "#/components/schemas/ListenerDelta"
+          },
+          "localEgress": {
+            "$ref": "#/components/schemas/LocalEgressDelta"
+          },
+          "meshAddressPools": {
+            "$ref": "#/components/schemas/AddressPools"
           },
           "networkId": {
             "$ref": "#/components/schemas/NetworkId"
@@ -10361,6 +10523,29 @@ export const schemaDocument = {
               "code": {
                 "type": "string",
                 "enum": [
+                  "state_scope_changed"
+                ]
+              },
+              "message": {
+                "type": "string"
+              },
+              "params": {
+                "$ref": "#/components/schemas/EmptyParams"
+              }
+            },
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "required": [
+              "code",
+              "params",
+              "message"
+            ],
+            "properties": {
+              "code": {
+                "type": "string",
+                "enum": [
                   "state_limit"
                 ]
               },
@@ -10686,6 +10871,28 @@ export const schemaDocument = {
           "name": {
             "type": "string",
             "description": "Raw input. Apply getAuthOptions.networkNameRules, not String.length."
+          },
+          "requestId": {
+            "$ref": "#/components/schemas/RequestId"
+          }
+        },
+        "additionalProperties": false
+      },
+      "RenewDemandRequest": {
+        "type": "object",
+        "required": [
+          "instance",
+          "requestId",
+          "expiresAt"
+        ],
+        "properties": {
+          "expiresAt": {
+            "type": "string",
+            "format": "date-time",
+            "description": "Absolute desired deadline of the existing demand; replay never adds duration."
+          },
+          "instance": {
+            "$ref": "#/components/schemas/InstanceRequest"
           },
           "requestId": {
             "$ref": "#/components/schemas/RequestId"

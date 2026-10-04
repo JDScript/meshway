@@ -16,14 +16,63 @@ pub struct Arguments {
     /// Suggested label for first enrollment; later business settings live on Server.
     #[arg(long)]
     hostname: Option<String>,
+    /// Local packet attachment. TUN requires Linux device/routing permissions;
+    /// control-only explicitly maintains control without installing networking.
+    #[arg(
+        long,
+        env = "MESHWAY_NETWORK_MODE",
+        default_value = "tun",
+        value_name = "tun|control-only"
+    )]
+    network_mode: meshway_ipc::NetworkMode,
+    /// Fixed bootstrap mapping for the Server or configured carrier names.
+    #[arg(long, value_name = "NAME=IP", value_parser = bootstrap_host)]
+    bootstrap_host: Vec<(String, std::net::IpAddr)>,
+    /// Real upstream for protected bootstrap DNS; repeat for multiple servers.
+    #[arg(long, value_name = "IP:PORT")]
+    bootstrap_nameserver: Vec<std::net::SocketAddr>,
 }
 impl Arguments {
     pub fn validate(self) -> Result<meshway_daemon::Settings, &'static str> {
+        let mut hosts = std::collections::BTreeMap::<String, Vec<std::net::IpAddr>>::new();
+        for (name, ip) in self.bootstrap_host {
+            let addresses = hosts.entry(name).or_default();
+            if !addresses.contains(&ip) {
+                addresses.push(ip);
+            }
+        }
+        let nameservers =
+            (!self.bootstrap_nameserver.is_empty()).then_some(self.bootstrap_nameserver);
         meshway_daemon::Settings::new(
             self.data_dir,
             &self.server,
             self.console_origin.as_deref(),
             self.hostname.as_deref(),
         )
+        .map(|settings| {
+            settings
+                .with_network_mode(self.network_mode)
+                .with_bootstrap(hosts, nameservers)
+        })
     }
+}
+
+fn bootstrap_host(value: &str) -> Result<(String, std::net::IpAddr), &'static str> {
+    let (name, address) = value.split_once('=').ok_or("Expected NAME=IP.")?;
+    let name = name.trim_end_matches('.').to_ascii_lowercase();
+    if name.len() > 253
+        || name.is_empty()
+        || !name
+            .split('.')
+            .all(meshway_configuration::valid_node_hostname)
+    {
+        return Err("Bootstrap host must be a DNS name.");
+    }
+    let address: std::net::IpAddr = address
+        .parse()
+        .map_err(|_| "Bootstrap value must be an IP address.")?;
+    if address.is_unspecified() || address.is_multicast() {
+        return Err("Bootstrap value must be a unicast address.");
+    }
+    Ok((name, address))
 }
