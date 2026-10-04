@@ -164,6 +164,7 @@ export function ConfigurationPage({
         network={network}
         section={view}
         onEditSource={(at) => nav.openView("source", at)}
+        onOpenSection={(section) => nav.openView(section)}
         onClose={nav.closeView}
       />
     )

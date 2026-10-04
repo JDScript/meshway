@@ -1,4 +1,8 @@
-import type { ConfigurationView, NetworkSummary } from "@meshway/control-client"
+import type {
+  ConfigurationView,
+  NetworkSummary,
+  PreparationRequirement,
+} from "@meshway/control-client"
 import { useQuery } from "@tanstack/react-query"
 import { FileCodeIcon } from "lucide-react"
 import { useMemo, type ReactNode } from "react"
@@ -39,11 +43,17 @@ import {
   type FormSection,
 } from "./forms"
 import { GroupsForm } from "./groups-form"
-import { pointerOf } from "./jsonc"
+import { pointerOf, pointerSegments } from "./jsonc"
+import { renamed } from "./keyed"
 import { sectionLabel } from "./labels"
 import { DraftNotice } from "./notice"
 import { edits, valueOf, type FormPart, type FormValues } from "./operations"
 import { configurationQuery, isDenied } from "./queries"
+import { referencedSets, renameSetReferences } from "./routing"
+import { RoutingForm } from "./routing-form"
+import { ruleSetsQuery } from "./rule-set-queries"
+import { preparationOf } from "./rule-sets"
+import { RuleSetsForm, type RuleSetStatus } from "./rule-sets-form"
 import { TopologyForm } from "./topology-form"
 
 /**
@@ -57,6 +67,7 @@ export function SectionWorkspace({
   network,
   section,
   onEditSource,
+  onOpenSection,
   onClose,
 }: {
   networkId: string
@@ -64,6 +75,7 @@ export function SectionWorkspace({
   network: NetworkSummary | null
   section: SectionKey
   onEditSource: (at: string) => void
+  onOpenSection: (section: SectionKey) => void
   onClose: () => void
 }) {
   const configuration = useQuery(configurationQuery(networkId))
@@ -156,6 +168,7 @@ export function SectionWorkspace({
               readMembers={network?.actions.manageMembers ?? false}
               notes={notesFor(form, entry, base)}
               onChange={draft.editForm}
+              onOpenSection={onOpenSection}
             />
           </div>
         )}
@@ -176,6 +189,17 @@ function countOf(
     return pools.ipv4.length + pools.ipv6.length
   }
   if (section === "dns") return null
+  if (section === "routing") {
+    const routing = valueOf(ops, base, "routing")
+    return (
+      (routing.mesh ?? []).length +
+      (routing.egress?.rules ?? []).length +
+      Object.values(routing.egress?.profiles ?? {}).reduce(
+        (sum, profile) => sum + (profile.rules ?? []).length,
+        0
+      )
+    )
+  }
   return entryCount(valueOf(ops, base, section))
 }
 
@@ -197,15 +221,37 @@ function notesFor(
     ...(checked?.issues ?? []),
     ...(checked?.requirements ?? []).map((requirement) => ({
       path: requirement.path,
-      message: m.configuration_requirement({
-        kind:
-          typeof requirement.kind === "string"
-            ? requirement.kind
-            : requirement.kind.material,
-      }),
+      message: requirementMessage(requirement),
     })),
-  ].filter((issue) => formViewOf(issue.path) === form)
+  ].filter(
+    (issue) =>
+      formViewOf(issue.path) === form ||
+      // Routing names rule sets and is checked against each node's access.
+      (form === "routing" && routingConcerns(issue.path))
+  )
   return notesFrom(local, controller, current === null)
+}
+
+function requirementMessage(requirement: PreparationRequirement): string {
+  if (requirement.kind === "ruleSetContent")
+    return m.configuration_requirement_rule_set({
+      key: pointerSegments(requirement.path)?.[1] ?? requirement.path,
+    })
+  return m.configuration_requirement({
+    kind:
+      typeof requirement.kind === "string"
+        ? requirement.kind
+        : requirement.kind.material,
+  })
+}
+
+/** A rule set's content, or a node as a whole (the egress a node is assigned against its access). */
+function routingConcerns(path: string): boolean {
+  const segments = pointerSegments(path) ?? []
+  return (
+    (segments[0] === "ruleSets" && segments.length === 2) ||
+    (segments[0] === "nodes" && segments.length === 2)
+  )
 }
 
 const problemsOf = <P extends FormPart>(
@@ -223,6 +269,7 @@ function SectionForm({
   readMembers,
   notes,
   onChange,
+  onOpenSection,
 }: {
   networkId: string
   section: FormSection
@@ -237,6 +284,7 @@ function SectionForm({
     part: P,
     value: FormValues[P]
   ) => void
+  onOpenSection: (section: SectionKey) => void
 }) {
   const draft = useConfigurationDraft(networkId)
   const ops = operationsOf(draft.entry)
@@ -251,6 +299,18 @@ function SectionForm({
     () => ({ users: userChips(names), owners: ownerChips(names) }),
     [names]
   )
+  const routes = section === "routing" || section === "ruleSets"
+  const statusRead = useQuery({ ...ruleSetsQuery(networkId), enabled: routes })
+  const status: RuleSetStatus = statusRead.data
+    ? {
+        kind: "read",
+        views: new Map(statusRead.data.items.map((item) => [item.key, item])),
+      }
+    : statusRead.isError
+      ? { kind: "failed" }
+      : { kind: "loading" }
+  const ruleSets = valueOf(ops, base, "ruleSets")
+  const routing = valueOf(ops, base, "routing")
 
   let body: ReactNode
   switch (section) {
@@ -309,6 +369,56 @@ function SectionForm({
           editable={editable}
           notes={notes}
           onChange={set("dns")}
+        />
+      )
+      break
+    case "routing": {
+      const saved = view.configuration.ruleSets
+      body = (
+        <RoutingForm
+          routing={routing}
+          editable={editable}
+          names={names}
+          notes={notes}
+          exits={
+            new Set(
+              Object.entries(base.nodes)
+                .filter(([, node]) => node.exitEnabled)
+                .map(([id]) => id)
+            )
+          }
+          ruleSets={Object.keys(ruleSets)}
+          setStatus={(key) => {
+            const set = ruleSets[key]
+            return set
+              ? preparationOf(
+                  set,
+                  saved[key],
+                  status.kind === "read" ? status.views.get(key) : undefined
+                )
+              : null
+          }}
+          onChange={set("routing")}
+          onOpenRuleSets={() => onOpenSection("ruleSets")}
+        />
+      )
+      break
+    }
+    case "ruleSets":
+      body = (
+        <RuleSetsForm
+          networkId={networkId}
+          sets={ruleSets}
+          saved={view.configuration.ruleSets}
+          status={status}
+          referenced={new Set(referencedSets(routing))}
+          editable={editable}
+          notes={notes}
+          onChange={set("ruleSets")}
+          onRename={(from, to) => {
+            onChange(view, "ruleSets", renamed(ruleSets, from, to))
+            onChange(view, "routing", renameSetReferences(routing, from, to))
+          }}
         />
       )
       break
